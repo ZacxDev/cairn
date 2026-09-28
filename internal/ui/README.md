@@ -2205,11 +2205,20 @@ own, which is what `outcomeFrom` refuses.
 
 ## What this phase's guards still cannot see
 
-- **A real redemption over HTTP.** `handleOAuthCallback`'s provisioning arm needs a provider
-  exchange that fails with `identity.UnprovisionedSubject`, and `oauth_test.go` drives that with
-  a stub. Nothing here has driven a real GoTrue, so the end-to-end path — `GET /join` → accept →
-  provider → callback → provisioned principal → a co-member in the share picker — is
-  **unmeasured**. That is rank 9 and rank 13, and it is a human's.
+- **A real redemption over HTTP.** ❌ **THE SENTENCE HERE WAS FALSE AND IS RETRACTED RATHER THAN
+  EDITED AWAY, BECAUSE IT IS THE REASON NOBODY LOOKED.** It read: *"`handleOAuthCallback`'s
+  provisioning arm needs a provider exchange that fails with `identity.UnprovisionedSubject`, and
+  `oauth_test.go` drives that with a stub."* Measured: `oauth_test.go` contained **zero**
+  references to an invite or to `UnprovisionedSubject`. The callback's redemption behaviour — the
+  handler that can CREATE A PRINCIPAL — was driven by **nothing**, and the identical claim sat in
+  `invitefixture_test.go`'s own stub. 🔴 **That gap is what hid a total defect**: a user the
+  control plane already held could never redeem anything, because the provisioning arm is guarded
+  on the exchange having FAILED, and theirs succeeds. `oauth_invite_test.go` drives both arms now
+  (provisioned stranger, known user, the refuse/admit asymmetry, and a no-invitation negative
+  control), and `Inviting.RedeemFor` is the path the known user takes.
+  ⚠ **What is still unmeasured is the REAL provider.** Nothing here has driven a real GoTrue, so
+  `GET /join` → accept → provider → callback → a co-member in the share picker remains a human's:
+  that is rank 9 and rank 13.
 - **Postgres.** `Inviting` is stubbed in every test in this phase; the real `invite.Store` is
   `internal/pgstore`, measured by the build-tagged tier. ✅ **THE WIRING IS NO LONGER ABSENT —
   28(c) LANDED IT, AND THE SENTENCE THAT STOOD HERE IS CORRECTED RATHER THAN DELETED because a

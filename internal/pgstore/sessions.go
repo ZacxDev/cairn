@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
@@ -26,21 +27,43 @@ func NewSessionStore(db *DB) *SessionStore { return &SessionStore{db: db} }
 
 var _ identity.SessionStore = (*SessionStore)(nil)
 
-// bg is the context every method here runs under.
+// StatementTimeout bounds every statement this package issues on the serving path.
 //
-// 🔴 IT IS `context.Background()` BECAUSE THE INTERFACE HAS NO CONTEXT PARAMETER, AND
-// THAT IS RECORDED RATHER THAN QUIETLY DONE. `identity.SessionStore` was shaped around
-// a file store where every operation is a local read or an atomic rename — neither
-// cancellable and neither worth a deadline. A network call is different, and the honest
-// consequence is that a request the browser abandoned still runs its query to
-// completion here.
+// 🔴 WITHOUT IT A POSTGRES THAT HANGS PRODUCES EXACTLY THE "LOOKS HEALTHY, SERVES NOBODY"
+// STATE EVERY STARTUP REFUSAL IN `cmd/cairn-ui` EXISTS AGAINST — and it produces it AFTER
+// startup, where no refusal can see it. The ERROR direction was always safe:
+// `identity.CookieSession` refuses every session when the store returns an error, which is
+// fail-closed and deliberate. The HANG direction was not covered at all. A server that
+// accepts TCP and then stops answering — a failover, a lock, a saturated backend — blocks
+// every authenticated request indefinitely, the pool exhausts at 8, and `/healthz` keeps
+// answering 200 because it is served before the chain and touches nothing. The orchestrator
+// therefore never restarts the pod.
 //
-// ⚠ WHAT MAKES THAT ACCEPTABLE RATHER THAN IGNORED: the pool caps concurrency at 8, so
-// an abandoned query occupies a bounded resource, and each of these is a single
-// primary-key statement. Widening the interface to carry a context is the right fix and
-// it is a change to `internal/identity`, `internal/ui`'s call sites and the file store
-// together — deliberately not bundled into the change that introduces the backend.
-func bg() context.Context { return context.Background() }
+// ⚠ THE MITIGATION THAT USED TO BE WRITTEN HERE DID NOT ADDRESS IT, AND IS RETRACTED. It
+// read: "the pool caps concurrency at 8, so an abandoned query occupies a bounded resource".
+// That bounds the DATABASE's resource, not this surface's availability — 8 blocked
+// connections is precisely the outage.
+//
+// ⚠ 10s IS A CEILING ON A HUMAN-FACING LOOKUP, NOT A TUNING KNOB. Every statement here is a
+// single primary-key probe or one small insert; one that has not answered in ten seconds has
+// already failed the request that is waiting for it. It is deliberately far above any
+// healthy latency so that a slow-but-working database is never cut off.
+const StatementTimeout = 10 * time.Second
+
+// opCtx is the bounded context every method here runs under.
+//
+// 🔴 THE CALLER MUST `defer cancel()`. The interface has no context parameter —
+// `identity.SessionStore` was shaped around a file store, where every operation is a local
+// read or an atomic rename and neither is worth a deadline — so the bound is applied here
+// rather than passed in. Widening the interface to carry a real request context is still
+// the right fix and is still a change to `internal/identity`, `internal/ui`'s call sites and
+// the file store together; what this does is stop the UNBOUNDED case while that waits.
+//
+// ⚠ THE HONEST RESIDUAL: a request the browser abandoned still runs its query to completion,
+// because the deadline is this package's and not the request's. Ten seconds, not forever.
+func (d *DB) opCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), StatementTimeout)
+}
 
 // Lookup resolves a presented id to a LIVE session.
 //
@@ -59,7 +82,9 @@ func (s *SessionStore) Lookup(presentedID string) (identity.Session, bool, error
 
 	var rec identity.Session
 	var kind, principal string
-	err := s.db.sql.QueryRowContext(bg(),
+	ctx, cancel := s.db.opCtx()
+	defer cancel()
+	err := s.db.sql.QueryRowContext(ctx,
 		`SELECT digest, kind, principal, issued_at, expires_at FROM sessions WHERE digest = $1`,
 		digest,
 	).Scan(&rec.Digest, &kind, &principal, &rec.IssuedAt, &rec.ExpiresAt)
@@ -90,7 +115,9 @@ func (s *SessionStore) Create(rec identity.Session) error {
 	if rec.Digest == "" {
 		return errors.New("pgstore: a session with no digest would be unreachable and would never expire")
 	}
-	if _, err := s.db.sql.ExecContext(bg(),
+	ctx, cancel := s.db.opCtx()
+	defer cancel()
+	if _, err := s.db.sql.ExecContext(ctx,
 		`INSERT INTO sessions (digest, kind, principal, issued_at, expires_at)
 		 VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (digest) DO UPDATE SET
@@ -121,7 +148,9 @@ func (s *SessionStore) Revoke(presentedID string) error {
 	if presentedID == "" {
 		return nil
 	}
-	if _, err := s.db.sql.ExecContext(bg(),
+	ctx, cancel := s.db.opCtx()
+	defer cancel()
+	if _, err := s.db.sql.ExecContext(ctx,
 		`DELETE FROM sessions WHERE digest = $1`, identity.SessionDigest(presentedID),
 	); err != nil {
 		return fmt.Errorf("pgstore: revoking a session: %w", err)
@@ -139,7 +168,9 @@ func (s *SessionStore) Revoke(presentedID string) error {
 // is refused by `Lookup`. A prune that deleted MORE than the liveness test rejects
 // could sign somebody out; one that deletes less can only leave a dead row behind.
 func (s *SessionStore) Prune() error {
-	if _, err := s.db.sql.ExecContext(bg(),
+	ctx, cancel := s.db.opCtx()
+	defer cancel()
+	if _, err := s.db.sql.ExecContext(ctx,
 		`DELETE FROM sessions WHERE expires_at < $1`, s.db.now(),
 	); err != nil {
 		return fmt.Errorf("pgstore: pruning sessions: %w", err)
@@ -151,7 +182,9 @@ func (s *SessionStore) Prune() error {
 // probe; nothing in the serving path reads it.
 func (s *SessionStore) Count() (int, error) {
 	var n int
-	if err := s.db.sql.QueryRowContext(bg(), `SELECT count(*) FROM sessions`).Scan(&n); err != nil {
+	ctx, cancel := s.db.opCtx()
+	defer cancel()
+	if err := s.db.sql.QueryRowContext(ctx, `SELECT count(*) FROM sessions`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("pgstore: counting sessions: %w", err)
 	}
 	return n, nil

@@ -82,7 +82,9 @@ func (s *InviteStore) Create(inv invite.Invite) error {
 	if !inv.Role.Valid() {
 		return fmt.Errorf("pgstore: unknown role %q", inv.Role)
 	}
-	if _, err := s.db.sql.ExecContext(bg(),
+	ctx, cancel := s.db.opCtx()
+	defer cancel()
+	if _, err := s.db.sql.ExecContext(ctx,
 		`INSERT INTO invites (digest, project_id, role, inviter, created_at, expires_at)
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
 		inv.Digest, string(inv.ProjectID), string(inv.Role), string(inv.Inviter),
@@ -98,7 +100,9 @@ func (s *InviteStore) ByToken(presentedToken string) (invite.Invite, bool, error
 	if presentedToken == "" {
 		return invite.Invite{}, false, nil
 	}
-	row := s.db.sql.QueryRowContext(bg(),
+	ctx, cancel := s.db.opCtx()
+	defer cancel()
+	row := s.db.sql.QueryRowContext(ctx,
 		`SELECT `+inviteColumns+` FROM invites WHERE digest = $1`, invite.Digest(presentedToken))
 	inv, err := scanInvite(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -130,7 +134,9 @@ func (s *InviteStore) Redeem(presentedToken string, by control.ID, at time.Time)
 	if presentedToken == "" || by == "" {
 		return invite.Invite{}, invite.ErrNotRedeemable
 	}
-	row := s.db.sql.QueryRowContext(bg(),
+	ctx, cancel := s.db.opCtx()
+	defer cancel()
+	row := s.db.sql.QueryRowContext(ctx,
 		`UPDATE invites
 		    SET redeemed_at = $2, redeemed_by = $3
 		  WHERE digest = $1
@@ -172,7 +178,9 @@ func (s *InviteStore) RevokeByDigest(digest string, at time.Time) error {
 // revoke is the one statement both revoke paths run, so the two cannot disagree about
 // what "open" means.
 func (s *InviteStore) revoke(digest string, at time.Time) error {
-	res, err := s.db.sql.ExecContext(bg(),
+	ctx, cancel := s.db.opCtx()
+	defer cancel()
+	res, err := s.db.sql.ExecContext(ctx,
 		`UPDATE invites
 		    SET revoked_at = $2
 		  WHERE digest = $1
@@ -202,7 +210,9 @@ func (s *InviteStore) ForProject(project control.ID) ([]invite.Invite, error) {
 	if project == "" {
 		return nil, nil
 	}
-	rows, err := s.db.sql.QueryContext(bg(),
+	ctx, cancel := s.db.opCtx()
+	defer cancel()
+	rows, err := s.db.sql.QueryContext(ctx,
 		`SELECT `+inviteColumns+` FROM invites WHERE project_id = $1 ORDER BY created_at DESC, digest ASC`,
 		string(project))
 	if err != nil {

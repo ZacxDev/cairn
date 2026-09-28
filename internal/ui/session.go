@@ -111,13 +111,22 @@ func csrfTokenFor(r *http.Request) string {
 // 🔴 THE IMPACT IS NIL, AND SAYING WHY IS THE POINT — "no impact" alone is how a wrong
 // claim gets replaced by an unexamined one. The gate is reachable only AFTER
 // authentication (see [Server.ServeHTTP]); the state-changing rows behind it are
-// `POST /sign-out`, `POST /share` and `POST /unshare` — `POST /sign-in` is `classPublic`
-// and dispatches ahead of the chain; `handleSignOut` then revokes `sha256(X)` for a
-// caller-chosen X, which is nothing, and the two share rows authorise from `id.Auth`
-// rather than from the cookie, so a caller who chose their own cookie gains no authority
-// by it. ⚠ THAT ENUMERATION READ "the only state-changing row is `POST /sign-out`" until
-// the share flow added two. The impact argument is unchanged; the LIST it rests on was
-// stale, and the list is the half a reader would have checked. The CSRF property itself is untouched, because it defends against a CROSS-SITE
+// `POST /sign-out`, `POST /share`, `POST /unshare`, `POST /invite` and
+// `POST /invite/revoke` — `POST /sign-in` and `POST /sign-in/github` are `classPublic` and
+// dispatch ahead of the chain; `handleSignOut` then revokes `sha256(X)` for a caller-chosen
+// X, which is nothing, and the share AND invite rows all authorise from `id.Auth` or
+// `id.Principal` rather than from the cookie, so a caller who chose their own cookie gains
+// no authority by it. `Mint` and `Revoke` in particular go through `mayManage`, which
+// requires `control.KindUser` and a real membership.
+// ⚠ THIS ENUMERATION HAS NOW GONE STALE TWICE, IN THE SAME PARAGRAPH THAT RECORDS THE FIRST
+// TIME. It read "the only state-changing row is `POST /sign-out`" until the share flow added
+// two, and the correction said "the LIST it rests on was stale, and the list is the half a
+// reader would have checked" — and then the invite flow added two more and did not touch it.
+// 🔴 A LIST OF ROWS MAINTAINED BY HAND IN A COMMENT IS A LEDGER WITH NO GATE: `routes.go`
+// knows the answer and nothing compares the two. Re-derive it rather than trusting this
+// sentence — `ui.DeclaredRoutes()` filtered on `stateChanging` is the authority — and if it
+// goes stale a third time, delete the enumeration and keep only the impact argument, which
+// has survived both movements unchanged. The CSRF property itself is untouched, because it defends against a CROSS-SITE
 // attacker riding a victim's cookie, and such an attacker can neither READ a `HttpOnly`
 // cookie nor SET a `__Host-` one for this origin.
 //

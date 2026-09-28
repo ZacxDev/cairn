@@ -41,6 +41,20 @@ type staticInviting struct {
 	lastProject control.ID
 	// lastDigest records what `Revoke` was asked to withdraw.
 	lastDigest string
+
+	// The REDEMPTION recorders. Both arms of the OAuth callback are counted separately,
+	// because the whole defect they exist for is that one of the two was never reached:
+	// asserting a SUM would be satisfied by the provisioning arm firing twice.
+	redeemCalls      int
+	redeemedToken    string
+	redeemedProvider string
+	redeemedSubject  string
+	redeemErr        error
+
+	redeemForCalls       int
+	redeemedForToken     string
+	redeemedForPrincipal control.Principal
+	redeemForErr         error
 }
 
 func (s *staticInviting) Invitable(control.Principal) []control.NamedProject {
@@ -83,10 +97,49 @@ func (s *staticInviting) Revoke(_ context.Context, _ control.Principal, digest s
 	return nil
 }
 
-func (s *staticInviting) Redeem(context.Context, string, string, string) (Redemption, error) {
-	// Not reached by any HTTP row: redemption happens on the OAuth callback's
-	// `UnprovisionedSubject` arm, and `oauth_test.go` drives that with its own stub.
-	return Redemption{}, invite.ErrNotRedeemable
+// Redeem is the PROVISIONING arm's dependency — a subject the control plane does not hold.
+//
+// ⚠ THE COMMENT THAT STOOD HERE WAS FALSE AND IS CORRECTED RATHER THAN DELETED, because it
+// is the reason nobody noticed the gap. It read: "Not reached by any HTTP row: redemption
+// happens on the OAuth callback's `UnprovisionedSubject` arm, and `oauth_test.go` drives
+// that with its own stub." The first clause is right; the second was not — measured,
+// `oauth_test.go` contained ZERO references to an invite or to `UnprovisionedSubject`, so
+// the callback's redemption arm was driven by nothing at all. `internal/ui/README.md`
+// carried the same false claim. The path that CREATES A PRINCIPAL was the uncovered one.
+//
+// It is reached now: `oauth_invite_test.go` drives both arms of the callback through this
+// fixture.
+func (s *staticInviting) Redeem(_ context.Context, token, provider, subject string) (Redemption, error) {
+	s.redeemedToken, s.redeemedProvider, s.redeemedSubject = token, provider, subject
+	s.redeemCalls++
+	if s.redeemErr != nil {
+		return Redemption{}, s.redeemErr
+	}
+	return Redemption{
+		Principal:   provisionedPrincipal(),
+		Provisioned: true,
+		Project:     fixtureNamedProject.ID,
+		Role:        control.RoleMember,
+	}, nil
+}
+
+// RedeemFor is the SUCCESS path's dependency — a principal the control plane already holds.
+//
+// 🔴 IT EXISTS BECAUSE THAT PATH WAS UNREACHABLE. See `Inviting.RedeemFor`: a known user's
+// exchange succeeds, so the provisioning arm's `errors.As` is false and their invitation
+// was silently discarded.
+func (s *staticInviting) RedeemFor(_ context.Context, token string, principal control.Principal) (Redemption, error) {
+	s.redeemedForToken, s.redeemedForPrincipal = token, principal
+	s.redeemForCalls++
+	if s.redeemForErr != nil {
+		return Redemption{}, s.redeemForErr
+	}
+	return Redemption{
+		Principal:   principal,
+		Provisioned: false,
+		Project:     fixtureNamedProject.ID,
+		Role:        control.RoleMember,
+	}, nil
 }
 
 var _ Inviting = (*staticInviting)(nil)

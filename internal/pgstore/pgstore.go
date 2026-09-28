@@ -82,6 +82,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	// The driver registers itself with `database/sql` as a side effect. It is the ONLY
@@ -143,6 +145,69 @@ func (d *DB) Close() error { return d.sql.Close() }
 // configuration.
 var ErrNoDSN = errors.New("pgstore: no connection string was configured, so no session or invite could ever be resolved")
 
+// redactedDSN is what replaces a connection string anywhere one would otherwise be
+// printed. It is a fixed marker rather than a truncation, because a prefix of a DSN is
+// still a hostname and a username.
+const redactedDSN = "<connection string redacted>"
+
+// redact removes the connection string from an error on its way out of this package.
+//
+// 🔴 THE SENTENCE "THE CONNECTION STRING IS DELIBERATELY NOT ECHOED" WAS FALSE, AND THIS
+// IS WHAT MAKES IT TRUE. Not interpolating the DSN into the FORMAT covers this package's
+// own text and nothing about the error it WRAPS. `lib/pq` hands a `postgres://…` DSN to
+// `net/url.Parse`, whose failure is a `*url.Error` carrying `URL` — the raw string,
+// verbatim, password and all. So a refusal that says twice that it does not echo the
+// value printed:
+//
+//	parse "postgres://cairn:SuperSecret123@db.example:not-a-port/cairn": invalid port
+//
+// MEASURED on the built binary, against the KEYWORD/VALUE form as the control: that form
+// reports only the offending key (`missing "=" after "oops"`) and leaks nothing, which is
+// why the repo's own tests — all keyword/value — were green while this was broken. ⚠ The
+// URL form is the one a Kubernetes secret carries and the one `README.md` documents, so
+// the leaking shape was the deployed shape.
+//
+// 🔴 IT IS TWO PASSES AND BOTH ARE LOAD-BEARING. The typed pass rewrites `*url.Error.URL`,
+// which is the known carrier. The textual pass then removes any remaining occurrence of
+// the DSN — because a driver is free to put it in any message it likes, and a redactor
+// that only knew today's one error type would go quietly stale the next time `lib/pq`
+// changes. Neither pass alone is sufficient: the typed one misses an untyped mention, and
+// the textual one misses a `*url.Error` whose `URL` differs from the DSN by so much as a
+// trimmed space.
+//
+// ⚠ IT CANNOT CATCH A DRIVER THAT PRINTS A DECOMPOSED PIECE — a bare password with no
+// surrounding DSN would survive both passes. That is stated rather than claimed away; the
+// textual pass is a floor, not a proof.
+func redact(err error, dsn string) error {
+	if err == nil {
+		return nil
+	}
+	// Pass 1: the typed carrier. `url.Error` is a struct with an exported `URL`, so this
+	// rewrites the field rather than the rendered string, which keeps `errors.Is`/`As`
+	// working on whatever it wraps.
+	var uerr *url.Error
+	if errors.As(err, &uerr) {
+		uerr.URL = redactedDSN
+	}
+	// Pass 2: anything left. A trimmed DSN is also removed, because `cmd/cairn-ui` passes
+	// the operator's value RAW and a leading space is a spelling the flag path allows.
+	msg := err.Error()
+	for _, secret := range []string{dsn, strings.TrimSpace(dsn)} {
+		if secret != "" {
+			msg = strings.ReplaceAll(msg, secret, redactedDSN)
+		}
+	}
+	if msg == err.Error() {
+		return err
+	}
+	// 🔴 THE REDACTED FORM IS A NEW ERROR VALUE AND THE ORIGINAL IS NOT WRAPPED, WHICH IS
+	// DELIBERATE AND IS THE ONE COST. Wrapping with `%w` would keep the original reachable
+	// through `errors.Unwrap`, and its `Error()` is the leaking string — so a caller that
+	// unwrapped and printed would undo this. Nothing in this repository matches on a
+	// driver error's type, so the loss is a capability nobody uses.
+	return errors.New(msg)
+}
+
 // Open connects, verifies the connection, and applies the schema.
 //
 // 🔴 IT PINGS, BECAUSE `sql.Open` VALIDATES NOTHING. `sql.Open` parses the DSN and
@@ -158,8 +223,9 @@ func Open(ctx context.Context, dsn string) (*DB, error) {
 	}
 	pool, err := sql.Open(DriverName, dsn)
 	if err != nil {
-		// The DSN is NOT interpolated into this message: it carries the password.
-		return nil, fmt.Errorf("pgstore: opening the connection pool failed (the connection string is deliberately not echoed — it carries a password): %w", err)
+		// The DSN is NOT interpolated into this message, and `redact` is what makes that
+		// true of the WRAPPED error as well — see its own comment.
+		return nil, fmt.Errorf("pgstore: opening the connection pool failed (the connection string is deliberately not echoed — it carries a password): %w", redact(err, dsn))
 	}
 	// 🔴 A BOUND ON CONNECTIONS, BECAUSE THE DEFAULT IS UNBOUNDED. `database/sql`'s
 	// zero value for `MaxOpenConns` is "no limit", so a burst of requests against a
@@ -174,7 +240,7 @@ func Open(ctx context.Context, dsn string) (*DB, error) {
 
 	if err := pool.PingContext(ctx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("pgstore: the database did not answer a ping (the connection string is deliberately not echoed — it carries a password): %w", err)
+		return nil, fmt.Errorf("pgstore: the database did not answer a ping (the connection string is deliberately not echoed — it carries a password): %w", redact(err, dsn))
 	}
 	db := &DB{sql: pool}
 	if err := db.Migrate(ctx); err != nil {

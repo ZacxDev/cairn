@@ -703,3 +703,85 @@ func TestTheRoleChooserIsDrivenByTheREALModelsHeldRole(t *testing.T) {
 		}
 	}
 }
+
+// TestRedeemForJoinsAPrincipalTheControlPlaneAlreadyHolds is `RedeemFor`'s base case — the
+// path a user who already has an account takes.
+func TestRedeemForJoinsAPrincipalTheControlPlaneAlreadyHolds(t *testing.T) {
+	r := newInvRig(t)
+	// `invAdmin` is not in `invOther`, whose owner is `invPlain`.
+	token, _, err := r.inviting.Mint(context.Background(), r.principal(invPlain), invOther, control.RoleMember, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, held := r.authority.Model().RoleIn(invOther, invAdmin); held {
+		t.Fatal("precondition: invAdmin already belongs to invOther, so this measures nothing")
+	}
+	before := len(r.authority.Model().Users)
+
+	red, err := r.inviting.RedeemFor(context.Background(), token, r.principal(invAdmin))
+	if err != nil {
+		t.Fatalf("RedeemFor: %v", err)
+	}
+	if red.Provisioned {
+		t.Error("Provisioned is true on a path that cannot provision — no `user-created` is written here")
+	}
+	m := r.authority.Model()
+	if after := len(m.Users); after != before {
+		t.Fatalf("users went %d -> %d: RedeemFor created an account, and it must not", before, after)
+	}
+	if role, ok := m.RoleIn(invOther, invAdmin); !ok || role != control.RoleMember {
+		t.Errorf("membership after redemption is (%q, %v), want (member, true)", role, ok)
+	}
+}
+
+// TestRedeemForRefusesSomebodyTheProjectAlreadyHolds is the guard that keeps this path from
+// being a role-rewrite primitive.
+//
+// 🔴 THE REFUSAL IS NOT POLITENESS. `Redeem`/`RedeemFor` write a bare `member-set`, and
+// `Model.apply` calls `setMembership` UNCONDITIONALLY — it never consults `refuseOrphaning`,
+// which exists only on the operator's `PlanMemberSet` path and whose whole job is to refuse
+// demoting a project's last owner. So without this check an `admin` could mint a `member`
+// invitation into their own project, have the sole OWNER redeem it, and leave the project
+// with nobody who may delete it or change its membership.
+//
+// 🔴 AND IT MUST REFUSE **BEFORE** THE INVITATION IS SPENT, which is the second assertion:
+// a refusal that consumed the token would burn a link that was legitimately for somebody
+// else.
+func TestRedeemForRefusesSomebodyTheProjectAlreadyHolds(t *testing.T) {
+	r := newInvRig(t)
+	// `invPlain` owns `invOther`. Mint an invitation into it and have its OWNER redeem.
+	token, _, err := r.inviting.Mint(context.Background(), r.principal(invPlain), invOther, control.RoleMember, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roleBefore, held := r.authority.Model().RoleIn(invOther, invPlain)
+	if !held || roleBefore != control.RoleOwner {
+		t.Fatalf("precondition: invPlain is (%q, %v) in invOther, want owner — this case is about a "+
+			"redemption that would DEMOTE the only owner", roleBefore, held)
+	}
+
+	_, err = r.inviting.RedeemFor(context.Background(), token, r.principal(invPlain))
+	if !errors.Is(err, ErrAlreadyAMember) {
+		t.Fatalf("RedeemFor returned %v, want ErrAlreadyAMember. Without this refusal the redemption "+
+			"writes a `member-set` that OVERWRITES the redeemer's role, and `Model.apply` does not "+
+			"consult `refuseOrphaning` — so the project's only owner just became a member.", err)
+	}
+	// The role is untouched…
+	if role, ok := r.authority.Model().RoleIn(invOther, invPlain); !ok || role != roleBefore {
+		t.Errorf("the owner's role moved to (%q, %v) despite the refusal, want (%q, true)",
+			role, ok, roleBefore)
+	}
+	// 🔴 …AND THE INVITATION IS STILL OPEN. A refusal that spent the token would destroy a
+	// link somebody else was meant to use, which is a worse outcome than the refusal itself.
+	inv, known, err := r.invites.ByToken(token)
+	if err != nil {
+		t.Fatalf("reading the invitation back: %v", err)
+	}
+	if !known {
+		t.Fatal("the invitation vanished")
+	}
+	if !inv.Redeemable(invClock) {
+		t.Errorf("the invitation is %q after a refused redemption, want still open — the refusal "+
+			"consumed a link that was not the redeemer's to spend", inv.StateAt(invClock))
+	}
+}

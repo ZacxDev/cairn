@@ -153,17 +153,43 @@ func TestTheProcessRefusesAnUnreachableDatabaseBeforeTheListener(t *testing.T) {
 	_, journal := seededJournal(t, credentialLive)
 	closedPort := aPortNothingIsListeningOn(t)
 
+	// 🔴 A DISTINCT, IMPROBABLE SECRET — never a realistic-looking credential. This repo is
+	// PUBLIC and `AGENTS.md` forbids credential-shaped fixtures; the value only has to be
+	// unmistakable in a grep.
+	const fixtureSecret = "NOT-A-REAL-PASSWORD-e3b0c44298fc"
+
 	for _, arm := range []struct {
 		name string
 		// dsn arrives in the ENVIRONMENT, which is the path a deployment uses and the only
 		// one the blank policy can refuse.
-		dsn  string
-		want string
+		dsn string
+		// secret is the substring that must NOT appear in the refusal. Empty where the arm's
+		// DSN carries none — an arm with no secret cannot measure a leak, and pretending it
+		// can is how the previous spelling of this guard passed while the property was broken.
+		secret string
+		want   string
 	}{
 		{
 			name: "a connection refused",
-			dsn:  fmt.Sprintf("host=127.0.0.1 port=%d user=cairn dbname=cairn sslmode=disable connect_timeout=5", closedPort),
+			dsn: fmt.Sprintf("host=127.0.0.1 port=%d user=cairn dbname=cairn sslmode=disable connect_timeout=5",
+				closedPort),
+			// No secret: a refused TCP connection carries no DSN in its error, so this arm
+			// measures that the REFUSAL fires and nothing about redaction.
 			want: "could not be opened",
+		},
+		{
+			// 🔴 A MALFORMED URL CARRYING A PASSWORD — and the MALFORMED half is the whole
+			// point, which cost a second vacuous guard to learn. `lib/pq` leaks the DSN only
+			// through `*url.Error`, which `net/url.Parse` produces for an UNPARSEABLE URL. A
+			// well-formed URL aimed at a closed port parses cleanly, fails at connect, and
+			// carries no DSN — so a fixture built that way CANNOT observe the leak. Measured:
+			// removing the redactor left this case GREEN with that fixture, exactly as the
+			// `user=cairn` spelling it replaced had been. An invalid port is what makes the
+			// unsafe shape reachable.
+			name:   "a malformed URL DSN carrying a password",
+			dsn:    "postgres://cairn:" + fixtureSecret + "@127.0.0.1:not-a-port/cairn?sslmode=disable",
+			secret: fixtureSecret,
+			want:   "could not be opened",
 		},
 		{
 			// 🔴 THE SECOND ARM IS ALSO THE NEGATIVE CONTROL FOR THE FIRST: a different
@@ -171,6 +197,8 @@ func TestTheProcessRefusesAnUnreachableDatabaseBeforeTheListener(t *testing.T) {
 			// above is satisfied by a program that refuses every DSN for any reason.
 			name: "a line that reduces to nothing",
 			dsn:  "   ",
+			// No secret in this DSN, so the leak check below is skipped rather than run
+			// vacuously against a fragment this arm never contained.
 			want: "reduces to nothing",
 		},
 	} {
@@ -179,7 +207,17 @@ func TestTheProcessRefusesAnUnreachableDatabaseBeforeTheListener(t *testing.T) {
 			// NOT EXIT. The mutant it exists to kill makes the child SERVE, and a bare
 			// `cmd.Run()` then blocks until the whole suite is killed — a hang reads as
 			// infrastructure rather than as a finding.
-			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			//
+			// 🔴 20s, AND THE NUMBER IS BOUNDED FROM ABOVE BY THE MUTATION BATTERY RATHER
+			// THAN BY THIS TEST. It was 60s, and under the `ui-startup-serves-an-
+			// unreachable-database` mutant BOTH arms wait their full deadline — 120s, which
+			// is exactly `tests/control_mutants.py`'s per-package timeout. The battery then
+			// reported `HARNESS ERROR` instead of a kill: the row scored nothing and the run
+			// exited 1 on a mutant its killer would have caught. A deadline generous enough
+			// to be safe and long enough to break the harness that reads it is worse than a
+			// tighter one. The floor is tiny — a refused connection and a blank-policy
+			// refusal are both immediate — so 20s is still ~1000x margin.
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, os.Args[0],
 				"-control-journal", journal,
@@ -205,11 +243,26 @@ func TestTheProcessRefusesAnUnreachableDatabaseBeforeTheListener(t *testing.T) {
 				t.Errorf("stderr does not contain %q, so this arm cannot tell which of the eleven "+
 					"refusals in `main` spoke:\n%s", arm.want, body)
 			}
-			// 🔴 AND THE CONNECTION STRING IS NOT IN THE OUTPUT. It carries a password, and a
-			// refusal is the single most likely line to be pasted into an issue. The check is
-			// on a fragment that is in EVERY arm's DSN and in nothing else this program prints.
-			if strings.Contains(string(body), "user=cairn") {
-				t.Errorf("the refusal ECHOED the connection string, which carries a password:\n%s", body)
+			// 🔴 AND THE SECRET IS NOT IN THE OUTPUT. A refusal is the single most likely line
+			// to be pasted into an issue, and this program tells the operator twice that it
+			// does not echo the connection string.
+			//
+			// 🔴 THIS CHECK USED TO READ `strings.Contains(body, "user=cairn")` AND IT WAS
+			// THREE WAYS WRONG — it is kept as a worked example rather than quietly replaced,
+			// because every one of the three is a shape that recurs. Its comment claimed the
+			// fragment was "in EVERY arm's DSN": arm 2's DSN is `"   "`, so the guard was
+			// vacuous there. Arm 1's DSN carried NO PASSWORD at all, so the one arm it did
+			// run against could not leak a secret even in principle. And neither arm used the
+			// `postgres://` URL form — the ONLY form that leaked, the form a Kubernetes
+			// secret carries, and the form `README.md` documents. The guard passed while the
+			// property it named was broken: a scanner that recognises only its own textbook
+			// example, which is exactly what `AGENTS.md` says to expect.
+			//
+			// What it asserts now is the SECRET, on an arm whose DSN actually carries one.
+			// The narrow, always-safe keyword/value case lives in
+			// `internal/pgstore/redact_test.go`, which needs no child process.
+			if arm.secret != "" && strings.Contains(string(body), arm.secret) {
+				t.Errorf("the refusal ECHOED the password out of the connection string:\n%s", body)
 			}
 		})
 	}

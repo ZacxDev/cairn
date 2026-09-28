@@ -661,10 +661,13 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 		// token are none of them that type, which `TestOnlyTheVerifiedUnknownSubjectArm
 		// IsProvisionable` pins from the identity side.
 		//
-		// ⚠ AN ALREADY-KNOWN USER CARRYING AN INVITATION IS NOT HANDLED HERE. Their exchange
-		// SUCCEEDS, so they never reach this arm; they join through the authenticated redeem
-		// route instead. Putting both in this handler would mean resolving a provider subject
-		// on the success path too, which `Exchange` deliberately does not return.
+		// ⚠ AN ALREADY-KNOWN USER CARRYING AN INVITATION IS NOT HANDLED HERE, AND THE
+		// SENTENCE THAT SAID WHERE THEY GO INSTEAD WAS FALSE. It read: "they join through the
+		// authenticated redeem route instead" — there is no such route, in this handler or in
+		// `DeclaredRoutes()`. The consequence was silent and total: an existing user's
+		// exchange SUCCEEDS, so `errors.As` below is false, the invitation was never read, it
+		// stayed `open`, and they were signed in with no membership and nothing said so.
+		// They are handled on the SUCCESS path now, by `RedeemFor` — see below.
 		var unprovisioned *identity.UnprovisionedSubject
 		if inviteToken != "" && s.inviting != nil && errors.As(err, &unprovisioned) {
 			red, rerr := s.inviting.Redeem(r.Context(), inviteToken, unprovisioned.Provider, unprovisioned.Subject)
@@ -694,6 +697,38 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 		s.logf("github sign-in refused: %v (%s, %s)", err, client, who)
 		s.renderSignIn(w, http.StatusUnauthorized, signInRefused)
 		return
+	}
+
+	// 🔴 AN EXISTING USER'S INVITATION IS REDEEMED HERE, AND THIS IS THE HALF THAT WAS
+	// MISSING. The arm above only fires for a subject the control plane does NOT hold; a
+	// known user exchanges successfully and reaches this line, so without this their
+	// invitation was read by nothing.
+	//
+	// 🔴 A FAILED REDEMPTION DOES NOT REFUSE THE SIGN-IN, WHICH IS THE OPPOSITE OF THE
+	// PROVISIONING ARM AND IS DELIBERATE. There, the account exists only BECAUSE of the
+	// invitation, so a dead invitation means there is nobody to sign in. Here the person is
+	// already a user with their own standing: refusing would turn "your invite link expired"
+	// into "you cannot log in", which is a worse outcome and a support call.
+	//
+	// ⚠ THE RESIDUAL, STATED RATHER THAN DISCOVERED: they are signed in and NOT told the
+	// invitation failed. The reason goes to the operator's log. Surfacing it needs a place to
+	// put a message across the `openSession` redirect, which this flow does not have — that
+	// is a UI change, and it is named here so the next reader finds it as a known gap rather
+	// than as an oversight.
+	if inviteToken != "" && s.inviting != nil {
+		red, rerr := s.inviting.RedeemFor(r.Context(), inviteToken, principal)
+		switch {
+		case rerr == nil:
+			s.logf("github sign-in: %s joined %s as %s by invitation (%s)",
+				principal.ID, red.Project, red.Role, client)
+		case errors.Is(rerr, ErrAlreadyAMember):
+			// Benign and common: somebody clicked a link for a project they are in.
+			s.logf("github sign-in: %s is already a member of the invited project (%s)",
+				principal.ID, client)
+		default:
+			s.logf("github sign-in: the invitation could not be redeemed for %s: %v (%s)",
+				principal.ID, rerr, client)
+		}
 	}
 
 	// 🔴 THE SAME MINT THE TOKEN FORM USES, NOT A SECOND ONE. `openSession` is where the

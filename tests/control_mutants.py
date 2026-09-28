@@ -2437,6 +2437,42 @@ MUTANTS: tuple[Mutant, ...] = (
         "every /invite one request at a time. That is the exact failure this program's "
         "startup refusals exist against, and nothing else in the tree would notice.",
     ),
+    # ---- ROUND 1's FINDINGS: the two paths nothing was pointed at --------------------
+    #
+    # 🔴 BOTH OF THESE WERE FOUND BY AN AUDIT AND NEITHER WAS FOUND BY A GATE, WHICH IS WHY
+    # THEY ARE ROWS RATHER THAN A PARAGRAPH IN A COMMIT MESSAGE. The callback's redemption
+    # behaviour had NO test at all — `oauth_test.go` carried zero references to an invite —
+    # while two places in the tree claimed it was covered. A false coverage claim is what
+    # kept anybody from looking, and the defect it hid was total.
+    Mutant(
+        name="ui-known-user-invitation-is-silently-discarded",
+        path="internal/ui/oauth.go",
+        # The CONDITION, not the whole block: `red` and `rerr` stay declared, so this is the
+        # narrowest expression that can be wrong rather than a deletion that takes its
+        # enclosing scope with it.
+        old="\tif inviteToken != \"\" && s.inviting != nil {\n\t\tred, rerr := s.inviting.RedeemFor(",
+        new="\tif false {\n\t\tred, rerr := s.inviting.RedeemFor(",
+        killer="TestAKnownUserCarryingAnInvitationRedeemsItOnTheCallback",
+        why="this IS the shipped defect, restored. The provisioning arm is guarded on the "
+        "exchange having FAILED with `UnprovisionedSubject`; a user the control plane already "
+        "holds exchanges SUCCESSFULLY, so without this branch their invitation is read by "
+        "nothing — they are signed in, it stays `open`, and no page or log says so. The "
+        "handler's own comment sent the reader to an 'authenticated redeem route' that is not "
+        "in `DeclaredRoutes()` and was never built.",
+    ),
+    Mutant(
+        name="ui-redeemfor-overwrites-an-existing-membership",
+        path="internal/ui/inviting.go",
+        old="\tif _, held := c.Authority.Model().RoleIn(inv.ProjectID, principal.ID); held {\n"
+        "\t\treturn Redemption{}, ErrAlreadyAMember\n\t}",
+        new="\tif false {\n\t\treturn Redemption{}, ErrAlreadyAMember\n\t}",
+        killer="TestRedeemForRefusesSomebodyTheProjectAlreadyHolds",
+        why="deleting the already-a-member refusal as a UX nicety. It is not one: `Redeem` "
+        "writes a bare `member-set` and `Model.apply` calls `setMembership` UNCONDITIONALLY — "
+        "it never consults `refuseOrphaning`, which lives only on the operator's "
+        "`PlanMemberSet` path. So an `admin` could mint a `member` invitation into their own "
+        "project, have the sole OWNER redeem it, and leave the project with no owner at all.",
+    ),
     # ---- Phase G: the invite flow's HTTP surface ----------------------------------
     #
     # 🔴 THESE ROWS EXIST HERE RATHER THAN IN A SCRATCHPAD SCRIPT BECAUSE OF THE ENTRY

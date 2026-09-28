@@ -60,6 +60,29 @@ type Inviting interface {
 	// has a token the provider signed and nobody this control plane knows. Taking an
 	// `Identity` would make the provisioning case unrepresentable.
 	Redeem(ctx context.Context, token, provider, subject string) (Redemption, error)
+
+	// RedeemFor accepts an invitation on behalf of a principal this control plane ALREADY
+	// holds, and its existence is a DEFECT FIX rather than a symmetry.
+	//
+	// 🔴 WITHOUT IT AN EXISTING USER COULD NEVER REDEEM ANYTHING, SILENTLY. The callback's
+	// provisioning arm is guarded by `errors.As(err, &identity.UnprovisionedSubject{})`,
+	// which requires the exchange to have FAILED for that specific reason. A user the
+	// control plane holds exchanges SUCCESSFULLY, so `err == nil`, so that arm is
+	// unreachable for them — they were signed in, the invitation was never read, it stayed
+	// `open`, and nothing on screen or in the log said so. The comment there pointed at
+	// "the authenticated redeem route", which is not in `DeclaredRoutes()` and was never
+	// built.
+	//
+	// 🔴 IT REFUSES A PRINCIPAL WHO IS ALREADY A MEMBER, AND THAT REFUSAL IS LOAD-BEARING
+	// RATHER THAN TIDINESS. `Redeem` writes a bare `member-set`, and `Model.apply` calls
+	// `setMembership` unconditionally — it does NOT consult `refuseOrphaning`, which lives
+	// only on the operator's `PlanMemberSet` path. So a redemption by an existing member
+	// would OVERWRITE their role, and an `admin` could mint a `member` invitation into
+	// their own project, have the sole OWNER redeem it, and leave the project ownerless —
+	// a state `refuseOrphaning`'s own message calls recoverable only by a two-step nobody
+	// would know to run. Refusing before anything is spent closes that without reaching
+	// into `internal/control` for an unexported guard.
+	RedeemFor(ctx context.Context, token string, principal control.Principal) (Redemption, error)
 }
 
 // Redemption is what a completed redemption did, so a handler can say so and a log can
@@ -101,6 +124,19 @@ var ErrNotInvitable = errors.New("ui: no such project, or it is not yours to inv
 // (`roleRefusal`). Discriminating in the log and not on the wire is this surface's standing
 // pattern — see `signInRefused` for the case where even the log line is the point.
 var ErrRoleNotConferrable = errors.New("ui: that role cannot be conferred by the role you hold")
+
+// ErrAlreadyAMember refuses a redemption by somebody the project already holds.
+//
+// ⚠ IT IS NOT UNIFORM WITH `invite.ErrNotRedeemable`, AND THE ASYMMETRY IS DELIBERATE.
+// Every other refusal on this flow is collapsed so that a caller cannot learn facts about
+// somebody ELSE's invitation. This one is a fact about the CALLER's own membership in a
+// project they are authenticated for, which is the same admissibility argument
+// `roleRefusal` rests on — and telling them "you are already in" is the only answer that
+// does not read as a broken link.
+//
+// 🔴 IT IS RETURNED BEFORE THE INVITATION IS SPENT, so the link keeps working for whoever
+// it was actually for.
+var ErrAlreadyAMember = errors.New("ui: that invitation is for a project you are already in")
 
 // ControlInviting is [Inviting] over the real control plane and a real invite store.
 type ControlInviting struct {
@@ -361,6 +397,70 @@ func (c ControlInviting) Redeem(ctx context.Context, token, provider, subject st
 	}, nil
 }
 
+// RedeemFor spends an invitation for a principal that already exists.
+//
+// 🔴 IT SHARES `Redeem`'s WRITE ORDER AND ITS REASONING — the invitation is spent FIRST,
+// because `invite.Store.Redeem` is the one conditional `UPDATE … RETURNING` in this flow
+// and therefore the only step that can pick a winner between two concurrent clicks. The
+// journal write follows. See `Redeem`'s doc for why the reverse order produces two
+// memberships from one invitation on an append-only journal.
+//
+// ⚠ IT WRITES ONE EVENT, NOT TWO. No `user-created`: the principal is already in the
+// model, which is the whole difference between this and `Redeem`.
+func (c ControlInviting) RedeemFor(ctx context.Context, token string, principal control.Principal) (Redemption, error) {
+	if token == "" || principal.ID == "" {
+		return Redemption{}, invite.ErrNotRedeemable
+	}
+	// 🔴 A PROJECT PRINCIPAL MAY NOT REDEEM. `Memberships` is keyed by USER and this
+	// repository's standing decision is that a project is not a member of itself, so a
+	// service account redeeming would write a membership row that no authority path reads —
+	// an invitation that appears to work and confers nothing.
+	if principal.Kind != control.KindUser {
+		return Redemption{}, invite.ErrNotRedeemable
+	}
+	now := c.now()
+
+	inv, known, err := c.Invites.ByToken(token)
+	if err != nil {
+		return Redemption{}, err
+	}
+	if !known || !inv.Redeemable(now) {
+		return Redemption{}, invite.ErrNotRedeemable
+	}
+
+	// 🔴 BEFORE THE SPEND. See `ErrAlreadyAMember`: this is what keeps a redemption from
+	// silently rewriting the redeemer's own role, and it must not consume the invitation on
+	// the way to saying so.
+	if _, held := c.Authority.Model().RoleIn(inv.ProjectID, principal.ID); held {
+		return Redemption{}, ErrAlreadyAMember
+	}
+
+	redeemed, err := c.Invites.Redeem(token, principal.ID, now)
+	if err != nil {
+		return Redemption{}, err
+	}
+	if _, err := c.Authority.ApplyNow(ctx, control.Event{
+		Kind:      control.EventMemberSet,
+		At:        now,
+		ProjectID: redeemed.ProjectID,
+		UserID:    principal.ID,
+		Role:      redeemed.Role,
+		// The INVITER, not the redeemer — `Redeem`'s rule, for its reason: the journal's
+		// question is who conferred this authority.
+		Actor: redeemed.Inviter,
+	}); err != nil {
+		return Redemption{}, fmt.Errorf(
+			"ui: the invitation was spent but the membership could not be recorded, so a new "+
+				"invitation is needed: %w", err)
+	}
+	return Redemption{
+		Principal:   principal,
+		Provisioned: false,
+		Project:     redeemed.ProjectID,
+		Role:        redeemed.Role,
+	}, nil
+}
+
 // mayManage is the one authority question this type asks, spelled once.
 func (c ControlInviting) mayManage(actor control.Principal, project control.ID) bool {
 	if actor.Kind != control.KindUser || project == "" {
@@ -375,15 +475,26 @@ func (c ControlInviting) mayManage(actor control.Principal, project control.ID) 
 // ⚠ `invite.Store` HAS NO BY-DIGEST READ, DELIBERATELY — every read takes the presented
 // TOKEN, and the mint page never holds one. So the project is recovered by listing the
 // projects this store can be asked about... which it cannot be, without a project. The
-// honest consequence: this scans the actor's OWN invitable projects, which is why [Revoke]
-// takes the actor. A `ByDigest` on the interface would be the cleaner shape and is a
+// honest consequence: this scans EVERY project in the model, one query each. See the body. A `ByDigest` on the interface would be the cleaner shape and is a
 // deliberate follow-up rather than an omission: adding a read that takes a digest widens
 // `invite.Store`'s stated rule ("every method takes the presented token") and that rule has
 // exactly one exception today, argued at `RevokeByDigest`.
 func (c ControlInviting) invitesByDigest(digest string) (invite.Invite, error) {
-	// The caller is about to be authority-checked against whatever project this returns, so
-	// scanning every project would be safe — but it would also be a listing of every
-	// project's invitations, so it is scoped to the model's projects and nothing wider.
+	// ⚠ THIS SCANS EVERY PROJECT IN THE MODEL, AND THE TWO SENTENCES THAT USED TO SIT HERE
+	// BOTH SAID OTHERWISE. The doc above claimed "this scans the actor's OWN invitable
+	// projects, which is why [Revoke] takes the actor" — this function takes no actor, and
+	// `Revoke` takes one for `mayManage`, which is the AUTHORITY check and not a scoping
+	// input. This comment claimed a narrowing too ("scoped to the model's projects and
+	// nothing wider"), which describes no narrowing at all: `Model.Projects` IS every
+	// project.
+	//
+	// 🔴 IT IS NOT AN AUTHORITY HOLE, and that is why it is a comment rather than a fix.
+	// The caller is authority-checked by `mayManage` against whatever project the resolved
+	// ROW names, and an unknown digest and a not-yours digest collapse to the same 403 with
+	// identical bytes — so scanning wider reveals nothing. What it costs is one query per
+	// project in the deployment, per revoke. `invite.Store` has no by-digest read by design
+	// (every method takes the presented TOKEN), so closing that is a widening of that
+	// interface and a separate change, which `invitesByDigest`'s doc already argues.
 	for project := range c.Authority.Model().Projects {
 		rows, err := c.Invites.ForProject(project)
 		if err != nil {
