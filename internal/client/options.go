@@ -34,7 +34,24 @@ type Options struct {
 	// ENTRY and this names something an entry POINTS AT, so they compose rather than conflict.
 	RefTo    string
 	HasRefTo bool
-	List     bool
+	// Tags is the CATEGORY narrowing — `--tag <name>`, REPEATABLE, with AND semantics.
+	//
+	// 🔴 THE FIRST AND ONLY REPEATABLE FLAG IN THIS CLI, AND THE FIRST `[]string` ON THIS
+	// STRUCT. Every other value-bearing flag here is last-wins by construction: the parser's
+	// assignment switch writes a scalar, so `--limit 1 --limit 2` means 2 and always did. A flag
+	// whose repetitions are its OPERAND SET cannot use that arm — it has to APPEND — and the
+	// hazard is that the wrong arm is silent: `--tag a --tag b` would narrow by `b` alone and
+	// answer 200 with more entries than were asked for.
+	//
+	// ⚠ NO `HasTags` COMPANION, WHERE `Ref` AND `RefTo` EACH HAVE ONE. Those need a flag because
+	// `--ref ''` is a real request that narrows and finds nothing; a tag operand that folds away
+	// is REFUSED by the option ladder, so there is no empty-but-present state to separate.
+	// `report.RecallOptions.Tags` carries the same note.
+	//
+	// ⚠ OPERANDS AS WRITTEN, NOT FOLDED. `report.canonicalTags` is the one place they are folded,
+	// deduped and sorted, so this client and the pod cannot disagree about what a query named.
+	Tags []string
+	List bool
 	// Limit / Page are pointers because `nil` is a DIFFERENT REQUEST from any integer: it is
 	// `--limit` that selects full-body mode, and defaulting it at the call site would make
 	// "the caller asked for a cap" indistinguishable from "the caller asked for nothing",

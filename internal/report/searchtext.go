@@ -94,7 +94,41 @@ func (r SearchReport) RenderText(host string, extraHeader []string, instance str
 		// `search-*` status, or a new body under an existing one, has to be added to this list
 		// and checked BY HAND today — or the constant has to become a predicate the way the
 		// recall renderer's `RendersNarrowedSet` is.
-		out = append(out, refToLine(r.RefTo, r.EntriesSearched, r.EntriesSearched+r.RefToSkipped,
+		//
+		// 🔴 BOTH NUMBERS MOVED WHEN THE TAG FILTER LANDED, AND LEAVING THEM WOULD HAVE BEEN A
+		// FALSE SENTENCE IN BOTH HALVES. The numerator is "entries that reference this", which is
+		// the set the `ref-to` filter KEPT — `EntriesSearched` alone once WAS that set and is not
+		// any more, because the tag filter removes some of it downstream. The denominator is the
+		// readable set, which now partitions three ways. So: kept-by-ref-to is
+		// `EntriesSearched + TagSkipped`, and readable is all three counters. With no tag filter
+		// `TagSkipped` is 0 and this line is byte-identical to what it was, which is what keeps
+		// `search-ref-to-*` goldens still.
+		out = append(out, refToLine(r.RefTo, r.EntriesSearched+r.TagSkipped,
+			r.EntriesSearched+r.RefToSkipped+r.TagSkipped, r.Label(), true, r.TagSkipped > 0))
+	}
+	// The CATEGORY narrowing, after the reverse-lookup line because that is the order the
+	// filters ran in.
+	//
+	// 🔴 THE CONSTANT `true` IS JUSTIFIED BY THE SAME ENUMERATION AND THE ENUMERATION IS NOW
+	// WIDER, WHICH IS THE COST THIS LINE ADDS TO A PROSE JUSTIFICATION. The count half is safe
+	// by construction for the same reason: `EntriesSearched` counts entries the filters KEPT,
+	// so the numerator here is the kept count whatever removed the rest. The clause half —
+	// "everything below is about those N" — is carried by the list above, and a `tag` filter
+	// adds no new STATUS and no new BODY to it: every shape it can produce is a shape
+	// `ref-to` can already produce, because the two filters differ only in their predicate and
+	// both run over `ordered` inside the same scope loop. That is why this line does not
+	// lengthen the list; it is also exactly the kind of claim the list's own last paragraph
+	// says nothing mechanical checks.
+	//
+	// 🔴 THE DENOMINATOR IS THE SET THIS FILTER SAW, NOT THE READABLE TOTAL, AND THE TWO DIFFER
+	// EXACTLY WHEN A `ref-to` FILTER ALSO RAN. `EntriesSearched + TagSkipped` is the set the tag
+	// filter was handed; `+ RefToSkipped` would be the readable set, and using it would print
+	// "2 of 7 entries carry it" while the filter had only ever LOOKED at 3 — a claim about five
+	// entries whose tags were never read, in the direction that understates the category. The
+	// recall side has the same shape and says so: `TagScopeTotal` is assigned AFTER the
+	// reverse-lookup narrowing, not before it.
+	if len(r.Tags) != 0 {
+		out = append(out, tagLine(r.Tags, r.EntriesSearched, r.EntriesSearched+r.TagSkipped,
 			r.Label(), true))
 	}
 
@@ -148,7 +182,7 @@ func (r SearchReport) RenderText(host string, extraHeader []string, instance str
 				" threshold — re-run with `--threshold " + twoPlaces(suggest) +
 				"` to see it, or rephrase."
 
-		case r.EntriesSearched == 0 && r.RefToSkipped > 0:
+		case r.EntriesSearched == 0 && (r.RefToSkipped > 0 || r.TagSkipped > 0):
 			// 🔴 THE FILTER'S ZERO, SAID AS THE FILTER'S. With nothing scanned, "an absent
 			// term rather than a weak one" is a claim about the QUERY that no comparison was
 			// made to support — the same defect `BestBelow` exists to refuse, one branch
@@ -164,8 +198,15 @@ func (r SearchReport) RenderText(host string, extraHeader []string, instance str
 			// zero-scanned sentence a present-but-empty scope prints is a DIFFERENT
 			// mechanism reaching the same branch, it predates the filter, and it is left
 			// exactly as it was rather than swept in here.
-			near = " Nothing was scanned: the `ref-to` filter removed every readable entry, " +
-				"so this zero is the FILTER's and says nothing about the query."
+			//
+			// 🔴 IT NAMES WHICH FILTER, AND WITH TWO OF THEM THAT STOPPED BEING A CONSTANT. A
+			// sentence hardcoding "`ref-to`" would send a reader who typed only `--tag` to check
+			// an operand they never gave — the empty-result hazard one level up, where the
+			// diagnosis is wrong rather than absent. Two filters make three subjects, and both
+			// halves of the sentence have to agree with the one chosen.
+			subject, possessive := emptyingFilters(r.RefToSkipped, r.TagSkipped)
+			near = " Nothing was scanned: " + subject + " removed every readable entry, " +
+				"so this zero is " + possessive + " and says nothing about the query."
 		}
 		out = append(out, "NO MATCH — searched "+scanned+", and nothing cleared the threshold."+near)
 		return strings.Join(out, "\n")
@@ -203,6 +244,29 @@ func (r SearchReport) RenderText(host string, extraHeader []string, instance str
 // that is compared byte for byte.
 func twoPlaces(x float64) string {
 	return strconv.FormatFloat(x, 'f', 2, 64)
+}
+
+// emptyingFilters names the filter or filters that drove the searched set to zero, plus the
+// possessive that agrees with it.
+//
+// 🔴 TWO RETURN VALUES BECAUSE ONE SENTENCE NAMES THE SUBJECT TWICE. "the `ref-to` filter
+// removed every readable entry, so this zero is the FILTER's" — the second half is a possessive
+// of the first, and picking one plural form per site is how the two stop agreeing.
+//
+// ⚠ IT IS NEVER CALLED WITH BOTH ZERO. Its one call site is inside a branch guarded on
+// `RefToSkipped > 0 || TagSkipped > 0`, so the fall-through is unreachable — but it returns the
+// `ref-to` wording rather than panicking, because the alternative to an unreachable branch is a
+// renderer that can crash on a report it was handed. Stated so nobody reads the fall-through as
+// a claim that `ref-to` is the default filter.
+func emptyingFilters(refToSkipped, tagSkipped int) (subject, possessive string) {
+	switch {
+	case refToSkipped > 0 && tagSkipped > 0:
+		return "the `ref-to` and `tag` filters", "the FILTERS'"
+	case tagSkipped > 0:
+		return "the `tag` filter", "the FILTER's"
+	default:
+		return "the `ref-to` filter", "the FILTER's"
+	}
 }
 
 // joinOrNoneWith is `', '.join(...) or '(none)'` — the empty join is the falsy string, not

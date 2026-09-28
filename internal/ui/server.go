@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -148,6 +149,9 @@ type EntryRef struct {
 //	Aliases     the `aliases:` front-matter sequence, AS WRITTEN (not the folded form)
 //	Tasks       the `refs:` front-matter sequence (or the accepted older `tasks:`/`task:`),
 //	            each carrying the ref AS WRITTEN and the URL the registry resolved it to
+//	Tags        the `tags:` front-matter sequence, FOLDED — unlike `Aliases`, which is as
+//	            written, because a tag's canonical form IS its folded form and the folded
+//	            string is what `/?tag=` compares against
 //	Sections    the `##` headings `report.SurfacedHeadings` names, with their bodies
 //	Bullets     top-level `- ` lines under `## Nuance / work-history`, with continuations
 //	Raw         the WHOLE file, decoded and otherwise untouched
@@ -164,6 +168,21 @@ type Entry struct {
 	Filename string
 	Aliases  []string
 	Tasks    []EntryRef
+
+	// Tags is the entry's `tags:`, folded, deduped and sorted by the loader.
+	//
+	// ⚠ FOLDED, WHERE `Aliases` IS AS-WRITTEN, AND THE ASYMMETRY IS THE LINK. Each tag is
+	// rendered as a link to `/?tag=<it>`, so the string on the page has to be the string the
+	// filter compares — showing the raw spelling beside a link built from the folded one
+	// would put two spellings of one tag in front of a reader with no way to tell which the
+	// store holds. `Aliases` has no link and its raw spelling is evidence about a collision,
+	// which is why it keeps it.
+	//
+	// ⚠ IT IS STILL USER TEXT FOR ESCAPING PURPOSES. The fold restricts it to `[a-z0-9.-]`
+	// TODAY; a page that relied on that would be trusting a loader invariant for its
+	// escaping, which is the shape this package's doc comment refuses. It goes through
+	// `g.Text` and `url.Values.Encode` like every other operand.
+	Tags []string
 
 	// Raw is the entry file's whole text, as `store.DecodeReplace` produced it: front
 	// matter, unsurfaced headings, prose before the first heading, and everything the
@@ -362,6 +381,44 @@ type SearchResults struct {
 	ScopesSearched []string
 }
 
+// TagMatches is the answer to `/?tag=<name>`: every VISIBLE entry carrying the tag.
+//
+// 🔴 IT IS DERIVED FROM `Visible(auth)`'s RESULT AND NEVER FROM A SECOND STORE READ, WHICH IS
+// WHAT MAKES THE AUTHORISATION ORDER STRUCTURAL HERE RATHER THAN REMEMBERED. `Visible` loads
+// through `scopeSetOf(auth.NamedScopes(control.VerbRead))`, so the scope list this filter walks
+// is already narrowed; a filter that loaded the store itself would answer "every marketing
+// entry" over directories the caller cannot name. `internal/report`'s own filters carry the
+// same rule, and `TestTheTagPageCannotSeeAScopeTheCallerCannotRead` is the two-principal guard.
+type TagMatches struct {
+	// Tag is the FOLDED tag this page narrowed by, which is what the heading shows and what
+	// the entries below were compared against.
+	Tag string
+	// Entries are the matches, in the order `Visible` listed their scopes and then their
+	// entries — the index order, not a relevance order, because a tag is a membership test
+	// and there is nothing to rank.
+	Entries []TagMatch
+	// Scanned is how many visible entries were LOOKED AT, and ScopesScanned how many scopes.
+	//
+	// 🔴 THEY EXIST SO A ZERO IS READABLE. An empty match list cannot distinguish "no entry
+	// carries this tag" from "this credential can see nothing" — the same distinction
+	// `SearchResults.ScopesSearched` is carried for, and the same reason.
+	Scanned       int
+	ScopesScanned int
+}
+
+// TagMatch is one entry carrying the tag, with what it takes to link to it.
+type TagMatch struct {
+	// ScopeID is carried so the match can LINK to the entry, resolved through the same
+	// traversal the scope cards use and never re-derived.
+	ScopeID control.ID
+	Scope   string
+	Ref     string
+	// Tags is the entry's WHOLE tag set, so the row shows the other categories it belongs to
+	// rather than only the one asked for — which is how a reader discovers the vocabulary,
+	// there being nothing that declares it.
+	Tags []string
+}
+
 // Hit is one matched hunk.
 type Hit struct {
 	// ScopeID is carried so the hit can LINK to the entry. It is resolved through the
@@ -466,6 +523,9 @@ func (s StoreSource) readEntry(scope string, e store.Entry) (Entry, error) {
 		Title:    e.Slug,
 		Filename: e.Filename,
 		Aliases:  e.RawAliases,
+		// No projection: the loader already folded, deduped and sorted these, and there is
+		// no registry to resolve a tag through — a tag points at nothing outside the store.
+		Tags: e.Tags,
 	}
 	for _, t := range e.Tasks {
 		// `Raw`, not `String()`: the page shows the ref the FILE carries,
@@ -559,6 +619,34 @@ func (s StoreSource) readEntry(scope string, e store.Entry) (Entry, error) {
 // OWN RULING: an all-scopes search names no scope, so there is nothing for a per-scope
 // refusal check to refuse, and narrowing the INDEX is what makes a store-wide search
 // store-wide over what the caller may see and nothing else.
+// EntriesByTag answers `/?tag=<name>`: every visible entry carrying the folded tag.
+//
+// 🔴 IT TAKES THE ALREADY-NARROWED SCOPE LIST AS AN ARGUMENT RATHER THAN RE-READING THE STORE,
+// AND THAT IS THE AUTHORISATION ORDER MADE STRUCTURAL. `handlePage` has already called
+// `Visible(auth)` to build the cards; handing that result here means this function has no way
+// to reach a scope the caller cannot read, because it never touches the store or the
+// authorization. A version taking `auth` and loading again would be correct today and one
+// dropped argument away from answering "every marketing entry" over the whole disk.
+//
+// ⚠ IT IS A PACKAGE FUNCTION AND NOT A METHOD ON `StoreSource` FOR THE SAME REASON: a method
+// would have `s.Root` in scope, which is the one thing a filter over an authorised list must
+// not need.
+func EntriesByTag(scopes []Scope, tag string) TagMatches {
+	out := TagMatches{Tag: tag, ScopesScanned: len(scopes)}
+	for _, sc := range scopes {
+		for _, e := range sc.Entries {
+			out.Scanned++
+			if !slices.Contains(e.Tags, tag) {
+				continue
+			}
+			out.Entries = append(out.Entries, TagMatch{
+				ScopeID: sc.ID, Scope: sc.Name, Ref: e.Ref, Tags: e.Tags,
+			})
+		}
+	}
+	return out
+}
+
 func (s StoreSource) Search(auth control.Authorization, query string) (SearchResults, error) {
 	named := auth.NamedScopes(control.VerbRead)
 	rep, err := report.Search(s.Root, report.SearchOptions{
@@ -1097,6 +1185,33 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request, id identity.
 		}
 		view.Query = query
 		view.Results = &results
+	}
+
+	// 🔴 `?tag=` IS A PARAMETER ON THIS SAME ROOT ROW, AND FOR A TAG THAT IS A REQUIREMENT
+	// RATHER THAN THE HOUSE PREFERENCE `?q=` FOLLOWS. A tag is USER TEXT out of a store file,
+	// so a `/tag/<name>` path would make the dispatcher match a PREFIX — and `routes` is an
+	// exact-match map whose completeness is the claim `DeclaredRoutes()`,
+	// `TestEveryServedPathComesFromTheLedger` and the `stateChanging` cross-site gates all
+	// read. See [QueryTag].
+	//
+	// 🔴 IT NARROWS `scopes`, WHICH `Visible(auth)` ALREADY NARROWED, AND NEVER THE STORE.
+	// `EntriesByTag` takes the list rather than the authorization for exactly that reason.
+	//
+	// ⚠ FOLDED BEFORE COMPARING, THROUGH THE SAME FUNCTION THE FILE'S OWN TAGS WENT THROUGH.
+	// A `/?tag=Marketing` typed by hand — or a link from a surface that did not fold — must
+	// reach the same entries `/?tag=marketing` does, and an unfolded compare would answer a
+	// silent zero instead.
+	//
+	// ⚠ AN UNRECOGNISED TAG IS AN HONEST ZERO AND NEVER A REFUSAL, which is [QueryView]'s
+	// ruling restated: a filter is not an authority question. A `?tag=` that folds AWAY (empty,
+	// or all punctuation) is treated as ABSENT rather than as an error, because this surface has
+	// no place to put a 400 for a browse parameter — where the POD refuses the same operand,
+	// because there a 400 is the answer shape the route already has. The cost is that a typo is
+	// silent, and the heading naming the FOLDED tag is what makes it visible.
+	if tag := store.NormalizeRef(r.URL.Query().Get(QueryTag)); tag != "" {
+		matches := EntriesByTag(scopes, tag)
+		view.Tag = tag
+		view.TagMatches = &matches
 	}
 	s.renderPage(w, view)
 }

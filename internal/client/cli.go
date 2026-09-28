@@ -60,13 +60,18 @@ func Verbs() []Verb {
 				// means `--ref` there and redefining it would break a pinned contract.
 				// BOTH clients declare it or `tests/parity/` reds on an unrecognised
 				// argument.
-				"--mode", "--ref", "--ref-to", "--list", "--limit", "--page"),
+				// `--tag` is REPEATABLE with AND semantics, and it composes with everything
+				// here — it is a filter over the entry set, not a selector of one entry, so
+				// `RejectRecallFlags` deliberately does not name it.
+				"--mode", "--ref", "--ref-to", "--tag", "--list", "--limit", "--page"),
 			Run: func(e Env, o Options) (int, error) { return Report(e, o, false) }},
 		{Name: "search", Help: "search the scope for hunks",
 			// The same `--ref-to` `recall` carries, for the same reason. Searching within
 			// the entries that reference one task is the narrowing a reverse lookup is
 			// usually wanted for.
-			Flags: append(append([]string{}, commonReadFlags...), "--all-scopes", "--ref-to"),
+			// The same `--tag` `recall` carries. Searching within one category is the
+			// narrowing the key exists for.
+			Flags: append(append([]string{}, commonReadFlags...), "--all-scopes", "--ref-to", "--tag"),
 			Run:   func(e Env, o Options) (int, error) { return Report(e, o, true) }},
 		{Name: "validate", Help: "the post-write check: parse, dropped lines, marker reachability",
 			Flags: commonReadFlags, Run: Validate},
@@ -464,6 +469,14 @@ func Parse(argv []string) (Verb, Options, error) {
 			opts.Ref, opts.HasRef = value, true
 		case "--ref-to":
 			opts.RefTo, opts.HasRefTo = value, true
+		// 🔴 `append`, NOT ASSIGNMENT, AND IT IS THE ONLY ARM IN THIS SWITCH THAT APPENDS.
+		// Every other value-bearing flag here is last-wins, which is the right contract for a
+		// scalar and the WRONG one for a parameter whose repetitions are its operand set:
+		// `--tag a --tag b` under an assignment narrows by `b` alone and returns MORE entries
+		// than were asked for, at exit 0, with a header line naming one tag. The `seen` set
+		// above already tolerates repetition, so nothing else in the parser has to move.
+		case "--tag":
+			opts.Tags = append(opts.Tags, value)
 		case "--limit":
 			n, err := strconv.Atoi(value)
 			if err != nil {

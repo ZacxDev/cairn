@@ -104,6 +104,12 @@ func (t TaskRef) String() string { return t.System + ":" + t.Ident }
 // `TestTheEmptySliceLedgerIsComplete` enforces both halves: it re-measures the claim above,
 // and it enumerates the slice fields by reflection so the set cannot GROW or SHRINK without
 // somebody deciding for the new field.
+//
+// ⚠ AND `Tags` IS THE FIRST FIELD THAT LEDGER ACTUALLY STOPPED. It was added as a fourth
+// slice field, the test went RED naming it, and the decision it forced is recorded here
+// rather than in the test: `parseTagsField` returns `sortedKeys`, which always allocates, so
+// `Tags` is an empty slice on an entry with no `tags:` — the same answer the other three
+// give, for the same reason `Aliases` gives it.
 type Entry struct {
 	// Slug is the filename's slug part, with `service:` and the filename agreeing.
 	Slug string
@@ -125,6 +131,21 @@ type Entry struct {
 	// comment gives; the KEY is `refs:`, with `tasks:`/`task:` as PERMANENTLY ACCEPTED
 	// aliases.
 	Tasks []TaskRef
+
+	// Tags are the `tags:` this entry carries — normalized, deduped and sorted, and
+	// non-nil when empty for the reason this struct's own ledger gives.
+	//
+	// 🔴 THE VOCABULARY IS OPEN, AND THAT IS A DECISION RATHER THAN AN OMISSION. `Kind` is
+	// a CLOSED four-value enum and this is deliberately not one: `marketing` and
+	// `project-xyz` are not the same axis as service/process/org/doc, and conflating two
+	// dimensions in one closed set makes both unassertable. The cost is named rather than
+	// hidden — a typo makes a silently separate category, and nothing here will catch it.
+	//
+	// ⚠ THERE IS NO `RawTags`, WHERE `Aliases` HAS `RawAliases`. An alias is an ADDRESS, so
+	// the spelling an operator wrote is evidence when two of them collide; a tag is a
+	// GROUPING and the only thing any surface renders or links to is the folded form. A
+	// second field would grow the empty-slice ledger for a value nothing reads.
+	Tags []string
 }
 
 // Ref is the canonical ref that addresses this entry unambiguously.
@@ -148,17 +169,23 @@ func (e Entry) Ref() string {
 // `aliases` (optional sequence), `kind` (optional), `filename` (optional —
 // supplied by the loader, otherwise derived), `refs` (optional sequence of
 // `<system>:<id>` refs) with `tasks` (older sequence) and `task` (older scalar
-// sugar for a one-element list) as PERMANENTLY ACCEPTED aliases.
+// sugar for a one-element list) as PERMANENTLY ACCEPTED aliases, and `tags`
+// (optional sequence — the OPEN category axis; see `parseTagsField`).
 //
 // 🔴 EVERY OTHER KEY IS IGNORED, NOT REFUSED, AND THAT IS MEASURED ON BOTH
 // IMPLEMENTATIONS RATHER THAN READ OFF THIS FUNCTION'S BODY. This function reads only
 // the keys it names and never enumerates the mapping, which is a CODE reading; the
-// measurement is `TestUnknownFrontMatterKeysAreIgnored`, which hands it `tags:`, `refs:`
-// and a nonsense key in turn beside a valid `{service, scope}` and asserts all three
-// load, with a no-`service:` mapping in the same test as the negative control proving the
-// probe can observe a refusal. The oracle was probed the same way and agrees. That pair
-// is what makes `refs:` backward-compatible: an older reader handed a `refs:` file loads
-// it and reports no refs, rather than refusing the file.
+// measurement is `TestUnknownFrontMatterKeysAreIgnored`, which hands it two unclaimed
+// keys in turn beside a valid `{service, scope}` and asserts both load, with a
+// no-`service:` mapping in the same test as the negative control proving the probe can
+// observe a refusal. The oracle was probed the same way and agrees. That pair is what
+// makes each of `refs:` and `tags:` backward-compatible in turn: an older reader handed
+// such a file loads it and reports nothing for the key, rather than refusing the file.
+//
+// ⚠ THAT TEST'S PROBE KEYS MOVE AS KEYS ARE CLAIMED, AND THE COMMENT USED TO NAME TWO
+// THAT ARE NOW READ. It probed `tags:` and `refs:`; both are accepted keys today, so a
+// test still handing them would assert that a CLAIMED key loads — true, and no longer a
+// measurement of the ignore rule. The probe keys are whatever this list does not name.
 func EntryFromMapping(mapping FrontMatter, source string) (Entry, error) {
 	bad := func(why string) error { return malformed(source, why) }
 
@@ -273,6 +300,11 @@ func EntryFromMapping(mapping FrontMatter, source string) (Entry, error) {
 		return Entry{}, taskErr
 	}
 
+	tags, tagErr := parseTagsField(mapping, source)
+	if tagErr != nil {
+		return Entry{}, tagErr
+	}
+
 	derived := slug + ".md"
 	if kind != "" {
 		derived = slug + "." + kind + ".md"
@@ -288,7 +320,100 @@ func EntryFromMapping(mapping FrontMatter, source string) (Entry, error) {
 		RawAliases: rawAliases,
 		Filename:   filename,
 		Tasks:      tasks,
+		Tags:       tags,
 	}, nil
+}
+
+// parseTagsField reads the entry's `tags:` — the CATEGORY axis, which `kind` is not.
+//
+// 🔴 IT IS `sequenceField` AND NOT A SECOND READER, AND THAT IS THE WHOLE REASON THIS KEY
+// NEEDED NO MIGRATION. `aliases:` proved the three answers in this exact parser:
+// absent-or-EMPTY-scalar yields nothing, a non-empty SCALAR is a named refusal, and a list
+// is itself. An older reader handed a `tags:` file loads it and reports no tags rather than
+// refusing it, because every key this function does not name is IGNORED — measured on both
+// implementations by `TestUnknownFrontMatterKeysAreIgnored`, which hands it `tags:` by name.
+//
+// 🔴 ONE REFUSAL FOR A TAG'S CONTENT, WHERE `aliases:` HAS TWO, AND THE DIFFERENCE IS
+// DELIBERATE. The alias loop refuses a whitespace-only item ("is not a non-empty string")
+// AND an item that folds away ("normalizes to the empty string"); the first is a SUBSET of
+// the second, since `NormalizeRef` returns "" for anything whose every character is outside
+// `[a-z0-9.-]`. A second sentence would be a second branch nothing can reach that the first
+// does not, and an operator reading two refusals for one mistake has to work out which one
+// they hit. The refusal a tag CAN hit names the fold, which is the thing they cannot see.
+//
+// ⚠ AND THE FOLD IS WHY A NORMALIZED-AWAY TAG IS REFUSED RATHER THAN DROPPED. Dropping it
+// would leave a file that DECLARES a category and an index that does not carry it, so
+// `?tag=` would answer "no entry carries this" about an entry whose front matter says it
+// does — an empty result whose cause is invisible at both ends.
+func parseTagsField(mapping FrontMatter, source string) ([]string, error) {
+	raw, err := sequenceField(mapping, "tags", source,
+		"`tags:` must be a list, not a bare string — write `tags: [<name>]`")
+	if err != nil {
+		return nil, err
+	}
+	set := map[string]struct{}{}
+	for _, tag := range raw {
+		normalized := NormalizeRef(tag)
+		if normalized == "" {
+			return nil, malformed(source, fmt.Sprintf(
+				"tag %s normalizes to the empty string — a tag must fold to at least one of `[a-z0-9.-]`",
+				PyRepr(tag)))
+		}
+		// DEDUPED, not rejected, for the reason `aliases:` is: two spellings of one tag on
+		// ONE entry are a single category, not a conflict.
+		set[normalized] = struct{}{}
+	}
+	// SORTED, because the rendered tag list and the `?tag=` links built from it must be
+	// byte-identical across two runs over an unchanged store; `sortedKeys` also allocates,
+	// which is what makes this non-nil when empty.
+	return sortedKeys(set), nil
+}
+
+// EntryHasAllTags is the `?tag=`/`--tag` predicate: AND semantics over an entry's folded
+// tags.
+//
+// 🔴 AND, NOT OR, AND THE CHOICE IS OBSERVABLE RATHER THAN A CONVENTION. A repeatable
+// parameter whose repetitions UNION is a parameter that gets WIDER the more you type, so a
+// second `--tag` could only ever return more — which is the opposite of what narrowing a
+// result set means, and the opposite of what every other filter on these routes does.
+//
+// ⚠ AN EMPTY `want` IS TRUE FOR EVERY ENTRY, which is what makes "no filter was sent" and
+// "a filter that removes nothing" the same code path rather than a caller-side branch. Both
+// callers gate on `len(want) != 0` before they announce a narrowing, because announcing one
+// that removed nothing is a line that misreports the index it sits above.
+func EntryHasAllTags(e Entry, want []string) bool {
+	for _, w := range want {
+		if !slices.Contains(e.Tags, w) {
+			return false
+		}
+	}
+	return true
+}
+
+// NormalizeTags folds, dedupes and sorts a set of tag OPERANDS, so a query written
+// `?tag=Marketing&tag=marketing` reaches the index as the one tag it names and renders as
+// the one tag it narrowed by.
+//
+// 🔴 THE SAME FOLD THE FILE'S OWN TAGS WENT THROUGH, reached through the same function. A
+// second folding rule for the query side is how a tag an operator can WRITE becomes one they
+// cannot ASK for: the write folds `Marketing` to `marketing`, and a query side that did not
+// would compare `Marketing` against it and answer "no entry carries this".
+//
+// ⚠ IT DROPS NOTHING SILENTLY, AND THE REASON IS IN A DIFFERENT PACKAGE. A member that folds
+// to "" is refused by the OPTION LADDER — `report.validateTags`, last in `ValidateRecall` and
+// `ValidateSearch` — before any caller reaches this, so there is no empty string for the set to
+// swallow. The refusal cannot live here: this package is the loader, and "a query operand is
+// malformed" is the report's own contract rather than the store's (see `internal/report`'s
+// package doc on why validation is not in the handler either). The `if n != ""` below is
+// therefore belt-and-braces against a caller that skipped the ladder, not the rule.
+func NormalizeTags(raw []string) []string {
+	set := map[string]struct{}{}
+	for _, t := range raw {
+		if n := NormalizeRef(t); n != "" {
+			set[n] = struct{}{}
+		}
+	}
+	return sortedKeys(set)
 }
 
 // sequenceField reads an optional list-valued key with Python's exact three

@@ -21,6 +21,22 @@ import (
 // that cannot observe a refusal are four facts about the probe. The no-`service:` mapping
 // MUST be refused, so if the assertion loop below were wired to nothing that case would fail
 // and the whole test with it.
+//
+// 🔴 AND A PROBE KEY GOES STALE THE DAY IT IS CLAIMED — THIS TEST PROBED `tags:`, WHICH IS NOW
+// READ. Its rows were `tags-as-a-list`, `tags-as-a-scalar` and a nonsense key. When `tags:`
+// became an accepted sequence key the SCALAR row went red (the loader refuses a bare string
+// there, correctly) and the LIST row silently changed what it measured: it asserted that a
+// CLAIMED key loads, which is true and says nothing whatever about the ignore rule. The list
+// row would have gone on passing forever, reading as coverage while providing none.
+//
+// 🔴 SO THE ROWS NOW VALIDATE THEIR OWN PREMISE MECHANICALLY RATHER THAN NAMING A LEDGER OF
+// ACCEPTED KEYS. A hand-kept list of the keys `EntryFromMapping` reads is the same sentence
+// this comment is, one indirection out, and it would go stale the same way. The DERIVATION is
+// that an ignored key cannot change the loaded entry: each probe carries a DISTINCTIVE
+// non-empty value, and the result is compared field-for-field against the same mapping without
+// the probe. A key that is actually read must either absorb that value into some field or
+// refuse the mapping — a claimed key can pass this only by reading a non-empty value into
+// nothing, which is not a state this loader has.
 func TestUnknownFrontMatterKeysAreIgnored(t *testing.T) {
 	valid := func(extra map[string]any) FrontMatter {
 		fm := FrontMatter{"service": "alpha", "scope": "zone-one"}
@@ -29,10 +45,13 @@ func TestUnknownFrontMatterKeysAreIgnored(t *testing.T) {
 		}
 		return fm
 	}
+	baseline, err := EntryFromMapping(valid(nil), "probe.md")
+	if err != nil {
+		t.Fatalf("the baseline mapping was refused, so every comparison below is against nothing: %v", err)
+	}
 	ignored := map[string]FrontMatter{
-		"tags-as-a-list":   valid(map[string]any{"tags": []string{"a", "b"}}),
-		"tags-as-a-scalar": valid(map[string]any{"tags": "a"}),
-		"a-nonsense-key":   valid(map[string]any{"zzz-no-such-key": "whatever"}),
+		"an-unclaimed-key-holding-a-list":   valid(map[string]any{"zzz-no-such-key": []string{"one", "two"}}),
+		"an-unclaimed-key-holding-a-scalar": valid(map[string]any{"zzz-no-such-key": "whatever"}),
 	}
 	for name, fm := range ignored {
 		entry, err := EntryFromMapping(fm, "probe.md")
@@ -42,11 +61,30 @@ func TestUnknownFrontMatterKeysAreIgnored(t *testing.T) {
 		if entry.Slug != "alpha" || entry.Scope != "zone-one" {
 			t.Fatalf("%s: loaded but wrong: slug=%q scope=%q", name, entry.Slug, entry.Scope)
 		}
+		// The premise check: IGNORED means the entry is indistinguishable from one loaded
+		// without the key at all. This is what a claimed key cannot satisfy.
+		if !reflect.DeepEqual(entry, baseline) {
+			t.Fatalf("%s: the probe key CHANGED the loaded entry, so it is read rather than "+
+				"ignored and this row measures nothing about the ignore rule.\nwith:    %+v\n"+
+				"without: %+v", name, entry, baseline)
+		}
 	}
 	// The control: a mapping this function MUST refuse.
 	if _, err := EntryFromMapping(FrontMatter{"scope": "zone-one"}, "probe.md"); err == nil {
-		t.Fatal("the control passed: a mapping with no `service:` loaded, so the three IGNOREDs " +
+		t.Fatal("the control passed: a mapping with no `service:` loaded, so the IGNOREDs " +
 			"above are facts about a probe that cannot observe a refusal")
+	}
+	// The SECOND control, on the premise check itself: a key this loader DOES read must make
+	// that comparison fail. Without it, `DeepEqual` could be comparing two copies of one
+	// value and every probe would pass whatever the loader did with the key.
+	claimed, err := EntryFromMapping(valid(map[string]any{"tags": []string{"marketing"}}), "probe.md")
+	if err != nil {
+		t.Fatalf("the premise-check control was refused rather than loaded: %v", err)
+	}
+	if reflect.DeepEqual(claimed, baseline) {
+		t.Fatal("the premise check cannot see a CLAIMED key: `tags: [marketing]` produced an " +
+			"entry equal to one with no `tags:` at all, so `DeepEqual` above would pass for a " +
+			"key that is read")
 	}
 }
 

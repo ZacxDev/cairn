@@ -394,12 +394,34 @@
     font-size: var(--text-sm);
     line-height: var(--tw-leading, var(--text-sm--line-height));
   }
-  .aliases, .tasks {
+  .aliases, .tasks, .tags {
     flex-basis: 100%;
     padding-left: calc(var(--spacing) * 4);
     font-size: var(--text-sm);
     line-height: var(--tw-leading, var(--text-sm--line-height));
     color: var(--color-muted);
+  }
+  .tags li {
+    margin-right: calc(var(--spacing) * 3);
+    display: inline-block;
+  }
+  .tag a {
+    color: var(--color-accent);
+    text-decoration-line: underline;
+    text-decoration-color: transparent;
+    text-underline-offset: 2px;
+    transition-property: color,text-decoration-color;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+    --tw-duration: 200ms;
+    transition-duration: 200ms;
+    --tw-ease: var(--ease-cairn);
+    transition-timing-function: var(--ease-cairn);
+    &:hover {
+      @media (hover: hover) {
+        text-decoration-color: currentcolor;
+      }
+    }
   }
   .task a {
     color: var(--color-accent);
