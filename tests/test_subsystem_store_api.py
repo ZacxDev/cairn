@@ -183,10 +183,18 @@ ROOT = Path(__file__).resolve().parents[1]
 # task budget. That is true of ONE hung call. This module has ~208 `fetch(` and
 # ~112 `await_audit(` sites, so a BROADLY hung server costs ~320x60s ≈ 5.3h
 # serialised where 15 s cost ~80m — and both blow the 45m budget, which is the
-# documented state where nothing is posted and the required checks stay
-# `pending` forever, clearable only by a fresh push. The bound is right for the
+# documented state where nothing is posted and the checks stay `pending`
+# forever, clearable only by a fresh push. The bound is right for the
 # failure it exists to absorb (one starved round-trip); it is not a defence
 # against a server that is down, and nothing here should be read as claiming so.
+#
+# ⚠ THEY ARE NOT *REQUIRED* CHECKS, AND THIS LINE USED TO SAY THEY WERE.
+# MEASURED: `GET repos/ZacxDev/cairn/branches/main/protection/required_status_checks`
+# answers 404 — this repository has no required status checks, so a `pending`
+# run blocks nothing and a merge can land beside it. The error is in the
+# PERMISSIVE direction, which is the one worth correcting: a reader who
+# believes the checks are required concludes a hung suite has at least held the
+# merge shut, and it has not.
 HANG_TIMEOUT = 60.0
 
 # 🔴 The guard the introducing commit CLAIMED and did not write. Its message said
@@ -3073,7 +3081,9 @@ class TestAuditLog:
 
 def run_seed(*args: str, env: "dict[str, str] | None" = None) -> subprocess.CompletedProcess:
     # `bash <script>` rather than the shebang: `/usr/bin/env` does not exist in
-    # the nix sandbox that gates merges (see test_runtime_shebangs.py).
+    # the nix sandbox CI runs (see test_runtime_shebangs.py). ⚠ It does NOT gate
+    # merges, which this line used to say: `required_status_checks` on `main`
+    # answers 404, so no tier here blocks anything.
     #
     # `env` defaults to None so every existing caller inherits the ambient
     # environment exactly as before; the push tests pass one to put a fake
@@ -3101,11 +3111,19 @@ def run_seed(*args: str, env: "dict[str, str] | None" = None) -> subprocess.Comp
 #
 # 🔴 POSIX sh, AND `mockbin.write_exec` OWNS THE SHEBANG. The first version of
 # this stub wrote `#!/usr/bin/env bash` itself. `/usr/bin/env` does not exist in
-# the nix sandbox that gates merges, and the two tiers reported that completely
+# the nix sandbox tier, and the two tiers reported that completely
 # differently: the dev host showed ONE tidy failure in `test_runtime_shebangs`,
-# while the gating tier showed `5 failed` — the guard PLUS all four tests here,
+# while the sandbox tier showed `5 failed` — the guard PLUS all four tests here,
 # which never ran at all (`bad interpreter`, rc 126). The class had zero
-# coverage on the only tier that matters, and the dev-host run could not say so.
+# coverage on the tier whose environment differs most, and the dev-host run
+# could not say so.
+#
+# ⚠ "THE GATING TIER" AND "THE ONLY TIER THAT MATTERS" ARE WHAT THIS PARAGRAPH
+# USED TO SAY, AND BOTH OVERSTATE IT. `required_status_checks` on `main` answers
+# 404, so neither tier gates anything — a red sandbox run does not hold a merge.
+# The sandbox tier still matters most for THIS class of defect, because it is
+# the environment where `/usr/bin/env` is absent; that is a claim about
+# coverage, not about enforcement, and the two are worth keeping apart.
 #
 # Resolving the path with `shutil.which` is not enough either: that scanner
 # flags a test writing ANY shebang, and its allowlist is explicitly not the way
@@ -3333,8 +3351,10 @@ class TestSeedPushVerdict:
         # 🔴 THIS TEST NEITHER SKIPS NOR DEGRADES — IT FAILS IF IT CANNOT RUN,
         # AND THAT TOOK THREE TRIES TO GET RIGHT.
         #
-        #   1. It CRASHED the gating tier: no `locale` binary in the nix sandbox,
-        #      so `subprocess.run(["locale", …])` raised FileNotFoundError.
+        #   1. It CRASHED the nix sandbox tier: no `locale` binary there, so
+        #      `subprocess.run(["locale", …])` raised FileNotFoundError. (That
+        #      tier does not GATE anything — see the note at `HANG_TIMEOUT`:
+        #      `required_status_checks` on `main` answers 404.)
         #   2. Made to skip, it went red differently: `run-tests.sh` refuses an
         #      UNPINNED skip, and EXPECTED_SKIPS conditions key on env vars
         #      (`unset:VAR`) while this predicate is locale AVAILABILITY — an
