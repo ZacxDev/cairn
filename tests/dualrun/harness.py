@@ -366,6 +366,49 @@ def entry_targets(scope: str, refs: list[str], principal: str = WIDE) -> list[Ta
     ]
 
 
+def ref_to_targets(scope: str, principal: str = WIDE) -> list[Target]:
+    """The REVERSE lookup, per scope: `?ref-to=` over a ref the world carries and one it does not.
+
+    🔴 IT IS NOT A DUPLICATE OF `tests/conformance/`'S NINE `?ref-to=` ROWS. That corpus replays
+    a DECLARED list against a DECLARED world; this one runs over whatever store the mode was
+    pointed at — a generated one in mode 2, a REAL one in mode 1 — so the counts on the `ref-to:`
+    header line and the set the filter keeps are computed from a world nobody wrote a fixture
+    for. That is this harness's whole reason for existing, and a new query parameter is exactly
+    the kind of thing a declared corpus covers narrowly and a sweep covers widely.
+
+    ⚠ THE OPERAND IS A LITERAL AND NOT ENUMERATED FROM THE STORE, which is a narrowing stated
+    rather than hidden. There is no route that lists an index's refs, so the harness cannot
+    discover one to ask about; `genstore.py` writes this one and a real store may carry none —
+    in which case BOTH servers answer `ref-to-absent` and the comparison is still a real
+    comparison of that branch. What it cannot do in mode 1 is guarantee a MATCH, the same
+    limitation `HIT_TERM` has and for the same reason.
+
+    ⚠ `%23` IS `#`. Unencoded it is the URL fragment delimiter and the operand would arrive
+    truncated at `example-repo` — identically on both servers, so the comparison would pass
+    while testing a shorter string than the one written here.
+    """
+    carried = "github:example-org/example-repo%23428"
+    absent = "clickup:no-such-task-in-any-world"
+    return [
+        Target(f"ref-to-hit:{principal}:{scope}",
+               "the reverse lookup over a ref the world DOES carry: the narrowed entry set, "
+               "and the `ref-to:` header's two counts computed from this store",
+               "GET", f"/api/v1/recall/{scope}?ref-to={carried}", principal, arm="entry"),
+        Target(f"ref-to-absent:{principal}:{scope}",
+               "the reverse lookup's own non-finding, which must not read as an empty scope",
+               "GET", f"/api/v1/recall/{scope}?ref-to={absent}", principal, arm="entry"),
+        Target(f"ref-to-malformed:{principal}:{scope}",
+               "the operand's refusal: a 400 whose sentence comes from the SAME parser an "
+               "entry's `refs:` item goes through, on both servers",
+               "GET", f"/api/v1/recall/{scope}?ref-to=no-colon-here", principal, arm="narrow"),
+        Target(f"search-ref-to:{principal}:{scope}",
+               "the same narrowing on the search route, whose searched-count is what shows "
+               "the filter ran",
+               "GET", f"/api/v1/search/{scope}?q={_q(HIT_TERM)}&ref-to={carried}",
+               principal, arm="entry"),
+    ]
+
+
 def search_by_ref_targets(scope: str, refs: list[str]) -> list[Target]:
     """A search whose term is a REF the scope actually indexes.
 
@@ -1247,10 +1290,17 @@ def run_once(work: Path, store: Path, pristine: Path, go_binary: Path, server_py
             entry_count += len(refs)
             targets += entry_targets(scope, refs)
             targets += search_by_ref_targets(scope, refs)
+            targets += ref_to_targets(scope)
         for scope in narrow_scopes:
             refs, problems = enumerate_refs(port_o, port_g, scope, NARROW)
             entry_problems += problems
             targets += entry_targets(scope, refs, NARROW)
+            # 🔴 THE NARROWED PRINCIPAL GETS THE SWEEP TOO, AND THAT IS THE AUTHORISATION-ORDER
+            # ARM. The filter must narrow AFTER scope authorisation, so a scope this principal
+            # may not see must answer what an absent scope answers whether or not its entries
+            # carry the ref — and a difference here is the only place this harness would see a
+            # filter applied to a store-wide load.
+            targets += ref_to_targets(scope, NARROW)
         # 🔴 ONE REF-SET COMPARISON PER SCOPE, COUNTED. A scope whose two index blocks list
         # different refs is a finding in its own right, and it is the arm that stops the
         # per-entry sweep from silently narrowing to whatever the oracle happened to list.

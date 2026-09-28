@@ -167,6 +167,20 @@ func (r RecallReport) Omitted() int {
 	return 0
 }
 
+// RefToMatched is how many entries the ref-to filter KEPT — the numerator of the ref-to line.
+//
+// 🔴 IT IS NOT `TotalInScope`, AND READING IT AS SUCH PRINTED SOMETHING FALSE. On
+// `ref-to-absent` the filter kept NOTHING, while `TotalInScope` on that branch is the scope's
+// own total so the report can say how much WAS read — so the line came out "3 of 3 entries in
+// `<scope>/` reference it" for a ref none of them carried. Caught by reading the regenerated
+// golden; no assertion comparing the two implementations could see it, because both agreed.
+func (r RecallReport) RefToMatched() int {
+	if r.Status == StatusRefToAbsent {
+		return 0
+	}
+	return r.TotalInScope
+}
+
 // Caveat is what this window can and cannot see — CaveatText, and nothing local.
 //
 // 🔴 `Listing`, NOT `Entries`. Badges are rendered by the index row, which iterates

@@ -210,7 +210,7 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 	// ⚠ EMITTED ONLY WHEN THE FILTER WAS SENT, so no existing golden moves. `HasRefTo` is
 	// false on every request that does not carry the parameter, and the line is absent then.
 	if r.HasRefTo {
-		out = append(out, refToLine(r.RefTo, r.TotalInScope, r.RefToScopeTotal, r.Scope))
+		out = append(out, refToLine(r.RefTo, r.RefToMatched(), r.RefToScopeTotal, r.Scope+"/"))
 	}
 
 	// 🔴 BEFORE EVERY STATUS BRANCH, INCLUDING THE ONES THAT RETURN IMMEDIATELY. A reject
@@ -442,10 +442,14 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 //
 // `matched`/`total` are the narrowed and pre-filter counts; `label` is the scope (or
 // `(all scopes)`), so the line reads the same on a single-scope and a store-wide run.
+// ⚠ `label` IS A FORMED LABEL AND CARRIES ITS OWN TRAILING `/`. `ScopeLabel` — which
+// `SearchReport.Label()` returns — already appends one, so a `/` added here printed
+// “ `(all scopes)/` “ on a store-wide search. Caught by reading the regenerated golden, not
+// by a test: both implementations agreed, and both were wrong.
 func refToLine(refTo string, matched, total int, label string) string {
 	return "  ref-to: `" + refTo + "` — " + strconv.Itoa(matched) + " of " +
 		strconv.Itoa(total) + " entr" + entryPlural(total) + " in `" + label +
-		"/` reference it, and everything below is about those " + strconv.Itoa(matched) +
+		"` reference it, and everything below is about those " + strconv.Itoa(matched) +
 		". This is a NARROWING, not a truncation: the rest were read and did not match."
 }
 

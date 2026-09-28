@@ -34,6 +34,9 @@
     },
     "rubble-heap": {
       "_why": "Every file in it is malformed -- the `scope-unreadable` state."
+    },
+    "linked-set": {
+      "_why": "The ONE scope whose entries carry `refs:`. It exists so a `?ref-to=` row can find a MATCH over the wire rather than only the non-finding: a corpus that only ever sent a ref nothing carries would pass against a filter wired to nothing. One entry carries the ref under the NEW key, one under the DEPRECATED `tasks:` spelling, and one carries none -- so the filter has something to keep, something to keep through the alias path, and something to remove."
     }
   },
   "entries": [
@@ -130,6 +133,71 @@
         "no front matter here, so the loader collects this as MALFORMED",
         ""
       ]
+    },
+    {
+      "path": "linked-set/linked-new-key.md",
+      "mtime": 946771200.0,
+      "text_lines": [
+        "---",
+        "service: linked-new-key",
+        "scope: linked-set",
+        "sensitivity: internal",
+        "refs: [github:example-org/example-repo#428, clickup:8600abcxyz]",
+        "---",
+        "",
+        "## What it is",
+        "An entry carrying `refs:` -- the current spelling of the key.",
+        "",
+        "## Pointers",
+        "- ops skill `manage-gadget` - the same skill, deliberately",
+        "",
+        "## Nuance / work-history",
+        "- 2000-01-02: the lease renewal races the rollout.",
+        ""
+      ]
+    },
+    {
+      "path": "linked-set/linked-old-key.md",
+      "mtime": 946684800.0,
+      "text_lines": [
+        "---",
+        "service: linked-old-key",
+        "scope: linked-set",
+        "sensitivity: internal",
+        "tasks: [github:example-org/example-repo#428]",
+        "---",
+        "",
+        "## What it is",
+        "An entry carrying the DEPRECATED `tasks:` spelling, so the deprecation window is measured over the wire and not only in a unit test.",
+        "",
+        "## Pointers",
+        "- ops skill `manage-gadget` - the same skill, deliberately",
+        "",
+        "## Nuance / work-history",
+        "- 2000-01-02: the lease renewal races the rollout here too.",
+        ""
+      ]
+    },
+    {
+      "path": "linked-set/linked-none.md",
+      "mtime": 946598400.0,
+      "text_lines": [
+        "---",
+        "service: linked-none",
+        "scope: linked-set",
+        "sensitivity: internal",
+        "---",
+        "",
+        "## What it is",
+        "An entry carrying NO refs, so a `?ref-to=` row has something to REMOVE and its count is not trivially the scope total.",
+        "",
+        "## Pointers",
+        "- ops skill `manage-gadget` - the same skill, deliberately",
+        "",
+        "## Nuance / work-history",
+        "- 2000-01-02: the lease renewal races the rollout here as well.",
+        ""
+      ]
     }
   ],
   "principals": [
@@ -137,7 +205,7 @@
       "name": "wide-reader",
       "kind": "mapped",
       "identity": "wide-reader",
-      "scopes": ["alpha-notes", "beta-notes", "hollow-set", "rubble-heap"],
+      "scopes": ["alpha-notes", "beta-notes", "hollow-set", "rubble-heap", "linked-set"],
       "_why": "Sees every scope. The authorized principal for most cases, and the only one that can write."
     },
     {

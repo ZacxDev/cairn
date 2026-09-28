@@ -135,6 +135,92 @@
         "gid": 0,
         "gname": "",
         "mode": "0o644",
+        "mtime": "946771200.0",
+        "name": "linked-set/linked-new-key.md",
+        "sha256": "4acabe7aa61ea1c6ae581ec024eebc473ce031dfbfbccb54e161ad64ee54e323",
+        "size": 362,
+        "text_lines": [
+          "---",
+          "service: linked-new-key",
+          "scope: linked-set",
+          "sensitivity: internal",
+          "refs: [github:example-org/example-repo#428, clickup:8600abcxyz]",
+          "---",
+          "",
+          "## What it is",
+          "An entry carrying `refs:` -- the current spelling of the key.",
+          "",
+          "## Pointers",
+          "- ops skill `manage-gadget` - the same skill, deliberately",
+          "",
+          "## Nuance / work-history",
+          "- 2000-01-02: the lease renewal races the rollout.",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946598400.0",
+        "name": "linked-set/linked-none.md",
+        "sha256": "39aff3b884a836f242b02fdd80925c36649ad0332504706e492484e569310250",
+        "size": 365,
+        "text_lines": [
+          "---",
+          "service: linked-none",
+          "scope: linked-set",
+          "sensitivity: internal",
+          "---",
+          "",
+          "## What it is",
+          "An entry carrying NO refs, so a `?ref-to=` row has something to REMOVE and its count is not trivially the scope total.",
+          "",
+          "## Pointers",
+          "- ops skill `manage-gadget` - the same skill, deliberately",
+          "",
+          "## Nuance / work-history",
+          "- 2000-01-02: the lease renewal races the rollout here as well.",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946684800.0",
+        "name": "linked-set/linked-old-key.md",
+        "sha256": "d98943762474b48c2fdcd2cc5d8c2e9c5eea0843d3e1aad1b6acd7166f1b1d2f",
+        "size": 423,
+        "text_lines": [
+          "---",
+          "service: linked-old-key",
+          "scope: linked-set",
+          "sensitivity: internal",
+          "tasks: [github:example-org/example-repo#428]",
+          "---",
+          "",
+          "## What it is",
+          "An entry carrying the DEPRECATED `tasks:` spelling, so the deprecation window is measured over the wire and not only in a unit test.",
+          "",
+          "## Pointers",
+          "- ops skill `manage-gadget` - the same skill, deliberately",
+          "",
+          "## Nuance / work-history",
+          "- 2000-01-02: the lease renewal races the rollout here too.",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
         "mtime": "946857600.125",
         "name": "rubble-heap/broken-four.md",
         "sha256": "db990bc7e89344971b325c29931dea494fcaa30259914f2a4ee49c0ebd32ead0",
@@ -151,9 +237,12 @@
       "rubble-heap/broken-four.md",
       "beta-notes/widget-three.md",
       "beta-notes/spare-six.md",
+      "linked-set/linked-new-key.md",
       "alpha-notes/gadget-two.md",
       "alpha-notes/gadget-one.md",
-      ".seed-stamp"
+      ".seed-stamp",
+      "linked-set/linked-old-key.md",
+      "linked-set/linked-none.md"
     ]
   },
   "case": "snapshot-legacy-token",
@@ -168,7 +257,7 @@
     ],
     [
       "ETag",
-      "\"sha256:13db39a86d3e6edf465cae907fa1ab9b4c9da7f82227ee0e7c5297a1890b406f\""
+      "\"sha256:0b3f95897acc16b9fe7f33e96d80121500e76f3ead91815a3f4926f9dd4945bd\""
     ],
     [
       "Server",
@@ -176,7 +265,7 @@
     ],
     [
       "X-Store-Entries",
-      "5"
+      "8"
     ],
     [
       "X-Store-Exit",
@@ -184,7 +273,7 @@
     ],
     [
       "X-Store-Snapshot",
-      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=5"
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=8"
     ],
     [
       "X-Store-Status",

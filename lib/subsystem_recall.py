@@ -2161,12 +2161,16 @@ def _ref_to_line(ref_to: str, matched: int, total: int, label: str) -> str:
     them. `internal/report.refToLine` is the Go spelling, and `tests/parity/harness.py`
     diffs the two clients' bytes.
 
-    `matched`/`total` are the narrowed and pre-filter counts; `label` is the scope (or
-    `(all scopes)`), so the line reads the same on a single-scope and a store-wide run.
+    `matched`/`total` are the narrowed and pre-filter counts.
+
+    ⚠ `label` IS A FORMED LABEL AND CARRIES ITS OWN TRAILING `/`. `SearchReport.label` already
+    appends one, so a `/` added here printed `` `(all scopes)/` `` on a store-wide search.
+    Caught by reading the regenerated golden, not by a test: both implementations agreed, and
+    both were wrong.
     """
     return (
         f"  ref-to: `{ref_to}` — {matched} of {total} entr"
-        f"{'y' if total == 1 else 'ies'} in `{label}/` reference it, and everything below "
+        f"{'y' if total == 1 else 'ies'} in `{label}` reference it, and everything below "
         f"is about those {matched}. This is a NARROWING, not a truncation: the rest were "
         f"read and did not match."
     )
@@ -2211,12 +2215,19 @@ def render_text(
     # ⚠ EMITTED ONLY WHEN THE FILTER WAS SENT, so no existing golden moves. `ref_to` is
     # `None` on every request that does not carry the parameter.
     if report.ref_to is not None:
+        # 🔴 THE NUMERATOR IS THE MATCHED COUNT, NOT `total_in_scope`, AND READING IT AS
+        # `total_in_scope` PRINTED SOMETHING FALSE. On `ref-to-absent` the filter kept
+        # NOTHING, while that field is the scope's own total on that branch so the report can
+        # say how much WAS read — so the line came out "3 of 3 entries reference it" for a ref
+        # none of them carried. Caught by reading the regenerated golden; no assertion
+        # comparing this to the Go port could see it, because both agreed.
+        matched = 0 if report.status == "ref-to-absent" else report.total_in_scope
         out.append(
             _ref_to_line(
                 report.ref_to,
-                report.total_in_scope,
+                matched,
                 report.ref_to_scope_total,
-                report.scope,
+                f"{report.scope}/",
             )
         )
 
@@ -3242,7 +3253,7 @@ def render_search(
                 report.ref_to,
                 report.entries_searched,
                 report.entries_searched + report.ref_to_skipped,
-                report.scope,
+                report.label,
             )
         )
 

@@ -19,7 +19,7 @@
     ],
     [
       "ETag",
-      "\"sha256:13db39a86d3e6edf465cae907fa1ab9b4c9da7f82227ee0e7c5297a1890b406f\""
+      "\"sha256:0b3f95897acc16b9fe7f33e96d80121500e76f3ead91815a3f4926f9dd4945bd\""
     ],
     [
       "Server",
@@ -27,7 +27,7 @@
     ],
     [
       "X-Store-Entries",
-      "5"
+      "8"
     ],
     [
       "X-Store-Exit",
@@ -35,7 +35,7 @@
     ],
     [
       "X-Store-Snapshot",
-      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=5"
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=8"
     ],
     [
       "X-Store-Status",
