@@ -289,6 +289,108 @@ func TestASignInWithNoInvitationTouchesNeitherRedemptionPath(t *testing.T) {
 	}
 }
 
+// startAFlightWithTheInviteInTheQUERY drives `POST /sign-in/github?invite=<token>` — the
+// token in the URL and NOT in the body — and returns the flight cookie.
+//
+// 🔴 THE BODY IS A WELL-FORMED FORM CARRYING A DIFFERENT FIELD, DELIBERATELY. A request with
+// no body at all would leave `ParseForm` with nothing to parse, so an empty
+// `PostFormValue` would be explained by "the body was unreadable" as well as by "the handler
+// read the body". Posting a parseable body with a decoy field isolates the one variable the
+// case is about: WHICH side of `r.Form` the value came from.
+func startAFlightWithTheInviteInTheQUERY(t *testing.T, srv *Server, token string) *http.Cookie {
+	t.Helper()
+	body := url.Values{"decoy": {"a parseable body that does not carry the token"}}
+	req := httptest.NewRequest("POST",
+		OAuthStartPath+"?"+url.Values{inviteTokenField: {token}}.Encode(),
+		strings.NewReader(body.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://"+req.Host)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("the start row answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == oauthFlightCookieName {
+			return c
+		}
+	}
+	t.Fatal("the start row set no flight cookie, so no callback can complete")
+	return nil
+}
+
+// TestTheGitHubStartRowIgnoresAnInvitationTokenInTheQUERYString is the regression guard for
+// `handleOAuthStart` reading `r.FormValue`.
+//
+// # 🔴 WHAT WAS WRONG
+//
+// `r.FormValue` reads `r.Form`, which for a POST is the parsed BODY **union the URL query**.
+// So `POST /sign-in/github?invite=<token>` was accepted and the flight carried the token —
+// while the comment directly above the read promised the value "never appears in a URL, a
+// referrer or an access log". An invite token is a bearer capability that can CREATE a
+// principal (`internal/invite`'s package doc), so the leak is the one `inviteTokenField`
+// exists to prevent, into the referrer the next hop receives and into every access log en
+// route. `handleJoinPage` records the mirror image of the same `FormValue` distinction.
+//
+// # 🔴 WHY THE NEGATIVE SUBTEST ALONE WOULD NOT BE COVERAGE
+//
+// "the token was not carried" is a reassuring ZERO, and a zero is indistinguishable from a
+// harness wired to nothing — a broken fixture, a flight that never opened, an `Inviting`
+// stub nothing reaches. The second subtest is the POSITIVE CONTROL: the SAME server, the
+// SAME callback, the SAME assertion, with the token in the BODY, where the count MUST move
+// to 1. Report the pair, never the zero alone.
+//
+// ⚠ IT IS A REGRESSION GUARD AND NOT AN INVARIANT ONE: the query subtest is RED on
+// `r.FormValue` (measured) and GREEN on `r.PostFormValue`.
+func TestTheGitHubStartRowIgnoresAnInvitationTokenInTheQUERYString(t *testing.T) {
+	// completeAndCountRedemptions runs one whole flow and reports how many times either
+	// redemption entry point was reached. `RedeemFor` is the arm a KNOWN user takes, which is
+	// the cheapest shape to drive; the assertion is about whether the token reached the
+	// callback at all, and both arms read it from the same flight field.
+	completeAndCountRedemptions := func(t *testing.T, start func(*testing.T, *Server, string) *http.Cookie) *staticInviting {
+		t.Helper()
+		cfg, stub, inviting := providerConfigWithInviting(t)
+		stub.err = nil
+		stub.principal = testIdentity().Principal
+		srv, err := New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cookie := start(t, srv, fixtureInviteToken)
+		cb := httptest.NewRequest("GET", OAuthCallbackPath+"?code=fixture-code", nil)
+		cb.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, cb)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("the callback answered %d, want 303 (a completed sign-in): %s", rec.Code, rec.Body.String())
+		}
+		return inviting
+	}
+
+	t.Run("a token in the query string is not picked up", func(t *testing.T) {
+		inviting := completeAndCountRedemptions(t, startAFlightWithTheInviteInTheQUERY)
+		if inviting.redeemForCalls != 0 || inviting.redeemCalls != 0 {
+			t.Errorf("a token supplied ONLY in `POST %s?%s=…` was redeemed "+
+				"(RedeemFor %d, Redeem %d, token %q). The start row is reading `r.FormValue`, which "+
+				"unions the URL query into the posted body — so a capability that can create a "+
+				"principal is accepted in a URL, and reaches the referrer and every access log en route.",
+				OAuthStartPath, inviteTokenField,
+				inviting.redeemForCalls, inviting.redeemCalls, inviting.redeemedForToken)
+		}
+	})
+
+	t.Run("POSITIVE CONTROL: the same token in the body IS picked up", func(t *testing.T) {
+		inviting := completeAndCountRedemptions(t, startAFlightCarryingAnInvite)
+		if inviting.redeemForCalls != 1 {
+			t.Fatalf("RedeemFor ran %d time(s) for a token posted in the BODY, want 1. The zero above is "+
+				"then a fact about this harness and not about the handler.", inviting.redeemForCalls)
+		}
+		if inviting.redeemedForToken != fixtureInviteToken {
+			t.Errorf("RedeemFor was given token %q, want %q", inviting.redeemedForToken, fixtureInviteToken)
+		}
+	})
+}
+
 // sessionWasOpenedFor answers whether the response set this surface's session cookie.
 //
 // ⚠ IT CANNOT READ THE PRINCIPAL OUT OF THE COOKIE — the value is an opaque id and the

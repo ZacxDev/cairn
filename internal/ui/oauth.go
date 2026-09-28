@@ -520,13 +520,24 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request, _ iden
 		s.renderSignIn(w, http.StatusInternalServerError, oauthNotStarted)
 		return
 	}
-	// 🔴 THE INVITATION TOKEN THIS SIGN-IN WILL REDEEM, READ FROM THE POSTED FORM AND
+	// 🔴 THE INVITATION TOKEN THIS SIGN-IN WILL REDEEM, READ FROM THE POSTED BODY AND
 	// CARRIED ON THE SERVER-SIDE FLIGHT. Empty for an ordinary sign-in. It is read from the
-	// form rather than from the query string because this row is a POST — see the route
+	// body rather than from the query string because this row is a POST — see the route
 	// ledger's note on why the START is a POST and the CALLBACK is a GET — so the value
 	// never appears in a URL, a referrer or an access log. It is NOT validated here: see
 	// [flights.start].
-	inviteToken := r.FormValue(inviteTokenField)
+	//
+	// 🔴 `PostFormValue` AND NOT `FormValue`, AND THE SENTENCE ABOVE IS WHAT MAKES THAT
+	// LOAD-BEARING RATHER THAN PEDANTIC — IT STOOD HERE BESIDE A LINE DOING THE OTHER THING.
+	// `FormValue` reads `r.Form`, which is the posted body UNION the URL query, so
+	// `POST /sign-in/github?invite=<token>` was accepted and the paragraph's own guarantee
+	// was false for it: the capability that can create a principal travelled in a URL, hence
+	// into the referrer the next hop receives and into every access log en route. Measured on
+	// a request carrying the field ONLY in the query: `FormValue` returned it and
+	// `PostFormValue` returned `""`. `handleJoinPage` records the mirror image of the same
+	// distinction — there the value must come from the QUERY, because a link is the only
+	// thing that can carry it — so the two reads are deliberately spelled differently.
+	inviteToken := r.PostFormValue(inviteTokenField)
 	id, outcome := s.flights.start(client, verifier, inviteToken, FlightTTL)
 	if outcome != flightOpened {
 		// The log names WHICH bound refused, because "the table is full" and "you have spent

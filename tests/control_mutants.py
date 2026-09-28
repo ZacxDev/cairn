@@ -2656,6 +2656,26 @@ MUTANTS: tuple[Mutant, ...] = (
         "resolution there is an oracle over which invitations exist, drivable at will.",
     ),
     Mutant(
+        name="ui-start-row-reads-the-invite-from-the-url-query",
+        path="internal/ui/oauth.go",
+        # The narrowest expression that can be wrong: one method name on one read. Both
+        # spellings compile, both return a string, and the difference is only WHICH half of
+        # `r.Form` the value may come from — which is why nothing but a request carrying the
+        # field in the query alone can tell them apart.
+        old="\tinviteToken := r.PostFormValue(inviteTokenField)",
+        new="\tinviteToken := r.FormValue(inviteTokenField)",
+        killer="TestTheGitHubStartRowIgnoresAnInvitationTokenInTheQUERYString",
+        why="this IS the shipped defect, restored: `FormValue` is the reflex reach for a form "
+        "field and it reads the posted body UNION the URL query, so "
+        "`POST /sign-in/github?invite=<token>` was accepted. The value is a bearer capability "
+        "that can CREATE a principal, and a query parameter lands in browser history, in the "
+        "referrer the next hop receives and in every access log en route — the leak "
+        "`inviteTokenField` is declared body-only to prevent, under a comment promising the "
+        "value 'never appears in a URL, a referrer or an access log'. `handleJoinPage` is "
+        "the mirror image of the same distinction and was corrected for it separately, which "
+        "is what makes the wrong spelling here a thing a reader walks past twice.",
+    ),
+    Mutant(
         name="ui-join-page-offers-a-form-with-no-token",
         path="internal/ui/render.go",
         old='\t\t\t\tg.If(token != "" && provider, joinForm(token)),',
