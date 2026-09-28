@@ -396,10 +396,61 @@ const contentFloorWidth = 3440
 // makes the floor FIRE with this message rather than pass in silence.
 const signinMainClass = "signin-main"
 
-// contentFloorExempt answers whether this capture is the one page the floor does not bind.
-// See [signinMainClass] for why the predicate reads two things and not one.
+// joinMainClass is the `<main>` class of the SECOND one-card public page.
+//
+// 🔴 IT IS A SECOND EXEMPT PAGE RATHER THAN A WIDENED FIRST ONE, AND THE STYLESHEET HAD
+// ALREADY DECIDED THAT — WHICH IS EXACTLY WHY THIS WENT UNNOTICED. `tailwind.css` gives
+// `.signin-main` and `.join-main` ONE rule, and says why in as many words: "The sign-in
+// page has one card and no list, so its `<main>` IS the card. The JOIN page is the same
+// shape for the same reason — one public page, one message, one button — and it shares the
+// rule rather than declaring a second one that could drift away from it." The CSS shared
+// the shape; the exemption below did not follow, so `/join` rendered 448px of an ultrawide
+// 3440px viewport (13.0%) and the floor refused it — correctly, on the letter, and wrongly
+// on the intent.
+//
+// ⚠ MEASURED RATHER THAN REASONED: the walk that caught it is the FIRST one this branch
+// ever ran, because `uiaudit` runs in CI and 28(b4) shipped `JoinPage` with no PR. A page
+// can therefore be added to a shared CSS rule and be invisible to this floor until somebody
+// opens one.
+const joinMainClass = "join-main"
+
+// contentFloorExemptPages is the LEDGER of pages the content floor does not bind, as
+// (path, class) PAIRS.
+//
+// 🔴 A LEDGER OF PAIRS RATHER THAN TWO SETS, BECAUSE THE TWO-CONDITION PROPERTY IS THE
+// WHOLE GUARD AND A SET-vs-SET FORM WOULD SILENTLY DESTROY IT. `signinMainClass` records
+// why the predicate reads both: a CLASS-only exemption is walked by putting that class on a
+// page that should be wide, and a PATH-only one by moving wide content behind an exempt
+// route. Matching `path ∈ paths && class ∈ classes` would newly admit the CROSS pairs —
+// `/join` wearing `signin-main`, `/sign-in` wearing `join-main` — neither of which anybody
+// decided. Each row is one decision, and a capture must match a row WHOLE.
+var contentFloorExemptPages = []struct {
+	Path      string
+	MainClass string
+}{
+	{Path: ui.SignInPath, MainClass: signinMainClass},
+	{Path: ui.JoinPath, MainClass: joinMainClass},
+}
+
+// contentFloorExempt answers whether this capture is one of the pages the floor does not
+// bind. See [signinMainClass] for why each row reads two things and not one.
 func contentFloorExempt(c *Capture) bool {
-	return c.Target.Path == ui.SignInPath && c.Content.MainClass == signinMainClass
+	for _, row := range contentFloorExemptPages {
+		if c.Target.Path == row.Path && c.Content.MainClass == row.MainClass {
+			return true
+		}
+	}
+	return false
+}
+
+// exemptPagesForLog renders the ledger for the summary line, so the clean verdict names
+// WHICH pages it excused rather than a bare count.
+func exemptPagesForLog() string {
+	out := make([]string, 0, len(contentFloorExemptPages))
+	for _, row := range contentFloorExemptPages {
+		out = append(out, fmt.Sprintf("%s with class %q", row.Path, row.MainClass))
+	}
+	return strings.Join(out, ", ")
 }
 
 // refuseWalkRegressions turns four per-page measurements into a FAILED WALK.
@@ -575,9 +626,9 @@ func refuseWalkRegressions(captures []*Capture) error {
 	// nothing; the number below moves when the layout does, which is what makes the clean
 	// verdict readable as a measurement.
 	fmt.Printf("uiaudit:   CONTENT FLOOR: narrowest non-exempt <main> at %dpx used %.1f%% of the viewport "+
-		"(%s), floor %.0f%% — over %d capture(s) at that width, %d exempt (%s with class %q)\n",
+		"(%s), floor %.0f%% — over %d capture(s) at that width, %d exempt (%s)\n",
 		Ultrawide.Width, floorMin*100, floorMinWhere, contentWidthFloor*100,
-		floorMeasured, floorExempt, ui.SignInPath, signinMainClass)
+		floorMeasured, floorExempt, exemptPagesForLog())
 	return nil
 }
 
