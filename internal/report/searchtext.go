@@ -49,28 +49,43 @@ func (r SearchReport) RenderText(host string, extraHeader []string, instance str
 		// The clause "everything below is about those N" is a claim about the BODY, and the
 		// only thing that carries it is an enumeration of what can BE below it. This line
 		// sits above exactly three statuses — `scope-absent` returns before the operand is
-		// parsed, so it never carries one — and `search-no-match` has two distinguishable
-		// bodies, which makes FOUR cases. Each was re-derived rather than covered by an
-		// absolute:
+		// parsed, so it never carries one — and `search-no-match` has THREE distinguishable
+		// bodies, which makes FIVE cases. ⚠ IT SAID "two bodies / FOUR cases" AND THAT WAS
+		// MEASURED INCOMPLETE: `N == 0` is TWO bodies, not one, and the second is live in this
+		// change's own `tests/dualrun/` gate. The paragraph below says a new body must be added
+		// to this list and checked BY HAND — so an incomplete list returns a false clean, which
+		// is why the fourth row exists rather than being folded into the third. Each was
+		// re-derived rather than covered by an absolute:
 		//
 		//   - `search-hit` — the hunks below come from kept entries only, because
 		//     `entryHunks` is called on the kept slice and on nothing else.
 		//   - `search-no-match` with N > 0 — the body is "searched N entries in <scopes>,
 		//     and nothing cleared the threshold", plus a near miss that is itself a hunk
 		//     from a kept entry. A statement about exactly those N.
-		//   - `search-no-match` with N == 0 — VACUOUS, not false: the body says the scan
-		//     found nothing because the filter removed every readable entry (see the
-		//     no-match branch below). Nothing under the line reports on a REMOVED entry as
-		//     though it had been kept, which is what the clause would have to be false about.
+		//   - `search-no-match` with N == 0 and `RefToSkipped > 0` — VACUOUS, not false: the
+		//     body says the scan found nothing because the FILTER removed every readable entry
+		//     (the `RefToSkipped > 0` case of the no-match branch below). Nothing under the
+		//     line reports on a REMOVED entry as though it had been kept, which is what the
+		//     clause would have to be false about.
+		//   - `search-no-match` with N == 0 and `RefToSkipped == 0` — a PRESENT-BUT-EMPTY scope
+		//     asked with `?ref-to=`. Nothing existed to keep OR to skip, so the `switch` falls
+		//     through to the DEFAULT `near` and prints "No candidate scored above zero at all,
+		//     so this is an absent term rather than a weak one." over a "0 of 0" line. Vacuous
+		//     for the same reason as the row above — there is no removed entry for anything
+		//     below to misreport — but it reaches the branch by a DIFFERENT mechanism, and the
+		//     ⚠ note at the no-match branch below is what owns that route. Measured live on
+		//     both servers, identical bytes: `genstore.py`'s empty scope is one of the
+		//     `search-ref-to` dualrun targets.
 		//
-		// ⚠ THE FOURTH CASE IS `search-unreadable`, and after the fix it requires
+		// ⚠ THE FIFTH CASE IS `search-unreadable`, and after the fix it requires
 		// `RefToSkipped == 0` as well as `EntriesSearched == 0` — so the line there reads
 		// "0 of 0", and the clause is about the empty set over a pre-filter set that was
-		// also empty. 🔴 THAT IS NOT WHY THE OLD COMMENT WAS WRONG, AND THE
-		// DIFFERENCE IS THE POINT: it reasoned only about the CLAUSE ("about the empty set
-		// rather than false about a non-empty one") and was literally true while the STATUS
-		// it annotated was false about the store. Re-deriving a clause says nothing about the
-		// branch that reaches it.
+		// also empty. ⚠ "0 of 0" IS THEREFORE NOT THAT STATUS'S SIGNATURE: the fourth row
+		// prints it too, and the STATUS is what tells them apart. 🔴 NONE OF THAT IS WHY THE
+		// PRE-FIX COMMENT WAS WRONG, AND THE DIFFERENCE IS THE POINT: it reasoned only about
+		// the CLAUSE ("about the empty set rather than false about a non-empty one") and was
+		// literally true while the STATUS it annotated was false about the store. Re-deriving
+		// a clause says nothing about the branch that reaches it.
 		//
 		// 🔴 AND THE ENUMERATION IS THE WHOLE JUSTIFICATION, WHICH IS WEAKER THAN A GUARD AND
 		// IS SAID SO RATHER THAN DRESSED UP. It is PROSE: nothing mechanical asserts that the

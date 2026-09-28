@@ -964,7 +964,8 @@ jobs:
             grep -q "^DIFFERENCE $name " /tmp/dualrun.txt || {
               echo "REFUSING: the declared licence '$name' did not fire"; exit 1; }
           done
-          # …and the two arms no other gate in this repository reads at all.
+          # …and the two arms no other gate in this repository reads at all. PRESENCE here;
+          # their COUNTS are floored in the block below, where a refusal can name a number.
           grep -q '^PASS audit-stream' /tmp/dualrun.txt
           grep -q '^PASS process-stream' /tmp/dualrun.txt
           # 🔴 LAST, SO ITS EXIT STATUS IS THE STEP'S. The in-run numbers, read rather than
@@ -978,8 +979,24 @@ jobs:
               print("REFUSING: no SUMMARY line — the run did not finish")
               sys.exit(1)
           targets, comparisons, differences, entries = (int(g) for g in m.groups())
+          # 🔴 THE TWO ARMS THAT PRINT THEIR OWN COUNT, READ AS NUMBERS AND NOT ONLY AS
+          # PRESENCE. `comparisons` above is a SUM over four arms and only these two publish a
+          # subtotal, so without these the total is the only floor and a move in it cannot be
+          # attributed to an arm — see the paragraph before `problems` for what that costs and
+          # what it still cannot buy. A FAIL arm prints no PASS line at all, so an absent match
+          # is a refusal rather than a zero.
+          arms = {}
+          for arm in ("audit-stream", "process-stream"):
+              a = re.search(rf"^PASS {arm} \((\d+) lines compared", text, re.M)
+              if not a:
+                  print(f"REFUSING: no `PASS {arm} (<n> lines compared` line — that arm "
+                        f"either failed or stopped reporting its own count")
+                  sys.exit(1)
+              arms[arm] = int(a.group(1))
           print(f"targets={targets} comparisons={comparisons} "
-                f"differences={differences} entries={entries}")
+                f"differences={differences} entries={entries} "
+                f"audit-stream={arms['audit-stream']} "
+                f"process-stream={arms['process-stream']}")
           # Measured on this branch: 410 / 1689 / 0 / 119. Floors rather than equalities, so
           # ADDING a target is not a red gate; a NARROWING is.
           # ⚠ 366 -> 410 WHEN THE `?ref-to=` SWEEP LANDED: FOUR targets per scope over nine
@@ -1024,17 +1041,41 @@ jobs:
           # response went unmeasured — and the exit code the status carries (3 -> 0) is one of
           # the header fields being compared, not a field that disappeared.
           #
-          # 🔴 HENCE WHAT THIS NUMBER IS AND IS NOT. It aggregates a count of the two servers'
-          # STDERR LINES alongside the per-response field sets, so removing an operator
-          # diagnostic lowers it while every response is compared exactly as before — and a
-          # response that genuinely lost a compared field would lower it by the same 1. The two
-          # are indistinguishable in the TOTAL. Attribute any move by measuring the ARMS; a
-          # floor re-derived without doing that is a floor whose reason is a guess.
+          # 🔴 HENCE WHAT THIS NUMBER IS AND IS NOT, AND THE FIRST DRAFT OF THIS PARAGRAPH WAS
+          # WRONG IN THE REASSURING DIRECTION. It aggregates a count of the two servers' STDERR
+          # LINES alongside the per-response field sets, so removing an operator diagnostic
+          # lowers it while every response is compared exactly as before. It said a response
+          # that lost a compared field "would lower it by the same 1", making the two
+          # "indistinguishable in the TOTAL". 🔴 MEASURED FALSE, AND WORSE THAN
+          # INDISTINGUISHABLE — INVISIBLE: `comparisons` is incremented at exactly THREE sites
+          # in `compare()` (status, the WHOLE header tuple, body), each unconditional before
+          # every return, so the count does not depend on how many header FIELDS the header
+          # comparison covers. Dropping `X-Store-Exit` from the compared set leaves
+          # comparisons=1689, 412 passes and differences=0 all UNCHANGED and this block exits
+          # 0. (The field IS compared today: forcing the Go server to emit `Exit + 7` yields
+          # `FAIL … header X-Store-Exit: '0' vs '7'`.) So no number here can refuse a narrowing
+          # INSIDE the header tuple — what refuses one is the per-field `FAIL header <name>`
+          # line and `internal/api`'s own tests, and ⚠ do NOT close the gap by counting
+          # per-field in `compare()`: that re-bases every floor above.
+          #
+          # 🔴 WHAT THE TWO ARM FLOORS BELOW DO BUY IS ATTRIBUTION, WHICH IS THE PART THAT WAS
+          # PROSE. "Attribute any move by measuring the ARMS" was an instruction to a human; the
+          # audit and process streams are the only arms that publish their own subtotal, so
+          # flooring those two makes a -1 in either one refuse under its OWN name, and a -1 that
+          # trips the total while both arms hold is thereby located in the per-target or ref-set
+          # arms. Measured on this branch: 425 and 23, the same run the 1689 came from. It does
+          # NOT close the invisible case above, and it does not floor the two arms that print no
+          # count — a floor re-derived without running the harness is a floor whose reason is a
+          # guess.
           problems = []
           if targets < 410:
               problems.append(f"targets {targets} < 410")
           if comparisons < 1689:
               problems.append(f"comparisons {comparisons} < 1689")
+          if arms["audit-stream"] < 425:
+              problems.append(f"audit-stream arm {arms['audit-stream']} < 425")
+          if arms["process-stream"] < 23:
+              problems.append(f"process-stream arm {arms['process-stream']} < 23")
           if entries < 119:
               problems.append(f"per-entry comparisons {entries} < 119")
           if differences:
