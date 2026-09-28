@@ -2310,8 +2310,18 @@ MUTANTS: tuple[Mutant, ...] = (
         path="cmd/cairn-ui/main.go",
         # The CONDITION, not the refusal it guards: the `fmt.Errorf` below stays in the
         # tree, so `raw` stays used and this is the narrowest expression that can be wrong.
-        old="\tif identity.ValueReducesToNothing(raw) {\n",
-        new="\tif false {\n",
+        # 🔴 DISAMBIGUATED BY THE REFUSAL TEXT BELOW IT, BECAUSE THIS ROW WENT `HARNESS ERROR`
+        # THE DAY A SECOND BLANK POLICY LANDED. 28(c) added `databaseDSNDefault`, whose
+        # condition is spelled identically, so `if identity.ValueReducesToNothing(raw) {`
+        # occurs TWICE in this file and the count assertion refused the row — correctly, and
+        # loudly, which is the whole reason it asserts a count rather than that a replacement
+        # happened. ⚠ The lesson is not "disambiguate your new row": it is that ADDING a
+        # second copy of a shape breaks the EXISTING row that matched the first, and only the
+        # battery can see it. Re-run the battery after duplicating any guarded shape.
+        old='\tif identity.ValueReducesToNothing(raw) {\n\t\treturn "", fmt.Errorf(\n'
+        '\t\t\t"%s=%q reduces to nothing, so this surface would read it as UNSET and fall back to the "+',
+        new='\tif false {\n\t\treturn "", fmt.Errorf(\n'
+        '\t\t\t"%s=%q reduces to nothing, so this surface would read it as UNSET and fall back to the "+',
         killer="TestAWhitespaceControlJournalLineIsRefusedRatherThanReadAsUnset",
         extra_killers=("TestTheProcessExitsOnAWhitespaceControlJournalLine",),
         why="deleting the blank policy as belt-and-braces, on the reading that "
@@ -2323,8 +2333,10 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-startup-refuses-an-explicitly-empty-journal-line",
         path="cmd/cairn-ui/main.go",
-        old='\tif raw == "" {\n\t\treturn "", nil\n\t}',
-        new='\tif false {\n\t\treturn "", nil\n\t}',
+        # Disambiguated by the `get(...)` line above it — same cause as the row above: 28(c)'s
+        # `databaseDSNDefault` opens with the identical three lines.
+        old='\traw := get(EnvUIControlJournal)\n\tif raw == "" {\n\t\treturn "", nil\n\t}',
+        new='\traw := get(EnvUIControlJournal)\n\tif false {\n\t\treturn "", nil\n\t}',
         killer="TestAWhitespaceControlJournalLineIsRefusedRatherThanReadAsUnset",
         why="deleting the early return as redundant — `ValueReducesToNothing(\"\")` is true, "
         "so the refusal below appears to cover it. The direction is the dangerous one for a "
