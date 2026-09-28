@@ -4944,12 +4944,51 @@ class TestDegradationMutationKills:
         mod = _load_mutant(
             tmp_path,
             "m_search_unreadable",
-            [('            if searched == 0 and bad', "            if False")],
+            [
+                (
+                    "            if searched == 0 and ref_to_skipped == 0 and bad",
+                    "            if False",
+                )
+            ],
         )
         store = _make_store(tmp_path / "s")
         _all_broken_scope(store)
         assert mod.search(store, "every-entry-broken", "readiness").status == "search-no-match"
         assert rc.search(store, "every-entry-broken", "readiness").status == "search-unreadable"
+
+    def test_kills_the_filter_driven_zero_term_ON_ITS_OWN(
+        self, tmp_path: Path, filter_zero_store: Path
+    ) -> None:
+        """🔴 THE NARROWEST EXPRESSION THAT CAN BE WRONG, MUTATED ALONE. The test above
+        deletes the WHOLE discriminator, which says nothing about the `ref_to_skipped`
+        term inside it — a mutant that removes a guard together with its enclosing
+        condition dies for the wrong reason. This one drops ONLY that term, which is
+        exactly the pre-fix spelling, and the store it is measured over is the one where
+        the two differ.
+        """
+        mod = _load_mutant(
+            tmp_path,
+            "m_filter_zero_term",
+            [
+                (
+                    "            if searched == 0 and ref_to_skipped == 0 and bad",
+                    "            if searched == 0 and bad",
+                )
+            ],
+        )
+        args = (filter_zero_store, "kept-none", "readiness")
+        mutant = mod.search(*args, ref_to=CLAUSE_REF)
+        assert mutant.status == "search-unreadable", (
+            "the mutant did not reproduce the pre-fix answer, so this test is measuring "
+            "something other than the term it names"
+        )
+        assert "NOT ONE of them could be indexed" in mod.render_search(mutant)
+        assert mod._exit_for(mutant.status, "kept-none/", mutant.malformed) == 3
+        # …and the SAME call on the real module, so the kill is a difference and not a
+        # claim about a store nothing can read.
+        live = rc.search(*args, ref_to=CLAUSE_REF)
+        assert live.status == "search-no-match"
+        assert mod._exit_for(live.status, "kept-none/", live.malformed) == 0
 
     def test_kills_the_withdrawn_completeness_claim(self, tmp_path: Path) -> None:
         """With the branch gone, an index three files short says `none omitted`."""
@@ -6029,9 +6068,30 @@ CLAUSE_CASES = (
     ("ref-to-absent", {"ref_to": CLAUSE_NOTHING}, CLAUSE_LINE_SILENT_ZERO, False),
     ("ref-absent", {"ref": "no-such-entry"}, CLAUSE_LINE_SILENT, False),
     ("ref-ambiguous", {"ref": "both-twins"}, CLAUSE_LINE_SILENT, False),
+    ("recalled", {"mode": "list", "page": 1}, CLAUSE_LINE_REPORTS, True),
     ("recalled", {"mode": "list", "page": 9}, CLAUSE_LINE_SILENT, False),
     ("recalled", {"mode": "digest", "page": 9}, CLAUSE_LINE_REPORTS, True),
 )
+
+#: Every combination of "is `entries` empty" × "is `listing` empty", which is the axis
+#: `renders_narrowed_set` is a disjunction over. All four are reachable under a ref-to
+#: line: `--ref` fills entries only, `digest` fills both, `list` on a valid page fills
+#: listing only, and the four silent shapes fill neither.
+CLAUSE_SHAPES = frozenset(
+    {
+        "entries=filled listing=empty",
+        "entries=filled listing=filled",
+        "entries=empty listing=filled",
+        "entries=empty listing=empty",
+    }
+)
+
+
+def _clause_shape(rep) -> str:
+    return (
+        f"entries={'filled' if rep.entries else 'empty'} "
+        f"listing={'filled' if rep.listing else 'empty'}"
+    )
 
 
 class TestTheRefToClauseAgreesWithWhatTheBodyRenders:
@@ -6045,6 +6105,15 @@ class TestTheRefToClauseAgreesWithWhatTheBodyRenders:
     each promised "everything below is about those 1" over a body that names no entry at
     all. The other five pass there, which is why the whole table is here rather than the
     three: the fix must not simply invert them.
+
+    🔴 AND A SECOND MATRIX, FOR THE NINTH ROW — `list` MODE ON A VALID PAGE. The table
+    shipped without it and a mutant survived the whole suite in both languages: deleting
+    `or bool(self.listing)` from `renders_narrowed_set` left all eight rows passing,
+    because no row emptied `entries` while filling `listing`. With the row present that
+    mutant FAILS HERE — the clause renders the silent variant over a body that lists
+    `carrier`, so this row's own line, body and property assertions all go red. The
+    STATUS ledger below could never have caught it: this row and the page-past-the-end
+    row are both `recalled`.
 
     ⚠ `digest` MODE PAST THE END IS THE CONTROL, and it rules out the obvious second
     guess. `page_is_past_the_end` is True on rows 7 AND 8; row 7 lists nothing while row 8
@@ -6062,6 +6131,7 @@ class TestTheRefToClauseAgreesWithWhatTheBodyRenders:
             "nothing-in-scope-carries-it",
             "named-entry-does-not-exist",
             "the-name-is-ambiguous",
+            "list-mode-a-valid-page",
             "list-mode-page-past-the-end",
             "digest-mode-page-past-the-end",
         ],
@@ -6153,4 +6223,141 @@ class TestTheRefToClauseAgreesWithWhatTheBodyRenders:
             "there — decide which it is rather than leaving the table silently partial"
         )
         assert not covered & unreachable
+
+    def test_the_table_covers_every_shape_the_predicate_reads(
+        self, clause_store: Path
+    ) -> None:
+        """The ledger, ON THE AXIS THE PROPERTY IS ACTUALLY BUILT FROM.
+
+        🔴 A STATUS LEDGER STRUCTURALLY CANNOT SEE THIS GAP WHILE READING AS COVERAGE.
+        `renders_narrowed_set` is a disjunction over `entries` and `listing`, so the table
+        is exhaustive only when all FOUR combinations of their emptiness are exercised —
+        and `list`-mode-valid-page and `list`-mode-past-the-end are BOTH `recalled`, so
+        the status ledger above was satisfied with the `listing`-only shape missing. With
+        it missing, deleting `or bool(self.listing)` survived the whole suite in both
+        languages.
+
+        The status ledger STAYS: "a new status is either exercised or declared
+        unreachable" is a different claim from "every render shape is exercised", and
+        neither implies the other. Two ledgers, two axes.
+        """
+        seen = {
+            _clause_shape(
+                rc.recall(clause_store, CLAUSE_SCOPE, **{"ref_to": CLAUSE_REF, **kwargs})
+            )
+            for _, kwargs, _, _ in CLAUSE_CASES
+        }
+        assert seen == CLAUSE_SHAPES, (
+            "the table's render shapes are not the four this predicate reads. Missing "
+            f"{sorted(CLAUSE_SHAPES - seen)}, unexpected {sorted(seen - CLAUSE_SHAPES)}. "
+            "Add a row rather than relaxing this: a table that never empties one of the "
+            "two sets cannot see that term of the disjunction at all."
+        )
+
+
+UNINDEXABLE = "---\nservice: widget\naliases: [one,\n  two]\n---\n"
+
+
+@pytest.fixture()
+def filter_zero_store(tmp_path: Path) -> Path:
+    """TWO scopes, each holding exactly the pair that separates the two mechanisms a
+    search's `searched == 0` can come from.
+
+    - `kept-none/` — ONE readable entry that does NOT carry the ref, plus ONE file that
+      cannot be indexed. Every readable entry here was read and indexed; the FILTER is
+      what empties the searched set.
+    - `all-broken/` — ONE file that cannot be indexed and nothing else. Nothing readable
+      exists, so the searched set is empty for the OTHER reason.
+
+    ⚠ NEITHER SCOPE'S READABLE ENTRY CARRIES THE REF, so the filter keeps nothing in
+    either and `entries_searched` is 0 on both. That is the point: the two shapes are
+    indistinguishable by the searched count alone, and a status derived from that count
+    alone answers the same thing for both.
+    """
+    store = tmp_path / "filter-zero-store"
+    kept = store / "kept-none"
+    kept.mkdir(parents=True)
+    (kept / "readable.md").write_text(
+        _entry(
+            "readable",
+            "kept-none",
+            what="Readable, indexed, and carrying no refs at all.",
+            nuance="- 2000-06-01 a bullet mentioning readiness",
+        ),
+        encoding="utf-8",
+    )
+    (kept / "wrapped-aliases.md").write_text(UNINDEXABLE, encoding="utf-8")
+    broken = store / "all-broken"
+    broken.mkdir()
+    (broken / "wrapped-aliases.md").write_text(UNINDEXABLE, encoding="utf-8")
+    return store
+
+
+class TestAFilterDrivenZeroIsNotAnUnreadableStore:
+    """The REGRESSION guard for the condition the `--ref-to` filter falsified.
+
+    🔴 RED/GREEN MATRIX, MEASURED. At `a6d1a69` — the branch head before this fix — the
+    `kept-none` case FAILS: the status is `search-unreadable`, the body says "NOTHING
+    COULD BE READ … NOT ONE of them could be indexed" and "The query was never run
+    against anything", and `_exit_for` returns 3 with "nothing could be read, so recall
+    was unavailable". All false about a scope whose one readable entry was read, indexed,
+    and then removed by the filter — and the non-zero throws away a run that had an
+    answer. The `all-broken` case passes there and must keep passing: this fix NARROWS
+    the branch, it does not delete it.
+
+    🔴 AND THE DEFECT WAS NOT PRE-EXISTING. `searched == 0 and bad` was sound while
+    `searched` counted every readable entry in the scope — which it did until the
+    `ref-to` filter was added upstream of that counter.
+    """
+
+    def test_the_filter_driven_zero_is_a_no_match_over_a_narrowed_set(
+        self, filter_zero_store: Path
+    ) -> None:
+        rep = rc.search(filter_zero_store, "kept-none", "readiness", ref_to=CLAUSE_REF)
+        assert (rep.entries_searched, rep.ref_to_skipped, len(rep.malformed)) == (0, 1, 1), (
+            "the fixture did not build the shape this test is named for"
+        )
+        assert rep.status == "search-no-match", (
+            f"a filter-driven zero answered {rep.status!r}. One readable entry was read "
+            "and indexed and then removed by the `ref-to` filter; `search-unreadable` "
+            "claims nothing in the scope could be indexed and sends the reader to fix "
+            "the malformed file instead."
+        )
+        text = rc.render_search(rep)
+        for never in (
+            "NOTHING COULD BE READ",
+            "NOT ONE of them could be indexed",
+            "was never run against anything",
+        ):
+            assert never not in text, (
+                f"the rendered answer still claims {never!r} over a scope whose readable "
+                f"entry WAS indexed:\n{text}"
+            )
+        for want in (
+            "status=search-no-match",
+            f"  ref-to: `{CLAUSE_REF}` — 0 of 1 entry in `kept-none/` reference it",
+            "🔴 MALFORMED — 1 entry file in `kept-none/`",
+            "NO MATCH — searched 0 entries in `kept-none/`, and nothing cleared the "
+            "threshold. Nothing was scanned: the `ref-to` filter removed every readable "
+            "entry, so this zero is the FILTER's and says nothing about the query.",
+        ):
+            assert want in text, f"the rendered answer is missing {want!r}:\n{text}"
+        # 🔴 THE OPERATOR-VISIBLE STAKE. `search-unreadable` is in
+        # `UNREADABLE_STATUSES`, so the wrong status also exited 3 with "recall was
+        # unavailable" — and a consumer told to print that verbatim and continue
+        # discards a run that had an answer.
+        assert rc._exit_for(rep.status, "kept-none/", rep.malformed) == 0
+
+    def test_a_scope_with_nothing_readable_still_answers_unreadable(
+        self, filter_zero_store: Path
+    ) -> None:
+        """The POSITIVE CONTROL: without it every assertion above is satisfied by a
+        status nothing can reach."""
+        rep = rc.search(filter_zero_store, "all-broken", "readiness", ref_to=CLAUSE_REF)
+        assert (rep.entries_searched, rep.ref_to_skipped, len(rep.malformed)) == (0, 0, 1)
+        assert rep.status == "search-unreadable"
+        text = rc.render_search(rep)
+        assert "NOTHING COULD BE READ" in text
+        assert "was never run against anything" in text
+        assert rc._exit_for(rep.status, "all-broken/", rep.malformed) == 3
 

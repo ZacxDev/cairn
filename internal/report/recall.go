@@ -154,9 +154,16 @@ func (r RecallReport) PageIsPastTheEnd() bool { return r.ListingPage > r.Listing
 // case is the control separating this predicate from any spelling built out of statuses and
 // page arithmetic.
 //
-// `Entries` and `Listing` are the only two sets the renderer prints below the header, and
-// after the filter both hold matched entries exclusively — so their emptiness IS the question,
-// and it stays the question if a status is added or a branch moves.
+// `Entries` and `Listing` are the only two sets below the header that can hold an entry THE
+// FILTER KEPT, and after the filter both hold matched entries exclusively — so their emptiness
+// IS the question, and it stays the question if a status is added or a branch moves.
+//
+// ⚠ NOT "the only two sets the renderer prints below the header", which is what this said and
+// is false: `Candidates`, `Malformed`, `MalformedElsewhere` and `KnownScopes` all print below
+// it. None of them can carry a matched entry — candidates are filenames offered by an
+// AMBIGUOUS ref, the two malformed sets are rejects the filter never saw because they never
+// reached the index, and `KnownScopes` is a list of scope names — so the predicate is
+// unaffected. The sentence was wrong; the claim under it was not.
 func (r RecallReport) RendersNarrowedSet() bool {
 	return len(r.Entries) != 0 || len(r.Listing) != 0
 }

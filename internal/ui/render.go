@@ -168,6 +168,30 @@ func ScopePage(v PageView) g.Node {
 	)
 }
 
+// RefsKeyDescription is the line under the entry page's "Refs" heading, and it is a CONSTANT
+// so that a test can pin the whole of it.
+//
+// ⚠ IT NAMES BOTH SPELLINGS BECAUSE THE PAGE CANNOT SAY WHICH ONE THIS FILE USED. The parser
+// folds `tasks:`/`task:` into the same values as `refs:` and keeps no record of which key they
+// came from, so a line naming only `refs:` would be a claim about the file that the page has
+// not checked — and a reader who grepped for `refs:` and found `tasks:` would conclude the
+// page was showing something else.
+//
+// 🔴 AND IT SAYS `accepted`, NOT `deprecated`. The older spellings are PERMANENT by operator
+// decision — `README.md` says they "stay accepted" — so telling an operator on the entry page
+// that the key they are looking at is on its way out would be this surface contradicting the
+// documentation shipped beside it. There is no removal date to warn about.
+//
+// 🔴 PINNED AS ONE NORMALISED STRING BY `TestTheRefsKeyDescriptionIsPinnedWhole`, THE SAME WAY
+// `ReplicaHonesty` IS, AND FOR THE SAME REASON. The paragraph above is a comment, and a comment
+// reds no test. This page really did serve the word `deprecated` in this very sentence at
+// `155d587`, and the edit that corrected it to `accepted older` was asserted by nothing — so
+// restoring `deprecated`, or dropping the older spellings from the sentence (the half a tidying
+// edit removes), left the whole suite green. A cosmetic reword now fails a test; that is the
+// intended cost of a machine-readable claim.
+const RefsKeyDescription = "the `refs:` front-matter key (or the accepted older " +
+	"`tasks:`/`task:`), as written"
+
 // EntryPage is ONE entry: the sections its file carries and the line items under the
 // journal heading.
 //
@@ -208,20 +232,7 @@ func EntryPage(v PageView) g.Node {
 				entryCounts(e),
 				g.If(len(e.Aliases) > 0, labelledList("Aliases", "the `aliases:` front-matter key, as written",
 					h.Ul(h.Class("aliases"), g.Map(e.Aliases, plainItem)))),
-				// ⚠ THE DESCRIPTION NAMES BOTH SPELLINGS BECAUSE THE PAGE CANNOT SAY WHICH
-				// ONE THIS FILE USED. The parser folds `tasks:`/`task:` into the same values
-				// as `refs:` and keeps no record of which key they came from, so a line
-				// naming only `refs:` would be a claim about the file that the page has not
-				// checked — and a reader who grepped for `refs:` and found `tasks:` would
-				// conclude the page was showing something else.
-				//
-				// 🔴 AND IT SAYS `accepted`, NOT `deprecated`. The older spellings are
-				// PERMANENT by operator decision — `README.md` says they "stay accepted" —
-				// so telling an operator on the entry page that the key they are looking at
-				// is on its way out would be this surface contradicting the documentation
-				// shipped beside it. There is no removal date to warn about.
-				g.If(len(e.Tasks) > 0, labelledList("Refs",
-					"the `refs:` front-matter key (or the accepted older `tasks:`/`task:`), as written",
+				g.If(len(e.Tasks) > 0, labelledList("Refs", RefsKeyDescription,
 					h.Ul(h.Class("tasks"), g.Map(e.Tasks, taskItem)))),
 				g.If(len(e.Sections) == 0, h.P(h.Class("empty"), g.Text(
 					"This entry carries none of the headings a reader surfaces. The file exists "+

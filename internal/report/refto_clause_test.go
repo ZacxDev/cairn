@@ -3,6 +3,7 @@ package report
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -84,6 +85,14 @@ const (
 // about those 1" over a body that names no entry at all. The other five pass there, which is
 // why the whole table is here rather than the three: the fix must not simply invert them.
 //
+// 🔴 AND A SECOND MATRIX, FOR THE NINTH ROW — `list` MODE ON A VALID PAGE. The table shipped
+// without it and a mutant survived the whole suite in both languages: deleting
+// `|| len(r.Listing) != 0` from `RendersNarrowedSet` left all eight rows passing, because no
+// row emptied `Entries` while filling `Listing`. With the row present that mutant FAILS HERE —
+// the clause renders the silent variant over a body that lists `carrier`, so this row's own
+// line, body and predicate assertions all go red. The status ledger below could never have
+// caught it: this row and the page-past-the-end row are both `recalled`.
+//
 // ⚠ `digest` MODE PAST THE END IS THE CONTROL, and it is the row that rules out the obvious
 // second guess. `PageIsPastTheEnd()` is true on rows 7 AND 8; row 7 lists nothing while row 8
 // still prints the featured body, so a predicate built out of page arithmetic gets one of
@@ -129,9 +138,14 @@ func TestTheRefToClauseAgreesWithWhatTheBodyRenders(t *testing.T) {
 		{"nothing in the scope carries it", withRefTo("clickup:nothing-carries-this"), StatusRefToAbsent, clauseLineSilentZero, false},
 		{"the named entry does not exist", withRef("no-such-entry"), StatusRefAbsent, clauseLineSilent, false},
 		{"the name is ambiguous", withRef("both-twins"), StatusRefAmbiguous, clauseLineSilent, false},
+		{"list mode, a valid page", withPage("list", 1), StatusRecalled, clauseLineReports, true},
 		{"list mode, page past the end", withPage("list", 9), StatusRecalled, clauseLineSilent, false},
 		{"digest mode, page past the end", withPage("digest", 9), StatusRecalled, clauseLineReports, true},
 	}
+
+	// The SHAPE LEDGER's tally, filled in by the loop and asserted after it. See
+	// `wantClauseShapes` for why the axis is this one and not the status.
+	seen := map[string]bool{}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -169,8 +183,47 @@ func TestTheRefToClauseAgreesWithWhatTheBodyRenders(t *testing.T) {
 				t.Errorf("RendersNarrowedSet()=%v but the body %s a matched entry",
 					rep.RendersNarrowedSet(), clausePick(named, "names", "does not name"))
 			}
+			seen[clauseShapeOf(rep)] = true
 		})
 	}
+
+	// 🔴 THE LEDGER, ON THE AXIS THE PREDICATE IS ACTUALLY BUILT FROM. `RendersNarrowedSet`
+	// reads two sets, so the table is exhaustive only when all FOUR combinations of their
+	// emptiness are exercised — and a ledger over STATUSES cannot see that, because
+	// list-mode-valid-page and list-mode-past-the-end are both `recalled`. It read as
+	// coverage while the `Listing`-only shape was missing, and with it missing the mutant
+	// that deletes `|| len(r.Listing) != 0` survived the whole suite in both languages.
+	for _, shape := range wantClauseShapes {
+		if !seen[shape] {
+			t.Errorf("no row in the table produces the render shape %q, so the predicate's "+
+				"behaviour on it is unmeasured. Add a row rather than deleting this line: "+
+				"`RendersNarrowedSet` is a disjunction over two sets and a table that never "+
+				"empties one of them cannot see that term at all.", shape)
+		}
+	}
+	for shape := range seen {
+		if !slices.Contains(wantClauseShapes, shape) {
+			t.Errorf("a row produced the render shape %q, which this ledger does not list. "+
+				"Either the shape set grew or a row stopped reaching what it was written "+
+				"for — decide which.", shape)
+		}
+	}
+}
+
+// wantClauseShapes is every combination of "is `Entries` empty" × "is `Listing` empty", which
+// is the axis `RendersNarrowedSet` is a disjunction over. All four are reachable under a
+// ref-to line: `--ref` fills Entries only, `digest` fills both, `list` on a valid page fills
+// Listing only, and the four silent shapes fill neither.
+var wantClauseShapes = []string{
+	"entries=filled listing=empty",
+	"entries=filled listing=filled",
+	"entries=empty listing=filled",
+	"entries=empty listing=empty",
+}
+
+func clauseShapeOf(r RecallReport) string {
+	return "entries=" + clausePick(len(r.Entries) != 0, "filled", "empty") +
+		" listing=" + clausePick(len(r.Listing) != 0, "filled", "empty")
 }
 
 func clausePick(cond bool, yes, no string) string {

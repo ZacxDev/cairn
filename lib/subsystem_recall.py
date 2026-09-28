@@ -623,11 +623,16 @@ KNOWN_SENSITIVITIES: tuple[str, ...] = ("client-confidential", "personal", "publ
 #   8. search-no-match   nothing did. NOT spelled `*-empty`: an empty scope and a
 #                        query that matched nothing in a full scope are different
 #                        facts, and two statuses that share a word get read as one.
-#   9. search-unreadable the searched scopes held files and none could be indexed,
-#                        so the query never ran against anything. Same argument as
-#                        `scope-unreadable`, and the same reason it must not
-#                        collapse into `search-no-match`: a zero from a scan that
-#                        walked nothing is not a zero.
+#   9. search-unreadable the searched scopes held files, NONE could be indexed,
+#                        and no readable entry was removed by a `--ref-to` filter
+#                        either — so the query never ran against anything. Same
+#                        argument as `scope-unreadable`, and the same reason it must
+#                        not collapse into `search-no-match`: a zero from a scan that
+#                        walked nothing is not a zero. 🔴 THE LAST TERM IS NOT
+#                        DECORATION: without it a filter that removed every readable
+#                        entry answered this status over a scope whose entries were
+#                        all indexed fine, printing "NOT ONE of them could be
+#                        indexed" about files that were.
 STATUS_PRECEDENCE: tuple[str, ...] = (
     "scope-absent",
     "scope-unreadable",
@@ -1437,11 +1442,19 @@ class RecallReport:
         matched entry. That case is the control separating this predicate from any
         spelling built out of statuses and page arithmetic.
 
-        `entries` and `listing` are the only two sets the renderer prints below the
-        header, and after the filter both hold matched entries exclusively — so their
-        emptiness IS the question, and it stays the question if a status is added or a
-        branch moves. `internal/report.RecallReport.RendersNarrowedSet` is the Go twin;
-        `tests/parity/harness.py` diffs the two clients' bytes.
+        `entries` and `listing` are the only two sets below the header that can hold an
+        entry THE FILTER KEPT, and after the filter both hold matched entries exclusively
+        — so their emptiness IS the question, and it stays the question if a status is
+        added or a branch moves. `internal/report.RecallReport.RendersNarrowedSet` is the
+        Go twin; `tests/parity/harness.py` diffs the two clients' bytes.
+
+        ⚠ NOT "the only two sets the renderer prints below the header", which is what
+        this said and is false: `candidates`, `malformed`, `malformed_elsewhere` and
+        `known_scopes` all print below it. None of them can carry a matched entry —
+        candidates are filenames offered by an AMBIGUOUS ref, the two malformed sets are
+        rejects the filter never saw because they never reached the index, and
+        `known_scopes` is a list of scope names — so the property is unaffected. The
+        sentence was wrong; the claim under it was not.
         """
         return bool(self.entries) or bool(self.listing)
 
@@ -3285,15 +3298,35 @@ def search(
     worst = max(below, default=None, key=lambda h: (h.score, -h.start))
     return SearchReport(
         # 🔴 `search-unreadable` OUTRANKS `search-no-match`, and the discriminator
-        # is `searched == 0` — not `cleared == 0`. A query that ran over zero
-        # readable entries produced a zero that says nothing about the query, and
-        # `render_search`'s no-match branch would have printed "searched 0 entries
-        # … nothing cleared the threshold" — technically true, and read by
+        # is "NOTHING READABLE EXISTED" — not `cleared == 0`, and, since the
+        # `ref-to` filter above, not `searched == 0` either. A query that ran over
+        # zero readable entries produced a zero that says nothing about the query,
+        # and `render_search`'s no-match branch would have printed "searched 0
+        # entries … nothing cleared the threshold" — technically true, and read by
         # everyone as "the store has nothing on this". Same class of bug as
         # `scope-empty` swallowing a broken scope.
+        #
+        # 🔴 `ref_to_skipped == 0` IS THE TERM THE FILTER MADE NECESSARY, AND ITS
+        # ABSENCE WAS A MEASURED DEFECT RATHER THAN A HYPOTHETICAL. `searched == 0
+        # and bad` was SOUND while `searched` counted every readable entry in the
+        # scope: a zero then meant nothing readable existed. The `ref-to` filter
+        # `continue`s before that counter and does not touch `bad`, so it can
+        # drive `searched` to 0 over a scope whose readable entries were all read
+        # and indexed — and one malformed file beside them was enough to answer
+        # `search-unreadable`, whose body says "NOT ONE of them could be indexed"
+        # and "The query was never run against anything". Both false, and the
+        # reader is sent to fix a file that had nothing to do with the empty
+        # result.
+        #
+        # So the PRE-FILTER readable count is what this branch is about, and
+        # `searched + ref_to_skipped` is that count: every readable entry in the
+        # searched scopes lands in exactly one of the two. A filter-driven zero
+        # therefore falls through to `search-no-match`, where the ref-to line's own
+        # "0 of N" and the sentence `render_search` prints for that shape are the
+        # honest answer: the query DID run, over a narrowed set that was empty.
         status=(
             "search-unreadable"
-            if searched == 0 and bad
+            if searched == 0 and ref_to_skipped == 0 and bad
             else ("search-hit" if cleared else "search-no-match")
         ),
         scope=normalize_ref(scope) if not all_scopes else "(all scopes)",
@@ -3349,15 +3382,48 @@ def render_search(
     # third field to carry it.
     if report.ref_to is not None:
         out.append(
-            # A CONSTANT True, AND THE NUMERATOR IS WHY IT CAN BE ONE. `entries_searched`
-            # is incremented once per entry the filter KEPT, so the count printed here is
-            # the kept count by construction and every status below is reporting on exactly
-            # that set — `render_text`'s problem (a count of matched entries rendered over a
-            # body about none of them) has no spelling here. Both statuses that print no
-            # HUNKS still report on that set: `search-no-match` prints "searched N entries in
-            # <scopes>", which is a statement about exactly the kept entries, and
-            # `search-unreadable` is only reachable with `entries_searched == 0`, so there the
-            # clause is about the empty set rather than false about a non-empty one.
+            # A CONSTANT True. THE NUMERATOR IS WHY IT CAN BE ONE FOR THE COUNT; THE
+            # SECOND CLAUSE IS CARRIED BY AN ENUMERATION AND BY NOTHING SHORTER.
+            #
+            # The count: `entries_searched` is incremented once per entry the filter KEPT,
+            # so the number printed here is the kept count by construction. `render_text`'s
+            # problem — a count of matched entries rendered over a body about none of them —
+            # has no spelling here on the count side.
+            #
+            # The clause "everything below is about those N" is a claim about the BODY, and
+            # the only thing that carries it is an enumeration of what can BE below it.
+            # This line sits above exactly three statuses — `scope-absent` returns before
+            # the operand is parsed, so it never carries one — and `search-no-match` has
+            # two distinguishable bodies, which makes FOUR cases. Each was re-derived
+            # rather than covered by an absolute:
+            #
+            #   - `search-hit` — the hunks below come from kept entries only, because
+            #     `_entry_hunks` is called after the filter's `continue` and nowhere else.
+            #   - `search-no-match` with N > 0 — the body is "searched N entries in
+            #     <scopes>, and nothing cleared the threshold", plus a near miss that is
+            #     itself a hunk from a kept entry. A statement about exactly those N.
+            #   - `search-no-match` with N == 0 — VACUOUS, not false: the body says the scan
+            #     found nothing because the filter removed every readable entry (see the
+            #     no-match branch below). Nothing under the line reports on a REMOVED entry
+            #     as though it had been kept, which is what the clause would have to be
+            #     false about.
+            #
+            # ⚠ THE FOURTH CASE IS `search-unreadable`, and after the fix it requires
+            # `ref_to_skipped == 0` as well as `entries_searched == 0` — so the line there
+            # reads "0 of 0", and the clause is about the empty set over a pre-filter set
+            # that was also empty. 🔴 THAT IS NOT WHY THE OLD COMMENT WAS
+            # WRONG, AND THE DIFFERENCE IS THE POINT: it reasoned only about the CLAUSE
+            # ("about the empty set rather than false about a non-empty one") and was
+            # literally true while the STATUS it annotated was false about the store.
+            # Re-deriving a clause says nothing about the branch that reaches it.
+            #
+            # 🔴 AND THE ENUMERATION IS THE WHOLE JUSTIFICATION, WHICH IS WEAKER THAN A GUARD
+            # AND IS SAID SO RATHER THAN DRESSED UP. It is PROSE: nothing mechanical asserts
+            # that the set of statuses reachable under this line is still those three, the
+            # way `renders_narrowed_set`'s table is now asserted over all four render shapes.
+            # A new `search-*` status, or a new body under an existing one, has to be added to
+            # this list and checked BY HAND today — or the constant has to become a property
+            # the way `renders_narrowed_set` is.
             _ref_to_line(
                 report.ref_to,
                 report.entries_searched,
@@ -3408,15 +3474,40 @@ def render_search(
         # 🔴 THE ZERO CARRIES ITS OWN EVIDENCE. How much was scanned (so a zero
         # from an empty scan is visible), and the best NEAR miss with its score
         # (so "matched nothing" and "just missed" are distinguishable).
-        near = (
-            f" The closest candidate was `{report.best_below[0]}` at "
-            f"{report.best_below[1]:.2f}, below the {report.threshold:.2f} threshold — "
-            f"re-run with `--threshold {max(0.0, report.best_below[1] - 0.01):.2f}` to see "
-            f"it, or rephrase."
-            if report.best_below is not None
-            else " No candidate scored above zero at all, so this is an absent term rather "
-            "than a weak one."
-        )
+        #
+        # 🔴 AND THE MIDDLE BRANCH IS THE FILTER'S ZERO, SAID AS THE FILTER'S. With
+        # nothing scanned, "an absent term rather than a weak one" is a claim about
+        # the QUERY that no comparison was made to support — the same defect
+        # `best_below` exists to refuse, one branch over. It is the shape the
+        # `ref-to` filter introduced: every readable entry was read and indexed, and
+        # then removed by the narrowing.
+        #
+        # ⚠ ORDERED AFTER `best_below` AND THE ORDER CANNOT MATTER: a near miss is a
+        # hunk from a scanned entry, so `best_below is not None` and
+        # `entries_searched == 0` cannot both hold. Written as a chain so a later
+        # edit does not have to re-derive that.
+        #
+        # ⚠ REACHABLE ONLY WITH A FILTER THAT REMOVED SOMETHING, DELIBERATELY. The
+        # zero-scanned sentence a present-but-empty scope prints is a DIFFERENT
+        # mechanism reaching the same branch, it predates the filter, and it is left
+        # exactly as it was rather than swept in here.
+        if report.best_below is not None:
+            near = (
+                f" The closest candidate was `{report.best_below[0]}` at "
+                f"{report.best_below[1]:.2f}, below the {report.threshold:.2f} threshold — "
+                f"re-run with `--threshold {max(0.0, report.best_below[1] - 0.01):.2f}` to see "
+                f"it, or rephrase."
+            )
+        elif report.entries_searched == 0 and report.ref_to_skipped > 0:
+            near = (
+                " Nothing was scanned: the `ref-to` filter removed every readable entry, "
+                "so this zero is the FILTER's and says nothing about the query."
+            )
+        else:
+            near = (
+                " No candidate scored above zero at all, so this is an absent term rather "
+                "than a weak one."
+            )
         out.append(f"NO MATCH — searched {scanned}, and nothing cleared the threshold.{near}")
         return "\n".join(out)
 

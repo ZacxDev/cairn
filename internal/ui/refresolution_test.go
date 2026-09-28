@@ -229,3 +229,54 @@ func TestTheOlderKeyResolvesTheSameURLs(t *testing.T) {
 		t.Fatalf("the older key resolved to %q, want %q", entry.Tasks[0].URL, want)
 	}
 }
+
+// TestTheRefsKeyDescriptionIsPinnedWhole pins the line under the entry page's "Refs" heading
+// as ONE NORMALISED STRING, the same way `TestTheReplicaHonestyNoticeIsPinnedWhole` pins the
+// share flow's notice.
+//
+// 🔴 WHOLE-STRING, NOT KEYWORD, AND THE PRECEDENT IS WHY. A guard asserting the page mentions
+// `refs:` survives a reword that has dropped the clause about the older spellings, or restored
+// the word `deprecated` this page used to carry — and `deprecated` on this surface contradicts
+// the documentation shipped beside it, which says those keys stay accepted. The comment on
+// `RefsKeyDescription` says all of that and a comment reds no test; before this test the whole
+// sentence was asserted by nothing.
+//
+// ⚠ AN INVARIANT GUARD, LABELLED AS ONE. The `accepted`/`deprecated` edit landed earlier on
+// this branch; this pins the corrected string rather than catching the loss of it. What it DOES
+// catch is the next edit.
+func TestTheRefsKeyDescriptionIsPinnedWhole(t *testing.T) {
+	want := normalizeSpace(RefsKeyDescription)
+	if want == "" {
+		t.Fatal("RefsKeyDescription is EMPTY, so every comparison below is vacuous")
+	}
+
+	world := benignWorld()
+	view := viewOf("operator@example.invalid", world)
+	view.Scope = &world[0]
+	view.Entry = &world[0].Entries[0]
+	// INSTRUMENT CONTROL: the labelled list renders only when the entry carries refs, so a
+	// fixture with none would satisfy nothing below by never emitting the line at all.
+	if len(view.Entry.Tasks) == 0 {
+		t.Fatal("the fixture entry carries no refs, so the `Refs` list never renders")
+	}
+	got := pageText(renderNode(t, EntryPage(view)))
+	if !strings.Contains(got, want) {
+		t.Errorf("the entry page does not carry the refs-key description as a whole string."+
+			"\nwant: %q\nThe line is pinned entire rather than by keyword because a reword that "+
+			"drops the older spellings, or restores `deprecated`, is exactly what this guard is "+
+			"for. If the wording changed on purpose, change `RefsKeyDescription` and this test "+
+			"together.", want)
+	}
+
+	// 🔴 NEGATIVE CONTROL: the comparison can FAIL. Without it a `Contains` that always
+	// matched — an empty needle, a normaliser that returned "" — would report green while
+	// measuring nothing.
+	mutated := strings.Replace(want, "the accepted older", "the deprecated older", 1)
+	if mutated == want {
+		t.Fatal("the negative control did not change the needle, so it controls nothing")
+	}
+	if strings.Contains(got, mutated) {
+		t.Error("the page carries the MUTATED description, so this test cannot tell the pinned " +
+			"string from a reworded one")
+	}
+}

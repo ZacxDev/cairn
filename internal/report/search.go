@@ -624,13 +624,32 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 	})
 
 	out := base
-	// 🔴 `search-unreadable` OUTRANKS `search-no-match`, AND THE DISCRIMINATOR IS
-	// "NOTHING WAS SEARCHED", not "nothing cleared". A query that ran over zero readable
-	// entries produced a zero that says nothing about the query, and the no-match branch
-	// would have printed "searched 0 entries … nothing cleared the threshold" — technically
-	// true, and read by everyone as "the store has nothing on this".
+	// 🔴 `search-unreadable` OUTRANKS `search-no-match`, AND THE DISCRIMINATOR IS "NOTHING
+	// READABLE EXISTED", not "nothing cleared" and — since the `ref-to` filter above — NOT
+	// "nothing was searched" either. A query that ran over zero readable entries produced a
+	// zero that says nothing about the query, and the no-match branch would have printed
+	// "searched 0 entries … nothing cleared the threshold" — technically true, and read by
+	// everyone as "the store has nothing on this".
+	//
+	// 🔴 `refToSkipped == 0` IS THE TERM THE FILTER MADE NECESSARY, AND ITS ABSENCE WAS A
+	// MEASURED DEFECT RATHER THAN A HYPOTHETICAL. `searched == 0 && len(bad) > 0` was SOUND
+	// while `searched` counted every readable entry in the scope: a zero then meant nothing
+	// readable existed. The `ref-to` filter runs upstream of that counter and does not touch
+	// `bad`, so it can drive `searched` to 0 over a scope whose readable entries were all
+	// read and indexed — and one malformed file beside them was enough to answer
+	// `search-unreadable`, whose body says "NOT ONE of them could be indexed" and "The query
+	// was never run against anything". Both false, and the reader is sent to fix a file that
+	// had nothing to do with the empty result.
+	//
+	// So the pre-filter readable count is what this branch is about, and `searched +
+	// refToSkipped` is that count: `searched` counts kept entries, `refToSkipped` counts
+	// readable entries the filter removed, and every readable entry in the searched scopes
+	// lands in exactly one of them. A filter-driven zero therefore falls through to
+	// `search-no-match`, where the ref-to line's own "0 of N" and the sentence
+	// `RenderText` prints for that shape are the honest answer: the query DID run, over a
+	// narrowed set that turned out to be empty.
 	switch {
-	case searched == 0 && len(bad) > 0:
+	case searched == 0 && refToSkipped == 0 && len(bad) > 0:
 		out.Status = StatusSearchUnreadable
 	case len(cleared) > 0:
 		out.Status = StatusSearchHit
