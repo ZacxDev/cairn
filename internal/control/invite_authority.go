@@ -35,17 +35,63 @@ func (r Role) CanManageMembers() bool {
 	return r == RoleOwner || r == RoleAdmin
 }
 
-// NamedProject is a project as a chooser renders it: the id a write must name, and the
-// display name a human recognises.
+// CanConfer answers whether a principal holding `r` may hand `other` to somebody else.
 //
-// 🔴 BOTH FIELDS, FOR THE REASON `NamedScope` CARRIES BOTH. The id is what any write must
+// # 🔴 IT EXISTS SO THE ESCALATION RULE HAS ONE SPELLING, AND IT ALREADY HAD TWO READERS
+//
+// The rule is "an admin may not make an owner". Without it that condition sits open-coded
+// at the MINT — where an invitation's role is chosen — and again at whatever renders the
+// role CHOOSER, because a chooser that offers `owner` to an admin offers a value the mint
+// will refuse. Two spellings of one rule, and the one that drifts is whichever is edited
+// second. [Role.CanManageMembers]'s own comment makes this argument at length about a
+// predicate that was open-coded at several sites and measured wrong at all but one of them
+// in the same direction; this is the same argument, arriving before the second site exists.
+//
+// # 🔴 WHY AN ADMIN MAY NOT CONFER `owner`
+//
+// Because they could then confer it on THEMSELVES and the trail would not say so. An admin
+// mints an `owner` invitation, redeems it with their own provider identity, and the journal
+// records a `member-set` at `owner` whose actor is the inviter — which is them — so the
+// escalation reads as an ordinary join performed by somebody entitled to perform it.
+// `refuseOrphaning` draws the same line from the other side when it refuses to remove a
+// project's last owner: the owner role is the one that cannot be reached sideways.
+//
+// ⚠ A ROLE THAT CANNOT MANAGE MEMBERS CONFERS NOTHING, which is a restatement rather than
+// a second rule — it is [Role.CanManageMembers] consulted here so that a caller cannot
+// satisfy this predicate without also satisfying that one. A caller checking only this one
+// is then not a hole.
+//
+// ⚠ AND AN INVALID `other` IS REFUSED, so a role string that reached a form or a database
+// without a mapping in `roleVerbs` cannot be conferred. That is [Role.Valid]'s fail-closed
+// direction, asked here rather than assumed of the caller.
+func (r Role) CanConfer(other Role) bool {
+	if !r.CanManageMembers() || !other.Valid() {
+		return false
+	}
+	return r == RoleOwner || other != RoleOwner
+}
+
+// NamedProject is a project as a chooser renders it: the id a write must name, the
+// display name a human recognises, and the role the listed principal holds in it.
+//
+// 🔴 THE FIRST TWO, FOR THE REASON `NamedScope` CARRIES BOTH. The id is what any write must
 // carry, because a display name is mutable and not unique; the name is the only half a
 // person can act on. A chooser offering one without the other is either unusable or
 // unsafe, and the share flow already records what happens when a human is shown a name
 // and the handler keys on an id — a 404 whose sentence is false.
+//
+// 🔴 AND `HeldRole` IS HERE RATHER THAN FETCHED AGAIN, WHICH IS THE POINT OF PUTTING IT ON
+// THIS TYPE AT ALL. A role chooser must offer only what the caller may confer
+// ([Role.CanConfer]), so it needs the caller's own role in each project. Every value in
+// this slice was produced by reading exactly that membership, so carrying it costs nothing
+// — where a renderer that asked again would be a SECOND read of the model, taken at a
+// different instant from the one that produced the list, and `ControlInviting.Invitable`'s
+// own comment is about exactly that window. It is the role of the USER
+// [Model.ProjectsManagedBy] was asked about, never the project's owner.
 type NamedProject struct {
-	ID   ID
-	Name string
+	ID       ID
+	Name     string
+	HeldRole Role
 }
 
 // ProjectsManagedBy lists every project in which `user` holds a role that
@@ -88,7 +134,10 @@ func (m Model) ProjectsManagedBy(user ID) []NamedProject {
 		if !known {
 			continue
 		}
-		out = append(out, NamedProject{ID: p.ID, Name: p.Name})
+		// `ship.Role` is the membership this loop ALREADY read to decide the project
+		// belongs in the list, so the caller's role costs no second lookup — see
+		// [NamedProject.HeldRole] for why a renderer must not go and ask for it again.
+		out = append(out, NamedProject{ID: p.ID, Name: p.Name, HeldRole: ship.Role})
 	}
 	slices.SortFunc(out, func(a, b NamedProject) int {
 		if c := cmp.Compare(a.Name, b.Name); c != 0 {

@@ -2346,6 +2346,277 @@ MUTANTS: tuple[Mutant, ...] = (
         "only thing that can see it. It is also why this row costs ~30s: the killing test "
         "kills it on its DEADLINE, the mutant having made the child serve rather than exit.",
     ),
+    # ---- Phase G: the invite flow's HTTP surface ----------------------------------
+    #
+    # 🔴 THESE ROWS EXIST HERE RATHER THAN IN A SCRATCHPAD SCRIPT BECAUSE OF THE ENTRY
+    # `./internal/ui/` IN `PKGS` ABOVE. That entry records that the share flow arrived with a
+    # battery of its OWN which NO gate ever ran, and that folding its rows in here bought the
+    # CI step, the copytree isolation and the count pin at once. The invite flow's sweep was
+    # first written as exactly that scratchpad script, scored 24 killed / 0 survived, and
+    # would have shipped as a number in a commit message — the same shape, one flow along.
+    Mutant(
+        name="role-escalation-check-dropped-from-canconfer",
+        path="internal/control/invite_authority.go",
+        old="return r == RoleOwner || other != RoleOwner",
+        new="return true",
+        killer="TestCanConferRefusesEveryEscalationAndPermitsEveryLegitimateHandOff",
+        why="the rule written as 'anybody who can manage members can confer anything' — the "
+        "obvious first draft, and it lets an admin mint an owner invitation and redeem it "
+        "themselves, leaving a journal that reads as an ordinary join.",
+    ),
+    Mutant(
+        name="canconfer-stops-asking-who-may-manage",
+        path="internal/control/invite_authority.go",
+        old="if !r.CanManageMembers() || !other.Valid() {",
+        new="if !other.Valid() {",
+        killer="TestCanConferRefusesEveryEscalationAndPermitsEveryLegitimateHandOff",
+        why="a caller who checks only `CanConfer` would then be a hole: an ordinary member "
+        "could confer `member`. The two predicates are deliberately nested so that one call "
+        "site cannot satisfy the narrow one without the wide one.",
+    ),
+    Mutant(
+        name="canconfer-stops-refusing-an-undefined-role",
+        path="internal/control/invite_authority.go",
+        old="if !r.CanManageMembers() || !other.Valid() {",
+        new="if !r.CanManageMembers() {",
+        killer="TestCanConferRefusesEveryEscalationAndPermitsEveryLegitimateHandOff",
+        why="`resolve` treats a role absent from `roleVerbs` as the EMPTY verb set, so a role "
+        "string from a newer build would be conferrable and would grant nothing — an "
+        "invitation that succeeds and confers no access.",
+    ),
+    Mutant(
+        name="allroles-loses-the-least-privileged-entry",
+        path="internal/control/model.go",
+        old="var AllRoles = []Role{RoleOwner, RoleAdmin, RoleMember}",
+        new="var AllRoles = []Role{RoleOwner, RoleAdmin}",
+        killer="TestAllRolesIsTheWholeRoleTable",
+        why="the shape of a chooser list edited by hand. Every role the model grants stays "
+        "grantable; what disappears is the ability to OFFER one, and the form would silently "
+        "stop being able to express `member`.",
+    ),
+    Mutant(
+        name="allroles-order-reverses",
+        path="internal/control/model.go",
+        old="var AllRoles = []Role{RoleOwner, RoleAdmin, RoleMember}",
+        new="var AllRoles = []Role{RoleMember, RoleAdmin, RoleOwner}",
+        killer="TestAllRolesIsTheWholeRoleTable",
+        why="a tidy-up that looks cosmetic. `inviteForm`'s comment explains its explicit "
+        "default BY REFERENCE to this order being descending, so flipping it makes that "
+        "comment false while the form keeps working — a claim rotting with no symptom.",
+    ),
+    Mutant(
+        name="namedproject-drops-the-callers-role",
+        path="internal/control/invite_authority.go",
+        old="out = append(out, NamedProject{ID: p.ID, Name: p.Name, HeldRole: ship.Role})",
+        new="out = append(out, NamedProject{ID: p.ID, Name: p.Name})",
+        killer="TestProjectsManagedByCarriesTheCallersOwnRole",
+        extra_killers=("TestTheRoleChooserIsDrivenByTheREALModelsHeldRole",),
+        why="THE MEASURED SEAM. This mutant SURVIVED a fully green suite before those two "
+        "guards existed: one side tested the model against a hand-built Model, the other "
+        "tested the chooser against a hand-built NamedProject, and neither built the "
+        "combined state. Its only symptom was a role chooser that silently offered nothing.",
+    ),
+    Mutant(
+        name="namedproject-reports-a-constant-role",
+        path="internal/control/invite_authority.go",
+        old="out = append(out, NamedProject{ID: p.ID, Name: p.Name, HeldRole: ship.Role})",
+        new="out = append(out, NamedProject{ID: p.ID, Name: p.Name, HeldRole: RoleOwner})",
+        killer="TestProjectsManagedByCarriesTheCallersOwnRole",
+        why="the direction a zero-check cannot see: a role that is present and WRONG, in the "
+        "permissive direction. It offers every admin the `owner` option, which the mint then "
+        "refuses — so the visible symptom is a form that errors rather than one that is empty.",
+    ),
+    Mutant(
+        name="ui-mint-stops-checking-conferrability",
+        path="internal/ui/inviting.go",
+        old="if !held.CanConfer(role) {",
+        new="if false {",
+        killer="TestAnAdminCannotMintAnOwnerInvitation",
+        why="the escalation itself, at the one gate that is load-bearing. The chooser's "
+        "filtering constrains a browser and nothing else; this is the check an HTTP client "
+        "has to get past.",
+    ),
+    Mutant(
+        name="ui-mint-error-loses-its-sentinel",
+        path="internal/ui/inviting.go",
+        old='"%w: a %q may not confer %q (see control.Role.CanConfer)",\n\t\t\tErrRoleNotConferrable, held, role)',
+        new='"ui: a %q may not confer %q (see control.Role.CanConfer)", held, role)',
+        killer="TestAnAdminCannotMintAnOwnerInvitation",
+        why="a `fmt.Errorf` written without `%w`, which is the commonest way a sentinel stops "
+        "being recognisable. `refuseInviteWrite` maps on `errors.Is`, so the refusal becomes a "
+        "500 — the wrong status, and a sentence that sends an operator hunting a broken server.",
+    ),
+    Mutant(
+        name="ui-invite-narrowing-skipped-before-the-unnarrowed-read",
+        path="internal/ui/invitehandlers.go",
+        old="\tchosen, found := pickProject(view.Projects, project)\n\tif !found {\n\t\twritePlain(w, http.StatusNotFound, inviteRefusal)\n\t\treturn\n\t}",
+        new="\tchosen, _ := pickProject(view.Projects, project)",
+        killer="TestAProjectThatIsNotInvitableIsRefusedBEFORETheUnnarrowedRead",
+        why="`Inviting.Outstanding` performs NO authority check and says so in its own doc — "
+        "the narrowing is the only thing in front of it. Dropping the refusal turns the page "
+        "into a listing of who is being invited where, for any project id a caller names.",
+    ),
+    Mutant(
+        name="ui-mint-response-loses-no-store",
+        path="internal/ui/invitehandlers.go",
+        old="\twriteHTMLNoStore(w, http.StatusOK, b.String())",
+        new="\twriteHTML(w, http.StatusOK, b.String())",
+        killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
+        why="the ordinary render helper, reached for because it is the one every other page "
+        "uses. This response's BODY is a bearer capability that can create a principal, and a "
+        "shared cache or a back-forward store keeping it is the whole exposure.",
+    ),
+    Mutant(
+        name="ui-minted-link-becomes-an-anchor",
+        path="internal/ui/render.go",
+        old='h.P(h.Class("invite-link"), g.Text(m.Link)),',
+        new='h.P(h.Class("invite-link"), h.A(h.Href(m.Link), g.Text(m.Link))),',
+        killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
+        why="the single most natural improvement to make to this page — a URL rendered as "
+        "text looks like an oversight. The link is a PATH with no origin, so an anchor "
+        "resolves it against THIS page: one stray click, or one link-prefetcher, and the "
+        "minter has redeemed the invitation on themselves.",
+    ),
+    Mutant(
+        name="ui-mint-logs-the-token",
+        path="internal/ui/invitehandlers.go",
+        old='s.logf("an invitation was minted: project=%s role=%s expires=%s by=%s",\n\t\tinv.ProjectID, inv.Role, inv.ExpiresAt.UTC().Format(time.RFC3339), inv.Inviter)',
+        new='s.logf("an invitation was minted: project=%s role=%s expires=%s by=%s token=%s",\n\t\tinv.ProjectID, inv.Role, inv.ExpiresAt.UTC().Format(time.RFC3339), inv.Inviter, token)',
+        killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
+        why="one field added to a log line while debugging, and never taken out. This is the "
+        "shape that put a 64-character secret into the control journal once already, and the "
+        "value here can create a principal.",
+    ),
+    Mutant(
+        name="ui-join-page-resolves-the-token",
+        path="internal/ui/invitehandlers.go",
+        old="\ts.render(w, JoinPage(token, s.providerArmed()))",
+        new="\tif s.inviting != nil {\n\t\t_, _ = s.inviting.Outstanding(control.ID(token))\n\t}\n\ts.render(w, JoinPage(token, s.providerArmed()))",
+        killer="TestTheJoinPageNeverConsultsTheInviteAuthority",
+        why="the obvious way to make the page more helpful — look the invitation up so it can "
+        "name the project. `GET /join` is dispatched BEFORE the authentication chain, so any "
+        "resolution there is an oracle over which invitations exist, drivable at will.",
+    ),
+    Mutant(
+        name="ui-join-page-offers-a-form-with-no-token",
+        path="internal/ui/render.go",
+        old='\t\t\t\tg.If(token != "" && provider, joinForm(token)),',
+        new="\t\t\t\tg.If(provider, joinForm(token)),",
+        killer="TestTheJoinPageWithoutATokenSaysSoAndOffersNoForm",
+        why="a simplification of a two-part condition. Submitting the empty form opens a "
+        "flight carrying no invitation and completes as an ORDINARY sign-in, so somebody who "
+        "was invited ends up signed in as nobody — or refused — with nothing saying the link "
+        "was at fault.",
+    ),
+    Mutant(
+        name="ui-role-chooser-stops-filtering",
+        path="internal/ui/render.go",
+        old="\tconferrable := conferrableRoles(v.Project.HeldRole)",
+        new="\tconferrable := control.AllRoles",
+        killer="TestTheRoleChooserOffersOnlyWhatTheCallerMayConfer",
+        why="`grantableVerbs = control.AllVerbs` one file over is exactly this shape and is "
+        "CORRECT there, which is what makes it the natural edit here. Roles differ: the mint "
+        "refuses `owner` from an admin, so an unfiltered list offers a value that cannot work.",
+    ),
+    Mutant(
+        name="ui-role-chooser-default-follows-the-list-order",
+        path="internal/ui/render.go",
+        old="g.If(r == leastPrivilegedRole, h.Selected()),",
+        new="g.If(false, h.Selected()),",
+        killer="TestTheRoleChooserOffersOnlyWhatTheCallerMayConfer",
+        why="a `selected` attribute reads as cosmetic. `control.AllRoles` is in DESCENDING "
+        "authority and a `select` with no explicit selection submits its FIRST option — so "
+        "removing this makes an unread form confer OWNERSHIP of a project.",
+    ),
+    Mutant(
+        name="ui-revoke-button-appears-on-a-spent-invitation",
+        path="internal/ui/render.go",
+        old='g.If(csrf != "" && row.State == "open", h.FormEl(',
+        new='g.If(csrf != "", h.FormEl(',
+        killer="TestTheRevokeButtonIsOfferedOnlyForAnOpenInvitation",
+        why="the same two-part-condition simplification as the join form. Not a security "
+        "hole — the store refuses a non-open revoke itself — but a control offered on every "
+        "row that works on one of them, which teaches people to ignore the refusal.",
+    ),
+    Mutant(
+        name="ui-invite-write-refusals-collapse-into-one",
+        path="internal/ui/invitehandlers.go",
+        old="\tcase errors.Is(err, ErrRoleNotConferrable):",
+        new="\tcase false:",
+        killer="TestTheTwoInviteWriteRefusalsAnswerDifferentlyForDifferentReasons",
+        why="the tidy-up that makes every refusal uniform, which is this surface's own rule "
+        "elsewhere and is wrong here: a person who picked `owner` from a list would be told "
+        "'that invitation cannot be recorded' and could never learn why.",
+    ),
+    Mutant(
+        name="ui-invite-read-refuses-instead-of-answering-with-no-store",
+        path="internal/ui/invitehandlers.go",
+        old="\tif s.inviting == nil {\n\t\t// Nothing to ask. The page says so — see [NoInviteStore] for why this is a page\n\t\t// rather than a refusal.\n\t\ts.renderInvite(w, view)\n\t\treturn\n\t}",
+        new="\tif s.inviting == nil {\n\t\ts.refuseWithoutInviteStore(w)\n\t\treturn\n\t}",
+        killer="TestTheInviteRowsAnswerHonestlyWithNoInviteStore",
+        why="consistency with the two WRITES, and with `refuseUnconfiguredOAuth` one file "
+        "over. `shell` links this path from the header of every page unconditionally, so a "
+        "501 here is a dead link in the frame of the whole surface.",
+    ),
+    Mutant(
+        name="ui-empty-invite-index-drops-the-authority-sentence",
+        path="internal/ui/render.go",
+        old='\t\tg.If(len(v.Projects) == 0 && !v.NoStore, h.P(h.Class("empty"), g.Text(',
+        new='\t\tg.If(false, h.P(h.Class("empty"), g.Text(',
+        killer="TestTheInviteIndexSaysAnEmptyListIsAnAuthorityAnswer",
+        why="an empty list looks self-explanatory. 'nothing here' and 'nothing you may see' "
+        "are different facts with different next actions, and `Page`'s equivalent sentence "
+        "shipped as a measured lie for exactly this reason.",
+    ),
+    Mutant(
+        name="ui-invite-nav-affordance-stops-linking",
+        path="internal/ui/render.go",
+        old='h.P(h.Class("nav-invite"), h.A(h.Href(InvitePath), g.Text("Invitations"))),',
+        new='h.P(h.Class("nav-invite"), g.Text("Invitations")),',
+        killer="TestEveryRenderedPageCarriesBothNavigationAffordances",
+        why="an affordance that looks like a label is how the SHARE flow shipped deployed, "
+        "authorised, route-registered, test-covered and reported MISSING. Same surface, same "
+        "defect, one flow along — and every gate but this one stays green.",
+    ),
+    Mutant(
+        name="ui-join-page-gains-authenticated-navigation",
+        path="internal/ui/render.go",
+        old='\t\t\th.Header(h.Class("page-header"), h.H1(g.Text("cairn"))),\n\t\t\th.Main(\n\t\t\t\th.Class("join-main"),',
+        new='\t\t\th.Header(h.Class("page-header"), h.H1(g.Text("cairn")),\n\t\t\t\th.P(h.Class("nav-share"), h.A(h.Href(SharePath), g.Text("Sharing")))),\n\t\t\th.Main(\n\t\t\t\th.Class("join-main"),',
+        killer="TestNoPublicPageOffersAuthenticatedNavigation",
+        why="the duplicate-header tidy-up, which is what `TestTheSignInPageOffersNoAuthenticated"
+        "Navigation` already exists to refuse on the OTHER public page. A `Sharing` link in "
+        "front of an unauthenticated visitor points at a route that answers 401.",
+    ),
+    Mutant(
+        name="ui-invite-honesty-notice-loses-its-weakest-clause",
+        path="internal/ui/invitehandlers.go",
+        old='"revoking it stops it being redeemed but takes nothing back from somebody who has " +\n\t"already joined."',
+        new='"revoking it stops it being redeemed."',
+        killer="TestTheInviteHonestyNoticeIsPinnedWhole",
+        why="the clause most worth dropping is always the one that makes the product sound "
+        "weakest, and a guard on WORDS would pass this. Revoking an invitation somebody has "
+        "already redeemed changes nothing about their access, and an administrator who "
+        "believes otherwise has withdrawn nothing. 🔴 THIS ROW SURVIVED WHEN IT WAS FIRST "
+        "WRITTEN, and the verdict was right: the guard compared the page against the CONSTANT, "
+        "so both sides of the comparison moved together and a reword was invisible. The guard "
+        "now pins a LITERAL copy of the sentence.",
+    ),
+    Mutant(
+        name="ui-share-replica-honesty-notice-loses-its-weakest-clause",
+        path="internal/ui/render.go",
+        old='"revoking a share stops future syncs: it does not recall entries already copied onto " +\n\t"somebody\'s machine."',
+        new='"revoking a share stops future syncs."',
+        killer="TestTheReplicaHonestyNoticeIsPinnedWhole",
+        why="🔴 A PRE-EXISTING DEFECT THIS SWEEP FOUND, IN A SHIPPED GUARD, ON A CLAIM "
+        "`AGENTS.md` MAKES. Writing the invite flow's notice guard by modelling it on the share "
+        "flow's copied the share flow's hole: `TestTheReplicaHonestyNoticeIsPinnedWhole` read "
+        "`normalizeSpace(ReplicaHonesty)`, so editing the constant moved BOTH sides and this "
+        "mutation passed — while that test's own doc said 'any cosmetic reword reds this test, "
+        "which is the intended cost' and `AGENTS.md` asserts the notice 'is pinned as a WHOLE "
+        "NORMALISED STRING'. Its negative control proved only that the COMPARISON can fail, "
+        "never that a change to the CONSTANT would. The row is here so the fix has a gate.",
+    ),
 )
 
 

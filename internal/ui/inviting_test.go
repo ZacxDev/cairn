@@ -249,8 +249,17 @@ func TestAnAdminCannotMintAnOwnerInvitation(t *testing.T) {
 	if err == nil {
 		t.Fatal("an admin minted an OWNER invitation — that is an escalation with a clean-looking audit trail")
 	}
-	if !strings.Contains(err.Error(), "only an owner may invite another owner") {
-		t.Fatalf("refused for a different reason: %v", err)
+	// 🔴 THE SENTINEL, NOT THE SENTENCE — AND THE SWAP IS WHAT MAKES THIS A GUARD ON THE
+	// REFUSAL RATHER THAN ON ITS WORDING. It asserted `strings.Contains(err.Error(), "only
+	// an owner may invite another owner")`, which is this repository's own spelled-guard
+	// trap: a reword walks past it, and it says nothing about the one property the HANDLER
+	// depends on, which is that `refuseInviteWrite` can RECOGNISE this error with
+	// `errors.Is`. An unwrapped error of any wording falls to that function's `default` arm
+	// and becomes a 500.
+	if !errors.Is(err, ErrRoleNotConferrable) {
+		t.Fatalf("refused for a different reason, or with an error no handler can classify "+
+			"(`refuseInviteWrite` maps on ErrRoleNotConferrable and answers 500 for anything "+
+			"it cannot match): %v", err)
 	}
 	// The positive half: an OWNER may, or the assertion above would also pass against a
 	// blanket refusal of owner invitations.
@@ -625,5 +634,72 @@ func TestInvitableListsOnlyManagedProjectsAndNothingForAProjectPrincipal(t *test
 	// not a user), so the assertion above cannot pass merely because the id is unknown.
 	if got := r.inviting.Invitable(r.principal(invOwner)); len(got) == 0 {
 		t.Error("the control is broken: a real owner was offered nothing, so the zero above proves nothing")
+	}
+}
+
+// TestTheRoleChooserIsDrivenByTheREALModelsHeldRole is the SEAM, and it exists because a
+// mutation sweep found the gap it closes.
+//
+// 🔴 THE MEASURED HOLE: dropping `HeldRole` from `Model.ProjectsManagedBy` SURVIVED a fully
+// green suite. `internal/control` tests `ProjectsManagedBy` against a hand-built Model;
+// `TestTheRoleChooserOffersOnlyWhatTheCallerMayConfer` tests the chooser against a hand-built
+// `control.NamedProject`. Both were hermetic, both passed, and NEITHER built the combined
+// state — so the field that carries the caller's role from the model to the form could be
+// deleted and the only visible consequence was a chooser that silently offered nothing at
+// all. That is this repository's own "verified in isolation is the new vacuous green".
+//
+// 🔴 SO WHAT IS ASSERTED IS THE RELATIONSHIP, IN BOTH DIRECTIONS AND BEHAVIOURALLY. The real
+// authority's owner must see `owner` offered and the real authority's ADMIN must not — which
+// is a claim about `ProjectsManagedBy`, about `Invitable`, about `CanConfer` and about
+// `inviteForm` together, and no one of them can satisfy it alone.
+func TestTheRoleChooserIsDrivenByTheREALModelsHeldRole(t *testing.T) {
+	r := newInvRig(t)
+
+	for _, tc := range []struct {
+		who        control.ID
+		wantHeld   control.Role
+		wantOwner  bool
+		wantMember bool
+	}{
+		{invOwner, control.RoleOwner, true, true},
+		{invAdmin, control.RoleAdmin, false, true},
+	} {
+		projects := r.inviting.Invitable(r.principal(tc.who))
+		if len(projects) != 1 {
+			t.Fatalf("%s: Invitable returned %d project(s), want 1 — the rig seeds exactly one",
+				tc.who, len(projects))
+		}
+		// The STRUCTURAL half: the field crossing the seam carries the caller's own role.
+		if got := projects[0].HeldRole; got != tc.wantHeld {
+			t.Errorf("%s: Invitable reported HeldRole %q, want %q. A zero value here is what the mutation "+
+				"that survived produced, and its only symptom was a chooser offering nothing",
+				tc.who, got, tc.wantHeld)
+		}
+
+		// The BEHAVIOURAL half, because a structural check type-checks past a wrong value: the
+		// rendered form over that REAL value must offer what the role admits.
+		view := InviteView{
+			Viewer:   "fixture-viewer",
+			CSRF:     renderCSRF,
+			Projects: projects,
+			Project:  projects[0],
+		}
+		html := renderNode(t, InvitePage(view))
+		if got := strings.Contains(html, `value="`+string(control.RoleOwner)+`"`); got != tc.wantOwner {
+			t.Errorf("%s (holds %s): the chooser offers `owner` = %v, want %v",
+				tc.who, tc.wantHeld, got, tc.wantOwner)
+		}
+		if got := strings.Contains(html, `value="`+string(control.RoleMember)+`"`); got != tc.wantMember {
+			t.Errorf("%s (holds %s): the chooser offers `member` = %v, want %v",
+				tc.who, tc.wantHeld, got, tc.wantMember)
+		}
+		// 🔴 AND THE FORM MUST BE THERE AT ALL. `inviteForm` renders a sentence instead of a
+		// form when nothing is conferrable, which is exactly what a zero `HeldRole` produces
+		// — so an assertion that only looked for the ABSENCE of `owner` would be satisfied by
+		// a page with no chooser on it.
+		if !strings.Contains(html, `action="`+InvitePath+`"`) {
+			t.Errorf("%s: no mint form is rendered at all. That is what a zero HeldRole looks like, and "+
+				"it satisfies every absence assertion above", tc.who)
+		}
 	}
 }

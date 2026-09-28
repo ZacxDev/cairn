@@ -332,7 +332,7 @@ project MEMBER. 🔴 **`ReplicaHonesty` is pinned as a WHOLE NORMALISED STRING.*
 next edit; everything else about the flow — `Revocable`, `-control-journal`, why the
 token-file deployment can show nothing — is in the README below, which is free to read.
 
-📄 Everything else is free to read where it lives: `internal/ui/README.md` (phases A–E: every
+📄 Everything else is free to read where it lives: `internal/ui/README.md` (phases A–G: every
 decision, its RED proof, what each still cannot see) and `internal/identity/session.go` (the
 session store's mechanics, and the two operator requirements that chose it).
 
