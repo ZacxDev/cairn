@@ -63,8 +63,8 @@ func (m MalformedEntry) Line() string {
 	return "malformed index entry `" + m.Label() + "`: " + m.Reason
 }
 
-// TaskRef is one `<system>:<id>` reference from an entry's `refs:` front matter (or from
-// the deprecated `tasks:`/`task:` spellings — see `refkeys.go`).
+// TaskRef is one `<system>:<id>` reference from an entry's `refs:` front matter (or from the
+// accepted `tasks:`/`task:` spellings — see `parseRefsField`, which is where both are read).
 //
 // ⚠ THE TYPE KEPT ITS NAME WHILE THE KEY CHANGED, AND THAT IS A DECISION RATHER THAN AN
 // OVERSIGHT. Renaming it would touch `internal/report`, `internal/ui`, every Go test and

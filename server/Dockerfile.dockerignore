@@ -5,5 +5,4 @@
 !lib/entry_shape.py
 !lib/host_identity.py
 !lib/env_aliases.py
-!lib/ref_keys.py
 !server/server.py
