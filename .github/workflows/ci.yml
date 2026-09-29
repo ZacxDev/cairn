@@ -792,9 +792,15 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 117 PASS lines measured on this head: 114 cases plus THREE structural checks —
+          # 127 PASS lines measured on this head: 124 cases plus THREE structural checks —
           # re-derived by RUNNING the harness on this tree and reading `grep -c '^PASS '`, never
           # by arithmetic on the previous literal.
+          # ⚠ 117 -> 127 WHEN THE TEN `--tag` ROWS LANDED. The gap to the case count is unchanged
+          # at three, which is the check that nothing was miscounted: both numbers moved by the
+          # same ten. One of those rows is the only thing in this repository that compares the two
+          # CLIENTS on a REPEATED flag — the corpus compares the two SERVERS over `?tag=` and
+          # never parses a command line, so a Go client whose parser ASSIGNED instead of appending
+          # would be green everywhere else.
           # ⚠ 110 -> 117 WHEN THE SEVEN `--ref-to` ROWS LANDED. The gap to the case count is
           # unchanged at three, which is the check that nothing was miscounted: both numbers
           # moved by the same seven.
@@ -844,16 +850,23 @@ jobs:
           # zero failures too; the floor is what tells a green gate from an absent one.
           # 🔴 AND IT IS RAISED WITH EVERY ROW THAT LANDS. It sat at 98 for four rows after the
           # rows were added, which is a floor that cannot see the four newest disappear.
-          if [ "$passes" -lt 117 ]; then
-            echo "REFUSING: $passes passes, and 117 were measured — the gate got smaller"
+          if [ "$passes" -lt 127 ]; then
+            echo "REFUSING: $passes passes, and 127 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then
             echo "REFUSING: $fails failing row(s)"
             exit 1
           fi
-          # …and the harness's own FOUR in-run content controls, read rather than assumed.
-          # 🔴 ALL FOUR FIELDS ARE NAMED, AND THE ANCHOR IS WHY THAT MATTERS. A prefix match
+          # …and the harness's own SIX in-run content controls, read rather than assumed.
+          # ⚠ FOUR -> SIX WITH THE `--tag` ROWS, AND THE TWO NEW ONES ARE A PAIR BECAUSE ONE
+          # CANNOT DO THE JOB. `tag-narrowing` says a `tag:` line was rendered at all;
+          # `tag-match` says its numerator was NON-ZERO. A world carrying no `tags:` still
+          # prints the line, reading `0 of N` on every row — which is exactly the vacuity the
+          # `--ref-to` rows shipped with until a fixture was planted, and it was MEASURED here:
+          # stripping the tags out of `tests/parity/world.py` leaves 127 PASS / 0 failures and
+          # `tag-narrowing=True`, and only `tag-match=False` refuses.
+          # 🔴 ALL SIX FIELDS ARE NAMED, AND THE ANCHOR IS WHY THAT MATTERS. A prefix match
           # says nothing about the fields AFTER the ones it spells, so a short anchor reads as
           # coverage of the whole line while checking only its head.
           # 🔴 IT HAS GONE STALE THAT WAY TWICE, WHICH IS WHY A TEST NOW OWNS THE AGREEMENT
@@ -871,7 +884,7 @@ jobs:
           # ⚠ THE TRAILING `mtime-files=…` FIELDS ARE DELIBERATELY NOT MATCHED: they carry a
           # measured number, not a verdict, so spelling them here would make this line red on
           # every corpus change.
-          grep -q '^CONTENT-FLOOR live-banner=True rendered-digest=True unreadable-entry=True unreadable-scope-dir=True' /tmp/parity.txt
+          grep -q '^CONTENT-FLOOR live-banner=True rendered-digest=True unreadable-entry=True unreadable-scope-dir=True tag-narrowing=True tag-match=True' /tmp/parity.txt
           grep -q 'dead-normalizations=0' /tmp/parity.txt
 
   # 🔴 P1's LAST STEP, AND IT IS ITS OWN JOB FOR THE SAME REASON THE CORPUS AND THE PARITY

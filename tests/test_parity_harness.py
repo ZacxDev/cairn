@@ -282,7 +282,7 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE — no defect ever narrowed the case list.
     """
     declared = len(harness.cases(1))
-    # 114 measured on this tree — by `len(harness.cases(1))`, which is what the assertion below
+    # 124 measured on this tree — by `len(harness.cases(1))`, which is what the assertion below
     # compares and is therefore the only measurement that can be right. The floor is the
     # repository's own formula for a collected-count floor — `m - min(50, max(1, m / 20))` for a
     # measured `m`, which `.github/workflows/ci.yml` owns and justifies: close enough that a real
@@ -314,7 +314,14 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # declared open again in `tests/parity/README.md` row 4. What remains in this family is the
     # four rows that gate a mode-000 ENTRY FILE and a mode-000 SCOPE DIRECTORY on both clients —
     # the conditions an ordinary `chmod` reaches.
-    floor = 108
+    # ⚠ 108 -> 117 WHEN THE TEN `--tag` ROWS LANDED: `m` moved 114 -> 124 and 117 is the
+    # literal the formula prescribes for it (`124 - min(50, max(1, 124/20)) = 117.8 -> 117`),
+    # re-derived by RUNNING the formula on `len(harness.cases(1))` rather than by arithmetic on
+    # the previous literal. One of those rows is the only thing in this repository that compares
+    # the two CLIENTS on a REPEATED flag: `tests/conformance/` compares the two SERVERS over
+    # `?tag=` and never parses a command line, so a Go client whose parser ASSIGNED instead of
+    # appending would be green everywhere else.
+    floor = 117
     # ✅ **DECIDED: PINNED TO ITS OWN FORMULA, BECAUSE IT HAS GONE STALE TWICE.**
     # The handoff filed this under "counts quoted in prose that nothing asserts
     # on", closing condition "a decision to pin each or a written line saying why
@@ -348,19 +355,20 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # the `parity` job. They must NOT be asserted equal: this one counts CASES
     # DECLARED by `harness.cases()`, that one counts PASSES a run produced, and
     # the two differ by design — a structural check is a pass with no declared
-    # case behind it, which is why the run reports 117 passes over 114 cases —
-    # re-derived here from one run's own `SUMMARY cases=114 passes=117 failures=0`
+    # case behind it, which is why the run reports 127 passes over 124 cases —
+    # re-derived here from one run's own `SUMMARY cases=124 passes=127 failures=0`
     # line, not from arithmetic on the previous literal:
     # `cache-mtime-parity`, `orphan-reap-parity` and `nonregular-path-parity`,
     # THREE structural checks. ⚠ It was 104/102, then 105/103, then 106/103, then
-    # 111/108, then 110/107 — and one of those pairs was WRONG for a whole round, because rows
+    # 111/108, then 110/107, then 117/114 — and one of those pairs was WRONG for a whole
+    # round, because rows
     # moved `m` and only `ci.yml` was updated. The gap itself
     # widens every time a claim turns out to be unreachable from any row. A
     # guard equating them would be red on a correct tree and would train its
     # reader to edit whichever number was handier. The docstring's instruction —
     # read `ci.yml`'s comparison rather than that sentence — remains the answer.
     assert declared >= floor, (
-        f"the parity gate declares only {declared} cases, and the floor is {floor} (114 were "
+        f"the parity gate declares only {declared} cases, and the floor is {floor} (124 were "
         f"measured on this tree, across every verb and every documented exit code). Two guards in "
         f"this file — the exit-only `why` check and the unique-id check — pass vacuously on a "
         f"narrowed list, so a shrinking case set gets quieter, not louder."
