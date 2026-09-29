@@ -24,41 +24,68 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`8ec36b4`**. ⏳ `#140` OPEN. ✅ Merged since the last update: **`#144`** (`bcfb60a`),
-  **`#136`** (`8ec36b4`), and in the deployment repo **`1255f9d6c`** on its trunk.
-- 🔴 **A PRODUCTION DEPLOY HAPPENED AND ITS SECOND HALF IS UNVERIFIED.** `cairn-ui` was bumped
-  `sha-7040b43` → **`sha-bcfb60a`** (`1255f9d6c`, the deployment repo's trunk, pushed — the repo's pre-push
-  gate ran **kustomize+kubeconform, gitleaks, sops-rules, relay-guard, xml-configmaps, ALL LEGS
-  PASS**). **DEPLOYED ≠ VERIFIED and they are stated separately: no rollout was observed.** There
-  is no kubeconfig for that cluster on this host — only `colima` and two `k3d` contexts — so the pod, its
-  `imageID` and the invite flow are unchecked by the session that deployed them. Probe:
-  `kubectl -n subsystem-store rollout status deploy/cairn-ui`, then compare the running
-  `imageID`, not the `image:` field.
-  - **Reason:** `#144` — `handleOAuthStart` read the invite token with `r.FormValue`, so
-    `POST /sign-in/github?invite=<token>` was accepted and a principal-creating capability
-    reached browser history, referrers and every proxy access log.
-  - **Measured BEFORE pointing production at it:** pin **4 commits behind** `main`; ghcr manifest
-    **HTTP 200 anonymously**, nonexistent tag **404** as the control; the replaced sha occurred
-    **exactly once** repo-wide, counted first. `trunk` MOVED between commit and push
-    (`c47aec72`→`4cddf4a8`) — caught by re-checking immediately before pushing.
-  - 🔴 **IT SHIPS TWO PRs. A PIN CANNOT SHIP HALF A TREE.** `#141` rides along (folds `tasks:`
-    into `refs:`, a user-visible change to what entry pages render). Audited on its own PR,
-    **not** by the deploying session. ⚠ The restart signs every open browser out once.
-- ✅ **RANK 33 IS DONE, NOT IN FLIGHT — `#144` MERGED AS SQUASH `bcfb60a`, VERIFIED BY CONTENT**
-  (`PostFormValue` and `internal/invite/invite_test.go` both on `main`; the ancestry check says
-  NO, as always after a squash, which is why content is the test). 🔴 **Rank 33 below still
-  reads `⏳ IN FLIGHT` — stale, and a peer acting on it would duplicate merged work.**
-- ✅ **THE LADDER ON `#144` RAN 0 THEN 1 AND IS CLOSED under the cap.** Round 0: 2 deletion
-  candidates + 1 requirement questioned (`ran: 1 · changed the outcome: 1`). Round 1 confirmed all
-  five of the PR's claims, returned 1 🟡 + 3 🟢, all fixed. ⚠ **`184fa4b`, the round-1 FIX commit,
-  is unaudited** — the cap ended the ladder where a fix round normally resets the gate. Records:
-  `#144`'s issue comments.
-- ✅ **`#136` MERGED (`8ec36b4`), AND THE PRUNE'S SAFETY PROPERTY WAS ASSERTED ON THE MERGED TREE
-  RATHER THAN THE BRANCH** — 16 commits behind, so only a merged-tree check was honest:
-  **41 lines lost, 0 missing from the archive, 0 duplicated**, positive control watched `0 → 1`.
-  ⚠ My checker also REFUSED on 4 "unexplained" lines that are the eviction's own new heading — too
-  strict, reported not silently overridden. **134,262 B → 131,270 B**, still **32,966 B** over, so
-  rank 27 is NOT discharged.
+- 🔴 **THE CLOSING CONDITION IS MET AND THIS ARC IS CLOSED.** It was a `check`, and all four
+  clauses hold on `main`: the principal × scope × verb matrix
+  (`internal/control/matrix_test.go::TestTheAuthorizationMatrixIsExactlyThis`), the share flow
+  with its replica-honesty notice pinned whole (`TestTheReplicaHonestyNoticeIsPinnedWhole`,
+  plus the invite sibling), identity through both backends (`identity.Backends`' chain tests),
+  and `packages.default` the Go client — `nix eval` resolves `default` and `cairn-go` to the
+  **identical** store path. The three prescribed commands: **`pytest tests -q` → 2303 passed, 0
+  failed**; **`go test ./...` → 20 packages `ok`, 0 failures** under the pinned **go1.25.14**;
+  `flake.nix` read. ⚠ **Anything still open below belongs to a NEW arc, not to another round of
+  this one.**
+  - 🔴 **THE FIRST `pytest` RUN EXITED **0** HAVING RUN **ZERO** TESTS** — bare interpreter, `No
+    module named pytest`. An exit code alone would have certified the arc closed on nothing.
+    Run it as `nix develop -c python3 -m pytest tests -q` and **read the count**.
+- ✅ **THE UNOBSERVED `cairn-ui` DEPLOY IS NOW OBSERVED, AND IT HOLDS.** A kubeconfig for that
+  cluster exists after all (operator supplied it; the previous session's "no kubeconfig on this
+  host" was true of what it looked at, not of the host). Rollout complete, **revision 8**,
+  `Available=True`, pod **Running 1/1, 0 restarts**. 🔴 **Verified by DIGEST, not by the `image:`
+  field:** the running `imageID` is `sha256:24397b10…e855`, and ghcr's digest for tag
+  `sha-bcfb60a…`, fetched anonymously, is the same. Deployed commit is **2 commits behind `main`
+  and both are `claudedocs/`-only**, so the artefact is code-current.
+  - **Runtime symptom exercised, not just the rollout:** `GET /` → **401** to a non-browser and
+    **303 → /sign-in** to a browser `Accept` (which is the corrected prediction this doc records,
+    reproduced); `/sign-in` → **200** carrying BOTH a `name="token"` field AND a
+    `sign-in/github` action, so **the provider button is ARMED** — the degraded-mode tell that a
+    502 on the key-set URL would have withheld it. That is 28(d) observed.
+- 🔴 **THE TWO DEPLOYED SURFACES WERE RUNNING DIFFERENT RENDERERS, AND NOTHING WAS LOOKING.**
+  `cairn-ui` moved to `sha-bcfb60a`; `subsystem-store-api` stayed at `sha-953ad36`, **25 commits
+  behind, 8 of them code**. Exactly one changes what the pod serves — `#141`, which edits
+  `internal/report` and `internal/store`, the renderer BOTH binaries share. So one store was
+  being rendered two ways, which is the property the byte-identity gates exist to hold, broken in
+  production by an image pin nobody re-read. ✅ **CLOSED**: the pod is bumped to `sha-bcfb60a`
+  (deployment repo `98b234927`), both pods now name the **same commit**, and the new `imageID`
+  `sha256:8f1eaf07…c4b7` matches the digest resolved from ghcr before the push.
+  ⚠ **Scope, honestly: LATENT, not live.** 0 of 319 entries carried `refs:`/`tasks:`/`task:` — but
+  that is this host's cache of the `personal` instance ONLY, so it is not a fleet reading.
+  - ⚠ **`rollout status` SAID "successfully rolled out" WHILE THE OLD POD WAS STILL SERVING.**
+    Flux had not applied yet, so the command described the previous ReplicaSet, truthfully and
+    uselessly. **Reconcile the SOURCE and then the Kustomization, then read `imageID`** — the
+    source lagged the Kustomization once in this session too.
+- ✅ **BOTH UNBACKED VOLUMES ARE BACKED UP, AND THE JOB HAS BEEN WATCHED SUCCEEDING.** The store's
+  backup mounted `subsystem-store-data` and nothing else, so `cairn-ui-state` (the append-only
+  control journal) and `cairn-ui-postgres-data` were both uncovered. New `cairn-ui-backup`
+  CronJob, 04:00 UTC: state volume copied read-only, Postgres taken with `pg_dump` over the
+  Service (a file copy of a live `PGDATA` is not a backup — it restores as a CORRUPT cluster
+  rather than an obvious failure). Verified run: **4 files, archive uploaded, RE-DOWNLOADED,
+  extracted, missing=0 differs=0**. Negative control: forcing `UI_MIN_DUMP_TABLES=99` failed the
+  job **at that guard's own error**, so the floors are reachable rather than decorative.
+  - ⚠ **IT TOOK THREE RUNS, AND BOTH FAILURES WERE MUTE.** (1) The NetworkPolicy admitted only
+    `app: cairn-ui`, so `pg_dump` TIMED OUT — a policy drop is a timeout, not a refusal, and the
+    job reported a connection error indistinguishable from a wrong host. (2) The script rebuilt
+    the S3 URL with a hardcoded `https://` against an `http://…:80` tenant, dying **after** the
+    archive was built and every floor had passed. Fixes: `2a9f94482`, `5922bba9c`, `dfab0ee36`.
+  - 🔴 **THE OBVIOUS ONE-WORD FIX FOR (1) WOULD HAVE CAUSED AN OUTAGE.** Putting `app: cairn-ui`
+    on the backup pod is what the netpol asks for — and `Service/cairn-ui` selects exactly that
+    label, so it would have enrolled a backup pod as a live BROWSER-TRAFFIC ENDPOINT for as long
+    as the job ran. Measured the selector before choosing; the rule keys on a pair no Service
+    selects.
+- ✅ **RANK 33 WAS STALE AND IS NOW CORRECT** — `#144` merged as squash `bcfb60a`, verified by
+  CONTENT (the ancestry check says NO, as always after a squash). ✅ `#140` rebased onto current
+  `main` and landed; its four evicted bullets asserted **0 lost, 0 duplicated**, with a positive
+  control confirming an UNMOVED bullet reads as absent from the archive. ✅ `#146` merged
+  (`94ecb7e`) — a peer's, not this session's.
 - ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE.** The resolver exited **5**; an
   unknown session id answers 200 with an EMPTY ARRAY, so the zero cannot distinguish "touched no
   task" from "wrong id". None written.
@@ -82,14 +109,17 @@ that way MINTS a claim on a released slug. `--list` is the read.
 6. ✅ forcing: user.
 7. ✅ `56cc56e` (#69). forcing: user.
 8. ✅ rule (o), `c4490f07`. forcing: incident.
-9. 🔴 **UNBLOCKED IN CODE *AND* IN DEPLOY** — 28(d) shipped the DSN, so `Inviting` is no longer
-   nil on the deployed surface. ⚠ Unverified; gated on rank 28. forcing: user.
+9. ✅ **DISCHARGED — the surface is up and the provider is ARMED**, measured against the deployed
+   pod (401/303 split, `sign-in/github` action present). The share flow itself still needs the
+   two-user world `## How to verify` builds. forcing: user.
 10. ✅ `901b77d` (#104). forcing: user.
 11. ⏳ **OPEN AS the handoff-tooling repo's `#1867`.** **CLAIMED.** forcing: incident.
 12. ✅ `#143` — `required_status_checks` 404s on all three repos; CI is advisory. forcing: gate.
-13. **COMPLETE A GITHUB SIGN-IN END TO END ON THE DEPLOYED SURFACE.** 🔴 Reachable for the first
-    time: the invite flow is deployed and `RedeemFor` runs on the callback success path. No
-    human has driven it against a real GoTrue. forcing: user.
+13. ✅ **DONE — THE OPERATOR DROVE IT AND IT WORKS.** GitHub sign-in completes end to end on the
+    deployed surface against a real GoTrue, reported in the session that closed this arc. ⚠ This
+    is an operator REPORT, which is the right authority for a human click-path, and it is not a
+    reading this document took: no transcript, code or exit status is recorded behind it.
+    forcing: user.
 14. ✅ `#117` as `9c24bc4`. forcing: gate.
 15. ✅ rule (p) `b4233ea9`. Four findings FILED rather than fixed — open. forcing: gate.
 16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION.** Keep-or-replace. forcing: user.
@@ -98,35 +128,64 @@ that way MINTS a claim on a released slug. `--list` is the read.
 19. **RUN THE WHOLE DESIGN THROUGH `/the-algorithm`.** Asked 09-23; still 0 hits. **Closing
     condition:** a recorded question→delete→simplify pass, or a line saying the fact-rot pass
     discharged it. forcing: user.
-20. **THE ARCHIVE IS OVER ITS LEDGER ALLOWANCE AND NOTHING WILL NOTICE** — 174,237 B against a
-    grandfathered 147,456 B. forcing: gate.
-21. ✅ API pod `sha-953ad36`. ⚠ A SECOND INSTANCE EXISTS, UNTOUCHED. forcing: user.
+20. **THE ARCHIVE IS OVER ITS LEDGER ALLOWANCE AND NOTHING WILL NOTICE** — **181,675 B** against
+    a grandfathered **147,456 B**. 🔴 **THIS FIGURE ROTS FASTER THAN ANY OTHER HERE, AND IT
+    ROTTED TWICE WHILE BEING FIXED:** the line read 174,237 B (stale by 4,083 B that `#136`'s
+    prune added by design); it was corrected to 178,320 B; then `#140` merged and moved it again
+    before this commit landed. ⚠ **Every prune that discharges rank 27 makes this number worse**
+    — the two ranks pull in opposite directions and neither says so. **Do not quote it, `stat`
+    it** — the same ruling the `AGENTS.md` budget line now carries, for the same reason.
+    forcing: gate.
+21. ✅ **API pod now `sha-bcfb60a`, the SAME COMMIT the UI runs** (deployment repo `98b234927`;
+    running `imageID` `sha256:8f1eaf07…c4b7` matches the digest resolved from ghcr first).
+    🔴 **THE `✅ sha-953ad36` THIS LINE USED TO CARRY WAS THE DEFECT, NOT THE RECORD OF A FIX** —
+    it read as done while the pod sat 25 commits behind the UI across `#141`, which edits the
+    shared renderer. **A ✅ on an image pin means "set deliberately once", never "still right".**
+    ⚠ A SECOND, CLIENT-SCOPED INSTANCE EXISTS, UNTOUCHED, and every entry count in this document
+    is scoped to the `personal` one. forcing: user.
 22. ❌ **WITHDRAWN — the edge cache TTL is left as it is.** 🔴 DO NOT RE-PROPOSE. forcing: user.
 23. ✅ `c6aed4e` (#135). forcing: gate.
 24. ✅ #134 `963517e`. forcing: user.
 25. ✅ **SUPERSEDED BY OPERATOR DECISION — DO NOT WORK THIS ITEM AS WRITTEN.** forcing: user.
 26. ✅ **DISCHARGED — 🔴 NOW EXPIRED**; re-run `git diff --stat <merge-base>...origin/main`
     before relying on it. forcing: gate.
-27. 🔴 **PRUNE THIS DOCUMENT — STILL OPEN, AND IT BLOCKED THIS UPDATE** (the ratchet refused
-    five times; this round landed only by compressing closed ranks, NOT by overriding).
-    **Closing condition:** a prune commit that MOVES to the archive rather than deletes, with
-    the 0-lost/0-duplicated assertion. forcing: gate.
-28. 🔴 **(a)(b)(c) DONE; (d) IS DEPLOYED AND UNVERIFIED.** The remaining work is the probe list
-    in `Open investigations`, which needs cluster access this session did not have. 🔴 The
-    operator authorised the deploy and the one-time sign-out explicitly. forcing: user.
+27. 🔴 **PRUNE THIS DOCUMENT — STILL OPEN.** `#140` moved four closed-arc bullets (0 lost, 0
+    duplicated, positive-controlled) but that is a batch, not the prune. **Closing condition
+    unchanged:** a prune commit that MOVES to the archive rather than deletes, with the
+    0-lost/0-duplicated assertion. ⚠ **A SECOND EVICTION BATCH IS STRANDED, UNCOMMITTED, IN AN
+    ABANDONED AGENT WORKTREE** — 21 archive lines written 2026-09-27, no live process, found
+    only because its branch registration blocked a `worktree add`. Nothing is LOST (both source
+    bullets are still in the doc, so it is the archive half of a move whose doc half never
+    happened) and the patch is preserved off-tree, but it is exactly the `stranded-docs` shape:
+    **work in a worktree that no PR, no branch and no index knows about.** forcing: gate.
+28. ✅ **(a)(b)(c)(d) ALL DONE AND (d) IS NOW OBSERVED** — rollout green at revision 8, running
+    `imageID` matched to ghcr's digest for the tag, and the provider button ARMED on the live
+    `/sign-in`, which is the degraded-mode tell. The probe list in `Open investigations` that
+    said it "needs cluster access this session did not have" is discharged. forcing: user.
 29. ✅ Both gates read; the first reading found a defect. forcing: gate.
-30. 🟡 **HARDEN `uiaudit/run.sh` AGAINST `CDPATH`.** **Closing condition:** `grep -L CDPATH`
-    over those five returns nothing. forcing: gate.
+30. 🟡 **HARDEN THE SHELL SCRIPTS AGAINST `CDPATH` — STILL OPEN, AND "those five" WAS WRONG.**
+    Re-measured on `main`: the tracked `.sh` files that contain a `cd` and do NOT set `CDPATH`
+    are **two**, not five — `uiaudit/run.sh` and `server/seed.sh`, and the second is already
+    carried separately as `server/seed.sh:110`'s `cd`. **Closing condition:** both set `CDPATH`,
+    i.e. that two-file list comes back empty. ⚠ The old count made the item look four scripts
+    bigger than it is, which is the direction that stops it being picked up. forcing: gate.
 31. ✅ Round 2 ran; two 🟡 fixed in `2e25174`; `#139` merged; ladder capped. forcing: gate.
 32. ✅ `5d3a972`. forcing: gate
-33. ⏳ **IN FLIGHT AS A PEER'S `ZacxDev/cairn#144`** — do NOT duplicate. forcing: gate.
-34. 🟡 **THE `#137` BASE-CLONE WRITE GUARD IS WRONG IN TWO WAYS, NOT ONE.** (a) it judges by
-    `--git-common-dir`, so a LINKED WORKTREE commit is refused; (b) 🔴 **NEW — it resolves the
-    repo from the SHELL'S CWD, not from `-C`**: standing in cairn while committing to a
-    worktree of a DIFFERENT repo, it refused while naming cairn. The override was pulled ~6
-    times this session for legitimate worktree commits. **Closing condition:** the guard admits
-    a linked worktree AND reads `-C`, with a test that a real base-clone write is still
-    refused. forcing: gate.
+33. ✅ **MERGED as `bcfb60a` (`#144`), verified by CONTENT.** 🔴 **THIS LINE READ `⏳ IN FLIGHT`
+    FOR TWO UPDATES AFTER THE MERGE, WHILE `State now` SAID IT WAS DONE** — the two sections
+    disagreed, and the ranked list is the one work gets drawn from. **A rank is the load-bearing
+    copy; correcting only the narrative leaves the trap armed.** forcing: gate.
+34. 🔴 **THE `#137` BASE-CLONE WRITE GUARD IS WRONG IN TWO WAYS, AND THE CROSS-REPO ONE
+    REPRODUCED AGAIN THIS SESSION — RAISED FROM 🟡.** (a) it judges by `--git-common-dir`, so a
+    LINKED WORKTREE commit is refused; (b) 🔴 **it resolves the repo from the SHELL'S CWD, not
+    from `-C`.** Third independent instance: every commit to the DEPLOYMENT repo's worktree was
+    refused with a message naming **cairn**, the session's cwd and a repository those commands
+    never touch. Proved false before each override — target `--git-common-dir` resolved to the
+    deployment repo, `remote get-url origin` to its remote, branch to the feature branch — and
+    the override was then pulled **eight** more times. ⚠ **A guard whose diagnosis is reliably
+    about the wrong repository trains its own bypass**, which is the `permanently-red gate`
+    failure wearing a different hat. **Closing condition:** the guard admits a linked worktree
+    AND reads `-C`, with a test that a real base-clone write is still refused. forcing: gate.
 35. ✅ `#142` as `021be7a`. forcing: gate.
 36. ✅ the handoff-tooling repo's `#1910` (`8c94b4c8`) — rule (o)'s banner counts consecutive
     approved-through writes; FAILS OPEN to UNKNOWN, never 0. forcing: incident.
@@ -162,8 +221,15 @@ that way MINTS a claim on a released slug. `--list` is the read.
   nothing else** — rc **1** is findings, rc **2** is the unreadable-artefact/skip-mismatch path.
   ⚠ I retyped the refuted version during a prune without re-measuring it; a `Defects` section that
   REPLACES makes an unre-measured retype indistinguishable from a fresh reading. **Read the rc.**
-- 🟡 **`cairn-ui-state` IS UNBACKED, AND IT IS THE VOLUME THAT WOULD ACTUALLY HURT** — it holds
-  the control journal. **Closing condition:** a backup row, or a line accepting the loss.
+- ✅ **CLOSED — `cairn-ui-state` IS BACKED UP, AND SO IS THE PVC THIS ENTRY DID NOT KNOW ABOUT.**
+  A `cairn-ui-backup` CronJob (04:00 UTC) copies the state volume read-only and takes Postgres
+  with `pg_dump` over the Service; the run was watched uploading, **re-downloading**, extracting
+  and verifying 4 files (missing=0 differs=0), with a forced-floor negative control failing at
+  that guard's own error. 🔴 **THE ENTRY NAMED ONE VOLUME AND THERE WERE TWO** —
+  `cairn-ui-postgres-data` arrived with 28(d) and was never added to it, because a defect entry
+  is written once and the world keeps moving. **The reusable form: an "X is unbacked" entry ages
+  into an UNDERCOUNT; re-derive the list from `get pvc` against the backup job's `volumes:`
+  rather than re-reading the sentence.**
 - ⚠ **DECLARED IN-TREE AND CONFIRMED ACCURATE BY ROUND 1, SO NOT RE-FILED** (read them where they
   live, in `internal/pgstore`'s package doc and `internal/ui/README.md`): the availability
   coupling, the asymmetric `-session-file` rollback, `invites` never pruned, a reload minting a
@@ -197,17 +263,27 @@ that way MINTS a claim on a released slug. `--list` is the read.
 - 🟡 **P7's TWO BINDING CLAIMS ARE NOT IN `AGENTS.md`, AND THE REASON IS THE BUDGET.** The
   validator is a digest of the **uncompressed** tar, and a `304` is a FOURTH read state.
   **Closing condition:** an eviction freeing ≥400 B, then both sentences land.
-- 🟡 **THE DEPLOYMENT MANIFEST'S NODE-AFFINITY COMMENT IS STALE.** Its stated reason (the LAN
-  registry not resolving) is void now the pod pulls from ghcr. **Closing condition:** the comment
-  states the true reason, or it goes.
+- ✅ **CLOSED — and it had ALREADY been closed before this entry was last retyped.** The block's
+  headline now reads *"THE ORIGINAL REASON IS NOW VOID, AND THE GUARD IS KEPT ANYWAY"* and gives
+  the true reason: the RWO `local-path` PVC does not follow the pod. 🔴 **But the fix was
+  PARTIAL in a way only reading the whole block shows** — six lines below it still said a rebuilt
+  burst node *"cannot pull its image"*, the void reason restated as live, contradicting its own
+  paragraph and surviving two image bumps. Corrected to "cannot reach its DATA". **A comment
+  edited at the top is not a comment fixed: the stale claim hides in the part nobody re-read.**
 - 🟡 **`tests/dualrun/` cannot see image drift, structurally.** **Closing condition:** decide
   whether a deployed-artefact arm is worth owning, or write the line saying it is not.
 - 🟡 **THE SHARE FLOW'S `?scope=` REFUSAL IS CORRECT AND ITS SENTENCE IS FALSE.** ⚠ The
   NAVIGATION half is CLOSED (`#133`, `d003708`); only the message half remains. `?scope=` is
   keyed on the scope **ID**; a hand-typed NAME gets 404 and *"not yours to share"* for a scope that **is** theirs. **Closing condition:** a decision on the message.
-- 🟡 **`AGENTS.md` + `CLAUDE.md` ARE EFFECTIVELY FULL.** ⚠ `8b1f2ff` spent the last slack.
+- 🔴 **`AGENTS.md` + `CLAUDE.md` PASS THEIR GATE BY *ONE BYTE*, AND BOTH FIGURES THIS DOCUMENT
+  QUOTED WERE WRONG.** Measured on `main`: `MAX_BYTES = 32_500`, `MIN_HEADROOM_BYTES = 900`,
+  files **31,332 + 267 = 31,599 B**, so headroom is **901 B against a 900 B floor** — the gate is
+  green and the next edit of any size reddens it. This doc said the ceiling was **37,700 B** and
+  the current weight **36,354 B**: 5,200 B and 4,755 B out, both in the direction that reads as
+  room to spare. 🔴 **`RULES.md` says to read the numbers from the test and never restate them;
+  this bullet is what restating them looks like four rounds later.** **Closing condition:** an
+  eviction freeing a stated number of bytes, or a line accepting it.
   **A false zero worth keeping:** `grep -c` on a phrase that WRAPS ACROSS A NEWLINE answers **0**.
-  **Closing condition:** an eviction freeing a stated number of bytes, or a line accepting it.
 - 🟡 **THE POSTGRES TIER'S MUTATION EVIDENCE IS STILL PROSE.** **Closing condition:** the rows
   added with `extra_killers`, or a line saying why a build-tagged tier cannot be there. ⚠ Note
   `#144`'s round 1 measured that an UNDECLARED extra killer is accepted silently — only a
@@ -227,9 +303,12 @@ that have closed, which is exactly what this document's own rule sends there, an
 
 - **The flake's source filter is git-based**: an untracked new `.go` file compiles under
   `go build` and fails `nix build`. Stage new files before reading either tier as green.
-- **`AGENTS.md` + `CLAUDE.md` are gated** to 37,700 B with a 900 B minimum headroom
-  (`tests/test_agent_instructions_weight.py`); currently 36,354 B. Put narrative in a
-  harness README behind a pointer — that is the pattern the gate's own playbook prints.
+- **`AGENTS.md` + `CLAUDE.md` are gated** by `tests/test_agent_instructions_weight.py`, which
+  OWNS the ceiling and the headroom floor. 🔴 **Do not quote either number here — the pair this
+  line used to carry (37,700 B / 36,354 B) was wrong by 5,200 B and 4,755 B, in the direction
+  that reads as room to spare.** Read them from the test, which prints what to evict and where.
+  Put narrative in a harness README behind a pointer — the pattern the gate's own playbook
+  prints.
 - **Decision (operator, this session): a project principal has NO authority over its own
   project's scopes.** A project is not a member of itself, so a service account for a
   project reaches that project's scopes only if somebody granted it. The wide alternative
@@ -331,6 +410,12 @@ that have closed, which is exactly what this document's own rule sends there, an
   rewritten to describe by ROLE, re-scanned, and the write then landed. **The previous four
   events were each followed by a better-worded sentence; this one was followed by a refusal.
   That is the whole argument for the gate, and it arrived unprompted.**
+  ⚠ **SIXTH EVENT, in the update that CLOSES this arc and having read this very bullet first:**
+  two findings in my own delta — a client project named outright in rank 21, and a real
+  `2026-09-29` stamp in rank 13. Both rewritten by ROLE and re-scanned to 0. 🔴 **The tell worth
+  adding: `python3 tests/leakscan.py 2>&1 | tail` reported `rc=0` because `tail` owns the exit
+  status** — the CONTENT said `2 finding(s) — REFUSING` while the code said fine. Redirect to a
+  file and read `$?`, exactly as this document says about every other tool.
 
 - 🔴 **A `STILL LIVE` INVESTIGATION BLOCK IS A CLAIM WITH NO EXPIRY, AND THIS DOC CARRIED ONE TWO
   MERGES PAST ITS FIX.** The host-HOME doctor-test block was re-measured as live by a
@@ -1274,6 +1359,56 @@ fabricate a full sha from a short one; a squash would have undone the A/B split.
   with one present) and which the harness's own `isolation: "worktree"` contradicts. **`Defects`
   REPLACES, so a closed entry survives every update nobody retypes** — rank 23 was marked DONE two
   sections away. Check the closing item before porting a hazard out of that list.
+
+- 🔴 **AN IMAGE PIN IS A CLAIM WITH NO EXPIRY, AND A `✅` BESIDE ONE IS THE MOST DANGEROUS SHAPE
+  IN THIS DOCUMENT.** Rank 21 read `✅ API pod sha-953ad36` — accurate the day it was written,
+  and by this session the pod was **25 commits behind, 8 of them code**, across the one commit
+  (`#141`) that edits the renderer BOTH deployed binaries share. So two live pods served one
+  store through two different renderers, and every instrument was green: pod healthy, route
+  answering, both repos' gates passing, the `✅` right there in the ranked list. 🔴 **THE
+  GENERAL FORM: a `✅` on a DEPLOYED ARTEFACT means "set deliberately once", never "still
+  correct" — the only ranks that can rot silently are the ones already marked done.** The cheap
+  read is `git rev-list --count <image's commit>..origin/main`, and split it by
+  `':(exclude)claudedocs'` so a docs-only distance does not read as drift.
+- 🔴 **`kubectl rollout status` ANSWERED "successfully rolled out" ABOUT THE POD I WAS REPLACING.**
+  Flux had not applied the new revision yet, so the command described the PREVIOUS ReplicaSet —
+  truthfully, and as a direct answer to the question I thought I was asking. Nothing in its
+  output says which generation it is about. **After a GitOps commit, reconcile the SOURCE and
+  then the Kustomization, confirm `lastAppliedRevision` is YOUR sha, and only then read
+  `imageID`.** ⚠ The source lagged separately: reconciling the Kustomization alone re-applied
+  the previous commit and reported success doing it.
+- 🔴 **A BACKUP THAT HAS NOT BEEN WATCHED RUN IS A MANIFEST, NOT A BACKUP — TWO OF THREE RUNS
+  FAILED, AND BOTH FAILURES WERE MUTE.** (1) The NetworkPolicy admitted only `app: cairn-ui`, so
+  `pg_dump` TIMED OUT rather than being refused — a policy drop looks exactly like a wrong host
+  or a dead database. (2) The uploader rebuilt the S3 URL with a hardcoded `https://` against an
+  `http://…:80` tenant, and died **after** the dump, the journal read, the archive and every
+  floor had passed. Both were invisible to `kustomize build`, `kubeconform` and all five
+  pre-push legs, which is the whole point: **a manifest gate proves the YAML is well-formed and
+  says nothing about whether the job can do its job.**
+- 🔴 **THE OBVIOUS ONE-WORD FIX FOR A NETWORKPOLICY DENIAL CAN BE AN OUTAGE.** The policy names
+  `app: cairn-ui`; putting that label on the backup pod is what it appears to ask for. But
+  `Service/cairn-ui` selects **exactly that label**, so the pod would have been enrolled as a
+  live browser-traffic ENDPOINT for as long as the job ran — answering a share of real requests
+  with nothing. **Before adopting a label to satisfy a selector, grep for every OTHER selector
+  that matches it**; the fix keys on a pair (`app.kubernetes.io/name` + `component: backup`) that
+  no Service selects.
+- 🔴 **A DEFECT ENTRY NAMING A LIST AGES INTO AN UNDERCOUNT, AND IT IS THE `✅` PROBLEM'S
+  SIBLING.** *"`cairn-ui-state` IS UNBACKED"* was true and became half the story when 28(d)
+  added `cairn-ui-postgres-data`; the entry was retyped through several updates and never grew,
+  because retyping a sentence is not re-deriving it. **For any "X is missing/unbacked/uncovered"
+  entry, re-derive the SET from the world (`get pvc` against the job's `volumes:`) instead of
+  re-reading the sentence.**
+- 🔴 **A `pytest` THAT RUNS ZERO TESTS EXITS 0, AND IT NEARLY CERTIFIED THIS ARC CLOSED.** The
+  bare interpreter has no pytest: `No module named pytest`, **exit 0**, no tests collected. The
+  closing condition names `pytest tests -q`, so an exit-code reading would have discharged the
+  whole arc on an empty run. `nix develop -c python3 -m pytest tests -q` → **2303 passed**.
+  **Count the runner's own result lines; the exit code is not the measurement.**
+- ⚠ **WORK STRANDED IN AN ABANDONED AGENT WORKTREE IS INVISIBLE TO EVERY SWEEP THIS DOC
+  PRESCRIBES.** A second eviction batch — 21 uncommitted archive lines from 2026-09-27 — was
+  found only because its branch registration made `git worktree add` refuse. No PR, no branch,
+  no index, no `gh pr list` row; `git status` in the base clone says nothing about it. This
+  clone carries **51 worktree registrations**. **`git worktree list` plus a `git -C <each>
+  status -s` is the only sweep that sees it**, and nothing runs it.
 
 ## How to verify
 
