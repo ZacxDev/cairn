@@ -623,6 +623,34 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 		{"the UNVERIFIABLE badge", "⚠ 1 UNVERIFIABLE"},
 		{"the missing-heading badge, naming BOTH counted headings", "🔴 NO Pointers, Nuance / work-history"},
 		{"the task badge", "🔗 2 tasks"},
+		// 🔴 THE WHOLE BADGE RUN, NOT THE TWO NEW BADGES SEPARATELY — because this ONE
+		// LINE is the section-boundary proof. `marked-three` carries the byte-identical
+		// bullet `- 2000-01-02: OPEN: the retry budget is still unbounded.` under BOTH
+		// `## Nuance / work-history` and `## Requirements`. The nuance side contributes
+		// `🔴 1 OPEN`; the requirements side contributes 4 of the section's 7 bullets to
+		// `🔴 4 REQ OPEN`. A reader that took requirements from the ENTRY body instead of
+		// the SECTION body folds the nuance bullet in and this line moves. So the
+		// boundary, both new badges, and the promise that neither disturbed the three
+		// existing ones are all pinned by a single normalised string — which is the
+		// house rule (pin the whole line, not a substring another feature can spell).
+		//
+		// ⚠ IT ALSO PINS THE FENCE RULE ARITHMETICALLY. The section's fenced block holds
+		// a seventh `- OPEN: (operator) …` line; if a fence stopped being skipped, REQ
+		// OPEN reads 5 and this row fails. That is a stronger check than asserting the
+		// fenced text is absent, because the text IS present — the BODY renders verbatim,
+		// fence markers and all. Only the COUNT distinguishes sample text from a bullet.
+		{"the requirements badge pair, and with it the section boundary and the fence rule",
+			"🔴 1 OPEN   🔴 1 NEAR-MISS   ⚠ 1 UNVERIFIABLE   🔴 4 REQ OPEN   ✅ 2 REQ MET   🔗 2 tasks"},
+		// The section renders in a BODY like the other three, verbatim — fence markers
+		// included. Without this row the pair above could hold while the section printed
+		// nothing at all.
+		{"the requirements section in a rendered body", "    ## Requirements"},
+		{"a requirement's operator provenance, rendered verbatim in the body",
+			"- OPEN: (operator) the listing should carry a per-row freshness stamp"},
+		{"a requirement's inferred provenance", "OPEN: (inferred) the export should stream"},
+		{"a met requirement naming the sha that closed it", "- RESOLVED def5678: (operator)"},
+		{"a requirement with NO provenance, which is a decided answer",
+			"- OPEN: the archive should keep its original timestamps"},
 		{"the task refs in a body", "    tasks: github:"},
 		{"a sensitivity the schema HONOURED", "sensitivity=public"},
 		{"a sensitivity the fail-safe OVERRODE", "(declared: internal)"},
