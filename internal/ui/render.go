@@ -1050,8 +1050,11 @@ func rootLegend() g.Node {
 		{"card", "one scope — a directory under the store root"},
 		{"card title", "the scope's display name, which is also its directory name"},
 		{"entries", "how many `.md` files in it the loader accepted"},
-		{"declared open", "bullets carrying an `OPEN:` marker, summed over the scope. " +
-			"The marker is opt-in, so a zero means nothing was declared rather than nothing is open"},
+		{"declared open", "`## Nuance / work-history` bullets carrying an `OPEN:` marker, " +
+			"summed over the scope. The marker is opt-in, so a zero means nothing was declared " +
+			"rather than nothing is open. ⚠ It does NOT include `## Requirements` bullets: " +
+			"`readEntry` sums the nuance section only, and this line read `bullets carrying an " +
+			"OPEN: marker` until that became two different populations"},
 		{"the refs listed", "the first few entry refs — a ref is the filename without `.md`"},
 	})
 }
@@ -1061,8 +1064,9 @@ func scopeLegend() g.Node {
 		{"row", "one entry file in this scope"},
 		{"ref", "the filename without `.md`: `<slug>` or `<slug>.<kind>`"},
 		{"title", "the `service:` key in the file's front matter"},
-		{"journal bullets", "top-level `-` lines under `## Nuance / work-history`"},
-		{"OPEN", "a bullet whose first line carries an `OPEN:` marker"},
+		{"journal bullets", "top-level `-` lines under `## Nuance / work-history`. " +
+			"`## Requirements` bullets are counted nowhere on this row"},
+		{"OPEN", "a `## Nuance / work-history` bullet whose first line carries an `OPEN:` marker"},
 		{"near-miss marker", "a bullet that tried to write a marker and missed the grammar. " +
 			"It is NOT counted as open, and it is the population most likely to hide a stale action"},
 	})
@@ -1096,6 +1100,11 @@ func entryLegend() g.Node {
 		{"inline code", "a single-backtick span in the file, rendered as code. A backtick with " +
 			"no closer on its line is left exactly as typed, and nothing inside a code fence " +
 			"is touched"},
+		{"operator / inferred", "WHO stated a `## Requirements` line item — read from a " +
+			"parenthetical immediately after the marker (`- OPEN: (operator) …`). It is absent " +
+			"when the file records nobody, which is a DECIDED third answer and not a weak " +
+			"`inferred`; a near-spelling such as `(Operator)` or `(operators)` is absent too, " +
+			"because an attribution the file does not make must not be manufacturable"},
 		{"marker out of reach", "a correctly-spelled `OPEN:` / `RESOLVED <sha>:` on a line item's " +
 			"SECOND or later line. A marker is read from the first line only, so it declares " +
 			"nothing — it stays in the text and is called out rather than badged"},

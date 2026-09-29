@@ -118,6 +118,7 @@ const (
 	badgeNearMiss       = "near-miss"
 	badgeUnverifiable   = "unverifiable"
 	badgeMissingHeading = "missing-heading"
+	badgeRequirements   = "requirements"
 )
 
 // noBadges is an EMPTY badge set, which is not the same thing as NO badge set.
@@ -146,6 +147,11 @@ func badgesPresent(entries []RecalledEntry) map[string]bool {
 		if len(e.MissingSections) != 0 {
 			kinds[badgeMissingHeading] = true
 		}
+		// ONE kind for the PAIR: both badges come from the same section, so a reader
+		// seeing either needs the same sentence, and two kinds would emit it twice.
+		if e.RequirementsOpen != 0 || e.RequirementsMet != 0 {
+			kinds[badgeRequirements] = true
+		}
 	}
 	return kinds
 }
@@ -173,27 +179,29 @@ func CaveatText(scope string, badges map[string]bool) string {
 
 	var clauses []string
 	if showAll || badges[badgeNearMiss] {
-		clauses = append(clauses, "`🔴 N NEAR-MISS` — N bullets TRIED to write a marker "+
-			"and missed the grammar, so they declare nothing and `N OPEN` is short by up to N")
+		clauses = append(clauses, "`🔴 N NEAR-MISS` — N `"+store.NuanceHeading+"` bullets "+
+			"TRIED to write a marker and missed the grammar, so they declare nothing and "+
+			"`N OPEN` is short by up to N")
 	}
 	if showAll || badges[badgeUnverifiable] {
-		clauses = append(clauses, "`⚠ N UNVERIFIABLE` — N `RESOLVED:` bullets name no sha, "+
-			"so the closure cannot be checked")
+		clauses = append(clauses, "`⚠ N UNVERIFIABLE` — N `"+store.NuanceHeading+"` "+
+			"`RESOLVED:` bullets name no sha, so the closure cannot be checked")
 	}
 	if showAll || badges[badgeMissingHeading] {
 		clauses = append(clauses, "`🔴 NO <heading>` — that heading is absent or renamed, "+
 			"so `N nuance` and every openness count on that row are 0 BY PARSE FAILURE and "+
 			"not by measurement, and the entry's content is on disk but invisible to this read")
 	}
+	if showAll || badges[badgeRequirements] {
+		clauses = append(clauses, "`🔴 N REQ OPEN` / `✅ N REQ MET` — N `"+
+			store.RequirementsHeading+"` bullets declaring each state. They do NOT sum to "+
+			"that section's bullet count (an unmarked bullet is neither), the `NEAR-MISS` "+
+			"and `UNVERIFIABLE` counts to their left do NOT cover this section, and `MET` "+
+			"folds a sha-checked closure together with a sha-less one")
+	}
 	optional := ""
 	if len(clauses) > 0 {
-		lead := "One further badge says"
-		switch len(clauses) {
-		case 3:
-			lead = "Three further badges say"
-		case 2:
-			lead = "Two further badges say"
-		}
+		lead := cardinalBadgeLead(len(clauses))
 		optional = " " + lead + " the row's own numbers cannot be trusted: " +
 			strings.Join(clauses, "; ") + "."
 	}
@@ -398,4 +406,29 @@ func isAre(n int) string {
 		return "is"
 	}
 	return "are"
+}
+
+// cardinalBadgeLead is `"<N> further badge(s) say(s)"` — DERIVED from the count, never a
+// switch listing the counts somebody thought of.
+//
+// 🔴 IT REPLACED A `switch` THAT TOPPED OUT AT THREE AND WOULD HAVE SAID "One further
+// badge says" FOR FOUR. Adding the requirements clause made a fourth reachable, and the
+// old shape's default was the SINGULAR — so the first reader to see all four badges would
+// have been told there was one. `claude/RULES.md`: "a count in prose is a claim", and the
+// audit round that found this is the second in this repo to find a stale hand-written
+// total. The fix is the FORM, not the number: nothing here needs editing when a fifth
+// clause arrives.
+//
+// ⚠ IT FALLS BACK TO THE DIGITS ABOVE THE WORDS IT KNOWS rather than guessing. An English
+// cardinal table is exactly the kind of list that goes stale silently; past five, a
+// numeral is correct, readable, and cannot be wrong.
+func cardinalBadgeLead(n int) string {
+	words := map[int]string{1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}
+	if n == 1 {
+		return "One further badge says"
+	}
+	if w, ok := words[n]; ok {
+		return w + " further badges say"
+	}
+	return strconv.Itoa(n) + " further badges say"
 }

@@ -5634,6 +5634,18 @@ class TestBadgesPresent:
         )
 
 
+def _every_badge_kind() -> tuple[str, ...]:
+    """Every `BADGE_*` kind the module declares, DERIVED from the module.
+
+    A hand-listed set is what went stale when a fourth badge arrived; this cannot.
+    """
+    return tuple(
+        getattr(rc, name)
+        for name in sorted(dir(rc))
+        if name.startswith("BADGE_") and isinstance(getattr(rc, name), str)
+    )
+
+
 class TestCaveatBadgeClausesAreConditional:
     SCOPE = "example-scope/"
 
@@ -5678,12 +5690,19 @@ class TestCaveatBadgeClausesAreConditional:
             for a in absent:
                 assert a not in text, f"{badge} should NOT explain {a}"
 
-    def test_all_three_badges_reproduce_the_FULL_prose(self) -> None:
+    def test_EVERY_badge_reproduces_the_FULL_prose(self) -> None:
         """The unconditional text is the ceiling, not a different text: with every
-        badge present the caveat must equal the `badges=None` rendering."""
-        every = frozenset(
-            {rc.BADGE_NEAR_MISS, rc.BADGE_UNVERIFIABLE, rc.BADGE_MISSING_HEADING}
-        )
+        badge present the caveat must equal the `badges=None` rendering.
+
+        🔴 THE SET IS DERIVED, AND IT USED TO BE HAND-LISTED AS THREE. Adding
+        `BADGE_REQUIREMENTS` made this test fail — correctly, because a hand-listed
+        set silently stops meaning "every badge" the moment a fourth exists, and it
+        would then compare a PARTIAL rendering against the full one and pass only
+        while the new clause happened to be absent. Reading the constants means a
+        fifth badge needs no edit here. `claude/RULES.md`: fix the FORM, not the
+        number."""
+        every = frozenset(_every_badge_kind())
+        assert every, "no badge constants were discovered — this test would be vacuous"
         assert rc.caveat_text(self.SCOPE, every) == rc.caveat_text(self.SCOPE, None)
 
     def test_the_lead_phrase_AGREES_with_the_clause_count(self) -> None:
@@ -5700,6 +5719,15 @@ class TestCaveatBadgeClausesAreConditional:
             frozenset({rc.BADGE_NEAR_MISS, rc.BADGE_UNVERIFIABLE, rc.BADGE_MISSING_HEADING}),
         )
         assert "Three further badges say" in three
+        # 🔴 FOUR IS THE CASE THE OLD HAND-WRITTEN CHAIN GOT WRONG, and it is reachable:
+        # `marked-three` in the reader fixture renders all four badges on one row. The
+        # chain topped out at three and DEFAULTED to the singular, so this rendering said
+        # "One further badge says" over four clauses.
+        every = rc.caveat_text(self.SCOPE, frozenset(_every_badge_kind()))
+        assert "Four further badges say" in every, (
+            "the lead phrase disagrees with a four-clause caveat — the exact defect the "
+            "derived cardinal replaced a hand-written chain to prevent"
+        )
 
     def test_badges_None_is_FAIL_SAFE_toward_saying_more(self) -> None:
         """A caller that computed nothing gets the full text, never a silent trim."""

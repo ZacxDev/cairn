@@ -151,3 +151,52 @@ func TestANuanceBulletNeverBecomesARequirementOnThePage(t *testing.T) {
 		}
 	}
 }
+
+// TestTheProvenanceBadgeIS_RENDERED closes a measured hole: the badge is the feature's only
+// on-screen output and NOTHING asserted the HTML.
+//
+// 🔴 MEASURED BEFORE THIS EXISTED — deleting BOTH `g.If(b.Provenance == …)` lines in
+// `render.go` left `internal/ui` and `cmd/cairn-ui` fully green. The matched control on the
+// same function is what makes that a hole rather than a house style: deleting the
+// pre-existing `PopulationOpen` badge two lines up reddens two named tests. So this was
+// below the standard this exact function already meets.
+//
+// ⚠ IT ASSERTS THE RENDERED HTML, not `Bullet.Provenance`. `requirements_test.go`'s other
+// cases already pin the MODEL; a model that is right and a view that prints nothing is
+// exactly the shape those cases cannot see.
+func TestTheProvenanceBadgeIS_RENDERED(t *testing.T) {
+	src := StoreSource{Root: requirementsWorld(t)}
+	item := readTheOneEntry(t, src)
+
+	world := benignWorld()
+	world[0].Entries[0].Sections = item.Sections
+	view := viewOf("operator@example.invalid", world)
+	view.Scope = &world[0]
+	view.Entry = &world[0].Entries[0]
+	out := renderNode(t, EntryPage(view))
+
+	operatorBadges := strings.Count(out, `<span class="badge badge-open">operator</span>`)
+	inferredBadges := strings.Count(out, `<span class="badge badge-quiet">inferred</span>`)
+
+	// The world carries two `(operator)` requirements (one met, one open) and one
+	// `(inferred)`, plus one with NO provenance — so the counts distinguish a renderer
+	// that prints the field from one that prints a constant, and from one that prints
+	// nothing.
+	if operatorBadges != 2 {
+		t.Errorf("rendered %d `operator` badge(s), want 2 — the world carries two "+
+			"`(operator)` requirements. Zero means the badge is not rendered at all, which "+
+			"is the state that was green before this test existed.", operatorBadges)
+	}
+	if inferredBadges != 1 {
+		t.Errorf("rendered %d `inferred` badge(s), want 1", inferredBadges)
+	}
+
+	// 🔴 AND THE ABSENT CASE RENDERS NOTHING, which is the half that stops a default
+	// standing in for a real attribution. The fixture's unmarked bullet and its
+	// no-provenance `OPEN:` bullet must contribute no badge, so the totals above are
+	// exactly the file's own attributions and not one per bullet.
+	if total := operatorBadges + inferredBadges; total != 3 {
+		t.Errorf("rendered %d provenance badges over a section of 4 requirement bullets, "+
+			"want 3 — the fourth records nobody and must render NOTHING", total)
+	}
+}

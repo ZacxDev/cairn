@@ -654,7 +654,16 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 		{"the task refs in a body", "    tasks: github:"},
 		{"a sensitivity the schema HONOURED", "sensitivity=public"},
 		{"a sensitivity the fail-safe OVERRODE", "(declared: internal)"},
-		{"the three-badge caveat clause", "Three further badges say"},
+		// 🔴 FOUR, NOT THREE, AND THE CHANGE FROM THREE IS THE FINDING THIS ROW NOW CARRIES.
+		// It read `Three further badges say` until the requirements clause made a FOURTH
+		// reachable — and the lead was a hand-written chain topping out at three whose
+		// DEFAULT was the singular, so the first reader to see four badges would have been
+		// told there was one. This row is what went red and said so.
+		//
+		// It is pinned at FOUR rather than loosened to `further badge` on purpose: the whole
+		// point is that the cardinal is DERIVED (`cardinalBadgeLead`), and a row matching any
+		// count would pass against the chain that could not count past three.
+		{"the four-badge caveat clause, whose cardinal is DERIVED and not hand-listed", "Four further badges say"},
 		{"the fill-in notice for a bare entry", "the entry exists but has not been filled in"},
 		{"the missing-section body notice", "section)"},
 		{"the no-parsable-What-it-is notice", "no parsable `## What it is`"},

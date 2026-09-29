@@ -1671,14 +1671,33 @@ and the operator's complaint was about the second.
 | card | one scope — a directory under the store root |
 | card title | the scope's display name, which is also its directory name |
 | `N entries` | `.md` files in that directory the loader accepted |
-| `N bullets declared open` | bullets carrying an `OPEN:` marker, summed over the scope |
+| `N bullets declared open` | `## Nuance / work-history` bullets carrying an `OPEN:` marker, summed over the scope. ⚠ NOT `## Requirements` bullets — `readEntry` sums the nuance section only |
 | ref | the filename without `.md`: `<slug>` or `<slug>.<kind>` |
 | title | the `service:` key in the file's front matter |
 | aliases / tasks | the `aliases:` / `tasks:` front-matter sequences, **as written** |
 | section | one `##` heading, with the heading text verbatim |
-| line item | one top-level `-` bullet under `## Nuance / work-history`, continuations included |
+| line item | one top-level `-` bullet under a BULLETED section — `## Nuance / work-history` or `## Requirements` — continuations included |
 | date | an ISO date the bullet's first line starts with |
 | `OPEN` / `near-miss marker` / `resolved` | the bullet's `store` openness population — exactly one |
+| `operator` / `inferred` | WHO stated a `## Requirements` line item, from a parenthetical immediately after the marker. Absent is a DECIDED third answer, not a weak `inferred` |
+
+⚠ **THESE TABLES ARE NOT PINNED AGAINST THE CODE, AND A PIN WAS TRIED AND REJECTED WITH A
+MEASUREMENT.** A round-1 audit found three of these rows stale at once — the code had begun
+counting one population while every copy still said "bullets", and the rendered
+`operator`/`inferred` badge appeared in no legend at all. The obvious fix is a test asserting
+every label `render.go` emits appears here. It was written, and it reported **five** labels
+absent: `the refs listed`, `journal bullets`, `OPEN / near-miss / resolved`,
+`marker out of reach` — all four PRE-EXISTING — plus the new one.
+
+🔴 **Those four are wording differences, not gaps** (this table says `OPEN` / `near-miss
+marker` / `resolved` as separate cells, and `N bullets declared open` where the legend says
+`declared open`), so satisfying the pin meant rewording a correct document to please a guard
+invented for the occasion. That is a guard on WORDS — walkable by rewording in one direction
+and brittle in the other — and `claude/RULES.md` is explicit that the fix for over-wide prose
+is not another guard. **So the four absences are recorded here as the finding they are, and
+the next person to edit either side gets this paragraph instead of a red test.** If a pin is
+ever wanted, pin the SHAPE (a rendered badge class with no row anywhere) rather than the
+label text.
 
 🔴 **`declared open` and not `open`, and the word is load-bearing.** The marker is opt-in:
 `report.RecalledEntry.OpenCount`'s own caveat is that a zero means *nothing was declared* and

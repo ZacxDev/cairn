@@ -153,7 +153,11 @@ type EntryRef struct {
 //	            written, because a tag's canonical form IS its folded form and the folded
 //	            string is what `/?tag=` compares against
 //	Sections    the `##` headings `report.SurfacedHeadings` names, with their bodies
-//	Bullets     top-level `- ` lines under `## Nuance / work-history`, with continuations
+//	Bullets     top-level `- ` lines under a BULLETED section — `## Nuance / work-history`
+//	            or `## Requirements` — with continuations. ⚠ It read "under
+//	            `## Nuance / work-history`" until the requirements section falsified it;
+//	            `Section.Bullets`' own comment 113 lines down was corrected and this ledger
+//	            was not, which is why a ledger and the thing it describes are one edit
 //	Raw         the WHOLE file, decoded and otherwise untouched
 //
 // ⚠ `Tasks` IS NAMED FOR THE OLDER FRONT-MATTER KEY AND THE KEY IS NOW `refs:`. The name is

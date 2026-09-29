@@ -699,6 +699,9 @@ UNREADABLE_STATUSES: tuple[str, ...] = ("scope-unreadable", "search-unreadable")
 BADGE_NEAR_MISS = "near-miss"
 BADGE_UNVERIFIABLE = "unverifiable"
 BADGE_MISSING_HEADING = "missing-heading"
+#: ONE kind for the PAIR: both badges come from the same section, so a reader seeing
+#: either needs the same sentence and two kinds would emit it twice.
+BADGE_REQUIREMENTS = "requirements"
 
 
 def badges_present(entries: "Sequence[RecalledEntry]") -> frozenset[str]:
@@ -716,7 +719,30 @@ def badges_present(entries: "Sequence[RecalledEntry]") -> frozenset[str]:
             kinds.add(BADGE_UNVERIFIABLE)
         if getattr(e, "missing_sections", ()):
             kinds.add(BADGE_MISSING_HEADING)
+        if e.requirements_open or e.requirements_met:
+            kinds.add(BADGE_REQUIREMENTS)
     return frozenset(kinds)
+
+
+def _cardinal_badge_lead(n: int) -> str:
+    """`"<N> further badge(s) say(s)"` — DERIVED, never a ternary listing the counts
+    somebody thought of.
+
+    🔴 IT REPLACED A CHAIN THAT TOPPED OUT AT THREE AND DEFAULTED TO THE SINGULAR, so the
+    first reader to see four badges would have been told there was one. Adding the
+    requirements clause made a fourth reachable. `claude/RULES.md`: "a count in prose is a
+    claim" — and this is the second stale hand-written total an audit round has found in
+    this repo. The fix is the FORM: nothing here needs editing when a fifth clause arrives.
+
+    ⚠ Past five it prints the NUMERAL rather than guessing a word. An English cardinal
+    table is exactly the list that goes stale silently; a digit cannot be wrong.
+    """
+    words = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}
+    if n == 1:
+        return "One further badge says"
+    if n in words:
+        return f"{words[n]} further badges say"
+    return f"{n} further badges say"
 
 
 def caveat_text(scope: str, badges: "frozenset[str] | None" = None) -> str:
@@ -755,13 +781,13 @@ def caveat_text(scope: str, badges: "frozenset[str] | None" = None) -> str:
     clauses = []
     if show_all or BADGE_NEAR_MISS in badges:
         clauses.append(
-            "`🔴 N NEAR-MISS` — N bullets TRIED to write a marker and missed the "
-            "grammar, so they declare nothing and `N OPEN` is short by up to N"
+            f"`🔴 N NEAR-MISS` — N `{NUANCE_HEADING}` bullets TRIED to write a marker "
+            "and missed the grammar, so they declare nothing and `N OPEN` is short by up to N"
         )
     if show_all or BADGE_UNVERIFIABLE in badges:
         clauses.append(
-            "`⚠ N UNVERIFIABLE` — N `RESOLVED:` bullets name no sha, so the "
-            "closure cannot be checked"
+            f"`⚠ N UNVERIFIABLE` — N `{NUANCE_HEADING}` `RESOLVED:` bullets name no sha, "
+            "so the closure cannot be checked"
         )
     if show_all or BADGE_MISSING_HEADING in badges:
         clauses.append(
@@ -770,11 +796,16 @@ def caveat_text(scope: str, badges: "frozenset[str] | None" = None) -> str:
             "by measurement, and the entry's content is on disk but invisible to "
             "this read"
         )
-    if clauses:
-        lead = (
-            "Three further badges say" if len(clauses) == 3
-            else ("Two further badges say" if len(clauses) == 2 else "One further badge says")
+    if show_all or BADGE_REQUIREMENTS in badges:
+        clauses.append(
+            f"`🔴 N REQ OPEN` / `✅ N REQ MET` — N `{REQUIREMENTS_HEADING}` bullets "
+            "declaring each state. They do NOT sum to that section's bullet count (an "
+            "unmarked bullet is neither), the `NEAR-MISS` and `UNVERIFIABLE` counts to "
+            "their left do NOT cover this section, and `MET` folds a sha-checked closure "
+            "together with a sha-less one"
         )
+    if clauses:
+        lead = _cardinal_badge_lead(len(clauses))
         optional = f" {lead} the row's own numbers cannot be trusted: " + "; ".join(clauses) + "."
 
     return (
