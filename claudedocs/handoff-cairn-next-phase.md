@@ -77,6 +77,38 @@ with test coverage.
 
 ## Open investigations — live diagnosis state
 
+### ❌ RETRACTED IN FULL — "the trusted-proxy allowlist is stale, so every caller shares one lockout bucket"
+- as-of: 2026-09-29 · `via: measurement`
+- **What was claimed, and it was wrong:** that `CAIRN_TRUSTED_PROXIES` names a single-host
+  prefix that nothing holds, so `netid.PeerIsTrusted` is false for every request,
+  `CF-Connecting-IP` is never read, and — per `netid.ResolveClient`'s documented
+  untrusted-peer branch — every public caller buckets under the gateway's own address,
+  making five failed sign-ins a 15-minute global sign-in outage.
+- **The measurement behind it was correct and the INFERENCE was not.** no *pod* holds the allowlisted address: 797 pods enumerated, exact-match on the podIP field, with the cairn-ui
+  pod's own IP returning a row as the positive control. That reading is true and it does not
+  support the conclusion.
+- **Why it does not:** the peer the pod sees is **not a pod**. It is the `hostNetwork` nebula
+  gateway, whose source address toward pods on that node is the `cilium_host` address — a
+  node-level address that appears in no pod's `status.podIP`. The API deployment's own
+  comment says exactly this, recording that the value was derived with
+  `ip route get <pod-ip>` after a gateway roll. **An instrument that enumerates pod IPs is
+  structurally incapable of seeing a `cilium_host` address, and its zero was read as an
+  elimination.**
+- **Re-measured the way the value was derived:**
+  `kubectl -n nebula exec ds/nebula-gateway -c nginx-proxy -- ip route get <cairn-ui podIP>`
+  prints a route out of `cilium_host` whose `src` is **the allowlisted address, exactly**.
+  **The allowlist matches the real proxy.** `CF-Connecting-IP` IS read, so a caller can only ever lock out itself — which is
+  the definition of the rate limit working, and is what `netid`'s package doc claims.
+- **Ruled out:** that there is any global-lockout exposure on this surface. `via: measurement`
+- **The reusable lesson, which is why this block is kept rather than deleted:** *ask what
+  your instrument can REPORT before reading its output as an elimination* — this repository
+  already records that sentence about a leak-scanner, and it was hit again here within the
+  same session, in a new shape. A confident 797-row enumeration with a working positive
+  control is exactly the kind of evidence that feels conclusive while answering a different
+  question than the one asked.
+- **Next probe:** none. The claim is withdrawn. If the gateway is ever rebuilt, re-derive the
+  value with the `ip route get` command above rather than by looking for a pod.
+
 ### A test fails only in full-suite context, so no local full-suite run in the other repo can be green
 - as-of: 2026-09-29
 - **Symptom + exact repro:** `scripts/browser-bridge/tests::test_the_release_handler_EXITS_rather_than_resuming[INT]`
@@ -292,6 +324,50 @@ with test coverage.
 - 🔴 **PR #146's merged body is FALSE about the code it merged** — it still describes `--tag`
   as repeatable and names symbols that do not exist. A merged PR body cannot be re-run;
   card 663's write-back is the accurate account.
+- 🔴 **A CLAIM ANSWERS "MAY I", NEVER "IS IT DONE" — AND THE SWEEP IS WHAT CLOSES THAT GAP.**
+  A session re-entering from the control-plane doc derived this doc's rank-4 slug and got
+  **rc 12 — ALREADY YOURS** (a context reset earlier in the same session had taken it), which
+  reads identically whether the work is untouched or finished. The doc it had just read said
+  `NOT STARTED`. Only `gh pr list --state open` saw that 21 files of #148 were already built
+  and audited over two rounds. ⚠ **So run the unconditional sweep even when the lock says the
+  item is yours** — rc 12 is the one return value that actively suggests you have nothing to
+  check. **Closing condition:** none needed; this is a lesson, not an open item.
+- 🔴 **THE DEPLOYED RENDERER GOES STALE ON EVERY `internal/report` MERGE AND NOTHING
+  OBSERVES IT — MEASURED TWICE IN ONE SESSION.** Both pods sat at `bcfb60a`, AGREED WITH
+  EACH OTHER, and were one code commit behind `main` across `#146`, which edits
+  `internal/report/{text,searchtext}.go`. Bumped to `b2b54e4`; `#148` merged **while that
+  was reconciling** and touches `internal/report/{entry,prose}.go`, so the gap re-opened
+  within minutes. Bumped again to `e8839d9`. 🔴 **POD-TO-POD AGREEMENT IS NOT THE PROPERTY
+  THE BYTE-IDENTITY GATES HOLD — POD-TO-CLIENT IS**, and two equal tags are equally stale,
+  so "compare the two tag strings" (which the manifest comment recommends) cannot see this.
+  The only reading that can is resolve-image-to-commit then
+  `git rev-list --count <that>..origin/main`, which no gate does in either repository.
+  **Closing condition:** something that FAILS when a deployed cairn image's commit is
+  behind `origin/main` — a CI job, a Prometheus rule, or an image-automation controller —
+  or a written line accepting manual bumps and naming who re-reads the distance.
+  ⚠ A third manual bump is not the fix and would rot the same way.
+- 🔴 **THE DATABASE-BACKED SESSION STORE HAS NEVER BEEN WRITTEN TO.** `sessions.n_tup_ins`
+  is **0** — cumulative since the postmaster came up at the 28(d) cutover
+  (`stats_reset` is NULL), with `schema_migrations.n_tup_ins = 1` as the positive control
+  proving the counter moves and that this is the database the app migrated. The startup
+  banner reads `state sessions in postgres, invitations in postgres` and the table exists
+  with the right columns; **a banner is configured-state, not evidence the feature works**,
+  which the 28(d) block said in advance. ⚠ So rank 13's operator sign-in report on the
+  control-plane doc cannot have landed in THIS database after the cutover, or it did not
+  persist. A single credential-form attempt from this session returned **401** and wrote
+  nothing (correct for a refusal): the store API token is NOT the UI credential — the UI's
+  is the one issued into the control journal at seeding. **Closing condition:** one sign-in
+  that moves `sessions.n_tup_ins` from 0 to 1, read before and after. The credential is the
+  operator's; nothing else blocks it.
+- ⚠ **`#140`'s "0 lost, 0 duplicated" WAS TRUE OF THE BULLETS IT MOVED AND SILENT ABOUT ONE
+  IT DELETED.** The operator-decision bullet *"the prune was chosen over feature work"* was
+  removed from the control-plane doc by `a035483` while the archive half of that move sat
+  unstaged in another session's scratchpad worktree, so it existed in **no committed file**
+  until PR **#149** restored it. **An eviction's safety property must be measured against
+  the COMMIT, never against the working tree that produced it.** ⚠ The other bullet in that
+  stranded batch (the card-cap retractions) is still in the live doc, so archiving it too
+  would have created the duplicate a prune's own property forbids — rank 27's prune still
+  owns that half.
 
 ## Gotchas / decisions / dead-ends
 
