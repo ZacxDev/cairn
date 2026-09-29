@@ -24,28 +24,17 @@ with test coverage.
 
 ## State now
 
-- 🔴 **THE CLOSING CONDITION IS NOW MET AND THIS ARC IS CLOSED.** The one thing the previous
-  update named as missing has landed: **#148 MERGED as `e8839d9`**. All four cards read
-  `complete`, and each feature is verified **BY CONTENT** on its repo's mainline — ancestry is
-  the wrong test after a squash and was not used: `ref-to` across 4 client files and 2 server
-  files (662), the tag filter in 2 `internal/report` files (663), `store.RequirementsHeading`
-  in `internal/report/prose.go`'s heading list (664), and the door scripts present in the other
-  repo (665) — with a nonexistent marker returning **0** as the negative control.
-  ⚠ **Anything still open below belongs to a NEW arc, not to another round of this one.**
-  - 🔴 **THE SWEEP IS WHAT FOUND #148, NOT THE LOCK.** A later session re-entered from the
-    control-plane doc, derived this doc's rank-4 slug and got **rc 12 — ALREADY YOURS**, which
-    reads identically whether the work is untouched or finished; the doc it had read still said
-    `NOT STARTED`. Only `gh pr list --state open` saw 21 files of it already built and audited.
-    **A claim answers "may I", never "is it done" — run the sweep even when the lock says the
-    item is yours.**
+- ⏳ **THE ARC'S CLOSING CONDITION IS NOT YET MET, AND ONE THING IS MISSING.** All four cards
+  — **662, 663, 664, 665** — are `complete`, but the condition also requires each one's PR
+  **merged and verified by content**, and **664's PR #148 is still OPEN**. Everything else is
+  done.
 - ✅ **662 — `refs:` + URL templates + `--ref-to`/`?ref-to=`.** MERGED, squash `5c59169`,
   verified by content.
 - ✅ **663 — entry-level `tags:` + scalar `--tag`/`?tag=`.** MERGED, squash `94ecb7e`,
   verified by content.
 - ✅ **665 — the four deterministic doors plus thin routing skills.** MERGED, squash
   `dc159b07` in the other repo, verified by content; that mainline went green after it.
-- ✅ **664 — the `## Requirements` section. MERGED as `e8839d9` (#148)**, verified by content
-  (`store.RequirementsHeading` in `internal/report/prose.go`'s heading list). Built
+- ⏳ **664 — the `## Requirements` section. IN FLIGHT: cairn#148**, head **`cc9452e`**. Built
   in both implementations plus the browser surface, **all eight acceptance criteria
   validated**, card `complete`, and audited over **two rounds** (round 0 requirements-and-
   deletion, round 1 the nine axes) with every finding from both fixed.
@@ -316,6 +305,14 @@ with test coverage.
 - 🔴 **PR #146's merged body is FALSE about the code it merged** — it still describes `--tag`
   as repeatable and names symbols that do not exist. A merged PR body cannot be re-run;
   card 663's write-back is the accurate account.
+- 🔴 **A CLAIM ANSWERS "MAY I", NEVER "IS IT DONE" — AND THE SWEEP IS WHAT CLOSES THAT GAP.**
+  A session re-entering from the control-plane doc derived this doc's rank-4 slug and got
+  **rc 12 — ALREADY YOURS** (a context reset earlier in the same session had taken it), which
+  reads identically whether the work is untouched or finished. The doc it had just read said
+  `NOT STARTED`. Only `gh pr list --state open` saw that 21 files of #148 were already built
+  and audited over two rounds. ⚠ **So run the unconditional sweep even when the lock says the
+  item is yours** — rc 12 is the one return value that actively suggests you have nothing to
+  check. **Closing condition:** none needed; this is a lesson, not an open item.
 - 🔴 **THE DEPLOYED RENDERER GOES STALE ON EVERY `internal/report` MERGE AND NOTHING
   OBSERVES IT — MEASURED TWICE IN ONE SESSION.** Both pods sat at `bcfb60a`, AGREED WITH
   EACH OTHER, and were one code commit behind `main` across `#146`, which edits
