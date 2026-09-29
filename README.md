@@ -336,7 +336,7 @@ files rather than reasoned from the code, and they agree sentence for sentence:
 | `tags:` with an indented `a: b` under it — a **block mapping** | **NOT refused.** It parses as the empty string, which the `or ()` rule makes an ABSENT key, so the entry loads carrying no tags |
 | `tags:` with a `-` item that is blank — the **block** list | **NOT refused.** The block-list scanner drops an empty item before the tag loop ever sees it, so `tags:` followed by a bare `-` and then `- alpha` loads carrying `alpha`. Only the *flow* spelling of a blank item reaches the refusal above |
 
-⚠ **So the fourth refusal — ``\`tags:\` must be a list, got <type>`` — is unreachable from a
+⚠ **So the fourth refusal — `` `tags:` must be a list, got <type> `` — is unreachable from a
 file, and that is stated rather than left to be discovered.** It guards the PROGRAMMATIC loader
 (`from_mapping` / `EntryFromMapping`), which is also the writer's validate pass, where a caller
 really can hand it a `dict`.
