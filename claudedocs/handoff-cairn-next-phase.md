@@ -24,30 +24,37 @@ with test coverage.
 
 ## State now
 
-- Base clone `main` is **current** at `9e61c4c0` (this doc's own previous update).
-- ✅ **662 — `refs:` + URL templates + `--ref-to`/`?ref-to=`. MERGED, squash `5c59169`.** Card `complete`.
-- ✅ **663 — entry-level `tags:` + scalar `--tag`/`?tag=`. MERGED, squash `94ecb7e`. Card
-  `complete`; claim `cairn-next-phase-c` RELEASED.** Rank 1 closed. Verified by content, with the
-  squash tree byte-identical to the tree the gates ran against (`94ecb7e^{tree}` and the tested
-  head `2c1bbcf^{tree}` are both `e52d5c21`), plus an independent re-run on `main`: `go vet` rc 0
-  with **0 bytes of stderr**, `go test ./...` **21 ok / 0 FAIL / 0 panics**, leakscan **0 findings
-  across 462 files**. Not re-run locally, and said so on the card: `pytest`, `suite.py`,
-  `run_go.sh`, `parity/harness.py`, `dualrun/harness.py`.
-- ✅ **665 — the four deterministic doors plus thin routing skills. MERGED, squash `dc159b07`.
-  Card `complete`; claim `cairn-next-phase-d` RELEASED.** Ranks 2 and 3
-  closed. Verified by CONTENT on that repo's mainline (ancestry is correctly **false** after a
-  squash): all five `scripts/cairn-ops/*.sh`, the test module, the three router skills, and the
-  12-line door-routing block in the store skill — with a sentinel positive control returning 0.
-- ⏳ **664 — `## Requirements` section. NOT STARTED**, card `open`. **It is the only thing between
-  this arc and its closing condition.** Its blocker (663) cleared.
-- 📋 Filed rather than fixed: **681**, **682** (`AGENTS.md` one-byte headroom), **683** (needs
-  re-pointing — see rank 7).
-- ✅ **No claims held.** Both `cairn-next-phase-c` and `-d` are released.
+- ⏳ **THE ARC'S CLOSING CONDITION IS NOT YET MET, AND ONE THING IS MISSING.** All four cards
+  — **662, 663, 664, 665** — are `complete`, but the condition also requires each one's PR
+  **merged and verified by content**, and **664's PR #148 is still OPEN**. Everything else is
+  done.
+- ✅ **662 — `refs:` + URL templates + `--ref-to`/`?ref-to=`.** MERGED, squash `5c59169`,
+  verified by content.
+- ✅ **663 — entry-level `tags:` + scalar `--tag`/`?tag=`.** MERGED, squash `94ecb7e`,
+  verified by content.
+- ✅ **665 — the four deterministic doors plus thin routing skills.** MERGED, squash
+  `dc159b07` in the other repo, verified by content; that mainline went green after it.
+- ⏳ **664 — the `## Requirements` section. IN FLIGHT: cairn#148**, head **`cc9452e`**. Built
+  in both implementations plus the browser surface, **all eight acceptance criteria
+  validated**, card `complete`, and audited over **two rounds** (round 0 requirements-and-
+  deletion, round 1 the nine axes) with every finding from both fixed.
+  - **Blocked ONLY on the `go` check.** 7 of 8 are green on `cc9452e`: `nix` `parity` `tests`
+    `leakscan` `uiaudit` `pgtest` `dualrun`. `go` was `in_progress` when this was written; it
+    runs 35–47 min and is the ONLY place all 188 mutants run together and the conformance
+    corpus runs against the Go server.
+  - 🔴 **The operator directed the merge; the merge has NOT happened.** Do not read "merge
+    approved" as "merged" — the gate had not settled, so merging would have been on the
+    PREVIOUS head's evidence.
+- ⚠ **Merging was directed with round 1's findings fixed but NO round 2 run.** The ladder rule
+  is that a round producing findings is followed by another, and round 1 produced five. The
+  cost was stated before merging and the decision was the operator's. **So the thing this arc
+  will not have bought is a delta audit of `6efc9dd..cc9452e`** — the range where this repo
+  most often finds a fix round's own prose was the next defect. Round 1 hit that shape twice
+  inside those very fixes.
+- ⚠ **Claim HELD: `cairn-next-phase-4`.** Release it once #148 merges and is verified.
 - ⚠ **No task-board front-matter field is recorded**: the handoff's task resolver exited **5**
-  (nothing resolved). An unknown session id answers 200 with an empty array, so that zero cannot
-  distinguish "touched no task" from "wrong id" — it is not a clean bill of health.
-- ⏳ **PR #1922 in the other repo is OPEN and unaudited** — the retraction of that repo's branch
-  protection claim in the CI platform skill. No pre-merge audit has run on it.
+  (nothing resolved). An unknown session id answers 200 with an empty array, so that zero
+  cannot distinguish "touched no task" from "wrong id" — it is not a clean bill of health.
 
 ## Open investigations — live diagnosis state
 
@@ -170,6 +177,21 @@ with test coverage.
   failure replaced one. This is the arithmetic a bare "it's green now" would have skipped.
   `via: measurement`
 
+### CLOSED: `uiaudit` red was the results-push leg, not the tree — and my first reading of it was wrong
+- as-of: 2026-09-29
+- **Cause, from the job's own log:** the failing step is `verify-push — the push actually
+  landed`; the body is `error code: 502` with `Content-Type: text/html`, i.e. the push was
+  refused **before reaching the service**. The a11y walk itself SUCCEEDED —
+  `payload shape OK — 38 page(s), 152 part(s)`. The job is `continue-on-error: true` and its
+  own comment names the edge in front of the hub as the likely cause. `via: measurement`
+- 🔴 **RETRACTED: my first reading blamed the change, on a state-change control.** It was
+  green on the three preceding commits and on mainline, red only on mine — which reads as
+  attribution and is not. **A transient 502 looks exactly like a state change at one commit.**
+  The discriminator is the STEP NAME in the log, and the later run on the next head came back
+  green with no code change to that path. `via: measurement`
+- **Lesson, which outlives this:** a single observation that a check flipped at your commit is
+  not attribution. Read what the step says it was doing.
+
 ## Next steps (ranked)
 
 🔴 **NUMBERING IS STABLE — every number KEEPS ITS LINE even when done, because a rank is half a
@@ -177,64 +199,80 @@ with test coverage.
 
 1. ✅ **DONE — card 663 written back, `cairn-next-phase-c` released.**
    forcing: gate — an unwritten card is re-dispatched and paid for twice.
-2. ✅ **DONE — PR #1905 merged**, squash `dc159b07`, after gating the merged tree on all four CI
-   statuses and attributing the one red by name. A merge note recording that attribution is on
-   the PR.
+2. ✅ **DONE — PR #1905 merged** in the other repo, squash `dc159b07`.
    forcing: user — the operator approved the merge conditional on verification.
 3. ✅ **DONE — card 665 written back, `cairn-next-phase-d` released.**
    forcing: gate — same as rank 1.
-4. 🔴 **Build 664 — the `## Requirements` section. THE ONLY ITEM LEFT BEFORE THE ARC CLOSES.**
-   Operator decision already recorded on the card: a fourth canonical section reusing the existing
-   `OPEN:`/`RESOLVED <sha>:` markers, with provenance read from a prefix **after** the marker so
-   the anchored marker regex stays byte-unchanged. ⚠ It regenerates the same golden fixtures 662
-   and 663 did, and both of those are now merged, so nothing is sequenced ahead of it.
-   forcing: user — one of the four features the operator asked for.
+4. ⏳ **Merge 664 — IN FLIGHT: cairn#148**, head `cc9452e`, 7 of 8 checks green and blocked
+   only on `go`. **THE ARC CLOSES HERE AND NOWHERE ELSE**, so this is the whole remaining
+   distance. When `go` lands green: squash-merge, verify by content on `main` — including that
+   `internal/store/openness.go` is byte-unchanged, which is criterion 2's pin and the one
+   thing in this change that could have gone wrong quietly — then release
+   `cairn-next-phase-4`. If `go` comes back RED, report what failed and do not merge.
+   forcing: user — one of the four features the operator asked for, and the operator directed
+   the merge.
 5. **Close or dismiss card 681's eight items.** Dismissal in writing is explicitly acceptable.
    forcing: none
 6. **Free real headroom in `AGENTS.md` (card 682), or accept the one byte in writing.**
    forcing: gate — the next edit by any session reddens the merged tree.
-7. **Re-point card 683**, in the other repo — its named test is not what was red. The red was the
-   browser skill's byte ceiling and **#1917 has now fixed it**, so the likeliest correct action is
-   to close 683 against that, or keep it open naming a run that actually exhibited the
-   release-handler failure.
-   forcing: gate — a card pointing at the wrong test guarantees the next session starts in the
-   wrong place.
-8. **Audit and land PR #1922 in the other repo** — the retraction of the stale branch-protection
-   claim. No pre-merge audit has run on it; round 0 first, since only round 0 can conclude *close
-   this, do not audit it*, and only while the merge decision is open.
-   forcing: gate — the claim it retracts tells a session a gate will stop a bad merge when nothing
-   will, which is the dangerous direction.
+7. **Re-point card 683**, in the other repo — its named test is not what was red. The red was
+   the browser skill's byte ceiling and #1917 fixed it, so the likeliest correct action is to
+   close 683 against that.
+   forcing: gate — a card pointing at the wrong test guarantees the next session starts in
+   the wrong place.
+8. **Audit and land PR #1922 in the other repo** — the retraction of the stale
+   branch-protection claim. No pre-merge audit has run on it; round 0 first.
+   forcing: gate — the claim it retracts tells a session a gate will stop a bad merge when
+   nothing will, which is the dangerous direction.
+9. 🔴 **The validator cannot see a mis-spelled marker in a `## Requirements` section.**
+   `validate.go`'s `journalBody` scopes every advisory to the nuance heading, so
+   `ScanOpenActions`, `ScanUnreachableMarkers` and `ScanDroppedLines` see no requirement
+   bullet, and the index row counts only open/met. **Measured:** a `## Requirements` holding
+   `- OPEN - …`, `- RESOLVED — …` and `- FIX: …` renders `🔴 1 NEAR-MISS`, and that 1 is the
+   NUANCE section's. Verbatim the failure `NearMissCount`'s own comment exists for,
+   reintroduced for the new section. Filed rather than fixed because the validator's messages
+   are byte-compared across both implementations, so it is a cross-language message change and
+   rushing it at the end of a fix round is the documented way a fix round introduces the next
+   finding. **Closing condition:** `cairn-validate` reports a near-miss sitting in a
+   `## Requirements` section; the message is byte-identical in `internal/store/validate.go`
+   and `lib/entry_shape.py`; the guard is watched RED on pre-change code.
+   forcing: gate — a writer who mis-spells the marker gets no signal from any surface, which
+   is the exact silent failure the marker grammar exists to prevent.
+10. 🔴 **The audit tooling presents AGENT-authored PR comments as the operator's verbatim
+    asks.** In the other repo, `scripts/audit-dispatch.py`'s `## THE OPERATOR'S OWN ASKS`
+    block declares "the operator's own words ONLY — no agent or tool output, by design" and
+    ledgered **2 asks, 10,627 B**, both `### from the PR comment` — both written by an agent
+    and posted through the operator's account. Zero genuine typed messages were present. The
+    block refutes itself: it says "me" in opposition to "the operator" in the same table.
+    **Root cause:** the filter is authorship-by-GitHub-account, so `gh pr comment` run by an
+    agent reads as the operator. **Why it matters:** the brief then instructs the auditor not
+    to propose deleting anything the operator asked for, so every self-issued requirement
+    becomes deletion-immune — inverting the one round that can conclude *close this PR*. It
+    fails the other way too: the four real decisions that PR turned on appeared nowhere.
+    **Closing condition:** a PR comment is either excluded from that block or labelled
+    "posted from the operator's account; authorship NOT verified" AND excluded from the
+    deletion-immunity clause, with a brief regenerated over a PR whose comments are
+    agent-authored showing the label.
+    forcing: gate — it silently disarms round 0, which is the only round that can stop work
+    that should not exist.
 
 ## Defects (batched)
-- **`?q=` and `?tag=` do not compose on the browse surface** — `/?q=a&tag=b` renders two
-  independent cards, and the search form carries no hidden tag field, so refining a query
-  silently drops the tag. On the pod they compose into one narrowed search. Declared in
+- **`?q=` and `?tag=` do not compose on the browse surface** — declared in
   `internal/ui/README.md` with a closing condition; composing changes a deployed answer.
-- **Nothing in the browser has been walked for `/?tag=`** — `uiaudit` does not visit it, no axe
-  pass has run over the new card. Declared in `internal/ui/README.md`.
-- **`internal/report/testdata/reader_fixtures.json` carries no `ref-to` and no `tag` case** —
-  re-measured this session: **0 occurrences of `tag`, 0 of `ref-to`** across its 286,152
-  bytes. The renderer's own differential fixture, which exists because the corpus cannot send
-  most of what it renders, covered neither filter.
-- **The two new parser refusal messages are not byte-compared across implementations** — the
-  corpus world holds one malformed entry and no row renders a `tags:`-specific reason. Systemic:
-  the same is true of every `aliases:`/`refs:` refusal.
-- **Four files are not `gofmt`-clean and nothing greps it** — `internal/client/{anchor_test,exit,options}.go`
-  and `internal/control/tokenfile/source.go`, re-confirmed with `gofmt -l` on `main`. Pre-existing.
-- 🔴 **PR #146's merged body is now FALSE about the code it merged.** It still carries a
-  section headed "AND semantics, and the first repeatable parameter in this project", stating
-  `--tag` is repeatable, that `client.Options` carries the first `[]string`, that the pod reads
-  it through `allValues`, and that operands are canonicalised in `report.canonicalTags`. **None
-  of those four is true on `main`** — the scalar commit `ef65738` landed inside the PR and the
-  body was never updated. A merged PR body cannot be re-run and cannot be corrected; card 663's
-  write-back is now the accurate account. No action available, recorded so nobody learns the
-  opposite from #146.
-- ⚠ **PR #1905's body claims it does not touch `claude/skills/cairn/SKILL.md`; it does** —
-  commit `8f6cafeb` added 12 lines. That claim is what its "#1872 has zero file overlap, merge
-  order does not matter" conclusion rested on. The conclusion still holds **textually**
-  (`merge-tree` rc 0 against #1872), but #1872's own copy of that file is already **13,461 B**
-  and the combination reaches **14,347 B**, against a 12,288 B skill-audit target — a
-  byte-gated shared file whose two authors each measured only their own side.
+- **Nothing in the browser has been walked for `/?tag=`**, and no browser has visited an
+  entry page carrying `## Requirements` either. Both rendering paths are tested; a human
+  clicking them is not.
+- **The two new parser refusal messages are not byte-compared across implementations** —
+  systemic: the same is true of every `aliases:`/`refs:` refusal.
+- **Four files are not `gofmt`-clean and nothing greps it** —
+  `internal/client/{anchor_test,exit,options}.go` and `internal/control/tokenfile/source.go`.
+  Pre-existing; re-confirmed on every commit of this arc.
+- **`internal/ui/README.md` documents four legend labels the code renders under different
+  wording**, and nothing pins the two against each other. A pin was written and deleted —
+  see the gotcha below.
+- 🔴 **PR #146's merged body is FALSE about the code it merged** — it still describes `--tag`
+  as repeatable and names symbols that do not exist. A merged PR body cannot be re-run;
+  card 663's write-back is the accurate account.
 
 ## Gotchas / decisions / dead-ends
 
@@ -366,6 +404,44 @@ with test coverage.
   `"${C}:refs/heads/…"`. **Third instance in this arc, hit after reading the rule that warns about
   it** — the rule is evidently not enough on its own, so prefer braces unconditionally in any
   `$VAR:` construction.
+
+- 🔴 **A GUARD I WROTE AND THEN DELETED, AND THE DELETION IS THE LESSON.** Three copies of one
+  legend claim went stale at once, so the obvious fix is a test asserting every rendered
+  label appears in the README. Written; its own positive control caught a wrong split key
+  (`<dt>` vs `<dt class="legend-term">`) rather than passing over an empty label set; and it
+  then reported FIVE absent labels, **four pre-existing and all four merely WORDING
+  differences**. Satisfying it meant rewording a correct document to please a guard invented
+  for the occasion — a guard on WORDS. Deleted, with the measurement recorded as prose.
+  **If a pin is ever wanted there, key it on the SHAPE — a rendered badge class with no row
+  anywhere — never on label text.**
+- 🔴 **A HAND-WRITTEN CARDINAL IN PROSE IS A CLAIM, AND THE DEFAULT IS WHERE IT LIES.** The
+  caveat's lead was `switch len(clauses) { case 3: … case 2: … }` defaulting to the SINGULAR.
+  A fourth clause made four reachable, so the first reader to see four badges would have been
+  told there was ONE. Fixed by DERIVING it in both languages, printing the numeral above five
+  rather than extending a word table. Caught by a fixture ledger row pinned at the old
+  number — which is the argument for pinning the exact string rather than a loose match.
+- 🔴 **`nix build` AND `go test` ARE DIFFERENT VIEWS OF "THE CODE".** Both Go gates were green
+  while `nix build .#ui-image` failed with `undefined: store.RequirementsHeading` — nix's
+  flake source includes only GIT-TRACKED files and the new parser was untracked. A local green
+  says nothing about the packaged build. Caught only because the image contract test reports a
+  failed build as a FAILURE rather than a skip.
+- 🔴 **A MUTATION BATTERY MUST GATE ON THE MUTANT BUILDING BEFORE READING ITS VERDICT.** A
+  mutant that fails to compile prints no `--- FAIL` line, which a harness grepping for one
+  scores as SURVIVED. Hit once here through shell quoting that emitted a literal `\&\&`.
+- 🔴 **A `pkgs`-STYLE PER-ROW OVERRIDE ON A LOAD-BEARING SEAM MUST BE ADD-ONLY.** The
+  committed battery's `PKGS` is a seam that must not SHRINK; a bare per-row override is a
+  mechanism for shrinking it, and the count pin counts ROWS not SCOPE. Now refused by
+  `__post_init__` unless the row is a superset.
+- 🔴 **A CHECK THAT FLIPPED AT YOUR COMMIT IS NOT ATTRIBUTION.** See the closed investigation
+  above: a transient 502 is indistinguishable from a state change at one commit. Read the
+  failing STEP, not the state transition.
+- ⚠ **`gh api …/logs --allow-escape-sequences` DOES NOT EXIST in this `gh`** — it returns
+  **0 bytes** and exits non-zero, which greps as "no failures found". And the `gh run view
+  --log` route REFUSES while any job in the run is still in progress. Assert a non-zero byte
+  count before believing any grep over a CI log.
+- ⚠ **A handoff delta is the easiest place to leak into a PUBLIC repo**, and the proposal run
+  does NOT run the leak gate — only `--confirm` does. Budget several scrub rounds and read the
+  refusal's own token list rather than hand-deriving one.
 
 ## How to verify
 
