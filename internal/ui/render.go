@@ -833,6 +833,15 @@ func bulletItem(b Bullet) g.Node {
 				h.Span(h.Class("badge badge-quiet"), g.Text("resolved "+b.ResolvedBy))),
 			g.If(b.Population == store.PopulationUnverifiable,
 				h.Span(h.Class("badge badge-near"), g.Text("resolved, no sha"))),
+			// 🔴 PROVENANCE IS RENDERED AS ITS OWN BADGE, AND ONLY WHEN THE FILE DECLARED
+			// ONE. "" is a decided answer — nobody recorded who asked — so it renders
+			// NOTHING rather than a default that would read as a weak `inferred`. Printing
+			// an attribution the file does not make is the one failure this feature cannot
+			// have, because the whole point of the section is who said it.
+			g.If(b.Provenance == store.ProvenanceOperator,
+				h.Span(h.Class("badge badge-open"), g.Text("operator"))),
+			g.If(b.Provenance == store.ProvenanceInferred,
+				h.Span(h.Class("badge badge-quiet"), g.Text("inferred"))),
 		),
 		h.Pre(h.Class("bullet-body"), h.Code(inlineCode(strings.Join(b.Body(), "\n")))),
 		unreachableNotes(b),

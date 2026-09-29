@@ -3802,14 +3802,26 @@ class TestMutationKillMatrix:
 
         ⚠ This mutation is the INVERSE of the one that used to live here: the
         anchor asserts the shipped source really carries the wider tuple, so the
-        test cannot pass by mutating a line that no longer exists."""
+        test cannot pass by mutating a line that no longer exists.
+
+        🔴 AND THE ANCHOR MOVED ONCE ALREADY, WHICH IS THE POINT OF ANCHORING IT.
+        Adding `REQUIREMENTS_HEADING` re-spelled the tuple across four lines, so
+        the old single-line anchor matched **0x** and `_load_mutant` REFUSED —
+        loudly, naming the count, instead of scoring the mutant SURVIVED against a
+        mutation that never applied. A battery keyed on exact source text has to
+        fail this way when the source is reformatted; the cost is updating the
+        anchor, and the alternative is a green row that measured nothing. Keep
+        the mutation itself narrow: it removes `WHAT_HEADING` and nothing else,
+        so the other three entries stay as the shipped source has them."""
         mod = _load_mutant(
             tmp_path,
             "m_sections",
             [
                 (
-                    'SURFACED_HEADINGS: tuple[str, ...] = (WHAT_HEADING, POINTERS_HEADING, NUANCE_HEADING)',
-                    'SURFACED_HEADINGS: tuple[str, ...] = (POINTERS_HEADING, NUANCE_HEADING)',
+                    "    WHAT_HEADING,\n    POINTERS_HEADING,\n"
+                    "    NUANCE_HEADING,\n    REQUIREMENTS_HEADING,\n",
+                    "    POINTERS_HEADING,\n"
+                    "    NUANCE_HEADING,\n    REQUIREMENTS_HEADING,\n",
                 )
             ],
         )

@@ -122,6 +122,11 @@ __all__ = [
     "UNREACHABLE_MARKER",
     "UnreachableMarker",
     "JournalBullet",
+    "REQUIREMENTS_HEADING",
+    "PROVENANCE_OPERATOR",
+    "PROVENANCE_INFERRED",
+    "Requirement",
+    "parse_requirements",
     "extract_sections",
     "scan_headings",
     "parse_journal_bullets",
@@ -1501,6 +1506,23 @@ WHAT_HEADING = "## What it is"
 POINTERS_HEADING = "## Pointers"
 NUANCE_HEADING = "## Nuance / work-history"
 
+# The FOURTH canonical section: what the subsystem was SAID to do, with open/met
+# state.
+#
+# 🔴 A SECTION AND NOT A NEW `kind:`, AND NOT A FIRST-CLASS OBJECT. The kind enum
+# is closed and asserted, so a fifth kind would move every kind-keyed table; a
+# requirement with its own routes and store would be a tracker, and this store is
+# deliberately not one. A heading is additive — `_heading_blocks` and
+# `extract_sections` are generic over headings — so an entry that has never heard
+# of this one parses exactly as it did before.
+REQUIREMENTS_HEADING = "## Requirements"
+
+# The three answers `_bullet_provenance` gives. 🔴 ABSENT (None) IS A DECIDED
+# ANSWER: "who said this" is the whole feature, so a requirement nobody
+# attributed has to stay distinguishable from one attributed to an agent.
+PROVENANCE_OPERATOR = "operator"
+PROVENANCE_INFERRED = "inferred"
+
 # A top-level journal bullet starts at COLUMN 0. Measured over the whole live
 # corpus (26 entries, 110 top-level bullets): every bullet line is
 # at indent 0 and every one of the 250 continuation lines is at indent 2. So an
@@ -2133,6 +2155,104 @@ def parse_journal_bullets(body: str) -> tuple[JournalBullet, ...]:
             )
         )
     return tuple(out)
+
+
+@dataclass(frozen=True)
+class Requirement:
+    """One bullet of a `## Requirements` section: a journal bullet plus WHO said it.
+
+    🔴 IT WRAPS `JournalBullet` RATHER THAN RE-DECLARING ITS FIELDS, because the
+    openness state machine is the thing being reused and a parallel dataclass is
+    how two readers come to disagree about what `RESOLVED <sha>:` means.
+    `openness_population`, `first_line`, `text` and `date` are all reached
+    through `bullet` and none of them is re-spelled here.
+    """
+
+    bullet: JournalBullet
+    provenance: str | None
+    """`'operator'` | `'inferred'` | None, read from a prefix AFTER the marker.
+
+    🔴 None IS A DECIDED ANSWER, NOT AN ACCIDENT. The whole feature is "who
+    stated this", so a requirement nobody attributed must stay distinguishable
+    from one attributed to an agent. Folding None into `'inferred'` would assert
+    an attribution the file does not make."""
+
+    @property
+    def is_open(self) -> bool:
+        """DECLARED open, exactly — and deliberately NOT `not is_met`.
+
+        A bullet carrying no marker is neither open nor met; it is unstated, and
+        both predicates return False for it. A `not is_met` spelling would
+        promote every unmarked bullet to an open requirement and inflate the
+        badge with work nobody declared."""
+        return self.bullet.openness_population == "open"
+
+    @property
+    def is_met(self) -> bool:
+        """Closed, in the journal's own two-state vocabulary.
+
+        🔴 READS `openness_population`, NOT `openness`, so it cannot disagree
+        with the badge beside it. `unverifiable` — a `RESOLVED:` naming no sha —
+        counts as MET: the writer closed it and only the CHECK is missing, which
+        is exactly what that population exists to report separately. Folding it
+        into not-met would reopen an action somebody finished."""
+        return self.bullet.openness_population in ("resolved", "unverifiable")
+
+
+def parse_requirements(body: str) -> tuple[Requirement, ...]:
+    """Group a REQUIREMENTS-section body into requirement bullets.
+
+    🔴 IT TAKES THE SECTION BODY, NOT THE ENTRY, AND THAT IS THE SECTION
+    BOUNDARY GUARD. The claim a requirement makes is "the operator said this
+    subsystem should do X"; a bullet saying the same words under
+    `## Nuance / work-history` is a note about history. The two are told apart
+    by WHICH SECTION THEY SIT IN and by nothing else — no keyword, no shape — so
+    the only way this can be wrong is a caller handing it the wrong body.
+    Callers get it from `extract_sections(...)[REQUIREMENTS_HEADING]`, a lookup
+    that cannot silently widen.
+
+    Bullet grouping is `parse_journal_bullets` verbatim: same column-0 rule,
+    same fence skipping, same continuation handling. A second grouper here would
+    be the duplicated predicate that diverges the day one side learns a new
+    fence spelling — invisibly, because both look right on the simple case.
+    """
+    return tuple(
+        Requirement(bullet=b, provenance=_bullet_provenance(b.first_line))
+        for b in parse_journal_bullets(body)
+    )
+
+
+def _bullet_provenance(first_line: str) -> str | None:
+    """`(operator)` / `(inferred)` from the run immediately AFTER the marker.
+
+    🔴 AFTER THE MARKER, INSIDE THE TEXT — NEVER AS A CAPTURE GROUP INSIDE
+    `_JOURNAL_OPENNESS`. That pattern is anchored, terminator-exact and among
+    the most heavily mutation-tested expressions here; widening it to carry an
+    optional parenthetical would change what counts as a marker for EVERY
+    journal bullet in every entry, to add a field only this section reads.
+
+        - OPEN: (operator) the share page should name the project
+               ^ the match ends here
+
+    ⚠ SO A LINE WITH NO PARSED MARKER HAS NO PROVENANCE, BY CONSTRUCTION — the
+    intended narrowing, and the safe direction: a near-miss bullet's whole
+    finding is that its marker did not parse, and attaching an author to it
+    would dress a failed write up as a recorded one.
+
+    🔴 THE MATCH IS THE WHOLE PARENTHESISED WORD. `(operators)` and
+    `(operator-ish)` are None, and so is `(Operator)` — a guard that accepted a
+    prefix, or folded case, would be walkable by writing anything close enough,
+    and provenance is precisely the claim that must not be manufacturable by
+    accident.
+    """
+    m = _JOURNAL_OPENNESS.match(first_line)
+    if not m:
+        return None
+    rest = first_line[m.end() :].lstrip()
+    for candidate in (PROVENANCE_OPERATOR, PROVENANCE_INFERRED):
+        if rest.startswith(f"({candidate})"):
+            return candidate
+    return None
 
 
 def _bullet_openness(first_line: str) -> tuple[str | None, str | None]:

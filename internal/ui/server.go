@@ -266,10 +266,16 @@ type Section struct {
 	// Body is everything under it, verbatim, with surrounding blank lines trimmed.
 	// Rendered as text for a section that is not the journal.
 	Body string
-	// Bullets are the top-level journal bullets, EMPTY for every section but
-	// `store.NuanceHeading`. A nuance section whose body is non-empty and which
-	// yields no bullets is its own state — prose before the first bullet — and
-	// `Body` is what shows it.
+	// Bullets are the top-level bullets of a BULLETED section — `store.NuanceHeading`
+	// and `store.RequirementsHeading`, and empty for every other. A section whose body
+	// is non-empty and which yields no bullets is its own state — prose before the
+	// first bullet — and `Body` is what shows it.
+	//
+	// ⚠ THIS USED TO READ "EMPTY FOR EVERY SECTION BUT `store.NuanceHeading`", which
+	// the requirements section falsified. Both populate it through the SAME
+	// `store.ParseJournalBullets` grouping, which is why one field carries both rather
+	// than a parallel slice: a second bullet type here would be free to disagree with
+	// the first about what a bullet IS.
 	Bullets []Bullet
 }
 
@@ -297,6 +303,15 @@ type Bullet struct {
 	// (`git cat-file -e <sha>`) from the page. The sha is the whole reason the marker takes
 	// one, per `journalOpenness`'s comment in `internal/store`.
 	ResolvedBy string
+	// Provenance is `store.ProvenanceOperator` / `store.ProvenanceInferred` / "" —
+	// WHO stated this requirement. Always "" for a nuance bullet, which states no
+	// requirement and therefore has nobody to attribute.
+	//
+	// 🔴 IT IS THE FEATURE, NOT A DECORATION. "The operator asked for this" and "an
+	// agent inferred it" are different claims with different weight, and "" is a
+	// DECIDED third answer meaning nobody recorded one — never a default standing in
+	// for `inferred`.
+	Provenance string
 	// Unreachable are the correctly-spelled markers on this bullet's lines 2..n, from
 	// `store.JournalBullet.UnreachableMarkers`.
 	//
@@ -571,6 +586,32 @@ func (s StoreSource) readEntry(scope string, e store.Entry) (Entry, error) {
 			continue
 		}
 		section := Section{Heading: heading, Body: body}
+		if heading == store.RequirementsHeading {
+			// 🔴 STRUCTURE FROM `internal/store`'s PARSERS, NEVER A SECOND MARKDOWN
+			// READER HERE. `ParseRequirements` is the same grouping the CLI and the pod
+			// read, so the page cannot show a requirement the renderer does not, or
+			// attribute one the parser refused.
+			//
+			// OPEN FIRST, then everything else, each run keeping FILE ORDER — a stable
+			// partition rather than a sort, because the store's order is the writer's and
+			// reordering within a run would invent a priority nobody declared.
+			reqs := store.ParseRequirements(body)
+			for _, wantOpen := range []bool{true, false} {
+				for _, r := range reqs {
+					if r.IsOpen() != wantOpen {
+						continue
+					}
+					section.Bullets = append(section.Bullets, Bullet{
+						Lines:       r.Lines,
+						Date:        r.Date,
+						Population:  r.OpennessPopulation(),
+						ResolvedBy:  r.ResolvedBy,
+						Provenance:  r.Provenance,
+						Unreachable: r.UnreachableMarkers(),
+					})
+				}
+			}
+		}
 		if heading == store.NuanceHeading {
 			for _, b := range store.ParseJournalBullets(body) {
 				section.Bullets = append(section.Bullets, Bullet{

@@ -24,7 +24,19 @@ const RecallLabel = "from index"
 // both halves fail: it is not one line (73 of 73 entries carry it, median 3 lines), and
 // NO BRIEFING PATH printed it — so an agent briefed only on an entry could not say what
 // the service WAS. It is rendered FIRST because it is the orienting sentence.
-var SurfacedHeadings = []string{store.WhatHeading, store.PointersHeading, store.NuanceHeading}
+//
+// ⚠ `## Requirements` IS SURFACED BUT NOT COUNTED, AND THE SPLIT IS THE SAME ONE THE NEXT
+// PARAGRAPH DRAWS. A body that prints what the subsystem was SAID to do is worth the
+// bytes; an entry that has never carried the section is not MISSING it, the way an entry
+// with no `## Nuance / work-history` is missing a section whose absence makes `0 nuance`
+// a lie. Putting it in `CountedHeadings` would raise `🔴 NO Requirements` on every entry
+// in the store, which is a defect report about a section nobody has written yet.
+//
+// It renders LAST because it is the newest section and the orienting order —
+// what it is, where to look, what happened — is what a reader already knows.
+var SurfacedHeadings = []string{
+	store.WhatHeading, store.PointersHeading, store.NuanceHeading, store.RequirementsHeading,
+}
 
 // CountedHeadings is THE SET WHOSE ABSENCE MAKES A NUMBER WRONG — a strictly different
 // question from "what does a body print", and the two are kept apart rather than merged.
