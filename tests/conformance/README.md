@@ -786,3 +786,47 @@ The corpus issues one request at a time against a freshly built world, so it can
 thing the feature is actually for: a client that syncs, stores the tag, and syncs again. The
 round trip is measured in `tests/dualrun/` (a `derive_if_none_match` target, asked of each
 server in turn) and in `tests/parity/` (`sync-again`, over two real clients and one cache).
+
+
+## The `?tag=` rows, and the fixture change one of them forced
+
+`tagged-set` is a NEW SCOPE rather than `tags:` added to an existing entry, which is `linked-set`'s
+own trick and for the same reason: the only pre-existing goldens that move are the ones that
+ENUMERATE scopes, plus the `entry-files=` count three new files change. No `recall-*`/`search-*`
+body golden moved.
+
+Twelve rows. Eight of them are ordinary coverage; four exist because nothing else in the corpus can
+see what they see.
+
+- **`recall-tag-two-and-semantics`** sends `?tag=` TWICE, and it is the only row that can see the
+  READ HELPER. Every other parameter on these routes is last-wins by contract — `?limit=1&limit=2`
+  means 2 and a golden pins it — so a server reading `?tag=` that way answers `marketing` alone and
+  returns TWO entries where AND semantics return ONE: more than was asked for, at 200, with a header
+  naming one tag. Only a row sending the parameter twice over a world where the two tags select
+  different sets can tell those apart.
+- **`recall-tag-empty-operand`** is `recall-tag-malformed`'s refusal through the other door, and it
+  is the row that stops the filter being silently DROPPED. An implementation that discarded empty
+  operands before validating answers 200 over the WHOLE scope for a query that named no category —
+  the widening direction — and every other row here stays green.
+- **`recall-tag-refused-scope`** is the authorisation-order criterion over the wire. `tagged-set`
+  EXISTS and holds entries carrying the tag, and `narrow-reader` may not see it, so the answer must
+  be the one an absent scope gives. A filter over a store-wide load answers `recalled` here.
+- **`recall-tag-composes-with-ref-to`** is the CROSS-FILTER row, and it forced a fixture change to
+  become reachable at all. With the ref on ONE entry, `?ref-to=` keeps exactly one, the tag filter
+  keeps or drops that one, and the `ref-to:` line reads `1 of 1` — so the reach clause's THIRD state
+  ("a FURTHER filter below narrows those N again") is unreachable over the wire. `tagged-one.md`
+  therefore carries the SAME ref `tagged-both.md` does: two entries reference it, one carries
+  `internal`, and the regenerated golden carries the third state. Verified by reading the golden.
+
+⚠ **`tagged-both.md` writes `tags: [Marketing, internal]` UNFOLDED and `tagged-one.md` writes
+`marketing` folded**, on purpose. `recall-tag-folds` asks with the capitalised spelling and must
+find both; two identical spellings in the world would make the fold assumed rather than measured.
+
+### The hand-spelled `If-None-Match` literals moved again, exactly as predicted
+
+`snapshot-conditional-not-modified`'s own `why` says "if world.json changes it stops matching and
+this case answers 200, loudly, in the diff". It did, in the first regeneration. Both occurrences —
+that row and the narrow principal's row which deliberately presents the wide principal's tag — were
+updated to the wide principal's new ETag, and both are what they were again. This is the second
+change in a row to trip that prediction; the prediction is the reason it costs one grep instead of a
+debugging session.

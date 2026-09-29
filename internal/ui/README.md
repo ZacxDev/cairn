@@ -2297,3 +2297,77 @@ own, which is what `outcomeFrom` refuses.
 - **Concurrency.** Two clicks on one invitation are handled by the store's conditional UPDATE and
   measured in `internal/pgstore`; two simultaneous MINTS, or a revoke racing a redemption, are
   not driven anywhere.
+
+
+# The `?tag=` surface — a filter on the root row, not a phase
+
+`tags:` is an entry-level front-matter key and `/?tag=<name>` is the listing every rendered tag
+links to. It is written up here rather than as a phase because it adds no route, no authority
+question and no state change: it is one query parameter on an existing GET row plus a projection
+field.
+
+## 🔴 A QUERY PARAMETER IS A REQUIREMENT HERE, NOT THE HOUSE PREFERENCE `?q=` FOLLOWS
+
+`?q=` and `?view=` ride on existing rows because a second path would be a second ledger row for
+one answer — a preference, defensible either way. `?tag=` has no such choice. A tag is USER TEXT
+out of a store file, so `/tag/<name>` would put caller-controlled bytes in a PATH SEGMENT, and
+`routes` is an **exact-match map** whose completeness is the claim three separate things read:
+`DeclaredRoutes()`, `TestEveryServedPathComesFromTheLedger`, and the `stateChanging`
+classification the cross-site gates derive from. One prefix route makes "every served path is a
+literal key in this map" false, and that sentence is load-bearing for the session layer rather
+than documentation.
+
+`TestTheTagParameterAddsNoRoute` is the guard, and it proves the parameter is **served** — a 200
+carrying a real listing — before asserting the ledger has no tag row. A ledger with no row is
+trivially true of a build that reads nothing.
+
+## 🔴 THE AUTHORISATION ORDER IS STRUCTURAL HERE RATHER THAN REMEMBERED
+
+`EntriesByTag` takes the already-narrowed scope **list** and is a package function rather than a
+method on `StoreSource`, so it has no `s.Root` in scope. That is deliberate: a version taking
+`control.Authorization` and loading the store itself would be correct today and one dropped
+argument away from answering "every marketing entry" over the whole disk.
+`TestTheTagPageCannotSeeAScopeTheCallerCannotRead` is the two-principal guard, with the positive
+control that the wide list finds both entries — without it the narrow list's single match is a
+fact about a filter wired to nothing.
+
+## 🔴 `Entry.Tags` IS FOLDED WHERE `Aliases` IS AS-WRITTEN, AND THE ASYMMETRY *IS* THE LINK
+
+The string on the page has to be the string the filter compares. Showing the raw spelling beside
+a link built from the folded one would put two spellings of one tag in front of a reader with no
+way to tell which the store holds. `Aliases` keeps its raw form because it has no link and its
+written spelling is evidence about a collision. `TagsKeyDescription` says both — that the list is
+folded, and that the vocabulary is OPEN — and is pinned as one normalised string for the measured
+reason `RefsKeyDescription` is: that line really did serve the word `deprecated` against a README
+saying permanent, with nothing asserting the correction.
+
+## 🔴 A HOSTILE TAG IS IN THE ESCAPING DIFFERENTIAL EVEN THOUGH THE LOADER CANNOT PRODUCE ONE
+
+`parseTagsField` folds every tag to `[a-z0-9.-]`, so no store FILE can put a hostile string on
+`Entry.Tags`. It is planted in `hostileWorld()` anyway, because a page whose escaping depended on
+that invariant would be one new writer of this projection away from broken — and `ui.Entry` has
+three writers already.
+
+Two sinks, two DIFFERENT mechanisms, and only one of them is the escaper: the link TEXT goes
+through `g.Text`, the HREF through `url.Values.Encode` — which is what stops a tag closing its
+attribute and opening an event handler. A guard on the text alone would be green for an href built
+by concatenation. `tagHref` must not reach `safeHref`, for the reason `scopeHref`/`entryHref` must
+not: that function ALLOWLISTS absolute http(s) and would refuse a same-origin path.
+
+## What this surface's guards still cannot see
+
+- **A real browser.** `uiaudit` does not walk `/?tag=`, and the tag listing adds a fourth card
+  shape plus a `<ul>` inside a `<p>` on every entry row of a scope page. Nothing has been captured
+  in a browser and no axe pass has run over it — the same gap the phases above declare, and
+  `refuseWalkRegressions` does not refuse on axe violations.
+- **The listing at scale.** `EntriesByTag` walks every visible entry on every root request that
+  carries a tag, and `Visible` has already read them all. On this store that is tens of entries;
+  nothing measures where it stops being free, and there is no pagination on the listing where the
+  scope page's index has a cap.
+- **A tag on a MALFORMED entry.** A file the loader refused carries no tags a filter can see, and
+  the listing says nothing about that — the CLI's `tag-absent` body does qualify its zero when the
+  scope has rejects, and this page has no equivalent sentence.
+- **Two clients of the same listing.** The pod's `?tag=` and this page's `?tag=` are different code
+  paths over the same key: the pod goes through `report.Recall`/`report.Search` and this one
+  filters `Visible`'s result. Nothing compares them, and they are not meant to agree on OUTPUT —
+  only on which entries carry a tag.
