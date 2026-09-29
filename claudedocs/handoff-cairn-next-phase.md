@@ -21,40 +21,59 @@ with test coverage.
   squash never makes the branch head an ancestor, so ancestry is the wrong test). A later
   session runs `clawgatectl task get <id>` for the four and `git grep` for each feature's
   marker on `origin/main`. ADDRESSED ⇒ arc CLOSED.
+- ✅ **VERDICT: ADDRESSED — THE ARC IS CLOSED.** Both halves measured this session, not
+  inherited: four cards read `"status": "complete"` out of the JSON, and each feature's
+  marker is present by content on its own repo's mainline. Nothing is left in flight.
 
 ## State now
 
-- ⏳ **THE ARC'S CLOSING CONDITION IS NOT YET MET, AND ONE THING IS MISSING.** All four cards
-  — **662, 663, 664, 665** — are `complete`, but the condition also requires each one's PR
-  **merged and verified by content**, and **664's PR #148 is still OPEN**. Everything else is
-  done.
-- ✅ **662 — `refs:` + URL templates + `--ref-to`/`?ref-to=`.** MERGED, squash `5c59169`,
-  verified by content.
-- ✅ **663 — entry-level `tags:` + scalar `--tag`/`?tag=`.** MERGED, squash `94ecb7e`,
-  verified by content.
-- ✅ **665 — the four deterministic doors plus thin routing skills.** MERGED, squash
-  `dc159b07` in the other repo, verified by content; that mainline went green after it.
-- ⏳ **664 — the `## Requirements` section. IN FLIGHT: cairn#148**, head **`cc9452e`**. Built
-  in both implementations plus the browser surface, **all eight acceptance criteria
-  validated**, card `complete`, and audited over **two rounds** (round 0 requirements-and-
-  deletion, round 1 the nine axes) with every finding from both fixed.
-  - **Blocked ONLY on the `go` check.** 7 of 8 are green on `cc9452e`: `nix` `parity` `tests`
-    `leakscan` `uiaudit` `pgtest` `dualrun`. `go` was `in_progress` when this was written; it
-    runs 35–47 min and is the ONLY place all 188 mutants run together and the conformance
-    corpus runs against the Go server.
-  - 🔴 **The operator directed the merge; the merge has NOT happened.** Do not read "merge
-    approved" as "merged" — the gate had not settled, so merging would have been on the
-    PREVIOUS head's evidence.
-- ⚠ **Merging was directed with round 1's findings fixed but NO round 2 run.** The ladder rule
-  is that a round producing findings is followed by another, and round 1 produced five. The
-  cost was stated before merging and the decision was the operator's. **So the thing this arc
-  will not have bought is a delta audit of `6efc9dd..cc9452e`** — the range where this repo
-  most often finds a fix round's own prose was the next defect. Round 1 hit that shape twice
-  inside those very fixes.
-- ⚠ **Claim HELD: `cairn-next-phase-4`.** Release it once #148 merges and is verified.
-- ⚠ **No task-board front-matter field is recorded**: the handoff's task resolver exited **5**
-  (nothing resolved). An unknown session id answers 200 with an empty array, so that zero
-  cannot distinguish "touched no task" from "wrong id" — it is not a clean bill of health.
+- ✅ **THE ARC'S CLOSING CONDITION IS MET AND THE ARC IS CLOSED.** All four cards
+  `complete`; all four PRs merged and verified **by content**. The previous revision's
+  "one thing is missing" — 664's PR still open — is closed.
+- ✅ **664 — the `## Requirements` section. MERGED: cairn#148, squash `e8839d9`**, merged
+  2026-09-29T22:05:58Z from head `cc9452e`.
+  - **All 8 checks green on `cc9452e`** before the merge: `nix` `parity` `tests` `leakscan`
+    `uiaudit` `pgtest` `dualrun` and — the one that was blocking — **`go`, success at
+    22:04:53Z after 50 minutes**. Every `go` STEP green including the three only that job
+    runs: the 188-mutant authz battery (35:52), the 57 routing/anchor mutants, and the
+    conformance corpus against the Go server. No skips.
+  - **Criterion 2's pin holds by content**, which was the one thing that could have gone
+    wrong quietly: `internal/store/openness.go` is blob
+    `242eb386dfa434f8615e56e21d53c2d025e3051f` on pre-merge main **and** post-merge
+    `origin/main`, `git diff --quiet` rc 0. Byte-unchanged.
+  - **The merged tree differs from the gated head by exactly ONE file** —
+    `claudedocs/handoff-cairn-next-phase.md`, the inert base move — so what shipped is what
+    the 8 checks measured. That is a stronger claim than "the markers are present" and it is
+    the check worth running first next time.
+  - Merged with **`--match-head-commit cc9452e…`**, so the merge could only land the exact
+    tree that was gated.
+- ✅ **662 — `refs:` + URL templates + `--ref-to`/`?ref-to=`.** MERGED, squash `5c59169`;
+  marker `type EntryRef struct` present in `internal/ui/server.go`.
+- ✅ **663 — entry-level `tags:` + scalar `--tag`/`?tag=`.** MERGED, squash `94ecb7e`;
+  marker `StatusTagAbsent` present across four paths under `internal/report/`.
+- ✅ **665 — the four deterministic doors plus thin routing skills.** MERGED in the other
+  repo, squash `dc159b07`; all nine of its files verified present on that repo's mainline
+  **this session**, with a negative control proving `cat-file -e` returns non-zero for an
+  absent path.
+- ✅ **Claim `cairn-next-phase-4` RELEASED.** No claim from this arc is held.
+- ⏳ **Cairn's mainline push run on `e8839d9` had NOT settled when this was written** —
+  `pgtest` `parity` `leakscan` green; `go` `tests` `nix` `dualrun` `uiaudit` `publish` in
+  progress. This is post-merge confirmation, **not** part of the closing condition, and
+  `go` alone takes ~50 min. Expect green; if not, the failures are new and are not #148's,
+  because #148's own tree was gated green and the only delta is a docs file.
+- ⚠ **Merged with round 1's findings fixed but NO round 2 run** — the operator's decision,
+  cost stated beforehand. So what this arc did not buy is a delta audit of
+  `6efc9dd..cc9452e`, the range where this repo most often finds that a fix round's own
+  prose was the next defect. Unchanged by the merge; recorded so it is not mistaken for
+  coverage.
+- ⚠ **`feat/requirements-section` still exists on the remote** at `cc9452e`, and worktree
+  `wt-664` pins it repo-globally. Merged deliberately **without** `--delete-branch`: the
+  worktree sits under a DIFFERENT session's scratchpad, so reaping it touches another
+  session's state. Left for the operator.
+- ⚠ **No task-board front-matter field is recorded**: the handoff's task resolver exited
+  **5** again (nothing resolved). An unknown session id answers 200 with an empty array, so
+  that zero cannot distinguish "touched no task" from "wrong id" — not a clean bill of
+  health.
 
 ## Open investigations — live diagnosis state
 
@@ -203,12 +222,9 @@ with test coverage.
    forcing: user — the operator approved the merge conditional on verification.
 3. ✅ **DONE — card 665 written back, `cairn-next-phase-d` released.**
    forcing: gate — same as rank 1.
-4. ⏳ **Merge 664 — IN FLIGHT: cairn#148**, head `cc9452e`, 7 of 8 checks green and blocked
-   only on `go`. **THE ARC CLOSES HERE AND NOWHERE ELSE**, so this is the whole remaining
-   distance. When `go` lands green: squash-merge, verify by content on `main` — including that
-   `internal/store/openness.go` is byte-unchanged, which is criterion 2's pin and the one
-   thing in this change that could have gone wrong quietly — then release
-   `cairn-next-phase-4`. If `go` comes back RED, report what failed and do not merge.
+4. ✅ **DONE — cairn#148 MERGED**, squash `e8839d9`, verified by content including
+   `internal/store/openness.go` byte-unchanged; `cairn-next-phase-4` released. **THE ARC
+   CLOSED HERE.**
    forcing: user — one of the four features the operator asked for, and the operator directed
    the merge.
 5. **Close or dismiss card 681's eight items.** Dismissal in writing is explicitly acceptable.
@@ -233,9 +249,11 @@ with test coverage.
    reintroduced for the new section. Filed rather than fixed because the validator's messages
    are byte-compared across both implementations, so it is a cross-language message change and
    rushing it at the end of a fix round is the documented way a fix round introduces the next
-   finding. **Closing condition:** `cairn-validate` reports a near-miss sitting in a
-   `## Requirements` section; the message is byte-identical in `internal/store/validate.go`
-   and `lib/entry_shape.py`; the guard is watched RED on pre-change code.
+   finding. 🔴 **Now LIVE ON `main`** — `e8839d9` shipped the section, so this gap is in the
+   deployed surface rather than on a branch. **Closing condition:** `cairn-validate` reports a
+   near-miss sitting in a `## Requirements` section; the message is byte-identical in
+   `internal/store/validate.go` and `lib/entry_shape.py`; the guard is watched RED on
+   pre-change code.
    forcing: gate — a writer who mis-spells the marker gets no signal from any surface, which
    is the exact silent failure the marker grammar exists to prevent.
 10. 🔴 **The audit tooling presents AGENT-authored PR comments as the operator's verbatim
@@ -261,12 +279,13 @@ with test coverage.
   `internal/ui/README.md` with a closing condition; composing changes a deployed answer.
 - **Nothing in the browser has been walked for `/?tag=`**, and no browser has visited an
   entry page carrying `## Requirements` either. Both rendering paths are tested; a human
-  clicking them is not.
+  clicking them is not. 🔴 **Now shipped on `main`** (`e8839d9`), so the unwalked path is a
+  deployed one.
 - **The two new parser refusal messages are not byte-compared across implementations** —
   systemic: the same is true of every `aliases:`/`refs:` refusal.
 - **Four files are not `gofmt`-clean and nothing greps it** —
   `internal/client/{anchor_test,exit,options}.go` and `internal/control/tokenfile/source.go`.
-  Pre-existing; re-confirmed on every commit of this arc.
+  Pre-existing; re-confirmed on every commit of this arc, `e8839d9` included.
 - **`internal/ui/README.md` documents four legend labels the code renders under different
   wording**, and nothing pins the two against each other. A pin was written and deleted —
   see the gotcha below.
@@ -443,6 +462,50 @@ with test coverage.
   does NOT run the leak gate — only `--confirm` does. Budget several scrub rounds and read the
   refusal's own token list rather than hand-deriving one.
 
+- 🔴 **THE BASE MOVED *DURING* THE GATE, AND THIS TIME THE CHECK RAN BEFORE THE MERGE.**
+  `b2b54e4` landed on `main` at 21:59:06Z — **45 minutes after** the `go` run on `cc9452e`
+  started — so the merge ref `a399d87` was built against the PREVIOUS base `3ae86ee` and no
+  gate ever saw current `main`. The one-command attribution, run pre-merge:
+  `git diff --name-only <gate-base> <current-main>` intersected against the PR's own file
+  set. Result: one docs file, **zero intersection** with #148's 21 files, no byte budget
+  summing across the two sides, and `leakscan` already green on `b2b54e4` independently.
+  🔴 **The contrast with the #1905 case recorded above is the whole lesson: same hazard, same
+  one-command check, but run BEFORE rather than after — where it can still change the
+  decision.**
+- 🔴 **`--match-head-commit` MAKES "MERGE EXACTLY WHAT WAS GATED" STRUCTURAL RATHER THAN A
+  DISCIPLINE.** `gh pr merge <n> --squash --match-head-commit <the gated sha>` refuses if the
+  head moved between the read and the merge. Free, and it removes the entire class of "the
+  evidence was about the previous head" that the previous revision of this doc had to warn
+  about in prose.
+- 🔴 **THE STRONGEST CONTENT VERIFICATION IS NOT A MARKER GREP — IT IS
+  `git diff --name-only <gated-head> origin/main`.** Expect exactly the base-move files. A
+  marker grep proves a symbol arrived; this proves the tree that shipped IS the tree the
+  checks measured, which is the claim that actually licenses trusting the green.
+- 🔴 **THE `go` JOB IS ~50 MINUTES NOW, NOT 35–47 — THE DOCUMENTED BAND IS STALE AND
+  READING IT AS A TIMEOUT WOULD HAVE CALLED A HEALTHY RUN HUNG.** Measured on `cc9452e`:
+  48 min elapsed with the job still `in_progress`, concluding `success` at 50 min. Step 8
+  (188 mutants) alone is **35:52**, and two substantial steps follow it. **Read STEP-level
+  progress — `gh api …/actions/runs/<id>/jobs`, `.steps[]` — to tell progressing from hung;
+  the job-level `in_progress` cannot.**
+- 🔴 **`clawgatectl task get` EMITS JSON, SO GREPPING `^status` RETURNS EMPTY FOR EVERY
+  CARD — AND EMPTY READS AS "NOT COMPLETE".** Hit here on all four cards at once: the field
+  is `  "status": "complete",` with leading whitespace inside a JSON object. A reassuring
+  zero in a new shape, and the tell was that ALL FOUR came back blank — a real answer would
+  vary. Parse it (`python3 -c 'json.load(sys.stdin)'`), never grep it.
+- 🔴 **A SQUASH COMMIT *IS* AN ANCESTOR OF `main`; THE BRANCH HEAD IS NOT.** Both are true
+  and conflating them wastes a probe. `merge-base --is-ancestor <squash> origin/main` is
+  **true** and a fine existence check for the commit; it is `<branch-head>` that is forever
+  non-ancestor. Verify the CONTENT either way — but do not read the squash-ancestry rule as
+  forbidding the cheap check on the squash itself.
+- ⚠ **THE HANDOFF BRANCH NAMESPACE IS REPO-GLOBAL AND CROWDED.** `worktree add -b
+  docs/handoff-arc-closed` failed `fatal: a branch named … already exists` — a prior
+  session's. `git branch --list 'docs/handoff*'` shows a dozen. Pick a name carrying this
+  arc's distinguishing fact, and expect the generic ones to be taken.
+- ⚠ **cairn does NOT declare itself a trunk-deploy repo**, so this doc is landed from a
+  worktree on a branch and a PR, not committed to `main` — even though prior revisions of
+  this very file were committed straight to `main`. The established practice and the written
+  rule disagree here; the written rule wins until the operator says otherwise.
+
 ## How to verify
 
 ```bash
@@ -461,27 +524,30 @@ python3 tests/leakscan.py --self-test && python3 tests/leakscan.py
 result lines. All gates as `nix develop -c …` — bare `go` here is 1.26.7 against a pinned
 1.25.14.
 
-**The two merged features, verified by content rather than ancestry:**
+**The arc's closing condition, re-runnable in full:**
 ```bash
-git grep -l 'type EntryRef struct' origin/main     # 662
-git grep -l 'StatusTagAbsent' origin/main          # 663
-git grep -l 'RefKeyRemovalAnchor' origin/main      # want ZERO in SOURCE — the deletion's positive control
-git grep -l 'canonicalTags' origin/main            # want ZERO — 663's scalar deletion's control
+# half one — the four cards. PARSE the JSON; grepping '^status' returns empty for all four.
+for id in 662 663 664 665; do printf '%s\t' "$id"; clawgatectl task get "$id" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["status"], d["repo"])'; done
+# half two — each feature's marker by CONTENT on its repo's mainline, reading PATHS not counts
+git grep -l 'type EntryRef struct'  origin/main   # 662 -> internal/ui/server.go
+git grep -l 'StatusTagAbsent'       origin/main   # 663 -> internal/report/*
+git grep -l 'RequirementsHeading'   origin/main   # 664 -> 7 source/test paths
+git grep -l 'RefKeyRemovalAnchor'   origin/main   # want ZERO in SOURCE — a deletion's control
+git grep -l 'canonicalTags'         origin/main   # want ZERO in SOURCE — 663's scalar control
 ```
 🔴 Both positive controls match the **handoff doc's own prose**, because this file names the
 deleted symbols. Read the paths, not the count: a hit in `claudedocs/` is this document talking
-about the deletion, not the deletion failing.
+about the deletion, not the deletion failing. Measured this session: `claudedocs/` only, zero
+source hits.
 
-**Rank 2's gate — PR #1905 in that repo, on the merged head:**
+**664's own pin, and the check that beats a marker grep:**
 ```bash
-gh api repos/<the shared rules-and-dotfiles repo>/commits/490362e3/status \
-  --jq '"state=\(.state)", (.statuses[] | "\(.context) \(.state) — \(.description)")'
-# EXPECT: pytests failure with failed=5, the other three success.
-# Then attribute the red by NAME, never by count:
-KUBECONFIG=<the cluster kubeconfig> kubectl -n <the CI namespace> get pipelinerun \
-  -l <the CI repo label> --sort-by=.metadata.creationTimestamp \
-  -o custom-columns='NAME:.metadata.name,REASON:.status.conditions[0].reason'
-# find the run whose .spec.params[revision] is your sha, then:
-KUBECONFIG=<the cluster kubeconfig> kubectl -n <the CI namespace> logs <run>-gate-pod -c step-pytests \
-  | grep -E '^<pytests-prefix>> _{3,}.*_{3,}$'
+# criterion 2 — openness.go byte-unchanged across the merge
+git rev-parse b2b54e4:internal/store/openness.go origin/main:internal/store/openness.go
+# expect the SAME blob twice: 242eb386dfa434f8615e56e21d53c2d025e3051f
+git diff --quiet b2b54e4 origin/main -- internal/store/openness.go; echo rc=$?   # want 0
+
+# the tree that shipped IS the tree that was gated — expect ONLY the base-move docs file
+git diff --name-only cc9452e origin/main
 ```
