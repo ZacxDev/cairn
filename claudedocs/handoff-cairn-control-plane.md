@@ -239,47 +239,8 @@ that way MINTS a claim on a released slug. `--list` is the read.
   one tier only; and P4 rounds 1 and 3's guards absent from the persistent battery.
 
 ## Gotchas / decisions / dead-ends
-🔴 **THIS SECTION HAS BEEN PRUNED THREE TIMES, AND PRUNED MEANS *MOVED*: NO PRUNE HAS DELETED NOR
-SHORTENED ANYTHING.** This is the THIRD prune, and it names its selection because a count without
-one is not reproducible. Measured from the `## Gotchas` heading to the line before
-`## How to verify`, at `9c24bc4`: **108 top-level bullets, 66,662 B**, inside a **105,456 B**
-document — **63% of a file read first thing every session**, more than the whole 65,536 B
-guideline by itself. Every one of the 108 was classified into exactly **one** of four buckets,
-and **DROP was required to stay empty**: **57 STAY · 8 ARCHIVE · 43 ROUTE-OUT · 0 DROP**, moving
-**26,804 B** of `Gotchas`, plus one settled `Open investigations` block (2,052 B) and one closed
-`Defects` entry (440 B) — **29,296 B in total, all of it VERBATIM** into
-`claudedocs/handoff-cairn-control-plane-archive.md`. Asserted rather than claimed: every bullet
-body present in **exactly one** of the two files afterwards, **0 lost, 0 duplicated**, every other
-section byte-identical, and the detector validated by a positive control that dropped a known
-bullet and was watched reporting **1 lost**.
-🔴 **43 OF THE 108 WERE NEVER ABOUT THIS ARC, AND THE ARCHIVE IS A WAY-STATION FOR THEM RATHER
-THAN THEIR HOME** — generic git/shell/grep/CI/agent-tooling tripwires learned while sitting in
-this repository. The `subsystem-index` ruling is to ask which repo a lesson is ABOUT, not which
-one you were standing in, so their home is the operator's own shared rules-and-dotfiles repo
-(`claude/RULES.md`, `claude/RULES-ARCHIVE.md`) or the owning skill there. **They were deliberately NOT routed in the same
-change:** that is a cross-repo PR against files with their own *enforced* byte ceilings, and doing
-it here would have made this one unreviewable. The ranked, per-bullet list naming each proposed
-destination is on the third prune's PR. **Until that follow-up lands, the archive is the only
-copy.**
-🔴 **THAT LEAVES THIS DOCUMENT ABOVE THE 65,536 B GUIDELINE, AND THE GAP IS REPORTED RATHER THAN
-CLOSED — WHICH IS THE CORRECT OUTCOME, NOT A SHORTFALL.** Closing it would have meant relocating
-bullets that are still live, and a prune that reaches a number by moving a live tripwire has
-deleted it from every reader who does not open the archive. The single largest cost of that
-refusal is the `ROUND 0 OF A LADDER …` bullet: its round-0 record is discharged, but its tail is
-the **sixth leak-gate event** and the latest instance of that tripwire, and a bullet cannot be
-split without landing text in both files and failing the 0-duplicated assertion. What stays is
-what binds a NEXT edit: one instance of each general tripwire still in force, the standing
-operator decisions, and the record of the arcs still open — **ranks 4, 9, 11, 12, 13, 15 and 16**.
-What moved is the record of a round, a PR or an arc that has CLOSED, plus every DUPLICATE instance
-of a tripwire kept here. Earlier prunes' figures, since this paragraph replaces the one carrying
-them: the first moved 125 of 174 bullets from 89,588 B; the second moved 70 of 147 from 84,556 B
-and stopped 23,664 B over the guideline for this same reason.
-⚠ **AND THE ARCHIVE'S OWN ALLOWANCE IS NOW A LIVE COUPLING NOBODY HAD RECORDED** — this move
-takes it from 138,791 B to a measured **174,237 B** against a **grandfathered 147,456 B** in the
-handoff-tooling repo's `handoff_budget.py` ledger (rule (p)). **Exceeding it will be noticed by
-nothing**, because a foreign ledger entry sits outside every one of that gate's corpus checks by
-construction — the same disjoint-key-spaces shape a bullet below already measures. Stated as a
-follow-up with a closing condition on the PR rather than fixed here.
+📄 **THE BOOKKEEPING OF PRUNES ONE, TWO AND THREE HAS MOVED TO `claudedocs/handoff-cairn-control-plane-archive.md`, VERBATIM** — the bullet counts, the byte figures, the four-bucket selection and the above-guideline reasoning. They are records of rounds
+that have closed, which is exactly what this document's own rule sends there, and moving them is what paid for this session's update without an override. 🔴 **THREE LIVE COUPLINGS SURVIVE THE MOVE and are restated here because losing them is how an eviction becomes a deletion:** a prune MOVES and never shortens; **43 of the third prune's bullets are generic tripwires still awaiting routing to the operator's own rules repo, and until that lands the archive is their ONLY copy**; and the archive is itself over its ledger allowance, which is rank 20.
 
 ⚠ **A DUPLICATE IS NOT A REDUNDANCY WHEN THE SECOND ONE RECORDS THAT THE LESSON WAS READ AND THEN HIT ANYWAY** — that is why the instance kept is usually the LATEST, which carries the re-occurrence, rather than the first, which carries only the discovery.
 
