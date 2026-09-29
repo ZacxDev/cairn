@@ -204,7 +204,7 @@ func benignWorld() []Scope {
 			// The SAME COUNT as the hostile world's, because the structural differential is a
 			// count of markup characters and a list of a different length would break it for
 			// the wrong reason.
-			Tags:     []string{"marketing", "plain-tag"},
+			Tags: []string{"marketing", "plain-tag"},
 			Tasks: refsResolvingToTheirOwnText(
 				"jira:PLAT-1",
 				"jira:PLAT-2",

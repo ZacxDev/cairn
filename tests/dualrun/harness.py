@@ -369,11 +369,19 @@ def entry_targets(scope: str, refs: list[str], principal: str = WIDE) -> list[Ta
 def tag_targets(scope: str, principal: str = WIDE) -> list[Target]:
     """The CATEGORY filter, per scope: `?tag=` over a tag the world carries and one it does not.
 
-    🔴 IT IS NOT A DUPLICATE OF `tests/conformance/`'S TWELVE `?tag=` ROWS, for the reason
+    🔴 IT IS NOT A DUPLICATE OF `tests/conformance/`'S ELEVEN `?tag=` ROWS, for the reason
     `ref_to_targets` gives: that corpus replays a DECLARED list against a DECLARED world, and
     this one runs over whatever store the mode was pointed at — a generated one in mode 2, a
     REAL one in mode 1 — so the header line's counts and the kept set are computed from a world
     nobody wrote a fixture for.
+
+    ⚠ ELEVEN, NOT TWELVE — AND IT SAID TWELVE FOR A ROUND, WHICH IS WHY THE COMMAND IS WRITTEN
+    HERE RATHER THAN THE HISTORY. `recall-tag-two-and-semantics` was DELETED when `?tag=` became
+    scalar (`tests/conformance/README.md` says why), and this sentence was not moved with it. The
+    count is a measurement: re-derive it with
+    `python3 -c "import json; d=json.load(open('tests/conformance/requests.json'));
+    print(sum('tag=' in c.get('target','') for c in d['cases']))"` — matching on the TARGET and
+    not on the id, because `snapshot-conditional-stale-etag` contains the letters `tag`.
 
     ⚠ THE REPEATED PARAMETER IS NOT SWEPT ANY MORE, AND IT IS NOT AN OVERSIGHT. `?tag=` was
     repeatable with AND semantics and is now SCALAR on an operator decision, so `?tag=a&tag=b`

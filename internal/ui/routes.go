@@ -288,8 +288,15 @@ const (
 	// session layer derives its cross-site gates from.
 	//
 	// ⚠ IT SHARES THE POD'S SPELLING, `tag`, on purpose: the same word names the same filter
-	// on `/api/v1/recall/{scope}` and here, so a reader moving between the two surfaces does
-	// not have to learn that they disagree.
+	// on `/api/v1/recall/{scope}` and here.
+	//
+	// 🔴 AND THE SPELLING IS THE CHEAP HALF — A DRAFT OF THIS COMMENT SAID A READER "does not
+	// have to learn that they disagree" WHILE THEY DID. `url.Values.Get` is FIRST-wins and the
+	// pod's `lastValue` is LAST-wins, so `?tag=a&tag=b` answered `a` here and `b` there. Making
+	// the operand scalar settled HOW MANY values are read and says nothing about WHICH, which
+	// is the step that draft skipped. `lastTagValue` in `server.go` is what makes the sentence
+	// true; it is the only parameter on this surface that agrees with the pod, because it is
+	// the only one a reader carries between them by hand.
 	QueryTag = "tag"
 	// QueryView selects WHICH VIEW of an entry `GET /entry` answers, and it rides on that
 	// row rather than on a route of its own for the reason `routes` gives about the share

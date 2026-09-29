@@ -309,9 +309,8 @@ and so could not be enumerated by any table.
 
 **A new optional front-matter key, `tags:`.** A sequence, like `aliases:`; every tag is folded
 the way a ref is (lowercased, everything outside `[a-z0-9.-]` to `-`, runs collapsed), deduped
-and sorted. **Nothing you have to do** — an entry with no `tags:` behaves exactly as it did, and
-a `tags:` file loads on a reader that has never heard of the key, reporting no tags rather than
-refusing the file.
+and sorted. An entry with no `tags:` behaves exactly as it did, and a `tags:` file loads on a
+reader that has never heard of the key, reporting no tags rather than refusing the file.
 
 ```yaml
 ---
@@ -320,6 +319,36 @@ scope: alpha-notes
 tags: [Marketing, project-xyz]     # folds to `marketing`, `project-xyz`
 ---
 ```
+
+🔴 **ONE THING CAN BREAK, AND IT IS NOT "NOTHING" — `tags:` USED TO BE AN IGNORED KEY.** Before
+this change the loaders named no `tags:` at all, so any value there loaded and was discarded; it
+was the probe key the ignore-rule test used, precisely because nothing read it. It is read now,
+and four shapes are refusable. **Three of them a FILE can carry, and the table says which** —
+measured on both implementations over real files, which agree sentence for sentence:
+
+| what you may already have written | what it does now |
+|---|---|
+| `tags: marketing` — a bare scalar | ``REFUSED: `tags:` must be a list, not a bare string — write `tags: [<name>]` `` |
+| `tags: ["!!!"]` — a flow item that folds to nothing | REFUSED: *tag `'!!!'` normalizes to the empty string* |
+| `tags: ["  "]` — a blank flow item | REFUSED, same sentence: whitespace folds away too |
+| `tags: {…}` / any non-sequence | ``REFUSED: `tags:` must be a list, got <type>`` — but **not reachable from a file**: the front-matter parser only ever produces a string or a list of strings, so a mapping under `tags:` reads as the key being absent. This refusal guards the PROGRAMMATIC loader (`from_mapping` / `EntryFromMapping`), which is also the writer's validate pass |
+| `tags:` with a `-` item that is blank — the **block** spelling | **NOT refused.** The block-list scanner drops an empty item before the tag loop ever sees it, so `tags:\n  - \n  - alpha` loads carrying `alpha`. Only the *flow* spelling of a blank item reaches the refusal above |
+
+**A refused entry is MALFORMED, and malformed is wider than "not indexed".** It leaves the index,
+so `--ref`, `--search` and every rendered listing lose it — it is *named* in the report's
+malformed block rather than vanishing silently — and it also becomes **unwritable**: `append` and
+`put` resolve their target through that same index, so they answer **404 `ref-unknown`** for a file
+that is sitting right there. Its bytes are still shipped by `/snapshot`, which walks the store
+directly and builds no index, so a synced cache carries the file and each client classifies it
+malformed for itself.
+
+🔴 **How likely that is, measured rather than guessed — and it is a measurement, not a guarantee.**
+Across three stores on one machine — two live client caches and one frozen pre-cutover mirror —
+**0 of 591 entries carried a `tags:` or `tag:` front-matter key** at this anchor. The reader doing
+the counting was checked against a positive control in the same run: it found 5 front-matter keys
+on a sample entry, so a zero from it is a zero it could have contradicted. That says nothing about
+**your** store. The check is `grep -rl '^tags:' <your cache root>`; the remedy is to make the value
+a list.
 
 🔴 **The vocabulary is OPEN and nothing declares it.** There is no allowlist, no closed set and
 no rename tool: you name a category when you need one. The cost is stated rather than hidden — a

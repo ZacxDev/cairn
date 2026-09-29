@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1208,12 +1209,18 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request, id identity.
 	// reach the same entries `/?tag=marketing` does, and an unfolded compare would answer a
 	// silent zero instead.
 	//
-	// ⚠ `Get` READS ONE VALUE OF `?tag=`, AND THAT IS CORRECT BECAUSE THE PARAMETER IS SCALAR —
-	// it was NOT correct while the parameter was repeatable. `?tag=a&tag=b` then meant "AND of
-	// both" on the pod and "a, with b silently dropped" here, with no repeated-parameter test on
-	// this side at all. What closed that is the SURFACE NARROWING, not a change on this line: one
-	// value is the whole operand, and the pod reads the last one by the same rule every other
-	// scalar parameter there follows.
+	// 🔴 `lastTagValue` AND NOT `Query().Get`, BECAUSE SCALAR DECIDES *HOW MANY* AND NEVER
+	// *WHICH*. `Get` returns the FIRST value; the pod's `lastValue` returns the LAST, so while
+	// this line read `Get` the two surfaces answered `?tag=a&tag=b` differently — `a` here, `b`
+	// there — and [QueryTag]'s own comment claimed a reader "does not have to learn that they
+	// disagree". Making the parameter scalar closed the AND/OR question and made reading ONE
+	// value correct; it did nothing about which one, and a draft of this comment asserted
+	// otherwise. Fixed on this line rather than declared, because a tag link is the one
+	// parameter a reader carries BETWEEN the two surfaces by hand.
+	//
+	// ⚠ AND THE REST OF THIS SURFACE IS STILL FIRST-WINS — that is stated so nobody reads this
+	// line as a class fix. Every other `?…=` here goes through `Query().Get`; none of them
+	// claims to agree with the pod, and none is linked to from a rendered page.
 	//
 	// ⚠ AN UNRECOGNISED TAG IS AN HONEST ZERO AND NEVER A REFUSAL, which is [QueryView]'s
 	// ruling restated: a filter is not an authority question. A `?tag=` that folds AWAY (empty,
@@ -1221,12 +1228,33 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request, id identity.
 	// no place to put a 400 for a browse parameter — where the POD refuses the same operand,
 	// because there a 400 is the answer shape the route already has. The cost is that a typo is
 	// silent, and the heading naming the FOLDED tag is what makes it visible.
-	if tag := store.NormalizeRef(r.URL.Query().Get(QueryTag)); tag != "" {
+	if tag := store.NormalizeRef(lastTagValue(r.URL.Query())); tag != "" {
 		matches := EntriesByTag(scopes, tag)
-		view.Tag = tag
 		view.TagMatches = &matches
 	}
 	s.renderPage(w, view)
+}
+
+// lastTagValue reads the LAST `?tag=` value, which is what `internal/api`'s `lastValue` does for
+// every scalar parameter on the pod's read routes.
+//
+// 🔴 IT EXISTS SO THE TWO SURFACES CANNOT DISAGREE ABOUT *WHICH* VALUE, and that is a different
+// claim from the one the scalar decision settled. `url.Values.Get` is first-wins by
+// specification; the pod is last-wins; both are defensible and neither is derivable from "the
+// operand is scalar". A reader who copies a `?tag=a&tag=b` between the two surfaces gets one
+// answer now, and [QueryTag]'s comment about them not disagreeing is true for the first time.
+//
+// ⚠ NOT A SHARED FUNCTION WITH `internal/api`, AND THE REASON IS THE IMPORT BAN. `internal/ui`
+// may import a third-party module and the pod's serving path may not (`internal/depspolicy`), so
+// a helper hoisted into a package both import would be a new edge in the graph that ban measures.
+// Four lines duplicated against that is the cheaper trade, and this header is what keeps the two
+// spellings answering the same question — the one thing a copy cannot carry by itself.
+func lastTagValue(params url.Values) string {
+	values := params[QueryTag]
+	if len(values) == 0 {
+		return ""
+	}
+	return values[len(values)-1]
 }
 
 // handleScopePage renders ONE scope's entry list.

@@ -2395,6 +2395,28 @@ not: that function ALLOWLISTS absolute http(s) and would refuse a same-origin pa
 - **Two clients of the same listing.** The pod's `?tag=` and this page's `?tag=` are different code
   paths over the same key: the pod goes through `report.Recall`/`report.Search` and this one
   filters `Visible`'s result. Nothing compares them, and they are not meant to agree on OUTPUT —
-  only on which entries carry a tag. They now share the PREDICATE (`store.HasTag`) and the FOLD
-  (`store.NormalizeRef`), so that half is structural rather than parallel; what is still
+  only on which entries carry a tag. They now share the PREDICATE (`store.HasTag`), the FOLD
+  (`store.NormalizeRef`) and, since `lastTagValue`, the REPEATED-PARAMETER rule; what is still
   uncompared is everything either side does around it, including the refusal policy above.
+
+### 🔴 `?q=` AND `?tag=` DO NOT COMPOSE ON THIS SURFACE, AND THAT IS DECLARED RATHER THAN CLOSED
+
+**`/?q=lease&tag=marketing` renders TWO INDEPENDENT CARDS** — a search card answering `lease`
+across every visible scope, and a tag card listing every entry carrying `marketing`. Neither
+narrows the other. **On the pod the same two parameters compose into ONE narrowed search**
+(`report.Search` applies the tag filter after scope authorisation and then searches what is left),
+so the two surfaces answer a two-parameter URL differently in KIND, not merely in layout.
+
+**And the search form drops the tag.** `searchbar` carries `name="q"` and nothing else, so a
+reader looking at a tag listing who types into the search box loses the tag — the form GETs `/`
+with `?q=` alone. That is the part most likely to read as a bug rather than as a boundary: the tag
+is visible on screen at the moment it is discarded. A hidden `<input type="hidden" name="tag">` is
+the whole mechanical fix, and it is deliberately NOT taken here.
+
+**Why declared and not composed.** Composing them changes what a DEPLOYED surface answers for a URL
+that already works, and it forces a choice nobody has made: whether `?q=` within `?tag=` should
+render one card or two, and which heading counts what. That is a decision with an operator, not a
+defect with a fix. **Closing condition:** a decision on the composed shape, then one card whose
+summary names both operands and a search form that round-trips the tag — checked by a test sending
+both parameters and asserting a single card. Until then the two-card rendering is the declared
+answer, and `tagResults`' own `Clear the tag` link is the only navigation between the two states.

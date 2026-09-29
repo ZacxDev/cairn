@@ -69,14 +69,19 @@ type PageView struct {
 	// with no Hits is a real zero and renders as one; nil means nobody asked.
 	Results *SearchResults
 
-	// Tag is the FOLDED `?tag=` filter in force on the root, "" when none was asked. It is
-	// the folded form and not the raw one for the reason `Entry.Tags` is folded: the heading
-	// names the string the comparison used, so a reader can see that `Marketing` reached
-	// `marketing`.
-	Tag string
-	// TagMatches is the answer to Tag, nil when no tag was asked. A non-nil TagMatches with no
-	// Entries is a real zero and renders as one; nil means nobody asked — the same nil/empty
-	// contract `Results` carries, and the same `g.Iff` discipline applies to reading it.
+	// 🔴 THERE IS NO `Tag` FIELD BESIDE THIS ONE, AND ITS ABSENCE IS A DECISION. One existed:
+	// it held the folded `?tag=` operand, was written at both sites that build this view, and
+	// was read by NOTHING — its own comment claimed it named the string in the heading while
+	// the heading read `TagMatches.Tag`. A second copy of one fact with no reader cannot be a
+	// guard; it can only come to disagree with the copy that is rendered. `TagMatches.Tag` is
+	// the one home, it sits beside the entries it was compared against, and `tagSummary` is
+	// what reads it. Do not re-add the outer field — if a future caller needs the operand
+	// where no `TagMatches` exists, that is the case to state, not a field to mirror.
+
+	// TagMatches is the answer to the `?tag=` filter, nil when no tag was asked. A non-nil
+	// TagMatches with no Entries is a real zero and renders as one; nil means nobody asked —
+	// the same nil/empty contract `Results` carries, and the same `g.Iff` discipline applies
+	// to reading it. The FOLDED operand lives on it, as `TagMatches.Tag`.
 	TagMatches *TagMatches
 
 	// Scope is the scope under view on the scope and entry pages, nil on the root.

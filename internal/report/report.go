@@ -215,8 +215,17 @@ func ValidateRecall(opts RecallOptions) error {
 // ENTRY, and "no entry is called that" is a fact about the store worth reporting. A tag operand
 // that folds away names NO CATEGORY AT ALL, so answering "no entry carries this" would be an
 // empty result whose cause is invisible — indistinguishable from a tag nobody has used yet, when
-// the real cause is that the query said nothing. An operator who typed `--tag ''` or `--tag '!!'`
+// the real cause is that the query said nothing. An operator who typed `--tag ""` or `--tag '!!'`
 // gets told so.
+//
+// ⚠ THE EMPTY OPERAND IS SPELLED WITH TWO DOUBLE QUOTES, AND `gofmt` DECIDES THAT RATHER THAN
+// TASTE — SO DO NOT "RESTORE" THE TWO-APOSTROPHE SPELLING. Go's doc-comment reformatter rewrites
+// a pair of adjacent apostrophes into a right curly quote, which garbles the one sentence that
+// documents this refusal and leaves the file non-`gofmt`-clean until somebody runs it. Measured
+// with `gofmt -d`, and BACKTICKS DO NOT PROTECT IT: a code span containing the pair is rewritten
+// exactly as bare text is, which is why the fix had to change the spelling rather than quote it.
+// Two double quotes are the same empty operand in every shell and the reformatter leaves them
+// alone; `'!!'` is a SINGLE pair of apostrophes and is stable too.
 //
 // ⚠ AND IT IS WHY THE REPORT TYPES CARRY A BARE `Tag`: with an empty operand refused here, no
 // report can ever hold a present-but-empty tag, so `Tag != ""` is the whole "was a filter sent"

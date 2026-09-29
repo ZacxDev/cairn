@@ -282,6 +282,55 @@ func TestTheTagParameterAddsNoRoute(t *testing.T) {
 	}
 }
 
+// TestARepeatedTagParameterIsLASTWinsLikeThePod pins WHICH value a repeated `?tag=` uses.
+//
+// 🔴 REGRESSION COVERAGE, WATCHED RED: with `lastTagValue` replaced by `Query().Get` — which is
+// what this line was — both sub-cases below report the FIRST value, and the two assertions fail
+// naming the tag they got. The defect was live and shipped: the pod's `lastValue` is last-wins
+// and `url.Values.Get` is first-wins, so `?tag=a&tag=b` answered `a` on this surface and `b` on
+// `/api/v1/recall/{scope}` while [QueryTag]'s comment claimed a reader "does not have to learn
+// that they disagree".
+//
+// 🔴 THE SCALAR DECISION DOES NOT COVER THIS, WHICH IS WHY THE GUARD IS SEPARATE FROM THE
+// `--tag`/`?tag=` SEMANTICS ROWS. Making the operand scalar removed the AND/OR question — HOW
+// MANY values are read — and left WHICH one entirely open. A comment asserted the second from
+// the first.
+//
+// 🔴 BOTH ORDERS ARE SENT, AND THAT IS NOT REDUNDANCY. One order cannot distinguish "reads the
+// last value" from "always answers `plain-tag`": a single fixture whose expected answer is a
+// constant is satisfied by an implementation that hardcodes the constant. Sending the pair and
+// requiring the answer to MOVE is the control on that. Both tags are ones `benignWorld`'s entry
+// actually carries, so each order renders a real listing and the HEADING — not the hit count —
+// is what separates them.
+func TestARepeatedTagParameterIsLASTWinsLikeThePod(t *testing.T) {
+	// The two tags `benignWorld`'s only entry carries. Distinct from each other, and each
+	// distinct from every other literal this test names.
+	const first, second = "marketing", "plain-tag"
+
+	for _, order := range [][2]string{{first, second}, {second, first}} {
+		sent, want := order, order[1]
+		srv := newTestServer(t, staticAuth{testIdentity()})
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+			RootPath+"?"+url.Values{QueryTag: sent[:]}.Encode(), nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("`?tag=%s&tag=%s` answered %d, want 200", sent[0], sent[1], rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "carry `"+want+"`") {
+			t.Errorf("`?tag=%s&tag=%s` did not narrow by the LAST value %q. The pod's "+
+				"`internal/api.lastValue` reads the last value of every scalar parameter, and "+
+				"`url.Values.Get` — which this surface used to call — reads the FIRST, so the "+
+				"two answered the same URL differently. Body:\n%s",
+				sent[0], sent[1], want, body)
+		}
+		if other := sent[0]; strings.Contains(body, "carry `"+other+"`") {
+			t.Errorf("`?tag=%s&tag=%s` narrowed by the FIRST value %q — first-wins, which is "+
+				"`Query().Get`'s rule and not the pod's", sent[0], sent[1], other)
+		}
+	}
+}
+
 // tagView builds the root page's state for a `?tag=` request, through the SAME function the
 // handler uses.
 //
@@ -292,7 +341,6 @@ func tagView(t *testing.T, scopes []Scope, tag string) PageView {
 	t.Helper()
 	v := viewOf("operator@example.invalid", scopes)
 	m := EntriesByTag(scopes, tag)
-	v.Tag = tag
 	v.TagMatches = &m
 	return v
 }
