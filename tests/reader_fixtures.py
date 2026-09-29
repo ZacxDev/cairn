@@ -282,8 +282,15 @@ ENTRIES: list[dict] = [
         "- RESOLVED: (inferred) the digest should collapse duplicate rows",
         "- OPEN: the archive should keep its original timestamps",
         "- 2000-01-09: a requirement nobody marked and nobody attributed",
-        # 🔴 THE BOUNDARY ROW — byte-identical to the nuance bullet above.
-        "- 2000-01-02: OPEN: the retry budget is still unbounded.",
+        # 🔴 THE BOUNDARY ROW — byte-identical to the nuance bullet above, TRAILER
+        # INCLUDED. It carried no `ATTRIBUTED` suffix first, so the two lines differed by
+        # 45 bytes while three comments and a PR called them identical — the fixture was
+        # fine (the guard is arithmetic and counting ignores a suffix) and the stated
+        # REASON was false. Fixed by making the line true rather than by weakening the
+        # sentence, which also buys a real case: a requirement bullet carrying a session
+        # trailer, where provenance is read immediately after the marker and a SUFFIX must
+        # not reach it.
+        f"- 2000-01-02: OPEN: the retry budget is still unbounded.{ATTRIBUTED}",
         "",
         # The fence rule, INSIDE this section rather than in an entry of its own: a
         # bullet in a fenced block is sample text and must not become a requirement.

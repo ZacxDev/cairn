@@ -195,7 +195,34 @@ class Mutant:
     #: row that does not set it.
     pkgs: tuple[str, ...] = field(default_factory=tuple)
 
+    #: 🔴 IT MAY ONLY *ADD* TO `PKGS`, NEVER REPLACE IT, AND `__post_init__` REFUSES
+    #: OTHERWISE. Round 0 of #148 raised this against the field as first written: the
+    #: header above calls `PKGS` a load-bearing seam that must not SHRINK, and a bare
+    #: per-row override is a mechanism for shrinking it. The concrete failure it named —
+    #: a future authz row copied from the `requirements-*` ones, setting
+    #: `pkgs=("./internal/control/",)`, losing the cross-package killers the header calls
+    #: load-bearing, and reporting a confident `killed=1` with nothing noticing, because
+    #: the count pin counts ROWS and not SCOPE.
+    #:
+    #: So the field now means "the seam PLUS these", and `run_tests` receives the union.
+    #: A row naming a package already in `PKGS` is accepted and redundant; a row that omits
+    #: one cannot exist.
+
     def __post_init__(self) -> None:
+        if self.pkgs:
+            missing = tuple(p for p in PKGS if p not in self.pkgs)
+            if missing:
+                # Not a silent widening: the row is REFUSED so the author sees that the
+                # seam is additive, rather than a run quietly measuring more than the row
+                # claimed. `PKGS` is defined below this class, which is why this reads it
+                # at call time rather than as a default.
+                raise MutationError(
+                    f"{self.name}: `pkgs` must ADD to the seam, not replace it — it omits "
+                    f"{missing}. The battery's header calls `PKGS` load-bearing precisely "
+                    f"because a mutant on one side of the seam is killed by a guard on the "
+                    f"other; a row that drops a package scores SURVIVED for that reason and "
+                    f"reads as a coverage gap. Write `PKGS + (\"./your/pkg/\",)`."
+                )
         if self.equivalent and self.extra_killers:
             raise AssertionError(
                 f"{self.name}: an EQUIVALENT row lists extra_killers {self.extra_killers}. "
@@ -2818,7 +2845,7 @@ MUTANTS: tuple[Mutant, ...] = (
     # ---- the `## Requirements` section: the boundary, the count, the attribution ----
     Mutant(
         name="requirements-read-the-whole-entry-body",
-        pkgs=("./internal/report/",),
+        pkgs=PKGS + ("./internal/report/",),
         path="internal/report/entry.go",
         old="store.ParseRequirements(sections[store.RequirementsHeading])",
         new="store.ParseRequirements(text)",
@@ -2836,7 +2863,7 @@ MUTANTS: tuple[Mutant, ...] = (
     ),
     Mutant(
         name="requirements-open-count-is-not-met",
-        pkgs=("./internal/store/",),
+        pkgs=PKGS + ("./internal/store/",),
         path="internal/store/requirements.go",
         old="return r.OpennessPopulation() == PopulationOpen",
         new="return !r.IsMet()",
@@ -2849,7 +2876,7 @@ MUTANTS: tuple[Mutant, ...] = (
     ),
     Mutant(
         name="requirements-provenance-accepts-a-prefix",
-        pkgs=("./internal/store/",),
+        pkgs=PKGS + ("./internal/store/",),
         path="internal/store/requirements.go",
         old="return rs[1+len(w)] == ')'",
         new="return true",
