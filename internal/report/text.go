@@ -48,6 +48,24 @@ func listingLine(entry RecalledEntry, width int) string {
 	if entry.UnverifiableCount != 0 {
 		badges = append(badges, "⚠ "+strconv.Itoa(entry.UnverifiableCount)+" UNVERIFIABLE")
 	}
+	// The requirements pair sits after the nuance populations and before `NO <heading>`,
+	// keeping the validator's order for the bullet populations and leaving the
+	// parser-never-reached badge where it was.
+	//
+	// 🔴 BOTH ARE CONDITIONAL, SO AN ENTRY WITH NO `## Requirements` RENDERS BYTE-IDENTICAL
+	// TO ONE THAT NEVER HEARD OF THE SECTION — which is what keeps this additive for every
+	// entry in the store and is why the goldens for those entries do not move.
+	//
+	// ⚠ `MET` IS RENDERED, NOT ONLY `OPEN`, AND THAT IS DELIBERATE RATHER THAN SYMMETRY FOR
+	// ITS OWN SAKE. A section showing only its open items reads as a to-do list; the pair is
+	// what makes it a RECORD — "three asked for, two delivered" is the sentence the operator
+	// asked to be able to read, and one number cannot say it.
+	if entry.RequirementsOpen != 0 {
+		badges = append(badges, "🔴 "+strconv.Itoa(entry.RequirementsOpen)+" REQ OPEN")
+	}
+	if entry.RequirementsMet != 0 {
+		badges = append(badges, "✅ "+strconv.Itoa(entry.RequirementsMet)+" REQ MET")
+	}
 	if len(entry.MissingSections) != 0 {
 		short := make([]string, 0, len(entry.MissingSections))
 		for _, h := range entry.MissingSections {

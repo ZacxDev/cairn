@@ -1458,6 +1458,7 @@ def main(argv: list[str] | None = None) -> int:
             # conjunction is a different change from dropping it from the line.
             saw_tag_narrowing = False
             saw_tag_match = False
+            saw_req_open = False
             wanted = None if args.only is None else set(args.only.split(","))
             selected = [c for c in cases(closed, hostile_port)
                         if wanted is None or c.id in wanted]
@@ -1672,6 +1673,21 @@ def main(argv: list[str] | None = None) -> int:
                     for line in py.stdout.splitlines():
                         if line.startswith("  tag: `") and " — 0 of " not in line:
                             saw_tag_match = True
+                # 🔴 THE REQUIREMENTS BADGE WITH A NON-ZERO COUNT, WHICH ONLY A SECTION THAT
+                # PARSED *AND KEPT SOMETHING* CAN PRODUCE — the same shape as `tag-match`, and
+                # for the same measured reason: #146 shipped a parity clause that compared two
+                # clients rendering NOTHING because no fixture carried the key it claimed to
+                # cover. Both clients losing the section would agree at zero badges and satisfy
+                # any check keyed on "the two outputs match".
+                #
+                # ⚠ ONE TERM, NOT A PAIR, AND THAT IS THE CORRECTED READING. `REQ MET` can only
+                # be rendered by the same section that renders `REQ OPEN` in this world, so a
+                # conjunction over both is the weaker term alone — exactly the relationship
+                # `tag-match`/`tag-narrowing` has, where the header above records that the
+                # "pair" framing was wrong. The badge is CONDITIONAL, so `0 REQ OPEN` is never
+                # printed: the string's presence IS the non-zero claim.
+                if "REQ OPEN" in py.stdout:
+                    saw_req_open = True
                 # 🔴 KEYED ON THE ROW'S OWN FIELD, NOT ON THE SENTENCE ALONE. Both mode-000
                 # families print the identical sentence, so `"index entry unreadable" in
                 # py.stderr` cannot say WHICH condition produced it: a run that had lost the
@@ -1954,22 +1970,28 @@ def main(argv: list[str] | None = None) -> int:
                   f"unreadable-entry={saw_unreadable_entry} "
                   f"unreadable-scope-dir={saw_unreadable_dir} "
                   f"tag-narrowing={saw_tag_narrowing} "
-                  f"tag-match={saw_tag_match}{mtime_note}")
+                  f"tag-match={saw_tag_match} "
+                  f"req-open={saw_req_open}{mtime_note}")
             # `saw_tag_narrowing` is deliberately NOT a term here: it is implied by
             # `saw_tag_match`, and a conjunct that cannot fail on its own reads as a fifth
             # independent claim while adding none. See the sentinels' own header.
             floor_broken = wanted is None and not (
                 saw_live_banner and saw_rendered_digest and saw_unreadable_entry
-                and saw_unreadable_dir and saw_tag_match
+                and saw_unreadable_dir and saw_tag_match and saw_req_open
             )
             if floor_broken:
-                print("REFUSING TO VOUCH: this run did not produce ALL FIVE of a LIVE banner, a "
+                print("REFUSING TO VOUCH: this run did not produce ALL SIX of a LIVE banner, a "
                       "rendered digest, an `index entry unreadable` sentence from each of a "
-                      "mode-000 ENTRY FILE and a mode-000 SCOPE DIRECTORY, and a `tag:` "
-                      "narrowing line with a NON-ZERO numerator — so it measured refusals "
+                      "mode-000 ENTRY FILE and a mode-000 SCOPE DIRECTORY, a `tag:` "
+                      "narrowing line with a NON-ZERO numerator, and a `REQ OPEN` badge — so "
+                      "it measured refusals "
                       "rather than reports, or one of the mode rows compared two clients "
                       "reading a store with nothing wrong, or the `--tag` rows compared two "
-                      "clients that emitted nothing about tags. Both mode families print the "
+                      "clients that emitted nothing about tags, or the world stopped carrying "
+                      "a `## Requirements` section so both clients rendered no badge and "
+                      "AGREED AT NOTHING — measured: dropping the section from `world.py` "
+                      "leaves 123 cases, 126 PASS, 0 failures and `req-open=False`, which is "
+                      "the vacuity this term exists to refuse. Both mode families print the "
                       "SAME sentence, so each sentinel is keyed on its row's own field and a "
                       "missing one names a condition nothing built. `tag-narrowing` is printed "
                       "beside it but is NOT a floor term: it is implied by a non-zero "

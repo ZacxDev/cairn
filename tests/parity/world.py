@@ -36,11 +36,21 @@ EPOCH_NS = 946_684_800 * 1_000_000_000
 
 
 def _entry(service: str, scope: str, *, aliases: str = "", body: str = "a synthetic entry",
-           refs: str = "", tags: str = "") -> str:
+           refs: str = "", tags: str = "", requirements: bool = False) -> str:
     """One entry's bytes.
 
     `refs` exists so the corpus can carry the `refs:` front-matter key, which is what the
     `--ref-to` rows narrow on; `tags` does the same for `tags:` and the `--tag` rows.
+
+    `requirements` adds a `## Requirements` SECTION rather than a front-matter key, which is
+    why it is a flag and not a string: the section's whole content is fixed here so both
+    clients render the same bytes from the same world, and no row has to pass it.
+
+    🔴 IT IS WHAT STOPS THIS GATE BEING VACUOUS ABOUT THE SECTION. #146 shipped a parity
+    clause that compared two clients rendering NOTHING, because no fixture carried the key it
+    claimed to cover. The badge this section produces reaches the index line of EVERY recall
+    row, so one entry carrying it makes every existing row a byte comparison of it — and the
+    `req-open` sentinel below refuses if the world stops carrying it.
 
     ⚠ IT WRITES THE CURRENT KEY ONLY. A `ref_key` parameter was here so one entry could carry
     the older `tasks:` spelling; the ALIAS is pinned in both languages by unit tests
@@ -53,6 +63,24 @@ def _entry(service: str, scope: str, *, aliases: str = "", body: str = "a synthe
     alias_line = f"aliases: [{aliases}]\n" if aliases else ""
     ref_line = f"refs: [{refs}]\n" if refs else ""
     tag_line = f"tags: [{tags}]\n" if tags else ""
+    # 🔴 THE MATRIX, AND THE BOUNDARY ROW IS THE LAST ONE. The nuance section below already
+    # carries `- 2000-01-02: OPEN: the synthetic action this entry records.`; repeating it
+    # VERBATIM here is the section-boundary case — a reader taking requirements from the entry
+    # body instead of the section body folds the nuance bullet in and the badge count moves.
+    # The fenced bullet must not count at all.
+    requirements_block = ("" if not requirements else
+        "\n## Requirements\n"
+        "\n"
+        "- OPEN: (operator) the operator asked for a per-row freshness stamp.\n"
+        "- 2000-01-08: OPEN: (inferred) an agent inferred the export should stream.\n"
+        "- RESOLVED def5678: (operator) the operator asked, and a sha closed it.\n"
+        "- RESOLVED: (inferred) inferred, closed, and nothing proves it.\n"
+        "- OPEN: a requirement with no provenance recorded at all.\n"
+        "- 2000-01-02: OPEN: the synthetic action this entry records.\n"
+        "\n"
+        "```markdown\n"
+        "- OPEN: (operator) sample text in a fence, which is not a bullet.\n"
+        "```\n")
     return (
         "---\n"
         f"service: {service}\n"
@@ -74,6 +102,7 @@ def _entry(service: str, scope: str, *, aliases: str = "", body: str = "a synthe
         "\n"
         "- 2000-01-02: OPEN: the synthetic action this entry records.\n"
         "- 2000-01-03: RESOLVED abc1234: the synthetic action that closed.\n"
+        f"{requirements_block}"
     )
 
 
@@ -106,7 +135,7 @@ ENTRIES: list[tuple[str, int, str]] = [
     # narrows by `internal` alone, which is what still needs an entry carrying it.
     ("alpha-notes/gauge-api.md", 4_000_000_000,
      _entry("gauge-api", "alpha-notes", refs="github:example-org/example-repo#428",
-            tags="Marketing, internal")),
+            tags="Marketing, internal", requirements=True)),
     # A malformed entry BESIDE readable ones: `aliases:` as a bare string is what the schema
     # refuses, and the rejection has to render in the same report as the good entries.
     ("alpha-notes/broken-four.md",

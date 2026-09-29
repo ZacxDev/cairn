@@ -176,7 +176,53 @@ class Mutant:
     # is a contradiction that could only ever report itself as a failure of the run.
     extra_killers: tuple[str, ...] = field(default_factory=tuple)
 
+    #: The packages to run for THIS row, overriding the module-wide `PKGS`.
+    #:
+    #: 🔴 IT EXISTS BECAUSE `PKGS` IS A DELIBERATELY NARROW SEAM AND WIDENING IT WOULD
+    #: RE-SCOPE EVERY OTHER ROW. `PKGS` covers the control/identity/server seam, and the
+    #: header above says why that scope is load-bearing: a mutant on one side of it is
+    #: killed by a guard on the other, so the list must not shrink. But a row whose killer
+    #: lives OUTSIDE that seam — `internal/store`, `internal/report` — scores SURVIVED for
+    #: the one reason that header names as a FALSE FINDING: "the killing test did not run".
+    #:
+    #: MEASURED: the three `requirements-*` rows below reported `killed=0 survived=3` with
+    #: an empty `pkgs`, while the same mutations die in seconds when the packages holding
+    #: their killers are run. Adding those two packages to `PKGS` instead would change what
+    #: 188 existing rows measure — every one of them would newly run two more packages,
+    #: giving unrelated guards a chance to be the killer and turning correct rows into
+    #: `misattributed` — and `len(PKGS)` is pinned to prose in three places by
+    #: `test_control_mutant_count_is_pinned.py`. A per-row override changes nothing for any
+    #: row that does not set it.
+    pkgs: tuple[str, ...] = field(default_factory=tuple)
+
+    #: 🔴 IT MAY ONLY *ADD* TO `PKGS`, NEVER REPLACE IT, AND `__post_init__` REFUSES
+    #: OTHERWISE. Round 0 of #148 raised this against the field as first written: the
+    #: header above calls `PKGS` a load-bearing seam that must not SHRINK, and a bare
+    #: per-row override is a mechanism for shrinking it. The concrete failure it named —
+    #: a future authz row copied from the `requirements-*` ones, setting
+    #: `pkgs=("./internal/control/",)`, losing the cross-package killers the header calls
+    #: load-bearing, and reporting a confident `killed=1` with nothing noticing, because
+    #: the count pin counts ROWS and not SCOPE.
+    #:
+    #: So the field now means "the seam PLUS these", and `run_tests` receives the union.
+    #: A row naming a package already in `PKGS` is accepted and redundant; a row that omits
+    #: one cannot exist.
+
     def __post_init__(self) -> None:
+        if self.pkgs:
+            missing = tuple(p for p in PKGS if p not in self.pkgs)
+            if missing:
+                # Not a silent widening: the row is REFUSED so the author sees that the
+                # seam is additive, rather than a run quietly measuring more than the row
+                # claimed. `PKGS` is defined below this class, which is why this reads it
+                # at call time rather than as a default.
+                raise MutationError(
+                    f"{self.name}: `pkgs` must ADD to the seam, not replace it — it omits "
+                    f"{missing}. The battery's header calls `PKGS` load-bearing precisely "
+                    f"because a mutant on one side of the seam is killed by a guard on the "
+                    f"other; a row that drops a package scores SURVIVED for that reason and "
+                    f"reads as a coverage gap. Write `PKGS + (\"./your/pkg/\",)`."
+                )
         if self.equivalent and self.extra_killers:
             raise AssertionError(
                 f"{self.name}: an EQUIVALENT row lists extra_killers {self.extra_killers}. "
@@ -2795,6 +2841,54 @@ MUTANTS: tuple[Mutant, ...] = (
         "NORMALISED STRING'. Its negative control proved only that the COMPARISON can fail, "
         "never that a change to the CONSTANT would. The row is here so the fix has a gate.",
     ),
+
+    # ---- the `## Requirements` section: the boundary, the count, the attribution ----
+    Mutant(
+        name="requirements-read-the-whole-entry-body",
+        pkgs=PKGS + ("./internal/report/",),
+        path="internal/report/entry.go",
+        old="store.ParseRequirements(sections[store.RequirementsHeading])",
+        new="store.ParseRequirements(text)",
+        killer="TestTheRenderedBytesMatchTheORACLEOverShapesTheCorpusCannotSend",
+        why="🔴 THE SECTION BOUNDARY, WHICH IS THE ONLY THING SEPARATING A STATED "
+        "REQUIREMENT FROM A NOTE ABOUT HISTORY. Nothing in a bullet's TEXT distinguishes "
+        "them — no keyword, no shape — so a reader handed the entry body instead of the "
+        "section body silently promotes every `OPEN:` nuance bullet to a requirement. "
+        "`marked-three` in the reader fixture carries one bullet VERBATIM under both "
+        "headings for exactly this row: the mutant folds it in and `🔴 4 REQ OPEN` "
+        "becomes 5, which is why the ledger pins the whole badge run rather than the two "
+        "new badges alone. ⚠ The store-level boundary test does NOT kill this one — it "
+        "calls `ParseRequirements` directly and so cannot see a caller passing the wrong "
+        "body. That asymmetry is the reason the differential fixture earns its place.",
+    ),
+    Mutant(
+        name="requirements-open-count-is-not-met",
+        pkgs=PKGS + ("./internal/store/",),
+        path="internal/store/requirements.go",
+        old="return r.OpennessPopulation() == PopulationOpen",
+        new="return !r.IsMet()",
+        killer="TestMetAndOpenAreNotComplements",
+        why="the open COUNT, written as the complement of met — which reads as obviously "
+        "equivalent and is not. A bullet carrying no marker is NEITHER open nor met; it is "
+        "unstated. This mutant promotes every unmarked bullet under the heading to an open "
+        "requirement, so the badge starts claiming work nobody declared, and it does so in "
+        "the direction that looks like diligence.",
+    ),
+    Mutant(
+        name="requirements-provenance-accepts-a-prefix",
+        pkgs=PKGS + ("./internal/store/",),
+        path="internal/store/requirements.go",
+        old="return rs[1+len(w)] == ')'",
+        new="return true",
+        killer="TestProvenanceIsTheWholeParenthesizedWord",
+        why="⚠ THE THIRD ROW, ADDED BEYOND THE TWO THE TASK NAMED, AND ARGUED FOR RATHER "
+        "THAN SMUGGLED IN. Provenance is the feature — `(operator)` versus `(inferred)` is "
+        "the whole distinction being asked for — so the one failure it cannot have is being "
+        "MANUFACTURABLE. Dropping the closing-paren check makes `(operators)`, "
+        "`(operator-ish)` and anything else starting with the right letters resolve to "
+        "`operator`, attributing a statement to the operator that the operator did not "
+        "make. Nothing about the resulting code reads wrong.",
+    ),
 )
 
 
@@ -2825,7 +2919,7 @@ def prepare_tree(dest: Path) -> None:
             stray.unlink()
 
 
-def run_tests(tree: Path) -> tuple[bool, set[str], str]:
+def run_tests(tree: Path, pkgs: tuple[str, ...] = ()) -> tuple[bool, set[str], str]:
     """Run the package's tests, returning (green, failing test names, raw output).
 
     🔴 THE FAILING TEST NAMES COME FROM `--- FAIL:` LINES, NOT FROM THE EXIT CODE. An
@@ -2843,7 +2937,7 @@ def run_tests(tree: Path) -> tuple[bool, set[str], str]:
         # `sync.Mutex` — the mutant is still KILLED, but at the default it costs ten
         # minutes of wall clock per occurrence instead of two, in a battery this job
         # runs on every push. The shortest real package here finishes in seconds.
-        ["go", "test", "-count=1", "-timeout=2m", "-v", *PKGS],
+        ["go", "test", "-count=1", "-timeout=2m", "-v", *(pkgs or PKGS)],
         cwd=tree,
         capture_output=True,
         text=True,
@@ -2935,7 +3029,7 @@ def main() -> int:
                 broken.append((m, str(exc)))
                 continue
 
-            green, failing, out = run_tests(work)
+            green, failing, out = run_tests(work, m.pkgs)
             if green:
                 verdict = "SURVIVED"
                 survived.append(m)

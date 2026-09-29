@@ -256,6 +256,47 @@ ENTRIES: list[dict] = [
         # A SECOND actor, so a renderer printing a constant where the actor goes
         # cannot pass by agreeing with itself.
         f"- 2000-01-07: an ordinary bullet that declares nothing.{ATTRIBUTED_OTHER}",
+        "",
+        # 🔴 THE FULL PROVENANCE MATRIX, AND IT LIVES ON *THIS* ENTRY FOR ONE REASON:
+        # its nuance section above already carries `OPEN: the retry budget is still
+        # unbounded.`, so repeating that line VERBATIM below is the section-boundary
+        # case at its strongest — the same text, the same declared marker, one
+        # section apart. A reader that took requirements from the entry BODY instead
+        # of the section body counts it twice and the badge arithmetic moves.
+        #
+        # ⚠ IT IS ADDED TO AN EXISTING ENTRY RATHER THAN AS A NEW ONE, DELIBERATELY.
+        # A new entry would shift every listing count, page boundary and scope total
+        # in the fixture, which is churn that says nothing about this section; a new
+        # SECTION on an entry whose body is already rendered (`sensitivity: public`)
+        # exercises the whole path and moves only this entry's rows.
+        "## Requirements",
+        # open × operator, open × inferred, met × operator, met-unverifiable ×
+        # inferred, open × absent, and unmarked × absent. Six of the nine cells the
+        # matrix has; the three that cannot exist are met-without-a-marker (a met
+        # requirement IS a marker) and unmarked-with-provenance (provenance is read
+        # after a marker, so no marker means no provenance — which the absent rows
+        # below and `TestALineWithNoParsedMarkerHasNoProvenance` both pin).
+        "- OPEN: (operator) the listing should carry a per-row freshness stamp",
+        "- 2000-01-08: OPEN: (inferred) the export should stream rather than buffer",
+        "- RESOLVED def5678: (operator) the sign-in card should name the workspace",
+        "- RESOLVED: (inferred) the digest should collapse duplicate rows",
+        "- OPEN: the archive should keep its original timestamps",
+        "- 2000-01-09: a requirement nobody marked and nobody attributed",
+        # 🔴 THE BOUNDARY ROW — byte-identical to the nuance bullet above, TRAILER
+        # INCLUDED. It carried no `ATTRIBUTED` suffix first, so the two lines differed by
+        # 45 bytes while three comments and a PR called them identical — the fixture was
+        # fine (the guard is arithmetic and counting ignores a suffix) and the stated
+        # REASON was false. Fixed by making the line true rather than by weakening the
+        # sentence, which also buys a real case: a requirement bullet carrying a session
+        # trailer, where provenance is read immediately after the marker and a SUFFIX must
+        # not reach it.
+        f"- 2000-01-02: OPEN: the retry budget is still unbounded.{ATTRIBUTED}",
+        "",
+        # The fence rule, INSIDE this section rather than in an entry of its own: a
+        # bullet in a fenced block is sample text and must not become a requirement.
+        "```markdown",
+        "- OPEN: (operator) sample text inside a fence, which is not a bullet",
+        "```",
     ]),
     # Neither COUNTED heading, so `is_bare` AND both `missing_sections` fire.
     _entry("alpha-notes/bare-four.md", EPOCH_NS + 1_000_000, [

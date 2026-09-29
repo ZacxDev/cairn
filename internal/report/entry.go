@@ -93,6 +93,21 @@ type RecalledEntry struct {
 	// same note.
 	Tasks []string
 
+	// RequirementsOpen and RequirementsMet are the `## Requirements` bullets that DECLARE
+	// open, and those that declare met, in the journal's own two-state vocabulary.
+	//
+	// 🔴 THEY DO NOT SUM TO THE SECTION'S BULLET COUNT, AND NOTHING SHOULD ASSUME THEY DO.
+	// A requirement bullet carrying no marker is neither — it is a sentence somebody wrote
+	// under the heading without declaring a state — so `open + met < len(bullets)` is an
+	// ordinary reading. Deriving either from the other, or either from the total, is how a
+	// badge starts claiming work nobody declared.
+	//
+	// ⚠ MET INCLUDES A SHA-LESS `RESOLVED:`. The writer closed it; only the CHECK is
+	// missing, which is what `UnverifiableCount` reports separately for the nuance section.
+	// Counting it as not-met would reopen an action somebody finished.
+	RequirementsOpen int
+	RequirementsMet  int
+
 	// Tags are the entry's `tags:`, already folded, deduped and sorted by the loader.
 	//
 	// ⚠ NO PROJECTION LOOP, WHERE `Tasks` HAS ONE, AND THE DIFFERENCE IS THE TYPE RATHER THAN
@@ -164,6 +179,26 @@ func ReadEntry(storeRoot string, entry store.Entry) (RecalledEntry, error) {
 		tasks = append(tasks, t.String())
 	}
 
+	// 🔴 FROM THE SECTION BODY, WHICH IS THE WHOLE BOUNDARY GUARD. `sections` is keyed by
+	// heading, so a bullet under `## Nuance / work-history` cannot reach this lookup — the
+	// two populations are told apart by which section they sit in and by nothing else. An
+	// absent heading is no key, so this is an empty body and yields no requirements, which
+	// is the same answer as a present-but-empty section and is correct for both: neither
+	// states a requirement.
+	requirements := store.ParseRequirements(sections[store.RequirementsHeading])
+	requirementsOpen, requirementsMet := 0, 0
+	for _, r := range requirements {
+		// Counted off the SAME predicates the renderer and the browser surface branch on,
+		// rather than off `Openness` directly — one source for the precedence order, for
+		// the reason the nuance populations above share one.
+		if r.IsOpen() {
+			requirementsOpen++
+		}
+		if r.IsMet() {
+			requirementsMet++
+		}
+	}
+
 	return RecalledEntry{
 		Ref:                 entry.Ref(),
 		Filename:            entry.Filename,
@@ -174,6 +209,8 @@ func ReadEntry(storeRoot string, entry store.Entry) (RecalledEntry, error) {
 		OpenCount:           populations[store.PopulationOpen],
 		NearMissCount:       populations[store.PopulationNearMiss],
 		UnverifiableCount:   populations[store.PopulationUnverifiable],
+		RequirementsOpen:    requirementsOpen,
+		RequirementsMet:     requirementsMet,
 		MTime:               mtime,
 		MissingSections:     missing,
 		Tasks:               tasks,

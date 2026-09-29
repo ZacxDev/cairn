@@ -258,12 +258,23 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 185 mutants, over SEVEN packages
+python3 tests/control_mutants.py          # 188 mutants, over SEVEN packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 185 mutants, 183 killed, 2 labelled EQUIVALENT at the code,
-0 misattributed, 0 harness errors, 0 stale extra-killers, positive control GREEN.**
+**Measured on this tree: 188 mutants, in TWO runs of different scopes rather than one.** 185 of
+them in the whole-battery run — 183 killed, 2 labelled EQUIVALENT at the code, 0 misattributed,
+0 harness errors, 0 stale extra-killers, positive control GREEN. The three `requirements-*` rows
+were measured individually, each `killed=1 survived=0 misattributed=0 harness-errors=0` with
+empty stderr and its own positive control GREEN.
+
+🔴 **THE TOTAL IS DELIBERATELY NOT SUMMED, AND THAT IS THIS LINE'S OWN RULE APPLIED TO ITSELF.**
+The paragraph below says this line is "a SEPARATE MEASUREMENT RATHER THAN THE COUNT PIN'S
+ARITHMETIC"; writing `186 killed` here by adding 183 + 3 would be exactly that arithmetic, over
+two runs of different scopes. The three new rows carry a per-row `pkgs` override
+(`internal/store`, `internal/report`), so they were never part of the run that produced the 183
+— and a whole-battery figure covering all 188 at once has not been taken in this change. Either
+take it and replace both sentences, or leave them as the two measurements they are.
 
 🔴 **AND THE RUN BEFORE IT REPORTED `harness-errors=2`, WHICH IS WHY THIS LINE IS A SEPARATE
 MEASUREMENT RATHER THAN THE COUNT PIN'S ARITHMETIC.** 28(c) added a SECOND blank policy
@@ -379,7 +390,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 185 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 188 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test

@@ -280,6 +280,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from subsystem_resolver import (  # noqa: E402
     NUANCE_HEADING,
     POINTERS_HEADING,
+    REQUIREMENTS_HEADING,
     WHAT_HEADING,
     AmbiguousRefError,
     ON_MALFORMED_COLLECT,
@@ -297,6 +298,7 @@ from subsystem_resolver import (  # noqa: E402
     normalize_ref,
     parse_front_matter,
     parse_journal_bullets,
+    parse_requirements,
     parse_task_ref,
     resolve_ref_tiered,
     TaskRef,
@@ -349,6 +351,7 @@ __all__ = [
     "WHAT_HEADING",
     "POINTERS_HEADING",
     "NUANCE_HEADING",
+    "REQUIREMENTS_HEADING",
     "SURFACED_HEADINGS",
     "COUNTED_HEADINGS",
     "DEFAULT_ENTRY_LIMIT",
@@ -447,7 +450,22 @@ RECALL_LABEL = "from index"
 #
 # It is rendered FIRST because it is the orienting sentence: pointers and nuance
 # are both about a thing the reader is assumed to have already identified.
-SURFACED_HEADINGS: tuple[str, ...] = (WHAT_HEADING, POINTERS_HEADING, NUANCE_HEADING)
+# ⚠ `## Requirements` IS SURFACED BUT NOT COUNTED, and the split is the same one
+# `COUNTED_HEADINGS` draws below. A body that prints what the subsystem was SAID
+# to do is worth the bytes; an entry that has never carried the section is not
+# MISSING it, the way an entry with no `## Nuance / work-history` is missing a
+# section whose absence makes `0 nuance` a lie. Putting it in `COUNTED_HEADINGS`
+# would raise `🔴 NO Requirements` on every entry in the store — a defect report
+# about a section nobody has written yet.
+#
+# It renders LAST because it is the newest section and the orienting order —
+# what it is, where to look, what happened — is what a reader already knows.
+SURFACED_HEADINGS: tuple[str, ...] = (
+    WHAT_HEADING,
+    POINTERS_HEADING,
+    NUANCE_HEADING,
+    REQUIREMENTS_HEADING,
+)
 
 # 🔴 THE SET WHOSE ABSENCE MAKES A NUMBER WRONG — a strictly different question
 # from "what does a body print", and the two are kept apart rather than merged.
@@ -681,6 +699,9 @@ UNREADABLE_STATUSES: tuple[str, ...] = ("scope-unreadable", "search-unreadable")
 BADGE_NEAR_MISS = "near-miss"
 BADGE_UNVERIFIABLE = "unverifiable"
 BADGE_MISSING_HEADING = "missing-heading"
+#: ONE kind for the PAIR: both badges come from the same section, so a reader seeing
+#: either needs the same sentence and two kinds would emit it twice.
+BADGE_REQUIREMENTS = "requirements"
 
 
 def badges_present(entries: "Sequence[RecalledEntry]") -> frozenset[str]:
@@ -698,7 +719,30 @@ def badges_present(entries: "Sequence[RecalledEntry]") -> frozenset[str]:
             kinds.add(BADGE_UNVERIFIABLE)
         if getattr(e, "missing_sections", ()):
             kinds.add(BADGE_MISSING_HEADING)
+        if e.requirements_open or e.requirements_met:
+            kinds.add(BADGE_REQUIREMENTS)
     return frozenset(kinds)
+
+
+def _cardinal_badge_lead(n: int) -> str:
+    """`"<N> further badge(s) say(s)"` — DERIVED, never a ternary listing the counts
+    somebody thought of.
+
+    🔴 IT REPLACED A CHAIN THAT TOPPED OUT AT THREE AND DEFAULTED TO THE SINGULAR, so the
+    first reader to see four badges would have been told there was one. Adding the
+    requirements clause made a fourth reachable. `claude/RULES.md`: "a count in prose is a
+    claim" — and this is the second stale hand-written total an audit round has found in
+    this repo. The fix is the FORM: nothing here needs editing when a fifth clause arrives.
+
+    ⚠ Past five it prints the NUMERAL rather than guessing a word. An English cardinal
+    table is exactly the list that goes stale silently; a digit cannot be wrong.
+    """
+    words = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}
+    if n == 1:
+        return "One further badge says"
+    if n in words:
+        return f"{words[n]} further badges say"
+    return f"{n} further badges say"
 
 
 def caveat_text(scope: str, badges: "frozenset[str] | None" = None) -> str:
@@ -737,13 +781,13 @@ def caveat_text(scope: str, badges: "frozenset[str] | None" = None) -> str:
     clauses = []
     if show_all or BADGE_NEAR_MISS in badges:
         clauses.append(
-            "`🔴 N NEAR-MISS` — N bullets TRIED to write a marker and missed the "
-            "grammar, so they declare nothing and `N OPEN` is short by up to N"
+            f"`🔴 N NEAR-MISS` — N `{NUANCE_HEADING}` bullets TRIED to write a marker "
+            "and missed the grammar, so they declare nothing and `N OPEN` is short by up to N"
         )
     if show_all or BADGE_UNVERIFIABLE in badges:
         clauses.append(
-            "`⚠ N UNVERIFIABLE` — N `RESOLVED:` bullets name no sha, so the "
-            "closure cannot be checked"
+            f"`⚠ N UNVERIFIABLE` — N `{NUANCE_HEADING}` `RESOLVED:` bullets name no sha, "
+            "so the closure cannot be checked"
         )
     if show_all or BADGE_MISSING_HEADING in badges:
         clauses.append(
@@ -752,11 +796,16 @@ def caveat_text(scope: str, badges: "frozenset[str] | None" = None) -> str:
             "by measurement, and the entry's content is on disk but invisible to "
             "this read"
         )
-    if clauses:
-        lead = (
-            "Three further badges say" if len(clauses) == 3
-            else ("Two further badges say" if len(clauses) == 2 else "One further badge says")
+    if show_all or BADGE_REQUIREMENTS in badges:
+        clauses.append(
+            f"`🔴 N REQ OPEN` / `✅ N REQ MET` — N `{REQUIREMENTS_HEADING}` bullets "
+            "declaring each state. They do NOT sum to that section's bullet count (an "
+            "unmarked bullet is neither), the `NEAR-MISS` and `UNVERIFIABLE` counts to "
+            "their left do NOT cover this section, and `MET` folds a sha-checked closure "
+            "together with a sha-less one"
         )
+    if clauses:
+        lead = _cardinal_badge_lead(len(clauses))
         optional = f" {lead} the row's own numbers cannot be trusted: " + "; ".join(clauses) + "."
 
     return (
@@ -1009,6 +1058,22 @@ class RecalledEntry:
     disagree about which population a bullet belongs to.
     """
 
+    requirements_open: int = 0
+    """`## Requirements` bullets DECLARING open, in the journal's own vocabulary."""
+
+    requirements_met: int = 0
+    """`## Requirements` bullets declaring met.
+
+    🔴 `requirements_open + requirements_met` DOES NOT EQUAL the section's bullet
+    count, and nothing should assume it does. A requirement bullet carrying no
+    marker is neither — a sentence somebody wrote under the heading without
+    declaring a state — so `open + met < len(bullets)` is an ordinary reading.
+    Deriving either from the other, or either from the total, is how a badge
+    starts claiming work nobody declared.
+
+    ⚠ MET INCLUDES A SHA-LESS `RESOLVED:`. The writer closed it; only the CHECK
+    is missing. Counting it as not-met would reopen an action somebody finished."""
+
     unverifiable_count: int = 0
     """`RESOLVED:` bullets naming no sha — closed, but the closure is unprovable.
 
@@ -1132,6 +1197,13 @@ def read_entry(store_root: str | Path, entry: SubsystemEntry) -> RecalledEntry:
     # now the third consumer, and it branches on the same thing `--validate`
     # does, so the two can never report different populations for one file.
     populations = Counter(b.openness_population for b in bullets)
+    # 🔴 FROM THE SECTION BODY, WHICH IS THE WHOLE BOUNDARY GUARD. `sections` is
+    # keyed by heading, so a bullet under `## Nuance / work-history` cannot reach
+    # this lookup — the two populations are told apart by which section they sit
+    # in and by nothing else. An absent heading yields "" here, which parses to no
+    # requirements: the same answer as a present-but-empty section, and correct for
+    # both, since neither states a requirement.
+    requirements = parse_requirements(sections.get(REQUIREMENTS_HEADING, ""))
     return RecalledEntry(
         ref=entry.ref,
         filename=entry.filename,
@@ -1142,6 +1214,8 @@ def read_entry(store_root: str | Path, entry: SubsystemEntry) -> RecalledEntry:
         open_count=populations["open"],
         near_miss_count=populations["near-miss"],
         unverifiable_count=populations["unverifiable"],
+        requirements_open=sum(1 for r in requirements if r.is_open),
+        requirements_met=sum(1 for r in requirements if r.is_met),
         mtime=mtime,
         missing_sections=tuple(h for h in COUNTED_HEADINGS if h not in sections),
         tasks=tuple(str(t) for t in entry.tasks),
@@ -2246,6 +2320,23 @@ def listing_line(entry: RecalledEntry, width: int) -> str:
         badges.append(f"🔴 {entry.near_miss_count} NEAR-MISS")
     if entry.unverifiable_count:
         badges.append(f"⚠ {entry.unverifiable_count} UNVERIFIABLE")
+    # The requirements pair sits after the nuance populations and before
+    # `NO <heading>`, keeping `--validate`'s order for the bullet populations and
+    # leaving the parser-never-reached badge where it was.
+    #
+    # 🔴 BOTH ARE CONDITIONAL, so an entry with no `## Requirements` renders
+    # byte-identical to one that never heard of the section — which is what keeps
+    # this additive for every entry in the store.
+    #
+    # ⚠ `MET` IS RENDERED, NOT ONLY `OPEN`, and that is deliberate rather than
+    # symmetry for its own sake. A section showing only its open items reads as a
+    # to-do list; the pair is what makes it a RECORD — "three asked for, two
+    # delivered" is the sentence the operator asked to be able to read, and one
+    # number cannot say it.
+    if entry.requirements_open:
+        badges.append(f"🔴 {entry.requirements_open} REQ OPEN")
+    if entry.requirements_met:
+        badges.append(f"✅ {entry.requirements_met} REQ MET")
     if entry.missing_sections:
         badges.append(
             "🔴 NO " + ", ".join(short_heading(h) for h in entry.missing_sections)
