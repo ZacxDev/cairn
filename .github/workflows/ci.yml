@@ -369,7 +369,12 @@ jobs:
           # nothing did; a delta audit reading CI is what found it. The local check that
           # WOULD have is the one the note prescribes, and it was run before this literal
           # moved: pytest with `--junitxml`, then this heredoc against that file.
-          FLOOR = 2219
+          # ⚠ 2219 -> 2304 WITH THE `tags:` SUITES: the collected count measured 2354 on this
+          # branch (2303 before, plus 51), and 2304 is what the formula prescribes for it —
+          # `2354 - min(50, max(1, 2354/20)) = 2304`. Moved because the DRIFT guard below
+          # refuses otherwise: a gap of 135 is past its bound, which is the mechanism working
+          # rather than an inconvenience.
+          FLOOR = 2304
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -956,12 +961,15 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/dualrun.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/dualrun.txt || true)
           echo "passes=$passes failures=$fails"
-          # 412 PASS lines measured on this branch: 410 targets plus the audit-stream and
+          # ⚠ 412 -> 478 WITH THE SIXTY-SIX `?tag=` TARGETS, and the gap to the target count is
+          # unchanged at two — which is the check that nothing was miscounted: both numbers moved
+          # by the same sixty-six.
+          # 478 PASS lines measured on this branch: 476 targets plus the audit-stream and
           # process-stream arms. ⚠ THE FLOOR IS NOT REDUNDANT WITH "ZERO FAILURES" — a run
           # that compared nothing has zero failures too, which is the whole reason the
           # summary reports a PAIR.
-          if [ "$passes" -lt 412 ]; then
-            echo "REFUSING: $passes passes, and 412 were measured — the gate got smaller"
+          if [ "$passes" -lt 478 ]; then
+            echo "REFUSING: $passes passes, and 478 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then
@@ -1010,8 +1018,31 @@ jobs:
                 f"differences={differences} entries={entries} "
                 f"audit-stream={arms['audit-stream']} "
                 f"process-stream={arms['process-stream']}")
-          # Measured on this branch: 410 / 1689 / 0 / 119. Floors rather than equalities, so
+          # Measured on this branch: 476 / 1958 / 0 / 119. Floors rather than equalities, so
           # ADDING a target is not a red gate; a NARROWING is.
+          #
+          # ⚠ 410 -> 476 WHEN THE `?tag=` SWEEP LANDED: SIX targets per scope over nine wide
+          # scopes and two narrow ones, so SIXTY-SIX — counted as `PASS tag…` / `PASS search-tag…`
+          # lines in the run, not inferred. `entries` is unchanged at 119 because the tag arm adds
+          # no per-entry comparison, exactly as the ref-to arm did not.
+          #
+          # 🔴 AND EVERY PART OF THE COMPARISONS MOVE IS ATTRIBUTED BY MEASUREMENT, WHICH IS THE
+          # DISCIPLINE THE PARAGRAPH BELOW EXISTS FOR. 1689 -> 1958 is +269, and it closes
+          # exactly: 66 new targets x 3 compared fields = 198, the audit stream +66 (one line per
+          # new target, 425 -> 491), the process stream +5 (23 -> 28), and the per-scope ref-set
+          # arm unchanged at 11. 198 + 66 + 5 = 269.
+          #
+          # 🔴 THE PROCESS-STREAM +5 IS THE ONE THAT NEEDED MEASURING RATHER THAN ARITHMETIC, AND
+          # ITS MECHANISM IS ITSELF THE ORDERING PROOF. `_exit_for` writes its stderr sentence
+          # only for an UNREADABLE status, so the five lines are the five non-malformed tag
+          # targets on `epsilon-rubble` — the scope whose every file is malformed. They answer
+          # `scope-unreadable`/`search-unreadable` BECAUSE that discriminator runs BEFORE the tag
+          # filter, which is the placement the whole feature is built on; `tag-malformed` on the
+          # same scope adds NOTHING, because a 400 is answered before any report exists.
+          # Measured with `--only`: `tag-hit:wide-writer:epsilon-rubble` prints a 4-line process
+          # stream against a 3-line baseline, `tag-malformed` on the same scope prints 3, and
+          # `search-tag` on every other scope answers `search-no-match` and prints 3.
+          #
           # ⚠ 366 -> 410 WHEN THE `?ref-to=` SWEEP LANDED: FOUR targets per scope over nine
           # wide scopes and two narrow ones, so FORTY-FOUR — counted as `PASS ref-to…` /
           # `PASS search-ref-to…` lines in the run, not inferred. Comparisons 1510 -> 1690 at
@@ -1076,19 +1107,19 @@ jobs:
           # audit and process streams are the only arms that publish their own subtotal, so
           # flooring those two makes a -1 in either one refuse under its OWN name, and a -1 that
           # trips the total while both arms hold is thereby located in the per-target or ref-set
-          # arms. Measured on this branch: 425 and 23, the same run the 1689 came from. It does
+          # arms. Measured on this branch: 491 and 28, the same run the 1958 came from. It does
           # NOT close the invisible case above, and it does not floor the two arms that print no
           # count — a floor re-derived without running the harness is a floor whose reason is a
           # guess.
           problems = []
-          if targets < 410:
-              problems.append(f"targets {targets} < 410")
-          if comparisons < 1689:
-              problems.append(f"comparisons {comparisons} < 1689")
-          if arms["audit-stream"] < 425:
-              problems.append(f"audit-stream arm {arms['audit-stream']} < 425")
-          if arms["process-stream"] < 23:
-              problems.append(f"process-stream arm {arms['process-stream']} < 23")
+          if targets < 476:
+              problems.append(f"targets {targets} < 476")
+          if comparisons < 1958:
+              problems.append(f"comparisons {comparisons} < 1958")
+          if arms["audit-stream"] < 491:
+              problems.append(f"audit-stream arm {arms['audit-stream']} < 491")
+          if arms["process-stream"] < 28:
+              problems.append(f"process-stream arm {arms['process-stream']} < 28")
           if entries < 119:
               problems.append(f"per-entry comparisons {entries} < 119")
           if differences:

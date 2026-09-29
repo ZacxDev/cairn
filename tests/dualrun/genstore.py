@@ -89,7 +89,7 @@ NON_ASCII_STEM = "crème-brûlée-café"
 
 
 def _front(service: str, scope: str, *, aliases: str = "", sensitivity: str = "",
-           tasks: str = "") -> list[str]:
+           tasks: str = "", tags: str = "") -> list[str]:
     out = ["---", f"service: {service}", f"scope: {scope}"]
     if aliases:
         out.append(f"aliases: [{aliases}]")
@@ -97,14 +97,17 @@ def _front(service: str, scope: str, *, aliases: str = "", sensitivity: str = ""
         out.append(f"sensitivity: {sensitivity}")
     if tasks:
         out.append(f"tasks: [{tasks}]")
+    if tags:
+        out.append(f"tags: [{tags}]")
     out.append("---")
     return out
 
 
 def _entry(service: str, scope: str, *, body: str, aliases: str = "", sensitivity: str = "",
-           tasks: str = "", pointers: list[str] | None = None,
+           tasks: str = "", tags: str = "", pointers: list[str] | None = None,
            nuance: list[str] | None = None) -> str:
-    lines = _front(service, scope, aliases=aliases, sensitivity=sensitivity, tasks=tasks)
+    lines = _front(service, scope, aliases=aliases, sensitivity=sensitivity, tasks=tasks,
+                   tags=tags)
     lines += ["", "## What it is", "", body, "", "## Pointers", ""]
     lines += pointers if pointers is not None else [f"- `apps/{service}/values.yaml`"]
     lines += ["", "## Nuance / work-history", ""]
@@ -186,10 +189,17 @@ def build_store(dest: Path, seed: int = DEFAULT_SEED, scale: int = 1) -> Path:
     # loader refuses a duplicate slug outright, so the filename tier cannot collide.
     add("alpha-index/gauge-api.md", 4_000_000_000,
         _entry("gauge-api", "alpha-index", body="The replace target.", aliases="shared-alias"))
-    # Every openness population at once, plus `tasks:` and an honoured sensitivity.
+    # 🔴 AND IT CARRIES `tags:` TOO, WHICH IS WHAT MAKES THE `?tag=` SWEEP FIND A MATCH OVER A
+    # GENERATED WORLD. A sweep that only ever sent a tag nothing carries would compare two
+    # `tag-absent` answers and pass against a filter wired to nothing. It carries BOTH tags and
+    # the ref, so the cross-filter target has a set the second filter can narrow; `marked-open`
+    # is also the only entry in this scope with a ref, so a `?ref-to=`+`?tag=` pair over
+    # `alpha-index` exercises three different counts.
+    # Every openness population at once, plus `tasks:`, `tags:` and an honoured sensitivity.
     add("alpha-index/marked-open.md", 5_000_000_000,
         _entry("marked-open", "alpha-index", body="Carries every openness population.",
                sensitivity="public", tasks="github:example-org/example-repo#428",
+               tags="Marketing, internal",
                nuance=[
                    "- 2000-01-02: OPEN: the retry budget is still unbounded.",
                    "  a continuation line, which belongs to the bullet above it.",

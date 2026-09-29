@@ -305,6 +305,61 @@ older spelling are not in it and cannot be — `CAIRN_UI_*`, `CAIRN_SUPABASE_*`,
 family `CAIRN_REF_BASE_<SYSTEM>` in the section below, whose suffix comes out of a store file
 and so could not be enumerated by any table.
 
+### 🔴 An entry can be TAGGED, and both readers narrow by tag
+
+**A new optional front-matter key, `tags:`.** A sequence, like `aliases:`; every tag is folded
+the way a ref is (lowercased, everything outside `[a-z0-9.-]` to `-`, runs collapsed), deduped
+and sorted. **Nothing you have to do** — an entry with no `tags:` behaves exactly as it did, and
+a `tags:` file loads on a reader that has never heard of the key, reporting no tags rather than
+refusing the file.
+
+```yaml
+---
+service: rollout-runbook
+scope: alpha-notes
+tags: [Marketing, project-xyz]     # folds to `marketing`, `project-xyz`
+---
+```
+
+🔴 **The vocabulary is OPEN and nothing declares it.** There is no allowlist, no closed set and
+no rename tool: you name a category when you need one. The cost is stated rather than hidden — a
+typo makes a silently separate category of one, and no check in this project will catch it. It is
+deliberately **not** the `kind:` enum, which stays a closed four-value set
+(`service`/`process`/`org`/`doc`): `marketing` and `project-xyz` are a different axis from
+service/process/org/doc, and putting two axes in one closed set makes both unassertable.
+
+**The five things worth knowing if you script this:**
+
+- **A new read filter, on both clients and both read routes.** `cairn recall --tag <name>` and
+  `cairn search … --tag <name>`; over HTTP, `GET /api/v1/recall/<scope>?tag=…` and
+  `GET /api/v1/search/<scope>?q=…&tag=…`. It composes with everything — `--ref`, `--ref-to`,
+  `--all-scopes`, `--mode`, `--page`.
+- 🔴 **It is REPEATABLE and the semantics are AND.** `--tag marketing --tag internal` keeps only
+  entries carrying **both**; over HTTP, `?tag=marketing&tag=internal`. A second `--tag` can only
+  ever narrow. ⚠ This is the **only** repeatable parameter on these routes — every other one is
+  last-wins, so `?limit=1&limit=2` still means 2.
+- **An operand that folds to nothing is a 400, not an empty result.** `--tag ''` and `--tag '!!'`
+  are refused by a message naming the fold, on both clients (exit **2**) and both routes. That is
+  the opposite of `?ref=`, which narrows on an empty value: a ref names an ENTRY, so "nothing is
+  called that" is a fact worth reporting, while a tag that folds away names no category at all
+  and answering "no entry carries this" would hide the cause.
+- **A new `X-Store-Status` value: `tag-absent`**, answered **200** and exit **0**. It is a
+  non-finding and not an error, reached two ways — nothing in the scope carries the tags, or
+  `--ref`/`?ref=` named an entry that does not while others do. The rendered `tag:` line carries
+  both counts (`N of M entries … carry it`), so a filtered index cannot be mistaken for a whole
+  one. **No exit code changed**: `cairn -exit-codes` prints the same table it did.
+- **The query side folds the same way the file side does**, so `--tag Marketing` finds an entry
+  written `tags: [marketing]` and vice versa. A tag you can write is one you can ask for.
+
+**On the browse pages** the entry and scope pages render an entry's tags, each a link to
+`/?tag=<name>` — a **query parameter on the root**, never a path segment, so no served path
+changed. That root listing shows every visible entry carrying the tag, across scopes, and reports
+how many entries it LOOKED at so an empty answer is legible.
+
+⚠ **The recall report gains a `    tags: a, b` line** under a printed entry's header, beside the
+existing `tasks:` line, and a `  tag: …` header line **only** when the filter was sent — so no
+output moves for a store with no tags in it.
+
 ### 🔴 An entry's refs are `refs:`, and both readers answer "what references this?"
 
 **The front-matter key is `refs:`.** `tasks:` and `task:` are **accepted spellings and stay

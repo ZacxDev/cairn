@@ -366,6 +366,65 @@ def entry_targets(scope: str, refs: list[str], principal: str = WIDE) -> list[Ta
     ]
 
 
+def tag_targets(scope: str, principal: str = WIDE) -> list[Target]:
+    """The CATEGORY filter, per scope: `?tag=` over a tag the world carries and one it does not.
+
+    🔴 IT IS NOT A DUPLICATE OF `tests/conformance/`'S TWELVE `?tag=` ROWS, for the reason
+    `ref_to_targets` gives: that corpus replays a DECLARED list against a DECLARED world, and
+    this one runs over whatever store the mode was pointed at — a generated one in mode 2, a
+    REAL one in mode 1 — so the header line's counts and the kept set are computed from a world
+    nobody wrote a fixture for.
+
+    🔴 THE REPEATED PARAMETER IS SWEPT TOO, AND IT IS THE ARM A SCALAR READ WOULD SURVIVE
+    EVERYWHERE ELSE. `?tag=a&tag=b` must narrow by BOTH; a server reading it last-wins answers
+    the one-tag set, which over `alpha-index` is a DIFFERENT entry set — and over a real store
+    in mode 1 it is whatever that store happens to hold, which is the point of a sweep.
+
+    ⚠ THE OPERANDS ARE LITERALS AND NOT ENUMERATED FROM THE STORE, the same narrowing
+    `ref_to_targets` declares and for the same reason: there is no route that lists an index's
+    tags, so the harness cannot discover one to ask about. `genstore.py` writes these two and a
+    REAL store may carry neither — in which case BOTH servers answer `tag-absent` and the
+    comparison is still a real comparison of that branch. What it cannot do in mode 1 is
+    guarantee a MATCH, exactly as `HIT_TERM` cannot.
+    """
+    carried = "marketing"
+    second = "internal"
+    absent = "no-such-category-in-any-world"
+    return [
+        Target(f"tag-hit:{principal}:{scope}",
+               "the category filter over a tag the world DOES carry: the narrowed entry set, "
+               "and the `tag:` header's two counts computed from this store",
+               "GET", f"/api/v1/recall/{scope}?tag={carried}", principal, arm="entry"),
+        Target(f"tag-repeated:{principal}:{scope}",
+               "🔴 THE REPEATED PARAMETER, WHICH MUST NARROW BY BOTH TAGS. A server reading it "
+               "last-wins answers the one-tag set instead — more entries than were asked for, "
+               "at 200, with a header naming one tag",
+               "GET", f"/api/v1/recall/{scope}?tag={carried}&tag={second}", principal,
+               arm="entry"),
+        Target(f"tag-absent:{principal}:{scope}",
+               "the filter's own non-finding, which must not read as an empty scope",
+               "GET", f"/api/v1/recall/{scope}?tag={absent}", principal, arm="entry"),
+        Target(f"tag-malformed:{principal}:{scope}",
+               "an operand that FOLDS AWAY is a 400 on both servers, from the same sentence — "
+               "the opposite choice from `?ref=`, whose empty value narrows and finds nothing",
+               "GET", f"/api/v1/recall/{scope}?tag=%21%21%21", principal, arm="narrow"),
+        Target(f"tag-and-ref-to:{principal}:{scope}",
+               "🔴 THE CROSS-FILTER TARGET. Both filters at once, so the `ref-to:` line's "
+               "numerator, the `tag:` line's denominator and the reach clause are three "
+               "separate derivations over one store — each wrong in a different direction if "
+               "either line is read off the searched count alone",
+               "GET",
+               f"/api/v1/recall/{scope}?ref-to=github:example-org/example-repo%23428"
+               f"&tag={second}",
+               principal, arm="entry"),
+        Target(f"search-tag:{principal}:{scope}",
+               "the same narrowing on the search route, whose searched-count is what shows the "
+               "filter ran",
+               "GET", f"/api/v1/search/{scope}?q={_q(HIT_TERM)}&tag={carried}",
+               principal, arm="entry"),
+    ]
+
+
 def ref_to_targets(scope: str, principal: str = WIDE) -> list[Target]:
     """The REVERSE lookup, per scope: `?ref-to=` over a ref the world carries and one it does not.
 
@@ -1291,6 +1350,7 @@ def run_once(work: Path, store: Path, pristine: Path, go_binary: Path, server_py
             targets += entry_targets(scope, refs)
             targets += search_by_ref_targets(scope, refs)
             targets += ref_to_targets(scope)
+            targets += tag_targets(scope)
         for scope in narrow_scopes:
             refs, problems = enumerate_refs(port_o, port_g, scope, NARROW)
             entry_problems += problems
@@ -1301,6 +1361,11 @@ def run_once(work: Path, store: Path, pristine: Path, go_binary: Path, server_py
             # carry the ref — and a difference here is the only place this harness would see a
             # filter applied to a store-wide load.
             targets += ref_to_targets(scope, NARROW)
+            # The narrowed principal gets the tag sweep too, for the reason above: a scope this
+            # principal may not see must answer what an absent scope answers whether or not its
+            # entries carry the tag, and a difference here is the only place this harness would
+            # see a tag filter applied to a store-wide load.
+            targets += tag_targets(scope, NARROW)
         # 🔴 ONE REF-SET COMPARISON PER SCOPE, COUNTED. A scope whose two index blocks list
         # different refs is a finding in its own right, and it is the arm that stops the
         # per-entry sweep from silently narrowing to whatever the oracle happened to list.
