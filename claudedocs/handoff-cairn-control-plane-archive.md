@@ -2217,3 +2217,20 @@ being evictable is stated above it; the bodies below are byte-identical to what 
   names as the promotion candidate for a blocking gate. ⚠ **28(b4) adds two pages and a nav
   affordance to this same surface.**
 
+
+<!-- second eviction batch, same run -->
+<!-- evictable because: a SPENT decision record: that prune ran and its safety property was asserted at the time -->
+<!-- RESCUED: `#140` (`a035483`) deleted this bullet from the live doc while the archive half of
+     that move was never committed, so between `a035483` and this commit the text below existed in
+     NO committed file in this repository — only in an uncommitted worktree. Measured before
+     restoring: absent from every file under `claudedocs/` at `origin/main`, present at
+     `a035483^:claudedocs/handoff-cairn-control-plane.md`, with a negative control at 0 and a
+     positive control at 1. The lesson, which is the reusable part: `#140` asserted "0 lost, 0
+     duplicated" over the bullets it MOVED, and that assertion is silent about a bullet it
+     DELETED whose archive half sat unstaged. An eviction's safety property has to be measured
+     against the COMMIT, never against the working tree that produced it. -->
+- **Decision (operator, this session): the prune was chosen over feature work**, and its
+  closing condition was met by MOVING rather than cutting. 🔴 **The safety property of a prune
+  is assertable and was asserted**: every bullet verified present in exactly one of the two
+  files, 0 missing and 0 duplicated, with every other section byte-identical. A prune that
+  cannot prove it moved rather than cut is the `BYPASS`-deletion failure with a tidier diff.
