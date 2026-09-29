@@ -79,7 +79,7 @@ func TestTheTagFilterNarrowsAfterScopeAuthorisation(t *testing.T) {
 		opts := func(scope string) RecallOptions {
 			return RecallOptions{
 				Scope: scope, Mode: DefaultMode, Limit: DefaultEntryLimit, Page: 1,
-				Tags: []string{sharedTag},
+				Tag: sharedTag, HasTag: true,
 			}
 		}
 		// POSITIVE CONTROL: the principal who CAN read `beta-notes` finds the tag there.
@@ -135,7 +135,7 @@ func TestTheTagFilterNarrowsAfterScopeAuthorisation(t *testing.T) {
 		opts := SearchOptions{
 			Query: "readiness", Context: ContextBullet, Threshold: DefaultThreshold,
 			MaxHits: DefaultMaxHits, AllScopes: true,
-			Tags: []string{sharedTag},
+			Tag: sharedTag, HasTag: true,
 		}
 		asBeta, err := Search(root, opts, onlyBeta)
 		if err != nil {
@@ -186,7 +186,7 @@ func TestTheTagFilterAnswersItsOwnNonFinding(t *testing.T) {
 	root := twoPrincipalTagWorld(t)
 	rep, err := Recall(root, RecallOptions{
 		Scope: "alpha-notes", Mode: DefaultMode, Limit: DefaultEntryLimit, Page: 1,
-		Tags: []string{"no-such-category"},
+		Tag: "no-such-category", HasTag: true,
 	}, store.Unrestricted())
 	if err != nil {
 		t.Fatalf("recall: %v", err)
@@ -236,10 +236,10 @@ func TestTheTagFilterAnswersItsOwnNonFinding(t *testing.T) {
 func TestTheTagNarrowingAnnouncesItself(t *testing.T) {
 	root := twoPrincipalTagWorld(t)
 
-	// ONE tag: the verb agrees with the operand set's size, so this reads "carry it".
+	// The operand is SCALAR, so the verb never moves: the line always reads "carry it".
 	one, err := Recall(root, RecallOptions{
 		Scope: "alpha-notes", Mode: DefaultMode, Limit: DefaultEntryLimit, Page: 1,
-		Tags: []string{"Marketing"},
+		Tag: "Marketing", HasTag: true,
 	}, store.Unrestricted())
 	if err != nil {
 		t.Fatalf("recall: %v", err)
@@ -252,25 +252,27 @@ func TestTheTagNarrowingAnnouncesItself(t *testing.T) {
 		t.Errorf("the recall header lacks the one-tag line.\nwanted: %s\ngot:\n%s", wantOne, got)
 	}
 
-	// TWO tags: AND semantics, and the verb moves to "all of them" so the line cannot be read
-	// as a union.
-	two, err := Recall(root, RecallOptions{
+	// ⚠ AND THE OTHER TAG ON THE SAME ENTRY GETS ITS OWN LINE, which is what keeps the line above
+	// from passing with the operand ignored: `internal` is carried by `runbook` and by nothing
+	// else in this scope, so its line names a DIFFERENT tag over the same counts.
+	other, err := Recall(root, RecallOptions{
 		Scope: "alpha-notes", Mode: DefaultMode, Limit: DefaultEntryLimit, Page: 1,
-		Tags: []string{"internal", "marketing"},
+		Tag: "internal", HasTag: true,
 	}, store.Unrestricted())
 	if err != nil {
 		t.Fatalf("recall: %v", err)
 	}
-	wantTwo := "  tag: `internal`, `marketing` — 1 of 2 entries in `alpha-notes/` carry all of " +
-		"them, and everything below is about those 1."
-	if got := two.RenderText("synthetic-host", nil, ""); !strings.Contains(got, wantTwo) {
-		t.Errorf("the recall header lacks the two-tag line.\nwanted: %s\ngot:\n%s", wantTwo, got)
+	wantOther := "  tag: `internal` — 1 of 2 entries in `alpha-notes/` carry it, and everything " +
+		"below is about those 1."
+	if got := other.RenderText("synthetic-host", nil, ""); !strings.Contains(got, wantOther) {
+		t.Errorf("the recall header lacks the second tag's line.\nwanted: %s\ngot:\n%s",
+			wantOther, got)
 	}
 
 	srch, err := Search(root, SearchOptions{
 		Scope: "alpha-notes", Query: "readiness", Context: ContextBullet,
 		Threshold: DefaultThreshold, MaxHits: DefaultMaxHits,
-		Tags: []string{sharedTag},
+		Tag: sharedTag, HasTag: true,
 	}, store.Unrestricted())
 	if err != nil {
 		t.Fatalf("search: %v", err)
@@ -323,11 +325,11 @@ func TestTheTagNarrowingAnnouncesItself(t *testing.T) {
 // other — including the case the resolver cannot see.
 func TestTagComposesWithRef(t *testing.T) {
 	root := twoPrincipalTagWorld(t)
-	rep := func(ref string, tags ...string) RecallReport {
+	rep := func(ref, tag string) RecallReport {
 		t.Helper()
 		out, err := Recall(root, RecallOptions{
 			Scope: "alpha-notes", Mode: DefaultMode, Limit: DefaultEntryLimit, Page: 1,
-			Ref: ref, HasRef: true, Tags: tags,
+			Ref: ref, HasRef: true, Tag: tag, HasTag: true,
 		}, store.Unrestricted())
 		if err != nil {
 			t.Fatalf("recall: %v", err)
@@ -421,7 +423,7 @@ func TestEachFiltersNonFindingIsAttributedToThatFilter(t *testing.T) {
 		Scope: "alpha-notes", Mode: DefaultMode, Limit: DefaultEntryLimit, Page: 1,
 		Ref: "ref-only", HasRef: true,
 		RefTo: sharedRef, HasRefTo: true,
-		Tags: []string{sharedTag},
+		Tag: sharedTag, HasTag: true,
 	}, store.Unrestricted())
 	if err != nil {
 		t.Fatalf("recall: %v", err)
@@ -450,7 +452,7 @@ func TestEachFiltersNonFindingIsAttributedToThatFilter(t *testing.T) {
 		Scope: "alpha-notes", Mode: DefaultMode, Limit: DefaultEntryLimit, Page: 1,
 		Ref: "tag-only", HasRef: true,
 		RefTo: sharedRef, HasRefTo: true,
-		Tags: []string{sharedTag},
+		Tag: sharedTag, HasTag: true,
 	}, store.Unrestricted())
 	if err != nil {
 		t.Fatalf("recall: %v", err)
@@ -476,14 +478,19 @@ func TestEachFiltersNonFindingIsAttributedToThatFilter(t *testing.T) {
 // carries this" is an empty result whose cause is invisible — indistinguishable from a tag nobody
 // has used, when the real cause is that the query said nothing.
 //
-// ⚠ MEASURED: with `validateTags`' condition short-circuited to `false` — the operand refused by
+// ⚠ MEASURED: with `validateTag`' condition short-circuited to `false` — the operand refused by
 // nothing — this test fails and NOTHING ELSE in five packages does. It SURVIVED before this test
 // existed.
+//
+// ⚠ AND `""` IS THE ROW THE SCALAR SURFACE MADE LOAD-BEARING RATHER THAN INCIDENTAL. `?tag=`
+// carrying nothing is a PRESENT operand that names no category, and the only thing separating it
+// from an absent parameter is `HasTag`; a `Tag string` alone would make this row unreachable and
+// answer 200 over the whole scope for it.
 func TestAMalformedTagIsRefusedByTheOptionLadder(t *testing.T) {
 	for _, bad := range []string{"", "!!!", "   ", "***", " @ "} {
 		recallErr := ValidateRecall(RecallOptions{
 			Scope: "alpha-notes", Mode: DefaultMode, Limit: DefaultEntryLimit, Page: 1,
-			Tags: []string{"marketing", bad},
+			Tag: bad, HasTag: true,
 		})
 		if recallErr == nil {
 			t.Errorf("ValidateRecall accepted tag %q", bad)
@@ -497,7 +504,7 @@ func TestAMalformedTagIsRefusedByTheOptionLadder(t *testing.T) {
 		if searchErr := ValidateSearch(SearchOptions{
 			Scope: "alpha-notes", Query: "x", Context: ContextBullet,
 			Threshold: DefaultThreshold, MaxHits: DefaultMaxHits,
-			Tags: []string{bad},
+			Tag: bad, HasTag: true,
 		}); searchErr == nil || searchErr.Error() != want {
 			t.Errorf("tag %q on search: refusal is %v, want %q", bad, searchErr, want)
 		}
@@ -507,39 +514,48 @@ func TestAMalformedTagIsRefusedByTheOptionLadder(t *testing.T) {
 	// record; and a request with a bad REF-TO and a bad tag gets the ref-to's, because this guard
 	// was appended after it.
 	if err := ValidateRecall(RecallOptions{
-		Scope: "alpha-notes", Mode: DefaultMode, Limit: 0, Page: 1, Tags: []string{"!!!"},
+		Scope: "alpha-notes", Mode: DefaultMode, Limit: 0, Page: 1, Tag: "!!!", HasTag: true,
 	}); err == nil || !strings.HasPrefix(err.Error(), "limit must be") {
 		t.Errorf("the guard order moved: got %v, want the limit refusal first", err)
 	}
 	if err := ValidateRecall(RecallOptions{
 		Scope: "alpha-notes", Mode: DefaultMode, Limit: DefaultEntryLimit, Page: 1,
-		RefTo: "no-colon-here", HasRefTo: true, Tags: []string{"!!!"},
+		RefTo: "no-colon-here", HasRefTo: true, Tag: "!!!", HasTag: true,
 	}); err == nil || !strings.HasPrefix(err.Error(), "ref-to is not a well-formed") {
 		t.Errorf("the tag guard jumped ahead of the ref-to guard: got %v", err)
 	}
-	// A well-formed operand set passes, so the refusals above are not "everything is refused".
+	// A well-formed operand passes, so the refusals above are not "everything is refused" — and so
+	// does an ABSENT one, which is the state `HasTag` separates from the `""` row above.
+	for _, good := range []string{"Marketing", "project_xyz", "a.b-c"} {
+		if err := ValidateRecall(RecallOptions{
+			Scope: "alpha-notes", Mode: DefaultMode, Limit: DefaultEntryLimit, Page: 1,
+			Tag: good, HasTag: true,
+		}); err != nil {
+			t.Errorf("a well-formed tag %q was refused: %v", good, err)
+		}
+	}
 	if err := ValidateRecall(RecallOptions{
 		Scope: "alpha-notes", Mode: DefaultMode, Limit: DefaultEntryLimit, Page: 1,
-		Tags: []string{"Marketing", "project_xyz", "a.b-c"},
+		Tag: "", HasTag: false,
 	}); err != nil {
-		t.Errorf("a well-formed tag set was refused: %v", err)
+		t.Errorf("no `--tag` at all was refused as a malformed one: %v", err)
 	}
-	// 🔴 AND THE RENDERER REFUSES IT TOO, RATHER THAN NARROWING TO EVERYTHING. `canonicalTags`
-	// re-validates inside `Recall`/`Search` for exactly this reason: `store.NormalizeTags` DROPS
-	// a member that folds away, and an empty want set matches every entry — so a caller that
-	// skipped the ladder would turn a malformed filter into NO filter, which is the widening
-	// direction. Driven directly, past the ladder.
+	// 🔴 AND THE RENDERER REFUSES IT TOO, RATHER THAN NARROWING TO EVERYTHING. `canonicalTag`
+	// re-validates inside `Recall`/`Search` for exactly this reason: a folded-away operand leaves
+	// the empty string, which the filter reads as "no filter was sent" — so a caller that skipped
+	// the ladder would turn a malformed filter into NO filter, which is the widening direction.
+	// Driven directly, past the ladder.
 	root := twoPrincipalTagWorld(t)
 	if _, err := Recall(root, RecallOptions{
 		Scope: "alpha-notes", Mode: DefaultMode, Limit: DefaultEntryLimit, Page: 1,
-		Tags: []string{"!!!"},
+		Tag: "!!!", HasTag: true,
 	}, store.Unrestricted()); err == nil {
 		t.Error("Recall accepted a folding-away tag from a caller that skipped ValidateRecall, " +
 			"which narrows to EVERYTHING rather than to nothing")
 	}
 	if _, err := Search(root, SearchOptions{
 		Scope: "alpha-notes", Query: "readiness", Context: ContextBullet,
-		Threshold: DefaultThreshold, MaxHits: DefaultMaxHits, Tags: []string{"!!!"},
+		Threshold: DefaultThreshold, MaxHits: DefaultMaxHits, Tag: "!!!", HasTag: true,
 	}, store.Unrestricted()); err == nil {
 		t.Error("Search accepted a folding-away tag from a caller that skipped ValidateSearch")
 	}
@@ -552,7 +568,7 @@ func TestAMalformedTagIsRefusedByTheOptionLadder(t *testing.T) {
 // "entries that reference this" over "entries that were readable". Both were derived from
 // `EntriesSearched` and `RefToSkipped` on the search side, which was correct while those two
 // partitioned the readable set — and the tag filter, placed downstream of the same counter,
-// falsified BOTH: the numerator became the entries that reference the ref AND carry the tags, and
+// falsified BOTH: the numerator became the entries that reference the ref AND carry the tag, and
 // the denominator lost every entry the tag filter removed. That is the same class of defect as
 // the `search-unreadable` term one file over, in PROSE rather than in a status, and it would have
 // been invisible to `tests/parity/` and `tests/conformance/` because both implementations would
@@ -610,7 +626,7 @@ func TestTheRefToLineStaysTrueWhenATagFilterNarrowsAfterIt(t *testing.T) {
 	t.Run("recall", func(t *testing.T) {
 		rep, err := Recall(root, RecallOptions{
 			Scope: "alpha-notes", Mode: DefaultMode, Limit: DefaultEntryLimit, Page: 1,
-			RefTo: sharedRef, HasRefTo: true, Tags: []string{sharedTag},
+			RefTo: sharedRef, HasRefTo: true, Tag: sharedTag, HasTag: true,
 		}, store.Unrestricted())
 		if err != nil {
 			t.Fatalf("recall: %v", err)
@@ -640,7 +656,7 @@ func TestTheRefToLineStaysTrueWhenATagFilterNarrowsAfterIt(t *testing.T) {
 		rep, err := Search(root, SearchOptions{
 			Scope: "alpha-notes", Query: "readiness", Context: ContextBullet,
 			Threshold: DefaultThreshold, MaxHits: DefaultMaxHits,
-			RefTo: sharedRef, HasRefTo: true, Tags: []string{sharedTag},
+			RefTo: sharedRef, HasRefTo: true, Tag: sharedTag, HasTag: true,
 		}, store.Unrestricted())
 		if err != nil {
 			t.Fatalf("search: %v", err)
@@ -664,7 +680,7 @@ func TestTheRefToLineStaysTrueWhenATagFilterNarrowsAfterIt(t *testing.T) {
 	t.Run("a tag filter that removes nothing keeps the original clause", func(t *testing.T) {
 		rep, err := Recall(root, RecallOptions{
 			Scope: "alpha-notes", Mode: "full", Limit: DefaultEntryLimit, Page: 1,
-			RefTo: sharedRef, HasRefTo: true, Tags: []string{"marketing"},
+			RefTo: sharedRef, HasRefTo: true, Tag: "marketing", HasTag: true,
 		}, store.Unrestricted())
 		if err != nil {
 			t.Fatal(err)
@@ -680,7 +696,7 @@ func TestTheRefToLineStaysTrueWhenATagFilterNarrowsAfterIt(t *testing.T) {
 			store.NuanceHeading, "", "- 2000-06-01 a bullet mentioning readiness", "")
 		kept, err := Recall(root, RecallOptions{
 			Scope: "alpha-notes", Mode: "full", Limit: DefaultEntryLimit, Page: 1,
-			RefTo: sharedRef, HasRefTo: true, Tags: []string{"marketing"},
+			RefTo: sharedRef, HasRefTo: true, Tag: "marketing", HasTag: true,
 		}, store.Unrestricted())
 		if err != nil {
 			t.Fatal(err)

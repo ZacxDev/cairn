@@ -94,12 +94,16 @@ ENTRIES: list[tuple[str, int, str]] = [
     # has something to KEEP and something to REMOVE — and `recall-ref-to-composes-with-ref`
     # can ask for an entry that does NOT carry the ref while other entries in the scope do,
     # which is the shape a filter wired to "keep everything" cannot answer correctly.
-    # 🔴 AND THE ONLY ENTRY CARRYING BOTH TAGS, WHICH IS WHAT MAKES `--tag a --tag b`
-    # DISCRIMINATING ON THE REAL CLIENTS. `ledger-svc` carries `marketing` alone and
-    # `widget-cfg` carries none, so one `--tag marketing` keeps two entries and adding
-    # `--tag internal` keeps ONE — the difference a client that read the repeated flag
-    # last-wins, or unioned it, cannot produce. It is also the only entry carrying BOTH a ref
-    # and a tag, so the cross-filter row has a set the second filter can narrow.
+    # 🔴 AND THE ONLY ENTRY CARRYING BOTH TAGS, WHICH IS WHAT MAKES THE TWO `--tag` OPERANDS
+    # SELECT DIFFERENT SETS. `ledger-svc` carries `marketing` alone and `widget-cfg` carries
+    # none, so `--tag marketing` keeps two entries while `--tag internal` keeps ONE — a
+    # difference no row could see if every tag in the world named the same set. It is also the
+    # only entry carrying BOTH a ref and a tag, so the cross-filter row has a set the second
+    # filter can narrow.
+    #
+    # ⚠ THE SECOND TAG IS NOT LEFTOVER FROM THE REPEATABLE FLAG. `--tag a --tag b` was the
+    # original reason both were written here and that row is gone; `recall-tag-composes-with-ref-to`
+    # narrows by `internal` alone, which is what still needs an entry carrying it.
     ("alpha-notes/gauge-api.md", 4_000_000_000,
      _entry("gauge-api", "alpha-notes", refs="github:example-org/example-repo#428",
             tags="Marketing, internal")),

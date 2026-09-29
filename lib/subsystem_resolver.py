@@ -140,8 +140,7 @@ __all__ = [
     "format_task_refs",
     "lossy_tag_for",
     "entry_references",
-    "entry_has_all_tags",
-    "normalize_tags",
+    "entry_has_tag",
     "normalize_ref",
     "split_kind",
     "path_refs",
@@ -595,40 +594,26 @@ def entry_references(entry: "SubsystemEntry", want: TaskRef) -> bool:
     )
 
 
-def entry_has_all_tags(entry: "SubsystemEntry", want: Sequence[str]) -> bool:
-    """Does this entry carry EVERY one of these folded tags — the `?tag=`/`--tag` predicate.
+def entry_has_tag(entry: "SubsystemEntry", want: str) -> bool:
+    """Does this entry carry this folded tag — the `?tag=`/`--tag` predicate.
 
-    🔴 AND, NOT OR, AND THE CHOICE IS OBSERVABLE RATHER THAN A CONVENTION. A repeatable
-    parameter whose repetitions UNION is a parameter that gets WIDER the more you type, so a
-    second `--tag` could only ever return more — the opposite of what narrowing a result set
-    means, and the opposite of what every other filter on these routes does.
-
-    ⚠ AN EMPTY `want` IS TRUE FOR EVERY ENTRY, which is what makes "no filter was sent" and
-    "a filter that removes nothing" one code path rather than a caller-side branch. Both
-    callers gate on a non-empty operand set before ANNOUNCING a narrowing, because announcing
-    one that removed nothing is a line that misreports the index it sits above.
+    🔴 ONE TAG, BECAUSE THE PARAMETER IS SCALAR, AND THE OPERATOR DECIDED THAT RATHER THAN A
+    GATE. A repeatable `--tag` was built first, with AND semantics; nobody had asked for
+    either, and neither the repetition nor the choice between AND and OR had an author of
+    record. The surface is one tag, so there is no set to quantify over and no semantics to
+    pick — which is also what makes reading ONE value out of a query string correct rather
+    than merely usual.
 
     🔴 ONE FUNCTION, for the reason `entry_references` gives: the filter runs at several call
-    sites and a predicate open-coded at N sites is wrong at N-1.
-    `internal/store.EntryHasAllTags` is the Go spelling.
+    sites and a predicate open-coded at N sites is wrong at N-1. `recall` narrows a scope's
+    entries, `search` narrows each searched scope's, and `internal/store.EntryHasTag` is the
+    Go spelling — which `internal/ui.EntriesByTag` reaches too, because a browser listing
+    that open-coded membership would be the third site the rule names.
+
+    ⚠ MEMBERSHIP AND NEVER A PREFIX: a tag is a whole folded token, so `market` does not find
+    `marketing`. The fold is `normalize_ref` on BOTH sides, applied once per side.
     """
-    return all(w in entry.tags for w in want)
-
-
-def normalize_tags(raw: Sequence[str]) -> tuple[str, ...]:
-    """Fold, dedupe and sort a set of tag OPERANDS.
-
-    🔴 THE SAME FOLD THE FILE'S OWN TAGS WENT THROUGH, REACHED THROUGH THE SAME FUNCTION. A
-    second folding rule for the query side is how a tag an operator can WRITE becomes one they
-    cannot ASK for: the write folds `Marketing` to `marketing`, and a query side that did not
-    would compare `Marketing` against it and answer "no entry carries this".
-
-    ⚠ IT DROPS NOTHING SILENTLY, AND THE REASON IS IN A DIFFERENT MODULE. A member that folds
-    to "" is refused by the OPTION LADDER — `subsystem_recall._validated_tags`, last in
-    `recall`'s and `search`'s guard sequences — before any caller reaches this. The `if nt`
-    below is belt-and-braces against a caller that skipped the ladder, not the rule.
-    """
-    return tuple(sorted({nt for nt in (normalize_ref(t) for t in raw) if nt}))
+    return want in entry.tags
 
 
 # --- The shared predicate ------------------------------------------------------

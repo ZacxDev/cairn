@@ -3215,21 +3215,24 @@ class TestTheTagsFrontMatterKey:
     @pytest.mark.parametrize(
         ("want", "hit"),
         [
-            ((), True),
-            (("marketing",), True),
-            (("marketing", "internal"), True),
-            (("internal", "marketing"), True),
-            (("marketing", "finance"), False),
-            (("finance",), False),
-            (("market",), False),
+            ("marketing", True),
+            ("internal", True),
+            ("finance", False),
+            ("market", False),
+            ("marketing-plan", False),
+            ("", False),
         ],
     )
-    def test_the_predicate_is_AND(self, want: tuple, hit: bool) -> None:
-        """🔴 AND, NOT OR. A repeatable parameter whose repetitions UNION gets WIDER the more
-        you type — the opposite of narrowing. The empty row is what makes "no filter" and "a
-        filter that removes nothing" one code path."""
+    def test_the_predicate_is_whole_token_membership(self, want: str, hit: bool) -> None:
+        """⚠ AN INVARIANT GUARD, LABELLED AS ONE. Nothing ever shipped a prefix or substring
+        match; what the rows pin is that a tag is a WHOLE folded token, which is what the
+        `?tag=` links and the fold rows both rely on. The AND/OR question these rows used to
+        pin went with the repeatability — a scalar operand has no quantifier to get wrong.
+
+        The `""` row is why a folded-away operand must be REFUSED upstream rather than
+        compared: here it narrows to nothing and would render as "no entry is tagged ``"."""
         entry = self._load(tags=["internal", "marketing"])
-        assert sr.entry_has_all_tags(entry, want) is hit
+        assert sr.entry_has_tag(entry, want) is hit
 
     @pytest.mark.parametrize(
         "raw",
@@ -3246,21 +3249,21 @@ class TestTheTagsFrontMatterKey:
     )
     def test_query_operands_fold_the_same_way_the_file_does(self, raw: str) -> None:
         """🔴 A RELATIONSHIP AND NOT TWO COMPONENT CHECKS, WHICH IS THE ONLY SHAPE THAT CAN SEE
-        THE DEFECT. `from_mapping` folding correctly and `normalize_tags` folding correctly are
+        THE DEFECT. `from_mapping` folding correctly and the QUERY side folding correctly are
         two hermetic claims; what breaks a user is the two DISAGREEING, and neither test can see
         that on its own. A tag an operator can WRITE must be one they can ASK for.
+
+        ⚠ THE QUERY SIDE IS `normalize_ref` DIRECTLY, where it used to be an operand-SET
+        normaliser: a scalar operand has nothing to dedupe or sort, so the fold is one call.
+        `subsystem_recall._validated_tag` is that call plus the refusal.
         """
         entry = self._load(tags=[raw])
-        assert entry.tags == sr.normalize_tags([raw])
+        assert entry.tags == (sr.normalize_ref(raw),)
         # …and the predicate joins them, which is the behavioural half a structural equality
         # check would pass straight over.
-        assert sr.entry_has_all_tags(entry, sr.normalize_tags([raw]))
+        assert sr.entry_has_tag(entry, sr.normalize_ref(raw))
 
-    def test_normalize_tags_dedupes_across_operands(self) -> None:
-        assert sr.normalize_tags(["Marketing", "marketing", "internal"]) == (
-            "internal",
-            "marketing",
-        )
-        # The control on the comparison: two different tags must NOT fold together, or every
-        # assertion above would pass with either side wired to a constant.
-        assert sr.normalize_tags(["marketing"]) != sr.normalize_tags(["finance"])
+    def test_two_different_tags_do_not_fold_together(self) -> None:
+        """The control on the comparison above: it would pass with either side wired to a
+        constant if every input folded to one value."""
+        assert sr.normalize_ref("marketing") != sr.normalize_ref("finance")

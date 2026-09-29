@@ -343,7 +343,8 @@ func Report(env Env, opts Options, isSearch bool) (int, error) {
 			AllScopes: opts.AllScopes,
 			RefTo:     opts.RefTo,
 			HasRefTo:  opts.HasRefTo,
-			Tags:      opts.Tags,
+			Tag:       opts.Tag,
+			HasTag:    opts.HasTag,
 		}
 		// 🔴 THE OPTION LADDER IS THE READER'S, RUN HERE — the same rule the recall branch
 		// below states, and it became REACHABLE on this branch with `--ref-to`. Every other
@@ -405,7 +406,8 @@ func Report(env Env, opts Options, isSearch bool) (int, error) {
 			HasRef:      opts.HasRef,
 			RefTo:       opts.RefTo,
 			HasRefTo:    opts.HasRefTo,
-			Tags:        opts.Tags,
+			Tag:         opts.Tag,
+			HasTag:      opts.HasTag,
 			Limit:       selection.Limit,
 			Mode:        mode,
 			Page:        selection.Page,

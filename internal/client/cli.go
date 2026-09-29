@@ -60,7 +60,7 @@ func Verbs() []Verb {
 				// means `--ref` there and redefining it would break a pinned contract.
 				// BOTH clients declare it or `tests/parity/` reds on an unrecognised
 				// argument.
-				// `--tag` is REPEATABLE with AND semantics, and it composes with everything
+				// `--tag` is the scalar CATEGORY narrowing, and it composes with everything
 				// here — it is a filter over the entry set, not a selector of one entry, so
 				// `RejectRecallFlags` deliberately does not name it.
 				"--mode", "--ref", "--ref-to", "--tag", "--list", "--limit", "--page"),
@@ -469,14 +469,11 @@ func Parse(argv []string) (Verb, Options, error) {
 			opts.Ref, opts.HasRef = value, true
 		case "--ref-to":
 			opts.RefTo, opts.HasRefTo = value, true
-		// 🔴 `append`, NOT ASSIGNMENT, AND IT IS THE ONLY ARM IN THIS SWITCH THAT APPENDS.
-		// Every other value-bearing flag here is last-wins, which is the right contract for a
-		// scalar and the WRONG one for a parameter whose repetitions are its operand set:
-		// `--tag a --tag b` under an assignment narrows by `b` alone and returns MORE entries
-		// than were asked for, at exit 0, with a header line naming one tag. The `seen` set
-		// above already tolerates repetition, so nothing else in the parser has to move.
+		// ASSIGNMENT, like every other value-bearing arm in this switch: `--tag` is scalar and
+		// last-wins, so `--tag a --tag b` means `b`. It appended once, for an AND filter the
+		// operator has since dropped; the pair is what keeps `--tag ''` refusable.
 		case "--tag":
-			opts.Tags = append(opts.Tags, value)
+			opts.Tag, opts.HasTag = value, true
 		case "--limit":
 			n, err := strconv.Atoi(value)
 			if err != nil {

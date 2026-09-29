@@ -317,11 +317,14 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # ⚠ 108 -> 117 WHEN THE TEN `--tag` ROWS LANDED: `m` moved 114 -> 124 and 117 is the
     # literal the formula prescribes for it (`124 - min(50, max(1, 124/20)) = 117.8 -> 117`),
     # re-derived by RUNNING the formula on `len(harness.cases(1))` rather than by arithmetic on
-    # the previous literal. One of those rows is the only thing in this repository that compares
-    # the two CLIENTS on a REPEATED flag: `tests/conformance/` compares the two SERVERS over
-    # `?tag=` and never parses a command line, so a Go client whose parser ASSIGNED instead of
-    # appending would be green everywhere else.
-    floor = 117
+    # the previous literal.
+    # ⚠ 117 -> 116 WHEN `recall-tag-repeated-is-AND` WAS DELETED: `--tag` became SCALAR on an
+    # operator decision, so `m` moved 124 -> 123 and 116 is what the formula prescribes for it
+    # (`123 - min(50, max(1, 123/20)) = 116.85 -> 116`), re-derived by RUNNING the formula on
+    # `len(harness.cases(1))`. This is the DELETION half of "move BOTH when a row lands, and
+    # both when one is DELETED" — a floor left at 117 over a 123-row corpus is not wrong today
+    # and is one row of loosening, which is exactly the drift this literal exists to refuse.
+    floor = 116
     # ✅ **DECIDED: PINNED TO ITS OWN FORMULA, BECAUSE IT HAS GONE STALE TWICE.**
     # The handoff filed this under "counts quoted in prose that nothing asserts
     # on", closing condition "a decision to pin each or a written line saying why
@@ -355,12 +358,13 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # the `parity` job. They must NOT be asserted equal: this one counts CASES
     # DECLARED by `harness.cases()`, that one counts PASSES a run produced, and
     # the two differ by design — a structural check is a pass with no declared
-    # case behind it, which is why the run reports 127 passes over 124 cases —
-    # re-derived here from one run's own `SUMMARY cases=124 passes=127 failures=0`
+    # case behind it, which is why the run reports 126 passes over 123 cases —
+    # re-derived here from one run's own `SUMMARY cases=123 passes=126 failures=0`
     # line, not from arithmetic on the previous literal:
     # `cache-mtime-parity`, `orphan-reap-parity` and `nonregular-path-parity`,
     # THREE structural checks. ⚠ It was 104/102, then 105/103, then 106/103, then
-    # 111/108, then 110/107, then 117/114 — and one of those pairs was WRONG for a whole
+    # 111/108, then 110/107, then 117/114, then 127/124, then 126/123 when `--tag` became
+    # scalar and a row was DELETED — and one of those pairs was WRONG for a whole
     # round, because rows
     # moved `m` and only `ci.yml` was updated. The gap itself
     # widens every time a claim turns out to be unreachable from any row. A
@@ -368,7 +372,7 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # reader to edit whichever number was handier. The docstring's instruction —
     # read `ci.yml`'s comparison rather than that sentence — remains the answer.
     assert declared >= floor, (
-        f"the parity gate declares only {declared} cases, and the floor is {floor} (124 were "
+        f"the parity gate declares only {declared} cases, and the floor is {floor} (123 were "
         f"measured on this tree, across every verb and every documented exit code). Two guards in "
         f"this file — the exit-only `why` check and the unique-id check — pass vacuously on a "
         f"narrowed list, so a shrinking case set gets quieter, not louder."

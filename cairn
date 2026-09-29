@@ -1367,7 +1367,7 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
                 max_hits=rc.DEFAULT_MAX_HITS,
                 all_scopes=args.all_scopes,
                 ref_to=args.ref_to,
-                tags=args.tag,
+                tag=args.tag,
             )
         except ValueError as exc:
             print(f"cairn: {exc}", file=sys.stderr)
@@ -1429,7 +1429,7 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
                 scope,
                 ref=args.ref,
                 ref_to=args.ref_to,
-                tags=args.tag,
+                tag=args.tag,
                 limit=selection.limit,
                 mode=mode,
                 page=selection.page,
@@ -2603,22 +2603,17 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="<system>:<id>",
         help="only entries whose `refs:` carries this ref (the REVERSE lookup)",
     )
-    # 🔴 `action="append"`, AND IT IS THE ONLY REPEATABLE FLAG EITHER CLIENT HAS. Every other
-    # value-bearing flag here is last-wins, which is the right contract for a scalar and the
-    # WRONG one for a parameter whose repetitions are its operand set: `--tag a --tag b` under
-    # a plain `store` narrows by `b` alone and returns MORE entries than were asked for, at
-    # exit 0, with a header line naming one tag. The semantics are AND — a second `--tag` can
-    # only ever narrow — so `default=[]` and an append are the whole change.
-    #
-    # ⚠ `default=[]` AND NOT `default=None`: `rc.recall` takes a Sequence and an empty one is
-    # "no filter", so a `None` would have to be defaulted at the call site — which is where the
-    # two clients would start to disagree about what an absent flag means.
+    # 🔴 SCALAR, AND LAST-WINS LIKE EVERY OTHER VALUE-BEARING FLAG HERE — an OPERATOR DECISION
+    # rather than a gate. A repeatable `--tag` with AND semantics shipped first; nobody had
+    # asked for the repetition, and the choice between AND and OR had no author of record, so
+    # the surface is one tag. `default=None` and not `""`: `rc.recall` refuses an operand that
+    # folds away, and `--tag ''` must reach that refusal rather than read as "no filter" — so
+    # absent and empty have to stay distinguishable all the way into the option ladder.
     r.add_argument(
         "--tag",
-        action="append",
-        default=[],
+        default=None,
         metavar="<name>",
-        help="only entries whose `tags:` carries this tag; repeatable, AND semantics",
+        help="only entries whose `tags:` carries this tag",
     )
     r.add_argument(
         "--list",
@@ -2651,14 +2646,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="<system>:<id>",
         help="only entries whose `refs:` carries this ref (the REVERSE lookup)",
     )
-    # The same repeatable `--tag` `recall` carries, for the same reason. Searching within one
+    # The same scalar `--tag` `recall` carries, for the same reason. Searching within one
     # category is the narrowing the key exists for.
     q.add_argument(
         "--tag",
-        action="append",
-        default=[],
+        default=None,
         metavar="<name>",
-        help="only entries whose `tags:` carries this tag; repeatable, AND semantics",
+        help="only entries whose `tags:` carries this tag",
     )
     q.set_defaults(func=cmd_search)
 

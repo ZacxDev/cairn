@@ -71,7 +71,7 @@ const (
 	// none. Only "nothing could be read" is a non-zero.
 	StatusRefToAbsent = "ref-to-absent"
 	// StatusTagAbsent is the CATEGORY filter's own non-finding: a `--tag`/`?tag=` was given
-	// and no entry in the caller's reachable scopes carries every tag named.
+	// and no entry in the caller's reachable scopes carries it.
 	//
 	// 🔴 IT IS NOT `scope-empty`, AND THAT IS THE STATUS A TAG FILTER WOULD OTHERWISE FALL
 	// INTO. `Recall`'s `len(entries) == 0` branch is downstream of every narrowing, and its

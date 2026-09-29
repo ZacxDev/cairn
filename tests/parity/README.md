@@ -563,19 +563,27 @@ oracle; deleting them because the oracle went away would lose it.
 
 ## The `--tag` rows, and the vacuity this gate closed on itself
 
-Ten rows. They are the only thing that compares the two CLIENTS on `--tag`, and one of them is the
-only thing in this repository that compares them on a REPEATED flag: `tests/conformance/` compares
-the two SERVERS over `?tag=` and never parses a command line, so a Go client that declared the flag
-as a scalar rather than an append, spelled it `--tags`, or dropped a repetition would pass `go test`,
-the corpus against both servers, and the leak gate, and be caught only here.
+Nine rows. They are the only thing that compares the two CLIENTS on `--tag`: `tests/conformance/`
+compares the two SERVERS over `?tag=` and never parses a command line, so a Go client that did not
+declare the flag, spelled it `--tags`, or read its operand differently would pass `go test`, the
+corpus against both servers, and the leak gate, and be caught only here.
 
-`recall-tag-repeated-is-AND` is that row. The world's `gauge-api` carries TWO tags and `ledger-svc`
-carries ONE of them, so `--tag marketing` keeps two entries and adding `--tag internal` keeps one —
-the difference a last-wins or unioning parser cannot produce. `gauge-api`'s tags are written
-UNFOLDED and `ledger-svc`'s folded, so `recall-tag-folds` reaching both measures the fold rather than
-assuming it.
+The world's `gauge-api` carries TWO tags and `ledger-svc` carries ONE of them, so `--tag marketing`
+keeps two entries while `--tag internal` keeps one — a difference no row could see if every tag in
+the world named the same set. `gauge-api`'s tags are written UNFOLDED and `ledger-svc`'s folded, so
+`recall-tag-folds` reaching both measures the fold rather than assuming it.
 
-### 🔴 THE CONTENT FLOOR GREW A **PAIR** OF SENTINELS, AND THE PAIR IS THE FINDING
+### ⚠ THERE WERE TEN, AND THE TENTH WAS THE REPEATED-FLAG ROW
+
+`recall-tag-repeated-is-AND` sent `--tag` twice and was the only thing in this repository comparing
+the two clients on a REPEATED flag. `--tag` is now SCALAR on an operator decision — the request was
+a tag filter, and neither the repetition nor the choice between AND and OR had an author of record —
+so that row is DELETED rather than rewritten, and **not replaced**: a repeated scalar flag is
+last-wins on both clients by the same construction every other value-bearing flag uses, so a row
+sending it twice would pin the parser's shared assignment arm rather than anything about tags. The
+capability it covered is gone with the capability.
+
+### 🔴 THE CONTENT FLOOR'S FIFTH SENTINEL, AND THE "PAIR" CLAIM WAS BACKWARDS
 
 When the `--ref-to` rows landed, their parity clause was VACUOUS until a fixture was planted: no
 entry in the world carried the key, so both clients emitted nothing and every row compared equal
@@ -583,11 +591,22 @@ about nothing. A `--tag` row has the identical failure mode, and it is invisible
 check here — the rows PASS, the pre-flight passes, the content floor passes, and `--self-test`
 passes, because all four are satisfied by two clients AGREEING.
 
-So `tag-narrowing` says a `tag:` line was rendered at all, and `tag-match` says its numerator was
-NON-ZERO. One sentinel would not have done it, and that is MEASURED rather than argued: stripping
-the tags out of `world.py` leaves **cases=124 passes=127 failures=0**, `tag-narrowing=True`, and only
-`tag-match=False` refuses at rc 2. A world with no `tags:` still prints the line — reading `0 of N`
-on every row — which is precisely why the numerator needs its own sentinel.
+`tag-match` is the sentinel that closes it: a `tag:` line whose numerator is NON-ZERO. This file,
+`ci.yml` and the PR body all said instead that `tag-narrowing` and `tag-match` were a **pair**
+"because one cannot do the job" — and the measurement every one of them cited says the opposite.
+Stripping the `tags=` arguments out of `world.py` leaves **cases=123 passes=126 failures=0**,
+`tag-narrowing=True`, `tag-match=False`, rc 2 — RE-MEASURED on this tree, not carried forward; the
+same reading over the 124-case corpus was 127 PASS. `tag-match` ALONE refuses, and `tag-narrowing`
+is the half that cannot.
+They are not independent either — the harness can only set `tag-match` inside the block
+`tag-narrowing` opens, so `tag-match ⟹ tag-narrowing` and a conjunction over both is `tag-match`.
+
+⚠ **`tag-narrowing` is still PRINTED and still named in `ci.yml`'s anchor**, which is why the anchor
+matches six fields for five controls. It separates "the line was never rendered" from "rendered at
+0" for whoever reads the run, and
+`test_the_CI_content_floor_grep_names_EVERY_field_the_harness_prints` requires every printed field
+to be named there. Dropping a field from the CONJUNCTION and dropping it from the LINE are different
+changes; only the first was made.
 
 ⚠ **`test_the_CI_content_floor_grep_names_EVERY_field_the_harness_prints` caught the two new fields
 missing from `ci.yml`'s anchor before CI could.** That is the second direction that guard exists
@@ -595,13 +614,16 @@ for, and it is the third time the anchor has been the thing that went stale.
 
 ### The counts, and how they were re-derived
 
-- `harness.cases()` 114 → 124; the run 117 → 127 PASS. The gap stays three (the three structural
-  checks), which is the check that nothing was miscounted: both numbers moved by the same ten.
-- `tests/test_parity_harness.py`'s derived case floor 108 → **117**, from
-  `124 - min(50, max(1, 124/20)) = 117.8 → 117`, computed by RUNNING the formula on
-  `len(harness.cases(1))` rather than by arithmetic on the previous literal.
-- `ci.yml`'s PASS floor 117 → **127**, watched to refuse: set one above the measurement it prints
-  `REFUSING: 127 passes, and 128 were measured` and exits 1.
+- `harness.cases()` 114 → 124 → **123**; the run 117 → 127 → **126** PASS. The gap stays three (the
+  three structural checks), which is the check that nothing was miscounted: both numbers moved by
+  the same ten, then both by the same one.
+- `tests/test_parity_harness.py`'s derived case floor 108 → 117 → **116**, from
+  `123 - min(50, max(1, 123/20)) = 116.85 → 116`, computed by RUNNING the formula on
+  `len(harness.cases(1))` rather than by arithmetic on the previous literal. This is the DELETION
+  half of that comment's "move BOTH when a row lands, and both when one is DELETED": a floor left at
+  117 over a 123-row corpus is not wrong today and is one row of loosening.
+- `ci.yml`'s PASS floor 117 → 127 → **126**, watched to refuse: set one above the measurement, it
+  prints `REFUSING: 126 passes, and 127 were measured — the gate got smaller` and exits 1.
 
 ### What these rows still cannot see
 
@@ -609,9 +631,9 @@ for, and it is the third time the anchor has been the thing that went stale.
   reaches, so no row presents "a malformed file that would have carried the tag" — the CLI's
   `tag-absent` body does qualify its zero when the scope has rejects, and that qualification has no
   cross-client byte comparison.
-- **More than two tags on one entry.** The AND semantics are measured at two; nothing drives three,
-  where the rendered list's separator and the verb agreement are the same code but the operand set
-  is not.
+- **A REPEATED `--tag`.** Nothing drives the flag twice on either client any more. What a repetition
+  means is now the parser's generic last-wins arm, which every other value-bearing flag exercises;
+  what is unmeasured is the two clients agreeing about it SPECIFICALLY for `--tag`.
 - **A tag that differs only in the fold.** `Marketing`/`marketing` is covered; a pair differing by
   `_` versus `-`, or by a folded-away character in the middle, is not driven from a command line on
   either client.

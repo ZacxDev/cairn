@@ -36,7 +36,7 @@
       "_why": "Every file in it is malformed -- the `scope-unreadable` state."
     },
     "tagged-set": {
-      "_why": "The ONE scope whose entries carry `tags:`. It exists so a `?tag=` row can find a MATCH over the wire rather than only the non-finding: a corpus that only ever sent a tag nothing carries would pass against a filter wired to nothing. One entry carries TWO tags and a `refs:` (so the two filters can be composed over the wire), one carries ONE of those tags, and one carries none -- so the filter has something to keep on one tag, something it must REMOVE when a second tag is added (the AND semantics), and something to remove on either. A NEW SCOPE rather than tags added to an existing entry, so the only pre-existing goldens that move are the ones that ENUMERATE scopes."
+      "_why": "The ONE scope whose entries carry `tags:`. It exists so a `?tag=` row can find a MATCH over the wire rather than only the non-finding: a corpus that only ever sent a tag nothing carries would pass against a filter wired to nothing. One entry carries TWO tags and a `refs:` (so the two filters can be composed over the wire), one carries ONE of those tags, and one carries none -- so the filter has something to keep and something to remove on EITHER tag, and the two tags name different sets, which is what stops a row passing with the operand ignored. A NEW SCOPE rather than tags added to an existing entry, so the only pre-existing goldens that move are the ones that ENUMERATE scopes."
     },
     "linked-set": {
       "_why": "The ONE scope whose entries carry `refs:`. It exists so a `?ref-to=` row can find a MATCH over the wire rather than only the non-finding: a corpus that only ever sent a ref nothing carries would pass against a filter wired to nothing. One entry carries the ref under the NEW key, one under the ACCEPTED OLDER `tasks:` spelling, and one carries none -- so the filter has something to keep, something to keep through the alias path, and something to remove."
@@ -238,7 +238,7 @@
         "---",
         "",
         "## What it is",
-        "An entry carrying ONE of the two tags, so a second `?tag=` must REMOVE it -- which is what makes the AND semantics observable over the wire rather than only in a unit test. It carries the SAME ref as `tagged-both.md`, which is what makes the cross-filter row reach the reach clause's THIRD state: two entries reference the ref and only one of them carries `internal`, so the `ref-to:` line has to say a FURTHER filter narrows its count. With the ref on one entry only that state is unreachable over the wire.",
+        "An entry carrying ONE of the two tags, so the two tags select DIFFERENT SETS over the wire and a row asking for either cannot pass with the operand ignored. It carries the SAME ref as `tagged-both.md`, which is what makes the cross-filter row reach the reach clause's THIRD state: two entries reference the ref and only one of them carries `internal`, so the `ref-to:` line has to say a FURTHER filter narrows its count. With the ref on one entry only that state is unreachable over the wire.",
         "",
         "## Pointers",
         "- ops skill `manage-gadget` - the same skill, deliberately",

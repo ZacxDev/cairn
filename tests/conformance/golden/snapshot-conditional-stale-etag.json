@@ -296,8 +296,8 @@
         "mode": "0o644",
         "mtime": "946425600.0",
         "name": "tagged-set/tagged-one.md",
-        "sha256": "3edf77587ab9d4e78faae1a2ee17c24ca4b8d45fb6e6627cc66679707249cc9b",
-        "size": 812,
+        "sha256": "06063892fe0a444783517d8698a71373da9bebc897fccbdc963442b6be7f9fe4",
+        "size": 796,
         "text_lines": [
           "---",
           "service: tagged-one",
@@ -308,7 +308,7 @@
           "---",
           "",
           "## What it is",
-          "An entry carrying ONE of the two tags, so a second `?tag=` must REMOVE it -- which is what makes the AND semantics observable over the wire rather than only in a unit test. It carries the SAME ref as `tagged-both.md`, which is what makes the cross-filter row reach the reach clause's THIRD state: two entries reference the ref and only one of them carries `internal`, so the `ref-to:` line has to say a FURTHER filter narrows its count. With the ref on one entry only that state is unreachable over the wire.",
+          "An entry carrying ONE of the two tags, so the two tags select DIFFERENT SETS over the wire and a row asking for either cannot pass with the operand ignored. It carries the SAME ref as `tagged-both.md`, which is what makes the cross-filter row reach the reach clause's THIRD state: two entries reference the ref and only one of them carries `internal`, so the `ref-to:` line has to say a FURTHER filter narrows its count. With the ref on one entry only that state is unreachable over the wire.",
           "",
           "## Pointers",
           "- ops skill `manage-gadget` - the same skill, deliberately",
@@ -348,7 +348,7 @@
     ],
     [
       "ETag",
-      "\"sha256:d332d628a38a10865ba3ecea9f634e1de39d1a98cc0ac5b7d82196f8a3a912bd\""
+      "\"sha256:61e30667058cdac6389cc7f14a11ca4add6055a8361fcf6bb650e3e4d63fe984\""
     ],
     [
       "Server",

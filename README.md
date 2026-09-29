@@ -334,17 +334,20 @@ service/process/org/doc, and putting two axes in one closed set makes both unass
   `cairn search … --tag <name>`; over HTTP, `GET /api/v1/recall/<scope>?tag=…` and
   `GET /api/v1/search/<scope>?q=…&tag=…`. It composes with everything — `--ref`, `--ref-to`,
   `--all-scopes`, `--mode`, `--page`.
-- 🔴 **It is REPEATABLE and the semantics are AND.** `--tag marketing --tag internal` keeps only
-  entries carrying **both**; over HTTP, `?tag=marketing&tag=internal`. A second `--tag` can only
-  ever narrow. ⚠ This is the **only** repeatable parameter on these routes — every other one is
-  last-wins, so `?limit=1&limit=2` still means 2.
+- 🔴 **It takes ONE tag.** `--tag` is scalar and last-wins, like every other value-bearing flag
+  on these clients, and `?tag=` is last-wins like every other parameter on these routes — so
+  `--tag a --tag b` and `?tag=a&tag=b` both mean `b`, exactly as `?limit=1&limit=2` means 2.
+  There is no way to ask for two categories at once, and that is deliberate: a repeatable
+  `--tag` with AND semantics was built and then dropped, because nobody had asked for the
+  repetition and the choice between AND and OR had no author. Ask again if you want it — with
+  the semantics you want named.
 - **An operand that folds to nothing is a 400, not an empty result.** `--tag ''` and `--tag '!!'`
   are refused by a message naming the fold, on both clients (exit **2**) and both routes. That is
   the opposite of `?ref=`, which narrows on an empty value: a ref names an ENTRY, so "nothing is
   called that" is a fact worth reporting, while a tag that folds away names no category at all
   and answering "no entry carries this" would hide the cause.
 - **A new `X-Store-Status` value: `tag-absent`**, answered **200** and exit **0**. It is a
-  non-finding and not an error, reached two ways — nothing in the scope carries the tags, or
+  non-finding and not an error, reached two ways — nothing in the scope carries the tag, or
   `--ref`/`?ref=` named an entry that does not while others do. The rendered `tag:` line carries
   both counts (`N of M entries … carry it`), so a filtered index cannot be mistaken for a whole
   one. **No exit code changed**: `cairn -exit-codes` prints the same table it did.

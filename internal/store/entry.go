@@ -369,51 +369,34 @@ func parseTagsField(mapping FrontMatter, source string) ([]string, error) {
 	return sortedKeys(set), nil
 }
 
-// EntryHasAllTags is the `?tag=`/`--tag` predicate: AND semantics over an entry's folded
-// tags.
+// HasTag is the `?tag=`/`--tag` predicate: does this folded tag set carry this folded tag.
 //
-// 🔴 AND, NOT OR, AND THE CHOICE IS OBSERVABLE RATHER THAN A CONVENTION. A repeatable
-// parameter whose repetitions UNION is a parameter that gets WIDER the more you type, so a
-// second `--tag` could only ever return more — which is the opposite of what narrowing a
-// result set means, and the opposite of what every other filter on these routes does.
+// 🔴 ONE TAG, BECAUSE THE PARAMETER IS SCALAR, AND THE OPERATOR DECIDED THAT RATHER THAN A
+// GATE. A repeatable `--tag` was built first, with AND semantics; nobody had asked for either,
+// and neither the repetition nor the choice between AND and OR had an author of record. With a
+// scalar operand there is no set to quantify over and no semantics to pick — which is also what
+// makes reading ONE value out of a query string correct rather than merely usual.
 //
-// ⚠ AN EMPTY `want` IS TRUE FOR EVERY ENTRY, which is what makes "no filter was sent" and
-// "a filter that removes nothing" the same code path rather than a caller-side branch. Both
-// callers gate on `len(want) != 0` before they announce a narrowing, because announcing one
-// that removed nothing is a line that misreports the index it sits above.
-func EntryHasAllTags(e Entry, want []string) bool {
-	for _, w := range want {
-		if !slices.Contains(e.Tags, w) {
-			return false
-		}
-	}
-	return true
-}
-
-// NormalizeTags folds, dedupes and sorts a set of tag OPERANDS, so a query written
-// `?tag=Marketing&tag=marketing` reaches the index as the one tag it names and renders as
-// the one tag it narrowed by.
+// 🔴 ONE FUNCTION, AND THERE ARE THREE CALLERS RATHER THAN THE TWO A READER WOULD ASSUME.
+// `report.Recall` narrows a scope's entries, `report.Search` narrows each searched scope's, and
+// `ui.EntriesByTag` answers `/?tag=`; that third site open-coded `slices.Contains` until this
+// header was measured against the tree. A predicate open-coded at N sites is wrong at N−1 of
+// them, and the browser listing is the site whose disagreement nothing else here would see.
 //
-// 🔴 THE SAME FOLD THE FILE'S OWN TAGS WENT THROUGH, reached through the same function. A
-// second folding rule for the query side is how a tag an operator can WRITE becomes one they
-// cannot ASK for: the write folds `Marketing` to `marketing`, and a query side that did not
-// would compare `Marketing` against it and answer "no entry carries this".
+// ⚠ IT TAKES THE TAG SET AND NOT AN `Entry`, WHERE `EntryReferences` TAKES ONE, AND THE
+// DIFFERENCE IS WHAT LETS THE THIRD CALLER REACH IT. `internal/ui` holds its own entry type —
+// built from this package's parsers, carrying the same folded `Tags` — so a predicate over
+// `Entry` would have been unreachable there and the open-coding would have stayed. A ref
+// comparison needs the structured `refs:` and its asymmetric normalisation; a tag comparison
+// needs the folded strings and nothing else.
 //
-// ⚠ IT DROPS NOTHING SILENTLY, AND THE REASON IS IN A DIFFERENT PACKAGE. A member that folds
-// to "" is refused by the OPTION LADDER — `report.validateTags`, last in `ValidateRecall` and
-// `ValidateSearch` — before any caller reaches this, so there is no empty string for the set to
-// swallow. The refusal cannot live here: this package is the loader, and "a query operand is
-// malformed" is the report's own contract rather than the store's (see `internal/report`'s
-// package doc on why validation is not in the handler either). The `if n != ""` below is
-// therefore belt-and-braces against a caller that skipped the ladder, not the rule.
-func NormalizeTags(raw []string) []string {
-	set := map[string]struct{}{}
-	for _, t := range raw {
-		if n := NormalizeRef(t); n != "" {
-			set[n] = struct{}{}
-		}
-	}
-	return sortedKeys(set)
+// ⚠ MEMBERSHIP AND NEVER A PREFIX: a tag is a whole folded token, so `market` does not find
+// `marketing`. The FOLD is `NormalizeRef` on both sides — `parseTagsField` per declared tag,
+// `report.canonicalTag` (or `ui.handlePage`) per query operand — so the rule the query side
+// enforces is the rule the file side enforces. There is no separate operand normaliser: one
+// operand needs one call.
+func HasTag(tags []string, want string) bool {
+	return slices.Contains(tags, want)
 }
 
 // sequenceField reads an optional list-valued key with Python's exact three

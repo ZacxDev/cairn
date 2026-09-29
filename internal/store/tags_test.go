@@ -158,31 +158,38 @@ func TestATagThatNormalizesAwayIsRefused(t *testing.T) {
 	}
 }
 
-// TestTheTagPredicateIsAND pins `EntryHasAllTags`' semantics, which are what a repeatable
-// `--tag` means.
+// TestTheTagPredicateIsWholeTokenMembership pins `HasTag`, which is the whole of what a scalar
+// `--tag`/`?tag=` means.
 //
-// ⚠ AN INVARIANT GUARD ON THE EMPTY-SET ROW, REGRESSION COVERAGE ON THE REST. Nothing ever
-// shipped an OR here; what the rows pin is that a second `--tag` can only ever NARROW, which is
-// the property that makes the flag a filter rather than a widener.
-func TestTheTagPredicateIsAND(t *testing.T) {
-	entry := Entry{Tags: []string{"internal", "marketing"}}
+// ⚠ AN INVARIANT GUARD, LABELLED AS ONE. Nothing ever shipped a prefix match or a substring
+// match here; what the rows pin is that a tag is a WHOLE folded token, which is the property the
+// `?tag=` links on the browser surface and the corpus's fold rows both rely on. It is not
+// regression coverage for any defect — the AND/OR question it used to pin is gone with the
+// repeatability, and there is no quantifier left to get wrong.
+//
+// 🔴 IT IS ALSO THE ONE BEHAVIOURAL CHECK ON THE PREDICATE ALL THREE CALLERS NOW SHARE
+// (`report.Recall`, `report.Search`, `ui.EntriesByTag`), which is why it survives the deletion
+// rather than going with the AND rows: a structural claim that three sites call one function
+// type-checks past a function that answers wrongly.
+func TestTheTagPredicateIsWholeTokenMembership(t *testing.T) {
+	tags := []string{"internal", "marketing"}
 	for _, row := range []struct {
-		want []string
+		want string
 		hit  bool
 		why  string
 	}{
-		{nil, true, "no tags asked for matches every entry — `len(want) == 0` is how the callers " +
-			"make 'no filter' and 'a filter that removes nothing' one code path"},
-		{[]string{}, true, "an empty non-nil set is the same answer as nil"},
-		{[]string{"marketing"}, true, "one tag the entry carries"},
-		{[]string{"marketing", "internal"}, true, "both tags, in the other order"},
-		{[]string{"marketing", "finance"}, false, "AND: one carried, one not — an OR would " +
-			"return true here, and a second --tag would WIDEN the result"},
-		{[]string{"finance"}, false, "a tag the entry does not carry"},
-		{[]string{"market"}, false, "no prefix matching: a tag is a whole folded token"},
+		{"marketing", true, "a tag the set carries"},
+		{"internal", true, "the other one, so neither row can pass on position alone"},
+		{"finance", false, "a tag the set does not carry"},
+		{"market", false, "no prefix matching: a tag is a whole folded token"},
+		{"marketing-plan", false, "nor the other direction — the asked-for tag is not a prefix " +
+			"of a carried one either"},
+		{"", false, "the empty tag carries nothing, which is why a folded-away operand must be " +
+			"REFUSED upstream rather than compared: it would narrow to nothing here and read " +
+			"as `no entry is tagged ''`"},
 	} {
-		if got := EntryHasAllTags(entry, row.want); got != row.hit {
-			t.Errorf("EntryHasAllTags(%q) = %v, want %v — %s", row.want, got, row.hit, row.why)
+		if got := HasTag(tags, row.want); got != row.hit {
+			t.Errorf("HasTag(%q, %q) = %v, want %v — %s", tags, row.want, got, row.hit, row.why)
 		}
 	}
 }
@@ -190,11 +197,16 @@ func TestTheTagPredicateIsAND(t *testing.T) {
 // TestTagOperandsFoldTheSameWayTheFileDoes is the seam between the two ends of this feature.
 //
 // 🔴 IT IS A RELATIONSHIP AND NOT TWO COMPONENT CHECKS, WHICH IS THE ONLY SHAPE THAT CAN SEE
-// THE DEFECT. `parseTagsField` folding correctly and `NormalizeTags` folding correctly are two
+// THE DEFECT. `parseTagsField` folding correctly and the QUERY side folding correctly are two
 // hermetic claims; the thing that breaks a user is the two disagreeing, and neither test can
 // see that on its own. So this asserts the WRITE side's answer and the QUERY side's answer are
 // equal over the same inputs — a query an operator can write must reach a tag an operator can
 // declare.
+//
+// ⚠ THE QUERY SIDE IS `NormalizeRef` DIRECTLY, WHERE IT USED TO BE AN OPERAND-SET NORMALISER.
+// With a scalar operand there is nothing to dedupe or sort, so the fold is one call — and the
+// seam is the same seam: `report.canonicalTag` is `NormalizeRef` plus the refusal, and
+// `ui.handlePage` is `NormalizeRef` alone.
 func TestTagOperandsFoldTheSameWayTheFileDoes(t *testing.T) {
 	for _, raw := range []string{
 		"Marketing", "MARKETING", " marketing ", "Project_Xyz", "project--xyz",
@@ -207,28 +219,22 @@ func TestTagOperandsFoldTheSameWayTheFileDoes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("declaring tag %q was refused: %v", raw, err)
 		}
-		operands := NormalizeTags([]string{raw})
-		if !reflect.DeepEqual(entry.Tags, operands) {
+		operand := NormalizeRef(raw)
+		if !reflect.DeepEqual(entry.Tags, []string{operand}) {
 			t.Fatalf("%q: the file folds it to %q and a query folds it to %q — a tag that can be "+
-				"WRITTEN but not ASKED FOR", raw, entry.Tags, operands)
+				"WRITTEN but not ASKED FOR", raw, entry.Tags, operand)
 		}
 		// …and the predicate joins them, which is the behavioural half a structural equality
 		// check would type-check straight past.
-		if !EntryHasAllTags(entry, operands) {
+		if !HasTag(entry.Tags, operand) {
 			t.Fatalf("%q: the entry declares %q and the query asks for %q and the predicate says "+
-				"no", raw, entry.Tags, operands)
+				"no", raw, entry.Tags, operand)
 		}
 	}
 	// The control on the comparison itself: two inputs that fold DIFFERENTLY must not compare
 	// equal, or the loop above would pass with either side wired to a constant.
-	if reflect.DeepEqual(NormalizeTags([]string{"marketing"}), NormalizeTags([]string{"finance"})) {
-		t.Fatal("NormalizeTags returns the same value for two different tags, so every " +
+	if NormalizeRef("marketing") == NormalizeRef("finance") {
+		t.Fatal("NormalizeRef returns the same value for two different tags, so every " +
 			"comparison above is vacuous")
-	}
-	// And `NormalizeTags` dedupes across operands, so `?tag=Marketing&tag=marketing` narrows by
-	// one tag rather than asserting one tag twice.
-	if got := NormalizeTags([]string{"Marketing", "marketing", "internal"}); !reflect.DeepEqual(
-		got, []string{"internal", "marketing"}) {
-		t.Fatalf("NormalizeTags did not dedupe across operands: %q", got)
 	}
 }

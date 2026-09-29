@@ -375,10 +375,11 @@ def tag_targets(scope: str, principal: str = WIDE) -> list[Target]:
     REAL one in mode 1 — so the header line's counts and the kept set are computed from a world
     nobody wrote a fixture for.
 
-    🔴 THE REPEATED PARAMETER IS SWEPT TOO, AND IT IS THE ARM A SCALAR READ WOULD SURVIVE
-    EVERYWHERE ELSE. `?tag=a&tag=b` must narrow by BOTH; a server reading it last-wins answers
-    the one-tag set, which over `alpha-index` is a DIFFERENT entry set — and over a real store
-    in mode 1 it is whatever that store happens to hold, which is the point of a sweep.
+    ⚠ THE REPEATED PARAMETER IS NOT SWEPT ANY MORE, AND IT IS NOT AN OVERSIGHT. `?tag=` was
+    repeatable with AND semantics and is now SCALAR on an operator decision, so `?tag=a&tag=b`
+    is last-wins — the rule every other parameter on these routes already follows, and the one
+    `recall-repeated-parameter` pins in `tests/conformance/` for a scalar. A target sending it
+    twice would measure that shared arm rather than anything about tags.
 
     ⚠ THE OPERANDS ARE LITERALS AND NOT ENUMERATED FROM THE STORE, the same narrowing
     `ref_to_targets` declares and for the same reason: there is no route that lists an index's
@@ -395,12 +396,6 @@ def tag_targets(scope: str, principal: str = WIDE) -> list[Target]:
                "the category filter over a tag the world DOES carry: the narrowed entry set, "
                "and the `tag:` header's two counts computed from this store",
                "GET", f"/api/v1/recall/{scope}?tag={carried}", principal, arm="entry"),
-        Target(f"tag-repeated:{principal}:{scope}",
-               "🔴 THE REPEATED PARAMETER, WHICH MUST NARROW BY BOTH TAGS. A server reading it "
-               "last-wins answers the one-tag set instead — more entries than were asked for, "
-               "at 200, with a header naming one tag",
-               "GET", f"/api/v1/recall/{scope}?tag={carried}&tag={second}", principal,
-               arm="entry"),
         Target(f"tag-absent:{principal}:{scope}",
                "the filter's own non-finding, which must not read as an empty scope",
                "GET", f"/api/v1/recall/{scope}?tag={absent}", principal, arm="entry"),

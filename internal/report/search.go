@@ -443,9 +443,9 @@ type SearchReport struct {
 	// line prints this count beside the searched one, so a zero says WHY it is zero.
 	RefToSkipped int
 
-	// Tags is the `?tag=` CATEGORY narrowing, canonical and sorted. Empty means no filter was
-	// sent. See `RecallOptions.Tags` for why there is no `HasTags`.
-	Tags []string
+	// Tag is the `?tag=` CATEGORY narrowing, FOLDED. `""` means no filter was sent. See
+	// `RecallReport.Tag` for why this one needs no `Has…` where the OPTIONS do.
+	Tag string
 
 	// TagSkipped is how many entries the TAG filter removed from the searched set.
 	//
@@ -575,20 +575,20 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 		wantRef = parsed
 		base.RefTo, base.HasRefTo = parsed.String(), true
 	}
-	// The tag operands are canonicalised ONCE, outside the scope loop, for the same reason the
-	// ref-to operand is parsed once: `wantTags` is only consulted when a filter was sent, so a
+	// The tag operand is canonicalised ONCE, outside the scope loop, for the same reason the
+	// ref-to operand is parsed once: `wantTag` is only consulted when a filter was sent, so a
 	// search with no `?tag=` does no per-entry work it did not do before.
-	var wantTags []string
-	if len(opts.Tags) != 0 {
-		canonical, tagErr := canonicalTags(opts.Tags)
+	var wantTag string
+	if opts.HasTag {
+		canonical, tagErr := canonicalTag(opts.Tag)
 		if tagErr != nil {
 			// Unreachable from either real caller — `ValidateSearch` refuses first. Returned
 			// rather than ignored so a caller that skips the ladder cannot silently search
-			// everything; see `canonicalTags`.
+			// everything; see `canonicalTag`.
 			return SearchReport{}, tagErr
 		}
-		wantTags = canonical
-		base.Tags = canonical
+		wantTag = canonical
+		base.Tag = canonical
 	}
 
 	queryTokens := Tokenize(opts.Query)
@@ -623,7 +623,7 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 			}
 			ordered = kept
 		}
-		if len(opts.Tags) != 0 {
+		if opts.HasTag {
 			// 🔴 HERE, INSIDE THE LOOP OVER `scopes`, FOR THE REASON THE `ref-to` FILTER ABOVE
 			// SPELLS OUT: `scopes` comes from `index.Scopes()` — including on the `all_scopes=1`
 			// path — and that index was narrowed by `visible` at load time, so this filter can
@@ -637,7 +637,7 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 			// below is a claim about `searched + refToSkipped + tagSkipped`.
 			kept := make([]store.Entry, 0, len(ordered))
 			for _, e := range ordered {
-				if store.EntryHasAllTags(e, wantTags) {
+				if store.HasTag(e.Tags, wantTag) {
 					kept = append(kept, e)
 					continue
 				}

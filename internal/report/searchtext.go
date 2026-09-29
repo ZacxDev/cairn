@@ -127,8 +127,8 @@ func (r SearchReport) RenderText(host string, extraHeader []string, instance str
 	// entries whose tags were never read, in the direction that understates the category. The
 	// recall side has the same shape and says so: `TagScopeTotal` is assigned AFTER the
 	// reverse-lookup narrowing, not before it.
-	if len(r.Tags) != 0 {
-		out = append(out, tagLine(r.Tags, r.EntriesSearched, r.EntriesSearched+r.TagSkipped,
+	if r.Tag != "" {
+		out = append(out, tagLine(r.Tag, r.EntriesSearched, r.EntriesSearched+r.TagSkipped,
 			r.Label(), true))
 	}
 

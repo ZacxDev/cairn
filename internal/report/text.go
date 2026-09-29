@@ -231,13 +231,13 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 	// because that is the order the two filters ran in — so a report carrying both reads as the
 	// composition it is rather than as two independent claims about one index.
 	//
-	// ⚠ EMITTED ONLY WHEN THE FILTER WAS SENT, so no existing golden moves: `Tags` is empty on
+	// ⚠ EMITTED ONLY WHEN THE FILTER WAS SENT, so no existing golden moves: `Tag` is empty on
 	// every request that does not carry the parameter.
-	if len(r.Tags) != 0 {
+	if r.Tag != "" {
 		// The same render decision, not a status — `RendersNarrowedSet()`'s own header records
 		// the shapes a status-name derivation got wrong, and every one of them is reachable
 		// with `--tag` in place of `--ref-to`.
-		out = append(out, tagLine(r.Tags, r.TagMatched, r.TagScopeTotal, r.Scope+"/",
+		out = append(out, tagLine(r.Tag, r.TagMatched, r.TagScopeTotal, r.Scope+"/",
 			r.RendersNarrowedSet()))
 	}
 
@@ -340,21 +340,21 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 		out = append(out, "")
 		// 🔴 TWO SENTENCES FOR ONE STATUS, FOR THE REASON `ref-to-absent` ABOVE HAS TWO, AND
 		// WRITTEN THAT WAY FROM THE START RATHER THAN AFTER A ROUND MEASURED IT WRONG. This
-		// status is reached TWO ways — nothing in the set carried the tags (the filter's own
+		// status is reached TWO ways — nothing in the set carried the tag (the filter's own
 		// zero), and "the `--ref` operand is not among the entries that DID" — and a status
 		// cannot tell them apart. The discriminator is `TagMatched`, taken from the filter's own
 		// result; see its field header.
 		if r.TagMatched > 0 {
 			// The `--ref` operand loaded fine, so the malformed rows cannot make THIS claim
-			// wrong; they can only understate the count of entries that DO carry the tags.
+			// wrong; they can only understate the count of entries that DO carry the tag.
 			extra := ""
 			if n := len(r.Malformed); n > 0 {
 				extra = " ⚠ AND THAT COUNT IS ONLY OF ENTRIES THAT LOADED: " + strconv.Itoa(n) +
 					" entry file" + plural(n) + " in this scope could not be indexed (listed " +
 					"above), and an entry that never loaded carries no tags a filter can see."
 			}
-			out = append(out, "`"+r.Ref+"` IS NOT TAGGED "+quotedTags(r.Tags)+" — it was read "+
-				"and does not carry "+allOfThem(len(r.Tags))+", so the two narrowings compose "+
+			out = append(out, "`"+r.Ref+"` IS NOT TAGGED `"+r.Tag+"` — it was read "+
+				"and does not carry it, so the two narrowings compose "+
 				"to nothing and no body is printed. "+strconv.Itoa(r.TagMatched)+" of the "+
 				strconv.Itoa(r.TagScopeTotal)+" entr"+entryPlural(r.TagScopeTotal)+" in `"+
 				r.Scope+"/` "+doesOrDo(r.TagMatched)+" — re-run without `--ref` to see "+
@@ -373,9 +373,9 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 				"tags a filter can see — one of them may be tagged this. Check those before " +
 				"concluding nothing is."
 		}
-		out = append(out, "NO ENTRY IS TAGGED "+quotedTags(r.Tags)+" — the "+
+		out = append(out, "NO ENTRY IS TAGGED `"+r.Tag+"` — the "+
 			strconv.Itoa(r.TagScopeTotal)+" entr"+entryPlural(r.TagScopeTotal)+" in `"+
-			r.Scope+"/` were read and none of them carries "+allOfThem(len(r.Tags))+". Both "+
+			r.Scope+"/` were read and none of them carries it. Both "+
 			"sides of the comparison are FOLDED, so a differently-cased spelling would have "+
 			"been found — but the tag vocabulary is OPEN and nothing declares it, so a typo in "+
 			"the file or in this query is a category of one that no check can see."+extra)
@@ -610,13 +610,11 @@ func reachClause(matched int, narrowedSetShown, narrowedFurther bool) string {
 // tagLine is the ONE spelling of the category-filter header, shared by both renderers for
 // exactly the reason `refToLine` above is shared: two report types, one sentence.
 //
-// 🔴 IT IS A SEPARATE FUNCTION AND NOT A `refToLine` PARAMETERISED BY A LABEL, AND THE
-// DIFFERENCE IS GRAMMATICAL RATHER THAN COSMETIC. This line's operand is a SET (`a`, `b`), so
-// the verb agrees with the set's size ("carry it" / "carry all of them") while `ref-to`'s
-// operand is one ref and its verb never moves. Folding the two into one function would put a
-// conditional on every clause of a sentence whose only shared part is the trailing
-// NARROWING caveat — and that caveat is the half neither renderer may spell twice, so it is
-// spelled once in `narrowingCaveat`.
+// 🔴 IT IS A SEPARATE FUNCTION AND NOT A `refToLine` PARAMETERISED BY A LABEL, EVEN THOUGH BOTH
+// OPERANDS ARE NOW SCALAR. The two sentences differ in every clause but the trailing NARROWING
+// caveat — "carry it" against "reference it", and two different pairs of counts — so folding them
+// would put a conditional on each clause to save one shared word. That caveat is the half neither
+// renderer may spell twice, so it is spelled once in `narrowingCaveat`.
 //
 // ⚠ `label` CARRIES ITS OWN TRAILING `/` — the trap `refToLine`'s header records, inherited
 // here because this function is copied from it. Pass `SearchReport.Label()`, never
@@ -626,11 +624,10 @@ func reachClause(matched int, narrowedSetShown, narrowedFurther bool) string {
 // the third reach state is unreachable here. A third filter added after it would have to pass
 // one — and would also have to re-derive this line's denominator, which is the set the tag
 // filter SAW rather than the readable total.
-func tagLine(tags []string, matched, total int, label string, narrowedSetShown bool) string {
-	return "  tag: " + quotedTags(tags) + " — " + strconv.Itoa(matched) + " of " +
-		strconv.Itoa(total) + " entr" + entryPlural(total) + " in `" + label + "` carry " +
-		allOfThem(len(tags)) + ", " + reachClause(matched, narrowedSetShown, false) +
-		narrowingCaveat
+func tagLine(tag string, matched, total int, label string, narrowedSetShown bool) string {
+	return "  tag: `" + tag + "` — " + strconv.Itoa(matched) + " of " +
+		strconv.Itoa(total) + " entr" + entryPlural(total) + " in `" + label + "` carry it, " +
+		reachClause(matched, narrowedSetShown, false) + narrowingCaveat
 }
 
 // narrowingCaveat is the clause both filter headers end with, spelled ONCE.
@@ -642,33 +639,6 @@ func tagLine(tags []string, matched, total int, label string, narrowedSetShown b
 // go stale in whichever line was edited second.
 const narrowingCaveat = " This is a NARROWING, not a truncation: the rest were read and " +
 	"did not match."
-
-// quotedTags is `` `a`, `b` `` — every tag backticked, in the canonical order the filter used.
-//
-// ⚠ BACKTICKED INDIVIDUALLY AND NOT AS ONE RUN. `` `a, b` `` reads as one tag whose name
-// contains a comma, which is a tag this loader cannot hold; the per-tag quoting is what makes
-// the operand set legible as a set.
-func quotedTags(tags []string) string {
-	out := make([]string, 0, len(tags))
-	for _, t := range tags {
-		out = append(out, "`"+t+"`")
-	}
-	return strings.Join(out, ", ")
-}
-
-// allOfThem agrees with the number of TAGS, which is a different count from every other idiom
-// in this file — those agree with a number of ENTRIES.
-//
-// 🔴 NAMED FOR WHAT IT AGREES WITH, because the `tag-absent` sentences put an entry count and a
-// tag count in one clause and an idiom picked by eye there would agree with the wrong one. The
-// AND semantics are why the plural form says "all of them" rather than "them": a report that
-// said "carry them" would read as an OR to anyone who had not read `EntryHasAllTags`.
-func allOfThem(tagCount int) string {
-	if tagCount == 1 {
-		return "it"
-	}
-	return "all of them"
-}
 
 // themOrIt and doesOrDo agree with a COUNT the reader is being pointed at, not with the
 // entry-total beside it in the same sentence. Spelled here beside their siblings because the

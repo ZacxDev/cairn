@@ -339,7 +339,7 @@ class TestStatusIsTheDiscriminator:
             # so this is `tag-absent` and not `recalled`; the vocabulary is OPEN, so there is
             # no valid-tag set to pick an unreachable member from — an operator-looking name
             # nothing declares is the honest fixture.
-            rc.recall(store, SCOPE, tags=["no-such-category"]).status,
+            rc.recall(store, SCOPE, tag="no-such-category").status,
             rc.recall(store, SCOPE).status,
             rc.search(store, SCOPE, "readiness").status,
             rc.search(store, SCOPE, "kryptonite").status,
@@ -6084,7 +6084,7 @@ CLAUSE_CASES = (
     # filter removed it, so NOTHING below is about it. `narrowed_set_shown` has to WIN over
     # `narrowed_further`, or the line would invite a reader to look for a subset that is not
     # on screen; `_reach_clause` states that precedence and this row is what measures it.
-    ("tag-absent", {"tags": ["no-such-category"]}, CLAUSE_LINE_SILENT, False),
+    ("tag-absent", {"tag": "no-such-category"}, CLAUSE_LINE_SILENT, False),
 )
 
 #: Every combination of "is `entries` empty" × "is `listing` empty", which is the axis
@@ -6479,7 +6479,7 @@ class TestTheTagFilterNarrowsAfterScopeAuthorisation:
     def test_recall(self, tag_principal_store: Path) -> None:
         # POSITIVE CONTROL: the principal who CAN read `beta-notes` finds the tag there.
         as_beta = rc.recall(
-            tag_principal_store, "beta-notes", tags=[TAG_SHARED], visible_scopes=["beta-notes"]
+            tag_principal_store, "beta-notes", tag=TAG_SHARED, visible_scopes=["beta-notes"]
         )
         assert (as_beta.status, as_beta.total_in_scope) == ("recalled", 1), (
             "POSITIVE CONTROL FAILED: the zero below is then a fact about a filter wired to "
@@ -6491,7 +6491,7 @@ class TestTheTagFilterNarrowsAfterScopeAuthorisation:
         as_alpha = rc.recall(
             tag_principal_store,
             "beta-notes",
-            tags=[TAG_SHARED],
+            tag=TAG_SHARED,
             visible_scopes=["alpha-notes"],
         )
         assert as_alpha.status == "scope-absent", (
@@ -6504,7 +6504,7 @@ class TestTheTagFilterNarrowsAfterScopeAuthorisation:
         own = rc.recall(
             tag_principal_store,
             "alpha-notes",
-            tags=[TAG_SHARED],
+            tag=TAG_SHARED,
             visible_scopes=["alpha-notes"],
         )
         assert own.status == "recalled"
@@ -6517,7 +6517,7 @@ class TestTheTagFilterNarrowsAfterScopeAuthorisation:
         safe, and a tag filter over a store-wide load would re-open exactly that hole. This is
         also the literal shape of "every marketing entry, across scopes".
         """
-        kw = dict(all_scopes=True, tags=[TAG_SHARED])
+        kw = dict(all_scopes=True, tag=TAG_SHARED)
         as_beta = rc.search(
             tag_principal_store, "beta-notes", "readiness", visible_scopes=["beta-notes"], **kw
         )
@@ -6544,7 +6544,7 @@ class TestTheTagFilterAnswersItsOwnNonFinding:
     """Criterion 6: the EXISTING empty-result vocabulary, not a new exit code."""
 
     def test_the_status_the_prose_and_the_exit_code(self, tag_principal_store: Path) -> None:
-        rep = rc.recall(tag_principal_store, "alpha-notes", tags=["no-such-category"])
+        rep = rc.recall(tag_principal_store, "alpha-notes", tag="no-such-category")
         assert rep.status == "tag-absent", (
             "`scope-empty` would claim the directory holds nothing, which is false of a scope "
             "holding two entries"
@@ -6586,18 +6586,21 @@ class TestTheTagNarrowingAnnouncesItself:
 
     def test_one_tag_on_both_report_types(self, tag_principal_store: Path) -> None:
         # The CANONICAL spelling: the query said `Marketing`, the line says `marketing`.
-        rec = rc.recall(tag_principal_store, "alpha-notes", tags=["Marketing"])
+        rec = rc.recall(tag_principal_store, "alpha-notes", tag="Marketing")
         assert self.ONE in rc.render_text(rec)
-        srch = rc.search(tag_principal_store, "alpha-notes", "readiness", tags=[TAG_SHARED])
+        srch = rc.search(tag_principal_store, "alpha-notes", "readiness", tag=TAG_SHARED)
         assert self.ONE in rc.render_search(srch)
 
-    def test_two_tags_move_the_verb(self, tag_principal_store: Path) -> None:
-        """🔴 AND SEMANTICS, SAID IN THE SENTENCE. "carry them" would read as a union to
-        anyone who had not read `entry_has_all_tags`; "carry all of them" cannot."""
-        rep = rc.recall(tag_principal_store, "alpha-notes", tags=["internal", "marketing"])
+    def test_the_other_tag_on_the_same_entry_gets_its_own_line(
+        self, tag_principal_store: Path
+    ) -> None:
+        """⚠ WHAT KEEPS THE LINE ABOVE FROM PASSING WITH THE OPERAND IGNORED. `internal` is
+        carried by `runbook` and by nothing else in this scope, so its line names a DIFFERENT
+        tag over the same counts."""
+        rep = rc.recall(tag_principal_store, "alpha-notes", tag="internal")
         assert (
-            "  tag: `internal`, `marketing` — 1 of 2 entries in `alpha-notes/` carry all of "
-            "them, and everything below is about those 1."
+            "  tag: `internal` — 1 of 2 entries in `alpha-notes/` carry it, and everything "
+            "below is about those 1."
         ) in rc.render_text(rep)
 
     def test_it_is_absent_without_the_filter(self, tag_principal_store: Path) -> None:
@@ -6623,12 +6626,12 @@ class TestTheTagFilterComposesWithTheOthers:
     """The three narrowings compose, and each non-finding is attributed to ITS OWN filter."""
 
     def test_tag_composes_with_ref(self, tag_principal_store: Path) -> None:
-        hit = rc.recall(tag_principal_store, "alpha-notes", ref="runbook", tags=[TAG_SHARED])
+        hit = rc.recall(tag_principal_store, "alpha-notes", ref="runbook", tag=TAG_SHARED)
         assert (hit.status, len(hit.entries)) == ("recalled", 1)
         # 🔴 THE ENTRY DOES NOT CARRY IT. `resolve_ref_tiered` resolves against the whole
         # index and knows nothing about the tag set, so without the membership test this
         # prints `unrelated` in full — the report answering a question nobody asked.
-        miss = rc.recall(tag_principal_store, "alpha-notes", ref="unrelated", tags=[TAG_SHARED])
+        miss = rc.recall(tag_principal_store, "alpha-notes", ref="unrelated", tag=TAG_SHARED)
         assert miss.status == "tag-absent" and not miss.entries
         # 🔴 AND THE RENDERED TEXT, BECAUSE STATUS AND `len(entries)` CAN BOTH BE CORRECT
         # WHILE THE PROSE IS FALSE — the shape that shipped twice on the `ref-to` side, in
@@ -6646,7 +6649,7 @@ class TestTheTagFilterComposesWithTheOthers:
         # The CONTROL on the wording swap: the other route to this status must keep the
         # original sentence, or the branch above has simply replaced it everywhere.
         none = rc.recall(
-            tag_principal_store, "alpha-notes", ref="runbook", tags=["no-such-category"]
+            tag_principal_store, "alpha-notes", ref="runbook", tag="no-such-category"
         )
         assert "NO ENTRY IS TAGGED `no-such-category`" in rc.render_text(none)
 
@@ -6682,7 +6685,7 @@ class TestTheTagFilterComposesWithTheOthers:
             "alpha-notes",
             ref="ref-only",
             ref_to=TAG_COMPOSE_REF,
-            tags=[TAG_SHARED],
+            tag=TAG_SHARED,
         )
         assert by_tag.status == "tag-absent"
         by_tag_text = rc.render_text(by_tag)
@@ -6697,7 +6700,7 @@ class TestTheTagFilterComposesWithTheOthers:
             "alpha-notes",
             ref="tag-only",
             ref_to=TAG_COMPOSE_REF,
-            tags=[TAG_SHARED],
+            tag=TAG_SHARED,
         )
         assert by_ref.status == "ref-to-absent"
         by_ref_text = rc.render_text(by_ref)
@@ -6741,7 +6744,7 @@ class TestTheTagFilterComposesWithTheOthers:
             "below is about those 1."
         )
 
-        rec = rc.recall(store, "alpha-notes", ref_to=TAG_COMPOSE_REF, tags=[TAG_SHARED])
+        rec = rc.recall(store, "alpha-notes", ref_to=TAG_COMPOSE_REF, tag=TAG_SHARED)
         assert (rec.ref_to_matched, rec.ref_to_scope_total) == (2, 3)
         assert (rec.tag_matched, rec.tag_scope_total) == (1, 2)
         rec_text = rc.render_text(rec)
@@ -6752,7 +6755,7 @@ class TestTheTagFilterComposesWithTheOthers:
         assert [e.ref for e in rec.entries] == ["both"]
 
         srch = rc.search(
-            store, "alpha-notes", "readiness", ref_to=TAG_COMPOSE_REF, tags=[TAG_SHARED]
+            store, "alpha-notes", "readiness", ref_to=TAG_COMPOSE_REF, tag=TAG_SHARED
         )
         assert (srch.entries_searched, srch.ref_to_skipped, srch.tag_skipped) == (1, 1, 1), (
             "the three counters must PARTITION the three readable entries"
@@ -6776,7 +6779,7 @@ class TestTheTagFilterComposesWithTheOthers:
             )
         text = rc.render_text(
             rc.recall(
-                store, "alpha-notes", mode="full", ref_to=TAG_COMPOSE_REF, tags=[TAG_SHARED]
+                store, "alpha-notes", mode="full", ref_to=TAG_COMPOSE_REF, tag=TAG_SHARED
             )
         )
         assert "narrows those 2 again" not in text
@@ -6839,7 +6842,7 @@ class TestATagDrivenZeroIsNotAnUnreadableStore:
     def test_a_filter_driven_zero_falls_through_to_no_match(
         self, tag_zero_store: Path
     ) -> None:
-        rep = rc.search(tag_zero_store, "tag-kept-none", "readiness", tags=[TAG_SHARED])
+        rep = rc.search(tag_zero_store, "tag-kept-none", "readiness", tag=TAG_SHARED)
         assert (rep.entries_searched, rep.tag_skipped, len(rep.malformed)) == (0, 1, 1), (
             "the fixture did not build the shape this test is named for"
         )
@@ -6873,7 +6876,7 @@ class TestATagDrivenZeroIsNotAnUnreadableStore:
     def test_the_positive_control_still_fires(self, tag_zero_store: Path) -> None:
         """The branch must NOT be deleted: a scope whose only file cannot be indexed is still
         `search-unreadable`, or every assertion above is satisfied by an unreachable status."""
-        rep = rc.search(tag_zero_store, "tag-all-broken", "readiness", tags=[TAG_SHARED])
+        rep = rc.search(tag_zero_store, "tag-all-broken", "readiness", tag=TAG_SHARED)
         assert (rep.entries_searched, rep.tag_skipped, len(rep.malformed)) == (0, 0, 1)
         assert rep.status == "search-unreadable"
         text = rc.render_search(rep)
@@ -6896,7 +6899,7 @@ class TestATagDrivenZeroIsNotAnUnreadableStore:
             _tagged("has-the-ref", "mixed-set", refs=[TAG_COMPOSE_REF]), encoding="utf-8"
         )
         rep = rc.search(
-            store, "mixed-set", "readiness", ref_to=TAG_COMPOSE_REF, tags=[TAG_SHARED]
+            store, "mixed-set", "readiness", ref_to=TAG_COMPOSE_REF, tag=TAG_SHARED
         )
         assert (rep.entries_searched, rep.ref_to_skipped, rep.tag_skipped) == (0, 1, 1)
         assert rep.status == "search-no-match"
@@ -6937,8 +6940,13 @@ class TestAMalformedTagIsRefusedByTheOptionLadder:
     — indistinguishable from a tag nobody has used, when the real cause is that the query said
     nothing.
 
-    ⚠ MEASURED: with `_validated_tags`' condition short-circuited to `False`, every row here
+    ⚠ MEASURED: with `_validated_tag`'s condition short-circuited to `False`, every row here
     fails and nothing else in the suite does.
+
+    ⚠ AND `""` IS THE ROW THE SCALAR SURFACE MADE LOAD-BEARING RATHER THAN INCIDENTAL. `?tag=`
+    carrying nothing is a PRESENT operand that names no category, and the only thing separating
+    it from an absent parameter is the `None` default; a `str` parameter alone would make this
+    row unreachable and answer 200 over the whole scope for it.
     """
 
     WANT = (
@@ -6951,10 +6959,10 @@ class TestAMalformedTagIsRefusedByTheOptionLadder:
         self, tag_principal_store: Path, bad: str
     ) -> None:
         with pytest.raises(ValueError) as exc:
-            rc.recall(tag_principal_store, "alpha-notes", tags=["marketing", bad])
+            rc.recall(tag_principal_store, "alpha-notes", tag=bad)
         assert str(exc.value) == self.WANT.format(bad)
         with pytest.raises(ValueError) as exc:
-            rc.search(tag_principal_store, "alpha-notes", "readiness", tags=[bad])
+            rc.search(tag_principal_store, "alpha-notes", "readiness", tag=bad)
         assert str(exc.value) == self.WANT.format(bad)
 
     def test_the_ladder_order_is_unchanged(self, tag_principal_store: Path) -> None:
@@ -6963,14 +6971,21 @@ class TestAMalformedTagIsRefusedByTheOptionLadder:
         bad REF-TO and a bad tag gets the ref-to's, because this guard was appended after it.
         """
         with pytest.raises(ValueError, match=r"^limit must be"):
-            rc.recall(tag_principal_store, "alpha-notes", limit=0, tags=["!!!"])
+            rc.recall(tag_principal_store, "alpha-notes", limit=0, tag="!!!")
         with pytest.raises(ValueError, match=r"^ref-to is not a well-formed"):
             rc.recall(
-                tag_principal_store, "alpha-notes", ref_to="no-colon-here", tags=["!!!"]
+                tag_principal_store, "alpha-notes", ref_to="no-colon-here", tag="!!!"
             )
 
-    def test_a_well_formed_operand_set_passes(self, tag_principal_store: Path) -> None:
+    @pytest.mark.parametrize("good", ["Marketing", "project_xyz", "a.b-c"])
+    def test_a_well_formed_operand_passes(
+        self, tag_principal_store: Path, good: str
+    ) -> None:
         """The control: the refusals above are not "everything is refused"."""
-        rc.recall(
-            tag_principal_store, "alpha-notes", tags=["Marketing", "project_xyz", "a.b-c"]
-        )
+        rc.recall(tag_principal_store, "alpha-notes", tag=good)
+
+    def test_an_absent_operand_is_not_a_malformed_one(
+        self, tag_principal_store: Path
+    ) -> None:
+        """The other half of the `None`/`""` split: no `--tag` at all must not be refused."""
+        rc.recall(tag_principal_store, "alpha-notes", tag=None)

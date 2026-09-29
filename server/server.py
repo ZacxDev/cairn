@@ -4170,18 +4170,17 @@ class StoreRequestHandler(BaseHTTPRequestHandler):
         # clients expose is `--ref-to`, the same spelling, so neither maps to the other
         # by mistake.
         ref_to_values = params.get("ref-to")
-        # 🔴 EVERY VALUE, NOT THE LAST, AND THAT IS THE WHOLE DIFFERENCE BETWEEN AN AND FILTER
-        # AND A ONE-TAG ONE. `?tag=` is the only REPEATABLE parameter on this route; every
-        # other one here is last-wins by contract (`?limit=1&limit=2` means 2, and the corpus
-        # pins it). `params` already holds repetitions in query-string order, so this is a read
-        # rather than a reconstruction.
+        # 🔴 THE LAST VALUE, LIKE EVERY OTHER PARAMETER ON THIS ROUTE, BECAUSE `?tag=` IS
+        # SCALAR. It was repeatable with AND semantics first; the operator decided one tag, and
+        # that is what makes reading ONE value out of a repetition correct by definition rather
+        # than a silent drop. `?limit=1&limit=2` means 2 here and the corpus pins that rule.
         #
-        # ⚠ AN EMPTY `?tag=` REACHES `rc.recall` AND IS REFUSED THERE, on purpose. The fold
-        # DROPS a member that folds away, so filtering here would turn `?tag=` into "no filter"
-        # and answer 200 over the whole scope for a query that named no category;
-        # `_validated_tags` reads the RAW operands for exactly that reason, and its ValueError
-        # becomes the same 400 every other malformed operand does.
-        tag_values = params.get("tag") or []
+        # ⚠ AN EMPTY `?tag=` REACHES `rc.recall` AND IS REFUSED THERE, on purpose — `""` is a
+        # present operand that names no category, not an absent filter, so defaulting it here
+        # would answer 200 over the whole scope for it; `_validated_tag` takes the RAW operand
+        # for exactly that reason, and its ValueError becomes the same 400 every other malformed
+        # operand does.
+        tag_values = params.get("tag")
         limit = _int_param(params, "limit")
         page = _int_param(params, "page")
         report = rc.recall(
@@ -4189,7 +4188,7 @@ class StoreRequestHandler(BaseHTTPRequestHandler):
             scope,
             ref=ref_values[-1] if ref_values else None,
             ref_to=ref_to_values[-1] if ref_to_values else None,
-            tags=tag_values,
+            tag=tag_values[-1] if tag_values else None,
             limit=limit if limit is not None else rc.DEFAULT_ENTRY_LIMIT,
             mode=mode,
             page=page if page is not None else 1,
@@ -4225,9 +4224,9 @@ class StoreRequestHandler(BaseHTTPRequestHandler):
             ref_to=(
                 params["ref-to"][-1] if params.get("ref-to") else None
             ),
-            # The same repeatable `?tag=` the recall route reads — EVERY value, never the last.
-            # See that route for why.
-            tags=params.get("tag") or [],
+            # The same scalar `?tag=` the recall route reads — last-wins. See that route for
+            # why, including why an EMPTY value is not an absent filter.
+            tag=(params["tag"][-1] if params.get("tag") else None),
             # 🔴 AND THIS IS WHAT MAKES `?all_scopes=1` SAFE. That flag names no
             # scope, so a per-scope refusal check has nothing to refuse — it
             # would search the CONTENT of every scope in the store. Narrowing

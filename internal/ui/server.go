@@ -7,7 +7,6 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -606,6 +605,41 @@ func (s StoreSource) readEntry(scope string, e store.Entry) (Entry, error) {
 	return item, nil
 }
 
+// EntriesByTag answers `/?tag=<name>`: every visible entry carrying the folded tag.
+//
+// 🔴 IT TAKES THE ALREADY-NARROWED SCOPE LIST AS AN ARGUMENT RATHER THAN RE-READING THE STORE,
+// AND THAT IS THE AUTHORISATION ORDER MADE STRUCTURAL. `handlePage` has already called
+// `Visible(auth)` to build the cards; handing that result here means this function has no way
+// to reach a scope the caller cannot read, because it never touches the store or the
+// authorization. A version taking `auth` and loading again would be correct today and one
+// dropped argument away from answering "every marketing entry" over the whole disk.
+//
+// ⚠ IT IS A PACKAGE FUNCTION AND NOT A METHOD ON `StoreSource` FOR THE SAME REASON: a method
+// would have `s.Root` in scope, which is the one thing a filter over an authorised list must
+// not need.
+//
+// 🔴 THE MEMBERSHIP TEST IS `store.HasTag` AND NOT A LOCAL `slices.Contains`, WHICH IS THE
+// CONSOLIDATION RULE APPLIED TO THE SITE THAT BROKE IT. It open-coded the test while
+// `store.HasTag`'s own header claimed to be the one spelling — two callers in `internal/report`
+// and this third one nothing compared against them. Nothing about a browser listing makes it a
+// different question from `cairn recall --tag`, and the day the rule changes (a fold, a
+// hierarchy, a prefix) is the day a third spelling answers differently with no gate on it.
+func EntriesByTag(scopes []Scope, tag string) TagMatches {
+	out := TagMatches{Tag: tag, ScopesScanned: len(scopes)}
+	for _, sc := range scopes {
+		for _, e := range sc.Entries {
+			out.Scanned++
+			if !store.HasTag(e.Tags, tag) {
+				continue
+			}
+			out.Entries = append(out.Entries, TagMatch{
+				ScopeID: sc.ID, Scope: sc.Name, Ref: e.Ref, Tags: e.Tags,
+			})
+		}
+	}
+	return out
+}
+
 // Search runs the root page's query through `internal/report`'s engine.
 //
 // 🔴 IT IS THE SAME SCORED, AUTHORITY-NARROWED SEARCH THE CLI AND THE POD RUN, AND A
@@ -619,34 +653,6 @@ func (s StoreSource) readEntry(scope string, e store.Entry) (Entry, error) {
 // OWN RULING: an all-scopes search names no scope, so there is nothing for a per-scope
 // refusal check to refuse, and narrowing the INDEX is what makes a store-wide search
 // store-wide over what the caller may see and nothing else.
-// EntriesByTag answers `/?tag=<name>`: every visible entry carrying the folded tag.
-//
-// 🔴 IT TAKES THE ALREADY-NARROWED SCOPE LIST AS AN ARGUMENT RATHER THAN RE-READING THE STORE,
-// AND THAT IS THE AUTHORISATION ORDER MADE STRUCTURAL. `handlePage` has already called
-// `Visible(auth)` to build the cards; handing that result here means this function has no way
-// to reach a scope the caller cannot read, because it never touches the store or the
-// authorization. A version taking `auth` and loading again would be correct today and one
-// dropped argument away from answering "every marketing entry" over the whole disk.
-//
-// ⚠ IT IS A PACKAGE FUNCTION AND NOT A METHOD ON `StoreSource` FOR THE SAME REASON: a method
-// would have `s.Root` in scope, which is the one thing a filter over an authorised list must
-// not need.
-func EntriesByTag(scopes []Scope, tag string) TagMatches {
-	out := TagMatches{Tag: tag, ScopesScanned: len(scopes)}
-	for _, sc := range scopes {
-		for _, e := range sc.Entries {
-			out.Scanned++
-			if !slices.Contains(e.Tags, tag) {
-				continue
-			}
-			out.Entries = append(out.Entries, TagMatch{
-				ScopeID: sc.ID, Scope: sc.Name, Ref: e.Ref, Tags: e.Tags,
-			})
-		}
-	}
-	return out
-}
-
 func (s StoreSource) Search(auth control.Authorization, query string) (SearchResults, error) {
 	named := auth.NamedScopes(control.VerbRead)
 	rep, err := report.Search(s.Root, report.SearchOptions{
@@ -1201,6 +1207,13 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request, id identity.
 	// A `/?tag=Marketing` typed by hand — or a link from a surface that did not fold — must
 	// reach the same entries `/?tag=marketing` does, and an unfolded compare would answer a
 	// silent zero instead.
+	//
+	// ⚠ `Get` READS ONE VALUE OF `?tag=`, AND THAT IS CORRECT BECAUSE THE PARAMETER IS SCALAR —
+	// it was NOT correct while the parameter was repeatable. `?tag=a&tag=b` then meant "AND of
+	// both" on the pod and "a, with b silently dropped" here, with no repeated-parameter test on
+	// this side at all. What closed that is the SURFACE NARROWING, not a change on this line: one
+	// value is the whole operand, and the pod reads the last one by the same rule every other
+	// scalar parameter there follows.
 	//
 	// ⚠ AN UNRECOGNISED TAG IS AN HONEST ZERO AND NEVER A REFUSAL, which is [QueryView]'s
 	// ruling restated: a filter is not an authority question. A `?tag=` that folds AWAY (empty,

@@ -2321,6 +2321,31 @@ than documentation.
 carrying a real listing — before asserting the ledger has no tag row. A ledger with no row is
 trivially true of a build that reads nothing.
 
+## 🔴 `?tag=` IS SCALAR, AND THAT IS WHAT MADE THIS PAGE'S ONE-VALUE READ CORRECT
+
+`handlePage` reads the parameter with `r.URL.Query().Get(QueryTag)`, which returns the FIRST
+value and ignores the rest. While `?tag=` was repeatable with AND semantics that was a real
+divergence and nothing here could see it: `?tag=a&tag=b` meant "entries carrying both" on the
+pod and "entries carrying `a`, with `b` silently dropped" on this page, at 200, with a heading
+naming one tag — and there was no repeated-parameter test on this side at all. The operand is
+now ONE tag on an operator decision, so one value IS the whole operand and the pod reads the
+LAST one by the rule every other scalar parameter there follows.
+
+⚠ **Nothing on this page was fixed, and saying so is the point.** The line is what it was; the
+surface narrowed underneath it. What that leaves declared rather than closed is the REFUSAL
+policy, which still differs on purpose: an operand that folds away is a 400 on the pod and an
+honest zero here, because this surface has no place to put a 400 for a browse parameter.
+
+## 🔴 THE MEMBERSHIP TEST IS `store.HasTag`, NOT A LOCAL `slices.Contains`
+
+`EntriesByTag` open-coded it while `store.HasTag`'s own header claimed to be the one spelling of
+the predicate — two callers in `internal/report` and this third one that nothing compared against
+them. Nothing about a browser listing makes "does this entry carry this tag" a different question
+from `cairn recall --tag`, and the day the rule changes (a fold, a hierarchy, a prefix) is the day
+a third spelling answers differently with no gate on it. The predicate takes the TAG SET rather
+than a `store.Entry` for exactly this reason: `ui.Entry` is its own type, and a predicate over
+`store.Entry` would have been unreachable from here.
+
 ## 🔴 THE AUTHORISATION ORDER IS STRUCTURAL HERE RATHER THAN REMEMBERED
 
 `EntriesByTag` takes the already-narrowed scope **list** and is a package function rather than a
@@ -2370,4 +2395,6 @@ not: that function ALLOWLISTS absolute http(s) and would refuse a same-origin pa
 - **Two clients of the same listing.** The pod's `?tag=` and this page's `?tag=` are different code
   paths over the same key: the pod goes through `report.Recall`/`report.Search` and this one
   filters `Visible`'s result. Nothing compares them, and they are not meant to agree on OUTPUT —
-  only on which entries carry a tag.
+  only on which entries carry a tag. They now share the PREDICATE (`store.HasTag`) and the FOLD
+  (`store.NormalizeRef`), so that half is structural rather than parallel; what is still
+  uncompared is everything either side does around it, including the refusal policy above.

@@ -1173,18 +1173,18 @@ func (s *Server) recall(rq *request, parts []string, params url.Values) error {
 	if raw, present := lastValue(params, "ref-to"); present {
 		opts.RefTo, opts.HasRefTo = raw, true
 	}
-	// 🔴 `allValues`, NOT `lastValue`, AND THAT IS THE WHOLE DIFFERENCE BETWEEN AN AND FILTER
-	// AND A ONE-TAG ONE. `?tag=` is the only REPEATABLE parameter on this route; every other one
-	// here is last-wins by contract. `store.NormalizeTags` is what folds, dedupes and sorts the
-	// set, so the canonical spelling reaching the report is the same one an entry's `tags:` went
-	// through and the rendered header says what the query narrowed by.
+	// 🔴 `lastValue`, LIKE EVERY OTHER PARAMETER ON THIS ROUTE, BECAUSE `?tag=` IS SCALAR. It was
+	// repeatable with AND semantics first, and the operator decided one tag — which is what makes
+	// reading ONE value out of a repetition correct by definition rather than a silent drop.
+	// Last-wins is the contract for every parameter here (`?limit=1&limit=2` means 2, and
+	// `recall-repeated-parameter` pins the rule), so `?tag=a&tag=b` is `b` by the same rule.
 	//
-	// ⚠ AN EMPTY `?tag=` SURVIVES THIS AND IS REFUSED BY `ValidateRecall` BELOW, on purpose:
-	// `NormalizeTags` drops a member that folds away, so filtering here would turn `?tag=` into
-	// "no filter" and answer 200 over the whole scope for a query that named no category.
-	// `report.validateTags` reads the RAW operands for exactly that reason.
-	if raw := allValues(params, "tag"); len(raw) != 0 {
-		opts.Tags = raw
+	// ⚠ AN EMPTY `?tag=` SURVIVES THIS AND IS REFUSED BY `ValidateRecall` BELOW, on purpose, and
+	// that is what `HasTag` is for: `""` is a present operand that names no category, so treating
+	// it as an absent filter would answer 200 over the whole scope for it — the widening
+	// direction. `report.validateTag` reads the RAW operand for exactly that reason.
+	if raw, present := lastValue(params, "tag"); present {
+		opts.Tag, opts.HasTag = raw, true
 	}
 	limit, err := intParam(params, "limit")
 	if err != nil {
@@ -1229,10 +1229,10 @@ func (s *Server) search(rq *request, parts []string, params url.Values) error {
 	if raw, present := lastValue(params, "ref-to"); present {
 		opts.RefTo, opts.HasRefTo = raw, true
 	}
-	// The same repeatable `?tag=` the recall route reads — `allValues`, never `lastValue`. See
-	// that route for why.
-	if raw := allValues(params, "tag"); len(raw) != 0 {
-		opts.Tags = raw
+	// The same scalar `?tag=` the recall route reads — last-wins. See that route for why, and
+	// for why an EMPTY value is not an absent filter.
+	if raw, present := lastValue(params, "tag"); present {
+		opts.Tag, opts.HasTag = raw, true
 	}
 	contextParam, err := intParam(params, "context")
 	if err != nil {
@@ -1437,23 +1437,6 @@ func lastOr(params url.Values, name, fallback string) string {
 		return value
 	}
 	return fallback
-}
-
-// allValues is EVERY value of a repeated parameter, in the order the query string carried them.
-//
-// 🔴 IT EXISTS BECAUSE `lastValue` IS THE WRONG ANSWER FOR A REPEATABLE PARAMETER AND WOULD BE
-// SILENT ABOUT IT. `?tag=a&tag=b` through `lastValue` is `b` — an AND filter that quietly became
-// a one-tag filter, returning MORE entries than asked for with a 200 and a header line naming
-// one tag. Last-wins is the contract for every SCALAR parameter on these routes (`?limit=1&limit=2`
-// means 2, and the corpus pins it); it is not a contract about a parameter whose repetitions are
-// its operand set.
-//
-// ⚠ IT PRESERVES ORDER AND DOES NOT DEDUPE. Both are the caller's job: `store.NormalizeTags`
-// folds, dedupes and sorts, and doing any of it here would put the canonicalisation rule at two
-// sites. `internal/api/query.go`'s `parseQuery` already appends repetitions in query-string order,
-// which is what makes this a read rather than a reconstruction.
-func allValues(params url.Values, name string) []string {
-	return params[name]
 }
 
 // intParam parses an optional integer parameter.

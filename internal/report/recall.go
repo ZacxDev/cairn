@@ -96,14 +96,15 @@ type RecallReport struct {
 	// filter's own result, on the only branch that runs the filter.
 	RefToMatched int
 
-	// Tags is the `?tag=` CATEGORY narrowing, canonical and sorted. Empty means no filter was
-	// sent — see `RecallOptions.Tags` for why there is no `HasTags` beside it.
+	// Tag is the `?tag=` CATEGORY narrowing, FOLDED. `""` means no filter was sent — and unlike
+	// `RecallOptions.Tag` this needs no `Has…` companion, because `validateTag` has already
+	// refused an operand that folds away, so a report can never hold a present-but-empty tag.
 	//
 	// ⚠ SET ON EVERY STATUS THE NARROWING REACHED, and NOT on `scope-absent` or
 	// `scope-unreadable`, for the reason `RefTo`'s own note gives: both return before the
 	// filter runs, and announcing a narrowing above "this scope does not exist" would suggest
 	// the narrowing is why nothing came back.
-	Tags []string
+	Tag string
 
 	// TagScopeTotal is how many entries were in play BEFORE the tag filter ran — which is the
 	// scope's own total, or the `ref-to`-narrowed count when both filters are present, because
@@ -114,13 +115,13 @@ type RecallReport struct {
 	// scope holds 2 entries". The rendered tag line prints both.
 	TagScopeTotal int
 
-	// TagMatched is how many of those entries carry every named tag: the numerator of the
-	// rendered tag line.
+	// TagMatched is how many of those entries carry the tag: the numerator of the rendered tag
+	// line.
 	//
 	// 🔴 A STORED COUNT TAKEN FROM THE FILTER'S OWN RESULT, NEVER DERIVED FROM A STATUS. That
 	// is not a preference — it is `RefToMatched`'s measured lesson applied before it can be
 	// re-learned here, and the mechanism is identical: `tag-absent` is reached TWO ways (nothing
-	// in the set matched, and the `--ref` operand is not among the ones that did), and a status
+	// in the set carried it, and the `--ref` operand is not among the ones that did), and a status
 	// cannot tell them apart. Deriving the numerator from the status printed "0 of N" over a
 	// scope where other entries DID match, in both implementations at once, so no assertion
 	// comparing the two could see it. Read this field; do not re-derive it.
@@ -428,17 +429,17 @@ func Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (Recal
 	// `TagScopeTotal`, for the reason spelled out above `RefToScopeTotal`: every `recalled`
 	// branch sets `TotalInScope` from the set the report is ABOUT, and the prose that reads it
 	// is a statement about the index the reader is looking at.
-	if len(opts.Tags) != 0 {
-		wantTags, tagErr := canonicalTags(opts.Tags)
+	if opts.HasTag {
+		wantTag, tagErr := canonicalTag(opts.Tag)
 		if tagErr != nil {
 			return RecallReport{}, tagErr
 		}
 		// The canonical spelling, so the rendered line and a `?tag=Marketing` agree.
-		base.Tags = wantTags
+		base.Tag = wantTag
 		base.TagScopeTotal = len(entries)
 		matching := make([]store.Entry, 0, len(entries))
 		for _, e := range entries {
-			if store.EntryHasAllTags(e, wantTags) {
+			if store.HasTag(e.Tags, wantTag) {
 				matching = append(matching, e)
 			}
 		}
@@ -499,7 +500,7 @@ func Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (Recal
 		// The same membership test for the TAG narrowing, against the tag filter's own result.
 		// `ref-to` is checked FIRST so the precedence between the two is stated rather than
 		// incidental: it is the order the filters ran in.
-		if len(opts.Tags) != 0 && !containsEntry(entries, *entry) {
+		if opts.HasTag && !containsEntry(entries, *entry) {
 			out := base
 			out.Status = StatusTagAbsent
 			out.TotalInScope = len(entries)

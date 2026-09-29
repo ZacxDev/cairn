@@ -82,7 +82,7 @@ func TestATagDrivenZeroIsNotReportedAsAnUnreadableStore(t *testing.T) {
 		rep, err := Search(root, SearchOptions{
 			Scope: scope, Query: "readiness", Context: ContextBullet,
 			Threshold: DefaultThreshold, MaxHits: DefaultMaxHits,
-			Tags: []string{sharedTag},
+			Tag: sharedTag, HasTag: true,
 		}, store.Unrestricted())
 		if err != nil {
 			t.Fatalf("search over %s: %v", scope, err)
@@ -195,7 +195,7 @@ func TestBothFiltersEmptyingTheSetNamesBothOfThem(t *testing.T) {
 	rep, err := Search(root, SearchOptions{
 		Scope: "mixed-set", Query: "readiness", Context: ContextBullet,
 		Threshold: DefaultThreshold, MaxHits: DefaultMaxHits,
-		RefTo: sharedRef, HasRefTo: true, Tags: []string{sharedTag},
+		RefTo: sharedRef, HasRefTo: true, Tag: sharedTag, HasTag: true,
 	}, store.Unrestricted())
 	if err != nil {
 		t.Fatal(err)
