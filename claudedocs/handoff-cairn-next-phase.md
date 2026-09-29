@@ -153,6 +153,23 @@ with test coverage.
 - **Next probe:** read that repo's mainline CI on `dc159b07` — it had not settled when this was
   written. Expect `failed=0`; if not, the remaining failures are new and are not #1917's.
 
+### RESOLVED — the last probe is answered: that repo's mainline is GREEN after #1905, and the arithmetic closes exactly
+- as-of: 2026-09-29
+- **This retires the "Next probe" line on the CLOSED block above** — do not re-run it.
+- **Read on the squash `dc159b07`:** all four checks success —
+  `pytests collected=24671 passed=24664 skipped=7 failed=0` · `nodetests 1720/0` ·
+  `gotests 461/0` · the pinned-client leg success. `via: measurement`
+- 🔴 **The collected count is 24671 on BOTH the gated tree and the mainline**, which is the
+  check that the base move between gate and merge was genuinely inert: #1917 moved bytes
+  between a skill file and its reference and added **no** tests, so the test population the
+  gate measured is the population that shipped. `via: measurement`
+- 🔴 **And the five are accounted for individually, not just in aggregate:** the gated tree was
+  `24659 passed + 7 skipped + 5 failed = 24671`; the mainline is
+  `24664 passed + 7 skipped + 0 failed = 24671`. **24659 + 5 = 24664** — the tests that turned
+  green are exactly the five that were red, so nothing was hiding behind them and no new
+  failure replaced one. This is the arithmetic a bare "it's green now" would have skipped.
+  `via: measurement`
+
 ## Next steps (ranked)
 
 🔴 **NUMBERING IS STABLE — every number KEEPS ITS LINE even when done, because a rank is half a
