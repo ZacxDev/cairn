@@ -305,6 +305,100 @@ older spelling are not in it and cannot be — `CAIRN_UI_*`, `CAIRN_SUPABASE_*`,
 family `CAIRN_REF_BASE_<SYSTEM>` in the section below, whose suffix comes out of a store file
 and so could not be enumerated by any table.
 
+### 🔴 An entry can be TAGGED, and both readers narrow by tag
+
+**A new optional front-matter key, `tags:`.** A sequence, like `aliases:`; every tag is folded
+the way a ref is (lowercased, everything outside `[a-z0-9.-]` to `-`, runs collapsed), deduped
+and sorted. An entry with no `tags:` behaves exactly as it did, and a `tags:` file loads on a
+reader that has never heard of the key, reporting no tags rather than refusing the file.
+
+```yaml
+---
+service: rollout-runbook
+scope: alpha-notes
+tags: [Marketing, project-xyz]     # folds to `marketing`, `project-xyz`
+---
+```
+
+🔴 **ONE THING CAN BREAK, AND IT IS NOT "NOTHING" — `tags:` USED TO BE AN IGNORED KEY.** Before
+this change the loaders named no `tags:` at all, so any value there loaded and was discarded; it
+was the probe key the ignore-rule test used, precisely because nothing read it. It is read now,
+and the parser carries four refusals. 🔴 **WHICH OF THEM A *FILE* CAN ACTUALLY REACH IS A
+DIFFERENT QUESTION, AND THE TABLE ANSWERS THAT ONE** — measured on both implementations over real
+files rather than reasoned from the code, and they agree sentence for sentence:
+
+| what you may already have written | what it does now |
+|---|---|
+| `tags: marketing` — a bare scalar | ``REFUSED: `tags:` must be a list, not a bare string — write `tags: [<name>]` `` |
+| `tags: ["!!!"]` — a flow item that folds to nothing | REFUSED: *tag `'!!!'` normalizes to the empty string* |
+| `tags: ["  "]` — a blank flow item | REFUSED, same sentence: whitespace folds away too |
+| `tags: {a: b}` or `tags: {}` — inline braces | REFUSED, but by the **first row's** sentence and not by the "got `<type>`" one: front matter holds only strings and lists of strings, so `{a: b}` parses as the *string* `{a: b}` and is a bare scalar |
+| `tags:` with an indented `a: b` under it — a **block mapping** | **NOT refused.** It parses as the empty string, which the `or ()` rule makes an ABSENT key, so the entry loads carrying no tags |
+| `tags:` with a `-` item that is blank — the **block** list | **NOT refused.** The block-list scanner drops an empty item before the tag loop ever sees it, so `tags:` followed by a bare `-` and then `- alpha` loads carrying `alpha`. Only the *flow* spelling of a blank item reaches the refusal above |
+
+⚠ **So the fourth refusal — `` `tags:` must be a list, got <type> `` — is unreachable from a
+file, and that is stated rather than left to be discovered.** It guards the PROGRAMMATIC loader
+(`from_mapping` / `EntryFromMapping`), which is also the writer's validate pass, where a caller
+really can hand it a `dict`.
+
+**A refused entry is MALFORMED, and malformed is wider than "not indexed".** It leaves the index,
+so `--ref`, `--search` and every rendered listing lose it — it is *named* in the report's
+malformed block rather than vanishing silently — and it also becomes **unwritable**: `append` and
+`put` resolve their target through that same index, so they answer **404 `ref-unknown`** for a file
+that is sitting right there. Its bytes are still shipped by `/snapshot`, which walks the store
+directly and builds no index, so a synced cache carries the file and each client classifies it
+malformed for itself.
+
+🔴 **How likely that is, measured rather than guessed — and it is a measurement, not a guarantee.**
+Across three stores on one machine — two live client caches and one frozen pre-cutover mirror —
+**0 of 591 entries carried a `tags:` or `tag:` front-matter key** at this anchor. The reader doing
+the counting was checked against a positive control in the same run: it found 5 front-matter keys
+on a sample entry, so a zero from it is a zero it could have contradicted. That says nothing about
+**your** store. The check is `grep -rl '^tags:' <your cache root>`; the remedy is to make the value
+a list.
+
+🔴 **The vocabulary is OPEN and nothing declares it.** There is no allowlist, no closed set and
+no rename tool: you name a category when you need one. The cost is stated rather than hidden — a
+typo makes a silently separate category of one, and no check in this project will catch it. It is
+deliberately **not** the `kind:` enum, which stays a closed four-value set
+(`service`/`process`/`org`/`doc`): `marketing` and `project-xyz` are a different axis from
+service/process/org/doc, and putting two axes in one closed set makes both unassertable.
+
+**The five things worth knowing if you script this:**
+
+- **A new read filter, on both clients and both read routes.** `cairn recall --tag <name>` and
+  `cairn search … --tag <name>`; over HTTP, `GET /api/v1/recall/<scope>?tag=…` and
+  `GET /api/v1/search/<scope>?q=…&tag=…`. It composes with everything — `--ref`, `--ref-to`,
+  `--all-scopes`, `--mode`, `--page`.
+- 🔴 **It takes ONE tag.** `--tag` is scalar and last-wins, like every other value-bearing flag
+  on these clients, and `?tag=` is last-wins like every other parameter on these routes — so
+  `--tag a --tag b` and `?tag=a&tag=b` both mean `b`, exactly as `?limit=1&limit=2` means 2.
+  There is no way to ask for two categories at once, and that is deliberate: a repeatable
+  `--tag` with AND semantics was built and then dropped, because nobody had asked for the
+  repetition and the choice between AND and OR had no author. Ask again if you want it — with
+  the semantics you want named.
+- **An operand that folds to nothing is a 400, not an empty result.** `--tag ''` and `--tag '!!'`
+  are refused by a message naming the fold, on both clients (exit **2**) and both routes. That is
+  the opposite of `?ref=`, which narrows on an empty value: a ref names an ENTRY, so "nothing is
+  called that" is a fact worth reporting, while a tag that folds away names no category at all
+  and answering "no entry carries this" would hide the cause.
+- **A new `X-Store-Status` value: `tag-absent`**, answered **200** and exit **0**. It is a
+  non-finding and not an error, reached two ways — nothing in the scope carries the tag, or
+  `--ref`/`?ref=` named an entry that does not while others do. The rendered `tag:` line carries
+  both counts (`N of M entries … carry it`), so a filtered index cannot be mistaken for a whole
+  one. **No exit code changed**: `cairn -exit-codes` prints the same table it did.
+- **The query side folds the same way the file side does**, so `--tag Marketing` finds an entry
+  written `tags: [marketing]` and vice versa. A tag you can write is one you can ask for.
+
+**On the browse pages** the entry and scope pages render an entry's tags, each a link to
+`/?tag=<name>` — a **query parameter on the root**, never a path segment, so no served path
+changed. That root listing shows every visible entry carrying the tag, across scopes, and reports
+how many entries it LOOKED at so an empty answer is legible.
+
+⚠ **The recall report gains a `    tags: a, b` line** under a printed entry's header, beside the
+existing `tasks:` line, and a `  tag: …` header line **only** when the filter was sent — so no
+output moves for a store with no tags in it.
+
 ### 🔴 An entry's refs are `refs:`, and both readers answer "what references this?"
 
 **The front-matter key is `refs:`.** `tasks:` and `task:` are **accepted spellings and stay

@@ -35,6 +35,9 @@
     "rubble-heap": {
       "_why": "Every file in it is malformed -- the `scope-unreadable` state."
     },
+    "tagged-set": {
+      "_why": "The ONE scope whose entries carry `tags:`. It exists so a `?tag=` row can find a MATCH over the wire rather than only the non-finding: a corpus that only ever sent a tag nothing carries would pass against a filter wired to nothing. One entry carries TWO tags and a `refs:` (so the two filters can be composed over the wire), one carries ONE of those tags, and one carries none -- so the filter has something to keep and something to remove on EITHER tag, and the two tags name different sets, which is what stops a row passing with the operand ignored. A NEW SCOPE rather than tags added to an existing entry, so the only pre-existing goldens that move are the ones that ENUMERATE scopes."
+    },
     "linked-set": {
       "_why": "The ONE scope whose entries carry `refs:`. It exists so a `?ref-to=` row can find a MATCH over the wire rather than only the non-finding: a corpus that only ever sent a ref nothing carries would pass against a filter wired to nothing. One entry carries the ref under the NEW key, one under the ACCEPTED OLDER `tasks:` spelling, and one carries none -- so the filter has something to keep, something to keep through the alias path, and something to remove."
     }
@@ -198,6 +201,73 @@
         "- 2000-01-02: the lease renewal races the rollout here as well.",
         ""
       ]
+    },
+    {
+      "path": "tagged-set/tagged-both.md",
+      "mtime": 946512000.0,
+      "text_lines": [
+        "---",
+        "service: tagged-both",
+        "scope: tagged-set",
+        "sensitivity: internal",
+        "tags: [Marketing, internal]",
+        "refs: [github:example-org/example-repo#428]",
+        "---",
+        "",
+        "## What it is",
+        "An entry carrying TWO tags and a ref, so the two filters can be COMPOSED over the wire and the tag list is written UNFOLDED to prove the loader folds it.",
+        "",
+        "## Pointers",
+        "- ops skill `manage-gadget` - the same skill, deliberately",
+        "",
+        "## Nuance / work-history",
+        "- 2000-01-02: the lease renewal races the rollout.",
+        ""
+      ]
+    },
+    {
+      "path": "tagged-set/tagged-one.md",
+      "mtime": 946425600.0,
+      "text_lines": [
+        "---",
+        "service: tagged-one",
+        "scope: tagged-set",
+        "sensitivity: internal",
+        "tags: [marketing]",
+        "refs: [github:example-org/example-repo#428]",
+        "---",
+        "",
+        "## What it is",
+        "An entry carrying ONE of the two tags, so the two tags select DIFFERENT SETS over the wire and a row asking for either cannot pass with the operand ignored. It carries the SAME ref as `tagged-both.md`, which is what makes the cross-filter row reach the reach clause's THIRD state: two entries reference the ref and only one of them carries `internal`, so the `ref-to:` line has to say a FURTHER filter narrows its count. With the ref on one entry only that state is unreachable over the wire.",
+        "",
+        "## Pointers",
+        "- ops skill `manage-gadget` - the same skill, deliberately",
+        "",
+        "## Nuance / work-history",
+        "- 2000-01-02: the lease renewal races the rollout here too.",
+        ""
+      ]
+    },
+    {
+      "path": "tagged-set/tagged-none.md",
+      "mtime": 946339200.0,
+      "text_lines": [
+        "---",
+        "service: tagged-none",
+        "scope: tagged-set",
+        "sensitivity: internal",
+        "---",
+        "",
+        "## What it is",
+        "An entry carrying NO tags, so a `?tag=` row has something to REMOVE and its count is not trivially the scope total.",
+        "",
+        "## Pointers",
+        "- ops skill `manage-gadget` - the same skill, deliberately",
+        "",
+        "## Nuance / work-history",
+        "- 2000-01-02: the lease renewal races the rollout here as well.",
+        ""
+      ]
     }
   ],
   "principals": [
@@ -205,7 +275,7 @@
       "name": "wide-reader",
       "kind": "mapped",
       "identity": "wide-reader",
-      "scopes": ["alpha-notes", "beta-notes", "hollow-set", "rubble-heap", "linked-set"],
+      "scopes": ["alpha-notes", "beta-notes", "hollow-set", "rubble-heap", "linked-set", "tagged-set"],
       "_why": "Sees every scope. The authorized principal for most cases, and the only one that can write."
     },
     {

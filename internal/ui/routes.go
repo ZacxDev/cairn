@@ -275,6 +275,29 @@ const (
 	// QueryQuery is the search box. It rides on the ROOT row rather than on a route of
 	// its own — see `routes`.
 	QueryQuery = "q"
+	// QueryTag is the CATEGORY filter: `/?tag=<name>`, the target every rendered tag links
+	// to. It rides on the ROOT row for exactly the reason [QueryQuery] and [QueryView] do,
+	// and this is the one place that reason is a REQUIREMENT rather than a preference.
+	//
+	// 🔴 A QUERY PARAMETER AND NEVER A PATH SEGMENT, BECAUSE EVERY SERVED PATH IS A LITERAL
+	// KEY IN `routes`. A `/tag/<name>` shape would make the last segment USER TEXT — a tag
+	// out of a file somebody else wrote — so the dispatcher would have to match a PREFIX,
+	// and `DeclaredRoutes()`, `TestEveryServedPathComesFromTheLedger` and the
+	// `stateChanging` classification all read exact keys. One prefix route would make the
+	// ledger's own claim ("every served path is in this map") false, which is the claim the
+	// session layer derives its cross-site gates from.
+	//
+	// ⚠ IT SHARES THE POD'S SPELLING, `tag`, on purpose: the same word names the same filter
+	// on `/api/v1/recall/{scope}` and here.
+	//
+	// 🔴 AND THE SPELLING IS THE CHEAP HALF — A DRAFT OF THIS COMMENT SAID A READER "does not
+	// have to learn that they disagree" WHILE THEY DID. `url.Values.Get` is FIRST-wins and the
+	// pod's `lastValue` is LAST-wins, so `?tag=a&tag=b` answered `a` here and `b` there. Making
+	// the operand scalar settled HOW MANY values are read and says nothing about WHICH, which
+	// is the step that draft skipped. `lastTagValue` in `server.go` is what makes the sentence
+	// true; it is the only parameter on this surface that agrees with the pod, because it is
+	// the only one a reader carries between them by hand.
+	QueryTag = "tag"
 	// QueryView selects WHICH VIEW of an entry `GET /entry` answers, and it rides on that
 	// row rather than on a route of its own for the reason `routes` gives about the share
 	// flow and the browse pair: a second path would be a second row in the ledger for one

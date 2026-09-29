@@ -1,10 +1,10 @@
 {
   "body": {
-    "bytes": 3157,
+    "bytes": 3158,
     "kind": "text_lines",
-    "sha256": "0422c70b56c8a9e7d5c07c2bd8e53b8c5bb4482fd9abe21593ce875848a0c6cc",
+    "sha256": "2d6b4db5fc722fbf95efb14da261a02ae78513bbc6da23b59f540cf80f9fe86f",
     "text_lines": [
-      "🔴 SNAPSHOT, NOT THE SOURCE — seeded=2000-01-04T00:00:00Z newest-entry=2000-01-03T00:00:00Z entry-files=8. This host serves a COPY of the authoritative store, pushed by `seed.sh`; nothing syncs it continuously, so it can be arbitrarily behind and it CANNOT KNOW BY HOW MUCH. The \"none omitted\" below is true of THIS DISK and says nothing about the source. Before trusting an absence — a missing entry, a missing badge, a zero — re-run the read against the local store, or re-seed. UNSTAMPED/UNREADABLE/NONE each mean the stated fact could not be established, never that it is fine.",
+      "🔴 SNAPSHOT, NOT THE SOURCE — seeded=2000-01-04T00:00:00Z newest-entry=2000-01-03T00:00:00Z entry-files=11. This host serves a COPY of the authoritative store, pushed by `seed.sh`; nothing syncs it continuously, so it can be arbitrarily behind and it CANNOT KNOW BY HOW MUCH. The \"none omitted\" below is true of THIS DISK and says nothing about the source. Before trusting an absence — a missing entry, a missing badge, a zero — re-run the read against the local store, or re-seed. UNSTAMPED/UNREADABLE/NONE each mean the stated fact could not be established, never that it is fine.",
       "",
       "subsystem-recall: status=recalled scope=alpha-notes",
       "  store: <STORE-ROOT>",
@@ -57,7 +57,7 @@
     ],
     [
       "X-Store-Snapshot",
-      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=8"
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=11"
     ],
     [
       "X-Store-Status",

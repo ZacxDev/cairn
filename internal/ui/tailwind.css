@@ -337,8 +337,26 @@
   }
 
   .aliases,
-  .tasks {
+  .tasks,
+  .tags {
     @apply basis-full pl-4 text-sm text-muted;
+  }
+
+  /* A tag renders inline rather than as a stacked list item: a tag set is read as a row of
+   * labels, and one <li> per line turns three tags into three lines of a scope row whose whole
+   * budget is a few lines. `.tasks` keeps the stacked shape because a task ref is long. */
+  .tags li {
+    @apply inline-block mr-3;
+  }
+
+  /* A tag's link gets the same affordance a task ref's does, spelled separately rather than by
+   * widening `.task a`: the two selectors carry different hazards (a task href comes from a
+   * registry and can be refused, a tag href is a constant path) and a shared rule would invite
+   * a `.refused` state on a link that cannot have one. */
+  .tag a {
+    @apply text-accent underline underline-offset-2 decoration-transparent;
+    @apply transition-[color,text-decoration-color] duration-200 ease-cairn;
+    @apply hover:decoration-current;
   }
 
   .task a {

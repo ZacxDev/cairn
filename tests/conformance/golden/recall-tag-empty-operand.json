@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 103,
+    "kind": "text_lines",
+    "sha256": "12907dbde0d83f6c9c84a556e7ff44dc351dfda51b214e37454b20eab371cee4",
+    "text_lines": [
+      "bad request: tag '' normalizes to the empty string — a tag must fold to at least one of `[a-z0-9.-]`",
+      ""
+    ]
+  },
+  "case": "recall-tag-empty-operand",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "103"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "status": 400
+}

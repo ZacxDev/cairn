@@ -786,3 +786,69 @@ The corpus issues one request at a time against a freshly built world, so it can
 thing the feature is actually for: a client that syncs, stores the tag, and syncs again. The
 round trip is measured in `tests/dualrun/` (a `derive_if_none_match` target, asked of each
 server in turn) and in `tests/parity/` (`sync-again`, over two real clients and one cache).
+
+
+## The `?tag=` rows, and the fixture change one of them forced
+
+`tagged-set` is a NEW SCOPE rather than `tags:` added to an existing entry, which is `linked-set`'s
+own trick and for the same reason: the only pre-existing goldens that move are the ones that
+ENUMERATE scopes, plus the `entry-files=` count three new files change. No `recall-*`/`search-*`
+body golden moved.
+
+Eleven rows. Eight of them are ordinary coverage; three exist because nothing else in the corpus
+can see what they see.
+
+⚠ **THERE WERE TWELVE, AND THE TWELFTH WAS `recall-tag-two-and-semantics`.** It sent `?tag=` twice
+and was the only row that could see whether the route read EVERY value or the LAST one. `?tag=` is
+now SCALAR on an operator decision — the request was a tag filter, and neither the repetition nor
+the choice between AND and OR had an author of record — so the parameter is last-wins like every
+other one on these routes, which `recall-repeated-parameter` already pins for a scalar. The row and
+its golden are deleted rather than regenerated: a row sending a scalar parameter twice would measure
+the shared last-wins arm, not anything about tags. ⚠ Nothing in the corpus now sends `?tag=` twice,
+and that is the honest shape of the gap: the CONTRACT for a repeated `?tag=` is "the rule every
+other parameter follows", and the rule itself is pinned elsewhere.
+
+- **`recall-tag-empty-operand`** is `recall-tag-malformed`'s refusal through the other door, and it
+  is the row that stops the filter being silently DROPPED. An implementation that discarded empty
+  operands before validating answers 200 over the WHOLE scope for a query that named no category —
+  the widening direction — and every other row here stays green.
+- **`recall-tag-refused-scope`** is the authorisation-order criterion over the wire. `tagged-set`
+  EXISTS and holds entries carrying the tag, and `narrow-reader` may not see it, so the answer must
+  be the one an absent scope gives. A filter over a store-wide load answers `recalled` here.
+- **`recall-tag-composes-with-ref-to`** is the CROSS-FILTER row, and it forced a fixture change to
+  become reachable at all. With the ref on ONE entry, `?ref-to=` keeps exactly one, the tag filter
+  keeps or drops that one, and the `ref-to:` line reads `1 of 1` — so the reach clause's THIRD state
+  ("a FURTHER filter below narrows those N again") is unreachable over the wire. `tagged-one.md`
+  therefore carries the SAME ref `tagged-both.md` does: two entries reference it, one carries
+  `internal`, and the regenerated golden carries the third state. Verified by reading the golden.
+
+⚠ **`tagged-both.md` writes `tags: [Marketing, internal]` UNFOLDED and `tagged-one.md` writes
+`marketing` folded**, on purpose. `recall-tag-folds` asks with the capitalised spelling and must
+find both; two identical spellings in the world would make the fold assumed rather than measured.
+The `internal` tag is still load-bearing after the scalar narrowing: `recall-tag-composes-with-ref-to`
+narrows by it alone.
+
+⚠ **AND NO GOLDEN MOVED WHEN THE OPERAND BECAME SCALAR** — regenerated against the oracle, the ten
+surviving tag goldens are byte-identical. Every one of them sends exactly one tag, and the rendered
+sentences for one tag were already `` `tag: `x` … carry it` `` and `none of them carries it`; the
+plural forms the deleted helpers built (`` `a`, `b` ``, "carry all of them") were reachable only from
+the row that is gone. Measured, not assumed: `suite.py generate` followed by `git diff --stat
+tests/conformance/golden/` shows the deleted file and nothing else.
+
+### The hand-spelled `If-None-Match` literals moved again, exactly as predicted
+
+`snapshot-conditional-not-modified`'s own `why` says "if world.json changes it stops matching and
+this case answers 200, loudly, in the diff". It did, in the first regeneration. Both occurrences —
+that row and the narrow principal's row which deliberately presents the wide principal's tag — were
+updated to the wide principal's new ETag, and both are what they were again. This is the second
+change in a row to trip that prediction; the prediction is the reason it costs one grep instead of a
+debugging session.
+
+⚠ **AND A THIRD TIME, WHEN `--tag` BECAME SCALAR** — over an edit that touched no tag GOLDEN at all.
+Two sentences inside `tagged-set`'s fixture bodies claimed a second `?tag=` would remove an entry
+("the AND semantics observable over the wire"), which the scalar operand made FALSE; correcting a
+fixture's own prose is an entry-BYTES change, so the archive digest moved and only the snapshot rows
+saw it. `FAIL snapshot-conditional-not-modified` on the first `run` after regeneration, both
+literals re-spelled from `snapshot-authorized.json`'s `ETag`, 0 failures after. The lesson is the
+one the prediction already carries, one level out: **a comment inside a fixture is part of the
+fixture.**

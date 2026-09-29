@@ -264,12 +264,15 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     and no duplicate id. So the floor covers those two, and nothing else in this file does.
 
     ⚠ It is also the only floor that runs in the `tests` job. CI's `parity` job refuses below the
-    PASS count `.github/workflows/ci.yml` pins — **117 at this head** — but that job needs a Go
+    PASS count `.github/workflows/ci.yml` pins — **126 at this head** — but that job needs a Go
     toolchain and a running pod; a developer running `pytest tests` reaches this one and not that
-    one. 🔴 NOTHING ASSERTS THAT THE TWO NUMBERS AGREE, which is exactly how this one went stale:
-    read `ci.yml`'s `-lt` comparison rather than this sentence.
-    🔴 **IT HAS GONE STALE IN BOTH DIRECTIONS, INCLUDING IN A COMMIT THAT MOVED `ci.yml` AND THIS
-    FILE TOGETHER.** So: **every number in this file is a MEASUREMENT with a command beside it**,
+    one. 🔴 THE TWO NUMBERS ARE STILL NOT ASSERTED EQUAL — they measure different things and must
+    not be — but the SENTENCE above is now pinned to the file it cites by
+    `test_the_prose_numbers_in_this_file_are_PINNED_to_what_they_cite`, because a comment that has
+    warned three times about its own staleness needs a gate rather than a fourth warning.
+    🔴 **IT HAD GONE STALE IN BOTH DIRECTIONS, INCLUDING IN A COMMIT THAT MOVED `ci.yml` AND THIS
+    FILE TOGETHER — AND THEN ONCE MORE, IN EXACTLY THAT CIRCUMSTANCE, WHICH IS WHAT BOUGHT THE
+    GATE.** So: **every number in this file is a MEASUREMENT with a command beside it**,
     and the two commands are
     `nix develop … -c python3 tests/parity/harness.py | grep -c '^PASS '` for the PASS count and
     `python3 -c "import harness; print(len(harness.cases(1)))"` for the case count — not
@@ -282,7 +285,7 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE — no defect ever narrowed the case list.
     """
     declared = len(harness.cases(1))
-    # 114 measured on this tree — by `len(harness.cases(1))`, which is what the assertion below
+    # 123 measured on this tree — by `len(harness.cases(1))`, which is what the assertion below
     # compares and is therefore the only measurement that can be right. The floor is the
     # repository's own formula for a collected-count floor — `m - min(50, max(1, m / 20))` for a
     # measured `m`, which `.github/workflows/ci.yml` owns and justifies: close enough that a real
@@ -314,7 +317,17 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # declared open again in `tests/parity/README.md` row 4. What remains in this family is the
     # four rows that gate a mode-000 ENTRY FILE and a mode-000 SCOPE DIRECTORY on both clients —
     # the conditions an ordinary `chmod` reaches.
-    floor = 108
+    # ⚠ 108 -> 117 WHEN THE TEN `--tag` ROWS LANDED: `m` moved 114 -> 124 and 117 is the
+    # literal the formula prescribes for it (`124 - min(50, max(1, 124/20)) = 117.8 -> 117`),
+    # re-derived by RUNNING the formula on `len(harness.cases(1))` rather than by arithmetic on
+    # the previous literal.
+    # ⚠ 117 -> 116 WHEN `recall-tag-repeated-is-AND` WAS DELETED: `--tag` became SCALAR on an
+    # operator decision, so `m` moved 124 -> 123 and 116 is what the formula prescribes for it
+    # (`123 - min(50, max(1, 123/20)) = 116.85 -> 116`), re-derived by RUNNING the formula on
+    # `len(harness.cases(1))`. This is the DELETION half of "move BOTH when a row lands, and
+    # both when one is DELETED" — a floor left at 117 over a 123-row corpus is not wrong today
+    # and is one row of loosening, which is exactly the drift this literal exists to refuse.
+    floor = 116
     # ✅ **DECIDED: PINNED TO ITS OWN FORMULA, BECAUSE IT HAS GONE STALE TWICE.**
     # The handoff filed this under "counts quoted in prose that nothing asserts
     # on", closing condition "a decision to pin each or a written line saying why
@@ -348,22 +361,101 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # the `parity` job. They must NOT be asserted equal: this one counts CASES
     # DECLARED by `harness.cases()`, that one counts PASSES a run produced, and
     # the two differ by design — a structural check is a pass with no declared
-    # case behind it, which is why the run reports 117 passes over 114 cases —
-    # re-derived here from one run's own `SUMMARY cases=114 passes=117 failures=0`
+    # case behind it, which is why the run reports 126 passes over 123 cases —
+    # re-derived here from one run's own `SUMMARY cases=123 passes=126 failures=0`
     # line, not from arithmetic on the previous literal:
     # `cache-mtime-parity`, `orphan-reap-parity` and `nonregular-path-parity`,
     # THREE structural checks. ⚠ It was 104/102, then 105/103, then 106/103, then
-    # 111/108, then 110/107 — and one of those pairs was WRONG for a whole round, because rows
+    # 111/108, then 110/107, then 117/114, then 127/124, then 126/123 when `--tag` became
+    # scalar and a row was DELETED — and one of those pairs was WRONG for a whole
+    # round, because rows
     # moved `m` and only `ci.yml` was updated. The gap itself
     # widens every time a claim turns out to be unreachable from any row. A
     # guard equating them would be red on a correct tree and would train its
     # reader to edit whichever number was handier. The docstring's instruction —
     # read `ci.yml`'s comparison rather than that sentence — remains the answer.
     assert declared >= floor, (
-        f"the parity gate declares only {declared} cases, and the floor is {floor} (114 were "
+        f"the parity gate declares only {declared} cases, and the floor is {floor} (123 were "
         f"measured on this tree, across every verb and every documented exit code). Two guards in "
         f"this file — the exit-only `why` check and the unique-id check — pass vacuously on a "
         f"narrowed list, so a shrinking case set gets quieter, not louder."
+    )
+
+
+def test_the_prose_numbers_in_this_file_are_PINNED_to_what_they_cite() -> None:
+    """🔴 A COMMENT THAT HAS WARNED THREE TIMES ABOUT ITS OWN STALENESS NEEDS A GATE, NOT A
+    FOURTH WARNING.
+
+    Two numbers in this file are quoted from somewhere else and were, until this guard, asserted
+    by nothing:
+
+      * the docstring of `test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set` quotes the
+        PASS floor `.github/workflows/ci.yml` pins for the `parity` job (`… at this head`);
+      * the comment above that test's `floor` literal quotes `len(harness.cases(1))`
+        (`# … measured on this tree`).
+
+    Both went stale — the first twice, the second once, and the second in the very commit that
+    moved `ci.yml` and this file together, which is the circumstance its own neighbouring comment
+    names as how it happens. The remedy the file already prescribes is "read `ci.yml`'s
+    comparison rather than this sentence"; this makes that mechanical, so the sentence can be
+    read.
+
+    🔴 IT DOES *NOT* ASSERT THE TWO NUMBERS AGREE WITH EACH OTHER, AND MUST NOT. The comment
+    beside `want_floor` decides that explicitly: the case floor counts CASES DECLARED and the CI
+    pin counts PASSES PRODUCED, and they differ by the three structural checks. What is pinned
+    here is each prose number against **its own** source — a claim about transcription, not about
+    the relationship.
+
+    ⚠ REGRESSION COVERAGE, NOT AN INVARIANT GUARD, UNLIKE THE REST OF THIS FILE: it is watched
+    RED against the stale literals it was written for (`117 at this head` against `ci.yml`'s 126,
+    and `124 measured on this tree` against 123 declared cases).
+    """
+    source = Path(__file__).read_text(encoding="utf-8")
+    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    # The `parity` job's own floor: there are four `"$passes" -lt` comparisons in `ci.yml`, so
+    # the anchor is the parity transcript this job greps, and the floor is the first comparison
+    # after it. Anchoring on the value would be circular; anchoring on the job name would break
+    # on a rename that changes nothing.
+    after = ci.split("/tmp/parity.txt", 1)
+    assert len(after) > 1, (
+        "`ci.yml` no longer mentions `/tmp/parity.txt`, so this guard cannot find the `parity` "
+        "job's PASS floor. Re-anchor it — do not delete it; the docstring it pins has gone "
+        "stale three times."
+    )
+    pinned = re.search(r'"\$passes" -lt (\d+)', after[1])
+    assert pinned, (
+        "no `\"$passes\" -lt <n>` comparison follows `/tmp/parity.txt` in `ci.yml`. Either the "
+        "`parity` job stopped enforcing a PASS floor — which is a finding, not a reason to drop "
+        "this guard — or the spelling moved and this anchor needs re-deriving."
+    )
+    ci_floor = int(pinned.group(1))
+
+    quoted = re.findall(r"\*\*(\d+) at this head\*\*", source)
+    assert len(quoted) == 1, (
+        f"expected exactly one `**<n> at this head**` in this file and found {quoted}. The "
+        f"instrument is dead, not the claim: re-derive the pattern."
+    )
+    assert int(quoted[0]) == ci_floor, (
+        f"this file's docstring says the `parity` job's PASS floor is {quoted[0]}, and "
+        f"`.github/workflows/ci.yml` pins {ci_floor}. Move the prose to match `ci.yml`, which "
+        f"is the authority — this exact sentence has gone stale in BOTH directions, once in a "
+        f"commit that moved `ci.yml` and this file together."
+    )
+
+    # The case-count comment, against the only measurement that can settle it. The pattern
+    # cannot match its own spelling here, because `(\d+)` is not a run of digits.
+    measured = re.findall(r"#\s+(\d+) measured on this tree", source)
+    assert len(measured) == 1, (
+        f"expected exactly one `# <n> measured on this tree` comment in this file and found "
+        f"{measured}. The instrument is dead, not the claim: re-derive the pattern."
+    )
+    declared = len(harness.cases(1))
+    assert int(measured[0]) == declared, (
+        f"the comment above the case floor says {measured[0]} cases were measured on this tree, "
+        f"and `len(harness.cases(1))` is {declared}. That comment is the premise the floor's "
+        f"formula is justified from, so a stale one makes the floor look explained when it is "
+        f"not — it is how the literal survived a corpus that shrank by a row."
     )
 
 

@@ -69,6 +69,21 @@ type PageView struct {
 	// with no Hits is a real zero and renders as one; nil means nobody asked.
 	Results *SearchResults
 
+	// 🔴 THERE IS NO `Tag` FIELD BESIDE THIS ONE, AND ITS ABSENCE IS A DECISION. One existed:
+	// it held the folded `?tag=` operand, was written at both sites that build this view, and
+	// was read by NOTHING — its own comment claimed it named the string in the heading while
+	// the heading read `TagMatches.Tag`. A second copy of one fact with no reader cannot be a
+	// guard; it can only come to disagree with the copy that is rendered. `TagMatches.Tag` is
+	// the one home, it sits beside the entries it was compared against, and `tagSummary` is
+	// what reads it. Do not re-add the outer field — if a future caller needs the operand
+	// where no `TagMatches` exists, that is the case to state, not a field to mirror.
+
+	// TagMatches is the answer to the `?tag=` filter, nil when no tag was asked. A non-nil
+	// TagMatches with no Entries is a real zero and renders as one; nil means nobody asked —
+	// the same nil/empty contract `Results` carries, and the same `g.Iff` discipline applies
+	// to reading it. The FOLDED operand lives on it, as `TagMatches.Tag`.
+	TagMatches *TagMatches
+
 	// Scope is the scope under view on the scope and entry pages, nil on the root.
 	Scope *Scope
 	// Entry is the entry under view on the entry page, nil elsewhere.
@@ -100,13 +115,18 @@ func Page(v PageView) g.Node {
 		// calls it only when the condition holds. Every `g.If` below is safe because its
 		// argument dereferences nothing; any new one that reads a pointer must be `g.Iff`.
 		g.Iff(v.Results != nil, func() g.Node { return searchResults(v) }),
+		// `g.Iff` for the reason above: the closure dereferences `v.TagMatches`.
+		g.Iff(v.TagMatches != nil, func() g.Node { return tagResults(v) }),
 		// 🔴 THE CARDS ARE WITHHELD WHILE A QUERY IS IN FORCE, AND THE ALTERNATIVE WAS
 		// MEASURED WORSE ON ITS OWN TERMS RATHER THAN ON TASTE. Rendering both puts a
 		// full, unfiltered scope list directly under a result list, and the two read as
 		// one list: the second half then looks like more results that happen to match
 		// nothing. The way back is a link that says so, not a second list nobody asked
 		// for.
-		g.If(v.Results == nil, g.Group([]g.Node{
+		// ⚠ AND `?tag=` WITHHOLDS THEM ON THE SAME GROUNDS, so the condition is "no filter is
+		// in force" rather than "no query is in force". A full unfiltered scope list under a
+		// tag listing reads as more matches that happen to belong to nothing.
+		g.If(v.Results == nil && v.TagMatches == nil, g.Group([]g.Node{
 			g.If(len(v.Scopes) == 0, h.P(h.Class("empty"), g.Text(
 				"No scope is visible to this credential. That is an authority "+
 					"answer, not an empty store."))),
@@ -192,6 +212,28 @@ func ScopePage(v PageView) g.Node {
 const RefsKeyDescription = "the `refs:` front-matter key (or the accepted older " +
 	"`tasks:`/`task:`), as written"
 
+// TagsKeyDescription is the line under the entry page's "Tags" heading, and it is a CONSTANT so
+// that a test can pin the whole of it.
+//
+// 🔴 IT SAYS `folded`, AND THAT IS THE ONE CLAIM THIS LINE HAS TO MAKE. The Refs list above says
+// "as written" and is true; this list is NOT as written — `parseTagsField` lowercases and
+// `-`-folds every tag — and a reader comparing the page against the file will see `Marketing` in
+// one and `marketing` in the other. Saying so is what stops that reading as the page showing
+// something else.
+//
+// 🔴 IT SAYS THE VOCABULARY IS OPEN, BECAUSE NOTHING ELSE ON THIS SURFACE CAN. There is no
+// declared tag set, no allowlist and no rename tool, so a typo is a category of one that no gate
+// catches — and the entry page is where an operator would look for the list that does not exist.
+//
+// 🔴 PINNED AS ONE NORMALISED STRING BY `TestTheTagsKeyDescriptionIsPinnedWhole`, THE SAME WAY
+// `RefsKeyDescription` AND `ReplicaHonesty` ARE, AND FOR THE SAME MEASURED REASON. A comment reds
+// no test: `RefsKeyDescription` really did serve the word `deprecated` while the README shipped
+// beside it said permanent, and the correction was asserted by nothing. Dropping the `folded`
+// clause here — the half a tidying edit removes — would leave this page claiming the file's own
+// spelling, and the whole suite green.
+const TagsKeyDescription = "the `tags:` front-matter key, FOLDED to lowercase `[a-z0-9.-]` — " +
+	"the vocabulary is OPEN, so nothing declares the valid set and a typo is a category of one"
+
 // EntryPage is ONE entry: the sections its file carries and the line items under the
 // journal heading.
 //
@@ -234,6 +276,8 @@ func EntryPage(v PageView) g.Node {
 					h.Ul(h.Class("aliases"), g.Map(e.Aliases, plainItem)))),
 				g.If(len(e.Tasks) > 0, labelledList("Refs", RefsKeyDescription,
 					h.Ul(h.Class("tasks"), g.Map(e.Tasks, taskItem)))),
+				g.If(len(e.Tags) > 0, labelledList("Tags", TagsKeyDescription,
+					h.Ul(h.Class("tags"), g.Map(e.Tags, tagItem)))),
 				g.If(len(e.Sections) == 0, h.P(h.Class("empty"), g.Text(
 					"This entry carries none of the headings a reader surfaces. The file exists "+
 						"and the loader accepted it; it simply has no `## What it is`, "+
@@ -479,6 +523,63 @@ func searchResults(v PageView) g.Node {
 	)
 }
 
+// tagResults is the `/?tag=<name>` listing.
+//
+// 🔴 IT REPORTS WHAT IT LOOKED AT, NOT ONLY WHAT IT FOUND, and that is `SearchResults`'
+// `ScopesSearched` rule one page over. An empty tag listing cannot distinguish "no entry
+// carries this" from "this credential can see nothing", and the two have opposite next
+// actions — write the tag, or ask for access.
+//
+// ⚠ THE VOCABULARY IS OPEN AND NOTHING DECLARES IT, so a zero here is also what a TYPO looks
+// like. The empty sentence says so, because there is no list of valid tags to check against
+// and no gate that could have caught it.
+func tagResults(v PageView) g.Node {
+	m := *v.TagMatches
+	return h.Section(
+		h.Class("card results"),
+		h.H2(g.Text("Tag")),
+		h.P(h.Class("card-what"), g.Text(tagWhat)),
+		h.P(h.Class("note"), g.Text(tagSummary(m))),
+		h.P(h.Class("note"), h.A(h.Href(RootPath), g.Text("Clear the tag and show every scope"))),
+		g.If(len(m.Entries) == 0 && m.Scanned > 0, h.P(h.Class("empty"), g.Text(
+			"No entry carries this tag. The tag vocabulary is OPEN — nothing declares the set "+
+				"of valid tags — so this is also what a typo looks like, in the query or in "+
+				"the file."))),
+		g.If(m.Scanned == 0, h.P(h.Class("empty"), g.Text(
+			"There was nothing to filter: no entry is visible to this credential. That is an "+
+				"authority answer, not a fact about the tag."))),
+		g.If(len(m.Entries) > 0, h.Ul(h.Class("hits"), g.Map(m.Entries, tagMatchItem))),
+	)
+}
+
+// tagWhat is the one sentence saying what this listing IS, the way `searchWhat` does for the
+// search card.
+const tagWhat = "Entries whose `tags:` front-matter key carries this tag, across every scope " +
+	"this credential may read. A tag is compared FOLDED, and this is a membership test rather " +
+	"than a ranking — the order below is the index's."
+
+// tagSummary is the counted sentence. ONE spelling, so the heading and the zero agree.
+func tagSummary(m TagMatches) string {
+	return strconv.Itoa(len(m.Entries)) + " of " + plural(m.Scanned, "visible entry",
+		"visible entries") + " in " + plural(m.ScopesScanned, "scope", "scopes") +
+		" carry `" + m.Tag + "`."
+}
+
+func tagMatchItem(m TagMatch) g.Node {
+	return h.Li(
+		h.Class("hit"),
+		h.P(
+			h.Class("hit-where"),
+			// The match LINKS to the entry, which is the whole reason the scope id is carried.
+			entryLinkFor(m.ScopeID, m.Ref, m.Ref),
+			h.Span(h.Class("hit-scope"), g.Text(m.Scope)),
+			// The entry's WHOLE tag set, each itself a link, so the listing is how a reader
+			// walks a vocabulary nothing declares.
+			h.Ul(h.Class("tags"), g.Map(m.Tags, tagItem)),
+		),
+	)
+}
+
 func hitItem(hit Hit) g.Node {
 	return h.Li(
 		h.Class("hit"),
@@ -590,6 +691,7 @@ func entryRow(s Scope, e Entry) g.Node {
 			g.Map(e.Aliases, func(a string) g.Node { return h.Li(g.Text(a)) }),
 		)),
 		g.If(len(e.Tasks) > 0, h.Ul(h.Class("tasks"), g.Map(e.Tasks, taskItem))),
+		g.If(len(e.Tags) > 0, h.Ul(h.Class("tags"), g.Map(e.Tags, tagItem))),
 	)
 }
 
@@ -1067,6 +1169,31 @@ func entryHref(scope control.ID, ref string, raw bool) string {
 		v.Set(QueryView, ViewRaw)
 	}
 	return EntryPath + "?" + v.Encode()
+}
+
+// tagHref is the ONE place a `/?tag=` URL is built.
+//
+// 🔴 `safeHref` IS NOT REACHED AND MUST NOT BE, which is `scopeHref`/`entryHref`'s ruling: that
+// function ALLOWLISTS absolute http(s), and this is a same-origin path. The operand still goes
+// through `url.Values.Encode` — a folded tag is `[a-z0-9.-]` TODAY, and building the URL by
+// concatenation would make this link's safety depend on a LOADER invariant rather than on an
+// encoder, which is the shape this package refuses everywhere else.
+//
+// 🔴 A QUERY PARAMETER ON THE ROOT, NEVER A PATH SEGMENT. See [QueryTag] for why that is a
+// requirement rather than a preference: every served path is a literal key in `routes`, and a
+// tag is user text.
+func tagHref(tag string) string {
+	return RootPath + "?" + url.Values{QueryTag: []string{tag}}.Encode()
+}
+
+// tagItem is one tag, as a link to the listing of everything carrying it.
+//
+// ⚠ ALWAYS A LINK, WHERE `taskItem` CAN FALL BACK TO PLAIN TEXT. A task ref's href comes from a
+// registry that may resolve nothing; a tag's href is a constant path with an encoded operand, so
+// there is no failure mode to fall back from. The link may lead to a listing of exactly this one
+// entry, which is a true answer and not a dead end.
+func tagItem(tag string) g.Node {
+	return h.Li(h.Class("tag"), h.A(h.Href(tagHref(tag)), g.Text(tag)))
 }
 
 // scopeLink renders a scope's name as a link, or as plain text when the authority named

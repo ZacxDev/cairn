@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,6 +149,9 @@ type EntryRef struct {
 //	Aliases     the `aliases:` front-matter sequence, AS WRITTEN (not the folded form)
 //	Tasks       the `refs:` front-matter sequence (or the accepted older `tasks:`/`task:`),
 //	            each carrying the ref AS WRITTEN and the URL the registry resolved it to
+//	Tags        the `tags:` front-matter sequence, FOLDED — unlike `Aliases`, which is as
+//	            written, because a tag's canonical form IS its folded form and the folded
+//	            string is what `/?tag=` compares against
 //	Sections    the `##` headings `report.SurfacedHeadings` names, with their bodies
 //	Bullets     top-level `- ` lines under `## Nuance / work-history`, with continuations
 //	Raw         the WHOLE file, decoded and otherwise untouched
@@ -164,6 +168,21 @@ type Entry struct {
 	Filename string
 	Aliases  []string
 	Tasks    []EntryRef
+
+	// Tags is the entry's `tags:`, folded, deduped and sorted by the loader.
+	//
+	// ⚠ FOLDED, WHERE `Aliases` IS AS-WRITTEN, AND THE ASYMMETRY IS THE LINK. Each tag is
+	// rendered as a link to `/?tag=<it>`, so the string on the page has to be the string the
+	// filter compares — showing the raw spelling beside a link built from the folded one
+	// would put two spellings of one tag in front of a reader with no way to tell which the
+	// store holds. `Aliases` has no link and its raw spelling is evidence about a collision,
+	// which is why it keeps it.
+	//
+	// ⚠ IT IS STILL USER TEXT FOR ESCAPING PURPOSES. The fold restricts it to `[a-z0-9.-]`
+	// TODAY; a page that relied on that would be trusting a loader invariant for its
+	// escaping, which is the shape this package's doc comment refuses. It goes through
+	// `g.Text` and `url.Values.Encode` like every other operand.
+	Tags []string
 
 	// Raw is the entry file's whole text, as `store.DecodeReplace` produced it: front
 	// matter, unsurfaced headings, prose before the first heading, and everything the
@@ -362,6 +381,44 @@ type SearchResults struct {
 	ScopesSearched []string
 }
 
+// TagMatches is the answer to `/?tag=<name>`: every VISIBLE entry carrying the tag.
+//
+// 🔴 IT IS DERIVED FROM `Visible(auth)`'s RESULT AND NEVER FROM A SECOND STORE READ, WHICH IS
+// WHAT MAKES THE AUTHORISATION ORDER STRUCTURAL HERE RATHER THAN REMEMBERED. `Visible` loads
+// through `scopeSetOf(auth.NamedScopes(control.VerbRead))`, so the scope list this filter walks
+// is already narrowed; a filter that loaded the store itself would answer "every marketing
+// entry" over directories the caller cannot name. `internal/report`'s own filters carry the
+// same rule, and `TestTheTagPageCannotSeeAScopeTheCallerCannotRead` is the two-principal guard.
+type TagMatches struct {
+	// Tag is the FOLDED tag this page narrowed by, which is what the heading shows and what
+	// the entries below were compared against.
+	Tag string
+	// Entries are the matches, in the order `Visible` listed their scopes and then their
+	// entries — the index order, not a relevance order, because a tag is a membership test
+	// and there is nothing to rank.
+	Entries []TagMatch
+	// Scanned is how many visible entries were LOOKED AT, and ScopesScanned how many scopes.
+	//
+	// 🔴 THEY EXIST SO A ZERO IS READABLE. An empty match list cannot distinguish "no entry
+	// carries this tag" from "this credential can see nothing" — the same distinction
+	// `SearchResults.ScopesSearched` is carried for, and the same reason.
+	Scanned       int
+	ScopesScanned int
+}
+
+// TagMatch is one entry carrying the tag, with what it takes to link to it.
+type TagMatch struct {
+	// ScopeID is carried so the match can LINK to the entry, resolved through the same
+	// traversal the scope cards use and never re-derived.
+	ScopeID control.ID
+	Scope   string
+	Ref     string
+	// Tags is the entry's WHOLE tag set, so the row shows the other categories it belongs to
+	// rather than only the one asked for — which is how a reader discovers the vocabulary,
+	// there being nothing that declares it.
+	Tags []string
+}
+
 // Hit is one matched hunk.
 type Hit struct {
 	// ScopeID is carried so the hit can LINK to the entry. It is resolved through the
@@ -466,6 +523,9 @@ func (s StoreSource) readEntry(scope string, e store.Entry) (Entry, error) {
 		Title:    e.Slug,
 		Filename: e.Filename,
 		Aliases:  e.RawAliases,
+		// No projection: the loader already folded, deduped and sorted these, and there is
+		// no registry to resolve a tag through — a tag points at nothing outside the store.
+		Tags: e.Tags,
 	}
 	for _, t := range e.Tasks {
 		// `Raw`, not `String()`: the page shows the ref the FILE carries,
@@ -544,6 +604,41 @@ func (s StoreSource) readEntry(scope string, e store.Entry) (Entry, error) {
 		}
 	}
 	return item, nil
+}
+
+// EntriesByTag answers `/?tag=<name>`: every visible entry carrying the folded tag.
+//
+// 🔴 IT TAKES THE ALREADY-NARROWED SCOPE LIST AS AN ARGUMENT RATHER THAN RE-READING THE STORE,
+// AND THAT IS THE AUTHORISATION ORDER MADE STRUCTURAL. `handlePage` has already called
+// `Visible(auth)` to build the cards; handing that result here means this function has no way
+// to reach a scope the caller cannot read, because it never touches the store or the
+// authorization. A version taking `auth` and loading again would be correct today and one
+// dropped argument away from answering "every marketing entry" over the whole disk.
+//
+// ⚠ IT IS A PACKAGE FUNCTION AND NOT A METHOD ON `StoreSource` FOR THE SAME REASON: a method
+// would have `s.Root` in scope, which is the one thing a filter over an authorised list must
+// not need.
+//
+// 🔴 THE MEMBERSHIP TEST IS `store.HasTag` AND NOT A LOCAL `slices.Contains`, WHICH IS THE
+// CONSOLIDATION RULE APPLIED TO THE SITE THAT BROKE IT. It open-coded the test while
+// `store.HasTag`'s own header claimed to be the one spelling — two callers in `internal/report`
+// and this third one nothing compared against them. Nothing about a browser listing makes it a
+// different question from `cairn recall --tag`, and the day the rule changes (a fold, a
+// hierarchy, a prefix) is the day a third spelling answers differently with no gate on it.
+func EntriesByTag(scopes []Scope, tag string) TagMatches {
+	out := TagMatches{Tag: tag, ScopesScanned: len(scopes)}
+	for _, sc := range scopes {
+		for _, e := range sc.Entries {
+			out.Scanned++
+			if !store.HasTag(e.Tags, tag) {
+				continue
+			}
+			out.Entries = append(out.Entries, TagMatch{
+				ScopeID: sc.ID, Scope: sc.Name, Ref: e.Ref, Tags: e.Tags,
+			})
+		}
+	}
+	return out
 }
 
 // Search runs the root page's query through `internal/report`'s engine.
@@ -1098,7 +1193,68 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request, id identity.
 		view.Query = query
 		view.Results = &results
 	}
+
+	// 🔴 `?tag=` IS A PARAMETER ON THIS SAME ROOT ROW, AND FOR A TAG THAT IS A REQUIREMENT
+	// RATHER THAN THE HOUSE PREFERENCE `?q=` FOLLOWS. A tag is USER TEXT out of a store file,
+	// so a `/tag/<name>` path would make the dispatcher match a PREFIX — and `routes` is an
+	// exact-match map whose completeness is the claim `DeclaredRoutes()`,
+	// `TestEveryServedPathComesFromTheLedger` and the `stateChanging` cross-site gates all
+	// read. See [QueryTag].
+	//
+	// 🔴 IT NARROWS `scopes`, WHICH `Visible(auth)` ALREADY NARROWED, AND NEVER THE STORE.
+	// `EntriesByTag` takes the list rather than the authorization for exactly that reason.
+	//
+	// ⚠ FOLDED BEFORE COMPARING, THROUGH THE SAME FUNCTION THE FILE'S OWN TAGS WENT THROUGH.
+	// A `/?tag=Marketing` typed by hand — or a link from a surface that did not fold — must
+	// reach the same entries `/?tag=marketing` does, and an unfolded compare would answer a
+	// silent zero instead.
+	//
+	// 🔴 `lastTagValue` AND NOT `Query().Get`, BECAUSE SCALAR DECIDES *HOW MANY* AND NEVER
+	// *WHICH*. `Get` returns the FIRST value; the pod's `lastValue` returns the LAST, so while
+	// this line read `Get` the two surfaces answered `?tag=a&tag=b` differently — `a` here, `b`
+	// there — and [QueryTag]'s own comment claimed a reader "does not have to learn that they
+	// disagree". Making the parameter scalar closed the AND/OR question and made reading ONE
+	// value correct; it did nothing about which one, and a draft of this comment asserted
+	// otherwise. Fixed on this line rather than declared, because a tag link is the one
+	// parameter a reader carries BETWEEN the two surfaces by hand.
+	//
+	// ⚠ AND THE REST OF THIS SURFACE IS STILL FIRST-WINS — that is stated so nobody reads this
+	// line as a class fix. Every other `?…=` here goes through `Query().Get`; none of them
+	// claims to agree with the pod, and none is linked to from a rendered page.
+	//
+	// ⚠ AN UNRECOGNISED TAG IS AN HONEST ZERO AND NEVER A REFUSAL, which is [QueryView]'s
+	// ruling restated: a filter is not an authority question. A `?tag=` that folds AWAY (empty,
+	// or all punctuation) is treated as ABSENT rather than as an error, because this surface has
+	// no place to put a 400 for a browse parameter — where the POD refuses the same operand,
+	// because there a 400 is the answer shape the route already has. The cost is that a typo is
+	// silent, and the heading naming the FOLDED tag is what makes it visible.
+	if tag := store.NormalizeRef(lastTagValue(r.URL.Query())); tag != "" {
+		matches := EntriesByTag(scopes, tag)
+		view.TagMatches = &matches
+	}
 	s.renderPage(w, view)
+}
+
+// lastTagValue reads the LAST `?tag=` value, which is what `internal/api`'s `lastValue` does for
+// every scalar parameter on the pod's read routes.
+//
+// 🔴 IT EXISTS SO THE TWO SURFACES CANNOT DISAGREE ABOUT *WHICH* VALUE, and that is a different
+// claim from the one the scalar decision settled. `url.Values.Get` is first-wins by
+// specification; the pod is last-wins; both are defensible and neither is derivable from "the
+// operand is scalar". A reader who copies a `?tag=a&tag=b` between the two surfaces gets one
+// answer now, and [QueryTag]'s comment about them not disagreeing is true for the first time.
+//
+// ⚠ NOT A SHARED FUNCTION WITH `internal/api`, AND THE REASON IS THE IMPORT BAN. `internal/ui`
+// may import a third-party module and the pod's serving path may not (`internal/depspolicy`), so
+// a helper hoisted into a package both import would be a new edge in the graph that ban measures.
+// Four lines duplicated against that is the cheaper trade, and this header is what keeps the two
+// spellings answering the same question — the one thing a copy cannot carry by itself.
+func lastTagValue(params url.Values) string {
+	values := params[QueryTag]
+	if len(values) == 0 {
+		return ""
+	}
+	return values[len(values)-1]
 }
 
 // handleScopePage renders ONE scope's entry list.

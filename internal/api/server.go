@@ -1173,6 +1173,19 @@ func (s *Server) recall(rq *request, parts []string, params url.Values) error {
 	if raw, present := lastValue(params, "ref-to"); present {
 		opts.RefTo, opts.HasRefTo = raw, true
 	}
+	// 🔴 `lastValue`, LIKE EVERY OTHER PARAMETER ON THIS ROUTE, BECAUSE `?tag=` IS SCALAR. It was
+	// repeatable with AND semantics first, and the operator decided one tag — which is what makes
+	// reading ONE value out of a repetition correct by definition rather than a silent drop.
+	// Last-wins is the contract for every parameter here (`?limit=1&limit=2` means 2, and
+	// `recall-repeated-parameter` pins the rule), so `?tag=a&tag=b` is `b` by the same rule.
+	//
+	// ⚠ AN EMPTY `?tag=` SURVIVES THIS AND IS REFUSED BY `ValidateRecall` BELOW, on purpose, and
+	// that is what `HasTag` is for: `""` is a present operand that names no category, so treating
+	// it as an absent filter would answer 200 over the whole scope for it — the widening
+	// direction. `report.validateTag` reads the RAW operand for exactly that reason.
+	if raw, present := lastValue(params, "tag"); present {
+		opts.Tag, opts.HasTag = raw, true
+	}
 	limit, err := intParam(params, "limit")
 	if err != nil {
 		return err
@@ -1215,6 +1228,11 @@ func (s *Server) search(rq *request, parts []string, params url.Values) error {
 	// The same `ref-to` the recall route reads, for the same reason it is not `ref`.
 	if raw, present := lastValue(params, "ref-to"); present {
 		opts.RefTo, opts.HasRefTo = raw, true
+	}
+	// The same scalar `?tag=` the recall route reads — last-wins. See that route for why, and
+	// for why an EMPTY value is not an absent filter.
+	if raw, present := lastValue(params, "tag"); present {
+		opts.Tag, opts.HasTag = raw, true
 	}
 	contextParam, err := intParam(params, "context")
 	if err != nil {

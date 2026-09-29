@@ -96,6 +96,37 @@ type RecallReport struct {
 	// filter's own result, on the only branch that runs the filter.
 	RefToMatched int
 
+	// Tag is the `?tag=` CATEGORY narrowing, FOLDED. `""` means no filter was sent — and unlike
+	// `RecallOptions.Tag` this needs no `Has…` companion, because `validateTag` has already
+	// refused an operand that folds away, so a report can never hold a present-but-empty tag.
+	//
+	// ⚠ SET ON EVERY STATUS THE NARROWING REACHED, and NOT on `scope-absent` or
+	// `scope-unreadable`, for the reason `RefTo`'s own note gives: both return before the
+	// filter runs, and announcing a narrowing above "this scope does not exist" would suggest
+	// the narrowing is why nothing came back.
+	Tag string
+
+	// TagScopeTotal is how many entries were in play BEFORE the tag filter ran — which is the
+	// scope's own total, or the `ref-to`-narrowed count when both filters are present, because
+	// the tag filter runs second.
+	//
+	// 🔴 IT EXISTS SO THE FILTER CANNOT HIDE WHAT IT REMOVED, exactly as `RefToScopeTotal`
+	// does: without a second number a reader cannot tell "2 entries carry this tag" from "the
+	// scope holds 2 entries". The rendered tag line prints both.
+	TagScopeTotal int
+
+	// TagMatched is how many of those entries carry the tag: the numerator of the rendered tag
+	// line.
+	//
+	// 🔴 A STORED COUNT TAKEN FROM THE FILTER'S OWN RESULT, NEVER DERIVED FROM A STATUS. That
+	// is not a preference — it is `RefToMatched`'s measured lesson applied before it can be
+	// re-learned here, and the mechanism is identical: `tag-absent` is reached TWO ways (nothing
+	// in the set carried it, and the `--ref` operand is not among the ones that did), and a status
+	// cannot tell them apart. Deriving the numerator from the status printed "0 of N" over a
+	// scope where other entries DID match, in both implementations at once, so no assertion
+	// comparing the two could see it. Read this field; do not re-derive it.
+	TagMatched int
+
 	// Candidates are the filenames an ambiguous ref named. The resolver never picks; nor
 	// does this.
 	Candidates []string
@@ -362,6 +393,71 @@ func Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (Recal
 		entries = matching
 	}
 
+	// 🔴 THE SET THE `ref-to` MEMBERSHIP TEST BELOW IS ABOUT, CAPTURED BEFORE THE TAG FILTER
+	// NARROWS `entries` AGAIN — AND KEEPING IT IS WHAT MAKES THE TWO NON-FINDINGS
+	// ATTRIBUTABLE. Without it, `--ref X --ref-to Y --tag Z` where X carries Y but not Z would
+	// take the `ref-to` branch and print "`X` DOES NOT REFERENCE `Y`", which is FALSE: X
+	// references Y, and the thing it lacks is the tag. Each filter's own non-finding has to be
+	// tested against that filter's own result, and after a second narrowing `entries` is the
+	// intersection and can answer for neither.
+	//
+	// ⚠ IT IS AN ALIAS, NOT A COPY, AND THAT IS SAFE HERE FOR A STATED REASON: the tag filter
+	// below appends into a FRESH slice and rebinds `entries`, so nothing ever writes through
+	// this alias. A filter that sorted or truncated in place would need a copy.
+	refToNarrowed := entries
+
+	// 🔴 THE CATEGORY NARROWING GOES HERE: AFTER `index.Entries(opts.Scope)`, WHICH IS AFTER
+	// SCOPE AUTHORISATION, AND NEVER BEFORE IT.
+	//
+	// The index `LoadStore` returned is already narrowed to the scopes this caller may read —
+	// that is the ONE narrowing, and `internal/control/README.md` refuses a second. So this
+	// filter can only ever remove entries from a set the caller was already entitled to, and it
+	// is structurally incapable of surfacing one they were not.
+	//
+	// 🔴 THE WRONG ORDER IS THE SAME REAL, CHEAP MISTAKE THE `ref-to` FILTER NAMES ONE
+	// PARAGRAPH UP, AND IT IS EASIER TO MAKE HERE. "Every marketing entry, across scopes" reads
+	// even more like a store-wide question than a reverse lookup does, and the obvious
+	// implementation of a store-wide question is a store-wide load —
+	// `store.LoadStore(storeRoot, verb, store.Unrestricted())`, or a `visible` argument quietly
+	// dropped — followed by a tag filter. That answers correctly and leaks: the hit set names
+	// entries, scopes and tags from directories the caller cannot read, and a TAG is exactly the
+	// kind of operand somebody reaches for across a whole store.
+	// `TestTheTagFilterNarrowsAfterScopeAuthorisation` is the two-principal guard, and it was
+	// watched RED against exactly that ordering.
+	//
+	// ⚠ `TotalInScope` BECOMES THE NARROWED COUNT AND THE PRE-FILTER TOTAL MOVES TO
+	// `TagScopeTotal`, for the reason spelled out above `RefToScopeTotal`: every `recalled`
+	// branch sets `TotalInScope` from the set the report is ABOUT, and the prose that reads it
+	// is a statement about the index the reader is looking at.
+	if opts.HasTag {
+		wantTag, tagErr := canonicalTag(opts.Tag)
+		if tagErr != nil {
+			return RecallReport{}, tagErr
+		}
+		// The canonical spelling, so the rendered line and a `?tag=Marketing` agree.
+		base.Tag = wantTag
+		base.TagScopeTotal = len(entries)
+		matching := make([]store.Entry, 0, len(entries))
+		for _, e := range entries {
+			if store.HasTag(e.Tags, wantTag) {
+				matching = append(matching, e)
+			}
+		}
+		// 🔴 ON `base`, FROM THE FILTER'S OWN RESULT, BEFORE ANY STATUS BRANCH — see the
+		// field's own header for why a derivation from the status name is measured wrong.
+		base.TagMatched = len(matching)
+		if len(matching) == 0 {
+			out := base
+			out.Status = StatusTagAbsent
+			out.TotalInScope = len(entries)
+			if opts.HasRef {
+				out.Ref, out.HasRef = store.NormalizeRef(opts.Ref), true
+			}
+			return out, nil
+		}
+		entries = matching
+	}
+
 	if opts.HasRef {
 		entry, _, refErr := store.ResolveRefTiered(opts.Ref, index, opts.Scope)
 		if refErr != nil {
@@ -389,9 +485,24 @@ func Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (Recal
 		// so an entry it finds is not necessarily in the ref-to set. Without this membership
 		// test, `--ref X --ref-to Y` would print X in full whether or not X references Y,
 		// which is the report answering a question nobody asked.
-		if opts.HasRefTo && !containsEntry(entries, *entry) {
+		//
+		// ⚠ AGAINST `refToNarrowed` AND NOT `entries`, BECAUSE A SECOND FILTER NOW SITS
+		// BETWEEN THEM. `entries` is the intersection of both narrowings, so an entry missing
+		// only the TAG would be reported here as not referencing the ref — a sentence that is
+		// false about the store. See `refToNarrowed`.
+		if opts.HasRefTo && !containsEntry(refToNarrowed, *entry) {
 			out := base
 			out.Status = StatusRefToAbsent
+			out.TotalInScope = len(refToNarrowed)
+			out.Ref, out.HasRef = store.NormalizeRef(opts.Ref), true
+			return out, nil
+		}
+		// The same membership test for the TAG narrowing, against the tag filter's own result.
+		// `ref-to` is checked FIRST so the precedence between the two is stated rather than
+		// incidental: it is the order the filters ran in.
+		if opts.HasTag && !containsEntry(entries, *entry) {
+			out := base
+			out.Status = StatusTagAbsent
 			out.TotalInScope = len(entries)
 			out.Ref, out.HasRef = store.NormalizeRef(opts.Ref), true
 			return out, nil

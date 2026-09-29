@@ -36,11 +36,11 @@ EPOCH_NS = 946_684_800 * 1_000_000_000
 
 
 def _entry(service: str, scope: str, *, aliases: str = "", body: str = "a synthetic entry",
-           refs: str = "") -> str:
+           refs: str = "", tags: str = "") -> str:
     """One entry's bytes.
 
     `refs` exists so the corpus can carry the `refs:` front-matter key, which is what the
-    `--ref-to` rows narrow on.
+    `--ref-to` rows narrow on; `tags` does the same for `tags:` and the `--tag` rows.
 
     ⚠ IT WRITES THE CURRENT KEY ONLY. A `ref_key` parameter was here so one entry could carry
     the older `tasks:` spelling; the ALIAS is pinned in both languages by unit tests
@@ -52,12 +52,14 @@ def _entry(service: str, scope: str, *, aliases: str = "", body: str = "a synthe
     """
     alias_line = f"aliases: [{aliases}]\n" if aliases else ""
     ref_line = f"refs: [{refs}]\n" if refs else ""
+    tag_line = f"tags: [{tags}]\n" if tags else ""
     return (
         "---\n"
         f"service: {service}\n"
         f"scope: {scope}\n"
         f"{alias_line}"
         f"{ref_line}"
+        f"{tag_line}"
         "---\n"
         "\n"
         "## What it is\n"
@@ -81,15 +83,30 @@ ENTRIES: list[tuple[str, int, str]] = [
     # 🔴 THE SAME WHOLE SECOND AS `widget-cfg`, A DIFFERENT FRACTION. Two entries that tie on
     # a truncated mtime fall through to the ref, and getting that wrong produces a different
     # ORDER with no error and no missing entry — which reads as a stale cache.
+    # ⚠ ITS TAG IS WRITTEN FOLDED WHILE `gauge-api`'s IS NOT, on purpose: a `--tag Marketing`
+    # must reach BOTH, so the two spellings in the world are what makes the fold observable
+    # rather than assumed.
     ("alpha-notes/ledger-svc.md", 750_000_000, _entry("ledger-svc", "alpha-notes",
-                                                      aliases="ledger-holder")),
+                                                      aliases="ledger-holder",
+                                                      tags="marketing")),
     # 🔴 THE ONE ENTRY IN THIS SCOPE CARRYING A REF, AND THAT IS WHAT MAKES THE `--ref-to`
     # ROWS DISCRIMINATING. `widget-cfg` and `ledger-svc` carry none, so a reverse lookup here
     # has something to KEEP and something to REMOVE — and `recall-ref-to-composes-with-ref`
     # can ask for an entry that does NOT carry the ref while other entries in the scope do,
     # which is the shape a filter wired to "keep everything" cannot answer correctly.
+    # 🔴 AND THE ONLY ENTRY CARRYING BOTH TAGS, WHICH IS WHAT MAKES THE TWO `--tag` OPERANDS
+    # SELECT DIFFERENT SETS. `ledger-svc` carries `marketing` alone and `widget-cfg` carries
+    # none, so `--tag marketing` keeps two entries while `--tag internal` keeps ONE — a
+    # difference no row could see if every tag in the world named the same set. It is also the
+    # only entry carrying BOTH a ref and a tag, so the cross-filter row has a set the second
+    # filter can narrow.
+    #
+    # ⚠ THE SECOND TAG IS NOT LEFTOVER FROM THE REPEATABLE FLAG. `--tag a --tag b` was the
+    # original reason both were written here and that row is gone; `recall-tag-composes-with-ref-to`
+    # narrows by `internal` alone, which is what still needs an entry carrying it.
     ("alpha-notes/gauge-api.md", 4_000_000_000,
-     _entry("gauge-api", "alpha-notes", refs="github:example-org/example-repo#428")),
+     _entry("gauge-api", "alpha-notes", refs="github:example-org/example-repo#428",
+            tags="Marketing, internal")),
     # A malformed entry BESIDE readable ones: `aliases:` as a bare string is what the schema
     # refuses, and the rejection has to render in the same report as the good entries.
     ("alpha-notes/broken-four.md",

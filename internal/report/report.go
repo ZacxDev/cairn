@@ -83,6 +83,20 @@ type RecallOptions struct {
 	RefTo    string
 	HasRefTo bool
 
+	// Tag/HasTag is the `?tag=`/`--tag` CATEGORY narrowing: keep only entries whose `tags:`
+	// carry it. The operand is carried AS WRITTEN; `canonicalTag` folds it once, inside
+	// `Recall`/`Search`.
+	//
+	// 🔴 IT CARRIES A `Has…` FOR THE REASON `Ref` AND `RefTo` DO, AND THAT PAIR IS WHAT MAKES
+	// AN EMPTY `?tag=` REFUSABLE. `?tag=` with an empty value is a present operand that names
+	// no category, and it must be answered 400 rather than read as "no filter was sent" — the
+	// widening direction. One string cannot hold both states, so the flag is not decoration: a
+	// `Tag string` alone would make `?tag=` and no `?tag=` at all the same request. ⚠ The
+	// REPORT types carry a bare `Tag` instead, because by then the operand has been validated
+	// and a non-empty folded tag IS "a filter ran" — see `RecallReport.Tag`.
+	Tag    string
+	HasTag bool
+
 	Limit int
 	Mode  string
 	Page  int
@@ -120,6 +134,11 @@ type SearchOptions struct {
 	// spelled `ref-to`.
 	RefTo    string
 	HasRefTo bool
+
+	// Tag/HasTag is the same category narrowing `RecallOptions.Tag` is, applied to the entry
+	// set each searched scope contributes. See that field for why the pair is not decoration.
+	Tag    string
+	HasTag bool
 }
 
 // Rendered is what a route needs to answer a report request: the four-state status, the
@@ -179,7 +198,76 @@ func ValidateRecall(opts RecallOptions) error {
 	if err := validateRefTo(opts.RefTo, opts.HasRefTo); err != nil {
 		return err
 	}
+	// AFTER `ref-to`, for the same reason `ref-to` is after `mode`: the ladder's order decides
+	// which message a request carrying two bad parameters gets, and that order is recorded in
+	// the goldens. A new guard goes at the END.
+	if err := validateTag(opts.Tag, opts.HasTag); err != nil {
+		return err
+	}
 	return nil
+}
+
+// validateTag refuses a tag OPERAND that folds away, which is the one thing about a tag that
+// can be wrong. `!has` is "no filter was sent" and passes.
+//
+// 🔴 A REFUSAL RATHER THAN A NARROWING TO NOTHING, WHICH IS THE OPPOSITE CHOICE FROM `?ref=`.
+// `?ref=` with an empty value narrows and finds nothing, and that is right there: a ref names an
+// ENTRY, and "no entry is called that" is a fact about the store worth reporting. A tag operand
+// that folds away names NO CATEGORY AT ALL, so answering "no entry carries this" would be an
+// empty result whose cause is invisible — indistinguishable from a tag nobody has used yet, when
+// the real cause is that the query said nothing. An operator who typed `--tag ""` or `--tag '!!'`
+// gets told so.
+//
+// ⚠ THE EMPTY OPERAND IS SPELLED WITH TWO DOUBLE QUOTES, AND `gofmt` DECIDES THAT RATHER THAN
+// TASTE — SO DO NOT "RESTORE" THE TWO-APOSTROPHE SPELLING. Go's doc-comment reformatter rewrites
+// a pair of adjacent apostrophes into a right curly quote, which garbles the one sentence that
+// documents this refusal and leaves the file non-`gofmt`-clean until somebody runs it. Measured
+// with `gofmt -d`, and BACKTICKS DO NOT PROTECT IT: a code span containing the pair is rewritten
+// exactly as bare text is, which is why the fix had to change the spelling rather than quote it.
+// Two double quotes are the same empty operand in every shell and the reformatter leaves them
+// alone; `'!!'` is a SINGLE pair of apostrophes and is stable too.
+//
+// ⚠ AND IT IS WHY THE REPORT TYPES CARRY A BARE `Tag`: with an empty operand refused here, no
+// report can ever hold a present-but-empty tag, so `Tag != ""` is the whole "was a filter sent"
+// question DOWNSTREAM of this guard. The OPTIONS still need `HasTag`, because this guard is what
+// reads it — see that field.
+//
+// ⚠ THE FOLD IS `store.NormalizeRef`, THE SAME FUNCTION `parseTagsField` applies to a DECLARED
+// tag, so the rule the query side enforces is the rule the FILE side enforces — one function,
+// not two spellings of "folds to something". A second rule here is how a tag an operator can
+// write becomes one they cannot ask for.
+func validateTag(tag string, has bool) error {
+	if !has {
+		return nil
+	}
+	if store.NormalizeRef(tag) == "" {
+		return fmt.Errorf("tag %s normalizes to the empty string — a tag must fold to at "+
+			"least one of `[a-z0-9.-]`", store.PyRepr(tag))
+	}
+	return nil
+}
+
+// canonicalTag is the ONE conversion from a caller's raw `--tag`/`?tag=` operand to the folded
+// tag the filter and the rendered header both use.
+//
+// 🔴 IT LIVES IN THE RENDERER RATHER THAN AT EACH CALL SITE, AND THAT IS THE SAME RULING
+// `ValidateRecall` ITSELF CARRIES. Two callers set these options — the pod's route and the Go
+// client's verb — and a "validate then normalise" pair spelled at both is one predicate at two
+// sites, wrong at the one that gets a new step first. The options therefore carry the operand as
+// WRITTEN and `Recall`/`Search` canonicalise once, which is also why `RecallOptions.Tag` is not
+// pre-folded: a report must be reproducible from the options a request actually carried.
+//
+// 🔴 IT RE-VALIDATES AND RETURNS THE ERROR, EXACTLY AS THE `ref-to` FILTER RE-PARSES ITS OPERAND.
+// Unreachable from either real caller, because the option ladder refuses a folding-away tag
+// first. Returned rather than ignored so a future caller that skips the ladder cannot silently
+// widen: a folded-away operand would leave the empty string, and the filter treats an empty tag
+// as "no filter was sent" — so swallowing the error here would turn a malformed filter into no
+// filter at all.
+func canonicalTag(raw string) (string, error) {
+	if err := validateTag(raw, true); err != nil {
+		return "", err
+	}
+	return store.NormalizeRef(raw), nil
 }
 
 // validateRefTo is the ONE place the reverse-lookup operand's shape is refused, shared by
@@ -218,6 +306,9 @@ func ValidateSearch(opts SearchOptions) error {
 	}
 	// Last, for the reason `ValidateRecall`'s own trailing guard gives.
 	if err := validateRefTo(opts.RefTo, opts.HasRefTo); err != nil {
+		return err
+	}
+	if err := validateTag(opts.Tag, opts.HasTag); err != nil {
 		return err
 	}
 	return nil

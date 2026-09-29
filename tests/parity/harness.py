@@ -421,6 +421,70 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              "search's own copy of the operand refusal — a different code path from recall's",
              ["search", "lease", "--scope", "alpha-notes", "--ref-to", "github:"]),
 
+        # --- the CATEGORY filter --------------------------------------------------
+        # 🔴 THESE ROWS ARE THE ONLY THING THAT COMPARES THE TWO CLIENTS ON `--tag`.
+        # `tests/conformance/` compares the two SERVERS over `?tag=`, which never parses a
+        # command line; a Go client that did not declare the flag, spelled it `--tags`, or read
+        # its operand differently would pass `go test`, the corpus against both servers and the
+        # leak gate, and be caught only here.
+        #
+        # ⚠ AND THE REPEATED-FLAG ROW IS GONE WITH THE REPEATABILITY. It was the only row in the
+        # repository comparing the two clients on a repeated flag, and it is not replaced: with a
+        # scalar `--tag` the repetition is last-wins on both clients by the same construction
+        # every other value-bearing flag uses, so a row sending it twice would pin the parser's
+        # generic arm rather than anything about tags.
+        Case("recall-tag-hit",
+             "the CATEGORY filter. TWO of the three readable entries in `alpha-notes` carry "
+             "`marketing` — one written FOLDED and one written `Marketing` — so the row "
+             "measures the narrowing, the fold, and the `tag:` header line's two counts, "
+             "which differ from each other here",
+             ["recall", "--scope", "alpha-notes", "--tag", "marketing"]),
+        Case("recall-tag-folds",
+             "the operand folds through the same function the FILE side does, so a tag an "
+             "operator can WRITE is one they can ASK for. `Marketing` must find both the entry "
+             "that wrote it capitalised and the one that wrote it folded",
+             ["recall", "--scope", "alpha-notes", "--tag", "Marketing"]),
+        Case("recall-tag-absent",
+             "the filter's own non-finding — `tag-absent`, exit 0, and a sentence that must "
+             "not read as an empty scope; the vocabulary is OPEN so it also has to say a typo "
+             "looks exactly like this",
+             ["recall", "--scope", "alpha-notes", "--tag", "no-such-category"]),
+        Case("recall-tag-composes-with-ref",
+             "both narrowings at once, and the row is about the PROSE rather than the status: "
+             "`widget-cfg` carries no tags while two entries in the same scope DO, so both "
+             "clients must print `2 of 3` and a sentence naming the ENTRY. Deriving the "
+             "numerator from the status instead is the defect the `--ref-to` side shipped "
+             "twice, in both clients at once, where no byte diff could see it",
+             ["recall", "--scope", "alpha-notes", "--ref", "widget-cfg",
+              "--tag", "marketing"]),
+        Case("recall-tag-composes-with-ref-to",
+             "🔴 THE CROSS-FILTER ROW. `gauge-api` carries the ref AND both tags; adding "
+             "`--tag internal` narrows the ref-to set the `ref-to:` line has already counted, "
+             "so that line's reach clause must say a FURTHER filter narrows it and the `tag:` "
+             "line's denominator must be the set the TAG filter SAW rather than the readable "
+             "total. Three numbers, wrong in three directions if either line is derived from "
+             "the searched count alone",
+             ["recall", "--scope", "alpha-notes",
+              "--ref-to", "github:example-org/example-repo#428", "--tag", "internal"]),
+        Case("recall-tag-malformed",
+             "a tag operand that FOLDS AWAY is refused at exit 2 with ONE sentence — the "
+             "opposite choice from `--ref ''`, which narrows and finds nothing, because a tag "
+             "that folds away names no category at all",
+             ["recall", "--scope", "alpha-notes", "--tag", "!!!"]),
+        Case("search-tag-hit",
+             "the same narrowing on `search`, whose branch runs the option ladder separately — "
+             "a client that validated only on recall answers a traceback here",
+             ["search", "lease", "--scope", "alpha-notes", "--tag", "marketing"]),
+        Case("search-tag-all-scopes",
+             "`--tag` composes with `--all-scopes`, which NAMES NO SCOPE — the shape a "
+             "per-scope check cannot protect. Both clients must walk the same scope set and "
+             "print the same counts",
+             ["search", "lease", "--all-scopes", "--tag", "marketing"]),
+        Case("search-tag-malformed",
+             "search's own copy of the tag refusal — a different code path from recall's, and "
+             "the one the oracle's `except ValueError` had to be added to for `--ref-to`",
+             ["search", "lease", "--scope", "alpha-notes", "--tag", "   "]),
+
         Case("recall-mode-full", "`--mode full` explicitly, which stays authoritative over the "
              "flag-derived mode", ["recall", "--scope", "alpha-notes", "--mode", "full"]),
         Case("recall-scope-empty", "a directory that exists and holds nothing — and the LIVE "
@@ -1362,6 +1426,38 @@ def main(argv: list[str] | None = None) -> int:
             # produced them rather than on the sentence alone — the only operand that can tell
             # the two conditions apart.
             saw_unreadable_dir = False
+            # 🔴 A FIFTH SENTINEL, AND IT IS THE ONE THIS GATE'S HISTORY SAYS IS NECESSARY.
+            # When the `--ref-to` rows landed, their parity clause was VACUOUS until a fixture
+            # was planted: no entry in the world carried the key, so both clients emitted
+            # nothing and every row compared equal about nothing. A `--tag` row has the same
+            # failure mode and it is invisible to every other check here — the rows PASS, the
+            # pre-flight passes, the content floor passes, and `--self-test` passes, because
+            # all of them are satisfied by two clients agreeing.
+            #
+            # 🔴 SO THE SENTINEL IS THE TAG HEADER LINE WITH A NON-ZERO NUMERATOR, WHICH ONLY A
+            # FILTER THAT RAN AND KEPT SOMETHING CAN PRODUCE. It is keyed on the rendered line
+            # rather than on the flag being accepted: two clients that both REFUSED `--tag` as an
+            # unknown argument would agree at exit 2 and satisfy a flag-level check, and a world
+            # carrying no `tags:` would make the line read `0 of N` on every row.
+            #
+            # 🔴 `tag-match` IS THE FLOOR TERM AND `tag-narrowing` IS NOT, WHICH IS THE OPPOSITE
+            # OF WHAT THREE PLACES USED TO CLAIM. `tag_match` is assignable only inside the block
+            # `tag_narrowing` opens, so `tag_match ⟹ tag_narrowing` and a conjunction over both is
+            # `tag_match` alone. The measurement everyone cited PROVES that direction rather than
+            # the "pair" one, and it has been RE-MEASURED on this tree rather than carried
+            # forward: stripping the `tags=` arguments out of `world.py` leaves 123 cases, 126
+            # PASS, 0 failures, `tag-narrowing=True`, `tag-match=False` and rc 2 — so `tag-match`
+            # is the half that refuses and `tag-narrowing` is the half that cannot. (The same
+            # reading over the 124-case corpus was 127 PASS; the direction is what matters and it
+            # is the same at both.)
+            #
+            # ⚠ THE FIELD IS STILL PRINTED, AND THAT IS NOT DECORATION. It separates "the line
+            # was never rendered" from "rendered, numerator 0" in the output a human reads, and
+            # `test_the_CI_content_floor_grep_names_EVERY_field_the_harness_prints` requires
+            # every printed field be named in `ci.yml`'s anchor — so dropping it from the
+            # conjunction is a different change from dropping it from the line.
+            saw_tag_narrowing = False
+            saw_tag_match = False
             wanted = None if args.only is None else set(args.only.split(","))
             selected = [c for c in cases(closed, hostile_port)
                         if wanted is None or c.id in wanted]
@@ -1568,6 +1664,14 @@ def main(argv: list[str] | None = None) -> int:
                     saw_live_banner = True
                 if "FEATURED IN FULL" in py.stdout:
                     saw_rendered_digest = True
+                # The tag filter ran at all…
+                if "  tag: `" in py.stdout:
+                    saw_tag_narrowing = True
+                    # …and it KEPT something, which is the half a world carrying no `tags:`
+                    # would fail. `0 of N` is what a vacuous fixture prints.
+                    for line in py.stdout.splitlines():
+                        if line.startswith("  tag: `") and " — 0 of " not in line:
+                            saw_tag_match = True
                 # 🔴 KEYED ON THE ROW'S OWN FIELD, NOT ON THE SENTENCE ALONE. Both mode-000
                 # families print the identical sentence, so `"index entry unreadable" in
                 # py.stderr` cannot say WHICH condition produced it: a run that had lost the
@@ -1848,19 +1952,29 @@ def main(argv: list[str] | None = None) -> int:
             print(f"CONTENT-FLOOR live-banner={saw_live_banner} "
                   f"rendered-digest={saw_rendered_digest} "
                   f"unreadable-entry={saw_unreadable_entry} "
-                  f"unreadable-scope-dir={saw_unreadable_dir}{mtime_note}")
+                  f"unreadable-scope-dir={saw_unreadable_dir} "
+                  f"tag-narrowing={saw_tag_narrowing} "
+                  f"tag-match={saw_tag_match}{mtime_note}")
+            # `saw_tag_narrowing` is deliberately NOT a term here: it is implied by
+            # `saw_tag_match`, and a conjunct that cannot fail on its own reads as a fifth
+            # independent claim while adding none. See the sentinels' own header.
             floor_broken = wanted is None and not (
                 saw_live_banner and saw_rendered_digest and saw_unreadable_entry
-                and saw_unreadable_dir
+                and saw_unreadable_dir and saw_tag_match
             )
             if floor_broken:
-                print("REFUSING TO VOUCH: this run did not produce ALL FOUR of a LIVE banner, a "
-                      "rendered digest, and an `index entry unreadable` sentence from each of a "
-                      "mode-000 ENTRY FILE and a mode-000 SCOPE DIRECTORY — so it measured "
-                      "refusals rather than reports, or one of the mode rows compared two "
-                      "clients reading a store with nothing wrong. Both mode families print the "
+                print("REFUSING TO VOUCH: this run did not produce ALL FIVE of a LIVE banner, a "
+                      "rendered digest, an `index entry unreadable` sentence from each of a "
+                      "mode-000 ENTRY FILE and a mode-000 SCOPE DIRECTORY, and a `tag:` "
+                      "narrowing line with a NON-ZERO numerator — so it measured refusals "
+                      "rather than reports, or one of the mode rows compared two clients "
+                      "reading a store with nothing wrong, or the `--tag` rows compared two "
+                      "clients that emitted nothing about tags. Both mode families print the "
                       "SAME sentence, so each sentinel is keyed on its row's own field and a "
-                      "missing one names a condition nothing built.",
+                      "missing one names a condition nothing built. `tag-narrowing` is printed "
+                      "beside it but is NOT a floor term: it is implied by a non-zero "
+                      "numerator, and it separates `never rendered` from `rendered at 0` for a "
+                      "human reading the line.",
                       file=sys.stderr)
 
             dead = [n.name for n in norms if not n.fired]

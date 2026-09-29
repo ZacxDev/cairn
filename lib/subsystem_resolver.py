@@ -140,6 +140,7 @@ __all__ = [
     "format_task_refs",
     "lossy_tag_for",
     "entry_references",
+    "entry_has_tag",
     "normalize_ref",
     "split_kind",
     "path_refs",
@@ -593,6 +594,28 @@ def entry_references(entry: "SubsystemEntry", want: TaskRef) -> bool:
     )
 
 
+def entry_has_tag(entry: "SubsystemEntry", want: str) -> bool:
+    """Does this entry carry this folded tag — the `?tag=`/`--tag` predicate.
+
+    🔴 ONE TAG, BECAUSE THE PARAMETER IS SCALAR, AND THE OPERATOR DECIDED THAT RATHER THAN A
+    GATE. A repeatable `--tag` was built first, with AND semantics; nobody had asked for
+    either, and neither the repetition nor the choice between AND and OR had an author of
+    record. The surface is one tag, so there is no set to quantify over and no semantics to
+    pick — which is also what makes reading ONE value out of a query string correct rather
+    than merely usual.
+
+    🔴 ONE FUNCTION, for the reason `entry_references` gives: the filter runs at several call
+    sites and a predicate open-coded at N sites is wrong at N-1. `recall` narrows a scope's
+    entries, `search` narrows each searched scope's, and `internal/store.EntryHasTag` is the
+    Go spelling — which `internal/ui.EntriesByTag` reaches too, because a browser listing
+    that open-coded membership would be the third site the rule names.
+
+    ⚠ MEMBERSHIP AND NEVER A PREFIX: a tag is a whole folded token, so `market` does not find
+    `marketing`. The fold is `normalize_ref` on BOTH sides, applied once per side.
+    """
+    return want in entry.tags
+
+
 # --- The shared predicate ------------------------------------------------------
 
 
@@ -684,6 +707,29 @@ class SubsystemEntry:
 
     filename: str
     """`<slug>.md` or `<slug>.<kind>.md` — the name a candidate list must show."""
+
+    tags: tuple[str, ...] = ()
+    """The `tags:` this entry carries — normalized, deduped and SORTED.
+
+    🔴 THE VOCABULARY IS OPEN, AND THAT IS A DECISION RATHER THAN AN OMISSION. `kind` is a
+    CLOSED four-value enum and this deliberately is not one: `marketing` and `project-xyz`
+    are not the same axis as service/process/org/doc, and conflating two dimensions in one
+    closed set makes both unassertable. The cost is named rather than hidden — a typo makes
+    a silently separate category, and nothing here will catch it.
+
+    ⚠ SORTED, WHERE `tasks` KEEPS FILE ORDER. A ref list is hand-maintained and has an
+    author's ordering, so re-sorting it would make every read-write cycle a diff; a tag set
+    has no ordering to preserve and IS rendered — the `tag:` header line and the `?tag=`
+    links built from it must be byte-identical across two runs over an unchanged store.
+    `aliases` is the field this copies.
+
+    ⚠ THERE IS NO `raw_tags`, WHERE `aliases` HAS `raw_aliases`. An alias is an ADDRESS, so
+    the spelling an operator wrote is evidence when two of them collide; a tag is a GROUPING
+    and the only thing any surface renders or links to is the folded form.
+
+    Defaulted and appended LAST for the reason `tasks` is: every existing construction site,
+    the test suite included, builds an entry without it.
+    """
 
     tasks: tuple[TaskRef, ...] = ()
     """The `refs:` this entry carries, in FILE ORDER, deduped, never normalized.
@@ -905,6 +951,48 @@ class SubsystemEntry:
             seen_tasks.add(key)
             tasks.append(ref)
 
+        # --- `tags:` — the CATEGORY axis, which `kind` is not -------------------
+        # 🔴 IT COPIES `aliases:`' SHAPE, WHICH IS ALREADY PROVEN IN THIS PARSER, AND THAT
+        # IS WHY THIS KEY NEEDED NO MIGRATION. The three answers are the same: absent or an
+        # EMPTY scalar yields nothing (`or ()` is what makes a bare `tags:` an absent key
+        # rather than a bare string), a non-empty SCALAR is a named refusal, and a list is
+        # itself. An older reader handed a `tags:` file loads it and reports no tags, because
+        # `from_mapping` reads only the keys it names — measured on both implementations.
+        #
+        # 🔴 ONE REFUSAL FOR A TAG'S CONTENT, WHERE `aliases:` HAS TWO, AND THE DIFFERENCE IS
+        # DELIBERATE. The alias loop refuses a whitespace-only item ("is not a non-empty
+        # string") AND one that folds away ("normalizes to the empty string"); the first is a
+        # SUBSET of the second, since `normalize_ref` returns "" for anything whose every
+        # character is outside `[a-z0-9.-]`. A second sentence would be a branch nothing can
+        # reach that the first does not, and an operator reading two refusals for one mistake
+        # has to work out which they hit. The refusal a tag CAN hit names the FOLD, which is
+        # the thing they cannot see.
+        #
+        # ⚠ AND A NORMALIZED-AWAY TAG IS REFUSED RATHER THAN DROPPED. Dropping it would leave
+        # a file that DECLARES a category and an index that does not carry it, so `?tag=`
+        # would answer "no entry carries this" about an entry whose front matter says it does
+        # — an empty result whose cause is invisible at both ends.
+        #
+        # 🔴 VALIDATED HERE AND NOWHERE ELSE, which is the ruling the refs block above states:
+        # the writer's validate pass answers "would the loader accept this file?" by building
+        # exactly what the loader builds, so the check belongs here or the two disagree.
+        raw_tags_in = mapping.get("tags") or ()
+        if isinstance(raw_tags_in, (str, bytes)):
+            raise bad("`tags:` must be a list, not a bare string — write `tags: [<name>]`")
+        if not isinstance(raw_tags_in, _AbcSequence):
+            raise bad(f"`tags:` must be a list, got {type(raw_tags_in).__name__}")
+        normalized_tags: set[str] = set()
+        for tag in raw_tags_in:
+            nt = normalize_ref(tag) if isinstance(tag, str) else ""
+            if not nt:
+                raise bad(
+                    f"tag {tag!r} normalizes to the empty string — a tag must fold to at "
+                    f"least one of `[a-z0-9.-]`"
+                )
+            # DEDUPED, not rejected, for the reason `aliases:` is: two spellings of one tag
+            # on ONE entry are a single category, not a conflict.
+            normalized_tags.add(nt)
+
         derived_filename = f"{slug}.{kind}.md" if kind else f"{slug}.md"
         return cls(
             slug=slug,
@@ -914,6 +1002,7 @@ class SubsystemEntry:
             raw_aliases=tuple(raw_aliases),
             filename=filename if isinstance(filename, str) else derived_filename,
             tasks=tuple(tasks),
+            tags=tuple(sorted(normalized_tags)),
         )
 
 

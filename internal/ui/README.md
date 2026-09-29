@@ -2297,3 +2297,129 @@ own, which is what `outcomeFrom` refuses.
 - **Concurrency.** Two clicks on one invitation are handled by the store's conditional UPDATE and
   measured in `internal/pgstore`; two simultaneous MINTS, or a revoke racing a redemption, are
   not driven anywhere.
+
+
+# The `?tag=` surface — a filter on the root row, not a phase
+
+`tags:` is an entry-level front-matter key and `/?tag=<name>` is the listing every rendered tag
+links to. It is written up here rather than as a phase because it adds no route, no authority
+question and no state change: it is one query parameter on an existing GET row plus a projection
+field.
+
+## 🔴 A QUERY PARAMETER IS A REQUIREMENT HERE, NOT THE HOUSE PREFERENCE `?q=` FOLLOWS
+
+`?q=` and `?view=` ride on existing rows because a second path would be a second ledger row for
+one answer — a preference, defensible either way. `?tag=` has no such choice. A tag is USER TEXT
+out of a store file, so `/tag/<name>` would put caller-controlled bytes in a PATH SEGMENT, and
+`routes` is an **exact-match map** whose completeness is the claim three separate things read:
+`DeclaredRoutes()`, `TestEveryServedPathComesFromTheLedger`, and the `stateChanging`
+classification the cross-site gates derive from. One prefix route makes "every served path is a
+literal key in this map" false, and that sentence is load-bearing for the session layer rather
+than documentation.
+
+`TestTheTagParameterAddsNoRoute` is the guard, and it proves the parameter is **served** — a 200
+carrying a real listing — before asserting the ledger has no tag row. A ledger with no row is
+trivially true of a build that reads nothing.
+
+## 🔴 `?tag=` IS SCALAR, AND THAT IS WHAT MADE THIS PAGE'S ONE-VALUE READ CORRECT
+
+`handlePage` reads the parameter with `r.URL.Query().Get(QueryTag)`, which returns the FIRST
+value and ignores the rest. While `?tag=` was repeatable with AND semantics that was a real
+divergence and nothing here could see it: `?tag=a&tag=b` meant "entries carrying both" on the
+pod and "entries carrying `a`, with `b` silently dropped" on this page, at 200, with a heading
+naming one tag — and there was no repeated-parameter test on this side at all. The operand is
+now ONE tag on an operator decision, so one value IS the whole operand and the pod reads the
+LAST one by the rule every other scalar parameter there follows.
+
+⚠ **Nothing on this page was fixed, and saying so is the point.** The line is what it was; the
+surface narrowed underneath it. What that leaves declared rather than closed is the REFUSAL
+policy, which still differs on purpose: an operand that folds away is a 400 on the pod and an
+honest zero here, because this surface has no place to put a 400 for a browse parameter.
+
+## 🔴 THE MEMBERSHIP TEST IS `store.HasTag`, NOT A LOCAL `slices.Contains`
+
+`EntriesByTag` open-coded it while `store.HasTag`'s own header claimed to be the one spelling of
+the predicate — two callers in `internal/report` and this third one that nothing compared against
+them. Nothing about a browser listing makes "does this entry carry this tag" a different question
+from `cairn recall --tag`, and the day the rule changes (a fold, a hierarchy, a prefix) is the day
+a third spelling answers differently with no gate on it. The predicate takes the TAG SET rather
+than a `store.Entry` for exactly this reason: `ui.Entry` is its own type, and a predicate over
+`store.Entry` would have been unreachable from here.
+
+## 🔴 THE AUTHORISATION ORDER IS STRUCTURAL HERE RATHER THAN REMEMBERED
+
+`EntriesByTag` takes the already-narrowed scope **list** and is a package function rather than a
+method on `StoreSource`, so it has no `s.Root` in scope. That is deliberate: a version taking
+`control.Authorization` and loading the store itself would be correct today and one dropped
+argument away from answering "every marketing entry" over the whole disk.
+`TestTheTagPageCannotSeeAScopeTheCallerCannotRead` is the two-principal guard, with the positive
+control that the wide list finds both entries — without it the narrow list's single match is a
+fact about a filter wired to nothing.
+
+## 🔴 `Entry.Tags` IS FOLDED WHERE `Aliases` IS AS-WRITTEN, AND THE ASYMMETRY *IS* THE LINK
+
+The string on the page has to be the string the filter compares. Showing the raw spelling beside
+a link built from the folded one would put two spellings of one tag in front of a reader with no
+way to tell which the store holds. `Aliases` keeps its raw form because it has no link and its
+written spelling is evidence about a collision. `TagsKeyDescription` says both — that the list is
+folded, and that the vocabulary is OPEN — and is pinned as one normalised string for the measured
+reason `RefsKeyDescription` is: that line really did serve the word `deprecated` against a README
+saying permanent, with nothing asserting the correction.
+
+## 🔴 A HOSTILE TAG IS IN THE ESCAPING DIFFERENTIAL EVEN THOUGH THE LOADER CANNOT PRODUCE ONE
+
+`parseTagsField` folds every tag to `[a-z0-9.-]`, so no store FILE can put a hostile string on
+`Entry.Tags`. It is planted in `hostileWorld()` anyway, because a page whose escaping depended on
+that invariant would be one new writer of this projection away from broken — and `ui.Entry` has
+three writers already.
+
+Two sinks, two DIFFERENT mechanisms, and only one of them is the escaper: the link TEXT goes
+through `g.Text`, the HREF through `url.Values.Encode` — which is what stops a tag closing its
+attribute and opening an event handler. A guard on the text alone would be green for an href built
+by concatenation. `tagHref` must not reach `safeHref`, for the reason `scopeHref`/`entryHref` must
+not: that function ALLOWLISTS absolute http(s) and would refuse a same-origin path.
+
+## What this surface's guards still cannot see
+
+- **A real browser.** `uiaudit` does not walk `/?tag=`, and the tag listing adds a fourth card
+  shape plus a `<ul>` inside a `<p>` on every entry row of a scope page. Nothing has been captured
+  in a browser and no axe pass has run over it — the same gap the phases above declare, and
+  `refuseWalkRegressions` does not refuse on axe violations.
+- **The listing at scale.** `EntriesByTag` walks every visible entry on every root request that
+  carries a tag, and `Visible` has already read them all. On this store that is tens of entries;
+  nothing measures where it stops being free, and there is no pagination on the listing where the
+  scope page's index has a cap.
+- **A tag on a MALFORMED entry.** A file the loader refused carries no tags a filter can see, and
+  the listing says nothing about that — the CLI's `tag-absent` body does qualify its zero when the
+  scope has rejects, and this page has no equivalent sentence.
+- **Two clients of the same listing.** The pod's `?tag=` and this page's `?tag=` are different code
+  paths over the same key: the pod goes through `report.Recall`/`report.Search` and this one
+  filters `Visible`'s result. Nothing compares them, and they are not meant to agree on OUTPUT —
+  only on which entries carry a tag. They now share the PREDICATE (`store.HasTag`), the FOLD
+  (`store.NormalizeRef`) and, since `lastTagValue`, the REPEATED-PARAMETER rule; what is still
+  uncompared is everything either side does around it, including the refusal policy above.
+- **`?q=` and `?tag=` TOGETHER.** They do not compose here and they do on the pod, and no test on
+  either side sends both. It gets its own subsection below rather than a bullet, because the gap
+  is a DECISION nobody has made rather than a test nobody has written.
+
+### 🔴 `?q=` AND `?tag=` DO NOT COMPOSE ON THIS SURFACE, AND THAT IS DECLARED RATHER THAN CLOSED
+
+**`/?q=lease&tag=marketing` renders TWO INDEPENDENT CARDS** — a search card answering `lease`
+across every visible scope, and a tag card listing every entry carrying `marketing`. Neither
+narrows the other. **On the pod the same two parameters compose into ONE narrowed search**
+(`report.Search` applies the tag filter after scope authorisation and then searches what is left),
+so the two surfaces answer a two-parameter URL differently in KIND, not merely in layout.
+
+**And the search form drops the tag.** `searchbar` carries `name="q"` and nothing else, so a
+reader looking at a tag listing who types into the search box loses the tag — the form GETs `/`
+with `?q=` alone. That is the part most likely to read as a bug rather than as a boundary: the tag
+is visible on screen at the moment it is discarded. A hidden `<input type="hidden" name="tag">` is
+the whole mechanical fix, and it is deliberately NOT taken here.
+
+**Why declared and not composed.** Composing them changes what a DEPLOYED surface answers for a URL
+that already works, and it forces a choice nobody has made: whether `?q=` within `?tag=` should
+render one card or two, and which heading counts what. That is a decision with an operator, not a
+defect with a fix. **Closing condition:** a decision on the composed shape, then one card whose
+summary names both operands and a search form that round-trips the tag — checked by a test sending
+both parameters and asserting a single card. Until then the two-card rendering is the declared
+answer, and `tagResults`' own `Clear the tag` link is the only navigation between the two states.

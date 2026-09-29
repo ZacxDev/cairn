@@ -34,7 +34,23 @@ type Options struct {
 	// ENTRY and this names something an entry POINTS AT, so they compose rather than conflict.
 	RefTo    string
 	HasRefTo bool
-	List     bool
+	// Tag / HasTag is the CATEGORY narrowing — `--tag <name>`, SCALAR and last-wins like every
+	// other value-bearing flag on this struct.
+	//
+	// 🔴 IT WAS REPEATABLE WITH AND SEMANTICS AND IS NOT ANY MORE, ON AN OPERATOR DECISION
+	// RATHER THAN A GATE. Nobody had asked for the repetition, and the choice between AND and OR
+	// had no author of record; a scalar flag needs neither, and the parser's ordinary assignment
+	// arm is then the correct one rather than the silent hazard an append existed to avoid.
+	//
+	// ⚠ IT CARRIES A `Has…` FOR THE REASON `Ref` AND `RefTo` DO: `--tag ''` is a present operand
+	// that names no category and must be REFUSED at exit 2, not read as "no filter was sent",
+	// and one string cannot hold both states. `report.RecallOptions.Tag` carries the same note.
+	//
+	// ⚠ OPERAND AS WRITTEN, NOT FOLDED. `report.canonicalTag` is the one place it is folded, so
+	// this client and the pod cannot disagree about what a query named.
+	Tag    string
+	HasTag bool
+	List bool
 	// Limit / Page are pointers because `nil` is a DIFFERENT REQUEST from any integer: it is
 	// `--limit` that selects full-body mode, and defaulting it at the call site would make
 	// "the caller asked for a cap" indistinguishable from "the caller asked for nothing",

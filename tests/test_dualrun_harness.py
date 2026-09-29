@@ -128,8 +128,21 @@ def targets() -> list:
     for scope in scopes:
         out += H.entry_targets(scope, [f"{scope}-one", f"{scope}-two"])
         out += H.search_by_ref_targets(scope, [f"{scope}-one", f"{scope}-two"])
+        # 🔴 THE TWO FILTER SWEEPS WERE MISSING FROM THIS FIXTURE AND THE PARAMETER LEDGER
+        # BELOW COULD NOT SEE IT, WHICH IS HOW `?tag=` REACHED A SHIPPED BRANCH UNLEDGERED.
+        # `run_once` builds `ref_to_targets` and `tag_targets` for every wide scope and for
+        # every narrow one; this fixture built neither, so the ledger's `sent` set held no
+        # `tag` and no `ref-to`. It stayed GREEN because its discovery regex could not see
+        # either name: `ref-to` carries a hyphen the old `[a-z_]+` character class excluded,
+        # and `?tag=` was read through `allValues` rather than one of the four helpers the
+        # regex names. The regex is widened below and this is the other half — a discovery
+        # that finds a parameter is only a guard if the fixture can send it.
+        out += H.ref_to_targets(scope)
+        out += H.tag_targets(scope)
     for scope in narrow:
         out += H.entry_targets(scope, [f"{scope}-one", f"{scope}-two"], H.NARROW)
+        out += H.ref_to_targets(scope, H.NARROW)
+        out += H.tag_targets(scope, H.NARROW)
     out += H.write_targets("alpha-index", "alpha-index-one",
                            "dualrun-scope-that-never-existed", "theta-ambiguous",
                            "dualrun-created-entry")
@@ -213,15 +226,27 @@ def test_every_QUERY_PARAMETER_the_server_reads_is_sent_by_some_target(targets):
     named: a parameter read through a variable rather than a literal would be invisible. The
     assertion on the discovered set's SIZE below is the positive control — a regex that
     stopped matching would produce a small set and pass this guard over nothing.
+
+    🔴 AND THE CHARACTER CLASS WAS `[a-z_]+`, WHICH SILENTLY EXCLUDED EVERY HYPHENATED
+    PARAMETER — `ref-to` is one, and it was invisible to this guard for its whole life. The
+    positive-control set above could not catch that: it names ten parameters and all ten happen
+    to be single words, so the regex was "still matching" while missing a name. Widened to
+    `[a-z_-]+`, and `ref-to` is asserted in the control set for exactly the reason the other ten
+    are. ⚠ A SECOND ROUTE TO THE SAME BLIND SPOT is the HELPER: `?tag=` was read through
+    `allValues`, which this regex does not name, so a repeatable parameter was unledgered until
+    it became scalar and moved onto `lastValue`. If a new read helper appears, it goes in the
+    alternation.
     """
     source = (ROOT / "internal" / "api" / "server.go").read_text(encoding="utf-8")
     discovered = set(re.findall(
-        r'\b(?:lastValue|lastOr|intParam|floatParam)\(params,\s*"([a-z_]+)"', source))
+        r'\b(?:lastValue|lastOr|intParam|floatParam)\(params,\s*"([a-z_-]+)"', source))
     assert discovered >= {"mode", "ref", "limit", "page", "q", "threshold", "max_hits",
-                          "context", "all_scopes", "scope"}, (
+                          "context", "all_scopes", "scope", "ref-to", "tag"}, (
         f"the parameter discovery found {sorted(discovered)}, which is missing one of the "
-        f"ten this server is known to read — the regex has stopped matching and this guard "
-        f"would pass over nothing")
+        f"twelve this server is known to read — the regex has stopped matching and this guard "
+        f"would pass over nothing. `ref-to` is in this set because it is the one HYPHENATED "
+        f"name, so a character class that excluded `-` again would fail here rather than "
+        f"passing over a parameter nothing sends")
 
     sent: dict[str, set[str]] = {}
     for target in targets:

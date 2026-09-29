@@ -215,7 +215,29 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 		// `RendersNarrowedSet()` is true exactly when a matched entry is printed below,
 		// and its own header records the three shapes a status-name derivation got wrong
 		// plus the digest-mode case that rules out the obvious second guess.
+		// ⚠ THE LAST ARGUMENT IS WHAT THE TAG FILTER MADE NECESSARY. `RefToMatched` is the
+		// entries that carry the ref; with a `--tag` also in force the body below reports on a
+		// SUBSET of them, so "everything below is about those N" would be false — see
+		// `reachClause`.
+		//
+		// ⚠ AND IT IS "THE TAG FILTER REMOVED SOMETHING", NOT "A TAG FILTER WAS SENT". A `--tag`
+		// that kept every entry narrows nothing, so the original clause is still TRUE there and
+		// saying otherwise would send a reader looking for a subset that is the whole set.
 		out = append(out, refToLine(r.RefTo, r.RefToMatched, r.RefToScopeTotal, r.Scope+"/",
+			r.RendersNarrowedSet(), r.TagScopeTotal > r.TagMatched))
+	}
+
+	// The CATEGORY narrowing announces itself for the same reason, and AFTER the `ref-to` line
+	// because that is the order the two filters ran in — so a report carrying both reads as the
+	// composition it is rather than as two independent claims about one index.
+	//
+	// ⚠ EMITTED ONLY WHEN THE FILTER WAS SENT, so no existing golden moves: `Tag` is empty on
+	// every request that does not carry the parameter.
+	if r.Tag != "" {
+		// The same render decision, not a status — `RendersNarrowedSet()`'s own header records
+		// the shapes a status-name derivation got wrong, and every one of them is reachable
+		// with `--tag` in place of `--ref-to`.
+		out = append(out, tagLine(r.Tag, r.TagMatched, r.TagScopeTotal, r.Scope+"/",
 			r.RendersNarrowedSet()))
 	}
 
@@ -312,6 +334,51 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 			"THIS SCOPE's `refs:` keys and NOT about whether the reference exists: an entry "+
 			"may point at it under a different spelling of the id half, which is compared "+
 			"byte-for-byte."+extra)
+		return strings.Join(out, "\n")
+
+	case StatusTagAbsent:
+		out = append(out, "")
+		// 🔴 TWO SENTENCES FOR ONE STATUS, FOR THE REASON `ref-to-absent` ABOVE HAS TWO, AND
+		// WRITTEN THAT WAY FROM THE START RATHER THAN AFTER A ROUND MEASURED IT WRONG. This
+		// status is reached TWO ways — nothing in the set carried the tag (the filter's own
+		// zero), and "the `--ref` operand is not among the entries that DID" — and a status
+		// cannot tell them apart. The discriminator is `TagMatched`, taken from the filter's own
+		// result; see its field header.
+		if r.TagMatched > 0 {
+			// The `--ref` operand loaded fine, so the malformed rows cannot make THIS claim
+			// wrong; they can only understate the count of entries that DO carry the tag.
+			extra := ""
+			if n := len(r.Malformed); n > 0 {
+				extra = " ⚠ AND THAT COUNT IS ONLY OF ENTRIES THAT LOADED: " + strconv.Itoa(n) +
+					" entry file" + plural(n) + " in this scope could not be indexed (listed " +
+					"above), and an entry that never loaded carries no tags a filter can see."
+			}
+			out = append(out, "`"+r.Ref+"` IS NOT TAGGED `"+r.Tag+"` — it was read "+
+				"and does not carry it, so the two narrowings compose "+
+				"to nothing and no body is printed. "+strconv.Itoa(r.TagMatched)+" of the "+
+				strconv.Itoa(r.TagScopeTotal)+" entr"+entryPlural(r.TagScopeTotal)+" in `"+
+				r.Scope+"/` "+doesOrDo(r.TagMatched)+" — re-run without `--ref` to see "+
+				themOrIt(r.TagMatched)+"."+extra)
+			return strings.Join(out, "\n")
+		}
+		// 🔴 IT SAYS WHAT WAS LOOKED AT AND WHAT WAS NOT, because a category filter's zero is as
+		// misreadable as a reverse lookup's: "no entry is tagged X" and "X is not a category
+		// anybody uses" are different facts, and only the first is in evidence. The vocabulary
+		// is OPEN, so a typo in either the file or the query makes a silently separate category
+		// — that is what the last clause names.
+		extra := ""
+		if n := len(r.Malformed); n > 0 {
+			extra = " ⚠ BUT " + strconv.Itoa(n) + " entry file" + plural(n) + " in this scope " +
+				"could not be indexed (listed above), and an entry that never loaded carries no " +
+				"tags a filter can see — one of them may be tagged this. Check those before " +
+				"concluding nothing is."
+		}
+		out = append(out, "NO ENTRY IS TAGGED `"+r.Tag+"` — the "+
+			strconv.Itoa(r.TagScopeTotal)+" entr"+entryPlural(r.TagScopeTotal)+" in `"+
+			r.Scope+"/` were read and none of them carries it. Both "+
+			"sides of the comparison are FOLDED, so a differently-cased spelling would have "+
+			"been found — but the tag vocabulary is OPEN and nothing declares it, so a typo in "+
+			"the file or in this query is a category of one that no check can see."+extra)
 		return strings.Join(out, "\n")
 
 	case StatusRefAbsent:
@@ -411,6 +478,16 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 			// subject is that re-base, not in one that happens to touch this function.
 			out = append(out, "    tasks: "+strings.Join(e.Tasks, ", "))
 		}
+		if len(e.Tags) != 0 {
+			// Identity, like the refs line above and for the same reason: "what category is
+			// this" is not content.
+			//
+			// ⚠ THE LABEL MATCHES THE KEY HERE, WHICH THE LINE ABOVE DOES NOT — and saying so
+			// is the point rather than leaving a reader to wonder whether this one is also
+			// deferred. `tags:` is the key an operator writes and `tags:` is what this prints;
+			// there is no older spelling, no rename in flight, and nothing to defer.
+			out = append(out, "    tags: "+strings.Join(e.Tags, ", "))
+		}
 		for _, heading := range SurfacedHeadings {
 			body := e.Sections[heading]
 			if body == "" {
@@ -496,16 +573,72 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 // (it returns `(no scope)` for an empty set, and a `/`-suffixed join otherwise). Caught by
 // reading the regenerated golden, not by a test: both implementations agreed, and both were
 // wrong.
-func refToLine(refTo string, matched, total int, label string, narrowedSetShown bool) string {
-	reach := "and everything below is about those " + strconv.Itoa(matched) + "."
-	if !narrowedSetShown {
-		reach = "and NOTHING below is about them — the sentence below says why."
-	}
+func refToLine(refTo string, matched, total int, label string, narrowedSetShown, narrowedFurther bool) string {
 	return "  ref-to: `" + refTo + "` — " + strconv.Itoa(matched) + " of " +
 		strconv.Itoa(total) + " entr" + entryPlural(total) + " in `" + label +
-		"` reference it, " + reach +
-		" This is a NARROWING, not a truncation: the rest were read and did not match."
+		"` reference it, " + reachClause(matched, narrowedSetShown, narrowedFurther) +
+		narrowingCaveat
 }
+
+// reachClause is the middle clause of BOTH filter headers: what the body below the line is
+// about. THREE states, spelled once, because there are three and two of them were once one.
+//
+// 🔴 THE THIRD STATE IS WHAT A SECOND FILTER MADE NECESSARY, AND ITS ABSENCE WOULD HAVE BEEN A
+// FALSE SENTENCE RATHER THAN A MISSING ONE. With `--ref-to X --tag Y`, the `ref-to` line's
+// numerator is the entries that reference X — which is correct and is NOT what the body renders,
+// because the tag filter then removes some of them. "Everything below is about those N" was
+// therefore false about the store in exactly the way #141's round 2 measured on four other
+// shapes: a count of matched entries above a body that reports on fewer. Naming the further
+// narrowing is the honest clause.
+//
+// 🔴 `narrowedSetShown` WINS OVER `narrowedFurther`, AND THE ORDER IS LOAD-BEARING. When nothing
+// below reports on a matched entry at all, "a further filter narrows those N again" would be
+// true and useless — it invites the reader to look for the narrowed subset, and there is no
+// subset on screen. The "NOTHING below" clause points at the sentence that explains the empty
+// body, which is the only thing there is to read.
+func reachClause(matched int, narrowedSetShown, narrowedFurther bool) string {
+	switch {
+	case !narrowedSetShown:
+		return "and NOTHING below is about them — the sentence below says why."
+	case narrowedFurther:
+		return "and a FURTHER filter below narrows those " + strconv.Itoa(matched) + " again."
+	default:
+		return "and everything below is about those " + strconv.Itoa(matched) + "."
+	}
+}
+
+// tagLine is the ONE spelling of the category-filter header, shared by both renderers for
+// exactly the reason `refToLine` above is shared: two report types, one sentence.
+//
+// 🔴 IT IS A SEPARATE FUNCTION AND NOT A `refToLine` PARAMETERISED BY A LABEL, EVEN THOUGH BOTH
+// OPERANDS ARE NOW SCALAR. The two sentences differ in every clause but the trailing NARROWING
+// caveat — "carry it" against "reference it", and two different pairs of counts — so folding them
+// would put a conditional on each clause to save one shared word. That caveat is the half neither
+// renderer may spell twice, so it is spelled once in `narrowingCaveat`.
+//
+// ⚠ `label` CARRIES ITS OWN TRAILING `/` — the trap `refToLine`'s header records, inherited
+// here because this function is copied from it. Pass `SearchReport.Label()`, never
+// `SearchReport.Scope`, which is the literal `(all scopes)` on a store-wide search.
+// ⚠ IT TAKES NO `narrowedFurther`, AND THAT IS A PROPERTY OF THE FILTER ORDER RATHER THAN AN
+// OMISSION. The tag filter runs LAST at both call sites, so nothing narrows its result again and
+// the third reach state is unreachable here. A third filter added after it would have to pass
+// one — and would also have to re-derive this line's denominator, which is the set the tag
+// filter SAW rather than the readable total.
+func tagLine(tag string, matched, total int, label string, narrowedSetShown bool) string {
+	return "  tag: `" + tag + "` — " + strconv.Itoa(matched) + " of " +
+		strconv.Itoa(total) + " entr" + entryPlural(total) + " in `" + label + "` carry it, " +
+		reachClause(matched, narrowedSetShown, false) + narrowingCaveat
+}
+
+// narrowingCaveat is the clause both filter headers end with, spelled ONCE.
+//
+// 🔴 IT IS A CONSTANT RATHER THAN A REPEATED LITERAL BECAUSE IT IS THE PART THAT MUST NOT
+// DIVERGE. The counts and the verbs differ between the two lines by design; this sentence is
+// the reader's instruction — "the rest were read and did not match", which is what stops a
+// narrowed index reading as a truncated one — and a second spelling of it is the one that would
+// go stale in whichever line was edited second.
+const narrowingCaveat = " This is a NARROWING, not a truncation: the rest were read and " +
+	"did not match."
 
 // themOrIt and doesOrDo agree with a COUNT the reader is being pointed at, not with the
 // entry-total beside it in the same sentence. Spelled here beside their siblings because the

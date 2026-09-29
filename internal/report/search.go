@@ -443,6 +443,20 @@ type SearchReport struct {
 	// line prints this count beside the searched one, so a zero says WHY it is zero.
 	RefToSkipped int
 
+	// Tag is the `?tag=` CATEGORY narrowing, FOLDED. `""` means no filter was sent. See
+	// `RecallReport.Tag` for why this one needs no `Has…` where the OPTIONS do.
+	Tag string
+
+	// TagSkipped is how many entries the TAG filter removed from the searched set.
+	//
+	// 🔴 IT IS THE SECOND TERM IN THE `search-unreadable` DISCRIMINATOR, NOT A DISPLAY FIELD,
+	// and that is the whole reason it is stored. `searched + RefToSkipped + TagSkipped` is the
+	// PRE-FILTER readable count, because every readable entry in the searched scopes lands in
+	// exactly one of the three: kept, removed by `ref-to`, or removed by `tag`. The status
+	// branch is about that count and never about `searched` alone — see the switch below for
+	// the measured defect that taught it.
+	TagSkipped int
+
 	// BestBelow is the `(ref, score)` of the best hunk that did NOT clear the threshold.
 	//
 	// 🔴 THIS IS WHAT MAKES A ZERO READABLE. An empty result cannot distinguish two
@@ -561,11 +575,27 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 		wantRef = parsed
 		base.RefTo, base.HasRefTo = parsed.String(), true
 	}
+	// The tag operand is canonicalised ONCE, outside the scope loop, for the same reason the
+	// ref-to operand is parsed once: `wantTag` is only consulted when a filter was sent, so a
+	// search with no `?tag=` does no per-entry work it did not do before.
+	var wantTag string
+	if opts.HasTag {
+		canonical, tagErr := canonicalTag(opts.Tag)
+		if tagErr != nil {
+			// Unreachable from either real caller — `ValidateSearch` refuses first. Returned
+			// rather than ignored so a caller that skips the ladder cannot silently search
+			// everything; see `canonicalTag`.
+			return SearchReport{}, tagErr
+		}
+		wantTag = canonical
+		base.Tag = canonical
+	}
 
 	queryTokens := Tokenize(opts.Query)
 	var cleared, below []Hunk
 	searched := 0
 	refToSkipped := 0
+	tagSkipped := 0
 	for _, sc := range scopes {
 		entries, entriesErr := index.Entries(sc)
 		if entriesErr != nil {
@@ -590,6 +620,28 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 					continue
 				}
 				refToSkipped++
+			}
+			ordered = kept
+		}
+		if opts.HasTag {
+			// 🔴 HERE, INSIDE THE LOOP OVER `scopes`, FOR THE REASON THE `ref-to` FILTER ABOVE
+			// SPELLS OUT: `scopes` comes from `index.Scopes()` — including on the `all_scopes=1`
+			// path — and that index was narrowed by `visible` at load time, so this filter can
+			// only REMOVE entries from a set this caller was already entitled to read. A tag is
+			// the operand most likely to tempt somebody into a store-wide load ("every marketing
+			// entry, across scopes"), which is exactly the hole `Search`'s own header paragraph
+			// closed by making visibility an index filter.
+			//
+			// ⚠ AFTER the `ref-to` filter, so the two counters partition the readable set
+			// rather than double-counting an entry both would have removed. The status branch
+			// below is a claim about `searched + refToSkipped + tagSkipped`.
+			kept := make([]store.Entry, 0, len(ordered))
+			for _, e := range ordered {
+				if store.HasTag(e.Tags, wantTag) {
+					kept = append(kept, e)
+					continue
+				}
+				tagSkipped++
 			}
 			ordered = kept
 		}
@@ -648,8 +700,17 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 	// `search-no-match`, where the ref-to line's own "0 of N" and the sentence
 	// `RenderText` prints for that shape are the honest answer: the query DID run, over a
 	// narrowed set that turned out to be empty.
+	//
+	// 🔴 `tagSkipped == 0` IS THE SAME TERM ONE FILTER LATER, AND IT IS ADDED IN THE SAME
+	// CHANGE AS THE FILTER RATHER THAN IN A LATER AUDIT ROUND. The `ref-to` term above was
+	// missing for three rounds because the commit that staled the condition WAS the commit that
+	// introduced the filter, so no delta audit's range contained it. The rule the two terms
+	// share, stated once: **every filter placed upstream of `searched` falsifies this condition
+	// unless its own skip count is subtracted back out.** Before adding a third filter,
+	// enumerate the status conditions downstream of it and ask which ones it can now falsify —
+	// this is the one.
 	switch {
-	case searched == 0 && refToSkipped == 0 && len(bad) > 0:
+	case searched == 0 && refToSkipped == 0 && tagSkipped == 0 && len(bad) > 0:
 		out.Status = StatusSearchUnreadable
 	case len(cleared) > 0:
 		out.Status = StatusSearchHit
@@ -666,6 +727,7 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 	out.TotalHits = len(cleared)
 	out.EntriesSearched = searched
 	out.RefToSkipped = refToSkipped
+	out.TagSkipped = tagSkipped
 	out.ScopesSearched = scopes
 	out.Malformed = bad
 	out.MalformedElsewhere = badElsewhere

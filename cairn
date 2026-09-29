@@ -1367,6 +1367,7 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
                 max_hits=rc.DEFAULT_MAX_HITS,
                 all_scopes=args.all_scopes,
                 ref_to=args.ref_to,
+                tag=args.tag,
             )
         except ValueError as exc:
             print(f"cairn: {exc}", file=sys.stderr)
@@ -1428,6 +1429,7 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
                 scope,
                 ref=args.ref,
                 ref_to=args.ref_to,
+                tag=args.tag,
                 limit=selection.limit,
                 mode=mode,
                 page=selection.page,
@@ -2601,6 +2603,18 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="<system>:<id>",
         help="only entries whose `refs:` carries this ref (the REVERSE lookup)",
     )
+    # 🔴 SCALAR, AND LAST-WINS LIKE EVERY OTHER VALUE-BEARING FLAG HERE — an OPERATOR DECISION
+    # rather than a gate. A repeatable `--tag` with AND semantics shipped first; nobody had
+    # asked for the repetition, and the choice between AND and OR had no author of record, so
+    # the surface is one tag. `default=None` and not `""`: `rc.recall` refuses an operand that
+    # folds away, and `--tag ''` must reach that refusal rather than read as "no filter" — so
+    # absent and empty have to stay distinguishable all the way into the option ladder.
+    r.add_argument(
+        "--tag",
+        default=None,
+        metavar="<name>",
+        help="only entries whose `tags:` carries this tag",
+    )
     r.add_argument(
         "--list",
         action="store_true",
@@ -2631,6 +2645,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="<system>:<id>",
         help="only entries whose `refs:` carries this ref (the REVERSE lookup)",
+    )
+    # The same scalar `--tag` `recall` carries, for the same reason. Searching within one
+    # category is the narrowing the key exists for.
+    q.add_argument(
+        "--tag",
+        default=None,
+        metavar="<name>",
+        help="only entries whose `tags:` carries this tag",
     )
     q.set_defaults(func=cmd_search)
 

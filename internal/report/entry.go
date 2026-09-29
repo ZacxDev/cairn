@@ -92,6 +92,16 @@ type RecalledEntry struct {
 	// whole subject is that re-base. `RecallReport.RenderText`'s own label carries the
 	// same note.
 	Tasks []string
+
+	// Tags are the entry's `tags:`, already folded, deduped and sorted by the loader.
+	//
+	// ⚠ NO PROJECTION LOOP, WHERE `Tasks` HAS ONE, AND THE DIFFERENCE IS THE TYPE RATHER THAN
+	// A SHORTCUT. `store.Entry.Tasks` is `[]TaskRef` and has to be flattened to its printed
+	// spelling; `store.Entry.Tags` is already `[]string` in exactly the form every surface
+	// renders, because a tag's canonical form IS its folded form and there is no raw spelling to
+	// choose between. The slice is shared with the loader's, which is safe for the same reason
+	// the rest of this struct's reads are: nothing here writes through it.
+	Tags []string
 }
 
 // IsBare is true when neither COUNTED section had any content.
@@ -167,6 +177,7 @@ func ReadEntry(storeRoot string, entry store.Entry) (RecalledEntry, error) {
 		MTime:               mtime,
 		MissingSections:     missing,
 		Tasks:               tasks,
+		Tags:                entry.Tags,
 	}, nil
 }
 

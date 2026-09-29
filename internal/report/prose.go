@@ -69,7 +69,19 @@ const (
 	// ⚠ IT EXITS 0, like every status outside `UnreadableStatuses`. "Nothing references
 	// this" is an ANSWER: the store was read, the question was asked, and the answer is
 	// none. Only "nothing could be read" is a non-zero.
-	StatusRefToAbsent      = "ref-to-absent"
+	StatusRefToAbsent = "ref-to-absent"
+	// StatusTagAbsent is the CATEGORY filter's own non-finding: a `--tag`/`?tag=` was given
+	// and no entry in the caller's reachable scopes carries it.
+	//
+	// 🔴 IT IS NOT `scope-empty`, AND THAT IS THE STATUS A TAG FILTER WOULD OTHERWISE FALL
+	// INTO. `Recall`'s `len(entries) == 0` branch is downstream of every narrowing, and its
+	// body opens `NOTHING RECORDED YET — <scope>/ exists but holds no entries` — a claim about
+	// the DIRECTORY, which is false of a full scope none of whose entries carry the tag. The
+	// filter therefore answers before that branch is reachable, with a sentence about the TAG.
+	//
+	// ⚠ IT EXITS 0, like every status outside `UnreadableStatuses`: "nothing carries this tag"
+	// is an ANSWER. The store was read, the question was asked, and the answer is none.
+	StatusTagAbsent        = "tag-absent"
 	StatusRecalled         = "recalled"
 	StatusSearchHit        = "search-hit"
 	StatusSearchNoMatch    = "search-no-match"

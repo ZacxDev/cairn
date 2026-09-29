@@ -409,10 +409,15 @@ func TestTheFourIgnoredErrnosAreStillSkipped(t *testing.T) {
 func TestTheEmptySliceLedgerIsComplete(t *testing.T) {
 	// The declared ledger: every slice-typed field of `Entry`, and what it is when empty.
 	// `nil` here is a STATEMENT OF FACT about today's code, re-measured below, not a wish.
+	// ⚠ `Tags` IS THE FIRST FIELD THIS LEDGER ACTUALLY STOPPED, AND THE DECISION IT FORCED IS
+	// RECORDED RATHER THAN INHERITED. Adding `Entry.Tags` turned this test RED naming the
+	// field; `parseTagsField` returns `sortedKeys`, which always allocates, so the answer is
+	// the same "empty slice" the other three give — chosen, not defaulted.
 	ledger := map[string]string{
 		"Aliases":    "empty slice",
 		"RawAliases": "empty slice",
 		"Tasks":      "empty slice",
+		"Tags":       "empty slice",
 	}
 
 	typ := reflect.TypeOf(Entry{})
