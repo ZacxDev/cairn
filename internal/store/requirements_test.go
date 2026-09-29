@@ -97,33 +97,64 @@ func TestProvenanceHasExactlyThreeAnswers(t *testing.T) {
 	}
 }
 
-// TestProvenanceIsTheWholeParenthesizedWord pins the narrowing the doc comment claims:
-// a prefix is not a match, a different case is not a match, and a bullet with no parsed
-// marker has no provenance however it is spelled.
+// TestProvenanceIsTheWholeParenthesizedWord pins the two narrowings that are BEHAVIOUR:
+// the match is the whole parenthesised word, and it is case-sensitive.
 //
-// 🔴 THIS IS WHAT STOPS PROVENANCE BEING MANUFACTURABLE. Every row here is a line a
-// writer could plausibly type, and every one must come back ABSENT — an accepted
-// near-spelling would attribute a statement to the operator that the operator did not
-// make.
+// 🔴 THIS IS WHAT STOPS PROVENANCE BEING MANUFACTURABLE — an accepted near-spelling would
+// attribute a statement to the operator that the operator did not make.
+//
+// ⚠ ONE ROW PER MECHANISM, AND THE ROW COUNT CAME DOWN ON PURPOSE. An earlier version had
+// eleven rows over three mechanisms; the duplicates cost nothing to RUN and cost a reader
+// the question "which of these is load-bearing?". Each row below is the narrowest input
+// that can distinguish the mechanism it names, and the mutation battery attributes which
+// mutant each one kills — `(operators)` kills the prefix-match mutant, `(Operator)` kills
+// the case-fold mutant. Deleting either stops a mutant dying, which is the test that the
+// trim did not cut muscle.
 func TestProvenanceIsTheWholeParenthesizedWord(t *testing.T) {
 	for _, c := range []struct {
 		line string
 		want string
+		why  string
 	}{
-		{"- OPEN: (operator) a real one", ProvenanceOperator},
-		{"- OPEN: (inferred) a real one", ProvenanceInferred},
-		{"- OPEN:(operator) no space is still fine", ProvenanceOperator},
-		{"- OPEN: (operators) a plural", ProvenanceAbsent},
-		{"- OPEN: (operator-ish) a hyphenated extension", ProvenanceAbsent},
-		{"- OPEN: (Operator) capitalised", ProvenanceAbsent},
-		{"- OPEN: (operator a missing paren", ProvenanceAbsent},
-		{"- OPEN: operator) no opening paren", ProvenanceAbsent},
-		{"- (operator) OPEN: the parenthetical came first", ProvenanceAbsent},
-		{"- (operator) no marker at all", ProvenanceAbsent},
-		{"- 2000-07-08 OPEN: (operator) a near-miss marker", ProvenanceAbsent},
+		// The two positive controls: without these the whole table could pass by
+		// returning ProvenanceAbsent unconditionally.
+		{"- OPEN: (operator) a real one", ProvenanceOperator, "positive control, operator"},
+		{"- OPEN: (inferred) a real one", ProvenanceInferred, "positive control, inferred"},
+		// The separator is optional, so a missing space must NOT change the answer.
+		{"- OPEN:(operator) no space", ProvenanceOperator, "the whitespace run is optional"},
+		// Mechanism 1: the closing paren is required, so a longer word is not a match.
+		// KILLS the prefix-match mutant.
+		{"- OPEN: (operators) a plural", ProvenanceAbsent, "whole word, not a prefix"},
+		// Mechanism 2: case-sensitive. KILLS the case-fold mutant.
+		{"- OPEN: (Operator) capitalised", ProvenanceAbsent, "case-sensitive"},
 	} {
 		if got := BulletProvenance(c.line); got != c.want {
-			t.Errorf("BulletProvenance(%q) = %q, want %q", c.line, got, c.want)
+			t.Errorf("BulletProvenance(%q) = %q, want %q (%s)", c.line, got, c.want, c.why)
+		}
+	}
+}
+
+// TestALineWithNoParsedMarkerHasNoProvenance is an INVARIANT GUARD, labelled as one, and
+// deliberately NOT counted as regression coverage.
+//
+// 🔴 THE BUG NEVER VIOLATED IT, BECAUSE IT CANNOT BE VIOLATED WITHOUT REWRITING
+// `BulletProvenance`'s FIRST TWO LINES. `MarkerSpan` returns 0 for every line
+// `BulletOpenness` refuses, and the function returns ProvenanceAbsent on a 0 span before
+// looking at anything else — so these rows are structurally unreachable rather than
+// behaviourally checked. No mutant in the battery dies here.
+//
+// It is kept anyway, cheaply, for one reason: it is the executable form of the doc
+// comment's claim that provenance cannot attach to a near-miss bullet. If a later change
+// makes provenance readable independently of the marker, this is what notices — and that
+// change is exactly the one that would dress a failed write up as a recorded one.
+func TestALineWithNoParsedMarkerHasNoProvenance(t *testing.T) {
+	for _, line := range []string{
+		"- (operator) no marker at all",
+		"- (operator) OPEN: the parenthetical came first",
+		"- 2000-07-08 OPEN: (operator) a near-miss marker, the date has no colon",
+	} {
+		if got := BulletProvenance(line); got != ProvenanceAbsent {
+			t.Errorf("BulletProvenance(%q) = %q, want ProvenanceAbsent", line, got)
 		}
 	}
 }
@@ -160,8 +191,20 @@ func TestTheSameTextUnderNuanceIsNotARequirement(t *testing.T) {
 	}
 }
 
-// TestARequirementsHeadingInsideAFenceIsNotAHeading is criterion 4's guard, over the
-// EXISTING `IsFence` rule rather than a second fence notion.
+// TestARequirementsHeadingInsideAFenceIsNotAHeading is criterion 4's guard — and it is an
+// INVARIANT GUARD, labelled as one rather than counted as regression coverage.
+//
+// 🔴 THE FENCE RULE PREDATES THIS CHANGE AND IS TESTED WHERE IT LIVES. `ParseRequirements`
+// contains no fence logic at all: it delegates grouping to `ParseJournalBullets` and gets
+// its body from `ExtractSections`, both of which already skip fences and are already
+// covered. So nothing here could have regressed, and no mutant in this feature's battery
+// dies on this test.
+//
+// It earns its place as a SEAM test instead: it asserts the NEW heading goes through the
+// SAME fence rule as the other three, which is the relationship a reader would otherwise
+// have to infer from two files. The distinction matters because the house rule is explicit
+// — a guard pinning an invariant the bug never violated must say so, or it reads as
+// coverage while providing none, which stops anyone looking.
 func TestARequirementsHeadingInsideAFenceIsNotAHeading(t *testing.T) {
 	fenced := "" +
 		"---\n" +
