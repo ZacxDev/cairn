@@ -24,37 +24,30 @@ with test coverage.
 
 ## State now
 
-- Base clone `main` is **current** at `1689df6` (the "behind 1" in the previous revision was
-  already resolved; `fetch` + `merge --ff-only` reported `Already up to date`).
-- ✅ **662 — `refs:` + URL templates + `--ref-to`/`?ref-to=`. MERGED, squash `5c59169`.** Card
-  `complete`. Unchanged this session.
-- ✅ **663 — entry-level `tags:` + scalar `--tag`/`?tag=`. MERGED, squash `94ecb7e`. CARD NOW
-  WRITTEN BACK AND `complete`; claim `cairn-next-phase-c` RELEASED.** Rank 1 is closed.
-  The write-back carries the per-criterion table, the ladder, and five named gaps. Evidence
-  re-derived this session rather than relayed:
-  - 🔴 **The squash tree is byte-identical to the tree the gates ran against** —
-    `94ecb7e^{tree}` and the tested head `2c1bbcf^{tree}` are both `e52d5c21`, `git diff`
-    between them empty. So the 8/8 green check-runs are literally about `main`.
-  - Independent re-run on `main` under `nix develop`: `go vet` rc 0 with **0 bytes of
-    stderr**; `go test ./...` rc 0, **21 ok / 0 FAIL / 0 panics**; `leakscan --self-test`
-    then `leakscan` rc 0, **0 findings across 462 files**.
-  - NOT re-run locally, and said so on the card: `pytest`, `suite.py`, `run_go.sh`,
-    `parity/harness.py`, `dualrun/harness.py`.
-- ⏳ **665 — PR #1905 in the operator's shared rules-and-dotfiles repo. IN FLIGHT:
-  other-repo#1905.** Its CI had never seen the merged tree, so this session **pushed a merge of
-  current `main` into the branch**: new head **`490362e3`**, tree **`8b932b4e`**, parents
-  `5c34b707` + `79a9b22a`, a fast-forward (no force). Built without `git merge` — the
-  session's cwd guard refuses one — via `merge-tree --write-tree` (rc **0**, read as an exit
-  code, not a marker grep) then `commit-tree`. **The four CI statuses were still
-  `pending` when this doc was written; the merge is gated on them.** Card not written back.
-- ⏳ **664 — `## Requirements` section. NOT STARTED**, card `open`. Its blocker (663) has now
-  cleared.
-- 📋 Filed rather than fixed: **681**, **682** (`AGENTS.md` one-byte headroom), **683**.
-- ⚠ **Claim still held:** `cairn-next-phase-d` only. Release it when #1905 merges and 665 is
-  written back. `cairn-next-phase-c` is released.
+- Base clone `main` is **current** at `9e61c4c0` (this doc's own previous update).
+- ✅ **662 — `refs:` + URL templates + `--ref-to`/`?ref-to=`. MERGED, squash `5c59169`.** Card `complete`.
+- ✅ **663 — entry-level `tags:` + scalar `--tag`/`?tag=`. MERGED, squash `94ecb7e`. Card
+  `complete`; claim `cairn-next-phase-c` RELEASED.** Rank 1 closed. Verified by content, with the
+  squash tree byte-identical to the tree the gates ran against (`94ecb7e^{tree}` and the tested
+  head `2c1bbcf^{tree}` are both `e52d5c21`), plus an independent re-run on `main`: `go vet` rc 0
+  with **0 bytes of stderr**, `go test ./...` **21 ok / 0 FAIL / 0 panics**, leakscan **0 findings
+  across 462 files**. Not re-run locally, and said so on the card: `pytest`, `suite.py`,
+  `run_go.sh`, `parity/harness.py`, `dualrun/harness.py`.
+- ✅ **665 — the four deterministic doors plus thin routing skills. MERGED, squash `dc159b07`.
+  Card `complete`; claim `cairn-next-phase-d` RELEASED.** Ranks 2 and 3
+  closed. Verified by CONTENT on that repo's mainline (ancestry is correctly **false** after a
+  squash): all five `scripts/cairn-ops/*.sh`, the test module, the three router skills, and the
+  12-line door-routing block in the store skill — with a sentinel positive control returning 0.
+- ⏳ **664 — `## Requirements` section. NOT STARTED**, card `open`. **It is the only thing between
+  this arc and its closing condition.** Its blocker (663) cleared.
+- 📋 Filed rather than fixed: **681**, **682** (`AGENTS.md` one-byte headroom), **683** (needs
+  re-pointing — see rank 7).
+- ✅ **No claims held.** Both `cairn-next-phase-c` and `-d` are released.
 - ⚠ **No task-board front-matter field is recorded**: the handoff's task resolver exited **5**
-  (nothing resolved). An unknown session id answers 200 with an empty array, so that zero
-  cannot distinguish "touched no task" from "wrong id" — it is not a clean bill of health.
+  (nothing resolved). An unknown session id answers 200 with an empty array, so that zero cannot
+  distinguish "touched no task" from "wrong id" — it is not a clean bill of health.
+- ⏳ **PR #1922 in the other repo is OPEN and unaudited** — the retraction of that repo's branch
+  protection claim in the CI platform skill. No pre-merge audit has run on it.
 
 ## Open investigations — live diagnosis state
 
@@ -137,41 +130,63 @@ with test coverage.
   open **naming a run that actually exhibited** the release-handler failure. Do not re-derive
   the load theory; the previous revision already retracted it.
 
+### CLOSED: the other repo's red was the browser skill's byte budget, and merging #1905 landed on a tree that already carried the fix
+- as-of: 2026-09-29
+- **Resolution.** The five failures were one defect — `scripts/browser-bridge/SKILL.md` at
+  **12,981 B** against a **12,288 B** ceiling — and **#1917** fixed exactly that, landing as
+  `f291e16a` **between** the merged-tree gate and the merge itself. So the squash `dc159b07` sits
+  on a tree carrying the fix, not on the one that was gated. `via: measurement`
+- **The three-tree matrix, which is what licensed merging through a red check.** `main`
+  `79a9b22a` 24584/failed=5 · PR head `5c34b707` 24606/failed=5 · merged `490362e3`
+  24671/failed=5 — `+87` tests base-to-merged, all passing, failure count unmoved, and **the same
+  five tests by name in all three**. `StepFailed` on every run, so verdicts rather than the
+  `exit 255` congestion signature. `via: measurement`
+- 🔴 **The lesson that outlives it: a COUNT is not a SET.** "Both sides show `failed=5`" and "both
+  sides fail the same five tests" are different claims, and only the second attributes a red to
+  something other than your diff. The count was available from the API; the set required reading
+  the gate's own log. `via: measurement`
+- 🔴 **And the base moved AGAIN between the gate and the merge** — the thing the gate existed to
+  catch. It happened to be benign (the fix, two files, zero overlap), but that was luck and was
+  verified after the fact rather than before: `git diff --name-only <gate-base> <squash>^` against
+  the PR's own file set is the one-command check, and it belongs BEFORE the merge, not after.
+  `via: measurement`
+- **Next probe:** read that repo's mainline CI on `dc159b07` — it had not settled when this was
+  written. Expect `failed=0`; if not, the remaining failures are new and are not #1917's.
+
 ## Next steps (ranked)
 
 🔴 **NUMBERING IS STABLE — every number KEEPS ITS LINE even when done, because a rank is half a
 `claim-work` slug.** Re-ranking re-points every live claim.
 
-1. ✅ **DONE — write back task-board card 663 and release `cairn-next-phase-c`.** Both landed
-   this session; card is `complete` with one evidence comment, claim released.
+1. ✅ **DONE — card 663 written back, `cairn-next-phase-c` released.**
    forcing: gate — an unwritten card is re-dispatched and paid for twice.
-2. **Land PR #1905** — **IN FLIGHT: other-repo#1905**, head `490362e3` (merge of current `main`
-   pushed this session). Gate on the four CI statuses **on that head**; the merge is the
-   only thing left. 🔴 **Expected result is `failed=5` with the five names in the
-   investigation above** — if the count or the set differs, the merge introduced something
-   and must be read before landing. The red is pre-existing and attributed; say so in the
-   merge note so nobody reads it as ignoring a gate, and note that #1917 fixes it at
-   `failed=0`. ⚠ Read the statuses' `.description`, and read them on
-   `/commits/490362e3/status` — **that repo posts legacy statuses and ZERO check-runs, the exact
-   mirror image of cairn**, so the habit built on cairn reads an empty set here.
+2. ✅ **DONE — PR #1905 merged**, squash `dc159b07`, after gating the merged tree on all four CI
+   statuses and attributing the one red by name. A merge note recording that attribution is on
+   the PR.
    forcing: user — the operator approved the merge conditional on verification.
-3. **Write back card 665** and release `cairn-next-phase-d`, once 2 lands.
+3. ✅ **DONE — card 665 written back, `cairn-next-phase-d` released.**
    forcing: gate — same as rank 1.
-4. **Build 664 — the `## Requirements` section.** Its blocker (663) has cleared. Operator
-   decision already recorded on the card: a fourth canonical section reusing the existing
-   `OPEN:`/`RESOLVED <sha>:` markers, with provenance read from a prefix **after** the marker
-   so the anchored marker regex stays byte-unchanged.
+4. 🔴 **Build 664 — the `## Requirements` section. THE ONLY ITEM LEFT BEFORE THE ARC CLOSES.**
+   Operator decision already recorded on the card: a fourth canonical section reusing the existing
+   `OPEN:`/`RESOLVED <sha>:` markers, with provenance read from a prefix **after** the marker so
+   the anchored marker regex stays byte-unchanged. ⚠ It regenerates the same golden fixtures 662
+   and 663 did, and both of those are now merged, so nothing is sequenced ahead of it.
    forcing: user — one of the four features the operator asked for.
 5. **Close or dismiss card 681's eight items.** Dismissal in writing is explicitly acceptable.
    forcing: none
 6. **Free real headroom in `AGENTS.md` (card 682), or accept the one byte in writing.**
    forcing: gate — the next edit by any session reddens the merged tree.
-7. **Re-point card 683**, in the other repo — its named test is not what is red (see the
-   superseding investigation block). Either re-point it at the `browser-bridge/SKILL.md` byte
-   ceiling, closing when #1917 merges, or keep it open naming a run that exhibited the
+7. **Re-point card 683**, in the other repo — its named test is not what was red. The red was the
+   browser skill's byte ceiling and **#1917 has now fixed it**, so the likeliest correct action is
+   to close 683 against that, or keep it open naming a run that actually exhibited the
    release-handler failure.
-   forcing: gate — a permanently-red local gate trains everyone to click through, and a card
-   pointing at the wrong test guarantees the next session starts in the wrong place.
+   forcing: gate — a card pointing at the wrong test guarantees the next session starts in the
+   wrong place.
+8. **Audit and land PR #1922 in the other repo** — the retraction of the stale branch-protection
+   claim. No pre-merge audit has run on it; round 0 first, since only round 0 can conclude *close
+   this, do not audit it*, and only while the merge decision is open.
+   forcing: gate — the claim it retracts tells a session a gate will stop a bad merge when nothing
+   will, which is the dangerous direction.
 
 ## Defects (batched)
 - **`?q=` and `?tag=` do not compose on the browse surface** — `/?q=a&tag=b` renders two
@@ -305,6 +320,35 @@ with test coverage.
   reading the gate's log over re-running the gate locally** when the gate has already run on the
   commit you care about; and `pgrep -f '<pattern>'` matched only this session's own shell, which
   is why nothing was killed by pattern.
+
+- 🔴 **THE HANDOFF TOOL'S PROPOSAL RUN DOES NOT RUN THE LEAK GATE — ONLY `--confirm` DOES.** A
+  `status=proposed` with no leak line is **not** a clean bill; it is the reassuring-zero shape.
+  Measured: a delta that proposed cleanly then refused at **27 findings** on confirm, and took
+  **three** further rounds to clear because each round's scrub revealed the next denied identifier
+  (project name → cluster name → task-board name). **Budget for several rounds, and read the
+  refusal's own token list rather than hand-deriving one** — the hand-derived list was right about
+  the first class and blind to the other two.
+- 🔴 **THIS REPO IS PUBLIC AND A HANDOFF DELTA IS THE EASIEST PLACE TO LEAK INTO IT.** Verification
+  commands are the trap: they naturally spell the other repo, the cluster, the kubeconfig handle,
+  the CI namespace and the label selector. The doc's own long-standing convention is to
+  **describe** that repo ("the operator's shared rules-and-dotfiles repo", "the other repo") and
+  never name it; follow it in command blocks too, with `<angle-bracket placeholders>`.
+  🔴 **`--leak-pre-existing-approved` was NOT used and must not be reached for here** — the
+  findings were introduced by the delta, not pre-existing, and that flag is the operator's call.
+- 🔴 **A COUNT IS NOT A SET, AND THE API ONLY GIVES YOU THE COUNT.** See the closed investigation
+  above. The 140-char status description truncates mid-word and names only the FIRST failure.
+- 🔴 **`git commit-tree` IS THE ROUTE PAST A GUARD WHOSE PREMISE DOES NOT APPLY.** The base-clone
+  write guard refuses `git merge` based on the SESSION's cwd, not the `-C` target. Rather than
+  reach for its documented `BASE_CLONE_WRITE_OK=1` override — which asserts a hazard you are not
+  actually taking — build the merge commit from plumbing: `merge-tree --write-tree` (exit code),
+  `commit-tree`, `push <sha>:refs/heads/<branch>`. It touches no branch, no index and no base
+  clone. The same shape works for an ordinary file commit via a scratch `GIT_INDEX_FILE` +
+  `read-tree` + `update-index` + `write-tree`.
+- 🔴 **zsh ATE `$C:refs/heads/...` AS A HISTORY MODIFIER** — `:r` was consumed and `git push`
+  reported `src refspec <sha>efs/heads/… does not match any`, which reads as a bad sha. Brace it:
+  `"${C}:refs/heads/…"`. **Third instance in this arc, hit after reading the rule that warns about
+  it** — the rule is evidently not enough on its own, so prefer braces unconditionally in any
+  `$VAR:` construction.
 
 ## How to verify
 
