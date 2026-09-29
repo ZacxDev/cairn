@@ -18,6 +18,24 @@ import (
 // The one place a token legitimately appears in a URL is the invitation LINK itself, which
 // is the thing being sent to a person — and the page it opens moves it into this field
 // before anything is redeemed.
+//
+// ⚠ THE RULE IS ONLY AS TRUE AS THE READ AT EACH CONSUMER, WHICH IS WHY THIS SENTENCE NOW
+// NAMES THE READ. `r.FormValue` merges the URL query into the posted body, so a handler
+// spelling it that way accepts the token in a query string however firmly the field is
+// declared body-only — `handleOAuthStart` did, for one release. Every consumer that must
+// take this value from a BODY uses `r.PostFormValue`; `handleJoinPage` is the one that must
+// take it from a QUERY and uses `r.URL.Query().Get`. Neither may be `FormValue`.
+//
+// 🔴 ONLY THE START ROW'S HALF IS MEASURED, AND SAYING SO IS THE POINT.
+// `TestTheGitHubStartRowIgnoresAnInvitationTokenInTheQUERYString` measures
+// `handleOAuthStart` and nothing else. `handleJoinPage`'s read is measured by NOTHING:
+// respelling it `r.FormValue` leaves `go test ./...` at rc 0 with the whole tree green,
+// while the SAME suite reddens for that mutation in `handleOAuthStart` — so the suite can
+// go red on this exact change and simply never looks at the join page. An earlier draft of
+// this sentence said the test measured the two-consumer rule, which read as coverage it
+// does not have. The deterministic remedy is an AST ban whose allowlist would be EMPTY,
+// filed separately; a ban is SPELLED rather than structural, so it would WIDEN this rather
+// than replace the behavioural test.
 const inviteTokenField = "invite"
 
 // Inviting is the invitation half of the browser surface, as an interface for the reason

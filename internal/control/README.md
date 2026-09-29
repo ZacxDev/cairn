@@ -258,11 +258,11 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 184 mutants, over SEVEN packages
+python3 tests/control_mutants.py          # 185 mutants, over SEVEN packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 184 mutants, 182 killed, 2 labelled EQUIVALENT at the code,
+**Measured on this tree: 185 mutants, 183 killed, 2 labelled EQUIVALENT at the code,
 0 misattributed, 0 harness errors, 0 stale extra-killers, positive control GREEN.**
 
 🔴 **AND THE RUN BEFORE IT REPORTED `harness-errors=2`, WHICH IS WHY THIS LINE IS A SEPARATE
@@ -379,7 +379,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 184 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 185 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test

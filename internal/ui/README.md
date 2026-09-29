@@ -2187,6 +2187,46 @@ never an authority input; the worst a wrong value does is land the caller on the
 refuses a non-open invitation itself and `refuseInviteWrite` answers that uniformly. What
 withholding the button saves is a person clicking a control that cannot work.
 
+## 🔴 The invitation token is read with `PostFormValue`, and for one release it was not
+
+`inviteTokenField` is declared a form field and never a query parameter, for the reason the
+mint-redirect bullet above gives: the value is a bearer capability that can CREATE a principal,
+and a query parameter lands in browser history, in the referrer the next hop receives and in
+every access log en route. That declaration binds nothing on its own. **What binds is the READ
+at each consumer**, and `handleOAuthStart` shipped reading `r.FormValue` — which returns
+`r.Form`, the posted body **union the URL query** — under a comment promising the value "never
+appears in a URL, a referrer or an access log". So `POST /sign-in/github?invite=<token>` was
+accepted and the flight carried the token out of a URL, which is precisely the leak the field is
+declared body-only to prevent.
+
+Measured with `httptest` on a request carrying the field in the query alone: `FormValue`
+returned it, `PostFormValue` returned `""`.
+
+Two consumers, two different correct spellings, and neither may be `FormValue`:
+
+| consumer | read | why |
+|---|---|---|
+| `handleOAuthStart` (POST) | `r.PostFormValue` | the token must come out of the body the accept form posted, never out of a URL |
+| `handleJoinPage` (GET) | `r.URL.Query().Get` | the invitation LINK is the one place the token legitimately appears in a URL, and `FormValue` on a GET would ALSO read a **multipart** body no browser navigation sends |
+
+⚠ **THAT LAST CLAUSE IS TRUE FOR MULTIPART AND FALSE FOR THE COMMONER SPELLING, WHICH IS WHY IT
+NOW NAMES THE TYPE.** Measured on the pinned toolchain: `GET` + `application/x-www-form-urlencoded`
+carrying the field ⇒ `FormValue` returns `""`, because `ParseForm` reads the body only for
+POST/PUT/PATCH; `GET` + `multipart/form-data` ⇒ `FormValue` returns the body's value, because
+`FormValue` reaches `ParseMultipartForm` and that does not branch on the method. An earlier draft
+said "a body", unqualified — and a reader who writes a urlencoded-GET-body guard against it
+watches it pass vacuously and concludes the hazard is closed. The source comment this table was
+derived from carried the qualifier; the table dropped it.
+
+⚠ `handleJoinPage` was corrected for the same distinction in its own commit, which is what makes
+the wrong spelling on the start row a thing a reader walks past twice — and is why the rule now
+lives on `inviteTokenField` itself, naming the read, rather than only as a property of the field.
+`TestTheGitHubStartRowIgnoresAnInvitationTokenInTheQUERYString` measures it, in a pair: the query
+case must not be picked up, and the SAME token in the BODY must be — because a bare "it was not
+redeemed" is a reassuring zero and a zero is indistinguishable from a harness wired to nothing.
+`control_mutants.py`'s `ui-start-row-reads-the-invite-from-the-url-query` is the standing proof
+that guard can go red, rather than one afternoon's reading recorded in a commit message.
+
 ## Refusals: which one discriminates, and why exactly one does
 
 | condition | status | body |
@@ -2204,6 +2244,17 @@ submitted role would be reflecting caller-chosen text into a sentence the page p
 own, which is what `outcomeFrom` refuses.
 
 ## What this phase's guards still cannot see
+
+- 🔴 **`handleJoinPage`'S READ. THE TWO-CONSUMER RULE ABOVE IS MEASURED ON ONE CONSUMER.**
+  `TestTheGitHubStartRowIgnoresAnInvitationTokenInTheQUERYString` covers `handleOAuthStart` and
+  nothing else. Measured: respelling `invitehandlers.go`'s read as `r.FormValue` leaves
+  `go test ./...` at **rc 0** with the whole tree green — while the SAME suite reddens for that
+  mutation in `handleOAuthStart`, which is the paired control proving the suite can see the change
+  and simply never looks at this page. A `GET /join` carrying a multipart body would then supply
+  the token, a second input path into the one value this page reflects, with every gate green.
+  ⚠ This is the same defect class the start-row fix closed, one file over, and it is listed here
+  rather than fixed because the deterministic remedy — an AST ban over the package, whose
+  allowlist is measured EMPTY — is wider than that fix and is filed separately.
 
 - **A real redemption over HTTP.** ❌ **THE SENTENCE HERE WAS FALSE AND IS RETRACTED RATHER THAN
   EDITED AWAY, BECAUSE IT IS THE REASON NOBODY LOOKED.** It read: *"`handleOAuthCallback`'s
