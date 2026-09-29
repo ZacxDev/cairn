@@ -231,6 +231,94 @@
         ],
         "uid": 0,
         "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946512000.0",
+        "name": "tagged-set/tagged-both.md",
+        "sha256": "e909702114a517f933d746e16f0d34a4080cf3029382d04ef3e3c2ec9747af1e",
+        "size": 459,
+        "text_lines": [
+          "---",
+          "service: tagged-both",
+          "scope: tagged-set",
+          "sensitivity: internal",
+          "tags: [Marketing, internal]",
+          "refs: [github:example-org/example-repo#428]",
+          "---",
+          "",
+          "## What it is",
+          "An entry carrying TWO tags and a ref, so the two filters can be COMPOSED over the wire and the tag list is written UNFOLDED to prove the loader folds it.",
+          "",
+          "## Pointers",
+          "- ops skill `manage-gadget` - the same skill, deliberately",
+          "",
+          "## Nuance / work-history",
+          "- 2000-01-02: the lease renewal races the rollout.",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946339200.0",
+        "name": "tagged-set/tagged-none.md",
+        "sha256": "b54a9985c3e87ffe15d5c3ddfb827404587dc5c9b913d34aa223ab64e566be3f",
+        "size": 362,
+        "text_lines": [
+          "---",
+          "service: tagged-none",
+          "scope: tagged-set",
+          "sensitivity: internal",
+          "---",
+          "",
+          "## What it is",
+          "An entry carrying NO tags, so a `?tag=` row has something to REMOVE and its count is not trivially the scope total.",
+          "",
+          "## Pointers",
+          "- ops skill `manage-gadget` - the same skill, deliberately",
+          "",
+          "## Nuance / work-history",
+          "- 2000-01-02: the lease renewal races the rollout here as well.",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946425600.0",
+        "name": "tagged-set/tagged-one.md",
+        "sha256": "3edf77587ab9d4e78faae1a2ee17c24ca4b8d45fb6e6627cc66679707249cc9b",
+        "size": 812,
+        "text_lines": [
+          "---",
+          "service: tagged-one",
+          "scope: tagged-set",
+          "sensitivity: internal",
+          "tags: [marketing]",
+          "refs: [github:example-org/example-repo#428]",
+          "---",
+          "",
+          "## What it is",
+          "An entry carrying ONE of the two tags, so a second `?tag=` must REMOVE it -- which is what makes the AND semantics observable over the wire rather than only in a unit test. It carries the SAME ref as `tagged-both.md`, which is what makes the cross-filter row reach the reach clause's THIRD state: two entries reference the ref and only one of them carries `internal`, so the `ref-to:` line has to say a FURTHER filter narrows its count. With the ref on one entry only that state is unreachable over the wire.",
+          "",
+          "## Pointers",
+          "- ops skill `manage-gadget` - the same skill, deliberately",
+          "",
+          "## Nuance / work-history",
+          "- 2000-01-02: the lease renewal races the rollout here too.",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
       }
     ],
     "mtime_order": [
@@ -242,7 +330,10 @@
       "alpha-notes/gadget-one.md",
       ".seed-stamp",
       "linked-set/linked-old-key.md",
-      "linked-set/linked-none.md"
+      "linked-set/linked-none.md",
+      "tagged-set/tagged-both.md",
+      "tagged-set/tagged-one.md",
+      "tagged-set/tagged-none.md"
     ]
   },
   "case": "snapshot-legacy-token",
@@ -257,7 +348,7 @@
     ],
     [
       "ETag",
-      "\"sha256:9cf9e8e71dbd3376ed2c22d89db417b02471f4f5e19bc592cdc51230c47cd182\""
+      "\"sha256:d332d628a38a10865ba3ecea9f634e1de39d1a98cc0ac5b7d82196f8a3a912bd\""
     ],
     [
       "Server",
@@ -265,7 +356,7 @@
     ],
     [
       "X-Store-Entries",
-      "8"
+      "11"
     ],
     [
       "X-Store-Exit",
@@ -273,7 +364,7 @@
     ],
     [
       "X-Store-Snapshot",
-      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=8"
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=11"
     ],
     [
       "X-Store-Status",
