@@ -2398,6 +2398,9 @@ not: that function ALLOWLISTS absolute http(s) and would refuse a same-origin pa
   only on which entries carry a tag. They now share the PREDICATE (`store.HasTag`), the FOLD
   (`store.NormalizeRef`) and, since `lastTagValue`, the REPEATED-PARAMETER rule; what is still
   uncompared is everything either side does around it, including the refusal policy above.
+- **`?q=` and `?tag=` TOGETHER.** They do not compose here and they do on the pod, and no test on
+  either side sends both. It gets its own subsection below rather than a bullet, because the gap
+  is a DECISION nobody has made rather than a test nobody has written.
 
 ### 🔴 `?q=` AND `?tag=` DO NOT COMPOSE ON THIS SURFACE, AND THAT IS DECLARED RATHER THAN CLOSED
 

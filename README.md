@@ -323,16 +323,23 @@ tags: [Marketing, project-xyz]     # folds to `marketing`, `project-xyz`
 🔴 **ONE THING CAN BREAK, AND IT IS NOT "NOTHING" — `tags:` USED TO BE AN IGNORED KEY.** Before
 this change the loaders named no `tags:` at all, so any value there loaded and was discarded; it
 was the probe key the ignore-rule test used, precisely because nothing read it. It is read now,
-and four shapes are refusable. **Three of them a FILE can carry, and the table says which** —
-measured on both implementations over real files, which agree sentence for sentence:
+and the parser carries four refusals. 🔴 **WHICH OF THEM A *FILE* CAN ACTUALLY REACH IS A
+DIFFERENT QUESTION, AND THE TABLE ANSWERS THAT ONE** — measured on both implementations over real
+files rather than reasoned from the code, and they agree sentence for sentence:
 
 | what you may already have written | what it does now |
 |---|---|
 | `tags: marketing` — a bare scalar | ``REFUSED: `tags:` must be a list, not a bare string — write `tags: [<name>]` `` |
 | `tags: ["!!!"]` — a flow item that folds to nothing | REFUSED: *tag `'!!!'` normalizes to the empty string* |
 | `tags: ["  "]` — a blank flow item | REFUSED, same sentence: whitespace folds away too |
-| `tags: {…}` / any non-sequence | ``REFUSED: `tags:` must be a list, got <type>`` — but **not reachable from a file**: the front-matter parser only ever produces a string or a list of strings, so a mapping under `tags:` reads as the key being absent. This refusal guards the PROGRAMMATIC loader (`from_mapping` / `EntryFromMapping`), which is also the writer's validate pass |
-| `tags:` with a `-` item that is blank — the **block** spelling | **NOT refused.** The block-list scanner drops an empty item before the tag loop ever sees it, so `tags:\n  - \n  - alpha` loads carrying `alpha`. Only the *flow* spelling of a blank item reaches the refusal above |
+| `tags: {a: b}` or `tags: {}` — inline braces | REFUSED, but by the **first row's** sentence and not by the "got `<type>`" one: front matter holds only strings and lists of strings, so `{a: b}` parses as the *string* `{a: b}` and is a bare scalar |
+| `tags:` with an indented `a: b` under it — a **block mapping** | **NOT refused.** It parses as the empty string, which the `or ()` rule makes an ABSENT key, so the entry loads carrying no tags |
+| `tags:` with a `-` item that is blank — the **block** list | **NOT refused.** The block-list scanner drops an empty item before the tag loop ever sees it, so `tags:` followed by a bare `-` and then `- alpha` loads carrying `alpha`. Only the *flow* spelling of a blank item reaches the refusal above |
+
+⚠ **So the fourth refusal — ``\`tags:\` must be a list, got <type>`` — is unreachable from a
+file, and that is stated rather than left to be discovered.** It guards the PROGRAMMATIC loader
+(`from_mapping` / `EntryFromMapping`), which is also the writer's validate pass, where a caller
+really can hand it a `dict`.
 
 **A refused entry is MALFORMED, and malformed is wider than "not indexed".** It leaves the index,
 so `--ref`, `--search` and every rendered listing lose it — it is *named* in the report's
