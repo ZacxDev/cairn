@@ -24,25 +24,46 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`fd1b2d0`**, clean, pushed. ⏳ OPEN in cairn: `#144` (a PEER's, rank 33), `#141`,
-  `#140`, `#136`. Nothing of this session's is left open.
-- ✅ **P6 MERGED — `#139` as `7040b43`.** Round 2 on `8b1f2ff..5d3a972`: 0 🔴 / 2 🟡 / 4 🟢, both
-  🟡 fixed in `2e25174`. 🔴 Ladder capped at round 2, so **those fixes ship UNAUDITED** — a
-  regression test watched RED pre-change, and a mutation row watched killing, stand in.
-- 🔴 **28(d) IS DEPLOYED AND IS NOT VERIFIED, AND THOSE ARE SEPARATE CLAIMS.** `trunk` carries
-  `d306ad9df` (A: the database, no user-visible effect) and `952623cc1` (B: `CAIRN_UI_DB_DSN` +
-  image → `sha-7040b432`, the sign-out). **Rebase-merged, NOT squashed** — a squash welds A and
-  B together and destroys the independent rollback the split exists for. ⚠ **No kubeconfig for
-  that cluster this session**; see the `Open investigations` block, which carries the probes.
-- ✅ **THE PUBLIC LEAK IS CLOSED — `#142` as `021be7a`.** `main` was RED with three
-  `denied-identifier` findings in THIS document, all from `85f7dde`, pushed straight to `main`
-  without a PR. Rewritten by ROLE. ⚠ History retains the strings (standing no-force-push
-  decision); declared, not closed.
-- ✅ Also merged: `#143`; the handoff-tooling repo's `#1911` (`142b1a5e`) and `#1910`
-  (`8c94b4c8`).
-- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE.** The task-board resolver
-  exited **5**; an unknown session id answers 200 with an empty array, so a zero cannot
-  distinguish "touched none" from "wrong id". None written.
+- `main` @ **`8ec36b4`**. ⏳ `#140` OPEN. ✅ Merged since the last update: **`#144`** (`bcfb60a`),
+  **`#136`** (`8ec36b4`), and in the deployment repo **`1255f9d6c`** on its trunk.
+- 🔴 **A PRODUCTION DEPLOY HAPPENED AND ITS SECOND HALF IS UNVERIFIED.** `cairn-ui` was bumped
+  `sha-7040b43` → **`sha-bcfb60a`** (`1255f9d6c`, the deployment repo's trunk, pushed — the repo's pre-push
+  gate ran **kustomize+kubeconform, gitleaks, sops-rules, relay-guard, xml-configmaps, ALL LEGS
+  PASS**). **DEPLOYED ≠ VERIFIED and they are stated separately: no rollout was observed.** There
+  is no kubeconfig for that cluster on this host — only `colima` and two `k3d` contexts — so the pod, its
+  `imageID` and the invite flow are unchecked by the session that deployed them. Probe:
+  `kubectl -n subsystem-store rollout status deploy/cairn-ui`, then compare the running
+  `imageID`, not the `image:` field.
+  - **Reason:** `#144` — `handleOAuthStart` read the invite token with `r.FormValue`, so
+    `POST /sign-in/github?invite=<token>` was accepted and a principal-creating capability
+    reached browser history, referrers and every proxy access log.
+  - **Measured BEFORE pointing production at it:** pin **4 commits behind** `main`; ghcr manifest
+    **HTTP 200 anonymously**, nonexistent tag **404** as the control; the replaced sha occurred
+    **exactly once** repo-wide, counted first. `trunk` MOVED between commit and push
+    (`c47aec72`→`4cddf4a8`) — caught by re-checking immediately before pushing.
+  - 🔴 **IT SHIPS TWO PRs. A PIN CANNOT SHIP HALF A TREE.** `#141` rides along (folds `tasks:`
+    into `refs:`, a user-visible change to what entry pages render). Audited on its own PR,
+    **not** by the deploying session. ⚠ The restart signs every open browser out once.
+- ✅ **RANK 33 IS DONE, NOT IN FLIGHT — `#144` MERGED AS SQUASH `bcfb60a`, VERIFIED BY CONTENT**
+  (`PostFormValue` and `internal/invite/invite_test.go` both on `main`; the ancestry check says
+  NO, as always after a squash, which is why content is the test). 🔴 **Rank 33 below still
+  reads `⏳ IN FLIGHT` — stale, and a peer acting on it would duplicate merged work.**
+- ✅ **THE LADDER ON `#144` RAN 0 THEN 1 AND IS CLOSED under the cap.** Round 0: 2 deletion
+  candidates + 1 requirement questioned (`ran: 1 · changed the outcome: 1`). Round 1 confirmed all
+  five of the PR's claims, returned 1 🟡 + 3 🟢, all fixed. ⚠ **`184fa4b`, the round-1 FIX commit,
+  is unaudited** — the cap ended the ladder where a fix round normally resets the gate. Records:
+  `#144`'s issue comments.
+- ✅ **`#136` MERGED (`8ec36b4`), AND THE PRUNE'S SAFETY PROPERTY WAS ASSERTED ON THE MERGED TREE
+  RATHER THAN THE BRANCH** — 16 commits behind, so only a merged-tree check was honest:
+  **41 lines lost, 0 missing from the archive, 0 duplicated**, positive control watched `0 → 1`.
+  ⚠ My checker also REFUSED on 4 "unexplained" lines that are the eviction's own new heading — too
+  strict, reported not silently overridden. **134,262 B → 131,270 B**, still **32,966 B** over, so
+  rank 27 is NOT discharged.
+- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE.** The resolver exited **5**; an
+  unknown session id answers 200 with an EMPTY ARRAY, so the zero cannot distinguish "touched no
+  task" from "wrong id". None written.
+- ✅ **ISSUE `#145` FILED** — the `FormValue` AST ban; allowlist measured **EMPTY** (zero live
+  call sites tree-wide, 11 `PostFormValue` sites as the positive control).
 
 ## Next steps (ranked)
 
@@ -113,125 +134,85 @@ that way MINTS a claim on a released slug. `--list` is the read.
 
 ## Defects (batched)
 
-- ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE; THIS SECTION REPLACES, SO ONE LEFT HERE IS RETYPED
-  EVERY ROUND.** The LESSON belongs under `Gotchas` (append); the entry belongs in the archive.
-- ✅ **CLOSED BY `#139` (`be8a61e` + `2e25174`):** the DSN password leak; the known-user
-  redemption defect; the missing provisioning-arm test; the migration-ledger race;
-  `StatementTimeout`; `OpenWith`; five false prose claims. Full text on `#139`.
-- 🔴 **ROUND 2's TWO 🟡 ARE FIXED IN `2e25174` AND WERE NEVER AUDITED.** (a) `Redeem` was a
-  SECOND unguarded membership writer, so a concurrent double-callback could demote a project's
-  sole owner; fixed by DELEGATING to `RedeemFor`, not by copying the guard. (b)
-  `pgstore.redact` returns the ORIGINAL error — pass 1 mutates `uerr.URL` IN PLACE — so safety
-  rests on that rewrite and a "work on a copy" cleanup would silently restore the leak.
-- 🟡 **`RedeemFor`'s `principal.Kind != KindUser` ARM HAS NO TEST AND IS UNREACHABLE** — an
-  invariant guard, not coverage (round 2).
-- 🟡 **NO TEST BUILDS THE COMBINED HANDLER+STORE STATE FOR REDEMPTION** — the handler test uses
-  a stub that never refuses, the store test has no handler, and they join only at the
-  `ErrAlreadyAMember` sentinel. Round 2's named seam.
-- 🟡 **THREE ROUND-1 FINDINGS REMAIN OPEN, TWO IN FLIGHT AS A PEER'S `#144`:**
-  `oauth.go:529` (`r.FormValue` reads the QUERY on a POST, against a comment naming
-  `PostFormValue`) · `internal/invite` has no test files while `StateAt`'s arm ORDER is
-  load-bearing · `invitesByDigest` queries per project per revoke. 🟢
-  `uiaudit/targets.go:196-209` walks only the token-less `/join`.
-- 🔴 **THE `test_a_real_run_PRINTS_every_skip` DIAGNOSIS PREVIOUSLY RECORDED HERE IS REFUTED.**
-  This doc attributed that test's redness to a two-read window and recorded the discriminating
-  control as *"re-running that file with the worktree STILL PRESENT → 26 passed"*. Re-run with
-  **six** agent worktrees present: **1 failed, 25 passed** — same state, opposite outcome. 🔴
-  **The two mechanisms are separable by the EXIT CODE and by nothing else** — `2` is the
-  unreadable-artefact/skip-mismatch path, `1` is FINDINGS. It was `1`, and the findings were a
-  real `denied-identifier` leak (closed by `#142`). **Closing condition:** the entry
-  distinguishes rc 1 from rc 2, or it is retired.
+- ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE; THIS SECTION REPLACES, SO ONE LEFT HERE IS RETYPED EVERY
+  ROUND.** The LESSON belongs under `Gotchas` (append); the entry belongs in the archive.
+- ✅ **CLOSED AND DROPPED RATHER THAN RETYPED.** By `#139` (`be8a61e`+`2e25174`): the DSN password
+  leak, the known-user redemption, the untested provisioning arm, the migration race. By `#144`
+  (`bcfb60a`): `handleOAuthStart`'s `r.FormValue` reading the URL query, and `internal/invite`
+  having no tests while `StateAt`'s arm order is declared load-bearing — watched RED on all three
+  forbidden reorderings. The third of that trio is now `#145`.
+- 🔴 **ROUND 2's TWO 🟡 ARE FIXED IN `2e25174` AND WERE NEVER AUDITED**, and `184fa4b` on `#144`
+  joins them: both are fix commits that no round read, because their ladders were capped or
+  closed. **Closing condition:** a delta round over the pair, or a line accepting them.
+- 🔴 **THE `#137` BASE-CLONE WRITE GUARD IS WRONG IN THREE WAYS, NOT TWO — AND THE THIRD IS
+  CROSS-REPO.** It refused `git add`/`commit` in a worktree of **the DEPLOYMENT repo** while
+  its message described **THIS** repo's state. It keys on the SESSION's cwd, not the command's target,
+  so the diagnosis it prints is about a repository the command never touched. Proved before each
+  override: `--git-common-dir` resolved to the deployment repo's git dir and `remote get-url origin` to its remote.
+  ⚠ Six overrides in one session, each after proving the premise false. **Closing condition:** the guard resolves the target
+  repo from the command, not the cwd, with a test that a real base-clone write is still refused.
+- 🟡 **`RedeemFor`'s `principal.Kind != KindUser` ARM HAS NO TEST** — an authorization arm
+  nothing exercises. **Closing condition:** a test, or a line saying why not.
+- 🟡 **NO TEST BUILDS THE COMBINED HANDLER+STORE STATE FOR REDEMPTION** — stub store on one side,
+  no handler on the other: the `isolation-seam` shape that hid the known-user defect.
+  **Closing condition:** one case over the real pair.
+- 🔴 **THE `test_a_real_run_PRINTS_every_skip` DIAGNOSIS PREVIOUSLY RECORDED HERE IS REFUTED**, by
+  `#142`: re-run with six agent worktrees still present gave **1 failed, 25 passed**, so the
+  two-read WINDOW is not what fails. The two mechanisms are distinguishable by **exit code and
+  nothing else** — rc **1** is findings, rc **2** is the unreadable-artefact/skip-mismatch path.
+  ⚠ I retyped the refuted version during a prune without re-measuring it; a `Defects` section that
+  REPLACES makes an unre-measured retype indistinguishable from a fresh reading. **Read the rc.**
 - 🟡 **`cairn-ui-state` IS UNBACKED, AND IT IS THE VOLUME THAT WOULD ACTUALLY HURT** — it holds
-  `journal.jsonl`, the only durable record of who may reach what, while `backup-cronjob.yaml`
-  names `subsystem-store-data` only. Pre-existing; NOT closed by the deliberate no-backup
-  decision on `cairn-ui-postgres`. **Closing condition:** a backup, or a line accepting it.
-- ⚠ **DECLARED IN-TREE AND CONFIRMED ACCURATE BY ROUND 1, SO NOT RE-FILED:** the availability
-  coupling; the asymmetric rollback to a stale `-session-file`; nothing prunes `invites`; a reload
-  of the mint response mints a spare invitation; `?invite=` reaches proxy access logs; a downgrade
-  past a future migration is refused by design; `Inviting` stubbed in every `internal/ui` test.
+  the control journal. **Closing condition:** a backup row, or a line accepting the loss.
+- ⚠ **DECLARED IN-TREE AND CONFIRMED ACCURATE BY ROUND 1, SO NOT RE-FILED** (read them where they
+  live, in `internal/pgstore`'s package doc and `internal/ui/README.md`): the availability
+  coupling, the asymmetric `-session-file` rollback, `invites` never pruned, a reload minting a
+  spare invitation, `?invite=` in access logs, a downgrade refused by design.
 - 🔴 **THE AMBIENT GO TOOLCHAIN IS NOT THE PINNED ONE, AND `AGENTS.md` SAYS IT IS.** A THIRD
-  independent reading, by round 1's auditor: bare `go version` → **1.26.7**; `nix develop -c go
-  version` → **1.25.14**. Every local `go vet`/`go test` outside the devShell is a green about a
-  toolchain this repo does not ship, and nothing warns. ⚠ The audit brief now carries the
-  `nix develop` wrapper — a mitigation for auditors, not for anyone else. **Closing condition:**
-  a `direnv`/`.envrc` putting the pinned toolchain on `PATH`, or a written line in `AGENTS.md`'s
-  verification section requiring `nix develop -c …`, plus a decision on whether anything refuses a
-  bare run.
-- 🟡 **FOUR FILES ARE NOT `gofmt`-CLEAN AND NOTHING GREPS IT.** Re-measured at `95a0b42`, a THIRD
-  reading agreeing with the second: `internal/client/{anchor_test,exit,options}.go` and
-  `internal/control/tokenfile/source.go`. `render.go` is clean (#133), `browse_test.go` fixed by
-  #134 — so the file the old entry asked to EXEMPT no longer needs it and that remedy is void.
+  independent reading: bare `go version` → **1.26.7**; `nix develop -c go version` → **1.25.14**.
+  Every local Go gate outside the devShell is a green about a toolchain this repo does not ship.
+  **Closing condition:** a `direnv`/`.envrc` putting the pinned toolchain on `PATH`, or a written
+  line in `AGENTS.md` requiring `nix develop -c …`, plus a decision on refusing a bare run.
+- 🟡 **FOUR FILES ARE NOT `gofmt`-CLEAN AND NOTHING GREPS IT.** Re-measured at `95a0b42`:
+  `internal/client/{anchor_test,exit,options}.go` and `internal/control/tokenfile/source.go`.
   **Closing condition:** fix the four, or a written line accepting them.
-- 🟡 **FOUR OF ELEVEN JOURNAL EVENT KINDS HAVE NO WRITER; THE SELECTION RULE IS STATED SO THE NUMBER
-  IS REPRODUCIBLE.** A kind has a writer iff non-test Go constructs it. Re-derive with
-  `find . -name '*.go' -not -name '*_test.go' -not -path './.claude/*' -print0 | xargs -0 grep -ohE 'Kind:\s*(control\.)?Event[A-Za-z]+'`
-  against `control.AllEventKinds` (11). **Constructed (7):** `user-created`, `project-created`,
-  `scope-created`, `member-set`, `credential-issued`, `granted`, `grant-revoked`. **Writer-less
-  (4):** `member-removed`, `scope-renamed`, `scope-moved`, `credential-revoked`. ⚠
-  `granted`/`grant-revoked` are constructed only by the browser surface. ⚠ Hand-appending is the
-  shape that let a 64-character secret into the journal (rank 5), and `-issue-credential`'s output
-  still says *"append a `credential-revoked` record BY HAND"*. **Closing condition:** a writer for
-  `credential-revoked`, or a line saying hand-append is the intended interface and where its schema
-  is documented.
-- 🟡 **THREE FILED BY #54's AND #57's LADDERS REMAIN.** 🔴 **(b) NAMES THE WRONG FILE.**
-  `internal/control/tokenfile/source.go` was fixed by `c47636b`; the LIVE stale copy is
-  **`internal/control/filestore.go:54`** — *"This module has no `require` block and `flake.nix`
+- 🟡 **FOUR OF ELEVEN JOURNAL EVENT KINDS HAVE NO WRITER; THE SELECTION RULE IS STATED SO THE
+  NUMBER IS REPRODUCIBLE.** A kind has a writer iff non-test Go constructs it, against
+  `control.AllEventKinds` (11). **Writer-less (4):** `member-removed`, `scope-renamed`,
+  `scope-moved`, `credential-revoked`. ⚠ Hand-appending is the shape that let a 64-character
+  secret into the journal. **Closing condition:** a writer for `credential-revoked`, or a line
+  saying hand-append is the intended interface and where its schema is documented.
+- 🟡 **THREE FILED BY #54's AND #57's LADDERS REMAIN.** 🔴 **(b) NAMES THE WRONG FILE.** The LIVE
+  stale copy is **`internal/control/filestore.go:54`** — *"no `require` block and `flake.nix`
   passes `vendorHash = null`"* — both halves false since #55. (c)
   `internal/report/testdata/reader_fixtures.json` contains **no `[cairn: …]` trailer at all** (0
-  hits against 8 in `server.py` as a positive control), so the differential reader fixture never
-  exercises attribution rendering. (d) is closed — `internal/ui/README.md`'s Phase E settles it.
-  **Closing condition:** one PR for (b)–(c).
+  against 8 in `server.py` as a positive control). **Closing condition:** one PR for (b)–(c).
 - 🟡 **`checks.default-is-the-go-client` IS INSENSITIVE ON THE PYTHON SIDE.** `mkCairn`'s pname is
-  already `cairn`, so a `meta.mainProgram` removed *there* leaves the base-name assertions green.
-  **Closing condition:** close it, or a written line saying why not.
-- 🟡 **COUNTS QUOTED IN PROSE THAT NOTHING ASSERTS ON** — now **`tests/test_parity_harness.py`'s
-  floor alone**. Settled pattern: a count that moves on every regeneration gets DELETED, one that
-  must never move gets PINNED (`tests/test_control_mutant_count_is_pinned.py`); deciding which is
-  the work. ⚠ 28(b4) exercised that pin growing: 152 → 177 refused the write at FIVE sites, naming
-  each — including one it must NOT touch (`152.21 s user`, a TIMING). **Closing condition:** pin the
-  parity floor, or a line saying why not.
+  already `cairn`. **Closing condition:** close it, or a written line saying why not.
+- 🟡 **COUNTS QUOTED IN PROSE THAT NOTHING ASSERTS ON** — now `tests/test_parity_harness.py`'s
+  floor alone. **Closing condition:** pin it, or a line saying why not.
 - 🔴 **A CHANGELOG ROW IS BORN WITH THE WRONG ANCHOR, STRUCTURALLY.** The anchor is the SQUASH
-  commit, unknowable while the PR carrying the row is open, so every row is written wrong and is
-  only correctable by a follow-up. #69 shipped anchored to a commit the squash discarded (fixed in
-  #78); #90 shipped a visible `<UNFILLED>` — the honest choice — fixed in #92. ⚠ **Nothing gates
-  it.** **Closing condition:** a check refusing a `CHANGELOG.md` anchor absent from `main`, or a
-  written line accepting the two-step.
-- 🟡 **P7's TWO BINDING CLAIMS ARE NOT IN `AGENTS.md`, AND THE REASON IS THE BUDGET.** The two that
-  belong there: the validator is a digest of the **uncompressed** tar (not gzip, not an
-  authorization epoch), and a `304` is a FOURTH read state beside
-  `live`/`cached`/`scope-empty`/`store-unreachable`. **Closing condition:** an eviction PR frees
-  ≥400 B, then both sentences land and `tests/test_agent_instructions_weight.py` exits 0 with both
-  present.
-- 🟡 **THE DEPLOYMENT MANIFEST'S NODE-AFFINITY COMMENT IS STALE.** It keeps the pod off the off-LAN
-  burst node *because the LAN registry does not resolve there*; the pod now pulls from ghcr, so that
-  reason is void while the affinity may still be wanted (the PVC is ReadWriteOnce local-path). **A
-  comment is a claim too. Closing condition:** the comment states the true reason, or it goes.
-- 🟡 **`tests/dualrun/` cannot see image drift, structurally.** It runs the TREE's `server.py`;
-  nothing compares the Go server against the artefact actually serving. **Closing condition:**
-  decide whether a deployed-artefact arm is worth owning, or write the line saying it is not.
-- 🟡 **THE SHARE FLOW'S `?scope=` REFUSAL IS CORRECT AND ITS SENTENCE IS FALSE.** The navigation
-  half is CLOSED (#133 merged `d003708`). What remains: `?scope=` is keyed on the scope **ID**, never
-  the display name — deliberate, and `render.go` says why — but a human who hand-types the name they
-  can see gets **404** and *"no such scope, or it is not yours to share"* for a scope that **is**
-  theirs. **Closing condition:** a decision on whether the name-keyed refusal should say something
-  true.
-- 🟡 **`AGENTS.md` + `CLAUDE.md` ARE EFFECTIVELY FULL.** ⚠ `8b1f2ff` spent the last slack:
-  correcting the FALSE `AGENTS.md:309` (*"only `internal/ui` may import one"*, while
-  `internal/pgstore` imports `lib/pq`) had to be a SWAP, and the first rewording cost 6 bytes and was
-  refused at `897 >= 900`. **A false zero worth keeping:** `grep -c` on a phrase that WRAPS ACROSS A
-  NEWLINE answers **0** — flatten whitespace and keep a positive control. **Closing condition:** an
-  eviction PR freeing a stated number of bytes, or a line accepting the file is closed.
-- 🟡 **THE POSTGRES TIER'S MUTATION EVIDENCE IS STILL PROSE.** #134's two raw-view rows are in
-  `tests/control_mutants.py`; the pgtest tier's are not — they live in a scratchpad script, and
-  `8b1f2ff` added four more of the same shape in its commit message. ⚠ **28(b4) did exactly this for
-  its own 25 rows**, so the open question is only whether a build-tagged tier can be mutated by a
-  battery running `go test` without the tag. **Closing condition:** the rows added with
-  `extra_killers` and the count moved at every site, or a line saying why a build-tagged tier cannot
-  be there.
-- 🟡 **NO NIX CHECK OWNS THE POSTGRES TIER, AND ONE COULD.** The build tag keeps it out of `doCheck`,
-  so one CI step is the only thing that runs it — deletable, which
-  `tests/test_pgtest_tier_is_declared.py` notices as a test but not as a build failure. A
-  unix-socket server needs no network and would work in the sandbox. **Closing condition:** a
+  commit, unknowable while the PR carrying the row is open. ⚠ Nothing gates it. **Closing
+  condition:** a check refusing an anchor absent from `main`, or a line accepting the two-step.
+- 🟡 **P7's TWO BINDING CLAIMS ARE NOT IN `AGENTS.md`, AND THE REASON IS THE BUDGET.** The
+  validator is a digest of the **uncompressed** tar, and a `304` is a FOURTH read state.
+  **Closing condition:** an eviction freeing ≥400 B, then both sentences land.
+- 🟡 **THE DEPLOYMENT MANIFEST'S NODE-AFFINITY COMMENT IS STALE.** Its stated reason (the LAN
+  registry not resolving) is void now the pod pulls from ghcr. **Closing condition:** the comment
+  states the true reason, or it goes.
+- 🟡 **`tests/dualrun/` cannot see image drift, structurally.** **Closing condition:** decide
+  whether a deployed-artefact arm is worth owning, or write the line saying it is not.
+- 🟡 **THE SHARE FLOW'S `?scope=` REFUSAL IS CORRECT AND ITS SENTENCE IS FALSE.** ⚠ The
+  NAVIGATION half is CLOSED (`#133`, `d003708`); only the message half remains. `?scope=` is
+  keyed on the scope **ID**; a hand-typed NAME gets 404 and *"not yours to share"* for a scope that **is** theirs. **Closing condition:** a decision on the message.
+- 🟡 **`AGENTS.md` + `CLAUDE.md` ARE EFFECTIVELY FULL.** ⚠ `8b1f2ff` spent the last slack.
+  **A false zero worth keeping:** `grep -c` on a phrase that WRAPS ACROSS A NEWLINE answers **0**.
+  **Closing condition:** an eviction freeing a stated number of bytes, or a line accepting it.
+- 🟡 **THE POSTGRES TIER'S MUTATION EVIDENCE IS STILL PROSE.** **Closing condition:** the rows
+  added with `extra_killers`, or a line saying why a build-tagged tier cannot be there. ⚠ Note
+  `#144`'s round 1 measured that an UNDECLARED extra killer is accepted silently — only a
+  LISTED-but-absent one fails — so declaring is hygiene, not a requirement.
+- 🟡 **NO NIX CHECK OWNS THE POSTGRES TIER, AND ONE COULD.** **Closing condition:** a
   `checks.pgtest` derivation, or a written line saying the CI step plus the ledger is enough.
 - Everything previously listed stands unchanged: #38's three residuals; `ScopeByNameIn`
   raw-vs-folded; P4 round 5's two prose defects; the degenerate-spelling limb; PR #15's six
@@ -1306,6 +1287,19 @@ fabricate a full sha from a short one; a squash would have undone the A/B split.
   fourth table holding something non-derivable** — a trigger, not a date.
 - **Decision (operator, this session): 28(d) DEPLOYED, with the one-time sign-out accepted
   explicitly in advance**, and the A/B split preserved through the merge by using `--rebase`.
+
+- 🔴 **A TOOL'S VERDICT IS A CLAIM ABOUT THE TOOL. TWO SHAPES, ONE SESSION, OPPOSITE DIRECTIONS.**
+  (a) **A guard can be wrong about WHICH REPOSITORY you are in and still read as precise.** The
+  base-clone write guard refused a commit in a worktree of the DEPLOYMENT repo and explained it
+  in terms of THIS one — this repo's worktree count, this repo's branch. Every fact was true, none about the command. (b) **A checker that REFUSES is not automatically right, and "it
+  refused" is neither a reason to stop nor to override.** My merged-tree prune check reported
+  `0 lost, 0 duplicated` and watched its control move `0 → 1`, then refused on 4 "unexplained"
+  lines that were the eviction's own new heading — a move is entitled to add one.
+  **The habit both need: when a tool names state, check that state belongs to what you are
+  doing** (`--git-common-dir`, `remote get-url origin`), and **name which assertion refused and
+  why it does not apply** rather than flipping the verdict and quoting the clean half. ⚠ The cost
+  is asymmetric: (a) is pulling an override for a reason that
+  was about another repo, on a repo where committing DEPLOYS; (b) is blocking a correct merge.
 
 ## How to verify
 
