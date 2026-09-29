@@ -284,11 +284,6 @@ that have closed, which is exactly what this document's own rule sends there, an
   defect as the `go` job's `ok` floor (`-lt 16` against seventeen packages) and as the
   publish battery's, now three times in this repository. **Before batching a count defect as
   prose, grep for the number in an `assert` or an `if`.**
-- **Decision (operator, this session): the prune was chosen over feature work**, and its
-  closing condition was met by MOVING rather than cutting. 🔴 **The safety property of a prune
-  is assertable and was asserted**: every bullet verified present in exactly one of the two
-  files, 0 missing and 0 duplicated, with every other section byte-identical. A prune that
-  cannot prove it moved rather than cut is the `BYPASS`-deletion failure with a tidier diff.
 - 🔴 **A CONTROL THAT SETTLED "IS THE TREE DIRTY" WAS READ AS SETTLING "WHICH ARTEFACT DID IT",
   AND THE INSTRUMENT COULD NOT ANSWER THE SECOND QUESTION AT ALL.** ❌ **RETRACTED:** *"the
   scanner's single `COULD NOT READ` line named the worktree directory … the rival mechanism was
@@ -707,12 +702,6 @@ that have closed, which is exactly what this document's own rule sends there, an
   cost here was zero, but the shape is general: **a tool that prints your argument back at you on a
   usage error turns "passed by path" into "passed by value".** Prefer a tool that reads the secret
   itself; failing that, treat the log as secret-bearing and destroy it with the world.
-- ⚠ **8103 WAS ALREADY TAKEN, WHICH IS THE PREDICTED COLLISION ARRIVING ON SCHEDULE.** This document
-  records that `## How to verify` naming a fixed port is the cause, and that the fix is `ss -ltn` first
-  plus handing over the PID and session id. Followed: this session's instance is **127.0.0.1:8147, PID
-  3427887, session `bb38a675`**. The occupant of 8103 was left alone. **The recipe still names 8103 —
-  the prediction has now been confirmed twice and the recipe has still not been changed.**
-
 - 🔴 **THE BROWSER PASS'S OWN REPORT CARRIED TWO WRONG HEADLINES OUT OF THREE, AND BOTH WERE RETIRED BY
   ONE EXTRA REQUEST EACH. A DISPATCHED PASS IS A WITNESS, NOT A VERDICT.** (a) It filed *"every unknown
   path is auth-gated — 401, not a 404"* as a SURPRISE. Measured with the discriminating pair the report
@@ -776,13 +765,6 @@ that have closed, which is exactly what this document's own rule sends there, an
   **rc 3** without its dependency, **rc 0** with it — exactly as its own docstring says, and for the
   reason the docstring gives. **Read `$?` off the command itself; a pipeline's status belongs to its
   last stage.**
-- ⚠ **REMOVING A FINISHED AGENT'S WORKTREE MAKES THAT AGENT UNRESUMABLE, AND THAT TRADE WAS NOT
-  WEIGHED.** Sweeping it restored the leak gate to rc 0 and simultaneously ended the ability to send
-  the agent a two-line follow-up; the next round cost a fresh dispatch with a hand-written brief. The
-  two goods are in direct tension — worktree isolation is mandatory AND an agent worktree reds the
-  gate. ✅ `#127` closed the gate half (directory entries are now NAMED as skipped, and a genuinely
-  unreadable FILE still exits 2, proven in both directions). **So sweep for tidiness, not for the
-  gate — and not while you may still want the agent.**
 - 🔴 **SQUASH-MERGING A STACKED PARENT MAKES THE CHILD `CONFLICTING`, PREDICTABLY, AND THE FIX IS
   `--onto`.** `main` gains the parent's content as a NEW commit while the child still carries the
   parent's originals, so the same work collides with itself. `git rebase --onto origin/main
@@ -964,18 +946,6 @@ that have closed, which is exactly what this document's own rule sends there, an
   a concurrent session's PR touching the same three files. The claim lock could not have shown it
   (the peer claimed a DIFFERENT slug, `cairn-ui-share-affordance`, for the same package). **Both
   moments are load-bearing, and the second one is where the sunk cost is highest.**
-- 🔴 **CARRIED FORWARD FROM A `State now` THAT WAS ABOUT TO DROP THEM A SECOND TIME — TWO
-  RETRACTED MECHANISMS ABOUT THE CARD CAP, BOTH STILL BINDING.** (a) ❌ *"`.page-main > .card`
-  reaches exactly the two broken pages"* — it reaches **four**: `/scope`, `/entry`, `NavigatePage`
-  and `/?q=`, whose `searchResults` renders `.card.results` as a direct child of `<main>`. Three
-  route states were rendered and the claim generalised to the ROUTE SET. **For a claim about a SET,
-  enumerate the render sites from SOURCE.** (b) ❌ *"`.scope-grid .card`
-  overrides for cards inside the grid"* — it declares only `margin-block: 0` and has EQUAL
-  specificity, so it could never override a `max-width`. The grid is safe because `>` is a CHILD
-  COMBINATOR and grid cards are GRANDCHILDREN, which never match — so **anyone who later flattens
-  the `.scope-grid` wrapper silently caps the whole grid**, which is why #131's guard pins the
-  NESTING and not only the declaration. ⚠ Both sat under `State now`, which REPLACES; they survive
-  here and in the `cairn/ui` index entry, and nowhere else in this doc.
 - 🔴 **A GUARD THAT WALKS FROM THE REPO ROOT CANNOT TELL THIS REPO FROM A CHECKOUT OF THIS REPO
   INSIDE IT** — and agent worktrees now live under `.claude/worktrees/`, so this is the default
   situation rather than an exotic one. The tell is a FAIL naming paths that contain the repo's own
@@ -1146,12 +1116,6 @@ that have closed, which is exactly what this document's own rule sends there, an
   branch and a PR (`#136`) — which does not shrink `main`'s copy in time to pay for the same session.
   ⚠ **The guard blocks the WHOLE command, heredoc included**, so `cat > msg.txt <<EOF … git commit -F
   msg.txt` leaves no message file behind: write it with a file tool first.
-- **Decision (operator, this session): re-verify #134 on the merged tree, then merge, with NO further
-  audit ladder.** Offered and declined: a delta round on the round-0/round-1 fix commits; merging on
-  `ci=green` without the merged-tree run; sending it back. ⚠ **THE COST, RECORDED HONESTLY: round 1
-  returned 0🔴/6🟡/4🟢 with every finding needing a fix, which is this repo's own condition for another
-  round — so ROUND 2 WAS DUE AND WAS SKIPPED. Do not read that ladder as converged.**
-
 - **Decision (operator, this session): AN INVITE IS REDEEMED BY BINDING IT INTO THE OAUTH FLIGHT.**
   Declined: sign-in first (smallest blast radius, but it cannot lift the picker's emptiness, which is
   P6's point), and a dedicated invite SESSION KIND (every authz path would have to learn a session
@@ -1191,16 +1155,6 @@ that have closed, which is exactly what this document's own rule sends there, an
   up**, so it cannot become an oracle over which invitations exist. Cost: a dead link shows "sign in
   to accept" and then a generic refusal. Follows `signInRefused`'s uniformity ruling, but it is a UX
   call, not a forced one — the operator may want the project and role shown.
-- 🔴 **AN axe REGRESSION REACHES `main` GREEN, AND #134's ROUND 1 IS THE MEASURED INSTANCE — moved
-  HERE from `State now`, a REPLACE bucket that was about to drop it.** Its new `<nav class=
-  "view-tabs">` beside `<nav class="crumbs">` made two landmarks, same role, no names: axe
-  `landmark-unique`, measured with a control (2 violations → 1 when one line was suppressed), and
-  naming only the NEW nav fixes nothing because the pair must be unique. 🔴 **The gap is structural
-  and OPEN:** `refuseWalkRegressions` does not refuse on axe violations and the `uiaudit` job is
-  `continue-on-error`; it would surface only in the hub's `new_a11y_rules` delta, which `ci.yml`
-  names as the promotion candidate for a blocking gate. ⚠ **28(b4) adds two pages and a nav
-  affordance to this same surface.**
-
 - 🔴 **28(b4)'s LESSONS ARE MOVED, NOT DELETED, AND THIS ROUND IS ONE BULLET BECAUSE THIS SECTION IS
   74% OF THIS DOCUMENT AND IS WHAT MADE THE RATCHET REFUSE IT.** `nix run .#build-ui-stylesheet`
   reads `root="${1:-$PWD}"`, so a worktree flake ref run from elsewhere
@@ -1300,6 +1254,26 @@ fabricate a full sha from a short one; a squash would have undone the A/B split.
   why it does not apply** rather than flipping the verdict and quoting the clean half. ⚠ The cost
   is asymmetric: (a) is pulling an override for a reason that
   was about another repo, on a repo where committing DEPLOYS; (b) is blocking a correct merge.
+- 🔴 **A SECOND ARC RAN BESIDE RANK 28 AND LANDED — `#137` as `7c3929d`: the ported
+  parallel-work rules plus a repo-local base-clone write guard, the repo's FIRST tracked
+  `.claude/`, 75 tests, `.gitignore` for `.claude/worktrees/`.** The guard is **live in the base
+  clone and verified there** (`git commit` → deny · `merge --ff-only` → allow · `git status` →
+  allow); it **FAILS OPEN** because it is tracked in a PUBLIC repo and only exit 2 blocks, and it
+  is **not a security boundary**. 🔴 **The three rounds' measured lessons are in
+  `cairn recall --ref base-clone-write-guard`, not here** — the store outlives this file, and this
+  document is 30 KB over its allowance. Deferrals: **`#138`**, six items with closing conditions
+  after `/the-algorithm` deleted four of six requirements and found **five of the six had been
+  issued by an audit round** — "a department, not a maker". ⚠ **Its own item 1 bit immediately:**
+  the guard keys on the cwd, so `git -C <a worktree> commit` issued from the base clone is
+  REFUSED — the false-POSITIVE mirror of the four documented bypasses, and worse, because those
+  lose protection while this blocks correct work. `BASE_CLONE_WRITE_OK=1` is the documented way
+  past it.
+- 🔴 **THIS DOC'S `Defects` SECTION HANDED A CLOSED HAZARD TO A NEW FILE AS A 🔴 RULE** —
+  *"worktrees must live OUTSIDE the repo root"*, whose both halves are closed (`#127`: leakscan
+  rc 0, naming the nested checkout as a reasoned skip; `#135`: `go test` 19 ok from the base clone
+  with one present) and which the harness's own `isolation: "worktree"` contradicts. **`Defects`
+  REPLACES, so a closed entry survives every update nobody retypes** — rank 23 was marked DONE two
+  sections away. Check the closing item before porting a hazard out of that list.
 
 ## How to verify
 

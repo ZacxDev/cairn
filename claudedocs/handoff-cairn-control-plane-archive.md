@@ -2177,3 +2177,43 @@ nothing**, because a foreign ledger entry sits outside every one of that gate's 
 construction — the same disjoint-key-spaces shape a bullet below already measures. Stated as a
 follow-up with a closing condition on the PR rather than fixed here.
 
+
+## Evicted from `Gotchas` — closed-arc records and one duplicate instance
+
+Moved VERBATIM out of `claudedocs/handoff-cairn-control-plane.md` to land a size-ratcheted
+update without an override, which is rank 27's closing condition. Each bullet's reason for
+being evictable is stated above it; the bodies below are byte-identical to what was removed.
+
+<!-- evictable because: DUPLICATE instance: the doc keeps the later, wider bullet on the same tripwire (a handed-over localhost:PORT being taken by another session) -->
+- ⚠ **8103 WAS ALREADY TAKEN, WHICH IS THE PREDICTED COLLISION ARRIVING ON SCHEDULE.** This document
+  records that `## How to verify` naming a fixed port is the cause, and that the fix is `ss -ltn` first
+  plus handing over the PID and session id. Followed: this session's instance is **127.0.0.1:8147, PID
+  3427887, session `bb38a675`**. The occupant of 8103 was left alone. **The recipe still names 8103 —
+  the prediction has now been confirmed twice and the recipe has still not been changed.**
+
+<!-- evictable because: CLOSED: #127 closed the gate half, and this session re-measured the other half as closed too (leakscan rc 0 with a nested worktree present) -->
+- ⚠ **REMOVING A FINISHED AGENT'S WORKTREE MAKES THAT AGENT UNRESUMABLE, AND THAT TRADE WAS NOT
+  WEIGHED.** Sweeping it restored the leak gate to rc 0 and simultaneously ended the ability to send
+  the agent a two-line follow-up; the next round cost a fresh dispatch with a hand-written brief. The
+  two goods are in direct tension — worktree isolation is mandatory AND an agent worktree reds the
+  gate. ✅ `#127` closed the gate half (directory entries are now NAMED as skipped, and a genuinely
+  unreadable FILE still exits 2, proven in both directions). **So sweep for tidiness, not for the
+  gate — and not while you may still want the agent.**
+<!-- evictable because: CLOSED decision record: #134 merged as 963517e -->
+- **Decision (operator, this session): re-verify #134 on the merged tree, then merge, with NO further
+  audit ladder.** Offered and declined: a delta round on the round-0/round-1 fix commits; merging on
+  `ci=green` without the merged-tree run; sending it back. ⚠ **THE COST, RECORDED HONESTLY: round 1
+  returned 0🔴/6🟡/4🟢 with every finding needing a fix, which is this repo's own condition for another
+  round — so ROUND 2 WAS DUE AND WAS SKIPPED. Do not read that ladder as converged.**
+
+<!-- evictable because: CLOSED round record: #134's ladder is finished and both navs carry aria-labels -->
+- 🔴 **AN axe REGRESSION REACHES `main` GREEN, AND #134's ROUND 1 IS THE MEASURED INSTANCE — moved
+  HERE from `State now`, a REPLACE bucket that was about to drop it.** Its new `<nav class=
+  "view-tabs">` beside `<nav class="crumbs">` made two landmarks, same role, no names: axe
+  `landmark-unique`, measured with a control (2 violations → 1 when one line was suppressed), and
+  naming only the NEW nav fixes nothing because the pair must be unique. 🔴 **The gap is structural
+  and OPEN:** `refuseWalkRegressions` does not refuse on axe violations and the `uiaudit` job is
+  `continue-on-error`; it would surface only in the hub's `new_a11y_rules` delta, which `ci.yml`
+  names as the promotion candidate for a blocking gate. ⚠ **28(b4) adds two pages and a nav
+  affordance to this same surface.**
+
