@@ -338,24 +338,137 @@ new arc their leftovers belong to, not another round of either.
   `packages.default` flips `-verbs`/`-exit-codes` from exit 2 to exit 0, which is a
   public-surface change and the operator's call, not a side effect of a version bump.
 
+### ANSWERED — the Python-vs-Go decision is MADE (Go), and it is a PIN-SEAM SPLIT rather than a one-line flip
+- as-of: 2026-09-30
+- **What this settles:** the client-pin block's 🔴 *"Decide Python-vs-Go default BEFORE opening
+  it"* is ANSWERED — **operator decision: take the GO client.** Do not re-open it; below is its
+  measured COST, unknown when that sentence was written.
+- **Observed (with values)** — both packages built from the pinned revision and inspected, not
+  inferred from the flake:
+  | reading | `cairn-<pin>` (Python) | `cairn-go-<pin>` (Go) |
+  |---|---|---|
+  | top level | `bin` + **`libexec`** | `bin` **only** |
+  | `entry_shape.py` / `subsystem_resolver.py` | present / present | absent |
+  | `--ref-to` / `--tag` in `recall --help` | 2 / 2 | **1 / 1** |
+  | `--scope` (control) / a bogus flag (control) | 2 / 0 | 1 / **0** |
+  | `-verbs` | rc **2** (argparse refusal) | rc **0** + table |
+  `via: measurement`
+- **Ruled out:** that the flip is re-pointing one threaded package name. The config repo's
+  `scripts/lib/cairn_pin.py` reaches the reader modules by route 2 — `which cairn` → `realpath` →
+  `<store>/libexec/cairn/lib`, accepted on **CONTENT** (both marker modules) with **no local
+  fallback**, because that repo deleted its own copies. The Go package has no `libexec` at all, so
+  route 2 refuses and `CairnPinUnresolved` fires for **22 tracked files importing `cairn_pin`**, 11
+  importing `cairn_lib`, the out-of-store `cairn-who` and `cairn-validate` launchers (the latter is
+  named by the `subsystem-index` write protocol), and the writer. `via: measurement`
+- **Ruled out:** that an env var alone is the fix. `cairn_pin`'s own docstring records that the
+  variable route exists for sandboxes and that **route 2 is the one that must work unattended** —
+  the session-variables file lands in `profile.d`, which a non-interactive shell does not source.
+  So the replacement must be an on-PATH, content-valid answer, not a `CAIRN_LIB` export.
+  `via: code`
+- **Ruled out:** that the four parse contracts the config repo's ops wrappers depend on break
+  on the Go client. All four probed directly against the built Go binary, one control each —
+  values in the Gotchas entry below, not repeated here. `via: measurement`
+- **Ruled out:** that the Go package is reachable only at the NEW pin, making the flip depend on
+  the bump. `packages.cairn-go` and `default = mkGoClient` are present in the flake at **both** the
+  old and the new pinned revisions. The bump is still required for the *features* — the old
+  revision predates all three — but not for evaluation. ⚠ This CORRECTS a claim I made earlier in
+  this same session and had not measured. `via: measurement`
+- **Leading hypothesis — a mechanism, not a guess.** One name does two jobs: *the binary the
+  operator types* and *the source of the reader modules*. The flip separates them — deploy line
+  takes the Go package, a second threaded name keeps the Python one, and an in-store `cairn-py`
+  launcher gives route 2 a content-valid answer without an env var. 🔴 **Bind it to
+  `packages.cairn-go`, NOT `packages.default`**: same store path today, but `default` can be
+  re-pointed upstream without the name changing meaning, and a pin must not inherit that.
+- **Next probe:** rank 6 carries the design and the file set. The two RED proofs it must not skip:
+  watch `cairn_pin` route 2 REFUSE on a Go-only PATH and then resolve once a Python-lib launcher
+  is on PATH (both directions), and watch the new threaded-name guard fail against a decoy
+  binding of the right name pointing at the wrong package — **that exact decoy shape is recorded
+  as having SURVIVED in the guard file already**, so copy its assignment-bound regex discipline
+  rather than searching the whole region.
+
+### ✅ RESOLVED 2026-09-30 — the pin bump is MERGED, SWITCHED and verified BEHAVIOURALLY on the installed client; and the blocker above was ALREADY BEING REPORTED by a red instrument nobody reads
+- as-of: 2026-09-30
+- **What this settles:** the client-pin block's *"Next probe: … then `nix flake update cairn` and a
+  switch"* is **RUN**. The config repo's PR is squash-merged and the switch is done. The two blocks
+  immediately above — the Go decision and the parked-base-clone blocker — are **NOT** superseded:
+  the flip itself is still unbuilt, and this entry is the PYTHON step only.
+- 🔴 **AND THE BLOCKER THAT MADE THE ROUTE NON-OBVIOUS, RECORDED BECAUSE THE NEXT SWITCH HITS IT
+  TOO: the config repo's base clone is parked on ANOTHER SESSION'S BRANCH** — 1 ahead / 3 behind
+  its mainline, in sync with its own remote — and that branch pinned the OLD revision, as did the
+  mainline until this merge. So `home-manager switch --flake <config-repo>` run there builds the
+  **old** client and **exits 0**, leaving the greps at 0, which reads as "the bump did not work".
+  🔴 **Do NOT fix it by switching branches in the shared base clone** — the rules forbid it and
+  the branch is someone else's. Use a clean worktree at the merged mainline. ⚠ The session-start
+  status line cannot show this: it reports the repo the session is IN, and an earlier command here
+  read a REMOTE ref, which never sees the local checkout's branch. `via: measurement`
+- **Observed (with values), on the INSTALLED path rather than a store path built by hand:**
+  | reading | before | after |
+  |---|---|---|
+  | `readlink -f "$(which cairn)"` | `…-cairn-5dfc11a/bin/cairn` | **`…-cairn-cdf6fae/bin/cairn`** |
+  | `--ref-to` in `recall --help` | 0 | **2** |
+  | `--tag` in `recall --help` | 0 | **2** |
+  | `--scope` (instrument control) | 2 | 2 — unchanged, so the grep worked BOTH times |
+  | a bogus flag (negative control) | 0 | 0 |
+  | `-verbs` | rc 2 | rc 2 — still the PYTHON client, as this step intends |
+  The merge landed as one squash commit; verified **by content, never ancestry** — the config
+  repo's mainline pins the new revision and the old revision greps **0**. `via: measurement`
+- 🔴 **AND `--help` IS NOT BEHAVIOUR, so both features were EXERCISED with a control each:**
+  `--ref-to` with a malformed ref → rc **2** carrying the ref-grammar refusal (*"not a well-formed
+  `<system>:<id>` ref"*); `--tag` with a bogus tag → **`status=tag-absent`** with the real narrowing
+  sentence (*"0 of 13 entries in `cairn/` carry it … This is a NARROWING, not a truncation"*). Those
+  are the SAME strings a previous session measured against the live pods — so pod and installed
+  client now agree on behaviour, not merely on a version. `via: measurement`
+- **Ruled out:** that switching from a WORKTREE instead of the parked base clone would repoint the
+  two out-of-store launchers at a scratch path. Checked BEFORE the switch by reading the module's
+  own binding (the workspace prefix is derived from `$HOME`, not from the flake's location) and
+  AFTER by `readlink -f` — the arbiter, because one level of `readlink` shows only the
+  home-manager-files store indirection and would have read as a store copy. **Both launchers
+  terminate in the base clone; 0 terminate in the scratch worktree, 2 in the base clone**, and one
+  of them runs to rc 0. `via: measurement`
+- 🔴 **Ruled out: that the parked-base-clone blocker above was unobserved. IT IS BEING REPORTED
+  EVERY SIX HOURS BY A UNIT THAT HAS BEEN RED FOR AT LEAST TWO DAYS.** The switch printed
+  `degraded` and named one failed user unit — the passive drift deadman. Its exit code is
+  **12 = `not-on-branch-main`**, and its own output names the branch:
+  *"DRIFT — checkout is on '<branch>', not on branch main … anything committed on '<branch>' stays
+  invisible to origin/main."* Failure history: **12, 17, 17, 17, 17, 12** across the last six
+  timer firings, the oldest ~2 days before this session. ⚠ **PRE-EXISTING, NOT CAUSED BY THE
+  SWITCH** — the last failure stamped ~48 minutes BEFORE the switch ran, and it is timer-triggered.
+  `via: measurement`
+- **Leading hypothesis:** this is the *permanently-red-gate* failure, not a missing instrument. A
+  currency check that fires on schedule, names the exact drift, and is never read has already
+  trained its own bypass — and this arc spent a session rediscovering by hand what it prints.
+  🔴 **This is DIRECT INPUT TO RANK 2: before building a new currency instrument, account for the
+  one that already exists and is red.** A second unread instrument is worse than none.
+- **Next probe:** for the drift deadman — `systemctl --user status drift-check.service` and
+  `journalctl --user -u drift-check.service` for the per-host lines, then decide between unbreaking
+  it and stopping gating on it; do NOT add a third check beside it. ⚠ Two of its lines are
+  unreachable REMOTE hosts, so part of its red is about the other machine and not about this one —
+  read the per-host lines before attributing the whole verdict. For rank 6's remaining half: the Go
+  flip is designed but UNBUILT, and the decision it implements is the operator's, already made.
+
 ## Next steps (ranked)
 
 🔴 **NUMBERING IS STABLE — a rank is half a `claim-work` slug**, and `claim-work` comes BEFORE
 you act. ⚠ **AND RUN `gh pr list --state open` ANYWAY, TWICE — before starting and again
-immediately before `gh pr create`.** Measured three times this session: the pre-work sweep was
-clean and a peer's PR appeared mid-write (`#150`, `#153`, `#155` — the last one retracting a
-claim a peer had shipped hours earlier). `claim-work` answering **rc 12, already yours** is
-indistinguishable from untouched work; only the sweep sees a duplicate nobody claimed.
+immediately before `gh pr create`.** Measured three times: the pre-work sweep was clean and a
+peer's PR appeared mid-write (`#150`, `#153`, `#155` — the last one retracting a claim a peer had
+shipped hours earlier). `claim-work` answering **rc 12, already yours** is indistinguishable from
+untouched work; only the sweep sees a duplicate nobody claimed.
 
-1. ✅ **DONE — all PRs merged.** Six landed this session, verified BY CONTENT on `origin/main`
-   with a negative control at 0; ancestry was deliberately not used (a squash never makes the
-   branch head an ancestor). forcing: gate — unmerged docs PRs are the `stranded-docs` shape,
-   and `#149` exists because that shape already cost a bullet.
+1. ✅ **DONE — all PRs merged.** Six landed in the prior session, verified BY CONTENT on
+   `origin/main` with a negative control at 0; ancestry was deliberately not used (a squash never
+   makes the branch head an ancestor). `#156` and this doc's own PR landed after it, same way.
+   forcing: gate — unmerged docs PRs are the `stranded-docs` shape, and `#149` exists because
+   that shape already cost a bullet.
 2. **BUILD THE DEPLOYED-ARTEFACT CURRENCY INSTRUMENT — the (a) half, still unbuilt and now
    known to cover THREE artefacts** (two pod images, one installed client), not the one its
    wording names. 🔴 **Watch it go RED on a deliberately stale pin before believing it**, and
    do not accept "both pods carry the same tag" as the check — they were equal to each other
-   and both stale, twice in one session.
+   and both stale, twice in one session. 🔴 **AND ACCOUNT FOR THE CURRENCY INSTRUMENT THAT
+   ALREADY EXISTS AND IS RED: the config repo's drift deadman has been failing every six hours
+   for two days, exit 12 = `not-on-branch-main`, naming the exact drift this arc rediscovered by
+   hand.** Unbreak it or stop gating on it; a second unread instrument beside it is worse than
+   none. Evidence: the RESOLVED investigation block.
    forcing: regression — the image gap re-opened within minutes of being closed, twice, and no
    gate in any of the three repositories can see any of the three artefacts.
 3. ✅ **DONE 2026-09-30 — clause (b) is MET.** Session table `count(*)` 0 → 1 on the live
@@ -364,32 +477,40 @@ indistinguishable from untouched work; only the sweep sees a duplicate nobody cl
    credential that could run it, and that is now moot: one was issued for their own user.
 4. **P8 — retire the Python oracle.** Carried over unchanged: a real read AND a real write
    against the live pod from **two distinct hosts**, recorded, AND no open defect naming the
-   Go client or `packages.default`. **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway and
-   the residual risk is accepted EXPLICITLY, in writing.**
+   Go client or `packages.default`.
+   ⚠ **AND RANK 6 NOW FEEDS IT: the operator has chosen the Go client for the installed CLI, so
+   P8's decision half is partly pre-answered — but the pin-seam split rank 6 describes must land
+   FIRST, or retiring `packages.cairn` removes the reader modules 22 config-repo consumers
+   import.** **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway and the residual risk is
+   accepted EXPLICITLY, in writing.**
    forcing: deadline — the 2026-11-01 backstop, set by the operator.
-5. **Fix the base-clone write guard.** It reproduced a **FIFTH** independent time this session:
-   it refused commits in linked worktrees while naming the base clone, having resolved the repo
-   from `$PWD` rather than the command's `-C` target. Premise proved false before every
-   override. **Closing condition:** the guard admits a linked worktree AND reads `-C`, with a
-   test that a real base-clone write is still refused.
+5. **Fix the base-clone write guard.** It reproduced a **FIFTH** independent time: it refused
+   commits in linked worktrees while naming the base clone, having resolved the repo from `$PWD`
+   rather than the command's `-C` target. Premise proved false before every override.
+   **Closing condition:** the guard admits a linked worktree AND reads `-C`, with a test that a
+   real base-clone write is still refused.
    forcing: gate — a guard whose diagnosis is reliably about the wrong repository trains its own
    bypass, which is the permanently-red-gate failure wearing a different hat.
-6. **MERGE THE CONFIG REPO'S PR #1933 AND RUN THE SWITCH — this is what makes the shipped
-   features usable from the CLI.** All four checks PASS. 🔴 **Decide Python-vs-Go default
-   first** (it flips `-verbs`/`-exit-codes` from exit 2 to exit 0 — a public-surface change,
-   the operator's call). Then re-run the `--help` greps and require `--ref-to`/`--tag`
-   non-zero; the switch is the step that silently may not happen.
+6. 🔶 **HALF DONE — THE PYTHON STEP SHIPPED; THE OPERATOR'S DECISION (GO) IS UNBUILT.** ✅ The
+   config repo's PR is squash-merged, the switch is run, and the installed client carries both
+   features — verified BEHAVIOURALLY, not just greped in `--help`. **Do NOT re-do that half.**
+   ⛔ What remains is the GO FLIP, a **PIN-SEAM SPLIT** rather than a one-line change: the Go
+   package ships no `libexec/cairn/lib`, which is how 22 config-repo files, both out-of-store
+   launchers and the writer reach the reader modules via `cairn_pin` route 2 — content-validated,
+   no fallback. Design, file set and RED proofs: the ANSWERED block. 🔴 **Switch from a CLEAN
+   WORKTREE at the merged mainline** — the base clone is parked on another session's branch, where
+   a switch rebuilds the OLD client at exit 0.
    forcing: user — the operator asked directly *"how can we validate and start using the new
-   features?"* and the CLI answer is currently "you cannot".
+   features?"*, and chose Go over Python for the installed client when asked.
 7. **TRIAGE THE SEVEN UN-DROPPED SCOPE ITEMS from the original asks**, each measured absent on
-   `main` this session: a PWA (no manifest, no service worker), htmx (0 occurrences —
-   the surface is server-rendered gomponents), Google sign-in (only the one provider route
-   exists), "move scope ownership between projects" and "remove a member" (both exist ONLY as
-   declared journal event kinds with no writer, no CLI flag and no UI route), **scope**-level
-   tags (entry-level `tags:` shipped instead), and `/the-algorithm` over the whole design
-   (asked 2026-09-23, still 0 hits). Two look like conscious narrowings — Google was
-   re-specified to one provider, and scope tags may have been narrowed during the proposal
-   walkthrough — but neither was ever recorded as a decision, so they read as dropped.
+   `main`: a PWA (no manifest, no service worker), htmx (0 occurrences — the surface is
+   server-rendered gomponents), Google sign-in (only the one provider route exists), "move scope
+   ownership between projects" and "remove a member" (both exist ONLY as declared journal event
+   kinds with no writer, no CLI flag and no UI route), **scope**-level tags (entry-level `tags:`
+   shipped instead), and `/the-algorithm` over the whole design (asked 2026-09-23, still 0 hits).
+   Two look like conscious narrowings — Google was re-specified to one provider, and scope tags
+   may have been narrowed during the proposal walkthrough — but neither was ever recorded as a
+   decision, so they read as dropped.
    forcing: user — all seven were asked directly and none was ever declined in writing.
 
 ## Defects (batched)
@@ -618,6 +739,48 @@ indistinguishable from untouched work; only the sweep sees a duplicate nobody cl
   Grepping the session corpus for a deliberately-absent string returned **1** — my own
   transcript, which had recorded the probe command. Exclude your own session id before reading
   such a control as a failure.
+
+- 🔴 **DECISION (operator, this session): the installed client becomes the GO one.** It flips
+  `-verbs`/`-exit-codes` from exit 2 to exit 0 — the public-surface widening residual 7 predicted —
+  raised with its blast radius before the choice. The concern raised alongside it (the ops wrappers
+  PARSE the client, and the parity gate's own named blind set includes `doctor` states) was then
+  **measured closed** on all four parse surfaces: `recall`'s `store:` line, `routes`' rows plus its
+  `instances:` line, `doctor --json`'s `<alias>/reader-resolution` detail (with a bogus alias ABSENT
+  as the control), and `doctor` exiting **10** under `--no-sync`. NOT closed: `sync`, left to the
+  parity harness, which runs both clients over one cache root by design. `via: measurement`
+- ✅ **THE PYTHON HALF OF RANK 6 SHIPPED; THE GO DECISION IS UNBUILT.** Staged Python-first so the Go change lands against a known-good, rollback-able state instead of riding a
+  lock bump. **Do not read "rank 6 verified" as "the Go decision shipped".** Rollback point:
+  home-manager generation **845** was current immediately before the switch.
+- 🔴 **A `test -d` AGAINST A VARIABLE HOLDING GARBAGE ANSWERED THE REASSURING SIDE.** A background
+  build's path was captured with `tail -1`, which returned the runner's `[exited with code 0]` line;
+  `test -d "$GARBAGE/libexec/cairn/lib"` then printed *"design premise holds"* — the wanted answer,
+  because the path did not exist. Redone with the store path's **own existence** printed beside it.
+  The documented *comparison against an absent operand reports SAME, not MISSING* trap, in a new
+  shape: **a negative a broken instrument would also produce is not a negative.**
+- 🔴 **TWO DOCS PRs ON ONE DOC WERE BOTH `MERGEABLE/CLEAN`, AND THE SECOND WENT `CONFLICTING` THE
+  INSTANT THE FIRST MERGED.** `CLEAN` describes the base as it stood, not a property of the PR, so a
+  green sweep plus two green `mergeable` reads is **not** evidence both can land. Confirmed by two
+  instruments agreeing: `git merge-tree --write-tree` **exit 1** (branch on the EXIT CODE — it prints
+  a tree OID on success and emits no `<<<<<<<`, so a marker grep returns a confident wrong "no
+  conflict") and GitHub's `CONFLICTING DIRTY`. **Resolved by rebuilding the delta on the merged base
+  through `handoff_doc.py`, never by hand** — the sections have replace/append semantics a 3-way text
+  merge cannot know, and hand-resolving is how a REPLACE section eats an APPEND one.
+- ⚠ **`gh pr checks` EXITS 8 WHILE ANY CHECK IS PENDING, AND ITS EMPTY SET READS AS ALL-GREEN.** The
+  non-zero is not a failing gate. Worse, filtering for non-passing checks returns empty BOTH when
+  everything passed and when **no checks exist at all** — which is what a fresh push looks like. One
+  PR here was misread as green on exactly that. **Print the check COUNT before the buckets.**
+- ⚠ **A SWITCH REPORTING `degraded` IS REPORTING ON THE WHOLE USER SESSION, NOT ITS OWN WORK.**
+  `home-manager switch` exited **0** while printing `The service manager is degraded` and naming a
+  failed unit whose last failure stamped ~48 min earlier, on its own timer. **Read the failure's own
+  timestamp before attributing it to the deploy you just ran.**
+- ⚠ **THE SIZE CEILING IS PAID BY WRITING LESS, NOT BY EVICTING HISTORY — `--prune` cannot take a
+  whole investigation block.** It names lines verbatim, each matching exactly one, but `- as-of:`
+  and `` `via: measurement` `` recur (5 and 7 times here) and are parsed fields. This delta was cut
+  ~20% to fit, dropping no measured value: one block's facts were folded into another, and a
+  duplicated table was removed.
+- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE.** The resolver exited **5**: an
+  unknown session id answers 200 with an EMPTY ARRAY, so that zero cannot separate "touched no
+  task" from "wrong id". None written, none created.
 
 ## How to verify
 
