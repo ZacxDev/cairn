@@ -89,14 +89,16 @@ type RecalledEntry struct {
 	// only work-tracker items. Renaming is mechanical but would have to move
 	// `store.Entry.Tasks`, this field and the oracle's `RecalledEntry.tasks` together.
 	//
-	// 🔴 THE RENDERED SIDE HAS PARTLY MOVED, AND THE SPLIT IS WHAT A READER NEEDS TO KNOW.
-	// The INDEX BADGE now reads `🔗 N ref(s)` — see [listingLine] — so the goldens, the
-	// reader fixture and the parity byte diffs were re-based once already. The BODY LABEL
-	// in [RecallReport.RenderText] still reads `tasks: `, awaiting an operator ruling it
-	// has not been given. So `task` survives here in TWO different states — an internal
-	// NAME (no ruling needed, purely mechanical) and one rendered LABEL (ruling pending) —
-	// and they are not one deferral. `RecallReport.RenderText`'s own label carries the
-	// closing condition for the second.
+	// 🔴 THE RENDERED SIDE HAS FULLY MOVED, AND THIS FIELD IS NOW THE ONLY `task` LEFT ON
+	// THE READ PATH. The INDEX BADGE reads `🔗 N ref(s)` (see [listingLine]) and the BODY
+	// LABEL reads `refs: ` (see [RecallReport.RenderText]); both re-based the goldens, the
+	// reader fixture and the parity byte diffs, the second on an operator ruling. So the
+	// deferral recorded above is now about a NAME and nothing else — purely mechanical, no
+	// ruling needed, no rendered byte at stake. ⚠ It is NOT therefore free: moving it is
+	// still a three-repo-file edit (`store.Entry.Tasks`, this field, the oracle's
+	// `RecalledEntry.tasks`) plus the oracle's JSON payload key, which is machine-readable
+	// and would break a consumer where a label breaks nobody. That asymmetry is why the
+	// rendered words moved first and this did not move with them.
 	Tasks []string
 
 	// RequirementsOpen and RequirementsMet are the `## Requirements` bullets that DECLARE

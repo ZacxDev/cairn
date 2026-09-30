@@ -657,7 +657,19 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 		{"a met requirement naming the sha that closed it", "- RESOLVED def5678: (operator)"},
 		{"a requirement with NO provenance, which is a decided answer",
 			"- OPEN: the archive should keep its original timestamps"},
-		{"the task refs in a body", "    tasks: github:"},
+		// ⚠ THE BRANCH IS THE SAME ONE; ONLY ITS RENDERED LABEL MOVED, exactly as the badge
+		// row above did — so the covered set does not shrink. It read `    tasks: github:`
+		// until the label was renamed on an operator ruling.
+		//
+		// 🔴 AND IT IS NOW THE WHOLE LINE RATHER THAN A PREFIX, WHICH IS A MEASURED FIX AND
+		// NOT A TIGHTENING FOR ITS OWN SAKE. The old spelling stopped at `github:`, and a
+		// prefix is contained by any longer string — the badge guard in
+		// `refsbadge_test.go` had an always-plural mutant SURVIVE for exactly that reason
+		// (`🔗 1 refs` contains `🔗 1 ref`). The full line also pins the SEPARATOR and the
+		// ORDER of the two refs, which is the file order the loader promises and which a
+		// prefix could not see.
+		{"the refs in a body, as a whole line",
+			"    refs: github:example-org/example-repo#428, linear:ENG-441"},
 		{"a sensitivity the schema HONOURED", "sensitivity=public"},
 		{"a sensitivity the fail-safe OVERRODE", "(declared: internal)"},
 		// 🔴 FOUR, NOT THREE, AND THE CHANGE FROM THREE IS THE FINDING THIS ROW NOW CARRIES.
