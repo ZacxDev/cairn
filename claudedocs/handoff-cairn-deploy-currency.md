@@ -25,14 +25,24 @@ new arc their leftovers belong to, not another round of either.
 
 ## State now
 
-- 🔴 **CLOSING-CONDITION CLAUSE (b) IS MET; THE ARC IS NOT CLOSED — CLAUSE (a) IS THE ONE ITEM
-  LEFT.** (b) asked that the session table be written, read before and after one real sign-in:
-  `count(*)` moved **0 → 1** on the live deployment. While proving it, the invite store was also
-  written (**0 → 1**, minted then revoked) and the share flow was exercised end to end on the real
-  surface (`granted` + `grant-revoked`, picker offering a real second user). Full values, and the
-  instrument correction that came with it, are the RESOLVED block under `Open investigations`.
+- 🔴 **CLOSING-CONDITION CLAUSE (b) IS MET; THE ARC IS NOT CLOSED.** (b) asked that the session
+  table be written, read before and after one real sign-in: `count(*)` moved **0 → 1** on the live
+  deployment. While proving it, the invite store was also written (**0 → 1**, minted then revoked)
+  and the share flow was exercised end to end on the real surface (`granted` + `grant-revoked`,
+  picker offering a real second user). Full values, and the instrument correction that came with
+  it, are the RESOLVED block under `Open investigations`.
   ⚠ **(a) — an instrument that FAILS when a deployed image is behind `origin/main` — does not
-  exist, so "is this arc finished?" answers NO, and the one item is rank 2.**
+  exist. That is rank 2.**
+  - 🔴 **AND (a) AS WRITTEN IS NARROWER THAN THE PROBLEM, WHICH A PEER SESSION MEASURED WHILE
+    THIS WAS IN FLIGHT (`#153`, squash `d6290d54`).** The closing condition says "a deployed
+    **image**", and the INSTALLED CLIENT on this host is a third stale artefact it does not
+    cover: **63 commits** behind, predating all three feature squashes, carrying neither
+    `--ref-to` nor `--tag`. **So "how do I start using the new features" currently answers
+    "you cannot from the installed CLI"** — the pods have them, the client does not. ⚠ An
+    earlier draft of this bullet said (a) was "the one item left"; that was true of the
+    condition's wording and false of the arc's subject, which is the same
+    narrower-than-the-sentence shape this repo keeps recording. Do NOT re-derive (a) as
+    image-only.
 - ⚠ **THE OPERATOR NOW HAS A BROWSER-SURFACE CREDENTIAL, AND BEFORE THIS THEY HAD NONE** — issued
   for their own existing user and delivered to a `0600` file outside this repo. The path is
   deliberately not written here: a handoff doc is committed to a PUBLIC repository, and naming the
