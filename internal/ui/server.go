@@ -332,15 +332,27 @@ type Bullet struct {
 // Text is the bullet rejoined, VERBATIM — the shape a search hit quotes.
 func (b Bullet) Text() string { return strings.Join(b.Lines, "\n") }
 
-// Body is the bullet's lines with the two prefixes the page renders STRUCTURALLY removed:
-// the `- ` list marker (the line is an `<li>`) and the openness marker the badge shows.
+// Body is the bullet's lines with the three prefixes the page renders STRUCTURALLY removed:
+// the `- ` list marker (the line is an `<li>`), the openness marker the badge shows, and —
+// on a requirement that declared one — the `(operator)` / `(inferred)` parenthetical the
+// provenance badge shows.
 //
-// 🔴 BOTH CUTS COME FROM `internal/store`'s OWN PATTERNS, VIA [store.BulletMarkerSpan] AND
-// [store.MarkerSpan], SO THIS FUNCTION SPELLS NO GRAMMAR. That is the difference between a
-// transformation and a second parser: `MarkerSpan` is 0 for every line `BulletOpenness`
-// refused, so a NEAR MISS — a line that tried to write a marker and missed — keeps its
-// marker text on the page, which is the entire finding. A `TrimPrefix(line, "OPEN: ")` here
-// would swallow it and the badge would be the only evidence left.
+// 🔴 ALL THREE CUTS COME FROM `internal/store`'s OWN PATTERNS, VIA [store.BulletMarkerSpan],
+// [store.MarkerSpan] AND [store.ProvenanceSpan], SO THIS FUNCTION SPELLS NO GRAMMAR. That is
+// the difference between a transformation and a second parser: `MarkerSpan` is 0 for every
+// line `BulletOpenness` refused, so a NEAR MISS — a line that tried to write a marker and
+// missed — keeps its marker text on the page, which is the entire finding. A
+// `TrimPrefix(line, "OPEN: ")` here would swallow it and the badge would be the only
+// evidence left, and a `TrimPrefix(line, "(operator) ")` would be the same mistake one
+// clause further along.
+//
+// 🔴 THE PROVENANCE CUT IS GATED ON [Bullet.Provenance], NOT ON THE OFFSET ALONE, AND THE
+// GATE IS THE WHOLE CORRECTNESS ARGUMENT. `store.ProvenanceSpan` reads the LINE, and a
+// NUANCE bullet's line may perfectly well be spelled `- OPEN: (operator) …` — provenance is
+// a property of the `## Requirements` SECTION, so that bullet gets no provenance badge and
+// `Provenance` is "" for it. Cutting on the offset alone would delete `(operator)` from a
+// nuance bullet with nothing on the page to replace it: text removed, no badge, no trace.
+// So the rule is the marker's rule exactly — remove only what a badge is showing.
 //
 // 🔴 ONLY LINE 1. Lines 2..n are verbatim, because the parser reads line 1 only: a marker
 // further down declares nothing and must stay where the writer put it, reported by
@@ -359,6 +371,13 @@ func (b Bullet) Body() []string {
 	copy(out, b.Lines)
 	first := out[0]
 	if n := store.MarkerSpan(first); n > 0 {
+		// `ProvenanceSpan` starts where the marker ended and is never less than `n` when it
+		// is non-zero, so this REPLACES the cut rather than adding a second one.
+		if b.Provenance != store.ProvenanceAbsent {
+			if p := store.ProvenanceSpan(first); p > n {
+				n = p
+			}
+		}
 		out[0] = strings.TrimLeft(first[n:], " \t")
 		return out
 	}

@@ -838,6 +838,16 @@ func bulletItem(b Bullet) g.Node {
 			// NOTHING rather than a default that would read as a weak `inferred`. Printing
 			// an attribution the file does not make is the one failure this feature cannot
 			// have, because the whole point of the section is who said it.
+			//
+			// 🔴 AND THE BADGE IS NOW THE ONLY PLACE THE PARENTHETICAL APPEARS, for the
+			// reason the marker is: it read twice — once here and once in the `(operator)`
+			// still sitting at the head of the line below — which is the duplication
+			// [Bullet.Body] exists to end. The cut is `store.ProvenanceSpan`, gated on this
+			// same `Provenance` value, so the three cases where NO badge renders are exactly
+			// the three where nothing is removed: a near miss, a declared marker with no
+			// parenthetical, and a near-spelling like `(Operator)`. A NUANCE bullet is a
+			// fourth: it declares no provenance whatever its line says, so its own
+			// `(operator)` stays on the page where the writer put it.
 			g.If(b.Provenance == store.ProvenanceOperator,
 				h.Span(h.Class("badge badge-open"), g.Text("operator"))),
 			g.If(b.Provenance == store.ProvenanceInferred,
@@ -1101,10 +1111,12 @@ func entryLegend() g.Node {
 			"no closer on its line is left exactly as typed, and nothing inside a code fence " +
 			"is touched"},
 		{"operator / inferred", "WHO stated a `## Requirements` line item — read from a " +
-			"parenthetical immediately after the marker (`- OPEN: (operator) …`). It is absent " +
+			"parenthetical immediately after the marker (`- OPEN: (operator) …`), which the " +
+			"badge replaces rather than repeats, exactly as it does the marker. It is absent " +
 			"when the file records nobody, which is a DECIDED third answer and not a weak " +
 			"`inferred`; a near-spelling such as `(Operator)` or `(operators)` is absent too, " +
-			"because an attribution the file does not make must not be manufacturable"},
+			"because an attribution the file does not make must not be manufacturable — and a " +
+			"spelling this badge does not claim is left in the text, never quietly removed"},
 		{"marker out of reach", "a correctly-spelled `OPEN:` / `RESOLVED <sha>:` on a line item's " +
 			"SECOND or later line. A marker is read from the first line only, so it declares " +
 			"nothing — it stays in the text and is called out rather than badged"},

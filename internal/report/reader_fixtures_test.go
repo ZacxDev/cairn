@@ -622,7 +622,13 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 		{"the NEAR-MISS badge", "🔴 1 NEAR-MISS"},
 		{"the UNVERIFIABLE badge", "⚠ 1 UNVERIFIABLE"},
 		{"the missing-heading badge, naming BOTH counted headings", "🔴 NO Pointers, Nuance / work-history"},
-		{"the task badge", "🔗 2 tasks"},
+		// ⚠ THE BRANCH IS THE SAME ONE; ONLY ITS RENDERED WORD MOVED. It read
+		// `🔗 2 tasks` until the badge was renamed to name the `refs:` key it counts, so
+		// the covered set does not shrink — this row still pins the one branch no other
+		// row can produce. The INPUT key `tasks:` is untouched and is still what
+		// `marked-three` is written with, which is why this row proves the fold as well
+		// as the badge.
+		{"the refs badge", "🔗 2 refs"},
 		// 🔴 THE WHOLE BADGE RUN, NOT THE TWO NEW BADGES SEPARATELY — because this ONE
 		// LINE is the section-boundary proof. `marked-three` carries the byte-identical
 		// bullet `- 2000-01-02: OPEN: the retry budget is still unbounded.` under BOTH
@@ -640,7 +646,7 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 		// fenced text is absent, because the text IS present — the BODY renders verbatim,
 		// fence markers and all. Only the COUNT distinguishes sample text from a bullet.
 		{"the requirements badge pair, and with it the section boundary and the fence rule",
-			"🔴 1 OPEN   🔴 1 NEAR-MISS   ⚠ 1 UNVERIFIABLE   🔴 4 REQ OPEN   ✅ 2 REQ MET   🔗 2 tasks"},
+			"🔴 1 OPEN   🔴 1 NEAR-MISS   ⚠ 1 UNVERIFIABLE   🔴 4 REQ OPEN   ✅ 2 REQ MET   🔗 2 refs"},
 		// The section renders in a BODY like the other three, verbatim — fence markers
 		// included. Without this row the pair above could hold while the section printed
 		// nothing at all.

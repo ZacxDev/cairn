@@ -1131,10 +1131,16 @@ class RecalledEntry:
     not stale about the schema, only narrower than it: the key carries repos, PRs,
     docs and dashboards, not only work-tracker items. Renaming the field is a
     mechanical change that would have to move `SubsystemEntry.tasks`, the JSON
-    payload's key, `internal/report.RecalledEntry.Tasks` and the rendered
-    `tasks:` label together, which re-bases goldens — so it belongs in a change
-    whose whole subject is that re-base. `render_text`'s own label carries the
-    same note.
+    payload's key and `internal/report.RecalledEntry.Tasks` together.
+
+    🔴 THE RENDERED SIDE HAS PARTLY MOVED, AND THE SPLIT IS WHAT A READER NEEDS
+    TO KNOW. The INDEX BADGE now reads `🔗 N ref(s)` — see `listing_line` — so the
+    goldens, the reader fixture and the parity byte diffs were re-based once
+    already. The BODY LABEL in `render_text` still reads `tasks: `, awaiting an
+    operator ruling it has not been given. So `task` survives here in TWO
+    different states — an internal NAME (no ruling needed, purely mechanical) and
+    one rendered LABEL (ruling pending) — and they are not one deferral.
+    `render_text`'s own label carries the closing condition for the second.
 
     Carried from `SubsystemEntry.tasks` rather than re-parsed from the front
     matter here: the loader already validated them, and a second parse at the
@@ -2297,9 +2303,9 @@ def listing_line(entry: RecalledEntry, width: int) -> str:
     reads `entries[].missing_sections` or runs `--validate`; splitting the row's
     vocabulary across two payloads is how the two start to disagree.
 
-    🔴 A FIFTH BADGE — `🔗 N task(s)` — AND THE BAR ABOVE IS THE REASON IT IS A
+    🔴 A FIFTH BADGE — `🔗 N ref(s)` — AND THE BAR ABOVE IS THE REASON IT IS A
     COUNT AND NOT THE REFS. It clears the "changes what the reader DOES" bar on
-    the same grounds `OPEN` does: an entry joined to a task is an entry whose
+    the same grounds `OPEN` does: an entry joined to a ref is an entry whose
     work has a tracked owner and a closing condition somewhere else, and that is
     the single fact that decides whether to spend a `--ref`. What it does NOT do
     is print the refs themselves — `github:example-org/alpha-toolkit#428` is 36
@@ -2307,6 +2313,18 @@ def listing_line(entry: RecalledEntry, width: int) -> str:
     contract is one line per entry. The refs are printed in the ENTRY BODY, which
     `--ref <name>` and the featured entry already show; the row says only that
     there are some.
+
+    🔴 THE WORD IS `ref`, AND THE CHANGE FROM `task` IS THE POINT RATHER THAN A
+    TIDY-UP. `entry.tasks` is the parsed `refs:` front-matter sequence, and once
+    `tasks:` folded into `refs:` the badge was naming a key the file format no
+    longer has — a reader who grepped their entries for `tasks:` after reading
+    this row found nothing and could not tell a renamed key from an absent one.
+    The accepted older INPUT spellings (`tasks:`, `task:`) are untouched; this is
+    the rendered word, and `internal/report`'s `listingLine` carries the byte-
+    identical change in the same commit, because the two renderers diverging here
+    is precisely the silent drift `tests/parity/` exists to catch.
+    ⚠ The `RecalledEntry.tasks` FIELD and the body's `tasks: ` LABEL still read
+    `task` — see `render_text`, which says what is left and why.
 
     Conditional like the other four: measured, **0 of 120** live
     entries carry `tasks:`, so no row on the store today renders any differently
@@ -2342,7 +2360,7 @@ def listing_line(entry: RecalledEntry, width: int) -> str:
             "🔴 NO " + ", ".join(short_heading(h) for h in entry.missing_sections)
         )
     if entry.tasks:
-        badges.append(f"🔗 {len(entry.tasks)} task{'' if len(entry.tasks) == 1 else 's'}")
+        badges.append(f"🔗 {len(entry.tasks)} ref{'' if len(entry.tasks) == 1 else 's'}")
     if not badges:
         return base
     return base + "   " + "   ".join(badges)
@@ -2991,25 +3009,31 @@ def render_text(
         )
         if e.tasks:
             # 🔴 THE REFS THEMSELVES, AND ONLY IN A BODY. The index row carries a
-            # COUNT (`🔗 N tasks`) because it is one line per entry and a ref is
+            # COUNT (`🔗 N refs`) because it is one line per entry and a ref is
             # up to 36 characters; the body is already many lines, so printing
             # them here costs nothing the reader has not already agreed to pay.
             # Rendered from `e.tasks` — the loader's validated refs — so this can
             # never show a ref that `--validate` would reject.
             #
-            # Above the sections deliberately: "which task does this answer" is
+            # Above the sections deliberately: "which ref does this answer" is
             # identity, like the ref and the sensitivity on the line above, not
             # content.
             #
-            # ⚠ THE LABEL STILL READS `tasks:` WHILE THE FRONT-MATTER KEY IS `refs:`
-            # AND THE BROWSER SURFACE SAYS "Refs", AND THAT IS DEFERRED RATHER THAN
-            # OVERLOOKED. These are the bytes the Go renderer is diffed against, so
-            # the two labels move together or not at all, and changing them is not a
-            # rename: it re-bases every recall golden in `tests/conformance/`, the
-            # reader fixture `internal/report/testdata/` replays, and the parity
-            # harness's byte diffs. It belongs in a change whose whole subject is
-            # that re-base. `internal/report.RecallReport.RenderText` carries the
-            # same note beside the same line.
+            # ⚠ THE LABEL STILL READS `tasks:` WHILE THE FRONT-MATTER KEY IS `refs:`,
+            # THE BROWSER SURFACE SAYS "Refs" AND THE INDEX BADGE NOW SAYS `ref` TOO
+            # — SO THIS IS THE LAST RENDERED `task` ON THE READ SURFACE, AND IT IS
+            # STILL DEFERRED RATHER THAN OVERLOOKED. The re-base argument that
+            # deferred it is now SPENT: `listing_line`'s badge paid it, so the
+            # goldens, the reader fixture and the parity byte diffs have all moved
+            # once already. What is left is an operator DECISION this change was not
+            # given — the badge was named for renaming, this label was not, and a
+            # body label is a different public string from an index badge. Closing
+            # condition: an operator ruling on the label, then this line and
+            # `internal/report.RecallReport.RenderText` moving together with a
+            # regenerated fixture and corpus. ⚠ Until then the two words disagree ON
+            # ONE SCREEN, which is worse to read than either alone — say so when the
+            # ruling is asked for. These are the bytes the Go renderer is diffed
+            # against, so the two labels move together or not at all.
             out.append(f"    tasks: {', '.join(e.tasks)}")
         if e.tags:
             # Identity, like the refs line above and for the same reason: "what category is

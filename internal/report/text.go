@@ -74,12 +74,21 @@ func listingLine(entry RecalledEntry, width int) string {
 		badges = append(badges, "🔴 NO "+strings.Join(short, ", "))
 	}
 	if len(entry.Tasks) != 0 {
-		// 🔴 A COUNT AND NOT THE REFS, on the same bar: an entry joined to a task is an
+		// 🔴 A COUNT AND NOT THE REFS, on the same bar: an entry joined to a ref is an
 		// entry whose work has a tracked owner and a closing condition somewhere else,
 		// which decides whether to spend a `?ref=`. What it does NOT do is print the refs
 		// — one can be 36 characters, three of them would triple the row, and the index's
 		// whole contract is one line per entry. The refs are printed in the BODY.
-		badges = append(badges, "🔗 "+strconv.Itoa(len(entry.Tasks))+" task"+plural(len(entry.Tasks)))
+		//
+		// 🔴 THE WORD IS `ref`, AND THE CHANGE FROM `task` IS THE POINT RATHER THAN A
+		// TIDY-UP. `Tasks` is the parsed `refs:` front-matter sequence, and once `tasks:`
+		// folded into `refs:` the badge was naming a key the file format no longer has —
+		// a reader who grepped their entries for `tasks:` after reading this row found
+		// nothing and could not tell a renamed key from an absent one. The accepted older
+		// INPUT spellings (`tasks:`, `task:`) are untouched; this is the rendered word.
+		// ⚠ The `RecalledEntry.Tasks` FIELD and the body's `tasks: ` LABEL still read
+		// `task` — see [RecallReport.RenderText], which says what is left and why.
+		badges = append(badges, "🔗 "+strconv.Itoa(len(entry.Tasks))+" ref"+plural(len(entry.Tasks)))
 	}
 	if len(badges) == 0 {
 		return base
@@ -486,14 +495,18 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 			// "which task does this answer" is identity, like the ref and the sensitivity
 			// on the line above, not content.
 			//
-			// ⚠ THE LABEL STILL READS `tasks:` WHILE THE FRONT-MATTER KEY IS `refs:` AND THE
-			// BROWSER SURFACE SAYS "Refs", AND THAT IS DEFERRED RATHER THAN OVERLOOKED. The
-			// Go type's field and the Python dataclass's each got a paragraph explaining the
-			// name; this line had none, so a reader could not tell the mismatch from an
-			// omission. Changing it is not a rename: it re-bases every recall golden in
-			// `tests/conformance/`, the reader fixture `internal/report/testdata/` replays,
-			// and the parity harness's byte diffs — so it belongs in a change whose whole
-			// subject is that re-base, not in one that happens to touch this function.
+			// ⚠ THE LABEL STILL READS `tasks:` WHILE THE FRONT-MATTER KEY IS `refs:`, THE
+			// BROWSER SURFACE SAYS "Refs" AND THE INDEX BADGE NOW SAYS `ref` TOO — SO THIS
+			// IS THE LAST RENDERED `task` ON THE READ SURFACE, AND IT IS STILL DEFERRED
+			// RATHER THAN OVERLOOKED. The re-base argument that deferred it is now SPENT —
+			// [listingLine]'s badge paid it, so the goldens, the reader fixture and the
+			// parity byte diffs have all moved once already. What is left is an operator
+			// DECISION this change was not given: the badge was named for renaming, this
+			// label was not, and a body label is a different public string from an index
+			// badge. Closing condition: an operator ruling on the label, then this line and
+			// the oracle's `render_text` moving together with a regenerated fixture and
+			// corpus. ⚠ Until then the two words disagree ON ONE SCREEN, which is worse to
+			// read than either alone — say so when the ruling is asked for.
 			out = append(out, "    tasks: "+strings.Join(e.Tasks, ", "))
 		}
 		if len(e.Tags) != 0 {

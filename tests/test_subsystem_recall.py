@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import ast
 import collections
+import dataclasses
 import hashlib
 import importlib.util
 import json
@@ -7029,3 +7030,75 @@ class TestAMalformedTagIsRefusedByTheOptionLadder:
     ) -> None:
         """The other half of the `None`/`""` split: no `--tag` at all must not be refused."""
         rc.recall(tag_principal_store, "alpha-notes", tag=None)
+
+
+class TestTheLinkBadgeSaysREFSAndNotTASKS:
+    """A REGRESSION guard, not an invariant guard: the badge really did read
+    `🔗 N task(s)` on this line until this change, while the key it counts has been
+    `refs:` since `tasks:` folded into it. Measured red at `ba78dbb` with `🔗 1 task`
+    / `🔗 2 tasks`, green at HEAD.
+
+    🔴 IT PINS BOTH CARDINALITIES, because the reader fixture and the conformance
+    corpus pin only one each and neither pins the pair: a mutant that hardcoded
+    `"refs"` — always plural — survives a fixture whose only joined entry carries two
+    refs. `internal/report/refsbadge_test.go` is the byte-for-byte other half; the two
+    renderers must agree or `tests/parity/` goes red.
+
+    🔴 IT PINS THE WHOLE NORMALISED LINE, NOT A SUBSTRING, AND THE DIFFERENCE IS MEASURED
+    RATHER THAN STYLISTIC. The first version asserted `want in line` and a mutant that
+    hardcoded the plural — dropping the `'' if … else 's'` conditional — SURVIVED it,
+    because `🔗 1 refs` contains `🔗 1 ref`. That is the house rule's own failure mode: a
+    guard spelled as a prefix is walkable by writing a longer word. The base below is
+    written out rather than built from `listing_line`'s own format, the way
+    `TestListingLineOpenAnnotation` spells its pre-change format out, so a literal lifted
+    from the implementation cannot agree with it by construction.
+    """
+
+    # `  <ref padded to 12>  <count right-aligned to 3> nuance   <sensitivity>   <badges>`
+    BASE = "  svc             1 nuance   public"
+
+    @pytest.mark.parametrize(
+        "refs,badge",
+        [
+            (("github:example-org/example-repo#1",), "🔗 1 ref"),
+            (
+                ("github:example-org/example-repo#1", "github:example-org/example-repo#2"),
+                "🔗 2 refs",
+            ),
+            (
+                (
+                    "github:example-org/example-repo#1",
+                    "github:example-org/example-repo#2",
+                    "github:example-org/example-repo#3",
+                ),
+                "🔗 3 refs",
+            ),
+        ],
+    )
+    def test_the_badge_names_the_refs_key(self, refs: tuple[str, ...], badge: str) -> None:
+        entry = dataclasses.replace(
+            _recalled(["- 2000-01-02: an ordinary lesson."]), tasks=refs
+        )
+        line = rc.listing_line(entry, 12)
+        assert line == f"{self.BASE}   {badge}"
+        # 🔴 AND THE OLD WORD IS GONE, asserted as the whole badge segment for the same
+        # reason the positive assertion is: the bare word `task` appears nowhere on this
+        # row today, but `🔗 N task` is exactly what a revert re-introduces, and a
+        # positive-only assertion passes against a renderer that emits BOTH.
+        assert f"🔗 {len(refs)} task" not in line, line
+
+    def test_the_badge_is_CONDITIONAL(self) -> None:
+        """An INVARIANT guard — labelled as one, and not counted as regression coverage
+        for the rename. It pins the property every badge on this row shares: an entry
+        with no refs renders a row byte-identical to one from before the badge existed.
+        """
+        entry = _recalled(["- 2000-01-02: an ordinary lesson."])
+        bare = rc.listing_line(entry, 12)
+        assert "🔗" not in bare, bare
+        joined = rc.listing_line(
+            dataclasses.replace(entry, tasks=("github:example-org/example-repo#1",)), 12
+        )
+        assert joined != bare, (
+            "the badge did not change the row at all, so the assertion above is vacuous "
+            "— this test cannot tell a conditional badge from no badge"
+        )

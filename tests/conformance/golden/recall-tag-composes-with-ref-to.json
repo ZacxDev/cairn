@@ -1,8 +1,8 @@
 {
   "body": {
-    "bytes": 3614,
+    "bytes": 3613,
     "kind": "text_lines",
-    "sha256": "365879922603854846fec7bf166fd90a0e7be9eb22b03f88411b32aa77fdc15d",
+    "sha256": "dd5807c87cbffe03419e30aa391c285776daa71d0f34ec74524623da91bb210a",
     "text_lines": [
       "🔴 SNAPSHOT, NOT THE SOURCE — seeded=2000-01-04T00:00:00Z newest-entry=2000-01-03T00:00:00Z entry-files=11. This host serves a COPY of the authoritative store, pushed by `seed.sh`; nothing syncs it continuously, so it can be arbitrarily behind and it CANNOT KNOW BY HOW MUCH. The \"none omitted\" below is true of THIS DISK and says nothing about the source. Before trusting an absence — a missing entry, a missing badge, a zero — re-run the read against the local store, or re-seed. UNSTAMPED/UNREADABLE/NONE each mean the stated fact could not be established, never that it is fine.",
       "",
@@ -16,7 +16,7 @@
       "  (+1 further malformed entry in OTHER scopes of this store, not shown: rubble-heap (1). Nothing on this screen is affected by them; they are named so a defect in a scope nobody recalls today is still visible.)",
       "",
       "INDEX (from index) — ALL 1 entry in `tagged-set/`, none omitted (newest-first by file mtime):",
-      "  tagged-both    1 nuance   client-confidential (declared: internal)   🔗 1 task",
+      "  tagged-both    1 nuance   client-confidential (declared: internal)   🔗 1 ref",
       "",
       "FEATURED IN FULL (from index) — 1 of 1, most-recent fallback — newest entry file in `tagged-set/` (no handoff doc to read a path window from):",
       "",

@@ -87,10 +87,16 @@ type RecalledEntry struct {
 	// the way in — permanently, by operator decision — so the name is not stale about the
 	// schema, only narrower than it: the key carries repos, PRs, docs and dashboards, not
 	// only work-tracker items. Renaming is mechanical but would have to move
-	// `store.Entry.Tasks`, this field, the oracle's `RecalledEntry.tasks` and the rendered
-	// `tasks:` label together, which re-bases goldens — so it belongs in a change whose
-	// whole subject is that re-base. `RecallReport.RenderText`'s own label carries the
-	// same note.
+	// `store.Entry.Tasks`, this field and the oracle's `RecalledEntry.tasks` together.
+	//
+	// 🔴 THE RENDERED SIDE HAS PARTLY MOVED, AND THE SPLIT IS WHAT A READER NEEDS TO KNOW.
+	// The INDEX BADGE now reads `🔗 N ref(s)` — see [listingLine] — so the goldens, the
+	// reader fixture and the parity byte diffs were re-based once already. The BODY LABEL
+	// in [RecallReport.RenderText] still reads `tasks: `, awaiting an operator ruling it
+	// has not been given. So `task` survives here in TWO different states — an internal
+	// NAME (no ruling needed, purely mechanical) and one rendered LABEL (ruling pending) —
+	// and they are not one deferral. `RecallReport.RenderText`'s own label carries the
+	// closing condition for the second.
 	Tasks []string
 
 	// RequirementsOpen and RequirementsMet are the `## Requirements` bullets that DECLARE
