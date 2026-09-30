@@ -25,6 +25,29 @@ new arc their leftovers belong to, not another round of either.
 
 ## State now
 
+- 🔴 **CLOSING-CONDITION CLAUSE (b) IS MET; THE ARC IS NOT CLOSED.** (b) asked that the session
+  table be written, read before and after one real sign-in: `count(*)` moved **0 → 1** on the live
+  deployment. While proving it, the invite store was also written (**0 → 1**, minted then revoked)
+  and the share flow was exercised end to end on the real surface (`granted` + `grant-revoked`,
+  picker offering a real second user). Full values, and the instrument correction that came with
+  it, are the RESOLVED block under `Open investigations`.
+  ⚠ **(a) — an instrument that FAILS when a deployed image is behind `origin/main` — does not
+  exist. That is rank 2.**
+  - 🔴 **AND (a) AS WRITTEN IS NARROWER THAN THE PROBLEM, WHICH A PEER SESSION MEASURED WHILE
+    THIS WAS IN FLIGHT (`#153`, squash `d6290d54`).** The closing condition says "a deployed
+    **image**", and the INSTALLED CLIENT on this host is a third stale artefact it does not
+    cover: **63 commits** behind, predating all three feature squashes, carrying neither
+    `--ref-to` nor `--tag`. **So "how do I start using the new features" currently answers
+    "you cannot from the installed CLI"** — the pods have them, the client does not. ⚠ An
+    earlier draft of this bullet said (a) was "the one item left"; that was true of the
+    condition's wording and false of the arc's subject, which is the same
+    narrower-than-the-sentence shape this repo keeps recording. Do NOT re-derive (a) as
+    image-only.
+- ⚠ **THE OPERATOR NOW HAS A BROWSER-SURFACE CREDENTIAL, AND BEFORE THIS THEY HAD NONE** — issued
+  for their own existing user and delivered to a `0600` file outside this repo. The path is
+  deliberately not written here: a handoff doc is committed to a PUBLIC repository, and naming the
+  file is a pointer to a live bearer token. It is in the operator's own `subsystem-store` config
+  directory beside the other client config.
 - Branch: `main`, clean, at `e8839d9`. No uncommitted work anywhere: 54 registered
   worktrees swept, instrument positive-controlled, **2 dirty and neither holding anything
   unsaved** (one byte-identical to `main`, one rescued — see below).
@@ -93,6 +116,54 @@ new arc their leftovers belong to, not another round of either.
   asked. If the gateway is ever rebuilt, re-derive with `ip route get`, never by looking for
   a pod.
 
+### ✅ RESOLVED 2026-09-30 — the session store IS written, the invite store IS written, and the share flow is EXERCISED on the live deployment
+- as-of: 2026-09-30 · `via: measurement`
+- **What this settles:** the `Next probe` of the RETIRED block below ("one real sign-in … reading
+  the counter before and after") has been run against the real deployment, and so has everything
+  rank 3 was blocked on. **Closing-condition clause (b) is MET.** The block below is
+  **retired** — do not re-run its probe or re-derive its framing.
+- **How the credential problem was solved, since the operator had none:** `cairn-server` is not in
+  the `cairn-ui` image and that pod's `/tmp` is read-only, but the pod **does** carry the exact nix
+  glibc the binary is linked against, so the binary was copied onto the writable state volume and
+  run there — appending under the same `flock` the application uses — rather than contending for
+  the ReadWriteOnce PVC with a second pod. A credential was issued for the operator's OWN existing
+  user, delivered to a `0600` file, and the binary and token were removed from the volume
+  afterwards. The pod stayed `ready=true restarts=0` throughout.
+- **Observed (with values), all against the live deployment:**
+  | reading | before | after |
+  |---|---|---|
+  | `select count(*) from sessions` | 0 | **1** (`user`, the operator's user id) |
+  | `select count(*) from invites` | 0 | **1**, minted then **revoked** |
+  | live `/share` candidate list | no candidate possible | **offers a real second user** |
+  | `granted` / `grant-revoked` in the journal | 0 / 0 | **1 / 1** |
+  | journal records | 30 | **37** |
+  `POST /sign-in` → **303** with `__Host-cairn-session; Path=/; HttpOnly; Secure; SameSite=Lax`;
+  `GET /` authenticated → **200** with 26 scope cards; anonymous → **401**.
+- 🔴 **AND THE CLAUSE THIS ARC EXISTS TO PROVE: live `/share` rendered 2 × `read,write`
+  "via project membership" while "shares you can take back" said "No grant names this scope"** —
+  a principal with authority and NO grant, which is exactly the positive control `AGENTS.md`
+  names as proof the listing is computed from `control.Resolve` and never from `Model.Grants`.
+  Both implementations render a principal-with-both identically, so this is the first evidence
+  that claim holds rather than being asserted. `via: measurement`
+- 🔴 **CORRECTION TO THE RETIRED BLOCK'S INSTRUMENT, AND IT IS THE REUSABLE PART:
+  `pg_stat_user_tables.n_tup_ins` LAGS, SO ITS ZERO CANNOT DISTINGUISH "NEVER WRITTEN" FROM
+  "WRITTEN SECONDS AGO".** Measured: immediately after the live sign-in the row was ALREADY
+  present (`count(*)=1`, `issued_at` stamped) while the view still read `n_tup_ins=0
+  n_live_tup=0`; a later read caught up to `ins=1 live=1`. `track_counts=on`, and
+  `stats_fetch_consistency=cache` is why — a stats snapshot is cached. **So the authority is
+  `select count(*)`, a direct read; the counter is lagging corroboration, never the primary
+  reading.** The retired block's conclusion was nonetheless CORRECT, because it rested on
+  `count(*) = 0` — but its stated evidence, and the `schema_migrations n_tup_ins=1` "positive
+  control" beside it, would give a false negative to anyone re-running it within seconds of a
+  sign-in. ⚠ Same shape as this doc's other retraction: an instrument answering a different
+  question than the one asked.
+- **Ruled out:** that the second user needs a credential to make the picker usable. It does not —
+  it is left provisioned as a co-member with **no** credential, so it is inert but keeps the share
+  picker exercisable. `via: measurement`
+- **Next probe:** none for this block; it is closed. What remains of this arc is clause **(a)**,
+  the deployed-artefact currency instrument, which is rank 2.
+
+### ❌ RETIRED 2026-09-30 — superseded by the block above; its probe has been run and its instrument was wrong
 ### The browser surface's session table has never been written to
 - as-of: 2026-09-29
 - **Symptom + exact repro:** not a defect yet — a deployed feature with zero exercise.
@@ -224,10 +295,13 @@ already yours**, while 21 files of finished, twice-audited work sat in an open P
    and both stale, twice, which is exactly how this went unseen.
    forcing: regression — the gap re-opened within minutes of being closed, twice in one
    session, and no gate in either repository can see it.
-3. **Prove the session table is written** — the (b) half. Needs the browser surface's own
-   credential, which is the operator's. Claim `cairn-ui-session-store-probe` is HELD and
-   deliberately not released.
-   forcing: user — the operator holds the only credential that can run it.
+3. ✅ **DONE 2026-09-30 — the session table is written and clause (b) is MET.** `count(*)` 0 → 1
+   on the live deployment, plus the invite store 0 → 1 and the share flow exercised end to end.
+   The credential problem was solved without the operator having one: a credential was issued for
+   their OWN existing user from inside the pod that owns the journal. Claim
+   `cairn-ui-session-store-probe` RELEASED. ⚠ Its `n_tup_ins` evidence was corrected in the same
+   pass — see the RESOLVED investigation block.
+   forcing: user — the operator held the only credential that could run it, and that is now moot.
 4. **P8 — retire the Python oracle.** Carried over from the control-plane arc unchanged:
    closing condition is a real read AND a real write against the live pod from **two distinct
    hosts**, recorded, AND no open defect naming the Go client or `packages.default`.
