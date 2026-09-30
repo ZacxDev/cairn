@@ -1303,6 +1303,34 @@
       "why": "a CORRECT precondition and bytes the loader would reject: 422, and nothing is written. Targets the one fixture entry no other write case changes, so its revision is the same for both spare-six rows."
     },
     {
+      "id": "put-replace-tag-outside-the-vocabulary",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/entry/beta-notes/spare-six",
+      "principal": "wide-reader",
+      "headers": [
+        ["If-Match", "\"e3cedc8844f84a31\""]
+      ],
+      "body": {
+        "text_lines": ["---", "service: spare-six", "scope: beta-notes", "tags: [marketing]", "---", "", "## What it is", "a body the index loader ACCEPTS and the closed tag vocabulary REFUSES.", "", "## Nuance / work-history", "- 2000-01-03: the synthetic action this entry records.", ""]
+      },
+      "why": "the CLOSED `tags:` vocabulary, on the replace half. 🔴 THE POINT IS THAT THE LOADER WOULD ACCEPT THESE BYTES: `marketing` folds fine and an entry carrying it READS, so this refusal is the write path's own and it must NOT wear the loader's `the index loader would reject these bytes` sentence. A CORRECT precondition, so the 412 arm cannot answer first and shadow it. Nothing is written, and this is the only row that compares the two servers' vocabulary refusal byte for byte - `tests/test_tag_vocabulary.py` reads the two sources as TEXT and is blind to an argument-order mistake that still renders well-formed English."
+    },
+    {
+      "id": "put-replace-tag-outside-the-vocabulary-UNFOLDED",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/entry/beta-notes/spare-six",
+      "principal": "wide-reader",
+      "headers": [
+        ["If-Match", "\"e3cedc8844f84a31\""]
+      ],
+      "body": {
+        "text_lines": ["---", "service: spare-six", "scope: beta-notes", "tags: [Not_Infra]", "---", "", "## What it is", "an off-vocabulary tag written UNFOLDED.", "", "## Nuance / work-history", "- 2000-01-03: the synthetic action this entry records.", ""]
+      },
+      "why": "the same refusal over an UNFOLDED spelling, because both servers must name the FOLDED tag (`not-infra`) rather than what the file wrote - the folded form is the only one the store would ever have carried, and two implementations that folded at different moments would answer two different sentences with the same status."
+    },
+    {
       "id": "put-create",
       "phase": "write",
       "method": "PUT",
@@ -1343,6 +1371,34 @@
         "raw_text": "not an entry at all\n"
       },
       "why": "the create half's validity gate. The name stays free, so nothing later in the corpus depends on it."
+    },
+    {
+      "id": "put-create-tag-outside-the-vocabulary",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/entry/beta-notes/rejected-nine",
+      "principal": "wide-reader",
+      "headers": [
+        ["If-None-Match", "*"]
+      ],
+      "body": {
+        "text_lines": ["---", "service: rejected-nine", "scope: beta-notes", "tags: [marketing]", "---", "", "## What it is", "a body the index loader ACCEPTS and the closed tag vocabulary REFUSES.", "", "## Nuance / work-history", "- 2000-01-03: the synthetic action this entry records.", ""]
+      },
+      "why": "the CLOSED `tags:` vocabulary, on the create half. The name stays FREE, so nothing later in the corpus depends on it - and that is the create-side property the gate exists for: a caller that fixes the tag can retry into the same ref rather than meeting a 412 `already-exists`."
+    },
+    {
+      "id": "put-create-tag-INSIDE-the-vocabulary-declines-to-refuse",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/entry/beta-notes/tagged-ten",
+      "principal": "wide-reader",
+      "headers": [
+        ["If-None-Match", "*"]
+      ],
+      "body": {
+        "text_lines": ["---", "service: tagged-ten", "scope: beta-notes", "tags: [Infra, product]", "---", "", "## What it is", "CREATED carrying two DECLARED tags, one of them written unfolded.", "", "## Nuance / work-history", "- 2000-01-03: this entry did not exist until the suite created it.", ""]
+      },
+      "why": "🔴 THE POSITIVE CONTROL ON THE VOCABULARY GATE, AND WITHOUT IT THE THREE REFUSALS ABOVE ARE SATISFIED BY A SERVER THAT REFUSES EVERY TAGGED BODY. 201, and the tags land. It is LAST in the corpus on purpose: it is the only vocabulary row that changes the world, so no earlier row's golden can move under it."
     }
   ],
   "relations": {

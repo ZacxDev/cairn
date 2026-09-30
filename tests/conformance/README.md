@@ -852,3 +852,56 @@ saw it. `FAIL snapshot-conditional-not-modified` on the first `run` after regene
 literals re-spelled from `snapshot-authorized.json`'s `ETag`, 0 failures after. The lesson is the
 one the prediction already carries, one level out: **a comment inside a fixture is part of the
 fixture.**
+
+## The CLOSED `tags:` vocabulary — four rows, and why the refusal is on the WRITE path
+
+The vocabulary is CLOSED on the write path and OPEN to every reader: `infra`, `product`,
+`tooling`, `client-work`. `internal/write`'s `tagVocabulary` and `lib/entry_shape.py`'s
+`TAG_VOCABULARY` are the two declarations; `tests/test_tag_vocabulary.py` reds when one moves
+alone.
+
+🔴 **WHY NOT IN THE READER, WHICH IS THE ONE DESIGN QUESTION HERE.** A vocabulary refusal raised
+by `SubsystemEntry.from_mapping` / `store.EntryFromMapping` makes the entry MALFORMED, and this
+README's own `?tag=` section is downstream of what that means: out of the index, so `--ref` and
+`--search` lose it, AND **unwritable**, because every write route resolves its target through that
+index and answers 404 `ref-unknown`. Closing the vocabulary in the reader would therefore take
+every entry that already carries an off-vocabulary tag and make it unreadable and unrepairable in
+one stroke — a store-wide outage caused by the guard rather than by the data. The check sits in
+`internal/write` specifically because `internal/store` cannot import it: a back-import is an
+import CYCLE, so the reader *cannot* consult the list. That is compiler-enforced, not a comment.
+
+**The four rows, and what each sees that nothing else does:**
+
+- **`put-replace-tag-outside-the-vocabulary`** — a CORRECT `If-Match` (so the 412 arm cannot
+  answer first and shadow the 422) and a body the index loader would **accept**. That last part is
+  the point: `marketing` folds fine and an entry carrying it READS, so the refusal is the write
+  path's own and must NOT wear the loader's `the index loader would reject these bytes` sentence.
+  It targets `spare-six`, the one fixture entry no other write case changes, so its revision is
+  the same literal both `spare-six` rows already use — and a refused write changes nothing, so the
+  row is state-neutral.
+- **`put-replace-tag-outside-the-vocabulary-UNFOLDED`** — `tags: [Not_Infra]`, and both servers
+  must name the FOLDED tag (`not-infra`). Two implementations that folded at different moments
+  would answer two different sentences with the same status, which is exactly the class the
+  corpus exists to catch and which `tests/test_tag_vocabulary.py` cannot: it reads both sources
+  as TEXT and is blind to an argument-order mistake that still renders well-formed English.
+- **`put-create-tag-outside-the-vocabulary`** — the create half, on a fresh name. The name stays
+  FREE, which is the create-side property the gate exists for: a caller that fixes the tag retries
+  into the same ref rather than meeting a 412 `already-exists`.
+- **`put-create-tag-INSIDE-the-vocabulary-declines-to-refuse`** — 🔴 the POSITIVE CONTROL. Without
+  it the three rows above are all satisfied by a server that refuses every tagged body. 201, two
+  DECLARED tags, one of them written unfolded. It is **last in the corpus** on purpose: it is the
+  only vocabulary row that changes the world, so no earlier row's golden can move under it.
+
+⚠ **ONLY ONE PRE-EXISTING GOLDEN MOVED, AND IT IS A PROSE ONE.** `recall-tag-absent` carried the
+sentence *"the tag vocabulary is OPEN and nothing declares it"*, which the closure made false.
+Both renderers now say that the QUERY's operand is checked against no vocabulary and that a file
+written before the closure can carry any tag — the two typo routes that genuinely survive. Reworded
+in `internal/report/text.go` and `lib/subsystem_recall.py` together, because `tests/parity/`'s
+`recall-tag-absent` row diffs the two clients' stdout byte for byte. `suite.py generate` followed
+by `git status` shows that golden plus the four new files and nothing else.
+
+⚠ **AND THE WORLD'S TAGS WERE DELIBERATELY LEFT OFF-VOCABULARY.** `tagged-set` still writes
+`marketing` and `internal`, neither of which a write may now land. That is not an oversight — it
+is the corpus carrying the population the design exists to protect: every read row over
+`tagged-set` is a live demonstration that an entry whose tags predate the closure still loads,
+still resolves by ref, still narrows under `?tag=` and still accepts an append.

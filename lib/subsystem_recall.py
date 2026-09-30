@@ -2866,9 +2866,20 @@ def render_text(
             return "\n".join(out)
         # 🔴 IT SAYS WHAT WAS LOOKED AT AND WHAT WAS NOT, because a category filter's zero is
         # as misreadable as a reverse lookup's: "no entry is tagged X" and "X is not a category
-        # anybody uses" are different facts, and only the first is in evidence. The vocabulary
-        # is OPEN, so a typo in either the file or the query makes a silently separate category
-        # — that is what the last clause names.
+        # anybody uses" are different facts, and only the first is in evidence.
+        #
+        # 🔴 AND THE LAST CLAUSE IS SCOPED TO WHAT THE CLOSED VOCABULARY DOES **NOT** COVER,
+        # WHICH IS THE HALF THAT WOULD READ AS FIXED IF IT WERE DROPPED. The write path
+        # refuses a tag outside `entry_shape.TAG_VOCABULARY`, so a typo cannot ENTER the store
+        # through this server any more — but this QUERY's operand is checked against nothing
+        # (deliberately: see `entry_has_tag`), and a file that predates the closure or arrived
+        # by another route can still carry anything. Both remaining typo routes are named
+        # because a zero here is still what each of them looks like.
+        #
+        # ⚠ BYTE-IDENTICAL WITH `internal/report/text.go`'s `tag-absent` branch, which is not
+        # a style request: `tests/parity/`'s `recall-tag-absent` row diffs the two clients'
+        # stdout, and `tests/conformance/golden/recall-tag-absent.json` pins the served bytes.
+        # Reword one side alone and both go red.
         extra = (
             f" ⚠ BUT {len(report.malformed)} entry file"
             f"{'' if len(report.malformed) == 1 else 's'} in this scope could not be "
@@ -2883,8 +2894,9 @@ def render_text(
             f"entr{'y' if report.tag_scope_total == 1 else 'ies'} in `{report.scope}/` were "
             f"read and none of them carries it. Both sides of "
             f"the comparison are FOLDED, so a differently-cased spelling would have been "
-            f"found — but the tag vocabulary is OPEN and nothing declares it, so a typo in "
-            f"the file or in this query is a category of one that no check can see.{extra}"
+            f"found — but this query's operand is checked against no vocabulary, and a file "
+            f"written before the write path's vocabulary closed can carry any tag, so a "
+            f"typo either side is a category of one that no read can see.{extra}"
         )
         return "\n".join(out)
 

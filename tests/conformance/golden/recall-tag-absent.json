@@ -1,8 +1,8 @@
 {
   "body": {
-    "bytes": 2924,
+    "bytes": 2989,
     "kind": "text_lines",
-    "sha256": "ec1241660e50f802f13b62b9d2b0b15874c297644c6281b6e2d008a6cb65ba3e",
+    "sha256": "98dbc70ea9d721298eac7dd8d6f1fa7e3f36aafdb9d2eace393b228b4e5e7f5b",
     "text_lines": [
       "🔴 SNAPSHOT, NOT THE SOURCE — seeded=2000-01-04T00:00:00Z newest-entry=2000-01-03T00:00:00Z entry-files=11. This host serves a COPY of the authoritative store, pushed by `seed.sh`; nothing syncs it continuously, so it can be arbitrarily behind and it CANNOT KNOW BY HOW MUCH. The \"none omitted\" below is true of THIS DISK and says nothing about the source. Before trusting an absence — a missing entry, a missing badge, a zero — re-run the read against the local store, or re-seed. UNSTAMPED/UNREADABLE/NONE each mean the stated fact could not be established, never that it is fine.",
       "",
@@ -14,7 +14,7 @@
       "",
       "  (+1 further malformed entry in OTHER scopes of this store, not shown: rubble-heap (1). Nothing on this screen is affected by them; they are named so a defect in a scope nobody recalls today is still visible.)",
       "",
-      "NO ENTRY IS TAGGED `no-such-category` — the 3 entries in `tagged-set/` were read and none of them carries it. Both sides of the comparison are FOLDED, so a differently-cased spelling would have been found — but the tag vocabulary is OPEN and nothing declares it, so a typo in the file or in this query is a category of one that no check can see.",
+      "NO ENTRY IS TAGGED `no-such-category` — the 3 entries in `tagged-set/` were read and none of them carries it. Both sides of the comparison are FOLDED, so a differently-cased spelling would have been found — but this query's operand is checked against no vocabulary, and a file written before the write path's vocabulary closed can carry any tag, so a typo either side is a category of one that no read can see.",
       ""
     ]
   },

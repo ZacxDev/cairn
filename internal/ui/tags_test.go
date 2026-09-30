@@ -203,9 +203,10 @@ func TestTheTagPageCannotSeeAScopeTheCallerCannotRead(t *testing.T) {
 // nothing" (ask for access). That is `SearchResults.ScopesSearched`'s argument, and the counts
 // are what make the difference visible.
 //
-// ⚠ AND THE TYPO CASE IS NAMED OUT LOUD, because the vocabulary is OPEN: there is no valid-tag
-// set to check a query against, so a zero over a non-empty store is also what a misspelling
-// looks like and nothing else on this surface can say so.
+// ⚠ AND THE TYPO CASE IS NAMED OUT LOUD, WHICH CLOSING THE WRITE-PATH VOCABULARY DID NOT
+// RETIRE. This page's `?tag=` operand is checked against no valid-tag set at all, and an entry
+// written before the closure can carry anything, so a zero over a non-empty store is still also
+// what a misspelling looks like and nothing else on this surface can say so.
 func TestTheTagListingReportsWhatItLookedAt(t *testing.T) {
 	world := []Scope{{ID: control.ID("scp_one000000000"), Name: "alpha-notes", Entries: []Entry{
 		{Ref: "runbook", Filename: "runbook.md", Tags: []string{"marketing"}},
@@ -221,7 +222,7 @@ func TestTheTagListingReportsWhatItLookedAt(t *testing.T) {
 	if !strings.Contains(miss, "0 of 2 visible entries in 1 scope carry `no-such-category`.") {
 		t.Errorf("a zero over a non-empty store does not report what it looked at:\n%s", miss)
 	}
-	if !strings.Contains(miss, "The tag vocabulary is OPEN") {
+	if !strings.Contains(miss, "This query's operand is checked against no vocabulary") {
 		t.Errorf("a zero does not say that a typo looks exactly like this:\n%s", miss)
 	}
 
@@ -231,7 +232,7 @@ func TestTheTagListingReportsWhatItLookedAt(t *testing.T) {
 		"answer, not a fact about the tag.") {
 		t.Errorf("a zero over an empty authority reads as a fact about the tag:\n%s", empty)
 	}
-	if strings.Contains(empty, "The tag vocabulary is OPEN") {
+	if strings.Contains(empty, "This query's operand is checked against no vocabulary") {
 		t.Errorf("the authority zero borrowed the typo sentence, so the two mechanisms are "+
 			"indistinguishable again:\n%s", empty)
 	}

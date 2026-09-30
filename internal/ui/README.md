@@ -2381,9 +2381,16 @@ The string on the page has to be the string the filter compares. Showing the raw
 a link built from the folded one would put two spellings of one tag in front of a reader with no
 way to tell which the store holds. `Aliases` keeps its raw form because it has no link and its
 written spelling is evidence about a collision. `TagsKeyDescription` says both — that the list is
-folded, and that the vocabulary is OPEN — and is pinned as one normalised string for the measured
-reason `RefsKeyDescription` is: that line really did serve the word `deprecated` against a README
-saying permanent, with nothing asserting the correction.
+folded, and WHERE the vocabulary is closed — and is pinned as one normalised string for the
+measured reason `RefsKeyDescription` is: that line really did serve the word `deprecated` against
+a README saying permanent, with nothing asserting the correction.
+
+⚠ **AND IT DELIBERATELY DOES NOT ENUMERATE THE SET.** The four declared terms live in
+`internal/write`'s `tagVocabulary` and in `lib/entry_shape.py`, pinned against each other; a third
+spelling of them on a page that nothing gates against them is drift waiting to happen. The line
+states the SCOPE instead — a tag shown here was either accepted by the write-path gate or predates
+it — because "this is one of the valid categories" and "this is what the file says" are different
+claims and only the second is in evidence on this page.
 
 ## 🔴 A HOSTILE TAG IS IN THE ESCAPING DIFFERENTIAL EVEN THOUGH THE LOADER CANNOT PRODUCE ONE
 

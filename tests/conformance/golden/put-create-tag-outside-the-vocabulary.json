@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 246,
+    "kind": "text_lines",
+    "sha256": "07fcda8b46ef371804800826d846a11b840e1db0554a5f21fa5076b00149f127",
+    "text_lines": [
+      "unprocessable: tag 'marketing' is not one of client-work|infra|product|tooling — the tag vocabulary is CLOSED on the WRITE path, so widening it is a code change. The index loader still READS this tag: an entry already carrying it is unaffected",
+      ""
+    ]
+  },
+  "case": "put-create-tag-outside-the-vocabulary",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "246"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "entry-shape"
+    ]
+  ],
+  "reason": "Unprocessable Entity",
+  "status": 422
+}

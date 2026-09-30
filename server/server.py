@@ -320,6 +320,16 @@ import env_aliases  # noqa: E402
 # the boundary tests address it as an attribute of this module.
 from entry_shape import BULLET_TEXT_MAX  # noqa: E402,F401
 
+# 🔴 THE CLOSED `tags:` VOCABULARY, IMPORTED FROM THE SAME MODULE AND FOR A SHARPER
+# VERSION OF THE SAME REASON. `BULLET_TEXT_MAX` is imported so one number serves the
+# pod and the client; this tuple is imported so the vocabulary CANNOT be reached from
+# `subsystem_resolver` — that module is the READER, this module imports it, and a
+# back-import is a cycle. A vocabulary refusal raised by the reader makes the entry
+# MALFORMED, which takes it out of the index, out of `--ref`, out of `--search` AND out
+# of every write route (they resolve their target through the index): the guard would
+# brick every entry already carrying an off-vocabulary tag. See `TAG_VOCABULARY`.
+from entry_shape import TAG_VOCABULARY, tag_outside_vocabulary  # noqa: E402
+
 # 🔴 THE PATH CLASSIFIER IS IMPORTED, NOT DEFINED HERE — it moved into
 # `subsystem_resolver` when `load_index` grew an entry-kind guard of its own.
 # "What IS this path" spelled at N sites is wrong at N-1 of them, and the two
@@ -2600,6 +2610,65 @@ def parse_if_match(raw: str) -> "list[str]":
     return tags
 
 
+def _validate_entry_bytes(data: bytes, *, scope: str, filename: str) -> None:
+    """May these bytes LAND as an entry? Raises, or returns None.
+
+    🔴 ONE FUNCTION, BECAUSE THE PREDICATE WAS OPEN-CODED AT BOTH WRITE PRIMITIVES.
+    `replace_entry` and `create_entry` each held their own copy of decode + mapping +
+    `from_mapping`, identical down to the refusal string, and the closed tag vocabulary
+    would have been a THIRD rule spelled twice. A predicate duplicated across call
+    sites regenerates the same bug at every site; the Go port already had one
+    (`write.validateEntryBytes`), so this is also what keeps the two implementations
+    comparable function for function.
+
+    ⚠ THE ORDER RELATIVE TO THE LOCK IS THE CALLER'S, AND THE TWO CALLERS DISAGREE ON
+    PURPOSE. `replace_entry` must read the precondition under the lock, so it validates
+    inside it; `create_entry` validates BEFORE the name is claimed, so a refused body
+    leaves the ref free to retry into. Hoisting the call into this function would have
+    had to pick one, which is why it takes bytes and not a lock.
+
+    🔴 `strict`, AND DELIBERATELY **NOT** `decode_entry_text`. This is the CALLER'S
+    body, not the store's own bytes: a PUT is the one primitive that can destroy
+    content, so bytes the reader could not parse are refused (422, via the
+    `UnicodeDecodeError` the route catches) rather than written. Round-tripping them
+    here would let one PUT leave an entry the index loader classifies as MALFORMED. See
+    the codec block above for why the two write primitives are meant to disagree
+    exactly here.
+
+    🔴 AND IT IS NOW TWO CLAIMS, NOT ONE — "the loader would accept it" AND "its
+    `tags:` are in the closed vocabulary" — WHICH IS WHY THE SECOND REFUSAL DOES NOT
+    WEAR THE FIRST'S SENTENCE. `the index loader would reject these bytes: …` is a
+    statement about the READER, pinned byte for byte by the conformance goldens; the
+    loader accepts an off-vocabulary tag and always will (see `TAG_VOCABULARY` for the
+    outage that makes that non-negotiable), so borrowing that prefix would be a false
+    claim about what a reader does with the same file. Distinct sentence, same
+    `EntryShapeError`, same 422 and same `X-Store-Status: entry-shape` — because the
+    REMEDY is identical (fix the body and resend), and `X-Store-Status` discriminates
+    remedies, not causes.
+
+    🔴 THE VOCABULARY CHECK RUNS **AFTER** THE LOADER'S, AND THE ORDER IS LOAD-BEARING
+    TWICE OVER. It needs the FOLDED tag set, which only a successful parse produces;
+    and a body that fails both must keep answering with the loader's sentence, which
+    the existing goldens hold.
+    """
+    text = data.decode("utf-8", errors="strict")
+    try:
+        entry = rc.SubsystemEntry.from_mapping(
+            entry_mapping(text, filename=filename, scope=scope),
+            source=filename,
+        )
+    except rc.MalformedEntryError as exc:
+        raise EntryShapeError(f"the index loader would reject these bytes: {exc}")
+    offender = tag_outside_vocabulary(entry.tags)
+    if offender is not None:
+        raise EntryShapeError(
+            f"tag {offender!r} is not one of {'|'.join(TAG_VOCABULARY)} — the tag "
+            f"vocabulary is CLOSED on the WRITE path, so widening it is a code "
+            f"change. The index loader still READS this tag: an entry already "
+            f"carrying it is unaffected"
+        )
+
+
 def replace_entry(
     path: Path, *, data: bytes, if_match: "Sequence[str]", scope: str, filename: str
 ) -> str:
@@ -2614,12 +2683,12 @@ def replace_entry(
     revision R, both pass, and the second would overwrite the first — which is
     the exact lost update the precondition exists to refuse.
 
-    🔴 THE NEW BYTES ARE VALIDATED BEFORE THEY LAND, through the index loader's
-    OWN mapping (`entry_mapping` + `SubsystemEntry.from_mapping`). A PUT is the
-    only primitive here that can destroy content rather than add to it, so a
-    body the reader would classify as MALFORMED is refused instead of written:
-    otherwise one bad PUT turns a served entry into a `MALFORMED` block and the
-    content it replaced is gone.
+    🔴 THE NEW BYTES ARE VALIDATED BEFORE THEY LAND, by `_validate_entry_bytes` —
+    the index loader's OWN mapping (`entry_mapping` + `SubsystemEntry.from_mapping`)
+    AND the closed `tags:` vocabulary. A PUT is the only primitive here that can
+    destroy content rather than add to it, so a body the reader would classify as
+    MALFORMED is refused instead of written: otherwise one bad PUT turns a served
+    entry into a `MALFORMED` block and the content it replaced is gone.
 
     ⚠ **ATTRIBUTION IS NOT ENFORCED HERE, AND THAT IS A DECIDED LIMIT RATHER THAN
     AN OVERSIGHT.** Criterion 4's "every appended bullet records actor and
@@ -2645,21 +2714,10 @@ def replace_entry(
         current = entry_revision(original)
         if current not in if_match:
             raise PreconditionFailed(current)
-        # 🔴 `strict`, AND DELIBERATELY **NOT** `decode_entry_text`. This is the
-        # CALLER'S body, not the store's own bytes: a PUT is the one primitive
-        # that can destroy content, so bytes the reader could not parse are
-        # refused (422, via the `UnicodeDecodeError` the route catches) rather
-        # than written. Round-tripping them here would let one PUT leave an entry
-        # the index loader classifies as MALFORMED. See the codec block above for
-        # why the two write primitives are meant to disagree exactly here.
-        text = data.decode("utf-8", errors="strict")
-        try:
-            rc.SubsystemEntry.from_mapping(
-                entry_mapping(text, filename=filename, scope=scope),
-                source=filename,
-            )
-        except rc.MalformedEntryError as exc:
-            raise EntryShapeError(f"the index loader would reject these bytes: {exc}")
+        # The write-time validator, INSIDE the lock — see `_validate_entry_bytes` for
+        # why the two write primitives call it at different points and what its two
+        # claims are.
+        _validate_entry_bytes(data, scope=scope, filename=filename)
         _WRITE_INTERLEAVE()
         _replace_bytes(path, data)
         return entry_revision(data)
@@ -2674,9 +2732,10 @@ def create_entry(
     if absent". Raises `EntryExists` if the name is taken, `EntryShapeError` or
     `UnicodeDecodeError` if the bytes are not an entry the reader would accept.
 
-    🔴 IT VALIDATES THE BODY THROUGH THE **SAME** LOADER PATH `replace_entry`
-    DOES, and that is not defensive symmetry — it is the only thing that stops a
-    create landing bytes the reader classifies as MALFORMED. A malformed entry is
+    🔴 IT VALIDATES THE BODY THROUGH THE **SAME FUNCTION** `replace_entry` DOES
+    (`_validate_entry_bytes`), and that is not defensive symmetry — it is the only
+    thing that stops a create landing bytes the reader classifies as MALFORMED, and
+    the only thing that stops an off-vocabulary `tags:` landing. A malformed entry is
     worse on a create than on a replace: it is invisible to `resolve_ref_tiered`,
     so the ref it was meant to answer keeps resolving to nothing while the file
     sits there occupying the name, and the next create gets a 412 for a file
@@ -2698,14 +2757,9 @@ def create_entry(
     STORE ROOT is `StoreMissingError`'s to report, never something a write
     silently conjures.
     """
-    text = data.decode("utf-8", errors="strict")
-    try:
-        rc.SubsystemEntry.from_mapping(
-            entry_mapping(text, filename=filename, scope=scope),
-            source=filename,
-        )
-    except rc.MalformedEntryError as exc:
-        raise EntryShapeError(f"the index loader would reject these bytes: {exc}")
+    # The write-time validator, BEFORE the name is claimed — see
+    # `_validate_entry_bytes`.
+    _validate_entry_bytes(data, scope=scope, filename=filename)
     path.parent.mkdir(exist_ok=True)
     with _EntryLock(path):
         try:

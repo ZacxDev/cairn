@@ -319,8 +319,8 @@ func CreateEntry(path string, data []byte, scope, filename string, interleave fu
 	return EntryRevision(data), nil
 }
 
-// validateEntryBytes answers "would the index loader accept these bytes as an
-// entry", through the loader's own mapping and validator.
+// validateEntryBytes answers "may these bytes LAND as an entry", which is the index
+// loader's own question plus the one refusal this repository adds on top of it.
 //
 // 🔴 A STRICT DECODE, AND DELIBERATELY NOT THE ENTRY CODEC. This is the CALLER'S
 // body, not the store's own bytes: a write is the one primitive that can destroy
@@ -329,13 +329,44 @@ func CreateEntry(path string, data []byte, scope, filename string, interleave fu
 // classifies as MALFORMED. This is the one place the two write primitives are MEANT
 // to be strict where the append is permissive, so it is stated rather than left to
 // look like the lossy-rewrite bug above.
+//
+// 🔴 AND IT IS NOW TWO CLAIMS, NOT ONE — "the loader would accept it" AND "its `tags:`
+// are in the closed vocabulary" — WHICH IS WHY THE SECOND REFUSAL DOES NOT WEAR THE
+// FIRST'S SENTENCE. `the index loader would reject these bytes: …` is a statement about
+// the READER, pinned byte for byte by the conformance goldens; the loader accepts an
+// off-vocabulary tag and always will (see `tagVocabulary` for the outage that makes
+// that non-negotiable), so borrowing that prefix would be a false claim about what a
+// reader does with the same file. Distinct sentence, same `EntryShapeError`, same 422
+// and same `X-Store-Status: entry-shape` — because the REMEDY is identical (fix the
+// body and resend), and `X-Store-Status` discriminates remedies, not causes. That is
+// the same test `EntryExistsError` passes and `PreconditionFailedError` fails.
+//
+// 🔴 THE VOCABULARY CHECK RUNS **AFTER** THE LOADER'S, AND THE ORDER IS LOAD-BEARING
+// TWICE OVER. It needs the FOLDED tag set, which only a successful parse produces; and
+// a body that fails both must keep answering with the loader's sentence, which the
+// existing goldens hold.
+//
+// ⚠ THE CALLER SET IS PINNED AT EXACTLY {CreateEntry, ReplaceEntry} by
+// `TestTheWriteTimeValidatorHasExactlyTheDeclaredCallers`, and it is pinned in BOTH
+// directions. Shrinking it lands an off-vocabulary tag; GROWING it — most plausibly
+// into `AppendBullet`, which looks symmetrical and is not — makes every append to an
+// entry already carrying one fail, which is the outage this design exists to avoid
+// wearing a different hat.
 func validateEntryBytes(data []byte, scope, filename string) error {
 	if !utf8.Valid(data) {
 		return &BodyNotUTF8Error{Offset: firstInvalidUTF8(data)}
 	}
 	mapping := store.EntryMapping(string(data), filename, scope)
-	if _, err := store.EntryFromMapping(mapping, filename); err != nil {
+	entry, err := store.EntryFromMapping(mapping, filename)
+	if err != nil {
 		return &EntryShapeError{message: "the index loader would reject these bytes: " + err.Error()}
+	}
+	if tag, outside := tagOutsideVocabulary(entry.Tags); outside {
+		return &EntryShapeError{message: fmt.Sprintf(
+			"tag %s is not one of %s — the tag vocabulary is CLOSED on the WRITE path, "+
+				"so widening it is a code change. The index loader still READS this tag: "+
+				"an entry already carrying it is unaffected",
+			store.PyRepr(tag), strings.Join(tagVocabulary, "|"))}
 	}
 	return nil
 }

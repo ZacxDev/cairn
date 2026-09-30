@@ -615,6 +615,13 @@ def entry_has_tag(entry: "SubsystemEntry", want: str) -> bool:
     Go spelling — which `internal/ui.EntriesByTag` reaches too, because a browser listing
     that open-coded membership would be the third site the rule names.
 
+    ⚠ THE OPERAND IS NOT CHECKED AGAINST THE CLOSED WRITE VOCABULARY, AND THAT IS DELIBERATE
+    RATHER THAN AN OVERSIGHT. `entry_shape.TAG_VOCABULARY` decides what a WRITE may land; a
+    read filter must still be able to name a tag the store already carries — including one
+    written before the vocabulary closed — or the entries an operator most needs to find
+    would be the ones they could not ask for. So `?tag=`/`--tag` takes any folded token, a
+    zero is the honest answer for an undeclared one, and the rendered non-finding says so.
+
     ⚠ MEMBERSHIP AND NEVER A PREFIX: a tag is a whole folded token, so `market` does not find
     `marketing`. The fold is `normalize_ref` on BOTH sides, applied once per side.
     """
@@ -716,11 +723,23 @@ class SubsystemEntry:
     tags: tuple[str, ...] = ()
     """The `tags:` this entry carries — normalized, deduped and SORTED.
 
-    🔴 THE VOCABULARY IS OPEN, AND THAT IS A DECISION RATHER THAN AN OMISSION. `kind` is a
-    CLOSED four-value enum and this deliberately is not one: `marketing` and `project-xyz`
-    are not the same axis as service/process/org/doc, and conflating two dimensions in one
-    closed set makes both unassertable. The cost is named rather than hidden — a typo makes
-    a silently separate category, and nothing here will catch it.
+    🔴 THE VOCABULARY IS OPEN **TO THIS PARSER** AND CLOSED ON THE WRITE PATH, AND THE
+    ASYMMETRY IS THE DESIGN RATHER THAN A GAP. The declared set is
+    `entry_shape.TAG_VOCABULARY`, enforced by `server.py`'s `_validate_entry_bytes`, so a
+    `PUT` carrying a tag outside it answers 422 and nothing lands. This parser accepts ANY
+    folded tag and must keep doing so: a refusal here makes the entry MALFORMED, which takes
+    it out of the index, out of `--ref`, out of `--search` AND out of every write route
+    (they resolve their target through the index), so closing the vocabulary HERE would make
+    every entry already carrying an off-vocabulary tag unreadable and unrepairable in one
+    stroke. The read side therefore still sees an open set, and the residual cost is named
+    rather than hidden: a tag written before the vocabulary closed, or written by some other
+    tool straight onto the disk, is a category of one that no read can catch.
+
+    ⚠ IT IS A DIFFERENT AXIS FROM `kind`, WHICH IS WHY THERE ARE TWO CLOSED SETS AND NOT
+    ONE. `kind` is service/process/org/doc — what SHAPE of thing the entry describes; the
+    tag axis is the technical domain it belongs to. An entry carries one value from each and
+    neither set refines the other, so conflating them in one enum would make both
+    unassertable.
 
     ⚠ SORTED, WHERE `tasks` KEEPS FILE ORDER. A ref list is hand-maintained and has an
     author's ordering, so re-sorting it would make every read-write cycle a diff; a tag set
@@ -973,14 +992,31 @@ class SubsystemEntry:
         # has to work out which they hit. The refusal a tag CAN hit names the FOLD, which is
         # the thing they cannot see.
         #
+        # 🔴 AND THE CLOSED VOCABULARY DID NOT MAKE IT TWO, WHICH IS THE CLAIM ABOVE
+        # SURVIVING A CHANGE THAT LOOKS LIKE IT SHOULD HAVE BROKEN IT. The declared tag set
+        # is enforced by `server.py`'s `_validate_entry_bytes`, NOT here, so the count of
+        # refusals THIS parser can raise about a tag's content is still exactly one. A
+        # reader that refused an undeclared tag would emit a SECOND content refusal — and
+        # the worst possible one, because unlike the fold it fires on entries that already
+        # exist and already load, making them malformed and therefore unwritable (the write
+        # routes resolve through the index). See `entry_shape.TAG_VOCABULARY` for why that
+        # outage is what put the check in the module this one CANNOT import.
+        #
         # ⚠ AND A NORMALIZED-AWAY TAG IS REFUSED RATHER THAN DROPPED. Dropping it would leave
         # a file that DECLARES a category and an index that does not carry it, so `?tag=`
         # would answer "no entry carries this" about an entry whose front matter says it does
         # — an empty result whose cause is invisible at both ends.
         #
-        # 🔴 VALIDATED HERE AND NOWHERE ELSE, which is the ruling the refs block above states:
-        # the writer's validate pass answers "would the loader accept this file?" by building
-        # exactly what the loader builds, so the check belongs here or the two disagree.
+        # 🔴 THE SHAPE IS VALIDATED HERE AND NOWHERE ELSE, which is the ruling the refs block
+        # above states: the writer's validate pass answers "would the loader accept this
+        # file?" by building exactly what the loader builds, so the shape check belongs here
+        # or the two disagree.
+        #
+        # ⚠ "HERE AND NOWHERE ELSE" IS ABOUT THE SHAPE, NOT ABOUT THE VALUE, AND THE
+        # DISTINCTION IS NEW. The writer's pass is now STRICTLY STRONGER than the loader by
+        # exactly one rule — the closed vocabulary — and that is the one place the two are
+        # MEANT to disagree, for the reason the block above gives. Anything else the writer
+        # refuses that a reader accepts is a defect.
         raw_tags_in = mapping.get("tags") or ()
         if isinstance(raw_tags_in, (str, bytes)):
             raise bad("`tags:` must be a list, not a bare string — write `tags: [<name>]`")

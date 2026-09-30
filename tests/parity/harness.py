@@ -446,8 +446,9 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              ["recall", "--scope", "alpha-notes", "--tag", "Marketing"]),
         Case("recall-tag-absent",
              "the filter's own non-finding — `tag-absent`, exit 0, and a sentence that must "
-             "not read as an empty scope; the vocabulary is OPEN so it also has to say a typo "
-             "looks exactly like this",
+             "not read as an empty scope; the QUERY operand is checked against no vocabulary "
+             "(the closed one gates WRITES only), so it also has to say a typo looks exactly "
+             "like this",
              ["recall", "--scope", "alpha-notes", "--tag", "no-such-category"]),
         Case("recall-tag-composes-with-ref",
              "both narrowings at once, and the row is about the PROSE rather than the status: "

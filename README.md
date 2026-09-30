@@ -357,12 +357,30 @@ on a sample entry, so a zero from it is a zero it could have contradicted. That 
 **your** store. The check is `grep -rl '^tags:' <your cache root>`; the remedy is to make the value
 a list.
 
-🔴 **The vocabulary is OPEN and nothing declares it.** There is no allowlist, no closed set and
-no rename tool: you name a category when you need one. The cost is stated rather than hidden — a
-typo makes a silently separate category of one, and no check in this project will catch it. It is
-deliberately **not** the `kind:` enum, which stays a closed four-value set
-(`service`/`process`/`org`/`doc`): `marketing` and `project-xyz` are a different axis from
-service/process/org/doc, and putting two axes in one closed set makes both unassertable.
+🔴 **The vocabulary is CLOSED on the WRITE path and OPEN to every READER, and the asymmetry is
+the design rather than a gap.** The declared set is exactly four terms — **`infra`**,
+**`product`**, **`tooling`**, **`client-work`** — and both servers refuse a `PUT` whose front
+matter carries anything else: **422** with `X-Store-Status: entry-shape` and a body naming the
+four. Nothing lands.
+
+The READER accepts any folded tag, and it has to. A vocabulary refusal in the loader would make
+the entry **malformed**, and the paragraph above is what that costs: out of the index, out of
+`--ref`, out of `--search` **and unwritable**, because the write routes resolve their target
+through that index. Closing the vocabulary in the reader would therefore take every entry that
+already carries an off-vocabulary tag and make it unreadable and unrepairable in the same stroke
+— a store-wide outage caused by the guard rather than by the data. So `--tag`/`?tag=` will name
+any token you like, an entry written before the closure keeps loading and keeps serving, and the
+rendered non-finding still says a typo looks exactly like an honest zero.
+
+**Widening the set is a code change, in two places that must move together:**
+`internal/write/tagvocab.go` (`tagVocabulary`, the Go pod) and `lib/entry_shape.py`
+(`TAG_VOCABULARY`, the Python oracle). `tests/test_tag_vocabulary.py` fails if one side moves
+alone, and `tests/conformance/` compares the two servers' refusal bytes over the wire.
+
+It is deliberately **not** the `kind:` enum, which stays its own closed four-value set
+(`service`/`process`/`org`/`doc`). `kind:` says what SHAPE of thing the entry describes and the
+tag axis says which technical domain it belongs to; an entry carries one value from each, neither
+set refines the other, and putting two axes in one closed set makes both unassertable.
 
 **The five things worth knowing if you script this:**
 
