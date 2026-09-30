@@ -25,34 +25,39 @@ new arc their leftovers belong to, not another round of either.
 
 ## State now
 
-- 🔴 **CLAUSE (b) IS MET; CLAUSE (a) IS ALL THAT IS LEFT, AND IT COVERS THREE ARTEFACTS RATHER THAN
-  THE ONE ITS WORDING NAMES.** (b): `sessions` `count(*)` **0 → 1** live, `invites` **0 → 1** (minted
-  then revoked), share flow end to end, journal **30 → 37**. (a) — an instrument that FAILS on a
-  stale deployed artefact — **is unbuilt: rank 2.** Artefacts: two pod images (both DIGEST-verified
-  at `origin/main`) and the installed client.
-- ✅ **THE INSTALLED CLIENT IS NO LONGER STALE — MERGED, SWITCHED, VERIFIED BEHAVIOURALLY.** The
-  config repo's PR is squash-merged, four checks green on the MERGED tree
-  (`pytests 24733/24726/0/7`, `gotests 461`, `nodetests 1720`, `cairn-client-runs`), verified by
-  CONTENT: its mainline pins the new revision, the old greps **0**. Here `readlink -f "$(which
-  cairn)"` moved `…-cairn-5dfc11a` → `…-cairn-cdf6fae`; `--ref-to`/`--tag` **0 → 2** each, `--scope`
-  steady at 2 and a bogus flag at 0 as controls; both features EXERCISED (bad ref → rc 2 + the
-  `<system>:<id>` refusal; bad tag → `tag-absent`, *"0 of 13 entries … a NARROWING"*). Rollback:
-  home-manager generation **845**.
-- ⏳ **RANK 6'S REMAINING HALF IS THE GO FLIP** — operator-decided, a pin-seam split not a one-line
-  change; design and RED proofs are the ANSWERED block. ⚠ **"Rank 6 verified" ≠ "Go shipped".**
-- ⚠ **THE OPERATOR HAS A BROWSER-SURFACE CREDENTIAL AND HAD NONE BEFORE** — their own user, issued
-  from inside the pod that owns the journal, in a `0600` file in their client-config directory. **The
-  path is deliberately not written here:** this repo is PUBLIC and naming it points at a live token.
-- ⚠ **A SECOND USER IS PROVISIONED LIVE AND DELIBERATELY INERT** — `member` on the existing project
-  with **no credential**, so it cannot authenticate; it only keeps the share picker exercisable. Its
-  grant and test invitation were revoked.
-- ✅ **CARRIED FORWARD — a REPLACE heading would drop these values.** Predecessor arcs closed,
-  re-measured: `pytest tests -q` **2357 passed / 0 failed**, `go test ./...` **21 ok / 0 FAIL**, `nix
-  eval` resolving `default` and `cairn-go` to the **identical** store path; `#148` merged as
-  `e8839d9`. Pod images DIGEST-verified (`ab2a59ab5` → `ccdcd13e4`); a bullet in NO committed file
-  restored as `#149`.
-- 🔴 **THIS DOC IS AT ITS ENFORCED CEILING AND `--prune` CANNOT SHRINK IT — read the OPEN block
-  before the next update, which will otherwise be REFUSED.**
+- ✅ **RANK 6 IS CLOSED: THE GO CLIENT IS LIVE AND VERIFIED ON BOTH HOSTS.** Operator decision
+  (Go), `#1933` + `#1939` merged, `ship.sh` rc 0 with **2 hosts compared, both at `aa01eb77`**.
+  Verified on the CONSUMER rather than off the deploy's verdict — identical readings on both
+  machines: `cairn` → `…-cairn-go-cdf6fae/bin/cairn`, `cairn-py` → `…-cairn-cdf6fae/bin/cairn`
+  (**byte-identical store paths across hosts**), `--ref-to`/`--tag` **1/1** with `--scope` 1 and
+  a bogus flag **0** as controls, `-verbs` **rc 0** (was 2), `cairn_pin` route 2 resolving via
+  `cairn-py`, and `cairn-validate`/`cairn-who` both **rc 0**.
+- 🔴 **CLAUSE (a) IS NOW THE ONLY OPEN ITEM IN THIS ARC** — an instrument that FAILS when a
+  deployed artefact is behind. Clause (b) was met earlier. Rank 2 owns it, and rank 2 has grown
+  a prerequisite: the currency instrument that already exists gave **two false readings in one
+  day**; see the RESOLVED block.
+- ✅ **CAIRN HAS 0 OPEN PRs OF MINE.** Merged this session: `#156` (`517efb54`), `#157`
+  (`94dc2594`), `#158` (`245b568b`, the ceiling), `#159` (`ba78dbb4`, the P8 constraint).
+  ⚠ **`#160` is a PEER's** (`close-the-tag-vocabulary-at-the-write-path`) — opened while this ran,
+  not mine, untouched.
+- ✅ **THE DOC'S OWN CEILING IS FIXED BY EVICTION, NOT BY AN OVERRIDE.** 65,526 B → 51,374 B
+  against 65,536; headroom **10 B → 14,162 B**. Seven closed bodies live verbatim in
+  `claudedocs/archive-cairn-deploy-currency.md` (0 of 222 pruned lines absent from it).
+  `--override-size-ratchet` was NOT used.
+- ⚠ **THE OPERATOR HAS A BROWSER-SURFACE CREDENTIAL AND HAD NONE BEFORE** — their own user,
+  issued from inside the pod that owns the journal, in a `0600` file in their client-config
+  directory. **The path is deliberately not written here:** this repo is PUBLIC.
+- ⚠ **A SECOND USER IS PROVISIONED LIVE AND DELIBERATELY INERT** — `member` on the existing
+  project with **no credential**; it only keeps the share picker exercisable. Grant and test
+  invitation revoked.
+- ✅ **CARRIED FORWARD — a REPLACE heading would drop these values.** Predecessor arcs closed:
+  `pytest tests -q` **2357 passed / 0 failed**, `go test ./...` **21 ok / 0 FAIL**, `nix eval`
+  resolving `default` and `cairn-go` to the **identical** store path; `#148` merged as `e8839d9`.
+  Pod images DIGEST-verified (`ab2a59ab5` → `ccdcd13e4`); a bullet in NO committed file restored
+  as `#149`.
+- ⚠ **NO TASK-BOARD FIELD: AN UNKNOWN, NOT A MEASURED ABSENCE.** The resolver reported
+  **0 tasks**; an unknown session id answers 200 with an EMPTY ARRAY, so that zero cannot
+  separate "touched no task" from "wrong id". None written, none created.
 
 ## Open investigations — live diagnosis state
 
@@ -260,6 +265,49 @@ new arc their leftovers belong to, not another round of either.
   only grows. The route is above; the archive is the destination; do not reach for
   `--override-size-ratchet`, which ships an over-ceiling doc rather than fixing one.
 
+### ✅ RESOLVED 2026-09-30 — the Go flip shipped to both hosts, and the two instruments that failed on the way are rank 2's real subject
+- as-of: 2026-09-30
+- **What this settles:** rank 6 in full. The ANSWERED block's design is BUILT and DEPLOYED; its
+  "Next probe" is spent. Do not re-derive the pin-seam split — it is in `#1939`.
+- **Observed (with values), identical on BOTH hosts:** `cairn` → `…-cairn-go-cdf6fae/bin/cairn`,
+  `cairn-py` → `…-cairn-cdf6fae/bin/cairn`; `--ref-to`/`--tag` **1/1**, `--scope` **1**, bogus
+  flag **0**; `-verbs` **rc 0**; `cairn_pin` → `…-cairn-cdf6fae/libexec/cairn/lib`;
+  `cairn-validate` **rc 0**, `cairn-who` **rc 0**. `ship.sh` rc 0, 2 hosts compared at
+  `aa01eb77`. `via: measurement`
+- 🔴 **Ruled out: that a local green build says anything about CI.** The first `#1939` run went
+  RED because I put the Go client in `gateTools`, which backs the devShell AND `checks.pytests`
+  — and the config repo's CI pod **cannot sandbox a nix build**: PodSecurity `baseline` blocks the fixes,
+  nix silently FALLS BACK to unsandboxed, and `nix config show` still reports `sandbox = true`
+  (**the tell is that `/build` does not exist**). `mkGoClient` runs `go vet ./... && go test
+  ./...` over 21 packages, which does not pass impure → `cairn-client-runs` FAILED and `pytests`
+  reported `BROKEN GATE … before a verdict`. The same derivation builds green here, sandbox on,
+  **21 ok / 0 FAIL**. Fix: the Go build is out of that repo's critical path; the hosts still install
+  the UNMODIFIED package. `via: measurement`
+- 🔴 **Ruled out: that `NO CAPACITY` is a verdict on the diff.** The merged-tree re-gate posted
+  `NO CAPACITY: <leg> — the gate never started (queued past its deadline)` on all four legs.
+  Timeline: `pending` **17:25:4x** → `error` **18:25:5x**, exactly **60 minutes**, never started.
+  Queue was then drained (**5 Running / 1 Pending** against 457 Completed + 57 Error — split by
+  phase, because terminal pods are not pressure), so a close/reopen re-trigger (the live CEL
+  filter accepts `reopened`) came back **4/4 green: collected=24741 passed=24734 failed=0**,
+  which is +4/+4 on the tests `#1926` added. `via: measurement`
+- 🔴 **Ruled out: that the drift deadman can be trusted as-is — TWO false readings in one day.**
+  (i) exit **12 = `not-on-branch-main`**: TRUE, unread for two days, and it cleared on its own
+  when a peer moved the base clone off their branch. (ii) *"did not answer (unreachable)"* for
+  the laptop, while a direct `ssh` answered **instantly** and `ship.sh` converged it **twice**.
+  **A gate that is red when right and red when wrong trains its own bypass** — which is exactly
+  what rank 2 must not add a third of. `via: measurement`
+- 🔴 **Ruled out: my own "full local suite" as a gate. It is a DIFFERENT POPULATION and I
+  contaminated it.** `pytest scripts/tests` collected **15,904**; CI's pytests leg collected
+  **24,741**. And its single failure —
+  `test_gate_exit_truthfulness.py::test_a_green_real_run_says_pass_with_exit_zero`, a test my
+  branch does not touch (`git diff --name-only origin/main` → 0) — **did not reproduce**: a
+  clean re-run is **13 passed / 0 failed**. I had killed pytest PIDs in that worktree while a
+  test that spawns a REAL nested run was in flight. A control that shares the step you doubt.
+  `via: measurement`
+- **Leading hypothesis:** none. Closed.
+- **Next probe:** none for rank 6. For rank 2, the probe is the drift deadman's own per-host
+  lines (`journalctl --user -u drift-check.service`) BEFORE designing anything new.
+
 ## Next steps (ranked)
 
 🔴 **NUMBERING IS STABLE — a rank is half a `claim-work` slug**, and `claim-work` comes BEFORE
@@ -274,15 +322,18 @@ untouched work; only the sweep sees a duplicate nobody claimed.
    makes the branch head an ancestor). `#156` and this doc's own PR landed after it, same way.
    forcing: gate — unmerged docs PRs are the `stranded-docs` shape, and `#149` exists because
    that shape already cost a bullet.
-2. **BUILD THE DEPLOYED-ARTEFACT CURRENCY INSTRUMENT — the (a) half, still unbuilt and now
-   known to cover THREE artefacts** (two pod images, one installed client), not the one its
-   wording names. 🔴 **Watch it go RED on a deliberately stale pin before believing it**, and
-   do not accept "both pods carry the same tag" as the check — they were equal to each other
-   and both stale, twice in one session. 🔴 **AND ACCOUNT FOR THE CURRENCY INSTRUMENT THAT
-   ALREADY EXISTS AND IS RED: the config repo's drift deadman has been failing every six hours
-   for two days, exit 12 = `not-on-branch-main`, naming the exact drift this arc rediscovered by
-   hand.** Unbreak it or stop gating on it; a second unread instrument beside it is worse than
-   none. Evidence: the RESOLVED investigation block.
+2. **BUILD THE DEPLOYED-ARTEFACT CURRENCY INSTRUMENT — the (a) half, still unbuilt and the
+   ONLY thing left in this arc.** It covers THREE artefacts (two pod images, one installed
+   client), not the one its wording names. 🔴 **Watch it go RED on a deliberately stale pin
+   before believing it**, and do not accept "both pods carry the same tag" — they were equal to
+   each other and both stale, twice.
+   🔴 **AND THE CURRENCY INSTRUMENT THAT ALREADY EXISTS GAVE TWO FALSE READINGS IN ONE DAY —
+   THAT IS THE STRONGEST ARGUMENT AGAINST BUILDING A SECOND ONE BESIDE IT.** The config repo's
+   drift deadman: (i) exit **12 = `not-on-branch-main`**, TRUE and unread for two days — and it
+   has since cleared on its own because a peer moved the base clone; (ii) *"zach@<laptop> did
+   not answer (unreachable)"* while a direct `ssh` answered **instantly** and `ship.sh`
+   converged that host twice. A gate that is red when right and red when wrong teaches its own
+   bypass. **Unbreak it or stop gating on it; do not add a third check.**
    forcing: regression — the image gap re-opened within minutes of being closed, twice, and no
    gate in any of the three repositories can see any of the three artefacts.
 3. ✅ **DONE 2026-09-30 — clause (b) is MET.** Session table `count(*)` 0 → 1 on the live
@@ -307,24 +358,26 @@ untouched work; only the sweep sees a duplicate nobody claimed.
    **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway and the residual risk is accepted
    EXPLICITLY, in writing.**
    forcing: deadline — the 2026-11-01 backstop, set by the operator.
-5. **Fix the base-clone write guard.** It reproduced a **FIFTH** independent time: it refused
+5. **Fix the base-clone write guard.** It reproduced a **SEVENTH** and **EIGHTH** time this
+   session — once naming the WRONG REPOSITORY (it reported the cairn base clone for a config-repo
+   worktree whose `git-common-dir` is that repo's), and once on a `checkout` in a config-repo worktree: it refused
    commits in linked worktrees while naming the base clone, having resolved the repo from `$PWD`
    rather than the command's `-C` target. Premise proved false before every override.
    **Closing condition:** the guard admits a linked worktree AND reads `-C`, with a test that a
    real base-clone write is still refused.
    forcing: gate — a guard whose diagnosis is reliably about the wrong repository trains its own
    bypass, which is the permanently-red-gate failure wearing a different hat.
-6. 🔶 **HALF DONE — THE PYTHON STEP SHIPPED; THE OPERATOR'S DECISION (GO) IS UNBUILT.** ✅ The
-   config repo's PR is squash-merged, the switch is run, and the installed client carries both
-   features — verified BEHAVIOURALLY, not just greped in `--help`. **Do NOT re-do that half.**
-   ⛔ What remains is the GO FLIP, a **PIN-SEAM SPLIT** rather than a one-line change: the Go
-   package ships no `libexec/cairn/lib`, which is how 22 config-repo files, both out-of-store
-   launchers and the writer reach the reader modules via `cairn_pin` route 2 — content-validated,
-   no fallback. Design, file set and RED proofs: the ANSWERED block. 🔴 **Switch from a CLEAN
-   WORKTREE at the merged mainline** — the base clone is parked on another session's branch, where
-   a switch rebuilds the OLD client at exit 0.
-   forcing: user — the operator asked directly *"how can we validate and start using the new
-   features?"*, and chose Go over Python for the installed client when asked.
+6. ✅ **DONE 2026-09-30 — THE GO CLIENT IS LIVE AND VERIFIED ON BOTH HOSTS.** Decision (Go)
+   made by the operator, `#1933` (pin bump) and `#1939` (the pin-seam split) both merged,
+   `ship.sh` converged **2 hosts compared, both at `aa01eb77`**. Verified on the CONSUMER, not
+   off the deploy's own verdict: `readlink -f ~/.local/bin/cairn` → `…-cairn-go-cdf6fae/bin/cairn`
+   and `cairn-py` → `…-cairn-cdf6fae/bin/cairn`, **byte-identical store paths on both machines**;
+   `--ref-to`/`--tag` 1/1 with `--scope` 1 and a bogus flag **0** as controls; `-verbs` **rc 0**
+   (was 2) — the visible sign of the flip; `cairn_pin` route 2 resolving through `cairn-py`; and
+   `cairn-validate`/`cairn-who` both **rc 0**, which was the actual risk of the split. Claim
+   `cairn-deploy-currency-6` RELEASED.
+   forcing: user — the operator asked *"how can we validate and start using the new features?"*,
+   chose Go when asked, and asked for the laptop shipped.
 7. **TRIAGE THE SEVEN UN-DROPPED SCOPE ITEMS from the original asks**, each measured absent on
    `main`: a PWA (no manifest, no service worker), htmx (0 occurrences — the surface is
    server-rendered gomponents), Google sign-in (only the one provider route exists), "move scope
@@ -613,6 +666,41 @@ untouched work; only the sweep sees a duplicate nobody claimed.
 - ⚠ **A PRUNED BLOCK LOOKS LIKE A STUB AND THAT IS CORRECT.** Heading plus `as-of:` and nothing
   else means "the body is in the archive". It is not damage to tidy, and re-adding prose under it
   spends the headroom the eviction just bought.
+
+- ✅ **RANK 6 CLOSED, AND THE STAGING WAS THE POINT.** Python-first (pin bump, verified), then
+  Go (pin-seam split, verified) — each independently green, with home-manager generation **845**
+  as the rollback point for the first and a clean second switch on top. Bundling them would have
+  put a public-surface change and a lock bump in one irreversible step.
+- 🔴 **THREE BLAST-RADIUS KEYS, AND I FOUND THEM ONE RED AT A TIME.** Round 1 keyed the test
+  target set on the threaded package name → **15 files**. Round 2 added `gateTools`/
+  `REQUIRED_TOOLS` → **39**, of which I had missed **24**. Round 3 was CI naming
+  `test_the_cairn_home_nix_entries_stay_ADJACENT` in `test_peer_host.py` — a file with no "cairn"
+  in its name, keyed on the deploy-line TEXT. **Adding a `home.file` entry has a blast radius
+  keyed on POSITION, which no name-based selection can find.** Ask what the change's radius is
+  keyed on, then pick the set from THAT — and accept that for a positional change the answer is
+  "the full suite", i.e. CI.
+- 🔴 **TWO GUARDS FIRED AND BOTH WERE RIGHT; NEITHER WAS RELAXED.** The adjacency pin exists
+  because `nix/home.nix`'s `cairn-validate` comment refers to neighbours POSITIONALLY ("the pair
+  above", "Read all three lines together") — so `cairn-py` moved BELOW the trio rather than the
+  assertion moving. The runtime-shebang ban is about a CLASS: "my fixture is never executed" is
+  not an exemption, so the fixture uses `testlib.mockbin.write_exec`.
+- 🔴 **I DELETED MY OWN NEW ASSERTION RATHER THAN SHIP A VACUOUS ONE.** The two-client
+  byte-identity `validate` check was real when written (`cmp` rc 0, mutation-killed with its own
+  message). Once the Go client left that check, both names resolved to the SAME package — it
+  would have diffed a binary against itself and passed unconditionally. A green that reads like a
+  parity gate and asserts nothing is worse than its absence.
+- ⚠ **VERIFYING A BUILT COMMIT'S OWN DIFF BEFORE PUSHING CAUGHT A SILENT 6-FILE LOSS.** The
+  plumbing route parents on a sha you name; the worktree's local HEAD never advanced after a
+  `push <sha>:<branch>`, so `-p $(rev-parse HEAD)` pointed at the MERGE BASE and the commit
+  contained only the newest file. `git diff --stat <parent> <built>` is the step that found it.
+- ⚠ **AN EMPTY OVERLAP IS ONLY MEANINGFUL IF BOTH OPERANDS ARE NON-EMPTY.** Deciding whether to
+  re-gate after main moved, I printed a header and never `cat`ed the file — `comm -12` then
+  reported no overlap because one side was empty. Print both COUNTS first (theirs 4, mine 7) and
+  only then read the intersection.
+- ⚠ **THE PIPE-EATS-THE-STATUS TRAP LANDED FOUR MORE TIMES THIS SESSION**, in both polarities:
+  `rc=$?` after `| tail` reported a *nix build failure* as success, and a trailing
+  `grep -c '^FAILED'` reported three *green* runs as "failed with exit code 1". Read the runner's
+  own result line; take an exit code off the command itself.
 
 ## How to verify
 
