@@ -25,62 +25,34 @@ new arc their leftovers belong to, not another round of either.
 
 ## State now
 
-- 🔴 **CLAUSE (b) IS MET AND VERIFIED ON THE LIVE DEPLOYMENT; THE ARC IS NOT CLOSED.**
-  `select count(*) from sessions` moved **0 → 1**, `invites` **0 → 1** (minted then revoked),
-  the share flow ran end to end (`granted` + `grant-revoked`, picker offering a real second
-  user), and the control journal went **30 → 37** records. `cairn` repo `main` is at
-  **`1e6fceb6`**, clean, **0 open PRs**.
-- 🔴 **WHAT IS LEFT IS CLAUSE (a), AND IT HAS TWO HALVES — THE CONDITION'S WORDING ONLY
-  COVERS ONE.** (a) says "a deployed **image**". Three artefacts can be stale, not one:
-  - ✅ **the two pod images** — both bumped to `origin/main` this session and verified by
-    DIGEST against values resolved from ghcr *before* each push; deployed commit was 0 behind
-    at the time.
-  - ⏳ **the INSTALLED CLIENT — still stale, and this is the live item.** Re-measured directly
-    rather than taken from the peer block that found it: `readlink -f "$(command -v cairn)"` →
-    `…-cairn-5dfc11a/bin/cairn`, and `cairn recall --help` greps **0** for `--ref-to`, **0**
-    for `--tag` and **0** for `Requirements`, with `--scope` at **2** as the positive control
-    proving the grep works. **So "how do I start using the new features" answers: from the
-    browser yes, from the installed CLI NO.**
-  - ❌ **no instrument exists that FAILS on any of the three.** That is rank 2 and it is
-    unbuilt.
-- ⏳ **THE CLIENT FIX IS BUILT, GREEN AND UNMERGED — it is one merge plus one switch away.**
-  The config repo's **PR #1933** (`fix/cairn-client-pin-bump`) is OPEN with **all four checks
-  PASS**: `pytests collected=24710 passed=24703 skipped=7 failed=0`, `gotests 461/0`,
-  `nodetests 1720/0`, and a `cairn-client-runs` leg confirming the pinned client executes.
-  ⚠ **Green on a PR is not applied to this host:** that repo's mainline still pins
-  `5dfc11a2ac12`, which is byte-for-byte the revision installed here — so the two agree, and
-  both are stale. Merging it is necessary AND not sufficient; the client is a home-manager
-  `home.file` COPY, so it also needs a switch.
-- ⚠ **THE OPERATOR NOW HAS A BROWSER-SURFACE CREDENTIAL AND HAD NONE BEFORE.** Issued for
-  their own existing user from inside the pod that owns the journal, delivered to a `0600`
-  file in their own client-config directory. **The path is deliberately not written here** —
-  this repo is PUBLIC and naming the file is a pointer to a live bearer token.
-- ⚠ **A SECOND USER IS PROVISIONED ON THE LIVE DEPLOYMENT AND IS DELIBERATELY INERT.**
-  `supabase:sharing-test`, joined to the existing project at role `member`, with **no
-  credential** — so it cannot authenticate, and it exists only to keep the share picker
-  exercisable. Its grant was revoked and the test invitation was revoked.
-- ✅ **CARRIED FORWARD — BOTH PREDECESSOR ARCS ARE CLOSED, RE-MEASURED RATHER THAN READ OFF
-  THEIR DOCS** (kept because a REPLACE heading would otherwise drop the values): control-plane
-  `python3 -m pytest tests -q` **2357 passed / 0 failed**, `go test ./...` **21 ok / 0 FAIL**,
-  `nix eval` resolving `default` and `cairn-go` to the **identical** store path; next-phase
-  `#148` merged as `e8839d9` with all four cards `complete`, each feature verified by content.
-- ✅ **CARRIED FORWARD — the two pod images were bumped to `origin/main` this session and
-  verified by DIGEST** (deployment repo `ab2a59ab5` → `ccdcd13e4`), and a bullet that existed
-  in NO committed file was restored as `#149`. Both are recorded in full under `Gotchas` and in
-  the RESOLVED investigation block; the values are kept here so a future REPLACE cannot take
-  them silently.
-- 🔴 **A RETRACTED FINDING OF THIS ARC'S OWN LIVES UNDER `Open investigations` AND IS STILL
-  BINDING:** the trusted-proxy "global lockout" claim is WITHDRAWN — there is no such exposure.
-  Do not re-derive it; the block says why.
-- ⚠ **NO TASK-BOARD FIELD: an UNKNOWN rather than a measured
-  absence.** The resolver exited **5**; an unknown session id answers 200 with an empty array,
-  so that zero cannot distinguish "touched no task" from "wrong id". None written, none
-  created.
-- ✅ **SIX PRs MERGED THIS SESSION IN `cairn`**, all docs-only: `#149` (`438b977a`, the rescued
-  bullet), `#150` (`25b6ab62`, a peer's arc close), `#151` (`cdf6fae5`, the retraction + four
-  defects), `#152` (`01a07c91`, this doc's birth), `#154` (`53534f7e`, clause (b) + the
-  counter correction), and two peers' — `#153` (`d6290d54`, the client-side half) and `#155`
-  (`1e6fceb6`, retracting a `CAIRN_LIB` two-tier claim `#153` had shipped as measured).
+- 🔴 **CLAUSE (b) IS MET; CLAUSE (a) IS ALL THAT IS LEFT, AND IT COVERS THREE ARTEFACTS RATHER THAN
+  THE ONE ITS WORDING NAMES.** (b): `sessions` `count(*)` **0 → 1** live, `invites` **0 → 1** (minted
+  then revoked), share flow end to end, journal **30 → 37**. (a) — an instrument that FAILS on a
+  stale deployed artefact — **is unbuilt: rank 2.** Artefacts: two pod images (both DIGEST-verified
+  at `origin/main`) and the installed client.
+- ✅ **THE INSTALLED CLIENT IS NO LONGER STALE — MERGED, SWITCHED, VERIFIED BEHAVIOURALLY.** The
+  config repo's PR is squash-merged, four checks green on the MERGED tree
+  (`pytests 24733/24726/0/7`, `gotests 461`, `nodetests 1720`, `cairn-client-runs`), verified by
+  CONTENT: its mainline pins the new revision, the old greps **0**. Here `readlink -f "$(which
+  cairn)"` moved `…-cairn-5dfc11a` → `…-cairn-cdf6fae`; `--ref-to`/`--tag` **0 → 2** each, `--scope`
+  steady at 2 and a bogus flag at 0 as controls; both features EXERCISED (bad ref → rc 2 + the
+  `<system>:<id>` refusal; bad tag → `tag-absent`, *"0 of 13 entries … a NARROWING"*). Rollback:
+  home-manager generation **845**.
+- ⏳ **RANK 6'S REMAINING HALF IS THE GO FLIP** — operator-decided, a pin-seam split not a one-line
+  change; design and RED proofs are the ANSWERED block. ⚠ **"Rank 6 verified" ≠ "Go shipped".**
+- ⚠ **THE OPERATOR HAS A BROWSER-SURFACE CREDENTIAL AND HAD NONE BEFORE** — their own user, issued
+  from inside the pod that owns the journal, in a `0600` file in their client-config directory. **The
+  path is deliberately not written here:** this repo is PUBLIC and naming it points at a live token.
+- ⚠ **A SECOND USER IS PROVISIONED LIVE AND DELIBERATELY INERT** — `member` on the existing project
+  with **no credential**, so it cannot authenticate; it only keeps the share picker exercisable. Its
+  grant and test invitation were revoked.
+- ✅ **CARRIED FORWARD — a REPLACE heading would drop these values.** Predecessor arcs closed,
+  re-measured: `pytest tests -q` **2357 passed / 0 failed**, `go test ./...` **21 ok / 0 FAIL**, `nix
+  eval` resolving `default` and `cairn-go` to the **identical** store path; `#148` merged as
+  `e8839d9`. Pod images DIGEST-verified (`ab2a59ab5` → `ccdcd13e4`); a bullet in NO committed file
+  restored as `#149`.
+- 🔴 **THIS DOC IS AT ITS ENFORCED CEILING AND `--prune` CANNOT SHRINK IT — read the OPEN block
+  before the next update, which will otherwise be REFUSED.**
 
 ## Open investigations — live diagnosis state
 
@@ -445,6 +417,32 @@ new arc their leftovers belong to, not another round of either.
   unreachable REMOTE hosts, so part of its red is about the other machine and not about this one —
   read the per-host lines before attributing the whole verdict. For rank 6's remaining half: the Go
   flip is designed but UNBUILT, and the decision it implements is the operator's, already made.
+
+### 🔴 OPEN — this doc is at its enforced ceiling and `--prune` STRUCTURALLY cannot shrink it
+- as-of: 2026-09-30
+- **Symptom + repro:** any update → `status=size-ratchet`, exit **14**, nothing written. **65,526 B
+  against an enforced 65,536 B ceiling — 10 B.** `handoff-audit.py`: **5.3x target**, **18,496 B
+  evictable** (15,617 B in 4 resolved blocks).
+- 🔴 **Observed — the blocker is the AMBIGUITY rule, not the `as-of:` one.** `LOAD_BEARING_FIELDS`
+  *exempts* `as-of:` when a whole block is named, precisely so the largest eviction is takeable — so
+  that rule is not it. But every named line must match **exactly one** line, and `- as-of: <date>` /
+  `` `via: measurement` `` recur across blocks *by design* (*"Append-verbatim makes duplicates
+  ordinary"*). Measured: `- as-of: <a shared date>` **5 matches**, `` `via: measurement` `` **9**,
+  `|---|---|---|` **3** → `status=prune-refused`, exit 15. Heading-only is refused too
+  (`[partial block]`). No spelling works. `via: measurement`
+- **Ruled out:** pruning one block at a time so duplicates become unique — removing one takes
+  that stamp from 5 matches to 4, and it reaches 1 only after the other four are gone, the blocked
+  step. `via: measurement`
+- 🔴 **RETRACTED TWICE, BOTH MINE, IN ONE SESSION.** I claimed this limit from the duplicate lines
+  without reading the tool; then read `LOAD_BEARING_FIELDS` and retracted the CONCLUSION too; the
+  third step finally ran the command. **Conclusion stands; the first mechanism AND the retraction of
+  the conclusion were both wrong.** The lesson is the sequence. `via: code`
+- **Leading hypothesis:** structural — `Open investigations` only grows, and its exit rule is
+  defeated by its own append-verbatim duplicates.
+- **Next probe — operator's call, not mechanical:** (1) `--override-size-ratchet "<reason>"`, whose
+  contract requires the reason to state whether an operator approved; or (2) split the arc — clause
+  (a) is open, so that is a scope decision. ⚠ `State now` was compacted this round, which buys ONE
+  small update, not a fix. Do not spend it on prose.
 
 ## Next steps (ranked)
 
