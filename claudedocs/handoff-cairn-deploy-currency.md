@@ -25,63 +25,62 @@ new arc their leftovers belong to, not another round of either.
 
 ## State now
 
-- 🔴 **CLOSING-CONDITION CLAUSE (b) IS MET; THE ARC IS NOT CLOSED.** (b) asked that the session
-  table be written, read before and after one real sign-in: `count(*)` moved **0 → 1** on the live
-  deployment. While proving it, the invite store was also written (**0 → 1**, minted then revoked)
-  and the share flow was exercised end to end on the real surface (`granted` + `grant-revoked`,
-  picker offering a real second user). Full values, and the instrument correction that came with
-  it, are the RESOLVED block under `Open investigations`.
-  ⚠ **(a) — an instrument that FAILS when a deployed image is behind `origin/main` — does not
-  exist. That is rank 2.**
-  - 🔴 **AND (a) AS WRITTEN IS NARROWER THAN THE PROBLEM, WHICH A PEER SESSION MEASURED WHILE
-    THIS WAS IN FLIGHT (`#153`, squash `d6290d54`).** The closing condition says "a deployed
-    **image**", and the INSTALLED CLIENT on this host is a third stale artefact it does not
-    cover: **63 commits** behind, predating all three feature squashes, carrying neither
-    `--ref-to` nor `--tag`. **So "how do I start using the new features" currently answers
-    "you cannot from the installed CLI"** — the pods have them, the client does not. ⚠ An
-    earlier draft of this bullet said (a) was "the one item left"; that was true of the
-    condition's wording and false of the arc's subject, which is the same
-    narrower-than-the-sentence shape this repo keeps recording. Do NOT re-derive (a) as
-    image-only.
-- ⚠ **THE OPERATOR NOW HAS A BROWSER-SURFACE CREDENTIAL, AND BEFORE THIS THEY HAD NONE** — issued
-  for their own existing user and delivered to a `0600` file outside this repo. The path is
-  deliberately not written here: a handoff doc is committed to a PUBLIC repository, and naming the
-  file is a pointer to a live bearer token. It is in the operator's own `subsystem-store` config
-  directory beside the other client config.
-- Branch: `main`, clean, at `e8839d9`. No uncommitted work anywhere: 54 registered
-  worktrees swept, instrument positive-controlled, **2 dirty and neither holding anything
-  unsaved** (one byte-identical to `main`, one rescued — see below).
-- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE.** The resolver exited
-  **5**; an unknown session id answers 200 with an EMPTY ARRAY, so that zero cannot
-  distinguish "touched no task" from "wrong id". None written, and none created.
-- ✅ **BOTH PREDECESSOR ARCS ARE CLOSED, RE-MEASURED RATHER THAN READ OFF THEIR DOCS.**
-  - control-plane: `python3 -m pytest tests -q` **2357 passed / 0 failed** (528.8 s),
-    `go test ./...` **21 ok / 0 FAIL**, `nix eval` resolving `default` and `cairn-go` to the
-    **identical** store path, and both named tests present
-    (`internal/control/matrix_test.go:85`, `internal/ui/sharing_test.go:416`). ⚠ The doc's
-    counts were 2303 and 20; both grew with `#146`.
-  - next-phase: `#148` MERGED as `e8839d9`; all four cards `complete`; each feature verified
-    **by content** on mainline with a nonexistent marker returning **0** as the negative
-    control. Recorded by a peer session's **PR #150**.
-- ✅ **BOTH DEPLOYED PODS ARE NOW AT `origin/main` — 0 COMMITS BEHIND, AND IT TOOK TWO
-  DEPLOYS.** Deployment repo `ab2a59ab5` (→ `b2b54e4`) then `ccdcd13e4` (→ `e8839d9`).
-  Verified by DIGEST against values resolved from ghcr **before** each push:
-  `cairn-ui sha256:518824b9…c939`, `cairn-store-go sha256:8a83e9cc…ac0c`, both pods
-  `ready=true restarts=0`. Runtime symptom exercised, not just the rollout: `GET /` → **401**
-  to a non-browser and **303 → /sign-in** to a browser `Accept`; `/sign-in` → **200**
-  carrying both a `name="token"` field and a `sign-in/github` action, so the provider is
-  ARMED; and the store API served a real live fetch (322 entries) on the new image.
-- 🔴 **ONE OF THIS SESSION'S OWN FINDINGS IS RETRACTED, AND THE RETRACTION IS THE MOST
-  VALUABLE THING HERE.** I reported that the browser surface's trusted-proxy allowlist was
-  stale and that every public caller therefore shared one lockout bucket — a 15-minute
-  global sign-in outage available to anyone. **There is no such exposure.** Full block under
-  `Open investigations`; do not re-derive it.
-- ✅ **A BULLET THAT EXISTED IN NO COMMITTED FILE IS RESTORED — PR #149.** `#140`
-  (`a035483`) deleted an operator-decision bullet from the control-plane doc while the
-  archive half of that move sat unstaged in another session's scratchpad worktree.
-- ⏳ **THREE PRs OPEN, none merged by this session:** **#149** (the rescue, +17/−0), **#150**
-  (a peer's arc-closing bookkeeping, +125/−59), **#151** (mine, +76/−0 — the retraction and
-  four defects, deliberately narrowed to zero overlap with #150 so merge order is free).
+- 🔴 **CLAUSE (b) IS MET AND VERIFIED ON THE LIVE DEPLOYMENT; THE ARC IS NOT CLOSED.**
+  `select count(*) from sessions` moved **0 → 1**, `invites` **0 → 1** (minted then revoked),
+  the share flow ran end to end (`granted` + `grant-revoked`, picker offering a real second
+  user), and the control journal went **30 → 37** records. `cairn` repo `main` is at
+  **`1e6fceb6`**, clean, **0 open PRs**.
+- 🔴 **WHAT IS LEFT IS CLAUSE (a), AND IT HAS TWO HALVES — THE CONDITION'S WORDING ONLY
+  COVERS ONE.** (a) says "a deployed **image**". Three artefacts can be stale, not one:
+  - ✅ **the two pod images** — both bumped to `origin/main` this session and verified by
+    DIGEST against values resolved from ghcr *before* each push; deployed commit was 0 behind
+    at the time.
+  - ⏳ **the INSTALLED CLIENT — still stale, and this is the live item.** Re-measured directly
+    rather than taken from the peer block that found it: `readlink -f "$(command -v cairn)"` →
+    `…-cairn-5dfc11a/bin/cairn`, and `cairn recall --help` greps **0** for `--ref-to`, **0**
+    for `--tag` and **0** for `Requirements`, with `--scope` at **2** as the positive control
+    proving the grep works. **So "how do I start using the new features" answers: from the
+    browser yes, from the installed CLI NO.**
+  - ❌ **no instrument exists that FAILS on any of the three.** That is rank 2 and it is
+    unbuilt.
+- ⏳ **THE CLIENT FIX IS BUILT, GREEN AND UNMERGED — it is one merge plus one switch away.**
+  The config repo's **PR #1933** (`fix/cairn-client-pin-bump`) is OPEN with **all four checks
+  PASS**: `pytests collected=24710 passed=24703 skipped=7 failed=0`, `gotests 461/0`,
+  `nodetests 1720/0`, and a `cairn-client-runs` leg confirming the pinned client executes.
+  ⚠ **Green on a PR is not applied to this host:** that repo's mainline still pins
+  `5dfc11a2ac12`, which is byte-for-byte the revision installed here — so the two agree, and
+  both are stale. Merging it is necessary AND not sufficient; the client is a home-manager
+  `home.file` COPY, so it also needs a switch.
+- ⚠ **THE OPERATOR NOW HAS A BROWSER-SURFACE CREDENTIAL AND HAD NONE BEFORE.** Issued for
+  their own existing user from inside the pod that owns the journal, delivered to a `0600`
+  file in their own client-config directory. **The path is deliberately not written here** —
+  this repo is PUBLIC and naming the file is a pointer to a live bearer token.
+- ⚠ **A SECOND USER IS PROVISIONED ON THE LIVE DEPLOYMENT AND IS DELIBERATELY INERT.**
+  `supabase:sharing-test`, joined to the existing project at role `member`, with **no
+  credential** — so it cannot authenticate, and it exists only to keep the share picker
+  exercisable. Its grant was revoked and the test invitation was revoked.
+- ✅ **CARRIED FORWARD — BOTH PREDECESSOR ARCS ARE CLOSED, RE-MEASURED RATHER THAN READ OFF
+  THEIR DOCS** (kept because a REPLACE heading would otherwise drop the values): control-plane
+  `python3 -m pytest tests -q` **2357 passed / 0 failed**, `go test ./...` **21 ok / 0 FAIL**,
+  `nix eval` resolving `default` and `cairn-go` to the **identical** store path; next-phase
+  `#148` merged as `e8839d9` with all four cards `complete`, each feature verified by content.
+- ✅ **CARRIED FORWARD — the two pod images were bumped to `origin/main` this session and
+  verified by DIGEST** (deployment repo `ab2a59ab5` → `ccdcd13e4`), and a bullet that existed
+  in NO committed file was restored as `#149`. Both are recorded in full under `Gotchas` and in
+  the RESOLVED investigation block; the values are kept here so a future REPLACE cannot take
+  them silently.
+- 🔴 **A RETRACTED FINDING OF THIS ARC'S OWN LIVES UNDER `Open investigations` AND IS STILL
+  BINDING:** the trusted-proxy "global lockout" claim is WITHDRAWN — there is no such exposure.
+  Do not re-derive it; the block says why.
+- ⚠ **NO TASK-BOARD FIELD: an UNKNOWN rather than a measured
+  absence.** The resolver exited **5**; an unknown session id answers 200 with an empty array,
+  so that zero cannot distinguish "touched no task" from "wrong id". None written, none
+  created.
+- ✅ **SIX PRs MERGED THIS SESSION IN `cairn`**, all docs-only: `#149` (`438b977a`, the rescued
+  bullet), `#150` (`25b6ab62`, a peer's arc close), `#151` (`cdf6fae5`, the retraction + four
+  defects), `#152` (`01a07c91`, this doc's birth), `#154` (`53534f7e`, clause (b) + the
+  counter correction), and two peers' — `#153` (`d6290d54`, the client-side half) and `#155`
+  (`1e6fceb6`, retracting a `CAIRN_LIB` two-tier claim `#153` had shipped as measured).
 
 ## Open investigations — live diagnosis state
 
@@ -311,49 +310,87 @@ new arc their leftovers belong to, not another round of either.
 - **Next probe:** none for this. The remaining question is the operator's: merge the
   other repo's PR, then switch.
 
+### The client-side half is GREEN on a PR and STALE on this host, and those are different claims
+- as-of: 2026-09-30
+- **Symptom + exact repro:** the installed CLI carries none of the three features this repo
+  shipped. `readlink -f "$(command -v cairn)"`; then
+  `cairn recall --help | grep -c -- --tag`.
+- **Observed (with values):** installed store path is `…-cairn-5dfc11a/bin/cairn`;
+  `--ref-to` **0**, `--tag` **0**, `Requirements` **0** in `--help`, with `--scope` at **2**
+  as the positive control proving the grep can match. The config repo's mainline
+  `flake.lock` node for this project locks **`5dfc11a2ac12`** — the same revision — so the
+  pin and the install agree and both predate all three feature squashes. `via: measurement`
+- **Ruled out:** that the fix is unwritten or red. The config repo's **PR #1933** is OPEN
+  with all four checks PASS (`pytests 24703 passed / 0 failed`, `gotests 461/0`,
+  `nodetests 1720/0`, plus a leg that runs the pinned client). `via: measurement`
+- **Ruled out:** that merging it is sufficient. The client is installed by home-manager as a
+  `home.file` **copy** — `readlink -f` terminates in the store, not in a working tree — so
+  the tree changing does nothing until a switch runs. `via: code`
+- **Ruled out:** that the PODS share the gap. Both were bumped to `origin/main` this session
+  and verified by digest; the three features are live on the browser surface, which is why
+  the browser answer and the CLI answer differ. `via: measurement`
+- **Leading hypothesis:** nothing is broken — the pin was never bumped, and the bump is now
+  one merge plus one switch from applied.
+- **Next probe:** merge the config repo's PR #1933, then run the home-manager switch, then
+  **re-run the `--help` greps above and require `--ref-to` and `--tag` to be non-zero** —
+  the switch is the step that can silently not happen, and `--help` is the cheapest reading
+  that can tell. 🔴 **Decide Python-vs-Go default BEFORE merging:** taking
+  `packages.default` flips `-verbs`/`-exit-codes` from exit 2 to exit 0, which is a
+  public-surface change and the operator's call, not a side effect of a version bump.
+
 ## Next steps (ranked)
 
-🔴 **NUMBERING IS STABLE — a rank is half a `claim-work` slug**, and `claim-work` comes
-BEFORE you act. ⚠ **And run `gh pr list --state open` ANYWAY: a claim answers "may I", never
-"is it done".** Measured this session — rank 4 of the next-phase doc returned **rc 12,
-already yours**, while 21 files of finished, twice-audited work sat in an open PR.
+🔴 **NUMBERING IS STABLE — a rank is half a `claim-work` slug**, and `claim-work` comes BEFORE
+you act. ⚠ **AND RUN `gh pr list --state open` ANYWAY, TWICE — before starting and again
+immediately before `gh pr create`.** Measured three times this session: the pre-work sweep was
+clean and a peer's PR appeared mid-write (`#150`, `#153`, `#155` — the last one retracting a
+claim a peer had shipped hours earlier). `claim-work` answering **rc 12, already yours** is
+indistinguishable from untouched work; only the sweep sees a duplicate nobody claimed.
 
-1. **Merge the three open PRs — #149, #150, #151 — in the cairn repo.** All three are
-   docs-only. #151 is `+76/−0` and cannot textually conflict with #150's `State now`
-   rewrite; #149 touches only the archive. Offer round 0 of the audit ladder on #149 and
-   #151 and skip the nine correctness axes: no code paths are touched.
-   forcing: gate — three unmerged docs PRs are the `stranded-docs` shape one `checkout` from
-   loss, and #149 exists precisely because that shape already cost a bullet.
-2. **Build the deployed-artefact currency instrument** — the (a) half of this arc's closing
-   condition. Files: a new CI job or Prometheus rule; the deployment repo's
-   the deployment repo's `subsystem-store` app directory carries the two `image:` pins it must
-   read (`deployment.yaml` for the API pod, `ui-deployment.yaml` for the browser surface). 🔴 **Watch it go RED on a deliberately stale pin before believing it** — and
-   note that "both pods carry the same tag" is NOT the check: they were equal to each other
-   and both stale, twice, which is exactly how this went unseen.
-   forcing: regression — the gap re-opened within minutes of being closed, twice in one
-   session, and no gate in either repository can see it.
-3. ✅ **DONE 2026-09-30 — the session table is written and clause (b) is MET.** `count(*)` 0 → 1
-   on the live deployment, plus the invite store 0 → 1 and the share flow exercised end to end.
-   The credential problem was solved without the operator having one: a credential was issued for
-   their OWN existing user from inside the pod that owns the journal. Claim
-   `cairn-ui-session-store-probe` RELEASED. ⚠ Its `n_tup_ins` evidence was corrected in the same
-   pass — see the RESOLVED investigation block.
-   forcing: user — the operator held the only credential that could run it, and that is now moot.
-4. **P8 — retire the Python oracle.** Carried over from the control-plane arc unchanged:
-   closing condition is a real read AND a real write against the live pod from **two distinct
-   hosts**, recorded, AND no open defect naming the Go client or `packages.default`.
-   **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway and the residual risk is accepted
-   EXPLICITLY, in writing.**
+1. ✅ **DONE — all PRs merged.** Six landed this session, verified BY CONTENT on `origin/main`
+   with a negative control at 0; ancestry was deliberately not used (a squash never makes the
+   branch head an ancestor). forcing: gate — unmerged docs PRs are the `stranded-docs` shape,
+   and `#149` exists because that shape already cost a bullet.
+2. **BUILD THE DEPLOYED-ARTEFACT CURRENCY INSTRUMENT — the (a) half, still unbuilt and now
+   known to cover THREE artefacts** (two pod images, one installed client), not the one its
+   wording names. 🔴 **Watch it go RED on a deliberately stale pin before believing it**, and
+   do not accept "both pods carry the same tag" as the check — they were equal to each other
+   and both stale, twice in one session.
+   forcing: regression — the image gap re-opened within minutes of being closed, twice, and no
+   gate in any of the three repositories can see any of the three artefacts.
+3. ✅ **DONE 2026-09-30 — clause (b) is MET.** Session table `count(*)` 0 → 1 on the live
+   deployment, invite store 0 → 1, share flow exercised end to end. Claim
+   `cairn-ui-session-store-probe` RELEASED. forcing: user — the operator held the only
+   credential that could run it, and that is now moot: one was issued for their own user.
+4. **P8 — retire the Python oracle.** Carried over unchanged: a real read AND a real write
+   against the live pod from **two distinct hosts**, recorded, AND no open defect naming the
+   Go client or `packages.default`. **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway and
+   the residual risk is accepted EXPLICITLY, in writing.**
    forcing: deadline — the 2026-11-01 backstop, set by the operator.
-5. **Fix the base-clone write guard** — carried over as the control-plane doc's rank 34, and
-   it reproduced a **fourth** independent time this session: it refused a commit in a LINKED
-   WORKTREE while naming the base clone, having resolved the repo from `$PWD` rather than
-   from the command's `-C` target. The premise was proved false on every axis before each
-   override (`--show-toplevel`, a 63-byte `gitdir:` `.git` FILE, a per-worktree git dir, a
-   feature branch, the base clone still on `main`). **Closing condition:** the guard admits a
-   linked worktree AND reads `-C`, with a test that a real base-clone write is still refused.
-   forcing: gate — a guard whose diagnosis is reliably about the wrong repository trains its
-   own bypass, which is the permanently-red-gate failure wearing a different hat.
+5. **Fix the base-clone write guard.** It reproduced a **FIFTH** independent time this session:
+   it refused commits in linked worktrees while naming the base clone, having resolved the repo
+   from `$PWD` rather than the command's `-C` target. Premise proved false before every
+   override. **Closing condition:** the guard admits a linked worktree AND reads `-C`, with a
+   test that a real base-clone write is still refused.
+   forcing: gate — a guard whose diagnosis is reliably about the wrong repository trains its own
+   bypass, which is the permanently-red-gate failure wearing a different hat.
+6. **MERGE THE CONFIG REPO'S PR #1933 AND RUN THE SWITCH — this is what makes the shipped
+   features usable from the CLI.** All four checks PASS. 🔴 **Decide Python-vs-Go default
+   first** (it flips `-verbs`/`-exit-codes` from exit 2 to exit 0 — a public-surface change,
+   the operator's call). Then re-run the `--help` greps and require `--ref-to`/`--tag`
+   non-zero; the switch is the step that silently may not happen.
+   forcing: user — the operator asked directly *"how can we validate and start using the new
+   features?"* and the CLI answer is currently "you cannot".
+7. **TRIAGE THE SEVEN UN-DROPPED SCOPE ITEMS from the original asks**, each measured absent on
+   `main` this session: a PWA (no manifest, no service worker), htmx (0 occurrences —
+   the surface is server-rendered gomponents), Google sign-in (only the one provider route
+   exists), "move scope ownership between projects" and "remove a member" (both exist ONLY as
+   declared journal event kinds with no writer, no CLI flag and no UI route), **scope**-level
+   tags (entry-level `tags:` shipped instead), and `/the-algorithm` over the whole design
+   (asked 2026-09-23, still 0 hits). Two look like conscious narrowings — Google was
+   re-specified to one provider, and scope tags may have been narrowed during the proposal
+   walkthrough — but neither was ever recorded as a decision, so they read as dropped.
+   forcing: user — all seven were asked directly and none was ever declined in writing.
 
 ## Defects (batched)
 
@@ -526,30 +563,95 @@ already yours**, while 21 files of finished, twice-audited work sat in an open P
   exit was the counter's, not the runner's. The pipe-eats-the-verdict trap with the
   polarity inverted, and the remedy is the same: read the content.
 
+- 🔴 **(a) AS WRITTEN IS NARROWER THAN THE PROBLEM — DO NOT RE-DERIVE IT AS IMAGE-ONLY.** The
+  closing condition says "a deployed **image**", and there are THREE artefacts that can be
+  stale: the two pod images and the INSTALLED CLIENT. This instruction is recorded here, under
+  an APPEND heading, because it first lived in `State now` — which REPLACES, so the next update
+  would have deleted the one sentence telling the next session the condition under-describes its
+  own arc. ⚠ That is the same narrower-than-the-sentence shape this repo keeps recording, and it
+  was committed while correcting a different instrument error in the same PR.
+- 🔴 **A CREDENTIAL CAN BE ISSUED WITHOUT THE OPERATOR HAVING ONE, AND THE POD THAT OWNS THE
+  JOURNAL IS WHERE IT HAS TO HAPPEN.** The operator had no browser-surface credential at all,
+  which blocked every live verification. `cairn-server` is NOT in the browser pod's image and
+  that pod's `/tmp` is read-only — **but it carries the exact nix glibc the binary is linked
+  against**, so the binary was copied onto the writable state volume and run there, appending
+  under the same `flock` the application uses. That beat the alternative (a second pod mounting
+  the ReadWriteOnce PVC) on blast radius. A credential was issued for the operator's OWN
+  existing user, delivered to a `0600` file, and the binary and token were deleted from the
+  volume afterwards; the pod stayed `ready=true restarts=0` throughout. ⚠ Check the glibc store
+  path first — a nix-built binary is dynamically linked and a mismatch is the failure mode.
+- 🔴 **`pg_stat_user_tables.n_tup_ins` LAGS, SO ITS ZERO CANNOT DISTINGUISH "NEVER WRITTEN"
+  FROM "WRITTEN SECONDS AGO".** Measured: immediately after the live sign-in the row was
+  ALREADY present (`count(*)=1`, `issued_at` stamped) while the view still read `n_tup_ins=0
+  n_live_tup=0`; a later read caught up to `ins=1 live=1`. `track_counts=on`, and
+  `stats_fetch_consistency=cache` is the mechanism. **`select count(*)` is the authority.**
+  ⚠ An earlier entry in this arc cited the counter as its evidence *and* cited a sibling
+  table's non-zero counter as a "positive control proving the counter moves" — both were
+  corrected in `#154`, because that pair would hand a false negative to anyone re-running it
+  within seconds of a sign-in.
+- 🔴 **A `member` CANNOT SHARE, AND THAT INTERACTS WITH CO-MEMBERSHIP NARROWING IN A WAY THE
+  PRODUCT ASK DID NOT ANTICIPATE.** `/share` answers **404** to a `member` — only owner/admin
+  may share. And `Candidates` is narrowed to people you already share a project with. So the
+  only principals you *can* share with already reach every scope the project owns, which means
+  a per-scope grant is only *meaningful* for a scope the project does NOT own, or across
+  projects. The mechanism works; its useful surface is narrower than "share per-scope with
+  other users" reads.
+- 🔴 **THE SHARE PAGE'S POSITIVE CONTROL IS NOW MEASURED RATHER THAN ASSERTED.** Live `/share`
+  rendered **2 × `read,write` "via project membership"** while "shares you can take back" said
+  *"No grant names this scope"* — a principal with authority and NO grant, which is exactly the
+  shape `AGENTS.md` names as proof the listing comes from `control.Resolve` and never from
+  `Model.Grants`. A principal with BOTH renders identically under either implementation, so
+  only this fixture can tell them apart.
+- ⚠ **`/invite` IS AN INDEX, NOT THE MINT FORM — and I nearly filed that as a defect.** The
+  page lists projects you may invite into; the form lives at `/invite?project=<id>`. Reading
+  the index and concluding "the mint affordance is missing" is the same shape as this arc's
+  two retractions: a confident read of a page that answers a different question than the one
+  asked.
+- 🔴 **A SESSION-MESSAGE AUDIT NEEDS A CORPUS ENUMERATION, BECAUSE THE ARC RESOLVER CANNOT SEE
+  THIS REPO.** `extract_user_msgs.py --arc` exits **3** on any doc here — it resolves only four
+  repo handles and this project is not one, so nothing is measured (which is a different
+  finding from an empty arc, exit 4). Enumerate the project's own transcript directory instead.
+  ⚠ **And 369 of the 514 extracted records were `<task-notification>` harness blobs** despite
+  the tool documenting that harness boilerplate is removed — the real operator-message count
+  was **145**. A count taken off that tool without filtering is inflated ~3.5×.
+- ⚠ **A NEGATIVE CONTROL CAN CONTAMINATE ITSELF WHEN THE CORPUS IS YOUR OWN TRANSCRIPT.**
+  Grepping the session corpus for a deliberately-absent string returned **1** — my own
+  transcript, which had recorded the probe command. Exclude your own session id before reading
+  such a control as a failure.
+
 ## How to verify
 
-🔴 **READ EVERY STATUS OFF THE COMMAND, NEVER THROUGH A PIPE** — a `| tail` owns the exit
-status, which this arc's predecessor paid for four times.
+🔴 **READ EVERY STATUS OFF THE COMMAND, NEVER THROUGH A PIPE.** This arc has now paid **five**
+times; the fifth was this session's own task-board `field` helper piped to `head -2`, where `$?` was
+`head`'s **0** and the real status was **1**. Redirect to a file and read `$?`.
 
 ```bash
-# the two closed arcs, re-measurable
-nix develop -c bash -c "cd /home/zach/workspace/cairn && python3 -m pytest tests -q -p no:randomly"   # 2357 passed
-nix develop -c bash -c "go test ./... > /tmp/t.out 2>&1; echo rc=\$?; grep -c '^ok' /tmp/t.out"        # 21 ok
-nix eval --raw .#packages.x86_64-linux.default.outPath   # == .#packages.x86_64-linux.cairn-go.outPath
+# clause (b) — DIRECT reads are the authority; the stats counter LAGS and its 0 is ambiguous
+kubectl -n subsystem-store exec sts/cairn-ui-postgres -- psql -U cairn_ui -d cairn_ui \
+  -c "select count(*) from sessions; select count(*) from invites;"
 
-# deployed currency — the (a) half of the closing condition, by hand until rank 2 lands
+# the deployed images: resolve image -> commit -> COUNT the distance (no gate does this)
 DEP=$(kubectl -n subsystem-store get deploy cairn-ui \
   -o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*sha-//')
-git -C /home/zach/workspace/cairn rev-list --count ${DEP}..origin/main    # must be 0
+git rev-list --count ${DEP}..origin/main          # must be 0, or only claudedocs/ commits
 
-# the (b) half — read the counter BEFORE and AFTER one sign-in; the MOVE is the evidence
-kubectl -n subsystem-store exec sts/cairn-ui-postgres -- psql -U cairn_ui -d cairn_ui \
-  -c "select relname,n_tup_ins,n_live_tup from pg_stat_user_tables order by relname;"
+# the INSTALLED client — the third stale artefact, and the cheapest reading of it
+readlink -f "$(command -v cairn)"
+cairn recall --help | grep -c -- --tag           # must be non-zero once #1933 lands + a switch
+cairn recall --help | grep -c -- --scope         # positive control: must already be non-zero
 ```
 
 **Verify a deploy by DIGEST, never by the `image:` field:** resolve the tag on ghcr
 anonymously *before* the push, then read `.status.containerStatuses[0].imageID` back and
 compare. A tag equal to what you wrote proves only that you wrote it.
+
+**The share flow, end to end, on a COPY rather than the live world** — the recipe that worked:
+copy the journal out, provision a second user with `-create-user` then join it to the EXISTING
+project **by id** with `-set-member` (the same `-project` NAME twice mints a second project),
+`-issue-credential`, run `cairn-ui` on a port chosen after `ss -ltn`, then drive
+`/sign-in` → `/share` → `/unshare`. `/share` takes `scope` + `subject` + repeated `verb=`;
+`/unshare` takes a `grant=grt_…` id. A `member` gets **404** on `/share` — only owner/admin
+may share.
 
 **The leak gate must pass before any push, and read its CONTENT not a pipe's rc:**
 ```bash
