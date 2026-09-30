@@ -274,6 +274,43 @@ new arc their leftovers belong to, not another round of either.
   whose whole value is refusing. Expect the badge cardinal to be the documented
   hand-written-cardinal trap in a new place.
 
+### RESOLVED, and it RETRACTS the `CAIRN_LIB` two-tier gotcha this same session wrote two blocks above
+- as-of: 2026-09-29
+- 🔴 **THE FIX IS LANDED AND THE SUITE IS GREEN**, so the "Next probe" on the block
+  above is answered: the other repo's PR carries a second commit updating the eight
+  guards. Full suite under the pinned lib: **`TOTAL collected=24710 passed=24703
+  skipped=7 failed=0`, `RESULT: PASS (exit=0)`**, 0 failure headers. The arithmetic
+  closes exactly — `+3` collected are three tests this change ADDS, `+11` passed is
+  the 8 that were red plus those 3, skips unchanged at 7 — so nothing hid behind the
+  failures and no new failure replaced one. `via: measurement`
+- 🔴 **RETRACTED: "a pin bump's local suite runs against the INSTALLED client, so a
+  green local run is structurally unable to see the bump."** That block is above, it
+  is stated as measured, and it is **FALSE**. Do not act on it and do not re-derive
+  it. Measured directly: inside `nix develop` with `$CAIRN_LIB` unset, `cairn` on
+  PATH resolves to the **pinned** package (`flake.nix` puts `cairn.packages.*.cairn`
+  in the devShell) and `cairn_pin.ensure()` returns the pinned `lib/`. And
+  `run-tests.sh`'s own header records that the pre-push tier "now runs `nix
+  develop`". **Both tiers read the same lib; there was no tier gap.** `via: measurement`
+- 🔴 **THE REAL CAUSE WAS COVERAGE, AND IT IS A DULLER LESSON WORTH MORE.** The
+  pre-push check on the bump ran **seven `*cairn*`-named test files** and reported
+  "282 passed / 0 failed" as if that gated it. **None of the three files that fail is
+  `*cairn*`-named** — they are the recall, touch and task-refs suites. A
+  FILENAME-SHAPED selection cannot gate a change whose blast radius is a shared
+  VOCABULARY, because the vocabulary's consumers are not named after it. Ask what
+  the change's blast radius is keyed on, then pick the target set from THAT.
+  `via: measurement`
+- ⚠ **ALSO RETRACTED: "merge and switch together, or pre-push fails on an unswitched
+  host."** Same root error. Pre-push enters `nix develop`, so it gets the pinned lib
+  whatever is installed. A `home-manager switch` is still wanted — but only so the
+  operator's INTERACTIVE `cairn` gains the features, which was the point of the bump,
+  not a test concern. `via: measurement`
+- **`$CAIRN_LIB` is still the right INSTRUMENT, just not the explanation.** Setting it
+  explicitly is how the eight were attributed to the bump rather than to the tree:
+  same tree, same test, **old lib 1 passed / new lib 1 failed**. That old-lib arm is
+  an A/B probe, not a configuration anybody runs. `via: measurement`
+- **Next probe:** none for this. The remaining question is the operator's: merge the
+  other repo's PR, then switch.
+
 ## Next steps (ranked)
 
 🔴 **NUMBERING IS STABLE — a rank is half a `claim-work` slug**, and `claim-work` comes
@@ -451,6 +488,43 @@ already yours**, while 21 files of finished, twice-audited work sat in an open P
   verified; this is a finding, NOT an operator requirement, and nothing here is
   deletion-immune" — the mitigation the closed arc's rank 10 asks for, applied rather than merely
   filed.
+
+- 🔴 **I ASSERTED A MECHANISM WITHOUT MEASURING IT, WHILE FIXING GUARDS THAT EXIST TO
+  STOP THAT.** The retraction above is the instance. A coherent story — "two tiers,
+  two libs, the local one is stale" — explained every observation I had, so I wrote
+  it into a handoff doc and a PR comment as measured. It took one command to refute
+  (`nix develop … -c 'which cairn'`). **A theory that explains the failure is not
+  evidence for it**, and the cheap discriminating control was cheaper than the
+  paragraph I wrote instead. The tell I ignored: I had never actually run the
+  resolution, only read the resolver's docstring and reasoned forward from it.
+- 🔴 **A GUARD CAN BE NARROWER THAN ITS NAME AND STILL PASS — TWO DID, IN ONE CLASS.**
+  `..._drops_ALL_THREE_explanations` and `..._brings_ONLY_its_own_clause` asserted
+  over three badges while the module had four: green, reading as coverage, providing
+  none for the fourth. Only the sibling that COMPARED against the full rendering
+  failed. **A hand-written cardinal in a test NAME is the same claim as one in prose**
+  — derive the set, and add a guard that FAILS when the module grows a member nobody
+  mapped. That new guard was watched red with its own message, not another's.
+- 🔴 **A MUTATION ANCHOR THAT GOES `0x` IS THE GOOD FAILURE; THE BAD ONE IS RE-POINTING
+  IT AT THE WRONG SITE.** Three anchors went stale (a tuple re-spelled across lines, a
+  predicate that grew two terms, a construction moved into a factory) and
+  `_load_mutant` REFUSED each loudly rather than scoring SURVIVED — which is the only
+  reason they were found. My first re-anchor then aimed at a *sibling* site: the
+  mutation applied, the test failed, and it read as a broken FIX rather than a wrong
+  ANCHOR. **Re-derive which call path the scenario reaches before moving an anchor**,
+  and prefer the narrowest expression the mutation can be about — the factory over
+  its caller, the tuple's first element over the whole tuple.
+- 🔴 **A CLASS-LEVEL `module.CONSTANT` IN A TEST IS AN IMPORT-TIME DEPENDENCY, AND IT
+  FAILS AS AN OPAQUE COLLECTION ERROR.** Keying a map on `rc.BADGE_REQUIREMENTS`
+  resolved at class-definition time, so against a client lacking it the whole FILE
+  reported `1 error` — no test names, no counts, exit 2. Keyed on the badge's VALUE
+  literal instead, the file imports either way and the mismatch is reported BY NAME.
+  Same family as every other opaque-zero in this doc: prefer the failure that names
+  itself.
+- ⚠ **`grep -c` EXITS 1 ON ZERO MATCHES, SO A TRAILING `grep -c` MAKES A GREEN RUN
+  REPORT FAILURE.** A background full-suite run notified as "failed with exit code 1"
+  while its own content read `RESULT: PASS (exit=0)` and `0` failure headers — the
+  exit was the counter's, not the runner's. The pipe-eats-the-verdict trap with the
+  polarity inverted, and the remedy is the same: read the content.
 
 ## How to verify
 
