@@ -289,14 +289,23 @@ untouched work; only the sweep sees a duplicate nobody claimed.
    deployment, invite store 0 → 1, share flow exercised end to end. Claim
    `cairn-ui-session-store-probe` RELEASED. forcing: user — the operator held the only
    credential that could run it, and that is now moot: one was issued for their own user.
-4. **P8 — retire the Python oracle.** Carried over unchanged: a real read AND a real write
-   against the live pod from **two distinct hosts**, recorded, AND no open defect naming the
-   Go client or `packages.default`.
-   ⚠ **AND RANK 6 NOW FEEDS IT: the operator has chosen the Go client for the installed CLI, so
-   P8's decision half is partly pre-answered — but the pin-seam split rank 6 describes must land
-   FIRST, or retiring `packages.cairn` removes the reader modules 22 config-repo consumers
-   import.** **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway and the residual risk is
-   accepted EXPLICITLY, in writing.**
+4. **P8 — retire the Python oracle.** Carried over: a real read AND a real write against the
+   live pod from **two distinct hosts**, recorded, AND no open defect naming the Go client or
+   `packages.default`.
+   🔴 **AND P8 NOW HAS A HARD CROSS-REPO PRECONDITION IT DID NOT HAVE, CREATED BY RANK 6 —
+   `packages.cairn` CANNOT BE DELETED UNTIL THE CONFIG REPO STOPS IMPORTING THE READER
+   MODULES.** The Go flip makes that dependency EXPLICIT rather than incidental: the config repo
+   now threads `packages.cairn` under its own name purely for `libexec/cairn/lib`, deploys it as
+   a second on-PATH launcher, and points three `CAIRN_LIB=` units at it. **22 files import that
+   resolver, with no fallback by construction** — the copies were deleted when it consolidated
+   onto the pin — so deleting `packages.cairn` refuses them all at import, including the writer
+   and the launcher the `subsystem-index` write protocol names. ⚠ **The 2026-11-01 BACKSTOP is
+   what makes this urgent rather than academic: a date-triggered P8 that fires into that state
+   breaks the config repo with no warning.** So the ORDER is: the config repo stops importing
+   the reader modules → then `packages.cairn` goes. Never the reverse, and the backstop does not
+   change the order — it only decides when the question is forced.
+   **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway and the residual risk is accepted
+   EXPLICITLY, in writing.**
    forcing: deadline — the 2026-11-01 backstop, set by the operator.
 5. **Fix the base-clone write guard.** It reproduced a **FIFTH** independent time: it refused
    commits in linked worktrees while naming the base clone, having resolved the repo from `$PWD`
