@@ -346,19 +346,23 @@ with test coverage.
   behind `origin/main` — a CI job, a Prometheus rule, or an image-automation controller —
   or a written line accepting manual bumps and naming who re-reads the distance.
   ⚠ A third manual bump is not the fix and would rot the same way.
-- 🔴 **THE DATABASE-BACKED SESSION STORE HAS NEVER BEEN WRITTEN TO.** `sessions.n_tup_ins`
-  is **0** — cumulative since the postmaster came up at the 28(d) cutover
-  (`stats_reset` is NULL), with `schema_migrations.n_tup_ins = 1` as the positive control
-  proving the counter moves and that this is the database the app migrated. The startup
-  banner reads `state sessions in postgres, invitations in postgres` and the table exists
-  with the right columns; **a banner is configured-state, not evidence the feature works**,
-  which the 28(d) block said in advance. ⚠ So rank 13's operator sign-in report on the
-  control-plane doc cannot have landed in THIS database after the cutover, or it did not
-  persist. A single credential-form attempt from this session returned **401** and wrote
-  nothing (correct for a refusal): the store API token is NOT the UI credential — the UI's
-  is the one issued into the control journal at seeding. **Closing condition:** one sign-in
-  that moves `sessions.n_tup_ins` from 0 to 1, read before and after. The credential is the
-  operator's; nothing else blocks it.
+- ✅ **CLOSED 2026-09-30 — the database-backed session store IS written, AND THIS ENTRY'S OWN
+  EVIDENCE WAS THE WRONG INSTRUMENT.** It read: *"`sessions.n_tup_ins` is 0 — cumulative since
+  the postmaster came up at the 28(d) cutover (`stats_reset` is NULL), with
+  `schema_migrations.n_tup_ins = 1` as the positive control proving the counter moves"*.
+  🔴 **`pg_stat_user_tables.n_tup_ins` LAGS, so its zero cannot distinguish "never written" from
+  "written seconds ago".** Measured on the live deployment: immediately after a real sign-in the
+  row was ALREADY present (`count(*) = 1`, `issued_at` stamped) while the view still read
+  `n_tup_ins=0 n_live_tup=0`; a later read caught up to `ins=1 live=1`. `track_counts=on`, and
+  `stats_fetch_consistency=cache` is the mechanism — a stats snapshot is cached.
+  **The authority is `select count(*)`, a direct read; the counter is lagging corroboration.**
+  ⚠ The original CONCLUSION was right — it rested on `count(*) = 0` — but the evidence as written
+  here, and the `schema_migrations` "positive control" beside it, would hand a false negative to
+  anyone re-running it within seconds of a sign-in. **Closed by:** `count(*)` 0 → 1 on the live
+  surface, with the invite store also written (0 → 1, minted then revoked) and the share flow
+  exercised end to end. The credential was not the operator's after all — one was issued for their
+  own existing user from inside the pod that owns the journal, which is why this no longer needed
+  them. Full values: `claudedocs/handoff-cairn-deploy-currency.md`'s RESOLVED block.
 - ⚠ **`#140`'s "0 lost, 0 duplicated" WAS TRUE OF THE BULLETS IT MOVED AND SILENT ABOUT ONE
   IT DELETED.** The operator-decision bullet *"the prune was chosen over feature work"* was
   removed from the control-plane doc by `a035483` while the archive half of that move sat
