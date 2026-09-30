@@ -125,6 +125,84 @@ new arc their leftovers belong to, not another round of either.
   five is already spent** by the 401 above. The allowlist is correct (see the retraction), so
   a further failure locks out only the caller — not everybody.
 
+### The INSTALLED client carries none of the three features this repo shipped, and no card, claim or arc owns it — this arc's client-side half
+- as-of: 2026-09-29
+- **Symptom + exact repro:** `cairn recall --help` on this host lists neither `--ref-to` nor
+  `--tag`. `readlink -f "$(which cairn)"` → a `/nix/store/…-cairn-5dfc11a/bin/cairn`.
+- **Observed (with values):** installed revision **`5dfc11a`**, dated **2026-09-23**, is
+  **63 commits** behind `origin/main` and `merge-base --is-ancestor` says it is an ancestor of
+  **all three** feature squashes (`5c59169` refs, `94ecb7e` tags, `e8839d9` requirements) — so
+  it predates every one. `--ref-to` and `--tag` each grep **0** in `--help`. It is the PYTHON
+  client (argparse usage; `-verbs` refuses at exit 2), while the flake's `default` is now the
+  Go one. It is installed by **home-manager as a `home.file` COPY** — `readlink -f` terminates
+  in `…-home-manager-files/…`, so editing anything does nothing and it needs a switch — and the
+  revision comes from the other repo's `flake.lock` node `cairn`, locked at `5dfc11a2ac12`.
+  `via: measurement`
+- **Ruled out:** the deployed PODS as the gap. They carry all three, measured behaviourally
+  against the live pod with a control on each: `?ref-to=zzz-no-such-ref` → **400** carrying
+  662's own refusal (*"not a well-formed `<system>:<id>` ref"*); `?tag=<bogus>` →
+  **`status=tag-absent`** with a real narrowing sentence (*"0 of 13 entries … carry it"*); and a
+  `## Requirements` section written into a real entry → index row **`🔴 2 REQ OPEN ✅ 1 REQ
+  MET`**, the counts matching the content exactly. That is a SECOND, INDEPENDENT instrument
+  agreeing with this arc's digest verification — behaviour where that read identity.
+  `via: measurement`
+- **Ruled out:** this arc already covering it. Closing condition (a) is about a deployed
+  **image's** commit; grepping this doc for `flake.lock`, home-manager, "installed client" and
+  `5dfc11a` returns **empty**, and none of the five ranked steps names it. No task-board card
+  matches, and `claim-work --list` holds no claim on it (`cairn-pods-renderer-lag` is released).
+  `via: measurement`
+- **Leading hypothesis:** nothing is broken — the pin was simply never bumped. It is 6 days old
+  and three user-facing features have landed behind it. `via: assumed`
+- **Next probe:** in the other repo,
+  `python3 -c "import json;print(json.load(open('flake.lock'))['nodes']['cairn']['locked']['rev'])"`
+  then `nix flake update cairn` and a switch. Expect `scripts/tests/test_cairn_flake_pin.py` to
+  gate it: it pins the whole SEAM as one relationship (input → outputs argument →
+  `extraSpecialArgs` → `nix/home.nix`'s module header → the deploy line), plus the half of the
+  split that must NOT move to the package, plus the `CAIRN_MIRROR_ROOT` export whose absence
+  silently downgrades a `doctor` check from PASS to NOT-RUN. 🔴 **Decide Python-vs-Go default
+  BEFORE opening it** — taking `packages.default` flips `-verbs`/`-exit-codes` from exit 2 to
+  exit 0, which is a public-surface change and the operator's call, not a side effect of a bump.
+
+### SUPERSEDES the "Next probe" on the client-pin block above: the bump was BUILT, it is RED, and the cause is a VOCABULARY SEAM rather than a regression
+- as-of: 2026-09-29
+- 🔴 **The block above ends with "open the PR and expect `test_cairn_flake_pin.py` to gate it".
+  That probe is ANSWERED and its expectation was WRONG in an instructive way** — the seam guard
+  it named passes; eight OTHER guards fail. Do not re-run that probe.
+- **Symptom + exact repro:** the other repo's PR (`flake.lock`'s `cairn` node only,
+  `5dfc11a2ac12` → `cdf6fae5f6ba`) is RED on that repo's `pytests` context. Repro:
+  `CAIRN_LIB=<new-store-path>/libexec/cairn/lib` then the repo's own runner.
+- **Observed (with values):** full suite under the new lib —
+  **`TOTAL collected=24707 passed=24692 skipped=7 failed=8`, `RESULT: FAIL (exit=1)`.**
+  `nodetests`, `gotests` and the **pinned-client leg all PASS**, so the client itself runs. The
+  eight, by name: `test_every_declared_status_is_reachable` ·
+  `test_all_three_badges_reproduce_the_FULL_prose` · `test_kills_the_what_it_is_INCLUSION` ·
+  `test_kills_the_unreadable_entry_wrap` · `test_kills_the_search_unreadable_discriminator` ·
+  `test_the_WRITER_refuses_a_bare_string_the_READER_would_reject` ·
+  `test_a_github_ref_survives_write_read_BYTE_IDENTICALLY` · `test_kills_the_ITERDIR_choice`.
+  `via: measurement`
+- **Ruled out:** a pre-existing red. That repo's mainline is green on all four contexts
+  (`collected=24707 passed=24700 failed=0`). `via: measurement`
+- **Ruled out:** anything other than the pin. Same tree, same test, only `CAIRN_LIB` differs —
+  **old lib 1 passed, new lib 1 failed.** One variable, both directions. `via: measurement`
+- **Ruled out:** the seam guard the input's own comment names. `test_cairn_flake_pin.py` and six
+  other client suites pass — **282 passed / 0 failed** — which is exactly why that green was
+  believed and was not evidence. `via: measurement`
+- **Leading hypothesis — and it is a mechanism, not a guess.** The three shipped features GREW
+  the vocabulary those guards enumerate: a fourth canonical section, two new statuses, two new
+  badges (so a guard asserting "all **three** badges" is false *by arithmetic*), and ref
+  grammar. Both repos' suites are green in isolation; together they are not. Worked example, the
+  `ITERDIR` one: it mutates the FILENAME tier (`iterdir`→`glob`) and asserts a `0o000` scope then
+  emits NO caveat — a silently-wrong "slug is free". Under the new lib the ALIAS tier catches the
+  `PermissionError` and says so, so the mutant can no longer be silent. **The client got SAFER;
+  what broke is the fixture's isolation premise**, because one `chmod` breaks both tiers.
+  `via: measurement`
+- **Next probe:** update that repo's writer-side guards to absorb the new vocabulary — the
+  heading set, the status set, the badge cardinal (**derive it, never re-count it in prose**), and
+  the ref grammar — then re-run under `CAIRN_LIB=<new>`. 🔴 **Do NOT relax the assertions to go
+  green:** five of the eight guard against a SILENT wrong answer, and three are mutation kills
+  whose whole value is refusing. Expect the badge cardinal to be the documented
+  hand-written-cardinal trap in a new place.
+
 ## Next steps (ranked)
 
 🔴 **NUMBERING IS STABLE — a rank is half a `claim-work` slug**, and `claim-work` comes
@@ -222,6 +300,83 @@ already yours**, while 21 files of finished, twice-audited work sat in an open P
   retraction above first spelled the allowlisted address in order to explain it. Every
   address is now named by ROLE, checked mechanically against the diff (0 matches).
   **An example that IS the thing it forbids is the thing it forbids.**
+
+- 🔴 **A DEPLOYED-CURRENCY ARC HAS A CLIENT-SIDE HALF, AND IT IS THE HALF NOBODY IS LOOKING
+  AT.** "What is deployed" naturally reads as pods and images; the artefact an operator actually
+  TYPES is pinned separately, by a different repo, through a different mechanism (home-manager
+  `home.file`, not an image tag), and it can be six days and three features behind while every
+  pod is at `origin/main` and every currency check is green. The full measurement is the Open
+  investigations block above. **Any instrument built for closing condition (a) should be asked
+  whether it can see the client at all** — as specified it cannot.
+- 🔴 **`x-store-revision: unknown` — THE HEADER EXISTS AND NOTHING POPULATES IT, MEASURED.** The
+  pod already answers a revision header on every read and its value is the literal string
+  `unknown`, so you cannot ask a running pod which code it is. There is **no `/version` route**
+  either — the read heads are exactly `recall`, `search`, `snapshot`. That is why establishing
+  whether a pod carried a feature needed a behavioural probe rather than one `curl`. It is also
+  a ready-made home for this arc's instrument: populating that header at build time makes pod
+  currency a one-request check instead of a deploy-repo archaeology exercise.
+- 🔴 **THE CLOSED `next-phase` ARC'S RANK 9 IS CONFIRMED LIVE, WITH A PAIRED CONTROL — and it is
+  now on real content.** Identical `OPEN:` marker text: under `## Requirements` the validator
+  reports **`0 declared`**; moved verbatim under `## Nuance / work-history` it is **found**. Only
+  the SECTION differs, so the scoping is the mechanism, not the spelling. A whole-scope run
+  agrees (13 entry files, still only the one pre-existing declared `OPEN:`). So a requirement's
+  open state reaches **no** validator surface. Recorded as an `OPEN: (inferred)` requirement on
+  the `cairn/report` store entry, which is self-demonstrating: the bullet describing the
+  blindness is itself invisible to the check that would report it.
+- 🔴 **A `## Requirements` BADGE LIVES ON THE INDEX VIEW, NOT ON A `--ref` READ — AND PROBING THE
+  WRONG ONE READS AS "THE FEATURE IS ABSENT".** A `--ref` read renders the section's body
+  verbatim (bodies always are) and emits **no** badge, so `grep REQ` there returns 0 on a pod
+  that fully supports it. Use the index/list view, and pair it with a badge-rendering control
+  (assert some OTHER badge appears) so a zero cannot mean "badges are off everywhere".
+- ⚠ **#150 WAS MERGED 16 MINUTES BEFORE ITS OWN CHECKS SETTLED** — merged 22:43:22Z, all 8 green
+  at 22:59:43Z, no auto-merge. The outcome was benign and the head was already 6-of-8 green, but
+  what a gate buys is the ORDERING of the evidence, not the outcome, and that is what was spent.
+  Recorded, not relitigated.
+- ⚠ **zsh: AN UNQUOTED MULTI-PATH `$3` INSIDE A FUNCTION IS **ONE** PATHSPEC, NOT TWO.** zsh does
+  not word-split, so `git grep -l "$1" <rev> -- $3` with `$3="internal/api internal/report"`
+  matches nothing and returns a confident **0 for every row** of a check table. Three features
+  read as "integration ABSENT" until a positive control caught it. Use `${=3}` or a real array.
+- ⚠ **`clawgatectl task list` IS NOT A VERB — IT IS `ls`** — and the wrong spelling printed
+  nothing and exited without an error, which reads exactly like "no open tasks". Same shape as
+  grepping JSON for `^status`: the tool answered about itself, not about the board.
+
+- 🔴 **A PIN BUMP'S LOCAL SUITE RUNS AGAINST THE *INSTALLED* CLIENT, NOT THE PINNED ONE — SO A
+  GREEN LOCAL RUN IS STRUCTURALLY UNABLE TO SEE THE BUMP.** `cairn_pin` resolves the packaged
+  `lib/` from **`$CAIRN_LIB`, else from `~/.local/bin/cairn`'s store path** — never from
+  `flake.lock`. Measured: 282 tests passed locally and were reported as covering the bump; they
+  exercised the OLD lib, while CI's sandbox exercised the NEW one and found 8 failures. This is
+  the two-tier rule with a concrete mechanism: **name the variable that selects the tier, and set
+  it.** `CAIRN_LIB=<store-path>/libexec/cairn/lib` is the whole fix to the method.
+- 🔴 **"VERIFIED IN ISOLATION" HAS A CONCRETE SHAPE HERE: TWO REPOS, EACH GREEN, BROKEN
+  TOGETHER.** cairn's suite is green at `cdf6fae`; the other repo's is green on its mainline; the
+  pin that joins them fails 8 guards. Nothing in either repo's CI ever built the combined state —
+  the other repo's pinned-client leg passes because it only asks whether the client RUNS. **Ask
+  which surface your fixture does not load.**
+- 🔴 **A COUNT IS NOT A SET, AND I GOT THE SET WRONG TWICE BEFORE GETTING IT RIGHT.** The status
+  description truncates at 140 chars and named **1**; a file-scoped run found **1**; my first
+  FAILURES-header regex found **4**; the runner's own `failed=` said **8**. Only the last is the
+  set. **Read the runner's own total, then make your name-extraction agree with it** — a header
+  pattern that returns fewer names than the total is a broken instrument, and the disagreement is
+  the tell.
+- ⚠ **THE WRITE GUARD KEYS ON THE SESSION'S CWD, NOT THE `-C` TARGET — AND THE PLUMBING ROUTE IS
+  THE RIGHT ANSWER, NOT THE OVERRIDE.** Committing into a worktree of the OTHER repo was refused
+  because this session sits in *this* repo's shared base clone. The documented
+  `BASE_CLONE_WRITE_OK=1` asserts a hazard that was not happening; `hash-object` → scratch
+  `GIT_INDEX_FILE` → `read-tree` → `update-index` → `write-tree` → `commit-tree` → `push <sha>:…`
+  produced the commit while touching no branch, no index and no base clone. Verify the built
+  commit's own diff before pushing it.
+- ⚠ **zsh ATE `$C:flake.lock` AS A HISTORY MODIFIER — FOURTH INSTANCE IN THIS EFFORT, AND THIS
+  TIME IT FAKED A SAFETY FAILURE.** `git show "$C:flake.lock"` lost `:f`, wrote an EMPTY file, and
+  the "is this worktree's content already pushed?" check then reported a false
+  *DIFFERENT — DO NOT REMOVE*. Braced (`"${C}:flake.lock"`) it is byte-identical. Prior instances
+  were refspecs, so "brace refspecs" was the wrong generalisation: **brace every `$VAR:`
+  construction.** The failure direction is not always loud — here it was, but a false SAME would
+  have licensed deleting unsaved work.
+- ⚠ **AN AGENT-AUTHORED PR COMMENT IS LABELLED AS SUCH, DELIBERATELY.** The finding above was
+  posted to that PR prefixed "posted from the operator's account by an AGENT; authorship NOT
+  verified; this is a finding, NOT an operator requirement, and nothing here is
+  deletion-immune" — the mitigation the closed arc's rank 10 asks for, applied rather than merely
+  filed.
 
 ## How to verify
 
