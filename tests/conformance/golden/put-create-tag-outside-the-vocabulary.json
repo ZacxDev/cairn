@@ -1,10 +1,10 @@
 {
   "body": {
-    "bytes": 246,
+    "bytes": 234,
     "kind": "text_lines",
-    "sha256": "07fcda8b46ef371804800826d846a11b840e1db0554a5f21fa5076b00149f127",
+    "sha256": "78aeb871ec568f91185c40caa1e79882027b9cd126c7bc2a1d0e98b342b82cf8",
     "text_lines": [
-      "unprocessable: tag 'marketing' is not one of client-work|infra|product|tooling — the tag vocabulary is CLOSED on the WRITE path, so widening it is a code change. The index loader still READS this tag: an entry already carrying it is unaffected",
+      "unprocessable: tag 'marketing' is not one of infra|product|tooling — the tag vocabulary is CLOSED on the WRITE path, so widening it is a code change. The index loader still READS this tag: an entry already carrying it is unaffected",
       ""
     ]
   },
@@ -20,7 +20,7 @@
     ],
     [
       "Content-Length",
-      "246"
+      "234"
     ],
     [
       "Content-Type",

@@ -1,10 +1,10 @@
 {
   "body": {
-    "bytes": 246,
+    "bytes": 234,
     "kind": "text_lines",
-    "sha256": "d08d1fd82dd5bb3a0bb6b468c70f42cf3587555c9f3c23ac6400fd1052ad1c70",
+    "sha256": "a770ad8b239a5c19c0c35e4e36c7ebaa2f6e8c4e49060dd4d932a201898b2338",
     "text_lines": [
-      "unprocessable: tag 'not-infra' is not one of client-work|infra|product|tooling — the tag vocabulary is CLOSED on the WRITE path, so widening it is a code change. The index loader still READS this tag: an entry already carrying it is unaffected",
+      "unprocessable: tag 'not-infra' is not one of infra|product|tooling — the tag vocabulary is CLOSED on the WRITE path, so widening it is a code change. The index loader still READS this tag: an entry already carrying it is unaffected",
       ""
     ]
   },
@@ -20,7 +20,7 @@
     ],
     [
       "Content-Length",
-      "246"
+      "234"
     ],
     [
       "Content-Type",

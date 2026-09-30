@@ -17,9 +17,9 @@ import (
 // taggedEntry is one entry body carrying exactly the `tags:` line given.
 //
 // ⚠ IT TAKES THE RAW FLOW-SEQUENCE TEXT, NOT A SLICE, so a case can write the UNFOLDED
-// spelling an operator would type (`Infra`, `Client_Work`) and measure that the fold
-// happens before the vocabulary comparison. A `[]string` here would have folded in the
-// helper and made every fold case vacuous.
+// spelling an operator would type (`Infra`, `ToOlInG`) and measure that the fold happens
+// before the vocabulary comparison. A `[]string` here would have folded in the helper and
+// made every fold case vacuous.
 func taggedEntry(tagsFlow string) string {
 	return "---\n" +
 		"service: gadget-one\n" +
@@ -42,7 +42,7 @@ func taggedEntry(tagsFlow string) string {
 // a mutant that reorders the vocabulary, drops a term, or changes the separator — the
 // exact three edits the conformance corpus would then catch on the oracle instead, one
 // gate and several minutes later.
-const wantRefusal = "tag 'marketing' is not one of client-work|infra|product|tooling — " +
+const wantRefusal = "tag 'marketing' is not one of infra|product|tooling — " +
 	"the tag vocabulary is CLOSED on the WRITE path, so widening it is a code change. " +
 	"The index loader still READS this tag: an entry already carrying it is unaffected"
 
@@ -201,12 +201,26 @@ func TestEveryDeclaredTagIsAcceptedByBothWritePrimitives(t *testing.T) {
 // folded set and never the raw front matter.
 //
 // 🔴 THE FOLD IS WHY THIS IS NOT A CASE-SENSITIVE ALLOWLIST. An operator writes
-// `tags: [Infra]` or `tags: [Client_Work]`; `NormalizeRef` lowercases and folds `_` to
-// `-`, so both are declared terms by the time the comparison happens. A gate that
-// compared the raw strings would refuse the spelling most people type, and the refusal
-// would name a tag the store would never have held.
+// `tags: [Infra]` or `tags: [ToOlInG]`; `NormalizeRef` lowercases and trims, so both are
+// declared terms by the time the comparison happens. A gate that compared the raw strings
+// would refuse the spelling most people type, and the refusal would name a tag the store
+// would never have held.
+//
+// ⚠ THE `_`→`-` HALF OF THE FOLD IS MEASURED BY THE REFUSAL BRANCH, NOT THE ACCEPT ONE,
+// AND THE NARROWING IS WHY. All three declared terms are single words now, so no
+// UNDERSCORE spelling of a declared term exists to accept — `Pro_duct` folds to
+// `pro-duct`, which is not a term. So the `_` rule is exercised below, where `Not_Infra`
+// must be refused naming the folded `not-infra`. Said out loud because the obvious edit
+// (add an underscore case to the accepted list) cannot be done and a reader would
+// otherwise read its absence as an omission.
 func TestTheVocabularyComparisonSeesTheFOLDEDTag(t *testing.T) {
-	accepted := []string{"Infra", " infra ", "INFRA", "Client_Work", "client_work"}
+	// ⚠ THE FOLD CASES COVER CASE, SURROUNDING WHITESPACE AND `_`→`-`, AND THE LAST ONE
+	// NEEDS A HYPHENATED TERM TO BE REACHABLE AT ALL. With the vocabulary narrowed to
+	// three single-word terms there is none, so `Pro_duct` is used: it folds to
+	// `pro-duct`, which is NOT a declared term, and would therefore be a refusal — so the
+	// `_` rule is measured by the refusal branch below rather than here. Said out loud
+	// because the accepted list silently losing its `_` case is how that coverage goes.
+	accepted := []string{"Infra", " infra ", "INFRA", "Product", "ToOlInG", "  tooling"}
 	for _, raw := range accepted {
 		dir := t.TempDir()
 		if _, err := CreateEntry(filepath.Join(dir, "alpha-notes", "gadget-one.md"),
@@ -266,33 +280,34 @@ func TestAppendingToAnEntryCarryingAnOffVocabularyTagStillWorks(t *testing.T) {
 	}
 }
 
-// TestTheVocabularyIsExactlyTheDeclaredFourTerms pins the set, its ORDER and its
-// uniqueness.
+// TestTheVocabularyIsExactlyTheDeclaredThreeTerms pins the set and its ORDER.
 //
 // 🔴 THE ORDER IS PART OF THE WIRE CONTRACT, NOT TIDINESS. The refusal joins this slice
 // with `|`, the oracle joins its own tuple the same way, and `tests/conformance/`
-// compares the two servers' bytes. Sorted-and-unique is also what makes the refusal
-// stable across runs.
+// compares the two servers' bytes.
 //
 // ⚠ AN INVARIANT GUARD, NOT REGRESSION COVERAGE: no defect ever reordered this slice.
-// It is here so a fifth term added on one side is red in this package rather than three
+// It is here so a term added on one side alone is red in this package rather than three
 // gates away.
-func TestTheVocabularyIsExactlyTheDeclaredFourTerms(t *testing.T) {
-	want := []string{"client-work", "infra", "product", "tooling"}
+//
+// 🔴 IT DELIBERATELY DOES **NOT** ALSO ASSERT SORTEDNESS AND UNIQUENESS, AND DELETING
+// THOSE TWO ASSERTIONS IS THE POINT RATHER THAN A TRIM. They stood here for one round
+// behind the `slices.Equal` above, and they were UNREACHABLE AS FAILURES — which is a
+// derivation, not a measurement, and is stated as one: `t.Fatalf` ends the test, and
+// `slices.Equal` against a literal that is itself sorted and duplicate-free already
+// implies both properties, so any slice that could violate either has necessarily
+// already failed the equality. Two assertions that cannot fail read as two more things
+// being checked and check nothing, which is worse than their absence because it stops
+// the next reader looking for the property that IS unguarded. What WAS measured is the
+// other half: mutant M12 (swapping two terms) reds the equality below, so the order is
+// genuinely guarded — by the equality, and only by it.
+func TestTheVocabularyIsExactlyTheDeclaredThreeTerms(t *testing.T) {
+	want := []string{"infra", "product", "tooling"}
 	if !slices.Equal(tagVocabulary, want) {
 		t.Fatalf("tagVocabulary=%q, want %q — if a term was added or removed on purpose, "+
-			"move `lib/entry_shape.py`'s TAG_VOCABULARY in the same commit and regenerate "+
-			"`tests/conformance/` goldens", tagVocabulary, want)
-	}
-	if !sort.StringsAreSorted(tagVocabulary) {
-		t.Fatal("tagVocabulary is not sorted, so the refusal message's order is accidental")
-	}
-	seen := map[string]bool{}
-	for _, tag := range tagVocabulary {
-		if seen[tag] {
-			t.Fatalf("tagVocabulary carries %q twice", tag)
-		}
-		seen[tag] = true
+			"move `lib/entry_shape.py`'s TAG_VOCABULARY in the same commit, regenerate the "+
+			"`tests/conformance/` goldens, and check `scopeTagTable` still maps only "+
+			"declared terms (`TestEveryMappedTagIsInTheVocabulary`)", tagVocabulary, want)
 	}
 }
 

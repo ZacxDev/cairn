@@ -23,7 +23,7 @@ func entryWithTags(service, scope, tagsFlow string) string {
 // built from the implementation. See `internal/write/tagvocab_test.go` for why a
 // derived expectation would assert nothing.
 const theVocabularyRefusal = "unprocessable: tag 'marketing' is not one of " +
-	"client-work|infra|product|tooling — the tag vocabulary is CLOSED on the WRITE path, " +
+	"infra|product|tooling — the tag vocabulary is CLOSED on the WRITE path, " +
 	"so widening it is a code change. The index loader still READS this tag: an entry " +
 	"already carrying it is unaffected\n"
 
@@ -124,9 +124,9 @@ func TestAPUTCarryingAnOffVocabularyTagIsRefusedOnTheWire(t *testing.T) {
 		}
 		replaced := h.do(t, "PUT", "/api/v1/entry/alpha-notes/arrival", wideToken,
 			map[string]string{"If-Match": `"` + write.EntryRevision(landed) + `"`},
-			entryWithTags("arrival", "alpha-notes", "Client_Work"))
+			entryWithTags("arrival", "alpha-notes", "ToOlInG"))
 		if replaced.status != 200 {
-			t.Fatalf("a replace carrying `Client_Work` answered %d\nbody: %s",
+			t.Fatalf("a replace carrying `ToOlInG` answered %d\nbody: %s",
 				replaced.status, replaced.body)
 		}
 		// ⚠ AND THE UNFOLDED SPELLING IS ACCEPTED, which is what stops the gate being a
@@ -135,7 +135,7 @@ func TestAPUTCarryingAnOffVocabularyTagIsRefusedOnTheWire(t *testing.T) {
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
-		if !strings.Contains(string(again), "tags: [Client_Work]") {
+		if !strings.Contains(string(again), "tags: [ToOlInG]") {
 			t.Fatalf("the replace did not land:\n%s", string(again))
 		}
 	})

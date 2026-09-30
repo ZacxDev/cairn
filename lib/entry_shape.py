@@ -180,9 +180,21 @@ SHAPE_HEADINGS: tuple[str, ...] = (POINTERS_HEADING, NUANCE_HEADING)
 BULLET_TEXT_MAX = 2000
 
 #: The CLOSED set of `tags:` front-matter values a WRITE may land. The axis is the
-#: technical domain an entry belongs to, which is deliberately a different question
+#: technical DOMAIN an entry belongs to, which is deliberately a different question
 #: from `KINDS` (service/process/org/doc — what SHAPE of thing the entry describes);
 #: an entry carries one value from each, and neither set refines the other.
+#:
+#: 🔴 IT WAS FOUR TERMS FOR ONE ROUND, AND THE FOURTH FALSIFIED THE SENTENCE ABOVE.
+#: `client-work` shipped in the first draft beside these three and is REMOVED: `infra`,
+#: `product` and `tooling` all answer "what KIND of work is this", while `client-work`
+#: answers "WHO is it for" — a second axis. Under the one-tag-per-entry rule
+#: (`entry_has_tag`'s scalar operand) a set mixing two axes makes both unassertable,
+#: which is the identical objection this repository already records against putting the
+#: category axis into `kind:`. The "who" question was also already answered elsewhere:
+#: the SCOPE name carries it, so the fourth term largely restated the directory an entry
+#: lives in. Dropping a term is the direction that can refuse a write somebody used to
+#: be able to make, so it was taken on an operator decision with the live store
+#: re-tagged first.
 #:
 #: 🔴 IT LIVES IN THE WRITER'S MODULE AND NOT IN `subsystem_resolver`, AND THE REASON
 #: IS A MEASURED OUTAGE RATHER THAN TASTE. `SubsystemEntry.from_mapping` is the READER.
@@ -205,7 +217,7 @@ BULLET_TEXT_MAX = 2000
 #: for a `PUT` carrying an off-vocabulary tag. Reordering or extending one side alone is
 #: a RED corpus, not a review comment — `tests/test_tag_vocabulary.py` is the cheaper
 #: red that says which side moved.
-TAG_VOCABULARY: tuple[str, ...] = ("client-work", "infra", "product", "tooling")
+TAG_VOCABULARY: tuple[str, ...] = ("infra", "product", "tooling")
 
 
 def tag_outside_vocabulary(tags: "Sequence[str]") -> str | None:

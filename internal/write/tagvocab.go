@@ -3,10 +3,21 @@ package write
 import "slices"
 
 // tagVocabulary is the CLOSED set of `tags:` front-matter values a WRITE may land.
-// The axis is the technical domain an entry belongs to, which is deliberately a
+// The axis is the technical DOMAIN an entry belongs to, which is deliberately a
 // different question from `store.Kinds` (service/process/org/doc — what SHAPE of thing
 // the entry describes); an entry carries one value from each, and neither set is the
 // other's refinement.
+//
+// 🔴 IT WAS FOUR TERMS FOR ONE ROUND, AND THE FOURTH FALSIFIED THE SENTENCE ABOVE.
+// `client-work` shipped in the first draft beside these three and is REMOVED: `infra`,
+// `product` and `tooling` all answer "what KIND of work is this", while `client-work`
+// answers "WHO is it for" — a second axis. Under the one-tag-per-entry rule
+// (`HasTag`'s scalar operand) a set mixing two axes makes both unassertable, which is
+// the identical objection this repository already records against putting the category
+// axis into `kind:`. The "who" question was also already answered elsewhere: the SCOPE
+// name carries it, so the fourth term largely restated the directory an entry lives in.
+// Dropping a term is the direction that can refuse a write somebody used to be able to
+// make, so it was taken on an operator decision with the live store re-tagged first.
 //
 // 🔴 IT LIVES IN THE WRITER'S PACKAGE AND NOT BESIDE `store.Kinds`, AND THE REASON IS A
 // MEASURED OUTAGE RATHER THAN TASTE. `store.parseTagsField` is the READER. A refusal
@@ -33,7 +44,20 @@ import "slices"
 // response bytes for a `PUT` carrying an off-vocabulary tag. Reordering or extending
 // one side alone is a RED corpus, not a review comment —
 // `tests/test_tag_vocabulary.py` is the cheaper red that says which side moved.
-var tagVocabulary = []string{"client-work", "infra", "product", "tooling"}
+//
+// ⚠ AND THE BROWSER IS NOT A WRITER, WHICH IS WHY NO BROWSER-SIDE GATE EXISTS. Measured
+// rather than assumed: every state-changing route in `internal/ui/routes.go`'s dispatch
+// table is `POST /share`, `/unshare`, `/sign-in`, `/sign-out`, `/invite`,
+// `/invite/revoke` or `/sign-in/github` — sharing, sessions and invitations. There is a
+// `GET /entry`, and it is a READ page; no route creates, replaces or appends to an entry
+// at all, and `internal/ui` imports neither `internal/write` nor any other entry writer
+// (it reaches `internal/store`'s parsers only). So "every writer is
+// gated" is true of the browser only VACUOUSLY. Saying so is the point: a reader who
+// took it for a built gate would stop looking on the day that surface grows one. The
+// route set is already pinned against a hand-written ledger there
+// (`TestTheRouteLedgerMatchesTheDispatchTable`), so a new route cannot arrive unseen —
+// but nothing makes it arrive through THIS function, and that is the open edge.
+var tagVocabulary = []string{"infra", "product", "tooling"}
 
 // tagOutsideVocabulary returns the FIRST tag that is not in `tagVocabulary`.
 //

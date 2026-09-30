@@ -856,9 +856,18 @@ fixture.**
 ## The CLOSED `tags:` vocabulary — four rows, and why the refusal is on the WRITE path
 
 The vocabulary is CLOSED on the write path and OPEN to every reader: `infra`, `product`,
-`tooling`, `client-work`. `internal/write`'s `tagVocabulary` and `lib/entry_shape.py`'s
-`TAG_VOCABULARY` are the two declarations; `tests/test_tag_vocabulary.py` reds when one moves
-alone.
+`tooling`. `internal/write`'s `tagVocabulary` and `lib/entry_shape.py`'s `TAG_VOCABULARY` are
+the two declarations; `tests/test_tag_vocabulary.py` reds when one moves alone.
+
+⚠ **IT SHIPPED AS FOUR TERMS AND NARROWED TO THREE BEFORE RELEASE, AND THE THREE REFUSAL
+GOLDENS HERE MOVED WITH IT** — the refusal joins the vocabulary with `|`, so dropping
+`client-work` changed the served bytes of every refusal row and of nothing else. Regenerated
+against the oracle, `git status` showed exactly
+`put-replace-tag-outside-the-vocabulary{,-UNFOLDED}` and
+`put-create-tag-outside-the-vocabulary` modified; the 201 control row's golden did **not**
+move, because its body is `created` plus an ETag over bytes the narrowing did not touch. That
+asymmetry is the cheapest available confirmation that the corpus is measuring the refusal
+sentence rather than the request.
 
 🔴 **WHY NOT IN THE READER, WHICH IS THE ONE DESIGN QUESTION HERE.** A vocabulary refusal raised
 by `SubsystemEntry.from_mapping` / `store.EntryFromMapping` makes the entry MALFORMED, and this

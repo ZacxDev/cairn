@@ -358,10 +358,17 @@ on a sample entry, so a zero from it is a zero it could have contradicted. That 
 a list.
 
 🔴 **The vocabulary is CLOSED on the WRITE path and OPEN to every READER, and the asymmetry is
-the design rather than a gap.** The declared set is exactly four terms — **`infra`**,
-**`product`**, **`tooling`**, **`client-work`** — and both servers refuse a `PUT` whose front
-matter carries anything else: **422** with `X-Store-Status: entry-shape` and a body naming the
-four. Nothing lands.
+the design rather than a gap.** The declared set is exactly three terms — **`infra`**,
+**`product`**, **`tooling`** — and both servers refuse a `PUT` whose front matter carries
+anything else: **422** with `X-Store-Status: entry-shape` and a body naming the three. Nothing
+lands.
+
+The axis is the technical **domain** of the work. It is deliberately *not* "who the work is
+for": a fourth term `client-work` shipped for one round and was removed, because `infra` /
+`product` / `tooling` answer *what kind of work* while `client-work` answers *whose*, and a
+closed set mixing two axes under a one-tag-per-entry rule makes both unassertable — the same
+objection this project already records against folding the category axis into `kind:`. The
+"whose" question is answered by the **scope** name, which every entry already carries.
 
 The READER accepts any folded tag, and it has to. A vocabulary refusal in the loader would make
 the entry **malformed**, and the paragraph above is what that costs: out of the index, out of
@@ -372,15 +379,37 @@ already carries an off-vocabulary tag and make it unreadable and unrepairable in
 any token you like, an entry written before the closure keeps loading and keeps serving, and the
 rendered non-finding still says a typo looks exactly like an honest zero.
 
-**Widening the set is a code change, in two places that must move together:**
-`internal/write/tagvocab.go` (`tagVocabulary`, the Go pod) and `lib/entry_shape.py`
-(`TAG_VOCABULARY`, the Python oracle). `tests/test_tag_vocabulary.py` fails if one side moves
-alone, and `tests/conformance/` compares the two servers' refusal bytes over the wire.
+**Widening or narrowing the set is a code change in four places, and all four go red if you
+move one alone:**
+
+1. `internal/write/tagvocab.go` — `tagVocabulary`, the **deployed** Go pod's declaration;
+2. `lib/entry_shape.py` — `TAG_VOCABULARY`, the Python oracle's;
+3. `internal/write/tagvocab_test.go` — the hand-typed expectation and the refusal sentence,
+   pinned as literals on purpose so the test cannot be satisfied by the implementation;
+4. `tests/conformance/golden/put-*-tag-*-the-vocabulary.json` — the recorded refusal bytes,
+   regenerated with `python3 tests/conformance/suite.py generate` (never hand-edited: a
+   golden's body is checked against its own recorded digest).
+
+`tests/test_tag_vocabulary.py` is the cheap red that says *which side* moved; `tests/conformance/`
+is the one that compares the two servers' refusal bytes over the wire. **Narrowing** the set
+additionally needs `internal/write/scopetags.go` checked, because a scope still mapped to a
+removed term would classify entries into a category every write refuses —
+`TestEveryMappedTagIsInTheVocabulary` is that check.
 
 It is deliberately **not** the `kind:` enum, which stays its own closed four-value set
 (`service`/`process`/`org`/`doc`). `kind:` says what SHAPE of thing the entry describes and the
 tag axis says which technical domain it belongs to; an entry carries one value from each, neither
 set refines the other, and putting two axes in one closed set makes both unassertable.
+
+⚠ **Which surfaces the gate actually covers, stated rather than left to be assumed.** Both
+servers' `PUT` routes are gated — that is every path by which an entry's front matter can be
+written through cairn, including `cairn put` and `cairn create`, because both clients send the
+body and relay the server's answer rather than validating locally. `POST …/bullets` (`cairn
+append`) is **not** gated and must not be: it never touches front matter, and gating it would
+refuse appends to entries that predate the closure. The **browser** surface has no entry-write
+route at all — `internal/ui` declares `/share`, `/unshare`, the session pair, `/invite`,
+`/invite/revoke` and the OAuth pair, and nothing that creates, replaces or appends to an entry
+— so "the browser is gated" is true only vacuously, and no browser-side check was built.
 
 **The five things worth knowing if you script this:**
 

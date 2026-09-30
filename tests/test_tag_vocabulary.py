@@ -5,7 +5,7 @@ the oracle's own write path.
 WHAT IS BEING PROTECTED
 -----------------------
 `tags:` is the entry front matter's category axis, and its vocabulary is CLOSED on the
-WRITE path: `infra`, `product`, `tooling`, `client-work`. Two servers enforce it —
+WRITE path: `infra`, `product`, `tooling`. Two servers enforce it —
 `internal/write`'s `validateEntryBytes` (the DEPLOYED Go pod) and `server.py`'s
 `_validate_entry_bytes` (the oracle) — and they must refuse the same bodies with the same
 bytes, because `tests/conformance/` replays one corpus against both.
@@ -44,15 +44,15 @@ answered bytes, which no amount of source reading can substitute for. Said here 
 than left to be discovered, because a reader who took this file for full coverage would
 stop looking.
 
-🔴 AND ONE MORE BLIND SPOT, MEASURED RATHER THAN REASONED.
-`test_the_refusal_sentence_is_byte_identical_across_the_two_servers` builds the Python side
-from an f-string **in this file**, not from `server.py`, so it is a pin on the GO source and
-on this module's own spelling — a one-word reword INSIDE `server.py` leaves it green. That
-was watched: rewording `CLOSED` to `SEALED` in `server.py` reds
-`test_the_oracle_refuses_*` (two tests, whole-string) and reds three
-`tests/conformance/` rows, and leaves the sentence test above passing. Both halves of the
-oracle's rendered sentence are therefore covered — just not by the test whose name sounds
-like it.
+🔴 A BLIND SPOT THAT WAS HERE AND IS NOW CLOSED, KEPT AS THE RECORD RATHER THAN DELETED.
+`test_the_refusal_sentence_is_byte_identical_across_the_two_servers` used to build the
+Python side from an f-string **in this file** rather than from `server.py`, so it pinned
+the Go source against this module's own spelling and nothing about the oracle: rewording
+`CLOSED` to `SEALED` inside `server.py` left it GREEN — measured, not reasoned. It now RUNS
+the oracle's `_validate_entry_bytes` and reads the exception, so the same reword reds it.
+Written down because the SHAPE is the interesting part: a test whose NAME claims a
+relationship while its body compares one side to itself reads as coverage and provides
+none, and the name is what a later reader trusts.
 
 ⚠ AND IT SAYS NOTHING ABOUT THE CLIENTS. Neither client pre-validates a tag: both send the
 body and relay the server's refusal, deliberately, so there is no third spelling of the
@@ -79,12 +79,12 @@ import subsystem_resolver as sr  # noqa: E402
 #: The vocabulary, SPELLED HERE BY HAND. Neither side is imported for this one: an
 #: expectation derived from the implementation asserts `x == x` and stays green through
 #: the exact edit this file exists to catch.
-DECLARED = ("client-work", "infra", "product", "tooling")
+DECLARED = ("infra", "product", "tooling")
 
 #: The refusal, likewise spelled by hand, with the two substitutions left as the
 #: implementations write them.
 DECLARED_REFUSAL = (
-    "tag 'marketing' is not one of client-work|infra|product|tooling — the tag "
+    "tag 'marketing' is not one of infra|product|tooling — the tag "
     "vocabulary is CLOSED on the WRITE path, so widening it is a code change. The index "
     "loader still READS this tag: an entry already carrying it is unaffected"
 )
@@ -191,15 +191,36 @@ def test_the_vocabulary_is_the_declared_set_in_both_languages():
     )
 
 
-def test_the_refusal_sentence_is_byte_identical_across_the_two_servers():
-    """Both implementations' refusals, rendered for one tag and compared whole."""
+def test_the_refusal_sentence_is_byte_identical_across_the_two_servers(oracle):
+    """Both implementations' refusals, rendered for one tag and compared whole.
+
+    🔴 THE PYTHON SIDE IS THE ORACLE'S OWN RENDERED EXCEPTION, AND IT WAS NOT ALWAYS.
+    For one round this test built the "Python refusal" from an f-string typed in THIS
+    file and compared it to another literal in this file — so its name and its docstring
+    claimed both implementations while its body provided the Go half plus a
+    self-comparison. That is the `guards-narrower` shape (a description that claims a
+    RELATIONSHIP over a body that inspects one SIDE), and it was not hypothetical: a
+    one-word reword INSIDE `server.py` left this test GREEN, measured. The fix is to make
+    the body as wide as the sentence rather than to narrow the sentence — so the Python
+    half now comes from RUNNING the oracle's validator and reading the exception it
+    raises, which is the only spelling a client ever sees.
+
+    ⚠ THE GO HALF IS STILL SOURCE TEXT, because the `tests` CI job has no Go toolchain.
+    Its residual blind spot — an argument-ORDER mistake that still renders well-formed
+    English — is closed by `tests/conformance/`, which sends one body to both servers and
+    diffs the answered bytes. That is now the ONLY half of this comparison that source
+    reading has to carry.
+    """
     offender = entry_shape.tag_outside_vocabulary(("marketing",))
     assert offender == "marketing"
-    python_refusal = (
-        f"tag {offender!r} is not one of {'|'.join(entry_shape.TAG_VOCABULARY)} — the tag "
-        f"vocabulary is CLOSED on the WRITE path, so widening it is a code change. The "
-        f"index loader still READS this tag: an entry already carrying it is unaffected"
-    )
+
+    # The ORACLE's own bytes, from the live code path a `PUT` takes.
+    with pytest.raises(oracle.EntryShapeError) as caught:
+        oracle._validate_entry_bytes(
+            _entry_bytes("marketing"), scope="alpha-notes", filename="gadget-one.md"
+        )
+    python_refusal = str(caught.value)
+
     go_refusal = _go_refusal_template() % (
         repr(offender),
         "|".join(_go_vocabulary()),
@@ -214,6 +235,11 @@ def test_the_refusal_sentence_is_byte_identical_across_the_two_servers():
         f"want: {_normalize(DECLARED_REFUSAL)}\n"
         f"got:  {_normalize(python_refusal)}"
     )
+    # …and the two servers against EACH OTHER, which is the claim in the name. It is not
+    # implied by the two assertions above only in the sense that a future edit could
+    # loosen one of them; asserting it directly costs one line and says what this test is
+    # for.
+    assert _normalize(go_refusal) == _normalize(python_refusal)
 
 
 def test_the_helper_reports_the_first_offender_and_nothing_for_a_clean_set():
@@ -433,9 +459,13 @@ def test_every_declared_tag_lands_through_both_oracle_write_primitives(
 
 def test_the_oracle_sees_the_FOLDED_tag(oracle, tmp_path: Path):
     """🔴 THE FOLD IS WHY THIS IS NOT A CASE-SENSITIVE ALLOWLIST. An operator writes
-    `tags: [Infra]` or `tags: [Client_Work]`; `normalize_ref` lowercases and folds `_` to
-    `-`, so both are declared terms by the time the comparison happens."""
-    for n, raw in enumerate(("Infra", " infra ", "INFRA", "Client_Work", "client_work")):
+    `tags: [Infra]` or `tags: [ToOlInG]`; `normalize_ref` lowercases and trims, so both are
+    declared terms by the time the comparison happens.
+
+    ⚠ The `_`→`-` half of the fold is measured by the REFUSAL below rather than here: all
+    three declared terms are single words, so no underscore spelling of a declared term
+    exists to accept. `Not_Infra` folding to `not-infra` is what exercises it."""
+    for n, raw in enumerate(("Infra", " infra ", "INFRA", "Product", "ToOlInG", "  tooling")):
         target = tmp_path / f"fold-{n}" / "alpha-notes" / "gadget-one.md"
         target.parent.parent.mkdir(parents=True)
         oracle.create_entry(
