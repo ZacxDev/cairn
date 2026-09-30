@@ -163,6 +163,46 @@ new arc their leftovers belong to, not another round of either.
   BEFORE opening it** — taking `packages.default` flips `-verbs`/`-exit-codes` from exit 2 to
   exit 0, which is a public-surface change and the operator's call, not a side effect of a bump.
 
+### SUPERSEDES the "Next probe" on the client-pin block above: the bump was BUILT, it is RED, and the cause is a VOCABULARY SEAM rather than a regression
+- as-of: 2026-09-29
+- 🔴 **The block above ends with "open the PR and expect `test_cairn_flake_pin.py` to gate it".
+  That probe is ANSWERED and its expectation was WRONG in an instructive way** — the seam guard
+  it named passes; eight OTHER guards fail. Do not re-run that probe.
+- **Symptom + exact repro:** the other repo's PR (`flake.lock`'s `cairn` node only,
+  `5dfc11a2ac12` → `cdf6fae5f6ba`) is RED on that repo's `pytests` context. Repro:
+  `CAIRN_LIB=<new-store-path>/libexec/cairn/lib` then the repo's own runner.
+- **Observed (with values):** full suite under the new lib —
+  **`TOTAL collected=24707 passed=24692 skipped=7 failed=8`, `RESULT: FAIL (exit=1)`.**
+  `nodetests`, `gotests` and the **pinned-client leg all PASS**, so the client itself runs. The
+  eight, by name: `test_every_declared_status_is_reachable` ·
+  `test_all_three_badges_reproduce_the_FULL_prose` · `test_kills_the_what_it_is_INCLUSION` ·
+  `test_kills_the_unreadable_entry_wrap` · `test_kills_the_search_unreadable_discriminator` ·
+  `test_the_WRITER_refuses_a_bare_string_the_READER_would_reject` ·
+  `test_a_github_ref_survives_write_read_BYTE_IDENTICALLY` · `test_kills_the_ITERDIR_choice`.
+  `via: measurement`
+- **Ruled out:** a pre-existing red. That repo's mainline is green on all four contexts
+  (`collected=24707 passed=24700 failed=0`). `via: measurement`
+- **Ruled out:** anything other than the pin. Same tree, same test, only `CAIRN_LIB` differs —
+  **old lib 1 passed, new lib 1 failed.** One variable, both directions. `via: measurement`
+- **Ruled out:** the seam guard the input's own comment names. `test_cairn_flake_pin.py` and six
+  other client suites pass — **282 passed / 0 failed** — which is exactly why that green was
+  believed and was not evidence. `via: measurement`
+- **Leading hypothesis — and it is a mechanism, not a guess.** The three shipped features GREW
+  the vocabulary those guards enumerate: a fourth canonical section, two new statuses, two new
+  badges (so a guard asserting "all **three** badges" is false *by arithmetic*), and ref
+  grammar. Both repos' suites are green in isolation; together they are not. Worked example, the
+  `ITERDIR` one: it mutates the FILENAME tier (`iterdir`→`glob`) and asserts a `0o000` scope then
+  emits NO caveat — a silently-wrong "slug is free". Under the new lib the ALIAS tier catches the
+  `PermissionError` and says so, so the mutant can no longer be silent. **The client got SAFER;
+  what broke is the fixture's isolation premise**, because one `chmod` breaks both tiers.
+  `via: measurement`
+- **Next probe:** update that repo's writer-side guards to absorb the new vocabulary — the
+  heading set, the status set, the badge cardinal (**derive it, never re-count it in prose**), and
+  the ref grammar — then re-run under `CAIRN_LIB=<new>`. 🔴 **Do NOT relax the assertions to go
+  green:** five of the eight guard against a SILENT wrong answer, and three are mutation kills
+  whose whole value is refusing. Expect the badge cardinal to be the documented
+  hand-written-cardinal trap in a new place.
+
 ## Next steps (ranked)
 
 🔴 **NUMBERING IS STABLE — a rank is half a `claim-work` slug**, and `claim-work` comes
@@ -299,6 +339,44 @@ already yours**, while 21 files of finished, twice-audited work sat in an open P
 - ⚠ **`clawgatectl task list` IS NOT A VERB — IT IS `ls`** — and the wrong spelling printed
   nothing and exited without an error, which reads exactly like "no open tasks". Same shape as
   grepping JSON for `^status`: the tool answered about itself, not about the board.
+
+- 🔴 **A PIN BUMP'S LOCAL SUITE RUNS AGAINST THE *INSTALLED* CLIENT, NOT THE PINNED ONE — SO A
+  GREEN LOCAL RUN IS STRUCTURALLY UNABLE TO SEE THE BUMP.** `cairn_pin` resolves the packaged
+  `lib/` from **`$CAIRN_LIB`, else from `~/.local/bin/cairn`'s store path** — never from
+  `flake.lock`. Measured: 282 tests passed locally and were reported as covering the bump; they
+  exercised the OLD lib, while CI's sandbox exercised the NEW one and found 8 failures. This is
+  the two-tier rule with a concrete mechanism: **name the variable that selects the tier, and set
+  it.** `CAIRN_LIB=<store-path>/libexec/cairn/lib` is the whole fix to the method.
+- 🔴 **"VERIFIED IN ISOLATION" HAS A CONCRETE SHAPE HERE: TWO REPOS, EACH GREEN, BROKEN
+  TOGETHER.** cairn's suite is green at `cdf6fae`; the other repo's is green on its mainline; the
+  pin that joins them fails 8 guards. Nothing in either repo's CI ever built the combined state —
+  the other repo's pinned-client leg passes because it only asks whether the client RUNS. **Ask
+  which surface your fixture does not load.**
+- 🔴 **A COUNT IS NOT A SET, AND I GOT THE SET WRONG TWICE BEFORE GETTING IT RIGHT.** The status
+  description truncates at 140 chars and named **1**; a file-scoped run found **1**; my first
+  FAILURES-header regex found **4**; the runner's own `failed=` said **8**. Only the last is the
+  set. **Read the runner's own total, then make your name-extraction agree with it** — a header
+  pattern that returns fewer names than the total is a broken instrument, and the disagreement is
+  the tell.
+- ⚠ **THE WRITE GUARD KEYS ON THE SESSION'S CWD, NOT THE `-C` TARGET — AND THE PLUMBING ROUTE IS
+  THE RIGHT ANSWER, NOT THE OVERRIDE.** Committing into a worktree of the OTHER repo was refused
+  because this session sits in *this* repo's shared base clone. The documented
+  `BASE_CLONE_WRITE_OK=1` asserts a hazard that was not happening; `hash-object` → scratch
+  `GIT_INDEX_FILE` → `read-tree` → `update-index` → `write-tree` → `commit-tree` → `push <sha>:…`
+  produced the commit while touching no branch, no index and no base clone. Verify the built
+  commit's own diff before pushing it.
+- ⚠ **zsh ATE `$C:flake.lock` AS A HISTORY MODIFIER — FOURTH INSTANCE IN THIS EFFORT, AND THIS
+  TIME IT FAKED A SAFETY FAILURE.** `git show "$C:flake.lock"` lost `:f`, wrote an EMPTY file, and
+  the "is this worktree's content already pushed?" check then reported a false
+  *DIFFERENT — DO NOT REMOVE*. Braced (`"${C}:flake.lock"`) it is byte-identical. Prior instances
+  were refspecs, so "brace refspecs" was the wrong generalisation: **brace every `$VAR:`
+  construction.** The failure direction is not always loud — here it was, but a false SAME would
+  have licensed deleting unsaved work.
+- ⚠ **AN AGENT-AUTHORED PR COMMENT IS LABELLED AS SUCH, DELIBERATELY.** The finding above was
+  posted to that PR prefixed "posted from the operator's account by an AGENT; authorship NOT
+  verified; this is a finding, NOT an operator requirement, and nothing here is
+  deletion-immune" — the mitigation the closed arc's rank 10 asks for, applied rather than merely
+  filed.
 
 ## How to verify
 
