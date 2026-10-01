@@ -136,63 +136,13 @@ new arc their leftovers belong to, not another round of either.
 
 ### ✅ RESOLVED 2026-09-30 — the pin bump is MERGED, SWITCHED and verified BEHAVIOURALLY on the installed client; and the blocker above was ALREADY BEING REPORTED by a red instrument nobody reads
 - as-of: 2026-09-30
-- **What this settles:** the client-pin block's *"Next probe: … then `nix flake update cairn` and a
-  switch"* is **RUN**. The config repo's PR is squash-merged and the switch is done. The two blocks
-  immediately above — the Go decision and the parked-base-clone blocker — are **NOT** superseded:
-  the flip itself is still unbuilt, and this entry is the PYTHON step only.
-- 🔴 **AND THE BLOCKER THAT MADE THE ROUTE NON-OBVIOUS, RECORDED BECAUSE THE NEXT SWITCH HITS IT
-  TOO: the config repo's base clone is parked on ANOTHER SESSION'S BRANCH** — 1 ahead / 3 behind
-  its mainline, in sync with its own remote — and that branch pinned the OLD revision, as did the
-  mainline until this merge. So `home-manager switch --flake <config-repo>` run there builds the
-  **old** client and **exits 0**, leaving the greps at 0, which reads as "the bump did not work".
-  🔴 **Do NOT fix it by switching branches in the shared base clone** — the rules forbid it and
-  the branch is someone else's. Use a clean worktree at the merged mainline. ⚠ The session-start
-  status line cannot show this: it reports the repo the session is IN, and an earlier command here
   read a REMOTE ref, which never sees the local checkout's branch. `via: measurement`
-- **Observed (with values), on the INSTALLED path rather than a store path built by hand:**
   | reading | before | after |
   |---|---|---|
-  | `readlink -f "$(which cairn)"` | `…-cairn-5dfc11a/bin/cairn` | **`…-cairn-cdf6fae/bin/cairn`** |
-  | `--ref-to` in `recall --help` | 0 | **2** |
-  | `--tag` in `recall --help` | 0 | **2** |
-  | `--scope` (instrument control) | 2 | 2 — unchanged, so the grep worked BOTH times |
-  | a bogus flag (negative control) | 0 | 0 |
-  | `-verbs` | rc 2 | rc 2 — still the PYTHON client, as this step intends |
-  The merge landed as one squash commit; verified **by content, never ancestry** — the config
   repo's mainline pins the new revision and the old revision greps **0**. `via: measurement`
-- 🔴 **AND `--help` IS NOT BEHAVIOUR, so both features were EXERCISED with a control each:**
-  `--ref-to` with a malformed ref → rc **2** carrying the ref-grammar refusal (*"not a well-formed
-  `<system>:<id>` ref"*); `--tag` with a bogus tag → **`status=tag-absent`** with the real narrowing
-  sentence (*"0 of 13 entries in `cairn/` carry it … This is a NARROWING, not a truncation"*). Those
-  are the SAME strings a previous session measured against the live pods — so pod and installed
   client now agree on behaviour, not merely on a version. `via: measurement`
-- **Ruled out:** that switching from a WORKTREE instead of the parked base clone would repoint the
-  two out-of-store launchers at a scratch path. Checked BEFORE the switch by reading the module's
-  own binding (the workspace prefix is derived from `$HOME`, not from the flake's location) and
-  AFTER by `readlink -f` — the arbiter, because one level of `readlink` shows only the
-  home-manager-files store indirection and would have read as a store copy. **Both launchers
-  terminate in the base clone; 0 terminate in the scratch worktree, 2 in the base clone**, and one
   of them runs to rc 0. `via: measurement`
-- 🔴 **Ruled out: that the parked-base-clone blocker above was unobserved. IT IS BEING REPORTED
-  EVERY SIX HOURS BY A UNIT THAT HAS BEEN RED FOR AT LEAST TWO DAYS.** The switch printed
-  `degraded` and named one failed user unit — the passive drift deadman. Its exit code is
-  **12 = `not-on-branch-main`**, and its own output names the branch:
-  *"DRIFT — checkout is on '<branch>', not on branch main … anything committed on '<branch>' stays
-  invisible to origin/main."* Failure history: **12, 17, 17, 17, 17, 12** across the last six
-  timer firings, the oldest ~2 days before this session. ⚠ **PRE-EXISTING, NOT CAUSED BY THE
-  SWITCH** — the last failure stamped ~48 minutes BEFORE the switch ran, and it is timer-triggered.
   `via: measurement`
-- **Leading hypothesis:** this is the *permanently-red-gate* failure, not a missing instrument. A
-  currency check that fires on schedule, names the exact drift, and is never read has already
-  trained its own bypass — and this arc spent a session rediscovering by hand what it prints.
-  🔴 **This is DIRECT INPUT TO RANK 2: before building a new currency instrument, account for the
-  one that already exists and is red.** A second unread instrument is worse than none.
-- **Next probe:** for the drift deadman — `systemctl --user status drift-check.service` and
-  `journalctl --user -u drift-check.service` for the per-host lines, then decide between unbreaking
-  it and stopping gating on it; do NOT add a third check beside it. ⚠ Two of its lines are
-  unreachable REMOTE hosts, so part of its red is about the other machine and not about this one —
-  read the per-host lines before attributing the whole verdict. For rank 6's remaining half: the Go
-  flip is designed but UNBUILT, and the decision it implements is the operator's, already made.
 
 ### 🔴 OPEN — this doc is at its enforced ceiling and `--prune` STRUCTURALLY cannot shrink it
 - as-of: 2026-09-30
