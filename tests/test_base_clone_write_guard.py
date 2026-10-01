@@ -197,6 +197,57 @@ def test_the_doc_table_is_parseable():
     assert len(documented) >= 5, f"parse is probably broken: {documented}"
 
 
+def _declared_out_from_doc() -> frozenset[str]:
+    """The subcommands the doc's DELIBERATELY-OUT table names, in backticks.
+
+    A second table, with its own header, so the refused-set parse above cannot see
+    it and the two cannot be confused for one another. Whole backticked cells
+    rather than `[a-z0-9-]+`: the entries are `worktree remove` and `branch -D`,
+    and the spelling — the flag, the second word — is the part that carries the
+    decision.
+    """
+    text = DOC.read_text(encoding="utf-8")
+    start = text.index("| NOT refused, and it is not a read |")
+    end = text.index("\n\n", start)
+    rows = text[start:end].splitlines()[2:]  # skip header + separator
+    names: set[str] = set()
+    for row in rows:
+        names.update(re.findall(r"`([^`]+)`", row.split("|")[1]))
+    return frozenset(names)
+
+
+def test_the_doc_OUT_table_is_parseable():
+    """POSITIVE CONTROL for the parse the decision test below rests on."""
+    out = _declared_out_from_doc()
+    assert out, "the out-table parse found nothing — it is matching nothing"
+
+
+def test_the_two_shared_state_WRITERS_LEFT_OUT_carry_a_RECORDED_DECISION():
+    """🔴 THE CLOSING CONDITION WAS A DECISION PER SUBCOMMAND, NOT A WIDER SET.
+
+    An audit found five subcommands writing shared state outside `_REFUSED`:
+    `clean`, `rm` and `mv` went IN, and `worktree remove` and `branch -D` stayed
+    out — the first because this repo's own parallel-work recipe PRESCRIBES
+    `git -C "$REPO" worktree remove "$WT"` from the base clone and refusing a
+    documented recipe is the guard's own stated failure mode, and both because a
+    worktree registration and a branch ref live in the COMMON git dir, so the same
+    write is available identically from any worktree and conditions 2 and 3 cannot
+    scope the hazard at all.
+
+    This pins the DECISION rather than the prose: the out-table names exactly those
+    two, and neither appears in the refused ledger. It fails if the set GROWS (a
+    third subcommand quietly declared out) or SHRINKS (a decision deleted), and it
+    fails if one is ever added to `_REFUSED` without its doc row moving — which is
+    the mirror of `test_the_refused_set_matches_the_documented_table`.
+    """
+    assert _declared_out_from_doc() == {"worktree remove", "branch -D"}
+    refused = _refused_from_hook()
+    for entry in _declared_out_from_doc():
+        assert entry.split()[0] not in refused, (
+            f"`{entry}` is declared OUT in the doc and IN in the hook's ledger"
+        )
+
+
 def test_the_refused_set_matches_the_documented_table():
     """The ledger and the doc move together, and this fails on GROW *or* SHRINK.
 
@@ -442,6 +493,265 @@ def test_a_command_after_a_heredoc_terminator_is_still_a_command(parallel_clone)
     clone, _ = parallel_clone[:2]
     command = "cat > /tmp/recipe <<'EOF'\nbody\nEOF\ngit commit -m x"
     assert _decision(_run_hook(command, clone)) == "deny"
+
+
+# ------------------- (a) the heredoc OPENER, decided by the quote-aware walk
+#
+# 🔴 `_shell_lines` CALLED ITSELF "QUOTE- AND HEREDOC-AWARE" WHILE ITS OPENER
+# SEARCH RAN A REGEX OVER THE ALREADY-JOINED RAW LINE, so a `<<WORD` in a quoted
+# string or a `#` comment opened a heredoc bash never opened and every later line
+# was swallowed as its body. The fail-open is reached by ORDINARY TEXT.
+#
+# Every case in this block was watched at `ffa0eca`, the ref this change is built
+# on, and the verdict is named per row. `ffa0eca` is also where the existing
+# heredoc cases above were green, which is why they are not repeated here: the one
+# that matters most, `<<'EOF'` whose body is `git commit -m x`, is pinned by
+# `test_quoted_and_heredoc_CONTENT_is_data_not_a_command` and is EXACTLY what the
+# attractive implementation of this fix breaks — "blank out the quoted spans, then
+# run the old regex" erases that delimiter, opens no heredoc, and REFUSES the body.
+
+
+@pytest.mark.parametrize("command,why", [
+    ('echo "a <<EOF b"\ngit commit -m x',
+     "a `<<` inside DOUBLE quotes; proved end to end at `ffa0eca`, clone 1 -> 2"),
+    ("echo 'a <<EOF b'\ngit commit -m x",
+     "the same inside SINGLE quotes"),
+    ("echo hi # write the recipe with <<EOF\ngit commit -m x",
+     "a `<<` inside a trailing comment"),
+    ("# a comment that mentions <<EOF\ngit commit -m x",
+     "a comment at the START of the line, where there is no previous character"),
+    ("echo hi;# see <<EOF\ngit commit -m x",
+     "a `#` that begins a word because an OPERATOR ended the previous one — the "
+     "only case that reaches `_WORD_BREAK_BEFORE_HASH` rather than the whitespace "
+     "test beside it"),
+    ("cat > /tmp/f <<EOF\nit's data\nEOF\ngit commit -m x",
+     "an apostrophe in a heredoc BODY opened a quote that swallowed the terminator"),
+    ("echo x # don't\ngit commit -m y",
+     "an apostrophe in a COMMENT did the same, one mechanism over"),
+    ("cat > /tmp/f <<EOF\nbody\nEOF\n# a comment with <<X\ngit commit -m x",
+     "a comment on the FIRST line after a heredoc terminator — two mechanisms "
+     "composed, and ⚠ NOT evidence for the one it was written for: a draft reset "
+     "`prev` when a body line flushed, and a mutation sweep scored that reset dead "
+     "because the command-mode newline had already cleared it"),
+    ("cat <<<word\ngit commit -m x",
+     "a herestring: `<<` read out of chars two and three of `<<<`"),
+    ('cat <<<"EOF"\ngit commit -m x',
+     "the same, with a delimiter-shaped quoted operand"),
+])
+def test_a_FAKE_heredoc_OPENER_cannot_swallow_the_commands_after_it(
+        parallel_clone, command, why):
+    """🔴 EVERY ROW WAS MEASURED **ALLOW** AT `ffa0eca` AND IS DENY HERE.
+
+    Three mechanisms, all closed by moving the opener decision INTO the walk that
+    already knew the quote state:
+
+      * the opener regex ran on the raw line, so quotes and comments were invisible
+        to it (rows 1-4);
+      * quotes were tracked inside a heredoc BODY and inside a COMMENT, where bash
+        tracks none, so one apostrophe swallowed the terminator or the rest of the
+        command (rows 5-6);
+      * a `<<<` HERESTRING carries no body, but its second and third `<` read as a
+        `<<` and opened a heredoc named after the operand (rows 7-8). The regex
+        declined the FIRST `<<` of the run by accident and then matched at the
+        second; the walk declines a lookahead whose previous character is `<`.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) == "deny", f"{why}: {command!r}"
+
+
+@pytest.mark.parametrize("command,why", [
+    ('cat > /tmp/recipe <<"EOF"\ngit commit -m x\nEOF',
+     "a DOUBLE-quoted delimiter — quotes that belong to the delimiter, not a string"),
+    ("cat > /tmp/recipe <<-EOF\n\tgit commit -m x\n\tEOF",
+     "the tab-stripping `<<-` form still opens a heredoc"),
+    ("cat > /tmp/recipe << EOF\ngit commit -m x\nEOF",
+     "a space between `<<` and the delimiter"),
+    ("cat <<A <<B\nx\nA\ngit commit -m x\nB",
+     "the SECOND of two heredocs on one line — `re.search` could only find one"),
+])
+def test_a_REAL_heredoc_BODY_is_still_data_in_every_spelling(
+        parallel_clone, command, why):
+    """The fail-CLOSED direction, which is the one this file forbids itself.
+
+    Rows 1-3 were green at `ffa0eca` — ⚠ INVARIANT GUARDS, pinning that moving the
+    opener search into the walk did not lose a spelling the regex accepted. They
+    are the cases the "blank out the quotes first" implementation breaks, so they
+    are worth their place even though they evidence nothing about the fix.
+
+    🔴 ROW 4 WAS MEASURED **DENY** AT `ffa0eca` AND IS ALLOW HERE — a FALSE
+    POSITIVE, and regression coverage rather than an invariant guard. Only the
+    first opener on a line was recorded, so B's body was parsed as commands and a
+    line of DATA reading `git commit -m x` was refused with a message diagnosing a
+    shared-tree mutation that was not happening.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) is None, f"{why}: {command!r}"
+
+
+# ------------------------- (b) wrapper words that used to hide the program name
+
+
+@pytest.mark.parametrize("wrapper", [
+    "if", "while", "until", "command", "nohup", "eval", "exec", "sudo", "xargs",
+    "nice",
+])
+def test_a_WRAPPER_WORD_does_not_hide_the_program_name(parallel_clone, wrapper):
+    """🔴 ONE ROW PER WORD, EVERY ONE MEASURED ALLOWING AT `ffa0eca`.
+
+    `_leading_assignments` skipped assignments, `env`, and a `_LEADING_RESERVED`
+    set of eight shell words — so the program name of `if git commit -m x` was read
+    as `if` and the segment was not a git call at all. The repair is ONE ledger,
+    `_LEADING_WORDS`, which absorbed both of those: `claude/RULES.md`'s "one rule,
+    one place" is the reason it is not a second set beside the first.
+
+    Parametrised per word rather than written as one case, for the reason the
+    single-`&` cases above are: a suite that exercised one spelling of a class is
+    exactly how this class stayed open while reading as covered.
+    """
+    clone = parallel_clone[0]
+    command = f"{wrapper} git commit -m x"
+    assert _decision(_run_hook(command, clone)) == "deny", command
+
+
+@pytest.mark.parametrize("prefix,why", [
+    ("timeout 5", "a bare DURATION operand, the only operand-consuming row"),
+    ("timeout 5s", "the same with a unit suffix"),
+    ("timeout --foreground 5", "a flag that takes no value, then the operand"),
+    ("timeout -s TERM 5", "a flag that takes a SEPARATE value, then the operand"),
+    ("timeout -k 1 5", "two values before the operand"),
+    ("sudo -u somebody", "`-u <user>`"),
+    ("sudo -u somebody --", "…and an end-of-options marker"),
+    ("xargs -n 1", "`-n <count>`"),
+    ("xargs -I {}", "`-I <string>`"),
+    ("xargs --max-args=1", "an ATTACHED value takes no separate word"),
+    ("stdbuf -o 0", "`-o <mode>`"),
+    ("stdbuf -o0", "the attached spelling of the same flag"),
+    ("nice -n 5", "`-n <adjustment>`"),
+    ("nice -5", "the old attached spelling, which is not a known flag at all"),
+    ("env -i", "pre-existing: `env`'s own flags, green at `ffa0eca`"),
+    ("env -u FOO", "pre-existing: `env -u <name>` consumes a value, green there too"),
+    ("/usr/bin/env -i", "the ledger is matched on the BASENAME too — green at "
+                        "`ffa0eca`, which open-coded exactly this one"),
+    ("/usr/bin/time", "…and the basename match is what generalises it: this was "
+                      "ALLOW at `ffa0eca`, because `time` was matched as a bare "
+                      "WORD only"),
+])
+def test_a_wrapper_that_consumes_a_VALUE_still_finds_the_program(
+        parallel_clone, prefix, why):
+    """The half of the ledger that is not just a word list.
+
+    Every row but the last two was measured ALLOW at `ffa0eca`. The two `env` rows
+    were already green: they are ⚠ INVARIANT GUARDS, and they are here because
+    folding the open-coded `env` branch into the ledger is exactly the kind of
+    consolidation that silently drops the behaviour it absorbed.
+    """
+    clone = parallel_clone[0]
+    command = f"{prefix} git commit -m x"
+    assert _decision(_run_hook(command, clone)) == "deny", f"{why}: {command}"
+
+
+@pytest.mark.parametrize("command,why", [
+    ("command -v git", "a LOOKUP, not a run — nothing follows `git` to be a write"),
+    ("timeout 5 git status", "a read, reached through the operand-consuming row"),
+    ("nice -n 5 git log --oneline -3", "a read behind a wrapper"),
+    ("xargs -n 1 git status", "…and behind one with a value flag"),
+    ("ssh host.invalid git commit -m x",
+     "`ssh` is NOT in the ledger: the write lands on another machine, and skipping "
+     "it would invent a false positive"),
+])
+def test_the_wrapper_ledger_does_not_OVER_fire(parallel_clone, command, why):
+    """NEGATIVE CONTROL for the block above, with its POSITIVE CONTROL in the run.
+
+    A ledger that refuses `command -v git` or `timeout 5 git status` has turned a
+    read into a refusal, which is the direction this guard forbids itself. The
+    paired `deny` in the same fixture is what stops this reading as a hook wired to
+    nothing — every assertion here is an ALLOW, and an allow is indistinguishable
+    from a crash.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook("git commit -m x", clone)) == "deny", "positive control"
+    assert _decision(_run_hook(command, clone)) is None, f"{why}: {command}"
+
+
+# --------------- (c) three more shared-state writers, and two decisions to leave out
+
+
+@pytest.mark.parametrize("command", [
+    "git clean -fd",
+    "git clean -fdx",
+    "git clean -f",
+    # 🔴 `-e<pattern>` ATTACHED, AND THE PATTERN STARTS WITH AN `n`. The cluster
+    # scan in `_is_clean_dry_run` stops at an `e` for exactly this: reading the
+    # pattern's letters as flags would call a real delete a dry run. It is the only
+    # case that reaches that `break`.
+    "git clean -fenfoo",
+    "git rm seed.txt",
+    "git rm --cached seed.txt",
+    "git mv seed.txt renamed.txt",
+])
+def test_the_three_newly_refused_WRITERS_are_refused(parallel_clone, command):
+    """🔴 "EVERYTHING ELSE IS A READ" WAS FALSE, AND EVERY ROW ALLOWED AT `ffa0eca`.
+
+    `git clean -fd` deletes untracked files out of a tree a peer is standing in;
+    `git rm` and `git mv` delete or rename tracked files AND stage it. None was in
+    the ledger, and the complement of the ledger was being described as reads.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) == "deny", command
+
+
+@pytest.mark.parametrize("command", [
+    "git clean -n",
+    "git clean --dry-run",
+    "git clean -nd",
+    "git clean -dn",
+    "git clean -n -d",
+    "git clean -xn",
+])
+def test_a_DRY_RUN_clean_is_a_read(parallel_clone, command):
+    """It prints what it would delete and deletes nothing.
+
+    ⚠ NOT REGRESSION COVERAGE, AND SAYING SO MATTERS: these were green at `ffa0eca`
+    *vacuously*, because `clean` was not refused there at all. They pin the
+    exemption that lands with the refusal, and the pair is what makes the refusal
+    usable — a guard that refused `git clean -n` would be refusing the command you
+    run to find out what `git clean -fd` would do.
+
+    🔴 THE COMBINED CLUSTER SPELLINGS ARE THE POINT. `-nd`, `-dn` and `-xn` are how
+    the flag is actually typed, and an exemption that only matched a bare `-n`
+    would allow `git clean -n` and refuse `git clean -nd` — the arbitrary half of a
+    false positive. `_is_clean_dry_run` reads the cluster, and stops at an `e`
+    because `-e` is the one `git clean` flag that takes a value.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) is None, command
+
+
+@pytest.mark.parametrize("command", [
+    "git worktree remove /tmp/some-worktree",
+    "git worktree prune",
+    "git branch -D some-branch",
+    "git branch -d some-branch",
+])
+def test_the_two_DELIBERATE_omissions_stay_allowed(parallel_clone, command):
+    """⚠ A DECLARED DECISION, PINNED SO THE DOC CANNOT GO STALE — not a requirement
+    that these stay allowed forever.
+
+    `worktree remove` and `branch -D` both write shared state, and both are out of
+    `_REFUSED` on a decision recorded in the doc's second table:
+    `claudedocs/working-in-parallel.md` PRESCRIBES `git -C "$REPO" worktree remove
+    "$WT"` run from the base clone, and both write refs or registrations that live
+    in the COMMON git dir — reachable identically from any worktree, so conditions 2
+    and 3 cannot scope the hazard and refusing only the base-clone spelling would
+    teach that the worktree spelling is safe.
+
+    ⚠ INVARIANT GUARDS: green at `ffa0eca` too, because nothing refused them there
+    either. 🔴 IF ONE GOES RED, THE DECISION CHANGED — move the doc row out of the
+    out-table and into the refused table in the same commit, which
+    `test_the_two_shared_state_WRITERS_LEFT_OUT_carry_a_RECORDED_DECISION` forces.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) is None, command
 
 
 @pytest.mark.parametrize("command", [
@@ -1177,7 +1487,14 @@ def test_no_number_of_ADDITIVE_candidates_can_crowd_OUT_the_real_one(
     assert _decision(_run_hook(command, wt)) == "deny", f"{shape} N={count}"
 
 
-def test_a_NUL_BYTE_in_a_redirect_does_not_CRASH_the_hook(parallel_clone):
+@pytest.mark.parametrize("command", [
+    "git -C a\0b commit -m x",
+    "git --git-dir=a\0b commit -m x",
+    "cd a\0b && git commit -m x",
+    "GIT_DIR=a\0b git commit -m x",
+    "GIT_INDEX_FILE=a\0b git add seed.txt",
+])
+def test_a_NUL_BYTE_in_a_redirect_does_not_CRASH_the_hook(parallel_clone, command):
     """🔴 A CRASH IS AN ALLOW, AND THIS ONE WAS REACHED THROUGH THE GUARD'S OWN
     PLUMBING RATHER THAN ITS POLICY.
 
@@ -1191,14 +1508,24 @@ def test_a_NUL_BYTE_in_a_redirect_does_not_CRASH_the_hook(parallel_clone):
     this file's own header forbids itself, and `_run_hook` asserts rc 0 on every
     call for exactly this reason.
 
-    ⚠ IT ALSO FALSIFIES A CLAIM THIS BRANCH SHIPPED. `_abs_path` said a second
-    existence check "could never change a verdict"; removing the duplicate turned
-    this DENY into a crash-ALLOW. The mutation sweep scored that guard unreachable
-    because it scored VERDICTS, and a crash is not a verdict — a blind spot of the
-    instrument, now recorded beside both.
+    ⚠ IT ALSO FALSIFIED A CLAIM THE SAME BRANCH SHIPPED: `_abs_path` said a second
+    existence check "could never change a verdict", and removing the duplicate
+    turned the `-C` row's DENY into a crash-ALLOW. The mutation sweep scored that
+    guard unreachable because it scored VERDICTS, and a crash is not a verdict — a
+    blind spot of the instrument.
+
+    🔴 THE NUL HALF OF THAT IS NOW RE-MEASURED AND CLOSED, AND THE CLAIM IS STILL
+    FALSE FOR A DIFFERENT REASON — which is why the rows below are parametrised
+    rather than left at one. All five spellings answer **deny at rc 0** both with
+    and without the duplicate check, so NUL no longer separates them; what does is
+    `GIT_INDEX_FILE=<the clone>/.git/index`, which `isdir` rejects because it names
+    a FILE. The measurement is beside `_abs_path`. ⚠ The four rows added here were
+    green at `ffa0eca` — INVARIANT GUARDS: they pin that the walk and ledger changes
+    did not reintroduce a crash on a dimension `_run_hook`'s rc assertion is the
+    only witness to.
     """
     clone = parallel_clone[0]
-    assert _decision(_run_hook("git -C a\0b commit -m x", clone)) == "deny"
+    assert _decision(_run_hook(command, clone)) == "deny", repr(command)
 
 
 def test_GIT_INDEX_FILE_pointed_at_the_clones_INDEX_is_refused(parallel_clone):

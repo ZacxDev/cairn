@@ -412,7 +412,32 @@ jobs:
           # a NUL-byte and a `GIT_INDEX_FILE` case, net +5. Attributed by
           # measurement rather than arithmetic — the base collects 2390 and the
           # hook suite moves 80 -> 115, and 2390 + 35 = 2425.
-          FLOOR = 2375
+          # ⚠ 2375 -> 2445 WITH THE BASE-CLONE GUARD'S THREE DECLARED FAIL-OPENS, AND
+          # THE DRIFT GUARD FORCED THIS ONE TOO: at 2375 the gap would have been 120,
+          # past `MAX_GAP`, so the job would be RED with zero failing tests — the
+          # fourth time that trap has landed on this same file, which is why the
+          # local recipe above is run BEFORE the literal moves rather than after CI
+          # complains. Measured 2495 on this tree with
+          # `pytest tests -p no:randomly --collect-only -q`, so
+          # `2495 - min(50, max(1, 2495/20)) = 2445` and the gap is exactly 50 again.
+          # ⚠ THE SAME TREE *RUNS* 2494 PASSED / 0 FAILED, AND THE ONE-TEST GAP IS
+          # STATED RATHER THAN ROUNDED AWAY: `ran` below comes from the junit
+          # `tests` attribute, not from `--collect-only`, so the comparison the step
+          # actually makes is 2494 >= 2445 with a gap of 49. Both numbers clear the
+          # floor and both are inside `MAX_GAP`; the derivation above is quoted on the
+          # collect-only number because that is the figure the recipe in this comment
+          # prescribes.
+          # 🔴 ON FULL NODE IDS, NO `sed`, AND THE ONE REMOVAL IS A PARAMETRISATION
+          # RATHER THAN A DELETION. Base ref `git merge-base origin/main HEAD`
+          # (= the tip of `main` at the time, with nothing behind this branch, so this
+          # tree IS the merged tree): base 2425, head 2495, **71 added, 1 removed**.
+          # The removal is
+          # `test_base_clone_write_guard.py::test_a_NUL_BYTE_in_a_redirect_does_not_CRASH_the_hook`,
+          # which gained five parametrise ids — so it appears in BOTH columns under the
+          # `sed`-collapsing form and the two numbers would read 66/0 there. Say which
+          # pipeline produced them: this is the no-`sed` one. All 71 additions are in that
+          # one file, which moves 115 -> 185.
+          FLOOR = 2445
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)

@@ -60,15 +60,42 @@ The refused set, which the guard enforces and its test pins against this table:
 | `checkout` *(bare)* / `switch` | moves the shared HEAD under a peer |
 | `reset` | moves the shared HEAD and index |
 | `rebase` / `merge` / `cherry-pick` / `am` / `apply` | rewrites or advances the shared tree |
+| `clean` | deletes untracked files out of the shared working tree |
+| `rm` / `mv` | deletes or renames tracked files in the shared tree, and stages that |
 | `stash` | the stack is repo-GLOBAL, not per-worktree — see below |
+
+🔴 **And the complement of that set is NOT "reads" — two subcommands that write shared
+state are out of it on a DECISION, recorded here so the decision can be looked up.** An
+audit found five writers outside the ledger; `clean`, `rm` and `mv` went in, and these two
+did not:
+
+| NOT refused, and it is not a read | why it is out |
+|---|---|
+| `worktree remove` | **This document prescribes it**, at `git -C "$REPO" worktree remove "$WT"` in the recipe above, run FROM the base clone. Refusing a documented recipe is the failure mode the guard forbids itself — break one and people route around the guard. And the hazard is not base-clone-shaped: a worktree REGISTRATION lives in the common git dir, so the same removal is available identically from any worktree, which conditions 2 and 3 cannot distinguish |
+| `branch -D` | Same second reason, and it is the whole reason here: a branch ref lives in the common git dir too, so `git -C <any worktree> branch -D x` deletes it just as well. Refusing only the base-clone spelling would teach that the worktree spelling is safe, which is worse than refusing neither |
+
+⚠ **That reasoning is NOT uniform with `stash`, and pretending otherwise would be the
+tidier lie.** `stash` is in the refused set on a hazard that is *also* repo-global and
+*also* reachable from any worktree — kept as "a cheap table row" for a future host that
+runs parallel worktrees of this repo without the fleet guard. The hook's docstring says so
+in those words. The difference that decided these two rows is the FIRST reason, not the
+second: `worktree remove` is a step in the recipe this file tells you to run and `git stash`
+is a command this file tells you never to run. Where a hazard is only repo-global, the
+tiebreak is whether refusing it breaks a documented recipe.
 
 **Not refused, deliberately**, because each is a documented recipe and a guard that breaks
 one trains everybody to route around it: `git merge --ff-only <ref>` (the base-clone
 re-sync — it cannot conflict or autostash, it either fast-forwards or refuses, and the
 refusal is the signal that the clone diverged); `git checkout <ref> -- <paths>` (the
 pathspec form does not move HEAD — bare `git checkout <branch>` IS refused, because that
-moves the shared HEAD); `git stash list`, `show` and `--help`; and every other read,
-including `push`, which touches no file in the clone.
+moves the shared HEAD); `git stash list`, `show` and `--help`; `git clean -n` /
+`--dry-run`, and the combined cluster spelling `-nd`, which print what they would delete
+and delete nothing; and every other read, including `push`, which touches no file in the
+clone.
+
+⚠ **`git rm -n` and `git mv -n` are dry runs too and are refused anyway.** No recipe here
+runs either in the base clone, so the cost is nothing and the exemption list stays one
+item shorter; the hook says the same beside `_is_exempt`.
 
 ⚠ **`git restore` is NOT in the refused set at all**, so it never reaches an exemption. An
 earlier version of this paragraph listed it among the deliberate exemptions, which reads as a
@@ -271,7 +298,11 @@ same run as the control.
 | `GIT_DIR=<the clone>/.git git …`, or `GIT_DIR` already exported | REFUSED |
 | `cd <the base clone> && git commit …` | REFUSED |
 | `cd <a worktree> && git commit …` from the clone | REFUSED — see below |
-| `bash -c 'cd <the base clone> && git commit …'` | NOT SEEN — still open |
+| `if git commit …`, and the same behind `while`, `until`, `command`, `nohup`, `timeout <dur>`, `eval`, `stdbuf`, `exec`, `sudo`, `xargs`, `nice`, `env`, `time`, `{ … ; }` | REFUSED — one ledger of wrapper words, with the value-consuming ones marked |
+| `ssh <host> git commit …`, `ionice -p <pid> git …`, `watch git …`, a shell FUNCTION | NOT SEEN — deliberately not in that ledger, because the write may not land on this machine or that word may not be the program being run |
+| a `<<WORD` inside quotes or inside a `#` comment, then a real `git commit` on a later line | REFUSED — the heredoc opener is decided by the quote-aware walk, so a fake one no longer swallows the lines after it |
+| a REAL heredoc body, in every spelling including `<<'EOF'`, `<<-EOF` and two heredocs on one line | NOT A COMMAND — it is data and is dropped, which is the direction that matters: refusing a recipe you are WRITING INTO A FILE is the failure mode this guard forbids itself |
+| `bash -c 'cd <the base clone> && git commit …'`, and `eval 'git commit …'` | NOT SEEN — still open |
 
 🔴 **`$VAR` TARGETS ARE REFUSED, NOT RESOLVED, AND THE RECIPE ABOVE IS WRITTEN IN
 EXACTLY THAT SPELLING — so `git -C "$WT" commit` from the base clone is refused and
@@ -328,5 +359,8 @@ and recorded so it is a decision rather than a surprise.
   in this repo was nearly lost that way, by two sessions writing it within one hour, and
   the only thing that caught it was a write tool warning about durable lines it was about
   to drop.
-- The guard is lexical and approximate. It cannot see a subcommand held in a variable,
-  behind `eval`, or inside a shell function, and it allows anything it cannot parse.
+- The guard is lexical and approximate. It cannot see a subcommand held in a variable, inside
+  a shell function, or inside a QUOTED script — `bash -c '…'` and `eval 'git commit'` are one
+  token each — and it allows anything it cannot parse. ⚠ An earlier version of this bullet said
+  "behind `eval`" without that qualifier, and the unquoted form `eval git commit -m x` is
+  refused now: the distinction is the quoting, not the word.

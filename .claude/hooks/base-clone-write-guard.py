@@ -106,9 +106,16 @@ were gated on the hit set being a singleton):
     here; do not add it on the strength of this paragraph, because the ordinary
     `git restore <path>` form carries no `--` and would be refused wholesale.
   * `git stash list` / `show` / `--help` — reads.
+  * `git clean -n` / `--dry-run`, and the combined cluster spelling `-nd` — it
+    PRINTS what it would delete and deletes nothing. ⚠ `git rm -n` and
+    `git mv -n` are dry runs too and are deliberately NOT exempt; the reason is at
+    `_is_exempt`.
   * every other read: `log`, `status`, `diff`, `show`, `fetch`, `ls-files`,
-    `rev-parse`, `worktree`, `branch`, `push`. Pushing from the base clone
-    touches no file in it.
+    `rev-parse`, `push`. Pushing from the base clone touches no file in it.
+  * 🔴 AND `worktree` AND `branch`, WHICH ARE NOT READS — `worktree remove` and
+    `branch -D` destroy shared state, and they are out of `_REFUSED` on a DECISION
+    rather than by oversight. The reasons are in `_REFUSED`'s comment and in the
+    doc's second table; do not read their absence here as "nobody looked".
 
 ⚠ `git stash` IS IN THE REFUSED SET AND ON THIS HOST IT IS A PURE DUPLICATE —
 measured: the host-wide guard denies it too. `refs/stash` lives in the COMMON git
@@ -123,9 +130,9 @@ cheap table row for. Kept for that reason and no other.
 
 🔴 WHAT THIS GUARD NOW SEES, AND WHAT IT STILL CANNOT. Naming the second list is
 not optional: a guard whose limits are unstated reads as coverage it does not
-have. This table was once four open items, every one MEASURED passing straight
-through; three are CLOSED and the entry that closed each is named so a reader can
-check the claim rather than take it:
+have. This table was once four open items and then seven, every one MEASURED
+passing straight through; six are CLOSED and the entry that closed each is named
+so a reader can check the claim rather than take it:
 
   * `git -C <the base clone> commit …` from a linked worktree — CLOSED, the `-C`
     chain is resolved and judged (`_redirect_targets`);
@@ -146,39 +153,38 @@ check the claim rather than take it:
     `{ … }` does) and a wrong model there fails OPEN. So `cd <clone> && git
     commit` is refused, while the mirror — `cd <a worktree> && git commit` from
     the clone — is still refused too, as it was before. Pass `-C` instead.
-  * `bash -c 'cd <the base clone> && git commit …'` — STILL OPEN. The inner
-    script is one quoted token, so nothing in it is parsed as a command. Closing
-    it means recursing into nested shells, which is where the host-wide guard
-    spends two separate recursion budgets.
-
-🔴 AND THREE MORE OPEN ITEMS, ALL PRE-DATING THE TARGET RESOLUTION AND ALL FOUND
-BY AN ADVERSARIAL AUDIT RATHER THAN BY THE SUITE. They are recorded with a
-CLOSING CONDITION each, because an unstated limit reads as coverage and an
-unclosable one is just a complaint:
-
-  * `_shell_lines` CALLS ITSELF "QUOTE- AND HEREDOC-AWARE" AND ITS OPENER REGEX
-    RUNS ON THE RAW LINE. So a `<<WORD` appearing inside a quoted string — or
-    inside a `#` comment — starts a heredoc that was never opened, and every
-    later line is swallowed as its body. `echo "a <<EOF b"` then `git commit` was
-    proven to pass straight through, clone 1 -> 2 commits. ⚠ IT IS A
-    FAIL-OPEN REACHED BY ORDINARY TEXT, not a crafted payload.
-    **Closing condition:** the opener search runs over the same quote-aware walk
-    that produced the line, with a test for a `<<` inside quotes AND one inside a
-    comment, both watched red first.
-  * THE PROGRAM-NAME WALK MISSES COMMAND WRAPPERS. `_leading_assignments` skips
-    assignments, `env` and a few reserved words, so `if git commit`, `while`,
-    `command`, `nohup`, `timeout`, `eval`, `stdbuf`, `exec`, `sudo` and `xargs`
-    each hide the `git`. **Closing condition:** one ledger of wrapper words with
-    the value-consuming ones marked, and a parametrised case per word watched red.
-  * THE COMPLEMENT OF `_REFUSED` IS CALLED "READS" AND IT IS NOT. `clean -fd`,
-    `rm`, `mv`, `worktree remove` and `branch -D` all write shared state and none
-    is in the ledger. **Closing condition:** a decision recorded for each — in the
-    set, or named in the doc's table as deliberately out — since widening the set
-    without the doc moving is a refusal nobody can look up.
-
-⚠ ALL THREE ARE OUT OF THIS CHANGE'S DECLARED SCOPE and are not held against this
-merge; they are here so the next reader starts from the measurement rather than
-from a rediscovery.
+  * A `<<WORD` INSIDE QUOTES OR INSIDE A `#` COMMENT OPENING A HEREDOC THAT BASH
+    NEVER OPENED, so every later line was swallowed as its body — CLOSED, the
+    opener is now found BY the quote-aware walk (`_heredoc_delimiter`, called from
+    `_shell_lines`) instead of by a regex over the line that walk had already
+    joined. `echo "a <<EOF b"` then `git commit` was proven to pass straight
+    through, clone 1 -> 2 commits. ⚠ IT WAS A FAIL-OPEN REACHED BY ORDINARY TEXT,
+    not a crafted payload — which is also why the obvious repair is the wrong one:
+    blanking the quoted spans first erases the delimiter of `<<'EOF'`, and that
+    REFUSES the body, which is the fail-CLOSED regression `_shell_lines` exists to
+    prevent. Two more of the same family closed with it, both named at
+    `_shell_lines`: quote tracking inside a heredoc BODY, and recording only the
+    FIRST of several openers on one line.
+  * COMMAND WRAPPERS HIDING THE PROGRAM NAME — `if git commit -m x`, and `while`,
+    `until`, `command`, `nohup`, `timeout`, `eval`, `stdbuf`, `exec`, `sudo`,
+    `xargs`, `nice` — CLOSED by ONE ledger, `_LEADING_WORDS`, which absorbed the
+    `_LEADING_RESERVED` set and the open-coded `env` branch it used to be split
+    across. The words that consume a value are marked there, and the words
+    deliberately NOT skipped are named with their reasons.
+  * `clean`, `mv` AND `rm` WRITING SHARED STATE WHILE "EVERYTHING ELSE IS A READ" —
+    CLOSED in `_REFUSED`, with `git clean -n`/`--dry-run`/`-nd` exempt as the read
+    it is. ⚠ THE OTHER TWO THE SAME AUDIT NAMED, `worktree remove` AND `branch -D`,
+    ARE DELIBERATELY OUT, and the decision is recorded in the DOC's second table
+    rather than only here: `claudedocs/working-in-parallel.md` PRESCRIBES
+    `git -C "$REPO" worktree remove "$WT"` run from the base clone, and refusing a
+    documented recipe is this file's own stated failure mode; and both write refs
+    or worktree registrations, which live in the COMMON git dir and are writable
+    identically from any worktree, so conditions 2 and 3 cannot scope the hazard —
+    refusing only in the base clone would teach that the worktree spelling is safe.
+  * `bash -c 'cd <the base clone> && git commit …'` — STILL OPEN, the one row that
+    is. The inner script is one quoted token, so nothing in it is parsed as a
+    command. Closing it means recursing into nested shells, which is where the
+    host-wide guard spends two separate recursion budgets.
 
 ⚠ AND A FIFTH ROW IS CLOSED IN THE ONLY DIRECTION THAT IS SAFE: `git -C "$WT" …`
 IS REFUSED, NEVER RESOLVED. A `$VAR` target is one this guard cannot follow, so
@@ -236,16 +242,27 @@ OVERRIDE = "BASE_CLONE_WRITE_OK"
 #: AGAINST THE DOC, failing when it GROWS or SHRINKS. A subcommand added here
 #: without the doc's table moving is a refusal nobody can look up; one removed
 #: without the doc moving leaves the doc promising a guard that is gone.
+#:
+#: 🔴 AND "EVERYTHING ELSE IS A READ" WAS WRONG, WHICH IS WHY `clean`, `mv` AND
+#: `rm` ARE HERE: an audit found five shared-state writers outside the set. Three
+#: are in it — these — and the other two, `worktree remove` and `branch -D`, are
+#: named in the DOC's second table as deliberately out, each with its reason. The
+#: decision is recorded in both places because widening a set without the doc
+#: moving is a refusal nobody can look up, and declining to widen it without the
+#: doc moving is a hazard nobody can find.
 _REFUSED = frozenset({
     "add",
     "am",
     "apply",
     "cherry-pick",
     "checkout",
+    "clean",
     "commit",
     "merge",
+    "mv",
     "rebase",
     "reset",
+    "rm",
     "stash",
     "switch",
 })
@@ -418,6 +435,79 @@ def _git(cwd: str, *args: str) -> str | None:
     return out.stdout.strip()
 
 
+#: Characters after which an unquoted `#` BEGINS A WORD, so bash reads it as the
+#: start of a comment running to the end of the line. Whitespace is tested
+#: separately; these are the shell operator characters, which end a word too.
+#: ⚠ USED FOR OPENER DETECTION ONLY — see `_segments` on why `commenters` stays
+#: cleared there, and why a parser narrower than bash's misses real commands.
+_WORD_BREAK_BEFORE_HASH = frozenset(";|&()<>")
+
+
+def _heredoc_delimiter(command: str, index: int) -> str | None:
+    """The delimiter a `<<` at `command[index:]` opens, or `None` if it opens none.
+
+    🔴 IT IS A LOOKAHEAD AND IT CONSUMES NOTHING, which is what lets `_shell_lines`
+    call it from inside its own quote-aware walk: the walk then reads the
+    delimiter's characters as ordinary text, so the LINE it returns stays
+    byte-identical to its input and a quoted delimiter's two quotes open and close
+    in the walk's own quote state exactly as they did before.
+
+    🔴 AND A QUOTE IMMEDIATELY AFTER `<<` IS DELIMITER QUOTING, NOT STRING
+    QUOTING — WHICH IS WHY THE OBVIOUS IMPLEMENTATION OF THIS FIX IS A FAIL-CLOSED
+    REGRESSION. "Blank out the quoted spans, then run the old regex over the
+    result" erases the delimiter of `<<'EOF'` and `<<"EOF"` along with the quotes,
+    so NO heredoc opens, so the body — `git commit -m x` in this file's own worked
+    example two functions down — is read as a command and REFUSED. That is
+    precisely the regression `_shell_lines` exists to prevent, so the opener is
+    read inline in the walk instead of over a rewritten string.
+
+    What it declines, each on purpose:
+
+      * `<<<WORD` — a bash HERESTRING, which carries its data on the SAME line and
+        has no body and no terminator. ⚠ THAT EXPLICIT `return None` IS A HEDGE AND
+        NOT A LIVE BRANCH, which is measured rather than assumed: a mutation sweep
+        DELETED it and every test stayed green (SURVIVED, 0 failures), because the
+        `re.match` below declines a delimiter starting with `<` anyway. It is kept
+        for the same reason the attached `-C<path>` branch in `_redirect_targets` is
+        — a reader comparing this walk against bash's grammar should not have to
+        work out whether the omission was deliberate. 🔴 THE THING THAT ACTUALLY
+        CLOSES HERESTRINGS IS IN THE WALK, NOT HERE: `_shell_lines` refuses to start
+        a lookahead at the SECOND `<` of a `<<<` run, and deleting THAT fails two
+        tests. Without it, `cat <<<"EOF"` reads chars two and three as a `<<` and
+        opens a heredoc named `EOF`, swallowing every later line.
+      * `<<-` is NOT declined: it is the tab-stripping heredoc and opens one, and a
+        sweep that removed the `-` skip fails its test.
+      * anything whose delimiter is not a bare identifier, optionally
+        single- or double-quoted — the same shape the regex accepted. ⚠ The
+        closing-quote test is a second HEDGE, SURVIVED by the same sweep: it can
+        only change the answer for `<<'EOF` with no closing quote, which bash
+        rejects outright, so no reachable command distinguishes the two.
+
+    ⚠ ONE SHAPE IT STILL GETS WRONG, AND IT IS INHERITED RATHER THAN NEW: an
+    arithmetic left shift whose right operand is a NAME, `$((a << b))`, reads as a
+    heredoc opening on `b`. The predecessor regex did the same. It swallows later
+    lines, so it is fail-OPEN; closing it needs the `$(( … ))` nesting this parser
+    deliberately does not model.
+    """
+    at = index + 2                                  # just past the `<<`
+    if command[at:at + 1] == "<":
+        return None                                 # a herestring
+    if command[at:at + 1] == "-":
+        at += 1
+    while command[at:at + 1] in (" ", "\t"):
+        at += 1
+    quote = ""
+    if command[at:at + 1] in ("'", '"'):
+        quote = command[at]
+        at += 1
+    match = re.match(r"[A-Za-z_][A-Za-z_0-9]*", command[at:])
+    if not match:
+        return None
+    if quote and command[at + match.end():at + match.end() + 1] != quote:
+        return None
+    return match.group(0)
+
+
 def _shell_lines(command: str) -> list[str]:
     """The command's logical lines: newline-separated, but QUOTE- and HEREDOC-aware.
 
@@ -444,48 +534,139 @@ def _shell_lines(command: str) -> list[str]:
     heredocs, and only the resulting lines reach the lexer. A heredoc body is DATA
     and is dropped; the lines AFTER its terminator are commands again, which is the
     case a token-space skip gets wrong.
+
+    🔴 AND THE OPENER IS FOUND BY THE WALK ITSELF, NOT BY A REGEX OVER THE JOINED
+    LINE — WHICH IS THE OTHER HALF OF THE SAME FUNCTION AND WAS A FAIL-OPEN FOR
+    TWO ROUNDS. The first version of this function searched the already-joined RAW
+    line for `<<-?\\s*(['\"]?)([A-Za-z_]\\w*)\\1`, so a `<<WORD` inside a quoted
+    string, or inside a `#` comment, opened a heredoc that bash never opened and
+    EVERY LATER LINE was swallowed as its body. Measured end to end:
+    `echo "a <<EOF b"` followed by `git commit` passed straight through and took a
+    miniature clone from 1 to 2 commits. ⚠ IT WAS REACHED BY ORDINARY TEXT, not by
+    a crafted payload — a function that calls itself quote-aware while its most
+    consequential decision reads the string it had already stopped trusting.
+
+    🔴 THE BODY IS NOT QUOTE-TRACKED EITHER, AND THAT WAS A THIRD FAIL-OPEN OF THE
+    SAME FAMILY. A heredoc body has no quoting at all, so tracking quotes through
+    it let one apostrophe in the DATA open a quote that swallowed the terminator
+    line, after which the body never ended and every real command behind it was
+    dropped: `cat > f <<EOF` / `it's data` / `EOF` / `git commit -m x` was ALLOW
+    before and is DENY now. Bodies are still dropped, so recognising them better
+    cannot invent a false positive.
+
+    ⚠ EVERY OPENER ON A LINE IS RECORDED, NOT JUST THE FIRST, because `re.search`
+    could only ever find one. `cat <<A <<B` has two bodies in order, and reading
+    only `A` left B's body being parsed as commands — the fail-CLOSED direction: a
+    body line reading `git commit -m x` was REFUSED while nothing was being
+    committed.
     """
     lines: list[str] = []
     current: list[str] = []
     pending: list[str] = []          # heredoc delimiters still awaited
+    openers: list[str] = []          # delimiters THIS line opens, in order
     quote: str | None = None
+    comment = False
+    prev: str | None = None          # the previous character on this logical line
     index, size = 0, len(command)
 
     def flush(line: str) -> None:
+        nonlocal openers
         if pending:
             # Inside a heredoc body: data, never a command. Only its terminator
-            # is interesting, and only because it ends the body.
+            # is interesting, and only because it ends the body. ⚠ `.strip()` is
+            # WIDER than bash, which strips leading TABS for `<<-` only; a line
+            # that is the delimiter plus spaces ends the body here and would not
+            # in bash, which drops MORE text and is therefore the fail-open
+            # direction. Kept as it was: narrowing it is a separate decision with
+            # its own measurement to make.
             if line.strip() == pending[0]:
                 pending.pop(0)
+            openers = []
             return
-        opener = re.search(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z_0-9]*)\1", line)
-        if opener:
-            pending.append(opener.group(2))
+        pending.extend(openers)
+        openers = []
         lines.append(line)
 
     while index < size:
         char = command[index]
+        if pending:
+            # A heredoc BODY. No quoting, no comments, no openers of its own —
+            # see the docstring: tracking any of them here was a fail-open.
+            #
+            # ⚠ IT DELIBERATELY DOES NOT RESET `prev`/`comment`, AND A DRAFT THAT DID
+            # WAS **MEASURED DEAD**. The reasoning was: the terminator's flush is
+            # what ends the body, so the first character of the next command line
+            # would inherit the last character of the OPENER line, and a leading `#`
+            # there would not read as a comment. Wrong — the command-mode newline
+            # branch below sets `prev = None` AFTER calling `flush`, which is where
+            # the body began, and body mode never writes `prev` again. So it is
+            # already `None` for every line after a terminator. A mutation sweep
+            # deleting the reset scored it SURVIVED with 0 failures, and the test
+            # that was supposed to kill it (a comment on the line right after a
+            # terminator) is green either way — it stays, because that case is a
+            # REFUSAL that was ALLOW at `ffa0eca`, just not for this reason.
+            if char == "\n":
+                flush("".join(current))
+                current = []
+            else:
+                current.append(char)
+            index += 1
+            continue
         if quote:
             current.append(char)
             if char == quote:
                 quote = None
+            prev = char
             index += 1
-            continue
-        if char in ("'", '"'):
-            quote = char
-            current.append(char)
-            index += 1
-            continue
-        if char == "\\" and index + 1 < size:
-            current.append(command[index:index + 2])
-            index += 2
             continue
         if char == "\n":
             flush("".join(current))
             current = []
+            comment = False
+            prev = None
             index += 1
             continue
+        if comment:
+            # To the end of the line, literally: a quote in a comment opens
+            # nothing and a backslash continues nothing.
+            current.append(char)
+            prev = char
+            index += 1
+            continue
+        if char == "\\" and index + 1 < size:
+            current.append(command[index:index + 2])
+            # bash DELETES a backslash-newline pair, so the characters either side
+            # of it end up adjacent — `prev` must not become whitespace, or a `#`
+            # after a line continuation would read as a comment where bash reads it
+            # as part of the word (`echo foo\<nl>#bar` prints `foo#bar`). Any OTHER
+            # escaped character IS the previous character and never breaks a word:
+            # `\ ` is a literal space INSIDE one, so a `#` after it opens no
+            # comment either.
+            if command[index + 1] != "\n":
+                prev = command[index + 1]
+            index += 2
+            continue
+        if char in ("'", '"'):
+            quote = char
+            current.append(char)
+            prev = char
+            index += 1
+            continue
+        if char == "#" and (prev is None or prev.isspace()
+                            or prev in _WORD_BREAK_BEFORE_HASH):
+            comment = True
+            current.append(char)
+            prev = char
+            index += 1
+            continue
+        if char == "<" and prev != "<" and command[index + 1:index + 2] == "<":
+            # `prev != "<"` so the SECOND `<` of a `<<<` herestring cannot start a
+            # lookahead of its own; `_heredoc_delimiter` carries both halves.
+            delimiter = _heredoc_delimiter(command, index)
+            if delimiter is not None:
+                openers.append(delimiter)
         current.append(char)
+        prev = char
         index += 1
     flush("".join(current))
     return [line for line in lines if line.strip()]
@@ -503,6 +684,13 @@ def _segments(command: str) -> list[list[str]]:
     is cleared so a `#` inside a URL or a quoted string cannot truncate the line —
     bash would not treat it as a comment there, and a parser NARROWER than bash's
     is a parser that misses real commands.
+
+    ⚠ `_shell_lines` DOES MODEL COMMENTS AND THIS DOES NOT, WHICH IS A DELIBERATE
+    ASYMMETRY RATHER THAN A DISAGREEMENT. There, a comment decides only whether a
+    `<<` opens a heredoc — a question about the lines that FOLLOW. Here it would
+    decide whether words are commands, and getting that narrower than bash drops
+    real ones. So comment text still arrives in these segments as ordinary tokens,
+    and the `curl …/x#frag && git commit` case stays refused.
 
     Returns `[]` for anything it cannot tokenise, which ALLOWS. That is the
     fail-open posture, and it is why this guard is described as reducing a routine
@@ -529,41 +717,117 @@ def _segments(command: str) -> list[list[str]]:
     return [segment for segment in out if segment]
 
 
-#: Shell reserved words that can PRECEDE a command without being one.
-#: 🔴 `{` COST A GUARD: `{ git commit -m x; }` passed straight through because the
-#: program name was read as `{`. A round-2 audit measured it, and noted why it
-#: reads as covered — the docstring lists the `(…)` twin among the closed walks,
-#: and `(` IS closed, because it is an OPERATOR character while `{` is a reserved
-#: WORD. The paren fix could never have covered it. `then`/`do`/`else` are here for
-#: the same reason and close `if …; then git commit; fi` on one line, which was
-#: missed before and after the rewrite.
-_LEADING_RESERVED = frozenset({"{", "}", "!", "then", "do", "else", "elif", "time"})
+#: 🔴 ONE LEDGER OF EVERY WORD THAT CAN PRECEDE THE PROGRAM NAME WITHOUT BEING IT,
+#: AND IT IS ONE LEDGER DELIBERATELY. It was two — a `_LEADING_RESERVED` set of
+#: shell reserved words plus an open-coded `env` branch — and the words that hide a
+#: `git` do not divide along that line at all: `claude/RULES.md`'s "one rule, one
+#: place" says a predicate split across two places is wrong at one of them, and it
+#: was. `if git commit -m x`, `while`, `until`, `command`, `nohup`, `timeout`,
+#: `eval`, `stdbuf`, `exec`, `sudo`, `xargs` and `nice` were each MEASURED passing
+#: straight through, because the program name was read as the wrapper.
+#:
+#: 🔴 `{` COST A GUARD and is the row that explains the shape of this problem:
+#: `{ git commit -m x; }` passed straight through because the program name was read
+#: as `{`, while the docstring listed the `(…)` twin among the CLOSED walks — and
+#: `(` is closed, because it is an OPERATOR character where `{` is a reserved WORD.
+#: The paren fix could never have covered it.
+#:
+#: Each value is `(operands consumed before the program name, that word's own flags
+#: that take a SEPARATE value)`. An ATTACHED value takes no separate word, so
+#: `stdbuf -o0` and `xargs --max-args=3` fall out of the `startswith("-")` skip for
+#: free; `timeout` is the only word here that eats a bare OPERAND (its duration).
+#:
+#: ⚠ NOT CLOSED, the same caveat `_GIT_GLOBALS_WITH_VALUE` carries, and the
+#: direction of the gap is the fail-OPEN one: a wrapper missing from this ledger
+#: hides the `git` behind it. Known absences, each left out on purpose rather than
+#: forgotten, because skipping a word whose operand is NOT a local program would
+#: invent a false positive — the direction this file forbids itself:
+#:   * `ssh <host> git commit` and `bash -c '…'` / `sh -c '…'` — the write lands on
+#:     another machine, or inside a quoted token this parser cannot see at all (the
+#:     nested-shell row in the docstring's table);
+#:   * `ionice -p <pid> …` — `-p` re-prioritises an EXISTING process, so the word
+#:     after the flags is not necessarily the program being run;
+#:   * `watch`, `strace`, `coproc`, `find -exec`, `make`, a shell FUNCTION name — no
+#:     measurement either way, and a guess here buys a refusal nobody can look up.
+#: A `git` reached through any of those is unseen, exactly as a `git` inside
+#: `bash -c` is.
+_NO_VALUE_FLAGS: frozenset[str] = frozenset()
+_LEADING_WORDS: dict[str, tuple[int, frozenset[str]]] = {
+    # Shell reserved words and the brace group. None takes a flag or an operand.
+    # `then`/`do`/`else`/`elif` close `if …; then git commit; fi` on one line;
+    # `if`/`while`/`until` close the same shape when the git call is the CONDITION.
+    "{": (0, _NO_VALUE_FLAGS),
+    "}": (0, _NO_VALUE_FLAGS),
+    "!": (0, _NO_VALUE_FLAGS),
+    "if": (0, _NO_VALUE_FLAGS),
+    "while": (0, _NO_VALUE_FLAGS),
+    "until": (0, _NO_VALUE_FLAGS),
+    "then": (0, _NO_VALUE_FLAGS),
+    "do": (0, _NO_VALUE_FLAGS),
+    "else": (0, _NO_VALUE_FLAGS),
+    "elif": (0, _NO_VALUE_FLAGS),
+    # `eval git commit` is visible; `eval 'git commit'` is one quoted token and is
+    # not, which is the nested-shell gap rather than a new one.
+    "eval": (0, _NO_VALUE_FLAGS),
+    # Command wrappers. `time` and `exec` take no operand; `command -v git` lands
+    # on a `git` with nothing after it, which `_git_subcommand` answers `None` for.
+    "time": (0, _NO_VALUE_FLAGS),
+    "command": (0, _NO_VALUE_FLAGS),
+    "exec": (0, frozenset({"-a"})),
+    "nohup": (0, _NO_VALUE_FLAGS),
+    "nice": (0, frozenset({"-n", "--adjustment"})),
+    "stdbuf": (0, frozenset({"-i", "--input", "-o", "--output", "-e", "--error"})),
+    "sudo": (0, frozenset({
+        "-u", "--user", "-g", "--group", "-U", "--other-user", "-p", "--prompt",
+        "-r", "--role", "-t", "--type", "-C", "--close-from", "-h", "--host",
+        "-D", "--chdir", "-R", "--chroot",
+    })),
+    "xargs": (0, frozenset({
+        "-I", "-i", "--replace", "-n", "--max-args", "-L", "-l", "--max-lines",
+        "-P", "--max-procs", "-s", "--max-chars", "-E", "-e", "--eof",
+        "-d", "--delimiter", "-a", "--arg-file",
+    })),
+    # `env -i`, `env -u NAME`, `env --`: a round-1 audit measured `env -i git
+    # commit` and `env -u FOO git commit` both passing through.
+    "env": (0, frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"})),
+    # 🔴 THE ONE OPERAND-CONSUMING ROW. `timeout <duration> git commit` hides the
+    # `git` behind a word that is not a flag. ⚠ AND THE COST OF THAT IS A FAIL-OPEN
+    # ON A MALFORMED COMMAND, STATED RATHER THAN HIDDEN: `timeout git commit` (no
+    # duration, which `timeout` itself rejects) consumes `git` as the duration and
+    # lands on `commit`, which is not a program name, so the segment is not read as
+    # a git call. Allowing a command that cannot run is the cheap direction.
+    "timeout": (1, frozenset({"-s", "--signal", "-k", "--kill-after"})),
+}
 
 
 def _leading_assignments(segment: list[str]) -> tuple[dict[str, str], int]:
-    """`VAR=value` prefixes (and `env` with its own flags), and where argv starts."""
+    """`VAR=value` prefixes and `_LEADING_WORDS` wrappers, and where argv starts.
+
+    A wrapper is matched on its BASENAME as well as its spelling, so
+    `/usr/bin/env` and `/usr/bin/time` are skipped like the bare words — the same
+    reason `_git_subcommand` reads `basename(…) == "git"`.
+    """
     assignments: dict[str, str] = {}
     i = 0
     while i < len(segment):
         word = segment[i]
-        if word in _LEADING_RESERVED:
+        entry = _LEADING_WORDS.get(word)
+        if entry is None:
+            entry = _LEADING_WORDS.get(os.path.basename(word))
+        if entry is not None:
+            operands, value_flags = entry
             i += 1
+            # The wrapper's OWN options, then its own operands. `--` has no entry
+            # in any `value_flags`, so it is consumed as a one-word flag, which is
+            # what it is.
+            while i < len(segment) and segment[i].startswith("-"):
+                i += 2 if segment[i] in value_flags else 1
+            i += operands
             continue
         match = re.fullmatch(r"([A-Za-z_][A-Za-z_0-9]*)=(.*)", word)
         if match:
             assignments[match.group(1)] = match.group(2)
             i += 1
-            continue
-        if os.path.basename(word) == "env":
-            i += 1
-            # `env -i`, `env -u NAME`, `env --`: consume env's own options so the
-            # program name is found. A round-1 audit measured `env -i git commit`
-            # and `env -u FOO git commit` both passing through.
-            while i < len(segment) and segment[i].startswith("-"):
-                if segment[i] in ("-u", "--unset"):
-                    i += 2
-                else:
-                    i += 1
             continue
         break
     return assignments, i
@@ -587,6 +851,35 @@ def _git_subcommand(segment: list[str]) -> str | None:
     return segment[j] if j < len(segment) else None
 
 
+def _is_clean_dry_run(word: str) -> bool:
+    """Does this one word make a `git clean` a DRY RUN, so that it is a read?
+
+    `--dry-run`, a bare `-n`, and an `n` inside a COMBINED short cluster — `-nd`,
+    `-xn`, `-ndx` — because the combined spelling is how the flag is usually typed
+    and a check that only saw `-n` would refuse `git clean -nd` while allowing
+    `git clean -n`, which is the arbitrary half of a false positive.
+
+    ⚠ READING A CLUSTER IS ONLY SAFE BECAUSE IT IS SCOPED TO `git clean`'s OWN
+    FLAGS, and the scan says so by stopping where that scoping stops. Of
+    `-d -f -i -n -q -x -X -e`, only `n` means dry-run and only `-e` takes a value,
+    so the scan breaks at an `e`: without that, the attached spelling `-enpattern`
+    would read its pattern's letters as flags and call a real delete a dry run — a
+    false NEGATIVE, which is the cheap direction but still not one to take by
+    accident. A cluster this misreads can only make the guard refuse (`-X`, `-f`
+    and friends carry no `n`), which is the direction this file prefers.
+    """
+    if word == "--dry-run":
+        return True
+    if not word.startswith("-") or word.startswith("--"):
+        return False
+    for char in word[1:]:
+        if char == "n":
+            return True
+        if char == "e":
+            break
+    return False
+
+
 def _is_exempt(subcommand: str, segment: list[str]) -> bool:
     """Is this SEGMENT one of the documented recipes that must not be refused?
 
@@ -601,6 +894,20 @@ def _is_exempt(subcommand: str, segment: list[str]) -> bool:
     if subcommand == "stash":
         rest = segment[segment.index("stash") + 1:]
         return bool(rest) and rest[0] in ("list", "show", "--help")
+    if subcommand == "clean":
+        # A dry run PRINTS what it would delete and deletes nothing. ⚠ THE SCAN IS
+        # OVER THE WHOLE SEGMENT, like `merge`'s `--ff-only` beside it, so a `-n`
+        # anywhere in the segment excuses it — including one that belongs to a
+        # global option rather than to `clean`. Consistent with its sibling and
+        # with `git clean`'s own flag set; a position-aware scan would have to
+        # model every global option's arity, which `_GIT_GLOBALS_WITH_VALUE` says
+        # outright that it does not.
+        return any(_is_clean_dry_run(word) for word in segment)
+    # ⚠ `git rm -n` AND `git mv -n` ARE DRY RUNS TOO AND ARE DELIBERATELY NOT
+    # EXEMPT. No recipe in this repo's docs runs either in the base clone, so a
+    # refusal there costs an ergonomic nothing, and every exemption is a hole an
+    # audit then has to re-read. Widen it when a recipe needs it, with the recipe
+    # as the evidence — not on the symmetry argument alone.
     return False
 
 
@@ -693,13 +1000,36 @@ def _is_main_worktree(cwd: str) -> bool | None:
 def _abs_path(value: str, base: str) -> str | None:
     """A path a command NAMES, made absolute against `base`. `None` if unusable.
 
-    🔴 IT DOES NOT ASK WHETHER THE DIRECTORY EXISTS, AND A DRAFT THAT DID WAS A
-    SECOND GUARD SCORED **UNREACHABLE** BY THE SAME MUTATION SWEEP. `_protected`
-    has to make that check anyway — it is the function that decides whether a
-    directory is the base clone — so a second copy here could never change a
-    verdict, and this file's own rule is that one predicate in two places
-    regenerates the same bug at both. The existence check now lives ONCE, in
-    `_protected`, ahead of the probe budget so a junk path costs nothing.
+    🔴 IT DOES NOT ASK WHETHER THE DIRECTORY EXISTS, AND THE REASON IS NO LONGER
+    THE ONE THIS COMMENT GAVE FOR TWO ROUNDS. It said a second existence check here
+    "could never change a verdict", because `_protected` has to make that check
+    anyway. **RE-MEASURED, AND IT IS FALSE.** Driven by restoring exactly that
+    check (`if not os.path.isdir(resolved): return None`) and running the whole
+    suite plus a NUL battery against both copies:
+
+      * `GIT_INDEX_FILE=<the clone>/.git/index git add <file>`, run from a linked
+        worktree, is **deny** without the check and **ALLOW** with it — one test
+        failure out of 176, and it is the one pinning a payload measured to rewrite
+        the clone's index. The mechanism is that `_GIT_FILE_ENV_NAMES` values name
+        a FILE, so `isdir` is false for a target that is perfectly real; the
+        dirname that makes it a directory is taken downstream, in
+        `_ambient_targets.record`. A check here is therefore not a duplicate of
+        `_protected`'s at all — it asks a different question of a different value.
+      * ⚠ THE EARLIER FALSIFICATION IS A SEPARATE ONE AND IT IS NOW CLOSED. A NUL
+        byte in a target used to crash the hook (rc 1, a silent ALLOW); `_git` now
+        catches `ValueError`, and all five NUL spellings — `-C`, `--git-dir`, `cd`,
+        `GIT_DIR`, `GIT_INDEX_FILE` — answer **deny at rc 0 on both copies**, so
+        that dimension no longer separates them. Measured from the base clone and
+        from a linked worktree; naming both points because the verdict depends on
+        which.
+
+    So: the check stays out, but on the measurement above rather than on the
+    "could never change a verdict" claim, which was wrong in the fail-OPEN
+    direction. The existence check this guard DOES make lives once, in
+    `_protected`, ahead of its three `git` spawns so a junk path costs nothing —
+    and ⚠ a draft that ALSO put one here was scored **unreachable** by a mutation
+    sweep, which is a fact about the sweep: it scored VERDICTS, and the two cases
+    above are a crash and an environment variable it never varied.
 
     `~` is expanded because the lexer hands the tilde through literally while bash
     would have expanded it, and a parser NARROWER than the shell's is one that
