@@ -504,3 +504,112 @@ pointer** — which is what "move the text to the archive leaving a pointer" mea
   lines (`journalctl --user -u drift-check.service`) BEFORE designing anything new.
 
 
+
+### ✅ RESOLVED 2026-09-30 — the deadman is GREEN, both "false readings" were TRUE, and clause (a)'s detector is ruled out by /the-algorithm
+- as-of: 2026-09-30
+- **What this settles:** rank 2 in full, in the form the prerequisite asked for — *read the
+  per-host lines BEFORE designing anything*. Reading them is what killed the design.
+- 🔴 **Ruled out: that the deadman was broken. IT HAD ZERO INSTRUMENT DEFECTS.** All four red arms
+  were true findings against a backlog nobody had cleared. Before → after, read off the
+  instrument's own lines rather than inferred:
+  | arm | before | after |
+  |---|---|---|
+  | rc17 built source | `<laptop>` built-source subtree `NOT current: 5 behind` | `CURRENT (0 behind / 0 ahead)` |
+  | rc22 skill tiers | both hosts disagree with the ledger | both `matches the ledger (16 …)` |
+  | rc10 behind | both hosts `BEHIND by 1` | `ship.sh` rc 0, 2 hosts at `5fdafe00` |
+  | rc15 settings keys | `model skipDangerousModePermissionPrompt` | key sets `AGREE` |
+  | `[srcrepo]` | `same=1 differing=1` | `same=2 differing=0` |
+  rc17 cleared **on its own** — re-measured at the moment of acting, the subtree distance was
+  **0, not the 5** a 5-hour-old reading said; a peer had already pulled it. rc22 took
+  `sync-skill-tiers.py --apply` on BOTH hosts (13 → 16 overrides), verified to SURVIVE the
+  subsequent switch. `via: measurement`
+- 🔴 **Ruled out: that the "unreachable" reading was false.** The probe names **ONE ADDRESS** and
+  the **very next line** reports a successful fallback to the host's second address, after which
+  the entire remote block is real `<laptop>` data. Positive control: the primary address genuinely
+  does not answer `:22`; the second does. **It was a misread of a per-address diagnostic as a
+  per-host verdict**, and the instrument printed its own correction immediately. The rc12
+  `not-on-branch-main` reading was already conceded TRUE. `via: measurement`
+- 🔴 **RETRACTED, MINE, THIS SESSION: "0 successes in 76 firings, never green in 19 days."** I took
+  that from `grep -c "Deactivated successfully"` — a pattern I never positive-controlled, on a run
+  systemd had just reported `Result=success`. The real marker is `Finished Passive drift deadman`.
+  True counts: **78 failures / 4 successes** over a Sep 11–30 journal, last green **Sep 16 — 14
+  days, not 19, and not "never"**. The finding survives (a gate red for two weeks, toasting every
+  6 hours); the numbers did not. **A reassuring zero from an unvalidated pattern is the same trap
+  this doc already records twice.** `via: measurement`
+- 🔴 **Ruled out: that clause (a)'s detector is worth building.** Measured, all three artefacts:
+  | artefact | pinned at | behind `origin/main` | **code-bearing** behind |
+  |---|---|---|---|
+  | `cairn-ui` pod | `e8839d9` | 12 | **0** |
+  | `subsystem-store-api` pod (Go) | `e8839d9` | 12 | **0** |
+  | installed client (= the config repo's `flake.lock`) | `cdf6fae` | 8 | **0** |
+  Every one of those commits touches only `claudedocs/`/`*.md`. So a naive `distance == 0`
+  instrument is **RED today for zero real drift** — the false positive that trains its own bypass
+  — and a correctly path-scoped one is green, needing a deliberately stale pin to go red.
+  `via: measurement`
+- 🔴 **Ruled out: `x-store-revision` as "a ready-made home" for the instrument. THE GOTCHA BELOW
+  SAYING SO IS WRONG.** `X-Store-Revision` is the **scope's own git HEAD**, read off
+  `<scope>/.git/HEAD` — it is what lets a report be quoted as `scope@sha`. `unknown` is
+  **load-bearing**, not absence: a refused scope MUST answer it, indistinguishable from an absent
+  one, with its own positive control. And the health route deliberately reveals no version
+  *because it is unauthenticated*; the `Server` banner "must carry no version". Populating it with
+  a build revision would hijack pinned semantics and reverse a deliberate disclosure decision.
+  `via: code`
+- 🔴 **Ruled out: that allowlisting `model` was the cheap path to green.** TWO independent written
+  rulings say it is deliberately non-exempt: `drift-check.sh`'s *"WHAT IS NOT ON THIS LIST, ON
+  PURPOSE: … `model` — behaviour, not preference"*, and the suite uses `model` as this
+  subsystem's **primary negative control** (`test_settings_key_set_divergence_is_rc15`), whose
+  docstring warns that using allowlisted keys there "would have turned the subsystem's primary
+  negative control green while looking like a test that still fires". Aligning the hosts cost
+  **zero code and zero test change**. **My recommendation was an unmeasured analogy to
+  `effortLevel`/`voice`/`theme`; the codebase had already argued the opposite.** `via: code`
+- **Leading hypothesis:** none. Closed.
+- **Next probe:** none for rank 2. For rank 8, the Flux obstacle is the tag ordering — see it.
+
+
+### ✅ RESOLVED 2026-10-01 — round 0 audited PR #163 and the deletion argument SURVIVED; six findings were mine and are fixed here
+- as-of: 2026-10-01
+- **What this settles:** whether clause (a)'s deletion argument rests on a sound predicate.
+  It does, and more strongly than the doc claimed.
+- 🔴 **The predicate HOLDS, and the audit tested it harder than I did.** I re-ran my own
+  count; the auditor **enumerated the actual file set** in both ranges and found it entirely
+  `claudedocs/*.md` — four files for the pods' range, three for the client's. **No commit in
+  either range touches `flake.nix`, `flake.lock`, `go.mod`, `go.sum`, `.github/workflows/**`,
+  `server/Dockerfile`, `internal/**`, `cmd/**` or any `Makefile`.** It also checked the one
+  way a `*.md` could be code-bearing — a `//go:embed` of markdown — and there is none.
+  So "0 code-bearing" is true under any predicate stricter than mine. `via: measurement`
+- 🔴 **Ruled out: that `0 code-bearing` means `same image`. IT DOES NOT, AND THE DOC HELD BOTH
+  HALVES WITHOUT JOINING THEM.** `ba78dbb..03f912e` diffs **only** this handoff doc, and the
+  `cairn-ui` digests differ (`ff292fab…` → `40ac9382…`). The mechanism was already recorded
+  here ("the Go binary's nix store path embeds the short rev"). Measured independently twice.
+  **Consequence for rank 8, which is why it matters:** enrolling the pins as rank 8 was first
+  worded would have produced **12 pod rollouts for 0 code change** in exactly the window used
+  to argue no drift exists. `via: measurement`
+- 🔴 **Ruled out: that rank 8 needs a new `main-<ts>` tag. `publish-image.yml:78` ALREADY
+  MINTS AN ORDERABLE IMMUTABLE TAG** — "plus a bare semver on a version tag push" — which
+  fires per RELEASE rather than per commit, a strictly smaller blast radius. A whole cairn-side
+  workflow change was designed and is now unnecessary; rank 8 is rewritten to it. `via: code`
+- 🔴 **MY OWN REGRESSION, caught by the audit: the "fixed" verify recipe CANNOT RUN.** I
+  removed `| sed 's/.*sha-//'` — the very thing that made the old recipe work — while claiming
+  to fix two bugs in that block. Measured: `rc=128`, empty stdout,
+  `fatal: ambiguous argument 'sha-e8839d91…..origin/main'`. Under the `2>/dev/null` the block
+  itself warns about, the capture is empty and the next comment reads `0 = functionally
+  current`. **A fix round's own output is the likeliest next defect**, and this one broke the
+  instrument the whole arc is about. Fixed in `## How to verify`. `via: measurement`
+- 🔴 **Ruled out: "ZERO INSTRUMENT DEFECTS" as stated. IT IS AN OVERCORRECTION.** The doc's own
+  remedy is *"Read the line AFTER the alarming one"* — a workaround imposed on every future
+  reader for a diagnostic whose lede is reliably misread. Converting an instrument defect into
+  a reader defect removes the last case for touching the instrument, and that is a judgement.
+  The accurate claim: **no defect in what it MEASURES; a real defect in how its lede READS.**
+  `via: code`
+- **Ruled out:** that the eviction lost content — but **my denominator was wrong.** Verified
+  against the commits: handoff removed **50** non-blank lines, archive added **59**, and **0**
+  removed lines are absent from the archive at HEAD. The 59 was the archive's *added* count,
+  not the evicted set; the 9-line gap is the heading, the `as-of:` stamp and the residue, which
+  stayed in the handoff too. The archive copy is a **superset** — the safe direction — so the
+  property holds and the number I quoted was not reproducible. This arc's `#140`/`#149` history
+  is *about* eviction counts. `via: measurement`
+- **Leading hypothesis:** none. Closed.
+- **Next probe:** watch one *scheduled* drift-check firing go green, which no reading here
+  covers. For rank 8, the semver path — not a new tag.
+
+
