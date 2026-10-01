@@ -145,10 +145,19 @@ SHAPE_HEADINGS: tuple[str, ...] = (POINTERS_HEADING, NUANCE_HEADING)
 #:     orders of magnitude below that cap. Deleting it would not widen the
 #:     server's exposure by one byte.
 #:   * NOT a bound on what a READ costs, which is the plausible one. A recall
-#:     prints an entry's nuance bullets in FULL and the bullet COUNT is
-#:     uncapped — measured, one entry holds 111 — so worst-case read cost is
-#:     count × this value and the count is the free variable. Capping the text
-#:     cannot bound a product whose other factor is unbounded.
+#:     prints an entry's nuance bullets in FULL and the bullet COUNT is STILL
+#:     uncapped — re-measured on one live store of 331 entries: median 5, p90 21,
+#:     **one entry holds 151** — so worst-case read cost is count × this value and
+#:     the count is the free variable. Capping the text cannot bound a product
+#:     whose other factor is unbounded.
+#:     ⚠ THAT FREE VARIABLE IS NOW SURFACED BUT STILL NOT BOUND, AND THE
+#:     DISTINCTION IS THE WHOLE POINT. `subsystem_recall.NUANCE_BULLET_CEILING`
+#:     (30) renders an ADVISORY index badge on an entry over it — it refuses
+#:     nothing, rewrites nothing and caps nothing, so every sentence above stays
+#:     true. What changed is only that a reader can SEE the count is extreme; the
+#:     product is as unbounded as it was. The earlier `111` is kept nowhere: it
+#:     was a measurement of the same class and the store grew past it, which is
+#:     itself the argument against treating either number as a bound.
 #:
 #: 🔴 WHAT IT IS: an EDITORIAL tripwire on the tail, and the number is the p99 of
 #: the corpus the store already holds. Measured over 2,211 dated bullets: median
@@ -177,6 +186,14 @@ SHAPE_HEADINGS: tuple[str, ...] = (POINTERS_HEADING, NUANCE_HEADING)
 #: it is whether a reader's comprehension actually falls off somewhere, or a
 #: per-entry read budget with the bullet count capped alongside. Re-measuring the
 #: same distribution can only ever re-derive a percentile.
+#: ⚠ HALF OF THAT SECOND OPTION NOW HAS A MEASUREMENT AND THE OTHER HALF DOES
+#: NOT. The bullet-count distribution is measured, and the cost curve it implies
+#: is written at `subsystem_recall.NUANCE_BULLET_CEILING` / `report.NuanceBulletCeiling`
+#: — read it there rather than re-deriving it. What is still unmeasured is the
+#: READ BUDGET itself: nothing bounds a digest, which prints the whole index plus
+#: ONE featured body in full, and on a real store that single body measured 97.6%
+#: of the read. So "a per-entry read budget with the bullet count capped
+#: alongside" remains OPEN as stated; only the distribution behind it is settled.
 BULLET_TEXT_MAX = 2000
 
 #: The CLOSED set of `tags:` front-matter values a WRITE may land. The axis is the

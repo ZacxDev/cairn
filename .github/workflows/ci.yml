@@ -392,6 +392,20 @@ jobs:
           # new case is `test_the_prose_numbers_in_this_file_are_PINNED_to_what_they_cite`, added
           # by this branch. Attributed by measurement rather than assumed: the PR branch alone
           # collected 2357 too, which is the check that the merge added nothing here.
+          # 🔴 2307 -> 2388 ON THE MERGE OF #167 AND #168, AND NEITHER BRANCH'S LITERAL WAS
+          # RIGHT FOR THIS TREE. Both raised this constant from the same base, so the textual
+          # conflict had no correct wholesale side: #167 measured 2425 (+35) alone and wrote
+          # 2375; #168 measured 2403 (+13) alone and wrote 2353. Taking #167's literal
+          # understates the merged suite by #168's 13 tests and taking #168's understates it
+          # by #167's 35 — the floor would be wrong either way, silently, with nothing red.
+          # RE-DERIVED BY MEASURING THE MERGED TREE rather than by arithmetic on either
+          # literal: `m = 2438` from the collect recipe above, with a `-k` control returning 0
+          # so the count is a reading and not a harness wired to nothing. Both branches'
+          # independent numbers corroborate it (2390 base + 35 + 13 = 2438), which is a
+          # cross-check and NOT the derivation. `2438 - min(50, max(1, 2438/20)) = 2388`,
+          # gap exactly 50.
+          #
+          # --- #167's reason this constant had to move (kept: it is the incident) ---
           # ⚠ 2307 -> 2375 WITH THE BASE-CLONE GUARD'S TARGET RESOLUTION. Measured
           # 2425 on this tree with `pytest tests --collect-only -q`, so
           # `2425 - min(50, max(1, 2425/20)) = 2375` and the gap is exactly 50
@@ -412,32 +426,51 @@ jobs:
           # a NUL-byte and a `GIT_INDEX_FILE` case, net +5. Attributed by
           # measurement rather than arithmetic — the base collects 2390 and the
           # hook suite moves 80 -> 115, and 2390 + 35 = 2425.
-          # ⚠ 2375 -> 2445 WITH THE BASE-CLONE GUARD'S THREE DECLARED FAIL-OPENS, AND
-          # THE DRIFT GUARD FORCED THIS ONE TOO: at 2375 the gap would have been 120,
-          # past `MAX_GAP`, so the job would be RED with zero failing tests — the
-          # fourth time that trap has landed on this same file, which is why the
-          # local recipe above is run BEFORE the literal moves rather than after CI
-          # complains. Measured 2495 on this tree with
-          # `pytest tests -p no:randomly --collect-only -q`, so
-          # `2495 - min(50, max(1, 2495/20)) = 2445` and the gap is exactly 50 again.
-          # ⚠ THE SAME TREE *RUNS* 2494 PASSED / 0 FAILED, AND THE ONE-TEST GAP IS
-          # STATED RATHER THAN ROUNDED AWAY: `ran` below comes from the junit
-          # `tests` attribute, not from `--collect-only`, so the comparison the step
-          # actually makes is 2494 >= 2445 with a gap of 49. Both numbers clear the
-          # floor and both are inside `MAX_GAP`; the derivation above is quoted on the
-          # collect-only number because that is the figure the recipe in this comment
-          # prescribes.
-          # 🔴 ON FULL NODE IDS, NO `sed`, AND THE ONE REMOVAL IS A PARAMETRISATION
-          # RATHER THAN A DELETION. Base ref `git merge-base origin/main HEAD`
-          # (= the tip of `main` at the time, with nothing behind this branch, so this
-          # tree IS the merged tree): base 2425, head 2495, **71 added, 1 removed**.
-          # The removal is
+          #
+          # --- #168's scope note on what this number does NOT cover (kept) ---
+          # ⚠ 2307 -> 2353 ON THE NUANCE-CEILING BADGE BRANCH, AND THE DRIFT GUARD *WOULD* HAVE
+          # FORCED THIS ONE — which is the first time that is true here, so it is worth saying.
+          # The `2357` the paragraph above states is stale: this branch's merge-base collects
+          # **2390**, so the gap had already drifted to 83 before this change touched anything,
+          # and the +13 below takes it to 96 against a `MAX_GAP` of 100. Left alone, the NEXT PR
+          # adding five tests reds this step — a gate nobody can keep green is the failure this
+          # file's own comments call out, so it moves now rather than after it breaks.
+          # Measured with full node ids on one collect-only run per tree (the recipe above with
+          # the `sed` DROPPED, which is the form the +added/-removed numbers must come from):
+          # base **2390**, head **2403**, **13 added, 0 removed** — all thirteen in
+          # `tests/test_nuance_bullet_ceiling.py`, the cross-language pin on the badge's ceiling
+          # constant. `2403 - min(50, max(1, 2403/20)) = 2353`, derived from the head count by
+          # the formula rather than by arithmetic on the previous literal.
+          # 🔴 THE GO TESTS AND THE PARITY GATE ARE STILL NOT IN THIS NUMBER, as the paragraphs
+          # above require: the badge's Go-side guards live in `internal/report` (a different
+          # runner, a different job) and its two parity boundary rows change `cases`/`passes`
+          # not at all, so the `parity` job's own floor does not move with this.
+          # #168's own literal was 2388, which is what that merge-base's 2438 formula gives
+          # once #167 is in front of it; this line carries the number FORWARD rather than
+          # replacing the reasoning.
+          #
+          # ⚠ 2388 -> 2458 WITH THE BASE-CLONE GUARD'S THREE DECLARED FAIL-OPENS, AND THE
+          # DRIFT GUARD FORCED THIS ONE TOO: at 2388 the gap would have been 120, past
+          # `MAX_GAP`, so the job would be RED with zero failing tests — the fourth time
+          # that trap has landed on this same file, which is why the local recipe above is
+          # run BEFORE the literal moves rather than after CI complains.
+          # 🔴 MEASURED ON THE MERGED TREE AND NOT ON THE BRANCH, WHICH MATTERED HERE: this
+          # branch was built on `ffa0eca` and `#168` landed on `main` while it was open,
+          # touching THIS STEP. So the number below comes from a tree with `origin/main`
+          # merged in — 2508 by `pytest tests -p no:randomly --collect-only -q` — and
+          # `2508 - min(50, max(1, 2508/20)) = 2458`, the gap exactly 50 again. The branch
+          # alone collects 2495; quoting that would have under-set the floor by 13 and
+          # re-armed the drift guard for the next PR.
+          # 🔴 ON FULL NODE IDS, NO `sed`, AND THE ONE REMOVAL IS A PARAMETRISATION RATHER
+          # THAN A DELETION. Base ref `git merge-base origin/main HEAD` = `ffa0eca`: base
+          # 2425, branch 2495, **71 added, 1 removed**; `origin/main` contributes the other
+          # 13 (#168's, already attributed above). The removal is
           # `test_base_clone_write_guard.py::test_a_NUL_BYTE_in_a_redirect_does_not_CRASH_the_hook`,
           # which gained five parametrise ids — so it appears in BOTH columns under the
-          # `sed`-collapsing form and the two numbers would read 66/0 there. Say which
-          # pipeline produced them: this is the no-`sed` one. All 71 additions are in that
-          # one file, which moves 115 -> 185.
-          FLOOR = 2445
+          # `sed`-collapsing form and the two numbers read 66/0 there. Say which pipeline
+          # produced them: this is the no-`sed` one. All 71 additions are in that one file,
+          # which moves 115 -> 185.
+          FLOOR = 2458
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)

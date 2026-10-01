@@ -324,6 +324,61 @@ ENTRIES: list[tuple[str, int, str]] = [
      "- `apps/scarp-idx/values.yaml`\n"
      "\n## Nuance / work-history\n\n"
      "- 2000-01-10: RESOLVED abc1234: closed and verifiable, reported by nothing.\n"),
+    # --- THE NUANCE-CEILING BADGE, WHOSE BOUNDARY NOTHING ELSE IN THIS WORLD CROSSES -----
+    #
+    # 🔴 WITHOUT THESE TWO THE GATE IS STRUCTURALLY BLIND TO THE BADGE, AND THAT WAS
+    # MEASURED RATHER THAN FEARED: the world's largest nuance section held 5 bullets against
+    # a ceiling of 30, so every index row in it renders on the SILENT side of the predicate.
+    # Both clients would have agreed byte-for-byte while neither ever evaluated the branch —
+    # a green that is a claim about the world, not about the renderers. The badge is exactly
+    # the kind of divergence this gate exists for: one ceiling moving alone changes ONE badge
+    # on SOME rows, with no error, no missing entry and no exit-code change.
+    #
+    # ⚠ TWO ROWS, NOT ONE, FOR THE REASON THE REST OF THIS FILE GIVES FOR EVERY PAIR: an
+    # oversized entry alone pins that the badge CAN appear and nothing about WHERE it starts.
+    # `talus-ridge` sits one bullet OVER the ceiling and `talus-flat` sits exactly AT it, so
+    # a client whose predicate is off by one — or whose ceiling is — renders a row the other
+    # does not and the differ goes red.
+    #
+    # ⚠ THE COUNTS ARE WRITTEN AS LITERALS HERE RATHER THAN DERIVED FROM THE CONSTANT, and
+    # that inverts the renderers' own rule on purpose. `tests/parity/` compares two
+    # INDEPENDENT implementations; a world that computed its bullet counts from one of them
+    # would move with it, so a ceiling changed on the Python side alone would silently
+    # re-seed the fixture and keep both clients on the same side of the boundary. A literal
+    # cannot follow either implementation, which is what keeps the comparison honest. If the
+    # ceiling ever moves, these two numbers are meant to be updated BY HAND and the staleness
+    # is meant to be loud: `tests/test_nuance_bullet_ceiling.py` is what says what the
+    # ceiling is.
+    # 🔴 THEY LIVE IN `alpha-notes` BECAUSE THAT IS THE SCOPE THE RECALL CASES RENDER, AND
+    # THE FIRST DRAFT PUT THEM IN `crag-notes` AND MEASURED NOTHING. `crag-notes` is reached
+    # by `validate` only, which prints no index row, so the badge never rendered: a desync
+    # control — Python ceiling 25 against Go's 30 — ran the whole gate and reported
+    # `cases=123 passes=126 failures=0`, GREEN, with the two renderers openly disagreeing.
+    # That is the "reassuring zero" shape exactly: entries present in the store, branch never
+    # evaluated, and a pass that was a claim about the world rather than about the clients.
+    # Seeded here instead, the same control goes RED. Put a fixture where the case LOOKS, not
+    # merely where it fits the theme.
+    #
+    # ⚠ THEIR MTIMES ARE THE OLDEST IN THE SCOPE, deliberately. The newest entry wins the
+    # featured pick, and a 31-bullet body taking that slot would displace the entry whose
+    # body every existing digest case measures — buying this branch by deleting another's.
+    # At the bottom of the index they add rows and move nothing.
+    ("alpha-notes/talus-ridge.md", 100_000_000,
+     "---\nservice: talus-ridge\nscope: alpha-notes\n---\n"
+     "\n## What it is\n\n"
+     "a synthetic entry one bullet over the nuance ceiling, so the size badge renders.\n"
+     "\n## Pointers\n\n"
+     "- `apps/talus-ridge/values.yaml`\n"
+     "\n## Nuance / work-history\n\n"
+     + "".join(f"- 2000-01-11: synthetic finding {i:02d}.\n" for i in range(31))),
+    ("alpha-notes/talus-flat.md", 150_000_000,
+     "---\nservice: talus-flat\nscope: alpha-notes\n---\n"
+     "\n## What it is\n\n"
+     "a synthetic entry exactly AT the nuance ceiling, so the size badge must stay silent.\n"
+     "\n## Pointers\n\n"
+     "- `apps/talus-flat/values.yaml`\n"
+     "\n## Nuance / work-history\n\n"
+     + "".join(f"- 2000-01-12: synthetic finding {i:02d}.\n" for i in range(30))),
 ]
 
 #: The sheets above, as store-relative paths. A sheet is NOT an entry: `ls-entries` must not

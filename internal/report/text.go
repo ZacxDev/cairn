@@ -10,6 +10,52 @@ import (
 	"github.com/ZacxDev/cairn/internal/store"
 )
 
+// NuanceBulletCeiling is the largest `## Nuance / work-history` bullet count that earns NO
+// size badge. An entry STRICTLY OVER it renders `⚠ OVER 30 nuance — prune or split`.
+//
+// 🔴 DERIVED FROM A MEASURED DISTRIBUTION, NOT PICKED FOR ROUNDNESS. Over one live store of
+// 331 entries the count is heavily skewed — median 5, p90 21, max 151 — and the number that
+// matters is not the count but what a FEATURED render of that entry costs, because the index
+// row is ~60 B whatever the entry while the featured body is the whole section. Median
+// nuance-section BYTES by band (the byte counts are the authority; a `kB` below is 1000
+// bytes, not 1024, and an audit round read these as KiB and reported drift that was purely
+// the unit): 0-9 → 2,549 B, 10-19 → 10,493 B, 20-29 → 22,533 B, 30-39 → 47,154 B,
+// 60-99 → 88,925 B, 100+ → 163,636 B. The knee is at 30: the SMALLEST body this threshold
+// flags is 29,477 B (~7.4K tokens) against 14,615 B at a ceiling of 25 — it more than
+// doubles across that one step — and the median flagged body is 51,126 B (~12.8K tokens).
+// ⚠ Those medians are a reading of ONE live store and move as it grows; the ~2x step at the
+// knee is the claim, not any single figure.
+//
+// 🔴 AND THE OTHER HALF OF THE CHOICE IS THE FIRING RATE, BECAUSE A BADGE THAT FIRES
+// EVERYWHERE TRAINS ITS OWN BYPASS. At 30 it fires on ~5% of rows (measured twice on one
+// live store of 331 entries: 17 then 18, as the store grew between the two reads — so read
+// it as a rate, never as an invariant) while flagging ~36% of all nuance bytes.
+// `🔴 N OPEN`, already beside it on the row, fires on 41.1%. A ceiling of 20 was measured
+// and rejected: 11.2% of rows, and it admits a 12.9 KB entry, which is not a tax anyone
+// needs warning about.
+//
+// 🔴 IT IS DUPLICATED IN `lib/subsystem_recall.py` AS `NUANCE_BULLET_CEILING` BECAUSE
+// `packages.cairn` CANNOT IMPORT `internal/` — the same packaging constraint `internal/envalias`
+// lives under — and the two are pinned against each other by
+// `tests/test_nuance_bullet_ceiling.py`. Two renderers that disagree about this number print
+// different bytes for one entry, which is exactly the silent drift `tests/parity/` exists to
+// catch; move both or neither.
+//
+// ⚠ IT IS ADVISORY AND IT IS NOT A GATE. Nothing refuses and nothing exits non-zero. It
+// SURFACES the free variable `lib/entry_shape.py`'s `BULLET_TEXT_MAX` comment names; it does
+// not BOUND it, and that comment is the one place the still-open read-budget question lives.
+//
+// 🔴 TWO GATES ARE STRUCTURALLY BLIND TO THIS BADGE, AND BOTH ARE RUN AS ITS VALIDATION, SO
+// NEITHER'S GREEN IS EVIDENCE ABOUT IT. Measured: `tests/conformance/`'s world tops out
+// around ONE nuance bullet and `tests/dualrun/`'s generated world at FIVE, against a ceiling
+// of 30 — so every row in both renders on the SILENT side and the branch is never evaluated.
+// What DOES measure it: `internal/report`'s fixture replay (both sides of the boundary, in
+// bytes) and `tests/parity/` (both real clients, with a desync control proven to go RED).
+// Neither blind gate is seeded, deliberately: both compare implementations that reach this
+// badge through the SAME `listing_line`/`listingLine` pair parity already compares, so a row
+// in either would be a second sample of one unknown rather than a new claim.
+const NuanceBulletCeiling = 30
+
 // listingLine is ONE index line: `  <ref>   N nuance  <sensitivity>[  <badges>]`. ~60
 // bytes.
 //
@@ -97,6 +143,35 @@ func listingLine(entry RecalledEntry, width int) string {
 		// renderers share. Its reason and its CLOSING CONDITION (P8) are written once, at
 		// the key itself in `lib/subsystem_recall.py`.
 		badges = append(badges, "🔗 "+strconv.Itoa(len(entry.Tasks))+" ref"+plural(len(entry.Tasks)))
+	}
+	// 🔴 THE SIXTH BADGE, AND THE ONLY ONE WHOSE SUBJECT IS THE ENTRY'S COST RATHER THAN ITS
+	// CONTENT. A digest prints ONE featured body in full, and on a real store that single
+	// body has been measured at 97.6% of the whole read, because one entry had 151 nuance
+	// bullets. Nothing on the row said so — `151 nuance` is a number, not a judgement, and a
+	// reader has no second row to compare it against. The badge supplies the comparison by
+	// naming the ceiling.
+	//
+	// ⚠ IT DELIBERATELY DOES NOT REPEAT THE COUNT, which is the one place it departs from
+	// the five above. Each of those carries its own number because that number appears
+	// NOWHERE ELSE on the line; the nuance count is already this row's second column, so
+	// `⚠ 151 nuance — OVER 30` would print `151 nuance` twice in sixty bytes. The badge says
+	// only what the row cannot: where the bar is.
+	//
+	// 🔴 THE CEILING IS INTERPOLATED FROM [NuanceBulletCeiling], NEVER SPELLED AS A LITERAL,
+	// in both renderers. A hand-written `30` agrees with the constant on the day it is typed
+	// and nothing asserts it still does — and the failure is silent in the worst way, since
+	// the badge would go on PRINTING a bar the predicate no longer uses.
+	//
+	// ⚠ IT IS STRICTLY `>`, SO THE WORD `OVER` IS LITERALLY TRUE. An entry AT the ceiling
+	// renders no badge; `>=` with the same word would have been wrong at exactly one count.
+	//
+	// ⚠ AND IT IS LAST IN THE RUN, AFTER `refs`. It is advisory, where the badges to its left
+	// report unfinished business, so putting it first would push a `🔴` one column right on
+	// every row that has both. Appending also leaves every existing badge sequence
+	// byte-identical in relative order, which is why no golden for an entry under the ceiling
+	// moves.
+	if entry.BulletCount > NuanceBulletCeiling {
+		badges = append(badges, "⚠ OVER "+strconv.Itoa(NuanceBulletCeiling)+" nuance — prune or split")
 	}
 	if len(badges) == 0 {
 		return base
