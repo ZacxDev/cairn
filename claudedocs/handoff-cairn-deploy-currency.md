@@ -35,38 +35,35 @@ new arc their leftovers belong to, not another round of either.
 
 - ✅ **RANK 2 IS CLOSED, AND NOT BY BUILDING ANYTHING.** The drift deadman reports
   `Result=success`, `ExecMainStatus=0` and its own verdict `no drift on the host(s) CHECKED`.
-  Four arms cleared. 🔴 **The accurate claim about the instrument is NOT "no defects":** no
-  defect in what it **MEASURES**, and a real defect in how its **LEDE READS** — the remedy this
-  doc imposes is *"read the line AFTER the alarming one"*, which is a workaround on every future
-  reader. Two earlier bullets here said "zero defects" flatly; that is the overcorrection.
-- 🔴 **THAT GREEN IS A MANUAL INVOCATION, AND THE DISTINCTION IS LOAD-BEARING.**
-  `ExecMainExitTimestamp` 19:39:04 against the timer's `LastTriggerUSec` 12:46:43. **The
-  deadman has NOT been observed green on its own schedule.** Verify on a timer firing before
-  quoting this as green.
-- 🔴 **DO NOT QUOTE A FIRING TOTAL FROM THIS DOC — THE TOTALS MOVE AND TWO OF MINE WERE WRONG.**
-  Successes went **4 → 6 inside one session because I kept running the unit by hand**; failures
-  read **78 then 73** because the user journal **rotates**. Both numbers were published as
-  measured. **The durable facts, which do not move:** the last **SCHEDULED** success was
-  **Sep 16 18:44:55**; every scheduled firing after it was red; and the Sep 30 successes
-  (19:24:11, 19:25:43, 19:39:04) are **all manual**. Quote those, never a total.
-- 🔴 **CLAUSE (a) IS RULED OUT RATHER THAN MET** — see the disposition under `## Goal`.
-  ⚠ The substitution that licenses it is a **JUDGEMENT**, not only a measurement: (a) as written
-  says "a deployed cairn **image's commit** is behind", which is **12** for the pods and **8**
-  for the client. The path-scoped predicate is better and was verified — **choosing it is a
-  decision, self-issued by this session**, the same class (a) was rejected for.
-- ⚠ **`model` IS `opus[1m]`** — measured on this host; the other host is asserted, not re-read
-  here. An earlier pruned bullet said `z-ai/glm-5.3-flash`, which the operator reversed.
-- ✅ **ARC CLOSED** on (a)+(b): (b) met, (a) ruled out with sign-off, successor filed as rank 8.
-  ⚠ Four ranked items remain open; "closed" is scoped to the two clauses, not the file.
-- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE.** The resolver exited **5**;
-  an unknown session id answers 200 with an EMPTY ARRAY, so that zero cannot separate
-  "touched no task" from "wrong id".
-- ✅ **CARRIED FORWARD — a REPLACE heading would drop these.** `pytest tests -q` **2368 passed /
-  0 failed** (re-measured; an earlier carried-forward 2357 was stale-low); `go vet ./... && go
-  test ./...` **21 ok / 0 FAIL**; `nix eval` resolving `default` and `cairn-go` to the
-  **identical** store path. Rank 6 closed: Go client live on both hosts at byte-identical store
-  paths, `-verbs` **rc 0**, `cairn-validate`/`cairn-who` **rc 0**. Pod images DIGEST-verified.
-- ⚠ **CAIRN HAS ONE OPEN PR OF MINE — `#163`, this doc.** `#160`/`#162`/`#164` are a PEER's.
+  Four arms cleared. 🔴 **The accurate claim is NOT "no defects":** no defect in what it
+  **MEASURES**, a real defect in how its **LEDE READS** — the remedy this doc imposes is *"read
+  the line AFTER the alarming one"*, a workaround on every future reader.
+- 🔴 **THAT GREEN IS A MANUAL INVOCATION.** `ExecMainExitTimestamp` 19:39:04 against the timer's
+  `LastTriggerUSec` 12:46:43. **It has NOT been observed green on its own schedule.**
+- 🔴 **DO NOT QUOTE A FIRING TOTAL FROM THIS DOC.** Successes went **4 → 6 inside one session
+  because I kept running the unit by hand**; failures read **78 then 73** because the journal
+  **rotates**. ⚠ **A surviving bullet in `## Gotchas` still says "78 failing firings" and ends
+  "Take the 78" — it is UNPRUNABLE (it quotes a `forcing:` field) and it is WRONG. Ignore it.**
+  The durable facts: last **SCHEDULED** success **Sep 16 18:44:55**; every scheduled firing
+  after it red; the Sep 30 successes (19:24:11, 19:25:43, 19:39:04) **all manual**.
+- 🔴 **CLAUSE (a) IS RULED OUT RATHER THAN MET** — disposition under `## Goal`. ⚠ The
+  substitution licensing it is a **JUDGEMENT**, self-issued by this session — the class (a) was
+  rejected for: (a) as written reads **12** for the pods and **8** for the client.
+- ⚠ **`model` IS `opus[1m]`** — measured on this host; the other host asserted, not re-read.
+  🔴 **AND THE OBSERVATION WORTH KEEPING, LOST ONCE AND RESTORED: the earlier
+  `z-ai/glm-5.3-flash` value did NOT survive on the host running a live Claude Code, while it
+  DID on the host without one.** One observation, mechanism unproven — but it is the only
+  recorded warning that **writing `model` on a host with a live session can be reverted, which
+  silently re-reddens rc15.** Set on BOTH hosts so the key sets agree.
+- ✅ **ARC CLOSED** on (a)+(b): (b) met, (a) ruled out with sign-off, successor rank 8.
+  ⚠ Four ranked items remain open (4, 5, 7, 8); "closed" is scoped to the two clauses.
+- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE.** The resolver exited **5**; an
+  unknown session id answers 200 with an EMPTY ARRAY, so that zero cannot separate "touched no
+  task" from "wrong id".
+- ✅ **CARRIED FORWARD.** `pytest tests -q` **2368 passed / 0 failed**; `go vet ./... && go test
+  ./...` **21 ok / 0 FAIL**; `nix eval` resolving `default` and `cairn-go` to the **identical**
+  store path. Rank 6 closed: Go client live on both hosts at byte-identical store paths.
+- ⚠ **ONE OPEN PR OF MINE — `#163`.** `#160`/`#162`/`#164` are a PEER's.
 
 ## Open investigations — live diagnosis state
 
@@ -179,87 +176,90 @@ new arc their leftovers belong to, not another round of either.
 
 ### ✅ RESOLVED 2026-10-01 — round 1 ran the nine axes on #163: 0 deploy-blocking, and the four findings that mattered were all MINE
 - as-of: 2026-10-01
-- **What this settles:** the correctness pass round 0 could not license skipping. The
-  measurable core of the deletion argument **reproduced exactly** — 12/0 and 8/0 with the file
-  sets enumerated, the digest pair `ff292fab…` → `40ac9382…`, and both evictions verbatim
-  (eviction 1: 50 removed / 59 added / 0 absent; eviction 2: 0 of 147 absent, 116 net).
-- 🔴 **RETRACTED, MINE, AND THIS IS THE THIRD TIME IN THIS DOC — THE RETRACTION'S OWN FIGURES
-  WERE WRONG.** I published "78 failures / 4 successes". Measured now: **6 successes, 73
-  failures**. The 6 includes **three manual runs I made myself** (19:24:11, 19:25:43, 19:39:04)
-  — I counted one — and 73 is below 78 because the journal **rotates**. So a correction written
-  to fix an unvalidated count was itself an unvalidated count. **The lesson is the SHAPE: a
-  total over a rotating log that I am concurrently adding to is not a measurement, and no amount
-  of care at the moment of reading fixes that.** Replaced with the scheduled/manual split, which
   does not move. `via: measurement`
-- 🔴 **Ruled out: that the round-0 fix to `## How to verify` was a net improvement. IT SILENTLY
-  NARROWED THE ARC'S RE-VERIFICATION FROM THREE ARTEFACTS TO TWO.** The pre-round-0 block looped
-  `for d in cairn-ui subsystem-store-api`; my rewrite reads only `subsystem-store-api` — and
-  `cairn-ui` is precisely the pin whose digest this arc measured moving. `## Goal` points a
-  later session at that block. **A rewrite that fixes two named bugs can delete a third thing
   nobody named**; restored to both pods. `via: measurement`
-- 🔴 **Ruled out: the leak recipe's own comment. "The base clone exits 2 on … agent worktrees" is
-  FALSE, measured.** With **13** agent worktrees physically present, `leakscan.py` in the base
-  clone exits **0** over 468 files — because `.gitignore` ignores that directory and the scanner
-  enumerates with `git ls-files --cached --others --exclude-standard`. An ignored path is
-  invisible to it by construction. The `result`-symlink half is untested, not confirmed. **A
-  future session hitting a real exit 2 would have blamed a cause that cannot produce it** — this
-  doc's own "an empty result cannot distinguish two mechanisms", in a comment I carried forward
   without testing. `via: measurement`
-- 🔴 **Ruled out: that rank 8's semver rewrite was landable. THE TAG HAS NEVER BEEN MINTED.**
-  `git tag -l` → **0**; `git ls-remote --tags origin` → empty; anonymous ghcr tag lists fully
-  paginated → `cairn-store` **122**, `cairn-store-go` **121**, `cairn-ui` **79**, and **every
-  one** is `sha-<40hex>`. The `version_tag` code is real and its push steps are guarded `!= ''`,
-  so it has simply never fired. **Rank 8's two halves contradicted each other** — it cited the
-  semver tag *and* required the initial `newTag` to be already-published. Rewritten to say so.
-  ⚠ And the citation `publish-image.yml:78` points at a **COMMENT**, not the minting code at
   `:161-172`/`:393`/`:629`/`:786`. A comment is a claim. `via: measurement`
-- **Ruled out:** that `d839a79`'s commit message describes `d839a79`. It says *"Round 0's fixes
-  pushed the handoff doc 3,062 B over its ceiling"* and *"This evicts four terminal blocks"* —
-  but `c9776c7` already carries the removal and leaves the doc at **58,385 B, 7,151 B UNDER**;
-  `d839a79` touches only the archive. The "over by 3,062 B" state existed in a REFUSED proposal
-  run, never in a commit. Substance verified independently and holds; the message is wrong about
-  which commit does what, and is left rather than rewritten so the pushed history is not
   re-pointed. `via: measurement`
-- **Ruled out:** that round 0's rewrite of rank 4 was lossless. It **deleted P8's carried
-  preconditions**, which survived only in a doc `## Goal` declares CLOSED. Restored.
   `via: measurement`
-- **Leading hypothesis:** none for the audit. Closed.
-- **Next probe:** watch one **scheduled** firing go green — the timer's next is the only reading
-  that settles the headline. For rank 8, the operator's release-cadence decision.
+
+### ✅ RESOLVED 2026-10-01 — round 2 re-audited the fixes and found FOUR more that were mine, two re-creating the exact shape they were fixing
+- as-of: 2026-10-01
+- **What this settles:** that a fix round's own prose is the likeliest next finding. Three
+  rounds, every one finding real defects in the previous round's *corrections*.
+- 🔴 **Ruled out: that restoring the both-pods loop was a fix. IT RE-CREATED THE FALSE ZERO IT
+  WAS FIXING.** Rebuilt as `echo "…: $(git rev-list …)"`, which hands `$?` to `echo`. Measured:
+  with `kubectl` failing, `DEP` is **empty**, `..origin/main` is a **VALID** range, and the block
+  prints `0`/`0` at **rc 0** — an affirmative *"no drift"* for a block that never reached the
+  cluster. **An empty operand makes a valid range, not an error.** Two lines under this section's
+  own *"READ EVERY STATUS OFF THE COMMAND"* headline. Fixed with guards on `kubectl`'s status and
+  on `DEP` being a real tag. `via: measurement`
+- 🔴 **Ruled out: my own generalisation of the prune rule — WRONG ON TWO OF THREE FIELDS NAMED,
+  AND IT OMITTED TWO.** Read out of the tool's values, not its source: the guarded set is **the
+  task-board field, `closing-condition`, `forcing` and `as-of`**. **The `via` field is NOT in
+  it** (`load_bearing_field()` returns `None`); a `via`-tagged line is unprunable only because it
+  RECURS — the ambiguity rule. And **`as-of` is `block_scoped`, so it IS exempt when a whole
+  block is named**; "no bypass" is false for it. ⚠ The wrong bullet is itself unprunable because
+  it quotes `forcing:`, so it is corrected by naming. **I wrote an untested generalisation inside
+  the bullet whose lesson is "a comment is a claim I carried forward without testing".**
+  `via: code`
+- 🔴 **Ruled out: that the replacement archive bullet was safe. IT TOLD THE READER NOT TO QUOTE A
+  COUNT, THEN QUOTED THREE — ALL FALSE.** "12 bodies, 39,944 B, four retractions"; measured at
+  the PR head **14 / 48,650 B**, falsified by its own sibling commit **14 seconds later in the
+  same PR**, and the archive header says **three**. Replaced with a bullet carrying **no count** —
+  the only version that cannot go stale. `via: measurement`
+- **Ruled out:** that `0 of 147 absent, 116 net` reproduces. **147 is an ARCHIVE-side count on a
+  HANDOFF-side "absent" claim** — the same conflation the preceding block confesses to. The
+  reproducible triple is **116 removed / 151 non-blank added / 0 absent**; the safety property
+  holds. `via: measurement`
+- **Ruled out:** the `result` hedge, the self-test `tail`, and round 1's losslessness — three
+  more, all mine. A live `result` **directory** is skipped BY NAME and exits **0**; only a
+  **DANGLING** one exits 2, so "a plausible exit-2 cause" was half-false. `--self-test` prints
+  **no summary line**, so the `tail -2` I added always shows the last two `PASS` rows whether a
+  control failed or not — a content-check providing none. And three things were silently lost and
+  are restored here: the `model`-didn't-survive observation (**0 hits in handoff AND archive** —
+  gone, not evicted), the sweep's two anchors, and rank 5's measured "twice", widened to
+  "repeatedly" with no new measurement. `via: measurement`
+- **Leading hypothesis:** none. ⚠ **The pattern is three-for-three: in this doc the thing most
+  likely to be wrong is the sentence written to correct the last wrong sentence.**
+- **Next probe:** a **scheduled** firing going green — still unobserved. For rank 8, the
+  operator's cadence decision.
 
 ## Next steps (ranked)
 
 🔴 **NUMBERING IS STABLE — a rank is half a `claim-work` slug**, and `claim-work` comes BEFORE
-you act. ⚠ **AND RUN `gh pr list --state open` ANYWAY, TWICE.**
+you act. ⚠ **AND RUN `gh pr list --state open` ANYWAY, TWICE — before starting, and again
+immediately before `gh pr create`.** Those two moments are the point: measured three times, the
+pre-work sweep was clean and a peer's PR appeared mid-write. `claim-work` answering **rc 12,
+already yours** is indistinguishable from untouched work; only the sweep sees an unclaimed
+duplicate.
 
 1. ✅ **DONE — all PRs merged**, verified BY CONTENT with a negative control at 0.
    forcing: gate — unmerged docs PRs are the `stranded-docs` shape.
 2. ✅ **DONE 2026-09-30 — RULED OUT, NOT BUILT.** The deadman is green (four arms cleared;
-   **manual invocation** — see `State now`) and clause (a)'s detector was ruled out by
-   `/the-algorithm`: self-issued requirement, all three artefacts functionally current, and an
-   instrument whose **every failing firing toasted and none was acted on**. 🔴 **Do not quote a
-   firing total from this item — see `State now`; two of mine were wrong.** **Do NOT re-open
-   this as "build the currency instrument".** Successor is rank 8.
+   **manual invocation**) and clause (a)'s detector was ruled out by `/the-algorithm`:
+   self-issued requirement, all three artefacts functionally current, and an instrument whose
+   **every failing firing toasted and none was acted on**. 🔴 **Quote no firing total from this
+   doc.** **Do NOT re-open this as "build the currency instrument".** Successor is rank 8.
    forcing: regression — the image gap re-opened twice; rank 8 carries it now.
 3. ✅ **DONE 2026-09-30 — clause (b) is MET.** Sessions 0 → 1, invites 0 → 1, share flow end to end.
    forcing: user — the operator held the only credential that could run it.
-4. **P8 — retire the Python oracle.** 🔴 **CARRIED PRECONDITIONS, RESTORED after round 0's
-   rewrite dropped them:** a real read AND a real write against the live pod from **two distinct
-   hosts**, recorded, AND **no open defect naming the Go client or `packages.default`**. 🔴
-   **PLUS the cross-repo one: `packages.cairn` CANNOT BE DELETED until the config repo stops
-   importing the reader modules** — 22 files import that resolver with no fallback, plus the
-   writer and the launcher the `subsystem-index` protocol names. ORDER: config repo stops
-   importing → then `packages.cairn` goes. **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway
-   and the residual risk is accepted EXPLICITLY, in writing.** ⚠ Three entry conditions now;
-   read all of them.
+4. **P8 — retire the Python oracle.** 🔴 **THREE entry conditions; read all of them.** (i) a real
+   read AND a real write against the live pod from **two distinct hosts**, recorded; (ii) **no
+   open defect naming the Go client or `packages.default`**; (iii) **`packages.cairn` CANNOT BE
+   DELETED until the config repo stops importing the reader modules** — 22 files import that
+   resolver with no fallback, plus the writer and the launcher the `subsystem-index` protocol
+   names. ORDER: config repo stops importing → then `packages.cairn` goes. **BACKSTOP: not done
+   by 2026-11-01 ⇒ P8 opens anyway and the residual risk is accepted EXPLICITLY, in writing.**
    forcing: deadline — the 2026-11-01 backstop, set by the operator.
 5. **Fix the base-clone write guard.** Reproduced a **NINTH** time this session — it refused a
    commit whose `-C` target was a LINKED WORKTREE on a feature branch while naming the base
-   clone, having resolved the repo from `$PWD`. ⚠ **And it is inconsistent as well as wrong —
-   `handoff_doc.py` committed into that same worktree repeatedly, unimpeded, because it runs git
-   from inside Python where no PreToolUse hook sees it.** Premise proved false before every
-   override. **Closing condition:** the guard admits a linked worktree AND reads `-C`, with a
-   test that a real base-clone write is still refused.
+   clone, having resolved the repo from `$PWD` — and a **TENTH** time against an auditor's own
+   private clone. Measured **twice in the same session**, and **the premise was proved false
+   before each override**. ⚠ **It is also inconsistent: `handoff_doc.py` committed into that same
+   worktree unimpeded, because it runs git from inside Python where no PreToolUse hook sees it.**
+   **Closing condition:** the guard admits a linked worktree AND reads `-C`, with a test that a
+   real base-clone write is still refused.
    forcing: gate — a guard whose diagnosis is reliably about the wrong repository trains its own
    bypass, and one a sibling tool walks past is not a gate.
 6. ✅ **DONE 2026-09-30 — the Go client is live and verified on BOTH hosts.**
@@ -269,21 +269,22 @@ you act. ⚠ **AND RUN `gh pr list --state open` ANYWAY, TWICE.**
    tags, and `/the-algorithm` over the whole design.
    forcing: user — all seven were asked directly and none was ever declined in writing.
 8. **OPERATOR DECISION FIRST: WHAT RELEASE CADENCE SHOULD THE PODS TRACK? Nothing can be built
-   until that is answered.** 🔴 **REWRITTEN TWICE AND BOTH EARLIER WORDINGS WERE WRONG.**
-   (i) The first asked for a new `main-<ts>` tag — unnecessary, a semver path exists.
-   (ii) The second pointed at that semver tag — **but it has NEVER been minted: 0 git tags, and
-   0 of 122/121/79 ghcr tags are non-`sha`.** So an `ImagePolicy` over it selects nothing today.
-   **The three options, and they are a cadence choice rather than a mechanism:** cut version
-   tags and enrol on semver (deploy per release, each a deliberate act); mint a per-commit
-   orderable tag **gated on code-bearing paths** (deploy per code change — ungated it is **12
-   rollouts for 0 code change** over the window this arc examined, because every commit moves
-   the digest); or do not enrol and keep hand-edited pins, the status quo the incident came from.
-   **Already measured, so nobody re-derives it:** anonymous tag listing works for both packages
-   (**no `secretRef`**); the setter marker must go in the deployment repo's root-kustomization
-   for `subsystem-store`, **NOT** the app manifests — both `ImageUpdateAutomation`s scope
-   `update.path` to the kustomizations tree, so every `$imagepolicy` under the apps tree is
-   documentation; the working model is a neighbouring app's root-kustomization; and the initial
-   `newTag` **must already be published** or the deployment points at a non-existent image.
+   until that is answered.** 🔴 **REWRITTEN TWICE; BOTH EARLIER WORDINGS WERE WRONG.** (i) A new
+   `main-<ts>` tag is unnecessary — a semver path exists. (ii) That semver tag has **NEVER been
+   minted**: 0 git tags, and 0 of 122/121/79 ghcr tags are non-`sha`, so an `ImagePolicy` over it
+   selects nothing today. ⚠ **A live `claim-work` holds this rank under a SUPERSEDED subject
+   ("orderable tag in cairn CI, then ImagePolicy…") — the mechanism-first plan this item
+   replaces. Re-read the item, not the claim.** **The three options, a cadence choice rather than
+   a mechanism:** cut version tags and enrol on semver (deploy per release, each a deliberate
+   act); mint a per-commit orderable tag **gated on code-bearing paths** (deploy per code change
+   — ungated it is **12 rollouts for 0 code change** over this arc's own window, because every
+   commit moves the digest; ⚠ and this revives cairn-CI work round 0 declared unnecessary); or do
+   not enrol and keep hand-edited pins, the status quo the incident came from.
+   **Already measured:** anonymous tag listing works for both packages (**no `secretRef`**); the
+   setter marker goes in the deployment repo's root-kustomization for `subsystem-store`, **NOT**
+   the app manifests — both `ImageUpdateAutomation`s scope `update.path` to the kustomizations
+   tree, so every `$imagepolicy` under the apps tree is documentation; the working model is a
+   neighbouring app's root-kustomization; the initial `newTag` **must already be published**.
    🔴 **BLAST RADIUS: in the deployment repo commit IS deploy. Nothing has been written there.**
    forcing: regression — both pods sat one code commit behind `main` across `#146` and re-opened
    within minutes, twice.
@@ -668,14 +669,6 @@ you act. ⚠ **AND RUN `gh pr list --state open` ANYWAY, TWICE.**
   *do not fix a parked base clone by switching branches in it* — now lives **only** in the
   archive; the general rule is in the portable rules file independently.
 
-- 🔴 **A CLOSED-BLOCK ARCHIVE EXISTS: `claudedocs/archive-cairn-deploy-currency.md`.** ⚠ **This
-  bullet REPLACES a pruned one whose every figure this arc then falsified** — it said "seven
-  block bodies, ~22 KB, three retractions" and the file now holds **12 bodies, 39,944 B** and
-  **four** retractions. **So do not quote a count of it from here either; read the file.** It
-  carries the retractions whose whole value is stopping a re-derivation (the trusted-proxy
-  exposure that does not exist, the `CAIRN_LIB` two-tier split measured false, `n_tup_ins`
-  lagging, and `--prune` "structurally" being unable to shrink this doc). **Evict to it, never
-  summarise into it.**
 - 🔴 **A PERMANENTLY-RED GATE'S DIAGNOSIS IS USUALLY ITS BACKLOG, NOT ITS CODE** — ⚠ **replaces a
   pruned bullet that carried two falsified figures.** The deadman was red on **four true
   findings nobody had cleared**, and the instinct to "fix the instrument" would have weakened
@@ -705,47 +698,77 @@ you act. ⚠ **AND RUN `gh pr list --state open` ANYWAY, TWICE.**
   unprunable and are corrected by naming instead. **Keep a quoted field out of a bullet you may
   later need to retract.**
 
+- 🔴 **A CLOSED-BLOCK ARCHIVE EXISTS: `claudedocs/archive-cairn-deploy-currency.md`** — and ⚠
+  **this bullet DELIBERATELY CARRIES NO COUNT OF IT.** Its predecessor was pruned for giving
+  three (bodies, bytes, retractions) and **all three were false at the PR head, one of them
+  falsified by its own sibling commit 14 seconds later.** The counts move on every eviction, so
+  **read the file**. It holds the retractions whose value is stopping a re-derivation.
+  **Evict to it, never summarise into it.**
+- 🔴 **CORRECTION, NAMED BECAUSE THE WRONG BULLET CANNOT BE REMOVED: the surviving bullet that
+  says `--prune` refuses any line holding a `forcing`, `via` or `as-of` field, with "no bypass", IS
+  WRONG.** Read out of the tool's own values: the guarded set is **the task-board
+  field, `closing-condition`, `forcing` and `as-of`**. **The `via` field is NOT in it** — a
+  `via`-tagged line is unprunable only because it RECURS, which is the ambiguity rule, so **such a bullet
+  CAN be pruned by naming a longer unique line or the whole block.** And **`as-of` is
+  `block_scoped`, so it IS exempt when the whole block is named.** ⚠ That bullet is unprunable
+  because it quotes `forcing:` — **the field it is wrong about makes it permanent.** Keep a
+  quoted field out of any bullet you may later need to retract.
+- 🔴 **A SURVIVING BULLET IN THIS SECTION ENDS "Take the 78" AND THE 78 IS RETRACTED.** It also
+  says "78 failing firings". Both are wrong (measured 73, and the total moves anyway); it quotes
+  `forcing: regression` so it cannot be pruned. **Ignore that instruction**; `State now` carries
+  the scheduled/manual split that replaces it. ⚠ **A ban stated in one section does not reach an
+  append-only bullet that instructs the reader to do the banned thing** — the ban has to NAME it.
+- 🔴 **AN EMPTY OPERAND MAKES A VALID GIT RANGE, NOT AN ERROR.** `${EMPTY}..origin/main` counts
+  from the root and prints a plausible number at **rc 0** — so a recipe deriving a revision from a
+  command must check THAT command's status first, and `$(…)` inside `echo` throws it away. Both
+  halves cost a false "no drift" here.
+- ⚠ **A COMMIT MESSAGE CAN DESCRIBE A STATE THAT EXISTED ONLY IN A REFUSED PROPOSAL RUN**, and a
+  commit that performs a removal can carry no mention of it. Name the commit that carries the
+  removal, in the message of the commit that carries it.
+
 ## How to verify
 
-🔴 **READ EVERY STATUS OFF THE COMMAND, NEVER THROUGH A PIPE.** This arc has paid **five** times.
-Redirect to a file and read `$?`.
+🔴 **READ EVERY STATUS OFF THE COMMAND, NEVER THROUGH A PIPE — AND NOT THROUGH `echo` EITHER.**
+This arc has paid **six** times; the sixth was this block's own both-pods loop, where
+`echo "…: $(git rev-list …)"` handed `$?` to `echo` and printed a confident `0`.
 
 ```bash
 # the deadman — the fleet currency instrument that EXISTS. Read the unit, not a grep:
 systemctl --user start drift-check.service
 systemctl --user show drift-check.service -p ExecMainStatus -p Result   # want 0 / success
-# 🔴 its SUCCESS marker is `Finished Passive drift deadman`, NOT "Deactivated successfully"
-#    (that pattern returns a false 0 — it cost a wrong "never green" claim here).
+# 🔴 its SUCCESS marker is `Finished Passive drift deadman`, NOT "Deactivated successfully".
 # 🔴 AND `start` MAKES A MANUAL RUN. The claim that matters is a SCHEDULED green, so compare:
 systemctl --user show drift-check.timer -p LastTriggerUSec   # vs ExecMainExitTimestamp above
-# ⚠ Do NOT quote a success/failure TOTAL: the journal rotates AND your own `start` adds to it.
+# ⚠ Quote no success/failure TOTAL: the journal rotates AND your own `start` adds to it.
 
 # clause (b) — DIRECT reads are the authority; the stats counter LAGS and its 0 is ambiguous
 kubectl -n subsystem-store exec sts/cairn-ui-postgres -- psql -U cairn_ui -d cairn_ui \
   -c "select count(*) from sessions; select count(*) from invites;"
 
-# the deployed pods -> commit -> distance. 🔴 ALL THREE artefacts, and three corrections:
-#   (1) the store deploy is `subsystem-store-api`, NOT `cairn-store`;
-#   (2) the count MUST be path-scoped or it reports 12 for ZERO code drift;
-#   (3) 🔴 the `sed` IS LOAD-BEARING — without it `git rev-list` exits 128 `fatal: ambiguous
-#       argument` with EMPTY stdout, which under a `2>/dev/null` reads as the reassuring `0`.
-#   ⚠ BOTH pods, not one: an earlier edit of this block dropped `cairn-ui`, the very pin whose
-#     digest this arc measured moving.
-export KUBECONFIG=<the cluster kubeconfig>   # without it kubectl hits localhost:8080, and a
-                                             # `2>/dev/null` turns that into a false absence
-git fetch origin            # 🔴 a stale origin/main UNDERSTATES the distance, and the
-                            #    understatement reads as "0 = current"
+# the TWO POD artefacts. 🔴 EVERY GUARD EXISTS BECAUSE ITS ABSENCE PRODUCED A FALSE ZERO:
+#   (a) the store deploy is `subsystem-store-api`, NOT `cairn-store`;
+#   (b) an EMPTY `DEP` makes `..origin/main` a VALID range printing 0 at rc 0, so a failed
+#       `kubectl` reads as "no drift" unless checked FIRST (measured);
+#   (c) `${IMG##*sha-}` returns `$IMG` unchanged if there is no `sha-`;
+#   (d) the count MUST be path-scoped or it reports 12 for ZERO code drift.
+export KUBECONFIG=<the cluster kubeconfig>   # else kubectl hits localhost:8080
+git fetch origin            # 🔴 a stale origin/main UNDERSTATES the distance
 for d in cairn-ui subsystem-store-api; do
-  DEP=$(kubectl -n subsystem-store get deploy "$d" \
-    -o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*sha-//')
-  echo "$d informational: $(git rev-list --count ${DEP}..origin/main)"
-  echo "$d code-bearing  : $(git rev-list --count ${DEP}..origin/main -- . \
-    ':(exclude)claudedocs' ':(exclude)*.md')"      # <- 0 = no code-bearing drift
+  IMG=$(kubectl -n subsystem-store get deploy "$d" \
+          -o jsonpath='{.spec.template.spec.containers[0].image}')
+  if [ $? -ne 0 ] || [ -z "$IMG" ]; then echo "$d: NOT MEASURED (kubectl)"; continue; fi
+  DEP=${IMG##*sha-}
+  if [ "$DEP" = "$IMG" ] || [ -z "$DEP" ]; then echo "$d: NOT MEASURED (no sha- tag: $IMG)"; continue; fi
+  git rev-list --count "${DEP}..origin/main" > /tmp/inf.$$ 2>/tmp/e.$$
+  if [ $? -ne 0 ]; then echo "$d: NOT MEASURED ($(cat /tmp/e.$$))"; continue; fi
+  git rev-list --count "${DEP}..origin/main" -- . ':(exclude)claudedocs' ':(exclude)*.md' \
+    > /tmp/cb.$$ 2>/dev/null
+  echo "$d informational=$(cat /tmp/inf.$$) code-bearing=$(cat /tmp/cb.$$)"   # want 0
 done
 #   ⚠ 0 code-bearing does NOT mean "same image": every commit moves the digest (the nix store
 #     path embeds the rev), so a docs commit changes the digest while changing nothing served.
 
-# the INSTALLED client — the third artefact
+# the THIRD artefact — the INSTALLED client
 readlink -f "$(command -v cairn)"
 cairn recall --help | grep -c -- --tag      # non-zero
 cairn recall --help | grep -c -- --scope    # positive control: must already be non-zero
@@ -756,13 +779,14 @@ cairn recall --help | grep -c -- --scope    # positive control: must already be 
 
 **The leak gate must pass before any push, and read its CONTENT not a pipe's rc:**
 ```bash
-# ⚠ The base clone is FINE here: `.claude/worktrees/` is gitignored and the scanner enumerates
-#   with `git ls-files --exclude-standard`, so agent worktrees are invisible to it — measured
-#   rc 0 over 468 files with 13 of them present. An untracked `result` symlink is NOT ignored
-#   and remains a plausible exit-2 cause; that half is untested.
-# 🔴 Per-run output paths: a fixed /tmp name is truncated by a sibling agent, and reading the
-#   CONTENT rather than a pipe's rc is the whole point of redirecting.
+# ⚠ The base clone is FINE: `.claude/worktrees/` is gitignored and the scanner enumerates with
+#   `git ls-files --exclude-standard`, so agent worktrees are invisible to it — measured rc 0
+#   over 468 files with 13 present. And a live `result` is fine too: an existing DIRECTORY is
+#   skipped BY NAME with its own control. 🔴 Only a DANGLING `result` exits 2. Measured both.
+# 🔴 `--self-test` prints NO summary line, so a `tail` of it reads nothing — take its rc, and
+#   read CONTENT only from the main scan, which does print `clean` / `REFUSING`.
 O=$(mktemp -d)
-python3 tests/leakscan.py --self-test > "$O/self" 2>&1; echo rc=$?; tail -2 "$O/self"
-python3 tests/leakscan.py           > "$O/scan" 2>&1; echo rc=$?; tail -3 "$O/scan"
+python3 tests/leakscan.py --self-test > "$O/self" 2>&1; echo "self-test rc=$?"
+python3 tests/leakscan.py           > "$O/scan" 2>&1; echo "scan rc=$?"; tail -3 "$O/scan"
+# 🔴 rc 2 is "could not vouch" — a control of its own misbehaved. NEVER a pass.
 ```
