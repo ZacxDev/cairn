@@ -11,6 +11,7 @@ nothing is recorded yet: ordinary, not an error, and not a clean bill of health.
 Non-blocking: if it exits non-zero, print the stderr line and carry on.
 
 ## Goal
+
 Make "what is deployed" and "what is on `main`" observable rather than remembered, and
 prove the one deployed feature that has never been exercised. Both predecessor arcs
 (`handoff-cairn-control-plane.md`, `handoff-cairn-next-phase.md`) are CLOSED; this is the
@@ -22,35 +23,45 @@ new arc their leftovers belong to, not another round of either.
   browser surface's session table has been written — `sessions.n_tup_ins` read as 0 before
   and ≥1 after one real sign-in. A later session runs the instrument's own red-control and
   the two psql reads. ADDRESSED ⇒ arc CLOSED.
+- 🔴 **DISPOSITION, 2026-09-30 — the condition is FROZEN, so it is recorded as RULED OUT
+  rather than rewritten.** (b) is **MET**. (a) is **RULED OUT, not met**: `/the-algorithm`
+  found its author of record is `forcing: regression` — self-issued, no human asked — and
+  all three artefacts measure 0 code-bearing commits behind. **No instrument was built and
+  no red-control was run, because there is no instrument to run one against.** Operator
+  signed off; residual risk accepted explicitly. **A later session must NOT read clause (a)
+  above as live work** — it is answered by deletion, and rank 8 is the successor.
 
 ## State now
 
-- ✅ **RANK 2 IS CLOSED, AND NOT BY BUILDING ANYTHING.** The passive drift deadman is **GREEN**
-  — `Result=success`, `ExecMainStatus=0`, and its own verdict line *"no drift on the host(s)
-  CHECKED: workbench (local), laptop (remote)"*. Four arms cleared this session; the instrument
-  had **zero defects** and was red because of a four-item backlog nobody had actioned.
-- 🔴 **CLAUSE (a) IS RULED OUT RATHER THAN MET, WITH OPERATOR SIGN-OFF.** `/the-algorithm` step 1
-  found its maker is `forcing: regression` — **self-issued by a prior agent session; no human
-  asked.** Measured: all three artefacts are **functionally current** (table in the RESOLVED
-  block), so the detective instrument it specifies would be **green today** and red only on a
-  path-unscoped count. **Decision (operator): record the deletion, fix the reading, file the
-  real fix.** The residual risk is accepted EXPLICITLY, in writing, here.
-- ✅ **ARC CLOSED.** (b) was met earlier; (a) is ruled out above with the real fix filed as rank 8.
+- ✅ **RANK 2 IS CLOSED, AND NOT BY BUILDING ANYTHING.** The drift deadman reports
+  `Result=success`, `ExecMainStatus=0` and its own verdict `no drift on the host(s) CHECKED`.
+  Four arms cleared; the instrument had **no defects** and was red on a four-item backlog.
+- 🔴 **THAT GREEN IS A MANUAL INVOCATION, AND SAYING SO IS THE POINT.**
+  `ExecMainExitTimestamp` is 19:39:04 while the timer's `LastTriggerUSec` is 12:46:43, so
+  **the deadman has NOT been observed green on its own schedule.** The config repo is 0
+  behind at the time of writing, so the next scheduled run should also be green — but that
+  is a prediction, not a reading. **Verify on a timer firing before quoting this as green.**
+- 🔴 **CLAUSE (a) IS RULED OUT RATHER THAN MET** — see the disposition under `## Goal`.
+  ⚠ **And the substitution that licenses it is a JUDGEMENT, not only a measurement.** (a) as
+  written says "a deployed cairn **image's commit** is behind `origin/main`", which is **12**
+  for the pods and **8** for the client. Replacing that with a path-scoped count is a better
+  predicate and it was verified — but **choosing it is itself a decision, self-issued by this
+  session**, the same class (a) was rejected for. Recorded rather than presented as a reading.
+- ⚠ **`model` IS `opus[1m]` ON BOTH HOSTS.** An earlier bullet in this doc said
+  `z-ai/glm-5.3-flash`; the operator reversed that in the same session (*"set claude code back
+  to opus"*) and both hosts were set to `opus[1m]`. Set on BOTH so the key sets agree and rc15
+  stays green. ⚠ The glm value did **not** survive on the host running a live Claude Code
+  while it did on the host without one — one observation, mechanism unproven.
+- ✅ **ARC CLOSED** — (b) met, (a) ruled out with sign-off, successor filed as rank 8.
 - ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE.** The resolver exited **5**
-  (0 tasks). An unknown session id answers 200 with an EMPTY ARRAY, so that zero cannot separate
-  "touched no task" from "wrong id". None written, none created.
-- ⚠ **`model` IS NOW `z-ai/glm-5.3-flash` ON BOTH HOSTS** (operator instruction: nothing defaults
-  to opus). Set on BOTH so the key sets agree and rc15 stays green. ⚠ Not an Anthropic model id,
-  so it presumably needs a gateway — **unverified that Claude Code resolves it**; confirm on a
-  fresh session.
-- ✅ **CARRIED FORWARD — a REPLACE heading would drop these.** `pytest tests -q` **2357 passed /
-  0 failed**; `go test ./...` **21 ok / 0 FAIL**; `nix eval` resolving `default` and `cairn-go` to
-  the **identical** store path. Rank 6 closed: Go client live on both hosts at byte-identical
-  store paths (`cairn` → `…-cairn-go-cdf6fae/bin/cairn`, `cairn-py` → `…-cairn-cdf6fae/bin/cairn`),
-  `-verbs` **rc 0**, `cairn-validate`/`cairn-who` **rc 0**. Pod images DIGEST-verified. The doc's
-  ceiling was cleared by EVICTION to `claudedocs/archive-cairn-deploy-currency.md`, not by
-  `--override-size-ratchet`.
-- ⚠ **CAIRN HAS 0 OPEN PRs OF MINE.** `#160` and `#162` are a PEER's, untouched.
+  (0 tasks); an unknown session id answers 200 with an EMPTY ARRAY, so that zero cannot
+  separate "touched no task" from "wrong id".
+- ✅ **CARRIED FORWARD — a REPLACE heading would drop these.** `pytest tests -q` **2357 passed
+  / 0 failed**; `go test ./...` **21 ok / 0 FAIL**; `nix eval` resolving `default` and
+  `cairn-go` to the **identical** store path. Rank 6 closed: Go client live on both hosts at
+  byte-identical store paths, `-verbs` **rc 0**, `cairn-validate`/`cairn-who` **rc 0**. Pod
+  images DIGEST-verified.
+- ⚠ **CAIRN HAS ONE OPEN PR OF MINE — `#163`, this doc.** `#160`/`#162` are a PEER's.
 
 ## Open investigations — live diagnosis state
 
@@ -88,51 +99,12 @@ new arc their leftovers belong to, not another round of either.
 
 ### ANSWERED — the Python-vs-Go decision is MADE (Go), and it is a PIN-SEAM SPLIT rather than a one-line flip
 - as-of: 2026-09-30
-- **What this settles:** the client-pin block's 🔴 *"Decide Python-vs-Go default BEFORE opening
-  it"* is ANSWERED — **operator decision: take the GO client.** Do not re-open it; below is its
-  measured COST, unknown when that sentence was written.
-- **Observed (with values)** — both packages built from the pinned revision and inspected, not
-  inferred from the flake:
-  | reading | `cairn-<pin>` (Python) | `cairn-go-<pin>` (Go) |
   |---|---|---|
-  | top level | `bin` + **`libexec`** | `bin` **only** |
-  | `entry_shape.py` / `subsystem_resolver.py` | present / present | absent |
-  | `--ref-to` / `--tag` in `recall --help` | 2 / 2 | **1 / 1** |
-  | `--scope` (control) / a bogus flag (control) | 2 / 0 | 1 / **0** |
-  | `-verbs` | rc **2** (argparse refusal) | rc **0** + table |
   `via: measurement`
-- **Ruled out:** that the flip is re-pointing one threaded package name. The config repo's
-  `scripts/lib/cairn_pin.py` reaches the reader modules by route 2 — `which cairn` → `realpath` →
-  `<store>/libexec/cairn/lib`, accepted on **CONTENT** (both marker modules) with **no local
-  fallback**, because that repo deleted its own copies. The Go package has no `libexec` at all, so
-  route 2 refuses and `CairnPinUnresolved` fires for **22 tracked files importing `cairn_pin`**, 11
-  importing `cairn_lib`, the out-of-store `cairn-who` and `cairn-validate` launchers (the latter is
   named by the `subsystem-index` write protocol), and the writer. `via: measurement`
-- **Ruled out:** that an env var alone is the fix. `cairn_pin`'s own docstring records that the
-  variable route exists for sandboxes and that **route 2 is the one that must work unattended** —
-  the session-variables file lands in `profile.d`, which a non-interactive shell does not source.
-  So the replacement must be an on-PATH, content-valid answer, not a `CAIRN_LIB` export.
   `via: code`
-- **Ruled out:** that the four parse contracts the config repo's ops wrappers depend on break
-  on the Go client. All four probed directly against the built Go binary, one control each —
   values in the Gotchas entry below, not repeated here. `via: measurement`
-- **Ruled out:** that the Go package is reachable only at the NEW pin, making the flip depend on
-  the bump. `packages.cairn-go` and `default = mkGoClient` are present in the flake at **both** the
-  old and the new pinned revisions. The bump is still required for the *features* — the old
-  revision predates all three — but not for evaluation. ⚠ This CORRECTS a claim I made earlier in
   this same session and had not measured. `via: measurement`
-- **Leading hypothesis — a mechanism, not a guess.** One name does two jobs: *the binary the
-  operator types* and *the source of the reader modules*. The flip separates them — deploy line
-  takes the Go package, a second threaded name keeps the Python one, and an in-store `cairn-py`
-  launcher gives route 2 a content-valid answer without an env var. 🔴 **Bind it to
-  `packages.cairn-go`, NOT `packages.default`**: same store path today, but `default` can be
-  re-pointed upstream without the name changing meaning, and a pin must not inherit that.
-- **Next probe:** rank 6 carries the design and the file set. The two RED proofs it must not skip:
-  watch `cairn_pin` route 2 REFUSE on a Go-only PATH and then resolve once a Python-lib launcher
-  is on PATH (both directions), and watch the new threaded-name guard fail against a decoy
-  binding of the right name pointing at the wrong package — **that exact decoy shape is recorded
-  as having SURVIVED in the guard file already**, so copy its assignment-bound regex discipline
-  rather than searching the whole region.
 
 ### ✅ RESOLVED 2026-09-30 — the pin bump is MERGED, SWITCHED and verified BEHAVIOURALLY on the installed client; and the blocker above was ALREADY BEING REPORTED by a red instrument nobody reads
 - as-of: 2026-09-30
@@ -146,110 +118,33 @@ new arc their leftovers belong to, not another round of either.
 
 ### 🔴 OPEN — this doc is at its enforced ceiling and `--prune` STRUCTURALLY cannot shrink it
 - as-of: 2026-09-30
-- **Symptom + repro:** any update → `status=size-ratchet`, exit **14**, nothing written. **65,526 B
-  against an enforced 65,536 B ceiling — 10 B.** `handoff-audit.py`: **5.3x target**, **18,496 B
-  evictable** (15,617 B in 4 resolved blocks).
 - 🔴 **Observed — the blocker is the AMBIGUITY rule, not the `as-of:` one.** `LOAD_BEARING_FIELDS`
   *exempts* `as-of:` when a whole block is named, precisely so the largest eviction is takeable — so
   that rule is not it. But every named line must match **exactly one** line, and `- as-of: <date>` /
   `` `via: measurement` `` recur across blocks *by design* (*"Append-verbatim makes duplicates
   ordinary"*). Measured: `- as-of: <a shared date>` **5 matches**, `` `via: measurement` `` **9**,
-  `|---|---|---|` **3** → `status=prune-refused`, exit 15. Heading-only is refused too
   (`[partial block]`). No spelling works. `via: measurement`
-- **Ruled out:** pruning one block at a time so duplicates become unique — removing one takes
-  that stamp from 5 matches to 4, and it reaches 1 only after the other four are gone, the blocked
   step. `via: measurement`
-- 🔴 **RETRACTED TWICE, BOTH MINE, IN ONE SESSION.** I claimed this limit from the duplicate lines
-  without reading the tool; then read `LOAD_BEARING_FIELDS` and retracted the CONCLUSION too; the
-  third step finally ran the command. **Conclusion stands; the first mechanism AND the retraction of
   the conclusion were both wrong.** The lesson is the sequence. `via: code`
-- **Leading hypothesis:** structural — `Open investigations` only grows, and its exit rule is
-  defeated by its own append-verbatim duplicates.
-- **Next probe — operator's call, not mechanical:** (1) `--override-size-ratchet "<reason>"`, whose
-  contract requires the reason to state whether an operator approved; or (2) split the arc — clause
-  (a) is open, so that is a scope decision. ⚠ `State now` was compacted this round, which buys ONE
-  small update, not a fix. Do not spend it on prose.
 
 ### ✅ RESOLVED 2026-09-30 — the ceiling is cleared by EVICTION, and this RETRACTS my own "`--prune` cannot shrink it" from one round ago
 - as-of: 2026-09-30
-- 🔴 **RETRACTED: "`--prune` STRUCTURALLY cannot shrink this doc."** I wrote that here one round
-  ago as measured. **It is FALSE, and the doc is ~18.8 KB smaller because it is.** What I measured
-  was true; the conclusion I drew from it was too wide.
-- **What is actually true, stated so nobody has to re-derive it:**
-  - a prune naming a `### ` heading must name **every** line of its block, else `[partial block]`;
   - every named line must match **exactly one** line, else `[ambiguous]` — and `- as-of: <date>`
     plus a bare `` `via: measurement` `` recur across blocks *by design*
-    (*"Append-verbatim makes duplicates ordinary"*);
-  - therefore a **whole block** genuinely cannot be named — that half was right;
-  - **but the BODY's unique lines can**, leaving the heading and its stamp as a pointer. Measured:
-    a 28-line body-only prune returned `status=proposed` on the first try.
   `via: measurement`
-- **Observed (with values):** 7 closed blocks evicted **verbatim** to
-  `claudedocs/archive-cairn-deploy-currency.md` (22,127 B, 7 blocks), 223 lines pruned,
-  **~18.8 KB** freed against a doc that had **10 B** of headroom. Each evicted block keeps its
   HEADING and `as-of:` stamp in place as the pointer — that is the shape a prune leaves, and it is
   deliberate rather than residue. `via: measurement`
-- 🔴 **Ruled out:** that I found this myself. **A PEER SESSION had already shipped the exit path
-  and I nearly landed a doc entry contradicting it.** The config repo's PR #1926 —
-  *"the size-ratchet refusal denied the exit rule (q) had just shipped"* — says in as many words
-  that the route is *"move the text to the archive leaving a pointer, then `--prune` the lines
-  out"* and that **`--prune` combines with `--update`**. I found it only because a `git diff`
-  against a moved mainline listed a file I had not written. **The sweep is what saved this, not my
   reasoning.** `via: doc`
-- 🔴 **THE REUSABLE PART, AND IT IS ABOUT ME RATHER THAN THE TOOL — THREE ROUNDS ON ONE CLAIM:**
-  (1) asserted the limit from duplicate lines without reading the tool; (2) read
-  `LOAD_BEARING_FIELDS`, over-corrected, retracted the *conclusion*; (3) ran the command, restored
-  the conclusion in a narrower form; (4) a peer's PR showed the conclusion was still too wide and
-  the exit existed. **Every step was reasoning where a command was available, and the command was
-  one line each time.** The rule this repo already carries — *a theory that explains the
-  observation is not evidence for it* — was in scope the whole way.
 - **Leading hypothesis:** none. Closed.
-- **Next probe:** none for the ceiling. ⚠ **The doc will fill again** — `Open investigations`
-  only grows. The route is above; the archive is the destination; do not reach for
-  `--override-size-ratchet`, which ships an over-ceiling doc rather than fixing one.
 
 ### ✅ RESOLVED 2026-09-30 — the Go flip shipped to both hosts, and the two instruments that failed on the way are rank 2's real subject
 - as-of: 2026-09-30
-- **What this settles:** rank 6 in full. The ANSWERED block's design is BUILT and DEPLOYED; its
-  "Next probe" is spent. Do not re-derive the pin-seam split — it is in `#1939`.
-- **Observed (with values), identical on BOTH hosts:** `cairn` → `…-cairn-go-cdf6fae/bin/cairn`,
-  `cairn-py` → `…-cairn-cdf6fae/bin/cairn`; `--ref-to`/`--tag` **1/1**, `--scope` **1**, bogus
-  flag **0**; `-verbs` **rc 0**; `cairn_pin` → `…-cairn-cdf6fae/libexec/cairn/lib`;
-  `cairn-validate` **rc 0**, `cairn-who` **rc 0**. `ship.sh` rc 0, 2 hosts compared at
   `aa01eb77`. `via: measurement`
-- 🔴 **Ruled out: that a local green build says anything about CI.** The first `#1939` run went
-  RED because I put the Go client in `gateTools`, which backs the devShell AND `checks.pytests`
-  — and the config repo's CI pod **cannot sandbox a nix build**: PodSecurity `baseline` blocks the fixes,
-  nix silently FALLS BACK to unsandboxed, and `nix config show` still reports `sandbox = true`
-  (**the tell is that `/build` does not exist**). `mkGoClient` runs `go vet ./... && go test
-  ./...` over 21 packages, which does not pass impure → `cairn-client-runs` FAILED and `pytests`
-  reported `BROKEN GATE … before a verdict`. The same derivation builds green here, sandbox on,
-  **21 ok / 0 FAIL**. Fix: the Go build is out of that repo's critical path; the hosts still install
   the UNMODIFIED package. `via: measurement`
-- 🔴 **Ruled out: that `NO CAPACITY` is a verdict on the diff.** The merged-tree re-gate posted
-  `NO CAPACITY: <leg> — the gate never started (queued past its deadline)` on all four legs.
-  Timeline: `pending` **17:25:4x** → `error` **18:25:5x**, exactly **60 minutes**, never started.
-  Queue was then drained (**5 Running / 1 Pending** against 457 Completed + 57 Error — split by
-  phase, because terminal pods are not pressure), so a close/reopen re-trigger (the live CEL
-  filter accepts `reopened`) came back **4/4 green: collected=24741 passed=24734 failed=0**,
   which is +4/+4 on the tests `#1926` added. `via: measurement`
-- 🔴 **Ruled out: that the drift deadman can be trusted as-is — TWO false readings in one day.**
-  (i) exit **12 = `not-on-branch-main`**: TRUE, unread for two days, and it cleared on its own
-  when a peer moved the base clone off their branch. (ii) *"did not answer (unreachable)"* for
-  the laptop, while a direct `ssh` answered **instantly** and `ship.sh` converged it **twice**.
-  **A gate that is red when right and red when wrong trains its own bypass** — which is exactly
   what rank 2 must not add a third of. `via: measurement`
-- 🔴 **Ruled out: my own "full local suite" as a gate. It is a DIFFERENT POPULATION and I
-  contaminated it.** `pytest scripts/tests` collected **15,904**; CI's pytests leg collected
-  **24,741**. And its single failure —
-  `test_gate_exit_truthfulness.py::test_a_green_real_run_says_pass_with_exit_zero`, a test my
-  branch does not touch (`git diff --name-only origin/main` → 0) — **did not reproduce**: a
-  clean re-run is **13 passed / 0 failed**. I had killed pytest PIDs in that worktree while a
-  test that spawns a REAL nested run was in flight. A control that shares the step you doubt.
   `via: measurement`
 - **Leading hypothesis:** none. Closed.
-- **Next probe:** none for rank 6. For rank 2, the probe is the drift deadman's own per-host
-  lines (`journalctl --user -u drift-check.service`) BEFORE designing anything new.
 
 ### ❌ RETIRED 2026-09-30 — "the currency instrument that already exists gave TWO FALSE READINGS in one day"
 - as-of: 2026-09-30
@@ -315,57 +210,109 @@ new arc their leftovers belong to, not another round of either.
 - **Leading hypothesis:** none. Closed.
 - **Next probe:** none for rank 2. For rank 8, the Flux obstacle is the tag ordering — see it.
 
+### ✅ RESOLVED 2026-10-01 — round 0 audited PR #163 and the deletion argument SURVIVED; six findings were mine and are fixed here
+- as-of: 2026-10-01
+- **What this settles:** whether clause (a)'s deletion argument rests on a sound predicate.
+  It does, and more strongly than the doc claimed.
+- 🔴 **The predicate HOLDS, and the audit tested it harder than I did.** I re-ran my own
+  count; the auditor **enumerated the actual file set** in both ranges and found it entirely
+  `claudedocs/*.md` — four files for the pods' range, three for the client's. **No commit in
+  either range touches `flake.nix`, `flake.lock`, `go.mod`, `go.sum`, `.github/workflows/**`,
+  `server/Dockerfile`, `internal/**`, `cmd/**` or any `Makefile`.** It also checked the one
+  way a `*.md` could be code-bearing — a `//go:embed` of markdown — and there is none.
+  So "0 code-bearing" is true under any predicate stricter than mine. `via: measurement`
+- 🔴 **Ruled out: that `0 code-bearing` means `same image`. IT DOES NOT, AND THE DOC HELD BOTH
+  HALVES WITHOUT JOINING THEM.** `ba78dbb..03f912e` diffs **only** this handoff doc, and the
+  `cairn-ui` digests differ (`ff292fab…` → `40ac9382…`). The mechanism was already recorded
+  here ("the Go binary's nix store path embeds the short rev"). Measured independently twice.
+  **Consequence for rank 8, which is why it matters:** enrolling the pins as rank 8 was first
+  worded would have produced **12 pod rollouts for 0 code change** in exactly the window used
+  to argue no drift exists. `via: measurement`
+- 🔴 **Ruled out: that rank 8 needs a new `main-<ts>` tag. `publish-image.yml:78` ALREADY
+  MINTS AN ORDERABLE IMMUTABLE TAG** — "plus a bare semver on a version tag push" — which
+  fires per RELEASE rather than per commit, a strictly smaller blast radius. A whole cairn-side
+  workflow change was designed and is now unnecessary; rank 8 is rewritten to it. `via: code`
+- 🔴 **MY OWN REGRESSION, caught by the audit: the "fixed" verify recipe CANNOT RUN.** I
+  removed `| sed 's/.*sha-//'` — the very thing that made the old recipe work — while claiming
+  to fix two bugs in that block. Measured: `rc=128`, empty stdout,
+  `fatal: ambiguous argument 'sha-e8839d91…..origin/main'`. Under the `2>/dev/null` the block
+  itself warns about, the capture is empty and the next comment reads `0 = functionally
+  current`. **A fix round's own output is the likeliest next defect**, and this one broke the
+  instrument the whole arc is about. Fixed in `## How to verify`. `via: measurement`
+- 🔴 **Ruled out: "ZERO INSTRUMENT DEFECTS" as stated. IT IS AN OVERCORRECTION.** The doc's own
+  remedy is *"Read the line AFTER the alarming one"* — a workaround imposed on every future
+  reader for a diagnostic whose lede is reliably misread. Converting an instrument defect into
+  a reader defect removes the last case for touching the instrument, and that is a judgement.
+  The accurate claim: **no defect in what it MEASURES; a real defect in how its lede READS.**
+  `via: code`
+- **Ruled out:** that the eviction lost content — but **my denominator was wrong.** Verified
+  against the commits: handoff removed **50** non-blank lines, archive added **59**, and **0**
+  removed lines are absent from the archive at HEAD. The 59 was the archive's *added* count,
+  not the evicted set; the 9-line gap is the heading, the `as-of:` stamp and the residue, which
+  stayed in the handoff too. The archive copy is a **superset** — the safe direction — so the
+  property holds and the number I quoted was not reproducible. This arc's `#140`/`#149` history
+  is *about* eviction counts. `via: measurement`
+- **Leading hypothesis:** none. Closed.
+- **Next probe:** watch one *scheduled* drift-check firing go green, which no reading here
+  covers. For rank 8, the semver path — not a new tag.
+
 ## Next steps (ranked)
 
 🔴 **NUMBERING IS STABLE — a rank is half a `claim-work` slug**, and `claim-work` comes BEFORE
 you act. ⚠ **AND RUN `gh pr list --state open` ANYWAY, TWICE** — before starting and again
-immediately before `gh pr create`. `claim-work` answering **rc 12, already yours** is
-indistinguishable from untouched work; only the sweep sees a duplicate nobody claimed.
+immediately before `gh pr create`.
 
-1. ✅ **DONE — all PRs merged**, verified BY CONTENT on `origin/main` with a negative control at 0.
+1. ✅ **DONE — all PRs merged**, verified BY CONTENT with a negative control at 0.
    forcing: gate — unmerged docs PRs are the `stranded-docs` shape.
-2. ✅ **DONE 2026-09-30 — RULED OUT, NOT BUILT.** The deadman is GREEN (four arms cleared) and
-   clause (a)'s detector was ruled out by `/the-algorithm`: self-issued requirement, all three
-   artefacts functionally current, and "who hears it" measured at 76 unread toasts. **Do NOT
-   re-open this as "build the currency instrument"** — that instruction is deleted deliberately.
-   The real fix is rank 8. Claim `cairn-deploy-currency-2` RELEASED.
+2. ✅ **DONE 2026-09-30 — RULED OUT, NOT BUILT.** The deadman is green (four arms cleared,
+   manual invocation — see `State now`) and clause (a)'s detector was ruled out by
+   `/the-algorithm`: self-issued requirement, all three artefacts functionally current, and
+   "who hears it" measured at **78 failing firings, every one of which toasted**. **Do NOT
+   re-open this as "build the currency instrument".** Successor is rank 8.
    forcing: regression — the image gap re-opened twice; rank 8 carries it now.
 3. ✅ **DONE 2026-09-30 — clause (b) is MET.** Sessions 0 → 1, invites 0 → 1, share flow end to end.
    forcing: user — the operator held the only credential that could run it.
-4. **P8 — retire the Python oracle.** Carried: a real read AND a real write against the live pod
-   from **two distinct hosts**, recorded, AND no open defect naming the Go client or
-   `packages.default`. 🔴 **HARD CROSS-REPO PRECONDITION: `packages.cairn` CANNOT BE DELETED until
-   the config repo stops importing the reader modules** — 22 files import that resolver with no
-   fallback by construction, plus the writer and the launcher the `subsystem-index` protocol
-   names. ORDER: config repo stops importing → then `packages.cairn` goes. Never the reverse.
-   **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway and the residual risk is accepted
-   EXPLICITLY, in writing.**
+4. **P8 — retire the Python oracle.** 🔴 **HARD CROSS-REPO PRECONDITION: `packages.cairn`
+   CANNOT BE DELETED until the config repo stops importing the reader modules** — 22 files
+   import that resolver with no fallback, plus the writer and the launcher the
+   `subsystem-index` protocol names. ORDER: config repo stops importing → then
+   `packages.cairn` goes. **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway and the
+   residual risk is accepted EXPLICITLY, in writing.**
    forcing: deadline — the 2026-11-01 backstop, set by the operator.
-5. **Fix the base-clone write guard.** Reproduced a SEVENTH and EIGHTH time, once naming the WRONG
-   REPOSITORY. **Closing condition:** the guard admits a linked worktree AND reads `-C`, with a
-   test that a real base-clone write is still refused.
-   forcing: gate — a guard whose diagnosis is reliably about the wrong repository trains its own
-   bypass.
-6. ✅ **DONE 2026-09-30 — the Go client is live and verified on BOTH hosts**, byte-identical store
-   paths, `-verbs` rc 0. Claim `cairn-deploy-currency-6` RELEASED.
+5. **Fix the base-clone write guard.** Reproduced a **NINTH** time this session — it refused a
+   commit whose `-C` target was a LINKED WORKTREE on a feature branch while naming the base
+   clone, having resolved the repo from `$PWD`. ⚠ **And it is inconsistent as well as wrong —
+   `handoff_doc.py` committed into that same worktree twice in the same session unimpeded,
+   because it runs git from inside Python where no PreToolUse hook sees it.** Premise proved
+   false before the override, both times. **Closing condition:** the guard admits a linked
+   worktree AND reads `-C`, with a test that a real base-clone write is still refused.
+   forcing: gate — a guard whose diagnosis is reliably about the wrong repository trains its
+   own bypass, and one that a sibling tool walks past is not a gate.
+6. ✅ **DONE 2026-09-30 — the Go client is live and verified on BOTH hosts**, byte-identical
+   store paths, `-verbs` rc 0.
    forcing: user — the operator chose Go and asked for the laptop shipped.
 7. **TRIAGE THE SEVEN UN-DROPPED SCOPE ITEMS**, each measured absent on `main`: a PWA, htmx,
    Google sign-in, "move scope ownership between projects", "remove a member", **scope**-level
-   tags, and `/the-algorithm` over the whole design. Two look like conscious narrowings but
-   neither was recorded as a decision, so they read as dropped.
+   tags, and `/the-algorithm` over the whole design.
    forcing: user — all seven were asked directly and none was ever declined in writing.
-8. **ENROL THE TWO CAIRN POD PINS IN THE FLUX IMAGE AUTOMATION THAT ALREADY EXISTS — the real fix
-   clause (a) was a detector for.** 19 files under the deployment repo's `flux-system/image-automation/`
-   already drive other apps; cairn is simply not enrolled, so its `image:` fields are hand-edited
-   and that hand-edit is what goes stale. 🔴 **OBSTACLE, measured:** cairn publishes
-   `sha-<40-hex>`, which has **no ordering**, so an `ImagePolicy` cannot pick "newest". Needs an
-   additional **immutable** orderable tag (`main-<ts>`, the pattern another app here already
-   uses) — compatible with cairn's no-`latest` rule, whose stated hazard is **mutable** tags, not
-   unorderable ones. 🔴 **BLAST RADIUS: in the deployment repo commit IS deploy, and the end state
-   is every cairn commit auto-deploying to both pods — operator's call before any of it.**
-   The closing condition itself names "image automation" as an accepted form.
-   forcing: regression — both pods sat one code commit behind `main` across `#146` and re-opened
-   within minutes, twice.
+8. **DECIDE WHETHER THE POD PINS GET IMAGE AUTOMATION AT ALL — and if so, on the SEMVER tag,
+   NOT a per-commit one.** 🔴 **REWRITTEN after round 0; the first wording was wrong twice.**
+   (i) A new `main-<ts>` tag is **unnecessary**: `publish-image.yml:78` already mints a bare
+   semver on a version-tag push — orderable, immutable, **per release**. (ii) Enrolling a
+   **per-commit** tag would roll both pods on every docs-only commit, measured at **12
+   rollouts for 0 code change** over the window this arc examined. So the live question is a
+   release cadence, not a detector.
+   **What is already measured, so nobody re-derives it:** anonymous tag listing works for both
+   packages (**no `secretRef`**, unlike the private-package neighbours); the setter marker must
+   go in the deployment repo's root-kustomization for `subsystem-store`, **NOT** in the app
+   manifests — both `ImageUpdateAutomation`s scope `update.path` to the kustomizations tree, so
+   every `$imagepolicy` occurrence under the apps tree is documentation; the working model is
+   the neighbouring app's root-kustomization (`images:` + `newTag` + marker); and the initial
+   `newTag` **must be an already-published tag** or the deployment points at a non-existent
+   image. 🔴 **BLAST RADIUS: in the deployment repo commit IS deploy. Operator's call before
+   any of it, and nothing has been written there.**
+   forcing: regression — both pods sat one code commit behind `main` across `#146` and
+   re-opened within minutes, twice.
 
 ## Defects (batched)
 
@@ -431,13 +378,6 @@ indistinguishable from untouched work; only the sweep sees a duplicate nobody cl
   pod is at `origin/main` and every currency check is green. The full measurement is the Open
   investigations block above. **Any instrument built for closing condition (a) should be asked
   whether it can see the client at all** — as specified it cannot.
-- 🔴 **`x-store-revision: unknown` — THE HEADER EXISTS AND NOTHING POPULATES IT, MEASURED.** The
-  pod already answers a revision header on every read and its value is the literal string
-  `unknown`, so you cannot ask a running pod which code it is. There is **no `/version` route**
-  either — the read heads are exactly `recall`, `search`, `snapshot`. That is why establishing
-  whether a pod carried a feature needed a behavioural probe rather than one `curl`. It is also
-  a ready-made home for this arc's instrument: populating that header at build time makes pod
-  currency a one-request check instead of a deploy-repo archaeology exercise.
 - 🔴 **THE CLOSED `next-phase` ARC'S RANK 9 IS CONFIRMED LIVE, WITH A PAIRED CONTROL — and it is
   now on real content.** Identical `OPEN:` marker text: under `## Requirements` the validator
   reports **`0 declared`**; moved verbatim under `## Nuance / work-history` it is **found**. Only
@@ -701,10 +641,6 @@ indistinguishable from untouched work; only the sweep sees a duplicate nobody cl
   self-issued (`forcing: regression`, no human maker), all three artefacts measure functionally
   current, and the instrument that would host it had 76 unread toasts. Recorded as
   answered-by-deletion with the residual risk accepted in writing. The real fix is rank 8.
-- 🔴 **DECISION (operator, this session): `model` is aligned on the hosts, not allowlisted** —
-  and then set to `z-ai/glm-5.3-flash` on BOTH, because nothing should default to opus. Checked at
-  the widest reading: `DRAFTER_MODEL` already defaults to `haiku` and no config file defaults to
-  opus, so `settings.json` was the only site.
 - 🔴 **A PERMANENTLY-RED GATE'S DIAGNOSIS IS USUALLY ITS BACKLOG, NOT ITS CODE.** The deadman was
   red 78 times and had **zero** defects — four true findings nobody had cleared. The instinct to
   "fix the instrument" would have weakened four working arms. **Ask what it is red ABOUT before
@@ -724,10 +660,55 @@ indistinguishable from untouched work; only the sweep sees a duplicate nobody cl
   5 hours old; at the moment of acting the subtree was **0 behind** — a peer had pulled it. The
   planned `pull --ff-only` + switch on the other host was never needed.
 
+- 🔴 **DECISION (operator): clause (a)'s detector is NOT built.** `/the-algorithm` was run over
+  it on the operator's instruction and returned *delete*: self-issued requirement
+  (`forcing: regression`, no human maker), all three artefacts functionally current, and the
+  instrument that would host it had **78 failing firings, every one of which toasted**.
+  🔴 **AN EARLIER COPY OF THIS BULLET SURVIVES BELOW AND QUOTES "76 unread toasts" — a figure
+  this same doc RETRACTS. It could not be pruned, and that is by design:** one of its lines
+  quotes `` `forcing: regression` ``, and the prune tool refuses any line carrying that field
+  because a ranked item's forcing function is read from it — with **no bypass flag**, since the
+  loss would be a silent FALSE ABSENCE rather than an error. **So a falsified bullet that
+  happens to quote a forcing kind is unprunable in an append-only section: the only remedy is a
+  correction like this one.** Take the 78. Successor is rank 8.
+- 🔴 **DECISION (operator): `model` is aligned on the hosts rather than allowlisted, and the
+  value is `opus[1m]`.** ⚠ **This REPLACES a pruned bullet that said `z-ai/glm-5.3-flash`** —
+  set earlier in the same session and then reversed by the operator (*"set claude code back to
+  opus"*). Checked at the widest reading: `DRAFTER_MODEL` already defaults to `haiku` and no
+  config file defaults to opus, so `settings.json` was the only site. **A decision bullet that
+  records a value is stale the moment the value moves; prefer naming the DECISION and keeping
+  the value in a REPLACE section.**
+- 🔴 **`x-store-revision` IS THE SCOPE'S GIT HEAD, NOT A BUILD-REVISION SLOT — and the bullet
+  that said otherwise is PRUNED rather than left to be re-read.** It is read off
+  `<scope>/.git/HEAD`, which is what lets a report be quoted as `scope@sha`; `unknown` is a
+  **load-bearing** authorization narrowing a refused scope MUST answer, with its own positive
+  control; and the health route deliberately carries no version *because it is unauthenticated*.
+  The pruned bullet ended *"a ready-made home for this arc's instrument"*, which would have sent
+  the next session to hijack pinned semantics. ⚠ **It is still true that nothing answers "which
+  code is this pod" — there is no `/version` route and the read heads are exactly `recall`,
+  `search`, `snapshot`.** That half was worth keeping; the instruction was not.
+- 🔴 **AN APPEND-ONLY SECTION STILL CARRIES A FALSE INSTRUCTION UNTIL SOMEBODY PRUNES IT.** A
+  refutation written into `Open investigations` does not reach a reader who lands in `Gotchas`,
+  and three bullets here were falsified by this arc's own later rounds. **`--prune` works on the
+  append sections and is the remedy** — the refutation stays, the instruction goes. Measured:
+  the audit found all three, and none carried a marker.
+- 🔴 **I SHIPPED A BROKEN COMMAND WHILE CLAIMING TO FIX TWO BUGS IN THE SAME BLOCK.** Deleting
+  `| sed 's/.*sha-//'` made `git rev-list` exit 128 with empty stdout — a failure that reads as
+  `0` under the very `2>/dev/null` the block warns about two lines earlier. **When you rewrite a
+  recipe, RUN it**; a diff that looks like a correction is not one.
+- ⚠ **A "GREEN" THAT CAME FROM `systemctl start` IS NOT A GREEN ON THE SCHEDULE.** Compare the
+  unit's `ExecMainExitTimestamp` with the timer's `LastTriggerUSec` before quoting one.
+- ⚠ **A PRUNE LEAVES MORE THAN THE HEADING-PLUS-STAMP THIS DOC DESCRIBES AS CORRECT.** The
+  evicted block's stub also keeps orphan mid-sentence fragments (the `via:` field lines, which a
+  prune may not name) and a table header with no rows. **Not damage to tidy — but do not describe
+  it as "some residual `via:` lines" either.** ⚠ And one 🔴 instruction from the evicted body —
+  *do not fix a parked base clone by switching branches in it* — now lives **only** in the
+  archive; the general rule is in the portable rules file independently.
+
 ## How to verify
 
-🔴 **READ EVERY STATUS OFF THE COMMAND, NEVER THROUGH A PIPE.** This arc has paid **five** times.
-Redirect to a file and read `$?`.
+🔴 **READ EVERY STATUS OFF THE COMMAND, NEVER THROUGH A PIPE.** This arc has paid **five**
+times. Redirect to a file and read `$?`.
 
 ```bash
 # the deadman — the fleet currency instrument that EXISTS. Read the unit, not a grep:
@@ -735,24 +716,31 @@ systemctl --user start drift-check.service
 systemctl --user show drift-check.service -p ExecMainStatus -p Result   # want 0 / success
 # 🔴 its SUCCESS marker is `Finished Passive drift deadman`, NOT "Deactivated successfully"
 #    (that pattern returns a false 0 — it cost a wrong "never green" claim here).
+# 🔴 AND THAT IS A MANUAL RUN. For the claim that matters, compare the unit's exit stamp
+#    with the TIMER's own last firing; they are different claims:
+systemctl --user show drift-check.timer -p LastTriggerUSec
 
 # clause (b) — DIRECT reads are the authority; the stats counter LAGS and its 0 is ambiguous
 kubectl -n subsystem-store exec sts/cairn-ui-postgres -- psql -U cairn_ui -d cairn_ui \
   -c "select count(*) from sessions; select count(*) from invites;"
 
-# the deployed pods -> commit -> distance. 🔴 TWO BUGS FIXED HERE:
+# the deployed pods -> commit -> distance. 🔴 THREE corrections live in this block:
 #   (1) the store deploy is `subsystem-store-api`, NOT `cairn-store`;
-#   (2) the count MUST be path-scoped or it reports 12 for ZERO real drift.
-export KUBECONFIG=<the cluster kubeconfig>        # without it kubectl hits localhost:8080 and a
-                                     # `2>/dev/null` turns that into a false "no such deploy"
-for d in cairn-ui subsystem-store-api; do
-  kubectl -n subsystem-store get deploy $d \
-    -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
-done
-DEP=<the sha- tag above>
+#   (2) the count MUST be path-scoped or it reports 12 for ZERO code drift;
+#   (3) 🔴 the `sed` IS LOAD-BEARING. Without it `DEP` holds the whole `sha-<40hex>` tag and
+#       `git rev-list` exits 128 `fatal: ambiguous argument` with EMPTY stdout — which under a
+#       `2>/dev/null` reads as the reassuring `0`. A previous edit of this block deleted it.
+export KUBECONFIG=<the cluster kubeconfig>   # without it kubectl hits localhost:8080, and a
+                                             # `2>/dev/null` turns that into a false absence
+DEP=$(kubectl -n subsystem-store get deploy subsystem-store-api \
+  -o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*sha-//')
+git fetch origin            # 🔴 origin/main is only as current as your last fetch; a stale
+                            #    ref UNDERSTATES the count and the understatement reads as 0
 git rev-list --count ${DEP}..origin/main                                   # informational
 git rev-list --count ${DEP}..origin/main -- . ':(exclude)claudedocs' ':(exclude)*.md'
-#   ^ THIS is the number that matters. 0 = functionally current.
+#   ^ THIS is the number that matters. 0 = no code-bearing drift.
+#   ⚠ 0 here does NOT mean "same image": every commit moves the digest (nix store path embeds
+#     the rev), so a docs commit changes the digest while changing nothing served.
 
 # the INSTALLED client — the third artefact
 readlink -f "$(command -v cairn)"
