@@ -60,7 +60,7 @@ The refused set, which the guard enforces and its test pins against this table:
 | `checkout` *(bare)* / `switch` | moves the shared HEAD under a peer |
 | `reset` | moves the shared HEAD and index |
 | `rebase` / `merge` / `cherry-pick` / `am` / `apply` | rewrites or advances the shared tree |
-| `clean` | deletes untracked files out of the shared working tree |
+| `clean` | deletes untracked files out of the shared working tree. ⚠ On a host that also runs the fleet's own guard this row is **nearly a duplicate**, the way `stash` is: that guard already denies `-f`/`--force` — the only spelling git permits to destroy non-interactively — fails CLOSED, and covers every worktree. The residue here is `git clean -i`. `rm`/`mv` are **not** duplicated anywhere; the hook's docstring carries the measurement |
 | `rm` / `mv` | deletes or renames tracked files in the shared tree, and stages that |
 | `stash` | the stack is repo-GLOBAL, not per-worktree — see below |
 
@@ -88,7 +88,10 @@ one trains everybody to route around it: `git merge --ff-only <ref>` (the base-c
 re-sync — it cannot conflict or autostash, it either fast-forwards or refuses, and the
 refusal is the signal that the clone diverged); `git checkout <ref> -- <paths>` (the
 pathspec form does not move HEAD — bare `git checkout <branch>` IS refused, because that
-moves the shared HEAD); `git stash list`, `show` and `--help`; a **dry run** of `clean`,
+moves the shared HEAD); `git stash list` and `show`; **`-h` / `--help` on every refused
+subcommand** — measured as help on all fourteen (rc 129, `usage:`, repository unchanged),
+and read from the first word after the subcommand only, because `git commit -m -h`
+*commits* with `-h` as the message; a **dry run** of `clean`,
 `rm` or `mv` — `--dry-run`, `-n`, or an `n` in a combined short cluster (`-nd`, `-rn`,
 `-nv`) — which rehearse and change nothing; and every other read, including `push`, which
 touches no file in the clone.
@@ -317,7 +320,7 @@ same run as the control.
 | `cd <the base clone> && git commit …` | REFUSED |
 | `cd <a worktree> && git commit …` from the clone | REFUSED — see below |
 | `if git commit …`, and the same behind `while`, `until`, `command`, `nohup`, `timeout <dur>`, `eval`, `stdbuf`, `exec`, `sudo`, `xargs`, `nice`, `env`, `time`, `{ … ; }` | REFUSED — one ledger of wrapper words, with the value-consuming ones marked |
-| `ssh <host> git commit …`, `ionice -p <pid> git …`, `watch git …`, a shell FUNCTION | NOT SEEN — deliberately not in that ledger, because the write may not land on this machine or that word may not be the program being run |
+| `ssh <host> git commit …`, `ionice -p <pid> git …`, `watch git …`, `coproc`, `strace`, a shell FUNCTION, and an unknown tail | NOT SEEN, and 🔴 **this list is not a to-do**. The wrapper class cannot be enumerated, so the ledger's closing condition was **retired** rather than met: the root fix is nested-shell recursion (`bash -c '…'`), not another word, and a replay of one host's session history — 37,268 distinct real Bash commands — moved **zero** verdicts for any of the twelve words the ledger added. ⚠ Zero past is not zero future, which is why the code stays; but **do not add an entry without re-opening the question**, and a test pins the set so that growing it is a decision |
 | a `<<WORD` inside quotes or inside a `#` comment, then a real `git commit` on a later line | REFUSED — the heredoc opener is decided by the quote-aware walk, so a fake one no longer swallows the lines after it |
 | a REAL heredoc body, in every spelling including `<<'EOF'`, `<<-EOF` and two heredocs on one line | NOT A COMMAND — it is data and is dropped, which is the direction that matters: refusing a recipe you are WRITING INTO A FILE is the failure mode this guard forbids itself |
 | `bash -c 'cd <the base clone> && git commit …'`, and `eval 'git commit …'` | NOT SEEN — still open |

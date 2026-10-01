@@ -105,7 +105,15 @@ were gated on the hit set being a singleton):
     HEAD under a peer. ⚠ `git restore` is NOT in `_REFUSED` and never reaches
     here; do not add it on the strength of this paragraph, because the ordinary
     `git restore <path>` form carries no `--` and would be refused wholesale.
-  * `git stash list` / `show` / `--help` — reads.
+  * `git stash list` / `show` — reads.
+  * 🔴 `-h` / `--help` ON **EVERY** REFUSED SUBCOMMAND — measured as help, rc 129
+    `usage:`, repository unchanged, for all fourteen. This list named `--help` as a
+    read for two rounds while the code exempted it for `stash` ALONE, so
+    `git rm -h`, `git commit --help` and `git rebase --help` were refused; a corpus
+    replay over this project's real Bash history found two commands of exactly that
+    shape. ⚠ It is read from the FIRST word after the subcommand only, because
+    `git commit -m -h` COMMITS (the `-h` is the message) — `_is_read_only_spelling`
+    carries that measurement and the two residual false positives it costs.
   * a DRY RUN of `clean`, `mv` or `rm` — `--dry-run`, `-n`, or an `n` in a combined
     short cluster (`-nd`, `-rn`, `-nv`). ONE predicate over all three, because a
     `clean`-only version of it refused `git rm -n`: the rehearsal somebody runs
@@ -132,6 +140,20 @@ linked worktrees, where condition 3 is false and this entry can never fire. The
 only host it covers is one that BOTH lacks the fleet guard AND runs parallel
 worktrees of cairn — a future fleet host, which is plausible enough to keep a
 cheap table row for. Kept for that reason and no other.
+
+⚠ AND `git clean` IS VERY NEARLY THE SAME STORY, WHICH IS WORTH SAYING BECAUSE THE
+PARAGRAPH ABOVE EXISTS FOR `stash` AND NOTHING SAID IT FOR `clean` — so the row read
+as new coverage that it mostly is not. Measured against the operator's host-wide
+guard, both its policies, cwd = the base clone: that guard already DENIES
+`git clean -f` / `--force`, which is the only spelling git permits to destroy
+non-interactively; it fails CLOSED where this one fails open, and it applies in every
+worktree rather than only the main one, so on that host it is strictly WIDER. What
+this entry adds there is the residue: `git clean -i`, the interactive spelling, which
+that guard allows. 🔴 THE SAME IS **NOT** TRUE OF `rm` AND `mv` — no equivalent check
+exists for either, so those two are genuinely new coverage on every host. The `clean`
+row is kept for the same forward-looking reason as `stash` and stated at that scope:
+the overlap is a property of ONE operator's machine, not of this repository, which
+cannot see that guard at all (see the note further down on why it is not importable).
 
 🔴 WHAT THIS GUARD NOW SEES, AND WHAT IT STILL CANNOT. Naming the second list is
 not optional: a guard whose limits are unstated reads as coverage it does not
@@ -172,10 +194,37 @@ so a reader can check the claim rather than take it:
     FIRST of several openers on one line.
   * COMMAND WRAPPERS HIDING THE PROGRAM NAME — `if git commit -m x`, and `while`,
     `until`, `command`, `nohup`, `timeout`, `eval`, `stdbuf`, `exec`, `sudo`,
-    `xargs`, `nice` — CLOSED by ONE ledger, `_LEADING_WORDS`, which absorbed the
+    `xargs`, `nice` — handled by ONE ledger, `_LEADING_WORDS`, which absorbed the
     `_LEADING_RESERVED` set and the open-coded `env` branch it used to be split
-    across. The words that consume a value are marked there, and the words
-    deliberately NOT skipped are named with their reasons.
+    across. The words that consume a value are marked there.
+    🔴 THIS ROW IS NOT "CLOSED", AND ITS CLOSING CONDITION IS **RETIRED** RATHER
+    THAN MET. That condition was "one ledger of wrapper words with the
+    value-consuming ones marked, and a parametrised case per word watched red",
+    which defines done as an ENUMERATION OVER AN OPEN SET — it licenses, and
+    arguably obliges, the next reader to add word 21 forever. The class cannot be
+    enumerated: `ssh`, `ionice -p`, `watch`, `strace`, `coproc`, a shell FUNCTION
+    and an unknown tail are all still unhandled, and so is `bash -c '…'`.
+    🔴 THE ROOT FIX IS THE `bash -c` ROW BELOW, NOT WORD 21. Recursing into nested
+    shells is where real coverage would come from, and it is where the host-wide
+    guard spends two separate recursion budgets. **No entry should be added to the
+    ledger without re-opening this question** — `_LEADING_WORDS` is pinned by a
+    test for exactly that reason, so growing it is a decision somebody makes rather
+    than a chore somebody completes.
+    ⚠ AND THE MEASUREMENT THAT JUSTIFIED THE RETIREMENT, WITH ITS COUNTER-ARGUMENT,
+    BECAUSE ONLY ONE OF THEM IS A REASON TO ACT. A replay of ONE host's session
+    history — 37,268 distinct real Bash commands — through the parser before and
+    after each of these three repairs counted the verdict flips: the heredoc row 17,
+    the refused-ledger row 13, and this row **0**. Only two of its twelve new words
+    ever preceded a refused git subcommand at all, and in every such command a bare
+    refused git call was already present, so no verdict moved. Nothing flipped in
+    the loosening direction for any row. 🔴 THE COUNTER-ARGUMENT IS LIVE: a guard
+    also deters what has not happened yet, and zero past occurrences is not zero
+    future ones. That measurement is what a deletion pass asks for; it is NOT
+    evidence the ledger is worthless, which is why the code stays. Scope, stated
+    because the number is otherwise read wider than it was taken: one host, one
+    project's history, lexical verdicts with the cwd unresolved — so some fraction
+    of the 17 and the 13 would have been allowed by condition 2 anyway. The
+    DIRECTION and the RECURRENCE are the load-bearing parts; the integers are not.
   * `clean`, `mv` AND `rm` WRITING SHARED STATE WHILE "EVERYTHING ELSE IS A READ" —
     CLOSED in `_REFUSED`, with a DRY RUN of any of the three exempt as the read it
     is (`_is_dry_run`). ⚠ AND THE FIRST VERSION OF THAT EXEMPTION WAS `clean`-ONLY,
@@ -746,11 +795,18 @@ def _segments(command: str) -> list[list[str]]:
 #: `stdbuf -o0` and `xargs --max-args=3` fall out of the `startswith("-")` skip for
 #: free; `timeout` is the only word here that eats a bare OPERAND (its duration).
 #:
-#: ⚠ NOT CLOSED, the same caveat `_GIT_GLOBALS_WITH_VALUE` carries, and the
-#: direction of the gap is the fail-OPEN one: a wrapper missing from this ledger
-#: hides the `git` behind it. Known absences, each left out on purpose rather than
-#: forgotten, because skipping a word whose operand is NOT a local program would
-#: invent a false positive — the direction this file forbids itself:
+#: 🔴 NOT CLOSED, AND DELIBERATELY NOT CLOSABLE — DO NOT ADD WORD 21 WITHOUT
+#: RE-OPENING THE QUESTION. The docstring's table records why this row's closing
+#: condition was RETIRED rather than met: "a case per word" defines done as an
+#: enumeration over an OPEN set, and the root fix is nested-shell recursion
+#: (`bash -c '…'`), not another word. `tests/test_base_clone_write_guard.py` PINS
+#: this dict so a growth is a decision rather than a chore — if you are here to add
+#: an entry, read that table first and say what makes this word worth a row when a
+#: replay of 37,268 real commands moved no verdict for any of the twelve already
+#: here. The direction of the gap is still fail-OPEN, and that is accepted.
+#: Known absences, each left out on purpose rather than forgotten, because skipping a
+#: word whose operand is NOT a local program would invent a false positive — the
+#: direction this file forbids itself:
 #:   * `ssh <host> git commit` and `bash -c '…'` / `sh -c '…'` — the write lands on
 #:     another machine, or inside a quoted token this parser cannot see at all (the
 #:     nested-shell row in the docstring's table);
@@ -907,6 +963,58 @@ _DRY_RUN_SHORT_VALUE_FLAGS: dict[str, frozenset[str]] = {
 }
 
 
+#: 🔴 `-h` AND `--help` ARE READS FOR EVERY MEMBER OF `_REFUSED`, AND THAT IS
+#: MEASURED FOR ALL FOURTEEN RATHER THAN ASSUMED FROM "git uses parse-options".
+#: On git 2.55.0, `git <sub> -h` answers **rc 129 with `usage:` on the first line and
+#: the repository bit-for-bit unchanged** for `add am apply cherry-pick checkout clean
+#: commit merge mv rebase reset rm stash switch` — all fourteen, no exception, so
+#: there is no subcommand here needing `--help` only. (`git grep -h` means
+#: `--no-filename`, which is why the question was asked; `grep` is not refused.)
+#: `--help` execs the manual page: rc 0, repository unchanged, all fourteen.
+#:
+#: 🔴 REFUSING `--help` WAS THE PUREST FALSE POSITIVE THIS FILE COULD EMIT, and it
+#: was live: the exemption existed for `stash` ALONE, so `git rm -h`, `git mv -h`,
+#: `git clean -h`, `git commit --help` and `git rebase --help` were all DENIED while
+#: the docstring's own list named `--help` as a read. A corpus replay over the
+#: project's real Bash history found TWO commands that are exactly this shape, so it
+#: had already fired falsely. One predicate at a second site; now at neither.
+_HELP_SPELLINGS = frozenset({"-h", "--help"})
+
+
+def _is_read_only_spelling(subcommand: str, rest: list[str]) -> bool:
+    """🔴 THE ONE PLACE THAT ANSWERS "does a FLAG make this refused subcommand a
+    read?" — consulted by `_is_exempt` for every subcommand, never per-subcommand.
+
+    Two kinds of answer live here because they are the same question. Both used to be
+    open-coded per subcommand and both were wrong at a site: the dry-run half was
+    `clean`-only (so `git rm -n` was refused) and the help half was `stash`-only (so
+    `git rm -h` was refused). What stays in `_is_exempt` is the per-RECIPE
+    exemptions — `merge --ff-only`, the pathspec `checkout`, `stash list` — which are
+    a different category: those name a documented workflow, these name a flag that
+    makes the command write nothing.
+
+    🔴 HELP IS READ FROM `rest[0]` ONLY, AND SCANNING THE WHOLE TAIL WOULD BE A
+    FAIL-OPEN — MEASURED, with a positive control in the same run. `git commit -m -h`
+    with a staged change **creates a commit**, subject `-h`: the `-h` is the MESSAGE,
+    sitting in a flag's value position, and `git commit -m X` committed in the same
+    run so the instrument was known to work. A tail scan would therefore allow a real
+    base-clone commit. No flag's value can occupy `rest[0]`, which is what makes that
+    position sound without modelling any subcommand's arity.
+
+    ⚠ THE COST IS TWO RESIDUAL FALSE POSITIVES, STATED RATHER THAN HIDDEN:
+    `git clean -i -h` and `git commit -m X -h` are help requests (rc 129, `usage:`,
+    repository unchanged — measured) and stay REFUSED, because their `-h` is not
+    first. Nobody types either; every spelling the corpus actually contains has the
+    flag first. ⚠ AND A CLUSTER IS NOT READ FOR AN `h`: `git clean -fh` is also help
+    (measured), and is also still refused. Widening to clusters would need `h` to
+    mean help inside a cluster for all fourteen, which was not measured — and the
+    cheap direction for an unmeasured widening is not to make it.
+    """
+    if rest and rest[0] in _HELP_SPELLINGS:
+        return True
+    return _is_dry_run(subcommand, rest)
+
+
 def _is_dry_run(subcommand: str, rest: list[str]) -> bool:
     """Is this a DRY RUN of a refused subcommand, and therefore a read?
 
@@ -973,12 +1081,11 @@ def _is_exempt(subcommand: str, segment: list[str]) -> bool:
         # somehow does, no exemption applies and the refusal stands, which is the
         # fail-CLOSED direction this function must take when it cannot tell.
         return False
-    # 🔴 THE DRY-RUN PREDICATE IS ASKED FIRST AND FOR EVERY SUBCOMMAND, because it
-    # is ONE predicate rather than a per-subcommand branch. It was a `clean`-only
-    # branch here, which refused `git rm -n` and `git mv -n` — the rehearsal
-    # somebody runs BEFORE the dangerous spelling. `_DRY_RUN_SHORT_VALUE_FLAGS`
-    # carries the measurement and the list of subcommands deliberately NOT in it.
-    if _is_dry_run(subcommand, rest):
+    # 🔴 THE FLAG-SHAPED EXEMPTIONS ARE ASKED FIRST, FOR EVERY SUBCOMMAND, FROM ONE
+    # PLACE. Both halves of `_is_read_only_spelling` used to be per-subcommand
+    # branches here and both were wrong at a site: the dry run was `clean`-only
+    # (refusing `git rm -n`) and the help was `stash`-only (refusing `git rm -h`).
+    if _is_read_only_spelling(subcommand, rest):
         return True
     if subcommand == "merge":
         return "--ff-only" in rest
@@ -986,7 +1093,10 @@ def _is_exempt(subcommand: str, segment: list[str]) -> bool:
         # The pathspec form. `--` is what makes it one, and it does not move HEAD.
         return "--" in rest
     if subcommand == "stash":
-        return bool(rest) and rest[0] in ("list", "show", "--help")
+        # ⚠ `--help` IS DELIBERATELY GONE FROM THIS TUPLE, not lost: it is handled
+        # above for every subcommand now, and leaving a copy here would be the third
+        # site of the predicate that this change exists to remove.
+        return bool(rest) and rest[0] in ("list", "show")
     return False
 
 

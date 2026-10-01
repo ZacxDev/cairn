@@ -482,7 +482,21 @@ jobs:
           # fail-open where an exemption read a flag belonging to a WRAPPER — the hook
           # suite moves 185 -> 222, all in that one file. #170 merged in between and adds
           # nothing here: it is Go-only.
-          FLOOR = 2495
+          # ⚠ 2495 -> 2527 ON THE SECOND REVIEW ROUND, AND CI WOULD HAVE PASSED WITHOUT
+          # IT — said plainly because a literal moved for comfort rather than for a gate
+          # is the kind of edit that makes the next reader distrust all of them. At 2495
+          # the gap would have been 82, inside `MAX_GAP`; the move is for the SAME reason
+          # #168's note gives, that the next PR adding nineteen tests reds the step, and
+          # not because anything was red. Measured 2577 on the merged tree by
+          # `pytest tests -p no:randomly --collect-only -q`, so
+          # `2579 - min(50, max(1, 2579/20)) = 2529`. The +34 is `-h`/`--help` becoming a
+          # read for every member of `_REFUSED` (+32) plus the two that pin
+          # `_LEADING_WORDS` so growing the wrapper ledger is a decision rather than a
+          # chore. 🔴 28 OF THOSE ROWS ARE ONE PARAMETRISED CASE OVER `_REFUSED` ITSELF,
+          # so this number now moves whenever that ledger does, by TWO PER SUBCOMMAND —
+          # worth knowing before reading a future +2 here as somebody adding tests.
+          # The hook suite moves 222 -> 256.
+          FLOOR = 2529
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)

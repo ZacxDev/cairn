@@ -222,6 +222,55 @@ def test_the_doc_OUT_table_is_parseable():
     assert out, "the out-table parse found nothing — it is matching nothing"
 
 
+def _leading_words_from_hook() -> frozenset[str]:
+    """The wrapper words `_LEADING_WORDS` skips, read out of the hook's SOURCE."""
+    text = HOOK.read_text(encoding="utf-8")
+    block = re.search(
+        r"_LEADING_WORDS: dict\[str, tuple\[int, frozenset\[str\]\]\] = \{(.*?)\n\}",
+        text, re.S)
+    assert block, "could not find the _LEADING_WORDS literal in the hook source"
+    # Keys only: a key is a quoted word at the start of a line, before a `:`.
+    return frozenset(re.findall(r'^\s{4}"([^"]+)": \(', block.group(1), re.M))
+
+
+def test_the_wrapper_ledger_is_parseable():
+    """POSITIVE CONTROL for the parse the pin below rests on."""
+    words = _leading_words_from_hook()
+    assert "timeout" in words, f"the parse found no `timeout`: {words}"
+    assert len(words) >= 10, f"implausibly small, parse is probably broken: {words}"
+
+
+def test_the_WRAPPER_LEDGER_is_PINNED_so_GROWING_IT_IS_A_DECISION():
+    """🔴 THIS GUARD EXISTS TO STOP A RATCHET, WHICH IS AN UNUSUAL THING FOR A TEST TO
+    DO, SO IT SAYS SO.
+
+    The closing condition this ledger was built against — "a parametrised case per
+    wrapper word, watched red" — defined done as an ENUMERATION OVER AN OPEN SET. It
+    is RETIRED (see the hook's own table): the class cannot be enumerated, `ssh`,
+    `ionice -p`, `watch`, `coproc`, a shell function and `bash -c '…'` all remain
+    unhandled, and the root fix is nested-shell recursion rather than another word.
+
+    So the set is pinned and this test fails on GROW as well as shrink. A grow is not
+    forbidden — it is made into a decision with a place to argue for it, instead of a
+    chore the next reader feels obliged to complete. ⚠ The justification on record: a
+    replay of one host's session history, 37,268 distinct real Bash commands, moved
+    **zero** verdicts for any of the twelve words this ledger added, while the other
+    two repairs in the same change moved 17 and 13. The counter-argument is on record
+    too, beside it — a guard deters the unprecedented, and zero past is not zero
+    future — which is why the CODE stays and only the closing condition retired.
+
+    ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE: green at `336aebf` and at every ref
+    where the ledger has these members. It pins a decision, not a fix.
+    """
+    assert _leading_words_from_hook() == {
+        # shell reserved words and the brace group
+        "{", "}", "!", "if", "while", "until", "then", "do", "else", "elif",
+        # command wrappers
+        "eval", "time", "command", "exec", "nohup", "nice", "stdbuf", "sudo",
+        "xargs", "env", "timeout",
+    }
+
+
 def _dry_run_keys_from_hook() -> frozenset[str]:
     """The subcommands `_DRY_RUN_SHORT_VALUE_FLAGS` exempts a dry run for."""
     text = HOOK.read_text(encoding="utf-8")
@@ -818,6 +867,76 @@ def test_the_DRY_RUN_exemption_is_ONE_PREDICATE_over_THREE_subcommands(
     """
     clone = parallel_clone[0]
     assert _decision(_run_hook(command, clone)) == expected, command
+
+
+#: Every member of `_REFUSED`, so the help test below cannot cover a subset of the
+#: ledger and read as covering it. Derived from the hook's own literal rather than
+#: retyped: a subcommand added there with no help case is the gap this closes.
+_REFUSED_SUBCOMMANDS = sorted(_refused_from_hook())
+
+
+@pytest.mark.parametrize("subcommand", _REFUSED_SUBCOMMANDS)
+@pytest.mark.parametrize("flag", ["-h", "--help"])
+def test_HELP_is_a_READ_for_EVERY_refused_subcommand(parallel_clone, subcommand, flag):
+    """🔴 REFUSING `--help` IS THE PUREST FALSE POSITIVE THIS GUARD CAN EMIT, AND IT
+    WAS LIVE FOR TWO ROUNDS WHILE THE DOCSTRING CLAIMED OTHERWISE.
+
+    The hook's `WHAT IS DELIBERATELY NOT REFUSED` list named `--help` as a read; the
+    code exempted it for `stash` ALONE. So `git rm -h`, `git mv -h`, `git clean -h`,
+    `git commit --help` and `git rebase --help` were all **deny** — one predicate at
+    one of two sites, wrong at the other. A replay of this project's real Bash
+    history found TWO commands that are exactly this shape, so it had already fired
+    falsely rather than merely being able to.
+
+    🔴 MEASURED, NOT ASSUMED FROM "git uses parse-options": on git 2.55.0 every one
+    of the fourteen answers `-h` with rc 129, `usage:` on the first line, and the
+    repository bit-for-bit unchanged; `--help` execs the manual at rc 0, also
+    unchanged. The question was asked because `-h` is NOT universally help in git —
+    `git grep -h` means `--no-filename` — and the answer is that no refused
+    subcommand is such a case, so none needs a `--help`-only exception.
+
+    🔴 PARAMETRISED OVER THE LEDGER ITSELF — `_refused_from_hook()`, not a retyped
+    list — so a subcommand added to `_REFUSED` with no help case is impossible.
+
+    Red/green: **27 of these 28 rows were `deny` at `336aebf`**. The single green one
+    is `[--help-stash]`, which is the whole point: that was the ONE site the exemption
+    existed at. `git stash -h` was refused there too, which is why even `stash` is
+    only half-green.
+    """
+    clone = parallel_clone[0]
+    command = f"git {subcommand} {flag}"
+    assert _decision(_run_hook(command, clone)) is None, command
+
+
+@pytest.mark.parametrize("command,expected,why", [
+    # 🔴 HELP IS READ FROM THE FIRST WORD AFTER THE SUBCOMMAND ONLY, and these two
+    # rows are why. MEASURED with a positive control in the same run (`git commit
+    # -m X` committed): `git commit -m -h` **creates a commit** with subject `-h`,
+    # because the `-h` is the MESSAGE. A tail scan would allow a real base-clone
+    # commit — the fail-open direction — so the exemption reads `rest[0]`, which no
+    # flag's value can occupy.
+    ("git commit -m -h", "deny", "the `-h` is the commit MESSAGE and it COMMITS"),
+    ("git commit --message=-h", "deny", "the attached spelling of the same thing"),
+    # ⚠ THE COST, STATED RATHER THAN HIDDEN: these two ARE help requests (rc 129,
+    # `usage:`, repository unchanged — measured) and stay refused, because their `-h`
+    # is not first. Residual FALSE POSITIVES, kept because the alternative is the
+    # fail-open above and because no real spelling puts a flag before `-h`.
+    ("git clean -i -h", "deny", "a help request whose `-h` is not first"),
+    ("git clean -fh", "deny", "a CLUSTER containing `h` — also help, also refused: "
+                              "`h` meaning help inside a cluster was not measured "
+                              "for all fourteen, and the cheap direction for an "
+                              "unmeasured widening is not to make it"),
+])
+def test_the_HELP_exemption_does_not_read_a_FLAGS_VALUE(
+        parallel_clone, command, expected, why):
+    """The fail-open the obvious implementation of the help fix would have opened.
+
+    ⚠ The last two rows assert a REFUSAL that is a false positive, deliberately. They
+    are not a claim that those commands write — they pin the boundary this exemption
+    chose, so moving it is a decision somebody has to make here on purpose.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) == expected, f"{why}: {command}"
 
 
 @pytest.mark.parametrize("command,expected,why", [
