@@ -2243,6 +2243,36 @@ def short_heading(heading: str) -> str:
     return heading.lstrip("#").strip()
 
 
+#: The largest `## Nuance / work-history` bullet count that earns NO size badge.
+#: An entry STRICTLY OVER it renders `⚠ OVER 30 nuance — prune or split`.
+#:
+#: 🔴 DERIVED FROM A MEASURED DISTRIBUTION, NOT PICKED FOR ROUNDNESS. Over one live
+#: store of 331 entries the count is heavily skewed — median 5, p90 21, max 151 — and
+#: the number that matters is not the count but what a FEATURED render of that entry
+#: costs, because the index row is ~60 B whatever the entry while the featured body is
+#: the whole section. Median nuance-section bytes by band: 0-9 → 2.5 KB, 10-19 → 10 KB,
+#: 20-29 → 22 KB, 30-39 → 47 KB, 60-99 → 89 KB, 100+ → 164 KB. The knee is at 30: the
+#: SMALLEST body this threshold flags is 29 KB (~7.4K tokens) against 14.6 KB at a
+#: ceiling of 25 — it more than doubles across that one step — and the median flagged
+#: body is 51 KB (~12.8K tokens), which is the five-figure token bill the badge exists
+#: to name.
+#:
+#: 🔴 AND THE OTHER HALF OF THE CHOICE IS THE FIRING RATE, BECAUSE A BADGE THAT FIRES
+#: EVERYWHERE TRAINS ITS OWN BYPASS — which `claude/RULES.md` names as the
+#: permanently-red-gate failure. At 30 it fires on ~5% of rows (measured twice on one
+#: live store of 331 entries: 17 then 18, as the store grew between the two reads — so
+#: read this as a rate, never as an invariant) while flagging ~36% of all nuance bytes.
+#: The badge already beside it on the row, `🔴 N OPEN`, fires on 41.1%, so this one is
+#: roughly eight times sparser than a badge the index already carries. A ceiling of 20
+#: was measured and rejected: 11.2% of rows, and it admits a 12.9 KB entry, which is not
+#: a tax anyone needs warning about.
+#:
+#: ⚠ IT IS ADVISORY AND IT IS NOT A GATE. Nothing refuses, nothing exits non-zero; the
+#: entry renders exactly as before apart from this badge. The remedy it names is the
+#: store's own prune-on-resolve discipline, which `caveat_text` already says is manual.
+NUANCE_BULLET_CEILING = 30
+
+
 def listing_line(entry: RecalledEntry, width: int) -> str:
     """ONE index line: `  <ref>   N nuance  <sensitivity>[  <badges>]`. ~60 B.
 
@@ -2334,6 +2364,47 @@ def listing_line(entry: RecalledEntry, width: int) -> str:
     Conditional like the other four: measured, **0 of 120** live
     entries carry `tasks:`, so no row on the store today renders any differently
     than it did before this badge existed.
+
+    🔴 A SIXTH BADGE — `⚠ OVER 30 nuance — prune or split` — AND IT IS THE ONLY ONE
+    WHOSE SUBJECT IS THE ENTRY'S COST RATHER THAN ITS CONTENT. It clears the
+    "changes what the reader DOES" bar on a measurement the index could not
+    previously surface: a digest prints ONE featured body in full, and on a real
+    store that single body has been measured at 97.6% of the whole read, because
+    one entry had 151 nuance bullets. Nothing on the row said so — `151 nuance`
+    is a number, not a judgement, and a reader has no second row to compare it
+    against. The badge supplies the comparison by naming the ceiling.
+
+    ⚠ IT DELIBERATELY DOES NOT REPEAT THE COUNT, and that is the one place it
+    departs from the five above. Every other badge carries its own number because
+    that number appears NOWHERE ELSE on the line; the nuance count is already the
+    second column of this very row, so `⚠ 151 nuance — OVER 30` would print `151
+    nuance` twice in sixty bytes. The badge says only what the row cannot: where
+    the bar is.
+
+    🔴 THE CEILING IS INTERPOLATED FROM `NUANCE_BULLET_CEILING`, NEVER SPELLED AS A
+    LITERAL, in both renderers. A hand-written `30` in the string agrees with the
+    constant on the day it is typed and nothing asserts it still does — and the
+    failure is silent in the worst way, since the badge would go on PRINTING a
+    bar the predicate no longer uses. Interpolating is also what lets a mutation
+    test move the constant and watch the rendered bytes follow.
+
+    ⚠ IT IS STRICTLY `>`, SO THE WORD `OVER` IS LITERALLY TRUE. An entry AT the
+    ceiling renders no badge. `>=` with the same word would have been wrong at
+    exactly one count, which is the kind of off-by-one a reader cannot see.
+
+    ⚠ AND IT IS LAST IN THE RUN, AFTER `refs`. It is advisory, where the badges to
+    its left report unfinished business, so putting it first would push a `🔴` one
+    column right on every row that has both. Appending also leaves every existing
+    badge sequence byte-identical in relative order.
+
+    ⚠ NO CAVEAT CLAUSE IS ADDED FOR IT, deliberately. `caveat_text`'s conditional
+    clauses share one lead — "the row's own numbers CANNOT BE TRUSTED" — and that
+    sentence is false about this badge: its number is a measurement, and the row
+    it sits on is accurate. The badge is self-legending instead, because it names
+    both the bar and the remedy inline.
+
+    Conditional like the other five: measured at **~5% of 331** live entries over
+    the ceiling, so ~95% of rows on that store render byte-identical to before.
     """
     base = f"  {entry.ref.ljust(width)}  {entry.bullet_count:>3} nuance   {sensitivity_label(entry.sensitivity, entry.declared_sensitivity)}"
     badges: list[str] = []
@@ -2366,6 +2437,8 @@ def listing_line(entry: RecalledEntry, width: int) -> str:
         )
     if entry.tasks:
         badges.append(f"🔗 {len(entry.tasks)} ref{'' if len(entry.tasks) == 1 else 's'}")
+    if entry.bullet_count > NUANCE_BULLET_CEILING:
+        badges.append(f"⚠ OVER {NUANCE_BULLET_CEILING} nuance — prune or split")
     if not badges:
         return base
     return base + "   " + "   ".join(badges)

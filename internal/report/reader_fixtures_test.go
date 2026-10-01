@@ -759,6 +759,44 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 		// here — which is a claim the ~59 unlabelled rows above also make, in bytes, but
 		// which nothing NAMED until this row.
 		{"a host line with NO instance clause, which is every single-instance host and the pod", "consulted no other)"},
+		// 🔴 THE NUANCE-CEILING BADGE, PINNED AS BOTH SIDES OF ITS BOUNDARY — and the SILENT
+		// row is the load-bearing half. The badge fires on `BulletCount >
+		// NuanceBulletCeiling`; a row pinning only the loud side passes for a mutant that
+		// changed `>` to `>=`, or the ceiling from 30 to 29, because the loud row goes on
+		// rendering exactly as before. Only an entry sitting AT the ceiling and rendering
+		// NOTHING can see those, which is why the fixture world holds `at-ceiling` beside
+		// `over-ceiling` one bullet apart.
+		//
+		// 🔴 BOTH ARE WHOLE LINES WITH THEIR OWN NEWLINES ON BOTH SIDES, NOT SUBSTRINGS, AND
+		// THAT IS THE TRAP THIS FILE ALREADY DOCUMENTS ONE ROW OF. `  at-ceiling     30
+		// nuance   public` is a PREFIX of the same row with a badge appended, so a bare
+		// substring pin is satisfied by the very mutant it exists to catch — the identical
+		// shape that let an always-plural `🔗 1 refs` mutant survive against `🔗 1 ref`.
+		// Delimiting both ends makes the absence of a badge assertable.
+		//
+		// ⚠ AND THE CEILING IS SPELLED IN THE EXPECTED BYTES RATHER THAN INTERPOLATED FROM
+		// [NuanceBulletCeiling], deliberately, inverting the rule the renderer follows. The
+		// renderer interpolates so the printed bar cannot drift from the predicate; this
+		// ledger is the differential record of what the ORACLE produced, so a literal is
+		// what makes moving the constant in Go alone go red here instead of silently
+		// re-deriving the new answer on both sides of the comparison.
+		{"the nuance-ceiling badge firing one bullet OVER the ceiling, as a whole line",
+			"\n  over-ceiling    31 nuance   public   ⚠ OVER 30 nuance — prune or split\n"},
+		{"an entry AT the ceiling rendering NO badge, which is the boundary's silent half",
+			"\n  at-ceiling      30 nuance   public\n"},
+		// 🔴 THE BADGE'S POSITION, AND THIS ROW EXISTS BECAUSE A MUTANT MOVING THE EMITTER TO
+		// THE FRONT OF THE RUN *SURVIVED* THE TWO ROWS ABOVE. Neither of those entries carries
+		// another badge, so a one-badge run renders identically wherever the append happens —
+		// the "last in the run" claim written beside the emitter was a comment nothing
+		// measured, which is precisely the comment-as-unchecked-claim this repo treats as a
+		// defect. `mixed-ceiling` is over the ceiling AND declares open bullets AND carries
+		// `refs:`, so the whole line below pins the size badge AFTER both.
+		//
+		// ⚠ IT ALSO PINS THAT THE COUNT IS EVERY BULLET AND NOT THE UNDECLARED ONES: the entry
+		// holds 2 `OPEN:` bullets among 31, and the row reads `31 nuance`, so a reader that
+		// counted only unmarked bullets would print 29 and render no badge at all.
+		{"the size badge's POSITION — last in the run, after OPEN and after refs",
+			"\n  mixed-ceiling   31 nuance   public   🔴 2 OPEN   🔗 1 ref   ⚠ OVER 30 nuance — prune or split\n"},
 	} {
 		if !strings.Contains(rendered, row.marker) {
 			t.Errorf("no fixture case renders %s (looked for %q). The fixture's whole value "+
