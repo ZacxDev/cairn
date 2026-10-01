@@ -80,9 +80,18 @@ def _init_clone(path: Path) -> Path:
     against the cwd's — so a fixture that invoked the cairn checkout's hook while
     standing in a synthetic repo would be measuring the cross-repo REFUSAL path
     and never the refusal itself. Copying makes each fixture a faithful miniature
-    of the real deployment (`<repo>/.claude/hooks/<file>`), which is also why
-    `shutil.copy` and not a symlink: `os.path.realpath` on a symlink resolves back
-    to the cairn checkout and the guard would police the wrong tree.
+    of the real deployment (`<repo>/.claude/hooks/<file>`).
+
+    ⚠ THE REASON GIVEN HERE FOR `shutil.copy` OVER A SYMLINK WAS WRONG, AND AN
+    AUDIT MEASURED IT. It claimed `os.path.realpath` on a symlink "resolves back
+    to the cairn checkout and the guard would police the wrong tree". The guard
+    uses `os.path.abspath(__file__)` and never `realpath` on it, so a symlinked
+    hook resolves its own directory to the SYMLINK's location — the fixture repo —
+    and behaves correctly; the auditor drove that case and saw it work. A copy is
+    kept anyway, as a PREFERENCE rather than a necessity: it does not depend on
+    which of `abspath`/`realpath` the hook happens to use, so changing that line
+    in the hook cannot silently repoint every fixture in this file. Recorded
+    because a false reason in a comment is what stops the next reader checking.
     """
     path.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, **_GIT_ENV}
@@ -682,19 +691,27 @@ def test_the_wiring_names_no_absolute_interpreter_path():
 
 # ------------------------------------------------- the write TARGET, not the cwd
 #
-# 🔴 THE FALSE POSITIVE THESE COVER, AND WHY IT IS THE EXPENSIVE DIRECTION. The
-# four conditions all key on the **cwd**, so a session whose shell sits in the
-# base clone was refused even when the command it ran wrote somewhere else
-# entirely. The repo's OWN recipe is `git -C <worktree> commit`, issued from a
-# session rooted in the clone, so the guard refused the very flow its refusal
-# message prescribes — measured ten times across one effort before this fix.
+# 🔴 ONE DEFECT, BOTH DIRECTIONS, AND THE SECOND HALF IS THE ONE THAT MATTERS
+# MORE. Every condition keyed on the **cwd**, which is neither necessary nor
+# sufficient for "this command writes to the shared base clone":
 #
-# The docstring's "WHAT THIS GUARD STILL CANNOT SEE" table names the mirror of
-# this (a `-C` INTO the clone passing through) and defers it to the host-wide
-# guard, which already resolves all four redirection spellings. These tests do
-# NOT close that half: widening the guard to catch it would grow the second copy
-# of that resolution the docstring tells us not to grow. They close the half that
-# COUNTERMANDS the operator, which condition 2 already establishes is worse.
+#   * NOT SUFFICIENT — a session whose shell sits in the clone was refused for
+#     `git -C <a linked worktree> commit`, the spelling the guard's own refusal
+#     message PRESCRIBES, measured ten times across one effort; and a cross-repo
+#     commit it blocked outright had to be handed back to the operator.
+#   * NOT NECESSARY — a `-C`, `--git-dir`, `--work-tree`, `GIT_DIR` or `cd`
+#     pointing INTO the clone from anywhere else passed straight through. That is
+#     the fail-OPEN half, and the whole reason this hook exists is that a commit
+#     landing on the wrong branch of a shared clone is SILENT.
+#
+# Both halves close by asking the conditions about the directory the command
+# WRITES to. The cases below are grouped by direction, and each says which ref it
+# was watched RED at: `fbe81e0` is the guard before any of this, `0e1060f` is
+# after the `-C`-only half landed. A case green at `0e1060f` is labelled an
+# INVARIANT GUARD, because a green there evidences nothing about this change.
+#
+# ⚠ ONE GAP IS LEFT OPEN DELIBERATELY and has its own declared-gap test at the
+# bottom of this file: a git write inside a NESTED shell (`bash -c '…'`).
 
 
 def test_a_write_redirected_into_a_linked_worktree_is_allowed(parallel_clone):
@@ -760,3 +777,501 @@ def test_a_redirect_to_an_UNRESOLVABLE_path_stays_refused(parallel_clone):
     clone = parallel_clone[0]
     verdict = _run_hook(f"git -C {clone}/no-such-dir commit -m 'work'", clone)
     assert _decision(verdict) == "deny"
+
+
+# ------------------------------- the UNDER-blocking half: a redirect INTO the clone
+#
+# 🔴 THESE ARE THE FAIL-OPEN CASES, AND EVERY ONE OF THEM WAS MEASURED ALLOWING AT
+# `0e1060f`. The guard's own docstring listed four of them as "cannot see" for two
+# rounds while deferring the repair to the operator's host-wide guard — which is
+# not importable from a PUBLIC repo, so the deferral could never complete. Each
+# refusal here is a write that genuinely lands in the shared clone.
+
+
+def test_a_redirect_INTO_the_clone_from_a_LINKED_WORKTREE_is_refused(parallel_clone):
+    """🔴 THE SPELLING THIS REPO'S OWN RECIPE USES, pointed the wrong way.
+
+    An agent standing in its worktree that types the clone's path by mistake
+    commits onto whatever branch the clone is on. Watched RED at `fbe81e0` AND at
+    `0e1060f` (both ALLOWED: the cwd is a linked worktree, so every cwd-keyed
+    condition was false), green here.
+    """
+    clone, wt = parallel_clone[:2]
+    assert _decision(_run_hook(f"git -C {clone} commit -m 'work'", wt)) == "deny"
+
+
+def test_a_redirect_INTO_the_clone_from_ANOTHER_REPOSITORY_is_refused(tmp_path):
+    """The cwd narrowing and the target widening are not in tension, and this is
+    the case that shows it.
+
+    Condition 2 stops the guard POLICING another repo — a `git commit` whose
+    target is that repo stays allowed. It must not also stop the guard seeing a
+    command that reaches back INTO its own clone from there, which is a real
+    base-clone write however far away the shell is standing.
+
+    Watched RED at `fbe81e0` and `0e1060f`.
+    """
+    global _ACTIVE_HOOK
+    clone = tmp_path / "clone"
+    other = tmp_path / "other"
+    local_hook = _init_clone(clone)
+    _add_worktree(clone, tmp_path / "wt")
+    _init_clone(other)
+    _ACTIVE_HOOK = local_hook
+    try:
+        # NEGATIVE CONTROL, in the same run: the other repo's own write is allowed.
+        assert _decision(_run_hook("git commit -m 'work'", other)) is None
+        assert _decision(
+            _run_hook(f"git -C {clone} commit -m 'work'", other)) == "deny"
+    finally:
+        _ACTIVE_HOOK = None
+
+
+@pytest.mark.parametrize("flag", [
+    "--git-dir={gitdir}",
+    "--git-dir {gitdir}",
+    "--work-tree={clone}",
+    "--work-tree {clone}",
+])
+def test_the_gitdir_and_worktree_flags_INTO_the_clone_are_refused(parallel_clone, flag):
+    """🔴 BOTH FLAGS, BOTH SEPARATORS, AND NEITHER IS HYPOTHETICAL.
+
+    MEASURED against git 2.55.0 on a miniature clone, and this is why they are
+    judged IN ADDITION to the caller's directory rather than instead of it:
+
+      * `git --git-dir=<the clone>/.git add <file>` run FROM a linked worktree
+        exits 0 and stages into the CLONE's index;
+      * `git --work-tree=<a linked worktree> rev-parse --absolute-git-dir` run
+        from the main worktree answers the CLONE's `.git` — the flag moves which
+        files are read, not which index and HEAD are written.
+
+    So each names one half of the operation while the other half still comes from
+    the caller. Watched RED at `fbe81e0` and `0e1060f` (both ALLOWED).
+    """
+    clone, wt = parallel_clone[:2]
+    command = f"git {flag.format(gitdir=clone / '.git', clone=clone)} add seed.txt"
+    assert _decision(_run_hook(command, wt)) == "deny", command
+
+
+def test_a_GIT_DIR_ASSIGNMENT_INTO_the_clone_is_refused(parallel_clone):
+    """`GIT_DIR=<the clone>/.git git add …` carries no flag at all.
+
+    The variable overrides git's directory discovery, so a bare `git` after it
+    writes to the clone wherever the shell is standing. Watched RED at `fbe81e0`
+    and `0e1060f`.
+    """
+    clone, wt = parallel_clone[:2]
+    command = f"GIT_DIR={clone / '.git'} git add seed.txt"
+    assert _decision(_run_hook(command, wt)) == "deny"
+
+
+def test_a_GIT_DIR_in_the_ENVIRONMENT_INTO_the_clone_is_refused(parallel_clone):
+    """The same variable, already exported, so it never appears in the command.
+
+    Read from the hook's own environment for that reason. Watched RED at
+    `fbe81e0` and `0e1060f`.
+    """
+    clone, wt = parallel_clone[:2]
+    verdict = _run_hook("git add seed.txt", wt,
+                        env_extra={"GIT_DIR": str(clone / ".git")})
+    assert _decision(verdict) == "deny"
+
+
+def test_a_cd_INTO_the_clone_is_refused(parallel_clone):
+    """`cd <the clone> && git commit` — the second row of the docstring's table.
+
+    ⚠ CLOSED IN THE UNDER-BLOCKING DIRECTION ONLY, and the asymmetry is the
+    point: a `cd` target is judged IN ADDITION to the caller's directory, never
+    instead of it, because deciding that a `cd` REPLACES the caller needs bash's
+    positional model — `( … )` does not persist, `{ … }` does — and a wrong model
+    there fails OPEN. Watched RED at `fbe81e0` and `0e1060f`.
+    """
+    clone, wt = parallel_clone[:2]
+    assert _decision(_run_hook(f"cd {clone} && git commit -m x", wt)) == "deny"
+
+
+def test_a_redirect_into_a_SUBDIRECTORY_of_the_clone_is_refused(parallel_clone):
+    """A `-C` does not have to name the clone's root to write to the clone.
+
+    git discovers the repository by walking up, so any directory inside the main
+    worktree is the main worktree for this purpose — measured: `git -C
+    <clone>/<subdir> rev-parse --absolute-git-dir` answers `<clone>/.git`. A
+    guard that string-compared the target against the clone's root would miss
+    every one of these. Watched RED at `fbe81e0` and `0e1060f`.
+    """
+    clone, wt = parallel_clone[:2]
+    sub = clone / ".claude"
+    assert sub.is_dir(), "the fixture installs the hook under .claude/hooks"
+    assert _decision(_run_hook(f"git -C {sub} commit -m x", wt)) == "deny"
+
+
+def test_a_SAFE_redirect_does_not_vouch_for_a_DANGEROUS_SIBLING(parallel_clone):
+    """🔴 THE FAIL-OPEN THE `-C`-ONLY HALF INTRODUCED, MEASURED RATHER THAN FEARED.
+
+    `git -C <a linked worktree> --git-dir=<the clone>/.git commit` carries one
+    redirect that is safe and one that is not. At `0e1060f` the safe one ended the
+    enquiry and the command was ALLOWED — a strictly NEW fail-open, since
+    `fbe81e0` refused it (on the cwd, for the wrong reason). Which repository such
+    a command lands in is genuinely ambiguous, so a resolvable `-C` must not vouch
+    for a sibling that names the clone.
+    """
+    clone, wt = parallel_clone[:2]
+    command = f"git -C {wt} --git-dir={clone / '.git'} commit -m x"
+    assert _decision(_run_hook(command, clone)) == "deny"
+
+
+def test_a_GIT_DIR_in_the_environment_cannot_STEER_THE_GUARDS_OWN_READS(parallel_clone):
+    """🔴 A SECOND FAIL-OPEN, IN THE INSTRUMENT RATHER THAN THE POLICY, AND IT WAS
+    PRESENT AT BOTH BASE REFS.
+
+    The guard answers "what is this directory" by shelling out to `git`, and that
+    child inherited the hook's environment — so a `GIT_DIR` already exported in
+    the session answered for every directory it asked about. Pointed at a LINKED
+    worktree's git dir, `rev-parse --absolute-git-dir` stops equalling
+    `--git-common-dir` ANYWHERE, so the clone itself stops looking like a main
+    worktree and a plain `git commit` IN THE CLONE is allowed.
+
+    MEASURED, with the no-variable control DENYing in the same run: ALLOW at
+    `fbe81e0`, ALLOW at `0e1060f`, deny here.
+
+    🔴 THE VARIABLE HERE POINTS SOMEWHERE HARMLESS ON PURPOSE. If it named the
+    clone, the refusal could come from `_ambient_targets` judging it as a target
+    and the test would pass with the scrub deleted — green for the wrong reason.
+    Naming a linked worktree makes the scrub the only thing that can produce it.
+    """
+    clone, wt = parallel_clone[:2]
+    wt_gitdir = clone / ".git" / "worktrees" / wt.name
+    assert wt_gitdir.is_dir(), f"fixture: no worktree git dir at {wt_gitdir}"
+    # POSITIVE CONTROL, same fixture, same command, no variable.
+    assert _decision(_run_hook("git commit -m x", clone)) == "deny"
+    verdict = _run_hook("git commit -m x", clone,
+                        env_extra={"GIT_DIR": str(wt_gitdir)})
+    assert _decision(verdict) == "deny", (
+        "an exported GIT_DIR steered the guard's own `git` reads, so no directory "
+        "looked like the main worktree and a real base-clone write was allowed"
+    )
+
+
+# ------------------------------- the OVER-blocking half: a redirect OUT of the clone
+
+
+def test_a_redirect_to_ANOTHER_REPOSITORY_is_allowed(tmp_path):
+    """The case that was handed back to the operator: a cross-repo worktree commit.
+
+    A session rooted in cairn that runs `git -C <another repo's worktree> commit`
+    touches this clone not at all. Watched RED at `fbe81e0`; green at `0e1060f`,
+    so relative to the ref this change is built on it is an ⚠ INVARIANT GUARD —
+    it pins that generalising the resolution to four spellings did not lose the
+    one spelling that already worked.
+    """
+    global _ACTIVE_HOOK
+    clone = tmp_path / "clone"
+    other = tmp_path / "other"
+    local_hook = _init_clone(clone)
+    _add_worktree(clone, tmp_path / "wt")
+    _init_clone(other)
+    _add_worktree(other, tmp_path / "other-wt")
+    _ACTIVE_HOOK = local_hook
+    try:
+        # POSITIVE CONTROL: the same fixture refuses a real base-clone write, so a
+        # pair of allows below cannot be a hook that is simply wired to nothing.
+        assert _decision(_run_hook("git commit -m x", clone)) == "deny"
+        for target in (other, tmp_path / "other-wt"):
+            assert _decision(
+                _run_hook(f"git -C {target} commit -m x", clone)) is None, target
+    finally:
+        _ACTIVE_HOOK = None
+
+
+def test_a_gitdir_redirect_to_a_LINKED_WORKTREE_is_allowed(parallel_clone):
+    """🔴 THE FALSE POSITIVE THE `-C`-ONLY HALF LEFT STANDING, and the trap the
+    whole resolution has to avoid.
+
+    `--git-dir=<a linked worktree's git dir>` writes to that worktree's index and
+    HEAD, not the clone's. The trap: a linked worktree and the main worktree of
+    one clone share the git COMMON dir, so a check that resolved the target to the
+    common dir would call this the base clone and re-create the very false
+    positive being removed. `--absolute-git-dir` is what separates them.
+
+    Watched RED at `0e1060f` (deny) and green here.
+
+    🔴 AND THE VERDICT IS cwd-CONDITIONAL, WHICH AN EARLIER DOC ROW AND AN EARLIER
+    LABEL IN THE ACCEPTANCE SCRIPT BOTH OMITTED — one read as unconditional, the
+    other said "cwd = the base clone" while passing the worktree. `--git-dir` is
+    ADDITIVE, so the caller's directory is judged as well: from the worktree this
+    is allowed, from the clone it is REFUSED. Both are asserted here so the pair
+    cannot drift apart again.
+    """
+    clone, wt = parallel_clone[:2]
+    wt_gitdir = clone / ".git" / "worktrees" / wt.name
+    command = f"git --git-dir={wt_gitdir} commit -m x"
+    assert _decision(_run_hook(command, wt)) is None, command
+    assert _decision(_run_hook(command, clone)) == "deny", command
+
+
+def test_a_redirect_at_a_path_that_is_NO_REPOSITORY_stays_refused(parallel_clone):
+    """🔴 FAILS CLOSED, and the host-wide guard records this exact shape as a
+    measured fail-open: naming a repo handed it the whole verdict, so a `-C` at an
+    ordinary directory left the branch check evaluating NOTHING and the command
+    ran unchecked.
+
+    ⚠ INVARIANT GUARD — green at `0e1060f` too.
+    """
+    clone = parallel_clone[0]
+    outside = clone.parent / "plain"
+    outside.mkdir()
+    assert _decision(_run_hook(f"git -C {outside} commit -m x", clone)) == "deny"
+
+
+def test_an_UNEXPANDED_VARIABLE_in_a_redirect_stays_refused(parallel_clone):
+    """`git -C $WT commit` — the guard runs before the shell expands anything.
+
+    A target it cannot resolve must leave the refusal standing; the alternative is
+    that any unresolvable string disarms the guard. ⚠ INVARIANT GUARD — green at
+    `0e1060f`.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook("git -C $WT commit -m x", clone)) == "deny"
+
+
+# ------------------- a target named by a VARIABLE: REFUSED, and that is the ruling
+#
+# 🔴 THIS SECTION REPLACES ONE THAT RESOLVED `$VAR` FROM THE COMMAND TEXT, AND THE
+# RETRACTION IS THE MOST USEFUL THING IN IT. The requirement came from a report
+# that `git -C "$WT" add` was wrongly refused for a cross-repo worktree. Measured
+# against the real paths with a control: the LITERAL-path spelling was already
+# allowed, and the repro had assigned `WT` in a PREVIOUS Bash call, which no parser
+# in this process could ever resolve. There was no defect.
+#
+# The resolver written for that non-defect opened FOUR fail-opens. In each of these
+# bash leaves `WT` UNSET, so the command git runs is `git -C "" commit` — which git
+# runs in the CURRENT directory, the clone:
+#
+#     ( WT=<wt> ) ; git -C "$WT" commit       a subshell assignment is discarded
+#     false && WT=<wt> ; git -C "$WT" commit   the assignment never runs
+#     if false; then WT=<wt>; fi; git -C …     nor does one in an untaken branch
+#     WT=<wt> true; git -C "$WT" commit        a command PREFIX scopes to `true`
+#
+# All four were ALLOW with the resolver and DENY without it; one was proved end to
+# end, the clone going 1 -> 2 commits while the worktree stayed at 1. Knowing a
+# name is ASSIGNED SOMEWHERE IN THE TEXT is not knowing the shell will have
+# ASSIGNED IT.
+#
+# 🔴 AND NOTE HOW THE FALLBACK DIED. The brief said not to relax it, and it was not
+# relaxed — the resolver made it UNREACHABLE in those four shapes instead. A rule
+# honoured formally while its purpose is defeated is the harder failure to see,
+# which is why these cases are pinned by SHAPE rather than left to the one-line
+# claim that unresolvable targets refuse.
+
+
+@pytest.mark.parametrize("command,why", [
+    ('( WT={wt} ) ; git -C "$WT" commit -m x',
+     "a subshell assignment is discarded, so $WT is unset"),
+    ('false && WT={wt} ; git -C "$WT" commit -m x',
+     "the assignment never runs, so $WT is unset"),
+    ('if false; then WT={wt}; fi; git -C "$WT" commit -m x',
+     "an untaken branch assigns nothing"),
+    ('WT={wt} true; git -C "$WT" commit -m x',
+     "a command prefix scopes the assignment to `true`"),
+    ('WT={wt}\ngit -C "$WT" commit -m x',
+     "even the shape that WOULD have resolved: no expansion happens at all now"),
+    ('export WT={wt}; git -C "$WT" commit -m x',
+     "`export` is not modelled either, and now does not need to be"),
+    ('git -C "$WT" commit -m x',
+     "the value is nowhere in the text"),
+    ('git -C "${{WT}}" commit -m x',
+     "nor in the braced spelling"),
+])
+def test_a_target_named_by_a_VARIABLE_is_always_REFUSED(parallel_clone, command, why):
+    """🔴 THE FOUR FAIL-OPEN SHAPES, PLUS THE ONES THAT MERELY LOOK RESOLVABLE.
+
+    Every row is a REAL base-clone write: `git -C ""` runs in the current
+    directory. The first four were measured **ALLOW** at the resolver head and
+    **DENY** at `0e1060f`, and are green here — so they are regression coverage
+    against a fail-open this branch itself introduced and removed.
+
+    Rows five and six are the ⚠ ERGONOMIC COST, stated rather than hidden: the
+    spelling a careful script uses is refused too. The remedy is an ABSOLUTE path,
+    which the refusal message names, and it is a cheaper remedy than modelling
+    shell scope in Python inside a security path.
+
+    Rows seven and eight were green at both refs — ⚠ INVARIANT GUARDS.
+    """
+    clone, wt = parallel_clone[:2]
+    text = command.format(wt=wt)
+    assert _decision(_run_hook(text, clone)) == "deny", f"{why}: {text}"
+
+
+def test_an_ASSIGNMENT_token_naming_the_clone_is_not_a_redirect_TARGET(parallel_clone):
+    """🔴 A DRAFT OF THIS TEST ASSERTED `deny` AND WAS WRONG ABOUT THE SHELL, which
+    is worth keeping because it is the same error the deleted resolver was built on.
+
+    `WT=<the clone>` then `git -C "$WT" commit`, run from the LINKED WORKTREE. The
+    draft reasoned "the clone is named in the text, so it must be judged". But
+    `$WT` is unexpanded, so the command git runs is `git -C "" commit` — which runs
+    in the CURRENT directory, the worktree. No base-clone write happens, and
+    `allow` is the correct answer. Measured: allow at `fbe81e0`, at `0e1060f` and
+    here.
+
+    So what this pins is that a leading `VAR=` token is NOT mistaken for a
+    redirect target. It would be a false positive to treat it as one, and the
+    mirror case — the same command from the CLONE — is refused by the fallback and
+    covered in the parametrised set above.
+
+    ⚠ INVARIANT GUARD: green at both refs. It exists because the wrong answer here
+    is the attractive one.
+    """
+    clone, wt = parallel_clone[:2]
+    verdict = _run_hook(f'WT={clone}\ngit -C "$WT" commit -m x', wt)
+    assert _decision(verdict) is None
+
+
+def _existing_dirs(root, count: int) -> list[Path]:
+    """`count` ORDINARY directories — not worktrees, not repositories.
+
+    Plain directories are the point: the probe cap these pin the absence of
+    filtered only paths that do NOT exist, so a handful of real directories was
+    enough to spend it. That is what made an ordinary cross-repo sweep a bypass
+    rather than an exotic payload.
+    """
+    out = []
+    for n in range(count):
+        path = root / f"pad{n}"
+        path.mkdir()
+        out.append(path)
+    return out
+
+
+@pytest.mark.parametrize("count", [8, 12, 30])
+@pytest.mark.parametrize("shape", ["git-dir", "cd"])
+def test_no_number_of_ADDITIVE_candidates_can_crowd_OUT_the_real_one(
+        parallel_clone, shape, count):
+    """🔴 THE HAZARD THAT HAD NO TEST, AND IT REPLACES TWO THAT LOOKED LIKE IT DID.
+
+    The guard once capped how many directories it would ask `git` about. The cap
+    was measured to convert a DENY into an ALLOW at exactly the bound, TWICE, one
+    level apart: first globally (primaries crowding out primaries), then — after
+    the fix — in the additive pass alone, because `cd` and `GIT_DIR` targets are
+    whole-command scans appended to every segment's extras.
+
+    Both shapes here were ALLOW at `c22e7a0` for N >= 8 and DENY for N <= 7, and
+    the `cd` one was driven END TO END: the clone went 1 -> 2 commits with `HEAD`
+    subject `PROOF` while the worktree stayed at 1. **That shape is an ordinary
+    cross-repo sweep.** Green here at N = 8, 12 and 30, so a cap merely RAISED
+    rather than removed cannot satisfy this.
+
+    ⚠ IT REPLACES `test_junk_candidates…probe_budget` AND
+    `test_junk_ADDITIVE_candidates…`, WHICH BOTH WENT VACUOUS WITH THE CAP. One
+    padded with primaries, which were already uncapped; the other tested a cap
+    that no longer exists. Deleting them without this would have left the file
+    looking like it covered the area it had just stopped covering.
+    """
+    clone, wt = parallel_clone[:2]
+    pads = _existing_dirs(clone.parent, count)
+    if shape == "git-dir":
+        pad = " ".join(f"--git-dir={d}" for d in pads)
+        command = f"git {pad} --git-dir={clone / '.git'} add seed.txt"
+    else:
+        pad = " ".join(f"cd {d} && git fetch ;" for d in pads)
+        command = f"{pad} cd {clone} && git commit -m PROOF"
+    assert _decision(_run_hook(command, wt)) == "deny", f"{shape} N={count}"
+
+
+def test_a_NUL_BYTE_in_a_redirect_does_not_CRASH_the_hook(parallel_clone):
+    """🔴 A CRASH IS AN ALLOW, AND THIS ONE WAS REACHED THROUGH THE GUARD'S OWN
+    PLUMBING RATHER THAN ITS POLICY.
+
+    `subprocess.run(cwd=…)` raises `ValueError: embedded null byte` — not an
+    `OSError` — so a NUL in a `-C` value escaped `_git`'s handler and killed the
+    hook with a traceback and rc 1. Every status except 2 lets the command RUN, so
+    the traceback was an ALLOW on a payload `0e1060f` DENIED.
+
+    Measured: DENY at `0e1060f`, **rc 1** at `c22e7a0`, deny here. Reach is narrow
+    — bash cannot carry a NUL in argv — but fail-open-on-crash is the property
+    this file's own header forbids itself, and `_run_hook` asserts rc 0 on every
+    call for exactly this reason.
+
+    ⚠ IT ALSO FALSIFIES A CLAIM THIS BRANCH SHIPPED. `_abs_path` said a second
+    existence check "could never change a verdict"; removing the duplicate turned
+    this DENY into a crash-ALLOW. The mutation sweep scored that guard unreachable
+    because it scored VERDICTS, and a crash is not a verdict — a blind spot of the
+    instrument, now recorded beside both.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook("git -C a\0b commit -m x", clone)) == "deny"
+
+
+def test_GIT_INDEX_FILE_pointed_at_the_clones_INDEX_is_refused(parallel_clone):
+    """🔴 CONDITION 1 SAYS "MUTATES THE INDEX", AND THIS MUTATED THE CLONE'S INDEX
+    WHILE BEING ALLOWED.
+
+    `GIT_INDEX_FILE=<the clone>/.git/index git add <file>` from a linked worktree
+    was ALLOW at `0e1060f` and at `c22e7a0`, and was measured to REWRITE the
+    clone's index with a file staged. Nothing judged the variable: the judged-env
+    list was `GIT_DIR`/`GIT_WORK_TREE` while the SCRUB list beside it already named
+    nine variables, and a comment calling the first "the two environment
+    variables" read as though those were the same question.
+
+    🔴 IT IS JUDGED BY ITS CONTAINING DIRECTORY, because the value is a FILE.
+    `<clone>/.git/index` -> `<clone>/.git`, which `_protected` already recognises
+    as the main worktree. That keeps `_protected` answering one question about one
+    directory instead of learning about files.
+
+    ⚠ AND THE SET STOPS AT WHAT LANDS: `GIT_COMMON_DIR`, `-c core.worktree=`,
+    `GIT_CONFIG_KEY_*` and `--config-env` were each driven end to end and measured
+    NOT to mutate the clone, so they stay unjudged. Widening past what was shown
+    to land trades a false negative for a false positive with no measurement on
+    either side.
+    """
+    clone, wt = parallel_clone[:2]
+    command = f"GIT_INDEX_FILE={clone / '.git' / 'index'} git add seed.txt"
+    assert _decision(_run_hook(command, wt)) == "deny"
+    # The same variable in the ENVIRONMENT rather than the command text.
+    verdict = _run_hook("git add seed.txt", wt,
+                        env_extra={"GIT_INDEX_FILE": str(clone / ".git" / "index")})
+    assert _decision(verdict) == "deny"
+
+
+def test_a_cd_does_not_override_a_RESOLVED_redirect(parallel_clone):
+    """🔴 THE FALSE POSITIVE THE `cd` SCAN WOULD HAVE INVENTED.
+
+    `cd <the clone> && git -C <a linked worktree> commit` writes to the worktree:
+    a `-C` moves git's whole repository discovery, so the shell's directory — and
+    therefore the `cd` — is not consulted at all. Judging the `cd` target for a
+    segment that resolved its own `-C` would refuse this, which is a new false
+    positive created by the fix for a false negative.
+
+    That is why `_ambient_targets` returns the `cd` and `GIT_DIR` families
+    SEPARATELY: `GIT_DIR` overrides a `-C` (measured) and stays judged for every
+    segment, while a `cd` loses to one.
+
+    ⚠ INVARIANT GUARD relative to the refs — green at `0e1060f`, which read no
+    `cd` at all. It pins the precedence this change had to get right.
+    """
+    clone, wt = parallel_clone[:2]
+    verdict = _run_hook(f"cd {clone} && git -C {wt} commit -m x", wt)
+    assert _decision(verdict) is None
+
+
+# ------------------------------------------------------------ the DECLARED gap
+
+
+def test_a_git_write_inside_a_NESTED_SHELL_is_still_unseen(parallel_clone):
+    """⚠ A DECLARED GAP, PINNED SO THE DOCSTRING CANNOT GO STALE — not a
+    requirement that it stay open.
+
+    `bash -c 'cd <the clone> && git commit …'` is one quoted token to this
+    parser, so nothing inside it is read as a command. The module docstring's
+    table names this as the one row still open, and the operator's host-wide
+    guard spends two separate recursion budgets to close the equivalent — so it is
+    not cheap, and it is covered on the hosts that run that guard.
+
+    🔴 IF THIS GOES RED, THE GUARD IMPROVED. Update the docstring's table to mark
+    the row CLOSED and replace this test with a refusal case; do NOT re-open the
+    gap to make it green again.
+    """
+    clone, wt = parallel_clone[:2]
+    command = f"bash -c 'cd {clone} && git commit -m x'"
+    assert _decision(_run_hook(command, wt)) is None, (
+        "the nested-shell row is no longer a gap — see this test's docstring"
+    )
