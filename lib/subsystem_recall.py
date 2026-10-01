@@ -1133,17 +1133,14 @@ class RecalledEntry:
     mechanical change that would have to move `SubsystemEntry.tasks`, the JSON
     payload's key and `internal/report.RecalledEntry.Tasks` together.
 
-    🔴 THE RENDERED TEXT SURFACE HAS FULLY MOVED, SO WHAT IS DEFERRED HERE IS NOW
-    A NAME AND A JSON KEY, NOT A LABEL. The INDEX BADGE reads `🔗 N ref(s)` (see
+    🔴 THE RENDERED TEXT SURFACE HAS FULLY MOVED, SO WHAT IS LEFT HERE IS A NAME
+    AND A JSON KEY, NOT A LABEL. The INDEX BADGE reads `🔗 N ref(s)` (see
     `listing_line`) and the BODY LABEL reads `refs: ` (see `render_text`); both
     re-based the goldens, the reader fixture and the parity byte diffs, the second
     on an operator ruling. Two spellings of `task` remain and they are NOT one
-    deferral: this FIELD NAME, which no reader sees and which moving is purely
-    mechanical; and `render_json`'s payload key `"tasks"`, which a consumer reads.
-    ⚠ THE JSON KEY IS THE ONE WITH A COST — renaming it breaks a consumer's `[]`
-    presence check silently, and it has no Go counterpart, so it is not held equal
-    by `tests/parity/` either. That asymmetry is why the rendered words moved
-    first and these did not move with them.
+    thing: this FIELD NAME, which no reader sees, so moving it is mechanical and
+    needs no ruling; and `report_json`'s payload key `"tasks"`, whose reason and
+    CLOSING CONDITION (P8) are written once, at the key itself.
 
     Carried from `SubsystemEntry.tasks` rather than re-parsed from the front
     matter here: the loader already validated them, and a second parse at the
@@ -2327,15 +2324,12 @@ def listing_line(entry: RecalledEntry, width: int) -> str:
     identical change in the same commit, because the two renderers diverging here
     is precisely the silent drift `tests/parity/` exists to catch.
 
-    ⚠ THE BODY LABEL MOVED WITH IT — ONE CHANGE LATER, ON AN OPERATOR RULING, AND
-    SAYING SO IS THE POINT RATHER THAN LEAVING A READER TO CHECK. This docstring
-    read "the body's `tasks: ` LABEL still reads `task`" for exactly one change;
-    both rendered words are `ref` now, so nothing on this text surface spells
-    `task` any more. Two things still do, and they are different: the internal
-    FIELD NAME (`RecalledEntry.tasks`, `SubsystemEntry.tasks`,
+    ⚠ THE BODY LABEL SPELLS `refs:` TOO, so nothing on this text surface spells
+    `task` any more. Two things still do, and they are different from each other:
+    the internal FIELD NAME (`RecalledEntry.tasks`, `SubsystemEntry.tasks`,
     `internal/report.RecalledEntry.Tasks`), which no reader sees; and
-    `render_json`'s payload key `"tasks"`, which IS public but MACHINE-readable and
-    is therefore out of scope by decision — both are recorded on `tasks` below.
+    `report_json`'s payload key `"tasks"`, which exits at P8. Both are recorded on
+    `tasks` below.
 
     Conditional like the other four: measured, **0 of 120** live
     entries carry `tasks:`, so no row on the store today renders any differently
@@ -3030,44 +3024,30 @@ def render_text(
             # identity, like the ref and the sensitivity on the line above, not
             # content.
             #
-            # 🔴 THE LABEL READS `refs:`, WHICH IS THE FRONT-MATTER KEY, AND THE
-            # HISTORY IS KEPT RATHER THAN DELETED BECAUSE THE PREVIOUS STATE WAS A
-            # RECORDED DEFERRAL AND NOT AN OVERSIGHT. It read `tasks:` from before
-            # `tasks:` folded into `refs:` until an operator ruled on it; the comment
-            # here said the re-base argument was SPENT (`listing_line`'s badge had
-            # already moved the goldens, the reader fixture and the parity byte diffs)
-            # and that what remained was a decision, since a body label is a different
-            # public string from an index badge. 🔴 THAT CLOSING CONDITION IS NOW MET:
-            # the ruling was given, and this line, `internal/report`'s
-            # `RecallReport.RenderText`, the fixture and the corpus moved together. The
-            # state it warned about — the badge saying `ref` while this said `task`,
-            # two words for one field on one screen — lasted exactly one change.
+            # 🔴 THE LABEL READS `refs:`, WHICH IS THE FRONT-MATTER KEY. It read
+            # `tasks:` from before `tasks:` folded into `refs:`, deferred on a recorded
+            # closing condition — an operator ruling on the label — which has been
+            # given. These are the bytes the Go renderer is diffed against, so this
+            # label and `internal/report`'s move together or not at all.
             #
             # ⚠ THE ACCEPTED INPUT SPELLINGS ARE UNTOUCHED. `tasks:` and `task:` are
             # still read on the way in, permanently, by operator decision; only the
             # rendered word moved. So a reader who writes `tasks:` still sees `refs:`
             # here, and that is correct rather than a mismatch — the parser keeps no
             # record of which key an entry used, which is also why the browser surface
-            # names both spellings. These are the bytes the Go renderer is diffed
-            # against, so the two labels move together or not at all.
+            # names both spellings.
             #
-            # ⚠ AND THE JSON PAYLOAD'S KEY IS STILL `tasks`, DELIBERATELY. `render_json`
-            # is machine-readable: renaming a key there breaks a consumer's `[]` check
-            # silently, where renaming a human-read label breaks nobody. It also has no
-            # Go counterpart, so it is not part of the byte-identity contract this line
-            # is under. Out of scope by decision, not by omission.
+            # ⚠ `report_json`'s PAYLOAD KEY STILL SPELLS `tasks`, AND ITS EXIT IS P8.
+            # The reason and the closing condition are written ONCE, at the key itself
+            # in `report_json`; do not restate them here.
             out.append(f"    refs: {', '.join(e.tasks)}")
         if e.tags:
             # Identity, like the refs line above and for the same reason: "what category is
             # this" is not content.
             #
-            # ⚠ THIS COMMENT USED TO SAY THE LABEL ABOVE DISAGREED WITH ITS KEY WHERE THIS
-            # ONE AGREES, AND THAT DISTINCTION IS GONE: both labels now spell their own
-            # front-matter key. It is rewritten rather than deleted because the sentence it
-            # replaces was a true claim about a state that no longer exists, and a reader who
-            # remembers it has to be told where it went. What survives is the narrower fact:
-            # `tags:` never had an older spelling, so there was never anything here to defer
-            # — the label above had one and its deferral is now closed.
+            # `tags:` is the key an operator writes and `tags:` is what this prints.
+            # There is no older spelling and no alias, so unlike the refs label above
+            # there is nothing here that could drift from its key.
             out.append(f"    tags: {', '.join(e.tags)}")
         for heading in SURFACED_HEADINGS:
             body = e.sections.get(heading)
@@ -3239,7 +3219,24 @@ def report_json(report: RecallReport) -> dict:
                 # where the text surface puts them: the row gets a count, the body
                 # gets the refs. `[]` for an entry with none, never omitted — a
                 # consumer branching on presence would read a missing key as "this
-                # reader is too old to know about tasks", which is a different fact.
+                # reader is too old to know about refs", which is a different fact.
+                #
+                # 🔴 THE KEY STILL SPELLS `tasks` WHERE BOTH RENDERED WORDS NOW SPELL
+                # `refs`, AND ITS EXIT IS P8 — A MILESTONE WITH A CHECKER, NOT A BARE
+                # DECISION. The text surface moved (`🔗 N ref(s)` on the index row,
+                # `    refs: ` in a body); this key did not, because it is the one
+                # spelling a machine reads positionally rather than a human reads.
+                # ⚠ AND THE REACH IS NARROWER THAN "A PUBLIC API" — stated because an
+                # earlier version of this note called it public and claimed renaming it
+                # would break a consumer, which CONTRADICTS what `recall`'s own
+                # `ref_to` comment already measured: `report_json` has no caller outside
+                # `tests/` and this module's own `--json` entrypoint, `cairn` renders
+                # text, and the Go port has no JSON recall payload at all. So renaming
+                # it would move nobody's bytes today; it is left alone because the whole
+                # surface is ORACLE-ONLY and goes when the module does.
+                # CLOSING CONDITION: `packages.cairn` retired (P8) — the same condition
+                # the `lib/` rule closes on, and it is on the P8 retirement ledger in
+                # `tests/parity/README.md` so it cannot close on a list nobody keeps.
                 "tasks": list(e.tasks),
                 "tags": list(e.tags),
             }

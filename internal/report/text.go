@@ -87,19 +87,15 @@ func listingLine(entry RecalledEntry, width int) string {
 		// nothing and could not tell a renamed key from an absent one. The accepted older
 		// INPUT spellings (`tasks:`, `task:`) are untouched; this is the rendered word.
 		//
-		// ⚠ THE BODY LABEL MOVED WITH IT — ONE CHANGE LATER, ON AN OPERATOR RULING, AND
-		// SAYING SO IS THE POINT RATHER THAN LEAVING A READER TO CHECK. This comment read
-		// "the body's `tasks: ` LABEL still reads `task`" for exactly one change; both
-		// rendered words are `ref` now, so nothing on this surface spells `task` any more.
-		// Two things DO still read `task`, and they are different from each other and from
-		// this. (a) The internal FIELD NAME — `RecalledEntry.Tasks`, `store.Entry.Tasks`,
-		// the oracle's `RecalledEntry.tasks` — which no reader sees; its own deferral is
-		// recorded on [RecalledEntry.Tasks]. (b) The oracle's JSON payload key `"tasks"` in
-		// `render_json`, which IS a public string but a MACHINE-READABLE one: renaming it
-		// breaks a consumer's `[]` check silently, where renaming a human-read label breaks
-		// nobody. It has no Go counterpart — `internal/report` renders text only — so it is
-		// not part of the byte-identity contract these two renderers share, and it is out
-		// of scope here deliberately rather than by omission.
+		// ⚠ THE BODY LABEL SPELLS `refs:` TOO, so nothing on this surface spells `task` any
+		// more. Two things DO still read `task`, and they are different from each other and
+		// from this. (a) The internal FIELD NAME — `RecalledEntry.Tasks`,
+		// `store.Entry.Tasks`, the oracle's `RecalledEntry.tasks` — which no reader sees;
+		// its own note is on [RecalledEntry.Tasks]. (b) The oracle's JSON payload key
+		// `"tasks"` in `report_json`, which has NO Go counterpart — `internal/report`
+		// renders text only — so it is outside the byte-identity contract these two
+		// renderers share. Its reason and its CLOSING CONDITION (P8) are written once, at
+		// the key itself in `lib/subsystem_recall.py`.
 		badges = append(badges, "🔗 "+strconv.Itoa(len(entry.Tasks))+" ref"+plural(len(entry.Tasks)))
 	}
 	if len(badges) == 0 {
@@ -507,17 +503,11 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 			// "which ref does this answer" is identity, like the ref and the sensitivity
 			// on the line above, not content.
 			//
-			// 🔴 THE LABEL READS `refs:`, WHICH IS THE FRONT-MATTER KEY, AND THE HISTORY IS
-			// KEPT RATHER THAN DELETED BECAUSE THE PREVIOUS STATE WAS A RECORDED DEFERRAL
-			// AND NOT AN OVERSIGHT. It read `tasks:` from before `tasks:` folded into
-			// `refs:` until an operator ruled on it; the comment here said the re-base
-			// argument was SPENT ([listingLine]'s badge had already moved the goldens, the
-			// reader fixture and the parity byte diffs) and that what remained was a
-			// decision, since a body label is a different public string from an index
-			// badge. 🔴 THAT CLOSING CONDITION IS NOW MET: the ruling was given, and this
-			// line, the oracle's `render_text`, the fixture and the corpus moved together.
-			// The state it warned about — the badge saying `ref` while this said `task`, two
-			// words for one field on one screen — lasted exactly one change and is over.
+			// 🔴 THE LABEL READS `refs:`, WHICH IS THE FRONT-MATTER KEY. It read `tasks:`
+			// from before `tasks:` folded into `refs:`, deferred on a recorded closing
+			// condition — an operator ruling on the label — which has been given. These are
+			// the bytes the oracle's `render_text` is diffed against, so this label and its
+			// twin move together or not at all.
 			//
 			// ⚠ THE ACCEPTED INPUT SPELLINGS ARE UNTOUCHED. `tasks:` and `task:` are still
 			// read on the way in, permanently, by operator decision; only the rendered word
@@ -530,13 +520,9 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 			// Identity, like the refs line above and for the same reason: "what category is
 			// this" is not content.
 			//
-			// ⚠ THIS COMMENT USED TO SAY THE LABEL ABOVE DISAGREED WITH ITS KEY WHERE THIS
-			// ONE AGREES, AND THAT DISTINCTION IS GONE: both labels now spell their own
-			// front-matter key. It is rewritten rather than deleted because the sentence it
-			// replaces was a true claim about a state that no longer exists, and a reader
-			// who remembers it has to be told where it went. What survives is the narrower
-			// fact: `tags:` never had an older spelling, so there was never anything here to
-			// defer — the label above had one and its deferral is now closed.
+			// `tags:` is the key an operator writes and `tags:` is what this prints. There
+			// is no older spelling and no alias, so unlike the refs label above there is
+			// nothing here that could drift from its key.
 			out = append(out, "    tags: "+strings.Join(e.Tags, ", "))
 		}
 		for _, heading := range SurfacedHeadings {

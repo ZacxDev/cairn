@@ -127,11 +127,18 @@ func TestTheProvenanceParENTHETICALIsRemovedFromTheBODY(t *testing.T) {
 // TestANuanceBulletKeepsItsParENTHETICAL is the GATE, and it is the assertion that separates
 // "remove what a badge replaces" from "remove anything that looks like provenance".
 //
-// 🔴 MEASURED AS THE KILLING CASE. Deleting the `b.Provenance != store.ProvenanceAbsent` gate
-// in `Bullet.Body` leaves every assertion in the test above GREEN — the requirements bullets
-// are stripped either way — and reddens exactly this one. A nuance bullet gets no provenance
-// badge whatever its line says, so a cut there deletes text with nothing on the page to
-// replace it: no badge, no note, no trace.
+// 🔴 MEASURED AS A KILLING CASE. Deleting the `b.Provenance != store.ProvenanceAbsent` gate
+// in `Bullet.Body` leaves every assertion in [TestTheProvenanceParENTHETICALIsRemovedFromTheBODY]
+// GREEN — the requirements bullets are stripped either way — and reddens this test. A nuance
+// bullet gets no provenance badge whatever its line says, so a cut there deletes text with
+// nothing on the page to replace it: no badge, no note, no trace.
+//
+// ⚠ NOT THE ONLY KILLER, AND THE WORD MATTERS: an earlier version of this line said "reddens
+// exactly this one", which an independent re-run of the same mutation disproved —
+// [TestTheProvenanceParENTHETICALIsGoneFromTheRENDEREDPage] reddens too, on its count of the
+// shared line. Two killers is better than one; a comment DESIGNATING a unique killer is how
+// the second gets trimmed as redundant. Neither is redundant: this one pins the MODEL, that
+// one pins the HTML.
 //
 // ⚠ IT IS A PAIR WITH THE REQUIREMENTS SIDE OF THE SAME LINE, because the two bullets are
 // byte-identical on disk. Asserting only that the nuance copy is intact would pass against a
@@ -250,13 +257,24 @@ func TestTheProvenanceParENTHETICALIsGoneFromTheRENDEREDPage(t *testing.T) {
 	}
 }
 
-// TestProvenanceSpanAndTheBadgeAgreeOnEveryFixtureLine is the SEAM guard: one scan decides the
-// badge's word and the body's cut, so the two cannot disagree about which bytes the provenance
-// is — and this is what asserts the relationship rather than either side.
+// TestProvenanceSpanAndTheBadgeAgreeOnEveryFixtureLine is an INVARIANT GUARD, labelled as one,
+// and deliberately NOT counted as regression coverage for this change — the same labelling
+// [TestTheLinkBadgeIsCONDITIONAL] carries in `internal/report`.
 //
-// ⚠ A STRUCTURAL CHECK ONLY, and labelled so. It pins that a non-zero span implies a non-empty
-// word and vice versa, over every line the fixture carries; the behavioural claim is the three
-// tests above.
+// 🔴 MEASURED: IT STAYS GREEN UNDER BOTH PAYLOAD MUTATIONS. Dropping the provenance cut from
+// `Bullet.Body` and dropping its `b.Provenance` gate each leave this test passing, because
+// neither touches `bulletProvenance` — so it provides NO regression coverage for the defect
+// this change fixed, and reporting it as if it did would overstate the suite.
+//
+// It is kept, cheaply, because it guards a DIFFERENT class that no other test here covers: a
+// future edit that splits `bulletProvenance` back into two scans, letting the badge's WORD and
+// the cut's OFFSET disagree about which bytes the provenance is. That is the failure
+// `ProvenanceSpan`'s doc promises cannot happen; this is its executable form. A mutation
+// inside `bulletProvenance` is what would redden it, and none was run — so "no regression
+// coverage" is measured and "dead" is not claimed.
+//
+// ⚠ A STRUCTURAL CHECK ONLY. It pins that a non-zero span implies a non-empty word and vice
+// versa, over every line the fixture carries; the behavioural claims are the three tests above.
 func TestProvenanceSpanAndTheBadgeAgreeOnEveryFixtureLine(t *testing.T) {
 	src := StoreSource{Root: provenanceStripWorld(t)}
 	item := readTheOneEntry(t, src)

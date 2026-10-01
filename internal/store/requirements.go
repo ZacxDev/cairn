@@ -198,16 +198,19 @@ func bulletProvenance(firstLine string) (string, int) {
 // `(OPERATOR)`, `(operator — via chat)` and everything else a writer might reach for,
 // each of which is a different claim that nothing would then be able to tell apart.
 //
-// ⚠ BYTE INDEXING IS SAFE HERE ONLY BECAUSE `(`, `)` AND BOTH WORDS ARE ASCII, and the
-// comparison is exact: a multi-byte rune can satisfy the LENGTH check — where the rune-indexed
-// version it replaced would not — but can never satisfy the EQUALITY, so it is refused either
-// way. That is the argument; the measurement is 142,786 pairs with 0 disagreements against the
-// previous rune-indexed, bool-returning form, over (a) every string of length 0..4 from a
-// 16-symbol alphabet including a 3-byte and a 4-byte rune and (b) each of those symbols
-// inserted at, substituted for and deleted from every position of a well-formed `(word)`, with
-// three tails. The differential's own negative control — dropping the word-equality check —
-// reported 846 disagreements, so the 0 is a measurement rather than a harness wired to nothing.
-// The offset is what a caller cutting the text needs; the bool could not give it one.
+// ⚠ BYTE INDEXING IS SAFE HERE ONLY BECAUSE `(`, `)` AND BOTH WORDS ARE ASCII, AND THAT IS THE
+// WHOLE ARGUMENT: a multi-byte rune can satisfy the LENGTH check — where the rune-indexed
+// version this replaced would not — but can never satisfy the byte-exact EQUALITY, so it is
+// refused either way, one line later. The offset is what a caller cutting the text needs, and
+// a bool could not give it one.
+//
+// ⚠ AN EARLIER VERSION CITED A PAIR-COUNT FROM AN AD-HOC DIFFERENTIAL AGAINST THE RUNE FORM,
+// AND THE FIGURE IS DELETED RATHER THAN CORRECTED. The harness was never committed, so nobody
+// could re-derive it — and an independent rebuild of the same sweep got a different total,
+// which is exactly what an uncheckable number is worth. Either commit the sweep as a test or
+// state the argument; this states the argument. `TestProvenanceIsTheWholeParenthesizedWord`
+// and `requirements-provenance-accepts-a-prefix` in `tests/control_mutants.py` are the
+// checkable guards on the behaviour that argument is about.
 func matchParenthesizedWord(s string, word string) int {
 	if len(s) < len(word)+2 || s[0] != '(' {
 		return 0
