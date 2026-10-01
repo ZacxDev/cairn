@@ -613,3 +613,54 @@ pointer** — which is what "move the text to the archive leaving a pointer" mea
   covers. For rank 8, the semver path — not a new tag.
 
 
+
+### ✅ RESOLVED 2026-10-01 — round 1 ran the nine axes on #163: 0 deploy-blocking, and the four findings that mattered were all MINE
+- as-of: 2026-10-01
+- **What this settles:** the correctness pass round 0 could not license skipping. The
+  measurable core of the deletion argument **reproduced exactly** — 12/0 and 8/0 with the file
+  sets enumerated, the digest pair `ff292fab…` → `40ac9382…`, and both evictions verbatim
+  (eviction 1: 50 removed / 59 added / 0 absent; eviction 2: 0 of 147 absent, 116 net).
+- 🔴 **RETRACTED, MINE, AND THIS IS THE THIRD TIME IN THIS DOC — THE RETRACTION'S OWN FIGURES
+  WERE WRONG.** I published "78 failures / 4 successes". Measured now: **6 successes, 73
+  failures**. The 6 includes **three manual runs I made myself** (19:24:11, 19:25:43, 19:39:04)
+  — I counted one — and 73 is below 78 because the journal **rotates**. So a correction written
+  to fix an unvalidated count was itself an unvalidated count. **The lesson is the SHAPE: a
+  total over a rotating log that I am concurrently adding to is not a measurement, and no amount
+  of care at the moment of reading fixes that.** Replaced with the scheduled/manual split, which
+  does not move. `via: measurement`
+- 🔴 **Ruled out: that the round-0 fix to `## How to verify` was a net improvement. IT SILENTLY
+  NARROWED THE ARC'S RE-VERIFICATION FROM THREE ARTEFACTS TO TWO.** The pre-round-0 block looped
+  `for d in cairn-ui subsystem-store-api`; my rewrite reads only `subsystem-store-api` — and
+  `cairn-ui` is precisely the pin whose digest this arc measured moving. `## Goal` points a
+  later session at that block. **A rewrite that fixes two named bugs can delete a third thing
+  nobody named**; restored to both pods. `via: measurement`
+- 🔴 **Ruled out: the leak recipe's own comment. "The base clone exits 2 on … agent worktrees" is
+  FALSE, measured.** With **13** agent worktrees physically present, `leakscan.py` in the base
+  clone exits **0** over 468 files — because `.gitignore` ignores that directory and the scanner
+  enumerates with `git ls-files --cached --others --exclude-standard`. An ignored path is
+  invisible to it by construction. The `result`-symlink half is untested, not confirmed. **A
+  future session hitting a real exit 2 would have blamed a cause that cannot produce it** — this
+  doc's own "an empty result cannot distinguish two mechanisms", in a comment I carried forward
+  without testing. `via: measurement`
+- 🔴 **Ruled out: that rank 8's semver rewrite was landable. THE TAG HAS NEVER BEEN MINTED.**
+  `git tag -l` → **0**; `git ls-remote --tags origin` → empty; anonymous ghcr tag lists fully
+  paginated → `cairn-store` **122**, `cairn-store-go` **121**, `cairn-ui` **79**, and **every
+  one** is `sha-<40hex>`. The `version_tag` code is real and its push steps are guarded `!= ''`,
+  so it has simply never fired. **Rank 8's two halves contradicted each other** — it cited the
+  semver tag *and* required the initial `newTag` to be already-published. Rewritten to say so.
+  ⚠ And the citation `publish-image.yml:78` points at a **COMMENT**, not the minting code at
+  `:161-172`/`:393`/`:629`/`:786`. A comment is a claim. `via: measurement`
+- **Ruled out:** that `d839a79`'s commit message describes `d839a79`. It says *"Round 0's fixes
+  pushed the handoff doc 3,062 B over its ceiling"* and *"This evicts four terminal blocks"* —
+  but `c9776c7` already carries the removal and leaves the doc at **58,385 B, 7,151 B UNDER**;
+  `d839a79` touches only the archive. The "over by 3,062 B" state existed in a REFUSED proposal
+  run, never in a commit. Substance verified independently and holds; the message is wrong about
+  which commit does what, and is left rather than rewritten so the pushed history is not
+  re-pointed. `via: measurement`
+- **Ruled out:** that round 0's rewrite of rank 4 was lossless. It **deleted P8's carried
+  preconditions**, which survived only in a doc `## Goal` declares CLOSED. Restored.
+  `via: measurement`
+- **Leading hypothesis:** none for the audit. Closed.
+- **Next probe:** watch one **scheduled** firing go green — the timer's next is the only reading
+  that settles the headline. For rank 8, the operator's release-cadence decision.
+
