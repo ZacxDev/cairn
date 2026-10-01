@@ -781,7 +781,7 @@ paragraph used to add "the lone PASS being the only two-entry scope", and
 for any scope with more than two entries". Re-measured on the
 workbench, same store, counting entries as `subsystem_recall` **indexes** them:
 `cli`=5, `alpha-toolkit`=26, `beta-cluster`=49, `gamma-infra`=0,
-`storage-resolver`=1. `storage-resolver/` holds `backblaze.md` plus a
+`widget-registry`=1. `widget-registry/` holds `catalog.md` plus a
 `README.md`, and a README in a scope is correctly not indexed — so it is a
 **one**-entry scope, and **no two-entry scope appears in that run at all**. The
 boundary that holds is arithmetic rather than measured: a one-entry index has
@@ -872,7 +872,7 @@ check that shrugged at a missing entry could not detect a half-copied seed.
 between a workbench and a pod failed by construction — `verify: scopes=16 pass=0
 fail=16` on a store whose content was identical. `claude/RULES.md`: a
 permanently-red gate is worse than no gate. **That rule alone closes it**:
-measured on scope `kubeclaw`, workbench versus the live pod, using the script's
+measured on scope `gadget-mesh`, workbench versus the live pod, using the script's
 own expressions — `store:` + banner canonicalised gives **2** differing lines,
 adding `host:` gives **0**.
 

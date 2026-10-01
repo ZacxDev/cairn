@@ -378,7 +378,7 @@ remote_entries=$(wc -l < "$remote_list" | tr -d ' ')
 # It fires only when the two conditions the multi-host case guarantees are BOTH
 # met: an UNPAIRABLE line (GNU comm arms the order check only after one) and an
 # adjacency where C and locale order disagree — e.g. `<scope>/README.md` beside
-# `<scope>/backblaze.md`, which the real store is full of. So the FIRST push
+# `<scope>/catalog.md`, which the real store is full of. So the FIRST push
 # after another host seeds would abort at `set -e` on comm's rc=1, printing
 # three "not in sorted order" diagnostics and NO verdict at all: no PUSHED, no
 # NOTE, no OK, no MISMATCH — content landed, exit code unexplained. Exactly the

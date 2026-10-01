@@ -42,7 +42,7 @@
 #
 #     FAIL scope=alpha-toolkit    raw-diff-lines=45   accounted-for=6
 #     FAIL scope=cli              raw-diff-lines=8    accounted-for=6
-#     PASS scope=storage-resolver (1 entry)
+#     PASS scope=widget-registry (1 entry)
 #     FAIL scope=gamma-infra      raw-diff-lines=108  accounted-for=6
 #     FAIL scope=beta-cluster     raw-diff-lines=336  accounted-for=6
 #
@@ -51,14 +51,14 @@
 # permanently-red gate is worse than no gate.
 #
 # 🔴 TWO READINGS OF THAT RUN WERE WRONG, AND THIS IS THE CORRECTION.
-# The `storage-resolver` line above said `(2 entries)` and the paragraph
+# The `widget-registry` line above said `(2 entries)` and the paragraph
 # concluded "every passing scope had 2 entries; every failing one had more".
 # RE-MEASURED on this host, same store, counting entries as
 # `subsystem_recall` INDEXES them rather than as files on disk:
 #
-#     cli=5  alpha-toolkit=26  beta-cluster=49  gamma-infra=0  storage-resolver=1
+#     cli=5  alpha-toolkit=26  beta-cluster=49  gamma-infra=0  widget-registry=1
 #
-# `storage-resolver/` holds `backblaze.md` plus a `README.md`, and a README in a
+# `widget-registry/` holds `catalog.md` plus a `README.md`, and a README in a
 # scope is correctly NOT indexed — so it is a ONE-entry scope. NO TWO-ENTRY
 # SCOPE APPEARS IN THAT RUN AT ALL, so the data could never support a two-entry
 # boundary, in either direction.

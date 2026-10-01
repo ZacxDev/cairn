@@ -188,9 +188,16 @@ def test_the_denied_identifier_SET_cannot_shrink_unnoticed():
     because the negative controls are built on it — lose it and every
     `denied-identifier` control in `--self-test` passes against nothing.
     """
-    assert len(leakscan.DENIED_IDENTIFIER_DIGESTS) == 16, (
+    # 16 → 18: two identifiers the original hand scrub MISSED while replacing
+    # their synthetic neighbours, so they sat on a PUBLIC `main` with this gate
+    # reporting zero. That is the blind spot `AGENTS.md` declares in as many
+    # words — the set is CLOSED, so a name nobody added is invisible — and the
+    # digests were added BEFORE the scrub precisely so the gate could be watched
+    # to go red on them (14 findings across 3 files) and thereby prove the two
+    # entries match the text that was there, rather than a typo matching nothing.
+    assert len(leakscan.DENIED_IDENTIFIER_DIGESTS) == 18, (
         f"the denied-identifier set holds "
-        f"{len(leakscan.DENIED_IDENTIFIER_DIGESTS)} digests, not 16. Adding a "
+        f"{len(leakscan.DENIED_IDENTIFIER_DIGESTS)} digests, not 18. Adding a "
         f"name is expected — raise this number in the same commit and say what "
         f"it is for. REMOVING one un-gates a real project, repository, cluster "
         f"or host name, and there is no other check that would notice."

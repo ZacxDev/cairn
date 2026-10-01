@@ -3346,7 +3346,7 @@ class TestSeedPushVerdict:
 
         Needs BOTH: an unpairable line (comm arms the order check only after
         one) and an adjacency where C and en_US disagree. `README.md` beside
-        `backblaze.md`/`thing-alpha.md` is that adjacency, and the real store is
+        `catalog.md`/`thing-alpha.md` is that adjacency, and the real store is
         full of it — so the FIRST push after another host seeds would abort."""
         # 🔴 THIS TEST NEITHER SKIPS NOR DEGRADES — IT FAILS IF IT CANNOT RUN,
         # AND THAT TOOK THREE TRIES TO GET RIGHT.
@@ -3385,7 +3385,7 @@ class TestSeedPushVerdict:
         # at once — and it cannot pass while the collation is unavailable, which
         # is exactly the vacuity this test kept falling into.
         forced = "en_US.UTF-8"
-        pair = f"{SCOPE}/README.md\n{SCOPE}/backblaze.md\n"
+        pair = f"{SCOPE}/README.md\n{SCOPE}/catalog.md\n"
 
         def _sorted_under(lc: str) -> str:
             return subprocess.run(
@@ -3395,7 +3395,7 @@ class TestSeedPushVerdict:
 
         c_order, loc_order = _sorted_under("C"), _sorted_under(forced)
         assert c_order != loc_order, (
-            f"`sort` orders {SCOPE}/README.md and {SCOPE}/backblaze.md the same "
+            f"`sort` orders {SCOPE}/README.md and {SCOPE}/catalog.md the same "
             f"under C and under {forced}, so comm's order check cannot arm and "
             "this test would pass whether or not the collation is pinned.\n"
             "Either the fixture stopped inverting, or — far more likely — this "
@@ -3411,9 +3411,16 @@ class TestSeedPushVerdict:
         # order, `comm` never complained, and the mutant that strips `LC_ALL=C`
         # from the comm calls SURVIVED a fully green run. The inversion needs a
         # lowercase sibling sorting BEFORE `README` in en_US and AFTER it in C —
-        # 'b' is 0x62, above 'R' at 0x52, but below 'r' when case is folded.
+        # 'c' is 0x63, above 'R' at 0x52, but below 'r' when case is folded.
+        # 🔴 SO THE FILENAME IS LOAD-BEARING, NOT DECORATIVE. Measured over all
+        # 26 initials against `README.md`: 'a'..'q' invert, 'r'..'z' do not —
+        # which is why `thing-alpha.md` ('t') is named above as the version that
+        # did NOT work, and it is a RANGE rather than one letter's accident.
+        # Renaming this sibling means re-checking that range, not just the
+        # spelling — the `c_order != loc_order` assertion above is the control
+        # that catches getting it wrong, and it is why that assertion is there.
         (store / SCOPE / "README.md").write_text(_entry("README", SCOPE))
-        (store / SCOPE / "backblaze.md").write_text(_entry("backblaze", SCOPE))
+        (store / SCOPE / "catalog.md").write_text(_entry("catalog", SCOPE))
         self._foreign(dest)
         env = {**env, "LC_ALL": forced, "LANG": forced}
 
@@ -4205,7 +4212,7 @@ def token_file(tmp_path: Path) -> Path:
 # ⚠ THAT RUN USED TO BE SUMMARISED AS "every scope with more than two entries
 # failed", WHICH IS WRONG. Re-measured, entries as `subsystem_recall`
 # INDEXES them: cli=5, alpha-toolkit=26, beta-cluster=49, gamma-infra=0,
-# storage-resolver=1. No two-entry scope appears in that run at all, so the data
+# widget-registry=1. No two-entry scope appears in that run at all, so the data
 # could not support a two-entry boundary; and `gamma-infra` FAILED on a SET
 # difference, not on order (0 indexed entries means `status=scope-empty` with no
 # INDEX block, which ordering cannot make differ by 102 lines). The boundary
@@ -4379,7 +4386,7 @@ def _ambiguous_refs(root: Path) -> None:
 #
 # 🔴 A KEYWORD OR SUBSTRING ASSERTION WOULD NOT HAVE CAUGHT EITHER. Both wrong
 # claims were fluent English containing every word a plausible partial
-# assertion would have looked for — "storage-resolver", "PASS", "entries" —
+# assertion would have looked for — "widget-registry", "PASS", "entries" —
 # which is the "a guard on WORDS is walkable by REWORDING" shape in
 # `claude/RULES.md`. When the artefact under test IS PROSE, the whole
 # normalised string is the only pin that holds.
@@ -4405,7 +4412,7 @@ _EXPECTED_EVIDENCE_BLOCK = """
 
     FAIL scope=alpha-toolkit    raw-diff-lines=45   accounted-for=6
     FAIL scope=cli              raw-diff-lines=8    accounted-for=6
-    PASS scope=storage-resolver (1 entry)
+    PASS scope=widget-registry (1 entry)
     FAIL scope=gamma-infra      raw-diff-lines=108  accounted-for=6
     FAIL scope=beta-cluster     raw-diff-lines=336  accounted-for=6
 
@@ -4414,14 +4421,14 @@ _EXPECTED_EVIDENCE_BLOCK = """
     permanently-red gate is worse than no gate.
 
     🔴 TWO READINGS OF THAT RUN WERE WRONG, AND THIS IS THE CORRECTION.
-    The `storage-resolver` line above said `(2 entries)` and the paragraph
+    The `widget-registry` line above said `(2 entries)` and the paragraph
     concluded "every passing scope had 2 entries; every failing one had more".
     RE-MEASURED on this host, same store, counting entries as
     `subsystem_recall` INDEXES them rather than as files on disk:
 
-    cli=5  alpha-toolkit=26  beta-cluster=49  gamma-infra=0  storage-resolver=1
+    cli=5  alpha-toolkit=26  beta-cluster=49  gamma-infra=0  widget-registry=1
 
-    `storage-resolver/` holds `backblaze.md` plus a `README.md`, and a README in a
+    `widget-registry/` holds `catalog.md` plus a `README.md`, and a README in a
     scope is correctly NOT indexed — so it is a ONE-entry scope. NO TWO-ENTRY
     SCOPE APPEARS IN THAT RUN AT ALL, so the data could never support a two-entry
     boundary, in either direction.
@@ -4459,7 +4466,7 @@ _RETRACTED_BOUNDARY = (
     "every scope with more than two entries",
     "could not pass for any scope with more than two entries",
     "every passing scope had 2 entries",
-    "pass scope=storage-resolver (2 entries)",
+    "pass scope=widget-registry (2 entries)",
     "every pass had ≤2 entries",
     "any scope with >2 entries",
     # 🔴 NOT A BOUNDARY CLAIM, BUT THE SAME FAILURE MODE AND THE SAME SCANNER.
@@ -4723,7 +4730,7 @@ class TestByteIdentityVerifier:
         `scopes=5 pass=1 fail=4`.
 
         ⚠ THAT PASS WAS NOT "the only two-entry scope" — see the fixture header
-        above. `storage-resolver` indexes ONE entry, no two-entry scope appears
+        above. `widget-registry` indexes ONE entry, no two-entry scope appears
         in the run, and one of the four FAILs was a set difference rather than
         an ordering one. The boundary is arithmetic: one entry admits one order,
         two or more can diverge.
