@@ -678,3 +678,85 @@ def test_the_wiring_names_no_absolute_interpreter_path():
     assert commands, "no PreToolUse commands found — the parse is wrong, not the file"
     for command in commands:
         assert "/nix/store" not in command, command
+
+
+# ------------------------------------------------- the write TARGET, not the cwd
+#
+# 🔴 THE FALSE POSITIVE THESE COVER, AND WHY IT IS THE EXPENSIVE DIRECTION. The
+# four conditions all key on the **cwd**, so a session whose shell sits in the
+# base clone was refused even when the command it ran wrote somewhere else
+# entirely. The repo's OWN recipe is `git -C <worktree> commit`, issued from a
+# session rooted in the clone, so the guard refused the very flow its refusal
+# message prescribes — measured ten times across one effort before this fix.
+#
+# The docstring's "WHAT THIS GUARD STILL CANNOT SEE" table names the mirror of
+# this (a `-C` INTO the clone passing through) and defers it to the host-wide
+# guard, which already resolves all four redirection spellings. These tests do
+# NOT close that half: widening the guard to catch it would grow the second copy
+# of that resolution the docstring tells us not to grow. They close the half that
+# COUNTERMANDS the operator, which condition 2 already establishes is worse.
+
+
+def test_a_write_redirected_into_a_linked_worktree_is_allowed(parallel_clone):
+    """🔴 THE REGRESSION TEST. `-C <linked worktree>` from the base clone writes
+    to the worktree, so the base clone is untouched and there is nothing to refuse.
+
+    Watched RED at `03f912e` (the guard ignored `-C` entirely and denied) and
+    green at HEAD.
+    """
+    clone, wt = parallel_clone[:2]
+    verdict = _run_hook(f"git -C {wt} commit -m 'work'", clone)
+    assert _decision(verdict) is None, (
+        "a commit redirected into a linked worktree was refused while naming the "
+        "base clone — the premise of the refusal is false"
+    )
+
+
+def test_a_write_redirected_INTO_the_base_clone_is_still_refused(parallel_clone):
+    """The other half of the pair, and what stops the fix being a silencing.
+
+    An explicit `-C <the base clone>` is a real base-clone write and must stay
+    refused — otherwise `-C` becomes a bypass for the whole guard.
+
+    ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE: it was already GREEN at
+    `03f912e`, because the pre-fix guard denied everything and so could not get
+    this case wrong. It pins that condition 5 did not widen into a bypass; it
+    does not evidence the fix.
+    """
+    clone = parallel_clone[0]
+    verdict = _run_hook(f"git -C {clone} commit -m 'work'", clone)
+    assert _decision(verdict) == "deny"
+
+
+def test_a_RELATIVE_redirect_into_a_linked_worktree_is_allowed(parallel_clone):
+    """`-C` takes a relative path too, and resolving it against the wrong base is
+    how a fix like this passes its absolute-path test and fails in practice."""
+    clone, wt = parallel_clone[:2]
+    rel = os.path.relpath(wt, clone)
+    verdict = _run_hook(f"git -C {rel} commit -m 'work'", clone)
+    assert _decision(verdict) is None
+
+
+def test_CUMULATIVE_redirects_resolve_like_git_does(parallel_clone):
+    """`git -C a -C b` is `cd a; cd b` — each is relative to the previous.
+
+    Asserted because taking only the LAST `-C` is the obvious shortcut and it is
+    wrong whenever the last one is relative.
+    """
+    clone, wt = parallel_clone[:2]
+    verdict = _run_hook(
+        f"git -C {wt.parent} -C {wt.name} commit -m 'work'", clone
+    )
+    assert _decision(verdict) is None
+
+
+def test_a_redirect_to_an_UNRESOLVABLE_path_stays_refused(parallel_clone):
+    """🔴 FAILS CLOSED. A `-C` the guard cannot resolve must NOT buy an exemption,
+    or a typo'd path becomes a bypass. The guard refuses when it cannot prove the
+    write lands elsewhere.
+
+    ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE — green at `03f912e` too, for the
+    same reason as the pair above."""
+    clone = parallel_clone[0]
+    verdict = _run_hook(f"git -C {clone}/no-such-dir commit -m 'work'", clone)
+    assert _decision(verdict) == "deny"

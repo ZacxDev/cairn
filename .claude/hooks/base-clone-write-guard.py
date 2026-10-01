@@ -20,12 +20,14 @@ unexpectedly is worse than no guard, so every unexpected condition here exits 0
 and says nothing. Its whole job is to refuse a narrow, well-understood shape; it
 is not a security boundary and must never behave like one.
 
-Four conditions must ALL hold before it refuses anything:
+Five conditions must ALL hold before it refuses anything:
 
   1. the command mutates the working tree, the index or HEAD (see `_REFUSED`);
   2. the cwd's repository is THE ONE THIS FILE SHIPS IN;
   3. the cwd is that clone's MAIN worktree, not a linked one;
-  4. that clone has at least one LINKED worktree REGISTRATION.
+  4. that clone has at least one LINKED worktree REGISTRATION;
+  5. the command does not REDIRECT its write out of that worktree with `-C`
+     (`_writes_elsewhere`), which fails closed on a target it cannot resolve.
 
 A fresh clone has no linked worktrees, so condition 4 is false and an outside
 contributor never sees this hook fire at all.
@@ -130,6 +132,17 @@ exotic. The operator's host-wide `guard_core.py` already resolves all four —
 `cd <clone> && git commit` that guard is therefore STRICTLY STRONGER than this
 one. The right repair is to reuse that resolution rather than grow a second copy
 of it here. Recorded as a known narrowing, not as done.
+
+🔴 AND THE LIST ABOVE IS THE UNDER-BLOCKING DIRECTION ONLY — ALL FOUR ARE STILL
+OPEN. Its MIRROR, where a `-C` pointing OUT of this worktree was refused anyway,
+is CLOSED by condition 5: a write this guard can prove lands in a linked worktree
+or another repository is no longer refused. ⚠ Condition 5 reads `-C` and nothing
+else, so `--git-dir=` / `--work-tree=` still produce that false positive; closing
+those is the same "reuse the host guard's resolution" job as the list above, and
+is deliberately not done here. The asymmetry is on purpose: condition 2's own
+history records that a false positive COUNTERMANDS the operator while a false
+negative merely loses a guard the host-wide one still holds, so the cheap half of
+the repair was taken on the expensive side first.
 
 ⚠ AND IT IS INERT IN THE OTHER RUNTIME. Only Claude Code reads
 `.claude/settings.json`; the opencode plugin spawns `guard_core.py` and never
@@ -454,6 +467,73 @@ def _is_main_worktree(cwd: str) -> bool | None:
         return None
 
 
+def _effective_dir(segment: list[str], cwd: str) -> str | None:
+    """Where this git call actually runs after its `-C` globals, or `None`.
+
+    `None` means "no `-C`, so it runs in `cwd`", which the caller must be able to
+    tell apart from "runs in a path that happens to equal `cwd`".
+
+    🔴 CUMULATIVE, BECAUSE GIT IS. `git -C a -C b` is `cd a; cd b` — each `-C` is
+    relative to the one before it, so taking only the LAST is wrong whenever the
+    last is relative. Both spellings are read, `-C <path>` and the attached
+    `-C<path>`: missing the attached form would refuse a legitimate redirect,
+    which is the direction this function exists to stop.
+    """
+    _, i = _leading_assignments(segment)
+    j = i + 1
+    here: str | None = None
+    while j < len(segment):
+        word = segment[j]
+        value: str | None = None
+        if word == "-C" and j + 1 < len(segment):
+            value, j = segment[j + 1], j + 2
+        elif word.startswith("-C") and len(word) > 2:
+            value, j = word[2:], j + 1
+        if value is not None:
+            base = here if here is not None else cwd
+            here = os.path.normpath(os.path.join(base, value))
+            continue
+        if word in _GIT_GLOBALS_WITH_VALUE:
+            j += 2
+            continue
+        if word.startswith("-"):
+            j += 1
+            continue
+        break
+    return here
+
+
+def _writes_elsewhere(segment: list[str], cwd: str, own_repo: str) -> bool:
+    """True when this segment's write PROVABLY lands outside the base clone's
+    main worktree, so this guard has nothing to protect.
+
+    The mirror of condition 2: that one stopped the guard policing another
+    REPOSITORY because the cwd had wandered into it; this stops it policing
+    another WORKTREE because the command redirected there. Both are
+    false-POSITIVE fixes, and this file's own ruling is that a false positive is
+    worse than a false negative because it countermands the operator.
+
+    🔴 FAILS CLOSED. An absent, unresolvable or unreadable target returns False,
+    so the refusal stands: a `-C` the guard cannot follow must never buy an
+    exemption, or a typo'd path becomes a bypass for the whole guard.
+
+    ⚠ IT READS `-C` AND NOTHING ELSE. `--git-dir=` / `--work-tree=` redirect too
+    and are deliberately NOT handled — they stay in the "cannot see" table above.
+    Closing those means resolving the same four spellings the host-wide guard
+    already resolves, and this file's own ruling is to reuse that resolution
+    rather than grow a second copy of it here.
+    """
+    target = _effective_dir(segment, cwd)
+    if target is None or not os.path.isdir(target):
+        return False
+    repo = _repo_root(target)
+    if repo is None:
+        return False
+    if repo != own_repo:
+        return True
+    return _is_main_worktree(target) is not True
+
+
 def _linked_worktrees(cwd: str) -> int | None:
     """How many LINKED worktrees this clone has (main worktree excluded)."""
     out = _git(cwd, "worktree", "list", "--porcelain")
@@ -494,15 +574,21 @@ def main() -> None:
         if assignments.get(OVERRIDE):
             _allow()
 
-    hits: list[str] = []
+    # 🔴 THE CHEAP, STRING-ONLY PASS COMES FIRST AND THAT ORDERING IS DELIBERATE.
+    # This hook costs a `python3` spawn on EVERY Bash call, so the refused-set
+    # match — pure parsing, no subprocess — decides early-out for the overwhelming
+    # majority of commands. The `git` calls below run only for a command that is
+    # ALREADY a candidate for refusal. The segment is carried alongside its
+    # subcommand because `_writes_elsewhere` needs the argv, not just the verb.
+    candidates: list[tuple[str, list[str]]] = []
     for segment in segments:
         subcommand = _git_subcommand(segment)
         if subcommand is None or subcommand not in _REFUSED:
             continue
         if _is_exempt(subcommand, segment):
             continue
-        hits.append(subcommand)
-    if not hits:
+        candidates.append((subcommand, segment))
+    if not candidates:
         _allow()
 
     cwd = data.get("cwd")
@@ -522,6 +608,19 @@ def main() -> None:
 
     linked = _linked_worktrees(cwd)
     if not linked:
+        _allow()
+
+    # 🔴 CONDITION 5, AND IT IS A cwd NARROWING LIKE CONDITION 2. Every condition
+    # above asks about the SHELL's directory; this one asks where the COMMAND
+    # writes. A segment that redirects itself out of this worktree with `-C`
+    # cannot touch the tree being protected, so refusing it countermands the
+    # operator for no gain — measured ten times across one effort, on the
+    # `git -C <worktree> commit` spelling this guard's OWN refusal prescribes.
+    # It can only ever refuse LESS, and only where the target is PROVED to be
+    # elsewhere; `_writes_elsewhere` fails closed on anything it cannot resolve.
+    hits = [sub for sub, segment in candidates
+            if not _writes_elsewhere(segment, cwd, own_repo)]
+    if not hits:
         _allow()
 
     branch = _git(cwd, "branch", "--show-current") or "a detached HEAD"
