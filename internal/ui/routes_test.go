@@ -150,12 +150,19 @@ type staticSource struct {
 
 func (s staticSource) Visible(control.Authorization) ([]Scope, error) { return s.scopes, nil }
 
-func (s staticSource) Search(_ control.Authorization, query string) (SearchResults, error) {
+// ⚠ IT ECHOES THE TAG RATHER THAN APPLYING IT, which is the same ruling `hits` already carries:
+// these are DISPATCH tests, and a fixture that really narrowed would make them measure
+// `report.Search`'s tag filter instead. Echoing is what the COMPOSED rendering needs — the card
+// names the operand — and `TestTheQueryAndTheTagComposeIntoOneCard` drives the real
+// `StoreSource` against a store on disk for the narrowing itself.
+func (s staticSource) Search(_ control.Authorization, query, tag string) (SearchResults, error) {
 	scopes := make([]string, 0, len(s.scopes))
 	for _, sc := range s.scopes {
 		scopes = append(scopes, sc.Name)
 	}
-	return SearchResults{Query: query, Hits: s.hits, TotalHits: len(s.hits), ScopesSearched: scopes}, nil
+	return SearchResults{
+		Query: query, Tag: tag, Hits: s.hits, TotalHits: len(s.hits), ScopesSearched: scopes,
+	}, nil
 }
 
 // staticSharing is a share world with no journal behind it, so the dispatch tests
@@ -666,7 +673,7 @@ func (c *countingSource) Visible(control.Authorization) ([]Scope, error) {
 // WALK ONE PAGE WIDE: `GET /?q=…` renders an answer about what this credential can find,
 // which is an answer about authority, and a source method that answered without being
 // counted would let a handler render it having asked nobody.
-func (c *countingSource) Search(control.Authorization, string) (SearchResults, error) {
+func (c *countingSource) Search(control.Authorization, string, string) (SearchResults, error) {
 	c.calls++
 	return SearchResults{}, nil
 }
