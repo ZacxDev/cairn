@@ -2437,28 +2437,56 @@ not: that function ALLOWLISTS absolute http(s) and would refuse a same-origin pa
   only on which entries carry a tag. They now share the PREDICATE (`store.HasTag`), the FOLD
   (`store.NormalizeRef`) and, since `lastTagValue`, the REPEATED-PARAMETER rule; what is still
   uncompared is everything either side does around it, including the refusal policy above.
-- **`?q=` and `?tag=` TOGETHER.** They do not compose here and they do on the pod, and no test on
-  either side sends both. It gets its own subsection below rather than a bullet, because the gap
-  is a DECISION nobody has made rather than a test nobody has written.
+- **A COMPOSED answer in a real browser.** `?q=` and `?tag=` now compose (subsection below), and
+  the composed card is a FIFTH card shape nothing has captured — three `note` links where the
+  search card has one, and a hidden form control. `uiaudit` still does not walk `/?tag=`, so it
+  does not walk this either, and no axe pass has run over it.
 
-### 🔴 `?q=` AND `?tag=` DO NOT COMPOSE ON THIS SURFACE, AND THAT IS DECLARED RATHER THAN CLOSED
+### ✅ `?q=` AND `?tag=` COMPOSE ON THIS SURFACE, THE SAME WAY THEY COMPOSE ON THE POD
 
-**`/?q=lease&tag=marketing` renders TWO INDEPENDENT CARDS** — a search card answering `lease`
-across every visible scope, and a tag card listing every entry carrying `marketing`. Neither
-narrows the other. **On the pod the same two parameters compose into ONE narrowed search**
-(`report.Search` applies the tag filter after scope authorisation and then searches what is left),
-so the two surfaces answer a two-parameter URL differently in KIND, not merely in layout.
+**`/?q=lease&tag=marketing` renders ONE card**: a search over the entries carrying `marketing`,
+nothing else. The tag goes INTO `report.Search` as `SearchOptions.Tag`/`HasTag` — the same call the
+pod makes — so the narrowing happens after scope authorisation and before scoring, and every count
+on the card (`TotalHits`, `BestBelow`, the hit budget) is a count over the narrowed set.
+`handlePage`'s `switch` sets exactly one of `Results`/`TagMatches`, so the two-card answer is no
+longer reachable.
 
-**And the search form drops the tag.** `searchbar` carries `name="q"` and nothing else, so a
-reader looking at a tag listing who types into the search box loses the tag — the form GETs `/`
-with `?q=` alone. That is the part most likely to read as a bug rather than as a boundary: the tag
-is visible on screen at the moment it is discarded. A hidden `<input type="hidden" name="tag">` is
-the whole mechanical fix, and it is deliberately NOT taken here.
+**Which operand decides which shape.** The QUERY decides the answer shape and the TAG decides what
+it ran over. A search is ranked; a tag listing is a membership test with nothing to rank; there is
+no one card that is both. So `?tag=` alone keeps the listing it has always had, and adding words to
+the box turns it into a search WITHIN that tag. The reverse order — a tag listing filtered by the
+query — would answer a two-operand URL with an unranked list, which is the shape the pod does not
+produce.
 
-**Why declared and not composed.** Composing them changes what a DEPLOYED surface answers for a URL
-that already works, and it forces a choice nobody has made: whether `?q=` within `?tag=` should
-render one card or two, and which heading counts what. That is a decision with an operator, not a
-defect with a fix. **Closing condition:** a decision on the composed shape, then one card whose
-summary names both operands and a search form that round-trips the tag — checked by a test sending
-both parameters and asserting a single card. Until then the two-card rendering is the declared
-answer, and `tagResults`' own `Clear the tag` link is the only navigation between the two states.
+**The summary names both operands, and that is what makes the composed zero readable.**
+`searchSummary` appends "The tag `x` narrowed this search to N entries before the query ran,
+leaving out M visible entries that do not carry it." The counts are `report.SearchReport`'s own
+`EntriesSearched` and `TagSkipped`, which is the identical argument `RefToSkipped` already carries
+one package over: without them a composed zero cannot distinguish "these words are not in these
+entries" from "the tag left nothing to search".
+
+**The search form round-trips the tag**, as a hidden `<input type="hidden" name="tag">` rendered
+only when a tag is in force. That closes the half most likely to read as a bug: the tag was
+discarded at the one moment it was visible on screen. A blank submission with a tag in force now
+lands on `?q=&tag=<it>`, which is the tag listing — so emptying the box is how a reader steps back
+out of a composed search without losing the filter.
+
+**Three ways back**, because a composed state has three neighbours and this surface has no script:
+drop the tag and keep the words, drop the words and keep the tag, drop both. The bare-root link's
+label changes with a tag in force, because "Clear the search and show every scope" beside a
+composed answer describes one of the two things the link does.
+
+**What was measured.** `TestTheQueryAndTheTagComposeIntoOneCard` drives the real `StoreSource` over
+a five-entry store through the real dispatcher and checks THREE answers, not one: `?q=` alone names
+three entries, `?tag=` alone names two, and together they name the one in both — so neither "ignores
+the tag" nor "ignores the query" can pass. Watched RED with `handlePage`'s `switch` replaced by the
+two independent `if`s it used to be and the tag dropped on the way into `Search`: two cards, `ledger`
+and `charter` on the page, no tag clause. The form guard was watched red with the hidden input
+removed (three sub-tests) and the no-tag case watched red with it always rendered.
+
+**What is still NOT covered.** The pod's composed answer and this one are still not compared against
+each other — they share the ENGINE now, which is strictly more than they shared before, but nothing
+sends the same two parameters to both and diffs the result; the entries they select must agree, and
+nothing they render around that is compared. And `tagItem` still builds a bare `/?tag=` href, so a
+tag link does not carry a query — unreachable today, because the composed card renders search hits
+and those carry no tag list, but it is the direction a future edit would have to carry.
