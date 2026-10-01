@@ -344,3 +344,163 @@ pointer** — which is what "move the text to the archive leaving a pointer" mea
   read the per-host lines before attributing the whole verdict. For rank 6's remaining half: the Go
   flip is designed but UNBUILT, and the decision it implements is the operator's, already made.
 
+
+### ANSWERED — the Python-vs-Go decision is MADE (Go), and it is a PIN-SEAM SPLIT rather than a one-line flip
+- as-of: 2026-09-30
+- **What this settles:** the client-pin block's 🔴 *"Decide Python-vs-Go default BEFORE opening
+  it"* is ANSWERED — **operator decision: take the GO client.** Do not re-open it; below is its
+  measured COST, unknown when that sentence was written.
+- **Observed (with values)** — both packages built from the pinned revision and inspected, not
+  inferred from the flake:
+  | reading | `cairn-<pin>` (Python) | `cairn-go-<pin>` (Go) |
+  |---|---|---|
+  | top level | `bin` + **`libexec`** | `bin` **only** |
+  | `entry_shape.py` / `subsystem_resolver.py` | present / present | absent |
+  | `--ref-to` / `--tag` in `recall --help` | 2 / 2 | **1 / 1** |
+  | `--scope` (control) / a bogus flag (control) | 2 / 0 | 1 / **0** |
+  | `-verbs` | rc **2** (argparse refusal) | rc **0** + table |
+  `via: measurement`
+- **Ruled out:** that the flip is re-pointing one threaded package name. The config repo's
+  `scripts/lib/cairn_pin.py` reaches the reader modules by route 2 — `which cairn` → `realpath` →
+  `<store>/libexec/cairn/lib`, accepted on **CONTENT** (both marker modules) with **no local
+  fallback**, because that repo deleted its own copies. The Go package has no `libexec` at all, so
+  route 2 refuses and `CairnPinUnresolved` fires for **22 tracked files importing `cairn_pin`**, 11
+  importing `cairn_lib`, the out-of-store `cairn-who` and `cairn-validate` launchers (the latter is
+  named by the `subsystem-index` write protocol), and the writer. `via: measurement`
+- **Ruled out:** that an env var alone is the fix. `cairn_pin`'s own docstring records that the
+  variable route exists for sandboxes and that **route 2 is the one that must work unattended** —
+  the session-variables file lands in `profile.d`, which a non-interactive shell does not source.
+  So the replacement must be an on-PATH, content-valid answer, not a `CAIRN_LIB` export.
+  `via: code`
+- **Ruled out:** that the four parse contracts the config repo's ops wrappers depend on break
+  on the Go client. All four probed directly against the built Go binary, one control each —
+  values in the Gotchas entry below, not repeated here. `via: measurement`
+- **Ruled out:** that the Go package is reachable only at the NEW pin, making the flip depend on
+  the bump. `packages.cairn-go` and `default = mkGoClient` are present in the flake at **both** the
+  old and the new pinned revisions. The bump is still required for the *features* — the old
+  revision predates all three — but not for evaluation. ⚠ This CORRECTS a claim I made earlier in
+  this same session and had not measured. `via: measurement`
+- **Leading hypothesis — a mechanism, not a guess.** One name does two jobs: *the binary the
+  operator types* and *the source of the reader modules*. The flip separates them — deploy line
+  takes the Go package, a second threaded name keeps the Python one, and an in-store `cairn-py`
+  launcher gives route 2 a content-valid answer without an env var. 🔴 **Bind it to
+  `packages.cairn-go`, NOT `packages.default`**: same store path today, but `default` can be
+  re-pointed upstream without the name changing meaning, and a pin must not inherit that.
+- **Next probe:** rank 6 carries the design and the file set. The two RED proofs it must not skip:
+  watch `cairn_pin` route 2 REFUSE on a Go-only PATH and then resolve once a Python-lib launcher
+  is on PATH (both directions), and watch the new threaded-name guard fail against a decoy
+  binding of the right name pointing at the wrong package — **that exact decoy shape is recorded
+  as having SURVIVED in the guard file already**, so copy its assignment-bound regex discipline
+  rather than searching the whole region.
+
+
+### 🔴 OPEN — this doc is at its enforced ceiling and `--prune` STRUCTURALLY cannot shrink it
+- as-of: 2026-09-30
+- **Symptom + repro:** any update → `status=size-ratchet`, exit **14**, nothing written. **65,526 B
+  against an enforced 65,536 B ceiling — 10 B.** `handoff-audit.py`: **5.3x target**, **18,496 B
+  evictable** (15,617 B in 4 resolved blocks).
+- 🔴 **Observed — the blocker is the AMBIGUITY rule, not the `as-of:` one.** `LOAD_BEARING_FIELDS`
+  *exempts* `as-of:` when a whole block is named, precisely so the largest eviction is takeable — so
+  that rule is not it. But every named line must match **exactly one** line, and `- as-of: <date>` /
+  `` `via: measurement` `` recur across blocks *by design* (*"Append-verbatim makes duplicates
+  ordinary"*). Measured: `- as-of: <a shared date>` **5 matches**, `` `via: measurement` `` **9**,
+  `|---|---|---|` **3** → `status=prune-refused`, exit 15. Heading-only is refused too
+  (`[partial block]`). No spelling works. `via: measurement`
+- **Ruled out:** pruning one block at a time so duplicates become unique — removing one takes
+  that stamp from 5 matches to 4, and it reaches 1 only after the other four are gone, the blocked
+  step. `via: measurement`
+- 🔴 **RETRACTED TWICE, BOTH MINE, IN ONE SESSION.** I claimed this limit from the duplicate lines
+  without reading the tool; then read `LOAD_BEARING_FIELDS` and retracted the CONCLUSION too; the
+  third step finally ran the command. **Conclusion stands; the first mechanism AND the retraction of
+  the conclusion were both wrong.** The lesson is the sequence. `via: code`
+- **Leading hypothesis:** structural — `Open investigations` only grows, and its exit rule is
+  defeated by its own append-verbatim duplicates.
+- **Next probe — operator's call, not mechanical:** (1) `--override-size-ratchet "<reason>"`, whose
+  contract requires the reason to state whether an operator approved; or (2) split the arc — clause
+  (a) is open, so that is a scope decision. ⚠ `State now` was compacted this round, which buys ONE
+  small update, not a fix. Do not spend it on prose.
+
+
+### ✅ RESOLVED 2026-09-30 — the ceiling is cleared by EVICTION, and this RETRACTS my own "`--prune` cannot shrink it" from one round ago
+- as-of: 2026-09-30
+- 🔴 **RETRACTED: "`--prune` STRUCTURALLY cannot shrink this doc."** I wrote that here one round
+  ago as measured. **It is FALSE, and the doc is ~18.8 KB smaller because it is.** What I measured
+  was true; the conclusion I drew from it was too wide.
+- **What is actually true, stated so nobody has to re-derive it:**
+  - a prune naming a `### ` heading must name **every** line of its block, else `[partial block]`;
+  - every named line must match **exactly one** line, else `[ambiguous]` — and `- as-of: <date>`
+    plus a bare `` `via: measurement` `` recur across blocks *by design*
+    (*"Append-verbatim makes duplicates ordinary"*);
+  - therefore a **whole block** genuinely cannot be named — that half was right;
+  - **but the BODY's unique lines can**, leaving the heading and its stamp as a pointer. Measured:
+    a 28-line body-only prune returned `status=proposed` on the first try.
+  `via: measurement`
+- **Observed (with values):** 7 closed blocks evicted **verbatim** to
+  `claudedocs/archive-cairn-deploy-currency.md` (22,127 B, 7 blocks), 223 lines pruned,
+  **~18.8 KB** freed against a doc that had **10 B** of headroom. Each evicted block keeps its
+  HEADING and `as-of:` stamp in place as the pointer — that is the shape a prune leaves, and it is
+  deliberate rather than residue. `via: measurement`
+- 🔴 **Ruled out:** that I found this myself. **A PEER SESSION had already shipped the exit path
+  and I nearly landed a doc entry contradicting it.** The config repo's PR #1926 —
+  *"the size-ratchet refusal denied the exit rule (q) had just shipped"* — says in as many words
+  that the route is *"move the text to the archive leaving a pointer, then `--prune` the lines
+  out"* and that **`--prune` combines with `--update`**. I found it only because a `git diff`
+  against a moved mainline listed a file I had not written. **The sweep is what saved this, not my
+  reasoning.** `via: doc`
+- 🔴 **THE REUSABLE PART, AND IT IS ABOUT ME RATHER THAN THE TOOL — THREE ROUNDS ON ONE CLAIM:**
+  (1) asserted the limit from duplicate lines without reading the tool; (2) read
+  `LOAD_BEARING_FIELDS`, over-corrected, retracted the *conclusion*; (3) ran the command, restored
+  the conclusion in a narrower form; (4) a peer's PR showed the conclusion was still too wide and
+  the exit existed. **Every step was reasoning where a command was available, and the command was
+  one line each time.** The rule this repo already carries — *a theory that explains the
+  observation is not evidence for it* — was in scope the whole way.
+- **Leading hypothesis:** none. Closed.
+- **Next probe:** none for the ceiling. ⚠ **The doc will fill again** — `Open investigations`
+  only grows. The route is above; the archive is the destination; do not reach for
+  `--override-size-ratchet`, which ships an over-ceiling doc rather than fixing one.
+
+
+### ✅ RESOLVED 2026-09-30 — the Go flip shipped to both hosts, and the two instruments that failed on the way are rank 2's real subject
+- as-of: 2026-09-30
+- **What this settles:** rank 6 in full. The ANSWERED block's design is BUILT and DEPLOYED; its
+  "Next probe" is spent. Do not re-derive the pin-seam split — it is in `#1939`.
+- **Observed (with values), identical on BOTH hosts:** `cairn` → `…-cairn-go-cdf6fae/bin/cairn`,
+  `cairn-py` → `…-cairn-cdf6fae/bin/cairn`; `--ref-to`/`--tag` **1/1**, `--scope` **1**, bogus
+  flag **0**; `-verbs` **rc 0**; `cairn_pin` → `…-cairn-cdf6fae/libexec/cairn/lib`;
+  `cairn-validate` **rc 0**, `cairn-who` **rc 0**. `ship.sh` rc 0, 2 hosts compared at
+  `aa01eb77`. `via: measurement`
+- 🔴 **Ruled out: that a local green build says anything about CI.** The first `#1939` run went
+  RED because I put the Go client in `gateTools`, which backs the devShell AND `checks.pytests`
+  — and the config repo's CI pod **cannot sandbox a nix build**: PodSecurity `baseline` blocks the fixes,
+  nix silently FALLS BACK to unsandboxed, and `nix config show` still reports `sandbox = true`
+  (**the tell is that `/build` does not exist**). `mkGoClient` runs `go vet ./... && go test
+  ./...` over 21 packages, which does not pass impure → `cairn-client-runs` FAILED and `pytests`
+  reported `BROKEN GATE … before a verdict`. The same derivation builds green here, sandbox on,
+  **21 ok / 0 FAIL**. Fix: the Go build is out of that repo's critical path; the hosts still install
+  the UNMODIFIED package. `via: measurement`
+- 🔴 **Ruled out: that `NO CAPACITY` is a verdict on the diff.** The merged-tree re-gate posted
+  `NO CAPACITY: <leg> — the gate never started (queued past its deadline)` on all four legs.
+  Timeline: `pending` **17:25:4x** → `error` **18:25:5x**, exactly **60 minutes**, never started.
+  Queue was then drained (**5 Running / 1 Pending** against 457 Completed + 57 Error — split by
+  phase, because terminal pods are not pressure), so a close/reopen re-trigger (the live CEL
+  filter accepts `reopened`) came back **4/4 green: collected=24741 passed=24734 failed=0**,
+  which is +4/+4 on the tests `#1926` added. `via: measurement`
+- 🔴 **Ruled out: that the drift deadman can be trusted as-is — TWO false readings in one day.**
+  (i) exit **12 = `not-on-branch-main`**: TRUE, unread for two days, and it cleared on its own
+  when a peer moved the base clone off their branch. (ii) *"did not answer (unreachable)"* for
+  the laptop, while a direct `ssh` answered **instantly** and `ship.sh` converged it **twice**.
+  **A gate that is red when right and red when wrong trains its own bypass** — which is exactly
+  what rank 2 must not add a third of. `via: measurement`
+- 🔴 **Ruled out: my own "full local suite" as a gate. It is a DIFFERENT POPULATION and I
+  contaminated it.** `pytest scripts/tests` collected **15,904**; CI's pytests leg collected
+  **24,741**. And its single failure —
+  `test_gate_exit_truthfulness.py::test_a_green_real_run_says_pass_with_exit_zero`, a test my
+  branch does not touch (`git diff --name-only origin/main` → 0) — **did not reproduce**: a
+  clean re-run is **13 passed / 0 failed**. I had killed pytest PIDs in that worktree while a
+  test that spawns a REAL nested run was in flight. A control that shares the step you doubt.
+  `via: measurement`
+- **Leading hypothesis:** none. Closed.
+- **Next probe:** none for rank 6. For rank 2, the probe is the drift deadman's own per-host
+  lines (`journalctl --user -u drift-check.service`) BEFORE designing anything new.
+
+
