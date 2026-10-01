@@ -134,6 +134,61 @@ func TestProvenanceIsTheWholeParenthesizedWord(t *testing.T) {
 	}
 }
 
+// TestProvenanceSpanEndsPastTheParentheticalAndNowhereElse pins the OFFSET half of the one
+// scan, and it asserts the SLICES rather than the integer so a reader can see the cut.
+//
+// 🔴 A RENDERER CUTS AT THIS NUMBER, so an off-by-one is not an off-by-one: one byte short
+// leaves a stray `)` at the head of the line, one byte long eats the first character of the
+// requirement. Naming `line[:span]` and `line[span:]` is what makes both visible; comparing
+// `span` to a literal would be a number nobody could check against the input.
+//
+// ⚠ THE `want` PREFIXES ARE SPELLED OUT RATHER THAN BUILT FROM `MarkerSpan`, because a
+// prefix derived from the implementation agrees with it by construction.
+func TestProvenanceSpanEndsPastTheParentheticalAndNowhereElse(t *testing.T) {
+	for _, c := range []struct {
+		line, cut, rest, why string
+	}{
+		{"- OPEN: (operator) a real one", "- OPEN: (operator)", " a real one",
+			"the marker, the separator and the whole word"},
+		{"- OPEN:(operator) no space", "- OPEN:(operator)", " no space",
+			"the separator is optional and the span must not assume one"},
+		{"- RESOLVED def5678: (operator) closed", "- RESOLVED def5678: (operator)", " closed",
+			"the sha is INSIDE the marker, so the span starts after it"},
+		{"- 2000-01-02: OPEN: (inferred) dated", "- 2000-01-02: OPEN: (inferred)", " dated",
+			"MarkerSpan already covers a date inside a declared marker"},
+	} {
+		span := ProvenanceSpan(c.line)
+		if span == 0 {
+			t.Errorf("ProvenanceSpan(%q) = 0, want a cut past %q (%s)", c.line, c.cut, c.why)
+			continue
+		}
+		if got := c.line[:span]; got != c.cut {
+			t.Errorf("ProvenanceSpan(%q) cuts %q, want %q (%s)", c.line, got, c.cut, c.why)
+		}
+		if got := c.line[span:]; got != c.rest {
+			t.Errorf("ProvenanceSpan(%q) leaves %q, want %q (%s)", c.line, got, c.rest, c.why)
+		}
+	}
+	// 🔴 AND IT IS 0 ON EXACTLY THE LINES THE WORD IS ABSENT ON — the relationship, not
+	// either side. A span that fired where no badge renders would delete text from a page
+	// with nothing to replace it, which is the failure `internal/ui`'s gate exists for.
+	for _, line := range []string{
+		"- OPEN: (operators) a plural",
+		"- OPEN: (Operator) capitalised",
+		"- OPEN: no parenthetical at all",
+		"- OPENISH: (operator) a near miss",
+		"- (operator) no marker at all",
+	} {
+		if span := ProvenanceSpan(line); span != 0 {
+			t.Errorf("ProvenanceSpan(%q) = %d, want 0 — it would cut %q", line, span, line[:span])
+		}
+		if word := BulletProvenance(line); word != ProvenanceAbsent {
+			t.Errorf("BulletProvenance(%q) = %q, want absent — the pair above is only a "+
+				"relationship check if both answer absent", line, word)
+		}
+	}
+}
+
 // TestALineWithNoParsedMarkerHasNoProvenance is an INVARIANT GUARD, labelled as one, and
 // deliberately NOT counted as regression coverage.
 //

@@ -1,8 +1,8 @@
 {
   "body": {
-    "bytes": 3649,
+    "bytes": 3646,
     "kind": "text_lines",
-    "sha256": "8081a2bf3c6fdf0677dc59198bfed6f8982c6f272092d4a2a6f9b6a163e94e63",
+    "sha256": "3c5257e585fe5c08a05d8b9dec5d2c2b8a66629148a46c639ccccd47073d1be6",
     "text_lines": [
       "🔴 SNAPSHOT, NOT THE SOURCE — seeded=2000-01-04T00:00:00Z newest-entry=2000-01-03T00:00:00Z entry-files=11. This host serves a COPY of the authoritative store, pushed by `seed.sh`; nothing syncs it continuously, so it can be arbitrarily behind and it CANNOT KNOW BY HOW MUCH. The \"none omitted\" below is true of THIS DISK and says nothing about the source. Before trusting an absence — a missing entry, a missing badge, a zero — re-run the read against the local store, or re-seed. UNSTAMPED/UNREADABLE/NONE each mean the stated fact could not be established, never that it is fine.",
       "",
@@ -15,13 +15,13 @@
       "  (+1 further malformed entry in OTHER scopes of this store, not shown: rubble-heap (1). Nothing on this screen is affected by them; they are named so a defect in a scope nobody recalls today is still visible.)",
       "",
       "INDEX (from index) — ALL 2 entries in `linked-set/`, none omitted (newest-first by file mtime):",
-      "  linked-new-key    1 nuance   client-confidential (declared: internal)   🔗 2 tasks",
-      "  linked-old-key    1 nuance   client-confidential (declared: internal)   🔗 1 task",
+      "  linked-new-key    1 nuance   client-confidential (declared: internal)   🔗 2 refs",
+      "  linked-old-key    1 nuance   client-confidential (declared: internal)   🔗 1 ref",
       "",
       "FEATURED IN FULL (from index) — 1 of 2, most-recent fallback — newest entry file in `linked-set/` (no handoff doc to read a path window from):",
       "",
       "  ### linked-new-key  (linked-set/linked-new-key.md, sensitivity=client-confidential (declared: internal))",
-      "    tasks: github:example-org/example-repo#428, clickup:8600abcxyz",
+      "    refs: github:example-org/example-repo#428, clickup:8600abcxyz",
       "    ## What it is",
       "      An entry carrying `refs:` -- the current spelling of the key.",
       "    ## Pointers",

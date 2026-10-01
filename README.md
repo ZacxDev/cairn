@@ -461,7 +461,7 @@ changed. That root listing shows every visible entry carrying the tag, across sc
 how many entries it LOOKED at so an empty answer is legible.
 
 ⚠ **The recall report gains a `    tags: a, b` line** under a printed entry's header, beside the
-existing `tasks:` line, and a `  tag: …` header line **only** when the filter was sent — so no
+existing `refs:` line, and a `  tag: …` header line **only** when the filter was sent — so no
 output moves for a store with no tags in it.
 
 ### 🔴 An entry's refs are `refs:`, and both readers answer "what references this?"
@@ -498,9 +498,14 @@ it holds. Where both appear on one entry, `refs:` is the one that is read.
   `internal/store/refurl.go` for why that is the safe direction rather than a limitation.
 
 **On the browse pages** the entry section that used to be headed **Tasks** is now **Refs**, and
-each ref is a link when it resolves. ⚠ The **text** renderer's label is still `tasks:` — the
-recall report's bytes are compared byte-for-byte against the other implementation's by two
-gates, so that line moves in a change whose subject is that re-base.
+each ref is a link when it resolves. **The text renderer now agrees**: a printed entry's body
+carries `    refs: …` and its index row carries `🔗 N ref(s)`. ⚠ That sentence read "the text
+renderer's label is still `tasks:`" until an operator ruled on it; both rendered words moved
+together with a regenerated reader fixture and conformance corpus, because the recall report's
+bytes are compared byte-for-byte against the other implementation's by two gates. **What did
+NOT move: the JSON payload's key is still `"tasks"`** — `--json` consumers are unaffected,
+deliberately, because renaming a machine-readable key breaks a presence check silently where
+renaming a human-read label breaks nobody.
 
 ## The client — `cairn`
 

@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import ast
 import collections
+import dataclasses
 import hashlib
 import importlib.util
 import json
@@ -7029,3 +7030,210 @@ class TestAMalformedTagIsRefusedByTheOptionLadder:
     ) -> None:
         """The other half of the `None`/`""` split: no `--tag` at all must not be refused."""
         rc.recall(tag_principal_store, "alpha-notes", tag=None)
+
+
+class TestTheLinkBadgeSaysREFSAndNotTASKS:
+    """A REGRESSION guard, not an invariant guard: the badge really did read
+    `🔗 N task(s)` on this line until this change, while the key it counts has been
+    `refs:` since `tasks:` folded into it. Measured red at `ba78dbb` with `🔗 1 task`
+    / `🔗 2 tasks`, green at HEAD.
+
+    🔴 IT PINS BOTH CARDINALITIES, because the reader fixture and the conformance
+    corpus pin only one each and neither pins the pair: a mutant that hardcoded
+    `"refs"` — always plural — survives a fixture whose only joined entry carries two
+    refs. `internal/report/refsbadge_test.go` is the byte-for-byte other half; the two
+    renderers must agree or `tests/parity/` goes red.
+
+    🔴 IT PINS THE WHOLE NORMALISED LINE, NOT A SUBSTRING, AND THE DIFFERENCE IS MEASURED
+    RATHER THAN STYLISTIC. The first version asserted `want in line` and a mutant that
+    hardcoded the plural — dropping the `'' if … else 's'` conditional — SURVIVED it,
+    because `🔗 1 refs` contains `🔗 1 ref`. That is the house rule's own failure mode: a
+    guard spelled as a prefix is walkable by writing a longer word. The base below is
+    written out rather than built from `listing_line`'s own format, the way
+    `TestListingLineOpenAnnotation` spells its pre-change format out, so a literal lifted
+    from the implementation cannot agree with it by construction.
+    """
+
+    # `  <ref padded to 12>  <count right-aligned to 3> nuance   <sensitivity>   <badges>`
+    BASE = "  svc             1 nuance   public"
+
+    @pytest.mark.parametrize(
+        "refs,badge",
+        [
+            (("github:example-org/example-repo#1",), "🔗 1 ref"),
+            (
+                ("github:example-org/example-repo#1", "github:example-org/example-repo#2"),
+                "🔗 2 refs",
+            ),
+            (
+                (
+                    "github:example-org/example-repo#1",
+                    "github:example-org/example-repo#2",
+                    "github:example-org/example-repo#3",
+                ),
+                "🔗 3 refs",
+            ),
+        ],
+    )
+    def test_the_badge_names_the_refs_key(self, refs: tuple[str, ...], badge: str) -> None:
+        entry = dataclasses.replace(
+            _recalled(["- 2000-01-02: an ordinary lesson."]), tasks=refs
+        )
+        line = rc.listing_line(entry, 12)
+        assert line == f"{self.BASE}   {badge}"
+        # 🔴 AND THE OLD WORD IS GONE, asserted as the whole badge segment for the same
+        # reason the positive assertion is: the bare word `task` appears nowhere on this
+        # row today, but `🔗 N task` is exactly what a revert re-introduces, and a
+        # positive-only assertion passes against a renderer that emits BOTH.
+        assert f"🔗 {len(refs)} task" not in line, line
+
+    def test_the_badge_is_CONDITIONAL(self) -> None:
+        """An INVARIANT guard — labelled as one, and not counted as regression coverage
+        for the rename. It pins the property every badge on this row shares: an entry
+        with no refs renders a row byte-identical to one from before the badge existed.
+        """
+        entry = _recalled(["- 2000-01-02: an ordinary lesson."])
+        bare = rc.listing_line(entry, 12)
+        assert "🔗" not in bare, bare
+        joined = rc.listing_line(
+            dataclasses.replace(entry, tasks=("github:example-org/example-repo#1",)), 12
+        )
+        assert joined != bare, (
+            "the badge did not change the row at all, so the assertion above is vacuous "
+            "— this test cannot tell a conditional badge from no badge"
+        )
+
+
+class TestTheBodyLabelSaysREFSAndNotTASKS:
+    """A REGRESSION guard. The body label read `    tasks: ` from before `tasks:` folded
+    into `refs:` right through the badge rename — so for exactly one change the index row
+    said `ref` and the body under it said `task`: two words for one field on one screen,
+    which is the confusion the badge rename existed to remove. Measured red at `b338e7d`
+    (the badge-only commit) and at `ba78dbb`; green at HEAD.
+
+    🔴 IT COMPARES WHOLE LINES, NOT SUBSTRINGS, AND THE MARGIN THAT BUYS IS MEASURED
+    RATHER THAN ASSERTED. The badge guard above first asserted `want in line` and an
+    always-plural mutant SURVIVED it, because `🔗 1 refs` contains `🔗 1 ref`. The three
+    forms were then run against three mutants on the Go twin of this guard (same renderer
+    contract, and the Go side is where the mutants were cheapest to apply), by name, so a
+    neighbouring guard's red could not be read as this one's::
+
+        guard form                        L1 revert   L2 indent 4->3   L3 emits BOTH
+        Contains("refs: ")                RED         PASSED           not measured
+        Contains("    refs: ")            RED         RED              PASSED
+        whole line + count (this test)    RED         RED              RED
+
+    ⚠ AN EARLIER VERSION OF THIS DOCSTRING CLAIMED THE INDENTED SUBSTRING COULD NOT SEE
+    THE INDENT MUTANT, AND THAT IS FALSE — it catches it, because the four spaces are IN
+    the substring. The two real blind spots are the measured ones: the un-indented form
+    misses the indent, and the indented form misses a HALF-APPLIED RENAME, which is the
+    shape that matters most here because it is what a partly-reverted change looks like.
+    The retired-label count is what closes that cell.
+
+    ⚠ THE OLDER INPUT KEYS GET THEIR OWN CASE, because a guard on the `refs:` fixture alone
+    would pass just as well if the rename had been implemented by dropping support for
+    `tasks:`/`task:` — the one outcome this change must not have.
+    """
+
+    REFS = "github:example-org/example-repo#1, github:example-org/example-repo#2"
+
+    def _world(self, tmp_path: Path, front_matter: str) -> Path:
+        """ONE entry whose front matter carries `front_matter` — the refs key under test, in
+        its own shape — plus a `tags:` the body also renders.
+
+        ⚠ The key is a parameter rather than fixed, and the shapes are NOT interchangeable:
+        `refs:`/`tasks:` are SEQUENCES and `task:` is a SCALAR, so one spelling for all three
+        would write a file the loader refuses for two of them, and the case would be
+        measuring a rejection rather than a label.
+        """
+        store = tmp_path / "store"
+        (store / "alpha-notes").mkdir(parents=True)
+        (store / "alpha-notes" / "gadget-one.md").write_text(
+            "\n".join([
+                "---",
+                "service: gadget-one",
+                "scope: alpha-notes",
+                "sensitivity: public",
+                front_matter,
+                "tags: [infra]",
+                "---",
+                "",
+                "## What it is",
+                "",
+                "The gadget.",
+                "",
+                "## Pointers",
+                "- somewhere",
+                "",
+                "## Nuance / work-history",
+                "- 2000-01-02: an ordinary lesson.",
+                "",
+            ]),
+            encoding="utf-8",
+        )
+        return store
+
+    def _lines(self, store: Path) -> list[str]:
+        """The REAL path — `recall` then `render_text` — split into LINES, so an assertion
+        compares a whole line instead of searching a 3 KB report for a substring.
+
+        `ref=` so exactly ONE body renders: a digest prints the same line, and then the
+        counts below would be measuring the MODE rather than the label.
+
+        ⚠ The HOST line is left to whatever this machine reports and is never asserted on —
+        it is the one line of this output that is supposed to be machine-dependent, which is
+        why `tests/reader_fixtures.py` pins it by patching the writer's seam. Every line
+        this class asserts is host-independent.
+        """
+        report = rc.recall(store, "alpha-notes", ref="gadget-one")
+        return rc.render_text(report).split("\n")
+
+    def test_the_label_names_the_refs_key(self, tmp_path: Path) -> None:
+        want = f"    refs: {self.REFS}"
+        retired = f"    tasks: {self.REFS}"
+        lines = self._lines(self._world(tmp_path, f"refs: [{self.REFS}]"))
+
+        assert lines.count(want) == 1, (
+            f"the rendered report carries {lines.count(want)} line(s) equal to {want!r}, "
+            f"want exactly 1 (of {len(lines)} lines rendered)"
+        )
+        # 🔴 AND THE RETIRED LABEL IS GONE, as its own whole line: a positive-only check
+        # passes against a renderer that emits both.
+        assert lines.count(retired) == 0, (
+            f"the rendered report still carries {lines.count(retired)} line(s) of the "
+            f"retired label {retired!r}"
+        )
+        # The `tags:` line is the CONTROL: it proves this fixture really does render
+        # identity lines, so the zero above cannot be a report that rendered none of them.
+        assert lines.count("    tags: infra") == 1, (
+            "the `tags:` control line did not render exactly once — without it a passing "
+            "assertion above is indistinguishable from a report with no identity lines"
+        )
+
+    @pytest.mark.parametrize(
+        "front_matter,want",
+        [
+            (
+                "tasks: [github:example-org/example-repo#1]",
+                "    refs: github:example-org/example-repo#1",
+            ),
+            (
+                "task: github:example-org/example-repo#2",
+                "    refs: github:example-org/example-repo#2",
+            ),
+        ],
+    )
+    def test_the_label_is_rendered_from_the_OLDER_keys_too(
+        self, tmp_path: Path, front_matter: str, want: str
+    ) -> None:
+        """🔴 `tasks:` AND `task:` STAY ACCEPTED ON THE WAY IN, PERMANENTLY, by operator
+        decision — so an entry written with an older key must render the NEW label. The
+        parser keeps no record of which key it read, which is also why the browser surface
+        names both spellings. A 0 here means either the label did not move or the older key
+        stopped being accepted, and those are different defects.
+        """
+        lines = self._lines(self._world(tmp_path, front_matter))
+        assert lines.count(want) == 1, (
+            f"an entry written with `{front_matter}` rendered {lines.count(want)} line(s) "
+            f"equal to {want!r}, want exactly 1"
+        )

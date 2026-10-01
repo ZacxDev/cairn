@@ -622,7 +622,13 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 		{"the NEAR-MISS badge", "🔴 1 NEAR-MISS"},
 		{"the UNVERIFIABLE badge", "⚠ 1 UNVERIFIABLE"},
 		{"the missing-heading badge, naming BOTH counted headings", "🔴 NO Pointers, Nuance / work-history"},
-		{"the task badge", "🔗 2 tasks"},
+		// ⚠ THE BRANCH IS THE SAME ONE; ONLY ITS RENDERED WORD MOVED. It read
+		// `🔗 2 tasks` until the badge was renamed to name the `refs:` key it counts, so
+		// the covered set does not shrink — this row still pins the one branch no other
+		// row can produce. The INPUT key `tasks:` is untouched and is still what
+		// `marked-three` is written with, which is why this row proves the fold as well
+		// as the badge.
+		{"the refs badge", "🔗 2 refs"},
 		// 🔴 THE WHOLE BADGE RUN, NOT THE TWO NEW BADGES SEPARATELY — because this ONE
 		// LINE is the section-boundary proof. `marked-three` carries the byte-identical
 		// bullet `- 2000-01-02: OPEN: the retry budget is still unbounded.` under BOTH
@@ -640,7 +646,7 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 		// fenced text is absent, because the text IS present — the BODY renders verbatim,
 		// fence markers and all. Only the COUNT distinguishes sample text from a bullet.
 		{"the requirements badge pair, and with it the section boundary and the fence rule",
-			"🔴 1 OPEN   🔴 1 NEAR-MISS   ⚠ 1 UNVERIFIABLE   🔴 4 REQ OPEN   ✅ 2 REQ MET   🔗 2 tasks"},
+			"🔴 1 OPEN   🔴 1 NEAR-MISS   ⚠ 1 UNVERIFIABLE   🔴 4 REQ OPEN   ✅ 2 REQ MET   🔗 2 refs"},
 		// The section renders in a BODY like the other three, verbatim — fence markers
 		// included. Without this row the pair above could hold while the section printed
 		// nothing at all.
@@ -651,7 +657,19 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 		{"a met requirement naming the sha that closed it", "- RESOLVED def5678: (operator)"},
 		{"a requirement with NO provenance, which is a decided answer",
 			"- OPEN: the archive should keep its original timestamps"},
-		{"the task refs in a body", "    tasks: github:"},
+		// ⚠ THE BRANCH IS THE SAME ONE; ONLY ITS RENDERED LABEL MOVED, exactly as the badge
+		// row above did — so the covered set does not shrink. It read `    tasks: github:`
+		// until the label was renamed on an operator ruling.
+		//
+		// 🔴 AND IT IS NOW THE WHOLE LINE RATHER THAN A PREFIX, WHICH IS A MEASURED FIX AND
+		// NOT A TIGHTENING FOR ITS OWN SAKE. The old spelling stopped at `github:`, and a
+		// prefix is contained by any longer string — the badge guard in
+		// `refsbadge_test.go` had an always-plural mutant SURVIVE for exactly that reason
+		// (`🔗 1 refs` contains `🔗 1 ref`). The full line also pins the SEPARATOR and the
+		// ORDER of the two refs, which is the file order the loader promises and which a
+		// prefix could not see.
+		{"the refs in a body, as a whole line",
+			"    refs: github:example-org/example-repo#428, linear:ENG-441"},
 		{"a sensitivity the schema HONOURED", "sensitivity=public"},
 		{"a sensitivity the fail-safe OVERRODE", "(declared: internal)"},
 		// 🔴 FOUR, NOT THREE, AND THE CHANGE FROM THREE IS THE FINDING THIS ROW NOW CARRIES.

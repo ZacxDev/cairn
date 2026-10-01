@@ -87,10 +87,17 @@ type RecalledEntry struct {
 	// the way in — permanently, by operator decision — so the name is not stale about the
 	// schema, only narrower than it: the key carries repos, PRs, docs and dashboards, not
 	// only work-tracker items. Renaming is mechanical but would have to move
-	// `store.Entry.Tasks`, this field, the oracle's `RecalledEntry.tasks` and the rendered
-	// `tasks:` label together, which re-bases goldens — so it belongs in a change whose
-	// whole subject is that re-base. `RecallReport.RenderText`'s own label carries the
-	// same note.
+	// `store.Entry.Tasks`, this field and the oracle's `RecalledEntry.tasks` together.
+	//
+	// 🔴 THE RENDERED SIDE HAS FULLY MOVED, SO THIS FIELD IS A NAME AND NOTHING ELSE. The
+	// INDEX BADGE reads `🔗 N ref(s)` (see [listingLine]) and the BODY LABEL reads
+	// `refs: ` (see [RecallReport.RenderText]); both re-based the goldens, the reader
+	// fixture and the parity byte diffs, the second on an operator ruling. So what is
+	// deferred here needs no ruling and risks no rendered byte — it is a three-file
+	// mechanical edit (`store.Entry.Tasks`, this field, the oracle's
+	// `RecalledEntry.tasks`), worth doing when something else is already touching all
+	// three. ⚠ The oracle's JSON payload key `"tasks"` is a SEPARATE object with its own
+	// closing condition (P8), stated at the key itself; it is not this deferral.
 	Tasks []string
 
 	// RequirementsOpen and RequirementsMet are the `## Requirements` bullets that DECLARE

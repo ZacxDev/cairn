@@ -1,6 +1,8 @@
 package store
 
 import (
+	"unicode/utf8"
+
 	"github.com/ZacxDev/cairn/internal/pytext"
 )
 
@@ -125,43 +127,96 @@ func ParseRequirements(body string) []Requirement {
 // be walkable by writing anything starting with the right letters, and provenance is
 // precisely the claim that must not be manufacturable by accident.
 func BulletProvenance(firstLine string) string {
+	word, _ := bulletProvenance(firstLine)
+	return word
+}
+
+// ProvenanceSpan is the byte offset in `firstLine` immediately PAST the parenthetical
+// [BulletProvenance] read — the openness marker, the optional whitespace after it and the
+// `(operator)` / `(inferred)` word together — or 0 when the line declares no provenance.
+//
+// 🔴 IT EXISTS SO A RENDERER THAT REPLACES THE PARENTHETICAL WITH A BADGE CAN REMOVE IT BY
+// OFFSET RATHER THAN BY SPELLING ITS OWN `\(operator\)`. That is the same division of labour
+// [MarkerSpan] already has with the openness marker, and for the same reason: a surface that
+// re-spelled the grammar would be a second parser, free to disagree with
+// `BulletProvenance` about what counts as provenance — and it would disagree invisibly,
+// because both look right on `- OPEN: (operator) …`.
+//
+// 🔴 0 IS "NO PROVENANCE HERE", NEVER "STRIP NOTHING BUT THE MARKER". It is 0 on exactly the
+// lines `BulletProvenance` answers ProvenanceAbsent for — a near miss (`MarkerSpan` is 0), a
+// declared marker with no parenthetical, and `(operator-ish)` — so a caller that cuts at this
+// offset when it is non-zero and at `MarkerSpan` otherwise removes text on precisely the
+// lines a badge replaces it on, and on no others.
+//
+// ⚠ AND IT IS NEVER LESS THAN `MarkerSpan(firstLine)` WHEN IT IS NON-ZERO, because the scan
+// starts where the marker ended. A caller may therefore use it in place of the marker span
+// rather than in addition to it.
+func ProvenanceSpan(firstLine string) int {
+	_, span := bulletProvenance(firstLine)
+	return span
+}
+
+// bulletProvenance is the ONE scan both exported spellings read, so the word and the offset
+// cannot disagree about which run of bytes the provenance is. Two functions each doing their
+// own scan is the duplicated predicate that renders a badge for `(inferred)` while cutting
+// the bytes of something else.
+func bulletProvenance(firstLine string) (string, int) {
 	span := MarkerSpan(firstLine)
 	if span == 0 {
-		return ProvenanceAbsent
+		return ProvenanceAbsent, 0
 	}
-	rest := []rune(firstLine[span:])
+	rest := firstLine[span:]
 	// The separator between the marker and the parenthetical is optional whitespace,
 	// read with Python's 29-code-point `\s` rather than Go's five — the same rule every
 	// other transcription in this package uses, so a non-breaking space cannot mean one
 	// thing here and another in `BulletDate`.
-	i := 0
-	for i < len(rest) && pytext.IsSpace(rest[i]) {
-		i++
+	//
+	// Counted in BYTES rather than code points because the offset is what the caller cuts
+	// at; `pytext.IsSpace` still decides membership per RUNE, so the two questions stay
+	// separate.
+	gap := 0
+	for _, r := range rest {
+		if !pytext.IsSpace(r) {
+			break
+		}
+		gap += utf8.RuneLen(r)
 	}
 	for _, candidate := range []string{ProvenanceOperator, ProvenanceInferred} {
-		if matchParenthesizedWord(rest[i:], candidate) {
-			return candidate
+		if n := matchParenthesizedWord(rest[gap:], candidate); n != 0 {
+			return candidate, span + gap + n
 		}
 	}
-	return ProvenanceAbsent
+	return ProvenanceAbsent, 0
 }
 
 // matchParenthesizedWord is `\(<word>\)` at position 0, exactly — case-sensitive, and
-// with the closing paren REQUIRED so the word cannot be a prefix of a longer one.
+// with the closing paren REQUIRED so the word cannot be a prefix of a longer one. It
+// returns the match's LENGTH IN BYTES, or 0 for no match.
 //
 // Case-sensitive on purpose: `(Operator)` is ProvenanceAbsent. The two spellings are
 // schema tokens, not prose, and folding them would be the first step toward accepting
 // `(OPERATOR)`, `(operator — via chat)` and everything else a writer might reach for,
 // each of which is a different claim that nothing would then be able to tell apart.
-func matchParenthesizedWord(rs []rune, word string) bool {
-	w := []rune(word)
-	if len(rs) < len(w)+2 || rs[0] != '(' {
-		return false
+//
+// ⚠ BYTE INDEXING IS SAFE HERE ONLY BECAUSE `(`, `)` AND BOTH WORDS ARE ASCII, AND THAT IS THE
+// WHOLE ARGUMENT: a multi-byte rune can satisfy the LENGTH check — where the rune-indexed
+// version this replaced would not — but can never satisfy the byte-exact EQUALITY, so it is
+// refused either way, one line later. The offset is what a caller cutting the text needs, and
+// a bool could not give it one.
+//
+// ⚠ AN EARLIER VERSION CITED A PAIR-COUNT FROM AN AD-HOC DIFFERENTIAL AGAINST THE RUNE FORM,
+// AND THE FIGURE IS DELETED RATHER THAN CORRECTED. The harness was never committed, so nobody
+// could re-derive it — and an independent rebuild of the same sweep got a different total,
+// which is exactly what an uncheckable number is worth. Either commit the sweep as a test or
+// state the argument; this states the argument. `TestProvenanceIsTheWholeParenthesizedWord`
+// and `requirements-provenance-accepts-a-prefix` in `tests/control_mutants.py` are the
+// checkable guards on the behaviour that argument is about.
+func matchParenthesizedWord(s string, word string) int {
+	if len(s) < len(word)+2 || s[0] != '(' {
+		return 0
 	}
-	for i, c := range w {
-		if rs[1+i] != c {
-			return false
-		}
+	if s[1:1+len(word)] != word || s[1+len(word)] != ')' {
+		return 0
 	}
-	return rs[1+len(w)] == ')'
+	return len(word) + 2
 }

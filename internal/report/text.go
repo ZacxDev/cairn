@@ -74,12 +74,29 @@ func listingLine(entry RecalledEntry, width int) string {
 		badges = append(badges, "🔴 NO "+strings.Join(short, ", "))
 	}
 	if len(entry.Tasks) != 0 {
-		// 🔴 A COUNT AND NOT THE REFS, on the same bar: an entry joined to a task is an
+		// 🔴 A COUNT AND NOT THE REFS, on the same bar: an entry joined to a ref is an
 		// entry whose work has a tracked owner and a closing condition somewhere else,
 		// which decides whether to spend a `?ref=`. What it does NOT do is print the refs
 		// — one can be 36 characters, three of them would triple the row, and the index's
 		// whole contract is one line per entry. The refs are printed in the BODY.
-		badges = append(badges, "🔗 "+strconv.Itoa(len(entry.Tasks))+" task"+plural(len(entry.Tasks)))
+		//
+		// 🔴 THE WORD IS `ref`, AND THE CHANGE FROM `task` IS THE POINT RATHER THAN A
+		// TIDY-UP. `Tasks` is the parsed `refs:` front-matter sequence, and once `tasks:`
+		// folded into `refs:` the badge was naming a key the file format no longer has —
+		// a reader who grepped their entries for `tasks:` after reading this row found
+		// nothing and could not tell a renamed key from an absent one. The accepted older
+		// INPUT spellings (`tasks:`, `task:`) are untouched; this is the rendered word.
+		//
+		// ⚠ THE BODY LABEL SPELLS `refs:` TOO, so nothing on this surface spells `task` any
+		// more. Two things DO still read `task`, and they are different from each other and
+		// from this. (a) The internal FIELD NAME — `RecalledEntry.Tasks`,
+		// `store.Entry.Tasks`, the oracle's `RecalledEntry.tasks` — which no reader sees;
+		// its own note is on [RecalledEntry.Tasks]. (b) The oracle's JSON payload key
+		// `"tasks"` in `report_json`, which has NO Go counterpart — `internal/report`
+		// renders text only — so it is outside the byte-identity contract these two
+		// renderers share. Its reason and its CLOSING CONDITION (P8) are written once, at
+		// the key itself in `lib/subsystem_recall.py`.
+		badges = append(badges, "🔗 "+strconv.Itoa(len(entry.Tasks))+" ref"+plural(len(entry.Tasks)))
 	}
 	if len(badges) == 0 {
 		return base
@@ -495,27 +512,29 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 			SensitivityLabel(e.Sensitivity, e.DeclaredSensitivity)+")")
 		if len(e.Tasks) != 0 {
 			// 🔴 THE REFS THEMSELVES, AND ONLY IN A BODY. Above the sections deliberately:
-			// "which task does this answer" is identity, like the ref and the sensitivity
+			// "which ref does this answer" is identity, like the ref and the sensitivity
 			// on the line above, not content.
 			//
-			// ⚠ THE LABEL STILL READS `tasks:` WHILE THE FRONT-MATTER KEY IS `refs:` AND THE
-			// BROWSER SURFACE SAYS "Refs", AND THAT IS DEFERRED RATHER THAN OVERLOOKED. The
-			// Go type's field and the Python dataclass's each got a paragraph explaining the
-			// name; this line had none, so a reader could not tell the mismatch from an
-			// omission. Changing it is not a rename: it re-bases every recall golden in
-			// `tests/conformance/`, the reader fixture `internal/report/testdata/` replays,
-			// and the parity harness's byte diffs — so it belongs in a change whose whole
-			// subject is that re-base, not in one that happens to touch this function.
-			out = append(out, "    tasks: "+strings.Join(e.Tasks, ", "))
+			// 🔴 THE LABEL READS `refs:`, WHICH IS THE FRONT-MATTER KEY. It read `tasks:`
+			// from before `tasks:` folded into `refs:`, deferred on a recorded closing
+			// condition — an operator ruling on the label — which has been given. These are
+			// the bytes the oracle's `render_text` is diffed against, so this label and its
+			// twin move together or not at all.
+			//
+			// ⚠ THE ACCEPTED INPUT SPELLINGS ARE UNTOUCHED. `tasks:` and `task:` are still
+			// read on the way in, permanently, by operator decision; only the rendered word
+			// moved. So a reader who writes `tasks:` still sees `refs:` here, and that is
+			// correct rather than a mismatch — the parser keeps no record of which key an
+			// entry used, which is also why the browser surface names both spellings.
+			out = append(out, "    refs: "+strings.Join(e.Tasks, ", "))
 		}
 		if len(e.Tags) != 0 {
 			// Identity, like the refs line above and for the same reason: "what category is
 			// this" is not content.
 			//
-			// ⚠ THE LABEL MATCHES THE KEY HERE, WHICH THE LINE ABOVE DOES NOT — and saying so
-			// is the point rather than leaving a reader to wonder whether this one is also
-			// deferred. `tags:` is the key an operator writes and `tags:` is what this prints;
-			// there is no older spelling, no rename in flight, and nothing to defer.
+			// `tags:` is the key an operator writes and `tags:` is what this prints. There
+			// is no older spelling and no alias, so unlike the refs label above there is
+			// nothing here that could drift from its key.
 			out = append(out, "    tags: "+strings.Join(e.Tags, ", "))
 		}
 		for _, heading := range SurfacedHeadings {
