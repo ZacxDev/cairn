@@ -761,11 +761,16 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 		{"a host line with NO instance clause, which is every single-instance host and the pod", "consulted no other)"},
 		// 🔴 THE NUANCE-CEILING BADGE, PINNED AS BOTH SIDES OF ITS BOUNDARY — and the SILENT
 		// row is the load-bearing half. The badge fires on `BulletCount >
-		// NuanceBulletCeiling`; a row pinning only the loud side passes for a mutant that
+		// NuanceBulletCeiling`; a world holding only the loud side cannot see a mutant that
 		// changed `>` to `>=`, or the ceiling from 30 to 29, because the loud row goes on
 		// rendering exactly as before. Only an entry sitting AT the ceiling and rendering
 		// NOTHING can see those, which is why the fixture world holds `at-ceiling` beside
 		// `over-ceiling` one bullet apart.
+		//
+		// ⚠ THE PRECEDING SENTENCE IS ABOUT THE WORLD, NOT ABOUT THESE TWO ROWS — see the
+		// note on the position row below for what this ledger can and cannot fail on. These
+		// rows pin that the fixture KEEPS both sides of the boundary; the Go renderer's own
+		// agreement with the oracle is measured by the byte comparison.
 		//
 		// 🔴 BOTH ARE WHOLE LINES WITH THEIR OWN NEWLINES ON BOTH SIDES, NOT SUBSTRINGS, AND
 		// THAT IS THE TRAP THIS FILE ALREADY DOCUMENTS ONE ROW OF. `  at-ceiling     30
@@ -784,13 +789,22 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 			"\n  over-ceiling    31 nuance   public   ⚠ OVER 30 nuance — prune or split\n"},
 		{"an entry AT the ceiling rendering NO badge, which is the boundary's silent half",
 			"\n  at-ceiling      30 nuance   public\n"},
-		// 🔴 THE BADGE'S POSITION, AND THIS ROW EXISTS BECAUSE A MUTANT MOVING THE EMITTER TO
-		// THE FRONT OF THE RUN *SURVIVED* THE TWO ROWS ABOVE. Neither of those entries carries
-		// another badge, so a one-badge run renders identically wherever the append happens —
-		// the "last in the run" claim written beside the emitter was a comment nothing
-		// measured, which is precisely the comment-as-unchecked-claim this repo treats as a
-		// defect. `mixed-ceiling` is over the ceiling AND declares open bullets AND carries
-		// `refs:`, so the whole line below pins the size badge AFTER both.
+		// 🔴 THE BADGE'S POSITION — AND READ WHAT THIS ROW DOES AND DOES NOT DO, BECAUSE AN
+		// EARLIER WORDING CLAIMED THE KILL FOR IT AND THAT WAS WRONG. A mutant moving the
+		// emitter to the FRONT of the run originally SURVIVED, and what was missing was the
+		// fixture ENTRY: both other bulky entries carry a single badge, so a one-badge run
+		// renders identically wherever the append happens. Adding `mixed-ceiling` — over the
+		// ceiling AND declaring open bullets AND carrying `refs:` — is what made the position
+		// observable, and the guard that now KILLS that mutant is the byte comparison in
+		// `TestTheRenderedBytesMatchTheORACLEOverShapesTheCorpusCannotSend`, not this ledger.
+		//
+		// ⚠ SO WHAT IS THIS ROW FOR? This ledger reads the fixture's STORED ORACLE BYTES, so it
+		// is structurally blind to any Go-side mutant — measured: neither the position mutant
+		// nor `>`→`>=` makes THIS test fail. What it uniquely catches is the fixture LOSING
+		// that coverage: an entry quietly dropped, or a ceiling changed on the PYTHON side and
+		// laundered through a regeneration, which would move these bytes while both renderers
+		// still agreed with each other. That is a different claim from the byte comparison's,
+		// and it is the one the covered-set-cannot-shrink rule is about.
 		//
 		// ⚠ IT ALSO PINS THAT THE COUNT IS EVERY BULLET AND NOT THE UNDECLARED ONES: the entry
 		// holds 2 `OPEN:` bullets among 31, and the row reads `31 nuance`, so a reader that

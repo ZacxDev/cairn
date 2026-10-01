@@ -2250,12 +2250,12 @@ def short_heading(heading: str) -> str:
 #: store of 331 entries the count is heavily skewed — median 5, p90 21, max 151 — and
 #: the number that matters is not the count but what a FEATURED render of that entry
 #: costs, because the index row is ~60 B whatever the entry while the featured body is
-#: the whole section. Median nuance-section bytes by band: 0-9 → 2.5 KB, 10-19 → 10 KB,
-#: 20-29 → 22 KB, 30-39 → 47 KB, 60-99 → 89 KB, 100+ → 164 KB. The knee is at 30: the
-#: SMALLEST body this threshold flags is 29 KB (~7.4K tokens) against 14.6 KB at a
-#: ceiling of 25 — it more than doubles across that one step — and the median flagged
-#: body is 51 KB (~12.8K tokens), which is the five-figure token bill the badge exists
-#: to name.
+#: the whole section. The band table and the knee are written ONCE, beside
+#: `report.NuanceBulletCeiling` in `internal/report/text.go` — read the figures there
+#: rather than keeping a second copy of them true here. In one line: the median nuance
+#: body roughly DOUBLES from the 20-29 band to the 30-39 band, and the smallest body a
+#: ceiling of 30 flags (29,477 B) is more than twice the smallest a ceiling of 25 flags
+#: (14,615 B), which is the five-figure token bill the badge exists to name.
 #:
 #: 🔴 AND THE OTHER HALF OF THE CHOICE IS THE FIRING RATE, BECAUSE A BADGE THAT FIRES
 #: EVERYWHERE TRAINS ITS OWN BYPASS — which `claude/RULES.md` names as the
@@ -2264,12 +2264,20 @@ def short_heading(heading: str) -> str:
 #: read this as a rate, never as an invariant) while flagging ~36% of all nuance bytes.
 #: The badge already beside it on the row, `🔴 N OPEN`, fires on 41.1%, so this one is
 #: roughly eight times sparser than a badge the index already carries. A ceiling of 20
-#: was measured and rejected: 11.2% of rows, and it admits a 12.9 KB entry, which is not
+#: was measured and rejected: 11.2% of rows, and it admits a 12,887 B entry, which is not
 #: a tax anyone needs warning about.
 #:
 #: ⚠ IT IS ADVISORY AND IT IS NOT A GATE. Nothing refuses, nothing exits non-zero; the
 #: entry renders exactly as before apart from this badge. The remedy it names is the
 #: store's own prune-on-resolve discipline, which `caveat_text` already says is manual.
+#: 🔴 SO IT SURFACES A COST, IT DOES NOT REDUCE ONE — and an audit round questioned the
+#: REQUIREMENT on exactly that: the motivation was a ~50K-token digest, 97.6% of it one
+#: body, and a badge changes that bill by ZERO tokens. The free variable
+#: `entry_shape.BULLET_TEXT_MAX`'s comment names is now VISIBLE and still UNBOUND. The
+#: bounding change — cap the featured body, or pick the featured entry by COST rather
+#: than by mtime, since `select_featured` picks by mtime and `--limit` caps entry COUNT
+#: and does nothing in `digest`, where exactly one body prints — is NOT taken here and
+#: is NOT yet an owned decision. Recorded so nobody reads this badge as the answer.
 NUANCE_BULLET_CEILING = 30
 
 

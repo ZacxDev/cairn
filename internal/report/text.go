@@ -17,10 +17,14 @@ import (
 // 331 entries the count is heavily skewed — median 5, p90 21, max 151 — and the number that
 // matters is not the count but what a FEATURED render of that entry costs, because the index
 // row is ~60 B whatever the entry while the featured body is the whole section. Median
-// nuance-section bytes by band: 0-9 → 2.5 KB, 10-19 → 10 KB, 20-29 → 22 KB, 30-39 → 47 KB,
-// 60-99 → 89 KB, 100+ → 164 KB. The knee is at 30: the SMALLEST body this threshold flags is
-// 29 KB (~7.4K tokens) against 14.6 KB at a ceiling of 25 — it more than doubles across that
-// one step — and the median flagged body is 51 KB (~12.8K tokens).
+// nuance-section BYTES by band (the byte counts are the authority; a `kB` below is 1000
+// bytes, not 1024, and an audit round read these as KiB and reported drift that was purely
+// the unit): 0-9 → 2,549 B, 10-19 → 10,493 B, 20-29 → 22,533 B, 30-39 → 47,154 B,
+// 60-99 → 88,925 B, 100+ → 163,636 B. The knee is at 30: the SMALLEST body this threshold
+// flags is 29,477 B (~7.4K tokens) against 14,615 B at a ceiling of 25 — it more than
+// doubles across that one step — and the median flagged body is 51,126 B (~12.8K tokens).
+// ⚠ Those medians are a reading of ONE live store and move as it grows; the ~2x step at the
+// knee is the claim, not any single figure.
 //
 // 🔴 AND THE OTHER HALF OF THE CHOICE IS THE FIRING RATE, BECAUSE A BADGE THAT FIRES
 // EVERYWHERE TRAINS ITS OWN BYPASS. At 30 it fires on ~5% of rows (measured twice on one
@@ -37,7 +41,19 @@ import (
 // different bytes for one entry, which is exactly the silent drift `tests/parity/` exists to
 // catch; move both or neither.
 //
-// ⚠ IT IS ADVISORY AND IT IS NOT A GATE. Nothing refuses and nothing exits non-zero.
+// ⚠ IT IS ADVISORY AND IT IS NOT A GATE. Nothing refuses and nothing exits non-zero. It
+// SURFACES the free variable `lib/entry_shape.py`'s `BULLET_TEXT_MAX` comment names; it does
+// not BOUND it, and that comment is the one place the still-open read-budget question lives.
+//
+// 🔴 TWO GATES ARE STRUCTURALLY BLIND TO THIS BADGE, AND BOTH ARE RUN AS ITS VALIDATION, SO
+// NEITHER'S GREEN IS EVIDENCE ABOUT IT. Measured: `tests/conformance/`'s world tops out
+// around ONE nuance bullet and `tests/dualrun/`'s generated world at FIVE, against a ceiling
+// of 30 — so every row in both renders on the SILENT side and the branch is never evaluated.
+// What DOES measure it: `internal/report`'s fixture replay (both sides of the boundary, in
+// bytes) and `tests/parity/` (both real clients, with a desync control proven to go RED).
+// Neither blind gate is seeded, deliberately: both compare implementations that reach this
+// badge through the SAME `listing_line`/`listingLine` pair parity already compares, so a row
+// in either would be a second sample of one unknown rather than a new claim.
 const NuanceBulletCeiling = 30
 
 // listingLine is ONE index line: `  <ref>   N nuance  <sensitivity>[  <badges>]`. ~60
