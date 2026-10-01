@@ -2878,16 +2878,29 @@ MUTANTS: tuple[Mutant, ...] = (
         name="requirements-provenance-accepts-a-prefix",
         pkgs=PKGS + ("./internal/store/",),
         path="internal/store/requirements.go",
-        old="return rs[1+len(w)] == ')'",
-        new="return true",
+        old="if s[1:1+len(word)] != word || s[1+len(word)] != ')' {",
+        new="if s[1:1+len(word)] != word {",
         killer="TestProvenanceIsTheWholeParenthesizedWord",
+        extra_killers=("TestProvenanceSpanEndsPastTheParentheticalAndNowhereElse",),
         why="⚠ THE THIRD ROW, ADDED BEYOND THE TWO THE TASK NAMED, AND ARGUED FOR RATHER "
         "THAN SMUGGLED IN. Provenance is the feature — `(operator)` versus `(inferred)` is "
         "the whole distinction being asked for — so the one failure it cannot have is being "
         "MANUFACTURABLE. Dropping the closing-paren check makes `(operators)`, "
         "`(operator-ish)` and anything else starting with the right letters resolve to "
         "`operator`, attributing a statement to the operator that the operator did not "
-        "make. Nothing about the resulting code reads wrong.",
+        "make. Nothing about the resulting code reads wrong. "
+        "🔴 THE PATTERN WAS RE-DERIVED ONCE, AND THE REASON IS WORTH KEEPING. It read "
+        "`return rs[1+len(w)] == ')'` → `return true` while `matchParenthesizedWord` "
+        "indexed RUNES and returned a bool; the function now takes a byte offset and "
+        "returns a LENGTH, so that pattern matched 0 times and this row reported a HARNESS "
+        "ERROR — correctly, and loudly, which is the whole point of the occurrence check: "
+        "a pattern matching nothing would otherwise score the mutant SURVIVED without ever "
+        "running. ⚠ THE LESSON FOR THE NEXT PERSON REFACTORING `internal/store`: a battery "
+        "row is coupled to the exact SPELLING of the line it mutates and names it NOWHERE "
+        "ELSE — grepping for the function's NAME finds nothing, because the row does not "
+        "carry it. Grep for `path=\"<file>\"` in this module instead. "
+        "⚠ `extra_killers` is MEASURED, not assumed: the mutant reddens the span test too, "
+        "because one scan now decides both the word and the offset a renderer cuts at.",
     ),
 )
 
