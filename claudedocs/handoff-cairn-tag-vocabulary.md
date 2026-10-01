@@ -25,22 +25,34 @@ them being USED and ENFORCED.
   **MET 2026-10-01** — see "How to verify" for the exact probes and their outputs.
 
 ## State now
-- Branch: `main`. Five PRs merged and verified **by content** on `origin/main` (a squash
-  never makes the branch head an ancestor, so ancestry is the wrong test):
-  - **#164** — two private identifiers plus a private entry filename scrubbed out of this
-    PUBLIC repo, and their digests added to `tests/leakscan.py` so recurrence is caught.
+- Branch: `main` on the mainline; **this doc's own branch `docs/handoff-cairn-tag-vocabulary`
+  is UNMERGED (PR #169)**, so a session resuming from `main` cannot find this file. That is
+  worth fixing before the next handoff: the canonical doc for the arc is not on the mainline.
+- **Rank 1 is CLOSED and shipped to review: [PR #170](https://github.com/ZacxDev/cairn/pull/170),
+  `feat/browse-q-and-tag-compose`** (`5e7646d` the feature, `9eacee0` the CHANGELOG row). ⚠ **NOT
+  MERGED and NOT DEPLOYED** — at the time of writing CI had returned `leakscan`, `pgtest` and
+  `parity` green with `tests`, `go`, `dualrun`, `nix` and `uiaudit` still running. Read the run
+  before acting on this line; it is a reading, not a result.
+- Five PRs merged and verified **by content** on `origin/main` (a squash never makes the branch
+  head an ancestor, so ancestry is the wrong test):
+  - **#164** — two private identifiers plus a private entry filename scrubbed out of this PUBLIC
+    repo, and their digests added to `tests/leakscan.py` so recurrence is caught.
   - **#160** — the `tags:` vocabulary CLOSED at the WRITE path (`internal/write`).
   - **#162** — the rendered link badge and body label both read `refs`; a `## Requirements`
     bullet's provenance renders once (badge) instead of twice.
-  - **#165**, **#167** — `.claude/hooks/base-clone-write-guard.py` now judges the write
-    TARGET rather than the session cwd.
-- **Store: 303 entries tagged** across both instances — `infra` 136 / `product` 99 /
-  `tooling` 68. Zero off-vocabulary tags anywhere.
-- **Deployed and verified**: the deployment repo's pod and UI pins moved
-  `e8839d9 -> ffa0eca` in one commit; the pod has rolled and both features are live at the
-  edge. ⚠ The **UI** rollout is NOT independently verified — see Open investigations.
-- A new store entry `cairn/tag-vocabulary` holds the closed vocabulary AND the per-scope
-  table. The table CANNOT live in this repo: the scope names are denied identifiers here.
+  - **#165**, **#167** — `.claude/hooks/base-clone-write-guard.py` now judges the write TARGET
+    rather than the session cwd.
+- **Store: 303 entries tagged** across both instances — `infra` 136 / `product` 99 / `tooling` 68.
+  Zero off-vocabulary tags anywhere. ⚠ RECALL as of the previous session, not re-measured here.
+- **Deployed and verified** (previous session): the deployment repo's pod and UI pins moved
+  `e8839d9 -> ffa0eca` in one commit; the pod has rolled and both features are live at the edge.
+  ⚠ The **UI** rollout is still NOT independently verified — Open investigations block 1.
+- ⚠ **No task-board field is recorded on this doc, and that is a REFUSAL rather than a zero.**
+  `<tooling>`'s task resolver exited **5** — nothing resolved. An unknown session id answers
+  200 with an empty array, so this cannot distinguish "touched no task" from "wrong id".
+  (The board's name is a denied identifier here; `tests/leakscan.py` refused an earlier draft
+  of this very bullet that spelled it, which is the gate doing its job on a handoff delta —
+  the exact path four past leak events took.)
 
 ## Open investigations — live diagnosis state
 
@@ -81,42 +93,62 @@ them being USED and ENFORCED.
   refuse. Record which of the two, if either, still blocks.
 
 ## Next steps (ranked)
-1. **Make `?q=` and `?tag=` compose in the browse surface.** The operator explicitly chose
-   "close it — make them compose" over documenting the limitation, and it was queued behind
-   the PR traffic and never dispatched. Repo: this one; files `internal/ui/server.go`
-   (`handlePage`), plus tests. Today searching drops an active tag filter and vice versa.
-   forcing: user — the operator selected this option and it was never delivered.
-2. **Close the three declared guard fail-opens.** All three are recorded with closing
-   conditions in `.claude/hooks/base-clone-write-guard.py`'s docstring and all three were
-   proven end to end by an audit: (a) `_shell_lines`' heredoc opener regex runs on the raw
-   line, so ordinary text containing `<<WORD` — a quoted string, or even a `#` comment —
-   silently drops every later line; (b) the program-name walk misses `if git commit`,
-   `while`, `command`, `nohup`, `timeout`, `eval`, `stdbuf`, `exec`, `sudo`, `xargs`;
-   (c) the `_REFUSED` complement is described as "reads" while `clean -fd`, `rm`, `mv`,
-   `worktree remove` and `branch -D` all write shared state.
-   forcing: security — each is a measured way to land a commit on the wrong branch in a
-   shared clone, which is the single failure this guard exists to prevent.
-3. **Confirm the UI pod rolled** (Open investigations block 1). One click path in a
-   signed-in browser; everything else about the deploy is already verified.
-   forcing: user — the operator asked for this deploy to be validated, and this is the one
-   half that could not be closed from here.
-4. **Teach the entry template to emit a `tags:` line.**
-   `scripts/lib/subsystem_touch.py --template` emits none, so every entry born through the
-   handoff flow starts untagged and invisible to `--tag`. That silently re-opens the gap
-   this arc just closed, one entry at a time. Repo: the private tooling repo.
+🔴 **The numbering is UNCHANGED on purpose. Rank 1 stays in place as CLOSED rather than being
+removed, because the rank is half a `claim-work` slug's identity — renumbering 2→1 would
+re-point every live claim on this doc.** Closed items are struck here, never deleted.
+
+1. ~~**Make `?q=` and `?tag=` compose in the browse surface.**~~ **CLOSED — PR #170, awaiting CI
+   and merge.** One card, the composition the pod already performed (`report.SearchOptions.Tag`
+   passed into the engine, so the narrowing lands after scope authorisation and before scoring),
+   a summary naming both operands and both counts, a hidden `tag` input so the form round-trips
+   the filter, and three ways back. `internal/ui/README.md`'s declared limitation is rewritten as
+   closed. **What is left on this item is the MERGE, not the build.**
+   forcing: user — the operator selected this option; it is built and under review.
+2. **Close the three declared guard fail-opens.** All three are recorded with closing conditions
+   in `.claude/hooks/base-clone-write-guard.py`'s docstring and all three were proven end to end
+   by an audit: (a) `_shell_lines`' heredoc opener regex runs on the raw line, so ordinary text
+   containing `<<WORD` — a quoted string, or even a `#` comment — silently drops every later
+   line; (b) the program-name walk misses `if git commit`, `while`, `command`, `nohup`,
+   `timeout`, `eval`, `stdbuf`, `exec`, `sudo`, `xargs`; (c) the `_REFUSED` complement is
+   described as "reads" while `clean -fd`, `rm`, `mv`, `worktree remove` and `branch -D` all
+   write shared state.
+   forcing: security — each is a measured way to land a commit on the wrong branch in a shared
+   clone, which is the single failure this guard exists to prevent.
+3. **Confirm the UI pod rolled** (Open investigations block 1). One click path in a signed-in
+   browser; everything else about the deploy is already verified. ⚠ **Once #170 merges and
+   deploys there is a SECOND thing to look at on the same visit** — open `/?q=<word>&tag=<tag>`
+   and confirm it renders ONE card rather than two.
+   forcing: user — the operator asked for this deploy to be validated, and this is the one half
+   that could not be closed from here.
+4. **Teach the entry template to emit a `tags:` line.** `scripts/lib/subsystem_touch.py
+   --template` emits none, so every entry born through the handoff flow starts untagged and
+   invisible to `--tag`. That silently re-opens the gap this arc just closed, one entry at a
+   time. Repo: the private tooling repo.
    forcing: regression — new entries reintroduce the untagged state this arc eliminated.
+5. **Land this doc on the mainline.** PR #169 carries the only copy of this file; until it
+   merges, `/resume` from `main` cannot find it and the next session re-derives the arc from
+   `git log`. This session found it only by searching `--all`.
+   forcing: gate — the resume path is the mechanism, and it is currently broken for this arc.
 
 ## Defects (batched)
-- `.claude/hooks/base-clone-write-guard.py:702` still says the existence check lives
-  "ahead of the probe budget" — #167 deleted that budget, so the sentence describes a
-  mechanism that no longer exists.
-- Same file: `_abs_path`'s claim that a second existence check "could never change a
-  verdict" was measured FALSE when a NUL byte crashed the hook. #167 fixed the crash,
-  which plausibly restores the claim — but it has not been re-measured since.
+- `.claude/hooks/base-clone-write-guard.py:702` still says the existence check lives "ahead of
+  the probe budget" — #167 deleted that budget, so the sentence describes a mechanism that no
+  longer exists.
+- Same file: `_abs_path`'s claim that a second existence check "could never change a verdict"
+  was measured FALSE when a NUL byte crashed the hook. #167 fixed the crash, which plausibly
+  restores the claim — but it has not been re-measured since.
 - The base clone of this repo carries a STAGED modification to the hook whose content is
-  byte-identical to `origin/main`, while `HEAD` sits 4 commits behind. Harmless (the
-  running hook is the fixed one) but it makes `git status` misleading. Clearing it is
-  `restore --staged --worktree` on that path, then an ff-only merge.
+  byte-identical to `origin/main`, while `HEAD` sits 4 commits behind. **Re-measured this
+  session and STILL TRUE** (`git -C /home/zach/workspace/cairn status -s` → `M` staged;
+  `rev-list --count HEAD..origin/main` → 4). Harmless (the running hook is the fixed one) but it
+  makes `git status` misleading. Clearing it is `restore --staged --worktree` on that path, then
+  an ff-only merge.
+- **The pod's composed `?q=`+`?tag=` answer and the browse surface's are not compared against
+  each other.** After #170 they share the ENGINE, which is strictly more than they shared
+  before, but nothing sends the same two parameters to both and diffs the result. Declared in
+  `internal/ui/README.md` rather than fixed.
+- **`uiaudit` walks neither `/?tag=` nor the composed card**, which after #170 is a fifth card
+  shape carrying three `note` links and a hidden form control. No axe pass has run over either.
 
 ## Gotchas / decisions / dead-ends
 - 🔴 **The per-scope tag table cannot live in this repo.** `tests/leakscan.py` denies the
@@ -146,11 +178,47 @@ them being USED and ENFORCED.
 - ⚠ The client instance's migration to the Go image is owned by a DIFFERENT session. Do
   not touch that cluster's manifests from this arc.
 
-## How to verify
-Both halves of the closing condition, each with the control that makes it mean something.
+- 🔴 **THE CANONICAL HANDOFF FOR THIS ARC IS NOT ON `main`.** It lives only on
+  `docs/handoff-cairn-tag-vocabulary` (PR #169, open). A `/resume` kickoff naming
+  `claudedocs/handoff-cairn-tag-vocabulary.md` dead-ends from a `main` checkout. The way to find
+  it is `git log --all --oneline --diff-filter=A -- '*<topic>*'`, then read it out of the ref
+  with `git show <branch>:<path>` — **a plain `grep -rl` over the tree finds nothing**, because
+  the file is not in the working tree at all.
+- 🔴 **`git -C "$VAR"` IS REFUSED BY THE BASE-CLONE WRITE GUARD, AND THE REFUSAL NAMES THE WRONG
+  DIRECTORY.** #167 deleted the shell-variable resolver, so a `$VAR` is unresolvable and the
+  guard falls back to refusing — and the refusal text says the base clone is the target even
+  when the variable holds a worktree path. This is already in the doc as a decision; recording
+  the SYMPTOM because it is what a reader actually sees. Pass `-C` a LITERAL absolute path. Bit
+  this session once, and the previous session twice in one hour.
+- ⚠ **`/home/zach/workspace/cairn-handoff` is a STALE worktree sitting on
+  `docs/handoff-share-flow-audited` at `b707ab9`, a closed arc.** `worktree add` to that path
+  fails with "already exists", and the obvious recovery — `switch -c` in it — silently moves
+  somebody else's worktree off its branch. Restored this session; use a fresh path
+  (`cairn-hv` was used here). 59 linked worktrees are registered against the base clone.
+- 🔴 **THE COMPOSED SHAPE WAS NOT A FREE CHOICE, AND THE REASONING IS WORTH KEEPING.** The query
+  decides the ANSWER SHAPE and the tag decides WHAT IT RAN OVER. A search is ranked; a tag
+  listing is a membership test with nothing to rank; there is no one card that is both. The
+  reverse order — a tag listing filtered by the query — would answer a two-operand URL with an
+  unranked list, which is the shape the pod does not produce. So `?tag=` alone keeps its listing
+  and adding words turns it into a search WITHIN that tag.
+- ⚠ **A rendered card-what sentence is a claim, and composing made one of them FALSE.** "Scored
+  over every line of every entry the credential can read" describes an unnarrowed search; under
+  a tag it over-claims. Two whole constants now, pinned separately — concatenating a clause onto
+  a shared half would let one edit move both pinned strings at once.
+- 🔴 **A MUTATION MEASUREMENT CORRECTED MY OWN COMMENT, AND THE CORRECTION IS THE RECORD.** The
+  draft said a four-entry fixture would let an `EntriesSearched`⇄`TagSkipped` swap survive a
+  green suite. Run against both fixtures, it would NOT have: the composed-ZERO sub-test killed
+  it there (counts 1 and 3, not 2 and 2). The fifth entry buys each sub-test seeing the swap on
+  its OWN assertion rather than rescuing the suite — a smaller claim, and the one now written in
+  `internal/ui/compose_test.go`.
+- ⚠ **Local Go here is 1.26.7 against a 1.25 `go.mod`.** It builds and tests fine, but the
+  pinned-toolchain run is CI's, not a local one. Do not report a local green as a pinned green.
 
-**The write gate — negative then positive** (the positive control is not optional: without
-it, a refusal is indistinguishable from a broken write path):
+## How to verify
+Both halves of the ORIGINAL closing condition, plus rank 1's.
+
+**The write gate — negative then positive** (the positive control is not optional: without it, a
+refusal is indistinguishable from a broken write path):
 ```bash
 # take any entry, set an off-vocabulary tag, and try to replace it
 <tooling>/scripts/cairn-ops/write.sh put --scope cairn --ref tag-vocabulary --file <bad copy> --no-verify
@@ -168,9 +236,29 @@ curl -s -H "Authorization: Bearer ${CAIRN_TOKEN}" "${CAIRN_URL}/api/v1/recall/ca
 #   and the retired word must be gone:  grep -c '🔗 [0-9]* task'  => 0
 ```
 
-**Tag coverage across the fleet** — read each scope on its RESOLVED instance; the two
-caches replicate 12 scopes, so a naive walk double-counts:
+**Tag coverage across the fleet** — read each scope on its RESOLVED instance; the two caches
+replicate 12 scopes, so a naive walk double-counts:
 ```bash
 <tooling>/scripts/cairn-ops/health.sh instances --scope <scope>   # which cache is authoritative
 # expected totals: infra 136 / product 99 / tooling 68, and no fourth term
 ```
+
+**Rank 1 — the composition, in the repo.** Three answers, not one: a composed page that is right
+for the wrong reason is indistinguishable from either operand acting alone.
+```bash
+go -C <checkout> test ./internal/ui/ -run TestTheQueryAndTheTagComposeIntoOneCard -v
+go -C <checkout> test ./internal/ui/ -run 'TestTheSearchFormRoundTripsTheTag|TestTheComposedCardOffersEveryWayBack'
+#   => the three answers are three DIFFERENT sets: `?q=` alone names 3 entries,
+#      `?tag=` alone names 2, together they name the 1 in both.
+```
+
+**Rank 1 — the composition, against the DEPLOYED UI** (only after #170 merges and the pin moves;
+the test above is evidence about the checkout, never about the edge). In a signed-in browser open
+`/?q=<a word in a tagged entry>&tag=<that tag>`:
+- **ONE** card, headed `Search`, not two;
+- its second line names both operands — "The tag `x` narrowed this search to N entries before the
+  query ran, leaving out M visible entries that do not carry it";
+- typing a new word in the box keeps the tag; emptying the box lands on the plain tag listing.
+
+Two cards is the pre-change answer and means the UI pin did not move — which is also Open
+investigations block 1's question, answered by the same visit.
