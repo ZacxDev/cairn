@@ -483,8 +483,22 @@ func breadcrumbs(crumbs []crumb) g.Node {
 //
 // ⚠ THE ACTION IS THE ROOT PATH, WHICH IS ALSO WHERE A BLANK SUBMISSION LANDS. Submitting an
 // empty box is how a reader clears a search, and it arrives as `?q=` — which
-// `handlePage` trims to "" and treats as no query at all.
+// `handlePage` trims to "" and treats as no query at all. With a tag in force the same blank
+// submission lands on `?q=&tag=<it>`, which is the tag listing: emptying the box is how a
+// reader steps back OUT of a composed search without losing the filter.
+//
+// 🔴 THE TAG RIDES ALONG IN A HIDDEN INPUT, AND IT IS THE WHOLE "the form drops the tag" FIX.
+// `searchbar` carried `name="q"` and nothing else, so a reader looking at a tag listing who
+// typed into the box lost the tag — discarded at the one moment it was visible on screen.
+// A `GET` form submits exactly the controls it holds, so carrying the filter means holding it.
+//
+// 🔴 AND A HIDDEN CONTROL THAT SILENTLY NARROWS A SEARCH IS ONLY HONEST BECAUSE THE ANSWER
+// NAMES IT. Every state this input can be non-empty in renders a card whose summary says which
+// tag narrowed it — `tagSummary` for the listing, `searchSummary`'s composed clause for the
+// search — so the constraint is never invisible. Do not add a hidden parameter here that no
+// rendered sentence accounts for.
 func searchForm(v PageView) g.Node {
+	tag := activeTag(v)
 	return h.FormEl(
 		h.Class("searchbar"),
 		h.Method("get"),
@@ -501,8 +515,38 @@ func searchForm(v PageView) g.Node {
 			h.Placeholder("words to look for"),
 			h.AutoComplete("off"),
 		),
+		// 🔴 OMITTED ENTIRELY WHEN NO TAG IS IN FORCE, rather than rendered empty. An empty
+		// `?tag=` is a present operand that folds away, which `handlePage` treats as absent —
+		// so the two spellings answer the same today, and a form that put `&tag=` on every
+		// search URL would make every shared link carry a parameter its reader never chose.
+		g.If(tag != "", h.Input(h.Type("hidden"), h.Name(QueryTag), h.Value(tag))),
 		h.Button(h.Type("submit"), g.Text("Search")),
 	)
+}
+
+// activeTag is the ONE reader of the `?tag=` operand on the root page, wherever it landed.
+//
+// 🔴 IT DERIVES AND DOES NOT MIRROR, WHICH IS WHY IT IS A FUNCTION AND NOT A `PageView` FIELD.
+// `PageView` carried a `Tag` field once; it was written at both sites that build the view, read
+// by NOTHING, and its own comment claimed it named the string in the heading while the heading
+// read `TagMatches.Tag`. A second copy of one fact can only come to disagree with the copy that
+// is rendered. The operand's home is beside the entries it was compared against — `TagMatches`
+// when the tag filtered alone, `SearchResults` when it narrowed a search — and this reads
+// whichever of those exists.
+//
+// ⚠ THE ORDER OF THE TWO CHECKS CANNOT MATTER, AND THAT IS A PROPERTY OF `handlePage` RATHER
+// THAN OF THIS FUNCTION. Its `switch` sets exactly one of the two pointers, so no view reaches
+// here with both. If that ever stops being true, this function will quietly prefer the search —
+// which is why the composition is pinned by counting CARDS in the markup rather than by trusting
+// this precedence.
+func activeTag(v PageView) string {
+	if v.Results != nil {
+		return v.Results.Tag
+	}
+	if v.TagMatches != nil {
+		return v.TagMatches.Tag
+	}
+	return ""
 }
 
 // searchResults renders the scored answer from `internal/report`.
@@ -513,15 +557,29 @@ func searchForm(v PageView) g.Node {
 // blank for both has diagnosed nothing. The searched-scope list is rendered beside it for
 // the same reason one level up: a zero over an EMPTY scope set is an authority answer, not
 // a statement about the store.
+// 🔴 AND IT IS THE COMPOSED CARD TOO — `?q=` ALONE AND `?q=` WITHIN `?tag=` ARE ONE CARD, NOT
+// TWO SHAPES. The tag was applied inside the engine, so every count on this card is already a
+// count over the narrowed set: a second card would have to re-explain the same numbers. What
+// changes with a tag in force is the SUMMARY, which names both operands, and the ways back,
+// which become three because there are three states to return to rather than one.
 func searchResults(v PageView) g.Node {
 	r := *v.Results
 	return h.Section(
 		h.Class("card results"),
 		h.H2(g.Text("Search")),
-		h.P(h.Class("card-what"), g.Text(searchWhat)),
+		h.P(h.Class("card-what"), g.Text(searchWhatFor(r.Tag))),
 		h.P(h.Class("note"), g.Text(searchSummary(r))),
 		h.P(h.Class("note"), g.Text("Searched: "+scopeListText(r.ScopesSearched))),
-		h.P(h.Class("note"), h.A(h.Href(RootPath), g.Text("Clear the search and show every scope"))),
+		// 🔴 THREE WAYS BACK WHEN A TAG IS IN FORCE, AND EACH NAMES THE STATE IT LANDS ON.
+		// A composed answer has three neighbours — drop the tag, drop the words, drop both —
+		// and this surface has no script, so a state a link does not name is a state a reader
+		// reaches by editing the URL. The single "show every scope" link below is the whole
+		// navigation when no tag narrowed the search, which is what it has always been.
+		g.If(r.Tag != "", h.P(h.Class("note"), h.A(h.Href(searchHref(r.Query)),
+			g.Text("Clear the tag and search every entry")))),
+		g.If(r.Tag != "", h.P(h.Class("note"), h.A(h.Href(tagHref(r.Tag)),
+			g.Text("Clear the search and list everything tagged `"+r.Tag+"`")))),
+		h.P(h.Class("note"), h.A(h.Href(RootPath), g.Text(clearAllLabel(r.Tag)))),
 		g.If(len(r.Hits) == 0 && r.BestBelow != "", h.P(h.Class("empty"), g.Text(
 			"Nothing cleared the threshold. The closest entry was `"+r.BestBelow+"` — "+
 				"so this is a near miss rather than a store with nothing in it."))),
@@ -1065,7 +1123,29 @@ const (
 	searchWhat = "Scored over every line of every entry the credential can read, by the " +
 		"same engine `cairn search` uses — so a word inside a bullet is findable, not " +
 		"just a word in a title."
+	// 🔴 THE COMPOSED CARD NEEDS ITS OWN, BECAUSE `searchWhat` BECOMES FALSE UNDER A TAG.
+	// "over every line of every entry the credential can read" describes what the engine did
+	// when nothing narrowed it; with `?tag=` in force the search ran over a SUBSET, and a
+	// card-what that over-claims is the same defect as a comment the code contradicts — worse
+	// here, because a reader sees it. The summary line reports the counts; this says which
+	// QUESTION was asked.
+	searchWithinTagWhat = "Scored over every line of every entry the credential can read " +
+		"THAT CARRIES THIS TAG, by the same engine `cairn search --tag` uses — so a word " +
+		"inside a bullet is findable, not just a word in a title."
 )
+
+// searchWhatFor picks the card-what sentence for the state this card is in.
+//
+// ⚠ TWO WHOLE SENTENCES RATHER THAN ONE WITH A CLAUSE BOLTED ON, which is `RefsKeyDescription`'s
+// and `ReplicaHonesty`'s ruling restated: a page's claim is pinned as a whole normalised string so
+// that a reword is an edit a reviewer sees, and building one of these by concatenating a clause
+// onto the other would let a change to the shared half move both pinned strings at once.
+func searchWhatFor(tag string) string {
+	if tag == "" {
+		return searchWhat
+	}
+	return searchWithinTagWhat
+}
 
 func rootLegend() g.Node {
 	return legend([][2]string{
@@ -1228,6 +1308,31 @@ func tagHref(tag string) string {
 	return RootPath + "?" + url.Values{QueryTag: []string{tag}}.Encode()
 }
 
+// searchHref is the ONE place a `/?q=` URL is built, and it exists for the same two reasons
+// `tagHref` does: `url.Values.Encode` rather than concatenation, and a query parameter on the
+// root rather than a path segment.
+//
+// ⚠ ITS OPERAND IS LESS CONSTRAINED THAN `tagHref`'s AND THAT IS WHY IT CANNOT BE A `+`. A
+// folded tag is `[a-z0-9.-]` today; a query is WHATEVER A READER TYPED, reflected straight back
+// off `handlePage`. The encoder is what stops `?q=` ending an attribute, and the only reason
+// this is not already a stored-XSS report is that nothing built this URL before.
+func searchHref(query string) string {
+	return RootPath + "?" + url.Values{QueryQuery: []string{query}}.Encode()
+}
+
+// clearAllLabel names what the bare-root link actually does, which differs by how many filters
+// are in force.
+//
+// ⚠ A LABEL THAT LIES BY OMISSION IS THE DEFECT HERE, NOT A WORDING PREFERENCE. "Clear the
+// search and show every scope" beside a composed answer describes one of the two things the
+// link does and leaves the reader to discover the other by clicking it.
+func clearAllLabel(tag string) string {
+	if tag == "" {
+		return "Clear the search and show every scope"
+	}
+	return "Clear the search AND the tag, and show every scope"
+}
+
 // tagItem is one tag, as a link to the listing of everything carrying it.
 //
 // ⚠ ALWAYS A LINK, WHERE `taskItem` CAN FALL BACK TO PLAIN TEXT. A task ref's href comes from a
@@ -1266,17 +1371,30 @@ func entryLinkFor(scope control.ID, ref, label string) g.Node {
 // 🔴 THE TRUNCATION IS STATED. A list that silently stopped at `report.DefaultMaxHits`
 // reads as "that is all there is", which is the same defect as a scope card that showed
 // the first five refs without saying so.
+// 🔴 AND WITH A TAG IN FORCE IT NAMES BOTH OPERANDS, WHICH IS WHAT MAKES THE COMPOSED ZERO
+// READABLE. `report.SearchReport.RefToSkipped` carries the identical argument one package over:
+// a narrowed search that matches nothing cannot otherwise distinguish "these words are not in
+// these entries" from "the tag left nothing to search", and the two have opposite next actions
+// — rephrase, or pick a different tag. The counts come off the ENGINE's own report, so they
+// describe the set the scorer actually walked rather than a count this page re-derived.
 func searchSummary(r SearchResults) string {
+	var found string
 	switch {
 	case r.TotalHits == 0:
-		return "No match cleared the threshold."
+		found = "No match cleared the threshold."
 	case r.Omitted > 0:
-		return plural(len(r.Hits), "match", "matches") + " shown of " +
+		found = plural(len(r.Hits), "match", "matches") + " shown of " +
 			strconv.Itoa(r.TotalHits) + " that cleared the threshold; " +
 			strconv.Itoa(r.Omitted) + " not shown."
 	default:
-		return plural(r.TotalHits, "match", "matches") + " cleared the threshold."
+		found = plural(r.TotalHits, "match", "matches") + " cleared the threshold."
 	}
+	if r.Tag == "" {
+		return found
+	}
+	return found + " The tag `" + r.Tag + "` narrowed this search to " +
+		plural(r.EntriesSearched, "entry", "entries") + " before the query ran, leaving out " +
+		plural(r.TagSkipped, "visible entry", "visible entries") + " that do not carry it."
 }
 
 // scopeListText renders the searched-scope set, and says so when it is EMPTY rather than

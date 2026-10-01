@@ -48,9 +48,24 @@ import (
 // narrowing seam behind it.
 type Source interface {
 	Visible(auth control.Authorization) ([]Scope, error)
-	// Search answers the root page's `?q=`. It is the SAME engine the CLI and the pod
-	// use — see [StoreSource.Search] for why a second matcher was never on the table.
-	Search(auth control.Authorization, query string) (SearchResults, error)
+	// Search answers the root page's `?q=`, narrowed by `?tag=` when one was sent. It is
+	// the SAME engine the CLI and the pod use — see [StoreSource.Search] for why a second
+	// matcher was never on the table.
+	//
+	// 🔴 THE TAG IS AN ARGUMENT RATHER THAN A SECOND METHOD, BECAUSE THE TWO PARAMETERS
+	// COMPOSE INTO ONE QUESTION AND NOT TWO ANSWERS. `?q=` and `?tag=` used to render two
+	// independent cards here while the POD composed them into one narrowed search, so the
+	// two surfaces answered a two-parameter URL differently in KIND. Passing the tag down
+	// to the one engine is what makes them agree; a `SearchWithinTag` beside this would be
+	// a second place deciding what composition means.
+	//
+	// ⚠ `""` MEANS NO FILTER, AND THAT IS SAFE HERE WHERE IT IS NOT IN `report.SearchOptions`.
+	// The report options carry a `HasTag` companion because an EMPTY-but-present operand is a
+	// refusable request there. By this point `handlePage` has already folded the operand
+	// through `store.NormalizeRef` and treated a tag that folds away as ABSENT — see the
+	// `?tag=` block in `handlePage` for why a browse filter has no place to put a 400 — so
+	// "present and empty" cannot reach this method and a bare string is the whole operand.
+	Search(auth control.Authorization, query, tag string) (SearchResults, error)
 }
 
 // Scope is one scope's worth of entries, as the pages render them.
@@ -417,6 +432,29 @@ type SearchResults struct {
 	// ScopesSearched is the narrowed set the engine actually walked. It is rendered so
 	// an empty result is legible as an AUTHORITY answer when the set is empty.
 	ScopesSearched []string
+
+	// Tag is the FOLDED `?tag=` operand this search was narrowed by, "" when no tag was
+	// sent. It is the COMPOSED state's discriminator: the root page renders ONE card for
+	// `?q=&tag=` and this is how the card knows to name both operands.
+	//
+	// 🔴 IT LIVES HERE AND NOT ON `PageView`, WHICH IS THAT TYPE'S OWN RULING APPLIED.
+	// `PageView` carried a `Tag` field once, read by nothing while the heading read
+	// `TagMatches.Tag`, and it was deleted because a second copy of one fact can only come
+	// to disagree with the copy that is rendered. The operand belongs beside the entries it
+	// was compared against: on `TagMatches` when the tag filtered ALONE, and here when it
+	// narrowed a search. `activeTag` in `render.go` is the ONE reader that spans both, and
+	// it derives — it does not mirror.
+	Tag string
+	// TagSkipped is how many visible entries the tag filter removed BEFORE the query ran,
+	// and EntriesSearched is how many it left. Both are `report.SearchReport`'s own counts.
+	//
+	// 🔴 THEY ARE WHAT STOPS A NARROWED ZERO READING AS AN EMPTY STORE, which is the
+	// argument `report.SearchReport.RefToSkipped` already makes one package over: a composed
+	// search that matches nothing cannot otherwise distinguish "the words are not in these
+	// entries" from "the tag left nothing to search". Rendered by `searchSummary`, and only
+	// when `Tag != ""` — there is nothing for them to explain otherwise.
+	TagSkipped      int
+	EntriesSearched int
 }
 
 // TagMatches is the answer to `/?tag=<name>`: every VISIBLE entry carrying the tag.
@@ -718,11 +756,26 @@ func EntriesByTag(scopes []Scope, tag string) TagMatches {
 // OWN RULING: an all-scopes search names no scope, so there is nothing for a per-scope
 // refusal check to refuse, and narrowing the INDEX is what makes a store-wide search
 // store-wide over what the caller may see and nothing else.
-func (s StoreSource) Search(auth control.Authorization, query string) (SearchResults, error) {
+// 🔴 THE TAG IS APPLIED BY `report.Search` AND NEVER BY A FILTER OVER ITS ANSWER, AND THAT
+// IS WHAT MAKES THE COMPOSITION THE SAME COMPOSITION THE POD PERFORMS. `report.Search`
+// narrows the entry set AFTER scope authorisation and THEN scores what is left, so the
+// threshold, the near-miss `BestBelow` and the hit budget are all computed over the narrowed
+// set. Dropping non-matching hits out of an unnarrowed answer here would agree on WHICH
+// entries appear and disagree on every count beside them — including `BestBelow`, which would
+// then name an entry the tag excluded.
+//
+// ⚠ THE OPERAND IS HANDED OVER AS WRITTEN AND CANONICALISED INSIDE, which is
+// `report.SearchOptions.Tag`'s documented contract. `handlePage` has already folded it to
+// decide whether a filter was sent at all; `canonicalTag` folding an already-folded tag is
+// idempotent, and the alternative — a caller that pre-canonicalises and an engine that trusts
+// it — is the second spelling of the fold that `store.HasTag`'s own header refuses.
+func (s StoreSource) Search(auth control.Authorization, query, tag string) (SearchResults, error) {
 	named := auth.NamedScopes(control.VerbRead)
 	rep, err := report.Search(s.Root, report.SearchOptions{
 		Query:     query,
 		AllScopes: true,
+		Tag:       tag,
+		HasTag:    tag != "",
 		// The three tuning values are `internal/report`'s own defaults, reached through
 		// its constants rather than copied. `internal/api` and `internal/client` spell
 		// exactly these three the same way; a fourth surface inventing its own threshold
@@ -737,10 +790,17 @@ func (s StoreSource) Search(auth control.Authorization, query string) (SearchRes
 
 	ids := scopeIDsByFoldedName(named)
 	out := SearchResults{
-		Query:          query,
-		TotalHits:      rep.TotalHits,
-		Omitted:        rep.Omitted(),
-		ScopesSearched: rep.ScopesSearched,
+		Query:     query,
+		TotalHits: rep.TotalHits,
+		Omitted:   rep.Omitted(),
+		// 🔴 `rep.Tag` AND NOT THE `tag` ARGUMENT, so the page names the operand the ENGINE
+		// compared against rather than the one this method was handed. They differ by a fold
+		// today only in theory; the day they differ in practice is the day the page would
+		// otherwise claim a filter that did not run.
+		Tag:             rep.Tag,
+		TagSkipped:      rep.TagSkipped,
+		EntriesSearched: rep.EntriesSearched,
+		ScopesSearched:  rep.ScopesSearched,
 	}
 	if rep.BestBelow != nil {
 		out.BestBelow = rep.BestBelow.Ref
@@ -1248,15 +1308,7 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request, id identity.
 	// reader just typed into, not as a SENTENCE the page presents as its own. A reflected
 	// banner can say "your access was suspended, call this number"; a reflected search box
 	// says what the reader typed, which is the whole point of the control.
-	if query := strings.TrimSpace(r.URL.Query().Get(QueryQuery)); query != "" {
-		results, err := s.source.Search(id.Auth, query)
-		if err != nil {
-			writePlain(w, http.StatusInternalServerError, "the store could not be read")
-			return
-		}
-		view.Query = query
-		view.Results = &results
-	}
+	query := strings.TrimSpace(r.URL.Query().Get(QueryQuery))
 
 	// 🔴 `?tag=` IS A PARAMETER ON THIS SAME ROOT ROW, AND FOR A TAG THAT IS A REQUIREMENT
 	// RATHER THAN THE HOUSE PREFERENCE `?q=` FOLLOWS. A tag is USER TEXT out of a store file,
@@ -1292,7 +1344,38 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request, id identity.
 	// no place to put a 400 for a browse parameter — where the POD refuses the same operand,
 	// because there a 400 is the answer shape the route already has. The cost is that a typo is
 	// silent, and the heading naming the FOLDED tag is what makes it visible.
-	if tag := store.NormalizeRef(lastTagValue(r.URL.Query())); tag != "" {
+	tag := store.NormalizeRef(lastTagValue(r.URL.Query()))
+
+	// 🔴 THE TWO PARAMETERS COMPOSE INTO ONE CARD, AND THE COMPOSITION IS THE POD'S.
+	// `/?q=lease&tag=marketing` used to render TWO INDEPENDENT CARDS here — a search over
+	// every visible entry beside a listing of everything carrying the tag, neither narrowing
+	// the other — while `/api/v1/search` answered the same pair as ONE narrowed search. The
+	// surfaces disagreed in KIND, not merely in layout, and the search form discarded a tag
+	// that was on screen at the moment a reader typed into the box. Both are closed here:
+	// the tag goes INTO the engine, so exactly one of `Results`/`TagMatches` is ever non-nil.
+	//
+	// 🔴 THE QUERY DECIDES WHICH ANSWER SHAPE, AND THE TAG DECIDES WHAT IT RAN OVER — which
+	// is the only ordering that keeps the three states legible. A search is RANKED and a tag
+	// listing is a MEMBERSHIP TEST with nothing to rank, so there is no one card that is both;
+	// asking "was a query sent" first means `?tag=` alone keeps the listing it has always had,
+	// and adding words to the box turns it into a search WITHIN that tag rather than replacing
+	// it. The reverse order — a tag listing filtered by the query — would answer a two-operand
+	// URL with an UNRANKED list, which is the shape the pod does not produce.
+	//
+	// ⚠ EXACTLY ONE CARD IS A STRUCTURAL PROPERTY OF THIS `switch`, NOT A RENDERER RULE.
+	// `Page` still reads both pointers independently, so a later edit that sets both here
+	// would silently restore the two-card answer — `TestTheQueryAndTheTagComposeIntoOneCard`
+	// counts the cards in the MARKUP for that reason, rather than asserting on this branch.
+	switch {
+	case query != "":
+		results, err := s.source.Search(id.Auth, query, tag)
+		if err != nil {
+			writePlain(w, http.StatusInternalServerError, "the store could not be read")
+			return
+		}
+		view.Query = query
+		view.Results = &results
+	case tag != "":
 		matches := EntriesByTag(scopes, tag)
 		view.TagMatches = &matches
 	}
