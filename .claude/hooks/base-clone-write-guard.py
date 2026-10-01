@@ -145,6 +145,14 @@ check the claim rather than take it:
     it means recursing into nested shells, which is where the host-wide guard
     spends two separate recursion budgets.
 
+⚠ AND A FIFTH ROW IS CLOSED IN THE ONLY DIRECTION THAT IS SAFE: `git -C "$WT" …`
+IS REFUSED, NEVER RESOLVED. A `$VAR` target is one this guard cannot follow, so
+the caller's directory is judged and the refusal stands. That costs ergonomics on
+the spelling this repo's own recipe is written in, and the cost is paid
+deliberately — the comment above `_abs_path` carries the four fail-opens that a
+resolver for it opened, all four measured ALLOW where a bare commit in the clone
+is DENY. **The remedy is an absolute path, and the refusal message says so.**
+
 🔴 AND "REUSE THE HOST GUARD'S RESOLUTION" — WHICH THIS DOCSTRING TOLD TWO
 EARLIER ROUNDS TO DO — IS NOT AVAILABLE, SO SAYING IT WAS THE ADVICE THAT KEPT
 THE GAP OPEN. `guard_core.py` lives in the operator's `~/.claude/hooks/`, is not
@@ -243,12 +251,28 @@ _GIT_DIR_ENV_NAMES = ("GIT_DIR", "GIT_WORK_TREE")
 #: positional model and why guessing it fails open.
 _CHDIR_BUILTINS = frozenset({"cd", "pushd"})
 
-#: Upper bound on how many DISTINCT directories one Bash call may make this hook
-#: ask `git` about. A BOUND, NOT A POLICY: a command text carrying a hundred
-#: `--git-dir=` flags must not turn a per-Bash-call hook into a hundred `git`
-#: spawns. Each segment's own primary directory (its `-C` target, or the caller's)
-#: is probed FIRST, so what a truncation can lose is only the additive coverage
-#: added here — never the directory every earlier version of this guard judged.
+#: Upper bound on how many distinct ADDITIVE directories one Bash call may make
+#: this hook ask `git` about: the `--git-dir` / `--work-tree` / `GIT_DIR` / `cd`
+#: targets, and those only. A command text carrying a hundred `--git-dir=` flags
+#: must not turn a per-Bash-call hook into a hundred `git` spawns.
+#:
+#: 🔴 IT IS SCOPED TO THE ADDITIVE PASS BECAUSE A GLOBAL BUDGET WAS A MEASURED
+#: BYPASS, AND THE COMMENT THAT STOOD HERE CLAIMED OTHERWISE. It said a truncation
+#: "can lose only the additive coverage added here — never the directory every
+#: earlier version of this guard judged". False: the counter was shared by both
+#: passes, so PRIMARIES crowded out primaries. Eight `git -C <a real linked
+#: worktree> add` segments — each a legitimate, resolvable, trusted redirect —
+#: followed by a bare `git commit` IN THE CLONE was **ALLOW**, where the base ref
+#: denies it. Bisected on one fixture: DENY for N ≤ 7, ALLOW for N ≥ 8, exactly the
+#: bound. Padding with work the guard is SUPPOSED to permit bought an exemption
+#: for the write it is supposed to refuse.
+#:
+#: So the primary directory of every candidate segment is now ALWAYS probed, with
+#: no cap. That is unbounded in principle, and it is the same exposure the base ref
+#: carries (it, too, probed per candidate); `_ROOTS` and `_PROBED` memoise per
+#: path, so the cost is distinct directories rather than segments. A cap belongs on
+#: the half that cannot change a refusal into an allow, which is the additive half
+#: alone.
 _MAX_PROBED_DIRS = 8
 
 
@@ -550,107 +574,41 @@ def _is_main_worktree(cwd: str) -> bool | None:
         return None
 
 
-#: A `$NAME` / `${NAME}` reference inside a token.
-_VAR_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z_0-9]*)\}|\$([A-Za-z_][A-Za-z_0-9]*)")
-
-#: 🔴 THERE IS DELIBERATELY NO "IS THIS STILL A LITERAL" FILTER HERE, AND A DRAFT
-#: THAT HAD ONE WAS DELETED AFTER A MUTATION SWEEP SCORED IT **UNREACHABLE**.
-#: It rejected a value carrying a command substitution, a glob or a surviving `$`.
-#: Breaking it on purpose (the pattern changed to one that matches nothing)
-#: changed NO verdict in the whole suite, because every value it rejected is
-#: rejected again downstream: such a string is not an existing directory, so
-#: `_protected` answers `None` for it anyway. A guard that cannot change an answer
-#: reads as coverage while providing none, which is worse than not having it.
-#: ⚠ AND REMOVING IT IS THE FAIL-CLOSED DIRECTION, which is why it was removed
-#: rather than labelled: the filter shrank the candidate list, so it could turn an
-#: AMBIGUOUS two-value name into a single trusted value. Without it, two values
-#: stay two, and two values never replace the caller's directory.
-
-#: How many literals one token may expand to. A BOUND, NOT A POLICY, for the same
-#: reason as `_MAX_PROBED_DIRS`: a text assigning one name twenty values must not
-#: make a per-Bash-call hook enumerate twenty paths.
-_MAX_EXPANSIONS = 8
-
-
-def _assigned_values(segments: list[list[str]]) -> dict[str, list[tuple[int, str]]]:
-    """`{NAME: [(segment index, literal value), …]}` for the whole command line.
-
-    Only the LEADING position is read, which is the one position a shell treats as
-    an assignment — the same restriction the `OVERRIDE` read learned the hard way,
-    and for the same reason: `git commit -m 'WT=/x'` assigns nothing.
-    """
-    out: dict[str, list[tuple[int, str]]] = {}
-    for index, segment in enumerate(segments):
-        assignments, _ = _leading_assignments(segment)
-        for name, value in assignments.items():
-            out.setdefault(name, []).append((index, value))
-    return out
-
-
-def _expand(token: str, variables: dict[str, list[tuple[int, str]]],
-            before: int | None) -> list[str]:
-    """Every literal `token` could be, given what the command line assigns.
-
-    `[]` means "this guard cannot say", and every caller treats that as "judge the
-    caller's directory too" — the fail-CLOSED fallback. An unresolvable target
-    must never buy an exemption.
-
-    🔴 `before` IS A SEGMENT INDEX AND THE RULE IS BASH'S, MEASURED IN BASH RATHER
-    THAN REASONED. Only an assignment in a STRICTLY EARLIER segment governs an
-    expansion:
-
-        WT=/tmp/NEW; printf '[%s]' "$WT"        →  [/tmp/NEW]
-        WT=/tmp/NEW printf '[%s]' "$WT"         →  []        (same segment!)
-        printf '[%s]' "$WT"; WT=/tmp/NEW        →  []
-
-    The middle line is the trap: an assignment PREFIX does not affect its own
-    command's expansions, so resolving from it would make the guard believe a
-    redirect the shell never performs. `None` lifts the ordering requirement, for
-    callers whose answer can only ADD judged directories.
-
-    ⚠ NOT A SHELL, AND NOTHING HERE PRETENDS OTHERWISE. One substitution pass, no
-    recursion, no command substitution, no globbing, no arithmetic. A token this
-    leaves still carrying a `$`, a backtick or a `*` is simply not an existing
-    directory, so it buys nothing — see the note above `_MAX_EXPANSIONS` for why
-    filtering those out explicitly was measured UNREACHABLE and deleted.
-    """
-    if not _VAR_REF.search(token):
-        return [token]
-    names = sorted({m.group(1) or m.group(2) for m in _VAR_REF.finditer(token)})
-    options: list[list[str]] = []
-    for name in names:
-        values = list(dict.fromkeys(
-            v for i, v in variables.get(name, [])
-            if before is None or i < before))
-        if not values:
-            return []
-        options.append(values)
-    out: list[str] = []
-    for combination in _product(options):
-        chosen = dict(zip(names, combination))
-        text = _VAR_REF.sub(lambda m: chosen[m.group(1) or m.group(2)], token)
-        if text not in out:
-            out.append(text)
-        if len(out) >= _MAX_EXPANSIONS:
-            break
-    return out
-
-
-def _product(options: list[list[str]]) -> list[tuple[str, ...]]:
-    """A bounded cartesian product. Bounded rather than `itertools.product` so the
-    cap is visible at the only place that can blow up."""
-    out: list[tuple[str, ...]] = [()]
-    for values in options:
-        grown: list[tuple[str, ...]] = []
-        for prefix in out:
-            for value in values:
-                grown.append(prefix + (value,))
-                if len(grown) >= _MAX_EXPANSIONS:
-                    break
-            if len(grown) >= _MAX_EXPANSIONS:
-                break
-        out = grown
-    return out
+#: 🔴 THERE IS NO VARIABLE EXPANSION HERE, AND A VERSION OF THIS FILE THAT HAD IT
+#: OPENED FOUR FAIL-OPENS AN AUDIT MEASURED. The reasoning that produced it was:
+#: an unresolvable `-C "$WT"` falls back to judging the caller's directory, which
+#: is correct but annoying, so resolve what the command text itself assigns. The
+#: defect is that KNOWING A NAME IS ASSIGNED SOMEWHERE IN THE TEXT IS NOT KNOWING
+#: THE SHELL WILL HAVE ASSIGNED IT. In each of these bash leaves `WT` **unset**,
+#: so the command git actually runs is `git -C "" commit` — and git runs that in
+#: the CURRENT directory, the clone:
+#:
+#:     ( WT=<wt> ) ; git -C "$WT" commit       a subshell assignment is discarded
+#:     false && WT=<wt> ; git -C "$WT" commit   the assignment never runs
+#:     if false; then WT=<wt>; fi; git -C …     nor does one in an untaken branch
+#:     WT=<wt> true; git -C "$WT" commit        a command PREFIX scopes to `true`
+#:
+#: All four were ALLOW with expansion and DENY without it, re-measured on a
+#: miniature clone with a bare `git commit` in the clone DENYing as the control in
+#: the same run; the first was proved end to end, the clone going 1 -> 2 commits
+#: while the worktree stayed at 1. That is precisely the silent wrong-branch commit
+#: this hook exists to prevent.
+#:
+#: 🔴 AND NOTE WHAT THE EXPANSION DID TO THE FALLBACK: it did not relax it, it made
+#: it UNREACHABLE in those four shapes — honoured formally, not substantively. A
+#: rule obeyed to the letter while its purpose is defeated is the harder failure to
+#: see, which is why this comment is long and the code is gone.
+#:
+#: It was also NARROWER than intended: `export WT=…; git -C "$WT" add` stayed
+#: refused, because the assignment walk does not model `export`. So it bought
+#: ergonomics in the shapes where it was WRONG and not in the shape a careful
+#: script uses.
+#:
+#: The replacement is not a better parser, it is PROSE: an unresolvable target
+#: refuses, and the refusal names the remedy — pass `-C` an ABSOLUTE path. Modelling
+#: shell scope in Python inside a security path is a cost with no measured symptom
+#: behind it: the requirement traced to a report whose own repro assigned the
+#: variable in a PREVIOUS Bash call, which no parser here could ever resolve.
 
 
 def _abs_path(value: str, base: str) -> str | None:
@@ -677,8 +635,7 @@ def _abs_path(value: str, base: str) -> str | None:
 
 
 def _redirect_targets(segment: list[str], cwd: str,
-                      variables: dict[str, list[tuple[int, str]]],
-                      index: int) -> tuple[str | None, list[str]]:
+                      ) -> tuple[str | None, list[str]]:
     """`(the directory this git call RUNS IN, the directories it NAMES)`.
 
     The first element is the cumulative `-C` result, or `None` when the segment
@@ -686,20 +643,11 @@ def _redirect_targets(segment: list[str], cwd: str,
     `-C` that happens to resolve to `cwd`". The second is every `--git-dir` /
     `--work-tree` value, in both the spaced and the attached `=` spelling.
 
-    🔴 A `-C "$WT"` IS THE SPELLING THE WHOLE RECIPE IS WRITTEN IN, AND LEAVING IT
-    UNRESOLVED WAS NOT A SMALL GAP — IT WAS THE REPORTED DEFECT. A cross-repo
-    worktree write issued as `WT=<path>` on one line and `git -C "$WT" add …` on
-    the next was REFUSED, because the token is literally `$WT` here and an
-    unresolvable target falls back to the caller's directory. The literal-path
-    spelling of the same command was already allowed, which is why the fallback
-    is not the thing to relax: `_expand` resolves what the command text itself
-    assigns, and anything it still cannot resolve keeps the refusal.
-
-    ⚠ ONE EXPANSION, ONE VALUE, OR NO REPLACEMENT. The `-C` result is trusted to
-    replace the caller's directory only when the token resolves to exactly ONE
-    literal; a name the text assigns two different values is genuinely ambiguous,
-    so every candidate is returned as a NAMED (additive) directory instead and the
-    caller's own directory stays in the judged set.
+    ⚠ A `$VAR` IS NOT RESOLVED, AND THAT IS A DECISION WITH A MEASUREMENT BEHIND
+    IT RATHER THAN AN OMISSION — the long comment above `_abs_path` carries the
+    four fail-opens a resolver opened. `git -C "$WT" commit` therefore names a
+    target this guard cannot follow, so the caller's directory is judged and the
+    refusal stands. The remedy is in the refusal message: an ABSOLUTE path.
 
     🔴 THE `-C` CHAIN IS CUMULATIVE, BECAUSE GIT IS. `git -C a -C b` is
     `cd a; cd b` — each `-C` is relative to the one before it, so taking only the
@@ -721,7 +669,6 @@ def _redirect_targets(segment: list[str], cwd: str,
     _, i = _leading_assignments(segment)
     j = i + 1
     here: str | None = None
-    ambiguous: list[str] = []
     named: list[str] = []
     while j < len(segment):
         word = segment[j]
@@ -731,24 +678,19 @@ def _redirect_targets(segment: list[str], cwd: str,
         elif word.startswith("-C") and len(word) > 2:
             hop, j = word[2:], j + 1
         if hop is not None:
-            options = _expand(hop, variables, index)
-            if len(options) == 1:
-                # 🔴 `normpath`, not `_abs_path`: an intermediate hop in the chain is
-                # a directory to resolve the NEXT one against, and demanding that
-                # each link exist would drop a chain whose final link does.
-                here = os.path.normpath(
-                    os.path.join(here or cwd, os.path.expanduser(options[0])))
-            else:
-                # Unresolvable, or several candidates. Break the chain so it cannot
-                # replace the caller's directory, and judge every candidate anyway.
-                ambiguous.extend(options)
-                here = None
+            # 🔴 `normpath`, not `_abs_path`: an intermediate hop in the chain is a
+            # directory to resolve the NEXT one against, and demanding that each
+            # link exist would drop a chain whose final link does. A hop carrying
+            # an unexpanded `$VAR` therefore produces a path that is not a
+            # repository, which `_judged_dirs` turns into "judge the caller too".
+            here = os.path.normpath(
+                os.path.join(here or cwd, os.path.expanduser(hop)))
             continue
         for opt in _GIT_REPO_OPTS:
             if word == opt and j + 1 < len(segment):
-                named.extend(_expand(segment[j + 1], variables, None))
+                named.append(segment[j + 1])
             elif word.startswith(opt + "="):
-                named.extend(_expand(word.split("=", 1)[1], variables, None))
+                named.append(word.split("=", 1)[1])
         if word in _GIT_GLOBALS_WITH_VALUE:
             j += 2
             continue
@@ -757,12 +699,10 @@ def _redirect_targets(segment: list[str], cwd: str,
             continue
         break
     base = here or cwd
-    resolved = [_abs_path(v, base) for v in named] + [_abs_path(v, cwd) for v in ambiguous]
-    return here, [d for d in resolved if d]
+    return here, [d for d in (_abs_path(v, base) for v in named) if d]
 
 
 def _ambient_targets(segments: list[list[str]], cwd: str,
-                     variables: dict[str, list[tuple[int, str]]],
                      ) -> tuple[list[str], list[str]]:
     """`(directories a GIT_DIR-family variable names, directories a `cd` names)`.
 
@@ -795,29 +735,26 @@ def _ambient_targets(segments: list[list[str]], cwd: str,
         resolved = _abs_path(os.environ.get(name, ""), cwd)
         if resolved:
             env_dirs.append(resolved)
-    for index, segment in enumerate(segments):
+    for segment in segments:
         for word in segment:
             for name in _GIT_DIR_ENV_NAMES:
                 if word.startswith(name + "="):
-                    for value in _expand(word.split("=", 1)[1], variables, None):
-                        resolved = _abs_path(value, cwd)
-                        if resolved:
-                            env_dirs.append(resolved)
+                    resolved = _abs_path(word.split("=", 1)[1], cwd)
+                    if resolved:
+                        env_dirs.append(resolved)
         _, i = _leading_assignments(segment)
         if i < len(segment) and os.path.basename(segment[i]) in _CHDIR_BUILTINS:
             for word in segment[i + 1:]:
                 if word.startswith("-"):
                     continue
-                for value in _expand(word, variables, index):
-                    resolved = _abs_path(value, cwd)
-                    if resolved:
-                        cd_dirs.append(resolved)
+                resolved = _abs_path(word, cwd)
+                if resolved:
+                    cd_dirs.append(resolved)
                 break
     return env_dirs, cd_dirs
 
 
-def _judged_dirs(segment: list[str], index: int, cwd: str,
-                 variables: dict[str, list[tuple[int, str]]],
+def _judged_dirs(segment: list[str], cwd: str,
                  env_dirs: list[str], cd_dirs: list[str]) -> list[str]:
     """Every directory a write in this segment could land in, primary one FIRST.
 
@@ -842,7 +779,7 @@ def _judged_dirs(segment: list[str], index: int, cwd: str,
     moves the shell, which a `-C` then overrides, while `GIT_DIR` overrides the
     `-C` in turn.
     """
-    here, named = _redirect_targets(segment, cwd, variables, index)
+    here, named = _redirect_targets(segment, cwd)
     trusted = bool(here) and _repo_root(here) is not None
     primary = here if trusted else cwd
     extra = list(named) + env_dirs + ([] if trusted else cd_dirs)
@@ -879,12 +816,18 @@ def _main_worktree_path(cwd: str) -> str | None:
 
 
 #: Memo for `_protected`, keyed on the directory asked about. One Bash call can
-#: name the same directory from several segments, and each probe is two `git`
-#: spawns — see `_MAX_PROBED_DIRS` for the other half of the same budget.
+#: name the same directory from several segments, and each probe is up to three
+#: `git` spawns.
 _PROBED: dict[str, tuple[str, int] | None] = {}
 
+#: How many ADDITIVE probes this process has spent. Counted separately from
+#: `_PROBED` because a primary probe must never consume the additive budget — see
+#: `_MAX_PROBED_DIRS` for the bypass that taught the distinction.
+_ADDITIVE_PROBES = 0
 
-def _protected(path: str, own_repo: str) -> tuple[str, int] | None:
+
+def _protected(path: str, own_repo: str,
+               budgeted: bool = False) -> tuple[str, int] | None:
     """`(the clone's main worktree, its linked-worktree count)` when a write into
     `path` lands in the SHARED BASE CLONE of the repository this file ships in.
     `None` for every other directory, and for every question git cannot answer.
@@ -896,14 +839,24 @@ def _protected(path: str, own_repo: str) -> tuple[str, int] | None:
     therefore IDENTICAL for the main worktree and every linked worktree of it, so
     a check built on it alone re-creates the false positive this resolution exists
     to remove. `--absolute-git-dir` is what separates them — `<common>` in the
-    main worktree, `<common>/worktrees/<name>` in a linked one. `--show-toplevel`
-    answers neither: it is a fatal when the target is a git dir, which is the
-    spelling `--git-dir=` requires, and it cannot tell main from linked by itself.
+    main worktree, `<common>/worktrees/<name>` in a linked one.
+
+    ⚠ `--show-toplevel` IS REJECTED FOR TWO DIFFERENT REASONS AND AN EARLIER DRAFT
+    OF THIS COMMENT MERGED THEM INTO ONE WRONG ONE. It said the flag form is
+    "fatal when the target is a git dir". Measured: `git --git-dir=<clone>/.git
+    rev-parse --show-toplevel` from a linked worktree exits **0** and answers the
+    WORKTREE — a confidently wrong answer, which is worse than a fatal. The fatal
+    belongs to the probe form this guard would have to use, `git -C <a git dir>
+    rev-parse --show-toplevel` → rc 128 `must be run in a work tree`. Two
+    independent disqualifications; the conclusion was right and the attribution
+    was not. And it answers neither question anyway: a worktree root does not say
+    whether it is the MAIN one, so it would need the comparison above regardless.
 
     A `path` that IS a git dir is answered correctly by both questions (measured
     for `<clone>/.git` and `<common>/worktrees/<name>`), which is what lets one
     probe serve a worktree path and a `--git-dir` value alike.
     """
+    global _ADDITIVE_PROBES
     # 🔴 THE ONE EXISTENCE CHECK, AND IT COMES BEFORE THE BUDGET. This hook runs
     # BEFORE the command does, so a directory the command is about to create does
     # not exist yet; a path that is not a directory now cannot be the base clone,
@@ -914,12 +867,22 @@ def _protected(path: str, own_repo: str) -> tuple[str, int] | None:
         return None
     if path in _PROBED:
         return _PROBED[path]
+    if budgeted:
+        # Exhaustion returns without writing `_PROBED`, so the budget can never
+        # record a verdict — only decline to compute one. ⚠ THAT IS BELT AND
+        # BRACES, NOT A LIVE GUARANTEE, and saying so is the point: with the
+        # passes ordered unbudgeted-first, every primary is probed before any
+        # budget can run out, so memoising the exhaustion here would change no
+        # answer today. It is written this way so that reordering the passes
+        # cannot quietly turn a cost control into a verdict.
+        if _ADDITIVE_PROBES >= _MAX_PROBED_DIRS:
+            return None
+        _ADDITIVE_PROBES += 1
     result: tuple[str, int] | None = None
-    if len(_PROBED) < _MAX_PROBED_DIRS:
-        if _repo_root(path) == own_repo and _is_main_worktree(path) is True:
-            linked = _linked_worktrees(path)
-            if linked:
-                result = (_main_worktree_path(path) or path, linked)
+    if _repo_root(path) == own_repo and _is_main_worktree(path) is True:
+        linked = _linked_worktrees(path)
+        if linked:
+            result = (_main_worktree_path(path) or path, linked)
     _PROBED[path] = result
     return result
 
@@ -985,25 +948,29 @@ def main() -> None:
     if not own_repo:
         _allow()
 
-    # 🔴 TWO PASSES, PRIMARY DIRECTORIES FIRST, AND THE ORDER IS THE `_MAX_PROBED_DIRS`
-    # GUARANTEE RATHER THAN TIDINESS. Pass one asks about the directory each git
-    # call actually RUNS IN — its `-C` target, or the caller's — which is the only
-    # directory any earlier version of this guard judged. Pass two asks about the
-    # ADDITIVE ones (`--git-dir`, `--work-tree`, `GIT_DIR`, a `cd`). Interleaving
-    # them would let a command text full of `--git-dir=` flags spend the probe
-    # budget before a primary was ever asked about, which would make the new
-    # coverage cost the old — a fail-OPEN paid for with a widening.
-    variables = _assigned_values(segments)
-    env_dirs, cd_dirs = _ambient_targets(segments, cwd, variables)
-    plans = [(sub, _judged_dirs(segment, index, cwd, variables, env_dirs, cd_dirs))
-             for sub, segment, index in candidates]
+    # 🔴 TWO PASSES, AND THE SPLIT IS WHAT MAKES THE PROBE BUDGET SAFE RATHER THAN
+    # MERELY TIDY. Pass one asks about the directory each git call actually RUNS IN
+    # — its `-C` target, or the caller's — which is the only directory any earlier
+    # version of this guard judged, and it is UNBUDGETED. Pass two asks about the
+    # ADDITIVE ones (`--git-dir`, `--work-tree`, `GIT_DIR`, a `cd`) and is the only
+    # pass a cap applies to.
+    #
+    # An earlier draft shared one budget across both and ordered the passes to
+    # compensate. Ordering is not a guarantee: the counter was global, so eight
+    # legitimate `git -C <a real linked worktree> add` segments exhausted it and a
+    # bare `git commit` IN THE CLONE on the same line was ALLOWED. Padding with
+    # permitted work bought an exemption for a refused write. `_MAX_PROBED_DIRS`
+    # carries the bisect.
+    env_dirs, cd_dirs = _ambient_targets(segments, cwd)
+    plans = [(sub, _judged_dirs(segment, cwd, env_dirs, cd_dirs))
+             for sub, segment, _ in candidates]
 
     hits: list[str] = []
     found: tuple[str, int] | None = None
-    for rank in (0, 1):
+    for budgeted in (False, True):
         for subcommand, dirs in plans:
-            for path in (dirs[:1] if rank == 0 else dirs[1:]):
-                verdict = _protected(path, own_repo)
+            for path in (dirs[1:] if budgeted else dirs[:1]):
+                verdict = _protected(path, own_repo, budgeted)
                 if verdict:
                     hits.append(subcommand)
                     found = found or verdict

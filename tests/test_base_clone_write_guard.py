@@ -59,6 +59,20 @@ def _refused_from_hook() -> frozenset[str]:
     return frozenset(re.findall(r'"([a-z0-9-]+)"', block.group(1)))
 
 
+def _probe_bound_from_hook() -> int:
+    """`_MAX_PROBED_DIRS`, read out of the hook's SOURCE.
+
+    Read rather than hardcoded so the probe-budget test keeps padding PAST the
+    bound if the bound ever moves. `test_the_probe_bound_is_parseable` is the
+    positive control: a regex that matched nothing would make that test pad zero
+    directories and pass while measuring nothing at all.
+    """
+    text = HOOK.read_text(encoding="utf-8")
+    match = re.search(r"^_MAX_PROBED_DIRS = (\d+)$", text, re.M)
+    assert match, "could not find the _MAX_PROBED_DIRS literal in the hook source"
+    return int(match.group(1))
+
+
 def _refused_from_doc() -> frozenset[str]:
     """The subcommands the doc's refused-set TABLE names, in backticks."""
     text = DOC.read_text(encoding="utf-8")
@@ -179,6 +193,19 @@ def test_the_hook_ledger_is_parseable():
     refused = _refused_from_hook()
     assert "commit" in refused, "the parse found no `commit` — it is matching nothing"
     assert len(refused) >= 5, f"implausibly small ledger, parse is probably broken: {refused}"
+
+
+def test_the_probe_bound_is_parseable():
+    """POSITIVE CONTROL for the read the probe-budget test pads from.
+
+    Without it, a regex matching nothing would make
+    `test_junk_candidates_cannot_crowd_a_REAL_one_out_of_the_probe_budget` build
+    zero padding segments and pass while exercising nothing — the same
+    disjoint-key-spaces failure the ledger comparison below guards against.
+    """
+    bound = _probe_bound_from_hook()
+    assert bound >= 1, bound
+    assert bound < 1000, f"implausible bound, the parse is probably wrong: {bound}"
 
 
 def test_the_doc_table_is_parseable():
@@ -1017,183 +1044,156 @@ def test_an_UNEXPANDED_VARIABLE_in_a_redirect_stays_refused(parallel_clone):
     assert _decision(_run_hook("git -C $WT commit -m x", clone)) == "deny"
 
 
-# ------------------------- the target named by a VARIABLE the command text assigns
+# ------------------- a target named by a VARIABLE: REFUSED, and that is the ruling
 #
-# 🔴 THE REPORTED DEFECT, AND IT WAS NOT THE ONE ANYBODY PREDICTED. A cross-repo
-# worktree write was refused from a cairn-rooted session, and the hypothesis on
-# arrival was that target resolution broke for a worktree belonging to a DIFFERENT
-# clone (which shares no git dir, no common dir and no object store). Measured
-# against the real paths with the control DENYing in the same run, that was wrong:
-# the LITERAL-path spelling was already allowed. What was refused was
+# 🔴 THIS SECTION REPLACES ONE THAT RESOLVED `$VAR` FROM THE COMMAND TEXT, AND THE
+# RETRACTION IS THE MOST USEFUL THING IN IT. The requirement came from a report
+# that `git -C "$WT" add` was wrongly refused for a cross-repo worktree. Measured
+# against the real paths with a control: the LITERAL-path spelling was already
+# allowed, and the repro had assigned `WT` in a PREVIOUS Bash call, which no parser
+# in this process could ever resolve. There was no defect.
 #
-#     WT=<path>
-#     git -C "$WT" add <file>
+# The resolver written for that non-defect opened FOUR fail-opens. In each of these
+# bash leaves `WT` UNSET, so the command git runs is `git -C "" commit` — which git
+# runs in the CURRENT directory, the clone:
 #
-# because the token is literally `$WT` to this parser, and an unresolvable target
-# correctly falls back to the caller's directory — which was the clone. So the
-# fallback is not what to relax; the fix is to resolve what the command text
-# itself assigns, and the cases below pin both halves of that.
-
-
-def test_a_redirect_through_a_VARIABLE_assigned_EARLIER_is_resolved(tmp_path):
-    """🔴 THE REGRESSION TEST FOR THE REPORTED DEFECT.
-
-    `WT=<another repo's worktree>` on one line, `git -C "$WT" commit` on the
-    next. Watched RED at `fbe81e0` AND at `0e1060f` — both refused — and green
-    here. The literal-path spelling of the same command was ALREADY green at
-    `0e1060f`, which is what identified the variable rather than the cross-repo
-    worktree as the mechanism.
-    """
-    global _ACTIVE_HOOK
-    clone = tmp_path / "clone"
-    other_wt = tmp_path / "other-wt"
-    local_hook = _init_clone(clone)
-    _add_worktree(clone, tmp_path / "wt")
-    _init_clone(tmp_path / "other")
-    _add_worktree(tmp_path / "other", other_wt)
-    _ACTIVE_HOOK = local_hook
-    try:
-        # POSITIVE CONTROL: this fixture refuses a real base-clone write.
-        assert _decision(_run_hook("git commit -m x", clone)) == "deny"
-        # The literal spelling, which `0e1060f` already allowed — asserted so a
-        # future regression tells you WHICH of the two broke.
-        assert _decision(
-            _run_hook(f"git -C {other_wt} commit -m x", clone)) is None
-        verdict = _run_hook(f'WT={other_wt}\ngit -C "$WT" commit -m x', clone)
-        assert _decision(verdict) is None, (
-            "a cross-repo worktree write named through a variable the command "
-            "text assigns was refused — the reported defect"
-        )
-        # 🔴 BOTH SPELLINGS. `${NAME}` is the one a careful script uses, and
-        # cairn's own rules require braces around a ref followed by a `:` or a
-        # path separator — so a pattern that only read `$NAME` would miss the
-        # spelling the house style mandates. A mutation sweep confirmed the
-        # braced alternative is load-bearing and not decoration.
-        braced = _run_hook(f'WT={other_wt}\ngit -C "${{WT}}" commit -m x', clone)
-        assert _decision(braced) is None, "the braced ${NAME} spelling was refused"
-    finally:
-        _ACTIVE_HOOK = None
-
-
-def test_a_variable_redirect_INTO_the_clone_is_refused(parallel_clone):
-    """The pair, and what stops variable resolution becoming a bypass.
-
-    If `$WT` resolves to the clone, the write lands in the clone. Watched RED at
-    `fbe81e0` AND at `0e1060f` — both ALLOWED it, because the cwd here is the
-    linked worktree and neither ref read the redirect at all.
-
-    🔴 A FIRST DRAFT OF THIS DOCSTRING CALLED IT AN INVARIANT GUARD, and running
-    it at the two refs is what showed the label was false. The cwd was chosen to
-    be the WORKTREE precisely so the refusal can only come from resolving the
-    variable — which also means neither ref could get it right, so it is
-    regression coverage after all. The label was wrong in the direction that
-    understates coverage; the measurement is the authority, not the intent.
-    """
-    clone, wt = parallel_clone[:2]
-    verdict = _run_hook(f'WT={clone}\ngit -C "$WT" commit -m x', wt)
-    assert _decision(verdict) == "deny"
+#     ( WT=<wt> ) ; git -C "$WT" commit       a subshell assignment is discarded
+#     false && WT=<wt> ; git -C "$WT" commit   the assignment never runs
+#     if false; then WT=<wt>; fi; git -C …     nor does one in an untaken branch
+#     WT=<wt> true; git -C "$WT" commit        a command PREFIX scopes to `true`
+#
+# All four were ALLOW with the resolver and DENY without it; one was proved end to
+# end, the clone going 1 -> 2 commits while the worktree stayed at 1. Knowing a
+# name is ASSIGNED SOMEWHERE IN THE TEXT is not knowing the shell will have
+# ASSIGNED IT.
+#
+# 🔴 AND NOTE HOW THE FALLBACK DIED. The brief said not to relax it, and it was not
+# relaxed — the resolver made it UNREACHABLE in those four shapes instead. A rule
+# honoured formally while its purpose is defeated is the harder failure to see,
+# which is why these cases are pinned by SHAPE rather than left to the one-line
+# claim that unresolvable targets refuse.
 
 
 @pytest.mark.parametrize("command,why", [
+    ('( WT={wt} ) ; git -C "$WT" commit -m x',
+     "a subshell assignment is discarded, so $WT is unset"),
+    ('false && WT={wt} ; git -C "$WT" commit -m x',
+     "the assignment never runs, so $WT is unset"),
+    ('if false; then WT={wt}; fi; git -C "$WT" commit -m x',
+     "an untaken branch assigns nothing"),
+    ('WT={wt} true; git -C "$WT" commit -m x',
+     "a command prefix scopes the assignment to `true`"),
+    ('WT={wt}\ngit -C "$WT" commit -m x',
+     "even the shape that WOULD have resolved: no expansion happens at all now"),
+    ('export WT={wt}; git -C "$WT" commit -m x',
+     "`export` is not modelled either, and now does not need to be"),
     ('git -C "$WT" commit -m x',
-     "the value is nowhere in the text, so the guard cannot know it"),
-    ('WT={other} git -C "$WT" commit -m x',
-     "an assignment PREFIX does not affect its own command's expansions"),
-    ('git -C "$WT" commit -m x; WT={other}',
-     "an assignment AFTER the command cannot govern it"),
-    ('WT={other}\nWT={clone}\ngit -C "$WT" commit -m x',
-     "two different values for one name is genuinely ambiguous"),
-    ('WT=$(echo {other})\ngit -C "$WT" commit -m x',
-     "a command substitution is not evaluated, so the value is not a directory"),
-    ('WT={other}/*\ngit -C "$WT" commit -m x',
-     "a glob is not expanded, so the value is not a directory either"),
+     "the value is nowhere in the text"),
+    ('git -C "${{WT}}" commit -m x',
+     "nor in the braced spelling"),
 ])
-def test_an_UNRESOLVABLE_variable_keeps_the_refusal(tmp_path, command, why):
-    """🔴 THE FALLBACK IS NOT RELAXED, AND THAT IS THE WHOLE SAFETY ARGUMENT.
+def test_a_target_named_by_a_VARIABLE_is_always_REFUSED(parallel_clone, command, why):
+    """🔴 THE FOUR FAIL-OPEN SHAPES, PLUS THE ONES THAT MERELY LOOK RESOLVABLE.
 
-    Every row names a target this guard cannot resolve to one literal directory,
-    so every row must leave the refusal standing. Rows two and three are BASH'S
-    OWN RULE, measured rather than reasoned:
+    Every row is a REAL base-clone write: `git -C ""` runs in the current
+    directory. The first four were measured **ALLOW** at the resolver head and
+    **DENY** at `0e1060f`, and are green here — so they are regression coverage
+    against a fail-open this branch itself introduced and removed.
 
-        WT=/tmp/NEW; printf '[%s]' "$WT"   →  [/tmp/NEW]
-        WT=/tmp/NEW printf '[%s]' "$WT"    →  []          (same segment!)
-        printf '[%s]' "$WT"; WT=/tmp/NEW   →  []
+    Rows five and six are the ⚠ ERGONOMIC COST, stated rather than hidden: the
+    spelling a careful script uses is refused too. The remedy is an ABSOLUTE path,
+    which the refusal message names, and it is a cheaper remedy than modelling
+    shell scope in Python inside a security path.
 
-    Resolving from either would make the guard believe a redirect the shell never
-    performs — a fail-OPEN invented by a fix for a fail-closed annoyance.
-
-    ⚠ THE LAST TWO ROWS ARE NOT ABOUT THE EXPANSION AT ALL, and saying so is the
-    point: a command substitution and a glob are not evaluated here, so the value
-    is simply not an existing directory and `_protected` answers nothing for it.
-    A draft of the hook ALSO carried an explicit "is this still a literal" filter;
-    a mutation sweep scored it unreachable for exactly this reason and it was
-    deleted rather than left reading as coverage.
-
-    ⚠ INVARIANT GUARDS: all six were green at `0e1060f`, which refused every one
-    of these for a different reason (it resolved no variables at all). They
-    evidence that this change did not open a hole, not that it closed one.
-    """
-    global _ACTIVE_HOOK
-    clone = tmp_path / "clone"
-    other_wt = tmp_path / "other-wt"
-    local_hook = _init_clone(clone)
-    _add_worktree(clone, tmp_path / "wt")
-    _init_clone(tmp_path / "other")
-    _add_worktree(tmp_path / "other", other_wt)
-    _ACTIVE_HOOK = local_hook
-    try:
-        text = command.format(other=other_wt, clone=clone)
-        assert _decision(_run_hook(text, clone)) == "deny", f"{why}: {text}"
-    finally:
-        _ACTIVE_HOOK = None
-
-
-def test_an_AMBIGUOUS_variable_judges_EVERY_value_it_could_have(parallel_clone):
-    """🔴 A MUTATION SWEEP FOUND THE PARAMETRISED ROW ABOVE GREEN FOR THE WRONG
-    REASON, AND THIS IS THE CASE THAT MAKES THE BRANCH REACHABLE.
-
-    When one name carries two different values the redirect is ambiguous, so it
-    may not replace the caller's directory — and EVERY candidate is judged on top.
-    The row above runs from the clone, where the caller's own directory already
-    produces the refusal, so deleting the "judge every candidate" line left it
-    green. Here the caller stands in the LINKED WORKTREE, which is not refusable,
-    so the only thing that can produce a refusal is the clone appearing among the
-    candidate values. Mutating `ambiguous.extend(options)` to extend nothing turns
-    this red and nothing else in the suite.
+    Rows seven and eight were green at both refs — ⚠ INVARIANT GUARDS.
     """
     clone, wt = parallel_clone[:2]
-    command = f'WT={wt}\nWT={clone}\ngit -C "$WT" commit -m x'
-    # POSITIVE CONTROL: from this cwd, the same command without the clone among
-    # the candidates is allowed — so the refusal below is the clone being seen.
-    assert _decision(_run_hook(f'WT={wt}\ngit -C "$WT" commit -m x', wt)) is None
+    text = command.format(wt=wt)
+    assert _decision(_run_hook(text, clone)) == "deny", f"{why}: {text}"
+
+
+def test_an_ASSIGNMENT_token_naming_the_clone_is_not_a_redirect_TARGET(parallel_clone):
+    """🔴 A DRAFT OF THIS TEST ASSERTED `deny` AND WAS WRONG ABOUT THE SHELL, which
+    is worth keeping because it is the same error the deleted resolver was built on.
+
+    `WT=<the clone>` then `git -C "$WT" commit`, run from the LINKED WORKTREE. The
+    draft reasoned "the clone is named in the text, so it must be judged". But
+    `$WT` is unexpanded, so the command git runs is `git -C "" commit` — which runs
+    in the CURRENT directory, the worktree. No base-clone write happens, and
+    `allow` is the correct answer. Measured: allow at `fbe81e0`, at `0e1060f` and
+    here.
+
+    So what this pins is that a leading `VAR=` token is NOT mistaken for a
+    redirect target. It would be a false positive to treat it as one, and the
+    mirror case — the same command from the CLONE — is refused by the fallback and
+    covered in the parametrised set above.
+
+    ⚠ INVARIANT GUARD: green at both refs. It exists because the wrong answer here
+    is the attractive one.
+    """
+    clone, wt = parallel_clone[:2]
+    verdict = _run_hook(f'WT={clone}\ngit -C "$WT" commit -m x', wt)
+    assert _decision(verdict) is None
+
+
+def test_junk_ADDITIVE_candidates_cannot_crowd_a_REAL_one_out_of_the_budget(parallel_clone):
+    """🔴 TWO DIFFERENT HAZARDS SHARE ONE BOUND, AND A DRAFT REPLACED THIS TEST
+    WITH THE OTHER ONE INSTEAD OF KEEPING BOTH — A MUTATION SWEEP CAUGHT IT.
+
+    This is the ADDITIVE half: `--git-dir=` values are budgeted, so padding with
+    enough of them could push the one that names the clone past the bound. The
+    defence is that a path which is not a directory is answered BEFORE the counter
+    is consulted, so junk costs nothing. Moving that check after the counter
+    survived the suite once this test was gone.
+
+    The sibling below is the PRIMARY half: real, trusted `-C` targets are not
+    budgeted at all. Both are needed; neither implies the other.
+
+    ⚠ INVARIANT GUARD for the existence check itself, which the sweep scored
+    unreachable for CORRECTNESS — `git` fails on a nonexistent cwd anyway. What is
+    reachable, and what this pins, is the ORDERING.
+    """
+    clone, wt = parallel_clone[:2]
+    count = 2 * _probe_bound_from_hook()
+    padding = " ".join(f"--git-dir={clone}/absent-{n}" for n in range(count))
+    command = f"git {padding} --git-dir={clone / '.git'} add seed.txt"
     assert _decision(_run_hook(command, wt)) == "deny", command
 
 
 def test_junk_candidates_cannot_crowd_a_REAL_one_out_of_the_probe_budget(parallel_clone):
-    """🔴 THE PROBE BUDGET IS A BOUND ON `git` SPAWNS, AND IT MUST NOT BECOME A
-    BYPASS. A MUTATION SWEEP IS WHAT MADE THIS CASE NECESSARY.
+    """🔴 THE PROBE BUDGET WAS A MEASURED BYPASS, AND THIS TEST'S FIRST VERSION
+    DESCRIBED THAT HAZARD WITHOUT TESTING IT.
 
-    The guard asks `git` about at most `_MAX_PROBED_DIRS` distinct directories per
-    Bash call, so a command text naming a hundred of them cannot turn a
-    per-call hook into a hundred subprocesses. That bound is spent on REAL
-    directories only: a path that does not exist is answered `None` before the
-    counter is consulted. Without that ordering, padding a line with more
-    nonexistent `--git-dir=` values than the budget allows exhausts it, and the
-    one value that names the clone is never asked about — the refusal becomes an
-    allow, bought with junk.
+    The budget bounds how many directories one Bash call may make the hook ask
+    `git` about. The first version padded with NONEXISTENT `--git-dir=` values —
+    which the existence pre-check means never consume budget at all, so the body
+    could not exercise the sentence its docstring made. "Reads as coverage while
+    providing none" in a test about a bypass.
 
-    ⚠ The redundant-looking existence check this pins was itself scored
-    UNREACHABLE for CORRECTNESS by the same sweep — `git` fails on a nonexistent
-    cwd anyway, so the verdict never depended on it. This test is what makes it
-    reachable, and it pins the ORDERING rather than the check.
+    This pads with REAL linked worktrees reached through `-C`, each a legitimate,
+    resolvable, trusted redirect, and then writes to the clone with a bare
+    `git commit` on the same line. Measured on the shared-budget head: DENY for
+    N <= 7, ALLOW for N >= 8 — exactly `_MAX_PROBED_DIRS`. Padding with work the
+    guard is SUPPOSED to permit bought an exemption for the write it must refuse.
 
-    Watched RED at `fbe81e0` and `0e1060f` — neither read `--git-dir` at all, so
-    neither refused this from a worktree cwd.
+    The budget is now scoped to the ADDITIVE pass; primary directories are always
+    probed. Watched RED at the resolver head (`ALLOW`) and green here.
+
+    🔴 THE PADDING COUNT IS READ OUT OF THE HOOK, NOT HARDCODED, and it pads to
+    TWICE the bound: a cap merely raised rather than scoped must not green this.
+    `test_the_probe_bound_is_parseable` is the positive control for that read, so a
+    regex matching nothing cannot silently pad zero directories.
     """
-    clone, wt = parallel_clone[:2]
-    padding = " ".join(f"--git-dir={clone}/absent-{n}" for n in range(12))
-    command = f"git {padding} --git-dir={clone / '.git'} add seed.txt"
-    assert _decision(_run_hook(command, wt)) == "deny", command
+    clone = parallel_clone[0]
+    count = 2 * _probe_bound_from_hook()
+    extras = []
+    for n in range(count):
+        path = clone.parent / f"budget-{n}"
+        _add_worktree(clone, path, branch=f"budget-{n}")
+        extras.append(path)
+    pad = " ".join(f"git -C {p} add seed.txt &&" for p in extras)
+    command = f"{pad} git commit -m x"
+    assert _decision(_run_hook(command, clone)) == "deny", f"N={count}"
 
 
 def test_a_cd_does_not_override_a_RESOLVED_redirect(parallel_clone):

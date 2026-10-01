@@ -264,13 +264,27 @@ same run as the control.
 | `git -C <the base clone> commit …` from a worktree, or from another repo | REFUSED |
 | `git -C <a linked worktree> commit …` from the base clone | allowed |
 | `git -C <ANOTHER repo's worktree> commit …` from the base clone | allowed |
-| `git -C "$WT" …` where the command text assigns `WT` on an earlier line | resolved, then judged |
+| `git -C "$WT" …` — any `$VAR` target, however it is assigned | REFUSED — never resolved |
 | `git --git-dir=<the clone>/.git …` / `--work-tree=<the clone> …` | REFUSED, from anywhere |
 | `git --git-dir=<a linked worktree's git dir> …` | allowed |
 | `GIT_DIR=<the clone>/.git git …`, or `GIT_DIR` already exported | REFUSED |
 | `cd <the base clone> && git commit …` | REFUSED |
 | `cd <a worktree> && git commit …` from the clone | REFUSED — see below |
 | `bash -c 'cd <the base clone> && git commit …'` | NOT SEEN — still open |
+
+🔴 **`$VAR` TARGETS ARE REFUSED, NOT RESOLVED, AND THE RECIPE ABOVE IS WRITTEN IN
+EXACTLY THAT SPELLING — so `git -C "$WT" commit` from the base clone is refused and
+you must pass an absolute path.** This is the one place the guard is deliberately
+less convenient than it could be, and the reason is measured. A version that
+resolved what the command text assigns opened four fail-opens, because **knowing a
+name is assigned somewhere in the text is not knowing the shell will have assigned
+it**: a subshell assignment is discarded, a short-circuited one never runs, one in
+an untaken branch never runs, and a command *prefix* scopes to that command only.
+In each, bash leaves `WT` unset, so git runs `git -C ""` — **in the current
+directory, the clone**. All four were ALLOW with the resolver and DENY without it;
+one was proved end to end, the clone going 1 → 2 commits while the worktree stayed
+at 1. The resolver did not relax the fail-closed fallback — it made it
+**unreachable** in those shapes, which is the harder failure to see.
 
 ⚠ **Two rows are deliberately asymmetric and neither is an oversight.**
 
@@ -291,9 +305,9 @@ is tracked in a **public** repository and must run on a stranger's clone with no
 it. An import would be a missing module everywhere else, and a `PreToolUse` hook that fails
 to start is silently an **allow** — so the guard would go inert exactly where it is the only
 one present. The resolution here is a second implementation on purpose, and much smaller:
-four redirection spellings, variables only where the command text itself assigns them, no
-sourced files, and **everything it cannot resolve falls back to judging the caller's
-directory** — the fail-CLOSED direction, which is what lets it stay small.
+four redirection spellings, **no variable resolution at all**, no sourced files, and
+**everything it cannot resolve falls back to judging the caller's directory** — the
+fail-CLOSED direction, which is what lets it stay small.
 
 ⚠ **And it is inert in the other runtime.** Only Claude Code reads `.claude/settings.json`;
 the opencode plugin spawns `guard_core.py` and never consults this file. A rule the fleet
