@@ -25,34 +25,34 @@ them being USED and ENFORCED.
   **MET 2026-10-01** — see "How to verify" for the exact probes and their outputs.
 
 ## State now
-- Branch: `main` on the mainline; **this doc's own branch `docs/handoff-cairn-tag-vocabulary`
-  is UNMERGED (PR #169)**, so a session resuming from `main` cannot find this file. That is
-  worth fixing before the next handoff: the canonical doc for the arc is not on the mainline.
-- **Rank 1 is CLOSED and shipped to review: [PR #170](https://github.com/ZacxDev/cairn/pull/170),
-  `feat/browse-q-and-tag-compose`** (`5e7646d` the feature, `9eacee0` the CHANGELOG row). ⚠ **NOT
-  MERGED and NOT DEPLOYED** — at the time of writing CI had returned `leakscan`, `pgtest` and
-  `parity` green with `tests`, `go`, `dualrun`, `nix` and `uiaudit` still running. Read the run
-  before acting on this line; it is a reading, not a result.
-- Five PRs merged and verified **by content** on `origin/main` (a squash never makes the branch
-  head an ancestor, so ancestry is the wrong test):
-  - **#164** — two private identifiers plus a private entry filename scrubbed out of this PUBLIC
-    repo, and their digests added to `tests/leakscan.py` so recurrence is caught.
-  - **#160** — the `tags:` vocabulary CLOSED at the WRITE path (`internal/write`).
-  - **#162** — the rendered link badge and body label both read `refs`; a `## Requirements`
-    bullet's provenance renders once (badge) instead of twice.
-  - **#165**, **#167** — `.claude/hooks/base-clone-write-guard.py` now judges the write TARGET
-    rather than the session cwd.
-- **Store: 303 entries tagged** across both instances — `infra` 136 / `product` 99 / `tooling` 68.
-  Zero off-vocabulary tags anywhere. ⚠ RECALL as of the previous session, not re-measured here.
-- **Deployed and verified** (previous session): the deployment repo's pod and UI pins moved
-  `e8839d9 -> ffa0eca` in one commit; the pod has rolled and both features are live at the edge.
-  ⚠ The **UI** rollout is still NOT independently verified — Open investigations block 1.
-- ⚠ **No task-board field is recorded on this doc, and that is a REFUSAL rather than a zero.**
-  `<tooling>`'s task resolver exited **5** — nothing resolved. An unknown session id answers
-  200 with an empty array, so this cannot distinguish "touched no task" from "wrong id".
-  (The board's name is a denied identifier here; `tests/leakscan.py` refused an earlier draft
-  of this very bullet that spelled it, which is the gate doing its job on a handoff delta —
-  the exact path four past leak events took.)
+- Branch: `main` at **`fc2ddfe`** (NOT `ffa0eca` — see the base-moved gotcha below). This
+  doc's own branch `docs/handoff-cairn-tag-vocabulary` is still **UNMERGED (PR #169)**,
+  `MERGEABLE`/`UNSTABLE`, 1 commit behind `origin/main`.
+- 🔴 **RANK 1 IS NOT MERGED, AND IT NOW CONFLICTS.** PR #170 went
+  `MERGEABLE` → **`CONFLICTING`/`DIRTY`** mid-session, because **#168 merged under it**
+  (another session owns `cairn-recall-entry-bullet-badge`). Measured, not inferred:
+  `git merge-tree --write-tree origin/main origin/feat/browse-q-and-tag-compose` exits **1**,
+  and the conflict is **ONE file — `CHANGELOG.md` (content)**; `README.md` auto-merged.
+  ⚠ **#170's 7-of-8 green is evidence about the PRE-#168 tree and nothing else.** It must be
+  re-run after the resolution: #168 touches `internal/report/text.go` while #170 touches
+  `internal/ui/render.go`, and disjoint files are not safety.
+- **Rank 2 is CLAIMED (`cairn-tag-vocabulary-2`) and IN FLIGHT, not verified.** A subagent is
+  building all three declared fail-opens in `.claude/hooks/base-clone-write-guard.py` in an
+  isolated worktree, plus the two triaged comment defects. **No PR, no review, no red/green
+  matrix seen at the time of writing.** Treat every claim about it as unmeasured.
+- **Base clone is CLEAN and the staged-orphan defect is CLOSED** — see Defects.
+- ⚠ **No task-board field is recorded, and that is a REFUSAL rather than a zero.** The resolver
+  exited **5** — nothing resolved. An unknown session id answers 200 with an empty array, so
+  this cannot distinguish "touched no task" from "wrong id". Not a clean bill of health.
+  🔴 **And this bullet is where the leak gate fired on THIS session's delta**: naming the board
+  is a `denied-identifier`, so the field's own spelling cannot appear in this repo. The previous
+  handoff recorded that exact trap and I reproduced it anyway — the gate is what caught it.
+- Carried forward, still true and NOT re-measured this session: **five PRs merged and verified
+  by content** on `origin/main` (#164 scrub + digests, #160 `tags:` closed at the write path,
+  #162 `refs` badge/label, #165 + #167 the write guard judging the TARGET); **303 entries
+  tagged** across both instances (`infra` 136 / `product` 99 / `tooling` 68, zero
+  off-vocabulary); the pod and UI pins moved `e8839d9 -> ffa0eca` in one commit and **the POD
+  is confirmed rolled** while **the UI is not** (Open investigations block 1).
 
 ## Open investigations — live diagnosis state
 
@@ -93,62 +93,65 @@ them being USED and ENFORCED.
   refuse. Record which of the two, if either, still blocks.
 
 ## Next steps (ranked)
-🔴 **The numbering is UNCHANGED on purpose. Rank 1 stays in place as CLOSED rather than being
-removed, because the rank is half a `claim-work` slug's identity — renumbering 2→1 would
-re-point every live claim on this doc.** Closed items are struck here, never deleted.
+🔴 **Numbering UNCHANGED on purpose — the rank is half a `claim-work` slug's identity.** Closed
+items are struck, never deleted.
 
-1. ~~**Make `?q=` and `?tag=` compose in the browse surface.**~~ **CLOSED — PR #170, awaiting CI
-   and merge.** One card, the composition the pod already performed (`report.SearchOptions.Tag`
-   passed into the engine, so the narrowing lands after scope authorisation and before scoring),
-   a summary naming both operands and both counts, a hidden `tag` input so the form round-trips
-   the filter, and three ways back. `internal/ui/README.md`'s declared limitation is rewritten as
-   closed. **What is left on this item is the MERGE, not the build.**
-   forcing: user — the operator selected this option; it is built and under review.
-2. **Close the three declared guard fail-opens.** All three are recorded with closing conditions
-   in `.claude/hooks/base-clone-write-guard.py`'s docstring and all three were proven end to end
-   by an audit: (a) `_shell_lines`' heredoc opener regex runs on the raw line, so ordinary text
-   containing `<<WORD` — a quoted string, or even a `#` comment — silently drops every later
-   line; (b) the program-name walk misses `if git commit`, `while`, `command`, `nohup`,
-   `timeout`, `eval`, `stdbuf`, `exec`, `sudo`, `xargs`; (c) the `_REFUSED` complement is
-   described as "reads" while `clean -fd`, `rm`, `mv`, `worktree remove` and `branch -D` all
-   write shared state.
+1. ~~**Make `?q=` and `?tag=` compose in the browse surface.**~~ **THE BUILD IS CLOSED** — PR
+   [#170](https://github.com/ZacxDev/cairn/pull/170), `feat/browse-q-and-tag-compose`
+   (`5e7646d` the feature, `9eacee0` the CHANGELOG row). 🔴 **BUT THE MERGE IS NO LONGER A
+   MERGE — IT IS A CONFLICT RESOLUTION.** Resolve `CHANGELOG.md` in a worktree (both sides
+   append rows; keep both), push, **wait for a FULL CI re-run**, then merge. Do not merge on
+   the stored green: it was measured before #168 existed.
+   forcing: gate — the PR cannot merge while GitHub reports `CONFLICTING`.
+2. **Close the three declared guard fail-opens.** IN FLIGHT: claimed `cairn-tag-vocabulary-2`,
+   subagent building. All three are recorded with closing conditions in
+   `.claude/hooks/base-clone-write-guard.py`'s docstring: (a) `_shell_lines`' heredoc opener
+   regex runs on the raw line, so ordinary text containing `<<WORD` silently drops every later
+   line; (b) the program-name walk misses `if`, `while`, `command`, `nohup`, `timeout`, `eval`,
+   `stdbuf`, `exec`, `sudo`, `xargs`; (c) the `_REFUSED` complement is called "reads" while
+   `clean -fd`, `rm`, `mv`, `worktree remove` and `branch -D` all write shared state.
+   **The (c) decision is MADE — see Gotchas; do not relitigate it.**
    forcing: security — each is a measured way to land a commit on the wrong branch in a shared
    clone, which is the single failure this guard exists to prevent.
-3. **Confirm the UI pod rolled** (Open investigations block 1). One click path in a signed-in
-   browser; everything else about the deploy is already verified. ⚠ **Once #170 merges and
-   deploys there is a SECOND thing to look at on the same visit** — open `/?q=<word>&tag=<tag>`
-   and confirm it renders ONE card rather than two.
+3. **Confirm the UI pod rolled** (Open investigations block 1), and on the SAME visit open
+   `/?q=<word>&tag=<tag>` and confirm it renders ONE card rather than two. ⚠ The second half
+   only exists at the edge **after #170 merges AND the pin moves** — so this is gated on rank 1,
+   and doing it early spends the operator's screen twice for half an answer.
    forcing: user — the operator asked for this deploy to be validated, and this is the one half
    that could not be closed from here.
 4. **Teach the entry template to emit a `tags:` line.** `scripts/lib/subsystem_touch.py
    --template` emits none, so every entry born through the handoff flow starts untagged and
-   invisible to `--tag`. That silently re-opens the gap this arc just closed, one entry at a
-   time. Repo: the private tooling repo.
+   invisible to `--tag`. Repo: the private tooling repo.
    forcing: regression — new entries reintroduce the untagged state this arc eliminated.
-5. **Land this doc on the mainline.** PR #169 carries the only copy of this file; until it
-   merges, `/resume` from `main` cannot find it and the next session re-derives the arc from
-   `git log`. This session found it only by searching `--all`.
+5. **Land this doc on the mainline.** PR #169 carries the only copy; until it merges, `/resume`
+   from `main` dead-ends for this arc. It is `MERGEABLE` now and 1 behind.
    forcing: gate — the resume path is the mechanism, and it is currently broken for this arc.
 
 ## Defects (batched)
-- `.claude/hooks/base-clone-write-guard.py:702` still says the existence check lives "ahead of
-  the probe budget" — #167 deleted that budget, so the sentence describes a mechanism that no
-  longer exists.
-- Same file: `_abs_path`'s claim that a second existence check "could never change a verdict"
-  was measured FALSE when a NUL byte crashed the hook. #167 fixed the crash, which plausibly
-  restores the claim — but it has not been re-measured since.
-- The base clone of this repo carries a STAGED modification to the hook whose content is
-  byte-identical to `origin/main`, while `HEAD` sits 4 commits behind. **Re-measured this
-  session and STILL TRUE** (`git -C /home/zach/workspace/cairn status -s` → `M` staged;
-  `rev-list --count HEAD..origin/main` → 4). Harmless (the running hook is the fixed one) but it
-  makes `git status` misleading. Clearing it is `restore --staged --worktree` on that path, then
-  an ff-only merge.
-- **The pod's composed `?q=`+`?tag=` answer and the browse surface's are not compared against
-  each other.** After #170 they share the ENGINE, which is strictly more than they shared
-  before, but nothing sends the same two parameters to both and diffs the result. Declared in
-  `internal/ui/README.md` rather than fixed.
-- **`uiaudit` walks neither `/?tag=` nor the composed card**, which after #170 is a fifth card
-  shape carrying three `note` links and a hidden form control. No axe pass has run over either.
+🔴 **This heading REPLACES on every update — so everything still open has to be re-listed here
+or it is deleted.** That is how this list is maintained; it is not a sign the earlier text was
+wrong.
+
+- ✅ **CLOSED: the base clone's STAGED modification to the hook.** It was byte-identical to
+  `origin/main` (both blob `28ca42c`), so `git restore --staged --worktree` on that path
+  followed by `git merge --ff-only origin/main` was **content-neutral** — verified by
+  re-hashing the file after: still `28ca42c`. The earlier entry describing it as open, and its
+  instruction to clear it, are **superseded — do not re-run them.**
+- **IN FLIGHT under rank 2** (carried forward, not closed): `base-clone-write-guard.py:702`
+  still says the existence check lives "ahead of the probe budget", which #167 deleted; and
+  `_abs_path`'s claim that a second existence check "could never change a verdict" was measured
+  FALSE when a NUL byte crashed the hook, has plausibly been restored by #167's fix, and **has
+  not been re-measured.** Both are in rank 2's brief. Re-verify from the PR, not from this line.
+- ⚠ **STILL OPEN: the pod's composed `?q=`+`?tag=` answer and the browse surface's are not
+  compared against each other.** After #170 they share the ENGINE, which is strictly more than
+  they shared before, but nothing sends the same two parameters to both and diffs the result.
+  Declared in `internal/ui/README.md` rather than fixed.
+- ⚠ **STILL OPEN: `uiaudit` walks neither `/?tag=` nor the composed card**, which after #170 is
+  a fifth card shape carrying three `note` links and a hidden form control. No axe pass has run
+  over either.
+- ⚠ **Newly measured as REACHED: #170 and #168 share `CHANGELOG.md` and `README.md`.** The
+  previous handoff predicted the interaction; #168 merging made it a real conflict. Nothing in
+  this repo serialises two PRs that both append a CHANGELOG row.
 
 ## Gotchas / decisions / dead-ends
 - 🔴 **The per-scope tag table cannot live in this repo.** `tests/leakscan.py` denies the
@@ -214,13 +217,58 @@ re-point every live claim on this doc.** Closed items are struck here, never del
 - ⚠ **Local Go here is 1.26.7 against a 1.25 `go.mod`.** It builds and tests fine, but the
   pinned-toolchain run is CI's, not a local one. Do not report a local green as a pinned green.
 
-## How to verify
-Both halves of the ORIGINAL closing condition, plus rank 1's.
+- 🔴 **OPERATOR DECISION on fail-open (c), made this session. Implement it; do not relitigate.**
+  `clean`, `mv`, `rm` go **INTO** `_REFUSED` (with `clean -n` / `--dry-run` exempt).
+  `worktree remove` and `branch -D` are recorded as **DELIBERATELY OUT**, for two reasons that
+  both belong in the doc: (1) `claudedocs/working-in-parallel.md:33` **prescribes**
+  `git -C "$REPO" worktree remove "$WT"` run FROM the base clone, so refusing it breaks the
+  repo's own documented recipe — the failure mode this guard explicitly forbids itself;
+  (2) both write refs / worktree registrations, which live in the **common** git dir and are
+  writable identically from ANY worktree, so conditions 2+3 cannot scope the hazard, and
+  refusing only in the base clone teaches that the worktree spelling is safe when it is not.
+  ⚠ **Acknowledge rather than hide the tension:** `stash` IS in `_REFUSED` on a hazard that is
+  equally repo-global; the docstring keeps it as "a cheap table row". The reasoning is not
+  uniform and the doc should say so.
+- 🔴 **`_REFUSED` IS PINNED AGAINST THE DOC AND FAILS ON GROW *OR* SHRINK.**
+  `tests/test_base_clone_write_guard.py::test_the_refused_set_matches_the_documented_table`
+  parses the `_REFUSED` literal out of the hook source and compares it to the subcommands in
+  backticks under `claudedocs/working-in-parallel.md`'s `| refused | why it collides |` table.
+  **Both move in ONE commit**, and two companion tests exist so the comparison cannot be two
+  empty sets.
+- 🔴 **THE BASE CLONE MOVES UNDER YOU, AND `git log` IS WHERE YOU FIND OUT.** This session
+  ff-merged to `ffa0eca`, then found HEAD at `fc2ddfe` later in the same session — another
+  session merged #168 and re-synced the shared clone. **Re-read `git log`/`rev-parse` at the
+  moment you act on a PR's mergeability, never from the survey that motivated it.** The cost
+  here was a stated "all three PRs are 0 behind" that was true when measured and false twenty
+  minutes later, in the direction that matters.
+- 🔴 **A BASE MOVE RESETS `mergeable` TO `UNKNOWN`, AND `UNKNOWN` IS NOT `MERGEABLE`.**
+  Immediately after #168 landed, `gh pr view 170 --json mergeable` answered `UNKNOWN` — GitHub
+  recomputes asynchronously. **Poll until it is not `UNKNOWN` before believing either answer**;
+  reading `UNKNOWN` as "fine" is how a conflicting PR gets a merge attempt.
+- ⚠ **`git merge-tree --write-tree` exits non-zero on conflict and prints the conflicting paths
+  — branch on the EXIT CODE.** It emits NO `<<<<<<<` markers, so grepping for them finds
+  nothing whether or not a conflict exists. Used correctly here it named `CHANGELOG.md` in one
+  command.
+- ⚠ **The `go` CI job on this repo runs ~25–35 min and `gh pr checks` shows it as
+  `pending 0`.** Its steps are a 189-mutant authz battery, the Go client ledgers, a 57-mutant
+  routing battery and the conformance corpus. `gh run view --job <id>` shows per-step ticks and
+  is the only way to tell "slow but advancing" from "stuck" — do not read `pending 0` as stuck,
+  and do not read a 20-minute watcher timeout as a failure.
+- ⚠ **`/home/zach/workspace/cairn-hv2` was used as this session's worktree for the handoff
+  branch**, because `cairn-handoff` is still the stale worktree on a closed arc. Remove it when
+  done. 60 linked worktrees are now registered against the base clone.
 
-**The write gate — negative then positive** (the positive control is not optional: without it, a
+## How to verify
+Rank 1's state, first — it is the item whose status changed:
+```bash
+gh pr view 170 --json mergeable,mergeStateStatus      # must not be UNKNOWN before you believe it
+git -C /home/zach/workspace/cairn merge-tree --write-tree \
+    origin/main origin/feat/browse-q-and-tag-compose; echo "exit=$?"   # non-zero = still conflicting
+```
+
+**The write gate — negative then positive** (the positive control is not optional: without it a
 refusal is indistinguishable from a broken write path):
 ```bash
-# take any entry, set an off-vocabulary tag, and try to replace it
 <tooling>/scripts/cairn-ops/write.sh put --scope cairn --ref tag-vocabulary --file <bad copy> --no-verify
 #   => 🔴 the store REFUSED the write [entry-shape] — ... is not one of infra|product|tooling
 <tooling>/scripts/cairn-ops/write.sh put --scope cairn --ref tag-vocabulary --file <good copy> --no-verify
@@ -232,14 +280,13 @@ locally, so it is NOT evidence about what is deployed):
 ```bash
 set -a; . /home/zach/.config/subsystem-store/env; set +a
 curl -s -H "Authorization: Bearer ${CAIRN_TOKEN}" "${CAIRN_URL}/api/v1/recall/cairn" \
-  | grep -c '🔗 [0-9]* ref'     # => 4
-#   and the retired word must be gone:  grep -c '🔗 [0-9]* task'  => 0
+  | grep -c '🔗 [0-9]* ref'     # => 4   and  '🔗 [0-9]* task'  => 0
 ```
 
 **Tag coverage across the fleet** — read each scope on its RESOLVED instance; the two caches
 replicate 12 scopes, so a naive walk double-counts:
 ```bash
-<tooling>/scripts/cairn-ops/health.sh instances --scope <scope>   # which cache is authoritative
+<tooling>/scripts/cairn-ops/health.sh instances --scope <scope>
 # expected totals: infra 136 / product 99 / tooling 68, and no fourth term
 ```
 
@@ -248,17 +295,11 @@ for the wrong reason is indistinguishable from either operand acting alone.
 ```bash
 go -C <checkout> test ./internal/ui/ -run TestTheQueryAndTheTagComposeIntoOneCard -v
 go -C <checkout> test ./internal/ui/ -run 'TestTheSearchFormRoundTripsTheTag|TestTheComposedCardOffersEveryWayBack'
-#   => the three answers are three DIFFERENT sets: `?q=` alone names 3 entries,
-#      `?tag=` alone names 2, together they name the 1 in both.
+#   => `?q=` alone names 3 entries, `?tag=` alone names 2, together they name the 1 in both.
 ```
 
-**Rank 1 — the composition, against the DEPLOYED UI** (only after #170 merges and the pin moves;
-the test above is evidence about the checkout, never about the edge). In a signed-in browser open
-`/?q=<a word in a tagged entry>&tag=<that tag>`:
-- **ONE** card, headed `Search`, not two;
-- its second line names both operands — "The tag `x` narrowed this search to N entries before the
-  query ran, leaving out M visible entries that do not carry it";
-- typing a new word in the box keeps the tag; emptying the box lands on the plain tag listing.
-
-Two cards is the pre-change answer and means the UI pin did not move — which is also Open
-investigations block 1's question, answered by the same visit.
+**Rank 1 — against the DEPLOYED UI** (only after #170 merges and the pin moves). Open
+`/?q=<a word in a tagged entry>&tag=<that tag>`: **ONE** card headed `Search`, its second line
+naming both operands and both counts; typing a new word keeps the tag; emptying the box lands on
+the plain tag listing. **Two cards is the pre-change answer and means the pin did not move** —
+which is Open investigations block 1's question, answered by the same visit.
