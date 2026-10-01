@@ -222,6 +222,43 @@ def test_the_doc_OUT_table_is_parseable():
     assert out, "the out-table parse found nothing — it is matching nothing"
 
 
+def _dry_run_keys_from_hook() -> frozenset[str]:
+    """The subcommands `_DRY_RUN_SHORT_VALUE_FLAGS` exempts a dry run for."""
+    text = HOOK.read_text(encoding="utf-8")
+    block = re.search(
+        r"_DRY_RUN_SHORT_VALUE_FLAGS: dict\[str, frozenset\[str\]\] = \{(.*?)\n\}",
+        text, re.S)
+    assert block, "could not find the _DRY_RUN_SHORT_VALUE_FLAGS literal"
+    return frozenset(re.findall(r'"([a-z-]+)":', block.group(1)))
+
+
+def test_the_dry_run_ledger_is_parseable():
+    """POSITIVE CONTROL for the parse the test below rests on."""
+    keys = _dry_run_keys_from_hook()
+    assert "clean" in keys, f"the parse found no `clean` — it matches nothing: {keys}"
+
+
+def test_the_DRY_RUN_exemption_covers_EXACTLY_THREE_SUBCOMMANDS_AND_NO_MORE():
+    """🔴 AN EXEMPTION LEDGER THAT CAN GROW SILENTLY IS THE HAZARD HERE, not a
+    missing row — so this fails on GROW as well as on shrink.
+
+    Three refused subcommands have a dry-run spelling that was measured to change
+    nothing and are deliberately OUT (`add -n`, `commit --dry-run`,
+    `apply --check`): an operator decision, not a mechanical consequence of the
+    predicate. And 🔴 TWO SPELLINGS THAT LOOK LIKE DRY RUNS ARE NOT — `git merge
+    --no-commit` staged a merge AND moved HEAD on a fast-forward, and `git
+    cherry-pick -n` staged the picked file, both measured CHANGED. Adding `merge`
+    or `cherry-pick` to this ledger would exempt a real write, so the set is pinned
+    rather than described.
+
+    Every key must also be IN `_REFUSED`: exempting a subcommand that is not
+    refused is dead code that reads as coverage.
+    """
+    keys = _dry_run_keys_from_hook()
+    assert keys == {"clean", "mv", "rm"}, keys
+    assert keys <= _refused_from_hook(), keys - _refused_from_hook()
+
+
 def test_the_two_shared_state_WRITERS_LEFT_OUT_carry_a_RECORDED_DECISION():
     """🔴 THE CLOSING CONDITION WAS A DECISION PER SUBCOMMAND, NOT A WIDER SET.
 
@@ -700,31 +737,135 @@ def test_the_three_newly_refused_WRITERS_are_refused(parallel_clone, command):
     assert _decision(_run_hook(command, clone)) == "deny", command
 
 
-@pytest.mark.parametrize("command", [
-    "git clean -n",
-    "git clean --dry-run",
-    "git clean -nd",
-    "git clean -dn",
-    "git clean -n -d",
-    "git clean -xn",
+@pytest.mark.parametrize("command,expected", [
+    # ---- DRY RUNS: reads, so they must be allowed. Every row measured on git
+    # 2.55.0 (rc 0, repository bit-for-bit unchanged) before being asserted here.
+    ("git clean -n", None),
+    ("git clean --dry-run", None),
+    ("git clean -nd", None),
+    ("git clean -dn", None),
+    ("git clean -n -d", None),
+    ("git clean -xn", None),
+    ("git rm -n seed.txt", None),
+    ("git rm --dry-run seed.txt", None),
+    ("git rm -rn seed.txt", None),
+    ("git rm -nr seed.txt", None),
+    ("git rm -qn seed.txt", None),
+    ("git mv -n seed.txt other.txt", None),
+    ("git mv --dry-run seed.txt other.txt", None),
+    ("git mv -nv seed.txt other.txt", None),
+    ("git mv -vn seed.txt other.txt", None),
+    ("git mv -kn seed.txt other.txt", None),
+    # ---- 🔴 THE POSITIVE CONTROLS, IN THE SAME PARAMETRISED RUN. An exemption
+    # that widened to the real spelling is the failure mode here, and a test file
+    # that only asserts allows cannot see it.
+    ("git clean -fd", "deny"),
+    ("git clean -f", "deny"),
+    ("git clean -fenfoo", "deny"),
+    ("git rm seed.txt", "deny"),
+    ("git rm -r seed.txt", "deny"),
+    ("git rm -f seed.txt", "deny"),
+    ("git mv seed.txt other.txt", "deny"),
+    ("git mv -f seed.txt other.txt", "deny"),
+    ("git mv -kv seed.txt other.txt", "deny"),
+    # ---- 🔴 AND THE CONTROLS THAT MAKE THE *LEDGER KEY* CHECK REACHABLE, which is
+    # the half of `_is_dry_run` a dry-run-spelling test cannot exercise. `-n` does
+    # NOT mean dry-run everywhere: on `commit` it is `--no-verify`, which commits,
+    # and on `cherry-pick` it is `--no-commit`, which was MEASURED to stage the
+    # picked file. `git merge --no-commit` staged a merge and moved HEAD on a
+    # fast-forward. A predicate that answered on the FLAG rather than on the
+    # subcommand would allow all four.
+    ("git commit -n -m x", "deny"),
+    ("git commit --no-verify -m x", "deny"),
+    ("git cherry-pick -n deadbeef", "deny"),
+    ("git merge --no-commit other-branch", "deny"),
+    ("git add -n seed.txt", "deny"),
 ])
-def test_a_DRY_RUN_clean_is_a_read(parallel_clone, command):
-    """It prints what it would delete and deletes nothing.
+def test_the_DRY_RUN_exemption_is_ONE_PREDICATE_over_THREE_subcommands(
+        parallel_clone, command, expected):
+    """🔴 IT SHIPPED `clean`-ONLY AND THAT WAS A FALSE POSITIVE A REVIEW MEASURED.
 
-    ⚠ NOT REGRESSION COVERAGE, AND SAYING SO MATTERS: these were green at `ffa0eca`
-    *vacuously*, because `clean` was not refused there at all. They pin the
-    exemption that lands with the refusal, and the pair is what makes the refusal
-    usable — a guard that refused `git clean -n` would be refusing the command you
-    run to find out what `git clean -fd` would do.
+    At `d6eafdb` — this branch's own head before the fix — `git clean -n` was
+    allowed while `git rm -n`, `git rm --dry-run`, `git mv -n` and
+    `git mv --dry-run` were **REFUSED**, with the real spellings denying in the same
+    run. One predicate open-coded at one of three sites is wrong at the other two,
+    and `git rm -n` is exactly what somebody types to see what a `git rm` would do
+    BEFORE doing it: refusing the rehearsal alongside the dangerous spelling is how
+    a guard teaches that it is noise, which this file's own header calls the worse
+    failure. Now `_is_dry_run`, consulted for every subcommand.
 
-    🔴 THE COMBINED CLUSTER SPELLINGS ARE THE POINT. `-nd`, `-dn` and `-xn` are how
-    the flag is actually typed, and an exemption that only matched a bare `-n`
-    would allow `git clean -n` and refuse `git clean -nd` — the arbitrary half of a
-    false positive. `_is_clean_dry_run` reads the cluster, and stops at an `e`
-    because `-e` is the one `git clean` flag that takes a value.
+    🔴 THE `rm`/`mv` ROWS ARE REAL REGRESSION COVERAGE, UNLIKE THE `clean` ONES.
+    They were measured **deny** at `d6eafdb` and allow here. The `clean` rows were
+    green at `ffa0eca` *vacuously* — `clean` was not refused there at all — and are
+    green at `d6eafdb` for the right reason, so they are ⚠ invariant guards that the
+    consolidation did not lose what it absorbed.
+
+    🔴 AND THE CLUSTER ROWS ARE WHY THIS IS A MEASUREMENT RATHER THAN A SYMMETRY
+    ARGUMENT. A brief asserted `git rm -rn` "is not a thing". It is, on git 2.55.0,
+    and it is a dry run — as are `-nr`, `-qn`, `-nv`, `-vn` and `-kn`. Reading a
+    cluster is safe here only because each subcommand's own short flags say so:
+    `clean`'s `-e <pattern>` takes a value so the scan stops at an `e` (and
+    `git clean -fenfoo` was measured to really delete, which is the control for
+    that stop), while `rm`'s `-n -q -f -r` and `mv`'s `-v -n -f -k` take none.
+
+    ⚠ `git add -n` IS A REAL DRY RUN (measured: rc 0, repository unchanged) AND IS
+    ASSERTED **deny** HERE ON PURPOSE. It is one of three such spellings left out of
+    the exemption by decision rather than by oversight — `commit --dry-run` and
+    `apply --check` are the others — because widening a guard's exemptions is an
+    operator call and scope creep in a guard is its own hazard. 🔴 IF THAT DECISION
+    CHANGES, THIS ROW IS WHERE IT CHANGES, together with the ledger, the hook
+    docstring and the doc. It is NOT a claim that `git add -n` writes.
     """
     clone = parallel_clone[0]
-    assert _decision(_run_hook(command, clone)) is None, command
+    assert _decision(_run_hook(command, clone)) == expected, command
+
+
+@pytest.mark.parametrize("command,expected,why", [
+    ("git clean -fd", "deny", "the bare control"),
+    ("nice -n 5 git clean -fd", "deny",
+     "`-n` is nice's ADJUSTMENT flag, not clean's dry-run"),
+    ("xargs -n 1 git rm seed.txt", "deny",
+     "`-n` is xargs' max-args"),
+    ("stdbuf -o 0 git clean -fd", "deny",
+     "a wrapper whose flags carry no `n` at all — the control for the control"),
+    ("env -- git checkout other-branch", "deny",
+     "`--` is env's end-of-options, not a pathspec separator. ⚠ THE OLDEST ROW: "
+     "ALLOW at `ffa0eca` already, because `env` was skipped while the `checkout` "
+     "exemption searched the whole segment"),
+    ("sudo -- git checkout other-branch", "deny", "the same through `sudo`"),
+    ("sudo --ff-only git merge other-branch", "deny",
+     "not even a real sudo flag, and it still excused the merge"),
+    # The exemptions themselves must still work — an over-narrow scan would refuse
+    # the documented recipes, which is the direction this file forbids itself.
+    ("git clean -n", None, "the exemption still fires when the flag is the "
+                           "subcommand's own"),
+    ("git checkout origin/main -- AGENTS.md", None, "…and the pathspec recipe"),
+    ("git merge --ff-only origin/main", None, "…and the re-sync recipe"),
+    ("git stash list", None, "…and the stash read"),
+])
+def test_an_EXEMPTING_FLAG_must_belong_to_the_SUBCOMMAND_not_to_a_WRAPPER(
+        parallel_clone, command, expected, why):
+    """🔴 FOUND BY MUTATION-TESTING THE DRY-RUN FIX, NOT BY THE SUITE, AND THE DEFECT
+    WAS IN A NEIGHBOURING PREDICATE RATHER THAN IN THE CODE THAT CHANGED.
+
+    Three of the four exemptions scanned the WHOLE segment for their excusing flag.
+    Once `_LEADING_WORDS` started skipping `nice`, `xargs` and `sudo`, a flag
+    belonging to the WRAPPER excused the git write behind it — measured ALLOW with
+    the bare spelling DENYing in the same run. `env -- git checkout other-branch`
+    needed no new ledger at all: it was ALLOW at `ffa0eca` too, because `env` was
+    already skipped while `checkout`'s exemption searched the whole segment.
+
+    So the lesson is the one worth pinning: **a widening in one predicate can turn a
+    latent flaw in a different one into a live bypass.** `_is_exempt` now computes
+    the words after the subcommand ONCE and every exemption reads only those.
+
+    Red/green: the `nice`, `xargs`, `sudo` and `env` rows were ALLOW at `d6eafdb`;
+    the `env` one was ALLOW at `ffa0eca` as well. The four allow rows are ⚠ invariant
+    guards — they pin that narrowing the scan did not break the recipes, which is the
+    failure mode a narrowing invites.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) == expected, f"{why}: {command}"
 
 
 @pytest.mark.parametrize("command", [

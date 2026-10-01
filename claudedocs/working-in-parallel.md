@@ -88,14 +88,32 @@ one trains everybody to route around it: `git merge --ff-only <ref>` (the base-c
 re-sync — it cannot conflict or autostash, it either fast-forwards or refuses, and the
 refusal is the signal that the clone diverged); `git checkout <ref> -- <paths>` (the
 pathspec form does not move HEAD — bare `git checkout <branch>` IS refused, because that
-moves the shared HEAD); `git stash list`, `show` and `--help`; `git clean -n` /
-`--dry-run`, and the combined cluster spelling `-nd`, which print what they would delete
-and delete nothing; and every other read, including `push`, which touches no file in the
-clone.
+moves the shared HEAD); `git stash list`, `show` and `--help`; a **dry run** of `clean`,
+`rm` or `mv` — `--dry-run`, `-n`, or an `n` in a combined short cluster (`-nd`, `-rn`,
+`-nv`) — which rehearse and change nothing; and every other read, including `push`, which
+touches no file in the clone.
 
-⚠ **`git rm -n` and `git mv -n` are dry runs too and are refused anyway.** No recipe here
-runs either in the base clone, so the cost is nothing and the exemption list stays one
-item shorter; the hook says the same beside `_is_exempt`.
+🔴 **The dry-run exemption is ONE predicate over all three, and it shipped `clean`-only
+first, which was a FALSE POSITIVE.** Measured on git 2.55.0 against a throwaway repo, with
+the dangerous spellings denying in the same run: `git clean -n` allowed while `git rm -n`
+and `git mv -n` were REFUSED — the same predicate open-coded at one of three sites, wrong
+at the other two. `git rm -n` is exactly what you type to see what a `git rm` would do
+*before* doing it, so refusing the rehearsal alongside the real thing teaches that the
+guard is noise. Reading a combined cluster is safe only because each subcommand's own
+short-flag set says so: `clean`'s `-e <pattern>` takes a value, so the scan stops there
+(`git clean -fenjunk.txt` was measured to really delete), while `rm`'s `-n -q -f -r` and
+`mv`'s `-v -n -f -k` take none.
+
+⚠ **Three more refused subcommands have a spelling that was measured to change nothing,
+and they are deliberately NOT exempt**: `git add -n` / `--dry-run`, `git commit
+--dry-run`, and `git apply --check` / `--stat`. That is an operator decision rather than a
+mechanical consequence of the predicate, and scope creep in a guard is its own hazard.
+🔴 **And two spellings that LOOK like dry runs are not, so they must never be added:**
+`git merge --no-commit` staged a merge *and moved HEAD* on a fast-forward, and
+`git cherry-pick -n` staged the picked file — both measured to change the repository. A
+flag named for what it does not do is not a flag that does nothing. The rest of the ledger
+(`am`, `cherry-pick`, `checkout`, `switch`, `merge`, `rebase`, `reset`, `stash`) has no
+`--dry-run` at all — rc 129, unknown option.
 
 ⚠ **`git restore` is NOT in the refused set at all**, so it never reaches an exemption. An
 earlier version of this paragraph listed it among the deliberate exemptions, which reads as a

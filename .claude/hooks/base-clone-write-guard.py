@@ -106,10 +106,15 @@ were gated on the hit set being a singleton):
     here; do not add it on the strength of this paragraph, because the ordinary
     `git restore <path>` form carries no `--` and would be refused wholesale.
   * `git stash list` / `show` / `--help` — reads.
-  * `git clean -n` / `--dry-run`, and the combined cluster spelling `-nd` — it
-    PRINTS what it would delete and deletes nothing. ⚠ `git rm -n` and
-    `git mv -n` are dry runs too and are deliberately NOT exempt; the reason is at
-    `_is_exempt`.
+  * a DRY RUN of `clean`, `mv` or `rm` — `--dry-run`, `-n`, or an `n` in a combined
+    short cluster (`-nd`, `-rn`, `-nv`). ONE predicate over all three, because a
+    `clean`-only version of it refused `git rm -n`: the rehearsal somebody runs
+    BEFORE the dangerous spelling. Every row measured on git 2.55.0, repository
+    bit-for-bit unchanged; `_DRY_RUN_SHORT_VALUE_FLAGS` carries the measurements, the
+    three refused subcommands whose dry runs are deliberately NOT exempt
+    (`add -n`, `commit --dry-run`, `apply --check`), and the two spellings that look
+    like dry runs and are not (`merge --no-commit`, `cherry-pick -n` — both measured
+    to WRITE).
   * every other read: `log`, `status`, `diff`, `show`, `fetch`, `ls-files`,
     `rev-parse`, `push`. Pushing from the base clone touches no file in it.
   * 🔴 AND `worktree` AND `branch`, WHICH ARE NOT READS — `worktree remove` and
@@ -172,8 +177,12 @@ so a reader can check the claim rather than take it:
     across. The words that consume a value are marked there, and the words
     deliberately NOT skipped are named with their reasons.
   * `clean`, `mv` AND `rm` WRITING SHARED STATE WHILE "EVERYTHING ELSE IS A READ" —
-    CLOSED in `_REFUSED`, with `git clean -n`/`--dry-run`/`-nd` exempt as the read
-    it is. ⚠ THE OTHER TWO THE SAME AUDIT NAMED, `worktree remove` AND `branch -D`,
+    CLOSED in `_REFUSED`, with a DRY RUN of any of the three exempt as the read it
+    is (`_is_dry_run`). ⚠ AND THE FIRST VERSION OF THAT EXEMPTION WAS `clean`-ONLY,
+    WHICH WAS A FALSE POSITIVE A REVIEW MEASURED: `git rm -n` and `git mv -n` denied
+    while `git clean -n` allowed — one predicate at one of three sites. Widened to
+    ONE predicate, red-first per spelling.
+    ⚠ THE OTHER TWO THE SAME AUDIT NAMED, `worktree remove` AND `branch -D`,
     ARE DELIBERATELY OUT, and the decision is recorded in the DOC's second table
     rather than only here: `claudedocs/working-in-parallel.md` PRESCRIBES
     `git -C "$REPO" worktree remove "$WT"` run from the base clone, and refusing a
@@ -851,32 +860,78 @@ def _git_subcommand(segment: list[str]) -> str | None:
     return segment[j] if j < len(segment) else None
 
 
-def _is_clean_dry_run(word: str) -> bool:
-    """Does this one word make a `git clean` a DRY RUN, so that it is a read?
+#: 🔴 ONE LEDGER FOR THE DRY-RUN PREDICATE, OVER EVERY REFUSED SUBCOMMAND THAT HAS
+#: ONE — AND IT IS ONE BECAUSE THE FIRST VERSION WAS `clean`-ONLY AND THAT WAS A
+#: FALSE POSITIVE. The exemption was written for the subcommand that happened to be
+#: under discussion, so `git clean -n` was a read while `git rm -n` and
+#: `git mv -n` — MEASURED, rc 0 and the repository bit-for-bit unchanged — were
+#: REFUSED. `git rm -n` is exactly what somebody types to see what a `git rm` would
+#: do *before* doing it; refusing the safe rehearsal alongside the dangerous
+#: spelling is how a guard teaches that it is noise, which this file's own header
+#: calls the worse failure. `claude/RULES.md`: a predicate open-coded at one of
+#: three sites is wrong at the other two.
+#:
+#: The value is that subcommand's own SHORT flags that consume a value, which is the
+#: ONLY thing that makes reading a COMBINED cluster (`-nd`, `-rn`) safe. Taken from
+#: git's own `-h` output rather than from memory, on git 2.55.0:
+#:
+#:   * `clean` — `-q -n -f -i -d -e <pattern> -x -X`: `-e` is the one that takes a
+#:     value, so the scan must stop there. 🔴 MEASURED, NOT REASONED: the attached
+#:     spelling `git clean -fenjunk.txt` really does delete (repo CHANGED), while
+#:     `-n`, `-nd`, `-dn` and `-xn` really do not (repo SAME) — so without the stop
+#:     the pattern's own letters would read as flags and a real delete would be
+#:     called a dry run.
+#:   * `rm` — `-n -q -f -r`: NONE takes a value, so no stop is needed. Measured:
+#:     `-rn`, `-nr`, `-qn` and `-fn` are all accepted and all leave the repository
+#:     unchanged. ⚠ A BRIEF ASSERTED `git rm -rn` "is not a thing"; it is, on
+#:     2.55.0, and it is a dry run — which is why this row carries a measurement
+#:     instead of an opinion.
+#:   * `mv` — `-v -n -f -k`: none takes a value either; `-nv`, `-vn` and `-kn`
+#:     measured accepted and unchanged.
+#:
+#: ⚠ NOT CLOSED, and deliberately NOT widened to the rest of `_REFUSED` even though
+#: three more members have a spelling that was measured to change nothing:
+#: `add -n`/`--dry-run`, `commit --dry-run`, and `apply --check`/`--stat` (positive
+#: control in the same run: a bare `apply` CHANGED the tree). Those are an operator
+#: decision, not a mechanical consequence of this table, and scope creep in a guard
+#: is its own hazard. 🔴 AND TWO SPELLINGS THAT *LOOK* LIKE DRY RUNS ARE NOT, SO
+#: THEY MUST NEVER BE ADDED: `git merge --no-commit` staged a merge AND moved HEAD
+#: on a fast-forward, and `git cherry-pick -n` staged the picked file — both
+#: measured CHANGED. A flag named for what it does not do is not a flag that does
+#: nothing. `am`, `cherry-pick`, `checkout`, `switch`, `merge`, `rebase`, `reset`
+#: and `stash` have no `--dry-run` at all (rc 129, unknown option).
+_DRY_RUN_SHORT_VALUE_FLAGS: dict[str, frozenset[str]] = {
+    "clean": frozenset({"e"}),
+    "mv": frozenset(),
+    "rm": frozenset(),
+}
 
-    `--dry-run`, a bare `-n`, and an `n` inside a COMBINED short cluster — `-nd`,
-    `-xn`, `-ndx` — because the combined spelling is how the flag is usually typed
-    and a check that only saw `-n` would refuse `git clean -nd` while allowing
-    `git clean -n`, which is the arbitrary half of a false positive.
 
-    ⚠ READING A CLUSTER IS ONLY SAFE BECAUSE IT IS SCOPED TO `git clean`'s OWN
-    FLAGS, and the scan says so by stopping where that scoping stops. Of
-    `-d -f -i -n -q -x -X -e`, only `n` means dry-run and only `-e` takes a value,
-    so the scan breaks at an `e`: without that, the attached spelling `-enpattern`
-    would read its pattern's letters as flags and call a real delete a dry run — a
-    false NEGATIVE, which is the cheap direction but still not one to take by
-    accident. A cluster this misreads can only make the guard refuse (`-X`, `-f`
-    and friends carry no `n`), which is the direction this file prefers.
+def _is_dry_run(subcommand: str, rest: list[str]) -> bool:
+    """Is this a DRY RUN of a refused subcommand, and therefore a read?
+
+    ONE predicate for `clean`, `mv` and `rm` — see `_DRY_RUN_SHORT_VALUE_FLAGS` for
+    why it is one and for the measurement behind each row. Covers `--dry-run`, a
+    bare `-n`, and an `n` inside a COMBINED short cluster, stopping at a short flag
+    that takes a value so the value's own letters are never read as flags.
+
+    🔴 `rest` IS THE WORDS AFTER THE SUBCOMMAND, NOT THE SEGMENT, AND THAT IS A
+    MEASURED FAIL-OPEN REPAIR RATHER THAN TIDINESS — `_is_exempt` narrows it; the
+    measurement is there.
     """
-    if word == "--dry-run":
-        return True
-    if not word.startswith("-") or word.startswith("--"):
+    value_flags = _DRY_RUN_SHORT_VALUE_FLAGS.get(subcommand)
+    if value_flags is None:
         return False
-    for char in word[1:]:
-        if char == "n":
+    for word in rest:
+        if word == "--dry-run":
             return True
-        if char == "e":
-            break
+        if not word.startswith("-") or word.startswith("--"):
+            continue
+        for char in word[1:]:
+            if char == "n":
+                return True
+            if char in value_flags:
+                break
     return False
 
 
@@ -885,29 +940,53 @@ def _is_exempt(subcommand: str, segment: list[str]) -> bool:
 
     Per segment, so chaining two exempt recipes is not refused — it was, while
     the exemptions were gated on the whole command yielding a single hit.
+
+    🔴 AND EVERY EXEMPTION READS ONLY THE WORDS **AFTER THE SUBCOMMAND**, WHICH IS A
+    FAIL-OPEN REPAIR WITH A MEASUREMENT BEHIND IT. Three of these four used to scan
+    the whole segment, so a flag belonging to a WRAPPER excused the git write behind
+    it. Measured on a miniature clone with the bare spelling DENYing in the same run:
+
+        nice -n 5 git clean -fd          ALLOW — `-n` is nice's adjustment flag
+        xargs -n 1 git rm seed.txt       ALLOW — `-n` is xargs' max-args
+        env -- git checkout other-branch ALLOW — `--` is env's end-of-options
+        sudo --ff-only git merge <ref>   ALLOW — not even a real sudo flag
+
+    The `env` row is the oldest: it was ALLOW before any of this work, because `env`
+    was already skipped as a leading word while the `checkout` exemption searched the
+    whole segment for a `--`. The other three became reachable when `_LEADING_WORDS`
+    started skipping `nice`/`xargs`/`sudo` — a widening that turned a latent flaw in
+    a NEIGHBOURING predicate into a live bypass, which is the shape worth recording:
+    the defect was not in the code that changed. One narrowing closes all four,
+    because there is one place that computes `rest`.
+
+    ⚠ IT IS STILL APPROXIMATE IN THE OTHER DIRECTION: `segment.index(subcommand)`
+    takes the FIRST occurrence, so a global option whose VALUE happens to equal the
+    subcommand (`git -C clean clean -n`) starts the scan one word early. That can
+    only make the scan WIDER, never narrower, so it cannot refuse a dry run — and a
+    position-aware walk would have to model every global option's arity, which
+    `_GIT_GLOBALS_WITH_VALUE` says outright that it does not.
     """
+    try:
+        rest = segment[segment.index(subcommand) + 1:]
+    except ValueError:
+        # The subcommand came out of this segment, so this cannot happen — and if it
+        # somehow does, no exemption applies and the refusal stands, which is the
+        # fail-CLOSED direction this function must take when it cannot tell.
+        return False
+    # 🔴 THE DRY-RUN PREDICATE IS ASKED FIRST AND FOR EVERY SUBCOMMAND, because it
+    # is ONE predicate rather than a per-subcommand branch. It was a `clean`-only
+    # branch here, which refused `git rm -n` and `git mv -n` — the rehearsal
+    # somebody runs BEFORE the dangerous spelling. `_DRY_RUN_SHORT_VALUE_FLAGS`
+    # carries the measurement and the list of subcommands deliberately NOT in it.
+    if _is_dry_run(subcommand, rest):
+        return True
     if subcommand == "merge":
-        return "--ff-only" in segment
+        return "--ff-only" in rest
     if subcommand == "checkout":
         # The pathspec form. `--` is what makes it one, and it does not move HEAD.
-        return "--" in segment
+        return "--" in rest
     if subcommand == "stash":
-        rest = segment[segment.index("stash") + 1:]
         return bool(rest) and rest[0] in ("list", "show", "--help")
-    if subcommand == "clean":
-        # A dry run PRINTS what it would delete and deletes nothing. ⚠ THE SCAN IS
-        # OVER THE WHOLE SEGMENT, like `merge`'s `--ff-only` beside it, so a `-n`
-        # anywhere in the segment excuses it — including one that belongs to a
-        # global option rather than to `clean`. Consistent with its sibling and
-        # with `git clean`'s own flag set; a position-aware scan would have to
-        # model every global option's arity, which `_GIT_GLOBALS_WITH_VALUE` says
-        # outright that it does not.
-        return any(_is_clean_dry_run(word) for word in segment)
-    # ⚠ `git rm -n` AND `git mv -n` ARE DRY RUNS TOO AND ARE DELIBERATELY NOT
-    # EXEMPT. No recipe in this repo's docs runs either in the base clone, so a
-    # refusal there costs an ergonomic nothing, and every exemption is a hole an
-    # audit then has to re-read. Widen it when a recipe needs it, with the recipe
-    # as the evidence — not on the symmetry argument alone.
     return False
 
 

@@ -470,7 +470,19 @@ jobs:
           # `sed`-collapsing form and the two numbers read 66/0 there. Say which pipeline
           # produced them: this is the no-`sed` one. All 71 additions are in that one file,
           # which moves 115 -> 185.
-          FLOOR = 2458
+          # ⚠ 2458 -> 2495 ON THE REVIEW FIX IN THE SAME BRANCH, AND THE DRIFT GUARD DID
+          # **NOT** FORCE THIS ONE — the gap at 2458 would have been 87, inside `MAX_GAP`.
+          # Moved for the reason #168's own note gives two paragraphs up and for no other:
+          # at 87 the next PR adding fourteen tests reds this step, and a gate nobody can
+          # keep green is the failure this file's comments call out. Measured 2545 on the
+          # merged tree by `pytest tests -p no:randomly --collect-only -q`, so
+          # `2545 - min(50, max(1, 2545/20)) = 2495`. The +37 is this branch's: the
+          # dry-run exemption became ONE predicate over `clean`/`mv`/`rm` (a `clean`-only
+          # version had REFUSED `git rm -n`), and mutation-testing that fix found a
+          # fail-open where an exemption read a flag belonging to a WRAPPER — the hook
+          # suite moves 185 -> 222, all in that one file. #170 merged in between and adds
+          # nothing here: it is Go-only.
+          FLOOR = 2495
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
