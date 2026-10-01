@@ -132,7 +132,13 @@ check the claim rather than take it:
   * `git --git-dir=…/.git commit …` / `--work-tree=…` — CLOSED, both spellings
     and both separators, judged IN ADDITION to the caller's directory;
   * `GIT_DIR=…/.git git commit …` — CLOSED, from a leading assignment on any
-    segment and from this hook's own environment;
+    segment and from this hook's own environment. `GIT_INDEX_FILE=…/.git/index`
+    is CLOSED too, and it was found by an audit driving variables END TO END
+    rather than by reading: it was ALLOWED and REWROTE the clone's index, which is
+    condition 1's own words. ⚠ `GIT_COMMON_DIR`, `-c core.worktree=`,
+    `GIT_CONFIG_KEY_*` and `--config-env` were driven the same way and measured
+    NOT to mutate the clone, so they are deliberately NOT judged — the set stops
+    at what lands;
   * `cd <the base clone> && git commit …` — CLOSED in the UNDER-blocking
     direction only, and the asymmetry is deliberate: a `cd` target is judged IN
     ADDITION, never instead of the caller's directory, because deciding that a
@@ -144,6 +150,35 @@ check the claim rather than take it:
     script is one quoted token, so nothing in it is parsed as a command. Closing
     it means recursing into nested shells, which is where the host-wide guard
     spends two separate recursion budgets.
+
+🔴 AND THREE MORE OPEN ITEMS, ALL PRE-DATING THE TARGET RESOLUTION AND ALL FOUND
+BY AN ADVERSARIAL AUDIT RATHER THAN BY THE SUITE. They are recorded with a
+CLOSING CONDITION each, because an unstated limit reads as coverage and an
+unclosable one is just a complaint:
+
+  * `_shell_lines` CALLS ITSELF "QUOTE- AND HEREDOC-AWARE" AND ITS OPENER REGEX
+    RUNS ON THE RAW LINE. So a `<<WORD` appearing inside a quoted string — or
+    inside a `#` comment — starts a heredoc that was never opened, and every
+    later line is swallowed as its body. `echo "a <<EOF b"` then `git commit` was
+    proven to pass straight through, clone 1 -> 2 commits. ⚠ IT IS A
+    FAIL-OPEN REACHED BY ORDINARY TEXT, not a crafted payload.
+    **Closing condition:** the opener search runs over the same quote-aware walk
+    that produced the line, with a test for a `<<` inside quotes AND one inside a
+    comment, both watched red first.
+  * THE PROGRAM-NAME WALK MISSES COMMAND WRAPPERS. `_leading_assignments` skips
+    assignments, `env` and a few reserved words, so `if git commit`, `while`,
+    `command`, `nohup`, `timeout`, `eval`, `stdbuf`, `exec`, `sudo` and `xargs`
+    each hide the `git`. **Closing condition:** one ledger of wrapper words with
+    the value-consuming ones marked, and a parametrised case per word watched red.
+  * THE COMPLEMENT OF `_REFUSED` IS CALLED "READS" AND IT IS NOT. `clean -fd`,
+    `rm`, `mv`, `worktree remove` and `branch -D` all write shared state and none
+    is in the ledger. **Closing condition:** a decision recorded for each — in the
+    set, or named in the doc's table as deliberately out — since widening the set
+    without the doc moving is a refusal nobody can look up.
+
+⚠ ALL THREE ARE OUT OF THIS CHANGE'S DECLARED SCOPE and are not held against this
+merge; they are here so the next reader starts from the measurement rather than
+from a rediscovery.
 
 ⚠ AND A FIFTH ROW IS CLOSED IN THE ONLY DIRECTION THAT IS SAFE: `git -C "$WT" …`
 IS REFUSED, NEVER RESOLVED. A `$VAR` target is one this guard cannot follow, so
@@ -242,38 +277,69 @@ _OPERATOR_CHARS = set("();<>|&")
 #: fail-OPEN. Only `-C` replaces it; see `_judged_dirs`.
 _GIT_REPO_OPTS = ("--git-dir", "--work-tree")
 
-#: The two environment variables that override git's directory discovery, with
-#: the same standing as the flags above: judged in addition, never instead.
+#: Environment variables naming a DIRECTORY that redirects a git write, with the
+#: same standing as the flags above: judged in addition, never instead.
+#: ⚠ THIS SET IS NOT `_GIT_DISCOVERY_ENV`, AND AN EARLIER COMMENT SAYING "the two
+#: environment variables" READ AS IF IT WERE. Two different questions: that set is
+#: everything whose presence would steer the guard's OWN reads and is therefore
+#: scrubbed, which is cheap to over-include; THIS set is everything whose value
+#: must be JUDGED as a write target, which has to be earned by measurement. They
+#: are deliberately different sizes — and this one is the smaller, deliberately:
+#: `GIT_COMMON_DIR` is scrubbed but NOT judged, because it was driven end to end
+#: and measured not to mutate the clone. Judging a variable that cannot land buys
+#: a false positive and no coverage.
 _GIT_DIR_ENV_NAMES = ("GIT_DIR", "GIT_WORK_TREE")
+
+#: Environment variables naming a FILE rather than a directory. Judged by the
+#: directory CONTAINING that file, because that is what identifies the repository.
+#: 🔴 `GIT_INDEX_FILE` IS HERE BECAUSE IT WAS MEASURED TO LAND, not because it
+#: looked plausible: `GIT_INDEX_FILE=<the clone>/.git/index git add <file>` run
+#: from a linked worktree was ALLOWED and REWROTE the clone's index. That is
+#: condition 1's "mutates the index", in the clone, allowed — the exact shape this
+#: guard exists for, reached by a variable nothing judged.
+#: ⚠ AND THE SET STOPS AT WHAT LANDS. `-c core.worktree=`, `GIT_CONFIG_KEY_*` and
+#: `--config-env` were each driven END TO END against a miniature clone and
+#: measured NOT to mutate it, so they are deliberately unjudged: widening past
+#: what was shown to land would trade false negatives for false positives with no
+#: measurement on either side.
+_GIT_FILE_ENV_NAMES = ("GIT_INDEX_FILE",)
 
 #: Shell builtins that move the caller's directory. Read as ADDITIONAL judged
 #: directories only — the docstring's table says why a replacement needs bash's
 #: positional model and why guessing it fails open.
 _CHDIR_BUILTINS = frozenset({"cd", "pushd"})
 
-#: Upper bound on how many distinct ADDITIVE directories one Bash call may make
-#: this hook ask `git` about: the `--git-dir` / `--work-tree` / `GIT_DIR` / `cd`
-#: targets, and those only. A command text carrying a hundred `--git-dir=` flags
-#: must not turn a per-Bash-call hook into a hundred `git` spawns.
+#: 🔴 THERE IS NO CAP ON HOW MANY DIRECTORIES THIS HOOK WILL ASK `git` ABOUT, AND
+#: TWO EARLIER DRAFTS HAD ONE. Both were measured to convert a DENY into an ALLOW
+#: at exactly the bound, which is the one direction this file may not fail in. The
+#: history is kept because the cap is the obvious optimisation and the reasoning
+#: that justified it was wrong twice, in the same way, one level apart:
 #:
-#: 🔴 IT IS SCOPED TO THE ADDITIVE PASS BECAUSE A GLOBAL BUDGET WAS A MEASURED
-#: BYPASS, AND THE COMMENT THAT STOOD HERE CLAIMED OTHERWISE. It said a truncation
-#: "can lose only the additive coverage added here — never the directory every
-#: earlier version of this guard judged". False: the counter was shared by both
-#: passes, so PRIMARIES crowded out primaries. Eight `git -C <a real linked
-#: worktree> add` segments — each a legitimate, resolvable, trusted redirect —
-#: followed by a bare `git commit` IN THE CLONE was **ALLOW**, where the base ref
-#: denies it. Bisected on one fixture: DENY for N ≤ 7, ALLOW for N ≥ 8, exactly the
-#: bound. Padding with work the guard is SUPPOSED to permit bought an exemption
-#: for the write it is supposed to refuse.
+#:   * GLOBAL cap. The counter was shared by the primary and additive passes, so
+#:     PRIMARIES crowded out primaries. Eight `git -C <a real linked worktree> add`
+#:     segments — each a legitimate, resolvable, trusted redirect — followed by a
+#:     bare `git commit` IN THE CLONE: DENY for N ≤ 7, ALLOW for N ≥ 8.
+#:   * ADDITIVE-ONLY cap. The fix for the above, and still a bypass, because
+#:     `cd` and `GIT_DIR` targets are WHOLE-COMMAND scans appended to every
+#:     segment's extras. Bisected on two independent spellings, cwd = a linked
+#:     worktree, N ≤ 7 deny / N ≥ 8 allow: `git --git-dir=<an existing dir>` × N
+#:     then `--git-dir=<the clone>/.git add` REWROTE the clone's index with a file
+#:     staged; and N × `cd <an existing dir> && git fetch` then `cd <the clone> &&
+#:     git commit` took the clone from 1 to 2 commits. The second is an ORDINARY
+#:     CROSS-REPO SWEEP, not an exotic payload.
 #:
-#: So the primary directory of every candidate segment is now ALWAYS probed, with
-#: no cap. That is unbounded in principle, and it is the same exposure the base ref
-#: carries (it, too, probed per candidate); `_ROOTS` and `_PROBED` memoise per
-#: path, so the cost is distinct directories rather than segments. A cap belongs on
-#: the half that cannot change a refusal into an allow, which is the additive half
-#: alone.
-_MAX_PROBED_DIRS = 8
+#: 🔴 AND THE SENTENCE THAT STOOD HERE WAS THE PROBLEM, NOT THE CODE: "a cap
+#: belongs on the half that cannot change a refusal into an allow, which is the
+#: additive half alone." Measured FALSE, and it is exactly the kind of claim that
+#: stops the next reader from looking. Any N EXISTING directories named additively
+#: crowded out the real one; the existence pre-check only filters paths that do not
+#: exist, which a cross-repo sweep's `cd` targets certainly do.
+#:
+#: What makes "no cap" affordable: `_ROOTS` and `_PROBED` memoise per PATH, so the
+#: cost is distinct directories rather than segments, and the cheap string-only
+#: pass still early-outs every command that is not already a refusal candidate.
+#: A hostile command text can still make this slow. It cannot make it wrong, and
+#: that is the trade this file takes every time.
 
 
 def _allow() -> NoReturn:
@@ -323,7 +389,17 @@ _GIT_DISCOVERY_ENV = (
 
 
 def _git(cwd: str, *args: str) -> str | None:
-    """One read-only git call. `None` on ANY failure — see the fail-open note."""
+    """One read-only git call. `None` on ANY failure — see the fail-open note.
+
+    🔴 `ValueError` IS IN THE EXCEPT CLAUSE BECAUSE IT WAS MEASURED, NOT BECAUSE IT
+    LOOKED POSSIBLE. `subprocess.run(cwd=…)` raises `ValueError: embedded null
+    byte` — not an `OSError` — for a path containing NUL, so `git -C $'a\\0b'
+    commit` crashed this hook with a traceback and rc 1. Every non-zero status
+    other than 2 lets the command RUN, so the crash was an ALLOW on a payload the
+    base ref DENIED: a fail-open reached by a defect in the guard's own plumbing
+    rather than in its policy. Reach is narrow — bash cannot carry NUL in argv —
+    but fail-open-on-crash is the property this file's own header forbids itself.
+    """
     env = {k: v for k, v in os.environ.items() if k not in _GIT_DISCOVERY_ENV}
     try:
         out = subprocess.run(
@@ -335,7 +411,7 @@ def _git(cwd: str, *args: str) -> str | None:
             check=False,
             env=env,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError, subprocess.SubprocessError):
         return None
     if out.returncode != 0:
         return None
@@ -529,8 +605,11 @@ def _is_exempt(subcommand: str, segment: list[str]) -> bool:
 
 
 #: Memo for `_repo_root`. It is asked about every `-C` target as well as every
-#: probed directory, and a command line may carry many of each; without this the
-#: `_MAX_PROBED_DIRS` budget would bound only half the `git` spawns.
+#: probed directory, and a command line may carry many of each. 🔴 THIS AND
+#: `_PROBED` ARE WHAT MAKE "NO PROBE CAP" AFFORDABLE: the cost of a long command
+#: line is distinct DIRECTORIES, not segments, so the shapes a cap was added for
+#: are already cheap. Two caps were tried and both were measured to convert a DENY
+#: into an ALLOW; the note above `_allow` carries the bisects.
 _ROOTS: dict[str, str | None] = {}
 
 
@@ -731,17 +810,29 @@ def _ambient_targets(segments: list[list[str]], cwd: str,
     """
     env_dirs: list[str] = []
     cd_dirs: list[str] = []
-    for name in _GIT_DIR_ENV_NAMES:
-        resolved = _abs_path(os.environ.get(name, ""), cwd)
+
+    def record(name: str, value: str) -> None:
+        """Judge one variable's value, as a directory or as a file's parent."""
+        resolved = _abs_path(value, cwd)
+        if not resolved:
+            return
+        # A FILE-valued variable identifies its repository by the directory it sits
+        # in: `GIT_INDEX_FILE=<clone>/.git/index` is a write to `<clone>/.git`,
+        # which `_protected` recognises as the main worktree. Taking the dirname
+        # here rather than teaching `_protected` about files keeps that function
+        # answering exactly one question about exactly one directory.
+        if name in _GIT_FILE_ENV_NAMES:
+            resolved = os.path.dirname(resolved)
         if resolved:
             env_dirs.append(resolved)
+
+    for name in _GIT_DIR_ENV_NAMES + _GIT_FILE_ENV_NAMES:
+        record(name, os.environ.get(name, ""))
     for segment in segments:
         for word in segment:
-            for name in _GIT_DIR_ENV_NAMES:
+            for name in _GIT_DIR_ENV_NAMES + _GIT_FILE_ENV_NAMES:
                 if word.startswith(name + "="):
-                    resolved = _abs_path(word.split("=", 1)[1], cwd)
-                    if resolved:
-                        env_dirs.append(resolved)
+                    record(name, word.split("=", 1)[1])
         _, i = _leading_assignments(segment)
         if i < len(segment) and os.path.basename(segment[i]) in _CHDIR_BUILTINS:
             for word in segment[i + 1:]:
@@ -820,14 +911,7 @@ def _main_worktree_path(cwd: str) -> str | None:
 #: `git` spawns.
 _PROBED: dict[str, tuple[str, int] | None] = {}
 
-#: How many ADDITIVE probes this process has spent. Counted separately from
-#: `_PROBED` because a primary probe must never consume the additive budget — see
-#: `_MAX_PROBED_DIRS` for the bypass that taught the distinction.
-_ADDITIVE_PROBES = 0
-
-
-def _protected(path: str, own_repo: str,
-               budgeted: bool = False) -> tuple[str, int] | None:
+def _protected(path: str, own_repo: str) -> tuple[str, int] | None:
     """`(the clone's main worktree, its linked-worktree count)` when a write into
     `path` lands in the SHARED BASE CLONE of the repository this file ships in.
     `None` for every other directory, and for every question git cannot answer.
@@ -856,28 +940,15 @@ def _protected(path: str, own_repo: str,
     for `<clone>/.git` and `<common>/worktrees/<name>`), which is what lets one
     probe serve a worktree path and a `--git-dir` value alike.
     """
-    global _ADDITIVE_PROBES
-    # 🔴 THE ONE EXISTENCE CHECK, AND IT COMES BEFORE THE BUDGET. This hook runs
-    # BEFORE the command does, so a directory the command is about to create does
-    # not exist yet; a path that is not a directory now cannot be the base clone,
-    # and spending probe budget on it would let a line full of junk
-    # `--git-dir=` values crowd a REAL additive candidate out of the verdict.
-    # Not memoised either: `os.path.isdir` is a stat, not a `git` spawn.
+    # A path that is not a directory NOW cannot be the base clone — this hook runs
+    # before the command does, so a directory the command is about to create does
+    # not exist yet. A cheap `stat` ahead of up to three `git` spawns, and nothing
+    # more: ⚠ IT CANNOT CHANGE A VERDICT, because `git` fails on a nonexistent cwd
+    # by itself. A mutation sweep scored it unreachable for exactly that reason.
     if not os.path.isdir(path):
         return None
     if path in _PROBED:
         return _PROBED[path]
-    if budgeted:
-        # Exhaustion returns without writing `_PROBED`, so the budget can never
-        # record a verdict — only decline to compute one. ⚠ THAT IS BELT AND
-        # BRACES, NOT A LIVE GUARANTEE, and saying so is the point: with the
-        # passes ordered unbudgeted-first, every primary is probed before any
-        # budget can run out, so memoising the exhaustion here would change no
-        # answer today. It is written this way so that reordering the passes
-        # cannot quietly turn a cost control into a verdict.
-        if _ADDITIVE_PROBES >= _MAX_PROBED_DIRS:
-            return None
-        _ADDITIVE_PROBES += 1
     result: tuple[str, int] | None = None
     if _repo_root(path) == own_repo and _is_main_worktree(path) is True:
         linked = _linked_worktrees(path)
@@ -948,35 +1019,28 @@ def main() -> None:
     if not own_repo:
         _allow()
 
-    # 🔴 TWO PASSES, AND THE SPLIT IS WHAT MAKES THE PROBE BUDGET SAFE RATHER THAN
-    # MERELY TIDY. Pass one asks about the directory each git call actually RUNS IN
-    # — its `-C` target, or the caller's — which is the only directory any earlier
-    # version of this guard judged, and it is UNBUDGETED. Pass two asks about the
-    # ADDITIVE ones (`--git-dir`, `--work-tree`, `GIT_DIR`, a `cd`) and is the only
-    # pass a cap applies to.
+    # 🔴 ONE PASS OVER EVERY JUDGED DIRECTORY, AND THE ABSENCE OF A SECOND IS THE
+    # FIX. Two earlier drafts split this into a primary pass and an additive pass
+    # so that a probe BUDGET could be applied to one of them; both arrangements
+    # were measured to turn a DENY into an ALLOW at the bound (the comment above
+    # `_PROBED`'s neighbours carries the two bisects). With no budget there is
+    # nothing for an ordering to protect, so there is no ordering to get wrong.
     #
-    # An earlier draft shared one budget across both and ordered the passes to
-    # compensate. Ordering is not a guarantee: the counter was global, so eight
-    # legitimate `git -C <a real linked worktree> add` segments exhausted it and a
-    # bare `git commit` IN THE CLONE on the same line was ALLOWED. Padding with
-    # permitted work bought an exemption for a refused write. `_MAX_PROBED_DIRS`
-    # carries the bisect.
+    # The primary directory still comes FIRST within each segment's list, and that
+    # is now purely cosmetic: it decides which directory the refusal MESSAGE names,
+    # and naming the one the command actually runs in reads better than naming a
+    # `cd` target. Nothing about the verdict depends on it.
     env_dirs, cd_dirs = _ambient_targets(segments, cwd)
-    plans = [(sub, _judged_dirs(segment, cwd, env_dirs, cd_dirs))
-             for sub, segment, _ in candidates]
 
     hits: list[str] = []
     found: tuple[str, int] | None = None
-    for budgeted in (False, True):
-        for subcommand, dirs in plans:
-            for path in (dirs[1:] if budgeted else dirs[:1]):
-                verdict = _protected(path, own_repo, budgeted)
-                if verdict:
-                    hits.append(subcommand)
-                    found = found or verdict
-                    break
-        if hits:
-            break
+    for subcommand, segment, _ in candidates:
+        for path in _judged_dirs(segment, cwd, env_dirs, cd_dirs):
+            verdict = _protected(path, own_repo)
+            if verdict:
+                hits.append(subcommand)
+                found = found or verdict
+                break
     if not hits or not found:
         _allow()
 
@@ -1010,4 +1074,19 @@ def main() -> None:
     )
 
 
-main()
+# 🔴 THE HEADER'S PROMISE — "every unexpected condition here exits 0 and says
+# nothing" — IS MADE STRUCTURAL HERE RATHER THAN LEFT TO EVERY `except` CLAUSE
+# BEING COMPLETE. One was not: a NUL byte in a `-C` value raised `ValueError`
+# past `_git`'s handler and crashed the hook with rc 1, which SILENTLY ALLOWS —
+# a payload the base ref denied. `_git` now catches it at the source, and this
+# exists so the NEXT such gap is a quiet allow instead of a crash, which is the
+# outcome this file already documents for a malformed payload.
+#
+# ⚠ `SystemExit` IS NOT AN `Exception` SUBCLASS, and that is what makes this safe
+# rather than a disaster: the `sys.exit(0)` inside `_allow` and `_deny` passes
+# straight through, so wrapping the body cannot swallow a REFUSAL and convert it
+# into an allow. That is the one way this line could be wrong, so it is stated.
+try:
+    main()
+except Exception:
+    sys.exit(0)

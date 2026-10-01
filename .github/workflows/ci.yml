@@ -392,7 +392,27 @@ jobs:
           # new case is `test_the_prose_numbers_in_this_file_are_PINNED_to_what_they_cite`, added
           # by this branch. Attributed by measurement rather than assumed: the PR branch alone
           # collected 2357 too, which is the check that the merge added nothing here.
-          FLOOR = 2307
+          # ⚠ 2307 -> 2375 WITH THE BASE-CLONE GUARD'S TARGET RESOLUTION. Measured
+          # 2425 on this tree with `pytest tests --collect-only -q`, so
+          # `2425 - min(50, max(1, 2425/20)) = 2375` and the gap is exactly 50
+          # again. The branch is rebased onto `main` with NOTHING behind it, so
+          # this tree IS the merged tree — the distinction the note above insists
+          # on, satisfied by the rebase rather than by a separate measurement.
+          # 🔴 AND THE DRIFT GUARD FORCED THIS ONE: at 2307 the gap was 118,
+          # past `MAX_GAP`, so the job was RED with zero failing tests. That is the
+          # two-tier trap this step's own history records twice, landing a third
+          # time on the same file: THREE full local runs were green (2403, 2420,
+          # 2425 passed / 0 failed) while this job refused, because the floor and
+          # the drift guard live in THIS STEP and in no test. An audit reading CI
+          # is what caught it, exactly as the note predicts. The local check that
+          # WOULD have is the one prescribed above, and it was run before this
+          # literal moved.
+          # ⚠ THE +5 OVER THE AUDITED HEAD IS NOT `main`'s: this branch replaced two
+          # probe-budget tests with a parametrised crowding case (6 rows) and added
+          # a NUL-byte and a `GIT_INDEX_FILE` case, net +5. Attributed by
+          # measurement rather than arithmetic — the base collects 2390 and the
+          # hook suite moves 80 -> 115, and 2390 + 35 = 2425.
+          FLOOR = 2375
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)

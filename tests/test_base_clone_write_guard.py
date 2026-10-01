@@ -59,20 +59,6 @@ def _refused_from_hook() -> frozenset[str]:
     return frozenset(re.findall(r'"([a-z0-9-]+)"', block.group(1)))
 
 
-def _probe_bound_from_hook() -> int:
-    """`_MAX_PROBED_DIRS`, read out of the hook's SOURCE.
-
-    Read rather than hardcoded so the probe-budget test keeps padding PAST the
-    bound if the bound ever moves. `test_the_probe_bound_is_parseable` is the
-    positive control: a regex that matched nothing would make that test pad zero
-    directories and pass while measuring nothing at all.
-    """
-    text = HOOK.read_text(encoding="utf-8")
-    match = re.search(r"^_MAX_PROBED_DIRS = (\d+)$", text, re.M)
-    assert match, "could not find the _MAX_PROBED_DIRS literal in the hook source"
-    return int(match.group(1))
-
-
 def _refused_from_doc() -> frozenset[str]:
     """The subcommands the doc's refused-set TABLE names, in backticks."""
     text = DOC.read_text(encoding="utf-8")
@@ -94,9 +80,18 @@ def _init_clone(path: Path) -> Path:
     against the cwd's — so a fixture that invoked the cairn checkout's hook while
     standing in a synthetic repo would be measuring the cross-repo REFUSAL path
     and never the refusal itself. Copying makes each fixture a faithful miniature
-    of the real deployment (`<repo>/.claude/hooks/<file>`), which is also why
-    `shutil.copy` and not a symlink: `os.path.realpath` on a symlink resolves back
-    to the cairn checkout and the guard would police the wrong tree.
+    of the real deployment (`<repo>/.claude/hooks/<file>`).
+
+    ⚠ THE REASON GIVEN HERE FOR `shutil.copy` OVER A SYMLINK WAS WRONG, AND AN
+    AUDIT MEASURED IT. It claimed `os.path.realpath` on a symlink "resolves back
+    to the cairn checkout and the guard would police the wrong tree". The guard
+    uses `os.path.abspath(__file__)` and never `realpath` on it, so a symlinked
+    hook resolves its own directory to the SYMLINK's location — the fixture repo —
+    and behaves correctly; the auditor drove that case and saw it work. A copy is
+    kept anyway, as a PREFERENCE rather than a necessity: it does not depend on
+    which of `abspath`/`realpath` the hook happens to use, so changing that line
+    in the hook cannot silently repoint every fixture in this file. Recorded
+    because a false reason in a comment is what stops the next reader checking.
     """
     path.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, **_GIT_ENV}
@@ -193,19 +188,6 @@ def test_the_hook_ledger_is_parseable():
     refused = _refused_from_hook()
     assert "commit" in refused, "the parse found no `commit` — it is matching nothing"
     assert len(refused) >= 5, f"implausibly small ledger, parse is probably broken: {refused}"
-
-
-def test_the_probe_bound_is_parseable():
-    """POSITIVE CONTROL for the read the probe-budget test pads from.
-
-    Without it, a regex matching nothing would make
-    `test_junk_candidates_cannot_crowd_a_REAL_one_out_of_the_probe_budget` build
-    zero padding segments and pass while exercising nothing — the same
-    disjoint-key-spaces failure the ledger comparison below guards against.
-    """
-    bound = _probe_bound_from_hook()
-    assert bound >= 1, bound
-    assert bound < 1000, f"implausible bound, the parse is probably wrong: {bound}"
 
 
 def test_the_doc_table_is_parseable():
@@ -1012,11 +994,19 @@ def test_a_gitdir_redirect_to_a_LINKED_WORKTREE_is_allowed(parallel_clone):
     positive being removed. `--absolute-git-dir` is what separates them.
 
     Watched RED at `0e1060f` (deny) and green here.
+
+    🔴 AND THE VERDICT IS cwd-CONDITIONAL, WHICH AN EARLIER DOC ROW AND AN EARLIER
+    LABEL IN THE ACCEPTANCE SCRIPT BOTH OMITTED — one read as unconditional, the
+    other said "cwd = the base clone" while passing the worktree. `--git-dir` is
+    ADDITIVE, so the caller's directory is judged as well: from the worktree this
+    is allowed, from the clone it is REFUSED. Both are asserted here so the pair
+    cannot drift apart again.
     """
     clone, wt = parallel_clone[:2]
     wt_gitdir = clone / ".git" / "worktrees" / wt.name
     command = f"git --git-dir={wt_gitdir} commit -m x"
     assert _decision(_run_hook(command, wt)) is None, command
+    assert _decision(_run_hook(command, clone)) == "deny", command
 
 
 def test_a_redirect_at_a_path_that_is_NO_REPOSITORY_stays_refused(parallel_clone):
@@ -1136,64 +1126,110 @@ def test_an_ASSIGNMENT_token_naming_the_clone_is_not_a_redirect_TARGET(parallel_
     assert _decision(verdict) is None
 
 
-def test_junk_ADDITIVE_candidates_cannot_crowd_a_REAL_one_out_of_the_budget(parallel_clone):
-    """🔴 TWO DIFFERENT HAZARDS SHARE ONE BOUND, AND A DRAFT REPLACED THIS TEST
-    WITH THE OTHER ONE INSTEAD OF KEEPING BOTH — A MUTATION SWEEP CAUGHT IT.
+def _existing_dirs(root, count: int) -> list[Path]:
+    """`count` ORDINARY directories — not worktrees, not repositories.
 
-    This is the ADDITIVE half: `--git-dir=` values are budgeted, so padding with
-    enough of them could push the one that names the clone past the bound. The
-    defence is that a path which is not a directory is answered BEFORE the counter
-    is consulted, so junk costs nothing. Moving that check after the counter
-    survived the suite once this test was gone.
+    Plain directories are the point: the probe cap these pin the absence of
+    filtered only paths that do NOT exist, so a handful of real directories was
+    enough to spend it. That is what made an ordinary cross-repo sweep a bypass
+    rather than an exotic payload.
+    """
+    out = []
+    for n in range(count):
+        path = root / f"pad{n}"
+        path.mkdir()
+        out.append(path)
+    return out
 
-    The sibling below is the PRIMARY half: real, trusted `-C` targets are not
-    budgeted at all. Both are needed; neither implies the other.
 
-    ⚠ INVARIANT GUARD for the existence check itself, which the sweep scored
-    unreachable for CORRECTNESS — `git` fails on a nonexistent cwd anyway. What is
-    reachable, and what this pins, is the ORDERING.
+@pytest.mark.parametrize("count", [8, 12, 30])
+@pytest.mark.parametrize("shape", ["git-dir", "cd"])
+def test_no_number_of_ADDITIVE_candidates_can_crowd_OUT_the_real_one(
+        parallel_clone, shape, count):
+    """🔴 THE HAZARD THAT HAD NO TEST, AND IT REPLACES TWO THAT LOOKED LIKE IT DID.
+
+    The guard once capped how many directories it would ask `git` about. The cap
+    was measured to convert a DENY into an ALLOW at exactly the bound, TWICE, one
+    level apart: first globally (primaries crowding out primaries), then — after
+    the fix — in the additive pass alone, because `cd` and `GIT_DIR` targets are
+    whole-command scans appended to every segment's extras.
+
+    Both shapes here were ALLOW at `c22e7a0` for N >= 8 and DENY for N <= 7, and
+    the `cd` one was driven END TO END: the clone went 1 -> 2 commits with `HEAD`
+    subject `PROOF` while the worktree stayed at 1. **That shape is an ordinary
+    cross-repo sweep.** Green here at N = 8, 12 and 30, so a cap merely RAISED
+    rather than removed cannot satisfy this.
+
+    ⚠ IT REPLACES `test_junk_candidates…probe_budget` AND
+    `test_junk_ADDITIVE_candidates…`, WHICH BOTH WENT VACUOUS WITH THE CAP. One
+    padded with primaries, which were already uncapped; the other tested a cap
+    that no longer exists. Deleting them without this would have left the file
+    looking like it covered the area it had just stopped covering.
     """
     clone, wt = parallel_clone[:2]
-    count = 2 * _probe_bound_from_hook()
-    padding = " ".join(f"--git-dir={clone}/absent-{n}" for n in range(count))
-    command = f"git {padding} --git-dir={clone / '.git'} add seed.txt"
-    assert _decision(_run_hook(command, wt)) == "deny", command
+    pads = _existing_dirs(clone.parent, count)
+    if shape == "git-dir":
+        pad = " ".join(f"--git-dir={d}" for d in pads)
+        command = f"git {pad} --git-dir={clone / '.git'} add seed.txt"
+    else:
+        pad = " ".join(f"cd {d} && git fetch ;" for d in pads)
+        command = f"{pad} cd {clone} && git commit -m PROOF"
+    assert _decision(_run_hook(command, wt)) == "deny", f"{shape} N={count}"
 
 
-def test_junk_candidates_cannot_crowd_a_REAL_one_out_of_the_probe_budget(parallel_clone):
-    """🔴 THE PROBE BUDGET WAS A MEASURED BYPASS, AND THIS TEST'S FIRST VERSION
-    DESCRIBED THAT HAZARD WITHOUT TESTING IT.
+def test_a_NUL_BYTE_in_a_redirect_does_not_CRASH_the_hook(parallel_clone):
+    """🔴 A CRASH IS AN ALLOW, AND THIS ONE WAS REACHED THROUGH THE GUARD'S OWN
+    PLUMBING RATHER THAN ITS POLICY.
 
-    The budget bounds how many directories one Bash call may make the hook ask
-    `git` about. The first version padded with NONEXISTENT `--git-dir=` values —
-    which the existence pre-check means never consume budget at all, so the body
-    could not exercise the sentence its docstring made. "Reads as coverage while
-    providing none" in a test about a bypass.
+    `subprocess.run(cwd=…)` raises `ValueError: embedded null byte` — not an
+    `OSError` — so a NUL in a `-C` value escaped `_git`'s handler and killed the
+    hook with a traceback and rc 1. Every status except 2 lets the command RUN, so
+    the traceback was an ALLOW on a payload `0e1060f` DENIED.
 
-    This pads with REAL linked worktrees reached through `-C`, each a legitimate,
-    resolvable, trusted redirect, and then writes to the clone with a bare
-    `git commit` on the same line. Measured on the shared-budget head: DENY for
-    N <= 7, ALLOW for N >= 8 — exactly `_MAX_PROBED_DIRS`. Padding with work the
-    guard is SUPPOSED to permit bought an exemption for the write it must refuse.
+    Measured: DENY at `0e1060f`, **rc 1** at `c22e7a0`, deny here. Reach is narrow
+    — bash cannot carry a NUL in argv — but fail-open-on-crash is the property
+    this file's own header forbids itself, and `_run_hook` asserts rc 0 on every
+    call for exactly this reason.
 
-    The budget is now scoped to the ADDITIVE pass; primary directories are always
-    probed. Watched RED at the resolver head (`ALLOW`) and green here.
-
-    🔴 THE PADDING COUNT IS READ OUT OF THE HOOK, NOT HARDCODED, and it pads to
-    TWICE the bound: a cap merely raised rather than scoped must not green this.
-    `test_the_probe_bound_is_parseable` is the positive control for that read, so a
-    regex matching nothing cannot silently pad zero directories.
+    ⚠ IT ALSO FALSIFIES A CLAIM THIS BRANCH SHIPPED. `_abs_path` said a second
+    existence check "could never change a verdict"; removing the duplicate turned
+    this DENY into a crash-ALLOW. The mutation sweep scored that guard unreachable
+    because it scored VERDICTS, and a crash is not a verdict — a blind spot of the
+    instrument, now recorded beside both.
     """
     clone = parallel_clone[0]
-    count = 2 * _probe_bound_from_hook()
-    extras = []
-    for n in range(count):
-        path = clone.parent / f"budget-{n}"
-        _add_worktree(clone, path, branch=f"budget-{n}")
-        extras.append(path)
-    pad = " ".join(f"git -C {p} add seed.txt &&" for p in extras)
-    command = f"{pad} git commit -m x"
-    assert _decision(_run_hook(command, clone)) == "deny", f"N={count}"
+    assert _decision(_run_hook("git -C a\0b commit -m x", clone)) == "deny"
+
+
+def test_GIT_INDEX_FILE_pointed_at_the_clones_INDEX_is_refused(parallel_clone):
+    """🔴 CONDITION 1 SAYS "MUTATES THE INDEX", AND THIS MUTATED THE CLONE'S INDEX
+    WHILE BEING ALLOWED.
+
+    `GIT_INDEX_FILE=<the clone>/.git/index git add <file>` from a linked worktree
+    was ALLOW at `0e1060f` and at `c22e7a0`, and was measured to REWRITE the
+    clone's index with a file staged. Nothing judged the variable: the judged-env
+    list was `GIT_DIR`/`GIT_WORK_TREE` while the SCRUB list beside it already named
+    nine variables, and a comment calling the first "the two environment
+    variables" read as though those were the same question.
+
+    🔴 IT IS JUDGED BY ITS CONTAINING DIRECTORY, because the value is a FILE.
+    `<clone>/.git/index` -> `<clone>/.git`, which `_protected` already recognises
+    as the main worktree. That keeps `_protected` answering one question about one
+    directory instead of learning about files.
+
+    ⚠ AND THE SET STOPS AT WHAT LANDS: `GIT_COMMON_DIR`, `-c core.worktree=`,
+    `GIT_CONFIG_KEY_*` and `--config-env` were each driven end to end and measured
+    NOT to mutate the clone, so they stay unjudged. Widening past what was shown
+    to land trades a false negative for a false positive with no measurement on
+    either side.
+    """
+    clone, wt = parallel_clone[:2]
+    command = f"GIT_INDEX_FILE={clone / '.git' / 'index'} git add seed.txt"
+    assert _decision(_run_hook(command, wt)) == "deny"
+    # The same variable in the ENVIRONMENT rather than the command text.
+    verdict = _run_hook("git add seed.txt", wt,
+                        env_extra={"GIT_INDEX_FILE": str(clone / ".git" / "index")})
+    assert _decision(verdict) == "deny"
 
 
 def test_a_cd_does_not_override_a_RESOLVED_redirect(parallel_clone):

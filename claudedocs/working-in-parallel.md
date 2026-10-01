@@ -266,7 +266,8 @@ same run as the control.
 | `git -C <ANOTHER repo's worktree> commit …` from the base clone | allowed |
 | `git -C "$WT" …` — any `$VAR` target, however it is assigned | REFUSED — never resolved |
 | `git --git-dir=<the clone>/.git …` / `--work-tree=<the clone> …` | REFUSED, from anywhere |
-| `git --git-dir=<a linked worktree's git dir> …` | allowed |
+| `git --git-dir=<a linked worktree's git dir> …` **from that worktree** | allowed |
+| …the same command **from the base clone** | REFUSED — `--git-dir` is additive, so the caller's directory is still judged |
 | `GIT_DIR=<the clone>/.git git …`, or `GIT_DIR` already exported | REFUSED |
 | `cd <the base clone> && git commit …` | REFUSED |
 | `cd <a worktree> && git commit …` from the clone | REFUSED — see below |
