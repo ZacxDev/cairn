@@ -650,3 +650,66 @@ for, and it is the third time the anchor has been the thing that went stale.
 - **A tag that differs only in the fold.** `Marketing`/`marketing` is covered; a pair differing by
   `_` versus `-`, or by a folded-away character in the middle, is not driven from a command line on
   either client.
+
+## 🔴 The nuance-ceiling badge, and the SECOND vacuity this gate closed on itself
+
+Two rows in the world — `talus-ridge` (31 nuance bullets) and `talus-flat` (exactly 30) — exist for
+the index row's size badge, `⚠ OVER 30 nuance — prune or split`. They are the only thing comparing
+the two CLIENTS on it: the badge's threshold is a constant spelled once per renderer
+(`NuanceBulletCeiling` / `NUANCE_BULLET_CEILING`) because `packages.cairn` cannot import
+`internal/`, so the two can silently disagree, and a disagreement changes ONE badge on SOME rows —
+no error, no missing entry, no exit code. `tests/test_nuance_bullet_ceiling.py` pins the two
+constants and the two rendered strings by reading the Go source as text; this is what measures the
+two real clients instead.
+
+### ⚠ THEY WERE SEEDED IN `crag-notes` FIRST, AND THAT GREEN WAS A GREEN ABOUT NOTHING
+
+Measured, not feared. With both entries in `crag-notes` the gate ran with the two ceilings
+deliberately DESYNCED — Python at 25 against Go's 30 — and reported `cases=123 passes=126
+failures=0 dead-normalizations=0`, exit 0, with the two renderers openly disagreeing. The cause is
+that **every `recall` case targets `alpha-notes`**; `crag-notes` is reached by `validate` alone,
+which prints no index row. The entries were in the store, the files were synced, the PREFLIGHT and
+CONTENT-FLOOR controls all vouched, and the branch was never evaluated once.
+
+That is the "reassuring zero" shape at the level of the WORLD rather than the harness: every control
+this gate owns was green, because each of them asks whether the *clients* reached live content, and
+none asks whether any case renders the row a new fixture was added for. Reseeded into `alpha-notes`,
+the same desync control goes **RED with 9 failures** — `recall-digest`, `recall-list`, `recall-page`,
+`recall-no-sync`, four `recall-focus-*` rows and `recall-routed-to-the-DEFAULT-instance-is-still-labelled`
+— diffing both sides of the boundary at once:
+
+```
+-  talus-flat    30 nuance   client-confidential   ⚠ OVER 25 nuance — prune or split
+-  talus-ridge   31 nuance   client-confidential   ⚠ OVER 25 nuance — prune or split
++  talus-flat    30 nuance   client-confidential
++  talus-ridge   31 nuance   client-confidential   ⚠ OVER 30 nuance — prune or split
+```
+
+**The lesson is about where a fixture goes, not about this badge.** A scope is a theme, and the
+scope a new entry *reads* like it belongs to is not necessarily one any case renders. Before
+trusting a world addition, run the gate with the thing it measures deliberately BROKEN and confirm
+it goes red — a world addition is an instrument like any other, and an untested one is decoration.
+
+### Why TWO rows, and why the counts are literals
+
+`talus-flat` at exactly the ceiling is the load-bearing half: an oversized entry alone pins that the
+badge CAN appear and nothing about WHERE it starts, so a client whose predicate is `>=` rather than
+`>`, or whose ceiling is 29, renders identically on `talus-ridge`. Their mtimes are the OLDEST in
+the scope on purpose — the newest entry wins the featured pick, and a 31-bullet body taking that
+slot would displace the entry every existing digest case measures, buying this branch by deleting
+another's.
+
+The bullet counts are written as LITERALS in `world.py` rather than derived from
+`NUANCE_BULLET_CEILING`, which inverts the rule the renderers follow. This gate compares two
+INDEPENDENT implementations; a world computing its counts from one of them would move with it, so a
+ceiling changed on the Python side alone would re-seed the fixture and keep both clients on the same
+side of the boundary — re-creating exactly the vacuity above by a different route.
+
+### What these two rows still cannot see
+
+- **A badge interacting with PAGINATION.** Both rows sit in a single-page index; nothing drives an
+  oversized entry across the 100-row page boundary, where the row would be on page 2.
+- **The badge on a SEARCH hunk header.** It is an index-row fact only, and `search` renders no
+  index — so if a future change surfaced it on a hunk, nothing here would compare it.
+- **An entry oversized AND malformed.** `talus-ridge` parses; a file whose nuance heading is renamed
+  reports `0 nuance` and no badge by PARSE FAILURE, and no row pairs that with an oversized body.
