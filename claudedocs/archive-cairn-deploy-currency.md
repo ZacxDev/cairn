@@ -664,3 +664,46 @@ pointer** — which is what "move the text to the archive leaving a pointer" mea
 - **Next probe:** watch one **scheduled** firing go green — the timer's next is the only reading
   that settles the headline. For rank 8, the operator's release-cadence decision.
 
+
+### ✅ RESOLVED 2026-10-01 — round 2 re-audited the fixes and found FOUR more that were mine, two re-creating the exact shape they were fixing
+- as-of: 2026-10-01
+- **What this settles:** that a fix round's own prose is the likeliest next finding. Three
+  rounds, every one finding real defects in the previous round's *corrections*.
+- 🔴 **Ruled out: that restoring the both-pods loop was a fix. IT RE-CREATED THE FALSE ZERO IT
+  WAS FIXING.** Rebuilt as `echo "…: $(git rev-list …)"`, which hands `$?` to `echo`. Measured:
+  with `kubectl` failing, `DEP` is **empty**, `..origin/main` is a **VALID** range, and the block
+  prints `0`/`0` at **rc 0** — an affirmative *"no drift"* for a block that never reached the
+  cluster. **An empty operand makes a valid range, not an error.** Two lines under this section's
+  own *"READ EVERY STATUS OFF THE COMMAND"* headline. Fixed with guards on `kubectl`'s status and
+  on `DEP` being a real tag. `via: measurement`
+- 🔴 **Ruled out: my own generalisation of the prune rule — WRONG ON TWO OF THREE FIELDS NAMED,
+  AND IT OMITTED TWO.** Read out of the tool's values, not its source: the guarded set is **the
+  task-board field, `closing-condition`, `forcing` and `as-of`**. **The `via` field is NOT in
+  it** (`load_bearing_field()` returns `None`); a `via`-tagged line is unprunable only because it
+  RECURS — the ambiguity rule. And **`as-of` is `block_scoped`, so it IS exempt when a whole
+  block is named**; "no bypass" is false for it. ⚠ The wrong bullet is itself unprunable because
+  it quotes `forcing:`, so it is corrected by naming. **I wrote an untested generalisation inside
+  the bullet whose lesson is "a comment is a claim I carried forward without testing".**
+  `via: code`
+- 🔴 **Ruled out: that the replacement archive bullet was safe. IT TOLD THE READER NOT TO QUOTE A
+  COUNT, THEN QUOTED THREE — ALL FALSE.** "12 bodies, 39,944 B, four retractions"; measured at
+  the PR head **14 / 48,650 B**, falsified by its own sibling commit **14 seconds later in the
+  same PR**, and the archive header says **three**. Replaced with a bullet carrying **no count** —
+  the only version that cannot go stale. `via: measurement`
+- **Ruled out:** that `0 of 147 absent, 116 net` reproduces. **147 is an ARCHIVE-side count on a
+  HANDOFF-side "absent" claim** — the same conflation the preceding block confesses to. The
+  reproducible triple is **116 removed / 151 non-blank added / 0 absent**; the safety property
+  holds. `via: measurement`
+- **Ruled out:** the `result` hedge, the self-test `tail`, and round 1's losslessness — three
+  more, all mine. A live `result` **directory** is skipped BY NAME and exits **0**; only a
+  **DANGLING** one exits 2, so "a plausible exit-2 cause" was half-false. `--self-test` prints
+  **no summary line**, so the `tail -2` I added always shows the last two `PASS` rows whether a
+  control failed or not — a content-check providing none. And three things were silently lost and
+  are restored here: the `model`-didn't-survive observation (**0 hits in handoff AND archive** —
+  gone, not evicted), the sweep's two anchors, and rank 5's measured "twice", widened to
+  "repeatedly" with no new measurement. `via: measurement`
+- **Leading hypothesis:** none. ⚠ **The pattern is three-for-three: in this doc the thing most
+  likely to be wrong is the sentence written to correct the last wrong sentence.**
+- **Next probe:** a **scheduled** firing going green — still unobserved. For rank 8, the
+  operator's cadence decision.
+
