@@ -250,23 +250,50 @@ duplicate. Run that sweep twice: at orientation, and again immediately before
 `gh pr create` — the window is around twenty minutes and the second moment is where the
 sunk cost is highest.
 
-## 🔴 What the guard CANNOT see — measured, and stated because unstated limits read as coverage
+## 🔴 What the guard judges, and the one thing it still cannot see
 
-It keys on the **cwd** and nothing else, so every one of these was MEASURED to pass
-straight through while the same command typed *in* the base clone is refused:
+It judges **the directory the command WRITES to**, not the one the shell is standing in.
+That was the other way round for two rounds, and keying on the cwd was wrong in both
+directions at once — it refused writes that went elsewhere, and it missed writes that came
+back in. Both halves are closed; the table below is what each spelling does now, and every
+row was MEASURED against a miniature clone with a real base-clone write denying in the
+same run as the control.
 
-| bypass | why |
+| spelling | verdict |
 |---|---|
-| `git -C <the base clone> commit …` from a worktree | the cwd is the worktree; the target is not read |
-| `cd <the base clone> && git commit …` | same |
-| `git --git-dir=… --work-tree=… commit …` | same |
-| `bash -c 'cd <the base clone> && git commit …'` | same |
+| `git -C <the base clone> commit …` from a worktree, or from another repo | REFUSED |
+| `git -C <a linked worktree> commit …` from the base clone | allowed |
+| `git -C <ANOTHER repo's worktree> commit …` from the base clone | allowed |
+| `git -C "$WT" …` where the command text assigns `WT` on an earlier line | resolved, then judged |
+| `git --git-dir=<the clone>/.git …` / `--work-tree=<the clone> …` | REFUSED, from anywhere |
+| `git --git-dir=<a linked worktree's git dir> …` | allowed |
+| `GIT_DIR=<the clone>/.git git …`, or `GIT_DIR` already exported | REFUSED |
+| `cd <the base clone> && git commit …` | REFUSED |
+| `cd <a worktree> && git commit …` from the clone | REFUSED — see below |
+| `bash -c 'cd <the base clone> && git commit …'` | NOT SEEN — still open |
 
-⚠ **The first two are the spelling this document's own recipe uses**, so this is not an
-exotic gap. The fleet's `guard_core.py` already resolves all four, which makes it
-**strictly stronger than this guard** on `cd <clone> && git commit`. The right repair is to
-reuse that resolution rather than grow a second copy here — `claude/RULES.md` is explicit
-that one predicate in two places regenerates the same bug at both. **Open, not done.**
+⚠ **Two rows are deliberately asymmetric and neither is an oversight.**
+
+A **`cd` target is judged IN ADDITION to the caller's directory, never instead of it.**
+Deciding that a `cd` *replaces* the caller needs bash's positional model — `( … )` does not
+persist, `{ … }` does — and a wrong model there fails OPEN, which is the one direction this
+guard may not fail in. So a `cd` into the clone is caught, while a `cd` *out* of it is still
+refused. **Use `-C` instead**, which the guard resolves exactly.
+
+**`bash -c '…'` is one quoted token** to this parser, so nothing inside it is read as a
+command. The fleet's `guard_core.py` closes the equivalent, and spends two separate
+recursion budgets to do it.
+
+🔴 **"Reuse the fleet guard's resolution" was this document's advice for two rounds, and it
+is not available — saying so is what unblocked the repair.** `guard_core.py` lives in the
+operator's `~/.claude/hooks/`, is not tracked here, and ships to two known hosts; this hook
+is tracked in a **public** repository and must run on a stranger's clone with nothing beside
+it. An import would be a missing module everywhere else, and a `PreToolUse` hook that fails
+to start is silently an **allow** — so the guard would go inert exactly where it is the only
+one present. The resolution here is a second implementation on purpose, and much smaller:
+four redirection spellings, variables only where the command text itself assigns them, no
+sourced files, and **everything it cannot resolve falls back to judging the caller's
+directory** — the fail-CLOSED direction, which is what lets it stay small.
 
 ⚠ **And it is inert in the other runtime.** Only Claude Code reads `.claude/settings.json`;
 the opencode plugin spawns `guard_core.py` and never consults this file. A rule the fleet
