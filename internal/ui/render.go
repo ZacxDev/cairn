@@ -221,18 +221,27 @@ const RefsKeyDescription = "the `refs:` front-matter key (or the accepted older 
 // one and `marketing` in the other. Saying so is what stops that reading as the page showing
 // something else.
 //
-// 🔴 IT SAYS THE VOCABULARY IS OPEN, BECAUSE NOTHING ELSE ON THIS SURFACE CAN. There is no
-// declared tag set, no allowlist and no rename tool, so a typo is a category of one that no gate
-// catches — and the entry page is where an operator would look for the list that does not exist.
+// 🔴 IT SAYS WHERE THE VOCABULARY IS CLOSED, BECAUSE NOTHING ELSE ON THIS SURFACE CAN — AND IT
+// DOES NOT ENUMERATE THE SET. The declared set lives in `internal/write`'s `tagVocabulary` and is
+// enforced on the WRITE path; a third spelling of those terms, on a page nothing gates against
+// them, is the drift this line refuses to start. What it must say instead is the SCOPE: a tag
+// shown here was either accepted by that gate or predates it, which is the difference between
+// "this is one of the valid categories" and "this is what the file says".
 //
-// 🔴 PINNED AS ONE NORMALISED STRING BY `TestTheTagsKeyDescriptionIsPinnedWhole`, THE SAME WAY
-// `RefsKeyDescription` AND `ReplicaHonesty` ARE, AND FOR THE SAME MEASURED REASON. A comment reds
-// no test: `RefsKeyDescription` really did serve the word `deprecated` while the README shipped
-// beside it said permanent, and the correction was asserted by nothing. Dropping the `folded`
-// clause here — the half a tidying edit removes — would leave this page claiming the file's own
-// spelling, and the whole suite green.
+// 🔴 PINNED AS ONE NORMALISED STRING BY `TestTheTagsKeyDescriptionIsPinnedWhole`, AGAINST A
+// HAND-TYPED LITERAL — AND THE LITERAL IS A CORRECTION, NOT A STYLE. That test used to compare
+// the page against THIS CONSTANT, which moves both sides of the comparison together and could
+// not see a reword at all: measured, a mutant reducing this line to `"the `tags:` front-matter
+// key"` — dropping the FOLDED clause and the vocabulary clause at once — left `go test ./...`
+// green tree-wide. That is the identical defect already recorded for `ReplicaHonesty` in
+// `internal/ui/sharing_test.go`, and the fix is the same: two spellings, deliberately, so
+// changing what this page claims is an edit a reviewer sees.
+//
+// ⚠ SO THE DUPLICATION IS LOAD-BEARING AND MUST NOT BE "DEDUPLICATED" BACK INTO ONE. The battery
+// row is `ui-tags-key-description-loses-both-its-claims` in `tests/control_mutants.py`.
 const TagsKeyDescription = "the `tags:` front-matter key, FOLDED to lowercase `[a-z0-9.-]` — " +
-	"the vocabulary is OPEN, so nothing declares the valid set and a typo is a category of one"
+	"the vocabulary is CLOSED on the write path, so a tag here was either accepted by that " +
+	"gate or predates it"
 
 // EntryPage is ONE entry: the sections its file carries and the line items under the
 // journal heading.
@@ -530,9 +539,11 @@ func searchResults(v PageView) g.Node {
 // carries this" from "this credential can see nothing", and the two have opposite next
 // actions — write the tag, or ask for access.
 //
-// ⚠ THE VOCABULARY IS OPEN AND NOTHING DECLARES IT, so a zero here is also what a TYPO looks
-// like. The empty sentence says so, because there is no list of valid tags to check against
-// and no gate that could have caught it.
+// ⚠ A ZERO HERE IS STILL WHAT A TYPO LOOKS LIKE, AND CLOSING THE WRITE-PATH VOCABULARY DID NOT
+// CHANGE THAT — which is why the empty sentence still says it. This page's `?tag=` operand is
+// checked against no vocabulary at all (deliberately: see `store.HasTag`), and an entry written
+// before the closure can carry any tag. The gate refuses new bad tags; it cannot make a
+// mistyped QUERY look different from an honest zero.
 func tagResults(v PageView) g.Node {
 	m := *v.TagMatches
 	return h.Section(
@@ -542,9 +553,10 @@ func tagResults(v PageView) g.Node {
 		h.P(h.Class("note"), g.Text(tagSummary(m))),
 		h.P(h.Class("note"), h.A(h.Href(RootPath), g.Text("Clear the tag and show every scope"))),
 		g.If(len(m.Entries) == 0 && m.Scanned > 0, h.P(h.Class("empty"), g.Text(
-			"No entry carries this tag. The tag vocabulary is OPEN — nothing declares the set "+
-				"of valid tags — so this is also what a typo looks like, in the query or in "+
-				"the file."))),
+			"No entry carries this tag. This query's operand is checked against no "+
+				"vocabulary, and an entry written before the write path's vocabulary closed "+
+				"can carry any tag — so this is also what a typo looks like, in the query or "+
+				"in the file."))),
 		g.If(m.Scanned == 0, h.P(h.Class("empty"), g.Text(
 			"There was nothing to filter: no entry is visible to this credential. That is an "+
 				"authority answer, not a fact about the tag."))),

@@ -357,12 +357,77 @@ on a sample entry, so a zero from it is a zero it could have contradicted. That 
 **your** store. The check is `grep -rl '^tags:' <your cache root>`; the remedy is to make the value
 a list.
 
-🔴 **The vocabulary is OPEN and nothing declares it.** There is no allowlist, no closed set and
-no rename tool: you name a category when you need one. The cost is stated rather than hidden — a
-typo makes a silently separate category of one, and no check in this project will catch it. It is
-deliberately **not** the `kind:` enum, which stays a closed four-value set
-(`service`/`process`/`org`/`doc`): `marketing` and `project-xyz` are a different axis from
-service/process/org/doc, and putting two axes in one closed set makes both unassertable.
+🔴 **The vocabulary is CLOSED on the WRITE path and OPEN to every READER, and the asymmetry is
+the design rather than a gap.** The declared set is exactly three terms — **`infra`**,
+**`product`**, **`tooling`** — and both servers refuse a `PUT` whose front matter carries
+anything else: **422** with `X-Store-Status: entry-shape` and a body naming the three. Nothing
+lands.
+
+The axis is the technical **domain** of the work. It is deliberately *not* "who the work is
+for": a fourth term `client-work` shipped for one round and was removed, because `infra` /
+`product` / `tooling` answer *what kind of work* while `client-work` answers *whose*, and a
+closed set mixing two axes under a one-tag-per-entry rule makes both unassertable — the same
+objection this project already records against folding the category axis into `kind:`. The
+"whose" question is answered by the **scope** name, which every entry already carries.
+
+The READER accepts any folded tag, and it has to. A vocabulary refusal in the loader would make
+the entry **malformed**, and the paragraph above is what that costs: out of the index, out of
+`--ref`, out of `--search` **and unwritable**, because the write routes resolve their target
+through that index. Closing the vocabulary in the reader would therefore take every entry that
+already carries an off-vocabulary tag and make it unreadable and unrepairable in the same stroke
+— a store-wide outage caused by the guard rather than by the data. So `--tag`/`?tag=` will name
+any token you like, an entry written before the closure keeps loading and keeps serving, and the
+rendered non-finding still says a typo looks exactly like an honest zero.
+
+**Widening or narrowing the set is a change in SIX files — two declarations and four
+expectations — and the count is measured rather than counted by eye.** Derived by adding a
+fourth term to both declarations and reading what went red:
+
+| # | file | what is in it | which gate reds |
+|---|---|---|---|
+| 1 | `internal/write/tagvocab.go` | `tagVocabulary` — the **deployed** Go pod's declaration | — (this is the change) |
+| 2 | `lib/entry_shape.py` | `TAG_VOCABULARY` — the Python oracle's | — (this is the change) |
+| 3 | `internal/write/tagvocab_test.go` | **two** literals: the refusal sentence and the term list | `go test ./internal/write/` |
+| 4 | `internal/api/tagvocab_test.go` | the 422 body as served, including its `unprocessable: ` prefix | `go test ./internal/api/` |
+| 5 | `tests/test_tag_vocabulary.py` | **two** literals: `DECLARED` and `DECLARED_REFUSAL` | `pytest` |
+| 6 | `tests/conformance/golden/put-*-tag-*-the-vocabulary.json` | the recorded refusal bytes — regenerate with `python3 tests/conformance/suite.py generate`, never hand-edit (a golden's body is checked against its own recorded digest) | **three** gates: `tests/conformance/run_go.sh`, `python3 tests/conformance/suite.py run`, and `pytest tests/test_conformance_suite.py` |
+
+So: **eight hand-typed literals across four test files, plus three goldens.** Every one is a
+literal on purpose — a test that derived its expectation from the declaration would assert
+`x == x` and stay green through exactly this edit.
+
+⚠ **And two more files carry the terms as PROSE, which no gate covers**: this README's list
+above, and `CHANGELOG.md`'s row. Those are the ones that go stale silently, so edit them in the
+same commit.
+
+⚠ **The count above says "six files", and the earlier draft of this paragraph said "four
+places" — wrong in the direction that makes the change look cheap.** That is the identical
+mistake `lib/entry_shape.py` already records about its own per-host-cache sentence (*"THIS
+COMMENT SAID 'a four-place change' AND THAT WAS WRONG BY 2×"*), two files from where the
+undercount was written. Re-derive rather than trusting the number:
+
+```bash
+# add a term to both declarations, then read what fails
+go test ./... ; python3 -m pytest tests -q
+```
+
+`tests/test_tag_vocabulary.py` is the cheap red that says *which side* moved;
+`tests/conformance/` is the one that compares the two servers' refusal bytes over the wire.
+
+It is deliberately **not** the `kind:` enum, which stays its own closed four-value set
+(`service`/`process`/`org`/`doc`). `kind:` says what SHAPE of thing the entry describes and the
+tag axis says which technical domain it belongs to; an entry carries one value from each, neither
+set refines the other, and putting two axes in one closed set makes both unassertable.
+
+⚠ **Which surfaces the gate actually covers, stated rather than left to be assumed.** Both
+servers' `PUT` routes are gated — that is every path by which an entry's front matter can be
+written through cairn, including `cairn put` and `cairn create`, because both clients send the
+body and relay the server's answer rather than validating locally. `POST …/bullets` (`cairn
+append`) is **not** gated and must not be: it never touches front matter, and gating it would
+refuse appends to entries that predate the closure. The **browser** surface has no entry-write
+route at all — `internal/ui` declares `/share`, `/unshare`, the session pair, `/invite`,
+`/invite/revoke` and the OAuth pair, and nothing that creates, replaces or appends to an entry
+— so "the browser is gated" is true only vacuously, and no browser-side check was built.
 
 **The five things worth knowing if you script this:**
 

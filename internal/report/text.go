@@ -381,9 +381,20 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 		}
 		// 🔴 IT SAYS WHAT WAS LOOKED AT AND WHAT WAS NOT, because a category filter's zero is as
 		// misreadable as a reverse lookup's: "no entry is tagged X" and "X is not a category
-		// anybody uses" are different facts, and only the first is in evidence. The vocabulary
-		// is OPEN, so a typo in either the file or the query makes a silently separate category
-		// — that is what the last clause names.
+		// anybody uses" are different facts, and only the first is in evidence.
+		//
+		// 🔴 AND THE LAST CLAUSE IS SCOPED TO WHAT THE CLOSED VOCABULARY DOES **NOT** COVER,
+		// WHICH IS THE HALF THAT WOULD READ AS FIXED IF IT WERE DROPPED. The write path
+		// refuses a tag outside `internal/write`'s declared set, so a typo cannot ENTER the
+		// store through this server any more — but this QUERY's operand is checked against
+		// nothing (deliberately: see `store.HasTag`), and a file that predates the closure or
+		// arrived by another route can still carry anything. Both remaining typo routes are
+		// named because a zero here is still what each of them looks like.
+		//
+		// ⚠ BYTE-IDENTICAL WITH `lib/subsystem_recall.py`'s `tag-absent` branch, which is not
+		// a style request: `tests/parity/`'s `recall-tag-absent` row diffs the two clients'
+		// stdout, and `tests/conformance/golden/recall-tag-absent.json` pins the served bytes.
+		// Reword one side alone and both go red.
 		extra := ""
 		if n := len(r.Malformed); n > 0 {
 			extra = " ⚠ BUT " + strconv.Itoa(n) + " entry file" + plural(n) + " in this scope " +
@@ -395,8 +406,9 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 			strconv.Itoa(r.TagScopeTotal)+" entr"+entryPlural(r.TagScopeTotal)+" in `"+
 			r.Scope+"/` were read and none of them carries it. Both "+
 			"sides of the comparison are FOLDED, so a differently-cased spelling would have "+
-			"been found — but the tag vocabulary is OPEN and nothing declares it, so a typo in "+
-			"the file or in this query is a category of one that no check can see."+extra)
+			"been found — but this query's operand is checked against no vocabulary, and a "+
+			"file written before the write path's vocabulary closed can carry any tag, so a "+
+			"typo either side is a category of one that no read can see."+extra)
 		return strings.Join(out, "\n")
 
 	case StatusRefAbsent:

@@ -258,15 +258,22 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 188 mutants, over SEVEN packages
+python3 tests/control_mutants.py          # 189 mutants, over SEVEN packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 188 mutants, in TWO runs of different scopes rather than one.** 185 of
-them in the whole-battery run — 183 killed, 2 labelled EQUIVALENT at the code, 0 misattributed,
-0 harness errors, 0 stale extra-killers, positive control GREEN. The three `requirements-*` rows
-were measured individually, each `killed=1 survived=0 misattributed=0 harness-errors=0` with
-empty stderr and its own positive control GREEN.
+**Measured on this tree: 189 mutants, in ONE run.**
+`mutants=189 killed=187 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive
+control GREEN. Both survivors are the rows labelled EQUIVALENT at the code — the two
+constant-time-compare edits, whose property is a TIMING one no behavioural test can see; each
+prints its label and its reason at the end of the run.
+
+⚠ **THIS PARAGRAPH USED TO DESCRIBE "TWO RUNS OF DIFFERENT SCOPES", AND THAT IS NO LONGER HOW
+THE BATTERY WORKS.** The three `requirements-*` rows carry their own `pkgs` (`PKGS` plus
+`./internal/report/`), so the single invocation already covers them and the separate measurement
+they once needed is gone. The number beside it was also one behind: re-derive both from a run
+rather than editing the count to match, because the kill/survivor split is pinned by nothing and
+it is the half that has been wrong before.
 
 🔴 **THE TOTAL IS DELIBERATELY NOT SUMMED, AND THAT IS THIS LINE'S OWN RULE APPLIED TO ITSELF.**
 The paragraph below says this line is "a SEPARATE MEASUREMENT RATHER THAN THE COUNT PIN'S
@@ -390,7 +397,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 188 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 189 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test

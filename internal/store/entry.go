@@ -135,11 +135,24 @@ type Entry struct {
 	// Tags are the `tags:` this entry carries — normalized, deduped and sorted, and
 	// non-nil when empty for the reason this struct's own ledger gives.
 	//
-	// 🔴 THE VOCABULARY IS OPEN, AND THAT IS A DECISION RATHER THAN AN OMISSION. `Kind` is
-	// a CLOSED four-value enum and this is deliberately not one: `marketing` and
-	// `project-xyz` are not the same axis as service/process/org/doc, and conflating two
-	// dimensions in one closed set makes both unassertable. The cost is named rather than
-	// hidden — a typo makes a silently separate category, and nothing here will catch it.
+	// 🔴 THE VOCABULARY IS OPEN **TO THIS PARSER** AND CLOSED ON THE WRITE PATH, AND THE
+	// ASYMMETRY IS THE DESIGN RATHER THAN A GAP. The declared set lives in
+	// `internal/write`'s `tagVocabulary` and is enforced by `write.validateEntryBytes`, so
+	// a `PUT` carrying a tag outside it answers 422 and nothing lands. This parser accepts
+	// ANY folded tag and must keep doing so: a refusal here makes the entry MALFORMED,
+	// which takes it out of the index, out of `--ref`, out of `--search` AND out of every
+	// write route (they resolve their target through the index), so closing the vocabulary
+	// HERE would make every entry already carrying an off-vocabulary tag unreadable and
+	// unrepairable in one stroke. The read side therefore still sees an open set, and the
+	// residual cost is named rather than hidden: a tag written before the vocabulary
+	// closed, or written by some other tool straight onto the disk, is a category of one
+	// that no read can catch.
+	//
+	// ⚠ IT IS A DIFFERENT AXIS FROM `Kind`, WHICH IS WHY THERE ARE TWO CLOSED SETS AND NOT
+	// ONE. `Kind` is service/process/org/doc — what SHAPE of thing the entry describes;
+	// the tag axis is the technical domain it belongs to. An entry carries one value from
+	// each and neither set refines the other, so conflating them in one enum would make
+	// both unassertable.
 	//
 	// ⚠ THERE IS NO `RawTags`, WHERE `Aliases` HAS `RawAliases`. An alias is an ADDRESS, so
 	// the spelling an operator wrote is evidence when two of them collide; a tag is a
@@ -170,7 +183,8 @@ func (e Entry) Ref() string {
 // supplied by the loader, otherwise derived), `refs` (optional sequence of
 // `<system>:<id>` refs) with `tasks` (older sequence) and `task` (older scalar
 // sugar for a one-element list) as PERMANENTLY ACCEPTED aliases, and `tags`
-// (optional sequence — the OPEN category axis; see `parseTagsField`).
+// (optional sequence — the category axis, whose vocabulary is CLOSED on the WRITE
+// path and OPEN to this parser; see `parseTagsField`).
 //
 // 🔴 EVERY OTHER KEY IS IGNORED, NOT REFUSED, AND THAT IS MEASURED ON BOTH
 // IMPLEMENTATIONS RATHER THAN READ OFF THIS FUNCTION'S BODY. This function reads only
@@ -341,6 +355,17 @@ func EntryFromMapping(mapping FrontMatter, source string) (Entry, error) {
 // does not, and an operator reading two refusals for one mistake has to work out which one
 // they hit. The refusal a tag CAN hit names the fold, which is the thing they cannot see.
 //
+// 🔴 AND THE CLOSED VOCABULARY DID NOT MAKE IT TWO, WHICH IS THE CLAIM ABOVE SURVIVING A
+// CHANGE THAT LOOKS LIKE IT SHOULD HAVE BROKEN IT. The declared tag set is enforced by
+// `write.validateEntryBytes`, NOT here, so the count of refusals THIS function can raise
+// about a tag's content is still exactly one. The sentence above is a claim about the
+// READER and it is still true; a reader that refused an undeclared tag would emit a SECOND
+// content refusal — and it would be the worst possible one, because unlike the fold it
+// would fire on entries that already exist and already load, making them malformed and
+// therefore unwritable (the write routes resolve through the index). See `tagVocabulary` in
+// `internal/write` for why that outage is what put the check on the other side of an import
+// cycle rather than in this loop.
+//
 // ⚠ AND THE FOLD IS WHY A NORMALIZED-AWAY TAG IS REFUSED RATHER THAN DROPPED. Dropping it
 // would leave a file that DECLARES a category and an index that does not carry it, so
 // `?tag=` would answer "no entry carries this" about an entry whose front matter says it
@@ -389,6 +414,13 @@ func parseTagsField(mapping FrontMatter, source string) ([]string, error) {
 // `Entry` would have been unreachable there and the open-coding would have stayed. A ref
 // comparison needs the structured `refs:` and its asymmetric normalisation; a tag comparison
 // needs the folded strings and nothing else.
+//
+// ⚠ THE OPERAND IS NOT CHECKED AGAINST THE CLOSED WRITE VOCABULARY, AND THAT IS DELIBERATE
+// RATHER THAN AN OVERSIGHT. `internal/write`'s `tagVocabulary` decides what a WRITE may land;
+// a read filter must still be able to name a tag the store already carries — including one
+// written before the vocabulary closed — or the entries an operator most needs to find would
+// be the ones they could not ask for. So `?tag=`/`--tag` takes any folded token, a zero is
+// the honest answer for an undeclared one, and the rendered non-finding says so.
 //
 // ⚠ MEMBERSHIP AND NEVER A PREFIX: a tag is a whole folded token, so `market` does not find
 // `marketing`. The FOLD is `NormalizeRef` on both sides — `parseTagsField` per declared tag,

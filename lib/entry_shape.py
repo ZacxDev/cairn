@@ -57,6 +57,7 @@ __all__ = [
     "CairnError", "GitError", "RepoPathMissingError", "StoreMissingError",
     "BULLET_TEXT_MAX", "SHAPE_HEADINGS", "STORE_IS_PER_HOST",
     "STORE_IS_ONE_INSTANCE",
+    "TAG_VOCABULARY", "tag_outside_vocabulary",
     "DROPPED_LINE", "UNREACHABLE_MARKER",
     "SHAPE_ABSENT", "SHAPE_RENAMED", "SHAPE_DUPLICATED", "SHAPE_EMPTY",
     "SHAPE_INVENTORY_SHOWN",
@@ -177,6 +178,68 @@ SHAPE_HEADINGS: tuple[str, ...] = (POINTERS_HEADING, NUANCE_HEADING)
 #: per-entry read budget with the bullet count capped alongside. Re-measuring the
 #: same distribution can only ever re-derive a percentile.
 BULLET_TEXT_MAX = 2000
+
+#: The CLOSED set of `tags:` front-matter values a WRITE may land. The axis is the
+#: technical DOMAIN an entry belongs to, which is deliberately a different question
+#: from `KINDS` (service/process/org/doc — what SHAPE of thing the entry describes);
+#: an entry carries one value from each, and neither set refines the other.
+#:
+#: 🔴 IT WAS FOUR TERMS FOR ONE ROUND, AND THE FOURTH FALSIFIED THE SENTENCE ABOVE.
+#: `client-work` shipped in the first draft beside these three and is REMOVED: `infra`,
+#: `product` and `tooling` all answer "what KIND of work is this", while `client-work`
+#: answers "WHO is it for" — a second axis. Under the one-tag-per-entry rule
+#: (`entry_has_tag`'s scalar operand) a set mixing two axes makes both unassertable,
+#: which is the identical objection this repository already records against putting the
+#: category axis into `kind:`. The "who" question was also already answered elsewhere:
+#: the SCOPE name carries it, so the fourth term largely restated the directory an entry
+#: lives in. Dropping a term is the direction that can refuse a write somebody used to
+#: be able to make, so it was taken on an operator decision with the live store
+#: re-tagged first.
+#:
+#: 🔴 IT LIVES IN THE WRITER'S MODULE AND NOT IN `subsystem_resolver`, AND THE REASON
+#: IS A MEASURED OUTAGE RATHER THAN TASTE. `SubsystemEntry.from_mapping` is the READER.
+#: A refusal there makes the entry MALFORMED, and a malformed entry is out of the
+#: index, out of `--ref`, out of `--search` AND UNWRITABLE — every write route resolves
+#: its target THROUGH the index, so `PUT` and `POST .../bullets` answer 404 for it. A
+#: vocabulary check in the reader would therefore take every entry already carrying an
+#: off-vocabulary tag and make it unreadable and unrepairable in the same stroke: a
+#: store-wide outage caused by the guard, not by the data.
+#:
+#: 🔴 AND THE SPLIT IS ENFORCED BY THE IMPORT GRAPH RATHER THAN BY THIS COMMENT. This
+#: module imports `subsystem_resolver` at module scope, so a back-import is a CYCLE and
+#: the reader cannot reach this tuple. That is the whole reason it is not a sibling of
+#: `KINDS`: a constant the reader can see is a constant a later edit can wire into
+#: `from_mapping`, and the refusal that edit produces is the outage above.
+#:
+#: ⚠ SORTED, AND THAT IS PART OF THE REFUSAL'S CONTRACT RATHER THAN TIDINESS. The
+#: message joins this tuple with `|`; `internal/write`'s `tagVocabulary` joins its own
+#: slice the same way; `tests/conformance/` compares the two servers' response bytes
+#: for a `PUT` carrying an off-vocabulary tag. Reordering or extending one side alone is
+#: a RED corpus, not a review comment — `tests/test_tag_vocabulary.py` is the cheaper
+#: red that says which side moved.
+TAG_VOCABULARY: tuple[str, ...] = ("infra", "product", "tooling")
+
+
+def tag_outside_vocabulary(tags: "Sequence[str]") -> str | None:
+    """The FIRST tag not in `TAG_VOCABULARY`, or `None` if every tag is in it.
+
+    🔴 IT TAKES THE FOLDED SET, NEVER THE RAW FRONT MATTER, so `tags: [Infra]` and
+    `tags: [infra]` are the same write. `SubsystemEntry.from_mapping` has already
+    lowercased, folded through `normalize_ref`, deduped and SORTED by the time this
+    sees it — which is also what makes "the first offender" deterministic: one body
+    cannot name one tag on this run and a different one on the next, and the two
+    servers handed one body name the same tag. There is no separate operand normaliser
+    here for the same reason `entry_has_tag` has none: one fold, applied once, on the
+    side that owns the spelling.
+
+    ⚠ ONE TAG REPORTED, NOT THE SET. An operator fixes the front matter one line at a
+    time and the next write re-runs this check, so a list adds bytes to the refusal
+    without adding a decision to it.
+    """
+    for tag in tags:
+        if tag not in TAG_VOCABULARY:
+            return tag
+    return None
 
 #: 🔴 PRINTED UNDER EVERY `store:` LINE, AND IT IS LOAD-BEARING. The CACHE is
 #: per-host: two machines can hold the same scope with different entries in it

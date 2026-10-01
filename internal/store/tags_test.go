@@ -1,6 +1,8 @@
 package store
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -236,5 +238,128 @@ func TestTagOperandsFoldTheSameWayTheFileDoes(t *testing.T) {
 	if NormalizeRef("marketing") == NormalizeRef("finance") {
 		t.Fatal("NormalizeRef returns the same value for two different tags, so every " +
 			"comparison above is vacuous")
+	}
+}
+
+// TestTheReaderSTILLLOADSAnOffVocabularyTag is the guard that stops the closed tag
+// vocabulary being implemented in the one place that would cause an outage.
+//
+// 🔴 WHAT A REFUSAL HERE WOULD COST, WHICH IS THE WHOLE REASON THIS TEST EXISTS. The
+// declared set lives in `internal/write`'s `tagVocabulary` and is enforced by
+// `write.validateEntryBytes` — the WRITE path. If it were enforced by `parseTagsField`
+// instead, every entry already carrying an off-vocabulary tag would become MALFORMED, and a
+// malformed entry is not merely unrendered: it is out of the index, so `--ref` and
+// `--search` lose it, AND it is UNWRITABLE, because every write route resolves its target
+// through that same index and answers 404 `ref-unknown`. Unreadable and unrepairable in one
+// stroke, over data that was valid when it was written.
+//
+// 🔴 SO THIS ASSERTS FOUR SURFACES, NOT ONLY "IT PARSED". A parse that returns an entry
+// proves nothing about the index it has to land in, and "the entry is in the index" is the
+// claim the outage above is actually about. Measured over a real store on disk rather than a
+// hand-built `FrontMatter`, because `LoadStore` is what the pod and both clients call.
+//
+// ⚠ AN INVARIANT GUARD AS WRITTEN — the reader has never refused an undeclared tag, so no
+// defect is being pinned. It was watched RED anyway, by the only mutation that can produce
+// the hazard: adding the vocabulary comparison to `parseTagsField`. Measured with that
+// mutation, this test reports the entry as MALFORMED and `ResolveRefTiered` answers nothing
+// for its ref — which is what a reader-side implementation looks like from the outside.
+func TestTheReaderSTILLLOADSAnOffVocabularyTag(t *testing.T) {
+	// Two tags NEITHER of which is in the write path's declared set, written the way an
+	// operator would have written them before the vocabulary closed.
+	const body = "---\n" +
+		"service: legacy-note\n" +
+		"scope: alpha-notes\n" +
+		"tags: [Marketing, project-xyz]\n" +
+		"---\n" +
+		"\n" +
+		"## What it is\n" +
+		"A synthetic entry written before the vocabulary closed.\n" +
+		"\n" +
+		"## Nuance / work-history\n" +
+		"- 2000-01-02: the synthetic action this entry records.\n"
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "alpha-notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "alpha-notes", "legacy-note.md"),
+		[]byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	index, err := LoadStore(root, "recalled", Unrestricted())
+	if err != nil {
+		t.Fatalf("a store holding one entry with off-vocabulary tags would not load: %v", err)
+	}
+
+	// 1. NOT MALFORMED. This is the assertion the whole test is for: a degrading load
+	//    collects rejects rather than raising, so a refusal would show up here as a ROW
+	//    and NOT as an error from `LoadStore` — which is exactly how such a change could
+	//    ship looking green.
+	if bad := index.Malformed; len(bad) > 0 {
+		t.Fatalf("the reader classified an off-vocabulary tag as MALFORMED, which takes the "+
+			"entry out of the index AND out of every write route: %+v", bad)
+	}
+	// 🔴 THE POSITIVE CONTROL ON THAT CHANNEL, IN THE SAME RUN. An empty `Malformed` is
+	// indistinguishable from a field nothing ever writes, so a second scope holding a file
+	// the loader really does refuse must show up in it. Without this the check above is the
+	// reassuring zero this repository's rules name.
+	if err := os.MkdirAll(filepath.Join(root, "rubble-heap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "rubble-heap", "broken-four.md"),
+		[]byte("---\nservice: broken-four\nscope: rubble-heap\n"+
+			"aliases: a bare string, which the schema refuses\n---\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	control, err := LoadStore(root, "recalled", Unrestricted())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(control.Malformed) == 0 {
+		t.Fatal("a file the loader genuinely refuses did not appear in `Malformed`, so the " +
+			"check above measured a channel wired to nothing")
+	}
+	for _, row := range control.Malformed {
+		if strings.Contains(row.Filename, "legacy-note") {
+			t.Fatalf("the entry under test appeared in `Malformed` once a sibling was "+
+				"added: %+v", control.Malformed)
+		}
+	}
+
+	// 2. IN THE INDEX, under its scope, with the tags folded rather than dropped.
+	entries, scopeErr := index.Entries("alpha-notes")
+	if scopeErr != nil {
+		t.Fatalf("the scope is unknown to the index: %v", scopeErr)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("the index holds %d entry/entries, want 1: %+v", len(entries), entries)
+	}
+	if got := entries[0].Tags; !reflect.DeepEqual(got, []string{"marketing", "project-xyz"}) {
+		t.Fatalf("Tags=%q — the reader must surface an undeclared tag folded, not drop it "+
+			"and not refuse it", got)
+	}
+
+	// 3. RESOLVABLE BY REF, which is what `--ref` reads and what every write route resolves
+	//    through. An entry in the index but unreachable by ref is still unwritable.
+	resolved, _, resolveErr := ResolveRefTiered("legacy-note", index, "alpha-notes")
+	if resolveErr != nil {
+		t.Fatalf("`--ref legacy-note` does not resolve, so `put`/`append` would answer 404 "+
+			"for an entry that is sitting right there: %v", resolveErr)
+	}
+	if resolved == nil || resolved.Filename != "legacy-note.md" {
+		t.Fatalf("the ref resolved to %+v", resolved)
+	}
+
+	// 4. FINDABLE BY THE TAG FILTER, using the undeclared tag as the operand — the read
+	//    surface deliberately does NOT consult the write vocabulary.
+	if !HasTag(resolved.Tags, NormalizeRef("Marketing")) {
+		t.Fatalf("`--tag Marketing` does not find an entry declaring it: %q", resolved.Tags)
+	}
+	// The control on that predicate: a tag the entry does NOT carry must not match, or the
+	// assertion above would pass with `HasTag` wired to true. `infra` is a DECLARED term,
+	// so this also pins that membership is not satisfied by the vocabulary.
+	if HasTag(resolved.Tags, "infra") {
+		t.Fatal("HasTag matched a tag the entry does not carry, so the check above is vacuous")
 	}
 }

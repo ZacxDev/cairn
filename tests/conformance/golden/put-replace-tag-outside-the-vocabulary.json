@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 348,
+    "kind": "text_lines",
+    "sha256": "c790af9377ce91367ae22125e43dd4564f3ff70b0afb13ccd9d27a5cf4270f31",
+    "text_lines": [
+      "unprocessable: tag 'marketing' is not one of infra|product|tooling — the tag vocabulary is CLOSED on the WRITE path, so widening it is a code change. An entry already carrying this tag still READS and still accepts appends; what is refused is this WRITE, re-sending such an entry unchanged included. Edit the tag to one of those terms and resend",
+      ""
+    ]
+  },
+  "case": "put-replace-tag-outside-the-vocabulary",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "348"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "entry-shape"
+    ]
+  ],
+  "reason": "Unprocessable Entity",
+  "status": 422
+}

@@ -336,9 +336,9 @@ class TestStatusIsTheDiscriminator:
             # SYNTHETIC id, because a real one would tie this fixture to a tracker.
             rc.recall(store, SCOPE, ref_to="clickup:no-such-task").status,
             # The CATEGORY filter's own non-finding. ⚠ A tag no entry in the corpus carries,
-            # so this is `tag-absent` and not `recalled`; the vocabulary is OPEN, so there is
-            # no valid-tag set to pick an unreachable member from — an operator-looking name
-            # nothing declares is the honest fixture.
+            # so this is `tag-absent` and not `recalled`. ⚠ The closed vocabulary gates WRITES
+            # only, so a READ operand has no valid-tag set to pick an unreachable member from
+            # — an operator-looking name nothing declares is still the honest fixture.
             rc.recall(store, SCOPE, tag="no-such-category").status,
             rc.recall(store, SCOPE).status,
             rc.search(store, SCOPE, "readiness").status,

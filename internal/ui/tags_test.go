@@ -19,16 +19,61 @@ import (
 // the correction was asserted by nothing. This line makes TWO claims a tidying edit would drop
 // without changing anything a keyword guard reads: that the tags shown are FOLDED (unlike the
 // Aliases list directly above, which is as-written, so a reader comparing page against file
-// otherwise sees two spellings and cannot tell which the store holds), and that the vocabulary
-// is OPEN (there is no declared set, so a typo is a category of one that no gate catches — and
-// the entry page is where an operator would look for the list that does not exist).
+// otherwise sees two spellings and cannot tell which the store holds), and WHERE the vocabulary
+// is closed — on the WRITE path, so a tag on this page was either accepted by that gate or
+// predates it, which is not the same as "this is one of the valid categories".
 //
-// ⚠ AN INVARIANT GUARD, LABELLED AS ONE. No bug ever removed this clause; what it catches is the
-// next edit.
+// 🔴 AND IT COMPARES AGAINST A HAND-TYPED LITERAL, WHICH IS A CORRECTION: THIS TEST READ
+// `normalizeSpace(TagsKeyDescription)` AND COULD NOT SEE A REWORD AT ALL. Comparing the page
+// against the CONSTANT moves both sides of the comparison together, so a mutant reducing
+// `TagsKeyDescription` to `"the `tags:` front-matter key"` — dropping BOTH claims at once —
+// SURVIVED, with `go test ./...` green tree-wide. Meanwhile this function's own doc said the
+// line was "pinned entire rather than by keyword" and its error text named the two clauses it
+// was supposedly protecting. A guard whose description claims coverage its body does not
+// provide is worse than none, because it stops anyone looking.
+//
+// 🔴 THE SAME DEFECT, IN THE SAME PACKAGE, FOUND THE SAME WAY, AND THAT IS WHY THE FIX IS
+// COPIED RATHER THAN INVENTED. `TestTheReplicaHonestyNoticeIsPinnedWhole` had it first
+// (`internal/ui/sharing_test.go`), was corrected to a literal, and carries a
+// `tests/control_mutants.py` row so the fix has a standing gate. This one now has both.
+// Its negative control below proved only that the COMPARISON can fail, never that a change to
+// the CONSTANT would — which is the distinction worth carrying forward: a negative control on
+// the comparator is not a control on the expectation's SOURCE.
+//
+// ⚠ SO THE TWO SPELLINGS ARE LOAD-BEARING AND MUST NOT BE "DEDUPLICATED" BACK INTO ONE.
+// Changing what this page claims is meant to be an edit in two places with a reviewer.
+//
+// 🔴 AND THE THIRD SIBLING STILL HAS THE DEFECT, NAMED HERE RATHER THAN LEFT TO BE
+// REDISCOVERED. `TestTheRefsKeyDescriptionIsPinnedWhole`
+// (`internal/ui/refresolution_test.go`) reads `normalizeSpace(RefsKeyDescription)` — the
+// same derived expectation, the same blind spot, and it is PRE-EXISTING rather than
+// anything this change introduced. It is deliberately NOT fixed here: an open pull
+// request is renaming that badge and its label, so editing its guard in parallel is a
+// semantic conflict on the one file both changes would touch. **Closing condition:** that
+// rename lands, then `RefsKeyDescription`'s guard takes a hand-typed literal and a
+// `tests/control_mutants.py` row, exactly as this one and the replica-honesty one now
+// have. Checked by: whoever reviews that pull request — the row is the mechanical half.
+//
+// ⚠ AN INVARIANT GUARD, LABELLED AS ONE. No bug ever removed either clause; what it catches is
+// the next edit.
 func TestTheTagsKeyDescriptionIsPinnedWhole(t *testing.T) {
-	want := normalizeSpace(TagsKeyDescription)
+	// 🔴 A LITERAL COPY, NEVER `normalizeSpace(TagsKeyDescription)` — see the header.
+	const wantLiteral = "the `tags:` front-matter key, FOLDED to lowercase `[a-z0-9.-]` — " +
+		"the vocabulary is CLOSED on the write path, so a tag here was either accepted by " +
+		"that gate or predates it"
+	want := normalizeSpace(wantLiteral)
 	if want == "" {
-		t.Fatal("TagsKeyDescription is EMPTY, so every comparison below is vacuous")
+		t.Fatal("the pinned literal is EMPTY, so every comparison below is vacuous")
+	}
+	// The CONSTANT must say exactly this. That is the assertion a reword fails, and it is
+	// separate from "the page renders it" below because the two break for different reasons:
+	// this one means somebody changed what the page claims, that one means a page stopped
+	// claiming it.
+	if got := normalizeSpace(TagsKeyDescription); got != want {
+		t.Errorf("`TagsKeyDescription` no longer reads as the pinned line.\n got: %q\nwant: %q\n"+
+			"If the wording changed ON PURPOSE, change both — that two-place edit IS the gate. "+
+			"The clauses most likely to have gone are `FOLDED` and the one saying WHERE the "+
+			"vocabulary is closed.", got, want)
 	}
 	world := benignWorld()
 	view := viewOf("operator@example.invalid", world)
@@ -43,13 +88,17 @@ func TestTheTagsKeyDescriptionIsPinnedWhole(t *testing.T) {
 	if !strings.Contains(got, want) {
 		t.Errorf("the entry page does not carry the tags-key description as a whole string."+
 			"\nwant: %q\nThe line is pinned entire rather than by keyword because a reword that "+
-			"drops the FOLDED clause or the OPEN-vocabulary clause is exactly what this guard "+
+			"drops the FOLDED clause or the closed-vocabulary clause is exactly what this guard "+
 			"is for. If the wording changed on purpose, change `TagsKeyDescription` and this "+
 			"test together.", want)
 	}
 	// NEGATIVE CONTROL on the comparison: a string the page does not carry must NOT be found,
 	// or `Contains` over `pageText` would be satisfied by anything.
-	if strings.Contains(got, normalizeSpace(TagsKeyDescription+" and something nobody wrote")) {
+	//
+	// ⚠ IT IS A CONTROL ON THE COMPARATOR AND NOT ON THE EXPECTATION, which is precisely the
+	// gap that let the pre-correction version of this test survive a reword — see the header.
+	// Keeping it is still right; reading it as proof the pin works is what was wrong.
+	if strings.Contains(got, want+" and something nobody wrote") {
 		t.Error("the page text contains a string nobody wrote, so the assertion above is vacuous")
 	}
 }
@@ -203,9 +252,10 @@ func TestTheTagPageCannotSeeAScopeTheCallerCannotRead(t *testing.T) {
 // nothing" (ask for access). That is `SearchResults.ScopesSearched`'s argument, and the counts
 // are what make the difference visible.
 //
-// ⚠ AND THE TYPO CASE IS NAMED OUT LOUD, because the vocabulary is OPEN: there is no valid-tag
-// set to check a query against, so a zero over a non-empty store is also what a misspelling
-// looks like and nothing else on this surface can say so.
+// ⚠ AND THE TYPO CASE IS NAMED OUT LOUD, WHICH CLOSING THE WRITE-PATH VOCABULARY DID NOT
+// RETIRE. This page's `?tag=` operand is checked against no valid-tag set at all, and an entry
+// written before the closure can carry anything, so a zero over a non-empty store is still also
+// what a misspelling looks like and nothing else on this surface can say so.
 func TestTheTagListingReportsWhatItLookedAt(t *testing.T) {
 	world := []Scope{{ID: control.ID("scp_one000000000"), Name: "alpha-notes", Entries: []Entry{
 		{Ref: "runbook", Filename: "runbook.md", Tags: []string{"marketing"}},
@@ -221,7 +271,7 @@ func TestTheTagListingReportsWhatItLookedAt(t *testing.T) {
 	if !strings.Contains(miss, "0 of 2 visible entries in 1 scope carry `no-such-category`.") {
 		t.Errorf("a zero over a non-empty store does not report what it looked at:\n%s", miss)
 	}
-	if !strings.Contains(miss, "The tag vocabulary is OPEN") {
+	if !strings.Contains(miss, "This query's operand is checked against no vocabulary") {
 		t.Errorf("a zero does not say that a typo looks exactly like this:\n%s", miss)
 	}
 
@@ -231,7 +281,7 @@ func TestTheTagListingReportsWhatItLookedAt(t *testing.T) {
 		"answer, not a fact about the tag.") {
 		t.Errorf("a zero over an empty authority reads as a fact about the tag:\n%s", empty)
 	}
-	if strings.Contains(empty, "The tag vocabulary is OPEN") {
+	if strings.Contains(empty, "This query's operand is checked against no vocabulary") {
 		t.Errorf("the authority zero borrowed the typo sentence, so the two mechanisms are "+
 			"indistinguishable again:\n%s", empty)
 	}
