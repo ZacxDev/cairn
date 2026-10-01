@@ -156,6 +156,7 @@ DENIED_IDENTIFIER_DIGESTS = frozenset({
     "5458dce063933a5e7a9a22bae6bf9bdddf72c56b8fe659546e156fd098394e29",
     "6686bf96fc55109d308a0f411cd3cf0b9c24b95be8f684e50e8abd0d4d3645d1",
     "54cc0e115ea67faee9adb38705ce84643d50fc1d639518c404472834407e52ae",
+    "80aa2096db0a98483535de29a8df66eb1e6a079dd97619edeb715fd71a07cc56",
     "8be0b5445fca6eb16d14c6f4eaff1cf1d1a3362ef660bfb2b66e74bf309b7e61",
     "969572e7d6c32c2a7a68822816e907d2eda9b22a2d22022b225ae7309b0e5810",
     "a44950c2d4123f950705f81e7fa05858596c71b5f127c9b23f326bf9c6e4cddf",
@@ -164,6 +165,7 @@ DENIED_IDENTIFIER_DIGESTS = frozenset({
     "e8410d8cab10b3a9efdbcc1fdf7bfba2962842886d9f4b6ade581cbfb9a16095",
     "e80b757b8ff429370ce09cd1b193e099d1dbb8413c234f7bf2e7e280d5dae424",
     "f55e9ac512ce8de1b70bca77f709d8a7df592e7f25a0b9773646e6b3014c0bcf",
+    "fc83a19f1734368be7f05ec5172f7e4b55e76235958f6b580e28a7892a35b95e",
 })
 
 #: TWO sentinels whose digests ARE in the set above, so the controls — and the
