@@ -362,10 +362,20 @@ func validateEntryBytes(data []byte, scope, filename string) error {
 		return &EntryShapeError{message: "the index loader would reject these bytes: " + err.Error()}
 	}
 	if tag, outside := tagOutsideVocabulary(entry.Tags); outside {
+		// 🔴 THE SECOND SENTENCE IS SCOPED TO READS AND APPENDS, AND THE PREVIOUS DRAFT WAS
+		// FALSE EXACTLY WHERE IT WAS PRINTED. It read "an entry already carrying it is
+		// unaffected", and the one moment an operator sees this string is the moment a write
+		// carrying such a tag was refused — including a verbatim re-send of an entry that
+		// already has it, which is the case `api`'s own test pins and which the CHANGELOG
+		// lists under "what CAN break". So the wire was telling the operator the opposite of
+		// what had just happened to them. "Unaffected" is true of the READ path and of
+		// `POST .../bullets`; it is false of this verb, and the sentence now says which.
 		return &EntryShapeError{message: fmt.Sprintf(
 			"tag %s is not one of %s — the tag vocabulary is CLOSED on the WRITE path, "+
-				"so widening it is a code change. The index loader still READS this tag: "+
-				"an entry already carrying it is unaffected",
+				"so widening it is a code change. An entry already carrying this tag "+
+				"still READS and still accepts appends; what is refused is this WRITE, "+
+				"re-sending such an entry unchanged included. Edit the tag to one of "+
+				"those terms and resend",
 			store.PyRepr(tag), strings.Join(tagVocabulary, "|"))}
 	}
 	return nil

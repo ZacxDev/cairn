@@ -44,7 +44,9 @@ func taggedEntry(tagsFlow string) string {
 // gate and several minutes later.
 const wantRefusal = "tag 'marketing' is not one of infra|product|tooling — " +
 	"the tag vocabulary is CLOSED on the WRITE path, so widening it is a code change. " +
-	"The index loader still READS this tag: an entry already carrying it is unaffected"
+	"An entry already carrying this tag still READS and still accepts appends; what is " +
+	"refused is this WRITE, re-sending such an entry unchanged included. Edit the tag " +
+	"to one of those terms and resend"
 
 // TestTheWritePathRefusesATagOutsideTheDeclaredVocabulary is the gate, measured at BOTH
 // write primitives.
@@ -52,10 +54,18 @@ const wantRefusal = "tag 'marketing' is not one of infra|product|tooling — " +
 // 🔴 THE RED/GREEN MATRIX. Red at `245b568` (the base this branch forked from): this file
 // does not compile there, because `tagOutsideVocabulary` does not exist — the weak red a
 // new symbol always produces. The INFORMATIVE red is the one that keeps the shape and
-// removes the behaviour: deleting the four-line `tagOutsideVocabulary` block from
-// `validateEntryBytes` while leaving everything else in place. Measured with that
-// mutation, `CreateEntry` returned a nil error and wrote the file, `ReplaceEntry`
-// returned a nil error and replaced it, and the two `EveryDeclaredTag` subtests kept
+// removes the behaviour: neutering the `tagOutsideVocabulary` block in
+// `validateEntryBytes` while leaving everything else in place.
+//
+// ⚠ AND "DELETE THE BLOCK" IS THE WRONG SPELLING OF THAT MUTATION — IT DOES NOT COMPILE.
+// This comment said "the four-line block" for two rounds; the block is SEVEN lines, and
+// removing it leaves `entry` bound and unused, which is a Go compile error
+// (`declared and not used: entry`) rather than a test failure. A mutant that does not
+// build measures nothing. The spellings that DO compile and kill: `entry, err :=` →
+// `_, err :=` together with the block, or keeping the call and feeding it
+// `entry.Tags[:0]`. Both were run. Measured with the mutation,
+// `CreateEntry` returned a nil error and wrote the file, `ReplaceEntry`
+// returned a nil error and replaced it, and the `EveryDeclaredTag` subtests kept
 // PASSING — which is what attributes the failure to the vocabulary check and not to the
 // loader validation it sits behind. Green at HEAD. Both reds were run; the second is the
 // one that attributes.
@@ -141,10 +151,10 @@ func TestTheWritePathRefusesATagOutsideTheDeclaredVocabulary(t *testing.T) {
 // written through BOTH primitives and the write is observed to LAND: a new file on disk
 // for the create, changed bytes for the replace.
 //
-// ⚠ IT WALKS THE VOCABULARY RATHER THAN NAMING THE FOUR TERMS, WHICH IS THE ONE PLACE
-// DERIVING FROM THE IMPLEMENTATION IS CORRECT. The claim here is "every declared term is
-// writable", not "these four terms are the declared ones" — that second claim is
-// `TestTheVocabularyIsExactlyTheDeclaredFourTerms`'s, with literals, and
+// ⚠ IT WALKS THE VOCABULARY RATHER THAN NAMING THE TERMS, WHICH IS THE ONE PLACE DERIVING
+// FROM THE IMPLEMENTATION IS CORRECT. The claim here is "every declared term is writable",
+// not "these are the declared ones" — that second claim is
+// `TestTheVocabularyIsExactlyTheDeclaredThreeTerms`'s, with literals, and
 // `tests/test_tag_vocabulary.py`'s across the two languages.
 func TestEveryDeclaredTagIsAcceptedByBothWritePrimitives(t *testing.T) {
 	if len(tagVocabulary) == 0 {
@@ -306,8 +316,8 @@ func TestTheVocabularyIsExactlyTheDeclaredThreeTerms(t *testing.T) {
 	if !slices.Equal(tagVocabulary, want) {
 		t.Fatalf("tagVocabulary=%q, want %q — if a term was added or removed on purpose, "+
 			"move `lib/entry_shape.py`'s TAG_VOCABULARY in the same commit, regenerate the "+
-			"`tests/conformance/` goldens, and check `scopeTagTable` still maps only "+
-			"declared terms (`TestEveryMappedTagIsInTheVocabulary`)", tagVocabulary, want)
+			"`tests/conformance/` goldens, and move the other hand-typed expectations "+
+			"`README.md` enumerates — this literal is only one of them", tagVocabulary, want)
 	}
 }
 

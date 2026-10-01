@@ -379,22 +379,40 @@ already carries an off-vocabulary tag and make it unreadable and unrepairable in
 any token you like, an entry written before the closure keeps loading and keeps serving, and the
 rendered non-finding still says a typo looks exactly like an honest zero.
 
-**Widening or narrowing the set is a code change in four places, and all four go red if you
-move one alone:**
+**Widening or narrowing the set is a change in SIX files — two declarations and four
+expectations — and the count is measured rather than counted by eye.** Derived by adding a
+fourth term to both declarations and reading what went red:
 
-1. `internal/write/tagvocab.go` — `tagVocabulary`, the **deployed** Go pod's declaration;
-2. `lib/entry_shape.py` — `TAG_VOCABULARY`, the Python oracle's;
-3. `internal/write/tagvocab_test.go` — the hand-typed expectation and the refusal sentence,
-   pinned as literals on purpose so the test cannot be satisfied by the implementation;
-4. `tests/conformance/golden/put-*-tag-*-the-vocabulary.json` — the recorded refusal bytes,
-   regenerated with `python3 tests/conformance/suite.py generate` (never hand-edited: a
-   golden's body is checked against its own recorded digest).
+| # | file | what is in it | which gate reds |
+|---|---|---|---|
+| 1 | `internal/write/tagvocab.go` | `tagVocabulary` — the **deployed** Go pod's declaration | — (this is the change) |
+| 2 | `lib/entry_shape.py` | `TAG_VOCABULARY` — the Python oracle's | — (this is the change) |
+| 3 | `internal/write/tagvocab_test.go` | **two** literals: the refusal sentence and the term list | `go test ./internal/write/` |
+| 4 | `internal/api/tagvocab_test.go` | the 422 body as served, including its `unprocessable: ` prefix | `go test ./internal/api/` |
+| 5 | `tests/test_tag_vocabulary.py` | **two** literals: `DECLARED` and `DECLARED_REFUSAL` | `pytest` |
+| 6 | `tests/conformance/golden/put-*-tag-*-the-vocabulary.json` | the recorded refusal bytes — regenerate with `python3 tests/conformance/suite.py generate`, never hand-edit (a golden's body is checked against its own recorded digest) | **three** gates: `tests/conformance/run_go.sh`, `python3 tests/conformance/suite.py run`, and `pytest tests/test_conformance_suite.py` |
 
-`tests/test_tag_vocabulary.py` is the cheap red that says *which side* moved; `tests/conformance/`
-is the one that compares the two servers' refusal bytes over the wire. **Narrowing** the set
-additionally needs `internal/write/scopetags.go` checked, because a scope still mapped to a
-removed term would classify entries into a category every write refuses —
-`TestEveryMappedTagIsInTheVocabulary` is that check.
+So: **eight hand-typed literals across four test files, plus three goldens.** Every one is a
+literal on purpose — a test that derived its expectation from the declaration would assert
+`x == x` and stay green through exactly this edit.
+
+⚠ **And two more files carry the terms as PROSE, which no gate covers**: this README's list
+above, and `CHANGELOG.md`'s row. Those are the ones that go stale silently, so edit them in the
+same commit.
+
+⚠ **The count above says "six files", and the earlier draft of this paragraph said "four
+places" — wrong in the direction that makes the change look cheap.** That is the identical
+mistake `lib/entry_shape.py` already records about its own per-host-cache sentence (*"THIS
+COMMENT SAID 'a four-place change' AND THAT WAS WRONG BY 2×"*), two files from where the
+undercount was written. Re-derive rather than trusting the number:
+
+```bash
+# add a term to both declarations, then read what fails
+go test ./... ; python3 -m pytest tests -q
+```
+
+`tests/test_tag_vocabulary.py` is the cheap red that says *which side* moved;
+`tests/conformance/` is the one that compares the two servers' refusal bytes over the wire.
 
 It is deliberately **not** the `kind:` enum, which stays its own closed four-value set
 (`service`/`process`/`org`/`doc`). `kind:` says what SHAPE of thing the entry describes and the

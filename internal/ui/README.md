@@ -2385,12 +2385,25 @@ folded, and WHERE the vocabulary is closed — and is pinned as one normalised s
 measured reason `RefsKeyDescription` is: that line really did serve the word `deprecated` against
 a README saying permanent, with nothing asserting the correction.
 
-⚠ **AND IT DELIBERATELY DOES NOT ENUMERATE THE SET.** The four declared terms live in
+🔴 **AND THE PIN IS AGAINST A HAND-TYPED LITERAL, WHICH IS A CORRECTION THIS PARAGRAPH USED TO GET
+WRONG.** It said the line "is pinned as one normalised string" and left it there, while
+`TestTheTagsKeyDescriptionIsPinnedWhole` compared the page against the CONSTANT — both sides of the
+comparison moving together, so a reword was invisible. Measured: a mutant reducing the line to
+``the `tags:` front-matter key``, dropping the FOLDED clause and the vocabulary clause at once,
+left `go test ./...` green **tree-wide**. That is the same defect `TestTheReplicaHonestyNoticeIsPinnedWhole`
+had and was corrected for, in this same package, found the same way — by writing a sibling guard
+and scoring it. The guard now holds a literal copy, the battery row
+`ui-tags-key-description-loses-both-its-claims` is the standing gate on that fix, and the two
+spellings must not be "deduplicated" back into one.
+
+⚠ **AND IT DELIBERATELY DOES NOT ENUMERATE THE SET.** The declared terms live in
 `internal/write`'s `tagVocabulary` and in `lib/entry_shape.py`, pinned against each other; a third
-spelling of them on a page that nothing gates against them is drift waiting to happen. The line
-states the SCOPE instead — a tag shown here was either accepted by the write-path gate or predates
-it — because "this is one of the valid categories" and "this is what the file says" are different
-claims and only the second is in evidence on this page.
+spelling of them on a page that nothing gates against them is drift waiting to happen — and the set
+has already moved once (four terms to three) after this page was written, which is exactly the edit
+an enumeration here would have survived silently. The line states the SCOPE instead — a tag shown
+here was either accepted by the write-path gate or predates it — because "this is one of the valid
+categories" and "this is what the file says" are different claims and only the second is in
+evidence on this page.
 
 ## 🔴 A HOSTILE TAG IS IN THE ESCAPING DIFFERENTIAL EVEN THOUGH THE LOADER CANNOT PRODUCE ONE
 

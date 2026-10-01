@@ -85,8 +85,10 @@ DECLARED = ("infra", "product", "tooling")
 #: implementations write them.
 DECLARED_REFUSAL = (
     "tag 'marketing' is not one of infra|product|tooling — the tag "
-    "vocabulary is CLOSED on the WRITE path, so widening it is a code change. The index "
-    "loader still READS this tag: an entry already carrying it is unaffected"
+    "vocabulary is CLOSED on the WRITE path, so widening it is a code change. An entry "
+    "already carrying this tag still READS and still accepts appends; what is refused is "
+    "this WRITE, re-sending such an entry unchanged included. Edit the tag to one of "
+    "those terms and resend"
 )
 
 
@@ -421,9 +423,9 @@ def test_every_declared_tag_lands_through_both_oracle_write_primitives(
     VALIDATOR THAT REFUSES EVERY BODY. Each declared term is written through BOTH
     primitives and the write is OBSERVED to land.
 
-    ⚠ IT WALKS THE VOCABULARY RATHER THAN NAMING THE FOUR TERMS, which is the one place
+    ⚠ IT WALKS THE VOCABULARY RATHER THAN NAMING THE TERMS, which is the one place
     deriving from the implementation is correct: the claim here is "every declared term is
-    writable", not "these four are the declared ones" — that second claim is
+    writable", not "these are the declared ones" — that second claim is
     `test_the_vocabulary_is_the_declared_set_in_both_languages`', with literals."""
     assert entry_shape.TAG_VOCABULARY, "the vocabulary is EMPTY, so this test is vacuous"
     for n, tag in enumerate(entry_shape.TAG_VOCABULARY):

@@ -1124,7 +1124,7 @@
         "report-store-path",
         "report-host-identity"
       ],
-      "why": "The filter's own non-finding: `tag-absent`, which must NOT read as `scope-empty`. That branch's body says the DIRECTORY holds no entries, which is false of a scope holding three. The vocabulary is OPEN, so the sentence also has to say that a typo looks exactly like this."
+      "why": "The filter's own non-finding: `tag-absent`, which must NOT read as `scope-empty`. That branch's body says the DIRECTORY holds no entries, which is false of a scope holding three. The QUERY operand is checked against no vocabulary (the closed one gates WRITES only), so the sentence also has to say that a typo looks exactly like this."
     },
     {
       "id": "recall-tag-malformed",

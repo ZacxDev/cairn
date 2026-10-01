@@ -2842,6 +2842,26 @@ MUTANTS: tuple[Mutant, ...] = (
         "never that a change to the CONSTANT would. The row is here so the fix has a gate.",
     ),
 
+    Mutant(
+        name="ui-tags-key-description-loses-both-its-claims",
+        path="internal/ui/render.go",
+        old='"the vocabulary is CLOSED on the write path, so a tag here was either accepted by that " +\n\t"gate or predates it"',
+        new='""',
+        killer="TestTheTagsKeyDescriptionIsPinnedWhole",
+        why="🔴 THE SAME PRE-EXISTING DEFECT AS THE REPLICA-HONESTY ROW ABOVE, IN THE SAME "
+        "PACKAGE, AND IT SURVIVED FOR THE SAME REASON. `TestTheTagsKeyDescriptionIsPinnedWhole` "
+        "read `normalizeSpace(TagsKeyDescription)`, so editing the constant moved BOTH sides of "
+        "its comparison and a reword was invisible: the audit's own mutant reduced the line to "
+        "`the `tags:` front-matter key`, dropping the FOLDED clause AND the vocabulary clause at "
+        "once, and `go test ./...` stayed green tree-wide. Its negative control proved only that "
+        "the COMPARISON can fail, never that a change to the CONSTANT would — which is the "
+        "distinction worth keeping: a control on the comparator is not a control on the "
+        "expectation's SOURCE. The guard now pins a LITERAL copy and this row is the standing "
+        "gate on that fix. ⚠ The edit here empties the clause rather than rewording it, because "
+        "an empty second half is what a 'simplify this sentence' edit actually produces and it "
+        "leaves the FOLDED clause intact — so a kill cannot be credited to the wrong half.",
+    ),
+
     # ---- the `## Requirements` section: the boundary, the count, the attribution ----
     Mutant(
         name="requirements-read-the-whole-entry-body",

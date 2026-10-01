@@ -2661,11 +2661,21 @@ def _validate_entry_bytes(data: bytes, *, scope: str, filename: str) -> None:
         raise EntryShapeError(f"the index loader would reject these bytes: {exc}")
     offender = tag_outside_vocabulary(entry.tags)
     if offender is not None:
+        # 🔴 THE SECOND SENTENCE IS SCOPED TO READS AND APPENDS, AND THE PREVIOUS DRAFT
+        # WAS FALSE EXACTLY WHERE IT WAS PRINTED. It read "an entry already carrying it
+        # is unaffected", and the one moment an operator sees this string is the moment a
+        # write carrying such a tag was refused — including a verbatim re-send of an entry
+        # that already has it. So the wire was telling the operator the opposite of what
+        # had just happened to them. "Unaffected" is true of the READ path and of
+        # `POST .../bullets`; it is false of this verb, and the sentence now says which.
+        # Byte-identical with `internal/write/validateEntryBytes` — `tests/conformance/`
+        # diffs the two servers' answers for this row.
         raise EntryShapeError(
             f"tag {offender!r} is not one of {'|'.join(TAG_VOCABULARY)} — the tag "
             f"vocabulary is CLOSED on the WRITE path, so widening it is a code "
-            f"change. The index loader still READS this tag: an entry already "
-            f"carrying it is unaffected"
+            f"change. An entry already carrying this tag still READS and still "
+            f"accepts appends; what is refused is this WRITE, re-sending such an "
+            f"entry unchanged included. Edit the tag to one of those terms and resend"
         )
 
 

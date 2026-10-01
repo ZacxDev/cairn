@@ -223,17 +223,22 @@ const RefsKeyDescription = "the `refs:` front-matter key (or the accepted older 
 //
 // 🔴 IT SAYS WHERE THE VOCABULARY IS CLOSED, BECAUSE NOTHING ELSE ON THIS SURFACE CAN — AND IT
 // DOES NOT ENUMERATE THE SET. The declared set lives in `internal/write`'s `tagVocabulary` and is
-// enforced on the WRITE path; a third spelling of those four words, on a page nothing gates
-// against them, is the drift this line refuses to start. What it must say instead is the SCOPE:
-// a tag shown here was either accepted by that gate or predates it, which is the difference
-// between "this is one of the valid categories" and "this is what the file says".
+// enforced on the WRITE path; a third spelling of those terms, on a page nothing gates against
+// them, is the drift this line refuses to start. What it must say instead is the SCOPE: a tag
+// shown here was either accepted by that gate or predates it, which is the difference between
+// "this is one of the valid categories" and "this is what the file says".
 //
-// 🔴 PINNED AS ONE NORMALISED STRING BY `TestTheTagsKeyDescriptionIsPinnedWhole`, THE SAME WAY
-// `RefsKeyDescription` AND `ReplicaHonesty` ARE, AND FOR THE SAME MEASURED REASON. A comment reds
-// no test: `RefsKeyDescription` really did serve the word `deprecated` while the README shipped
-// beside it said permanent, and the correction was asserted by nothing. Dropping the `folded`
-// clause here — the half a tidying edit removes — would leave this page claiming the file's own
-// spelling, and the whole suite green.
+// 🔴 PINNED AS ONE NORMALISED STRING BY `TestTheTagsKeyDescriptionIsPinnedWhole`, AGAINST A
+// HAND-TYPED LITERAL — AND THE LITERAL IS A CORRECTION, NOT A STYLE. That test used to compare
+// the page against THIS CONSTANT, which moves both sides of the comparison together and could
+// not see a reword at all: measured, a mutant reducing this line to `"the `tags:` front-matter
+// key"` — dropping the FOLDED clause and the vocabulary clause at once — left `go test ./...`
+// green tree-wide. That is the identical defect already recorded for `ReplicaHonesty` in
+// `internal/ui/sharing_test.go`, and the fix is the same: two spellings, deliberately, so
+// changing what this page claims is an edit a reviewer sees.
+//
+// ⚠ SO THE DUPLICATION IS LOAD-BEARING AND MUST NOT BE "DEDUPLICATED" BACK INTO ONE. The battery
+// row is `ui-tags-key-description-loses-both-its-claims` in `tests/control_mutants.py`.
 const TagsKeyDescription = "the `tags:` front-matter key, FOLDED to lowercase `[a-z0-9.-]` — " +
 	"the vocabulary is CLOSED on the write path, so a tag here was either accepted by that " +
 	"gate or predates it"

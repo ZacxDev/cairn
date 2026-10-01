@@ -24,8 +24,9 @@ func entryWithTags(service, scope, tagsFlow string) string {
 // derived expectation would assert nothing.
 const theVocabularyRefusal = "unprocessable: tag 'marketing' is not one of " +
 	"infra|product|tooling — the tag vocabulary is CLOSED on the WRITE path, " +
-	"so widening it is a code change. The index loader still READS this tag: an entry " +
-	"already carrying it is unaffected\n"
+	"so widening it is a code change. An entry already carrying this tag still READS " +
+	"and still accepts appends; what is refused is this WRITE, re-sending such an " +
+	"entry unchanged included. Edit the tag to one of those terms and resend\n"
 
 // TestAPUTCarryingAnOffVocabularyTagIsRefusedOnTheWire pins the closed tag vocabulary at
 // the HTTP surface, on BOTH halves of PUT, with the store observed unchanged.
@@ -37,7 +38,7 @@ const theVocabularyRefusal = "unprocessable: tag 'marketing' is not one of " +
 // that retries the wrong one loops forever. An off-vocabulary tag and a body the loader
 // rejects have the SAME remedy — fix the front matter and resend — so a second token
 // would be a distinction with no branch behind it. The difference rides in the BODY,
-// which is where the four valid terms have to be anyway.
+// which is where the valid terms have to be named anyway.
 //
 // 🔴 AND THE FILE IS CHECKED AFTER EVERY REFUSAL. A 422 that has already written the
 // bytes is the failure this design exists to prevent, and a status code is not evidence
