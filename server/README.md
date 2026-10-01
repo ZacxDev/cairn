@@ -781,7 +781,7 @@ paragraph used to add "the lone PASS being the only two-entry scope", and
 for any scope with more than two entries". Re-measured on the
 workbench, same store, counting entries as `subsystem_recall` **indexes** them:
 `cli`=5, `alpha-toolkit`=26, `beta-cluster`=49, `gamma-infra`=0,
-`widget-registry`=1. `widget-registry/` holds `backblaze.md` plus a
+`widget-registry`=1. `widget-registry/` holds `catalog.md` plus a
 `README.md`, and a README in a scope is correctly not indexed — so it is a
 **one**-entry scope, and **no two-entry scope appears in that run at all**. The
 boundary that holds is arithmetic rather than measured: a one-entry index has

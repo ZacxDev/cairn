@@ -58,7 +58,7 @@
 #
 #     cli=5  alpha-toolkit=26  beta-cluster=49  gamma-infra=0  widget-registry=1
 #
-# `widget-registry/` holds `backblaze.md` plus a `README.md`, and a README in a
+# `widget-registry/` holds `catalog.md` plus a `README.md`, and a README in a
 # scope is correctly NOT indexed — so it is a ONE-entry scope. NO TWO-ENTRY
 # SCOPE APPEARS IN THAT RUN AT ALL, so the data could never support a two-entry
 # boundary, in either direction.

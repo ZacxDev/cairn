@@ -3346,7 +3346,7 @@ class TestSeedPushVerdict:
 
         Needs BOTH: an unpairable line (comm arms the order check only after
         one) and an adjacency where C and en_US disagree. `README.md` beside
-        `backblaze.md`/`thing-alpha.md` is that adjacency, and the real store is
+        `catalog.md`/`thing-alpha.md` is that adjacency, and the real store is
         full of it — so the FIRST push after another host seeds would abort."""
         # 🔴 THIS TEST NEITHER SKIPS NOR DEGRADES — IT FAILS IF IT CANNOT RUN,
         # AND THAT TOOK THREE TRIES TO GET RIGHT.
@@ -3385,7 +3385,7 @@ class TestSeedPushVerdict:
         # at once — and it cannot pass while the collation is unavailable, which
         # is exactly the vacuity this test kept falling into.
         forced = "en_US.UTF-8"
-        pair = f"{SCOPE}/README.md\n{SCOPE}/backblaze.md\n"
+        pair = f"{SCOPE}/README.md\n{SCOPE}/catalog.md\n"
 
         def _sorted_under(lc: str) -> str:
             return subprocess.run(
@@ -3395,7 +3395,7 @@ class TestSeedPushVerdict:
 
         c_order, loc_order = _sorted_under("C"), _sorted_under(forced)
         assert c_order != loc_order, (
-            f"`sort` orders {SCOPE}/README.md and {SCOPE}/backblaze.md the same "
+            f"`sort` orders {SCOPE}/README.md and {SCOPE}/catalog.md the same "
             f"under C and under {forced}, so comm's order check cannot arm and "
             "this test would pass whether or not the collation is pinned.\n"
             "Either the fixture stopped inverting, or — far more likely — this "
@@ -3411,9 +3411,16 @@ class TestSeedPushVerdict:
         # order, `comm` never complained, and the mutant that strips `LC_ALL=C`
         # from the comm calls SURVIVED a fully green run. The inversion needs a
         # lowercase sibling sorting BEFORE `README` in en_US and AFTER it in C —
-        # 'b' is 0x62, above 'R' at 0x52, but below 'r' when case is folded.
+        # 'c' is 0x63, above 'R' at 0x52, but below 'r' when case is folded.
+        # 🔴 SO THE FILENAME IS LOAD-BEARING, NOT DECORATIVE. Measured over all
+        # 26 initials against `README.md`: 'a'..'q' invert, 'r'..'z' do not —
+        # which is why `thing-alpha.md` ('t') is named above as the version that
+        # did NOT work, and it is a RANGE rather than one letter's accident.
+        # Renaming this sibling means re-checking that range, not just the
+        # spelling — the `c_order != loc_order` assertion above is the control
+        # that catches getting it wrong, and it is why that assertion is there.
         (store / SCOPE / "README.md").write_text(_entry("README", SCOPE))
-        (store / SCOPE / "backblaze.md").write_text(_entry("backblaze", SCOPE))
+        (store / SCOPE / "catalog.md").write_text(_entry("catalog", SCOPE))
         self._foreign(dest)
         env = {**env, "LC_ALL": forced, "LANG": forced}
 
@@ -4421,7 +4428,7 @@ _EXPECTED_EVIDENCE_BLOCK = """
 
     cli=5  alpha-toolkit=26  beta-cluster=49  gamma-infra=0  widget-registry=1
 
-    `widget-registry/` holds `backblaze.md` plus a `README.md`, and a README in a
+    `widget-registry/` holds `catalog.md` plus a `README.md`, and a README in a
     scope is correctly NOT indexed — so it is a ONE-entry scope. NO TWO-ENTRY
     SCOPE APPEARS IN THAT RUN AT ALL, so the data could never support a two-entry
     boundary, in either direction.
