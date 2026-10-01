@@ -20,29 +20,33 @@ unexpectedly is worse than no guard, so every unexpected condition here exits 0
 and says nothing. Its whole job is to refuse a narrow, well-understood shape; it
 is not a security boundary and must never behave like one.
 
-Five conditions must ALL hold before it refuses anything:
+Three conditions must ALL hold before it refuses anything, and they are asked
+about the directory THE COMMAND WRITES TO rather than the one the shell happens
+to be standing in (`_judged_dirs`):
 
   1. the command mutates the working tree, the index or HEAD (see `_REFUSED`);
-  2. the cwd's repository is THE ONE THIS FILE SHIPS IN;
-  3. the cwd is that clone's MAIN worktree, not a linked one;
-  4. that clone has at least one LINKED worktree REGISTRATION;
-  5. the command does not REDIRECT its write out of that worktree with `-C`
-     (`_writes_elsewhere`), which fails closed on a target it cannot resolve.
+  2. a directory that command writes to belongs to THE REPOSITORY THIS FILE
+     SHIPS IN, and is that clone's MAIN worktree rather than a linked one;
+  3. that clone has at least one LINKED worktree REGISTRATION.
 
-A fresh clone has no linked worktrees, so condition 4 is false and an outside
+A fresh clone has no linked worktrees, so condition 3 is false and an outside
 contributor never sees this hook fire at all.
 
-🔴 CONDITION 2 EXISTS BECAUSE A ROUND-1 AUDIT CAUGHT THIS GUARD POLICING ANOTHER
-REPOSITORY. Claude Code's Bash cwd persists across calls, so a session rooted in
-cairn that moves into a sibling repo carried this hook there and refused
-`git commit` in it — measured against a repo with 93 worktree registrations whose
-OWN instructions declare that committing to its main branch IS deploying. The
-refusal cited a doc path that does not exist there. That is the false-POSITIVE
-mirror of the cwd narrowings listed at the bottom of this docstring, and it is
-worse than them: a false negative loses a guard, a false positive countermands
-another repo's documented workflow.
+🔴 CONDITION 2 IS ABOUT THE **TARGET**, AND EVERY EARLIER VERSION ASKED IT ABOUT
+THE **cwd** — WHICH WAS WRONG IN BOTH DIRECTIONS AT ONCE. Claude Code's Bash cwd
+persists across calls, so a session rooted in cairn that moves into a sibling
+repo carried this hook there and refused `git commit` in it — measured against a
+repo with 93 worktree registrations whose OWN instructions declare that
+committing to its main branch IS deploying, and the refusal cited a doc path that
+does not exist there. The mirror image was measured too: a session rooted in the
+base clone was refused for `git -C <a linked worktree> commit`, which is the
+spelling this guard's own refusal message PRESCRIBES, and a cross-repo commit it
+blocked outright had to be handed back to the operator. Both are the same defect
+— the cwd is not the write target — so both close together here, and neither is
+the worse half. A false negative loses a guard; a false positive countermands
+another repo's documented workflow and teaches everyone the override.
 
-🔴 CONDITION 4 IS "HAS EVER HAD A WORKTREE NOBODY REMOVED", NOT "SOMEBODY IS
+🔴 CONDITION 3 IS "HAS EVER HAD A WORKTREE NOBODY REMOVED", NOT "SOMEBODY IS
 WORKING HERE NOW", AND AN EARLIER DRAFT OF THIS DOCSTRING CLAIMED THE LATTER.
 `git worktree list` reports REGISTRATIONS, and an abandoned one is indistinguishable
 here from a live peer: measured on the author's clone, 36 registrations of which
@@ -112,37 +116,90 @@ dir, so the stack is shared by every worktree of the clone and the hazard is not
 the base clone specifically. 🔴 AN EARLIER DRAFT JUSTIFIED THE ENTRY AS HOLDING
 "on a machine that does not run the host guard, which is every machine but the
 author's", AND THAT IS STRUCTURALLY FALSE: such a machine is a fresh clone with no
-linked worktrees, where condition 4 is false and this entry can never fire. The
+linked worktrees, where condition 3 is false and this entry can never fire. The
 only host it covers is one that BOTH lacks the fleet guard AND runs parallel
 worktrees of cairn — a future fleet host, which is plausible enough to keep a
 cheap table row for. Kept for that reason and no other.
 
-🔴 WHAT THIS GUARD STILL CANNOT SEE, BECAUSE IT KEYS ON THE **cwd**. Naming these
-is not optional: a guard whose limits are unstated reads as coverage it does not
-have. All four were MEASURED to pass straight through:
+🔴 WHAT THIS GUARD NOW SEES, AND WHAT IT STILL CANNOT. Naming the second list is
+not optional: a guard whose limits are unstated reads as coverage it does not
+have. This table was once four open items, every one MEASURED passing straight
+through; three are CLOSED and the entry that closed each is named so a reader can
+check the claim rather than take it:
 
-  * `git -C <the base clone> commit …` issued from a linked worktree;
-  * `cd <the base clone> && git commit …` likewise;
-  * `git --git-dir=…/.git --work-tree=… commit …`;
-  * `bash -c 'cd <the base clone> && git commit …'`.
+  * `git -C <the base clone> commit …` from a linked worktree — CLOSED, the `-C`
+    chain is resolved and judged (`_redirect_targets`);
+  * `git --git-dir=…/.git commit …` / `--work-tree=…` — CLOSED, both spellings
+    and both separators, judged IN ADDITION to the caller's directory;
+  * `GIT_DIR=…/.git git commit …` — CLOSED, from a leading assignment on any
+    segment and from this hook's own environment. `GIT_INDEX_FILE=…/.git/index`
+    is CLOSED too, and it was found by an audit driving variables END TO END
+    rather than by reading: it was ALLOWED and REWROTE the clone's index, which is
+    condition 1's own words. ⚠ `GIT_COMMON_DIR`, `-c core.worktree=`,
+    `GIT_CONFIG_KEY_*` and `--config-env` were driven the same way and measured
+    NOT to mutate the clone, so they are deliberately NOT judged — the set stops
+    at what lands;
+  * `cd <the base clone> && git commit …` — CLOSED in the UNDER-blocking
+    direction only, and the asymmetry is deliberate: a `cd` target is judged IN
+    ADDITION, never instead of the caller's directory, because deciding that a
+    `cd` REPLACES it needs bash's positional model (`( … )` does not persist,
+    `{ … }` does) and a wrong model there fails OPEN. So `cd <clone> && git
+    commit` is refused, while the mirror — `cd <a worktree> && git commit` from
+    the clone — is still refused too, as it was before. Pass `-C` instead.
+  * `bash -c 'cd <the base clone> && git commit …'` — STILL OPEN. The inner
+    script is one quoted token, so nothing in it is parsed as a command. Closing
+    it means recursing into nested shells, which is where the host-wide guard
+    spends two separate recursion budgets.
 
-⚠ THE FIRST TWO ARE THE SPELLING THIS REPO'S OWN RECIPE USES, so the gap is not
-exotic. The operator's host-wide `guard_core.py` already resolves all four —
-`_commands_with_cwd`, `_argv_named_repo_dirs`, `_git_dir_env_targets` — and on
-`cd <clone> && git commit` that guard is therefore STRICTLY STRONGER than this
-one. The right repair is to reuse that resolution rather than grow a second copy
-of it here. Recorded as a known narrowing, not as done.
+🔴 AND THREE MORE OPEN ITEMS, ALL PRE-DATING THE TARGET RESOLUTION AND ALL FOUND
+BY AN ADVERSARIAL AUDIT RATHER THAN BY THE SUITE. They are recorded with a
+CLOSING CONDITION each, because an unstated limit reads as coverage and an
+unclosable one is just a complaint:
 
-🔴 AND THE LIST ABOVE IS THE UNDER-BLOCKING DIRECTION ONLY — ALL FOUR ARE STILL
-OPEN. Its MIRROR, where a `-C` pointing OUT of this worktree was refused anyway,
-is CLOSED by condition 5: a write this guard can prove lands in a linked worktree
-or another repository is no longer refused. ⚠ Condition 5 reads `-C` and nothing
-else, so `--git-dir=` / `--work-tree=` still produce that false positive; closing
-those is the same "reuse the host guard's resolution" job as the list above, and
-is deliberately not done here. The asymmetry is on purpose: condition 2's own
-history records that a false positive COUNTERMANDS the operator while a false
-negative merely loses a guard the host-wide one still holds, so the cheap half of
-the repair was taken on the expensive side first.
+  * `_shell_lines` CALLS ITSELF "QUOTE- AND HEREDOC-AWARE" AND ITS OPENER REGEX
+    RUNS ON THE RAW LINE. So a `<<WORD` appearing inside a quoted string — or
+    inside a `#` comment — starts a heredoc that was never opened, and every
+    later line is swallowed as its body. `echo "a <<EOF b"` then `git commit` was
+    proven to pass straight through, clone 1 -> 2 commits. ⚠ IT IS A
+    FAIL-OPEN REACHED BY ORDINARY TEXT, not a crafted payload.
+    **Closing condition:** the opener search runs over the same quote-aware walk
+    that produced the line, with a test for a `<<` inside quotes AND one inside a
+    comment, both watched red first.
+  * THE PROGRAM-NAME WALK MISSES COMMAND WRAPPERS. `_leading_assignments` skips
+    assignments, `env` and a few reserved words, so `if git commit`, `while`,
+    `command`, `nohup`, `timeout`, `eval`, `stdbuf`, `exec`, `sudo` and `xargs`
+    each hide the `git`. **Closing condition:** one ledger of wrapper words with
+    the value-consuming ones marked, and a parametrised case per word watched red.
+  * THE COMPLEMENT OF `_REFUSED` IS CALLED "READS" AND IT IS NOT. `clean -fd`,
+    `rm`, `mv`, `worktree remove` and `branch -D` all write shared state and none
+    is in the ledger. **Closing condition:** a decision recorded for each — in the
+    set, or named in the doc's table as deliberately out — since widening the set
+    without the doc moving is a refusal nobody can look up.
+
+⚠ ALL THREE ARE OUT OF THIS CHANGE'S DECLARED SCOPE and are not held against this
+merge; they are here so the next reader starts from the measurement rather than
+from a rediscovery.
+
+⚠ AND A FIFTH ROW IS CLOSED IN THE ONLY DIRECTION THAT IS SAFE: `git -C "$WT" …`
+IS REFUSED, NEVER RESOLVED. A `$VAR` target is one this guard cannot follow, so
+the caller's directory is judged and the refusal stands. That costs ergonomics on
+the spelling this repo's own recipe is written in, and the cost is paid
+deliberately — the comment above `_abs_path` carries the four fail-opens that a
+resolver for it opened, all four measured ALLOW where a bare commit in the clone
+is DENY. **The remedy is an absolute path, and the refusal message says so.**
+
+🔴 AND "REUSE THE HOST GUARD'S RESOLUTION" — WHICH THIS DOCSTRING TOLD TWO
+EARLIER ROUNDS TO DO — IS NOT AVAILABLE, SO SAYING IT WAS THE ADVICE THAT KEPT
+THE GAP OPEN. `guard_core.py` lives in the operator's `~/.claude/hooks/`, is not
+tracked here, and ships to two known hosts; THIS file is tracked in a PUBLIC
+repository and must run on a stranger's clone with nothing beside it. An import
+of it would be a missing module on every other machine — and a `PreToolUse` hook
+that fails to start is silently an ALLOW, so the guard would go inert exactly
+where it is the only one present. The resolution below is therefore a second
+implementation on purpose. It is deliberately much smaller than the host guard's:
+it resolves the four REDIRECTION spellings and no variables, reads no sourced
+files, and treats everything it cannot resolve as "judge the caller's directory
+too" — the fail-CLOSED fallback, which is what lets it stay small.
 
 ⚠ AND IT IS INERT IN THE OTHER RUNTIME. Only Claude Code reads
 `.claude/settings.json`; the opencode plugin spawns `guard_core.py` and never
@@ -208,6 +265,82 @@ _GIT_GLOBALS_WITH_VALUE = frozenset({
 #: `punctuation_chars=True` emits these as their own tokens.
 _OPERATOR_CHARS = set("();<>|&")
 
+#: git's global options that NAME a repository or a work tree. 🔴 THEY ARE JUDGED
+#: IN ADDITION TO THE CALLER'S DIRECTORY, NEVER INSTEAD OF IT, AND THAT IS
+#: MEASURED RATHER THAN CAUTIOUS. From the main worktree,
+#: `git --work-tree=<a linked worktree> rev-parse --absolute-git-dir` answers the
+#: MAIN clone's `.git` — the flag moves where the FILES are read, not which index
+#: and HEAD get written — and `git --git-dir=<the clone>/.git add <file>` run from
+#: a linked worktree really does stage into the clone (rc 0, measured). So each of
+#: these names one half of the operation while the other half still comes from the
+#: caller, and suppressing the caller's directory on their authority would be
+#: fail-OPEN. Only `-C` replaces it; see `_judged_dirs`.
+_GIT_REPO_OPTS = ("--git-dir", "--work-tree")
+
+#: Environment variables naming a DIRECTORY that redirects a git write, with the
+#: same standing as the flags above: judged in addition, never instead.
+#: ⚠ THIS SET IS NOT `_GIT_DISCOVERY_ENV`, AND AN EARLIER COMMENT SAYING "the two
+#: environment variables" READ AS IF IT WERE. Two different questions: that set is
+#: everything whose presence would steer the guard's OWN reads and is therefore
+#: scrubbed, which is cheap to over-include; THIS set is everything whose value
+#: must be JUDGED as a write target, which has to be earned by measurement. They
+#: are deliberately different sizes — and this one is the smaller, deliberately:
+#: `GIT_COMMON_DIR` is scrubbed but NOT judged, because it was driven end to end
+#: and measured not to mutate the clone. Judging a variable that cannot land buys
+#: a false positive and no coverage.
+_GIT_DIR_ENV_NAMES = ("GIT_DIR", "GIT_WORK_TREE")
+
+#: Environment variables naming a FILE rather than a directory. Judged by the
+#: directory CONTAINING that file, because that is what identifies the repository.
+#: 🔴 `GIT_INDEX_FILE` IS HERE BECAUSE IT WAS MEASURED TO LAND, not because it
+#: looked plausible: `GIT_INDEX_FILE=<the clone>/.git/index git add <file>` run
+#: from a linked worktree was ALLOWED and REWROTE the clone's index. That is
+#: condition 1's "mutates the index", in the clone, allowed — the exact shape this
+#: guard exists for, reached by a variable nothing judged.
+#: ⚠ AND THE SET STOPS AT WHAT LANDS. `-c core.worktree=`, `GIT_CONFIG_KEY_*` and
+#: `--config-env` were each driven END TO END against a miniature clone and
+#: measured NOT to mutate it, so they are deliberately unjudged: widening past
+#: what was shown to land would trade false negatives for false positives with no
+#: measurement on either side.
+_GIT_FILE_ENV_NAMES = ("GIT_INDEX_FILE",)
+
+#: Shell builtins that move the caller's directory. Read as ADDITIONAL judged
+#: directories only — the docstring's table says why a replacement needs bash's
+#: positional model and why guessing it fails open.
+_CHDIR_BUILTINS = frozenset({"cd", "pushd"})
+
+#: 🔴 THERE IS NO CAP ON HOW MANY DIRECTORIES THIS HOOK WILL ASK `git` ABOUT, AND
+#: TWO EARLIER DRAFTS HAD ONE. Both were measured to convert a DENY into an ALLOW
+#: at exactly the bound, which is the one direction this file may not fail in. The
+#: history is kept because the cap is the obvious optimisation and the reasoning
+#: that justified it was wrong twice, in the same way, one level apart:
+#:
+#:   * GLOBAL cap. The counter was shared by the primary and additive passes, so
+#:     PRIMARIES crowded out primaries. Eight `git -C <a real linked worktree> add`
+#:     segments — each a legitimate, resolvable, trusted redirect — followed by a
+#:     bare `git commit` IN THE CLONE: DENY for N ≤ 7, ALLOW for N ≥ 8.
+#:   * ADDITIVE-ONLY cap. The fix for the above, and still a bypass, because
+#:     `cd` and `GIT_DIR` targets are WHOLE-COMMAND scans appended to every
+#:     segment's extras. Bisected on two independent spellings, cwd = a linked
+#:     worktree, N ≤ 7 deny / N ≥ 8 allow: `git --git-dir=<an existing dir>` × N
+#:     then `--git-dir=<the clone>/.git add` REWROTE the clone's index with a file
+#:     staged; and N × `cd <an existing dir> && git fetch` then `cd <the clone> &&
+#:     git commit` took the clone from 1 to 2 commits. The second is an ORDINARY
+#:     CROSS-REPO SWEEP, not an exotic payload.
+#:
+#: 🔴 AND THE SENTENCE THAT STOOD HERE WAS THE PROBLEM, NOT THE CODE: "a cap
+#: belongs on the half that cannot change a refusal into an allow, which is the
+#: additive half alone." Measured FALSE, and it is exactly the kind of claim that
+#: stops the next reader from looking. Any N EXISTING directories named additively
+#: crowded out the real one; the existence pre-check only filters paths that do not
+#: exist, which a cross-repo sweep's `cd` targets certainly do.
+#:
+#: What makes "no cap" affordable: `_ROOTS` and `_PROBED` memoise per PATH, so the
+#: cost is distinct directories rather than segments, and the cheap string-only
+#: pass still early-outs every command that is not already a refusal candidate.
+#: A hostile command text can still make this slow. It cannot make it wrong, and
+#: that is the trade this file takes every time.
+
 
 def _allow() -> NoReturn:
     """Say nothing and let the command run. Every non-refusal path ends here.
@@ -233,8 +366,41 @@ def _deny(reason: str) -> NoReturn:
     sys.exit(0)
 
 
+#: Environment variables that steer git's repository DISCOVERY, scrubbed from
+#: every read this guard makes. 🔴 NOT HYGIENE — A MEASURED FAIL-OPEN. The guard's
+#: question is "what is THIS DIRECTORY", and `_git` inherited the hook's
+#: environment, so a `GIT_DIR` already exported in the session answered for it
+#: instead. Measured on a miniature clone, with the no-variable control DENYing in
+#: the same run: `GIT_DIR=<a linked worktree's git dir>` in the hook's environment
+#: made a bare `git commit` IN THE BASE CLONE **allow** — every directory looks
+#: like a linked worktree, so condition 2 is false everywhere. Both base refs of
+#: this change had it. The variables are not ignored, they are judged explicitly
+#: instead (`_ambient_targets`), which is the only reading under which the guard's
+#: own reads and the command's targets cannot disagree.
+#: ⚠ NOT CLOSED, the same caveat `_GIT_GLOBALS_WITH_VALUE` carries: a discovery
+#: variable missing from this set steers the reads again. The fail-open posture
+#: makes that a gap rather than a crash, and `_ROOTS`/`_PROBED` cache per path, so
+#: adding a name here costs nothing.
+_GIT_DISCOVERY_ENV = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
+    "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+)
+
+
 def _git(cwd: str, *args: str) -> str | None:
-    """One read-only git call. `None` on ANY failure — see the fail-open note."""
+    """One read-only git call. `None` on ANY failure — see the fail-open note.
+
+    🔴 `ValueError` IS IN THE EXCEPT CLAUSE BECAUSE IT WAS MEASURED, NOT BECAUSE IT
+    LOOKED POSSIBLE. `subprocess.run(cwd=…)` raises `ValueError: embedded null
+    byte` — not an `OSError` — for a path containing NUL, so `git -C $'a\\0b'
+    commit` crashed this hook with a traceback and rc 1. Every non-zero status
+    other than 2 lets the command RUN, so the crash was an ALLOW on a payload the
+    base ref DENIED: a fail-open reached by a defect in the guard's own plumbing
+    rather than in its policy. Reach is narrow — bash cannot carry NUL in argv —
+    but fail-open-on-crash is the property this file's own header forbids itself.
+    """
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_DISCOVERY_ENV}
     try:
         out = subprocess.run(
             ("git", *args),
@@ -243,8 +409,9 @@ def _git(cwd: str, *args: str) -> str | None:
             text=True,
             timeout=5,
             check=False,
+            env=env,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError, subprocess.SubprocessError):
         return None
     if out.returncode != 0:
         return None
@@ -437,15 +604,34 @@ def _is_exempt(subcommand: str, segment: list[str]) -> bool:
     return False
 
 
+#: Memo for `_repo_root`. It is asked about every `-C` target as well as every
+#: probed directory, and a command line may carry many of each. 🔴 THIS AND
+#: `_PROBED` ARE WHAT MAKE "NO PROBE CAP" AFFORDABLE: the cost of a long command
+#: line is distinct DIRECTORIES, not segments, so the shapes a cap was added for
+#: are already cheap. Two caps were tried and both were measured to convert a DENY
+#: into an ALLOW; the note above `_allow` carries the bisects.
+_ROOTS: dict[str, str | None] = {}
+
+
 def _repo_root(path: str) -> str | None:
-    """The COMMON git dir of the repository containing `path`, resolved."""
+    """The COMMON git dir of the repository containing `path`, resolved.
+
+    🔴 THIS ANSWER IDENTIFIES THE CLONE AND NOT THE WORKTREE, which is exactly
+    why it cannot be the whole test: a linked worktree and the main worktree of
+    one clone give the SAME common dir. `_protected` pairs it with
+    `_is_main_worktree` for that reason.
+    """
+    if path in _ROOTS:
+        return _ROOTS[path]
     common = _git(path, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    if not common:
-        return None
-    try:
-        return os.path.realpath(common)
-    except OSError:
-        return None
+    result: str | None = None
+    if common:
+        try:
+            result = os.path.realpath(common)
+        except OSError:
+            result = None
+    _ROOTS[path] = result
+    return result
 
 
 def _is_main_worktree(cwd: str) -> bool | None:
@@ -467,32 +653,123 @@ def _is_main_worktree(cwd: str) -> bool | None:
         return None
 
 
-def _effective_dir(segment: list[str], cwd: str) -> str | None:
-    """Where this git call actually runs after its `-C` globals, or `None`.
+#: 🔴 THERE IS NO VARIABLE EXPANSION HERE, AND A VERSION OF THIS FILE THAT HAD IT
+#: OPENED FOUR FAIL-OPENS AN AUDIT MEASURED. The reasoning that produced it was:
+#: an unresolvable `-C "$WT"` falls back to judging the caller's directory, which
+#: is correct but annoying, so resolve what the command text itself assigns. The
+#: defect is that KNOWING A NAME IS ASSIGNED SOMEWHERE IN THE TEXT IS NOT KNOWING
+#: THE SHELL WILL HAVE ASSIGNED IT. In each of these bash leaves `WT` **unset**,
+#: so the command git actually runs is `git -C "" commit` — and git runs that in
+#: the CURRENT directory, the clone:
+#:
+#:     ( WT=<wt> ) ; git -C "$WT" commit       a subshell assignment is discarded
+#:     false && WT=<wt> ; git -C "$WT" commit   the assignment never runs
+#:     if false; then WT=<wt>; fi; git -C …     nor does one in an untaken branch
+#:     WT=<wt> true; git -C "$WT" commit        a command PREFIX scopes to `true`
+#:
+#: All four were ALLOW with expansion and DENY without it, re-measured on a
+#: miniature clone with a bare `git commit` in the clone DENYing as the control in
+#: the same run; the first was proved end to end, the clone going 1 -> 2 commits
+#: while the worktree stayed at 1. That is precisely the silent wrong-branch commit
+#: this hook exists to prevent.
+#:
+#: 🔴 AND NOTE WHAT THE EXPANSION DID TO THE FALLBACK: it did not relax it, it made
+#: it UNREACHABLE in those four shapes — honoured formally, not substantively. A
+#: rule obeyed to the letter while its purpose is defeated is the harder failure to
+#: see, which is why this comment is long and the code is gone.
+#:
+#: It was also NARROWER than intended: `export WT=…; git -C "$WT" add` stayed
+#: refused, because the assignment walk does not model `export`. So it bought
+#: ergonomics in the shapes where it was WRONG and not in the shape a careful
+#: script uses.
+#:
+#: The replacement is not a better parser, it is PROSE: an unresolvable target
+#: refuses, and the refusal names the remedy — pass `-C` an ABSOLUTE path. Modelling
+#: shell scope in Python inside a security path is a cost with no measured symptom
+#: behind it: the requirement traced to a report whose own repro assigned the
+#: variable in a PREVIOUS Bash call, which no parser here could ever resolve.
 
-    `None` means "no `-C`, so it runs in `cwd`", which the caller must be able to
-    tell apart from "runs in a path that happens to equal `cwd`".
 
-    🔴 CUMULATIVE, BECAUSE GIT IS. `git -C a -C b` is `cd a; cd b` — each `-C` is
-    relative to the one before it, so taking only the LAST is wrong whenever the
-    last is relative. Both spellings are read, `-C <path>` and the attached
-    `-C<path>`: missing the attached form would refuse a legitimate redirect,
-    which is the direction this function exists to stop.
+def _abs_path(value: str, base: str) -> str | None:
+    """A path a command NAMES, made absolute against `base`. `None` if unusable.
+
+    🔴 IT DOES NOT ASK WHETHER THE DIRECTORY EXISTS, AND A DRAFT THAT DID WAS A
+    SECOND GUARD SCORED **UNREACHABLE** BY THE SAME MUTATION SWEEP. `_protected`
+    has to make that check anyway — it is the function that decides whether a
+    directory is the base clone — so a second copy here could never change a
+    verdict, and this file's own rule is that one predicate in two places
+    regenerates the same bug at both. The existence check now lives ONCE, in
+    `_protected`, ahead of the probe budget so a junk path costs nothing.
+
+    `~` is expanded because the lexer hands the tilde through literally while bash
+    would have expanded it, and a parser NARROWER than the shell's is one that
+    misses real commands — the same reasoning that cleared `commenters`.
+    """
+    if not value or value.startswith("-"):
+        return None
+    try:
+        return os.path.normpath(os.path.join(base, os.path.expanduser(value)))
+    except (OSError, ValueError):
+        return None
+
+
+def _redirect_targets(segment: list[str], cwd: str,
+                      ) -> tuple[str | None, list[str]]:
+    """`(the directory this git call RUNS IN, the directories it NAMES)`.
+
+    The first element is the cumulative `-C` result, or `None` when the segment
+    carries no `-C` at all — which the caller must be able to tell apart from "a
+    `-C` that happens to resolve to `cwd`". The second is every `--git-dir` /
+    `--work-tree` value, in both the spaced and the attached `=` spelling.
+
+    ⚠ A `$VAR` IS NOT RESOLVED, AND THAT IS A DECISION WITH A MEASUREMENT BEHIND
+    IT RATHER THAN AN OMISSION — the long comment above `_abs_path` carries the
+    four fail-opens a resolver opened. `git -C "$WT" commit` therefore names a
+    target this guard cannot follow, so the caller's directory is judged and the
+    refusal stands. The remedy is in the refusal message: an ABSOLUTE path.
+
+    🔴 THE `-C` CHAIN IS CUMULATIVE, BECAUSE GIT IS. `git -C a -C b` is
+    `cd a; cd b` — each `-C` is relative to the one before it, so taking only the
+    LAST is wrong whenever the last is relative.
+
+    🔴 AND THE NAMED DIRECTORIES RESOLVE AGAINST THE `-C` RESULT, NOT AGAINST THE
+    CALLER — MEASURED, because the other order is just as plausible. From a cwd of
+    `<M>`, `git -C clone --git-dir=.git rev-parse --absolute-git-dir` answers
+    `<M>/clone/.git`: git applies every `-C` first and only then interprets
+    `--git-dir`. `GIT_DIR` behaves the same way.
+
+    ⚠ THE ATTACHED `-C<path>` BRANCH IS A HEDGE, NOT A LIVE PATH, AND MEASURING IT
+    IS WHY THAT IS WRITTEN DOWN: git 2.55.0 answers `unknown option: -Cnope` and
+    exits 129, so no attached redirect ever runs. It is read anyway because a
+    reader comparing this walk against `_git_subcommand`'s would otherwise have to
+    guess whether the omission was deliberate, and because the cost of reading it
+    is one branch.
     """
     _, i = _leading_assignments(segment)
     j = i + 1
     here: str | None = None
+    named: list[str] = []
     while j < len(segment):
         word = segment[j]
-        value: str | None = None
+        hop: str | None = None
         if word == "-C" and j + 1 < len(segment):
-            value, j = segment[j + 1], j + 2
+            hop, j = segment[j + 1], j + 2
         elif word.startswith("-C") and len(word) > 2:
-            value, j = word[2:], j + 1
-        if value is not None:
-            base = here if here is not None else cwd
-            here = os.path.normpath(os.path.join(base, value))
+            hop, j = word[2:], j + 1
+        if hop is not None:
+            # 🔴 `normpath`, not `_abs_path`: an intermediate hop in the chain is a
+            # directory to resolve the NEXT one against, and demanding that each
+            # link exist would drop a chain whose final link does. A hop carrying
+            # an unexpanded `$VAR` therefore produces a path that is not a
+            # repository, which `_judged_dirs` turns into "judge the caller too".
+            here = os.path.normpath(
+                os.path.join(here or cwd, os.path.expanduser(hop)))
             continue
+        for opt in _GIT_REPO_OPTS:
+            if word == opt and j + 1 < len(segment):
+                named.append(segment[j + 1])
+            elif word.startswith(opt + "="):
+                named.append(word.split("=", 1)[1])
         if word in _GIT_GLOBALS_WITH_VALUE:
             j += 2
             continue
@@ -500,38 +777,108 @@ def _effective_dir(segment: list[str], cwd: str) -> str | None:
             j += 1
             continue
         break
-    return here
+    base = here or cwd
+    return here, [d for d in (_abs_path(v, base) for v in named) if d]
 
 
-def _writes_elsewhere(segment: list[str], cwd: str, own_repo: str) -> bool:
-    """True when this segment's write PROVABLY lands outside the base clone's
-    main worktree, so this guard has nothing to protect.
+def _ambient_targets(segments: list[list[str]], cwd: str,
+                     ) -> tuple[list[str], list[str]]:
+    """`(directories a GIT_DIR-family variable names, directories a `cd` names)`.
 
-    The mirror of condition 2: that one stopped the guard policing another
-    REPOSITORY because the cwd had wandered into it; this stops it policing
-    another WORKTREE because the command redirected there. Both are
-    false-POSITIVE fixes, and this file's own ruling is that a false positive is
-    worse than a false negative because it countermands the operator.
+    Both are judged IN ADDITION to whatever a git segment names for itself,
+    because both govern a later BARE `git commit` carrying no flag of its own —
+    but they are returned SEPARATELY because they lose to a `-C` differently:
 
-    🔴 FAILS CLOSED. An absent, unresolvable or unreadable target returns False,
-    so the refusal stands: a `-C` the guard cannot follow must never buy an
-    exemption, or a typo'd path becomes a bypass for the whole guard.
+      * a `GIT_DIR=` / `GIT_WORK_TREE=` value, from an assignment anywhere or from
+        this hook's OWN environment, OVERRIDES a `-C`: measured, `git -C <clone>`
+        with `GIT_DIR=.git` resolves the git dir from the variable, so the variable
+        is judged for EVERY candidate segment;
+      * a `cd` / `pushd` target is only the shell's directory, which a `-C`
+        supersedes entirely. So it is judged only for segments that do NOT resolve
+        a `-C` of their own. Without that split, `cd <the clone> && git -C <a
+        worktree> commit` would be refused on the strength of a `cd` git never
+        consults — a false positive invented by the fix for a false negative.
 
-    ⚠ IT READS `-C` AND NOTHING ELSE. `--git-dir=` / `--work-tree=` redirect too
-    and are deliberately NOT handled — they stay in the "cannot see" table above.
-    Closing those means resolving the same four spellings the host-wide guard
-    already resolves, and this file's own ruling is to reuse that resolution
-    rather than grow a second copy of it here.
+    🔴 THIS IS A WHOLE-COMMAND SCAN AND THE OVERRIDE'S HISTORY IS NOT A REASON TO
+    NARROW IT. `OVERRIDE` was a whole-text `re.search` once and three audits walked
+    it, so the shape reads as the known defect — but that scan decided an ALLOW, so
+    a spurious match was fail-OPEN. This one decides a REFUSAL, so a spurious match
+    is fail-CLOSED, and the two are opposite in exactly the dimension that mattered.
+    It still reads TOKENS from the one `_segments` parse rather than the raw string:
+    heredoc bodies are already dropped there, and this file's own rule is that two
+    grammars over one language is how the exemptions got walked.
     """
-    target = _effective_dir(segment, cwd)
-    if target is None or not os.path.isdir(target):
-        return False
-    repo = _repo_root(target)
-    if repo is None:
-        return False
-    if repo != own_repo:
-        return True
-    return _is_main_worktree(target) is not True
+    env_dirs: list[str] = []
+    cd_dirs: list[str] = []
+
+    def record(name: str, value: str) -> None:
+        """Judge one variable's value, as a directory or as a file's parent."""
+        resolved = _abs_path(value, cwd)
+        if not resolved:
+            return
+        # A FILE-valued variable identifies its repository by the directory it sits
+        # in: `GIT_INDEX_FILE=<clone>/.git/index` is a write to `<clone>/.git`,
+        # which `_protected` recognises as the main worktree. Taking the dirname
+        # here rather than teaching `_protected` about files keeps that function
+        # answering exactly one question about exactly one directory.
+        if name in _GIT_FILE_ENV_NAMES:
+            resolved = os.path.dirname(resolved)
+        if resolved:
+            env_dirs.append(resolved)
+
+    for name in _GIT_DIR_ENV_NAMES + _GIT_FILE_ENV_NAMES:
+        record(name, os.environ.get(name, ""))
+    for segment in segments:
+        for word in segment:
+            for name in _GIT_DIR_ENV_NAMES + _GIT_FILE_ENV_NAMES:
+                if word.startswith(name + "="):
+                    record(name, word.split("=", 1)[1])
+        _, i = _leading_assignments(segment)
+        if i < len(segment) and os.path.basename(segment[i]) in _CHDIR_BUILTINS:
+            for word in segment[i + 1:]:
+                if word.startswith("-"):
+                    continue
+                resolved = _abs_path(word, cwd)
+                if resolved:
+                    cd_dirs.append(resolved)
+                break
+    return env_dirs, cd_dirs
+
+
+def _judged_dirs(segment: list[str], cwd: str,
+                 env_dirs: list[str], cd_dirs: list[str]) -> list[str]:
+    """Every directory a write in this segment could land in, primary one FIRST.
+
+    🔴 `-C` IS THE ONLY SPELLING THAT REPLACES THE CALLER'S DIRECTORY. It means
+    "run git as if the cwd were this", so git's whole repository discovery starts
+    there and nothing of the caller's is left — measured: from a linked worktree,
+    `git -C <the main worktree> rev-parse --absolute-git-dir` answers the clone's
+    `.git` and `git -C <a linked worktree> …` answers that worktree's. Every other
+    redirection spelling leaves one half of the operation with the caller, so each
+    is additive; `_GIT_REPO_OPTS` carries the measurement.
+
+    🔴 AND IT REPLACES ONLY WHEN IT RESOLVES TO A GIT WORKTREE. A `-C` the guard
+    cannot follow — a typo, an unexpanded `$VAR`, a path the command is about to
+    create, a directory that is no repository at all — must never buy an
+    exemption, so the caller's directory is judged instead and the refusal stands.
+    The host-wide guard records the same rule from a measured fail-OPEN: naming a
+    repo handed it the whole verdict, so a `-C` at an ordinary directory left the
+    branch check evaluating NOTHING.
+
+    🔴 AND A RESOLVED `-C` DROPS THE `cd` TARGETS WHILE KEEPING THE GIT_DIR ONES.
+    `_ambient_targets` carries the measurement; the short form is that a `cd` only
+    moves the shell, which a `-C` then overrides, while `GIT_DIR` overrides the
+    `-C` in turn.
+    """
+    here, named = _redirect_targets(segment, cwd)
+    trusted = bool(here) and _repo_root(here) is not None
+    primary = here if trusted else cwd
+    extra = list(named) + env_dirs + ([] if trusted else cd_dirs)
+    out: list[str] = []
+    for path in (primary, *extra):
+        if path and path not in out:
+            out.append(path)
+    return out
 
 
 def _linked_worktrees(cwd: str) -> int | None:
@@ -541,6 +888,74 @@ def _linked_worktrees(cwd: str) -> int | None:
         return None
     return max(0, sum(1 for line in out.splitlines()
                       if line.startswith("worktree ")) - 1)
+
+
+def _main_worktree_path(cwd: str) -> str | None:
+    """The clone's MAIN worktree path, read from git rather than derived.
+
+    `git worktree list --porcelain` lists the main worktree FIRST (measured, from
+    the main worktree, a linked one, the git dir and a linked worktree's git dir —
+    same answer from all four). Read because the refusal message has to name a
+    directory a reader can `cd` into, and a judged target may be a `.git` dir,
+    where `rev-parse --show-toplevel` is a fatal rather than an answer.
+    """
+    out = _git(cwd, "worktree", "list", "--porcelain")
+    for line in (out or "").splitlines():
+        if line.startswith("worktree "):
+            return line[len("worktree "):].strip()
+    return None
+
+
+#: Memo for `_protected`, keyed on the directory asked about. One Bash call can
+#: name the same directory from several segments, and each probe is up to three
+#: `git` spawns.
+_PROBED: dict[str, tuple[str, int] | None] = {}
+
+def _protected(path: str, own_repo: str) -> tuple[str, int] | None:
+    """`(the clone's main worktree, its linked-worktree count)` when a write into
+    `path` lands in the SHARED BASE CLONE of the repository this file ships in.
+    `None` for every other directory, and for every question git cannot answer.
+
+    This is conditions 2 and 3 in one place, asked about ONE directory, so the
+    only thing that changed when the guard stopped keying on the cwd is which
+    directories get passed in. The two git questions are different and the
+    distinction is the whole trap: `--git-common-dir` identifies the CLONE and is
+    therefore IDENTICAL for the main worktree and every linked worktree of it, so
+    a check built on it alone re-creates the false positive this resolution exists
+    to remove. `--absolute-git-dir` is what separates them — `<common>` in the
+    main worktree, `<common>/worktrees/<name>` in a linked one.
+
+    ⚠ `--show-toplevel` IS REJECTED FOR TWO DIFFERENT REASONS AND AN EARLIER DRAFT
+    OF THIS COMMENT MERGED THEM INTO ONE WRONG ONE. It said the flag form is
+    "fatal when the target is a git dir". Measured: `git --git-dir=<clone>/.git
+    rev-parse --show-toplevel` from a linked worktree exits **0** and answers the
+    WORKTREE — a confidently wrong answer, which is worse than a fatal. The fatal
+    belongs to the probe form this guard would have to use, `git -C <a git dir>
+    rev-parse --show-toplevel` → rc 128 `must be run in a work tree`. Two
+    independent disqualifications; the conclusion was right and the attribution
+    was not. And it answers neither question anyway: a worktree root does not say
+    whether it is the MAIN one, so it would need the comparison above regardless.
+
+    A `path` that IS a git dir is answered correctly by both questions (measured
+    for `<clone>/.git` and `<common>/worktrees/<name>`), which is what lets one
+    probe serve a worktree path and a `--git-dir` value alike.
+    """
+    # A path that is not a directory NOW cannot be the base clone — this hook runs
+    # before the command does, so a directory the command is about to create does
+    # not exist yet. A cheap `stat` ahead of up to three `git` spawns, and nothing
+    # more: ⚠ IT CANNOT CHANGE A VERDICT, because `git` fails on a nonexistent cwd
+    # by itself. A mutation sweep scored it unreachable for exactly that reason.
+    if not os.path.isdir(path):
+        return None
+    if path in _PROBED:
+        return _PROBED[path]
+    result: tuple[str, int] | None = None
+    if _repo_root(path) == own_repo and _is_main_worktree(path) is True:
+        linked = _linked_worktrees(path)
+        if linked:
+            result = (_main_worktree_path(path) or path, linked)
+    _PROBED[path] = result
+    return result
 
 
 def main() -> None:
@@ -579,15 +994,15 @@ def main() -> None:
     # match — pure parsing, no subprocess — decides early-out for the overwhelming
     # majority of commands. The `git` calls below run only for a command that is
     # ALREADY a candidate for refusal. The segment is carried alongside its
-    # subcommand because `_writes_elsewhere` needs the argv, not just the verb.
-    candidates: list[tuple[str, list[str]]] = []
-    for segment in segments:
+    # subcommand because the target resolution needs the argv, not just the verb.
+    candidates: list[tuple[str, list[str], int]] = []
+    for index, segment in enumerate(segments):
         subcommand = _git_subcommand(segment)
         if subcommand is None or subcommand not in _REFUSED:
             continue
         if _is_exempt(subcommand, segment):
             continue
-        candidates.append((subcommand, segment))
+        candidates.append((subcommand, segment, index))
     if not candidates:
         _allow()
 
@@ -595,38 +1010,45 @@ def main() -> None:
     if not isinstance(cwd, str) or not os.path.isdir(cwd):
         _allow()
 
-    # Condition 2: this guard polices the repository it ships in, and no other.
-    # `__file__` is `<repo>/.claude/hooks/<this>`, so the repo it belongs to is
-    # the one containing this file.
+    # Conditions 2 and 3 are `_protected`, and this is the only place that knows
+    # which repository "this repo" is. `__file__` is `<repo>/.claude/hooks/<this>`,
+    # so the repo it belongs to is the one containing this file — read ONCE, and
+    # never from the cwd, which is what let a wandering session carry the guard
+    # into a sibling repository.
     own_repo = _repo_root(os.path.dirname(os.path.abspath(__file__)))
-    here = _repo_root(cwd)
-    if not own_repo or not here or own_repo != here:
+    if not own_repo:
         _allow()
 
-    if _is_main_worktree(cwd) is not True:
+    # 🔴 ONE PASS OVER EVERY JUDGED DIRECTORY, AND THE ABSENCE OF A SECOND IS THE
+    # FIX. Two earlier drafts split this into a primary pass and an additive pass
+    # so that a probe BUDGET could be applied to one of them; both arrangements
+    # were measured to turn a DENY into an ALLOW at the bound (the comment above
+    # `_PROBED`'s neighbours carries the two bisects). With no budget there is
+    # nothing for an ordering to protect, so there is no ordering to get wrong.
+    #
+    # The primary directory still comes FIRST within each segment's list, and that
+    # is now purely cosmetic: it decides which directory the refusal MESSAGE names,
+    # and naming the one the command actually runs in reads better than naming a
+    # `cd` target. Nothing about the verdict depends on it.
+    env_dirs, cd_dirs = _ambient_targets(segments, cwd)
+
+    hits: list[str] = []
+    found: tuple[str, int] | None = None
+    for subcommand, segment, _ in candidates:
+        for path in _judged_dirs(segment, cwd, env_dirs, cd_dirs):
+            verdict = _protected(path, own_repo)
+            if verdict:
+                hits.append(subcommand)
+                found = found or verdict
+                break
+    if not hits or not found:
         _allow()
 
-    linked = _linked_worktrees(cwd)
-    if not linked:
-        _allow()
-
-    # 🔴 CONDITION 5, AND IT IS A cwd NARROWING LIKE CONDITION 2. Every condition
-    # above asks about the SHELL's directory; this one asks where the COMMAND
-    # writes. A segment that redirects itself out of this worktree with `-C`
-    # cannot touch the tree being protected, so refusing it countermands the
-    # operator for no gain — measured ten times across one effort, on the
-    # `git -C <worktree> commit` spelling this guard's OWN refusal prescribes.
-    # It can only ever refuse LESS, and only where the target is PROVED to be
-    # elsewhere; `_writes_elsewhere` fails closed on anything it cannot resolve.
-    hits = [sub for sub, segment in candidates
-            if not _writes_elsewhere(segment, cwd, own_repo)]
-    if not hits:
-        _allow()
-
-    branch = _git(cwd, "branch", "--show-current") or "a detached HEAD"
+    clone, linked = found
+    branch = _git(clone, "branch", "--show-current") or "a detached HEAD"
     ordered = sorted(set(hits))
     _deny(
-        f"REFUSED: {cwd} is this repo's SHARED base clone, and it carries "
+        f"REFUSED: {clone} is this repo's SHARED base clone, and it carries "
         f"{linked} linked worktree registration(s) — so this tree may be shared "
         f"with another session or agent. `git {', '.join(ordered)}` mutates the "
         f"tree, the index or HEAD that a peer would be standing on. A commit "
@@ -636,15 +1058,35 @@ def main() -> None:
         f"This clone is currently on `{branch}`.\n"
         f"\n"
         f"Do this instead:\n"
-        f"  git -C {cwd} fetch origin\n"
-        f"  git -C {cwd} worktree add <a path> -b <branch> origin/main\n"
+        f"  git -C {clone} fetch origin\n"
+        f"  git -C {clone} worktree add <a path> -b <branch> origin/main\n"
         f"  # …edit, test and commit INSIDE that worktree…\n"
         f"  git -C <that path> push -u origin HEAD:<branch>\n"
-        f"  git -C {cwd} worktree remove <that path>   # ONLY after the push SUCCEEDED\n"
+        f"  git -C {clone} worktree remove <that path>   # ONLY after the push SUCCEEDED\n"
+        f"\n"
+        f"The directory judged was the one this command WRITES to, not the shell's:\n"
+        f"a `git -C <a linked worktree> …` from here is NOT refused, and a\n"
+        f"`-C` / `--git-dir` / `GIT_DIR` pointing INTO this clone is refused from\n"
+        f"anywhere. A target this guard cannot resolve leaves the refusal standing.\n"
         f"\n"
         f"Full rules, and the measurement behind each one: {DOC}\n"
         f"Deliberately doing this anyway: put {OVERRIDE}=1 in front of the command."
     )
 
 
-main()
+# 🔴 THE HEADER'S PROMISE — "every unexpected condition here exits 0 and says
+# nothing" — IS MADE STRUCTURAL HERE RATHER THAN LEFT TO EVERY `except` CLAUSE
+# BEING COMPLETE. One was not: a NUL byte in a `-C` value raised `ValueError`
+# past `_git`'s handler and crashed the hook with rc 1, which SILENTLY ALLOWS —
+# a payload the base ref denied. `_git` now catches it at the source, and this
+# exists so the NEXT such gap is a quiet allow instead of a crash, which is the
+# outcome this file already documents for a malformed payload.
+#
+# ⚠ `SystemExit` IS NOT AN `Exception` SUBCLASS, and that is what makes this safe
+# rather than a disaster: the `sys.exit(0)` inside `_allow` and `_deny` passes
+# straight through, so wrapping the body cannot swallow a REFUSAL and convert it
+# into an allow. That is the one way this line could be wrong, so it is stated.
+try:
+    main()
+except Exception:
+    sys.exit(0)
