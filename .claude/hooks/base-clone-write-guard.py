@@ -1347,8 +1347,31 @@ def _option_state(subcommand: str,
 #: ⚠ NO COUNT HERE ON PURPOSE, AND THE REASON IS THE DEFECT ITSELF: the measurement was
 #: taken when the ledger was smaller, `_REFUSED` has grown since, and the stale count
 #: was still being restated at five sites in this file and two in the tests.
-#: `test_HELP_is_a_READ_for_EVERY_refused_subcommand` is parametrised over
-#: `_REFUSED` itself and reports the count it covered — read it there.
+#: `test_HELP_is_a_READ_for_EVERY_refused_subcommand` is PARAMETRISED OVER `_REFUSED`
+#: ITSELF, so its coverage IS the ledger by construction and there is no count for this
+#: comment to restate: adding a subcommand adds its two help cases automatically, and a
+#: member with no case is impossible rather than merely unlikely.
+#: ⚠ AN EARLIER VERSION OF THIS SENTENCE SAID THE TEST "reports the count it covered —
+#: read it there", AND IT DID NOT: the test holds no `print`, so the pointer named
+#: nothing. Kept as a record because it is the same defect one level up — a claim about
+#: where to find a number is still a claim — and because the honest repair was to state
+#: the structural fact rather than to add a `print`, which in a parametrised test emits
+#: one line per case and still reports no count.
+#:
+#: 🔴 AND THE SHAPE BEHIND IT IS A **DECLARED, UNCLOSED LIMIT** RATHER THAN A FIXED ONE,
+#: WHICH IS WORTH MORE THAN A GUARD THAT READS CLOSED. Every pointer of this shape in the
+#: payload was swept and checked BY HAND: three exist, this one was false, and the two
+#: that say a test "PRINTS the tally" — the ambiguous-prefix widening test and the
+#: differential — were verified to really print. A detector for it was then WRITTEN AND
+#: DELETED: distinguishing "read the number this test PRINTS" from "read the set this
+#: test ASSERTS" has no lexical proxy that survives contact with this payload. Every
+#: variant tried fired on legitimate prose — `git worktree list` "reports
+#: REGISTRATIONS", a consumer ledger whose members you "read there" in the assertion —
+#: and narrowing it far enough to be quiet left it matching only the instance already
+#: fixed, which is a spelled guard that catches nothing. A permanently-red or
+#: self-satisfying gate is worse than none (`claude/RULES.md`), so: **if you write a
+#: comment saying a test reports a number, open the test and confirm it prints one. No
+#: machine is checking that.**
 #:
 #: 🔴 REFUSING `--help` WAS THE PUREST FALSE POSITIVE THIS FILE COULD EMIT, and it
 #: was live: the exemption existed for `stash` ALONE, so `git rm -h`, `git mv -h`,
