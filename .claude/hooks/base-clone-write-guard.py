@@ -107,7 +107,8 @@ were gated on the hit set being a singleton):
     `git restore <path>` form carries no `--` and would be refused wholesale.
   * `git stash list` / `show` — reads.
   * 🔴 `-h` / `--help` ON **EVERY** REFUSED SUBCOMMAND — measured as help, rc 129
-    `usage:`, repository unchanged, for all fourteen. This list named `--help` as a
+    `usage:`, repository unchanged, for EVERY member of `_REFUSED`. This list named
+    `--help` as a
     read for two rounds while the code exempted it for `stash` ALONE, so
     `git rm -h`, `git commit --help` and `git rebase --help` were refused; a corpus
     replay over this project's real Bash history found two commands of exactly that
@@ -669,7 +670,16 @@ def _shell_lines(command: str) -> list[str]:
     quote_escapes = False            # does THIS quote honour `\`? see the open branch
     comment = False
     prev: str | None = None          # the previous character on this logical line
-    prev_escaped = False             # …and did it arrive via a `\` escape pair?
+    # …and did it arrive via a `\` escape pair? 🔴 THE RULE FOR EVERY RESET OF THIS FLAG,
+    # STATED ONCE RATHER THAN TALLIED: `prev_escaped` is READ at exactly ONE site — the
+    # quote-open branch, where it decides whether a `$'` is really a `$'`. So a reset
+    # matters only if control can reach that read from it with no intervening write;
+    # every reset except the one marked LIVE sits on a branch that cannot, and each says
+    # which. ⚠ TWO AUDIT ROUNDS FOUND THIS LEDGER SHORT — once missing the live reset,
+    # once missing a dead label — so the single-read property is now asserted by
+    # `test_prev_escaped_is_READ_AT_EXACTLY_ONE_SITE`: if a second read appears, every
+    # DEAD label below needs re-deriving and that test says so.
+    prev_escaped = False
     index, size = 0, len(command)
 
     def flush(line: str) -> None:
@@ -816,6 +826,11 @@ def _shell_lines(command: str) -> list[str]:
             comment = True
             current.append(char)
             prev = char
+            # DEAD, by the invariant above the declaration: `#` is not `$`, and the next
+            # character is handled by the comment branch, which opens no quote. This
+            # label was the one the ledger missed TWICE — count corrected, then a reset
+            # left unlabelled — which is why the rule is now stated once at the
+            # declaration and asserted by a test rather than tallied here.
             prev_escaped = False
             index += 1
             continue
@@ -1204,16 +1219,27 @@ def _resolve_long(token: str, grammar: dict[str, object]) -> tuple[str | None, b
     takes a value — the fail-CLOSED reading, and free, because git refuses an
     ambiguous abbreviation outright so nothing is written either way.
 
-    ⚠ THAT LAST CLAUSE IS A WIDENING RATHER THAN A RESOLUTION, and what reaches it is
-    ONE OPTION FAMILY IN **TEN** SPELLINGS — `--p --pa --pat --path --paths --pathsp
-    --pathspe --pathspec --pathspec- --pathspec-f`, each a prefix of both
-    `--pathspec-from-file` (value) and `--pathspec-file-nul` (boolean), and twenty once
-    the `--no-` probes are counted. 🔴 AN EARLIER VERSION OF THIS SENTENCE SAID "EXACTLY
-    ONE SHAPE", which was wrong by nine on a round whose subject was exhaustiveness
-    claims being wrong by a count. The SAFETY conclusion is unchanged and is the part
-    that matters: all twenty are one family, git answers every one
-    `rc 129 ambiguous option` and writes nothing, so no verdict here can permit or
-    prevent a write — which is why erring toward consuming the value costs nothing.
+    ⚠ THAT LAST CLAUSE IS A WIDENING RATHER THAN A RESOLUTION, AND ITS SAFETY ARGUMENT
+    IS AN INVARIANT, NOT A LIST:
+
+        every name in these tables is a real option of that subcommand, so the hook's
+        candidate set is a SUBSET of git's. A token this branch answers for matched two
+        or more of the hook's names; those are two or more of git's names; therefore git
+        finds the abbreviation ambiguous too, refuses it, and writes nothing — so no
+        verdict here can permit or prevent a write, and erring toward consuming the
+        value costs nothing.
+
+    🔴 THE LIST IS GONE ON PURPOSE. It said "exactly one shape", was corrected to "ten",
+    and the correcting commit made it wrong by nine again by adding a second subcommand
+    to the grammar — three wrong counts in three rounds, each written to fix the last.
+    Both halves of the invariant are now DERIVED by
+    `tests/test_base_clone_write_guard.py`:
+    `test_EVERY_NAME_IN_THE_OPTION_TABLES_IS_A_REAL_GIT_OPTION` measures the subset
+    premise against the installed git, and
+    `test_the_AMBIGUOUS_PREFIX_WIDENING_HOLDS_FOR_EVERY_TOKEN_THAT_REACHES_IT` walks
+    every prefix of every name and asserts the two-or-more property, reporting the
+    tally instead of fixing it in prose. Read the numbers there, never here — a count
+    beside a table that grows is the one thing in this file guaranteed to rot.
     """
     long_value: frozenset[str] = grammar["long_value"]        # type: ignore[assignment]
     long_bool: frozenset[str] = grammar["long_bool"]          # type: ignore[assignment]
@@ -1231,8 +1257,15 @@ def _option_state(subcommand: str,
     """`(final boolean state per canonical long option, the OPERANDS)`.
 
     🔴 THE ONE PLACE THAT READS GIT'S OPTION GRAMMAR. Everything that used to match an
-    option spelling now asks this: `_is_dry_run` reads `--dry-run` out of the flags,
-    and `symbolic-ref`'s exemption reads `--delete` and counts the operands.
+    option spelling now asks this. ⚠ THE CONSUMERS ARE NOT LISTED HERE ANY MORE: the
+    hand-maintained list said two and missed the third in the same commit that added it,
+    which matters because this sentence is what a reader uses to decide how many call
+    sites an edit must satisfy. `test_the_OPTION_STATE_CONSUMERS_ARE_AN_ASSERTED_LEDGER`
+    pins the call sites and fails on GROW as well as SHRINK; read them there.
+    ⚠ TWO LITERAL SPELLING MATCHES REMAIN AND BOTH ARE DEFENDED AT THEIR OWN SITES, so
+    "everything" above is not quite everything: `_HELP_SPELLINGS` (git does not
+    abbreviate `--help` — measured) and `checkout`'s `--` (an end-of-options separator,
+    not an option).
 
     Last-wins is why the flags are a dict rather than a set: `-n --no-dry-run` leaves
     `--dry-run` False and really deletes, measured. A value — attached, spaced, short
@@ -1307,10 +1340,15 @@ def _option_state(subcommand: str,
 #: MEASURED FOR ALL FOURTEEN RATHER THAN ASSUMED FROM "git uses parse-options".
 #: On git 2.55.0, `git <sub> -h` answers **rc 129 with `usage:` on the first line and
 #: the repository bit-for-bit unchanged** for `add am apply cherry-pick checkout clean
-#: commit merge mv rebase reset rm stash switch` — all fourteen, no exception, so
-#: there is no subcommand here needing `--help` only. (`git grep -h` means
-#: `--no-filename`, which is why the question was asked; `grep` is not refused.)
-#: `--help` execs the manual page: rc 0, repository unchanged, all fourteen.
+#: commit merge mv rebase reset rm stash switch` — the whole ledger as it stood
+#: then, no exception, so no subcommand here needs `--help` only. (`git grep -h`
+#: means `--no-filename`, which is why the question was asked; `grep` is not
+#: refused.) `--help` execs the manual page: rc 0, repository unchanged, same set.
+#: ⚠ NO COUNT HERE ON PURPOSE, AND THE REASON IS THE DEFECT ITSELF: the measurement was
+#: taken when the ledger was smaller, `_REFUSED` has grown since, and the stale count
+#: was still being restated at five sites in this file and two in the tests.
+#: `test_HELP_is_a_READ_for_EVERY_refused_subcommand` is parametrised over
+#: `_REFUSED` itself and reports the count it covered — read it there.
 #:
 #: 🔴 REFUSING `--help` WAS THE PUREST FALSE POSITIVE THIS FILE COULD EMIT, and it
 #: was live: the exemption existed for `stash` ALONE, so `git rm -h`, `git mv -h`,
@@ -1353,7 +1391,8 @@ def _is_read_only_spelling(subcommand: str, rest: list[str]) -> bool:
     first. Nobody types either; every spelling the corpus actually contains has the
     flag first. ⚠ AND A CLUSTER IS NOT READ FOR AN `h`: `git clean -fh` is also help
     (measured), and is also still refused. Widening to clusters would need `h` to
-    mean help inside a cluster for all fourteen, which was not measured — and the
+    mean help inside a cluster for every refused subcommand, which was not
+    measured — and the
     cheap direction for an unmeasured widening is not to make it.
     """
     if rest and rest[0] in _HELP_SPELLINGS:

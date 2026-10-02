@@ -109,7 +109,8 @@ re-sync — it cannot conflict or autostash, it either fast-forwards or refuses,
 refusal is the signal that the clone diverged); `git checkout <ref> -- <paths>` (the
 pathspec form does not move HEAD — bare `git checkout <branch>` IS refused, because that
 moves the shared HEAD); `git stash list` and `show`; **`-h` / `--help` on every refused
-subcommand** — measured as help on all fourteen (rc 129, `usage:`, repository unchanged),
+subcommand** — measured as help on every member of the refused set (rc 129, `usage:`,
+repository unchanged),
 and read from the first word after the subcommand only, because `git commit -m -h`
 *commits* with `-h` as the message; a **dry run** of `clean`,
 `rm` or `mv` — `--dry-run`, `-n`, or an `n` in a combined short cluster (`-nd`, `-rn`,

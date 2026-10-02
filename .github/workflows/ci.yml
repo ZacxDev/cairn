@@ -520,17 +520,37 @@ jobs:
           # that were each wrong in the same direction, and the rows are its cases.
           # Measured 2638 on the merged tree, so
           # `2638 - min(50, max(1, 2638/20)) = 2588`. The hook suite moves 293 -> 315.
-          # ⚠ 2588 -> 2607 ON AUDIT ROUND 3, and 🔴 ONE OF THE NINETEEN NEW CASES IS NOT
-          # A CASE AT ALL BUT A DIFFERENTIAL FUZZ — one collected test that generates
-          # **1664** real git commands over `clean`/`rm`/`mv`, runs each in its own copy
-          # of a miniature clone, and compares the guard's verdict against what git
-          # actually did. It costs ~60s of this job on its own, which is the whole
-          # reason it is ONE test rather than 1664 parametrised rows: the floor, and the
-          # drift guard, both count COLLECTED tests, and 1664 rows would have moved this
-          # literal by more than `MAX_GAP` in a single commit. Measured 2659 on the
-          # merged tree, so `2659 - min(50, max(1, 2659/20)) = 2609`. The hook suite
-          # moves 315 -> 336.
-          FLOOR = 2609
+          # ⚠ 2588 -> 2615 ACROSS AUDIT ROUNDS 3 AND 4, AND 🔴 ONE OF THE NEW CASES IS NOT A CASE AT ALL BUT A
+          # DIFFERENTIAL FUZZ — one collected test that generates real git commands over
+          # `clean`/`rm`/`mv`, runs each in its own copy of a miniature clone, and
+          # compares the guard's verdict against what git actually did. It costs about a
+          # minute of this job on its own, which is the whole reason it is ONE test
+          # rather than one row per command: the floor and the drift guard both count
+          # COLLECTED tests, and a row per command would have moved this literal by more
+          # than `MAX_GAP` in a single commit. Its own case count and generation DEPTH
+          # are asserted inside the test, where they are derived from its pools.
+          #
+          # 🔴 AND THAT HEADING IS NOW **PINNED** RATHER THAN TRUSTED, BECAUSE RESTATING
+          # THE FLOOR IS THE ONE DEFECT THIS PARAGRAPH HAS SHIPPED THREE ROUNDS RUNNING.
+          # Round 2's heading said 2565 against a literal of 2566; the paragraph written
+          # to name THAT shipped "2588 -> 2607" against a literal of 2609, plus a case
+          # count of nineteen that was twenty-one. Every one was prose beside a computed
+          # number, and only the computed one was checked by anything.
+          # `tests/test_base_clone_write_guard.py` ::
+          # `test_the_CI_FLOOR_PROSE_CANNOT_DISAGREE_WITH_THE_LITERAL` now parses this
+          # step and fails unless the last transition and the arithmetic below both equal
+          # the literal. ⚠ It earned its place immediately: the first draft of this
+          # paragraph DELETED the arrow instead of fixing it, and the test went red on
+          # that too. Case counts are gone from here entirely — the differential asserts
+          # its own, derived from its pools.
+          # ⚠ ROUND 4 ADDED NO BEHAVIOUR AT ALL — its cases are the MECHANICAL
+          # replacements for prose counts: the ambiguity invariant derived from the
+          # hook's own tables, the subset premise measured against the installed git,
+          # the `prev_escaped` single-read property, the `_option_state` caller ledger,
+          # and the pin on this very paragraph.
+          # Measured 2665 collected on the merged tree, so
+          # `2665 - min(50, max(1, 2665/20)) = 2615`.
+          FLOOR = 2615
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)

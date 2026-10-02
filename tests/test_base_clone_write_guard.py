@@ -18,6 +18,7 @@ suite. Said plainly rather than left for a reader to infer from a wall of
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import shutil
@@ -42,6 +43,50 @@ _GIT_ENV = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_SYSTEM": os.devnull,
 }
+
+
+def _hook_namespace() -> dict:
+    """The hook's module-level definitions, loaded WITHOUT running `main()`.
+
+    🔴 THIS EXISTS SO STRUCTURAL CLAIMS CAN BE **DERIVED** FROM THE CODE INSTEAD OF
+    RESTATED BESIDE IT. Four audit rounds in a row found the same defect — a count or
+    an enumeration written in prose next to a thing that changes — and three of those
+    were in paragraphs added to correct the previous one. `claude/RULES.md` says to
+    prefer a deterministic fix over a prose one; a count nobody can re-derive is the
+    prose one.
+
+    The hook is a SCRIPT: its last statement is `try: main()`, which consumes stdin and
+    exits, so a plain import is impossible — which is why the other readers in this
+    file parse the source. Cutting the source at that invocation and `exec`ing the rest
+    gives the real functions and tables.
+    """
+    source = HOOK.read_text(encoding="utf-8")
+    marker = "\ntry:\n    main()\n"
+    assert marker in source, (
+        "the hook no longer ends with the `try: main()` invocation this cut relies on"
+    )
+    namespace: dict = {"__name__": "base_clone_write_guard_under_test"}
+    exec(compile(source[: source.index(marker)], str(HOOK), "exec"), namespace)
+    # POSITIVE CONTROL: a namespace missing these would make every derived check below
+    # vacuous, which is the failure mode of loading code by cutting a string.
+    for symbol in ("_resolve_long", "_option_state", "_OPTION_GRAMMAR", "_REFUSED",
+                   "_DRY_RUN_SUBCOMMANDS"):
+        assert symbol in namespace, f"the hook's `{symbol}` did not load"
+    return namespace
+
+
+def _git_long_options(subcommand: str) -> frozenset[str]:
+    """Every long option `git <subcommand> -h` prints, as canonical names.
+
+    `--[no-]dry-run` yields `dry-run`. Read from git rather than from a list here, so
+    the subset premise the ambiguity invariant rests on is measured on the git that is
+    actually installed instead of asserted for the one that was.
+    """
+    done = subprocess.run(["git", subcommand, "-h"], capture_output=True, text=True,
+                          env={**os.environ, **_GIT_ENV})
+    text = done.stdout + done.stderr
+    assert "usage:" in text, f"`git {subcommand} -h` printed no usage: {text[:200]}"
+    return frozenset(re.findall(r"--(?:\[no-\])?([a-z][a-z0-9-]*)", text))
 
 
 def _refused_from_hook() -> frozenset[str]:
@@ -243,6 +288,17 @@ _DRY_RUN_MARKER = {"clean": "Would remove", "rm": "rm '", "mv": "Checking rename
 #: real to act on — otherwise "nothing changed" would not mean "it was a dry run".
 _DIFFERENTIAL_OPERANDS = {"clean": [], "rm": ["seed.txt"],
                           "mv": ["seed.txt", "moved.txt"]}
+
+#: 🔴 HOW MANY OPTION WORDS THE DIFFERENTIAL COMBINES, AND IT IS A FLOOR RATHER THAN A
+#: SETTING. At depth 2 the sweep catches the FALSE-POSITIVE half of the defect it was
+#: built for and **structurally cannot see the FAIL-OPEN half**: the swallowed word has
+#: to sit BETWEEN a `-n` and a `--no-dry-run`, which needs three. Measured on the
+#: reverted conditional — depth 2: 6 divergences, **zero fail-opens**; depth 3: 58, with
+#: the fail-opens present. So a future edit trimming the pool or the depth for runtime
+#: would leave the whole class unobserved behind a green suite, and because this is
+#: deliberately ONE collected test neither the floor nor `MAX_GAP` could see it. The
+#: test asserts this constant and the generated case count, so the trim fails loudly.
+_DIFFERENTIAL_DEPTH = 3
 
 
 def _leading_words_from_hook() -> frozenset[str]:
@@ -826,12 +882,17 @@ def test_an_UNESCAPED_dollar_quote_IS_honoured_and_its_reset_is_LIVE(parallel_cl
     one and the second line never runs. ALLOW is therefore correct, and refusing would
     be a false positive on a command that cannot execute.
 
-    ⚠ IT IS HERE BECAUSE THE SURVIVOR LEDGER WAS SHORT BY ONE. Six `prev_escaped`
-    resets were added and exactly one survivor was declared; deleting the reset on the
-    GENERIC TAIL branch kept the whole suite green while flipping this row to deny —
-    behaviourally live and unguarded. The other two unlabelled resets (the in-quote
-    escape branch and the comment branch) are DEAD, which their own comments now say,
-    so the ledger and the code agree.
+    ⚠ IT IS HERE BECAUSE THE SURVIVOR LEDGER WAS SHORT BY ONE — TWICE. Six
+    `prev_escaped` resets were added and exactly one survivor was declared; deleting the
+    reset on the GENERIC TAIL branch kept the whole suite green while flipping this row
+    to deny, behaviourally live and unguarded. The correcting round then labelled four
+    of the five dead ones and left the fifth bare while claiming "the other two".
+
+    🔴 SO THE COUNT IS GONE AND THE RULE REPLACES IT: `prev_escaped` is read at exactly
+    one site, so every reset but the one marked LIVE is dead, and
+    `test_prev_escaped_is_READ_AT_EXACTLY_ONE_SITE` asserts the property the labels
+    depend on. Each dead reset was also individually mutated and SURVIVED, which is what
+    makes the labels honest rather than hopeful.
     """
     clone = parallel_clone[0]
     command = "echo \\x$'a\\'\ngit commit -m sneaky"
@@ -1224,7 +1285,8 @@ def test_HELP_is_a_READ_for_EVERY_refused_subcommand(parallel_clone, subcommand,
     falsely rather than merely being able to.
 
     🔴 MEASURED, NOT ASSUMED FROM "git uses parse-options": on git 2.55.0 every one
-    of the fourteen answers `-h` with rc 129, `usage:` on the first line, and the
+    member of the ledger answers `-h` with rc 129, `usage:` on the first line, and
+    the
     repository bit-for-bit unchanged; `--help` execs the manual at rc 0, also
     unchanged. The question was asked because `-h` is NOT universally help in git —
     `git grep -h` means `--no-filename` — and the answer is that no refused
@@ -1259,7 +1321,8 @@ def test_HELP_is_a_READ_for_EVERY_refused_subcommand(parallel_clone, subcommand,
     ("git clean -i -h", "deny", "a help request whose `-h` is not first"),
     ("git clean -fh", "deny", "a CLUSTER containing `h` — also help, also refused: "
                               "`h` meaning help inside a cluster was not measured "
-                              "for all fourteen, and the cheap direction for an "
+                              "for every refused subcommand, and the cheap "
+                              "direction for an "
                               "unmeasured widening is not to make it"),
 ])
 def test_the_HELP_exemption_does_not_read_a_FLAGS_VALUE(
@@ -1272,6 +1335,199 @@ def test_the_HELP_exemption_does_not_read_a_FLAGS_VALUE(
     """
     clone = parallel_clone[0]
     assert _decision(_run_hook(command, clone)) == expected, f"{why}: {command}"
+
+
+def test_the_CI_FLOOR_PROSE_CANNOT_DISAGREE_WITH_THE_LITERAL():
+    """🔴 THE SAME COMMENT HAS SHIPPED A WRONG FLOOR NUMBER THREE ROUNDS RUNNING, EACH
+    TIME IN THE PARAGRAPH WRITTEN TO CORRECT THE LAST ONE.
+
+    Round 2's heading said 2565 against a literal of 2566; the paragraph added to name
+    that said "2588 -> 2607" against a literal of 2609. The defect is structural, not
+    careless: a number written in PROSE beside a number that is COMPUTED will drift, and
+    only the computed one is checked by anything. `claude/RULES.md` prescribes a
+    deterministic fix over a prose one, and `RULES.md`'s own precedent is a test that
+    owns the constants so nobody restates them.
+
+    So this parses the step: the arithmetic line's result, and every `A -> B` transition
+    in the floor commentary, must agree with the `FLOOR` literal the job actually uses.
+    ⚠ IT PINS AGREEMENT, NOT THE VALUE — raising the floor needs no edit here, which is
+    what keeps it from becoming one more number to maintain.
+    """
+    text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    literal = re.search(r"^\s*FLOOR = (\d+)\s*$", text, re.M)
+    assert literal, "no `FLOOR = <n>` literal found — this parse is wrong, not the file"
+    floor = int(literal.group(1))
+    block = text[: literal.start()]
+
+    # The derivation the comment prescribes: `m - min(50, max(1, m/20)) = <floor>`.
+    arithmetic = re.findall(r"min\(50, max\(1, \d+/20\)\) = (\d+)", block)
+    assert arithmetic, "the floor's arithmetic line is gone — it is the only derivation"
+    assert int(arithmetic[-1]) == floor, (
+        f"the floor comment's arithmetic computes {arithmetic[-1]} but the job uses "
+        f"{floor}"
+    )
+    # …and no transition arrow may claim a different destination than the live literal.
+    transitions = re.findall(r"#\s*⚠?\s*(\d{4}) -> (\d{4})", block)
+    assert transitions, "no floor transitions found — the parse is wrong, not the file"
+    assert int(transitions[-1][1]) == floor, (
+        f"the last floor transition says `-> {transitions[-1][1]}` while the job uses "
+        f"{floor}; a heading restating the number is what drifted three rounds running"
+    )
+    # POSITIVE CONTROL: the patterns must be able to see a disagreement at all.
+    assert re.search(r"min\(50, max\(1, \d+/20\)\) = (\d+)",
+                     "`9999 - min(50, max(1, 9999/20)) = 1234`"), "pattern wired to nothing"
+
+
+def test_the_hook_namespace_loads_and_is_not_the_live_one():
+    """POSITIVE CONTROL for the loader the derived checks below rest on."""
+    namespace = _hook_namespace()
+    assert callable(namespace["_resolve_long"])
+    assert "clean" in namespace["_OPTION_GRAMMAR"]
+    assert namespace["__name__"] != "__main__", (
+        "the cut must not leave the module looking like the script entry point"
+    )
+
+
+def test_EVERY_NAME_IN_THE_OPTION_TABLES_IS_A_REAL_GIT_OPTION():
+    """🔴 THE PREMISE THE AMBIGUITY INVARIANT RESTS ON, ASSERTED INSTEAD OF ASSUMED.
+
+    The fail-closed widening in `_resolve_long` is safe because the hook's candidate set
+    is a SUBSET of git's: if two of the hook's names share a prefix then two of git's do
+    too, so git refuses the abbreviation and writes nothing. That argument fails the
+    moment a name in the tables is not a real option of that subcommand — a typo, or an
+    option git renamed or dropped.
+
+    So the premise is measured against the installed git rather than trusted. ⚠ This is
+    also the test that fails on a git which has REMOVED an option the tables name, which
+    is the direction the version caveat at `_OPTION_GRAMMAR` cannot cover by itself.
+    """
+    grammar = _hook_namespace()["_OPTION_GRAMMAR"]
+    for subcommand, spec in sorted(grammar.items()):
+        real = _git_long_options(subcommand)
+        assert real, f"no options parsed for `git {subcommand} -h`"
+        declared = {name[2:] for name in set(spec["long_value"]) | set(spec["long_bool"])}
+        missing = sorted(declared - real)
+        assert not missing, (
+            f"`git {subcommand}` does not have these options the table names: "
+            f"{missing} — the ambiguity invariant's subset premise is broken"
+        )
+
+
+def test_the_AMBIGUOUS_PREFIX_WIDENING_HOLDS_FOR_EVERY_TOKEN_THAT_REACHES_IT():
+    """🔴 THE INVARIANT, DERIVED — REPLACING A PROSE ENUMERATION THAT WENT STALE TWICE.
+
+    The docstring used to count the tokens reaching the widening branch: first "exactly
+    one shape", corrected to "ten", and the correcting commit made it wrong by nine
+    again by adding a second subcommand to the grammar. A count beside a table that
+    grows is the defect this whole file keeps re-finding, so the count is gone and this
+    is what replaces it:
+
+      for every token this branch answers `(None, value-taking)` for, the hook's own
+      table matches it with AT LEAST TWO names.
+
+    Combined with the subset premise above — every table name is a real git option —
+    that is the whole safety argument: two hook names sharing the prefix means two git
+    names do, so git refuses the abbreviation as ambiguous and writes nothing, whichever
+    verdict the guard gives. An invariant does not go stale when a table grows.
+
+    The numbers are REPORTED, never asserted, for exactly the same reason.
+    """
+    namespace = _hook_namespace()
+    grammar, resolve = namespace["_OPTION_GRAMMAR"], namespace["_resolve_long"]
+    # ⚠ A SET PER SUBCOMMAND, NOT A LIST: a token that prefixes several names is
+    # generated once per name, and appending it each time inflated the first reported
+    # figure to 46 — the same restate-a-count defect, one layer in, in the test written
+    # to retire it. The number is only reported, but a wrong report is still a claim.
+    reached: dict[str, set[str]] = {}
+    for subcommand, spec in sorted(grammar.items()):
+        names = set(spec["long_value"]) | set(spec["long_bool"])
+        for name in sorted(names):
+            for cut in range(3, len(name) + 1):          # `--` plus one char, upward
+                token = name[:cut]
+                canonical, takes_value = resolve(token, spec)
+                if canonical is None and takes_value:
+                    matches = sorted(n for n in names if n.startswith(token))
+                    assert len(matches) >= 2, (
+                        f"`git {subcommand} {token}` reaches the widening branch but "
+                        f"the table matches it with {matches} — fewer than two names "
+                        f"means git may NOT find it ambiguous, and the safety argument "
+                        f"for consuming a value does not apply"
+                    )
+                    reached.setdefault(subcommand, set()).add(token)
+    # POSITIVE CONTROL for the walk itself: an exact name must resolve, and the branch
+    # must actually be reachable — a zero here would mean the loop proved nothing.
+    assert resolve("--exclude", grammar["clean"]) == ("--exclude", True)
+    assert reached, "no token reached the widening branch — this test proved nothing"
+
+    # 🔴 THE OTHER HALF OF THE RULE, AND A SURVIVING MUTANT IS WHY IT IS HERE. The walk
+    # above only generates prefixes OF EXISTING NAMES, so every token it tries matches at
+    # least one — which means it can never see a mutant that reports value-taking for a
+    # token matching NOTHING. `return None, True` survived the whole suite. An UNKNOWN
+    # long option must be read as a bare boolean and consume no value, which is the
+    # documented behaviour (and the narrow, named fail-open in `_OPTION_GRAMMAR`'s
+    # version limit); treating it as value-taking would swallow the following word, so a
+    # `-n` after it would go unseen and a real dry run would be refused — and on `merge`
+    # it would swallow a `--ff-only` and refuse the prescribed resync recipe.
+    for subcommand, spec in sorted(grammar.items()):
+        names = set(spec["long_value"]) | set(spec["long_bool"])
+        unknown = "--zzz-not-a-real-option"
+        assert not any(n.startswith(unknown) for n in names), "pick a different probe"
+        assert resolve(unknown, spec) == (None, False), (
+            f"`git {subcommand} {unknown}` matches no name in the table, so it must be "
+            f"read as a bare boolean: reporting it value-taking swallows the next word"
+        )
+    print("\nambiguous-prefix widening reached by: "
+          + ", ".join(f"{sub} {len(toks)}" for sub, toks in sorted(reached.items()))
+          + f" (total {sum(len(t) for t in reached.values())}, before `--no-` probes)")
+
+
+def test_prev_escaped_is_READ_AT_EXACTLY_ONE_SITE():
+    """🔴 THE INVARIANT BEHIND THE DEAD/LIVE LABELS, so the ledger cannot drift again.
+
+    Two audit rounds found the `prev_escaped` survivor ledger short by one — first
+    missing the LIVE reset, then missing a DEAD label. The fix is not a third count: the
+    flag is READ at exactly one site, the quote-open branch, so a reset can only matter
+    if control can reach that read from it with no intervening write. Every reset but
+    the one labelled LIVE is on a branch that cannot (each says which), and a mutation
+    sweep confirms each of those individually SURVIVES.
+
+    If this test fails, a second read was added and every DEAD label needs re-deriving.
+    """
+    lines = HOOK.read_text(encoding="utf-8").splitlines()
+    reads = [
+        line for line in lines
+        if "prev_escaped" in line
+        and not re.match(r"\s*prev_escaped(?::[^=]+)? = ", line)
+        and not line.lstrip().startswith("#")
+    ]
+    assert len(reads) == 1, (
+        f"`prev_escaped` is read at {len(reads)} sites, not one, so the DEAD labels on "
+        f"its resets no longer follow: {reads}"
+    )
+
+
+def test_the_OPTION_STATE_CONSUMERS_ARE_AN_ASSERTED_LEDGER():
+    """🔴 `_option_state`'s "ONE PLACE" SENTENCE LISTED ITS CONSUMERS BY HAND AND MISSED
+    THE ONE ADDED IN THE SAME COMMIT. That sentence is what a reader uses to decide how
+    many call sites an edit must satisfy, so it is pinned here instead of maintained.
+
+    Fails on GROW (a consumer added without the prose moving) and on SHRINK (one
+    removed), which is the shape `claude/RULES.md` prescribes for a caller ledger: a
+    relationship, failing in both directions, rather than a count in a comment.
+    """
+    source = HOOK.read_text(encoding="utf-8")
+    callers: list[tuple[str, str]] = []
+    enclosing = "<module>"
+    for line in source.splitlines():
+        match = re.match(r"def (\w+)\(", line)
+        if match:
+            enclosing = match.group(1)
+        if "_option_state(" in line and not line.lstrip().startswith("#") \
+                and not line.startswith("def _option_state"):
+            callers.append((enclosing, line.strip()))
+    assert [c[0] for c in callers] == ["_is_dry_run", "_is_exempt", "_is_exempt"], (
+        f"the `_option_state` call sites moved: {callers}"
+    )
 
 
 def _repo_state(repo: Path) -> str:
@@ -1329,15 +1585,10 @@ def test_the_guard_AGREES_WITH_REAL_GIT_over_generated_option_combinations(tmp_p
     cases: list[list[str]] = []
     for subcommand, pool in _DIFFERENTIAL_POOL.items():
         operands = _DIFFERENTIAL_OPERANDS[subcommand]
-        for first in pool:
-            cases.append([subcommand, first, *operands])
-            for second in pool:
-                if second == first:
-                    continue
-                cases.append([subcommand, first, second, *operands])
-                for third in pool:
-                    if third not in (first, second):
-                        cases.append([subcommand, first, second, third, *operands])
+        for words in itertools.chain.from_iterable(
+                itertools.permutations(pool, depth)
+                for depth in range(1, _DIFFERENTIAL_DEPTH + 1)):
+            cases.append([subcommand, *words, *operands])
 
     wrote = dry = 0
     divergences: list[str] = []
@@ -1347,11 +1598,13 @@ def test_the_guard_AGREES_WITH_REAL_GIT_over_generated_option_combinations(tmp_p
         shutil.copytree(template, repo, symlinks=True)
         # 🔴 EACH CASE DRIVES THE HOOK COPY INSIDE ITS OWN COPY OF THE REPO. The first
         # version of this harness passed the TEMPLATE's hook while standing in the
-        # copy, so `own_repo` and the cwd were different repositories and every verdict
-        # was the cross-repo ALLOW — it reported 60 fail-opens including `git clean -f`,
-        # which the rest of this file proves is denied. A differential whose instrument
-        # is wired to the wrong tree reports the guard as ABSENT, which is
-        # indistinguishable from a guard that is absent.
+        # copy, so `own_repo` and the cwd were different repositories and EVERY verdict
+        # was the cross-repo ALLOW — so every command that wrote anything read as a
+        # fail-open, `git clean -f` included, which the rest of this file proves is
+        # denied. A differential whose instrument is wired to the wrong tree reports the
+        # guard as ABSENT, which is indistinguishable from a guard that is absent.
+        # ⚠ NO COUNT FOR THAT RUN: the draft is not in the tree, so nobody can
+        # re-derive one, and an unreproducible number is the same defect as a stale one.
         case_hook = repo / ".claude" / "hooks" / HOOK.name
         # 🔴 THE VERDICT IS TAKEN BEFORE THE COMMAND RUNS, the only order that measures
         # what the guard would have done to a live call.
@@ -1378,7 +1631,42 @@ def test_the_guard_AGREES_WITH_REAL_GIT_over_generated_option_combinations(tmp_p
     # Reported, not merely asserted: a zero means nothing without the pair beside it.
     print(f"\ndifferential: {len(cases)} commands, {wrote} wrote, {dry} dry runs, "
           f"{len(divergences)} divergence(s)")
-    assert wrote >= 5 and dry >= 5, (
+
+    # 🔴 THE SHAPE FLOORS, BECAUSE THE CLASS FLOORS ALONE LET THIS COLLAPSE TO A
+    # FRACTION OF ITSELF AND STAY GREEN. Nothing used to assert the number of generated
+    # commands or the depth, and `wrote >= 5` was two orders of magnitude below the
+    # measured 383 — so trimming the pool or dropping the third loop for runtime would
+    # pass, with the fail-open class unobserved and the collected count unchanged.
+    #
+    # The expected count is DERIVED from the pools and the depth rather than written
+    # down, so it cannot disagree with them: dropping a loop or shrinking a pool fails
+    # here, while legitimately growing a pool needs no edit.
+    assert _DIFFERENTIAL_DEPTH >= 3, (
+        "the differential must combine at least three option words: at depth 2 the "
+        "fail-open class this test exists for is structurally unreachable (measured — "
+        "see `_DIFFERENTIAL_DEPTH`)"
+    )
+    expected = 0
+    for pool in _DIFFERENTIAL_POOL.values():
+        size, arrangements = len(pool), 0
+        for depth in range(1, _DIFFERENTIAL_DEPTH + 1):
+            term = 1
+            for factor in range(depth):
+                term *= size - factor
+            arrangements += term
+        expected += arrangements
+    assert len(cases) == expected, (
+        f"the generator produced {len(cases)} commands where the pools and "
+        f"`_DIFFERENTIAL_DEPTH`={_DIFFERENTIAL_DEPTH} imply {expected} — a loop or a "
+        f"pool was changed without the floors moving with it"
+    )
+    assert max(len(argv) for argv in cases) - 1 - min(
+        len(ops) for ops in _DIFFERENTIAL_OPERANDS.values()) >= _DIFFERENTIAL_DEPTH, (
+        "no generated command carries the full option depth"
+    )
+    # The CLASS floors, now set near what was measured (383 wrote / 516 dry) with
+    # headroom for a different git, rather than at a token 5.
+    assert wrote >= 200 and dry >= 250, (
         f"the differential observed too little to vouch for anything: {len(cases)} "
         f"commands, {wrote} that wrote, {dry} dry runs — both classes must be "
         f"populated or a zero-divergence result is a fact about the harness"
