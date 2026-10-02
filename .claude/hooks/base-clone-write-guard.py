@@ -1232,14 +1232,23 @@ def _resolve_long(token: str, grammar: dict[str, object]) -> tuple[str | None, b
     🔴 THE LIST IS GONE ON PURPOSE. It said "exactly one shape", was corrected to "ten",
     and the correcting commit made it wrong by nine again by adding a second subcommand
     to the grammar — three wrong counts in three rounds, each written to fix the last.
-    Both halves of the invariant are now DERIVED by
-    `tests/test_base_clone_write_guard.py`:
-    `test_EVERY_NAME_IN_THE_OPTION_TABLES_IS_A_REAL_GIT_OPTION` measures the subset
-    premise against the installed git, and
+    What replaces it is DERIVED by `tests/test_base_clone_write_guard.py`:
     `test_the_AMBIGUOUS_PREFIX_WIDENING_HOLDS_FOR_EVERY_TOKEN_THAT_REACHES_IT` walks
     every prefix of every name and asserts the two-or-more property, reporting the
     tally instead of fixing it in prose. Read the numbers there, never here — a count
     beside a table that grows is the one thing in this file guaranteed to rot.
+
+    ⚠ AND THE SUBSET PREMISE ITSELF IS DELIBERATELY NOT ASSERTED ANYWHERE, WHICH AN
+    EARLIER VERSION OF THIS PARAGRAPH GOT WRONG IN BOTH HALVES: it named a
+    `…IS_A_REAL_GIT_OPTION` test that no longer exists, and it described a measurement
+    that was abandoned on purpose. Asserting "every name in these tables is a real
+    option" false-failed on git before 2.51, which has no `merge --compact-summary` —
+    a red that said nothing about the hook, since a phantom name in `long_bool` can
+    never make a token value-taking. What IS asserted instead is the version-robust
+    consequence, by `test_NO_TOKENS_VALUE_TAKING_VERDICT_DIFFERS_FROM_THE_INSTALLED_GITS`:
+    wherever the installed git resolves a token to exactly one option, this function's
+    value-taking verdict equals git's. The subset property remains the ARGUMENT above;
+    it is no longer a gate, because the gate was a function of the runner's git version.
     """
     long_value: frozenset[str] = grammar["long_value"]        # type: ignore[assignment]
     long_bool: frozenset[str] = grammar["long_bool"]          # type: ignore[assignment]
@@ -1358,20 +1367,29 @@ def _option_state(subcommand: str,
 #: the structural fact rather than to add a `print`, which in a parametrised test emits
 #: one line per case and still reports no count.
 #:
-#: 🔴 AND THE SHAPE BEHIND IT IS A **DECLARED, UNCLOSED LIMIT** RATHER THAN A FIXED ONE,
-#: WHICH IS WORTH MORE THAN A GUARD THAT READS CLOSED. Every pointer of this shape in the
-#: payload was swept and checked BY HAND: three exist, this one was false, and the two
-#: that say a test "PRINTS the tally" — the ambiguous-prefix widening test and the
-#: differential — were verified to really print. A detector for it was then WRITTEN AND
-#: DELETED: distinguishing "read the number this test PRINTS" from "read the set this
-#: test ASSERTS" has no lexical proxy that survives contact with this payload. Every
-#: variant tried fired on legitimate prose — `git worktree list` "reports
-#: REGISTRATIONS", a consumer ledger whose members you "read there" in the assertion —
-#: and narrowing it far enough to be quiet left it matching only the instance already
-#: fixed, which is a spelled guard that catches nothing. A permanently-red or
-#: self-satisfying gate is worse than none (`claude/RULES.md`), so: **if you write a
-#: comment saying a test reports a number, open the test and confirm it prints one. No
-#: machine is checking that.**
+#: 🔴 AND THE SHAPE SPLITS INTO TWO QUESTIONS — ONE NOW MACHINE-CHECKED, ONE A DECLARED
+#: LIMIT — BECAUSE COLLAPSING THEM INTO ONE "UNCLOSABLE" IS WHAT LET A SECOND DEAD
+#: POINTER THROUGH. The first version of this note declared the whole shape unclosable;
+#: an audit then found `_resolve_long`'s comment still naming a test that an earlier fix
+#: in this same branch had deleted. A limit stated wider than reality is the same defect
+#: as a claim stated wider than reality.
+#:
+#:   * **"does the named test EXIST?" — CLOSED, by
+#:     `test_EVERY_TEST_A_PAYLOAD_COMMENT_NAMES_STILL_EXISTS`.** A plain AST lookup over
+#:     every `test_*` definition under `tests/`, with no false-positive class: module
+#:     STEMS are excluded by derivation rather than by a hardcoded name, and tests cited
+#:     as deleted history sit in a declared ledger that is itself asserted to stay
+#:     absent. Its first run found two real dead pointers — this one, and a renamed test
+#:     still cited by its old name.
+#:   * **"does the named test PRINT the number this comment sends you to read?" — STILL
+#:     OPEN, and deliberately so.** A detector for it was written and DELETED: it fired
+#:     on eight sites, seven legitimate (`git worktree list` "reports REGISTRATIONS"; a
+#:     consumer ledger whose members you "read there" in the ASSERTION; `git
+#:     symbolic-ref HEAD` "prints the ref"), and narrowing it until it went quiet left it
+#:     matching only the instance already fixed — a spelled guard catching nothing. A
+#:     permanently-red or self-satisfying gate is worse than none (`claude/RULES.md`).
+#:     So: **if you write a comment saying a test reports a number, open the test and
+#:     confirm it prints one. No machine is checking THAT half.**
 #:
 #: 🔴 REFUSING `--help` WAS THE PUREST FALSE POSITIVE THIS FILE COULD EMIT, and it
 #: was live: the exemption existed for `stash` ALONE, so `git rm -h`, `git mv -h`,

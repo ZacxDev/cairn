@@ -1229,11 +1229,13 @@ def test_the_three_newly_refused_WRITERS_are_refused(parallel_clone, command):
     # a choice somebody made on purpose.
     # ⚠ AND IT IS NOT THE ONLY SHAPE THAT REACHES THAT BRANCH, as an earlier comment
     # here claimed — nor is the correction's own count right, which is why there is no
-    # count here now. `test_the_AMBIGUOUS_PREFIX_WIDENING_HOLDS_FOR_EVERY_TOKEN_THAT_
-    # REACHES_IT` enumerates them from the tables and PRINTS the tally; read it there.
-    # Every one of them is ambiguous to git, which writes nothing, so the conclusion
-    # holds however many there turn out to be — which is the point of asserting the
-    # invariant instead of the list.
+    # count here now. The widening test — its name is one token, so it is written on a
+    # line of its own rather than wrapped, because an identifier split across two
+    # comment lines is unsearchable for a reader and unparseable for the existence sweep:
+    # `test_the_AMBIGUOUS_PREFIX_WIDENING_HOLDS_FOR_EVERY_TOKEN_THAT_REACHES_IT`
+    # enumerates them from the tables and PRINTS the tally; read it there. Every one of
+    # them is ambiguous to git, which writes nothing, so the conclusion holds however
+    # many there turn out to be — the point of asserting the invariant, not the list.
     ("git rm --pathspec-f -n seed.txt", "deny"),
     ("git rm --p -n seed.txt", "deny"),
     ("git rm --pathspec- -n seed.txt", "deny"),
@@ -1488,6 +1490,112 @@ def test_NO_LIVE_PROSE_COUNT_OR_DEAD_POINTER_SURVIVES_IN_THE_PAYLOAD():
         f"{len(hits)} live prose claim(s) that a test should own:\n" + "\n".join(hits)
     )
 # PROSE-SWEEP SELF-EXCLUSION END
+
+
+def _test_functions_defined_under_tests() -> frozenset[str]:
+    """Every `test_*` function name defined anywhere under `tests/`, from the AST.
+
+    Parsed rather than grepped: a name in a docstring or an assertion message is not a
+    definition, and only the grammar can tell those apart. A file that fails to parse
+    raises here rather than being skipped — a skip would silently shrink this set, and a
+    shrunken set turns a live pointer into a false positive.
+    """
+    names: set[str] = set()
+    for path in sorted((ROOT / "tests").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                    and node.name.startswith("test_"):
+                names.add(node.name)
+    return frozenset(names)
+
+
+def _test_module_stems() -> frozenset[str]:
+    """`test_*` FILE stems under `tests/` — names that are modules, not functions.
+
+    Derived rather than listed: a comment citing `tests/test_base_clone_write_guard.py`
+    mentions a `test_`-prefixed token that no function defines, and hardcoding that one
+    exclusion would leave a permanent false positive the moment any other test module is
+    cited. A gate with a standing false positive is one everybody learns to ignore.
+    """
+    return frozenset(path.stem for path in (ROOT / "tests").rglob("test_*.py"))
+
+
+#: Tests this payload cites as HISTORY — a record that they were deleted or replaced —
+#: so naming them is correct and their absence is the point. A DECLARED ledger rather
+#: than a lexical "is this sentence about the past" guess, which would be a spelled
+#: guard: the existence sweep asserts each of these is still ABSENT, so if one is ever
+#: re-created the sweep says so instead of quietly hiding a live pointer again.
+_TESTS_CITED_AS_HISTORY = frozenset({
+    # Replaced by the parametrised crowding case when the probe cap was removed; both
+    # went vacuous with the cap, which is what the citing docstring records.
+    "test_junk_candidates",
+    "test_junk_ADDITIVE_candidates",
+})
+
+
+def test_EVERY_TEST_A_PAYLOAD_COMMENT_NAMES_STILL_EXISTS():
+    """🔴 THE HALF OF THE DEAD-POINTER SHAPE THAT **IS** MECHANISABLE, AND I WRONGLY
+    DECLARED IT UNCLOSABLE ALONG WITH THE HALF THAT IS NOT.
+
+    Two questions were collapsed into one "unclosable" limit, and only one of them
+    deserved it:
+
+      * "does the named test PRINT a tally?" — genuinely unclosable here. Measured: a
+        detector for it fired on eight sites, seven legitimate (`git worktree list`
+        "reports REGISTRATIONS"; a ledger whose members you "read there" in the
+        ASSERTION; `git symbolic-ref HEAD` "prints the ref"), and narrowing it until it
+        went quiet left it matching only the instance already fixed. Deleted.
+      * "does the named test EXIST?" — a plain AST lookup with **no false-positive
+        class at all**. This is that, and it is the half that then failed: the F3 fix
+        replaced `…IS_A_REAL_GIT_OPTION` and left the old name in the hook's comment,
+        pointing at nothing.
+
+    A limit stated wider than reality is the same defect as a claim stated wider than
+    reality. So the declared limit is now the print half only.
+    """
+    defined = _test_functions_defined_under_tests()
+    modules = _test_module_stems()
+    # CONTROLS, both asserted every run: a name known PRESENT resolves, a name known
+    # ABSENT does not. Without the pair, an empty `defined` would flag every pointer and
+    # a universe-sized one would flag none.
+    # ⚠ THE ABSENT CONTROL IS BUILT FROM PARTS so the full token never appears as a
+    # literal in this file — otherwise the sweep below finds its own control and reports
+    # it, which is what the first run did.
+    absent = "test_" + "a_name_no_test_will_ever_define"
+    assert "test_a_commit_in_the_base_clone_is_refused" in defined, (
+        "a test known to exist is missing from the parse — it is wired to nothing"
+    )
+    assert absent not in defined, (
+        "a name known not to exist resolved — the parse is not discriminating"
+    )
+    assert len(defined) >= 500, f"implausibly few test functions parsed: {len(defined)}"
+    assert "test_base_clone_write_guard" in modules, "the module-stem derivation is wrong"
+    # …and the history ledger must stay history: a re-created test here would mean the
+    # citing docstring is now describing something live.
+    for historic in sorted(_TESTS_CITED_AS_HISTORY):
+        assert historic not in defined, (
+            f"`{historic}` is cited as a DELETED test but now exists — drop it from "
+            f"`_TESTS_CITED_AS_HISTORY` and re-read the docstring that cites it"
+        )
+
+    dead: list[str] = []
+    for name in _PROSE_PAYLOAD:
+        raw = (ROOT / name).read_text(encoding="utf-8")
+        # ⚠ NORMALISED FIRST: a long name wrapped across two comment lines was otherwise
+        # captured TRUNCATED and reported as missing — a false positive manufactured by
+        # the reader, which is how a gate earns being ignored.
+        text = re.sub(r"[ \t]+", " ", re.sub(r"\n\s*(?:#:|#|\*|>)?\s*", " ", raw))
+        for cited in sorted(set(re.findall(r"\btest_[A-Za-z0-9_]+", text))):
+            if cited in modules or cited in defined or cited in _TESTS_CITED_AS_HISTORY:
+                continue
+            dead.append(f"{name} names `{cited}`, which no test under tests/ defines")
+    assert not dead, (
+        f"{len(dead)} comment(s) pointing at a test that does not exist:\n"
+        + "\n".join(dead)
+    )
+    print(f"\nexistence sweep: {len(defined)} test functions defined, "
+          f"{len(modules)} test modules, 0 dead pointers in {len(_PROSE_PAYLOAD)} files")
 
 
 def test_the_CI_FLOOR_PROSE_CANNOT_DISAGREE_WITH_THE_LITERAL():
@@ -2009,7 +2117,7 @@ def test_the_two_DELIBERATE_omissions_stay_allowed(parallel_clone, command):
     ⚠ INVARIANT GUARDS: green at `ffa0eca` too, because nothing refused them there
     either. 🔴 IF ONE GOES RED, THE DECISION CHANGED — move the doc row out of the
     out-table and into the refused table in the same commit, which
-    `test_the_two_shared_state_WRITERS_LEFT_OUT_carry_a_RECORDED_DECISION` forces.
+    `test_the_shared_state_WRITERS_LEFT_OUT_carry_a_RECORDED_DECISION` forces.
     """
     clone = parallel_clone[0]
     assert _decision(_run_hook(command, clone)) is None, command
