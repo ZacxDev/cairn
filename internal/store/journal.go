@@ -1,6 +1,8 @@
 package store
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"regexp"
 	"strings"
 
@@ -101,6 +103,59 @@ type JournalBullet struct {
 	// distinction `PopulationUnverifiable` reports, so the field is branched on and
 	// not merely stored.
 	ResolvedBy string
+
+	// StartLine is the 0-based index, WITHIN THE SECTION BODY this bullet was parsed
+	// from, of the line that OPENED it.
+	//
+	// 🔴 IT EXISTS SO A RENDERER NEED NOT RE-DECIDE WHAT A BULLET IS. `AGENTS.md`:
+	// entry structure comes from this package's parsers, never from a new markdown
+	// reader. A caller that wants to annotate bullet openings while emitting a body
+	// VERBATIM would otherwise have to re-detect them, and the detection is not
+	// trivial: a `- ` line INSIDE A FENCE is sample text, not a bullet (see the
+	// `IsFence` branch below), and text before the first bullet is dropped. A second
+	// copy of that rule would be wrong about fences on its first day.
+	//
+	// ⚠ IT IS AN INDEX INTO THE BODY, NOT INTO THE FILE. The body is what
+	// `ExtractSections` returned, so a caller holding the file must not use this
+	// against file line numbers. Named as a claim because an off-by-a-section is
+	// silent: it would annotate the wrong lines rather than fail.
+	//
+	// ⚠ AND IT IS NOT A LENGTH. `len(Lines)` can exceed the distance to the next
+	// bullet's StartLine, because trailing blank lines are stripped from `Lines`
+	// while remaining in the body. A caller spanning bullets must walk StartLines,
+	// never `StartLine + len(Lines)`.
+	StartLine int
+}
+
+// CitationID is the opaque per-bullet token the read surfaces print, as exactly 8
+// lowercase hex characters.
+//
+// 🔴 WHAT IT IS FOR. "Was this recalled bullet actually used?" has no answer today:
+// every available proxy is a SPELLED one, walkable by rewording, and the obvious one
+// is saturated by a MANDATE rather than by use: a downstream consumer's resume flow
+// requires its report to echo what it recalled, so "a printed ref reappears later" fires
+// 451/454 = 99.3% and measures COMPLIANCE, not use. A token that exists nowhere else in a
+// corpus turns that question into a match.
+//
+// 🔴 DERIVED FROM THE BULLET'S OWN BYTES, WHICH IS WHAT MAKES CROSS-LANGUAGE AGREEMENT
+// REACHABLE RATHER THAN DISCIPLINED. `sha256` over `Lines` joined with "\n", first 8
+// hex characters. No normalisation: `lib/subsystem_resolver.py` must produce the same
+// string for the same bullet forever, and every normalisation step is a second place
+// the two can disagree. Pinned by `internal/store/testdata/citation_ids.json`, which
+// the PYTHON side generates and this package's test replays — so neither
+// implementation can move without one of them going red.
+//
+// ⚠ EDITING A BULLET CHANGES ITS ID, and that is correct rather than a limitation: a
+// reworded bullet is a different bullet, and an id that survived an edit would assert
+// a continuity nobody checked. It does mean an id is NOT a durable name for a
+// LESSON — only for a byte-exact bullet.
+//
+// ⚠ 8 HEX, NOT 4, AND THE REASON IS ARITHMETIC. At 16 bits a 3,129-bullet corpus
+// collides with probability ≈1 (birthday: ~50% by ~300 bullets); 32 bits puts it near
+// 0.1% corpus-wide. Do not shorten it to fit a column.
+func (b JournalBullet) CitationID() string {
+	sum := sha256.Sum256([]byte(strings.Join(b.Lines, "\n")))
+	return hex.EncodeToString(sum[:])[:8]
 }
 
 // OpennessPopulation is WHICH of the six populations this bullet belongs to. Exactly
@@ -182,8 +237,13 @@ func (b JournalBullet) Text() string { return strings.Join(b.Lines, "\n") }
 //     cannot inflate a bullet's line count.
 func ParseJournalBullets(body string) []JournalBullet {
 	var groups [][]string
+	// 🔴 PARALLEL TO `groups`, APPENDED IN LOCKSTEP WITH IT. A map keyed on the
+	// opening LINE would be wrong wherever two bullets open identically, which the
+	// corpus does not forbid; the index is recorded where the group is created, so
+	// the two slices cannot disagree about which bullet is which.
+	var starts []int
 	inFence := false
-	for _, line := range pytext.SplitLines(body) {
+	for i, line := range pytext.SplitLines(body) {
 		if IsFence(line) {
 			inFence = !inFence
 			if len(groups) > 0 {
@@ -193,6 +253,7 @@ func ParseJournalBullets(body string) []JournalBullet {
 		}
 		if !inFence && journalBullet.MatchString(line) {
 			groups = append(groups, []string{line})
+			starts = append(starts, i)
 			continue
 		}
 		if len(groups) > 0 {
@@ -200,7 +261,7 @@ func ParseJournalBullets(body string) []JournalBullet {
 		}
 	}
 	out := make([]JournalBullet, 0, len(groups))
-	for _, group := range groups {
+	for gi, group := range groups {
 		for len(group) > 0 && pytext.StripWhitespace(group[len(group)-1]) == "" {
 			group = group[:len(group)-1]
 		}
@@ -210,6 +271,7 @@ func ParseJournalBullets(body string) []JournalBullet {
 			Date:       BulletDate(group[0]),
 			Openness:   openness,
 			ResolvedBy: resolvedBy,
+			StartLine:  starts[gi],
 		})
 	}
 	return out

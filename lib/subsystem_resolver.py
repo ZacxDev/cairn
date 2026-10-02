@@ -93,6 +93,7 @@ wrong reason and stays green with the guard deleted (`claude/RULES.md` →
 from __future__ import annotations
 
 import errno
+import hashlib
 import re
 import stat
 from collections.abc import Sequence as _AbcSequence
@@ -2010,6 +2011,63 @@ class JournalBullet:
     which is the branch that makes the field load-bearing.
     """
 
+    start_line: int = 0
+    """0-based index, WITHIN THE SECTION BODY this bullet was parsed from, of the
+    line that OPENED it.
+
+    🔴 IT EXISTS SO A RENDERER NEED NOT RE-DECIDE WHAT A BULLET IS. A caller that
+    wants to annotate bullet openings while emitting a body VERBATIM would
+    otherwise re-detect them, and the detection is not trivial: a `- ` line
+    INSIDE A FENCE is sample text rather than a bullet, and text before the first
+    bullet is dropped. A second copy of that rule would be wrong about fences on
+    its first day. `internal/store`'s `JournalBullet.StartLine` is the same field
+    for the same reason.
+
+    ⚠ AN INDEX INTO THE BODY, NOT INTO THE FILE — the body is what
+    `extract_sections` returned. Named because an off-by-a-section is silent: it
+    would annotate the wrong lines rather than fail.
+
+    ⚠ AND `0` IS A LEGITIMATE VALUE (the body's first line), so it CANNOT be read
+    as "unset". The default exists only so the many call sites that construct a
+    bullet without a body position keep working; if you need "position unknown",
+    add a separate field rather than overloading this one.
+
+    ⚠ NOT A LENGTH, either: `len(lines)` can exceed the distance to the next
+    bullet's `start_line`, because trailing blank lines are stripped from `lines`
+    while remaining in the body. Walk `start_line`s; never add `len(lines)`.
+    """
+
+    @property
+    def citation_id(self) -> str:
+        """The opaque per-bullet token the read surfaces print — 8 lowercase hex.
+
+        🔴 WHAT IT IS FOR. "Was this recalled bullet actually used?" has no answer
+        today: every available proxy is a SPELLED one, walkable by rewording, and
+        the obvious one is saturated by a MANDATE rather than by use — a downstream
+        consumer's resume flow requires its report to echo what it recalled, so "a
+        printed ref reappears later" fires 451/454 = 99.3% and measures COMPLIANCE,
+        not use. A token existing nowhere else in a corpus turns that question into
+        a match.
+
+        🔴 DERIVED FROM THE BULLET'S OWN BYTES, WHICH IS WHAT MAKES CROSS-LANGUAGE
+        AGREEMENT REACHABLE RATHER THAN DISCIPLINED. `sha256` over `text` (the
+        lines joined with "\\n"), first 8 hex characters, and **no
+        normalisation** — `internal/store` must produce the same string for the
+        same bullet forever, and every normalisation step is a second place the
+        two can disagree. `text` is reused rather than re-joined here so there is
+        one definition of "the bullet's bytes".
+
+        ⚠ EDITING A BULLET CHANGES ITS ID, which is correct rather than a
+        limitation: a reworded bullet is a different bullet, and an id surviving
+        an edit would assert a continuity nobody checked. So an id names a
+        BYTE-EXACT bullet, never a lesson.
+
+        ⚠ 8 HEX, NOT 4, AND THE REASON IS ARITHMETIC. At 16 bits a 3,129-bullet
+        corpus collides with probability ≈1 (birthday: ~50% by ~300 bullets); 32
+        bits puts it near 0.1% corpus-wide. Do not shorten it to fit a column.
+        """
+        return hashlib.sha256(self.text.encode("utf-8")).hexdigest()[:8]
+
     @property
     def first_line(self) -> str:
         return self.lines[0] if self.lines else ""
@@ -2165,8 +2223,13 @@ def parse_journal_bullets(body: str) -> tuple[JournalBullet, ...]:
         cannot inflate a bullet's line count.
     """
     bullets: list[list[str]] = []
+    # 🔴 PARALLEL TO `bullets`, APPENDED IN LOCKSTEP WITH IT. A dict keyed on the
+    # opening LINE would be wrong wherever two bullets open identically, which the
+    # corpus does not forbid; the index is recorded where the group is created, so
+    # the two lists cannot disagree about which bullet is which.
+    starts: list[int] = []
     in_fence = False
-    for line in body.splitlines():
+    for i, line in enumerate(body.splitlines()):
         if _is_fence(line):
             in_fence = not in_fence
             if bullets:
@@ -2174,11 +2237,12 @@ def parse_journal_bullets(body: str) -> tuple[JournalBullet, ...]:
             continue
         if not in_fence and _JOURNAL_BULLET.match(line):
             bullets.append([line])
+            starts.append(i)
             continue
         if bullets:
             bullets[-1].append(line)
     out: list[JournalBullet] = []
-    for group in bullets:
+    for gi, group in enumerate(bullets):
         while group and not group[-1].strip():
             group.pop()
         openness, resolved_by = _bullet_openness(group[0])
@@ -2188,6 +2252,7 @@ def parse_journal_bullets(body: str) -> tuple[JournalBullet, ...]:
                 date=_bullet_date(group[0]),
                 openness=openness,
                 resolved_by=resolved_by,
+                start_line=starts[gi],
             )
         )
     return tuple(out)
