@@ -746,6 +746,8 @@ def _shell_lines(command: str) -> list[str]:
             if char == quote:
                 quote = None
             prev = char
+            # DEAD: leaving a quote always clears it, so a `$'` opener can
+            # never be reached from here. Kept for symmetry; sweep-confirmed.
             prev_escaped = False
             index += 1
             continue
@@ -754,6 +756,8 @@ def _shell_lines(command: str) -> list[str]:
             current = []
             comment = False
             prev = None
+            # DEAD: a newline clears `prev` too, so the next line starts with
+            # `prev is None` and the `$` test cannot fire. Sweep-confirmed.
             prev_escaped = False
             index += 1
             continue
@@ -762,6 +766,8 @@ def _shell_lines(command: str) -> list[str]:
             # nothing and a backslash continues nothing.
             current.append(char)
             prev = char
+            # DEAD: a comment runs to end of line and opens no quote, so the
+            # `$'` test is unreachable from inside one. Sweep-confirmed.
             prev_escaped = False
             index += 1
             continue
@@ -800,6 +806,8 @@ def _shell_lines(command: str) -> list[str]:
             quote_escapes = char == '"' or (prev == "$" and not prev_escaped)
             current.append(char)
             prev = char
+            # DEAD: `#` is not `$`, so this cannot change the `$'` test.
+            # Sweep-confirmed.
             prev_escaped = False
             index += 1
             continue
@@ -819,6 +827,12 @@ def _shell_lines(command: str) -> list[str]:
                 openers.append(delimiter)
         current.append(char)
         prev = char
+        # 🔴 LIVE, AND THE ONLY ONE OF THE SIX THAT IS. This is the generic
+        # tail, where an ordinary `$` lands. Deleting it kept 315 tests green
+        # while turning `echo \x$'a\'` plus a later write from allow into
+        # deny — a false positive on a command bash itself rejects with
+        # `unexpected EOF`. It was an UNDECLARED survivor until an audit
+        # mutated the line; the ledger in the commit was short by one.
         prev_escaped = False
         index += 1
     flush("".join(current))
@@ -1150,6 +1164,35 @@ _OPTION_GRAMMAR: dict[str, dict[str, object]] = {
         "short_value": frozenset({"m"}),
         "short_bool": {"d": "--delete", "q": "--quiet"},
     },
+    # 🔴 `merge` IS HERE SO THE `--ff-only` EXEMPTION STOPS MATCHING A SPELLING. It was
+    # `"--ff-only" in rest`, and `git merge --ff-o origin/main` is a spelling git
+    # ACCEPTS (measured: it reaches the same `not something we can merge` as the full
+    # form, i.e. past option parsing) and was REFUSED — a false positive on the one
+    # resync recipe `claudedocs/working-in-parallel.md` prescribes.
+    #
+    # ⚠ EVERY VALUE-TAKING OPTION IS LISTED AND THE OPTIONAL-ARGUMENT ONES ARE NOT,
+    # which is the distinction that decides whether a word gets swallowed. `--log[=<n>]`
+    # and `-S`/`--gpg-sign[=<key-id>]` take their argument ONLY attached, so modelling
+    # them as value-taking would eat a following `--ff-only` and refuse a documented
+    # recipe. Required-argument options are `--cleanup`, `-s`/`--strategy`,
+    # `-X`/`--strategy-option`, `-m`/`--message`, `-F`/`--file`, `--into-name`.
+    # 🔴 AND `-n` ON `merge` IS "do not show a diffstat", NOT a dry run — it is
+    # deliberately absent from `short_bool`, and `merge` is absent from
+    # `_DRY_RUN_SUBCOMMANDS`, so two independent things would have to be wrong for it
+    # to be read as one.
+    "merge": {
+        "long_value": frozenset({"--cleanup", "--strategy", "--strategy-option",
+                                 "--message", "--file", "--into-name"}),
+        "long_bool": frozenset({
+            "--ff-only", "--ff", "--stat", "--summary", "--compact-summary", "--log",
+            "--squash", "--commit", "--edit", "--rerere-autoupdate",
+            "--verify-signatures", "--verbose", "--quiet", "--abort", "--quit",
+            "--continue", "--allow-unrelated-histories", "--progress", "--gpg-sign",
+            "--autostash", "--overwrite-ignore", "--signoff", "--verify",
+        }),
+        "short_value": frozenset({"s", "X", "m", "F"}),
+        "short_bool": {"e": "--edit", "v": "--verbose", "q": "--quiet"},
+    },
 }
 
 
@@ -1161,12 +1204,16 @@ def _resolve_long(token: str, grammar: dict[str, object]) -> tuple[str | None, b
     takes a value — the fail-CLOSED reading, and free, because git refuses an
     ambiguous abbreviation outright so nothing is written either way.
 
-    ⚠ THAT LAST CLAUSE IS A WIDENING RATHER THAN A RESOLUTION, and exactly one shape
-    reaches it: `git rm --pathspec-f`, which prefixes both `--pathspec-from-file`
-    (value) and `--pathspec-file-nul` (boolean). Measured — git answers it
-    `rc 129 ambiguous option` and writes nothing — so no verdict here can permit or
-    prevent a write, which is why erring toward consuming the value costs nothing. A
-    test pins the choice and says the same thing.
+    ⚠ THAT LAST CLAUSE IS A WIDENING RATHER THAN A RESOLUTION, and what reaches it is
+    ONE OPTION FAMILY IN **TEN** SPELLINGS — `--p --pa --pat --path --paths --pathsp
+    --pathspe --pathspec --pathspec- --pathspec-f`, each a prefix of both
+    `--pathspec-from-file` (value) and `--pathspec-file-nul` (boolean), and twenty once
+    the `--no-` probes are counted. 🔴 AN EARLIER VERSION OF THIS SENTENCE SAID "EXACTLY
+    ONE SHAPE", which was wrong by nine on a round whose subject was exhaustiveness
+    claims being wrong by a count. The SAFETY conclusion is unchanged and is the part
+    that matters: all twenty are one family, git answers every one
+    `rc 129 ambiguous option` and writes nothing, so no verdict here can permit or
+    prevent a write — which is why erring toward consuming the value costs nothing.
     """
     long_value: frozenset[str] = grammar["long_value"]        # type: ignore[assignment]
     long_bool: frozenset[str] = grammar["long_bool"]          # type: ignore[assignment]
@@ -1213,11 +1260,32 @@ def _option_state(subcommand: str,
             operands.append(word)
             continue
         if word.startswith("--"):
-            token, _, attached = word.partition("=")
+            # 🔴 `sep`, NOT `attached`, AND `negated` IS CONSULTED — TWO ERRORS IN ONE
+            # CONDITIONAL, EACH MEASURED TO DELETE A FILE IN THE BASE CLONE. The line
+            # was `token, _, attached = …` with `if takes_value and not attached`:
+            #
+            #   * `partition` DISCARDS the separator, so `--exclude=` and
+            #     `--pathspec-from-file=` gave `attached == ""` — falsy — and the model
+            #     ate the NEXT word. git accepts the empty value and consumes nothing.
+            #   * `negated` was computed one line up and never used here. `git rm -h`
+            #     prints `--[no-]pathspec-from-file <file>`; the `--no-` form takes no
+            #     argument, but stripping `--no-` to build `probe` resolved a
+            #     value-taking canonical and the next word was eaten.
+            #
+            # Either way the swallowed word is read as NEITHER flag NOR operand, so a
+            # following `--no-dry-run` went invisible and the dry-run exemption stood
+            # while git deleted. Measured, with the verdict taken before the command:
+            # `git rm -n --no-pathspec-from-file --no-dry-run seed.txt` was ALLOWED and
+            # deleted a TRACKED file; `git rm -n --pathspec-from-file= --no-dry-run f`
+            # and `git clean -n --exclude= --no-dry-run -f -d` the same. It cut the
+            # other way too: `git clean --exclude= -n` and
+            # `git rm --no-pathspec-from-file -n f` are real dry runs ("Would remove",
+            # file present) and were REFUSED.
+            token, sep, _attached = word.partition("=")
             negated = token.startswith("--no-")
             probe = "--" + token[len("--no-"):] if negated else token
             canonical, takes_value = _resolve_long(probe, grammar)
-            if takes_value and not attached and index < len(rest):
+            if takes_value and not negated and not sep and index < len(rest):
                 index += 1                      # its value, never a flag or operand
             if canonical is not None and canonical in long_bool:
                 flags[canonical] = not negated
@@ -1250,6 +1318,12 @@ def _option_state(subcommand: str,
 #: the docstring's own list named `--help` as a read. A corpus replay over the
 #: project's real Bash history found TWO commands that are exactly this shape, so it
 #: had already fired falsely. One predicate at a second site; now at neither.
+#: ⚠ AN EXACT-STRING SET, AND UNLIKE THE THREE THAT WERE REPLACED BY `_OPTION_GRAMMAR`
+#: THAT IS CORRECT HERE — MEASURED, SO THE NEXT READER DOES NOT "FIX" IT. git does NOT
+#: abbreviate `--help`: `git clean --hel` and `git clean --h` both answer
+#: `error: unknown option` (rc 129). `-h` has no bundle form either, since parse-options
+#: intercepts it before any bundle is read. So there is no prefix, bundle or negation to
+#: route through a grammar, and routing it through one would only add a table to keep.
 _HELP_SPELLINGS = frozenset({"-h", "--help"})
 
 
@@ -1290,12 +1364,23 @@ def _is_read_only_spelling(subcommand: str, rest: list[str]) -> bool:
 def _is_dry_run(subcommand: str, rest: list[str]) -> bool:
     """Is this a DRY RUN of a refused subcommand, and therefore a read?
 
-    ONE QUESTION ASKED OF ONE MODEL: is `--dry-run`'s final state True? Every spelling
-    git accepts for it therefore works here for free — `-n`, `--dry-run`, `--dry`,
-    `--d`, a bundle like `-nd`, and the LAST-WINS pair `--no-dry-run -n` — and every
-    spelling that cancels it works too. `_OPTION_GRAMMAR` carries the measurements and
-    the two scope limits; this function is deliberately three lines so that there is
-    no second grammar to get wrong.
+    ONE QUESTION ASKED OF ONE MODEL: is `--dry-run`'s final state True? The spellings
+    that work are `-n`, `--dry-run`, any unambiguous PREFIX of it (`--dry`, `--d`), a
+    bundle like `-nd`, and the LAST-WINS pair in both orders — each measured.
+
+    🔴 "EVERY SPELLING GIT ACCEPTS WORKS FOR FREE, IN BOTH DIRECTIONS" IS WHAT THIS
+    DOCSTRING SAID, AND IT WAS FALSE — a differential fuzz against real git found
+    divergences on options PRESENT IN 2.55.0, not future ones, so the claim was not
+    covered by `_OPTION_GRAMMAR`'s version caveat either. It is the claim that stopped
+    anyone looking. What the model covers is **the option set written down in
+    `_OPTION_GRAMMAR` for the subcommand in question, under git's prefix, bundling,
+    value and last-wins rules**. What it does NOT cover, stated so the next reader
+    starts here: an option absent from those tables (see the version limit there); an
+    option whose argument is OPTIONAL rather than required, which is listed as a
+    boolean on purpose and would be mis-modelled if listed as value-taking; and
+    anything outside the option grammar entirely — a pathspec that looks like a flag, a
+    configured alias, `-c` config overriding a default. The tables are DATA, and data
+    is exactly as complete as somebody measured it to be.
 
     ⚠ ONLY `clean`, `mv` AND `rm` ARE IN THE DRY-RUN SET, and the grammar holding a
     `symbolic-ref` entry does not change that: `--dry-run` is not in that
@@ -1361,9 +1446,18 @@ def _is_exempt(subcommand: str, segment: list[str]) -> bool:
     if _is_read_only_spelling(subcommand, rest):
         return True
     if subcommand == "merge":
-        return "--ff-only" in rest
+        # 🔴 THROUGH THE GRAMMAR MODEL, NOT `"--ff-only" in rest`. That exact match
+        # refused `git merge --ff-o origin/main` — a spelling git accepts — which is a
+        # false positive on the base-clone resync recipe this repo prescribes. It also
+        # went the other way: `git merge -m --ff-only <ref>` is a real merge whose
+        # MESSAGE is `--ff-only`, and the string match exempted it.
+        flags, _ = _option_state(subcommand, rest)
+        return flags.get("--ff-only", False)
     if subcommand == "checkout":
         # The pathspec form. `--` is what makes it one, and it does not move HEAD.
+        # ⚠ STILL A LITERAL COMPARISON, AND CORRECTLY SO: `--` is the end-of-options
+        # SEPARATOR, not an option, so git does not abbreviate it and there is no
+        # grammar to route it through.
         return "--" in rest
     if subcommand == "stash":
         # ⚠ `--help` IS DELIBERATELY GONE FROM THIS TUPLE, not lost: it is handled

@@ -222,6 +222,29 @@ def test_the_doc_OUT_table_is_parseable():
     assert out, "the out-table parse found nothing — it is matching nothing"
 
 
+#: 🔴 THE DIFFERENTIAL'S OPTION POOL. Every word is a spelling git 2.55.0 ACCEPTS for
+#: that subcommand; the harness builds commands from them and compares the guard's
+#: verdict against what git really did. Kept small on purpose — the combinatorics are
+#: cubic at the depth below — and the wider out-of-band sweep is in the commit message.
+_DIFFERENTIAL_POOL: dict[str, list[str]] = {
+    "clean": ["-n", "-f", "-d", "--no-dry-run", "--dry", "--exclude=",
+              "--exclude=junk.txt", "-e", "-ejunk.txt", "--"],
+    "rm": ["-n", "-f", "--no-dry-run", "--dry", "--cached", "--ignore-unmatch",
+           "--no-pathspec-from-file", "--pathspec-from-file=", "--"],
+    "mv": ["-n", "-f", "-k", "--no-dry-run", "--dry", "--verbose", "--"],
+}
+
+#: What the subcommand prints when GIT itself considered the run a DRY one. Read from
+#: the real command's output rather than inferred from the flags, so the oracle is git
+#: and not a second copy of the model under test.
+_DRY_RUN_MARKER = {"clean": "Would remove", "rm": "rm '", "mv": "Checking rename"}
+
+#: Operands appended after the option words, so every generated command has something
+#: real to act on — otherwise "nothing changed" would not mean "it was a dry run".
+_DIFFERENTIAL_OPERANDS = {"clean": [], "rm": ["seed.txt"],
+                          "mv": ["seed.txt", "moved.txt"]}
+
+
 def _leading_words_from_hook() -> frozenset[str]:
     """The wrapper words `_LEADING_WORDS` skips, read out of the hook's SOURCE."""
     text = HOOK.read_text(encoding="utf-8")
@@ -470,6 +493,54 @@ def test_the_ff_only_resync_recipe_is_allowed(parallel_clone):
     assert _decision(verdict) is None
 
 
+@pytest.mark.parametrize("command,expected,why", [
+    ("git merge --ff-only origin/main", None, "the canonical spelling, the control"),
+    ("git merge --ff-onl origin/main", None, "an unambiguous PREFIX git accepts"),
+    ("git merge --ff-on origin/main", None, "…shorter"),
+    ("git merge --ff-o origin/main", None,
+     "🔴 the shortest one git still resolves, and it was REFUSED — a false positive on "
+     "the one base-clone resync recipe this repo prescribes. Measured: git reaches the "
+     "same `not something we can merge` as the full form, i.e. past option parsing"),
+    ("git merge --ff origin/main", "deny",
+     "⚠ A DIFFERENT OPTION, NOT AN ABBREVIATION: `--ff` ALLOWS a fast-forward, it does "
+     "not require one, so this is an ordinary merge and must stay refused"),
+    ("git merge -m --ff-only origin/main", "deny",
+     "🔴 THE FAIL-OPEN THE STRING MATCH HAD: `-m` takes a value, so this is a real "
+     "merge whose MESSAGE is `--ff-only`, and `\"--ff-only\" in rest` exempted it"),
+    ("git merge --message --ff-only origin/main", "deny",
+     "⚠ THE LONG TWIN, AND A SURVIVING MUTANT IS WHY IT IS HERE: emptying `merge`'s "
+     "`long_value` left every test green, because the row above exercises the SHORT "
+     "`-m` only. Same fail-open, reached through the long spelling"),
+    ("git merge --clean --ff-only origin/main", "deny",
+     "…and through a PREFIX of a long value option (`--cleanup <mode>`), which is the "
+     "combination of the two rules this model exists for"),
+    ("git merge -s ours --ff-only origin/main", None,
+     "a value-taking option BEFORE the flag: `ours` must not be mistaken for it"),
+    ("git merge -S --ff-only origin/main", None,
+     "⚠ `-S`/`--gpg-sign` takes its key ONLY attached, so modelling it as value-taking "
+     "would eat the `--ff-only` and refuse a documented recipe"),
+    ("git merge --log --ff-only origin/main", None,
+     "…and the long twin, `--log[=<n>]`"),
+])
+def test_the_FF_ONLY_exemption_goes_through_the_OPTION_GRAMMAR(
+        parallel_clone, command, expected, why):
+    """🔴 THE EXEMPTION MATCHED A SPELLING UNDER A CLAIM THAT NOTHING DOES.
+
+    `_is_exempt` read `"--ff-only" in rest` while `_option_state`'s docstring asserted
+    it was "THE ONE PLACE THAT READS GIT'S OPTION GRAMMAR. Everything that used to
+    match an option spelling now asks this." The behaviour predated that sentence; the
+    sentence was new in the commit that consolidated the other three — which is what
+    makes it a defect rather than a gap, because a claim of coverage is what stops the
+    next reader looking.
+
+    Routing it through the model makes the claim true and closes both directions at
+    once: the abbreviations git accepts are allowed, and a `--ff-only` sitting in a
+    flag's VALUE no longer exempts a real merge.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) == expected, f"{why}: {command}"
+
+
 def test_a_pathspec_checkout_is_allowed(parallel_clone):
     """`git checkout <ref> -- <paths>` takes a file; it does not move HEAD.
 
@@ -688,6 +759,16 @@ def test_a_FAKE_heredoc_OPENER_cannot_swallow_the_commands_after_it(
      "character it consumed — so `prev == \"$\"` and the quote was routed into the "
      "escape-honouring model, eating its own closer. deny before the escape model, "
      "ALLOW after it, deny now: `prev_escaped` is what separates the two"),
+    ("echo \\$'a\\'\ngit commit -m sneaky",
+     "🔴 THE REGRESSION THE ESCAPE MODEL ITSELF SHIPPED, and the narrowest thing in "
+     "this file: an ESCAPED dollar. `\\$` is a literal dollar to bash and the `'` "
+     "after it opens a PLAIN single quote — but the unquoted-escape branch sets "
+     "`prev` to the character it consumed, so `prev == \"$\"` held and the quote was "
+     "routed into the escape-honouring model, eating its own closer. deny before the "
+     "escape model, **ALLOW** after it, deny now; `prev_escaped` is the difference. "
+     "It is the hole this file's own sweep found as `r14` one commit earlier, "
+     "reachable in production by a one-character prefix: the guard was closed against "
+     "the mutant and open against the shell"),
     ("echo 'ends with a backslash \\'\ngit commit -m sneaky",
      "🔴 THE OTHER DIRECTION, AND A MUTATION SWEEP IS WHAT FOUND IT UNGUARDED: inside "
      "`'…'` a backslash is LITERAL, so the quote above closes and this line ends. A "
@@ -734,6 +815,27 @@ def test_an_ESCAPED_QUOTE_does_not_disarm_the_guard_for_LATER_LINES(
     """
     clone = parallel_clone[0]
     assert _decision(_run_hook(command, clone)) == "deny", f"{why}: {command!r}"
+
+
+def test_an_UNESCAPED_dollar_quote_IS_honoured_and_its_reset_is_LIVE(parallel_clone):
+    """🔴 THE OTHER SIDE OF `prev_escaped`, AND AN UNDECLARED LIVE MUTANT POINTED AT IT.
+
+    Here the `$` is UNESCAPED — the escape consumed the `x` — so `$'…'` really does
+    honour the backslash, the quote never closes, and **bash itself** reports
+    `unexpected EOF while looking for matching '` (measured): the script dies on line
+    one and the second line never runs. ALLOW is therefore correct, and refusing would
+    be a false positive on a command that cannot execute.
+
+    ⚠ IT IS HERE BECAUSE THE SURVIVOR LEDGER WAS SHORT BY ONE. Six `prev_escaped`
+    resets were added and exactly one survivor was declared; deleting the reset on the
+    GENERIC TAIL branch kept the whole suite green while flipping this row to deny —
+    behaviourally live and unguarded. The other two unlabelled resets (the in-quote
+    escape branch and the comment branch) are DEAD, which their own comments now say,
+    so the ledger and the code agree.
+    """
+    clone = parallel_clone[0]
+    command = "echo \\x$'a\\'\ngit commit -m sneaky"
+    assert _decision(_run_hook(command, clone)) is None, repr(command)
 
 
 @pytest.mark.parametrize("command,why", [
@@ -1024,10 +1126,29 @@ def test_the_three_newly_refused_WRITERS_are_refused(parallel_clone, command):
     # (does not), so `_resolve_long` cannot resolve it; it reports value-taking
     # because ANY candidate does, which swallows the `-n` and REFUSES. 🔴 git itself
     # answers this command `rc 129 ambiguous option` and writes NOTHING (measured), so
-    # neither verdict can prevent or permit a write — the row exists so the widening
-    # is a choice somebody made on purpose, and it is the only case that reaches that
-    # branch at all.
+    # neither verdict can prevent or permit a write — the row exists so the widening is
+    # a choice somebody made on purpose.
+    # ⚠ AND IT IS NOT THE ONLY SHAPE THAT REACHES THAT BRANCH, as an earlier comment
+    # here claimed: the same family does it in TEN spellings (`--p` through
+    # `--pathspec-f`), twenty with the `--no-` probes. One family, all ambiguous, all
+    # writing nothing — so the conclusion holds and only the count was wrong.
     ("git rm --pathspec-f -n seed.txt", "deny"),
+    ("git rm --p -n seed.txt", "deny"),
+    ("git rm --pathspec- -n seed.txt", "deny"),
+    # ---- 🔴 THE FIVE ROWS A DIFFERENTIAL FUZZ AGAINST REAL GIT FOUND INSIDE THE
+    # OPTION MODEL ITSELF, each measured with the verdict taken BEFORE the command.
+    # Two errors in one conditional: `partition` discarded the `=` separator, so
+    # `--exclude=` looked like "no value" and the NEXT word was eaten; and `negated`
+    # was computed and never consulted, so the `--no-` form of a value-taking option
+    # ate one too. The swallowed word is read as neither flag nor operand, so a
+    # following `--no-dry-run` went invisible and the exemption stood while git deleted.
+    ("git rm -n --no-pathspec-from-file --no-dry-run seed.txt", "deny"),
+    ("git rm -n --pathspec-from-file= --no-dry-run seed.txt", "deny"),
+    ("git clean -n --exclude= --no-dry-run -f -d", "deny"),
+    # …and the same bug REFUSING two real dry runs — the direction this file forbids
+    # itself. Measured: `Would remove` / `rm '…'`, and nothing changed.
+    ("git clean --exclude= -n", None),
+    ("git rm --no-pathspec-from-file -n seed.txt", None),
     # ---- 🔴 AND THE CONTROLS THAT MAKE THE *LEDGER KEY* CHECK REACHABLE, which is
     # the half of `_is_dry_run` a dry-run-spelling test cannot exercise. `-n` does
     # NOT mean dry-run everywhere: on `commit` it is `--no-verify`, which commits,
@@ -1151,6 +1272,121 @@ def test_the_HELP_exemption_does_not_read_a_FLAGS_VALUE(
     """
     clone = parallel_clone[0]
     assert _decision(_run_hook(command, clone)) == expected, f"{why}: {command}"
+
+
+def _repo_state(repo: Path) -> str:
+    """A hash of everything a `clean`/`rm`/`mv` could change: HEAD, the index, and the
+    working tree's own file list and contents."""
+    env = {**os.environ, **_GIT_ENV}
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True,
+                          text=True, env=env).stdout
+    index = subprocess.run(["git", "ls-files", "-s"], cwd=repo, capture_output=True,
+                           text=True, env=env).stdout
+    tree = []
+    for path in sorted(p for p in repo.rglob("*") if ".git" not in p.parts):
+        tree.append(f"{path.relative_to(repo)}:"
+                    f"{path.read_bytes().hex() if path.is_file() else 'DIR'}")
+    return head + index + "\n".join(tree)
+
+
+def test_the_guard_AGREES_WITH_REAL_GIT_over_generated_option_combinations(tmp_path):
+    """🔴 A DIFFERENTIAL AGAINST REAL GIT, ADOPTED BECAUSE A HANDFUL OF REGRESSION ROWS
+    CLOSES SPELLINGS AND LEAVES THE METHOD THAT FOUND THEM UNAVAILABLE TO THE NEXT
+    CHANGE. The fail-open it was added for was invisible to 315 passing tests: the
+    option model swallowed a word it should not have, so a following `--no-dry-run`
+    went unseen and `git rm -n --no-pathspec-from-file --no-dry-run seed.txt` was
+    ALLOWED while deleting a TRACKED file. Nothing in the suite enumerated option
+    combinations against git, so nothing could see it.
+
+    The invariants, with GIT as the oracle rather than the model under test:
+
+      * the command CHANGED the repository  ⇒  the guard must **deny**  (fail-open);
+      * it changed nothing, exited 0, and git's OWN output says it was a dry run  ⇒
+        the guard must **allow**  (false positive).
+
+    Anything else — an error, or a no-op for an unrelated reason — asserts nothing,
+    which is why the dry-run half reads git's marker instead of inferring from flags.
+
+    🔴 IT REPORTS ITS OWN CONTROLS, because "0 divergences" is otherwise
+    indistinguishable from a harness wired to nothing: the run must classify at least
+    five commands as WROTE and five as DRY, or it observed neither class and the zero
+    means nothing. ⚠ Measured negative control, out of band: reverting either half of
+    the conditional this was written for turns it RED, and each half independently —
+    see the commit message for the per-variant counts.
+    """
+    template = tmp_path / "template"
+    _init_clone(template)
+    _add_worktree(template, tmp_path / "template-wt")
+    (template / "junk.txt").write_text("untracked\n", encoding="utf-8")
+    env = {**os.environ, **_GIT_ENV}
+
+    # 🔴 DEPTH THREE, NOT TWO, AND THE REASON IS A MEASUREMENT RATHER THAN THOROUGHNESS.
+    # At depth 2 this harness catches the FALSE-POSITIVE half of the defect it was
+    # written for and misses the FAIL-OPEN half entirely: the swallowed word has to sit
+    # BETWEEN a `-n` and a `--no-dry-run`, so the shape needs three option words. A
+    # depth-2 sweep reports zero and reads as coverage. Ask what a sweep's shape
+    # structurally cannot reach, not only how many cases it runs.
+    cases: list[list[str]] = []
+    for subcommand, pool in _DIFFERENTIAL_POOL.items():
+        operands = _DIFFERENTIAL_OPERANDS[subcommand]
+        for first in pool:
+            cases.append([subcommand, first, *operands])
+            for second in pool:
+                if second == first:
+                    continue
+                cases.append([subcommand, first, second, *operands])
+                for third in pool:
+                    if third not in (first, second):
+                        cases.append([subcommand, first, second, third, *operands])
+
+    wrote = dry = 0
+    divergences: list[str] = []
+    for argv in cases:
+        repo = tmp_path / "case"
+        shutil.rmtree(repo, ignore_errors=True)
+        shutil.copytree(template, repo, symlinks=True)
+        # 🔴 EACH CASE DRIVES THE HOOK COPY INSIDE ITS OWN COPY OF THE REPO. The first
+        # version of this harness passed the TEMPLATE's hook while standing in the
+        # copy, so `own_repo` and the cwd were different repositories and every verdict
+        # was the cross-repo ALLOW — it reported 60 fail-opens including `git clean -f`,
+        # which the rest of this file proves is denied. A differential whose instrument
+        # is wired to the wrong tree reports the guard as ABSENT, which is
+        # indistinguishable from a guard that is absent.
+        case_hook = repo / ".claude" / "hooks" / HOOK.name
+        # 🔴 THE VERDICT IS TAKEN BEFORE THE COMMAND RUNS, the only order that measures
+        # what the guard would have done to a live call.
+        verdict = _decision(_run_hook("git " + " ".join(argv), repo, hook=case_hook))
+        before = _repo_state(repo)
+        done = subprocess.run(["git", *argv], cwd=repo, capture_output=True,
+                              text=True, env=env, timeout=60)
+        after = _repo_state(repo)
+        output = done.stdout + done.stderr
+        marker = _DRY_RUN_MARKER[argv[0]]
+        if before != after:
+            wrote += 1
+            if verdict != "deny":
+                divergences.append(f"FAIL-OPEN: `git {' '.join(argv)}` CHANGED the "
+                                   f"repository and the guard said {verdict!r}")
+        elif done.returncode == 0 and marker in output:
+            dry += 1
+            if verdict is not None:
+                divergences.append(f"FALSE POSITIVE: `git {' '.join(argv)}` is a dry "
+                                   f"run (git printed {marker!r}, nothing changed) and "
+                                   f"the guard said {verdict!r}")
+    shutil.rmtree(tmp_path / "case", ignore_errors=True)
+
+    # Reported, not merely asserted: a zero means nothing without the pair beside it.
+    print(f"\ndifferential: {len(cases)} commands, {wrote} wrote, {dry} dry runs, "
+          f"{len(divergences)} divergence(s)")
+    assert wrote >= 5 and dry >= 5, (
+        f"the differential observed too little to vouch for anything: {len(cases)} "
+        f"commands, {wrote} that wrote, {dry} dry runs — both classes must be "
+        f"populated or a zero-divergence result is a fact about the harness"
+    )
+    assert not divergences, (
+        f"{len(divergences)} divergence(s) over {len(cases)} commands "
+        f"({wrote} wrote, {dry} dry):\n" + "\n".join(divergences[:20])
+    )
 
 
 @pytest.mark.parametrize("command,expected,why", [
