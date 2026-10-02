@@ -25,21 +25,30 @@ them being USED and ENFORCED.
   **MET 2026-10-01** — see "How to verify" for the exact probes and their outputs.
 
 ## State now
-- Branch: `main` at **`306164c`**. Base clone clean and re-synced. **60 linked worktrees** registered.
-- ✅ **RANK 1 CLOSED AND MERGED** — PR #170, squash **`5c96ffd`**, verified by content on `origin/main`
-  (5 feature markers in `internal/ui/render.go`, `compose_test.go` present, both CHANGELOG rows).
-  ⚠ It did NOT merge cleanly: **#168 landed under it mid-review and it went `CONFLICTING`**. Resolved
-  by merging `origin/main` into the branch (not rebasing — review threads anchor to the commits),
-  keeping BOTH CHANGELOG rows newest-first. Full 8/8 CI re-run on the MERGED tree before merging.
-- ✅ **RANK 2 CLOSED AND MERGED** — PR #171, squash **`306164c`**, verified by content. All three
-  declared fail-opens closed, plus `revert`/`update-index`/`read-tree`/`symbolic-ref` added to the
-  ledger, the dry-run and `--help` exemptions consolidated, and git's option GRAMMAR modelled once
-  in `_OPTION_GRAMMAR` rather than matched as spellings at three sites.
-- ⚠ **NOT DEPLOYED. Nothing from either PR is at the edge.** Rank 3 needs a deployment-repo image-pin
-  bump first, which is an operator decision (a bump carries every commit merged since).
-- ⚠ **No task-board field, and that is a REFUSAL rather than a zero** — the resolver exited 5.
-  🔴 Naming the board is a `denied-identifier`; the leak gate fired on exactly that in this arc's
-  first handoff delta, so the field's own spelling cannot appear in this repo.
+- Branch: `main` at **`ffede27`**. Base clone clean, 0 behind, **no open PRs**.
+- ✅ **THREE RANKS CLOSED AND MERGED, all verified by content on `origin/main`** (a squash never makes
+  the branch head an ancestor, so ancestry is the wrong test):
+  - **rank 1 — `5c96ffd` (#170)**, `?q=` and `?tag=` compose into one card. ⚠ It did NOT merge
+    cleanly: #168 landed under it mid-review and flipped it to `CONFLICTING`. Resolved by merging
+    `origin/main` INTO the branch (not rebasing — review threads anchor to the commits), keeping both
+    CHANGELOG rows, and re-running CI in full on the merged tree.
+  - **rank 2 — `306164c` (#171)**, the three declared guard fail-opens, plus `revert`/`update-index`/
+    `read-tree`/`symbolic-ref` into the ledger, the dry-run and `--help` exemptions consolidated, and
+    git's option GRAMMAR modelled once in `_OPTION_GRAMMAR` instead of matched as spellings at three
+    sites. Closed after a SIX-round audit ladder (round 0 + rounds 1–5).
+  - **rank 5 — `ffede27` (#169)**, this doc on the mainline. The `/resume` path for this arc works.
+- 🔴 **NOTHING IS DEPLOYED. Neither merged feature is at the edge**, and that is rank 3's blocker: it
+  needs a deployment-repo image-pin bump, which is an operator decision because a bump carries every
+  commit merged since (the last one carried 19).
+- ⚠ **No task-board field, and that is a REFUSAL rather than a zero** — the resolver exited **5**
+  again this session. An unknown session id answers 200 with an empty array, so a zero cannot
+  distinguish "touched no task" from "wrong id". 🔴 Naming the board is a `denied-identifier`; the
+  leak gate fired on exactly that in this arc's first handoff delta.
+- **Subsystem index: one dated bullet appended** to `cairn/base-clone-write-guard.md` (the option-
+  grammar fail-opens, the differential instrument, and the two confirmations of the "treat any third
+  fix as guilty" warning). The `--session` window was empty — 17 of 17 paths outside the cwd, the
+  blind spot a delegated session always lands in — so the `--pr` window over #170/#171/#169 is what
+  resolved it. Read that bullet before touching the guard again.
 
 ## Open investigations — live diagnosis state
 
@@ -82,33 +91,30 @@ them being USED and ENFORCED.
 ## Next steps (ranked)
 🔴 **Numbering UNCHANGED — the rank is half a `claim-work` slug's identity.** Closed items struck.
 
-1. ~~**Make `?q=` and `?tag=` compose in the browse surface.**~~ **CLOSED, MERGED `5c96ffd` (#170).**
-   forcing: gate — it is merged; nothing remains.
-2. ~~**Close the three declared guard fail-opens.**~~ **CLOSED, MERGED `306164c` (#171)**, after a
-   full audit ladder (round 0 + rounds 1–5). See Gotchas for what the ladder caught.
+1. ~~**Make `?q=` and `?tag=` compose in the browse surface.**~~ **CLOSED, MERGED `5c96ffd`.**
+   forcing: gate — merged; nothing remains.
+2. ~~**Close the three declared guard fail-opens.**~~ **CLOSED, MERGED `306164c`.**
    forcing: security — closed.
-3. **Confirm the deploy, in ONE signed-in browser visit.** Two things on the same visit: the Refs
-   panel heading (`refs` ⇒ the UI pod rolled; `tasks` ⇒ pod and UI are out of step), and
-   `/?q=<word>&tag=<tag>` rendering **ONE** card headed `Search` rather than two.
-   🔴 **BLOCKED ON A PIN BUMP THAT IS THE OPERATOR'S CALL** — neither #170 nor #171 is at the edge,
-   and a bump carries every commit merged since (the last one carried 19). The browser bridge was
-   measured disconnected (`connected: 0`) and is not re-measured here.
+3. **Confirm the deploy, in ONE signed-in browser visit.** Two answers from one visit: the Refs panel
+   heading (`refs` ⇒ the UI pod rolled; `tasks` ⇒ pod and UI are out of step), and `/?q=<word>&tag=<tag>`
+   rendering **ONE** card headed `Search` rather than two.
+   🔴 **BLOCKED ON A PIN BUMP, WHICH IS THE OPERATOR'S CALL** — see State now. The browser bridge was
+   measured disconnected (`connected: 0`) and has not been re-measured.
    forcing: user — the operator asked for this deploy to be validated.
 4. **Teach the entry template to emit a `tags:` line.** `scripts/lib/subsystem_touch.py --template`
-   emits none, so every entry born through the handoff flow starts untagged and invisible to
-   `--tag`. Repo: the private tooling repo.
-   forcing: regression — new entries reintroduce the untagged state this arc eliminated.
-5. ~~**Land this doc on the mainline.**~~ **CLOSED by this update** — PR #169 merged carrying it.
+   emits none, so every entry born through the handoff flow starts untagged and invisible to `--tag`,
+   re-opening this arc's gap one entry at a time. Repo: the private tooling repo.
+   forcing: regression — new entries reintroduce the state this arc eliminated.
+5. ~~**Land this doc on the mainline.**~~ **CLOSED, MERGED `ffede27`.**
    forcing: gate — closed.
-6. **Replace `ci.yml`'s hand-edited collected-test `FLOOR` with a baseline derived at the merge
-   base.** Found by audit round 0 and unfixed on purpose (out of #171's scope). The literal has
-   been moved by **22+ commits**; the step is ~382 comment lines guarding one integer; its own
-   comment says no bug ever narrowed this suite; it MISSED the one real deletion (the name-diff
-   recipe caught that); and it has gone **RED with zero failing tests four times**, each time
-   costing a round. ⚠ Every round of #171 moved it again (2458→2495→2529→2566→2588→2609→2617).
-   **Closing condition:** the literal is gone, the baseline is collected at `git merge-base
-   origin/main HEAD` in the same job, the removals-must-be-renames check still runs, and one PR
-   that adds tests goes green without touching `ci.yml`.
+6. **Replace `ci.yml`'s hand-edited collected-test `FLOOR` with a baseline derived at the merge base.**
+   Found by audit round 0, deliberately out of #171's scope. The literal has been moved by 22+ commits
+   (and once per round during #171: 2458→2495→2529→2566→2588→2609→2617); the step is ~382 comment lines
+   guarding one integer; its own comment says no bug ever narrowed this suite; it MISSED the one real
+   deletion (the name-diff recipe caught that); and it has gone **RED with zero failing tests four
+   times**. **Closing condition:** the literal is gone, the baseline is collected at `git merge-base
+   origin/main HEAD` in the same job, the removals-must-be-renames check still runs, and one PR that
+   adds tests goes green without touching `ci.yml`.
    forcing: gate — a permanently-red-prone gate trains everyone to click through, which
    `claude/RULES.md` names as worse than no gate.
 
@@ -288,36 +294,70 @@ deleted.** That is how the list is maintained, not a sign the earlier text was w
 - ⚠ `/home/zach/workspace/cairn-hv2` was this session's handoff worktree; `cairn-handoff` is still
   the stale one on a closed arc. Remove hv2 when done.
 
+- 🔴 **RETRACTED — "THE CANONICAL HANDOFF FOR THIS ARC IS NOT ON `main`" IS NOW FALSE, AND SO IS ITS
+  INSTRUCTION.** The bullet below (and its `git log --all --diff-filter=A` / `git show <branch>:<path>`
+  recipe) applied while PR #169 was open. **#169 merged as `ffede27`: the doc IS on `main`.** Read it
+  at `claudedocs/handoff-cairn-tag-vocabulary.md` directly — do not run the branch-ref dance, and do
+  not conclude from a failed `git show origin/docs/...` that the doc is missing; that branch is
+  deleted. ⚠ Recorded as a retraction rather than a deletion because `Gotchas` is an APPEND bucket:
+  the superseded text survives verbatim below and would otherwise be read as current.
+- 🔴 **THE LADDER'S OWN LESSON, AND THE MOST REUSABLE THING THIS ARC PRODUCED: every fix round
+  introduced the next finding, and the fix for a defect recreated that defect one token over.**
+  Rank 2 ran five audit rounds on a PR whose CI was **8/8 green at every single step**. What the green
+  suite never saw: a **tracked file deleted** in the base clone while the guard answered allow; a
+  **regression a fix round itself shipped**; `git revert` writing the shared tree while the PR *pinned
+  a claim* that the out-set was complete. 🔴 **Rounds 4 and 5 found NO behavioural defects** — by then
+  the hook was AST-identical to its base modulo comments — **so the ladder was stopped on a STATED
+  criterion rather than a clean round**, because the remaining class had reproduced in every single
+  fix round and another round buys occurrence six, not convergence. Write the criterion down when you
+  do that; an unexplained stop reads identically to a convergence.
+- 🔴 **NINE INSTRUMENTS RETURNED A CONFIDENT WRONG ANSWER IN THIS ARC. EVERY ONE WAS CAUGHT BY A
+  CONTROL AND NONE BY THE RESULT LOOKING WRONG.** An `awk` range whose end pattern matched its own
+  start line (reported 0 for everything); a **case-SENSITIVE** sweep for a word written in capitals
+  (0 hits against 1); importing the hook as a module, which runs `main()` and `sys.exit(0)`s —
+  **exit 0, no output, indistinguishable from "zero findings"**; a `" 1 passed"` matcher anchored
+  mid-line; a differential pointed at the wrong tree (383 false fail-opens); a `-h` arity reader whose
+  attached-arg branch matched empty; a marker-grep over `git merge-tree`, which prints no markers; a
+  sweep whose own control string was the operator's real checkout path — in a PUBLIC repo; and a
+  mutation anchor that never applied. **Validate the instrument, report the pair, treat a reassuring
+  zero as unproven.**
+- ⚠ **An `audit-claims`/range sha TRUNCATED BY HAND silently disarms the attribution gate.**
+  `7ee84771` for `7ee8477c` made the range unresolvable; the assembler said `PAYLOAD NOT VERIFIED …
+  exited 128` and **fell back to the STATED count**, reverting to its pre-measurement behaviour. Use
+  full 40-char shas. ⚠ `--claims-file` also leaves placeholders the brief's own commands then carry
+  (`<the PR's head sha>` ×2, a repo-unknown spelling ×3, and an EMPTY `WHERE TO WORK` section):
+  substitute all of them, assert zero remain, and verify the base-branch *assumption* against the PR.
+- ⚠ **Two API limit outages hit mid-run, and they fail differently.** One agent died after one line —
+  resume works, but re-anchor it and re-verify the world first. One died **between its commit+push and
+  its report**, so the work had landed while the report was lost: **check the pushed ref before
+  assuming anything was lost.**
+
 ## How to verify
-**Both merged features, from the repo** (neither is deployed):
+**Everything merged, from the repo** (nothing is deployed, so none of this is edge evidence):
 ```bash
-git -C /home/zach/workspace/cairn log --oneline -3   # 306164c (#171), 5c96ffd (#170)
+git -C /home/zach/workspace/cairn log --oneline -4   # ffede27, 306164c, 5c96ffd, fc2ddfe
 go -C /home/zach/workspace/cairn test ./internal/ui/ -run TestTheQueryAndTheTagComposeIntoOneCard -v
 nix-shell -p python312Packages.pytest python312 git --run \
-  "python3 -m pytest tests/test_base_clone_write_guard.py -q"     # => 344 passed
-python3 tests/leakscan.py && python3 tests/leakscan.py --self-test # => both exit 0
+  "python3 -m pytest tests/test_base_clone_write_guard.py -q"      # => 344 passed
+python3 tests/leakscan.py && python3 tests/leakscan.py --self-test  # => both exit 0
 ```
 
-**The guard's own hazard, end to end** — the three that used to destroy things, with the dry runs
-that must still be allowed as the control (run in a THROWAWAY clone with one linked worktree):
+**The guard's own hazard, end to end** — the spellings that used to destroy things, with the dry runs
+that must still be ALLOWED as the control. Run in a THROWAWAY clone carrying one linked worktree:
 ```
-git rm -n --no-pathspec-from-file --no-dry-run seed.txt   => deny   (deleted a TRACKED file before)
-git clean -n --exclude= --no-dry-run -f -d                => deny   (deleted files before)
-git symbolic-ref -qd refs/heads/alias                     => deny   (deleted a ref before)
-git clean --dry / git rm --dry / git merge --ff-o <ref>    => ALLOW  (real reads, refused before)
-git commit -m x  => deny   ·   git status => allow         (the pair that makes the above readable)
+git rm -n --no-pathspec-from-file --no-dry-run seed.txt  => deny   (deleted a TRACKED file before)
+git clean -n --exclude= --no-dry-run -f -d               => deny   (deleted files before)
+git clean -f --exc -n                                    => deny   (prefix ate its value before)
+git symbolic-ref -qd refs/heads/alias                    => deny   (deleted a ref before)
+git clean --dry · git rm --dry · git merge --ff-o <ref>   => ALLOW  (real reads, refused before)
+git commit -m x => deny  ·  git status => allow           (the pair that makes the above readable)
 ```
-
-**The write gate — negative then positive** (the positive control is not optional):
-```bash
-<tooling>/scripts/cairn-ops/write.sh put --scope cairn --ref tag-vocabulary --file <bad copy> --no-verify
-#   => 🔴 REFUSED [entry-shape] — ... is not one of infra|product|tooling
-<tooling>/scripts/cairn-ops/write.sh put --scope cairn --ref tag-vocabulary --file <good copy> --no-verify
-#   => cairn: replaced instance=... revision=...
-```
+🔴 **A verdict is only half a claim about a destructive command** — run the real command in a copy and
+report what moved. ⚠ `git merge --ff` must still DENY: it is a distinct option from `--ff-only` and
+permits a merge commit.
 
 **Rank 3, against the DEPLOYED edge — only after a pin bump.** In a signed-in browser open
-`/?q=<a word in a tagged entry>&tag=<that tag>`: **ONE** card headed `Search`, its second line
-naming both operands and both counts; typing a new word keeps the tag; emptying the box lands on
-the plain tag listing. **Two cards means the pin did not move** — which is also the UI-rollout
-question, answered by the same visit.
+`/?q=<a word in a tagged entry>&tag=<that tag>`: **ONE** card headed `Search`, its second line naming
+both operands and both counts; typing a new word keeps the tag; emptying the box lands on the plain
+tag listing. **Two cards means the pin did not move** — which is also the UI-rollout question,
+answered by the same visit.
