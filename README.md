@@ -460,6 +460,16 @@ route at all — `internal/ui` declares `/share`, `/unshare`, the session pair, 
 changed. That root listing shows every visible entry carrying the tag, across scopes, and reports
 how many entries it LOOKED at so an empty answer is legible.
 
+🔴 **And `?q=` and `?tag=` COMPOSE on that root, the same way they compose on the pod.**
+`/?q=lease&tag=marketing` is **one** card: a search over the entries carrying `marketing` and
+nothing else, narrowed by the same `report.Search` call `GET /api/v1/search/<scope>?q=…&tag=…`
+makes. ⚠ **This changed what a URL that already worked answers** — the page used to render two
+independent cards, a search over everything beside a listing of everything tagged, neither
+narrowing the other. If you link to a two-parameter browse URL, it now returns the intersection.
+The card's summary names both operands and reports how many entries the tag left out, so a
+composed zero says why it is zero; the search box carries the tag along in a hidden control, so
+refining the words keeps the filter and emptying the box returns to the plain tag listing.
+
 ⚠ **The recall report gains a `    tags: a, b` line** under a printed entry's header, beside the
 existing `refs:` line, and a `  tag: …` header line **only** when the filter was sent — so no
 output moves for a store with no tags in it.
@@ -547,6 +557,37 @@ least one check could not look* — which is not a clean bill of health.
 **Writes never degrade.** There is no cache to answer from and no such thing as a
 stale write, so an unreachable store is a refused write at `7`, never a queued or
 local one.
+
+### An index row now warns when ONE entry is a whole read's worth of tokens
+
+An index row ends in badges, and there is a new one. An entry with **more than 30**
+`## Nuance / work-history` bullets gets `⚠ OVER 30 nuance — prune or split`:
+
+```
+  example-entry  151 nuance   internal   🔴 3 OPEN   ⚠ OVER 30 nuance — prune or split
+```
+
+**Why it exists.** A digest prints the index for every entry and **one** featured
+entry's body in full, so a single oversized entry sets the cost of the whole read.
+Measured on a real store: a digest came to ~50K tokens and **97.6% of it was one
+body**, because that entry had 151 nuance bullets. The row already printed `151
+nuance` — a number with nothing to compare it against. The badge supplies the
+comparison by naming the bar.
+
+**Where 30 comes from.** The bullet count is a proxy for what a featured render
+costs, so the threshold was set from the cost curve rather than picked: over one
+live store of 331 entries the median nuance section is 2.5 KB at 0–9 bullets,
+22 KB at 20–29 and **47 KB at 30–39** — and the *smallest* body above 30 is 29 KB
+(~7.4K tokens) against 14.6 KB at a ceiling of 25. It fires on **~5% of rows**,
+against 41% for the `🔴 N OPEN` badge already beside it; a badge that fires on
+everything trains its own bypass.
+
+**It is advisory.** Nothing refuses, no exit code moved, no new status value, and
+an entry at or under the ceiling renders byte-identical to before. ⚠ **If you
+PARSE an index row**, note that a row may now carry one more badge, and that it is
+appended **after** `🔗 N refs` — the existing badges keep their order. The
+threshold is one named constant per renderer (`NuanceBulletCeiling` /
+`NUANCE_BULLET_CEILING`), pinned equal by `tests/test_nuance_bullet_ceiling.py`.
 
 ### A sync that is already current does not re-download
 

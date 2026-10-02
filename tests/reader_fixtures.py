@@ -189,7 +189,44 @@ def _many_notes() -> list[dict]:
     return out
 
 
-SCOPES = ["alpha-notes", "beta-notes", "hollow-set", "rubble-heap", "many-notes", "tied-notes"]
+SCOPES = ["alpha-notes", "beta-notes", "hollow-set", "rubble-heap", "many-notes", "tied-notes",
+          "bulky-notes"]
+
+
+def _ceiling_entry(name: str, mtime_ns: int, bullets: int) -> dict:
+    """One entry carrying exactly `bullets` PLAIN `## Nuance / work-history` bullets.
+
+    🔴 PLAIN IS THE POINT: not one of them declares `OPEN:`, `RESOLVED`, a near-miss
+    spelling or a requirement, so the row's ONLY badge is the size one. A bullet that
+    tripped another population would make the pinned badge run ambiguous about which
+    predicate produced it, which is the mutation-isolation failure `claude/RULES.md`
+    names — a guard that dies for the wrong reason proves nothing about its own branch.
+
+    ⚠ THE BULLETS ARE PAIRWISE DISTINCT rather than one line repeated. A world whose
+    bullets are all the same string cannot see a parser that deduplicates, and cannot
+    see one that counts LINES where the other counts BULLETS, because the two answers
+    coincide on identical input.
+    """
+    return _entry(
+        f"bulky-notes/{name}.md",
+        mtime_ns,
+        [
+            "---",
+            f"service: {name}",
+            "scope: bulky-notes",
+            "sensitivity: public",
+            "---",
+            "",
+            "## What it is",
+            f"An entry written to sit at {bullets} nuance bullets exactly.",
+            "",
+            "## Pointers",
+            "- `docs/bulky.md`",
+            "",
+            "## Nuance / work-history",
+        ]
+        + [f"- 2000-01-02: finding {i:02d} about the retry budget." for i in range(bullets)],
+    )
 
 ENTRIES: list[dict] = [
     # Two entries inside ONE WHOLE SECOND, differing only in the fraction — the shape a
@@ -363,6 +400,53 @@ ENTRIES: list[dict] = [
         "",
         "## Nuance / work-history",
         "- 2000-01-02: nothing.",
+    ]),
+    # 🔴 THE TWO SIDES OF THE NUANCE-CEILING BADGE'S BOUNDARY, IN THEIR OWN SCOPE. The badge
+    # fires on `BulletCount > NuanceBulletCeiling`, so a world holding only an oversized
+    # entry would pin that the badge CAN appear and nothing about WHERE it starts: a mutant
+    # changing `>` to `>=`, or the ceiling from 30 to 29, renders identically on it. These
+    # two sit one apart ACROSS the boundary, so the silent row is as load-bearing as the
+    # loud one and every such mutant moves exactly one line.
+    #
+    # ⚠ THEIR OWN SCOPE, LIKE `tied-notes`, AND FOR THE SAME REASON: dropped into
+    # `alpha-notes` they would re-sort its index, move its featured pick and its `… N more`
+    # arithmetic, and churn every golden in that scope to measure something none of them is
+    # about. Here the only pre-existing golden that moves is the known-scope list.
+    _ceiling_entry("at-ceiling", EPOCH_NS + 8_000_000, rc.NUANCE_BULLET_CEILING),
+    _ceiling_entry("over-ceiling", EPOCH_NS + 7_000_000, rc.NUANCE_BULLET_CEILING + 1),
+    # 🔴 AND A THIRD ENTRY, WHOSE ONLY JOB IS THE BADGE'S POSITION — ADDED BECAUSE A MUTANT
+    # MOVING IT TO THE FRONT OF THE RUN *SURVIVED* THE TWO ROWS ABOVE. Neither of them
+    # carries any other badge, so on both of them a one-badge run renders identically
+    # wherever the append happens: the position claim written beside the emitter was a
+    # comment nothing measured. This entry is over the ceiling AND declares open bullets AND
+    # carries `refs:`, so the size badge has a `🔴 N OPEN` to its left and a `🔗 N ref` it
+    # must follow — which is what makes "last in the run", and specifically "after refs",
+    # assertable in bytes.
+    #
+    # ⚠ 31 BULLETS TOTAL, TWO OF WHICH DECLARE `OPEN:`. The count the badge branches on is
+    # every bullet in the section, not the undeclared ones, so the openness markers must not
+    # change the total — if they did, this row would be measuring two predicates at once and
+    # a failure could not be attributed.
+    _entry("bulky-notes/mixed-ceiling.md", EPOCH_NS + 6_000_000, [
+        "---",
+        "service: mixed-ceiling",
+        "scope: bulky-notes",
+        "sensitivity: public",
+        "tasks: [github:example-org/example-repo#428]",
+        "---",
+        "",
+        "## What it is",
+        "Over the ceiling AND carrying other badges, so the size badge's POSITION is visible.",
+        "",
+        "## Pointers",
+        "- `docs/bulky.md`",
+        "",
+        "## Nuance / work-history",
+        "- 2000-01-02: OPEN: the first declared item.",
+        "- 2000-01-03: OPEN: the second declared item.",
+    ] + [
+        f"- 2000-01-04: finding {i:02d} that declares nothing."
+        for i in range(rc.NUANCE_BULLET_CEILING - 1)
     ]),
     # A section that is PRESENT AND EMPTY, which is a different fact from an absent one —
     # and the only input that tells the two apart. Without it, a parser deriving presence
@@ -711,6 +795,12 @@ CASES: list[dict] = [
     # cannot produce rather than as parity coverage.
     _recall("digest-focus-sourceless", "a window with no named source: the `the supplied path window` arm, which no CLI invocation can produce", scope="alpha-notes", focus_paths=["apps/gadget-two/values.yaml"]),
     _recall("ref-hit-emptysec", "a PRESENT-AND-EMPTY section, which must not render as an absent one", scope="alpha-notes", ref="emptysec-fourteen"),
+    # 🔴 BOTH SIDES OF THE NUANCE-CEILING BOUNDARY IN ONE GOLDEN. `list` mode is the tight
+    # instrument here: the badge is an INDEX-row fact, and list mode prints the index and
+    # nothing else, so the two rows sit adjacent and a mutant that moves the boundary moves
+    # a line this case can show. A digest over the same scope would print one 31-bullet body
+    # in full to measure the same two rows.
+    _recall("nuance-ceiling-boundary", "the size badge's exact edge: one entry AT the ceiling renders silent, one entry ONE OVER it renders the badge", scope="bulky-notes", mode="list"),
     _search("hit", "the ordinary search", scope="alpha-notes", query="lease"),
     _search("hit-context", "a raw ±N window instead of the enclosing bullet", scope="alpha-notes", query="lease", context=2),
     _search("hit-context-zero", "a zero-line window, which is still a window and not a bullet", scope="alpha-notes", query="lease", context=0),

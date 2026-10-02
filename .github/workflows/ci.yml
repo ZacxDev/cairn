@@ -392,6 +392,20 @@ jobs:
           # new case is `test_the_prose_numbers_in_this_file_are_PINNED_to_what_they_cite`, added
           # by this branch. Attributed by measurement rather than assumed: the PR branch alone
           # collected 2357 too, which is the check that the merge added nothing here.
+          # 🔴 2307 -> 2388 ON THE MERGE OF #167 AND #168, AND NEITHER BRANCH'S LITERAL WAS
+          # RIGHT FOR THIS TREE. Both raised this constant from the same base, so the textual
+          # conflict had no correct wholesale side: #167 measured 2425 (+35) alone and wrote
+          # 2375; #168 measured 2403 (+13) alone and wrote 2353. Taking #167's literal
+          # understates the merged suite by #168's 13 tests and taking #168's understates it
+          # by #167's 35 — the floor would be wrong either way, silently, with nothing red.
+          # RE-DERIVED BY MEASURING THE MERGED TREE rather than by arithmetic on either
+          # literal: `m = 2438` from the collect recipe above, with a `-k` control returning 0
+          # so the count is a reading and not a harness wired to nothing. Both branches'
+          # independent numbers corroborate it (2390 base + 35 + 13 = 2438), which is a
+          # cross-check and NOT the derivation. `2438 - min(50, max(1, 2438/20)) = 2388`,
+          # gap exactly 50.
+          #
+          # --- #167's reason this constant had to move (kept: it is the incident) ---
           # ⚠ 2307 -> 2375 WITH THE BASE-CLONE GUARD'S TARGET RESOLUTION. Measured
           # 2425 on this tree with `pytest tests --collect-only -q`, so
           # `2425 - min(50, max(1, 2425/20)) = 2375` and the gap is exactly 50
@@ -412,7 +426,143 @@ jobs:
           # a NUL-byte and a `GIT_INDEX_FILE` case, net +5. Attributed by
           # measurement rather than arithmetic — the base collects 2390 and the
           # hook suite moves 80 -> 115, and 2390 + 35 = 2425.
-          FLOOR = 2375
+          #
+          # --- #168's scope note on what this number does NOT cover (kept) ---
+          # ⚠ 2307 -> 2353 ON THE NUANCE-CEILING BADGE BRANCH, AND THE DRIFT GUARD *WOULD* HAVE
+          # FORCED THIS ONE — which is the first time that is true here, so it is worth saying.
+          # The `2357` the paragraph above states is stale: this branch's merge-base collects
+          # **2390**, so the gap had already drifted to 83 before this change touched anything,
+          # and the +13 below takes it to 96 against a `MAX_GAP` of 100. Left alone, the NEXT PR
+          # adding five tests reds this step — a gate nobody can keep green is the failure this
+          # file's own comments call out, so it moves now rather than after it breaks.
+          # Measured with full node ids on one collect-only run per tree (the recipe above with
+          # the `sed` DROPPED, which is the form the +added/-removed numbers must come from):
+          # base **2390**, head **2403**, **13 added, 0 removed** — all thirteen in
+          # `tests/test_nuance_bullet_ceiling.py`, the cross-language pin on the badge's ceiling
+          # constant. `2403 - min(50, max(1, 2403/20)) = 2353`, derived from the head count by
+          # the formula rather than by arithmetic on the previous literal.
+          # 🔴 THE GO TESTS AND THE PARITY GATE ARE STILL NOT IN THIS NUMBER, as the paragraphs
+          # above require: the badge's Go-side guards live in `internal/report` (a different
+          # runner, a different job) and its two parity boundary rows change `cases`/`passes`
+          # not at all, so the `parity` job's own floor does not move with this.
+          # #168's own literal was 2388, which is what that merge-base's 2438 formula gives
+          # once #167 is in front of it; this line carries the number FORWARD rather than
+          # replacing the reasoning.
+          #
+          # ⚠ 2388 -> 2458 WITH THE BASE-CLONE GUARD'S THREE DECLARED FAIL-OPENS, AND THE
+          # DRIFT GUARD FORCED THIS ONE TOO: at 2388 the gap would have been 120, past
+          # `MAX_GAP`, so the job would be RED with zero failing tests — the fourth time
+          # that trap has landed on this same file, which is why the local recipe above is
+          # run BEFORE the literal moves rather than after CI complains.
+          # 🔴 MEASURED ON THE MERGED TREE AND NOT ON THE BRANCH, WHICH MATTERED HERE: this
+          # branch was built on `ffa0eca` and `#168` landed on `main` while it was open,
+          # touching THIS STEP. So the number below comes from a tree with `origin/main`
+          # merged in — 2508 by `pytest tests -p no:randomly --collect-only -q` — and
+          # `2508 - min(50, max(1, 2508/20)) = 2458`, the gap exactly 50 again. The branch
+          # alone collects 2495; quoting that would have under-set the floor by 13 and
+          # re-armed the drift guard for the next PR.
+          # 🔴 ON FULL NODE IDS, NO `sed`, AND THE ONE REMOVAL IS A PARAMETRISATION RATHER
+          # THAN A DELETION. Base ref `git merge-base origin/main HEAD` = `ffa0eca`: base
+          # 2425, branch 2495, **71 added, 1 removed**; `origin/main` contributes the other
+          # 13 (#168's, already attributed above). The removal is
+          # `test_base_clone_write_guard.py::test_a_NUL_BYTE_in_a_redirect_does_not_CRASH_the_hook`,
+          # which gained five parametrise ids — so it appears in BOTH columns under the
+          # `sed`-collapsing form and the two numbers read 66/0 there. Say which pipeline
+          # produced them: this is the no-`sed` one. All 71 additions are in that one file,
+          # which moves 115 -> 185.
+          # ⚠ 2458 -> 2495 ON THE REVIEW FIX IN THE SAME BRANCH, AND THE DRIFT GUARD DID
+          # **NOT** FORCE THIS ONE — the gap at 2458 would have been 87, inside `MAX_GAP`.
+          # Moved for the reason #168's own note gives two paragraphs up and for no other:
+          # at 87 the next PR adding fourteen tests reds this step, and a gate nobody can
+          # keep green is the failure this file's comments call out. Measured 2545 on the
+          # merged tree by `pytest tests -p no:randomly --collect-only -q`, so
+          # `2545 - min(50, max(1, 2545/20)) = 2495`. The +37 is this branch's: the
+          # dry-run exemption became ONE predicate over `clean`/`mv`/`rm` (a `clean`-only
+          # version had REFUSED `git rm -n`), and mutation-testing that fix found a
+          # fail-open where an exemption read a flag belonging to a WRAPPER — the hook
+          # suite moves 185 -> 222, all in that one file. #170 merged in between and adds
+          # nothing here: it is Go-only.
+          # ⚠ 2495 -> 2527 ON THE SECOND REVIEW ROUND, AND CI WOULD HAVE PASSED WITHOUT
+          # IT — said plainly because a literal moved for comfort rather than for a gate
+          # is the kind of edit that makes the next reader distrust all of them. At 2495
+          # the gap would have been 82, inside `MAX_GAP`; the move is for the SAME reason
+          # #168's note gives, that the next PR adding nineteen tests reds the step, and
+          # not because anything was red. Measured 2577 on the merged tree by
+          # `pytest tests -p no:randomly --collect-only -q`, so
+          # `2579 - min(50, max(1, 2579/20)) = 2529`. The +34 is `-h`/`--help` becoming a
+          # read for every member of `_REFUSED` (+32) plus the two that pin
+          # `_LEADING_WORDS` so growing the wrapper ledger is a decision rather than a
+          # chore. 🔴 28 OF THOSE ROWS ARE ONE PARAMETRISED CASE OVER `_REFUSED` ITSELF,
+          # so this number now moves whenever that ledger does, by TWO PER SUBCOMMAND —
+          # worth knowing before reading a future +2 here as somebody adding tests.
+          # The hook suite moves 222 -> 256.
+          # ⚠ TWO PROSE NUMBERS IN THE PARAGRAPH ABOVE WERE WRONG WHEN IT LANDED AND ARE
+          # CORRECTED HERE RATHER THAN QUIETLY: it said "Measured 2577" and headed itself
+          # "2495 -> 2527" while computing from 2579 and setting 2529. The literal and the
+          # arithmetic were right and only the prose was stale — which is the failure this
+          # file's own comments are most prone to, so it is named rather than patched over.
+          # ⚠ 2529 -> 2566 ON AUDIT ROUND 1 — and 🔴 THE PARAGRAPH ABOVE THIS ONE
+          # ANNOUNCED THAT IT WAS FIXING TWO STALE PROSE NUMBERS AND THEN THIS HEADING
+          # STATED A THIRD WRONG ONE (2565) while the arithmetic below and the literal
+          # both said 2566. Named rather than silently corrected, because that is the
+          # third occurrence of one defect in one file and the pattern is the finding:
+          # a number written in prose next to a number that is COMPUTED will drift, and
+          # only the computed one is checked by anything. `_REFUSED` GREW BY FOUR (`revert`,
+          # `update-index`, `read-tree`, `symbolic-ref`), so the parametrised help case
+          # contributes EIGHT of the new rows by itself — the "two per subcommand" warning
+          # above, firing for the first time. Measured 2616 on the merged tree, so
+          # `2616 - min(50, max(1, 2616/20)) = 2566`. The hook suite moves 256 -> 293.
+          # The last of those 293 was added after the sweep: a SURVIVING MUTANT marked
+          # the single-quote half of the escape model as having no case at all.
+          # ⚠ 2566 -> 2588 ON AUDIT ROUND 2. `_REFUSED` did NOT grow, so this one is all
+          # behaviour: git's option GRAMMAR is now modelled once (unambiguous prefixes,
+          # short bundling, last-wins negation) in place of three exact-string tables
+          # that were each wrong in the same direction, and the rows are its cases.
+          # Measured 2638 on the merged tree, so
+          # `2638 - min(50, max(1, 2638/20)) = 2588`. The hook suite moves 293 -> 315.
+          # ⚠ 2588 -> 2617 ACROSS AUDIT ROUNDS 3, 4 AND 5, AND 🔴 ONE OF THE NEW CASES IS NOT A CASE AT ALL BUT A
+          # DIFFERENTIAL FUZZ — one collected test that generates real git commands over
+          # `clean`/`rm`/`mv`, runs each in its own copy of a miniature clone, and
+          # compares the guard's verdict against what git actually did. It costs about a
+          # minute of this job on its own, which is the whole reason it is ONE test
+          # rather than one row per command: the floor and the drift guard both count
+          # COLLECTED tests, and a row per command would have moved this literal by more
+          # than `MAX_GAP` in a single commit. Its own case count and generation DEPTH
+          # are asserted inside the test, where they are derived from its pools.
+          #
+          # 🔴 AND THAT HEADING IS NOW **PINNED** RATHER THAN TRUSTED, BECAUSE RESTATING
+          # THE FLOOR IS THE ONE DEFECT THIS PARAGRAPH HAS SHIPPED THREE ROUNDS RUNNING.
+          # Round 2's heading said 2565 against a literal of 2566; the paragraph written
+          # to name THAT shipped "2588 -> 2607" against a literal of 2609, plus a case
+          # count of nineteen that was twenty-one. Every one was prose beside a computed
+          # number, and only the computed one was checked by anything.
+          # `tests/test_base_clone_write_guard.py` ::
+          # `test_the_CI_FLOOR_PROSE_CANNOT_DISAGREE_WITH_THE_LITERAL` now parses this
+          # step and fails unless the last transition and the arithmetic below both equal
+          # the literal. ⚠ It earned its place immediately: the first draft of this
+          # paragraph DELETED the arrow instead of fixing it, and the test went red on
+          # that too. Case counts are gone from here entirely — the differential asserts
+          # its own, derived from its pools.
+          # ⚠ ROUND 4 ADDED NO BEHAVIOUR AT ALL — its cases are the MECHANICAL
+          # replacements for prose counts: the ambiguity invariant derived from the
+          # hook's own tables, the subset premise measured against the installed git,
+          # the `prev_escaped` single-read property, the `_option_state` caller ledger,
+          # and the pin on this very paragraph.
+          # Measured 2665 collected on the merged tree, so
+          # ⚠ ROUND 5 ADDED NO BEHAVIOUR EITHER, and its one net new case is the sweep
+          # that stops a count being restated in prose at all — the shape that had
+          # reproduced in every fix round. Its other work was making three existing
+          # guards falsifiable: a pool-axis floor the derived case count was blind to, a
+          # per-case depth check in place of one that could not fail, and an `ast` read
+          # count in place of a regex a self-referential assignment walked past.
+          # ⚠ AND ONE MORE CASE AFTER THAT: an audit found a comment naming a test an
+          # earlier fix in the same branch had DELETED, so the existence half of the
+          # dead-pointer shape — "does the test this comment names still exist" — is now
+          # machine-checked by an AST sweep. It is a plain lookup with no false-positive
+          # class, unlike the print/report half, which stays a declared limit.
+          # Measured 2667 collected on the merged tree, so
+          # `2667 - min(50, max(1, 2667/20)) = 2617`.
+          FLOOR = 2617
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)

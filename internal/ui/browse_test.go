@@ -364,11 +364,14 @@ func TestSearchIsNarrowedByTheCallersAuthorityWithANonVacuousZero(t *testing.T) 
 			"pair below measures narrowing", onlyInBeta)
 	}
 
-	asA, err := src.Search(readsA.Auth, onlyInBeta)
+	// No tag: this guard is about the AUTHORITY narrowing, and `""` is how `Source.Search`
+	// spells "no category filter" — see `TestTheQueryAndTheTagComposeIntoOneCard` for the
+	// other operand.
+	asA, err := src.Search(readsA.Auth, onlyInBeta, "")
 	if err != nil {
 		t.Fatalf("searching as A: %v", err)
 	}
-	asB, err := src.Search(readsB.Auth, onlyInBeta)
+	asB, err := src.Search(readsB.Auth, onlyInBeta, "")
 	if err != nil {
 		t.Fatalf("searching as B: %v", err)
 	}
