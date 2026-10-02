@@ -18,6 +18,7 @@ suite. Said plainly rather than left for a reader to infer from a wall of
 """
 from __future__ import annotations
 
+import ast
 import itertools
 import json
 import os
@@ -75,18 +76,34 @@ def _hook_namespace() -> dict:
     return namespace
 
 
-def _git_long_options(subcommand: str) -> frozenset[str]:
-    """Every long option `git <subcommand> -h` prints, as canonical names.
+def _git_long_options(subcommand: str) -> dict[str, bool]:
+    """`{canonical long option: does it take a REQUIRED separate value}`, from git itself.
 
-    `--[no-]dry-run` yields `dry-run`. Read from git rather than from a list here, so
-    the subset premise the ambiguity invariant rests on is measured on the git that is
-    actually installed instead of asserted for the one that was.
+    `--[no-]dry-run` yields `dry-run: False`; `--exclude <pattern>` yields `True`. An
+    OPTIONAL argument (`--log[=<n>]`, `--gpg-sign[=<key-id>]`) yields False, because git
+    only accepts those attached and treating them as value-taking would swallow the next
+    word. Read from the INSTALLED git, so a claim about option arity is measured on the
+    git that is running rather than asserted for the one that was.
     """
     done = subprocess.run(["git", subcommand, "-h"], capture_output=True, text=True,
                           env={**os.environ, **_GIT_ENV})
     text = done.stdout + done.stderr
     assert "usage:" in text, f"`git {subcommand} -h` printed no usage: {text[:200]}"
-    return frozenset(re.findall(r"--(?:\[no-\])?([a-z][a-z0-9-]*)", text))
+    options: dict[str, bool] = {}
+    # `--[no-]name <arg>` / `--name <arg>` / `--name[=<arg>]` / `--name=<arg>` / `--name`
+    #
+    # ⚠ THE ALTERNATION ORDER WAS WRONG IN THE FIRST DRAFT AND THE POSITIVE CONTROL
+    # CAUGHT IT: the attached branch could match EMPTY, so it always won and every option
+    # read as taking no value — `git clean --exclude` came back False. A reader whose
+    # every answer is "no value" makes the whole comparison below vacuous.
+    for name, arg in re.findall(
+            r"--(?:\[no-\])?([a-z][a-z0-9-]*)(\[?=<[^>]+>\]?| <[^>]+>)?", text):
+        # A REQUIRED separate value is the space-then-`<…>` form. An attached or
+        # optional one (`[=<n>]`, `=<n>`) consumes no following word, so it is False
+        # here on purpose — treating it as value-taking would swallow the next word.
+        takes = bool(arg) and arg.lstrip().startswith("<")
+        options[name] = options.get(name, False) or takes
+    return options
 
 
 def _refused_from_hook() -> frozenset[str]:
@@ -294,11 +311,32 @@ _DIFFERENTIAL_OPERANDS = {"clean": [], "rm": ["seed.txt"],
 #: built for and **structurally cannot see the FAIL-OPEN half**: the swallowed word has
 #: to sit BETWEEN a `-n` and a `--no-dry-run`, which needs three. Measured on the
 #: reverted conditional — depth 2: 6 divergences, **zero fail-opens**; depth 3: 58, with
-#: the fail-opens present. So a future edit trimming the pool or the depth for runtime
-#: would leave the whole class unobserved behind a green suite, and because this is
-#: deliberately ONE collected test neither the floor nor `MAX_GAP` could see it. The
-#: test asserts this constant and the generated case count, so the trim fails loudly.
+#: the fail-opens present. So an edit trimming the depth for runtime would leave the
+#: whole class unobserved behind a green suite, and because this is deliberately ONE
+#: collected test neither the CI floor nor `MAX_GAP` could see it.
+#:
+#: ⚠ THE DEPTH IS ONE OF **TWO** AXES AND THE FIRST VERSION OF THESE FLOORS GUARDED ONLY
+#: THIS ONE. A derived case count cannot see a trimmed POOL, because the derivation reads
+#: the same pools the generator does and both shrink together — measured, cutting
+#: `clean`'s pool in half took 1664 commands to 929 and PASSED, and deleting that pool
+#: outright, a whole subcommand, took it to 844 with the runtime halved and PASSED. The
+#: pool axis is pinned separately, by `_DIFFERENTIAL_POOL_FLOOR` and by the
+#: subcommand-set assertion beside it.
 _DIFFERENTIAL_DEPTH = 3
+
+#: Per-subcommand minimum pool size, pinned INDEPENDENTLY of the generator because the
+#: derived case count structurally cannot see a trim. Set a couple of words below what
+#: each pool carries, so ADDING words needs no edit here and REMOVING any is a decision.
+_DIFFERENTIAL_POOL_FLOOR = {"clean": 8, "rm": 7, "mv": 5}
+
+#: The hook's own dry-run policy set, read from its SOURCE rather than retyped, so the
+#: differential cannot drift to sweep a different three subcommands than the exemption
+#: actually applies to.
+_DRY_RUN_SUBCOMMANDS_FOR_TESTS = frozenset(
+    re.findall(r'"([a-z-]+)"',
+               re.search(r"_DRY_RUN_SUBCOMMANDS = frozenset\(\{(.*?)\}\)",
+                         HOOK.read_text(encoding="utf-8"), re.S).group(1))
+)
 
 
 def _leading_words_from_hook() -> frozenset[str]:
@@ -1190,9 +1228,12 @@ def test_the_three_newly_refused_WRITERS_are_refused(parallel_clone, command):
     # neither verdict can prevent or permit a write — the row exists so the widening is
     # a choice somebody made on purpose.
     # ⚠ AND IT IS NOT THE ONLY SHAPE THAT REACHES THAT BRANCH, as an earlier comment
-    # here claimed: the same family does it in TEN spellings (`--p` through
-    # `--pathspec-f`), twenty with the `--no-` probes. One family, all ambiguous, all
-    # writing nothing — so the conclusion holds and only the count was wrong.
+    # here claimed — nor is the correction's own count right, which is why there is no
+    # count here now. `test_the_AMBIGUOUS_PREFIX_WIDENING_HOLDS_FOR_EVERY_TOKEN_THAT_
+    # REACHES_IT` enumerates them from the tables and PRINTS the tally; read it there.
+    # Every one of them is ambiguous to git, which writes nothing, so the conclusion
+    # holds however many there turn out to be — which is the point of asserting the
+    # invariant instead of the list.
     ("git rm --pathspec-f -n seed.txt", "deny"),
     ("git rm --p -n seed.txt", "deny"),
     ("git rm --pathspec- -n seed.txt", "deny"),
@@ -1337,6 +1378,118 @@ def test_the_HELP_exemption_does_not_read_a_FLAGS_VALUE(
     assert _decision(_run_hook(command, clone)) == expected, f"{why}: {command}"
 
 
+#: The PR's payload, ENUMERATED. Not a glob and not `grep -r`: the local `grep` is a
+#: ugrep wrapper that honours `.gitignore`, so a `-r` zero is a claim about grep's view.
+_PROSE_PAYLOAD = (
+    ".claude/hooks/base-clone-write-guard.py",
+    "tests/test_base_clone_write_guard.py",
+    "claudedocs/working-in-parallel.md",
+)
+
+# PROSE-SWEEP SELF-EXCLUSION START — everything between this marker and the END marker
+# is the sweep's own patterns, controls and reasoning, so it necessarily contains the
+# shapes it looks for. The span is cut from the scanned text, the markers are asserted to
+# exist, and a planted claim is matched AFTER the cut to prove the cut did not blind it.
+#: 🔴 (pattern, what it catches, a CONTROL STRING IT MUST MATCH). The controls are
+#: asserted on every run: a sweep whose pattern cannot match its own control is wired to
+#: nothing, and its zero is a fact about the sweep. Three instruments in this PR reported
+#: a reassuring zero while blind — a marker-grep over `git merge-tree`, a `" 1 passed"`
+#: substring, and a case-SENSITIVE sweep for a word that was written in capitals.
+_PROSE_SWEEPS = (
+    (r"(?:\b(?:thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\b"
+     r"|\b1[0-9]\b)(?:(?!_REFUSED|refused|ledger|option tables).){0,90}?"
+     r"(?:_REFUSED|refused subcommand|refused set|the ledger|option tables)"
+     r"|(?:_REFUSED|refused subcommand|refused set|the ledger|option tables)"
+     r"(?:(?!_REFUSED).){0,90}?(?:\b(?:thirteen|fourteen|fifteen|sixteen|seventeen"
+     r"|eighteen|nineteen|twenty)\b|\b1[0-9]\b)",
+     "a COUNT of a ledger the tests already derive",
+     "measured for all fourteen members of `_REFUSED`"),
+    (r"_DRY_RUN_(?:SHORT_)?VALUE_FLAGS",
+     "a pointer to a symbol that no longer exists",
+     "see `_DRY_RUN_VALUE_FLAGS` for the measurement"),
+    (r"own letters are never read as flags",
+     "the retracted `-e` stop reasoning, true only for the attached spelling",
+     "so the pattern's own letters are never read as flags"),
+    (r"\b60 fail-opens\b",
+     "a divergence count from a draft that is not in the tree, so nobody can re-derive it",
+     "it reported 60 fail-opens including `git clean -f`"),
+    # ⚠ NO OPERATOR IDENTIFIER IN EITHER THE PATTERN OR THE CONTROL, AND THAT IS A
+    # DELIBERATE NARROWING RATHER THAN AN OVERSIGHT. The first draft matched the
+    # operator's username and used their real checkout path as the control — committing
+    # a host path into a PUBLIC repository to test for host paths. `home/` and `/Users/`
+    # give the reach without naming anybody, and the identity class is `leakscan.py`'s
+    # own `operator-identity` rule, which is exempted from its own scan by name for
+    # exactly this reason: a scanner has to contain the strings it looks for.
+    (r"(?:home/|/Users/|\b10\.\d+\.\d+\.\d+|\b192\.168\.|\b172\.(?:1[6-9]|2\d|3[01])\.)",
+     "an absolute home path or a private IP — this repository is PUBLIC",
+     "a path such as home/<someone>/checkout"),
+)
+
+
+def test_NO_LIVE_PROSE_COUNT_OR_DEAD_POINTER_SURVIVES_IN_THE_PAYLOAD():
+    """🔴 THE MECHANICAL CLOSURE FOR THE DEFECT EVERY FIX ROUND OF THIS PR REPRODUCED:
+    a count or a pointer stated in PROSE beside a thing that changes.
+
+    Four rounds fixed the reported instance and left the shape alive elsewhere. The last
+    one reported "the count is gone from all eight sites" on the strength of a
+    case-SENSITIVE grep, and the survivor was `MEASURED FOR ALL FOURTEEN` — uppercase,
+    seven lines above a comment saying no count was there. So the sweep is no longer
+    something somebody runs: it runs here, case-INSENSITIVELY, over an ENUMERATED file
+    list, with each pattern's control asserted to HIT.
+
+    ⚠ IT IS SCOPED TO LIVE CLAIMS, NOT TO HISTORY. The ledger pattern only fires when a
+    number sits within ninety characters of a reference to the refused ledger or the
+    option tables; the mechanism narratives this file is full of — what was measured,
+    what was retracted — keep their numbers, because a claim about the past cannot go
+    stale. That is why the history was de-numbered where it sat next to a ledger
+    instead: an absolute rule needs no exemption list, and an exemption list is how a
+    guard becomes walkable.
+    """
+    # ⚠ BUILT FROM A TAG RATHER THAN WRITTEN OUT: a literal spelling the whole marker
+    # would be a second occurrence of it, and the first draft's `index()` found that
+    # literal instead of the real END marker — cutting the wrong span and leaving the
+    # markers behind. The assertion below caught it.
+    tag = "PROSE-SWEEP SELF-" + "EXCLUSION"
+    start, end = f"# {tag} START", f"# {tag} END"
+    scanned: dict[str, str] = {}
+    for name in _PROSE_PAYLOAD:
+        raw = (ROOT / name).read_text(encoding="utf-8")
+        if name == Path(__file__).name or name.endswith(Path(__file__).name):
+            assert start in raw and end in raw, (
+                "the self-exclusion markers are gone; without them this sweep matches "
+                "its own patterns and says nothing about the rest of the file"
+            )
+            raw = raw[: raw.index(start)] + raw[raw.index(end) + len(end):]
+            assert start not in raw and end not in raw, "the cut left a marker behind"
+        # Normalised: a claim wrapped across comment lines is invisible per-line, which
+        # is how the hook's own top-level summary hid for two rounds.
+        flat = re.sub(r"\n\s*(?:#:|#|\*|>)?\s*", " ", raw)
+        scanned[name] = re.sub(r"[ \t]+", " ", flat)
+
+    hits: list[str] = []
+    for pattern, what, control in _PROSE_SWEEPS:
+        compiled = re.compile(pattern, re.I | re.S)
+        # CONTROL 1: the pattern must match its own control string.
+        assert compiled.search(control), (
+            f"the sweep for {what!r} cannot match its own control — it is wired to "
+            f"nothing and a zero from it would mean nothing"
+        )
+        # CONTROL 2: and it must still reach the SCANNED text after the self-cut. A
+        # cut that removed too much would leave every pattern matching nothing, which
+        # is the same reassuring zero one layer along.
+        for name, flat in scanned.items():
+            assert compiled.search(flat + " " + control), (
+                f"the sweep for {what!r} cannot see a planted claim in {name} — the "
+                f"self-exclusion cut too much"
+            )
+            for match in compiled.finditer(flat):
+                hits.append(f"{name}: {what}: …{match.group(0)[:110]}…")
+    assert not hits, (
+        f"{len(hits)} live prose claim(s) that a test should own:\n" + "\n".join(hits)
+    )
+# PROSE-SWEEP SELF-EXCLUSION END
+
+
 def test_the_CI_FLOOR_PROSE_CANNOT_DISAGREE_WITH_THE_LITERAL():
     """🔴 THE SAME COMMENT HAS SHIPPED A WRONG FLOOR NUMBER THREE ROUNDS RUNNING, EACH
     TIME IN THE PARAGRAPH WRITTEN TO CORRECT THE LAST ONE.
@@ -1388,29 +1541,83 @@ def test_the_hook_namespace_loads_and_is_not_the_live_one():
     )
 
 
-def test_EVERY_NAME_IN_THE_OPTION_TABLES_IS_A_REAL_GIT_OPTION():
-    """🔴 THE PREMISE THE AMBIGUITY INVARIANT RESTS ON, ASSERTED INSTEAD OF ASSUMED.
+def test_NO_TOKENS_VALUE_TAKING_VERDICT_DIFFERS_FROM_THE_INSTALLED_GITS():
+    """🔴 THE THING THAT ACTUALLY MATTERS, ASSERTED INSTEAD OF A VERSION-DEPENDENT PREMISE.
 
-    The fail-closed widening in `_resolve_long` is safe because the hook's candidate set
-    is a SUBSET of git's: if two of the hook's names share a prefix then two of git's do
-    too, so git refuses the abbreviation and writes nothing. That argument fails the
-    moment a name in the tables is not a real option of that subcommand — a typo, or an
-    option git renamed or dropped.
+    This test used to assert the SUBSET PREMISE — every name in `_OPTION_GRAMMAR` is a
+    real option of that subcommand. That premise is true on git 2.55 and **false on
+    2.50**, where `git merge --compact-summary` does not exist: measured FAIL on 2.49.0
+    and 2.50.1, PASS from 2.51.0 up. 🔴 AND IT WAS A FALSE FAILURE — the hook is
+    unaffected, because a phantom name in `long_bool` can never make a token
+    value-taking, so across every prefix token of `merge`'s names the verdict differed in
+    ZERO cases even on 2.50. The `tests` job runs `ubuntu-latest` with python pinned and
+    **git not pinned at all**, so that gate was a function of the runner image; and
+    `claude/RULES.md` is explicit that a permanently-red gate is worse than none, because
+    it trains everyone to click through.
 
-    So the premise is measured against the installed git rather than trusted. ⚠ This is
-    also the test that fails on a git which has REMOVED an option the tables name, which
-    is the direction the version caveat at `_OPTION_GRAMMAR` cannot cover by itself.
+    So the assertion is the version-robust one: **for every token, if the installed git
+    resolves it to exactly one option, the hook's value-taking verdict must equal git's
+    for that option.** That is what the swallow-the-next-word decision depends on. A
+    token git finds AMBIGUOUS is unconstrained — git refuses it and writes nothing — and
+    a token git does not know at all is unconstrained for the same reason.
+
+    🔴 MEASURED ON TWO REAL BINARIES, NOT ARGUED: **git 2.44.2 PASS · 2.55.0 PASS**, run
+    from two nixpkgs pins on one machine. 2.44.2 is the useful end — it has no
+    `--compact-summary` at all (`git merge -h | grep -c` is 0 there, 2 on 2.55.0), which
+    is exactly the condition that made the old premise red, and this invariant does not
+    notice.
+
+    ⚠ A SIMULATION OF AN OLDER OPTION SET WAS WRITTEN FIRST AND IS DELETED, which is
+    worth recording because it was the same defect one layer along: it asserted that the
+    installed git HAS `--compact-summary` so it could remove it, and therefore failed on
+    git 2.44.2 — a new gate that is a function of the runner image, in the fix for a gate
+    that was one. The real two-point matrix replaces it; CI keeps only the invariant,
+    which holds on both.
+
+    ⚠ WHAT THIS STILL CANNOT SEE, stated rather than implied: a value-taking option that
+    a FUTURE git adds and the tables do not name resolves to one git option with
+    `takes=True` while the hook says False — so this test WOULD catch it, which is the
+    narrow fail-open `_OPTION_GRAMMAR`'s version limit names. What it cannot catch is a
+    git that changes an option's arity without changing its name in `-h`.
     """
-    grammar = _hook_namespace()["_OPTION_GRAMMAR"]
+    namespace = _hook_namespace()
+    grammar, resolve = namespace["_OPTION_GRAMMAR"], namespace["_resolve_long"]
+    differences: list[str] = []
+    compared = 0
     for subcommand, spec in sorted(grammar.items()):
         real = _git_long_options(subcommand)
         assert real, f"no options parsed for `git {subcommand} -h`"
-        declared = {name[2:] for name in set(spec["long_value"]) | set(spec["long_bool"])}
-        missing = sorted(declared - real)
-        assert not missing, (
-            f"`git {subcommand}` does not have these options the table names: "
-            f"{missing} — the ambiguity invariant's subset premise is broken"
-        )
+        hook_names = set(spec["long_value"]) | set(spec["long_bool"])
+        tokens = {name[: cut] for name in hook_names
+                  for cut in range(3, len(name) + 1)}
+        tokens |= {f"--{name}"[: cut] for name in real
+                   for cut in range(3, len(name) + 3)}
+        for token in sorted(tokens):
+            bare = token[2:]
+            git_matches = [n for n in real if n.startswith(bare)]
+            if bare in real:
+                git_matches = [bare]
+            if len(git_matches) != 1:
+                continue                      # ambiguous or unknown to git: it refuses
+            compared += 1
+            _, hook_takes = resolve(token, spec)
+            git_takes = real[git_matches[0]]
+            if hook_takes != git_takes:
+                differences.append(
+                    f"`git {subcommand} {token}` -> git resolves "
+                    f"`--{git_matches[0]}` (takes a value: {git_takes}) but the hook "
+                    f"says takes a value: {hook_takes}"
+                )
+    # POSITIVE CONTROL: the comparison must actually have compared something, and a
+    # known value-taking option must come back as one from BOTH sides.
+    assert compared >= 50, f"only {compared} token(s) compared — this proved little"
+    assert _git_long_options("clean").get("exclude") is True, (
+        "`git clean --exclude` did not parse as value-taking — the `-h` reader is wrong"
+    )
+    assert not differences, (
+        f"{len(differences)} token(s) where the hook and the installed git disagree "
+        f"about consuming a value ({compared} compared):\n" + "\n".join(differences[:15])
+    )
 
 
 def test_the_AMBIGUOUS_PREFIX_WIDENING_HOLDS_FOR_EVERY_TOKEN_THAT_REACHES_IT():
@@ -1492,17 +1699,37 @@ def test_prev_escaped_is_READ_AT_EXACTLY_ONE_SITE():
     sweep confirms each of those individually SURVIVES.
 
     If this test fails, a second read was added and every DEAD label needs re-deriving.
+
+    🔴 COUNTED FROM THE AST, NOT FROM A REGEX, AND THE REGEX WAS WALKABLE. It excluded
+    any line matching `^\\s*prev_escaped = `, so a read on the RIGHT-HAND SIDE of an
+    assignment to the flag itself counted as a pure write: the mutant
+    `prev_escaped = bool(prev_escaped) and False` SURVIVED green, and three realistic
+    shapes hide in the same place (`= prev_escaped and char != "\\n"`, `= not
+    prev_escaped`, `: bool = prev_escaped or False`). A line-shaped guard over code is a
+    spelled guard; `ast` distinguishes a `Load` from a `Store` because that is what the
+    grammar means.
     """
-    lines = HOOK.read_text(encoding="utf-8").splitlines()
+    tree = ast.parse(HOOK.read_text(encoding="utf-8"), filename=str(HOOK))
     reads = [
-        line for line in lines
-        if "prev_escaped" in line
-        and not re.match(r"\s*prev_escaped(?::[^=]+)? = ", line)
-        and not line.lstrip().startswith("#")
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and node.id == "prev_escaped"
+        and isinstance(node.ctx, ast.Load)
     ]
+    stores = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and node.id == "prev_escaped"
+        and isinstance(node.ctx, ast.Store)
+    ]
+    # POSITIVE CONTROL: the walk must see the writes too, or a zero on reads would be
+    # indistinguishable from an AST that never found the name at all.
+    assert len(stores) >= 5, (
+        f"the AST walk found only {len(stores)} write(s) of `prev_escaped` — it is not "
+        f"looking at the right tree"
+    )
     assert len(reads) == 1, (
-        f"`prev_escaped` is read at {len(reads)} sites, not one, so the DEAD labels on "
-        f"its resets no longer follow: {reads}"
+        f"`prev_escaped` is READ at {len(reads)} site(s), not one, so the DEAD labels on "
+        f"its resets no longer follow: lines "
+        f"{sorted(node.lineno for node in reads)}"
     )
 
 
@@ -1638,14 +1865,39 @@ def test_the_guard_AGREES_WITH_REAL_GIT_over_generated_option_combinations(tmp_p
     # measured 383 — so trimming the pool or dropping the third loop for runtime would
     # pass, with the fail-open class unobserved and the collected count unchanged.
     #
-    # The expected count is DERIVED from the pools and the depth rather than written
-    # down, so it cannot disagree with them: dropping a loop or shrinking a pool fails
-    # here, while legitimately growing a pool needs no edit.
+    # ⚠ AND THE FIRST VERSION OF THESE FLOORS CLOSED ONE AXIS OF TWO, which is the
+    # failure this whole ladder keeps repeating: fix the reported instance, leave the
+    # shape. The derived case count catches a dropped LOOP and is structurally blind to
+    # a trimmed POOL, because it reads the same pools the generator does. Both axes are
+    # covered now, and each is measured below rather than asserted in a sentence:
+    # the depth by `_DIFFERENTIAL_DEPTH` plus a PER-CASE depth check, the pool by the
+    # subcommand set and `_DIFFERENTIAL_POOL_FLOOR`. Growing a pool still needs no edit.
     assert _DIFFERENTIAL_DEPTH >= 3, (
         "the differential must combine at least three option words: at depth 2 the "
         "fail-open class this test exists for is structurally unreachable (measured — "
         "see `_DIFFERENTIAL_DEPTH`)"
     )
+    # 🔴 THE POOL AXIS, WHICH THE FIRST VERSION OF THESE FLOORS COULD NOT SEE AT ALL.
+    # `expected` is derived from the same pools the generator reads, so the two shrink
+    # together and `len(cases) == expected` is blind to a trim: measured, `clean`'s pool
+    # cut from ten words to five took 1664 commands to 929 and PASSED, and DELETING the
+    # `clean` pool entirely — a whole subcommand, 49% of the sweep — took it to 844 and
+    # PASSED, runtime halved. Both cleared the class floors too. So the subcommand set
+    # and the pool sizes are pinned here, independently of the generator.
+    assert set(_DIFFERENTIAL_POOL) == {"clean", "rm", "mv"}, (
+        f"the differential must sweep all three refused writers with a dry run; it "
+        f"covers {sorted(_DIFFERENTIAL_POOL)}"
+    )
+    assert set(_DIFFERENTIAL_POOL) == set(_DIFFERENTIAL_OPERANDS) == _DRY_RUN_SUBCOMMANDS_FOR_TESTS, (
+        "the differential's subcommands, its operand table and the hook's own dry-run "
+        "policy set must be the same three"
+    )
+    for subcommand, floor in _DIFFERENTIAL_POOL_FLOOR.items():
+        assert len(_DIFFERENTIAL_POOL[subcommand]) >= floor, (
+            f"`{subcommand}`'s option pool has {len(_DIFFERENTIAL_POOL[subcommand])} "
+            f"words, below the floor of {floor} — trimming a pool is invisible to the "
+            f"derived case count, which is why the floor is written down separately"
+        )
     expected = 0
     for pool in _DIFFERENTIAL_POOL.values():
         size, arrangements = len(pool), 0
@@ -1657,12 +1909,17 @@ def test_the_guard_AGREES_WITH_REAL_GIT_over_generated_option_combinations(tmp_p
         expected += arrangements
     assert len(cases) == expected, (
         f"the generator produced {len(cases)} commands where the pools and "
-        f"`_DIFFERENTIAL_DEPTH`={_DIFFERENTIAL_DEPTH} imply {expected} — a loop or a "
-        f"pool was changed without the floors moving with it"
+        f"`_DIFFERENTIAL_DEPTH`={_DIFFERENTIAL_DEPTH} imply {expected} — a loop was "
+        f"changed without the floors moving with it"
     )
-    assert max(len(argv) for argv in cases) - 1 - min(
-        len(ops) for ops in _DIFFERENTIAL_OPERANDS.values()) >= _DIFFERENTIAL_DEPTH, (
-        "no generated command carries the full option depth"
+    # 🔴 PER CASE, NOT ACROSS CASES. The first form mixed the MAXIMUM argv length over
+    # all cases with the MINIMUM operand count over subcommands — `6 - 1 - 0 = 5 >= 3`
+    # — so it held even with the generator collapsed to depth 1, while its message
+    # claimed to check that some command carries the full depth. It could not fail.
+    deepest = max(len(argv) - 1 - len(_DIFFERENTIAL_OPERANDS[argv[0]]) for argv in cases)
+    assert deepest >= _DIFFERENTIAL_DEPTH, (
+        f"the deepest generated command carries {deepest} option word(s), not "
+        f"{_DIFFERENTIAL_DEPTH} — the generator was collapsed"
     )
     # The CLASS floors, now set near what was measured (383 wrote / 516 dry) with
     # headroom for a different git, rather than at a token 5.

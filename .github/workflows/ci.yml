@@ -520,7 +520,7 @@ jobs:
           # that were each wrong in the same direction, and the rows are its cases.
           # Measured 2638 on the merged tree, so
           # `2638 - min(50, max(1, 2638/20)) = 2588`. The hook suite moves 293 -> 315.
-          # ⚠ 2588 -> 2615 ACROSS AUDIT ROUNDS 3 AND 4, AND 🔴 ONE OF THE NEW CASES IS NOT A CASE AT ALL BUT A
+          # ⚠ 2588 -> 2616 ACROSS AUDIT ROUNDS 3, 4 AND 5, AND 🔴 ONE OF THE NEW CASES IS NOT A CASE AT ALL BUT A
           # DIFFERENTIAL FUZZ — one collected test that generates real git commands over
           # `clean`/`rm`/`mv`, runs each in its own copy of a miniature clone, and
           # compares the guard's verdict against what git actually did. It costs about a
@@ -549,8 +549,15 @@ jobs:
           # the `prev_escaped` single-read property, the `_option_state` caller ledger,
           # and the pin on this very paragraph.
           # Measured 2665 collected on the merged tree, so
-          # `2665 - min(50, max(1, 2665/20)) = 2615`.
-          FLOOR = 2615
+          # ⚠ ROUND 5 ADDED NO BEHAVIOUR EITHER, and its one net new case is the sweep
+          # that stops a count being restated in prose at all — the shape that had
+          # reproduced in every fix round. Its other work was making three existing
+          # guards falsifiable: a pool-axis floor the derived case count was blind to, a
+          # per-case depth check in place of one that could not fail, and an `ast` read
+          # count in place of a regex a self-referential assignment walked past.
+          # Measured 2666 collected on the merged tree, so
+          # `2666 - min(50, max(1, 2666/20)) = 2616`.
+          FLOOR = 2616
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)

@@ -1337,7 +1337,7 @@ def _option_state(subcommand: str,
 
 
 #: 🔴 `-h` AND `--help` ARE READS FOR EVERY MEMBER OF `_REFUSED`, AND THAT IS
-#: MEASURED FOR ALL FOURTEEN RATHER THAN ASSUMED FROM "git uses parse-options".
+#: MEASURED MEMBER BY MEMBER RATHER THAN ASSUMED FROM "git uses parse-options".
 #: On git 2.55.0, `git <sub> -h` answers **rc 129 with `usage:` on the first line and
 #: the repository bit-for-bit unchanged** for `add am apply cherry-pick checkout clean
 #: commit merge mv rebase reset rm stash switch` — the whole ledger as it stood
