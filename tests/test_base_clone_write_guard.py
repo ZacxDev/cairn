@@ -18,6 +18,8 @@ suite. Said plainly rather than left for a reader to infer from a wall of
 """
 from __future__ import annotations
 
+import ast
+import itertools
 import json
 import os
 import shutil
@@ -42,6 +44,66 @@ _GIT_ENV = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_SYSTEM": os.devnull,
 }
+
+
+def _hook_namespace() -> dict:
+    """The hook's module-level definitions, loaded WITHOUT running `main()`.
+
+    🔴 THIS EXISTS SO STRUCTURAL CLAIMS CAN BE **DERIVED** FROM THE CODE INSTEAD OF
+    RESTATED BESIDE IT. Four audit rounds in a row found the same defect — a count or
+    an enumeration written in prose next to a thing that changes — and three of those
+    were in paragraphs added to correct the previous one. `claude/RULES.md` says to
+    prefer a deterministic fix over a prose one; a count nobody can re-derive is the
+    prose one.
+
+    The hook is a SCRIPT: its last statement is `try: main()`, which consumes stdin and
+    exits, so a plain import is impossible — which is why the other readers in this
+    file parse the source. Cutting the source at that invocation and `exec`ing the rest
+    gives the real functions and tables.
+    """
+    source = HOOK.read_text(encoding="utf-8")
+    marker = "\ntry:\n    main()\n"
+    assert marker in source, (
+        "the hook no longer ends with the `try: main()` invocation this cut relies on"
+    )
+    namespace: dict = {"__name__": "base_clone_write_guard_under_test"}
+    exec(compile(source[: source.index(marker)], str(HOOK), "exec"), namespace)
+    # POSITIVE CONTROL: a namespace missing these would make every derived check below
+    # vacuous, which is the failure mode of loading code by cutting a string.
+    for symbol in ("_resolve_long", "_option_state", "_OPTION_GRAMMAR", "_REFUSED",
+                   "_DRY_RUN_SUBCOMMANDS"):
+        assert symbol in namespace, f"the hook's `{symbol}` did not load"
+    return namespace
+
+
+def _git_long_options(subcommand: str) -> dict[str, bool]:
+    """`{canonical long option: does it take a REQUIRED separate value}`, from git itself.
+
+    `--[no-]dry-run` yields `dry-run: False`; `--exclude <pattern>` yields `True`. An
+    OPTIONAL argument (`--log[=<n>]`, `--gpg-sign[=<key-id>]`) yields False, because git
+    only accepts those attached and treating them as value-taking would swallow the next
+    word. Read from the INSTALLED git, so a claim about option arity is measured on the
+    git that is running rather than asserted for the one that was.
+    """
+    done = subprocess.run(["git", subcommand, "-h"], capture_output=True, text=True,
+                          env={**os.environ, **_GIT_ENV})
+    text = done.stdout + done.stderr
+    assert "usage:" in text, f"`git {subcommand} -h` printed no usage: {text[:200]}"
+    options: dict[str, bool] = {}
+    # `--[no-]name <arg>` / `--name <arg>` / `--name[=<arg>]` / `--name=<arg>` / `--name`
+    #
+    # ⚠ THE ALTERNATION ORDER WAS WRONG IN THE FIRST DRAFT AND THE POSITIVE CONTROL
+    # CAUGHT IT: the attached branch could match EMPTY, so it always won and every option
+    # read as taking no value — `git clean --exclude` came back False. A reader whose
+    # every answer is "no value" makes the whole comparison below vacuous.
+    for name, arg in re.findall(
+            r"--(?:\[no-\])?([a-z][a-z0-9-]*)(\[?=<[^>]+>\]?| <[^>]+>)?", text):
+        # A REQUIRED separate value is the space-then-`<…>` form. An attached or
+        # optional one (`[=<n>]`, `=<n>`) consumes no following word, so it is False
+        # here on purpose — treating it as value-taking would swallow the next word.
+        takes = bool(arg) and arg.lstrip().startswith("<")
+        options[name] = options.get(name, False) or takes
+    return options
 
 
 def _refused_from_hook() -> frozenset[str]:
@@ -197,6 +259,219 @@ def test_the_doc_table_is_parseable():
     assert len(documented) >= 5, f"parse is probably broken: {documented}"
 
 
+def _declared_out_from_doc() -> frozenset[str]:
+    """The subcommands the doc's DELIBERATELY-OUT table names, in backticks.
+
+    A second table, with its own header, so the refused-set parse above cannot see
+    it and the two cannot be confused for one another. Whole backticked cells
+    rather than `[a-z0-9-]+`: the entries are `worktree remove` and `branch -D`,
+    and the spelling — the flag, the second word — is the part that carries the
+    decision.
+    """
+    text = DOC.read_text(encoding="utf-8")
+    start = text.index("| NOT refused, and it is not a read |")
+    end = text.index("\n\n", start)
+    rows = text[start:end].splitlines()[2:]  # skip header + separator
+    names: set[str] = set()
+    for row in rows:
+        names.update(re.findall(r"`([^`]+)`", row.split("|")[1]))
+    return frozenset(names)
+
+
+def test_the_doc_OUT_table_is_parseable():
+    """POSITIVE CONTROL for the parse the decision test below rests on."""
+    out = _declared_out_from_doc()
+    assert out, "the out-table parse found nothing — it is matching nothing"
+
+
+#: 🔴 THE DIFFERENTIAL'S OPTION POOL. Every word is a spelling git 2.55.0 ACCEPTS for
+#: that subcommand; the harness builds commands from them and compares the guard's
+#: verdict against what git really did. Kept small on purpose — the combinatorics are
+#: cubic at the depth below — and the wider out-of-band sweep is in the commit message.
+_DIFFERENTIAL_POOL: dict[str, list[str]] = {
+    "clean": ["-n", "-f", "-d", "--no-dry-run", "--dry", "--exclude=",
+              "--exclude=junk.txt", "-e", "-ejunk.txt", "--"],
+    "rm": ["-n", "-f", "--no-dry-run", "--dry", "--cached", "--ignore-unmatch",
+           "--no-pathspec-from-file", "--pathspec-from-file=", "--"],
+    "mv": ["-n", "-f", "-k", "--no-dry-run", "--dry", "--verbose", "--"],
+}
+
+#: What the subcommand prints when GIT itself considered the run a DRY one. Read from
+#: the real command's output rather than inferred from the flags, so the oracle is git
+#: and not a second copy of the model under test.
+_DRY_RUN_MARKER = {"clean": "Would remove", "rm": "rm '", "mv": "Checking rename"}
+
+#: Operands appended after the option words, so every generated command has something
+#: real to act on — otherwise "nothing changed" would not mean "it was a dry run".
+_DIFFERENTIAL_OPERANDS = {"clean": [], "rm": ["seed.txt"],
+                          "mv": ["seed.txt", "moved.txt"]}
+
+#: 🔴 HOW MANY OPTION WORDS THE DIFFERENTIAL COMBINES, AND IT IS A FLOOR RATHER THAN A
+#: SETTING. At depth 2 the sweep catches the FALSE-POSITIVE half of the defect it was
+#: built for and **structurally cannot see the FAIL-OPEN half**: the swallowed word has
+#: to sit BETWEEN a `-n` and a `--no-dry-run`, which needs three. Measured on the
+#: reverted conditional — depth 2: 6 divergences, **zero fail-opens**; depth 3: 58, with
+#: the fail-opens present. So an edit trimming the depth for runtime would leave the
+#: whole class unobserved behind a green suite, and because this is deliberately ONE
+#: collected test neither the CI floor nor `MAX_GAP` could see it.
+#:
+#: ⚠ THE DEPTH IS ONE OF **TWO** AXES AND THE FIRST VERSION OF THESE FLOORS GUARDED ONLY
+#: THIS ONE. A derived case count cannot see a trimmed POOL, because the derivation reads
+#: the same pools the generator does and both shrink together — measured, cutting
+#: `clean`'s pool in half took 1664 commands to 929 and PASSED, and deleting that pool
+#: outright, a whole subcommand, took it to 844 with the runtime halved and PASSED. The
+#: pool axis is pinned separately, by `_DIFFERENTIAL_POOL_FLOOR` and by the
+#: subcommand-set assertion beside it.
+_DIFFERENTIAL_DEPTH = 3
+
+#: Per-subcommand minimum pool size, pinned INDEPENDENTLY of the generator because the
+#: derived case count structurally cannot see a trim. Set a couple of words below what
+#: each pool carries, so ADDING words needs no edit here and REMOVING any is a decision.
+_DIFFERENTIAL_POOL_FLOOR = {"clean": 8, "rm": 7, "mv": 5}
+
+#: The hook's own dry-run policy set, read from its SOURCE rather than retyped, so the
+#: differential cannot drift to sweep a different three subcommands than the exemption
+#: actually applies to.
+_DRY_RUN_SUBCOMMANDS_FOR_TESTS = frozenset(
+    re.findall(r'"([a-z-]+)"',
+               re.search(r"_DRY_RUN_SUBCOMMANDS = frozenset\(\{(.*?)\}\)",
+                         HOOK.read_text(encoding="utf-8"), re.S).group(1))
+)
+
+
+def _leading_words_from_hook() -> frozenset[str]:
+    """The wrapper words `_LEADING_WORDS` skips, read out of the hook's SOURCE."""
+    text = HOOK.read_text(encoding="utf-8")
+    block = re.search(
+        r"_LEADING_WORDS: dict\[str, tuple\[int, frozenset\[str\]\]\] = \{(.*?)\n\}",
+        text, re.S)
+    assert block, "could not find the _LEADING_WORDS literal in the hook source"
+    # Keys only: a key is a quoted word at the start of a line, before a `:`.
+    return frozenset(re.findall(r'^\s{4}"([^"]+)": \(', block.group(1), re.M))
+
+
+def test_the_wrapper_ledger_is_parseable():
+    """POSITIVE CONTROL for the parse the pin below rests on."""
+    words = _leading_words_from_hook()
+    assert "timeout" in words, f"the parse found no `timeout`: {words}"
+    assert len(words) >= 10, f"implausibly small, parse is probably broken: {words}"
+
+
+def test_the_WRAPPER_LEDGER_is_PINNED_so_GROWING_IT_IS_A_DECISION():
+    """🔴 THIS GUARD EXISTS TO STOP A RATCHET, WHICH IS AN UNUSUAL THING FOR A TEST TO
+    DO, SO IT SAYS SO.
+
+    The closing condition this ledger was built against — "a parametrised case per
+    wrapper word, watched red" — defined done as an ENUMERATION OVER AN OPEN SET. It
+    is RETIRED (see the hook's own table): the class cannot be enumerated, `ssh`,
+    `ionice -p`, `watch`, `coproc`, a shell function and `bash -c '…'` all remain
+    unhandled, and the root fix is nested-shell recursion rather than another word.
+
+    So the set is pinned and this test fails on GROW as well as shrink. A grow is not
+    forbidden — it is made into a decision with a place to argue for it, instead of a
+    chore the next reader feels obliged to complete. ⚠ The justification on record: a
+    replay of one host's session history, 37,268 distinct real Bash commands, moved
+    **zero** verdicts for any of the twelve words this ledger added, while the other
+    two repairs in the same change moved 17 and 13. The counter-argument is on record
+    too, beside it — a guard deters the unprecedented, and zero past is not zero
+    future — which is why the CODE stays and only the closing condition retired.
+
+    ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE: green at `336aebf` and at every ref
+    where the ledger has these members. It pins a decision, not a fix.
+    """
+    assert _leading_words_from_hook() == {
+        # shell reserved words and the brace group
+        "{", "}", "!", "if", "while", "until", "then", "do", "else", "elif",
+        # command wrappers
+        "eval", "time", "command", "exec", "nohup", "nice", "stdbuf", "sudo",
+        "xargs", "env", "timeout",
+    }
+
+
+def _dry_run_keys_from_hook() -> frozenset[str]:
+    """The subcommands `_DRY_RUN_SUBCOMMANDS` exempts a dry run for.
+
+    ⚠ IT READS THE POLICY SET, NOT THE GRAMMAR. `_OPTION_GRAMMAR` also has a
+    `symbolic-ref` entry — it models that subcommand's options for the `--delete`
+    check — and reading keys from there would silently claim `symbolic-ref` has an
+    exempt dry run. Two sets, two questions.
+    """
+    text = HOOK.read_text(encoding="utf-8")
+    block = re.search(r"_DRY_RUN_SUBCOMMANDS = frozenset\(\{(.*?)\}\)", text, re.S)
+    assert block, "could not find the _DRY_RUN_SUBCOMMANDS literal"
+    return frozenset(re.findall(r'"([a-z-]+)"', block.group(1)))
+
+
+def test_the_dry_run_ledger_is_parseable():
+    """POSITIVE CONTROL for the parse the test below rests on."""
+    keys = _dry_run_keys_from_hook()
+    assert "clean" in keys, f"the parse found no `clean` — it matches nothing: {keys}"
+
+
+def test_the_DRY_RUN_exemption_covers_EXACTLY_THREE_SUBCOMMANDS_AND_NO_MORE():
+    """🔴 AN EXEMPTION LEDGER THAT CAN GROW SILENTLY IS THE HAZARD HERE, not a
+    missing row — so this fails on GROW as well as on shrink.
+
+    🔴 TWO CATEGORIES SIT OUTSIDE THIS SET AND AN EARLIER VERSION OF THIS DOCSTRING
+    LUMPED THEM UNDER ONE HEADING, WHICH IS A CATEGORY ERROR RATHER THAN A STALE
+    MEASUREMENT. `add -n` and `apply --check` were measured to change nothing: they
+    ARE reads, left out by an operator decision about scope creep, and that decision is
+    revisitable. `commit --dry-run` is not in the same category at all — it WRITES a
+    tree object — so it must never be exempted, and a sentence that filed it beside the
+    other two is exactly what a future widening would have cited.
+    And 🔴 TWO SPELLINGS THAT LOOK LIKE DRY RUNS ARE NOT — `git merge
+    --no-commit` staged a merge AND moved HEAD on a fast-forward, and `git
+    cherry-pick -n` staged the picked file, both measured CHANGED. Adding `merge`
+    or `cherry-pick` to this ledger would exempt a real write, so the set is pinned
+    rather than described.
+
+    Every key must also be IN `_REFUSED`: exempting a subcommand that is not
+    refused is dead code that reads as coverage.
+    """
+    keys = _dry_run_keys_from_hook()
+    assert keys == {"clean", "mv", "rm"}, keys
+    assert keys <= _refused_from_hook(), keys - _refused_from_hook()
+
+
+def test_the_shared_state_WRITERS_LEFT_OUT_carry_a_RECORDED_DECISION():
+    """🔴 THIS PINS THE DECISIONS TAKEN, **NOT** THAT NO OTHER WRITER EXISTS — AND
+    THE EARLIER VERSION OF IT PINNED THE SECOND THING, WHICH WAS FALSE.
+
+    It asserted the out-set was exactly `{worktree remove, branch -D}` while the hook
+    comment said "an audit found five writers" and the doc's table listed two. A
+    round-1 audit then measured `git revert --no-edit HEAD` ALLOWED — writing the
+    tree, the index AND HEAD, through the same sequencer as `cherry-pick`, which was
+    already refused. So the trio of prose + table + pin was a **pinned false
+    completeness**: this repo's own "reads as coverage while providing none", with a
+    test holding it in place. `revert`, `update-index`, `read-tree` and
+    `symbolic-ref` are all in `_REFUSED` now.
+
+    What the three rows mean, each a decision with a reason in the doc:
+
+      * `worktree remove` — the parallel-work recipe PRESCRIBES it from the base
+        clone, and refusing a documented recipe is the guard's stated failure mode;
+      * `branch -D` — a branch ref lives in the COMMON git dir, so the same delete is
+        available identically from any worktree, which conditions 2 and 3 cannot
+        scope;
+      * `restore` — it DOES overwrite the working-tree file (measured: an unsaved
+        edit replaced by committed content), but the ordinary form carries no `--`,
+        so refusing it would refuse every `git restore <path>`.
+
+    Fails on GROW (a decision added without its reason) and on SHRINK (a decision
+    deleted), and fails if one is added to `_REFUSED` without its doc row moving —
+    the mirror of `test_the_refused_set_matches_the_documented_table`.
+    ⚠ It can never assert completeness: the complement of `_REFUSED` is not
+    enumerable, and the doc now names the known tail instead of implying there is
+    none.
+    """
+    assert _declared_out_from_doc() == {"worktree remove", "branch -D", "restore"}
+    refused = _refused_from_hook()
+    for entry in _declared_out_from_doc():
+        assert entry.split()[0] not in refused, (
+            f"`{entry}` is declared OUT in the doc and IN in the hook's ledger"
+        )
+
+
 def test_the_refused_set_matches_the_documented_table():
     """The ledger and the doc move together, and this fails on GROW *or* SHRINK.
 
@@ -310,6 +585,54 @@ def test_the_ff_only_resync_recipe_is_allowed(parallel_clone):
     clone, _ = parallel_clone[:2]
     verdict = _run_hook("git fetch origin && git merge --ff-only origin/main", clone)
     assert _decision(verdict) is None
+
+
+@pytest.mark.parametrize("command,expected,why", [
+    ("git merge --ff-only origin/main", None, "the canonical spelling, the control"),
+    ("git merge --ff-onl origin/main", None, "an unambiguous PREFIX git accepts"),
+    ("git merge --ff-on origin/main", None, "…shorter"),
+    ("git merge --ff-o origin/main", None,
+     "🔴 the shortest one git still resolves, and it was REFUSED — a false positive on "
+     "the one base-clone resync recipe this repo prescribes. Measured: git reaches the "
+     "same `not something we can merge` as the full form, i.e. past option parsing"),
+    ("git merge --ff origin/main", "deny",
+     "⚠ A DIFFERENT OPTION, NOT AN ABBREVIATION: `--ff` ALLOWS a fast-forward, it does "
+     "not require one, so this is an ordinary merge and must stay refused"),
+    ("git merge -m --ff-only origin/main", "deny",
+     "🔴 THE FAIL-OPEN THE STRING MATCH HAD: `-m` takes a value, so this is a real "
+     "merge whose MESSAGE is `--ff-only`, and `\"--ff-only\" in rest` exempted it"),
+    ("git merge --message --ff-only origin/main", "deny",
+     "⚠ THE LONG TWIN, AND A SURVIVING MUTANT IS WHY IT IS HERE: emptying `merge`'s "
+     "`long_value` left every test green, because the row above exercises the SHORT "
+     "`-m` only. Same fail-open, reached through the long spelling"),
+    ("git merge --clean --ff-only origin/main", "deny",
+     "…and through a PREFIX of a long value option (`--cleanup <mode>`), which is the "
+     "combination of the two rules this model exists for"),
+    ("git merge -s ours --ff-only origin/main", None,
+     "a value-taking option BEFORE the flag: `ours` must not be mistaken for it"),
+    ("git merge -S --ff-only origin/main", None,
+     "⚠ `-S`/`--gpg-sign` takes its key ONLY attached, so modelling it as value-taking "
+     "would eat the `--ff-only` and refuse a documented recipe"),
+    ("git merge --log --ff-only origin/main", None,
+     "…and the long twin, `--log[=<n>]`"),
+])
+def test_the_FF_ONLY_exemption_goes_through_the_OPTION_GRAMMAR(
+        parallel_clone, command, expected, why):
+    """🔴 THE EXEMPTION MATCHED A SPELLING UNDER A CLAIM THAT NOTHING DOES.
+
+    `_is_exempt` read `"--ff-only" in rest` while `_option_state`'s docstring asserted
+    it was "THE ONE PLACE THAT READS GIT'S OPTION GRAMMAR. Everything that used to
+    match an option spelling now asks this." The behaviour predated that sentence; the
+    sentence was new in the commit that consolidated the other three — which is what
+    makes it a defect rather than a gap, because a claim of coverage is what stops the
+    next reader looking.
+
+    Routing it through the model makes the claim true and closes both directions at
+    once: the abbreviations git accepts are allowed, and a `--ff-only` sitting in a
+    flag's VALUE no longer exempts a real merge.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) == expected, f"{why}: {command}"
 
 
 def test_a_pathspec_checkout_is_allowed(parallel_clone):
@@ -444,6 +767,1362 @@ def test_a_command_after_a_heredoc_terminator_is_still_a_command(parallel_clone)
     assert _decision(_run_hook(command, clone)) == "deny"
 
 
+# ------------------- (a) the heredoc OPENER, decided by the quote-aware walk
+#
+# 🔴 `_shell_lines` CALLED ITSELF "QUOTE- AND HEREDOC-AWARE" WHILE ITS OPENER
+# SEARCH RAN A REGEX OVER THE ALREADY-JOINED RAW LINE, so a `<<WORD` in a quoted
+# string or a `#` comment opened a heredoc bash never opened and every later line
+# was swallowed as its body. The fail-open is reached by ORDINARY TEXT.
+#
+# Every case in this block was watched at `ffa0eca`, the ref this change is built
+# on, and the verdict is named per row. `ffa0eca` is also where the existing
+# heredoc cases above were green, which is why they are not repeated here: the one
+# that matters most, `<<'EOF'` whose body is `git commit -m x`, is pinned by
+# `test_quoted_and_heredoc_CONTENT_is_data_not_a_command` and is EXACTLY what the
+# attractive implementation of this fix breaks — "blank out the quoted spans, then
+# run the old regex" erases that delimiter, opens no heredoc, and REFUSES the body.
+
+
+@pytest.mark.parametrize("command,why", [
+    ('echo "a <<EOF b"\ngit commit -m x',
+     "a `<<` inside DOUBLE quotes; proved end to end at `ffa0eca`, clone 1 -> 2"),
+    ("echo 'a <<EOF b'\ngit commit -m x",
+     "the same inside SINGLE quotes"),
+    ("echo hi # write the recipe with <<EOF\ngit commit -m x",
+     "a `<<` inside a trailing comment"),
+    ("# a comment that mentions <<EOF\ngit commit -m x",
+     "a comment at the START of the line, where there is no previous character"),
+    ("echo hi;# see <<EOF\ngit commit -m x",
+     "a `#` that begins a word because an OPERATOR ended the previous one — the "
+     "only case that reaches `_WORD_BREAK_BEFORE_HASH` rather than the whitespace "
+     "test beside it"),
+    ("cat > /tmp/f <<EOF\nit's data\nEOF\ngit commit -m x",
+     "an apostrophe in a heredoc BODY opened a quote that swallowed the terminator"),
+    ("echo x # don't\ngit commit -m y",
+     "an apostrophe in a COMMENT did the same, one mechanism over"),
+    ("cat > /tmp/f <<EOF\nbody\nEOF\n# a comment with <<X\ngit commit -m x",
+     "a comment on the FIRST line after a heredoc terminator — two mechanisms "
+     "composed, and ⚠ NOT evidence for the one it was written for: a draft reset "
+     "`prev` when a body line flushed, and a mutation sweep scored that reset dead "
+     "because the command-mode newline had already cleared it"),
+    ("cat <<<word\ngit commit -m x",
+     "a herestring: `<<` read out of chars two and three of `<<<`"),
+    ('cat <<<"EOF"\ngit commit -m x',
+     "the same, with a delimiter-shaped quoted operand"),
+])
+def test_a_FAKE_heredoc_OPENER_cannot_swallow_the_commands_after_it(
+        parallel_clone, command, why):
+    """🔴 EVERY ROW WAS MEASURED **ALLOW** AT `ffa0eca` AND IS DENY HERE.
+
+    Three mechanisms, all closed by moving the opener decision INTO the walk that
+    already knew the quote state:
+
+      * the opener regex ran on the raw line, so quotes and comments were invisible
+        to it (rows 1-4);
+      * quotes were tracked inside a heredoc BODY and inside a COMMENT, where bash
+        tracks none, so one apostrophe swallowed the terminator or the rest of the
+        command (rows 5-6);
+      * a `<<<` HERESTRING carries no body, but its second and third `<` read as a
+        `<<` and opened a heredoc named after the operand (rows 7-8). The regex
+        declined the FIRST `<<` of the run by accident and then matched at the
+        second; the walk declines a lookahead whose previous character is `<`.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) == "deny", f"{why}: {command!r}"
+
+
+@pytest.mark.parametrize("command,why", [
+    ('echo "say \\"hi\\""\ngit commit -m sneaky',
+     'an ESCAPED quote inside `"…"` — the `\\"` was read as the closer, so the real '
+     'closer re-opened a quote that never closed and the WHOLE command came back as '
+     'one logical line with `git` not at argv[0]'),
+    ('printf "%s\\n" "a\\"b"\ngit commit -m sneaky',
+     "the same through an ordinary `printf`"),
+    ('sed -i "s/x/\\"y\\"/" f.txt\ngit commit -m sneaky',
+     "…and an ordinary `sed`"),
+    ("echo $'it\\'s'\ngit commit -m sneaky",
+     "`$'…'` is the one single-quote form that DOES honour a backslash, which is "
+     "why the flag is set from the character before the opening quote"),
+    ('echo "a\\\\b"\ngit commit -m sneaky',
+     "⚠ THE DISCRIMINATOR: a BALANCED escape was already handled, and must stay so — "
+     "deny before the fix as well as after"),
+    ("echo \\$'a\\'\ngit commit -m sneaky",
+     "🔴 THE REGRESSION THE ESCAPE MODEL ITSELF SHIPPED, and the narrowest one in this "
+     "file: an ESCAPED dollar. `\\$` is a literal dollar to bash and the `'` after it "
+     "opens a PLAIN single quote, but the unquoted-escape branch sets `prev` to the "
+     "character it consumed — so `prev == \"$\"` and the quote was routed into the "
+     "escape-honouring model, eating its own closer. deny before the escape model, "
+     "ALLOW after it, deny now: `prev_escaped` is what separates the two"),
+    ("echo \\$'a\\'\ngit commit -m sneaky",
+     "🔴 THE REGRESSION THE ESCAPE MODEL ITSELF SHIPPED, and the narrowest thing in "
+     "this file: an ESCAPED dollar. `\\$` is a literal dollar to bash and the `'` "
+     "after it opens a PLAIN single quote — but the unquoted-escape branch sets "
+     "`prev` to the character it consumed, so `prev == \"$\"` held and the quote was "
+     "routed into the escape-honouring model, eating its own closer. deny before the "
+     "escape model, **ALLOW** after it, deny now; `prev_escaped` is the difference. "
+     "It is the hole this file's own sweep found as `r14` one commit earlier, "
+     "reachable in production by a one-character prefix: the guard was closed against "
+     "the mutant and open against the shell"),
+    ("echo 'ends with a backslash \\'\ngit commit -m sneaky",
+     "🔴 THE OTHER DIRECTION, AND A MUTATION SWEEP IS WHAT FOUND IT UNGUARDED: inside "
+     "`'…'` a backslash is LITERAL, so the quote above closes and this line ends. A "
+     "mutant that let EVERY quote honour escapes ate the closing quote, glued the "
+     "rest of the command on, and flipped this to ALLOW with all 292 tests still "
+     "green — so the single-quote half of the model had no case at all"),
+    ('echo "say \\"hi\\""\ngit add new.txt && git commit -m sneaky',
+     "⚠ AND THE ROW THAT EXPLAINS WHY ONE PUBLISHED REPRO DID NOT REPRODUCE: with an "
+     "OPERATOR before the write this was already deny at `0aa1ba2`. The glued line "
+     "still reaches the lexer, which handles `\\\"` correctly, and `&&` is emitted as "
+     "its own token — so the write lands in a SECOND segment whose first word is "
+     "`git`. The fail-open needs the write to be the first word of its segment"),
+])
+def test_an_ESCAPED_QUOTE_does_not_disarm_the_guard_for_LATER_LINES(
+        parallel_clone, command, why):
+    """🔴 ONE `\\"` ON AN EARLIER LINE TURNED THE GUARD OFF FOR THE WHOLE REST OF THE
+    COMMAND, AND THE DOCSTRING CLAIMED THIS FAMILY WAS CLOSED.
+
+    `_shell_lines` tracked quotes but had no backslash model inside them, so the
+    escaped quote closed the string, the real closer opened a new one, and nothing
+    ever closed THAT — the walk returned every remaining line glued into one. A
+    later-line `git add … && git commit …` then sits in the middle of a token list
+    whose first word is `echo`, so no candidate is produced and the write is
+    ALLOWED. Measured end to end with a plain-`echo` control denying in the same run.
+
+    ⚠ SINGLE-LINE COMMANDS WERE NEVER AFFECTED — `;` still splits — so this needed a
+    newline and a later-line write, which is precisely the ordinary shape of an
+    agent's Bash call rather than an exotic one.
+
+    🔴 AND THE REPRO IS NARROWER THAN THE FIRST REPORT OF IT, WHICH IS WHY THE LAST
+    ROW IS HERE RATHER THAN THE SHAPE THAT WAS HANDED TO ME. A report of this gave
+    the later line as `git add new.txt && git commit -m sneaky`; driven against
+    `0aa1ba2` that is **deny**, not allow. The glued line still reaches `shlex`,
+    which DOES model `\\"` inside double quotes, and `&&` comes back as its own
+    operator token — so the write starts a second segment and is seen. The fail-open
+    needs the write to be the FIRST word of its segment, i.e. a bare later line.
+    Every row above was re-measured in that shape before being asserted; taking the
+    reported one would have shipped five rows that were green at the base ref.
+
+    🔴 THE FIX IS QUOTE-KIND-AWARE AND THAT IS NOT PEDANTRY: inside `'…'` a backslash
+    is LITERAL, so honouring escapes there would mis-parse `<<'EOF'` and break the
+    heredoc battery above. The full (a) battery was re-run against this change, not
+    just these rows.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) == "deny", f"{why}: {command!r}"
+
+
+def test_an_UNESCAPED_dollar_quote_IS_honoured_and_its_reset_is_LIVE(parallel_clone):
+    """🔴 THE OTHER SIDE OF `prev_escaped`, AND AN UNDECLARED LIVE MUTANT POINTED AT IT.
+
+    Here the `$` is UNESCAPED — the escape consumed the `x` — so `$'…'` really does
+    honour the backslash, the quote never closes, and **bash itself** reports
+    `unexpected EOF while looking for matching '` (measured): the script dies on line
+    one and the second line never runs. ALLOW is therefore correct, and refusing would
+    be a false positive on a command that cannot execute.
+
+    ⚠ IT IS HERE BECAUSE THE SURVIVOR LEDGER WAS SHORT BY ONE — TWICE. Six
+    `prev_escaped` resets were added and exactly one survivor was declared; deleting the
+    reset on the GENERIC TAIL branch kept the whole suite green while flipping this row
+    to deny, behaviourally live and unguarded. The correcting round then labelled four
+    of the five dead ones and left the fifth bare while claiming "the other two".
+
+    🔴 SO THE COUNT IS GONE AND THE RULE REPLACES IT: `prev_escaped` is read at exactly
+    one site, so every reset but the one marked LIVE is dead, and
+    `test_prev_escaped_is_READ_AT_EXACTLY_ONE_SITE` asserts the property the labels
+    depend on. Each dead reset was also individually mutated and SURVIVED, which is what
+    makes the labels honest rather than hopeful.
+    """
+    clone = parallel_clone[0]
+    command = "echo \\x$'a\\'\ngit commit -m sneaky"
+    assert _decision(_run_hook(command, clone)) is None, repr(command)
+
+
+@pytest.mark.parametrize("command,why", [
+    ('cat > /tmp/recipe <<"EOF"\ngit commit -m x\nEOF',
+     "a DOUBLE-quoted delimiter — quotes that belong to the delimiter, not a string"),
+    ("cat > /tmp/recipe <<-EOF\n\tgit commit -m x\n\tEOF",
+     "the tab-stripping `<<-` form still opens a heredoc"),
+    ("cat > /tmp/recipe << EOF\ngit commit -m x\nEOF",
+     "a space between `<<` and the delimiter"),
+    ("cat <<A <<B\nx\nA\ngit commit -m x\nB",
+     "the SECOND of two heredocs on one line — `re.search` could only find one"),
+])
+def test_a_REAL_heredoc_BODY_is_still_data_in_every_spelling(
+        parallel_clone, command, why):
+    """The fail-CLOSED direction, which is the one this file forbids itself.
+
+    Rows 1-3 were green at `ffa0eca` — ⚠ INVARIANT GUARDS, pinning that moving the
+    opener search into the walk did not lose a spelling the regex accepted. They
+    are the cases the "blank out the quotes first" implementation breaks, so they
+    are worth their place even though they evidence nothing about the fix.
+
+    🔴 ROW 4 WAS MEASURED **DENY** AT `ffa0eca` AND IS ALLOW HERE — a FALSE
+    POSITIVE, and regression coverage rather than an invariant guard. Only the
+    first opener on a line was recorded, so B's body was parsed as commands and a
+    line of DATA reading `git commit -m x` was refused with a message diagnosing a
+    shared-tree mutation that was not happening.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) is None, f"{why}: {command!r}"
+
+
+# ------------------------- (b) wrapper words that used to hide the program name
+
+
+@pytest.mark.parametrize("wrapper", [
+    "if", "while", "until", "command", "nohup", "eval", "exec", "sudo", "xargs",
+    "nice",
+])
+def test_a_WRAPPER_WORD_does_not_hide_the_program_name(parallel_clone, wrapper):
+    """🔴 ONE ROW PER WORD, EVERY ONE MEASURED ALLOWING AT `ffa0eca`.
+
+    `_leading_assignments` skipped assignments, `env`, and a `_LEADING_RESERVED`
+    set of eight shell words — so the program name of `if git commit -m x` was read
+    as `if` and the segment was not a git call at all. The repair is ONE ledger,
+    `_LEADING_WORDS`, which absorbed both of those: `claude/RULES.md`'s "one rule,
+    one place" is the reason it is not a second set beside the first.
+
+    Parametrised per word rather than written as one case, for the reason the
+    single-`&` cases above are: a suite that exercised one spelling of a class is
+    exactly how this class stayed open while reading as covered.
+    """
+    clone = parallel_clone[0]
+    command = f"{wrapper} git commit -m x"
+    assert _decision(_run_hook(command, clone)) == "deny", command
+
+
+@pytest.mark.parametrize("prefix,why", [
+    ("timeout 5", "a bare DURATION operand, the only operand-consuming row"),
+    ("timeout 5s", "the same with a unit suffix"),
+    ("timeout --foreground 5", "a flag that takes no value, then the operand"),
+    ("timeout -s TERM 5", "a flag that takes a SEPARATE value, then the operand"),
+    ("timeout -k 1 5", "two values before the operand"),
+    ("sudo -u somebody", "`-u <user>`"),
+    ("sudo -u somebody --", "…and an end-of-options marker"),
+    ("xargs -n 1", "`-n <count>`"),
+    ("xargs -I {}", "`-I <string>`"),
+    ("xargs --max-args=1", "an ATTACHED value takes no separate word"),
+    ("stdbuf -o 0", "`-o <mode>`"),
+    ("stdbuf -o0", "the attached spelling of the same flag"),
+    ("nice -n 5", "`-n <adjustment>`"),
+    ("nice -5", "the old attached spelling, which is not a known flag at all"),
+    ("env -i", "pre-existing: `env`'s own flags, green at `ffa0eca`"),
+    ("env -u FOO", "pre-existing: `env -u <name>` consumes a value, green there too"),
+    ("/usr/bin/env -i", "the ledger is matched on the BASENAME too — green at "
+                        "`ffa0eca`, which open-coded exactly this one"),
+    ("/usr/bin/time", "…and the basename match is what generalises it: this was "
+                      "ALLOW at `ffa0eca`, because `time` was matched as a bare "
+                      "WORD only"),
+])
+def test_a_wrapper_that_consumes_a_VALUE_still_finds_the_program(
+        parallel_clone, prefix, why):
+    """The half of the ledger that is not just a word list.
+
+    Every row but the last two was measured ALLOW at `ffa0eca`. The two `env` rows
+    were already green: they are ⚠ INVARIANT GUARDS, and they are here because
+    folding the open-coded `env` branch into the ledger is exactly the kind of
+    consolidation that silently drops the behaviour it absorbed.
+    """
+    clone = parallel_clone[0]
+    command = f"{prefix} git commit -m x"
+    assert _decision(_run_hook(command, clone)) == "deny", f"{why}: {command}"
+
+
+@pytest.mark.parametrize("command,why", [
+    ("command -v git", "a LOOKUP, not a run — nothing follows `git` to be a write"),
+    ("timeout 5 git status", "a read, reached through the operand-consuming row"),
+    ("nice -n 5 git log --oneline -3", "a read behind a wrapper"),
+    ("xargs -n 1 git status", "…and behind one with a value flag"),
+    ("ssh host.invalid git commit -m x",
+     "`ssh` is NOT in the ledger: the write lands on another machine, and skipping "
+     "it would invent a false positive"),
+])
+def test_the_wrapper_ledger_does_not_OVER_fire(parallel_clone, command, why):
+    """NEGATIVE CONTROL for the block above, with its POSITIVE CONTROL in the run.
+
+    A ledger that refuses `command -v git` or `timeout 5 git status` has turned a
+    read into a refusal, which is the direction this guard forbids itself. The
+    paired `deny` in the same fixture is what stops this reading as a hook wired to
+    nothing — every assertion here is an ALLOW, and an allow is indistinguishable
+    from a crash.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook("git commit -m x", clone)) == "deny", "positive control"
+    assert _decision(_run_hook(command, clone)) is None, f"{why}: {command}"
+
+
+# --------------- (c) three more shared-state writers, and two decisions to leave out
+
+
+@pytest.mark.parametrize("command,why", [
+    ("git revert --no-edit HEAD",
+     "🔴 ALLOWED at `0aa1ba2` and it moves HEAD, the index and the worktree — "
+     "condition 1's own three, through the SAME sequencer as `cherry-pick`, which "
+     "was already refused"),
+    ("git revert -n HEAD", "the staged form: no new commit, but the index rewritten"),
+    ("git revert HEAD", "the bare form"),
+    ("git update-index --force-remove seed.txt",
+     "plumbing that rewrites `.git/index` directly — measured, the path left the index"),
+    ("git read-tree HEAD", "rewrites `.git/index` from a tree"),
+    ("git read-tree -m HEAD side", "…and from two"),
+    ("git symbolic-ref HEAD refs/heads/side",
+     "rewrites `.git/HEAD` — the shared HEAD moved under a peer, measured"),
+    ("git symbolic-ref --delete refs/heads/alias",
+     "a one-operand WRITE, so it cannot be excluded by operand count"),
+    # 🔴 THE FOUR SPELLINGS AN EXACT-STRING `--delete` CHECK MISSED, each measured to
+    # DELETE A REAL REF. Branch refs live in the COMMON git dir — the stated reason
+    # `branch -D` could not be scoped — so every one was reachable from any worktree.
+    ("git symbolic-ref -qd refs/heads/alias", "SHORT BUNDLING, `-q` then `-d`"),
+    ("git symbolic-ref -dq refs/heads/alias", "…and the other order"),
+    ("git symbolic-ref --del refs/heads/alias", "an unambiguous PREFIX"),
+    ("git symbolic-ref --d refs/heads/alias", "…the shortest one git still resolves"),
+])
+def test_the_FOUR_writers_a_ROUND_ONE_AUDIT_found_are_refused(
+        parallel_clone, command, why):
+    """🔴 THE PR THAT ADDED `clean`/`rm`/`mv` ALSO ASSERTED THE OUT-SET WAS COMPLETE,
+    AND IT WAS NOT. Every row here was ALLOWED at `0aa1ba2` while the hook's comment
+    said an audit had found five writers, the doc tabled two as deliberately out, and
+    a test pinned that pair on grow AND shrink. A pinned false completeness is worse
+    than an unstated limit: it is the thing that stops the next reader looking.
+
+    `revert` is the sharpest row — it is implemented by the same sequencer as
+    `cherry-pick`, which was in the ledger, so the asymmetry had no reason at all.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) == "deny", f"{why}: {command}"
+
+
+@pytest.mark.parametrize("command,why", [
+    ("git symbolic-ref HEAD", "the READ form: prints the ref, changes nothing"),
+    ("git symbolic-ref --short HEAD", "…and with a flag, which is not an operand"),
+    ("git symbolic-ref -q HEAD", "…and the quiet one"),
+    ("git symbolic-ref -m reason HEAD",
+     "`-m <reason>` is this subcommand's one value-taking SHORT option, so its value "
+     "must not be counted as a second operand"),
+    ("git symbolic-ref --no-delete refs/heads/alias",
+     "last-wins negation: measured, it PRINTED the ref and deleted nothing"),
+])
+def test_the_symbolic_ref_READ_form_is_not_refused(parallel_clone, command, why):
+    """🔴 THE READ AND WRITE FORMS DIFFER BY ONE OPERAND, WHICH IS THE ONLY REASON
+    THIS SUBCOMMAND NEEDS AN EXEMPTION.
+
+    Measured on git 2.55.0: `git symbolic-ref HEAD` prints `refs/heads/<branch>` and
+    leaves HEAD, the index and the worktree byte-identical, while
+    `git symbolic-ref HEAD refs/heads/<other>` rewrote `.git/HEAD`. Refusing the
+    one-operand form would refuse the ordinary way to ask which branch is checked
+    out — a false positive, the direction this guard forbids itself — so the
+    exemption COUNTS operands with flags dropped, and excludes `--delete` by name
+    because that is a write with one operand.
+
+    ⚠ NOT REGRESSION COVERAGE: green at `0aa1ba2` vacuously, because `symbolic-ref`
+    was not refused there at all. These pin the exemption that lands with the
+    refusal; the pair is what makes the refusal usable.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) is None, f"{why}: {command}"
+
+
+@pytest.mark.parametrize("command", [
+    "git clean -fd",
+    "git clean -fdx",
+    "git clean -f",
+    # 🔴 `-e<pattern>` ATTACHED, AND THE PATTERN STARTS WITH AN `n`. The cluster
+    # scan in `_is_clean_dry_run` stops at an `e` for exactly this: reading the
+    # pattern's letters as flags would call a real delete a dry run. It is the only
+    # case that reaches that `break`.
+    "git clean -fenfoo",
+    "git rm seed.txt",
+    "git rm --cached seed.txt",
+    "git mv seed.txt renamed.txt",
+])
+def test_the_three_newly_refused_WRITERS_are_refused(parallel_clone, command):
+    """🔴 "EVERYTHING ELSE IS A READ" WAS FALSE, AND EVERY ROW ALLOWED AT `ffa0eca`.
+
+    `git clean -fd` deletes untracked files out of a tree a peer is standing in;
+    `git rm` and `git mv` delete or rename tracked files AND stage it. None was in
+    the ledger, and the complement of the ledger was being described as reads.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) == "deny", command
+
+
+@pytest.mark.parametrize("command,expected", [
+    # ---- DRY RUNS: reads, so they must be allowed. Every row measured on git
+    # 2.55.0 (rc 0, repository bit-for-bit unchanged) before being asserted here.
+    ("git clean -n", None),
+    ("git clean --dry-run", None),
+    ("git clean -nd", None),
+    ("git clean -dn", None),
+    ("git clean -n -d", None),
+    ("git clean -xn", None),
+    ("git rm -n seed.txt", None),
+    ("git rm --dry-run seed.txt", None),
+    ("git rm -rn seed.txt", None),
+    ("git rm -nr seed.txt", None),
+    ("git rm -qn seed.txt", None),
+    ("git mv -n seed.txt other.txt", None),
+    ("git mv --dry-run seed.txt other.txt", None),
+    ("git mv -nv seed.txt other.txt", None),
+    ("git mv -vn seed.txt other.txt", None),
+    ("git mv -kn seed.txt other.txt", None),
+    # ---- 🔴 THE POSITIVE CONTROLS, IN THE SAME PARAMETRISED RUN. An exemption
+    # that widened to the real spelling is the failure mode here, and a test file
+    # that only asserts allows cannot see it.
+    ("git clean -fd", "deny"),
+    ("git clean -f", "deny"),
+    ("git clean -fenfoo", "deny"),
+    ("git rm seed.txt", "deny"),
+    ("git rm -r seed.txt", "deny"),
+    ("git rm -f seed.txt", "deny"),
+    ("git mv seed.txt other.txt", "deny"),
+    ("git mv -f seed.txt other.txt", "deny"),
+    ("git mv -kv seed.txt other.txt", "deny"),
+    # ---- 🔴 THE THREE THAT DELETED REAL FILES, or would have. Each was ALLOWED at
+    # `0aa1ba2` by the first version of this exemption, and the first two were
+    # measured destroying files in an armed clone.
+    ("git clean -f -e -n", "deny"),      # `-n` is --exclude's VALUE; deleted junk
+    ("git clean -f --exclude -n", "deny"),       # the long spelling of the same
+    ("git rm -f -- -n", "deny"),         # `-n` is a PATHSPEC after `--`; deleted it
+    ("git rm -f -- -n seed.txt", "deny"),
+    ("git mv -f -- -n other.txt", "deny"),
+    # …and the one a SURVIVING MUTANT pointed at: deleting the long-option guard
+    # flipped this to ALLOW while all 256 tests stayed green.
+    ("git rm --ignore-unmatch seed.txt", "deny"),
+    ("git rm --cached --ignore-unmatch seed.txt", "deny"),
+    # The attached spellings must keep working — `-fenfoo` was measured to really
+    # delete, and `--exclude=n` is the long twin.
+    ("git clean -f --exclude=n", "deny"),
+    ("git clean -fenfoo", "deny"),
+    # 🔴 THE BOUNDARY ROW A SURVIVING MUTANT ASKED FOR. `position == len(word) - 1`
+    # → `<=` SURVIVED with the whole suite green: `-fenfoo` denies under that mutant
+    # too, so it is not a control for the boundary at all. What distinguishes them is
+    # an ATTACHED value followed by a REAL `-n`: today `-efoo` consumes nothing
+    # further and the `-n` is the dry run, so this is ALLOW; under the mutant the
+    # `-n` is eaten as `-e`'s value and a genuine dry run is REFUSED.
+    ("git clean -f -efoo -n", None),
+    ("git clean -f --exclude=foo -n", None),
+    # 🔴 PREFIX MATCHING, BOTH DIRECTIONS — git resolves an unambiguous abbreviation
+    # and the abbreviation eats its value identically. `--exc` ate the `-n` and the
+    # clean really deleted; `--dry` and `--d` are real dry runs that were REFUSED.
+    ("git clean -f --exc -n", "deny"),
+    ("git clean -f --ex -n", "deny"),
+    ("git clean -f --e -n", "deny"),
+    ("git clean --dry", None),
+    ("git clean --d", None),
+    ("git rm --dry seed.txt", None),
+    # 🔴 LAST-WINS NEGATION. The old walk returned on the first `n` and never read the
+    # rest, so both of these deleted real files while being allowed.
+    ("git clean -n --no-dry-run -f", "deny"),
+    ("git clean -n --no-dry -f", "deny"),
+    ("git rm -n --no-dry-run seed.txt", "deny"),
+    ("git mv -n --no-dry-run seed.txt other.txt", "deny"),
+    # …and the other order, which really is a dry run.
+    ("git clean --no-dry-run -n", None),
+    ("git rm --no-dry-run -n seed.txt", None),
+    # ⚠ THE AMBIGUOUS-PREFIX WIDENING, AND THIS ROW PINS A DECISION RATHER THAN A
+    # SAFETY PROPERTY — say so, because it looks like the latter. `--pathspec-f`
+    # prefixes BOTH `--pathspec-from-file` (takes a value) and `--pathspec-file-nul`
+    # (does not), so `_resolve_long` cannot resolve it; it reports value-taking
+    # because ANY candidate does, which swallows the `-n` and REFUSES. 🔴 git itself
+    # answers this command `rc 129 ambiguous option` and writes NOTHING (measured), so
+    # neither verdict can prevent or permit a write — the row exists so the widening is
+    # a choice somebody made on purpose.
+    # ⚠ AND IT IS NOT THE ONLY SHAPE THAT REACHES THAT BRANCH, as an earlier comment
+    # here claimed — nor is the correction's own count right, which is why there is no
+    # count here now. The widening test — its name is one token, so it is written on a
+    # line of its own rather than wrapped, because an identifier split across two
+    # comment lines is unsearchable for a reader and unparseable for the existence sweep:
+    # `test_the_AMBIGUOUS_PREFIX_WIDENING_HOLDS_FOR_EVERY_TOKEN_THAT_REACHES_IT`
+    # enumerates them from the tables and PRINTS the tally; read it there. Every one of
+    # them is ambiguous to git, which writes nothing, so the conclusion holds however
+    # many there turn out to be — the point of asserting the invariant, not the list.
+    ("git rm --pathspec-f -n seed.txt", "deny"),
+    ("git rm --p -n seed.txt", "deny"),
+    ("git rm --pathspec- -n seed.txt", "deny"),
+    # ---- 🔴 THE FIVE ROWS A DIFFERENTIAL FUZZ AGAINST REAL GIT FOUND INSIDE THE
+    # OPTION MODEL ITSELF, each measured with the verdict taken BEFORE the command.
+    # Two errors in one conditional: `partition` discarded the `=` separator, so
+    # `--exclude=` looked like "no value" and the NEXT word was eaten; and `negated`
+    # was computed and never consulted, so the `--no-` form of a value-taking option
+    # ate one too. The swallowed word is read as neither flag nor operand, so a
+    # following `--no-dry-run` went invisible and the exemption stood while git deleted.
+    ("git rm -n --no-pathspec-from-file --no-dry-run seed.txt", "deny"),
+    ("git rm -n --pathspec-from-file= --no-dry-run seed.txt", "deny"),
+    ("git clean -n --exclude= --no-dry-run -f -d", "deny"),
+    # …and the same bug REFUSING two real dry runs — the direction this file forbids
+    # itself. Measured: `Would remove` / `rm '…'`, and nothing changed.
+    ("git clean --exclude= -n", None),
+    ("git rm --no-pathspec-from-file -n seed.txt", None),
+    # ---- 🔴 AND THE CONTROLS THAT MAKE THE *LEDGER KEY* CHECK REACHABLE, which is
+    # the half of `_is_dry_run` a dry-run-spelling test cannot exercise. `-n` does
+    # NOT mean dry-run everywhere: on `commit` it is `--no-verify`, which commits,
+    # and on `cherry-pick` it is `--no-commit`, which was MEASURED to stage the
+    # picked file. `git merge --no-commit` staged a merge and moved HEAD on a
+    # fast-forward. A predicate that answered on the FLAG rather than on the
+    # subcommand would allow all four.
+    ("git commit -n -m x", "deny"),
+    ("git commit --no-verify -m x", "deny"),
+    ("git cherry-pick -n deadbeef", "deny"),
+    ("git merge --no-commit other-branch", "deny"),
+    ("git add -n seed.txt", "deny"),
+])
+def test_the_DRY_RUN_exemption_is_ONE_PREDICATE_over_THREE_subcommands(
+        parallel_clone, command, expected):
+    """🔴 IT SHIPPED `clean`-ONLY AND THAT WAS A FALSE POSITIVE A REVIEW MEASURED.
+
+    At `d6eafdb` — this branch's own head before the fix — `git clean -n` was
+    allowed while `git rm -n`, `git rm --dry-run`, `git mv -n` and
+    `git mv --dry-run` were **REFUSED**, with the real spellings denying in the same
+    run. One predicate open-coded at one of three sites is wrong at the other two,
+    and `git rm -n` is exactly what somebody types to see what a `git rm` would do
+    BEFORE doing it: refusing the rehearsal alongside the dangerous spelling is how
+    a guard teaches that it is noise, which this file's own header calls the worse
+    failure. Now `_is_dry_run`, consulted for every subcommand.
+
+    🔴 THE `rm`/`mv` ROWS ARE REAL REGRESSION COVERAGE, UNLIKE THE `clean` ONES.
+    They were measured **deny** at `d6eafdb` and allow here. The `clean` rows were
+    green at `ffa0eca` *vacuously* — `clean` was not refused there at all — and are
+    green at `d6eafdb` for the right reason, so they are ⚠ invariant guards that the
+    consolidation did not lose what it absorbed.
+
+    🔴 AND THE CLUSTER ROWS ARE WHY THIS IS A MEASUREMENT RATHER THAN A SYMMETRY
+    ARGUMENT. A brief asserted `git rm -rn` "is not a thing". It is, on git 2.55.0,
+    and it is a dry run — as are `-nr`, `-qn`, `-nv`, `-vn` and `-kn`. Every spelling
+    here is resolved by the ONE option model in `_OPTION_GRAMMAR`: bundles, unambiguous
+    PREFIXES (`--dry`, `--d`), a value-taking flag's attached or spaced value, the `--`
+    stop, and last-wins negation. ⚠ THE EARLIER REASONING THIS DOCSTRING CARRIED — that
+    a cluster is safe because the scan "stops at an `e`" — IS RETRACTED: it was true for
+    the attached spelling and false for the spaced one, and `git clean -f -e -n` deleted
+    a file while being allowed.
+
+    ⚠ `git add -n` IS A REAL DRY RUN (measured: rc 0, repository unchanged) AND IS
+    ASSERTED **deny** HERE ON PURPOSE — an operator decision about scope creep, with
+    `apply --check` the other one of its kind. 🔴 `commit --dry-run` IS NOT ONE OF
+    THOSE AND MUST NOT BE FILED WITH THEM: it writes a tree object. 🔴 IF THE `add -n`
+    DECISION CHANGES, THIS ROW IS WHERE IT CHANGES, together with `_DRY_RUN_SUBCOMMANDS`,
+    the hook docstring's read-list bullet and the doc's exemption paragraph — four
+    places, and a previous round moved two of them and called it done. It is NOT a
+    claim that `git add -n` writes.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) == expected, command
+
+
+#: Every member of `_REFUSED`, so the help test below cannot cover a subset of the
+#: ledger and read as covering it. Derived from the hook's own literal rather than
+#: retyped: a subcommand added there with no help case is the gap this closes.
+_REFUSED_SUBCOMMANDS = sorted(_refused_from_hook())
+
+
+@pytest.mark.parametrize("subcommand", _REFUSED_SUBCOMMANDS)
+@pytest.mark.parametrize("flag", ["-h", "--help"])
+def test_HELP_is_a_READ_for_EVERY_refused_subcommand(parallel_clone, subcommand, flag):
+    """🔴 REFUSING `--help` IS THE PUREST FALSE POSITIVE THIS GUARD CAN EMIT, AND IT
+    WAS LIVE FOR TWO ROUNDS WHILE THE DOCSTRING CLAIMED OTHERWISE.
+
+    The hook's `WHAT IS DELIBERATELY NOT REFUSED` list named `--help` as a read; the
+    code exempted it for `stash` ALONE. So `git rm -h`, `git mv -h`, `git clean -h`,
+    `git commit --help` and `git rebase --help` were all **deny** — one predicate at
+    one of two sites, wrong at the other. A replay of this project's real Bash
+    history found TWO commands that are exactly this shape, so it had already fired
+    falsely rather than merely being able to.
+
+    🔴 MEASURED, NOT ASSUMED FROM "git uses parse-options": on git 2.55.0 every one
+    member of the ledger answers `-h` with rc 129, `usage:` on the first line, and
+    the
+    repository bit-for-bit unchanged; `--help` execs the manual at rc 0, also
+    unchanged. The question was asked because `-h` is NOT universally help in git —
+    `git grep -h` means `--no-filename` — and the answer is that no refused
+    subcommand is such a case, so none needs a `--help`-only exception.
+
+    🔴 PARAMETRISED OVER THE LEDGER ITSELF — `_refused_from_hook()`, not a retyped
+    list — so a subcommand added to `_REFUSED` with no help case is impossible.
+
+    Red/green: **27 of these 28 rows were `deny` at `336aebf`**. The single green one
+    is `[--help-stash]`, which is the whole point: that was the ONE site the exemption
+    existed at. `git stash -h` was refused there too, which is why even `stash` is
+    only half-green.
+    """
+    clone = parallel_clone[0]
+    command = f"git {subcommand} {flag}"
+    assert _decision(_run_hook(command, clone)) is None, command
+
+
+@pytest.mark.parametrize("command,expected,why", [
+    # 🔴 HELP IS READ FROM THE FIRST WORD AFTER THE SUBCOMMAND ONLY, and these two
+    # rows are why. MEASURED with a positive control in the same run (`git commit
+    # -m X` committed): `git commit -m -h` **creates a commit** with subject `-h`,
+    # because the `-h` is the MESSAGE. A tail scan would allow a real base-clone
+    # commit — the fail-open direction — so the exemption reads `rest[0]`, which no
+    # flag's value can occupy.
+    ("git commit -m -h", "deny", "the `-h` is the commit MESSAGE and it COMMITS"),
+    ("git commit --message=-h", "deny", "the attached spelling of the same thing"),
+    # ⚠ THE COST, STATED RATHER THAN HIDDEN: these two ARE help requests (rc 129,
+    # `usage:`, repository unchanged — measured) and stay refused, because their `-h`
+    # is not first. Residual FALSE POSITIVES, kept because the alternative is the
+    # fail-open above and because no real spelling puts a flag before `-h`.
+    ("git clean -i -h", "deny", "a help request whose `-h` is not first"),
+    ("git clean -fh", "deny", "a CLUSTER containing `h` — also help, also refused: "
+                              "`h` meaning help inside a cluster was not measured "
+                              "for every refused subcommand, and the cheap "
+                              "direction for an "
+                              "unmeasured widening is not to make it"),
+])
+def test_the_HELP_exemption_does_not_read_a_FLAGS_VALUE(
+        parallel_clone, command, expected, why):
+    """The fail-open the obvious implementation of the help fix would have opened.
+
+    ⚠ The last two rows assert a REFUSAL that is a false positive, deliberately. They
+    are not a claim that those commands write — they pin the boundary this exemption
+    chose, so moving it is a decision somebody has to make here on purpose.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) == expected, f"{why}: {command}"
+
+
+#: The PR's payload, ENUMERATED. Not a glob and not `grep -r`: the local `grep` is a
+#: ugrep wrapper that honours `.gitignore`, so a `-r` zero is a claim about grep's view.
+_PROSE_PAYLOAD = (
+    ".claude/hooks/base-clone-write-guard.py",
+    "tests/test_base_clone_write_guard.py",
+    "claudedocs/working-in-parallel.md",
+)
+
+# PROSE-SWEEP SELF-EXCLUSION START — everything between this marker and the END marker
+# is the sweep's own patterns, controls and reasoning, so it necessarily contains the
+# shapes it looks for. The span is cut from the scanned text, the markers are asserted to
+# exist, and a planted claim is matched AFTER the cut to prove the cut did not blind it.
+#: 🔴 (pattern, what it catches, a CONTROL STRING IT MUST MATCH). The controls are
+#: asserted on every run: a sweep whose pattern cannot match its own control is wired to
+#: nothing, and its zero is a fact about the sweep. Three instruments in this PR reported
+#: a reassuring zero while blind — a marker-grep over `git merge-tree`, a `" 1 passed"`
+#: substring, and a case-SENSITIVE sweep for a word that was written in capitals.
+_PROSE_SWEEPS = (
+    (r"(?:\b(?:thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\b"
+     r"|\b1[0-9]\b)(?:(?!_REFUSED|refused|ledger|option tables).){0,90}?"
+     r"(?:_REFUSED|refused subcommand|refused set|the ledger|option tables)"
+     r"|(?:_REFUSED|refused subcommand|refused set|the ledger|option tables)"
+     r"(?:(?!_REFUSED).){0,90}?(?:\b(?:thirteen|fourteen|fifteen|sixteen|seventeen"
+     r"|eighteen|nineteen|twenty)\b|\b1[0-9]\b)",
+     "a COUNT of a ledger the tests already derive",
+     "measured for all fourteen members of `_REFUSED`"),
+    (r"_DRY_RUN_(?:SHORT_)?VALUE_FLAGS",
+     "a pointer to a symbol that no longer exists",
+     "see `_DRY_RUN_VALUE_FLAGS` for the measurement"),
+    (r"own letters are never read as flags",
+     "the retracted `-e` stop reasoning, true only for the attached spelling",
+     "so the pattern's own letters are never read as flags"),
+    (r"\b60 fail-opens\b",
+     "a divergence count from a draft that is not in the tree, so nobody can re-derive it",
+     "it reported 60 fail-opens including `git clean -f`"),
+    # ⚠ NO OPERATOR IDENTIFIER IN EITHER THE PATTERN OR THE CONTROL, AND THAT IS A
+    # DELIBERATE NARROWING RATHER THAN AN OVERSIGHT. The first draft matched the
+    # operator's username and used their real checkout path as the control — committing
+    # a host path into a PUBLIC repository to test for host paths. `home/` and `/Users/`
+    # give the reach without naming anybody, and the identity class is `leakscan.py`'s
+    # own `operator-identity` rule, which is exempted from its own scan by name for
+    # exactly this reason: a scanner has to contain the strings it looks for.
+    (r"(?:home/|/Users/|\b10\.\d+\.\d+\.\d+|\b192\.168\.|\b172\.(?:1[6-9]|2\d|3[01])\.)",
+     "an absolute home path or a private IP — this repository is PUBLIC",
+     "a path such as home/<someone>/checkout"),
+)
+
+
+def test_NO_LIVE_PROSE_COUNT_OR_DEAD_POINTER_SURVIVES_IN_THE_PAYLOAD():
+    """🔴 THE MECHANICAL CLOSURE FOR THE DEFECT EVERY FIX ROUND OF THIS PR REPRODUCED:
+    a count or a pointer stated in PROSE beside a thing that changes.
+
+    Four rounds fixed the reported instance and left the shape alive elsewhere. The last
+    one reported "the count is gone from all eight sites" on the strength of a
+    case-SENSITIVE grep, and the survivor was `MEASURED FOR ALL FOURTEEN` — uppercase,
+    seven lines above a comment saying no count was there. So the sweep is no longer
+    something somebody runs: it runs here, case-INSENSITIVELY, over an ENUMERATED file
+    list, with each pattern's control asserted to HIT.
+
+    ⚠ IT IS SCOPED TO LIVE CLAIMS, NOT TO HISTORY. The ledger pattern only fires when a
+    number sits within ninety characters of a reference to the refused ledger or the
+    option tables; the mechanism narratives this file is full of — what was measured,
+    what was retracted — keep their numbers, because a claim about the past cannot go
+    stale. That is why the history was de-numbered where it sat next to a ledger
+    instead: an absolute rule needs no exemption list, and an exemption list is how a
+    guard becomes walkable.
+    """
+    # ⚠ BUILT FROM A TAG RATHER THAN WRITTEN OUT: a literal spelling the whole marker
+    # would be a second occurrence of it, and the first draft's `index()` found that
+    # literal instead of the real END marker — cutting the wrong span and leaving the
+    # markers behind. The assertion below caught it.
+    tag = "PROSE-SWEEP SELF-" + "EXCLUSION"
+    start, end = f"# {tag} START", f"# {tag} END"
+    scanned: dict[str, str] = {}
+    for name in _PROSE_PAYLOAD:
+        raw = (ROOT / name).read_text(encoding="utf-8")
+        if name == Path(__file__).name or name.endswith(Path(__file__).name):
+            assert start in raw and end in raw, (
+                "the self-exclusion markers are gone; without them this sweep matches "
+                "its own patterns and says nothing about the rest of the file"
+            )
+            raw = raw[: raw.index(start)] + raw[raw.index(end) + len(end):]
+            assert start not in raw and end not in raw, "the cut left a marker behind"
+        # Normalised: a claim wrapped across comment lines is invisible per-line, which
+        # is how the hook's own top-level summary hid for two rounds.
+        flat = re.sub(r"\n\s*(?:#:|#|\*|>)?\s*", " ", raw)
+        scanned[name] = re.sub(r"[ \t]+", " ", flat)
+
+    hits: list[str] = []
+    for pattern, what, control in _PROSE_SWEEPS:
+        compiled = re.compile(pattern, re.I | re.S)
+        # CONTROL 1: the pattern must match its own control string.
+        assert compiled.search(control), (
+            f"the sweep for {what!r} cannot match its own control — it is wired to "
+            f"nothing and a zero from it would mean nothing"
+        )
+        # CONTROL 2: and it must still reach the SCANNED text after the self-cut. A
+        # cut that removed too much would leave every pattern matching nothing, which
+        # is the same reassuring zero one layer along.
+        for name, flat in scanned.items():
+            assert compiled.search(flat + " " + control), (
+                f"the sweep for {what!r} cannot see a planted claim in {name} — the "
+                f"self-exclusion cut too much"
+            )
+            for match in compiled.finditer(flat):
+                hits.append(f"{name}: {what}: …{match.group(0)[:110]}…")
+    assert not hits, (
+        f"{len(hits)} live prose claim(s) that a test should own:\n" + "\n".join(hits)
+    )
+# PROSE-SWEEP SELF-EXCLUSION END
+
+
+def _test_functions_defined_under_tests() -> frozenset[str]:
+    """Every `test_*` function name defined anywhere under `tests/`, from the AST.
+
+    Parsed rather than grepped: a name in a docstring or an assertion message is not a
+    definition, and only the grammar can tell those apart. A file that fails to parse
+    raises here rather than being skipped — a skip would silently shrink this set, and a
+    shrunken set turns a live pointer into a false positive.
+    """
+    names: set[str] = set()
+    for path in sorted((ROOT / "tests").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                    and node.name.startswith("test_"):
+                names.add(node.name)
+    return frozenset(names)
+
+
+def _test_module_stems() -> frozenset[str]:
+    """`test_*` FILE stems under `tests/` — names that are modules, not functions.
+
+    Derived rather than listed: a comment citing `tests/test_base_clone_write_guard.py`
+    mentions a `test_`-prefixed token that no function defines, and hardcoding that one
+    exclusion would leave a permanent false positive the moment any other test module is
+    cited. A gate with a standing false positive is one everybody learns to ignore.
+    """
+    return frozenset(path.stem for path in (ROOT / "tests").rglob("test_*.py"))
+
+
+#: Tests this payload cites as HISTORY — a record that they were deleted or replaced —
+#: so naming them is correct and their absence is the point. A DECLARED ledger rather
+#: than a lexical "is this sentence about the past" guess, which would be a spelled
+#: guard: the existence sweep asserts each of these is still ABSENT, so if one is ever
+#: re-created the sweep says so instead of quietly hiding a live pointer again.
+_TESTS_CITED_AS_HISTORY = frozenset({
+    # Replaced by the parametrised crowding case when the probe cap was removed; both
+    # went vacuous with the cap, which is what the citing docstring records.
+    "test_junk_candidates",
+    "test_junk_ADDITIVE_candidates",
+})
+
+
+def test_EVERY_TEST_A_PAYLOAD_COMMENT_NAMES_STILL_EXISTS():
+    """🔴 THE HALF OF THE DEAD-POINTER SHAPE THAT **IS** MECHANISABLE, AND I WRONGLY
+    DECLARED IT UNCLOSABLE ALONG WITH THE HALF THAT IS NOT.
+
+    Two questions were collapsed into one "unclosable" limit, and only one of them
+    deserved it:
+
+      * "does the named test PRINT a tally?" — genuinely unclosable here. Measured: a
+        detector for it fired on eight sites, seven legitimate (`git worktree list`
+        "reports REGISTRATIONS"; a ledger whose members you "read there" in the
+        ASSERTION; `git symbolic-ref HEAD` "prints the ref"), and narrowing it until it
+        went quiet left it matching only the instance already fixed. Deleted.
+      * "does the named test EXIST?" — a plain AST lookup with **no false-positive
+        class at all**. This is that, and it is the half that then failed: the F3 fix
+        replaced `…IS_A_REAL_GIT_OPTION` and left the old name in the hook's comment,
+        pointing at nothing.
+
+    A limit stated wider than reality is the same defect as a claim stated wider than
+    reality. So the declared limit is now the print half only.
+    """
+    defined = _test_functions_defined_under_tests()
+    modules = _test_module_stems()
+    # CONTROLS, both asserted every run: a name known PRESENT resolves, a name known
+    # ABSENT does not. Without the pair, an empty `defined` would flag every pointer and
+    # a universe-sized one would flag none.
+    # ⚠ THE ABSENT CONTROL IS BUILT FROM PARTS so the full token never appears as a
+    # literal in this file — otherwise the sweep below finds its own control and reports
+    # it, which is what the first run did.
+    absent = "test_" + "a_name_no_test_will_ever_define"
+    assert "test_a_commit_in_the_base_clone_is_refused" in defined, (
+        "a test known to exist is missing from the parse — it is wired to nothing"
+    )
+    assert absent not in defined, (
+        "a name known not to exist resolved — the parse is not discriminating"
+    )
+    assert len(defined) >= 500, f"implausibly few test functions parsed: {len(defined)}"
+    assert "test_base_clone_write_guard" in modules, "the module-stem derivation is wrong"
+    # …and the history ledger must stay history: a re-created test here would mean the
+    # citing docstring is now describing something live.
+    for historic in sorted(_TESTS_CITED_AS_HISTORY):
+        assert historic not in defined, (
+            f"`{historic}` is cited as a DELETED test but now exists — drop it from "
+            f"`_TESTS_CITED_AS_HISTORY` and re-read the docstring that cites it"
+        )
+
+    dead: list[str] = []
+    for name in _PROSE_PAYLOAD:
+        raw = (ROOT / name).read_text(encoding="utf-8")
+        # ⚠ NORMALISED FIRST: a long name wrapped across two comment lines was otherwise
+        # captured TRUNCATED and reported as missing — a false positive manufactured by
+        # the reader, which is how a gate earns being ignored.
+        text = re.sub(r"[ \t]+", " ", re.sub(r"\n\s*(?:#:|#|\*|>)?\s*", " ", raw))
+        for cited in sorted(set(re.findall(r"\btest_[A-Za-z0-9_]+", text))):
+            if cited in modules or cited in defined or cited in _TESTS_CITED_AS_HISTORY:
+                continue
+            dead.append(f"{name} names `{cited}`, which no test under tests/ defines")
+    assert not dead, (
+        f"{len(dead)} comment(s) pointing at a test that does not exist:\n"
+        + "\n".join(dead)
+    )
+    print(f"\nexistence sweep: {len(defined)} test functions defined, "
+          f"{len(modules)} test modules, 0 dead pointers in {len(_PROSE_PAYLOAD)} files")
+
+
+def test_the_CI_FLOOR_PROSE_CANNOT_DISAGREE_WITH_THE_LITERAL():
+    """🔴 THE SAME COMMENT HAS SHIPPED A WRONG FLOOR NUMBER THREE ROUNDS RUNNING, EACH
+    TIME IN THE PARAGRAPH WRITTEN TO CORRECT THE LAST ONE.
+
+    Round 2's heading said 2565 against a literal of 2566; the paragraph added to name
+    that said "2588 -> 2607" against a literal of 2609. The defect is structural, not
+    careless: a number written in PROSE beside a number that is COMPUTED will drift, and
+    only the computed one is checked by anything. `claude/RULES.md` prescribes a
+    deterministic fix over a prose one, and `RULES.md`'s own precedent is a test that
+    owns the constants so nobody restates them.
+
+    So this parses the step: the arithmetic line's result, and every `A -> B` transition
+    in the floor commentary, must agree with the `FLOOR` literal the job actually uses.
+    ⚠ IT PINS AGREEMENT, NOT THE VALUE — raising the floor needs no edit here, which is
+    what keeps it from becoming one more number to maintain.
+    """
+    text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    literal = re.search(r"^\s*FLOOR = (\d+)\s*$", text, re.M)
+    assert literal, "no `FLOOR = <n>` literal found — this parse is wrong, not the file"
+    floor = int(literal.group(1))
+    block = text[: literal.start()]
+
+    # The derivation the comment prescribes: `m - min(50, max(1, m/20)) = <floor>`.
+    arithmetic = re.findall(r"min\(50, max\(1, \d+/20\)\) = (\d+)", block)
+    assert arithmetic, "the floor's arithmetic line is gone — it is the only derivation"
+    assert int(arithmetic[-1]) == floor, (
+        f"the floor comment's arithmetic computes {arithmetic[-1]} but the job uses "
+        f"{floor}"
+    )
+    # …and no transition arrow may claim a different destination than the live literal.
+    transitions = re.findall(r"#\s*⚠?\s*(\d{4}) -> (\d{4})", block)
+    assert transitions, "no floor transitions found — the parse is wrong, not the file"
+    assert int(transitions[-1][1]) == floor, (
+        f"the last floor transition says `-> {transitions[-1][1]}` while the job uses "
+        f"{floor}; a heading restating the number is what drifted three rounds running"
+    )
+    # POSITIVE CONTROL: the patterns must be able to see a disagreement at all.
+    assert re.search(r"min\(50, max\(1, \d+/20\)\) = (\d+)",
+                     "`9999 - min(50, max(1, 9999/20)) = 1234`"), "pattern wired to nothing"
+
+
+def test_the_hook_namespace_loads_and_is_not_the_live_one():
+    """POSITIVE CONTROL for the loader the derived checks below rest on."""
+    namespace = _hook_namespace()
+    assert callable(namespace["_resolve_long"])
+    assert "clean" in namespace["_OPTION_GRAMMAR"]
+    assert namespace["__name__"] != "__main__", (
+        "the cut must not leave the module looking like the script entry point"
+    )
+
+
+def test_NO_TOKENS_VALUE_TAKING_VERDICT_DIFFERS_FROM_THE_INSTALLED_GITS():
+    """🔴 THE THING THAT ACTUALLY MATTERS, ASSERTED INSTEAD OF A VERSION-DEPENDENT PREMISE.
+
+    This test used to assert the SUBSET PREMISE — every name in `_OPTION_GRAMMAR` is a
+    real option of that subcommand. That premise is true on git 2.55 and **false on
+    2.50**, where `git merge --compact-summary` does not exist: measured FAIL on 2.49.0
+    and 2.50.1, PASS from 2.51.0 up. 🔴 AND IT WAS A FALSE FAILURE — the hook is
+    unaffected, because a phantom name in `long_bool` can never make a token
+    value-taking, so across every prefix token of `merge`'s names the verdict differed in
+    ZERO cases even on 2.50. The `tests` job runs `ubuntu-latest` with python pinned and
+    **git not pinned at all**, so that gate was a function of the runner image; and
+    `claude/RULES.md` is explicit that a permanently-red gate is worse than none, because
+    it trains everyone to click through.
+
+    So the assertion is the version-robust one: **for every token, if the installed git
+    resolves it to exactly one option, the hook's value-taking verdict must equal git's
+    for that option.** That is what the swallow-the-next-word decision depends on. A
+    token git finds AMBIGUOUS is unconstrained — git refuses it and writes nothing — and
+    a token git does not know at all is unconstrained for the same reason.
+
+    🔴 MEASURED ON TWO REAL BINARIES, NOT ARGUED: **git 2.44.2 PASS · 2.55.0 PASS**, run
+    from two nixpkgs pins on one machine. 2.44.2 is the useful end — it has no
+    `--compact-summary` at all (`git merge -h | grep -c` is 0 there, 2 on 2.55.0), which
+    is exactly the condition that made the old premise red, and this invariant does not
+    notice.
+
+    ⚠ A SIMULATION OF AN OLDER OPTION SET WAS WRITTEN FIRST AND IS DELETED, which is
+    worth recording because it was the same defect one layer along: it asserted that the
+    installed git HAS `--compact-summary` so it could remove it, and therefore failed on
+    git 2.44.2 — a new gate that is a function of the runner image, in the fix for a gate
+    that was one. The real two-point matrix replaces it; CI keeps only the invariant,
+    which holds on both.
+
+    ⚠ WHAT THIS STILL CANNOT SEE, stated rather than implied: a value-taking option that
+    a FUTURE git adds and the tables do not name resolves to one git option with
+    `takes=True` while the hook says False — so this test WOULD catch it, which is the
+    narrow fail-open `_OPTION_GRAMMAR`'s version limit names. What it cannot catch is a
+    git that changes an option's arity without changing its name in `-h`.
+    """
+    namespace = _hook_namespace()
+    grammar, resolve = namespace["_OPTION_GRAMMAR"], namespace["_resolve_long"]
+    differences: list[str] = []
+    compared = 0
+    for subcommand, spec in sorted(grammar.items()):
+        real = _git_long_options(subcommand)
+        assert real, f"no options parsed for `git {subcommand} -h`"
+        hook_names = set(spec["long_value"]) | set(spec["long_bool"])
+        tokens = {name[: cut] for name in hook_names
+                  for cut in range(3, len(name) + 1)}
+        tokens |= {f"--{name}"[: cut] for name in real
+                   for cut in range(3, len(name) + 3)}
+        for token in sorted(tokens):
+            bare = token[2:]
+            git_matches = [n for n in real if n.startswith(bare)]
+            if bare in real:
+                git_matches = [bare]
+            if len(git_matches) != 1:
+                continue                      # ambiguous or unknown to git: it refuses
+            compared += 1
+            _, hook_takes = resolve(token, spec)
+            git_takes = real[git_matches[0]]
+            if hook_takes != git_takes:
+                differences.append(
+                    f"`git {subcommand} {token}` -> git resolves "
+                    f"`--{git_matches[0]}` (takes a value: {git_takes}) but the hook "
+                    f"says takes a value: {hook_takes}"
+                )
+    # POSITIVE CONTROL: the comparison must actually have compared something, and a
+    # known value-taking option must come back as one from BOTH sides.
+    assert compared >= 50, f"only {compared} token(s) compared — this proved little"
+    assert _git_long_options("clean").get("exclude") is True, (
+        "`git clean --exclude` did not parse as value-taking — the `-h` reader is wrong"
+    )
+    assert not differences, (
+        f"{len(differences)} token(s) where the hook and the installed git disagree "
+        f"about consuming a value ({compared} compared):\n" + "\n".join(differences[:15])
+    )
+
+
+def test_the_AMBIGUOUS_PREFIX_WIDENING_HOLDS_FOR_EVERY_TOKEN_THAT_REACHES_IT():
+    """🔴 THE INVARIANT, DERIVED — REPLACING A PROSE ENUMERATION THAT WENT STALE TWICE.
+
+    The docstring used to count the tokens reaching the widening branch: first "exactly
+    one shape", corrected to "ten", and the correcting commit made it wrong by nine
+    again by adding a second subcommand to the grammar. A count beside a table that
+    grows is the defect this whole file keeps re-finding, so the count is gone and this
+    is what replaces it:
+
+      for every token this branch answers `(None, value-taking)` for, the hook's own
+      table matches it with AT LEAST TWO names.
+
+    Combined with the subset premise above — every table name is a real git option —
+    that is the whole safety argument: two hook names sharing the prefix means two git
+    names do, so git refuses the abbreviation as ambiguous and writes nothing, whichever
+    verdict the guard gives. An invariant does not go stale when a table grows.
+
+    The numbers are REPORTED, never asserted, for exactly the same reason.
+    """
+    namespace = _hook_namespace()
+    grammar, resolve = namespace["_OPTION_GRAMMAR"], namespace["_resolve_long"]
+    # ⚠ A SET PER SUBCOMMAND, NOT A LIST: a token that prefixes several names is
+    # generated once per name, and appending it each time inflated the first reported
+    # figure to 46 — the same restate-a-count defect, one layer in, in the test written
+    # to retire it. The number is only reported, but a wrong report is still a claim.
+    reached: dict[str, set[str]] = {}
+    for subcommand, spec in sorted(grammar.items()):
+        names = set(spec["long_value"]) | set(spec["long_bool"])
+        for name in sorted(names):
+            for cut in range(3, len(name) + 1):          # `--` plus one char, upward
+                token = name[:cut]
+                canonical, takes_value = resolve(token, spec)
+                if canonical is None and takes_value:
+                    matches = sorted(n for n in names if n.startswith(token))
+                    assert len(matches) >= 2, (
+                        f"`git {subcommand} {token}` reaches the widening branch but "
+                        f"the table matches it with {matches} — fewer than two names "
+                        f"means git may NOT find it ambiguous, and the safety argument "
+                        f"for consuming a value does not apply"
+                    )
+                    reached.setdefault(subcommand, set()).add(token)
+    # POSITIVE CONTROL for the walk itself: an exact name must resolve, and the branch
+    # must actually be reachable — a zero here would mean the loop proved nothing.
+    assert resolve("--exclude", grammar["clean"]) == ("--exclude", True)
+    assert reached, "no token reached the widening branch — this test proved nothing"
+
+    # 🔴 THE OTHER HALF OF THE RULE, AND A SURVIVING MUTANT IS WHY IT IS HERE. The walk
+    # above only generates prefixes OF EXISTING NAMES, so every token it tries matches at
+    # least one — which means it can never see a mutant that reports value-taking for a
+    # token matching NOTHING. `return None, True` survived the whole suite. An UNKNOWN
+    # long option must be read as a bare boolean and consume no value, which is the
+    # documented behaviour (and the narrow, named fail-open in `_OPTION_GRAMMAR`'s
+    # version limit); treating it as value-taking would swallow the following word, so a
+    # `-n` after it would go unseen and a real dry run would be refused — and on `merge`
+    # it would swallow a `--ff-only` and refuse the prescribed resync recipe.
+    for subcommand, spec in sorted(grammar.items()):
+        names = set(spec["long_value"]) | set(spec["long_bool"])
+        unknown = "--zzz-not-a-real-option"
+        assert not any(n.startswith(unknown) for n in names), "pick a different probe"
+        assert resolve(unknown, spec) == (None, False), (
+            f"`git {subcommand} {unknown}` matches no name in the table, so it must be "
+            f"read as a bare boolean: reporting it value-taking swallows the next word"
+        )
+    print("\nambiguous-prefix widening reached by: "
+          + ", ".join(f"{sub} {len(toks)}" for sub, toks in sorted(reached.items()))
+          + f" (total {sum(len(t) for t in reached.values())}, before `--no-` probes)")
+
+
+def test_prev_escaped_is_READ_AT_EXACTLY_ONE_SITE():
+    """🔴 THE INVARIANT BEHIND THE DEAD/LIVE LABELS, so the ledger cannot drift again.
+
+    Two audit rounds found the `prev_escaped` survivor ledger short by one — first
+    missing the LIVE reset, then missing a DEAD label. The fix is not a third count: the
+    flag is READ at exactly one site, the quote-open branch, so a reset can only matter
+    if control can reach that read from it with no intervening write. Every reset but
+    the one labelled LIVE is on a branch that cannot (each says which), and a mutation
+    sweep confirms each of those individually SURVIVES.
+
+    If this test fails, a second read was added and every DEAD label needs re-deriving.
+
+    🔴 COUNTED FROM THE AST, NOT FROM A REGEX, AND THE REGEX WAS WALKABLE. It excluded
+    any line matching `^\\s*prev_escaped = `, so a read on the RIGHT-HAND SIDE of an
+    assignment to the flag itself counted as a pure write: the mutant
+    `prev_escaped = bool(prev_escaped) and False` SURVIVED green, and three realistic
+    shapes hide in the same place (`= prev_escaped and char != "\\n"`, `= not
+    prev_escaped`, `: bool = prev_escaped or False`). A line-shaped guard over code is a
+    spelled guard; `ast` distinguishes a `Load` from a `Store` because that is what the
+    grammar means.
+    """
+    tree = ast.parse(HOOK.read_text(encoding="utf-8"), filename=str(HOOK))
+    reads = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and node.id == "prev_escaped"
+        and isinstance(node.ctx, ast.Load)
+    ]
+    stores = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and node.id == "prev_escaped"
+        and isinstance(node.ctx, ast.Store)
+    ]
+    # POSITIVE CONTROL: the walk must see the writes too, or a zero on reads would be
+    # indistinguishable from an AST that never found the name at all.
+    assert len(stores) >= 5, (
+        f"the AST walk found only {len(stores)} write(s) of `prev_escaped` — it is not "
+        f"looking at the right tree"
+    )
+    assert len(reads) == 1, (
+        f"`prev_escaped` is READ at {len(reads)} site(s), not one, so the DEAD labels on "
+        f"its resets no longer follow: lines "
+        f"{sorted(node.lineno for node in reads)}"
+    )
+
+
+def test_the_OPTION_STATE_CONSUMERS_ARE_AN_ASSERTED_LEDGER():
+    """🔴 `_option_state`'s "ONE PLACE" SENTENCE LISTED ITS CONSUMERS BY HAND AND MISSED
+    THE ONE ADDED IN THE SAME COMMIT. That sentence is what a reader uses to decide how
+    many call sites an edit must satisfy, so it is pinned here instead of maintained.
+
+    Fails on GROW (a consumer added without the prose moving) and on SHRINK (one
+    removed), which is the shape `claude/RULES.md` prescribes for a caller ledger: a
+    relationship, failing in both directions, rather than a count in a comment.
+    """
+    source = HOOK.read_text(encoding="utf-8")
+    callers: list[tuple[str, str]] = []
+    enclosing = "<module>"
+    for line in source.splitlines():
+        match = re.match(r"def (\w+)\(", line)
+        if match:
+            enclosing = match.group(1)
+        if "_option_state(" in line and not line.lstrip().startswith("#") \
+                and not line.startswith("def _option_state"):
+            callers.append((enclosing, line.strip()))
+    assert [c[0] for c in callers] == ["_is_dry_run", "_is_exempt", "_is_exempt"], (
+        f"the `_option_state` call sites moved: {callers}"
+    )
+
+
+def _repo_state(repo: Path) -> str:
+    """A hash of everything a `clean`/`rm`/`mv` could change: HEAD, the index, and the
+    working tree's own file list and contents."""
+    env = {**os.environ, **_GIT_ENV}
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True,
+                          text=True, env=env).stdout
+    index = subprocess.run(["git", "ls-files", "-s"], cwd=repo, capture_output=True,
+                           text=True, env=env).stdout
+    tree = []
+    for path in sorted(p for p in repo.rglob("*") if ".git" not in p.parts):
+        tree.append(f"{path.relative_to(repo)}:"
+                    f"{path.read_bytes().hex() if path.is_file() else 'DIR'}")
+    return head + index + "\n".join(tree)
+
+
+def test_the_guard_AGREES_WITH_REAL_GIT_over_generated_option_combinations(tmp_path):
+    """🔴 A DIFFERENTIAL AGAINST REAL GIT, ADOPTED BECAUSE A HANDFUL OF REGRESSION ROWS
+    CLOSES SPELLINGS AND LEAVES THE METHOD THAT FOUND THEM UNAVAILABLE TO THE NEXT
+    CHANGE. The fail-open it was added for was invisible to 315 passing tests: the
+    option model swallowed a word it should not have, so a following `--no-dry-run`
+    went unseen and `git rm -n --no-pathspec-from-file --no-dry-run seed.txt` was
+    ALLOWED while deleting a TRACKED file. Nothing in the suite enumerated option
+    combinations against git, so nothing could see it.
+
+    The invariants, with GIT as the oracle rather than the model under test:
+
+      * the command CHANGED the repository  ⇒  the guard must **deny**  (fail-open);
+      * it changed nothing, exited 0, and git's OWN output says it was a dry run  ⇒
+        the guard must **allow**  (false positive).
+
+    Anything else — an error, or a no-op for an unrelated reason — asserts nothing,
+    which is why the dry-run half reads git's marker instead of inferring from flags.
+
+    🔴 IT REPORTS ITS OWN CONTROLS, because "0 divergences" is otherwise
+    indistinguishable from a harness wired to nothing: the run must classify at least
+    five commands as WROTE and five as DRY, or it observed neither class and the zero
+    means nothing. ⚠ Measured negative control, out of band: reverting either half of
+    the conditional this was written for turns it RED, and each half independently —
+    see the commit message for the per-variant counts.
+    """
+    template = tmp_path / "template"
+    _init_clone(template)
+    _add_worktree(template, tmp_path / "template-wt")
+    (template / "junk.txt").write_text("untracked\n", encoding="utf-8")
+    env = {**os.environ, **_GIT_ENV}
+
+    # 🔴 DEPTH THREE, NOT TWO, AND THE REASON IS A MEASUREMENT RATHER THAN THOROUGHNESS.
+    # At depth 2 this harness catches the FALSE-POSITIVE half of the defect it was
+    # written for and misses the FAIL-OPEN half entirely: the swallowed word has to sit
+    # BETWEEN a `-n` and a `--no-dry-run`, so the shape needs three option words. A
+    # depth-2 sweep reports zero and reads as coverage. Ask what a sweep's shape
+    # structurally cannot reach, not only how many cases it runs.
+    cases: list[list[str]] = []
+    for subcommand, pool in _DIFFERENTIAL_POOL.items():
+        operands = _DIFFERENTIAL_OPERANDS[subcommand]
+        for words in itertools.chain.from_iterable(
+                itertools.permutations(pool, depth)
+                for depth in range(1, _DIFFERENTIAL_DEPTH + 1)):
+            cases.append([subcommand, *words, *operands])
+
+    wrote = dry = 0
+    divergences: list[str] = []
+    for argv in cases:
+        repo = tmp_path / "case"
+        shutil.rmtree(repo, ignore_errors=True)
+        shutil.copytree(template, repo, symlinks=True)
+        # 🔴 EACH CASE DRIVES THE HOOK COPY INSIDE ITS OWN COPY OF THE REPO. The first
+        # version of this harness passed the TEMPLATE's hook while standing in the
+        # copy, so `own_repo` and the cwd were different repositories and EVERY verdict
+        # was the cross-repo ALLOW — so every command that wrote anything read as a
+        # fail-open, `git clean -f` included, which the rest of this file proves is
+        # denied. A differential whose instrument is wired to the wrong tree reports the
+        # guard as ABSENT, which is indistinguishable from a guard that is absent.
+        # ⚠ NO COUNT FOR THAT RUN: the draft is not in the tree, so nobody can
+        # re-derive one, and an unreproducible number is the same defect as a stale one.
+        case_hook = repo / ".claude" / "hooks" / HOOK.name
+        # 🔴 THE VERDICT IS TAKEN BEFORE THE COMMAND RUNS, the only order that measures
+        # what the guard would have done to a live call.
+        verdict = _decision(_run_hook("git " + " ".join(argv), repo, hook=case_hook))
+        before = _repo_state(repo)
+        done = subprocess.run(["git", *argv], cwd=repo, capture_output=True,
+                              text=True, env=env, timeout=60)
+        after = _repo_state(repo)
+        output = done.stdout + done.stderr
+        marker = _DRY_RUN_MARKER[argv[0]]
+        if before != after:
+            wrote += 1
+            if verdict != "deny":
+                divergences.append(f"FAIL-OPEN: `git {' '.join(argv)}` CHANGED the "
+                                   f"repository and the guard said {verdict!r}")
+        elif done.returncode == 0 and marker in output:
+            dry += 1
+            if verdict is not None:
+                divergences.append(f"FALSE POSITIVE: `git {' '.join(argv)}` is a dry "
+                                   f"run (git printed {marker!r}, nothing changed) and "
+                                   f"the guard said {verdict!r}")
+    shutil.rmtree(tmp_path / "case", ignore_errors=True)
+
+    # Reported, not merely asserted: a zero means nothing without the pair beside it.
+    print(f"\ndifferential: {len(cases)} commands, {wrote} wrote, {dry} dry runs, "
+          f"{len(divergences)} divergence(s)")
+
+    # 🔴 THE SHAPE FLOORS, BECAUSE THE CLASS FLOORS ALONE LET THIS COLLAPSE TO A
+    # FRACTION OF ITSELF AND STAY GREEN. Nothing used to assert the number of generated
+    # commands or the depth, and `wrote >= 5` was two orders of magnitude below the
+    # measured 383 — so trimming the pool or dropping the third loop for runtime would
+    # pass, with the fail-open class unobserved and the collected count unchanged.
+    #
+    # ⚠ AND THE FIRST VERSION OF THESE FLOORS CLOSED ONE AXIS OF TWO, which is the
+    # failure this whole ladder keeps repeating: fix the reported instance, leave the
+    # shape. The derived case count catches a dropped LOOP and is structurally blind to
+    # a trimmed POOL, because it reads the same pools the generator does. Both axes are
+    # covered now, and each is measured below rather than asserted in a sentence:
+    # the depth by `_DIFFERENTIAL_DEPTH` plus a PER-CASE depth check, the pool by the
+    # subcommand set and `_DIFFERENTIAL_POOL_FLOOR`. Growing a pool still needs no edit.
+    assert _DIFFERENTIAL_DEPTH >= 3, (
+        "the differential must combine at least three option words: at depth 2 the "
+        "fail-open class this test exists for is structurally unreachable (measured — "
+        "see `_DIFFERENTIAL_DEPTH`)"
+    )
+    # 🔴 THE POOL AXIS, WHICH THE FIRST VERSION OF THESE FLOORS COULD NOT SEE AT ALL.
+    # `expected` is derived from the same pools the generator reads, so the two shrink
+    # together and `len(cases) == expected` is blind to a trim: measured, `clean`'s pool
+    # cut from ten words to five took 1664 commands to 929 and PASSED, and DELETING the
+    # `clean` pool entirely — a whole subcommand, 49% of the sweep — took it to 844 and
+    # PASSED, runtime halved. Both cleared the class floors too. So the subcommand set
+    # and the pool sizes are pinned here, independently of the generator.
+    assert set(_DIFFERENTIAL_POOL) == {"clean", "rm", "mv"}, (
+        f"the differential must sweep all three refused writers with a dry run; it "
+        f"covers {sorted(_DIFFERENTIAL_POOL)}"
+    )
+    assert set(_DIFFERENTIAL_POOL) == set(_DIFFERENTIAL_OPERANDS) == _DRY_RUN_SUBCOMMANDS_FOR_TESTS, (
+        "the differential's subcommands, its operand table and the hook's own dry-run "
+        "policy set must be the same three"
+    )
+    for subcommand, floor in _DIFFERENTIAL_POOL_FLOOR.items():
+        assert len(_DIFFERENTIAL_POOL[subcommand]) >= floor, (
+            f"`{subcommand}`'s option pool has {len(_DIFFERENTIAL_POOL[subcommand])} "
+            f"words, below the floor of {floor} — trimming a pool is invisible to the "
+            f"derived case count, which is why the floor is written down separately"
+        )
+    expected = 0
+    for pool in _DIFFERENTIAL_POOL.values():
+        size, arrangements = len(pool), 0
+        for depth in range(1, _DIFFERENTIAL_DEPTH + 1):
+            term = 1
+            for factor in range(depth):
+                term *= size - factor
+            arrangements += term
+        expected += arrangements
+    assert len(cases) == expected, (
+        f"the generator produced {len(cases)} commands where the pools and "
+        f"`_DIFFERENTIAL_DEPTH`={_DIFFERENTIAL_DEPTH} imply {expected} — a loop was "
+        f"changed without the floors moving with it"
+    )
+    # 🔴 PER CASE, NOT ACROSS CASES. The first form mixed the MAXIMUM argv length over
+    # all cases with the MINIMUM operand count over subcommands — `6 - 1 - 0 = 5 >= 3`
+    # — so it held even with the generator collapsed to depth 1, while its message
+    # claimed to check that some command carries the full depth. It could not fail.
+    deepest = max(len(argv) - 1 - len(_DIFFERENTIAL_OPERANDS[argv[0]]) for argv in cases)
+    assert deepest >= _DIFFERENTIAL_DEPTH, (
+        f"the deepest generated command carries {deepest} option word(s), not "
+        f"{_DIFFERENTIAL_DEPTH} — the generator was collapsed"
+    )
+    # The CLASS floors, now set near what was measured (383 wrote / 516 dry) with
+    # headroom for a different git, rather than at a token 5.
+    assert wrote >= 200 and dry >= 250, (
+        f"the differential observed too little to vouch for anything: {len(cases)} "
+        f"commands, {wrote} that wrote, {dry} dry runs — both classes must be "
+        f"populated or a zero-divergence result is a fact about the harness"
+    )
+    assert not divergences, (
+        f"{len(divergences)} divergence(s) over {len(cases)} commands "
+        f"({wrote} wrote, {dry} dry):\n" + "\n".join(divergences[:20])
+    )
+
+
+@pytest.mark.parametrize("command,expected,why", [
+    ("git clean -fd", "deny", "the bare control"),
+    ("nice -n 5 git clean -fd", "deny",
+     "`-n` is nice's ADJUSTMENT flag, not clean's dry-run"),
+    ("xargs -n 1 git rm seed.txt", "deny",
+     "`-n` is xargs' max-args"),
+    ("stdbuf -o 0 git clean -fd", "deny",
+     "a wrapper whose flags carry no `n` at all — the control for the control"),
+    ("env -- git checkout other-branch", "deny",
+     "`--` is env's end-of-options, not a pathspec separator. ⚠ THE OLDEST ROW: "
+     "ALLOW at `ffa0eca` already, because `env` was skipped while the `checkout` "
+     "exemption searched the whole segment"),
+    ("sudo -- git checkout other-branch", "deny", "the same through `sudo`"),
+    ("sudo --ff-only git merge other-branch", "deny",
+     "not even a real sudo flag, and it still excused the merge"),
+    # The exemptions themselves must still work — an over-narrow scan would refuse
+    # the documented recipes, which is the direction this file forbids itself.
+    ("git clean -n", None, "the exemption still fires when the flag is the "
+                           "subcommand's own"),
+    ("git checkout origin/main -- AGENTS.md", None, "…and the pathspec recipe"),
+    ("git merge --ff-only origin/main", None, "…and the re-sync recipe"),
+    ("git stash list", None, "…and the stash read"),
+])
+def test_an_EXEMPTING_FLAG_must_belong_to_the_SUBCOMMAND_not_to_a_WRAPPER(
+        parallel_clone, command, expected, why):
+    """🔴 FOUND BY MUTATION-TESTING THE DRY-RUN FIX, NOT BY THE SUITE, AND THE DEFECT
+    WAS IN A NEIGHBOURING PREDICATE RATHER THAN IN THE CODE THAT CHANGED.
+
+    Three of the four exemptions scanned the WHOLE segment for their excusing flag.
+    Once `_LEADING_WORDS` started skipping `nice`, `xargs` and `sudo`, a flag
+    belonging to the WRAPPER excused the git write behind it — measured ALLOW with
+    the bare spelling DENYing in the same run. `env -- git checkout other-branch`
+    needed no new ledger at all: it was ALLOW at `ffa0eca` too, because `env` was
+    already skipped while `checkout`'s exemption searched the whole segment.
+
+    So the lesson is the one worth pinning: **a widening in one predicate can turn a
+    latent flaw in a different one into a live bypass.** `_is_exempt` now computes
+    the words after the subcommand ONCE and every exemption reads only those.
+
+    Red/green, corrected after a re-measurement — ⚠ AN EARLIER VERSION OF THIS
+    DOCSTRING SAID FOUR AND THE TRUE NUMBER IS THREE. At `d6eafdb` the suite reports
+    **4 failed / 7 passed** for this test, and the `xargs -n 1 git rm seed.txt` row
+    was **already deny** there: `rm` had no dry-run exemption yet, so the wrapper's
+    `-n` had nothing to borrow. It only became a bypass one commit later, which is
+    why it is red against the INTERMEDIATE state and not against `d6eafdb`. So:
+    `nice`, `sudo --` and `sudo --ff-only` were ALLOW at `d6eafdb`; the `env` one was
+    ALLOW at `ffa0eca` as well. The four allow rows are ⚠ invariant
+    guards — they pin that narrowing the scan did not break the recipes, which is the
+    failure mode a narrowing invites.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) == expected, f"{why}: {command}"
+
+
+@pytest.mark.parametrize("command", [
+    "git worktree remove /tmp/some-worktree",
+    "git worktree prune",
+    "git branch -D some-branch",
+    "git branch -d some-branch",
+])
+def test_the_two_DELIBERATE_omissions_stay_allowed(parallel_clone, command):
+    """⚠ A DECLARED DECISION, PINNED SO THE DOC CANNOT GO STALE — not a requirement
+    that these stay allowed forever.
+
+    `worktree remove` and `branch -D` both write shared state, and both are out of
+    `_REFUSED` on a decision recorded in the doc's second table:
+    `claudedocs/working-in-parallel.md` PRESCRIBES `git -C "$REPO" worktree remove
+    "$WT"` run from the base clone, and both write refs or registrations that live
+    in the COMMON git dir — reachable identically from any worktree, so conditions 2
+    and 3 cannot scope the hazard and refusing only the base-clone spelling would
+    teach that the worktree spelling is safe.
+
+    ⚠ INVARIANT GUARDS: green at `ffa0eca` too, because nothing refused them there
+    either. 🔴 IF ONE GOES RED, THE DECISION CHANGED — move the doc row out of the
+    out-table and into the refused table in the same commit, which
+    `test_the_shared_state_WRITERS_LEFT_OUT_carry_a_RECORDED_DECISION` forces.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) is None, command
+
+
 @pytest.mark.parametrize("command", [
     "git merge --ff-only origin/main & git merge other-branch",
     "git checkout origin/main -- AGENTS.md & git checkout other-branch",
@@ -567,11 +2246,38 @@ def test_the_refusal_does_not_assert_the_closed_nested_worktree_hazard(parallel_
     "git worktree list",
     "git push origin HEAD:some-branch",
     "git stash list",
-    "git restore somefile",
+    # ⚠ `git restore` IS NOT IN THIS LIST — see the test below. It is allowed, but it
+    # is not a read, and this test's NAME would have asserted that it is.
     "ls -la",
 ])
 def test_reads_and_non_git_commands_are_allowed(parallel_clone, command):
     clone, _ = parallel_clone[:2]
+    assert _decision(_run_hook(command, clone)) is None, command
+
+
+@pytest.mark.parametrize("command", [
+    "git restore seed.txt",
+    "git restore --staged seed.txt",
+    "git restore .",
+])
+def test_git_restore_is_ALLOWED_and_is_NOT_a_read(parallel_clone, command):
+    """🔴 SPLIT OUT OF THE "reads" TEST, BECAUSE THE NAME WAS THE CLAIM AND IT WAS
+    FALSE. `git restore seed.txt` sat in `test_reads_and_non_git_commands_are_allowed`
+    — measured, it **overwrites the working-tree file**: an unsaved edit was replaced
+    by the committed content, which is destroying work rather than reading.
+
+    The verdict is unchanged and correct. `restore` is deliberately OUT of `_REFUSED`
+    and has its own row in the doc's out-table: the ordinary form carries no `--`, so
+    adding it to the ledger would refuse EVERY `git restore <path>` — including the
+    single-file recovery the fleet rules prescribe in place of `git checkout --`. The
+    same hazard the `checkout` pathspec exemption exists for, arriving from the other
+    side.
+
+    ⚠ INVARIANT GUARD — green at every ref. What moved is the NAME above it, which is
+    the whole point: a test title is a claim, and this one asserted that a
+    work-destroying command is a read.
+    """
+    clone = parallel_clone[0]
     assert _decision(_run_hook(command, clone)) is None, command
 
 
@@ -1177,7 +2883,14 @@ def test_no_number_of_ADDITIVE_candidates_can_crowd_OUT_the_real_one(
     assert _decision(_run_hook(command, wt)) == "deny", f"{shape} N={count}"
 
 
-def test_a_NUL_BYTE_in_a_redirect_does_not_CRASH_the_hook(parallel_clone):
+@pytest.mark.parametrize("command", [
+    "git -C a\0b commit -m x",
+    "git --git-dir=a\0b commit -m x",
+    "cd a\0b && git commit -m x",
+    "GIT_DIR=a\0b git commit -m x",
+    "GIT_INDEX_FILE=a\0b git add seed.txt",
+])
+def test_a_NUL_BYTE_in_a_redirect_does_not_CRASH_the_hook(parallel_clone, command):
     """🔴 A CRASH IS AN ALLOW, AND THIS ONE WAS REACHED THROUGH THE GUARD'S OWN
     PLUMBING RATHER THAN ITS POLICY.
 
@@ -1191,14 +2904,24 @@ def test_a_NUL_BYTE_in_a_redirect_does_not_CRASH_the_hook(parallel_clone):
     this file's own header forbids itself, and `_run_hook` asserts rc 0 on every
     call for exactly this reason.
 
-    ⚠ IT ALSO FALSIFIES A CLAIM THIS BRANCH SHIPPED. `_abs_path` said a second
-    existence check "could never change a verdict"; removing the duplicate turned
-    this DENY into a crash-ALLOW. The mutation sweep scored that guard unreachable
-    because it scored VERDICTS, and a crash is not a verdict — a blind spot of the
-    instrument, now recorded beside both.
+    ⚠ IT ALSO FALSIFIED A CLAIM THE SAME BRANCH SHIPPED: `_abs_path` said a second
+    existence check "could never change a verdict", and removing the duplicate
+    turned the `-C` row's DENY into a crash-ALLOW. The mutation sweep scored that
+    guard unreachable because it scored VERDICTS, and a crash is not a verdict — a
+    blind spot of the instrument.
+
+    🔴 THE NUL HALF OF THAT IS NOW RE-MEASURED AND CLOSED, AND THE CLAIM IS STILL
+    FALSE FOR A DIFFERENT REASON — which is why the rows below are parametrised
+    rather than left at one. All five spellings answer **deny at rc 0** both with
+    and without the duplicate check, so NUL no longer separates them; what does is
+    `GIT_INDEX_FILE=<the clone>/.git/index`, which `isdir` rejects because it names
+    a FILE. The measurement is beside `_abs_path`. ⚠ The four rows added here were
+    green at `ffa0eca` — INVARIANT GUARDS: they pin that the walk and ledger changes
+    did not reintroduce a crash on a dimension `_run_hook`'s rc assertion is the
+    only witness to.
     """
     clone = parallel_clone[0]
-    assert _decision(_run_hook("git -C a\0b commit -m x", clone)) == "deny"
+    assert _decision(_run_hook(command, clone)) == "deny", repr(command)
 
 
 def test_GIT_INDEX_FILE_pointed_at_the_clones_INDEX_is_refused(parallel_clone):

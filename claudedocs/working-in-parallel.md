@@ -60,17 +60,96 @@ The refused set, which the guard enforces and its test pins against this table:
 | `checkout` *(bare)* / `switch` | moves the shared HEAD under a peer |
 | `reset` | moves the shared HEAD and index |
 | `rebase` / `merge` / `cherry-pick` / `am` / `apply` | rewrites or advances the shared tree |
+| `clean` | deletes untracked files out of the shared working tree. ⚠ On a host that also runs the fleet's own guard this row is **nearly a duplicate**, the way `stash` is: that guard already denies `-f`/`--force` — the only spelling git permits to destroy non-interactively — fails CLOSED, and covers every worktree. The residue here is `git clean -i`. `rm`/`mv` are **not** duplicated anywhere; the hook's docstring carries the measurement |
+| `rm` / `mv` | deletes or renames tracked files in the shared tree, and stages that |
+| `revert` | ⚠ **was ALLOWED until a round-1 audit of the PR that wrote this table.** It writes the tree, the index *and* HEAD — condition 1's own three — through the **same sequencer** as `cherry-pick`, which was already refused. The asymmetry had no reason; measured `revert --no-edit HEAD` moved HEAD and the worktree, `revert -n HEAD` staged a rewrite |
+| `update-index` / `read-tree` | plumbing that rewrites `.git/index` directly, measured. `read-tree -m` rewrites it from two trees; `update-index --force-remove` dropped a path from it |
+| `symbolic-ref` | rewrites `.git/HEAD` — measured: `git symbolic-ref HEAD refs/heads/<other>` moved the shared HEAD under a peer. ⚠ Its **read** form is exempt: one operand and no `--delete` (`git symbolic-ref HEAD`, `--short`, `-q`) prints and changes nothing |
 | `stash` | the stack is repo-GLOBAL, not per-worktree — see below |
+
+🔴 **And the complement of that set is NOT "reads" — some subcommands that write shared
+state are out of it on a DECISION, recorded here so the decision can be looked up.** A
+round-0 audit found five writers outside the ledger and a round-1 audit of the PR that
+fixed those found four more. 🔴 **The accounting, which an earlier version of this sentence
+got wrong by one — on the very round whose subject was a false completeness claim.** It said
+nine considered, seven in, three out; that is ten. **Of the nine considered, seven went in
+and two stayed out (`worktree remove`, `branch -D`); `restore` is a third out-row from a
+separate discovery, not one of the nine.** So the table below has three rows while the nine
+split 7/2:
+
+⚠ **"Considered" is not "all", and an earlier version of this section implied it was.** It
+said an audit had found five and *the other two* were named here, and the table plus its
+test then pinned the out-set as exactly two — a **pinned false completeness**, which is
+this repo's own named "reads as coverage while providing none" failure. `revert` was in
+neither list and was allowed. The complement of the refused set is **not enumerable**;
+known writers still outside it include `update-ref`, `tag -d`/`-f`, `notes`, `replace`,
+`reflog delete`, `bisect start`, `sparse-checkout set`, `submodule update`,
+`checkout-index`, `gc`/`prune`/`repack` and `filter-branch` — most of which write refs or
+object storage in the **common** git dir, which is the `worktree remove` reasoning below.
+The table and its test pin the **decisions taken**, never the absence of others.
+
+| NOT refused, and it is not a read | why it is out |
+|---|---|
+| `restore` | `git restore <path>` **overwrites the working-tree file** — measured, an unsaved edit was replaced by the committed content. It is out because the ordinary form carries no `--`, so adding it to the ledger would refuse **every** `git restore`, including the one-file recovery the fleet rules prescribe in place of `git checkout --`. ⚠ The same hazard the `checkout` pathspec exemption exists for, arriving from the other side |
+| `worktree remove` | **This document prescribes it**, at `git -C "$REPO" worktree remove "$WT"` in the recipe above, run FROM the base clone. Refusing a documented recipe is the failure mode the guard forbids itself — break one and people route around the guard. And the hazard is not base-clone-shaped: a worktree REGISTRATION lives in the common git dir, so the same removal is available identically from any worktree, which conditions 2 and 3 cannot distinguish |
+| `branch -D` | Same second reason, and it is the whole reason here: a branch ref lives in the common git dir too, so `git -C <any worktree> branch -D x` deletes it just as well. Refusing only the base-clone spelling would teach that the worktree spelling is safe, which is worse than refusing neither |
+
+⚠ **That reasoning is NOT uniform with `stash`, and pretending otherwise would be the
+tidier lie.** `stash` is in the refused set on a hazard that is *also* repo-global and
+*also* reachable from any worktree — kept as "a cheap table row" for a future host that
+runs parallel worktrees of this repo without the fleet guard. The hook's docstring says so
+in those words. The difference that decided these two rows is the FIRST reason, not the
+second: `worktree remove` is a step in the recipe this file tells you to run and `git stash`
+is a command this file tells you never to run. Where a hazard is only repo-global, the
+tiebreak is whether refusing it breaks a documented recipe.
 
 **Not refused, deliberately**, because each is a documented recipe and a guard that breaks
 one trains everybody to route around it: `git merge --ff-only <ref>` (the base-clone
 re-sync — it cannot conflict or autostash, it either fast-forwards or refuses, and the
 refusal is the signal that the clone diverged); `git checkout <ref> -- <paths>` (the
 pathspec form does not move HEAD — bare `git checkout <branch>` IS refused, because that
-moves the shared HEAD); `git stash list`, `show` and `--help`; and every other read,
-including `push`, which touches no file in the clone.
+moves the shared HEAD); `git stash list` and `show`; **`-h` / `--help` on every refused
+subcommand** — measured as help on every member of the refused set (rc 129, `usage:`,
+repository unchanged),
+and read from the first word after the subcommand only, because `git commit -m -h`
+*commits* with `-h` as the message; a **dry run** of `clean`,
+`rm` or `mv` — `--dry-run`, `-n`, or an `n` in a combined short cluster (`-nd`, `-rn`,
+`-nv`) — which rehearse and change nothing; and every other read, including `push`, which
+touches no file in the clone.
 
-⚠ **`git restore` is NOT in the refused set at all**, so it never reaches an exemption. An
+🔴 **The dry-run exemption is ONE predicate over all three, and it shipped `clean`-only
+first, which was a FALSE POSITIVE.** Measured on git 2.55.0 against a throwaway repo, with
+the dangerous spellings denying in the same run: `git clean -n` allowed while `git rm -n`
+and `git mv -n` were REFUSED — the same predicate open-coded at one of three sites, wrong
+at the other two. `git rm -n` is exactly what you type to see what a `git rm` would do
+*before* doing it, so refusing the rehearsal alongside the real thing teaches that the
+guard is noise. Reading a combined cluster is safe only because each subcommand's own
+short-flag set says so: `clean`'s `-e <pattern>` takes a value, so the scan stops there
+(`git clean -fenjunk.txt` was measured to really delete), while `rm`'s `-n -q -f -r` and
+`mv`'s `-v -n -f -k` take none.
+
+⚠ **Two more refused subcommands have a spelling that was measured to change nothing, and
+they are deliberately NOT exempt**: `git add -n` / `--dry-run` and `git apply --check` /
+`--stat`. That is an operator decision rather than a mechanical consequence of the
+predicate, and scope creep in a guard is its own hazard.
+
+🔴 **`git commit --dry-run` is NOT one of them, and an earlier version of this paragraph
+said it was.** Measured: with a staged change it **writes a new tree object** into
+`.git/objects`. ⚠ The added object is the whole finding — `.git/index` also changes under a
+plain `git status` when the stat cache is stale (measured both ways on one machine), so the
+index half cannot tell a read from a write and citing it gets the finding dismissed. The
+verdict was always right; the recorded *reason* was wrong, and that is the sentence a
+future widening would have leaned on.
+🔴 **And two spellings that LOOK like dry runs are not, so they must never be added:**
+`git merge --no-commit` staged a merge *and moved HEAD* on a fast-forward, and
+`git cherry-pick -n` staged the picked file — both measured to change the repository. A
+flag named for what it does not do is not a flag that does nothing. The rest of the ledger
+(`am`, `cherry-pick`, `checkout`, `switch`, `merge`, `rebase`, `reset`, `stash`) has no
+`--dry-run` at all — rc 129, unknown option.
+
+⚠ **`git restore` is NOT in the refused set at all** — it has a row in the deliberately-out
+table above, and ⚠ **it is not a read**: it overwrites the working-tree file. It never
+reaches an exemption. An
 earlier version of this paragraph listed it among the deliberate exemptions, which reads as a
 licence to add it to the ledger — and doing so would refuse **every** `git restore <path>`,
 because the ordinary form carries no `--`. The hook's docstring carries the same warning
@@ -271,7 +350,12 @@ same run as the control.
 | `GIT_DIR=<the clone>/.git git …`, or `GIT_DIR` already exported | REFUSED |
 | `cd <the base clone> && git commit …` | REFUSED |
 | `cd <a worktree> && git commit …` from the clone | REFUSED — see below |
-| `bash -c 'cd <the base clone> && git commit …'` | NOT SEEN — still open |
+| `if git commit …`, and the same behind `while`, `until`, `command`, `nohup`, `timeout <dur>`, `eval`, `stdbuf`, `exec`, `sudo`, `xargs`, `nice`, `env`, `time`, `{ … ; }` | REFUSED — one ledger of wrapper words, with the value-consuming ones marked |
+| `ssh <host> git commit …`, `ionice -p <pid> git …`, `watch git …`, `coproc`, `strace`, a shell FUNCTION, and an unknown tail | NOT SEEN, and 🔴 **this list is not a to-do**. The wrapper class cannot be enumerated, so the ledger's closing condition was **retired** rather than met: the root fix is nested-shell recursion (`bash -c '…'`), not another word, and a replay of one host's session history — 37,268 distinct real Bash commands — moved **zero** verdicts for any of the twelve words the ledger added. ⚠ Zero past is not zero future, which is why the code stays; but **do not add an entry without re-opening the question**, and a test pins the set so that growing it is a decision |
+| a `<<WORD` inside quotes or inside a `#` comment, then a real `git commit` on a later line | REFUSED — the heredoc opener is decided by the quote-aware walk, so a fake one no longer swallows the lines after it |
+| a REAL heredoc body, in every spelling including `<<'EOF'`, `<<-EOF` and two heredocs on one line | NOT A COMMAND — it is data and is dropped, which is the direction that matters: refusing a recipe you are WRITING INTO A FILE is the failure mode this guard forbids itself |
+| `bash -c 'cd <the base clone> && git commit …'`, and `eval 'git commit …'` | NOT SEEN — still open |
+| ``echo `git commit -m x` `` — BACKTICK command substitution | NOT SEEN — still open. ⚠ `$(git commit -m x)` **is** refused, because `(` and `)` are operator characters the parser already splits on and a backtick is not. Pre-existing; listed because this table is where limits get stated |
 
 🔴 **`$VAR` TARGETS ARE REFUSED, NOT RESOLVED, AND THE RECIPE ABOVE IS WRITTEN IN
 EXACTLY THAT SPELLING — so `git -C "$WT" commit` from the base clone is refused and
@@ -328,5 +412,8 @@ and recorded so it is a decision rather than a surprise.
   in this repo was nearly lost that way, by two sessions writing it within one hour, and
   the only thing that caught it was a write tool warning about durable lines it was about
   to drop.
-- The guard is lexical and approximate. It cannot see a subcommand held in a variable,
-  behind `eval`, or inside a shell function, and it allows anything it cannot parse.
+- The guard is lexical and approximate. It cannot see a subcommand held in a variable, inside
+  a shell function, or inside a QUOTED script — `bash -c '…'` and `eval 'git commit'` are one
+  token each — and it allows anything it cannot parse. ⚠ An earlier version of this bullet said
+  "behind `eval`" without that qualifier, and the unquoted form `eval git commit -m x` is
+  refused now: the distinction is the quoting, not the word.
