@@ -272,14 +272,17 @@ def test_the_WRAPPER_LEDGER_is_PINNED_so_GROWING_IT_IS_A_DECISION():
 
 
 def _dry_run_keys_from_hook() -> frozenset[str]:
-    """The subcommands `_DRY_RUN_SHORT_VALUE_FLAGS` exempts a dry run for."""
+    """The subcommands `_DRY_RUN_SUBCOMMANDS` exempts a dry run for.
+
+    ⚠ IT READS THE POLICY SET, NOT THE GRAMMAR. `_OPTION_GRAMMAR` also has a
+    `symbolic-ref` entry — it models that subcommand's options for the `--delete`
+    check — and reading keys from there would silently claim `symbolic-ref` has an
+    exempt dry run. Two sets, two questions.
+    """
     text = HOOK.read_text(encoding="utf-8")
-    block = re.search(
-        r"_DRY_RUN_VALUE_FLAGS: dict\[str, tuple\[frozenset\[str\], "
-        r"frozenset\[str\]\]\] = \{(.*?)\n\}",
-        text, re.S)
-    assert block, "could not find the _DRY_RUN_VALUE_FLAGS literal"
-    return frozenset(re.findall(r'^\s{4}"([a-z-]+)": \(', block.group(1), re.M))
+    block = re.search(r"_DRY_RUN_SUBCOMMANDS = frozenset\(\{(.*?)\}\)", text, re.S)
+    assert block, "could not find the _DRY_RUN_SUBCOMMANDS literal"
+    return frozenset(re.findall(r'"([a-z-]+)"', block.group(1)))
 
 
 def test_the_dry_run_ledger_is_parseable():
@@ -292,10 +295,14 @@ def test_the_DRY_RUN_exemption_covers_EXACTLY_THREE_SUBCOMMANDS_AND_NO_MORE():
     """🔴 AN EXEMPTION LEDGER THAT CAN GROW SILENTLY IS THE HAZARD HERE, not a
     missing row — so this fails on GROW as well as on shrink.
 
-    Three refused subcommands have a dry-run spelling that was measured to change
-    nothing and are deliberately OUT (`add -n`, `commit --dry-run`,
-    `apply --check`): an operator decision, not a mechanical consequence of the
-    predicate. And 🔴 TWO SPELLINGS THAT LOOK LIKE DRY RUNS ARE NOT — `git merge
+    🔴 TWO CATEGORIES SIT OUTSIDE THIS SET AND AN EARLIER VERSION OF THIS DOCSTRING
+    LUMPED THEM UNDER ONE HEADING, WHICH IS A CATEGORY ERROR RATHER THAN A STALE
+    MEASUREMENT. `add -n` and `apply --check` were measured to change nothing: they
+    ARE reads, left out by an operator decision about scope creep, and that decision is
+    revisitable. `commit --dry-run` is not in the same category at all — it WRITES a
+    tree object — so it must never be exempted, and a sentence that filed it beside the
+    other two is exactly what a future widening would have cited.
+    And 🔴 TWO SPELLINGS THAT LOOK LIKE DRY RUNS ARE NOT — `git merge
     --no-commit` staged a merge AND moved HEAD on a fast-forward, and `git
     cherry-pick -n` staged the picked file, both measured CHANGED. Adding `merge`
     or `cherry-pick` to this ledger would exempt a real write, so the set is pinned
@@ -674,6 +681,13 @@ def test_a_FAKE_heredoc_OPENER_cannot_swallow_the_commands_after_it(
     ('echo "a\\\\b"\ngit commit -m sneaky',
      "⚠ THE DISCRIMINATOR: a BALANCED escape was already handled, and must stay so — "
      "deny before the fix as well as after"),
+    ("echo \\$'a\\'\ngit commit -m sneaky",
+     "🔴 THE REGRESSION THE ESCAPE MODEL ITSELF SHIPPED, and the narrowest one in this "
+     "file: an ESCAPED dollar. `\\$` is a literal dollar to bash and the `'` after it "
+     "opens a PLAIN single quote, but the unquoted-escape branch sets `prev` to the "
+     "character it consumed — so `prev == \"$\"` and the quote was routed into the "
+     "escape-honouring model, eating its own closer. deny before the escape model, "
+     "ALLOW after it, deny now: `prev_escaped` is what separates the two"),
     ("echo 'ends with a backslash \\'\ngit commit -m sneaky",
      "🔴 THE OTHER DIRECTION, AND A MUTATION SWEEP IS WHAT FOUND IT UNGUARDED: inside "
      "`'…'` a backslash is LITERAL, so the quote above closes and this line ends. A "
@@ -852,7 +866,15 @@ def test_the_wrapper_ledger_does_not_OVER_fire(parallel_clone, command, why):
     ("git read-tree -m HEAD side", "…and from two"),
     ("git symbolic-ref HEAD refs/heads/side",
      "rewrites `.git/HEAD` — the shared HEAD moved under a peer, measured"),
-    ("git symbolic-ref --delete HEAD", "a one-operand WRITE, excluded by name"),
+    ("git symbolic-ref --delete refs/heads/alias",
+     "a one-operand WRITE, so it cannot be excluded by operand count"),
+    # 🔴 THE FOUR SPELLINGS AN EXACT-STRING `--delete` CHECK MISSED, each measured to
+    # DELETE A REAL REF. Branch refs live in the COMMON git dir — the stated reason
+    # `branch -D` could not be scoped — so every one was reachable from any worktree.
+    ("git symbolic-ref -qd refs/heads/alias", "SHORT BUNDLING, `-q` then `-d`"),
+    ("git symbolic-ref -dq refs/heads/alias", "…and the other order"),
+    ("git symbolic-ref --del refs/heads/alias", "an unambiguous PREFIX"),
+    ("git symbolic-ref --d refs/heads/alias", "…the shortest one git still resolves"),
 ])
 def test_the_FOUR_writers_a_ROUND_ONE_AUDIT_found_are_refused(
         parallel_clone, command, why):
@@ -873,6 +895,11 @@ def test_the_FOUR_writers_a_ROUND_ONE_AUDIT_found_are_refused(
     ("git symbolic-ref HEAD", "the READ form: prints the ref, changes nothing"),
     ("git symbolic-ref --short HEAD", "…and with a flag, which is not an operand"),
     ("git symbolic-ref -q HEAD", "…and the quiet one"),
+    ("git symbolic-ref -m reason HEAD",
+     "`-m <reason>` is this subcommand's one value-taking SHORT option, so its value "
+     "must not be counted as a second operand"),
+    ("git symbolic-ref --no-delete refs/heads/alias",
+     "last-wins negation: measured, it PRINTED the ref and deleted nothing"),
 ])
 def test_the_symbolic_ref_READ_form_is_not_refused(parallel_clone, command, why):
     """🔴 THE READ AND WRITE FORMS DIFFER BY ONE OPERAND, WHICH IS THE ONLY REASON
@@ -961,10 +988,46 @@ def test_the_three_newly_refused_WRITERS_are_refused(parallel_clone, command):
     # flipped this to ALLOW while all 256 tests stayed green.
     ("git rm --ignore-unmatch seed.txt", "deny"),
     ("git rm --cached --ignore-unmatch seed.txt", "deny"),
-    # The attached spellings must keep working — they are the control for the stop,
-    # and `-fenfoo` was measured to really delete.
+    # The attached spellings must keep working — `-fenfoo` was measured to really
+    # delete, and `--exclude=n` is the long twin.
     ("git clean -f --exclude=n", "deny"),
     ("git clean -fenfoo", "deny"),
+    # 🔴 THE BOUNDARY ROW A SURVIVING MUTANT ASKED FOR. `position == len(word) - 1`
+    # → `<=` SURVIVED with the whole suite green: `-fenfoo` denies under that mutant
+    # too, so it is not a control for the boundary at all. What distinguishes them is
+    # an ATTACHED value followed by a REAL `-n`: today `-efoo` consumes nothing
+    # further and the `-n` is the dry run, so this is ALLOW; under the mutant the
+    # `-n` is eaten as `-e`'s value and a genuine dry run is REFUSED.
+    ("git clean -f -efoo -n", None),
+    ("git clean -f --exclude=foo -n", None),
+    # 🔴 PREFIX MATCHING, BOTH DIRECTIONS — git resolves an unambiguous abbreviation
+    # and the abbreviation eats its value identically. `--exc` ate the `-n` and the
+    # clean really deleted; `--dry` and `--d` are real dry runs that were REFUSED.
+    ("git clean -f --exc -n", "deny"),
+    ("git clean -f --ex -n", "deny"),
+    ("git clean -f --e -n", "deny"),
+    ("git clean --dry", None),
+    ("git clean --d", None),
+    ("git rm --dry seed.txt", None),
+    # 🔴 LAST-WINS NEGATION. The old walk returned on the first `n` and never read the
+    # rest, so both of these deleted real files while being allowed.
+    ("git clean -n --no-dry-run -f", "deny"),
+    ("git clean -n --no-dry -f", "deny"),
+    ("git rm -n --no-dry-run seed.txt", "deny"),
+    ("git mv -n --no-dry-run seed.txt other.txt", "deny"),
+    # …and the other order, which really is a dry run.
+    ("git clean --no-dry-run -n", None),
+    ("git rm --no-dry-run -n seed.txt", None),
+    # ⚠ THE AMBIGUOUS-PREFIX WIDENING, AND THIS ROW PINS A DECISION RATHER THAN A
+    # SAFETY PROPERTY — say so, because it looks like the latter. `--pathspec-f`
+    # prefixes BOTH `--pathspec-from-file` (takes a value) and `--pathspec-file-nul`
+    # (does not), so `_resolve_long` cannot resolve it; it reports value-taking
+    # because ANY candidate does, which swallows the `-n` and REFUSES. 🔴 git itself
+    # answers this command `rc 129 ambiguous option` and writes NOTHING (measured), so
+    # neither verdict can prevent or permit a write — the row exists so the widening
+    # is a choice somebody made on purpose, and it is the only case that reaches that
+    # branch at all.
+    ("git rm --pathspec-f -n seed.txt", "deny"),
     # ---- 🔴 AND THE CONTROLS THAT MAKE THE *LEDGER KEY* CHECK REACHABLE, which is
     # the half of `_is_dry_run` a dry-run-spelling test cannot exercise. `-n` does
     # NOT mean dry-run everywhere: on `commit` it is `--no-verify`, which commits,
@@ -999,19 +1062,22 @@ def test_the_DRY_RUN_exemption_is_ONE_PREDICATE_over_THREE_subcommands(
 
     🔴 AND THE CLUSTER ROWS ARE WHY THIS IS A MEASUREMENT RATHER THAN A SYMMETRY
     ARGUMENT. A brief asserted `git rm -rn` "is not a thing". It is, on git 2.55.0,
-    and it is a dry run — as are `-nr`, `-qn`, `-nv`, `-vn` and `-kn`. Reading a
-    cluster is safe here only because each subcommand's own short flags say so:
-    `clean`'s `-e <pattern>` takes a value so the scan stops at an `e` (and
-    `git clean -fenfoo` was measured to really delete, which is the control for
-    that stop), while `rm`'s `-n -q -f -r` and `mv`'s `-v -n -f -k` take none.
+    and it is a dry run — as are `-nr`, `-qn`, `-nv`, `-vn` and `-kn`. Every spelling
+    here is resolved by the ONE option model in `_OPTION_GRAMMAR`: bundles, unambiguous
+    PREFIXES (`--dry`, `--d`), a value-taking flag's attached or spaced value, the `--`
+    stop, and last-wins negation. ⚠ THE EARLIER REASONING THIS DOCSTRING CARRIED — that
+    a cluster is safe because the scan "stops at an `e`" — IS RETRACTED: it was true for
+    the attached spelling and false for the spaced one, and `git clean -f -e -n` deleted
+    a file while being allowed.
 
     ⚠ `git add -n` IS A REAL DRY RUN (measured: rc 0, repository unchanged) AND IS
-    ASSERTED **deny** HERE ON PURPOSE. It is one of three such spellings left out of
-    the exemption by decision rather than by oversight — `commit --dry-run` and
-    `apply --check` are the others — because widening a guard's exemptions is an
-    operator call and scope creep in a guard is its own hazard. 🔴 IF THAT DECISION
-    CHANGES, THIS ROW IS WHERE IT CHANGES, together with the ledger, the hook
-    docstring and the doc. It is NOT a claim that `git add -n` writes.
+    ASSERTED **deny** HERE ON PURPOSE — an operator decision about scope creep, with
+    `apply --check` the other one of its kind. 🔴 `commit --dry-run` IS NOT ONE OF
+    THOSE AND MUST NOT BE FILED WITH THEM: it writes a tree object. 🔴 IF THE `add -n`
+    DECISION CHANGES, THIS ROW IS WHERE IT CHANGES, together with `_DRY_RUN_SUBCOMMANDS`,
+    the hook docstring's read-list bullet and the doc's exemption paragraph — four
+    places, and a previous round moved two of them and called it done. It is NOT a
+    claim that `git add -n` writes.
     """
     clone = parallel_clone[0]
     assert _decision(_run_hook(command, clone)) == expected, command

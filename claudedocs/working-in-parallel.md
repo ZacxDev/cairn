@@ -70,8 +70,12 @@ The refused set, which the guard enforces and its test pins against this table:
 🔴 **And the complement of that set is NOT "reads" — some subcommands that write shared
 state are out of it on a DECISION, recorded here so the decision can be looked up.** A
 round-0 audit found five writers outside the ledger and a round-1 audit of the PR that
-fixed those found four more. Of the **nine considered**, seven went in and these three did
-not:
+fixed those found four more. 🔴 **The accounting, which an earlier version of this sentence
+got wrong by one — on the very round whose subject was a false completeness claim.** It said
+nine considered, seven in, three out; that is ten. **Of the nine considered, seven went in
+and two stayed out (`worktree remove`, `branch -D`); `restore` is a third out-row from a
+separate discovery, not one of the nine.** So the table below has three rows while the nine
+split 7/2:
 
 ⚠ **"Considered" is not "all", and an earlier version of this section implied it was.** It
 said an audit had found five and *the other two* were named here, and the table plus its
