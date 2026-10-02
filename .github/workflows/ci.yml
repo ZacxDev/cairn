@@ -496,7 +496,19 @@ jobs:
           # so this number now moves whenever that ledger does, by TWO PER SUBCOMMAND —
           # worth knowing before reading a future +2 here as somebody adding tests.
           # The hook suite moves 222 -> 256.
-          FLOOR = 2529
+          # ⚠ TWO PROSE NUMBERS IN THE PARAGRAPH ABOVE WERE WRONG WHEN IT LANDED AND ARE
+          # CORRECTED HERE RATHER THAN QUIETLY: it said "Measured 2577" and headed itself
+          # "2495 -> 2527" while computing from 2579 and setting 2529. The literal and the
+          # arithmetic were right and only the prose was stale — which is the failure this
+          # file's own comments are most prone to, so it is named rather than patched over.
+          # ⚠ 2529 -> 2565 ON AUDIT ROUND 1. `_REFUSED` GREW BY FOUR (`revert`,
+          # `update-index`, `read-tree`, `symbolic-ref`), so the parametrised help case
+          # contributes EIGHT of the new rows by itself — the "two per subcommand" warning
+          # above, firing for the first time. Measured 2616 on the merged tree, so
+          # `2616 - min(50, max(1, 2616/20)) = 2566`. The hook suite moves 256 -> 293.
+          # The last of those 293 was added after the sweep: a SURVIVING MUTANT marked
+          # the single-quote half of the escape model as having no case at all.
+          FLOOR = 2566
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)

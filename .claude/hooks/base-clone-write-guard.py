@@ -239,10 +239,17 @@ so a reader can check the claim rather than take it:
     or worktree registrations, which live in the COMMON git dir and are writable
     identically from any worktree, so conditions 2 and 3 cannot scope the hazard —
     refusing only in the base clone would teach that the worktree spelling is safe.
-  * `bash -c 'cd <the base clone> && git commit …'` — STILL OPEN, the one row that
-    is. The inner script is one quoted token, so nothing in it is parsed as a
-    command. Closing it means recursing into nested shells, which is where the
-    host-wide guard spends two separate recursion budgets.
+  * `bash -c 'cd <the base clone> && git commit …'` — STILL OPEN. The inner script
+    is one quoted token, so nothing in it is parsed as a command. Closing it means
+    recursing into nested shells, which is where the host-wide guard spends two
+    separate recursion budgets.
+  * BACKTICK COMMAND SUBSTITUTION — ``echo `git commit -m x` `` — STILL OPEN, and it
+    is in this list because the list is the only place a limit gets stated. Measured:
+    the backtick form is ALLOWED while `$(git commit -m x)` is REFUSED, because `(`
+    and `)` are operator characters that `_segments` already splits on and a backtick
+    is not. Neither form was in either list before. Pre-existing, not closed here,
+    and the same shape as the nested-shell row above: it is a second grammar for
+    "run this string as a command".
 
 ⚠ AND A FIFTH ROW IS CLOSED IN THE ONLY DIRECTION THAT IS SAFE: `git -C "$WT" …`
 IS REFUSED, NEVER RESOLVED. A `$VAR` target is one this guard cannot follow, so
@@ -301,13 +308,34 @@ OVERRIDE = "BASE_CLONE_WRITE_OK"
 #: without the doc's table moving is a refusal nobody can look up; one removed
 #: without the doc moving leaves the doc promising a guard that is gone.
 #:
-#: 🔴 AND "EVERYTHING ELSE IS A READ" WAS WRONG, WHICH IS WHY `clean`, `mv` AND
-#: `rm` ARE HERE: an audit found five shared-state writers outside the set. Three
-#: are in it — these — and the other two, `worktree remove` and `branch -D`, are
-#: named in the DOC's second table as deliberately out, each with its reason. The
-#: decision is recorded in both places because widening a set without the doc
-#: moving is a refusal nobody can look up, and declining to widen it without the
-#: doc moving is a hazard nobody can find.
+#: 🔴 AND "EVERYTHING ELSE IS A READ" WAS WRONG, WHICH IS WHY `clean`, `mv`, `rm`,
+#: `revert`, `update-index`, `read-tree` AND `symbolic-ref` ARE HERE. Two audits
+#: found them: a round-0 pass found five writers outside the set, and a round-1
+#: audit of the PR that fixed those found four more. Of the NINE considered, seven
+#: are in — these — and three are deliberately out (`worktree remove`, `branch -D`,
+#: `restore`), each with its reason in the DOC's second table. The decision is
+#: recorded in both places because widening a set without the doc moving is a
+#: refusal nobody can look up, and declining to widen it without the doc moving is a
+#: hazard nobody can find.
+#:
+#: 🔴 "CONSIDERED" IS NOT "ALL", AND AN EARLIER VERSION OF THIS COMMENT IMPLIED IT
+#: WAS — WHICH IS THE FAILURE THIS FILE NAMES ELSEWHERE AS "READS AS COVERAGE WHILE
+#: PROVIDING NONE". It said an audit had found five writers and the other two were
+#: named in the doc, and the doc's table plus its test then pinned the out-set as
+#: exactly two. That is a pinned FALSE COMPLETENESS: `revert` was outside both lists
+#: and ALLOWED, writing the tree, the index and HEAD — condition 1's own words —
+#: through the same sequencer as `cherry-pick`, which was already refused. The
+#: complement of this set is NOT enumerable, and the test now pins the DECISIONS
+#: TAKEN rather than the absence of others. Known writers still outside it, named so
+#: the next reader starts from the limit rather than from a rediscovery:
+#: `update-ref`, `tag -d`/`-f`, `notes`, `replace`, `reflog delete`, `bisect start`,
+#: `sparse-checkout set`, `submodule update`, `checkout-index`, `gc`/`prune`/`repack`
+#: and `filter-branch`. ⚠ MOST OF THOSE WRITE REFS OR OBJECT STORAGE IN THE COMMON
+#: GIT DIR, which is the `worktree remove` / `branch -D` reasoning — reachable
+#: identically from any worktree, so conditions 2 and 3 cannot scope them. Measured
+#: with a probe whose snapshot covered HEAD, the index and one worktree file: it is
+#: BLIND to other refs, so its "SAME" for `update-ref` and `tag -f` is an artefact
+#: of the instrument and is NOT evidence those are reads. Said rather than quoted.
 _REFUSED = frozenset({
     "add",
     "am",
@@ -318,11 +346,15 @@ _REFUSED = frozenset({
     "commit",
     "merge",
     "mv",
+    "read-tree",
     "rebase",
     "reset",
+    "revert",
     "rm",
     "stash",
     "switch",
+    "symbolic-ref",
+    "update-index",
 })
 
 #: git's own global options that consume a SEPARATE value, so
@@ -623,6 +655,7 @@ def _shell_lines(command: str) -> list[str]:
     pending: list[str] = []          # heredoc delimiters still awaited
     openers: list[str] = []          # delimiters THIS line opens, in order
     quote: str | None = None
+    quote_escapes = False            # does THIS quote honour `\`? see the open branch
     comment = False
     prev: str | None = None          # the previous character on this logical line
     index, size = 0, len(command)
@@ -671,6 +704,28 @@ def _shell_lines(command: str) -> list[str]:
             index += 1
             continue
         if quote:
+            # 🔴 A BACKSLASH ESCAPE INSIDE A QUOTE, AND THE VERSION WITHOUT IT
+            # DISARMED THE GUARD FOR EVERY LATER LINE. Measured end to end: with
+            # `echo "say \"hi\""` on the first line, a `git add` + `git commit` on a
+            # LATER line passed straight through. The `\"` was read as the closing
+            # quote, the real closer re-opened one that never closes, so the walk
+            # returned the whole multi-line command as ONE logical line — `git` is
+            # then not at argv[0] and no candidate is produced at all. Ordinary
+            # text: `printf "%s\n" "a\"b"` and `sed -i "s/x/\"y\"/" f` do it too.
+            # ⚠ Single-line commands were never affected (`;` still splits); it
+            # needs a newline and a later-line write, which is the ordinary shape of
+            # an agent's Bash call.
+            #
+            # ⚠ ESCAPES ARE HONOURED PER QUOTE KIND, NOT EVERYWHERE, because bash
+            # does not: inside `'…'` a backslash is LITERAL, so honouring one there
+            # would mis-parse the common `<<'EOF'` delimiter and every `'…\…'`
+            # string. `$'…'` is the exception bash itself carves out, so the flag is
+            # set from the character before the opening quote.
+            if quote_escapes and char == "\\" and index + 1 < size:
+                current.append(command[index:index + 2])
+                prev = command[index + 1]
+                index += 2
+                continue
             current.append(char)
             if char == quote:
                 quote = None
@@ -706,6 +761,10 @@ def _shell_lines(command: str) -> list[str]:
             continue
         if char in ("'", '"'):
             quote = char
+            # `"…"` honours backslash escapes; `'…'` does not; `$'…'` does — see the
+            # quote branch above for the measurement and for why the distinction is
+            # load-bearing rather than pedantic.
+            quote_escapes = char == '"' or prev == "$"
             current.append(char)
             prev = char
             index += 1
@@ -795,15 +854,19 @@ def _segments(command: str) -> list[list[str]]:
 #: `stdbuf -o0` and `xargs --max-args=3` fall out of the `startswith("-")` skip for
 #: free; `timeout` is the only word here that eats a bare OPERAND (its duration).
 #:
-#: 🔴 NOT CLOSED, AND DELIBERATELY NOT CLOSABLE — DO NOT ADD WORD 21 WITHOUT
-#: RE-OPENING THE QUESTION. The docstring's table records why this row's closing
+#: 🔴 NOT CLOSED, AND DELIBERATELY NOT CLOSABLE — DO NOT ADD A WORD WITHOUT
+#: RE-OPENING THE QUESTION. ⚠ An earlier wording said "do not add word 21" against a
+#: dict that already HAD 21 entries, so a reader counting to check landed on
+#: "already fired" and could read the rule as spent. The invariant is the rule, never
+#: the ordinal. The docstring's table records why this row's closing
 #: condition was RETIRED rather than met: "a case per word" defines done as an
 #: enumeration over an OPEN set, and the root fix is nested-shell recursion
 #: (`bash -c '…'`), not another word. `tests/test_base_clone_write_guard.py` PINS
 #: this dict so a growth is a decision rather than a chore — if you are here to add
 #: an entry, read that table first and say what makes this word worth a row when a
 #: replay of 37,268 real commands moved no verdict for any of the twelve already
-#: here. The direction of the gap is still fail-OPEN, and that is accepted.
+#: here — a replay whose own scope is stated there. The direction of the gap is still
+#: fail-OPEN, and that is accepted.
 #: Known absences, each left out on purpose rather than forgotten, because skipping a
 #: word whose operand is NOT a local program would invent a false positive — the
 #: direction this file forbids itself:
@@ -945,21 +1008,47 @@ def _git_subcommand(segment: list[str]) -> str | None:
 #:   * `mv` — `-v -n -f -k`: none takes a value either; `-nv`, `-vn` and `-kn`
 #:     measured accepted and unchanged.
 #:
-#: ⚠ NOT CLOSED, and deliberately NOT widened to the rest of `_REFUSED` even though
-#: three more members have a spelling that was measured to change nothing:
-#: `add -n`/`--dry-run`, `commit --dry-run`, and `apply --check`/`--stat` (positive
-#: control in the same run: a bare `apply` CHANGED the tree). Those are an operator
-#: decision, not a mechanical consequence of this table, and scope creep in a guard
-#: is its own hazard. 🔴 AND TWO SPELLINGS THAT *LOOK* LIKE DRY RUNS ARE NOT, SO
+#: ⚠ NOT CLOSED, and deliberately NOT widened to the rest of `_REFUSED`. Two more
+#: members have a spelling measured to change nothing — `add -n`/`--dry-run` and
+#: `apply --check`/`--stat` (positive control in the same run: a bare `apply`
+#: CHANGED the tree). Those are an operator decision, not a mechanical consequence
+#: of this table, and scope creep in a guard is its own hazard.
+#: 🔴 AND `commit --dry-run` IS **NOT** ONE OF THEM — AN EARLIER VERSION OF THIS
+#: COMMENT LISTED IT AS A GENUINE READ AND THAT WAS WRONG, WHICH MATTERS BECAUSE IT
+#: IS THE SENTENCE THAT WOULD LICENSE WIDENING. Measured: `git commit --dry-run`
+#: with a staged change WRITES A NEW TREE OBJECT into `.git/objects`. ⚠ THE ADDED
+#: OBJECT IS THE WHOLE FINDING AND THE INDEX IS NOT PART OF IT: `.git/index` also
+#: changes under a plain `git status` when the stat cache is stale — measured
+#: BOTH ways on this machine, `status` leaving it untouched in one run and changing
+#: it in another — so the index half cannot discriminate a read from a write and
+#: quoting it would get the finding dismissed. The verdict is already correct
+#: (`commit` is not in the table, so it still refuses); what was wrong was the
+#: recorded reason. 🔴 AND TWO SPELLINGS THAT *LOOK* LIKE DRY RUNS ARE NOT, SO
 #: THEY MUST NEVER BE ADDED: `git merge --no-commit` staged a merge AND moved HEAD
 #: on a fast-forward, and `git cherry-pick -n` staged the picked file — both
 #: measured CHANGED. A flag named for what it does not do is not a flag that does
 #: nothing. `am`, `cherry-pick`, `checkout`, `switch`, `merge`, `rebase`, `reset`
 #: and `stash` have no `--dry-run` at all (rc 129, unknown option).
-_DRY_RUN_SHORT_VALUE_FLAGS: dict[str, frozenset[str]] = {
-    "clean": frozenset({"e"}),
-    "mv": frozenset(),
-    "rm": frozenset(),
+#: 🔴 AND THE VALUE-FLAG SET IS SHORT **AND** LONG, BECAUSE THE SHORT-ONLY VERSION
+#: DELETED FILES. The comment here used to claim the `e` stop meant "the pattern's
+#: own letters are never read as flags". True for the ATTACHED spelling that was
+#: measured (`git clean -fenjunk.txt`, correctly refused) and FALSE for the spaced
+#: one, which is a separate word the stop never reaches. Measured, files really
+#: gone, in an armed clone:
+#:
+#:     git clean -f -e -n     ALLOWED, and it DELETED the untracked file
+#:     git rm -f -- -n        ALLOWED, and it DELETED a tracked file named `-n`
+#:
+#: In the first the `-n` is `--exclude`'s VALUE; in the second it is a PATHSPEC
+#: after `--`. Both were surface this exemption created — neither subcommand was
+#: refused at all before it. So the walk skips a value-taking flag's next word and
+#: stops dead at `--`, and the sets below are per subcommand, from that
+#: subcommand's own `-h` output on git 2.55.0.
+_DRY_RUN_VALUE_FLAGS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    #          short letters that take a value   long options that take one
+    "clean": (frozenset({"e"}), frozenset({"--exclude"})),
+    "mv": (frozenset(), frozenset()),
+    "rm": (frozenset(), frozenset({"--pathspec-from-file"})),
 }
 
 
@@ -1018,27 +1107,56 @@ def _is_read_only_spelling(subcommand: str, rest: list[str]) -> bool:
 def _is_dry_run(subcommand: str, rest: list[str]) -> bool:
     """Is this a DRY RUN of a refused subcommand, and therefore a read?
 
-    ONE predicate for `clean`, `mv` and `rm` — see `_DRY_RUN_SHORT_VALUE_FLAGS` for
-    why it is one and for the measurement behind each row. Covers `--dry-run`, a
-    bare `-n`, and an `n` inside a COMBINED short cluster, stopping at a short flag
-    that takes a value so the value's own letters are never read as flags.
+    ONE predicate for `clean`, `mv` and `rm` — see `_DRY_RUN_VALUE_FLAGS` for why it
+    is one and for the measurement behind each row. Covers `--dry-run`, a bare `-n`,
+    and an `n` inside a COMBINED short cluster.
+
+    🔴 THREE THINGS IT MUST NOT READ AS A FLAG, EACH BECAUSE THE VERSION WITHOUT IT
+    WAS MEASURED TO DELETE FILES OR TO ALLOW A WRITE:
+
+      * **a value-taking flag's SPACED value.** `git clean -f -e -n` was ALLOWED and
+        deleted the untracked file: the `-n` is `--exclude`'s value, a separate word
+        the attached-form stop never reaches. So the walk skips the next word after
+        such a flag, short or long.
+      * **anything after `--`.** `git rm -f -- -n` was ALLOWED and deleted a tracked
+        file named `-n`: after `--` every word is a PATHSPEC, so the scan stops dead.
+      * **a long option that merely CONTAINS an `n`.** Long options are never
+        cluster-scanned — `git rm --ignore-unmatch seed.txt` writes, and a mutation
+        that deleted that guard flipped it to ALLOW while the whole suite stayed
+        green, so it is now pinned by a case of its own.
 
     🔴 `rest` IS THE WORDS AFTER THE SUBCOMMAND, NOT THE SEGMENT, AND THAT IS A
     MEASURED FAIL-OPEN REPAIR RATHER THAN TIDINESS — `_is_exempt` narrows it; the
     measurement is there.
     """
-    value_flags = _DRY_RUN_SHORT_VALUE_FLAGS.get(subcommand)
-    if value_flags is None:
+    entry = _DRY_RUN_VALUE_FLAGS.get(subcommand)
+    if entry is None:
         return False
+    short_value, long_value = entry
+    skip_next = False
     for word in rest:
+        if skip_next:
+            skip_next = False
+            continue
+        if word == "--":
+            break
         if word == "--dry-run":
             return True
-        if not word.startswith("-") or word.startswith("--"):
+        if not word.startswith("-") or word == "-":
             continue
-        for char in word[1:]:
+        if word.startswith("--"):
+            # `--opt=value` carries its value; `--opt value` consumes the next word.
+            if "=" not in word and word in long_value:
+                skip_next = True
+            continue
+        for position, char in enumerate(word[1:], start=1):
             if char == "n":
                 return True
-            if char in value_flags:
+            if char in short_value:
+                # Attached (`-enfoo`) if anything follows it in this word; spaced
+                # (`-e foo`) if it ends the cluster.
+                if position == len(word) - 1:
+                    skip_next = True
                 break
     return False
 
@@ -1097,6 +1215,21 @@ def _is_exempt(subcommand: str, segment: list[str]) -> bool:
         # above for every subcommand now, and leaving a copy here would be the third
         # site of the predicate that this change exists to remove.
         return bool(rest) and rest[0] in ("list", "show")
+    if subcommand == "symbolic-ref":
+        # 🔴 THE READ FORM AND THE WRITE FORM DIFFER BY ONE OPERAND, WHICH IS WHY
+        # THIS SUBCOMMAND NEEDS AN EXEMPTION AT ALL. Measured on git 2.55.0:
+        # `git symbolic-ref HEAD` (and `--short`/`-q`) PRINTS the ref and changes
+        # nothing, while `git symbolic-ref HEAD refs/heads/<other>` rewrote
+        # `.git/HEAD` — the shared HEAD moved under a peer, silently, which is the
+        # exact failure this whole file exists for. Refusing the one-operand form
+        # would refuse the ordinary way to ask which branch is checked out.
+        #
+        # ⚠ COUNTED, NOT PATTERN-MATCHED, and the flags are dropped first: a flag
+        # is not an operand, so `--short HEAD` is still a read. `--delete` is a
+        # WRITE with one operand, so it is excluded by name rather than by count.
+        operands = [word for word in rest if not word.startswith("-")]
+        deleting = any(word in ("-d", "--delete") for word in rest)
+        return len(operands) <= 1 and not deleting
     return False
 
 

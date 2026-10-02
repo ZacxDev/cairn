@@ -275,10 +275,11 @@ def _dry_run_keys_from_hook() -> frozenset[str]:
     """The subcommands `_DRY_RUN_SHORT_VALUE_FLAGS` exempts a dry run for."""
     text = HOOK.read_text(encoding="utf-8")
     block = re.search(
-        r"_DRY_RUN_SHORT_VALUE_FLAGS: dict\[str, frozenset\[str\]\] = \{(.*?)\n\}",
+        r"_DRY_RUN_VALUE_FLAGS: dict\[str, tuple\[frozenset\[str\], "
+        r"frozenset\[str\]\]\] = \{(.*?)\n\}",
         text, re.S)
-    assert block, "could not find the _DRY_RUN_SHORT_VALUE_FLAGS literal"
-    return frozenset(re.findall(r'"([a-z-]+)":', block.group(1)))
+    assert block, "could not find the _DRY_RUN_VALUE_FLAGS literal"
+    return frozenset(re.findall(r'^\s{4}"([a-z-]+)": \(', block.group(1), re.M))
 
 
 def test_the_dry_run_ledger_is_parseable():
@@ -308,25 +309,38 @@ def test_the_DRY_RUN_exemption_covers_EXACTLY_THREE_SUBCOMMANDS_AND_NO_MORE():
     assert keys <= _refused_from_hook(), keys - _refused_from_hook()
 
 
-def test_the_two_shared_state_WRITERS_LEFT_OUT_carry_a_RECORDED_DECISION():
-    """🔴 THE CLOSING CONDITION WAS A DECISION PER SUBCOMMAND, NOT A WIDER SET.
+def test_the_shared_state_WRITERS_LEFT_OUT_carry_a_RECORDED_DECISION():
+    """🔴 THIS PINS THE DECISIONS TAKEN, **NOT** THAT NO OTHER WRITER EXISTS — AND
+    THE EARLIER VERSION OF IT PINNED THE SECOND THING, WHICH WAS FALSE.
 
-    An audit found five subcommands writing shared state outside `_REFUSED`:
-    `clean`, `rm` and `mv` went IN, and `worktree remove` and `branch -D` stayed
-    out — the first because this repo's own parallel-work recipe PRESCRIBES
-    `git -C "$REPO" worktree remove "$WT"` from the base clone and refusing a
-    documented recipe is the guard's own stated failure mode, and both because a
-    worktree registration and a branch ref live in the COMMON git dir, so the same
-    write is available identically from any worktree and conditions 2 and 3 cannot
-    scope the hazard at all.
+    It asserted the out-set was exactly `{worktree remove, branch -D}` while the hook
+    comment said "an audit found five writers" and the doc's table listed two. A
+    round-1 audit then measured `git revert --no-edit HEAD` ALLOWED — writing the
+    tree, the index AND HEAD, through the same sequencer as `cherry-pick`, which was
+    already refused. So the trio of prose + table + pin was a **pinned false
+    completeness**: this repo's own "reads as coverage while providing none", with a
+    test holding it in place. `revert`, `update-index`, `read-tree` and
+    `symbolic-ref` are all in `_REFUSED` now.
 
-    This pins the DECISION rather than the prose: the out-table names exactly those
-    two, and neither appears in the refused ledger. It fails if the set GROWS (a
-    third subcommand quietly declared out) or SHRINKS (a decision deleted), and it
-    fails if one is ever added to `_REFUSED` without its doc row moving — which is
+    What the three rows mean, each a decision with a reason in the doc:
+
+      * `worktree remove` — the parallel-work recipe PRESCRIBES it from the base
+        clone, and refusing a documented recipe is the guard's stated failure mode;
+      * `branch -D` — a branch ref lives in the COMMON git dir, so the same delete is
+        available identically from any worktree, which conditions 2 and 3 cannot
+        scope;
+      * `restore` — it DOES overwrite the working-tree file (measured: an unsaved
+        edit replaced by committed content), but the ordinary form carries no `--`,
+        so refusing it would refuse every `git restore <path>`.
+
+    Fails on GROW (a decision added without its reason) and on SHRINK (a decision
+    deleted), and fails if one is added to `_REFUSED` without its doc row moving —
     the mirror of `test_the_refused_set_matches_the_documented_table`.
+    ⚠ It can never assert completeness: the complement of `_REFUSED` is not
+    enumerable, and the doc now names the known tail instead of implying there is
+    none.
     """
-    assert _declared_out_from_doc() == {"worktree remove", "branch -D"}
+    assert _declared_out_from_doc() == {"worktree remove", "branch -D", "restore"}
     refused = _refused_from_hook()
     for entry in _declared_out_from_doc():
         assert entry.split()[0] not in refused, (
@@ -646,6 +660,69 @@ def test_a_FAKE_heredoc_OPENER_cannot_swallow_the_commands_after_it(
 
 
 @pytest.mark.parametrize("command,why", [
+    ('echo "say \\"hi\\""\ngit commit -m sneaky',
+     'an ESCAPED quote inside `"…"` — the `\\"` was read as the closer, so the real '
+     'closer re-opened a quote that never closed and the WHOLE command came back as '
+     'one logical line with `git` not at argv[0]'),
+    ('printf "%s\\n" "a\\"b"\ngit commit -m sneaky',
+     "the same through an ordinary `printf`"),
+    ('sed -i "s/x/\\"y\\"/" f.txt\ngit commit -m sneaky',
+     "…and an ordinary `sed`"),
+    ("echo $'it\\'s'\ngit commit -m sneaky",
+     "`$'…'` is the one single-quote form that DOES honour a backslash, which is "
+     "why the flag is set from the character before the opening quote"),
+    ('echo "a\\\\b"\ngit commit -m sneaky',
+     "⚠ THE DISCRIMINATOR: a BALANCED escape was already handled, and must stay so — "
+     "deny before the fix as well as after"),
+    ("echo 'ends with a backslash \\'\ngit commit -m sneaky",
+     "🔴 THE OTHER DIRECTION, AND A MUTATION SWEEP IS WHAT FOUND IT UNGUARDED: inside "
+     "`'…'` a backslash is LITERAL, so the quote above closes and this line ends. A "
+     "mutant that let EVERY quote honour escapes ate the closing quote, glued the "
+     "rest of the command on, and flipped this to ALLOW with all 292 tests still "
+     "green — so the single-quote half of the model had no case at all"),
+    ('echo "say \\"hi\\""\ngit add new.txt && git commit -m sneaky',
+     "⚠ AND THE ROW THAT EXPLAINS WHY ONE PUBLISHED REPRO DID NOT REPRODUCE: with an "
+     "OPERATOR before the write this was already deny at `0aa1ba2`. The glued line "
+     "still reaches the lexer, which handles `\\\"` correctly, and `&&` is emitted as "
+     "its own token — so the write lands in a SECOND segment whose first word is "
+     "`git`. The fail-open needs the write to be the first word of its segment"),
+])
+def test_an_ESCAPED_QUOTE_does_not_disarm_the_guard_for_LATER_LINES(
+        parallel_clone, command, why):
+    """🔴 ONE `\\"` ON AN EARLIER LINE TURNED THE GUARD OFF FOR THE WHOLE REST OF THE
+    COMMAND, AND THE DOCSTRING CLAIMED THIS FAMILY WAS CLOSED.
+
+    `_shell_lines` tracked quotes but had no backslash model inside them, so the
+    escaped quote closed the string, the real closer opened a new one, and nothing
+    ever closed THAT — the walk returned every remaining line glued into one. A
+    later-line `git add … && git commit …` then sits in the middle of a token list
+    whose first word is `echo`, so no candidate is produced and the write is
+    ALLOWED. Measured end to end with a plain-`echo` control denying in the same run.
+
+    ⚠ SINGLE-LINE COMMANDS WERE NEVER AFFECTED — `;` still splits — so this needed a
+    newline and a later-line write, which is precisely the ordinary shape of an
+    agent's Bash call rather than an exotic one.
+
+    🔴 AND THE REPRO IS NARROWER THAN THE FIRST REPORT OF IT, WHICH IS WHY THE LAST
+    ROW IS HERE RATHER THAN THE SHAPE THAT WAS HANDED TO ME. A report of this gave
+    the later line as `git add new.txt && git commit -m sneaky`; driven against
+    `0aa1ba2` that is **deny**, not allow. The glued line still reaches `shlex`,
+    which DOES model `\\"` inside double quotes, and `&&` comes back as its own
+    operator token — so the write starts a second segment and is seen. The fail-open
+    needs the write to be the FIRST word of its segment, i.e. a bare later line.
+    Every row above was re-measured in that shape before being asserted; taking the
+    reported one would have shipped five rows that were green at the base ref.
+
+    🔴 THE FIX IS QUOTE-KIND-AWARE AND THAT IS NOT PEDANTRY: inside `'…'` a backslash
+    is LITERAL, so honouring escapes there would mis-parse `<<'EOF'` and break the
+    heredoc battery above. The full (a) battery was re-run against this change, not
+    just these rows.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) == "deny", f"{why}: {command!r}"
+
+
+@pytest.mark.parametrize("command,why", [
     ('cat > /tmp/recipe <<"EOF"\ngit commit -m x\nEOF',
      "a DOUBLE-quoted delimiter — quotes that belong to the delimiter, not a string"),
     ("cat > /tmp/recipe <<-EOF\n\tgit commit -m x\n\tEOF",
@@ -762,6 +839,61 @@ def test_the_wrapper_ledger_does_not_OVER_fire(parallel_clone, command, why):
 # --------------- (c) three more shared-state writers, and two decisions to leave out
 
 
+@pytest.mark.parametrize("command,why", [
+    ("git revert --no-edit HEAD",
+     "🔴 ALLOWED at `0aa1ba2` and it moves HEAD, the index and the worktree — "
+     "condition 1's own three, through the SAME sequencer as `cherry-pick`, which "
+     "was already refused"),
+    ("git revert -n HEAD", "the staged form: no new commit, but the index rewritten"),
+    ("git revert HEAD", "the bare form"),
+    ("git update-index --force-remove seed.txt",
+     "plumbing that rewrites `.git/index` directly — measured, the path left the index"),
+    ("git read-tree HEAD", "rewrites `.git/index` from a tree"),
+    ("git read-tree -m HEAD side", "…and from two"),
+    ("git symbolic-ref HEAD refs/heads/side",
+     "rewrites `.git/HEAD` — the shared HEAD moved under a peer, measured"),
+    ("git symbolic-ref --delete HEAD", "a one-operand WRITE, excluded by name"),
+])
+def test_the_FOUR_writers_a_ROUND_ONE_AUDIT_found_are_refused(
+        parallel_clone, command, why):
+    """🔴 THE PR THAT ADDED `clean`/`rm`/`mv` ALSO ASSERTED THE OUT-SET WAS COMPLETE,
+    AND IT WAS NOT. Every row here was ALLOWED at `0aa1ba2` while the hook's comment
+    said an audit had found five writers, the doc tabled two as deliberately out, and
+    a test pinned that pair on grow AND shrink. A pinned false completeness is worse
+    than an unstated limit: it is the thing that stops the next reader looking.
+
+    `revert` is the sharpest row — it is implemented by the same sequencer as
+    `cherry-pick`, which was in the ledger, so the asymmetry had no reason at all.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) == "deny", f"{why}: {command}"
+
+
+@pytest.mark.parametrize("command,why", [
+    ("git symbolic-ref HEAD", "the READ form: prints the ref, changes nothing"),
+    ("git symbolic-ref --short HEAD", "…and with a flag, which is not an operand"),
+    ("git symbolic-ref -q HEAD", "…and the quiet one"),
+])
+def test_the_symbolic_ref_READ_form_is_not_refused(parallel_clone, command, why):
+    """🔴 THE READ AND WRITE FORMS DIFFER BY ONE OPERAND, WHICH IS THE ONLY REASON
+    THIS SUBCOMMAND NEEDS AN EXEMPTION.
+
+    Measured on git 2.55.0: `git symbolic-ref HEAD` prints `refs/heads/<branch>` and
+    leaves HEAD, the index and the worktree byte-identical, while
+    `git symbolic-ref HEAD refs/heads/<other>` rewrote `.git/HEAD`. Refusing the
+    one-operand form would refuse the ordinary way to ask which branch is checked
+    out — a false positive, the direction this guard forbids itself — so the
+    exemption COUNTS operands with flags dropped, and excludes `--delete` by name
+    because that is a write with one operand.
+
+    ⚠ NOT REGRESSION COVERAGE: green at `0aa1ba2` vacuously, because `symbolic-ref`
+    was not refused there at all. These pin the exemption that lands with the
+    refusal; the pair is what makes the refusal usable.
+    """
+    clone = parallel_clone[0]
+    assert _decision(_run_hook(command, clone)) is None, f"{why}: {command}"
+
+
 @pytest.mark.parametrize("command", [
     "git clean -fd",
     "git clean -fdx",
@@ -817,6 +949,22 @@ def test_the_three_newly_refused_WRITERS_are_refused(parallel_clone, command):
     ("git mv seed.txt other.txt", "deny"),
     ("git mv -f seed.txt other.txt", "deny"),
     ("git mv -kv seed.txt other.txt", "deny"),
+    # ---- 🔴 THE THREE THAT DELETED REAL FILES, or would have. Each was ALLOWED at
+    # `0aa1ba2` by the first version of this exemption, and the first two were
+    # measured destroying files in an armed clone.
+    ("git clean -f -e -n", "deny"),      # `-n` is --exclude's VALUE; deleted junk
+    ("git clean -f --exclude -n", "deny"),       # the long spelling of the same
+    ("git rm -f -- -n", "deny"),         # `-n` is a PATHSPEC after `--`; deleted it
+    ("git rm -f -- -n seed.txt", "deny"),
+    ("git mv -f -- -n other.txt", "deny"),
+    # …and the one a SURVIVING MUTANT pointed at: deleting the long-option guard
+    # flipped this to ALLOW while all 256 tests stayed green.
+    ("git rm --ignore-unmatch seed.txt", "deny"),
+    ("git rm --cached --ignore-unmatch seed.txt", "deny"),
+    # The attached spellings must keep working — they are the control for the stop,
+    # and `-fenfoo` was measured to really delete.
+    ("git clean -f --exclude=n", "deny"),
+    ("git clean -fenfoo", "deny"),
     # ---- 🔴 AND THE CONTROLS THAT MAKE THE *LEDGER KEY* CHECK REACHABLE, which is
     # the half of `_is_dry_run` a dry-run-spelling test cannot exercise. `-n` does
     # NOT mean dry-run everywhere: on `commit` it is `--no-verify`, which commits,
@@ -978,8 +1126,14 @@ def test_an_EXEMPTING_FLAG_must_belong_to_the_SUBCOMMAND_not_to_a_WRAPPER(
     latent flaw in a different one into a live bypass.** `_is_exempt` now computes
     the words after the subcommand ONCE and every exemption reads only those.
 
-    Red/green: the `nice`, `xargs`, `sudo` and `env` rows were ALLOW at `d6eafdb`;
-    the `env` one was ALLOW at `ffa0eca` as well. The four allow rows are ⚠ invariant
+    Red/green, corrected after a re-measurement — ⚠ AN EARLIER VERSION OF THIS
+    DOCSTRING SAID FOUR AND THE TRUE NUMBER IS THREE. At `d6eafdb` the suite reports
+    **4 failed / 7 passed** for this test, and the `xargs -n 1 git rm seed.txt` row
+    was **already deny** there: `rm` had no dry-run exemption yet, so the wrapper's
+    `-n` had nothing to borrow. It only became a bypass one commit later, which is
+    why it is red against the INTERMEDIATE state and not against `d6eafdb`. So:
+    `nice`, `sudo --` and `sudo --ff-only` were ALLOW at `d6eafdb`; the `env` one was
+    ALLOW at `ffa0eca` as well. The four allow rows are ⚠ invariant
     guards — they pin that narrowing the scan did not break the recipes, which is the
     failure mode a narrowing invites.
     """
@@ -1137,11 +1291,38 @@ def test_the_refusal_does_not_assert_the_closed_nested_worktree_hazard(parallel_
     "git worktree list",
     "git push origin HEAD:some-branch",
     "git stash list",
-    "git restore somefile",
+    # ⚠ `git restore` IS NOT IN THIS LIST — see the test below. It is allowed, but it
+    # is not a read, and this test's NAME would have asserted that it is.
     "ls -la",
 ])
 def test_reads_and_non_git_commands_are_allowed(parallel_clone, command):
     clone, _ = parallel_clone[:2]
+    assert _decision(_run_hook(command, clone)) is None, command
+
+
+@pytest.mark.parametrize("command", [
+    "git restore seed.txt",
+    "git restore --staged seed.txt",
+    "git restore .",
+])
+def test_git_restore_is_ALLOWED_and_is_NOT_a_read(parallel_clone, command):
+    """🔴 SPLIT OUT OF THE "reads" TEST, BECAUSE THE NAME WAS THE CLAIM AND IT WAS
+    FALSE. `git restore seed.txt` sat in `test_reads_and_non_git_commands_are_allowed`
+    — measured, it **overwrites the working-tree file**: an unsaved edit was replaced
+    by the committed content, which is destroying work rather than reading.
+
+    The verdict is unchanged and correct. `restore` is deliberately OUT of `_REFUSED`
+    and has its own row in the doc's out-table: the ordinary form carries no `--`, so
+    adding it to the ledger would refuse EVERY `git restore <path>` — including the
+    single-file recovery the fleet rules prescribe in place of `git checkout --`. The
+    same hazard the `checkout` pathspec exemption exists for, arriving from the other
+    side.
+
+    ⚠ INVARIANT GUARD — green at every ref. What moved is the NAME above it, which is
+    the whole point: a test title is a claim, and this one asserted that a
+    work-destroying command is a read.
+    """
+    clone = parallel_clone[0]
     assert _decision(_run_hook(command, clone)) is None, command
 
 
