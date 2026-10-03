@@ -21,9 +21,13 @@ That is the arrangement `tests/marker_corpus.py` + `tests/test_marker_oracle_swe
 different function, and it is named here so nobody takes either half for the whole.
 
 ⚠ WHAT NEITHER HALF SEES: the bodies are hand-written, so nothing here speaks for the
-LIVE corpus, and no surface PRINTS an id yet — this PR adds the derivation and the
-position, not the rendering. The differential reader fixture is what compares rendered
-bytes once it does.
+LIVE corpus, and nothing here speaks for RENDERING. ⚠ THAT SECOND CLAUSE USED TO READ
+"no surface PRINTS an id yet — this PR adds the derivation and the position, not the
+rendering", AND IT IS NO LONGER TRUE: both text renderers now append ` [cb:<id>]` to
+every surfaced section line that opens a bullet, so a rendered byte depends on
+`citation_id`. The differential reader fixture is what compares the two renderers' bytes
+(138 of its lines carry a token), and `tests/test_citation_render.py` is what pins the
+POSITION and the verbatim body on this side.
 
 🔴 ONE GUARD WAS DELETED RATHER THAN KEPT, AND THE DELETION IS THE RECORD.
 `test_the_id_is_STABLE_across_calls` asserted that two calls on one body agree.
@@ -286,6 +290,17 @@ def test_the_id_is_NOT_SCOPED():
     else in a corpus" does not hold for duplicated TEXT: two byte-identical bullets in
     different entries or scopes collide deterministically, because `append_bullet`
     dedupes within ONE file only. Pinned so the docstring's correction is checkable.
+
+    ⚠ AND THIS IS ONE OF **TWO** FAILURE MODES OF THAT FRAMING — NAMED HERE BECAUSE THIS
+    TEST COVERS ONLY THIS ONE, AND A READER WHO FINDS IT WILL OTHERWISE READ IT AS THE
+    WHOLE CORRECTION. The second is the CITATION ECHO: a writer who quotes `[cb:…]` inside
+    new prose has that token stored verbatim (only a TRAILING token is stripped), so the
+    token enters the corpus permanently and a later search cannot tell a use from a
+    quotation. It is declared at `citation_id`'s docstring and in `README.md`; it is NOT
+    pinned by a test anywhere, deliberately — the consequence is a rule for a DOWNSTREAM
+    consumer ("take the LAST `[cb:…]` on a line"), not behaviour this tree implements, and
+    the one piece of behaviour it rests on is already pinned by
+    `internal/write`'s `TestACitationTokenInProseIsNotStripped`.
     """
     a = parse_journal_bullets("## one entry\n- one\n")[0].citation_id
     b = parse_journal_bullets("- one\n")[0].citation_id

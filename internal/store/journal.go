@@ -135,10 +135,20 @@ type JournalBullet struct {
 	// no token at all. ⚠ THE WRONG SPLITTER IS ALREADY IN THIS TREE:
 	// `internal/ui/render.go`'s `inlineCode` splits its text on "\n". Both
 	// renderers that emit section bodies use `pytext.SplitLines`, which is why the
-	// index aligns
-	// TODAY; it is an alignment, not a property. The fixture case
+	// index aligns TODAY; it is an alignment, not a property.
+	//
+	// 🔴 AND THE FIXTURE CASE DOES NOT CATCH A CONSUMER — THIS COMMENT SAID IT DID,
+	// AND THAT IS RETRACTED RATHER THAN SOFTENED. It read: "the fixture case
 	// `a-NON-newline-line-break-inside-a-bullet` is what catches a consumer that
-	// picks the other one.
+	// picks the other one." That case pins THIS PACKAGE'S OWN StartLines (0 and 2 on
+	// `"- a\rb\n- c\n"`) against the Python answers, so it catches the PARSER
+	// changing splitter. It never runs a consumer. Measured at `902be517`: swapping
+	// `internal/report`'s emission splitter to `strings.Split(body, "\n")` left
+	// `go test ./... -count=1` at 21 ok, 0 FAIL — that fixture replay included.
+	// What catches a consumer is
+	// `report.TestTheRENDERERSOwnSplitterIsWhatPlacesTheToken`, which hands
+	// `RenderText` a body directly; a body that arrived through `ExtractSections`
+	// cannot see the difference, because that function re-joins with "\n".
 	StartLine int
 }
 
@@ -152,11 +162,51 @@ type JournalBullet struct {
 // 451/454 = 99.3% and measures COMPLIANCE, not use. A token that exists nowhere else in a
 // corpus turns that question into a match.
 //
-// 🔴 NOT PRINTED BY ANY SURFACE AT THIS COMMIT, AND THAT IS THE SEQUENCING RATHER THAN
-// AN OVERSIGHT — the derivation lands before the renderer so no rendered byte moves in
-// the same change. **Closing condition for the dead payload:** an
-// `internal/report/testdata/reader_fixtures.json` row carrying `[cb:`. Until then every
-// guard over this method is a contract pin and nothing here is exercised by a read.
+// 🔴 AND THAT UNIQUENESS DECAYS, BY THE SAME MECHANISM THAT DISQUALIFIED THE OLD PROXY.
+// Declared here rather than left for a reader to discover, because it is the FOUNDING
+// rationale one paragraph up. [CitationToken] is stripped off the END of a submitted line
+// before `write.ContentHash` is taken, so a verbatim echo is still recognised as the same
+// bullet; a token quoted INSIDE new prose is not a trailer, is not stripped, and is stored
+// VERBATIM by `write.RenderBullet` / the oracle's `render_bullet`. Measured end to end
+// against the oracle's own functions: `- 2000-01-02: … [cb:7a54575e]` read, then
+// `building on [cb:7a54575e], …` submitted, stores a bullet whose PROSE carries
+// `[cb:7a54575e]` forever and which on the next read ALSO carries its own id. So:
+//
+//   - A CONSUMER MUST TAKE THE **LAST** `[cb:…]` ON A LINE, AND MUST NOT READ A TOKEN'S
+//     PRESENCE AS EVIDENCE THE LINE OPENS A BULLET. A first-match regexp reads the
+//     quoted id — a different bullet's. 🔴 But a LAST-match regexp is still wrong on the
+//     mirror case, which the first draft of this rule omitted: a quoted token can end a
+//     line that carries NO id — prose, a continuation line, an indented dash, a fenced
+//     sample — and this function returns nothing for every one of those. Measured on two
+//     different bodies: a strict last-match scraper matches this function on EVERY annotated
+//     line and misattributes exactly ONE LINE PER UNANNOTATED SHAPE, i.e. four, each to a
+//     different bullet's id. 🔴 The four is STRUCTURAL (there are four such shapes); the
+//     denominator is a property of the body, so quote the shapes and not a ratio.
+//     Both renderers emit the same bytes, so no comparison between them can surface it.
+//     🔴 Which is the argument against scraping at all: [CitationIDsByStartLine] answers
+//     for exactly the lines that HAVE an id, so the question cannot arise. A scraper has
+//     to re-decide what opens a bullet, and that is the decision the `dropped-lines`
+//     defect above is about.
+//
+//   - "NOWHERE ELSE IN A CORPUS" IS TRUE UNTIL THE FIRST SUCH WRITE, AND NOT AFTER. A
+//     corpus search for a token then cannot tell a USE from a QUOTATION, which is exactly
+//     the saturation the 99.3% proxy was rejected for. Nothing here bounds it and nothing
+//     is proposed: `write.TestACitationTokenInProseIsNotStripped` makes the mid-prose token
+//     deliberately permanent, because stripping it would make two different bullets hash
+//     alike. The honest statement is that the signal degrades with use.
+//
+// 🔴 IT IS NOW PRINTED, AND THE CLOSING CONDITION THAT SAID SO IS MET. This comment read
+// "NOT PRINTED BY ANY SURFACE AT THIS COMMIT" and named the condition that would retire
+// that sentence: an `internal/report/testdata/reader_fixtures.json` row carrying `[cb:`.
+// There are such rows. BOTH text renderers append [CitationToken] to every surfaced
+// section line that OPENS a bullet — `internal/report`'s `RecallReport.RenderText` and
+// `lib/subsystem_recall.py`'s `render_text`, which is also the oracle pod's — so this
+// method is on the read path of every recall and its guards are no longer contract pins
+// over a dead payload. ⚠ WHAT IS STILL NOT PRINTED: the oracle's `--json` payload carries
+// `sections` as RAW bodies and is deliberately unannotated, and no browser surface reads
+// `StartLine`. (That cross-reference read "`report_json`'s own note" and pointed at
+// nothing — the function carried no such note; it is now written at its `"sections"` key
+// in `lib/subsystem_recall.py`.)
 //
 // 🔴 DERIVED FROM THE BULLET'S OWN BYTES, WHICH IS WHAT MAKES CROSS-LANGUAGE AGREEMENT
 // REACHABLE RATHER THAN DISCIPLINED. `sha256` over `Text()` — `Lines` joined with "\n"
@@ -209,10 +259,18 @@ type JournalBullet struct {
 //
 // 🔴 AND THE ID IS **NOT SCOPED**. Two byte-identical bullets in different entries, or
 // in different scopes, get the SAME id, deterministically — `write.AppendBullet` dedupes
-// within ONE file only, so the corpus does not forbid it. The framing "a token that
-// exists nowhere else in a corpus" therefore holds for the PROSE a bullet carries and
-// not for a duplicate of it, and the arithmetic below models RANDOM collisions only; it
-// says nothing about duplicated text, which collides with probability 1.
+// within ONE file only, so the corpus does not forbid it. The arithmetic below models
+// RANDOM collisions only; it says nothing about duplicated text, which collides with
+// probability 1.
+//
+// 🔴 AND THE ESCAPE HATCH THIS PARAGRAPH USED TO OFFER IS GONE. It read: the framing "a
+// token that exists nowhere else in a corpus" "therefore holds for the PROSE a bullet
+// carries and not for a duplicate of it". That is the one reading the citation echo
+// breaks — a writer who quotes `[cb:…]` INSIDE new prose puts the token in the prose, and
+// nothing strips it there. So the framing holds for NEITHER a duplicate NOR the prose;
+// the decay paragraph above the derivation states the honest version and nothing bounds
+// it. Two independent failure modes of one sentence, which is why it is retracted rather
+// than narrowed again.
 //
 // ⚠ 8 HEX, NOT 4, AND THE REASON IS ARITHMETIC. At 16 bits a 3,129-bullet corpus
 // collides with probability ≈1 (birthday: ~50% by ~300 bullets); 32 bits puts it near
@@ -228,6 +286,76 @@ func (b JournalBullet) CitationID() string {
 	// the next edit moves one of them.
 	sum := sha256.Sum256([]byte(b.Text()))
 	return hex.EncodeToString(sum[:])[:8]
+}
+
+// CitationToken is the rendered spelling of one citation id — the LEADING SPACE is part
+// of it, because every caller appends it to a line that already ends in content.
+//
+// 🔴 ONE SPELLING OF THE RENDERED TOKEN, AND THE REASON IS A SEAM RATHER THAN TIDINESS.
+// `internal/write`'s `citationTokenPattern` (`\[cb:[0-9a-f]{8}\]`) is what STRIPS this
+// trailer before a bullet's `ContentHash` is taken, and the echo it strips is measured
+// rather than feared — a downstream consumer's resume flow requires its report to echo
+// what it recalled, firing on 451 of 454 runs (99.3%). A format that drifted from that
+// pattern would leave the token in the hash, and the damage is the silent kind: the
+// re-POST stops matching the bullet on disk, appends a near-duplicate, and that duplicate
+// carries a `[cb:…]` in its PROSE naming the bullet it was copied FROM. The two cannot be
+// derived from one another (a format string is not a regexp), so what binds them is a
+// test that renders through this function and strips through that one —
+// `TestTheRenderedCitationTokenIsStrippedByTheWritePath`.
+//
+// ⚠ 14 BYTES PER ANNOTATED LINE, and that is the whole cost of the feature: 1 space + 4
+// for `[cb:` + 8 hex + 1 for `]`. It counts against `BulletTextMax` on a re-POST rather
+// than being exempt; the reason is at `write.BulletContent`.
+func CitationToken(id string) string { return " [cb:" + id + "]" }
+
+// CitationIDsByStartLine maps a SECTION BODY's bullet-opening line index to that bullet's
+// [JournalBullet.CitationID].
+//
+// 🔴 IT PARSES FOR IDS ONLY — THE CALLER STILL EMITS THE BODY VERBATIM, AND THAT
+// SEPARATION IS THE WHOLE DESIGN RATHER THAN A STYLE CHOICE. The obvious implementation
+// of an annotated read is to walk [ParseJournalBullets] and print each bullet's `Lines`;
+// that is RULED OUT, because this parser has a recorded `dropped-lines` defect — text
+// BEFORE the first bullet never enters the bullet list, and a bullet whose opening line
+// was lost or indented is ABSORBED into the bullet above it. Today those are an advisory
+// validator finding and nothing is lost. Under a re-emission they become SILENT DELETION
+// on the read surface: measured history is 7 versions across two entries carrying dropped
+// lines for 2–8 days with that validator green throughout. So this function hands back
+// POSITIONS, never content, and a renderer that uses it cannot lose a byte it was given.
+//
+// 🔴 A LINE WITH NO ENTRY HERE IS NOT EVIDENCE ITS BULLET WAS NOT PRINTED. Every body line
+// is printed either way; the map only says which ones carry an id. Four shapes are absent
+// from it BY DESIGN — prose, a blank, an INDENTED dash (a continuation, see
+// `journalBullet`), and a dash INSIDE A FENCE (sample text) — and a fifth, the
+// `dropped-lines` population above, is absent by DEFECT. Measured over a real 344-entry
+// store, by surfaced section: `## Pointers` 1,589 of 2,635 body lines carry an id and 15
+// are pre-first-bullet prose; `## Nuance / work-history` 3,375 of 14,094; `## What it is`
+// 7 of 1,274, because that section is prose and 1,258 of its lines precede any bullet;
+// `## Requirements` 7 of 7. ⚠ THOSE ARE ONE READING OF A LIVE STORE AND WILL NOT
+// RE-DERIVE — the store is not in this repository, and the nuance pair moved 3,367/14,086
+// -> 3,375/14,094 between two measurements an hour apart while this comment was being
+// written. What is STABLE, and what the sentence actually rests on, is the last clause:
+// ZERO column-0 dash lines in any of the four sections parsed to no bullet, at both
+// readings. So missing ids are a DEGRADATION IN COVERAGE, never in content, and anyone
+// reading a gap as "that bullet was withheld" has the direction backwards.
+//
+// ⚠ THE KEYS ARE INDICES INTO `pytext.SplitLines(body)`, WHICH BREAKS ON **TEN**
+// CHARACTERS — not on "\n". A caller that re-splits with `strings.Split(body, "\n")`
+// annotates the wrong line, silently; the worked measurement is at
+// [JournalBullet.StartLine]. Split with `pytext.SplitLines` or do not use this map.
+//
+// ⚠ AND IT IS PER SECTION BODY, NOT PER FILE — `StartLine` is an index into whatever
+// `ExtractSections` returned, so handing this a whole entry file annotates lines that
+// merely share an offset with a bullet.
+//
+// Collisions are impossible: `ParseJournalBullets` records one start index per group, in
+// lockstep with the groups, so no two bullets claim one line.
+func CitationIDsByStartLine(body string) map[int]string {
+	bullets := ParseJournalBullets(body)
+	out := make(map[int]string, len(bullets))
+	for _, b := range bullets {
+		out[b.StartLine] = b.CitationID()
+	}
+	return out
 }
 
 // OpennessPopulation is WHICH of the six populations this bullet belongs to. Exactly
