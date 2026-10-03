@@ -151,7 +151,7 @@ type NewUser struct {
 	//
 	// ⚠ THEY MUST MATCH THE BACKEND'S CONFIGURED PROVIDER EXACTLY, AND NOTHING HERE CAN
 	// CHECK THAT. `SupabaseJWT` resolves against `DefaultSupabaseProvider` ("supabase")
-	// unless `CAIRN_SUPABASE_PROVIDER` says otherwise; a user created under a different
+	// unless `CAIRN_OIDC_PROVIDER` says otherwise; a user created under a different
 	// string is a user that backend will never find. The mismatch is invisible to this
 	// package — it holds no configuration — so it is a pod that refuses one person's
 	// sign-in rather than a refusal here.

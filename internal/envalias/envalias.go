@@ -1,5 +1,7 @@
-// Package envalias is THE one definition of the `SUBSYSTEM_STORE_*` → `CAIRN_*`
-// environment-variable rename, and of the deprecation window both names live in.
+// Package envalias is THE one definition of every environment-variable RENAME this
+// project has made, and of the deprecation window both spellings live in. There are two
+// renames: `SUBSYSTEM_STORE_*` → `CAIRN_*`, and `CAIRN_SUPABASE_*` → `CAIRN_OIDC_*` for
+// the JWT verifier's settings (see the section on it below).
 //
 // 🔴 THERE ARE TWO SPELLINGS OF THIS LEDGER AND THAT IS PACKAGING, NOT DUPLICATION.
 // `packages.cairn` installs the Python client script and `lib/` under `libexec` and
@@ -38,6 +40,49 @@
 //     deliberately not added, and `cli.go`'s cache-root refusal names it anyway — a
 //     pre-existing message defect, not this package's). The naming decision does not
 //     depend on the count, but the claim does.
+//
+// # 🔴 THE SECOND RENAME IS NOT A PREFIX SWAP AT ALL, WHICH IS WHY `Pair` IS ARBITRARY
+//
+// `Pair` was always a `New` and an `Old` rather than a prefix rule, and the second rename is
+// what makes that load-bearing instead of incidental: `CAIRN_SUPABASE_*` → `CAIRN_OIDC_*`,
+// over the SEVEN settings of `internal/identity`'s JWT verifier. That verifier is a generic
+// RFC 7519 one — it requires a non-empty issuer and audience, accepts a CLOSED asymmetric
+// algorithm set, and takes its keys from a JWKS URL; nothing in it is specific to one
+// vendor, whose URLs appear only as examples in doc comments. A name that implies a provider
+// the code never required is a claim an operator reads as a dependency, and the point of the
+// rename is to stop making it.
+//
+// ⚠ ONE `CAIRN_SUPABASE_*` NAME IS DELIBERATELY NOT IN HERE, AND THE OMISSION IS THE
+// DECISION RATHER THAN A MISS. `CAIRN_SUPABASE_REDIRECT_URL` configures the GoTrue PKCE
+// sign-in flow, which talks to GoTrue's own `/authorize` and `/token`; it is honestly named
+// for what it reaches, so renaming it would make the namespace LESS informative, not more.
+// (Two siblings a reader may go looking for — `_AUTH_URL` and `_ANON_KEY` — do not exist at
+// all; `internal/ui/README.md` records why each was declined.) And
+// `CAIRN_SUPABASE_JWT_SECRET`/`_JWT_SECRET_FILE` are RETIRED rather than renamed:
+// `identity.retiredEnv` refuses a deployment that still sets one, and a pair here would turn
+// that refusal into a working alias.
+//
+// 🔴 ONE `RemovalAnchor` FOR THE WHOLE LEDGER, WHICH IS A WIDER PROMISE THAN THE OIDC PAIRS
+// NEED AND IS NOT A CLAIM THAT THE PYTHON CLIENT READS THEM. The anchor is a single
+// constant, so those pairs inherit "until `packages.cairn` is retired" — a milestone that
+// has nothing to do with a pod-side verifier. Per-pair anchors were the honest alternative
+// and were DECLINED: they would change `Pair`, both warning formats, the Python twin and the
+// cross-language gate, in order to SHORTEN a deprecation window nobody has asked to shorten.
+// The cost is a warning that names a milestone some readers will find unrelated; what it buys
+// is one window, one sentence, and no mechanism change.
+//
+// 🔴 AND `internal/identity` RESOLVES ITS PAIRS THROUGH `OldName` RATHER THAN `Value`, WHICH
+// IS A DECLARED SEAM AND NOT AN OVERSIGHT. `blank` here is `TrimSpace(v) == ""`, so `Value`
+// reads a whitespace-only NEW name as absent and falls through to the old one. That package's
+// whole history is the opposite rule: a setting that is PRESENT and reduces to nothing is a
+// misconfiguration it refuses BY NAME, over a predicate (`identity.ValueReducesToNothing`)
+// that is wider than whitespace — 32 zero-width runes are not whitespace and were once a
+// live bypass. So it asks this package WHICH SPELLING an operator wrote and applies its own
+// blank policy to the value, which is the same ruling `cmd/cairn-ui`'s raw readers took and
+// `TestTheRawReadVariablesAreNotInTheAliasLedger` records. The measured consequence:
+// `CAIRN_OIDC_ISSUER="  "` beside a real `CAIRN_SUPABASE_ISSUER` is REFUSED at startup there,
+// where `Value` would have resolved the old name — the louder direction. The warning line
+// stays true for it because it states PRECEDENCE, never this run's outcome.
 //
 // # The resolution rules, which are the same in both spellings
 //
@@ -122,6 +167,15 @@ var Ledger = []Pair{
 	{New: "CAIRN_LISTEN_HOST", Old: "SUBSYSTEM_STORE_HOST"},
 	{New: "CAIRN_LOCKOUT_S", Old: "SUBSYSTEM_STORE_LOCKOUT_S"},
 	{New: "CAIRN_MAX_FAILURES", Old: "SUBSYSTEM_STORE_MAX_FAILURES"},
+	// The JWT verifier's settings. 🔴 THEY SORT INTO THE MIDDLE OF THIS LIST, SO THIS IS
+	// NOT AN APPEND — see rule 3 above for why the position is load-bearing.
+	{New: "CAIRN_OIDC_AUDIENCE", Old: "CAIRN_SUPABASE_AUDIENCE"},
+	{New: "CAIRN_OIDC_ISSUER", Old: "CAIRN_SUPABASE_ISSUER"},
+	{New: "CAIRN_OIDC_JWKS_URL", Old: "CAIRN_SUPABASE_JWKS_URL"},
+	{New: "CAIRN_OIDC_LEEWAY", Old: "CAIRN_SUPABASE_LEEWAY"},
+	{New: "CAIRN_OIDC_MAX_AGE", Old: "CAIRN_SUPABASE_MAX_AGE"},
+	{New: "CAIRN_OIDC_PROVIDER", Old: "CAIRN_SUPABASE_PROVIDER"},
+	{New: "CAIRN_OIDC_REQUIRE_ROLE", Old: "CAIRN_SUPABASE_REQUIRE_ROLE"},
 	{New: "CAIRN_PORT", Old: "SUBSYSTEM_STORE_PORT"},
 	{New: "CAIRN_STORE_ROOT", Old: "SUBSYSTEM_STORE_ROOT"},
 	{New: "CAIRN_TOKEN", Old: "SUBSYSTEM_STORE_TOKEN"},
@@ -193,20 +247,27 @@ var news = func() map[string]string {
 	return m
 }()
 
-// oldName is the deprecated spelling of `newName`, or "" if there is not one.
+// OldName is the deprecated spelling of `newName`, or "" if there is not one.
 //
 // It returns "" rather than panicking so that a caller passing a name that was never
 // renamed — `CAIRN_ROUTES`, `CAIRN_UI_PORT` — gets plain single-name behaviour from
 // `Value` instead of a crash.
 //
-// ⚠ UNEXPORTED BECAUSE NOTHING OUTSIDE THIS PACKAGE ASKS THE REVERSE QUESTION. Every
-// caller names the CURRENT spelling and lets `ValueFrom` find the alias; the reverse
-// direction is only ever needed in here (and in the test that pins the "never renamed"
-// case). An exported name in `internal/` reads as "a consumer relies on this" — a claim
-// this one could not support. `lib/env_aliases.py`'s `old_name` stays public: Python has
-// no unexport, and the cross-language gate pins the LEDGER, the anchor and the warning
-// text, not the function set, so the two spellings do not have to match here.
-func oldName(newName string) string { return news[newName] }
+// 🔴 IT WAS UNEXPORTED, AND THE COMMENT SAYING SO IS REPLACED RATHER THAN SOFTENED,
+// BECAUSE THE CLAIM IT RESTED ON DIED. It read "UNEXPORTED BECAUSE NOTHING OUTSIDE THIS
+// PACKAGE ASKS THE REVERSE QUESTION … every caller names the CURRENT spelling and lets
+// `ValueFrom` find the alias". `internal/identity` now asks it, and it cannot use
+// `ValueFrom`: it must know WHICH SPELLING the operator actually wrote, because its own
+// blank policy quotes the offending line back at them, and a refusal naming
+// `CAIRN_OIDC_ISSUER` to an operator whose manifest says `CAIRN_SUPABASE_ISSUER` sends them
+// looking in the wrong place — the same mis-blame `FileWarning` exists against one level
+// down. See the seam paragraph in the package doc for why that package keeps its own
+// predicate rather than taking this one's.
+//
+// `lib/env_aliases.py`'s `old_name` was public throughout: Python has no unexport, and the
+// cross-language gate pins the LEDGER, the anchor and the warning text, not the function
+// set, so the two spellings never had to match here.
+func OldName(newName string) string { return news[newName] }
 
 // Value is the resolved value of `newName` over `env`: the new name if it is present and
 // non-blank, else the old name, else "".

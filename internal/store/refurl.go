@@ -43,9 +43,10 @@ import (
 // `CAIRN_REF_BASE_<SYSTEM>`, the system half upper-cased with `-` folded to `_`.
 //
 // ⚠ NOT IN `internal/envalias`'S LEDGER, AND THAT IS CORRECT RATHER THAN AN OMISSION. That
-// ledger is the `SUBSYSTEM_STORE_*` → `CAIRN_*` RENAME; these names are new and have no
-// deprecated spelling, so `envalias.Value` gives them plain single-name behaviour — which its
-// own `oldName` documents as the "never renamed" case.
+// ledger holds RENAMES (`SUBSYSTEM_STORE_*` → `CAIRN_*`, and `CAIRN_SUPABASE_*` →
+// `CAIRN_OIDC_*`); these names are new and have no deprecated spelling, so `envalias.Value`
+// gives them plain single-name behaviour — which its own `OldName` documents as the
+// "never renamed" case.
 //
 // ⚠ AND THE NAME SPACE IS OPEN BY DESIGN, so no ledger COULD enumerate it: the system half
 // comes out of a store file, and any system somebody writes a ref for can be given a base.

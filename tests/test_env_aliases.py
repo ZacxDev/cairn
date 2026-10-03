@@ -307,6 +307,85 @@ class TestTheLedgerItself:
             "is not discriminating, and the guard above would be red on a correct tree"
         )
 
+    def test_the_verifier_rename_is_present_in_full_and_in_the_middle(self) -> None:
+        """🔴 THE SECOND RENAME, PINNED AS A SET AND AS A POSITION.
+
+        `CAIRN_SUPABASE_*` → `CAIRN_OIDC_*` covers the SEVEN settings of the JWT verifier in
+        `internal/identity`. Two things have to hold and neither implies the other:
+
+        * **all seven, and no more.** A partial rename is the worst outcome available: six
+          settings read from either spelling and the seventh silently stops resolving, so a
+          deployment that migrated its manifest comes up with one check off.
+        * **sorted into the MIDDLE of the ledger** — after `CAIRN_MAX_FAILURES`, before
+          `CAIRN_PORT`. The order is a property of the ledger because both clients emit
+          deprecation warnings in it and `tests/parity/harness.py` diffs their stderr
+          BYTE-FOR-BYTE; an append would have been in the wrong place.
+          `test_the_order_is_identical` above pins the two languages against each other,
+          which is a different claim from this one — two identically mis-sorted ledgers
+          agree.
+
+        ⚠ REGRESSION coverage: at `d7e1fec` none of these pairs exists, so the expected set
+        is absent from `LEDGER` and this is RED there — measured, together with the three
+        probes recorded in `internal/identity/oidcrename_test.go`.
+
+        ⚠ THREE `CAIRN_SUPABASE_*` NAMES ARE DELIBERATELY ABSENT and the assertion must not
+        grow to them: `_REDIRECT_URL` configures the GoTrue PKCE flow and is honestly named
+        for what it talks to, and `_JWT_SECRET`/`_JWT_SECRET_FILE` are RETIRED — a pair here
+        would turn a startup refusal into a working alias.
+        """
+        want = (
+            ("CAIRN_OIDC_AUDIENCE", "CAIRN_SUPABASE_AUDIENCE"),
+            ("CAIRN_OIDC_ISSUER", "CAIRN_SUPABASE_ISSUER"),
+            ("CAIRN_OIDC_JWKS_URL", "CAIRN_SUPABASE_JWKS_URL"),
+            ("CAIRN_OIDC_LEEWAY", "CAIRN_SUPABASE_LEEWAY"),
+            ("CAIRN_OIDC_MAX_AGE", "CAIRN_SUPABASE_MAX_AGE"),
+            ("CAIRN_OIDC_PROVIDER", "CAIRN_SUPABASE_PROVIDER"),
+            ("CAIRN_OIDC_REQUIRE_ROLE", "CAIRN_SUPABASE_REQUIRE_ROLE"),
+        )
+        got = tuple(p for p in env_aliases.LEDGER if p[0].startswith("CAIRN_OIDC_"))
+        assert got == want, (
+            f"the verifier rename is {got}, want {want}. A pair missing here is a deprecated "
+            "spelling that silently stopped resolving for one setting while six still work"
+        )
+
+        names = [new for new, _old in env_aliases.LEDGER]
+        first, last = names.index(want[0][0]), names.index(want[-1][0])
+        assert names[first - 1] == "CAIRN_MAX_FAILURES", names
+        assert names[last + 1] == "CAIRN_PORT", names
+
+        for _new, old in want:
+            assert not old.startswith(
+                ("CAIRN_SUPABASE_REDIRECT", "CAIRN_SUPABASE_JWT_SECRET")
+            ), f"{old} is a GoTrue-specific or RETIRED name and must not be aliased"
+
+    def test_a_deprecated_verifier_name_warns_naming_its_replacement(self) -> None:
+        """🔴 RESOLUTION AND WARNING ARE DIFFERENT CLAIMS, and this is the second.
+
+        A deployment can resolve the deprecated spelling correctly forever and never tell
+        its operator the line is deprecated — which is the half that makes the removal
+        anchor meaningless when it arrives.
+
+        ⚠ REGRESSION coverage, RED at `d7e1fec`: the pair is in no ledger there, so
+        `deprecations` returns `[]`. Asserted as the WHOLE rendered line, because the
+        artifact is prose and a guard on keywords is walkable by rewording — the same ruling
+        this module's docstring states for the cross-language comparison.
+
+        ⚠ NOTHING ON THE PYTHON SIDE READS THESE NAMES; the verifier is pod-side and
+        Go-only. The pair is in both ledgers because this gate pins them as ONE set and
+        because `deprecations` sweeps the whole environment, so a client run in a shell that
+        still exports an old spelling warns about it in BOTH clients — which is what keeps
+        the parity harness's byte-for-byte stderr diff meaningful.
+        """
+        env = {
+            "CAIRN_SUPABASE_JWKS_URL": "https://idp.example.invalid/.well-known/jwks.json",
+            "CAIRN_SUPABASE_ISSUER": "https://idp.example.invalid/",
+        }
+        # Sorted by NEW name: ISSUER before JWKS_URL.
+        assert env_aliases.deprecations(env) == [
+            env_aliases.env_warning("CAIRN_OIDC_ISSUER", "CAIRN_SUPABASE_ISSUER"),
+            env_aliases.env_warning("CAIRN_OIDC_JWKS_URL", "CAIRN_SUPABASE_JWKS_URL"),
+        ]
+
     def test_the_removal_anchor_carries_no_date(self) -> None:
         """The window is anchored to a MILESTONE a reader can check, never to a date.
 

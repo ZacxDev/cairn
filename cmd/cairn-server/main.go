@@ -402,7 +402,7 @@ func main() {
 			// shape as the `tokenfile.ErrStoreRootUnreadable` arm above.
 			fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
 				"subsystem-store-api: identity: %s. Either configure a session backend (a "+
-					"$CAIRN_SUPABASE_* or $CAIRN_TRUSTED_HEADER_* set) or unset $%s",
+					"$CAIRN_OIDC_* or $CAIRN_TRUSTED_HEADER_* set) or unset $%s",
 				err.Error(), EnvControlJournal)))
 			os.Exit(exitConfig)
 		}

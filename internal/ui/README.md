@@ -1275,15 +1275,25 @@ opens **zero** flights.
 
 ## Configuration, and the three states a deployment can be in
 
-Everything is in the `CAIRN_SUPABASE_*` namespace. The verifier's settings
-(`JWKS_URL`, `ISSUER`, `AUDIENCE`, `PROVIDER`, `REQUIRE_ROLE`, `LEEWAY`, `MAX_AGE`) are read
-through `identity.SupabaseBackendFromEnvironment`, which is the **same ledger and the same blank
-policy** `cmd/cairn-server` gets — a second reader of that ledger is the duplicated predicate
-`internal/identity/config.go`'s whole history is about.
+🔴 **TWO NAMESPACES, AND THE SPLIT IS LEGIBLE RATHER THAN HISTORICAL.** The verifier's
+settings are **`CAIRN_OIDC_*`** (`JWKS_URL`, `ISSUER`, `AUDIENCE`, `PROVIDER`,
+`REQUIRE_ROLE`, `LEEWAY`, `MAX_AGE`) because the verifier is a generic RFC 7519/JWKS one and
+a vendor prefix asserted a dependency it never had; their `CAIRN_SUPABASE_*` spellings still
+resolve through `internal/envalias`, the new name wins, and a deprecated one that is set
+warns once. They are read through `identity.SupabaseBackendFromEnvironment`, which is the
+**same ledger and the same blank policy** `cmd/cairn-server` gets — a second reader of that
+ledger is the duplicated predicate `internal/identity/config.go`'s whole history is about.
+The operator contract for pointing it at any IdP is `internal/identity/README.md`
+§ *Wiring any OIDC provider*.
 
-**One** name is read by `cmd/cairn-ui` itself, outside the ledger, and the cost is stated where
-it is declared: `CAIRN_SUPABASE_REDIRECT_URL` (required; what arms the button, judged with
-`identity.ValueReducesToNothing` rather than a fresh `TrimSpace`).
+**One** name stays in the `CAIRN_SUPABASE_*` namespace and is read by `cmd/cairn-ui` itself,
+outside the ledger, and the cost is stated where it is declared:
+`CAIRN_SUPABASE_REDIRECT_URL` (required; what arms the button, judged with
+`identity.ValueReducesToNothing` rather than a fresh `TrimSpace`). ⚠ **IT IS NOT RENAMED,
+AND THAT IS THE DECISION RATHER THAN AN OVERSIGHT**: this one really does talk to GoTrue —
+its `/authorize`, its `/token`, its `GOTRUE_URI_ALLOW_LIST` — so the vendor prefix is the
+informative part. `cmd/cairn-ui`'s `TestTheOAuthSettingIsInTheSupabaseNamespaceAndItsPathsComeFromTheLedger`
+pins that it stays there.
 
 ⚠ **A `CAIRN_SUPABASE_ANON_KEY`/`_FILE` PAIR WAS DRAFTED AND DELETED**, and the record is worth
 more than the code was. A **hosted** Supabase project sits behind an API gateway that refuses the
@@ -1295,14 +1305,14 @@ pod mounts**. Re-adding twenty lines if a hosted project ever appears is cheaper
 them; the symptom that would call for it (the exchange answering 401 with everything else
 correct) is recorded at `identity.SupabaseOAuth.Exchange`.
 
-🔴 **There is no `CAIRN_SUPABASE_AUTH_URL`.** `/authorize` and `/token` hang off the verifier's
+🔴 **There is no `CAIRN_SUPABASE_AUTH_URL` and never was one.** `/authorize` and `/token` hang off the verifier's
 own **issuer**, which for Supabase *is* the GoTrue base URL. Two places to name the project is a
 deployment that verifies tokens from one and starts sign-ins at another — every sign-in would
 complete at the provider and be refused here, with nothing naming the disagreement.
 
 | state | what it means | what the surface does |
 |---|---|---|
-| no `CAIRN_SUPABASE_*` | the deployment that existed before this change | credential form only; the two OAuth rows answer **501** |
+| no verifier variable in either spelling | the deployment that existed before this change | credential form only; the two OAuth rows answer **501** |
 | the ledger armed, no redirect URL | a bearer JWT authenticates; no browser flow | credential form only; rows answer 501; the startup line says so |
 | both, key set fetched | the button is live | both doors |
 | both, key set **never fetched** | the provider was unreachable at startup, or is now | credential form only; rows answer **503**; a `WARNING` on stderr; **re-arms by itself** when a fetch succeeds |

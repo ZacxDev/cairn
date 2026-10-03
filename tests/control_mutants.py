@@ -1656,7 +1656,7 @@ MUTANTS: tuple[Mutant, ...] = (
         extra_killers=("TestAPartiallyConfiguredBackendRefusesToStart",),
         why="`checkClaims` tests `opts.MaxAge > 0`, so a negative duration is read as "
         "ZERO and zero means the check is OFF. An operator who wrote "
-        "`CAIRN_SUPABASE_MAX_AGE=-1h` — a sign typo, or a value templated from a "
+        "`CAIRN_OIDC_MAX_AGE=-1h` — a sign typo, or a value templated from a "
         "subtraction — gets a bound they configured and nothing enforcing it, which is "
         "the shape `parseBool` refuses one file over for the same reason.",
     ),

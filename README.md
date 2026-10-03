@@ -301,9 +301,40 @@ one on (`flake.nix` sets `version = self.shortRev`), and a milestone is somethin
 check.
 
 ⚠ **That table is the RENAME ledger, not every variable this project reads.** Names with no
-older spelling are not in it and cannot be — `CAIRN_UI_*`, `CAIRN_SUPABASE_*`, and the open
-family `CAIRN_REF_BASE_<SYSTEM>` in the section below, whose suffix comes out of a store file
-and so could not be enumerated by any table.
+older spelling are not in it and cannot be — `CAIRN_UI_*`, `CAIRN_SUPABASE_REDIRECT_URL`, and
+the open family `CAIRN_REF_BASE_<SYSTEM>` in the section below, whose suffix comes out of a
+store file and so could not be enumerated by any table.
+
+🔴 **AND THE LEDGER NOW HOLDS A SECOND RENAME, WHICH IS WHY THE BULLET ABOVE NO LONGER SAYS
+`CAIRN_SUPABASE_*` WHOLESALE.** The pod-side **JWT verifier**'s seven settings are
+`CAIRN_OIDC_*`:
+
+| now | was |
+|---|---|
+| `CAIRN_OIDC_JWKS_URL` | `CAIRN_SUPABASE_JWKS_URL` |
+| `CAIRN_OIDC_ISSUER` | `CAIRN_SUPABASE_ISSUER` |
+| `CAIRN_OIDC_AUDIENCE` | `CAIRN_SUPABASE_AUDIENCE` |
+| `CAIRN_OIDC_PROVIDER` | `CAIRN_SUPABASE_PROVIDER` |
+| `CAIRN_OIDC_REQUIRE_ROLE` | `CAIRN_SUPABASE_REQUIRE_ROLE` |
+| `CAIRN_OIDC_LEEWAY` | `CAIRN_SUPABASE_LEEWAY` |
+| `CAIRN_OIDC_MAX_AGE` | `CAIRN_SUPABASE_MAX_AGE` |
+
+Same rules as the table above: **both spellings work, the new one wins, an old one that is
+set warns once per process naming its replacement**, and the window closes when
+`packages.cairn` is retired (P8). The verifier never required a particular provider — it is
+an RFC 7519 verifier over a JWKS URL, with a required issuer and audience and a closed
+asymmetric algorithm set — so the old prefix asserted a dependency that was not there, and
+you can point it at Keycloak, Authentik, Dex, Zitadel, Okta, Auth0 or Supabase/GoTrue
+alike. **The operator contract — every setting, the refusals, the algorithm set, two worked
+non-Supabase examples, and the limit (OIDC buys authentication only; grants are still
+yours) — is [`internal/identity/README.md`](internal/identity/README.md) § _Wiring any OIDC
+provider_.**
+
+⚠ **Two `CAIRN_SUPABASE_*` names are deliberately NOT renamed and one more is not a variable
+at all.** `CAIRN_SUPABASE_REDIRECT_URL` configures `cairn-ui`'s GoTrue PKCE sign-in flow and
+is honestly named for what it talks to; `CAIRN_SUPABASE_JWT_SECRET` and
+`CAIRN_SUPABASE_JWT_SECRET_FILE` are **retired** and setting either is a startup refusal, not
+an alias.
 
 ### 🔴 An entry can be TAGGED, and both readers narrow by tag
 

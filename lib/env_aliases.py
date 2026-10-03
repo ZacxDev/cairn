@@ -1,4 +1,7 @@
-"""THE one definition of the `SUBSYSTEM_STORE_*` → `CAIRN_*` rename — Python side.
+"""THE one definition of every environment-variable RENAME — Python side.
+
+There are two: `SUBSYSTEM_STORE_*` → `CAIRN_*`, and `CAIRN_SUPABASE_*` → `CAIRN_OIDC_*`
+over the seven settings of the JWT verifier in `internal/identity` (see below).
 
 🔴 THERE ARE TWO SPELLINGS OF THIS LEDGER AND THAT IS PACKAGING, NOT DUPLICATION.
 `packages.cairn` installs the client script and `lib/` under `libexec` and nothing
@@ -49,6 +52,26 @@ an earlier draft of this paragraph named as live.
 
 ⚠ `SUBSYSTEM_STORE_ROUTES_ISH`, in `tests/test_env_pin.py`, is a negative-control
 FIXTURE and not a variable anything reads. It is deliberately not in this ledger.
+
+🔴 THE SECOND RENAME IS NOT A PREFIX SWAP AT ALL, which is why `LEDGER` is pairs and not
+a rule: `CAIRN_SUPABASE_*` → `CAIRN_OIDC_*`, over the seven settings of the JWT verifier
+in `internal/identity`. That verifier is a generic RFC 7519 one (non-empty issuer and
+audience required, a CLOSED asymmetric algorithm set, keys from a JWKS URL) and nothing
+in it is specific to one vendor, so the old name asserted a dependency the code never
+had. ⚠ `CAIRN_SUPABASE_REDIRECT_URL` is deliberately NOT renamed — it configures the
+GoTrue PKCE sign-in flow and is honestly named for what it talks to — and
+`CAIRN_SUPABASE_JWT_SECRET`/`_JWT_SECRET_FILE` are RETIRED rather than renamed: a pair
+here would turn a startup refusal into a working alias.
+
+⚠ NOTHING ON THIS SIDE READS THE OIDC NAMES; the verifier is pod-side and Go-only. They
+are here because `tests/test_env_aliases.py` pins the two spellings of the ledger as ONE
+set — a pair present in one language and absent in the other is the half-migration that
+gate exists to catch — and because `deprecations` sweeps the whole environment, so a
+client run in a shell that still exports an old spelling warns about it in BOTH clients
+and the parity harness's byte-for-byte stderr diff stays meaningful. The single
+`REMOVAL_ANCHOR` therefore covers these pairs too, which is a wider promise than they
+need and NOT a claim that this client reads them; per-pair anchors were declined as a
+mechanism change (see `internal/envalias/envalias.go`'s package doc).
 """
 
 from __future__ import annotations
@@ -80,6 +103,15 @@ LEDGER: tuple[tuple[str, str], ...] = (
     ("CAIRN_LISTEN_HOST", "SUBSYSTEM_STORE_HOST"),
     ("CAIRN_LOCKOUT_S", "SUBSYSTEM_STORE_LOCKOUT_S"),
     ("CAIRN_MAX_FAILURES", "SUBSYSTEM_STORE_MAX_FAILURES"),
+    # The JWT verifier's settings. 🔴 THEY SORT INTO THE MIDDLE, so this is not an
+    # append; the order is load-bearing (third bullet above).
+    ("CAIRN_OIDC_AUDIENCE", "CAIRN_SUPABASE_AUDIENCE"),
+    ("CAIRN_OIDC_ISSUER", "CAIRN_SUPABASE_ISSUER"),
+    ("CAIRN_OIDC_JWKS_URL", "CAIRN_SUPABASE_JWKS_URL"),
+    ("CAIRN_OIDC_LEEWAY", "CAIRN_SUPABASE_LEEWAY"),
+    ("CAIRN_OIDC_MAX_AGE", "CAIRN_SUPABASE_MAX_AGE"),
+    ("CAIRN_OIDC_PROVIDER", "CAIRN_SUPABASE_PROVIDER"),
+    ("CAIRN_OIDC_REQUIRE_ROLE", "CAIRN_SUPABASE_REQUIRE_ROLE"),
     ("CAIRN_PORT", "SUBSYSTEM_STORE_PORT"),
     ("CAIRN_STORE_ROOT", "SUBSYSTEM_STORE_ROOT"),
     ("CAIRN_TOKEN", "SUBSYSTEM_STORE_TOKEN"),

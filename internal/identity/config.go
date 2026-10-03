@@ -8,29 +8,61 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/ZacxDev/cairn/internal/envalias"
 )
 
 // The environment this package reads. New names use the `CAIRN_` prefix, per
-// `AGENTS.md`'s naming rule; nothing here has a `SUBSYSTEM_STORE_` alias because
-// nothing here has ever been deployed under one, and minting an alias for a setting
-// with no existing holder is inventing a migration nobody needs.
+// `AGENTS.md`'s naming rule.
+//
+// 🔴 THE VERIFIER'S SEVEN SETTINGS ARE `CAIRN_OIDC_*` AND THEIR `CAIRN_SUPABASE_*`
+// SPELLINGS STILL RESOLVE, THROUGH `internal/envalias` AND NOWHERE ELSE. The sentence that
+// stood here — "nothing here has a `SUBSYSTEM_STORE_` alias because nothing here has ever
+// been deployed under one" — is still true of that prefix and is no longer true of this
+// const block as a whole: the verifier is a generic RFC 7519/JWKS one (non-empty issuer and
+// audience required, a CLOSED asymmetric algorithm set, no vendor-specific behaviour
+// anywhere), so a name implying one provider asserted a dependency the code never had. The
+// rename goes through the ledger rather than a fallback at a call site; `written` below is
+// the one place either spelling is read.
+//
+// ⚠ THE `CAIRN_SUPABASE_*` NAMESPACE IS NOT EMPTIED, AND THE SPLIT IS THE POINT.
+// `CAIRN_SUPABASE_REDIRECT_URL` (read by `cmd/cairn-ui`, outside every ledger here)
+// configures the GoTrue PKCE sign-in flow and is honestly named for what it talks to;
+// `CAIRN_SUPABASE_JWT_SECRET`/`_JWT_SECRET_FILE` are RETIRED and refuse. Neither is renamed.
 const (
-	// EnvSupabaseJWKSURL is the JWKS endpoint — `https://<ref>.supabase.co/auth/v1/.well-known/jwks.json`.
+	// EnvSupabaseJWKSURL is the JWKS endpoint. 🔴 THE VARIABLE IS `CAIRN_OIDC_JWKS_URL`
+	// WHILE THE IDENTIFIER STILL READS `Supabase`, which is a deliberately deferred Go
+	// rename and not a disagreement: `internal/identity/README.md` § *Wiring any OIDC
+	// provider* carries the operator-facing contract, and the identifiers move in their own
+	// change so this one stays readable.
 	//
 	// ⚠ IT IS THE ONLY WAY TO GIVE THIS BACKEND A KEY. The two variables that named the
 	// LEGACY symmetric secret are deleted, not deprecated: this build verifies no
 	// shared-secret algorithm. Setting one of them now REFUSES — see `retiredEnv`.
-	EnvSupabaseJWKSURL = "CAIRN_SUPABASE_JWKS_URL"
+	EnvSupabaseJWKSURL = "CAIRN_OIDC_JWKS_URL"
 	// EnvSupabaseIssuer is the required `iss`.
-	EnvSupabaseIssuer = "CAIRN_SUPABASE_ISSUER"
+	EnvSupabaseIssuer = "CAIRN_OIDC_ISSUER"
 	// EnvSupabaseAudience is the required `aud`. Defaults to DefaultSupabaseAudience.
-	EnvSupabaseAudience = "CAIRN_SUPABASE_AUDIENCE"
+	EnvSupabaseAudience = "CAIRN_OIDC_AUDIENCE"
 	// EnvSupabaseProvider is the `control.User.Provider` a subject resolves against.
-	EnvSupabaseProvider = "CAIRN_SUPABASE_PROVIDER"
+	//
+	// 🔴 IT IS IN THE GENERIC NAMESPACE, AND THAT WAS THE ONE SETTING WHOSE SIDE HAD TO BE
+	// ARGUED. It reads like provider configuration and is not: the value is cairn's OWN
+	// authz namespace, the `provider` half of the `(provider, subject)` key
+	// `Model.UserByProviderSubject` resolves a verified `sub` with, and the only code that
+	// reads it is `supabaseFromEnv` → `SupabaseConfig.Provider` → the verifier. The GoTrue
+	// sign-in flow's upstream provider is a different thing with a different home
+	// (`SupabaseOAuthProviderGitHub`), so nothing in the PKCE path reads this.
+	//
+	// ⚠ AND THE DEFAULT IS STILL `DefaultSupabaseProvider` ("supabase"), WHICH IS A DATA
+	// KEY RATHER THAN A LABEL. It is matched against `control.User` rows an operator has
+	// already provisioned, so changing the default would orphan every existing row; the
+	// variable is how a deployment on another IdP names its own namespace.
+	EnvSupabaseProvider = "CAIRN_OIDC_PROVIDER"
 	// EnvSupabaseRequireRole refuses a token whose `role` claim is not this.
-	EnvSupabaseRequireRole = "CAIRN_SUPABASE_REQUIRE_ROLE"
+	EnvSupabaseRequireRole = "CAIRN_OIDC_REQUIRE_ROLE"
 	// EnvSupabaseLeeway is the clock-skew allowance, as a Go duration.
-	EnvSupabaseLeeway = "CAIRN_SUPABASE_LEEWAY"
+	EnvSupabaseLeeway = "CAIRN_OIDC_LEEWAY"
 	// EnvSupabaseMaxAge additionally refuses a token whose `iat` is older than this,
 	// regardless of `exp`. A Go duration; empty or `0` leaves `exp` alone bounding the
 	// session, and a NEGATIVE value is refused rather than read as zero.
@@ -43,7 +75,7 @@ const (
 	// tested refusals whose only defect was that no deployment could arm them. Wiring
 	// one variable is cheaper than deleting a working bound, and `EnvSupabaseLeeway` is
 	// the sibling it now reads exactly like.
-	EnvSupabaseMaxAge = "CAIRN_SUPABASE_MAX_AGE"
+	EnvSupabaseMaxAge = "CAIRN_OIDC_MAX_AGE"
 
 	// EnvProxyFronted is the explicit declaration. See `TrustedHeaderConfig.ProxyFronted`.
 	EnvProxyFronted = "CAIRN_TRUSTED_HEADER_PROXY_FRONTED"
@@ -469,7 +501,7 @@ func ledgers() []ledger { return []ledger{supabaseEnv, proxyEnv} }
 // cannot arm a backend, which is the distinction that keeps it from being a second
 // spelling of a live setting.
 const retiredSymmetricSecret = "the legacy symmetric (HS256) JWT secret, which this build no longer verifies with at all. Use " +
-	EnvSupabaseJWKSURL + " — a Supabase project's asymmetric signing keys"
+	EnvSupabaseJWKSURL + " — the issuer's published asymmetric signing keys"
 
 var retiredEnv = map[string]string{
 	"CAIRN_SUPABASE_JWT_SECRET":      retiredSymmetricSecret,
@@ -500,20 +532,55 @@ var ErrBlankSetting = errors.New("identity: a setting is present and holds a val
 // to it — and this refusal is then the only thing between that and a silent empty string.
 var ErrUndeclaredSetting = errors.New("identity: a reader asked for a setting no ledger declares a policy for")
 
-// touched reports whether an operator WROTE this variable down, and hands back what they
-// wrote. Absent, and present-with-the-EMPTY-string, are both "not written".
+// written reports whether an operator WROTE this variable down under EITHER spelling, hands
+// back what they wrote, and names the spelling they used. Absent, and
+// present-with-the-EMPTY-string, are both "not written".
 //
-// 🔴 ONE PREDICATE, THREE CALLERS, AND THAT IS THE POINT RATHER THAN TIDINESS.
+// 🔴 ONE PREDICATE, EVERY CALLER, AND THAT IS THE POINT RATHER THAN TIDINESS.
 // `refuseRetiredSettings` and the ledger sweep open-coded `present && value != ""`
-// separately; they agreed, and nothing gated them agreeing.
+// separately; they agreed, and nothing gated them agreeing. The alias lookup is in the SAME
+// place for the same reason: a second site resolving `CAIRN_SUPABASE_ISSUER` by hand is the
+// duplicated predicate this file's whole history is about, and `AGENTS.md` names it —
+// *"never open-code a fallback at a call site"*.
+//
+// 🔴 `envalias.OldName` RATHER THAN `envalias.Value`, AND THE DIFFERENCE IS THIS PACKAGE'S
+// ENTIRE BLANK POLICY. `envalias.Value` reads a whitespace-only value as ABSENT and falls
+// through to the other spelling — which is correct there and is exactly what this package
+// refuses: a setting that is present and reduces to nothing is a MISCONFIGURATION named in
+// an `os.Exit(78)` refusal, over `reducesToNothing`, which is wider than whitespace (32
+// zero-width runes are not whitespace and were once a live bypass). So the alias ledger
+// answers "which spelling exists" and this file keeps deciding what the VALUE means. Same
+// ruling, same reason, as `cmd/cairn-ui`'s raw readers, and the seam is declared in
+// `internal/envalias`'s package doc.
+//
+// 🔴 AND IT RETURNS THE SPELLING BECAUSE A REFUSAL QUOTES THE LINE BACK. A `blankFault`
+// naming `CAIRN_OIDC_LEEWAY` to an operator whose manifest says `CAIRN_SUPABASE_LEEWAY`
+// sends them to a line that does not exist — the same mis-blame `envalias.FileWarning`
+// exists against one level down.
 //
 // ⚠ THE EMPTY STRING IS DELIBERATELY OUTSIDE. A manifest that emits every variable with an
 // empty default is a common shape, and refusing it would be a wider change than any defect
 // measured here — so `X=""` is "not using this" everywhere in this file, and `X="  "` is
-// not.
+// not. 🔴 ONE CONSEQUENCE WORTH STATING: `CAIRN_OIDC_ISSUER=""` beside a real
+// `CAIRN_SUPABASE_ISSUER` therefore falls through to the deprecated spelling, which is what
+// `envalias.Value` would do; `CAIRN_OIDC_ISSUER="  "` does NOT, and is refused instead.
+// That is the only place the two resolvers part, and it parts in the LOUD direction.
+func written(env map[string]string, name string) (raw string, spelling string, ok bool) {
+	if value, present := env[name]; present && value != "" {
+		return value, name, true
+	}
+	if old := envalias.OldName(name); old != "" {
+		if value, present := env[old]; present && value != "" {
+			return value, old, true
+		}
+	}
+	return "", name, false
+}
+
+// touched is `written` for a caller that does not need the spelling.
 func touched(env map[string]string, name string) (string, bool) {
-	value, present := env[name]
-	return value, present && value != ""
+	raw, _, ok := written(env, name)
+	return raw, ok
 }
 
 // refuseRetiredSettings refuses a deployment that still sets a variable this build
@@ -579,8 +646,10 @@ type blankFault struct {
 // arm the ledger that sentence is false, and the answer is the setting's own: measured, a
 // version that refused unconditionally crash-looped a COMPLETE trusted-header deployment
 // that carried one blank optional beside it, with a message that was false for that input.
+// 🔴 EVERY FAULT NAMES THE SPELLING THE OPERATOR WROTE, NOT THE CURRENT ONE. `written`
+// returns it; see that function for why a refusal that renames the line is a mis-blame.
 func (s setting) resolve(env map[string]string, armed bool) (string, *blankFault) {
-	raw, ok := touched(env, s.name)
+	raw, spelling, ok := written(env, s.name)
 	if !ok {
 		return "", nil
 	}
@@ -588,7 +657,7 @@ func (s setting) resolve(env map[string]string, armed bool) (string, *blankFault
 		return s.value(raw), nil
 	}
 	if !armed {
-		return "", &blankFault{name: s.name, raw: raw,
+		return "", &blankFault{name: spelling, raw: raw,
 			because: "nothing else in the " + ledgerOf(s.name) + " ledger holds a value, so that backend would be silently OFF while the manifest says it is on"}
 	}
 	switch s.policy {
@@ -597,13 +666,13 @@ func (s setting) resolve(env map[string]string, armed bool) (string, *blankFault
 		// `refusedByConstructor` the rung in `s.refusedBy` is where it lands.
 		return "", nil
 	case refuseBlank:
-		return "", &blankFault{name: s.name, raw: raw,
+		return "", &blankFault{name: spelling, raw: raw,
 			because: "it is read as UNSET, and unset means: " + s.unset}
 	default:
 		// 🔴 FAIL CLOSED ON `policyUndeclared`. The zero value of `blankPolicy` is not a
 		// decision, and a setting that forgot to make one must not inherit the permissive
 		// answer. Reachable: `TestAnUndeclaredPolicyRefusesRatherThanDefaulting`.
-		return "", &blankFault{name: s.name, raw: raw,
+		return "", &blankFault{name: spelling, raw: raw,
 			because: "this setting declares no blank policy (" + s.policy.String() + "), so nothing here can say whether that is a misconfiguration"}
 	}
 }
@@ -749,7 +818,7 @@ func FromEnvironment(env map[string]string, authority interface {
 	// half-configuration case that actually occurs) still runs first". That is FALSE, and
 	// the error is in what the blank sweep sees: it refuses a setting written BLANK, not
 	// one left ABSENT. The ordinary half-configuration is an absent companion —
-	// `CAIRN_SUPABASE_JWKS_URL` set, `CAIRN_SUPABASE_ISSUER` never written — which arms
+	// `CAIRN_OIDC_JWKS_URL` set, `CAIRN_OIDC_ISSUER` never written — which arms
 	// the ledger, produces no blank fault, and lands HERE. Measured on this tree: with a
 	// nil `sessions`, all 15 ledger variables set alone reach this refusal and 0 reach
 	// their own backend's; with a session authority, 0 reach this one and 15 reach their
@@ -879,7 +948,7 @@ var ErrSessionBackendWithoutAuthority = errors.New(
 // `FromEnvironment`: that builder arms the trusted-header backend when an operator declares
 // the deployment proxy-fronted, and `internal/ui/auth.go` records why a publicly-reachable
 // browser endpoint cannot carry that trade at any setting. Without this function the UI
-// would have to read `CAIRN_SUPABASE_*` itself — a second spelling of the blank policy this
+// would have to read `CAIRN_OIDC_*` itself — a second spelling of the blank policy this
 // file's whole history is about, wrong in the same direction at the same seven sites.
 //
 // 🔴 SO THE ORDER HERE IS `FromEnvironment`'s ORDER, NOT A CHEAPER ONE: retired names first
@@ -896,7 +965,8 @@ var ErrSessionBackendWithoutAuthority = errors.New(
 // (`ErrNoAuthority`), which is the fail-closed direction.
 //
 // ⚠ AND "ARMED" IS THE LEDGER'S OWN QUESTION, NOT "DID A BACKEND GET BUILT". `false` with a
-// nil error means no `CAIRN_SUPABASE_*` variable holds a real value — the deployment has not
+// nil error means no `CAIRN_OIDC_*` variable (in either spelling) holds a real value — the
+// deployment has not
 // asked for this backend. An armed ledger that fails its own construction returns the
 // error, never `false`: a half-configured backend must not read as an absent one.
 func SupabaseBackendFromEnvironment(env map[string]string, authority ModelSource) (*SupabaseJWT, bool, error) {
