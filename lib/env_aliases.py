@@ -163,8 +163,23 @@ FILE_WARNING_FORMAT = (
     "{new} is the one that is read. Both are accepted until {anchor}."
 )
 
+#: The ONE lookup direction this side builds: new name → old name, read by `old_name`
+#: and by `value`'s fallback.
+#:
+#: ⚠ THE OTHER DIRECTION (old → new) WAS BUILT BESIDE THIS ONE AND HAD ZERO READERS
+#: TREE-WIDE — the declared-but-unread shape this repository refuses, the same ruling as
+#: `Claims.Email` in `internal/identity/jws.go`. `deprecations`/`file_deprecations` walk
+#: `LEDGER` through `_present` instead, which is where the sort order comes from, so the
+#: map was dead from the commit that added it.
+#:
+#: 🔴 ITS GO TWIN IS NOT DEAD, AND THAT ASYMMETRY IS THE POINT RATHER THAN AN OVERSIGHT:
+#: `envalias.olds` IS read, by `Deprecations` and `FileDeprecations`, because those two
+#: range over a map where these two comprehend a list. So "the two spellings are one
+#: ledger" is a claim about the PAIRS, never about the helpers —
+#: `tests/test_env_aliases.py` compares ledger CONTENTS and is structurally blind to
+#: helper SURFACE, which is why an unread helper here could sit beside a read one there
+#: with every gate green. Reintroduce this direction only with a caller.
 _NEW_TO_OLD = {new: old for new, old in LEDGER}
-_OLD_TO_NEW = {old: new for new, old in LEDGER}
 
 #: The once-per-process-per-LINE set behind `warn_once`.
 #:

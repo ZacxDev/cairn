@@ -373,7 +373,11 @@ top-level **string**. It is not a nested lookup and not an array membership test
   it, and every token is refused with `role claim is not <x>`;
 - a provider that emits `roles: […]` or `groups: […]` does not satisfy it either;
 - a provider that can be configured to add a **top-level, scalar** `role` claim does, and
-  that is the change to make at the provider rather than here.
+  that is the change to make at the provider rather than here;
+- **GoTrue emits one natively** (`authenticated` / `anon` / `service_role`), which is the
+  shape the field was written against — so the variable is provider-neutral and the *claim*
+  it reads is not universally available. `internal/identity/jws.go`'s `Claims.Role` comment
+  is the code-side half of this sentence.
 
 **Leaving it unset is a real configuration, not a gap** — the ledger says so in its own
 `unset` sentence — because the authorization question is answered by `control.Resolve`

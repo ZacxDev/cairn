@@ -311,7 +311,7 @@ class TestTheLedgerItself:
         """🔴 THE SECOND RENAME, PINNED AS A SET AND AS A POSITION.
 
         `CAIRN_SUPABASE_*` → `CAIRN_OIDC_*` covers the SEVEN settings of the JWT verifier in
-        `internal/identity`. Two things have to hold and neither implies the other:
+        `internal/identity`. THREE things have to hold and none implies another:
 
         * **all seven, and no more.** A partial rename is the worst outcome available: six
           settings read from either spelling and the seventh silently stops resolving, so a
@@ -323,15 +323,29 @@ class TestTheLedgerItself:
           `test_the_order_is_identical` above pins the two languages against each other,
           which is a different claim from this one — two identically mis-sorted ledgers
           agree.
+        * **no pair ANYWHERE IN THE LEDGER aliases a GoTrue-specific or RETIRED name.**
+          `CAIRN_SUPABASE_REDIRECT_URL` configures the GoTrue PKCE flow and is honestly
+          named for what it talks to; `CAIRN_SUPABASE_JWT_SECRET`/`_JWT_SECRET_FILE` are
+          RETIRED, and a pair for either would turn a startup refusal into a working alias.
+          🔴 THE SWEEP IS OVER `LEDGER`, NOT OVER `want`, AND THE DIFFERENCE IS THE WHOLE
+          CLAIM: the hazard is a pair ADDED, under ANY new spelling, and the first bullet
+          sees only pairs whose new name starts `CAIRN_OIDC_`. A pair spelled
+          `("CAIRN_UI_REDIRECT_URL", "CAIRN_SUPABASE_REDIRECT_URL")` is invisible to the
+          first bullet and is exactly the hazard.
 
         ⚠ REGRESSION coverage: at `d7e1fec` none of these pairs exists, so the expected set
         is absent from `LEDGER` and this is RED there — measured, together with the three
         probes recorded in `internal/identity/oidcrename_test.go`.
 
-        ⚠ THREE `CAIRN_SUPABASE_*` NAMES ARE DELIBERATELY ABSENT and the assertion must not
-        grow to them: `_REDIRECT_URL` configures the GoTrue PKCE flow and is honestly named
-        for what it talks to, and `_JWT_SECRET`/`_JWT_SECRET_FILE` are RETIRED — a pair here
-        would turn a startup refusal into a working alias.
+        🔴 THE THIRD BULLET'S LOOP USED TO ITERATE `want` — THE LITERAL DEFINED IN THIS
+        FUNCTION — WHICH MADE IT A PROPERTY OF A CONSTANT AND UNABLE TO GO RED ON ANY TREE.
+        `got == want` is already an exact-literal comparison above it, so the loop restated
+        what that line had settled. Measured rather than reasoned, and the measurement is
+        the reason the sweep is over `LEDGER` now: injecting the two pairs named above into
+        `LEDGER` left the old loop GREEN, while the same assertion over `LEDGER` goes RED
+        naming the offending old spelling. ⚠ A mutant whose NEW name starts `CAIRN_OIDC_`
+        does NOT exercise this bullet — `got == want` kills it first — so it is the wrong
+        mutant to prove this guard with, in either direction.
         """
         want = (
             ("CAIRN_OIDC_AUDIENCE", "CAIRN_SUPABASE_AUDIENCE"),
@@ -353,7 +367,9 @@ class TestTheLedgerItself:
         assert names[first - 1] == "CAIRN_MAX_FAILURES", names
         assert names[last + 1] == "CAIRN_PORT", names
 
-        for _new, old in want:
+        # Over the WHOLE ledger, not over `want`: see the third bullet. A pair added under
+        # any new spelling is the hazard, and `want` cannot see one.
+        for _new, old in env_aliases.LEDGER:
             assert not old.startswith(
                 ("CAIRN_SUPABASE_REDIRECT", "CAIRN_SUPABASE_JWT_SECRET")
             ), f"{old} is a GoTrue-specific or RETIRED name and must not be aliased"

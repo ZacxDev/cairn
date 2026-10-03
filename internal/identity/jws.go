@@ -103,7 +103,24 @@ type Claims struct {
 	Expiry    numericDate `json:"exp"`
 	NotBefore numericDate `json:"nbf"`
 	IssuedAt  numericDate `json:"iat"`
-	// Role is Supabase's own `role` claim (`authenticated` / `anon` / `service_role`).
+	// Role is a TOP-LEVEL SCALAR `role` claim, and the setting that reads it is
+	// `CAIRN_OIDC_REQUIRE_ROLE` — provider-neutral, because the check is a string
+	// comparison against whatever the token puts there.
+	//
+	// 🔴 WHAT THAT MEANS FOR A PROVIDER THAT IS NOT GoTrue, STATED HERE BECAUSE THE
+	// FIELD NAME READS AS UNIVERSAL AND IS NOT. GoTrue emits a top-level `role`
+	// natively (`authenticated` / `anon` / `service_role`); most other OIDC providers
+	// do not, and the nested or list-valued forms they DO emit —
+	// `realm_access.roles`, `roles`, `groups` — CANNOT satisfy this field: `json:"role"`
+	// is neither a path selector nor a membership test, so such a token decodes to an
+	// empty `Role` and every comparison against a configured value fails.
+	//
+	// ⚠ WHICH IS WHY THE CHECK IS OPTIONAL RATHER THAN A DEFAULT. An empty
+	// `CAIRN_OIDC_REQUIRE_ROLE` disables it entirely — `AuthenticateToken` guards it
+	// with `s.requireRole != ""` — so a deployment on such a provider leaves it unset
+	// and loses nothing it had. `internal/identity/README.md` § *`CAIRN_OIDC_REQUIRE_ROLE`
+	// reads a TOP-LEVEL `role` STRING* is the operator-facing half of this.
+	//
 	// Read so a caller can refuse an anonymous session; NOT used for authorization,
 	// which is `control.Resolve`'s answer and nothing else's.
 	Role string `json:"role"`

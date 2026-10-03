@@ -86,7 +86,7 @@ These are the house style, and they are why the guards here are worth trusting:
 
 | path | what |
 |---|---|
-| `cairn` | the PYTHON client CLI and the ORACLE — every verb `cairn -verbs` prints; do not hand-list them here, this row omitted `routes` for the whole of P-A |
+| `cairn` | the PYTHON client CLI and the ORACLE — every verb `cairn -verbs` prints; do not hand-list them here, a hand-list here silently omitted one for a whole phase |
 | `lib/` | the Python reader: cache resolution, recall rendering, scope/ref resolution, doctor |
 | `server/` | the pod: `server.py`, `Dockerfile`, `seed.sh`, `verify-byte-identity.sh` |
 | `cmd/cairn-server`, `internal/api` | the Go port of the server (P1), stdlib-only — see below |
@@ -113,12 +113,11 @@ tables, the mutation batteries, the two reader divergences' reasoning, the close
 measurements and the PAX-header story. Records of rounds, read on demand. What is below
 is what binds the next edit.
 
-✅ **ALL THREE STEPS ARE DONE, AND STEP TWO IS `tests/dualrun/`** — both servers over ONE
-store; every route, scope, entry and principal compared, uncompressed tar included, 0
-differences. 🔴 Do not declare a step done early; a sentence about the CORPUS is satisfied
-by a green corpus while every step stands untouched. ⚠ It licenses the image cutover's
-PRECONDITION, not the cutover — **diff the two images** for what the agreement test
-cannot read; this gate reads neither image.
+✅ **ALL THREE STEPS ARE DONE, STEP TWO IS `tests/dualrun/`**, and 🔴 **do not declare a
+step done early** — a sentence about the CORPUS is satisfied by a green corpus while every
+step stands untouched. ⚠ **It reads NEITHER IMAGE, so it licenses an image swap's
+PRECONDITION and never the swap** — diff the two images. What it compared, and the 0
+differences: `tests/dualrun/README.md`.
 
 🔴 **AND THE BYTE-IDENTITY GATE IS SCOPED TO THE *UNCOMPRESSED* TAR, BECAUSE GZIP IDENTITY
 IS UNATTAINABLE — MEASURED, NOT ASSUMED.** Two independent reasons, so closing one does
@@ -240,14 +239,11 @@ renderer" is a P8 property, not a P2 one, AND THE DEFAULT FLIP DID NOT MAKE IT O
 renderer still ships as `packages.cairn` until the oracle is deleted, so until then this gate IS
 the comparison rather than the absence of one.
 
-**Measured on this tree: 123 cases, 126 PASS, 0 failures, 0 dead normalizations** — every
-verb, every output-shaping flag, every documented exit code, `--help` in four spellings, the
-argument-shape rules, a TWO-INSTANCE `routes --check`, a routed `put` and four routed READS
-against a second pod, and THREE structural checks on top. 🔴 **THAT IS NOT 123 BYTE DIFFS: 92 rows
-compare stdout, stderr AND the exit code; 23 compare the exit code ONLY; 8 compare the exit code
-plus "both sides put something on stdout" — so 31 of 123 never compare output text.** Declared
-per row and in the residual table; it is the HEADLINE that reads wider than the gate, so know
-which rows are load-bearing before trusting one.
+🔴 **THE HEADLINE READS WIDER THAN THE GATE, SO KNOW WHICH ROWS ARE LOAD-BEARING BEFORE
+TRUSTING ONE.** "123 cases, 126 PASS, 0 failures, 0 dead normalizations" is NOT 123 byte
+diffs: 92 rows compare stdout, stderr AND the exit code; 23 compare the exit code ONLY; 8
+compare the exit code plus "both sides put something on stdout" — so **31 of 123 never
+compare output text.** Declared per row; what the corpus covers is in `tests/parity/README.md`.
 
 🔴 **TWO CLIENTS FAILING IDENTICALLY COMPARE EQUAL** — its first full run reported 72 PASS / 0
 FAIL against a pod that refused every request. Three controls stand against that, they are three
@@ -435,9 +431,8 @@ merely present. 🔴 **IT IS PUBLISHED AND IT IS NOW THE DEPLOYED POD — THE
 CUTOVER HAPPENED.** `.github/workflows/publish-image.yml` pushes BOTH pods, to
 two ghcr packages (`cairn-store`, `cairn-store-go`) under one `sha-<40-hex>`
 scheme, and the cluster pulls the second. ⚠ Both are
-PUBLIC and anonymously pullable, verified against a negative control — including
-the retracted private-on-first-publish prediction, recorded in
-`server/README.md`.
+PUBLIC and anonymously pullable, verified against a negative control; the
+retracted prediction about that is in `server/README.md`.
 
 🔴 **THE INTERPRETER IS PINNED, NOT INHERITED.** `flake.nix` uses
 `pkgs.python312` because `server/Dockerfile` is `python:3.12-slim` and CI pins
@@ -454,10 +449,15 @@ new name, because `tests/parity/` diffs the two clients' stderr byte-for-byte. I
 read when **`packages.cairn` is retired (P8)**: a milestone, never a date. The ledger, the
 resolver and the warning text are `internal/envalias` and `lib/env_aliases.py` — two spellings
 only because `packages.cairn` cannot import `internal/`, pinned against each other by
-`tests/test_env_aliases.py`. **Never open-code a fallback at a call site**, and note the two
-pairs that are NOT the prefix swap: the pod's listen address is `CAIRN_LISTEN_HOST` because
-`CAIRN_HOST` already means the machine LABEL, and its store root is `CAIRN_STORE_ROOT` because
-`CAIRN_ROOT` would read as a sibling of the client-side `CAIRN_MIRROR_ROOT`.
+`tests/test_env_aliases.py`. **Never open-code a fallback at a call site.**
+
+🔴 **THE LEDGER IS ARBITRARY `(new, old)` PAIRS, NOT A PREFIX RULE, AND IT CARRIES TWO
+RENAMES.** The second is `CAIRN_SUPABASE_*` → `CAIRN_OIDC_*` over the JWT verifier's seven
+settings — not a prefix swap at all, taken because that verifier never required a provider;
+and two of the `SUBSYSTEM_STORE_*` pairs are not the mechanical swap either. **READ THE
+LEDGER, NEVER INFER A PAIR FROM A RULE** — the per-pair reasoning and the spellings
+deliberately NOT paired (a GoTrue redirect URL; two RETIRED secrets, where a pair would turn
+a startup refusal into a working alias) are in `internal/envalias/envalias.go`'s package doc.
 
 Other identifiers still read `subsystem_store` — the `lib/` module names,
 `~/.config/subsystem-store/`, `/run/secrets/subsystem-store/`, the `subsystem-recall` CLI
