@@ -124,7 +124,24 @@ func AppendBullet(path, text, actor, session, today string, interleave func()) (
 			"entry has no `%s` heading, so an appended bullet would have nowhere to go",
 			store.NuanceHeading)}
 	}
-	wanted := ContentHash(text)
+	// 🔴 BOTH SIDES THROUGH `BulletContent`, BECAUSE AN IDEMPOTENCY CHECK BETWEEN TWO
+	// DIFFERENT REDUCTIONS IS NOT ONE. The stored side has always been reduced; the
+	// REQUEST side was hashed raw, so a caller echoing back what a read surface printed
+	// — prose plus the trailers appended to it — produced a hash the stored side could
+	// not match, and the retry landed a near-duplicate.
+	//
+	// 🔴 AND THE OPENER CLAUSE OF `BulletContent` IS INERT FOR A REQUEST ONLY BECAUSE
+	// THE VALIDATOR ASKS THE SAME EXPRESSION THE SAME QUESTION. A previous draft of
+	// this comment asserted the inertness from the validator merely "refusing a `text`
+	// that opens a markdown bullet" — and that was FALSE: the validator tested an ASCII
+	// `"- "` prefix on the RAW text while `BulletContent` strips the opener from the
+	// COLLAPSED one, so `"-<U+00A0><prose>"` was accepted by the validator and reduced
+	// to `<prose>` on the line below, hashing equal to an unrelated stored bullet —
+	// `duplicate`, and the caller's text never written. `BulletRequestProblem` now runs
+	// `bulletOpenerRe` over `CollapseWhitespace(text)`, which is the string this line
+	// reduces, so the claim is a property of ONE predicate rather than an inference
+	// across two.
+	wanted := ContentHash(BulletContent([]string{text}))
 	for _, existing := range store.ParseJournalBullets(body) {
 		if ContentHash(BulletContent(existing.Lines)) == wanted {
 			return "duplicate", existing.Lines[0], EntryRevision(original), nil

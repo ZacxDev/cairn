@@ -394,6 +394,24 @@
           # under the package it tests, like `reader_fixtures.json`, and named here
           # for the same reason: the dimension is supplied, not pinned away.
           || (rel == "internal/store/testdata/marker_oracle_sweep.json")
+          # 🔴 AND A FOURTH, ADDED WITHOUT WAITING FOR THE RED BUILD THIS TIME — the
+          # paragraph above is what made it predictable. `internal/store`'s
+          # citation-id test replays `tests/citation_ids.py`'s PYTHON answers, so the
+          # two implementations of `CitationID` / `citation_id` cannot drift without
+          # one of them going red. 🔴 THE ALLOWLIST IS FILE-BY-FILE FOR FIXTURES: the
+          # `hasPrefix "internal/"` row above is inside the `type == "directory"`
+          # clause, so it carries the DIRECTORY and not the JSON inside it. A reader
+          # who assumes a directory row covers its files gets the two-tier split the
+          # row above paid for — green on the dev host, RED in the sandbox.
+          || (rel == "internal/store/testdata/citation_ids.json")
+          # 🔴 AND A FIFTH, FOR THE SAME REASON AND FROM THE SAME GENERATOR
+          # DISCIPLINE. `internal/pytext`'s decode test replays CPython's own
+          # `bytes.decode("utf-8", errors="replace")` answers over 82,176 inputs —
+          # the differential that caught `DecodeUTF8Replace` emitting one U+FFFD per
+          # invalid BYTE where CPython emits one per maximal SUBPART. Without this
+          # row that test is green on the dev host and RED in the sandbox, which is
+          # the two-tier split the three rows above each paid for once.
+          || (rel == "internal/pytext/testdata/decode_replace.json")
           # 🔴 AND THE BROWSER SURFACE'S STYLESHEET, WHICH IS `//go:embed`ed AND THEREFORE
           # A COMPILE-TIME INPUT RATHER THAN A FIXTURE. `internal/ui/stylesheet.go` embeds
           # `app.css`; a filtered tree without it does not fail a test, it fails to

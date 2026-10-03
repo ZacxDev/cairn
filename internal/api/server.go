@@ -1507,7 +1507,12 @@ func (s *Server) appendBullet(rq *request, parts []string, body []byte) error {
 	rq.audit(200, status)
 	rq.respond(200, []byte(line+"\n"), "text/plain; charset=utf-8", map[string]string{
 		"X-Store-Status": status,
-		"X-Cairn-Bullet": write.ContentHash(write.BulletText(payload)),
+		// 🔴 THE SAME REDUCTION `AppendBullet` DECIDED WITH, not a hash of the raw
+		// `text`. The header is only useful as the idempotency KEY — a client holds it
+		// to ask "did my retry land on this bullet" — so a value computed over a
+		// different string than the comparison used would answer a question nobody
+		// asked. Unchanged for prose with no trailers, which is every conformance row.
+		"X-Cairn-Bullet": write.ContentHash(write.BulletContent([]string{write.BulletText(payload)})),
 		"ETag":           `"` + revision + `"`,
 	})
 	return nil

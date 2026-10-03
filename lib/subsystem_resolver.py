@@ -93,6 +93,7 @@ wrong reason and stays green with the guard deleted (`claude/RULES.md` →
 from __future__ import annotations
 
 import errno
+import hashlib
 import re
 import stat
 from collections.abc import Sequence as _AbcSequence
@@ -1961,6 +1962,61 @@ def line_openness(line: str) -> tuple[str | None, str | None]:
     return _bullet_openness(_as_opening_line(line))
 
 
+class CitationIDDomainError(ValueError):
+    """A `str` `citation_id` has no defined answer for. See `_citation_hash_bytes`."""
+
+
+def _citation_hash_bytes(text: str) -> bytes:
+    """The bytes `citation_id` hashes — the REPLACE-DECODED form of `text`.
+
+    🔴 THE DOMAIN IS DECLARED HERE BECAUSE THE TWO IMPLEMENTATIONS DID NOT AGREE ON
+    IT. Go's `JournalBullet.CitationID` is TOTAL: a Go string is a byte sequence, so
+    hashing it cannot fail. The Python side encoded with the STRICT handler, which is
+    total for a client-side read (`read_text(errors="replace")` can only produce
+    well-formed text) and PARTIAL on the pod, which decodes entry files
+    `errors="surrogateescape"` — so a bullet off a malformed entry holds lone
+    surrogates and a strict encode raises. MEASURED on `b"- a\\xe2\\x82\\n  tail\\n"`:
+    `UnicodeEncodeError: 'utf-8' codec can't encode characters in position 3-4:
+    surrogates not allowed`. The pod's own `append_bullet` carries a 🔴 comment one
+    function above the call site saying "every re-encode below has to be the same
+    handler or the round trip raises. It did." — this was a re-encode that was not.
+
+    🔴 THE RULE: THE ID IS A FUNCTION OF THE ENTRY'S BYTES AS A `replace` DECODE
+    SEES THEM, whichever handler the caller's own decode used. The coercion is
+    `encode(surrogateescape)` — the exact inverse of the pod's decode, so it
+    recovers the file's original bytes — followed by `decode(replace)`, which is
+    what both the Python client and Go's `store.DecodeReplace` already do. All three
+    paths therefore answer the SAME id for one file. On text with no surrogates the
+    coercion is the identity, so nothing on the ordinary path moves.
+
+    🔴 `surrogatepass` IS NOT THE FIX, AND IT LOOKS LIKE ONE. It is total and it
+    round-trips, but it re-encodes each surrogate as its own three bytes where Go
+    hashes the replacement character — so it would close the exception and OPEN a
+    cross-language divergence. MEASURED on that bullet: `surrogatepass` gives the
+    bytes `2d2061edb3a2edb2820a20207461696c` and the id `2e6d42b3`, while the
+    coercion gives `2d2061efbfbd0a20207461696c` and `041430ff` — which is the id
+    Go answers and the one `internal/store/testdata/citation_ids.json` records.
+
+    ⚠ WHAT STILL REFUSES, STATED RATHER THAN LEFT TO BE MET. `surrogateescape`
+    encodes only U+DC80..U+DCFF — the range its own decode produces. A lone
+    surrogate OUTSIDE that range (say U+D800) cannot come from either decode path,
+    and Go cannot hold one at all, so there is NO measured answer to agree with; it
+    raises `CitationIDDomainError` rather than an incidental `UnicodeEncodeError`,
+    which is a named refusal instead of a 500 with a codec message in it. If a path
+    is ever found that produces one, that is a decision to make then, not a default
+    to guess now.
+    """
+    try:
+        raw = text.encode("utf-8", errors="surrogateescape")
+    except UnicodeEncodeError as exc:
+        raise CitationIDDomainError(
+            "citation_id is defined over text produced by decoding bytes as UTF-8 "
+            "with the 'replace' or 'surrogateescape' handler; this text carries a "
+            f"surrogate outside U+DC80..U+DCFF, which neither produces ({exc})"
+        ) from exc
+    return raw.decode("utf-8", errors="replace").encode("utf-8")
+
+
 @dataclass(frozen=True)
 class JournalBullet:
     """One top-level bullet of a `## Nuance / work-history` section, VERBATIM.
@@ -1977,6 +2033,57 @@ class JournalBullet:
     date: str | None
     """The ISO date the bullet is dated with, or None. ~44% of the real corpus
     carries no date; `None` is an ordinary reading, not a parse failure."""
+
+    start_line: int
+    """0-based index, WITHIN THE SECTION BODY this bullet was parsed from, of the
+    line that OPENED it.
+
+    🔴 IT EXISTS SO A RENDERER NEED NOT RE-DECIDE WHAT A BULLET IS. A caller that
+    wants to annotate bullet openings while emitting a body VERBATIM would
+    otherwise re-detect them, and the detection is not trivial: a `- ` line
+    INSIDE A FENCE is sample text rather than a bullet, and text before the first
+    bullet is dropped. A second copy of that rule would be wrong about fences on
+    its first day. `internal/store`'s `JournalBullet.StartLine` is the same field
+    for the same reason.
+
+    ⚠ AN INDEX INTO THE BODY, NOT INTO THE FILE — the body is what
+    `extract_sections` returned. Named because an off-by-a-section is silent: it
+    would annotate the wrong lines rather than fail.
+
+    ⚠ NOT A LENGTH, either: `len(lines)` can exceed the distance to the next
+    bullet's `start_line`, because trailing blank lines are stripped from `lines`
+    while remaining in the body. Walk `start_line`s; never add `len(lines)`.
+
+    ⚠ AND IT IS AN INDEX INTO `body.splitlines()`, WHICH BREAKS ON **TEN**
+    CHARACTERS — not on `"\\n"`. A consumer that re-splits the body with
+    `text.split("\\n")` (or Go's `strings.Split(text, "\\n")`) gets a DIFFERENT
+    list and this index then names the wrong line, silently. MEASURED on
+    `"- a\\rb\\n- c\\n"`: `splitlines()` gives `['- a', 'b', '- c']` and the
+    start_lines are `[0, 2]`; `split("\\n")` gives `['- a\\rb', '- c', '']`, so
+    start_line 0 points MID-LINE and start_line 2 points at `''`. Use the same
+    splitter the parser used — `pytext.SplitLines` on the Go side — and note that
+    `internal/ui/render.go`'s `inlineCode` already reaches for the wrong one.
+
+    🔴 NO DEFAULT, DELIBERATELY, AND THE ONE IT USED TO CARRY WAS JUSTIFIED BY
+    CALL SITES THAT DO NOT EXIST. The removed docstring said the `= 0` existed
+    "only so the many call sites that construct a bullet without a body position
+    keep working". There is exactly ONE PRODUCTION construction site —
+    `parse_journal_bullets` — and it supplies this field; the rest are TESTS, which
+    construct the value they are asserting about and would rather fail loudly than
+    inherit a 0.
+
+    ⚠ AND THE COUNT IS STATED THAT WAY ON PURPOSE, BECAUSE A TOTAL WENT STALE INSIDE
+    ITS OWN COMMIT. An earlier draft read "measured over every `.py` in the tree there
+    is exactly ONE construction site": true at `3fb8dc2`, and already false at
+    `0aa5fc48`, where the same commit's new `tests/test_citation_ids.py` added two
+    more. The number that cannot rot is the one about PRODUCTION code, and the next
+    test to construct a bullet does not invalidate it.
+
+    A default would be worse than absent here: `0` is a LEGITIMATE value (the body's
+    first line), so it cannot be read as "unset", and a bullet nobody positioned
+    would annotate line 0 rather than fail. If you ever need "position unknown",
+    add a separate field rather than overloading this one.
+    """
 
     openness: str | None = None
     """`'open'` | `'resolved'` | None — the bullet's DECLARED openness marker.
@@ -2009,6 +2116,118 @@ class JournalBullet:
     `--validate` now reports every sha-less `RESOLVED` as an UNVERIFIABLE closure,
     which is the branch that makes the field load-bearing.
     """
+
+    @property
+    def citation_id(self) -> str:
+        """The opaque per-bullet token the read surfaces print — 8 lowercase hex.
+
+        🔴 WHAT IT IS FOR. "Was this recalled bullet actually used?" has no answer
+        today: every available proxy is a SPELLED one, walkable by rewording, and
+        the obvious one is saturated by a MANDATE rather than by use — a downstream
+        consumer's resume flow requires its report to echo what it recalled, so "a
+        printed ref reappears later" fires 451/454 = 99.3% and measures COMPLIANCE,
+        not use. A token existing nowhere else in a corpus turns that question into
+        a match.
+
+        🔴 NOT PRINTED BY ANY SURFACE AT THIS COMMIT, AND THAT IS THE SEQUENCING
+        RATHER THAN AN OVERSIGHT — the derivation lands before the renderer so no
+        rendered byte moves in the same change. **Closing condition for the dead
+        payload:** a `internal/report/testdata/reader_fixtures.json` row carrying
+        `[cb:`. Until then every guard over this property is a contract pin and
+        nothing here is exercised by a read.
+
+        🔴 DERIVED FROM THE BULLET'S OWN BYTES, WHICH IS WHAT MAKES CROSS-LANGUAGE
+        AGREEMENT REACHABLE RATHER THAN DISCIPLINED. `sha256` over `text` (the
+        lines joined with "\\n"), first 8 hex characters. `text` is reused rather
+        than re-joined here so there is one definition of "the bullet's bytes".
+
+        🔴 TWO NORMALISATIONS, NAMED, BECAUSE AN EARLIER DRAFT OF THIS DOCSTRING
+        SAID "**no** normalisation" AND THAT WAS FALSE. Both are in the id whether
+        anyone wants them or not, and both are KEPT:
+
+          1. THE LINE TERMINATOR. `parse_journal_bullets` splits on
+             `str.splitlines()`, which strips the terminator, and `text` re-imposes
+             `"\\n"`. So THIRTEEN byte-distinct spellings of one bullet — LF,
+             CRLF, a lone CR, `\\v`, `\\f`, `\\x1c`, `\\x1d`, `\\x1e`, U+0085,
+             U+2028, U+2029, no final terminator at all, and a trailing blank
+             line — all yield ONE id. MEASURED: all thirteen give `3a98d5a7` for
+             `- one`.
+          2. THE DECODE FORM. The text is coerced to what a
+             `errors="replace"` decode would have produced before hashing; see
+             `_citation_hash_bytes` below for why, and for the one input that
+             refuses.
+
+        ⚠ SO DO NOT "RESTORE BYTE-EXACTNESS" BY HASHING THE RAW SLICE. The
+        behaviour above is desirable — a CRLF entry and an LF entry naming the
+        same bullet should name it with the same id — but it is a CONTRACT: every
+        previously printed id stops resolving the day somebody hashes the
+        unsplit bytes instead.
+
+        ⚠ THE INVALIDATION SET IS WIDER THAN "EDITING A BULLET", AND EVERY MEMBER
+        BELOW IS MEASURED. An id names a parsed bullet's bytes, so it moves on:
+
+          * a TRAILING-WHITESPACE change — `- one` is `3a98d5a7` and `- one   ` is
+            `7adcabe5`. Nothing strips it.
+          * UNICODE FORM — NFC `- café` is `60bec6cc` and NFD is `83a886e0`. Two
+            visually identical bullets, two ids, and no normalisation closes it
+            (adding one would be a third normalisation and a contract change).
+          * ADDING OR REMOVING an `OPEN:` / `RESOLVED <sha>:` marker, because the
+            marker is part of the opening line's bytes.
+          * THE WRITE TRAILER. ` [cairn: <actor>/<session>]` lives inside
+            `lines[0]`, so an id is partly a function of the SESSION that wrote
+            the bullet.
+          * FIXING THE RECORDED `dropped-lines` DEFECT, which moves a NEIGHBOUR's
+            id: lines currently absorbed into the preceding bullet would leave its
+            `lines`, so a bullet nobody touched loses its id. MEASURED, with the
+            bodies named, because the one number this row was first given arrived
+            without one: over `"- first\\nstray line\\n- second\\n"` the first bullet
+            is `608a5be6`, and over `"- first\\n- second\\n"` — the same bullet after
+            the absorbed line leaves — it is `6b4d8edb`.
+
+            ⚠ AND `ad08c42d`, WHICH `0aa5fc48`'s COMMIT MESSAGE PAIRED WITH
+            `6b4d8edb` HERE, IS RETRACTED AS UNREPRODUCIBLE. It appears in NO tracked
+            file — measured at `0aa5fc48`, 0 of 491, with `6b4d8edb` as the positive
+            control for the same grep (found, in
+            `internal/store/testdata/citation_ids.json`) — and two differently-shaped
+            sweeps over 24,088 absorbing constructions produced it zero times:
+            `"- first"` plus 0..3 stray lines drawn from a 25-item word space, and
+            twelve opening-line spellings plus 0..2 of the same. Both sweeps'
+            positive controls reproduced the two ids above. No body is offered for
+            it, deliberately: inventing one that happens to hash to it would be a
+            worse record than the retraction.
+
+        🔴 AND THE ID IS **NOT SCOPED**. Two byte-identical bullets in different
+        entries, or in different scopes, get the SAME id, deterministically —
+        `write.AppendBullet` dedupes within ONE file only, so the corpus does not
+        forbid it. The framing "a token existing nowhere else in a corpus"
+        therefore holds for the PROSE a bullet carries and not for a duplicate of
+        it, and the arithmetic below models RANDOM collisions only; it says nothing
+        about duplicated text, which collides with probability 1.
+
+        ⚠ 8 HEX, NOT 4, AND THE REASON IS ARITHMETIC. At 16 bits a 3,129-bullet
+        corpus collides with probability ≈1 (birthday: ~50% by ~300 bullets); 32
+        bits puts it near 0.1% corpus-wide. Do not shorten it to fit a column.
+
+        ⚠ AND THIS FILE NOW CARRIES THREE CORPUS SIZES THAT ARE **THREE DIFFERENT
+        POPULATIONS**, NOT A DISAGREEMENT. Said here because the 3,129 is the newest
+        and a reader meeting it after the other two would read it as a correction:
+
+          * **110** — TOP-LEVEL bullets across 26 entries, with 250 continuation
+            lines between them. That is the population `_JOURNAL_BULLET`'s comment
+            counts, and its subject is INDENTATION.
+          * **196** — bullets in the openness survey (`openness`'s docstring, "195
+            of 196"). A later measurement of a grown store, and its subject is
+            MARKERS.
+          * **3,129** — the population the collision arithmetic is sized for: the
+            store as measured when the citation id was designed.
+
+        🔴 NONE OF THE THREE IS A RE-MEASUREMENT OF ANOTHER, AND NOTHING HERE CAN
+        RECONCILE THEM — the live store is not in this repository, so no test can
+        re-derive any of these numbers. What is checkable is the only thing the
+        arithmetic needs: 8 hex is sufficient at ALL THREE sizes, and 4 is
+        insufficient at all three.
+        """
+        return hashlib.sha256(_citation_hash_bytes(self.text)).hexdigest()[:8]
 
     @property
     def first_line(self) -> str:
@@ -2165,8 +2384,13 @@ def parse_journal_bullets(body: str) -> tuple[JournalBullet, ...]:
         cannot inflate a bullet's line count.
     """
     bullets: list[list[str]] = []
+    # 🔴 PARALLEL TO `bullets`, APPENDED IN LOCKSTEP WITH IT. A dict keyed on the
+    # opening LINE would be wrong wherever two bullets open identically, which the
+    # corpus does not forbid; the index is recorded where the group is created, so
+    # the two lists cannot disagree about which bullet is which.
+    starts: list[int] = []
     in_fence = False
-    for line in body.splitlines():
+    for i, line in enumerate(body.splitlines()):
         if _is_fence(line):
             in_fence = not in_fence
             if bullets:
@@ -2174,11 +2398,12 @@ def parse_journal_bullets(body: str) -> tuple[JournalBullet, ...]:
             continue
         if not in_fence and _JOURNAL_BULLET.match(line):
             bullets.append([line])
+            starts.append(i)
             continue
         if bullets:
             bullets[-1].append(line)
     out: list[JournalBullet] = []
-    for group in bullets:
+    for gi, group in enumerate(bullets):
         while group and not group[-1].strip():
             group.pop()
         openness, resolved_by = _bullet_openness(group[0])
@@ -2188,6 +2413,7 @@ def parse_journal_bullets(body: str) -> tuple[JournalBullet, ...]:
                 date=_bullet_date(group[0]),
                 openness=openness,
                 resolved_by=resolved_by,
+                start_line=starts[gi],
             )
         )
     return tuple(out)

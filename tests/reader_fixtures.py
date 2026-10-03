@@ -75,7 +75,7 @@ STORE_PLACEHOLDER = "<STORE-ROOT>"
 EPOCH_NS = 946684800 * 1_000_000_000
 
 #: The session-attribution trailer `server.py`'s `render_bullet` appends — the SHAPE, in
-#: synthetic actors. Spelled to satisfy `server.py`'s `_ATTRIBUTION_RE`
+#: synthetic actors. Spelled to satisfy `server.py`'s `_ATTRIBUTION_PATTERN`
 #: (`[a-z0-9][a-z0-9-]{0,31}` / `[A-Za-z0-9][A-Za-z0-9_.-]{0,63}`), because a trailer that
 #: regex cannot read is not an attribution and would measure a different thing entirely.
 #:

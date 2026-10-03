@@ -559,19 +559,28 @@ mechanical check that it is genuinely dead rather than merely unused:
 
 | **the PYTHON half of the closed `tags:` vocabulary** — `lib/entry_shape.py`'s `TAG_VOCABULARY` + `tag_outside_vocabulary` (and their two `__all__` entries), `server.py`'s `_validate_entry_bytes` together with its import of them, and the ORACLE half of `tests/test_tag_vocabulary.py` (the `oracle` fixture, `_entry_bytes`, the four `test_the_oracle_*` / `test_every_declared_tag_lands_*` tests, `test_the_oracles_two_write_primitives_share_ONE_validator`, and the Python side of both cross-language pins) | the vocabulary is enforced by the DEPLOYED Go pod; the Python spelling exists **only** because `server.py` is the oracle the conformance goldens are recorded from, and because `packages.cairn` cannot import `internal/`. It is the same reason `lib/env_aliases.py` is on this list in spirit: two spellings of one constant, pinned against each other, where only one of them serves traffic | ⚠ **NOT a delete-the-Python-side script, because the GOLDENS are recorded from the oracle.** Three things move together or none: (a) `tests/conformance/suite.py generate` stops being the recorder — whatever replaces it records from `cmd/cairn-server` — **before** `server.py` goes, or the four `put-*-tag-*-the-vocabulary` goldens become bytes nothing can regenerate; (b) `tests/test_tag_vocabulary.py` loses its oracle half and its two cross-language pins collapse to single-source assertions over `internal/write` — at which point they are asserting `x == x` and the LITERALS (`DECLARED`, `DECLARED_REFUSAL`) become the only non-derived expectation, so they must stay hand-typed; (c) `internal/write/tagvocab.go` becomes the sole declaration and its ⚠ SORTED paragraph loses its second half. **What must NOT be deleted with it:** nothing in `internal/write` — `tagVocabulary` and `validateEntryBytes` are the DEPLOYED pod's, and only the Python mirror of them is on this list |
 
-⚠ **This ledger is a list of things to DECIDE about, not a delete script.** Four rows above
-(`pyoserror.go`, the narrower rows, the mtime bound, and the tag vocabulary's goldens) carry
-a measurement or an artefact that outlives the oracle; deleting them because the oracle went
-away would lose it.
+| **the PYTHON half of the CITATION ID** — `JournalBullet.citation_id`, `start_line`, `_citation_hash_bytes` and `CitationIDDomainError` in `lib/subsystem_resolver.py`; the generator `tests/citation_ids.py`; the drift guard and domain tests in `tests/test_citation_ids.py`; the fixture `internal/store/testdata/citation_ids.json`; and that fixture's row in `flake.nix`'s `onlyGo` filter | the id exists TWICE for one reason — `packages.cairn` installs the client and its `lib/` under `libexec` and nothing else, so `lib/` **cannot** import `internal/`. The Python copy serves no traffic: the DEPLOYED pod is `cmd/cairn-server`. Everything in this row is the apparatus that keeps the two copies equal, and with one copy there is nothing to keep equal. Same shape as the `tags:` vocabulary row above — and see the ✅ note below this table for exactly how late this row was | 🔴 **A DECISION, NOT A DELETION, AND THE DECISION IS GENUINELY OPEN.** With no Python generator, `internal/store/citationid_test.go` has no oracle to replay — it becomes a SELF-SNAPSHOT, which that file's own header calls worthless ("nothing here can agree with itself"). ⚠ But a printed id is exactly the kind of thing a frozen contract pin is FOR: every id ever emitted into a report stops resolving if the derivation moves, and a snapshot is what makes that movement red. P8 must choose between (a) **keep the fixture, relabel it** — not an oracle but a FROZEN CONTRACT recorded at a named commit, with its header rewritten to say so, since a file claiming to record CPython while recording Go is worse than either; (b) **delete it** and accept that a derivation change is caught only by whatever consumer prints an id; (c) **re-home the oracle** — regenerate from a pinned `cairn-server` binary, which makes it a Go self-snapshot under a slower name. **Closing condition:** `packages.cairn` gone **and** `internal/store/citationid_test.go`'s header states which of (a)/(b)/(c) was taken, in the same commit. ⚠ **What must NOT go with it:** nothing in `internal/store` or `internal/pytext` — `CitationID`, `StartLine` and `DecodeUTF8Replace` are the deployed pod's. 🔴 **AND `internal/pytext/testdata/decode_replace.json` IS *NOT* ON THIS LIST**, which is the distinction worth stating: it records CPython's `bytes.decode("utf-8", errors="replace")`, a property of the INTERPRETER the Go reader must match for as long as any entry file might hold an invalid byte. It outlives the oracle entirely |
 
-🔴 **THE ROW ABOVE WAS ADDED ONE ROUND LATE, WHICH IS THE THIRD TIME THIS FILE HAS RECORDED
-THAT EXACT OMISSION.** The closed-vocabulary change shipped a Python half whose only reason
-to exist is the oracle, and left this ledger at the same row count it had before — the same
-shape as residual 9 "closing on a ledger that did not list it", and the same shape as the
+⚠ **This ledger is a list of things to DECIDE about, not a delete script.** Five rows above
+(`pyoserror.go`, the narrower rows, the mtime bound, the tag vocabulary's goldens, and the
+citation fixture) carry a measurement, an artefact or an open choice that outlives the oracle;
+deleting them because the oracle went away would lose it.
+
+🔴 **THE TAG-VOCABULARY ROW WAS ADDED ONE ROUND LATE, WHICH WAS THE THIRD TIME THIS FILE HAD
+RECORDED THAT EXACT OMISSION.** The closed-vocabulary change shipped a Python half whose only
+reason to exist is the oracle, and left this ledger at the same row count it had before — the
+same shape as residual 9 "closing on a ledger that did not list it", and the same shape as the
 row that had to be split when its two conditions were collapsed. The lesson is not "remember
 the ledger": it is that **anything added to `lib/` or `server/server.py` for parity's sake is
 a ledger row by construction**, and the commit that adds it is the only moment anybody knows
 that.
+
+✅ **THE CITATION-ID ROW IS THE FIRST ONE ADDED ON TIME, AND SAYING SO IS WHAT MAKES THE
+SENTENCE ABOVE CHECKABLE RATHER THAN A RESOLUTION.** It would have been the fourth omission:
+the citation id landed a Python `citation_id` whose only reason to exist is that `lib/` cannot
+import `internal/`, and the commit that added it added no row. The row went in with the
+follow-up commit that fixed the rest of that change, which is one round late by the strictest
+reading and on time by the only one anybody can check — before the branch merged.
 
 
 ## The `--tag` rows, and the vacuity this gate closed on itself

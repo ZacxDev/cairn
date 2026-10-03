@@ -659,19 +659,114 @@ _FORBIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co"})
 # prefix rule untouched, so an appended `OPEN:` bullet still declares itself.
 ATTRIBUTION = " [cairn: {actor}/{session}]"
 
-# The parser for the suffix above, and it is deliberately the SAME shape written
-# by `render_bullet` rather than a looser one: a trailer this cannot read is not
-# an attribution, so its bullet's content hash is computed over the whole line
-# and simply will not collide with a fresh append. Anchored at end-of-line.
-_ATTRIBUTION_RE = re.compile(
-    r"[ \t]*\[cairn: (?P<actor>[a-z0-9][a-z0-9-]{0,31})"
-    r"/(?P<session>[A-Za-z0-9][A-Za-z0-9_.-]{0,63})\]\Z"
+# The suffix above as a PATTERN FRAGMENT, and it is deliberately the SAME shape
+# written by `render_bullet` rather than a looser one: a trailer this cannot read
+# is not an attribution, so its bullet's content hash is computed over the whole
+# line and simply will not collide with a fresh append.
+#
+# ⚠ A FRAGMENT, NOT AN ANCHORED EXPRESSION, and that is what makes the ONE-PIECE
+# expression below composable: a fragment can be placed in an alternation, an
+# end-anchored expression cannot. It is never compiled on its own —
+# `_BULLET_TRAILER_PIECE_RE` is the only consumer, and the groups are
+# non-capturing because nothing reads the actor or the session back out of a
+# stored line.
+_ATTRIBUTION_PATTERN = (
+    r"\[cairn: [a-z0-9][a-z0-9-]{0,31}/[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\]"
 )
 
 # `- YYYY-MM-DD: ` — the dated bullet opener this writer emits and the one the
 # corpus already uses. Stripped before hashing so a bullet re-POSTed on a later
 # day is still recognised as the same CONTENT.
+#
+# 🔴 IT IS ALSO THE REQUEST-SIDE PREDICATE, NOT ONLY THE STORED-SIDE ONE.
+# `_bullet_request_problem` asks THIS expression whether a submitted `text` opens
+# a bullet, over the same collapsed string `bullet_content` will reduce — see the
+# clause there for what asking a different question cost.
 _BULLET_OPENER_RE = re.compile(r"\A[-*][ \t]+(?:\d{4}-\d{2}-\d{2}:[ \t]+)?")
+
+# The opaque per-bullet token a READ surface prints — `JournalBullet.citation_id`
+# in brackets, 8 lowercase hex. The same kind of fragment
+# `_ATTRIBUTION_PATTERN` is.
+#
+# 🔴 IT IS STRIPPED BEFORE HASHING BECAUSE AN AGENT ECHOES WHAT IT READ, AND THAT
+# IS MEASURED RATHER THAN FEARED: a downstream consumer's resume flow requires its
+# report to echo the bullets it recalled, which fires on 451 of 454 runs (99.3%).
+# So the text arriving at `POST /bullets` routinely ENDS in whatever the read
+# surface appended. A token left in the hash breaks idempotency in the one
+# direction that destroys nothing and is therefore silent: the re-POST stops
+# matching the bullet already on disk, appends a near-duplicate, and that
+# duplicate carries a `[cb:…]` in its PROSE whose value is not its own id — a
+# citation that resolves to the bullet it was copied from, forever.
+_CITATION_TOKEN_PATTERN = r"\[cb:[0-9a-f]{8}\]"
+
+# EXACTLY ONE machine-written trailer: the optional separating whitespace plus one
+# bracketed piece. Deliberately UNANCHORED and deliberately not repeated — the
+# only consumer is `_strip_bullet_trailers`, which `fullmatch`es it against a
+# slice whose both ends it already computed, so this expression is never
+# `search`ed over a line.
+#
+# 🔴 ORDER-FREE IS THE POINT, AND TWO SEQUENTIAL END-ANCHORED `sub` CALLS CANNOT
+# DELIVER IT: with the attribution stripped first, `… [cairn: a/b] [cb:deadbeef]`
+# leaves the attribution IN (its `\Z` anchor no longer reaches the end of the
+# line) and the whole trailer enters the hash. Both orders are reachable: the read
+# surface appends the token after a stored line that already ends in an
+# attribution, and `render_bullet` appends an attribution after whatever text the
+# caller sent. One ALTERNATION — here, over both spellings — is what makes the
+# peel order-free; the repetition lives in the loop rather than in a `+`.
+#
+# 🔴 AND THE REPETITION IS NOT A `+` BECAUSE THE WHOLE-RUN EXPRESSION
+# `(?:[ \t]*(?:ATTR|TOKEN))+\Z` IS QUADRATIC IN CPYTHON WHENEVER THE RUN DOES NOT
+# REACH THE END OF THE LINE. `re` retries the whole alternation from every start
+# position, and there is no literal prefix to prefilter on because the expression
+# opens with `[ \t]*`. When the run DOES reach `\Z` the cost stays linear: each
+# start position inside the prose fails in O(1) (a prose character is neither
+# whitespace nor `[`), and the first position that CAN match consumes the rest and
+# stops. When it does NOT, each of the ~n start positions INSIDE the run matches
+# its way to the final non-trailer word before failing — O(n) apiece, O(n²) total.
+# So the fast shape is the one both linearity fixtures built when that expression
+# landed, which is why BOTH were green on it. Append one
+# non-trailer word and, through `bullet_content`, BOTH implementations in ONE
+# process in ONE run, this host, CPython 3.12 (load average 5.3–5.9), over
+# `"- 2000-01-02: " + prose + " [cb:deadbeef]" * n` and that string plus `" tail"`:
+#
+#     n        line bytes   `+`\Z AT-END  `+`\Z NOT-END  peel AT-END  peel NOT-END
+#     1,000        14,048   0.000089s     0.032837s      0.000444s    0.000047s
+#     2,000        28,048   0.000329s     0.128986s      0.000678s    0.000094s
+#     4,000        56,048   0.000434s     0.492542s      0.001338s    0.000179s
+#     8,000       112,048   0.001018s     2.108743s      0.002609s    0.000322s
+#     16,000      224,048   0.002047s     8.825283s      0.005163s    0.001062s
+#     32,000      448,048   0.003530s     (not run)      0.010967s    0.001537s
+#
+# — the whole-run expression is ×3.8–4.3 per doubling on NOT-END (8.83 s over a
+# 224 KB line, 4311× its own AT-END time at the same n). The peel is ×1.9–2.1 per
+# doubling on AT-END, and NOT-END is O(1) IN THE STRIP ITSELF — one failed
+# `fullmatch` and the loop breaks. ⚠ DO NOT READ A PER-DOUBLING RANGE OFF THE
+# NOT-END COLUMN: at 0.3–1.5 ms it is noise-dominated, its own steps here are
+# ×1.45 to ×3.30, and an earlier draft of this sentence claimed "×1.5–2.1 on BOTH
+# shapes", which this table contradicts — as did the FIRST attempt to correct it,
+# which said ×1.80 and was caught by re-deriving the five ratios rather than
+# eyeballing the column. The linearity claim rests on the GRAMMAR
+# argument above and on 17 adversarial shapes measured to n=64,000, never on these
+# six rows.
+# ⚠ AND THE PEEL IS 2.5–3× SLOWER ON AT-END, which is the
+# shape every real caller sends: a per-iteration interpreter cost, stated rather
+# than hidden, and the trade is 2.5× on 5 ms against 8300× on 8.8 s.
+#
+# ⚠ GO IS NOT AFFECTED AND `internal/write` THEREFORE STILL CARRIES THE `+`\z
+# ALTERNATION: RE2 does not backtrack. Measured there the same way — `go test`,
+# one process, one run — ×1.7–2.4 per doubling on both shapes out to n=64,000 /
+# 896,048 bytes (AT-END 27.4 ms, NOT-END 33.5 ms). Two mechanisms, one answer; the
+# equivalence is what the enumeration in `_strip_bullet_trailers` measures.
+#
+# REACHABLE, not theoretical, and by the same route the `[cb:]` echo hole was:
+# `PUT /api/v1/entry/<scope>/<ref>` writes caller bytes verbatim with NO per-line
+# cap (`BULLET_TEXT_MAX` governs only the `POST /bullets` request text);
+# `bullet_content` then runs over that stored line on every subsequent
+# `POST /bullets`, inside the per-entry write lock; and the rate limiter counts
+# failed auths only, so an authenticated writer is not request-rate-limited.
+_BULLET_TRAILER_PIECE_RE = re.compile(
+    r"[ \t]*(?:" + _ATTRIBUTION_PATTERN + r"|" + _CITATION_TOKEN_PATTERN + r")"
+)
 
 # How much of a bullet's content hash is carried. 16 hex characters is 64 bits —
 # far past any collision an append stream could reach, and short enough to read
@@ -2224,18 +2319,88 @@ def content_hash(text: str) -> str:
     ).hexdigest()[:CONTENT_HASH_CHARS]
 
 
+def _strip_bullet_trailers(s: str) -> str:
+    """Remove every MACHINE-WRITTEN trailer from the end of one collapsed bullet,
+    in ANY ORDER and ANY NUMBER, and nothing else.
+
+    🔴 ONE RULE, ONE PLACE: `bullet_content` is the only caller, and nothing else
+    here may re-spell "what a trailer is". `internal/write`'s
+    `stripBulletTrailers` is the Go counterpart — two spellings only because
+    `lib/` cannot import `internal/`.
+
+    ⚠ AND THE TWO SPELLINGS ARE NOW TWO MECHANISMS, WHICH IS A STRONGER CLAIM TO
+    HOLD UP THAN A TRANSCRIPTION. Go keeps the whole-run `+`-and-`\\z` alternation
+    because RE2 cannot backtrack; this peels the run one piece at a time because
+    CPython's engine can and does — `_BULLET_TRAILER_PIECE_RE` carries both
+    measurements. So the equivalence stopped being readable off a shared pattern
+    and became a property that has to be MEASURED; the EQUIVALENCE block below
+    names the two gates that measure it, and `tests/parity/` still compares the
+    two CLIENTS' rendered bytes on top of that.
+
+    HOW IT IS LINEAR. Every piece this grammar admits begins with `[`, ends with
+    `]`, and contains NEITHER bracket — `_ATTRIBUTION_PATTERN`'s actor and session
+    classes and `_CITATION_TOKEN_PATTERN`'s hex run all exclude them. So if a piece
+    ends at `end`, its `[` is necessarily the LAST `[` before `end - 1`, and
+    `rfind` locates it in at most one piece's length (106 characters for the widest
+    attribution, 13 for a token). Each turn of the loop therefore costs O(piece +
+    the whitespace it consumes) and consumes both; the one unbounded `rfind` — the
+    scan that finds no `[` at all, or finds one too far back to be a piece — is
+    paid once, because it breaks. Total: O(len(s)).
+
+    EQUIVALENCE, AND IT IS A GATE IN THE TREE RATHER THAN A NUMBER IN A COMMENT —
+    both halves are re-derivable by running them:
+
+    * against the ORACLE, in one language:
+      `test_the_PEEL_agrees_with_the_WHOLE_RUN_expression_it_replaced` compares this
+      peel with `(?:[ \\t]*(?:ATTR|TOKEN))+\\Z` over 284,210 inputs — every suffix
+      sequence of length 0..3 drawn from 20 trailer-ish pieces crossed with 10 prose
+      prefixes (84,210), plus 200,000 seeded random strings over an alphabet of
+      brackets, whitespace, `cairn:`/`cb:` fragments and hex. 0 disagreements, with
+      a positive control that reports 21,010 against a one-piece strip.
+    * ACROSS LANGUAGES: `test_the_strip_DIGESTS_to_the_same_string_the_GO_half_pins`
+      hashes this function's output over the 84,210 structured inputs, and
+      `internal/write/trailerdigest_test.go` pins the SAME hex constant for
+      `stripBulletTrailers`. One constant, two mechanisms; measured equal here.
+
+    ⚠ THE WIDENING IS KEPT, AND IT IS WHY THIS IS A LOOP RATHER THAN ONE PEEL: a
+    line that somehow ends in two attributions loses both. In the
+    idempotency-preserving direction, and a line carrying two is already a defect
+    somewhere upstream.
+    """
+    end = len(s)
+    while end and s[end - 1] == "]":
+        opener = s.rfind("[", 0, end - 1)
+        if opener < 0:
+            break
+        start = opener
+        while start and s[start - 1] in " \t":
+            start -= 1
+        if _BULLET_TRAILER_PIECE_RE.fullmatch(s, start, end) is None:
+            break
+        end = start
+    return s[:end]
+
+
 def bullet_content(lines: "Sequence[str]") -> str:
     """One stored bullet -> the CONTENT its hash is taken over.
 
-    Strips the two things this writer adds and the corpus already uses: the
-    `- YYYY-MM-DD: ` opener and the ` [cairn: actor/session]` trailer. A bullet
-    carrying neither (most of the existing corpus) comes back as its own prose,
-    which is what makes a fresh append idempotent against a hand-written bullet
-    that says the same thing.
+    Strips what a MACHINE put there and the corpus already uses: the
+    `- YYYY-MM-DD: ` opener, the ` [cairn: actor/session]` trailer, and the
+    ` [cb:xxxxxxxx]` citation token a read surface prints — the last two in any
+    order, see `_strip_bullet_trailers`. A bullet carrying none of them (most of
+    the existing corpus) comes back as its own prose, which is what makes a fresh
+    append idempotent against a hand-written bullet that says the same thing.
+
+    ⚠ AND THE CITATION TOKEN COUNTS AGAINST `BULLET_TEXT_MAX` RATHER THAN BEING
+    EXEMPT. Said here because this function is where somebody would look for the
+    exemption: the cap is measured on the text a caller SUBMITS, before anything
+    is stripped, so an echoed token spends 14 of the 2000 characters. Exempting it
+    would mean the cap measured a different string in the validator than here, and
+    two clients would have to agree on that difference.
     """
     joined = " ".join(" ".join(line.split()) for line in lines).strip()
     joined = _BULLET_OPENER_RE.sub("", joined, count=1)
-    joined = _ATTRIBUTION_RE.sub("", joined)
+    joined = _strip_bullet_trailers(joined)
     return " ".join(joined.split())
 
 
@@ -2547,7 +2712,26 @@ def append_bullet(
                 f"bullet would have nowhere to go"
             )
         insert_at, body = block
-        wanted = content_hash(text)
+        # 🔴 BOTH SIDES THROUGH `bullet_content`, BECAUSE AN IDEMPOTENCY CHECK
+        # BETWEEN TWO DIFFERENT REDUCTIONS IS NOT ONE. The stored side has always
+        # been reduced; the REQUEST side was hashed raw, so a caller echoing back
+        # what a read surface printed — prose plus the trailers appended to it —
+        # produced a hash the stored side could not match, and the retry landed a
+        # near-duplicate.
+        #
+        # 🔴 AND THE OPENER CLAUSE OF `bullet_content` IS INERT FOR A REQUEST ONLY
+        # BECAUSE THE VALIDATOR ASKS THE SAME EXPRESSION THE SAME QUESTION. A
+        # previous draft of this comment asserted the inertness from
+        # `_bullet_request_problem` merely "refusing a `text` that opens a markdown
+        # bullet" — and that was FALSE: the validator tested an ASCII `"- "` prefix
+        # on the RAW text while `bullet_content` strips the opener from the
+        # COLLAPSED one, so `"-\xa0<prose>"` was accepted by the validator and
+        # reduced to `<prose>` on the line below, hashing equal to an unrelated
+        # stored bullet — `duplicate`, and the caller's text never written.
+        # `_bullet_request_problem` now runs `_BULLET_OPENER_RE` over
+        # `" ".join(text.split())`, which is the string this line reduces, so the
+        # claim is a property of ONE predicate rather than an inference across two.
+        wanted = content_hash(bullet_content([text]))
         for existing in rc.parse_journal_bullets(body):
             if content_hash(bullet_content(existing.lines)) == wanted:
                 return "duplicate", existing.lines[0], entry_revision(original)
@@ -4790,7 +4974,13 @@ class StoreRequestHandler(BaseHTTPRequestHandler):
             encode_entry_text(line + "\n"),
             headers={
                 "X-Store-Status": status,
-                "X-Cairn-Bullet": content_hash(payload["text"]),
+                # 🔴 THE SAME REDUCTION `append_bullet` DECIDED WITH, not a hash
+                # of the raw `text`. The header is only useful as the idempotency
+                # KEY — a client holds it to ask "did my retry land on this
+                # bullet" — so a value computed over a different string than the
+                # comparison used would answer a question nobody asked. Unchanged
+                # for prose with no trailers, which is every conformance row.
+                "X-Cairn-Bullet": content_hash(bullet_content([payload["text"]])),
                 "ETag": f'"{revision}"',
             },
         )
@@ -5172,7 +5362,50 @@ def _bullet_request_problem(payload: Any) -> str | None:
                 f"({unicodedata.category(char)}), a control or formatting "
                 "character that must not be written into a curated entry"
             )
-    if text.lstrip().startswith(("- ", "* ")):
+    # 🔴 THE PREDICATE IS `_BULLET_OPENER_RE` ITSELF, OVER THE STRING
+    # `bullet_content` WILL ACTUALLY REDUCE — because the two spellings this
+    # replaced disagreed, and the disagreement was reachable. The old clause asked
+    # `text.lstrip().startswith(("- ", "* "))`, an **ASCII** space, while
+    # `bullet_content` first collapses whitespace with `str.split()`, whose class
+    # carries U+00A0, U+1680, U+2000..U+200A, U+202F, U+205F and U+3000. So a
+    # `text` of `"-\xa0the drill head overheats"` was ACCEPTED here and reduced to
+    # `"the drill head overheats"` there — the same content hash as the stored
+    # bullet, so the append answered `duplicate` and the caller's text never
+    # reached the file. MEASURED over one synthetic entry, `POST "-\xa0<prose>"`
+    # issued immediately after `POST "<prose>"` appended:
+    #
+    #     3fb8dc2    appended   the request side was hashed RAW, no opener strip ran
+    #     0aa5fc48   duplicate  and the U+00A0 text is NOT in the file
+    #     here       400        `text` must not open a markdown bullet
+    #
+    # 🔴 AND THE ENUMERATION IS THE ONE IN THE TREE, SO THE NUMBERS ARE
+    # CHECKABLE. `test_bullet_trailer_strip.py`'s and `openerseam_test.go`'s
+    # head×whitespace×tail table is 9 heads × 12 whitespace spellings × 6 tails =
+    # 648 rows. Re-derived at this head by running the full validator twice over
+    # that table, once with this clause and once with the raw-prefix clause it
+    # replaced: this clause accepts 406 and refuses 242, with **0** rows in the
+    # hole; the raw-prefix clause accepts 576 and refuses 72, with **80** rows in
+    # the hole.
+    #
+    # ⚠ AN EARLIER DRAFT CITED "176 of 1,305" HERE AND THAT CORPUS IS NOT IN THE
+    # TREE — the figures were not re-derivable by a reader, which is the same
+    # defect the paragraphs above retract elsewhere. The property held; the number
+    # could not be checked. Do not reintroduce a corpus that does not ship.
+    #
+    # ⚠ THE SENTINEL SPACE IS NOT COSMETIC: it is the opener with NOTHING after
+    # it. The collapse drops a trailing run, so `"- "` arrives as `"-"` and the
+    # opener's `[ \t]+` would not match — which the raw-prefix check DID refuse.
+    # Appending one space makes this a strict SUPERSET of both spellings rather
+    # than a trade: over the same 648 rows, **0** are refused by the old clause
+    # and accepted by this one.
+    #
+    # ⚠ AND IT IS A REAL WIDENING, DECLARED RATHER THAN INCIDENTAL. Newly refused:
+    # an opener followed by whitespace OUTSIDE the ASCII space (`"-\xa0foo"`), and
+    # an opener followed by nothing at all (`"-"`, `"*"`, `"- "`). Both answer a
+    # named 400 where they previously either silently de-duplicated against an
+    # unrelated bullet or stored `- <date>: - [cairn: …]`. `"-foo"` — no
+    # whitespace after the dash — is still accepted, here and by `bullet_content`.
+    if _BULLET_OPENER_RE.match(" ".join(text.split()) + " "):
         return (
             "`text` must not open a markdown bullet — the `- ` is added here, and "
             "a second one would start a bullet with no attribution trailer"
