@@ -437,7 +437,7 @@ func TestTheIssuerIsReadableSoTheFlowNeedsNoSecondVariable(t *testing.T) {
 }
 
 // TestTheNarrowSupabaseBuilderIsTheSameLEDGERTheChainBuilderUSES pins that `cairn-ui`'s
-// builder is not a second reader of `CAIRN_SUPABASE_*`.
+// builder is not a second reader of the verifier's `CAIRN_OIDC_*` ledger.
 //
 // 🔴 A SECOND READER IS THE DEFECT THIS FILE'S WHOLE HISTORY IS ABOUT: "is this setting set?"
 // had six answers in one file, and which one a setting got was decided by which reader it

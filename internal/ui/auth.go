@@ -24,7 +24,7 @@ import (
 // here and every call site passed `nil` — an exported parameter with no caller, which is the
 // shape this repository refuses elsewhere … it comes back in the phase that builds the
 // sign-in flow, together with a caller that passes something." That phase is this one:
-// `cmd/cairn-ui` builds the backend from `CAIRN_SUPABASE_*` and passes it, or passes nil
+// `cmd/cairn-ui` builds the backend from `CAIRN_OIDC_*` and passes it, or passes nil
 // when no such variable is set. ⚠ NOTE THAT NIL IS STILL A REAL CASE HERE — a deployment
 // with no provider configured — so the parameter is not "always supplied"; what changed is
 // that it is now supplied by SOMETHING, which is what the removal was waiting for.

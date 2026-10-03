@@ -54,10 +54,18 @@ func registerCreateUserFlags() *createUserFlags {
 				"An OPERATOR action: a verified session for a subject this control plane holds no "+
 				"user for is refused, never provisioned, so somebody with write access to the "+
 				"journal has to do this deliberately. Requires -provider, -subject and -project"),
+		// 🔴 THE TWO VARIABLE NAMES COME FROM `internal/identity`'S CONSTANTS RATHER THAN
+		// FROM LITERALS, AND THE RENAME IS WHY. This help text named
+		// `CAIRN_SUPABASE_PROVIDER` as a string while the variable became
+		// `CAIRN_OIDC_PROVIDER` — caught by `envalias`'s
+		// `TestNoServingCodeSpellsADeprecatedName`, which is the seam guard for exactly
+		// this: a second spelling of a renamed name in serving code works (both names
+		// resolve) while telling an operator to set the deprecated one.
 		provider: flag.String("provider", "",
 			"the identity provider's namespace, which must EQUAL what the session backend "+
-				"resolves against: `supabase` (or $CAIRN_SUPABASE_PROVIDER) for the JWT backend, "+
-				"$CAIRN_TRUSTED_HEADER_PROVIDER for the proxy backend. A user created under any "+
+				"resolves against: `"+identity.DefaultSupabaseProvider+"` (or $"+
+				identity.EnvSupabaseProvider+") for the JWT backend, $"+
+				identity.EnvProxyProvider+" for the proxy backend. A user created under any "+
 				"other string is one that backend will never find"),
 		subject: flag.String("subject", "",
 			"the provider's own stable id for this person — the JWT's `sub`, or what the "+

@@ -1349,7 +1349,7 @@ func envDeclarationsFromSource(t *testing.T) map[string]string {
 	// `reflect.DeepEqual` against the ledgers is already the exact-membership check. What
 	// is pinned instead is a VALUE: reading names but not values, or resolving a literal
 	// wrongly, both produce a set that does not contain this one.
-	const canary = "CAIRN_SUPABASE_JWKS_URL"
+	const canary = "CAIRN_OIDC_JWKS_URL"
 	for _, v := range declared {
 		if v == canary {
 			return declared

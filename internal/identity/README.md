@@ -244,6 +244,233 @@ Other rules worth naming:
 - **RSA moduli below 2048 bits are dropped**; EC points are validated on the curve through
   `crypto/ecdh` before becoming a key.
 
+## Wiring any OIDC provider — the operator contract
+
+🔴 **THE VERIFIER IS PROVIDER-NEUTRAL, AND THE VARIABLES NOW SAY SO.** `SupabaseJWT` wears a
+vendor's name and is an RFC 7519 verifier over a JWKS document: it requires a non-empty
+issuer and audience, accepts a **closed** asymmetric algorithm set, and takes every
+verification key out of a URL you give it. Nothing in `jws.go` or `supabase.go` branches on
+who the issuer is; the Supabase URLs in this package appear only as examples in doc
+comments. So the seven settings are **`CAIRN_OIDC_*`**, and a tenant points cairn at the IdP
+they already run — Keycloak, Authentik, Dex, Zitadel, Okta, Auth0, or Supabase/GoTrue.
+
+⚠ **THE GO IDENTIFIERS STILL READ `Supabase` (`SupabaseJWT`, `EnvSupabaseIssuer`,
+`supabase.go`, `DefaultSupabaseProvider`), AND THAT IS A DEFERRED RENAME RATHER THAN A
+DISAGREEMENT.** The variables an operator types are the contract; the Go names are internal
+and move in their own change, because renaming a type, its file, its tests and its mutation
+rows in the same commit as an operator-facing rename makes neither reviewable. Read the
+constants' values, never their identifiers, when you want to know what to set.
+
+### The three-way split, which is the part that is easy to misread
+
+Twelve `CAIRN_SUPABASE_*` names existed. They are now three different things:
+
+| group | names | what happened |
+|---|---|---|
+| the generic verifier | `JWKS_URL`, `ISSUER`, `AUDIENCE`, `PROVIDER`, `REQUIRE_ROLE`, `LEEWAY`, `MAX_AGE` | **renamed to `CAIRN_OIDC_*`.** Both spellings resolve; the new one wins; a deprecated one that is set warns once per process naming its replacement |
+| the GoTrue sign-in flow | `CAIRN_SUPABASE_REDIRECT_URL` | **not renamed.** It configures the PKCE flow against GoTrue's own `/authorize` and `/token`, so it is honestly named for what it talks to. Read by `cmd/cairn-ui`, outside every ledger here |
+| retired | `CAIRN_SUPABASE_JWT_SECRET`, `_JWT_SECRET_FILE` | **neither renamed nor ignored.** They named the legacy symmetric secret this build no longer verifies with; setting one is a startup **refusal** (`retiredEnv`) |
+
+⚠ **THAT IS TEN NAMES, NOT TWELVE, AND THE CORRECTION IS WORTH MORE THAN A TIDY TABLE.**
+Two names a reader may go looking for in the second group — `CAIRN_SUPABASE_AUTH_URL` and
+`CAIRN_SUPABASE_ANON_KEY`/`_FILE` — **do not exist in this tree**. The first was declined
+because `/authorize` and `/token` hang off the verifier's own issuer, and two places to name
+one provider is a deployment that verifies tokens from one and starts sign-ins at another;
+the second was drafted and deleted because it serves a hosted-project shape nobody here
+runs. `internal/ui/README.md` carries both rulings. Anyone who counts twelve is counting a
+name that was never implemented.
+
+🔴 **THE RENAME GOES THROUGH `internal/envalias` AND NOWHERE ELSE**, so there is exactly one
+definition of "which spelling is read" — `written` in `config.go`. The deprecation window
+closes at the ledger's single `RemovalAnchor`, which is `packages.cairn`'s retirement (P8);
+that is a wider promise than these pairs need and is not a claim that the Python client
+reads them. The one place this package's resolver and `envalias.Value` deliberately part is
+a **whitespace-only** current name, which is refused here rather than falling through to the
+deprecated spelling — see `written`'s comment, and `oidcrename_test.go`.
+
+### The contract, setting by setting
+
+| variable | required | what it must be |
+|---|---|---|
+| `CAIRN_OIDC_JWKS_URL` | **yes** | the provider's JWKS document. The ONLY source of a verification key. Unset is `ErrSupabaseNoKeys` |
+| `CAIRN_OIDC_ISSUER` | **yes** | matched against `iss` **exactly**, as a string. Unset is `ErrSupabaseNoIssuer` |
+| `CAIRN_OIDC_AUDIENCE` | no | matched against `aud`, which may be a string **or** an array; it must be present in it. Defaults to `authenticated` |
+| `CAIRN_OIDC_PROVIDER` | no | **cairn's own namespace**, not the provider's — see below. Defaults to `supabase` |
+| `CAIRN_OIDC_REQUIRE_ROLE` | no | refuses a token whose top-level `role` claim is not this string. Unset means **no role is required** |
+| `CAIRN_OIDC_LEEWAY` | no | a Go duration, clock-skew allowance, in `[0, 2m]`. Unset is **zero** |
+| `CAIRN_OIDC_MAX_AGE` | no | a Go duration; additionally refuses a token whose `iat` is older than it, regardless of `exp`. Unset or `0` means `exp` alone bounds the session |
+
+🔴 **EVERY ONE OF THOSE IS PART OF A LEDGER, AND TOUCHING ANY ONE OF THEM ARMS THE BACKEND.**
+A half-configured verifier does not come up quietly — it is `os.Exit(78)` in a crash loop
+where an operator sees it. See *Configuration: a partial configuration REFUSES to start*
+above, which is the rule, and the blank-policy section under it, which is what a value that
+reduces to nothing means per setting.
+
+🔴 **AN EMPTY ISSUER OR AUDIENCE IS REFUSED, AND THE REASON IS THE WHOLE POINT OF REQUIRING
+THEM.** A verifier with no issuer accepts a token from **any** issuer whose signing key
+happens to be in the key set — so the moment a key set is shared, aggregated, or served by a
+gateway that fronts more than one realm, anybody with an account anywhere behind it is a
+principal here. A verifier with no audience accepts a token minted for a **different
+application at the same issuer**, which is the ordinary case: an IdP issues one signing key
+and many clients. Both sentinels say so in their own text
+(`ErrSupabaseNoIssuer`, `ErrSupabaseNoAudience`), and `checkClaims` refuses an empty
+requirement a second time rather than comparing against it — because an empty requirement
+compared against a claim **passes**.
+
+### The accepted algorithm set is CLOSED: `RS256` and `ES256`
+
+Those two, unconditionally, for every deployment. Not configurable, and the token's header
+only **selects** from the set — it can never widen it.
+
+- **`none` is refused** as "not in the configured set", which is the classic forgery.
+- **every `HS*` algorithm is refused unconditionally**, ahead of the set check, by a PREFIX
+  rule rather than a spelling — the second classic forgery mints a token under
+  `alg: HS256` using the verifier's own **public** key as the HMAC secret.
+- **nothing else is accepted**, including `RS384`, `RS512`, `PS256` and `EdDSA`. A provider
+  signing with one of those does not work here and the refusal names the algorithm.
+
+**So check your provider's signing algorithm before anything else.** If it is RS256 or
+ES256 you are fine; if it is configurable, set it to one of those; if it is neither and not
+configurable, this verifier cannot be used as it stands and widening `algKeyType` +
+`hashFor` is the change to make (both tables, together, and
+`TestNoConfiguredAlgorithmIsSymmetric` is what keeps that honest).
+
+Other claim rules an operator can trip over, all of them refusals on a token that otherwise
+verifies: **`exp` is required** (a token without one never expires); **`crit` is refused**
+per RFC 7515 §4.1.11; **`sub` must be non-empty**; **a token with no `kid` is refused when
+more than one key could verify it**; **a duplicate `kid` refuses the whole JWKS document**;
+**RSA moduli under 2048 bits are dropped**, as are `oct` entries.
+
+### 🔴 `CAIRN_OIDC_PROVIDER` IS CAIRN'S NAMESPACE, NOT THE PROVIDER'S — and it is a DATA key
+
+It is the `provider` half of the `(provider, subject)` pair `Model.UserByProviderSubject`
+resolves a verified `sub` with, so its value must **equal the string the matching
+`control.User` rows were created under**. `cairn-server -create-user -provider <x>` writes
+that string; this variable is what the verifier looks it up by. They are two halves of one
+key and nothing in either program can check that they agree — a mismatch is a pod that
+refuses one person's sign-in, with no error saying why.
+
+Consequences, stated because each one bites:
+
+- **the default is `supabase`**, and it stays that way deliberately: it is matched against
+  rows operators have already provisioned, so changing the default would orphan every
+  existing user. Set the variable if you want a different namespace; do not expect the
+  default to follow the rename.
+- **it is not the upstream social provider.** Somebody who signed in with GitHub and
+  somebody who signed in with Google both arrive with a token from **your** IdP, whose `sub`
+  is your IdP's user id. Keying on the upstream login would give one person two rows the day
+  they link a second one.
+- **one namespace per deployment.** There is one verifier and one value, so two IdPs at once
+  is not a configuration this supports.
+
+### `CAIRN_OIDC_REQUIRE_ROLE` reads a TOP-LEVEL `role` STRING, and most providers do not emit one
+
+This is the setting most likely to be configured and silently unsatisfiable, so it is spelled
+out rather than left to a decoded-claims surprise. `Claims.Role` is `json:"role"` — a
+top-level **string**. It is not a nested lookup and not an array membership test, so:
+
+- a provider that emits `realm_access.roles: ["…"]` (nested, and a list) does **not** satisfy
+  it, and every token is refused with `role claim is not <x>`;
+- a provider that emits `roles: […]` or `groups: […]` does not satisfy it either;
+- a provider that can be configured to add a **top-level, scalar** `role` claim does, and
+  that is the change to make at the provider rather than here;
+- **GoTrue emits one natively** (`authenticated` / `anon` / `service_role`), which is the
+  shape the field was written against — so the variable is provider-neutral and the *claim*
+  it reads is not universally available. `internal/identity/jws.go`'s `Claims.Role` comment
+  is the code-side half of this sentence.
+
+**Leaving it unset is a real configuration, not a gap** — the ledger says so in its own
+`unset` sentence — because the authorization question is answered by `control.Resolve`
+regardless (see the limit below). The setting exists for the deployments whose IdP marks
+anonymous sessions with a distinguishable `role`, which is the case it was written for.
+
+### Two worked examples, neither of them Supabase
+
+🔴 **THE VALUES BELOW ARE SHAPES, NOT A SUPPORTED MATRIX.** Nothing in this repository has
+been run against any of these products — see *What this package structurally CANNOT see*,
+whose first bullet says every key here is generated at test time. What makes them useful is
+that every field is derivable from your own provider's discovery document, and the last step
+is the same in both: **decode one real token** and read `iss`, `aud` and `alg` out of it,
+because those three are what the verifier compares and no vendor documentation substitutes
+for the bytes your IdP actually emits.
+
+**Keycloak**, realm `engineering`, client `cairn`:
+
+```sh
+# from https://sso.example.test/realms/engineering/.well-known/openid-configuration
+CAIRN_OIDC_ISSUER=https://sso.example.test/realms/engineering
+CAIRN_OIDC_JWKS_URL=https://sso.example.test/realms/engineering/protocol/openid-connect/certs
+CAIRN_OIDC_AUDIENCE=cairn          # ⚠ see the note below — this is the field to CHECK
+CAIRN_OIDC_PROVIDER=keycloak       # and `-create-user -provider keycloak` to match
+CAIRN_OIDC_LEEWAY=30s
+CAIRN_CONTROL_JOURNAL=/var/lib/cairn/control.jsonl
+```
+
+⚠ **The audience is the field to check first on Keycloak.** An access token's `aud` is
+whatever that realm's mappers put there, and a client's own id is **not** automatically among
+them; if `aud` does not contain the value you set, every token is refused with
+`identity: JWT claims refused: aud`. Decode a token; add an audience mapper if it is not
+there. `CAIRN_OIDC_REQUIRE_ROLE` is best left unset here, for the reason in the section
+above: Keycloak's roles are nested under `realm_access`/`resource_access`, not a top-level
+string.
+
+**Authentik**, an OAuth2/OIDC provider with application slug `cairn`:
+
+```sh
+CAIRN_OIDC_ISSUER=https://auth.example.test/application/o/cairn/
+CAIRN_OIDC_JWKS_URL=https://auth.example.test/application/o/cairn/jwks/
+CAIRN_OIDC_AUDIENCE=<the provider's Client ID>
+CAIRN_OIDC_PROVIDER=authentik
+CAIRN_OIDC_MAX_AGE=12h
+CAIRN_CONTROL_JOURNAL=/var/lib/cairn/control.jsonl
+```
+
+⚠ **The trailing slash is part of the issuer string.** `iss` is compared with `==`, so
+`…/o/cairn` and `…/o/cairn/` are two different issuers and one of them refuses every token.
+Copy the `issuer` field out of the discovery document verbatim rather than retyping it.
+
+**Dex, Zitadel, Okta and Auth0** take the same four fields from the same discovery document
+(`issuer`, `jwks_uri`, the client id as the audience, a namespace you choose). Nothing about
+them is special here, which is the point of the rename.
+
+### 🔴 THE LIMIT, WHICH IS THE HONEST HALF: OIDC BUYS AUTHENTICATION ONLY
+
+**Authorization stays `control.Resolve`'s answer, and nothing in this package narrows
+anything.** Wiring your IdP does not make cairn multi-tenant-by-SSO. Specifically:
+
+- **a verified token for a subject this control plane holds no user for is REFUSED, never
+  provisioned.** Your IdP vouches for who somebody is; it says nothing about whether this
+  cairn instance has an account for them. Just-in-time provisioning would make every read
+  route a user-creation endpoint for anybody with an account at your IdP.
+- **a federated user with no grants is authenticated and sees nothing.** The token verifies,
+  `Identity.Valid()` is true, the audit line names them — and the `control.Authorization` is
+  empty, so every scope answers exactly as if it did not exist — **`refused equals absent`**
+  is a relation the conformance corpus pins, and the caller cannot tell the two apart.
+  Concretely: every read route answers `X-Store-Status: scope-absent`, every write route
+  answers the not-found body, and on the browse surface it renders as **`No scope is visible
+  to this credential`** (`internal/ui`'s wording, pinned by its own tests). That is not a
+  misconfiguration; it is the default state of a newly provisioned user.
+- **SSO group or role membership is NOT a scope grant.** Nothing in this repository reads a
+  `groups` claim, maps a role onto a project, or derives membership from a token. Project
+  membership and scope shares live in the control journal and are written by
+  `cairn-server -create-user`, `-set-member` and `-issue-credential`, or through
+  `cairn-ui`'s share flow.
+- **so you still manage grants**, per user, after they exist. The IdP decides who may ask;
+  cairn decides what the answer is.
+- **and a configured journal is not optional once a verifier is armed.** An armed verifier
+  with no `$CAIRN_CONTROL_JOURNAL` is a startup refusal
+  (`ErrSessionBackendWithoutAuthority`), because the only other authority available is the
+  token-file projection, whose one synthetic user no IdP can name — a pod that authenticates
+  and then reads nothing. The two directions and their measurements are in the section after
+  next.
+
+⚠ **AND REVOCATION IS THE PROVIDER'S PROBLEM UNTIL `exp`.** This package holds no denylist:
+a token stays valid until its own `exp` whatever your IdP does to the session behind it.
+`CAIRN_OIDC_MAX_AGE` is the blunt instrument for that — it refuses a token whose `iat` is
+older than the bound regardless of `exp` — and the authority side (what the principal may
+do) is bounded instead by `control.Cache`'s refresh. Narrowing the token side properly is
+P5/P6's, with a session store.
+
 ## The IdP outage, measured by killing the dependency
 
 `TestAnIdentityProviderOutageDoesNotStopAnAlreadyIssuedSession` is four claims:
@@ -465,8 +692,8 @@ runs **before** the constructors, so it shadows every backend-specific refusal f
 deployment with no journal. The draft called that cost narrow — only a ledger
 half-configured "past the blank sweep" — on the grounds that the blank sweep catches the
 half-configuration that actually occurs. It does not: the sweep refuses a value written
-**blank**, not one left **absent**, and an absent companion (`CAIRN_SUPABASE_JWKS_URL` set,
-`CAIRN_SUPABASE_ISSUER` never written) is the ordinary shape. **Measured on this tree:**
+**blank**, not one left **absent**, and an absent companion (`CAIRN_OIDC_JWKS_URL` set,
+`CAIRN_OIDC_ISSUER` never written) is the ordinary shape. **Measured on this tree:**
 with a nil session authority, **15 of 15** ledger variables set alone are refused by this
 sentinel and **0** reach their own backend; with an authority supplied, **0** and **15**.
 `TestTheEnvironmentLedgersNameEveryVariableEachBackendReads`'s "the ledger is load-bearing
@@ -499,8 +726,8 @@ Read from the code, three facts that compose:
    at provider `cairn-token-file` asserting subject `operator` therefore authenticates
    somebody who resolves to an **empty `Authorization`** — a 200 that permits nothing.
 
-The concrete trap: an operator follows this README, sets `CAIRN_SUPABASE_JWKS_URL` and
-`CAIRN_SUPABASE_ISSUER`, gets a pod that fetches the JWKS, starts clean, satisfies the
+The concrete trap: an operator follows this README, sets `CAIRN_OIDC_JWKS_URL` and
+`CAIRN_OIDC_ISSUER`, gets a pod that fetches the JWKS, starts clean, satisfies the
 partial-configuration ledger and passes its health check — and every sign-in **succeeds
 and reads nothing**. That is precisely the failure `config.go`'s ledger exists to prevent,
 arriving by a route the ledger structurally cannot see: it asks *"did you configure it"*,

@@ -172,6 +172,14 @@ func TestAWhitespaceRedirectURLIsRefusedRatherThanReadAsUnset(t *testing.T) {
 // a test that had grown two vacuous halves, and saying so is better than quietly shipping
 // them.
 //
+// 🔴 THE NAMESPACE CLAIM NARROWED AND THE ASSERTION BELOW IS NOW THE WHOLE OF IT. It used
+// to read "every setting of this integration" lives under `CAIRN_SUPABASE_`; the VERIFIER's
+// seven settings are `CAIRN_OIDC_*` now (a generic RFC 7519/JWKS verifier should not imply a
+// vendor), and `CAIRN_SUPABASE_REDIRECT_URL` stays because it configures the GoTrue PKCE
+// flow and is honestly named for what it talks to. So what is pinned here is that the
+// GoTrue-specific setting keeps the GoTrue-specific namespace — a claim about ONE variable,
+// which is what it always measured.
+//
 // ⚠ TWO ASSERTIONS WERE DELETED AS MEASURING NOTHING. One walked THREE constants asserting a
 // `CAIRN_SUPABASE_` prefix; two of them were the anon-key pair this round deleted, so it now
 // walks one. The other read
@@ -188,8 +196,9 @@ func TestAWhitespaceRedirectURLIsRefusedRatherThanReadAsUnset(t *testing.T) {
 // the same claim with less information.
 func TestTheOAuthSettingIsInTheSupabaseNamespaceAndItsPathsComeFromTheLedger(t *testing.T) {
 	if !strings.HasPrefix(EnvSupabaseRedirectURL, "CAIRN_SUPABASE_") {
-		t.Errorf("%q is not in the CAIRN_SUPABASE_* namespace, which is where every setting of this "+
-			"integration lives", EnvSupabaseRedirectURL)
+		t.Errorf("%q is not in the CAIRN_SUPABASE_* namespace, which is where the GoTrue-SPECIFIC "+
+			"settings of this integration live — the generic verifier's are CAIRN_OIDC_*",
+			EnvSupabaseRedirectURL)
 	}
 	// The callback PATH half comes from `internal/ui` rather than being written twice: the
 	// operator's `GOTRUE_URI_ALLOW_LIST` entry has to match the route this binary serves, and

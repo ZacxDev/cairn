@@ -411,7 +411,8 @@ func main() {
 
 	// 🔴 THE SUPABASE BACKEND, BUILT FROM ITS OWN LEDGER AND FROM THE AUTHORITY THIS WHOLE
 	// SURFACE AUTHORISES FROM. `identity.SupabaseBackendFromEnvironment` reads
-	// `CAIRN_SUPABASE_*` through the SAME blank policy `cmd/cairn-server` gets, which is
+	// `CAIRN_OIDC_*` (and its deprecated `CAIRN_SUPABASE_*` spellings) through the SAME
+	// blank policy `cmd/cairn-server` gets, which is
 	// why this program does not read those variables itself: a second reader of that ledger
 	// is the duplicated predicate `internal/identity/config.go`'s whole history is about.
 	//
@@ -511,7 +512,7 @@ func main() {
 		Credentials: authority,
 		// 🔴 `envalias.OSValue`, NOT `os.Getenv`, SO THE REF-BASE NAMES GO THROUGH THE ONE
 		// RESOLVER. These names have no deprecated spelling, so it returns plain
-		// single-name behaviour — which is exactly what `envalias.oldName`'s own comment
+		// single-name behaviour — which is exactly what `envalias.OldName`'s own comment
 		// promises for a name that was never renamed, and is why a bare `os.Getenv` here
 		// would be a second lookup path for no benefit.
 		Source: ui.StoreSource{Root: *store, RefBase: envalias.OSValue},
@@ -865,7 +866,7 @@ func openDatabase(dsn string) (*pgstore.DB, error) {
 
 // providerSignIn builds the GitHub sign-in flow, or reports that this deployment has none.
 //
-// 🔴 THREE STATES AND THEY ARE NOT TWO. (a) No `CAIRN_SUPABASE_*` at all: no backend, no
+// 🔴 THREE STATES AND THEY ARE NOT TWO. (a) No verifier variable at all: no backend, no
 // flow, no button — the deployment that exists today. (b) The backend armed and NO redirect
 // URL: a bearer JWT authenticates but there is no browser flow, so no button. That is a real
 // configuration — a deployment that wants JWT API access and keeps the credential form for
