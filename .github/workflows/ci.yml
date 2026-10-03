@@ -562,7 +562,23 @@ jobs:
           # class, unlike the print/report half, which stays a declared limit.
           # Measured 2667 collected on the merged tree, so
           # `2667 - min(50, max(1, 2667/20)) = 2617`.
-          FLOOR = 2617
+          # ⚠ 2617 -> 2671 FOR THE CITATION-ID BRANCH, AND IT IS THE FIFTH TIME THIS
+          # GUARD HAS GONE RED WITH ZERO FAILING TESTS. That branch adds 54 collected
+          # tests — the CPython decode differential, the citation-id seam, the trailer
+          # strip's order/linearity/digest guards and the opener seam — taking the gap
+          # to 104 against a `MAX_GAP` of 100. The suite itself was GREEN in the same
+          # run (`2720 passed, 1 skipped`, `collected=2721 failed=0`); only this step
+          # refused, which is the whole reason the paragraph above keeps saying so.
+          # 🔴 AND AN AUDIT ROUND READ THIS NUMBER AND CLEARED IT. Round 1 of that
+          # branch's ladder examined the floor at 2675 collected, measured the gap at
+          # 58, and recorded "correct as left" — true when written and falsified by the
+          # same branch's own later commits, which is a claim no delta range can see
+          # because the branch never touched THIS FILE. A floor that lives in a workflow
+          # step is invisible to every local run AND to every range-scoped audit; the
+          # only thing that catches it is reading the job.
+          # Measured 2721 collected on the branch, so
+          # `2721 - min(50, max(1, 2721/20)) = 2671`.
+          FLOOR = 2671
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
