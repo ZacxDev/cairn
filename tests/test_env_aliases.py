@@ -308,7 +308,7 @@ class TestTheLedgerItself:
         )
 
     def test_the_verifier_rename_is_present_in_full_and_in_the_middle(self) -> None:
-        """🔴 THE SECOND RENAME, PINNED AS A SET AND AS A POSITION.
+        """🔴 THE SECOND RENAME: PINNED AS A SET, AS A POSITION, AND AS A LEDGER-WIDE BOUND.
 
         `CAIRN_SUPABASE_*` → `CAIRN_OIDC_*` covers the SEVEN settings of the JWT verifier in
         `internal/identity`. THREE things have to hold and none implies another:
