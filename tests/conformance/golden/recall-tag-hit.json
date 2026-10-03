@@ -1,8 +1,8 @@
 {
   "body": {
-    "bytes": 3702,
+    "bytes": 3730,
     "kind": "text_lines",
-    "sha256": "b666c5a3a02c6a398706b777ca59341d3b70bdd2484152c14a173d84073a7659",
+    "sha256": "decdf32aa4960e38db07deb2eea8474cfb73214f7fe1e1b92daf71c8c788ce26",
     "text_lines": [
       "🔴 SNAPSHOT, NOT THE SOURCE — seeded=2000-01-04T00:00:00Z newest-entry=2000-01-03T00:00:00Z entry-files=11. This host serves a COPY of the authoritative store, pushed by `seed.sh`; nothing syncs it continuously, so it can be arbitrarily behind and it CANNOT KNOW BY HOW MUCH. The \"none omitted\" below is true of THIS DISK and says nothing about the source. Before trusting an absence — a missing entry, a missing badge, a zero — re-run the read against the local store, or re-seed. UNSTAMPED/UNREADABLE/NONE each mean the stated fact could not be established, never that it is fine.",
       "",
@@ -26,9 +26,9 @@
       "    ## What it is",
       "      An entry carrying TWO tags and a ref, so the two filters can be COMPOSED over the wire and the tag list is written UNFOLDED to prove the loader folds it.",
       "    ## Pointers",
-      "      - ops skill `manage-gadget` - the same skill, deliberately",
+      "      - ops skill `manage-gadget` - the same skill, deliberately [cb:95840af8]",
       "    ## Nuance / work-history",
-      "      - 2000-01-02: the lease renewal races the rollout.",
+      "      - 2000-01-02: the lease renewal races the rollout. [cb:937a26f6]",
       "",
       "… 1 further entry in `tagged-set/` LISTED ABOVE but NOT shown in full. Nothing is hidden: this is the default digest, not a judgement about relevance. `--ref <name>` prints any one of them in full; `--limit 2` prints them all.",
       ""

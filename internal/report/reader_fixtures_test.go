@@ -811,6 +811,91 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 		// counted only unmarked bullets would print 29 and render no badge at all.
 		{"the size badge's POSITION — last in the run, after OPEN and after refs",
 			"\n  mixed-ceiling   31 nuance   public   🔴 2 OPEN   🔗 1 ref   ⚠ OVER 30 nuance — prune or split\n"},
+		// 🔴 THE PER-BULLET CITATION TOKEN, AND THIS BLOCK IS THE CLOSING CONDITION
+		// `store.JournalBullet.CitationID`'s own comment DECLARED: "a
+		// `reader_fixtures.json` row carrying `[cb:`". Before this change the derivation
+		// existed and no surface printed it, so every guard over it was a contract pin over
+		// a dead payload.
+		//
+		// 🔴 EVERY ROW IS A WHOLE LINE, FOR THE REASON THE TWO CEILING ROWS ABOVE ARE. A
+		// substring pin is satisfied by the mutant it exists to catch — and the token makes
+		// that sharper rather than softer, because an ANNOTATED line CONTAINS the
+		// unannotated one.
+		//
+		// ⚠ WHICH MEANS **FOUR** ROWS ALREADY IN THIS LIST SILENTLY BECAME PREFIXES, NOT
+		// TWO — AN EARLIER DRAFT OF THIS PARAGRAPH SAID TWO AND NAMED ONLY THE REQUIREMENT
+		// ROWS. Re-derived over the fixture's own rendered lines, counting occurrences that
+		// END the line, at `d7e1fec8` -> `902be517`:
+		//
+		//	`- OPEN: (operator) the listing should carry a per-row freshness stamp`   6/6 -> 0/6
+		//	`- OPEN: the archive should keep its original timestamps`                 6/6 -> 0/6
+		//	`" [cairn: fixture-actor/sess-0000000000000001]"`                        25/25 -> 9/25
+		//	`" [cairn: other-actor/sess-0000000000000002]"`                           6/6 -> 0/6
+		//
+		// Each row's own claim — "this provenance renders in a body", "a trailer renders" —
+		// is untouched and still true, so none is rewritten. What had to move is the
+		// COVERAGE: the declared mitigation was "the rows below pin the same section's
+		// lines END TO END, token included", and measured against the rows below it covered
+		// only TWO of the four. `- OPEN: the archive …` is covered by the requirements row;
+		// `fixture-actor` by the twice-written-bullet pair. `(operator) the listing …` and
+		// `other-actor` were covered by NOTHING, so two rows are added below for them —
+		// the covered set may not shrink, and the `other-actor` row is the one whose whole
+		// point is that one spelling cannot cover.
+		{"a `## Pointers` row carrying a citation token — THE SCOPE DECISION, which is " +
+			"every surfaced section and not only nuance",
+			"\n      - `docs/marked-three.md` [cb:63b7f79b]\n"},
+		{"a `## Requirements` row carrying one, as a whole line",
+			"\n      - OPEN: the archive should keep its original timestamps [cb:ca0cfc2b]\n"},
+		// 🔴 THE TWO ROWS THAT PUT BACK THE END-OF-LINE POSITION THE TOKEN TOOK AWAY, and
+		// they are here because the paragraph above MEASURED the mitigation short rather
+		// than assuming it sufficient. Each re-pins, END TO END, a line whose substring row
+		// earlier in this list stopped reaching the line's end at this change.
+		//
+		// ⚠ THE SECOND ONE IS THE LOAD-BEARING HALF. The `other-actor` substring row exists
+		// precisely because "a renderer printing a constant where the actor goes agrees with
+		// itself on one" — a SECOND actor is the only thing that can see it — and it was the
+		// one row left with no end-to-end replacement. A whole-line pin on the second
+		// actor's line also makes it the only row here that would fail if the trailer and
+		// the token were emitted in the WRONG ORDER on a non-`fixture-actor` bullet.
+		{"a requirement's OPERATOR provenance as a whole line, token included — the " +
+			"end-of-line position its substring row above lost",
+			"\n      - OPEN: (operator) the listing should carry a per-row freshness stamp " +
+				"[cb:7cb03866]\n"},
+		{"a SECOND actor's attribution trailer as a whole line, with the token after it — " +
+			"the one weakened row nothing else re-covers",
+			"\n      - 2000-01-07: an ordinary bullet that declares nothing. " +
+				"[cairn: other-actor/sess-0000000000000002] [cb:738a8413]\n"},
+		// 🔴 THE FENCE RULE, ON THE READ SURFACE, AS AN ABSENCE. The body renders VERBATIM,
+		// fence markers and all, so this dash line is PRESENT; what makes it sample text
+		// rather than a bullet is that it carries no token. Delimiting both ends is what
+		// makes the absence assertable — `…not a bullet` is a prefix of `…not a bullet
+		// [cb:xxxxxxxx]`, so a bare substring would pass against an annotator that had
+		// stopped skipping fences. This is the one row in the list that fails if the
+		// annotation got WIDER.
+		{"a dash line INSIDE A FENCE, rendered in full and carrying NO token",
+			"\n      - this is sample text inside a fence, not a bullet\n"},
+		// 🔴 TWO BYTE-IDENTICAL OPENING LINES, TWO DIFFERENT IDS — and that is the contract
+		// rather than a collision. `marked-three` carries the same opening line under
+		// `## Nuance / work-history` and under `## Requirements`; the nuance one has a
+		// CONTINUATION line and the requirements one does not, and the id is `sha256` over
+		// the WHOLE bullet (`Lines` joined with "\n"), never over its opening line. So these
+		// two rows pin the claim `JournalBullet.Lines`' own comment makes — a real bullet is
+		// WRAPPED PROSE — in rendered bytes, which no other row in this list can do.
+		//
+		// ⚠ AND THEY ARE THE CONTROL AGAINST AN ANNOTATOR THAT HASHED ONLY `Lines[0]`: that
+		// mutant renders ONE id on both lines, so the pair fails while every other row here
+		// stays green.
+		{"the nuance copy of a twice-written bullet, with the id of the WRAPPED bullet",
+			"\n      - 2000-01-02: OPEN: the retry budget is still unbounded. " +
+				"[cairn: fixture-actor/sess-0000000000000001] [cb:8a904c04]\n"},
+		{"the requirements copy of the SAME opening line, with a DIFFERENT id",
+			"\n      - 2000-01-02: OPEN: the retry budget is still unbounded. " +
+				"[cairn: fixture-actor/sess-0000000000000001] [cb:2536180a]\n"},
+		// The prose section's honest zero, as a whole line: `## What it is` is prose, it
+		// opens no bullet, and it therefore carries no token. Without this a renderer that
+		// annotated EVERY body line would satisfy all five rows above.
+		{"a `## What it is` prose line, which carries no token because it opens no bullet",
+			"\n      The entry that carries every openness population.\n"},
 	} {
 		if !strings.Contains(rendered, row.marker) {
 			t.Errorf("no fixture case renders %s (looked for %q). The fixture's whole value "+

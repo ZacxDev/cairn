@@ -618,7 +618,41 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 				continue
 			}
 			out = append(out, "    "+heading)
-			for _, line := range pytext.SplitLines(body) {
+			// 🔴 THE BODY IS STILL EMITTED LINE BY LINE VERBATIM, AND THE PARSE IS FOR
+			// POSITIONS ONLY. Re-emitting the body from `ParseJournalBullets`' groups would
+			// be shorter and is RULED OUT: that parser DROPS text before the first bullet
+			// and ABSORBS a bullet whose opening line was lost or indented, which is an
+			// advisory validator finding today and would become silent deletion on the read
+			// surface. See `store.CitationIDsByStartLine` for the measured history. Every
+			// byte here is the byte the body had; the only addition is a suffix.
+			//
+			// ⚠ A LINE WITH NO ID IS NOT A LINE THAT WAS WITHHELD. Prose, blanks, indented
+			// dashes (continuations), dashes inside a fence and the `dropped-lines`
+			// population all print in full and carry no token.
+			//
+			// 🔴 `pytext.SplitLines` ON BOTH SIDES OF THE LOOKUP, WHICH IS WHAT MAKES THE
+			// INDEX MEAN ANYTHING. `StartLine` is an index into exactly this split, which
+			// breaks on TEN characters; `strings.Split(body, "\n")` would place tokens
+			// mid-line with no error.
+			//
+			// 🔴 AND THE GUARD IS A TEST, NOT THE SPELLING. An earlier draft of this comment
+			// ended "the ONE spelling of the splitter is the guard", which is not a guard at
+			// all — it is a description of the code it sits in. Measured at `902be517`:
+			// swapping this expression for `strings.Split(body, "\n")`, with the `pytext`
+			// import kept live so nothing else moved, left `go test ./... -count=1` at 21
+			// ok, 0 FAIL. Every body reaching here through `Recall` has been through
+			// `ExtractSections`, which splits the FILE and re-joins with "\n", so no other
+			// break character survives and the two splitters cannot disagree on it. What
+			// catches the swap is `report.TestTheRENDERERSOwnSplitterIsWhatPlacesTheToken`,
+			// which hands this method a body DIRECTLY — and that is the shape the hazard is
+			// reachable in, which `internal/ui/render.go`'s `inlineCode` (splitting on "\n")
+			// is the standing example of.
+			ids := store.CitationIDsByStartLine(body)
+			for i, line := range pytext.SplitLines(body) {
+				if id, annotated := ids[i]; annotated {
+					out = append(out, "      "+line+store.CitationToken(id))
+					continue
+				}
 				out = append(out, "      "+line)
 			}
 		}
