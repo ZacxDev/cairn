@@ -578,7 +578,25 @@ jobs:
           # only thing that catches it is reading the job.
           # Measured 2721 collected on the branch, so
           # `2721 - min(50, max(1, 2721/20)) = 2671`.
-          FLOOR = 2671
+          # ⚠ 2671 -> 2676 FOR THE CITATION-ID RENDERER BRANCH, AND THIS TRANSITION
+          # AVERTED NOTHING — said plainly, because a reader scanning these lines for a
+          # reason will otherwise supply one. That branch adds 5 collected tests
+          # (`tests/test_citation_render.py`), which takes the gap to 55 against a
+          # `MAX_GAP` of 100; the step was MEASURED to pass unedited (`collected=2726
+          # failed=0`, gap 55 at the old literal). The literal moves anyway, to put the
+          # margin back at the 50 the formula is built around rather than letting it
+          # creep toward the bound — which is maintenance the paragraph below
+          # deliberately does NOT demand on every test-adding PR, and which therefore
+          # happens only when somebody chooses it. 🔴 NO COUNT IS GIVEN OF HOW MANY
+          # TRANSITIONS ABOVE DID AVERT A FAILURE, AND THE OMISSION IS DELIBERATE: a
+          # first draft of this paragraph said "the first of these six that averted
+          # nothing", and there are SIXTEEN `⚠ A -> B` lines above this one — re-derived
+          # at this commit, not carried over — several of which already record that the
+          # guard would NOT have fired. The number was wrong in the paragraph written to
+          # be precise about numbers, which is the whole reason the count is gone.
+          # Measured 2726 collected on the branch, so
+          # `2726 - min(50, max(1, 2726/20)) = 2676`.
+          FLOOR = 2676
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)

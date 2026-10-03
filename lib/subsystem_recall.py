@@ -292,6 +292,8 @@ from subsystem_resolver import (  # noqa: E402
     SubsystemIndex,
     UnknownScopeError,
     associate_paths,
+    citation_ids_by_start_line,
+    citation_token,
     entry_has_tag,
     entry_references,
     load_index,
@@ -3146,8 +3148,31 @@ def render_text(
             body = e.sections.get(heading)
             if body:
                 out.append(f"    {heading}")
-                for line in body.splitlines():
-                    out.append(f"      {line}")
+                # 🔴 THE BODY IS STILL EMITTED LINE BY LINE VERBATIM, AND THE PARSE
+                # IS FOR POSITIONS ONLY. Re-emitting the body from
+                # `parse_journal_bullets`' groups would be shorter and is RULED OUT:
+                # that parser DROPS text before the first bullet and ABSORBS a bullet
+                # whose opening line was lost or indented, which is an advisory
+                # validator finding today and would become silent deletion on the
+                # read surface. See `citation_ids_by_start_line` for the measured
+                # history. Every byte here is the byte the body had; the only
+                # addition is a suffix.
+                #
+                # ⚠ A LINE WITH NO ID IS NOT A LINE THAT WAS WITHHELD. Prose, blanks,
+                # indented dashes (continuations), dashes inside a fence and the
+                # `dropped-lines` population all print in full and carry no token.
+                #
+                # 🔴 `splitlines()` ON BOTH SIDES OF THE LOOKUP, WHICH IS WHAT MAKES
+                # THE INDEX MEAN ANYTHING. `start_line` is an index into exactly this
+                # split, which breaks on TEN characters; `body.split("\n")` would
+                # place tokens mid-line with no error. The ONE spelling of the
+                # splitter is the guard.
+                ids = citation_ids_by_start_line(body)
+                for i, line in enumerate(body.splitlines()):
+                    if i in ids:
+                        out.append(f"      {line}{citation_token(ids[i])}")
+                    else:
+                        out.append(f"      {line}")
         if not e.sections.get(WHAT_HEADING):
             # 🔴 SAID, NOT LEFT BLANK — and BODY-ONLY, never on the index row.
             # Absent and present-but-empty are folded together on purpose: both

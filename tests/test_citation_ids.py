@@ -21,9 +21,13 @@ That is the arrangement `tests/marker_corpus.py` + `tests/test_marker_oracle_swe
 different function, and it is named here so nobody takes either half for the whole.
 
 ⚠ WHAT NEITHER HALF SEES: the bodies are hand-written, so nothing here speaks for the
-LIVE corpus, and no surface PRINTS an id yet — this PR adds the derivation and the
-position, not the rendering. The differential reader fixture is what compares rendered
-bytes once it does.
+LIVE corpus, and nothing here speaks for RENDERING. ⚠ THAT SECOND CLAUSE USED TO READ
+"no surface PRINTS an id yet — this PR adds the derivation and the position, not the
+rendering", AND IT IS NO LONGER TRUE: both text renderers now append ` [cb:<id>]` to
+every surfaced section line that opens a bullet, so a rendered byte depends on
+`citation_id`. The differential reader fixture is what compares the two renderers' bytes
+(138 of its lines carry a token), and `tests/test_citation_render.py` is what pins the
+POSITION and the verbatim body on this side.
 
 🔴 ONE GUARD WAS DELETED RATHER THAN KEPT, AND THE DELETION IS THE RECORD.
 `test_the_id_is_STABLE_across_calls` asserted that two calls on one body agree.

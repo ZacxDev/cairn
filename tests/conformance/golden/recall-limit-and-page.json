@@ -1,8 +1,8 @@
 {
   "body": {
-    "bytes": 3428,
+    "bytes": 3456,
     "kind": "text_lines",
-    "sha256": "a2ef4556b2fe50de75d1be3c86c31151791039cce69e85d3013df274fe3c409d",
+    "sha256": "2d755683f108e06dd0c4b4ea14f7642e6176024c5d0e153aecff543343a172d8",
     "text_lines": [
       "🔴 SNAPSHOT, NOT THE SOURCE — seeded=2000-01-04T00:00:00Z newest-entry=2000-01-03T00:00:00Z entry-files=11. This host serves a COPY of the authoritative store, pushed by `seed.sh`; nothing syncs it continuously, so it can be arbitrarily behind and it CANNOT KNOW BY HOW MUCH. The \"none omitted\" below is true of THIS DISK and says nothing about the source. Before trusting an absence — a missing entry, a missing badge, a zero — re-run the read against the local store, or re-seed. UNSTAMPED/UNREADABLE/NONE each mean the stated fact could not be established, never that it is fine.",
       "",
@@ -22,9 +22,9 @@
       "    ## What it is",
       "      A second synthetic entry, newer than gadget-one by 500ms and no more.",
       "    ## Pointers",
-      "      - ops skill `manage-gadget` - the same skill, deliberately",
+      "      - ops skill `manage-gadget` - the same skill, deliberately [cb:95840af8]",
       "    ## Nuance / work-history",
-      "      - 2000-01-02: the sidecar drops its lease during a rollout.",
+      "      - 2000-01-02: the sidecar drops its lease during a rollout. [cb:2b070862]",
       "",
       "… 1 further entry in `alpha-notes/` LISTED ABOVE but NOT shown in full. Nothing is hidden: this is the default digest, not a judgement about relevance. `--ref <name>` prints any one of them in full; `--limit 2` prints them all.",
       ""
