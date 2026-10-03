@@ -2067,9 +2067,19 @@ class JournalBullet:
     🔴 NO DEFAULT, DELIBERATELY, AND THE ONE IT USED TO CARRY WAS JUSTIFIED BY
     CALL SITES THAT DO NOT EXIST. The removed docstring said the `= 0` existed
     "only so the many call sites that construct a bullet without a body position
-    keep working"; measured over every `.py` in the tree there is exactly ONE
-    construction site — `parse_journal_bullets` — and it supplies this field. A
-    default would be worse than absent here: `0` is a LEGITIMATE value (the body's
+    keep working". There is exactly ONE PRODUCTION construction site —
+    `parse_journal_bullets` — and it supplies this field; the rest are TESTS, which
+    construct the value they are asserting about and would rather fail loudly than
+    inherit a 0.
+
+    ⚠ AND THE COUNT IS STATED THAT WAY ON PURPOSE, BECAUSE A TOTAL WENT STALE INSIDE
+    ITS OWN COMMIT. An earlier draft read "measured over every `.py` in the tree there
+    is exactly ONE construction site": true at `3fb8dc2`, and already false at
+    `0aa5fc48`, where the same commit's new `tests/test_citation_ids.py` added two
+    more. The number that cannot rot is the one about PRODUCTION code, and the next
+    test to construct a bullet does not invalidate it.
+
+    A default would be worse than absent here: `0` is a LEGITIMATE value (the body's
     first line), so it cannot be read as "unset", and a bullet nobody positioned
     would annotate line 0 rather than fail. If you ever need "position unknown",
     add a separate field rather than overloading this one.
@@ -2168,7 +2178,23 @@ class JournalBullet:
             the bullet.
           * FIXING THE RECORDED `dropped-lines` DEFECT, which moves a NEIGHBOUR's
             id: lines currently absorbed into the preceding bullet would leave its
-            `lines`, so a bullet nobody touched loses its id.
+            `lines`, so a bullet nobody touched loses its id. MEASURED, with the
+            bodies named, because the one number this row was first given arrived
+            without one: over `"- first\\nstray line\\n- second\\n"` the first bullet
+            is `608a5be6`, and over `"- first\\n- second\\n"` — the same bullet after
+            the absorbed line leaves — it is `6b4d8edb`.
+
+            ⚠ AND `ad08c42d`, WHICH `0aa5fc48`'s COMMIT MESSAGE PAIRED WITH
+            `6b4d8edb` HERE, IS RETRACTED AS UNREPRODUCIBLE. It appears in NO tracked
+            file — measured at `0aa5fc48`, 0 of 491, with `6b4d8edb` as the positive
+            control for the same grep (found, in
+            `internal/store/testdata/citation_ids.json`) — and two differently-shaped
+            sweeps over 24,088 absorbing constructions produced it zero times:
+            `"- first"` plus 0..3 stray lines drawn from a 25-item word space, and
+            twelve opening-line spellings plus 0..2 of the same. Both sweeps'
+            positive controls reproduced the two ids above. No body is offered for
+            it, deliberately: inventing one that happens to hash to it would be a
+            worse record than the retraction.
 
         🔴 AND THE ID IS **NOT SCOPED**. Two byte-identical bullets in different
         entries, or in different scopes, get the SAME id, deterministically —

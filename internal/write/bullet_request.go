@@ -201,10 +201,39 @@ func BulletRequestProblem(raw []byte, payload any) string {
 				r, name)
 		}
 	}
-	lstripped := strings.TrimLeftFunc(text, func(r rune) bool {
-		return pytext.StripWhitespace(string(r)) == ""
-	})
-	if strings.HasPrefix(lstripped, "- ") || strings.HasPrefix(lstripped, "* ") {
+	// 🔴 THE PREDICATE IS `bulletOpenerRe` ITSELF, OVER THE STRING `BulletContent`
+	// WILL ACTUALLY REDUCE — because the two spellings this replaced disagreed, and
+	// the disagreement was reachable. The old clause asked
+	// `strings.HasPrefix(lstripped, "- ")`, an **ASCII** space, while `BulletContent`
+	// first collapses whitespace with `pytext.CollapseWhitespace`, whose class carries
+	// U+00A0, U+1680, U+2000..U+200A, U+202F, U+205F and U+3000. So a `text` of
+	// `"-<U+00A0>the drill head overheats"` was ACCEPTED here and reduced to
+	// `"the drill head overheats"` there — the same content hash as the stored
+	// bullet, so the append answered `duplicate` and the caller's text never reached
+	// the file. MEASURED over one synthetic entry, `POST "-<U+00A0><prose>"` issued
+	// immediately after `POST "<prose>"` appended:
+	//
+	//	3fb8dc2    appended   the request side was hashed RAW, so no opener strip ran
+	//	0aa5fc48   duplicate  and the U+00A0 text is NOT in the file
+	//	here       400        `text` must not open a markdown bullet
+	//
+	// 176 of 1,305 enumerated head×whitespace×tail texts were in that hole; this
+	// expression leaves 0.
+	//
+	// ⚠ THE SENTINEL SPACE IS NOT COSMETIC: it is the opener with NOTHING after it.
+	// The collapse drops a trailing run, so `"- "` arrives as `"-"` and the opener's
+	// `[ \t]+` would not match — which the raw-prefix check DID refuse. Appending one
+	// space makes this a strict SUPERSET of both spellings rather than a trade:
+	// enumerated over the same 1,305 texts, zero are refused by the old clause and
+	// accepted by this one.
+	//
+	// ⚠ AND IT IS A REAL WIDENING, DECLARED RATHER THAN INCIDENTAL. Newly refused:
+	// an opener followed by whitespace OUTSIDE the ASCII space (`"-<U+00A0>foo"`), and
+	// an opener followed by nothing at all (`"-"`, `"*"`, `"- "`). Both answer a named
+	// 400 where they previously either silently de-duplicated against an unrelated
+	// bullet or stored `- <date>: - [cairn: …]`. `"-foo"` — no whitespace after the
+	// dash — is still accepted, here and by `BulletContent`.
+	if bulletOpenerRe.MatchString(pytext.CollapseWhitespace(text) + " ") {
 		return "`text` must not open a markdown bullet — the `- ` is added here, and " +
 			"a second one would start a bullet with no attribution trailer"
 	}

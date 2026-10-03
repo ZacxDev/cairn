@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """The `[cb:]` ECHO HOLE in `content_hash`/`bullet_content` — the PYTHON half.
 
-🔴 WHAT THE DEFECT WAS, AND WHY IT IS A REGRESSION RATHER THAN AN INVARIANT. The
-attribution parser `_ATTRIBUTION_RE` is anchored at `\\Z`, and `bullet_content`
-stripped it with a single `sub`. The moment a read surface appends the per-bullet
+🔴 WHAT THE DEFECT WAS, AND WHY IT IS A REGRESSION RATHER THAN AN INVARIANT.
+`bullet_content` stripped the attribution with a single `sub` over an expression
+anchored at `\\Z` and nothing else (the `_ATTRIBUTION_RE` / `_CITATION_TOKEN_RE`
+pair, now folded into the one `_BULLET_TRAILERS_RE` alternation). The moment a read
+surface appends the per-bullet
 citation token, a stored line ends `… [cairn: a/b] [cb:xxxxxxxx]` — the anchor no
 longer reaches the attribution, so the WHOLE trailer entered the content hash, the
 idempotency check stopped matching, and a retried append landed a near-duplicate
@@ -18,13 +20,23 @@ with `bullet_content` and hashed the REQUEST text raw, so even a perfect stored-
 strip left the two hashes taken over different strings. Both sides now go through
 `bullet_content`.
 
-Every test below was watched RED against the pre-fix source — the single-pass strip
-and the raw request hash — and the matrix is in the commit message.
+Every test below was watched RED against the pre-fix source — ONE end-anchored `sub`
+on the stored side and a RAW hash on the request side — and the matrix is in the
+commit message.
+
+⚠ "SINGLE-PASS" IS NOW AMBIGUOUS HERE AND THE WORD IS DELIBERATELY NOT USED. An
+earlier draft of this docstring called the pre-fix source "the single-pass strip",
+which stopped being a distinguishing description the moment the order-free LOOP that
+replaced it was itself replaced by a single-pass ALTERNATION — see
+`_BULLET_TRAILERS_RE` for why (the loop was quadratic on a write path with no
+per-line length cap). What distinguished the pre-fix source was the ANCHOR, not the
+number of passes.
 """
 from __future__ import annotations
 
 import importlib.util
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -131,3 +143,172 @@ def test_the_token_COUNTS_against_BULLET_TEXT_MAX():
     problem = api._bullet_request_problem({"text": over, "session": "s1"})
     assert "max" in problem and "1 over" in problem, (
         f"the token was exempted from the cap: {problem!r}")
+
+
+# ---------------------------------------------------------------------------
+# THE OPENER SEAM between `_bullet_request_problem` and `bullet_content` — the
+# PYTHON half.  `internal/write/openerseam_test.go` is the Go twin.
+#
+# 🔴 WHAT THE DEFECT WAS. `_append_bullet` asserted that `bullet_content`'s opener
+# strip is "inert for a request" because `_bullet_request_problem` "refuses a `text`
+# that opens a markdown bullet".  The two asked DIFFERENT questions of DIFFERENT
+# strings: the validator tested `text.lstrip().startswith(("- ", "* "))`, an ASCII
+# space, on the RAW text, while `bullet_content` strips `_BULLET_OPENER_RE` from the
+# COLLAPSED text — and `str.split()`'s class carries U+00A0, U+1680, U+2000..U+200A,
+# U+202F, U+205F and U+3000.
+#
+# 🔴 AND IT IS A REGRESSION, NOT AN INVARIANT: measured over one synthetic entry,
+# `POST "-\u00a0<prose>"` straight after `POST "<prose>"` answered `appended` at
+# 3fb8dc2 (the request side was hashed raw, so no opener strip ran), `duplicate` at
+# 0aa5fc48 with the caller's text never written, and a 400 here.
+#
+# ⚠ EVERY NON-ASCII WHITESPACE BELOW IS SPELLED AS AN ESCAPE, NEVER PASTED. A literal
+# U+00A0 in a source file is indistinguishable on screen from a space, which is the
+# very confusion the defect is made of.
+# ---------------------------------------------------------------------------
+
+#: The non-ASCII members of the collapse class that REACH the opener clause. U+0085,
+#: U+2028 and U+2029 are deliberately absent: they are line breaks, so the one-line
+#: clause refuses them several clauses earlier, and a fixture built on one would pass
+#: for the wrong reason.
+COLLAPSE_WHITESPACE_OPENERS = (
+    "\u00a0", "\u1680", "\u2000", "\u200a", "\u202f", "\u205f", "\u3000",
+)
+
+
+@pytest.mark.parametrize("ws", COLLAPSE_WHITESPACE_OPENERS)
+@pytest.mark.parametrize("opener", ["-", "*"])
+def test_an_opener_spelled_with_NON_ASCII_whitespace_is_REFUSED(ws, opener):
+    text = f"{opener}{ws}{PROSE}"
+    problem = api._bullet_request_problem({"text": text, "session": "s1"})
+    assert problem is not None, (
+        f"U+{ord(ws):04X} after {opener!r}: ACCEPTED, and `bullet_content` reduces it "
+        f"to {api.bullet_content([text])!r} — the same content as a bare prose bullet, "
+        "so the append answers `duplicate` and the caller's text is never stored")
+    assert "must not open a markdown bullet" in problem, (
+        f"refused for the wrong reason: {problem!r}")
+
+
+def test_the_validator_refuses_every_text_whose_COLLAPSED_form_opens_a_bullet():
+    """🔴 THE SEAM AS A RELATIONSHIP RATHER THAN A CHARACTER LIST. The property
+    `_append_bullet` now asserts is "no accepted `text` reaches `_BULLET_OPENER_RE`",
+    so this asks exactly that of every row — a spelled list of whitespace characters
+    would pass while the next one nobody thought of walked straight through.
+
+    ⚠ AN INVARIANT GUARD over the rows the test above already covers, so it is not
+    counted twice as regression coverage; what it adds is the SHRINK direction."""
+    ws = ["", " ", "  ",
+          "\u00a0", "\u1680", "\u2000", "\u200a", "\u202f", "\u205f", "\u3000",
+          " \u00a0", "\u00a0 "]
+    heads = ["", "-", "*", "--", "-x", "x", "a-", " ", "\u00a0"]
+    tails = ["", PROSE, f"2000-01-02: {PROSE}", "-", "*", "]"]
+
+    accepted = refused = 0
+    for h in heads:
+        for w in ws:
+            for t in tails:
+                text = h + w + t
+                problem = api._bullet_request_problem({"text": text, "session": "s1"})
+                if problem is not None:
+                    refused += 1
+                    continue
+                accepted += 1
+                collapsed = " ".join(text.split())
+                assert not api._BULLET_OPENER_RE.match(collapsed), (
+                    f"{text!r} is ACCEPTED yet `_BULLET_OPENER_RE` matches its "
+                    f"collapsed form {collapsed!r} — `bullet_content` will strip an "
+                    "opener the CALLER sent, so the content hash is taken over "
+                    "somebody else's bullet")
+    # POSITIVE CONTROL: a zero would be indistinguishable from a loop that never
+    # entered its body, and the accepted branch is the only one that asserts anything.
+    assert accepted > 0, "not one row was ACCEPTED, so the assertion above never ran"
+    assert refused > 0, "not one row was REFUSED, so this table cannot see the clause"
+
+
+@pytest.mark.parametrize(
+    "text", ["-", "*", "- ", "* ", "-  ", "-\u00a0", " -\u00a0"])
+def test_an_opener_with_NOTHING_after_it_is_still_refused(text):
+    """⚠ THE DUAL HAZARD THE SENTINEL SPACE CLOSES, AND THE REASON THE CLAUSE IS NOT
+    SIMPLY `_BULLET_OPENER_RE` OVER THE COLLAPSED TEXT. The collapse drops a trailing
+    whitespace run, so `"- "` arrives as `"-"`, which `[ \\t]+` does not match — and
+    the raw-prefix check this replaced DID refuse it. Without the sentinel the fix
+    would have been wider on one axis and NARROWER on another."""
+    problem = api._bullet_request_problem({"text": text, "session": "s1"})
+    assert problem is not None and "must not open a markdown bullet" in problem, (
+        f"{text!r}: got {problem!r}, want the markdown-opener refusal")
+
+
+@pytest.mark.parametrize("text", ["-foo", "*foo", "--foo", "x - y"])
+def test_a_dash_with_NO_whitespace_after_it_is_still_PROSE(text):
+    """The NEGATIVE control for the clause above: `bullet_content` does not strip
+    these either, so refusing them would be a widening nobody chose."""
+    assert api._bullet_request_problem({"text": text, "session": "s1"}) is None
+    assert api.bullet_content([f"- 2000-01-02: {text}"]) == text
+
+
+def test_a_NON_ASCII_opener_does_not_SILENTLY_DEDUPE_end_to_end(tmp_path):
+    """🔴 THE DEFECT AS BEHAVIOUR, because the assertions above are about the
+    validator and the damage lived in the SEAM: a unit test of either side alone
+    stays green."""
+    entry = tmp_path / "entry.md"
+    entry.write_text(
+        "---\nservice: synth\n---\n\n## What it is\n\nx\n\n## Pointers\n\n- y\n\n"
+        f"{api.rc.NUANCE_HEADING}\n\n- 2000-01-01: an older note.\n",
+        encoding="utf-8")
+    status, _line, _rev = api.append_bullet(
+        entry, text=PROSE, actor="zach", session="s1", today="2000-01-02")
+    assert status == "appended", status
+
+    disguised = f"-\u00a0{PROSE}"
+    problem = api._bullet_request_problem({"text": disguised, "session": "s1"})
+    if problem is None:
+        status2, line2, _ = api.append_bullet(
+            entry, text=disguised, actor="zach", session="s1", today="2000-01-03")
+        stored = entry.read_text(encoding="utf-8")
+        raise AssertionError(
+            f"a U+00A0 opener was accepted and the append answered {status2!r} naming "
+            f"{line2!r}; is the caller's own text in the file? {disguised in stored}")
+
+
+#: The wall-clock ceiling for ONE `bullet_content` call over a stored line of many
+#: trailers. A thousandfold-margin number rather than a tight one — the measurements
+#: that set it are on the test below.
+TRAILER_STRIP_BUDGET_SECONDS = 1.0
+
+
+@pytest.mark.parametrize("n", [4000, 8000])
+def test_the_trailer_strip_is_LINEAR_rather_than_QUADRATIC(n):
+    """🔴 A REGRESSION GUARD ON CPU, AND THE REGRESSION WAS REACHABLE ON THE WRITE
+    PATH. `0aa5fc48` made `_strip_bullet_trailers` a LOOP over two `\\Z`-anchored
+    expressions, so every iteration re-scanned from position 0: O(trailers × length).
+    `bullet_content` runs once per stored bullet on every `POST /bullets`, inside the
+    per-entry write lock, and there is no per-line length cap on the bytes a write can
+    put on disk — `BULLET_TEXT_MAX` governs only the REQUEST text, and the rate
+    limiter counts failed auths only.
+
+    MEASURED on this host over one stored line of n trailing ` [cb:deadbeef]` tokens,
+    CPython 3.12, the strip alone:
+
+        n        line bytes   loop        one alternation
+        1                62   0.000002s   0.000001s
+        1,000        14,048   0.1066s     0.000121s
+        4,000        56,048   1.7052s     0.000404s
+        16,000      224,048   27.4662s    0.001362s
+
+    🔴 TWO POINTS, NAMED, because one measurement is not a claim about a curve. The
+    budget sits three orders of magnitude ABOVE the linear cost at both points and
+    below the quadratic cost at them — so no plausible machine slowdown turns a red
+    into a green or the reverse.
+    """
+    line = f"- 2000-01-02: {PROSE}" + TOKEN * n
+    started = time.perf_counter()
+    got = api.bullet_content([line])
+    elapsed = time.perf_counter() - started
+    assert got == PROSE, (
+        f"n={n}: reduced to {got[:80]!r} ({len(got)} chars) — this measures the wrong "
+        "thing if the strip is not also CORRECT at scale")
+    assert elapsed < TRAILER_STRIP_BUDGET_SECONDS, (
+        f"n={n} ({len(line)} line chars): bullet_content took {elapsed:.3f}s, budget "
+        f"{TRAILER_STRIP_BUDGET_SECONDS:.3f}s — the strip is super-linear in the "
+        "number of trailers, which is a write-path CPU exhaustion reachable by an "
+        "authenticated writer")

@@ -43,21 +43,19 @@ const BulletTextMax = 2000
 // rule untouched, so an appended `OPEN:` bullet still declares itself.
 const attributionFormat = " [cairn: %s/%s]"
 
-// attributionRe parses the suffix above, and it is deliberately the SAME shape
-// `RenderBullet` writes rather than a looser one: a trailer this cannot read is not
-// an attribution, so its bullet's content hash is computed over the whole line and
-// simply will not collide with a fresh append. Anchored at end-of-line.
-var attributionRe = regexp.MustCompile(
-	`[ \t]*\[cairn: [a-z0-9][a-z0-9-]{0,31}/[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\]\z`)
+// attributionPattern is the suffix above as a pattern, and it is deliberately the
+// SAME shape `RenderBullet` writes rather than a looser one: a trailer this cannot
+// read is not an attribution, so its bullet's content hash is computed over the whole
+// line and simply will not collide with a fresh append.
+//
+// ⚠ A PATTERN FRAGMENT, NOT AN ANCHORED EXPRESSION, and that is what makes the one
+// alternation below possible: a fragment can be repeated, an end-anchored expression
+// cannot. It is never compiled on its own — `bulletTrailersRe` is the only consumer.
+const attributionPattern = `\[cairn: [a-z0-9][a-z0-9-]{0,31}/[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\]`
 
-// bulletOpenerRe is `- YYYY-MM-DD: ` — the dated bullet opener this writer emits
-// and the one the corpus already uses. Stripped before hashing so a bullet
-// re-POSTed on a later day is still recognised as the same CONTENT.
-var bulletOpenerRe = regexp.MustCompile(`\A[-*][ \t]+(?:\d{4}-\d{2}-\d{2}:[ \t]+)?`)
-
-// citationTokenRe is the opaque per-bullet token a READ surface prints —
-// `store.JournalBullet.CitationID` in brackets, 8 lowercase hex. Anchored at
-// end-of-line, the same shape `attributionRe` is.
+// citationTokenPattern is the opaque per-bullet token a READ surface prints —
+// `store.JournalBullet.CitationID` in brackets, 8 lowercase hex. The same kind of
+// fragment `attributionPattern` is.
 //
 // 🔴 IT IS STRIPPED BEFORE HASHING BECAUSE AN AGENT ECHOES WHAT IT READ, AND THAT
 // IS MEASURED RATHER THAN FEARED: a downstream consumer's resume flow requires its
@@ -68,18 +66,58 @@ var bulletOpenerRe = regexp.MustCompile(`\A[-*][ \t]+(?:\d{4}-\d{2}-\d{2}:[ \t]+
 // matching the bullet already on disk, appends a near-duplicate, and that duplicate
 // carries a `[cb:…]` in its PROSE whose value is not its own id — a citation that
 // resolves to the bullet it was copied from, forever.
-var citationTokenRe = regexp.MustCompile(`[ \t]*\[cb:[0-9a-f]{8}\]\z`)
+const citationTokenPattern = `\[cb:[0-9a-f]{8}\]`
+
+// bulletOpenerRe is `- YYYY-MM-DD: ` — the dated bullet opener this writer emits
+// and the one the corpus already uses. Stripped before hashing so a bullet
+// re-POSTed on a later day is still recognised as the same CONTENT.
+//
+// 🔴 IT IS ALSO THE REQUEST-SIDE PREDICATE, NOT ONLY THE STORED-SIDE ONE.
+// `BulletRequestProblem` asks THIS expression whether a submitted `text` opens a
+// bullet, over the same collapsed string `BulletContent` will reduce — see the
+// clause there for what asking a different question cost.
+var bulletOpenerRe = regexp.MustCompile(`\A[-*][ \t]+(?:\d{4}-\d{2}-\d{2}:[ \t]+)?`)
+
+// bulletTrailersRe matches the WHOLE run of machine-written trailers at the end of
+// one collapsed bullet — any order, any number — in ONE anchored alternation.
+//
+// 🔴 ORDER-FREE IS THE POINT, AND TWO SEQUENTIAL `ReplaceAllString` CALLS CANNOT
+// DELIVER IT: with the attribution stripped first, `… [cairn: a/b] [cb:deadbeef]`
+// leaves the attribution IN (its anchor no longer reaches the end of the line) and
+// the whole trailer enters the hash. Both orders are reachable — the read surface
+// appends the token after a stored line that already ends in an attribution, and
+// `RenderBullet` appends an attribution after whatever text the caller sent. ONE
+// alternation under a `+` is order-free without sequencing anything.
+//
+// 🔴 AND IT REPLACES A LOOP, WHICH WAS ORDER-FREE AND QUADRATIC. The loop re-ran an
+// end-anchored expression until it stopped shrinking the string, so each iteration
+// re-scanned from position 0: O(trailers × length) on a path that runs once per
+// stored bullet on every `POST /bullets`, inside the per-entry write lock, with no
+// per-line length cap on the bytes a write can put on disk. MEASURED on this host
+// over one stored line of n trailing ` [cb:deadbeef]` tokens, `BulletContent` end to
+// end, Go 1.25:
+//
+//	n        line bytes   loop        this
+//	1                48   2.9µs       0.6µs
+//	1,000        14,034   234ms       0.30ms
+//	4,000        56,034   4.33s       1.15ms
+//	16,000      224,034   72.8s       4.71ms
+//
+// EQUIVALENCE, re-derived rather than inherited: enumerated over every suffix
+// sequence of length 0..3 drawn from 20 trailer-ish pieces (5 attribution spellings,
+// 5 token spellings, 10 malformed ones) crossed with 10 prose prefixes — 84,210
+// inputs in Go and the same 84,210 in Python — the loop and this expression agree on
+// ALL of them, zero disagreements, including every row
+// `citationtoken_test.go`/`test_bullet_trailer_strip.py` assert.
+//
+// ⚠ THE WIDENING THE LOOP BOUGHT IS KEPT, AND IT IS WHY THE `+` IS NOT A `?`: a line
+// that somehow ends in two attributions loses both. In the idempotency-preserving
+// direction, and a line carrying two is already a defect somewhere upstream.
+var bulletTrailersRe = regexp.MustCompile(
+	`(?:[ \t]*(?:` + attributionPattern + `|` + citationTokenPattern + `))+\z`)
 
 // stripBulletTrailers removes every MACHINE-WRITTEN trailer from the end of one
 // collapsed bullet, in ANY ORDER and ANY NUMBER, and nothing else.
-//
-// 🔴 ORDER-FREE IS THE POINT, AND IT IS WHY THIS IS A LOOP RATHER THAN TWO
-// SEQUENTIAL `ReplaceAllString` CALLS, which are correct for exactly one ordering:
-// with `attributionRe` applied first, `… [cairn: a/b] [cb:deadbeef]` leaves the
-// attribution IN (its anchor no longer reaches the end of the line) and the whole
-// trailer enters the hash. Both orders are reachable — the read surface appends the
-// token after a stored line that already ends in an attribution, and
-// `RenderBullet` appends an attribution after whatever text the caller sent.
 //
 // 🔴 ONE RULE, ONE PLACE: `BulletContent` is the only caller, and nothing else in
 // this package or in `server/server.py` may re-spell "what a trailer is". The two
@@ -87,23 +125,11 @@ var citationTokenRe = regexp.MustCompile(`[ \t]*\[cb:[0-9a-f]{8}\]\z`)
 // because `lib/` cannot import `internal/`, and `tests/parity/` is what compares
 // them.
 //
-// ⚠ IT STRIPS REPEATEDLY, so a line that somehow ends in two attributions loses
-// both. That is a widening over the single-pass version it replaces, it is in the
-// idempotency-preserving direction, and a line carrying two is already a defect
-// somewhere upstream. The loop terminates because every iteration shortens the
-// string.
+// One pass. `bulletTrailersRe` is anchored at `\z` and every alternative consumes at
+// least one bracketed token, so there is exactly one possible match and no empty one
+// — `ReplaceAllString` and a slice at the match start are the same operation here.
 func stripBulletTrailers(s string) string {
-	for {
-		if next := attributionRe.ReplaceAllString(s, ""); next != s {
-			s = next
-			continue
-		}
-		if next := citationTokenRe.ReplaceAllString(s, ""); next != s {
-			s = next
-			continue
-		}
-		return s
-	}
+	return bulletTrailersRe.ReplaceAllString(s, "")
 }
 
 // EntryRevision is the revision an `If-Match` is compared against: the entry

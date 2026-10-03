@@ -36,7 +36,15 @@ the count intact says "a decoded byte moved".
 
 🔴 REGENERATE AND DIFF, NEVER HAND-EDIT — the same rule
 `internal/report/testdata/reader_fixtures.json` and
-`internal/store/testdata/citation_ids.json` carry.
+`internal/store/testdata/citation_ids.json` carry, AND IT IS NOW ENFORCED THE SAME WAY
+THEY ARE. `tests/test_pytext_decode_replace.py` re-runs this script in a subprocess on
+every pytest run and compares BYTES. ⚠ Until that file existed the rule above was a
+REQUEST: nothing in `pytest tests` read this fixture, so the Go tier replayed committed
+bytes and nobody ever re-asked the interpreter — measured, by hand-editing a digest and
+one `output_hex` with the guard absent and watching a full `pytest tests` report NOT ONE
+failure about it. (That run was not green outright: it carried 10 unrelated failures
+from the scratch copy having no `.git`. "Reported nothing about this fixture" is the
+claim; "green" would be a wider one than was measured.)
 
     python3 tests/pytext_decode_replace.py > internal/pytext/testdata/decode_replace.json
 """

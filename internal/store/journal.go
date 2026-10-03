@@ -199,6 +199,14 @@ type JournalBullet struct {
 // absorbed into the preceding bullet would leave its `Lines`, so a bullet nobody
 // touched loses its id.
 //
+// ⚠ THAT LAST MEMBER NOW NAMES ITS BODIES, BECAUSE THE FIRST NUMBER IT WAS GIVEN
+// ARRIVED WITHOUT ONE. Measured here, in Go: over `"- first\nstray line\n- second\n"`
+// the first bullet is `608a5be6`, and over `"- first\n- second\n"` — the same bullet
+// after the absorbed line leaves — it is `6b4d8edb`. `0aa5fc48`'s commit message
+// paired `6b4d8edb` with `ad08c42d`; that second value is RETRACTED as
+// unreproducible, and the retraction and its sweeps are recorded once, beside
+// `lib/subsystem_resolver.py`'s copy of this list.
+//
 // 🔴 AND THE ID IS **NOT SCOPED**. Two byte-identical bullets in different entries, or
 // in different scopes, get the SAME id, deterministically — `write.AppendBullet` dedupes
 // within ONE file only, so the corpus does not forbid it. The framing "a token that

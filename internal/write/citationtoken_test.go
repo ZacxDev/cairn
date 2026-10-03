@@ -12,8 +12,10 @@ import (
 // The `[cb:]` ECHO HOLE in ContentHash/BulletContent — the GO half.
 //
 // 🔴 WHAT THE DEFECT WAS, AND WHY IT IS A REGRESSION RATHER THAN AN INVARIANT.
-// `attributionRe` is anchored at `\z` and `BulletContent` stripped it with a single
-// `ReplaceAllString`. The moment a read surface appends the per-bullet citation
+// `BulletContent` stripped the attribution with a single `ReplaceAllString` over an
+// expression anchored at `\z` and nothing else (the `attributionRe` /
+// `citationTokenRe` pair, now folded into the one `bulletTrailersRe` alternation).
+// The moment a read surface appends the per-bullet citation
 // token, a stored line ends `… [cairn: a/b] [cb:xxxxxxxx]` — the anchor no longer
 // reaches the attribution, so the WHOLE trailer entered the content hash, the
 // idempotency check stopped matching, and a retried append landed a near-duplicate
