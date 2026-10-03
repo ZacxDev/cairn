@@ -22,24 +22,53 @@ them being USED and ENFORCED.
   from the closed set, the pod REFUSES an off-vocabulary tag at the write path (422,
   `X-Store-Status: entry-shape`) with a valid tag still accepted as the control, and both
   halves are verified against the DEPLOYED pod rather than against `main`.
-  **MET 2026-10-01** — see "How to verify" for the exact probes and their outputs.
+  🔴 **WAS DECLARED MET BY THE PREVIOUS SESSION; RE-MEASURED THE NEXT DAY AND IT IS NOT MET.** The
+  write-gate half still holds live; the "every entry" half does not — 10 of 339. 🔴 **The condition is
+  UNCHANGED and is NOT being rewritten to match the measurement** — it is frozen at round 1, and
+  a verdict that moves when the answer is inconvenient is not a closing condition. See "State
+  now" for both halves and "How to verify" for the probes that produced them.
 
 ## State now
-- Branch: `main` at **`306164c`**. Base clone clean and re-synced. **60 linked worktrees** registered.
-- ✅ **RANK 1 CLOSED AND MERGED** — PR #170, squash **`5c96ffd`**, verified by content on `origin/main`
-  (5 feature markers in `internal/ui/render.go`, `compose_test.go` present, both CHANGELOG rows).
-  ⚠ It did NOT merge cleanly: **#168 landed under it mid-review and it went `CONFLICTING`**. Resolved
-  by merging `origin/main` into the branch (not rebasing — review threads anchor to the commits),
-  keeping BOTH CHANGELOG rows newest-first. Full 8/8 CI re-run on the MERGED tree before merging.
-- ✅ **RANK 2 CLOSED AND MERGED** — PR #171, squash **`306164c`**, verified by content. All three
-  declared fail-opens closed, plus `revert`/`update-index`/`read-tree`/`symbolic-ref` added to the
-  ledger, the dry-run and `--help` exemptions consolidated, and git's option GRAMMAR modelled once
-  in `_OPTION_GRAMMAR` rather than matched as spellings at three sites.
-- ⚠ **NOT DEPLOYED. Nothing from either PR is at the edge.** Rank 3 needs a deployment-repo image-pin
-  bump first, which is an operator decision (a bump carries every commit merged since).
-- ⚠ **No task-board field, and that is a REFUSAL rather than a zero** — the resolver exited 5.
-  🔴 Naming the board is a `denied-identifier`; the leak gate fired on exactly that in this arc's
-  first handoff delta, so the field's own spelling cannot appear in this repo.
+- Branch: `main` at **`ffede27`**. Base clone clean, 0 behind. 🔴 **ONE OPEN PR — #172**
+  (`docs/handoff-arc-closeout`, doc-only, 8/8 checks pass, `MERGEABLE`), and this delta is stacked
+  ON it (`docs/tag-vocab-reopened`, branched from its head `239da57`) rather than off `main`, so the
+  two cannot conflict on a 400-line doc. 🔴 **Do NOT merge #172 with `--delete-branch`** — GitHub
+  auto-closes a PR whose base is deleted and refuses to reopen it.
+- ✅ **THREE RANKS CLOSED AND MERGED, verified by content on `origin/main`**: rank 1 `5c96ffd` (#170),
+  rank 2 `306164c` (#171), rank 5 `ffede27` (#169). Unchanged by this session.
+- 🔴 **THE CLOSING CONDITION HAS RE-OPENED, AND IT WAS RE-OPENED BY A MECHANISM THIS DOC ALREADY
+  PREDICTED AS RANK 4.** It was declared MET 2026-10-01. Re-run 2026-10-02, it is MET on one half and
+  NOT MET on the other. Both halves below were measured this session; neither was taken from the doc.
+- ✅ **HALF 2 — the write gate — STILL MET, measured live against the DEPLOYED pod**
+  (the `personal` instance's `CAIRN_URL`; the host is a `reachable-hostname` and cannot be written
+  here), negative then positive in one run:
+  `PUT /api/v1/entry/cairn/tag-vocabulary` with `tags: [zzz-not-a-real-tag]` ⇒ **422**,
+  `x-store-status: entry-shape`, body `tag 'zzz-not-a-real-tag' is not one of infra|product|tooling`;
+  the same request with the tag restored ⇒ **200**, `x-store-status: replaced`,
+  `etag: "f1040929673545e9"`. The positive control's ETag came back **equal to the `If-Match` sent**,
+  and `cmp` then confirmed the cache copy byte-identical, so that write was content-neutral.
+  ⚠ A first attempt without `If-Match` answered **428 `precondition-required`** — the precondition is
+  checked BEFORE the shape, so a probe that omits it measures the precondition and reports nothing
+  about the vocabulary.
+- 🔴 **HALF 1 — "every entry on its resolved instance carries a tag from the closed set" — NOT MET.
+  10 of 339 carry NO tag at all.** 0 carry an off-vocabulary tag, so the gate is holding; these ten
+  did not defeat it, they were **born tagless and never went through it**. Spread over **9 of 29
+  scopes** — one scope holds 2, eight hold 1 each. 🔴 **THE TEN FILENAMES CANNOT BE WRITTEN HERE:
+  the scope names are `denied-identifier`s and this repo is PUBLIC** (the same ruling that put the
+  per-scope tag table in the store rather than in `internal/write/scopetags.go`). They are recorded
+  in the store entry `cairn/tag-vocabulary`; re-derive them any time with the sweep in
+  "How to verify".
+- 🔴 **ROOT CAUSE MEASURED, NOT INFERRED — IT IS RANK 4, AND RANK 4 HAS ALREADY FIRED TEN TIMES.**
+  All ten are `created_by: handoff` and dated **2026-10-01/02**, i.e. on or after the day the
+  condition was declared met. `subsystem_touch.py --template <slug> --writer handoff` emits
+  `service:`, `scope:`, `sensitivity:`, `created_by:` and a commented `aliases:` — and **no `tags:`
+  line and no `refs:` line**, for `--writer handoff` AND `--writer analyze-service`. So every entry
+  born through either flow starts untagged and invisible to `--tag`. Rate so far: ~5/day.
+- ⚠ **No task-board field, and that is a REFUSAL rather than a zero** — the resolver exited **5**
+  again this session. An unknown session id answers 200 with an empty array, so a zero cannot
+  distinguish "touched no task" from "wrong id".
+- ⚠ **This session changed NO repository file and wrote NO entry content.** Its only write to the
+  store was the content-neutral positive control above.
 
 ## Open investigations — live diagnosis state
 
@@ -79,43 +108,105 @@ them being USED and ENFORCED.
   anything, and a second that is not executable, then attempt a write the guard would
   refuse. Record which of the two, if either, still blocks.
 
+### Half 1 re-opened: are the ten untagged entries the template's doing, or authors forgetting?
+- as-of: 2026-10-02
+- **Symptom + exact repro:** `cairn recall --scope <s> --tag <t>` sums to fewer than the denominator
+  it prints, for 9 of 29 scopes. Reproduce per scope with the three vocabulary terms and compare the
+  sum of `N` against `M` in `tag: \`<t>\` — N of M entr(y|ies) in \`<s>/\` carry it`.
+- **Observed (with values):** 339 entries on their resolved instances, 329 tagged, **10 untagged, 0
+  off-vocabulary**. Two independent instruments agree on the same ten files and the same 339: a
+  front-matter walk of both instance caches restricted by `routes.json`, and the reader's own printed
+  denominators. All ten carry `created_by: handoff`; every one contains a date of 2026-10-01 or
+  2026-10-02 and none earlier.
+- **Ruled out:** "authors forgot, so it is a discipline problem" — the template itself emits no
+  `tags:` line, so a tagless entry is the DEFAULT rather than an omission. `via: measurement`
+  (`subsystem_touch.py --template probe-slug --writer handoff` and `--writer analyze-service`, each
+  with a positive control: `grep -c '^service:'` = 1 in the same output where `grep -c '^tags:'` = 0).
+- **Ruled out:** "the write gate regressed and let them through" — the gate answers 422 on an
+  off-vocabulary tag right now, and none of the ten carries a bad tag; they carry none. `via:
+  measurement` (the live 422/200 pair in `State now`).
+- **Leading hypothesis:** the template is the whole mechanism, and the ten are its complete output
+  since the condition was declared met. Fixing rank 4 stops the bleed; backfilling the ten closes
+  the arc. Doing the backfill FIRST re-opens it within a day.
+- **Next probe:** decide rank 4's shape — a placeholder `tags: []` the author must fill (fails loudly
+  at nothing, so it needs a checker) versus a per-scope default read from `cairn/tag-vocabulary`'s
+  real table (self-correcting, but a new scope has no row). That decision is the work, not the edit.
+
+### An instrument lied three times in a row this session, and the controls are the only reason it is not in the numbers above
+- as-of: 2026-10-02
+- **Symptom + exact repro:** three consecutive greps over `subsystem_touch.py --template` output
+  returned `0` for `^tags:` while measuring nothing at all.
+- **Observed (with values):** (1) `--template` alone ⇒ `error: argument --template: expected one
+  argument`, output empty, `grep -c` = 0. (2) `--template probe-slug` ⇒ `--template needs --writer`,
+  output empty, `grep -c` = 0 — **and the positive control `grep -c '^service:'` was also 0, which is
+  what exposed it.** (3) only `--template probe-slug --writer handoff` produced a real template, where
+  `service:` = 1 and `tags:` = 0. A fourth: the denominator sweep's regex required the literal
+  `entries`, so every ONE-entry scope read as `M=0` and six scopes were silently scored empty; caught
+  by cross-checking against the filesystem walk, whose total disagreed by exactly 6.
+- **Ruled out:** nothing — this is recorded as a method note, not a narrowing. `via: measurement`.
+- **Leading hypothesis:** both are the same failure: a zero from a command that never ran what you
+  think it ran. A positive control in the SAME output is what distinguishes them, and a plural-only
+  regex is the cheapest possible version of it.
+- **Next probe:** none needed. Carry the pattern: every sweep prints a line it MUST find beside the
+  line it is counting.
+
 ## Next steps (ranked)
 🔴 **Numbering UNCHANGED — the rank is half a `claim-work` slug's identity.** Closed items struck.
 
-1. ~~**Make `?q=` and `?tag=` compose in the browse surface.**~~ **CLOSED, MERGED `5c96ffd` (#170).**
-   forcing: gate — it is merged; nothing remains.
-2. ~~**Close the three declared guard fail-opens.**~~ **CLOSED, MERGED `306164c` (#171)**, after a
-   full audit ladder (round 0 + rounds 1–5). See Gotchas for what the ladder caught.
+1. ~~**Make `?q=` and `?tag=` compose in the browse surface.**~~ **CLOSED, MERGED `5c96ffd`.**
+   forcing: gate — merged; nothing remains.
+2. ~~**Close the three declared guard fail-opens.**~~ **CLOSED, MERGED `306164c`.**
    forcing: security — closed.
-3. **Confirm the deploy, in ONE signed-in browser visit.** Two things on the same visit: the Refs
-   panel heading (`refs` ⇒ the UI pod rolled; `tasks` ⇒ pod and UI are out of step), and
+3. **Confirm the deploy, in ONE signed-in browser visit.** Two answers from one visit: the Refs panel
+   heading (`refs` ⇒ the UI pod rolled; `tasks` ⇒ pod and UI are out of step), and
    `/?q=<word>&tag=<tag>` rendering **ONE** card headed `Search` rather than two.
-   🔴 **BLOCKED ON A PIN BUMP THAT IS THE OPERATOR'S CALL** — neither #170 nor #171 is at the edge,
-   and a bump carries every commit merged since (the last one carried 19). The browser bridge was
-   measured disconnected (`connected: 0`) and is not re-measured here.
+   🔴 **BLOCKED ON A PIN BUMP, WHICH IS THE OPERATOR'S CALL** — see State now. The browser bridge was
+   measured disconnected (`connected: 0`) and has not been re-measured.
    forcing: user — the operator asked for this deploy to be validated.
-4. **Teach the entry template to emit a `tags:` line.** `scripts/lib/subsystem_touch.py --template`
-   emits none, so every entry born through the handoff flow starts untagged and invisible to
-   `--tag`. Repo: the private tooling repo.
-   forcing: regression — new entries reintroduce the untagged state this arc eliminated.
-5. ~~**Land this doc on the mainline.**~~ **CLOSED by this update** — PR #169 merged carrying it.
+4. 🔴 **Teach the entry template to emit a `tags:` line — THIS IS NOW THE ARC'S OWN BLOCKER, NOT A
+   FOLLOW-ON.** `subsystem_touch.py --template … --writer {handoff,analyze-service}` emits none, so
+   every entry born through either flow starts untagged; **10 such entries have landed since
+   2026-10-01 and they are what re-opened the closing condition.** Repo: the private tooling repo.
+   The open decision is placeholder-vs-per-scope-default (see the investigation block).
+   forcing: regression — measured, ten occurrences, ~5/day, re-opening a condition already declared met.
+5. ~~**Land this doc on the mainline.**~~ **CLOSED, MERGED `ffede27`.**
    forcing: gate — closed.
-6. **Replace `ci.yml`'s hand-edited collected-test `FLOOR` with a baseline derived at the merge
-   base.** Found by audit round 0 and unfixed on purpose (out of #171's scope). The literal has
-   been moved by **22+ commits**; the step is ~382 comment lines guarding one integer; its own
-   comment says no bug ever narrowed this suite; it MISSED the one real deletion (the name-diff
-   recipe caught that); and it has gone **RED with zero failing tests four times**, each time
-   costing a round. ⚠ Every round of #171 moved it again (2458→2495→2529→2566→2588→2609→2617).
-   **Closing condition:** the literal is gone, the baseline is collected at `git merge-base
-   origin/main HEAD` in the same job, the removals-must-be-renames check still runs, and one PR
-   that adds tests goes green without touching `ci.yml`.
+6. **Replace `ci.yml`'s hand-edited collected-test `FLOOR` with a baseline derived at the merge base.**
+   Found by audit round 0, deliberately out of #171's scope. The literal has been moved by 22+ commits
+   (and once per round during #171: 2458→2495→2529→2566→2588→2609→2617); the step is ~382 comment lines
+   guarding one integer; its own comment says no bug ever narrowed this suite; it MISSED the one real
+   deletion (the name-diff recipe caught that); and it has gone **RED with zero failing tests four
+   times**. **Closing condition:** the literal is gone, the baseline is collected at `git merge-base
+   origin/main HEAD` in the same job, the removals-must-be-renames check still runs, and one PR that
+   adds tests goes green without touching `ci.yml`.
    forcing: gate — a permanently-red-prone gate trains everyone to click through, which
    `claude/RULES.md` names as worse than no gate.
+7. **Backfill the ten untagged entries**, one vocabulary term each, AFTER rank 4 lands. The write gate
+   is the checker: a wrong term is refused 422, so no separate validator is needed. 🔴 **Pick the term
+   by EXACT scope match against `cairn/tag-vocabulary`'s real table, never by prefix** — the
+   synthetic pair in `internal/write/scopetags.go` (`alpha` vs `alpha-fleet`) disagrees on purpose
+   for exactly this reason, and the real table has a pair that disagrees the same way, so a prefix
+   match gets it backwards.
+   forcing: regression — these ten ARE the unmet half of this arc's closing condition.
 
 ## Defects (batched)
 🔴 **This heading REPLACES on every update — everything still open must be re-listed or it is
 deleted.** That is how the list is maintained, not a sign the earlier text was wrong.
 
+- 🔴 **NEW, AND IT IS THE ARC'S OWN GAP: 10 of 339 entries on their resolved instances carry no tag.**
+  Enumerated in `State now`. Rank 7 fixes them; rank 4 stops more arriving.
+- 🔴 **NEW: `subsystem_touch.py`'s template emits no `tags:` AND no `refs:` line**, for both writers.
+  `refs:` is the same class of silent omission as `tags:` and is not covered by any gate — the write
+  path refuses a BAD tag, and has nothing to say about an ABSENT one. Rank 4 should fix both lines or
+  say why not.
+- ⚠ **NEW, pre-existing and NOT this arc: `cairn doctor` exits 9.** `personal/token-scopes` reports
+  **two** scopes that exist on disk and not in the store's answer to that token, both **mirror-only**
+  (they are named in the check's own output; both are `denied-identifier`s here) — so the question is
+  whether they were ever seeded, not whether access was lost.
+- ⚠ **NEW: six scopes hold their single entry on BOTH instances' caches.** Harmless for the tag
+  question once `routes.json` is honoured, but it is why a flat two-cache walk reports **138**
+  untagged where the routes-aware one reports **10**. Any future sweep over "every entry" must filter
+  by resolved instance or it is measuring copies.
 - ⚠ **STILL OPEN: the pod's composed `?q=`+`?tag=` answer and the browse surface's are not compared
   against each other.** After #170 they share the ENGINE, but nothing sends the same two parameters
   to both and diffs the result. Declared in `internal/ui/README.md` rather than fixed.
@@ -124,13 +215,12 @@ deleted.** That is how the list is maintained, not a sign the earlier text was w
 - ⚠ **DECLARED LIMIT, not a defect: a comment claiming "this test reports/prints X" is NOT
   machine-checked.** The *existence* half is (`test_EVERY_TEST_A_PAYLOAD_COMMENT_NAMES_STILL_EXISTS`,
   shipped in #171). The *print/report* half was built, measured as a spelled guard firing on 7
-  legitimate sites out of 8 (`git worktree list` "reports REGISTRATIONS", a ledger "read there" in
-  an assertion, `symbolic-ref` "prints the ref"), and **deleted rather than narrowed to
-  self-satisfaction**. The imperative is written at the site.
-- ✅ CLOSED: the base clone's staged orphan on the hook (was byte-identical to `origin/main`;
-  cleared content-neutrally). ✅ CLOSED: both `_abs_path` comment defects — and the retraction is
-  recorded rather than the claim restored, because #167 closed the NUL route but restoring the
-  check flips `GIT_INDEX_FILE=<clone>/.git/index git add` from deny to ALLOW.
+  legitimate sites out of 8, and **deleted rather than narrowed to self-satisfaction**.
+- ✅ CLOSED (carried forward — the RETRACTION is the load-bearing half): the base clone's staged
+  orphan on the hook (was byte-identical to `origin/main`; cleared content-neutrally). ✅ CLOSED:
+  both `_abs_path` comment defects — and **the retraction is recorded rather than the claim
+  restored**, because #167 closed the NUL route while restoring the check would flip
+  `GIT_INDEX_FILE=<clone>/.git/index git add` from deny to **ALLOW**. Do not "re-fix" it.
 
 ## Gotchas / decisions / dead-ends
 - 🔴 **The per-scope tag table cannot live in this repo.** `tests/leakscan.py` denies the
@@ -288,36 +378,171 @@ deleted.** That is how the list is maintained, not a sign the earlier text was w
 - ⚠ `/home/zach/workspace/cairn-hv2` was this session's handoff worktree; `cairn-handoff` is still
   the stale one on a closed arc. Remove hv2 when done.
 
+- 🔴 **RETRACTED — "THE CANONICAL HANDOFF FOR THIS ARC IS NOT ON `main`" IS NOW FALSE, AND SO IS ITS
+  INSTRUCTION.** The bullet below (and its `git log --all --diff-filter=A` / `git show <branch>:<path>`
+  recipe) applied while PR #169 was open. **#169 merged as `ffede27`: the doc IS on `main`.** Read it
+  at `claudedocs/handoff-cairn-tag-vocabulary.md` directly — do not run the branch-ref dance, and do
+  not conclude from a failed `git show origin/docs/...` that the doc is missing; that branch is
+  deleted. ⚠ Recorded as a retraction rather than a deletion because `Gotchas` is an APPEND bucket:
+  the superseded text survives verbatim below and would otherwise be read as current.
+- 🔴 **THE LADDER'S OWN LESSON, AND THE MOST REUSABLE THING THIS ARC PRODUCED: every fix round
+  introduced the next finding, and the fix for a defect recreated that defect one token over.**
+  Rank 2 ran five audit rounds on a PR whose CI was **8/8 green at every single step**. What the green
+  suite never saw: a **tracked file deleted** in the base clone while the guard answered allow; a
+  **regression a fix round itself shipped**; `git revert` writing the shared tree while the PR *pinned
+  a claim* that the out-set was complete. 🔴 **Rounds 4 and 5 found NO behavioural defects** — by then
+  the hook was AST-identical to its base modulo comments — **so the ladder was stopped on a STATED
+  criterion rather than a clean round**, because the remaining class had reproduced in every single
+  fix round and another round buys occurrence six, not convergence. Write the criterion down when you
+  do that; an unexplained stop reads identically to a convergence.
+- 🔴 **NINE INSTRUMENTS RETURNED A CONFIDENT WRONG ANSWER IN THIS ARC. EVERY ONE WAS CAUGHT BY A
+  CONTROL AND NONE BY THE RESULT LOOKING WRONG.** An `awk` range whose end pattern matched its own
+  start line (reported 0 for everything); a **case-SENSITIVE** sweep for a word written in capitals
+  (0 hits against 1); importing the hook as a module, which runs `main()` and `sys.exit(0)`s —
+  **exit 0, no output, indistinguishable from "zero findings"**; a `" 1 passed"` matcher anchored
+  mid-line; a differential pointed at the wrong tree (383 false fail-opens); a `-h` arity reader whose
+  attached-arg branch matched empty; a marker-grep over `git merge-tree`, which prints no markers; a
+  sweep whose own control string was the operator's real checkout path — in a PUBLIC repo; and a
+  mutation anchor that never applied. **Validate the instrument, report the pair, treat a reassuring
+  zero as unproven.**
+- ⚠ **An `audit-claims`/range sha TRUNCATED BY HAND silently disarms the attribution gate.**
+  `7ee84771` for `7ee8477c` made the range unresolvable; the assembler said `PAYLOAD NOT VERIFIED …
+  exited 128` and **fell back to the STATED count**, reverting to its pre-measurement behaviour. Use
+  full 40-char shas. ⚠ `--claims-file` also leaves placeholders the brief's own commands then carry
+  (`<the PR's head sha>` ×2, a repo-unknown spelling ×3, and an EMPTY `WHERE TO WORK` section):
+  substitute all of them, assert zero remain, and verify the base-branch *assumption* against the PR.
+- ⚠ **Two API limit outages hit mid-run, and they fail differently.** One agent died after one line —
+  resume works, but re-anchor it and re-verify the world first. One died **between its commit+push and
+  its report**, so the work had landed while the report was lost: **check the pushed ref before
+  assuming anything was lost.**
+
+- 🔴 **"MET" ON A CLOSING CONDITION IS A READING WITH A DATE, NOT A PROPERTY — AND THIS ARC IS THE
+  WORKED EXAMPLE.** The condition was declared MET 2026-10-01 and was FALSE 24 hours later, because
+  one half of it ranges over a growing population (every entry in the store) while the other is a
+  code property (the write gate). **A condition with a population half re-opens on its own**; only
+  the code half stays closed. When a closing condition quantifies over data, say which half decays
+  and name the mechanism that feeds it — here, rank 4, which the doc had already written down as the
+  predicted regression and which had already fired ten times before anyone re-ran the check.
+- 🔴 **A ROUTES-BLIND SWEEP OVER "EVERY ENTRY" IS WRONG BY 13×, IN THE ALARMING DIRECTION.** Both
+  instance caches hold directories for scopes the OTHER instance owns, so a flat walk of
+  `*/*.md` across `~/.cache/subsystem-store` and `~/.cache/subsystem-store-civitai` reports **138**
+  untagged entries where the routes-aware count is **10**. Resolve each scope through
+  `~/.config/subsystem-store/routes.json` and keep only the copy on its own instance.
+- ⚠ **`*/README.md` IS NOT AN ENTRY, AND THE READER IS THE ARBITER.** 12 scope-level READMEs have no
+  front matter at all. The reader's own denominators exclude them (`cli` prints `M=14` where the
+  filesystem holds 14 entries + 1 README), which is what settled it — do not count them as untagged.
+- 🔴 **THE WRITE PRECONDITION IS CHECKED BEFORE THE SHAPE, SO A PROBE WITHOUT `If-Match` MEASURES THE
+  WRONG THING.** `PUT /api/v1/entry/<scope>/<ref>` with no `If-Match` answers **428
+  `precondition-required`** whatever the body's tag says. The revision is `sha256` of the entry file,
+  first 16 hex chars — re-derive it at the moment of the probe, and read the ETag that comes back: if
+  it EQUALS what you sent, the positive control was content-neutral.
+- ⚠ **A `grep -c` OVER A COMMAND THAT REFUSED TO RUN IS A ZERO ABOUT NOTHING, AND IT HAPPENED THREE
+  TIMES IN A ROW HERE.** `subsystem_touch.py --template` needs BOTH a slug and `--writer`; each
+  missing one exits with a usage error, empty stdout, and `grep -c '^tags:'` = 0 — identical to the
+  real finding. The control that caught it was `grep -c '^service:'` in the SAME output: a line the
+  template definitely emits. **Never report a zero without a non-zero from the same invocation.**
+- ⚠ **A PLURAL-ONLY REGEX SILENTLY ZEROED SIX SCOPES.** The reader prints `N of M entry` (singular)
+  for a one-entry scope and `entries` otherwise; a sweep matching only `entries` scored those six as
+  `M=0`. Found by cross-checking against a second instrument whose total disagreed by exactly 6 —
+  **the disagreement was the finding**, not either number on its own.
+- 🔴 **THIS DELTA IS STACKED ON #172 ON PURPOSE, AND THE ALTERNATIVE WAS MEASURED WORSE.** #172 is
+  doc-only, open, 8/8 green, and **declares this arc CLOSED while half 1 is false** — it also deletes
+  the write-gate verification block from `How to verify`. Basing off `main` instead would have put two
+  independent structured merges of the same 400-line doc on a collision course. Basing off #172's head
+  (`239da57`) means this version is "#172's text plus the correction". 🔴 **Merge #172 WITHOUT
+  `--delete-branch`, or retarget this PR to `main` first** — a deleted base auto-closes the child PR
+  and GitHub refuses to reopen it.
+- ⚠ **TWO `cairn` SESSIONS WERE LIVE WHILE THIS RAN** (`cairn-83` idle 17h, `cairn-06` busy 14h);
+  #172 was opened 45 minutes before this session started, so its author was very likely still working.
+  **Nothing was pushed to its branch** — a stacked branch of my own was used instead.
+- ⚠ **`/home/zach/workspace/cairn-reopen` was this session's worktree** (branch
+  `docs/tag-vocab-reopened`, off `239da57`). `cairn-handoff` is still the stale worktree on a closed
+  arc; 14 `cairn-*` worktree paths now exist beside the base clone. Remove `cairn-reopen` when this
+  lands.
+
 ## How to verify
-**Both merged features, from the repo** (neither is deployed):
+**Everything merged, from the repo** (nothing is deployed, so none of this is edge evidence):
 ```bash
-git -C /home/zach/workspace/cairn log --oneline -3   # 306164c (#171), 5c96ffd (#170)
+git -C /home/zach/workspace/cairn log --oneline -4   # ffede27, 306164c, 5c96ffd, fc2ddfe
 go -C /home/zach/workspace/cairn test ./internal/ui/ -run TestTheQueryAndTheTagComposeIntoOneCard -v
 nix-shell -p python312Packages.pytest python312 git --run \
-  "python3 -m pytest tests/test_base_clone_write_guard.py -q"     # => 344 passed
-python3 tests/leakscan.py && python3 tests/leakscan.py --self-test # => both exit 0
+  "python3 -m pytest tests/test_base_clone_write_guard.py -q"      # => 344 passed
+python3 tests/leakscan.py && python3 tests/leakscan.py --self-test  # => both exit 0
 ```
 
-**The guard's own hazard, end to end** — the three that used to destroy things, with the dry runs
-that must still be allowed as the control (run in a THROWAWAY clone with one linked worktree):
+**The guard's own hazard, end to end** (rank 2 — CARRIED FORWARD, not re-measured this session) — the
+spellings that used to destroy things, with the dry runs that must still be ALLOWED as the control.
+Run in a THROWAWAY clone carrying one linked worktree:
 ```
-git rm -n --no-pathspec-from-file --no-dry-run seed.txt   => deny   (deleted a TRACKED file before)
-git clean -n --exclude= --no-dry-run -f -d                => deny   (deleted files before)
-git symbolic-ref -qd refs/heads/alias                     => deny   (deleted a ref before)
-git clean --dry / git rm --dry / git merge --ff-o <ref>    => ALLOW  (real reads, refused before)
-git commit -m x  => deny   ·   git status => allow         (the pair that makes the above readable)
+git rm -n --no-pathspec-from-file --no-dry-run seed.txt  => deny   (deleted a TRACKED file before)
+git clean -n --exclude= --no-dry-run -f -d               => deny   (deleted files before)
+git clean -f --exc -n                                    => deny   (prefix ate its value before)
+git symbolic-ref -qd refs/heads/alias                    => deny   (deleted a ref before)
+git clean --dry · git rm --dry · git merge --ff-o <ref>   => ALLOW  (real reads, refused before)
+git commit -m x => deny  ·  git status => allow           (the pair that makes the above readable)
 ```
+🔴 **A verdict is only half a claim about a destructive command** — run the real command in a copy and
+report what moved. ⚠ `git merge --ff` must still DENY: it is a distinct option from `--ff-only` and
+permits a merge commit.
 
-**The write gate — negative then positive** (the positive control is not optional):
+**The closing condition, both halves, in the order that makes them readable.** Half 2 first — it is
+cheap and it tells you the gate still exists before you interpret half 1's numbers.
+
 ```bash
-<tooling>/scripts/cairn-ops/write.sh put --scope cairn --ref tag-vocabulary --file <bad copy> --no-verify
-#   => 🔴 REFUSED [entry-shape] — ... is not one of infra|product|tooling
-<tooling>/scripts/cairn-ops/write.sh put --scope cairn --ref tag-vocabulary --file <good copy> --no-verify
-#   => cairn: replaced instance=... revision=...
+# HALF 2 — the write gate, against the DEPLOYED pod. Negative THEN positive; the positive is not
+# optional, and a run without If-Match answers 428 and measures the precondition instead.
+set -a; . /home/zach/.config/subsystem-store/env; set +a
+URL="${CAIRN_URL:?}"; TOK="${CAIRN_TOKEN:?}"
+cp ~/.cache/subsystem-store/cairn/tag-vocabulary.md /tmp/good.md
+sed 's/^tags: \[tooling\]$/tags: [zzz-not-a-real-tag]/' /tmp/good.md > /tmp/bad.md
+diff <(grep '^tags:' /tmp/good.md) <(grep '^tags:' /tmp/bad.md) \
+  || echo 'FIXTURE CONTROL: the two copies differ on the tags line'   # else the sed missed
+REV=$(sha256sum /tmp/good.md | cut -c1-16)                            # re-derive NOW, not earlier
+for f in bad good; do
+  curl -sS -o /tmp/$f.body -D /tmp/$f.hdr -w "$f => HTTP %{http_code}\n" \
+    -X PUT "$URL/api/v1/entry/cairn/tag-vocabulary" \
+    -H "Authorization: Bearer $TOK" -H 'Content-Type: text/markdown' -H "If-Match: $REV" \
+    --data-binary @/tmp/$f.md
+  grep -i '^x-store-status\|^etag' /tmp/$f.hdr
+done
+#   bad  => HTTP 422   x-store-status: entry-shape   "... is not one of infra|product|tooling"
+#   good => HTTP 200   x-store-status: replaced      etag: "f1040929673545e9"  == the If-Match sent,
+#                                                     so the control changed nothing (confirm with cmp)
+```
+
+```bash
+# HALF 1 — every entry on ITS RESOLVED INSTANCE. Ask the READER, scope by scope, and compare the sum
+# of the three vocabulary terms against the denominator the reader itself prints.
+#   POSITIVE CONTROL 1: an off-vocabulary tag must read `0 of <non-zero>`.
+#   POSITIVE CONTROL 2: a ONE-entry scope must read a non-zero denominator — the reader says
+#                       `of 1 entry` (SINGULAR), and a plural-only regex scores six scopes as empty.
+cairn sync
+cairn recall --scope cairn --tag zzz-not-a-real-tag --no-sync | grep -oE 'tag: .* carry it'
+ONE=$(cairn ls-entries --no-sync | sed -E 's/^\[[^]]*\] //' | cut -d/ -f1 | sort | uniq -c \
+      | awk '$1==1{print $2; exit}')          # any scope holding exactly ONE entry
+cairn recall --scope "$ONE" --tag tooling --no-sync | grep -oE 'tag: .* carry it'
+for s in $(python3 -c 'import json;print(" ".join(sorted(json.load(open("/home/zach/.config/subsystem-store/routes.json")))))'); do
+  for t in infra product tooling; do
+    cairn recall --scope "$s" --tag "$t" --no-sync 2>/dev/null \
+      | grep -oE 'tag: `[^`]+` — [0-9]+ of [0-9]+ (entry|entries)'
+  done
+done
+# => the three N must sum to M for EVERY scope. 9 of 29 fell short when this was written, gap 10.
+```
+
+```bash
+# RANK 4's premise — does the template emit a tags: line? The `service:` count is the positive
+# control; without it a usage error reads as a clean zero.
+T=<tooling>/scripts/lib/subsystem_touch.py   # <tooling> = the private tooling checkout
+for w in handoff analyze-service; do
+  python3 "$T" --template probe-slug --writer "$w" \
+    | awk '/^service:/{s++} /^tags:/{t++} END{printf "%s: service=%d tags=%d\n", "'"$w"'", s, t}'
+done
+# => both writers: service=1 tags=0   (service=0 means the command refused and you measured nothing)
 ```
 
 **Rank 3, against the DEPLOYED edge — only after a pin bump.** In a signed-in browser open
-`/?q=<a word in a tagged entry>&tag=<that tag>`: **ONE** card headed `Search`, its second line
-naming both operands and both counts; typing a new word keeps the tag; emptying the box lands on
-the plain tag listing. **Two cards means the pin did not move** — which is also the UI-rollout
-question, answered by the same visit.
+`/?q=<a word in a tagged entry>&tag=<that tag>`: **ONE** card headed `Search`, its second line naming
+both operands and both counts; typing a new word keeps the tag; emptying the box lands on the plain
+tag listing. **Two cards means the pin did not move** — which is also the UI-rollout question,
+answered by the same visit.
