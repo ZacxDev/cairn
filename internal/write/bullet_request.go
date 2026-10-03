@@ -217,15 +217,24 @@ func BulletRequestProblem(raw []byte, payload any) string {
 	//	0aa5fc48   duplicate  and the U+00A0 text is NOT in the file
 	//	here       400        `text` must not open a markdown bullet
 	//
-	// 176 of 1,305 enumerated head×whitespace×tail texts were in that hole; this
-	// expression leaves 0.
+	// 🔴 AND THE ENUMERATION IS THE ONE IN THE TREE, SO THE NUMBERS ARE CHECKABLE.
+	// `openerseam_test.go`'s and `test_bullet_trailer_strip.py`'s head×whitespace×tail
+	// table is 9 heads × 12 whitespace spellings × 6 tails = 648 rows. Re-derived at
+	// this head by running the full validator twice over that table, once with this
+	// clause and once with the raw-prefix clause it replaced: this clause accepts 406
+	// and refuses 242, with **0** rows in the hole; the raw-prefix clause accepts 576
+	// and refuses 72, with **80** rows in the hole.
+	//
+	// ⚠ AN EARLIER DRAFT CITED "176 of 1,305" HERE AND THAT CORPUS IS NOT IN THE TREE
+	// — the figures were not re-derivable by a reader, which is the same defect the
+	// paragraphs above retract elsewhere. The property held; the number could not be
+	// checked. Do not reintroduce a corpus that does not ship.
 	//
 	// ⚠ THE SENTINEL SPACE IS NOT COSMETIC: it is the opener with NOTHING after it.
 	// The collapse drops a trailing run, so `"- "` arrives as `"-"` and the opener's
 	// `[ \t]+` would not match — which the raw-prefix check DID refuse. Appending one
-	// space makes this a strict SUPERSET of both spellings rather than a trade:
-	// enumerated over the same 1,305 texts, zero are refused by the old clause and
-	// accepted by this one.
+	// space makes this a strict SUPERSET of both spellings rather than a trade: over
+	// the same 648 rows, **0** are refused by the old clause and accepted by this one.
 	//
 	// ⚠ AND IT IS A REAL WIDENING, DECLARED RATHER THAN INCIDENTAL. Newly refused:
 	// an opener followed by whitespace OUTSIDE the ASCII space (`"-<U+00A0>foo"`), and
@@ -264,7 +273,7 @@ func BulletRequestProblem(raw []byte, payload any) string {
 	//	{"session":…,"actor":"\ud800"}   `text` is required…        the scan's sentence
 	//	{"text":123,…,"actor":…}         `text` is required…        the scan's sentence
 	//	{"text":"a\nb",…,"actor":…}      `text` must be ONE line…   the scan's sentence
-	//	{"text":"ab",…,"actor":…}  `text` contains U+0001…    the scan's sentence
+	//	{"text":"a\u0001b",…,"actor":…}  `text` contains U+0001…    the scan's sentence
 	//	{"text":"- oops",…,"actor":…}    `text` must not open …     the scan's sentence
 	//	{"text":"ok","session":"!!",…}   `session` is required…     the scan's sentence
 	//	{"text":"ok","actor":"\ud800"}   `session` is required…     the scan's sentence

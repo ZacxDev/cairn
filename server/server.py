@@ -664,11 +664,12 @@ ATTRIBUTION = " [cairn: {actor}/{session}]"
 # is not an attribution, so its bullet's content hash is computed over the whole
 # line and simply will not collide with a fresh append.
 #
-# ⚠ A FRAGMENT, NOT AN ANCHORED EXPRESSION, and that is what makes the one
-# alternation below possible: a fragment can be repeated, an end-anchored
-# expression cannot. It is never compiled on its own — `_BULLET_TRAILERS_RE` is
-# the only consumer, and the groups are non-capturing because nothing reads the
-# actor or the session back out of a stored line.
+# ⚠ A FRAGMENT, NOT AN ANCHORED EXPRESSION, and that is what makes the ONE-PIECE
+# expression below composable: a fragment can be placed in an alternation, an
+# end-anchored expression cannot. It is never compiled on its own —
+# `_BULLET_TRAILER_PIECE_RE` is the only consumer, and the groups are
+# non-capturing because nothing reads the actor or the session back out of a
+# stored line.
 _ATTRIBUTION_PATTERN = (
     r"\[cairn: [a-z0-9][a-z0-9-]{0,31}/[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\]"
 )
@@ -698,44 +699,64 @@ _BULLET_OPENER_RE = re.compile(r"\A[-*][ \t]+(?:\d{4}-\d{2}-\d{2}:[ \t]+)?")
 # citation that resolves to the bullet it was copied from, forever.
 _CITATION_TOKEN_PATTERN = r"\[cb:[0-9a-f]{8}\]"
 
-# The WHOLE run of machine-written trailers at the end of one collapsed bullet —
-# any order, any number — in ONE anchored alternation.
+# EXACTLY ONE machine-written trailer: the optional separating whitespace plus one
+# bracketed piece. Deliberately UNANCHORED and deliberately not repeated — the
+# only consumer is `_strip_bullet_trailers`, which `fullmatch`es it against a
+# slice whose both ends it already computed, so this expression is never
+# `search`ed over a line.
 #
-# 🔴 ORDER-FREE IS THE POINT, AND TWO SEQUENTIAL `sub` CALLS CANNOT DELIVER IT:
-# with the attribution stripped first, `… [cairn: a/b] [cb:deadbeef]` leaves the
-# attribution IN (its `\Z` anchor no longer reaches the end of the line) and the
-# whole trailer enters the hash. Both orders are reachable: the read surface
-# appends the token after a stored line that already ends in an attribution, and
-# `render_bullet` appends an attribution after whatever text the caller sent. ONE
-# alternation under a `+` is order-free without sequencing anything.
+# 🔴 ORDER-FREE IS THE POINT, AND TWO SEQUENTIAL END-ANCHORED `sub` CALLS CANNOT
+# DELIVER IT: with the attribution stripped first, `… [cairn: a/b] [cb:deadbeef]`
+# leaves the attribution IN (its `\Z` anchor no longer reaches the end of the
+# line) and the whole trailer enters the hash. Both orders are reachable: the read
+# surface appends the token after a stored line that already ends in an
+# attribution, and `render_bullet` appends an attribution after whatever text the
+# caller sent. One ALTERNATION — here, over both spellings — is what makes the
+# peel order-free; the repetition lives in the loop rather than in a `+`.
 #
-# 🔴 AND IT REPLACES A LOOP, WHICH WAS ORDER-FREE AND QUADRATIC. The loop re-ran
-# an end-anchored expression until it stopped shrinking the string, so each
-# iteration re-scanned from position 0: O(trailers × length) on a path that runs
-# once per stored bullet on every `POST /bullets`, inside the per-entry write
-# lock, with no per-line length cap on the bytes a write can put on disk.
-# MEASURED on this host over one stored line of n trailing ` [cb:deadbeef]`
-# tokens, CPython 3.12:
+# 🔴 AND THE REPETITION IS NOT A `+` BECAUSE THE WHOLE-RUN EXPRESSION
+# `(?:[ \t]*(?:ATTR|TOKEN))+\Z` IS QUADRATIC IN CPYTHON WHENEVER THE RUN DOES NOT
+# REACH THE END OF THE LINE. `re` retries the whole alternation from every start
+# position, and there is no literal prefix to prefilter on because the expression
+# opens with `[ \t]*`. When the run DOES reach `\Z` the cost stays linear: each
+# start position inside the prose fails in O(1) (a prose character is neither
+# whitespace nor `[`), and the first position that CAN match consumes the rest and
+# stops. When it does NOT, each of the ~n start positions INSIDE the run matches
+# its way to the final non-trailer word before failing — O(n) apiece, O(n²) total.
+# So the fast shape is the one both linearity fixtures built when that expression
+# landed, which is why BOTH were green on it. Append one
+# non-trailer word and, through `bullet_content`, BOTH implementations in ONE
+# process in ONE run, this host, CPython 3.12 (load average 5.3–5.9), over
+# `"- 2000-01-02: " + prose + " [cb:deadbeef]" * n` and that string plus `" tail"`:
 #
-#     n        line bytes   loop       this
-#     1                62   0.000002s  0.000001s
-#     1,000        14,048   0.1066s    0.000121s
-#     4,000        56,048   1.7052s    0.000404s
-#     16,000      224,048   27.4662s   0.001362s
+#     n        line bytes   `+`\Z AT-END  `+`\Z NOT-END  peel AT-END  peel NOT-END
+#     1,000        14,059   0.000089s     0.032837s      0.000444s    0.000047s
+#     2,000        28,059   0.000329s     0.128986s      0.000678s    0.000094s
+#     4,000        56,059   0.000434s     0.492542s      0.001338s    0.000179s
+#     8,000       112,059   0.001018s     2.108743s      0.002609s    0.000322s
+#     16,000      224,059   0.002047s     8.825283s      0.005163s    0.001062s
+#     32,000      448,059   0.003530s     (not run)      0.010967s    0.001537s
 #
-# EQUIVALENCE, re-derived rather than inherited: enumerated over every suffix
-# sequence of length 0..3 drawn from 20 trailer-ish pieces (5 attribution
-# spellings, 5 token spellings, 10 malformed ones) crossed with 10 prose prefixes
-# — 84,210 inputs here and the same 84,210 in Go — the loop and this expression
-# agree on ALL of them, zero disagreements, including every row
-# `tests/test_bullet_trailer_strip.py`/`citationtoken_test.go` assert.
+# — the whole-run expression is ×3.8–4.3 per doubling on NOT-END (8.83 s over a
+# 224 KB line, 4311× its own AT-END time at the same n); the peel is ×1.5–2.1 per
+# doubling on BOTH shapes. ⚠ AND THE PEEL IS 2.5× SLOWER ON AT-END, which is the
+# shape every real caller sends: a per-iteration interpreter cost, stated rather
+# than hidden, and the trade is 2.5× on 5 ms against 8300× on 8.8 s.
 #
-# ⚠ THE WIDENING THE LOOP BOUGHT IS KEPT, AND IT IS WHY THE `+` IS NOT A `?`: a
-# line that somehow ends in two attributions loses both. In the
-# idempotency-preserving direction, and a line carrying two is already a defect
-# somewhere upstream.
-_BULLET_TRAILERS_RE = re.compile(
-    r"(?:[ \t]*(?:" + _ATTRIBUTION_PATTERN + r"|" + _CITATION_TOKEN_PATTERN + r"))+\Z"
+# ⚠ GO IS NOT AFFECTED AND `internal/write` THEREFORE STILL CARRIES THE `+`\z
+# ALTERNATION: RE2 does not backtrack. Measured there the same way — `go test`,
+# one process, one run — ×1.7–2.4 per doubling on both shapes out to n=64,000 /
+# 896,059 bytes (AT-END 27.4 ms, NOT-END 33.5 ms). Two mechanisms, one answer; the
+# equivalence is what the enumeration in `_strip_bullet_trailers` measures.
+#
+# REACHABLE, not theoretical, and by the same route the `[cb:]` echo hole was:
+# `PUT /api/v1/entry/<scope>/<ref>` writes caller bytes verbatim with NO per-line
+# cap (`BULLET_TEXT_MAX` governs only the `POST /bullets` request text);
+# `bullet_content` then runs over that stored line on every subsequent
+# `POST /bullets`, inside the per-entry write lock; and the rate limiter counts
+# failed auths only, so an authenticated writer is not request-rate-limited.
+_BULLET_TRAILER_PIECE_RE = re.compile(
+    r"[ \t]*(?:" + _ATTRIBUTION_PATTERN + r"|" + _CITATION_TOKEN_PATTERN + r")"
 )
 
 # How much of a bullet's content hash is carried. 16 hex characters is 64 bits —
@@ -2295,17 +2316,60 @@ def _strip_bullet_trailers(s: str) -> str:
 
     🔴 ONE RULE, ONE PLACE: `bullet_content` is the only caller, and nothing else
     here may re-spell "what a trailer is". `internal/write`'s
-    `stripBulletTrailers` is the Go transcription — two spellings only because
-    `lib/` cannot import `internal/`, and `tests/parity/` is what compares them.
+    `stripBulletTrailers` is the Go counterpart — two spellings only because
+    `lib/` cannot import `internal/`.
 
-    One pass. `_BULLET_TRAILERS_RE` is anchored at `\\Z` and every alternative
-    consumes at least one bracketed token, so there is exactly one possible match
-    and no empty one — the `count=1` is a statement of that, not a limit that
-    changes the answer. Why one alternation rather than the loop this replaced,
-    with the equivalence enumeration and the measured curve:
-    `_BULLET_TRAILERS_RE`.
+    ⚠ AND THE TWO SPELLINGS ARE NOW TWO MECHANISMS, WHICH IS A STRONGER CLAIM TO
+    HOLD UP THAN A TRANSCRIPTION. Go keeps the whole-run `+`-and-`\\z` alternation
+    because RE2 cannot backtrack; this peels the run one piece at a time because
+    CPython's engine can and does — `_BULLET_TRAILER_PIECE_RE` carries both
+    measurements. So the equivalence stopped being readable off a shared pattern
+    and became a property that has to be MEASURED; the EQUIVALENCE block below
+    names the two gates that measure it, and `tests/parity/` still compares the
+    two CLIENTS' rendered bytes on top of that.
+
+    HOW IT IS LINEAR. Every piece this grammar admits begins with `[`, ends with
+    `]`, and contains NEITHER bracket — `_ATTRIBUTION_PATTERN`'s actor and session
+    classes and `_CITATION_TOKEN_PATTERN`'s hex run all exclude them. So if a piece
+    ends at `end`, its `[` is necessarily the LAST `[` before `end - 1`, and
+    `rfind` locates it in at most one piece's length (106 characters for the widest
+    attribution, 13 for a token). Each turn of the loop therefore costs O(piece +
+    the whitespace it consumes) and consumes both; the one unbounded `rfind` — the
+    scan that finds no `[` at all, or finds one too far back to be a piece — is
+    paid once, because it breaks. Total: O(len(s)).
+
+    EQUIVALENCE, AND IT IS A GATE IN THE TREE RATHER THAN A NUMBER IN A COMMENT —
+    both halves are re-derivable by running them:
+
+    * against the ORACLE, in one language:
+      `test_the_PEEL_agrees_with_the_WHOLE_RUN_expression_it_replaced` compares this
+      peel with `(?:[ \\t]*(?:ATTR|TOKEN))+\\Z` over 284,210 inputs — every suffix
+      sequence of length 0..3 drawn from 20 trailer-ish pieces crossed with 10 prose
+      prefixes (84,210), plus 200,000 seeded random strings over an alphabet of
+      brackets, whitespace, `cairn:`/`cb:` fragments and hex. 0 disagreements, with
+      a positive control that reports 21,010 against a one-piece strip.
+    * ACROSS LANGUAGES: `test_the_strip_DIGESTS_to_the_same_string_the_GO_half_pins`
+      hashes this function's output over the 84,210 structured inputs, and
+      `internal/write/trailerdigest_test.go` pins the SAME hex constant for
+      `stripBulletTrailers`. One constant, two mechanisms; measured equal here.
+
+    ⚠ THE WIDENING IS KEPT, AND IT IS WHY THIS IS A LOOP RATHER THAN ONE PEEL: a
+    line that somehow ends in two attributions loses both. In the
+    idempotency-preserving direction, and a line carrying two is already a defect
+    somewhere upstream.
     """
-    return _BULLET_TRAILERS_RE.sub("", s, count=1)
+    end = len(s)
+    while end and s[end - 1] == "]":
+        opener = s.rfind("[", 0, end - 1)
+        if opener < 0:
+            break
+        start = opener
+        while start and s[start - 1] in " \t":
+            start -= 1
+        if _BULLET_TRAILER_PIECE_RE.fullmatch(s, start, end) is None:
+            break
+        end = start
+    return s[:end]
 
 
 def bullet_content(lines: "Sequence[str]") -> str:
@@ -5305,15 +5369,26 @@ def _bullet_request_problem(payload: Any) -> str | None:
     #     0aa5fc48   duplicate  and the U+00A0 text is NOT in the file
     #     here       400        `text` must not open a markdown bullet
     #
-    # 176 of 1,305 enumerated head×whitespace×tail texts were in that hole; this
-    # expression leaves 0.
+    # 🔴 AND THE ENUMERATION IS THE ONE IN THE TREE, SO THE NUMBERS ARE
+    # CHECKABLE. `test_bullet_trailer_strip.py`'s and `openerseam_test.go`'s
+    # head×whitespace×tail table is 9 heads × 12 whitespace spellings × 6 tails =
+    # 648 rows. Re-derived at this head by running the full validator twice over
+    # that table, once with this clause and once with the raw-prefix clause it
+    # replaced: this clause accepts 406 and refuses 242, with **0** rows in the
+    # hole; the raw-prefix clause accepts 576 and refuses 72, with **80** rows in
+    # the hole.
+    #
+    # ⚠ AN EARLIER DRAFT CITED "176 of 1,305" HERE AND THAT CORPUS IS NOT IN THE
+    # TREE — the figures were not re-derivable by a reader, which is the same
+    # defect the paragraphs above retract elsewhere. The property held; the number
+    # could not be checked. Do not reintroduce a corpus that does not ship.
     #
     # ⚠ THE SENTINEL SPACE IS NOT COSMETIC: it is the opener with NOTHING after
     # it. The collapse drops a trailing run, so `"- "` arrives as `"-"` and the
     # opener's `[ \t]+` would not match — which the raw-prefix check DID refuse.
     # Appending one space makes this a strict SUPERSET of both spellings rather
-    # than a trade: enumerated over the same 1,305 texts, zero are refused by the
-    # old clause and accepted by this one.
+    # than a trade: over the same 648 rows, **0** are refused by the old clause
+    # and accepted by this one.
     #
     # ⚠ AND IT IS A REAL WIDENING, DECLARED RATHER THAN INCIDENTAL. Newly refused:
     # an opener followed by whitespace OUTSIDE the ASCII space (`"-\xa0foo"`), and

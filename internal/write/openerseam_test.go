@@ -38,6 +38,18 @@ import (
 // REACH the opener clause. U+0085, U+2028 and U+2029 are deliberately absent: they are
 // line breaks, so the one-line clause refuses them several clauses earlier, and a
 // fixture built on one would pass this test for the wrong reason.
+//
+// ⚠ IT IS A SAMPLE OF A RANGE, NOT THE RANGE: U+2000 and U+200A are the ENDPOINTS of
+// U+2000..U+200A and the nine between them are not listed. Said because the list reads
+// like an enumeration. The whole class was swept at this head instead — all 29 code
+// points `str.isspace()`/`CollapseWhitespace` accept, each as `"-" + ws + prose`
+// through the Python validator, which is the oracle for this clause — and it leaves no
+// gap behind the sample: 0 ACCEPTED; 17 refused by the OPENER clause (U+0020, U+00A0,
+// U+1680, all of U+2000..U+200A, U+202F, U+205F, U+3000); 10 refused EARLIER by the
+// one-line clause (U+000A..U+000D, U+001C, U+001D, U+001E, U+0085, U+2028, U+2029);
+// and 2 refused earlier by the category clause (U+0009, U+001F). So the nine
+// unsampled members are covered by the opener clause exactly as the endpoints are, and
+// U+001C..U+001F are absent for TWO different reasons rather than one.
 var collapseWhitespaceOpeners = []rune{
 	0x00a0, 0x1680, 0x2000, 0x200a, 0x202f, 0x205f, 0x3000,
 }
@@ -179,9 +191,29 @@ func TestANonASCIIOpenerDoesNotSilentlyDedupeEndToEnd(t *testing.T) {
 }
 
 // trailerStripBudget is the wall-clock ceiling for ONE `BulletContent` call over a
-// stored line of many trailers. A thousandfold-margin number rather than a tight one —
-// the measurements that set it are on the test below.
+// stored line of many trailers. A hundred-to-thousandfold-margin number rather than a
+// tight one — the measurements that set it are on the test below.
 const trailerStripBudget = time.Second
+
+// trailerStripShapeRatioMax bounds NOT-END cost ÷ AT-END cost at the same n, measured
+// back to back in ONE process. It pins the SHAPE axis rather than the machine: a
+// wall-clock budget can be met by a fast box, a ratio cannot. Measured 1.10 and 1.13 at
+// the two ASSERTED points (n=4,000 and n=8,000), so 50 leaves a factor of 44.
+//
+// ⚠ ON THIS SIDE IT IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE: RE2 does not
+// backtrack, so neither this bound nor the NOT-END budget row below has ever been red
+// on any Go implementation this repository has carried — `0aa5fc48`'s loop was
+// quadratic on AT-END and returned immediately on NOT-END. It exists because the Python
+// counterpart's identical row IS regression coverage, and because the two fixtures are
+// meant to be readable against each other.
+//
+// 🔴 AND IT IS MUTATION-PROVEN REACHABLE RATHER THAN MERELY PRESENT, which is the thing
+// an invariant guard most often is not. Replacing `stripBulletTrailers` with a CORRECT
+// but NOT-END-quadratic strip — scan `i` from 0 and take the first full-suffix match,
+// the Go analogue of what CPython's engine does internally — turns both this bound and
+// the NOT-END budget row RED with their own messages (n=8,000: 2m34s, 1863×) while
+// every other test in this package stays green.
+const trailerStripShapeRatioMax = 50.0
 
 func TestTheTrailerStripIsLinearRatherThanQuadratic(t *testing.T) {
 	// 🔴 A REGRESSION GUARD ON CPU, AND THE REGRESSION WAS REACHABLE ON THE DEPLOYED
@@ -192,36 +224,82 @@ func TestTheTrailerStripIsLinearRatherThanQuadratic(t *testing.T) {
 	// put on disk — `BulletTextMax` governs only the REQUEST text, and the rate limiter
 	// counts failed auths only, so an authenticated writer is not request-rate-limited.
 	//
-	// MEASURED on this host over one stored line of n trailing ` [cb:deadbeef]` tokens,
-	// Go 1.25, the strip alone:
+	// 🔴 WHICH SHAPES THIS FIXTURE COVERS, NAMED, BECAUSE IT COVERS EXACTLY TWO. Both
+	// are `"- 2000-01-02: " + trailerProse + trailerToken*n`: AT-END as-is, so the
+	// trailer run reaches end-of-line; NOT-END with one non-trailer word appended, so
+	// it does not. The AT-END shape ALONE is what this fixture built before `cee28805`,
+	// and that gap is why `server.py`'s whole-run `(?:[ \t]*(?:ATTR|TOKEN))+\Z` shipped
+	// green there while being quadratic on NOT-END under CPython's backtracking engine.
+	// What is still NOT covered: a run interleaving attributions and tokens, a run of
+	// malformed near-misses, a trailer-like suffix in the MIDDLE of a long line, and any
+	// multi-line bullet.
 	//
-	//	n        line bytes   loop     one alternation
-	//	1                48   2.9µs    0.6µs
-	//	1,000        14,034   234ms    0.30ms
-	//	4,000        56,034   4.33s    1.15ms
-	//	16,000      224,034   72.8s    4.71ms
+	// MEASURED on this host over both shapes in ONE process in ONE run, Go 1.25,
+	// `BulletContent` end to end:
 	//
-	// 🔴 TWO POINTS, NAMED, because one measurement is not a claim about a curve. The
-	// budget sits three orders of magnitude ABOVE the linear cost at both points and a
-	// factor of 4 and 17 BELOW the quadratic cost at them — so no plausible machine or
-	// `-race` slowdown turns a red into a green or the reverse.
+	//	n        line bytes   AT-END     NOT-END    NOT-END/AT-END
+	//	1,000        14,059   368µs      381µs      1.03
+	//	4,000        56,059   1.421ms    1.559ms    1.10
+	//	8,000       112,059   3.337ms    3.762ms    1.13
+	//	16,000      224,059   5.716ms    8.843ms    1.55
+	//	64,000      896,059   27.44ms    33.46ms    1.22
+	//
+	// 🔴 TWO POINTS ASSERTED, NAMED, because one measurement is not a claim about a
+	// curve; the five rows above are ×1.7-2.4 per doubling on both shapes, which is what
+	// "linear" means here. The budget sits 266-641× ABOVE the measured cost at the two
+	// asserted points.
 	for _, n := range []int{4000, 8000} {
-		line := "- 2000-01-02: " + trailerProse + strings.Repeat(trailerToken, n)
+		atEnd := "- 2000-01-02: " + trailerProse + strings.Repeat(trailerToken, n)
+		notEnd := atEnd + " tail"
+
 		start := time.Now()
-		got := BulletContent([]string{line})
-		elapsed := time.Since(start)
-		if got != trailerProse {
-			t.Fatalf("n=%d: reduced to %q (%d bytes), want %q — this measures the wrong "+
-				"thing if the strip is not also CORRECT at scale",
-				n, truncateForFailure(got), len(got), trailerProse)
+		gotAtEnd := BulletContent([]string{atEnd})
+		atEndElapsed := time.Since(start)
+
+		start = time.Now()
+		gotNotEnd := BulletContent([]string{notEnd})
+		notEndElapsed := time.Since(start)
+
+		if gotAtEnd != trailerProse {
+			t.Fatalf("n=%d AT-END: reduced to %q (%d bytes), want %q — this measures the "+
+				"wrong thing if the strip is not also CORRECT at scale",
+				n, truncateForFailure(gotAtEnd), len(gotAtEnd), trailerProse)
 		}
-		if elapsed > trailerStripBudget {
-			t.Errorf("n=%d (%d line bytes): BulletContent took %s, budget %s — the strip "+
-				"is super-linear in the number of trailers, which is a write-path CPU "+
-				"exhaustion reachable by an authenticated writer",
-				n, len(line), elapsed, trailerStripBudget)
+		// NOT-END: the run does not reach the anchor, so NOTHING is a trailer and only
+		// the opener comes off. Pinned so a strip that got fast by stripping too much
+		// cannot pass this test.
+		wantNotEnd := trailerProse + strings.Repeat(trailerToken, n) + " tail"
+		if gotNotEnd != wantNotEnd {
+			t.Fatalf("n=%d NOT-END: the strip removed a suffix that does not reach "+
+				"end-of-line — %d bytes, want %d",
+				n, len(gotNotEnd), len(wantNotEnd))
+		}
+
+		for _, shape := range []struct {
+			label   string
+			elapsed time.Duration
+			line    string
+		}{{"AT-END", atEndElapsed, atEnd}, {"NOT-END", notEndElapsed, notEnd}} {
+			if shape.elapsed > trailerStripBudget {
+				t.Errorf("n=%d %s (%d line bytes): BulletContent took %s, budget %s — the "+
+					"strip is super-linear in the number of trailers on the %s suffix "+
+					"shape, which is a write-path CPU exhaustion reachable by an "+
+					"authenticated writer",
+					n, shape.label, len(shape.line), shape.elapsed, trailerStripBudget,
+					shape.label)
+			}
+		}
+
+		ratio := float64(notEndElapsed) / float64(atEndElapsed)
+		if ratio >= trailerStripShapeRatioMax {
+			t.Errorf("n=%d: NOT-END cost %s is %.0fx AT-END's %s, bound %.0fx — the "+
+				"strip's cost depends on WHERE the trailer run ends, which is the "+
+				"signature of a backtracking re-scan and a write-path CPU exhaustion "+
+				"reachable by an authenticated writer",
+				n, notEndElapsed, ratio, atEndElapsed, trailerStripShapeRatioMax)
 		} else {
-			t.Logf("n=%d (%d line bytes): %s", n, len(line), elapsed)
+			t.Logf("n=%d (%d line bytes): AT-END %s, NOT-END %s, ratio %.2f",
+				n, len(atEnd), atEndElapsed, notEndElapsed, ratio)
 		}
 	}
 }

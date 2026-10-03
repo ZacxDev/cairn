@@ -110,6 +110,19 @@ var bulletOpenerRe = regexp.MustCompile(`\A[-*][ \t]+(?:\d{4}-\d{2}-\d{2}:[ \t]+
 // ALL of them, zero disagreements, including every row
 // `citationtoken_test.go`/`test_bullet_trailer_strip.py` assert.
 //
+// 🔴 AND THIS EXPRESSION IS NO LONGER WHAT PYTHON CARRIES, WHICH IS A FACT ABOUT THE
+// ENGINE AND NOT ABOUT THE GRAMMAR. The same `+`-and-anchor shape is QUADRATIC under
+// CPython's backtracking engine whenever the trailer run does NOT reach end-of-line:
+// `re` retries the alternation from every start position, and each of the ~n positions
+// INSIDE the run matches its way to the final non-trailer word before failing — O(n)
+// apiece (8.8s over a 224 KB line; `server.py`'s
+// `_BULLET_TRAILER_PIECE_RE` carries the table). RE2 has no backtracking, so this
+// side is linear on BOTH suffix shapes — measured in one process in one run, ×1.7-2.4
+// per doubling out to n=64,000 / 896,059 bytes, AT-END 27.4ms and NOT-END 33.5ms, the
+// per-n rows in `TestTheTrailerStripIsLinearRatherThanQuadratic`. `server.py` peels
+// the run one piece at a time instead. Two mechanisms, one answer, and the answer is
+// what `trailerdigest_test.go` compares — never the expression.
+//
 // ⚠ THE WIDENING THE LOOP BOUGHT IS KEPT, AND IT IS WHY THE `+` IS NOT A `?`: a line
 // that somehow ends in two attributions loses both. In the idempotency-preserving
 // direction, and a line carrying two is already a defect somewhere upstream.
@@ -121,9 +134,17 @@ var bulletTrailersRe = regexp.MustCompile(
 //
 // 🔴 ONE RULE, ONE PLACE: `BulletContent` is the only caller, and nothing else in
 // this package or in `server/server.py` may re-spell "what a trailer is". The two
-// languages carry one transcription each (`server.py`'s `_strip_bullet_trailers`)
+// languages carry one implementation each (`server.py`'s `_strip_bullet_trailers`)
 // because `lib/` cannot import `internal/`, and `tests/parity/` is what compares
 // them.
+//
+// ⚠ AND IT IS NO LONGER A TRANSCRIPTION — THE TWO ARE TWO MECHANISMS OVER ONE
+// GRAMMAR, which is a stronger claim to hold up than a shared expression. This keeps
+// the whole-run alternation because RE2 cannot backtrack; `server.py` peels the run
+// one piece at a time because CPython's engine can and does. See `bulletTrailersRe`
+// for the measurement, and `trailerdigest_test.go` for the one constant both
+// implementations are pinned to — which is what makes the equivalence measured rather
+// than assumed now that there is no shared expression to read it off.
 //
 // One pass. `bulletTrailersRe` is anchored at `\z` and every alternative consumes at
 // least one bracketed token, so there is exactly one possible match and no empty one
