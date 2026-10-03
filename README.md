@@ -589,6 +589,68 @@ appended **after** `🔗 N refs` — the existing badges keep their order. The
 threshold is one named constant per renderer (`NuanceBulletCeiling` /
 `NUANCE_BULLET_CEILING`), pinned equal by `tests/test_nuance_bullet_ceiling.py`.
 
+### Every printed bullet now carries an opaque citation id
+
+Inside a printed body, each line that **opens** a top-level bullet gains a trailing
+` [cb:xxxxxxxx]` — 8 lowercase hex:
+
+```
+    ## Pointers
+      - apps/example/values.yaml — the chart values [cb:710f5a96]
+    ## Nuance / work-history
+      - 2000-01-02: OPEN: the retry budget is still unbounded. [cb:3cc70d82]
+        a continuation line, which belongs to the bullet above it.
+```
+
+Both ids above are the real values for those exact bytes, and the second one is
+worth a second look: it is taken over the bullet's **two** lines, so the same
+opening line with no continuation under it answers a **different** id. A bullet is
+its wrapped prose, not its first line.
+
+**Why it exists.** "Was this recalled bullet actually used?" had no answer. Every
+available proxy is a *spelled* one, walkable by rewording, and the obvious one is
+saturated by a mandate rather than by use — a downstream consumer's resume flow
+requires its report to echo what it recalled, so "a printed ref reappears later"
+fires on 451 of 454 runs (99.3%) and measures compliance. A token that exists
+nowhere else in a corpus turns that question into a match.
+
+**All four surfaced sections, not just the journal.** `## What it is`,
+`## Pointers`, `## Nuance / work-history` and `## Requirements` are all annotated.
+Measured over a real 344-entry store, `## Pointers` carries **1,589 of the 4,978**
+ids a full read would print — 32% of them — so annotating only the journal would
+have annotated the section where the signal is not. (That total is one reading of a
+live store and will not re-derive; the nuance section alone moved by 8 bullets
+between two measurements an hour apart.)
+
+**What the id is a function of.** `sha256` over the bullet's own lines joined with
+`\n`, first 8 hex. It is **not scoped**: two byte-identical bullets in different
+entries or scopes get the same id, deterministically. It **moves** when the bullet
+does — including on a trailing-whitespace change, a change of Unicode form, adding
+or removing an `OPEN:`/`RESOLVED <sha>:` marker, and the ` [cairn: actor/session]`
+write trailer, which lives inside the opening line and makes an id partly a function
+of the writing session. Line terminators are normalised, so a CRLF file and an LF
+file name the same bullet with the same id.
+
+**The cost, measured rather than estimated.** 14 bytes per annotated line. On a real
+local cache: the default digest read of one scope went 9,181 → 9,279 bytes
+(**+98 B, +1.07%**, 7 tokens), and a full `--limit 100` read of the same scope went
+150,569 → 152,935 (**+2,366 B, +1.57%**, 169 tokens). Across four scopes the full-read
+cost ranged **+1.57% to +2.61%**; the percentage is highest where bullets are
+shortest. `--list` is **unchanged** — the index prints no bodies, so it carries no
+tokens.
+
+⚠ **If you PARSE a printed body**, a bullet's opening line now has a suffix. Lines
+that open no bullet are untouched, and **not every bullet line carries an id**: prose,
+blanks, an *indented* dash (a continuation), a dash inside a code fence, and text
+before a section's first bullet all print in full with no token. **A missing id is
+never evidence that a bullet was not printed** — the body is still emitted line for
+line, verbatim.
+
+⚠ **If you echo a recalled bullet back into a write**, nothing changes: both pods
+strip the token (and the attribution, in any order) before taking a bullet's content
+hash, so a re-POST of an annotated line is still recognised as the same bullet. The
+token does count against the 2,000-character submitted-text cap.
+
 ### A sync that is already current does not re-download
 
 `GET /api/v1/snapshot` carries an **`ETag`** — `"sha256:<64 hex>"` over the

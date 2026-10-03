@@ -35,10 +35,15 @@ import (
 // CPython emits one per maximal SUBPART, so one entry file produced two citation ids.
 //
 // ⚠ WHAT IT CANNOT SEE. The bodies are hand-written, so this says nothing about the LIVE
-// corpus, and nothing about RENDERING — no surface prints an id yet. The differential
-// reader fixture is what compares rendered bytes, and `tests/parity/harness.py` is what
-// compares the two real clients. Said here rather than left to be discovered, because a
-// reader who took this file for full coverage would stop looking.
+// corpus, and nothing about RENDERING. ⚠ THE SECOND HALF OF THAT SENTENCE USED TO READ "no
+// surface prints an id yet", AND THAT IS NO LONGER TRUE: both text renderers now append
+// ` [cb:<id>]` to every surfaced section line that opens a bullet, so a rendered byte
+// depends on this function. What measures that is still not here —
+// `internal/report/testdata/reader_fixtures.json` compares the two renderers' bytes (138
+// of its lines carry a token), `internal/report/citationtoken_test.go` pins the POSITION
+// and the verbatim body, and `tests/parity/harness.py` compares the two real clients. Said
+// here rather than left to be discovered, because a reader who took this file for full
+// coverage would stop looking.
 
 type citationCase struct {
 	Name string `json:"name"`
