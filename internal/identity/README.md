@@ -440,9 +440,11 @@ anything.** Wiring your IdP does not make cairn multi-tenant-by-SSO. Specificall
   route a user-creation endpoint for anybody with an account at your IdP.
 - **a federated user with no grants is authenticated and sees nothing.** The token verifies,
   `Identity.Valid()` is true, the audit line names them — and the `control.Authorization` is
-  empty, so every scope answers exactly as if it did not exist. On the browse surface that
-  renders as **`No scope is visible to this credential`** (`internal/ui`'s wording, pinned by
-  its own tests); on the API it is an empty listing and a 404 per scope. That is not a
+  empty, so every scope answers exactly as if it did not exist — **`refused equals absent`**
+  is a relation the conformance corpus pins, and the caller cannot tell the two apart.
+  Concretely: every read route answers `X-Store-Status: scope-absent`, every write route
+  answers the not-found body, and on the browse surface it renders as **`No scope is visible
+  to this credential`** (`internal/ui`'s wording, pinned by its own tests). That is not a
   misconfiguration; it is the default state of a newly provisioned user.
 - **SSO group or role membership is NOT a scope grant.** Nothing in this repository reads a
   `groups` claim, maps a role onto a project, or derives membership from a token. Project
