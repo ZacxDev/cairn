@@ -596,7 +596,23 @@ jobs:
           # be precise about numbers, which is the whole reason the count is gone.
           # Measured 2726 collected on the branch, so
           # `2726 - min(50, max(1, 2726/20)) = 2676`.
-          FLOOR = 2676
+          # ⚠ 2676 -> 2677 FOR THAT BRANCH'S FIX ROUND, AND THIS TRANSITION AVERTED
+          # NOTHING EITHER — said as plainly as the one above it, and for the same reason.
+          # The round adds exactly ONE collected test
+          # (`test_the_RENDERERS_own_splitter_is_what_places_the_token`, the guard that
+          # makes a splitter swap in the renderer go red; the Go twin is a `go test` and
+          # this floor cannot see it). That takes the gap to 51 against a `MAX_GAP` of 100,
+          # and the step was MEASURED to pass unedited at the old literal. The literal moves
+          # anyway, on the same choice the paragraph above records: put the margin back at
+          # the 50 the formula is built around. 🔴 AND THE COUNT ABOVE WAS RE-DERIVED RATHER
+          # THAN CARRIED OVER, WHICH IS THE ONLY WAY TO QUOTE ONE HERE. There are SEVENTEEN
+          # `⚠ A -> B` lines above THIS one — the previous paragraph's "SIXTEEN" was counted
+          # at ITS line and is still correct there, which is exactly why the number cannot
+          # be copied forward. No count is given of how many averted a failure, for the
+          # reason that paragraph gives.
+          # Measured 2727 collected on the branch, so
+          # `2727 - min(50, max(1, 2727/20)) = 2677`.
+          FLOOR = 2677
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)

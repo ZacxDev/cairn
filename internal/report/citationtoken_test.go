@@ -202,8 +202,13 @@ func TestEVERYSurfacedSectionsBulletOpeningsCarryACitationID(t *testing.T) {
 }
 
 // TestTheBODYKeepsEveryORIGINALByteEvenWhereTheParserMISHANDLESIt is THE safety property the
-// whole design exists for, and it is the one test that tells the shipped implementation from
-// the ruled-out one.
+// whole design exists for: the body survives annotation BYTE FOR BYTE AND IN ORDER.
+//
+// ⚠ IT IS NOT "THE ONE TEST THAT TELLS THE SHIPPED IMPLEMENTATION FROM THE RULED-OUT ONE",
+// WHICH IS WHAT THIS LINE USED TO SAY. Measured: the id test above fails under the
+// reconstruction too — see the matrix below. What is unique here is the CLAIM, not the kill:
+// this is the only test that asserts the rendered body reconstructs to the original bytes in
+// order, which a line COUNT (what the id test checks first) cannot do.
 //
 // 🔴 WHAT IS RULED OUT: re-emitting each section body from `ParseJournalBullets`' groups
 // instead of from the body's own lines. That parser DROPS text before the first bullet and
@@ -212,14 +217,40 @@ func TestEVERYSurfacedSectionsBulletOpeningsCarryACitationID(t *testing.T) {
 // surface, and the measured history is 7 versions across two entries carrying dropped lines
 // for 2–8 days with that validator green the whole time.
 //
-// 🔴 THE MATRIX, AND IT IS NOT THE USUAL ONE. This guard is GREEN at `d7e1fec8` — at base no
-// token is appended, so every body line renders as exactly `"      "+line` and the assertion
-// holds vacuously. So against BASE it is an INVARIANT guard and must not be counted as
-// regression coverage. It was watched RED against the RULED-OUT IMPLEMENTATION: with
-// `text.go`'s loop replaced by `for _, b := range store.ParseJournalBullets(body) { for _, l
-// := range b.Lines {…} }`, this test fails on the pre-bullet prose line and on the absorbed
-// indented dash while `TestEVERYSurfacedSectionsBulletOpeningsCarryACitationID` above stays
-// GREEN — which is exactly why a guard that only checks ids were appended is not enough.
+// 🔴 THE MATRIX, RE-DERIVED — AND BOTH HALVES OF THE EARLIER ONE WERE WRONG. It said this
+// guard is "GREEN at `d7e1fec8` … an INVARIANT guard [that] must not be counted as
+// regression coverage", and that the ruled-out implementation reds it "while
+// `TestEVERYSurfacedSectionsBulletOpeningsCarryACitationID` above stays GREEN". Measured at
+// `902be517`:
+//
+//   - IT IS REGRESSION COVERAGE, NOT AN INVARIANT GUARD. With the emission loop reverted to
+//     base's shape — the narrowest expression, the helpers kept referenced so the package
+//     still builds — this test FAILS at the token-count floor at the bottom of the
+//     function: "this world rendered 0 tokens, want 3". Its own anti-vacuity assertion is
+//     what makes it red at base, so the verbatim-body claim never gets to hold vacuously.
+//     ⚠ AND AT A LITERAL `d7e1fec8` CHECKOUT THE CLAIM IS NOT EVEN REACHABLE: neither
+//     `store.CitationIDsByStartLine` nor `store.CitationToken` exists there, so this file
+//     does not compile. The measurement above is the only reading of "at base" that has an
+//     answer, and it is the one reported.
+//
+//   - THE ID TEST DOES NOT STAY GREEN UNDER THE RECONSTRUCTION. With `text.go`'s loop
+//     replaced by `for _, b := range store.ParseJournalBullets(body) { for _, l := range
+//     b.Lines {…} }`, BOTH tests fail. This one fails at its line-count assertion
+//     (`## Pointers`: 1 rendered line for a 2-line body); the id test fails FIRST, at its
+//     own per-section `len(got) != len(lines)` check — `## What it is` renders 0 body lines
+//     for a 1-line prose body, and `## Pointers` 4 for 5. The structural reason is that the
+//     id test's first per-section assertion is a LINE COUNT, which the reconstruction breaks
+//     in any section carrying pre-bullet prose, and its world contains a prose-only
+//     `## What it is`.
+//
+// ⚠ SO WHAT IS LEFT OF "A GUARD THAT ONLY CHECKS IDS WERE APPENDED IS NOT ENOUGH"? It
+// holds, and the measurement above is its own example — but the weaker guard is a SUBTEST,
+// not this file's id test. Under the reconstruction the id test's `## Nuance /
+// work-history` and `## Requirements` subtests both PASSED: those two section bodies are
+// entirely absorbed into bullet groups, so the reconstruction reproduces them line for line
+// and the ids land correctly. A test scoped to a section like that, asserting only that
+// bullet openings carry ids, passes the implementation this design rules out. Which is why
+// the world above carries a prose-only section and a pre-bullet-prose section at all.
 //
 // ⚠ IT IS A CLAIM ABOUT CONTENT, NOT ABOUT IDS. A body line that carries no token still has
 // to be there in full. A MISSING ID IS A DEGRADATION IN COVERAGE AND NEVER IN CONTENT; a
@@ -345,16 +376,32 @@ func TestTheBODYKeepsEveryORIGINALByteEvenWhereTheParserMISHANDLESIt(t *testing.
 	}
 }
 
-// TestTheTokenLandsOnTheLineTheSPLITTERSaysItDoes is a REGRESSION guard against the one
-// hazard `store.JournalBullet.StartLine` names and that already has a wrong-splitter
-// consumer elsewhere in this tree (`internal/ui/render.go`'s `inlineCode` splits on "\n").
+// TestTheTokenLandsOnTheLineTheSPLITTERSaysItDoes drives a lone `\r` through the WHOLE
+// read path — an entry file on disk, `Recall`, `RenderText` — and pins the rendered body
+// as whole normalised lines.
 //
-// 🔴 A LONE `\r` IS WHAT SEPARATES THE TWO SPLITTERS, AND NOTHING ELSE IN THE SUITE SENDS
-// ONE THROUGH A RENDERED BODY. On the body `"- a\rb\n- c"`, `pytext.SplitLines` gives
-// `["- a", "b", "- c"]` with StartLines `[0, 2]`; `strings.Split(body, "\n")` gives
-// `["- a\rb", "- c"]`, so index 0 would annotate MID-LINE and index 2 would not exist. The
-// assertion below is the whole normalised body, so a mutant swapping the splitter cannot
-// pass by spelling a substring.
+// 🔴 AND IT CANNOT SEPARATE THE TWO SPLITTERS. AN EARLIER DRAFT OF THIS COMMENT CLAIMED IT
+// COULD, AND THAT CLAIM WAS MEASURED FALSE RATHER THAN ARGUED AWAY. It read "a lone `\r` is
+// what separates the two splitters … a mutant swapping the splitter cannot pass by spelling
+// a substring". The `\r` never reaches a renderer: `ExtractSections` builds a section body
+// by splitting the FILE and re-joining with "\n", so every other break character is gone
+// before `RenderText` sees a body. Measured on the entry this test writes — the body
+// arrives as `"- a\nb\n- c"`, for which `pytext.SplitLines` and `strings.Split(body, "\n")`
+// return the SAME list. Mutation-proven at `902be517`: swapping `text.go`'s emission
+// splitter to `strings.Split(body, "\n")` (the import kept live so the only change is the
+// splitter) left `go test ./... -count=1` at **21 ok, 0 FAIL** — this test among them.
+// `TestTheRENDERERSOwnSplitterIsWhatPlacesTheToken` below is what actually separates them,
+// by handing `RenderText` a body DIRECTLY.
+//
+// ⚠ SO WHAT IS THIS TEST FOR? The end-to-end path, which the direct-body test deliberately
+// skips: an entry on disk, through `Recall`, renders its bullet openings annotated and its
+// continuation line not. That is a real claim and no other test in this file makes it over
+// a file. It is kept, re-labelled, and NOT counted as splitter coverage.
+//
+// ⚠ THE EXPECTED TOKEN IS SPELLED HERE RATHER THAN BUILT FROM `store.CitationToken`, for
+// the reason `citationTokenRe` is: a format derived from the implementation agrees with it
+// by construction and could not fail when the format moves. Only the 8 hex characters come
+// from the derivation, because they are a `sha256` nobody can spell by hand.
 //
 // Measured RED at `d7e1fec8`: at base no token is emitted, so the expected bytes carry two
 // tokens that are simply absent. GREEN at HEAD.
@@ -362,8 +409,7 @@ func TestTheTokenLandsOnTheLineTheSPLITTERSaysItDoes(t *testing.T) {
 	const body = "- a\rb\n- c"
 	ids := store.CitationIDsByStartLine(body)
 	if len(ids) != 2 {
-		t.Fatalf("the body parsed to %d bullets, want 2 — this case cannot see a splitter "+
-			"difference otherwise: %v", len(ids), ids)
+		t.Fatalf("the body parsed to %d bullets, want 2: %v", len(ids), ids)
 	}
 	if _, ok := ids[2]; !ok {
 		t.Fatalf("no bullet starts at body line 2, so `pytext.SplitLines` is not what the "+
@@ -386,14 +432,105 @@ func TestTheTokenLandsOnTheLineTheSPLITTERSaysItDoes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recall: %v", err)
 	}
+
+	// 🔴 THE PREMISE THIS TEST RESTS ON, ASSERTED RATHER THAN ASSUMED — and it is the
+	// retraction above, made mechanical. If `ExtractSections` ever STOPS collapsing the
+	// `\r`, the sentence "this test cannot separate the splitters" becomes false and
+	// somebody has to re-read both comments. Pinning it here is what makes that loud.
+	sections := store.ExtractSections(store.DecodeReplace([]byte(entry)), SurfacedHeadings)
+	extracted := sections[store.NuanceHeading]
+	if strings.Contains(extracted, "\r") {
+		t.Fatalf("`ExtractSections` preserved the lone \\r (%q) — this test's own comment "+
+			"says it does not, and the direct-body test exists because of that. Re-read "+
+			"both.", extracted)
+	}
+
 	got := sectionBodies(rep.RenderText("fixture-host", nil, ""))[store.NuanceHeading]
 	want := []string{
-		"      - a" + store.CitationToken(ids[0]),
+		"      - a [cb:" + ids[0] + "]",
 		"      b",
-		"      - c" + store.CitationToken(ids[2]),
+		"      - c [cb:" + ids[2] + "]",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("the body annotated on the wrong line boundary\n  got\n%s\n  want\n%s",
+			strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// TestTheRENDERERSOwnSplitterIsWhatPlacesTheToken is the guard the comment at `text.go`'s
+// emission loop claims exists: swap that loop's `pytext.SplitLines` for
+// `strings.Split(body, "\n")` and THIS test goes red.
+//
+// 🔴 IT HANDS `RenderText` A BODY DIRECTLY, AND THAT IS THE WHOLE DESIGN RATHER THAN A
+// SHORTCUT. Every other test in this file reaches the renderer through `Recall`, which
+// reaches `ExtractSections`, which splits the FILE and re-joins with "\n" — so a lone `\r`
+// is already gone by the time any splitter runs and the two splitters cannot disagree. The
+// hazard is only reachable where a body arrives WITHOUT that normalisation, which a
+// `RecalledEntry` constructed in-process is. `RecalledEntry.Sections` is an exported
+// `map[string]string` and `RenderText` is a plain method over plain values (see
+// `AGENTS.md`: the renderer is a library, not a handler), so this needs no store, no file
+// and no fixture.
+//
+// 🔴 WHY A LONE `\r`, AND WHAT EACH SPLITTER DOES WITH IT. On `"- a\rb\n- c"`:
+// `pytext.SplitLines` gives `["- a", "b", "- c"]` and `ParseJournalBullets` reports
+// StartLines `[0, 2]`; `strings.Split(body, "\n")` gives `["- a\rb", "- c"]`, so the index
+// 0 entry lands MID-LINE (after `b`) and index 2 does not exist at all. `pytext.SplitLines`
+// breaks on TEN characters and `"\n"` is one of them, which is exactly why every body that
+// has been through `ExtractSections` hides the difference.
+//
+// 🔴 THE MATRIX. RED at `902be517` with the splitter swapped — measured, with the mutation
+// isolated to that one expression (the `pytext` import kept live by a package-level
+// reference, because the loop is its only user and an unused import is a BUILD failure,
+// which is a red for the wrong reason). Under it this test rendered one body line
+// (`"      - a"`) against three expected. GREEN at `902be517` unmodified. ⚠ Against
+// `d7e1fec8` the question does not arise: neither `store.CitationIDsByStartLine` nor
+// `store.CitationToken` exists there, so this file does not compile.
+//
+// ⚠ IT IS A POSITION CLAIM, NOT A HASH CLAIM — the 8 hex come from the derivation under
+// test. What pins the hash is `internal/store/citationid_test.go` against the PYTHON
+// answers; what pins the FORMAT is the literal ` [cb:` spelled below and
+// `TestTheRenderedCitationTokenIsStrippedByTheWritePath`.
+func TestTheRENDERERSOwnSplitterIsWhatPlacesTheToken(t *testing.T) {
+	const body = "- a\rb\n- c"
+	ids := store.CitationIDsByStartLine(body)
+	if len(ids) != 2 {
+		t.Fatalf("the body parsed to %d bullets, want 2 — this case cannot see a splitter "+
+			"difference otherwise: %v", len(ids), ids)
+	}
+	if _, ok := ids[2]; !ok {
+		t.Fatalf("no bullet starts at body line 2, so `pytext.SplitLines` is not what the "+
+			"parser used: %v", ids)
+	}
+	// 🔴 THE POSITIVE CONTROL ON THE FIXTURE, because this whole test is vacuous over a
+	// body the two splitters agree on: they must DISAGREE on these bytes, here, before any
+	// claim about which one the renderer picked means anything.
+	if a, b := pytext.SplitLines(body), strings.Split(body, "\n"); len(a) == len(b) {
+		t.Fatalf("the two splitters agree on %q (%d vs %d lines), so this test cannot see "+
+			"which one the renderer used", body, len(a), len(b))
+	}
+
+	rep := RecallReport{
+		Status: "recalled",
+		Scope:  "alpha-notes",
+		Entries: []RecalledEntry{{
+			Ref:         "gadget-one",
+			Filename:    "gadget-one.md",
+			Sensitivity: "public",
+			// The body as the renderer receives it — NOT through `ExtractSections`.
+			Sections: map[string]string{store.NuanceHeading: body},
+		}},
+		TotalInScope: 1,
+		Limit:        DefaultEntryLimit,
+	}
+	got := sectionBodies(rep.RenderText("fixture-host", nil, ""))[store.NuanceHeading]
+	want := []string{
+		"      - a [cb:" + ids[0] + "]",
+		"      b",
+		"      - c [cb:" + ids[2] + "]",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("the renderer did not split the body with `pytext.SplitLines`, so the "+
+			"index from `CitationIDsByStartLine` named the wrong line\n  got\n%s\n  want\n%s",
 			strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }

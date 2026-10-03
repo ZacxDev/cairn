@@ -2131,6 +2131,30 @@ class JournalBullet:
         not use. A token existing nowhere else in a corpus turns that question into
         a match.
 
+        🔴 AND THAT UNIQUENESS DECAYS, BY THE SAME MECHANISM THAT DISQUALIFIED THE
+        OLD PROXY. Declared here rather than left for a reader to discover, because
+        it is the FOUNDING rationale one paragraph up. `citation_token` is stripped
+        off the END of a submitted line before a bullet's content hash is taken, so a
+        verbatim echo is still recognised as the same bullet; a token quoted INSIDE
+        new prose is not a trailer, is not stripped, and is stored VERBATIM by
+        `server.py`'s `render_bullet`. Measured end to end against those functions:
+        `- 2000-01-02: … [cb:7a54575e]` read, then `building on [cb:7a54575e], …`
+        submitted, stores a bullet whose PROSE carries `[cb:7a54575e]` forever and
+        which on the next read ALSO carries its own id. So:
+
+        * A CONSUMER MUST TAKE THE **LAST** `[cb:…]` ON A LINE. A first-match regexp
+          reads the quoted id — a different bullet's. Both renderers emit the same
+          bytes, so no comparison between them can surface the mistake. Deriving ids
+          from the body with `citation_ids_by_start_line` avoids the question
+          entirely, and is what both renderers do.
+
+        * "NOWHERE ELSE IN A CORPUS" IS TRUE UNTIL THE FIRST SUCH WRITE, AND NOT
+          AFTER. A corpus search for a token then cannot tell a USE from a QUOTATION,
+          which is exactly the saturation the 99.3% proxy was rejected for. Nothing
+          here bounds it and nothing is proposed: the mid-prose token is deliberately
+          permanent, because stripping it would make two different bullets hash
+          alike. The honest statement is that the signal degrades with use.
+
         🔴 IT IS NOW PRINTED, AND THE CLOSING CONDITION THAT SAID SO IS MET. This
         docstring read "NOT PRINTED BY ANY SURFACE AT THIS COMMIT" and named the
         condition that would retire that sentence: a
@@ -2141,8 +2165,9 @@ class JournalBullet:
         property is on the read path of every recall and its guards are no longer
         contract pins over a dead payload. ⚠ WHAT IS STILL NOT PRINTED: the
         `report_json` payload carries `sections` as RAW bodies and is deliberately
-        unannotated (its own note says why), and no browser surface reads
-        `start_line`.
+        unannotated, and no browser surface reads `start_line`. (That cross-reference
+        read "its own note says why" and pointed at nothing — `report_json` carried
+        no such note; the note is now written at its `"sections"` key.)
 
         🔴 DERIVED FROM THE BULLET'S OWN BYTES, WHICH IS WHAT MAKES CROSS-LANGUAGE
         AGREEMENT REACHABLE RATHER THAN DISCIPLINED. `sha256` over `text` (the
@@ -2207,10 +2232,18 @@ class JournalBullet:
         🔴 AND THE ID IS **NOT SCOPED**. Two byte-identical bullets in different
         entries, or in different scopes, get the SAME id, deterministically —
         `write.AppendBullet` dedupes within ONE file only, so the corpus does not
-        forbid it. The framing "a token existing nowhere else in a corpus"
-        therefore holds for the PROSE a bullet carries and not for a duplicate of
-        it, and the arithmetic below models RANDOM collisions only; it says nothing
-        about duplicated text, which collides with probability 1.
+        forbid it. The arithmetic below models RANDOM collisions only; it says
+        nothing about duplicated text, which collides with probability 1.
+
+        🔴 AND THE ESCAPE HATCH THIS PARAGRAPH USED TO OFFER IS GONE. It read: the
+        framing "a token existing nowhere else in a corpus" "therefore holds for the
+        PROSE a bullet carries and not for a duplicate of it". That is the one
+        reading the citation echo breaks — a writer who quotes `[cb:…]` INSIDE new
+        prose puts the token in the prose, and nothing strips it there. So the
+        framing holds for NEITHER a duplicate NOR the prose; the decay paragraph
+        above states the honest version and nothing bounds it. Two independent
+        failure modes of one sentence, which is why it is retracted rather than
+        narrowed again.
 
         ⚠ 8 HEX, NOT 4, AND THE REASON IS ARITHMETIC. At 16 bits a 3,129-bullet
         corpus collides with probability ≈1 (birthday: ~50% by ~300 bullets); 32

@@ -135,10 +135,20 @@ type JournalBullet struct {
 	// no token at all. ⚠ THE WRONG SPLITTER IS ALREADY IN THIS TREE:
 	// `internal/ui/render.go`'s `inlineCode` splits its text on "\n". Both
 	// renderers that emit section bodies use `pytext.SplitLines`, which is why the
-	// index aligns
-	// TODAY; it is an alignment, not a property. The fixture case
+	// index aligns TODAY; it is an alignment, not a property.
+	//
+	// 🔴 AND THE FIXTURE CASE DOES NOT CATCH A CONSUMER — THIS COMMENT SAID IT DID,
+	// AND THAT IS RETRACTED RATHER THAN SOFTENED. It read: "the fixture case
 	// `a-NON-newline-line-break-inside-a-bullet` is what catches a consumer that
-	// picks the other one.
+	// picks the other one." That case pins THIS PACKAGE'S OWN StartLines (0 and 2 on
+	// `"- a\rb\n- c\n"`) against the Python answers, so it catches the PARSER
+	// changing splitter. It never runs a consumer. Measured at `902be517`: swapping
+	// `internal/report`'s emission splitter to `strings.Split(body, "\n")` left
+	// `go test ./... -count=1` at 21 ok, 0 FAIL — that fixture replay included.
+	// What catches a consumer is
+	// `report.TestTheRENDERERSOwnSplitterIsWhatPlacesTheToken`, which hands
+	// `RenderText` a body directly; a body that arrived through `ExtractSections`
+	// cannot see the difference, because that function re-joins with "\n".
 	StartLine int
 }
 
@@ -152,6 +162,28 @@ type JournalBullet struct {
 // 451/454 = 99.3% and measures COMPLIANCE, not use. A token that exists nowhere else in a
 // corpus turns that question into a match.
 //
+// 🔴 AND THAT UNIQUENESS DECAYS, BY THE SAME MECHANISM THAT DISQUALIFIED THE OLD PROXY.
+// Declared here rather than left for a reader to discover, because it is the FOUNDING
+// rationale one paragraph up. [CitationToken] is stripped off the END of a submitted line
+// before `write.ContentHash` is taken, so a verbatim echo is still recognised as the same
+// bullet; a token quoted INSIDE new prose is not a trailer, is not stripped, and is stored
+// VERBATIM by `write.RenderBullet` / the oracle's `render_bullet`. Measured end to end
+// against the oracle's own functions: `- 2000-01-02: … [cb:7a54575e]` read, then
+// `building on [cb:7a54575e], …` submitted, stores a bullet whose PROSE carries
+// `[cb:7a54575e]` forever and which on the next read ALSO carries its own id. So:
+//
+//   - A CONSUMER MUST TAKE THE **LAST** `[cb:…]` ON A LINE. A first-match regexp reads the
+//     quoted id — a different bullet's. Both renderers emit the same bytes, so no
+//     comparison between them can surface the mistake. Deriving ids from the body with
+//     [CitationIDsByStartLine] avoids the question entirely, and is what both renderers do.
+//
+//   - "NOWHERE ELSE IN A CORPUS" IS TRUE UNTIL THE FIRST SUCH WRITE, AND NOT AFTER. A
+//     corpus search for a token then cannot tell a USE from a QUOTATION, which is exactly
+//     the saturation the 99.3% proxy was rejected for. Nothing here bounds it and nothing
+//     is proposed: `write.TestACitationTokenInProseIsNotStripped` makes the mid-prose token
+//     deliberately permanent, because stripping it would make two different bullets hash
+//     alike. The honest statement is that the signal degrades with use.
+//
 // 🔴 IT IS NOW PRINTED, AND THE CLOSING CONDITION THAT SAID SO IS MET. This comment read
 // "NOT PRINTED BY ANY SURFACE AT THIS COMMIT" and named the condition that would retire
 // that sentence: an `internal/report/testdata/reader_fixtures.json` row carrying `[cb:`.
@@ -160,8 +192,10 @@ type JournalBullet struct {
 // `lib/subsystem_recall.py`'s `render_text`, which is also the oracle pod's — so this
 // method is on the read path of every recall and its guards are no longer contract pins
 // over a dead payload. ⚠ WHAT IS STILL NOT PRINTED: the oracle's `--json` payload carries
-// `sections` as RAW bodies and is deliberately unannotated (`report_json`'s own note), and
-// no browser surface reads `StartLine`.
+// `sections` as RAW bodies and is deliberately unannotated, and no browser surface reads
+// `StartLine`. (That cross-reference read "`report_json`'s own note" and pointed at
+// nothing — the function carried no such note; it is now written at its `"sections"` key
+// in `lib/subsystem_recall.py`.)
 //
 // 🔴 DERIVED FROM THE BULLET'S OWN BYTES, WHICH IS WHAT MAKES CROSS-LANGUAGE AGREEMENT
 // REACHABLE RATHER THAN DISCIPLINED. `sha256` over `Text()` — `Lines` joined with "\n"
@@ -214,10 +248,18 @@ type JournalBullet struct {
 //
 // 🔴 AND THE ID IS **NOT SCOPED**. Two byte-identical bullets in different entries, or
 // in different scopes, get the SAME id, deterministically — `write.AppendBullet` dedupes
-// within ONE file only, so the corpus does not forbid it. The framing "a token that
-// exists nowhere else in a corpus" therefore holds for the PROSE a bullet carries and
-// not for a duplicate of it, and the arithmetic below models RANDOM collisions only; it
-// says nothing about duplicated text, which collides with probability 1.
+// within ONE file only, so the corpus does not forbid it. The arithmetic below models
+// RANDOM collisions only; it says nothing about duplicated text, which collides with
+// probability 1.
+//
+// 🔴 AND THE ESCAPE HATCH THIS PARAGRAPH USED TO OFFER IS GONE. It read: the framing "a
+// token that exists nowhere else in a corpus" "therefore holds for the PROSE a bullet
+// carries and not for a duplicate of it". That is the one reading the citation echo
+// breaks — a writer who quotes `[cb:…]` INSIDE new prose puts the token in the prose, and
+// nothing strips it there. So the framing holds for NEITHER a duplicate NOR the prose;
+// the decay paragraph above the derivation states the honest version and nothing bounds
+// it. Two independent failure modes of one sentence, which is why it is retracted rather
+// than narrowed again.
 //
 // ⚠ 8 HEX, NOT 4, AND THE REASON IS ARITHMETIC. At 16 bits a 3,129-bullet corpus
 // collides with probability ≈1 (birthday: ~50% by ~300 bullets); 32 bits puts it near

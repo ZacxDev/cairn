@@ -19,9 +19,17 @@ are an advisory `--validate` finding at exit 0; under a reconstruction they woul
 SILENT DELETION on the read surface, and the measured history is 7 versions across two
 entries carrying dropped lines for 2–8 days with that validator green the whole time.
 
-So a test that only checks ids were appended would pass the dangerous implementation too.
-`test_the_body_keeps_every_original_byte_even_where_the_parser_mishandles_it` is the one
-that does not.
+So a test that only checks ids were appended would pass the dangerous implementation too —
+and that is TRUE OF A SECTION, not of either test here. Measured at `902be517` with the
+reconstruction installed in both languages: BOTH
+`test_every_surfaced_sections_bullet_openings_carry_a_citation_id` and
+`test_the_body_keeps_every_original_byte_even_where_the_parser_mishandles_it` fail. What
+passes it is the Go twin's `## Nuance / work-history` and `## Requirements` SUBTESTS, whose
+bodies are entirely absorbed into bullet groups and therefore reproduce line for line. So
+the sentence above is a claim about COVERAGE SCOPE: a world of nothing but clean bullets
+cannot see the reconstruction, which is why both worlds here carry a prose-only section and
+a section with pre-bullet prose. An earlier draft of this paragraph named the id test as the
+one that would pass; that was measured false and is retracted.
 
 ## What it structurally cannot see
 
@@ -51,6 +59,7 @@ import subsystem_recall as rc  # noqa: E402
 from subsystem_resolver import (  # noqa: E402
     citation_ids_by_start_line,
     citation_token,
+    extract_sections,
     parse_journal_bullets,
 )
 
@@ -249,18 +258,47 @@ def test_every_surfaced_sections_bullet_openings_carry_a_citation_id(tmp_path: P
 def test_the_body_keeps_every_original_byte_even_where_the_parser_mishandles_it(
     tmp_path: Path,
 ) -> None:
-    """THE safety property the whole design exists for, and the one test that tells the
-    shipped implementation from the ruled-out one.
+    """THE safety property the whole design exists for: the body survives annotation BYTE
+    FOR BYTE AND IN ORDER.
 
-    🔴 THE MATRIX, AND IT IS NOT THE USUAL ONE. This guard is GREEN at `d7e1fec8` — at base
-    no token is appended, so every body line renders as exactly `"      " + line` and the
-    assertion holds vacuously. So against BASE it is an INVARIANT guard and must not be
-    counted as regression coverage. It was watched RED against the RULED-OUT
-    IMPLEMENTATION: with `render_text`'s loop replaced by
-    `for b in parse_journal_bullets(body): for line in b.lines: …`, it fails on the
-    pre-bullet prose and on the absorbed indented dash while
-    `test_every_surfaced_sections_bullet_openings_carry_a_citation_id` stays GREEN — which
-    is exactly why a guard that only checks ids were appended is not enough.
+    ⚠ IT IS NOT "THE ONE TEST THAT TELLS THE SHIPPED IMPLEMENTATION FROM THE RULED-OUT
+    ONE", WHICH IS WHAT THIS LINE USED TO SAY. Measured: the id test above fails under the
+    reconstruction too — see the matrix. What is unique here is the CLAIM, not the kill:
+    this is the only test asserting the rendered body reconstructs to the original bytes in
+    order, which a line COUNT (what the id test checks first) cannot do.
+
+    🔴 THE MATRIX, RE-DERIVED — AND BOTH HALVES OF THE EARLIER ONE WERE WRONG. It said this
+    guard is "GREEN at `d7e1fec8` … an INVARIANT guard [that] must not be counted as
+    regression coverage", and that the ruled-out implementation reds it while
+    `test_every_surfaced_sections_bullet_openings_carry_a_citation_id` "stays GREEN".
+    Measured at `902be517`:
+
+    * IT IS REGRESSION COVERAGE, NOT AN INVARIANT GUARD. With the emission loop reverted
+      to base's shape — the narrowest expression — this test FAILS at its token-count
+      floor (`tests/test_citation_render.py`'s last assertion): "this world must render 3
+      tokens …, got 0". Its own anti-vacuity assertion is what makes it red at base, so
+      the verbatim-body claim never gets to hold vacuously. ⚠ AND AT A LITERAL `d7e1fec8`
+      CHECKOUT THE CLAIM IS NOT REACHABLE AT ALL: neither `citation_token` nor
+      `citation_ids_by_start_line` exists there, so this module's imports fail. The
+      measurement above is the only reading of "at base" that has an answer.
+
+    * THE ID TEST DOES NOT STAY GREEN UNDER THE RECONSTRUCTION. With `render_text`'s loop
+      replaced by `for b in parse_journal_bullets(body): for line in b.lines: …`, BOTH
+      tests fail — each with `KeyError: '## What it is'`, the id test at its `bodies`
+      lookup and this one at its own. A prose-only section emits NO body lines under the
+      reconstruction, so `_section_bodies` never creates that key. (The Go twins report the
+      same defect as a length mismatch rather than a KeyError, because a nil Go map yields
+      an empty slice instead of raising.)
+
+    ⚠ SO WHAT IS LEFT OF "A TEST THAT ONLY CHECKS IDS WERE APPENDED WOULD PASS THE
+    DANGEROUS IMPLEMENTATION TOO"? It holds, and the measurement is its own example — but
+    the weaker guard is a SUBTEST, not this file's id test. In the Go twin, which runs its
+    four sections as subtests, `## Nuance / work-history` and `## Requirements` both PASSED
+    under the reconstruction: those two bodies are entirely absorbed into bullet groups, so
+    the reconstruction reproduces them line for line and the ids land correctly. A test
+    scoped to a section like that, asserting only that bullet openings carry ids, passes
+    the implementation this design rules out — which is why the worlds here carry a
+    prose-only section and a pre-bullet-prose section at all.
 
     ⚠ IT IS A CLAIM ABOUT CONTENT, NOT ABOUT IDS. A body line carrying no token still has
     to be there in full. A MISSING ID IS A DEGRADATION IN COVERAGE AND NEVER IN CONTENT; a
@@ -328,16 +366,30 @@ def test_the_body_keeps_every_original_byte_even_where_the_parser_mishandles_it(
 
 
 def test_the_token_lands_on_the_line_the_splitter_says_it_does(tmp_path: Path) -> None:
-    """REGRESSION guard against the one hazard `JournalBullet.start_line` names, and that
-    already has a wrong-splitter consumer in this tree (`internal/ui/render.go`'s
-    `inlineCode` splits on `"\\n"`).
+    """Drives a lone `\\r` through the WHOLE read path — an entry file on disk, `recall`,
+    `render_text` — and pins the rendered body as whole normalised lines.
 
-    🔴 A LONE `\\r` IS WHAT SEPARATES THE TWO SPLITTERS, AND NOTHING ELSE IN THE SUITE
-    SENDS ONE THROUGH A RENDERED BODY. On `"- a\\rb\\n- c"`, `splitlines()` gives
-    `['- a', 'b', '- c']` with start_lines `[0, 2]`; `split("\\n")` gives `['- a\\rb',
-    '- c']`, so index 0 would annotate MID-LINE and index 2 would not exist. The assertion
-    is the whole normalised body, so a mutant swapping the splitter cannot pass by
-    spelling a substring.
+    🔴 AND IT CANNOT SEPARATE THE TWO SPLITTERS. AN EARLIER DRAFT OF THIS DOCSTRING CLAIMED
+    IT COULD, AND THAT CLAIM WAS MEASURED FALSE RATHER THAN ARGUED AWAY. It read "a lone
+    `\\r` is what separates the two splitters … a mutant swapping the splitter cannot pass
+    by spelling a substring". The `\\r` never reaches a renderer: `extract_sections` builds
+    a section body by splitting the FILE and re-joining with `"\\n"`, so every other break
+    character is gone before `render_text` sees a body. Measured on the entry this test
+    writes — the body arrives as `'- a\\nb\\n- c'`, for which `splitlines()` and
+    `split("\\n")` return the SAME list. Mutation-proven at `902be517`: swapping
+    `render_text`'s emission splitter to `body.split("\\n")` left
+    `pytest tests/test_citation_render.py tests/test_citation_ids.py` at 17 passed, 0
+    failed — this test among them. `test_the_RENDERERS_own_splitter_is_what_places_the_token`
+    below is what actually separates them, by handing `render_text` a body DIRECTLY.
+
+    ⚠ SO WHAT IS THIS TEST FOR? The end-to-end path, which the direct-body test deliberately
+    skips: an entry on disk, through `recall`, renders its bullet openings annotated and its
+    continuation line not. It is kept, re-labelled, and NOT counted as splitter coverage.
+
+    ⚠ THE EXPECTED TOKEN IS SPELLED HERE RATHER THAN BUILT FROM `citation_token`, for the
+    reason `TOKEN_RE` is: a format derived from the implementation agrees with it by
+    construction and could not fail when the format moves. Only the 8 hex characters come
+    from the derivation, because they are a `sha256` nobody can spell by hand.
 
     Watched RED at `d7e1fec8`: at base no token is emitted, so the expected bytes carry
     two tokens that are simply absent.
@@ -347,31 +399,115 @@ def test_the_token_lands_on_the_line_the_splitter_says_it_does(tmp_path: Path) -
     assert len(ids) == 2, f"the body parsed to {len(ids)} bullets, want 2: {ids}"
     assert 2 in ids, f"no bullet starts at body line 2, so `splitlines()` is not what the parser used: {ids}"
 
-    store = _world(
-        tmp_path,
-        "\n".join(
-            [
-                "---",
-                "service: gadget-one",
-                f"scope: {SCOPE}",
-                "sensitivity: public",
-                "---",
-                "",
-                "## Nuance / work-history",
-                "",
-                body,
-                "",
-            ]
-        ),
+    entry = "\n".join(
+        [
+            "---",
+            "service: gadget-one",
+            f"scope: {SCOPE}",
+            "sensitivity: public",
+            "---",
+            "",
+            "## Nuance / work-history",
+            "",
+            body,
+            "",
+        ]
     )
+    store = _world(tmp_path, entry)
+
+    # 🔴 THE PREMISE THIS TEST RESTS ON, ASSERTED RATHER THAN ASSUMED — the retraction
+    # above, made mechanical. If `extract_sections` ever STOPS collapsing the `\r`, the
+    # sentence "this test cannot separate the splitters" becomes false and somebody has to
+    # re-read both docstrings.
+    extracted = extract_sections(entry, rc.SURFACED_HEADINGS)[rc.NUANCE_HEADING]
+    assert "\r" not in extracted, (
+        f"`extract_sections` preserved the lone \\r ({extracted!r}) — this docstring says "
+        "it does not, and the direct-body test exists because of that. Re-read both."
+    )
+
     report = rc.recall(store, SCOPE, mode="full")
     got = _section_bodies(rc.render_text(report))[rc.NUANCE_HEADING]
     want = [
-        "      - a" + citation_token(ids[0]),
+        f"      - a [cb:{ids[0]}]",
         "      b",
-        "      - c" + citation_token(ids[2]),
+        f"      - c [cb:{ids[2]}]",
     ]
     assert got == want, "the body annotated on the wrong line boundary"
+
+
+def test_the_RENDERERS_own_splitter_is_what_places_the_token() -> None:
+    """The guard `render_text`'s emission comment claims exists: swap that loop's
+    `splitlines()` for `body.split("\\n")` and THIS test goes red.
+
+    🔴 IT HANDS `render_text` A BODY DIRECTLY, AND THAT IS THE WHOLE DESIGN RATHER THAN A
+    SHORTCUT. Every other test in this file reaches the renderer through `recall`, which
+    reaches `extract_sections`, which splits the FILE and re-joins with `"\\n"` — so a lone
+    `\\r` is already gone by the time any splitter runs and the two splitters cannot
+    disagree. The hazard is only reachable where a body arrives WITHOUT that normalisation,
+    which a `RecalledEntry` constructed in-process is. So this needs no store, no file and
+    no `tmp_path`.
+
+    🔴 WHY A LONE `\\r`, AND WHAT EACH SPLITTER DOES WITH IT. On `'- a\\rb\\n- c'`:
+    `splitlines()` gives `['- a', 'b', '- c']` and `parse_journal_bullets` reports
+    start_lines `[0, 2]`; `split("\\n")` gives `['- a\\rb', '- c']`, so the index-0 entry
+    lands MID-LINE (after `b`) and index 2 does not exist at all. `splitlines()` breaks on
+    TEN characters and `"\\n"` is one of them, which is exactly why every body that has
+    been through `extract_sections` hides the difference.
+
+    🔴 THE MATRIX. RED at `902be517` with the splitter swapped — measured, with the
+    mutation isolated to that one expression. GREEN at `902be517` unmodified. ⚠ Against
+    `d7e1fec8` the question does not arise: neither `citation_token` nor
+    `citation_ids_by_start_line` exists there, so this module's imports fail.
+
+    ⚠ IT IS A POSITION CLAIM, NOT A HASH CLAIM — the 8 hex come from the derivation under
+    test. What pins the hash is `tests/test_citation_ids.py` against the GO answers; what
+    pins the FORMAT is the literal ` [cb:` spelled below and
+    `test_the_rendered_citation_token_is_stripped_by_the_PODS_write_path`.
+
+    ⚠ AND IT READS THE **PYTHON** RENDERER ONLY. The Go twin is
+    `report.TestTheRENDERERSOwnSplitterIsWhatPlacesTheToken`; `lib/` cannot import
+    `internal/`, so neither can stand in for the other.
+    """
+    body = "- a\rb\n- c"
+    ids = citation_ids_by_start_line(body)
+    assert len(ids) == 2, (
+        f"the body parsed to {len(ids)} bullets, want 2 — this case cannot see a splitter "
+        f"difference otherwise: {ids}"
+    )
+    assert 2 in ids, f"no bullet starts at body line 2: {ids}"
+    # 🔴 THE POSITIVE CONTROL ON THE FIXTURE, because this whole test is vacuous over a
+    # body the two splitters agree on: they must DISAGREE on these bytes, here, before any
+    # claim about which one the renderer picked means anything.
+    assert len(body.splitlines()) != len(body.split("\n")), (
+        f"the two splitters agree on {body!r}, so this test cannot see which one the "
+        "renderer used"
+    )
+
+    report = rc.RecallReport(
+        status="recalled",
+        scope=SCOPE,
+        store_root="/store",
+        entries=(
+            rc.RecalledEntry(
+                ref="gadget-one",
+                filename="gadget-one.md",
+                sensitivity="public",
+                # The body as the renderer receives it — NOT through `extract_sections`.
+                sections={rc.NUANCE_HEADING: body},
+            ),
+        ),
+        total_in_scope=1,
+    )
+    got = _section_bodies(rc.render_text(report))[rc.NUANCE_HEADING]
+    want = [
+        f"      - a [cb:{ids[0]}]",
+        "      b",
+        f"      - c [cb:{ids[2]}]",
+    ]
+    assert got == want, (
+        "the renderer did not split the body with `splitlines()`, so the index from "
+        f"`citation_ids_by_start_line` named the wrong line\n  got  {got}\n  want {want}"
+    )
 
 
 def test_the_rendered_citation_token_is_stripped_by_the_PODS_write_path() -> None:
@@ -441,12 +577,19 @@ def test_the_rendered_citation_token_is_stripped_by_the_PODS_write_path() -> Non
     # trailer and must stay in the hash. Without this, a pattern widened to
     # `\\[cb:[^]]*\\]` — which would swallow arbitrary bracketed prose — passes everything
     # above.
+    #
+    # ⚠ TWO SPELLINGS, NOT SIX, BECAUSE FOUR WERE ALREADY COVERED TWICE OVER. This loop
+    # read six; `tests/test_bullet_trailer_strip.py`'s named near-miss test asserts the
+    # upper-case, seven-hex, nine-hex and non-hex classes over the SAME function, and
+    # `TRAILER_STRIP_AXIS_PIECES` sweeps the whole near-miss class over 84,210 inputs with
+    # a cross-language digest — including `[cb:deadbee]`, `[cb:deadbeeff]`,
+    # `[cb:DEADBEEF]`, an unclosed `[cb:deadbeef` and a bare `cb:deadbeef]`. The two
+    # below are the only spellings in the original six that NO other test sends. What
+    # earns this block its place is not the spellings at all — it is that `stored` above
+    # comes from the real derivation and the real format rather than a hand-spelled
+    # literal, and that is untouched by the deletion.
     for bad in (
-        " [cb:deadbeef9]",  # nine hex
-        " [cb:deadbee]",  # seven hex
-        " [cb:DEADBEEF]",  # upper case
         " [cb: deadbeef]",  # a space inside
-        " [cb:deadbeeg]",  # not hex
         " (cb:deadbeef)",  # the wrong brackets
     ):
         assert api.bullet_content([stored + bad]) != api.bullet_content([stored]), (
@@ -484,7 +627,10 @@ def test_the_two_renderers_spell_the_token_identically() -> None:
         "the comparison rather than loosening the pattern"
     )
     # The POSITIVE CONTROL on that pattern: it must be able to MISS. Without this, a typo
-    # in the expression above makes the assertion unfalsifiable.
+    # in the expression above makes the assertion unfalsifiable. ⚠ KEPT RATHER THAN DELETED
+    # AS CEREMONY: this assertion's instrument is a hand-written regex over SOURCE TEXT,
+    # which is the one class in this tree where a wrong pattern reports a confident PASS
+    # and no other gate notices.
     assert not re.search(
         r'^func CitationToken\(id string\) string \{ return " \[cb\]" \+ id \+ "\]" \}$',
         go,

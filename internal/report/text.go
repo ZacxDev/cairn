@@ -633,7 +633,20 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 			// 🔴 `pytext.SplitLines` ON BOTH SIDES OF THE LOOKUP, WHICH IS WHAT MAKES THE
 			// INDEX MEAN ANYTHING. `StartLine` is an index into exactly this split, which
 			// breaks on TEN characters; `strings.Split(body, "\n")` would place tokens
-			// mid-line with no error. The ONE spelling of the splitter is the guard.
+			// mid-line with no error.
+			//
+			// 🔴 AND THE GUARD IS A TEST, NOT THE SPELLING. An earlier draft of this comment
+			// ended "the ONE spelling of the splitter is the guard", which is not a guard at
+			// all — it is a description of the code it sits in. Measured at `902be517`:
+			// swapping this expression for `strings.Split(body, "\n")`, with the `pytext`
+			// import kept live so nothing else moved, left `go test ./... -count=1` at 21
+			// ok, 0 FAIL. Every body reaching here through `Recall` has been through
+			// `ExtractSections`, which splits the FILE and re-joins with "\n", so no other
+			// break character survives and the two splitters cannot disagree on it. What
+			// catches the swap is `report.TestTheRENDERERSOwnSplitterIsWhatPlacesTheToken`,
+			// which hands this method a body DIRECTLY — and that is the shape the hazard is
+			// reachable in, which `internal/ui/render.go`'s `inlineCode` (splitting on "\n")
+			// is the standing example of.
 			ids := store.CitationIDsByStartLine(body)
 			for i, line := range pytext.SplitLines(body) {
 				if id, annotated := ids[i]; annotated {

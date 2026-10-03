@@ -3165,8 +3165,20 @@ def render_text(
                 # 🔴 `splitlines()` ON BOTH SIDES OF THE LOOKUP, WHICH IS WHAT MAKES
                 # THE INDEX MEAN ANYTHING. `start_line` is an index into exactly this
                 # split, which breaks on TEN characters; `body.split("\n")` would
-                # place tokens mid-line with no error. The ONE spelling of the
-                # splitter is the guard.
+                # place tokens mid-line with no error.
+                #
+                # 🔴 AND THE GUARD IS A TEST, NOT THE SPELLING. An earlier draft of
+                # this comment ended "the ONE spelling of the splitter is the guard",
+                # which is not a guard — it describes the code it sits in. Measured at
+                # `902be517`: swapping this expression for `body.split("\n")` left
+                # `pytest tests/test_citation_render.py tests/test_citation_ids.py`
+                # at 17 passed, 0 failed. Every body reaching here through `recall`
+                # has been through `extract_sections`, which splits the FILE and
+                # re-joins with "\n", so no other break character survives and the
+                # two splitters cannot disagree on it. What catches the swap is
+                # `test_the_RENDERERS_own_splitter_is_what_places_the_token`, which
+                # hands `render_text` a body DIRECTLY — the shape the hazard is
+                # reachable in.
                 ids = citation_ids_by_start_line(body)
                 for i, line in enumerate(body.splitlines()):
                     if i in ids:
@@ -3330,6 +3342,23 @@ def report_json(report: RecallReport) -> dict:
                 "file": e.filename,
                 "sensitivity": e.sensitivity,
                 "declared_sensitivity": e.declared_sensitivity,
+                # 🔴 RAW BODIES — AND SO THE `[cb:xxxxxxxx]` CITATION TOKEN THE TEXT
+                # SURFACE APPENDS IS NOT HERE. `render_text` annotates every
+                # bullet-opening line in a surfaced section; this payload hands back
+                # `e.sections` exactly as `extract_sections` returned it, so the two
+                # payloads of one read disagree on those 14 bytes per bullet. That is
+                # the design and not an omission: a JSON consumer holding the body can
+                # derive the ids itself with `citation_ids_by_start_line`, which is the
+                # same function the renderer uses, and baking them in would make this
+                # payload a second place the format is spelled.
+                #
+                # ⚠ THE NOTE EXISTS HERE BECAUSE TWO OTHER PLACES CLAIM IT DOES.
+                # `JournalBullet.citation_id` and `internal/store`'s `CitationID` both
+                # say the `--json` payload is "deliberately unannotated (`report_json`'s
+                # own note says why)". That was a cross-reference to nothing when it was
+                # written — the only note near here explained why `listing` omits
+                # `sections`, which is a different claim. A pointer at nothing is where
+                # a reader stops looking, so the note is now real.
                 "sections": dict(e.sections),
                 "missing_sections": list(e.missing_sections),
                 "is_bare": e.is_bare,

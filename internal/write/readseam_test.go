@@ -82,12 +82,19 @@ func TestTheRenderedCitationTokenIsStrippedByTheWritePath(t *testing.T) {
 	// a trailer, and must stay in the hash. Without this, a pattern widened to `\[cb:[^]]*\]`
 	// — which would swallow arbitrary prose a writer put in brackets — passes everything
 	// above.
+	//
+	// ⚠ TWO SPELLINGS, NOT SIX, BECAUSE FOUR WERE ALREADY COVERED TWICE OVER. This loop read
+	// six; `TestAMalformedCitationTokenIsNotStripped` in this package asserts the
+	// upper-case, seven-hex, nine-hex and non-hex classes over the SAME `BulletContent`, and
+	// `trailerdigest_test.go`'s axis sweeps the whole near-miss class over 84,210 inputs with
+	// a digest pinned equal to the Python half — including `[cb:deadbee]`, `[cb:deadbeeff]`,
+	// `[cb:DEADBEEF]`, an unclosed `[cb:deadbeef` and a bare `cb:deadbeef]`. The two below
+	// are the only spellings in the original six that NO other test sends. What earns this
+	// block its place is not the spellings at all — it is that `stored` and `id` above come
+	// from the real derivation and the real format rather than hand-spelled literals, and
+	// that is untouched by the deletion.
 	for _, bad := range []string{
-		" [cb:deadbeef9]", // nine hex
-		" [cb:deadbee]",   // seven hex
-		" [cb:DEADBEEF]",  // upper case
 		" [cb: deadbeef]", // a space inside
-		" [cb:deadbeeg]",  // not hex
 		" (cb:deadbeef)",  // the wrong brackets
 	} {
 		if BulletContent([]string{stored + bad}) == BulletContent([]string{stored}) {
@@ -97,8 +104,8 @@ func TestTheRenderedCitationTokenIsStrippedByTheWritePath(t *testing.T) {
 	}
 
 	// And the format itself, pinned as a WHOLE NORMALISED STRING rather than by a property,
-	// because a property check ("it contains the id") is satisfied by every one of the six
-	// malformed spellings above.
+	// because a property check ("it contains the id") is satisfied by both malformed
+	// spellings above and by every one the two batteries named there sweep.
 	if store.CitationToken("deadbeef") != " [cb:deadbeef]" {
 		t.Errorf("the rendered token spelling moved: %q", store.CitationToken("deadbeef"))
 	}

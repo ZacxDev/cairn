@@ -646,10 +646,41 @@ before a section's first bullet all print in full with no token. **A missing id 
 never evidence that a bullet was not printed** — the body is still emitted line for
 line, verbatim.
 
-⚠ **If you echo a recalled bullet back into a write**, nothing changes: both pods
-strip the token (and the attribution, in any order) before taking a bullet's content
-hash, so a re-POST of an annotated line is still recognised as the same bullet. The
-token does count against the 2,000-character submitted-text cap.
+⚠ **If you echo a recalled bullet VERBATIM back into a write**, nothing changes: both
+pods strip the token (and the attribution, in any order) before taking a bullet's
+content hash, so a re-POST of an annotated line is still recognised as the same bullet
+and answers `duplicate` without writing. The token does count against the
+2,000-character submitted-text cap.
+
+🔴 **But that is a claim about the HASH, not about the bytes on disk — and a token you
+quote INSIDE new prose is PERMANENT.** The strip only reads a *trailing* token; a
+`[cb:…]` in mid-sentence is prose, and the write path stores the submitted text
+verbatim. Measured end to end against the pod's own functions:
+
+```
+READ 1   - 2000-01-02: the retry budget is still unbounded. [cb:7a54575e]
+SUBMIT   building on [cb:7a54575e], the budget is now capped at 5 retries.
+STORED   - 2000-01-05: building on [cb:7a54575e], the budget is now capped … [cairn: …]
+READ 2   - 2000-01-05: building on [cb:7a54575e], … [cairn: …] [cb:58ff27d9]
+```
+
+Two consequences, and neither is hypothetical once anyone cites a bullet this way:
+
+1. **A consumer parsing the annotation must take the LAST `[cb:…]` on a line.** A line
+   that already contains a token renders with two, and a first-match regex reads the
+   quoted one — the id of a *different* bullet. Both renderers produce identical bytes
+   here, so nothing downstream can detect the difference by comparing the two; the rule
+   is the contract. Prefer deriving ids from the body with
+   `CitationIDsByStartLine` / `citation_ids_by_start_line` over scraping rendered text
+   at all.
+2. **"A token that exists nowhere else in a corpus" stops holding after the first such
+   write.** That sentence is this feature's founding rationale — it is what makes "was
+   this bullet used?" a *match* rather than a guess — and a citation written into stored
+   prose puts the token in the corpus permanently, where a later search cannot tell a
+   use from a quotation. This is the same saturation-by-echo that disqualified the
+   previous proxy at 451/454 = 99.3%, arriving by a slower route. The feature is
+   therefore **weaker than the rationale above states, by an amount that grows with
+   use**, and nothing in either implementation bounds it.
 
 ### A sync that is already current does not re-download
 

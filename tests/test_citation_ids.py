@@ -290,6 +290,17 @@ def test_the_id_is_NOT_SCOPED():
     else in a corpus" does not hold for duplicated TEXT: two byte-identical bullets in
     different entries or scopes collide deterministically, because `append_bullet`
     dedupes within ONE file only. Pinned so the docstring's correction is checkable.
+
+    ⚠ AND THIS IS ONE OF **TWO** FAILURE MODES OF THAT FRAMING — NAMED HERE BECAUSE THIS
+    TEST COVERS ONLY THIS ONE, AND A READER WHO FINDS IT WILL OTHERWISE READ IT AS THE
+    WHOLE CORRECTION. The second is the CITATION ECHO: a writer who quotes `[cb:…]` inside
+    new prose has that token stored verbatim (only a TRAILING token is stripped), so the
+    token enters the corpus permanently and a later search cannot tell a use from a
+    quotation. It is declared at `citation_id`'s docstring and in `README.md`; it is NOT
+    pinned by a test anywhere, deliberately — the consequence is a rule for a DOWNSTREAM
+    consumer ("take the LAST `[cb:…]` on a line"), not behaviour this tree implements, and
+    the one piece of behaviour it rests on is already pinned by
+    `internal/write`'s `TestACitationTokenInProseIsNotStripped`.
     """
     a = parse_journal_bullets("## one entry\n- one\n")[0].citation_id
     b = parse_journal_bullets("- one\n")[0].citation_id
