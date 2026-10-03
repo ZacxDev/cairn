@@ -172,10 +172,21 @@ type JournalBullet struct {
 // `building on [cb:7a54575e], …` submitted, stores a bullet whose PROSE carries
 // `[cb:7a54575e]` forever and which on the next read ALSO carries its own id. So:
 //
-//   - A CONSUMER MUST TAKE THE **LAST** `[cb:…]` ON A LINE. A first-match regexp reads the
-//     quoted id — a different bullet's. Both renderers emit the same bytes, so no
-//     comparison between them can surface the mistake. Deriving ids from the body with
-//     [CitationIDsByStartLine] avoids the question entirely, and is what both renderers do.
+//   - A CONSUMER MUST TAKE THE **LAST** `[cb:…]` ON A LINE, AND MUST NOT READ A TOKEN'S
+//     PRESENCE AS EVIDENCE THE LINE OPENS A BULLET. A first-match regexp reads the
+//     quoted id — a different bullet's. 🔴 But a LAST-match regexp is still wrong on the
+//     mirror case, which the first draft of this rule omitted: a quoted token can end a
+//     line that carries NO id — prose, a continuation line, an indented dash, a fenced
+//     sample — and this function returns nothing for every one of those. Measured on two
+//     different bodies: a strict last-match scraper matches this function on EVERY annotated
+//     line and misattributes exactly ONE LINE PER UNANNOTATED SHAPE, i.e. four, each to a
+//     different bullet's id. 🔴 The four is STRUCTURAL (there are four such shapes); the
+//     denominator is a property of the body, so quote the shapes and not a ratio.
+//     Both renderers emit the same bytes, so no comparison between them can surface it.
+//     🔴 Which is the argument against scraping at all: [CitationIDsByStartLine] answers
+//     for exactly the lines that HAVE an id, so the question cannot arise. A scraper has
+//     to re-decide what opens a bullet, and that is the decision the `dropped-lines`
+//     defect above is about.
 //
 //   - "NOWHERE ELSE IN A CORPUS" IS TRUE UNTIL THE FIRST SUCH WRITE, AND NOT AFTER. A
 //     corpus search for a token then cannot tell a USE from a QUOTATION, which is exactly

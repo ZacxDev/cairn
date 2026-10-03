@@ -666,13 +666,25 @@ READ 2   - 2000-01-05: building on [cb:7a54575e], … [cairn: …] [cb:58ff27d9]
 
 Two consequences, and neither is hypothetical once anyone cites a bullet this way:
 
-1. **A consumer parsing the annotation must take the LAST `[cb:…]` on a line.** A line
-   that already contains a token renders with two, and a first-match regex reads the
-   quoted one — the id of a *different* bullet. Both renderers produce identical bytes
-   here, so nothing downstream can detect the difference by comparing the two; the rule
-   is the contract. Prefer deriving ids from the body with
-   `CitationIDsByStartLine` / `citation_ids_by_start_line` over scraping rendered text
-   at all.
+1. **A consumer parsing the annotation must take the LAST `[cb:…]` on a line — and must
+   NOT read a token's PRESENCE as evidence that the line opens a bullet.** Both halves
+   are needed and the second was missing from the first draft of this rule. A line that
+   already contains a token renders with two, and a first-match regex reads the quoted
+   one — the id of a *different* bullet. But the mirror image is worse, because a
+   last-match regex is still wrong on it: **a quoted token can end a line that carries no
+   id at all** — prose, a wrapped bullet's continuation line, an indented dash, or a
+   fenced sample — and all four of those shapes are enumerated above as unannotated.
+   Measured twice, on two different bodies: a strict last-match scraper agrees with
+   `citation_ids_by_start_line` on **every** annotated line and misattributes **exactly one
+   line per unannotated shape — four of them** — each to a different bullet's id, which is
+   precisely the harm the first half exists to prevent. 🔴 **The four is STRUCTURAL and the
+   denominator is not:** there are four unannotated shapes, so the count is four on a 9-line
+   body and four on a 14-line one. Do not quote a ratio here; quote the shapes. Both renderers produce identical bytes here, so nothing downstream can detect
+   the difference by comparing the two; the rule is the contract.
+   🔴 **Which is why the real advice is not to scrape at all.** Derive ids from the body
+   with `CitationIDsByStartLine` / `citation_ids_by_start_line`, which answers `None` for
+   every unannotated shape by construction. A scraper has to re-decide what opens a
+   bullet, and that decision is the one this repo already records a parser defect in.
 2. **"A token that exists nowhere else in a corpus" stops holding after the first such
    write.** That sentence is this feature's founding rationale — it is what makes "was
    this bullet used?" a *match* rather than a guess — and a citation written into stored
