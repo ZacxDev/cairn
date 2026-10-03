@@ -673,6 +673,21 @@ _ATTRIBUTION_RE = re.compile(
 # day is still recognised as the same CONTENT.
 _BULLET_OPENER_RE = re.compile(r"\A[-*][ \t]+(?:\d{4}-\d{2}-\d{2}:[ \t]+)?")
 
+# The opaque per-bullet token a READ surface prints — `JournalBullet.citation_id`
+# in brackets, 8 lowercase hex. Anchored at end-of-line, the same shape
+# `_ATTRIBUTION_RE` is.
+#
+# 🔴 IT IS STRIPPED BEFORE HASHING BECAUSE AN AGENT ECHOES WHAT IT READ, AND THAT
+# IS MEASURED RATHER THAN FEARED: a downstream consumer's resume flow requires its
+# report to echo the bullets it recalled, which fires on 451 of 454 runs (99.3%).
+# So the text arriving at `POST /bullets` routinely ENDS in whatever the read
+# surface appended. A token left in the hash breaks idempotency in the one
+# direction that destroys nothing and is therefore silent: the re-POST stops
+# matching the bullet already on disk, appends a near-duplicate, and that
+# duplicate carries a `[cb:…]` in its PROSE whose value is not its own id — a
+# citation that resolves to the bullet it was copied from, forever.
+_CITATION_TOKEN_RE = re.compile(r"[ \t]*\[cb:[0-9a-f]{8}\]\Z")
+
 # How much of a bullet's content hash is carried. 16 hex characters is 64 bits —
 # far past any collision an append stream could reach, and short enough to read
 # in an audit line.
@@ -2224,18 +2239,61 @@ def content_hash(text: str) -> str:
     ).hexdigest()[:CONTENT_HASH_CHARS]
 
 
+def _strip_bullet_trailers(s: str) -> str:
+    """Remove every MACHINE-WRITTEN trailer from the end of one collapsed bullet,
+    in ANY ORDER and ANY NUMBER, and nothing else.
+
+    🔴 ORDER-FREE IS THE POINT, AND IT IS WHY THIS IS A LOOP RATHER THAN TWO
+    SEQUENTIAL `sub` CALLS, which are correct for exactly one ordering: with
+    `_ATTRIBUTION_RE` applied first, `… [cairn: a/b] [cb:deadbeef]` leaves the
+    attribution IN — its `\\Z` anchor no longer reaches the end of the line — and
+    the whole trailer enters the hash. Both orders are reachable: the read surface
+    appends the token after a stored line that already ends in an attribution, and
+    `render_bullet` appends an attribution after whatever text the caller sent.
+
+    🔴 ONE RULE, ONE PLACE: `bullet_content` is the only caller, and nothing else
+    here may re-spell "what a trailer is". `internal/write`'s
+    `stripBulletTrailers` is the Go transcription — two spellings only because
+    `lib/` cannot import `internal/`, and `tests/parity/` is what compares them.
+
+    ⚠ IT STRIPS REPEATEDLY, so a line that somehow ends in two attributions loses
+    both. That is a widening over the single-pass version it replaces, it is in
+    the idempotency-preserving direction, and a line carrying two is already a
+    defect somewhere upstream. The loop terminates because every iteration
+    shortens the string.
+    """
+    while True:
+        nxt = _ATTRIBUTION_RE.sub("", s)
+        if nxt != s:
+            s = nxt
+            continue
+        nxt = _CITATION_TOKEN_RE.sub("", s)
+        if nxt != s:
+            s = nxt
+            continue
+        return s
+
+
 def bullet_content(lines: "Sequence[str]") -> str:
     """One stored bullet -> the CONTENT its hash is taken over.
 
-    Strips the two things this writer adds and the corpus already uses: the
-    `- YYYY-MM-DD: ` opener and the ` [cairn: actor/session]` trailer. A bullet
-    carrying neither (most of the existing corpus) comes back as its own prose,
-    which is what makes a fresh append idempotent against a hand-written bullet
-    that says the same thing.
+    Strips what a MACHINE put there and the corpus already uses: the
+    `- YYYY-MM-DD: ` opener, the ` [cairn: actor/session]` trailer, and the
+    ` [cb:xxxxxxxx]` citation token a read surface prints — the last two in any
+    order, see `_strip_bullet_trailers`. A bullet carrying none of them (most of
+    the existing corpus) comes back as its own prose, which is what makes a fresh
+    append idempotent against a hand-written bullet that says the same thing.
+
+    ⚠ AND THE CITATION TOKEN COUNTS AGAINST `BULLET_TEXT_MAX` RATHER THAN BEING
+    EXEMPT. Said here because this function is where somebody would look for the
+    exemption: the cap is measured on the text a caller SUBMITS, before anything
+    is stripped, so an echoed token spends 14 of the 2000 characters. Exempting it
+    would mean the cap measured a different string in the validator than here, and
+    two clients would have to agree on that difference.
     """
     joined = " ".join(" ".join(line.split()) for line in lines).strip()
     joined = _BULLET_OPENER_RE.sub("", joined, count=1)
-    joined = _ATTRIBUTION_RE.sub("", joined)
+    joined = _strip_bullet_trailers(joined)
     return " ".join(joined.split())
 
 
@@ -2547,7 +2605,15 @@ def append_bullet(
                 f"bullet would have nowhere to go"
             )
         insert_at, body = block
-        wanted = content_hash(text)
+        # 🔴 BOTH SIDES THROUGH `bullet_content`, BECAUSE AN IDEMPOTENCY CHECK
+        # BETWEEN TWO DIFFERENT REDUCTIONS IS NOT ONE. The stored side has always
+        # been reduced; the REQUEST side was hashed raw, so a caller echoing back
+        # what a read surface printed — prose plus the trailers appended to it —
+        # produced a hash the stored side could not match, and the retry landed a
+        # near-duplicate. The opener clause of `bullet_content` is inert for a
+        # request: `_bullet_request_problem` refuses a `text` that opens a markdown
+        # bullet, so `_BULLET_OPENER_RE` cannot match here.
+        wanted = content_hash(bullet_content([text]))
         for existing in rc.parse_journal_bullets(body):
             if content_hash(bullet_content(existing.lines)) == wanted:
                 return "duplicate", existing.lines[0], entry_revision(original)
@@ -4790,7 +4856,13 @@ class StoreRequestHandler(BaseHTTPRequestHandler):
             encode_entry_text(line + "\n"),
             headers={
                 "X-Store-Status": status,
-                "X-Cairn-Bullet": content_hash(payload["text"]),
+                # 🔴 THE SAME REDUCTION `append_bullet` DECIDED WITH, not a hash
+                # of the raw `text`. The header is only useful as the idempotency
+                # KEY — a client holds it to ask "did my retry land on this
+                # bullet" — so a value computed over a different string than the
+                # comparison used would answer a question nobody asked. Unchanged
+                # for prose with no trailers, which is every conformance row.
+                "X-Cairn-Bullet": content_hash(bullet_content([payload["text"]])),
                 "ETag": f'"{revision}"',
             },
         )

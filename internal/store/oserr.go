@@ -86,8 +86,13 @@ func isIgnoredStatErrno(err error) bool {
 //
 // It delegates to `pytext`, which is where the CPython string rules live: the query
 // parser in `internal/api` needs the SAME decode for a percent-escaped byte run, and a
-// second copy is the duplicated predicate this codebase keeps finding. See
-// `pytext.DecodeUTF8Replace` for why it is one replacement per invalid BYTE.
+// second copy is the duplicated predicate this codebase keeps finding.
+//
+// ⚠ ONE REPLACEMENT CHARACTER PER MAXIMAL SUBPART — not per invalid BYTE, which is what
+// this comment used to say on the strength of a claim in `pytext` that had never been
+// measured. The rule, the retraction and the differential fixture that pins it are all
+// at `pytext.DecodeUTF8Replace`; restated here only far enough that a reader who stops
+// at this file is not left with the wrong one.
 func DecodeReplace(data []byte) string {
 	return pytext.DecodeUTF8Replace(data)
 }

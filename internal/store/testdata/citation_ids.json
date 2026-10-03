@@ -3,6 +3,7 @@
   "cases": [
     {
       "name": "one-single-line-bullet",
+      "body_hex": "2d20323032362d30312d30313a2061206c6573736f6e2e0a",
       "body": "- 2026-01-01: a lesson.\n",
       "bullets": [
         {
@@ -16,6 +17,7 @@
     },
     {
       "name": "wrapped-bullet-is-ONE-bullet",
+      "body_hex": "2d20323032362d30312d30313a2061206c6573736f6e20746861742077726170730a20206f6e746f2061207365636f6e64206c696e650a2020616e6420612074686972642e0a",
       "body": "- 2026-01-01: a lesson that wraps\n  onto a second line\n  and a third.\n",
       "bullets": [
         {
@@ -31,6 +33,7 @@
     },
     {
       "name": "two-bullets-with-IDENTICAL-opening-lines",
+      "body_hex": "2d2073616d65206f70656e696e670a20207461696c20410a2d2073616d65206f70656e696e670a20207461696c20420a",
       "body": "- same opening\n  tail A\n- same opening\n  tail B\n",
       "bullets": [
         {
@@ -53,6 +56,7 @@
     },
     {
       "name": "text-before-the-first-bullet-is-DROPPED",
+      "body_hex": "707265616d626c652070726f7365206e6f626f64792063616e20616464726573730a2d20323032362d30312d30313a20746865206f6e6c792062756c6c65742e0a",
       "body": "preamble prose nobody can address\n- 2026-01-01: the only bullet.\n",
       "bullets": [
         {
@@ -66,17 +70,18 @@
     },
     {
       "name": "a-dash-line-INSIDE-A-FENCE-is-not-a-bullet",
-      "body": "- real bullet\n  ```\n  - not a bullet\n  ```\n- second real bullet\n",
+      "body_hex": "2d207265616c2062756c6c65740a6060600a2d206e6f7420612062756c6c65740a6060600a2d207365636f6e64207265616c2062756c6c65740a",
+      "body": "- real bullet\n```\n- not a bullet\n```\n- second real bullet\n",
       "bullets": [
         {
           "start_line": 0,
           "lines": [
             "- real bullet",
-            "  ```",
-            "  - not a bullet",
-            "  ```"
+            "```",
+            "- not a bullet",
+            "```"
           ],
-          "citation_id": "dabfea49"
+          "citation_id": "a9176e94"
         },
         {
           "start_line": 4,
@@ -89,6 +94,7 @@
     },
     {
       "name": "trailing-blank-lines-are-stripped-from-lines",
+      "body_hex": "2d2066697273740a0a0a2d207365636f6e640a",
       "body": "- first\n\n\n- second\n",
       "bullets": [
         {
@@ -108,7 +114,8 @@
       ]
     },
     {
-      "name": "markers-do-not-change-the-id-derivation",
+      "name": "markers-are-just-BYTES-so-they-DO-change-the-id",
+      "body_hex": "2d20323032362d30312d30313a204f50454e3a20756e66696e69736865642e0a2d20323032362d30312d30323a205245534f4c56454420616263313233343a20646f6e652e0a",
       "body": "- 2026-01-01: OPEN: unfinished.\n- 2026-01-02: RESOLVED abc1234: done.\n",
       "bullets": [
         {
@@ -129,6 +136,7 @@
     },
     {
       "name": "unicode-and-emoji-survive-the-utf8-encode",
+      "body_hex": "2d20f09f94b42061206c6573736f6e207769746820c3a96d6f6a6920616e6420616363656e747320e2809420616e6420616e20656e20646173682e0a",
       "body": "- 🔴 a lesson with émoji and accents — and an en dash.\n",
       "bullets": [
         {
@@ -142,8 +150,89 @@
     },
     {
       "name": "empty-body-yields-no-bullets",
+      "body_hex": "",
       "body": "",
       "bullets": []
+    },
+    {
+      "name": "a-TRUNCATED-multibyte-sequence-in-a-bullet",
+      "body_hex": "2d2061e2820a20207461696c0a",
+      "body": "- a�\n  tail\n",
+      "bullets": [
+        {
+          "start_line": 0,
+          "lines": [
+            "- a�",
+            "  tail"
+          ],
+          "citation_id": "041430ff"
+        }
+      ]
+    },
+    {
+      "name": "a-LONE-continuation-byte-in-a-bullet",
+      "body_hex": "2d2061206c6573736f6e20776974682061208020737472617920627974650a",
+      "body": "- a lesson with a � stray byte\n",
+      "bullets": [
+        {
+          "start_line": 0,
+          "lines": [
+            "- a lesson with a � stray byte"
+          ],
+          "citation_id": "e1bcac8f"
+        }
+      ]
+    },
+    {
+      "name": "an-OVERLONG-sequence-spans-three-replacements",
+      "body_hex": "2d2061206c6573736f6e207769746820e08080206f7665726c6f6e672062797465730a",
+      "body": "- a lesson with ��� overlong bytes\n",
+      "bullets": [
+        {
+          "start_line": 0,
+          "lines": [
+            "- a lesson with ��� overlong bytes"
+          ],
+          "citation_id": "c9ab16f1"
+        }
+      ]
+    },
+    {
+      "name": "an-invalid-byte-on-a-CONTINUATION-line",
+      "body_hex": "2d2061206c6573736f6e20746861742077726170730a20206f6e746f206120f09f98207472756e6361746564207461696c0a",
+      "body": "- a lesson that wraps\n  onto a � truncated tail\n",
+      "bullets": [
+        {
+          "start_line": 0,
+          "lines": [
+            "- a lesson that wraps",
+            "  onto a � truncated tail"
+          ],
+          "citation_id": "98d591eb"
+        }
+      ]
+    },
+    {
+      "name": "a-NON-newline-line-break-inside-a-bullet",
+      "body_hex": "2d20610d620a2d20630a",
+      "body": "- a\rb\n- c\n",
+      "bullets": [
+        {
+          "start_line": 0,
+          "lines": [
+            "- a",
+            "b"
+          ],
+          "citation_id": "18077f74"
+        },
+        {
+          "start_line": 2,
+          "lines": [
+            "- c"
+          ],
+          "citation_id": "dca09a24"
+        }
+      ]
     }
   ]
 }

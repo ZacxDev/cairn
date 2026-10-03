@@ -404,6 +404,14 @@
           # who assumes a directory row covers its files gets the two-tier split the
           # row above paid for — green on the dev host, RED in the sandbox.
           || (rel == "internal/store/testdata/citation_ids.json")
+          # 🔴 AND A FIFTH, FOR THE SAME REASON AND FROM THE SAME GENERATOR
+          # DISCIPLINE. `internal/pytext`'s decode test replays CPython's own
+          # `bytes.decode("utf-8", errors="replace")` answers over 82,176 inputs —
+          # the differential that caught `DecodeUTF8Replace` emitting one U+FFFD per
+          # invalid BYTE where CPython emits one per maximal SUBPART. Without this
+          # row that test is green on the dev host and RED in the sandbox, which is
+          # the two-tier split the three rows above each paid for once.
+          || (rel == "internal/pytext/testdata/decode_replace.json")
           # 🔴 AND THE BROWSER SURFACE'S STYLESHEET, WHICH IS `//go:embed`ed AND THEREFORE
           # A COMPILE-TIME INPUT RATHER THAN A FIXTURE. `internal/ui/stylesheet.go` embeds
           # `app.css`; a filtered tree without it does not fail a test, it fails to

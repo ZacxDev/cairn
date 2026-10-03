@@ -24,6 +24,16 @@ different function, and it is named here so nobody takes either half for the who
 LIVE corpus, and no surface PRINTS an id yet — this PR adds the derivation and the
 position, not the rendering. The differential reader fixture is what compares rendered
 bytes once it does.
+
+🔴 ONE GUARD WAS DELETED RATHER THAN KEPT, AND THE DELETION IS THE RECORD.
+`test_the_id_is_STABLE_across_calls` asserted that two calls on one body agree.
+`citation_id` has no state, cache, clock or randomness, so NO defect could violate it —
+an *invariant* guard, which `AGENTS.md` says must be labelled and not counted as
+regression coverage. Determinism ACROSS PROCESSES, which is the property anything
+downstream actually needs, is covered strictly more strongly by the drift guard above:
+it runs the generator in a subprocess and compares. Deleted rather than relabelled
+because a labelled guard still costs a run and still reads as coverage in a list of
+test names.
 """
 from __future__ import annotations
 
@@ -40,7 +50,11 @@ GENERATOR = REPO / "tests" / "citation_ids.py"
 
 sys.path.insert(0, str(REPO / "lib"))
 
-from subsystem_resolver import parse_journal_bullets  # noqa: E402
+from subsystem_resolver import (  # noqa: E402
+    CitationIDDomainError,
+    JournalBullet,
+    parse_journal_bullets,
+)
 
 
 def _regenerated() -> dict:
@@ -73,14 +87,45 @@ def test_the_committed_fixture_matches_the_LIVE_python_implementation():
         "resolving, so say so in the commit rather than letting the diff speak.")
 
 
+#: 🔴 THE COVERED SET, AND IT CANNOT SHRINK. Each entry is a case name whose BODY
+#: carries something no other case does, so deleting one is a RED run rather than a
+#: quieter fixture — the same rule `reader_fixtures.json`'s coverage ledger carries.
+#: The invalid-UTF-8 rows are here because the fixture had NONE until the decode
+#: divergence was measured, and the `unicode-and-emoji` row that looked like coverage
+#: exercises the ENCODE side only, where the defect was on the DECODE side.
+REQUIRED_CASES = (
+    "a-dash-line-INSIDE-A-FENCE-is-not-a-bullet",
+    "a-TRUNCATED-multibyte-sequence-in-a-bullet",
+    "a-LONE-continuation-byte-in-a-bullet",
+    "an-OVERLONG-sequence-spans-three-replacements",
+    "an-invalid-byte-on-a-CONTINUATION-line",
+    "a-NON-newline-line-break-inside-a-bullet",
+)
+
+#: The count of hand-written cases, EXACT. A lower bound pins shrink only, so adding
+#: a case would prompt nobody — which is what the Go side's `< 9` floor did while its
+#: comment claimed otherwise. `internal/store/citationid_test.go` carries the same
+#: number for its own tier; the drift guard above is what keeps them describing one
+#: fixture.
+HAND_WRITTEN_CASES = 14
+
+
 def test_the_fixture_is_not_vacuous():
     """A floor, before any equality above is trusted. An empty `cases` list compares
     equal to an empty regeneration and would make the drift guard pass forever."""
     doc = json.loads(FIXTURE.read_text(encoding="utf-8"))
     cases = doc["cases"]
-    assert len(cases) >= 9, f"only {len(cases)} case(s) — something truncated the fixture"
+    assert len(cases) == HAND_WRITTEN_CASES, (
+        f"{len(cases)} case(s), expected exactly {HAND_WRITTEN_CASES}. If you ADDED "
+        "one, bump the constant here and in internal/store/citationid_test.go — that "
+        "prompt is the point. If you did not, something truncated the fixture.")
     bullets = sum(len(c["bullets"]) for c in cases)
     assert bullets >= 12, f"only {bullets} bullet(s) across {len(cases)} cases"
+    names = {c["name"] for c in cases}
+    missing = [n for n in REQUIRED_CASES if n not in names]
+    assert not missing, (
+        f"the fixture lost case(s) {missing}. Each one is the only row carrying its "
+        "shape; without it the seam is green over a case nobody runs.")
     # Every id present must be 8 lowercase hex. Asserted over the FIXTURE as well as
     # in Go, because a generator bug would otherwise be recorded as the oracle.
     for c in cases:
@@ -88,6 +133,28 @@ def test_the_fixture_is_not_vacuous():
             cid = b["citation_id"]
             assert len(cid) == 8 and all(ch in "0123456789abcdef" for ch in cid), (
                 f"{c['name']}: {cid!r} is not 8 lowercase hex characters")
+        # And every body round-trips its hex: a `body` that is not the decode of
+        # `body_hex` would let the Go side compare ids over text the oracle never saw.
+        raw = bytes.fromhex(c["body_hex"])
+        assert raw.decode("utf-8", errors="replace") == c["body"], (
+            f"{c['name']}: `body` is not the replace-decode of `body_hex`")
+
+
+def test_at_least_one_fixture_case_carries_INVALID_utf8():
+    """🔴 THE POSITIVE CONTROL ON THE ROW ABOVE. `REQUIRED_CASES` is a list of NAMES,
+    and a name can be kept while its body is replaced with ASCII — the spelled-guard
+    shape. This asserts the PROPERTY: some case's bytes do not decode strictly."""
+    doc = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    malformed = []
+    for c in doc["cases"]:
+        raw = bytes.fromhex(c["body_hex"])
+        try:
+            raw.decode("utf-8")
+        except UnicodeDecodeError:
+            malformed.append(c["name"])
+    assert len(malformed) >= 4, (
+        f"only {len(malformed)} case(s) carry invalid UTF-8 ({malformed}); the decode "
+        "divergence this fixture exists to catch is invisible without them")
 
 
 def test_two_bullets_with_IDENTICAL_opening_lines_get_DIFFERENT_ids():
@@ -104,11 +171,22 @@ def test_two_bullets_with_IDENTICAL_opening_lines_get_DIFFERENT_ids():
 
 def test_start_line_points_at_the_OPENING_line_in_the_BODY():
     """Including the two shapes a re-implementation gets wrong: a dropped preamble
-    shifts the first bullet off 0, and a `- ` inside a FENCE is not a bullet."""
-    body = "preamble nobody can address\n- first\n  ```\n  - not a bullet\n  ```\n- second\n"
+    shifts the first bullet off 0, and a `- ` inside a FENCE is not a bullet.
+
+    🔴 THE FENCED DASH IS AT COLUMN 0, AND THE INDENT IT USED TO CARRY MADE THIS
+    ASSERTION VACUOUS. `_JOURNAL_BULLET` is `^[-*][ \\t]+`, anchored at column 0, so
+    an INDENTED dash opens no bullet whether the fence rule exists or not — the
+    assertion message said "the fenced dash must not be counted as a bullet" and
+    nothing here could have counted it. MEASURED: with `_is_fence` disabled, every
+    citation guard still PASSED. At column 0 the rule is load-bearing — ON gives 2
+    bullets at [1, 5], OFF gives 3 at [1, 3, 5].
+    """
+    body = "preamble nobody can address\n- first\n```\n- not a bullet\n```\n- second\n"
     bullets = parse_journal_bullets(body)
     lines = body.splitlines()
-    assert len(bullets) == 2, [b.lines for b in bullets]
+    assert len(bullets) == 2, (
+        "a `- ` line INSIDE A FENCE opened a bullet, so the fence rule is not being "
+        f"applied: {[b.lines for b in bullets]}")
     assert bullets[0].start_line == 1, "the dropped preamble must shift the first bullet"
     assert bullets[1].start_line == 5, "the fenced dash must not be counted as a bullet"
     # The property that makes the field usable: the line it names IS the opening line.
@@ -130,14 +208,105 @@ def test_start_line_is_NOT_a_length():
         "unguarded — pick a body that still does")
 
 
-@pytest.mark.parametrize("body", [
-    "- plain\n",
-    "- 🔴 unicode émoji — en dash\n",
-    "- wrapped\n  tail\n",
-])
-def test_the_id_is_STABLE_across_calls(body):
-    """It is a pure function of the bytes, so two parses of one body agree. Cheap, and
-    it is the property every downstream use depends on."""
-    a = parse_journal_bullets(body)[0].citation_id
-    b = parse_journal_bullets(body)[0].citation_id
-    assert a == b == parse_journal_bullets(body)[0].citation_id
+#: The entry bytes of the measured divergence: `\xe2\x82` is a TRUNCATED 3-byte
+#: sequence, which CPython's `replace` handler collapses to ONE U+FFFD.
+MALFORMED_ENTRY = b"- a\xe2\x82\n  tail\n"
+
+
+def test_the_POD_and_the_CLIENT_decode_paths_give_ONE_id():
+    """🔴 THE DOMAIN, ASSERTED AS BEHAVIOUR. The pod decodes entry files
+    `errors="surrogateescape"` and the client `errors="replace"`, so one file reaches
+    `citation_id` as two different `str`s. Before the fix the pod's form RAISED —
+    measured `UnicodeEncodeError: 'utf-8' codec can't encode characters in position
+    3-4: surrogates not allowed` — which would have been a 500 on a malformed entry
+    the moment any surface printed an id.
+
+    ⚠ AND THE TWO MUST AGREE, NOT MERELY BOTH ANSWER. `surrogatepass` would have made
+    the pod total while making it disagree with Go and with the client, which is the
+    divergence it looks like it closes.
+    """
+    pod = parse_journal_bullets(MALFORMED_ENTRY.decode("utf-8", "surrogateescape"))
+    client = parse_journal_bullets(MALFORMED_ENTRY.decode("utf-8", "replace"))
+    assert len(pod) == len(client) == 1
+    assert "\udce2" in pod[0].text, "the premise moved: the pod's text has no surrogate"
+    assert "�" in client[0].text, "the premise moved: the client's text has no U+FFFD"
+    assert pod[0].citation_id == client[0].citation_id, (
+        "one entry file has two citation ids depending on which handler read it")
+    # And the value is the fixture's, so this agrees with Go rather than only itself.
+    committed = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    row = next(c for c in committed["cases"]
+               if c["body_hex"] == MALFORMED_ENTRY.hex())
+    assert client[0].citation_id == row["bullets"][0]["citation_id"]
+
+
+def test_a_surrogate_OUTSIDE_the_escape_range_is_a_NAMED_refusal():
+    """⚠ THE RESIDUE, AND IT IS A REFUSAL RATHER THAN A GUESS. `surrogateescape`
+    produces only U+DC80..U+DCFF, so a lone U+D800 cannot come from either decode path
+    and Go cannot hold one at all — there is no measured answer to agree with. It
+    raises `CitationIDDomainError` instead of an incidental `UnicodeEncodeError`, which
+    is what makes the domain a declared thing rather than a stack trace.
+    """
+    with pytest.raises(CitationIDDomainError):
+        JournalBullet(lines=("- a \ud800 lesson",), date=None, start_line=0).citation_id
+    # The reachable half still answers, so the refusal above is not simply "surrogates
+    # are refused" — which would be the pod's 500 again under a nicer name.
+    assert JournalBullet(
+        lines=("- a \udc80 lesson",), date=None, start_line=0).citation_id
+
+
+def test_the_line_TERMINATOR_does_not_change_the_id():
+    """🔴 A NORMALISATION THE DOCSTRING USED TO DENY, PINNED AS BEHAVIOUR SO THE
+    CORRECTED CLAIM IS CHECKABLE. `splitlines()` strips the terminator and `text`
+    re-imposes `"\\n"`, so thirteen byte-distinct spellings of one bullet share an id.
+    Kept rather than fixed: a CRLF entry and an LF entry naming the same bullet should
+    name it with the same id. The hazard is a future "restore byte-exactness", which
+    would silently invalidate every id ever printed.
+    """
+    terminators = [chr(c) for c in (0x0A, 0x0D, 0x0B, 0x0C, 0x1C, 0x1D, 0x1E, 0x85)]
+    terminators += [chr(0x0D) + chr(0x0A), chr(0x2028), chr(0x2029)]
+    bodies = ["- one" + t for t in terminators] + ["- one", "- one" + chr(0x0A) * 2]
+    assert len(set(bodies)) == 13, "the premise moved: the bodies are not all distinct"
+    ids = {parse_journal_bullets(b)[0].citation_id for b in bodies}
+    assert ids == {"3a98d5a7"}, (
+        f"thirteen spellings of one bullet gave {len(ids)} id(s) ({sorted(ids)}); the "
+        "terminator normalisation the docstring declares has changed")
+
+
+def test_TRAILING_WHITESPACE_does_change_the_id():
+    """The other half of the claim above, and the reason it is not "whitespace is
+    normalised": nothing strips a trailing space, so two bullets that LOOK identical
+    get different ids. Part of the declared invalidation set."""
+    plain = parse_journal_bullets("- one" + chr(0x0A))[0].citation_id
+    padded = parse_journal_bullets("- one" + chr(0x20) * 3 + chr(0x0A))[0].citation_id
+    assert plain == "3a98d5a7" and padded == "7adcabe5", (plain, padded)
+
+
+def test_the_id_is_NOT_SCOPED():
+    """🔴 THE CLAIM THE DESIGN'S OWN FRAMING OVERSTATED. "A token existing nowhere
+    else in a corpus" does not hold for duplicated TEXT: two byte-identical bullets in
+    different entries or scopes collide deterministically, because `append_bullet`
+    dedupes within ONE file only. Pinned so the docstring's correction is checkable.
+    """
+    a = parse_journal_bullets("## one entry\n- one\n")[0].citation_id
+    b = parse_journal_bullets("- one\n")[0].citation_id
+    assert a == b, "the premise moved: the id now depends on something outside the bullet"
+
+
+def test_a_NON_newline_break_shows_why_the_SPLITTER_matters():
+    """⚠ THE HAZARD `start_line`'s DOCSTRING NAMES, AS A MEASUREMENT. The index is
+    into `splitlines()`, which breaks on ten characters; a consumer splitting on `"\\n"`
+    gets a different list and the index lands mid-line. `internal/ui/render.go`'s
+    `inlineCode` already splits its text on `"\\n"`, so this is not hypothetical."""
+    body = "- a\rb\n- c\n"
+    bullets = parse_journal_bullets(body)
+    assert [b.start_line for b in bullets] == [0, 2]
+    right = body.splitlines()
+    wrong = body.split("\n")
+    assert right == ["- a", "b", "- c"], right
+    assert wrong == ["- a\rb", "- c", ""], wrong
+    for b in bullets:
+        assert right[b.start_line] == b.first_line
+    # The wrong splitter misses the second bullet entirely, which is the damage.
+    assert wrong[bullets[1].start_line] == "", (
+        "this body no longer demonstrates the hazard, so the docstring's third ⚠ is "
+        "unguarded — pick one that still does")

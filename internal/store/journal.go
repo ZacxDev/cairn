@@ -124,6 +124,21 @@ type JournalBullet struct {
 	// bullet's StartLine, because trailing blank lines are stripped from `Lines`
 	// while remaining in the body. A caller spanning bullets must walk StartLines,
 	// never `StartLine + len(Lines)`.
+	//
+	// ⚠ AND IT IS AN INDEX INTO `pytext.SplitLines(body)`, WHICH BREAKS ON **TEN**
+	// CHARACTERS — not on "\n". A consumer that re-splits the body with
+	// `strings.Split(text, "\n")` gets a DIFFERENT list, and this index then names
+	// the wrong line with no error anywhere. MEASURED on `"- a\rb\n- c\n"`:
+	// `pytext.SplitLines` gives `["- a", "b", "- c"]` and the StartLines are
+	// `[0, 2]`; `strings.Split(…, "\n")` gives `["- a\rb", "- c", ""]`, so StartLine
+	// 0 points MID-LINE and StartLine 2 points at `""` — the second bullet would get
+	// no token at all. ⚠ THE WRONG SPLITTER IS ALREADY IN THIS TREE:
+	// `internal/ui/render.go`'s `inlineCode` splits its text on "\n". Both
+	// renderers that emit section bodies use `pytext.SplitLines`, which is why the
+	// index aligns
+	// TODAY; it is an alignment, not a property. The fixture case
+	// `a-NON-newline-line-break-inside-a-bullet` is what catches a consumer that
+	// picks the other one.
 	StartLine int
 }
 
@@ -137,24 +152,73 @@ type JournalBullet struct {
 // 451/454 = 99.3% and measures COMPLIANCE, not use. A token that exists nowhere else in a
 // corpus turns that question into a match.
 //
+// 🔴 NOT PRINTED BY ANY SURFACE AT THIS COMMIT, AND THAT IS THE SEQUENCING RATHER THAN
+// AN OVERSIGHT — the derivation lands before the renderer so no rendered byte moves in
+// the same change. **Closing condition for the dead payload:** an
+// `internal/report/testdata/reader_fixtures.json` row carrying `[cb:`. Until then every
+// guard over this method is a contract pin and nothing here is exercised by a read.
+//
 // 🔴 DERIVED FROM THE BULLET'S OWN BYTES, WHICH IS WHAT MAKES CROSS-LANGUAGE AGREEMENT
-// REACHABLE RATHER THAN DISCIPLINED. `sha256` over `Lines` joined with "\n", first 8
-// hex characters. No normalisation: `lib/subsystem_resolver.py` must produce the same
-// string for the same bullet forever, and every normalisation step is a second place
-// the two can disagree. Pinned by `internal/store/testdata/citation_ids.json`, which
-// the PYTHON side generates and this package's test replays — so neither
+// REACHABLE RATHER THAN DISCIPLINED. `sha256` over `Text()` — `Lines` joined with "\n"
+// — first 8 hex characters. Pinned by `internal/store/testdata/citation_ids.json`,
+// which the PYTHON side generates and this package's test replays, so neither
 // implementation can move without one of them going red.
 //
-// ⚠ EDITING A BULLET CHANGES ITS ID, and that is correct rather than a limitation: a
-// reworded bullet is a different bullet, and an id that survived an edit would assert
-// a continuity nobody checked. It does mean an id is NOT a durable name for a
-// LESSON — only for a byte-exact bullet.
+// 🔴 TWO NORMALISATIONS, NAMED, BECAUSE AN EARLIER DRAFT OF THIS COMMENT SAID "No
+// normalisation" AND THAT WAS FALSE. Both are in the id whether anyone wants them or
+// not, and both are KEPT:
+//
+//  1. THE LINE TERMINATOR. `ParseJournalBullets` splits with `pytext.SplitLines`, which
+//     strips the terminator, and `Text()` re-imposes "\n". So THIRTEEN byte-distinct
+//     spellings of one bullet — LF, CRLF, a lone CR, \v, \f, \x1c, \x1d, \x1e, U+0085,
+//     U+2028, U+2029, no final terminator at all, and a trailing blank line — all yield
+//     ONE id. MEASURED: all thirteen give `3a98d5a7` for `- one`.
+//  2. THE DECODE FORM, which is a property of the CALLER rather than of this method.
+//     `Lines` hold whatever string the loader produced, and `store.DecodeReplace` is
+//     what the reader uses — so the id is a function of the entry's bytes AS A
+//     `replace` DECODE SEES THEM. `lib/subsystem_resolver.py` coerces to the same form
+//     before hashing (see `_citation_hash_bytes` there), which is what makes the pod's
+//     `surrogateescape` decode answer the same id. ⚠ A caller that parsed bullets out
+//     of RAW file bytes would get a different id for a malformed entry;
+//     `internal/write` does exactly that, and it is safe only because it never calls
+//     this method — it hashes `BulletContent`, not a citation id.
+//
+// ⚠ SO DO NOT "RESTORE BYTE-EXACTNESS" BY HASHING THE RAW SLICE. The behaviour above is
+// desirable — a CRLF entry and an LF entry naming the same bullet should name it with
+// the same id — but it is a CONTRACT: every previously printed id stops resolving the
+// day somebody hashes the unsplit bytes instead.
+//
+// ⚠ THE INVALIDATION SET IS WIDER THAN "EDITING A BULLET", AND EVERY MEMBER IS MEASURED.
+// An id names a parsed bullet's bytes, so it moves on: a TRAILING-WHITESPACE change
+// (`- one` is `3a98d5a7`, `- one   ` is `7adcabe5`); UNICODE FORM (NFC `- café` is
+// `60bec6cc`, NFD `83a886e0` — two visually identical bullets, two ids); ADDING OR
+// REMOVING an `OPEN:`/`RESOLVED <sha>:` marker, which is part of the opening line's
+// bytes; the WRITE TRAILER, since ` [cairn: <actor>/<session>]` lives inside `Lines[0]`
+// and an id is therefore partly a function of the writing SESSION; and FIXING THE
+// RECORDED `dropped-lines` DEFECT, which moves a NEIGHBOUR's id — lines currently
+// absorbed into the preceding bullet would leave its `Lines`, so a bullet nobody
+// touched loses its id.
+//
+// 🔴 AND THE ID IS **NOT SCOPED**. Two byte-identical bullets in different entries, or
+// in different scopes, get the SAME id, deterministically — `write.AppendBullet` dedupes
+// within ONE file only, so the corpus does not forbid it. The framing "a token that
+// exists nowhere else in a corpus" therefore holds for the PROSE a bullet carries and
+// not for a duplicate of it, and the arithmetic below models RANDOM collisions only; it
+// says nothing about duplicated text, which collides with probability 1.
 //
 // ⚠ 8 HEX, NOT 4, AND THE REASON IS ARITHMETIC. At 16 bits a 3,129-bullet corpus
 // collides with probability ≈1 (birthday: ~50% by ~300 bullets); 32 bits puts it near
-// 0.1% corpus-wide. Do not shorten it to fit a column.
+// 0.1% corpus-wide. Do not shorten it to fit a column. ⚠ THE 3,129 IS A DIFFERENT
+// POPULATION FROM THE 110 THIS STRUCT'S OWN COMMENT COUNTS — three sizes are in play
+// across the two implementations and none is a re-measurement of another; the
+// reconciliation is written out once, in `citation_id`'s docstring in
+// `lib/subsystem_resolver.py`.
 func (b JournalBullet) CitationID() string {
-	sum := sha256.Sum256([]byte(strings.Join(b.Lines, "\n")))
+	// `Text()` rather than a second `strings.Join`: ONE definition of "the bullet's
+	// bytes", which is the rule the Python twin's docstring already states. Two
+	// definitions on the one function where a divergence is a contract break is how
+	// the next edit moves one of them.
+	sum := sha256.Sum256([]byte(b.Text()))
 	return hex.EncodeToString(sum[:])[:8]
 }
 

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -26,6 +27,13 @@ import (
 // implementation on every pytest run, so the fixture cannot drift away from the code it
 // claims to record — the same two-sided arrangement `markersweep_test.go` uses.
 //
+// 🔴 AND IT COMPARES THE DECODE, NOT ONLY THE HASH. Each case carries the entry BYTES as
+// hex beside their `errors="replace"` decode, and this side decodes the hex with
+// `DecodeReplace` before parsing. The first revision replayed the DECODED string, which
+// made it structurally unable to see a decode difference — and a decode difference is
+// what shipped: `pytext.DecodeUTF8Replace` emitted one U+FFFD per invalid BYTE where
+// CPython emits one per maximal SUBPART, so one entry file produced two citation ids.
+//
 // ⚠ WHAT IT CANNOT SEE. The bodies are hand-written, so this says nothing about the LIVE
 // corpus, and nothing about RENDERING — no surface prints an id yet. The differential
 // reader fixture is what compares rendered bytes, and `tests/parity/harness.py` is what
@@ -33,7 +41,12 @@ import (
 // reader who took this file for full coverage would stop looking.
 
 type citationCase struct {
-	Name    string `json:"name"`
+	Name string `json:"name"`
+	// BodyHex is the entry bytes; Body is their `errors="replace"` decode. 🔴 THE
+	// HEX IS THE INPUT AND THE STRING IS AN EXPECTATION — replaying `Body` alone is
+	// what made the first revision of this fixture structurally unable to see a
+	// DECODE difference, which is the difference that shipped.
+	BodyHex string `json:"body_hex"`
 	Body    string `json:"body"`
 	Bullets []struct {
 		StartLine  int      `json:"start_line"`
@@ -61,14 +74,19 @@ func loadCitationFixture(t *testing.T) citationFixture {
 	if err := json.Unmarshal(raw, &fx); err != nil {
 		t.Fatalf("the citation fixture does not parse: %v", err)
 	}
-	// 🔴 A FLOOR BEFORE ANY COMPARISON. An empty `cases` list would make every loop
-	// below iterate zero times and report success — the vacuous green this whole
-	// arrangement exists to avoid. The number is the count of hand-written cases; it
-	// moves when a case is added, which is a deliberate prompt to read this file.
-	if len(fx.Cases) < 9 {
-		t.Fatalf("the fixture carries %d case(s); it is supposed to carry at least 9, "+
-			"so something truncated it and a green run here would mean nothing",
-			len(fx.Cases))
+	// 🔴 AN EXACT COUNT BEFORE ANY COMPARISON, AND EXACT IS THE FIX RATHER THAN THE
+	// STYLE. An empty `cases` list would make every loop below iterate zero times and
+	// report success — the vacuous green this whole arrangement exists to avoid. The
+	// previous spelling was `< 9` and its comment claimed the number "moves when a
+	// case is added, which is a deliberate prompt to read this file": a LOWER BOUND
+	// pins shrink only, so a tenth case prompted nothing and the sentence was wider
+	// than the code. Equality is what makes adding a case land here.
+	const handWrittenCases = 14
+	if len(fx.Cases) != handWrittenCases {
+		t.Fatalf("the fixture carries %d case(s) and this guard expects exactly %d. "+
+			"If you ADDED a case, bump the constant — that prompt is the point. If you "+
+			"did not, something truncated the fixture and a green run here would mean "+
+			"nothing.", len(fx.Cases), handWrittenCases)
 	}
 	return fx
 }
@@ -76,8 +94,26 @@ func loadCitationFixture(t *testing.T) citationFixture {
 func TestTheCitationIDAgreesWithThePythonOracle(t *testing.T) {
 	fx := loadCitationFixture(t)
 	compared := 0
+	decoded := 0
 	for _, c := range fx.Cases {
-		got := ParseJournalBullets(c.Body)
+		// 🔴 THE DECODE IS PART OF WHAT IS BEING COMPARED. The entry bytes go through
+		// THIS side's `DecodeReplace`; if that disagrees with CPython's `replace`
+		// handler the `lines` below are different lines and the id is a different id,
+		// which is exactly the defect this pair of fields was added for. Asserted
+		// before the ids so a red run names the decode rather than the hash.
+		raw, err := hex.DecodeString(c.BodyHex)
+		if err != nil {
+			t.Fatalf("%s: body_hex does not decode: %v", c.Name, err)
+		}
+		body := DecodeReplace(raw)
+		if body != c.Body {
+			t.Errorf("%s: this side's DecodeReplace of the entry bytes gives %q, the "+
+				"oracle's `errors=\"replace\"` decode gives %q — every id below would be "+
+				"taken over different text", c.Name, body, c.Body)
+			continue
+		}
+		decoded++
+		got := ParseJournalBullets(body)
 		if len(got) != len(c.Bullets) {
 			t.Errorf("%s: this side parsed %d bullet(s), the oracle %d — the ids below "+
 				"would be compared pairwise against different bullets",
@@ -112,7 +148,16 @@ func TestTheCitationIDAgreesWithThePythonOracle(t *testing.T) {
 	if compared == 0 {
 		t.Fatal("not a single bullet was compared, so this test asserted nothing")
 	}
-	t.Logf("compared %d bullet(s) across %d case(s)", compared, len(fx.Cases))
+	// And the same control for the DECODE half, which has its own way of asserting
+	// nothing: every case `continue`ing on a decode mismatch leaves the id loop
+	// unreached, and `compared` would be 0 — but a fixture of only EMPTY bodies would
+	// decode cleanly and compare no ids, so both counters are needed.
+	if decoded != len(fx.Cases) {
+		t.Errorf("only %d of %d case(s) got as far as an id comparison",
+			decoded, len(fx.Cases))
+	}
+	t.Logf("compared %d bullet(s) across %d case(s); %d body decode(s) matched",
+		compared, len(fx.Cases), decoded)
 }
 
 func TestTheCitationIDIsEightLowercaseHexAndDependsOnEveryLine(t *testing.T) {

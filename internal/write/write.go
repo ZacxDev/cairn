@@ -124,7 +124,14 @@ func AppendBullet(path, text, actor, session, today string, interleave func()) (
 			"entry has no `%s` heading, so an appended bullet would have nowhere to go",
 			store.NuanceHeading)}
 	}
-	wanted := ContentHash(text)
+	// 🔴 BOTH SIDES THROUGH `BulletContent`, BECAUSE AN IDEMPOTENCY CHECK BETWEEN TWO
+	// DIFFERENT REDUCTIONS IS NOT ONE. The stored side has always been reduced; the
+	// REQUEST side was hashed raw, so a caller echoing back what a read surface printed
+	// — prose plus the trailers appended to it — produced a hash the stored side could
+	// not match, and the retry landed a near-duplicate. The opener clause of
+	// `BulletContent` is inert for a request: `BulletRequestProblem` refuses a `text`
+	// that opens a markdown bullet, so `bulletOpenerRe` cannot match here.
+	wanted := ContentHash(BulletContent([]string{text}))
 	for _, existing := range store.ParseJournalBullets(body) {
 		if ContentHash(BulletContent(existing.Lines)) == wanted {
 			return "duplicate", existing.Lines[0], EntryRevision(original), nil

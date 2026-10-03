@@ -240,32 +240,125 @@ func ContainsSpace(s string) bool {
 
 // DecodeUTF8Replace is Python's `bytes.decode("utf-8", errors="replace")`.
 //
-// 🔴 ONE U+FFFD PER INVALID **BYTE**, NOT PER INVALID RUN, and that is why
-// `strings.ToValidUTF8` is not used. CPython's `replace` handler emits one replacement
-// character for every byte it could not decode, so a two-byte invalid sequence becomes
-// TWO U+FFFD there and ONE with Go's helper — a length difference, in text that offsets
-// are computed against and that a refusal quotes back.
+// 🔴 ONE U+FFFD PER MAXIMAL SUBPART, NOT PER INVALID BYTE AND NOT PER INVALID RUN.
+// CPython implements Unicode TR#36's "substitution of maximal subparts": the decoder
+// consumes the longest prefix that could still have become a valid sequence and
+// replaces THAT WHOLE PREFIX with ONE U+FFFD. So `b"\xe2\x82"` is ONE replacement
+// character (a truncated 3-byte sequence), `b"\x80\x80"` is TWO (neither byte is a
+// prefix of the other), and `b"\xe0\x80\x80"` is THREE (0xE0 followed by a byte below
+// 0xA0 is overlong, so the lead alone is the subpart and each 0x80 after it is its own
+// invalid start).
 //
-// Two callers need it and they need the same answer: the index loader reads an entry
-// file this way, and the query parser decodes a percent-escaped byte run this way. A
-// second copy is the duplicated predicate that diverges the day one of them is fixed.
+// ⚠ AND THE RETRACTED CLAIM IS NAMED RATHER THAN QUIETLY REPLACED, because it read as
+// a measurement and it was never measured: this comment said "ONE U+FFFD PER INVALID
+// **BYTE** … one replacement character for every byte it could not decode", and the
+// implementation below did exactly that. It is right for a lone `0x80` and wrong for
+// every multi-byte truncation — which is why every example anyone wrote by hand
+// agreed. Measured over the generated sweep in
+// `internal/pytext/testdata/decode_replace.json`: **4,284 of 82,176** inputs differed
+// between that rule and CPython's, and 0 differ under the rule below.
+//
+// `strings.ToValidUTF8` is still not used: it replaces a whole invalid RUN with one
+// substitution, which is a third rule again — `b"\x80\x80"` would be ONE there and is
+// TWO here.
+//
+// THE LENGTH IS THE STAKE, not the glyph. Three callers need the same answer and two
+// of them compute offsets into the result: the index loader reads an entry file this
+// way (`store.DecodeReplace`), the query parser decodes a percent-escaped byte run
+// this way, and `client.FocusPathsFromText` scans it. A refusal also quotes this text
+// back.
+//
+// 🔴 PINNED DIFFERENTIALLY, BY CPython ITSELF — `tests/pytext_decode_replace.py`
+// writes CPython's answers and `decodereplace_test.go` replays them. Do not "simplify"
+// this to `utf8.DecodeRune`'s width: that is the per-byte rule the audit found, and it
+// is green on every ASCII-plus-one-stray-byte example.
 func DecodeUTF8Replace(data []byte) string {
 	if utf8.Valid(data) {
 		return string(data)
 	}
-	out := make([]rune, 0, len(data))
+	var b strings.Builder
+	b.Grow(len(data))
 	for i := 0; i < len(data); {
-		r, w := utf8.DecodeRune(data[i:])
-		if r == utf8.RuneError && w <= 1 {
-			out = append(out, utf8.RuneError)
-			i++
-			continue
+		size, ok := utf8MaximalSubpart(data[i:])
+		if ok {
+			// Copied as BYTES rather than decoded and re-encoded. A valid sequence is
+			// already the bytes CPython would produce, and a rune round trip is a
+			// second place to be wrong about one.
+			b.Write(data[i : i+size])
+		} else {
+			b.WriteRune(utf8.RuneError)
 		}
-		out = append(out, r)
-		i += w
+		i += size
 	}
-	return string(out)
+	return b.String()
 }
+
+// utf8MaximalSubpart reports how many bytes at the front of `data` form either a
+// complete valid UTF-8 sequence (`ok` true) or the MAXIMAL SUBPART of a would-be-valid
+// one (`ok` false). It never returns 0, so a caller's loop always advances.
+//
+// 🔴 IT IS A TRANSCRIPTION OF CPython's DECODER BRANCHES, not of its documentation,
+// because the maximal-subpart length is decided by where the branch gives up:
+//
+//   - an invalid START byte (0x80..0xC1, 0xF5..0xFF) is a 1-byte subpart — 0xC0 and
+//     0xC1 are leads only of overlong forms, so they are starts that can never be
+//     completed;
+//   - a lead whose FIRST continuation is missing or invalid is a 1-byte subpart, and
+//     that includes the two RANGE gates, which is the half a reader skips: 0xE0 with a
+//     second byte below 0xA0 (overlong), 0xED with one at or above 0xA0 (a surrogate),
+//     0xF0 below 0x90 (overlong) and 0xF4 at or above 0x90 (past U+10FFFF) all fail AT
+//     the first continuation, so the lead alone is the subpart and the bytes after it
+//     are judged afresh;
+//   - a lead plus a valid first continuation whose SECOND continuation is missing or
+//     invalid is a 2-byte subpart, and so on for the third.
+//
+// "Missing" and "invalid" produce the same length on purpose: CPython's `replace`
+// handler treats an exhausted input exactly like a bad byte, which is why
+// `b"\xe2\x82"` and `b"\xe2\x82A"` both start with ONE U+FFFD.
+func utf8MaximalSubpart(data []byte) (int, bool) {
+	c := data[0]
+	switch {
+	case c < 0x80:
+		return 1, true
+	case c < 0xc2:
+		// 0x80..0xBF are bare continuations; 0xC0..0xC1 lead only overlong forms.
+		return 1, false
+	case c < 0xe0:
+		if len(data) < 2 || !isUTF8Continuation(data[1]) {
+			return 1, false
+		}
+		return 2, true
+	case c < 0xf0:
+		if len(data) < 2 || !isUTF8Continuation(data[1]) {
+			return 1, false
+		}
+		if (c == 0xe0 && data[1] < 0xa0) || (c == 0xed && data[1] >= 0xa0) {
+			return 1, false
+		}
+		if len(data) < 3 || !isUTF8Continuation(data[2]) {
+			return 2, false
+		}
+		return 3, true
+	case c < 0xf5:
+		if len(data) < 2 || !isUTF8Continuation(data[1]) {
+			return 1, false
+		}
+		if (c == 0xf0 && data[1] < 0x90) || (c == 0xf4 && data[1] >= 0x90) {
+			return 1, false
+		}
+		if len(data) < 3 || !isUTF8Continuation(data[2]) {
+			return 2, false
+		}
+		if len(data) < 4 || !isUTF8Continuation(data[3]) {
+			return 3, false
+		}
+		return 4, true
+	}
+	// 0xF5..0xFF: never a lead of anything inside U+10FFFF.
+	return 1, false
+}
+
+func isUTF8Continuation(b byte) bool { return b&0xc0 == 0x80 }
 
 // Lower is CPython's `str.lower()` FOR ONE OF THE TWO RULES THAT SEPARATE IT FROM
 // `strings.ToLower`, AND NOT THE OTHER. Which one, and why, is the whole of this comment.

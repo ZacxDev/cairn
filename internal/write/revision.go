@@ -55,6 +55,57 @@ var attributionRe = regexp.MustCompile(
 // re-POSTed on a later day is still recognised as the same CONTENT.
 var bulletOpenerRe = regexp.MustCompile(`\A[-*][ \t]+(?:\d{4}-\d{2}-\d{2}:[ \t]+)?`)
 
+// citationTokenRe is the opaque per-bullet token a READ surface prints —
+// `store.JournalBullet.CitationID` in brackets, 8 lowercase hex. Anchored at
+// end-of-line, the same shape `attributionRe` is.
+//
+// 🔴 IT IS STRIPPED BEFORE HASHING BECAUSE AN AGENT ECHOES WHAT IT READ, AND THAT
+// IS MEASURED RATHER THAN FEARED: a downstream consumer's resume flow requires its
+// report to echo the bullets it recalled, which fires on 451 of 454 runs (99.3%).
+// So the text arriving at `POST /bullets` routinely ENDS in whatever the read
+// surface appended. A token left in the hash breaks idempotency in the one
+// direction that destroys nothing and is therefore silent: the re-POST stops
+// matching the bullet already on disk, appends a near-duplicate, and that duplicate
+// carries a `[cb:…]` in its PROSE whose value is not its own id — a citation that
+// resolves to the bullet it was copied from, forever.
+var citationTokenRe = regexp.MustCompile(`[ \t]*\[cb:[0-9a-f]{8}\]\z`)
+
+// stripBulletTrailers removes every MACHINE-WRITTEN trailer from the end of one
+// collapsed bullet, in ANY ORDER and ANY NUMBER, and nothing else.
+//
+// 🔴 ORDER-FREE IS THE POINT, AND IT IS WHY THIS IS A LOOP RATHER THAN TWO
+// SEQUENTIAL `ReplaceAllString` CALLS, which are correct for exactly one ordering:
+// with `attributionRe` applied first, `… [cairn: a/b] [cb:deadbeef]` leaves the
+// attribution IN (its anchor no longer reaches the end of the line) and the whole
+// trailer enters the hash. Both orders are reachable — the read surface appends the
+// token after a stored line that already ends in an attribution, and
+// `RenderBullet` appends an attribution after whatever text the caller sent.
+//
+// 🔴 ONE RULE, ONE PLACE: `BulletContent` is the only caller, and nothing else in
+// this package or in `server/server.py` may re-spell "what a trailer is". The two
+// languages carry one transcription each (`server.py`'s `_strip_bullet_trailers`)
+// because `lib/` cannot import `internal/`, and `tests/parity/` is what compares
+// them.
+//
+// ⚠ IT STRIPS REPEATEDLY, so a line that somehow ends in two attributions loses
+// both. That is a widening over the single-pass version it replaces, it is in the
+// idempotency-preserving direction, and a line carrying two is already a defect
+// somewhere upstream. The loop terminates because every iteration shortens the
+// string.
+func stripBulletTrailers(s string) string {
+	for {
+		if next := attributionRe.ReplaceAllString(s, ""); next != s {
+			s = next
+			continue
+		}
+		if next := citationTokenRe.ReplaceAllString(s, ""); next != s {
+			s = next
+			continue
+		}
+		return s
+	}
+}
+
 // EntryRevision is the revision an `If-Match` is compared against: the entry
 // file's CONTENT.
 //
@@ -96,11 +147,19 @@ func ContentHash(text string) string {
 
 // BulletContent reduces one STORED bullet to the content its hash is taken over.
 //
-// Strips the two things this writer adds and the corpus already uses: the
-// `- YYYY-MM-DD: ` opener and the ` [cairn: actor/session]` trailer. A bullet
-// carrying neither (most of the existing corpus) comes back as its own prose, which
-// is what makes a fresh append idempotent against a hand-written bullet that says
-// the same thing.
+// Strips what a MACHINE put there and the corpus already uses: the
+// `- YYYY-MM-DD: ` opener, the ` [cairn: actor/session]` trailer, and the
+// ` [cb:xxxxxxxx]` citation token a read surface prints — the last two in any order,
+// see `stripBulletTrailers`. A bullet carrying none of them (most of the existing
+// corpus) comes back as its own prose, which is what makes a fresh append idempotent
+// against a hand-written bullet that says the same thing.
+//
+// ⚠ AND THE CITATION TOKEN COUNTS AGAINST `BulletTextMax` RATHER THAN BEING EXEMPT.
+// Said here because this function is where someone would look for the exemption: the
+// cap is measured on the text a caller SUBMITS (`bullet_request.go`, and the client's
+// own pre-check), before anything is stripped, so an echoed token spends 14 of the
+// 2000 characters. Exempting it would mean the cap measured a different string in the
+// validator than here, and two clients would have to agree on that difference.
 func BulletContent(lines []string) string {
 	parts := make([]string, 0, len(lines))
 	for _, line := range lines {
@@ -108,7 +167,7 @@ func BulletContent(lines []string) string {
 	}
 	joined := pytext.StripWhitespace(strings.Join(parts, " "))
 	joined = bulletOpenerRe.ReplaceAllString(joined, "")
-	joined = attributionRe.ReplaceAllString(joined, "")
+	joined = stripBulletTrailers(joined)
 	return pytext.CollapseWhitespace(joined)
 }
 
