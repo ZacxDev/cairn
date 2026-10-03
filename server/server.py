@@ -730,23 +730,32 @@ _CITATION_TOKEN_PATTERN = r"\[cb:[0-9a-f]{8}\]"
 # `"- 2000-01-02: " + prose + " [cb:deadbeef]" * n` and that string plus `" tail"`:
 #
 #     n        line bytes   `+`\Z AT-END  `+`\Z NOT-END  peel AT-END  peel NOT-END
-#     1,000        14,059   0.000089s     0.032837s      0.000444s    0.000047s
-#     2,000        28,059   0.000329s     0.128986s      0.000678s    0.000094s
-#     4,000        56,059   0.000434s     0.492542s      0.001338s    0.000179s
-#     8,000       112,059   0.001018s     2.108743s      0.002609s    0.000322s
-#     16,000      224,059   0.002047s     8.825283s      0.005163s    0.001062s
-#     32,000      448,059   0.003530s     (not run)      0.010967s    0.001537s
+#     1,000        14,048   0.000089s     0.032837s      0.000444s    0.000047s
+#     2,000        28,048   0.000329s     0.128986s      0.000678s    0.000094s
+#     4,000        56,048   0.000434s     0.492542s      0.001338s    0.000179s
+#     8,000       112,048   0.001018s     2.108743s      0.002609s    0.000322s
+#     16,000      224,048   0.002047s     8.825283s      0.005163s    0.001062s
+#     32,000      448,048   0.003530s     (not run)      0.010967s    0.001537s
 #
 # — the whole-run expression is ×3.8–4.3 per doubling on NOT-END (8.83 s over a
-# 224 KB line, 4311× its own AT-END time at the same n); the peel is ×1.5–2.1 per
-# doubling on BOTH shapes. ⚠ AND THE PEEL IS 2.5× SLOWER ON AT-END, which is the
+# 224 KB line, 4311× its own AT-END time at the same n). The peel is ×1.9–2.1 per
+# doubling on AT-END, and NOT-END is O(1) IN THE STRIP ITSELF — one failed
+# `fullmatch` and the loop breaks. ⚠ DO NOT READ A PER-DOUBLING RANGE OFF THE
+# NOT-END COLUMN: at 0.3–1.5 ms it is noise-dominated, its own steps here are
+# ×1.45 to ×3.30, and an earlier draft of this sentence claimed "×1.5–2.1 on BOTH
+# shapes", which this table contradicts — as did the FIRST attempt to correct it,
+# which said ×1.80 and was caught by re-deriving the five ratios rather than
+# eyeballing the column. The linearity claim rests on the GRAMMAR
+# argument above and on 17 adversarial shapes measured to n=64,000, never on these
+# six rows.
+# ⚠ AND THE PEEL IS 2.5–3× SLOWER ON AT-END, which is the
 # shape every real caller sends: a per-iteration interpreter cost, stated rather
 # than hidden, and the trade is 2.5× on 5 ms against 8300× on 8.8 s.
 #
 # ⚠ GO IS NOT AFFECTED AND `internal/write` THEREFORE STILL CARRIES THE `+`\z
 # ALTERNATION: RE2 does not backtrack. Measured there the same way — `go test`,
 # one process, one run — ×1.7–2.4 per doubling on both shapes out to n=64,000 /
-# 896,059 bytes (AT-END 27.4 ms, NOT-END 33.5 ms). Two mechanisms, one answer; the
+# 896,048 bytes (AT-END 27.4 ms, NOT-END 33.5 ms). Two mechanisms, one answer; the
 # equivalence is what the enumeration in `_strip_bullet_trailers` measures.
 #
 # REACHABLE, not theoretical, and by the same route the `[cb:]` echo hole was:

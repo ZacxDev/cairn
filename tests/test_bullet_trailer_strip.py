@@ -310,9 +310,12 @@ TRAILER_STRIP_BUDGET_SECONDS = 1.0
 #: `cee28805` the n=4,000 row goes RED on THIS assertion (1174x) and the n=8,000 row on
 #: the BUDGET (2.098s); at HEAD both are green. Isolated to the narrowest expression as
 #: well as to the whole file — swapping only `_strip_bullet_trailers`' body for the
-#: whole-run expression reds exactly these two and leaves the other 36 tests in this
+#: whole-run expression reds exactly these two and leaves the other 38 tests in this
 #: file green, which is what proves the mutant CORRECT and this guard the only thing
-#: that sees it.
+#: that sees it. ⚠ RE-DERIVE THAT COUNT WHEN YOU ADD A TEST HERE — it read `36` until
+#: a later round measured 38, because the figure was taken before this file's last two
+#: tests landed and then carried forward unchanged. The file collects 40; the mutant
+#: reds 2.
 TRAILER_STRIP_SHAPE_RATIO_MAX = 50.0
 
 
@@ -344,8 +347,8 @@ def test_the_trailer_strip_is_LINEAR_rather_than_QUADRATIC(n):
     this host, CPython 3.12 (load average 5.3-5.9):
 
         n        line chars   `+`\\Z AT-END  `+`\\Z NOT-END  peel AT-END  peel NOT-END
-        4,000        56,059   0.000434s     0.492542s      0.001338s    0.000179s
-        8,000       112,059   0.001018s     2.108743s      0.002609s    0.000322s
+        4,000        56,048   0.000434s     0.492542s      0.001338s    0.000179s
+        8,000       112,048   0.001018s     2.108743s      0.002609s    0.000322s
 
     🔴 TWO POINTS, NAMED, AND THE BUDGET'S MARGIN IS NOT THE SAME AT BOTH. Against
     the quadratic expression the budget refuses n=8,000 NOT-END (2.11s, 2.1x over) and

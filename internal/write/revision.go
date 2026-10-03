@@ -118,7 +118,7 @@ var bulletOpenerRe = regexp.MustCompile(`\A[-*][ \t]+(?:\d{4}-\d{2}-\d{2}:[ \t]+
 // apiece (8.8s over a 224 KB line; `server.py`'s
 // `_BULLET_TRAILER_PIECE_RE` carries the table). RE2 has no backtracking, so this
 // side is linear on BOTH suffix shapes — measured in one process in one run, ×1.7-2.4
-// per doubling out to n=64,000 / 896,059 bytes, AT-END 27.4ms and NOT-END 33.5ms, the
+// per doubling out to n=64,000 / 896,048 bytes, AT-END 27.4ms and NOT-END 33.5ms, the
 // per-n rows in `TestTheTrailerStripIsLinearRatherThanQuadratic`. `server.py` peels
 // the run one piece at a time instead. Two mechanisms, one answer, and the answer is
 // what `trailerdigest_test.go` compares — never the expression.
@@ -135,8 +135,15 @@ var bulletTrailersRe = regexp.MustCompile(
 // 🔴 ONE RULE, ONE PLACE: `BulletContent` is the only caller, and nothing else in
 // this package or in `server/server.py` may re-spell "what a trailer is". The two
 // languages carry one implementation each (`server.py`'s `_strip_bullet_trailers`)
-// because `lib/` cannot import `internal/`, and `tests/parity/` is what compares
-// them.
+// because `lib/` cannot import `internal/`.
+//
+// 🔴 AND WHAT COMPARES THEM IS `trailerdigest_test.go`, NOT `tests/parity/`. This
+// sentence read "`tests/parity/` is what compares them" until a round measured the
+// claim: that harness diffs the two CLIENTS' rendered bytes, this is POD-side, and
+// `tests/parity/README.md` contains ZERO occurrences of "trailer". It named a gate
+// that does not see this function — a description claiming coverage the
+// implementation does not provide, which is worse than none because it stops the
+// next reader looking. The real comparison is the digest below.
 //
 // ⚠ AND IT IS NO LONGER A TRANSCRIPTION — THE TWO ARE TWO MECHANISMS OVER ONE
 // GRAMMAR, which is a stronger claim to hold up than a shared expression. This keeps

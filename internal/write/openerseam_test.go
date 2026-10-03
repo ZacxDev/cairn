@@ -238,11 +238,11 @@ func TestTheTrailerStripIsLinearRatherThanQuadratic(t *testing.T) {
 	// `BulletContent` end to end:
 	//
 	//	n        line bytes   AT-END     NOT-END    NOT-END/AT-END
-	//	1,000        14,059   368µs      381µs      1.03
-	//	4,000        56,059   1.421ms    1.559ms    1.10
-	//	8,000       112,059   3.337ms    3.762ms    1.13
-	//	16,000      224,059   5.716ms    8.843ms    1.55
-	//	64,000      896,059   27.44ms    33.46ms    1.22
+	//	1,000        14,048   368µs      381µs      1.03
+	//	4,000        56,048   1.421ms    1.559ms    1.10
+	//	8,000       112,048   3.337ms    3.762ms    1.13
+	//	16,000      224,048   5.716ms    8.843ms    1.55
+	//	64,000      896,048   27.44ms    33.46ms    1.22
 	//
 	// 🔴 TWO POINTS ASSERTED, NAMED, because one measurement is not a claim about a
 	// curve; the five rows above are ×1.7-2.4 per doubling on both shapes, which is what
