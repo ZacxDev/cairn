@@ -168,7 +168,7 @@ designed off state rather than a failure.
    never the tooling's `repo_label`.** `DeriveScope` is worktree-stable (it reads the git
    COMMON dir); `repo_label` is the basename of whatever path it was handed, so a run from a
    worktree would key the same arc under the worktree's directory name and split one arc in
-   two. Computing it in `cairn arc register --repo <path>` makes "which scope is this repo"
+   two. Computing it in the proposed `arc register` verb (S3; `--repo <path>`) makes "which scope is this repo"
    one rule in one place — the same one `cairn recall --repo` uses.
 2. **Write edges are derived at READ time from the bytes the reader already loads — no index,
    no cache.** The cost is one parse of the scope, the same order as a `recall`; at the
@@ -256,7 +256,7 @@ value. It never opens the store itself, so it cannot see a scope the caller coul
 (`internal/ui`'s `TagMatches` follows the same rule for the same reason).
 
 **Registration (push, tooling side).** After `/handoff --confirm` lands the doc, the tooling
-calls `cairn arc register --repo <path> --slug <topic> --from <json-file>`, non-blocking (a
+calls the proposed `arc register` verb (S3) with `--repo <path> --slug <topic> --from <json-file>`, non-blocking (a
 failed registration prints its stderr line and the handoff still succeeds). The client
 derives the home scope, then `PUT /api/v1/arc/<home>/<slug>`. Payload (synthetic):
 
@@ -410,6 +410,12 @@ Pinned as WHOLE normalised strings (a guard on words is walkable by rewording).
    UNCHANGED — a design constraint asserted, not a ledger moved.
 6. **Named blind spot:** `tests/test_parity_harness.py::test_every_CLI_verb_appears_in_at_least_one_case`
    reads the PYTHON parser, so it cannot see a Go-only verb at all.
+7. `tests/test_no_scrubbed_identifiers.py::test_the_malformed_remedy_names_a_verb_THIS_PACKAGE_REGISTERS`
+   refuses every backticked "cairn" + verb citation in any tracked file whose verb the PYTHON
+   parser does not register — it reads only that parser, so S0 widens it to also accept the
+   declared `GO_ONLY_VERBS`. Until the slice that REGISTERS a verb has merged, docs cite it
+   only as a proposal ("the proposed `arcs` verb"), never in that runnable shape — this plan
+   and its handoff included, which is how this PR's first CI run went red.
 
 **UI:** `internal/ui/routes.go` `routes`; `routes_test.go`'s hand ledger and
 `contentAuthority`; `uiaudit/targets.go` (`linkExpanded`, since the scope page will link arc
@@ -443,14 +449,14 @@ pages); `internal/ui/README.md`.
 - **Positive controls.** Every "zero sessions" assertion is paired with a fixture that must
   produce a non-zero count; every refused-equals-absent pair includes a principal for whom the
   same request is a real answer (the corpus's existing 500-floor rule).
-- **Byte identity, pod ⇄ CLI.** `cairn sessions --scope X` over a synced cache equals the
+- **Byte identity, pod ⇄ CLI.** The proposed `sessions` verb (S2), run with `--scope X` over a synced cache, equals the
   pod's `sessions/X` body over the same store — one test, both renderings.
 - **Authz matrix.** principal × scope × route, as a relationship, including: arc homed in an
   unreadable scope; inferred scope unreadable; registering against an unwritable declared
   scope; the bare row.
 - **End-to-end** `tests/arcs/e2e.sh` (S5): boots `cairn-server` on a synthetic store, appends
   two trailered bullets with two sessions via `cairn append`, registers one arc via
-  `cairn arc register`, then asserts `cairn sessions` and `cairn arcs` list both, with the
+  the proposed `arc register` verb, then asserts the proposed `sessions` and `arcs` verbs list both, with the
   coverage lines, and that a reader without the scope gets the absent answer. It is the
   closing check.
 - **Which gate covers what:** `go test ./...` — derivation, journal, routes, authz, CLI,
@@ -466,11 +472,11 @@ pages); `internal/ui/README.md`.
 |---|---|---|---|
 | S0 | **Declaration plumbing**: `go_only` corpus field + both validators, `GO_ONLY_VERBS` with its three-operand check, `go_only` capability rows — exercised on synthetic tables, no route added. | S | No surface moves; the controls prove the ledgers can go red. |
 | S1 | **`internal/touch` + `write.ParseAttributions`**: derivation, `Coverage`, rendering, strip⇄parse seam test, a 10× synthetic-store benchmark. | M | Library only; nothing calls it yet. |
-| S2 | **Sessions surface**: `GET/HEAD sessions/<scope>`, `cairn sessions`, corpus rows, pod⇄CLI byte identity, authz pairs. | M | Needs no registrations; answers the "which sessions" half alone. |
-| S3 | **Arc registry**: append-only, never-compacted journal at `-arc-journal` / `CAIRN_ARC_JOURNAL`, no default, and a startup REFUSAL when the path resolves inside the store root (shown RED first); `PUT/GET arc/…`, `GET arcs/<scope>` listing `declared` AND `inferred` arcs with the label; home-scope visibility (Q1); status `unknown` accepted and never rendered as `open` (Q4); `cairn arc …` and `cairn arcs`; merge rule 7. | L | Off by default (no journal ⇒ `registrations-unconfigured`). Live use also needs the Deployment change under "Decisions taken", which is the operator's, in the private deployment repo. |
+| S2 | **Sessions surface**: `GET/HEAD sessions/<scope>`, the proposed `sessions` verb, corpus rows, pod⇄CLI byte identity, authz pairs. | M | Needs no registrations; answers the "which sessions" half alone. |
+| S3 | **Arc registry**: append-only, never-compacted journal at `-arc-journal` / `CAIRN_ARC_JOURNAL`, no default, and a startup REFUSAL when the path resolves inside the store root (shown RED first); `PUT/GET arc/…`, `GET arcs/<scope>` listing `declared` AND `inferred` arcs with the label; home-scope visibility (Q1); status `unknown` accepted and never rendered as `open` (Q4); the proposed `arc` and `arcs` verbs; merge rule 7. | L | Off by default (no journal ⇒ `registrations-unconfigured`). Live use also needs the Deployment change under "Decisions taken", which is the operator's, in the private deployment repo. |
 | S4 | **UI**: scope-page section and `/arc` page, ledgers, uiaudit — rendering the `declared`/`inferred` label and the home-scope visibility rule verbatim from S3's renderer (no second visibility check), and `unknown` status as `unknown`. Reads the journal from its own READ-ONLY mount. | M | Read-only over S2/S3. |
 | S5 | **`arcs --check`**, exiting on doctor's `0`/`9`/`10` legend with NO new constant — so `cairn -exit-codes` and both exit-code ledgers stay byte-unchanged, which the slice asserts — **+ `tests/arcs/e2e.sh`**. | S | The closing check; reads only. |
-| T1 | **Tooling side** (private tooling repo, not cairn): `/handoff --confirm` calls `cairn arc register` non-blocking; the pin bump that brings the verb. | S | A separate repo's PR; cairn is complete without it. |
+| T1 | **Tooling side** (private tooling repo, not cairn): `/handoff --confirm` calls the proposed `arc register` verb non-blocking; the pin bump that brings the verb. | S | A separate repo's PR; cairn is complete without it. |
 
 Sizes are relative, not estimates — nobody has measured these.
 
