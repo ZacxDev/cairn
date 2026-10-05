@@ -22,50 +22,55 @@ them being USED and ENFORCED.
   from the closed set, the pod REFUSES an off-vocabulary tag at the write path (422,
   `X-Store-Status: entry-shape`) with a valid tag still accepted as the control, and both
   halves are verified against the DEPLOYED pod rather than against `main`.
-  ✅ **MET — BOTH HALVES MEASURED IN ONE SESSION, AND THE ARC IS CLOSED.** It had been
-  declared met once before and was false a day later; this time the mechanism that
-  re-opened it is closed too. Numbers and probes in "State now" / "How to verify".
-  🔴 **The condition was never rewritten to match a measurement** — it is frozen at round
-  1 and reads exactly as it did. Outstanding items below are a NEW arc.
+  🔴 **NOT MET — AND THE HONEST VERDICT IS THAT IT CANNOT BE HELD MET BY BACKFILLING.**
+  Half 2 (the gate) is met and stays met: it is a code property. Half 1 quantifies over a
+  GROWING POPULATION and has now been measured true-then-false **twice**, by two different
+  sessions, each time within ~24–28 hours. **The only thing that closes half 1 durably is
+  the TEMPLATE fix merging** (see the ranked list), not another backfill.
+  🔴 **The condition itself is UNCHANGED — frozen at round 1.** It is not being rewritten
+  to match a measurement, and it is not being declared met because the work was done.
 
 ## State now
-- Branch: `main`. Base clone clean. Worktree used this session: `/home/zach/workspace/cairn-r7`
-  (branch `docs/tag-vocab-closed`) — remove it when this lands.
+- Branch: `main`. Base clone clean.
 - ✅ **THREE RANKS CLOSED AND MERGED EARLIER IN THIS ARC, verified by content on `origin/main`**
   (a squash never makes the branch head an ancestor, so ancestry is the wrong test): rank 1
   `5c96ffd` (#170), rank 2 `306164c` (#171), rank 5 `ffede27` (#169). Unchanged since.
-- ✅ **HALF 1 — MET. Every entry on its resolved instance carries exactly one closed-set tag.**
-  Two instruments, each with its own controls, agree: the reader's own per-scope denominators
-  report **0 of 29 scopes with a gap**, and a routes-aware front-matter walk reports **346 ok,
-  0 untagged, 0 off-vocabulary**. Positive control on the reader sweep: an off-vocabulary tag
-  reports `0 of 14` against a live denominator, so the zeros above are readable.
-- ✅ **HALF 2 — MET, re-measured against the DEPLOYED pod AFTER the 16 writes** (not carried
-  over from earlier in the session): an off-vocabulary tag on
+- ✅ **HALF 2 — MET, and it STAYS met because it is a code property.** Re-measured against the
+  DEPLOYED pod after the backfill writes: an off-vocabulary tag on
   `PUT /api/v1/entry/cairn/tag-vocabulary` ⇒ **422**, `x-store-status: entry-shape`; the same
-  request with the tag restored ⇒ **200**, `x-store-status: replaced`. The probe target was
-  confirmed byte-identical afterwards (`cmp`), so the control changed nothing.
-- 🔴 **THE UNTAGGED SET GREW 10 → 16 IN ONE DAY WHILE IT WAS BEING FIXED, AND THAT IS THE MOST
-  USEFUL NUMBER THIS ARC PRODUCED.** Six new untagged entries arrived between measuring ten and
-  backfilling them — the ~5/day bleed, observed rather than estimated. It is why the template
-  had to be fixed BEFORE the backfill rather than after, and why "declared MET" decayed in 24
-  hours the first time.
+  request with the tag restored ⇒ **200**, `x-store-status: replaced`. Probe target confirmed
+  byte-identical afterwards (`cmp`).
+- 🔴 **HALF 1 — WAS MET FOR A FEW HOURS, THEN FALSE AGAIN. THIS IS THE ARC'S CENTRAL FINDING,
+  NOT AN ACCIDENT OF TIMING.** The sequence, all measured:
+  - 10 untagged of 339 on their resolved instances.
+  - One day later, before any fix landed: **16** untagged. Six arrived in between.
+  - All 16 backfilled; immediately afterwards **0 of 29 scopes with a gap**, and a routes-aware
+    walk agreed at **346 ok / 0 untagged / 0 off-vocabulary**. Two instruments, each controlled.
+  - **~28 hours after that: 5 untagged again**, on a store that had grown to 363 entry files on
+    resolved instances. Nothing regressed; new entries simply kept being born untagged.
+  🔴 **SO "BACKFILL THEN DECLARE CLOSED" IS A MEASUREMENT WITH A HALF-LIFE, AND THIS DOC
+  PREVIOUSLY SHIPPED EXACTLY THAT MISTAKE TWICE** — once as `MET 2026-10-01`, and once in the
+  commit this update corrects, which claimed the arc was CLOSED while 5 new untagged entries were
+  already on the pod.
 - ✅ **ALL 16 BACKFILLED** by `cairn put`, one vocabulary term each taken from the per-scope
   table by EXACT scope match: **6 `infra`, 9 `product`, 1 `tooling`**, written **16/16, 0
-  failures**, each with its own new revision. The inserter refused to touch any entry whose
-  byte round-trip did not restore the original, and 0 were refused.
+  failures**. The inserter refused to touch any entry whose byte round-trip did not restore the
+  original, and 0 were refused. ⚠ **That work is not wasted and is not a closure either** — it
+  cleared the backlog; it does nothing about the inflow.
   🔴 **EVERY ONE WAS `created_by: handoff` — which is what makes this the TEMPLATE's doing and
-  not an authoring-discipline problem.** No hand-written entry was in the set, at either the
-  ten-entry or the sixteen-entry measurement; that is the evidence rank 4 rests on.
-- ✅ **THE TEMPLATE IS FIXED AND THE PR IS UP: the TOOLING repo's PR #2004** (that repo's own
-  numbering, not this one's; its name is a `denied-identifier` here), `MERGEABLE`.
-  It emits `tags: [TODO-pick-one]` — a placeholder that **normalizes OUTSIDE the vocabulary**,
-  so the gate that already exists refuses an unedited one (422, measured). ⚠ **NOT MERGED, and
-  that repo reports NO CI checks on the branch**, so the only evidence is a local run: **1809 tests
-  pass** across the nine suites that read that template or its skill.
+  not an authoring-discipline problem.** No hand-written entry was in any of the three
+  measurements; that is the evidence rank 4 rests on.
+- 🔴 **THE BLOCKER IS NOW ONE MERGE: the TOOLING repo's PR #2004** (that repo's own numbering;
+  its name is a `denied-identifier` here), `MERGEABLE`. It emits `tags: [TODO-pick-one]` — a
+  placeholder that **normalizes OUTSIDE the vocabulary**, so the gate that already exists refuses
+  an unedited one (422, measured). ⚠ **NOT MERGED, and that repo reports NO CI checks on the
+  branch**, so its only evidence is a local run: **1809 tests pass** across the nine suites that
+  read that template or its skill. **Until it merges, every new entry is still born untagged and
+  half 1 will be false again within a day of any backfill.**
 - ✅ **The store entry `cairn/tag-vocabulary`'s `OPEN:` bullet was rewritten to `RESOLVED:`**
-  in the same session that closed it (revision `6cf1d6d1a81de8f9`). Bare `RESOLVED:` with no
-  sha, deliberately: the backfill was store writes, not a commit, and reaching for a nearby sha
-  would record a verified closure pointing at a commit that implements nothing.
+  (revision `6cf1d6d1a81de8f9`). ⚠ **That bullet is now OVER-CLAIMING and should be re-opened or
+  corrected** — it says both halves are met. Bare `RESOLVED:` with no sha was right for the
+  reason given (the backfill was store writes, not a commit); the verdict in it was not.
 - ⚠ **No task-board field, and that is a REFUSAL rather than a zero** — the resolver exited 5
   again. An unknown session id answers 200 with an empty array, so a zero cannot distinguish
   "touched no task" from "wrong id".
@@ -186,10 +191,51 @@ them being USED and ENFORCED.
   second that is not executable, then attempt a write the guard would refuse. Record which of
   the two, if either, still blocks.
 
+### Half 1 is a decaying measurement — what rate, and does the template fix actually flatten it?
+- as-of: 2026-10-05
+- **Symptom + exact repro:** the untagged count returns to non-zero within about a day of any
+  backfill. Reproduce with the `cairn recall --tag` denominator sweep in "How to verify" and
+  compare the sum of the three vocabulary terms against `M` per scope.
+- **Observed (with values):** 10 untagged at the first measurement; **16** one day later with no
+  fix landed (+6); **0** immediately after backfilling all 16; **5** about 28 hours after that,
+  with the resolved-instance population at 363 entry files. Every untagged entry at every
+  measurement carried `created_by: handoff`. Two instruments agree at each point.
+- **Ruled out:** "the backfill regressed something" — the backfill's 16 writes all returned
+  `replaced` with new revisions, and the five now untagged are five DIFFERENT entries, none of
+  them among the 16. `via: measurement` (the 16 refs are listed in the store entry; the 5 are
+  disjoint from them).
+- **Ruled out:** "authors are forgetting" — the template emits no `tags:` line, so untagged is
+  the DEFAULT rather than an omission, and every untagged entry across all three measurements was
+  template-born. `via: measurement` (`--template … --writer {handoff,analyze-service}` with
+  `grep -c '^service:'` = 1 as the positive control in the same output where `^tags:` = 0).
+- **Leading hypothesis:** the inflow is ~5/day and entirely template-born, so merging the
+  template fix takes it to zero and nothing else will.
+- **Next probe:** after the tooling PR merges, let a day pass and re-run the sweep WITHOUT
+  backfilling. A zero then is the first evidence the fix works in the field; a non-zero names
+  either a second writer or a path that bypasses the template.
+
+### A hook that fails to START is asserted to be an ALLOW, and nobody has measured it
+- as-of: 2026-10-01
+- **Carried forward UNCHANGED and still unprobed.** `.claude/hooks/base-clone-write-guard.py`'s
+  docstring says every unexpected condition exits 0 and says nothing, so a hook that cannot
+  start lets the command run; the whole fail-open/fail-closed design rests on it.
+- **Observed (with values):** an independent audit measured that **exit 1 produces no `deny` on
+  stdout**, so a crashing hook does not block. It had no read of the harness's handling of a
+  hook that never starts at all (missing interpreter, syntax error, chmod).
+- **Ruled out:** nothing — unprobed rather than narrowed. `via: assumed` (the claim is the
+  file's own, carried across four PRs without measurement).
+- **Leading hypothesis:** a hook that fails to start is indeed an ALLOW, so the guard's
+  protection is only as good as the file being loadable.
+- **Next probe:** in a THROWAWAY project dir (never this repo, never while agents are working
+  against the live hook), register a hook that exits non-zero before doing anything, and a
+  second that is not executable, then attempt a write the guard would refuse. Record which of
+  the two, if either, still blocks.
+
 ## Next steps (ranked)
 🔴 **Numbering UNCHANGED — the rank is half a `claim-work` slug's identity.** Closed items struck.
-🔴 **THE ARC'S CLOSING CONDITION IS MET. Ranks 3 and 6 below are a NEW ARC, not another round of
-this one** — they were on the queue when the condition was frozen and neither is part of it.
+🔴 **RANK 4 IS THE ONLY THING THAT CLOSES THIS ARC. Do not backfill again first** — that restores
+a green reading for hours and changes nothing. Ranks 3 and 6 are a NEW arc; they were on the queue
+when the condition was frozen and neither is part of it.
 
 1. ~~**Make `?q=` and `?tag=` compose in the browse surface.**~~ **CLOSED, MERGED `5c96ffd`.**
    forcing: gate — merged; nothing remains.
@@ -202,11 +248,12 @@ this one** — they were on the queue when the condition was frozen and neither 
    the two features it would validate, so a bump now carries considerably more than them. The
    browser bridge was measured disconnected (`connected: 0`) and has not been re-measured.
    forcing: user — the operator asked for this deploy to be validated.
-4. **Teach the entry template to emit a `tags:` line.** **IN FLIGHT:
-   the TOOLING repo's PR #2004** — implemented, `MERGEABLE`, 1809 local tests green, no CI
-   on that repo's branch. Nothing further to design; it needs merging.
-   forcing: regression — measured, 16 occurrences, ~5/day, and it re-opened a condition already
-   declared met.
+4. 🔴 **MERGE THE TEMPLATE FIX — the TOOLING repo's PR #2004. THIS IS THE ARC'S BLOCKER AND
+   NOTHING ELSE IS.** Implemented, `MERGEABLE`, 1809 local tests green, no CI on that repo's
+   branch. Nothing left to design or measure before merging. Until it lands, half 1 returns to
+   non-zero within a day of any backfill — measured twice.
+   forcing: regression — measured three times (10, then 16, then 5 after a full backfill), ~5/day,
+   and it has falsified a "met" verdict twice.
 5. ~~**Land this doc on the mainline.**~~ **CLOSED, MERGED `ffede27`.**
    forcing: gate — closed.
 6. **Replace `ci.yml`'s hand-edited collected-test `FLOOR` with a baseline derived at the merge base.**
@@ -218,32 +265,38 @@ this one** — they were on the queue when the condition was frozen and neither 
    and one PR that adds tests goes green without touching `ci.yml`.
    forcing: gate — a permanently-red-prone gate trains everyone to click through, which
    `claude/RULES.md` names as worse than no gate.
-7. ~~**Backfill the untagged entries.**~~ **CLOSED — all 16 written, 0 failed**, verified by two
-   instruments at 0 gaps. It was ten when ranked and sixteen when done.
-   forcing: regression — closed.
-8. **NEW ARC: make the write path refuse an ABSENT tag, not just an off-vocabulary one.** This is
-   the half that would stop the condition decaying again: an author who DELETES the template's
-   `tags:` line still creates an untagged entry, because the gate cannot refuse a missing field.
-   `internal/write`'s validator caller set is pinned at exactly `{CreateEntry, ReplaceEntry}` by
-   `TestTheWriteTimeValidatorHasExactlyTheDeclaredCallers`, in BOTH directions, and the code
-   explicitly forbids growing it into `AppendBullet` — appends to an entry carrying a bad tag must
-   keep working. 🔴 **Order: it is safe to land AFTER the backfill and NOT before** — a `put`
-   rewriting an untagged entry would start failing, and the backfill's own writes carry a tag so
-   they pass either way. Needs `lib/entry_shape.py` (the oracle's pinned second spelling) and the
-   parity gate to move with it.
-   forcing: regression — without it, rank 4's template is the only thing standing between the
-   store and the state this whole arc existed to remove.
+7. **Backfill the residual untagged entries — AFTER rank 4 merges, and only then.** 16 were written
+   and the backlog was cleared; **5 have arrived since**, across 4 scopes — 2 `infra`, 2 `product`,
+   1 `tooling` by exact table match. 🔴 **Their refs cannot be written here** (the scope names are
+   `denied-identifier`s and this repo is PUBLIC); re-derive them with the sweep in "How to verify",
+   which is the reliable route anyway since the set changes daily. Doing this before rank 4 buys a
+   green reading with a ~1-day half-life.
+   forcing: regression — these are the unmet half of the closing condition.
+8. **NEW ARC: make the write path refuse an ABSENT tag, not just an off-vocabulary one.** The
+   template fix is a DEFAULT; this is an ENFORCEMENT, and it is what makes half 1 stop being a
+   decaying measurement at all. An author who deletes the template's `tags:` line still creates an
+   untagged entry. `internal/write`'s validator caller set is pinned at exactly
+   `{CreateEntry, ReplaceEntry}` by `TestTheWriteTimeValidatorHasExactlyTheDeclaredCallers`, in
+   BOTH directions, and the code explicitly forbids growing it into `AppendBullet` — appends to an
+   entry carrying a bad tag must keep working. 🔴 **Order: land it AFTER a backfill, never before**
+   — a `put` rewriting an untagged entry would start failing. Needs `lib/entry_shape.py` (the
+   oracle's pinned second spelling) and the parity gate to move with it.
+   forcing: regression — without it, a template default is the only thing between the store and
+   the state this arc existed to remove.
 
 ## Defects (batched)
 🔴 **This heading REPLACES on every update — everything still open must be re-listed or it is
 deleted.** That is how the list is maintained, not a sign the earlier text was wrong.
 
+- 🔴 **NEW: the store entry `cairn/tag-vocabulary`'s `RESOLVED:` bullet over-claims** — it states
+  both halves of the closing condition are met, which was true for a few hours and is false now.
+  Correct it to a declared-open state, or re-word it to say the backlog was cleared rather than
+  the arc closed.
 - ⚠ **STILL OPEN: `subsystem_touch.py`'s template emits no `refs:` line**, the same class of
-  silent omission `tags:` was. Deliberately left out of that PR: nothing is bleeding from
+  silent omission `tags:` was. Deliberately left out of the tooling PR: nothing is bleeding from
   it, no gate reads it, and it was not part of this arc's closing condition.
 - ⚠ **STILL OPEN: the per-scope tag table is one row short of the routed scopes**, and an entry
-  in the uncovered scope is already tagged. See the investigation block — it is a question about
-  the table's status, not a wrong row.
+  in the uncovered scope is already tagged — so the table is descriptive, not authoritative.
 - ⚠ **STILL OPEN: the pod's composed `?q=`+`?tag=` answer and the browse surface's are not
   compared against each other.** After #170 they share the ENGINE, but nothing sends the same two
   parameters to both and diffs the result. Declared in `internal/ui/README.md` rather than fixed.
@@ -565,6 +618,81 @@ deleted.** That is how the list is maintained, not a sign the earlier text was w
   itself merged as `2859888`. Verify by CONTENT (`git show origin/main:<path> | grep`), never by
   ancestry — a squash never makes the branch head an ancestor.
 
+- 🔴 **A CLOSING CONDITION WITH A POPULATION HALF CANNOT BE CLOSED BY FIXING THE POPULATION —
+  AND THIS ARC PROVED IT TWICE, THE SECOND TIME AGAINST MY OWN "CLOSED" COMMIT.** Half 2 is a code
+  property and stayed met from the moment it shipped. Half 1 ranges over every entry in a store
+  that grows, so it is a reading with a half-life: 10 → 16 (one day, no fix) → 0 (backfill) → 5
+  (~28 hours). **Before declaring such a condition met, ask which half decays and what the inflow
+  is**; and **re-measure at the moment of the claim, not at the moment of the work** — the second
+  false "closed" was written from a measurement taken hours earlier in the same session.
+- 🔴 **DO THE INFLOW BEFORE THE BACKLOG. A backfill first is work whose result expires.** The
+  ordering that actually converges is: stop new violations (the template default), then clear the
+  backlog, then make the violation impossible (the write-path refusal). Clearing the backlog first
+  produced a green sweep that was false within a day, twice.
+- 🔴 **AN ABSENT FIELD IS NOT AN INVALID FIELD, AND THAT ONE DISTINCTION IS THE WHOLE ARC.** The
+  vocabulary gate was correct, enforced and measured working the entire time — it refuses an
+  OFF-vocabulary tag and is structurally blind to a MISSING one, so entries born without the line
+  never met it. **When a gate is "enforced", ask what shape of input never reaches it.**
+- 🔴 **THE FIX FOR A MISSING FIELD IS A VALUE THE VALIDATOR REJECTS, NEVER AN EMPTY ONE.**
+  `tags: []` was the obvious first draft and is exactly as invisible as no line at all — it parses
+  as "no tags" and passes the same gate. A placeholder that NORMALIZES OUTSIDE the vocabulary makes
+  the existing validator do the enforcing, so no new gate was needed.
+- 🔴 **A PLACEHOLDER MUST NOT CONTAIN THE VALID VALUES IT IS OFFERING.** The first draft read
+  `<infra|product|tooling — pick exactly ONE>`: refused today, because the store folds a bracketed
+  value into ONE tag — but a future normalizer that split on `|` would extract `infra`, a VALID
+  term, and the unedited placeholder would start landing SILENTLY. The literal now contains no
+  vocabulary word and a test pins that it cannot.
+- 🔴 **`parse_front_matter` KEEPS EVERYTHING AFTER THE COLON, SO A TRAILING COMMENT POISONS THE
+  VALUE.** `tags: [infra]  # pick one` parses as `'[infra]  # pick one'` — meaning a CORRECTLY
+  edited tag would have been refused too. Guidance goes on its own `#` line, which the parser
+  skips, the way `aliases:` already relies on. Caught by measuring the parser, not reasoning about it.
+- 🔴 **A `RESOLVED:` WITH NO COMMIT TAKES A BARE MARKER — DO NOT REACH FOR A NEARBY SHA.** A bare
+  `RESOLVED:` reports as `⚠ UNVERIFIABLE`, which the tooling calls "not a defect — closing is the
+  point"; an adjacent-but-unrelated sha records a VERIFIED closure pointing at a commit that
+  implements nothing. ⚠ But that is about the MARKER's form — it does not make the bullet's VERDICT
+  true, and this arc's bullet was wrong about the verdict while being right about the marker.
+- ⚠ **A ROUTES-BLIND SWEEP OVER "every entry" IS WRONG BY 13×, IN THE ALARMING DIRECTION.** Both
+  instance caches hold directories for scopes the OTHER instance owns, so a flat walk reported
+  **138** untagged where the routes-aware count was **10**. Resolve each scope through
+  `routes.json` and keep only the copy on its own instance.
+- ⚠ **`*/README.md` IS NOT AN ENTRY, AND THE READER IS THE ARBITER.** 12 scope-level READMEs have
+  no front matter. The reader's own denominators exclude them — a home-grown sweep that counts them
+  reports "NOT MET" forever on a fully tagged store, which mine did right after the backfill
+  succeeded.
+- ⚠ **A write probe WITHOUT `If-Match` answers 428 `precondition-required`** — the precondition is
+  checked BEFORE the shape, so it measures nothing about the vocabulary. The revision is `sha256`
+  of the entry file, first 16 hex; re-derive it at the moment of the probe, and an ETag equal to
+  what you sent means the write was content-neutral.
+- 🔴 **FOUR INSTRUMENTS LIED THIS SESSION AND EVERY ONE WAS CAUGHT BY A CONTROL, NEVER BY THE
+  ANSWER LOOKING WRONG.** (a) `subsystem_touch.py --template` needs BOTH a slug and `--writer`;
+  each missing one exits with a usage error, EMPTY stdout, and `grep -c '^tags:'` = **0** —
+  identical to the real finding. Caught by `grep -c '^service:'` on the SAME output. (b) The reader
+  prints `N of M entry` (SINGULAR) for a one-entry scope; a plural-only regex scored **six scopes
+  as empty**, found because a second instrument's total disagreed by exactly 6 — **the
+  disagreement was the finding**. (c) A `put` loop over a manifest of RELATIVE paths failed
+  **16/16 and reported `rc=0`** (the cwd resets between tool calls, and `rc=$?` after a pipe is
+  `grep`'s status): nothing was written, visible only because the loop branched on OUTPUT.
+  (d) Twice an unconditional label was printed under a count (`(0 => no table)`,
+  `(empty => none open)`) and contradicted the data directly above it — once nearly concluding the
+  per-scope table did not exist, which would have changed the design. **Never print a verdict a
+  command cannot have computed.**
+- 🔴 **THE LEAK GATE REFUSED THIS ARC'S HANDOFF DELTAS TWICE — 13 findings, then 8 — AND WAS RIGHT
+  BOTH TIMES.** Real scope names and dated stamps the first time; the TOOLING REPO'S OWN NAME the
+  second. The split that works: **counts and mechanism here, names in the store entry
+  `cairn/tag-vocabulary`**, which is `client-confidential` and is the designed home. Verify a
+  scrubbed delta as a PAIR, never a bare zero: **1 finding on a positive control** (same file plus
+  one known denied identifier), **0 under test**.
+- ⚠ **THE TOOLING REPO IS PUBLIC** (measured: `isPrivate=false`), so it is NOT a fallback home for
+  scope names either — and this doc previously called it "the private tooling repo", which is wrong
+  in the direction that matters.
+- ⚠ **A STACKED DOCS PR MERGES INTO ITS PARENT'S BRANCH, NOT `main` — SAY SO BEFORE CALLING IT
+  LANDED.** #173 merged into #172's branch; `main` still read `MET` for another day, until #172
+  itself merged as `2859888`. Verify by CONTENT (`git show origin/main:<path> | grep`), never by
+  ancestry — a squash never makes the branch head an ancestor.
+- ⚠ **`UNSTABLE` ON A FRESH PR IS USUALLY CHECKS IN FLIGHT, NOT A FAILURE.** #177 read `UNSTABLE`
+  minutes after creation and `CLEAN` with 8/8 passing once the `go` job finished — that job runs
+  ~41–49 minutes and shows as pending the whole time. Read the rollup before reporting a problem.
+
 ## How to verify
 **The closing condition, both halves.** Half 2 first — it is cheap and tells you the gate still
 exists before you interpret half 1's numbers.
@@ -589,8 +717,10 @@ done
 ```
 
 ```bash
-# HALF 1 — every entry on ITS RESOLVED INSTANCE, asked of the READER, which is the arbiter of
-# what counts as an entry (it excludes `*/README.md`; a sweep that counts them never goes green).
+# HALF 1 — a DECAYING measurement: it is a reading with a timestamp, never a property. Re-run it
+# at the moment you intend to claim anything, not from a measurement taken earlier in a session.
+# Asked of the READER, which is the arbiter of what counts as an entry (it excludes `*/README.md`;
+# a sweep that counts them never goes green).
 #   POSITIVE CONTROL 1: an off-vocabulary tag must read `0 of <non-zero>`.
 #   POSITIVE CONTROL 2: a ONE-entry scope must read a non-zero denominator — the reader says
 #                       `of 1 entry` (SINGULAR), and a plural-only regex scores those as empty.
@@ -602,13 +732,14 @@ for s in $(python3 -c 'import json;print(" ".join(sorted(json.load(open("/home/z
       | grep -oE 'tag: `[^`]+` — [0-9]+ of [0-9]+ (entry|entries)'
   done
 done
-# => the three N must SUM TO M for every scope. 0 of 29 scopes had a gap when this was written.
+# => the three N must SUM TO M for every scope. Readings so far: 10 untagged, then 16, then 0
+#    right after the backfill, then 5 about 28 hours later.
 ```
 
 ```bash
 # RANK 4's premise, and the guard on it. The `service:` count is the positive control: without it
 # a usage error (missing slug, or missing --writer) reads as a clean zero.
-T=<tooling>/scripts/lib/subsystem_touch.py   # <tooling> = the private-name-free tooling checkout
+T=<tooling>/scripts/lib/subsystem_touch.py   # <tooling> = the tooling checkout, unnameable here
 for w in handoff analyze-service; do
   python3 "$T" --template probe-slug --writer "$w" \
     | awk '/^service:/{s++} /^tags:/{t++} END{printf "%s: service=%d tags=%d\n", "'"$w"'", s, t}'
