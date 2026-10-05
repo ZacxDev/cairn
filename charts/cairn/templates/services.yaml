@@ -1,0 +1,37 @@
+{{- include "cairn.preconditions" . -}}
+{{- if .Values.store.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cairn.fullname" . }}-store
+  labels:
+    {{- include "cairn.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ include "cairn.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: store
+  ports:
+    - name: http
+      port: {{ .Values.store.port }}
+      targetPort: http
+{{- end }}
+{{- if .Values.ui.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cairn.fullname" . }}-ui
+  labels:
+    {{- include "cairn.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ include "cairn.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: ui
+  ports:
+    - name: http
+      port: {{ .Values.ui.port }}
+      targetPort: http
+{{- end }}

@@ -1,0 +1,95 @@
+{{- include "cairn.preconditions" . -}}
+{{- if .Values.ui.enabled }}
+---
+# 🔴 `enableServiceLinks: false` AND AN EXPLICIT PORT VARIABLE. KEEP BOTH — THEY
+# FAIL DIFFERENTLY, AND THIS COMBINATION IS A ~12-MINUTE OUTAGE WRITTEN DOWN.
+#
+# With service links on (the DEFAULT, which a manifest that sets nothing gets),
+# the kubelet injects `<SVCNAME>_PORT=tcp://<clusterIP>:<port>` for every Service
+# in the namespace. A Service named `cairn-ui` therefore injects
+# `CAIRN_UI_PORT=tcp://…` — which is the variable this binary reads as its LISTEN
+# PORT. A kubelet injection and a manifest `env:` are ONE process environment, so
+# the injection shadows the manifest and startup is fatal on an unparseable port.
+#
+# ⚠ RENAMING THE SERVICE DOES NOT REMOVE THE CLASS. Any Service name whose env
+# form collides with a `CAIRN_*` the binary reads recreates it, so the fix is the
+# disjunction and not a naming convention.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cairn.fullname" . }}-ui
+  labels:
+    {{- include "cairn.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ui
+spec:
+  replicas: {{ .Values.ui.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "cairn.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: ui
+  template:
+    metadata:
+      labels:
+        {{- include "cairn.labels" . | nindent 8 }}
+        app.kubernetes.io/component: ui
+    spec:
+      enableServiceLinks: false
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: cairn-ui
+          image: {{ .Values.image.ui | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            # Explicit, and load-bearing — see the header.
+            - name: CAIRN_UI_PORT
+              value: {{ .Values.ui.port | quote }}
+            - name: CAIRN_UI_HOST
+              value: "0.0.0.0"
+            - name: CAIRN_STORE_ROOT
+              value: {{ .Values.storage.mountPath | quote }}
+            - name: CAIRN_TOKEN_FILE
+              value: {{ printf "%s/%s" .Values.tokenFile.mountPath .Values.tokenFile.secretKey | quote }}
+            {{- with .Values.trustedProxies }}
+            - name: CAIRN_TRUSTED_PROXIES
+              value: {{ join "," . | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.ui.port }}
+          # 🔴 `/healthz` IS THE ONLY PROBE-SAFE ROUTE, MEASURED BY RUNNING THE
+          # BINARY: `/healthz` answers 200 unauthenticated, while `/`, `/health`
+          # and `/readyz` all answer 401. Probing anything else leaves the pod
+          # permanently NotReady while the process is perfectly healthy — so this
+          # path is not a value, because making it configurable is offering the
+          # caller a way to get it wrong.
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            # readOnly HERE is the container's view, and it is free. The UI reads;
+            # the store writes. The claim reference deliberately carries no such
+            # flag — see `cairn.storeVolume`.
+            - name: store
+              mountPath: {{ .Values.storage.mountPath }}
+              readOnly: true
+            - name: token
+              mountPath: {{ .Values.tokenFile.mountPath }}
+              readOnly: true
+          {{- with .Values.ui.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        {{- include "cairn.storeVolume" . | nindent 8 }}
+        - name: token
+          secret:
+            secretName: {{ .Values.tokenFile.secretName }}
+{{- end }}
