@@ -1,0 +1,41 @@
+{{- include "cairn.preconditions" . -}}
+{{- if .Values.networkPolicy.enabled }}
+---
+# 🔴 A POLICY MUST NAME EVERY PORT THE RELEASE SERVES, OR THE WORKLOAD IT MISSES
+# IS SILENTLY UNREACHABLE WHILE REPORTING HEALTHY. A namespace-wide
+# `podSelector: {}` covers a new pod the instant it exists — by denying
+# everything — so a UI added on a second port behind a policy written for the
+# store alone presents as Deployment 1/1 Ready, probes green, and the ingress
+# controller unable to open a socket. That reads as a UI bug, not a policy one.
+#
+# The port list is DERIVED from the same `enabled` flags the Deployments use, so
+# the two cannot disagree.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cairn.fullname" . }}-ingress
+  labels:
+    {{- include "cairn.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "cairn.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- if .Values.networkPolicy.ingressFrom }}
+        {{- toYaml .Values.networkPolicy.ingressFrom | nindent 8 }}
+        {{- else }}
+        []
+        {{- end }}
+      ports:
+        {{- if .Values.store.enabled }}
+        - protocol: TCP
+          port: {{ .Values.store.port }}
+        {{- end }}
+        {{- if .Values.ui.enabled }}
+        - protocol: TCP
+          port: {{ .Values.ui.port }}
+        {{- end }}
+{{- end }}

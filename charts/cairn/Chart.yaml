@@ -1,0 +1,17 @@
+apiVersion: v2
+name: cairn
+description: >-
+  The cairn store pod and browser surface, packaged so a new deployment does not
+  re-pay the manifest landmines. It does NOT bundle an identity provider.
+type: application
+
+# 🔴 THE CHART VERSION IS NOT THE APP VERSION, AND `appVersion` IS DELIBERATELY
+# ABSENT RATHER THAN PINNED HERE. cairn's version IS its git revision — the flake
+# derives it and nothing writes it by hand — so an `appVersion` string in this
+# file would be a second, hand-maintained spelling that can disagree with the
+# image actually deployed. Pin the image by digest in values instead.
+version: 0.1.0
+
+keywords: [cairn, notes, store]
+home: https://github.com/ZacxDev/cairn
+sources: [https://github.com/ZacxDev/cairn]
