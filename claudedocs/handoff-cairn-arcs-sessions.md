@@ -132,7 +132,7 @@ facts, the eight design decisions, the ledgers and the slice table).
 ```bash
 # the plan's load-bearing citations still hold (re-read before acting on any)
 sed -n 44p internal/write/revision.go          # attributionFormat
-sed -n 54p internal/write/revision.go          # attributionPattern
+grep -n '^const attributionPattern\|^const attributionActorClass\|^const sessionClass' internal/write/revision.go  # the grammar (split into its two classes by S1)
 sed -n 542,558p internal/control/tokenfile/source.go   # storeDirs: no dot filter
 go run ./cmd/cairn -verbs                      # today: 10 verbs, none Go-only
 go run ./cmd/cairn -exit-codes                 # the codes the new verbs must reuse
