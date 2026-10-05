@@ -1,0 +1,57 @@
+{
+  "body": {
+    "bytes": 1231,
+    "kind": "text_lines",
+    "sha256": "ca20c07c7faa8f5c14bec6eeccd0d796bddd6179228e04f6dc096378e9dbd18c",
+    "text_lines": [
+      "🔴 SNAPSHOT, NOT THE SOURCE — seeded=2000-01-04T00:00:00Z newest-entry=2000-01-03T00:00:00Z entry-files=11. This host serves a COPY of the authoritative store, pushed by `seed.sh`; nothing syncs it continuously, so it can be arbitrarily behind and it CANNOT KNOW BY HOW MUCH. The \"none omitted\" below is true of THIS DISK and says nothing about the source. Before trusting an absence — a missing entry, a missing badge, a zero — re-run the read against the local store, or re-seed. UNSTAMPED/UNREADABLE/NONE each mean the stated fact could not be established, never that it is fine.",
+      "",
+      "cairn-sessions: status=scope-empty scope=hollow-set",
+      "  coverage: writes measured from entry trailers · reads NOT recorded (not collected in this phase)",
+      "  attribution: trailers are self-reported — actor as written in the entry (only appended bullets had it set by the pod); session ids are declared by the writer",
+      "  scanned: 0 of 0 entries · 0 unreadable · 0 rejected by the index · 0 bullets with a refused trailer",
+      "  attributed: 0 of 0 bullets carry a write trailer (0 have none — their writers are NOT listed)",
+      "",
+      "`hollow-set/` EXISTS AND HOLDS NO ENTRY — nothing was ever recorded there, so no session wrote there through an entry.",
+      ""
+    ]
+  },
+  "case": "sessions-empty-scope",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Length",
+      "1231"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Exit",
+      "0"
+    ],
+    [
+      "X-Store-Revision",
+      "unknown"
+    ],
+    [
+      "X-Store-Snapshot",
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=11"
+    ],
+    [
+      "X-Store-Status",
+      "scope-empty"
+    ]
+  ],
+  "reason": "OK",
+  "recorded_from": "cmd/cairn-server",
+  "status": 200
+}

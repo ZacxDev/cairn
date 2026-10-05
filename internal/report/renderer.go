@@ -78,6 +78,25 @@ func (rd Reader) Search(storeRoot string, opts SearchOptions, visible store.Scop
 	}, nil
 }
 
+// Sessions renders one `/sessions` request.
+//
+// ⚠ UNLIKE `Recall` AND `Search` IT NEEDS NO HOST: the sessions report names no machine and no path,
+// which is what lets the pod's body and the CLI's stdout carry the same report bytes.
+func (rd Reader) Sessions(storeRoot, scope string, visible store.ScopeSet) (Rendered, error) {
+	rep, err := Sessions(storeRoot, scope, visible)
+	if err != nil {
+		return Rendered{}, err
+	}
+	code, warning := rep.Exit()
+	return Rendered{
+		Status:  rep.Status,
+		Scope:   rep.Scope,
+		Exit:    code,
+		Text:    rep.RenderText(),
+		Warning: warning,
+	}, nil
+}
+
 // ExitFor is the exit code, and the one warning line that goes with it. ONE decision site,
 // for both report types.
 //

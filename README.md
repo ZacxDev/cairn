@@ -556,12 +556,28 @@ renaming a human-read label breaks nobody.
 | a scope's digest | `cairn recall --scope X` (`--ref R`, `--list`, `--limit N`, `--page N`) |
 | find a hunk by text | `cairn search 'query'` (`--all-scopes`) |
 | what the cache actually holds — the ENTRY files, never a scope's `README.md` | `cairn ls-entries` |
+| which sessions wrote attributed bullets in a scope, with coverage counts (Go client only) | `cairn sessions --scope X` (or `--repo P`) |
 | the post-write check: parse, dropped lines, marker reachability | `cairn validate` |
 | one call of diagnostics | `cairn doctor` (`--json`, `--no-sync`) |
 | append one dated, attributed bullet | `cairn append --scope S --ref R --text '…' --session ID` |
 | replace a whole entry behind `If-Match` | `cairn put --scope S --ref R --file F` |
 | create a new entry (refuses to overwrite) | `cairn create --scope S --ref R --file F` |
 | the scope→instance table, graded | `cairn routes` (`--check`) |
+
+### `cairn sessions` — who wrote here, and what that answer cannot see
+
+`cairn sessions --scope X` (and the pod's `GET /api/v1/sessions/X`) lists every session id that
+signed a surviving `## Nuance / work-history` bullet with a ` [cairn: <actor>/<session>]` trailer,
+per session: the actor(s) as written, the bullet count and the date span. Both surfaces call ONE
+renderer, so the report bytes are identical; only the line above them differs (the CLI's cache
+banner, the pod's snapshot stamp). It exists on the **Go** client and pod only — the Python oracle
+has no twin. Every answer prints its coverage, because most bullets carry no trailer:
+`attributed: K of N` (the N−K are NOT listed), what was scanned or rejected, that **reads are not
+recorded**, and that trailers are **self-reported** (`put`/`create` write bytes verbatim, and the
+session id is the writer's own word). `scope-absent`, `scope-empty`, `no-attributed-writes` and
+`scope-unreadable` are four different statements and render differently; a scope you may not read
+answers exactly like one that does not exist. Exit codes are the read set below — `0` for every
+answer, `3` when nothing in the scope could be scanned.
 
 ### Exit codes, because the caller is usually a program
 
@@ -793,6 +809,7 @@ anyone editing a routing path are in [`lib/README.md`](lib/README.md).
 | `GET /api/v1/recall/{scope}` | rendered digest (`?mode=&ref=&limit=&page=`) |
 | `GET /api/v1/search/{scope}?q=…` | search (`?threshold=&max_hits=&context=&all_scopes=`) |
 | `GET /api/v1/snapshot[?scope=]` | gzipped tar of the entry files — the sync payload |
+| `GET /api/v1/sessions/{scope}` | which sessions wrote attributed bullets, with coverage — **Go pod only**, same renderer as `cairn sessions` |
 | `POST /api/v1/entry/{scope}/{ref}/bullets` | append ONE attributed bullet (the actor comes from the token, never the body) |
 | `PUT /api/v1/entry/{scope}/{ref}` | whole-file replace via `If-Match`, or create via `If-None-Match: *` |
 

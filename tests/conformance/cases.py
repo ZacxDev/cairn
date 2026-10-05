@@ -93,9 +93,10 @@ class Case:
     #: between the two validators "Go's routes minus the oracle's" equals "the routes
     #: `go_only` rows address", and `tests/test_go_client_ledgers.py` checks that
     #: equation out of the running binary. ⚠ `suite.py generate` records goldens FROM
-    #: THE ORACLE and therefore records none for these rows; how a `go_only` golden is
-    #: recorded is the first Go-only route's problem (the plan's ledger item 4), not
-    #: something this field pretends to have solved.
+    #: THE ORACLE and therefore records none for these rows; they are recorded from the
+    #: Go server by `run_go.sh record-go-only` and stamped `recorded_from:
+    #: cmd/cairn-server` — change detectors, not oracle witnesses (`suite.record_go_only`,
+    #: `suite.check_golden_provenance`).
     go_only: bool = False
     go_only_why: str = ""
     #: 🔴 THIS ROW DELIBERATELY ADDRESSES A METHOD/HEAD THE SERVER HAS NO ROUTE

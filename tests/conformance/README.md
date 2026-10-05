@@ -125,7 +125,7 @@ python3 tests/conformance/suite.py run --base-url … --token-file … --oracle-
 The second form is for a `--base-url` pointing at a hand-started **oracle**. Omitting
 `--base-url` boots the oracle and always asserts.
 
-## …and the mirror: rows asserted against the GO SERVER ONLY (none yet)
+## …and the mirror: rows asserted against the GO SERVER ONLY (`sessions/<scope>`, nine rows)
 
 🔴 **Before this mark, a route only the Go server serves had no legal spelling here** — its
 rows were refused by the shrink half of the route ledger ("addresses routes the server no
@@ -141,9 +141,29 @@ refuses a `go_only` row for a route `server.py` DECLARES (and checks that before
 so the diagnosis is reachable), and `internal/api`'s `checkRouteLedger` refuses one for a
 route Go does NOT dispatch. `tests/test_go_client_ledgers.py` reads `cairn-server -routes`
 and checks the whole equation — Go's routes minus the oracle's equals the `go_only` routes
-here AND in `testlib/capability_ledger` — out of the running binary. ⚠ **How a `go_only`
-golden is recorded is still open**: `generate` records from the oracle, so the first Go-only
-route has to bring a recorder (the plan's ledger item 4) along with its rows.
+here AND in `testlib/capability_ledger` — out of the running binary.
+
+🔴 **A `go_only` GOLDEN IS A CHANGE DETECTOR, NOT A CONTRACT WITNESS — and it says so in the
+file.** Every other golden here is recorded from the oracle and states what ANY implementation
+must answer. A `go_only` row has no second implementation, so its golden is recorded from the Go
+server under test and carries `"recorded_from": "cmd/cairn-server"`; it can only say the served
+bytes did not MOVE, never that they are right, because an expectation derived from the
+implementation it tests proves nothing about that implementation. The contract witnesses for a
+Go-only route are the Go tests with literal expected bodies (for `sessions`:
+`internal/report/sessions_test.go`, `internal/api/sessions_test.go`) and the relations here,
+which every go-only read head joins (refused-equals-absent, head-matches-get, uniform-401).
+
+```bash
+tests/conformance/run_go.sh record-go-only   # the ONLY way a go_only golden is written
+```
+
+It boots the Go server exactly as a `run` does, issues the WHOLE corpus in order (so the goldens
+are recorded under the arithmetic they are replayed under), writes ONLY the `go_only` rows, and
+refuses — writing nothing — if a go-only route got no 2xx (the oracle's uniform 401 passed a
+first, "anything but the no-route 404" draft of that floor, measured), if a relation fails, or
+if a body names this machine. `run` refuses a golden whose stamp disagrees with its row's mark,
+in either direction, so an oracle golden cannot become a change detector by accident nor the
+reverse. `generate` still records none of these rows and leaves their goldens alone.
 
 ## Three cases send literal request bytes
 

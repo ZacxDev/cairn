@@ -77,6 +77,34 @@ def _raw_corpus() -> dict:
     return json.loads(cases_mod.REQUESTS_PATH.read_text(encoding="utf-8"))
 
 
+#: 🔴 THE REAL `go_only` ROWS, SPELLED BY HAND — never derived from the corpus under test,
+#: so a row that lost (or gained) its mark moves the assertions that read this. The
+#: arcs/sessions S2 slice added them; the next Go-only route moves this set in its commit.
+SESSIONS_GO_ONLY_IDS = (
+    "sessions-authorized", "sessions-authorized-head", "sessions-legacy-token",
+    "sessions-refused-scope", "sessions-absent-scope", "sessions-empty-scope",
+    "sessions-unreadable-scope", "sessions-unauthenticated", "sessions-arity-too-long",
+)
+
+
+def _raw_corpus_without_go_only() -> dict:
+    """The real corpus with every `go_only` row (and every relation naming one) removed.
+
+    For the tests that stand the ORACLE in for "a port" (`assert_oracle_specific=False`):
+    such a run COMPARES go_only rows, and the oracle's only answer to a Go-only route is its
+    no-route 404 — so those rows would fail for a reason unrelated to what the test measures.
+    """
+    raw = _raw_corpus()
+    gone = {c["id"] for c in raw["cases"] if c.get("go_only")}
+    raw["cases"] = [c for c in raw["cases"] if c["id"] not in gone]
+    rel = raw["relations"]
+    rel["uniform_401"] = [i for i in rel["uniform_401"] if i not in gone]
+    for key, members in (("refused_equals_absent", ("refused", "absent")),
+                         ("head_matches_get", ("head", "get"))):
+        rel[key] = [p for p in rel[key] if not any(p[m] in gone for m in members)]
+    return raw
+
+
 def _records_answering(corpus: cases_mod.Corpus, status: int) -> dict:
     """A record per case, all IDENTICAL apart from the id, answering `status`.
 
@@ -292,24 +320,29 @@ class TestTheOracleSpecificMark:
         asserting it against a port — so `run_against_oracle` asserts every marked row
         and `run`'s default is the strict direction.
 
-        ⚠ The oracle run DOES skip `go_only` rows (see `TestTheGoOnlyMark`) — and the
-        real corpus has none yet, so this still reads "nothing". The day the first
-        Go-only route lands, this assertion becomes "exactly the go_only ids"."""
+        ⚠ The oracle run DOES skip `go_only` rows (see `TestTheGoOnlyMark`) — and since
+        the arcs/sessions S2 slice the real corpus has nine, so "nothing" became "exactly
+        the go_only ids, spelled by hand": every `oracle_only` row is still ASSERTED, and
+        no skip line names an oracle-specific row."""
         outcome = suite.run_against_oracle()
         assert outcome.failures == []
-        assert outcome.skipped == sorted(
-            c.id for c in cases_mod.load_corpus().cases if c.go_only
-        ) == []
-        assert not [ln for ln in outcome.lines if ln.startswith("SKIP")]
+        assert sorted(outcome.skipped) == sorted(SESSIONS_GO_ONLY_IDS)
+        skips = [ln for ln in outcome.lines if ln.startswith("SKIP")]
+        assert skips, "the positive control: the go_only rows ARE skipped, and say so"
+        assert not [ln for ln in skips if "oracle-specific" in ln]
 
-    def test_skipping_is_REPORTED_by_id_and_by_reason(self):
+    def test_skipping_is_REPORTED_by_id_and_by_reason(self, tmp_path):
         """A skip nobody can see is indistinguishable from a pass, which is the whole
         failure mode this suite is built against — so the run names every skipped id on
-        its own line, with the row's reason, and counts them in the summary."""
+        its own line, with the row's reason, and counts them in the summary.
+
+        The oracle stands in for a port here, so the corpus is the real one MINUS its
+        `go_only` rows, which a non-oracle run compares and the oracle cannot answer."""
+        corpus = _corpus_from(_raw_corpus_without_go_only(), tmp_path)
         with tempfile.TemporaryDirectory(prefix="cairn-conformance-") as td:
             with oracle.running_oracle(Path(td)) as ora:
                 outcome = suite.run(
-                    ora.base_url, ora.token_file, GOLDEN,
+                    ora.base_url, ora.token_file, GOLDEN, corpus,
                     assert_oracle_specific=False,
                 )
         assert sorted(outcome.skipped) == sorted(
@@ -340,7 +373,7 @@ class TestTheOracleSpecificMark:
         # request itself is part of the run's arithmetic: fifteen deliberate refusals
         # from one client address, and a canary at the end that proves no lockout
         # tripped. Dropping a request would change what the limiter saw.
-        assert outcome.requests == len(cases_mod.load_corpus().cases) + 1
+        assert outcome.requests == len(corpus.cases) + 1
         # The oracle answers every one of them correctly, so a skip must not turn into
         # a failure — and the relation whose member was skipped must still be asserted
         # over what is left.
@@ -358,7 +391,9 @@ class TestTheOracleSpecificMark:
         raw = _raw_corpus()
         members = set(raw["relations"]["uniform_401"])
         for row in raw["cases"]:
-            if row["id"] in members:
+            # A go_only member is already excused by its own mark (and may not carry
+            # both); `skipped=members` below is what removes every member either way.
+            if row["id"] in members and not row.get("go_only"):
                 row["oracle_only"] = True
                 row["oracle_only_why"] = (
                     "a synthetic mark, used only to prove the relation refuses to "
@@ -457,7 +492,10 @@ class TestTheGoOnlyMark:
 
     def test_GREEN_a_go_only_row_for_a_route_the_oracle_lacks_is_accepted(self, tmp_path):
         corpus = _corpus_from(_raw_with(_go_only_row()), tmp_path)
-        assert cases_mod.go_only_routes(corpus) == {SYNTHETIC_GO_ONLY_ROUTE}
+        # The real corpus's own go_only routes, spelled by hand, plus the synthetic one.
+        assert cases_mod.go_only_routes(corpus) == {
+            SYNTHETIC_GO_ONLY_ROUTE, "GET sessions", "HEAD sessions",
+        }
         # …and it is NOT counted as oracle coverage, so the oracle's ledger is unmoved.
         assert cases_mod.addressed_routes(corpus) == EXPECTED_ROUTES
 
@@ -526,11 +564,13 @@ class TestTheGoOnlyMark:
         corpus = _corpus_from(_raw_with(_go_only_row()), tmp_path)
         outcome = suite.run_against_oracle(corpus=corpus)
         assert outcome.failures == []
-        assert outcome.skipped == ["synthetic-go-only-read"]
+        assert sorted(outcome.skipped) == sorted(
+            ("synthetic-go-only-read",) + SESSIONS_GO_ONLY_IDS
+        )
         line = f"SKIP synthetic-go-only-read (go-only: {SYNTHETIC_GO_ONLY_WHY})"
         assert line in outcome.lines
         summary = [ln for ln in outcome.lines if ln.startswith("SUMMARY")][0]
-        assert "skipped=1 [synthetic-go-only-read]" in summary
+        assert f"skipped={1 + len(SESSIONS_GO_ONLY_IDS)} [synthetic-go-only-read," in summary
         assert outcome.requests == len(cases_mod.load_corpus().cases) + 1 + 1
 
     def test_a_NON_oracle_run_COMPARES_a_go_only_row(self, tmp_path):
@@ -564,8 +604,56 @@ class TestTheGoOnlyMark:
         assert any(
             ln.startswith("SKIP synthetic-go-only-read (go-only: ") for ln in outcome.lines
         )
-        # The positive control: generate DID record the rest.
-        assert len(list(out.glob("*.json"))) == len(cases_mod.load_corpus().cases)
+        # The positive control: generate DID record the rest — every row but the real
+        # go_only ones, which the oracle does not record either.
+        assert len(list(out.glob("*.json"))) == (
+            len(cases_mod.load_corpus().cases) - len(SESSIONS_GO_ONLY_IDS)
+        )
+        assert not [p for p in out.glob("*.json") if p.stem in SESSIONS_GO_ONLY_IDS]
+
+
+class TestTheGoOnlyGoldensAreRecordedFromGoAndSaySo:
+    """🔴 THE RECORDER S0 LEFT OPEN (the plan's ledger item 4). A `go_only` golden is
+    recorded from the Go server by `run_go.sh record-go-only` and stamped
+    `recorded_from: cmd/cairn-server` — a CHANGE DETECTOR, never an oracle witness — and
+    `run` refuses a golden whose stamp disagrees with its row's mark."""
+
+    def test_every_committed_golden_carries_the_provenance_its_row_declares(self, corpus):
+        stamped = []
+        for case in corpus.cases:
+            golden = wire.read_golden(GOLDEN, case.id)
+            assert suite.check_golden_provenance(case, golden) is None, case.id
+            if "recorded_from" in golden:
+                stamped.append(case.id)
+        # The positive control, spelled by hand: exactly the go_only rows are stamped.
+        assert sorted(stamped) == sorted(SESSIONS_GO_ONLY_IDS)
+
+    def test_RED_a_go_only_golden_without_the_stamp_is_refused(self, corpus):
+        case = corpus.by_id("sessions-authorized")
+        golden = {k: v for k, v in wire.read_golden(GOLDEN, case.id).items()
+                  if k != "recorded_from"}
+        problem = suite.check_golden_provenance(case, golden)
+        assert problem and "carries recorded_from=None" in problem
+
+    def test_RED_an_oracle_golden_WITH_the_stamp_is_refused(self, corpus):
+        case = corpus.by_id("recall-authorized")
+        golden = dict(wire.read_golden(GOLDEN, case.id))
+        golden["recorded_from"] = suite.GO_ONLY_RECORDED_FROM
+        problem = suite.check_golden_provenance(case, golden)
+        assert problem and "its golden is the ORACLE's" in problem
+
+    def test_the_recorder_REFUSES_a_server_that_does_not_serve_the_route(self, tmp_path):
+        """Pointed at the ORACLE — which answers every Go-only row with its no-route 404
+        — the recorder must refuse rather than file that 404 as the contract, and must
+        write nothing."""
+        out = tmp_path / "golden"
+        with tempfile.TemporaryDirectory(prefix="cairn-conformance-") as td:
+            with oracle.running_oracle(Path(td)) as ora:
+                with pytest.raises(suite.SuiteError) as exc:
+                    suite.record_go_only(ora.base_url, ora.token_file, out)
+        assert "no go_only row addressing GET sessions got a 2xx" in str(
+            exc.value)
+        assert not out.exists() or not list(out.glob("*.json"))
 
 
 class TestARelationCannotBeSatisfiedByTwoSERVERERRORS:
@@ -792,6 +880,8 @@ class TestTheFramingClaim:
             "recall-authorized": 3386,
             "search-authorized-head": 7,
             "search-authorized": 7,
+            "sessions-authorized-head": 13,
+            "sessions-authorized": 13,
         }
         suite.check_head_pairs(corpus, _records_answering(corpus, 200), outcome)
         assert len(outcome.failures) == 1
@@ -913,8 +1003,13 @@ class TestTheSuitePassesAgainstTheOracle:
         result_lines = [
             ln for ln in outcome.lines if ln.startswith(("PASS ", "FAIL "))
         ]
-        # Read the CONTENT, not an exit code: count the runner's own lines.
-        assert len(result_lines) == len(outcome.lines) - 1  # all but SUMMARY
+        skip_lines = [ln for ln in outcome.lines if ln.startswith("SKIP ")]
+        # Read the CONTENT, not an exit code: count the runner's own lines. Every line
+        # but SUMMARY is a verdict or a declared go-only skip — nine per-case skips and
+        # the three relations whose members they are.
+        assert len(skip_lines) == len(SESSIONS_GO_ONLY_IDS) + 3
+        assert all("go-only" in ln for ln in skip_lines)
+        assert len(result_lines) == len(outcome.lines) - 1 - len(skip_lines)
         assert not [ln for ln in result_lines if ln.startswith("FAIL")]
 
     def test_adding_a_case_moves_the_numbers(self, tmp_path):
@@ -1064,7 +1159,12 @@ class TestTheGoldensAreGenerated:
         suite.generate(second)
         names = sorted(p.name for p in first.glob("*.json"))
         assert names == sorted(p.name for p in second.glob("*.json"))
-        assert names == sorted(p.name for p in GOLDEN.glob("*.json"))
+        # The committed set is the oracle's PLUS the go_only goldens, which the oracle
+        # never records (`run_go.sh record-go-only` does, from the Go server).
+        go_only = {f"{i}.json" for i in SESSIONS_GO_ONLY_IDS}
+        committed = sorted(p.name for p in GOLDEN.glob("*.json"))
+        assert go_only <= set(committed)
+        assert names == [n for n in committed if n not in go_only]
         unstable, uncommitted = [], []
         for name in names:
             a = (first / name).read_text(encoding="utf-8")

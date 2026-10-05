@@ -75,6 +75,12 @@ func Verbs() []Verb {
 			// narrowing the key exists for.
 			Flags: append(append([]string{}, commonReadFlags...), "--all-scopes", "--ref-to", "--tag"),
 			Run:   func(e Env, o Options) (int, error) { return Report(e, o, true) }},
+		// 🔴 GO-ONLY, DECLARED: the Python client has no `sessions` (decision 3 of the
+		// arcs/sessions plan), and the `scope-sessions` row of `capability_ledger.LEDGER` plus
+		// `flake.nix`'s `want-go-only-verbs.txt` are what make that legal. It renders through the
+		// SAME `report.Sessions` the pod's `sessions/<scope>` route does.
+		{Name: "sessions", Help: "which sessions wrote attributed bullets in the scope, with coverage",
+			Flags: commonReadFlags, Run: Sessions},
 		{Name: "validate", Help: "the post-write check: parse, dropped lines, marker reachability",
 			Flags: commonReadFlags, Run: Validate},
 		{Name: "ls-entries", Help: "one `<scope>/<entry>.md` per line",

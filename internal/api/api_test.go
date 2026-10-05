@@ -246,6 +246,7 @@ func TestEveryDeclaredRouteIsActuallyDISPATCHED(t *testing.T) {
 		"recall":   "/api/v1/recall/alpha-notes",
 		"search":   "/api/v1/search/alpha-notes?q=x",
 		"snapshot": "/api/v1/snapshot",
+		"sessions": "/api/v1/sessions/alpha-notes",
 		"entry":    "/api/v1/entry/alpha-notes/gadget-one",
 	}
 	for _, route := range DeclaredRoutes() {
@@ -281,7 +282,7 @@ func TestTheLedgerGuardCanGoRed(t *testing.T) {
 	// keeps the wiring and the declared set in step; feeding it a wiring the ledger does
 	// not name must be an error, or the agreement test is comparing a set with itself.
 	srv := &Server{
-		readRoutes:  map[string]readRoute{"recall": {}, "search": {}, "snapshot": {}, "raw_dump": {}},
+		readRoutes:  map[string]readRoute{"recall": {}, "search": {}, "snapshot": {}, "sessions": {}, "raw_dump": {}},
 		writeRoutes: map[writeKey]writeRoute{{"POST", "entry"}: {}, {"PUT", "entry"}: {}},
 	}
 	err := srv.checkLedger()
