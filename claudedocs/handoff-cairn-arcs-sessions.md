@@ -20,11 +20,11 @@ facts, the eight design decisions, the ledgers and the slice table).
 - **closing-condition:** `check` — slices S0–S5 of the plan are MERGED on `main` (verified
   by content, not ancestry), AND `tests/arcs/e2e.sh` exits 0 on `main` — it boots
   `cairn-server` on a synthetic store, appends two trailered bullets from two sessions,
-  registers one arc with `cairn arc register`, and asserts `cairn sessions --scope
-  alpha-notes` and `cairn arcs --scope alpha-notes` list both sessions and the arc with their
+  registers one arc with the proposed `arc register` verb (S3), and asserts that the proposed
+  `sessions` and `arcs` verbs, each run with `--scope alpha-notes`, list both sessions and the arc with their
   coverage lines, while a principal without that scope gets the absent answer (the negative
-  control) — AND, against the DEPLOYED pod, `cairn arcs --repo /home/zach/workspace/cairn`
-  lists this arc (`cairn-arcs-sessions`), registered by `/handoff` itself (slice T1).
+  control) — AND, against the DEPLOYED pod, the proposed `arcs` verb run with
+  `--repo /home/zach/workspace/cairn` lists this arc (`cairn-arcs-sessions`), registered by `/handoff` itself (slice T1).
   ADDRESSED ⇒ arc CLOSED.
 
 ## State now
@@ -55,14 +55,14 @@ facts, the eight design decisions, the ledgers and the slice table).
 3. **S1 — `internal/touch` + `write.ParseAttributions`**: derivation, coverage, rendering,
    the strip⇄parse seam test, a 10× synthetic-store benchmark. Size M.
    forcing: user — the operator asked for session↔scope resolution.
-4. **S2 — the sessions surface**: `GET/HEAD sessions/<scope>`, `cairn sessions`, corpus
+4. **S2 — the sessions surface**: `GET/HEAD sessions/<scope>`, the proposed `sessions` verb, corpus
    rows, pod⇄CLI byte identity, authz pairs. Size M.
    forcing: user — the operator asked for session↔scope resolution.
 5. **S3 — the arc registry**: append-only journal at `-arc-journal`/`CAIRN_ARC_JOURNAL`
    (no default), with a startup REFUSAL when the path resolves inside the store root, shown
    RED first; `PUT/GET arc/<home>/<slug>`; `GET arcs/<scope>` listing `declared` and
    `inferred` arcs with the label; home-scope visibility; `unknown` status never shown as
-   `open`; `cairn arc …`/`cairn arcs`; the merge rule. Size L.
+   `open`; the proposed `arc` and `arcs` verbs; the merge rule. Size L.
    forcing: user — the operator asked for arc registration.
 6. **S4 — UI**: scope-page section and `/arc` page, both route ledgers, uiaudit; renders the
    `declared`/`inferred` label and visibility from S3's renderer, and reads the journal from
@@ -71,7 +71,7 @@ facts, the eight design decisions, the ledgers and the slice table).
 7. **S5 — `arcs --check` on doctor's 0/9/10 with no new exit constant, and
    `tests/arcs/e2e.sh`**, the closing check. Size S.
    forcing: gate — the closing condition names this command.
-8. **T1 — the private tooling repo's `/handoff --confirm` calls `cairn arc register`**,
+8. **T1 — the private tooling repo's `/handoff --confirm` calls the proposed `arc register` verb**,
    non-blocking, sending `open`/`closed` when it can and omitting status otherwise; plus the
    pin bump. Size S; a different repo's PR.
    forcing: user — the operator decided registration is pushed by `/handoff`.
