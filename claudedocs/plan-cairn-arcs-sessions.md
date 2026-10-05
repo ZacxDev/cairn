@@ -103,8 +103,8 @@ What it established, at the scope it carries:
   `store.LoadStore`'s root loop (`internal/store/load.go:185-248`) skip only NON-directories —
   neither filters a dot-prefixed DIRECTORY.** A `.something/` directory at the store root
   would therefore be enumerated as a SCOPE by the token-file adapter — and the legacy bare row
-  reaches every enumerated scope. Any registration storage placed under the store root must be
-  a regular FILE, or must live elsewhere.
+  reaches every enumerated scope. That is why the operator put registration storage OUTSIDE
+  the store tree (Q2), and why the pod enforces it at startup.
 - In the reference deployment the store root IS the volume root, the pod is the single writer
   (one replica, read-write-once claim), and the UI mounts the same claim READ-ONLY at the same
   root (measured in the private deployment manifests; no names here).
@@ -140,7 +140,28 @@ never see a transcript.
 | 3 | **Go-only, declared.** New routes in `cmd/cairn-server`/`internal/api`, new verbs in `cmd/cairn`/`internal/client`. The Python oracle is not extended. | The conformance corpus, the parity harness and the dual-run cannot compare these surfaces against a second implementation. Coverage comes from Go tests with literal expectations plus implementation-neutral relations. |
 | 4 | **Deliverable is this plan plus a handoff, as a PR.** No task-board cards. | — |
 
-## Decisions this plan takes (each with its evidence; the operator may overturn any)
+**The seven questions this plan first left open were answered by the operator on review of
+the PR.** They are decisions now, numbered as the questions were:
+
+| # | decision | cost accepted |
+|---|---|---|
+| Q1 | **An arc is visible iff its HOME scope is readable.** Its other scopes are listed narrowed. | An arc homed in a scope you cannot read is not listed under one you can; the coverage line says so. |
+| Q2 | **The journal lives at a SEPARATE path, `-arc-journal` / `CAIRN_ARC_JOURNAL`, OUTSIDE the store tree.** The pod refuses to start if the path resolves inside the store root. | One Deployment change in the reference deployment (below): today the store root IS the volume root, so the journal needs its own mount. |
+| Q3 | **`arcs --scope X` lists arcs whose member session wrote to X without declaring it, labelled `inferred`**, beside `declared` ones. | `inferred` is a join over self-reported trailers and inherits their limits; the label is what keeps it from reading as a registration. |
+| Q4 | **Status is `open` \| `closed` \| `unknown`.** `/handoff` sends `open`/`closed` when it can; cairn accepts `unknown` and renders it as `unknown`, never as `open`. | Arcs registered by tooling that cannot compute a verdict stay `unknown` indefinitely. |
+| Q5 | **`arcs --check` reuses doctor's `0`/`9`/`10` exit codes** at its own call site. No new constants. | The `{0, 9}` overlap gains a third call site; it stays unambiguous because each call site knows its verb (`internal/client/exit.go:19-24`). |
+| Q6 | **An authenticated append-time write log is a LATER phase**, listed in Deferred beside reads. Every result states that trailers are self-reported. | Derived edges remain forgeable through `put`/`create` and the session id remains self-declared for this whole phase. |
+| Q7 | **Registrations, closed arcs included, are kept forever: append-only, no compaction this phase.** | The journal grows by one event per `/handoff` run; its size is unbounded until a later phase. |
+
+**The one deployment change Q2 needs (not made here; the deployment repo is private).** The
+pod's Deployment mounts its data volume at the store root, so no path on it is outside the
+store tree. It needs a SECOND volume — or a re-rooted store on a subdirectory — mounted
+read-write in the pod at the journal's directory, with `CAIRN_ARC_JOURNAL` set to a file in
+it; and, for S4, the same volume mounted READ-ONLY in the UI's Deployment with the same
+variable. Until that lands, the routes answer `registrations-unconfigured`, which is the
+designed off state rather than a failure.
+
+## Design decisions this plan takes (each with its evidence; 4, 5 and 6 are now fixed by Q1–Q3)
 
 1. **The arc key is `(home scope, slug)`, where the home scope is cairn's OWN repo→scope
    derivation (`client.ScopeForRepo` → `DeriveScope`, `internal/client/reposcope.go:60-102`),
@@ -160,28 +181,30 @@ never see a transcript.
    (`ParseAttributions`) so "what is a trailer" stays one definition. A trailer quoted
    mid-prose, a placeholder, or a malformed one is not an edge. The seam test pins that every
    trailer the strip removes is one the parser returns, and vice versa.
-4. **Registrations live in an append-only JSONL journal on the pod's volume, written only by
-   the pod, read by the pod and the UI.** Not pgstore: the pod cannot link a driver
-   (`pgstore.go:1-25`, `internal/depspolicy`), and the pod is the surface that must serve them.
-   Not inside the snapshot: the snapshot is byte-compared against the oracle by
-   `tests/dualrun/`, so a Go-only member would be a divergence. Mechanically it follows
-   `control.FileStore` (lock, append, re-read, keep last-known-good on a bad read). The path is
-   a flag, `-arc-journal` / `CAIRN_ARC_JOURNAL`, with **no default** — unset means the arc
-   routes answer `registrations-unconfigured`, and no image or Dockerfile changes. If it is
-   placed under the store root it MUST be a regular file (the dot-directory hazard above), and
-   slice S3 carries the guard proving the token-file adapter, the loader and the snapshot all
-   ignore it.
+4. **Registrations live in an append-only JSONL journal OUTSIDE the store tree (Q2), written
+   only by the pod, read by the pod and the UI, never compacted (Q7).** Not pgstore: the pod
+   cannot link a driver (`pgstore.go:1-25`, `internal/depspolicy`), and the pod is the surface
+   that must serve them. Not inside the snapshot: the snapshot is byte-compared against the
+   oracle by `tests/dualrun/`, so a Go-only member would be a divergence. Mechanically it
+   follows `control.FileStore` (lock, append, re-read, keep last-known-good on a bad read). The
+   path is `-arc-journal` / `CAIRN_ARC_JOURNAL` with **no default** — unset means the arc
+   routes answer `registrations-unconfigured`, and no image or Dockerfile changes. 🔴 **The pod
+   REFUSES TO START when the path, after symlink resolution, is inside the store root** — the
+   dot-directory hazard above means a journal (or its directory) under the root could become a
+   scope, so "outside the tree" is enforced, not requested. The variable is a new name with no
+   old spelling, so `internal/envalias` gains no pair.
 5. **Arc→scope edges have TWO provenances, both reported, never merged silently**:
-   `declared` (in the registration; the home scope is always declared) and `via-session`
+   `declared` (in the registration; the home scope is always declared) and `inferred`
    (computed at read time: a scope where a registered member session wrote an attributed
    bullet). The second is needed to answer the question asked — an arc whose session wrote to
-   scope X touched X whether or not anyone declared it. Registration remains the authority
-   for membership; `via-session` is a join, labelled as one.
+   scope X touched X whether or not anyone declared it, and Q3 makes it part of `arcs --scope`.
+   Registration remains the authority for membership; `inferred` is a join over SELF-REPORTED
+   trailers, labelled as one on every surface (API body, CLI, UI).
 6. **An arc is visible to a principal iff it may READ the arc's HOME scope**; its other scopes
    are listed narrowed through the same predicate. A rule of "visible when any of its scopes is
    readable" would print the home scope's NAME — a scope the reader may not see — which breaks
    refused-equals-absent for scope names. The cost: an arc homed in a scope you cannot read is
-   not listed under a scope you can, and the coverage line says so. (Open question 1.)
+   not listed under a scope you can, and the coverage line says so. (Fixed by Q1.)
 7. **Registration replaces state per key, but an UNMEASURED leg never erases a measured one.**
    The tooling pushes the whole current report on every `/handoff`; a push with
    `readers_measured: false` keeps the previously registered reader members rather than
@@ -200,7 +223,8 @@ WriteEdge   (derived, never stored)
   date                               -- the bullet's own `- YYYY-MM-DD:` opener, if present
 
 Arc         (registered)  key = (home_scope, slug)
-  status            open | closed | unknown
+  status            open | closed | unknown   -- absent in the payload ⇒ unknown; rendered
+                                              --   as `unknown`, never defaulted to open (Q4)
   closing_kind      check | judgement | none
   declared_scopes   []scope          -- ⊇ {home_scope}
   writers_measured, readers_measured bool
@@ -258,7 +282,7 @@ components the existing `checkPathComponents` already vets:
 | route | arity | answers |
 |---|---|---|
 | `GET`/`HEAD sessions/<scope>` | 2 | sessions with attributed writes in the scope, per session: actor, bullet count, first/last date; plus coverage |
-| `GET`/`HEAD arcs/<scope>` | 2 | arcs touching the scope, each with provenance (`declared`/`via-session`); plus coverage |
+| `GET`/`HEAD arcs/<scope>` | 2 | arcs touching the scope, each with provenance (`declared`/`inferred`); plus coverage |
 | `GET`/`HEAD arc/<home>/<slug>` | 3 | one arc: metadata, members (each with the narrowed scopes it wrote), scopes by provenance; plus coverage |
 | `PUT arc/<home>/<slug>` | 3 | register/replace; `X-Store-Status: arc-registered` or `arc-unchanged` |
 
@@ -277,7 +301,7 @@ with write nowhere gets the existing credential-level `403`.
 | `arcs` | `--scope`/`--repo` | the POD (`arcs/<scope>`), body printed verbatim — registrations are not in the cache | `0` (incl. none registered), `3` unreachable |
 | `arc show` | `--repo`, `--slug` | the pod (`arc/<home>/<slug>`) | `0` (incl. `arc-unregistered`), `3` |
 | `arc register` | `--repo`, `--slug`, `--from` | `PUT arc/…` | `0`, `6` refused, `7` did not happen, `2` usage |
-| `arcs --check` | (none) | the pod: orphan findings over every arc the principal can see | doctor's legend, `0`/`9`/`10`, at its own call site (open question 5) |
+| `arcs --check` | (none) | the pod: orphan findings over every arc the principal can see | doctor's legend, `0` no finding / `9` a finding measured / `10` could not look, at its own call site — no new constant (Q5) |
 
 `arc show`/`arc register` as one `arc` verb with a sub-action, or two verbs, is a naming
 detail settled in S3 against `cli.go`'s parser; either way `-verbs` prints them and the
@@ -313,7 +337,7 @@ separate "wrote elsewhere" from "never wrote").
 One predicate, no parallel check: every read uses `rq.visible`; registration uses
 `rq.writable`; the UI uses `Source.Visible`. In `internal/touch` the narrowing is structural
 (it receives an already-narrowed index). Arc visibility is "home scope ∈ visible"; every
-scope list an arc renders (declared, via-session, per-member) is intersected with the visible
+scope list an arc renders (declared, inferred, per-member) is intersected with the visible
 set before rendering. The legacy bare row may read arcs and sessions and may not register,
 because it may write nowhere — the existing rule, unchanged.
 
@@ -321,8 +345,8 @@ because it may write nowhere — the existing rule, unchanged.
 
 | shape | write edges | registrations |
 |---|---|---|
-| token-file pod (deployed) | derived from the store at read time | journal file via `-arc-journal`; unset ⇒ `registrations-unconfigured` |
-| control-journal UI | derived from its read-only store mount | the same journal file, read-only |
+| token-file pod (deployed) | derived from the store at read time | journal file via `-arc-journal`, OUTSIDE the store tree (startup refuses otherwise); unset ⇒ `registrations-unconfigured`; needs its own mount (the Deployment change under "Decisions taken") |
+| control-journal UI | derived from its read-only store mount | the same journal file, on its own READ-ONLY mount |
 | pgstore UI | unchanged — pgstore holds sessions/invites only | NOT pgstore: the pod could not serve what only the UI can read |
 | client cache | `sessions` derives locally | not cached; `arcs`/`arc` go to the pod |
 
@@ -332,13 +356,17 @@ Every answer carries these lines, always printed in full (a zero is printed, nev
 
 - `coverage: writes measured from entry trailers · reads NOT recorded (not collected in this phase)`
 - `attributed: K of N bullets carry a write trailer (N−K have none — their writers are NOT listed)`
-- `attribution: actor as written in the entry; only appended bullets had it set by the pod; session ids are declared by the writer`
+- `attribution: trailers are self-reported — actor as written in the entry (only appended bullets had it set by the pod); session ids are declared by the writer` (Q6)
 - one status token, each a distinct mechanism, sharing no phrase with another:
   `scope-absent` · `scope-empty` · `no-attributed-writes` (entries exist, zero trailers) ·
   `registrations-unconfigured` · `no-arc-registered` (journal read, nothing for this scope) ·
   `arc-unregistered` · a populated list
-- arcs answers add: `M of S writing sessions belong to a registered arc` and
-  `arcs are listed only when their home scope is readable to you`
+- arcs answers add: `M of S writing sessions belong to a registered arc`,
+  `arcs are listed only when their home scope is readable to you` (Q1), and a per-arc
+  provenance label, `declared` or `inferred` — the latter glossed once per answer as
+  `inferred: a member session wrote here; the arc did not declare this scope` (Q3)
+- every arc's status is printed as registered: `open`, `closed` or `unknown` — an `unknown`
+  is never rendered as, sorted with, or counted as `open` (Q4)
 - arc answers add the tooling's own coverage: `commits_unstamped of commits_total commits
   carry no session id`, `readers: measured | NOT measured`, and the registration's age.
 
@@ -396,12 +424,15 @@ pages); `internal/ui/README.md`.
   most guards are new-behaviour tests; each new guard is mutation-tested (break the code, watch
   THAT guard fail with ITS message). Three are genuine regression-shaped guards and must be
   shown red on pre-change code:
-  1. **The dot-directory hazard** — a test placing a dot-prefixed directory at the store root
-     and asserting the token-file adapter does not enumerate it as a scope. RED at `621b4e6`
-     (by reading `source.go:542-558`; S3 must measure it). Either fix the adapter or forbid the
-     shape; the plan prefers keeping the journal a file and pinning that `storeDirs`,
-     `LoadStore` and `snapshot.Build` all ignore a regular dot-FILE (an invariant guard,
-     labelled as one).
+  1. **The journal-inside-the-store hazard (Q2)** — first, MEASURE the premise: a dot-prefixed
+     directory at the store root IS enumerated as a scope by the token-file adapter (expected
+     at `621b4e6` from reading `source.go:542-558`; S3 must observe it, not cite it). Then
+     the guard: `cairn-server -arc-journal <store-root>/.arcs/journal.jsonl` must REFUSE TO
+     START, naming the reason — and so must a path that reaches the store root through a
+     symlink, and the store root itself. RED before the startup check exists (the pod starts
+     and the journal's directory becomes a scope), GREEN after; the control is a path outside
+     the root, which must start. The refusal is a design choice, not a fix to the adapter, so
+     the adapter's dot-directory behaviour stays as it is and stays recorded.
   2. **The ledger seams** — adding a head to `readHeads` with no corpus row must turn
      `TestTheRouteLedgerMatchesTheConformanceCorpus` red; adding a Go verb with no
      `GO_ONLY_VERBS` entry must turn the ledger test red. Watched red, then made green.
@@ -415,7 +446,7 @@ pages); `internal/ui/README.md`.
 - **Byte identity, pod ⇄ CLI.** `cairn sessions --scope X` over a synced cache equals the
   pod's `sessions/X` body over the same store — one test, both renderings.
 - **Authz matrix.** principal × scope × route, as a relationship, including: arc homed in an
-  unreadable scope; via-session scope unreadable; registering against an unwritable declared
+  unreadable scope; inferred scope unreadable; registering against an unwritable declared
   scope; the bare row.
 - **End-to-end** `tests/arcs/e2e.sh` (S5): boots `cairn-server` on a synthetic store, appends
   two trailered bullets with two sessions via `cairn append`, registers one arc via
@@ -436,9 +467,9 @@ pages); `internal/ui/README.md`.
 | S0 | **Declaration plumbing**: `go_only` corpus field + both validators, `GO_ONLY_VERBS` with its three-operand check, `go_only` capability rows — exercised on synthetic tables, no route added. | S | No surface moves; the controls prove the ledgers can go red. |
 | S1 | **`internal/touch` + `write.ParseAttributions`**: derivation, `Coverage`, rendering, strip⇄parse seam test, a 10× synthetic-store benchmark. | M | Library only; nothing calls it yet. |
 | S2 | **Sessions surface**: `GET/HEAD sessions/<scope>`, `cairn sessions`, corpus rows, pod⇄CLI byte identity, authz pairs. | M | Needs no registrations; answers the "which sessions" half alone. |
-| S3 | **Arc registry**: journal + `-arc-journal`, `PUT/GET arc/…`, `GET arcs/<scope>`, `cairn arc …` and `cairn arcs`, merge rule 7, visibility rule 6, the dot-path guard. | L | Off by default (no journal ⇒ `registrations-unconfigured`). |
-| S4 | **UI**: scope-page section and `/arc` page, ledgers, uiaudit. | M | Read-only over S2/S3. |
-| S5 | **`arcs --check` + `tests/arcs/e2e.sh`**. | S | The closing check; reads only. |
+| S3 | **Arc registry**: append-only, never-compacted journal at `-arc-journal` / `CAIRN_ARC_JOURNAL`, no default, and a startup REFUSAL when the path resolves inside the store root (shown RED first); `PUT/GET arc/…`, `GET arcs/<scope>` listing `declared` AND `inferred` arcs with the label; home-scope visibility (Q1); status `unknown` accepted and never rendered as `open` (Q4); `cairn arc …` and `cairn arcs`; merge rule 7. | L | Off by default (no journal ⇒ `registrations-unconfigured`). Live use also needs the Deployment change under "Decisions taken", which is the operator's, in the private deployment repo. |
+| S4 | **UI**: scope-page section and `/arc` page, ledgers, uiaudit — rendering the `declared`/`inferred` label and the home-scope visibility rule verbatim from S3's renderer (no second visibility check), and `unknown` status as `unknown`. Reads the journal from its own READ-ONLY mount. | M | Read-only over S2/S3. |
+| S5 | **`arcs --check`**, exiting on doctor's `0`/`9`/`10` legend with NO new constant — so `cairn -exit-codes` and both exit-code ledgers stay byte-unchanged, which the slice asserts — **+ `tests/arcs/e2e.sh`**. | S | The closing check; reads only. |
 | T1 | **Tooling side** (private tooling repo, not cairn): `/handoff --confirm` calls `cairn arc register` non-blocking; the pin bump that brings the verb. | S | A separate repo's PR; cairn is complete without it. |
 
 Sizes are relative, not estimates — nobody has measured these.
@@ -449,7 +480,10 @@ Sizes are relative, not estimates — nobody has measured these.
 |---|---|
 | A trailer is forged through `put`/`create`, or a session id is made up. | Not closable from bytes. Stated in the coverage line on every answer; Deferred names the append-time ledger that would close it. |
 | A list without its denominator reads as complete (≈75% of bullets are unattributed, measured). | `attributed: K of N` printed always, pinned as a whole string. |
-| Registration storage becomes a scope (dot-directory hazard). | The journal is a file; S3's guard; open question 2. |
+| Registration storage becomes a scope (dot-directory hazard). | The journal lives outside the store tree (Q2) and the pod refuses to start otherwise; S3's RED-first guard. |
+| An `inferred` arc reads as a registration. | The `inferred` label on every surface, glossed in the answer; pinned as a whole string. |
+| An `unknown` status reads as `open`. | Rendered literally; a test feeds a payload with no status and asserts the word `unknown` and the absence of `open`. |
+| The journal grows without bound (Q7). | Accepted this phase; one event per `/handoff` run. Its size is reportable by `arcs --check`, and compaction is listed in Deferred. |
 | A Go-only surface drifts with no second implementation to compare. | Literal-expectation Go tests, implementation-neutral relations, pod⇄CLI byte identity, the e2e check. |
 | `go_only` goldens recorded from Go read as contract. | Stamped `recorded-from`, documented as change detectors; contract assertions live in Go tests. |
 | An arc name leaks a client or a scope name. | Visibility via the home scope; all scope lists narrowed; synthetic fixtures; leakscan. |
@@ -470,25 +504,17 @@ Sizes are relative, not estimates — nobody has measured these.
   shipped. The seam left for it: `WriteEdge` becomes `Edge{Kind}` with `Kind` currently only
   `write`, and the coverage line's `reads NOT recorded` is a value, not a literal, so it can
   become `reads measured`.
-- **An append-time edge journal.** Recording `(actor, session, scope, entry, citation id)`
-  when `AppendBullet` writes would make edges authenticated and give history across
-  rewrites — and is the natural place the reads phase would write too. Not taken now: decision
-  1 chose the free back-fill.
-- **Retention and deregistration** of arcs (append-only forever, compaction, a `DELETE`).
+- **An authenticated append-time write log — a LATER phase, beside reads (Q6).** Recording
+  `(actor, session, scope, entry, citation id)` when `AppendBullet` writes would make edges
+  authenticated rather than self-reported and give history across rewrites — and is the
+  natural place the reads phase would write too. Until it exists, every result states that
+  trailers are self-reported. Its open questions: whether the session id should then be bound
+  to the credential, and how its edges reconcile with trailer-derived ones over the same bullet.
+- **Compaction and deregistration** of arcs. Q7 keeps every registration, closed arcs
+  included, forever and append-only this phase; a `DELETE` or compaction is a later decision.
 - **`?format=json`** on the new routes, until a consumer needs it.
 
 ## Open questions for the operator
 
-1. **Arc visibility**: home-scope-readable (recommended — no scope NAME leaks) or
-   any-touched-scope-readable (wider reach, leaks the home scope's name)?
-2. **Journal location**: a regular dot-file at the store root (no deployment change, needs
-   the S3 guard) or a separate path, which in the reference deployment means re-rooting the
-   store or a second mount?
-3. **`via-session` edges**: should `arcs --scope X` list an arc that never declared X but whose
-   member wrote there (recommended, labelled), or only declared edges?
-4. **Arc status**: can the tooling send `open`/`closed` deterministically (its verdict line),
-   or should cairn accept `unknown` indefinitely?
-5. **`arcs --check` exit codes**: reuse doctor's `0/9/10` legend at its own call site
-   (recommended — no new constants), or exit `0` with findings on stdout?
-6. **The append-time edge journal**: a later phase, or never?
-7. **Registrations for archived/closed arcs**: kept forever, or compacted?
+None open. All seven were answered on review and are recorded as Q1–Q7 under "Decisions
+taken".
