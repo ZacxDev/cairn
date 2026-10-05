@@ -28,21 +28,24 @@ facts, the eight design decisions, the ledgers and the slice table).
   ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- 📄 **PLAN ONLY — NO FEATURE CODE EXISTS.** Branch `docs/plan-cairn-arcs-sessions` off
-  `main` at `621b4e6` carries the plan and this doc; the PR is the operator's review point.
-- ⏳ **Awaiting the operator's answers to the plan's seven open questions** — 1 (arc
-  visibility rule) and 2 (journal location) gate slice S3; the rest can be answered during
-  the slices.
-- ✅ `python3 tests/leakscan.py --self-test` and `python3 tests/leakscan.py` both exit 0 with
-  the plan in the tree (0 findings on 499 files), and a positive control proved the scanner
-  sees the plan file: appending the private tooling repo's name to its text yields one
-  `denied-identifier` finding, so that name is unwritable in this repo — refer to it as
-  "the private tooling repo".
+- 📄 **PLAN ONLY — NO FEATURE CODE EXISTS.** PR #180, branch `docs/plan-cairn-arcs-sessions`
+  off `main` at `621b4e6`, carries the plan and this doc.
+- ✅ **ALL SEVEN OPEN QUESTIONS ARE ANSWERED BY THE OPERATOR** and folded into the plan as
+  Q1–Q7 under "Decisions taken"; the plan's "Open questions" section now reads none open.
+  In one line each: home-scope visibility; journal at a separate path outside the store tree;
+  `arcs --scope` lists `inferred` arcs beside `declared` ones; status `unknown` accepted and
+  never rendered as `open`; `arcs --check` on doctor's 0/9/10; the authenticated append-time
+  write log is a later phase; registrations kept forever, append-only, no compaction.
+- ⚠ **Q2 NEEDS ONE DEPLOYMENT CHANGE THAT IS NOT IN THIS REPO** — the pod's data volume is
+  mounted at the store root, so the journal needs its own mount (read-write in the pod,
+  read-only in the UI) and `CAIRN_ARC_JOURNAL`. The plan spells it out; nothing in the private
+  deployment repo was edited. Until it lands the routes answer `registrations-unconfigured`.
+- ✅ Both leakscan commands exit 0 with the revised plan in the tree.
 
 ## Next steps (ranked)
-1. **Operator reviews the plan PR and answers open questions 1 and 2.** Everything in S3
-   depends on the visibility rule and on where the journal file lives.
-   forcing: user — the operator asked for a plan to review before any code.
+1. ~~**Operator reviews the plan PR and answers open questions 1 and 2.**~~ **CLOSED** — all
+   seven answered and folded into the plan.
+   forcing: user — closed.
 2. **S0 — declaration plumbing** (`go_only` corpus field and both validators,
    `GO_ONLY_VERBS` with a three-operand check, `go_only` capability rows), exercised on
    synthetic tables with no route added. Size S.
@@ -55,17 +58,27 @@ facts, the eight design decisions, the ledgers and the slice table).
 4. **S2 — the sessions surface**: `GET/HEAD sessions/<scope>`, `cairn sessions`, corpus
    rows, pod⇄CLI byte identity, authz pairs. Size M.
    forcing: user — the operator asked for session↔scope resolution.
-5. **S3 — the arc registry**: journal + `-arc-journal`, `PUT/GET arc/<home>/<slug>`,
-   `GET arcs/<scope>`, `cairn arc …`/`cairn arcs`, the merge and visibility rules, the
-   dot-path guard (show it RED first). Size L.
+5. **S3 — the arc registry**: append-only journal at `-arc-journal`/`CAIRN_ARC_JOURNAL`
+   (no default), with a startup REFUSAL when the path resolves inside the store root, shown
+   RED first; `PUT/GET arc/<home>/<slug>`; `GET arcs/<scope>` listing `declared` and
+   `inferred` arcs with the label; home-scope visibility; `unknown` status never shown as
+   `open`; `cairn arc …`/`cairn arcs`; the merge rule. Size L.
    forcing: user — the operator asked for arc registration.
-6. **S4 — UI**: scope-page section and `/arc` page, both route ledgers, uiaudit. Size M.
+6. **S4 — UI**: scope-page section and `/arc` page, both route ledgers, uiaudit; renders the
+   `declared`/`inferred` label and visibility from S3's renderer, and reads the journal from
+   its own read-only mount. Size M.
    forcing: user — the operator asked for UI integration.
-7. **S5 — `arcs --check` and `tests/arcs/e2e.sh`**, the closing check. Size S.
+7. **S5 — `arcs --check` on doctor's 0/9/10 with no new exit constant, and
+   `tests/arcs/e2e.sh`**, the closing check. Size S.
    forcing: gate — the closing condition names this command.
 8. **T1 — the private tooling repo's `/handoff --confirm` calls `cairn arc register`**,
-   non-blocking, plus the pin bump. Size S; a different repo's PR.
+   non-blocking, sending `open`/`closed` when it can and omitting status otherwise; plus the
+   pin bump. Size S; a different repo's PR.
    forcing: user — the operator decided registration is pushed by `/handoff`.
+9. **The journal mount in the private deployment repo** (the Deployment change Q2 needs).
+   The operator's change; it gates live use of S3/S4 and the deployed half of the closing
+   condition, not their merge.
+   forcing: user — the operator chose a journal outside the store tree.
 
 ## Gotchas / decisions / dead-ends
 - **The trailer's `<session>` is self-declared and only the APPEND route sets `<actor>`.**
@@ -103,6 +116,17 @@ facts, the eight design decisions, the ledgers and the slice table).
 - **Ruled out:** adding new exit codes for the new verbs. Every outcome maps onto the existing
   printed contract, and a new constant would move two cross-client ledgers for nothing.
   `via: assumed` (a design choice; S2/S3 confirm it holds verb by verb)
+
+- **SUPERSEDES the "regular file or live elsewhere" half of the dot-directory bullet above:**
+  the operator chose ELSEWHERE (Q2). The journal lives outside the store tree and the pod
+  refuses to start when `-arc-journal` resolves inside the store root. The adapter hazard
+  itself is unchanged and still has to be measured RED in S3.
+- **Ruled out:** a journal file at the store root (dot-prefixed or not), the plan's original
+  no-deployment-change option. `via: doc` (operator decision Q2, recorded in the plan)
+- **Ruled out:** compacting or deleting closed-arc registrations this phase. `via: doc`
+  (operator decision Q7, recorded in the plan)
+- **Ruled out:** an authenticated append-time write log in this phase; it is Deferred beside
+  reads, and every result says trailers are self-reported. `via: doc` (operator decision Q6, recorded in the plan)
 
 ## How to verify
 ```bash
