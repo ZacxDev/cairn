@@ -36,7 +36,8 @@ are now TWO clients: `cmd/cairn` is a compiled binary whose subcommands no
 argparse introspection can see. A Go-only verb, or a Go client that silently
 LOST one, leaves every assertion in this file green. That gap is closed by
 `tests/test_go_client_ledgers.py`, which reads `cairn -verbs` out of the RUNNING
-binary and requires the two sets to be EQUAL — and by
+binary and requires it to equal the Python set PLUS the declared `go_only` verbs
+(`TestTheGoOnlyDeclaration` below proves those checkers on synthetic sets) — and by
 `checks.go-client-declares-its-verbs`, which does it again in the nix sandbox.
 Neither can run in the `tests` job (no Go toolchain), so both are read in jobs
 that have one. Do not read this file's "every verb is accounted for" as covering
@@ -58,14 +59,20 @@ import pytest
 
 from testlib import cairn_source
 from testlib.capability_ledger import (
+    GO_ONLY_VERBS,
     LEDGER,
     READS,
     WRITES,
     Capability,
     cli_verbs_from_parser,
+    go_only_route_names,
+    go_only_verbs,
+    go_side_route_problems,
+    go_side_verb_problems,
     http_routes,
     ledger_routes,
     normalise_path,
+    oracle_side_go_only_problems,
 )
 
 
@@ -359,7 +366,10 @@ class TestTheCliVerbTableMatchesTheLedger:
         that turns "the CLI covers every capability" from a promise into a
         measurement."""
         discovered = set(cli_verbs_from_parser())
-        declared = {row.cli for row in LEDGER if row.cli is not None}
+        # `go_only` rows name verbs the PYTHON client must NOT have; they are compared
+        # against the Go binary in `tests/test_go_client_ledgers.py`, and their absence
+        # here is `TestTheGoOnlyDeclaration`'s claim.
+        declared = {row.cli for row in LEDGER if row.cli is not None and not row.go_only}
         assert discovered, (
             "verb discovery came back EMPTY, so this equality would hold against "
             "an empty ledger and prove nothing. This floor is bare non-emptiness "
@@ -389,7 +399,7 @@ class TestTheCliVerbTableMatchesTheLedger:
         writing_verbs = {verb for verb, writes in flags.items() if writes}
         declared = {
             row.cli for row in LEDGER
-            if row.cli is not None and row.effect == WRITES
+            if row.cli is not None and row.effect == WRITES and not row.go_only
         }
         assert writing_verbs == declared, (
             f"the verbs argparse marks `writes=True` and the ledger rows whose "
@@ -473,3 +483,209 @@ class TestTheHttpRouteTableMatchesTheLedger:
             f"{sorted(found)}. Two rows derive one `(method, path)`, so one of "
             f"them is invisible to every assertion in this file."
         )
+
+
+# =============================================================================
+# The Go-only declaration (decision 3 of the arcs/sessions plan)
+# =============================================================================
+
+#: A verb and a route NOTHING has, standing in for the first real Go-only surface.
+#: The machinery has to be proved before one exists, so it is proved on these.
+SYNTHETIC_VERB = "synthetic-go-only"
+SYNTHETIC_ROUTE = ("GET", "/api/v1/synthetic-go-only/{scope}")
+
+
+def _synthetic_go_only_row(**overrides) -> Capability:
+    fields = dict(
+        name="synthetic-go-only",
+        effect=READS,
+        cli=SYNTHETIC_VERB,
+        route=SYNTHETIC_ROUTE,
+        go_only=True,
+        go_only_why="synthetic: proves the go_only machinery before any Go-only "
+                    "surface exists",
+    )
+    fields.update(overrides)
+    return Capability(**fields)
+
+
+def _flake_heredoc(name: str) -> list[str]:
+    """The lines of one `cat > <name> <<'EOF'` heredoc in `flake.nix`, stripped."""
+    import re
+
+    from testlib.capability_ledger import REPO
+
+    text = (REPO / "flake.nix").read_text(encoding="utf-8")
+    found = re.findall(
+        rf"cat > {re.escape(name)} <<'EOF'\n(.*?)^\s*EOF$", text,
+        re.DOTALL | re.MULTILINE,
+    )
+    assert len(found) == 1, (
+        f"expected exactly one `{name}` heredoc in flake.nix, found {len(found)} — "
+        f"the check moved or was renamed, and this pin would otherwise compare nothing"
+    )
+    return [ln.strip() for ln in found[0].splitlines() if ln.strip()]
+
+
+class TestTheGoOnlyDeclaration:
+    """🔴 A GO-ONLY SURFACE IS DECLARED, NEVER SILENT. A `go_only` row is excluded
+    from the Python-side gates above and must be ABSENT from the Python parser and
+    `server.py`'s tables; the Go side of the claim is
+    `tests/test_go_client_ledgers.py`. Every guard is shown RED on a synthetic case
+    it must refuse, asserting its own message, beside the GREEN declared case. The
+    real set is EMPTY today."""
+
+    def test_the_real_declared_sets_are_empty_today(self):
+        """An INVARIANT GUARD on today's state, spelled by hand: no Go-only verb or
+        route exists yet. The first one moves this test in the same commit."""
+        assert GO_ONLY_VERBS == frozenset()
+        assert go_only_route_names() == frozenset()
+
+    def test_RED_a_go_only_row_with_no_reason_is_refused(self):
+        with pytest.raises(ValueError, match="must say why only Go has it"):
+            _synthetic_go_only_row(go_only_why="  ")
+
+    def test_RED_a_reason_with_no_go_only_mark_is_refused(self):
+        with pytest.raises(ValueError, match="must say why only Go has it"):
+            _synthetic_go_only_row(go_only=False)
+
+    def test_RED_a_go_only_route_outside_the_api_prefix_is_refused(self):
+        with pytest.raises(ValueError, match="must be an /api/v1/ route"):
+            _synthetic_go_only_row(route=("GET", "/healthz"))
+
+    def test_the_derivations_read_the_go_only_rows_and_only_those(self):
+        ledger = LEDGER + (_synthetic_go_only_row(),)
+        assert go_only_verbs(ledger) == {SYNTHETIC_VERB}
+        # A GET route is ALSO a HEAD route on the Go server.
+        assert go_only_route_names(ledger) == {
+            "GET synthetic-go-only", "HEAD synthetic-go-only",
+        }
+        # …and a go_only route is NOT one the oracle-side gate expects `server.py` to
+        # have.
+        assert ledger_routes(ledger) == ledger_routes()
+
+    def test_GREEN_a_go_only_surface_the_oracle_lacks_raises_nothing(self):
+        ledger = LEDGER + (_synthetic_go_only_row(),)
+        assert oracle_side_go_only_problems(
+            ledger, set(cli_verbs_from_parser()), set(http_routes())
+        ) == []
+
+    def test_RED_a_go_only_VERB_the_python_client_has_is_stale(self):
+        ledger = LEDGER + (_synthetic_go_only_row(
+            cli="recall", route=None, no_route_because="synthetic"),)
+        problems = oracle_side_go_only_problems(
+            ledger, set(cli_verbs_from_parser()), set(http_routes())
+        )
+        assert len(problems) == 1
+        assert "the PYTHON client has the verb 'recall'" in problems[0]
+
+    def test_RED_a_go_only_ROUTE_the_oracle_dispatches_is_stale(self):
+        ledger = LEDGER + (_synthetic_go_only_row(
+            cli=None, no_cli_because="synthetic",
+            route=("GET", "/api/v1/recall/{scope}")),)
+        problems = oracle_side_go_only_problems(
+            ledger, set(cli_verbs_from_parser()), set(http_routes())
+        )
+        assert len(problems) == 1
+        assert "`server.py` DISPATCHES" in problems[0]
+
+    def test_the_REAL_ledger_declares_nothing_the_oracle_has(self):
+        """The real gate over the real operands, on the Python side."""
+        assert oracle_side_go_only_problems(
+            LEDGER, set(cli_verbs_from_parser()), set(http_routes())
+        ) == []
+
+    # --- the Go-side checkers, fed synthetic sets (the binary is read in the `go` job)
+
+    PY = {"recall", "sync"}
+
+    def test_GREEN_go_verbs_equal_python_plus_the_declared_go_only_set(self):
+        assert go_side_verb_problems(
+            frozenset({SYNTHETIC_VERB}), self.PY, self.PY | {SYNTHETIC_VERB}
+        ) == []
+
+    def test_RED_an_UNDECLARED_go_only_verb_is_refused(self):
+        problems = go_side_verb_problems(
+            frozenset(), self.PY, self.PY | {SYNTHETIC_VERB})
+        assert len(problems) == 1
+        assert problems[0].startswith("UNDECLARED Go-only verb")
+
+    def test_RED_a_declared_go_only_verb_the_GO_client_lacks_is_stale(self):
+        problems = go_side_verb_problems(frozenset({SYNTHETIC_VERB}), self.PY, self.PY)
+        assert len(problems) == 1
+        assert "the Go client does not have the verb" in problems[0]
+
+    def test_RED_a_declared_go_only_verb_the_PYTHON_client_has_is_stale(self):
+        problems = go_side_verb_problems(frozenset({"recall"}), self.PY, self.PY)
+        assert len(problems) == 1
+        assert "the PYTHON client HAS the verb" in problems[0]
+
+    def test_RED_a_python_verb_the_go_client_lacks_is_a_cutover_drop(self):
+        problems = go_side_verb_problems(frozenset(), self.PY, {"sync"})
+        assert len(problems) == 1 and "would DROP" in problems[0]
+
+    ORACLE = {"GET recall", "HEAD recall", "PUT entry"}
+    GO_ONLY = frozenset({"GET synthetic-go-only", "HEAD synthetic-go-only"})
+
+    def test_GREEN_go_routes_equal_oracle_plus_both_go_only_declarations(self):
+        assert go_side_route_problems(
+            self.ORACLE | self.GO_ONLY, self.ORACLE, set(self.GO_ONLY), self.GO_ONLY
+        ) == []
+
+    def test_RED_an_UNDECLARED_go_only_route_is_refused_by_BOTH_declarations(self):
+        problems = go_side_route_problems(
+            self.ORACLE | self.GO_ONLY, self.ORACLE, set(), frozenset()
+        )
+        assert len(problems) == 2
+        assert all(p.startswith("UNDECLARED Go-only route") for p in problems)
+        assert "requests.json" in problems[0] and "capability_ledger" in problems[1]
+
+    def test_RED_a_go_only_route_declared_in_ONE_place_only_is_refused(self):
+        problems = go_side_route_problems(
+            self.ORACLE | self.GO_ONLY, self.ORACLE, set(self.GO_ONLY), frozenset()
+        )
+        assert len(problems) == 1 and "capability_ledger" in problems[0]
+
+    def test_RED_a_go_only_route_go_does_not_dispatch_is_stale(self):
+        problems = go_side_route_problems(
+            self.ORACLE, self.ORACLE, set(self.GO_ONLY), self.GO_ONLY
+        )
+        assert len(problems) == 2
+        assert all("STALE Go-only declaration" in p for p in problems)
+
+    def test_RED_a_go_only_route_the_ORACLE_also_serves_is_stale(self):
+        oracle = self.ORACLE | self.GO_ONLY
+        problems = go_side_route_problems(
+            oracle, oracle, set(self.GO_ONLY), self.GO_ONLY)
+        assert len(problems) == 2
+        assert all("STALE Go-only declaration" in p for p in problems)
+
+    def test_RED_an_oracle_route_the_go_server_lacks_is_refused(self):
+        problems = go_side_route_problems(
+            {"GET recall", "HEAD recall"}, self.ORACLE, set(), frozenset()
+        )
+        assert len(problems) == 1 and "PUT entry" in problems[0]
+
+    # --- the flake's hand lists, pinned so none of them is free text
+
+    def test_the_flake_verb_lists_are_the_PYTHON_set_and_the_GO_ONLY_set(self):
+        """`checks.go-client-declares-its-verbs` diffs `cairn -verbs` against the
+        union of two heredocs. Pinned here: the shared one IS the Python parser's verb
+        set (with its read/write flag), the go-only one IS `GO_ONLY_VERBS`. Without
+        this a Go-only verb could be added to the shared list and pass the nix check.
+        """
+        shared = _flake_heredoc("want-verbs.txt")
+        python = cli_verbs_from_parser()
+        assert sorted(shared) == sorted(
+            f"{v} {'writes' if w else 'reads'}" for v, w in python.items()
+        )
+        go_only = {ln.split()[0] for ln in _flake_heredoc("want-go-only-verbs.txt")}
+        assert go_only == GO_ONLY_VERBS
+
+    def test_the_flake_route_lists_are_the_ORACLE_set_and_the_GO_ONLY_set(self):
+        from conformance import cases as cases_mod
+
+        assert set(_flake_heredoc("want.txt")) == cases_mod.declared_routes()
+        go_only = set(_flake_heredoc("want-go-only.txt"))
+        assert go_only == cases_mod.go_only_routes(cases_mod.load_corpus())
+        assert go_only == go_only_route_names()

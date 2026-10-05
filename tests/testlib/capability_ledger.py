@@ -36,6 +36,13 @@ and `Capability` refuses a row that leaves one unexplained:
     rows would mean two URLs for one noun), so the ledger mirrors it — and any
     route named by more than one row must say what discriminates them.
 
+🔴 A ROW MAY BE `go_only` — every surface it names exists in the GO
+implementation only, by decision (decision 3 of
+`claudedocs/plan-cairn-arcs-sessions.md`). Such a row is left out of the
+comparison against the Python parser and `server.py`, where it must be ABSENT,
+and is compared against the Go binaries instead. See `Capability.go_only` and
+the checkers at the bottom of this file.
+
 ⚠ THE UI COLUMN DOES NOT EXIST YET, deliberately. §I names three surfaces; the
 third has no code (plan P5), and a field with nothing to assert against is a
 column that drifts unchecked. It arrives with the UI, in the same commit as the
@@ -96,8 +103,32 @@ class Capability:
     #: What distinguishes this row from another row sharing its route. Mandatory
     #: in that case, unused otherwise.
     note: str = ""
+    #: 🔴 EVERY SURFACE THIS ROW NAMES EXISTS IN THE GO IMPLEMENTATION ONLY — decision
+    #: 3 of `claudedocs/plan-cairn-arcs-sessions.md`: new verbs and routes go into
+    #: `cmd/cairn`/`cmd/cairn-server`, and the Python oracle is NOT extended. Such a
+    #: row is compared against `cairn -verbs` / `cairn-server -routes` (in the `go`
+    #: job, `tests/test_go_client_ledgers.py`) and is EXCLUDED from the comparison
+    #: against the Python parser and `server.py`'s tables — where it must be ABSENT,
+    #: or the declaration is stale. `go_only_why` is mandatory with the mark and
+    #: refused without it, the same rule `requests.json`'s `go_only` follows.
+    go_only: bool = False
+    go_only_why: str = ""
 
     def __post_init__(self) -> None:
+        if self.go_only != bool(self.go_only_why.strip()):
+            raise ValueError(
+                f"{self.name}: a go_only row must say why only Go has it, and a row "
+                f"that is not go_only must not (go_only={self.go_only!r}, "
+                f"go_only_why={self.go_only_why!r})"
+            )
+        if self.go_only and self.route is not None and not self.route[1].startswith(
+            "/api/v1/"
+        ):
+            raise ValueError(
+                f"{self.name}: a go_only route must be an /api/v1/ route — the Go "
+                f"server's route ledger (`cairn-server -routes`) names nothing else, "
+                f"so {self.route!r} could be checked against nothing"
+            )
         if self.effect not in (READS, WRITES):
             raise ValueError(f"{self.name}: effect {self.effect!r} is not reads/writes")
         if (self.cli is None) != bool(self.no_cli_because):
@@ -358,16 +389,17 @@ def http_routes(tables: object | None = None) -> dict[tuple[str, str], str]:
     return routes
 
 
-def ledger_routes() -> dict[tuple[str, str], str]:
-    """The ledger's own `(METHOD, normalised path)` -> effect, rows collapsed.
+def ledger_routes(ledger: tuple[Capability, ...] = LEDGER) -> dict[tuple[str, str], str]:
+    """The ledger's own `(METHOD, normalised path)` -> effect, rows collapsed —
+    over the rows the ORACLE serves, i.e. every row not marked `go_only`.
 
     Two rows may name one route (`put` and `create`); they must agree on the
     effect, and a disagreement raises here rather than silently keeping whichever
     row came last.
     """
     out: dict[tuple[str, str], str] = {}
-    for row in LEDGER:
-        if row.route is None:
+    for row in ledger:
+        if row.route is None or row.go_only:
             continue
         method, path = row.route
         key = (method, normalise_path(path))
@@ -378,3 +410,166 @@ def ledger_routes() -> dict[tuple[str, str], str]:
             )
         out[key] = row.effect
     return out
+
+
+# ---------------------------------------------------------------------------
+# The Go-only surfaces: DECLARED here, checked against both implementations.
+# ---------------------------------------------------------------------------
+#
+# 🔴 THE DECLARATION IS THE `go_only` ROWS ABOVE AND NOTHING ELSE. `GO_ONLY_VERBS` and
+# `go_only_route_names` are DERIVED from them, never restated, so there is one place a
+# Go-only verb or route is declared and every checker below reads it. The checkers are
+# pure functions of plain sets so each can be fed a SYNTHETIC Go-only surface — none
+# exists yet — and watched to go red and green; the real operands are discovered by
+# the callers (`tests/test_capability_ledger.py` for the Python side, which needs no
+# compiler; `tests/test_go_client_ledgers.py` for the Go side, which does).
+
+
+def go_only_verbs(ledger: tuple[Capability, ...] = LEDGER) -> frozenset[str]:
+    """Every CLI verb a `go_only` row names."""
+    return frozenset(row.cli for row in ledger if row.go_only and row.cli is not None)
+
+
+#: The declared Go-only verb set. Empty until the first Go-only verb lands.
+GO_ONLY_VERBS: frozenset[str] = go_only_verbs()
+
+
+def go_only_route_names(ledger: tuple[Capability, ...] = LEDGER) -> frozenset[str]:
+    """Every `<METHOD> <head>` a `go_only` row's route is dispatched as.
+
+    That is the vocabulary `cairn-server -routes` and `requests.json` speak, so the
+    path is reduced to its head — and a GET route is ALSO a HEAD route, because the Go
+    server expands every read head over both safe methods (`safeReadMethods`).
+    """
+    out: set[str] = set()
+    for row in ledger:
+        if not row.go_only or row.route is None:
+            continue
+        method, path = row.route
+        head = path[len("/api/v1/"):].split("/", 1)[0]
+        out.add(f"{method} {head}")
+        if method == "GET":
+            out.add(f"HEAD {head}")
+    return frozenset(out)
+
+
+def oracle_side_go_only_problems(
+    ledger: tuple[Capability, ...],
+    python_verbs: set[str],
+    python_routes: set[tuple[str, str]],
+) -> list[str]:
+    """The STALE-declaration direction the Python side can see: a `go_only` row whose
+    verb the Python parser HAS, or whose route `server.py` DISPATCHES. Either means the
+    oracle grew the surface and the mark now hides a comparison.
+
+    `python_routes` is `http_routes()`'s key set — `(METHOD, normalised path)`.
+    """
+    problems: list[str] = []
+    for row in ledger:
+        if not row.go_only:
+            continue
+        if row.cli is not None and row.cli in python_verbs:
+            problems.append(
+                f"{row.name}: marked go_only, and the PYTHON client has the verb "
+                f"{row.cli!r}. The declaration is stale — drop the mark (and add the "
+                f"verb to the shared set), or the oracle grew a verb by mistake."
+            )
+        if row.route is not None:
+            key = (row.route[0], normalise_path(row.route[1]))
+            if key in python_routes:
+                problems.append(
+                    f"{row.name}: marked go_only, and `server.py` DISPATCHES {key!r}. "
+                    f"The declaration is stale — the oracle serves the route, so it "
+                    f"must be compared, not excused."
+                )
+    return problems
+
+
+def go_side_verb_problems(
+    declared_go_only: frozenset[str],
+    python_verbs: set[str],
+    go_verbs: set[str],
+) -> list[str]:
+    """`cairn -verbs` against the Python parser and the declaration, BOTH directions.
+
+    🔴 THE EQUATION: Go's verbs minus Python's == the declared Go-only set, and
+    Python's minus Go's == nothing. Each way it can fail has its own sentence:
+
+      * a Go verb Python lacks and nothing declares — an UNDECLARED Go-only verb;
+      * a declared Go-only verb the Go client does not have — a STALE declaration;
+      * a declared Go-only verb Python DOES have — stale the other way (the oracle
+        grew it), caught here too so the `go` job alone cannot be green over it;
+      * a Python verb Go lacks — a verb the cutover would DROP.
+    """
+    problems: list[str] = []
+    undeclared = sorted(go_verbs - python_verbs - declared_go_only)
+    if undeclared:
+        problems.append(
+            f"UNDECLARED Go-only verb(s) {undeclared}: the Go client has them and the "
+            f"Python client does not. A Go-only verb is a DECLARED divergence — add a "
+            f"`go_only` row for it to `testlib/capability_ledger.LEDGER` (decision 3), "
+            f"never a silent one."
+        )
+    missing = sorted(declared_go_only - go_verbs)
+    if missing:
+        problems.append(
+            f"STALE Go-only declaration {missing}: declared go_only and the Go client "
+            f"does not have the verb, so the row describes nothing."
+        )
+    grown = sorted(declared_go_only & python_verbs)
+    if grown:
+        problems.append(
+            f"STALE Go-only declaration {grown}: declared go_only and the PYTHON client "
+            f"HAS the verb, so the mark excuses a comparison that can be made."
+        )
+    dropped = sorted(python_verbs - go_verbs)
+    if dropped:
+        problems.append(
+            f"Python-only verb(s) {dropped}: the Go client lacks them, so the cutover "
+            f"would DROP them."
+        )
+    return problems
+
+
+def go_side_route_problems(
+    go_routes: set[str],
+    oracle_routes: set[str],
+    corpus_go_only: set[str],
+    ledger_go_only: frozenset[str],
+) -> list[str]:
+    """`cairn-server -routes` against the oracle's tables and BOTH Go-only declarations.
+
+    All four operands are `<METHOD> <head>`. 🔴 THE EQUATION: Go's routes minus the
+    oracle's == the routes `go_only` corpus rows address == the routes `go_only`
+    capability rows name; and the oracle's minus Go's == nothing. The two validators
+    each hold one edge of this (`cases.validate_corpus` refuses a `go_only` row for a
+    route the oracle declares; `checkRouteLedger` refuses one for a route Go does not
+    dispatch); this is the only place the whole triangle is read at once, out of the
+    running binary.
+    """
+    problems: list[str] = []
+    divergent = go_routes - oracle_routes
+    for label, declared in (
+        ("tests/conformance/requests.json `go_only` rows", corpus_go_only),
+        ("testlib/capability_ledger `go_only` rows", ledger_go_only),
+    ):
+        undeclared = sorted(divergent - declared)
+        if undeclared:
+            problems.append(
+                f"UNDECLARED Go-only route(s) {undeclared}: the Go server dispatches "
+                f"them, the oracle does not, and {label} do not declare them."
+            )
+        stale = sorted(declared - divergent)
+        if stale:
+            problems.append(
+                f"STALE Go-only declaration {stale} in {label}: either the Go server "
+                f"does not dispatch it or the oracle ALSO does, so it is not a Go-only "
+                f"route."
+            )
+    dropped = sorted(oracle_routes - go_routes)
+    if dropped:
+        problems.append(
+            f"oracle-only route(s) {dropped}: the Go server — the DEPLOYED pod — does "
+            f"not dispatch them."
+        )
+    return problems

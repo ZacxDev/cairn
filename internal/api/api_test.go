@@ -47,8 +47,21 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-// corpusRoutes is every `<METHOD> <head>` the conformance request list ADDRESSES,
-// derived from the declared target exactly as `cases.addressed_routes` derives it.
+// corpusRow is the slice of one `requests.json` row the route ledger reads.
+type corpusRow struct {
+	ID            string `json:"id"`
+	Method        string `json:"method"`
+	Target        string `json:"target"`
+	NegativeRoute bool   `json:"negative_route"`
+	// GoOnly is the corpus's DECLARATION that only this server serves the row's
+	// route (decision 3 of the arcs/sessions plan: new surfaces are Go-only, and the
+	// oracle is not extended). The Python validator refuses the mark for a route the
+	// oracle declares; this side refuses it for a route THIS server does not
+	// dispatch. See `checkRouteLedger`.
+	GoOnly bool `json:"go_only"`
+}
+
+// corpusRows reads the conformance request list's rows.
 //
 // 🔴 THIS FUNCTION IS THE GO SIDE OF A LEDGER THE SUITE CANNOT BUILD ITSELF.
 // `tests/conformance/cases.declared_routes` reads the ORACLE's two dispatch tables by
@@ -58,7 +71,7 @@ func repoRoot(t *testing.T) string {
 // on the Go side". This is it, and it reads the SAME data file rather than a copy of
 // it: a suite that replays a recorded list is structurally blind to a route added after
 // the list was written, in either language.
-func corpusRoutes(t *testing.T) []string {
+func corpusRows(t *testing.T) []corpusRow {
 	t.Helper()
 	path := filepath.Join(repoRoot(t), "tests", "conformance", "requests.json")
 	data, err := os.ReadFile(path)
@@ -66,12 +79,7 @@ func corpusRoutes(t *testing.T) []string {
 		t.Fatalf("the request list is the ledger's other half: %v", err)
 	}
 	var corpus struct {
-		Cases []struct {
-			ID            string `json:"id"`
-			Method        string `json:"method"`
-			Target        string `json:"target"`
-			NegativeRoute bool   `json:"negative_route"`
-		} `json:"cases"`
+		Cases []corpusRow `json:"cases"`
 	}
 	if err := json.Unmarshal(data, &corpus); err != nil {
 		t.Fatal(err)
@@ -83,56 +91,143 @@ func corpusRoutes(t *testing.T) []string {
 		t.Fatal("the request list parsed to zero cases: this ledger would then agree " +
 			"with anything")
 	}
-	seen := map[string]bool{}
-	var out []string
-	for _, c := range corpus.Cases {
+	return corpus.Cases
+}
+
+// routeOf is `<METHOD> <head>` for one row, derived from the declared target exactly as
+// `cases._route_of` derives it; false for a row that addresses no `/api/v1/` route.
+func routeOf(c corpusRow) (string, bool) {
+	if c.Method == "" || c.Target == "" {
+		return "", false
+	}
+	path, _, _ := strings.Cut(c.Target, "?")
+	if !strings.HasPrefix(path, APIPrefix) {
+		return "", false
+	}
+	parts := pathComponents(path)
+	if len(parts) == 0 {
+		return "", false
+	}
+	return c.Method + " " + parts[0], true
+}
+
+// checkRouteLedger compares the routes this server declares against the routes the
+// corpus addresses. It is a pure function of its two operands so the guard can be fed
+// a SYNTHETIC Go-only route — none exists yet — and watched to go red and green.
+//
+// 🔴 IT FAILS WHEN THE SET GROWS **AND** WHEN IT SHRINKS. A route the corpus never
+// addresses is a public, internet-reachable endpoint nothing replays; a corpus row for
+// a route this server no longer serves records a 404 as if it were the contract.
+//
+// 🔴 `go_only` ROWS COUNT AS COVERAGE HERE, AND THAT IS THE WHOLE OF WHAT "HONOURED"
+// MEANS ON THIS SIDE. Every route a `go_only` row addresses is one THIS server must
+// dispatch, so a Go-only route needs a row like any other; what this side cannot know
+// is whether the ORACLE serves it, and that edge is the Python validator's (it refuses
+// the mark for a route `server.py` declares). Together: Go's routes minus the oracle's
+// equals the routes `go_only` rows address — and `tests/test_go_client_ledgers.py`
+// checks that equation directly, out of the running binary.
+func checkRouteLedger(declared []string, rows []corpusRow) error {
+	if len(declared) == 0 {
+		return fmt.Errorf("this server declares no route at all")
+	}
+	addressed := map[string]bool{}
+	goOnly := map[string]bool{}
+	for _, c := range rows {
 		// A `negative_route` row exists to pin what a NON-route answers, so it
 		// contributes no coverage — the same exclusion the Python side makes, and for
 		// the same reason.
-		if c.NegativeRoute || c.Method == "" || c.Target == "" {
+		if c.NegativeRoute {
 			continue
 		}
-		path, _, _ := strings.Cut(c.Target, "?")
-		if !strings.HasPrefix(path, APIPrefix) {
+		name, ok := routeOf(c)
+		if !ok {
 			continue
 		}
-		parts := pathComponents(path)
-		if len(parts) == 0 {
-			continue
-		}
-		name := c.Method + " " + parts[0]
-		if !seen[name] {
-			seen[name] = true
-			out = append(out, name)
+		addressed[name] = true
+		if c.GoOnly {
+			goOnly[name] = true
 		}
 	}
-	slices.Sort(out)
-	return out
+	for _, name := range declared {
+		if !addressed[name] {
+			return fmt.Errorf("this server declares %q and the conformance request list "+
+				"never addresses it. A suite that replays a recorded list is STRUCTURALLY "+
+				"BLIND to a route added after the list was written — add a row per "+
+				"principal shape (marked `go_only` if the oracle does not serve it), then "+
+				"regenerate", name)
+		}
+	}
+	names := make([]string, 0, len(addressed))
+	for name := range addressed {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		if slices.Contains(declared, name) {
+			continue
+		}
+		// The specific diagnosis FIRST: a stale Go-only declaration is a different
+		// mistake from a stale shared row, and the fix differs (drop the mark and the
+		// rows, or wire the route), so it gets its own sentence.
+		if goOnly[name] {
+			return fmt.Errorf("the conformance request list marks %q `go_only` and this "+
+				"server does not dispatch it. A Go-only declaration for a route Go does "+
+				"not serve is STALE — it would record a 404 as the Go-only contract", name)
+		}
+		return fmt.Errorf("the conformance request list addresses %q and this server does "+
+			"not dispatch it. The ledger fails when the set SHRINKS as well as when it "+
+			"grows", name)
+	}
+	return nil
 }
 
 func TestTheRouteLedgerMatchesTheConformanceCorpus(t *testing.T) {
+	if err := checkRouteLedger(DeclaredRoutes(), corpusRows(t)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTheRouteLedgerHonoursADeclaredGoOnlyRouteAndOnlyThat(t *testing.T) {
+	// 🔴 NO GO-ONLY ROUTE EXISTS YET, so the machinery is proved on a SYNTHETIC one
+	// rather than by adding a public endpoint. The real corpus and the real ledger are
+	// the base; `synthetic-go-only` is a head nothing serves.
+	rows := corpusRows(t)
 	declared := DeclaredRoutes()
-	addressed := corpusRoutes(t)
-	if len(declared) == 0 {
-		t.Fatal("this server declares no route at all")
+	const head = "synthetic-go-only"
+	withRoute := append(slices.Clone(declared), "GET "+head)
+	row := corpusRow{ID: "synthetic", Method: "GET", Target: APIPrefix + head + "/alpha-notes"}
+
+	// GREEN: a declared Go route with a `go_only` row addressing it.
+	marked := row
+	marked.GoOnly = true
+	if err := checkRouteLedger(withRoute, append(slices.Clone(rows), marked)); err != nil {
+		t.Fatalf("a Go-only route WITH its go_only row must pass: %v", err)
 	}
-	// 🔴 IT FAILS WHEN THE SET GROWS **AND** WHEN IT SHRINKS. A route the corpus never
-	// addresses is a public, internet-reachable endpoint nothing replays; a corpus row
-	// for a route this server no longer serves records a 404 as if it were the contract.
-	for _, name := range declared {
-		if !slices.Contains(addressed, name) {
-			t.Fatalf("this server declares %q and the conformance request list never "+
-				"addresses it. A suite that replays a recorded list is STRUCTURALLY "+
-				"BLIND to a route added after the list was written — add a row per "+
-				"principal shape, then regenerate.", name)
-		}
+	// RED: the same route with NO row — the grow direction, with its own sentence.
+	err := checkRouteLedger(withRoute, rows)
+	if err == nil || !strings.Contains(err.Error(), "never addresses it") ||
+		!strings.Contains(err.Error(), head) {
+		t.Fatalf("a Go route with no corpus row must be refused by the GROW check, got %v", err)
 	}
-	for _, name := range addressed {
-		if !slices.Contains(declared, name) {
-			t.Fatalf("the conformance request list addresses %q and this server does "+
-				"not dispatch it. The ledger fails when the set SHRINKS as well as "+
-				"when it grows.", name)
-		}
+	// RED: a `go_only` row for a route this server does NOT dispatch — the stale
+	// declaration, refused with the go-only sentence rather than the generic one.
+	err = checkRouteLedger(declared, append(slices.Clone(rows), marked))
+	if err == nil || !strings.Contains(err.Error(), "is STALE") ||
+		!strings.Contains(err.Error(), head) {
+		t.Fatalf("a go_only row for an undispatched route must be refused as STALE, got %v", err)
+	}
+	// …and the CONTROL on that branch: the same row UNmarked gets the generic
+	// shrink sentence, so the STALE text above is chosen by the mark and not by
+	// accident.
+	err = checkRouteLedger(declared, append(slices.Clone(rows), row))
+	if err == nil || strings.Contains(err.Error(), "is STALE") ||
+		!strings.Contains(err.Error(), "SHRINKS") {
+		t.Fatalf("an unmarked row for an undispatched route must get the SHRINK sentence, got %v", err)
+	}
+	// The positive control on the base: the unmodified pair passes, so every red above
+	// is the synthetic change and not the harness.
+	if err := checkRouteLedger(declared, rows); err != nil {
+		t.Fatalf("the real ledger and corpus must pass: %v", err)
 	}
 }
 

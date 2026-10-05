@@ -125,6 +125,26 @@ python3 tests/conformance/suite.py run --base-url … --token-file … --oracle-
 The second form is for a `--base-url` pointing at a hand-started **oracle**. Omitting
 `--base-url` boots the oracle and always asserts.
 
+## …and the mirror: rows asserted against the GO SERVER ONLY (none yet)
+
+🔴 **Before this mark, a route only the Go server serves had no legal spelling here** — its
+rows were refused by the shrink half of the route ledger ("addresses routes the server no
+longer declares"), so the only options were to extend the oracle or to diverge silently.
+Decision 3 of `claudedocs/plan-cairn-arcs-sessions.md` puts the arcs/sessions routes in
+`cmd/cairn-server` only, so a row addressing one carries **`go_only: true` + `go_only_why`**.
+Against the oracle it is **skipped — by id, with its reason, counted** (`SKIP <id> (go-only:
+…)`); against any other server it is compared. `generate` records no golden for it from the
+oracle, whose only answer would be its no-route 404.
+
+The mark cannot become a licence, because both edges are checked: `cases.validate_corpus`
+refuses a `go_only` row for a route `server.py` DECLARES (and checks that before coverage,
+so the diagnosis is reachable), and `internal/api`'s `checkRouteLedger` refuses one for a
+route Go does NOT dispatch. `tests/test_go_client_ledgers.py` reads `cairn-server -routes`
+and checks the whole equation — Go's routes minus the oracle's equals the `go_only` routes
+here AND in `testlib/capability_ledger` — out of the running binary. ⚠ **How a `go_only`
+golden is recorded is still open**: `generate` records from the oracle, so the first Go-only
+route has to bring a recorder (the plan's ledger item 4) along with its rows.
+
 ## Three cases send literal request bytes
 
 `raw_request` rows write the request line themselves over a socket and read the
@@ -276,6 +296,10 @@ encodes:
   future tense left on a finished thing reads as an open gap.) The AST reader is
   still blind to a route dispatched from anywhere other than those two
   module-level dict literals.
+- **A Go-only route's CONTRACT.** A `go_only` row (see "…and the mirror" above) is never
+  compared against a second implementation, by decision. The corpus can tell you
+  the Go server still answers what was recorded; it cannot tell you that answer is
+  right. That is the Go tests' job, with literal expectations.
 - 🔴 **MOST OF WHAT THE REPORT RENDERER DOES.** The corpus sends the bodies
   `requests.json` declares, and none of them carries an openness marker, a
   near-miss marker, a `tasks:` key, a duplicate heading, a fenced region, a scope

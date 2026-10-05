@@ -38,10 +38,12 @@ var commonReadFlags = []string{"--scope", "--repo", "--no-sync"}
 //
 // 🔴 IT IS ALSO THE GO SIDE'S ANSWER TO THE CAPABILITY LEDGER'S BLIND SPOT. `tests/testlib/
 // capability_ledger.py` discovers the CLI's verbs by asking the PYTHON parser what subcommands it
-// has; there is no equivalent for a compiled binary, so a Go-only verb (or a Go client that
-// silently LOST one) would leave that gate green. `cairn -verbs` prints this table and
-// `tests/test_capability_ledger.py::TestTheGoClientDeclaresTheSameVerbs` reads it out of the
-// RUNNING binary — the same shape, and for the same reason, as `cairn-server -routes`.
+// has; there is no equivalent for a compiled binary, so an undeclared Go-only verb (or a Go
+// client that silently LOST one) would leave that gate green. `cairn -verbs` prints this table
+// and `tests/test_go_client_ledgers.py` reads it out of the RUNNING binary — the same shape, and
+// for the same reason, as `cairn-server -routes`. A verb here that the Python client lacks is
+// legal IFF a `go_only` row of `tests/testlib/capability_ledger.LEDGER` declares it (decision 3
+// of the arcs/sessions plan), and must also appear in `flake.nix`'s `want-go-only-verbs.txt`.
 func Verbs() []Verb {
 	return []Verb{
 		{Name: "sync", Help: "refresh the local cache from the pod",
