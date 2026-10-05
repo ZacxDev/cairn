@@ -298,6 +298,46 @@ def test_no_tracked_file_puts_the_scrub_phrase_where_an_identifier_belongs():
     )
 
 
+#: How a citation of a verb is spelled in text: a backticked `` `cairn <verb> ``.
+_CITED_VERB = re.compile(r"`cairn ([a-z][a-z-]*)")
+
+
+def registered_verbs(go_only: "frozenset[str] | None" = None) -> set[str]:
+    """Every verb SOME shipped client registers: the PYTHON CLI's `add_parser` calls
+    UNION the DECLARED Go-only verbs.
+
+    🔴 THE GO-ONLY HALF IS IMPORTED FROM THE ONE DECLARATION, NEVER COPIED. Decision 3
+    of the arcs/sessions plan puts new verbs in the Go client only, so they will never
+    appear in the Python parser — and this guard read ONLY that parser, which would hold
+    every doc citing a Go-only verb red forever. `capability_ledger.GO_ONLY_VERBS` is
+    derived from the `go_only` rows, and `tests/test_go_client_ledgers.py` refuses any
+    of them the Go binary does not actually register — so an entry there is a verb that
+    exists, not a licence to cite one that does not. `go_only` is injectable so the
+    widening can be shown RED/GREEN on a synthetic verb.
+    """
+    from testlib.capability_ledger import GO_ONLY_VERBS
+
+    root = Path(__file__).resolve().parent.parent
+    cli = (root / "cairn").read_text(encoding="utf-8")
+    python = set(re.findall(r'sub\.add_parser\(\s*"([a-z-]+)"', cli))
+    assert python, "no subcommands parsed out of the CLI — this check is vacuous"
+    return python | set(GO_ONLY_VERBS if go_only is None else go_only)
+
+
+def unregistered_citations(
+    registered: set[str], texts: "dict[str, str]"
+) -> dict[str, list[str]]:
+    """`{verb: [up to three paths]}` for every `` `cairn <verb> `` cited in `texts`
+    (path -> content) that is not in `registered`. Raises if NOTHING is cited, since an
+    empty citation set would make the relationship vacuous."""
+    cited: dict[str, list[str]] = {}
+    for path, text in texts.items():
+        for verb in _CITED_VERB.findall(text):
+            cited.setdefault(verb, []).append(path)
+    assert cited, "no `cairn <verb>` citations found anywhere — this check is vacuous"
+    return {v: sorted(set(f))[:3] for v, f in cited.items() if v not in registered}
+
+
 def test_the_malformed_remedy_names_a_verb_THIS_PACKAGE_REGISTERS():
     """🔴 THE HALF A SPELLING GUARD CANNOT COVER.
 
@@ -306,12 +346,10 @@ def test_the_malformed_remedy_names_a_verb_THIS_PACKAGE_REGISTERS():
     which is the defect that shipped: `--validate <path>` was a real flag, of a
     program that is not here. So this pins the RELATIONSHIP instead: every
     ``cairn <verb>`` an operator-facing string tells someone to run must be a
-    verb the CLI actually registers.
+    verb a shipped client registers — the Python CLI's, or a DECLARED Go-only one
+    (see `registered_verbs`).
     """
-    root = Path(__file__).resolve().parent.parent
-    cli = (root / "cairn").read_text(encoding="utf-8")
-    registered = set(re.findall(r'sub\.add_parser\(\s*"([a-z-]+)"', cli))
-    assert registered, "no subcommands parsed out of the CLI — this check is vacuous"
+    registered = registered_verbs()
 
     # 🔴 EVERY TRACKED FILE, NOT TWO. The first version read `cairn` and
     # `lib/subsystem_recall.py` only, while its docstring claimed "every
@@ -321,21 +359,55 @@ def test_the_malformed_remedy_names_a_verb_THIS_PACKAGE_REGISTERS():
     # `lib/cairn_doctor.py` left the file green. A description claiming a
     # relationship over an implementation that inspects one slice is the same
     # defect this module exists to catch, one level up.
-    cited: dict[str, list[str]] = {}
+    texts: dict[str, str] = {}
     scanned, _skipped = partition_tracked_files()
     for path in scanned:
         try:
-            text = path.read_text(encoding="utf-8")
+            texts[str(path)] = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        for verb in re.findall(r"`cairn ([a-z][a-z-]*)", text):
-            cited.setdefault(verb, []).append(str(path))
-    assert cited, "no `cairn <verb>` citations found anywhere — this check is vacuous"
 
-    unknown = {v: sorted(set(f))[:3] for v, f in cited.items() if v not in registered}
+    unknown = unregistered_citations(registered, texts)
     assert not unknown, (
         f"text tells someone to run a `cairn <verb>` the CLI does not register: "
         f"{unknown}. Registered: {sorted(registered)}. A remedy naming a verb that "
         f"does not exist sends the reader hunting for a flag instead of telling "
-        f"them where the check lives."
+        f"them where the check lives. A verb ONLY the Go client has must be declared "
+        f"by a `go_only` row in `tests/testlib/capability_ledger.LEDGER`."
     )
+
+
+def test_a_GO_ONLY_verb_may_be_cited_IFF_it_is_declared():
+    """The widening, shown on a SYNTHETIC verb (no Go-only verb exists yet): cited
+    while undeclared it is refused; declared, it is accepted; and a verb that is
+    neither Python's nor declared is still refused beside it."""
+    # 🔴 THE BACKTICK IS SPLICED IN, NOT WRITTEN, because the real guard scans THIS
+    # file too: spelled literally, these two synthetic citations turned it red — measured,
+    # and a fair positive control on the scanner, but not a state to commit.
+    tick = "`"
+    texts = {
+        "doc.md": f"run {tick}cairn synthetic-go-only --scope x{tick} to list them; "
+                  f"{tick}cairn recall{tick} reads the digest",
+        "other.md": f"or {tick}cairn no-such-verb{tick} which exists nowhere",
+    }
+    undeclared = unregistered_citations(registered_verbs(go_only=frozenset()), texts)
+    assert set(undeclared) == {"synthetic-go-only", "no-such-verb"}
+
+    declared = unregistered_citations(
+        registered_verbs(go_only=frozenset({"synthetic-go-only"})), texts
+    )
+    assert set(declared) == {"no-such-verb"}
+    # The control: a real Python verb is accepted either way, so the reds above are the
+    # declaration and not a broken registry.
+    assert "recall" in registered_verbs(go_only=frozenset())
+    # …and the real registry is exactly Python's plus the real declaration.
+    from testlib.capability_ledger import GO_ONLY_VERBS
+    assert registered_verbs() == registered_verbs(go_only=frozenset()) | GO_ONLY_VERBS
+
+
+def test_the_citation_check_REFUSES_an_empty_citation_set():
+    """The vacuity assertion, kept reachable after the refactor."""
+    import pytest
+
+    with pytest.raises(AssertionError, match="this check is vacuous"):
+        unregistered_citations({"recall"}, {"doc.md": "no citations here"})

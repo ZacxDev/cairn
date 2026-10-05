@@ -1418,9 +1418,19 @@
           sync reads
           validate reads
           EOF
-          sed -i 's/^ *//' want-verbs.txt
+          # 🔴 THE GO-ONLY VERBS, DECLARED APART FROM THE SHARED SET ABOVE. Decision 3 of
+          # the arcs/sessions plan puts new verbs in the Go client only, so a verb here has
+          # NO Python twin. Neither list is free text: `tests/test_capability_ledger.py`
+          # pins the one above against the PYTHON parser and this one against
+          # `capability_ledger.GO_ONLY_VERBS` (the `go_only` rows), so a verb cannot be
+          # moved between them, or declared Go-only here alone, without a red test. Empty
+          # until the first Go-only verb lands.
+          cat > want-go-only-verbs.txt <<'EOF'
+          EOF
+          sed -i 's/^ *//; /^$/d' want-verbs.txt want-go-only-verbs.txt
+          sort -u want-verbs.txt want-go-only-verbs.txt > want-all-verbs.txt
 
-          if ! diff -u want-verbs.txt verbs.txt; then
+          if ! diff -u want-all-verbs.txt verbs.txt; then
             echo "FAIL: the Go client's declared verb set is not the set this check names."
             echo "      A verb is a CAPABILITY — the ledger in tests/testlib/capability_ledger.py"
             echo "      has a row per capability and asserts it against the HTTP route table."
@@ -1496,9 +1506,18 @@
           POST entry
           PUT entry
           EOF
-          sed -i 's/^ *//' want.txt
+          # 🔴 THE GO-ONLY ROUTES, DECLARED APART FROM THE ORACLE-SHARED SET ABOVE —
+          # routes the deployed pod serves and `server/server.py` does not (decision 3 of
+          # the arcs/sessions plan). `tests/test_capability_ledger.py` pins the list above
+          # against the oracle's tables and this one against the `go_only` rows of
+          # `tests/conformance/requests.json` AND of the capability ledger. Empty until the
+          # first Go-only route lands.
+          cat > want-go-only.txt <<'EOF'
+          EOF
+          sed -i 's/^ *//; /^$/d' want.txt want-go-only.txt
+          sort -u want.txt want-go-only.txt > want-all.txt
 
-          if ! diff -u want.txt routes.txt; then
+          if ! diff -u want-all.txt routes.txt; then
             echo "FAIL: the Go server's declared route set is not the set this check"
             echo "      names. Adding a row to a dispatch table is adding a public,"
             echo "      internet-reachable endpoint, and this is where somebody has"

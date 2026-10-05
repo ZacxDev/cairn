@@ -892,8 +892,11 @@ jobs:
           # Go-ONLY ledger-flag set, which is the one thing that notices a third `-verbs`-shaped
           # flag arriving. That last one is the gate over residual 7 in tests/parity/README.md, so
           # it is exactly as load-bearing as the other three and belongs under the same floor.
-          if ran < 4:
-              print(f"REFUSING: collected {ran} < 4 — the ledger file narrowed")
+          # FIVE since the arcs/sessions S0 slice: the go-only ROUTE triangle (Go's
+          # `-routes` minus the oracle's tables == the declared go-only routes), the one
+          # place a Go-only route is checked against the running server binary.
+          if ran < 5:
+              print(f"REFUSING: collected {ran} < 5 — the ledger file narrowed")
               sys.exit(1)
           sys.exit(1 if fail else 0)
           PY

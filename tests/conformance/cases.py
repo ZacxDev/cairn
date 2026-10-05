@@ -19,6 +19,9 @@ green run:
     store.
   * EVERY DECLARED ROUTE IS ADDRESSED — see `declared_routes` for what this can
     and cannot see. This is the one guard that turns the list into a LEDGER.
+  * A ROUTE ONLY THE GO SERVER SERVES IS DECLARED, NEVER SILENT — its rows carry
+    `go_only`, and the mark is refused for a route the oracle declares. See
+    `Case.go_only`.
   * EVERY RELATION NAMES CASES THAT EXIST, and every case in a relation is
     actually issued.
 """
@@ -74,6 +77,27 @@ class Case:
     #: reason must say where. Four rows carry it today.
     oracle_only: bool = False
     oracle_only_why: str = ""
+    #: 🔴 THE MIRROR OF `oracle_only`: THIS ROW ADDRESSES A ROUTE ONLY THE GO SERVER
+    #: SERVES. The arcs/sessions phase extends `cmd/cairn-server` and NOT the oracle
+    #: (decision 3 of `claudedocs/plan-cairn-arcs-sessions.md`), so such a route is a
+    #: DECLARED divergence rather than a drifted one. The row is asserted against the
+    #: Go server and SKIPPED — by id, with its reason, counted — against the oracle,
+    #: which has no answer to record but its no-route 404.
+    #:
+    #: 🔴 THE MARK IS CHECKED AGAINST THE ORACLE'S TABLES IN BOTH DIRECTIONS, so it
+    #: cannot become a licence: a `go_only` row whose route the oracle DOES declare is
+    #: refused (the oracle grew it and the mark is now a lie), and an UNmarked row for
+    #: a route the oracle lacks is refused by the shrink half of the ledger below,
+    #: exactly as before. The Go side's `TestTheRouteLedgerMatchesTheConformanceCorpus`
+    #: closes the third edge — a `go_only` row for a route Go does not dispatch — so
+    #: between the two validators "Go's routes minus the oracle's" equals "the routes
+    #: `go_only` rows address", and `tests/test_go_client_ledgers.py` checks that
+    #: equation out of the running binary. ⚠ `suite.py generate` records goldens FROM
+    #: THE ORACLE and therefore records none for these rows; how a `go_only` golden is
+    #: recorded is the first Go-only route's problem (the plan's ledger item 4), not
+    #: something this field pretends to have solved.
+    go_only: bool = False
+    go_only_why: str = ""
     #: 🔴 THIS ROW DELIBERATELY ADDRESSES A METHOD/HEAD THE SERVER HAS NO ROUTE
     #: FOR — a `PATCH` at the entry noun, a `GET` at it, a `POST` at a read
     #: route. Such a row must NOT count as coverage of a route (its answer is a
@@ -162,6 +186,8 @@ def load_corpus(path: Path | None = None) -> Corpus:
                 negative_route=bool(row.get("negative_route", False)),
                 oracle_only=bool(row.get("oracle_only", False)),
                 oracle_only_why=row.get("oracle_only_why", ""),
+                go_only=bool(row.get("go_only", False)),
+                go_only_why=row.get("go_only_why", ""),
             )
         )
     corpus = Corpus(
@@ -235,6 +261,37 @@ def validate_corpus(corpus: Corpus, *, routes: set[str] | None = None) -> None:
                 f"oracle_only, so the reason describes nothing and the row IS "
                 f"compared against every implementation. Set the mark, or delete "
                 f"the reason."
+            )
+        if case.go_only and not case.go_only_why.strip():
+            raise CorpusError(
+                f"case {case.id!r} is marked go_only and states no reason. The mark "
+                f"stops the case being compared against the oracle at all, so it has "
+                f"to say why only the Go server serves this route — a licence to "
+                f"differ nobody can read is the defect `oracle_only` refuses too."
+            )
+        if case.go_only_why.strip() and not case.go_only:
+            raise CorpusError(
+                f"case {case.id!r} states a go_only reason but is not marked go_only, "
+                f"so the reason describes nothing and the row IS compared against the "
+                f"oracle. Set the mark, or delete the reason."
+            )
+        if case.go_only and case.oracle_only:
+            raise CorpusError(
+                f"case {case.id!r} is marked BOTH go_only and oracle_only, so it would "
+                f"be compared against neither server and cover nothing."
+            )
+        if case.go_only and case.negative_route:
+            raise CorpusError(
+                f"case {case.id!r} is marked go_only AND negative_route. A negative row "
+                f"pins what a NON-route answers and is checked against the ORACLE's "
+                f"tables; there is no Go-only negative ledger, so the pair would be "
+                f"checked against nothing. Drop one mark."
+            )
+        if case.go_only and _route_of(case) is None:
+            raise CorpusError(
+                f"case {case.id!r} is marked go_only but addresses no /api/v1/ route, "
+                f"so the mark names no route for either ledger to check and claims "
+                f"nothing."
             )
 
     # 🔴 READS BEFORE WRITES. See this module's docstring: the freshness fields a
@@ -324,6 +381,23 @@ def validate_corpus(corpus: Corpus, *, routes: set[str] | None = None) -> None:
                 f"behind a row that looks deliberate."
             )
 
+    # 🔴 THE GO-ONLY MARK IS CHECKED **BEFORE** COVERAGE, FOR THE REASON THE NEGATIVE
+    # SET IS: `addressed_routes` excludes `go_only` rows, so on the day the oracle
+    # grows a route that only `go_only` rows address, the coverage check below would
+    # fire first with "you never address it" — the wrong sentence for a corpus that
+    # addresses it and calls it Go-only. The specific diagnosis has to come first or
+    # it is unreachable.
+    grown = sorted(go_only_routes(corpus) & declared)
+    if grown:
+        raise CorpusError(
+            "rows marked go_only address routes the ORACLE declares: "
+            + ", ".join(grown)
+            + ". The mark says only the Go server serves the route, and it stops the "
+            "row being compared against the oracle — so for a route the oracle DOES "
+            "serve, the mark is now a lie that hides a comparison. Remove go_only "
+            "from those rows and regenerate their goldens from the oracle."
+        )
+
     uncovered = sorted(declared - addressed_routes(corpus))
     if uncovered:
         raise CorpusError(
@@ -340,7 +414,10 @@ def validate_corpus(corpus: Corpus, *, routes: set[str] | None = None) -> None:
             "the request list addresses routes the server no longer declares: "
             + ", ".join(stale)
             + ". The ledger fails when the set SHRINKS as well as when it grows; a "
-            "row for a deleted route records a 404 as if it were the contract."
+            "row for a deleted route records a 404 as if it were the contract. If "
+            "the route is one ONLY the Go server serves, mark every row addressing "
+            "it `go_only` with a `go_only_why` — a declared divergence, never a "
+            "silent one."
         )
 
 
@@ -375,8 +452,9 @@ def declared_routes(source: Path | None = None) -> set[str]:
         invisible here.
       * a route added to a NON-PYTHON implementation. There is no source for
         this function to read, so for the Go server this blind spot re-opens and
-        has to be closed on that side. `README.md` says so under "what this
-        suite cannot see".
+        is closed on that side (`api.DeclaredRoutes()` against every row,
+        `go_only` ones included). `README.md` says so under "what this suite
+        cannot see".
       * the non-API paths: `/healthz` and the uniform-401 catch-all are not
         rows in either table and are covered by ordinary cases instead.
     """
@@ -428,16 +506,35 @@ def _route_of(case: Case) -> str | None:
 
 
 def addressed_routes(corpus: Corpus) -> set[str]:
-    """`<METHOD> <head>` for every case that addresses an `/api/v1/` route.
+    """`<METHOD> <head>` for every case that addresses an ORACLE `/api/v1/` route.
 
     Derived from the declared target, so a row cannot claim coverage it does not
     exercise. Cases aimed at `/healthz`, at a non-API path, or at a path with no
     head contribute nothing — which is correct: they cover no route. So do rows
-    marked `negative_route`, which exist to pin what a NON-route answers.
+    marked `negative_route`, which exist to pin what a NON-route answers, and rows
+    marked `go_only`, whose route is the GO server's alone and is ledgered by
+    `go_only_routes` instead. ⚠ The Go side's `corpusRoutes` counts BOTH sets,
+    because every route here and every `go_only` route is one Go dispatches.
     """
     out: set[str] = set()
     for case in corpus.cases:
-        if case.negative_route:
+        if case.negative_route or case.go_only:
+            continue
+        named = _route_of(case)
+        if named is not None:
+            out.add(named)
+    return out
+
+
+def go_only_routes(corpus: Corpus) -> set[str]:
+    """`<METHOD> <head>` for every row marked `go_only` — the DECLARED divergence.
+
+    `validate_corpus` refuses one the oracle declares; the Go side refuses one Go
+    does not dispatch. Empty until the first Go-only route lands.
+    """
+    out: set[str] = set()
+    for case in corpus.cases:
+        if not case.go_only:
             continue
         named = _route_of(case)
         if named is not None:

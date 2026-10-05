@@ -72,7 +72,8 @@ class Outcome:
     failures: list[str] = None  # type: ignore[assignment]
     lines: list[str] = None  # type: ignore[assignment]
     #: Cases NOT compared on this run because they are marked `oracle_only` and the
-    #: server under test is not the oracle. 🔴 REPORTED BY ID IN THE SUMMARY AND
+    #: server under test is not the oracle, or marked `go_only` and it IS (see
+    #: `skipped_on`). 🔴 REPORTED BY ID IN THE SUMMARY AND
     #: NAMED WITH ITS REASON ON ITS OWN LINE, because a skip nobody can see is
     #: indistinguishable from a pass — which is the whole failure mode this suite is
     #: built against, arriving through the one mechanism that is allowed to skip.
@@ -200,6 +201,38 @@ def check_declared_normalizations(
 
 
 # ---------------------------------------------------------------------------
+# Which rows are not compared on this run, and why
+# ---------------------------------------------------------------------------
+
+
+def skip_label(corpus: cases_mod.Corpus, case_id: str) -> str:
+    """The word a SKIP line carries: which of the two marks excused this row.
+
+    Two marks, two opposite directions, so the line has to say which — a reader
+    counting `oracle-specific` skips against a Go run must not find a go-only row
+    folded into that number.
+    """
+    return "go-only" if corpus.by_id(case_id).go_only else "oracle-specific"
+
+
+def skipped_on(corpus: cases_mod.Corpus, *, server_is_oracle: bool) -> set[str]:
+    """The ids NOT compared against this server. 🔴 THE TWO MARKS ARE MIRRORS.
+
+    Against the ORACLE, a `go_only` row has nothing to answer but the no-route 404,
+    so it is skipped; every `oracle_only` row is asserted. Against anything else
+    (the Go server), every `go_only` row is asserted and every `oracle_only` row is
+    skipped. ⚠ Neither set is ever dropped from the REQUESTS — see `run`.
+    """
+    if server_is_oracle:
+        return {c.id for c in corpus.cases if c.go_only}
+    return {c.id for c in corpus.cases if c.oracle_only}
+
+
+def _why(case: cases_mod.Case) -> str:
+    return case.go_only_why if case.go_only else case.oracle_only_why
+
+
+# ---------------------------------------------------------------------------
 # The relational assertions
 # ---------------------------------------------------------------------------
 
@@ -261,14 +294,14 @@ def check_uniform_401(
             # row's own `oracle_only_why` has to say where that is covered instead.
             outcome.line(
                 f"SKIP relation uniform-401 {case_id} "
-                f"(oracle-specific; the relation is asserted over the remaining "
-                f"{len(ids)} members)"
+                f"({skip_label(corpus, case_id)}; the relation is asserted over the "
+                f"remaining {len(ids)} members)"
             )
     if not ids:
         outcome.fail(
             "uniform-401",
-            "every member of the uniform-401 relation is oracle-specific on this "
-            "run, so the relation asserts nothing at all",
+            "every member of the uniform-401 relation is skipped on this run "
+            "(oracle-specific or go-only), so the relation asserts nothing at all",
         )
         outcome.line("FAIL relation uniform-401 (no members left to compare)")
         return
@@ -316,8 +349,10 @@ def check_scope_pairs(
     skipped = skipped or set()
     for pair in corpus.scope_pairs:
         if pair.refused in skipped or pair.absent in skipped:
+            member = pair.refused if pair.refused in skipped else pair.absent
             outcome.line(
-                f"SKIP relation refused-equals-absent {pair.name} (oracle-specific)"
+                f"SKIP relation refused-equals-absent {pair.name} "
+                f"({skip_label(corpus, member)})"
             )
             continue
         outcome.assertions += 1
@@ -381,7 +416,11 @@ def check_head_pairs(
     skipped = skipped or set()
     for pair in corpus.head_pairs:
         if pair.head in skipped or pair.get in skipped:
-            outcome.line(f"SKIP relation head-matches-get {pair.name} (oracle-specific)")
+            member = pair.head if pair.head in skipped else pair.get
+            outcome.line(
+                f"SKIP relation head-matches-get {pair.name} "
+                f"({skip_label(corpus, member)})"
+            )
             continue
         outcome.assertions += 1
         if not _any_real_answer(records, pair.head, pair.get):
@@ -549,19 +588,31 @@ def generate(
     with tempfile.TemporaryDirectory(prefix="cairn-conformance-") as td:
         with oracle.running_oracle(Path(td), **oracle_kwargs) as ora:
             answers = execute(ora.base_url, ora.principals, corpus, outcome)
-            problems = check_declared_normalizations(corpus, answers)
+            # 🔴 A `go_only` ROW'S GOLDEN IS NEVER THE ORACLE'S TO RECORD: the oracle
+            # serves no such route, so what it would write is its no-route 404, filed
+            # as the contract. The request is still ISSUED (the run's arithmetic is
+            # the same on every server — see `run`); nothing is written for it, and an
+            # existing golden for it is left alone, since its id is still declared.
+            go_only = skipped_on(corpus, server_is_oracle=True)
+            problems = check_declared_normalizations(corpus, answers, go_only)
             texts: dict[str, str] = {}
             records: dict[str, dict[str, Any]] = {}
             for case in corpus.cases:
+                if case.id in go_only:
+                    outcome.line(
+                        f"SKIP {case.id} (go-only: {case.go_only_why}; its golden is "
+                        f"not recorded from the oracle)"
+                    )
+                    continue
                 resp, _fired = answers[case.id]
                 rec = wire.record(case, resp)
                 text = wire.dumps(rec)
                 problems += check_no_host_leak(text, f"the golden for {case.id!r}")
                 records[case.id] = rec
                 texts[case.id] = text
-            check_uniform_401(corpus, records, outcome)
-            check_scope_pairs(corpus, records, outcome)
-            check_head_pairs(corpus, records, outcome)
+            check_uniform_401(corpus, records, outcome, go_only)
+            check_scope_pairs(corpus, records, outcome, go_only)
+            check_head_pairs(corpus, records, outcome, go_only)
             if outcome.failures:
                 raise SuiteError(
                     "refusing to record goldens: the ORACLE itself violates a "
@@ -654,7 +705,9 @@ def run(
     """Replay the corpus against any server and diff against the goldens.
 
     🔴 `assert_oracle_specific` DEFAULTS TO **TRUE**, WHICH IS THE STRICT
-    DIRECTION, AND THAT IS DELIBERATE. A row marked `oracle_only` records an answer
+    DIRECTION FOR `oracle_only`, AND THAT IS DELIBERATE. It is also the statement
+    "this server is the oracle", so it SKIPS every `go_only` row — the one thing the
+    oracle cannot answer — and turning it off asserts them. A row marked `oracle_only` records an answer
     that is the Python server's own shape rather than a contract any implementation
     can honour (see `cases.Case.oracle_only`). Asserting it against a port fails;
     skipping it against the ORACLE would silently stop covering the oracle's real
@@ -670,9 +723,11 @@ def run(
     # deliberate refusals from one client address and the canary at the end is what
     # proves no lockout tripped. Dropping a request would change what the limiter
     # saw, so a skipped row would quietly alter the answers of the rows around it.
-    skipped = set()
-    if not assert_oracle_specific:
-        skipped = {c.id for c in corpus.cases if c.oracle_only}
+    #
+    # `assert_oracle_specific=True` IS THE STATEMENT "THIS SERVER IS THE ORACLE", so it
+    # also decides the mirror mark: `go_only` rows are skipped exactly when
+    # `oracle_only` rows are asserted. See `skipped_on`.
+    skipped = skipped_on(corpus, server_is_oracle=assert_oracle_specific)
     for problem in check_declared_normalizations(corpus, answers, skipped):
         outcome.failures.append(problem)
         outcome.line("FAIL normalization " + problem.split(":")[0])
@@ -683,7 +738,7 @@ def run(
         if case.id in skipped:
             outcome.skipped.append(case.id)
             outcome.line(
-                f"SKIP {case.id} (oracle-specific: {case.oracle_only_why})"
+                f"SKIP {case.id} ({skip_label(corpus, case.id)}: {_why(case)})"
             )
             continue
         records[case.id] = wire.record(case, resp)
@@ -734,7 +789,9 @@ def run_against_oracle(golden_dir: Path = GOLDEN_DIR, corpus: cases_mod.Corpus |
     """Boot the Python oracle over a fresh world and replay against it.
 
     Every `oracle_only` row is ASSERTED here — this function is the one place that
-    knows the server it is talking to IS `server/server.py`.
+    knows the server it is talking to IS `server/server.py` — and every `go_only`
+    row is SKIPPED, reported by id and counted, because the oracle serves no such
+    route.
     """
     with tempfile.TemporaryDirectory(prefix="cairn-conformance-") as td:
         with oracle.running_oracle(Path(td), **oracle_kwargs) as ora:
@@ -785,6 +842,9 @@ def main(argv: list[str] | None = None) -> int:
             "compare it and names every skipped id with its reason in the output and "
             "in the SUMMARY; `assert` compares it, which is what you want when "
             "--base-url points at a hand-started ORACLE rather than at a port. "
+            "`assert` also SKIPS every `go_only` row (a route only the Go server "
+            "serves) and `skip` compares them — the mirror mark, decided by the same "
+            "statement about which server this is. "
             "Omitting --base-url boots the oracle and always asserts."
         ),
     )

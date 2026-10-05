@@ -13,6 +13,12 @@ So while two clients are alive:
 Both are closed the same way `api.DeclaredRoutes()` and `cairn-server -routes` closed the route
 ledger's: the binary prints its own tables and this file reads them out of the RUNNING process.
 
+🔴 AND A GO-ONLY VERB OR ROUTE IS NOW LEGAL — IFF DECLARED. Decision 3 of the arcs/sessions plan
+puts new surfaces in the Go implementation only. The declaration is the `go_only` rows of
+`testlib/capability_ledger.LEDGER` (and, for routes, the `go_only` rows of
+`tests/conformance/requests.json`); this file reads the binaries and refuses any Go-only surface
+that is not declared, and any declaration that is stale in either direction.
+
 🔴 THIS FILE IS MEASURED IN THE JOB THAT OWNS ITS DEPENDENCY, AND A SKIP IS REFUSED THERE. Whether
 it skips in the `tests` job depends on whether that runner image happens to ship a `go` toolchain —
 not something this repository controls, and therefore not something asserted anywhere. The `go` job
@@ -185,14 +191,30 @@ def test_the_GO_ONLY_ledger_flags_are_exactly_the_declared_set(go_client):
     )
 
 
-def test_the_go_client_declares_EXACTLY_the_pythons_verb_set(go_client):
+def test_the_go_client_declares_EXACTLY_the_pythons_verb_set_plus_the_DECLARED_go_only_verbs(
+    go_client,
+):
     """🔴 BOTH DIRECTIONS, AND BOTH OPERANDS DISCOVERED.
 
-    A verb only Go has is a capability the ledger has no row for; a verb only Python has is a verb
-    the cutover would DROP. While both clients ship, the sets must be equal — and the day Python is
-    retired this test is what has to be deleted deliberately rather than quietly stopping to hold.
+    A verb only Go has is a DECLARED divergence or a defect: decision 3 of the arcs/sessions plan
+    puts new verbs in the Go client only, so `cairn -verbs` minus the Python parser's verbs must be
+    EXACTLY `capability_ledger.GO_ONLY_VERBS` (the `go_only` rows) — an undeclared one is refused,
+    and so is a declaration the Go client does not back, or the Python client also has. A verb
+    only Python has is one the cutover would DROP. The day Python is retired this test is what has
+    to be deleted deliberately rather than quietly stopping to hold.
+
+    🔴 WHY NOT THE THIRD (SOURCE) OPERAND `GO_ONLY_LEDGER_FLAGS` NEEDS. That guard's probe set was
+    once built FROM its own declaration, so shrinking the tuple shrank what was measured; the
+    source read is what cut that dependency. Here neither discovered operand is built from the
+    declaration — one is the running binary's `-verbs`, which prints the very table the parser
+    dispatches from (`client.Verbs()`), the other is the built argparse parser — so shrinking
+    `GO_ONLY_VERBS` cannot shrink what is measured: it turns a real Go-only verb UNDECLARED, which
+    is red. The synthetic RED/GREEN cases for every branch are in `tests/test_capability_ledger.py`
+    (`TestTheGoOnlyDeclaration`), which needs no compiler.
     """
-    from testlib.capability_ledger import cli_verbs_from_parser
+    from testlib.capability_ledger import (
+        GO_ONLY_VERBS, cli_verbs_from_parser, go_side_verb_problems,
+    )
 
     python_verbs = cli_verbs_from_parser()
     go_rows = _lines(go_client, "-verbs")
@@ -202,16 +224,18 @@ def test_the_go_client_declares_EXACTLY_the_pythons_verb_set(go_client):
         assert effect in ("reads", "writes"), f"unparseable row {row!r}"
         go_verbs[name] = effect == "writes"
 
-    assert set(go_verbs) == set(python_verbs), (
-        f"the two clients' verb sets differ. Go-only: {sorted(set(go_verbs) - set(python_verbs))}; "
-        f"Python-only: {sorted(set(python_verbs) - set(go_verbs))}. A Go-only verb is a capability "
-        f"the ledger has no row for; a Python-only verb is one the cutover would drop."
+    problems = go_side_verb_problems(GO_ONLY_VERBS, set(python_verbs), set(go_verbs))
+    assert not problems, (
+        "the two clients' verb sets differ from what is declared:\n  " + "\n  ".join(problems)
     )
     # 🔴 AND THE WRITE FLAG MUST AGREE, BECAUSE IT DECIDES AN EXIT CODE. `writes` is what makes an
     # unreachable store exit 7 (the record was NOT made) rather than 3 (nothing was displayed), and
-    # a verb that lost the flag on one client would report a failed write as a stale read.
+    # a verb that lost the flag on one client would report a failed write as a stale read. Over the
+    # SHARED verbs only: a Go-only verb has no Python flag to agree with (its row's `effect` is
+    # what states it, and `capability_ledger`'s go-only rows carry one).
     disagreeing = sorted(
-        verb for verb in go_verbs if go_verbs[verb] != bool(python_verbs[verb])
+        verb for verb in go_verbs
+        if verb in python_verbs and go_verbs[verb] != bool(python_verbs[verb])
     )
     assert not disagreeing, (
         f"{len(disagreeing)} verb(s) disagree about whether they WRITE: {disagreeing}. That flag "
@@ -248,11 +272,57 @@ def test_the_go_client_declares_EXACTLY_the_pythons_verb_set(go_client):
     # ⚠ SO MOVE THIS NUMBER WITH THE VERB SET, IN THE SAME COMMIT. It is deliberately NOT derived
     # from either side's discovery: this is the positive control ON that discovery, and a floor
     # computed from the thing under test cannot fail when the thing under test is truncated.
-    assert len(go_verbs) == 10, (
-        f"discovered {len(go_verbs)} verb(s): {sorted(go_verbs)}. If a verb was ADDED, move this "
-        f"number in the same commit — that is what this pin is for. If one was LOST on both "
+    #
+    # ⚠ OVER THE SHARED VERBS: a declared Go-only verb is counted by `GO_ONLY_VERBS`'s own
+    # derivation, not here, so adding one does not move this number — adding a SHARED verb does.
+    shared = set(go_verbs) - GO_ONLY_VERBS
+    assert len(shared) == 10, (
+        f"discovered {len(shared)} shared verb(s): {sorted(shared)}. If a verb was ADDED, move "
+        f"this number in the same commit — that is what this pin is for. If one was LOST on both "
         f"clients at once, the equality above cannot see it and this is the only line that can."
     )
+
+
+@pytest.fixture(scope="module")
+def go_server(tmp_path_factory) -> str:
+    if shutil.which("go") is None:
+        pytest.skip(GO_MISSING)
+    binary = str(tmp_path_factory.mktemp("cairn-go-server-ledger") / "cairn-server")
+    proc = subprocess.run(
+        ["go", "build", "-C", str(ROOT), "-o", binary, "./cmd/cairn-server"],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        pytest.fail(f"the Go server did not build, so its route ledger cannot be read:\n"
+                    f"{proc.stderr}")
+    return binary
+
+
+def test_the_go_servers_routes_are_the_oracles_plus_EXACTLY_the_declared_go_only_routes(
+    go_server,
+):
+    """🔴 THE WHOLE GO-ONLY ROUTE TRIANGLE, READ AT ONCE, OUT OF THE RUNNING BINARY.
+
+    Each validator holds one edge: `cases.validate_corpus` refuses a `go_only` corpus row for a
+    route the oracle declares, and `checkRouteLedger` (`internal/api`) refuses one for a route Go
+    does not dispatch. Neither sees the capability ledger's `go_only` rows, and neither reads
+    `cairn-server -routes` — the binary's own answer. Here: Go's routes minus the oracle's must
+    equal BOTH declarations, and the oracle's minus Go's must be empty. All four operands are
+    discovered or declared independently; none is built from another. Synthetic RED/GREEN cases
+    for every branch: `tests/test_capability_ledger.py::TestTheGoOnlyDeclaration`.
+    """
+    from conformance import cases as cases_mod
+    from testlib.capability_ledger import go_only_route_names, go_side_route_problems
+
+    go_routes = set(_lines(go_server, "-routes"))
+    oracle_routes = cases_mod.declared_routes()
+    problems = go_side_route_problems(
+        go_routes,
+        oracle_routes,
+        cases_mod.go_only_routes(cases_mod.load_corpus()),
+        go_only_route_names(),
+    )
+    assert not problems, "\n  ".join(problems)
 
 
 def test_the_go_clients_exit_codes_keep_the_shared_set_at_0_and_9(go_client):

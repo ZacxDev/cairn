@@ -290,10 +290,16 @@ class TestTheOracleSpecificMark:
         """🔴 THE PROPERTY THAT MAKES THE MARK SAFE. Skipping against the oracle would
         silently stop covering the oracle's real behaviour, which is worse than
         asserting it against a port — so `run_against_oracle` asserts every marked row
-        and `run`'s default is the strict direction."""
+        and `run`'s default is the strict direction.
+
+        ⚠ The oracle run DOES skip `go_only` rows (see `TestTheGoOnlyMark`) — and the
+        real corpus has none yet, so this still reads "nothing". The day the first
+        Go-only route lands, this assertion becomes "exactly the go_only ids"."""
         outcome = suite.run_against_oracle()
         assert outcome.failures == []
-        assert outcome.skipped == []
+        assert outcome.skipped == sorted(
+            c.id for c in cases_mod.load_corpus().cases if c.go_only
+        ) == []
         assert not [ln for ln in outcome.lines if ln.startswith("SKIP")]
 
     def test_skipping_is_REPORTED_by_id_and_by_reason(self):
@@ -404,6 +410,162 @@ class TestTheOracleSpecificMark:
             and "both members failed their own golden" in ln
             for ln in caveated.lines
         ), caveated.lines
+
+
+#: A head NO server dispatches, standing in for the first real Go-only route. The
+#: `go_only` machinery has to be proved before any such route exists, so it is proved
+#: on this one — never by adding a public endpoint to make a test pass.
+SYNTHETIC_GO_ONLY_HEAD = "synthetic-go-only"
+SYNTHETIC_GO_ONLY_ROUTE = f"GET {SYNTHETIC_GO_ONLY_HEAD}"
+SYNTHETIC_GO_ONLY_WHY = (
+    "a synthetic Go-only route used only to prove the go_only declaration is "
+    "honoured by the oracle-side validator and the runner"
+)
+
+
+def _go_only_row(**overrides) -> dict:
+    row = {
+        "id": "synthetic-go-only-read",
+        "phase": "read",
+        "method": "GET",
+        "target": f"/api/v1/{SYNTHETIC_GO_ONLY_HEAD}/alpha-notes",
+        "principal": "wide-reader",
+        "why": "a synthetic row for the go_only machinery's own tests",
+        "go_only": True,
+        "go_only_why": SYNTHETIC_GO_ONLY_WHY,
+    }
+    row.update(overrides)
+    return {k: v for k, v in row.items() if v is not None}
+
+
+def _raw_with(row: dict) -> dict:
+    """The real corpus with `row` inserted at the head of the READ phase."""
+    raw = _raw_corpus()
+    raw["cases"].insert(0, row)
+    return raw
+
+
+class TestTheGoOnlyMark:
+    """🔴 THE MIRROR OF `oracle_only`: A ROUTE ONLY THE GO SERVER SERVES, DECLARED.
+
+    Decision 3 of the arcs/sessions plan puts new routes in `cmd/cairn-server` and not
+    in the oracle. Before this mark, such a route's rows were refused by the shrink half
+    of the ledger ("addresses routes the server no longer declares") with no way to say
+    the divergence was intended. Each guard below is shown RED on the case it must
+    refuse, asserting on ITS OWN message, beside the GREEN declared case.
+    """
+
+    def test_GREEN_a_go_only_row_for_a_route_the_oracle_lacks_is_accepted(self, tmp_path):
+        corpus = _corpus_from(_raw_with(_go_only_row()), tmp_path)
+        assert cases_mod.go_only_routes(corpus) == {SYNTHETIC_GO_ONLY_ROUTE}
+        # …and it is NOT counted as oracle coverage, so the oracle's ledger is unmoved.
+        assert cases_mod.addressed_routes(corpus) == EXPECTED_ROUTES
+
+    def test_RED_the_same_row_UNMARKED_is_refused_as_a_route_the_oracle_lacks(self, tmp_path):
+        """The behaviour this slice exists to make declarable, unchanged for an
+        undeclared row: an unmarked row for a route the oracle does not serve is the
+        silent-divergence case, and it still fails."""
+        row = _go_only_row(go_only=None, go_only_why=None)
+        with pytest.raises(cases_mod.CorpusError) as exc:
+            _corpus_from(_raw_with(row), tmp_path)
+        assert "addresses routes the server no longer declares" in str(exc.value)
+        assert SYNTHETIC_GO_ONLY_ROUTE in str(exc.value)
+
+    def test_RED_a_go_only_mark_on_a_route_the_ORACLE_declares_is_refused(self, tmp_path):
+        """The stale-declaration direction: the oracle grew the route (here: it always
+        had it), so the mark hides a comparison."""
+        row = _go_only_row(target="/api/v1/recall/alpha-notes")
+        with pytest.raises(cases_mod.CorpusError) as exc:
+            _corpus_from(_raw_with(row), tmp_path)
+        assert "rows marked go_only address routes the ORACLE declares" in str(exc.value)
+        assert "GET recall" in str(exc.value)
+
+    def test_the_oracle_grew_check_is_REACHABLE_before_the_coverage_check(self, corpus, tmp_path):
+        """🔴 ORDER. The only rows for the synthetic route are `go_only`, so when the
+        oracle starts declaring it the coverage check ("never addresses") would fire
+        first with the wrong diagnosis if it ran first. Measured by asserting on THIS
+        message with the coverage condition also true."""
+        marked = _corpus_from(_raw_with(_go_only_row()), tmp_path)
+        with pytest.raises(cases_mod.CorpusError) as exc:
+            cases_mod.validate_corpus(
+                marked, routes=EXPECTED_ROUTES | {SYNTHETIC_GO_ONLY_ROUTE}
+            )
+        assert "address routes the ORACLE declares" in str(exc.value)
+        assert "never addresses" not in str(exc.value)
+
+    def test_RED_a_mark_with_no_reason_is_refused(self, tmp_path):
+        with pytest.raises(cases_mod.CorpusError) as exc:
+            _corpus_from(_raw_with(_go_only_row(go_only_why="  ")), tmp_path)
+        assert "is marked go_only and states no reason" in str(exc.value)
+
+    def test_RED_a_reason_with_no_mark_is_refused(self, tmp_path):
+        with pytest.raises(cases_mod.CorpusError) as exc:
+            _corpus_from(_raw_with(_go_only_row(go_only=None)), tmp_path)
+        assert "states a go_only reason but is not marked go_only" in str(exc.value)
+
+    def test_RED_both_marks_on_one_row_is_refused(self, tmp_path):
+        row = _go_only_row(oracle_only=True, oracle_only_why="synthetic")
+        with pytest.raises(cases_mod.CorpusError) as exc:
+            _corpus_from(_raw_with(row), tmp_path)
+        assert "BOTH go_only and oracle_only" in str(exc.value)
+
+    def test_RED_go_only_on_a_negative_route_row_is_refused(self, tmp_path):
+        with pytest.raises(cases_mod.CorpusError) as exc:
+            _corpus_from(_raw_with(_go_only_row(negative_route=True)), tmp_path)
+        assert "go_only AND negative_route" in str(exc.value)
+
+    def test_RED_go_only_on_a_row_addressing_no_api_route_is_refused(self, tmp_path):
+        with pytest.raises(cases_mod.CorpusError) as exc:
+            _corpus_from(_raw_with(_go_only_row(target="/healthz")), tmp_path)
+        assert "is marked go_only but addresses no /api/v1/ route" in str(exc.value)
+
+    def test_the_ORACLE_run_skips_a_go_only_row_and_REPORTS_it(self, tmp_path):
+        """A go-only row is skipped against the oracle — declared, counted, printed —
+        and the rest of the run is untouched: 0 failures. The request is still
+        ISSUED, which is why `requests` grows by one."""
+        corpus = _corpus_from(_raw_with(_go_only_row()), tmp_path)
+        outcome = suite.run_against_oracle(corpus=corpus)
+        assert outcome.failures == []
+        assert outcome.skipped == ["synthetic-go-only-read"]
+        line = f"SKIP synthetic-go-only-read (go-only: {SYNTHETIC_GO_ONLY_WHY})"
+        assert line in outcome.lines
+        summary = [ln for ln in outcome.lines if ln.startswith("SUMMARY")][0]
+        assert "skipped=1 [synthetic-go-only-read]" in summary
+        assert outcome.requests == len(cases_mod.load_corpus().cases) + 1 + 1
+
+    def test_a_NON_oracle_run_COMPARES_a_go_only_row(self, tmp_path):
+        """…and the mirror: against anything that is not the oracle the row is
+        compared, not skipped. The oracle stands in for "a port" here, so the
+        comparison reaches `read_golden` for a row nobody recorded and refuses — which
+        is the observable proof the row was not skipped."""
+        corpus = _corpus_from(_raw_with(_go_only_row()), tmp_path)
+        with tempfile.TemporaryDirectory(prefix="cairn-conformance-") as td:
+            with oracle.running_oracle(Path(td)) as ora:
+                with pytest.raises(wire.WireError) as exc:
+                    suite.run(
+                        ora.base_url, ora.token_file, GOLDEN, corpus,
+                        assert_oracle_specific=False,
+                    )
+        assert "no golden for case 'synthetic-go-only-read'" in str(exc.value)
+
+    def test_a_skipped_go_only_relation_member_is_labelled_go_only(self, tmp_path):
+        corpus = _corpus_from(_raw_with(_go_only_row()), tmp_path)
+        assert suite.skip_label(corpus, "synthetic-go-only-read") == "go-only"
+        assert suite.skip_label(corpus, "post-bullets-not-json") == "oracle-specific"
+
+    def test_generate_records_NO_golden_for_a_go_only_row(self, tmp_path):
+        """The oracle's only answer to a Go-only route is its no-route 404; recording
+        it would file that as the contract. Generated into a scratch directory, so the
+        committed goldens are untouched."""
+        corpus = _corpus_from(_raw_with(_go_only_row()), tmp_path)
+        out = tmp_path / "golden"
+        outcome = suite.generate(out, corpus)
+        assert not (out / "synthetic-go-only-read.json").exists()
+        assert any(
+            ln.startswith("SKIP synthetic-go-only-read (go-only: ") for ln in outcome.lines
+        )
+        # The positive control: generate DID record the rest.
+        assert len(list(out.glob("*.json"))) == len(cases_mod.load_corpus().cases)
 
 
 class TestARelationCannotBeSatisfiedByTwoSERVERERRORS:
