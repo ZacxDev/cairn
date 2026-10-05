@@ -31,49 +31,39 @@ them being USED and ENFORCED.
   to match a measurement, and it is not being declared met because the work was done.
 
 ## State now
-- Branch: `main`. Base clone clean.
-- ✅ **THREE RANKS CLOSED AND MERGED EARLIER IN THIS ARC, verified by content on `origin/main`**
-  (a squash never makes the branch head an ancestor, so ancestry is the wrong test): rank 1
-  `5c96ffd` (#170), rank 2 `306164c` (#171), rank 5 `ffede27` (#169). Unchanged since.
-- ✅ **HALF 2 — MET, and it STAYS met because it is a code property.** Re-measured against the
-  DEPLOYED pod after the backfill writes: an off-vocabulary tag on
-  `PUT /api/v1/entry/cairn/tag-vocabulary` ⇒ **422**, `x-store-status: entry-shape`; the same
-  request with the tag restored ⇒ **200**, `x-store-status: replaced`. Probe target confirmed
-  byte-identical afterwards (`cmp`).
-- 🔴 **HALF 1 — WAS MET FOR A FEW HOURS, THEN FALSE AGAIN. THIS IS THE ARC'S CENTRAL FINDING,
-  NOT AN ACCIDENT OF TIMING.** The sequence, all measured:
-  - 10 untagged of 339 on their resolved instances.
-  - One day later, before any fix landed: **16** untagged. Six arrived in between.
-  - All 16 backfilled; immediately afterwards **0 of 29 scopes with a gap**, and a routes-aware
-    walk agreed at **346 ok / 0 untagged / 0 off-vocabulary**. Two instruments, each controlled.
-  - **~28 hours after that: 5 untagged again**, on a store that had grown to 363 entry files on
-    resolved instances. Nothing regressed; new entries simply kept being born untagged.
-  🔴 **SO "BACKFILL THEN DECLARE CLOSED" IS A MEASUREMENT WITH A HALF-LIFE, AND THIS DOC
-  PREVIOUSLY SHIPPED EXACTLY THAT MISTAKE TWICE** — once as `MET 2026-10-01`, and once in the
-  commit this update corrects, which claimed the arc was CLOSED while 5 new untagged entries were
-  already on the pod.
-- ✅ **ALL 16 BACKFILLED** by `cairn put`, one vocabulary term each taken from the per-scope
-  table by EXACT scope match: **6 `infra`, 9 `product`, 1 `tooling`**, written **16/16, 0
-  failures**. The inserter refused to touch any entry whose byte round-trip did not restore the
-  original, and 0 were refused. ⚠ **That work is not wasted and is not a closure either** — it
-  cleared the backlog; it does nothing about the inflow.
-  🔴 **EVERY ONE WAS `created_by: handoff` — which is what makes this the TEMPLATE's doing and
-  not an authoring-discipline problem.** No hand-written entry was in any of the three
-  measurements; that is the evidence rank 4 rests on.
-- 🔴 **THE BLOCKER IS NOW ONE MERGE: the TOOLING repo's PR #2004** (that repo's own numbering;
-  its name is a `denied-identifier` here), `MERGEABLE`. It emits `tags: [TODO-pick-one]` — a
-  placeholder that **normalizes OUTSIDE the vocabulary**, so the gate that already exists refuses
-  an unedited one (422, measured). ⚠ **NOT MERGED, and that repo reports NO CI checks on the
-  branch**, so its only evidence is a local run: **1809 tests pass** across the nine suites that
-  read that template or its skill. **Until it merges, every new entry is still born untagged and
-  half 1 will be false again within a day of any backfill.**
-- ✅ **The store entry `cairn/tag-vocabulary`'s `OPEN:` bullet was rewritten to `RESOLVED:`**
-  (revision `6cf1d6d1a81de8f9`). ⚠ **That bullet is now OVER-CLAIMING and should be re-opened or
-  corrected** — it says both halves are met. Bare `RESOLVED:` with no sha was right for the
-  reason given (the backfill was store writes, not a commit); the verdict in it was not.
-- ⚠ **No task-board field, and that is a REFUSAL rather than a zero** — the resolver exited 5
+- Branch: `main` at **`7a99416`** (#177), base clone clean and ff-merged. No worktrees left from this
+  session. Open PR in this repo: **#178** (leakscan/CGNAT) — **another arc, not this one.**
+- ✅ **RANK 4 IS DONE AND LIVE ON THIS HOST — BOTH HALVES, VERIFIED ON THE CONSUMER RATHER THAN THE
+  DEPLOY.** The template emits the field and the skill doc now tells an author to replace it.
+  - the tooling repo's **PR #2004** merged (that repo's own numbering; its name is a
+    `denied-identifier` here). `--template … --writer {handoff,analyze-service}` now emits
+    `tags: [TODO-pick-one]`; measured `service=1 tags=1` for BOTH writers, where `service=1` is the
+    positive control — a `0` there means the command refused and nothing was measured.
+  - the placeholder **normalizes OUTSIDE the vocabulary**, so the gate that already exists refuses
+    an unedited one: **422 `entry-shape`**, `tag 'todo-pick-one' is not one of
+    infra|product|tooling`, against **200 `replaced`** for a real term. Measured live on the pod.
+  - the DEPLOYED skill copy carries the instruction: `readlink -f` lands in
+    a `/nix/store/<hash>-<tooling>-claude-skills/…` path (a COPY, not a symlink), and the placeholder
+    is present **1** where it was **0** before the switch.
+- ✅ **A `home-manager switch` WAS REQUIRED AND IS DONE** — the behaviour half ran from the working
+  copy, but the skill doc is a `/nix/store` COPY, so the instruction stayed pre-merge until a switch.
+  Switched pinned to the committed rev `66cc548c`; only 5 tooling-repo-local derivations, **no cairn
+  rebuild and no input change versus what the host already ran**.
+- ✅ **THE LOCK BUMP THAT WAS BLOCKING THE SWITCH IS COMMITTED** — the tooling repo's **PR #2045**,
+  merged as `66cc548c`. `cairn 5c96ffd→d7e1fec`, `home-manager a439f71→acd21c5`,
+  `nixpkgs_3 b6c8664→c9fe7d1`, committed UNCHANGED rather than regenerated. All four of that
+  repo's Tekton gates passed, including the one its own `flake.nix` warns a cairn bump can turn red
+  (`the pinned cairn client ran: validate and doctor both produced output`), plus 481 go / 1720 node
+  / 25364 py tests.
+- 🔴 **HALF 1 IS STILL NOT MET, AND THE BASELINE IS THE POINT OF THIS UPDATE.** At the moment the
+  fix went live: **5 untagged of 363 on resolved instances** (346 ok, 0 off-vocabulary, 12
+  `*/README.md` which are not entries). **Those 5 pre-date the fix.** They were NOT backfilled on
+  purpose — see rank 7.
+- ✅ **HALF 2 — MET and STAYS met**, because it is a code property. The 422/200 pair above is it.
+- ⚠ **No task-board field, and that is a REFUSAL rather than a zero** — the resolver exited **5**
   again. An unknown session id answers 200 with an empty array, so a zero cannot distinguish
-  "touched no task" from "wrong id".
+  "touched no task" from "wrong id". ⚠ Read its code WITHOUT a pipe: `… resolve | head` reported
+  `rc=0` over a "NOTHING RESOLVED" message in this very session.
 
 ## Open investigations — live diagnosis state
 
@@ -231,11 +221,53 @@ them being USED and ENFORCED.
   second that is not executable, then attempt a write the guard would refuse. Record which of
   the two, if either, still blocks.
 
+### Did the template fix actually stop the inflow? The baseline is set; the reading is not due yet
+- as-of: 2026-10-05
+- **Symptom + exact repro:** before the fix, the untagged count returned to non-zero within ~1 day
+  of any backfill. Reproduce with the half-1 denominator sweep in "How to verify".
+- **Observed (with values):** the full series, every point controlled — **10** untagged of 339;
+  **16** one day later with no fix landed (+6); **0** immediately after all 16 were backfilled;
+  **5** about 28 hours after that; and **5** again now, at the moment the fix went live, with the
+  resolved-instance population at **363** entry files. Every untagged entry at every measurement
+  carried `created_by: handoff`. Two instruments agree at each point.
+- **Ruled out:** "the 5 are new since the fix" — they are the same 5 counted before the switch, and
+  the count did not move across it. `via: measurement` (same refs, same count, before and after).
+- **Ruled out:** "authors are forgetting" — untagged was the template's DEFAULT, and every untagged
+  entry across all measurements was template-born. `via: measurement` (`--template … --writer …`
+  with `grep -c '^service:'` = 1 as the positive control in the same output where `^tags:` = 0
+  before the fix, 1 after).
+- **Leading hypothesis:** the inflow is now zero, because the only writer that produced untagged
+  entries was the template and it no longer can. The 5 residual are backlog, not inflow.
+- **Next probe:** 🔴 **wait a full day from 2026-10-05 ~04:00Z, then run the half-1 sweep WITHOUT
+  backfilling.** Still exactly 5 ⇒ the inflow stopped and rank 7 is pure cleanup. **More than 5** ⇒
+  a second writer or a path that bypasses the template, and the new refs name it. **Backfilling
+  first destroys this reading** — it is the only measurement that can distinguish the two.
+
+### Three user services are failing, and one of them is a green-check that hides future breakage
+- as-of: 2026-10-05
+- **Symptom + exact repro:** `home-manager switch` printed "The user systemd session is degraded"
+  and listed three failed units, then continued. Reproduce: `systemctl --user --failed`.
+- **Observed (with values):** `drift-check.service` ("Passive drift deadman — is either dev host
+  silently no longer receiving changes?") last exited **Sun 2026-10-04 18:11:24 CDT**;
+  `main-green-check.service` ("Is the current tip of origin/main actually green?") last exited
+  **Sun 2026-10-04 20:39:28 CDT**; `dunst.service` reports **no `ExecMainExitTimestamp` at all**.
+  The switch ran hours after both of those, in this session.
+- **Ruled out:** "the switch broke them" — two of the three exited hours BEFORE the switch ran.
+  `via: measurement` (`systemctl --user show <unit> -p ExecMainExitTimestamp`).
+- **Ruled out:** nothing for `dunst` — an empty exit timestamp does not date it, so whether the
+  switch touched that one is UNKNOWN rather than cleared. `via: assumed` (reasoned from the other
+  two, not measured for this one).
+- **Leading hypothesis:** all three are pre-existing and unrelated to this arc, but
+  `main-green-check` failing is load-bearing in its own right: a dead green-check reports nothing
+  while real breakage accumulates, which `claude/RULES.md` names as worse than no gate.
+- **Next probe:** `systemctl --user status main-green-check.service drift-check.service
+  dunst.service` and `journalctl --user -u main-green-check -n 50` — read why each failed before
+  restarting any of them.
+
 ## Next steps (ranked)
 🔴 **Numbering UNCHANGED — the rank is half a `claim-work` slug's identity.** Closed items struck.
-🔴 **RANK 4 IS THE ONLY THING THAT CLOSES THIS ARC. Do not backfill again first** — that restores
-a green reading for hours and changes nothing. Ranks 3 and 6 are a NEW arc; they were on the queue
-when the condition was frozen and neither is part of it.
+🔴 **RANK 7 IS BLOCKED ON A WAIT, NOT ON WORK.** Doing it early is not "getting ahead"; it destroys
+the one measurement that says whether rank 4 worked. Ranks 3 and 6 are a NEW arc.
 
 1. ~~**Make `?q=` and `?tag=` compose in the browse surface.**~~ **CLOSED, MERGED `5c96ffd`.**
    forcing: gate — merged; nothing remains.
@@ -244,16 +276,15 @@ when the condition was frozen and neither is part of it.
 3. **Confirm the deploy, in ONE signed-in browser visit.** Two answers from one visit: the Refs
    panel heading (`refs` ⇒ the UI pod rolled; `tasks` ⇒ pod and UI are out of step), and
    `/?q=<word>&tag=<tag>` rendering **ONE** card headed `Search` rather than two.
-   🔴 **BLOCKED ON A PIN BUMP, WHICH IS THE OPERATOR'S CALL** — and `main` has moved well past
-   the two features it would validate, so a bump now carries considerably more than them. The
-   browser bridge was measured disconnected (`connected: 0`) and has not been re-measured.
+   🔴 **BLOCKED ON A PIN BUMP, WHICH IS THE OPERATOR'S CALL** — and `main` has moved well past the
+   two features it would validate, so a bump now carries considerably more than them. The browser
+   bridge was measured disconnected (`connected: 0`) and has not been re-measured.
    forcing: user — the operator asked for this deploy to be validated.
-4. 🔴 **MERGE THE TEMPLATE FIX — the TOOLING repo's PR #2004. THIS IS THE ARC'S BLOCKER AND
-   NOTHING ELSE IS.** Implemented, `MERGEABLE`, 1809 local tests green, no CI on that repo's
-   branch. Nothing left to design or measure before merging. Until it lands, half 1 returns to
-   non-zero within a day of any backfill — measured twice.
-   forcing: regression — measured three times (10, then 16, then 5 after a full backfill), ~5/day,
-   and it has falsified a "met" verdict twice.
+4. ~~**Teach the entry template to emit a `tags:` line.**~~ **CLOSED AND LIVE** — the tooling repo's
+   PR #2004, plus the lock bump (#2045) and the `home-manager switch` that published the skill-doc
+   half. Verified on the consumer: deployed copy carries the instruction, both writers emit the
+   field, the unedited placeholder is refused 422.
+   forcing: regression — closed.
 5. ~~**Land this doc on the mainline.**~~ **CLOSED, MERGED `ffede27`.**
    forcing: gate — closed.
 6. **Replace `ci.yml`'s hand-edited collected-test `FLOOR` with a baseline derived at the merge base.**
@@ -265,48 +296,57 @@ when the condition was frozen and neither is part of it.
    and one PR that adds tests goes green without touching `ci.yml`.
    forcing: gate — a permanently-red-prone gate trains everyone to click through, which
    `claude/RULES.md` names as worse than no gate.
-7. **Backfill the residual untagged entries — AFTER rank 4 merges, and only then.** 16 were written
-   and the backlog was cleared; **5 have arrived since**, across 4 scopes — 2 `infra`, 2 `product`,
-   1 `tooling` by exact table match. 🔴 **Their refs cannot be written here** (the scope names are
-   `denied-identifier`s and this repo is PUBLIC); re-derive them with the sweep in "How to verify",
-   which is the reliable route anyway since the set changes daily. Doing this before rank 4 buys a
-   green reading with a ~1-day half-life.
-   forcing: regression — these are the unmet half of the closing condition.
-8. **NEW ARC: make the write path refuse an ABSENT tag, not just an off-vocabulary one.** The
-   template fix is a DEFAULT; this is an ENFORCEMENT, and it is what makes half 1 stop being a
-   decaying measurement at all. An author who deletes the template's `tags:` line still creates an
-   untagged entry. `internal/write`'s validator caller set is pinned at exactly
-   `{CreateEntry, ReplaceEntry}` by `TestTheWriteTimeValidatorHasExactlyTheDeclaredCallers`, in
-   BOTH directions, and the code explicitly forbids growing it into `AppendBullet` — appends to an
-   entry carrying a bad tag must keep working. 🔴 **Order: land it AFTER a backfill, never before**
-   — a `put` rewriting an untagged entry would start failing. Needs `lib/entry_shape.py` (the
-   oracle's pinned second spelling) and the parity gate to move with it.
-   forcing: regression — without it, a template default is the only thing between the store and
-   the state this arc existed to remove.
+7. **Backfill the 5 residual untagged entries — AFTER the day-later sweep, never before.** 2 `infra`,
+   2 `product`, 1 `tooling` by exact table match across 4 scopes. 🔴 **Their refs are not written
+   here** (the scope names are `denied-identifier`s and this repo is PUBLIC); re-derive them from the
+   sweep, which is the reliable route anyway. 🔴 **Running this before the sweep destroys the only
+   evidence that rank 4 worked** — a zero afterwards would be indistinguishable from a fix that did
+   nothing plus a backfill. Once done, half 1 is met and the arc's closing condition is answerable.
+   forcing: regression — these 5 ARE the unmet half of the closing condition.
+8. **NEW ARC: make the write path refuse an ABSENT tag, not just an off-vocabulary one.** Rank 4 is a
+   DEFAULT; this is an ENFORCEMENT, and it is what stops half 1 being a decaying measurement at all.
+   An author who deletes the template's `tags:` line still creates an untagged entry.
+   `internal/write`'s validator caller set is pinned at exactly `{CreateEntry, ReplaceEntry}` by
+   `TestTheWriteTimeValidatorHasExactlyTheDeclaredCallers`, in BOTH directions, and the code
+   explicitly forbids growing it into `AppendBullet` — appends to an entry carrying a bad tag must
+   keep working. 🔴 **Order: land it AFTER rank 7, never before** — a `put` rewriting an untagged
+   entry would start failing. Needs `lib/entry_shape.py` (the oracle's pinned second spelling) and
+   the parity gate to move with it.
+   forcing: regression — without it, a template default is the only thing between the store and the
+   state this arc existed to remove.
 
 ## Defects (batched)
 🔴 **This heading REPLACES on every update — everything still open must be re-listed or it is
 deleted.** That is how the list is maintained, not a sign the earlier text was wrong.
 
-- 🔴 **NEW: the store entry `cairn/tag-vocabulary`'s `RESOLVED:` bullet over-claims** — it states
-  both halves of the closing condition are met, which was true for a few hours and is false now.
-  Correct it to a declared-open state, or re-word it to say the backlog was cleared rather than
-  the arc closed.
-- ⚠ **STILL OPEN: `subsystem_touch.py`'s template emits no `refs:` line**, the same class of
-  silent omission `tags:` was. Deliberately left out of the tooling PR: nothing is bleeding from
-  it, no gate reads it, and it was not part of this arc's closing condition.
-- ⚠ **STILL OPEN: the per-scope tag table is one row short of the routed scopes**, and an entry
-  in the uncovered scope is already tagged — so the table is descriptive, not authoritative.
-- ⚠ **STILL OPEN: the pod's composed `?q=`+`?tag=` answer and the browse surface's are not
-  compared against each other.** After #170 they share the ENGINE, but nothing sends the same two
-  parameters to both and diffs the result. Declared in `internal/ui/README.md` rather than fixed.
+- 🔴 **NEW: `Open investigations` holds THREE identical copies of one open block.**
+  The section is append-only, so carrying an unchanged block forward in each delta appended
+  another copy (~2.2 kB wasted, and most of why this update hit the size ratchet). This round
+  pruned 13 closed/duplicated `Gotchas` bullets instead, because a verbatim-line prune cannot
+  safely disambiguate three identical blocks. **Pending:** collapse them to one, by naming the
+  surviving copy's line range rather than its text.
+- 🔴 **NEW: `main-green-check.service` is FAILING** (last exit 2026-10-04 20:39:28 CDT) — "is the
+  current tip of origin/main actually green?". Pre-existing, unrelated to this arc, and the one
+  failure here that hides other failures. `drift-check.service` is also failing (18:11:24 CDT) and
+  `dunst.service` is failing with no exit timestamp. See the investigation block.
+- ⚠ **STILL OPEN: the store entry `cairn/tag-vocabulary`'s journal bullet is declared `OPEN:`** and
+  should be closed once rank 7 lands — it already carries the retraction of an earlier
+  over-claiming `RESOLVED`. Bare `RESOLVED:` is the right form (no commit implements a store write).
+- ⚠ **STILL OPEN: `subsystem_touch.py`'s template emits no `refs:` line**, the same class of silent
+  omission `tags:` was. Deliberately out of PR #2004: nothing is bleeding from it, no gate reads it,
+  and it was not part of this arc's closing condition.
+- ⚠ **STILL OPEN: the per-scope tag table is one row short of the routed scopes**, and an entry in
+  the uncovered scope is already tagged — so the table is descriptive, not authoritative.
+- ⚠ **STILL OPEN: the pod's composed `?q=`+`?tag=` answer and the browse surface's are not compared
+  against each other.** After #170 they share the ENGINE, but nothing sends the same two parameters
+  to both and diffs the result. Declared in `internal/ui/README.md` rather than fixed.
 - ⚠ **STILL OPEN: `uiaudit` walks neither `/?tag=` nor the composed card** — a fifth card shape
   carrying three `note` links and a hidden form control. No axe pass has run over either.
 - ⚠ **DECLARED LIMIT, not a defect: a comment claiming "this test reports/prints X" is NOT
   machine-checked.** The *existence* half is
-  (`test_EVERY_TEST_A_PAYLOAD_COMMENT_NAMES_STILL_EXISTS`, shipped in #171). The *print/report*
-  half was built, measured as a spelled guard firing on 7 legitimate sites out of 8, and
-  **deleted rather than narrowed to self-satisfaction**.
+  (`test_EVERY_TEST_A_PAYLOAD_COMMENT_NAMES_STILL_EXISTS`, shipped in #171). The *print/report* half
+  was built, measured as a spelled guard firing on 7 legitimate sites out of 8, and **deleted rather
+  than narrowed to self-satisfaction**.
 - ✅ CLOSED (carried forward — the RETRACTION is the load-bearing half): the base clone's staged
   orphan on the hook (was byte-identical to `origin/main`; cleared content-neutrally). ✅ CLOSED:
   both `_abs_path` comment defects — and **the retraction is recorded rather than the claim
@@ -341,12 +381,6 @@ deleted.** That is how the list is maintained, not a sign the earlier text was w
 - ⚠ The client instance's migration to the Go image is owned by a DIFFERENT session. Do
   not touch that cluster's manifests from this arc.
 
-- 🔴 **THE CANONICAL HANDOFF FOR THIS ARC IS NOT ON `main`.** It lives only on
-  `docs/handoff-cairn-tag-vocabulary` (PR #169, open). A `/resume` kickoff naming
-  `claudedocs/handoff-cairn-tag-vocabulary.md` dead-ends from a `main` checkout. The way to find
-  it is `git log --all --oneline --diff-filter=A -- '*<topic>*'`, then read it out of the ref
-  with `git show <branch>:<path>` — **a plain `grep -rl` over the tree finds nothing**, because
-  the file is not in the working tree at all.
 - 🔴 **`git -C "$VAR"` IS REFUSED BY THE BASE-CLONE WRITE GUARD, AND THE REFUSAL NAMES THE WRONG
   DIRECTORY.** #167 deleted the shell-variable resolver, so a `$VAR` is unresolvable and the
   guard falls back to refusing — and the refusal text says the base clone is the target even
@@ -377,18 +411,6 @@ deleted.** That is how the list is maintained, not a sign the earlier text was w
 - ⚠ **Local Go here is 1.26.7 against a 1.25 `go.mod`.** It builds and tests fine, but the
   pinned-toolchain run is CI's, not a local one. Do not report a local green as a pinned green.
 
-- 🔴 **OPERATOR DECISION on fail-open (c), made this session. Implement it; do not relitigate.**
-  `clean`, `mv`, `rm` go **INTO** `_REFUSED` (with `clean -n` / `--dry-run` exempt).
-  `worktree remove` and `branch -D` are recorded as **DELIBERATELY OUT**, for two reasons that
-  both belong in the doc: (1) `claudedocs/working-in-parallel.md:33` **prescribes**
-  `git -C "$REPO" worktree remove "$WT"` run FROM the base clone, so refusing it breaks the
-  repo's own documented recipe — the failure mode this guard explicitly forbids itself;
-  (2) both write refs / worktree registrations, which live in the **common** git dir and are
-  writable identically from ANY worktree, so conditions 2+3 cannot scope the hazard, and
-  refusing only in the base clone teaches that the worktree spelling is safe when it is not.
-  ⚠ **Acknowledge rather than hide the tension:** `stash` IS in `_REFUSED` on a hazard that is
-  equally repo-global; the docstring keeps it as "a cheap table row". The reasoning is not
-  uniform and the doc should say so.
 - 🔴 **`_REFUSED` IS PINNED AGAINST THE DOC AND FAILS ON GROW *OR* SHRINK.**
   `tests/test_base_clone_write_guard.py::test_the_refused_set_matches_the_documented_table`
   parses the `_REFUSED` literal out of the hook source and compares it to the subcommands in
@@ -401,22 +423,10 @@ deleted.** That is how the list is maintained, not a sign the earlier text was w
   moment you act on a PR's mergeability, never from the survey that motivated it.** The cost
   here was a stated "all three PRs are 0 behind" that was true when measured and false twenty
   minutes later, in the direction that matters.
-- 🔴 **A BASE MOVE RESETS `mergeable` TO `UNKNOWN`, AND `UNKNOWN` IS NOT `MERGEABLE`.**
-  Immediately after #168 landed, `gh pr view 170 --json mergeable` answered `UNKNOWN` — GitHub
-  recomputes asynchronously. **Poll until it is not `UNKNOWN` before believing either answer**;
-  reading `UNKNOWN` as "fine" is how a conflicting PR gets a merge attempt.
 - ⚠ **`git merge-tree --write-tree` exits non-zero on conflict and prints the conflicting paths
   — branch on the EXIT CODE.** It emits NO `<<<<<<<` markers, so grepping for them finds
   nothing whether or not a conflict exists. Used correctly here it named `CHANGELOG.md` in one
   command.
-- ⚠ **The `go` CI job on this repo runs ~25–35 min and `gh pr checks` shows it as
-  `pending 0`.** Its steps are a 189-mutant authz battery, the Go client ledgers, a 57-mutant
-  routing battery and the conformance corpus. `gh run view --job <id>` shows per-step ticks and
-  is the only way to tell "slow but advancing" from "stuck" — do not read `pending 0` as stuck,
-  and do not read a 20-minute watcher timeout as a failure.
-- ⚠ **`/home/zach/workspace/cairn-hv2` was used as this session's worktree for the handoff
-  branch**, because `cairn-handoff` is still the stale worktree on a closed arc. Remove it when
-  done. 60 linked worktrees are now registered against the base clone.
 
 - 🔴 **WHAT THE AUDIT LADDER CAUGHT THAT A GREEN SUITE DID NOT — the single most useful record here.**
   Five rounds, each finding real defects, on a PR whose CI was **8/8 green at every step**:
@@ -435,15 +445,6 @@ deleted.** That is how the list is maintained, not a sign the earlier text was w
   previous occurrence (the floor heading was wrong three rounds running). **The fix is never better
   prose** — it is to delete the restatement, derive the number in a test, or state the INVARIANT
   instead of the enumeration. An invariant does not rot when a table grows; a count does.
-- 🔴 **NINE INSTRUMENTS RETURNED A CONFIDENT WRONG ANSWER IN THIS ARC, AND EVERY ONE WAS CAUGHT ONLY
-  BY A CONTROL.** `awk` with an end pattern matching its own start line (reported 0 prints for
-  everything); a **case-SENSITIVE** sweep for a word written in capitals (0 hits vs 1); importing
-  the hook as a module, which runs `main()` and `sys.exit(0)`s — **exit 0, no output, reads as
-  "zero findings"**; a `" 1 passed"` matcher anchored mid-line; a differential pointed at the wrong
-  tree (383 false fail-opens); a `-h` arity reader whose attached-arg branch matched empty; a
-  marker-grep over `git merge-tree`, which prints no markers; a sweep whose own control string was
-  the operator's real checkout path — in a PUBLIC repo; and a mutation anchor that never applied.
-  **Validate the instrument, report the pair, and treat a reassuring zero as unproven.**
 - 🔴 **`git merge --ff` IS NOT AN ABBREVIATION OF `--ff-only`** — they are two distinct options
   (`git merge -h`: `--[no-]ff` = "allow fast-forward (default)"), so `--ff` permits a merge commit
   and is correctly REFUSED. Read git's own option list rather than reasoning about prefixes; this
@@ -451,10 +452,6 @@ deleted.** That is how the list is maintained, not a sign the earlier text was w
 - ⚠ **`git commit --dry-run` WRITES** — it adds a tree object. The discriminator is the **added
   object**, not the index: `git status` rewrites `.git/index` too (stat-cache refresh), so citing
   the index is not evidence. `git merge --no-commit` and `git cherry-pick -n` also write.
-- 🔴 **A `claim-work`/`audit-claims` range endpoint TRUNCATED BY HAND silently disarms the gate.**
-  `7ee84771` for `7ee8477c` made the range unresolvable; the assembler reported `PAYLOAD NOT
-  VERIFIED … exited 128` and **fell back to the STATED count** — reverting to the behaviour it had
-  before the measured unit existed. **Use full 40-char shas.**
 - ⚠ **`--claims-file` leaves placeholders the brief's own commands then carry** — `<the PR's head
   sha>` ×2 and a repo-unknown spelling ×3, plus an EMPTY `WHERE TO WORK` section. Substitute all of
   them, assert zero remain, and verify the base-branch *assumption* against the PR.
@@ -463,19 +460,7 @@ deleted.** That is how the list is maintained, not a sign the earlier text was w
   ticks; do not read a watcher timeout as a failure.
 - ⚠ **A base move resets `mergeable` to `UNKNOWN`, and `UNKNOWN` is not `MERGEABLE`.** Poll until it
   is neither before believing either answer.
-- ⚠ **Two API limit outages hit mid-run.** One agent died after one line (resume works — re-anchor
-  it and re-verify the world first); one died *between* its commit+push and its report, so the work
-  had landed while the report was lost. **Check the pushed ref before assuming work was lost.**
-- ⚠ `/home/zach/workspace/cairn-hv2` was this session's handoff worktree; `cairn-handoff` is still
-  the stale one on a closed arc. Remove hv2 when done.
 
-- 🔴 **RETRACTED — "THE CANONICAL HANDOFF FOR THIS ARC IS NOT ON `main`" IS NOW FALSE, AND SO IS ITS
-  INSTRUCTION.** The bullet below (and its `git log --all --diff-filter=A` / `git show <branch>:<path>`
-  recipe) applied while PR #169 was open. **#169 merged as `ffede27`: the doc IS on `main`.** Read it
-  at `claudedocs/handoff-cairn-tag-vocabulary.md` directly — do not run the branch-ref dance, and do
-  not conclude from a failed `git show origin/docs/...` that the doc is missing; that branch is
-  deleted. ⚠ Recorded as a retraction rather than a deletion because `Gotchas` is an APPEND bucket:
-  the superseded text survives verbatim below and would otherwise be read as current.
 - 🔴 **THE LADDER'S OWN LESSON, AND THE MOST REUSABLE THING THIS ARC PRODUCED: every fix round
   introduced the next finding, and the fix for a defect recreated that defect one token over.**
   Rank 2 ran five audit rounds on a PR whose CI was **8/8 green at every single step**. What the green
@@ -536,20 +521,6 @@ deleted.** That is how the list is maintained, not a sign the earlier text was w
   for a one-entry scope and `entries` otherwise; a sweep matching only `entries` scored those six as
   `M=0`. Found by cross-checking against a second instrument whose total disagreed by exactly 6 —
   **the disagreement was the finding**, not either number on its own.
-- 🔴 **THIS DELTA IS STACKED ON #172 ON PURPOSE, AND THE ALTERNATIVE WAS MEASURED WORSE.** #172 is
-  doc-only, open, 8/8 green, and **declares this arc CLOSED while half 1 is false** — it also deletes
-  the write-gate verification block from `How to verify`. Basing off `main` instead would have put two
-  independent structured merges of the same 400-line doc on a collision course. Basing off #172's head
-  (`239da57`) means this version is "#172's text plus the correction". 🔴 **Merge #172 WITHOUT
-  `--delete-branch`, or retarget this PR to `main` first** — a deleted base auto-closes the child PR
-  and GitHub refuses to reopen it.
-- ⚠ **TWO `cairn` SESSIONS WERE LIVE WHILE THIS RAN** (`cairn-83` idle 17h, `cairn-06` busy 14h);
-  #172 was opened 45 minutes before this session started, so its author was very likely still working.
-  **Nothing was pushed to its branch** — a stacked branch of my own was used instead.
-- ⚠ **`/home/zach/workspace/cairn-reopen` was this session's worktree** (branch
-  `docs/tag-vocab-reopened`, off `239da57`). `cairn-handoff` is still the stale worktree on a closed
-  arc; 14 `cairn-*` worktree paths now exist beside the base clone. Remove `cairn-reopen` when this
-  lands.
 
 - 🔴 **AN ABSENT FIELD IS NOT AN INVALID FIELD, AND THAT ONE DISTINCTION IS THE WHOLE ARC.** The
   vocabulary gate was correct, enforced, and measured working the entire time — it refuses an
@@ -693,13 +664,77 @@ deleted.** That is how the list is maintained, not a sign the earlier text was w
   minutes after creation and `CLEAN` with 8/8 passing once the `go` job finished — that job runs
   ~41–49 minutes and shows as pending the whole time. Read the rollup before reporting a problem.
 
-## How to verify
-**The closing condition, both halves.** Half 2 first — it is cheap and tells you the gate still
-exists before you interpret half 1's numbers.
+- 🔴 **"MERGED" IS NOT "LIVE", AND THE SPLIT IS PER-FILE.** One PR fixed two halves and they
+  deployed by DIFFERENT mechanisms: a `scripts/lib/*.py` change runs from the base clone's working
+  copy and went live on re-sync; a `claude/skills/*/SKILL.md` change is a `/nix/store` COPY and
+  stayed pre-merge until a `home-manager switch`. Measured: the deployed skill carried **0**
+  occurrences of the new string while source carried **1**. `readlink -f` is the arbiter.
+- 🔴 **A DIRTY `flake.lock` MEANT THERE WAS NO SIDE-EFFECT-FREE SWITCH, AND BOTH OBVIOUS
+  OPTIONS WERE WRONG IN OPPOSITE DIRECTIONS** — the dirty tree carried three unreviewed input
+  bumps; the committed rev DOWNGRADED cairn below what the host runs (evidence: `cairn recall`
+  prints per-bullet citation ids, which exist only from `d7e1fec` on, while the committed lock
+  pinned `5c96ffd`). Committing the bump collapsed both into one reviewed state, which is why a
+  hygiene PR sat in the middle of a deploy.
+- 🔴 **A `git+file://<path>` FLAKE REF USES THE DIRTY WORKING TREE — it does NOT build the
+  committed revision.** Measured: `nix flake metadata --json` against it locked cairn at the
+  UNCOMMITTED rev. `?ref=<branch>&rev=<sha>` is what pins the committed tree, and nix's
+  `warning: Git tree is dirty` is the only hint, which reads as cosmetic. ⚠ A derivation count
+  is a useful proxy for "am I changing inputs?" — 5 derivations from the dirty tree against
+  **28 + 75 MiB** from the committed rev, same main nixpkgs, so the gap was entirely the bumps.
+- ⚠ **A FAST-FORWARD REFUSES A FILE THAT IS MODIFIED-BUT-BYTE-IDENTICAL to the target**
+  ("Please commit your changes or stash them"), because it compares index to HEAD, not content to
+  content. Fix: restore that one path after re-confirming identity with `cmp` **at the moment of
+  discarding** — never the repo-global stash.
+- 🔴 **THIS SECTION IS APPEND-ONLY AND A BLOCK GOT DUPLICATED INTO IT THREE TIMES.**
+  Carrying an unchanged investigation block forward in each delta appends another copy — the doc
+  now holds **three identical copies** of one open investigation, ~2.2 kB of pure duplication, and
+  that is most of why this update hit the size ratchet. **Carry an open block forward by
+  REFERENCE, never by re-pasting it.** The pending prune is in the Defects list.
+- ⚠ **THE REST OF THIS SESSION'S LESSONS ARE IN THE STORE, NOT HERE** — the
+  template/placeholder reasoning, the front-matter trailing-comment hazard, and the
+  invariant-versus-regression test labelling are on the `subsystem-index` entry in the tooling
+  scope (one bullet, revision `8e4d1c9a0a1c4b10`). The store outlives this doc, so restating them
+  here is the bloat the hygiene rules forbid.
 
+## How to verify
+**Rank 4, the half that needed a deploy — check the CONSUMER, not the merge.**
 ```bash
-# HALF 2 — the write gate, against the DEPLOYED pod. Negative THEN positive; the positive is not
-# optional, and a run without If-Match answers 428 and measures the precondition instead.
+# $SRC = the tooling checkout, $T = $SRC/scripts/lib/subsystem_touch.py (name unwritable here)
+readlink -f ~/.claude/skills/subsystem-index/SKILL.md     # /nix/store/… ⇒ a COPY, needs a switch
+grep -c 'TODO-pick-one' ~/.claude/skills/subsystem-index/SKILL.md   # deployed: 1 (was 0)
+grep -c 'TODO-pick-one' "$SRC/claude/skills/subsystem-index/SKILL.md"   # source: 1
+# the behaviour half, from the base clone's working copy. `service` is the POSITIVE CONTROL:
+# a usage error (missing slug, or missing --writer) prints nothing and reads as a clean zero.
+for w in handoff analyze-service; do
+  python3 "$T" --template probe-slug --writer "$w" \
+    | awk -v w="$w" '/^service:/{s++} /^tags:/{t++} END{printf "%s service=%d tags=%d\n", w, s, t}'
+done
+# => both writers: service=1 tags=1
+```
+
+**HALF 1 — the decaying half. A reading with a timestamp, never a property.** Re-run it at the
+moment you intend to claim anything. Asked of the READER, which is the arbiter of what counts as an
+entry (it excludes `*/README.md`; a sweep that counts them never goes green).
+```bash
+# POSITIVE CONTROL 1: an off-vocabulary tag must read `0 of <non-zero>`.
+# POSITIVE CONTROL 2: a ONE-entry scope must read a non-zero denominator — the reader says
+#                     `of 1 entry` (SINGULAR), and a plural-only regex scores those as empty.
+cairn sync
+cairn recall --scope cairn --tag zzz-not-a-real-tag --no-sync | grep -oE 'tag: .* carry it'
+for s in $(python3 -c 'import json;print(" ".join(sorted(json.load(open("/home/zach/.config/subsystem-store/routes.json")))))'); do
+  for t in infra product tooling; do
+    cairn recall --scope "$s" --tag "$t" --no-sync 2>/dev/null \
+      | grep -oE 'tag: `[^`]+` — [0-9]+ of [0-9]+ (entry|entries)'
+  done
+done
+# the three N must SUM TO M per scope. Series: 10 untagged -> 16 -> 0 (backfill) -> 5 -> 5 at the
+# moment the fix went live (2026-10-05 ~04:00Z, 363 entry files on resolved instances).
+# 🔴 A DAY LATER: still 5 ⇒ the inflow stopped. More than 5 ⇒ a second writer; the new refs name it.
+```
+
+**HALF 2 — the write gate, against the DEPLOYED pod.** Negative THEN positive; the positive is not
+optional, and a run without `If-Match` answers **428** and measures the precondition instead.
+```bash
 set -a; . /home/zach/.config/subsystem-store/env; set +a
 URL="${CAIRN_URL:-$SUBSYSTEM_STORE_URL}"; TOK="${CAIRN_TOKEN:-$SUBSYSTEM_STORE_TOKEN}"
 cp ~/.cache/subsystem-store/cairn/tag-vocabulary.md /tmp/good.md
@@ -713,42 +748,10 @@ for f in bad good; do
     --data-binary @/tmp/$f.md
   grep -iE '^x-store-status|^etag' /tmp/$f.hdr
 done
-#   bad  => 422  entry-shape      good => 200  replaced, etag == the If-Match sent (content-neutral)
+# bad => 422 entry-shape · good => 200 replaced, etag == the If-Match sent (so it was content-neutral)
 ```
 
-```bash
-# HALF 1 — a DECAYING measurement: it is a reading with a timestamp, never a property. Re-run it
-# at the moment you intend to claim anything, not from a measurement taken earlier in a session.
-# Asked of the READER, which is the arbiter of what counts as an entry (it excludes `*/README.md`;
-# a sweep that counts them never goes green).
-#   POSITIVE CONTROL 1: an off-vocabulary tag must read `0 of <non-zero>`.
-#   POSITIVE CONTROL 2: a ONE-entry scope must read a non-zero denominator — the reader says
-#                       `of 1 entry` (SINGULAR), and a plural-only regex scores those as empty.
-cairn sync
-cairn recall --scope cairn --tag zzz-not-a-real-tag --no-sync | grep -oE 'tag: .* carry it'
-for s in $(python3 -c 'import json;print(" ".join(sorted(json.load(open("/home/zach/.config/subsystem-store/routes.json")))))'); do
-  for t in infra product tooling; do
-    cairn recall --scope "$s" --tag "$t" --no-sync 2>/dev/null \
-      | grep -oE 'tag: `[^`]+` — [0-9]+ of [0-9]+ (entry|entries)'
-  done
-done
-# => the three N must SUM TO M for every scope. Readings so far: 10 untagged, then 16, then 0
-#    right after the backfill, then 5 about 28 hours later.
-```
-
-```bash
-# RANK 4's premise, and the guard on it. The `service:` count is the positive control: without it
-# a usage error (missing slug, or missing --writer) reads as a clean zero.
-T=<tooling>/scripts/lib/subsystem_touch.py   # <tooling> = the tooling checkout, unnameable here
-for w in handoff analyze-service; do
-  python3 "$T" --template probe-slug --writer "$w" \
-    | awk '/^service:/{s++} /^tags:/{t++} END{printf "%s: service=%d tags=%d\n", "'"$w"'", s, t}'
-done
-# BEFORE the tooling PR: service=1 tags=0   AFTER: service=1 tags=1
-```
-
-**Rank 3, against the DEPLOYED edge — only after a pin bump.** In a signed-in browser open
-`/?q=<a word in a tagged entry>&tag=<that tag>`: **ONE** card headed `Search`, its second line naming
-both operands and both counts; typing a new word keeps the tag; emptying the box lands on the plain
-tag listing. **Two cards means the pin did not move** — which is also the UI-rollout question,
-answered by the same visit.
+**Rank 3, against the DEPLOYED edge — only after a pin bump.** Signed-in browser,
+`/?q=<word>&tag=<tag>`: **ONE** card headed `Search`, second line naming both operands and both
+counts; a new word keeps the tag; emptying the box lands on the plain tag listing. **Two cards means
+the pin did not move**, which also answers the UI-rollout question.
