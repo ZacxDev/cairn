@@ -50,8 +50,38 @@ const attributionFormat = " [cairn: %s/%s]"
 //
 // ⚠ A PATTERN FRAGMENT, NOT AN ANCHORED EXPRESSION, and that is what makes the one
 // alternation below possible: a fragment can be repeated, an end-anchored expression
-// cannot. It is never compiled on its own — `bulletTrailersRe` is the only consumer.
-const attributionPattern = `\[cairn: [a-z0-9][a-z0-9-]{0,31}/[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\]`
+// cannot. It is never compiled on its own — `bulletTrailersRe` is the run it is a
+// piece of, and `attributionPieceRe` is the SAME two classes with capture groups, built
+// from the same two constants so the parser cannot accept a class the strip does not.
+const attributionPattern = `\[cairn: ` + attributionActorClass + `/` + sessionClass + `\]`
+
+// attributionActorClass is the `<actor>` half of a trailer as the grammar reads it.
+//
+// ⚠ NARROWER THAN WHAT `RenderBullet` WILL WRITE: the renderer formats any string, and
+// a principal whose `Display` carries an `@`, an uppercase letter or a dot (a
+// control-plane user's email) produces a trailer this class REJECTS. Such a trailer is
+// left in the content hash and is reported as MALFORMED by `ParseAttributions`, never
+// as an edge. Recorded, not widened: widening it changes what the strip removes, and
+// the strip is pinned against the Python oracle by `trailerdigest_test.go`.
+const attributionActorClass = `[a-z0-9][a-z0-9-]{0,31}`
+
+// sessionClass is the `<session>` half — ONE spelling for the trailer grammar AND the
+// request validator `SessionComponent`, which are the two sides of one promise: a
+// session id the validator admits is one the grammar can read back.
+const sessionClass = `[A-Za-z0-9][A-Za-z0-9_.-]{0,63}`
+
+// attributionPieceRe is ONE attribution, with the actor and session captured. It is
+// only ever run over the trailer RUN `bulletTrailersRe` already matched, never over a
+// whole bullet — which is what keeps a trailer quoted mid-prose from becoming an edge.
+var attributionPieceRe = regexp.MustCompile(
+	`\[cairn: (` + attributionActorClass + `)/(` + sessionClass + `)\]`)
+
+// malformedTrailerRe is a bracketed token that OPENS like an attribution and sits at
+// the very end of what precedes the parsed run — the position a trailer occupies —
+// but that the grammar did not accept (an empty half, an uppercase or `@` actor, a
+// space inside). Deliberately loose: it exists to COUNT what the grammar refused, so
+// a coverage line can say so, and it never produces an edge.
+var malformedTrailerRe = regexp.MustCompile(`\[cairn:[^\]]*\][ \t]*\z`)
 
 // citationTokenPattern is the opaque per-bullet token a READ surface prints —
 // `store.JournalBullet.CitationID` in brackets, 8 lowercase hex. The same kind of
@@ -156,8 +186,101 @@ var bulletTrailersRe = regexp.MustCompile(
 // One pass. `bulletTrailersRe` is anchored at `\z` and every alternative consumes at
 // least one bracketed token, so there is exactly one possible match and no empty one
 // — `ReplaceAllString` and a slice at the match start are the same operation here.
+//
+// 🔴 AND IT IS NOW A SLICE AT `trailerRunStart`, WHICH `ParseAttributions` ALSO READS:
+// the strip and the parser share ONE locator, so "what the strip removed" and "where
+// the parser looked" cannot disagree. `TestTheParserAndTheStripAgree` checks the half
+// that sharing does not give for free — that the attributions the parser RETURNS tile
+// the run the strip REMOVED, piece for piece.
 func stripBulletTrailers(s string) string {
-	return bulletTrailersRe.ReplaceAllString(s, "")
+	return s[:trailerRunStart(s)]
+}
+
+// trailerRunStart is the byte offset where the end-anchored trailer run begins, or
+// `len(s)` when there is none. Leftmost match of an expression anchored at `\z`, so
+// there is at most one, and it is non-empty when present.
+func trailerRunStart(s string) int {
+	loc := bulletTrailersRe.FindStringIndex(s)
+	if loc == nil {
+		return len(s)
+	}
+	return loc[0]
+}
+
+// Attribution is one ` [cairn: <actor>/<session>]` piece, as written. Neither half is
+// normalised: a session id is opaque and compared byte-exact.
+//
+// 🔴 A CLAIM THE ENTRY MAKES, NOT AN AUTHENTICATED FACT. `<actor>` was set from the
+// credential only when `AppendBullet` wrote the line; `ReplaceEntry`/`CreateEntry`
+// write a caller's bytes verbatim, so a trailer arriving through them says whatever
+// was sent. `<session>` is self-declared on every path.
+type Attribution struct {
+	Actor   string
+	Session string
+}
+
+// Attributions is what one bullet's trailer position holds.
+type Attributions struct {
+	// Pieces are the grammatical attributions in the END-ANCHORED run, left to right.
+	// Usually zero or one; a run holding two is a quotation or an upstream defect, and
+	// both are returned because the strip removes both.
+	Pieces []Attribution
+
+	// Malformed is true when a `[cairn:…]` token the grammar REFUSED sits where a
+	// trailer goes — at the end of the bullet, or immediately before the parsed run.
+	// It can be true alongside non-empty Pieces. A refused token mid-prose is prose,
+	// and leaves this false.
+	Malformed bool
+}
+
+// ParseAttributions reads the write trailer(s) of ONE stored bullet, given its lines
+// exactly as `store.ParseJournalBullets` grouped them.
+//
+// 🔴 ONE DEFINITION OF "WHAT A TRAILER IS": the bullet is collapsed by the same
+// function `BulletContent` uses and located by the same `trailerRunStart` the strip
+// slices at, so an attribution is returned iff the content hash ignores it.
+//
+// Behaviour, per shape (rows of `attributions_test.go`, except the duplicate append,
+// which `internal/touch`'s tests drive through `AppendBullet`):
+//   - no trailer: no Pieces, not Malformed.
+//   - a trailer the grammar refuses at the end (empty actor or session, an `@` or
+//     uppercase actor, a space inside): no Pieces, Malformed.
+//   - a non-uuid session (`ses_…`, a short word): ACCEPTED — the grammar never
+//     shape-checks a session beyond `sessionClass`.
+//   - a trailer on a NON-FINAL line of a wrapped bullet (prose follows it): not at the
+//     end of the collapsed text, so NO Pieces and NOT Malformed. An attributed bullet
+//     hand-extended after its append loses its edge — a coverage loss, and the same
+//     ruling the content hash makes.
+//   - a trailer at the end of the LAST continuation line: Pieces, like a one-line bullet.
+//   - CRLF: `pytext.SplitLines` has already removed the terminator from each line,
+//     and the collapse removes any stray `\r` as whitespace.
+//   - a duplicate append: `AppendBullet` writes NOTHING on `duplicate`, so the second
+//     session never reaches the bytes and there is nothing here to parse.
+func ParseAttributions(lines []string) Attributions {
+	// FAST PATH, NOT A SECOND DEFINITION: every attribution piece and every malformed
+	// token begins with the literal `[cairn:`, which holds no whitespace, so the
+	// collapse cannot create one that no line contains. Most bullets carry no trailer
+	// (≈3 in 4, measured), and the regexps below were ~60% of a derivation's CPU.
+	if !anyLineContains(lines, "[cairn:") {
+		return Attributions{}
+	}
+	s := collapseBullet(lines)
+	start := trailerRunStart(s)
+	var out Attributions
+	for _, m := range attributionPieceRe.FindAllStringSubmatch(s[start:], -1) {
+		out.Pieces = append(out.Pieces, Attribution{Actor: m[1], Session: m[2]})
+	}
+	out.Malformed = malformedTrailerRe.MatchString(s[:start])
+	return out
+}
+
+func anyLineContains(lines []string, sub string) bool {
+	for _, line := range lines {
+		if strings.Contains(line, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // EntryRevision is the revision an `If-Match` is compared against: the entry
@@ -215,14 +338,19 @@ func ContentHash(text string) string {
 // 2000 characters. Exempting it would mean the cap measured a different string in the
 // validator than here, and two clients would have to agree on that difference.
 func BulletContent(lines []string) string {
+	return pytext.CollapseWhitespace(stripBulletTrailers(collapseBullet(lines)))
+}
+
+// collapseBullet is one stored bullet as ONE whitespace-collapsed string with its
+// dated opener removed — the string the trailer run is located in, shared by
+// `BulletContent` and `ParseAttributions` so the two cannot read different strings.
+func collapseBullet(lines []string) string {
 	parts := make([]string, 0, len(lines))
 	for _, line := range lines {
 		parts = append(parts, pytext.CollapseWhitespace(line))
 	}
 	joined := pytext.StripWhitespace(strings.Join(parts, " "))
-	joined = bulletOpenerRe.ReplaceAllString(joined, "")
-	joined = stripBulletTrailers(joined)
-	return pytext.CollapseWhitespace(joined)
+	return bulletOpenerRe.ReplaceAllString(joined, "")
 }
 
 // RenderBullet is the line that goes on disk. ONE line, always attributed.

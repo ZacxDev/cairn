@@ -20,7 +20,10 @@ import (
 // identity: agent session ids are uuids and short hex handles. A full match on this
 // class is what stops a newline, a markdown control character or a `]` from breaking
 // the attribution trailer it is written into.
-var SessionComponent = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
+//
+// Built from `sessionClass`, the class the trailer grammar reads the session back
+// with, so the two cannot drift; the compiled string is unchanged.
+var SessionComponent = regexp.MustCompile("^" + sessionClass + "$")
 
 // SessionComponentPattern is the class as a refusal message quotes it, derived from
 // the compiled expression so the message cannot describe a class the code does not
