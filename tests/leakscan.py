@@ -86,10 +86,29 @@ DOC_ADDRESSES = {
     "10.244.0.0", "10.244.0.13", "10.244.0.123",
 }
 
+# 🔴 CGNAT (100.64/10) IS IN SCOPE, AND ITS ABSENCE HERE READ AS COVERAGE FOR
+# MONTHS. `10.`/`192.168.`/`172.16-31.` looks like "all the private ranges" to
+# anyone not holding the registry — but RFC6598 carrier-grade NAT space is
+# private, non-routable on the public internet, and it is what Tailscale hands
+# every node (`100.x.y.z`). An RFC1918-only pattern reads such an address as an
+# ordinary PUBLIC one and passes it, so a mesh host's address could ship in a
+# comment with the gate green. That is the failure mode this whole file exists
+# to stop, in the one range nobody thinks to list.
+#
+# ⚠ MEASURED BEFORE WIDENING, BOTH HALVES, because a rule added to a tree that
+# already violates it is a red gate on arrival: `git grep -nE` for the CGNAT
+# shape over `origin/main` exited **1** (no match), and the identical pattern
+# matched a known-CGNAT string on a positive control — so the zero was a real
+# zero rather than a broken search, and this widening is forward-looking only.
+#
+# ⚠ THE UPPER BOUND IS 100.127, NOT 100.255 — RFC6598 is a /10, so `100.128.x.x`
+# is ordinary public space and must NOT be refused. Writing `100\.\d{1,3}` would
+# have been the easy over-reach, and it would refuse real public addresses.
 _PRIVATE_IP = re.compile(
     r"\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
     r"|192\.168\.\d{1,3}\.\d{1,3}"
-    r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b"
+    r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+    r"|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3})\b"
 )
 
 # --------------------------------------------------------------------------
@@ -614,6 +633,19 @@ NEGATIVE_CONTROLS = [
     ("reachable-hostname", 'URL = "https://store.example-real.zacx.dev/api/v1/recall"'),
     ("private-ip", "    # the gateway listens on 192.168.50.94"),
     ("private-ip", "    NEBULA_GW = '10.42.0.10'"),
+    # 🔴 CGNAT. REALISTIC IN SHAPE, SYNTHETIC IN CONTENT — the same rule the
+    # denied-identifier controls below state, and the first draft of this line
+    # broke it: it used the operator's REAL Tailscale address, copied out of a
+    # handoff doc. The matcher reads only the SHAPE (a log line quoting a peer's
+    # `from=`, which is exactly how such an address reaches a comment), so the
+    # octets buy nothing — and a real one would make this control the leak the
+    # rule exists to prevent. ⚠ The exemption of this file from the scan is what
+    # makes that mistake SILENT, not what makes it safe.
+    ("private-ip",
+     '    # lighthouse log: handshake arrives from="100.78.129.44:41232"'),
+    # …and at the LOW boundary of the /10, because a fencepost error in
+    # `6[4-9]` would pass `100.64.x.x` while catching everything above it.
+    ("private-ip", "    TS_PEER = '100.64.0.1'"),
     ("operator-identity", "Co-Authored-By: someone <zacxdev@gmail.com>"),
     # 🔴 THE DENIED-IDENTIFIER CONTROL USES THE SENTINEL, NOT A REAL NAME, and
     # the reason is in `DENY_CANARY`'s own note: a realistic-CONTENT control
@@ -659,6 +691,16 @@ ALLOWED_CONTROLS = [
      "synthetic scope names in fixtures — the only kind this repo may carry"),
     ('secret = "s3cr3t-not-in-any-output"',
      "an obviously-fake value in a test asserting a token never leaks"),
+    # 🔴 THE CGNAT UPPER BOUND, AND THIS CONTROL IS THE POINT OF THE /10 RATHER
+    # THAN A `100\.\d{1,3}` SHORTCUT. RFC6598 ends at 100.127, so 100.128.0.0
+    # onward is ORDINARY PUBLIC SPACE — refusing it would make the rule reject
+    # real public addresses, and a gate that cries wolf is how this one gets
+    # turned off. Measured at TWO points because one is not a general claim:
+    # 100.64.0.1 (refused, in NEGATIVE_CONTROLS) and 100.128.0.1 (allowed here).
+    ("resolver = '100.128.0.1'  # public space, just above the CGNAT /10",
+     "the first address ABOVE RFC6598 — public, and must not be refused"),
+    ("peer = '100.63.255.254'  # public space, just below the CGNAT /10",
+     "the last address BELOW RFC6598 — the other fencepost"),
     # 🔴 THE NARROWNESS CONTROLS FOR THE TWO NEW RULES, and they are the half
     # that decides whether either rule survives contact with this tree. A
     # denylist that fired on ordinary English, or a date rule that fired on
