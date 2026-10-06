@@ -228,6 +228,8 @@ func TestAOneInstanceHostIsUNLABELLEDOnEveryReadVerb(t *testing.T) {
 			func(o *Options) { o.Scope = "alpha-notes" }},
 		{"search", func(e Env, o Options) (int, error) { return Report(e, o, true) },
 			func(o *Options) { o.Scope, o.Query = "alpha-notes", "synthetic" }},
+		// `sessions` reaches `readInstance` exactly as `recall` does — an invariant guard on it.
+		{"sessions", Sessions, func(o *Options) { o.Scope = "alpha-notes" }},
 		{"sync", Sync, nil},
 		{"doctor", Doctor, nil},
 		{"validate (no scope)", Validate, func(o *Options) { o.Scope, o.Repo = "", plain }},

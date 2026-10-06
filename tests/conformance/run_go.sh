@@ -14,7 +14,21 @@
 # of which the limiter counts, over a production default of five per minute.
 #
 #   usage: tests/conformance/run_go.sh [extra suite.py run arguments]
+#          tests/conformance/run_go.sh record-go-only
+#
+# 🔴 `record-go-only` IS THE ONE WAY A `go_only` GOLDEN IS WRITTEN. The oracle's
+# `suite.py generate` records from `server/server.py`, which serves no Go-only route, so
+# those rows' goldens are recorded from the Go server this script builds and are stamped
+# `recorded_from: cmd/cairn-server` — CHANGE DETECTORS, not oracle witnesses. It boots the
+# server exactly as a `run` does, so the goldens are recorded under the configuration they
+# are replayed under. See `suite.record_go_only` for what makes it refuse.
 set -euo pipefail
+
+command="run"
+if [[ "${1:-}" == "record-go-only" ]]; then
+  command="record-go-only"
+  shift
+fi
 
 # 🔴 `CDPATH= cd --`, WHICH IS WHAT THE OTHER TWO SCRIPTS IN THIS REPO ALREADY DO
 # (`server/build-push.sh`, `server/verify-byte-identity.sh`). A plain `cd <relative>`
@@ -62,7 +76,7 @@ for _ in $(seq 1 200); do
 done
 
 set +e
-python3 "$repo/tests/conformance/suite.py" run \
+python3 "$repo/tests/conformance/suite.py" "$command" \
   --base-url "http://127.0.0.1:$port" --token-file "$tokens" "$@"
 rc=$?
 set -e

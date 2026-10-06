@@ -826,7 +826,7 @@ func TestTheDeclaredVerbSetIsTheDispatchTable(t *testing.T) {
 	for name, want := range map[string]bool{
 		"append": true, "put": true, "create": true,
 		"sync": false, "recall": false, "search": false, "validate": false,
-		"ls-entries": false, "doctor": false,
+		"ls-entries": false, "doctor": false, "sessions": false,
 	} {
 		if writes[name] != want {
 			t.Errorf("%s: Writes=%v, want %v", name, writes[name], want)

@@ -8,10 +8,12 @@
     python3 tests/conformance/suite.py normalizations  # print the declared table
     python3 tests/conformance/suite.py build-store DIR # materialise the world
 
-🔴 `generate` IS THE ONLY WAY A GOLDEN IS EVER WRITTEN. There is no flag that
-edits one, and `read_golden` refuses a file whose recorded body does not hash to
-its recorded digest — a hand-edited golden is a golden that asserts what
-somebody believed.
+🔴 `generate` IS THE ONLY WAY AN ORACLE GOLDEN IS EVER WRITTEN, and
+`record-go-only` (via `run_go.sh record-go-only`) the only way a `go_only` one is —
+stamped `recorded_from: cmd/cairn-server`, a change detector rather than a contract
+witness (see `record_go_only`). There is no flag that edits one, and `read_golden`
+refuses a file whose recorded body does not hash to its recorded digest — a
+hand-edited golden is a golden that asserts what somebody believed.
 
 🔴 `run` MAKES FIVE KINDS OF CLAIM, AND THREE OF THEM NO GOLDEN FILE CAN HOLD:
 
@@ -646,6 +648,129 @@ def generate(
 
 
 # ---------------------------------------------------------------------------
+# record-go-only
+# ---------------------------------------------------------------------------
+
+#: 🔴 THE PROVENANCE STAMP A `go_only` GOLDEN CARRIES, AND THE ONLY GOLDENS THAT CARRY ONE.
+#: An oracle golden is a CONTRACT WITNESS: recorded from the reference implementation, it
+#: says what any implementation must answer. A `go_only` golden cannot be that — there is no
+#: second implementation — so it is recorded from the Go server under test and is a CHANGE
+#: DETECTOR: it pins that the served bytes did not move, never that they are right. The
+#: house rule is that an expectation is never derived from the implementation it tests;
+#: this stamp is what keeps a reader from mistaking one for the other, and `run` refuses a
+#: golden whose stamp disagrees with its row's mark. The contract witnesses for a Go-only
+#: route are the Go tests with literal expected bodies, and the relations below.
+GO_ONLY_RECORDED_FROM = "cmd/cairn-server"
+
+
+def check_golden_provenance(case: cases_mod.Case, golden: dict[str, Any]) -> str | None:
+    """A golden's `recorded_from` must match its row's mark. Returns the problem, or None.
+
+    `go_only` ⇒ stamped `cmd/cairn-server`; every other row ⇒ no stamp at all (the
+    oracle's `generate` writes none). A stamp on an oracle golden would claim a contract
+    witness was a change detector, and a missing one on a go-only golden the reverse.
+    """
+    stamp = golden.get("recorded_from")
+    if case.go_only and stamp != GO_ONLY_RECORDED_FROM:
+        return (
+            f"the golden for go_only row {case.id!r} carries recorded_from={stamp!r}, "
+            f"not {GO_ONLY_RECORDED_FROM!r}. A go_only golden is recorded from the Go "
+            f"server by `run_go.sh record-go-only` — never by the oracle's `generate`."
+        )
+    if not case.go_only and stamp is not None:
+        return (
+            f"the golden for row {case.id!r} carries recorded_from={stamp!r}, but the "
+            f"row is not go_only: its golden is the ORACLE's, recorded by `generate`."
+        )
+    return None
+
+
+def record_go_only(
+    base_url: str,
+    token_file: Path,
+    golden_dir: Path = GOLDEN_DIR,
+    corpus: cases_mod.Corpus | None = None,
+) -> Outcome:
+    """Record the goldens of the `go_only` rows — and ONLY those — from a running Go server.
+
+    🔴 THE WHOLE CORPUS IS ISSUED, IN ORDER, exactly as `run` issues it: the run's
+    arithmetic (the limiter's view, the write phase) must be the one the goldens are
+    replayed under, so a recorder that sent only the go-only rows would record answers
+    from a different world. Only `go_only` rows are WRITTEN; an oracle golden is never
+    touched, which is the other half of the provenance rule.
+
+    🔴 IT REFUSES TO RECORD, the way `generate` does, when:
+      * no row is `go_only` (nothing to record is a mistake, not a success);
+      * a go-only ROUTE got only the no-route 404 from every row addressing it — the
+        signature of pointing this at a server that does not serve it (the oracle,
+        or a stale binary), whose 404 would otherwise be filed as the contract;
+      * a relation fails over this server's answers (refused-equals-absent,
+        head-matches-get, uniform-401 — `oracle_only` rows skipped, as in `run`);
+      * a recorded body names this machine.
+    """
+    corpus = corpus or cases_mod.load_corpus()
+    go_only = [c for c in corpus.cases if c.go_only]
+    if not go_only:
+        raise SuiteError("refusing to record: no row is marked go_only")
+    principals = oracle.principals_from_token_file(token_file)
+    outcome = Outcome()
+    answers = execute(base_url, principals, corpus, outcome)
+    skipped = skipped_on(corpus, server_is_oracle=False)
+    problems = check_declared_normalizations(corpus, answers, skipped)
+
+    # 🔴 A 2xx, NOT "ANYTHING BUT THE NO-ROUTE 404": the first draft of this floor counted
+    # any other answer as served, and the ORACLE passed it — its uniform 401 to the
+    # unauthenticated go-only row is not a 404. Measured by pointing the recorder at the
+    # oracle; `test_the_recorder_REFUSES_a_server_that_does_not_serve_the_route` pins it.
+    served: dict[str, bool] = {}
+    for case in go_only:
+        resp, _fired = answers[case.id]
+        route = cases_mod._route_of(case) or case.id
+        real = resp.status is not None and 200 <= resp.status < 300
+        served[route] = served.get(route, False) or real
+    for route, ok in sorted(served.items()):
+        if not ok:
+            problems.append(
+                f"no go_only row addressing {route} got a 2xx — the rows a real server "
+                f"answers got the no-route 404 or a refusal, so this server does not serve "
+                f"it. Is --base-url the Go server built from this tree? Recording would "
+                f"file a refusal as the Go-only contract."
+            )
+
+    records = {
+        c.id: wire.record(c, answers[c.id][0]) for c in corpus.cases if c.id not in skipped
+    }
+    check_uniform_401(corpus, records, outcome, skipped)
+    check_scope_pairs(corpus, records, outcome, skipped)
+    check_head_pairs(corpus, records, outcome, skipped)
+    if outcome.failures:
+        raise SuiteError(
+            "refusing to record go_only goldens: the Go server violates a relational "
+            "property, so recording would bake the violation in.\n  "
+            + "\n  ".join(outcome.failures)
+        )
+    texts: dict[str, str] = {}
+    for case in go_only:
+        rec = dict(records[case.id])
+        rec["recorded_from"] = GO_ONLY_RECORDED_FROM
+        text = wire.dumps(rec)
+        problems += check_no_host_leak(text, f"the go_only golden for {case.id!r}")
+        texts[case.id] = text
+    if problems:
+        raise SuiteError("refusing to record go_only goldens:\n  " + "\n  ".join(problems))
+    for case_id, text in texts.items():
+        path = wire.golden_path(golden_dir, case_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        outcome.line(f"WROTE {case_id} (recorded_from: {GO_ONLY_RECORDED_FROM})")
+    outcome.line(
+        f"RECORDED go_only={len(texts)} requests={outcome.requests} "
+        f"assertions={outcome.assertions}"
+    )
+    return outcome
+
+
+# ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------
 
@@ -744,6 +869,11 @@ def run(
         records[case.id] = wire.record(case, resp)
         golden = wire.read_golden(golden_dir, case.id)
         ok = compare(case, resp, golden, outcome)
+        provenance = check_golden_provenance(case, golden)
+        outcome.assertions += 1
+        if provenance is not None:
+            ok = False
+            outcome.fail(case.id, provenance)
         if not ok:
             failed.add(case.id)
         outcome.line(("PASS " if ok else "FAIL ") + case.id)
@@ -849,6 +979,15 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
+    rg = sub.add_parser(
+        "record-go-only",
+        help="record the go_only rows' goldens from a running GO server "
+             "(use `tests/conformance/run_go.sh record-go-only`)",
+    )
+    rg.add_argument("--base-url", required=True)
+    rg.add_argument("--token-file", type=Path, required=True)
+    rg.add_argument("--golden-dir", type=Path, default=GOLDEN_DIR)
+
     sub.add_parser("normalizations", help="print the declared normalization table")
 
     b = sub.add_parser("build-store", help="materialise the declared world")
@@ -868,6 +1007,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "generate":
         outcome = generate(args.golden_dir)
+        for line in outcome.lines:
+            print(line)
+        return 0
+    if args.command == "record-go-only":
+        outcome = record_go_only(args.base_url, args.token_file, args.golden_dir)
         for line in outcome.lines:
             print(line)
         return 0

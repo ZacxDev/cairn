@@ -102,6 +102,9 @@ GET  /healthz                              unauthenticated; body is exactly "ok\
 GET  /api/v1/recall/{scope}[?mode=&ref=&limit=&page=]
 GET  /api/v1/search/{scope}?q=…[&threshold=&max_hits=&context=&all_scopes=]
 GET  /api/v1/snapshot[?scope=]             gzipped tar of the entry files
+GET  /api/v1/sessions/{scope}              which sessions wrote attributed bullets, with
+                                           coverage — GO POD ONLY (`cmd/cairn-server`);
+                                           this server does not serve it
 POST /api/v1/entry/{scope}/{ref}/bullets   append ONE attributed bullet
 PUT  /api/v1/entry/{scope}/{ref}           whole-file replace, `If-Match` REQUIRED
                                            …or CREATE, with `If-None-Match: *`

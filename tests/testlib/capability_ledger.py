@@ -179,6 +179,20 @@ LEDGER: tuple[Capability, ...] = (
         note="as `scope-digest`: the verb searches the cache, not the route",
     ),
     Capability(
+        name="scope-sessions",
+        effect=READS,
+        cli="sessions",
+        route=("GET", "/api/v1/sessions/{scope}"),
+        note="like `scope-digest`, the verb renders the synced cache and never "
+             "requests the route — but both call ONE Go renderer "
+             "(`report.Sessions`), so the two answers share every report byte "
+             "rather than being two implementations of it",
+        go_only=True,
+        go_only_why="decision 3 of the arcs/sessions plan: the sessions surface "
+                    "is added to `cmd/cairn-server` and `cmd/cairn` only, and the "
+                    "Python oracle is not extended",
+    ),
+    Capability(
         name="cache-validate",
         effect=READS,
         cli="validate",

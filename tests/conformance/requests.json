@@ -1219,6 +1219,96 @@
       "why": "The same refusal on the search ladder, so the guard is not recall-only. A whitespace operand strips to nothing and folds away."
     },
     {
+      "id": "sessions-authorized",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/sessions/alpha-notes",
+      "principal": "wide-reader",
+      "why": "the ordinary read over a scope whose bullets carry NO write trailer: `no-attributed-writes`, with `attributed: 0 of N` printed rather than an empty list that reads as 'nobody wrote here'. No `normalize` key: the body names no host and no store path, so every byte is deterministic.",
+      "go_only": true,
+      "go_only_why": "`sessions/<scope>` is served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. Its golden is recorded from the Go server (`recorded_from: cmd/cairn-server`), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/sessions_test.go`."
+    },
+    {
+      "id": "sessions-authorized-head",
+      "phase": "read",
+      "method": "HEAD",
+      "target": "/api/v1/sessions/alpha-notes",
+      "principal": "wide-reader",
+      "why": "HEAD keeps every header and sends no body; the head_matches_get relation pins its Content-Length against the GET's.",
+      "go_only": true,
+      "go_only_why": "`sessions/<scope>` is served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. Its golden is recorded from the Go server (`recorded_from: cmd/cairn-server`), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/sessions_test.go`."
+    },
+    {
+      "id": "sessions-legacy-token",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/sessions/alpha-notes",
+      "principal": "legacy",
+      "why": "a bare row is UNRESTRICTED for reads, so it reads a scope no allowlist names - the same rule `recall-legacy-token` pins.",
+      "go_only": true,
+      "go_only_why": "`sessions/<scope>` is served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. Its golden is recorded from the Go server (`recorded_from: cmd/cairn-server`), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/sessions_test.go`."
+    },
+    {
+      "id": "sessions-refused-scope",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/sessions/alpha-notes",
+      "principal": "narrow-reader",
+      "why": "alpha-notes EXISTS and this caller may not read it. Authorised by the SAME `rq.visible` recall uses, so it must answer what the absent half below answers - the refused half of the `sessions` pair.",
+      "go_only": true,
+      "go_only_why": "`sessions/<scope>` is served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. Its golden is recorded from the Go server (`recorded_from: cmd/cairn-server`), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/sessions_test.go`."
+    },
+    {
+      "id": "sessions-absent-scope",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/sessions/ghost-void",
+      "principal": "narrow-reader",
+      "why": "a scope that has never existed, asked by the same caller. The absent half of the pair.",
+      "go_only": true,
+      "go_only_why": "`sessions/<scope>` is served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. Its golden is recorded from the Go server (`recorded_from: cmd/cairn-server`), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/sessions_test.go`."
+    },
+    {
+      "id": "sessions-empty-scope",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/sessions/hollow-set",
+      "principal": "wide-reader",
+      "why": "a directory holding no entry: `scope-empty`, which must read differently from `no-attributed-writes` (entries exist, no trailer) and from `scope-unreadable`.",
+      "go_only": true,
+      "go_only_why": "`sessions/<scope>` is served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. Its golden is recorded from the Go server (`recorded_from: cmd/cairn-server`), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/sessions_test.go`."
+    },
+    {
+      "id": "sessions-unreadable-scope",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/sessions/rubble-heap",
+      "principal": "wide-reader",
+      "why": "every entry file is malformed, so NOTHING was scanned: `scope-unreadable`, X-Store-Exit 3, on a 200. Zero bullets scanned must never read as `no-attributed-writes`.",
+      "go_only": true,
+      "go_only_why": "`sessions/<scope>` is served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. Its golden is recorded from the Go server (`recorded_from: cmd/cairn-server`), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/sessions_test.go`."
+    },
+    {
+      "id": "sessions-unauthenticated",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/sessions/alpha-notes",
+      "principal": null,
+      "why": "no Authorization header: the uniform 401, a member of that relation, so the new head cannot grow a distinguishing refusal.",
+      "go_only": true,
+      "go_only_why": "`sessions/<scope>` is served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. Its golden is recorded from the Go server (`recorded_from: cmd/cairn-server`), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/sessions_test.go`."
+    },
+    {
+      "id": "sessions-arity-too-long",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/sessions/alpha-notes/extra",
+      "principal": "wide-reader",
+      "why": "the route table names arity 2; a third component does not dispatch and answers the no-route 404.",
+      "go_only": true,
+      "go_only_why": "`sessions/<scope>` is served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. Its golden is recorded from the Go server (`recorded_from: cmd/cairn-server`), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/sessions_test.go`."
+    },
+    {
       "id": "post-bullets-duplicate",
       "phase": "write",
       "method": "POST",
@@ -1405,8 +1495,15 @@
   ],
   "relations": {
     "_comment": ["TWO PROPERTIES THAT ARE RELATIONSHIPS BETWEEN RESPONSES. No per-response", "golden can hold either: each case has its own file, and each would keep", "passing if one of them grew a distinguishing header, because whoever", "regenerated would have recorded the divergence."],
-    "uniform_401": ["recall-bad-token", "recall-unauthenticated", "recall-no-client-ip", "recall-duplicate-client-ip", "root-path", "api-prefix-without-trailing-slash", "unlisted-path-with-valid-token", "options-root", "trace-root", "invented-verb-root", "raw-malformed-absolute-target", "snapshot-unauthenticated", "post-bullets-unauthenticated", "post-bullets-bad-token", "put-entry-unauthenticated"],
+    "uniform_401": ["recall-bad-token", "recall-unauthenticated", "recall-no-client-ip", "recall-duplicate-client-ip", "root-path", "api-prefix-without-trailing-slash", "unlisted-path-with-valid-token", "options-root", "trace-root", "invented-verb-root", "raw-malformed-absolute-target", "snapshot-unauthenticated", "post-bullets-unauthenticated", "post-bullets-bad-token", "put-entry-unauthenticated", "sessions-unauthenticated"],
     "refused_equals_absent": [
+      {
+        "name": "sessions",
+        "refused": "sessions-refused-scope",
+        "absent": "sessions-absent-scope",
+        "refused_scope": "alpha-notes",
+        "absent_scope": "ghost-void"
+      },
       {
         "name": "recall",
         "refused": "recall-refused-scope",
@@ -1444,6 +1541,11 @@
       }
     ],
     "head_matches_get": [
+      {
+        "name": "sessions",
+        "head": "sessions-authorized-head",
+        "get": "sessions-authorized"
+      },
       {
         "_why": "a HEAD must report the Content-Length its GET would have sent. Both values are host-dependent in LENGTH, so neither can live in a golden - but they can be compared to each other in one run.",
         "name": "recall",

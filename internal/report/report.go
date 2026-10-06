@@ -168,6 +168,8 @@ type Rendered struct {
 type Renderer interface {
 	Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (Rendered, error)
 	Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Rendered, error)
+	// Sessions is the Go-only `sessions/<scope>` answer — see `sessions.go`.
+	Sessions(storeRoot, scope string, visible store.ScopeSet) (Rendered, error)
 }
 
 // ValidateRecall is the guard ladder a recall's options must pass, IN THIS ORDER,

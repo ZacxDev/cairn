@@ -1423,9 +1423,10 @@
           # NO Python twin. Neither list is free text: `tests/test_capability_ledger.py`
           # pins the one above against the PYTHON parser and this one against
           # `capability_ledger.GO_ONLY_VERBS` (the `go_only` rows), so a verb cannot be
-          # moved between them, or declared Go-only here alone, without a red test. Empty
-          # until the first Go-only verb lands.
+          # moved between them, or declared Go-only here alone, without a red test. The
+          # first, `sessions`, is the arcs/sessions S2 slice.
           cat > want-go-only-verbs.txt <<'EOF'
+          sessions reads
           EOF
           sed -i 's/^ *//; /^$/d' want-verbs.txt want-go-only-verbs.txt
           sort -u want-verbs.txt want-go-only-verbs.txt > want-all-verbs.txt
@@ -1510,9 +1511,11 @@
           # routes the deployed pod serves and `server/server.py` does not (decision 3 of
           # the arcs/sessions plan). `tests/test_capability_ledger.py` pins the list above
           # against the oracle's tables and this one against the `go_only` rows of
-          # `tests/conformance/requests.json` AND of the capability ledger. Empty until the
-          # first Go-only route lands.
+          # `tests/conformance/requests.json` AND of the capability ledger. The first,
+          # `sessions/<scope>`, is the arcs/sessions S2 slice.
           cat > want-go-only.txt <<'EOF'
+          GET sessions
+          HEAD sessions
           EOF
           sed -i 's/^ *//; /^$/d' want.txt want-go-only.txt
           sort -u want.txt want-go-only.txt > want-all.txt

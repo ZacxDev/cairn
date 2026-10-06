@@ -225,6 +225,7 @@ func New(storeRoot string, tokens []authz.TokenRecord, trustedProxies []netip.Pr
 		"recall":   {arity: 2, handler: s.recall},
 		"search":   {arity: 2, handler: s.search},
 		"snapshot": {arity: 1, handler: s.snapshot},
+		"sessions": {arity: 2, handler: s.sessions},
 	}
 	s.writeRoutes = map[writeKey]writeRoute{
 		{"POST", "entry"}: {arity: 4, tail: []string{"bullets"}, handler: s.appendBullet},
@@ -1269,6 +1270,25 @@ func (s *Server) search(rq *request, parts []string, params url.Values) error {
 		return &badRequestError{message: err.Error()}
 	}
 	rendered, err := s.Renderer.Search(s.StoreRoot, opts, rq.visible)
+	if err != nil {
+		return err
+	}
+	return rq.serveReport(parts[0], rendered)
+}
+
+// sessions is the Go-only `GET`/`HEAD sessions/<scope>`: which sessions wrote attributed bullets
+// in a scope, with the coverage that makes an empty list honest (see `report.Sessions`).
+//
+// 🔴 AUTHORISED BY `rq.visible` — THE SAME VALUE `recall` HANDS ITS RENDERER, computed once from
+// `control.Authorization.Allows` in `authenticate`. There is no per-route check to drift: a scope
+// this caller may not read is absent from the index the renderer loads, so it answers exactly what
+// a scope that never existed answers (`scope-absent`, 200, `X-Store-Revision: unknown`), and the
+// conformance pair `sessions` in `refused_equals_absent` pins that on the wire.
+//
+// It takes no query parameter. One is IGNORED rather than refused, which is `recall`'s rule for a
+// parameter it does not read.
+func (s *Server) sessions(rq *request, parts []string, _ url.Values) error {
+	rendered, err := s.Renderer.Sessions(s.StoreRoot, parts[0], rq.visible)
 	if err != nil {
 		return err
 	}
