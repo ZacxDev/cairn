@@ -11,6 +11,7 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
+	"github.com/ZacxDev/cairn/internal/report"
 )
 
 // TestTheRouteLedgerMatchesTheDispatchTable is the ledger's own guard.
@@ -54,6 +55,10 @@ import (
 func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 	want := []string{
 		"GET / content",
+		// 🔴 THE ARC PAGE (S4 of the arcs/sessions phase). `content`, never `public`: it renders an
+		// answer about which arcs this credential can see, and an arc's existence is itself a fact
+		// the home scope's readers alone may learn (operator decision Q1).
+		"GET /arc content",
 		"GET /entry content",
 		// 🔴 THE INVITE FLOW'S FOUR ROWS, AND `GET /join public` IS THE ONE TO THINK ABOUT.
 		// `public` means the row is dispatched BEFORE the authentication chain, which is
@@ -163,6 +168,19 @@ func (s staticSource) Search(_ control.Authorization, query, tag string) (Search
 	return SearchResults{
 		Query: query, Tag: tag, Hits: s.hits, TotalHits: len(s.hits), ScopesSearched: scopes,
 	}, nil
+}
+
+// Touched and Arc answer the OFF state — no journal, a scope with no entry — because these are
+// DISPATCH fixtures. `arcs_test.go` drives the real `StoreSource` over a store and a journal on disk.
+func (s staticSource) Touched(_ control.Authorization, scope string) (Touched, error) {
+	return Touched{
+		Sessions: report.SessionsReport{Status: report.StatusScopeEmpty, Scope: scope},
+		Arcs:     report.ArcsReport{Status: report.StatusRegistrationsUnconfigured, Scope: scope},
+	}, nil
+}
+
+func (s staticSource) Arc(control.Authorization, string, string) (report.ArcReport, error) {
+	return report.ArcReport{Status: report.StatusRegistrationsUnconfigured}, nil
 }
 
 // staticSharing is a share world with no journal behind it, so the dispatch tests
@@ -377,6 +395,9 @@ var bareGETAnswer = map[string]int{
 	// measure, because that walk reads a rendered page. See `NavigatePage`.
 	"GET /scope content": http.StatusOK,
 	"GET /entry content": http.StatusOK,
+	// The arc page follows the browse pair: a request naming no arc has asked about nothing, so it
+	// gets the navigation page rather than the uniform arc refusal.
+	"GET /arc content":   http.StatusOK,
 	"GET /share content": http.StatusOK,
 	// 🔴 `GET /invite` ANSWERS 200 TO A PARAMETERLESS REQUEST *AND* ON A DEPLOYMENT WITH NO
 	// INVITE STORE, AND THE SECOND HALF IS THE DECISION. A 501 would have been the obvious
@@ -646,6 +667,9 @@ var contentAuthority = map[string]string{
 	"GET / content":      "source",
 	"GET /scope content": "source",
 	"GET /entry content": "source",
+	// `source`, because `Source.Arc` is narrowed by the same authority `Source.Visible` is — see the
+	// interface's own comment for why it is not a seam of its own.
+	"GET /arc content":   "source",
 	"GET /share content": "sharing",
 	// 🔴 A THIRD AUTHORITY, AND IT IS NAMED RATHER THAN FOLDED INTO `sharing`. The two are
 	// different seams answering different questions — `Sharing` is about SCOPES and
@@ -676,6 +700,18 @@ func (c *countingSource) Visible(control.Authorization) ([]Scope, error) {
 func (c *countingSource) Search(control.Authorization, string, string) (SearchResults, error) {
 	c.calls++
 	return SearchResults{}, nil
+}
+
+// Touched and Arc count for `Search`'s reason: each renders an answer about what this credential
+// can see, so a source method that answered without being counted would be a hole in the walk.
+func (c *countingSource) Touched(auth control.Authorization, scope string) (Touched, error) {
+	c.calls++
+	return staticSource{}.Touched(auth, scope)
+}
+
+func (c *countingSource) Arc(auth control.Authorization, home, slug string) (report.ArcReport, error) {
+	c.calls++
+	return staticSource{}.Arc(auth, home, slug)
 }
 
 // TestEveryContentRouteConsultsTheAuthority is a REGRESSION test, and the defect it

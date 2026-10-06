@@ -2500,3 +2500,154 @@ sends the same two parameters to both and diffs the result; the entries they sel
 nothing they render around that is compared. And `tagItem` still builds a bare `/?tag=` href, so a
 tag link does not carry a query — unreachable today, because the composed card renders search hits
 and those carry no tag list, but it is the direction a future edit would have to carry.
+
+
+# Phase H — who wrote here, and which arcs touched it (S4 of the arcs/sessions phase)
+
+The browser half of `claudedocs/plan-cairn-arcs-sessions.md`'s slice S4: one new row and one new
+pair of cards, and **no new derivation** — every value rendered is one the pod already computes.
+
+| route | class | what |
+|---|---|---|
+| `GET /scope?id=<control.ID>` | `content` | unchanged row; the page grows two cards, "Sessions that wrote here" and "Arcs that touched this scope" |
+| `GET /arc?home=<control.ID>&slug=<slug>` | `content` | one registered arc: status, closing kind, registration, the tooling's own coverage, declared scopes NARROWED, members with the readable scopes each wrote in |
+
+## 🔴 The data and its visibility come from the pod's code, and this package decides neither
+
+The cards render `report.Sessions` (over `internal/touch`) and `report.Arcs`; the arc page renders
+`report.Arc` (over `internal/arcs`' journal). Each is handed `scopeSetOf(auth.NamedScopes(VerbRead))` —
+the ONE narrowing `StoreSource.Visible` already uses, `Authorization.VisibleScopes(VerbRead)` spelled
+over that walk, which is the pod's `rq.visible`. The arc rule (an arc exists for a caller iff its HOME
+scope is readable, operator decision Q1) is applied INSIDE `report.Arcs`/`report.Arc`, so there is no
+second visibility check here to drift from the pod's.
+`TestTheSectionIsTheSameAnswerTheReportsGiveForTheSameVisibleSet` pins the relationship rather than
+either side: it computes the reports independently from `VisibleScopes(VerbRead)` for two principals
+and requires the page to carry their lines and no arc they do not list.
+
+⚠ **This does NOT revisit Phase E's decision.** Entry STRUCTURE still comes from `internal/store`'s
+parsers, never through `internal/report`. What comes from `internal/report` here is the arcs/sessions
+DATA and the sentences stating its coverage, which the plan requires to be the same on every surface:
+`RenderText`'s lines became exported methods (`AttributedLine`, `StatusesLine`, `StatusSentence`,
+`MemberLine`, …) that `RenderText` itself calls, so the page prints the pod's bytes in a different
+layout and never a second spelling of them. `internal/report`'s literal-body tests are what proved
+that refactor byte-preserving.
+
+## 🔴 Every way to miss an arc is ONE answer, and it is the pod's own sentence
+
+An unknown home id, a home the caller cannot read, an unregistered slug under a readable home, the
+home spelled as a NAME, and a REGISTERED arc homed in an unreadable scope all answer **404 with
+`report.ArcUnregisteredBody`**, byte for byte — the sentence that names neither home nor slug. The home
+is a `control.ID` for `/scope?id=`'s reason, matched against the narrowed `Visible` answer and never
+resolved; the slug is matched against the registered set inside `report.Arc`.
+
+⚠ **Two layers hold the hidden-home case, and each alone was measured to hold it.** The id is matched
+only against the caller's narrowed scopes, and `report.Arc` re-checks the home against the same set, so
+a mutant removing EITHER layer survives (below) and only removing both leaks. That is defence in depth,
+stated rather than counted as two guards.
+
+## 🔴 Off, broken and empty are three states, and none of them is an error page
+
+| state | scope page's arcs card | arc page |
+|---|---|---|
+| no `-arc-journal` (today's deployment) | 200: `status: registrations-unconfigured` and the pod's own unconfigured sentence | 200, the same sentence — decided BEFORE the home is looked at, so it says the same thing to every caller about every arc |
+| configured, file unreadable | 200; the card says the journal could not be read — "could not look", never "no arc registered" | **503** |
+| configured, nothing for this scope | 200, `no-arc-registered` with its counted lines | 404, the uniform answer |
+
+The sessions card does not depend on the journal at all; it reads the store.
+
+## 🔴 The binary: the pod's flag, the pod's variable, the pod's refusal — on a READ-ONLY mount
+
+`cmd/cairn-ui -arc-journal` / `$CAIRN_ARC_JOURNAL`, defaulted through `envOr` exactly as
+`cmd/cairn-server` does, refused when it reduces to nothing, and refused when it resolves INSIDE the
+store root by calling `arcs.ResolveJournalPath` — the pod's one implementation of "inside". The UI only
+ever calls `arcs.Journal.Read`; nothing in this package reaches `Register`. The startup line says
+`arcs read-only from <path>` or `arcs unconfigured`, read off the WIRED source.
+`TestTheBinaryREFUSESAnArcJournalInsideTheStoreRoot` re-execs the binary: a dot-directory journal, the
+store root itself and a whitespace flag each exit 78 with their own message, and two controls (a
+journal outside the root, no journal) come up and say which.
+
+⚠ **The blank policy inherits the pod's limit, deliberately.** `envOr` reads a whitespace-only
+`$CAIRN_ARC_JOURNAL` as unset, so only a whitespace FLAG reaches the refusal; a whitespace variable
+yields the off state on BOTH binaries. Unlike `-control-journal`, the off state switches no authority
+and is rendered honestly on every page, so the raw-read argument does not transfer — and changing it
+is one decision for both binaries, not a UI-only divergence.
+
+🔴 **Deployment requirement, not in this repository:** the journal's volume mounted READ-ONLY in the
+UI's pod at the path the pod writes, with `CAIRN_ARC_JOURNAL` set — the plan's "Decisions taken"
+names it. Until then this surface renders the off state, which is correct.
+
+## ⚠ Links are built by `arcHref`, not `safeHref`, which departs from the plan's wording
+
+The plan says "every href goes through `safeHref`". It cannot: `safeHref` ALLOWLISTS absolute
+http(s), so a same-origin `/arc?…` would be refused and every arc would render as unlinked text —
+which is why `scopeHref`/`entryHref`/`tagHref` already must not reach it. The arc data carries NO URL:
+every href is a ledger constant plus `url.Values.Encode`, and session ids are text, never links.
+`TestEveryArcHrefIsASameOriginPathWithEncodedOperands` plants a `javascript:`-shaped slug carrying
+`&home=…#`, a home carrying `"><script>`, and a scope id carrying `&slug=` into the REPORT VALUE (the
+journal's own validator refuses them — `hostileWorld`'s ruling for tags) and requires every rendered
+href to parse as `/arc` with exactly two query values that round-trip unchanged.
+
+## 🔴 `unknown` is `unknown`
+
+Every status renders through `report.StatusWord` in one badge class, so `unknown` is never styled or
+worded as `open` (Q4). `TestAnUnknownStatusIsRenderedAsUnknownAndNeverAsOpen` reads the unknown arc's
+row for `open` (none), the counted line for `unknown 1`, and the arc page's badge and gloss; its
+positive control is the same detector finding `status open` on an open arc's row.
+
+## The RED proof
+
+The new tests do not compile at the base commit (the types are new), which proves nothing about a
+guard, so the proof is a mutation battery: ONE edit per mutant, each scored by the named test's own
+`--- FAIL` line, an all-PASS baseline first. The ten kills are committed as rows of
+`tests/control_mutants.py` (`ui-arc-*`, `ui-scope-section-*`, `ui-unconfigured-*`, `ui-binary-*`), so CI
+re-runs them; the survivors are recorded here, because a row for them would have to be EQUIVALENT.
+
+| mutant | guard | verdict |
+|---|---|---|
+| an unresolvable home refused with the SCOPE refusal | `TestAnArcHomedInAnUnreadableScopeRendersExactlyLikeANeverRegisteredOne` | KILLED |
+| `report.Arcs` handed `store.Unrestricted()` | `TestTheScopePageListsOnlyArcsWhoseHomeIsReadable` (+ the same-set relation) | KILLED |
+| a two-state badge (closed, else open) | `TestAnUnknownStatusIsRenderedAsUnknownAndNeverAsOpen` | KILLED |
+| an unconfigured journal read as an unreadable one | `TestAnUnconfiguredJournalSaysSoRatherThanFailing` | KILLED |
+| the arc page answers 500 for the off state | the same | KILLED |
+| `arcHref` by string concatenation | `TestEveryArcHrefIsASameOriginPathWithEncodedOperands` | KILLED |
+| the arc link's href is its label | the same | KILLED |
+| the section fetched BEFORE the scope refusal | `TestAScopeTheCallerCannotReadGetsTheExistingRefusalAndNoSection` | KILLED |
+| `main` ignores `resolveArcJournal`'s error | `TestTheBinaryREFUSESAnArcJournalInsideTheStoreRoot` | KILLED |
+| the journal never handed to the source | the same (its control arm, through the startup line) | KILLED |
+| `Source.Arc` narrows with `store.Unrestricted()`, alone | the arc-page guard | **SURVIVED** — the id match holds |
+| an unresolved home id read as a NAME, alone | the arc-page guard | **SURVIVED** — `report.Arc`'s home check holds |
+| both of the two above | the arc-page guard (its by-name row) | KILLED |
+| `report.Sessions` handed `store.Unrestricted()` | every S4 guard | **SURVIVED** — for a scope already proved readable the sessions answer does not depend on the rest of the set; an invariant, not a hole |
+
+⚠ **`TestAScopeTheCallerCannotReadGetsTheExistingRefusalAndNoSection` is half an INVARIANT guard.** Its
+refusal half pins Phase E's `browseRefusal`, which this change did not touch; only its "the section's
+source was never asked" half is new, and that is the half the ordering mutant kills.
+
+The route ledgers moved and each went red first: `TestTheRouteLedgerMatchesTheDispatchTable`,
+`TestEveryServedPathComesFromTheLedger` (`bareGETAnswer`) and `TestEveryContentRouteConsultsTheAuthority`
+(`contentAuthority`) each named the new row before it was declared — `GET /arc` answers from `source`,
+because `Touched`/`Arc` are on the `Source` interface rather than a seam that walk does not count — and
+`uiaudit`'s `TestTheREALLedgerIsFullyACCOUNTEDFor` refused `GET /arc` until it joined `linkExpanded`.
+
+## `uiaudit` walks the arc page — over a journal no deployment has yet
+
+`boot.go`'s `writeArcJournal` registers one arc per fixture scope (slug = the scope's name, no members,
+no status, so `unknown`), outside the store tree, and passes `-arc-journal`. One per scope is MEASURED,
+not generous: with a single arc, the walk's per-page bound kept four scope pages by sorted ID, the arc's
+home was not among them, and the first walk captured no `/arc?…` page at all. Measured with chromium
+154 over the walk's own hermetic pod: 120 captures, four `/arc?home=…&slug=…` pages each reached by
+following a scope page's link, 0 overflow, 0 scripts, 0 axe violations, content floor 90.2%.
+
+## What this phase's guards still cannot see
+
+- **The pod and the page are not compared over the wire.** They share the report functions and the
+  sentences, so they cannot disagree about a count; nothing sends one request to both and diffs what
+  each says about the same scope.
+- **A real deployment's journal.** No read-only volume, no pod appending while the UI reads. A read
+  racing an append sees the old file or the new one, possibly with a torn tail the fold ignores —
+  argued from `arcs.fold`, not measured here.
+- **Scale.** The cards load the store twice more per scope page (sessions, arcs) on top of `Visible`,
+  and the arc page walks every readable scope for member writes. Fixture-sized only.
+- **Reads.** Every answer says reads are not recorded; that is the plan's deferred phase.
+- **Axe as a gate.** The walk's refusals do not refuse on axe violations, and the job is
+  `continue-on-error`.

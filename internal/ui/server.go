@@ -66,6 +66,13 @@ type Source interface {
 	// `?tag=` block in `handlePage` for why a browse filter has no place to put a 400 — so
 	// "present and empty" cannot reach this method and a bare string is the whole operand.
 	Search(auth control.Authorization, query, tag string) (SearchResults, error)
+	// Touched answers the scope page's "who wrote here, which arcs touched it" section, and Arc
+	// answers `/arc`. Both are on THIS interface rather than a second seam because they are reads
+	// narrowed by the same authority as `Visible`, and `TestEveryContentRouteConsultsTheAuthority`
+	// counts one seam per route: a separate interface would be a route that renders an answer about
+	// authority through a door the walk does not watch. See `arcs.go`.
+	Touched(auth control.Authorization, scope string) (Touched, error)
+	Arc(auth control.Authorization, home, slug string) (report.ArcReport, error)
 }
 
 // Scope is one scope's worth of entries, as the pages render them.
@@ -523,6 +530,11 @@ type StoreSource struct {
 	// ⚠ INJECTED RATHER THAN READ FROM `os.Getenv` HERE, so a test can measure both states
 	// of that dimension in one run. `cmd/cairn-ui` passes `envalias.OSValue`.
 	RefBase func(string) string
+
+	// ArcJournal is the arc registry's journal, already resolved and checked by
+	// `arcs.ResolveJournalPath` (outside the store tree), or "" — the designed OFF state, in which
+	// every arc answer is `registrations-unconfigured`. READ ONLY: see `arcSnapshot`.
+	ArcJournal string
 }
 
 // refBase is `RefBase` with the nil case folded in, so `readEntry` does not branch.
@@ -1436,7 +1448,17 @@ func (s *Server) handleScopePage(w http.ResponseWriter, r *http.Request, id iden
 		writePlain(w, http.StatusNotFound, browseRefusal)
 		return
 	}
+	// 🔴 THE SESSIONS-AND-ARCS SECTION IS ASKED FOR ONLY AFTER THE REFUSAL ABOVE, AND BY NAME OUT OF
+	// THE NARROWED ANSWER — so a scope this caller cannot read never reaches it, and the refusal for
+	// it stays the one `browseRefusal` every other miss gets. What the section shows is narrowed
+	// again inside `report.Sessions`/`report.Arcs` by the same visible set; see `arcs.go`.
+	touched, err := s.source.Touched(id.Auth, scope.Name)
+	if err != nil {
+		writePlain(w, http.StatusInternalServerError, "the store could not be read")
+		return
+	}
 	view.Scope = &scope
+	view.Touched = &touched
 	s.renderScope(w, view)
 }
 

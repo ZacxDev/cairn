@@ -135,6 +135,12 @@ func (r SessionsReport) ScannedLine() string {
 // The header and the two fixed coverage lines print on EVERY status, `scope-absent` included,
 // because a reader of an empty answer is the reader who most needs to know reads were never
 // measured. The count lines print wherever something was looked at.
+//
+// 🔴 EVERY LINE IT PRINTS COMES FROM AN EXPORTED METHOD OR CONSTANT, BECAUSE THE BROWSER SURFACE
+// PRINTS THE SAME CLAIMS IN A DIFFERENT LAYOUT. `internal/ui` reads `ScannedLine`,
+// `AttributedLine`, `LowerBoundLine`, `StatusSentence`, `ListHeading` and `SessionLine` rather than
+// spelling a second copy of any of them, so the page and the pod cannot disagree about a count or
+// a caveat — only about where it sits.
 func (r SessionsReport) RenderText() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "cairn-sessions: status=%s scope=%s\n", r.Status, r.Scope)
@@ -144,31 +150,54 @@ func (r SessionsReport) RenderText() string {
 		b.WriteString("  " + r.ScannedLine() + "\n")
 		b.WriteString("  " + r.AttributedLine() + "\n")
 	}
-	if r.Partial() && r.Status != StatusScopeUnreadable {
-		fmt.Fprintf(&b, "  ⚠ LOWER BOUND — %d entry file(s) in `%s/` were never scanned, so a session that wrote only there is NOT listed. `cairn validate --scope %s` names each file that fails to parse.\n",
-			r.Coverage.EntriesMalformed+r.Coverage.EntriesUnreadable, r.Scope, r.Scope)
+	if lower := r.LowerBoundLine(); lower != "" {
+		b.WriteString("  " + lower + "\n")
 	}
 	b.WriteString("\n")
-	switch r.Status {
-	case StatusScopeAbsent:
-		fmt.Fprintf(&b, "NO SCOPE `%s/` IS READABLE HERE. A scope that does not exist and one this credential may not read answer identically, by design; a cache that has not synced it answers the same way. Nothing was scanned, so nothing can be concluded about who wrote there.", r.Scope)
-	case StatusScopeEmpty:
-		fmt.Fprintf(&b, "`%s/` EXISTS AND HOLDS NO ENTRY — nothing was ever recorded there, so no session wrote there through an entry.", r.Scope)
-	case StatusScopeUnreadable:
-		fmt.Fprintf(&b, "NOTHING IN `%s/` COULD BE SCANNED — every entry file was rejected by the index or could not be read. This is NOT an empty scope and NOT 'no attributed writes': the bullets were never looked at. `cairn validate --scope %s` names each file that fails to parse.", r.Scope, r.Scope)
-	case StatusNoAttributedWrites:
-		fmt.Fprintf(&b, "NO ATTRIBUTED WRITES — %d bullet(s) in `%s/` were scanned and none carries a write trailer. Their writers are UNKNOWN, not absent: a bullet written before trailers existed, or through `put`/`create` without one, names nobody.", r.Coverage.Bullets, r.Scope)
-	default:
-		fmt.Fprintf(&b, "sessions: %d distinct, ordered by session id (byte-wise); dates are each bullet's own `- YYYY-MM-DD:` opener", len(r.Sessions))
-		for _, s := range r.Sessions {
-			b.WriteString("\n- " + sessionLine(s))
-		}
+	if sentence := r.StatusSentence(); sentence != "" {
+		b.WriteString(sentence)
+		return b.String()
+	}
+	b.WriteString(r.ListHeading())
+	for _, s := range r.Sessions {
+		b.WriteString("\n- " + SessionLine(s))
 	}
 	return b.String()
 }
 
-// sessionLine is one session's row: id, actor(s) as written, bullet count, date span.
-func sessionLine(s touch.Session) string {
+// LowerBoundLine is the warning that some entries were never scanned, or "" when none applies.
+func (r SessionsReport) LowerBoundLine() string {
+	if !r.Partial() || r.Status == StatusScopeUnreadable {
+		return ""
+	}
+	return fmt.Sprintf("⚠ LOWER BOUND — %d entry file(s) in `%s/` were never scanned, so a session that wrote only there is NOT listed. `cairn validate --scope %s` names each file that fails to parse.",
+		r.Coverage.EntriesMalformed+r.Coverage.EntriesUnreadable, r.Scope, r.Scope)
+}
+
+// StatusSentence is the answer's body for every status that lists NOTHING, and "" for
+// `sessions-listed`, whose body is `ListHeading` plus one `SessionLine` per session.
+func (r SessionsReport) StatusSentence() string {
+	switch r.Status {
+	case StatusScopeAbsent:
+		return fmt.Sprintf("NO SCOPE `%s/` IS READABLE HERE. A scope that does not exist and one this credential may not read answer identically, by design; a cache that has not synced it answers the same way. Nothing was scanned, so nothing can be concluded about who wrote there.", r.Scope)
+	case StatusScopeEmpty:
+		return fmt.Sprintf("`%s/` EXISTS AND HOLDS NO ENTRY — nothing was ever recorded there, so no session wrote there through an entry.", r.Scope)
+	case StatusScopeUnreadable:
+		return fmt.Sprintf("NOTHING IN `%s/` COULD BE SCANNED — every entry file was rejected by the index or could not be read. This is NOT an empty scope and NOT 'no attributed writes': the bullets were never looked at. `cairn validate --scope %s` names each file that fails to parse.", r.Scope, r.Scope)
+	case StatusNoAttributedWrites:
+		return fmt.Sprintf("NO ATTRIBUTED WRITES — %d bullet(s) in `%s/` were scanned and none carries a write trailer. Their writers are UNKNOWN, not absent: a bullet written before trailers existed, or through `put`/`create` without one, names nobody.", r.Coverage.Bullets, r.Scope)
+	}
+	return ""
+}
+
+// ListHeading is the line above a `sessions-listed` answer's rows.
+func (r SessionsReport) ListHeading() string {
+	return fmt.Sprintf("sessions: %d distinct, ordered by session id (byte-wise); dates are each bullet's own `- YYYY-MM-DD:` opener", len(r.Sessions))
+}
+
+// SessionLine is one session's row: id, actor(s) as written, bullet count, date span. Exported so
+// the browser surface prints these bytes rather than a second spelling of them.
+func SessionLine(s touch.Session) string {
 	label := "actor"
 	if len(s.Actors) > 1 {
 		label = "actors"
