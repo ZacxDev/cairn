@@ -26,11 +26,21 @@ facts, the eight design decisions, the ledgers and the slice table).
   control) — AND, against the DEPLOYED pod, the proposed `arcs` verb run with
   `--repo /home/zach/workspace/cairn` lists this arc (`cairn-arcs-sessions`), registered by `/handoff` itself (slice T1).
   ADDRESSED ⇒ arc CLOSED.
-- closing-verdict: not-addressed
+- closing-verdict: addressed
 
 ## State now
-- 🔴 **VERDICT: NOT ADDRESSED YET — clause 3 is now RUNNABLE.** Both operator steps landed;
-  this write is the `/handoff` that registers the arc. Clause 3 is checked right after it.
+- ✅ **VERDICT: ADDRESSED — THE ARC IS CLOSED.** All three clauses measured:
+  (1) S0–S5 merged (#182–#187); (2) `tests/arcs/e2e.sh` on `origin/main` `7528c74`: 32 PASS /
+  0 FAIL, `--self-test` sabotaged=3 caught=3; (3) against the DEPLOYED pod,
+  `cairn arcs --repo /home/zach/workspace/cairn` → `status=arcs-listed`, row
+  `cairn/cairn-arcs-sessions · declared · status open · closing check · 1 member`, registered by
+  this doc's own `/handoff` (`arc-register: registered home=cairn slug=cairn-arcs-sessions
+  status=open`) — run from a WORKTREE, so `DeriveScope`'s worktree-stability held live.
+  Extra: `arcs --check` against the deployed pod → `arcs-check-clean`, rc 0, 1 arc, no findings.
+- ⚠ **THE INSTALLED CLIENT LACKS `arcs --check`**: T1 pinned the tooling repo's cairn at
+  `4714652` (S4); `--check` landed in S5 (`7528c74`). The installed `cairn arcs --check` is a
+  usage error (rc 2) until that pin is bumped again; the check above ran via
+  `nix run github:ZacxDev/cairn/ea9cfa7 -- arcs …`. Not part of the closing condition.
 - ✅ **THE JOURNAL MOUNT IS LIVE** (deployment repo `trunk` `a49259c`): PVC `cairn-arc-journal`
   (local-path RWO 128Mi) RW at `/var/lib/cairn-arcs` in `subsystem-store-api`, RO in `cairn-ui`,
   `CAIRN_ARC_JOURNAL=/var/lib/cairn-arcs/arcs.jsonl` in both; BOTH images bumped `ffa0eca` →
@@ -72,13 +82,11 @@ facts, the eight design decisions, the ledgers and the slice table).
   append-time write log (Q6). Each would be a new arc with its own closing condition.
 
 ## Next steps (ranked)
-1. ~~**Operator: the journal mount.**~~ **DONE** — `a49259c`, see State now.
+1. ~~**Operator: the journal mount.**~~ **DONE** — deployment repo `trunk` `a49259c`.
    forcing: user — the operator chose a journal outside the store tree (Q2).
 2. ~~**Operator: `home-manager switch` on each host.**~~ **DONE** — both at `05180b6`.
    forcing: user — the deploy step for the tooling repo is the operator's.
-3. **Close the arc:** this write registers it; then `cairn arcs --repo /home/zach/workspace/cairn`
-   must list `cairn-arcs-sessions` and `cairn arcs --repo … --check` must exit 0. If both hold,
-   set `closing-verdict: addressed` (the next `/handoff` re-registers it `closed`).
+3. ~~**Close the arc.**~~ **DONE** — see State now; ADDRESSED.
    forcing: gate — clause 3 of the closing condition.
 
 ## Gotchas / decisions / dead-ends
