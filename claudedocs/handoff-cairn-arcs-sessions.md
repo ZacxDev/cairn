@@ -29,65 +29,47 @@ facts, the eight design decisions, the ledgers and the slice table).
 - closing-verdict: addressed
 
 ## State now
-- ✅ **VERDICT: ADDRESSED — THE ARC IS CLOSED.** All three clauses measured:
-  (1) S0–S5 merged (#182–#187); (2) `tests/arcs/e2e.sh` on `origin/main` `7528c74`: 32 PASS /
-  0 FAIL, `--self-test` sabotaged=3 caught=3; (3) against the DEPLOYED pod,
-  `cairn arcs --repo /home/zach/workspace/cairn` → `status=arcs-listed`, row
-  `cairn/cairn-arcs-sessions · declared · status open · closing check · 1 member`, registered by
-  this doc's own `/handoff` (`arc-register: registered home=cairn slug=cairn-arcs-sessions
-  status=open`) — run from a WORKTREE, so `DeriveScope`'s worktree-stability held live.
-  Extra: `arcs --check` against the deployed pod → `arcs-check-clean`, rc 0, 1 arc, no findings.
-- ⚠ **THE INSTALLED CLIENT LACKS `arcs --check`**: T1 pinned the tooling repo's cairn at
-  `4714652` (S4); `--check` landed in S5 (`7528c74`). The installed `cairn arcs --check` is a
-  usage error (rc 2) until that pin is bumped again; the check above ran via
-  `nix run github:ZacxDev/cairn/ea9cfa7 -- arcs …`. Not part of the closing condition.
-- ✅ **THE JOURNAL MOUNT IS LIVE** (deployment repo `trunk` `a49259c`): PVC `cairn-arc-journal`
-  (local-path RWO 128Mi) RW at `/var/lib/cairn-arcs` in `subsystem-store-api`, RO in `cairn-ui`,
-  `CAIRN_ARC_JOURNAL=/var/lib/cairn-arcs/arcs.jsonl` in both; BOTH images bumped `ffa0eca` →
-  `ea9cfa7` (the images were pre-arcs — a mount alone would have been inert). Both rolled out,
-  0 restarts, same node; cairn-ui logs `arcs read-only from /var/lib/cairn-arcs/arcs.jsonl`.
-  Rollback: both `image:` lines back to `ffa0eca` (named in each file's rollback comment).
-- ✅ **BOTH HOSTS SWITCHED** (`scripts/ship.sh` in the tooling repo: both at `05180b6`, VERIFIED):
-  the installed client lists `sessions`, `arcs`, `arc-show`, `arc-register`.
-- ✅ **DEPLOYED POD ANSWERS, pre-registration:** `cairn arcs --repo /home/zach/workspace/cairn`
-  → `status=no-arc-registered scope=cairn`, `attributed: 72 of 102 bullets`, `0 of 36 writing
-  sessions` in an arc — the journal is configured (not `registrations-unconfigured`) and empty.
-- ✅ **S0–S5 ALL MERGED on `main`**, each squash pinned with `--match-head-commit` to a head
-  whose 8 CI jobs were green: S0 #182 `0572b35`, S1 #183 `21d8782`, S2 #184 `c862970`, S3 #185
-  `dda0c3d`, S4 #186 `4714652`, S5 #187 `7528c74`. Plan #180 `107b389`.
-- ✅ **CLAUSE 2 MEASURED on a clean detached checkout of `origin/main` at `7528c74`:**
-  `tests/arcs/e2e.sh` rc 0, **32 `PASS` lines / 0 `FAIL`**, `SUMMARY e2e: passed=32 failed=0
-  expected=32`; `--self-test` rc 0, `sabotaged=3 caught=3` (the positive control).
-- ✅ **T1 MERGED in the private tooling repo** (its #2071, squash `05180b6`): a landed handoff
-  runs `cairn arc-register --repo … --slug <topic> --from <payload>` after `status=written|pushed`,
-  NON-BLOCKING (one `arc-register:` stderr line; an env-var opt-out documented in that repo's handoff skill), and
-  bumps that repo's cairn pin `d7e1fec` → `4714652`. Status comes from a NEW `closing-verdict:`
-  field under `## Goal` (this doc now carries one); absent ⇒ `unknown`. Merged over a RED gate by
-  operator decision: its base was already red with the SAME 8 pytest failures + nodetests
-  (collected 25524→25580, passed 25506→25562 — exactly its +56 new tests).
-- ⚠ **ONE DEPARTURE FROM THE PLAN, in S5:** "a member session that wrote nowhere the principal can
-  see" is a COVERAGE number, not exit 10 — members come from commit trailers and transcripts, so a
-  member with no entry trailer is the normal state and a 10 would be permanent. One-line revert.
-- ⚠ **Verb names as shipped:** `sessions`, `arcs` (`--check [--all-scopes]`), `arc-show`,
-  `arc-register --from <json>` — hyphenated, not `arc register|show`, because the ledgers carry one
-  read/write bit per verb.
-- ⚠ **Mid-phase seams, each found by CI or a rebase, not by a slice's own gates:** the
-  verb-citation guard read only the PYTHON parser (S0 widened it to `GO_ONLY_VERBS`); the authz
-  battery's create row matched S3's new PUT check twice (re-anchored + a new row, 190); a textually
-  clean S5 rebase failed `go build` on S4's rename `unconfiguredBody` →
-  `RegistrationsUnconfiguredBody`. Battery now **201 mutants, 199 killed, 2 EQUIVALENT**.
-
-- ⚠ **Deferred, NOT this arc** (recorded in the plan's Deferred section): recording READS
-  (client session header + retention; the pod sees syncs, not recalls) and an authenticated
-  append-time write log (Q6). Each would be a new arc with its own closing condition.
+- ✅ **VERDICT: ADDRESSED — THE ARC IS CLOSED.** All three clauses measured: (1) S0–S5 merged
+  (#182 `0572b35`, #183 `21d8782`, #184 `c862970`, #185 `dda0c3d`, #186 `4714652`, #187
+  `7528c74`; plan #180 `107b389`); (2) CLAUSE 2 MEASURED on a clean detached checkout of
+  `origin/main` at `7528c74`: `tests/arcs/e2e.sh` 32 PASS / 0 FAIL, `--self-test` sabotaged=3
+  caught=3; (3) the deployed personal pod lists `cairn/cairn-arcs-sessions`, registered by this
+  doc's own `/handoff` from a worktree. Everything below is post-close rollout, not part of the
+  closing condition.
+- ✅ **BOTH INSTANCES RUN THE PHASE.** Personal instance: deployment repo `trunk` `a49259c` (journal
+  volume, both images `ffa0eca` → `ea9cfa7`). CLIENT instance: the client infra repo's `trunk`
+  `e2748ec` — same change on `linstor-nvme`, images pinned by tag AND digest (store
+  `sha256:ba216e99…`, ui `sha256:1e239549…`); both pods running those digests, 0 restarts.
+  Live: `cairn arcs --scope <a client-routed scope>` went **HTTP 404 → `no-arc-registered`**,
+  `--check` rc 0; the pod's audit lines show both at `result=200`. Rollback on either: both
+  image lines back to `ffa0eca`; the journal volume is inert to that image.
+- ✅ **THE JOURNAL IS BACKED UP ON BOTH.** Personal: `cairn-ui-backup` stages it under `arcs/`
+  (deployment repo `99f43c4`); a manual run logged `arcs: lines=15`, `verify: files=5 missing=0
+  differs=0`, `OK … restored and verified`, and FAILS if `arcs.jsonl` is absent. Client:
+  `cairn-backup` step 7b uploads `arcs-<stamp>.jsonl` beside the archive with the same
+  stat/download/sha256 round trip; a manual run passed (144 entries restore-checked) with
+  `arcs: absent` — nothing has registered there yet, so **the upload branch has not run live**.
+- ✅ **THE INSTALLED CLIENT HAS `arcs --check`** — the tooling repo's pin bumped again to
+  `ea9cfa7` (its #2072, shipped to both hosts): `cairn arcs --repo /home/zach/workspace/cairn
+  --check` → `arcs-check-clean`, rc 0, `closed 1`. Retires the "installed client lacks
+  `--check`" caveat.
+- ✅ **UI VERIFIED SIGNED-IN on the personal instance** (operator's browser, an owned background
+  tab, never raised): scope page renders "Sessions that wrote here" (`scanned: 14 of 14`,
+  `attributed: 72 of 102`, 36 sessions) and "Arcs that touched this scope" linking the arc; the
+  arc page renders `arc-found`, status closed, closing check, 1 member.
+- ⏳ **UI NOT YET VERIFIED on the client instance** — neither browser profile is signed in to its
+  credential form (both pass the SSO proxy, then stop at cairn's own sign-in).
+- ⚠ **Registrations are already arriving from other sessions**: the personal journal held 15
+  records at the backup run, including an `inferred` arc on a second scope.
 
 ## Next steps (ranked)
-1. ~~**Operator: the journal mount.**~~ **DONE** — deployment repo `trunk` `a49259c`.
-   forcing: user — the operator chose a journal outside the store tree (Q2).
-2. ~~**Operator: `home-manager switch` on each host.**~~ **DONE** — both at `05180b6`.
-   forcing: user — the deploy step for the tooling repo is the operator's.
-3. ~~**Close the arc.**~~ **DONE** — see State now; ADDRESSED.
-   forcing: gate — clause 3 of the closing condition.
+1. **Verify the UI on the client instance** once the operator signs in there: a scope page's
+   two cards (sessions listed; arcs `no-arc-registered` until a client-routed `/handoff`).
+   forcing: user — the operator asked for production validation on both instances.
+2. **Confirm the client backup's upload branch on its first real run**: after the first arc
+   registers on the client instance, the next `cairn-backup` log must show `arcs: verified
+   <prefix>/arcs-<stamp>.jsonl` and `LAST_SUCCESS` must carry `arcs=<n> lines…`.
+   forcing: user — the operator asked for the journal to be included in the backup job.
 
 ## Gotchas / decisions / dead-ends
 - **The trailer's `<session>` is self-declared and only the APPEND route sets `<actor>`.**
@@ -136,6 +118,19 @@ facts, the eight design decisions, the ledgers and the slice table).
   (operator decision Q7, recorded in the plan)
 - **Ruled out:** an authenticated append-time write log in this phase; it is Deferred beside
   reads, and every result says trailers are self-reported. `via: doc` (operator decision Q6, recorded in the plan)
+
+- 🔴 **On `linstor` a claim-level `readOnly: true` BREAKS co-mounting**: the CSI driver mounts the
+  block device `-o ro`, which fails beside the rw holder on the same node (the client infra repo
+  records a job stuck Pending 24 min). The personal-instance pattern (claim-level readOnly on the UI) would
+  have walked straight into it; the client rollout enforces read-only on the CONTAINER mount only.
+  via: doc
+- **The stored credential files under `~/.config/subsystem-store/` are NOT valid browser
+  sign-in credentials** — the UI refused both (`That credential was not accepted`); stop after
+  two (lockout 5/60s). Signed-in UI checks go through the operator's own browser.
+- **The DR restore verifier stays on the older Go image on purpose**: its test pins the image
+  FAMILY (`cairn-store-go`) and declines intra-Go revision skew by design.
+- ⚠ **zsh does not word-split** — `set -- $K` on a two-word value silently skipped a `flux
+  reconcile` and the "rolled out" read that followed was the OLD Deployment. Use literal names.
 
 ## How to verify
 ```bash
