@@ -36,6 +36,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/pytext"
 	"github.com/ZacxDev/cairn/internal/store"
 )
@@ -170,6 +171,10 @@ type Renderer interface {
 	Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Rendered, error)
 	// Sessions is the Go-only `sessions/<scope>` answer — see `sessions.go`.
 	Sessions(storeRoot, scope string, visible store.ScopeSet) (Rendered, error)
+	// Arcs and Arc are the Go-only arc-registry answers — see `arcs.go`. `snap` is nil when the
+	// pod has no journal configured (the `registrations-unconfigured` off state).
+	Arcs(storeRoot, scope string, visible store.ScopeSet, snap *arcs.Snapshot) (Rendered, error)
+	Arc(storeRoot, home, slug string, visible store.ScopeSet, snap *arcs.Snapshot) (Rendered, error)
 }
 
 // ValidateRecall is the guard ladder a recall's options must pass, IN THIS ORDER,

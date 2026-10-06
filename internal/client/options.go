@@ -69,6 +69,11 @@ type Options struct {
 	Session string
 	File    string
 	IfMatch string
+
+	// Slug and From are the arc-registry verbs' operands: `--slug` names the arc under its home
+	// scope, and `--from` is the registration payload's JSON file (`-` for stdin).
+	Slug string
+	From string
 }
 
 // Selection is recall's FLAGS mapped onto the reader's arguments.

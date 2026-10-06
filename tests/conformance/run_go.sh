@@ -50,6 +50,10 @@ go build -C "$repo" -o "$binary" ./cmd/cairn-server
 declaration="$(python3 "$repo/tests/conformance/suite.py" build-store "$work/world")"
 store="$(sed -n 's/^store=//p' <<<"$declaration")"
 tokens="$(sed -n 's/^token-file=//p' <<<"$declaration")"
+# The seeded arc-registry journal, OUTSIDE the store tree (the server refuses one inside it). Only
+# this script passes it: the oracle serves no arc route, and the `go_only` arc rows are recorded
+# (`record-go-only`) and replayed against a server holding exactly the world's seeded records.
+arc_journal="$(sed -n 's/^arc-journal=//p' <<<"$declaration")"
 env_line="$(sed -n 's/^env: //p' <<<"$declaration")"
 
 port="$(python3 -c 'import socket
@@ -61,6 +65,7 @@ s.close()')"
 # shellcheck disable=SC2086  # the env line is a deliberate word-split of KEY=VALUE pairs
 env $env_line "$binary" \
   --store "$store" --host 127.0.0.1 --port "$port" --token-file "$tokens" \
+  --arc-journal "$arc_journal" \
   >"$work/server.log" 2>&1 &
 server=$!
 trap 'kill "$server" 2>/dev/null || true; rm -rf "$work"' EXIT

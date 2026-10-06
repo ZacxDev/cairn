@@ -125,7 +125,7 @@ python3 tests/conformance/suite.py run --base-url … --token-file … --oracle-
 The second form is for a `--base-url` pointing at a hand-started **oracle**. Omitting
 `--base-url` boots the oracle and always asserts.
 
-## …and the mirror: rows asserted against the GO SERVER ONLY (`sessions/<scope>`, nine rows)
+## …and the mirror: rows asserted against the GO SERVER ONLY (`sessions/<scope>` and the arc registry, 33 rows)
 
 🔴 **Before this mark, a route only the Go server serves had no legal spelling here** — its
 rows were refused by the shrink half of the route ledger ("addresses routes the server no
@@ -152,6 +152,22 @@ implementation it tests proves nothing about that implementation. The contract w
 Go-only route are the Go tests with literal expected bodies (for `sessions`:
 `internal/report/sessions_test.go`, `internal/api/sessions_test.go`) and the relations here,
 which every go-only read head joins (refused-equals-absent, head-matches-get, uniform-401).
+For the arc registry: `internal/report/arcs_test.go`, `internal/api/arcs_test.go` and
+`internal/arcs/arcs_test.go`.
+
+🔴 **THE ARC ROWS NEED A SEEDED JOURNAL, AND ONLY `run_go.sh` PASSES ONE.** The routes answer
+`registrations-unconfigured` unless the server is started with `-arc-journal`, so `build-store`
+writes the world's `arc_journal.records` to a file BESIDE the token file — outside the store
+tree, because the Go server refuses to start with a journal inside it — and prints
+`arc-journal=<path>`; `run_go.sh` hands that to the server for both `run` and `record-go-only`.
+The oracle is never told. The seed holds an EARLIER and a LATER registration of one arc, so the
+latest-wins fold is on the wire, and an arc homed in `alpha-notes` that DECLARES `beta-notes`, so
+`arcs-hidden-home` (narrow-reader, which cannot read alpha) pins the home-scope visibility rule
+beside `arcs-declared-elsewhere` (wide-reader), its positive control. The `PUT arc` rows run in
+the write phase; `put-arc-unchanged` pins that an identical retry appends nothing. The pair
+`put-arc` is keyed on the HOME scope because `validate_corpus` requires a pair's scope in the
+TARGET; the declared-scope refusal (`put-arc-refused-declared`) is a standalone row, and its
+byte-identity with an absent declared scope is pinned in `internal/api/arcs_test.go` instead.
 
 ```bash
 tests/conformance/run_go.sh record-go-only   # the ONLY way a go_only golden is written
@@ -320,6 +336,13 @@ encodes:
   compared against a second implementation, by decision. The corpus can tell you
   the Go server still answers what was recorded; it cannot tell you that answer is
   right. That is the Go tests' job, with literal expectations.
+- **Three arc-registry states, by construction of this world.** The `registrations-unconfigured`
+  off state (every Go run here HAS a journal), an `inferred` arc (the world's bullets carry no
+  write trailer, and the write phase that appends one runs after every read), and a DAMAGED
+  journal (a torn tail or an unreadable record). Each is pinned by Go tests with literal bodies
+  instead: `internal/report/arcs_test.go`, `internal/api/arcs_test.go`, `internal/arcs/arcs_test.go`.
+  Concurrency on the journal is likewise invisible to a one-request-at-a-time runner and is
+  measured by `TestConcurrentRegistrationsOfOneArcLoseNothing`.
 - 🔴 **MOST OF WHAT THE REPORT RENDERER DOES.** The corpus sends the bodies
   `requests.json` declares, and none of them carries an openness marker, a
   near-miss marker, a `tasks:` key, a duplicate heading, a fenced region, a scope

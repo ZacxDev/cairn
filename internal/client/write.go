@@ -78,6 +78,10 @@ var writeStatusExits = map[int]int{
 // advisory routing, not the verdict.
 var writeStatusTokenExits = map[string]int{
 	"already-exists": ExitWriteExists,
+	// `PUT arc/…` on a pod started with no `-arc-journal` (a 409). Nothing was written, and a
+	// byte-identical retry cannot help until an operator configures the journal — the "change
+	// something, do not just retry" bucket, 6, rather than 7.
+	"registrations-unconfigured": ExitWriteRefused,
 }
 
 func classifyWrite(code int, status, detail string) *WriteRefused {

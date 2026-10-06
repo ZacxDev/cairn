@@ -1,0 +1,57 @@
+{
+  "body": {
+    "bytes": 1448,
+    "kind": "text_lines",
+    "sha256": "5492f87db0e69ff143297f2a66226215a4f1f28e200615ee7ce810b8398bacc3",
+    "text_lines": [
+      "🔴 SNAPSHOT, NOT THE SOURCE — seeded=2000-01-04T00:00:00Z newest-entry=2000-01-03T00:00:00Z entry-files=11. This host serves a COPY of the authoritative store, pushed by `seed.sh`; nothing syncs it continuously, so it can be arbitrarily behind and it CANNOT KNOW BY HOW MUCH. The \"none omitted\" below is true of THIS DISK and says nothing about the source. Before trusting an absence — a missing entry, a missing badge, a zero — re-run the read against the local store, or re-seed. UNSTAMPED/UNREADABLE/NONE each mean the stated fact could not be established, never that it is fine.",
+      "",
+      "cairn-arc: status=arc-unregistered",
+      "  coverage: writes measured from entry trailers · reads NOT recorded (not collected in this phase)",
+      "  attribution: trailers are self-reported — actor as written in the entry (only appended bullets had it set by the pod); session ids are declared by the writer",
+      "  visibility: an arc is shown only when its HOME scope is readable to you — one homed in a scope you cannot read answers exactly like one never registered",
+      "  registration: arcs are pushed by the operator tooling at each handoff and are its own word — an arc nobody registered is not listed, and each is only as fresh as its last push",
+      "",
+      "NO SUCH ARC IS VISIBLE HERE. An arc that was never registered and one homed in a scope this credential may not read answer identically, by design — so this answer names neither the home nor the slug it was asked about.",
+      ""
+    ]
+  },
+  "case": "arc-unregistered-slug",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Length",
+      "1448"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Exit",
+      "0"
+    ],
+    [
+      "X-Store-Revision",
+      "a11ba11ba11ba11ba11ba11ba11ba11ba11ba11b"
+    ],
+    [
+      "X-Store-Snapshot",
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=11"
+    ],
+    [
+      "X-Store-Status",
+      "arc-unregistered"
+    ]
+  ],
+  "reason": "OK",
+  "recorded_from": "cmd/cairn-server",
+  "status": 200
+}

@@ -533,14 +533,18 @@ class TestTheGoOnlyDeclaration:
     `server.py`'s tables; the Go side of the claim is
     `tests/test_go_client_ledgers.py`. Every guard is shown RED on a synthetic case
     it must refuse, asserting its own message, beside the GREEN declared case. The
-    real set is the S2 sessions surface today."""
+    real set is the S2 sessions surface and the S3 arc registry today."""
 
     def test_the_real_declared_sets_are_exactly_todays(self):
         """An INVARIANT GUARD on today's state, spelled by hand: the arcs/sessions S2
-        slice declared the first Go-only verb and route (`sessions`). The next one
-        moves this test in the same commit."""
-        assert GO_ONLY_VERBS == frozenset({"sessions"})
-        assert go_only_route_names() == frozenset({"GET sessions", "HEAD sessions"})
+        slice declared the first Go-only verb and route (`sessions`), and S3 the arc
+        registry (`arcs`, `arc-show`, `arc-register`). The next one moves this test in
+        the same commit."""
+        assert GO_ONLY_VERBS == frozenset({"sessions", "arcs", "arc-show", "arc-register"})
+        assert go_only_route_names() == frozenset({
+            "GET sessions", "HEAD sessions", "GET arcs", "HEAD arcs",
+            "GET arc", "HEAD arc", "PUT arc",
+        })
 
     def test_RED_a_go_only_row_with_no_reason_is_refused(self):
         with pytest.raises(ValueError, match="must say why only Go has it"):
@@ -556,12 +560,15 @@ class TestTheGoOnlyDeclaration:
 
     def test_the_derivations_read_the_go_only_rows_and_only_those(self):
         ledger = LEDGER + (_synthetic_go_only_row(),)
-        # The real go_only row (`sessions`, spelled by hand) plus the synthetic one.
-        assert go_only_verbs(ledger) == {SYNTHETIC_VERB, "sessions"}
+        # The real go_only rows (spelled by hand) plus the synthetic one.
+        assert go_only_verbs(ledger) == {
+            SYNTHETIC_VERB, "sessions", "arcs", "arc-show", "arc-register",
+        }
         # A GET route is ALSO a HEAD route on the Go server.
         assert go_only_route_names(ledger) == {
             "GET synthetic-go-only", "HEAD synthetic-go-only",
-            "GET sessions", "HEAD sessions",
+            "GET sessions", "HEAD sessions", "GET arcs", "HEAD arcs",
+            "GET arc", "HEAD arc", "PUT arc",
         }
         # …and a go_only route is NOT one the oracle-side gate expects `server.py` to
         # have.

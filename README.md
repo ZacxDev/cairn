@@ -557,6 +557,9 @@ renaming a human-read label breaks nobody.
 | find a hunk by text | `cairn search 'query'` (`--all-scopes`) |
 | what the cache actually holds — the ENTRY files, never a scope's `README.md` | `cairn ls-entries` |
 | which sessions wrote attributed bullets in a scope, with coverage counts (Go client only) | `cairn sessions --scope X` (or `--repo P`) |
+| which registered arcs touched a scope, `declared` or `inferred` (Go client only; asks the pod) | `cairn arcs --scope X` (or `--repo P`) |
+| one registered arc: status, tooling coverage, members (Go client only; asks the pod) | `cairn arc-show --slug S` (home from `--scope`/`--repo`) |
+| register or update an arc from a JSON payload (Go client only) | `cairn arc-register --slug S --from F` (home from `--scope`/`--repo`) |
 | the post-write check: parse, dropped lines, marker reachability | `cairn validate` |
 | one call of diagnostics | `cairn doctor` (`--json`, `--no-sync`) |
 | append one dated, attributed bullet | `cairn append --scope S --ref R --text '…' --session ID` |
@@ -578,6 +581,43 @@ session id is the writer's own word). `scope-absent`, `scope-empty`, `no-attribu
 `scope-unreadable` are four different statements and render differently; a scope you may not read
 answers exactly like one that does not exist. Exit codes are the read set below — `0` for every
 answer, `3` when nothing in the scope could be scanned.
+
+### `cairn arcs`, `cairn arc-show`, `cairn arc-register` — the arc registry
+
+An **arc** is one effort tracked by one handoff doc in one repo, keyed by `(home scope, slug)`.
+Arcs are REGISTERED — pushed by the operator tooling at each handoff — never derived, and they live
+in an append-only journal the pod keeps **outside the store tree**: `cairn-server -arc-journal
+<file>` (or `$CAIRN_ARC_JOURNAL`), with **no default**. Unset, every arc route answers
+`registrations-unconfigured`, the designed off state; and the pod **refuses to start** if the
+symlink-resolved path is inside `-store`, because every directory at the store root is enumerated
+as a scope. Registrations are kept forever (no compaction in this phase); the latest valid record
+per arc is what is shown, and a torn final line or an unreadable one is skipped without poisoning
+the rest.
+
+```bash
+cairn arc-register --repo . --slug my-topic --from arc.json   # PUT  /api/v1/arc/<home>/my-topic
+cairn arc-show     --repo . --slug my-topic                   # GET  /api/v1/arc/<home>/my-topic
+cairn arcs         --scope alpha-notes                        # GET  /api/v1/arcs/alpha-notes
+```
+
+The payload (`schema: 1`) carries `status` (`open` | `closed`; omit it and it is `unknown`, which
+is never shown or counted as `open`), `closing_kind`, `declared_scopes` (the home is always
+declared), `writers_measured`/`readers_measured`, `commits_total`/`commits_unstamped`,
+`reported_at` and `members` (`session`, `role` ∈ originated | earliest-stamped | wrote | resumed,
+`first_seen`). Unknown fields are refused; a member whose session id could never match a write
+trailer is not stored and is counted back as `unjoinable=N`. The pod stamps `registered_by` (the
+credential's identity) and `registered_at` (its clock). A push that did not measure a leg keeps the
+members an earlier push measured for it, marked carried. Registering needs the **write** verb on
+the home scope and on every declared scope (a scope you may not write answers like one that does
+not exist); the bare legacy row may read arcs and may not register one.
+
+**Visibility:** an arc exists for you only when its HOME scope is readable to you; its other scopes
+are listed only if readable too, and hidden ones are omitted, not counted. `arcs --scope X` lists an
+arc as `declared` when it names X, or `inferred` when one of its member sessions wrote an
+attributed bullet in X without the arc declaring it — a join over self-reported trailers, labelled
+as such. All three verbs print the pod's body verbatim (registrations are not in the cache) and use
+the existing exit codes: reads 0 for every answer, 3 if the pod did not answer; `arc-register` 0
+registered or unchanged, 6 refused (including a pod with no journal), 7 did not happen.
 
 ### Exit codes, because the caller is usually a program
 
@@ -810,6 +850,9 @@ anyone editing a routing path are in [`lib/README.md`](lib/README.md).
 | `GET /api/v1/search/{scope}?q=…` | search (`?threshold=&max_hits=&context=&all_scopes=`) |
 | `GET /api/v1/snapshot[?scope=]` | gzipped tar of the entry files — the sync payload |
 | `GET /api/v1/sessions/{scope}` | which sessions wrote attributed bullets, with coverage — **Go pod only**, same renderer as `cairn sessions` |
+| `GET /api/v1/arcs/{scope}` | registered arcs that touched the scope, `declared` or `inferred` — **Go pod only** |
+| `GET /api/v1/arc/{home}/{slug}` | one registered arc — **Go pod only**; `arc-unregistered` when it is not visible to you |
+| `PUT /api/v1/arc/{home}/{slug}` | register or update one arc (write verb on every declared scope; `409 registrations-unconfigured` with no `-arc-journal`) — **Go pod only** |
 | `POST /api/v1/entry/{scope}/{ref}/bullets` | append ONE attributed bullet (the actor comes from the token, never the body) |
 | `PUT /api/v1/entry/{scope}/{ref}` | whole-file replace via `If-Match`, or create via `If-None-Match: *` |
 

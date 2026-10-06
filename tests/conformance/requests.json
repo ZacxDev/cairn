@@ -1309,6 +1309,166 @@
       "go_only_why": "`sessions/<scope>` is served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. Its golden is recorded from the Go server (`recorded_from: cmd/cairn-server`), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/sessions_test.go`."
     },
     {
+      "id": "arcs-authorized",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arcs/alpha-notes",
+      "principal": "wide-reader",
+      "why": "the ordinary listing: gadget-rollout is homed in alpha-notes and DECLARES it, so it is listed `declared`, and its LATER registration (status open) is the one shown - the latest-wins fold over the seeded journal. No `normalize` key: the body names no host and no store path.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arcs-authorized-head",
+      "phase": "read",
+      "method": "HEAD",
+      "target": "/api/v1/arcs/alpha-notes",
+      "principal": "wide-reader",
+      "why": "HEAD keeps every header and sends no body; head_matches_get pins its Content-Length against the GET's.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arcs-declared-elsewhere",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arcs/beta-notes",
+      "principal": "wide-reader",
+      "why": "beta-notes is declared by TWO arcs with different homes: gadget-rollout (homed in alpha-notes, open) and widget-fix (homed here, no status - so `unknown`, counted apart from open). Both are visible to this caller.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arcs-hidden-home",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arcs/beta-notes",
+      "principal": "narrow-reader",
+      "why": "the SAME scope for a caller who cannot read alpha-notes: gadget-rollout declares beta-notes but is homed in alpha-notes, so it is NOT listed (operator decision Q1) - only widget-fix is. The positive control is `arcs-declared-elsewhere`, where the same arc IS listed.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arcs-legacy-token",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arcs/alpha-notes",
+      "principal": "legacy",
+      "why": "a bare row reads every enumerated scope, so it may READ arcs; it may not register one (`put-arc-legacy`).",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arcs-refused-scope",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arcs/alpha-notes",
+      "principal": "narrow-reader",
+      "why": "alpha-notes EXISTS and this caller may not read it: authorised by the SAME `rq.visible` recall uses, so it answers what the absent half answers - the refused half of the `arcs` pair.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arcs-absent-scope",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arcs/ghost-void",
+      "principal": "narrow-reader",
+      "why": "a scope that has never existed, asked by the same caller. The absent half of the pair.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arcs-no-arc",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arcs/hollow-set",
+      "principal": "wide-reader",
+      "why": "a readable scope no registered arc declares or wrote in: `no-arc-registered`, which must read differently from `scope-absent` and from `registrations-unconfigured`.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arcs-unauthenticated",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arcs/alpha-notes",
+      "principal": null,
+      "why": "no Authorization header: the uniform 401, a member of that relation.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arc-authorized",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arc/alpha-notes/gadget-rollout",
+      "principal": "wide-reader",
+      "why": "one arc, shown: its LATEST registration, its tooling coverage, its declared scopes narrowed to this caller, and its members each with the readable scopes they wrote in (none: the world's bullets carry no trailer).",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arc-authorized-head",
+      "phase": "read",
+      "method": "HEAD",
+      "target": "/api/v1/arc/alpha-notes/gadget-rollout",
+      "principal": "wide-reader",
+      "why": "HEAD keeps every header and sends no body; head_matches_get pins its Content-Length against the GET's.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arc-unregistered-slug",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arc/alpha-notes/never-filed",
+      "principal": "wide-reader",
+      "why": "a readable home and a slug nobody registered: `arc-unregistered`, naming neither the home nor the slug.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arc-refused-home",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arc/alpha-notes/gadget-rollout",
+      "principal": "narrow-reader",
+      "why": "a REGISTERED arc homed in a scope this caller may not read answers exactly what a never-registered key under an absent home answers - the refused half of the `arc` pair (Q1). X-Store-Revision is gated by the same visible set, so alpha-notes' .git/HEAD cannot tell the two apart.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arc-absent-home",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arc/ghost-void/gadget-rollout",
+      "principal": "narrow-reader",
+      "why": "the same slug under a home that has never existed, asked by the same caller. The absent half.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arc-unauthenticated",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arc/alpha-notes/gadget-rollout",
+      "principal": null,
+      "why": "no Authorization header: the uniform 401.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arc-arity-too-short",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arc/alpha-notes",
+      "principal": "wide-reader",
+      "why": "the route table names arity 3; two components do not dispatch and answer the no-route 404.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
       "id": "post-bullets-duplicate",
       "phase": "write",
       "method": "POST",
@@ -1491,12 +1651,201 @@
         "text_lines": ["---", "service: tagged-ten", "scope: beta-notes", "tags: [Infra, product]", "---", "", "## What it is", "CREATED carrying two DECLARED tags, one of them written unfolded.", "", "## Nuance / work-history", "- 2000-01-03: this entry did not exist until the suite created it.", ""]
       },
       "why": "🔴 THE POSITIVE CONTROL ON THE VOCABULARY GATE, AND WITHOUT IT THE THREE REFUSALS ABOVE ARE SATISFIED BY A SERVER THAT REFUSES EVERY TAGGED BODY. 201, and the tags land. It is LAST in the corpus on purpose: it is the only vocabulary row that changes the world, so no earlier row's golden can move under it."
+    },
+    {
+      "id": "put-arc-registered",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/arc/alpha-notes/conformance-arc",
+      "principal": "wide-reader",
+      "body": {
+        "json": {
+          "schema": 1,
+          "status": "closed",
+          "closing_kind": "judgement",
+          "declared_scopes": [
+            "beta-notes"
+          ],
+          "writers_measured": true,
+          "readers_measured": true,
+          "commits_total": 3,
+          "commits_unstamped": 0,
+          "reported_at": "2000-01-04T00:00:00Z",
+          "members": [
+            {
+              "session": "s-0301",
+              "role": "originated",
+              "first_seen": "2000-01-04T00:00:00Z"
+            },
+            {
+              "session": "not a joinable id",
+              "role": "wrote",
+              "first_seen": ""
+            }
+          ]
+        }
+      },
+      "why": "a new registration by a caller holding write on the home scope AND the declared one: 200 `arc-registered`. The member whose id `write.SessionComponent` refuses is NOT stored and is COUNTED (`unjoinable=1`).",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "put-arc-unchanged",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/arc/alpha-notes/conformance-arc",
+      "principal": "wide-reader",
+      "body": {
+        "json": {
+          "schema": 1,
+          "status": "closed",
+          "closing_kind": "judgement",
+          "declared_scopes": [
+            "beta-notes"
+          ],
+          "writers_measured": true,
+          "readers_measured": true,
+          "commits_total": 3,
+          "commits_unstamped": 0,
+          "reported_at": "2000-01-04T00:00:00Z",
+          "members": [
+            {
+              "session": "s-0301",
+              "role": "originated",
+              "first_seen": "2000-01-04T00:00:00Z"
+            },
+            {
+              "session": "not a joinable id",
+              "role": "wrote",
+              "first_seen": ""
+            }
+          ]
+        }
+      },
+      "why": "the byte-identical retry: 200 `arc-unchanged`, and nothing appended - a retried PUT after a timeout cannot grow the append-only journal.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "put-arc-malformed",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/arc/alpha-notes/conformance-arc",
+      "principal": "wide-reader",
+      "body": {
+        "json": {
+          "schema": 1,
+          "status": "maybe"
+        }
+      },
+      "why": "a status outside open|closed|unknown is a 400 naming the field; nothing is written.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "put-arc-refused-declared",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/arc/beta-notes/narrow-arc",
+      "principal": "narrow-reader",
+      "body": {
+        "json": {
+          "schema": 1,
+          "declared_scopes": [
+            "alpha-notes"
+          ]
+        }
+      },
+      "why": "narrow-reader may write beta-notes but NOT alpha-notes: declaring alpha-notes answers the uniform write 404 and nothing is written - the refused half of the `put-arc` pair.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "put-arc-refused-home",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/arc/alpha-notes/narrow-arc",
+      "principal": "narrow-reader",
+      "body": {
+        "json": {
+          "schema": 1
+        }
+      },
+      "why": "narrow-reader may write beta-notes and NOT alpha-notes, so registering an arc HOMED in alpha-notes answers the uniform write 404 and nothing is written - the refused half of the `put-arc` pair (the home scope is always declared, so it needs write there too).",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "put-arc-absent-home",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/arc/ghost-void/narrow-arc",
+      "principal": "narrow-reader",
+      "body": {
+        "json": {
+          "schema": 1
+        }
+      },
+      "why": "the same caller registering under a HOME scope that has never existed: the absent half of the `put-arc` pair - byte-identical to `put-arc-refused-home`.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "put-arc-legacy",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/arc/alpha-notes/conformance-arc",
+      "principal": "legacy",
+      "body": {
+        "json": {
+          "schema": 1
+        }
+      },
+      "why": "a bare row holds the write verb nowhere: the existing credential-level 403, before any scope is named.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "put-arc-unauthenticated",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/arc/alpha-notes/conformance-arc",
+      "principal": null,
+      "body": {
+        "json": {
+          "schema": 1
+        }
+      },
+      "why": "no Authorization header on a write: the uniform 401.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
     }
   ],
   "relations": {
     "_comment": ["TWO PROPERTIES THAT ARE RELATIONSHIPS BETWEEN RESPONSES. No per-response", "golden can hold either: each case has its own file, and each would keep", "passing if one of them grew a distinguishing header, because whoever", "regenerated would have recorded the divergence."],
-    "uniform_401": ["recall-bad-token", "recall-unauthenticated", "recall-no-client-ip", "recall-duplicate-client-ip", "root-path", "api-prefix-without-trailing-slash", "unlisted-path-with-valid-token", "options-root", "trace-root", "invented-verb-root", "raw-malformed-absolute-target", "snapshot-unauthenticated", "post-bullets-unauthenticated", "post-bullets-bad-token", "put-entry-unauthenticated", "sessions-unauthenticated"],
+    "uniform_401": ["recall-bad-token", "recall-unauthenticated", "recall-no-client-ip", "recall-duplicate-client-ip", "root-path", "api-prefix-without-trailing-slash", "unlisted-path-with-valid-token", "options-root", "trace-root", "invented-verb-root", "raw-malformed-absolute-target", "snapshot-unauthenticated", "post-bullets-unauthenticated", "post-bullets-bad-token", "put-entry-unauthenticated", "sessions-unauthenticated", "arcs-unauthenticated", "arc-unauthenticated", "put-arc-unauthenticated"],
     "refused_equals_absent": [
+      {
+        "name": "arcs",
+        "refused": "arcs-refused-scope",
+        "absent": "arcs-absent-scope",
+        "refused_scope": "alpha-notes",
+        "absent_scope": "ghost-void"
+      },
+      {
+        "name": "arc",
+        "refused": "arc-refused-home",
+        "absent": "arc-absent-home",
+        "refused_scope": "alpha-notes",
+        "absent_scope": "ghost-void"
+      },
+      {
+        "name": "put-arc",
+        "refused": "put-arc-refused-home",
+        "absent": "put-arc-absent-home",
+        "refused_scope": "alpha-notes",
+        "absent_scope": "ghost-void"
+      },
       {
         "name": "sessions",
         "refused": "sessions-refused-scope",
@@ -1541,6 +1890,16 @@
       }
     ],
     "head_matches_get": [
+      {
+        "name": "arcs",
+        "head": "arcs-authorized-head",
+        "get": "arcs-authorized"
+      },
+      {
+        "name": "arc",
+        "head": "arc-authorized-head",
+        "get": "arc-authorized"
+      },
       {
         "name": "sessions",
         "head": "sessions-authorized-head",

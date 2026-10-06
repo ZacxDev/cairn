@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/ZacxDev/cairn/internal/api"
+	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/authz"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/control/tokenfile"
@@ -88,7 +89,7 @@ const (
 	// OVERLAP RULE IS ABOUT A DIFFERENT PROGRAM AND DOES NOT APPLY. The printed
 	// exit-code contract belongs to the CLIENT: `cmd/cairn` registers an `exit-codes`
 	// flag and `internal/client/exit.go` is the table it prints. THIS program registers
-	// five flags in `main` — `store`, `host`, `port`, `token-file`, `routes` — plus
+	// six flags in `main` — `store`, `host`, `port`, `token-file`, `routes`, `arc-journal` — plus
 	// `-create-user`'s six, `-issue-credential`'s six and `-set-member`'s four, and no
 	// exit-code flag among
 	// them; measured at `e11c3a7` by reading every file under `cmd/cairn-server/` in that
@@ -225,6 +226,11 @@ func main() {
 			"suite discovers the oracle's routes from its source by AST and has no "+
 			"equivalent here, so it reads this instead. It is an output of the DISPATCH "+
 			"TABLES, never a restatement of them")
+	arcJournal := flag.String("arc-journal", envOr(arcs.EnvJournal, ""),
+		"the arc registry's append-only journal (a FILE). NO DEFAULT: unset, the arc routes "+
+			"answer `registrations-unconfigured`. 🔴 IT MUST RESOLVE OUTSIDE -store — the pod "+
+			"refuses to start otherwise, because every directory at the store root is enumerated "+
+			"as a scope")
 	create := registerCreateUserFlags()
 	issue := registerIssueCredentialFlags()
 	setMember := registerSetMemberFlags()
@@ -360,6 +366,32 @@ func main() {
 		}
 		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: "+err.Error()))
 		os.Exit(exitConfig)
+	}
+
+	// 🔴 THE ARC JOURNAL IS CHECKED HERE, AFTER `api.New` HAS PROVEN THE STORE ROOT ENUMERATES,
+	// AND A JOURNAL INSIDE THE STORE TREE IS A REFUSAL TO START (operator decision Q2). Every
+	// directory at the store root — dot-prefixed or not — is a scope to the token-file authority
+	// (measured: `tokenfile`'s `TestADotDirectoryAtTheStoreRootIsEnumeratedAsAScope`), so a journal
+	// placed "beside the store" would hand its directory to every bare row as a readable scope.
+	// `arcs.ResolveJournalPath` decides on SYMLINK-RESOLVED paths and returns the one this pod uses
+	// from now on. Unset is the designed off state — the arc routes answer
+	// `registrations-unconfigured` — and is NOT an error. A value that reduces to nothing is the
+	// `refuseBlank` policy `EnvControlJournal` documents: an operator who wrote the line meant a
+	// journal. `TestTheBinaryREFUSESAnArcJournalInsideTheStoreRoot` is the gate, shown RED first.
+	if *arcJournal != "" {
+		if identity.ValueReducesToNothing(*arcJournal) {
+			fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
+				"subsystem-store-api: -arc-journal / $%s is set to a value that reduces to nothing. "+
+					"Refusing to start rather than reading it as unset; set a path or remove the line",
+				arcs.EnvJournal)))
+			os.Exit(exitConfig)
+		}
+		resolved, err := arcs.ResolveJournalPath(*store, *arcJournal)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: "+err.Error()+". Refusing to start"))
+			os.Exit(exitConfig)
+		}
+		srv.ArcJournal = resolved
 	}
 
 	// 🔴 IDENTITY IS CONFIGURED BEFORE THE LISTENER ACCEPTS, AND A BROKEN CONFIGURATION

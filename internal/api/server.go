@@ -49,6 +49,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/authz"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/control/tokenfile"
@@ -133,6 +134,11 @@ type Server struct {
 	Warn func(string)
 	// Now is the clock the append date comes from. nil means time.Now.
 	Now func() time.Time
+	// ArcJournal is the arc registry's journal path, already resolved and checked by
+	// `arcs.ResolveJournalPath`, or "" — the designed OFF state, in which the arc routes answer
+	// `registrations-unconfigured` (operator decision Q2). Set by `cmd/cairn-server` before
+	// serving; nothing here resolves or checks it again.
+	ArcJournal string
 
 	tokens atomic.Pointer[[]authz.TokenRecord]
 
@@ -226,10 +232,13 @@ func New(storeRoot string, tokens []authz.TokenRecord, trustedProxies []netip.Pr
 		"search":   {arity: 2, handler: s.search},
 		"snapshot": {arity: 1, handler: s.snapshot},
 		"sessions": {arity: 2, handler: s.sessions},
+		"arcs":     {arity: 2, handler: s.arcsList},
+		"arc":      {arity: 3, handler: s.arcShow},
 	}
 	s.writeRoutes = map[writeKey]writeRoute{
 		{"POST", "entry"}: {arity: 4, tail: []string{"bullets"}, handler: s.appendBullet},
 		{"PUT", "entry"}:  {arity: 3, handler: s.putEntry},
+		{"PUT", "arc"}:    {arity: 3, handler: s.registerArc},
 	}
 	// 🔴 THE WIRING IS CHECKED AGAINST THE LEDGER AT CONSTRUCTION, because a table
 	// built in code and a ledger declared beside it are two spellings, and the one
@@ -921,7 +930,12 @@ func (rq *request) finish(err error) {
 	var storeMissing *store.StoreMissingError
 	var unreadable *store.EntryUnreadableError
 	var revisionUnreadable *store.RevisionUnreadableError
+	var journalUnreadable *arcs.JournalUnreadableError
 	switch {
+	case errors.As(err, &journalUnreadable):
+		// The arc journal is CONFIGURED and could not be read: "could not look", never "no arc
+		// registered" — the four-state rule, for the registry.
+		rq.storeUnreachable(journalUnreadable.Error() + "\n")
 	case errors.As(err, &badReq):
 		// A caller error, and the caller is authenticated, so it may be told what it
 		// did wrong.
@@ -1293,6 +1307,123 @@ func (s *Server) sessions(rq *request, parts []string, _ url.Values) error {
 		return err
 	}
 	return rq.serveReport(parts[0], rendered)
+}
+
+// arcSnapshot is the journal read one arc request renders from, or nil when no journal is
+// configured — the `registrations-unconfigured` off state. Re-read on every request (no cache, the
+// `sessions` arrangement): a registration is visible the moment its append returns.
+func (s *Server) arcSnapshot() (*arcs.Snapshot, error) {
+	if s.ArcJournal == "" {
+		return nil, nil
+	}
+	snap, err := arcs.Journal{Path: s.ArcJournal}.Read()
+	if err != nil {
+		return nil, err
+	}
+	if snap.Damaged() {
+		// 🔴 THE OPERATOR LOG GETS THE COUNTS; THE BODY GETS ONLY THE FACT. A count of unreadable
+		// records is a count over arcs EVERY caller's home scopes, including ones this caller
+		// cannot read, so it belongs on stderr and not on the wire.
+		s.warn(fmt.Sprintf("cairn: arc journal %s: %d unreadable record(s) skipped, torn tail: %v",
+			s.ArcJournal, snap.Skipped, snap.TornTail))
+	}
+	return &snap, nil
+}
+
+// arcsList is the Go-only `GET`/`HEAD arcs/<scope>`: which registered arcs touched a scope,
+// `declared` or `inferred` (operator decision Q3).
+//
+// 🔴 AUTHORISED BY `rq.visible` AND NOTHING ELSE — the value `recall` and `sessions` hand their
+// renderers. The scope's existence, the inference's input and each arc's visibility (its HOME
+// scope, Q1) are all decided inside `report.Arcs` from that one set, so there is no per-route
+// check here to drift from it. Query parameters are ignored, `recall`'s rule.
+func (s *Server) arcsList(rq *request, parts []string, _ url.Values) error {
+	snap, err := s.arcSnapshot()
+	if err != nil {
+		return err
+	}
+	rendered, err := s.Renderer.Arcs(s.StoreRoot, parts[0], rq.visible, snap)
+	if err != nil {
+		return err
+	}
+	return rq.serveReport(parts[0], rendered)
+}
+
+// arcShow is the Go-only `GET`/`HEAD arc/<home>/<slug>`.
+//
+// 🔴 `serveReport` IS HANDED THE HOME AS ITS PATH SCOPE, so `X-Store-Revision` is the home
+// scope's revision GATED BY `rq.visible` exactly as on `recall` — an arc homed in a refused scope
+// gets `unknown` there, the same header a never-registered key under an absent scope gets.
+func (s *Server) arcShow(rq *request, parts []string, _ url.Values) error {
+	snap, err := s.arcSnapshot()
+	if err != nil {
+		return err
+	}
+	rendered, err := s.Renderer.Arc(s.StoreRoot, parts[0], parts[1], rq.visible, snap)
+	if err != nil {
+		return err
+	}
+	return rq.serveReport(parts[0], rendered)
+}
+
+// registerArc is the Go-only `PUT arc/<home>/<slug>`: register or update one arc.
+//
+// 🔴 THE WRITE AUTHORITY IT REQUIRES, AND WHY. A registration is a claim visible to readers of
+// EVERY scope it declares — `arcs/<scope>` lists an arc that declares the scope — so registering
+// one is a write to each of them, and the caller must hold the WRITE verb on the home scope AND on
+// every declared scope: `rq.writable`, the same one predicate `createEntry` consults, never a
+// second check. A scope it may not write answers the uniform write 404 (`notFound`), identical to a
+// scope that never existed, and NOTHING is written. A principal holding the write verb nowhere — the
+// bare row — never gets here: `handleWrite` answers its credential-level 403 first, so the legacy
+// row may READ arcs and may not register one, which is the existing rule.
+//
+// ORDER, each step chosen so an earlier answer can reveal nothing a later one protects: the 403
+// (in `handleWrite`), path components, then `registrations-unconfigured` — a fact about the POD,
+// identical for every target — then the payload's syntax (400, a function of the body alone), then
+// the per-scope write check (404), then the append.
+//
+// `registrations-unconfigured` IS A 409, NOT A 2xx AND NOT A 5xx: nothing was written, so a 2xx
+// would be a lie every client reads as success; and the state is the designed off switch, not a
+// failure of the pod. The client maps the token to "the store refused the write" (exit 6).
+func (s *Server) registerArc(rq *request, parts []string, body []byte) error {
+	if s.ArcJournal == "" {
+		rq.audit(409, report.StatusRegistrationsUnconfigured)
+		rq.respond(409, []byte("registrations-unconfigured: this pod was started without -arc-journal / $"+
+			arcs.EnvJournal+", so no arc can be registered. Nothing was written\n"),
+			"text/plain; charset=utf-8",
+			map[string]string{"X-Store-Status": report.StatusRegistrationsUnconfigured})
+		return nil
+	}
+	reg, unjoinable, err := arcs.DecodePayload(body, parts[0], parts[1])
+	if err != nil {
+		var bad *arcs.PayloadError
+		if errors.As(err, &bad) {
+			return &badRequestError{message: bad.Message}
+		}
+		return err
+	}
+	for _, scope := range reg.DeclaredScopes {
+		if !rq.writable.Allows(scope) {
+			rq.notFound("scope-unknown")
+			return nil
+		}
+	}
+	reg.RegisteredBy = rq.identity
+	outcome, err := arcs.Journal{Path: s.ArcJournal}.Register(reg, rq.srv.now())
+	if err != nil {
+		var unreadable *arcs.JournalUnreadableError
+		if errors.As(err, &unreadable) {
+			rq.storeUnreachable(unreadable.Error() + "\n")
+			return nil
+		}
+		return err
+	}
+	rq.audit(200, outcome.Status)
+	rq.respond(200, []byte(fmt.Sprintf("%s: %s/%s · members=%d · unjoinable=%d\n",
+		outcome.Status, outcome.Record.Home, outcome.Record.Slug, len(outcome.Record.Members), unjoinable)),
+		"text/plain; charset=utf-8",
+		map[string]string{"X-Store-Status": outcome.Status})
+	return nil
 }
 
 // serveReport is the ONE place a rendered report becomes a response, so neither the

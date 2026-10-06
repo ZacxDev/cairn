@@ -105,6 +105,12 @@ GET  /api/v1/snapshot[?scope=]             gzipped tar of the entry files
 GET  /api/v1/sessions/{scope}              which sessions wrote attributed bullets, with
                                            coverage — GO POD ONLY (`cmd/cairn-server`);
                                            this server does not serve it
+GET  /api/v1/arcs/{scope}                  registered arcs that touched the scope,
+                                           declared or inferred — GO POD ONLY
+GET  /api/v1/arc/{home}/{slug}             one registered arc — GO POD ONLY
+PUT  /api/v1/arc/{home}/{slug}             register/update an arc; needs `-arc-journal`
+                                           (a file OUTSIDE the store root, or the Go pod
+                                           refuses to start) — GO POD ONLY
 POST /api/v1/entry/{scope}/{ref}/bullets   append ONE attributed bullet
 PUT  /api/v1/entry/{scope}/{ref}           whole-file replace, `If-Match` REQUIRED
                                            …or CREATE, with `If-None-Match: *`
