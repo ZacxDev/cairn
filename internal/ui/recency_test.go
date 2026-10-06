@@ -171,6 +171,31 @@ func TestTheScopePageListsEntriesNewestFirstWithTiesByRef(t *testing.T) {
 	assertInOrder(t, "the scope page's rows", rec.Body.String(), links)
 }
 
+// TestTwoEntriesInsideOneSecondAreOrderedByTheirFraction pins the SUB-SECOND precision the order
+// inherits from `report.FileMTime`: two files written 0.5s apart inside ONE whole second, with refs
+// whose alphabetical order CONTRADICTS their recency. A reader that truncated to the second
+// (`ModTime().Unix()`) would tie them and fall through to the ref, listing `aspen` first.
+func TestTwoEntriesInsideOneSecondAreOrderedByTheirFraction(t *testing.T) {
+	root, id, orchard := recencyWorld(t)
+	second := recencyNow.Add(-90 * time.Second)
+	for ref, frac := range map[string]time.Duration{"aspen": 200 * time.Millisecond, "yew": 700 * time.Millisecond} {
+		path := filepath.Join(root, "orchard-notes", ref+".md")
+		body := "---\nservice: " + ref + "\nscope: orchard-notes\n---\n\n## What it is\n\nA " + ref + ".\n"
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, second.Add(frac), second.Add(frac)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := getAs(t, recencyServer(t, root, id), ScopePath+"?"+QueryID+"="+string(orchard)).Body.String()
+	href := func(ref string) string {
+		return `href="` + strings.ReplaceAll(entryHref(orchard, ref, false), "&", "&amp;") + `"`
+	}
+	// birch (5m) is older than both; yew (.7s) is newer than aspen (.2s) within the same second.
+	assertInOrder(t, "a same-second pair", body, []string{href("yew"), href("aspen"), href("birch")})
+}
+
 // TestTheRootPageOrdersScopeCardsByTheirNewestEntry: the card whose NEWEST entry is newest comes
 // first, an exact tie by scope name.
 func TestTheRootPageOrdersScopeCardsByTheirNewestEntry(t *testing.T) {
