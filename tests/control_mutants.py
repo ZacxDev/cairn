@@ -1338,6 +1338,23 @@ MUTANTS: tuple[Mutant, ...] = (
         "split-verb model.",
     ),
     Mutant(
+        name="arcs-check-ignores-the-home-visibility",
+        pkgs=PKGS + ("./internal/report/",),
+        path="internal/report/arcscheck.go",
+        old="\t\tif !visible.Allows(reg.Home) {",
+        new="\t\tif false {",
+        killer="TestAnArcHomedInAnUnreadableScopeIsNotChecked",
+        why="the arc orphan check (S5) is a FOURTH reader of operator decision Q1 — an arc "
+        "exists for a caller iff its HOME scope is readable — and it applies the rule in its "
+        "own loop rather than through `report.Arcs`. Dropping the guard there is the 'it is "
+        "only a health check, check everything' simplification: the check would then NAME "
+        "the slug and home of an arc homed in a scope the caller cannot read, and score its "
+        "findings, while every listing and the arc page stay correct. The killer feeds an "
+        "arc homed in an unreadable scope that declares a readable absent scope, so the "
+        "mutant both leaks the name and turns the exit to 9; its positive control is the "
+        "same registry for a caller who CAN read the home.",
+    ),
+    Mutant(
         name="read-set-uses-the-write-verb",
         path="internal/api/server.go",
         # ⚠ RE-DERIVED AT P4: the assignment now reads the `identity.Identity` the

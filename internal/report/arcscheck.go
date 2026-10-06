@@ -243,7 +243,7 @@ func (r ArcsCheckReport) RenderText() string {
 	b.WriteString("  " + ArcsCheckNotFindingLine + "\n")
 	if r.Status == StatusRegistrationsUnconfigured {
 		b.WriteString("\n")
-		b.WriteString(unconfiguredBody)
+		b.WriteString(RegistrationsUnconfiguredBody)
 		b.WriteString(" Nothing was checked (exit 10: could not look).")
 		return b.String()
 	}
