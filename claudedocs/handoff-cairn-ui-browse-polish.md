@@ -20,40 +20,23 @@ aliases/tags/refs as chips, and a clearer label for the journal section.
   box that narrows the row count when a query is typed.
 
 ## State now
-- ⏳ **VERDICT: NOT ADDRESSED — one clause open: the filter NARROWING the row count when a
-  query is typed, observed on the deployed UI.** Everything else in the closing condition is
-  measured: PR #191 squash-merged as `45df720` (content-verified: `internal/ui/filter.js` on
-  `origin/main`, `internal/` identical to the PR head `12f7fda`); the deployed personal pod's
-  served HTML (operator token over a port-forward, not a browser) shows 26 root cards and 83
-  scope rows each newest-first with `<time class="updated">` (`6m ago`, `22m ago`, `1h ago`…),
-  the filter control rendered, exactly one script `/static/filter.0d69fda9244d.js` (served 200
-  `text/javascript`, 3133 B, unauthenticated), "N history notes", the History heading with the
-  literal heading as tooltip, alias/tag chips, an `updated` row, and NO legend/explainer on any
-  of the three pages. The filter's typing behaviour is CI-only (uiaudit's real-browser test).
-- **Audit:** round 0 → proceed (1 deletion candidate D1, kept: the copy-absence tests guard
-  against an agent re-adding the copy); round 1 → CLEAN at `4eae012`, ladder ended. Two comment
-  overclaims round 0 flagged were fixed in `12f7fda` (allowlist is a claim about the ORIGIN's
-  bytes; five negative controls, not four). The PR body's stale legend sentence was corrected in
-  a PR comment, not a silent edit.
-- **Deployed, both instances, both pods `sha-45df720`, 0 restarts:** personal via deployment
-  repo `trunk` `7bd2b9a` (rollback: both lines back to `sha-ea9cfa7…`); client via the client
-  infra repo's `trunk` `aa72e83`, pinned by tag AND digest (store `sha256:1663000d…`, ui
-  `sha256:62495665…`; rollback to `ea9cfa7` @ `ba216e99…`/`1e239549…`). APIs answer on both
-  (`arcs --check` clean on personal; client `recall`/`arcs` answer from the client instance).
+- ✅ **VERDICT: ADDRESSED — THE ARC IS CLOSED.** Both clauses met: (1) PR #191 squash-merged as
+  `45df720` (content-verified: `internal/ui/filter.js` on `origin/main`; all 8 CI checks green
+  on the merged head `12f7fda`); (2) on the deployed personal UI the scope rows are
+  newest-first with an `… ago` `<time>` each (measured from the pod's served HTML: 26 root
+  cards, 83 scope rows, both sorted descending), and the operator reported, signed in, that
+  typing into the filter drops the row count.
+- Deployed on both instances, both pods `sha-45df720`, 0 restarts: personal via deployment repo
+  `trunk` `7bd2b9a`; client via the client infra repo's `trunk` `aa72e83`, tag+digest pinned.
+  Rollback on either: both image lines back to `sha-ea9cfa7…` (client digests `ba216e99…` /
+  `1e239549…`).
 - The prior arc `cairn-arcs-sessions` is CLOSED; its two post-close items (client-instance UI
   after operator sign-in; the client backup's `arcs:` upload on its first real run) still wait
-  on external triggers — see that doc.
-- **mtimes are real on the deployed store** — the root page's times are minutes-to-hours old,
-  not the seed time, so the "re-seed resets updated" caveat did not bite here.
+  on external triggers — see that doc. The client UI check now covers this rollout's image too.
 
 ## Next steps (ranked)
-1. **Type a query into the scope page's filter on the deployed personal UI** (operator's
-   browser, owned background tab, never raised) and watch "N of M entries" drop; that closes
-   the arc. No browser profile was connected on this host this session (`whoami` →
-   `connected: 0`). forcing: user — the operator asked for the filter.
-2. **The client UI's signed-in check** is still blocked on the operator signing in there (the
-   arcs-sessions doc's rank 1); this rollout changed its image too, so do both checks in one
-   visit. forcing: user
+1. **None for this arc.** The client-instance UI check lives in `handoff-cairn-arcs-sessions.md`
+   rank 1 and now covers this image as well. forcing: user — tracked there, not here.
 
 ## Gotchas / decisions / dead-ends
 - **Ref pointers exist only per ENTRY** (`refs:`/`tasks:` front matter, `<system>:<id>`,
