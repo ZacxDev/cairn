@@ -45,17 +45,23 @@ type Capture struct {
 	// links. See [ExpandLinks].
 	Hrefs []string
 
-	// ScriptCount is `document.scripts.length` as the BROWSER counted it after the page
-	// settled.
+	// ScriptSrcs is every element of `document.scripts` as the BROWSER holds it after the page
+	// settled: its `src` attribute as written, or "" for an INLINE script.
 	//
-	// 🔴 IT IS COUNTED IN THE DOM RATHER THAN GREPPED OUT OF THE HTML, AND THAT IS THE
+	// 🔴 IT IS READ OFF THE DOM RATHER THAN GREPPED OUT OF THE HTML, AND THAT IS THE
 	// WHOLE VALUE OF MEASURING IT HERE. `internal/ui`'s XSS story partly rests on this
-	// surface shipping no script at all, and a string search for `<script` over the served
-	// bytes cannot see a script an INJECTION created, a `<script>` a parser recovered from
-	// malformed markup, or one a subresource inserted. `document.scripts` is what the
-	// browser actually has. It is a measurement and not a refusal at this level: this
-	// module's own positive-control page carries a script on purpose, so the assertion
-	// belongs to the walk over the real surface — see `refuseWalkRegressions`.
+	// surface shipping no script but the ALLOWLISTED ones (`ui.AllowedScriptSources`), and a
+	// string search for `<script` over the served bytes cannot see a script an INJECTION
+	// created, a `<script>` a parser recovered from malformed markup, or one a subresource
+	// inserted. `document.scripts` is what the browser actually has. It is a measurement and
+	// not a refusal at this level: this module's own positive-control page carries a script
+	// on purpose, so the assertion belongs to the walk over the real surface — see
+	// `refuseWalkRegressions`, which refuses an inline script, a `src` the allowlist does not
+	// name, and an allowlisted one present twice.
+	//
+	// ⚠ IT WAS `ScriptCount` AND THE REFUSAL WAS `!= 0`, until the operator chose a client-side
+	// entry filter for the scope page. A count cannot tell the one allowlisted script from an
+	// injected one, so the field became the list and the refusal became the allowlist.
 	//
 	// 🔴 AND ITS SCOPE IS THE ORIGIN'S OWN DOM RATHER THAN A READER'S — MEASURED, NOT FEARED,
 	// AND THE ZERO IS ALREADY FALSE OF THE DEPLOYED SURFACE. The walk builds its own world:
@@ -66,15 +72,19 @@ type Capture struct {
 	// (no browser, so no extension can be blamed) against a positive control that counts a
 	// `<script>` when one is present: an anonymous `GET /sign-in` carries ONE inline
 	// bot-detection script, and an authenticated `GET /` carries TWO — that one plus an
-	// email-decoding subresource. So a zero here says the RENDERER emits no script, which is
-	// the property `internal/ui`'s guards establish; it does NOT say a reader's DOM has none.
+	// email-decoding subresource. So a clean list here says the RENDERER emits no script
+	// beyond its allowlist, which is the property `internal/ui`'s guards establish; it does NOT
+	// say a reader's DOM has nothing else.
 	//
 	// ⚠ The measurement, the RETRACTION behind it (an earlier reading of authenticated `/`
 	// was taken anonymously and therefore measured a `401` body, not the page) and the CONTENT
 	// the same edge rewrites are in `internal/ui/README.md`. Nothing here changes: this
 	// counter and its refusal are the right instrument for the property they can see.
-	ScriptCount int
+	ScriptSrcs []string
 }
+
+// ScriptCount is how many script elements the browser held.
+func (c *Capture) ScriptCount() int { return len(c.ScriptSrcs) }
 
 // AxeViolation is the subset of an axe result the push needs. The `ID` is the whole point:
 // The hub's P2 `new_a11y_rules` delta reads a TOP-LEVEL `id` off each stored a11y
@@ -686,10 +696,12 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 		}
 	}
 
-	// `document.scripts.length`, read off the live DOM. See [Capture.ScriptCount] for why
-	// this is a browser question and not a grep, and `refuseWalkRegressions` for where it
-	// is turned into a refusal.
-	if err := chromedp.Run(b.ctx, chromedp.Evaluate(`document.scripts.length`, &c.ScriptCount)); err != nil {
+	// `document.scripts`, read off the live DOM — each one's `src` as written, "" when inline.
+	// See [Capture.ScriptSrcs] for why this is a browser question and not a grep, and
+	// `refuseWalkRegressions` for where it is turned into a refusal.
+	if err := chromedp.Run(b.ctx, chromedp.Evaluate(
+		`Array.from(document.scripts).map(s => s.hasAttribute("src") ? s.getAttribute("src") : "")`,
+		&c.ScriptSrcs)); err != nil {
 		return nil, fmt.Errorf("counting scripts on %s at %s: %w", t.Path, vp.Name, err)
 	}
 
@@ -803,7 +815,7 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 	// because it is the one that does not depend on a header anybody can delete, not because
 	// a tag would be refused. The `testEngine` check above is unaffected — it measures the
 	// injection ARRIVING, whatever the page's policy is — and so is every zero
-	// `refuseWalkRegressions` reads, whose scope is stated at [Capture.ScriptCount].
+	// `refuseWalkRegressions` reads, whose scope is stated at [Capture.ScriptSrcs].
 	//
 	// ⚠ THE EVIDENCE USED TO BE A THROWAWAY SPIKE PROGRAM, WHICH WAS DELETED AND IS NOT COMING
 	// BACK. A separate binary nothing ran had already rotted inside its own change; the walk
