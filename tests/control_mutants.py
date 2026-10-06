@@ -1312,12 +1312,30 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="create-narrows-with-the-read-set",
         path="internal/api/server.go",
-        old="\tif !rq.writable.Allows(scope) {",
-        new="\tif !rq.visible.Allows(scope) {",
+        # ⚠ RE-ANCHORED AT S3 OF THE ARCS/SESSIONS PLAN: the bare `if` line became a substring
+        # of `registerArc`'s per-scope check too, and the count assertion refused this row
+        # ("occurs 2 time(s)") rather than mutating a site it does not name. The `func` line
+        # pins it to the CREATE half again; the mutation itself is unchanged.
+        old="func (s *Server) createEntry(rq *request, scope, ref string, body []byte) error {\n"
+        "\tif !rq.writable.Allows(scope) {",
+        new="func (s *Server) createEntry(rq *request, scope, ref string, body []byte) error {\n"
+        "\tif !rq.visible.Allows(scope) {",
         killer="TestTheWritePathNarrowsWithTheWriteVERB",
         why="the same swap on the CREATE half, which consults the set directly rather "
         "than through the loader. Two sites, two mutants: a fix applied to one of "
         "them is the one-rule-two-places failure this repository keeps paying for.",
+    ),
+    Mutant(
+        name="arc-register-narrows-with-the-read-set",
+        path="internal/api/server.go",
+        old="\tfor _, scope := range reg.DeclaredScopes {\n\t\tif !rq.writable.Allows(scope) {",
+        new="\tfor _, scope := range reg.DeclaredScopes {\n\t\tif !rq.visible.Allows(scope) {",
+        killer="TestRegisteringAnArcNarrowsWithTheWriteVERB",
+        why="the same swap at the THIRD site that consults the write set directly: the arc "
+        "registry's per-declared-scope check. A read-only principal could then put an arc "
+        "into the listing of a scope it may not write. The token file makes the two sets "
+        "equal, so no token-file test can see this; the killer measures it over the "
+        "split-verb model.",
     ),
     Mutant(
         name="read-set-uses-the-write-verb",

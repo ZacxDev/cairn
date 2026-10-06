@@ -843,30 +843,15 @@ func TestTheHotPathDoesNotContactTheAuthority(t *testing.T) {
 	}
 }
 
-// staticSource is a `control.Source` over a Model built by hand.
-//
-// 🔴 IT EXISTS BECAUSE THE TOKEN FILE CANNOT SPELL THE CASE THE NEXT TEST NEEDS. A
-// mapped row confers read AND write over one allowlist, so `rq.visible` and
-// `rq.writable` are equal for every principal the adapter can produce — which would
-// leave the write path's narrowing a branch NO TEST CAN REACH, and a guard that cannot
-// be reached is a guard that is not there. A hand-built model is the cheapest way to
-// prove the server asks the predicate with the verb rather than asking it once.
-type staticSource struct{ m control.Model }
+// splitVerbToken holds read AND write on alpha-notes and READ ONLY on beta-notes — the one
+// shape the token file cannot express, so it is built from a control model directly.
+const splitVerbToken = "read-beta-write-alpha-read-beta-write-alph"
 
-func (s staticSource) Model(context.Context) (control.Model, error) { return s.m, nil }
-
-// TestTheWritePathNarrowsWithTheWriteVERB is the reachability proof for the two sets.
-//
-// 🔴 A PRINCIPAL THAT MAY **READ** `beta-notes` AND **WRITE** ONLY `alpha-notes`. It
-// holds the write verb somewhere, so it is not the 403 case; it can read the scope it
-// is aiming at, so a read-set narrowing would let the write through to the ref
-// resolution and answer `ref-unknown`. The contract is that a write to a scope this
-// principal may not write answers exactly what an ABSENT scope answers — so the two
-// responses are compared to each other, byte for byte, rather than to a status code.
-func TestTheWritePathNarrowsWithTheWriteVERB(t *testing.T) {
+// splitVerbHarness is a matrix harness authorising from that split-verb model.
+func splitVerbHarness(t *testing.T) *matrixHarness {
+	t.Helper()
 	h := newMatrixHarness(t)
-	const token = "read-beta-write-alpha-read-beta-write-alph"
-
+	const token = splitVerbToken
 	at := time.Date(2000, 1, 5, 0, 0, 0, 0, time.UTC)
 	usr := control.DerivedID(control.PrefixUser, "owner")
 	prj := control.DerivedID(control.PrefixProject, "holder")
@@ -899,6 +884,63 @@ func TestTheWritePathNarrowsWithTheWriteVERB(t *testing.T) {
 	if err := h.srv.authority.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+
+	return h
+}
+
+// TestRegisteringAnArcNarrowsWithTheWriteVERB is the arc registry's twin of the CREATE half of
+// `TestTheWritePathNarrowsWithTheWriteVERB`: `registerArc` consults `rq.writable` directly for
+// every declared scope, a THIRD site where narrowing with the READ set would let a read-only
+// principal put a claim into a scope it cannot write. On the token file the two sets are equal by
+// construction, which makes the swap invisible to every token-file test (`arcs_test.go` included),
+// so it is measured over the split-verb model, the one place they differ. Two sites, two mutants:
+// `tests/control_mutants.py` row `arc-register-narrows-with-the-read-set`.
+//
+// The POSITIVE CONTROL is the same principal declaring only what it may write, which must
+// register — without it a handler refusing every PUT would pass the refusal.
+func TestRegisteringAnArcNarrowsWithTheWriteVERB(t *testing.T) {
+	h := splitVerbHarness(t)
+	journal := filepath.Join(t.TempDir(), "journal.jsonl")
+	h.srv.ArcJournal = journal
+
+	readOnly := h.do(t, "PUT", "/api/v1/arc/alpha-notes/split-arc", splitVerbToken, nil,
+		`{"schema":1,"declared_scopes":["beta-notes"]}`)
+	if readOnly.status != 404 || readOnly.body != "not found\n" {
+		t.Fatalf("an arc declaring a READ-ONLY scope must be refused as absent, got %d %q — if this "+
+			"is 200 the arc registry narrowed with the READ set", readOnly.status, readOnly.body)
+	}
+	if _, err := os.Stat(journal); !os.IsNotExist(err) {
+		t.Fatalf("a refused registration wrote the journal (stat err %v)", err)
+	}
+	ok := h.do(t, "PUT", "/api/v1/arc/alpha-notes/split-arc", splitVerbToken, nil, `{"schema":1}`)
+	if ok.status != 200 || ok.headers.Get("X-Store-Status") != "arc-registered" {
+		t.Fatalf("control: declaring only the writable home must register, got %d %q", ok.status, ok.body)
+	}
+}
+
+// staticSource is a `control.Source` over a Model built by hand.
+//
+// 🔴 IT EXISTS BECAUSE THE TOKEN FILE CANNOT SPELL THE CASE THE NEXT TEST NEEDS. A
+// mapped row confers read AND write over one allowlist, so `rq.visible` and
+// `rq.writable` are equal for every principal the adapter can produce — which would
+// leave the write path's narrowing a branch NO TEST CAN REACH, and a guard that cannot
+// be reached is a guard that is not there. A hand-built model is the cheapest way to
+// prove the server asks the predicate with the verb rather than asking it once.
+type staticSource struct{ m control.Model }
+
+func (s staticSource) Model(context.Context) (control.Model, error) { return s.m, nil }
+
+// TestTheWritePathNarrowsWithTheWriteVERB is the reachability proof for the two sets.
+//
+// 🔴 A PRINCIPAL THAT MAY **READ** `beta-notes` AND **WRITE** ONLY `alpha-notes`. It
+// holds the write verb somewhere, so it is not the 403 case; it can read the scope it
+// is aiming at, so a read-set narrowing would let the write through to the ref
+// resolution and answer `ref-unknown`. The contract is that a write to a scope this
+// principal may not write answers exactly what an ABSENT scope answers — so the two
+// responses are compared to each other, byte for byte, rather than to a status code.
+func TestTheWritePathNarrowsWithTheWriteVERB(t *testing.T) {
+	h := splitVerbHarness(t)
+	const token = splitVerbToken
 
 	// PRECONDITIONS, stated so no assertion below can pass vacuously.
 	if got := h.do(t, "GET", "/api/v1/recall/beta-notes", token, nil, ""); got.headers.Get("X-Store-Status") != "recalled" {
