@@ -619,6 +619,37 @@ as such. All three verbs print the pod's body verbatim (registrations are not in
 the existing exit codes: reads 0 for every answer, 3 if the pod did not answer; `arc-register` 0
 registered or unchanged, 6 refused (including a pod with no journal), 7 did not happen.
 
+### `cairn arcs --check` — the arc orphan check
+
+`cairn arcs --check` asks the pod (`GET /api/v1/arcs/<scope>?check=1`) whether the arc registry
+holds anything it should not. It is a flag on `arcs`, not a verb and not a `doctor` check: `doctor`
+is about this host and this credential, and its stdout is byte-compared against the Python oracle.
+
+```bash
+cairn arcs --check --repo .                       # arcs HOMED in this repo's scope
+cairn arcs --check --all-scopes --scope alpha-notes   # every arc visible on that scope's pod
+```
+
+**Findings** (exit **9**): a `journal-damaged` journal (a complete record that did not parse, or a
+torn tail — an arc registered only by that record is invisible everywhere); an arc whose
+`home-scope-absent` (its home is readable to you by grant and does not exist in the store); and a
+`declared-scope-absent` (the same for a declared scope). **Not findings**, printed as coverage
+instead: a member session with no attributed write in any scope you can read (members come from
+commits and transcripts, so this is the normal state), and a writing session in no arc (arcs are
+registered only from now on). Turning either into a finding would hold the check non-zero forever.
+
+**Exit codes are `doctor`'s** — `0` nothing wrong measured, `9` a finding, `10` could not look (no
+`-arc-journal` on the pod, a journal it cannot read, a pod that did not answer, or a pod too old to
+know `?check=1`, which answers a listing that the client refuses to read as a pass). No new exit
+code exists for it: `cairn -exit-codes` is unchanged. Usage errors are still `2`, and a scope no
+instance serves is still `11`. Only arcs whose HOME you can read are checked, and a declared scope
+you cannot read is neither checked nor counted — the check answers a scope you may not read exactly
+as one that does not exist. ⚠ One pod per run: the scope picks the instance, and a multi-instance
+host is not fanned out.
+
+`tests/arcs/e2e.sh` is the end-to-end check over both real binaries (`--self-test` proves it goes RED
+on a sabotaged build).
+
 ### Exit codes, because the caller is usually a program
 
 Read outcomes and write outcomes are **disjoint**, so a supervisor cannot read
@@ -850,7 +881,7 @@ anyone editing a routing path are in [`lib/README.md`](lib/README.md).
 | `GET /api/v1/search/{scope}?q=…` | search (`?threshold=&max_hits=&context=&all_scopes=`) |
 | `GET /api/v1/snapshot[?scope=]` | gzipped tar of the entry files — the sync payload |
 | `GET /api/v1/sessions/{scope}` | which sessions wrote attributed bullets, with coverage — **Go pod only**, same renderer as `cairn sessions` |
-| `GET /api/v1/arcs/{scope}` | registered arcs that touched the scope, `declared` or `inferred` — **Go pod only** |
+| `GET /api/v1/arcs/{scope}` | registered arcs that touched the scope, `declared` or `inferred`; with `?check=1` (`&all_scopes=1`) the orphan check, `X-Store-Exit` on doctor's 0/9/10 — **Go pod only** |
 | `GET /api/v1/arc/{home}/{slug}` | one registered arc — **Go pod only**; `arc-unregistered` when it is not visible to you |
 | `PUT /api/v1/arc/{home}/{slug}` | register or update one arc (write verb on every declared scope; `409 registrations-unconfigured` with no `-arc-journal`) — **Go pod only** |
 | `POST /api/v1/entry/{scope}/{ref}/bullets` | append ONE attributed bullet (the actor comes from the token, never the body) |

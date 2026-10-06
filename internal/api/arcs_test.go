@@ -147,3 +147,47 @@ func TestAnUnreadableJournalIsCouldNotLookNeverNothingRegistered(t *testing.T) {
 		t.Fatalf("an unreadable journal: %d %s %q", got.status, got.headers.Get("X-Store-Status"), got.body)
 	}
 }
+
+// TestTheArcsCheckIsAModeOfTheArcsHeadAuthorisedLikeIt is S5's served contract: `?check=1` on
+// `arcs/<scope>` answers the orphan check on doctor's codes in `X-Store-Exit` (0 here, 10 with no
+// journal), `?check=0` is still the listing (the `all_scopes` truth table), a journal that cannot be
+// read is the 503 every arc route gives, and — refused == absent — a caller who cannot read the
+// path scope gets, byte for byte, what a scope that never existed gets. The POSITIVE CONTROL is the
+// wide caller, for whom the same request checks the arc.
+func TestTheArcsCheckIsAModeOfTheArcsHeadAuthorisedLikeIt(t *testing.T) {
+	h := newHarness(t)
+	if got := h.do(t, "GET", "/api/v1/arcs/alpha-notes?check=1", wideToken, nil, ""); got.status != 200 ||
+		got.headers.Get("X-Store-Status") != "registrations-unconfigured" || got.headers.Get("X-Store-Exit") != "10" {
+		t.Fatalf("no journal: the check could not look — 200 with exit 10, got %d %s exit=%s",
+			got.status, got.headers.Get("X-Store-Status"), got.headers.Get("X-Store-Exit"))
+	}
+	journal := withJournal(t, h)
+	if put := h.do(t, "PUT", "/api/v1/arc/alpha-notes/gadget-rollout", wideToken, nil, arcPayload); put.status != 200 {
+		t.Fatalf("register: %d %q", put.status, put.body)
+	}
+	wide := h.do(t, "GET", "/api/v1/arcs/alpha-notes?check=1", wideToken, nil, "")
+	if wide.status != 200 || wide.headers.Get("X-Store-Status") != "arcs-check-clean" ||
+		wide.headers.Get("X-Store-Exit") != "0" || !strings.Contains(wide.body, "\n  arcs checked: 1 (open 1 · closed 0 · unknown 0)\n") {
+		t.Fatalf("POSITIVE CONTROL: the wide caller's check sees the arc: %d %s\n%s", wide.status, wide.headers.Get("X-Store-Status"), wide.body)
+	}
+	if listing := h.do(t, "GET", "/api/v1/arcs/alpha-notes?check=0", wideToken, nil, ""); listing.headers.Get("X-Store-Status") != "arcs-listed" {
+		t.Fatalf("check=0 is the listing: %s", listing.headers.Get("X-Store-Status"))
+	}
+	refused := h.do(t, "GET", "/api/v1/arcs/alpha-notes?check=1", narrowToken, nil, "")
+	absent := h.do(t, "GET", "/api/v1/arcs/ghost-void?check=1", narrowToken, nil, "")
+	if refused.status != 200 || refused.headers.Get("X-Store-Exit") != "0" ||
+		strings.Contains(refused.body, "gadget-rollout") ||
+		strings.ReplaceAll(refused.body, "alpha-notes", "ghost-void") != absent.body ||
+		refused.headers.Get("X-Store-Revision") != absent.headers.Get("X-Store-Revision") {
+		t.Fatalf("refused must equal absent:\n%s\n--- absent\n%s", refused.body, absent.body)
+	}
+	if err := os.Remove(journal); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(journal, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.do(t, "GET", "/api/v1/arcs/alpha-notes?check=1", wideToken, nil, ""); got.status != 503 {
+		t.Fatalf("an unreadable journal is could-not-look, the 503: %d %q", got.status, got.body)
+	}
+}

@@ -28,19 +28,21 @@ facts, the eight design decisions, the ledgers and the slice table).
   ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- 📄 **PLAN ONLY — NO FEATURE CODE EXISTS.** PR #180, branch `docs/plan-cairn-arcs-sessions`
-  off `main` at `621b4e6`, carries the plan and this doc.
-- ✅ **ALL SEVEN OPEN QUESTIONS ARE ANSWERED BY THE OPERATOR** and folded into the plan as
-  Q1–Q7 under "Decisions taken"; the plan's "Open questions" section now reads none open.
-  In one line each: home-scope visibility; journal at a separate path outside the store tree;
-  `arcs --scope` lists `inferred` arcs beside `declared` ones; status `unknown` accepted and
-  never rendered as `open`; `arcs --check` on doctor's 0/9/10; the authenticated append-time
-  write log is a later phase; registrations kept forever, append-only, no compaction.
-- ⚠ **Q2 NEEDS ONE DEPLOYMENT CHANGE THAT IS NOT IN THIS REPO** — the pod's data volume is
-  mounted at the store root, so the journal needs its own mount (read-write in the pod,
-  read-only in the UI) and `CAIRN_ARC_JOURNAL`. The plan spells it out; nothing in the private
-  deployment repo was edited. Until it lands the routes answer `registrations-unconfigured`.
-- ✅ Both leakscan commands exit 0 with the revised plan in the tree.
+- ✅ **S0–S3 MERGED on `main`** (#182, #183, #184, #185; read off `origin/main` at `dda0c3d`:
+  `internal/touch`, `internal/arcs`, `internal/report/{sessions,arcs}.go`, routes `sessions/`,
+  `arcs/`, `arc/`, verbs `sessions`, `arcs`, `arc-show`, `arc-register`).
+- 🔄 **S4 (UI) is PR #186**, branch `feat/s4-arcs-ui`, OPEN.
+- 🔄 **S5 is the PR from branch `feat/s5-arcs-check-e2e`**: `cairn arcs --check` (a FLAG on the
+  existing verb, served as `GET arcs/<scope>?check=1[&all_scopes=1]` — a mode of the existing head,
+  so NO verb or route ledger moved) and `tests/arcs/e2e.sh` (32 assertions over both real binaries;
+  `--self-test` proves 3 sabotaged builds each turn their named assertion RED). Wired into the `go`
+  CI job. Exit codes are doctor's 0/9/10 via `report.ArcsCheckExit`; `cairn -exit-codes` unchanged.
+- ⚠ **ONE DEPARTURE FROM THE PLAN, in S5:** "a member session that wrote nowhere the principal can
+  see" is printed as a COVERAGE number, not exit 10 — members come from commit trailers and
+  transcripts, so a member with no entry trailer is the normal state and a 10 would be permanent.
+- ⚠ **Q2 NEEDS ONE DEPLOYMENT CHANGE THAT IS NOT IN THIS REPO** — the journal's own mount and
+  `CAIRN_ARC_JOURNAL`. Until it lands the deployed routes answer `registrations-unconfigured`, and
+  `cairn arcs --check` against the deployed pod exits 10.
 
 ## Next steps (ranked)
 1. ~~**Operator reviews the plan PR and answers open questions 1 and 2.**~~ **CLOSED** — all
@@ -134,10 +136,11 @@ facts, the eight design decisions, the ledgers and the slice table).
 sed -n 44p internal/write/revision.go          # attributionFormat
 grep -n '^const attributionPattern\|^const attributionActorClass\|^const sessionClass' internal/write/revision.go  # the grammar (split into its two classes by S1)
 sed -n 542,558p internal/control/tokenfile/source.go   # storeDirs: no dot filter
-go run ./cmd/cairn -verbs                      # today: 10 verbs, none Go-only
-go run ./cmd/cairn -exit-codes                 # the codes the new verbs must reuse
+go run ./cmd/cairn -verbs                      # 14 verbs, four of them Go-only
+go run ./cmd/cairn -exit-codes                 # 13 rows; S5 must leave these UNCHANGED
 # the leak gate, both controls
 python3 tests/leakscan.py --self-test && python3 tests/leakscan.py
-# after S5: the closing check
-tests/arcs/e2e.sh; echo "rc=$?"                # must print rc=0
+# the closing check (S5) — first prove it can go red, then run it
+tests/arcs/e2e.sh --self-test                  # must print: SUMMARY e2e-self-test: sabotaged=3 caught=3
+tests/arcs/e2e.sh; echo "rc=$?"                # must print SUMMARY e2e: passed=32 failed=0 expected=32, rc=0
 ```

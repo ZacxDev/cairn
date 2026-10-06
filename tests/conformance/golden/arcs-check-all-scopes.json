@@ -1,0 +1,63 @@
+{
+  "body": {
+    "bytes": 2018,
+    "kind": "text_lines",
+    "sha256": "db1d7703e8ce7f0ca0bda6e75f09c782f37606241cf53dc3f022ba8363b6d98b",
+    "text_lines": [
+      "🔴 SNAPSHOT, NOT THE SOURCE — seeded=2000-01-04T00:00:00Z newest-entry=2000-01-03T00:00:00Z entry-files=11. This host serves a COPY of the authoritative store, pushed by `seed.sh`; nothing syncs it continuously, so it can be arbitrarily behind and it CANNOT KNOW BY HOW MUCH. The \"none omitted\" below is true of THIS DISK and says nothing about the source. Before trusting an absence — a missing entry, a missing badge, a zero — re-run the read against the local store, or re-seed. UNSTAMPED/UNREADABLE/NONE each mean the stated fact could not be established, never that it is fine.",
+      "",
+      "cairn-arcs-check: status=arcs-check-clean scope=alpha-notes exit=0",
+      "  checked: every arc visible to you",
+      "  coverage: writes measured from entry trailers · reads NOT recorded (not collected in this phase)",
+      "  attribution: trailers are self-reported — actor as written in the entry (only appended bullets had it set by the pod); session ids are declared by the writer",
+      "  visibility: only arcs whose HOME scope is readable to you are checked · a declared scope you cannot read is neither checked nor counted",
+      "  findings (exit 9): a home or declared scope readable to you that does not exist in the store · journal record(s) that could not be read",
+      "  not findings: a member session with no attributed write (members come from commits and transcripts, not entry trailers) and a writing session in no arc (arcs are registered only from now on) — both are coverage, below",
+      "  arcs checked: 2 (open 1 · closed 0 · unknown 1)",
+      "  members: 0 of 3 member sessions wrote an attributed bullet in a scope readable to you (3 did not — coverage, not a finding)",
+      "  sessions: 0 of 0 writing sessions in the scopes readable to you belong to an arc visible to you (0 in no arc — coverage, not a finding)",
+      "  attributed: 0 of 10 bullets across the 6 scope(s) readable to you carry a write trailer",
+      "",
+      "NO FINDING: 2 arc(s) checked, and every home and declared scope readable to you exists. This says nothing about arcs homed in scopes you cannot read.",
+      ""
+    ]
+  },
+  "case": "arcs-check-all-scopes",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Length",
+      "2018"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Exit",
+      "0"
+    ],
+    [
+      "X-Store-Revision",
+      "a11ba11ba11ba11ba11ba11ba11ba11ba11ba11b"
+    ],
+    [
+      "X-Store-Snapshot",
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=11"
+    ],
+    [
+      "X-Store-Status",
+      "arcs-check-clean"
+    ]
+  ],
+  "reason": "OK",
+  "recorded_from": "cmd/cairn-server",
+  "status": 200
+}

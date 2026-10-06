@@ -120,6 +120,16 @@ func (rd Reader) Arc(storeRoot, home, slug string, visible store.ScopeSet, snap 
 	return Rendered{Status: rep.Status, Exit: rep.Exit(), Text: rep.RenderText()}, nil
 }
 
+// ArcsCheck renders one `/arcs/<scope>?check=1` request. Its status and exit come from
+// `ArcsCheckExit`, the one mapping the client also consults.
+func (rd Reader) ArcsCheck(storeRoot, scope string, allScopes bool, visible store.ScopeSet, snap *arcs.Snapshot) (Rendered, error) {
+	rep, err := ArcsCheck(storeRoot, scope, allScopes, visible, snap)
+	if err != nil {
+		return Rendered{}, err
+	}
+	return Rendered{Status: rep.Status, Scope: rep.Scope, Exit: rep.Exit(), Text: rep.RenderText()}, nil
+}
+
 // ExitFor is the exit code, and the one warning line that goes with it. ONE decision site,
 // for both report types.
 //

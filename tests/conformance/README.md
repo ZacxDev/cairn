@@ -169,6 +169,13 @@ the write phase; `put-arc-unchanged` pins that an identical retry appends nothin
 TARGET; the declared-scope refusal (`put-arc-refused-declared`) is a standalone row, and its
 byte-identity with an absent declared scope is pinned in `internal/api/arcs_test.go` instead.
 
+**The orphan check (S5) is a `?check=1` MODE of the `arcs` head, not a new head**, so no route
+ledger moved; its four `arcs-check-*` rows are `go_only` like the head's, with their own
+`arcs-check` refused-equals-absent pair. ⚠ The seeded journal holds no orphan, so every row here
+answers `arcs-check-clean`: the corpus pins the served SHAPE and the authorisation relation, and
+the findings (exit 9) are witnessed by `internal/report/arcscheck_test.go` and `tests/arcs/e2e.sh`.
+The dual-run gate reads the parameter (`flagParam`) and declares it go-only rather than sending it.
+
 ```bash
 tests/conformance/run_go.sh record-go-only   # the ONLY way a go_only golden is written
 ```

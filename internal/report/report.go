@@ -175,6 +175,8 @@ type Renderer interface {
 	// pod has no journal configured (the `registrations-unconfigured` off state).
 	Arcs(storeRoot, scope string, visible store.ScopeSet, snap *arcs.Snapshot) (Rendered, error)
 	Arc(storeRoot, home, slug string, visible store.ScopeSet, snap *arcs.Snapshot) (Rendered, error)
+	// ArcsCheck is the Go-only orphan check, `arcs/<scope>?check=1` — see `arcscheck.go`.
+	ArcsCheck(storeRoot, scope string, allScopes bool, visible store.ScopeSet, snap *arcs.Snapshot) (Rendered, error)
 }
 
 // ValidateRecall is the guard ladder a recall's options must pass, IN THIS ORDER,

@@ -89,8 +89,12 @@ func Verbs() []Verb {
 		// precedent for a hyphenated verb. All three ask the POD (registrations are not in the
 		// cache) and print its body verbatim, so `internal/report`'s arc renderer is the only
 		// rendering of these answers anywhere.
-		{Name: "arcs", Help: "which registered arcs touched the scope, declared or inferred (asks the pod)",
-			Flags: []string{"--scope", "--repo"}, Run: ArcsList},
+		// `--check` is the arc ORPHAN CHECK (S5), a FLAG on this verb rather than a verb of its own:
+		// no verb ledger moves, and it asks the same pod the same head (`arcs/<scope>?check=1`). It
+		// exits on doctor's 0/9/10 (operator decision Q5); `--all-scopes` widens it from arcs homed
+		// in the scope to every arc visible on that scope's instance. See `ArcsList`.
+		{Name: "arcs", Help: "which registered arcs touched the scope, declared or inferred; --check: the orphan check (asks the pod)",
+			Flags: []string{"--scope", "--repo", "--check", "--all-scopes"}, Run: ArcsList},
 		{Name: "arc-show", Help: "one registered arc: status, coverage, members (asks the pod)",
 			Flags: []string{"--scope", "--repo", "--slug"}, Run: ArcShow},
 		{Name: "arc-register", Writes: true,
@@ -240,7 +244,7 @@ func exitLegendText() string {
 	b.WriteString("   8  the precondition failed: re-sync, re-derive, re-apply\n")
 	b.WriteString("   9  `create` only: the entry ALREADY EXISTS; nothing was written\n")
 	b.WriteString("  11  no instance could be decided for this scope; add a line to the table\n")
-	b.WriteString("\n`doctor` has its own set, which it prints on every run:\n")
+	b.WriteString("\n`doctor` has its own set, which it prints on every run (`arcs --check` reuses it):\n")
 	for _, row := range doctor.ExitLegend {
 		fmt.Fprintf(&b, "  %2d  %s\n", row.Code, row.Why)
 	}
