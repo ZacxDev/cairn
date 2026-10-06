@@ -1274,12 +1274,7 @@ func (s *Server) search(rq *request, parts []string, params url.Values) error {
 	// refuse — it would search the CONTENT of every scope in the store. What makes it
 	// safe is that the INDEX is narrowed, so "all scopes" means "all the CALLER'S
 	// scopes".
-	switch lastOr(params, "all_scopes", "0") {
-	case "0", "", "false":
-		opts.AllScopes = false
-	default:
-		opts.AllScopes = true
-	}
+	opts.AllScopes = flagParam(params, "all_scopes")
 	if err := report.ValidateSearch(opts); err != nil {
 		return &badRequestError{message: err.Error()}
 	}
@@ -1336,11 +1331,28 @@ func (s *Server) arcSnapshot() (*arcs.Snapshot, error) {
 // 🔴 AUTHORISED BY `rq.visible` AND NOTHING ELSE — the value `recall` and `sessions` hand their
 // renderers. The scope's existence, the inference's input and each arc's visibility (its HOME
 // scope, Q1) are all decided inside `report.Arcs` from that one set, so there is no per-route
-// check here to drift from it. Query parameters are ignored, `recall`'s rule.
-func (s *Server) arcsList(rq *request, parts []string, _ url.Values) error {
+// check here to drift from it.
+//
+// 🔴 `?check=1` TURNS THE LISTING INTO THE ORPHAN CHECK (`report.ArcsCheck`, slice S5), and
+// `?all_scopes=1` beside it widens the check from arcs HOMED in the path scope to every arc whose
+// home this caller can read — `search`'s `all_scopes` spelling and truth table (`flagParam`), for
+// the same reason: it names no scope, and what keeps it safe is that the INDEX and the arc set are
+// narrowed. The check rides this head rather than a new one because it is a mode of the same
+// question over the same journal and authority; the hazard that shape carries — a pod that
+// predates S5 ignores the parameter and answers a LISTING — is closed client-side, where a listing
+// status in check mode is "could not look" (`report.ArcsCheckExit`). Every OTHER parameter is
+// ignored, `recall`'s rule, and `all_scopes` without `check` is one of those.
+func (s *Server) arcsList(rq *request, parts []string, params url.Values) error {
 	snap, err := s.arcSnapshot()
 	if err != nil {
 		return err
+	}
+	if flagParam(params, "check") {
+		rendered, err := s.Renderer.ArcsCheck(s.StoreRoot, parts[0], flagParam(params, "all_scopes"), rq.visible, snap)
+		if err != nil {
+			return err
+		}
+		return rq.serveReport(parts[0], rendered)
 	}
 	rendered, err := s.Renderer.Arcs(s.StoreRoot, parts[0], rq.visible, snap)
 	if err != nil {
@@ -1588,6 +1600,17 @@ func lastOr(params url.Values, name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// flagParam is a boolean query parameter's ONE truth table: absent, `0`, empty and `false` are off;
+// any other value is on. `search`'s `all_scopes` defined it; the arc check's `check` and
+// `all_scopes` read it here rather than spelling a second table that could disagree.
+func flagParam(params url.Values, name string) bool {
+	switch lastOr(params, name, "0") {
+	case "0", "", "false":
+		return false
+	}
+	return true
 }
 
 // intParam parses an optional integer parameter.

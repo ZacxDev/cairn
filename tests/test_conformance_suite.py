@@ -79,7 +79,8 @@ def _raw_corpus() -> dict:
 
 #: 🔴 THE REAL `go_only` ROWS, SPELLED BY HAND — never derived from the corpus under test,
 #: so a row that lost (or gained) its mark moves the assertions that read this. The
-#: arcs/sessions S2 slice added the `sessions-*` rows and S3 the arc registry's; the next
+#: arcs/sessions S2 slice added the `sessions-*` rows, S3 the arc registry's, and S5 the four
+#: `arcs-check-*` rows (the orphan check, a `?check=1` mode of the `arcs` head); the next
 #: Go-only route moves this set in its commit.
 GO_ONLY_IDS = (
     "sessions-authorized", "sessions-authorized-head", "sessions-legacy-token",
@@ -87,15 +88,18 @@ GO_ONLY_IDS = (
     "sessions-unreadable-scope", "sessions-unauthenticated", "sessions-arity-too-long",
     "arcs-authorized", "arcs-authorized-head", "arcs-declared-elsewhere", "arcs-hidden-home",
     "arcs-legacy-token", "arcs-refused-scope", "arcs-absent-scope", "arcs-no-arc",
-    "arcs-unauthenticated", "arc-authorized", "arc-authorized-head", "arc-unregistered-slug",
+    "arcs-unauthenticated", "arcs-check-all-scopes", "arcs-check-scoped",
+    "arcs-check-refused-scope", "arcs-check-absent-scope",
+    "arc-authorized", "arc-authorized-head", "arc-unregistered-slug",
     "arc-refused-home", "arc-absent-home", "arc-unauthenticated", "arc-arity-too-short",
     "put-arc-registered", "put-arc-unchanged", "put-arc-malformed", "put-arc-refused-declared",
     "put-arc-refused-home", "put-arc-absent-home", "put-arc-legacy", "put-arc-unauthenticated",
 )
 
 #: The relation-level skips those rows cause against the oracle, spelled by hand: four
-#: uniform-401 members, four refused-equals-absent pairs and three head-matches-get pairs.
-GO_ONLY_RELATION_SKIPS = 11
+#: uniform-401 members, five refused-equals-absent pairs (S5 added `arcs-check`) and three
+#: head-matches-get pairs.
+GO_ONLY_RELATION_SKIPS = 12
 
 
 def _raw_corpus_without_go_only() -> dict:

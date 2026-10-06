@@ -1399,6 +1399,46 @@
       "go_only_why": "`arcs/<scope>`, `arc/<home>/<slug>` and `PUT arc/<home>/<slug>` are served by the Go server only - decision 3 of the arcs/sessions plan extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal (`run_go.sh` passes it; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcs_test.go` and `internal/api/arcs_test.go`."
     },
     {
+      "id": "arcs-check-all-scopes",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arcs/alpha-notes?check=1&all_scopes=1",
+      "principal": "wide-reader",
+      "why": "the orphan check over every arc this caller can see: both seeded arcs are homed in readable scopes that exist, so the answer is `arcs-check-clean` with `X-Store-Exit: 0` - doctor's legend (operator decision Q5) - and the coverage lines say how many members and writing sessions it could join.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>?check=1` is the arc orphan check (S5 of the arcs/sessions plan), a mode of the Go-only `arcs` head - decision 3 extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal, a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcscheck_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arcs-check-scoped",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arcs/beta-notes?check=1",
+      "principal": "narrow-reader",
+      "why": "without `all_scopes` only arcs HOMED in the path scope are checked: widget-fix, homed in beta-notes. gadget-rollout DECLARES beta-notes but is homed in alpha-notes, which this caller cannot read, so it is neither checked nor named.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>?check=1` is the arc orphan check (S5 of the arcs/sessions plan), a mode of the Go-only `arcs` head - decision 3 extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal, a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcscheck_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arcs-check-refused-scope",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arcs/alpha-notes?check=1",
+      "principal": "narrow-reader",
+      "why": "alpha-notes EXISTS, holds a registered arc, and this caller may not read it: the check must answer what the absent half answers - the refused half of the `arcs-check` pair.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>?check=1` is the arc orphan check (S5 of the arcs/sessions plan), a mode of the Go-only `arcs` head - decision 3 extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal, a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcscheck_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
+      "id": "arcs-check-absent-scope",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/arcs/ghost-void?check=1",
+      "principal": "narrow-reader",
+      "why": "a scope that has never existed, checked by the same caller. The absent half of the pair.",
+      "go_only": true,
+      "go_only_why": "`arcs/<scope>?check=1` is the arc orphan check (S5 of the arcs/sessions plan), a mode of the Go-only `arcs` head - decision 3 extends `cmd/cairn-server` and not the oracle. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED arc journal, a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/report/arcscheck_test.go` and `internal/api/arcs_test.go`."
+    },
+    {
       "id": "arc-authorized",
       "phase": "read",
       "method": "GET",
@@ -1829,6 +1869,13 @@
         "name": "arcs",
         "refused": "arcs-refused-scope",
         "absent": "arcs-absent-scope",
+        "refused_scope": "alpha-notes",
+        "absent_scope": "ghost-void"
+      },
+      {
+        "name": "arcs-check",
+        "refused": "arcs-check-refused-scope",
+        "absent": "arcs-check-absent-scope",
         "refused_scope": "alpha-notes",
         "absent_scope": "ghost-void"
       },

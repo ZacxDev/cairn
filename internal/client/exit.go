@@ -15,7 +15,7 @@ package client
 //	                7  the write did NOT happen and the reason is not the request
 //	                8  the precondition failed (412 on a `put`)
 //	                9  `create` only: the entry ALREADY EXISTS
-//	DOCTOR          0/9/10 — see `internal/doctor`
+//	DOCTOR          0/9/10 — see `internal/doctor`; `arcs --check` reuses it, no new code
 //
 // 🔴 THE `{0, 9}` OVERLAP WITH `doctor` IS DELIBERATE AND DOCUMENTED, AND THIS PORT MUST NOT
 // CHANGE IT. 0 means success in both because that is what 0 means; 9 is doctor's "a check

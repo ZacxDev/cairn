@@ -991,6 +991,33 @@ jobs:
             exit 1
           fi
 
+      # 🔴 THE ARCS/SESSIONS CLOSING CHECK (S5): both Go binaries, a synthetic store, an arc journal
+      # outside it, real `append`/`arc-register` writes, and what `sessions`/`arcs`/`arc-show`/
+      # `arcs --check` answer — including the not-found answer for a principal without the home
+      # scope. In THIS job because it needs the Go toolchain and nothing else here has it.
+      #
+      # ⚠ THE SELF-TEST RUNS FIRST AND IS NOT OPTIONAL. Every assertion is a grep or an exit-code
+      # compare, which a harness wired to nothing passes; `--self-test` rebuilds from sabotaged copies
+      # of the source (visibility disabled in each arc answer, the check unable to find) and refuses
+      # unless each one turns its named assertion RED. The script itself refuses (exit 2) when fewer
+      # assertions ran than it declares, and the floor below re-counts its PASS lines rather than
+      # reading its exit code.
+      - name: the arcs/sessions end-to-end check, after proving it can go RED
+        run: |
+          set -o pipefail
+          tests/arcs/e2e.sh --self-test | tee /tmp/arcs-e2e-self.txt
+          grep -qx 'SUMMARY e2e-self-test: sabotaged=3 caught=3' /tmp/arcs-e2e-self.txt
+          tests/arcs/e2e.sh > /tmp/arcs-e2e.txt 2>&1 || { cat /tmp/arcs-e2e.txt; exit 1; }
+          cat /tmp/arcs-e2e.txt
+          passes=$(grep -c '^PASS ' /tmp/arcs-e2e.txt || true)
+          fails=$(grep -c '^FAIL ' /tmp/arcs-e2e.txt || true)
+          echo "arcs e2e: passes=$passes fails=$fails"
+          # 32 assertions, measured when the script landed; `EXPECTED` in the script moves with it.
+          if [ "$passes" -lt 32 ] || [ "$fails" -ne 0 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL lines, and 32 / 0 were measured"
+            exit 1
+          fi
+
   # 🔴 THE P2 GATE, AND IT IS ITS OWN JOB FOR THE SAME REASON THE CORPUS IS: its verdict is
   # readable on its own in the checks list, and a failure in either language can never mask it.
   # It needs BOTH runtimes — the Python client is the oracle and the Go client is under test —

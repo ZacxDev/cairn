@@ -239,7 +239,19 @@ def test_every_QUERY_PARAMETER_the_server_reads_is_sent_by_some_target(targets):
     """
     source = (ROOT / "internal" / "api" / "server.go").read_text(encoding="utf-8")
     discovered = set(re.findall(
-        r'\b(?:lastValue|lastOr|intParam|floatParam)\(params,\s*"([a-z_-]+)"', source))
+        r'\b(?:lastValue|lastOr|intParam|floatParam|flagParam)\(params,\s*"([a-z_-]+)"', source))
+    # 🔴 A GO-ONLY PARAMETER IS EXCLUDED BY DECLARATION, NEVER BY HIDING IT FROM THE REGEX. `check`
+    # is read only by the Go-only `arcs/<scope>` head (the arc orphan check, S5 of the arcs/sessions
+    # plan); the oracle serves no arc route, so no dual-run target CAN compare it — the same blind
+    # spot this gate already has for the Go-only heads. `flagParam` is in the alternation above so
+    # the parameter IS discovered and has to be named here; the stale check below fails when a
+    # declared exclusion is no longer read at all.
+    go_only_params = {"check"}
+    stale_go_only = go_only_params - discovered
+    assert not stale_go_only, (
+        f"{sorted(stale_go_only)} is declared Go-only here and the server no longer reads it — "
+        f"an exclusion for a parameter that does not exist")
+    discovered -= go_only_params
     assert discovered >= {"mode", "ref", "limit", "page", "q", "threshold", "max_hits",
                           "context", "all_scopes", "scope", "ref-to", "tag"}, (
         f"the parameter discovery found {sorted(discovered)}, which is missing one of the "

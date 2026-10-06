@@ -1,12 +1,15 @@
 package client
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
 
+	"github.com/ZacxDev/cairn/internal/doctor"
+	"github.com/ZacxDev/cairn/internal/report"
 	"github.com/ZacxDev/cairn/internal/store"
 )
 
@@ -24,7 +27,8 @@ import (
 // `arc-unregistered`, `no-arc-registered` and `registrations-unconfigured`), 3 when the pod did
 // not answer one, 2 for usage, 11 unrouted. `arc-register`: 0 registered or unchanged, 6 refused
 // (malformed payload, a scope the credential may not write, a credential that writes nowhere, a pod
-// with no journal), 7 the write did not happen, 2 usage.
+// with no journal), 7 the write did not happen, 2 usage. `arcs --check` is the exception to the read
+// codes, and still no new one: it exits on DOCTOR'S 0/9/10 at its own call site (see `arcsCheck`).
 
 // maxArcPayloadBytes is the pod's own body cap (`api.maxBodyBytes`); a larger payload is refused
 // here, before the network, rather than sent to be refused there.
@@ -101,10 +105,20 @@ func printPodReport(env Env, label string, headers http.Header, body []byte) int
 }
 
 // ArcsList is `cairn arcs --scope X` (or `--repo P`): the pod's `GET arcs/<scope>`, verbatim.
+// With `--check` it is the orphan check instead — see `arcsCheck`.
 func ArcsList(env Env, opts Options) (int, error) {
+	if opts.AllScopes && !opts.Check {
+		// Refused rather than ignored: `--all-scopes` on a LISTING would be a flag that parses and
+		// changes nothing, which a caller reads as "it listed every arc".
+		fmt.Fprintln(env.Stderr, "cairn: arcs --all-scopes only widens --check; a listing is always about one scope")
+		return ExitUsage, nil
+	}
 	scope := ResolveScope(opts.Scope, opts.Repo, env.Stderr)
 	if scope == "" {
 		return ExitUsage, nil
+	}
+	if opts.Check {
+		return arcsCheck(env, opts, scope)
 	}
 	_, label, cfg, err := podFor(scope)
 	if err != nil {
@@ -115,6 +129,53 @@ func ArcsList(env Env, opts Options) (int, error) {
 		return 0, err
 	}
 	return printPodReport(env, label, headers, body), nil
+}
+
+// arcsCheck is `cairn arcs --check [--all-scopes]`: the pod's `GET arcs/<scope>?check=1`, printed
+// verbatim, exiting on DOCTOR'S legend (operator decision Q5) — `doctor.ExitOK` / `ExitProblem` /
+// `ExitUnmeasured`, read from `internal/doctor`, no new constant.
+//
+// 🔴 THE EXIT IS RECOMPUTED FROM `X-Store-Status` BY `report.ArcsCheckExit`, NOT READ FROM
+// `X-Store-Exit`. A pod that predates the check ignores `?check=1` and answers an `arcs/<scope>`
+// LISTING with `X-Store-Exit: 0`; trusting the header would print that listing as a passed check.
+// A status the mapping does not know is "could not look" (10), said on stderr.
+//
+// 🔴 "THE POD DID NOT ANSWER" IS ALSO 10, NOT 3. On every other read verb 3 means "nothing was
+// read"; on a check the question is whether anything was MEASURED, and doctor's 10 is that answer.
+// Two refusals keep their own codes because they happen before any look: usage (2) and an unrouted
+// scope (11, the routing contract every verb shares).
+//
+// ⚠ ONE INSTANCE PER RUN: the scope (`--scope`, `--repo`, or the working directory's repo) picks
+// the pod, and `--all-scopes` means every arc visible on THAT pod. A multi-instance host is not
+// fanned out; run it once per instance's scope.
+func arcsCheck(env Env, opts Options, scope string) (int, error) {
+	_, label, cfg, err := podFor(scope)
+	if err != nil {
+		var unrouted *UnroutedScope
+		var badConfig *RoutingConfigError
+		if errors.As(err, &unrouted) || errors.As(err, &badConfig) {
+			return 0, err
+		}
+		fmt.Fprintf(env.Stderr, "🔴 cairn: arcs --check could NOT look — %s\n", err)
+		return doctor.ExitUnmeasured, nil
+	}
+	path := "/api/v1/arcs/" + quoteAll(scope) + "?check=1"
+	if opts.AllScopes {
+		path += "&all_scopes=1"
+	}
+	headers, body, err := FetchReport(cfg, path, opts.Timeout)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "🔴 cairn: arcs --check could NOT look — %s\n", err)
+		return doctor.ExitUnmeasured, nil
+	}
+	printPodReport(env, label, headers, body)
+	status := headers.Get("X-Store-Status")
+	code, ok := report.ArcsCheckExit(status)
+	if !ok {
+		fmt.Fprintf(env.Stderr, "🔴 cairn: arcs --check could NOT look — the pod answered status %s, which is not a check answer "+
+			"(a pod that predates `arcs --check` ignores ?check=1 and lists instead)\n", store.PyRepr(status))
+	}
+	return code, nil
 }
 
 // ArcShow is `cairn arc-show --slug S` (home from `--scope`/`--repo`): `GET arc/<home>/<slug>`.
