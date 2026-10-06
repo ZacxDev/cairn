@@ -1002,35 +1002,12 @@
     @apply font-mono text-xs text-accent;
   }
 
-  /* The legend — a `<details>`, so it is one tap from the answer and costs no vertical
-   * space to a reader who already knows. No script: `<details>` is native. */
-  .legend {
-    @apply border border-line rounded-card px-4 py-3 text-sm bg-raised/60;
-  }
-
-  .legend summary {
-    @apply cursor-pointer text-muted font-medium;
-  }
-
-  .legend dl {
-    @apply grid gap-x-3 gap-y-1 mt-3;
-    grid-template-columns: max-content 1fr;
-  }
-
-  .legend-term {
-    @apply font-mono text-xs text-accent;
-  }
-
-  .legend-def {
-    @apply text-xs text-muted;
-  }
-
   /* ---- The prose measure. ------------------------------------------------------
    *
    * 🔴 EVERY PARAGRAPH OF PROSE ON THIS SURFACE, CAPPED IN ONE PLACE, AND IT IS THE OTHER
    * HALF OF THE ULTRAWIDE RUNG RATHER THAN A SEPARATE IDEA. The shell's top rung is now
-   * ~90% of an ultrawide display; every selector below is a SENTENCE — an explainer, a
-   * notice, a legend — which is exactly the content a 3100px container is wrong for. They
+   * ~90% of an ultrawide display; every selector below is a SENTENCE — an explainer or a
+   * notice — which is exactly the content a 3100px container is wrong for. They
    * are one list so the measure cannot come apart across eight rules, and so adding a ninth
    * prose class is one line in one place.
    *
@@ -1054,8 +1031,7 @@
   .missing,
   .replica-honesty,
   .read-only,
-  .outcome,
-  .legend {
+  .outcome {
     max-width: min(100%, var(--measure-prose));
   }
 }

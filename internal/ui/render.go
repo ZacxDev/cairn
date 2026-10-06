@@ -194,7 +194,6 @@ func ScopePage(v PageView) g.Node {
 		h.Section(
 			h.Class("card"),
 			h.H2(g.Text(s.Name)),
-			h.P(h.Class("card-what"), g.Text(scopeWhat)),
 			scopeStats(s),
 			g.If(len(s.Entries) == 0, h.P(h.Class("empty"), g.Text(
 				"This scope holds no readable entry. That is what the index says about "+
@@ -380,7 +379,7 @@ func relativeTime(at, now time.Time) string {
 // thing the raw view exists to be an alternative to. ONLY THE RAW VIEW CARRIES AN EXPLAINER
 // (`entryRawWhat`): the rendered view's — a paragraph re-describing the sections a reader is
 // looking at — was dropped on an operator decision, and its one useful mapping (`##` becomes a
-// heading, a marker becomes a badge) is still in the legend below. The raw view keeps its own
+// heading, a marker becomes a badge) is in `internal/ui/README.md`'s table. The raw view keeps its own
 // because it says something that view cannot show: that NOTHING is parsed, and that invalid
 // UTF-8 is the one substitution.
 func EntryPage(v PageView) g.Node {
@@ -413,22 +412,10 @@ func EntryPage(v PageView) g.Node {
 				missingBlock(e),
 			})),
 		),
-		// 🔴 NO LEGEND ON THE RAW VIEW, AND ITS DELETION IS A FINDING RATHER THAN A
-		// TRIM. A first version shipped `entryRawLegend()`, four rows. Three of them
-		// restated `entryRawWhat`, twenty pixels above on the same page. ❌ AND THE REASON
-		// FIRST GIVEN FOR DROPPING THE FOURTH WAS ITSELF FALSE, WHICH IS THE DEFECT THIS
-		// DELETION WAS SUPPOSED TO BE FIXING. It said the row's claim — long lines "are
-		// wrapped for reading rather than scrolled" — was wrong because `.entry-raw`
-		// carries `overflow-x-auto` too, "so scrolling is exactly what stays available".
-		// MEASURED in a real browser at 1440px and 390px, on a line of 5700 spaced
-		// characters AND a 4000-character unbreakable token: `scrollWidth == clientWidth`
-		// at both, nothing horizontally scrollable. `overflow-x: auto` is SET and never
-		// ENGAGES, because `pre-wrap` plus `break-word` means the content cannot exceed
-		// the box. The deleted row was substantially RIGHT. The deletion stands on its
-		// other three grounds — three of four rows restating the explainer above them,
-		// and a legend being a key to a diagram; the raw view
-		// renders ONE element, and the mapping a legend would explain is the identity.
-		g.If(!v.RawView, entryLegend()),
+		// ⚠ NO LEGEND ON EITHER VIEW. The raw view's was deleted first (three of its four rows
+		// restated `entryRawWhat`); the rendered view's "What am I looking at?" went later, on an
+		// operator decision, with the root and scope legends. The field-by-field mapping is
+		// `internal/ui/README.md`'s table.
 	)
 }
 
@@ -809,10 +796,13 @@ func scopeCard(s Scope, now time.Time) g.Node {
 		h.Div(
 			h.Class("card-head"),
 			h.H2(scopeLink(s)),
-			h.Span(h.Class("kind"), g.Text("scope")),
+			// The definition the card used to print under its head ("A scope is one directory
+			// under the store root…") is a TOOLTIP on this label now, on an operator decision —
+			// the same trim the legends got. It answers the original complaint (what IS this
+			// heading) one hover away instead of on every card of every visit.
+			h.Span(h.Class("kind"), h.TitleAttr(scopeKindTooltip), g.Text("scope")),
 			timeAgo(s.MTime(), now),
 		),
-		h.P(h.Class("card-what"), g.Text(scopeWhat)),
 		scopeStats(s),
 		g.If(len(s.Entries) > 0, h.Ul(
 			h.Class("card-entries"),
@@ -1252,8 +1242,8 @@ func missingBlock(e Entry) g.Node {
 			". That is different from a heading that is present and empty."))
 }
 
-// The explainers, and the ONE legend left (the entry page's). Each answers "what am I looking at"
-// in the vocabulary of the FILES rather than of this renderer.
+// The explainers that are left. Each answers "what am I looking at" in the vocabulary of the
+// FILES rather than of this renderer.
 //
 // 🔴 THEY EXIST BECAUSE THE FIRST VERSION OF THIS SURFACE WAS UNREADABLE FOR A REASON NO
 // TEST COULD SEE. Every escaping guard, every authority guard and every route guard was
@@ -1262,14 +1252,17 @@ func missingBlock(e Entry) g.Node {
 // prose is the only fix for it — so the prose is here, beside the thing it describes,
 // rather than in a README nobody has open while they are looking at the page.
 //
-// ⚠ AND THE OPERATOR HAS SINCE TRIMMED IT, ON A SECOND READING OF THE SAME PAGES: the root and
-// scope legends and the rendered entry view's explainer are gone, judged noise on a page read
-// every day once its labels were clear. That is a decision about THESE strings, not a retraction
-// of the paragraph above — the raw view's explainer and the entry legend stay, because each says
-// something about the mapping the page itself cannot show.
+// ⚠ AND THE OPERATOR HAS SINCE TRIMMED IT, ON A SECOND READING OF THE SAME PAGES: every legend
+// (root, scope AND entry), the rendered entry view's explainer and the scope explainer are gone,
+// judged noise on a page read every day once its labels were clear; the scope definition survives
+// as the root card's "scope" tooltip and the full field-by-field table lives in
+// `internal/ui/README.md`. That is a decision about THESE strings, not a retraction of the
+// paragraph above — the raw view's explainer stays, because it says something the raw view
+// itself cannot show.
 const (
-	scopeWhat = "A scope is one directory under the store root. Its entries are the " +
-		"`.md` files in it, one file per entry."
+	// scopeKindTooltip is what the root card's "scope" label says on hover — the short form of
+	// the explainer every card and the scope page used to print, removed on an operator decision.
+	scopeKindTooltip = "one directory under the store root; its entries are the .md files in it"
 	// 🔴 THE RAW VIEW'S EXPLAINER SAYS WHAT IS AND IS NOT SHOWN, AND THE SECOND HALF IS THE
 	// USEFUL ONE. A reader reaches this view because the rendered page did not account for
 	// something in the file; the fact worth telling them is that this view is the WHOLE file
@@ -1306,51 +1299,6 @@ func searchWhatFor(tag string) string {
 		return searchWhat
 	}
 	return searchWithinTagWhat
-}
-
-func entryLegend() g.Node {
-	return legend([][2]string{
-		{"section", "one `##` heading in the file. The heading TEXT is rendered as a heading and " +
-			"the `##` is not reprinted; a heading spelled any other way — one `#`, three, no " +
-			"space — also shows the file's own line. `## Nuance / work-history` is shown as " +
-			"History; hover it for the line as written"},
-		{"line item", "one top-level `-` bullet, with every continuation line it carries. The " +
-			"`-` is the list item and the badges are the marker, so neither is printed twice"},
-		{"date", "an ISO date the bullet's first line starts with. Around half of a real " +
-			"corpus carries none, so a blank is ordinary rather than a parse failure"},
-		{"OPEN / near-miss / resolved", "which of the store's openness populations the " +
-			"bullet is in — exactly one, decided by one predicate shared with the CLI"},
-		{"inline code", "a single-backtick span in the file, rendered as code. A backtick with " +
-			"no closer on its line is left exactly as typed, and nothing inside a code fence " +
-			"is touched"},
-		{"operator / inferred", "WHO stated a `## Requirements` line item — read from a " +
-			"parenthetical immediately after the marker (`- OPEN: (operator) …`), which the " +
-			"badge replaces rather than repeats, exactly as it does the marker. It is absent " +
-			"when the file records nobody, which is a DECIDED third answer and not a weak " +
-			"`inferred`; a near-spelling such as `(Operator)` or `(operators)` is absent too, " +
-			"because an attribution the file does not make must not be manufacturable — and a " +
-			"spelling this badge does not claim is left in the text, never quietly removed"},
-		{"marker out of reach", "a correctly-spelled `OPEN:` / `RESOLVED <sha>:` on a line item's " +
-			"SECOND or later line. A marker is read from the first line only, so it declares " +
-			"nothing — it stays in the text and is called out rather than badged"},
-	})
-}
-
-func legend(rows [][2]string) g.Node {
-	return h.Details(
-		h.Class("legend"),
-		h.Summary(g.Text("What am I looking at?")),
-		h.Dl(g.Group(func() []g.Node {
-			out := make([]g.Node, 0, len(rows)*2)
-			for _, row := range rows {
-				out = append(out,
-					h.Dt(h.Class("legend-term"), g.Text(row[0])),
-					h.Dd(h.Class("legend-def"), g.Text(row[1])),
-				)
-			}
-			return out
-		}())),
-	)
 }
 
 // labelledList is the aliases/refs/tags block on the entry page: a heading, then the list — and

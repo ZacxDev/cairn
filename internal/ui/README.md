@@ -1676,11 +1676,14 @@ not a guard on a LEAK**, because a leak needs no reachable URL.
 
 ## What each field on the page is in the underlying file
 
-This table USED to be rendered on the root and scope pages as well, as a `<details>` legend.
-⚠ **Those two legends are DELETED, on an operator decision** (the recency/filter change): once
-the pages' own labels were clear the definitions read as noise on every visit. The entry page
-keeps its legend, and the short definitions of the Aliases / Refs / Tags lists moved into
-`title=` tooltips on their headings. So this README is now the one full copy.
+This table USED to be rendered on the pages as well, as `<details>` legends.
+⚠ **All three legends — root, scope and entry — are DELETED, on an operator decision** (the
+recency/filter change), as is the scope explainer the root cards and the scope page printed:
+once the pages' own labels were clear the definitions read as noise on every visit. The short
+definitions of the Aliases / Refs / Tags lists, and of "scope", moved into `title=` tooltips. So
+this README is now the one full copy, and the entry legend's rows (sections, line items, dates,
+the openness badges, inline code, operator/inferred, markers out of reach) are the table above
+plus the badge sections of this document.
 
 | on the page | in the store |
 |---|---|
@@ -2700,7 +2703,12 @@ and the visible definition lines under Aliases / Refs / Tags (with `RefsKeyDescr
 `TagsKeyDescription`, their two pin tests and the `ui-tags-key-description-loses-both-its-claims`
 battery row). Short definitions moved to `title=` tooltips on those headings. `entryRawWhat` is
 KEPT: it says something the raw view cannot show (nothing is parsed; invalid UTF-8 is the one
-substitution). The entry legend is kept.
+substitution). A second approved round then removed the entry page's "What am I looking at?"
+legend and the scope explainer (`scopeWhat`) from the root cards and the scope page; "scope" keeps
+a short `title=` on the root card's kind label. `TestNoPageCarriesALegendOrTheScopeExplainer`
+asserts it by element and class (no `<details>` on any browse page, no `card-what` on the root or
+in the scope page's own card, with the raw view's explainer as the positive control): RED at the
+previous head `458ef8a` with 4 findings, green after.
 
 **Chips, and History.** Aliases (inert), refs (mono; refused refs keep `.task.refused`) and tags
 (links to `/?tag=`) render as pills on the entry page and on scope rows — the `ul` carries `chips`

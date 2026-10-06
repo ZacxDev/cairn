@@ -41,6 +41,57 @@ func hasClassSet(body, tag string, want ...string) bool {
 	return false
 }
 
+// TestNoPageCarriesALegendOrTheScopeExplainer pins the SECOND round of the operator's trim: the
+// entry page's "What am I looking at?" legend (both views) and the scope explainer — on the root
+// cards AND the scope page — are gone, asserted by ELEMENT and CLASS rather than by sentence, and
+// the scope definition survives as a `title=` on the root card's "scope" label.
+func TestNoPageCarriesALegendOrTheScopeExplainer(t *testing.T) {
+	root, id, orchard := recencyWorld(t)
+	srv := recencyServer(t, root, id)
+	pages := map[string]string{
+		"root":      RootPath,
+		"scope":     ScopePath + "?" + QueryID + "=" + string(orchard),
+		"entry":     entryHref(orchard, "birch", false),
+		"entry raw": entryHref(orchard, "birch", true),
+	}
+	bodies := map[string]string{}
+	for name, path := range pages {
+		rec := getAs(t, srv, path)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s answered %d", name, rec.Code)
+		}
+		bodies[name] = rec.Body.String()
+		// No legend of any kind: no `<details>` at all on a browse page, and no legend class.
+		if strings.Contains(bodies[name], "<details") || hasClassSet(bodies[name], "details", "legend") {
+			t.Errorf("the %s page still carries a <details> legend", name)
+		}
+	}
+	// No explainer paragraph on the root cards, nor in the scope page's own card (its head, between
+	// the heading and the filter control). The sessions/arcs cards further down keep theirs — they
+	// were not part of this decision — which is why the scope page is checked in that span only.
+	if hasClassSet(bodies["root"], "p", "card-what") {
+		t.Error("the root page still renders a card-what explainer")
+	}
+	scopeHead := bodies["scope"]
+	a, b := strings.Index(scopeHead, "<h2>orchard-notes</h2>"), strings.Index(scopeHead, `id="entry-filter-control"`)
+	if a < 0 || b < a {
+		t.Fatalf("the scope page's head span was not found (h2 at %d, filter at %d)", a, b)
+	}
+	if hasClassSet(scopeHead[a:b], "p", "card-what") {
+		t.Error("the scope page's own card still renders a card-what explainer")
+	}
+	// POSITIVE CONTROL on the `card-what` probe: the raw view still renders its own explainer, so
+	// the class scan above can see one when it is there.
+	if !hasClassSet(bodies["entry raw"], "p", "card-what") {
+		t.Fatal("the raw view's `card-what` explainer is not found, so the absence check above is vacuous " +
+			"(or `entryRawWhat` was removed, which this change did not ask for)")
+	}
+	// The definition moved to a tooltip on the root card's kind label.
+	if !regexp.MustCompile(`<span class="kind" title="[^"]+">scope</span>`).MatchString(bodies["root"]) {
+		t.Error("the root card's \"scope\" label carries no title= tooltip")
+	}
+}
+
 func TestTheRemovedDefinitionCopyIsAbsentAndChipsArePresent(t *testing.T) {
 	root, id, orchard := recencyWorld(t)
 	srv := recencyServer(t, root, id)
