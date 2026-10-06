@@ -20,39 +20,40 @@ aliases/tags/refs as chips, and a clearer label for the journal section.
   box that narrows the row count when a query is typed.
 
 ## State now
-- **PR #191 OPEN, not merged** — branch `zach/ui-browse-recency-filter`, head `458ef8a`,
-  `mergeable=MERGEABLE`; CI was still running at handoff (only `leakscan` had finished, green).
-  Built by a subagent in worktree `.claude/worktrees/agent-a76c7198a96027f59`.
-- Operator decisions taken this session (AskUserQuestion): filter is CLIENT-SIDE JS (operator
-  chose it over a no-JS `?q=` form); "updated" = entry FILE mtime; journal section displays as
-  "History" (literal heading in `title=`), rows say "N history notes", entry page drops the
-  count; drop entryWhat, the Aliases/Tags/Refs definition lines AND the root/scope legends.
-- What the PR does (subagent's report; gates NOT re-run by the parent beyond `go vet` of
-  `internal/ui` + `internal/report` in the worktree, rc 0): `report.FileMTime`/`report.NewerFirst`
-  exported and shared by recall ordering and the UI; server-side relative time against
-  `Config.Now`; `internal/ui/filter.js` served at a content-hashed `/static/filter.<hash>.js`;
-  the zero-script claim replaced by an allowlist (`ui.AllowedScriptSources()`), guarded over
-  rendered pages, uiaudit's walk, and a JS source ban (`innerHTML`, `fetch`, …); pinned-whole
-  tests for RefsKeyDescription/TagsKeyDescription and battery row
-  `ui-tags-key-description-loses-both-its-claims` deleted (battery now 200 mutants).
-- Reported, unverified by the parent: go test 23 ok; run_go.sh 0 failures; leakscan clean;
-  uiaudit 120 captures, 0 non-allowlisted scripts, 0 axe violations; 18/18 mutants killed.
-  Full pytest NOT re-run after the subagent fixed the 3 mutant-count pins.
-- Not deployed anywhere.
+- ⏳ **VERDICT: NOT ADDRESSED — one clause open: the filter NARROWING the row count when a
+  query is typed, observed on the deployed UI.** Everything else in the closing condition is
+  measured: PR #191 squash-merged as `45df720` (content-verified: `internal/ui/filter.js` on
+  `origin/main`, `internal/` identical to the PR head `12f7fda`); the deployed personal pod's
+  served HTML (operator token over a port-forward, not a browser) shows 26 root cards and 83
+  scope rows each newest-first with `<time class="updated">` (`6m ago`, `22m ago`, `1h ago`…),
+  the filter control rendered, exactly one script `/static/filter.0d69fda9244d.js` (served 200
+  `text/javascript`, 3133 B, unauthenticated), "N history notes", the History heading with the
+  literal heading as tooltip, alias/tag chips, an `updated` row, and NO legend/explainer on any
+  of the three pages. The filter's typing behaviour is CI-only (uiaudit's real-browser test).
+- **Audit:** round 0 → proceed (1 deletion candidate D1, kept: the copy-absence tests guard
+  against an agent re-adding the copy); round 1 → CLEAN at `4eae012`, ladder ended. Two comment
+  overclaims round 0 flagged were fixed in `12f7fda` (allowlist is a claim about the ORIGIN's
+  bytes; five negative controls, not four). The PR body's stale legend sentence was corrected in
+  a PR comment, not a silent edit.
+- **Deployed, both instances, both pods `sha-45df720`, 0 restarts:** personal via deployment
+  repo `trunk` `7bd2b9a` (rollback: both lines back to `sha-ea9cfa7…`); client via the client
+  infra repo's `trunk` `aa72e83`, pinned by tag AND digest (store `sha256:1663000d…`, ui
+  `sha256:62495665…`; rollback to `ea9cfa7` @ `ba216e99…`/`1e239549…`). APIs answer on both
+  (`arcs --check` clean on personal; client `recall`/`arcs` answer from the client instance).
 - The prior arc `cairn-arcs-sessions` is CLOSED; its two post-close items (client-instance UI
-  after operator sign-in; client backup's `arcs:` upload branch on its first real run) still
-  wait on external triggers — see that doc. Re-checked today: two client-routed scopes answer
-  `no-arc-registered` (2 of 7 sampled).
+  after operator sign-in; the client backup's `arcs:` upload on its first real run) still wait
+  on external triggers — see that doc.
+- **mtimes are real on the deployed store** — the root page's times are minutes-to-hours old,
+  not the seed time, so the "re-seed resets updated" caveat did not bite here.
 
 ## Next steps (ranked)
-1. **Ask the operator** whether to also drop the scope page's `scopeWhat` explainer ("A scope
-   is one directory under the store root…") and the entry page's collapsed "What am I looking
-   at?" legend — both still render on #191 (seen in the subagent's screenshots).
-   Repo cairn, `internal/ui/render.go`. forcing: user — the operator asked for the copy gone.
-2. **Wait for #191's CI, then `/audit-pr 191`**, fix findings as one batch, re-run the full
-   pytest suite. IN FLIGHT: ZacxDev/cairn#191. forcing: user — operator feedback being shipped.
-3. **Merge, publish images, deploy the UI to both instances, verify signed-in** on the
-   personal instance (operator's browser, background tab, never raised). forcing: user
+1. **Type a query into the scope page's filter on the deployed personal UI** (operator's
+   browser, owned background tab, never raised) and watch "N of M entries" drop; that closes
+   the arc. No browser profile was connected on this host this session (`whoami` →
+   `connected: 0`). forcing: user — the operator asked for the filter.
+2. **The client UI's signed-in check** is still blocked on the operator signing in there (the
+   arcs-sessions doc's rank 1); this rollout changed its image too, so do both checks in one
+   visit. forcing: user
 
 ## Gotchas / decisions / dead-ends
 - **Ref pointers exist only per ENTRY** (`refs:`/`tasks:` front matter, `<system>:<id>`,
@@ -66,6 +67,15 @@ aliases/tags/refs as chips, and a clearer label for the journal section.
 - The CSP is gone by operator decision (internal/ui/README.md), so the script needs no
   header change; served pages already carry Cloudflare-injected scripts downstream, which the
   allowlist guard (origin bytes) cannot see.
+
+- **Verifying the UI without a browser:** port-forward `deploy/cairn-ui` and `curl -H @<file>`
+  with `Authorization: Bearer <cairn-ui-operator.token>` (header from a 0600 file, never argv) —
+  a header credential beats the cookie backend, and the response is the ORIGIN's bytes (no
+  edge-injected scripts). It proves rendering and order, not script behaviour. via: command
+- **The base-clone write guard judges a `git -C $VAR` it cannot resolve as the cwd's repo** and
+  refuses; spell the worktree path literally. via: command
+- **The client infra repo's pre-push gate needs pyyaml**; run the push inside
+  `nix-shell -p 'python3.withPackages(p: [p.pyyaml])'` rather than `--no-verify`. via: command
 
 ## How to verify
 ```bash
