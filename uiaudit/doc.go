@@ -50,9 +50,11 @@
 // rules name:
 //
 //   - CONSOLE, WHICH IS STRUCTURAL; AND NETWORK, WHICH IS ONLY STRUCTURAL ON SOME TREES.
-//     The page ships no script, and `internal/ui`'s own XSS guard asserts that `"<img"` can
+//     A page with no script, and `internal/ui`'s own XSS guard asserts that `"<img"` can
 //     never render, so a console count of 0 is a fact about the page's shape rather than
-//     about its correctness — on every tree.
+//     about its correctness. ⚠ EXCEPT ON THE SCOPE PAGE, which now runs the ONE allowlisted
+//     script (`ui.AllowedScriptSources`, the entry filter): there a 0 is a MEASUREMENT that
+//     the script threw nothing, and `printSignalSummary` says which kind it printed.
 //
 //     ⚠ THE NETWORK HALF IS NARROWER, AND IT IS THE SECOND TIME A DRAFT OF THIS SENTENCE
 //     OVERREACHED. It rested on the stylesheet being INLINE, which made a page with no

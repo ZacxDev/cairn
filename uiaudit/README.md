@@ -346,7 +346,7 @@ nothing). Measured, both halves in the same run:
 | images with no dimensions | **1** | **0** | **structural** — no `<img>` renders anywhere; an existing XSS guard asserts `"<img"` cannot |
 | horizontal overflow | **true** | **false** on every page | real |
 | missing `<meta viewport>` | **true** | **false** on every page | real — gomponents' `HTML5` supplies it, and nothing pinned that before |
-| console events | **2** | **0** | **structural** — no script on the ORIGIN this walk boots, so nothing to observe. ⚠ Not "no script anywhere": see the scope note below the blind set |
+| console events | **2** | **0** | **structural** on pages with no script; ⚠ since the entry filter, a MEASUREMENT on the scope page, which runs the one allowlisted script (`ui.AllowedScriptSources`). Not "no script anywhere": see the scope note below the blind set |
 | network events (page subresources) | **2** | **0** | **structural** — there are none |
 | a11y digest entries | **1** | **10** on `/`, 3 on `/sign-in`, 4 on `/share` | real |
 | screenshot | **31137 bytes**, PNG magic checked | 6 PNGs | real |

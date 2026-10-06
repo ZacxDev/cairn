@@ -214,7 +214,7 @@ func TestTheBodyLabelSaysREFSAndNotTASKS(t *testing.T) {
 //
 // 🔴 `tasks:` AND `task:` STAY ACCEPTED ON THE WAY IN, PERMANENTLY, BY OPERATOR DECISION. An
 // entry written with an older key must therefore render the NEW label: the parser keeps no
-// record of which key it read, which is also why `ui.RefsKeyDescription` names both spellings.
+// record of which key it read, which is also why the browser's Refs tooltip names both spellings.
 // A guard on the `refs:` fixture alone would pass just as well if the rename had been
 // implemented by dropping the older keys — the one outcome this change must not have — so this
 // case is not redundant with the one above.

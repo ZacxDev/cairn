@@ -663,9 +663,10 @@ func viewportWidths() string {
 // ⚠ AND THE STRUCTURAL CLAIM IS NARROWER THAN AN EARLIER DRAFT OF IT SAID, WHICH IS A
 // CORRECTION RATHER THAN A CAVEAT. That draft printed "console=%d network=%d — STRUCTURAL
 // ZERO" over both numbers, on the reasoning that a page with no scripts and no subresources
-// cannot produce either. The first half holds: `internal/ui` ships an inline stylesheet, no
-// script, and an XSS guard asserting `"<img"` can never render, so the console collector has
-// nothing to observe. The second half was FALSE, and the walk that printed it had a non-zero
+// cannot produce either. The first half held then: `internal/ui` shipped an inline stylesheet,
+// no script, and an XSS guard asserting `"<img"` can never render, so the console collector had
+// nothing to observe. ⚠ It holds now only on pages without the one allowlisted script (the
+// scope page's entry filter) — the console line below says which kind of zero it printed. The second half was FALSE, and the walk that printed it had a non-zero
 // network count on the same line — because a browser requests `/favicon.ico` on its own
 // initiative and this surface has no such row, so it answers the dispatcher's refusal. That
 // is counted separately (see [Browser.FaviconRefusals]) and the per-page network zero below
