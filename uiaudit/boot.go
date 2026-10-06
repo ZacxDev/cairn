@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/arcs"
+	"github.com/ZacxDev/cairn/internal/store"
 	"github.com/ZacxDev/cairn/internal/ui"
 )
 
@@ -105,6 +108,11 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*
 		return nil, fmt.Errorf("the fixture store %s holds no scopes: a walk over it would capture an empty surface and report success", store)
 	}
 
+	arcJournal, err := writeArcJournal(dir, scopes)
+	if err != nil {
+		return nil, err
+	}
+
 	tokenPath := filepath.Join(dir, "tokens")
 	row := fmt.Sprintf("%s %s %s\n", fixtureToken, fixtureIdentity, strings.Join(scopes, ","))
 	if err := os.WriteFile(tokenPath, []byte(row), 0o600); err != nil {
@@ -141,6 +149,7 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*
 		"-store", store,
 		"-token-file", tokenPath,
 		"-session-file", filepath.Join(dir, "sessions.json"),
+		"-arc-journal", arcJournal,
 		"-host", bindHost,
 		"-port", fmt.Sprint(port),
 	)
@@ -237,6 +246,57 @@ func waitHealthy(ctx context.Context, url string, budget time.Duration) error {
 		}
 	}
 	return fmt.Errorf("cairn-ui never became ready within %s: %v", budget, last)
+}
+
+// writeArcJournal writes one arc registration PER FIXTURE SCOPE into a journal OUTSIDE the store
+// tree and returns its path, so the walk reaches the arcs card's LISTED state and the `/arc` page
+// itself — neither exists on a pod with no journal, and the unconfigured card is what
+// `internal/ui`'s own tests pin.
+//
+// 🔴 ONE PER SCOPE, NOT ONE, AND THAT IS MEASURED: the root publishes a link per scope and
+// `ExpandLinks` keeps the first four by sorted PATH — i.e. by scope ID — so a single arc homed in
+// one named scope was on a scope page the walk never captured, and the first run reached no
+// `/arc?…` page at all. With every scope carrying one, every captured scope page links one, and
+// `/arc?…` sorts ahead of `/entry?…` under that same per-page bound.
+//
+// 🔴 NO NAME IS INVENTED: each arc is homed in a fixture scope and its slug IS that scope's name,
+// the registrar is `fixtureIdentity`, and there are no members — so every string in the record
+// comes from the fixture world `tests/leakscan.py` already reads. The status is OMITTED, so the
+// captured pages show `unknown` — the Q4 state a reader is likeliest to misread as `open`.
+//
+// ⚠ THIS IS A JOURNAL NO DEPLOYMENT HAS YET, AND THAT IS THE TRADE BOOT.GO OTHERWISE REFUSES (see
+// `-control-journal` below). It is taken here because the registry's whole browser surface is
+// unreachable without one, and the deployment it previews is the one the plan's mount change
+// produces. The journal is written with `internal/arcs`' own record type, so a shape the pod would
+// skip as unreadable cannot be captured as if it were a registration.
+func writeArcJournal(dir string, scopes []string) (string, error) {
+	var b strings.Builder
+	for _, home := range scopes {
+		// `validRecord` refuses a home that is not already normalized; such a scope gets no arc.
+		if store.NormalizeRef(home) != home {
+			continue
+		}
+		reg := arcs.Registration{Schema: arcs.Schema, Home: home, Slug: home, Status: arcs.StatusUnknown,
+			ClosingKind: arcs.ClosingNone, DeclaredScopes: []string{home}, Members: []arcs.Member{},
+			ReportedAt: "2000-01-01T00:00:00Z", RegisteredBy: fixtureIdentity, RegisteredAt: "2000-01-01T00:00:00Z"}
+		line, err := json.Marshal(reg)
+		if err != nil {
+			return "", err
+		}
+		b.Write(line)
+		b.WriteByte('\n')
+	}
+	if b.Len() == 0 {
+		// A CONTENT-FLOOR refusal, for `listScopes`' reason: a journal with nothing in it would
+		// capture the empty card everywhere and report the listed state as covered.
+		return "", fmt.Errorf("no fixture scope name is already normalized, so no arc can be homed in one: %v", scopes)
+	}
+	arcDir := filepath.Join(dir, "arcs")
+	if err := os.MkdirAll(arcDir, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(arcDir, "journal.jsonl")
+	return path, os.WriteFile(path, []byte(b.String()), 0o600)
 }
 
 // listScopes reads the store root the way `tokenfile.Source.storeDirs` does: a scope is a

@@ -48,6 +48,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/authz"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/control/tokenfile"
@@ -252,6 +253,16 @@ func main() {
 	// 🔴 AND ITS DEFAULT IS NOT `envOr`, FOR `-control-journal`'S REASON — a whitespace
 	// value would resolve to "not set" and this surface would come up with no invitation
 	// store while the operator's manifest said otherwise. See `databaseDSNDefault`.
+	// 🔴 THE ARC JOURNAL IS THE POD'S FLAG AND THE POD'S VARIABLE, READ THE POD'S WAY. Same name
+	// (`-arc-journal`), same environment spelling (`$CAIRN_ARC_JOURNAL`, `arcs.EnvJournal`), same
+	// `envOr` default, same blank refusal and the same inside-the-store refusal below — one
+	// operator line configures both binaries, and a second policy here would be a second answer
+	// to "is the registry configured". The difference is the MOUNT, not the flag: the UI reads
+	// the file and never writes it, so its volume is mounted READ-ONLY.
+	arcJournal := flag.String("arc-journal", envOr(arcs.EnvJournal, ""),
+		"the arc registry's journal (a FILE), READ-ONLY here — the pod writes it. NO DEFAULT: unset, "+
+			"the scope page's arcs card and the arc page say registrations are unconfigured. 🔴 IT MUST "+
+			"RESOLVE OUTSIDE -store — this surface refuses to start otherwise, for the pod's reason")
 	dsnDefault, dsnErr := databaseDSNDefault(os.Getenv)
 	dbDSN := flag.String("db-dsn", dsnDefault,
 		"PostgreSQL connection string for the session and invite tables; without one, sessions live in "+
@@ -279,6 +290,18 @@ func main() {
 	// on whether the flag was also given: the policy is about the LINE the operator wrote.
 	if dsnErr != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+dsnErr.Error())
+		os.Exit(exitConfig)
+	}
+
+	// 🔴 THE ARC JOURNAL IS CHECKED BEFORE ANYTHING IS SERVED, WITH THE POD'S OWN FUNCTION. A
+	// journal that resolves inside the store root is a refusal to start on BOTH binaries
+	// (operator decision Q2): every directory at the store root is a scope to the token-file
+	// authority, so a journal "beside the store" would hand its directory to every bare row.
+	// `arcs.ResolveJournalPath` is the ONE implementation of "inside" — symlinks resolved, the
+	// root itself included — and this surface calls it rather than restating it.
+	resolvedArcJournal, err := resolveArcJournal(*store, *arcJournal)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(exitConfig)
 	}
 
@@ -515,7 +538,7 @@ func main() {
 		// single-name behaviour — which is exactly what `envalias.OldName`'s own comment
 		// promises for a name that was never renamed, and is why a bare `os.Getenv` here
 		// would be a second lookup path for no benefit.
-		Source: ui.StoreSource{Root: *store, RefBase: envalias.OSValue},
+		Source: ui.StoreSource{Root: *store, RefBase: envalias.OSValue, ArcJournal: resolvedArcJournal},
 		// 🔴 THE SAME `authority` AGAIN, FOR THE SAME REASON THE LINE ABOVE GIVES. The
 		// share flow renders "who has access to this" and the chain decides "may this caller
 		// see it"; two caches would let the page make a claim about a world the
@@ -676,8 +699,9 @@ func main() {
 	// holding a zero struct, so the invite rows leave the `NoInviteStore` branch and
 	// nil-panic at the first click; and a DSN branch that built the invite store but left
 	// `sessions` on the file store would serve, with the announced move never having
-	// happened. Asking the objects catches both — the type assertion is deliberate and is
-	// the only one in this program.
+	// happened. Asking the objects catches both — the type assertion is deliberate. ⚠ It said
+	// "and is the only one in this program"; the arcs half of this line below is a second, made
+	// for the same reason.
 	sessionsIn := "sessions in " + *sessionFile
 	if _, onPostgres := cfg.Sessions.(*pgstore.SessionStore); onPostgres {
 		sessionsIn = "sessions in postgres"
@@ -688,8 +712,15 @@ func main() {
 		invitesIn = "invitations in postgres"
 	}
 	stateMode := sessionsIn + ", " + invitesIn
-	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s\n",
-		len(ui.DeclaredRoutes()), addr, *store, sharingMode, signInMode, stateMode)
+	// 🔴 AND WHETHER ARCS CAN BE SHOWN, read off the wired SOURCE for the reason the two halves
+	// above read `cfg`: a caption derived from the flag would say "journal" for a source that was
+	// never handed one.
+	arcsMode := "arcs unconfigured (no -arc-journal / $" + arcs.EnvJournal + ": the arcs card says so)"
+	if src, ok := cfg.Source.(ui.StoreSource); ok && src.ArcJournal != "" {
+		arcsMode = "arcs read-only from " + src.ArcJournal
+	}
+	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s\n",
+		len(ui.DeclaredRoutes()), addr, *store, sharingMode, signInMode, stateMode, arcsMode)
 	if err := listener.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(1)
@@ -711,6 +742,32 @@ func main() {
 // that starts on an authority conferring `admin` on nobody, so that name is read raw.
 func envOr(name, fallback string) string {
 	return envalias.OSValueOr(name, fallback)
+}
+
+// resolveArcJournal is `-arc-journal`'s startup check: "" (unset) is the designed OFF state and is
+// returned as "", a value that reduces to nothing is refused, and anything else must pass
+// `arcs.ResolveJournalPath` — the pod's own check, so "outside the store tree" is ONE rule on both
+// binaries. The resolved path is what the source reads from then on.
+//
+// ⚠ THE BLANK POLICY IS THE POD'S, INCLUDING ITS LIMIT, AND THAT IS STATED RATHER THAN FIXED HERE.
+// The default comes through `envOr`, which reads a whitespace-only `$CAIRN_ARC_JOURNAL` as UNSET, so
+// only a whitespace FLAG value reaches the refusal below; a whitespace variable yields the off state.
+// `cmd/cairn-server` behaves identically (measured by reading both), and the off state is rendered
+// honestly on every page rather than switching an authority — the reason `-control-journal` is read
+// raw does not transfer. Changing it is one decision for both binaries, not a UI-only divergence.
+func resolveArcJournal(storeRoot, journal string) (string, error) {
+	if journal == "" {
+		return "", nil
+	}
+	if identity.ValueReducesToNothing(journal) {
+		return "", fmt.Errorf("-arc-journal / $%s is set to a value that reduces to nothing. "+
+			"Refusing to start rather than reading it as unset; set a path or remove the line", arcs.EnvJournal)
+	}
+	resolved, err := arcs.ResolveJournalPath(storeRoot, journal)
+	if err != nil {
+		return "", fmt.Errorf("%s. Refusing to start", err.Error())
+	}
+	return resolved, nil
 }
 
 // controlJournalDefault is the `-control-journal` flag's default, and the ONE place this

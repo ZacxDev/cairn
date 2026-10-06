@@ -115,9 +115,15 @@ type route struct {
 // `..` a routing question. In a query parameter it is a value the handler matches
 // against the narrowed answer and never resolves. See `handleEntryPage`.
 var routes = map[routeKey]route{
-	{"GET", "/"}:          {(*Server).handlePage, classContent},
-	{"GET", "/scope"}:     {(*Server).handleScopePage, classContent},
-	{"GET", "/entry"}:     {(*Server).handleEntryPage, classContent},
+	{"GET", "/"}:      {(*Server).handlePage, classContent},
+	{"GET", "/scope"}: {(*Server).handleScopePage, classContent},
+	{"GET", "/entry"}: {(*Server).handleEntryPage, classContent},
+	// 🔴 THE ARC PAGE IS A FOURTH FIXED BROWSE PATH WITH ITS OPERANDS IN QUERY PARAMETERS, for the
+	// browse pair's reason above: `/arc/{home}/{slug}` would need a prefix match, and the slug is a
+	// value a registration supplied. GET only — the UI never registers an arc (its journal mount is
+	// read-only), so neither cross-site gate gains a case; both would apply by METHOD if a write row
+	// were ever added. See `handleArcPage`.
+	{"GET", "/arc"}:       {(*Server).handleArcPage, classContent},
 	{"GET", "/share"}:     {(*Server).handleSharePage, classContent},
 	{"POST", "/share"}:    {(*Server).handleShare, 0},
 	{"POST", "/unshare"}:  {(*Server).handleUnshare, 0},
@@ -203,6 +209,8 @@ const (
 	// EntryPath is one entry, keyed by `?scope=<control.ID>&ref=<stem>`.
 	ScopePath = "/scope"
 	EntryPath = "/entry"
+	// ArcPath is one registered arc, keyed by `?home=<control.ID>&slug=<slug>`.
+	ArcPath = "/arc"
 	// SharePath answers the share flow's read AND its grant write, split by method.
 	SharePath = "/share"
 	// UnsharePath is a SEPARATE path rather than an action field on `SharePath`,
@@ -317,6 +325,14 @@ const (
 	// and the reason the recognised spelling is pinned as a literal in
 	// `rawview_test.go` instead of being read back off this constant.
 	QueryView = "view"
+	// QueryHome is the `control.ID` of an arc's HOME scope on `GET /arc` — an id and never a name,
+	// for the reason [Scope.ID] gives. A fourth spelling beside [QueryScope], [QueryID] and
+	// [QueryProject] because it names a different ROLE: not "the scope under view" but "the scope
+	// this arc belongs to", and a page about an arc is not a page about that scope.
+	QueryHome = "home"
+	// QuerySlug is the arc's slug on `GET /arc`: MATCHED against the registered set inside
+	// `report.Arc`, never resolved.
+	QuerySlug = "slug"
 )
 
 // ViewRaw is the one recognised [QueryView] value: the entry's file, as bytes.

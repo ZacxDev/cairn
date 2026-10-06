@@ -62,8 +62,9 @@ const (
 	ArcsDamagedLine      = "⚠ the registration journal holds record(s) that could not be read; an arc registered only by such a record is NOT shown"
 )
 
-// unconfiguredBody is shared by both answers: the same off state, one sentence.
-const unconfiguredBody = "REGISTRATIONS ARE NOT CONFIGURED ON THIS POD — it was started without -arc-journal / $" +
+// RegistrationsUnconfiguredBody is shared by both answers — and by the browser surface, which
+// renders it verbatim rather than writing a second sentence for the same off state.
+const RegistrationsUnconfiguredBody = "REGISTRATIONS ARE NOT CONFIGURED ON THIS POD — it was started without -arc-journal / $" +
 	arcs.EnvJournal + ", so no arc can be registered or shown. This is the designed off state, NOT 'no arc touched this scope'."
 
 // ArcsReport is the answer to `arcs/<scope>`.
@@ -145,10 +146,53 @@ func Arcs(storeRoot, scope string, visible store.ScopeSet, snap *arcs.Snapshot) 
 	return rep, nil
 }
 
-// statusWord is how an arc's status is printed. 🔴 `unknown` IS PRINTED AS ITSELF AND NOTHING
+// AttributedLine, SessionsLine and StatusesLine are the three counted lines of a
+// `no-arc-registered`/`arcs-listed` answer. 🔴 EXPORTED SO THE BROWSER SURFACE PRINTS THESE BYTES
+// RATHER THAN A SECOND SPELLING OF THEM — `RenderText` calls the same three, so the pod's body and
+// the page cannot disagree about a count or about its caveat.
+func (r ArcsReport) AttributedLine() string {
+	c := r.Coverage
+	return fmt.Sprintf("attributed: %d of %d bullets in `%s/` carry a write trailer (%d have none — an arc whose sessions wrote only those is NOT inferred)",
+		c.Attributed, c.Bullets, r.Scope, c.Bullets-c.Attributed)
+}
+
+// SessionsLine — see [ArcsReport.AttributedLine].
+func (r ArcsReport) SessionsLine() string {
+	return fmt.Sprintf("sessions: %d of %d writing sessions here belong to an arc listed below", r.InArcs, r.Sessions)
+}
+
+// StatusesLine — see [ArcsReport.AttributedLine]. 🔴 ANYTHING THAT IS NEITHER `open` NOR `closed`
+// IS COUNTED AS `unknown`, NEVER AS `open` (Q4).
+func (r ArcsReport) StatusesLine() string {
+	open, closed, unknown := 0, 0, 0
+	for _, a := range r.Arcs {
+		switch a.Status {
+		case arcs.StatusOpen:
+			open++
+		case arcs.StatusClosed:
+			closed++
+		default:
+			unknown++
+		}
+	}
+	return fmt.Sprintf("statuses: open %d · closed %d · unknown %d (unknown is the registering tool's lack of a verdict and is never counted as open)",
+		open, closed, unknown)
+}
+
+// Provenance is one listed arc's provenance as every surface prints it: `declared`, or
+// `inferred (<sessions> wrote here)`. Exported for [ArcsReport.AttributedLine]'s reason.
+func (a ArcLine) Provenance() string {
+	if a.Declared {
+		return "declared"
+	}
+	return "inferred (" + strings.Join(a.Wrote, ", ") + " wrote here)"
+}
+
+// StatusWord is how an arc's status is printed. 🔴 `unknown` IS PRINTED AS ITSELF AND NOTHING
 // ELSE — no gloss containing the other status words — so an `unknown` line cannot be read, or
-// grepped, as `open` (Q4).
-func statusWord(s string) string { return s }
+// grepped, as `open` (Q4). Exported so the browser surface prints the word through the same
+// function rather than mapping statuses itself.
+func StatusWord(s string) string { return s }
 
 // RenderText is the `arcs/<scope>` answer as the pod serves it (and the CLI prints verbatim).
 func (r ArcsReport) RenderText() string {
@@ -160,47 +204,48 @@ func (r ArcsReport) RenderText() string {
 	b.WriteString("  " + ArcsProvenanceLine + "\n")
 	b.WriteString("  " + ArcsRegistrationLine + "\n")
 	if r.Status == StatusNoArcRegistered || r.Status == StatusArcsListed {
-		c := r.Coverage
-		fmt.Fprintf(&b, "  attributed: %d of %d bullets in `%s/` carry a write trailer (%d have none — an arc whose sessions wrote only those is NOT inferred)\n",
-			c.Attributed, c.Bullets, r.Scope, c.Bullets-c.Attributed)
-		fmt.Fprintf(&b, "  sessions: %d of %d writing sessions here belong to an arc listed below\n", r.InArcs, r.Sessions)
-		open, closed, unknown := 0, 0, 0
-		for _, a := range r.Arcs {
-			switch a.Status {
-			case arcs.StatusOpen:
-				open++
-			case arcs.StatusClosed:
-				closed++
-			default:
-				unknown++
-			}
-		}
-		fmt.Fprintf(&b, "  statuses: open %d · closed %d · unknown %d (unknown is the registering tool's lack of a verdict and is never counted as open)\n",
-			open, closed, unknown)
+		b.WriteString("  " + r.AttributedLine() + "\n")
+		b.WriteString("  " + r.SessionsLine() + "\n")
+		b.WriteString("  " + r.StatusesLine() + "\n")
 		if r.Damaged {
 			b.WriteString("  " + ArcsDamagedLine + "\n")
 		}
 	}
 	b.WriteString("\n")
-	switch r.Status {
-	case StatusRegistrationsUnconfigured:
-		b.WriteString(unconfiguredBody)
-	case StatusScopeAbsent:
-		fmt.Fprintf(&b, "NO SCOPE `%s/` IS READABLE HERE. A scope that does not exist and one this credential may not read answer identically, by design; no arc is listed for it.", r.Scope)
-	case StatusNoArcRegistered:
-		fmt.Fprintf(&b, "NO REGISTERED ARC TOUCHED `%s/` THAT YOU CAN SEE — none declares it, and no member session of a visible arc wrote an attributed bullet here. Unregistered work, unattributed bullets and arcs homed in scopes you cannot read are all invisible to this answer.", r.Scope)
-	default:
-		fmt.Fprintf(&b, "arcs: %d, ordered by home scope then slug", len(r.Arcs))
-		for _, a := range r.Arcs {
-			prov := "declared"
-			if !a.Declared {
-				prov = "inferred (" + strings.Join(a.Wrote, ", ") + " wrote here)"
-			}
-			fmt.Fprintf(&b, "\n- %s/%s · %s · status %s · closing %s · %d member%s",
-				a.Home, a.Slug, prov, statusWord(a.Status), a.ClosingKind, a.Members, plural(a.Members))
-		}
+	if sentence := r.StatusSentence(); sentence != "" {
+		b.WriteString(sentence)
+		return b.String()
+	}
+	b.WriteString(r.ListHeading())
+	for _, a := range r.Arcs {
+		fmt.Fprintf(&b, "\n- %s/%s · %s · status %s · closing %s · %s",
+			a.Home, a.Slug, a.Provenance(), StatusWord(a.Status), a.ClosingKind, a.MembersPhrase())
 	}
 	return b.String()
+}
+
+// StatusSentence is the answer's body for every status that lists NOTHING, and "" for
+// `arcs-listed`. Exported for [ArcsReport.AttributedLine]'s reason.
+func (r ArcsReport) StatusSentence() string {
+	switch r.Status {
+	case StatusRegistrationsUnconfigured:
+		return RegistrationsUnconfiguredBody
+	case StatusScopeAbsent:
+		return fmt.Sprintf("NO SCOPE `%s/` IS READABLE HERE. A scope that does not exist and one this credential may not read answer identically, by design; no arc is listed for it.", r.Scope)
+	case StatusNoArcRegistered:
+		return fmt.Sprintf("NO REGISTERED ARC TOUCHED `%s/` THAT YOU CAN SEE — none declares it, and no member session of a visible arc wrote an attributed bullet here. Unregistered work, unattributed bullets and arcs homed in scopes you cannot read are all invisible to this answer.", r.Scope)
+	}
+	return ""
+}
+
+// ListHeading is the line above an `arcs-listed` answer's rows.
+func (r ArcsReport) ListHeading() string {
+	return fmt.Sprintf("arcs: %d, ordered by home scope then slug", len(r.Arcs))
+}
+
+// MembersPhrase is `1 member` / `N members`.
+func (a ArcLine) MembersPhrase() string {
+	return fmt.Sprintf("%d member%s", a.Members, plural(a.Members))
 }
 
 // ArcReport is the answer to `arc/<home>/<slug>`.
@@ -267,6 +312,87 @@ func Arc(storeRoot, home, slug string, visible store.ScopeSet, snap *arcs.Snapsh
 	return rep, nil
 }
 
+// ArcUnregisteredBody is the `arc-unregistered` sentence. Exported because the browser surface's
+// arc page answers its uniform 404 with these exact bytes: one sentence for "no such arc, or not
+// yours", on every surface.
+const ArcUnregisteredBody = "NO SUCH ARC IS VISIBLE HERE. An arc that was never registered and one homed in a scope this credential may not read answer identically, by design — so this answer names neither the home nor the slug it was asked about."
+
+// UnknownStatusGloss is printed under an `unknown` status, on the pod and on the page.
+const UnknownStatusGloss = "(the registering tool reported no verdict; this arc is not counted with any other status)"
+
+// The per-arc lines of an `arc-found` answer, exported for [ArcsReport.AttributedLine]'s reason:
+// `RenderText` prints exactly these, so a surface that lays them out differently still prints the
+// same claims, byte for byte.
+
+// RegisteredLine is when, by whom, and when the tool said it measured.
+func (r ArcReport) RegisteredLine() string {
+	reported := r.Reg.ReportedAt
+	if reported == "" {
+		reported = "an unstated time"
+	}
+	return fmt.Sprintf("registered: %s by %s · reported by the tool at %s", r.Reg.RegisteredAt, r.Reg.RegisteredBy, reported)
+}
+
+// ToolingCoverageLine is the tooling's own coverage, as counts and measured legs.
+func (r ArcReport) ToolingCoverageLine() string {
+	reg := r.Reg
+	return fmt.Sprintf("tooling coverage: %d of %d commits carry no session id · writers: %s · readers: %s",
+		reg.CommitsUnstamped, reg.CommitsTotal, measured(reg.WritersMeasured), measured(reg.ReadersMeasured))
+}
+
+// CarriedLine is "" when merge rule 7 carried no member.
+func (r ArcReport) CarriedLine() string {
+	carried := carriedCount(r.Reg)
+	if carried == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d member(s) carried from an earlier registration: the latest push did not measure their leg, and an unmeasured leg never erases a measured one", carried)
+}
+
+// DeclaredLine names the declared scopes NARROWED to `visible`; a hidden one is omitted, not counted.
+func (r ArcReport) DeclaredLine() string {
+	declared := "none"
+	if len(r.DeclaredVisible) > 0 {
+		declared = strings.Join(r.DeclaredVisible, ", ")
+	}
+	return fmt.Sprintf("declared scopes readable to you: %s (a declared scope you cannot read is omitted, not counted)", declared)
+}
+
+// MemberWritesLine is the member inference's denominator.
+func (r ArcReport) MemberWritesLine() string {
+	return fmt.Sprintf("member writes: inferred from %d of %d bullets carrying a write trailer, across the %d scope(s) readable to you",
+		r.Coverage.Attributed, r.Coverage.Bullets, r.Scopes)
+}
+
+// SortedMembers is the members in the order every surface prints them: by session id, byte-wise.
+func (r ArcReport) SortedMembers() []arcs.Member {
+	members := append([]arcs.Member{}, r.Reg.Members...)
+	slices.SortFunc(members, func(a, b arcs.Member) int { return strings.Compare(a.Session, b.Session) })
+	return members
+}
+
+// MembersHeading is the line above the member rows; it carries the count, so zero members says 0.
+func (r ArcReport) MembersHeading() string {
+	return fmt.Sprintf("members: %d, ordered by session id (byte-wise)", len(r.Reg.Members))
+}
+
+// MemberLine is one member's row: session, role, first seen, and the READABLE scopes it wrote in.
+func (r ArcReport) MemberLine(m arcs.Member) string {
+	seen := m.FirstSeen
+	if seen == "" {
+		seen = "unknown"
+	}
+	wrote := "none readable to you"
+	if scopes := r.WroteIn[m.Session]; len(scopes) > 0 {
+		wrote = strings.Join(scopes, ", ")
+	}
+	line := m.Session + " · " + m.Role + " · first seen " + seen + " · wrote in: " + wrote
+	if m.Carried {
+		line += " · carried"
+	}
+	return line
+}
+
 // RenderText is the `arc/<home>/<slug>` answer.
 //
 // 🔴 `arc-unregistered` AND `registrations-unconfigured` NAME NEITHER THE HOME NOR THE SLUG. The
@@ -290,52 +416,29 @@ func (r ArcReport) RenderText() string {
 	b.WriteString("\n")
 	switch r.Status {
 	case StatusRegistrationsUnconfigured:
-		b.WriteString(unconfiguredBody)
+		b.WriteString(RegistrationsUnconfiguredBody)
 		return b.String()
 	case StatusArcUnregistered:
-		b.WriteString("NO SUCH ARC IS VISIBLE HERE. An arc that was never registered and one homed in a scope this credential may not read answer identically, by design — so this answer names neither the home nor the slug it was asked about.")
+		b.WriteString(ArcUnregisteredBody)
 		return b.String()
 	}
 	reg := r.Reg
-	fmt.Fprintf(&b, "status: %s\n", statusWord(reg.Status))
+	fmt.Fprintf(&b, "status: %s\n", StatusWord(reg.Status))
 	if reg.Status == arcs.StatusUnknown {
-		b.WriteString("  (the registering tool reported no verdict; this arc is not counted with any other status)\n")
+		b.WriteString("  " + UnknownStatusGloss + "\n")
 	}
 	fmt.Fprintf(&b, "closing condition: %s\n", reg.ClosingKind)
-	reported := reg.ReportedAt
-	if reported == "" {
-		reported = "an unstated time"
+	b.WriteString(r.RegisteredLine() + "\n")
+	b.WriteString(r.ToolingCoverageLine() + "\n")
+	if carried := r.CarriedLine(); carried != "" {
+		b.WriteString("  " + carried + "\n")
 	}
-	fmt.Fprintf(&b, "registered: %s by %s · reported by the tool at %s\n", reg.RegisteredAt, reg.RegisteredBy, reported)
-	fmt.Fprintf(&b, "tooling coverage: %d of %d commits carry no session id · writers: %s · readers: %s\n",
-		reg.CommitsUnstamped, reg.CommitsTotal, measured(reg.WritersMeasured), measured(reg.ReadersMeasured))
-	if carried := carriedCount(reg); carried > 0 {
-		fmt.Fprintf(&b, "  %d member(s) carried from an earlier registration: the latest push did not measure their leg, and an unmeasured leg never erases a measured one\n", carried)
-	}
-	declared := "none"
-	if len(r.DeclaredVisible) > 0 {
-		declared = strings.Join(r.DeclaredVisible, ", ")
-	}
-	fmt.Fprintf(&b, "declared scopes readable to you: %s (a declared scope you cannot read is omitted, not counted)\n", declared)
-	fmt.Fprintf(&b, "member writes: inferred from %d of %d bullets carrying a write trailer, across the %d scope(s) readable to you\n",
-		r.Coverage.Attributed, r.Coverage.Bullets, r.Scopes)
-	members := append([]arcs.Member{}, reg.Members...)
-	slices.SortFunc(members, func(a, b arcs.Member) int { return strings.Compare(a.Session, b.Session) })
-	fmt.Fprintf(&b, "members: %d, ordered by session id (byte-wise)", len(members))
+	b.WriteString(r.DeclaredLine() + "\n")
+	b.WriteString(r.MemberWritesLine() + "\n")
+	members := r.SortedMembers()
+	b.WriteString(r.MembersHeading())
 	for _, m := range members {
-		seen := m.FirstSeen
-		if seen == "" {
-			seen = "unknown"
-		}
-		wrote := "none readable to you"
-		if scopes := r.WroteIn[m.Session]; len(scopes) > 0 {
-			wrote = strings.Join(scopes, ", ")
-		}
-		line := m.Session + " · " + m.Role + " · first seen " + seen + " · wrote in: " + wrote
-		if m.Carried {
-			line += " · carried"
-		}
-		b.WriteString("\n- " + line)
+		b.WriteString("\n- " + r.MemberLine(m))
 	}
 	return b.String()
 }

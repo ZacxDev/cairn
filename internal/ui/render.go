@@ -97,6 +97,12 @@ type PageView struct {
 	// AFTER both refusals, so a page reached with it set is a page the caller was already
 	// entitled to; nothing downstream may read it as permission to show more of the store.
 	RawView bool
+
+	// Touched is the scope page's sessions-and-arcs section, nil everywhere else — and nil on a
+	// scope page built by a caller that did not ask, in which case the section is simply absent.
+	Touched *Touched
+	// Arc is the arc page's answer, nil everywhere else. See `arcs.go`.
+	Arc *report.ArcReport
 }
 
 // Page is the ROOT: every scope this credential may read, as cards, plus the search box.
@@ -184,6 +190,8 @@ func ScopePage(v PageView) g.Node {
 			}))),
 			malformedBlock(s),
 		),
+		// `g.Iff`: the closure dereferences `v.Touched` — `Page`'s rule about `g.If`.
+		g.Iff(v.Touched != nil, func() g.Node { return touchedSections(*v.Touched, v.Scopes) }),
 		scopeLegend(),
 	)
 }

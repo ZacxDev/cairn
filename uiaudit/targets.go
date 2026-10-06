@@ -170,12 +170,20 @@ type Target struct {
 // captures the index, captures no per-project page, and says so. Reaching the per-project
 // page needs a world with a project this credential manages AND a store behind it, which
 // is named in `internal/ui/README.md` as a declared gap.
+//
+// 🔴 `GET /arc` IS HERE FOR `GET /scope`'s REASON: its operands are a minted scope id and a
+// registered slug, both values the SURFACE publishes — the scope page's arcs card links each listed
+// arc — so guessing either would capture the uniform arc refusal and count it as a page. The arc
+// page links back to `/scope?id=…` (breadcrumb, declared scopes); the queue's `Path` dedupe is what
+// terminates that cycle, as for the entry pair. `boot.go`'s `writeArcJournal` is what puts one arc
+// in the world, because with no journal the card lists nothing to follow.
 var linkExpanded = map[string]bool{
 	ui.RootPath:   true,
 	ui.ScopePath:  true,
 	ui.SharePath:  true,
 	ui.EntryPath:  true,
 	ui.InvitePath: true,
+	ui.ArcPath:    true,
 }
 
 // plainGET is the set of ledger paths captured exactly as the ledger spells them.

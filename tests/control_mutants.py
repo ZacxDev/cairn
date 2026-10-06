@@ -2940,6 +2940,111 @@ MUTANTS: tuple[Mutant, ...] = (
         "⚠ `extra_killers` is MEASURED, not assumed: the mutant reddens the span test too, "
         "because one scan now decides both the word and the offset a renderer cuts at.",
     ),
+    # 🔴 S4 OF THE ARCS/SESSIONS PHASE — THE BROWSER SURFACE'S SCOPE-PAGE SECTION AND `/arc` PAGE.
+    # Each row reverts ONE decision `internal/ui/arcs.go` records, and each was watched killed by
+    # its named guard with that guard's own message before it was committed here. ⚠ TWO SINGLE
+    # MUTANTS SURVIVE BY DESIGN AND ARE DELIBERATELY NOT ROWS: on the arc page the home id is
+    # matched against the narrowed `Visible` list AND `report.Arc` re-checks the home against the
+    # same set, so removing either layer alone leaves the other holding (measured; recorded in
+    # `internal/ui/README.md`'s S4 section). A row for either would have to be EQUIVALENT, and an
+    # equivalent row for a defence-in-depth layer reads as "this check does nothing".
+    Mutant(
+        name="ui-arc-page-refuses-an-unresolvable-home-with-the-scope-refusal",
+        path="internal/ui/arcs.go",
+        old="\tif found {\n\t\thome = scope.Name\n\t}",
+        new="\tif !found {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn\n\t}\n\thome = scope.Name",
+        killer="TestAnArcHomedInAnUnreadableScopeRendersExactlyLikeANeverRegisteredOne",
+        why="the natural shortcut — refuse an unknown home id at the scope lookup with the scope "
+        "page's own refusal — makes 'home unreadable' and 'slug unregistered' two different "
+        "bodies, which is an oracle over which scopes hold registered arcs.",
+    ),
+    Mutant(
+        name="ui-scope-section-lists-arcs-without-the-home-rule",
+        path="internal/ui/arcs.go",
+        old="\tout.Arcs, err = report.Arcs(s.Root, scope, visible, snap)",
+        new="\tout.Arcs, err = report.Arcs(s.Root, scope, store.Unrestricted(), snap)",
+        killer="TestTheScopePageListsOnlyArcsWhoseHomeIsReadable",
+        extra_killers=("TestTheSectionIsTheSameAnswerTheReportsGiveForTheSameVisibleSet",),
+        why="the scope is already proved readable by the page, so narrowing again looks redundant "
+        "— but the arc rule (Q1) is about the arc's HOME, and an unnarrowed call lists arcs homed "
+        "in scopes the caller cannot read, naming their homes and slugs on a page it can.",
+    ),
+    Mutant(
+        name="ui-arc-row-renders-unknown-as-open",
+        path="internal/ui/arcs.go",
+        old='h.Span(h.Class("badge"), g.Text("status "+report.StatusWord(a.Status))),',
+        new='h.Span(h.Class("badge"), g.Text("status "+map[bool]string{true: "closed", false: "open"}[a.Status == "closed"])),',
+        killer="TestAnUnknownStatusIsRenderedAsUnknownAndNeverAsOpen",
+        why="a two-state badge (closed, else open) is what a renderer written before Q4 looks "
+        "like, and it turns every registration that carried no verdict into an open one.",
+    ),
+    Mutant(
+        name="ui-unconfigured-journal-read-as-unreadable",
+        path="internal/ui/arcs.go",
+        old='\tif s.ArcJournal == "" {\n\t\treturn nil, nil\n\t}',
+        new='\tif s.ArcJournal == "" {\n\t\treturn nil, &arcs.JournalUnreadableError{Path: ""}\n\t}',
+        killer="TestAnUnconfiguredJournalSaysSoRatherThanFailing",
+        why="treating 'no journal' as an error is the fail-closed reflex, and it renders the "
+        "designed OFF state (Q2) as a broken one on every scope page of every deployment that "
+        "has not made the mount change yet.",
+    ),
+    Mutant(
+        name="ui-arc-page-errors-on-an-unconfigured-journal",
+        path="internal/ui/arcs.go",
+        old="\tcase report.StatusRegistrationsUnconfigured:\n",
+        new="\tcase report.StatusRegistrationsUnconfigured:\n\t\twritePlain(w, http.StatusInternalServerError, \"x\")\n\t\treturn\n",
+        killer="TestAnUnconfiguredJournalSaysSoRatherThanFailing",
+        why="the arc page's switch has one success arm; folding the off state into the error "
+        "arm is a one-line tidy that turns the designed off state into a 500.",
+    ),
+    Mutant(
+        name="ui-arc-href-built-by-concatenation",
+        path="internal/ui/arcs.go",
+        old='return ArcPath + "?" + url.Values{QueryHome: []string{string(home)}, QuerySlug: []string{slug}}.Encode()',
+        new='return ArcPath + "?home=" + string(home) + "&slug=" + slug + url.Values{}.Encode()',
+        killer="TestEveryArcHrefIsASameOriginPathWithEncodedOperands",
+        why="string concatenation is how every first draft builds a query, and with an operand "
+        "that carries `&` or `#` it splits one value into a second parameter.",
+    ),
+    Mutant(
+        name="ui-arc-link-href-is-its-label",
+        path="internal/ui/arcs.go",
+        old="name = h.A(h.Href(arcHref(home, a.Slug)), g.Text(label))",
+        new="name = h.A(h.Href(label), g.Text(label))",
+        killer="TestEveryArcHrefIsASameOriginPathWithEncodedOperands",
+        why="linking the text you show is the obvious shortcut, and it makes registration DATA "
+        "the href — so a home or slug spelled as a scheme becomes a live `javascript:` link.",
+    ),
+    Mutant(
+        name="ui-scope-section-fetched-before-the-refusal",
+        path="internal/ui/server.go",
+        old="\tscope, found := pickScope(scopes, wanted)\n\tif !found {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn\n\t}\n\t// 🔴 THE SESSIONS",
+        new="\t_, _ = s.source.Touched(id.Auth, string(wanted))\n\tscope, found := pickScope(scopes, wanted)\n\tif !found {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn\n\t}\n\t// 🔴 THE SESSIONS",
+        killer="TestAScopeTheCallerCannotReadGetsTheExistingRefusalAndNoSection",
+        why="fetching the page's data up front and refusing afterwards is an ordinary "
+        "refactor, and it puts a read keyed on caller-chosen input ahead of the refusal that "
+        "is supposed to stop it.",
+    ),
+    Mutant(
+        name="ui-binary-ignores-the-arc-journal-refusal",
+        path="cmd/cairn-ui/main.go",
+        old="\tresolvedArcJournal, err := resolveArcJournal(*store, *arcJournal)\n\tif err != nil {",
+        new="\tresolvedArcJournal, err := resolveArcJournal(*store, *arcJournal)\n\tif err != nil && false {",
+        killer="TestTheBinaryREFUSESAnArcJournalInsideTheStoreRoot",
+        why="whether `main` ACTS on the check is wiring no in-process test can see; a journal "
+        "inside the store root then comes up serving, its directory a scope to every bare row.",
+    ),
+    Mutant(
+        name="ui-binary-never-hands-the-journal-to-the-source",
+        path="cmd/cairn-ui/main.go",
+        old="Source: ui.StoreSource{Root: *store, RefBase: envalias.OSValue, ArcJournal: resolvedArcJournal},",
+        # `[:0]` rather than deleting the field: deleting it leaves `resolvedArcJournal` unused and
+        # the tree does not BUILD (measured), which this battery reports as a harness error.
+        new="Source: ui.StoreSource{Root: *store, RefBase: envalias.OSValue, ArcJournal: resolvedArcJournal[:0]},",
+        killer="TestTheBinaryREFUSESAnArcJournalInsideTheStoreRoot",
+        why="a flag that is parsed and checked but never wired is green on every refusal arm; "
+        "only the startup line read off the WIRED source says the journal reached the reader.",
+    ),
 )
 
 
