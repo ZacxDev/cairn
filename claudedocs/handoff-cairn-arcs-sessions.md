@@ -26,61 +26,56 @@ facts, the eight design decisions, the ledgers and the slice table).
   control) — AND, against the DEPLOYED pod, the proposed `arcs` verb run with
   `--repo /home/zach/workspace/cairn` lists this arc (`cairn-arcs-sessions`), registered by `/handoff` itself (slice T1).
   ADDRESSED ⇒ arc CLOSED.
+- closing-verdict: not-addressed
 
 ## State now
-- ✅ **S0–S3 MERGED on `main`** (#182, #183, #184, #185; read off `origin/main` at `dda0c3d`:
-  `internal/touch`, `internal/arcs`, `internal/report/{sessions,arcs}.go`, routes `sessions/`,
-  `arcs/`, `arc/`, verbs `sessions`, `arcs`, `arc-show`, `arc-register`).
-- 🔄 **S4 (UI) is PR #186**, branch `feat/s4-arcs-ui`, OPEN.
-- 🔄 **S5 is the PR from branch `feat/s5-arcs-check-e2e`**: `cairn arcs --check` (a FLAG on the
-  existing verb, served as `GET arcs/<scope>?check=1[&all_scopes=1]` — a mode of the existing head,
-  so NO verb or route ledger moved) and `tests/arcs/e2e.sh` (32 assertions over both real binaries;
-  `--self-test` proves 3 sabotaged builds each turn their named assertion RED). Wired into the `go`
-  CI job. Exit codes are doctor's 0/9/10 via `report.ArcsCheckExit`; `cairn -exit-codes` unchanged.
+- 🔴 **VERDICT: NOT ADDRESSED — ONE ITEM: the DEPLOYED half.** Clauses 1 and 2 are MET; clause
+  3 (`cairn arcs --repo <this checkout>` against the deployed pod lists `cairn-arcs-sessions`,
+  registered by `/handoff`) cannot pass until the two operator steps below land.
+- ✅ **S0–S5 ALL MERGED on `main`**, each squash pinned with `--match-head-commit` to a head
+  whose 8 CI jobs were green: S0 #182 `0572b35`, S1 #183 `21d8782`, S2 #184 `c862970`, S3 #185
+  `dda0c3d`, S4 #186 `4714652`, S5 #187 `7528c74`. Plan #180 `107b389`.
+- ✅ **CLAUSE 2 MEASURED on a clean detached checkout of `origin/main` at `7528c74`:**
+  `tests/arcs/e2e.sh` rc 0, **32 `PASS` lines / 0 `FAIL`**, `SUMMARY e2e: passed=32 failed=0
+  expected=32`; `--self-test` rc 0, `sabotaged=3 caught=3` (the positive control).
+- ✅ **T1 MERGED in the private tooling repo** (its #2071, squash `05180b6`): a landed handoff
+  runs `cairn arc-register --repo … --slug <topic> --from <payload>` after `status=written|pushed`,
+  NON-BLOCKING (one `arc-register:` stderr line; an env-var opt-out documented in that repo's handoff skill), and
+  bumps that repo's cairn pin `d7e1fec` → `4714652`. Status comes from a NEW `closing-verdict:`
+  field under `## Goal` (this doc now carries one); absent ⇒ `unknown`. Merged over a RED gate by
+  operator decision: its base was already red with the SAME 8 pytest failures + nodetests
+  (collected 25524→25580, passed 25506→25562 — exactly its +56 new tests).
 - ⚠ **ONE DEPARTURE FROM THE PLAN, in S5:** "a member session that wrote nowhere the principal can
-  see" is printed as a COVERAGE number, not exit 10 — members come from commit trailers and
-  transcripts, so a member with no entry trailer is the normal state and a 10 would be permanent.
-- ⚠ **Q2 NEEDS ONE DEPLOYMENT CHANGE THAT IS NOT IN THIS REPO** — the journal's own mount and
-  `CAIRN_ARC_JOURNAL`. Until it lands the deployed routes answer `registrations-unconfigured`, and
-  `cairn arcs --check` against the deployed pod exits 10.
+  see" is a COVERAGE number, not exit 10 — members come from commit trailers and transcripts, so a
+  member with no entry trailer is the normal state and a 10 would be permanent. One-line revert.
+- ⚠ **Verb names as shipped:** `sessions`, `arcs` (`--check [--all-scopes]`), `arc-show`,
+  `arc-register --from <json>` — hyphenated, not `arc register|show`, because the ledgers carry one
+  read/write bit per verb.
+- ⚠ **Mid-phase seams, each found by CI or a rebase, not by a slice's own gates:** the
+  verb-citation guard read only the PYTHON parser (S0 widened it to `GO_ONLY_VERBS`); the authz
+  battery's create row matched S3's new PUT check twice (re-anchored + a new row, 190); a textually
+  clean S5 rebase failed `go build` on S4's rename `unconfiguredBody` →
+  `RegistrationsUnconfiguredBody`. Battery now **201 mutants, 199 killed, 2 EQUIVALENT**.
+
+- ⚠ **Deferred, NOT this arc** (recorded in the plan's Deferred section): recording READS
+  (client session header + retention; the pod sees syncs, not recalls) and an authenticated
+  append-time write log (Q6). Each would be a new arc with its own closing condition.
 
 ## Next steps (ranked)
-1. ~~**Operator reviews the plan PR and answers open questions 1 and 2.**~~ **CLOSED** — all
-   seven answered and folded into the plan.
-   forcing: user — closed.
-2. **S0 — declaration plumbing** (`go_only` corpus field and both validators,
-   `GO_ONLY_VERBS` with a three-operand check, `go_only` capability rows), exercised on
-   synthetic tables with no route added. Size S.
-   forcing: gate — every later slice adds a Go-only route or verb, and today's ledgers
-   REFUSE one (`cases.py:337-344` refuses a corpus route the oracle lacks;
-   `test_the_go_client_declares_EXACTLY_the_pythons_verb_set` refuses a Go-only verb).
-3. **S1 — `internal/touch` + `write.ParseAttributions`**: derivation, coverage, rendering,
-   the strip⇄parse seam test, a 10× synthetic-store benchmark. Size M.
-   forcing: user — the operator asked for session↔scope resolution.
-4. **S2 — the sessions surface**: `GET/HEAD sessions/<scope>`, the proposed `sessions` verb, corpus
-   rows, pod⇄CLI byte identity, authz pairs. Size M.
-   forcing: user — the operator asked for session↔scope resolution.
-5. **S3 — the arc registry**: append-only journal at `-arc-journal`/`CAIRN_ARC_JOURNAL`
-   (no default), with a startup REFUSAL when the path resolves inside the store root, shown
-   RED first; `PUT/GET arc/<home>/<slug>`; `GET arcs/<scope>` listing `declared` and
-   `inferred` arcs with the label; home-scope visibility; `unknown` status never shown as
-   `open`; the proposed `arc` and `arcs` verbs; the merge rule. Size L.
-   forcing: user — the operator asked for arc registration.
-6. **S4 — UI**: scope-page section and `/arc` page, both route ledgers, uiaudit; renders the
-   `declared`/`inferred` label and visibility from S3's renderer, and reads the journal from
-   its own read-only mount. Size M.
-   forcing: user — the operator asked for UI integration.
-7. **S5 — `arcs --check` on doctor's 0/9/10 with no new exit constant, and
-   `tests/arcs/e2e.sh`**, the closing check. Size S.
-   forcing: gate — the closing condition names this command.
-8. **T1 — the private tooling repo's `/handoff --confirm` calls the proposed `arc register` verb**,
-   non-blocking, sending `open`/`closed` when it can and omitting status otherwise; plus the
-   pin bump. Size S; a different repo's PR.
-   forcing: user — the operator decided registration is pushed by `/handoff`.
-9. **The journal mount in the private deployment repo** (the Deployment change Q2 needs).
-   The operator's change; it gates live use of S3/S4 and the deployed half of the closing
-   condition, not their merge.
-   forcing: user — the operator chose a journal outside the store tree.
+1. **Operator: the journal mount in the private deployment repo.** A second volume, RW in the
+   pod and RO in the UI, with `CAIRN_ARC_JOURNAL` set in BOTH to a file on it (the pod's data
+   volume is mounted AT the store root, so no path on it is outside the store; the pod refuses
+   to start on one that is). Until then every arc route answers `registrations-unconfigured`.
+   forcing: user — the operator chose a journal outside the store tree (Q2).
+2. **Operator: `home-manager switch` on each host** so the tooling's pinned client gains
+   `arc-register`; until then `/handoff` prints `arc-register: verb-absent …` and registers
+   nothing.
+   forcing: user — the deploy step for the tooling repo is the operator's.
+3. **Then close the arc:** run `/handoff` on this topic (it registers the arc), then
+   `cairn arcs --repo /home/zach/workspace/cairn` against the deployed pod must list
+   `cairn-arcs-sessions`; also `cairn arcs --check` must exit 0. If both hold, set
+   `closing-verdict: addressed`.
+   forcing: gate — clause 3 of the closing condition.
 
 ## Gotchas / decisions / dead-ends
 - **The trailer's `<session>` is self-declared and only the APPEND route sets `<actor>`.**
@@ -132,15 +127,24 @@ facts, the eight design decisions, the ledgers and the slice table).
 
 ## How to verify
 ```bash
+# clause 1: every slice by CONTENT on main (squash ≠ ancestry)
+git fetch origin
+for p in internal/touch internal/arcs internal/report/sessions.go internal/report/arcs.go \
+         internal/report/arcscheck.go internal/ui/arcs.go tests/arcs/e2e.sh; do
+  git cat-file -e origin/main:$p && echo "present $p"; done
+# clause 2: the closing check and its positive control (≈ a few minutes; builds both binaries)
+nix develop --command bash tests/arcs/e2e.sh              # want: passed=32 failed=0 expected=32
+nix develop --command bash tests/arcs/e2e.sh --self-test  # want: sabotaged=3 caught=3
+# clause 3 (after the journal mount + switch + a /handoff on this topic):
+cairn arcs --repo /home/zach/workspace/cairn               # lists cairn-arcs-sessions
+cairn arcs --repo /home/zach/workspace/cairn --check; echo rc=$?   # want 0
 # the plan's load-bearing citations still hold (re-read before acting on any)
-sed -n 44p internal/write/revision.go          # attributionFormat
-grep -n '^const attributionPattern\|^const attributionActorClass\|^const sessionClass' internal/write/revision.go  # the grammar (split into its two classes by S1)
+grep -n '^const attributionPattern\|^const attributionActorClass\|^const sessionClass' internal/write/revision.go
 sed -n 542,558p internal/control/tokenfile/source.go   # storeDirs: no dot filter
-go run ./cmd/cairn -verbs                      # 14 verbs, four of them Go-only
-go run ./cmd/cairn -exit-codes                 # 13 rows; S5 must leave these UNCHANGED
-# the leak gate, both controls
+go run ./cmd/cairn -verbs                      # includes the Go-only sessions/arcs/arc-show/arc-register
+go run ./cmd/cairn -exit-codes                 # 13 rows; S5 left these UNCHANGED
+# the gates a slice must keep green
+go vet ./... && go test -count=1 ./...
+tests/conformance/run_go.sh && python3 tests/conformance/suite.py run
 python3 tests/leakscan.py --self-test && python3 tests/leakscan.py
-# the closing check (S5) — first prove it can go red, then run it
-tests/arcs/e2e.sh --self-test                  # must print: SUMMARY e2e-self-test: sabotaged=3 caught=3
-tests/arcs/e2e.sh; echo "rc=$?"                # must print SUMMARY e2e: passed=32 failed=0 expected=32, rc=0
 ```
