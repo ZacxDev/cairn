@@ -116,6 +116,24 @@ func (s Scope) OpenCount() int {
 	return n
 }
 
+// MTime is the scope's "updated" time: the NEWEST `Entry.MTime` among its entries, or 0 when
+// it has none (or every stat failed). The root page orders its cards by it, newest first.
+//
+// ⚠ A SCOPE HAS NO MTIME OF ITS OWN ON THIS SURFACE, DELIBERATELY. The directory's own mtime
+// moves when a file is CREATED or REMOVED and not when one is edited in place — which is how
+// every entry is written — so it would call a scope stale while its newest entry was minutes old.
+// "The newest thing in it" is the question a reader is asking, and it is answered from the same
+// doubles the entry rows show, so the card and its newest row cannot disagree.
+func (s Scope) MTime() float64 {
+	newest := 0.0
+	for _, e := range s.Entries {
+		if e.MTime > newest {
+			newest = e.MTime
+		}
+	}
+	return newest
+}
+
 // Malformed is one entry file the loader refused, as the page shows it.
 type Malformed struct {
 	// Label is `<scope>/<filename>`, the spelling every surface in this tree uses.
@@ -281,6 +299,21 @@ type Entry struct {
 	BulletCount   int
 	OpenCount     int
 	NearMissCount int
+
+	// MTime is the entry FILE's modification time on the pod's store, as
+	// `report.FileMTime` reads it — CPython's `st_mtime` double, the number recall orders
+	// its index by — or 0 when the stat failed. The scope page orders its rows by it,
+	// newest first, through `report.NewerFirst`; the pages render it relative to the
+	// render-time clock (`timeAgo`).
+	//
+	// 🔴 THE SAME READER AND THE SAME COMPARATOR AS RECALL, NOT A SECOND MTIME. See
+	// `report.FileMTime` for why a `ModTime()` compare here would order a same-second pair
+	// differently from the CLI with no error anywhere.
+	//
+	// ⚠ 0 IS "UNKNOWN", NOT THE EPOCH, and renders no timestamp at all — a stat that fails
+	// after a successful read is a store mutating underneath the reader, and printing
+	// "1970-01-01" for it would be a claim about the file nobody measured.
+	MTime float64
 }
 
 // Section is one `##` heading of an entry file and what sits under it.
@@ -640,6 +673,9 @@ func (s StoreSource) readEntry(scope string, e store.Entry) (Entry, error) {
 	if err != nil {
 		return Entry{}, store.EntryUnreadable(path, err)
 	}
+	// After the read, through recall's own reader — `ReadEntry`'s order exactly, so a stat
+	// failing here is the same 0.0 there.
+	item.MTime = report.FileMTime(path)
 	text := store.DecodeReplace(data)
 	// The raw view's whole payload, taken here rather than read on demand.
 	//
@@ -1304,6 +1340,7 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request, id identity.
 		Viewer: id.Principal.Display,
 		CSRF:   csrfTokenFor(r),
 		Scopes: scopes,
+		Now:    s.now(),
 	}
 
 	// 🔴 THE QUERY IS A PARAMETER ON THE EXISTING ROOT ROW, NOT A ROUTE OF ITS OWN, AND
@@ -1436,7 +1473,7 @@ func (s *Server) handleScopePage(w http.ResponseWriter, r *http.Request, id iden
 		writePlain(w, http.StatusInternalServerError, "the store could not be read")
 		return
 	}
-	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes}
+	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now()}
 
 	wanted := control.ID(r.URL.Query().Get(QueryID))
 	if wanted == "" {
@@ -1481,7 +1518,7 @@ func (s *Server) handleEntryPage(w http.ResponseWriter, r *http.Request, id iden
 		writePlain(w, http.StatusInternalServerError, "the store could not be read")
 		return
 	}
-	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes}
+	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now()}
 
 	q := r.URL.Query()
 	wanted, ref := control.ID(q.Get(QueryScope)), q.Get(QueryRef)

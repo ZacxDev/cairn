@@ -189,7 +189,7 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 					c.Layout.SmallTapTargets, c.Layout.SmallText, c.Layout.HorizontalOverflow,
 					c.Layout.MissingViewportMeta,
 					c.Content.MainWidth, 100*float64(c.Content.MainWidth)/float64(c.Content.InnerWidth),
-					c.ScriptCount,
+					c.ScriptCount(),
 					len(c.Console), len(c.Network), c.HasDigest())
 
 				// Expansion is read from ONE viewport's render, not all five: the hrefs a
@@ -466,12 +466,15 @@ func exemptPagesForLog() string {
 //     long unbroken line in a store entry's body makes the whole PAGE scroll sideways, on a
 //     phone above all. The widths are the whole point — a page can be clean at 390 and 1440
 //     and broken at 834, which is why there are five.
-//   - NO SCRIPT. `internal/ui`'s RENDERER emits none, and part of its XSS story rests on
-//     that; the console-zero claim in the summary above is explicitly structural FOR THAT
-//     REASON, so the day a script appears both that claim and the guard behind it go quiet
-//     at once. ⚠ THE RENDERER, NOT THE SERVED PAGE: this walk boots its own pod on loopback,
-//     so an edge CDN that injects script downstream is invisible to it — and on the deployed
-//     surface one does. Scope and measurement: [Capture.ScriptCount].
+//   - NO SCRIPT BUT THE ALLOWLISTED ONES. `internal/ui`'s RENDERER emits exactly the
+//     same-origin `src`s `ui.AllowedScriptSources` names (today: the scope page's entry
+//     filter), at most once each, and NO inline script — part of its XSS story rests on that.
+//     An inline script, a foreign `src` or a duplicate is a refusal. ⚠ IT WAS "NO SCRIPT AT
+//     ALL" until the operator chose a client-side filter; a count cannot tell the allowed
+//     script from an injected one, so the refusal reads the list. ⚠ THE RENDERER, NOT THE
+//     SERVED PAGE: this walk boots its own pod on loopback, so an edge CDN that injects script
+//     downstream is invisible to it — and on the deployed surface one does. Scope and
+//     measurement: [Capture.ScriptSrcs].
 //   - AXE ACTUALLY RAN. `Violations: 0` is produced identically by a clean page and by an
 //     injection that never executed, and this whole program's a11y half is inert in the
 //     second case. A decodable `testEngine` is what separates them.
@@ -552,8 +555,8 @@ func refuseWalkRegressions(captures []*Capture) error {
 			overflow = append(overflow, fmt.Sprintf("%s: scrollWidth=%d > innerWidth=%d",
 				where, c.Layout.ScrollWidth, c.Layout.InnerWidth))
 		}
-		if c.ScriptCount != 0 {
-			scripted = append(scripted, fmt.Sprintf("%s: document.scripts.length=%d", where, c.ScriptCount))
+		for _, bad := range scriptsOutsideAllowlist(c.ScriptSrcs) {
+			scripted = append(scripted, fmt.Sprintf("%s: %s", where, bad))
 		}
 		// The same discriminator `control_test.go` uses: an axe result that decodes and
 		// carries the engine block is an axe result that ran.
@@ -598,8 +601,8 @@ func refuseWalkRegressions(captures []*Capture) error {
 	// ⚠ THE MESSAGE SAYS "THIS ORIGIN" RATHER THAN "THIS SURFACE" ON PURPOSE, because the pod
 	// this walk boots is the only thing it can speak for — see [Capture.ScriptCount].
 	if len(scripted) > 0 {
-		refusals = append(refusals, fmt.Sprintf("SCRIPT ON THE PAGE on %d capture(s) — this ORIGIN renders "+
-			"none, and the console-zero claim above is structural only while that holds:\n    %s",
+		refusals = append(refusals, fmt.Sprintf("SCRIPT ON THE PAGE outside the allowlist, %d finding(s) — this "+
+			"ORIGIN renders only `ui.AllowedScriptSources`, once each, and never inline:\n    %s",
 			len(scripted), strings.Join(scripted, "\n    ")))
 	}
 	if len(axeless) > 0 {
@@ -618,7 +621,7 @@ func refuseWalkRegressions(captures []*Capture) error {
 		return fmt.Errorf("the walk measured %d regression class(es) over %d capture(s):\n  %s",
 			len(refusals), len(captures), strings.Join(refusals, "\n  "))
 	}
-	fmt.Printf("uiaudit:   REFUSALS: 0 horizontal overflow, 0 scripts, %d/%d captures carry a decodable axe "+
+	fmt.Printf("uiaudit:   REFUSALS: 0 horizontal overflow, 0 scripts outside the allowlist, %d/%d captures carry a decodable axe "+
 		"testEngine — over %d distinct width(s): %s\n",
 		len(captures)-len(axeless), len(captures), len(widths), viewportWidths())
 	// 🔴 THE FLOOR REPORTS ITS NARROWEST MEASUREMENT RATHER THAN A ZERO. "0 refusals" is
@@ -660,9 +663,10 @@ func viewportWidths() string {
 // ⚠ AND THE STRUCTURAL CLAIM IS NARROWER THAN AN EARLIER DRAFT OF IT SAID, WHICH IS A
 // CORRECTION RATHER THAN A CAVEAT. That draft printed "console=%d network=%d — STRUCTURAL
 // ZERO" over both numbers, on the reasoning that a page with no scripts and no subresources
-// cannot produce either. The first half holds: `internal/ui` ships an inline stylesheet, no
-// script, and an XSS guard asserting `"<img"` can never render, so the console collector has
-// nothing to observe. The second half was FALSE, and the walk that printed it had a non-zero
+// cannot produce either. The first half held then: `internal/ui` shipped an inline stylesheet,
+// no script, and an XSS guard asserting `"<img"` can never render, so the console collector had
+// nothing to observe. ⚠ It holds now only on pages without the one allowlisted script (the
+// scope page's entry filter) — the console line below says which kind of zero it printed. The second half was FALSE, and the walk that printed it had a non-zero
 // network count on the same line — because a browser requests `/favicon.ico` on its own
 // initiative and this surface has no such row, so it answers the dispatcher's refusal. That
 // is counted separately (see [Browser.FaviconRefusals]) and the per-page network zero below
@@ -716,8 +720,20 @@ func printSignalSummary(captures []*Capture, faviconRefusals int) {
 	// `CaptureTarget`. This line was still printing "STRUCTURAL, NOT A PASS" unconditionally, so a
 	// surface that grew a script would have had a non-zero count printed beside a sentence saying the
 	// collector cannot count. A claim about a measurement has to read the measurement.
-	if console == 0 {
-		fmt.Printf("uiaudit:   console=0 — 🔴 STRUCTURAL, NOT A PASS: this ORIGIN renders NO script, and an existing XSS guard asserts \"<img\" can never render, so the console collector has nothing to observe here whatever the code does. control_test.go counts 2 on a page that does. (ORIGIN, not the served page — a downstream injector is out of this walk's reach; see Capture.ScriptCount.)\n")
+	// ⚠ AND THE ZERO IS NO LONGER STRUCTURAL ON EVERY PAGE: the scope page now runs the ONE
+	// allowlisted script (`ui.AllowedScriptSources`), and a script that threw would land here. So
+	// on a walk that captured a page carrying it, zero is a MEASUREMENT — the filter ran and logged
+	// nothing — and the sentence says which.
+	scripted := 0
+	for _, c := range captures {
+		if c.ScriptCount() > 0 {
+			scripted++
+		}
+	}
+	if console == 0 && scripted > 0 {
+		fmt.Printf("uiaudit:   console=0 — a MEASUREMENT on %d capture(s) that ran the allowlisted script (it threw and logged nothing there), and structural on the rest, which render no script. control_test.go counts 2 on a page that does log. (ORIGIN, not the served page — a downstream injector is out of this walk's reach; see Capture.ScriptSrcs.)\n", scripted)
+	} else if console == 0 {
+		fmt.Printf("uiaudit:   console=0 — 🔴 STRUCTURAL, NOT A PASS: no captured page carried a script, and an existing XSS guard asserts \"<img\" can never render, so the console collector had nothing to observe. control_test.go counts 2 on a page that does. (ORIGIN, not the served page — a downstream injector is out of this walk's reach; see Capture.ScriptSrcs.)\n")
 	} else {
 		fmt.Printf("uiaudit:   console=%d — NOT a structural zero: this surface has grown something that logs, so `doc.go`'s console claim is now false and wants correcting.\n", console)
 	}
@@ -803,4 +819,33 @@ func writeJSON(path string, v any) error {
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", " ")
 	return enc.Encode(v)
+}
+
+// scriptsOutsideAllowlist is the walk's script refusal: one line per script element that is
+// INLINE, names a `src` `ui.AllowedScriptSources` does not, or repeats an allowlisted one.
+//
+// 🔴 THE ALLOWLIST IS READ FROM `internal/ui`, NEVER COPIED HERE. A second list in this module
+// would be a second place deciding what a page may run, and it would go stale in the direction
+// nobody notices — a script added to the renderer and to the copy, or removed from one.
+func scriptsOutsideAllowlist(srcs []string) []string {
+	allowed := map[string]bool{}
+	for _, src := range ui.AllowedScriptSources() {
+		allowed[src] = true
+	}
+	var out []string
+	seen := map[string]int{}
+	for _, src := range srcs {
+		switch {
+		case src == "":
+			out = append(out, "an INLINE script")
+		case !allowed[src]:
+			out = append(out, fmt.Sprintf("a script from %q, which the allowlist does not name", src))
+		default:
+			seen[src]++
+			if seen[src] == 2 {
+				out = append(out, fmt.Sprintf("the allowlisted script %q, more than once", src))
+			}
+		}
+	}
+	return out
 }

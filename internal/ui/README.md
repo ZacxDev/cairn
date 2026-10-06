@@ -362,8 +362,10 @@ escaping, `safeHref`, the raw-node ban and the structural differential all measu
 package *emits*, they all still hold, and none of them is weakened by what follows.
 
 What moved is a claim this section and `uiaudit` were both making one step wider than their
-evidence. The XSS story partly rested on **the page carrying no script at all**; `uiaudit`'s
-`refuseWalkRegressions` refuses any capture with `document.scripts.length != 0` and is the
+evidence. The XSS story partly rests on **the page carrying no script but the allowlisted
+ones** — it was "no script at all" until the scope page's entry filter (see the section on the
+one script below); `uiaudit`'s `refuseWalkRegressions` refuses any capture holding an inline
+script, a `src` `ui.AllowedScriptSources` does not name, or an allowlisted one twice, and is the
 gate behind it. **That gate boots its own pod on loopback over a temp directory it created**,
 so its zeros are a property of the ORIGIN's own bytes. They are structurally incapable of
 seeing anything inserted between that origin and a real client, and **on the current
@@ -378,9 +380,11 @@ when one is present:
 | anonymous `GET /sign-in` | **1** | an inline bot-detection injection (`__CF$cv$params`, referencing a `/cdn-cgi/challenge-platform/…` script) |
 | authenticated `GET /`, real session cookie | **2** | that same inline script, **plus** `<script data-cfasync="false" src="/cdn-cgi/scripts/<id>/cloudflare-static/email-decode.min.js">` |
 
-So the honest claim is: **this RENDERER emits no script — which is the property the guards
-above establish — and the SERVED page may carry script inserted downstream, as it does today.**
-Every `document.scripts.length == 0` in this repository should be read at that scope. The
+So the honest claim is: **this RENDERER emits no script beyond its allowlist — which is the
+property the guards above establish — and the SERVED page may carry script inserted downstream,
+as it does today.** Every script-allowlist verdict in this repository should be read at that
+scope (these measurements predate the filter script; the scope page now carries one more,
+allowlisted, of the origin's own). The
 `default-src 'none'` row in the table below is the same fact from the other side: with the
 header gone, nothing in a browser refuses that injected script, and the row's *"arbitrary
 script … become loadable"* is now realised rather than hypothetical.
@@ -1672,20 +1676,28 @@ not a guard on a LEAK**, because a leak needs no reachable URL.
 
 ## What each field on the page is in the underlying file
 
-This table is also rendered on the pages themselves, as a `<details>` legend. It is in two
-places on purpose: the README is where a maintainer looks and the page is where a reader looks,
-and the operator's complaint was about the second.
+This table USED to be rendered on the pages as well, as `<details>` legends.
+⚠ **All three legends — root, scope and entry — are DELETED, on an operator decision** (the
+recency/filter change), as is the scope explainer the root cards and the scope page printed:
+once the pages' own labels were clear the definitions read as noise on every visit. The short
+definitions of the Aliases / Refs / Tags lists, and of "scope", moved into `title=` tooltips. So
+this README is now the one full copy, and the entry legend's rows (sections, line items, dates,
+the openness badges, inline code, operator/inferred, markers out of reach) are the table above
+plus the badge sections of this document.
 
 | on the page | in the store |
 |---|---|
 | card | one scope — a directory under the store root |
 | card title | the scope's display name, which is also its directory name |
+| card / row timestamp (`5m ago`) | the file's mtime on the pod's store (a card shows its NEWEST entry's) — see the recency section below |
 | `N entries` | `.md` files in that directory the loader accepted |
 | `N bullets declared open` | `## Nuance / work-history` bullets carrying an `OPEN:` marker, summed over the scope. ⚠ NOT `## Requirements` bullets — `readEntry` sums the nuance section only |
 | ref | the filename without `.md`: `<slug>` or `<slug>.<kind>` |
 | title | the `service:` key in the file's front matter |
-| aliases / tasks | the `aliases:` / `tasks:` front-matter sequences, **as written** |
-| section | one `##` heading, with the heading text verbatim |
+| aliases / refs (chips) | the `aliases:` / `refs:` (or older `tasks:`) front-matter sequences, **as written** |
+| tags (chips) | the `tags:` front-matter sequence, **folded** |
+| `N history notes` | top-level bullets under `## Nuance / work-history` — display copy only |
+| section | one `##` heading, its text as the heading — except `## Nuance / work-history`, shown as **History** with the verbatim line in its tooltip |
 | line item | one top-level `-` bullet under a BULLETED section — `## Nuance / work-history` or `## Requirements` — continuations included |
 | date | an ISO date the bullet's first line starts with |
 | `OPEN` / `near-miss marker` / `resolved` | the bullet's `store` openness population — exactly one |
@@ -1789,8 +1801,10 @@ change. `BuildPayload` is where the filter lives, and
 than reading the `Push` field — a field nothing branches on is a declaration, not a guard.
 
 🔴 **Four measurements are REFUSALS** (`refuseWalkRegressions`): no horizontal overflow at
-any captured width, `document.scripts.length == 0`, a decodable axe `testEngine` on every
-capture, and a CONTENT FLOOR at the widest width. ⚠ **The script zero is a claim about the
+any captured width, no script outside `ui.AllowedScriptSources` (no inline one, no foreign
+`src`, no allowlisted one twice — it was `document.scripts.length == 0` until the filter), a
+decodable axe `testEngine` on every capture, and a CONTENT FLOOR at the widest width.
+⚠ **The script verdict is a claim about the
 ORIGIN this walk boots, not about the page a reader receives** — the deployed surface's
 served page carries injected script and rewritten content, measured; the scope, the numbers
 and the retraction behind them are in the XSS section above. The first three were already being COLLECTED
@@ -1999,9 +2013,11 @@ bounded by its container.
 it. Three constraints decided the shape, and each of them refused an obvious alternative:
 
 - **No JavaScript.** Tabs are where a browser surface usually grows its first script, and
-  this one may not have any: `uiaudit` asserts `document.scripts.length == 0` on every page
-  it captures, and part of this package's escaping story rests on there being none. Two
-  server-rendered links cost nothing a script would have bought — a shareable URL, a
+  at the time this one had none and `uiaudit` asserted `document.scripts.length == 0` on every
+  page. ⚠ The surface has since grown exactly ONE script, the scope page's entry filter, on an
+  operator decision (see the section on it below); the entry page still carries none, and both
+  guards now refuse any script outside `ui.AllowedScriptSources`. The argument here is
+  unchanged by it: two server-rendered links cost nothing a script would have bought — a shareable URL, a
   working back button and a browser-native reload come free, which is `searchForm`'s ruling
   for the same shape.
 - **No second route.** `routes` is an EXACT-MATCH map and the ledger's whole value is that
@@ -2390,30 +2406,24 @@ fact about a filter wired to nothing.
 The string on the page has to be the string the filter compares. Showing the raw spelling beside
 a link built from the folded one would put two spellings of one tag in front of a reader with no
 way to tell which the store holds. `Aliases` keeps its raw form because it has no link and its
-written spelling is evidence about a collision. `TagsKeyDescription` says both — that the list is
-folded, and WHERE the vocabulary is closed — and is pinned as one normalised string for the
-measured reason `RefsKeyDescription` is: that line really did serve the word `deprecated` against
-a README saying permanent, with nothing asserting the correction.
+written spelling is evidence about a collision.
 
-🔴 **AND THE PIN IS AGAINST A HAND-TYPED LITERAL, WHICH IS A CORRECTION THIS PARAGRAPH USED TO GET
-WRONG.** It said the line "is pinned as one normalised string" and left it there, while
-`TestTheTagsKeyDescriptionIsPinnedWhole` compared the page against the CONSTANT — both sides of the
-comparison moving together, so a reword was invisible. Measured: a mutant reducing the line to
-``the `tags:` front-matter key``, dropping the FOLDED clause and the vocabulary clause at once,
-left `go test ./...` green **tree-wide**. That is the same defect `TestTheReplicaHonestyNoticeIsPinnedWhole`
-had and was corrected for, in this same package, found the same way — by writing a sibling guard
-and scoring it. The guard now holds a literal copy, the battery row
-`ui-tags-key-description-loses-both-its-claims` is the standing gate on that fix, and the two
-spellings must not be "deduplicated" back into one.
+⚠ **THE VISIBLE DEFINITION LINES ARE GONE, AND SO ARE THEIR PINS — AN OPERATOR DECISION, NOT A
+RETRACTION.** `TagsKeyDescription` and `RefsKeyDescription` were sentences under the entry page's
+Tags and Refs headings, each pinned whole (the tags one against a hand-typed literal, with the
+battery row `ui-tags-key-description-loses-both-its-claims` as the gate on that fix — the lesson
+of why a pin compared against its own constant was blind still holds for every pinned claim left,
+and the history of this file records it). The operator judged the definitions noise on a page read
+every day; the constants, both tests and the battery row were deleted together, because a pin on a
+string the page no longer renders guards nothing. What survives is a SHORT tooltip on each heading
+(`the tags: front-matter key, folded to lowercase`; `… as written` for refs and aliases), which
+keeps the one claim a reader comparing page against file needs. The tooltips are deliberately NOT
+pinned by spelling; `TestTheRemovedDefinitionCopyIsAbsentAndChipsArePresent` pins that each heading
+HAS one and that the old lines are absent.
 
-⚠ **AND IT DELIBERATELY DOES NOT ENUMERATE THE SET.** The declared terms live in
-`internal/write`'s `tagVocabulary` and in `lib/entry_shape.py`, pinned against each other; a third
-spelling of them on a page that nothing gates against them is drift waiting to happen — and the set
-has already moved once (four terms to three) after this page was written, which is exactly the edit
-an enumeration here would have survived silently. The line states the SCOPE instead — a tag shown
-here was either accepted by the write-path gate or predates it — because "this is one of the valid
-categories" and "this is what the file says" are different claims and only the second is in
-evidence on this page.
+⚠ **THE PAGE STILL DOES NOT ENUMERATE THE TAG SET,** for the reason that always held: the declared
+terms live in `internal/write`'s `tagVocabulary` and in `lib/entry_shape.py`, pinned against each
+other, and a third spelling on a page nothing gates against them is drift waiting to happen.
 
 ## 🔴 A HOSTILE TAG IS IN THE ESCAPING DIFFERENTIAL EVEN THOUGH THE LOADER CANNOT PRODUCE ONE
 
@@ -2651,3 +2661,89 @@ following a scope page's link, 0 overflow, 0 scripts, 0 axe violations, content 
 - **Reads.** Every answer says reads are not recorded; that is the plan's deferred phase.
 - **Axe as a gate.** The walk's refusals do not refuse on axe violations, and the job is
   `continue-on-error`.
+
+## 🔴 Recency order, relative time, the ONE script, and a copy trim — operator decisions
+
+Six operator decisions landed together; this section records what each bought and what guards it.
+
+**Newest first, through recall's own number and comparator.** The scope page lists entries by the
+entry FILE's mtime on the pod's store, newest first; the root page orders scope cards by each
+scope's NEWEST entry (`Scope.MTime`). Both read `report.FileMTime` — CPython's `st_mtime` double,
+the number recall's index is ordered by — and sort with `report.NewerFirst`, the comparator
+`report.ListingOrder` now calls too. One reader and one comparator, so a same-second pair (which a
+`ModTime().Unix()` reader would tie) lists in the same order here as in `cairn recall`; ties on the
+exact double break by ref (rows) or name (cards). Ordering happens at RENDER, not in `Visible`, so
+the tag listing and the navigation page keep the index order their comments promise. The card's
+preview refs follow the same order.
+
+**Relative time is server-side against the injected clock.** `PageView.Now` is `Config.Now`, and
+`timeAgo` renders `<time datetime="<RFC 3339 UTC>" title="<absolute UTC>">5m ago</time>`. Buckets
+(all FLOOR): under a minute (or up to a minute in the future) `just now`; `Nm ago`; `Nh ago`;
+`Nd ago` below 30 days; past that — or more than a minute in the future — the absolute UTC date.
+An mtime of 0 (stat failed) renders no timestamp rather than the epoch; a zero clock renders dates.
+The entry page's provenance block gains an `updated` row.
+
+**The ONE script.** The scope page's entry filter is `filter.js`, embedded, served at a
+content-hashed `GET /static/filter.<12 hex>.js` (`classPublic`, `immutable`, `text/javascript`,
+`nosniff`), linked only from the scope page. It is a case-insensitive SUBSEQUENCE match, per field,
+over the ref, title, aliases and tags the server put in each row's `data-filter`; every
+whitespace-separated term must match some one field; no ranking (the recency order stands). It
+reads only `data-filter` and the box, writes only `hidden` and the count's `textContent`. The
+control is rendered `hidden` and the script reveals it, so with script off every row shows and no
+dead box does. This REVERSES the package's zero-script property; the exact claim that replaces it
+is: **every script element this server renders is a same-origin `src` named by
+`AllowedScriptSources`, at most once, never inline** — a claim about the ORIGIN's bytes; a script
+injected downstream reaches the served page and no guard here can see it (see the edge-injection
+measurement above). Held by `TestEveryBrowsePageCarriesOnlyAllowlistedScripts` (rendered
+bytes, five negative controls), `uiaudit`'s `refuseWalkRegressions` (the browser's
+`document.scripts`, inline/foreign/duplicate each refused, plus a positive control that the
+allowlisted one passes), and `TestTheFilterScriptTouchesOnlyWhatItSays` (a SPELLING guard over the
+file's code, labelled as one). `rawban_test.go` is untouched: the tag is `h.Script(h.Src(…))`.
+
+**Copy removed.** The rendered entry view's explainer (`entryWhat`), the root and scope legends,
+and the visible definition lines under Aliases / Refs / Tags (with `RefsKeyDescription`,
+`TagsKeyDescription`, their two pin tests and the `ui-tags-key-description-loses-both-its-claims`
+battery row). Short definitions moved to `title=` tooltips on those headings. `entryRawWhat` is
+KEPT: it says something the raw view cannot show (nothing is parsed; invalid UTF-8 is the one
+substitution). A second approved round then removed the entry page's "What am I looking at?"
+legend and the scope explainer (`scopeWhat`) from the root cards and the scope page; "scope" keeps
+a short `title=` on the root card's kind label. `TestNoPageCarriesALegendOrTheScopeExplainer`
+asserts it by element and class (no `<details>` on any browse page, no `card-what` on the root or
+in the scope page's own card, with the raw view's explainer as the positive control): RED at the
+previous head `458ef8a` with 4 findings, green after.
+
+**Chips, and History.** Aliases (inert), refs (mono; refused refs keep `.task.refused`) and tags
+(links to `/?tag=`) render as pills on the entry page and on scope rows — the `ul` carries `chips`
+plus a modifier, so every `li`-level class other guards read is unchanged. `## Nuance /
+work-history` is DISPLAYED as "History" with the verbatim line in its tooltip; the entry page drops
+its bullet count; scope rows say "N history notes". Display only: no file format, parser, raw view
+or `internal/report` byte moved.
+
+### The RED proof
+
+Base-compatible guards were run against `origin/main` with only the new test files copied in:
+
+| guard | origin/main | HEAD |
+|---|---|---|
+| `TestTheScopePageListsEntriesNewestFirstWithTiesByRef` | RED (alphabetical order) | green |
+| `TestTheRootPageOrdersScopeCardsByTheirNewestEntry` | RED | green |
+| `TestEveryTimestampIsRelativeToTheInjectedClockWithItsInstantPinned` | RED (no `<time>`) | green |
+| `TestTheRemovedDefinitionCopyIsAbsentAndChipsArePresent` | RED (22 findings) | green |
+| `uiaudit`'s `TestTheEntryFilterNarrowsRowsInARealBrowser`, against a base-built binary | RED (control never visible) | green |
+| `TestTwoEntriesInsideOneSecondAreOrderedByTheirFraction`, `TestRelativeTime…`, the script tests | RED by COMPILATION (new symbols) — weaker evidence, stated as such | green |
+
+A mutation battery over this change (18 mutants: comparator reversed, tie reversed, either sort
+removed, a scope dated by its first entry, the mtime zeroed or truncated to the second, the
+allowlist emptied, an inline script on root, the filter twice, a script on the entry page, two
+bucket off-by-ones, a non-RFC 3339 `datetime`, `innerHTML` in the script, aliases dropped from
+`data-filter`, the control visible without script, the History rename reverted) killed all 18 with
+the named guard. A `filter.js` mutant swapping the subsequence for `indexOf` was killed by the
+browser test.
+
+### What these guards cannot see
+
+- Ranking: the filter does not rank, so nothing measures relevance order.
+- Large scopes: the filter is O(rows × fields) per keystroke, measured only at 17 rows.
+- The filter's behaviour with script disabled is pinned server-side (the control renders `hidden`)
+  and not in a browser with script off.
+- Clock skew between the pod's filesystem and its clock beyond the one-minute grace renders a date.

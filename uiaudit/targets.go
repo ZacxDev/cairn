@@ -269,6 +269,10 @@ var notADocument = map[string]string{
 	ui.StylesheetHashedPath: "a text/css response and not a document, for every reason the unversioned " +
 		"row gives — this is the CONTENT-HASHED row, the one the pages actually link, so a browser walk " +
 		"does fetch it as a subresource and `Browser.onEvent` is what watches that fetch succeed",
+	ui.FilterScriptPath: "a text/javascript response and not a document — the scope page's one " +
+		"allowlisted script. `internal/ui`'s TestTheFilterScriptIsServedAtItsContentHashedRoute asserts its " +
+		"bytes and headers; the walk fetches it as the scope page's subresource, and " +
+		"TestTheEntryFilterNarrowsRowsInARealBrowser drives what it does",
 	ui.OAuthCallbackPath: "reachable only with a provider ?code= AND a live single-use flight " +
 		"cookie, so navigated bare it renders a refusal — capturing that would measure an error page and " +
 		"count it as a page",

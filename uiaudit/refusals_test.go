@@ -105,6 +105,15 @@ func TestTheWalkRefusalsCanEachGoRED(t *testing.T) {
 		t.Fatalf("POSITIVE CONTROL FAILED: a clean walk over all %d widths was REFUSED (%v). Every red "+
 			"below is then satisfied by a gate that refuses everything.", len(Viewports), err)
 	}
+	// …and a clean walk in which a page carries the ONE allowlisted script, once, is clean too —
+	// or every script refusal below is satisfied by a gate that still refuses any script at all,
+	// which is the pre-allowlist gate this one replaced.
+	withFilter := cleanWalk()
+	withFilter[2].ScriptSrcs = []string{ui.FilterScriptPath}
+	if err := refuseWalkRegressions(withFilter); err != nil {
+		t.Fatalf("POSITIVE CONTROL FAILED: a walk whose page carries the allowlisted script once was REFUSED "+
+			"(%v). The allowlist is not being read.", err)
+	}
 
 	for _, tc := range []struct {
 		name    string
@@ -129,8 +138,30 @@ func TestTheWalkRefusalsCanEachGoRED(t *testing.T) {
 			wantSub: "HORIZONTAL OVERFLOW",
 		},
 		{
-			name:    "a script on the page",
-			break_:  func(cs []*Capture) { cs[2].ScriptCount = 1 },
+			name:    "an inline script on the page",
+			break_:  func(cs []*Capture) { cs[2].ScriptSrcs = []string{""} },
+			wantSub: "SCRIPT ON THE PAGE",
+		},
+		{
+			// A same-origin path that LOOKS like the allowed one: the allowlist is exact, not a
+			// `/static/` prefix.
+			name:    "a script from a src the allowlist does not name",
+			break_:  func(cs []*Capture) { cs[2].ScriptSrcs = []string{"/static/filter.000000000000.js"} },
+			wantSub: "SCRIPT ON THE PAGE",
+		},
+		{
+			name: "the allowlisted script twice",
+			break_: func(cs []*Capture) {
+				cs[2].ScriptSrcs = []string{ui.FilterScriptPath, ui.FilterScriptPath}
+			},
+			wantSub: "SCRIPT ON THE PAGE",
+		},
+		{
+			// The allowed script beside an injected one: the allowed one must not launder it.
+			name: "the allowlisted script beside an inline one",
+			break_: func(cs []*Capture) {
+				cs[2].ScriptSrcs = []string{ui.FilterScriptPath, ""}
+			},
 			wantSub: "SCRIPT ON THE PAGE",
 		},
 		{

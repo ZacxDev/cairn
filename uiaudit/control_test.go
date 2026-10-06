@@ -21,7 +21,8 @@ import (
 // INDISTINGUISHABLE FROM AN INSTRUMENT WIRED TO NOTHING.
 //
 // The walk over `cairn-ui` reports small numbers, and some are zero BY CONSTRUCTION rather than
-// by passing: the page ships no script and `internal/ui`'s own XSS guard asserts `"<img"` can
+// by passing: the root page this pair captures ships no script (only the scope page runs the one
+// allowlisted script, `ui.AllowedScriptSources`) and `internal/ui`'s own XSS guard asserts `"<img"` can
 // never render, so the console collector cannot count there whatever the code does. Reporting
 // that zero alone would be a claim about nothing.
 //

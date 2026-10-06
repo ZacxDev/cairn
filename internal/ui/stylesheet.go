@@ -60,7 +60,7 @@ var stylesheet string
 //
 // ⚠ AND THE DIGEST IS OVER THE BYTES, NOT OVER THE BUILD. Hashing a revision, a timestamp or a
 // version string would change the URL on every deploy that changed nothing, which is a cache
-// miss for every visitor and a different defect in the same place. `hashStylesheet` reads the
+// miss for every visitor and a different defect in the same place. `hashAsset` reads the
 // embedded bytes and nothing else, so two builds of the same stylesheet produce the same URL.
 
 // stylesheetHashWidth is how many hex characters of the digest reach the URL.
@@ -77,11 +77,13 @@ var stylesheet string
 // are build output reaching the binary through `//go:embed`, so no caller can.
 const stylesheetHashWidth = 12
 
-// hashStylesheet is the digest function, and it takes the bytes as an ARGUMENT rather than
+// hashAsset is the digest function — the stylesheet's and the filter script's, one function for
+// both static assets so the two URLs cannot come to be versioned differently — and it takes the
+// bytes as an ARGUMENT rather than
 // reading the package variable, so a test can drive it at more than one point. A derivation
 // that could only ever be exercised over the one stylesheet this tree happens to carry could
 // not be told apart from a frozen literal.
-func hashStylesheet(css string) string {
+func hashAsset(css string) string {
 	sum := sha256.Sum256([]byte(css))
 	return hex.EncodeToString(sum[:])[:stylesheetHashWidth]
 }
@@ -90,5 +92,5 @@ func hashStylesheet(css string) string {
 // are spelled here once: `routes`, `stylesheetLink` and the ledger all reach the result through
 // [StylesheetHashedPath], never by re-assembling it.
 func hashedStylesheetPathFor(css string) string {
-	return "/static/app." + hashStylesheet(css) + ".css"
+	return "/static/app." + hashAsset(css) + ".css"
 }
