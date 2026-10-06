@@ -2691,8 +2691,10 @@ whitespace-separated term must match some one field; no ranking (the recency ord
 reads only `data-filter` and the box, writes only `hidden` and the count's `textContent`. The
 control is rendered `hidden` and the script reveals it, so with script off every row shows and no
 dead box does. This REVERSES the package's zero-script property; the exact claim that replaces it
-is: **every script element on every page is a same-origin `src` named by `AllowedScriptSources`, at
-most once, never inline.** Held by `TestEveryBrowsePageCarriesOnlyAllowlistedScripts` (rendered
+is: **every script element this server renders is a same-origin `src` named by
+`AllowedScriptSources`, at most once, never inline** — a claim about the ORIGIN's bytes; a script
+injected downstream reaches the served page and no guard here can see it (see the edge-injection
+measurement above). Held by `TestEveryBrowsePageCarriesOnlyAllowlistedScripts` (rendered
 bytes, five negative controls), `uiaudit`'s `refuseWalkRegressions` (the browser's
 `document.scripts`, inline/foreign/duplicate each refused, plus a positive control that the
 allowlisted one passes), and `TestTheFilterScriptTouchesOnlyWhatItSays` (a SPELLING guard over the

@@ -16,8 +16,11 @@ import (
 // REPLACES IT IS AN ALLOWLIST RATHER THAN A HOPE. The surface used to render no script at all and
 // `uiaudit` refused any capture with `document.scripts.length != 0`. The operator chose a
 // client-side filter over a server-side form, so the claim is now NARROWER and still exact: every
-// script element on every page is a same-origin `src` named by [AllowedScriptSources], at most
-// once, with NO inline body — and nothing else. Three guards hold it, at three depths:
+// script element THIS SERVER RENDERS is a same-origin `src` named by [AllowedScriptSources], at
+// most once, with NO inline body — and nothing else. ⚠ That is a claim about the ORIGIN's bytes:
+// a script inserted downstream (the edge injection `README.md` measures) reaches the SERVED page
+// and none of the guards below can see it, because each boots its own pod. Three guards hold the
+// origin claim, at three depths:
 //
 //   - `TestEveryBrowsePageCarriesOnlyAllowlistedScripts` (render_test) over the rendered bytes, with
 //     negative controls that an inline script and a foreign `src` both go red;

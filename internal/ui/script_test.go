@@ -74,9 +74,10 @@ func scriptViolations(page string) []string {
 // same-origin `src` and nothing else — and the scope page carries exactly the filter.
 //
 // 🔴 TWO CONTROLS MAKE ITS ZEROS READABLE. POSITIVE: the scope page's own count must be ONE, so a
-// guard wired to nothing (or a page that silently lost its script) is red. NEGATIVE: four
+// guard wired to nothing (or a page that silently lost its script) is red. NEGATIVE: five
 // realistic injections, each spliced into a real page, must each produce a violation — an
-// inline script, a foreign `src`, an uppercase tag, and the allowlisted tag twice.
+// inline script, a foreign `src`, an uppercase tag, the allowlisted tag twice, and the
+// allowlisted `src` carrying an inline body.
 func TestEveryBrowsePageCarriesOnlyAllowlistedScripts(t *testing.T) {
 	root, id, scopeID := recencyWorld(t)
 	srv := recencyServer(t, root, id)
