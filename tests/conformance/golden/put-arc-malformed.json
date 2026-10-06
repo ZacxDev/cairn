@@ -1,0 +1,41 @@
+{
+  "body": {
+    "bytes": 104,
+    "kind": "text_lines",
+    "sha256": "10aab0078aa3799192f5e4b92b3d8538f8a6c13f7739bbd2caa28fbeff51668e",
+    "text_lines": [
+      "bad request: status must be open, closed or unknown (omit it when the tool has no verdict), got 'maybe'",
+      ""
+    ]
+  },
+  "case": "put-arc-malformed",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "104"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "recorded_from": "cmd/cairn-server",
+  "status": 400
+}

@@ -81,6 +81,21 @@ func Verbs() []Verb {
 		// SAME `report.Sessions` the pod's `sessions/<scope>` route does.
 		{Name: "sessions", Help: "which sessions wrote attributed bullets in the scope, with coverage",
 			Flags: commonReadFlags, Run: Sessions},
+		// 🔴 GO-ONLY, DECLARED: the arc registry (the arcs/sessions S3 slice). Three FLAT verbs,
+		// not one `arc` verb with sub-actions, because this parser and every ledger that reads it
+		// are flat: `Verb.Writes` is ONE bit per verb and decides whether an unreachable store
+		// exits 7 or 3, and `-verbs` prints one `<name> <writes|reads>` per verb — an `arc` verb
+		// that both wrote and read would need a second axis in all three. `ls-entries` is the
+		// precedent for a hyphenated verb. All three ask the POD (registrations are not in the
+		// cache) and print its body verbatim, so `internal/report`'s arc renderer is the only
+		// rendering of these answers anywhere.
+		{Name: "arcs", Help: "which registered arcs touched the scope, declared or inferred (asks the pod)",
+			Flags: []string{"--scope", "--repo"}, Run: ArcsList},
+		{Name: "arc-show", Help: "one registered arc: status, coverage, members (asks the pod)",
+			Flags: []string{"--scope", "--repo", "--slug"}, Run: ArcShow},
+		{Name: "arc-register", Writes: true,
+			Help:  "register or update an arc from a JSON payload (writes to the pod)",
+			Flags: []string{"--scope", "--repo", "--slug", "--from"}, Run: ArcRegister},
 		{Name: "validate", Help: "the post-write check: parse, dropped lines, marker reachability",
 			Flags: commonReadFlags, Run: Validate},
 		{Name: "ls-entries", Help: "one `<scope>/<entry>.md` per line",
@@ -124,6 +139,10 @@ var requiredFlags = map[string][]string{
 	"append": {"--ref", "--text", "--session"},
 	"put":    {"--ref", "--file"},
 	"create": {"--ref", "--file"},
+	// The arc key is `(home scope, slug)`; the home comes from `--scope`/`--repo` like every other
+	// scope, so only the slug (and, to register, the payload) is required.
+	"arc-show":     {"--slug"},
+	"arc-register": {"--slug", "--from"},
 }
 
 // DeclaredVerbs is `<name> <writes|reads>` per line, sorted, for a ledger to read out of the
@@ -502,6 +521,10 @@ func Parse(argv []string) (Verb, Options, error) {
 			opts.File = value
 		case "--if-match":
 			opts.IfMatch = value
+		case "--slug":
+			opts.Slug = value
+		case "--from":
+			opts.From = value
 		}
 		i++
 	}

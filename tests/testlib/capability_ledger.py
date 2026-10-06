@@ -193,6 +193,40 @@ LEDGER: tuple[Capability, ...] = (
                     "Python oracle is not extended",
     ),
     Capability(
+        name="scope-arcs",
+        effect=READS,
+        cli="arcs",
+        route=("GET", "/api/v1/arcs/{scope}"),
+        note="the verb IS a client of the route: registrations live only in the "
+             "pod's journal, never in the cache, so `cairn arcs` prints the pod's "
+             "body verbatim and there is one renderer (`report.Arcs`)",
+        go_only=True,
+        go_only_why="decision 3 of the arcs/sessions plan: the arc registry (S3) is "
+                    "added to `cmd/cairn-server` and `cmd/cairn` only, and the Python "
+                    "oracle is not extended",
+    ),
+    Capability(
+        name="arc-show",
+        effect=READS,
+        cli="arc-show",
+        route=("GET", "/api/v1/arc/{home}/{slug}"),
+        note="a client of the route, like `scope-arcs`: the pod's body verbatim",
+        go_only=True,
+        go_only_why="decision 3 of the arcs/sessions plan: the arc registry (S3) is "
+                    "Go-only",
+    ),
+    Capability(
+        name="arc-register",
+        effect=WRITES,
+        cli="arc-register",
+        route=("PUT", "/api/v1/arc/{home}/{slug}"),
+        note="appends one record to the pod's arc journal, which lives OUTSIDE the "
+             "store tree; it changes what a reader of the declared scopes sees",
+        go_only=True,
+        go_only_why="decision 3 of the arcs/sessions plan: the arc registry (S3) is "
+                    "Go-only",
+    ),
+    Capability(
         name="cache-validate",
         effect=READS,
         cli="validate",
@@ -444,7 +478,7 @@ def go_only_verbs(ledger: tuple[Capability, ...] = LEDGER) -> frozenset[str]:
     return frozenset(row.cli for row in ledger if row.go_only and row.cli is not None)
 
 
-#: The declared Go-only verb set. Empty until the first Go-only verb lands.
+#: The declared Go-only verb set, derived from the `go_only` rows above.
 GO_ONLY_VERBS: frozenset[str] = go_only_verbs()
 
 

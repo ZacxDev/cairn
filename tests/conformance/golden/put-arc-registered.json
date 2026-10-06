@@ -1,0 +1,37 @@
+{
+  "body": {
+    "bytes": 73,
+    "kind": "text_lines",
+    "sha256": "207a51eb19a8243b424c7c9c95a2ce50b425b069fe94c0a48c100a14fee644d6",
+    "text_lines": [
+      "arc-registered: alpha-notes/conformance-arc · members=1 · unjoinable=1",
+      ""
+    ]
+  },
+  "case": "put-arc-registered",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Length",
+      "73"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "arc-registered"
+    ]
+  ],
+  "reason": "OK",
+  "recorded_from": "cmd/cairn-server",
+  "status": 200
+}

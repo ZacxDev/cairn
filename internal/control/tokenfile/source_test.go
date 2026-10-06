@@ -257,6 +257,45 @@ func TestALegacyRowReachesEveryScopeAndMayWriteNone(t *testing.T) {
 	}
 }
 
+// TestADotDirectoryAtTheStoreRootIsEnumeratedAsAScope RECORDS A HAZARD; it does not
+// close one.
+//
+// 🔴 THE PREMISE `cairn-server -arc-journal` REFUSES TO START ON, MEASURED RATHER THAN
+// CITED (step 1 of the arcs/sessions plan's RED-first list). `storeDirs` skips only
+// NON-directories, so a `.arcs/` directory beside the scopes — exactly where a journal
+// "next to the store" would land — becomes a scope in the projection, and a bare row then
+// READS it. `snapshot.Build` skips dot names; this adapter does not. The adapter's
+// behaviour is deliberately LEFT AS IT IS (the startup refusal is the design choice, not a
+// fix here), so this is an INVARIANT GUARD on today's hazard: if it ever goes red because
+// the adapter learned to skip dot directories, the refusal's stated reason has changed
+// and `internal/arcs.ResolveJournalPath`'s comment has to move with it.
+//
+// The control is the ordinary scope beside it, which must be enumerated too — otherwise a
+// projection that enumerated nothing would "prove" the dot directory was not special.
+func TestADotDirectoryAtTheStoreRootIsEnumeratedAsAScope(t *testing.T) {
+	root := storeWith(t, "alpha-notes", ".arcs")
+	if err := os.WriteFile(filepath.Join(root, ".arcs", "journal.jsonl"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	token := aToken('d')
+	m := modelOf(t, sourceOver(root, authz.LegacyRecord(token)))
+	_, auth, err := control.Authenticate(m, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ⚠ NOT `authorityOf`: that helper PROBES a fixed name list which holds no dot name, so it
+	// reported `[alpha-notes]` here — a fact about the probe list, measured on the first run
+	// of this test. `NamedScopes` is the one traversal `VisibleScopes` is derived from.
+	var read []string
+	for _, s := range auth.NamedScopes(control.VerbRead) {
+		read = append(read, s.Name)
+	}
+	sort.Strings(read)
+	if !equal(read, []string{".arcs", "alpha-notes"}) {
+		t.Fatalf("measured premise: a bare row reads the dot directory AND the real scope; got %v", read)
+	}
+}
+
 // TestAMappedRowReachesAScopeThatHasNoDirectoryYet is why the enumeration is a UNION
 // rather than a directory listing.
 //

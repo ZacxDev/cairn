@@ -64,15 +64,17 @@ type writeKey struct {
 // method on the server. The KEYS are declared here as the ledger, so the set is
 // readable without reading the wiring.
 //
-// ⚠ `sessions` IS GO-ONLY BY DECISION (decision 3 of the arcs/sessions plan): `server/server.py`
-// does not serve it, and every row addressing it in `tests/conformance/requests.json` is marked
-// `go_only`. The four places a head moves together are this table, those rows, the `go_only` row
-// of `tests/testlib/capability_ledger.LEDGER`, and `flake.nix`'s `want-go-only.txt`.
-var readHeads = []string{"recall", "search", "snapshot", "sessions"}
+// ⚠ `sessions`, `arcs`, `arc` AND `PUT arc` ARE GO-ONLY BY DECISION (decision 3 of the
+// arcs/sessions plan): `server/server.py` does not serve them, and every row addressing them in
+// `tests/conformance/requests.json` is marked `go_only`. The four places a head moves together are
+// this table, those rows, the `go_only` rows of `tests/testlib/capability_ledger.LEDGER`, and
+// `flake.nix`'s `want-go-only.txt`.
+var readHeads = []string{"recall", "search", "snapshot", "sessions", "arcs", "arc"}
 
 var writeKeys = []writeKey{
 	{"POST", "entry"},
 	{"PUT", "entry"},
+	{"PUT", "arc"},
 }
 
 // safeReadMethods are the two methods every read head is reachable by, and the pair

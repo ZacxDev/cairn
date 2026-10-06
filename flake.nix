@@ -1424,8 +1424,11 @@
           # pins the one above against the PYTHON parser and this one against
           # `capability_ledger.GO_ONLY_VERBS` (the `go_only` rows), so a verb cannot be
           # moved between them, or declared Go-only here alone, without a red test. The
-          # first, `sessions`, is the arcs/sessions S2 slice.
+          # first, `sessions`, is the arcs/sessions S2 slice; the arc registry is S3.
           cat > want-go-only-verbs.txt <<'EOF'
+          arc-register writes
+          arc-show reads
+          arcs reads
           sessions reads
           EOF
           sed -i 's/^ *//; /^$/d' want-verbs.txt want-go-only-verbs.txt
@@ -1512,10 +1515,15 @@
           # the arcs/sessions plan). `tests/test_capability_ledger.py` pins the list above
           # against the oracle's tables and this one against the `go_only` rows of
           # `tests/conformance/requests.json` AND of the capability ledger. The first,
-          # `sessions/<scope>`, is the arcs/sessions S2 slice.
+          # `sessions/<scope>`, is the arcs/sessions S2 slice; `arcs`/`arc` are S3's.
           cat > want-go-only.txt <<'EOF'
+          GET arc
+          GET arcs
           GET sessions
+          HEAD arc
+          HEAD arcs
           HEAD sessions
+          PUT arc
           EOF
           sed -i 's/^ *//; /^$/d' want.txt want-go-only.txt
           sort -u want.txt want-go-only.txt > want-all.txt

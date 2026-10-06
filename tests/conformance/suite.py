@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import json
 import socket
 import sys
 import tempfile
@@ -648,6 +649,29 @@ def generate(
 
 
 # ---------------------------------------------------------------------------
+# the arc journal (Go-only)
+# ---------------------------------------------------------------------------
+
+
+def write_arc_journal(path: Path, world: dict | None = None) -> Path:
+    """Write the world's seeded arc-registry journal to `path`, one record per line.
+
+    🔴 OUTSIDE THE STORE TREE, AND THAT IS NOT A CONVENIENCE: `cairn-server -arc-journal`
+    refuses to start when the path resolves inside the store root (operator decision Q2 of
+    the arcs/sessions plan), so `build-store` puts it beside the token file. The ORACLE is
+    never handed this file — it serves no arc route — so only `run_go.sh` passes it, and the
+    `go_only` arc rows are recorded and replayed against a server holding exactly these
+    records. Written with a trailing newline per record: a missing final newline is a TORN
+    TAIL to the Go reader and would be ignored.
+    """
+    world = world if world is not None else oracle.load_world()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps(r, separators=(",", ":")) for r in world["arc_journal"]["records"]]
+    path.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+    return path
+
+
+# ---------------------------------------------------------------------------
 # record-go-only
 # ---------------------------------------------------------------------------
 
@@ -1001,8 +1025,10 @@ def main(argv: list[str] | None = None) -> int:
         root = oracle.build_store(args.dest)
         tokens = oracle.mint_tokens()
         token_file = oracle.write_token_file(args.dest.parent / "tokens", tokens)
+        journal = write_arc_journal(args.dest.parent / "arcs" / "journal.jsonl")
         print(f"store={root}")
         print(f"token-file={token_file}")
+        print(f"arc-journal={journal}")
         print("env: " + " ".join(f"{k}={v}" for k, v in oracle.ORACLE_ENV.items()))
         return 0
     if args.command == "generate":

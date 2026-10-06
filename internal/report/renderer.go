@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/hostid"
 	"github.com/ZacxDev/cairn/internal/store"
 )
@@ -95,6 +96,28 @@ func (rd Reader) Sessions(storeRoot, scope string, visible store.ScopeSet) (Rend
 		Text:    rep.RenderText(),
 		Warning: warning,
 	}, nil
+}
+
+// Arcs renders one `/arcs/<scope>` request. Like `Sessions` it needs no host: the body names no
+// machine and no path.
+func (rd Reader) Arcs(storeRoot, scope string, visible store.ScopeSet, snap *arcs.Snapshot) (Rendered, error) {
+	rep, err := Arcs(storeRoot, scope, visible, snap)
+	if err != nil {
+		return Rendered{}, err
+	}
+	return Rendered{Status: rep.Status, Scope: rep.Scope, Exit: rep.Exit(), Text: rep.RenderText()}, nil
+}
+
+// Arc renders one `/arc/<home>/<slug>` request.
+//
+// ⚠ `Scope` IS LEFT EMPTY: the answer is about an arc, and on `arc-unregistered` it deliberately
+// names no scope at all.
+func (rd Reader) Arc(storeRoot, home, slug string, visible store.ScopeSet, snap *arcs.Snapshot) (Rendered, error) {
+	rep, err := Arc(storeRoot, home, slug, visible, snap)
+	if err != nil {
+		return Rendered{}, err
+	}
+	return Rendered{Status: rep.Status, Exit: rep.Exit(), Text: rep.RenderText()}, nil
 }
 
 // ExitFor is the exit code, and the one warning line that goes with it. ONE decision site,
