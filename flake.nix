@@ -427,6 +427,10 @@
           # file reaches the derivation as its own path literal. Adding it back here would
           # be a row nothing reads.
           || (rel == "internal/ui/app.css")
+          # 🔴 AND THE SCOPE PAGE'S FILTER SCRIPT, FOR `app.css`'s REASON EXACTLY:
+          # `internal/ui/script.go` `//go:embed`s it, so a filtered tree without it fails
+          # to COMPILE rather than failing a test. Named, never a `.js` suffix rule.
+          || (rel == "internal/ui/filter.js")
           # 🔴 THE NESTED MODULE'S TWO LOCK FILES, AND NOTHING ELSE FROM THAT
           # DIRECTORY. `internal/depspolicy`'s
           # `TestTheNestedModuleSetIsExactlyTheAllowlist` walks the tree for

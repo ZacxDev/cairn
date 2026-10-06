@@ -633,12 +633,26 @@ func ListingOrder(entries []RecalledEntry) []RecalledEntry {
 	out := make([]RecalledEntry, len(entries))
 	copy(out, entries)
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].MTime != out[j].MTime {
-			return out[i].MTime > out[j].MTime
-		}
-		return out[i].Ref < out[j].Ref
+		return NewerFirst(out[i].MTime, out[i].Ref, out[j].MTime, out[j].Ref)
 	})
 	return out
+}
+
+// NewerFirst is the ONE recency comparator: newer mtime first, and on an EXACT tie of the
+// double, the lexically smaller key first. [ListingOrder] orders the index by it, and
+// `internal/ui` orders its scope cards and entry rows by it.
+//
+// 🔴 ONE COMPARATOR, BECAUSE TWO SURFACES THAT LIST ONE STORE MUST AGREE ABOUT WHICH ENTRY IS
+// NEWEST. A second spelling in the browser — a `time.Time` compare, or a tie broken by title
+// instead of ref — would agree on every store where nothing ties and disagree on the one where
+// two entries were written inside one second, which is exactly the shape the conformance fixture
+// carries on purpose. The key is a parameter rather than a field so a SCOPE can be ordered by it
+// too (its key is its name, since scope names are unique where refs are only unique per scope).
+func NewerFirst(aMTime float64, aKey string, bMTime float64, bKey string) bool {
+	if aMTime != bMTime {
+		return aMTime > bMTime
+	}
+	return aKey < bKey
 }
 
 // ListingPageOf is one page of the ordered index, and how many pages there are in total.

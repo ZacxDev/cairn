@@ -2,8 +2,10 @@ package ui
 
 import (
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	g "maragu.dev/gomponents"
 	c "maragu.dev/gomponents/components"
@@ -103,6 +105,14 @@ type PageView struct {
 	Touched *Touched
 	// Arc is the arc page's answer, nil everywhere else. See `arcs.go`.
 	Arc *report.ArcReport
+
+	// Now is the render-time clock reading every relative timestamp on the page is computed
+	// against — the server's injected `Config.Now`, so a test pins "5m ago" exactly.
+	//
+	// ⚠ THE ZERO VALUE IS "NO CLOCK", AND THE PAGE THEN SAYS ONLY WHAT IT KNOWS: every
+	// timestamp renders as its absolute date rather than as a distance from the year 1. A
+	// view built without one (a test fixture, a future caller) cannot render "2000 years ago".
+	Now time.Time
 }
 
 // Page is the ROOT: every scope this credential may read, as cards, plus the search box.
@@ -136,8 +146,13 @@ func Page(v PageView) g.Node {
 			g.If(len(v.Scopes) == 0, h.P(h.Class("empty"), g.Text(
 				"No scope is visible to this credential. That is an authority "+
 					"answer, not an empty store."))),
-			g.If(len(v.Scopes) > 0, h.Div(h.Class("scope-grid"), g.Map(v.Scopes, scopeCard))),
-			g.If(len(v.Scopes) > 0, rootLegend()),
+			// 🔴 NEWEST FIRST, BY THE SCOPE'S NEWEST ENTRY, THROUGH RECALL'S OWN COMPARATOR. See
+			// [scopesNewestFirst]. Ordered HERE, at render, rather than in `Visible`: the tag
+			// listing and the navigation page keep the index order their own comments promise.
+			g.If(len(v.Scopes) > 0, h.Div(h.Class("scope-grid"), g.Map(scopesNewestFirst(v.Scopes),
+				func(s Scope) g.Node { return scopeCard(s, v.Now) }))),
+			// ⚠ NO LEGEND HERE ANY MORE, ON AN OPERATOR DECISION: the card's own labels say what
+			// each number is, and the definitions read as noise on every visit.
 		})),
 	)
 }
@@ -185,71 +200,161 @@ func ScopePage(v PageView) g.Node {
 				"This scope holds no readable entry. That is what the index says about "+
 					"this scope, not what your credential is allowed to see: a scope you "+
 					"could not read would not be addressable from here at all."))),
-			g.If(len(s.Entries) > 0, h.Ul(h.Class("entry-list"), g.Map(s.Entries, func(e Entry) g.Node {
-				return entryRow(s, e)
-			}))),
+			g.If(len(s.Entries) > 0, filterControl(len(s.Entries))),
+			// 🔴 NEWEST FIRST, BY FILE MTIME, THROUGH RECALL'S OWN COMPARATOR — see
+			// [entriesNewestFirst]. The id is what `filter.js` finds the rows by.
+			g.If(len(s.Entries) > 0, h.Ul(h.Class("entry-list"), h.ID("entry-list"),
+				g.Map(entriesNewestFirst(s.Entries), func(e Entry) g.Node {
+					return entryRow(s, e, v.Now)
+				}))),
 			malformedBlock(s),
 		),
 		// `g.Iff`: the closure dereferences `v.Touched` — `Page`'s rule about `g.If`.
 		g.Iff(v.Touched != nil, func() g.Node { return touchedSections(*v.Touched, v.Scopes) }),
-		scopeLegend(),
+		// ⚠ NO LEGEND, ON THE OPERATOR DECISION `Page` RECORDS. And the script is linked ONLY
+		// where the control it drives is rendered — a page carrying a script with nothing to do
+		// is a script the allowlist has to account for and nobody benefits from.
+		g.If(len(s.Entries) > 0, filterScriptTag()),
 	)
 }
 
-// RefsKeyDescription is the line under the entry page's "Refs" heading, and it is a CONSTANT
-// so that a test can pin the whole of it.
+// filterControl is the entry filter's box, its count and its empty-state line.
 //
-// ⚠ IT NAMES BOTH SPELLINGS BECAUSE THE PAGE CANNOT SAY WHICH ONE THIS FILE USED. The parser
-// folds `tasks:`/`task:` into the same values as `refs:` and keeps no record of which key they
-// came from, so a line naming only `refs:` would be a claim about the file that the page has
-// not checked — and a reader who grepped for `refs:` and found `tasks:` would conclude the
-// page was showing something else.
+// 🔴 RENDERED `hidden`, AND `filter.js` IS WHAT UNHIDES IT — PROGRESSIVE ENHANCEMENT IN THE
+// DIRECTION THAT CANNOT LIE. Without script a visible box would be a control that appears to
+// filter and does nothing; hidden, a script-less reader sees every row and no promise. The count
+// is server-rendered as "M of M" so the first thing the script does changes nothing visible.
 //
-// 🔴 AND IT SAYS `accepted`, NOT `deprecated`. The older spellings are PERMANENT by operator
-// decision — `README.md` says they "stay accepted" — so telling an operator on the entry page
-// that the key they are looking at is on its way out would be this surface contradicting the
-// documentation shipped beside it. There is no removal date to warn about.
-//
-// 🔴 PINNED AS ONE NORMALISED STRING BY `TestTheRefsKeyDescriptionIsPinnedWhole`, THE SAME WAY
-// `ReplicaHonesty` IS, AND FOR THE SAME REASON. The paragraph above is a comment, and a comment
-// reds no test. This page really did serve the word `deprecated` in this very sentence at
-// `155d587`, and the edit that corrected it to `accepted older` was asserted by nothing — so
-// restoring `deprecated`, or dropping the older spellings from the sentence (the half a tidying
-// edit removes), left the whole suite green. A cosmetic reword now fails a test; that is the
-// intended cost of a machine-readable claim.
-const RefsKeyDescription = "the `refs:` front-matter key (or the accepted older " +
-	"`tasks:`/`task:`), as written"
+// ⚠ THE BOX IS NOT A FORM AND SUBMITS NOWHERE: it has no `name` and no enclosing `<form>`, so the
+// filter is never a request and never reaches a log.
+func filterControl(total int) g.Node {
+	return h.Div(
+		h.Class("entry-filter"),
+		h.ID("entry-filter-control"),
+		g.Attr("hidden"),
+		h.Label(h.For("entry-filter"), g.Text("Filter entries")),
+		h.Input(
+			h.ID("entry-filter"),
+			h.Type("search"),
+			h.Placeholder("ref, title, alias or tag"),
+			h.AutoComplete("off"),
+		),
+		h.P(h.Class("filter-count"), h.ID("entry-filter-count"), h.Aria("live", "polite"),
+			g.Text(strconv.Itoa(total)+" of "+plural(total, "entry", "entries"))),
+		h.P(h.Class("empty"), h.ID("entry-filter-empty"), g.Attr("hidden"),
+			g.Text("No entry in this scope matches the filter.")),
+	)
+}
 
-// TagsKeyDescription is the line under the entry page's "Tags" heading, and it is a CONSTANT so
-// that a test can pin the whole of it.
+// entryFilterText is the `data-filter` payload `filter.js` matches against: the row's ref,
+// title, aliases and tags, ONE PER LINE, so the script can match per field.
 //
-// 🔴 IT SAYS `folded`, AND THAT IS THE ONE CLAIM THIS LINE HAS TO MAKE. The Refs list above says
-// "as written" and is true; this list is NOT as written — `parseTagsField` lowercases and
-// `-`-folds every tag — and a reader comparing the page against the file will see `Marketing` in
-// one and `marketing` in the other. Saying so is what stops that reading as the page showing
-// something else.
+// ⚠ IT IS USER TEXT IN AN ATTRIBUTE VALUE, which gomponents escapes like every other one, and
+// the script reads it back with `getAttribute` — the browser's decoded string, never markup.
+func entryFilterText(e Entry) string {
+	fields := []string{e.Ref, e.Title}
+	fields = append(fields, e.Aliases...)
+	fields = append(fields, e.Tags...)
+	return strings.Join(fields, "\n")
+}
+
+// entriesNewestFirst is the scope page's row order: newest file mtime first, ties by ref.
 //
-// 🔴 IT SAYS WHERE THE VOCABULARY IS CLOSED, BECAUSE NOTHING ELSE ON THIS SURFACE CAN — AND IT
-// DOES NOT ENUMERATE THE SET. The declared set lives in `internal/write`'s `tagVocabulary` and is
-// enforced on the WRITE path; a third spelling of those terms, on a page nothing gates against
-// them, is the drift this line refuses to start. What it must say instead is the SCOPE: a tag
-// shown here was either accepted by that gate or predates it, which is the difference between
-// "this is one of the valid categories" and "this is what the file says".
+// 🔴 IT IS `report.NewerFirst`, THE COMPARATOR RECALL'S INDEX IS ORDERED BY, OVER THE SAME
+// `report.FileMTime` DOUBLE — so the browser and `cairn recall` list one scope in one order,
+// including the same-second pair a nanosecond compare would split differently. A copy, so the
+// caller's slice (which `pickEntry` and the tag listing also read) keeps its index order.
+func entriesNewestFirst(entries []Entry) []Entry {
+	out := slices.Clone(entries)
+	slices.SortStableFunc(out, func(a, b Entry) int { return newerFirstCmp(a.MTime, a.Ref, b.MTime, b.Ref) })
+	return out
+}
+
+// scopesNewestFirst is the root page's card order: the scope whose NEWEST entry is newest comes
+// first ([Scope.MTime]), ties — including every scope with no entry — by name.
+func scopesNewestFirst(scopes []Scope) []Scope {
+	out := slices.Clone(scopes)
+	slices.SortStableFunc(out, func(a, b Scope) int { return newerFirstCmp(a.MTime(), a.Name, b.MTime(), b.Name) })
+	return out
+}
+
+// newerFirstCmp adapts `report.NewerFirst`, a less-than, to the three-way form `slices` wants.
+// It decides nothing itself.
+func newerFirstCmp(aMTime float64, aKey string, bMTime float64, bKey string) int {
+	switch {
+	case report.NewerFirst(aMTime, aKey, bMTime, bKey):
+		return -1
+	case report.NewerFirst(bMTime, bKey, aMTime, aKey):
+		return 1
+	default:
+		return 0
+	}
+}
+
+// timeAgo is the ONE rendering of an mtime: a `<time>` whose text is the distance from `now`
+// ([relativeTime]), whose `datetime` is the machine-readable RFC 3339 instant in UTC, and whose
+// `title` is the absolute UTC time a reader can hover for. Nil for an UNKNOWN mtime (0), which
+// renders nothing rather than the epoch — see [Entry.MTime].
 //
-// 🔴 PINNED AS ONE NORMALISED STRING BY `TestTheTagsKeyDescriptionIsPinnedWhole`, AGAINST A
-// HAND-TYPED LITERAL — AND THE LITERAL IS A CORRECTION, NOT A STYLE. That test used to compare
-// the page against THIS CONSTANT, which moves both sides of the comparison together and could
-// not see a reword at all: measured, a mutant reducing this line to `"the `tags:` front-matter
-// key"` — dropping the FOLDED clause and the vocabulary clause at once — left `go test ./...`
-// green tree-wide. That is the identical defect already recorded for `ReplicaHonesty` in
-// `internal/ui/sharing_test.go`, and the fix is the same: two spellings, deliberately, so
-// changing what this page claims is an edit a reviewer sees.
+// ⚠ SECOND PRECISION ON THE PAGE, DELIBERATELY, while the ORDER uses the full double. A reader
+// needs "when", not which nanosecond; the sub-second part is what decides a tie, and it does so in
+// [entriesNewestFirst], not here.
+func timeAgo(mtime float64, now time.Time) g.Node {
+	if mtime <= 0 {
+		return nil
+	}
+	at := time.Unix(int64(mtime), 0).UTC()
+	return h.Time(
+		h.Class("updated"),
+		h.DateTime(at.Format(time.RFC3339)),
+		h.TitleAttr(at.Format("2006-01-02 15:04:05 UTC")),
+		g.Text(relativeTime(at, now)),
+	)
+}
+
+// relativeTime is the bucketed distance from `at` to `now`, and the buckets are:
 //
-// ⚠ SO THE DUPLICATION IS LOAD-BEARING AND MUST NOT BE "DEDUPLICATED" BACK INTO ONE. The battery
-// row is `ui-tags-key-description-loses-both-its-claims` in `tests/control_mutants.py`.
-const TagsKeyDescription = "the `tags:` front-matter key, FOLDED to lowercase `[a-z0-9.-]` — " +
-	"the vocabulary is CLOSED on the write path, so a tag here was either accepted by that " +
-	"gate or predates it"
+//	now - at <  1 minute   "just now"   (and up to a minute in the FUTURE: skew between the
+//	                                     pod's filesystem and its clock is not news)
+//	         <  1 hour     "Nm ago"     N = whole minutes, 1..59
+//	         <  1 day      "Nh ago"     N = whole hours, 1..23
+//	         < 30 days     "Nd ago"     N = whole days, 1..29
+//	otherwise              "2000-01-02" the absolute UTC date: past a month a distance is less
+//	                                     useful than the date, and a timestamp more than a minute
+//	                                     in the FUTURE is a claim this page will not round to "now"
+//
+// Every bucket FLOORS: "59m ago" until the full hour, never "1h ago" at 59m30s. A zero `now` is
+// "no clock" ([PageView.Now]) and always answers the absolute date.
+func relativeTime(at, now time.Time) string {
+	date := at.UTC().Format("2006-01-02")
+	if now.IsZero() {
+		return date
+	}
+	d := now.Sub(at)
+	switch {
+	case d < -time.Minute:
+		return date
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return strconv.Itoa(int(d/time.Minute)) + "m ago"
+	case d < 24*time.Hour:
+		return strconv.Itoa(int(d/time.Hour)) + "h ago"
+	case d < 30*24*time.Hour:
+		return strconv.Itoa(int(d/(24*time.Hour))) + "d ago"
+	default:
+		return date
+	}
+}
+
+// ⚠ THERE ARE NO `RefsKeyDescription` / `TagsKeyDescription` CONSTANTS ANY MORE, AND THEIR
+// DELETION IS AN OPERATOR DECISION RATHER THAN A TIDY. Each was a visible sentence under the entry
+// page's Refs/Tags heading, pinned whole against a hand-typed literal (and the tags one by a
+// mutation-battery row). The operator judged the definitions noise on a page read every day; what
+// survives is a SHORT version in the heading's `title=` tooltip ([labelledList]'s call sites),
+// which keeps the two claims that mattered — "as written" for refs, "folded" for tags — one hover
+// away. The pins went with the sentences: a pinned string that is no longer rendered is a guard on
+// nothing.
 
 // EntryPage is ONE entry: the sections its file carries and the line items under the
 // journal heading.
@@ -260,9 +365,9 @@ const TagsKeyDescription = "the `tags:` front-matter key, FOLDED to lowercase `[
 // markdown file somebody else wrote, in both text and attribute positions, and
 // `entryRow`'s comment records why the two contexts have to be exercised separately.
 // 🔴 AND IT IS TWO VIEWS OF ONE ENTRY BEHIND ONE ROUTE, SWITCHED BY `?view=` AND NOT BY A
-// SCRIPT. Tabs are the obvious place a browser surface grows its first JavaScript, and this
-// one may not have any: `document.scripts.length == 0` is a property `uiaudit` measures on
-// every captured page, and part of this package's escaping story rests on it. Two server-
+// SCRIPT. This page carries NO script: the surface's one script is the scope page's filter, and
+// every script a page may carry is named by `AllowedScriptSources` and refused anywhere else by
+// `TestEveryBrowsePageCarriesOnlyAllowlistedScripts` and `uiaudit`'s walk. Two server-
 // rendered links cost nothing a script would have bought — they give a shareable URL, a
 // working back button and a browser-native reload for free, which is `searchForm`'s ruling
 // for the same shape. The alternative that WAS considered and refused: `:target`-driven
@@ -272,10 +377,12 @@ const TagsKeyDescription = "the `tags:` front-matter key, FOLDED to lowercase `[
 // ⚠ THE RAW VIEW REPLACES THE STRUCTURE AND KEEPS THE ORIENTATION. The heading, the tabs
 // and `provenance` are on both views because they say WHICH file this is; the counts,
 // aliases, tasks, sections and missing-section block are the parsers' answer and are the
-// thing the raw view exists to be an alternative to. The explainer and the legend are
-// SWAPPED rather than kept, because `entryWhat` describes transformations the raw view does
-// not perform — a page whose own explainer describes a different page is the "a comment is
-// a claim" defect, in user-facing prose.
+// thing the raw view exists to be an alternative to. ONLY THE RAW VIEW CARRIES AN EXPLAINER
+// (`entryRawWhat`): the rendered view's — a paragraph re-describing the sections a reader is
+// looking at — was dropped on an operator decision, and its one useful mapping (`##` becomes a
+// heading, a marker becomes a badge) is still in the legend below. The raw view keeps its own
+// because it says something that view cannot show: that NOTHING is parsed, and that invalid
+// UTF-8 is the one substitution.
 func EntryPage(v PageView) g.Node {
 	s, e := *v.Scope, *v.Entry
 	return shell("cairn — "+e.Ref, v,
@@ -283,18 +390,21 @@ func EntryPage(v PageView) g.Node {
 		h.Section(
 			h.Class("card"),
 			h.H2(g.Text(e.Ref)),
-			h.P(h.Class("card-what"), g.Text(entryWhatFor(v.RawView))),
+			g.If(v.RawView, h.P(h.Class("card-what"), g.Text(entryRawWhat))),
 			entryViewTabs(s, e, v.RawView),
-			provenance(s, e),
+			provenance(s, e, v.Now),
 			g.If(v.RawView, rawBlock(e)),
 			g.If(!v.RawView, g.Group([]g.Node{
 				entryCounts(e),
-				g.If(len(e.Aliases) > 0, labelledList("Aliases", "the `aliases:` front-matter key, as written",
-					h.Ul(h.Class("aliases"), g.Map(e.Aliases, plainItem)))),
-				g.If(len(e.Tasks) > 0, labelledList("Refs", RefsKeyDescription,
-					h.Ul(h.Class("tasks"), g.Map(e.Tasks, taskItem)))),
-				g.If(len(e.Tags) > 0, labelledList("Tags", TagsKeyDescription,
-					h.Ul(h.Class("tags"), g.Map(e.Tags, tagItem)))),
+				// The definitions are TOOLTIPS on the headings now, not lines under them — see
+				// the note where `RefsKeyDescription` used to be. Short, and each keeps the one
+				// claim a reader comparing the page against the file needs.
+				g.If(len(e.Aliases) > 0, labelledList("Aliases", "the aliases: front-matter key, as written",
+					h.Ul(h.Class("aliases chips chips-alias"), g.Map(e.Aliases, plainItem)))),
+				g.If(len(e.Tasks) > 0, labelledList("Refs", "the refs: front-matter key (or the older tasks:/task:), as written",
+					h.Ul(h.Class("tasks chips chips-ref"), g.Map(e.Tasks, taskItem)))),
+				g.If(len(e.Tags) > 0, labelledList("Tags", "the tags: front-matter key, folded to lowercase",
+					h.Ul(h.Class("tags chips chips-tag"), g.Map(e.Tags, tagItem)))),
 				g.If(len(e.Sections) == 0, h.P(h.Class("empty"), g.Text(
 					"This entry carries none of the headings a reader surfaces. The file exists "+
 						"and the loader accepted it; it simply has no `## What it is`, "+
@@ -480,14 +590,15 @@ func breadcrumbs(crumbs []crumb) g.Node {
 	)
 }
 
-// searchForm is a plain `GET` form, and the absence of script is the point.
+// searchForm is a plain `GET` form, and it needs no script.
 //
-// 🔴 NO JAVASCRIPT, ON A SURFACE WHOSE XSS STORY PARTLY RESTS ON THERE BEING NONE. A
-// type-ahead would need a script, a script would need a fetch, and `document.scripts.length`
-// would stop being zero — which is a property `uiaudit` measures on every captured page
-// precisely so that it cannot drift silently. A `GET` form gives a shareable URL, a working
-// back button and a browser-native reload for free, none of which a script version gets
-// without writing them.
+// 🔴 THE SEARCH STAYS SERVER-SIDE EVEN NOW THAT THE SURFACE SERVES ONE SCRIPT, AND THE TWO ARE
+// DIFFERENT QUESTIONS. The scope page's filter (`filter.js`) narrows rows ALREADY on the page;
+// this asks `report.Search` — the scored engine the CLI uses — over every entry the caller may
+// read, which a page that only holds one scope's rows could not answer. A type-ahead here would
+// need a script that FETCHES, which is exactly what `AllowedScriptSources`' one entry is pinned
+// not to do. A `GET` form gives a shareable URL, a working back button and a browser-native
+// reload for free, none of which a script version gets without writing them.
 //
 // ⚠ THE ACTION IS THE ROOT PATH, WHICH IS ALSO WHERE A BLANK SUBMISSION LANDS. Submitting an
 // empty box is how a reader clears a search, and it arrives as `?q=` — which
@@ -580,7 +691,7 @@ func searchResults(v PageView) g.Node {
 		h.P(h.Class("note"), g.Text("Searched: "+scopeListText(r.ScopesSearched))),
 		// 🔴 THREE WAYS BACK WHEN A TAG IS IN FORCE, AND EACH NAMES THE STATE IT LANDS ON.
 		// A composed answer has three neighbours — drop the tag, drop the words, drop both —
-		// and this surface has no script, so a state a link does not name is a state a reader
+		// and this card has no script, so a state a link does not name is a state a reader
 		// reaches by editing the URL. The single "show every scope" link below is the whole
 		// navigation when no tag narrowed the search, which is what it has always been.
 		g.If(r.Tag != "", h.P(h.Class("note"), h.A(h.Href(searchHref(r.Query)),
@@ -653,7 +764,7 @@ func tagMatchItem(m TagMatch) g.Node {
 			h.Span(h.Class("hit-scope"), g.Text(m.Scope)),
 			// The entry's WHOLE tag set, each itself a link, so the listing is how a reader
 			// walks a vocabulary nothing declares.
-			h.Ul(h.Class("tags"), g.Map(m.Tags, tagItem)),
+			h.Ul(h.Class("tags chips chips-tag"), g.Map(m.Tags, tagItem)),
 		),
 	)
 }
@@ -689,19 +800,23 @@ func hitItem(hit Hit) g.Node {
 // exactly that nothing said what the heading WAS or what the list items were. A card
 // whose title is unexplained is a card a reader has to guess at, and they will guess it
 // is a project, or a file, or a tag.
-func scopeCard(s Scope) g.Node {
+//
+// The card's timestamp is the scope's NEWEST entry ([Scope.MTime]) and its preview lists the
+// NEWEST refs, in the scope page's own order — so the card is a true summary of the page it links.
+func scopeCard(s Scope, now time.Time) g.Node {
 	return h.Section(
 		h.Class("card"),
 		h.Div(
 			h.Class("card-head"),
 			h.H2(scopeLink(s)),
 			h.Span(h.Class("kind"), g.Text("scope")),
+			timeAgo(s.MTime(), now),
 		),
 		h.P(h.Class("card-what"), g.Text(scopeWhat)),
 		scopeStats(s),
 		g.If(len(s.Entries) > 0, h.Ul(
 			h.Class("card-entries"),
-			g.Map(cardEntryPreview(s.Entries), func(e Entry) g.Node {
+			g.Map(cardEntryPreview(entriesNewestFirst(s.Entries)), func(e Entry) g.Node {
 				return h.Li(h.Class("card-entry"), h.Span(h.Class("ref"), g.Text(e.Ref)))
 			}),
 		)),
@@ -716,7 +831,7 @@ func scopeCard(s Scope) g.Node {
 // cardPreview is how many entry refs a card lists before it says how many it left out.
 //
 // ⚠ A FIXED NUMBER, AND THE CARD SAYS WHEN IT TRUNCATED. A card that silently showed the
-// first few would read as a complete list of a small scope.
+// newest few would read as a complete list of a small scope.
 const cardPreview = 5
 
 func cardEntryPreview(entries []Entry) []Entry {
@@ -747,9 +862,15 @@ func scopeStats(s Scope) g.Node {
 }
 
 // entryRow is one entry on the scope page.
-func entryRow(s Scope, e Entry) g.Node {
+//
+// 🔴 `data-filter` IS A FOURTH POSITION FOR THE SAME USER TEXT, AND IT IS AN ATTRIBUTE VALUE
+// LIKE `title` — escaped by the same gomponents path, read back by `filter.js` through
+// `getAttribute` as a decoded string and never written anywhere as markup. See
+// [entryFilterText].
+func entryRow(s Scope, e Entry, now time.Time) g.Node {
 	return h.Li(
 		h.Class("entry-row"),
+		h.Data("filter", entryFilterText(e)),
 		// 🔴 THE REF IS IN AN ATTRIBUTE VALUE *AND* IN TEXT CONTENT, DELIBERATELY. The
 		// two contexts escape through different code in gomponents — `valueAttr` for the
 		// first, `Text` for the second — so a page that put user text in only one of them
@@ -763,13 +884,20 @@ func entryRow(s Scope, e Entry) g.Node {
 			g.Text(plural(e.OpenCount, "OPEN bullet", "OPEN bullets")))),
 		g.If(e.NearMissCount > 0, h.Span(h.Class("badge badge-near"),
 			g.Text(plural(e.NearMissCount, "near-miss marker", "near-miss markers")))),
-		h.Span(h.Class("entry-count"), g.Text(plural(e.BulletCount, "journal bullet", "journal bullets"))),
+		// "history notes" is DISPLAY copy for the `## Nuance / work-history` bullets — the file
+		// format, the parser and the CLI's own words are untouched (see [historyLabel]).
+		h.Span(h.Class("entry-count"), h.TitleAttr("top-level bullets under "+store.NuanceHeading),
+			g.Text(plural(e.BulletCount, "history note", "history notes"))),
+		timeAgo(e.MTime, now),
+		// Chips: aliases are inert text, refs link where the registry resolved one, tags link to
+		// the tag filter — three containers with three modifier classes so the three read
+		// differently at a glance. The `li` classes are the ones every other test reads.
 		g.If(len(e.Aliases) > 0, h.Ul(
-			h.Class("aliases"),
-			g.Map(e.Aliases, func(a string) g.Node { return h.Li(g.Text(a)) }),
+			h.Class("aliases chips chips-alias"),
+			g.Map(e.Aliases, plainItem),
 		)),
-		g.If(len(e.Tasks) > 0, h.Ul(h.Class("tasks"), g.Map(e.Tasks, taskItem))),
-		g.If(len(e.Tags) > 0, h.Ul(h.Class("tags"), g.Map(e.Tags, tagItem))),
+		g.If(len(e.Tasks) > 0, h.Ul(h.Class("tasks chips chips-ref"), g.Map(e.Tasks, taskItem))),
+		g.If(len(e.Tags) > 0, h.Ul(h.Class("tags chips chips-tag"), g.Map(e.Tags, tagItem))),
 	)
 }
 
@@ -780,7 +908,10 @@ func entryRow(s Scope, e Entry) g.Node {
 // a filesystem PATH, and the store root is deliberately not on the page — a path is a
 // fact about the deployment rather than about the request, which is the rule
 // `handlePage`'s error branch follows.
-func provenance(s Scope, e Entry) g.Node {
+//
+// ⚠ `updated` IS THE FILE'S MTIME ON THE POD'S STORE — what the scope page orders by — and the
+// row is omitted when the stat failed, rather than printing a date nobody measured.
+func provenance(s Scope, e Entry, now time.Time) g.Node {
 	return h.Dl(
 		h.Class("provenance"),
 		h.Dt(h.Class("prov-key"), g.Text("scope")),
@@ -789,13 +920,25 @@ func provenance(s Scope, e Entry) g.Node {
 		h.Dd(h.Class("prov-val"), g.Text(e.Filename)),
 		h.Dt(h.Class("prov-key"), g.Text("service:")),
 		h.Dd(h.Class("prov-val"), g.Text(e.Title)),
+		g.If(e.MTime > 0, g.Group([]g.Node{
+			h.Dt(h.Class("prov-key"), g.Text("updated")),
+			h.Dd(h.Class("prov-val"), timeAgo(e.MTime, now)),
+		})),
 	)
 }
 
+// entryCounts is the entry page's openness stats.
+//
+// ⚠ THE BULLET COUNT IS GONE FROM HERE, ON AN OPERATOR DECISION: it duplicated the History
+// section directly below it, which IS the list it counted. The scope page's row keeps its count,
+// because there the list is not on the page. And with nothing declared open and no near miss the
+// line renders not at all, rather than as an empty paragraph.
 func entryCounts(e Entry) g.Node {
+	if e.OpenCount == 0 && e.NearMissCount == 0 {
+		return nil
+	}
 	return h.P(
 		h.Class("card-stats"),
-		h.Span(h.Class("stat"), g.Text(plural(e.BulletCount, "journal bullet", "journal bullets"))),
 		g.If(e.OpenCount > 0, h.Span(h.Class("stat stat-open"),
 			g.Text(plural(e.OpenCount, "declared open", "declared open")))),
 		g.If(e.NearMissCount > 0, h.Span(h.Class("stat stat-warn"),
@@ -822,11 +965,19 @@ func entryCounts(e Entry) g.Node {
 // never shows for a healthy entry; it shows for a `#`, a `###`, a missing space or a
 // heading this renderer was handed from somewhere else, which are exactly the cases where
 // "`## What it is`, verbatim" stops being true and a reader has to see why.
+//
+// ⚠ ONE HEADING IS RELABELLED FOR DISPLAY: `## Nuance / work-history` reads "History", with the
+// file's own line in the heading's `title=` — see [historyLabel]. Display only; the canonical-
+// marker check below still reads the verbatim heading.
 func sectionBlock(s Section) g.Node {
 	marker, text := headingParts(s.Heading)
+	label, tooltip := text, ""
+	if s.Heading == store.NuanceHeading {
+		label, tooltip = historyLabel, s.Heading
+	}
 	return h.Section(
 		h.Class("entry-section"),
-		h.H3(h.Class("section-head"), g.Text(text)),
+		h.H3(h.Class("section-head"), g.If(tooltip != "", h.TitleAttr(tooltip)), g.Text(label)),
 		g.If(marker != canonicalHeadingMarker, h.P(h.Class("section-source"), g.Text(
 			"in the file, verbatim: "+s.Heading))),
 		g.If(len(s.Bullets) == 0 && s.Body == "", h.P(h.Class("empty"), g.Text(
@@ -836,6 +987,16 @@ func sectionBlock(s Section) g.Node {
 		g.If(len(s.Bullets) > 0, h.Ul(h.Class("bullets"), g.Map(s.Bullets, bulletItem))),
 	)
 }
+
+// historyLabel is what the entry page CALLS the `## Nuance / work-history` section.
+//
+// 🔴 DISPLAY COPY ONLY, ON AN OPERATOR DECISION, AND THE BOUNDARY IS THE WHOLE RULE. The file
+// format, `store.NuanceHeading`, every parser, the raw view and `internal/report`'s text — which
+// is byte-compared against the Python oracle — all keep the heading as written. Only two things
+// on this surface use the new words: the entry page's section heading (with the verbatim line in
+// its `title=` tooltip, so the string a reader has to grep for is one hover away) and the scope
+// page's "N history notes" count.
+const historyLabel = "History"
 
 // canonicalHeadingMarker is the `#` run every heading `readEntry` can produce carries:
 // `store.WhatHeading`, `store.PointersHeading` and `store.NuanceHeading` are all `## ` +
@@ -1091,8 +1252,8 @@ func missingBlock(e Entry) g.Node {
 			". That is different from a heading that is present and empty."))
 }
 
-// The three legends. Each answers "what am I looking at" for the page it sits on, in the
-// vocabulary of the FILES rather than of this renderer.
+// The explainers, and the ONE legend left (the entry page's). Each answers "what am I looking at"
+// in the vocabulary of the FILES rather than of this renderer.
 //
 // 🔴 THEY EXIST BECAUSE THE FIRST VERSION OF THIS SURFACE WAS UNREADABLE FOR A REASON NO
 // TEST COULD SEE. Every escaping guard, every authority guard and every route guard was
@@ -1100,23 +1261,15 @@ func missingBlock(e Entry) g.Node {
 // under it were, or which part of a file any of it came from. That is a real defect and
 // prose is the only fix for it — so the prose is here, beside the thing it describes,
 // rather than in a README nobody has open while they are looking at the page.
+//
+// ⚠ AND THE OPERATOR HAS SINCE TRIMMED IT, ON A SECOND READING OF THE SAME PAGES: the root and
+// scope legends and the rendered entry view's explainer are gone, judged noise on a page read
+// every day once its labels were clear. That is a decision about THESE strings, not a retraction
+// of the paragraph above — the raw view's explainer and the entry legend stay, because each says
+// something about the mapping the page itself cannot show.
 const (
 	scopeWhat = "A scope is one directory under the store root. Its entries are the " +
 		"`.md` files in it, one file per entry."
-	// 🔴 IT NAMES WHAT IS RENDERED RATHER THAN PRINTED, BECAUSE THE PAGE NO LONGER SHOWS
-	// THE FILE'S BYTES AND SAYING "VERBATIM" WOULD BE FALSE. It used to read "its `##`
-	// headings, verbatim" and that was true when the heading line was printed as text. Two
-	// prefixes are now structure instead of characters — the `##` run and a marker the
-	// parser accepted — so this sentence states both transformations AND that anything the
-	// parser did not accept is left where the writer put it. A comment is a claim; so is an
-	// explainer, and this one is the answer to the mapping complaint the whole page exists
-	// for.
-	entryWhat = "One entry file. The sections below are its `##` headings and the line items " +
-		"under the journal heading are its top-level `-` bullets. Two prefixes are shown as " +
-		"structure rather than printed: a heading's `##` becomes the heading itself, and an " +
-		"`OPEN:` / `RESOLVED <sha>:` marker the parser accepted becomes a badge. Anything it " +
-		"did NOT accept stays in the text and is named — a near miss, a marker on a " +
-		"continuation line, a heading spelled some other way."
 	// 🔴 THE RAW VIEW'S EXPLAINER SAYS WHAT IS AND IS NOT SHOWN, AND THE SECOND HALF IS THE
 	// USEFUL ONE. A reader reaches this view because the rendered page did not account for
 	// something in the file; the fact worth telling them is that this view is the WHOLE file
@@ -1144,8 +1297,8 @@ const (
 
 // searchWhatFor picks the card-what sentence for the state this card is in.
 //
-// ⚠ TWO WHOLE SENTENCES RATHER THAN ONE WITH A CLAUSE BOLTED ON, which is `RefsKeyDescription`'s
-// and `ReplicaHonesty`'s ruling restated: a page's claim is pinned as a whole normalised string so
+// ⚠ TWO WHOLE SENTENCES RATHER THAN ONE WITH A CLAUSE BOLTED ON, which is `ReplicaHonesty`'s
+// ruling restated: a page's claim is pinned as a whole normalised string so
 // that a reword is an edit a reviewer sees, and building one of these by concatenating a clause
 // onto the other would let a change to the shared half move both pinned strings at once.
 func searchWhatFor(tag string) string {
@@ -1155,52 +1308,12 @@ func searchWhatFor(tag string) string {
 	return searchWithinTagWhat
 }
 
-func rootLegend() g.Node {
-	return legend([][2]string{
-		{"card", "one scope — a directory under the store root"},
-		{"card title", "the scope's display name, which is also its directory name"},
-		{"entries", "how many `.md` files in it the loader accepted"},
-		{"declared open", "`## Nuance / work-history` bullets carrying an `OPEN:` marker, " +
-			"summed over the scope. The marker is opt-in, so a zero means nothing was declared " +
-			"rather than nothing is open. ⚠ It does NOT include `## Requirements` bullets: " +
-			"`readEntry` sums the nuance section only, and this line read `bullets carrying an " +
-			"OPEN: marker` until that became two different populations"},
-		{"the refs listed", "the first few entry refs — a ref is the filename without `.md`"},
-	})
-}
-
-func scopeLegend() g.Node {
-	return legend([][2]string{
-		{"row", "one entry file in this scope"},
-		{"ref", "the filename without `.md`: `<slug>` or `<slug>.<kind>`"},
-		{"title", "the `service:` key in the file's front matter"},
-		{"journal bullets", "top-level `-` lines under `## Nuance / work-history`. " +
-			"`## Requirements` bullets are counted nowhere on this row"},
-		{"OPEN", "a `## Nuance / work-history` bullet whose first line carries an `OPEN:` marker"},
-		{"near-miss marker", "a bullet that tried to write a marker and missed the grammar. " +
-			"It is NOT counted as open, and it is the population most likely to hide a stale action"},
-	})
-}
-
-// entryWhatFor picks the explainer for the view actually being rendered.
-//
-// 🔴 IT EXISTS BECAUSE ONE EXPLAINER FOR TWO VIEWS WOULD BE FALSE ON ONE OF THEM. `entryWhat`
-// promises that a `##` becomes a heading and an accepted marker becomes a badge; the raw view
-// does neither. The whole reason this page carries an explainer is an operator complaint that
-// nobody could tell how the page mapped onto the file — a sentence describing the other view's
-// mapping is that complaint, restored.
-func entryWhatFor(rawView bool) string {
-	if rawView {
-		return entryRawWhat
-	}
-	return entryWhat
-}
-
 func entryLegend() g.Node {
 	return legend([][2]string{
 		{"section", "one `##` heading in the file. The heading TEXT is rendered as a heading and " +
 			"the `##` is not reprinted; a heading spelled any other way — one `#`, three, no " +
-			"space — also shows the file's own line"},
+			"space — also shows the file's own line. `## Nuance / work-history` is shown as " +
+			"History; hover it for the line as written"},
 		{"line item", "one top-level `-` bullet, with every continuation line it carries. The " +
 			"`-` is the list item and the badges are the marker, so neither is printed twice"},
 		{"date", "an ISO date the bullet's first line starts with. Around half of a real " +
@@ -1240,8 +1353,12 @@ func legend(rows [][2]string) g.Node {
 	)
 }
 
-// labelledList is the aliases/tasks pair on the entry page: a heading that says what the
-// list IS, then the list.
+// labelledList is the aliases/refs/tags block on the entry page: a heading, then the list — and
+// the definition of what the list IS rides on the heading as a `title=` tooltip.
+//
+// ⚠ A TOOLTIP, NOT A LINE UNDER THE HEADING, ON AN OPERATOR DECISION: the visible definitions
+// were read as noise on every visit. The tooltip text is SHORT and keeps only the claim a reader
+// comparing the page against the file needs (`as written`, `folded`).
 //
 // 🔴 IT TAKES THE BUILT LIST RATHER THAN A CLASS NAME, AND THAT IS A GUARD RATHER THAN A
 // SIGNATURE PREFERENCE. An earlier shape took `class string` and called `h.Class(class)`,
@@ -1249,11 +1366,10 @@ func legend(rows [][2]string) g.Node {
 // skip, because a class name that scan cannot read is a class name nobody can check has a
 // rule in the stylesheet. Nothing scans this package to build `app.css`, so an unreadable
 // class ships unstyled with every gate green. The literal belongs at the call site.
-func labelledList(heading, what string, list g.Node) g.Node {
+func labelledList(heading, tooltip string, list g.Node) g.Node {
 	return h.Div(
 		h.Class("labelled"),
-		h.H3(h.Class("section-head"), g.Text(heading)),
-		h.P(h.Class("note"), g.Text(what)),
+		h.H3(h.Class("section-head"), h.TitleAttr(tooltip), g.Text(heading)),
 		list,
 	)
 }

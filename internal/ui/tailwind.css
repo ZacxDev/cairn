@@ -369,6 +369,56 @@
     @apply text-muted line-through;
   }
 
+  /* Chips: aliases, refs and tags as pills. The CONTAINER carries `.chips` plus one modifier,
+   * so the `li` classes every other rule and test reads (`.tag`, `.task`, `.task.refused`) are
+   * untouched. Three modifiers so the three read differently at a glance: an alias is inert
+   * text (muted, no link), a ref is an identifier (mono), a tag is a link to the tag filter
+   * (accent). Declared AFTER `.tags li` so the chip spacing wins at equal specificity. */
+  .chips {
+    @apply flex flex-wrap items-center gap-1.5 list-none;
+  }
+
+  .chips > li {
+    @apply inline-flex items-center mr-0 rounded-full border px-2 py-0.5 text-xs leading-5;
+  }
+
+  .chips-alias > li {
+    @apply border-line bg-line/20 text-muted;
+  }
+
+  .chips-ref > li {
+    @apply border-line font-mono;
+  }
+
+  .chips-tag > li {
+    @apply border-accent/50 bg-accent/10;
+  }
+
+  /* A relative timestamp ("5m ago"). The absolute time is its `title`, so it never wraps. */
+  .updated {
+    @apply text-xs text-muted whitespace-nowrap;
+  }
+
+  /* The scope page's entry filter. Rendered `hidden` and revealed by `filter.js`; the
+   * preflight's `[hidden]` rule is `!important`, so the flex below cannot un-hide it. The
+   * shape is the search bar's, for the same 390px reason. */
+  .entry-filter {
+    @apply flex flex-col gap-2 mb-2;
+    @apply sm:flex-row sm:items-center sm:gap-3;
+  }
+
+  .entry-filter label {
+    @apply text-sm font-medium shrink-0;
+  }
+
+  .entry-filter input[type="search"] {
+    @apply w-full sm:flex-1 sm:min-w-0;
+  }
+
+  .filter-count {
+    @apply text-xs text-muted shrink-0;
+  }
+
   /* Forms. The transition list is named rather than `transition-all`: `all` animates
    * properties nobody chose, including layout ones, which is how a "subtle" theme starts
    * shifting text under a reader's cursor. */

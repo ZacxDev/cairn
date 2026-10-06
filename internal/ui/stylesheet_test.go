@@ -41,7 +41,7 @@ func hrefFromPage(t *testing.T, srv *Server, page string) string {
 // stylesheetDigestFromBytes is the digest the ledger expectation substitutes into the hashed
 // row.
 //
-// 🔴 IT RECOMPUTES FROM THE EMBEDDED BYTES AND NEVER READS `hashStylesheet`, so the ledger row
+// 🔴 IT RECOMPUTES FROM THE EMBEDDED BYTES AND NEVER READS `hashAsset`, so the ledger row
 // is a claim about the stylesheet rather than a restatement of the code that hashes it. The
 // width is spelled here a SECOND time on purpose: changing `stylesheetHashWidth` then fails
 // this file too, which is a decision somebody takes twice rather than a number that follows
@@ -352,7 +352,7 @@ func TestTheHashedStylesheetPathHasTheShapeItClaims(t *testing.T) {
 	// The digest is of the STYLESHEET and not of the empty string, which is what an
 	// initialisation-order mistake between the `//go:embed` variable and this derivation would
 	// produce — and it would produce it silently, as a perfectly well-formed path.
-	if strings.Contains(StylesheetHashedPath, hashStylesheet("")) {
+	if strings.Contains(StylesheetHashedPath, hashAsset("")) {
 		t.Error("the hashed path carries the digest of the EMPTY string, so it was derived before the " +
 			"embedded stylesheet was assigned. The path would be well-formed, stable and wrong: it would " +
 			"never change when the theme does.")

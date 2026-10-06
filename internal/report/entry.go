@@ -159,10 +159,7 @@ func ReadEntry(storeRoot string, entry store.Entry) (RecalledEntry, error) {
 	// the oracle's own shape: the read above already succeeded, so a stat that then fails
 	// is a store mutating underneath the reader, and the answer that keeps the report
 	// coming is a zero mtime — an entry sorted last, never an aborted report.
-	mtime := 0.0
-	if info, statErr := os.Stat(path); statErr == nil {
-		mtime = pyMtime(info)
-	}
+	mtime := FileMTime(path)
 	rawSensitivity, hasSensitivity := fm.String("sensitivity")
 
 	bullets := store.ParseJournalBullets(sections[store.NuanceHeading])
@@ -223,6 +220,25 @@ func ReadEntry(storeRoot string, entry store.Entry) (RecalledEntry, error) {
 		Tasks:               tasks,
 		Tags:                entry.Tags,
 	}, nil
+}
+
+// FileMTime is an entry file's mtime as every reader in this tree ORDERS by it: CPython's
+// `st_mtime` double (see pyMtime), or 0.0 when the stat fails.
+//
+// 🔴 IT IS EXPORTED SO THE BROWSER SURFACE ORDERS BY THE SAME NUMBER RECALL DOES, AND NOT BY A
+// SECOND MTIME READER. `internal/ui` sorts its scope and entry lists newest-first; a
+// `info.ModTime()` there would order two entries written inside one float's precision by
+// nanosecond while recall ties them and falls through to the ref, so the two surfaces would
+// list one store in two orders with no error anywhere. One reader, one double.
+//
+// ⚠ A FAILED STAT IS AN ORDINARY 0.0, which is the oracle's own shape: the caller's read has
+// already succeeded, so a stat that then fails is a store mutating underneath the reader, and
+// the answer that keeps the report coming is an entry sorted last, never an aborted report.
+func FileMTime(path string) float64 {
+	if info, err := os.Stat(path); err == nil {
+		return pyMtime(info)
+	}
+	return 0.0
 }
 
 // pyMtime is CPython's `os.stat_result.st_mtime`: `sec + 1e-9*nsec`, evaluated as a

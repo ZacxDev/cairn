@@ -196,6 +196,13 @@ var routes = map[routeKey]route{
 	// `/static/app..css`, a wrong digest, a suffixed digest — each of which a prefix match
 	// would serve and this map answers 404.
 	{"GET", StylesheetHashedPath}: {(*Server).handleHashedStylesheet, classPublic},
+
+	// 🔴 THE FILTER SCRIPT, AND IT IS THE ONLY SCRIPT ROW. A computed, content-hashed EXACT key for
+	// the stylesheet row's reasons above, and `classPublic` for the stylesheet's reason: it consults
+	// no authority and answers identical bytes to everybody. Only the scope page links it, and only
+	// `AllowedScriptSources` may name it — see `script.go` for the allowlist that replaced this
+	// surface's zero-script property, and the three guards that hold it.
+	{"GET", FilterScriptPath}: {(*Server).handleFilterScript, classPublic},
 }
 
 // SignInPath and SignOutPath are spelled once and read by the dispatcher, by the

@@ -94,13 +94,28 @@ var dangerousTokens = []string{
 	`href="data:`,
 }
 
+//
+// ⚠ `<script` IS NO LONGER "NEVER EMITTED": the scope page carries the ONE allowlisted filter
+// script (`script.go`). So the exact allowlisted tag is removed before counting, and ONLY that
+// exact tag — any other `<script` (inline, a foreign `src`, a different attribute order) still
+// counts here, and `TestEveryBrowsePageCarriesOnlyAllowlistedScripts` is the guard that owns
+// the allowlist itself.
 func countTokens(s string) int {
 	n := 0
-	lower := strings.ToLower(s)
+	lower := strings.ToLower(withoutAllowedScripts(s))
 	for _, tok := range dangerousTokens {
 		n += strings.Count(lower, strings.ToLower(tok))
 	}
 	return n
+}
+
+// withoutAllowedScripts removes every EXACT allowlisted script tag, and nothing else, so the
+// dangerous-token scans read every `<script` the allowlist does not account for.
+func withoutAllowedScripts(s string) string {
+	for _, src := range AllowedScriptSources() {
+		s = strings.ReplaceAll(s, allowedScriptTag(src), "")
+	}
+	return s
 }
 
 // structure is the markup-shape of a rendered page: how many tags it opens and
@@ -395,7 +410,7 @@ func TestHostileEntryTextIsEscapedOnEveryBrowsePage(t *testing.T) {
 				"writes an element or attribute NAME verbatim.", name, gotStructure, wantStructure)
 		}
 		for _, tok := range dangerousTokens {
-			if n := strings.Count(strings.ToLower(got), strings.ToLower(tok)); n > 0 {
+			if n := strings.Count(strings.ToLower(withoutAllowedScripts(got)), strings.ToLower(tok)); n > 0 {
 				t.Errorf("the %s page carries %d occurrence(s) of %q, which this renderer never emits: "+
 					"it came out of store content.", name, n, tok)
 			}
@@ -608,7 +623,7 @@ func TestHostileEntryTextIsEscaped(t *testing.T) {
 		inInput, inOutput, gotStructure, wantStructure)
 	if inOutput != 0 {
 		for _, tok := range dangerousTokens {
-			if n := strings.Count(strings.ToLower(out), strings.ToLower(tok)); n > 0 {
+			if n := strings.Count(strings.ToLower(withoutAllowedScripts(out)), strings.ToLower(tok)); n > 0 {
 				t.Errorf("the rendered page carries %d occurrence(s) of %q, which this renderer never emits: "+
 					"it came out of store content.", n, tok)
 			}
@@ -805,10 +820,13 @@ func TestTheEntryPageShowsHeadingsAndMarkersAsStructureRatherThanText(t *testing
 	out := entryPageOver(t, sections)
 
 	// --- The heading. ---
-	if !strings.Contains(out, `<h3 class="section-head">Nuance / work-history</h3>`) {
-		t.Error("the section heading is not rendered as a heading carrying the heading TEXT. The operator's " +
-			"complaint was that the page printed the file's own `##` line; an `<h3>` holding `## Nuance / " +
-			"work-history` is that same defect wearing a heading element")
+	// ⚠ THE NUANCE HEADING IS DISPLAYED AS "History" (an operator decision; see `historyLabel`),
+	// with the file's own line one hover away in `title=`. Still a heading carrying TEXT rather
+	// than the `##` line, which is what this assertion has always been about.
+	if !strings.Contains(out, `<h3 class="section-head" title="## Nuance / work-history">History</h3>`) {
+		t.Error("the section heading is not rendered as a heading carrying its display TEXT with the file's " +
+			"line in its tooltip. The operator's complaint was that the page printed the file's own `##` " +
+			"line; an `<h3>` holding `## Nuance / work-history` is that same defect wearing a heading element")
 	}
 	if strings.Contains(out, ">"+store.NuanceHeading+"<") {
 		t.Errorf("the literal %q is still rendered as an element's text. The `##` run is the heading now, so "+
@@ -856,7 +874,7 @@ func TestTheEntryPageShowsHeadingsAndMarkersAsStructureRatherThanText(t *testing
 	if !strings.Contains(out, `<span class="badge badge-open">OPEN</span>`) {
 		t.Error("the OPEN badge is absent, so the marker was removed from the line and replaced by nothing")
 	}
-	t.Logf("entry page: heading rendered as `<h3>Nuance / work-history</h3>` with no `##` text and no "+
+	t.Logf("entry page: heading rendered as `<h3 title=…>History</h3>` with no `##` text and no "+
 		"verbatim annotation; 3 bullet bodies carry their prose and none of [%q %q %q %q]; the resolved badge "+
 		"carries sha abc1234", "OPEN:", "RESOLVED abc1234:", "- ", "2000-01-02")
 }
@@ -1111,7 +1129,7 @@ func TestInlineCodeSpansRenderAsCodeWithoutBecomingMarkup(t *testing.T) {
 		}
 		for name, out := range pages {
 			for _, tok := range dangerousTokens {
-				if n := strings.Count(strings.ToLower(out), strings.ToLower(tok)); n > 0 {
+				if n := strings.Count(strings.ToLower(withoutAllowedScripts(out)), strings.ToLower(tok)); n > 0 {
 					t.Errorf("the %s page carries %d occurrence(s) of %q, which this renderer never emits: it "+
 						"came out of a backtick span or out of a ref in an href position", name, n, tok)
 				}

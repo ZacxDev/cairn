@@ -75,6 +75,10 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		"GET /sign-in/github/callback public",
 		"GET /static/app." + stylesheetDigestFromBytes(t) + ".css public",
 		"GET /static/app.css public",
+		// 🔴 THE ONE SCRIPT ROW (`script.go`). `public` for the stylesheet's reason — identical
+		// bytes to everybody, no authority consulted — and content-hashed for the stylesheet's
+		// reason, recomputed here from the embedded bytes rather than read off the implementation.
+		"GET /static/filter." + scriptDigestFromBytes(t) + ".js public",
 		"POST /invite",
 		"POST /invite/revoke",
 		"POST /share",
@@ -420,6 +424,8 @@ var bareGETAnswer = map[string]int{
 	// path carries a digest of `app.css`. A literal here would make every theme change a
 	// failing walk. What the row declares is unaffected: it answers 200 to a bare GET.
 	"GET " + StylesheetHashedPath + " public": http.StatusOK,
+	// The filter script's row, computed for the same reason: a bare GET is the whole request.
+	"GET " + FilterScriptPath + " public": http.StatusOK,
 }
 
 // TestEveryServedPathComesFromTheLedger closes the blind spot `DeclaredRoutes`'s own
