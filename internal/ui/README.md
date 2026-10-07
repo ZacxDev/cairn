@@ -2985,3 +2985,117 @@ every `/scope`, `/arc` and `/session` href on the panel to round-trip.
 
 ⚠ The same session id can now render at two LENGTHS on two pages: a label is a property of the list
 it sits in. The full id is always `title=` and the link operand, never the label.
+
+# Phase J — the arcs-first page and the arc page's tabs (S1 of the arcs/presence plan)
+
+Slice S1 of `claudedocs/plan-cairn-arcs-presence.md`: operator decisions O1 and O2, plan decisions
+10, 12 and 13. No presence — that is S2 onward.
+
+| route | class | what |
+|---|---|---|
+| `GET /arcs` | `content` | NEW: every arc homed in a scope the caller can read, LIVE ones first; `?all=1` lists every one. Linked from the header of every page ("Arcs"). `/` is unchanged (decision 13, open question P1) |
+| `GET /arc?home=<control.ID>&slug=<slug>&tab=sessions` | `content` | the SAME row; `tab` selects the panel. Scopes is the default and has no `tab=` in its URL |
+
+## 🔴 The data comes from `internal/report`, the clock from here
+
+`report.ArcsAcross` is a STRUCTURED answer with no `RenderText` (`report.SessionAcross`'s shape and
+reason: the arc rule lives in that package), so no printed byte moved. It is handed the ONE
+narrowing every browse read uses, keeps a registration only when its HOME is readable, and walks
+the narrowed index ONCE — `touch.Writes` per readable scope, each session's newest `LastDate` kept —
+so an arc's newest member bullet is a lookup, not a walk per arc. A member's bullet in a scope the
+caller cannot read never reaches the answer. The date comes back AS WRITTEN, because `internal/report`
+holds no clock; `arcsindex.go` applies what needs one:
+
+- **last updated** = max(the latest registration's pod-clock `registered_at`, the newest member
+  bullet CLAMPED TO TODAY and taken as 00:00 UTC). A tie goes to the registration (it carries a time
+  of day). `reported_at` is the tooling's clock and optional: shown in the row's tooltip, never used.
+  The row says which won — "registered 3h ago" or "bullet today" — through `instantAgo` / `dateAgo`.
+- **live** = `open` OR last updated at most 14 WHOLE days ago — ⌊(now − last updated) / 24h⌋ ≤ 14,
+  the truncation the row's "Nd ago" label uses, so "14d ago" is live and "15d ago" is not, whichever
+  source won. `unknown` is NOT `open` (Q4). Two earlier shapes were measured wrong in audit: an
+  instant comparison (`≤ 14×24h`) hid rows labelled "14d ago"; a per-source rule hid an arc with
+  strictly newer activity than a live one.
+- newest first, ties by `(home, slug)`; the page prints "N not live" — a count over VISIBLE arcs
+  only — and offers "show all N" (`?all=1`) or "live only". Only `1` is recognised; any other value
+  is the default view, `?view=`'s ruling.
+
+🔴 **O1's cost is pinned, not just accepted.** A trailer's session is self-declared, so a bullet
+written under ANOTHER actor naming a member session keeps an arc live.
+`TestABulletNamingAMemberByANonMemberKeepsTheArcLive` is an INVARIANT GUARD — a tripwire, not
+regression coverage (`ArcsAcross` keys on the session id and never reads the actor) — so "fixing" it is a
+red test and a decision, never a silent change.
+
+## 🔴 `/arc` tabs: scopes · sessions, and no third
+
+`ScopePage`'s shape (O2; ruling D1 deleted the entries tab): server-rendered links, the current tab
+a `<span>`, only the selected panel in the document, an unknown value (including the scope page's
+`arcs`/`entries`) rendering the default tab byte for byte. The tab is read AFTER every refusal, so
+each miss is still `report.ArcUnregisteredBody` on every tab. **Scopes** is the union of the
+narrowed declared scopes and every readable scope a member wrote in (`ArcReport.WroteIn`), each
+marked declared or inferred, with a count of members who wrote there, linking `/scope`. **Sessions**
+is the member list, linking `/session`. Both lay out data the page already held — no new read.
+
+⚠ **Also fixed on the way:** `handleArcPage` built its view without `Now`, so the arc page printed
+registration times as absolute dates while every other browse page printed relative ones.
+
+## Ledgers moved together
+
+The `routes` row and `ArcsPath`; `routes_test.go`'s hand ledger, `bareGETAnswer` (200: the bare
+request IS the page) and `contentAuthority` (`source`); `Source.Arcs` (counted by `countingSource`);
+`uiaudit/targets.go` (`ArcsPath` in `linkExpanded` — `TestTheREALLedgerIsFullyACCOUNTEDFor` was red
+until it joined) and `uiaudit/boot.go` (a recent, an open-old and a closed-old arc, so the live view,
+the not-live count and the toggle all render); `tailwind.css`/`app.css` (`.nav-arcs a` joins the
+header-link rule); nine `tests/control_mutants.py` rows. NOT `flake.nix` (no embedded asset), NOT
+the corpus (a browser row), NOT the `go` job's `ok` floor (no new package).
+
+## Cost, measured
+
+`BenchmarkSessionPageAndScopeTabs` gained an `arcs-page` case (`-benchtime 10x`, local go 1.26.8 —
+NOT the pinned 1.25; one host, idle; the RATIO is the claim): **10×30: 15.6 ms against the session
+page's 18.8 (0.83×); 30×100: 167 ms against 203 (0.82×)** — the same one whole-store walk, ≤ the
+session page at both sizes.
+
+## The RED proof
+
+The behavioural tests were copied onto `origin/main` (`078d248`) with a scratch-only shim supplying
+`ArcsPath` and `arcTabURL` as literals:
+
+| guard | origin/main | HEAD |
+|---|---|---|
+| `TestTheArcsPageListsLiveArcsNewestFirstAndCountsTheHidden` | RED (no route) | green |
+| `TestAnArcHomedInAnUnreadableScopeIsNeverListedEvenWhenItsMembersWroteWhereYouRead` | RED (no route) | green |
+| `TestAMemberBulletInAnUnreadableScopeDoesNotMoveTheArc` | RED (no route) | green |
+| `TestAFutureDatedBulletDoesNotSortAboveToday` | RED (no route) | green |
+| `TestABulletNamingAMemberByANonMemberKeepsTheArcLive` | RED (no route) — but an INVARIANT tripwire on O1's accepted cost, not regression coverage | green |
+| `TestABulletDatedExactlyFourteenDaysAgoIsStillLive` (audit round 1) | RED at this PR's first head `3c9cd9b` (a bullet dated today−14 hidden at noon while its row said "14d ago") | green |
+| `TestLivenessDoesNotDependOnWhichSourceWon`, `TestARegistrationIsLiveExactlyWhileItReadsFourteenDaysAgo` (audit round 2) | RED at `f238b91` (later-arc hidden while the older solo-arc was live; a 14d23h registration hidden) | green |
+| `TestTheArcsPageOffAndBrokenStates` | RED (no route) | green |
+| `TestTheArcPageRendersOnlyTheSelectedTab` | RED (no panels, no tab strip) | green |
+| `TestTheArcScopesTabNarrowsAndMarksProvenance` | RED (no scope rows) — its narrowing half is an INVARIANT guard | green |
+| `TestEveryArcMissIsTheSameBytesOnEveryTab` | **green** — an INVARIANT guard (main ignores `tab`), not regression coverage | green |
+| `TestTheArcsPageEscapesAPlantedHostileHomeAndSlug`, `TestTheArcTabHrefsEscapeAPlantedHostileSlug`, `report`'s two `ArcsAcross` tests | RED by COMPILATION only (new symbols) — weaker evidence | green |
+| `TestTheRouteLedgerMatchesTheDispatchTable`; `uiaudit`'s `TestTheREALLedgerIsFullyACCOUNTEDFor` | RED (the row is undeclared / unaccounted) | green |
+
+Mutants, each a `tests/control_mutants.py` row killed by the test it names, and each watched failing
+on that test's OWN assertion before the row was written: the clamp dropped
+(`TestAFutureDatedBulletDoesNotSortAboveToday`: order inverted, the future date printed);
+`reported_at` read instead of `registered_at`, `unknown` counted as open, the window widened to 15
+days (all `TestTheArcsPageListsLiveArcsNewestFirstAndCountsTheHidden`: the listed set and the
+not-live count move); the window compared as an instant (`≤ 14×24h`) rather than in whole days —
+this PR's first head (`TestARegistrationIsLiveExactlyWhileItReadsFourteenDaysAgo`, plus the bullet
+pair and the two-arc case); the member walk unrestricted (`TestAMemberBulletInAnUnreadableScopeDoesNotMoveTheArc`);
+the home check dropped (`TestAnArcHomedInAnUnreadableScopeIsNeverListedEvenWhenItsMembersWroteWhereYouRead`);
+the arc tab ignored and an unknown tab passed through (`TestTheArcPageRendersOnlyTheSelectedTab`).
+Not a row, watched by hand: dropping the member-bullet lookup reddens
+`TestABulletNamingAMemberByANonMemberKeepsTheArcLive`.
+
+## What these guards still cannot see
+
+- **Scale beyond the benchmark's two synthetic sizes**, and the real store (plan: "could not
+  measure"). Nothing is cached.
+- **The exact instant of 15×24h.** The boundary is measured at 14d23h (live, "14d ago") and 15d0h1m
+  (not, "15d ago") for a registration and at today−14 / today−15 for a bullet; the single nanosecond
+  at exactly 15 days is not.
+- **The live view on a deployment with a skewed pod clock**: a `registered_at` in the UI's future is
+  not clamped (decision 10 clamps bullet dates only) and sorts first.
+- **Tooltips on touch devices**, as Phase I records.

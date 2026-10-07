@@ -59,6 +59,9 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		// answer about which arcs this credential can see, and an arc's existence is itself a fact
 		// the home scope's readers alone may learn (operator decision Q1).
 		"GET /arc content",
+		// 🔴 THE ARCS-FIRST PAGE (S1 of the arcs/presence plan). `content`, never `public`: which arcs
+		// exist is an answer about which home scopes this credential can read (Q1).
+		"GET /arcs content",
 		"GET /entry content",
 		// 🔴 THE INVITE FLOW'S FOUR ROWS, AND `GET /join public` IS THE ONE TO THINK ABOUT.
 		// `public` means the row is dispatched BEFORE the authentication chain, which is
@@ -195,6 +198,12 @@ func (s staticSource) Arc(control.Authorization, string, string) (report.ArcRepo
 // `StoreSource` over a store on disk.
 func (s staticSource) Session(_ control.Authorization, session string) (SessionAnswer, error) {
 	return SessionAnswer{Report: report.SessionAcrossReport{ID: session}}, nil
+}
+
+// Arcs answers the OFF state — no journal — for `Touched`'s reason: a DISPATCH fixture.
+// `arcsindex_test.go` drives the real `StoreSource` over a store and a journal on disk.
+func (s staticSource) Arcs(control.Authorization) (report.ArcsAcrossReport, error) {
+	return report.ArcsAcrossReport{}, nil
 }
 
 // staticSharing is a share world with no journal behind it, so the dispatch tests
@@ -412,6 +421,9 @@ var bareGETAnswer = map[string]int{
 	// The arc page follows the browse pair: a request naming no arc has asked about nothing, so it
 	// gets the navigation page rather than the uniform arc refusal.
 	"GET /arc content": http.StatusOK,
+	// The arcs page's bare request IS the page — the live list — not a navigation fallback: it has
+	// no operand to name, so there is nothing for a refusal to protect.
+	"GET /arcs content": http.StatusOK,
 	// And the session page: a request naming no session asked about nothing, so it gets the
 	// navigation page rather than the uniform unseen-session refusal.
 	"GET /session content": http.StatusOK,
@@ -689,6 +701,8 @@ var contentAuthority = map[string]string{
 	// `source`, because `Source.Arc` is narrowed by the same authority `Source.Visible` is — see the
 	// interface's own comment for why it is not a seam of its own.
 	"GET /arc content": "source",
+	// `source`, for `Source.Arc`'s reason: `Source.Arcs` is narrowed by the same authority.
+	"GET /arcs content": "source",
 	// `source`, for `Source.Arc`'s reason: `Source.Session` is narrowed by the same authority.
 	"GET /session content": "source",
 	"GET /share content":   "sharing",
@@ -738,6 +752,11 @@ func (c *countingSource) Arc(auth control.Authorization, home, slug string) (rep
 func (c *countingSource) Session(auth control.Authorization, session string) (SessionAnswer, error) {
 	c.calls++
 	return staticSource{}.Session(auth, session)
+}
+
+func (c *countingSource) Arcs(auth control.Authorization) (report.ArcsAcrossReport, error) {
+	c.calls++
+	return staticSource{}.Arcs(auth)
 }
 
 // TestEveryContentRouteConsultsTheAuthority is a REGRESSION test, and the defect it

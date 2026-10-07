@@ -124,6 +124,12 @@ var routes = map[routeKey]route{
 	// read-only), so neither cross-site gate gains a case; both would apply by METHOD if a write row
 	// were ever added. See `handleArcPage`.
 	{"GET", "/arc"}: {(*Server).handleArcPage, classContent},
+	// 🔴 THE ARCS-FIRST PAGE (S1 of the arcs/presence plan): every arc homed in a readable scope, live
+	// ones first. A fixed path whose only operand (`?all=1`) is a view toggle, never an authority input;
+	// `content`, because which arcs exist is itself an answer about authority (Q1). GET only — the UI
+	// never registers an arc. `/` is NOT replaced (plan decision 13, open question P1). See
+	// `handleArcsPage`.
+	{"GET", "/arcs"}: {(*Server).handleArcsPage, classContent},
 	// 🔴 THE SESSION PAGE IS A FIFTH FIXED BROWSE PATH WITH ITS OPERAND IN A QUERY PARAMETER, for the
 	// browse pair's reason: `/session/{id}` would need a prefix match, and a session id is a value a
 	// WRITER declared in a trailer. It is the one browse row keyed by a value that is NOT scoped — a
@@ -224,6 +230,8 @@ const (
 	EntryPath = "/entry"
 	// ArcPath is one registered arc, keyed by `?home=<control.ID>&slug=<slug>`.
 	ArcPath = "/arc"
+	// ArcsPath is every arc this caller can see, live ones first; `?all=1` lists every one.
+	ArcsPath = "/arcs"
 	// SessionPath is one writing session across every readable scope, keyed by `?session=<id>`.
 	SessionPath = "/session"
 	// SharePath answers the share flow's read AND its grant write, split by method.
@@ -352,13 +360,15 @@ const (
 	// id is not a `control.ID` of anything: it is a value a writer declared in a trailer, opaque and
 	// byte-exact, and `write.SessionComponent` is its whole grammar.
 	QuerySession = "session"
-	// QueryTab selects WHICH TAB of `GET /scope` is rendered, for [QueryView]'s reason on the entry
+	// QueryTab selects WHICH TAB of `GET /scope` (and of `GET /arc`) is rendered, for [QueryView]'s reason on the entry
 	// page: three views of one scope behind one row, server-rendered, so a tab is a shareable URL and
 	// the back button works with no script. See [TabSessions].
 	QueryTab = "tab"
 )
 
-// TabSessions and TabArcs are the two recognised [QueryTab] values.
+// TabSessions and TabArcs are the two recognised [QueryTab] values on `GET /scope`. On `GET /arc`
+// only [TabSessions] is recognised (`arcTab`) and the default is the SCOPES tab — the same rule, one
+// page over.
 //
 // ⚠ THERE IS NO `TabEntries` CONSTANT, AND THE ABSENCE IS [ViewRaw]'s RULING RESTATED. The entries
 // tab is what the row answers when nothing selects otherwise — `?tab=entries`, `?tab=`, a typo and

@@ -288,6 +288,7 @@
   /* Both header links share one rule, which is a claim that they are the same KIND of
    * affordance rather than a saving. A second rule that drifted would make one of the two
    * entry points look like metadata, which is the defect `.nav-share` exists for. */
+  .nav-arcs a,
   .nav-share a,
   .nav-invite a {
     @apply text-sm text-accent no-underline;

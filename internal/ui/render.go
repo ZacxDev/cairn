@@ -105,11 +105,16 @@ type PageView struct {
 	Touched *Touched
 	// Arc is the arc page's answer, nil everywhere else. See `arcs.go`.
 	Arc *report.ArcReport
-	// Tab is the scope page's selected tab: "" (entries), [TabSessions] or [TabArcs] — already
-	// folded by `scopeTab`, so a renderer never sees an unrecognised value.
+	// Tab is the selected tab, already folded so a renderer never sees an unrecognised value: on the
+	// scope page "" (entries), [TabSessions] or [TabArcs] (`scopeTab`); on the arc page "" (scopes) or
+	// [TabSessions] (`arcTab`).
 	Tab string
 	// Session is the session page's answer, nil everywhere else. See `sessionpage.go`.
 	Session *SessionAnswer
+	// ArcsIndex is the arcs page's answer, nil everywhere else; ArcsAll is its `?all=1` toggle. See
+	// `arcsindex.go`.
+	ArcsIndex *report.ArcsAcrossReport
+	ArcsAll   bool
 
 	// Now is the render-time clock reading every relative timestamp on the page is computed
 	// against — the server's injected `Config.Now`, so a test pins "5m ago" exactly.
@@ -598,6 +603,10 @@ func shell(title string, v PageView, crumbs []crumb, body ...g.Node) g.Node {
 				// comment claiming singularity is exactly what stops the next person
 				// adding a third where it belongs.
 				h.H1(h.A(h.Href(RootPath), g.Text("cairn"))),
+				// 🔴 THE ARCS PAGE'S ENTRY POINT, UNCONDITIONAL FOR THE SHARE LINK'S REASON BELOW: a
+				// page reachable only by typing its path reads as absent. Not gated on "is a journal
+				// configured" either — `GET /arcs` ANSWERS on a deployment without one, saying so.
+				h.P(h.Class("nav-arcs"), h.A(h.Href(ArcsPath), g.Text("Arcs"))),
 				// 🔴 THE SHARE FLOW'S ONLY ENTRY POINT, AND IT IS UNCONDITIONAL ON
 				// PURPOSE. It shipped reachable only by TYPING `/share`: every route
 				// was registered, the authority was seeded, `sharing writable` was in

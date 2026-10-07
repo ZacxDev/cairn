@@ -3216,6 +3216,101 @@ MUTANTS: tuple[Mutant, ...] = (
         why="the arcs tab has three partial causes (damaged journal, rejected entries, unreadable "
         "entries) and the shortcut is to badge every counted answer.",
     ),
+    # 🔴 THE ARCS-FIRST PAGE AND THE ARC PAGE'S TABS (S1 of `claudedocs/plan-cairn-arcs-presence.md`).
+    # The plan's S1 test plan names four mutants — drop the clamp, use `reported_at`, count `unknown`
+    # as open, skip the visibility check in the member walk — and each is a row here, plus the home
+    # rule, the live window and the two tab rows. Each was watched killed by its named guard first.
+    Mutant(
+        name="ui-arcs-index-future-bullet-not-clamped",
+        path="internal/ui/arcsindex.go",
+        old="\tif today := utcDay(now); day.After(today) {",
+        new="\tif today := utcDay(now); false && day.After(today) {",
+        killer="TestAFutureDatedBulletDoesNotSortAboveToday",
+        why="a bullet's date is the writer's word on a `put`, so it looks like data to sort by as "
+        "written — and a member can then pin an arc to the top of everyone's page until the date passes.",
+    ),
+    Mutant(
+        name="ui-arcs-index-last-updated-reads-reported-at",
+        path="internal/ui/arcsindex.go",
+        old="time.Parse(time.RFC3339, a.RegisteredAt)",
+        new="time.Parse(time.RFC3339, a.ReportedAt)",
+        killer="TestTheArcsPageListsLiveArcsNewestFirstAndCountsTheHidden",
+        why="`reported_at` is the tooling's own 'when I measured' and reads like the natural 'last "
+        "update' — but it is optional and on the tooling's clock, where `registered_at` is always "
+        "present and the pod's.",
+    ),
+    Mutant(
+        name="ui-arcs-index-unknown-counts-as-open",
+        path="internal/ui/arcsindex.go",
+        old="\tif a.Status == arcs.StatusOpen {",
+        new="\tif a.Status != arcs.StatusClosed {",
+        killer="TestTheArcsPageListsLiveArcsNewestFirstAndCountsTheHidden",
+        why="'not closed' is the obvious spelling of 'still going', and it reads an arc whose tool "
+        "reported NO verdict as open — Q4's one rule.",
+    ),
+    Mutant(
+        name="ui-arcs-index-live-window-widened",
+        path="internal/ui/arcsindex.go",
+        old="const arcLiveDays = 14",
+        new="const arcLiveDays = 15",
+        killer="TestTheArcsPageListsLiveArcsNewestFirstAndCountsTheHidden",
+        why="an off-by-a-day window is invisible on every arc that is not within a day of the "
+        "boundary; only a fixture measured on BOTH sides of 14 days sees it.",
+    ),
+    Mutant(
+        name="ui-arcs-index-live-window-compared-as-an-instant",
+        path="internal/ui/arcsindex.go",
+        old="return int(now.Sub(act.At)/(24*time.Hour)) <= arcLiveDays",
+        new="return now.Sub(act.At) <= arcLiveDays*24*time.Hour",
+        killer="TestARegistrationIsLiveExactlyWhileItReadsFourteenDaysAgo",
+        extra_killers=("TestABulletDatedExactlyFourteenDaysAgoIsStillLive",
+                       "TestLivenessDoesNotDependOnWhichSourceWon"),
+        why="`now - last <= 14 days` is the obvious spelling, and it was this PR's first head: it hides "
+        "whatever the row's own '14d ago' label calls fourteen days — a registration 14d23h old, a "
+        "bullet dated today-14 at a noon clock (audit rounds 1 and 2).",
+    ),
+    Mutant(
+        name="ui-arcs-index-member-walk-unrestricted",
+        path="internal/report/arcsacross.go",
+        old='index, err := store.LoadStore(storeRoot, "scanned", visible)',
+        new='index, err := store.LoadStore(storeRoot, "scanned", store.Unrestricted())',
+        killer="TestAMemberBulletInAnUnreadableScopeDoesNotMoveTheArc",
+        extra_killers=("TestArcsAcrossListsReadableHomesWithTheirNewestReadableMemberBullet",),
+        pkgs=PKGS + ("./internal/report/",),
+        why="the arc is visible, so 'when did any of its members last write' looks like a fact about "
+        "the ARC — but each write is in a scope with its own authority, and an unrestricted walk lets "
+        "a hidden scope's activity reorder (and so reveal) what a reader sees.",
+    ),
+    Mutant(
+        name="ui-arcs-index-lists-arcs-homed-in-an-unreadable-scope",
+        path="internal/report/arcsacross.go",
+        old="\t\tif !visible.Allows(reg.Home) {\n\t\t\tcontinue\n\t\t}\n",
+        new="",
+        killer="TestAnArcHomedInAnUnreadableScopeIsNeverListedEvenWhenItsMembersWroteWhereYouRead",
+        extra_killers=("TestTheArcsPageListsLiveArcsNewestFirstAndCountsTheHidden",
+                       "TestArcsAcrossListsReadableHomesWithTheirNewestReadableMemberBullet"),
+        pkgs=PKGS + ("./internal/report/",),
+        why="an index of EVERY arc is the first draft of an arcs index; the home rule (Q1) is the one "
+        "thing that makes it a page about what this reader may see.",
+    ),
+    Mutant(
+        name="ui-arc-tab-selection-ignored",
+        path="internal/ui/arcs.go",
+        old="\tif tab == TabSessions {\n\t\treturn h.Div(",
+        new="\tif false && tab == TabSessions {\n\t\treturn h.Div(",
+        killer="TestTheArcPageRendersOnlyTheSelectedTab",
+        why="a tab whose link changes the URL and not the panel looks like a working tab on every "
+        "page but its own.",
+    ),
+    Mutant(
+        name="ui-arc-tab-unknown-value-passed-through",
+        path="internal/ui/arcs.go",
+        old='\tif raw == TabSessions {\n\t\treturn raw\n\t}\n\treturn ""',
+        new='\tif raw != "" {\n\t\treturn raw\n\t}\n\treturn ""',
+        killer="TestTheArcPageRendersOnlyTheSelectedTab",
+        why="passing the operand through is the shortest fold, and it renders a page with NO current "
+        "tab for every typo or scope-page tab name — a second URL for the default state.",
+    ),
 )
 
 

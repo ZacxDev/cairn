@@ -277,8 +277,10 @@ func waitHealthy(ctx context.Context, url string, budget time.Duration) error {
 //
 // 🔴 MEASURED NECESSARY: with no members, the session page was reachable only bare. The fixture's
 // attributed bullets sit in a scope the walk's per-page bound never captures, so no sessions tab it
-// reached listed a row; an arc's member chip is the one link to `/session?session=…` every captured
-// arc page carries. A store with no trailer at all is a CONTENT-FLOOR refusal, for `listScopes`'
+// reached listed a row; an arc's MEMBERS are the links to `/session?session=…` — as chips on each arc
+// row of the scope page's ARCS tab, and as rows on the arc page's SESSIONS tab (since the arc page
+// grew tabs, its default scopes tab carries none). Measured on one walk: the first `/session` page
+// was published by a scope page's arcs tab. A store with no trailer at all is a CONTENT-FLOOR refusal, for `listScopes`'
 // reason: the walk would capture no session page and report the row covered.
 func fixtureMembers(storeRoot string) ([]arcs.Member, error) {
 	index, err := store.LoadStore(storeRoot, "scanned", store.Unrestricted())
@@ -328,6 +330,36 @@ func writeArcJournal(dir, storeRoot string, scopes []string) (string, error) {
 		// A CONTENT-FLOOR refusal, for `listScopes`' reason: a journal with nothing in it would
 		// capture the empty card everywhere and report the listed state as covered.
 		return "", fmt.Errorf("no fixture scope name is already normalized, so no arc can be homed in one: %v", scopes)
+	}
+	// 🔴 THREE MORE ARCS FOR THE ARCS PAGE (S1 of the arcs/presence plan), all homed in the first
+	// normalized fixture scope: one registered an hour before the walk (live by recency), one `open`
+	// and old (live by status), one `closed` and old (hidden — so the "not live" count is non-zero
+	// and the show-all toggle renders). Every per-scope arc above is `unknown` and dated in 2000, so
+	// without these the live view would be EMPTY and the walk would capture only its empty state.
+	// ⚠ The recent one is stamped from the WALK's clock, the one place this fixture is not a fixed
+	// value: the page's live window is measured against the pod's clock, so a fixed date would age
+	// out of it. Its slug and home are fixture strings; no real time reaches a committed file.
+	home := ""
+	for _, s := range scopes {
+		if store.NormalizeRef(s) == s {
+			home = s
+			break
+		}
+	}
+	for _, extra := range []struct{ slug, status, at string }{
+		{"fixture-recent-arc", arcs.StatusClosed, time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)},
+		{"fixture-open-old-arc", arcs.StatusOpen, "2000-01-01T00:00:00Z"},
+		{"fixture-closed-old-arc", arcs.StatusClosed, "2000-01-01T00:00:00Z"},
+	} {
+		reg := arcs.Registration{Schema: arcs.Schema, Home: home, Slug: extra.slug, Status: extra.status,
+			ClosingKind: arcs.ClosingCheck, DeclaredScopes: []string{home}, Members: members,
+			ReportedAt: "2000-01-01T00:00:00Z", RegisteredBy: fixtureIdentity, RegisteredAt: extra.at}
+		line, err := json.Marshal(reg)
+		if err != nil {
+			return "", err
+		}
+		b.Write(line)
+		b.WriteByte('\n')
 	}
 	arcDir := filepath.Join(dir, "arcs")
 	if err := os.MkdirAll(arcDir, 0o700); err != nil {

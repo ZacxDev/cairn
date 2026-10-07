@@ -189,6 +189,13 @@ var linkExpanded = map[string]bool{
 	// unseen-session refusal and count it as a page. The scope page's TABS are what reach it, and the
 	// tabs are `/scope` links — see `roundRobinByRow` for why the cap no longer bounds them away.
 	ui.SessionPath: true,
+	// 🔴 `GET /arcs` IS HERE RATHER THAN IN `plainGET`, EVEN THOUGH ITS BARE PATH IS A PAGE, because
+	// it is the page that PUBLISHES the arcs a reader opens: each listed arc links `/arc?home=…&slug=…`
+	// with a minted home id, and its show-all toggle links `/arcs?all=1` — a view of the same row the
+	// walk would otherwise never capture. Expanding it is what reaches both. `boot.go`'s
+	// `writeArcJournal` registers a recent, an open-old and a closed-old arc so the live view, the
+	// hidden count and the toggle all render.
+	ui.ArcsPath: true,
 }
 
 // plainGET is the set of ledger paths captured exactly as the ledger spells them.
