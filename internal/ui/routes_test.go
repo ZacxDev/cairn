@@ -316,7 +316,7 @@ func (s staticCredentials) Authenticate(token string) (control.Principal, contro
 
 // testConfig is the fully wired server every dispatch test starts from. Each field is
 // spelled here once so a test that needs to vary ONE of them varies exactly one.
-func testConfig(t *testing.T, auth identity.Authenticator) Config {
+func testConfig(t testing.TB, auth identity.Authenticator) Config {
 	t.Helper()
 	return Config{
 		Auth:        auth,

@@ -203,7 +203,7 @@ func NavigatePage(v PageView) g.Node {
 // RATHER THAN HIDDEN. "Sessions 36" is `report.Sessions` over this scope and "Arcs 2" is `report.Arcs`
 // — a count of what a tab lists IS that tab's derivation, so there is no cheaper number that is the
 // same number. This page computed both on every load before the tabs existed (as two cards); the tab
-// decides what is RENDERED, not what is read. `TestTheScopePageCostOfTheTabCounts` measures it.
+// decides what is RENDERED, not what is read. `BenchmarkSessionPageAndScopeTabs` measures it.
 func ScopePage(v PageView) g.Node {
 	s := *v.Scope
 	var body g.Node

@@ -2527,7 +2527,7 @@ pair of cards, and **no new derivation** — every value rendered is one the pod
 
 | route | class | what |
 |---|---|---|
-| `GET /scope?id=<control.ID>` | `content` | unchanged row; the page grows two cards, "Sessions that wrote here" and "Arcs that touched this scope" |
+| `GET /scope?id=<control.ID>` | `content` | unchanged row; the page grows two cards, "Sessions that wrote here" and "Arcs that touched this scope" — ⚠ since Phase I, two TABS (`?tab=sessions`, `?tab=arcs`) |
 | `GET /arc?home=<control.ID>&slug=<slug>` | `content` | one registered arc: status, closing kind, registration, the tooling's own coverage, declared scopes NARROWED, members with the readable scopes each wrote in |
 
 ## 🔴 The data and its visibility come from the pod's code, and this package decides neither
@@ -2599,7 +2599,7 @@ names it. Until then this surface renders the off state, which is correct.
 The plan says "every href goes through `safeHref`". It cannot: `safeHref` ALLOWLISTS absolute
 http(s), so a same-origin `/arc?…` would be refused and every arc would render as unlinked text —
 which is why `scopeHref`/`entryHref`/`tagHref` already must not reach it. The arc data carries NO URL:
-every href is a ledger constant plus `url.Values.Encode`, and session ids are text, never links.
+every href is a ledger constant plus `url.Values.Encode`, and session ids are text, never links. ⚠ **Retracted by Phase I on an operator request:** a session id now links to `/session?session=…`, built the same way (`sessionHref`).
 `TestEveryArcHrefIsASameOriginPathWithEncodedOperands` plants a `javascript:`-shaped slug carrying
 `&home=…#`, a home carrying `"><script>`, and a scope id carrying `&slug=` into the REPORT VALUE (the
 journal's own validator refuses them — `hostileWorld`'s ruling for tags) and requires every rendered
@@ -2755,3 +2755,146 @@ browser test.
 - The filter's behaviour with script disabled is pinned server-side (the control renders `hidden`)
   and not in a browser with script off.
 - Clock skew between the pod's filesystem and its clock beyond the one-minute grace renders a date.
+
+
+# Phase I — scope tabs, a cross-scope session page, and the numbers-not-prose pass
+
+Three operator requests landed together: the session ids under "Sessions that wrote here" should
+be clickable; entries, sessions and arcs should be tabs; and the sessions/arcs views read as the
+same prose wall the entries view had before PR #191.
+
+| route | class | what |
+|---|---|---|
+| `GET /scope?id=<control.ID>&tab=sessions\|arcs` | `content` | the SAME row; `tab` selects which panel is rendered. Entries is the default and has no `tab=` in its URL |
+| `GET /session?session=<id>` | `content` | NEW: one writing session's attributed bullets across EVERY scope the caller can read, grouped by scope (newest activity first), each bullet linked to its anchor on the entry page; the arcs (home readable) that list it as a member |
+
+## 🔴 The session page is the first browse page keyed by a value that is not scoped
+
+A session id is global — whoever wrote the trailer chose it — so this is the one page that
+AGGREGATES across scopes, and its narrowing is the whole design. `StoreSource.Session` hands
+`scopeSetOf(auth.NamedScopes(control.VerbRead))` — the ONE narrowing `Visible`, `Touched` and `Arc`
+use — to `report.SessionAcross`, which loads an index narrowed to it, scans only files that index
+names, and applies the arc rule (home readable, Q1) itself. Nothing the request supplies names a
+scope. `report.SessionAcross` is a STRUCTURED answer with no `RenderText`: it lives in
+`internal/report` only because the arc rule does; no printed byte moved.
+
+**No existence oracle.** A session that wrote only in scopes the caller cannot read, an id nobody
+wrote, an id the trailer grammar cannot produce (`write.SessionComponent`, 64 bytes of
+`[A-Za-z0-9_.-]`) and a case variant of a hidden id all answer **404 with `sessionUnseenBody`**,
+the same bytes, naming nothing. The grammar check runs BEFORE any read, so a hostile query string
+costs one regexp match (`TestAHostileSessionIdIsBoundedBeforeAnyRead` counts the walks). The id is
+byte-exact — never folded, trimmed or lowercased. An unreadable journal with nothing else visible
+is a 503, never the 404: "could not look" is not "nothing there".
+
+**Bullet anchors.** Every nuance bullet on the entry page carries `id="b-<citation id>"` —
+`store.JournalBullet.CitationID`, the value `touch.BulletRef.CitationID` records, so link and
+anchor are one value from one function. A citation id is never empty (8 hex of a SHA-256) but is
+NOT unique: byte-identical bullets share one. The first gets `b-<cid>`, the n-th repeat
+`b-<cid>-<n>`; a link lands on the first, which carries the same text, date and trailer.
+`TestEveryBulletLinkOnTheSessionPageLandsOnAnAnchorThatExists` follows every link across the seam.
+
+## 🔴 Tabs are server-rendered, and only the selected panel is in the document
+
+`entryViewTabs`' ruling for the same shape: a link per tab gives a shareable URL and a working back
+button with no script, the current tab is a `<span>`, and the filter script rides only on the
+entries tab — the only one that renders its control. An UNKNOWN `tab` value (a typo, a case
+variant, `entries`) renders the entries tab rather than a 400: a view selector is not an authority
+question, `?view=`'s ruling.
+
+⚠ **The tab-label counts cost the two per-scope reports on every tab.** "Sessions N" IS
+`report.Sessions` and "Arcs N" IS `report.Arcs`; a count of what a tab lists is that tab's
+derivation, so there is no cheaper number that is the same number. Before this change the page
+computed both on every load (as two cards); the tab decides what is RENDERED, not what is read. A
+count that is not a measurement (journal off or unreadable, nothing scannable) is left off rather
+than printed as 0, and a lower bound carries `≥`.
+
+## 🔴 Numbers, tooltips, and a badge only when partial
+
+The sessions tab, arcs tab, arc page and session page carry ONE stats row of numbers ("2 sessions ·
+3 of 4 bullets attributed"); every caveat sentence the cards printed rides on the matching stat's
+`title=` — `internal/report`'s own exported line, never a second spelling, so the CLI's bytes are
+untouched. The `card-what` explainers (`sessionsWhat`, `arcsWhat`, `arcWhat`) are deleted. The
+attributed K of N is never omitted where something was scanned. `badge-warn` renders ONLY on a
+partial answer: rejected or unreadable entries (lower bound), nothing scannable (unmeasured), a
+damaged journal, an unmeasured writer leg, a carried member. Readers-unmeasured is NOT a badge
+cause: it is this phase's universal state (reads are not collected at all) and a badge on every
+arc would be a badge nobody reads; it stays in the tooling-coverage tooltip.
+
+Rows are compact. A session row is its first 8 bytes (full id in `title=`), actor, bullet count,
+last write and arc chips, and the whole row is one link (`.row-link::after` stretched over it, the
+chips above it). An arc row is its status badge (Q4 unchanged: one badge class, `unknown` is
+`unknown`), provenance word (full provenance as tooltip), closing kind, registered-at, declared
+scopes as chips (linked where readable) and members as session links. Bullet dates render at DAY
+precision ("today", "3d ago"): the bytes carry no time of day.
+
+## `uiaudit`: the cap became round-robin by row
+
+The per-page expansion cap kept "the first four by sorted path". The scope page now publishes its
+tab links beside its entry links and `/entry` sorts first, so the cap bounded away both tabs — and
+with them every `/session` and `/arc` page, reachable only through them — with nothing going red.
+`roundRobinByRow` takes the first of each ROUTE, then the second, and so on; still deterministic.
+`TestExpandLinksKeepsEveryRowAPageLinksWhenTheCapBites` is red on the prefix cap.
+`ui.SessionPath` joined `linkExpanded`.
+
+## Cost, measured
+
+`BenchmarkSessionPageAndScopeTabs` (`go test ./internal/ui/ -run '^$' -bench BenchmarkSessionPageAndScopeTabs
+-benchtime 20x`) over a synthetic store, one host, idle, ms per request:
+
+| size | session page | scope tab (entries / sessions / arcs) | entry page (the baseline every browse page pays) |
+|---|---|---|---|
+| 10 scopes × 30 entries | 16.4 | 13.8 / 14.3 / 13.7 | 9.1 |
+| 30 scopes × 100 entries | 185 | 145 / 147 / 148 | 107 |
+
+Roughly linear in entries. The session page costs ~1.7× the entry page at 3,000 entries: `Visible`
+(which every browse page already pays) plus one `touch.Writes` per readable scope. The tab counts
+add ~40 ms over the entry page at that size, because `report.Sessions` and `report.Arcs` EACH load
+the narrowed index. Nothing is cached, deliberately; if a deployment outgrows this, the fix is a
+cache in front of `Source`, not a second narrowing.
+
+## The RED proof
+
+New tests were copied onto `origin/main` (`64475d7`) with a scratch-only shim supplying the new
+identifiers as literals, so their verdict there is behaviour rather than a compile error:
+
+| guard | origin/main | HEAD |
+|---|---|---|
+| `TestTheSessionPageAggregatesReadableScopesNewestFirstAndOmitsAnUnreadableOne` | RED (no route) | green |
+| `TestASessionOnlyInAnUnreadableScopeAnswersExactlyLikeOneNeverWritten` | RED | green |
+| `TestAHostileSessionIdIsBoundedBeforeAnyRead` | RED | green |
+| `TestEveryBulletLinkOnTheSessionPageLandsOnAnAnchorThatExists` | RED | green |
+| `TestEachScopeTabRendersOnlyItsOwnPanel` | RED (no panels; filter + script on every `tab=`) | green |
+| `TestTheTabLabelsCarryPairwiseDistinctCounts` | RED | green |
+| `TestThePartialBadgeRendersOnlyWhenTheAnswerIsPartial` | RED (no panel) — weak; the battery below is the real proof | green |
+| `TestTheRemovedProseIsAbsentAndEveryCaveatIsATooltip` | RED (fails at the missing session page) — weak; same | green |
+| `uiaudit`'s `TestExpandLinksKeepsEveryRowAPageLinksWhenTheCapBites` | RED with the prefix cap restored | green |
+| `report`'s three `SessionAcross` tests, `TestTheSessionPageEscapesAPlantedHostileValueInEveryPosition`, `TestEveryBulletAnchorOnAnEntryPageIsUnique` | RED by COMPILATION only (new symbols) — weaker evidence | green |
+
+A one-edit battery over this change, each scored by the named test's own `--- FAIL` line after an
+all-PASS baseline: **19 mutants, 19 killed** — the session walk unrestricted (UI and report),
+hidden-home arcs listed, scope order reversed, the grammar bound skipped, a second unseen-body
+spelling, anchors dropped, duplicate anchors, tab selection ignored, an unknown tab passed through,
+the script on every tab, the sessions label printing the entry count, each partial badge forced on
+and off, a caveat printed visibly, a `card-what` restored, the attributed stat dropped. Eight of them
+are rows of `tests/control_mutants.py` (`ui-session-*`, `ui-bullet-anchor-dropped`,
+`ui-scope-tab-selection-ignored`, `ui-*-partial-badge-*`) so CI re-runs them; the S4 rows whose
+patterns moved were re-cut and still kill.
+
+The S4 arcs tests were ADAPTED, not weakened: each still makes its claim (home rule, unknown is not
+open, off/broken/empty, encoded hrefs) against the tab that now carries it, and the hidden-arc leak
+check now runs over all three tabs. The href guard now also plants a hostile member id and requires
+every `/scope`, `/arc` and `/session` href on the panel to round-trip.
+
+## What these guards still cannot see
+
+- **Scale beyond one host's measurement.** Nothing is cached; the session page re-walks every
+  readable scope per request. Measured above at 3,000 entries; a larger store is linear in entries.
+- **The pod has no session route**, so there is no second surface to compare this answer against.
+- **Bullet excerpts** come from the narrowed `Visible` answer the page already holds; a bullet whose
+  citation id the entry page could not reproduce would render with no excerpt — not measured, and
+  `TestEveryBulletLinkOnTheSessionPageLandsOnAnAnchorThatExists` is what would see the anchor half.
+- **Tooltips are not visible on touch devices.** The caveats are one hover away on a desktop and
+  one long-press (browser-dependent) on a phone.
+- **Short ids can collide.** Rows show the first 8 bytes; two ids sharing that prefix (the `uiaudit`
+  fixture's `sess-0000000000000001`/`…02`) render alike, distinguishable only by the `title=` and the
+  link. Real agent session ids are uuids, where 8 hex characters suffice; not lengthened adaptively.
