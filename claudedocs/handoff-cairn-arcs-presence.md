@@ -48,12 +48,16 @@ before any slice: decisions, threat model, slices S1–S5, the deploy preconditi
   (re-measured 23 ok on `main`; gate replay: 23 passes, 22 refused).
 
 ## Next steps (ranked)
-1. **Merge #196 when its CI is green** (repo cairn, `.github/workflows/ci.yml` only).
-   forcing: gate — the floor stood 4 below the package count, so four packages' tests
-   could be deleted with CI green.
+1. **#196 is MERGED** (`78fe99a`, all 8 checks green): the `go` job's `ok` floor is now `-lt 23`.
+   Nothing to do; the rank is kept so later ranks keep their claim identities.
+   forcing: gate — the floor stood 4 below the package count.
 2. **S1 — the arcs-first page and `/arc` tabs (scopes · sessions)**, per the plan; no
-   presence dependency. Repo cairn, `internal/ui`, `internal/report`. forcing: user — the
-   operator asked for an arcs-first page.
+   presence dependency. Repo cairn, `internal/ui`, `internal/report`. IN FLIGHT: branch
+   `zach/arcs-first-page` (subagent building it; PR not yet opened). Claimed:
+   `claim-work` slug `cairn-arcs-presence-2` — `claim-work --release cairn-arcs-presence-2`
+   once it merges. Then: round 0 + round 1 audit, merge, deploy to both instances (personal:
+   deployment repo trunk; client: client infra repo trunk, tag+digest pinned), verify live.
+   forcing: user — the operator asked for an arcs-first page and said go.
 3. **S2–S5 — presence, the host agent, badges, the bell**, in plan order. S2 deploys only
    after #195 has been live for the instance's effective session TTL (12 h default) and the
    journal still shows zero narrowed credentials — the plan's stated precondition.
