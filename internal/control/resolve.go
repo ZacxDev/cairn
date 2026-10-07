@@ -55,7 +55,29 @@ type Authorization struct {
 	// authority so that a materialized copy can report how stale it is instead of
 	// asserting it is current.
 	Epoch uint64
+	// narrowed records that a CREDENTIAL'S narrowing was applied to produce this value —
+	// see [Authorization.Narrowed].
+	narrowed bool
 }
+
+// Narrowed reports whether this authority came out of a credential carrying a narrowing,
+// i.e. whether [Narrow] was handed a NON-NIL list.
+//
+// 🔴 IT IS A FACT ABOUT HOW THE VALUE WAS PRODUCED, NOT A COMPARISON OF ITS CONTENTS, AND
+// THAT IS THE ONLY SPELLING THAT CANNOT BE FOOLED. A caller asking "is this narrower than
+// the principal's full authority" by comparing against `Resolve` gets two wrong answers:
+// a narrowing that happens to equal today's full set reads as un-narrowed (and stops being
+// so the moment the principal is granted another scope), and it costs a second model read
+// that a refresh can land between. The flag comes out of the SAME match `Authenticate`
+// made — one match, three facts, now four — so it cannot describe a different credential.
+//
+// ⚠ A NON-NIL EMPTY NARROWING IS NARROWED. It sees nothing, and `nil` is its opposite; a
+// check spelled `len(only) > 0` would read the see-nothing credential as unrestricted.
+//
+// Who reads it: `internal/ui` refuses to mint a browser session from a narrowed
+// credential, because a session re-derives the PRINCIPAL's full authority on every
+// request and would therefore discard the narrowing — see `internal/ui/README.md`.
+func (a Authorization) Narrowed() bool { return a.narrowed }
 
 // Allows is THE PREDICATE. Everything that narrows anything consults this.
 //
@@ -405,9 +427,10 @@ func Narrow(a Authorization, only []ID) Authorization {
 		keep[id] = struct{}{}
 	}
 	out := Authorization{
-		byScope: map[ID]VerbSet{},
-		names:   map[ID]string{},
-		Epoch:   a.Epoch,
+		byScope:  map[ID]VerbSet{},
+		names:    map[ID]string{},
+		Epoch:    a.Epoch,
+		narrowed: true,
 	}
 	for id, vs := range a.byScope {
 		if _, wanted := keep[id]; !wanted {

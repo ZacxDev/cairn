@@ -104,6 +104,30 @@ const InviteHonesty = "An invitation is a link, and the link is the authority: i
 // survives no hop. See `handleInvite`.
 const inviteOutcomeRevoked = "revoked"
 
+// membershipActor is the principal the invite flow may act as, and it is the ZERO principal
+// for a caller whose credential was narrowed.
+//
+// 🔴 MEMBERSHIP AUTHORITY IS NOT IN AN `Authorization`, SO A NARROWING CANNOT BOUND IT — AND
+// WITHOUT THIS A NARROWED TOKEN COULD WIDEN ITSELF. `Inviting` takes a principal (see its
+// `Invitable` comment for why) and decides from the principal's project ROLE. A bearer token
+// narrowed to one scope reaches these rows through the machine-token backend, and the
+// state-changing gate does not stop it (`csrfTokenValid`'s comment: the caller chooses its
+// own cookie). So a leaked narrowed token could mint an invitation into every project its
+// owner manages and redeem it as an identity the holder controls — full project membership
+// out of a credential meant to see one scope. A narrowed credential therefore exercises NO
+// membership authority.
+//
+// ⚠ THE REFUSAL RIDES THE EXISTING GUARDS RATHER THAN ADDING ONE PER HANDLER: the zero
+// principal is not `control.KindUser`, so `Invitable` lists nothing and `mayManage` refuses,
+// and each handler answers exactly what a caller managing nothing already gets. One rule,
+// one place — every invite handler that names an actor goes through this function.
+func membershipActor(id identity.Identity) control.Principal {
+	if id.Auth.Narrowed() {
+		return control.Principal{}
+	}
+	return id.Principal
+}
+
 // handleInvitePage renders the invite flow: the index with no `?project=`, one project's
 // page with it.
 //
@@ -136,7 +160,7 @@ func (s *Server) handleInvitePage(w http.ResponseWriter, r *http.Request, id ide
 	// so filling this only on the index branch would leave a path on which the page renders
 	// "No project is yours to invite into. That is an authority answer, not an empty
 	// control plane." to a caller who had just proved they manage one.
-	view.Projects = s.inviting.Invitable(id.Principal)
+	view.Projects = s.inviting.Invitable(membershipActor(id))
 
 	project := control.ID(r.URL.Query().Get(QueryProject))
 	if project == "" {
@@ -204,9 +228,9 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request, id identit
 	// Looking the name up BEFORE the write rather than after is deliberate: after a
 	// successful mint a concurrent membership change could remove the project from this
 	// list, and the page would then render an invitation with no name on it.
-	chosen, _ := pickProject(s.inviting.Invitable(id.Principal), project)
+	chosen, _ := pickProject(s.inviting.Invitable(membershipActor(id)), project)
 
-	token, inv, err := s.inviting.Mint(r.Context(), id.Principal, project, role, 0)
+	token, inv, err := s.inviting.Mint(r.Context(), membershipActor(id), project, role, 0)
 	if err != nil {
 		s.refuseInviteWrite(w, err, "mint")
 		return
@@ -269,7 +293,7 @@ func (s *Server) handleInviteRevoke(w http.ResponseWriter, r *http.Request, id i
 		writePlain(w, http.StatusBadRequest, inviteWriteRefusal)
 		return
 	}
-	if err := s.inviting.Revoke(r.Context(), id.Principal, digest); err != nil {
+	if err := s.inviting.Revoke(r.Context(), membershipActor(id), digest); err != nil {
 		s.refuseInviteWrite(w, err, "revoke")
 		return
 	}

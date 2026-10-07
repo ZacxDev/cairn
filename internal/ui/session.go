@@ -117,7 +117,9 @@ func csrfTokenFor(r *http.Request) string {
 // X, which is nothing, and the share AND invite rows all authorise from `id.Auth` or
 // `id.Principal` rather than from the cookie, so a caller who chose their own cookie gains
 // no authority by it. `Mint` and `Revoke` in particular go through `mayManage`, which
-// requires `control.KindUser` and a real membership.
+// requires `control.KindUser` and a real membership — and they receive `membershipActor(id)`,
+// the ZERO principal for a narrowed credential, because a bearer caller DOES reach these rows
+// this way and membership authority is not bounded by a scope narrowing (see that function).
 // ⚠ THIS ENUMERATION HAS NOW GONE STALE TWICE, IN THE SAME PARAGRAPH THAT RECORDS THE FIRST
 // TIME. It read "the only state-changing row is `POST /sign-out`" until the share flow added
 // two, and the correction said "the LIST it rests on was stale, and the list is the half a
@@ -217,19 +219,50 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request, _ identity
 		s.renderSignIn(w, http.StatusUnauthorized, signInRefused)
 		return
 	}
-	presented := r.PostFormValue(FieldToken)
-	principal, _, err := s.credentials.Authenticate(presented)
-	if err != nil {
-		// No token, no digest, no reason — and no principal, because there is not one.
-		// What IS recorded is the client, because a refusal nobody can attribute is a
-		// refusal nobody can act on, and this surface is reachable from the internet.
+	// refuse is the ONE failure exit for a presented credential, so a rejected token and a
+	// narrowed one cannot drift apart in status, body or lockout accounting. `reason` goes to
+	// the operator's log only and is a constant chosen here — never caller text.
+	refuse := func(reason string) {
+		// No token, no digest — and no principal, because for a rejected token there is
+		// not one and for a narrowed one naming it would put a real account beside a
+		// refusal. What IS recorded is the client, because a refusal nobody can attribute
+		// is a refusal nobody can act on, and this surface is reachable from the internet.
 		if s.limiter != nil && s.limiter.RecordFailure(client) {
-			s.logf("sign-in refused: %s — LOCKOUT TRIGGERED (client identity %s)",
-				client, peerState(trusted))
+			s.logf("sign-in refused: %s%s — LOCKOUT TRIGGERED (client identity %s)",
+				reason, client, peerState(trusted))
 		} else {
-			s.logf("sign-in refused: %s (client identity %s)", client, peerState(trusted))
+			s.logf("sign-in refused: %s%s (client identity %s)", reason, client, peerState(trusted))
 		}
 		s.renderSignIn(w, http.StatusUnauthorized, signInRefused)
+	}
+
+	presented := r.PostFormValue(FieldToken)
+	principal, auth, err := s.credentials.Authenticate(presented)
+	if err != nil {
+		refuse("")
+		return
+	}
+	// 🔴 A NARROWED CREDENTIAL MINTS NO SESSION. A session is keyed on the PRINCIPAL alone and
+	// `identity.CookieSession` re-derives `control.Resolve(model, principal)` on every request
+	// — the principal's FULL authority — so a session opened from a credential narrowed to one
+	// scope would read every scope its owner can, defeating the narrowing whose whole purpose
+	// is bounding what a leaked token reaches. Refusing is the operator's decision over the
+	// alternative (carrying the narrowing on the session row); it keeps "a session is a
+	// principal" true for both doors into `openSession`.
+	//
+	// 🔴 `auth.Narrowed()`, NEVER A COMPARISON AGAINST THE PRINCIPAL'S FULL AUTHORITY. A
+	// narrowing equal to today's full set compares equal and is still a narrowed credential —
+	// the principal's grants can grow tomorrow — and a non-nil EMPTY narrowing (sees nothing)
+	// is narrowed too. See `control.Authorization.Narrowed`.
+	//
+	// ⚠ THE REFUSAL IS THE SAME 401 AND THE SAME SENTENCE AS A WRONG TOKEN, AND IT COUNTS
+	// TOWARD THE LOCKOUT THE SAME WAY. A distinct answer would tell a caller "this token is
+	// real, merely narrowed" — an enumeration oracle `signInRefused`'s own comment rules out.
+	// It counts because a refused sign-in is a refused sign-in: an uncounted path would be a
+	// second behaviour a caller can measure (no lockout after N tries) and a free retry loop
+	// against the limiter. The reason reaches the operator's log and nowhere else.
+	if auth.Narrowed() {
+		refuse("the credential is narrowed — ")
 		return
 	}
 
@@ -244,6 +277,12 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request, _ identity
 // the store write and the cookie are four lines each and every one of them is load-bearing;
 // `handleSignIn` and `handleOAuthCallback` reach this function with a principal and nothing
 // else, so the two doors cannot diverge in what a session IS.
+//
+// 🔴 AND "A PRINCIPAL AND NOTHING ELSE" IS WHY NEITHER DOOR MAY PASS ONE THAT ARRIVED ON A
+// NARROWED CREDENTIAL. The session row carries no authority; `identity.CookieSession`
+// resolves the principal's FULL authority on every request. `handleSignIn` refuses a
+// narrowed credential before reaching here; `handleOAuthCallback`'s principal comes from a
+// provider identity, which has no credential and therefore no narrowing to lose.
 //
 // 🔴 THE OLD SESSION IS REVOKED BEFORE THE NEW ONE IS MINTED, WHICH IS THE FIXATION GUARD
 // AND IS STRONGER THAN "THE ID CHANGES". Session fixation is an attacker planting a session

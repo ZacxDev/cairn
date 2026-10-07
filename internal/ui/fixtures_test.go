@@ -29,7 +29,14 @@ var (
 // gave them separate worlds would let a defect in which world a path reads pass unseen.
 func fixtureCache(t *testing.T) *control.Cache {
 	t.Helper()
-	m, err := control.Replay([]control.Event{
+	return fixtureCacheWith(t)
+}
+
+// fixtureCacheWith is `fixtureCache` plus events replayed AFTER the base world, so a test
+// that needs one more scope or credential varies exactly that and inherits the rest.
+func fixtureCacheWith(t *testing.T, extra ...control.Event) *control.Cache {
+	t.Helper()
+	m, err := control.Replay(append([]control.Event{
 		{Kind: control.EventUserCreated, At: fixtureClock, UserID: fixtureUser,
 			Provider: "fixture-provider", Subject: "00000000-0000-4000-8000-000000000001",
 			Email: "rowan@notes.example.invalid"},
@@ -39,7 +46,7 @@ func fixtureCache(t *testing.T) *control.Cache {
 		{Kind: control.EventCredentialIssued, At: fixtureClock, CredentialID: "crd_fixture",
 			SubjectKind: control.KindUser, SubjectID: fixtureUser,
 			TokenHash: control.HashToken(testCredential), Label: "fixture"},
-	})
+	}, extra...))
 	if err != nil {
 		t.Fatalf("building the fixture world: %v", err)
 	}

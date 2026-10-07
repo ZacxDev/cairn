@@ -54,6 +54,13 @@ func NewCookieSession(sessions SessionStore, authority ModelSource) (*CookieSess
 // except a sign-out the attacker has no reason to perform. `control.Resolve` against the
 // model read on THIS request is what makes revocation take effect on the next page load.
 //
+// 🔴 WHICH MEANS A SESSION CARRIES ITS PRINCIPAL'S *FULL* AUTHORITY, AND THAT IS ONLY SAFE
+// BECAUSE NO SESSION IS EVER MINTED FROM A NARROWED CREDENTIAL. A credential narrowed to a
+// subset of scopes would lose its narrowing here, since the session row records only the
+// principal. `internal/ui`'s `handleSignIn` refuses such a credential before `openSession`;
+// the provider door has no credential to narrow. A NEW door into a session must hold the
+// same line — see `internal/ui/README.md`, "What a session can be minted from".
+//
 // 🔴 AND THE MODEL IS READ ONCE. Every fact below — the principal and its authorization —
 // comes out of that one value, so a refresh landing mid-request cannot authenticate
 // against one world and authorise against another. The same rule `SupabaseJWT` follows,

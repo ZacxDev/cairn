@@ -162,6 +162,8 @@ const csrfLabel = "cairn-csrf-v1"
 // session is open takes effect on the next request rather than at the next sign-in. A
 // `control.Authorization` frozen into this record would be a second, stale answer to
 // "what may this caller see", which is the one thing `internal/control` exists to forbid.
+// ⚠ The price is that a session is its principal's FULL authority, so it may never be
+// minted from a NARROWED credential — see `CookieSession.Authenticate`.
 type Session struct {
 	// Digest is the hex `sha256` of the session id. The id itself is never stored.
 	Digest string `json:"digest"`

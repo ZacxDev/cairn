@@ -965,6 +965,51 @@ Everything in Phase A's list still applies, and three of them now matter more:
   startup refusal exists against, arriving by the one route the refusal cannot cover. Nothing here
   measures it, and nothing in this PR changes it.
 
+## 🔴 What a session can be minted from — and why a NARROWED credential is not one of them
+
+A session row records a PRINCIPAL and nothing else, and `identity.CookieSession` re-resolves
+`control.Resolve(model, principal)` — the principal's **full** authority — on every request (that
+is what makes revocation take effect on the next page load). So whatever reaches `openSession` is
+promoted to everything its principal can read. Two doors reach it:
+
+| door | where the principal comes from | narrowing to lose? |
+|---|---|---|
+| `POST /sign-in` (`handleSignIn`) | a pasted credential, via `control.Authenticate` | **yes** — refused when `auth.Narrowed()` |
+| `GET /sign-in/github/callback` (`handleOAuthCallback`) | a provider identity (and possibly an invitation) | no — there is no credential |
+
+**A narrowed credential is refused at sign-in** (operator decision, over the alternative of storing
+the narrowing on the session row). Before this, a token narrowed to one scope pasted into the form
+opened a session that read every scope its owner can — measured RED by
+`TestANarrowedCredentialCannotSignIn`, which resolves the minted cookie and asserts the session
+reads a scope outside the narrowing. The rules it pins:
+
+- **"Narrowed" is `control.Authorization.Narrowed()`** — set by `control.Narrow` whenever the
+  credential's `NarrowedScopes` is non-nil — never a comparison against the principal's full
+  authority. So a narrowing to **nothing** (non-nil empty) is refused, and so is a narrowing
+  **equal to today's full set**: it is still a narrowed credential, and a session would pick up
+  every scope granted after sign-in.
+- **The refusal is the uniform one** — same 401, same `signInRefused` body, byte for byte
+  (`TestANarrowedSignInIsIndistinguishableFromAWrongToken`); a distinct answer would confirm the
+  token is real. The reason goes to the operator log only (`sign-in refused: the credential is
+  narrowed — <client>`), with no token or digest.
+- **It counts toward the lockout** like any refused sign-in
+  (`TestANarrowedSignInCountsTowardTheLockout`): an uncounted path is a measurable difference and a
+  free retry loop.
+
+🔴 **THE BEARER PATH HONOURS THE NARROWING FOR SCOPES — BUT MEMBERSHIP AUTHORITY WAS THE SAME BUG.**
+`identity.MachineToken` hands the narrowed `Authorization` through (`machinetoken.go`, the `Auth:
+auth` field), so every scope read on this surface is bounded. The invite flow is not scope-shaped:
+`Inviting` decides from the principal's project ROLE, which no scope narrowing bounds, and a bearer
+caller passes the CSRF gate with a cookie of its own choosing. A narrowed token could therefore mint
+an invitation into its owner's project and redeem it as an identity its holder controls. The invite
+handlers now act as `membershipActor(id)`, the zero principal for a narrowed caller, so `Invitable`
+lists nothing and `mayManage` refuses (`TestANarrowedBearerCannotMintAnInvitation`).
+
+⚠ **NOT CLOSED HERE, NAMED SO IT IS NOT REDISCOVERED:** `Sharing.Candidates(id.Principal)` still
+enumerates the collaborators across every project the principal belongs to, for a narrowed caller
+that holds `admin` on a scope inside its narrowing. It confers no authority — `Share` checks the
+scope against the narrowed `id.Auth` — but it is a listing wider than the narrowing.
+
 # Phase C — the share flow
 
 Three routes (`GET /share`, `POST /share`, `POST /unshare`), one new seam (`Sharing`), and one
