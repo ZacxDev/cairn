@@ -1162,6 +1162,73 @@
     border-color: var(--color-line);
     color: var(--color-muted);
   }
+  .badge-warn {
+    border-color: color-mix(in srgb, oklch(0.72 0.14 25) 60%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-danger) 60%, transparent);
+    }
+    background-color: color-mix(in srgb, oklch(0.72 0.14 25) 5%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-danger) 5%, transparent);
+    }
+    color: var(--color-danger);
+  }
+  .session-row, .arc-row {
+    position: relative;
+  }
+  .row-link {
+    font-family: var(--font-mono);
+  }
+  .row-link::after {
+    content: "";
+    position: absolute;
+    inset: 0px;
+  }
+  .session-row .chips, .arc-row .chips {
+    position: relative;
+    z-index: 10;
+  }
+  .chips-arc > li {
+    border-color: color-mix(in srgb, oklch(0.78 0.1 200) 50%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-accent) 50%, transparent);
+    }
+    background-color: color-mix(in srgb, oklch(0.78 0.1 200) 10%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-accent) 10%, transparent);
+    }
+  }
+  .chips-scope > li {
+    border-color: var(--color-line);
+    background-color: color-mix(in srgb, oklch(0.34 0.01 80) 20%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-line) 20%, transparent);
+    }
+  }
+  .chips-session > li {
+    border-color: var(--color-line);
+    font-family: var(--font-mono);
+  }
+  .chips-arc a, .chips-scope a, .chips-session a {
+    color: var(--color-accent);
+    text-decoration-line: none;
+    &:hover {
+      @media (hover: hover) {
+        text-decoration-line: underline;
+      }
+    }
+  }
+  .excerpt {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    min-width: 0px;
+  }
+  .session-id {
+    font-family: var(--font-mono);
+    word-break: break-all;
+  }
   .provenance {
     display: grid;
     column-gap: calc(var(--spacing) * 3);

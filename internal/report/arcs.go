@@ -88,6 +88,14 @@ type ArcLine struct {
 	// Wrote names the member sessions that wrote attributed bullets in it.
 	Declared bool
 	Wrote    []string
+	// DeclaredVisible is the registration's declared scopes NARROWED to `visible` (a hidden one is
+	// omitted, not counted), MemberSessions every member's session id sorted byte-wise, and
+	// RegisteredAt the pod's RFC 3339 stamp. 🔴 STRUCTURED FIELDS FOR THE BROWSER'S COMPACT ROW ONLY:
+	// `RenderText` reads none of them, so the pod's and the CLI's bytes are unchanged by their
+	// existence — the literal bodies in `arcs_test.go` are what hold that.
+	DeclaredVisible []string
+	MemberSessions  []string
+	RegisteredAt    string
 }
 
 // Arcs derives the `arcs/<scope>` answer. `snap` is nil when the pod has no journal configured.
@@ -122,7 +130,16 @@ func Arcs(storeRoot, scope string, visible store.ScopeSet, snap *arcs.Snapshot) 
 			continue
 		}
 		line := ArcLine{Home: reg.Home, Slug: reg.Slug, Status: reg.Status, ClosingKind: reg.ClosingKind,
-			Members: len(reg.Members), Declared: reg.Declares(res.Scope)}
+			Members: len(reg.Members), Declared: reg.Declares(res.Scope), RegisteredAt: reg.RegisteredAt}
+		for _, d := range reg.DeclaredScopes {
+			if visible.Allows(d) {
+				line.DeclaredVisible = append(line.DeclaredVisible, d)
+			}
+		}
+		for _, m := range reg.Members {
+			line.MemberSessions = append(line.MemberSessions, m.Session)
+		}
+		slices.Sort(line.MemberSessions)
 		for _, m := range reg.Members {
 			if wroteHere[m.Session] {
 				line.Wrote = append(line.Wrote, m.Session)

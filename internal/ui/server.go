@@ -73,6 +73,10 @@ type Source interface {
 	// authority through a door the walk does not watch. See `arcs.go`.
 	Touched(auth control.Authorization, scope string) (Touched, error)
 	Arc(auth control.Authorization, home, slug string) (report.ArcReport, error)
+	// Session answers `/session`: one writing session over EVERY scope this caller can read. On this
+	// interface for `Touched`'s reason — it is the one browse read that aggregates across scopes, so
+	// it is the last one that may answer through a door the authority walk does not count.
+	Session(auth control.Authorization, session string) (SessionAnswer, error)
 }
 
 // Scope is one scope's worth of entries, as the pages render them.
@@ -382,6 +386,10 @@ type Bullet struct {
 	// records the field case: a bullet carrying a second, correctly-spelled marker several
 	// lines down, declaring nothing, badged only by accident of a BROKEN line above it.
 	Unreachable []store.UnreachableMarker
+	// Anchor is the bullet's fragment id on the entry page — `b-<citation id>` — and "" for a bullet
+	// that gets none (a requirement: `internal/touch` scans only the nuance section, so nothing links
+	// one). It is what the session page's links land on. See [bulletAnchors].
+	Anchor string
 }
 
 // Text is the bullet rejoined, VERBATIM — the shape a search hit quotes.
@@ -722,8 +730,11 @@ func (s StoreSource) readEntry(scope string, e store.Entry) (Entry, error) {
 			}
 		}
 		if heading == store.NuanceHeading {
-			for _, b := range store.ParseJournalBullets(body) {
+			parsed := store.ParseJournalBullets(body)
+			anchors := bulletAnchors(parsed)
+			for i, b := range parsed {
 				section.Bullets = append(section.Bullets, Bullet{
+					Anchor:     anchors[i],
 					Lines:      b.Lines,
 					Date:       b.Date,
 					Population: b.OpennessPopulation(),
@@ -1496,6 +1507,9 @@ func (s *Server) handleScopePage(w http.ResponseWriter, r *http.Request, id iden
 	}
 	view.Scope = &scope
 	view.Touched = &touched
+	// The tab is read AFTER the refusal, for `?view=`'s reason in `handleEntryPage`: it selects which
+	// view of a scope the caller already proved they read, and is never an authority input.
+	view.Tab = scopeTab(r.URL.Query().Get(QueryTab))
 	s.renderScope(w, view)
 }
 

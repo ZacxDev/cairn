@@ -184,6 +184,11 @@ var linkExpanded = map[string]bool{
 	ui.EntryPath:  true,
 	ui.InvitePath: true,
 	ui.ArcPath:    true,
+	// 🔴 `GET /session` FOR `GET /arc`'s REASON: its operand is a session id the SURFACE publishes (the
+	// scope page's sessions tab, an arc's member chips), so guessing one would capture the uniform
+	// unseen-session refusal and count it as a page. The scope page's TABS are what reach it, and the
+	// tabs are `/scope` links — see `roundRobinByRow` for why the cap no longer bounds them away.
+	ui.SessionPath: true,
 }
 
 // plainGET is the set of ledger paths captured exactly as the ledger spells them.
@@ -495,9 +500,47 @@ func ExpandLinks(from Target, hrefs []string, ledger []string) (targets []Target
 		// one the walk would happily visit and the hub's page cap will not hold. Folding
 		// them into one number would make a short walk indistinguishable from a narrow one.
 		bounded = len(targets) - MaxExpansionsPerPage
-		targets = targets[:MaxExpansionsPerPage]
+		targets = roundRobinByRow(targets, MaxExpansionsPerPage)
 	}
 	return targets, declined, bounded
+}
+
+// roundRobinByRow keeps `n` of the sorted targets by taking the first of EACH ROUTE (URL path), then
+// the second of each, and so on — so a page that publishes many links on one row and a few on
+// another keeps both kinds.
+//
+// 🔴 MEASURED NECESSARY, NOT TIDY. "The first four by sorted path" was right while each page published
+// links on ONE row per kind of page. The scope page now publishes its tabs (`/scope?id=…&tab=…`)
+// beside its entry rows (`/entry?…`), and `/entry` sorts first: a plain prefix kept four entry pages
+// and bounded away BOTH tabs, so the sessions and arcs views — and every `/session` and `/arc` page,
+// reachable only through them — left the walk with nothing going red. One template's 127th instance
+// tells a layout audit nothing its 4th did not, which is the cap's whole premise; a SECOND template
+// is not that. Still deterministic: the input is sorted, and the kept set is re-sorted.
+func roundRobinByRow(sorted []Target, n int) []Target {
+	var rows []string
+	groups := map[string][]Target{}
+	for _, t := range sorted {
+		row, _, _ := strings.Cut(t.Path, "?")
+		if _, seen := groups[row]; !seen {
+			rows = append(rows, row)
+		}
+		groups[row] = append(groups[row], t)
+	}
+	var out []Target
+	for i := 0; len(out) < n; i++ {
+		took := false
+		for _, row := range rows {
+			if i < len(groups[row]) && len(out) < n {
+				out = append(out, groups[row][i])
+				took = true
+			}
+		}
+		if !took {
+			break
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
 }
 
 // MaxExpansionsPerPage is how many discovered targets ONE page contributes.

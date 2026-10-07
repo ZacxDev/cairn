@@ -189,6 +189,37 @@ func TestExpandLinksIsBOUNDEDPerPageAndSaysSoRatherThanTruncatingSilently(t *tes
 		"same set in a different order keeps the same four", len(hrefs), len(accepted), bounded, len(declined))
 }
 
+// TestExpandLinksKeepsEveryRowAPageLinksWhenTheCapBites: a page linking two ROWS keeps links on
+// both when the per-page cap bites — see `roundRobinByRow`.
+func TestExpandLinksKeepsEveryRowAPageLinksWhenTheCapBites(t *testing.T) {
+	// The scope page's shape: many entry rows, plus its two tab links on `/scope`. Under a plain
+	// sorted-prefix cap the four `/entry` links win and both tabs are bounded away — and with them
+	// every `/session` and `/arc` page, which only the tabs link. RED on that cap.
+	ledger := ui.DeclaredRouteLedger()
+	from := Target{Path: ui.ScopePath + "?id=scp_0000000000000000", SignedIn: true,
+		LedgerRow: "GET " + ui.ScopePath + " content", ExpandLinks: true}
+	var hrefs []string
+	for _, ref := range []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot"} {
+		hrefs = append(hrefs, "/entry?ref="+ref+"&scope=scp_0000000000000000")
+	}
+	hrefs = append(hrefs, "/scope?id=scp_0000000000000000&tab=arcs", "/scope?id=scp_0000000000000000&tab=sessions")
+	accepted, _, bounded := ExpandLinks(from, hrefs, ledger)
+	var got []string
+	for _, a := range accepted {
+		got = append(got, a.Path)
+	}
+	want := []string{
+		"/entry?ref=alpha&scope=scp_0000000000000000",
+		"/entry?ref=bravo&scope=scp_0000000000000000",
+		"/scope?id=scp_0000000000000000&tab=arcs",
+		"/scope?id=scp_0000000000000000&tab=sessions",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") || bounded != len(hrefs)-MaxExpansionsPerPage {
+		t.Errorf("kept %v (bounded %d), want %v (bounded %d): a page linking two rows must keep both",
+			got, bounded, want, len(hrefs)-MaxExpansionsPerPage)
+	}
+}
+
 // TestExpandLinksFollowsALinkACROSSRowsAndOnlyToADeclaredOne is the guard on the widening
 // the browse pages needed.
 //
