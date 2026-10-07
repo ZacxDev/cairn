@@ -1019,13 +1019,20 @@ narrowing" because a membership has no scope dimension: any such filter would be
 linking the two, a second authority decision outside `internal/control`
 (`TestANarrowedAdminBearerIsOfferedNoShareCandidates`).
 
-**One rule, one place, and a ledger that enforces it:** every actor-taking `s.inviting.*` and
-`s.sharing.Candidates` call passes `membershipActor(id)`, pinned by
-`TestEveryMembershipDecisionActsAsMembershipActor` (an AST ledger over the package, failing when a
-site bypasses it or the set of sites grows or shrinks). `Share`/`Unshare` take `id.Principal` as
-the journal's ACTOR only — attribution, not authority, which comes from the narrowed `id.Auth` —
-and `handleOAuthCallback`'s `RedeemFor` takes a provider principal with no credential behind it;
-both are named exemptions in that ledger.
+**One rule, one place, and a ledger that enforces it:** every use of an actor-taking method of
+`Inviting`, `Sharing`, `ControlInviting` or `ControlSharing` in this package's non-test code passes
+`membershipActor(id)`, pinned by `TestEveryMembershipDecisionActsAsMembershipActor`. The receiver is
+resolved by TYPE (`go/types`, run with no importer — the four types are local), so a local alias, a
+helper taking the interface, a renamed field or a direct `Control*` value is seen, and a METHOD
+VALUE (whose actor cannot be read at the site) is refused outright; the whole set is a literal, so it
+also fails when a site appears or disappears. `TestTheMembershipLedgerCanGoRED` keeps one arm per
+shape. ⚠ The first version matched the spelling `<x>.inviting.M(...)` and an auditor walked it with
+`inv := s.inviting` — measured PASS — which is why it is type-based now. ⚠ What it still does not
+see: the value converted to a DIFFERENT interface type declared elsewhere (the method then
+belongs to that type), a value passed out of the package, or reflection. Exemptions, each commented
+on its own ledger line: `Share`/`Unshare` (the principal is the journal's ACTOR — attribution; the
+authority is the narrowed `id.Auth`), `handleOAuthCallback`'s `RedeemFor` (a provider principal with
+no credential behind it), and `ControlInviting.Redeem` delegating to `RedeemFor`.
 
 # Phase C — the share flow
 

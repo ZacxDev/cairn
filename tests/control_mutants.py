@@ -373,7 +373,7 @@ MUTANTS: tuple[Mutant, ...] = (
     # ---- the membershipActor CALL SITES -------------------------------------------
     # The row above mutates the helper's BODY, which cannot see a call site that never calls
     # it. Each row below restores `id.Principal` at ONE site; the behavioural test named is
-    # the killer, and `TestEveryMembershipDecisionActsAsMembershipActor` (the AST ledger)
+    # the killer, and `TestEveryMembershipDecisionActsAsMembershipActor` (the type-resolved ledger)
     # goes red beside it on every one.
     Mutant(
         name="ui-invite-page-bypasses-membership-actor",

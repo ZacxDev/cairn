@@ -132,9 +132,9 @@ const inviteOutcomeRevoked = "revoked"
 // `mayManage` refuses, and each handler answers exactly what a caller managing nothing
 // already gets. A future door that turns a credential into membership authority (or into a
 // session — see `internal/ui/README.md`, "What a session can be minted from") must hold the
-// same line. 🔴 Every actor-taking `s.inviting.*` / `s.sharing.Candidates` call goes through
-// this function, and `TestEveryMembershipDecisionActsAsMembershipActor` is the ledger that
-// fails when one does not.
+// same line. 🔴 Every use of an actor-taking `Inviting`/`Sharing` method goes through this
+// function, and `TestEveryMembershipDecisionActsAsMembershipActor` is the type-resolved ledger
+// that fails when one does not, however the receiver was reached.
 func membershipActor(id identity.Identity) control.Principal {
 	if id.Auth.Narrowed() {
 		return control.Principal{}
