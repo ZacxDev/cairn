@@ -22,40 +22,33 @@ before any slice: decisions, threat model, slices S1–S5, the deploy preconditi
   server). ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- **S1 DONE and LIVE** — #197 merged as `45ef3d9` (content-verified: `internal/` and
-  `uiaudit/` on `main` identical to the PR head `25f8787`; all 8 CI checks green). Three
-  audit rounds; round 3 clean (the auditor's property test over 247,940 time points found 0
-  label/liveness mismatches, 5,774 under the mutant). `GET /arcs` lists arcs whose HOME scope
-  is readable; live ⇔ status open OR ⌊(now − last update)/24h⌋ ≤ 14 — the same truncation
-  the "Nd ago" label uses, so a row reading ≤14d is live whichever source won; last update =
-  max(pod `registered_at`, newest member bullet in a readable scope, future bullet dates
-  clamped to today); `?all=1` shows all; header "Arcs" link on every page. `/arc` has
-  scopes · sessions tabs (unknown tab ⇒ default; every miss is the same 404 bytes). Battery
-  226 rows (224 killed, 2 labelled equivalent) measured at `f238b91`; the re-anchored
-  `ui-arcs-index-live-window-compared-as-an-instant` row measured alone at `25f8787`.
-- **Deployed on BOTH instances at `sha-45ef3d9`, 0 restarts**: personal via deployment repo
-  trunk `47f387f`; client via the client infra repo trunk `ebf1d70`, tag+digest pinned
-  (store `sha256:f35f7061…`, ui `sha256:37fbdc9e…`). Rollback either: both image lines back
-  to `sha-6edcb45` (client digests `fdcf67b6…` / `3fe4386a…`).
-- **Verified live on the personal pod** (operator token over a port-forward, served HTML):
-  `/arcs` 200 with 30 live arcs newest first ("registered 2h ago"…), "0 not live" (every
-  registration is recent), `?all=1` 200, header link present on `/`, an arc's scopes tab
-  links 2 scopes and its sessions tab links its member session, an unknown arc 404. Client
-  instance: pods on the new digests, API answers; its UI not viewed (operator not signed in).
-- `claim-work` slug `cairn-arcs-presence-2` RELEASED.
+- **S1 DONE and LIVE** — #197 merged as `45ef3d9`, deployed on BOTH instances at `sha-45ef3d9`
+  (personal via deployment repo trunk `47f387f`; client via the client infra repo trunk
+  `ebf1d70`, tag+digest pinned: store `sha256:f35f7061…`, ui `sha256:37fbdc9e…`). Rollback
+  either: both image lines back to `sha-6edcb45` (client digests `fdcf67b6…` / `3fe4386a…`).
+  Verified live on the personal pod over a port-forward (`/arcs`, `?all=1`, `/arc` tabs, 404).
+- **S2 IN FLIGHT** — claimed as `claim-work` slug `cairn-arcs-presence-3` (this host). A
+  subagent is implementing it on branch `zach/presence-store-s2` (pushed; remote head
+  `e3c51e0` when this was written) in worktree
+  `.claude/worktrees/agent-ad81d55b3d16452b4`. Its mutation battery was still running;
+  **no PR number confirmed yet** — check `gh pr list --repo ZacxDev/cairn --head
+  zach/presence-store-s2`. Nothing reviewed, merged or deployed.
+- **S2 deploy precondition NOT yet established**: #195 merged 2026-10-07 17:33Z; the actual
+  rollout time of `sha-6edcb45` on each instance has NOT been read. S2 deploys no sooner than
+  that rollout + the instance's effective session TTL (12 h default; read the manifest for
+  `-session-ttl` / `CAIRN_UI_SESSION_TTL`), AND after re-reading the control journal for any
+  credential with non-null `narrowed_scopes`.
 
 ## Next steps (ranked)
-1. **#196 is MERGED** (`78fe99a`): the `go` job's `ok` floor is `-lt 23`. Nothing to do; the
-   rank is kept so later ranks keep their claim identities. forcing: gate — kept for numbering.
+1. **#196 is MERGED** (`78fe99a`): nothing to do; kept for numbering. forcing: gate — kept for numbering.
 2. **S1 is MERGED and DEPLOYED** (#197, `45ef3d9`). Nothing to do; kept for numbering.
    forcing: user — done.
-3. **S2 — presence store + agent API** (repo cairn, `internal/presence` new package, `cmd/cairn-ui`
-   second listener, ledgers per the plan's S2 row, `go` job `ok` floor → measured count on the
-   merged tree, 24 if nothing else moved), then S3 (tooling repo host agent), S4 (badges),
-   S5 (bell). 🔴 S2 deploys only after #195 (live since the `sha-6edcb45` rollout) has been
-   deployed for at least the instance's effective session TTL (12 h default) AND the journal
-   re-check still shows zero narrowed credentials. Use `control.Authorization.Narrowed()`
-   (#195) rather than the plan's decision-11 credential-row derivation, and update decision 11.
+3. **S2 — presence store + agent API** — IN FLIGHT: ZacxDev/cairn branch `zach/presence-store-s2`
+   (`internal/presence` new package, `cmd/cairn-ui` second listener + flags,
+   `tests/control_mutants.py` PKGS, `ci.yml` `ok` floor, `internal/ui/README.md`, plan decision 11).
+   Next: when the subagent reports, review its PR, RE-RUN its claimed mutation results (do not
+   trust self-reports), audit, merge; then deploy only once the precondition in State now holds.
+   Then S3 (tooling repo host agent), S4 (badges), S5 (bell).
    forcing: user — the operator asked for tmux identity and a bell button.
 
 ## Gotchas / decisions / dead-ends
@@ -86,6 +79,10 @@ before any slice: decisions, threat model, slices S1–S5, the deploy preconditi
 - **A scheduled merge-on-green loop must check the publish run's head sha equals the merge
   commit** before reading digests — the publish workflow lists the newest run, which can be
   another push. via: command
+
+- **S2 uses `control.Authorization.Narrowed()` (#195, `internal/control/resolve.go:78`)**, not the
+  plan's decision-11 credential-row derivation; the S2 PR is briefed to rewrite decision 11 to
+  describe what was built. A reviewer should check the edit landed. via: code
 
 ## How to verify
 ```bash
