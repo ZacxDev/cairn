@@ -25,14 +25,23 @@ import (
 // all reach the same method through a different spelling. The type checker answers "which
 // method is this" for every one of them, so the ledger is keyed on that answer.
 //
-// ⚠ THE CHECKER RUNS WITH NO IMPORTER, DELIBERATELY. Every import fails to resolve — which
-// costs nothing here, because the four types this ledger is about are declared IN this
-// package — and in exchange the test needs no export data, no `go list`, no module cache and
-// no network, so it behaves the same inside `nix build`'s sandbox as on a developer host. The
-// one thing an unresolved import does cost is the PARAMETER TYPE (`control.Principal` is
-// unresolved), so which parameter is the actor is read from the interface's SOURCE instead.
-// The positive controls in `TestEveryMembershipDecisionActsAsMembershipActor` are what make a
-// checker that resolved nothing a failure rather than a clean zero.
+// ⚠ IT IS NOT EXHAUSTIVE, AND THE SHAPES IT MISSES ARE NAMED RATHER THAN CHASED. Measured to
+// compile and pass a raw `id.Principal` with this ledger GREEN: a struct EMBEDDING `Inviting`,
+// a generic helper with a type-parameter receiver, a function literal in a package-level
+// `var`, a type assertion on a value of an IMPORTED type, and a locally declared interface
+// with the same method. The behavioural tests in `narrowed_test.go` and
+// `membershipactor_test.go` are what guard the real call sites; this ledger catches the
+// common rewrites of them.
+//
+// ⚠ THE CHECKER RUNS WITH NO IMPORTER, DELIBERATELY, AND THAT HAS A COST. In exchange the test
+// needs no export data, no `go list`, no module cache and no network, so it behaves the same
+// inside `nix build`'s sandbox as on a developer host. The cost: every import fails to
+// resolve, so an expression whose operand has an IMPORTED type is invalid and records no
+// Selection — a call reached through such a value is SILENTLY DROPPED from the ledger, not
+// reported (the type-assertion shape above is one). Unresolved imports also hide the PARAMETER
+// TYPE (`control.Principal`), so which parameter is the actor is read from the interface's
+// SOURCE instead. The pinned literal is what makes a checker that resolved nothing a failure
+// rather than a clean zero: a short ledger does not equal it.
 
 // membershipTypes are the types whose actor-taking methods the ledger watches.
 var membershipTypes = []string{"Inviting", "Sharing", "ControlInviting", "ControlSharing"}
@@ -214,17 +223,14 @@ var wantMembershipLedger = []string{
 //
 // It fails when a site passes anything other than `membershipActor(id)` outside the named
 // exemptions, when a method is used as a value, and when the set of sites grows or shrinks —
-// however the receiver was reached, because the receiver is resolved by type.
+// for direct, aliased, method-value and interface-helper uses, because the receiver is
+// resolved by type. Not for the shapes this file's header names as missed.
 func TestEveryMembershipDecisionActsAsMembershipActor(t *testing.T) {
 	fset := token.NewFileSet()
 	got := membershipLedger(t, fset, parseUIPackage(t, fset, nil))
 
-	// POSITIVE CONTROL: the checker resolved the field-based calls at all. An empty or short
-	// ledger would otherwise read as "nothing bypasses the helper".
-	if len(got) < 9 {
-		t.Fatalf("the type-based scan resolved only %d membership call(s) — the instrument is broken:\n%s",
-			len(got), strings.Join(got, "\n"))
-	}
+	// There is no separate count floor: the literal below IS the floor. An empty or short
+	// ledger — a checker that resolved nothing — does not equal it and fails here.
 	if strings.Join(got, "\n") != strings.Join(wantMembershipLedger, "\n") {
 		t.Fatalf("the membership-actor ledger moved. Every actor-taking Inviting/Sharing call must pass "+
 			"membershipActor(id) unless it is a named exemption; a NEW site must be added deliberately.\n"+

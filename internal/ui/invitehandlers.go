@@ -133,8 +133,12 @@ const inviteOutcomeRevoked = "revoked"
 // already gets. A future door that turns a credential into membership authority (or into a
 // session — see `internal/ui/README.md`, "What a session can be minted from") must hold the
 // same line. 🔴 Every use of an actor-taking `Inviting`/`Sharing` method goes through this
-// function, and `TestEveryMembershipDecisionActsAsMembershipActor` is the type-resolved ledger
-// that fails when one does not, however the receiver was reached.
+// function. The real call sites are guarded by the behavioural tests
+// (`TestANarrowedBearerSeesNoInvitations`, `TestANarrowedBearerCannotMintAnInvitation`,
+// `TestANarrowedBearerCannotRevokeAnInvitation`, `TestANarrowedAdminBearerIsOfferedNoShareCandidates`);
+// `TestEveryMembershipDecisionActsAsMembershipActor` is a type-resolved ledger that also
+// catches direct, aliased, method-value and interface-helper uses of the watched types — not
+// every shape (its file names the ones it misses).
 func membershipActor(id identity.Identity) control.Principal {
 	if id.Auth.Narrowed() {
 		return control.Principal{}

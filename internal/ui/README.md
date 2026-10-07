@@ -1028,8 +1028,13 @@ VALUE (whose actor cannot be read at the site) is refused outright; the whole se
 also fails when a site appears or disappears. `TestTheMembershipLedgerCanGoRED` keeps one arm per
 shape. ⚠ The first version matched the spelling `<x>.inviting.M(...)` and an auditor walked it with
 `inv := s.inviting` — measured PASS — which is why it is type-based now. ⚠ What it still does not
-see: the value converted to a DIFFERENT interface type declared elsewhere (the method then
-belongs to that type), a value passed out of the package, or reflection. Exemptions, each commented
+see — measured, and deliberately not chased further (the real call sites are guarded by the
+behavioural tests named above): a struct EMBEDDING `Inviting`; a generic helper with a
+type-parameter receiver; a function literal in a package-level `var`; a type assertion on a
+value of an IMPORTED type (the checker runs with no importer, so such an operand is invalid and
+the call is silently dropped rather than reported); a locally declared interface with the same
+method; the value converted to a DIFFERENT interface type declared elsewhere; a value passed out
+of the package; reflection. Exemptions, each commented
 on its own ledger line: `Share`/`Unshare` (the principal is the journal's ACTOR — attribution; the
 authority is the narrowed `id.Auth`), `handleOAuthCallback`'s `RedeemFor` (a provider principal with
 no credential behind it), and `ControlInviting.Redeem` delegating to `RedeemFor`.
