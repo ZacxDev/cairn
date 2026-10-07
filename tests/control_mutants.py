@@ -3050,8 +3050,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-arc-row-renders-unknown-as-open",
         path="internal/ui/arcs.go",
-        old='h.Span(h.Class("badge"), g.Text("status "+report.StatusWord(a.Status))),',
-        new='h.Span(h.Class("badge"), g.Text("status "+map[bool]string{true: "closed", false: "open"}[a.Status == "closed"])),',
+        old='h.Span(h.Class("badge"), h.TitleAttr("status"), g.Text(report.StatusWord(a.Status))),',
+        new='h.Span(h.Class("badge"), h.TitleAttr("status"), g.Text(map[bool]string{true: "closed", false: "open"}[a.Status == "closed"])),',
         killer="TestAnUnknownStatusIsRenderedAsUnknownAndNeverAsOpen",
         why="a two-state badge (closed, else open) is what a renderer written before Q4 looks "
         "like, and it turns every registration that carried no verdict into an open one.",
@@ -3122,6 +3122,99 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestTheBinaryREFUSESAnArcJournalInsideTheStoreRoot",
         why="a flag that is parsed and checked but never wired is green on every refusal arm; "
         "only the startup line read off the WIRED source says the journal reached the reader.",
+    ),
+    # 🔴 THE CROSS-SCOPE SESSION PAGE AND THE SCOPE TABS. The session page is the first browse page
+    # keyed by a value that is NOT scoped, so its narrowing is the whole design; each row below was
+    # watched killed by its named guard before it was committed here.
+    Mutant(
+        name="ui-session-page-walks-every-scope",
+        path="internal/ui/sessionpage.go",
+        old="rep, err := report.SessionAcross(s.Root, session, visible, snap)",
+        new="_ = visible\n\trep, err := report.SessionAcross(s.Root, session, store.Unrestricted(), snap)",
+        killer="TestTheSessionPageAggregatesReadableScopesNewestFirstAndOmitsAnUnreadableOne",
+        extra_killers=("TestASessionOnlyInAnUnreadableScopeAnswersExactlyLikeOneNeverWritten",),
+        why="a session id is global, so 'show everything this session wrote' is the natural first "
+        "draft — and it lists writes in scopes the caller cannot read, and turns the 404 into an "
+        "oracle over which hidden scopes a session touched.",
+    ),
+    Mutant(
+        name="ui-session-report-lists-arcs-homed-in-an-unreadable-scope",
+        path="internal/report/sessionacross.go",
+        old="\t\t\tif !visible.Allows(reg.Home) {\n\t\t\t\tcontinue\n\t\t\t}\n\t\t\tfor _, m := range reg.Members {",
+        new="\t\t\tfor _, m := range reg.Members {",
+        killer="TestTheSessionAcrossAnswerGroupsReadableScopesNewestFirstAndDropsTheHiddenOne",
+        extra_killers=("TestTheSessionPageAggregatesReadableScopesNewestFirstAndOmitsAnUnreadableOne",
+                       "TestASessionOnlyInAnUnreadableScopeAnswersExactlyLikeOneNeverWritten"),
+        pkgs=PKGS + ("./internal/report/",),
+        why="membership looks like a fact about the SESSION, so filtering it by scope looks "
+        "redundant — but the arc rule (Q1) is about the arc's HOME, and dropping it names hidden "
+        "arcs and makes a hidden-only session a page instead of the uniform 404.",
+    ),
+    Mutant(
+        name="ui-arc-row-names-a-hidden-declared-scope",
+        path="internal/report/arcs.go",
+        old="\t\t\tif visible.Allows(d) {",
+        new="\t\t\tif true {",
+        killer="TestAnArcDeclaringAHiddenScopeNeverNamesItOnAnyPage",
+        pkgs=PKGS + ("./internal/report/",),
+        why="the arc itself is readable (its home is), so its declared list looks like part of the "
+        "arc — but each declared scope is its own authority question, and `scopeChip` falls back to "
+        "the plain NAME for a scope whose id it cannot resolve, so an unfiltered list names a hidden "
+        "scope on a page about a readable one.",
+    ),
+    Mutant(
+        name="ui-session-id-bound-skipped",
+        path="internal/ui/sessionpage.go",
+        old="if !write.SessionComponent.MatchString(session) {",
+        new="if false && !write.SessionComponent.MatchString(session) {",
+        killer="TestAHostileSessionIdIsBoundedBeforeAnyRead",
+        why="every hostile id still answers 404 without the bound, because none is FOUND — so the "
+        "only observable is the store walk it costs, which is what an unbounded query string buys.",
+    ),
+    Mutant(
+        name="ui-session-unseen-answer-differs",
+        path="internal/ui/sessionpage.go",
+        old="\t\twritePlain(w, http.StatusNotFound, sessionUnseenBody)\n\t\treturn\n\t}\n\tview.Session",
+        new="\t\twritePlain(w, http.StatusNotFound, \"no such session\")\n\t\treturn\n\t}\n\tview.Session",
+        killer="TestASessionOnlyInAnUnreadableScopeAnswersExactlyLikeOneNeverWritten",
+        why="two refusal paths (the grammar bound and the empty answer) spelled two ways is the "
+        "ordinary shape, and any difference between them is an oracle over who wrote where.",
+    ),
+    Mutant(
+        name="ui-bullet-anchor-dropped",
+        path="internal/ui/render.go",
+        old='g.If(b.Anchor != "", h.ID(b.Anchor)),',
+        new="",
+        killer="TestEveryBulletLinkOnTheSessionPageLandsOnAnAnchorThatExists",
+        why="the anchor and the link live on two different pages, so each page's own test is "
+        "green without it; only following the link across the seam sees it land nowhere.",
+    ),
+    Mutant(
+        name="ui-scope-tab-selection-ignored",
+        path="internal/ui/render.go",
+        old="case v.Tab == TabSessions && v.Touched != nil:",
+        new="case false && v.Tab == TabSessions && v.Touched != nil:",
+        killer="TestEachScopeTabRendersOnlyItsOwnPanel",
+        why="a tab whose link changes the URL and not the panel looks like a working tab on every "
+        "page but its own.",
+    ),
+    Mutant(
+        name="ui-sessions-partial-badge-always-on",
+        path="internal/ui/arcs.go",
+        old='\tcase r.LowerBoundLine() != "":',
+        new="\tcase true:",
+        killer="TestThePartialBadgeRendersOnlyWhenTheAnswerIsPartial",
+        why="a warning on every answer is a warning nobody reads; the badge is a signal only "
+        "because it is ABSENT from a complete answer.",
+    ),
+    Mutant(
+        name="ui-arcs-partial-badge-ignores-the-condition",
+        path="internal/ui/arcs.go",
+        old="if counted && arcsPartial(r) {",
+        new="if counted {",
+        killer="TestThePartialBadgeRendersOnlyWhenTheAnswerIsPartial",
+        why="the arcs tab has three partial causes (damaged journal, rejected entries, unreadable "
+        "entries) and the shortcut is to badge every counted answer.",
     ),
 )
 

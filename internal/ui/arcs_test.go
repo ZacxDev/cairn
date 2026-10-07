@@ -2,12 +2,14 @@ package ui
 
 import (
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -166,6 +168,16 @@ func arcURL(home control.ID, slug string) string {
 
 func scopeURL(id control.ID) string { return ScopePath + "?" + QueryID + "=" + string(id) }
 
+// scopeTabURL is the scope page's URL on one tab — spelled here by hand rather than through
+// `scopeTabHref`, so a builder that dropped the tab would be caught rather than mirrored.
+func scopeTabURL(id control.ID, tab string) string {
+	return ScopePath + "?" + url.Values{QueryID: []string{string(id)}, QueryTab: []string{tab}}.Encode()
+}
+
+// inAttr is how a string appears inside a rendered attribute value: gomponents escapes attribute
+// values with `html.EscapeString`, so a tooltip check must look for the escaped form.
+func inAttr(s string) string { return html.EscapeString(s) }
+
 // visibleText is the page's text content with tags removed and entities resolved enough for a
 // substring check — so an absence assertion cannot be satisfied by the string merely being split
 // across markup, and a presence assertion is about what a reader sees.
@@ -227,8 +239,10 @@ func TestAnArcHomedInAnUnreadableScopeRendersExactlyLikeANeverRegisteredOne(t *t
 		t.Fatalf("POSITIVE CONTROL FAILED: W, who reads beta, got %d for the veiled arc: %s. Every refusal "+
 			"above is then satisfied by a page that refuses everything.", wide.Code, wide.Body.String())
 	}
-	if text := visibleText(wide.Body.String()); !strings.Contains(text, arcsSlugVeiled) || !strings.Contains(text, arcsSessionBeta) {
-		t.Errorf("W's arc page does not name the arc and its member, so its 200 may not be the arc page:\n%s", text)
+	// The member is a link to its session page now (short id visible, full id in the href).
+	if text := visibleText(wide.Body.String()); !strings.Contains(text, arcsSlugVeiled) ||
+		!strings.Contains(wide.Body.String(), `href="`+inAttr(sessionHref(arcsSessionBeta))+`"`) {
+		t.Errorf("W's arc page does not name the arc and link its member, so its 200 may not be the arc page:\n%s", text)
 	}
 	// POSITIVE CONTROL 2: A's OWN arc renders for A.
 	own := getAs(t, srvA, arcURL(browseScopeA, arcsSlugSeen))
@@ -243,7 +257,7 @@ func TestTheScopePageListsOnlyArcsWhoseHomeIsReadable(t *testing.T) {
 	readsA, _, readsW := arcsWorld(t)
 	src := StoreSource{Root: arcsStore(t), ArcJournal: arcsJournal(t, defaultArcs()...)}
 
-	pageA := getAs(t, arcsServer(t, src, readsA), scopeURL(browseScopeA))
+	pageA := getAs(t, arcsServer(t, src, readsA), scopeTabURL(browseScopeA, TabArcs))
 	if pageA.Code != http.StatusOK {
 		t.Fatalf("A's own scope page answered %d: %s", pageA.Code, pageA.Body.String())
 	}
@@ -251,22 +265,28 @@ func TestTheScopePageListsOnlyArcsWhoseHomeIsReadable(t *testing.T) {
 	if !strings.Contains(textA, "alpha-notes/"+arcsSlugSeen) {
 		t.Errorf("A's alpha page does not list A's own arc %q, so the absences below may be an empty section", arcsSlugSeen)
 	}
-	for _, leak := range []string{arcsSlugVeiled, arcsSlugShrouded, "beta-notes"} {
-		if strings.Contains(pageA.Body.String(), leak) {
-			t.Errorf("A's alpha page CONTAINS %q — an arc homed in beta, which A cannot read, leaked onto a page "+
-				"about a scope A can (Q1: listed only when its HOME is readable)", leak)
+	// 🔴 EVERY TAB, NOT ONLY THE ARCS ONE: the tab labels carry counts computed from the same reports,
+	// and the sessions tab carries arc chips — three renderings, so three places a hidden arc could
+	// surface.
+	for _, tab := range []string{"", TabSessions, TabArcs} {
+		body := getAs(t, arcsServer(t, src, readsA), scopeTabURL(browseScopeA, tab)).Body.String()
+		for _, leak := range []string{arcsSlugVeiled, arcsSlugShrouded, "beta-notes"} {
+			if strings.Contains(body, leak) {
+				t.Errorf("A's alpha page (tab %q) CONTAINS %q — an arc homed in beta, which A cannot read, leaked onto "+
+					"a page about a scope A can (Q1: listed only when its HOME is readable)", tab, leak)
+			}
 		}
 	}
-	if !strings.Contains(textA, "sessions: 1 of 1 writing sessions here belong to an arc listed below") {
-		t.Errorf("A's arcs card does not carry the counted sessions line for its own view:\n%s", textA)
+	if !strings.Contains(textA, "1 of 1 sessions in an arc") {
+		t.Errorf("A's arcs tab does not carry the counted sessions stat for its own view:\n%s", textA)
 	}
 
 	// POSITIVE CONTROL: W reads beta, so the same alpha page lists BOTH beta-homed arcs, each with
-	// its provenance.
-	pageW := getAs(t, arcsServer(t, src, readsW), scopeURL(browseScopeA))
-	textW := visibleText(pageW.Body.String())
+	// its provenance (the word visible, the report's full provenance in the badge's tooltip).
+	pageW := getAs(t, arcsServer(t, src, readsW), scopeTabURL(browseScopeA, TabArcs))
+	textW := visibleText(pageW.Body.String()) + pageW.Body.String()
 	for _, want := range []string{
-		"beta-notes/" + arcsSlugVeiled, "inferred (" + arcsSessionAlpha + " wrote here)",
+		"beta-notes/" + arcsSlugVeiled, `title="` + inAttr("inferred ("+arcsSessionAlpha+" wrote here)") + `"`,
 		"beta-notes/" + arcsSlugShrouded, "declared",
 	} {
 		if !strings.Contains(textW, want) {
@@ -308,14 +328,22 @@ func TestTheSectionIsTheSameAnswerTheReportsGiveForTheSameVisibleSet(t *testing.
 			t.Fatalf("INSTRUMENT: the reports list nothing for %s (%d sessions, %d arcs), so the comparison is vacuous",
 				name, len(sessions.Sessions), len(arcsRep.Arcs))
 		}
-		page := visibleText(getAs(t, arcsServer(t, src, who), scopeURL(browseScopeA)).Body.String())
-		var want []string
-		for _, s := range sessions.Sessions {
-			want = append(want, report.SessionLine(s))
+		// The two tabs, raw: the NUMBERS are visible text and the report's own sentences are tooltips,
+		// so both are read from the bytes (a tooltip is an attribute, which `visibleText` strips).
+		sessionsTab := getAs(t, arcsServer(t, src, who), scopeTabURL(browseScopeA, TabSessions)).Body.String()
+		arcsTab := getAs(t, arcsServer(t, src, who), scopeTabURL(browseScopeA, TabArcs)).Body.String()
+		page := sessionsTab + arcsTab
+		c := sessions.Coverage
+		want := []string{
+			strconv.Itoa(c.Attributed) + " of " + strconv.Itoa(c.Bullets) + " bullets attributed",
+			strconv.Itoa(arcsRep.InArcs) + " of " + strconv.Itoa(arcsRep.Sessions) + " sessions in an arc",
+			inAttr(sessions.AttributedLine()), inAttr(arcsRep.SessionsLine()), inAttr(arcsRep.StatusesLine()),
 		}
-		want = append(want, sessions.AttributedLine(), arcsRep.SessionsLine(), arcsRep.StatusesLine())
+		for _, s := range sessions.Sessions {
+			want = append(want, `href="`+inAttr(sessionHref(s.ID))+`"`, strings.Join(s.Actors, ", "))
+		}
 		for _, a := range arcsRep.Arcs {
-			want = append(want, a.Home+"/"+a.Slug, a.Provenance())
+			want = append(want, a.Home+"/"+a.Slug, inAttr(a.Provenance()))
 		}
 		for _, line := range want {
 			if !strings.Contains(page, line) {
@@ -361,8 +389,8 @@ func TestAScopeTheCallerCannotReadGetsTheExistingRefusalAndNoSection(t *testing.
 			"come first", src.touched)
 	}
 	// POSITIVE CONTROL: A's request for the same id renders the section with A's session, and DID ask.
-	own := getAs(t, arcsServer(t, src, readsA), scopeURL(browseScopeA))
-	if own.Code != http.StatusOK || !strings.Contains(visibleText(own.Body.String()), arcsSessionAlpha) {
+	own := getAs(t, arcsServer(t, src, readsA), scopeTabURL(browseScopeA, TabSessions))
+	if own.Code != http.StatusOK || !strings.Contains(own.Body.String(), `title="`+arcsSessionAlpha+`"`) {
 		t.Fatalf("POSITIVE CONTROL FAILED: A's own alpha page answered %d without its session: %s", own.Code, own.Body.String())
 	}
 	if src.touched != 1 {
@@ -387,6 +415,9 @@ func (c *touchCounting) Touched(a control.Authorization, scope string) (Touched,
 func (c *touchCounting) Arc(a control.Authorization, home, slug string) (report.ArcReport, error) {
 	return c.inner.Arc(a, home, slug)
 }
+func (c *touchCounting) Session(a control.Authorization, session string) (SessionAnswer, error) {
+	return c.inner.Session(a, session)
+}
 
 // TestAnUnknownStatusIsRenderedAsUnknownAndNeverAsOpen — Q4 on both surfaces: the `lantern-arc`
 // registration carries no verdict, and its row and its page say `unknown`, never `open`.
@@ -395,7 +426,7 @@ func TestAnUnknownStatusIsRenderedAsUnknownAndNeverAsOpen(t *testing.T) {
 	src := StoreSource{Root: arcsStore(t), ArcJournal: arcsJournal(t, defaultArcs()...)}
 	srv := arcsServer(t, src, readsA)
 
-	page := getAs(t, srv, scopeURL(browseScopeA)).Body.String()
+	page := getAs(t, srv, scopeTabURL(browseScopeA, TabArcs)).Body.String()
 	// The row is the `<li>` around the arc's link: from the last `<li` before it to the first
 	// `</li>` after it.
 	i := strings.Index(page, "alpha-notes/"+arcsSlugSeen+"</a>")
@@ -404,30 +435,29 @@ func TestAnUnknownStatusIsRenderedAsUnknownAndNeverAsOpen(t *testing.T) {
 	}
 	start := strings.LastIndex(page[:i], "<li")
 	end := strings.Index(page[i:], "</li>")
-	rowText := visibleText(page[start : i+end])
-	if !strings.Contains(rowText, "status unknown") {
-		t.Errorf("the unknown-status arc's row does not say `status unknown`: %q", rowText)
+	row := page[start : i+end]
+	rowText := visibleText(row)
+	if !strings.Contains(row, `<span class="badge" title="status">unknown</span>`) {
+		t.Errorf("the unknown-status arc's row has no `unknown` status badge: %q", row)
 	}
 	if strings.Contains(strings.ToLower(rowText), "open") {
 		t.Errorf("THE UNKNOWN-STATUS ARC'S ROW SAYS `open`: %q — an unknown is never rendered as open (Q4)", rowText)
 	}
-	if !strings.Contains(visibleText(page), "statuses: open 0 · closed 0 · unknown 1") {
-		t.Errorf("the statuses line does not count the arc as unknown:\n%s", visibleText(page))
+	if !strings.Contains(page, inAttr("statuses: open 0 · closed 0 · unknown 1")) {
+		t.Errorf("the statuses tooltip does not count the arc as unknown:\n%s", page)
 	}
 
 	arc := getAs(t, srv, arcURL(browseScopeA, arcsSlugSeen))
-	text := visibleText(arc.Body.String())
-	if arc.Code != http.StatusOK || !strings.Contains(text, report.UnknownStatusGloss) {
-		t.Errorf("the arc page (%d) does not carry the unknown gloss:\n%s", arc.Code, text)
-	}
-	if !strings.Contains(arc.Body.String(), `<span class="badge">unknown</span>`) {
-		t.Errorf("the arc page's status badge is not `unknown`:\n%s", arc.Body.String())
+	// The gloss rides on the badge as its tooltip — the badge and its caveat are one element.
+	if want := `<span class="badge" title="` + inAttr(report.UnknownStatusGloss) + `">unknown</span>`; arc.Code != http.StatusOK ||
+		!strings.Contains(arc.Body.String(), want) {
+		t.Errorf("the arc page (%d) does not carry an `unknown` badge with the unknown gloss:\n%s", arc.Code, arc.Body.String())
 	}
 
 	// POSITIVE CONTROL: the detector CAN see `open` — W's row for the OPEN veiled arc carries it.
 	_, _, readsW := arcsWorld(t)
-	wide := visibleText(getAs(t, arcsServer(t, src, readsW), scopeURL(browseScopeA)).Body.String())
-	if !strings.Contains(wide, "status open") {
+	wide := getAs(t, arcsServer(t, src, readsW), scopeTabURL(browseScopeA, TabArcs)).Body.String()
+	if !strings.Contains(wide, `<span class="badge" title="status">open</span>`) {
 		t.Errorf("POSITIVE CONTROL FAILED: W's page renders no `status open` for the open arc, so the absence " +
 			"above may be a renderer that prints no status at all")
 	}
@@ -441,22 +471,26 @@ func TestAnUnconfiguredJournalSaysSoRatherThanFailing(t *testing.T) {
 	off := StoreSource{Root: arcsStore(t)}
 	srv := arcsServer(t, off, readsA)
 
-	page := getAs(t, srv, scopeURL(browseScopeA))
+	page := getAs(t, srv, scopeTabURL(browseScopeA, TabArcs))
 	if page.Code != http.StatusOK {
 		t.Fatalf("the scope page with no journal answered %d: %s", page.Code, page.Body.String())
 	}
 	text := visibleText(page.Body.String())
-	for _, want := range []string{report.RegistrationsUnconfiguredBody, "status: " + report.StatusRegistrationsUnconfigured} {
-		if !strings.Contains(text, want) {
-			t.Errorf("the unconfigured scope page does not carry %q:\n%s", want, text)
-		}
+	// The short line is visible; the pod's own sentence is its tooltip, whole.
+	if !strings.Contains(text, arcsOff) || !strings.Contains(page.Body.String(),
+		`title="`+inAttr(report.RegistrationsUnconfiguredBody)+`"`) {
+		t.Errorf("the unconfigured arcs tab does not say so (short line + the pod's sentence as tooltip):\n%s", page.Body.String())
+	}
+	// And the tab label carries NO count: "Arcs 0" would be a measurement nobody made.
+	if !strings.Contains(page.Body.String(), `data-tab="arcs">Arcs</span>`) {
+		t.Errorf("the unconfigured arcs tab label is not a bare `Arcs`:\n%s", page.Body.String())
 	}
 	if strings.Contains(text, arcJournalUnreadable) {
 		t.Error("the unconfigured page says the journal could not be READ — off and broken are different states")
 	}
 	// The sessions half does not depend on the journal at all.
-	if !strings.Contains(text, arcsSessionAlpha) {
-		t.Error("the sessions card lost its list with the journal off; it reads the store, not the journal")
+	if !strings.Contains(getAs(t, srv, scopeTabURL(browseScopeA, TabSessions)).Body.String(), `title="`+arcsSessionAlpha+`"`) {
+		t.Error("the sessions tab lost its list with the journal off; it reads the store, not the journal")
 	}
 
 	var first string
@@ -475,15 +509,14 @@ func TestAnUnconfiguredJournalSaysSoRatherThanFailing(t *testing.T) {
 
 	// POSITIVE CONTROL: with a journal, neither page carries the unconfigured sentence.
 	on := StoreSource{Root: off.Root, ArcJournal: arcsJournal(t, defaultArcs()...)}
-	if strings.Contains(getAs(t, arcsServer(t, on, readsA), scopeURL(browseScopeA)).Body.String(),
-		"REGISTRATIONS ARE NOT CONFIGURED") {
+	if strings.Contains(getAs(t, arcsServer(t, on, readsA), scopeTabURL(browseScopeA, TabArcs)).Body.String(), arcsOff) {
 		t.Error("POSITIVE CONTROL FAILED: a configured journal still renders the unconfigured sentence")
 	}
 
 	// AND A CONFIGURED JOURNAL THAT CANNOT BE READ is a third state: the section says so, the page
 	// does not fail, and the arc page is a 503 — "could not look", never "no such arc".
 	broken := StoreSource{Root: off.Root, ArcJournal: t.TempDir()} // a directory: ReadFile fails
-	brokenPage := getAs(t, arcsServer(t, broken, readsA), scopeURL(browseScopeA))
+	brokenPage := getAs(t, arcsServer(t, broken, readsA), scopeTabURL(browseScopeA, TabArcs))
 	if brokenPage.Code != http.StatusOK || !strings.Contains(visibleText(brokenPage.Body.String()), arcJournalUnreadable) {
 		t.Errorf("an unreadable journal: scope page %d without the could-not-read sentence", brokenPage.Code)
 	}
@@ -507,44 +540,69 @@ func TestEveryArcHrefIsASameOriginPathWithEncodedOperands(t *testing.T) {
 	hostileSlug := "javascript:alert(document.cookie)&home=evil#x"
 	hostileHome := `javascript:fetch('//collector.invalid/c')"><script>x</script>`
 	homeID := control.ID("scp_fixture&slug=planted")
+	// ⚠ THE COMPACT ROW ALSO LINKS ITS DECLARED SCOPES AND ITS MEMBER SESSIONS, so a hostile member id
+	// is planted too — every href on the panel, whichever of the three paths it names, must parse and
+	// round-trip its operand exactly.
+	hostileMember := `s-1"><script>y</script>&session=planted#z`
 	touched := Touched{
 		Sessions: report.SessionsReport{Status: report.StatusScopeEmpty, Scope: hostileHome},
 		Arcs: report.ArcsReport{Status: report.StatusArcsListed, Scope: hostileHome, Arcs: []report.ArcLine{
-			{Home: hostileHome, Slug: hostileSlug, Status: arcs.StatusOpen, ClosingKind: "check", Members: 1, Declared: true},
+			{Home: hostileHome, Slug: hostileSlug, Status: arcs.StatusOpen, ClosingKind: "check", Members: 1, Declared: true,
+				DeclaredVisible: []string{hostileHome}, MemberSessions: []string{hostileMember}},
 		}},
 	}
 	var b strings.Builder
-	if err := touchedSections(touched, []Scope{{ID: homeID, Name: hostileHome}}).Render(&b); err != nil {
+	if err := arcsPanel(touched, []Scope{{ID: homeID, Name: hostileHome}}, browseClock).Render(&b); err != nil {
 		t.Fatal(err)
 	}
 	page := b.String()
 
 	hrefs := regexp.MustCompile(`href="([^"]*)"`).FindAllStringSubmatch(page, -1)
-	if len(hrefs) == 0 {
-		t.Fatal("INSTRUMENT: the rendered cards carry no href at all, so every assertion below is vacuous — the " +
-			"arc row must link its page")
-	}
+	seen := map[string]int{}
 	for _, m := range hrefs {
 		raw := strings.ReplaceAll(m[1], "&amp;", "&")
 		u, err := url.Parse(raw)
-		if err != nil || u.Scheme != "" || u.Host != "" || u.Path != ArcPath {
-			t.Errorf("href %q is not a same-origin path to %s", raw, ArcPath)
+		if err != nil || u.Scheme != "" || u.Host != "" {
+			t.Errorf("href %q is not a same-origin path", raw)
 			continue
 		}
 		q := u.Query()
-		if len(q) != 2 || q.Get(QueryHome) != string(homeID) || q.Get(QuerySlug) != hostileSlug ||
-			len(q[QueryHome]) != 1 || len(q[QuerySlug]) != 1 {
-			t.Errorf("href %q does not round-trip to exactly home=%q slug=%q (got %v): an operand split into a "+
-				"second parameter or was altered", raw, homeID, hostileSlug, q)
+		seen[u.Path]++
+		var want map[string]string
+		switch u.Path {
+		case ArcPath:
+			want = map[string]string{QueryHome: string(homeID), QuerySlug: hostileSlug}
+		case ScopePath:
+			want = map[string]string{QueryID: string(homeID)}
+		case SessionPath:
+			want = map[string]string{QuerySession: hostileMember}
+		default:
+			t.Errorf("href %q names a path this panel never links", raw)
+			continue
+		}
+		ok := len(q) == len(want)
+		for k, v := range want {
+			ok = ok && len(q[k]) == 1 && q.Get(k) == v
+		}
+		if !ok {
+			t.Errorf("href %q does not round-trip to exactly %v (got %v): an operand split into a second parameter "+
+				"or was altered", raw, want, q)
+		}
+	}
+	// INSTRUMENT: each of the three link kinds was actually rendered, so no branch above is vacuous.
+	for _, path := range []string{ArcPath, ScopePath, SessionPath} {
+		if seen[path] == 0 {
+			t.Errorf("INSTRUMENT: the rendered panel carries no %s href, so its round-trip check measured nothing", path)
 		}
 	}
 	for _, bad := range []string{`href="javascript:`, `href="data:`, "<script"} {
 		if strings.Contains(page, bad) {
-			t.Errorf("the rendered cards contain %q", bad)
+			t.Errorf("the rendered panel contains %q", bad)
 		}
 	}
 	// POSITIVE CONTROL for the token scan: the raw inputs DO carry what it looks for.
-	if !strings.Contains(hostileHome, "<script") || !strings.HasPrefix(hostileSlug, "javascript:") {
+	if !strings.Contains(hostileHome, "<script") || !strings.HasPrefix(hostileSlug, "javascript:") ||
+		!strings.Contains(hostileMember, "<script") {
 		t.Fatal("INSTRUMENT: the hostile fixtures no longer carry the tokens the scan looks for")
 	}
 }

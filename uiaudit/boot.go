@@ -17,6 +17,7 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/store"
+	"github.com/ZacxDev/cairn/internal/touch"
 	"github.com/ZacxDev/cairn/internal/ui"
 )
 
@@ -108,7 +109,7 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*
 		return nil, fmt.Errorf("the fixture store %s holds no scopes: a walk over it would capture an empty surface and report success", store)
 	}
 
-	arcJournal, err := writeArcJournal(dir, scopes)
+	arcJournal, err := writeArcJournal(dir, store, scopes)
 	if err != nil {
 		return nil, err
 	}
@@ -257,10 +258,12 @@ func waitHealthy(ctx context.Context, url string, budget time.Duration) error {
 // `ExpandLinks` keeps the first four by sorted PATH — i.e. by scope ID — so a single arc homed in
 // one named scope was on a scope page the walk never captured, and the first run reached no
 // `/arc?…` page at all. With every scope carrying one, every captured scope page links one, and
-// `/arc?…` sorts ahead of `/entry?…` under that same per-page bound.
+// `/arc?…` sorts ahead of `/entry?…` under that same per-page bound. ⚠ Since the scope page became tabs the
+// arc links sit on the ARCS tab, reached through `roundRobinByRow`; the per-scope reasoning still holds.
 //
 // 🔴 NO NAME IS INVENTED: each arc is homed in a fixture scope and its slug IS that scope's name,
-// the registrar is `fixtureIdentity`, and there are no members — so every string in the record
+// the registrar is `fixtureIdentity`, and the one member is a session id the fixture STORE already
+// carries in a trailer (`fixtureMembers`) — so every string in the record
 // comes from the fixture world `tests/leakscan.py` already reads. The status is OMITTED, so the
 // captured pages show `unknown` — the Q4 state a reader is likeliest to misread as `open`.
 //
@@ -269,7 +272,42 @@ func waitHealthy(ctx context.Context, url string, budget time.Duration) error {
 // unreachable without one, and the deployment it previews is the one the plan's mount change
 // produces. The journal is written with `internal/arcs`' own record type, so a shape the pod would
 // skip as unreadable cannot be captured as if it were a registration.
-func writeArcJournal(dir string, scopes []string) (string, error) {
+// fixtureMembers is ONE arc member: the byte-wise first session id the fixture store's trailers
+// carry, read through `internal/touch` — the derivation the pages themselves render.
+//
+// 🔴 MEASURED NECESSARY: with no members, the session page was reachable only bare. The fixture's
+// attributed bullets sit in a scope the walk's per-page bound never captures, so no sessions tab it
+// reached listed a row; an arc's member chip is the one link to `/session?session=…` every captured
+// arc page carries. A store with no trailer at all is a CONTENT-FLOOR refusal, for `listScopes`'
+// reason: the walk would capture no session page and report the row covered.
+func fixtureMembers(storeRoot string) ([]arcs.Member, error) {
+	index, err := store.LoadStore(storeRoot, "scanned", store.Unrestricted())
+	if err != nil {
+		return nil, err
+	}
+	first := ""
+	for _, scope := range index.Scopes() {
+		res, err := touch.Writes(storeRoot, index, scope)
+		if err != nil {
+			return nil, err
+		}
+		for _, s := range res.Sessions {
+			if first == "" || s.ID < first {
+				first = s.ID
+			}
+		}
+	}
+	if first == "" {
+		return nil, fmt.Errorf("the fixture store %s carries no attributed bullet, so no session page can be reached", storeRoot)
+	}
+	return []arcs.Member{{Session: first, Role: "wrote", FirstSeen: "2000-01-01T00:00:00Z"}}, nil
+}
+
+func writeArcJournal(dir, storeRoot string, scopes []string) (string, error) {
+	members, err := fixtureMembers(storeRoot)
+	if err != nil {
+		return "", err
+	}
 	var b strings.Builder
 	for _, home := range scopes {
 		// `validRecord` refuses a home that is not already normalized; such a scope gets no arc.
@@ -277,7 +315,7 @@ func writeArcJournal(dir string, scopes []string) (string, error) {
 			continue
 		}
 		reg := arcs.Registration{Schema: arcs.Schema, Home: home, Slug: home, Status: arcs.StatusUnknown,
-			ClosingKind: arcs.ClosingNone, DeclaredScopes: []string{home}, Members: []arcs.Member{},
+			ClosingKind: arcs.ClosingNone, DeclaredScopes: []string{home}, Members: members,
 			ReportedAt: "2000-01-01T00:00:00Z", RegisteredBy: fixtureIdentity, RegisteredAt: "2000-01-01T00:00:00Z"}
 		line, err := json.Marshal(reg)
 		if err != nil {

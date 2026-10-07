@@ -209,8 +209,8 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 						// arithmetic is `targets × pushed viewports`. Silently taking the
 						// first four would make a bounded walk read as a complete one, which
 						// is the under-coverage this whole derivation exists against.
-						fmt.Printf("uiaudit:   %s published %d further target(s); BOUNDED to the first %d by sorted path "+
-							"(MaxExpansionsPerPage — these pages are one template, and the hub's page cap is %d)\n",
+						fmt.Printf("uiaudit:   %s published %d further target(s); BOUNDED to %d, round-robin by row over the sorted paths "+
+							"(MaxExpansionsPerPage — one template per row; the hub's page cap is %d)\n",
 							t.Path, bounded+len(found), MaxExpansionsPerPage, MaxPages)
 					}
 					if len(found) == 0 {

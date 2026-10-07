@@ -127,7 +127,7 @@ func newLiveOver(
 	return l
 }
 
-func mustSessions(t *testing.T) *identity.FileSessionStore {
+func mustSessions(t testing.TB) *identity.FileSessionStore {
 	t.Helper()
 	store, err := identity.OpenFileSessionStore(filepath.Join(t.TempDir(), "sessions"))
 	if err != nil {
