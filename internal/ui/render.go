@@ -374,7 +374,10 @@ func relativeTime(at, now time.Time) string {
 // whole file into every rendered page load whether anybody asked for it or not.
 //
 // ⚠ THE RAW VIEW REPLACES THE STRUCTURE AND KEEPS THE ORIENTATION. The heading, the tabs
-// and `provenance` are on both views because they say WHICH file this is; the counts,
+// and `provenance` are on both views because they say WHICH file this is — but the raw
+// view's `provenance` carries only `file` and `updated`: its `scope` and `service:` rows are
+// parsed out of the front matter the raw text shows verbatim, so `provenance` drops them
+// there (its own comment says why). The counts,
 // aliases, tasks, sections and missing-section block are the parsers' answer and are the
 // thing the raw view exists to be an alternative to. ONLY THE RAW VIEW CARRIES AN EXPLAINER
 // (`entryRawWhat`): the rendered view's — a paragraph re-describing the sections a reader is
@@ -391,7 +394,7 @@ func EntryPage(v PageView) g.Node {
 			h.H2(g.Text(e.Ref)),
 			g.If(v.RawView, h.P(h.Class("card-what"), g.Text(entryRawWhat))),
 			entryViewTabs(s, e, v.RawView),
-			provenance(s, e, v.Now),
+			provenance(s, e, v.Now, v.RawView),
 			g.If(v.RawView, rawBlock(e)),
 			g.If(!v.RawView, g.Group([]g.Node{
 				entryCounts(e),
@@ -901,15 +904,25 @@ func entryRow(s Scope, e Entry, now time.Time) g.Node {
 //
 // ⚠ `updated` IS THE FILE'S MTIME ON THE POD'S STORE — what the scope page orders by — and the
 // row is omitted when the stat failed, rather than printing a date nobody measured.
-func provenance(s Scope, e Entry, now time.Time) g.Node {
+//
+// ⚠ ON THE RAW VIEW (`raw`) THE FRONT-MATTER ROWS ARE DROPPED, ON AN OPERATOR DECISION:
+// `scope` and `service:` are values parsed out of the front matter, which the raw text
+// directly below shows verbatim, so there they are redundant. `file` and `updated` stay on
+// both views because the file's text CANNOT show them — the name is not in the contents and
+// the mtime is not in the bytes. The breadcrumb names the scope on both views regardless.
+func provenance(s Scope, e Entry, now time.Time, raw bool) g.Node {
 	return h.Dl(
 		h.Class("provenance"),
-		h.Dt(h.Class("prov-key"), g.Text("scope")),
-		h.Dd(h.Class("prov-val"), g.Text(s.Name)),
+		g.If(!raw, g.Group([]g.Node{
+			h.Dt(h.Class("prov-key"), g.Text("scope")),
+			h.Dd(h.Class("prov-val"), g.Text(s.Name)),
+		})),
 		h.Dt(h.Class("prov-key"), g.Text("file")),
 		h.Dd(h.Class("prov-val"), g.Text(e.Filename)),
-		h.Dt(h.Class("prov-key"), g.Text("service:")),
-		h.Dd(h.Class("prov-val"), g.Text(e.Title)),
+		g.If(!raw, g.Group([]g.Node{
+			h.Dt(h.Class("prov-key"), g.Text("service:")),
+			h.Dd(h.Class("prov-val"), g.Text(e.Title)),
+		})),
 		g.If(e.MTime > 0, g.Group([]g.Node{
 			h.Dt(h.Class("prov-key"), g.Text("updated")),
 			h.Dd(h.Class("prov-val"), timeAgo(e.MTime, now)),

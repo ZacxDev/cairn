@@ -2027,6 +2027,14 @@ it. Three constraints decided the shape, and each of them refused an obvious alt
   they need both views rendered at once, which doubles the page and puts the whole file
   into every rendered page load whether or not anybody asked for it.
 
+**The raw view's provenance block carries `file` and `updated` only**, on an operator decision:
+`scope` and `service:` are values parsed out of the front matter, which the raw text below shows
+verbatim. The two kept rows are the ones the file's text cannot show (its name, its mtime); the
+rendered view keeps all four, and the breadcrumb names the scope on both. Held by
+`TestTheRawViewDropsTheFrontMatterProvenanceRowsAndKeepsTheRest`, which pins each view's `dt`
+keys as a pair — RED at the parent on the raw half; the rendered half is what goes red if the
+rows are deleted from both views.
+
 **Exactly one value is recognised.** `?view=raw` selects the raw view; `""`, `RAW`,
 `rendered`, `source` and anything else render the rendered view. That is `handlePage`'s
 ruling for `?q=` restated — a view selector is not an authority question, so an
