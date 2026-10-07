@@ -22,45 +22,40 @@ before any slice: decisions, threat model, slices S1–S5, the deploy preconditi
   server). ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- **Plan merged** (#194, `b4f349f`): five audit rounds, the fifth clean. Nothing built yet;
-  each slice waits for the operator's go-ahead.
-- **Shipped and deployed on BOTH instances at `sha-6edcb45`** (personal: deployment repo
-  trunk `8d37487`; client: client infra repo trunk `1c6145b`, tag+digest pinned store
-  `sha256:fdcf67b6…`, ui `sha256:3fe4386a…`; rollback both lines to `sha-64475d7`):
-  - #192 raw entry view drops the front-matter provenance rows (`64475d7`).
-  - #193 scope tabs (`?tab=entries|sessions|arcs` with counts), cross-scope `/session`
-    page (uniform 404 for unseen/hidden ids, bullet anchors `b-<citation id>`),
-    numbers-not-prose sessions/arcs views (`9fc8101`). Three audit rounds.
-  - #195 browser sign-in REFUSES a narrowed credential (uniform 401, counts toward
-    lockout); invite and share-candidate paths act as `membershipActor(id)` (a narrowed
-    bearer could previously mint invitations into its owner's project); type-resolved
-    membership ledger test (`6edcb45`). Battery measured in CI: `mutants=217 killed=215
-    survived=2 misattributed=0`.
-- **Verified live on the personal pod** (operator token over a port-forward, served HTML,
-  not a browser): tabs "Entries 15 · Sessions 37 · Arcs 2", filter only on Entries, 37
-  session links, session page 200 with trailer-free excerpt, its bullet link lands on an
-  existing anchor, unknown session id 404, arc page links its member sessions. Client
+- **S1 DONE and LIVE** — #197 merged as `45ef3d9` (content-verified: `internal/` and
+  `uiaudit/` on `main` identical to the PR head `25f8787`; all 8 CI checks green). Three
+  audit rounds; round 3 clean (the auditor's property test over 247,940 time points found 0
+  label/liveness mismatches, 5,774 under the mutant). `GET /arcs` lists arcs whose HOME scope
+  is readable; live ⇔ status open OR ⌊(now − last update)/24h⌋ ≤ 14 — the same truncation
+  the "Nd ago" label uses, so a row reading ≤14d is live whichever source won; last update =
+  max(pod `registered_at`, newest member bullet in a readable scope, future bullet dates
+  clamped to today); `?all=1` shows all; header "Arcs" link on every page. `/arc` has
+  scopes · sessions tabs (unknown tab ⇒ default; every miss is the same 404 bytes). Battery
+  226 rows (224 killed, 2 labelled equivalent) measured at `f238b91`; the re-anchored
+  `ui-arcs-index-live-window-compared-as-an-instant` row measured alone at `25f8787`.
+- **Deployed on BOTH instances at `sha-45ef3d9`, 0 restarts**: personal via deployment repo
+  trunk `47f387f`; client via the client infra repo trunk `ebf1d70`, tag+digest pinned
+  (store `sha256:f35f7061…`, ui `sha256:37fbdc9e…`). Rollback either: both image lines back
+  to `sha-6edcb45` (client digests `fdcf67b6…` / `3fe4386a…`).
+- **Verified live on the personal pod** (operator token over a port-forward, served HTML):
+  `/arcs` 200 with 30 live arcs newest first ("registered 2h ago"…), "0 not live" (every
+  registration is recent), `?all=1` 200, header link present on `/`, an arc's scopes tab
+  links 2 scopes and its sessions tab links its member session, an unknown arc 404. Client
   instance: pods on the new digests, API answers; its UI not viewed (operator not signed in).
-- **Narrowed-credential refusal NOT exercised live** — neither instance has ever issued a
-  narrowed credential (journals: 37 and 19 records, every `narrowed_scopes` null); covered
-  by tests that are red on pre-fix `main`.
-- **IN FLIGHT: ZacxDev/cairn#196** — the `go` job's `ok` floor `-lt 19` → `-lt 23`
-  (re-measured 23 ok on `main`; gate replay: 23 passes, 22 refused).
+- `claim-work` slug `cairn-arcs-presence-2` RELEASED.
 
 ## Next steps (ranked)
-1. **#196 is MERGED** (`78fe99a`, all 8 checks green): the `go` job's `ok` floor is now `-lt 23`.
-   Nothing to do; the rank is kept so later ranks keep their claim identities.
-   forcing: gate — the floor stood 4 below the package count.
-2. **S1 — the arcs-first page and `/arc` tabs (scopes · sessions)**, per the plan; no
-   presence dependency. Repo cairn, `internal/ui`, `internal/report`. IN FLIGHT: branch
-   `zach/arcs-first-page` (subagent building it; PR not yet opened). Claimed:
-   `claim-work` slug `cairn-arcs-presence-2` — `claim-work --release cairn-arcs-presence-2`
-   once it merges. Then: round 0 + round 1 audit, merge, deploy to both instances (personal:
-   deployment repo trunk; client: client infra repo trunk, tag+digest pinned), verify live.
-   forcing: user — the operator asked for an arcs-first page and said go.
-3. **S2–S5 — presence, the host agent, badges, the bell**, in plan order. S2 deploys only
-   after #195 has been live for the instance's effective session TTL (12 h default) and the
-   journal still shows zero narrowed credentials — the plan's stated precondition.
+1. **#196 is MERGED** (`78fe99a`): the `go` job's `ok` floor is `-lt 23`. Nothing to do; the
+   rank is kept so later ranks keep their claim identities. forcing: gate — kept for numbering.
+2. **S1 is MERGED and DEPLOYED** (#197, `45ef3d9`). Nothing to do; kept for numbering.
+   forcing: user — done.
+3. **S2 — presence store + agent API** (repo cairn, `internal/presence` new package, `cmd/cairn-ui`
+   second listener, ledgers per the plan's S2 row, `go` job `ok` floor → measured count on the
+   merged tree, 24 if nothing else moved), then S3 (tooling repo host agent), S4 (badges),
+   S5 (bell). 🔴 S2 deploys only after #195 (live since the `sha-6edcb45` rollout) has been
+   deployed for at least the instance's effective session TTL (12 h default) AND the journal
+   re-check still shows zero narrowed credentials. Use `control.Authorization.Narrowed()`
+   (#195) rather than the plan's decision-11 credential-row derivation, and update decision 11.
    forcing: user — the operator asked for tmux identity and a bell button.
 
 ## Gotchas / decisions / dead-ends
@@ -82,10 +77,20 @@ before any slice: decisions, threat model, slices S1–S5, the deploy preconditi
   that does not exist yet** — spell paths literally and create a worktree with
   `worktree add -b <branch>` in one step. via: command
 
+- **A ruling formula can be wrong while its stated goal is right** — the round-2 ruling for
+  #197 said `utcDay(lastUpdated) >= utcDay(now) − 14`, which would hide a 14d23h registration
+  reading "14d ago"; the implementer built the goal (`⌊Δ/24h⌋ ≤ 14`) and said so. Brief the
+  GOAL plus the test cases, and treat the formula as a suggestion. via: measurement
+- **zsh history modifiers bit a digest lookup**: `"…/$img:sha-…"` expands `:s` as a modifier
+  (`bad substitution`); brace it, `${img}:sha-…`. via: command
+- **A scheduled merge-on-green loop must check the publish run's head sha equals the merge
+  commit** before reading digests — the publish workflow lists the newest run, which can be
+  another push. via: command
+
 ## How to verify
 ```bash
-gh pr view 196 --repo ZacxDev/cairn --json state,statusCheckRollup
-git fetch origin && git cat-file -e origin/main:claudedocs/plan-cairn-arcs-presence.md && echo plan-merged
-git cat-file -e origin/main:internal/ui/sessionpage.go && echo session-page-merged
-git grep -n 'func (a Authorization) Narrowed' origin/main -- internal/control/
+git fetch origin && git cat-file -e origin/main:internal/ui/arcsindex.go && echo s1-merged
+gh pr view 197 --repo ZacxDev/cairn --json state,mergeCommit --jq '"\(.state) \(.mergeCommit.oid)"'
+# live: port-forward deploy/cairn-ui (personal) and GET /arcs, /arcs?all=1, /arc?home=…&slug=…&tab=sessions
+# with an Authorization: Bearer header read from a 0600 file; expect 200s and an unknown arc → 404
 ```
