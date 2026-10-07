@@ -3258,14 +3258,16 @@ MUTANTS: tuple[Mutant, ...] = (
         "boundary; only a fixture measured on BOTH sides of 14 days sees it.",
     ),
     Mutant(
-        name="ui-arcs-index-bullet-window-compared-as-an-instant",
+        name="ui-arcs-index-live-window-compared-as-an-instant",
         path="internal/ui/arcsindex.go",
-        old="return !act.At.Before(utcDay(now).AddDate(0, 0, -arcLiveDays))",
-        new="return now.Sub(act.At) <= arcLiveWindow",
-        killer="TestABulletDatedExactlyFourteenDaysAgoIsStillLive",
-        why="one comparison for both sources is the obvious shape, and it was this PR's first head: a "
-        "bullet's date is 00:00 with no time of day, so against a noon clock a bullet dated today-14 "
-        "reads as 14d12h and hides while its row says '14d ago' (audit round 1).",
+        old="return int(now.Sub(act.At)/(24*time.Hour)) <= arcLiveDays",
+        new="return now.Sub(act.At) <= arcLiveDays*24*time.Hour",
+        killer="TestARegistrationIsLiveExactlyWhileItReadsFourteenDaysAgo",
+        extra_killers=("TestABulletDatedExactlyFourteenDaysAgoIsStillLive",
+                       "TestLivenessDoesNotDependOnWhichSourceWon"),
+        why="`now - last <= 14 days` is the obvious spelling, and it was this PR's first head: it hides "
+        "whatever the row's own '14d ago' label calls fourteen days — a registration 14d23h old, a "
+        "bullet dated today-14 at a noon clock (audit rounds 1 and 2).",
     ),
     Mutant(
         name="ui-arcs-index-member-walk-unrestricted",

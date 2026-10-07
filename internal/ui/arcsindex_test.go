@@ -112,7 +112,7 @@ func getArcs(t *testing.T, srv *Server, all bool) string {
 // TestTheArcsPageListsLiveArcsNewestFirstAndCountsTheHidden pins decisions 10 and 12 as LITERAL
 // expectations. The registration times are pairwise distinct and their order is NOT the slugs'
 // alphabetical order, so a page sorted by name (or not sorted) cannot pass; the 14-day boundary is
-// measured on BOTH sides (13d23h live, 14d1h hidden); `open` is kept at 400 days; `unknown` at 20
+// measured on BOTH sides (13d23h live, 15d0h1m hidden — the label reads "15d ago"); `open` is kept at 400 days; `unknown` at 20
 // days is hidden (it is NOT `open`); `?all=1` shows every visible arc; the hidden count is printed.
 //
 // 🔴 AND THE COUNT IS OVER VISIBLE ARCS ONLY: beta-notes homes a closed, old arc that A cannot see,
@@ -124,7 +124,7 @@ func TestTheArcsPageListsLiveArcsNewestFirstAndCountsTheHidden(t *testing.T) {
 		idxReg("alpha-notes", "zinc-arc", arcs.StatusClosed, ago(1*time.Hour)),
 		idxReg("alpha-notes", "amber-arc", arcs.StatusUnknown, ago(3*day)),
 		idxReg("alpha-notes", "cedar-arc", arcs.StatusClosed, ago(13*day+23*time.Hour)),
-		idxReg("alpha-notes", "birch-arc", arcs.StatusClosed, ago(14*day+1*time.Hour)),
+		idxReg("alpha-notes", "birch-arc", arcs.StatusClosed, ago(15*day+time.Minute)),
 		idxReg("alpha-notes", "dune-arc", arcs.StatusUnknown, ago(20*day)),
 		idxReg("alpha-notes", "moss-arc", arcs.StatusOpen, ago(400*day)),
 		idxReg("beta-notes", "shroud-arc", arcs.StatusClosed, ago(90*day)),
@@ -135,11 +135,11 @@ func TestTheArcsPageListsLiveArcsNewestFirstAndCountsTheHidden(t *testing.T) {
 	live := getArcs(t, srvA, false)
 	if got, want := listedArcs(t, live), []string{"alpha-notes/zinc-arc", "alpha-notes/amber-arc",
 		"alpha-notes/cedar-arc", "alpha-notes/moss-arc"}; !slices.Equal(got, want) {
-		t.Errorf("A's live arcs are %v, want %v (newest first; open kept at 400d; 13d23h kept; 14d1h and an "+
+		t.Errorf("A's live arcs are %v, want %v (newest first; open kept at 400d; 13d23h kept; 15d0h1m and an "+
 			"unknown at 20d hidden)", got, want)
 	}
 	if got := notLive(t, live); got != "2 not live" {
-		t.Errorf("A's page prints %q, want %q — birch (14d1h) and dune (unknown, 20d), and NOT beta's arc", got, "2 not live")
+		t.Errorf("A's page prints %q, want %q — birch (15d0h1m) and dune (unknown, 20d), and NOT beta's arc", got, "2 not live")
 	}
 	if !strings.Contains(live, `href="/arcs?all=1"`) {
 		t.Error("the live view does not offer the show-all toggle")
@@ -275,6 +275,47 @@ func TestABulletDatedExactlyFourteenDaysAgoIsStillLive(t *testing.T) {
 	}
 	if all := getArcs(t, idxServer(t, src, readsA), true); !strings.Contains(all, ">14d ago</time>") || !strings.Contains(all, ">15d ago</time>") {
 		t.Error("INSTRUMENT: the edge row does not say 14d ago, so the boundary measured is not the one a reader sees")
+	}
+}
+
+// TestLivenessDoesNotDependOnWhichSourceWon is audit round 2's case: two closed arcs whose members
+// both wrote a bullet dated today−14. solo-arc's registration is 60 days old, so the bullet wins;
+// later-arc was registered at 05:00 on that same day, so its registration wins and its activity is
+// STRICTLY NEWER. Liveness is one rule over the winning instant, so later-arc cannot be hidden while
+// solo-arc is live — both are live, later-arc first.
+func TestLivenessDoesNotDependOnWhichSourceWon(t *testing.T) {
+	readsA, _, _ := arcsWorld(t)
+	src := StoreSource{
+		Root: idxStore(t, map[string]string{"alpha-notes": "- 2000-02-16: a [cairn: kiln-bot/s-ember-0001]\n" +
+			"- 2000-02-16: b [cairn: kiln-bot/s-wick-0002]\n"}),
+		ArcJournal: arcsJournal(t,
+			idxReg("alpha-notes", "solo-arc", arcs.StatusClosed, ago(60*day), "s-ember-0001"),
+			idxReg("alpha-notes", "later-arc", arcs.StatusClosed, "2000-02-16T05:00:00Z", "s-wick-0002")),
+	}
+	page := getArcs(t, idxServer(t, src, readsA), false)
+	if got, want := listedArcs(t, page), []string{"alpha-notes/later-arc", "alpha-notes/solo-arc"}; !slices.Equal(got, want) {
+		t.Errorf("live arcs are %v, want %v — later-arc's activity is newer than solo-arc's, so it cannot be "+
+			"the one hidden", got, want)
+	}
+}
+
+// TestARegistrationIsLiveExactlyWhileItReadsFourteenDaysAgo pins the label and the rule to ONE
+// truncation: a registration 14d23h old reads "14d ago" and is live; one 15d0h1m old reads "15d ago"
+// and is not.
+func TestARegistrationIsLiveExactlyWhileItReadsFourteenDaysAgo(t *testing.T) {
+	readsA, _, _ := arcsWorld(t)
+	src := StoreSource{Root: idxStore(t, nil), ArcJournal: arcsJournal(t,
+		idxReg("alpha-notes", "late-arc", arcs.StatusClosed, ago(14*day+23*time.Hour)),
+		idxReg("alpha-notes", "over-arc", arcs.StatusClosed, ago(15*day+time.Minute)))}
+	srv := idxServer(t, src, readsA)
+	if got, want := listedArcs(t, getArcs(t, srv, false)), []string{"alpha-notes/late-arc"}; !slices.Equal(got, want) {
+		t.Errorf("live arcs are %v, want %v (14d23h live, 15d0h1m not)", got, want)
+	}
+	all := getArcs(t, srv, true)
+	for _, label := range []string{">14d ago</time>", ">15d ago</time>"} {
+		if !strings.Contains(all, label) {
+			t.Errorf("the show-all page does not render %q", label)
+		}
 	}
 }
 

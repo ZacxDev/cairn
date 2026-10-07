@@ -3010,9 +3010,11 @@ holds no clock; `arcsindex.go` applies what needs one:
   bullet CLAMPED TO TODAY and taken as 00:00 UTC). A tie goes to the registration (it carries a time
   of day). `reported_at` is the tooling's clock and optional: shown in the row's tooltip, never used.
   The row says which won — "registered 3h ago" or "bullet today" — through `instantAgo` / `dateAgo`.
-- **live** = `open` OR last updated within 14 days, inclusive, each source at its own precision: a
-  registration instant at most 14×24h old, or a winning bullet DATE on or after today−14 (whole UTC
-  dates — a bullet has no time of day). `unknown` is NOT `open` (Q4).
+- **live** = `open` OR last updated at most 14 WHOLE days ago — ⌊(now − last updated) / 24h⌋ ≤ 14,
+  the truncation the row's "Nd ago" label uses, so "14d ago" is live and "15d ago" is not, whichever
+  source won. `unknown` is NOT `open` (Q4). Two earlier shapes were measured wrong in audit: an
+  instant comparison (`≤ 14×24h`) hid rows labelled "14d ago"; a per-source rule hid an arc with
+  strictly newer activity than a live one.
 - newest first, ties by `(home, slug)`; the page prints "N not live" — a count over VISIBLE arcs
   only — and offers "show all N" (`?all=1`) or "live only". Only `1` is recognised; any other value
   is the default view, `?view=`'s ruling.
@@ -3066,6 +3068,7 @@ The behavioural tests were copied onto `origin/main` (`078d248`) with a scratch-
 | `TestAFutureDatedBulletDoesNotSortAboveToday` | RED (no route) | green |
 | `TestABulletNamingAMemberByANonMemberKeepsTheArcLive` | RED (no route) — but an INVARIANT tripwire on O1's accepted cost, not regression coverage | green |
 | `TestABulletDatedExactlyFourteenDaysAgoIsStillLive` (audit round 1) | RED at this PR's first head `3c9cd9b` (a bullet dated today−14 hidden at noon while its row said "14d ago") | green |
+| `TestLivenessDoesNotDependOnWhichSourceWon`, `TestARegistrationIsLiveExactlyWhileItReadsFourteenDaysAgo` (audit round 2) | RED at `f238b91` (later-arc hidden while the older solo-arc was live; a 14d23h registration hidden) | green |
 | `TestTheArcsPageOffAndBrokenStates` | RED (no route) | green |
 | `TestTheArcPageRendersOnlyTheSelectedTab` | RED (no panels, no tab strip) | green |
 | `TestTheArcScopesTabNarrowsAndMarksProvenance` | RED (no scope rows) — its narrowing half is an INVARIANT guard | green |
@@ -3078,8 +3081,9 @@ on that test's OWN assertion before the row was written: the clamp dropped
 (`TestAFutureDatedBulletDoesNotSortAboveToday`: order inverted, the future date printed);
 `reported_at` read instead of `registered_at`, `unknown` counted as open, the window widened to 15
 days (all `TestTheArcsPageListsLiveArcsNewestFirstAndCountsTheHidden`: the listed set and the
-not-live count move); a winning bullet compared as an instant against the clock — this PR's first
-head (`TestABulletDatedExactlyFourteenDaysAgoIsStillLive`); the member walk unrestricted (`TestAMemberBulletInAnUnreadableScopeDoesNotMoveTheArc`);
+not-live count move); the window compared as an instant (`≤ 14×24h`) rather than in whole days —
+this PR's first head (`TestARegistrationIsLiveExactlyWhileItReadsFourteenDaysAgo`, plus the bullet
+pair and the two-arc case); the member walk unrestricted (`TestAMemberBulletInAnUnreadableScopeDoesNotMoveTheArc`);
 the home check dropped (`TestAnArcHomedInAnUnreadableScopeIsNeverListedEvenWhenItsMembersWroteWhereYouRead`);
 the arc tab ignored and an unknown tab passed through (`TestTheArcPageRendersOnlyTheSelectedTab`).
 Not a row, watched by hand: dropping the member-bullet lookup reddens
@@ -3089,10 +3093,9 @@ Not a row, watched by hand: dropping the member-bullet lookup reddens
 
 - **Scale beyond the benchmark's two synthetic sizes**, and the real store (plan: "could not
   measure"). Nothing is cached.
-- **Exactly 14 days on the REGISTRATION path.** That boundary is measured at 13d23h and 14d1h; `<=`
-  against `<` at the exact instant is not. The BULLET path compares whole UTC dates (a bullet has no
-  time of day) and is measured at today−14 (live) and today−15 (not) — audit round 1 found the
-  first head comparing a bullet's 00:00 against a clock with a time of day.
+- **The exact instant of 15×24h.** The boundary is measured at 14d23h (live, "14d ago") and 15d0h1m
+  (not, "15d ago") for a registration and at today−14 / today−15 for a bullet; the single nanosecond
+  at exactly 15 days is not.
 - **The live view on a deployment with a skewed pod clock**: a `registered_at` in the UI's future is
   not clamped (decision 10 clamps bullet dates only) and sorts first.
 - **Tooltips on touch devices**, as Phase I records.

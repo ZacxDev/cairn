@@ -31,8 +31,10 @@ import (
 //     WRITER'S word on a `put`, so it is CLAMPED TO TODAY first and taken as that day's 00:00 UTC —
 //     a future date cannot sort an arc above today's. `reported_at` is the tooling's own clock and
 //     optional, so it is shown in the tooltip and NEVER used ([arcLastUpdated]).
-//   - 🔴 LIVE = status `open` OR last updated within [arcLiveWindow]. `unknown` is NOT `open` (Q4 of
-//     the arcs plan): an `unknown` arc is live only by recency ([arcIsLive]).
+//   - 🔴 LIVE = status `open` OR last updated at most 14 WHOLE DAYS ago — the same truncation the row's
+//     "Nd ago" label uses, so "14d ago" is live and "15d ago" is not, whichever source won.
+//     `unknown` is NOT `open` (Q4 of the arcs plan): an `unknown` arc is live only by recency
+//     ([arcIsLive]).
 //   - newest first; ties by (home, slug), byte-wise. `?all=1` lists every visible arc; otherwise the
 //     page lists the live ones and PRINTS HOW MANY IT HID — a count of visible arcs only, so it can
 //     never reveal an arc homed in a scope the caller cannot read.
@@ -43,13 +45,9 @@ import (
 // `TestABulletNamingAMemberByANonMemberKeepsTheArcLive` is a TRIPWIRE pinning it (an invariant guard,
 // not regression coverage) so nobody "fixes" it silently.
 
-// arcLiveDays is how recently an arc must have been updated to be live when it is not `open`.
-// "Within 14 days" is inclusive at the boundary, measured on each source's OWN precision
-// ([arcIsLive]): a registration instant at most 14×24h old, or a bullet DATE on or after today−14.
+// arcLiveDays is how recently an arc must have been updated to be live when it is not `open`, in
+// WHOLE days ago ([arcIsLive]): inclusive, so an arc whose row reads "14d ago" is live.
 const arcLiveDays = 14
-
-// arcLiveWindow is [arcLiveDays] as a duration, for the registration's instant comparison.
-const arcLiveWindow = arcLiveDays * 24 * time.Hour
 
 // QueryAll is the arcs page's show-all toggle: `?all=1` lists every visible arc. Exactly one value is
 // recognised, [QueryView]'s ruling — any other value is the default (live-only) page, never a 400.
@@ -105,21 +103,22 @@ func utcDay(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-// arcIsLive is decision 12: `open`, or updated within [arcLiveDays]. `unknown` is NOT `open`.
+// arcIsLive is decision 12: `open`, or last updated at most [arcLiveDays] WHOLE days ago. `unknown`
+// is NOT `open`.
 //
-// 🔴 EACH SOURCE IS COMPARED AT ITS OWN PRECISION. A registration is an instant, so it is live while
-// `now − registered_at ≤ 14×24h`. A bullet is a DATE with no time of day: comparing its 00:00 against
-// a `now` that carries one made a bullet dated exactly today−14 read as 14d12h at noon — hidden, while
-// its row said "14d ago". So a winning bullet is live when its date is on or after today−14, by whole
-// UTC dates (`TestABulletDatedExactlyFourteenDaysAgoIsStillLive`).
+// 🔴 ONE RULE, OVER THE WINNING INSTANT, AT THE LABEL'S OWN TRUNCATION — and two earlier shapes were
+// measured wrong. (1) `now − last ≤ 14×24h` hid a bullet dated today−14 (its 00:00 is 14d12h before a
+// noon clock) while its row read "14d ago", and hid a registration 14d1h old under the same label.
+// (2) A per-source rule (bullet by whole dates, registration by instant) let an arc with STRICTLY
+// NEWER activity be hidden while an older one was live, because liveness then depended on which
+// source won (`TestLivenessDoesNotDependOnWhichSourceWon`). So: whole days = ⌊(now − last) / 24h⌋,
+// exactly what `relativeTime` prints and, for a bullet at 00:00, exactly `daysAgo`'s calendar count —
+// "Nd ago" with N ≤ 14 ⇔ live. A last-update in the future (a skewed pod clock) is 0 days: live.
 func arcIsLive(a report.ArcAcross, act arcActivity, now time.Time) bool {
 	if a.Status == arcs.StatusOpen {
 		return true
 	}
-	if act.FromBullet {
-		return !act.At.Before(utcDay(now).AddDate(0, 0, -arcLiveDays))
-	}
-	return now.Sub(act.At) <= arcLiveWindow
+	return int(now.Sub(act.At)/(24*time.Hour)) <= arcLiveDays
 }
 
 // arcIndexRow is one arc with its fold applied.
@@ -196,7 +195,7 @@ func (s *Server) handleArcsPage(w http.ResponseWriter, r *http.Request, id ident
 }
 
 // arcsLiveRule is the visible statement of the live filter, beside the count it explains.
-const arcsLiveRule = "live = open, or updated in the last 14 days"
+const arcsLiveRule = "live = open, or last updated 14 or fewer whole days ago (\"14d ago\" is live, \"15d ago\" is not)"
 
 // arcsUpdatedTip is the tooltip on every row's "last updated" — which two times were compared.
 const arcsUpdatedTip = "last updated: the newer of the latest registration (pod clock) and the newest " +
