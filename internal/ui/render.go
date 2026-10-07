@@ -105,6 +105,11 @@ type PageView struct {
 	Touched *Touched
 	// Arc is the arc page's answer, nil everywhere else. See `arcs.go`.
 	Arc *report.ArcReport
+	// Tab is the scope page's selected tab: "" (entries), [TabSessions] or [TabArcs] — already
+	// folded by `scopeTab`, so a renderer never sees an unrecognised value.
+	Tab string
+	// Session is the session page's answer, nil everywhere else. See `sessionpage.go`.
+	Session *SessionAnswer
 
 	// Now is the render-time clock reading every relative timestamp on the page is computed
 	// against — the server's injected `Config.Now`, so a test pins "5m ago" exactly.
@@ -188,33 +193,116 @@ func NavigatePage(v PageView) g.Node {
 }
 
 // ScopePage is ONE scope's entry list.
+//
+// 🔴 THREE SERVER-RENDERED TABS — ENTRIES, SESSIONS, ARCS — SWITCHED BY `?tab=` AND NOT BY A SCRIPT,
+// which is `entryViewTabs`' ruling for the same shape: a link per tab gives a shareable URL and a
+// working back button for nothing, and ONLY THE SELECTED TAB'S BODY IS IN THE DOCUMENT. The filter
+// script rides only on the entries tab, because only that tab renders the control it drives.
+//
+// ⚠ THE COUNTS ON THE TAB LABELS COST THE TWO PER-SCOPE REPORTS ON EVERY TAB, AND THAT IS STATED
+// RATHER THAN HIDDEN. "Sessions 36" is `report.Sessions` over this scope and "Arcs 2" is `report.Arcs`
+// — a count of what a tab lists IS that tab's derivation, so there is no cheaper number that is the
+// same number. This page computed both on every load before the tabs existed (as two cards); the tab
+// decides what is RENDERED, not what is read. `TestTheScopePageCostOfTheTabCounts` measures it.
 func ScopePage(v PageView) g.Node {
 	s := *v.Scope
+	var body g.Node
+	switch {
+	case v.Tab == TabSessions && v.Touched != nil:
+		body = sessionsPanel(*v.Touched, v.Scopes, v.Now)
+	case v.Tab == TabArcs && v.Touched != nil:
+		body = arcsPanel(*v.Touched, v.Scopes, v.Now)
+	default:
+		body = entriesPanel(s, v.Now)
+	}
 	return shell("cairn — "+s.Name, v, []crumb{{Label: s.Name}},
 		h.Section(
 			h.Class("card"),
 			h.H2(g.Text(s.Name)),
 			scopeStats(s),
-			g.If(len(s.Entries) == 0, h.P(h.Class("empty"), g.Text(
-				"This scope holds no readable entry. That is what the index says about "+
-					"this scope, not what your credential is allowed to see: a scope you "+
-					"could not read would not be addressable from here at all."))),
-			g.If(len(s.Entries) > 0, filterControl(len(s.Entries))),
-			// 🔴 NEWEST FIRST, BY FILE MTIME, THROUGH RECALL'S OWN COMPARATOR — see
-			// [entriesNewestFirst]. The id is what `filter.js` finds the rows by.
-			g.If(len(s.Entries) > 0, h.Ul(h.Class("entry-list"), h.ID("entry-list"),
-				g.Map(entriesNewestFirst(s.Entries), func(e Entry) g.Node {
-					return entryRow(s, e, v.Now)
-				}))),
-			malformedBlock(s),
+			scopeTabs(s, v.Tab, v.Touched),
+			body,
 		),
-		// `g.Iff`: the closure dereferences `v.Touched` — `Page`'s rule about `g.If`.
-		g.Iff(v.Touched != nil, func() g.Node { return touchedSections(*v.Touched, v.Scopes) }),
 		// ⚠ NO LEGEND, ON THE OPERATOR DECISION `Page` RECORDS. And the script is linked ONLY
 		// where the control it drives is rendered — a page carrying a script with nothing to do
 		// is a script the allowlist has to account for and nobody benefits from.
-		g.If(len(s.Entries) > 0, filterScriptTag()),
+		g.If(v.Tab == "" && len(s.Entries) > 0, filterScriptTag()),
 	)
+}
+
+// entriesPanel is the entries tab: the filter, the rows, and the files the loader refused.
+func entriesPanel(s Scope, now time.Time) g.Node {
+	return h.Div(
+		h.ID("scope-entries"),
+		g.If(len(s.Entries) == 0, h.P(h.Class("empty"), g.Text(
+			"This scope holds no readable entry. That is what the index says about "+
+				"this scope, not what your credential is allowed to see: a scope you "+
+				"could not read would not be addressable from here at all."))),
+		g.If(len(s.Entries) > 0, filterControl(len(s.Entries))),
+		// 🔴 NEWEST FIRST, BY FILE MTIME, THROUGH RECALL'S OWN COMPARATOR — see
+		// [entriesNewestFirst]. The id is what `filter.js` finds the rows by.
+		g.If(len(s.Entries) > 0, h.Ul(h.Class("entry-list"), h.ID("entry-list"),
+			g.Map(entriesNewestFirst(s.Entries), func(e Entry) g.Node {
+				return entryRow(s, e, now)
+			}))),
+		malformedBlock(s),
+	)
+}
+
+// scopeTab folds a `?tab=` value to the tab it selects: the two recognised values, and "" (entries)
+// for everything else — see [TabSessions] for why an unknown value is the default and not a 400.
+func scopeTab(raw string) string {
+	switch raw {
+	case TabSessions, TabArcs:
+		return raw
+	}
+	return ""
+}
+
+// scopeTabHref is the ONE place a scope-tab URL is built. The entries tab emits the plain scope URL
+// (`scopeHref`), so each state has exactly one canonical URL.
+func scopeTabHref(s Scope, tab string) string {
+	if tab == "" {
+		return scopeHref(s)
+	}
+	return ScopePath + "?" + url.Values{QueryID: []string{string(s.ID)}, QueryTab: []string{tab}}.Encode()
+}
+
+// scopeTabs is the tab strip. The current tab is a `<span>`, never a link to itself —
+// `entryViewTabs`' rule. Each label carries its count; a count that is not a measurement (the arcs
+// journal unconfigured or unreadable, a scope nothing could be scanned in) is left OFF rather than
+// printed as a zero, and a LOWER-BOUND count carries `≥`.
+func scopeTabs(s Scope, current string, t *Touched) g.Node {
+	tab := func(label, count, tab string) g.Node {
+		text := label
+		if count != "" {
+			text += " " + count
+		}
+		if tab == current {
+			return h.Span(h.Class("view-tab view-tab-here"), h.Data("tab", tabName(tab)), g.Text(text))
+		}
+		return h.A(h.Class("view-tab"), h.Data("tab", tabName(tab)), h.Href(scopeTabHref(s, tab)), g.Text(text))
+	}
+	sessions, arcsCount := "", ""
+	if t != nil {
+		sessions, arcsCount = sessionsCount(t.Sessions), arcsTabCount(*t)
+	}
+	return h.Nav(
+		h.Class("view-tabs"),
+		// Named: this is the page's second `<nav>`, after the breadcrumb (axe `landmark-unique`).
+		h.Aria("label", "Scope view"),
+		tab("Entries", strconv.Itoa(len(s.Entries)), ""),
+		tab("Sessions", sessions, TabSessions),
+		tab("Arcs", arcsCount, TabArcs),
+	)
+}
+
+// tabName is a tab's stable name for `data-tab`, which is what tests and the walk select by.
+func tabName(tab string) string {
+	if tab == "" {
+		return "entries"
+	}
+	return tab
 }
 
 // filterControl is the entry filter's box, its count and its empty-state line.
@@ -1061,6 +1149,8 @@ func headingParts(heading string) (marker, text string) {
 func bulletItem(b Bullet) g.Node {
 	return h.Li(
 		h.Class("bullet"),
+		// The session page's links land here. See [bulletAnchors].
+		g.If(b.Anchor != "", h.ID(b.Anchor)),
 		h.P(
 			h.Class("bullet-meta"),
 			g.If(b.Date != "", h.Span(h.Class("bullet-date"), g.Text(b.Date))),

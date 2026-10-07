@@ -70,6 +70,10 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		"GET /invite content",
 		"GET /join public",
 		"GET /scope content",
+		// 🔴 THE SESSION PAGE. `content`, never `public`: it aggregates one session's writes across
+		// every scope this credential can read, and a session that wrote only in scopes it cannot
+		// read must be indistinguishable from one that never wrote — an answer about authority.
+		"GET /session content",
 		"GET /share content",
 		"GET /sign-in public",
 		"GET /sign-in/github/callback public",
@@ -185,6 +189,12 @@ func (s staticSource) Touched(_ control.Authorization, scope string) (Touched, e
 
 func (s staticSource) Arc(control.Authorization, string, string) (report.ArcReport, error) {
 	return report.ArcReport{Status: report.StatusRegistrationsUnconfigured}, nil
+}
+
+// Session answers "nothing visible" — a DISPATCH fixture; `sessionpage_test.go` drives the real
+// `StoreSource` over a store on disk.
+func (s staticSource) Session(_ control.Authorization, session string) (SessionAnswer, error) {
+	return SessionAnswer{Report: report.SessionAcrossReport{ID: session}}, nil
 }
 
 // staticSharing is a share world with no journal behind it, so the dispatch tests
@@ -401,8 +411,11 @@ var bareGETAnswer = map[string]int{
 	"GET /entry content": http.StatusOK,
 	// The arc page follows the browse pair: a request naming no arc has asked about nothing, so it
 	// gets the navigation page rather than the uniform arc refusal.
-	"GET /arc content":   http.StatusOK,
-	"GET /share content": http.StatusOK,
+	"GET /arc content": http.StatusOK,
+	// And the session page: a request naming no session asked about nothing, so it gets the
+	// navigation page rather than the uniform unseen-session refusal.
+	"GET /session content": http.StatusOK,
+	"GET /share content":   http.StatusOK,
 	// 🔴 `GET /invite` ANSWERS 200 TO A PARAMETERLESS REQUEST *AND* ON A DEPLOYMENT WITH NO
 	// INVITE STORE, AND THE SECOND HALF IS THE DECISION. A 501 would have been the obvious
 	// answer for an unconfigured feature — it is what the two OAuth rows give — and it was
@@ -675,8 +688,10 @@ var contentAuthority = map[string]string{
 	"GET /entry content": "source",
 	// `source`, because `Source.Arc` is narrowed by the same authority `Source.Visible` is — see the
 	// interface's own comment for why it is not a seam of its own.
-	"GET /arc content":   "source",
-	"GET /share content": "sharing",
+	"GET /arc content": "source",
+	// `source`, for `Source.Arc`'s reason: `Source.Session` is narrowed by the same authority.
+	"GET /session content": "source",
+	"GET /share content":   "sharing",
 	// 🔴 A THIRD AUTHORITY, AND IT IS NAMED RATHER THAN FOLDED INTO `sharing`. The two are
 	// different seams answering different questions — `Sharing` is about SCOPES and
 	// `Inviting` is about PROJECT MEMBERSHIP, and `control.Role.CanManageMembers`'s own
@@ -718,6 +733,11 @@ func (c *countingSource) Touched(auth control.Authorization, scope string) (Touc
 func (c *countingSource) Arc(auth control.Authorization, home, slug string) (report.ArcReport, error) {
 	c.calls++
 	return staticSource{}.Arc(auth, home, slug)
+}
+
+func (c *countingSource) Session(auth control.Authorization, session string) (SessionAnswer, error) {
+	c.calls++
+	return staticSource{}.Session(auth, session)
 }
 
 // TestEveryContentRouteConsultsTheAuthority is a REGRESSION test, and the defect it

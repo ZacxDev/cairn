@@ -804,6 +804,56 @@
     @apply border-line text-muted;
   }
 
+  /* The PARTIAL badge: rendered only when an answer is a lower bound or unmeasured, its reason in
+   * the `title`. Its own class rather than `.badge-near`, which means a near-miss MARKER — two
+   * different findings must not read as one. */
+  .badge-warn {
+    @apply border-danger/60 bg-danger/5 text-danger;
+  }
+
+  /* Compact session / arc rows. A session row is ONE link: `.row-link` stretches an overlay over the
+   * whole row, and the chips sit above it (`z-10`) so their own links stay clickable. */
+  .session-row,
+  .arc-row {
+    @apply relative;
+  }
+
+  .row-link {
+    @apply font-mono;
+  }
+
+  .row-link::after {
+    content: "";
+    @apply absolute inset-0;
+  }
+
+  .session-row .chips,
+  .arc-row .chips {
+    @apply relative z-10;
+  }
+
+  .chips-arc > li {
+    @apply border-accent/50 bg-accent/10;
+  }
+
+  .chips-scope > li {
+    @apply border-line bg-line/20;
+  }
+
+  .chips-session > li {
+    @apply border-line font-mono;
+  }
+
+  .chips-arc a,
+  .chips-scope a,
+  .chips-session a {
+    @apply text-accent no-underline hover:underline;
+  }
+
+  .session-id {
+    @apply font-mono break-all;
+  }
+
   /* The entry page. */
   .provenance {
     @apply grid gap-x-3 gap-y-1 text-sm;

@@ -123,7 +123,13 @@ var routes = map[routeKey]route{
 	// value a registration supplied. GET only — the UI never registers an arc (its journal mount is
 	// read-only), so neither cross-site gate gains a case; both would apply by METHOD if a write row
 	// were ever added. See `handleArcPage`.
-	{"GET", "/arc"}:       {(*Server).handleArcPage, classContent},
+	{"GET", "/arc"}: {(*Server).handleArcPage, classContent},
+	// 🔴 THE SESSION PAGE IS A FIFTH FIXED BROWSE PATH WITH ITS OPERAND IN A QUERY PARAMETER, for the
+	// browse pair's reason: `/session/{id}` would need a prefix match, and a session id is a value a
+	// WRITER declared in a trailer. It is the one browse row keyed by a value that is NOT scoped — a
+	// session id is global — so it is the one page that AGGREGATES across scopes, and it does so only
+	// over the caller's narrowed set. GET only. See `handleSessionPage`.
+	{"GET", "/session"}:   {(*Server).handleSessionPage, classContent},
 	{"GET", "/share"}:     {(*Server).handleSharePage, classContent},
 	{"POST", "/share"}:    {(*Server).handleShare, 0},
 	{"POST", "/unshare"}:  {(*Server).handleUnshare, 0},
@@ -218,6 +224,8 @@ const (
 	EntryPath = "/entry"
 	// ArcPath is one registered arc, keyed by `?home=<control.ID>&slug=<slug>`.
 	ArcPath = "/arc"
+	// SessionPath is one writing session across every readable scope, keyed by `?session=<id>`.
+	SessionPath = "/session"
 	// SharePath answers the share flow's read AND its grant write, split by method.
 	SharePath = "/share"
 	// UnsharePath is a SEPARATE path rather than an action field on `SharePath`,
@@ -340,6 +348,27 @@ const (
 	// QuerySlug is the arc's slug on `GET /arc`: MATCHED against the registered set inside
 	// `report.Arc`, never resolved.
 	QuerySlug = "slug"
+	// QuerySession is a writing session's id on `GET /session` — a FIFTH spelling, because a session
+	// id is not a `control.ID` of anything: it is a value a writer declared in a trailer, opaque and
+	// byte-exact, and `write.SessionComponent` is its whole grammar.
+	QuerySession = "session"
+	// QueryTab selects WHICH TAB of `GET /scope` is rendered, for [QueryView]'s reason on the entry
+	// page: three views of one scope behind one row, server-rendered, so a tab is a shareable URL and
+	// the back button works with no script. See [TabSessions].
+	QueryTab = "tab"
+)
+
+// TabSessions and TabArcs are the two recognised [QueryTab] values.
+//
+// ⚠ THERE IS NO `TabEntries` CONSTANT, AND THE ABSENCE IS [ViewRaw]'s RULING RESTATED. The entries
+// tab is what the row answers when nothing selects otherwise — `?tab=entries`, `?tab=`, a typo and
+// no parameter at all render it — so it has no spelling to get wrong and `scopeTabHref` emits the
+// plain scope URL for it. An unrecognised value is answered with the DEFAULT TAB rather than a 400:
+// a view selector is not an authority question (`handlePage`'s ruling for `?q=`), and a stale or
+// hand-edited tab link landing on the entries is more useful than a refusal page.
+const (
+	TabSessions = "sessions"
+	TabArcs     = "arcs"
 )
 
 // ViewRaw is the one recognised [QueryView] value: the entry's file, as bytes.
