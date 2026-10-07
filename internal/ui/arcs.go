@@ -144,7 +144,10 @@ func (s *Server) handleArcPage(w http.ResponseWriter, r *http.Request, id identi
 		writePlain(w, http.StatusInternalServerError, "the store could not be read")
 		return
 	}
-	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes}
+	// ⚠ `Now` WAS MISSING HERE BEFORE THE ARCS PAGE EXISTED, so this page rendered every registration
+	// time as an absolute date while every other browse page rendered relative ones. Set now, so the
+	// arc a reader clicks on `/arcs` says "registered 3h ago" in both places.
+	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now()}
 
 	q := r.URL.Query()
 	homeID, slug := control.ID(q.Get(QueryHome)), q.Get(QuerySlug)
@@ -170,6 +173,10 @@ func (s *Server) handleArcPage(w http.ResponseWriter, r *http.Request, id identi
 	switch rep.Status {
 	case report.StatusArcFound:
 		view.Scope = &scope
+		// The tab is read AFTER every refusal, `handleScopePage`'s rule: it selects which view of an
+		// arc the caller already proved they can see, and is never an authority input — so every miss
+		// answers the same bytes whatever `tab` says.
+		view.Tab = arcTab(q.Get(QueryTab))
 	case report.StatusRegistrationsUnconfigured:
 		// Nothing about the home is carried onto the page: the off state is one page for everybody.
 	default:
@@ -508,15 +515,136 @@ func ArcPage(v PageView) g.Node {
 					report.SessionsReadsLine, report.ArcVisibilityLine, report.ArcsRegistrationLine)),
 				badge,
 			),
-			g.If(len(rep.DeclaredVisible) > 0, labelledList("Declared scopes", rep.DeclaredLine(),
-				h.Ul(h.Class("chips chips-scope"), g.Map(rep.DeclaredVisible, func(n string) g.Node {
-					return scopeChip(n, ids)
-				})))),
-			labelledList("Members "+strconv.Itoa(len(reg.Members)), rep.MembersHeading(),
-				h.Ul(h.Class("entry-list"), g.Map(rep.SortedMembers(), func(m arcs.Member) g.Node {
-					return memberRow(rep, m, memberLabels[m.Session], ids, v.Now)
-				}))),
+			arcTabs(s.ID, reg.Slug, v.Tab, len(arcScopeRows(rep)), len(reg.Members)),
+			arcTabPanel(rep, v.Tab, memberLabels, ids, v.Now),
 		),
+	)
+}
+
+// 🔴 THE ARC PAGE'S TWO TABS — SCOPES · SESSIONS — AND NO THIRD (operator decision O2, review ruling
+// D1: the "entries touched" tab was deleted in round 0). `ScopePage`'s shape exactly: server-rendered
+// links switched by `?tab=`, the current tab a `<span>`, ONLY THE SELECTED PANEL IN THE DOCUMENT, and
+// an unknown value answered with the default tab rather than a 400. Both panels lay out data the page
+// already held — `report.Arc`'s narrowed declared scopes, its `WroteIn` map and the member list — so
+// adding them added no read and no report change.
+
+// arcTab folds a `?tab=` value on the arc page: [TabSessions], or "" (scopes) for everything else —
+// including `arcs` and `entries`, which are scope-page tabs and mean nothing here.
+func arcTab(raw string) string {
+	if raw == TabSessions {
+		return raw
+	}
+	return ""
+}
+
+// arcTabHref is the ONE place an arc-tab URL is built. The scopes tab emits the plain arc URL
+// (`arcHref`), so each state has exactly one canonical URL; every operand goes through
+// `url.Values.Encode`.
+func arcTabHref(home control.ID, slug, tab string) string {
+	if tab == "" {
+		return arcHref(home, slug)
+	}
+	return ArcPath + "?" + url.Values{QueryHome: []string{string(home)}, QuerySlug: []string{slug},
+		QueryTab: []string{tab}}.Encode()
+}
+
+// arcTabs is the arc page's tab strip, each label carrying its count.
+func arcTabs(home control.ID, slug, current string, scopes, members int) g.Node {
+	tab := func(label string, count int, tab string) g.Node {
+		text := label + " " + strconv.Itoa(count)
+		if tab == current {
+			return h.Span(h.Class("view-tab view-tab-here"), h.Data("tab", arcTabName(tab)), g.Text(text))
+		}
+		return h.A(h.Class("view-tab"), h.Data("tab", arcTabName(tab)), h.Href(arcTabHref(home, slug, tab)), g.Text(text))
+	}
+	return h.Nav(
+		h.Class("view-tabs"),
+		// Named: the page's second `<nav>`, after the breadcrumb (axe `landmark-unique`).
+		h.Aria("label", "Arc view"),
+		tab("Scopes", scopes, ""),
+		tab("Sessions", members, TabSessions),
+	)
+}
+
+// arcTabName is a tab's stable name for `data-tab`.
+func arcTabName(tab string) string {
+	if tab == "" {
+		return "scopes"
+	}
+	return tab
+}
+
+// arcScopeRow is one readable scope on the arc's scopes tab: declared by the registration, written
+// in by a member, or both.
+type arcScopeRow struct {
+	Name     string
+	Declared bool
+	// Writers is how many member sessions wrote an attributed bullet there.
+	Writers int
+}
+
+// arcScopeRows is the scopes tab's rows: the union of the NARROWED declared scopes and every scope a
+// member wrote in (already narrowed — `report.Arc` walks only the readable index), sorted byte-wise.
+// Keyed on the FOLDED name (`idsByName`'s reason): a declared scope is stored folded while `WroteIn`
+// carries the index's spelling, and the two are one scope.
+func arcScopeRows(rep report.ArcReport) []arcScopeRow {
+	byName := map[string]*arcScopeRow{}
+	get := func(name string) *arcScopeRow {
+		key := store.NormalizeRef(name)
+		if r, ok := byName[key]; ok {
+			return r
+		}
+		r := &arcScopeRow{Name: name}
+		byName[key] = r
+		return r
+	}
+	for _, d := range rep.DeclaredVisible {
+		get(d).Declared = true
+	}
+	for _, scopes := range rep.WroteIn {
+		for _, sc := range scopes {
+			get(sc).Writers++
+		}
+	}
+	out := make([]arcScopeRow, 0, len(byName))
+	for _, r := range byName {
+		out = append(out, *r)
+	}
+	slices.SortFunc(out, func(a, b arcScopeRow) int { return strings.Compare(a.Name, b.Name) })
+	return out
+}
+
+// arcTabPanel renders ONLY the selected tab's panel.
+func arcTabPanel(rep report.ArcReport, tab string, memberLabels map[string]string, ids map[string]control.ID, now time.Time) g.Node {
+	if tab == TabSessions {
+		return h.Div(
+			h.ID("arc-sessions"),
+			g.If(len(rep.Reg.Members) == 0, h.P(h.Class("empty"), h.TitleAttr(rep.MembersHeading()),
+				g.Text("This registration lists no member session."))),
+			g.If(len(rep.Reg.Members) > 0, h.Ul(h.Class("entry-list"), h.TitleAttr(rep.MembersHeading()),
+				g.Map(rep.SortedMembers(), func(m arcs.Member) g.Node {
+					return memberRow(rep, m, memberLabels[m.Session], ids, now)
+				}))),
+		)
+	}
+	rows := arcScopeRows(rep)
+	return h.Div(
+		h.ID("arc-scopes"),
+		g.If(len(rows) == 0, h.P(h.Class("empty"), h.TitleAttr(rep.DeclaredLine()),
+			g.Text("No scope you can read is declared by this arc or written in by its members."))),
+		g.If(len(rows) > 0, h.Ul(h.Class("entry-list"), h.TitleAttr(rep.DeclaredLine()), g.Map(rows, func(r arcScopeRow) g.Node {
+			provenance, tip := "inferred", "a member session wrote here; the arc did not declare this scope"
+			if r.Declared {
+				provenance, tip = "declared", "the registration names this scope"
+			}
+			return h.Li(
+				h.Class("entry-row"),
+				h.Data("scope", r.Name),
+				h.Span(h.Class("ref"), h.TitleAttr(r.Name), scopeLink(Scope{ID: ids[store.NormalizeRef(r.Name)], Name: r.Name})),
+				h.Span(h.Class("badge badge-quiet"), h.TitleAttr(tip), g.Text(provenance)),
+				h.Span(h.Class("entry-count"), g.Text(plural(r.Writers, "member wrote here", "members wrote here"))),
+			)
+		}))),
 	)
 }
 

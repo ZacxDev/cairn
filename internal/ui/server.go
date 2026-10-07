@@ -77,6 +77,10 @@ type Source interface {
 	// interface for `Touched`'s reason — it is the one browse read that aggregates across scopes, so
 	// it is the last one that may answer through a door the authority walk does not count.
 	Session(auth control.Authorization, session string) (SessionAnswer, error)
+	// Arcs answers `/arcs`: every registration homed in a readable scope, with each one's newest
+	// member bullet over the readable scopes. On this interface for `Touched`'s reason — a second
+	// seam would be a route answering about authority through a door the walk does not count.
+	Arcs(auth control.Authorization) (report.ArcsAcrossReport, error)
 }
 
 // Scope is one scope's worth of entries, as the pages render them.

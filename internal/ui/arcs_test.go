@@ -166,6 +166,12 @@ func arcURL(home control.ID, slug string) string {
 	return ArcPath + "?" + url.Values{QueryHome: []string{string(home)}, QuerySlug: []string{slug}}.Encode()
 }
 
+// arcTabURL is the arc page's URL on one tab — spelled by hand, `scopeTabURL`'s reason.
+func arcTabURL(home control.ID, slug, tab string) string {
+	return ArcPath + "?" + url.Values{QueryHome: []string{string(home)}, QuerySlug: []string{slug},
+		QueryTab: []string{tab}}.Encode()
+}
+
 func scopeURL(id control.ID) string { return ScopePath + "?" + QueryID + "=" + string(id) }
 
 // scopeTabURL is the scope page's URL on one tab — spelled here by hand rather than through
@@ -234,7 +240,9 @@ func TestAnArcHomedInAnUnreadableScopeRendersExactlyLikeANeverRegisteredOne(t *t
 	}
 
 	// POSITIVE CONTROL 1: the same URL is a real answer for a caller who reads the home.
-	wide := getAs(t, arcsServer(t, src, readsW), arcURL(browseScopeB, arcsSlugVeiled))
+	// The members are on the arc page's SESSIONS tab since the arcs-first slice; the same URL on
+	// the default tab is still the 200 the refusals above are measured against.
+	wide := getAs(t, arcsServer(t, src, readsW), arcTabURL(browseScopeB, arcsSlugVeiled, TabSessions))
 	if wide.Code != http.StatusOK {
 		t.Fatalf("POSITIVE CONTROL FAILED: W, who reads beta, got %d for the veiled arc: %s. Every refusal "+
 			"above is then satisfied by a page that refuses everything.", wide.Code, wide.Body.String())
@@ -417,6 +425,9 @@ func (c *touchCounting) Arc(a control.Authorization, home, slug string) (report.
 }
 func (c *touchCounting) Session(a control.Authorization, session string) (SessionAnswer, error) {
 	return c.inner.Session(a, session)
+}
+func (c *touchCounting) Arcs(a control.Authorization) (report.ArcsAcrossReport, error) {
+	return c.inner.Arcs(a)
 }
 
 // TestAnUnknownStatusIsRenderedAsUnknownAndNeverAsOpen — Q4 on both surfaces: the `lantern-arc`

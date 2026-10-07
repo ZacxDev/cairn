@@ -302,7 +302,7 @@
     line-height: var(--tw-leading, var(--text-sm--line-height));
     color: var(--color-muted);
   }
-  .nav-share a, .nav-invite a {
+  .nav-arcs a, .nav-share a, .nav-invite a {
     font-size: var(--text-sm);
     line-height: var(--tw-leading, var(--text-sm--line-height));
     color: var(--color-accent);

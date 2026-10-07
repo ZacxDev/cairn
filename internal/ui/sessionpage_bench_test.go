@@ -110,6 +110,9 @@ func benchSessionPageAndScopeTabs(b *testing.B, scopes, entries int) {
 	scope := control.DerivedID(control.PrefixScope, "bench-scope-07")
 	for _, tc := range []struct{ name, path string }{
 		{"session-page", sessionURL("s-bench-05")},
+		// The arcs page (S1 of the arcs/presence plan): ONE whole-store member walk, the session page's
+		// shape, not one walk per arc — so its claim is "≤ the session page", stated as a ratio.
+		{"arcs-page", ArcsPath},
 		{"scope-tab-entries", ScopePath + "?" + QueryID + "=" + string(scope)},
 		{"scope-tab-sessions", ScopePath + "?" + QueryID + "=" + string(scope) + "&" + QueryTab + "=" + TabSessions},
 		{"scope-tab-arcs", ScopePath + "?" + QueryID + "=" + string(scope) + "&" + QueryTab + "=" + TabArcs},
