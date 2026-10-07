@@ -459,25 +459,26 @@ Every decision below is the plan author's, with its evidence; any of them can be
       minted before that deploy. The journal check covers the case regardless of the TTL: with no
       narrowed credential ever issued, no session can have been minted from one. Together these
       leave no narrowed session alive when presence switches on.
-    - **The BEARER path: derived, not carried — and the shared signature is NOT widened.**
-      `control.Authenticate` returns `(Principal, Authorization, error)` (`resolve.go:287`), `Narrow`
-      returns a plain `Authorization` (`resolve.go:399-419`), and `identity.TokenAuthority` has the
-      same signature (`internal/identity/machinetoken.go:28-30`, called at `:78`) and is shared
-      with the pod (`internal/api/server.go:357`, `internal/control/cache.go:249`). Widening it
-      would move the pod for a UI-only feature. Instead the presence predicate derives the bit
-      UI-side from the model it already holds. Authentication stamps the matched credential's id
-      on the principal (`p.CredentialID = matched.ID`, `resolve.go:313`), and the model keys
-      credentials by that id (`Credentials map[ID]Credential`, `internal/control/model.go:320`;
-      the row carries `NarrowedScopes`, `:285`). `cairn-ui`'s authority is a `control.Cache`
-      whose `Model` method is already handed to other UI code (`cmd/cairn-ui/main.go:308, 342`;
-      `cache.go:239`). So: `narrowed = CredentialID != "" && (row missing ||
-      row.NarrowedScopes != nil)` — a row that vanished between authentication and the check
-      reads as narrowed, i.e. fail closed. A cookie identity has an empty `CredentialID`
-      (`resolve.go:22-25`) and is un-narrowed by the prerequisite above. Computed per request,
-      never stored; `presence.For` returns nothing for a narrowed identity, so a narrowed bearer
-      credential sees no presence and cannot ring. **Ledger impact:** none in
+    - **The BEARER path: carried on the identity's own `Authorization` — AS BUILT in S2, which
+      deviates from this plan's first draft on an operator decision.** The draft derived the bit
+      UI-side from the matched credential's ROW (`CredentialID` → model lookup, missing row ⇒
+      narrowed), because no accessor existed when it was written. #195 (`6edcb45`) added one:
+      `control.Authorization.Narrowed()` (`internal/control/resolve.go:78`), set by `control.Narrow`
+      whenever the credential's `NarrowedScopes` is non-nil — so a narrowing to NOTHING and a
+      narrowing EQUAL to today's full set both read as narrowed. It is a fact about how the value
+      was produced, out of the SAME match `control.Authenticate` made, so it cannot describe a
+      different credential and needs no second model read. How it reaches the viewer:
+      `identity.MachineToken.Authenticate` hands through the `Authorization` `control.Authenticate`
+      returned (`Auth: auth`, `internal/identity/machinetoken.go`), so a narrowed bearer
+      credential's `Identity.Auth.Narrowed()` is true; `identity.CookieSession` re-resolves with
+      `control.Resolve` (`internal/identity/cookiesession.go`), which never sets it, so every
+      cookie identity reads un-narrowed — and is, because `POST /sign-in` refuses a narrowed
+      credential (`internal/ui/session.go`, `if auth.Narrowed()`), the prerequisite above.
+      `presence.visible` — the one predicate behind `presence.Store.For` — returns false for
+      `viewer.Auth.Narrowed()`, so a narrowed bearer credential sees no presence and
+      `presence.Service.Ring` queues nothing for it. **Ledger impact:** none in
       `internal/identity`, `internal/control` or `internal/api` — no `Identity` field, no signature
-      change, the pod is untouched; the derivation lives in `internal/presence`, which is already
+      change, no model lookup, the pod is untouched; the read lives in `internal/presence`, which is
       in `tests/control_mutants.py`'s `PKGS` (S2).
     - **What this buys: S2 is genuinely rollback-safe.** No session-store field, no pgstore
       migration, no schema version — rolling the UI image back is an ordinary rollback.
@@ -570,7 +571,7 @@ Two routes. There is no report route (ruling D4): outcomes are logged on the hos
 | **A stolen push token** | Can replace presence rows for its owner on its ONE host — badges can be made to LIE for ≤ TTL. It cannot aim a ring (the executor decides the pane, decision 9), read anything, sign in, or enqueue. |
 | **A stolen claim token** | Can claim — and so SUPPRESS — rings queued for its `(owner, host)`. Nothing else. |
 | **Revocation** | Delete the digest row; the token file is re-read per agent request, so the next request is 401 (S2 test). A row for another owner appearing in that re-read is refused as a row, logged (decision 15). |
-| **A narrowed credential or a session minted from one** | A narrowed bearer credential sees no presence and cannot ring (bit derived per request from the credential row, decision 11; e2e (f)). A session cannot be minted from one once the companion change — S2's hard prerequisite, pinned by S2's Go prerequisite test and repeated end to end by S5's e2e (f) — is deployed. Sessions minted before it are closed by the deploy precondition: zero narrowed credentials measured on either journal (the check that holds whatever the TTL), and S2 deploying no sooner than the instance's effective session TTL later (12 h by default; `-session-ttl` / `CAIRN_UI_SESSION_TTL` can change it). |
+| **A narrowed credential or a session minted from one** | A narrowed bearer credential sees no presence and cannot ring (bit read per request as `Auth.Narrowed()`, decision 11 as built; e2e (f)). A session cannot be minted from one once the companion change — S2's hard prerequisite, pinned by S2's Go prerequisite test and repeated end to end by S5's e2e (f) — is deployed. Sessions minted before it are closed by the deploy precondition: zero narrowed credentials measured on either journal (the check that holds whatever the TTL), and S2 deploying no sooner than the instance's effective session TTL later (12 h by default; `-session-ttl` / `CAIRN_UI_SESSION_TTL` can change it). |
 | **Stale presence** (pane closed, window renumbered, server restarted and `@N` reused) | Server: TTL and whole-host replace. Host: only generation-CHECKED, ledger-backed, unique rows are pushed, and the executor re-runs that predicate at ring time (decision 9). A stale row can show an old target for ≤ TTL; it can never aim a ring. |
 | **Two hosts present one session** | Deterministic target (decision 7); e2e (e). |
 | **What the bell can do** | Write ONE constant byte `0x07` to a pane tty the executor's uid owns. Writing the slave side is pane OUTPUT (verified above); the executor makes no ioctl; the ring payload carries no bytes, so there is nothing to inject even if the executor were wrong. |
@@ -584,7 +585,7 @@ Two routes. There is no report route (ruling D4): outcomes are logged on the hos
 |---|---|---|---|---|
 | S0 | cairn | **The sign-in widening** (finding above) — owned by the companion change, not by this plan. Listed so it is not lost. | — | Independent. |
 | S1 | cairn | **Arcs-first page + `/arc` tabs, no presence.** `GET /arcs` (decisions 10, 12, 13); `/arc?…&tab=` ∈ {scopes, sessions}. | `routes` + constants; `routes_test.go` hand ledger, `bareGETAnswer`, `contentAuthority`; `uiaudit/targets.go` (`/arcs` in `linkExpanded`) + `boot.go` fixtures (a recent, an open-old, a closed-old arc); `internal/ui/README.md`; `tests/control_mutants.py` rows (and the pinned count it forces into `ci.yml`). NOT `flake.nix`, NOT the corpus, NOT the `ok` floor (no new package). | Read-only over the journal and store that exist. Depends on #193 merging. |
-| S2 | cairn | **Presence store + agent API.** New package `internal/presence` (stdlib-only: the owner predicate, target selection, TTL, whole-host replace, the ring queue, token-file parsing); `cmd/cairn-ui` flags `-presence-agent-addr`, `-presence-tokens`, `-presence-owner`, `-issue-presence-token`; the agent listener's own ledger + test; the reachable-bind refusal on its bind; the bearer narrowing bit, DERIVED in `internal/presence` from `control.Cache.Model()`'s credential row keyed by `Principal.CredentialID` (missing row ⇒ narrowed) — NOT a new `identity.Identity` field and NOT a wider `TokenAuthority` signature, so `internal/identity`, `internal/control`, `internal/api` and the pod do not move (decision 11). **HARD PREREQUISITE: the companion sign-in change merged and deployed, pinned by S2's Go prerequisite test; S2 deploys no sooner than the instance's effective session TTL after it (12 h by default, `cmd/cairn-ui/main.go:219`), with no pre-existing narrowed credential on the target journal (decision 11's deploy precondition).** No session-store or pgstore schema change. | **`ci.yml:831` `ok` floor set to the `ok` count MEASURED on the merged tree** — 24 if nothing else moved (23 measured on `64475d7` + `internal/presence`); it is a `<` floor and silent if forgotten, and it is already 4 stale on `main` (a separate defect, handled outside this plan); **`./internal/presence/` added to `tests/control_mutants.py` `PKGS`** (recommended — the owner predicate IS an authz seam), which `tests/test_control_mutant_count_is_pinned.py` then forces through `ci.yml`'s step name/comments and the README enumerations; `cmd/cairn-ui` flag tests; `internal/ui/README.md`; `depspolicy` unchanged (asserted). | No browser change yet, and rollback-safe: it adds no schema version, so rolling the UI image back is an ordinary rollback. |
+| S2 | cairn | **Presence store + agent API.** New package `internal/presence` (stdlib-only: the owner predicate, target selection, TTL, whole-host replace, the ring queue, token-file parsing); `cmd/cairn-ui` flags `-presence-agent-addr`, `-presence-tokens`, `-presence-owner`, `-issue-presence-token`; the agent listener's own ledger + test; the reachable-bind refusal on its bind; the bearer narrowing bit READ as `viewer.Auth.Narrowed()` (#195's accessor, carried by the machine-token backend; AS BUILT — decision 11) — NOT a new `identity.Identity` field and NOT a wider `TokenAuthority` signature, so `internal/identity`, `internal/control`, `internal/api` and the pod do not move. **HARD PREREQUISITE: the companion sign-in change merged and deployed, pinned by S2's Go prerequisite test; S2 deploys no sooner than the instance's effective session TTL after it (12 h by default, `cmd/cairn-ui/main.go:219`), with no pre-existing narrowed credential on the target journal (decision 11's deploy precondition).** No session-store or pgstore schema change. | **`ci.yml:831` `ok` floor set to the `ok` count MEASURED on the merged tree** — 24 if nothing else moved (23 measured on `64475d7` + `internal/presence`); it is a `<` floor and silent if forgotten, and it is already 4 stale on `main` (a separate defect, handled outside this plan); **`./internal/presence/` added to `tests/control_mutants.py` `PKGS`** (recommended — the owner predicate IS an authz seam), which `tests/test_control_mutant_count_is_pinned.py` then forces through `ci.yml`'s step name/comments and the README enumerations; `cmd/cairn-ui` flag tests; `internal/ui/README.md`; `depspolicy` unchanged (asserted). | No browser change yet, and rollback-safe: it adds no schema version, so rolling the UI image back is an ordinary rollback. |
 | S3 | tooling repo | **Host side, on EACH host, sharing nothing with the existing snapshot unit (Q3).** (i) A presence push: oneshot service + timer (`OnStartupSec = 30s` for the first elapse, `OnUnitActiveSec = 60s`, `AccuracySec = 1s`), local scan via `local_host_label`, decision 9's filter, decision 8's wire body, that host's push token; (ii) a long-running ring-claim service (`Restart = "always"`, ~5 s loop) with the executor (decision 9) and that host's claim token. Tokens in 0600 files, never argv. | The tooling repo's own suite and nix module; no cairn ledger. | Inert until tokens are minted. |
 | S4 | cairn | **Presence badges** — `host · target · hotkey · runtime · seen Ns ago` (+ "also on …") on the session page and session rows; a "live pane" badge on `/arcs` and `/arc` rows — all through the one predicate. | `internal/ui` render tests; uiaudit fixture (owner + non-owner); README. No row. | Read-only over S2. |
 | S5 | cairn | **Bell.** `POST /ring` (browser ledger, class `0` — gates by method), queue semantics (O4/D3, decision 7), the button where S4 shows presence, a 303 back to the session page; `tests/presence/e2e.sh` with its `--self-test`, wired into the `go` job. | `routes` + `routes_test.go` (`POST /ring`); `tests/control_mutants.py`; `ci.yml` (the e2e step); README. | Needs S2–S4. |
@@ -617,11 +618,15 @@ Sizes are not estimated; nobody has measured these.
   refused and the session store holds no new record — red on any tree lacking the companion
   change, so S2 cannot merge ahead of it. And a provider (OAuth) sign-in yields an un-narrowed
   session: the positive control that the refusal is specific to narrowing, not to sign-in.
-- **Derived bearer bit:** over one model, an un-narrowed bearer credential of A sees A's presence
-  (positive control); a narrowed credential of A sees none; a principal whose `CredentialID`
-  names a row absent from the model sees none (fail closed). Shown RED by reading the bit from
-  `Authorization` emptiness instead of the credential row, and by treating a missing row as
-  un-narrowed.
+  AS BUILT: the refusal half is #195's `TestANarrowedCredentialCannotSignIn` (with its battery
+  row `ui-sign-in-accepts-a-narrowed-credential`), relied on rather than duplicated; S2 adds
+  the provider half, `TestAProviderSignInMintsAnUnnarrowedSession`.
+- **Bearer narrowing bit (AS BUILT, decision 11):** over one model, through the REAL
+  machine-token backend, an un-narrowed bearer credential of A sees A's presence and A's cookie
+  session sees it (positive controls); A's credentials narrowed to one scope, to every scope A has
+  today, and to nothing each see none. Shown RED by ignoring `Narrowed()` in the predicate
+  (`presence-predicate-ignores-narrowing`). The credential-row derivation and its two mutants
+  were not built: #195's accessor made the row lookup — and its missing-row case — unnecessary.
 - Target selection: two hosts, newest `last_activity` wins; equal and both-empty → smaller label.
 - Token isolation (decision 3): push and claim tokens presented to every browser GET row, to
   `POST /sign-in` and to the pod are refused exactly as a random token is (byte-compare); a real
