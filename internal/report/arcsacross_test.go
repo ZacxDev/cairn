@@ -43,18 +43,18 @@ func TestArcsAcrossListsReadableHomesWithTheirNewestReadableMemberBullet(t *test
 		t.Fatal(err)
 	}
 	want := []ArcAcross{
-		{Home: "north-notes", Slug: "kettle-arc", Status: arcs.StatusOpen, ClosingKind: arcs.ClosingCheck, Members: 1,
+		{Home: "north-notes", Slug: "kettle-arc", Status: arcs.StatusOpen, Members: 1,
 			DeclaredVisible: []string{"north-notes", "south-notes"}, RegisteredAt: "2000-01-06T07:08:09Z",
 			ReportedAt: "2000-01-02T00:00:00Z", NewestMemberBullet: "2000-01-07"},
-		{Home: "south-notes", Slug: "hush-arc", Status: arcs.StatusClosed, ClosingKind: arcs.ClosingCheck, Members: 1,
+		{Home: "south-notes", Slug: "hush-arc", Status: arcs.StatusClosed, Members: 1,
 			DeclaredVisible: []string{"south-notes"}, RegisteredAt: "2000-01-06T07:08:09Z",
 			ReportedAt: "2000-01-02T00:00:00Z", NewestMemberBullet: ""},
 	}
 	if !reflect.DeepEqual(rep.Arcs, want) {
 		t.Errorf("arcs\n got %+v\nwant %+v", rep.Arcs, want)
 	}
-	if !rep.Configured || rep.ScopesScanned != 2 {
-		t.Errorf("configured %v, scopes scanned %d; want true, 2", rep.Configured, rep.ScopesScanned)
+	if !rep.Configured {
+		t.Error("a configured journal answered Configured=false")
 	}
 	// POSITIVE CONTROL: a caller who reads east sees east's newer bullets move both arcs, and the
 	// east-homed arc — so the narrowing above is a measurement, not a walk that reads nothing.

@@ -39,8 +39,6 @@ type ArcsAcrossReport struct {
 	Damaged bool
 	// Arcs are in `arcs.Snapshot.Sorted` order (home, then slug).
 	Arcs []ArcAcross
-	// ScopesScanned is how many readable scopes the member walk read.
-	ScopesScanned int
 	// Coverage SUMS `touch.Writes`'s counts over every readable scope — the walk's own denominator:
 	// a bullet with no trailer names nobody, so it can never move an arc.
 	Coverage touch.Coverage
@@ -49,7 +47,7 @@ type ArcsAcrossReport struct {
 // ArcAcross is one listed arc. Flat fields rather than the whole `arcs.Registration`, so a caller
 // cannot render the UNNARROWED declared-scope list by reaching for the record.
 type ArcAcross struct {
-	Home, Slug, Status, ClosingKind string
+	Home, Slug, Status string
 	// Members is the registration's member count.
 	Members int
 	// DeclaredVisible is the declared scopes NARROWED to `visible` — a hidden one is omitted, not
@@ -87,7 +85,6 @@ func ArcsAcross(storeRoot string, visible store.ScopeSet, snap *arcs.Snapshot) (
 		if err != nil {
 			return ArcsAcrossReport{}, err
 		}
-		rep.ScopesScanned++
 		c := res.Coverage
 		rep.Coverage.Entries += c.Entries
 		rep.Coverage.EntriesMalformed += c.EntriesMalformed
@@ -106,7 +103,7 @@ func ArcsAcross(storeRoot string, visible store.ScopeSet, snap *arcs.Snapshot) (
 		if !visible.Allows(reg.Home) {
 			continue
 		}
-		line := ArcAcross{Home: reg.Home, Slug: reg.Slug, Status: reg.Status, ClosingKind: reg.ClosingKind,
+		line := ArcAcross{Home: reg.Home, Slug: reg.Slug, Status: reg.Status,
 			Members: len(reg.Members), RegisteredAt: reg.RegisteredAt, ReportedAt: reg.ReportedAt}
 		for _, d := range reg.DeclaredScopes {
 			if visible.Allows(d) {

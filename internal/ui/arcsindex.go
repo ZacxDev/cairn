@@ -40,11 +40,16 @@ import (
 // 🔴 THE ATTRIBUTION COST IS ACCEPTED, NOT OVERLOOKED (O1). A trailer's session is self-declared, so
 // anybody who can write a readable scope can keep an arc live by appending a bullet naming a member
 // session. It reorders what the reader could already see; it never makes an arc visible.
-// `TestABulletNamingAMemberByANonMemberKeepsTheArcLive` pins it so nobody "fixes" it silently.
+// `TestABulletNamingAMemberByANonMemberKeepsTheArcLive` is a TRIPWIRE pinning it (an invariant guard,
+// not regression coverage) so nobody "fixes" it silently.
 
-// arcLiveWindow is how recently an arc must have been updated to be live when it is not `open`.
-// "Within 14 days" is inclusive at the boundary: exactly 14 days old is still live.
-const arcLiveWindow = 14 * 24 * time.Hour
+// arcLiveDays is how recently an arc must have been updated to be live when it is not `open`.
+// "Within 14 days" is inclusive at the boundary, measured on each source's OWN precision
+// ([arcIsLive]): a registration instant at most 14×24h old, or a bullet DATE on or after today−14.
+const arcLiveDays = 14
+
+// arcLiveWindow is [arcLiveDays] as a duration, for the registration's instant comparison.
+const arcLiveWindow = arcLiveDays * 24 * time.Hour
 
 // QueryAll is the arcs page's show-all toggle: `?all=1` lists every visible arc. Exactly one value is
 // recognised, [QueryView]'s ruling — any other value is the default (live-only) page, never a 400.
@@ -71,10 +76,8 @@ type arcActivity struct {
 }
 
 // arcLastUpdated is decision 10: max(registration, clamped newest member bullet). A tie goes to the
-// registration, which carries a time of day where the bullet carries only a date.
-//
-// ⚠ A ZERO CLOCK CLAMPS NOTHING: "today" would be the year 1 and every bullet would lose, so with no
-// clock the bullet is taken as written. Every served request has a clock (`Config.Now`).
+// registration, which carries a time of day where the bullet carries only a date. `now` is always a
+// real clock — `New` installs one — so the clamp has no off switch.
 func arcLastUpdated(a report.ArcAcross, now time.Time) arcActivity {
 	var out arcActivity
 	if at, err := time.Parse(time.RFC3339, a.RegisteredAt); err == nil {
@@ -87,11 +90,8 @@ func arcLastUpdated(a report.ArcAcross, now time.Time) arcActivity {
 	if err != nil {
 		return out
 	}
-	if !now.IsZero() {
-		today := time.Date(now.UTC().Year(), now.UTC().Month(), now.UTC().Day(), 0, 0, 0, 0, time.UTC)
-		if day.After(today) {
-			day = today
-		}
+	if today := utcDay(now); day.After(today) {
+		day = today
 	}
 	if day.After(out.At) {
 		out = arcActivity{At: day, FromBullet: true, BulletDate: day.Format("2006-01-02")}
@@ -99,9 +99,27 @@ func arcLastUpdated(a report.ArcAcross, now time.Time) arcActivity {
 	return out
 }
 
-// arcIsLive is decision 12: `open`, or updated within [arcLiveWindow]. `unknown` is NOT `open`.
-func arcIsLive(a report.ArcAcross, last time.Time, now time.Time) bool {
-	return a.Status == arcs.StatusOpen || now.Sub(last) <= arcLiveWindow
+// utcDay is `t`'s calendar day, as that day's 00:00 UTC.
+func utcDay(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// arcIsLive is decision 12: `open`, or updated within [arcLiveDays]. `unknown` is NOT `open`.
+//
+// 🔴 EACH SOURCE IS COMPARED AT ITS OWN PRECISION. A registration is an instant, so it is live while
+// `now − registered_at ≤ 14×24h`. A bullet is a DATE with no time of day: comparing its 00:00 against
+// a `now` that carries one made a bullet dated exactly today−14 read as 14d12h at noon — hidden, while
+// its row said "14d ago". So a winning bullet is live when its date is on or after today−14, by whole
+// UTC dates (`TestABulletDatedExactlyFourteenDaysAgoIsStillLive`).
+func arcIsLive(a report.ArcAcross, act arcActivity, now time.Time) bool {
+	if a.Status == arcs.StatusOpen {
+		return true
+	}
+	if act.FromBullet {
+		return !act.At.Before(utcDay(now).AddDate(0, 0, -arcLiveDays))
+	}
+	return now.Sub(act.At) <= arcLiveWindow
 }
 
 // arcIndexRow is one arc with its fold applied.
@@ -117,7 +135,7 @@ type arcIndexRow struct {
 func arcsIndexRows(rep report.ArcsAcrossReport, now time.Time, all bool) (rows []arcIndexRow, hidden int) {
 	for _, a := range rep.Arcs {
 		act := arcLastUpdated(a, now)
-		live := arcIsLive(a, act.At, now)
+		live := arcIsLive(a, act, now)
 		if !live {
 			hidden++
 		}

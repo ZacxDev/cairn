@@ -277,8 +277,10 @@ func waitHealthy(ctx context.Context, url string, budget time.Duration) error {
 //
 // 🔴 MEASURED NECESSARY: with no members, the session page was reachable only bare. The fixture's
 // attributed bullets sit in a scope the walk's per-page bound never captures, so no sessions tab it
-// reached listed a row; an arc's member chip is the one link to `/session?session=…` every captured
-// arc page carries. A store with no trailer at all is a CONTENT-FLOOR refusal, for `listScopes`'
+// reached listed a row; an arc's MEMBERS are the links to `/session?session=…` — as chips on each arc
+// row of the scope page's ARCS tab, and as rows on the arc page's SESSIONS tab (since the arc page
+// grew tabs, its default scopes tab carries none). Measured on one walk: the first `/session` page
+// was published by a scope page's arcs tab. A store with no trailer at all is a CONTENT-FLOOR refusal, for `listScopes`'
 // reason: the walk would capture no session page and report the row covered.
 func fixtureMembers(storeRoot string) ([]arcs.Member, error) {
 	index, err := store.LoadStore(storeRoot, "scanned", store.Unrestricted())

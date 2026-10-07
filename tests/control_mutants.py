@@ -3223,8 +3223,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-arcs-index-future-bullet-not-clamped",
         path="internal/ui/arcsindex.go",
-        old="\t\tif day.After(today) {",
-        new="\t\tif false && day.After(today) {",
+        old="\tif today := utcDay(now); day.After(today) {",
+        new="\tif today := utcDay(now); false && day.After(today) {",
         killer="TestAFutureDatedBulletDoesNotSortAboveToday",
         why="a bullet's date is the writer's word on a `put`, so it looks like data to sort by as "
         "written — and a member can then pin an arc to the top of everyone's page until the date passes.",
@@ -3242,8 +3242,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-arcs-index-unknown-counts-as-open",
         path="internal/ui/arcsindex.go",
-        old="return a.Status == arcs.StatusOpen || now.Sub(last) <= arcLiveWindow",
-        new="return a.Status != arcs.StatusClosed || now.Sub(last) <= arcLiveWindow",
+        old="\tif a.Status == arcs.StatusOpen {",
+        new="\tif a.Status != arcs.StatusClosed {",
         killer="TestTheArcsPageListsLiveArcsNewestFirstAndCountsTheHidden",
         why="'not closed' is the obvious spelling of 'still going', and it reads an arc whose tool "
         "reported NO verdict as open — Q4's one rule.",
@@ -3251,11 +3251,21 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-arcs-index-live-window-widened",
         path="internal/ui/arcsindex.go",
-        old="const arcLiveWindow = 14 * 24 * time.Hour",
-        new="const arcLiveWindow = 15 * 24 * time.Hour",
+        old="const arcLiveDays = 14",
+        new="const arcLiveDays = 15",
         killer="TestTheArcsPageListsLiveArcsNewestFirstAndCountsTheHidden",
         why="an off-by-a-day window is invisible on every arc that is not within a day of the "
         "boundary; only a fixture measured on BOTH sides of 14 days sees it.",
+    ),
+    Mutant(
+        name="ui-arcs-index-bullet-window-compared-as-an-instant",
+        path="internal/ui/arcsindex.go",
+        old="return !act.At.Before(utcDay(now).AddDate(0, 0, -arcLiveDays))",
+        new="return now.Sub(act.At) <= arcLiveWindow",
+        killer="TestABulletDatedExactlyFourteenDaysAgoIsStillLive",
+        why="one comparison for both sources is the obvious shape, and it was this PR's first head: a "
+        "bullet's date is 00:00 with no time of day, so against a noon clock a bullet dated today-14 "
+        "reads as 14d12h and hides while its row says '14d ago' (audit round 1).",
     ),
     Mutant(
         name="ui-arcs-index-member-walk-unrestricted",

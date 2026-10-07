@@ -3010,14 +3010,17 @@ holds no clock; `arcsindex.go` applies what needs one:
   bullet CLAMPED TO TODAY and taken as 00:00 UTC). A tie goes to the registration (it carries a time
   of day). `reported_at` is the tooling's clock and optional: shown in the row's tooltip, never used.
   The row says which won — "registered 3h ago" or "bullet today" — through `instantAgo` / `dateAgo`.
-- **live** = `open` OR last updated within 14 days, inclusive. `unknown` is NOT `open` (Q4).
+- **live** = `open` OR last updated within 14 days, inclusive, each source at its own precision: a
+  registration instant at most 14×24h old, or a winning bullet DATE on or after today−14 (whole UTC
+  dates — a bullet has no time of day). `unknown` is NOT `open` (Q4).
 - newest first, ties by `(home, slug)`; the page prints "N not live" — a count over VISIBLE arcs
   only — and offers "show all N" (`?all=1`) or "live only". Only `1` is recognised; any other value
   is the default view, `?view=`'s ruling.
 
 🔴 **O1's cost is pinned, not just accepted.** A trailer's session is self-declared, so a bullet
 written under ANOTHER actor naming a member session keeps an arc live.
-`TestABulletNamingAMemberByANonMemberKeepsTheArcLive` is the positive control, so "fixing" it is a
+`TestABulletNamingAMemberByANonMemberKeepsTheArcLive` is an INVARIANT GUARD — a tripwire, not
+regression coverage (`ArcsAcross` keys on the session id and never reads the actor) — so "fixing" it is a
 red test and a decision, never a silent change.
 
 ## 🔴 `/arc` tabs: scopes · sessions, and no third
@@ -3040,7 +3043,7 @@ request IS the page) and `contentAuthority` (`source`); `Source.Arcs` (counted b
 `uiaudit/targets.go` (`ArcsPath` in `linkExpanded` — `TestTheREALLedgerIsFullyACCOUNTEDFor` was red
 until it joined) and `uiaudit/boot.go` (a recent, an open-old and a closed-old arc, so the live view,
 the not-live count and the toggle all render); `tailwind.css`/`app.css` (`.nav-arcs a` joins the
-header-link rule); eight `tests/control_mutants.py` rows. NOT `flake.nix` (no embedded asset), NOT
+header-link rule); nine `tests/control_mutants.py` rows. NOT `flake.nix` (no embedded asset), NOT
 the corpus (a browser row), NOT the `go` job's `ok` floor (no new package).
 
 ## Cost, measured
@@ -3061,7 +3064,8 @@ The behavioural tests were copied onto `origin/main` (`078d248`) with a scratch-
 | `TestAnArcHomedInAnUnreadableScopeIsNeverListedEvenWhenItsMembersWroteWhereYouRead` | RED (no route) | green |
 | `TestAMemberBulletInAnUnreadableScopeDoesNotMoveTheArc` | RED (no route) | green |
 | `TestAFutureDatedBulletDoesNotSortAboveToday` | RED (no route) | green |
-| `TestABulletNamingAMemberByANonMemberKeepsTheArcLive` | RED (no route) | green |
+| `TestABulletNamingAMemberByANonMemberKeepsTheArcLive` | RED (no route) — but an INVARIANT tripwire on O1's accepted cost, not regression coverage | green |
+| `TestABulletDatedExactlyFourteenDaysAgoIsStillLive` (audit round 1) | RED at this PR's first head `3c9cd9b` (a bullet dated today−14 hidden at noon while its row said "14d ago") | green |
 | `TestTheArcsPageOffAndBrokenStates` | RED (no route) | green |
 | `TestTheArcPageRendersOnlyTheSelectedTab` | RED (no panels, no tab strip) | green |
 | `TestTheArcScopesTabNarrowsAndMarksProvenance` | RED (no scope rows) — its narrowing half is an INVARIANT guard | green |
@@ -3074,7 +3078,8 @@ on that test's OWN assertion before the row was written: the clamp dropped
 (`TestAFutureDatedBulletDoesNotSortAboveToday`: order inverted, the future date printed);
 `reported_at` read instead of `registered_at`, `unknown` counted as open, the window widened to 15
 days (all `TestTheArcsPageListsLiveArcsNewestFirstAndCountsTheHidden`: the listed set and the
-not-live count move); the member walk unrestricted (`TestAMemberBulletInAnUnreadableScopeDoesNotMoveTheArc`);
+not-live count move); a winning bullet compared as an instant against the clock — this PR's first
+head (`TestABulletDatedExactlyFourteenDaysAgoIsStillLive`); the member walk unrestricted (`TestAMemberBulletInAnUnreadableScopeDoesNotMoveTheArc`);
 the home check dropped (`TestAnArcHomedInAnUnreadableScopeIsNeverListedEvenWhenItsMembersWroteWhereYouRead`);
 the arc tab ignored and an unknown tab passed through (`TestTheArcPageRendersOnlyTheSelectedTab`).
 Not a row, watched by hand: dropping the member-bullet lookup reddens
@@ -3084,8 +3089,10 @@ Not a row, watched by hand: dropping the member-bullet lookup reddens
 
 - **Scale beyond the benchmark's two synthetic sizes**, and the real store (plan: "could not
   measure"). Nothing is cached.
-- **Exactly 14 days.** The boundary is measured at 13d23h and 14d1h; `<=` against `<` at the exact
-  instant is not.
+- **Exactly 14 days on the REGISTRATION path.** That boundary is measured at 13d23h and 14d1h; `<=`
+  against `<` at the exact instant is not. The BULLET path compares whole UTC dates (a bullet has no
+  time of day) and is measured at today−14 (live) and today−15 (not) — audit round 1 found the
+  first head comparing a bullet's 00:00 against a clock with a time of day.
 - **The live view on a deployment with a skewed pod clock**: a `registered_at` in the UI's future is
   not clamped (decision 10 clamps bullet dates only) and sorts first.
 - **Tooltips on touch devices**, as Phase I records.

@@ -256,10 +256,34 @@ func TestAFutureDatedBulletDoesNotSortAboveToday(t *testing.T) {
 	}
 }
 
-// TestABulletNamingAMemberByANonMemberKeepsTheArcLive is the POSITIVE CONTROL for operator decision
-// O1's ACCEPTED COST, pinned so nobody "fixes" it silently: a trailer's session is self-declared, so
-// a bullet written under ANOTHER actor that NAMES a member session moves the arc. The control is the
-// same store without that bullet, where the arc is not live.
+// TestABulletDatedExactlyFourteenDaysAgoIsStillLive measures the window on the BULLET path at both
+// sides, by whole UTC dates: a bullet carries a date and no time of day, so "within 14 days" for it
+// means its date is on or after today−14. The clock is 12:00, so an instant comparison against the
+// bullet's 00:00 would put today−14 at 14d12h and hide it while its row says "14d ago".
+func TestABulletDatedExactlyFourteenDaysAgoIsStillLive(t *testing.T) {
+	readsA, _, _ := arcsWorld(t)
+	src := StoreSource{
+		Root: idxStore(t, map[string]string{"alpha-notes": "- 2000-02-16: day fourteen [cairn: kiln-bot/s-ember-0001]\n" +
+			"- 2000-02-15: day fifteen [cairn: kiln-bot/s-wick-0002]\n"}),
+		ArcJournal: arcsJournal(t,
+			idxReg("alpha-notes", "edge-arc", arcs.StatusClosed, ago(60*day), "s-ember-0001"),
+			idxReg("alpha-notes", "past-arc", arcs.StatusClosed, ago(60*day), "s-wick-0002")),
+	}
+	page := getArcs(t, idxServer(t, src, readsA), false)
+	if got, want := listedArcs(t, page), []string{"alpha-notes/edge-arc"}; !slices.Equal(got, want) {
+		t.Errorf("live arcs are %v, want %v — a bullet dated today−14 (2000-02-16) is within 14 days; today−15 is not", got, want)
+	}
+	if all := getArcs(t, idxServer(t, src, readsA), true); !strings.Contains(all, ">14d ago</time>") || !strings.Contains(all, ">15d ago</time>") {
+		t.Error("INSTRUMENT: the edge row does not say 14d ago, so the boundary measured is not the one a reader sees")
+	}
+}
+
+// TestABulletNamingAMemberByANonMemberKeepsTheArcLive is an INVARIANT GUARD — a TRIPWIRE, not
+// regression coverage: no defect ever violated it. It pins operator decision O1's ACCEPTED COST so
+// nobody "fixes" it silently: a trailer's session is self-declared, and `report.ArcsAcross` keys on
+// the session id and never reads the actor, so a bullet written under ANOTHER actor that NAMES a
+// member session moves the arc. The control is the same store without that bullet, where the arc is
+// not live. If it goes red, that is a decision to record, not a bug fixed.
 func TestABulletNamingAMemberByANonMemberKeepsTheArcLive(t *testing.T) {
 	readsA, _, _ := arcsWorld(t)
 	journal := arcsJournal(t, idxReg("alpha-notes", "fern-arc", arcs.StatusClosed, ago(45*day), "s-ember-0001"))
@@ -304,7 +328,7 @@ func TestTheArcsPageEscapesAPlantedHostileHomeAndSlug(t *testing.T) {
 	hostileHome := `n"><img src=x onerror=y>`
 	hostileSlug := `slug"<b>&home=evil#z`
 	rep := report.ArcsAcrossReport{Configured: true, Arcs: []report.ArcAcross{{
-		Home: hostileHome, Slug: hostileSlug, Status: arcs.StatusOpen, ClosingKind: arcs.ClosingCheck,
+		Home: hostileHome, Slug: hostileSlug, Status: arcs.StatusOpen,
 		DeclaredVisible: []string{hostileHome}, RegisteredAt: ago(time.Hour), ReportedAt: `r"<i>`,
 	}}}
 	view := PageView{Viewer: "v", Now: idxNow, Scopes: []Scope{{ID: "scp_planted", Name: hostileHome}}, ArcsIndex: &rep}
