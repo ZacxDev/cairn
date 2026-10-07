@@ -62,6 +62,7 @@ import (
 	// allowlist entry alone would be satisfied by a tree where `internal/api` imported it
 	// on every route.
 	"github.com/ZacxDev/cairn/internal/pgstore"
+	"github.com/ZacxDev/cairn/internal/presence"
 	"github.com/ZacxDev/cairn/internal/ui"
 )
 
@@ -263,6 +264,22 @@ func main() {
 		"the arc registry's journal (a FILE), READ-ONLY here — the pod writes it. NO DEFAULT: unset, "+
 			"the scope page's arcs card and the arc page say registrations are unconfigured. 🔴 IT MUST "+
 			"RESOLVE OUTSIDE -store — this surface refuses to start otherwise, for the pod's reason")
+	// 🔴 PRESENCE (S2): THREE LISTENER FLAGS THAT ARM ONE THING TOGETHER, AND A MINT MODE. No
+	// default and no environment spelling — see `presence.go` beside this file for why, and for
+	// the refusals each combination gets.
+	presenceAddr := flag.String(flagPresenceAddr, "",
+		"host:port of the SECOND listener serving the two presence agent routes. NO DEFAULT: unset, there is no "+
+			"listener. Needs -"+flagPresenceTokens+" and -"+flagPresenceOwner+"; assumes ONE replica (state is in memory)")
+	presenceTokens := flag.String(flagPresenceTokens, "",
+		"the presence token file (digests only), re-read on every agent request so deleting a row revokes it")
+	presenceOwner := flag.String(flagPresenceOwner, "",
+		"<kind>:<id> of this instance's SOLE presence owner; a token row for anybody else is refused. With -"+
+			flagIssuePresence+" it may also be an email or a project name, resolved once")
+	issuePresence := flag.String(flagIssuePresence, "",
+		"push|claim: mint ONE presence token for -"+flagPresenceOwner+" on -"+flagPresenceHost+
+			", append its digest to -"+flagPresenceTokens+", print the token once on stdout, and exit")
+	presenceHost := flag.String(flagPresenceHost, "",
+		"the ONE host label a token minted by -"+flagIssuePresence+" is bound to")
 	dsnDefault, dsnErr := databaseDSNDefault(os.Getenv)
 	dbDSN := flag.String("db-dsn", dsnDefault,
 		"PostgreSQL connection string for the session and invite tables; without one, sessions live in "+
@@ -346,6 +363,24 @@ func main() {
 	if err := refuseAnAuthorityNobodyCanSignInTo(authority, *controlJournal); err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(exitConfig)
+	}
+
+	// 🔴 THE PRESENCE FLAGS ARE JUDGED HERE, AFTER THE AUTHORITY IS MATERIALIZED, because the
+	// owner must be a principal it holds — and BEFORE anything is served. The mint mode exits
+	// here: it needs the authority to resolve the owner and nothing after this point.
+	presenceFlags := presenceSettings{addr: *presenceAddr, tokens: *presenceTokens, owner: *presenceOwner,
+		issue: *issuePresence, host: *presenceHost}
+	soleOwner, presenceOn, err := presenceListener(presenceFlags, authority.Model())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
+		os.Exit(exitConfig)
+	}
+	if presenceFlags.issue != "" {
+		if err := issuePresenceToken(os.Stdout, os.Stderr, authority.Model(), presenceFlags); err != nil {
+			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
+			os.Exit(exitConfig)
+		}
+		os.Exit(0)
 	}
 
 	machine, err := identity.NewMachineToken(authority)
@@ -515,6 +550,40 @@ func main() {
 		os.Exit(exitConfig)
 	}
 	limiter := netid.NewRateLimiter(maxFailures, window, lockout)
+
+	// 🔴 THE PRESENCE AGENT LISTENER, BOUND HERE SO EVERY WAY IT CAN FAIL IS A REFUSAL TO START
+	// rather than a goroutine that dies after the browser surface is already serving. Its bind
+	// gets its OWN reachability verdict, its limiter its OWN buckets, and its token file is read
+	// strictly once now — a row for another owner refuses the listener (decision 15).
+	presenceMode := "presence off (no -" + flagPresenceAddr + ")"
+	var agentServer *http.Server
+	var agentListener net.Listener
+	if presenceOn {
+		if err := presenceBindRefusal(*presenceAddr, proxyErr); err != nil {
+			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
+			os.Exit(exitConfig)
+		}
+		// ⚠ THE SERVICE IS HANDED TO NOTHING ELSE YET: S2 has no browser surface, so presence is
+		// written here and read by nobody until the badge slice wires it into `ui.Config`.
+		service := &presence.Service{Store: &presence.Store{}, Queue: &presence.Queue{}}
+		agent, rows, err := presence.NewAgent(presence.AgentConfig{
+			TokenFile: *presenceTokens, Owner: soleOwner, Service: service,
+			Limiter: netid.NewRateLimiter(maxFailures, window, lockout), TrustedProxies: trustedProxies,
+			Log: func(line string) { fmt.Fprintln(os.Stderr, "cairn-ui: "+line) },
+		})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error()+". Refusing to start")
+			os.Exit(exitConfig)
+		}
+		agentListener, err = net.Listen("tcp", *presenceAddr)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "cairn-ui: the presence agent listener cannot bind: "+err.Error()+". Refusing to start")
+			os.Exit(exitConfig)
+		}
+		agentServer = &http.Server{Handler: agent, ReadHeaderTimeout: 10 * time.Second}
+		presenceMode = fmt.Sprintf("presence agent on %s (sole owner %s, %d token row(s), %d route(s))",
+			agentListener.Addr(), soleOwner, len(rows), len(presence.AgentRoutes()))
+	}
 
 	// 🔴 THE CONFIG IS A NAMED VALUE RATHER THAN AN INLINE LITERAL, AND THE REASON IS THE
 	// STARTUP LINE BELOW. That line reports where the mutable state is, and it has to
@@ -719,8 +788,22 @@ func main() {
 	if src, ok := cfg.Source.(ui.StoreSource); ok && src.ArcJournal != "" {
 		arcsMode = "arcs read-only from " + src.ArcJournal
 	}
-	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s\n",
-		len(ui.DeclaredRoutes()), addr, *store, sharingMode, signInMode, stateMode, arcsMode)
+	if agentServer != nil {
+		go func() {
+			<-ctx.Done()
+			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = agentServer.Shutdown(shutdown)
+		}()
+		go func() {
+			if err := agentServer.Serve(agentListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				fmt.Fprintln(os.Stderr, "cairn-ui: the presence agent listener stopped: "+err.Error())
+				os.Exit(1)
+			}
+		}()
+	}
+	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s, %s\n",
+		len(ui.DeclaredRoutes()), addr, *store, sharingMode, signInMode, stateMode, arcsMode, presenceMode)
 	if err := listener.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(1)

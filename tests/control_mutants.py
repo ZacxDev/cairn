@@ -121,6 +121,12 @@ PKGS = (
     # had THREE spellings, the first two each walked around by a state nobody had tested,
     # and the sweep that found the third's uncovered clause was not gated either.
     "./cmd/cairn-ui/",
+    # 🔴 PRESENCE (S2 of the arcs/presence plan), BECAUSE ITS OWNER PREDICATE IS AN AUTHZ SEAM
+    # OVER THE SAME IDENTITIES. `presence.Store.For` decides who may see where a session runs and
+    # who may ring it, from `identity.Identity` and `control.Authorization.Narrowed()` — so a
+    # mutant in `internal/identity` or `internal/control` can be killed here, and its own guards
+    # (the single-owner wall, the queue's owner filter) are reachable only at unit level.
+    "./internal/presence/",
 )
 
 
@@ -3310,6 +3316,256 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestTheArcPageRendersOnlyTheSelectedTab",
         why="passing the operand through is the shortest fold, and it renders a page with NO current "
         "tab for every typo or scope-page tab name — a second URL for the default state.",
+    ),
+    # ---- presence (S2): the owner predicate, the target pick, the queue, the wall ---------
+    Mutant(
+        name="presence-predicate-ignores-narrowing",
+        path="internal/presence/presence.go",
+        old="if !viewer.Valid() || viewer.Auth.Narrowed() {",
+        new="if !viewer.Valid() || false && viewer.Auth.Narrowed() {",
+        killer="TestTheOwnerPredicateIsARelationship",
+        extra_killers=("TestTheBearerNarrowingBitReachesThePredicate",),
+        why="the bit is a fact about how the authority was PRODUCED, and a predicate that only "
+        "compares owners reads a narrowed bearer credential of A as A — so a token narrowed to "
+        "one scope sees where every one of A's sessions runs and can ring them.",
+    ),
+    Mutant(
+        name="presence-predicate-compares-id-only",
+        path="internal/presence/presence.go",
+        old="if owner != OwnerOf(viewer.Principal) {",
+        new="if owner.ID != viewer.Principal.ID {",
+        killer="TestTheOwnerPredicateIsARelationship",
+        why="the id is the obvious key and the kind looks redundant — until a project principal "
+        "carries the same id string as a user and sees that user's panes.",
+    ),
+    Mutant(
+        name="presence-predicate-ignores-owner",
+        path="internal/presence/presence.go",
+        old="if owner != OwnerOf(viewer.Principal) {",
+        new="if false && owner != OwnerOf(viewer.Principal) {",
+        killer="TestTheOwnerPredicateIsARelationship",
+        extra_killers=("TestARingGoesThroughTheOwnerPredicate",),
+        why="presence looks like session metadata, and session metadata is visible to anybody "
+        "who can read the session — which is exactly what O3's owner-only rule refuses.",
+    ),
+    Mutant(
+        name="presence-predicate-ignores-expiry",
+        path="internal/presence/presence.go",
+        old="return now.Before(expires)",
+        new="return true || now.Before(expires)",
+        killer="TestTheOwnerPredicateIsARelationship",
+        why="whole-host replace already drops a closed pane, so the TTL looks redundant — until "
+        "a host stops pushing at all and its last set is shown forever.",
+    ),
+    Mutant(
+        name="presence-target-picks-oldest-activity",
+        path="internal/presence/presence.go",
+        old="return a.activity.After(b.activity)",
+        new="return a.activity.Before(b.activity)",
+        killer="TestTheTargetIsTheNewestActivityThenTheSmallerHost",
+        extra_killers=("TestARingGoesThroughTheOwnerPredicate",),
+        why="a comparator's direction is the single easiest thing to flip, and a ring aimed at the "
+        "STALE host lights a window the operator is not looking for.",
+    ),
+    Mutant(
+        name="presence-target-tie-goes-to-larger-host",
+        path="internal/presence/presence.go",
+        old="return a.Host < b.Host",
+        new="return a.Host > b.Host",
+        killer="TestTheTargetIsTheNewestActivityThenTheSmallerHost",
+        why="any tie-break is deterministic, so the wrong one looks as good as the right one — "
+        "and the host side's expectation (decision 7) is the smaller label.",
+    ),
+    Mutant(
+        name="presence-replace-merges-instead-of-replacing",
+        path="internal/presence/presence.go",
+        old="kept := append([]Row(nil), rows...)",
+        new="kept := append(append([]Row(nil), s.hosts[hostKey{owner, host}].rows...), rows...)",
+        killer="TestAPushReplacesItsHostsWholeSetAndNoOtherHosts",
+        extra_killers=("TestAPushIsTheContractsReplace",),
+        why="an upsert is the ordinary shape of a write, and it keeps a closed pane's badge until "
+        "the TTL rather than until the next push.",
+    ),
+    Mutant(
+        name="presence-ring-skips-the-predicate",
+        path="internal/presence/queue.go",
+        old="\tp, ok := s.Store.For(viewer, session)\n\tif !ok {",
+        new="\tp, ok := s.Store.For(viewer, session)\n\tif false && !ok {",
+        killer="TestARingGoesThroughTheOwnerPredicate",
+        why="the ring button is only RENDERED where presence shows, so the handler looks guarded "
+        "already — but a POST does not need the button.",
+    ),
+    Mutant(
+        name="presence-queue-claim-ignores-owner",
+        path="internal/presence/queue.go",
+        old="if r.Owner != owner || r.Host != host {",
+        new="if r.Host != host {",
+        killer="TestTheQueueIsKeyedByOwnerAtUnitLevel",
+        why="a claim token is bound to a host, so filtering on the host looks sufficient — and "
+        "with the wall in place nothing end to end can show it is not.",
+    ),
+    Mutant(
+        name="presence-queue-claim-ignores-host",
+        path="internal/presence/queue.go",
+        old="if r.Owner != owner || r.Host != host {",
+        new="if r.Owner != owner {",
+        killer="TestTheQueueIsKeyedByOwnerAtUnitLevel",
+        extra_killers=("TestClaimsAreScopedToTheTokensHost",),
+        why="one owner, so 'my rings' reads as the whole filter — and host-b's claim service "
+        "swallows the ring meant for host-a's window.",
+    ),
+    Mutant(
+        name="presence-wall-admits-a-foreign-owner",
+        path="internal/presence/tokens.go",
+        old="\tif row.Owner != owner {\n\t\treturn ErrForeignOwner",
+        new="\tif false && row.Owner != owner {\n\t\treturn ErrForeignOwner",
+        killer="TestTheWallRefusesAForeignRowAtStartupAndAsARowAfterwards",
+        extra_killers=("TestTheBinaryRefusesEachPresenceMisconfiguration",),
+        why="the token file is the operator's own, so every row in it looks trustworthy — and a "
+        "copied line makes a second owner's tokens authenticate on a personal instance.",
+    ),
+    Mutant(
+        name="presence-wall-skipped-on-the-reread",
+        path="internal/presence/agent.go",
+        old="if err := admit(row, a.cfg.Owner); err != nil {",
+        new="if err := admit(row, a.cfg.Owner); false && err != nil {",
+        killer="TestTheWallRefusesAForeignRowAtStartupAndAsARowAfterwards",
+        why="the startup read already refused foreign rows, so the per-request re-read looks like "
+        "it only needs to parse — and a row added after startup walks straight past the wall.",
+    ),
+    Mutant(
+        name="presence-wall-skipped-at-startup",
+        path="internal/presence/tokens.go",
+        old="\t\tif err := admit(r, owner); err != nil {",
+        new="\t\tif err := admit(r, owner); false && err != nil {",
+        killer="TestTheWallRefusesAForeignRowAtStartupAndAsARowAfterwards",
+        extra_killers=("TestTheBinaryRefusesEachPresenceMisconfiguration",),
+        why="the per-request read refuses the row anyway, so the startup check looks redundant — "
+        "but a copied manifest then starts a listener for somebody else's hosts.",
+    ),
+    Mutant(
+        name="presence-token-kind-ignored",
+        path="internal/presence/agent.go",
+        old="if hit && row.Kind == kind {",
+        new="if hit {",
+        killer="TestAPushTokenCannotClaimAndAClaimTokenCannotPush",
+        why="one token file, one digest match — the kind column reads as a label rather than "
+        "the capability split decision 3 makes it.",
+    ),
+    Mutant(
+        name="presence-push-host-check-dropped",
+        path="internal/presence/agent.go",
+        old="if push.Host != row.Host {",
+        new="if false && push.Host != row.Host {",
+        killer="TestAPushNamingAnotherHostIs400AndWritesNothing",
+        why="the store keys on the TOKEN's host anyway, so the body's host looks decorative — and "
+        "a token file copied to the wrong machine silently reports that machine's panes as this one's.",
+    ),
+    Mutant(
+        name="presence-lockout-never-recorded",
+        path="internal/presence/agent.go",
+        old="if a.cfg.Limiter.RecordFailure(client) {",
+        new="if false && a.cfg.Limiter.RecordFailure(client) {",
+        killer="TestFailedTokensLockTheClientOut",
+        why="the refusal is already uniform, so counting it looks like logging — and a token "
+        "guesser gets unlimited tries.",
+    ),
+    Mutant(
+        name="presence-lockout-never-consulted",
+        path="internal/presence/agent.go",
+        old="if a.cfg.Limiter.LockedOut(client) {",
+        new="if false && a.cfg.Limiter.LockedOut(client) {",
+        killer="TestFailedTokensLockTheClientOut",
+        why="recording failures with nothing reading them is a limiter in name only.",
+    ),
+    Mutant(
+        name="presence-unknown-wire-fields-accepted",
+        path="internal/presence/wire.go",
+        old="\tdec.DisallowUnknownFields()\n",
+        new="",
+        killer="TestPushBodyBoundsEachWithAJustUnderControl",
+        why="a decoder that ignores extra keys is Go's default, and it is how `pane_preview` — pane "
+        "CONTENTS — would ride a push into this process unnoticed.",
+    ),
+    Mutant(
+        name="presence-row-bound-off-by-one",
+        path="internal/presence/wire.go",
+        old="if len(*w.Rows) > MaxRows {",
+        new="if len(*w.Rows) > MaxRows+1 {",
+        killer="TestPushBodyBoundsEachWithAJustUnderControl",
+        why="a bound tested only far outside itself survives an off-by-one at the edge.",
+    ),
+    Mutant(
+        name="presence-string-bound-off-by-one",
+        path="internal/presence/wire.go",
+        old="if len(v) > MaxStringBytes {",
+        new="if len(v) > MaxStringBytes+1 {",
+        killer="TestPushBodyBoundsEachWithAJustUnderControl",
+        why="the same edge, on every string field at once.",
+    ),
+    Mutant(
+        name="presence-session-class-unchecked",
+        path="internal/presence/wire.go",
+        old="if !write.SessionComponent.MatchString(r.Session) {",
+        new="if false && !write.SessionComponent.MatchString(r.Session) {",
+        killer="TestPushBodyBoundsEachWithAJustUnderControl",
+        why="presence only DISPLAYS the session id, so validating it looks like the write path's "
+        "job — but it is the key every page joins presence on.",
+    ),
+    Mutant(
+        name="presence-half-configuration-admitted",
+        path="cmd/cairn-ui/presence.go",
+        old="\tif len(missing) > 0 {\n",
+        new="\tif false && len(missing) > 0 {\n",
+        killer="TestThePresenceFlagsAreAllOrNoneAndNeverBlank",
+        why="each flag fails later on its own when absent, so the all-or-none rule looks redundant "
+        "— and the refusal an operator reads names the wrong cause.",
+    ),
+    Mutant(
+        name="presence-owner-the-authority-lacks-admitted",
+        path="cmd/cairn-ui/presence.go",
+        old="if _, known := m.PrincipalFor(owner.Kind, owner.ID); !known {",
+        new="if _, known := m.PrincipalFor(owner.Kind, owner.ID); false && !known {",
+        killer="TestThePresenceFlagsAreAllOrNoneAndNeverBlank",
+        why="a well-formed <kind>:<id> looks valid — and a typo'd id starts a listener whose pushes "
+        "no page can ever show.",
+    ),
+    Mutant(
+        name="presence-agent-bind-reachability-unchecked",
+        path="cmd/cairn-ui/presence.go",
+        old="if bindIsReachable(host) && proxyErr != nil {",
+        new="if false && bindIsReachable(host) && proxyErr != nil {",
+        killer="TestTheAgentBindGetsItsOwnReachabilityVerdict",
+        extra_killers=("TestTheBinaryRefusesEachPresenceMisconfiguration",),
+        why="the browser listener already passed this check, so a second listener looks covered — "
+        "but a loopback browser bind says nothing about a 0.0.0.0 agent bind.",
+    ),
+    Mutant(
+        name="presence-main-ignores-the-agent-bind-refusal",
+        path="cmd/cairn-ui/main.go",
+        old="if err := presenceBindRefusal(*presenceAddr, proxyErr); err != nil {",
+        new="if err := presenceBindRefusal(*presenceAddr, proxyErr); false && err != nil {",
+        killer="TestTheBinaryRefusesEachPresenceMisconfiguration",
+        why="the predicate is tested in-process, so the call looks covered — whether `main` ACTS on "
+        "it is wiring only a re-exec can see.",
+    ),
+    Mutant(
+        name="presence-main-never-serves-the-agent-listener",
+        path="cmd/cairn-ui/main.go",
+        old="\tif agentServer != nil {\n\t\tgo func() {",
+        new="\tif false && agentServer != nil {\n\t\tgo func() {",
+        killer="TestTheAgentListenerExistsOnlyWhenConfigured",
+        why="the listener is bound and announced, so the startup line looks right — and every push "
+        "connects and then hangs.",
+    ),
+    Mutant(
+        name="presence-mint-ignores-the-wall",
+        path="cmd/cairn-ui/presence.go",
+        old="if _, err := presence.LoadTokens(s.tokens, owner); err != nil {",
+        new="if _, err := presence.LoadTokens(s.tokens, owner); false && err != nil {",
+        killer="TestTheMintModeMintsOnceStoresTheDigestAndExits",
+        why="the listener refuses a foreign row at its next start anyway — which is exactly the "
+        "outage a mint that checked first would have prevented.",
     ),
 )
 
