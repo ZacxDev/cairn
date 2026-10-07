@@ -2888,7 +2888,10 @@ every `/scope`, `/arc` and `/session` href on the panel to round-trip.
 ## What these guards still cannot see
 
 - **Scale beyond one host's measurement.** Nothing is cached; the session page re-walks every
-  readable scope per request. Measured above at 3,000 entries; a larger store is linear in entries.
+  readable scope per request. Measured above at two sizes (300 and 3,000 entries), roughly linear
+  between them; nothing is measured beyond 3,000. The sessions tab adds one labelling pass over its
+  rows (`shortIDsIn`), O(N log N) — `BenchmarkShortIDsIn`: 0.36 ms at 4,000 ids and 1.9 ms at
+  16,000, against 44 ms and 680 ms for the first, pairwise draft on the same host.
 - **The pod has no session route**, so there is no second surface to compare this answer against.
 - **Bullet excerpts** come from the narrowed `Visible` answer the page already holds; a bullet whose
   citation id the entry page could not reproduce would render with no excerpt — not measured, and

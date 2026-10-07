@@ -850,6 +850,12 @@
     @apply text-accent no-underline hover:underline;
   }
 
+  /* A session page's bullet excerpt: the whole bullet on one collapsed line, clamped to three lines
+   * on screen; the full text is the element's `title`. `min-w-0` lets it shrink inside the flex row. */
+  .excerpt {
+    @apply line-clamp-3 min-w-0;
+  }
+
   .session-id {
     @apply font-mono break-all;
   }
