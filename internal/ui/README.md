@@ -965,6 +965,80 @@ Everything in Phase A's list still applies, and three of them now matter more:
   startup refusal exists against, arriving by the one route the refusal cannot cover. Nothing here
   measures it, and nothing in this PR changes it.
 
+## 🔴 What a session can be minted from — and why a NARROWED credential is not one of them
+
+A session row records a PRINCIPAL and nothing else, and `identity.CookieSession` re-resolves
+`control.Resolve(model, principal)` — the principal's **full** authority — on every request (that
+is what makes revocation take effect on the next page load). So whatever reaches `openSession` is
+promoted to everything its principal can read. Two doors reach it:
+
+| door | where the principal comes from | narrowing to lose? |
+|---|---|---|
+| `POST /sign-in` (`handleSignIn`) | a pasted credential, via `control.Authenticate` | **yes** — refused when `auth.Narrowed()` |
+| `GET /sign-in/github/callback` (`handleOAuthCallback`) | a provider identity (and possibly an invitation) | no — there is no credential |
+
+**A narrowed credential is refused at sign-in** (operator decision, over the alternative of storing
+the narrowing on the session row). Before this, a token narrowed to one scope pasted into the form
+opened a session that read every scope its owner can — measured RED by
+`TestANarrowedCredentialCannotSignIn`, which resolves the minted cookie and asserts the session
+reads a scope outside the narrowing — defeating the narrowing, whose whole purpose is bounding what
+a leaked token reaches. 🔴 **A NEW door into `openSession` must hold the same line**: a principal
+that arrived on a narrowed credential is never promoted to a session. The rules it pins:
+
+- **"Narrowed" is `control.Authorization.Narrowed()`** — set by `control.Narrow` whenever the
+  credential's `NarrowedScopes` is non-nil — never a comparison against the principal's full
+  authority. So a narrowing to **nothing** (non-nil empty) is refused, and so is a narrowing
+  **equal to today's full set**: it is still a narrowed credential, and a session would pick up
+  every scope granted after sign-in.
+- **The refusal is the uniform one** — same 401, same `signInRefused` body, byte for byte
+  (`TestANarrowedSignInIsIndistinguishableFromAWrongToken`); a distinct answer would confirm the
+  token is real. The reason goes to the operator log only (`sign-in refused: the credential is
+  narrowed — <client>`), with no token or digest.
+- **It counts toward the lockout** like any refused sign-in
+  (`TestANarrowedSignInCountsTowardTheLockout`): an uncounted path is a measurable difference and a
+  free retry loop.
+
+🔴 **THE BEARER PATH HONOURS THE NARROWING FOR SCOPES — BUT MEMBERSHIP AUTHORITY WAS THE SAME BUG.**
+`identity.MachineToken` hands the narrowed `Authorization` through (`machinetoken.go`, the `Auth:
+auth` field), so every scope read on this surface is bounded. The invite flow is not scope-shaped:
+`Inviting` decides from the principal's project ROLE, which no scope narrowing bounds, and a bearer
+caller passes the CSRF gate with a cookie of its own choosing. A narrowed token could therefore mint
+an invitation into its owner's project and redeem it as an identity its holder controls. The invite
+handlers now act as `membershipActor(id)`, the zero principal for a narrowed caller, so `Invitable`
+lists nothing and `mayManage` refuses — on all three rows: the project page
+(`TestANarrowedBearerSeesNoInvitations`), mint (`TestANarrowedBearerCannotMintAnInvitation`) and
+revoke (`TestANarrowedBearerCannotRevokeAnInvitation`).
+
+🔴 **THE SHARE FLOW'S CANDIDATE LIST IS MEMBERSHIP-DERIVED TOO, AND IS CLOSED THE SAME WAY.**
+`Sharing.Candidates` enumerates everyone the principal shares a project with, so a narrowed caller
+holding `admin` on a scope inside its narrowing was shown — and could share with — collaborators
+from projects its narrowing excludes. It is now called with `membershipActor(id)`, so a narrowed
+caller gets NO candidates and therefore cannot share through this surface at all (`handleShare`
+validates the subject against the same list). Chosen over "filter to the candidates within the
+narrowing" because a membership has no scope dimension: any such filter would be an invented rule
+linking the two, a second authority decision outside `internal/control`
+(`TestANarrowedAdminBearerIsOfferedNoShareCandidates`).
+
+**One rule, one place, and a ledger that enforces it:** every use of an actor-taking method of
+`Inviting`, `Sharing`, `ControlInviting` or `ControlSharing` in this package's non-test code passes
+`membershipActor(id)`, pinned by `TestEveryMembershipDecisionActsAsMembershipActor`. The receiver is
+resolved by TYPE (`go/types`, run with no importer — the four types are local), so a local alias, a
+helper taking the interface, a renamed field or a direct `Control*` value is seen, and a METHOD
+VALUE (whose actor cannot be read at the site) is refused outright; the whole set is a literal, so it
+also fails when a site appears or disappears. `TestTheMembershipLedgerCanGoRED` keeps one arm per
+shape. ⚠ The first version matched the spelling `<x>.inviting.M(...)` and an auditor walked it with
+`inv := s.inviting` — measured PASS — which is why it is type-based now. ⚠ What it still does not
+see — measured, and deliberately not chased further (the real call sites are guarded by the
+behavioural tests named above): a struct EMBEDDING `Inviting`; a generic helper with a
+type-parameter receiver; a function literal in a package-level `var`; a type assertion on a
+value of an IMPORTED type (the checker runs with no importer, so such an operand is invalid and
+the call is silently dropped rather than reported); a locally declared interface with the same
+method; the value converted to a DIFFERENT interface type declared elsewhere; a value passed out
+of the package; reflection. Exemptions, each commented
+on its own ledger line: `Share`/`Unshare` (the principal is the journal's ACTOR — attribution; the
+authority is the narrowed `id.Auth`), `handleOAuthCallback`'s `RedeemFor` (a provider principal with
+no credential behind it), and `ControlInviting.Redeem` delegating to `RedeemFor`.
+
 # Phase C — the share flow
 
 Three routes (`GET /share`, `POST /share`, `POST /unshare`), one new seam (`Sharing`), and one

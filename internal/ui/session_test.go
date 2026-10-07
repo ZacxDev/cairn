@@ -64,6 +64,17 @@ func newLiveMetered(
 	t *testing.T, trusted []netip.Prefix, limiter *netid.RateLimiter,
 ) *live {
 	t.Helper()
+	return newLiveOver(t, fixtureCache(t), nil, trusted, limiter)
+}
+
+// newLiveOver is the one constructor's body, over a caller-chosen authority and an optional
+// `Inviting`. `newLiveMetered` delegates to it, so a test that needs a wider world (a second
+// scope, a narrowed credential) still gets the SAME wiring every other session test drives.
+func newLiveOver(
+	t *testing.T, authority *control.Cache, inviting Inviting,
+	trusted []netip.Prefix, limiter *netid.RateLimiter,
+) *live {
+	t.Helper()
 	l := &live{
 		sessions: mustSessions(t),
 		log:      &bytes.Buffer{},
@@ -72,7 +83,6 @@ func newLiveMetered(
 	}
 	l.sessions.Now = func() time.Time { return l.now }
 
-	authority := fixtureCache(t)
 	// 🔴 ONLY THE `Credentials` ROLE IS COUNTED, AND THAT IS NOT A SHORTCUT. `authority` is
 	// also the cookie backend's `ModelSource` and `ControlSharing`'s authority; wrapping it
 	// for all three does not compile, and wrapping it for all three IF it did would count
@@ -108,6 +118,7 @@ func newLiveMetered(
 		Log:            l.log,
 		TrustedProxies: trusted,
 		Limiter:        limiter,
+		Inviting:       inviting,
 	})
 	if err != nil {
 		t.Fatalf("the server did not build: %v", err)

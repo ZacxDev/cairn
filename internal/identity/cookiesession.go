@@ -54,6 +54,9 @@ func NewCookieSession(sessions SessionStore, authority ModelSource) (*CookieSess
 // except a sign-out the attacker has no reason to perform. `control.Resolve` against the
 // model read on THIS request is what makes revocation take effect on the next page load.
 //
+// 🔴 So a session is its principal's FULL authority and must never be minted from a
+// narrowed credential — `internal/ui/README.md`, "What a session can be minted from".
+//
 // 🔴 AND THE MODEL IS READ ONCE. Every fact below — the principal and its authorization —
 // comes out of that one value, so a refresh landing mid-request cannot authenticate
 // against one world and authorise against another. The same rule `SupabaseJWT` follows,
