@@ -2895,6 +2895,16 @@ every `/scope`, `/arc` and `/session` href on the panel to round-trip.
   `TestEveryBulletLinkOnTheSessionPageLandsOnAnAnchorThatExists` is what would see the anchor half.
 - **Tooltips are not visible on touch devices.** The caveats are one hover away on a desktop and
   one long-press (browser-dependent) on a phone.
-- **Short ids can collide.** Rows show the first 8 bytes; two ids sharing that prefix (the `uiaudit`
-  fixture's `sess-0000000000000001`/`…02`) render alike, distinguishable only by the `title=` and the
-  link. Real agent session ids are uuids, where 8 hex characters suffice; not lengthened adaptively.
+
+## Audit round 1 — five fixes, each watched red on its mutant
+
+| finding | change | guard | mutant → verdict |
+|---|---|---|---|
+| `ArcLine.DeclaredVisible`'s filter had no test; unfiltered, the arcs tab NAMED a hidden declared scope (`scopeChip` falls back to the plain name) | none — the filter was right; the guard was missing | `TestAnArcDeclaringAHiddenScopeNeverNamesItOnAnyPage` (arcs tab, sessions tab, arc page, session page; W as the positive control) — an INVARIANT guard, not regression coverage | `if true {` → KILLED; also a `control_mutants.py` row (`ui-arc-row-names-a-hidden-declared-scope`) |
+| "unreadable journal + nothing visible → 503" had no test | none | `TestAnUnreadableJournalWithNothingVisibleIsA503NotTheUnseen404` (also: a grammar-refused id stays 404; a visible session stays 200 with `arcs unknown`) | `if false && …` → KILLED |
+| a new uiaudit test sat between another test's doc comment and its func | moved | — | — |
+| two ids sharing their first 8 bytes rendered as identical rows | `shortIDsIn`: per rendered list, the shortest prefix ≥ 8 bytes no OTHER id in the list shares (order-independent; an id that prefixes another renders in full one byte past it). Sessions tab, arc rows' member chips, arc page members | `TestShortIDsAreTheShortestUniquePrefixOfAtLeastEight`, `TestCollidingSessionIdsRenderAsDistinguishableRows` | fixed 8-byte labels (the pre-fix code) → KILLED; "never lengthen" → KILLED |
+| the session page's excerpt repeated the `[cairn: actor/session]` trailer | `bulletExcerpt`: the whole bullet body collapsed to one line, minus the END-ANCHORED trailer run via the new `write.WithoutTrailers` (the run `trailerRunStart` locates — the same one `ParseAttributions` reads). Session page only; entry page and raw view unchanged | `TestTheSessionPageExcerptDropsTheTrailerAndKeepsAMidProseToken` (a mid-prose `[cairn:` is kept, the entry page still shows the trailer); `write`'s `TestWithoutTrailersRemovesOnlyTheEndAnchoredRun` | unstripped (the pre-fix code) → KILLED; strip-every-`[cairn:` regex → KILLED |
+
+⚠ The same session id can now render at two LENGTHS on two pages: a label is a property of the list
+it sits in. The full id is always `title=` and the link operand, never the label.

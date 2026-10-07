@@ -231,6 +231,32 @@ func TestASessionOnlyInAnUnreadableScopeAnswersExactlyLikeOneNeverWritten(t *tes
 	}
 }
 
+// TestAnUnreadableJournalWithNothingVisibleIsA503NotTheUnseen404 — "could not look" is not "nothing
+// there": with the journal configured but unreadable, a session with no visible WRITE might still be
+// a member of an arc nobody could read, so a grammar-valid unseen id answers 503, never the uniform
+// 404. RED with that branch disabled (`if false && answer.ArcsUnreadable`).
+func TestAnUnreadableJournalWithNothingVisibleIsA503NotTheUnseen404(t *testing.T) {
+	roamer, _ := sessionWorld(t)
+	broken := StoreSource{Root: sessionStore(t), ArcJournal: t.TempDir()} // a directory: the read fails
+	srv := sessionServer(t, broken, roamer)
+	for _, id := range []string{"s-never-03", "s-hide-02"} {
+		rec := getAs(t, srv, sessionURL(id))
+		if rec.Code != http.StatusServiceUnavailable || rec.Body.String() != arcJournalUnreadable {
+			t.Errorf("%s with an unreadable journal answered %d %q, want 503 %q", id, rec.Code, rec.Body.String(),
+				arcJournalUnreadable)
+		}
+	}
+	// A grammar-REFUSED id is still the 404: it cannot be a member of anything, journal or not.
+	if rec := getAs(t, srv, sessionURL("<s>")); rec.Code != http.StatusNotFound {
+		t.Errorf("a grammar-refused id answered %d with an unreadable journal, want 404", rec.Code)
+	}
+	// POSITIVE CONTROL: a session with visible writes is still a page, badged as arcs-unknown.
+	rec := getAs(t, srv, sessionURL("s-roam-01"))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), ">arcs unknown</span>") {
+		t.Fatalf("POSITIVE CONTROL FAILED: s-roam-01 answered %d without the arcs-unknown badge:\n%s", rec.Code, rec.Body.String())
+	}
+}
+
 // sessionCounting counts `Session`, so a test can see the bound run BEFORE any read.
 type sessionCounting struct {
 	StoreSource

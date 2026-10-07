@@ -207,6 +207,15 @@ func trailerRunStart(s string) int {
 	return loc[0]
 }
 
+// WithoutTrailers is `s` with its END-ANCHORED machine-written trailer run removed — the run
+// `trailerRunStart` locates, the same one `ParseAttributions` reads and the content hash strips — and
+// nothing else: a `[cairn:` token mid-prose is not in trailer position and stays. For a DISPLAY
+// surface that already shows the attribution elsewhere (the browser's session page); `s` should be
+// the whole bullet, collapsed, so "end" means the bullet's end and not one line's.
+func WithoutTrailers(s string) string {
+	return strings.TrimRight(s[:trailerRunStart(s)], " \t")
+}
+
 // Attribution is one ` [cairn: <actor>/<session>]` piece, as written. Neither half is
 // normalised: a session id is opaque and compared byte-exact.
 //

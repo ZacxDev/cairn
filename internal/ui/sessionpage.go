@@ -130,6 +130,34 @@ func shortID(session string) string {
 	return session[:8]
 }
 
+// shortIDsIn is the displayed label for every id in ONE rendered list: the shortest prefix of at
+// least eight bytes that no OTHER id in the list shares, so two rows are never labelled alike.
+//
+// ⚠ THE SAME ID CAN THEREFORE RENDER AT TWO LENGTHS ON TWO PAGES — the label is a property of the
+// list it sits in, not of the id. Deterministic for a given list (it depends on the SET, not the
+// order). An id that is itself a prefix of another renders in full. The full id is always the
+// element's `title=` and the link's operand; the label is never an identifier.
+func shortIDsIn(ids []string) map[string]string {
+	out := make(map[string]string, len(ids))
+	for _, id := range ids {
+		n := min(8, len(id))
+		for ; n < len(id); n++ {
+			clash := false
+			for _, other := range ids {
+				if other != id && strings.HasPrefix(other, id[:n]) {
+					clash = true
+					break
+				}
+			}
+			if !clash {
+				break
+			}
+		}
+		out[id] = id[:n]
+	}
+	return out
+}
+
 // bulletAnchors is each nuance bullet's fragment id on the entry page: `b-<citation id>`, the id
 // `internal/touch` records as `BulletRef.CitationID` — so a session page link and the bullet it
 // names are keyed by ONE value, computed by ONE function (`store.JournalBullet.CitationID`).
@@ -254,13 +282,22 @@ func bulletExcerpts(scopes []Scope) map[string]string {
 					}
 					key := excerptKey(s.Name, e.Ref, strings.TrimPrefix(b.Anchor, "b-"))
 					if _, dup := out[key]; !dup {
-						out[key] = b.Body()[0]
+						out[key] = bulletExcerpt(b)
 					}
 				}
 			}
 		}
 	}
 	return out
+}
+
+// bulletExcerpt is the bullet as the SESSION PAGE shows it: its body (the date and markers the page
+// shows elsewhere already removed by `Bullet.Body`), whitespace-collapsed into one line, with the
+// end-anchored `[cairn: actor/session]` trailer run removed by `write.WithoutTrailers` — the page's
+// header already says who wrote it. The entry page and the raw view are untouched: they show the
+// bullet as the file has it. A `[cairn:` token that is NOT in trailer position is prose and stays.
+func bulletExcerpt(b Bullet) string {
+	return write.WithoutTrailers(strings.Join(strings.Fields(strings.Join(b.Body(), " ")), " "))
 }
 
 func excerptKey(scope, ref, cid string) string {

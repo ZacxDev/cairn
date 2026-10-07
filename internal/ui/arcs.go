@@ -291,6 +291,11 @@ func arcsPartial(r report.ArcsReport) bool {
 func sessionsPanel(t Touched, scopes []Scope, now time.Time) g.Node {
 	r := t.Sessions
 	ids := idsByName(scopes)
+	var all []string
+	for _, s := range r.Sessions {
+		all = append(all, s.ID)
+	}
+	labels := shortIDsIn(all)
 	arcsBySession := map[string][]report.ArcLine{}
 	for _, a := range t.Arcs.Arcs {
 		for _, m := range a.MemberSessions {
@@ -315,7 +320,7 @@ func sessionsPanel(t Touched, scopes []Scope, now time.Time) g.Node {
 		g.If(r.StatusSentence() != "", h.P(h.Class("empty"), h.TitleAttr(r.StatusSentence()),
 			g.Text(sessionsEmpty[r.Status]))),
 		g.If(len(r.Sessions) > 0, h.Ul(h.Class("entry-list"), g.Map(sessionsNewestFirst(r.Sessions),
-			func(s touch.Session) g.Node { return sessionRow(s, arcsBySession[s.ID], ids, now) }))),
+			func(s touch.Session) g.Node { return sessionRow(s, labels[s.ID], arcsBySession[s.ID], ids, now) }))),
 	)
 }
 
@@ -343,11 +348,11 @@ func sessionsNewestFirst(in []touch.Session) []touch.Session {
 
 // sessionRow is one compact session row. The whole row is the session page's link (`row-link`
 // stretches over it); the arc chips sit above that layer and keep their own links.
-func sessionRow(s touch.Session, arcLines []report.ArcLine, ids map[string]control.ID, now time.Time) g.Node {
+func sessionRow(s touch.Session, label string, arcLines []report.ArcLine, ids map[string]control.ID, now time.Time) g.Node {
 	return h.Li(
 		h.Class("entry-row session-row"),
 		h.Span(h.Class("ref"), h.TitleAttr(s.ID),
-			h.A(h.Class("row-link"), h.Href(sessionHref(s.ID)), g.Text(shortID(s.ID)))),
+			h.A(h.Class("row-link"), h.Href(sessionHref(s.ID)), g.Text(label))),
 		h.Span(h.Class("title"), g.Text(strings.Join(s.Actors, ", "))),
 		h.Span(h.Class("entry-count"), g.Text(plural(len(s.Bullets), "bullet", "bullets"))),
 		dateAgo(s.LastDate, now),
@@ -375,9 +380,10 @@ func scopeChip(name string, ids map[string]control.ID) g.Node {
 	return h.Li(h.A(h.Href(scopeHref(Scope{ID: id, Name: name})), g.Text(name)))
 }
 
-// sessionChip is one session as a chip: the short id, the full one in its tooltip.
-func sessionChip(id string) g.Node {
-	return h.Li(h.A(h.Href(sessionHref(id)), h.TitleAttr(id), g.Text(shortID(id))))
+// sessionChip is one session as a chip: its label in this list (`shortIDsIn`), the full id in its
+// tooltip.
+func sessionChip(id, label string) g.Node {
+	return h.Li(h.A(h.Href(sessionHref(id)), h.TitleAttr(id), g.Text(label)))
 }
 
 // arcsPanel is the scope page's Arcs tab.
@@ -431,6 +437,7 @@ func arcRow(a report.ArcLine, ids map[string]control.ID, now time.Time) g.Node {
 	if home := ids[store.NormalizeRef(a.Home)]; home != "" {
 		name = h.A(h.Href(arcHref(home, a.Slug)), g.Text(label))
 	}
+	memberLabels := shortIDsIn(a.MemberSessions)
 	provenance := "inferred"
 	if a.Declared {
 		provenance = "declared"
@@ -445,7 +452,7 @@ func arcRow(a report.ArcLine, ids map[string]control.ID, now time.Time) g.Node {
 		g.If(len(a.DeclaredVisible) > 0, h.Ul(h.Class("chips chips-scope"), h.TitleAttr("declared scopes you can read"),
 			g.Map(a.DeclaredVisible, func(n string) g.Node { return scopeChip(n, ids) }))),
 		g.If(len(a.MemberSessions) > 0, h.Ul(h.Class("chips chips-session"), h.TitleAttr("member sessions"),
-			g.Map(a.MemberSessions, sessionChip))),
+			g.Map(a.MemberSessions, func(id string) g.Node { return sessionChip(id, memberLabels[id]) }))),
 	)
 }
 
@@ -466,6 +473,11 @@ func ArcPage(v PageView) g.Node {
 	reg := rep.Reg
 	s := *v.Scope
 	ids := idsByName(v.Scopes)
+	var memberIDs []string
+	for _, m := range reg.Members {
+		memberIDs = append(memberIDs, m.Session)
+	}
+	memberLabels := shortIDsIn(memberIDs)
 	statusTip := "status"
 	if reg.Status == arcs.StatusUnknown {
 		statusTip = report.UnknownStatusGloss
@@ -502,7 +514,7 @@ func ArcPage(v PageView) g.Node {
 				})))),
 			labelledList("Members "+strconv.Itoa(len(reg.Members)), rep.MembersHeading(),
 				h.Ul(h.Class("entry-list"), g.Map(rep.SortedMembers(), func(m arcs.Member) g.Node {
-					return memberRow(rep, m, ids, v.Now)
+					return memberRow(rep, m, memberLabels[m.Session], ids, v.Now)
 				}))),
 		),
 	)
@@ -510,11 +522,11 @@ func ArcPage(v PageView) g.Node {
 
 // memberRow is one arc member: its session (linked), role, first-seen time, the READABLE scopes it
 // wrote in as chips, and `carried` when merge rule 7 kept it.
-func memberRow(rep report.ArcReport, m arcs.Member, ids map[string]control.ID, now time.Time) g.Node {
+func memberRow(rep report.ArcReport, m arcs.Member, label string, ids map[string]control.ID, now time.Time) g.Node {
 	return h.Li(
 		h.Class("entry-row session-row"),
 		h.Span(h.Class("ref"), h.TitleAttr(m.Session),
-			h.A(h.Class("row-link"), h.Href(sessionHref(m.Session)), g.Text(shortID(m.Session)))),
+			h.A(h.Class("row-link"), h.Href(sessionHref(m.Session)), g.Text(label))),
 		h.Span(h.Class("title"), g.Text(m.Role)),
 		instantAgo(m.FirstSeen, now),
 		g.If(m.Carried, h.Span(h.Class("badge badge-quiet"), h.TitleAttr(rep.CarriedLine()), g.Text("carried"))),

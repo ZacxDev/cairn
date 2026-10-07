@@ -3070,6 +3070,18 @@ MUTANTS: tuple[Mutant, ...] = (
         "arcs and makes a hidden-only session a page instead of the uniform 404.",
     ),
     Mutant(
+        name="ui-arc-row-names-a-hidden-declared-scope",
+        path="internal/report/arcs.go",
+        old="\t\t\tif visible.Allows(d) {",
+        new="\t\t\tif true {",
+        killer="TestAnArcDeclaringAHiddenScopeNeverNamesItOnAnyPage",
+        pkgs=PKGS + ("./internal/report/",),
+        why="the arc itself is readable (its home is), so its declared list looks like part of the "
+        "arc — but each declared scope is its own authority question, and `scopeChip` falls back to "
+        "the plain NAME for a scope whose id it cannot resolve, so an unfiltered list names a hidden "
+        "scope on a page about a readable one.",
+    ),
+    Mutant(
         name="ui-session-id-bound-skipped",
         path="internal/ui/sessionpage.go",
         old="if !write.SessionComponent.MatchString(session) {",

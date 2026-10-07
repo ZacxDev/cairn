@@ -189,19 +189,8 @@ func TestExpandLinksIsBOUNDEDPerPageAndSaysSoRatherThanTruncatingSilently(t *tes
 		"same set in a different order keeps the same four", len(hrefs), len(accepted), bounded, len(declined))
 }
 
-// TestExpandLinksFollowsALinkACROSSRowsAndOnlyToADeclaredOne is the guard on the widening
-// the browse pages needed.
-//
-// 🔴 THE OLD RULE WAS `u.Path == from.Path` AND IT WOULD HAVE SILENTLY UNDER-COVERED THE
-// NEW PAGES RATHER THAN FAILING. `GET /` publishes `/scope?id=…` and `GET /scope?id=…`
-// publishes `/entry?…` — links ACROSS ledger rows — so a same-path rule declines every one
-// of them, the walk captures the two new rows only in their parameterless form, and the run
-// reports success over pages no reader ever sees. That is the exact failure mode
-// `linkExpanded`'s own comment records from the first draft of this file, one step along.
-//
-// ⚠ AND THE WIDENING IS BOUNDED BY THE LEDGER, WHICH IS THE HALF THAT KEEPS IT FROM BEING A
-// CRAWLER. `/nowhere?x=1` above is relative, same-origin and carries a query, and it is
-// still declined — because the path is not a row this server declares.
+// TestExpandLinksKeepsEveryRowAPageLinksWhenTheCapBites: a page linking two ROWS keeps links on
+// both when the per-page cap bites — see `roundRobinByRow`.
 func TestExpandLinksKeepsEveryRowAPageLinksWhenTheCapBites(t *testing.T) {
 	// The scope page's shape: many entry rows, plus its two tab links on `/scope`. Under a plain
 	// sorted-prefix cap the four `/entry` links win and both tabs are bounded away — and with them
@@ -231,6 +220,19 @@ func TestExpandLinksKeepsEveryRowAPageLinksWhenTheCapBites(t *testing.T) {
 	}
 }
 
+// TestExpandLinksFollowsALinkACROSSRowsAndOnlyToADeclaredOne is the guard on the widening
+// the browse pages needed.
+//
+// 🔴 THE OLD RULE WAS `u.Path == from.Path` AND IT WOULD HAVE SILENTLY UNDER-COVERED THE
+// NEW PAGES RATHER THAN FAILING. `GET /` publishes `/scope?id=…` and `GET /scope?id=…`
+// publishes `/entry?…` — links ACROSS ledger rows — so a same-path rule declines every one
+// of them, the walk captures the two new rows only in their parameterless form, and the run
+// reports success over pages no reader ever sees. That is the exact failure mode
+// `linkExpanded`'s own comment records from the first draft of this file, one step along.
+//
+// ⚠ AND THE WIDENING IS BOUNDED BY THE LEDGER, WHICH IS THE HALF THAT KEEPS IT FROM BEING A
+// CRAWLER. `/nowhere?x=1` above is relative, same-origin and carries a query, and it is
+// still declined — because the path is not a row this server declares.
 func TestExpandLinksFollowsALinkACROSSRowsAndOnlyToADeclaredOne(t *testing.T) {
 	ledger := ui.DeclaredRouteLedger()
 	from := Target{
