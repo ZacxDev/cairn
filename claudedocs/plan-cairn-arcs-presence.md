@@ -9,11 +9,15 @@ they are marked `(#193)` and must be re-read once it lands. Every number about r
 instrument that produced it and what that instrument cannot see. Examples are synthetic: hosts
 `host-a`/`host-b`, tmux target `notes:3`, session ids `s-0001`, year-2000 dates.
 
-**Revision 2** applies the PR's round-0 and round-1 audit rulings: the `/arc` entries tab, the
-ring report route, the ring cooldown/cap and the client-side instance wall are gone; the presence
-push extends the existing host→server push unit; rings are claimed by a long-running service; two
-hosts presenting one session have a deterministic target; presence fails closed under credential
-narrowing; and the closing condition names one runnable check per repo.
+**Revision 2** applied the PR's round-0 and round-1 audit rulings: the `/arc` entries tab, the
+ring report route, the ring cooldown/cap and the client-side instance wall are gone; rings are
+claimed by a long-running service; two hosts presenting one session have a deterministic target;
+presence fails closed under credential narrowing; and the closing condition names one runnable
+check per repo. **Revision 3** applies round 2: extending the existing push unit was measured
+impossible, so presence gets its OWN unit on EACH host, scanning local windows only, with a token
+bound to ONE host label; the single-owner wall and the queue's owner filter each get their own
+reachable control; the narrowing bit uses the fail-safe polarity; the CI `ok` floor is stated as a
+measurement; and decision 8 lists the carried fields per location.
 
 ## Goal
 
@@ -65,13 +69,25 @@ The arcs-first half has no such escape: nothing today lists arcs across scopes.
      with no presence at all;
      (c) A's `POST /ring` enqueues; B's `POST /ring` for the same session gets the same answer as a
      session with no presence and leaves the queue unchanged;
-     (d) A's `host-a` claim token claims the ring exactly once; A's `host-b` claim token, owner B's
-     claim token for `host-a`, and a just-revoked claim token each claim nothing;
+     (d) A's `host-a` claim token claims the ring exactly once; A's `host-b` claim token and a
+     just-revoked claim token each claim nothing; and — the control for decision 15's
+     SINGLE-OWNER WALL, not for the queue — a token row for owner B in the token file refuses the
+     listener at startup, while the same row added to the file AFTER startup is refused as that
+     ROW only (logged; A's rows keep working) and B's token then gets 401. The queue's own
+     owner-keying cannot be reached end to end once the wall exists (no second owner can
+     authenticate), so its control is the S2 UNIT test that constructs the queue directly with two
+     owners;
      (e) with `s-0001` presented by both `host-a` and `host-b`, the ring goes to the host whose row
      has the newest `last_activity`, and on a tie to the byte-wise smaller host label;
      (f) a narrowed credential, and a session minted from one, see no presence and cannot ring.
      `--self-test` sabotages EVERY clause (a)–(f) in turn and must report each caught (exit 2 if
-     any sabotage is not caught).
+     any sabotage is not caught). Each sabotage is a mutant of the code path that clause pins, on
+     a scratch copy of the tree (the `tests/control_mutants.py` pattern), chosen so the clause's
+     OWN assertion is the one that fails: (a) drop the 14-day filter; (b) render presence without
+     the owner predicate; (c) enqueue without the predicate; (d) skip the per-row owner check in
+     the token-file reader (B's added row then authenticates); (e) pick the OLDEST
+     `last_activity`; (f) ignore the narrowing bit. A sabotage that leaves its clause green is a
+     clause that cannot fail, and the script reports it as such.
   2. **tooling repo: the S3 executor test**, in that repo's own suite (which tier has `tmux` is
      not measured here — the test must exit 2 rather than skip where it is absent, so a tier
      without it goes red instead of vacuously green). Against a PRIVATE tmux server
@@ -81,7 +97,8 @@ The arcs-first half has no such escape: nothing today lists arcs across scopes.
      property and shows each go red.
 
 Post-close rollout (NOT part of the closing condition): the personal instance runs with presence
-enabled, each operator host runs the S3 services, and a click on the deployed session page's bell
+enabled, each operator host runs its own S3 presence unit and its own ring-claim service, and a
+click on the deployed session page's bell
 lights the right window — an operator judgement over the window's status-line styling.
 
 ## What exists today, measured
@@ -106,7 +123,8 @@ lights the right window — an operator judgement over the window's status-line 
   repo's registrar sets `reported_at` to NOW on every call
   (`tooling:scripts/lib/handoff_register.py:151`), so every push differs and is appended. It is
   called only from the two success arms of a handoff write, after the commit is on the remote,
-  non-blocking (`tooling:scripts/lib/handoff_doc.py`, `_register_arc`, ~`:8827-8857`). So a
+  non-blocking (`tooling:scripts/lib/handoff_doc.py`: `_register_arc` defined at `:8832`, called
+  at `:8803` and `:8828`). So a
   registration's age is "time since the last handoff", which for an arc mid-flight can be days.
 
 ### Bullet dates — the only time the store carries
@@ -159,7 +177,11 @@ and `uiaudit/targets.go` (`linkExpanded`, `:180` (#193)). It did NOT touch `flak
 
 Two CI floors are relevant to any new tested package: the `go` job's per-package `ok` floor is a
 `<` comparison (`if [ "$ok" -lt 19 ]`, `.github/workflows/ci.yml:831`) — a package added without
-moving it is silently absorbed; and `tests/control_mutants.py`'s `PKGS` (`:88`) is pinned by
+moving it is silently absorbed. **It is already stale on `main`:** `go test ./...` on this tree
+(`64475d7` plus this doc; local go 1.26) prints **23** `^ok` lines against the floor's 19, so four
+packages can vanish today with the gate green. That is a pre-existing defect, being handled outside
+this plan; this plan only requires that whoever adds `internal/presence` sets the floor to the
+`ok` count MEASURED on the merged tree (24 if nothing else moved — re-measure). And second, `tests/control_mutants.py`'s `PKGS` (`:88`) is pinned by
 `tests/test_control_mutant_count_is_pinned.py`, which forces the counts and package enumerations
 spelled in `ci.yml` and the READMEs to follow any edit.
 
@@ -240,16 +262,27 @@ spelled in `ci.yml` and the READMEs to follow any edit.
 - **Cost, ONE local measurement on ONE host at ONE moment** (`scan --host <local> --no-ch
   --json`, no ssh): 0.196 s wall; 72 windows, 61 carrying a session id (all `claude`, 0 `opencode`,
   11 none), 62 with a hotkey; ledger 188 records → 63 live, 8 no-window, 37 not-live,
-  80 generation-mismatch, 2 conflicts. Not measured: the second host, an opencode-heavy moment.
+  80 generation-mismatch, 2 conflicts. **Re-measured for revision 3, three runs, same host:**
+  `scan --host <this host's own label> --no-ch --json` took 98–115 ms wall (exit 0 each), one
+  host in the document, 73 windows, 62 with a session id — and all 62 carry a ledger record with a
+  non-empty `tmux_pid`, so decision 9's filter would have dropped none at that moment. Not
+  measured: the second host, an opencode-heavy moment.
+- **The local host's label is resolved, never guessed:** `local_host_label` delegates to a shared
+  rule and RAISES rather than defaulting, because `hostname` is the same on both machines
+  (`session-manager:3773-3790`). The per-host presence unit uses it, so a host can never push under
+  the other's label.
 - **Opencode ids.** The tooling repo treats the id as opaque (`session-manager:3250`); the trailer
   grammar's `sessionClass` is `[A-Za-z0-9][A-Za-z0-9_.-]{0,63}` (`internal/write/revision.go:71`),
   which admits both a uuid and a `ses_`-prefixed id (`bullet_request.go:24-26`). Presence still
   carries `runtime`: one pane can hold both runtimes in sequence (the conflict above).
 
-### The existing host→server push unit (what S3 extends)
+### The existing host→server push unit (what S3 models on, and does NOT extend)
 
 - `tooling:scripts/tmux-snapshot-push.sh` is a DELIBERATE DUMB PIPE: it posts `session-manager
   --json --pane-preview` VERBATIM (`:15-22, :157`) and says not to reshape the payload there.
+- **Its collected document does not outlive the run:** it is written into a per-run `mktemp -d`
+  directory that `trap cleanup EXIT INT TERM` deletes (`:109-113`), so a second `ExecStart=` could
+  never read it.
 - It runs on ONE host only and covers both: the collector ssh'es to the other host, so the unit
   is gated to one host as a correctness requirement — two hosts each pushing a two-host document
   would fight over every row (`tooling:nix/home.nix:270-274`, comment `:4524-4527`).
@@ -258,7 +291,7 @@ spelled in `ci.yml` and the READMEs to follow any edit.
   timer `OnStartupSec = 1min`, `OnUnitActiveSec = 2min`, **no `AccuracySec`** (`home.nix:4519-4522`)
   — so systemd's default 1-minute accuracy applies and ticks land 2–3 minutes apart.
 - Token from a 0600 file, sent from a curl config file, never argv
-  (`tmux-snapshot-push.sh:55, 95, 115, 252-263`).
+  (`tmux-snapshot-push.sh:55, 95, 115, 252-263`) — the one part S3 copies.
 
 ### Ringing a bell in a pane — verified vs inferred
 
@@ -316,10 +349,15 @@ Every decision below is the plan author's, with its evidence; any of them can be
    ⚠ **Assumes ONE UI replica** (Open question P2).
 3. **The host side holds PRESENCE TOKENS, never a control-plane credential**, in two kinds —
    least privilege per process:
-   - a **push token** bound to `(owner, set of host labels)`: may only REPLACE presence for those
-     hosts (it lives with the extended push unit, which reports both hosts — Q3 below);
-   - a **claim token** bound to `(owner, one host label)`: may only claim that host's rings (it
-     lives with that host's ring service).
+   - a **push token** bound to `(owner, ONE host label)`: may only REPLACE that host's presence (it
+     lives with that host's presence unit — S3);
+   - a **claim token** bound to `(owner, ONE host label)`: may only claim that host's rings (it
+     lives with that host's ring-claim service).
+
+   Both kinds sit on the same host under the same uid, so the split does not protect one from a
+   compromise of the other; what it buys is that each PROCESS holds only the capability it uses —
+   a leaked environment of the push unit cannot suppress rings, and the claim service cannot make
+   badges lie.
 
    Both are stored server-side as digests in one file (`-presence-tokens`, no default), are
    unknown to `identity.Backends`, and so authenticate NOTHING but the agent routes: every browser
@@ -340,24 +378,30 @@ Every decision below is the plan author's, with its evidence; any of them can be
    owner equals `(viewer.Kind, viewer.ID)`, and the row is unexpired. Every surface — badge, page,
    ring enqueue — asks it and nothing else. Another owner's presence, expired presence and no
    presence render the SAME bytes and answer `POST /ring` the SAME way.
-6. **Presence is keyed `(owner, host label, session)`; a push REPLACES each named host's whole
-   set.** A closed pane disappears on the next push rather than at TTL. The host labels a push may
-   name come from the TOKEN row, never the body.
+6. **Presence is keyed `(owner, host label, session)`; a push REPLACES its host's whole set.** A
+   closed pane disappears on the next push rather than at TTL. The host comes from the TOKEN row;
+   the body's `host` must equal it (a mismatch is a 400, which catches a token file copied to the
+   wrong machine), and a push can never touch another host's rows.
 7. **Two hosts presenting one session: the TARGET is the row with the newest `last_activity`;
    ties — including two empty values — go to the byte-wise smaller host label.** An empty
    `last_activity` sorts oldest. The badge shows the target row (and "also on host-b" when
    another live row exists); a ring is queued for the target's host at enqueue time.
-8. **What a presence row carries, and what it never does.** Carried: `session`, `runtime`
-   (`claude | opencode | other`), `host` (validated against the token), `target`
-   (`<session>:<window>`, display only), `label`, `hotkey` (display or empty), `last_activity`
-   (RFC 3339 from the ledger record), `pushed_at` (UI clock). **Never carried**, and refused as
-   unknown fields: `pane_preview`, pane tty path, pane id, window id, tmux pid, cwd, repo path,
-   pane contents, transcript text. The agent re-resolves the pane locally at ring time
+8. **What presence carries, PER LOCATION, and what it never does.**
+   - **On the wire** (the contract below), exactly: top level `schema`, `host`, `rows`; per row
+     `session`, `runtime` (`claude | opencode | other`), `target` (`<session>:<window>`, display
+     only), `label`, `hotkey` (display or empty), `last_activity` (RFC 3339 from the ledger
+     record, or empty). Nothing else — S3's key-set test asserts these two sets.
+   - **Stored in the UI** (never sent by the host): the wire row, plus `owner` and `host` (both
+     from the token row), `pushed_at` (UI clock) and the expiry derived from it.
+   - **Never carried, anywhere**, and refused as unknown fields: `pane_preview`, pane tty path,
+     pane id, window id, tmux pid, cwd, repo path, pane contents, transcript text. The agent re-resolves the pane locally at ring time
    (decision 9), so the UI never needs them. Bounded: ≤ 256 rows per push, each string ≤ 128
    bytes, sessions validated by `write.SessionComponent`, `DisallowUnknownFields` (the
    `arcs.DecodePayload` rule, `arcs.go:168-184`).
 9. **The pushed rows and the executor use ONE join, so every offered bell can resolve.** A row is
-   pushed only if (i) its host's ledger read is `ok` — the sentinel carried the live server pid;
+   pushed only if (i) it is a LOCAL row — the scan is `--host <this host's own label>`, so there
+   is no ssh leg and no other host's ledger — and the local ledger read is `ok`, i.e. the sentinel
+   carried the live server pid;
    (ii) the row has a ledger record (`row.ledger`, `session-manager:3251`) whose `tmux_pid` is
    non-empty — so the generation was CHECKED, not `generation_unchecked`; (iii) its session id is
    `ledger.session_id`, never the task-file fallback (`:3241-3242`); (iv) no other live record
@@ -377,15 +421,28 @@ Every decision below is the plan author's, with its evidence; any of them can be
     index, **clamped to today** and taken as that day's 00:00 UTC; `last_updated =
     max(reg_at, bullet_at)`. The row says which won — "registered 3h ago" or "bullet today" (day
     precision, `dateAgo`'s rule, `arcs.go:554-563` (#193)).
-11. **Presence and rings FAIL CLOSED under credential narrowing.** `identity.Identity` gains a
-    `Narrowed` bit: set on the bearer path when the presented credential has `NarrowedScopes`,
-    and on the cookie path from the session record, which records at mint whether the credential
-    it was minted from was narrowed. `presence.For` returns nothing for a narrowed identity, so a
-    narrowed credential — or a session minted from one, whether or not the companion sign-in
-    change has landed — sees no presence and cannot ring. If the companion change lands first and
-    refuses narrowed sign-in, the session half of the bit is always false for new sessions; the
-    S2 test pins the relation either way (it accepts a refused sign-in OR a session without
-    presence, and fails only on presence shown).
+11. **Presence and rings FAIL CLOSED under credential narrowing — with the polarity that makes a
+    MISSING value safe.** `identity.Identity` gains `Unnarrowed bool`, TRUE only when it is
+    positively known the credential behind this request carried no narrowing:
+    - **bearer path:** true iff the presented credential's `NarrowedScopes` is nil;
+    - **cookie path:** copied from a new session-record field, `minted_unnarrowed`, written TRUE
+      at mint only when the credential (or provider sign-in) it was minted from carried no
+      narrowing.
+
+    `presence.For` returns nothing unless `Unnarrowed` is true. The reason for the polarity:
+    existing sessions do not have the field. `FileSessionStore` decodes each record with a plain
+    `json.Unmarshal` (`internal/identity/sessionstore.go:262`), so a missing field decodes as
+    `false`; the pgstore column is added with `NOT NULL DEFAULT false`. A field meaning "narrowed"
+    would have read every pre-S2 session as un-narrowed. With this one, **every session alive
+    when S2 deploys sees no presence and cannot ring until its user signs in again** — at most one
+    session lifetime, `DefaultSessionTTL = 12 * time.Hour` (`internal/identity/session.go:145`).
+    That is the accepted cost.
+
+    What is true about the companion sign-in change, precisely: this rule does not need it — a
+    session minted from a narrowed credential records `minted_unnarrowed = false` and is refused
+    here whether or not that change exists. If it lands, narrowed sign-ins are refused outright,
+    so no such session is minted at all; the S2 test accepts EITHER outcome (sign-in refused, or a
+    session without presence) and fails only when presence is shown.
 12. **Live = `open` OR `last_updated` within 14 days; `unknown` is NOT `open`** (Q4 of the arcs
     plan). Newest first, ties by `(home, slug)`; `?all=1` shows every visible arc; the hidden count
     is printed.
@@ -399,32 +456,39 @@ Every decision below is the plan author's, with its evidence; any of them can be
     wall is that the client instance's manifest does not set `-presence-agent-addr` /
     `-presence-tokens` — a deployment convention, not code. Recommended: the agent listener
     refuses to start unless `-presence-owner <kind>:<id>` names exactly ONE owner, and refuses any
-    token row for a different owner. Presence on a deployment then requires a deliberate,
+    token row for a different owner — at startup by refusing to start; for a row that appears in
+    the re-read token file AFTER startup, by refusing THAT ROW only (logged, naming the row's
+    digest prefix, never the token), so one bad edit cannot take the owner's own hosts offline.
+    Presence on a deployment then requires a deliberate,
     reviewable line naming the operator as that instance's sole presence owner; a copied manifest
     without it does not start the listener. (The earlier "agent refuses an origin matching a
     non-default instance file" wall is dropped, ruling D5.)
 
-### Q3: S3 EXTENDS the existing push unit — and the two places that bends a design input
+### Q3: S3 does NOT extend the existing push unit — measured impossible; each host gets its own
 
-Extending is possible and is the plan. The unit already collects BOTH hosts once every 2 minutes;
-a second `ExecStart=` in the same oneshot service runs a separate presence step that reads the SAME
-collected document (no second scan, no second timer), applies decision 9's predicate, strips it to
-decision 8's key set and POSTs it with the push token. It is a separate step, not an edit to the
-dumb pipe, because that script's own rule is that it never reshapes its payload
-(`tmux-snapshot-push.sh:15-22`). Its failure gets its own exit code so the existing alarm path
-(`systemctl --user --failed`) distinguishes it; a failed snapshot leg stops it (oneshot
-`ExecStart=` lines run in order), and presence then ages out at TTL — the honest outcome.
+Revision 2 planned a second `ExecStart=` on the existing push unit reading the same collected
+document. Measured against that script, it cannot work, and the review ruling reversed it:
 
-What it bends, stated rather than hidden:
-- **"Pushed by a host agent on each operator machine" (O3) becomes "pushed for each machine by
-  the one collecting host".** The remote host's rows arrive via the collector's ssh leg, which is
-  pre-existing operator infrastructure, not a cairn connection. Hence the push token is bound to a
-  SET of host labels (decision 3). Ring execution still runs ON each host (it must write a local
-  pty), from that host's own claim service.
-- **TTL ~3 min against a 2-minute tick with 1-minute default accuracy.** Ticks land 2–3 minutes
-  apart (no `AccuracySec`, `home.nix:4519-4522`), so a 3-minute TTL tolerates zero missed pushes
-  and can flicker. Recommended: set `AccuracySec = 5s` on the extended timer (harmless to the
-  snapshot leg). If the operator prefers not to touch that timer, raise the TTL to 5 minutes.
+- the document lives in a per-run `mktemp -d` directory that `trap cleanup EXIT` deletes before any
+  later `ExecStart=` runs (`tooling:scripts/tmux-snapshot-push.sh:109-113`);
+- it would couple presence to an unrelated push destination — a failed snapshot POST (exits 4/5,
+  `:28-38`) would stop the presence step — and to that unit's shared `TimeoutStartSec = 150`
+  budget, most of which is the ssh collector's (`home.nix:4318-4356`);
+- that unit runs on one host and collects the other over ssh, so it would also have forced a
+  token bound to a SET of host labels and bent O3's "a host-side agent on each operator machine".
+
+**So S3 is a NEW pair of user units on EACH host, sharing nothing with the snapshot unit:**
+
+- **presence push** — a oneshot service + timer per host: `session-manager scan --host <this
+  host's own label, from local_host_label> --no-ch --json` (LOCAL windows only, no ssh; measured
+  98–115 ms on one host), decision 9's filter, decision 8's wire body, POST with that host's push
+  token (bound to ONE host label). Timer `OnUnitActiveSec = 60s` with `AccuracySec = 1s`: without
+  it systemd's default 1-minute accuracy would stretch a 60 s period towards 2 minutes, and the
+  existing timer shows that default is what this repo's timers get (`home.nix:4519-4522`). At
+  60 s ± 1 s a ~3-minute TTL tolerates two missed pushes.
+- **ring claim** — a long-running user service per host (below).
+
+This restores O3 as the operator chose it: each machine reports itself, with its own token.
 
 **Ring claiming is NOT a timer**: a long-running user service per host (`Restart = "always"`,
 a ~5 s claim loop, outbound only), the shape the tooling repo already uses for its always-on
@@ -435,15 +499,14 @@ in unit start-up and, with default accuracy, would not run every 5 seconds anywa
 
 ```
 POST {agent-base}/agent/v1/presence           Authorization: Bearer <push token>
-  body: {"schema": 1, "hosts": {
-           "host-a": [{"session": "s-0001", "runtime": "claude", "target": "notes:3",
-                       "label": "notes", "hotkey": "Alt+n",
-                       "last_activity": "2000-01-02T03:04:05Z"}],
-           "host-b": []}}
-  — each named host's set is REPLACED; a host not named is untouched; a host the token does not
-    cover → 400, nothing written
-  200 X-Presence-Status: presence-replaced    body: "hosts=2 rows=1"
-  400 malformed (unknown field, oversize, bad session, uncovered host)   401 uniform
+  body: {"schema": 1, "host": "host-a",
+         "rows": [{"session": "s-0001", "runtime": "claude", "target": "notes:3",
+                   "label": "notes", "hotkey": "Alt+n",
+                   "last_activity": "2000-01-02T03:04:05Z"}]}
+  — that host's whole set is REPLACED (an empty `rows` clears it); `host` must equal the token's
+    host label, else 400 and nothing written; no other host is ever touched
+  200 X-Presence-Status: presence-replaced    body: "rows=1"
+  400 malformed (unknown field, oversize, bad session, host ≠ token's host)   401 uniform
 
 POST {agent-base}/agent/v1/rings/claim        Authorization: Bearer <claim token>
   body: {}            (POST, not GET: claiming CHANGES state)
@@ -458,13 +521,13 @@ Two routes. There is no report route (ruling D4): outcomes are logged on the hos
 | threat | control |
 |---|---|
 | **User B reads A's presence** (host labels, targets) | Decision 5's one predicate; B's pages byte-identical to no-presence pages (e2e (b)). Presence is never in a grant or a scope listing. |
-| **User B rings A's pane** | `POST /ring` enqueues only when `presence.For(viewer, session)` is non-nil; otherwise the same answer as no presence (e2e (c)). The queue is keyed by owner; a claim returns only rings for the claiming token's `(owner, host)` — B's claim token for the same host label gets none of A's (e2e (d)). |
+| **User B rings A's pane** | `POST /ring` enqueues only when `presence.For(viewer, session)` is non-nil; otherwise the same answer as no presence (e2e (c)). Two independent guards, each with its own control: the single-owner wall refuses any token row for B, so B cannot authenticate to the agent listener at all (e2e (d)); and behind it the queue is keyed by owner, so a claim returns only rings for the claiming token's `(owner, host)` — controlled by an S2 UNIT test that builds the queue with two owners, because the wall makes that filter unreachable end to end. |
 | **Cross-site ring** | Both existing gates by METHOD (`server.go:1143-1261`). No new class. |
 | **Replay / flooding** | At most ONE pending ring per `(owner, session)` (a repeat while pending is a no-op with the same answer) and a 60 s TTL (ruling D3). Ring ids are random and claim-once. Failed agent tokens hit the `netid.RateLimiter` lockout, keyed on the real client (decision 4). |
-| **A stolen push token** | Can replace presence rows for its owner on its host set — badges can be made to LIE for ≤ TTL. It cannot aim a ring (the executor decides the pane, decision 9), read anything, sign in, or enqueue. |
+| **A stolen push token** | Can replace presence rows for its owner on its ONE host — badges can be made to LIE for ≤ TTL. It cannot aim a ring (the executor decides the pane, decision 9), read anything, sign in, or enqueue. |
 | **A stolen claim token** | Can claim — and so SUPPRESS — rings queued for its `(owner, host)`. Nothing else. |
-| **Revocation** | Delete the digest row; the token file is re-read per agent request, so the next request is 401 (S2 test). |
-| **A narrowed credential or a session minted from one** | Sees no presence and cannot ring (decision 11; e2e (f)). |
+| **Revocation** | Delete the digest row; the token file is re-read per agent request, so the next request is 401 (S2 test). A row for another owner appearing in that re-read is refused as a row, logged (decision 15). |
+| **A narrowed credential or a session minted from one** | Sees no presence and cannot ring (decision 11; e2e (f)). Sessions minted before S2 lack the field and are treated the same way until their user signs in again (≤ 12 h). |
 | **Stale presence** (pane closed, window renumbered, server restarted and `@N` reused) | Server: TTL and whole-host replace. Host: only generation-CHECKED, ledger-backed, unique rows are pushed, and the executor re-runs that predicate at ring time (decision 9). A stale row can show an old target for ≤ TTL; it can never aim a ring. |
 | **Two hosts present one session** | Deterministic target (decision 7); e2e (e). |
 | **What the bell can do** | Write ONE constant byte `0x07` to a pane tty the executor's uid owns. Writing the slave side is pane OUTPUT (verified above); the executor makes no ioctl; the ring payload carries no bytes, so there is nothing to inject even if the executor were wrong. |
@@ -478,8 +541,8 @@ Two routes. There is no report route (ruling D4): outcomes are logged on the hos
 |---|---|---|---|---|
 | S0 | cairn | **The sign-in widening** (finding above) — owned by the companion change, not by this plan. Listed so it is not lost. | — | Independent. |
 | S1 | cairn | **Arcs-first page + `/arc` tabs, no presence.** `GET /arcs` (decisions 10, 12, 13); `/arc?…&tab=` ∈ {scopes, sessions}. | `routes` + constants; `routes_test.go` hand ledger, `bareGETAnswer`, `contentAuthority`; `uiaudit/targets.go` (`/arcs` in `linkExpanded`) + `boot.go` fixtures (a recent, an open-old, a closed-old arc); `internal/ui/README.md`; `tests/control_mutants.py` rows (and the pinned count it forces into `ci.yml`). NOT `flake.nix`, NOT the corpus, NOT the `ok` floor (no new package). | Read-only over the journal and store that exist. Depends on #193 merging. |
-| S2 | cairn | **Presence store + agent API.** New package `internal/presence` (stdlib-only: the owner predicate, target selection, TTL, whole-host replace, the ring queue, token-file parsing); `cmd/cairn-ui` flags `-presence-agent-addr`, `-presence-tokens`, `-presence-owner`, `-issue-presence-token`; the agent listener's own ledger + test; the reachable-bind refusal on its bind; `Identity.Narrowed` and the session record's narrowed-at-mint field. | **`ci.yml:831` `ok` floor `19` → `20`** for `internal/presence` (measure on the merged tree — it is a `<` floor and silent if forgotten); **`./internal/presence/` added to `tests/control_mutants.py` `PKGS`** (recommended — the owner predicate IS an authz seam), which `tests/test_control_mutant_count_is_pinned.py` then forces through `ci.yml`'s step name/comments and the README enumerations; `cmd/cairn-ui` flag tests; `internal/ui/README.md`; `depspolicy` unchanged (asserted). | Off by default; no browser change yet. |
-| S3 | tooling repo | **Host side.** (i) A presence step as a second `ExecStart=` on the existing push unit, `AccuracySec = 5s` on its timer (Q3); (ii) a long-running per-host claim service (`Restart = "always"`, ~5 s loop) with the executor (decision 9). Tokens in 0600 files, never argv. | The tooling repo's own suite and nix module; no cairn ledger. | Inert until tokens are minted. |
+| S2 | cairn | **Presence store + agent API.** New package `internal/presence` (stdlib-only: the owner predicate, target selection, TTL, whole-host replace, the ring queue, token-file parsing); `cmd/cairn-ui` flags `-presence-agent-addr`, `-presence-tokens`, `-presence-owner`, `-issue-presence-token`; the agent listener's own ledger + test; the reachable-bind refusal on its bind; `Identity.Unnarrowed` and the session record's `minted_unnarrowed` field (file store: new JSON field; pgstore: a new append-only migration adding the column `NOT NULL DEFAULT false`). | **`ci.yml:831` `ok` floor set to the `ok` count MEASURED on the merged tree** — 24 if nothing else moved (23 measured on `64475d7` + `internal/presence`); it is a `<` floor and silent if forgotten, and it is already 4 stale on `main` (a separate defect, handled outside this plan); **`internal/pgstore`'s migration list** (append-only); **`./internal/presence/` added to `tests/control_mutants.py` `PKGS`** (recommended — the owner predicate IS an authz seam), which `tests/test_control_mutant_count_is_pinned.py` then forces through `ci.yml`'s step name/comments and the README enumerations; `cmd/cairn-ui` flag tests; `internal/ui/README.md`; `depspolicy` unchanged (asserted). | Off by default; no browser change yet. |
+| S3 | tooling repo | **Host side, on EACH host, sharing nothing with the existing snapshot unit (Q3).** (i) A presence push: oneshot service + timer (`OnUnitActiveSec = 60s`, `AccuracySec = 1s`), local scan via `local_host_label`, decision 9's filter, decision 8's wire body, that host's push token; (ii) a long-running ring-claim service (`Restart = "always"`, ~5 s loop) with the executor (decision 9) and that host's claim token. Tokens in 0600 files, never argv. | The tooling repo's own suite and nix module; no cairn ledger. | Inert until tokens are minted. |
 | S4 | cairn | **Presence badges** — `host · target · hotkey · runtime · seen Ns ago` (+ "also on …") on the session page and session rows; a "live pane" badge on `/arcs` and `/arc` rows — all through the one predicate. | `internal/ui` render tests; uiaudit fixture (owner + non-owner); README. No row. | Read-only over S2. |
 | S5 | cairn | **Bell.** `POST /ring` (browser ledger, class `0` — gates by method), queue semantics (O4/D3, decision 7), the button where S4 shows presence, a 303 back to the session page; `tests/presence/e2e.sh` with its `--self-test`, wired into the `go` job. | `routes` + `routes_test.go` (`POST /ring`); `tests/control_mutants.py`; `ci.yml` (the e2e step); README. | Needs S2–S4. |
 
@@ -512,12 +575,20 @@ Sizes are not estimated; nobody has measured these.
   `POST /sign-in` and to the pod are refused exactly as a random token is (byte-compare); a real
   control credential IS accepted on the same request (positive control). A push token cannot
   claim; a claim token cannot push.
-- Claim isolation: B's claim token for `host-a` and A's `host-b` claim token get none of A's
-  `host-a` rings. **Revocation:** remove A's row from the token file → A's next request is 401
-  with no restart.
-- Whole-host replace: push `{host-a: [s1, s2]}` then `{host-a: [s2]}` → s1 gone; a push naming
-  only `host-b` leaves `host-a`'s rows. A push naming a host outside the token's set → 400,
-  nothing written.
+- **Queue owner-keying, at UNIT level** (the wall makes it unreachable end to end): construct
+  the queue directly with rings for owners A and B on the same host label; a claim as `(B,
+  host-a)` returns only B's, `(A, host-a)` only A's. Shown RED by dropping the owner from the
+  claim filter. A's `host-b` claim token gets none of A's `host-a` rings (end to end).
+- **The wall's own control:** a token row for B present at startup → the listener refuses to
+  start; the same row appended to the file after startup → that row is refused and logged, A's
+  push and claim still succeed, B's token gets 401. Shown RED by skipping the per-row owner check.
+- **Revocation:** remove A's row from the token file → A's next request is 401 with no restart.
+- **Legacy session record:** a session record written without `minted_unnarrowed` (the pre-S2
+  shape, loaded from a fixture file through `FileSessionStore`, and a pgstore row inserted before
+  the migration) authenticates, sees NO presence and cannot ring. Shown RED by flipping the
+  field's polarity.
+- Whole-host replace: push `host-a` with `[s1, s2]` then `[s2]` → s1 gone; `host-b`'s rows are
+  untouched by either. A push whose `host` differs from the token's → 400, nothing written.
 - Body bounds and unknown-field refusal (each never-carried field, `pane_preview` first), each
   with a just-under-the-bound positive control.
 - Startup: any of `-presence-agent-addr`, `-presence-tokens`, `-presence-owner` without the
@@ -526,18 +597,23 @@ Sizes are not estimated; nobody has measured these.
   (mirroring `main.go:474-509`).
 
 **S3 (tooling repo).**
-- **Push body:** from a fixture `session-manager` document, the pushed JSON's key set is EXACTLY
-  decision 8's (asserted as a set — grows or shrinks → red), `pane_preview` absent; rows dropped
-  for: a host whose ledger read is not `ok`; a row with no ledger record; a record with no
-  `tmux_pid`; an id from the task-file fallback; two live records with one id.
+- **Push body:** from a fixture `session-manager` document, the pushed JSON's top-level key set
+  is EXACTLY `{schema, host, rows}` and every row's is EXACTLY `{session, runtime, target, label,
+  hotkey, last_activity}` — the CONTRACT's wire sets (decision 8), asserted as sets so growth or
+  shrinkage is red; `pane_preview` absent; `host` equals `local_host_label()`. Rows dropped for: a
+  ledger read that is not `ok`; a row with no ledger record; a record with no `tmux_pid`; an id
+  from the task-file fallback; two live records with one id. A fixture carrying a second host's
+  rows pushes none of them.
+- **Host label:** when `local_host_label` raises, the push exits non-zero and sends nothing.
 - **Executor** against a private tmux server (`tmux -L <literal test socket>`): ring → bell flag on
   the target window only; ambiguous / unresolved / generation-unchecked / not-a-tty → nothing
   written, outcome logged.
 - **No input:** the target pane runs `cat > <file>`; after a ring the file is empty and
   `capture-pane` is unchanged. Structural: the executor's import graph is an asserted ledger with
   no module reaching `send-keys`/`paste-buffer`, failing on GROW.
-- Token never in argv (assert spawned command lines); the claim service exits non-zero on a 401
-  so `Restart=always` plus the failed-unit list surface a revoked token.
+- Token never in argv (assert spawned command lines). On a 401 the claim service exits with a
+  code listed in `RestartPreventExitStatus=` — `Restart=always` alone would restart it forever and
+  it would never appear in the failed-unit list — so a revoked token surfaces as a failed unit.
 - Missing `tmux` → exit 2, never skip.
 
 **S4.** Owner and non-owner render the same session page; the non-owner's bytes equal the
