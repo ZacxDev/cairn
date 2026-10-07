@@ -258,14 +258,14 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 200 mutants, over SEVEN packages
+python3 tests/control_mutants.py          # 203 mutants, over SEVEN packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 200 mutants, in ONE run.**
-`mutants=200 killed=198 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive
+**Measured on this tree: 203 mutants, in ONE run.**
+`mutants=203 killed=201 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive
 control GREEN — the S4 browser rows (`ui-arc-*`, `ui-scope-section-*`, `ui-unconfigured-*`,
-`ui-binary-*`) added ten, all killed; the recency/filter change then DELETED one (`ui-tags-key-description-loses-both-its-claims`, its pinned string removed on an operator decision). Both survivors are the rows labelled EQUIVALENT at the code — the two
+`ui-binary-*`) added ten, all killed; the recency/filter change then DELETED one (`ui-tags-key-description-loses-both-its-claims`, its pinned string removed on an operator decision); the narrowed-credential fix added three (`narrowed-flag-misses-the-empty-narrowing`, `ui-sign-in-accepts-a-narrowed-credential`, `ui-invite-flow-acts-as-a-narrowed-principal`), all killed by the test each names. Both survivors are the rows labelled EQUIVALENT at the code — the two
 constant-time-compare edits, whose property is a TIMING one no behavioural test can see; each
 prints its label and its reason at the end of the run.
 
@@ -398,7 +398,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 200 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 203 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test

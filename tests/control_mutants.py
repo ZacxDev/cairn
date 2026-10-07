@@ -340,6 +340,36 @@ MUTANTS: tuple[Mutant, ...] = (
         why="a restriction that is stored, displayed in the UI, and never enforced. "
         "Every test that only reads the credential row would still pass.",
     ),
+    Mutant(
+        name="narrowed-flag-misses-the-empty-narrowing",
+        path="internal/control/resolve.go",
+        old="\t\tnarrowed: true,\n",
+        new="\t\tnarrowed: len(only) > 0,\n",
+        killer="TestAnAuthorizationSaysWhetherACredentialNarrowedIt",
+        why="the idiomatic-looking `len` check again, one field along. A credential narrowed "
+        "to NOTHING then reads as un-narrowed, and every surface that refuses narrowed "
+        "credentials lets through the one meant to see least.",
+    ),
+    Mutant(
+        name="ui-sign-in-accepts-a-narrowed-credential",
+        path="internal/ui/session.go",
+        old="\tif auth.Narrowed() {\n\t\trefuse(",
+        new="\tif false && auth.Narrowed() {\n\t\trefuse(",
+        killer="TestANarrowedCredentialCannotSignIn",
+        why="the sign-in door as it stood before the refusal: a session is keyed on the "
+        "PRINCIPAL and re-resolves its full authority on every request, so a token narrowed "
+        "to one scope opens a browser session that reads every scope its owner can.",
+    ),
+    Mutant(
+        name="ui-invite-flow-acts-as-a-narrowed-principal",
+        path="internal/ui/invitehandlers.go",
+        old="\tif id.Auth.Narrowed() {\n\t\treturn control.Principal{}\n\t}",
+        new="\tif false && id.Auth.Narrowed() {\n\t\treturn control.Principal{}\n\t}",
+        killer="TestANarrowedBearerCannotMintAnInvitation",
+        why="membership authority is decided from the principal's project ROLE, which no "
+        "scope narrowing bounds — so a narrowed bearer token mints an invitation into its "
+        "owner's project and redeems it as an identity its holder controls.",
+    ),
     # ---- the journal boundary ------------------------------------------------------
     Mutant(
         name="unknown-event-kind-accepted",
