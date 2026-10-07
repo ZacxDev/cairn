@@ -117,9 +117,8 @@ func csrfTokenFor(r *http.Request) string {
 // X, which is nothing, and the share AND invite rows all authorise from `id.Auth` or
 // `id.Principal` rather than from the cookie, so a caller who chose their own cookie gains
 // no authority by it. `Mint` and `Revoke` in particular go through `mayManage`, which
-// requires `control.KindUser` and a real membership — and they receive `membershipActor(id)`,
-// the ZERO principal for a narrowed credential, because a bearer caller DOES reach these rows
-// this way and membership authority is not bounded by a scope narrowing (see that function).
+// requires `control.KindUser` and a real membership — reached via `membershipActor(id)`, which
+// is what keeps a narrowed bearer caller who DOES reach these rows this way from acting on it.
 // ⚠ THIS ENUMERATION HAS NOW GONE STALE TWICE, IN THE SAME PARAGRAPH THAT RECORDS THE FIRST
 // TIME. It read "the only state-changing row is `POST /sign-out`" until the share flow added
 // two, and the correction said "the LIST it rests on was stale, and the list is the half a
@@ -242,25 +241,8 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request, _ identity
 		refuse("")
 		return
 	}
-	// 🔴 A NARROWED CREDENTIAL MINTS NO SESSION. A session is keyed on the PRINCIPAL alone and
-	// `identity.CookieSession` re-derives `control.Resolve(model, principal)` on every request
-	// — the principal's FULL authority — so a session opened from a credential narrowed to one
-	// scope would read every scope its owner can, defeating the narrowing whose whole purpose
-	// is bounding what a leaked token reaches. Refusing is the operator's decision over the
-	// alternative (carrying the narrowing on the session row); it keeps "a session is a
-	// principal" true for both doors into `openSession`.
-	//
-	// 🔴 `auth.Narrowed()`, NEVER A COMPARISON AGAINST THE PRINCIPAL'S FULL AUTHORITY. A
-	// narrowing equal to today's full set compares equal and is still a narrowed credential —
-	// the principal's grants can grow tomorrow — and a non-nil EMPTY narrowing (sees nothing)
-	// is narrowed too. See `control.Authorization.Narrowed`.
-	//
-	// ⚠ THE REFUSAL IS THE SAME 401 AND THE SAME SENTENCE AS A WRONG TOKEN, AND IT COUNTS
-	// TOWARD THE LOCKOUT THE SAME WAY. A distinct answer would tell a caller "this token is
-	// real, merely narrowed" — an enumeration oracle `signInRefused`'s own comment rules out.
-	// It counts because a refused sign-in is a refused sign-in: an uncounted path would be a
-	// second behaviour a caller can measure (no lockout after N tries) and a free retry loop
-	// against the limiter. The reason reaches the operator's log and nowhere else.
+	// 🔴 A narrowed credential mints no session, and gets the uniform, lockout-counted
+	// refusal — the rules and their reasons: `internal/ui/README.md`, "What a session can be minted from".
 	if auth.Narrowed() {
 		refuse("the credential is narrowed — ")
 		return

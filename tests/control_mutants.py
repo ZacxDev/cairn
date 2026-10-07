@@ -370,6 +370,57 @@ MUTANTS: tuple[Mutant, ...] = (
         "scope narrowing bounds — so a narrowed bearer token mints an invitation into its "
         "owner's project and redeems it as an identity its holder controls.",
     ),
+    # ---- the membershipActor CALL SITES -------------------------------------------
+    # The row above mutates the helper's BODY, which cannot see a call site that never calls
+    # it. Each row below restores `id.Principal` at ONE site; the behavioural test named is
+    # the killer, and `TestEveryMembershipDecisionActsAsMembershipActor` (the AST ledger)
+    # goes red beside it on every one.
+    Mutant(
+        name="ui-invite-page-bypasses-membership-actor",
+        path="internal/ui/invitehandlers.go",
+        old="view.Projects = s.inviting.Invitable(membershipActor(id))",
+        new="view.Projects = s.inviting.Invitable(id.Principal)",
+        killer="TestANarrowedBearerSeesNoInvitations",
+        why="the project page is the narrowing in front of `Outstanding`, which checks nothing "
+        "itself: a narrowed bearer would list who is being invited into its owner's projects.",
+    ),
+    Mutant(
+        name="ui-invite-revoke-bypasses-membership-actor",
+        path="internal/ui/invitehandlers.go",
+        old="s.inviting.Revoke(r.Context(), membershipActor(id), digest)",
+        new="s.inviting.Revoke(r.Context(), id.Principal, digest)",
+        killer="TestANarrowedBearerCannotRevokeAnInvitation",
+        why="a narrowed bearer withdrawing its owner's invitations — membership authority "
+        "exercised through a credential meant to see one scope.",
+    ),
+    Mutant(
+        name="ui-invite-mint-display-bypasses-membership-actor",
+        path="internal/ui/invitehandlers.go",
+        old="pickProject(s.inviting.Invitable(membershipActor(id)), project)",
+        new="pickProject(s.inviting.Invitable(id.Principal), project)",
+        killer="TestEveryMembershipDecisionActsAsMembershipActor",
+        why="behaviourally INVISIBLE today — this read only finds a display name, and `Mint` "
+        "refuses on its own — which is exactly why the ledger, not a behavioural test, is its "
+        "killer: the next edit that trusts this list would inherit an un-narrowed one.",
+    ),
+    Mutant(
+        name="ui-share-page-candidates-bypass-membership-actor",
+        path="internal/ui/sharehandlers.go",
+        old="\tcandidates, err := s.sharing.Candidates(membershipActor(id))\n\tif err != nil {\n\t\twritePlain(w, http.StatusInternalServerError, \"the authority could not be read\")\n\t\treturn\n\t}\n\n\tview.Scope",
+        new="\tcandidates, err := s.sharing.Candidates(id.Principal)\n\tif err != nil {\n\t\twritePlain(w, http.StatusInternalServerError, \"the authority could not be read\")\n\t\treturn\n\t}\n\n\tview.Scope",
+        killer="TestANarrowedAdminBearerIsOfferedNoShareCandidates",
+        why="the share page lists every collaborator across the owner's projects to a caller "
+        "whose narrowing excludes them.",
+    ),
+    Mutant(
+        name="ui-share-write-candidates-bypass-membership-actor",
+        path="internal/ui/sharehandlers.go",
+        old="\tcandidates, err := s.sharing.Candidates(membershipActor(id))\n\tif err != nil {\n\t\twritePlain(w, http.StatusInternalServerError, \"the authority could not be read\")\n\t\treturn\n\t}\n\tsubject, ok",
+        new="\tcandidates, err := s.sharing.Candidates(id.Principal)\n\tif err != nil {\n\t\twritePlain(w, http.StatusInternalServerError, \"the authority could not be read\")\n\t\treturn\n\t}\n\tsubject, ok",
+        killer="TestANarrowedAdminBearerIsOfferedNoShareCandidates",
+        why="the write half: the subject check accepts a membership-derived collaborator the "
+        "page no longer offers, so the narrowing holds only for callers who use the form.",
+    ),
     # ---- the journal boundary ------------------------------------------------------
     Mutant(
         name="unknown-event-kind-accepted",

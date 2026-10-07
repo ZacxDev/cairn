@@ -104,23 +104,37 @@ const InviteHonesty = "An invitation is a link, and the link is the authority: i
 // survives no hop. See `handleInvite`.
 const inviteOutcomeRevoked = "revoked"
 
-// membershipActor is the principal the invite flow may act as, and it is the ZERO principal
-// for a caller whose credential was narrowed.
+// membershipActor is the principal a MEMBERSHIP-derived decision may act as, and it is the
+// ZERO principal for a caller whose credential was narrowed.
 //
 // 🔴 MEMBERSHIP AUTHORITY IS NOT IN AN `Authorization`, SO A NARROWING CANNOT BOUND IT — AND
 // WITHOUT THIS A NARROWED TOKEN COULD WIDEN ITSELF. `Inviting` takes a principal (see its
-// `Invitable` comment for why) and decides from the principal's project ROLE. A bearer token
+// `Invitable` comment for why) and decides from the principal's project ROLE; `Sharing.
+// Candidates` enumerates everyone the principal shares a project with. A bearer token
 // narrowed to one scope reaches these rows through the machine-token backend, and the
 // state-changing gate does not stop it (`csrfTokenValid`'s comment: the caller chooses its
 // own cookie). So a leaked narrowed token could mint an invitation into every project its
 // owner manages and redeem it as an identity the holder controls — full project membership
-// out of a credential meant to see one scope. A narrowed credential therefore exercises NO
-// membership authority.
+// out of a credential meant to see one scope — and could list every collaborator across
+// projects its narrowing excludes. A narrowed credential therefore exercises NO
+// membership-derived authority: no invitations, and no share candidates (so it cannot share
+// through this surface at all — `handleShare` validates the subject against `Candidates`).
+//
+// ⚠ WHY "NOTHING" AND NOT "THE CANDIDATES WITHIN THE NARROWING". A membership has no scope
+// dimension — a project member is a collaborator whether or not the project's scopes are in
+// the narrowing — so any filter would have to invent a rule linking the two, and an invented
+// rule is a second authority decision living outside `internal/control`. Empty is the one
+// answer that needs no such rule, and a narrowed credential is a machine credential that
+// does not need a browser share form.
 //
 // ⚠ THE REFUSAL RIDES THE EXISTING GUARDS RATHER THAN ADDING ONE PER HANDLER: the zero
-// principal is not `control.KindUser`, so `Invitable` lists nothing and `mayManage` refuses,
-// and each handler answers exactly what a caller managing nothing already gets. One rule,
-// one place — every invite handler that names an actor goes through this function.
+// principal is not `control.KindUser`, so `Invitable` and `Candidates` list nothing and
+// `mayManage` refuses, and each handler answers exactly what a caller managing nothing
+// already gets. A future door that turns a credential into membership authority (or into a
+// session — see `internal/ui/README.md`, "What a session can be minted from") must hold the
+// same line. 🔴 Every actor-taking `s.inviting.*` / `s.sharing.Candidates` call goes through
+// this function, and `TestEveryMembershipDecisionActsAsMembershipActor` is the ledger that
+// fails when one does not.
 func membershipActor(id identity.Identity) control.Principal {
 	if id.Auth.Narrowed() {
 		return control.Principal{}

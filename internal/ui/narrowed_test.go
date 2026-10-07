@@ -18,7 +18,14 @@ import (
 // The world is `fixtureCache` plus a SECOND scope in the same project — so the fixture user
 // reaches two scopes and a narrowing to one of them is a real subset — and three narrowed
 // credentials, one per shape a narrowing can have. Every value is synthetic.
-var fixtureScopeTwo = control.DerivedID(control.PrefixScope, "quarry-ledger")
+var (
+	fixtureScopeTwo = control.DerivedID(control.PrefixScope, "quarry-ledger")
+	// A second project the fixture user belongs to, with a collaborator nobody else shares
+	// and NO scopes — so it adds a share candidate without changing the user's scope set
+	// (the "equal to today's full set" credential below stays equal).
+	fixtureProjectKiln  = control.DerivedID(control.PrefixProject, "kiln")
+	fixtureCollaborator = control.DerivedID(control.PrefixUser, "sable")
+)
 
 const (
 	narrowedToOneToken  = "fixture-narrowed-to-one-scope-not-a-real-token"
@@ -31,6 +38,15 @@ func narrowedWorld(t *testing.T) *control.Cache {
 	return fixtureCacheWith(t,
 		control.Event{Kind: control.EventScopeCreated, At: fixtureClock, ScopeID: fixtureScopeTwo,
 			DisplayName: "quarry-ledger", ProjectID: fixtureProject},
+		control.Event{Kind: control.EventUserCreated, At: fixtureClock, UserID: fixtureCollaborator,
+			Provider: "fixture-provider", Subject: "00000000-0000-4000-8000-000000000002",
+			Email: "sable@notes.example.invalid"},
+		control.Event{Kind: control.EventProjectCreated, At: fixtureClock, ProjectID: fixtureProjectKiln,
+			Name: "kiln", UserID: fixtureUser},
+		control.Event{Kind: control.EventMemberSet, At: fixtureClock, ProjectID: fixtureProjectKiln,
+			UserID: fixtureUser, Role: control.RoleOwner},
+		control.Event{Kind: control.EventMemberSet, At: fixtureClock, ProjectID: fixtureProjectKiln,
+			UserID: fixtureCollaborator, Role: control.RoleMember},
 		control.Event{Kind: control.EventCredentialIssued, At: fixtureClock, CredentialID: "crd_narrow_one",
 			SubjectKind: control.KindUser, SubjectID: fixtureUser,
 			TokenHash: control.HashToken(narrowedToOneToken), Label: "narrowed to one",
@@ -217,18 +233,8 @@ func TestANarrowedBearerCannotMintAnInvitation(t *testing.T) {
 	mint := func(t *testing.T, bearer string) *httptest.ResponseRecorder {
 		t.Helper()
 		l := newLiveOver(t, authority, inviting, nil, nil)
-		form := url.Values{FieldProject: {string(fixtureProject)}, FieldRole: {string(control.RoleMember)}}
-		r := httptest.NewRequest(http.MethodPost, InvitePath, strings.NewReader(form.Encode()))
-		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		r.Host = testHost
-		r.Header.Set("Origin", "https://"+testHost)
-		r.Header.Set("Authorization", "Bearer "+bearer)
-		const chosen = "a-cookie-value-the-caller-chose"
-		r.AddCookie(&http.Cookie{Name: identity.SessionCookieName, Value: chosen})
-		r.Header.Set(HeaderCSRF, identity.CSRFTokenFor(chosen))
-		rec := httptest.NewRecorder()
-		l.srv.ServeHTTP(rec, r)
-		return rec
+		return l.bearerDo(http.MethodPost, InvitePath, bearer,
+			url.Values{FieldProject: {string(fixtureProject)}, FieldRole: {string(control.RoleMember)}})
 	}
 
 	if rec := mint(t, testCredential); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), JoinPath+"?") {

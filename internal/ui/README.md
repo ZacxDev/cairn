@@ -981,7 +981,9 @@ promoted to everything its principal can read. Two doors reach it:
 the narrowing on the session row). Before this, a token narrowed to one scope pasted into the form
 opened a session that read every scope its owner can — measured RED by
 `TestANarrowedCredentialCannotSignIn`, which resolves the minted cookie and asserts the session
-reads a scope outside the narrowing. The rules it pins:
+reads a scope outside the narrowing — defeating the narrowing, whose whole purpose is bounding what
+a leaked token reaches. 🔴 **A NEW door into `openSession` must hold the same line**: a principal
+that arrived on a narrowed credential is never promoted to a session. The rules it pins:
 
 - **"Narrowed" is `control.Authorization.Narrowed()`** — set by `control.Narrow` whenever the
   credential's `NarrowedScopes` is non-nil — never a comparison against the principal's full
@@ -1003,12 +1005,27 @@ auth` field), so every scope read on this surface is bounded. The invite flow is
 caller passes the CSRF gate with a cookie of its own choosing. A narrowed token could therefore mint
 an invitation into its owner's project and redeem it as an identity its holder controls. The invite
 handlers now act as `membershipActor(id)`, the zero principal for a narrowed caller, so `Invitable`
-lists nothing and `mayManage` refuses (`TestANarrowedBearerCannotMintAnInvitation`).
+lists nothing and `mayManage` refuses — on all three rows: the project page
+(`TestANarrowedBearerSeesNoInvitations`), mint (`TestANarrowedBearerCannotMintAnInvitation`) and
+revoke (`TestANarrowedBearerCannotRevokeAnInvitation`).
 
-⚠ **NOT CLOSED HERE, NAMED SO IT IS NOT REDISCOVERED:** `Sharing.Candidates(id.Principal)` still
-enumerates the collaborators across every project the principal belongs to, for a narrowed caller
-that holds `admin` on a scope inside its narrowing. It confers no authority — `Share` checks the
-scope against the narrowed `id.Auth` — but it is a listing wider than the narrowing.
+🔴 **THE SHARE FLOW'S CANDIDATE LIST IS MEMBERSHIP-DERIVED TOO, AND IS CLOSED THE SAME WAY.**
+`Sharing.Candidates` enumerates everyone the principal shares a project with, so a narrowed caller
+holding `admin` on a scope inside its narrowing was shown — and could share with — collaborators
+from projects its narrowing excludes. It is now called with `membershipActor(id)`, so a narrowed
+caller gets NO candidates and therefore cannot share through this surface at all (`handleShare`
+validates the subject against the same list). Chosen over "filter to the candidates within the
+narrowing" because a membership has no scope dimension: any such filter would be an invented rule
+linking the two, a second authority decision outside `internal/control`
+(`TestANarrowedAdminBearerIsOfferedNoShareCandidates`).
+
+**One rule, one place, and a ledger that enforces it:** every actor-taking `s.inviting.*` and
+`s.sharing.Candidates` call passes `membershipActor(id)`, pinned by
+`TestEveryMembershipDecisionActsAsMembershipActor` (an AST ledger over the package, failing when a
+site bypasses it or the set of sites grows or shrinks). `Share`/`Unshare` take `id.Principal` as
+the journal's ACTOR only — attribution, not authority, which comes from the narrowed `id.Auth` —
+and `handleOAuthCallback`'s `RedeemFor` takes a provider principal with no credential behind it;
+both are named exemptions in that ledger.
 
 # Phase C — the share flow
 

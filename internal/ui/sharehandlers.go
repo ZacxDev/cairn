@@ -111,7 +111,7 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request, id iden
 		writePlain(w, http.StatusInternalServerError, "the authority could not be read")
 		return
 	}
-	candidates, err := s.sharing.Candidates(id.Principal)
+	candidates, err := s.sharing.Candidates(membershipActor(id))
 	if err != nil {
 		writePlain(w, http.StatusInternalServerError, "the authority could not be read")
 		return
@@ -177,7 +177,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request, id identity
 	// share it with any principal whose id they could guess — which is what makes the
 	// unguessable ids load-bearing rather than cosmetic, and is not a property to rest
 	// a share flow on.
-	candidates, err := s.sharing.Candidates(id.Principal)
+	candidates, err := s.sharing.Candidates(membershipActor(id))
 	if err != nil {
 		writePlain(w, http.StatusInternalServerError, "the authority could not be read")
 		return

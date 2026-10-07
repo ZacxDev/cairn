@@ -74,9 +74,7 @@ type Authorization struct {
 // ⚠ A NON-NIL EMPTY NARROWING IS NARROWED. It sees nothing, and `nil` is its opposite; a
 // check spelled `len(only) > 0` would read the see-nothing credential as unrestricted.
 //
-// Who reads it: `internal/ui` refuses to mint a browser session from a narrowed
-// credential, because a session re-derives the PRINCIPAL's full authority on every
-// request and would therefore discard the narrowing — see `internal/ui/README.md`.
+// Who reads it and why: `internal/ui/README.md`, "What a session can be minted from".
 func (a Authorization) Narrowed() bool { return a.narrowed }
 
 // Allows is THE PREDICATE. Everything that narrows anything consults this.
