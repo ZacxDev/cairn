@@ -150,9 +150,39 @@ func csrfTokenValid(r *http.Request) bool {
 	return identity.CSRFTokenValid(cookie.Value, presented)
 }
 
-// handleSignInForm renders the way in. It is PUBLIC and it reads nothing.
+// handleSignInForm renders the way in. It is PUBLIC, and the one thing it reads is the
+// return-to value, which it validates and carries into both forms as a hidden field.
+//
+// 🔴 A BROWSER THAT IS ALREADY SIGNED IN AND ARRIVES WITH A `next` IS SENT STRAIGHT THERE.
+// That is the shape of a stale tab: a page redirected here while the session was expired, the
+// person signed in in another tab, and this one is reloaded. Without `next` the page renders as
+// it always did — a signed-in person may want the form to switch credentials, and a redirect
+// with nowhere particular to go would take that away. The identity is resolved through the
+// SAME chain gate (4) uses; this row is public, so the dispatcher handed it the zero value.
+//
+// 🔴 A `next` WHOSE PATH IS `/sign-in` ITSELF IS SENT TO `/`, NOT FOLLOWED. `safeNext` accepts
+// `/sign-in` (the loop check was deleted — see its comment), so without this a signed-in browser
+// at `/sign-in?next=/sign-in?next=…/scope` was redirected once per nesting level: measured 1, 21
+// and 140 hops at depths 1, 21 and 140, and a 140-deep value is ~1,966 bytes, under
+// `maxNextLen` — a browser gives up with "too many redirects" long before. A `next` naming the
+// sign-in page carries no destination a SIGNED-IN person can use, so the answer is the default
+// landing, in one hop. `/` rather than rendering the form, because the form would carry that
+// same `next` and a completed sign-in would land straight back on this branch.
+// The PATH is compared DECODED, as the dispatcher routes it, so `/sign%2Din?next=…` is caught
+// too; a value `url.Parse` refuses cannot be routed to this row at all.
+// `TestNoUnauthenticatedRequestShapeLoops` walks a 140-deep target.
 func (s *Server) handleSignInForm(w http.ResponseWriter, r *http.Request, _ identity.Identity) {
-	s.renderSignIn(w, http.StatusOK, "")
+	next := requestedNext(r)
+	if next != "" {
+		if id, err := s.auth.Authenticate(r); err == nil && id.Valid() {
+			if u, perr := url.Parse(next); perr == nil && u.Path == SignInPath {
+				next = RootPath
+			}
+			http.Redirect(w, r, next, http.StatusSeeOther)
+			return
+		}
+	}
+	s.renderSignIn(w, http.StatusOK, "", next)
 }
 
 // handleSignIn exchanges a presented credential for a session. It is one of TWO doors into
@@ -172,6 +202,10 @@ func (s *Server) handleSignInForm(w http.ResponseWriter, r *http.Request, _ iden
 // ordering costs nothing and the other ordering is a live hazard if gate (2) is ever
 // relaxed.
 func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request, _ identity.Identity) {
+	// The return-to value, from the posted body only and validated, carried into every
+	// re-render below so a refused attempt keeps it, and into `openSession` as the landing.
+	next := requestedNext(r)
+
 	// 🔴 THE CLIENT IS RESOLVED AND METERED BEFORE THE CREDENTIAL IS READ, and the reason
 	// is narrower than the one written here first. WHAT IT BUYS: a locked-out client causes
 	// NO credential work — no SHA-256 over the presented value, no authority read — which
@@ -199,7 +233,7 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request, _ identity
 		// alternative — one shared key for every unidentifiable request — is the failure
 		// `internal/netid` exists to avoid: a single abuser locks out everybody.
 		s.logf("sign-in refused: no client identity could be resolved from peer %q", r.RemoteAddr)
-		s.renderSignIn(w, http.StatusUnauthorized, signInRefused)
+		s.renderSignIn(w, http.StatusUnauthorized, signInRefused, next)
 		return
 	}
 	if s.limiter != nil && s.limiter.LockedOut(client) {
@@ -212,7 +246,7 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request, _ identity
 		// decision about that ruling, not about this handler.
 		s.logf("sign-in refused: %s is locked out (client identity %s)",
 			client, peerState(trusted))
-		s.renderSignIn(w, http.StatusUnauthorized, signInRefused)
+		s.renderSignIn(w, http.StatusUnauthorized, signInRefused, next)
 		return
 	}
 	// refuse is the ONE failure exit for a presented credential, so a rejected token and a
@@ -229,7 +263,7 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request, _ identity
 		} else {
 			s.logf("sign-in refused: %s%s (client identity %s)", reason, client, peerState(trusted))
 		}
-		s.renderSignIn(w, http.StatusUnauthorized, signInRefused)
+		s.renderSignIn(w, http.StatusUnauthorized, signInRefused, next)
 	}
 
 	presented := r.PostFormValue(FieldToken)
@@ -245,7 +279,7 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request, _ identity
 		return
 	}
 
-	s.openSession(w, r, principal, "credential from "+client+" (client identity "+peerState(trusted)+")")
+	s.openSession(w, r, principal, "credential from "+client+" (client identity "+peerState(trusted)+")", next)
 }
 
 // openSession is the ONE place a session is minted, and it is one place because there are
@@ -275,14 +309,14 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request, _ identity
 // values the caller already logs — never a value from the request body — because this line
 // is the one an operator reads to tell a token sign-in from a provider one, and a refusal
 // that reflected caller text into a log is how a log becomes unreadable.
-func (s *Server) openSession(w http.ResponseWriter, r *http.Request, principal control.Principal, via string) {
+func (s *Server) openSession(w http.ResponseWriter, r *http.Request, principal control.Principal, via, next string) {
 	if old, err := r.Cookie(identity.SessionCookieName); err == nil && old.Value != "" {
 		if err := s.sessions.Revoke(old.Value); err != nil {
 			// A revocation that failed must not be followed by a successful sign-in:
 			// the browser would end up holding a NEW session while the OLD one stayed
 			// live, which is the fixation hole this call exists to close.
 			s.logf("sign-in aborted: the previous session could not be revoked: %v", err)
-			s.renderSignIn(w, http.StatusInternalServerError, signInRefused)
+			s.renderSignIn(w, http.StatusInternalServerError, signInRefused, next)
 			return
 		}
 	}
@@ -290,7 +324,7 @@ func (s *Server) openSession(w http.ResponseWriter, r *http.Request, principal c
 	id, err := identity.NewSessionID()
 	if err != nil {
 		s.logf("sign-in aborted: no session id could be generated: %v", err)
-		s.renderSignIn(w, http.StatusInternalServerError, signInRefused)
+		s.renderSignIn(w, http.StatusInternalServerError, signInRefused, next)
 		return
 	}
 	now := s.now()
@@ -306,7 +340,7 @@ func (s *Server) openSession(w http.ResponseWriter, r *http.Request, principal c
 		// the store does not have would be refused on every request with no way to tell
 		// why, which is indistinguishable from a broken login.
 		s.logf("sign-in aborted: the session could not be stored: %v", err)
-		s.renderSignIn(w, http.StatusInternalServerError, signInRefused)
+		s.renderSignIn(w, http.StatusInternalServerError, signInRefused, next)
 		return
 	}
 
@@ -316,7 +350,14 @@ func (s *Server) openSession(w http.ResponseWriter, r *http.Request, principal c
 	s.logf("sign-in: a session was opened for %s via %s", principal, via)
 	// 303, not 302: the browser must follow it with a GET. A 302 leaves the method
 	// up to the client, and a client that re-POSTs to `/` gets the uniform 401.
-	http.Redirect(w, r, RootPath, http.StatusSeeOther)
+	//
+	// 🔴 `next` ARRIVES VALIDATED, AND THIS FUNCTION DOES NOT VALIDATE IT AGAIN ON PURPOSE.
+	// Each door validates where it READS the value — `requestedNext` for the form, `safeNext`
+	// on the flight's value in the callback — and each of those is a guard a test can reach
+	// and watch go red. A second check here would be one no test could reach, which this
+	// repository calls a defect when it is not labelled; a third door must validate where it
+	// reads, as these two do.
+	http.Redirect(w, r, landingFor(next), http.StatusSeeOther)
 }
 
 // handleSignOut revokes the session and clears the cookie, in that order.
@@ -356,9 +397,12 @@ func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request, _ identit
 // answers 501 or 503. `providerArmed` folds in BOTH questions — is a provider configured, and
 // has its key set ever been fetched — so a page rendered during a provider outage offers the
 // door that still works and not the one that does not.
-func (s *Server) renderSignIn(w http.ResponseWriter, code int, message string) {
+//
+// ⚠ `next` ARRIVES VALIDATED, for the reason `openSession` states: every caller passes the
+// value its door read through `safeNext`, or "".
+func (s *Server) renderSignIn(w http.ResponseWriter, code int, message, next string) {
 	var b strings.Builder
-	if err := SignInPage(message, s.providerArmed()).Render(&b); err != nil {
+	if err := SignInPage(message, s.providerArmed(), next).Render(&b); err != nil {
 		writePlain(w, http.StatusInternalServerError, "the page could not be rendered")
 		return
 	}

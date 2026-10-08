@@ -366,6 +366,91 @@ MUTANTS: tuple[Mutant, ...] = (
         "PRINCIPAL and re-resolves its full authority on every request, so a token narrowed "
         "to one scope opens a browser session that reads every scope its owner can.",
     ),
+    # ---- the sign-in RETURN PATH: the open-redirect validator, and the bearer split ----
+    #
+    # ⚠ `ui-next-allows-a-sign-in-loop` WAS A ROW HERE AND IS DELETED WITH THE CHECK IT
+    # MUTATED: its premise (`next=/sign-out` signs a person out) was false — the row is
+    # POST-only — see `safeNext` and `TestANextOfSignOutSignsNobodyOut`.
+    #
+    # `safeNext` is the ONE function every read of `?next=` goes through, so a hole in it is
+    # an open redirect on every door at once; and the dispatcher's redirect must never answer
+    # a program that presented an `Authorization` header with HTML instead of the 401.
+    Mutant(
+        name="ui-next-allows-a-network-path-reference",
+        path="internal/ui/returnto.go",
+        old="\tif strings.Contains(p, \"//\") {",
+        new="\tif false {",
+        killer="TestSafeNextRefusesTheOpenRedirectCorpus",
+        why="`strings.HasPrefix(next, \"/\")` is the check everybody writes first, and "
+        "`//evil.invalid` satisfies it — a browser resolves it to another HOST, so a sign-in "
+        "link anybody can craft lands a freshly authenticated victim on an attacker's page.",
+    ),
+    Mutant(
+        name="ui-next-allows-a-backslash",
+        path="internal/ui/returnto.go",
+        old="c == '\\\\' || c == '#'",
+        new="c == '#'",
+        killer="TestSafeNextRefusesTheOpenRedirectCorpus",
+        why="`/\\evil.invalid` passes every slash-based check and browsers read `\\` as `/` "
+        "in the authority position, so it is `//evil.invalid` to the thing that follows it.",
+    ),
+    Mutant(
+        name="ui-next-allows-control-characters",
+        path="internal/ui/returnto.go",
+        old="c == '#' || c < 0x21 || c > 0x7e",
+        new="c == '#' || c > 0x7e",
+        killer="TestSafeNextRefusesTheOpenRedirectCorpus",
+        why="a browser STRIPS tab and newline from a URL before parsing it, so `/<TAB>/evil` "
+        "passes the no-empty-segment check here and is `//evil` to the browser.",
+    ),
+    Mutant(
+        name="ui-next-allows-a-fragment",
+        path="internal/ui/returnto.go",
+        old="c == '\\\\' || c == '#' || c < 0x21",
+        new="c == '\\\\' || c < 0x21",
+        killer="TestSafeNextRefusesTheOpenRedirectCorpus",
+        why="a fragment never arrives in a request-URI, and one carrying an invalid escape makes "
+        "`url.Parse` fail, so `http.Redirect` skips its `path.Clean` and emits the value raw.",
+    ),
+    Mutant(
+        name="ui-next-allows-dot-segments",
+        path="internal/ui/returnto.go",
+        old="\t\tif seg == \".\" || seg == \"..\" {",
+        new="\t\tif seg == \"\\x00\" {",
+        killer="TestSafeNextRefusesTheOpenRedirectCorpus",
+        why="`/..//evil.invalid` is one dot-segment removal away from the path `//evil.invalid`; "
+        "refusing the shape keeps the value validated identical to the value sent.",
+    ),
+    Mutant(
+        name="ui-redirect-answers-a-failed-bearer-with-html",
+        path="internal/ui/returnto.go",
+        old="\t\t!presentedAuthorization(r)",
+        new="\t\ttrue",
+        killer="TestAFailedBearerAndANonBrowserKeepTheUniform401",
+        why="a program presenting a revoked token that also sends `Accept: text/html` would "
+        "be told to go and sign in through a form, instead of the uniform 401 its error "
+        "handling was written against — the machine contract moved with nothing saying so.",
+    ),
+    Mutant(
+        name="ui-signed-in-shortcut-follows-the-sign-in-page",
+        path="internal/ui/session.go",
+        old="if u, perr := url.Parse(next); perr == nil && u.Path == SignInPath {",
+        new="if u, perr := url.Parse(next); perr == nil && u.Path == \"/never-a-path\" {",
+        killer="TestNoUnauthenticatedRequestShapeLoops",
+        why="`safeNext` accepts `/sign-in` once its loop check is gone, so a shortcut that "
+        "follows any valid `next` strips one `/sign-in?next=` level per hop — 140 redirects at "
+        "depth 140, inside `maxNextLen` — and the browser reports too many redirects.",
+    ),
+    Mutant(
+        name="ui-redirect-admits-head",
+        path="internal/ui/returnto.go",
+        old="\treturn r.Method == http.MethodGet &&",
+        new="\treturn (r.Method == http.MethodGet || r.Method == http.MethodHead) &&",
+        killer="TestNoUnauthenticatedRequestShapeLoops",
+        extra_killers=("TestAFailedBearerAndANonBrowserKeepTheUniform401",),
+        why="HEAD reads as the harmless twin of GET, and no row answers it — so a redirected "
+        "HEAD lands on `/sign-in`, is not routed, and is redirected to `/sign-in` for ever.",
+    ),
     Mutant(
         name="ui-invite-flow-acts-as-a-narrowed-principal",
         path="internal/ui/invitehandlers.go",

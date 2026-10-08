@@ -756,17 +756,18 @@ What replaced it, and what was deliberately kept:
 - **the uniform refusal for a BAD CREDENTIAL stays**, and that was always the half worth its
   cost: it is an oracle over the credential TABLE, not over the URL space. No refusal on this
   surface says which part of a credential was wrong.
-- an unauthenticated caller still cannot tell *most* routes from a typo, because gate (4) runs
+- an unauthenticated caller still cannot tell routes from a typo, because gate (4) runs
   before gate (5) — a consequence of the gate ORDER rather than a guard anybody maintains.
-  ⚠ **Not the root**, and this bullet said otherwise in its first draft: a browser asking for `/`
-  gets 303 where `/nonsense` gets 401, so exactly one path is distinguishable without a
-  credential. It is the path a sign-in flow has to advertise anyway, and it discloses that `/`
-  exists — never anything about who may see it.
-- **`GET /` DOES redirect a browser now**, 303 to `/sign-in`, on an operator decision. It is
-  scoped to one path, one method and an `Accept` carrying `text/html`; every other path, method
-  and client keeps the uniform 401 byte for byte, so the machine contract is unmoved.
-  `TestTheRootRedirectsABrowserAndRefusesEverythingElse` probes each of those three dimensions
-  with the other two held at the redirecting value.
+  ⚠ **While the browser redirect was root-only, the root was the one exception** (a browser
+  asking for `/` got 303 where `/nonsense` got 401). Phase N removed the exception by widening
+  the redirect to every path: a browser now gets the same 303 for both, differing only in the
+  echoed `?next=`.
+- **A browser navigation DOES redirect now**, 303 to `/sign-in` — first `GET /` alone, then, in
+  Phase N, every path with the request-URI carried as `?next=`. It is scoped to `GET` (not `HEAD`), an
+  `Accept` carrying `text/html`, and NO `Authorization` header; every other method, every other
+  client and every failed bearer keeps the uniform 401 byte for byte, so the machine contract is
+  unmoved. `TestTheRootRedirectsABrowserAndRefusesEverythingElse` and Phase N's tests probe each
+  dimension with the others held at the redirecting value.
 
 ## 🔴 The CSRF token is derived, not stored
 
@@ -3366,3 +3367,153 @@ shape a parser rewrites.
   claim served by another (the plan's P2).
 - **A click in a real browser**: `uiaudit` never submits a non-GET row, so the bell is captured
   rendered, never pressed. The e2e drives the POST with `curl` and a real session cookie.
+
+# Phase N — the sign-in return path
+
+An operator report: a bookmarked `/scope?id=scp_…` opened with an expired session answered
+`unauthorized` — a 12-byte plain-text page with no way in. Now it is sent to sign-in carrying where
+it was going, and lands back there.
+
+| request | answer |
+|---|---|
+| `GET`, `Accept` containing `text/html`, NO `Authorization` header, authentication fails (no credential, or a cookie that no longer resolves) | `303 Location: /sign-in?next=<request-URI, query-encoded>`; `/sign-in` bare when the request-URI is `/` or one `safeNext` refuses |
+| the same, presenting an `Authorization` header (any value, including empty) | `401 unauthorized`, unchanged |
+| the same, `Accept: */*` or no `Accept` | `401 unauthorized`, unchanged |
+| `HEAD`, any shape | `401 unauthorized`, unchanged — see *No request shape loops* |
+| any other method (`POST`, `PUT`, `OPTIONS`, …) | unchanged: gate (2) then the uniform 401 |
+| `GET /sign-in?next=X` | the page, with `X` (if `safeNext` accepts it) as a hidden field in BOTH forms |
+| `GET /sign-in?next=X` while signed in | `303 Location: X` when `X` is valid; the form otherwise, as before |
+| `POST /sign-in` with body `next=X` | success: `303 Location: X` (else `/`); refusal: the page re-rendered with `X` kept |
+| `POST /sign-in/github` with body `next=X` | `X` stored on the server-side flight; the callback lands on it |
+
+## 🔴 ONE validator, `safeNext`, at every read
+
+`internal/ui/returnto.go`. Accepts only a same-origin path-absolute reference: non-empty, ≤ 2048
+bytes, first byte `/`, no `\` and no `#` anywhere, every byte printable ASCII (0x21–0x7e), and a
+path (before `?`) with no empty segment (`//` anywhere — which is also what refuses the
+network-path `//evil.invalid`) and no `.`/`..` segment. Anything else becomes `""`, which lands on
+`/` and renders no field — never an error page, never an echo. Reads go through it in exactly two
+places: `requestedNext` (the query on `GET`, the posted
+body ONLY on every other method — a `?next=` on a POST's URL is ignored, the invite token's rule) and
+`safeNext(flightNext)` in the callback, which re-validates the stored value at use. The redirect
+builder (`signInLocation`) validates the request-URI it is about to carry.
+
+⚠ **`openSession` and `renderSignIn` do NOT validate again, deliberately.** A third check would be a
+guard no test can reach, since every caller hands them a value its door already validated; each
+door's own check is reachable and was watched red.
+
+⚠ **Percent-escapes are not decoded for the shape rules.** `/%2F%2Fevil.invalid` is ACCEPTED: a
+browser resolving a `Location` treats `%2F` as data, so it lands on a path on THIS origin (which
+answers 404). `TestAnEscapedSlashPairLandsOnThisOrigin` pins the Location and resolves it against
+the origin. Nothing in `safeNext` decodes. The redirect carries `RequestURI()`, never the decoded
+`URL.Path`, so an escaped request is carried as it arrived.
+
+⚠ **`#` and dot/empty segments are refused because of `http.Redirect`, measured.** A fragment
+carrying an invalid escape (`/..//evil.invalid#%zz`) makes `url.Parse` fail, so `http.Redirect`
+skips its `path.Clean` and emits the value RAW; a browser then removes the dot segment and lands on
+the same-origin PATH `//evil.invalid`. Not exploitable as served, but one rewrite from a
+network-path reference — so the shape is refused rather than left to `path.Clean` to normalise, and
+the value validated is the value sent. Browsers never send a fragment in a request-URI, so the `#`
+rule loses nothing. `/..//evil.invalid` without a fragment is refused by the same rules.
+
+## 🔴 There is no sign-in loop check — it was deleted, and why
+
+The first version refused `next` values naming `/sign-in`, `/sign-out` or either GitHub row,
+decoding the path to do it, on the premise that `next=/sign-out` would sign a person straight back
+out. **False:** `/sign-out` is POST-only, so a 303 there is a GET that answers 404 and revokes
+nothing — `TestANextOfSignOutSignsNobodyOut` signs in with `next=/sign-out`, follows the landing
+(404) and requires the session to still answer 200. What remained was a nuisance landing, and the
+check was the validator's only decode step, so it went (with its mutant row).
+
+## 🔴 No request shape loops — and `HEAD` is why the redirect is `GET`-only
+
+The first version redirected `HEAD` too. No row answers `HEAD`, so a redirected `HEAD` lands on
+`/sign-in`, is not routed, reaches gate (4) again and is redirected to `/sign-in` again, for ever —
+measured on `/`, `/arcs?all=1`, `/sign-in` and `/join?token=x` (the base answered 401). Browsers
+never navigate with `HEAD`, so `HEAD` keeps the 401. `TestNoUnauthenticatedRequestShapeLoops`
+follows every `Location`, keeping the method, for `GET` and `HEAD` × signed out / signed in × with
+and without a dead cookie × ten targets, and requires a non-3xx within 5 hops; it does not depend
+on the deleted loop check.
+
+⚠ **The deletion opened one redirect chain, and the first version of that test could not see it.**
+With `/sign-in` accepted, the signed-in shortcut followed `next=/sign-in?next=…` one nesting level
+per hop — 1, 21 and 140 hops at depths 1, 21 and 140; 140 levels is ~1,966 bytes, inside
+`maxNextLen`, and a browser reports "too many redirects". The test's deepest target was depth 2,
+so "within 5 hops" held. Now the shortcut sends a `next` whose DECODED path is `/sign-in` to `/`
+(not the form: the form would carry that `next`, and a completed sign-in would land straight back
+here); `safeNext` is unchanged. The walk carries a 140-deep target held to ≤1 hop — red at
+`13e2008` (capped at 6 by the walk; 140 uncapped), green after (1 hop, landing `/`).
+
+## 🔴 The redirect is not an oracle
+
+`signInLocation` is a function of the request-URI and nothing else; it runs at gate (4), before
+the ledger and before any handler, and consults no store, session table or route.
+`TestTheSignInRedirectIsUniformAcrossWhatTheTargetNames` asserts both halves: responses for an
+existing scope, a missing scope, an existing entry, a missing entry and a missing arc are
+byte-identical (status, every header, body) once the echoed target is substituted, AND the source
+was consulted **0** times — against a non-zero count on an authenticated positive control over
+the same counter. Unknown paths redirect too, so a browser cannot tell a route from a typo either.
+
+## 🔴 The bearer split is by PRESENCE of the header
+
+Both header-borne backends read `Authorization`; a client that sends one is a program holding a
+credential and gets the 401 it was written against. Presence, not validity, and not non-emptiness:
+an empty `Authorization:` header is still a program. `Accept: text/html` is the second half — kept
+from the root-only branch so `curl` (`*/*`) and a browser's own `/favicon.ico` fetch keep the 401.
+⚠ That `Accept` condition is NARROWER than "any GET without `Authorization`", deliberately: it
+keeps the documented machine contract and costs no browser navigation.
+
+## The GitHub flight carries `next` server-side
+
+`flight.next`, beside `flight.invite`, for the same reasons minus secrecy: a cookie would be
+client-held state that outlives the flow, and the provider redirect URL is where an attacker
+crafting a callback link would put a value. Validated at start (`requestedNext`) and at use
+(`safeNext` in the callback), cleared with the verifier and the invite on consume.
+`TestTheGitHubFlightCarriesTheReturnPathServerSide` reads the table's internals for the stored and
+cleared halves and checks that neither the provider Location nor any cookie carries it;
+`TestTheCallbackRevalidatesTheReturnPathAtUse` plants `//evil.invalid` on a record directly — the
+only way to reach the use-time check — and requires a landing on `/`.
+
+## The RED proof
+
+Regression tests red at the base (`a20ebab`), run black-box against the base tree:
+`TestAnUnauthenticatedBrowserIsSentToSignInWithItsReturnPath` (every row answered 401) and
+`TestAnExpiredCookieIsSentToSignInAndTheCredentialFormLandsBack` (the expired cookie answered 401).
+`TestAFailedBearerAndANonBrowserKeepTheUniform401` was GREEN at the base — an **invariant guard**
+for the machine contract, not regression coverage. `TestTheRootRedirectsABrowserAndRefusesEverythingElse`
+moved two rows (`/share`, `/admin`) from 401 to 303 deliberately, kept `HEAD /` at 401, and gained
+a failed-bearer row, which at the base answered **303**: the old root branch did not look at
+`Authorization`.
+
+The audit round's fixes, red at the PR's first head (`94d3107`, the current tests dropped into an
+export of that tree) and green now: `TestNoUnauthenticatedRequestShapeLoops` (18 `HEAD` shapes
+"still redirecting after 5 hops"), `TestANextOfSignOutSignsNobodyOut` (landed on `/`, not
+`/sign-out`), `TestAFailedBearerAndANonBrowserKeepTheUniform401`'s browser-`HEAD` row (303), the
+root test's `HEAD /` row (303), and the corpus's fragment, dot-segment, empty-segment and
+now-accepted sign-in rows.
+
+Twenty-nine hand mutants, each one textual edit, each run against the named test and required to
+fail with that test's own message, the tree restored and digest-checked after each, with an unedited
+positive control running all fourteen tests green: every `safeNext` rule (empty segment / network
+path, backslash, `#`, control bytes, dot segments, length, scheme), the loop check RESTORED, the
+redirect predicate admitting `HEAD`, admitting every method, ignoring `Accept` and ignoring
+`Authorization`, presence-vs-value, the Location dropping `next` or carrying the decoded path,
+both landings forced to `/`, the refusal dropping `next`, `FormValue` for `PostFormValue`, either
+form losing its field, the flight dropping/not clearing/not re-validating `next`, the start row not
+validating, the signed-in shortcut removed or ignoring the identity, and the redirect consulting
+the source or varying by target — 29 killed. Seven of them are rows in `tests/control_mutants.py`
+(`ui-next-*`, `ui-redirect-answers-a-failed-bearer-with-html`, `ui-redirect-admits-head`), each run
+alone with `--only` under `PYTHONDONTWRITEBYTECODE=1`: `killed=1` each. Round 2 added an eighth,
+`ui-signed-in-shortcut-follows-the-sign-in-page`, killed by the deep target's own ≤1-hop message.
+
+## What these guards still cannot see
+
+- **A real browser's click path.** No Playwright/`uiaudit` walk signs out, opens a deep page and
+  signs back in; the round trip is driven in process with `httptest`. `uiaudit`'s redirect guard
+  REFUSES a capture that lands on `/sign-in`, which is the right outcome and not a measurement of
+  this flow.
+- **The GitHub provider end to end.** The stub provider is in process; the real GoTrue redirect is
+  not exercised, so "the provider URL carries no `next`" is a claim about what THIS process builds.
+- **Browser-specific URL parsing beyond the corpus.** The rules are the WHATWG shapes known to turn
+  a path into an authority (`//`, `\`, stripped tab/newline); a parser quirk outside them is not
+  tested here.

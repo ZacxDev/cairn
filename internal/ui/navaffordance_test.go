@@ -111,7 +111,7 @@ func TestEveryRenderedPageCarriesBothNavigationAffordances(t *testing.T) {
 // asserting the property with no record of why it is the property.
 func TestTheSignInPageOffersNoAuthenticatedNavigation(t *testing.T) {
 	for _, provider := range []bool{false, true} {
-		html := renderNode(t, SignInPage("", provider))
+		html := renderNode(t, SignInPage("", provider, ""))
 
 		// POSITIVE CONTROL — the matcher must be able to see an href on this page at
 		// all, or "no share link" is a fact about the matcher. The sign-in form posts
@@ -279,8 +279,8 @@ func TestNoPublicPageOffersAuthenticatedNavigation(t *testing.T) {
 func everyPublicPage(t *testing.T) map[string]string {
 	t.Helper()
 	return map[string]string{
-		"sign-in":          renderNode(t, SignInPage("", false)),
-		"sign-in-provider": renderNode(t, SignInPage("", true)),
+		"sign-in":          renderNode(t, SignInPage("", false, "")),
+		"sign-in-provider": renderNode(t, SignInPage("", true, "")),
 		"join":             renderNode(t, JoinPage(fixtureInviteToken, true)),
 		"join-no-provider": renderNode(t, JoinPage(fixtureInviteToken, false)),
 		"join-no-token":    renderNode(t, JoinPage("", true)),

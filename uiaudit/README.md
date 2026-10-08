@@ -246,8 +246,10 @@ the code forbids) and may change again before merge. **Read the constant, never 
 value.**
 
 Also unseen live: an undeclared path answering **404** rather than 401 — this walk never probes
-one. `GET /` **303**ing to `/sign-in` for `Accept: text/html` is covered by the redirect guard
-below rather than by a live capture, because a signed-in walk does not trigger it.
+one. An authenticated page **303**ing to `/sign-in?next=…` for an `Accept: text/html` GET with no
+session — every such page now, `GET /` alone before the sign-in return-path change — is covered
+by the redirect guard below rather than by a live capture, because a signed-in walk does not
+trigger it.
 
 🔴 **THIS LINE WAS STALE TWICE OVER, AND BOTH WAYS ARE WORTH RECORDING.** It named a specific
 clause of that policy, and the clause was deleted — a cross-reference to one *part* of a value

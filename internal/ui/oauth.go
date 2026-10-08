@@ -138,7 +138,17 @@ type flight struct {
 	// ⚠ IT IS CLEARED WHEN THE RECORD IS CONSUMED, for the reason `verifier` is — see
 	// [flights.take]. A spent record keeping it would leave a live capability in memory for
 	// the rest of the TTL, and unlike a spent verifier this one would still be redeemable.
-	invite  string
+	invite string
+	// next is the validated return-to value this sign-in should land on, or "" for `/`.
+	//
+	// 🔴 IT RIDES THE FLIGHT FOR THE INVITE TOKEN'S REASONS, MINUS THE SECRECY ONE. It is not a
+	// secret, but the two alternatives are still worse: a cookie would be a second piece of
+	// client-held state that outlives the flow and that a stale tab could replay into an
+	// unrelated sign-in, and the provider redirect URL is the provider's — a value there is
+	// one an attacker can set by crafting the callback link, so the landing would stop being
+	// a fact this process decided. Validated by `safeNext` at start AND at use, and cleared on
+	// consume with the other two.
+	next    string
 	expires time.Time
 	// client is the `netid.ResolveClient` identity that opened this flight, and it is held
 	// ONLY so `maxFlightsPerClient` can be counted. It is never compared at the callback:
@@ -240,7 +250,7 @@ func (r flightRefusal) String() string {
 // per-client cap allows. The token is resolved once, at the callback, where it is being
 // redeemed anyway and where its refusal is indistinguishable from every other reason a
 // sign-in did not complete.
-func (f *flights) start(client, verifier, invite string, ttl time.Duration) (string, flightRefusal) {
+func (f *flights) start(client, verifier, invite, next string, ttl time.Duration) (string, flightRefusal) {
 	id, err := newFlightID()
 	if err != nil {
 		return "", flightRefusedNoID
@@ -267,7 +277,7 @@ func (f *flights) start(client, verifier, invite string, ttl time.Duration) (str
 	if len(f.open) >= maxOpenFlights {
 		return "", flightRefusedGlobal
 	}
-	f.open[id] = flight{verifier: verifier, invite: invite, expires: now.Add(ttl), client: client}
+	f.open[id] = flight{verifier: verifier, invite: invite, next: next, expires: now.Add(ttl), client: client}
 	return id, flightOpened
 }
 
@@ -295,26 +305,29 @@ func (f *flights) start(client, verifier, invite string, ttl time.Duration) (str
 // of the TTL for no reason — which matters more now that a spent record is KEPT until expiry
 // rather than deleted. `TestAFlightIsSingleUseAndBoundToItsBrowser` asserts it on the table's
 // own internals, because nothing observable from outside can see a field that is not read.
-func (f *flights) take(id string) (verifier, invite string, ok bool) {
+func (f *flights) take(id string) (verifier, invite, next string, ok bool) {
 	if id == "" {
-		return "", "", false
+		return "", "", "", false
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	rec, held := f.open[id]
 	if !held || rec.consumed || !f.now().Before(rec.expires) {
-		return "", "", false
+		return "", "", "", false
 	}
-	verifier, invite = rec.verifier, rec.invite
+	verifier, invite, next = rec.verifier, rec.invite, rec.next
 	rec.consumed = true
 	// 🔴 BOTH SECRETS ARE CLEARED, NOT JUST THE VERIFIER. A spent record is KEPT until it
 	// expires (that is what makes the per-client cap a bound on the RATE), so anything left
 	// on it lives for the rest of the TTL. A spent verifier is useless by then; a spent
 	// INVITE TOKEN is not — the invitation may still be open, and it can create a principal.
 	// So the one that matters more is the one that was not here first.
-	rec.verifier, rec.invite = "", ""
+	// The return-to value is cleared with them: it is no secret, but a consumed record is
+	// one nothing may read again, and a field that survived consumption would be the one a
+	// later change started reading.
+	rec.verifier, rec.invite, rec.next = "", "", ""
 	f.open[id] = rec
-	return verifier, invite, true
+	return verifier, invite, next, true
 }
 
 // openCount is the table's size. For a test's instrument control, never for a decision.
@@ -455,12 +468,18 @@ func clearedOAuthFlightCookie() *http.Cookie {
 // is nothing to derive one from. Gate (2) is what stands in front of it — which is why gate
 // (2) is derived from the METHOD and runs BEFORE authentication.
 func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request, _ identity.Identity) {
+	// 🔴 THE RETURN-TO VALUE IS VALIDATED HERE, AT START, AND AGAIN AT USE IN THE CALLBACK
+	// (`landingFor`). It rides the SERVER-SIDE flight record for the reason the invitation
+	// token does — see [flight.next] — and is read from the posted body only, so the sign-in
+	// page's hidden field is the one way in. Every refusal below re-renders the page with it,
+	// so a person who retries does not lose where they were going.
+	next := requestedNext(r)
 	if s.oauth == nil {
-		s.refuseUnconfiguredOAuth(w)
+		s.refuseUnconfiguredOAuth(w, next)
 		return
 	}
 	if !s.providerArmed() {
-		s.refuseUnreadyOAuth(w)
+		s.refuseUnreadyOAuth(w, next)
 		return
 	}
 	// 🔴 THE CLIENT IS RESOLVED BEFORE ANY WORK, AND `netid.ResolveClient` IS REUSED RATHER
@@ -485,7 +504,7 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request, _ iden
 		// indistinguishable FROM EACH OTHER, not to claim a credential was rejected to
 		// somebody who typed none. `oauthNotStarted` is just as uninformative and is true.
 		s.logf("github sign-in refused: no client identity could be resolved from peer %q", r.RemoteAddr)
-		s.renderSignIn(w, http.StatusUnauthorized, oauthNotStarted)
+		s.renderSignIn(w, http.StatusUnauthorized, oauthNotStarted, next)
 		return
 	}
 
@@ -505,7 +524,7 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request, _ iden
 	// keeps meaning exactly what its own comment says it means.
 	if s.limiter != nil && s.limiter.LockedOut(client) {
 		s.logf("github sign-in refused: %s is locked out (client identity %s)", client, peerState(trusted))
-		s.renderSignIn(w, http.StatusUnauthorized, oauthNotStarted)
+		s.renderSignIn(w, http.StatusUnauthorized, oauthNotStarted, next)
 		return
 	}
 
@@ -517,7 +536,7 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request, _ iden
 		// ⚠ ALSO UNREACHABLE ON THE PINNED TOOLCHAIN — same reason as `flightRefusedNoID`,
 		// which says it once and at length. Both are defensive and neither is testable.
 		s.logf("github sign-in aborted: no PKCE verifier could be generated: %v", err)
-		s.renderSignIn(w, http.StatusInternalServerError, oauthNotStarted)
+		s.renderSignIn(w, http.StatusInternalServerError, oauthNotStarted, next)
 		return
 	}
 	// 🔴 THE INVITATION TOKEN THIS SIGN-IN WILL REDEEM, READ FROM THE POSTED BODY AND
@@ -538,7 +557,7 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request, _ iden
 	// distinction — there the value must come from the QUERY, because a link is the only
 	// thing that can carry it — so the two reads are deliberately spelled differently.
 	inviteToken := r.PostFormValue(inviteTokenField)
-	id, outcome := s.flights.start(client, verifier, inviteToken, FlightTTL)
+	id, outcome := s.flights.start(client, verifier, inviteToken, next, FlightTTL)
 	if outcome != flightOpened {
 		// The log names WHICH bound refused, because "the table is full" and "you have spent
 		// your own share" send an operator to completely different places — and a surface
@@ -552,10 +571,10 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request, _ iden
 		// sibling `randomPKCEValue` failure above already answers 500, so answering 503 for
 		// the identical failure one line down was two codes for one condition.
 		if outcome == flightRefusedNoID {
-			s.renderSignIn(w, http.StatusInternalServerError, oauthNotStarted)
+			s.renderSignIn(w, http.StatusInternalServerError, oauthNotStarted, next)
 			return
 		}
-		s.renderSignIn(w, http.StatusServiceUnavailable, oauthIncomplete)
+		s.renderSignIn(w, http.StatusServiceUnavailable, oauthIncomplete, next)
 		return
 	}
 	http.SetCookie(w, oauthFlightCookie(id, FlightTTL))
@@ -593,11 +612,11 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request, _ iden
 // compatible with the narrow claim and would not have been with the wide one.
 func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ identity.Identity) {
 	if s.oauth == nil {
-		s.refuseUnconfiguredOAuth(w)
+		s.refuseUnconfiguredOAuth(w, "")
 		return
 	}
 	if !s.providerArmed() {
-		s.refuseUnreadyOAuth(w)
+		s.refuseUnreadyOAuth(w, "")
 		return
 	}
 
@@ -631,15 +650,20 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 	if cookie, err := r.Cookie(oauthFlightCookieName); err == nil {
 		flightID = cookie.Value
 	}
-	verifier, inviteToken, held := s.flights.take(flightID)
+	verifier, inviteToken, flightNext, held := s.flights.take(flightID)
 	if !held {
 		// No cookie, an expired flight, or a replay. All three are the same observable
 		// deliberately: a callback that said which would tell a caller whether a given
-		// flight id had ever existed.
+		// flight id had ever existed. No return-to value either: there is no flight to
+		// have carried one, and the callback's own query is not a place `next` is read.
 		s.logf("github sign-in refused: the callback carried no completable flight (%s, %s)", client, who)
-		s.renderSignIn(w, http.StatusBadRequest, oauthIncomplete)
+		s.renderSignIn(w, http.StatusBadRequest, oauthIncomplete, "")
 		return
 	}
+	// 🔴 RE-VALIDATED AT USE, NOT TRUSTED BECAUSE IT WAS VALIDATED AT START. The record is
+	// this process's own memory, so the second check costs one function call and makes the
+	// landing a property of THIS line rather than of whichever code last wrote the field.
+	next := safeNext(flightNext)
 
 	// 🔴 THE PROVIDER'S OWN ERROR IS NOT REFLECTED BACK. GoTrue appends `error` and
 	// `error_description` when a user declines, and `error_description` is attacker-
@@ -650,13 +674,13 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 	query := r.URL.Query()
 	if providerErr := query.Get("error"); providerErr != "" {
 		s.logf("github sign-in refused: the provider declined (%s, %s)", client, who)
-		s.renderSignIn(w, http.StatusBadRequest, oauthIncomplete)
+		s.renderSignIn(w, http.StatusBadRequest, oauthIncomplete, next)
 		return
 	}
 	code := query.Get("code")
 	if code == "" {
 		s.logf("github sign-in refused: the callback carried no authorization code (%s, %s)", client, who)
-		s.renderSignIn(w, http.StatusBadRequest, oauthIncomplete)
+		s.renderSignIn(w, http.StatusBadRequest, oauthIncomplete, next)
 		return
 	}
 
@@ -688,7 +712,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 				// answer would make this route an oracle over other people's invitations,
 				// which is `invite.ErrNotRedeemable`'s own ruling one layer down.
 				s.logf("github sign-in refused: the invitation could not be redeemed: %v (%s, %s)", rerr, client, who)
-				s.renderSignIn(w, http.StatusUnauthorized, signInRefused)
+				s.renderSignIn(w, http.StatusUnauthorized, signInRefused, next)
 				return
 			}
 			// 🔴 A PRINCIPAL CAME INTO EXISTENCE, SO THE LOG SAYS SO EXPLICITLY. This is the
@@ -697,7 +721,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 			// act. An operator reading this stream must be able to find every one of them.
 			s.logf("github sign-in PROVISIONED a user by invitation: provisioned=%v project=%s role=%s (%s, %s)",
 				red.Provisioned, red.Project, red.Role, client, who)
-			s.openSession(w, r, red.Principal, "the "+GitHubLabel+" provider and an invitation")
+			s.openSession(w, r, red.Principal, "the "+GitHubLabel+" provider and an invitation", next)
 			return
 		}
 		// 🔴 THE SAME SENTENCE THE TOKEN FORM GIVES, FOR EVERY REASON THE EXCHANGE CAN
@@ -706,7 +730,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 		// the third one is the one that confirms a guess. The REASON goes to the operator's
 		// log, which is where the pod puts its own verdicts.
 		s.logf("github sign-in refused: %v (%s, %s)", err, client, who)
-		s.renderSignIn(w, http.StatusUnauthorized, signInRefused)
+		s.renderSignIn(w, http.StatusUnauthorized, signInRefused, next)
 		return
 	}
 
@@ -746,7 +770,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 	// fixation guard, the session record and the cookie live; a copy of it here would be a
 	// second place to forget the revoke-before-mint ordering, and the copy that forgot would
 	// be the one on the newer door.
-	s.openSession(w, r, principal, "the "+GitHubLabel+" provider")
+	s.openSession(w, r, principal, "the "+GitHubLabel+" provider", next)
 }
 
 // refuseUnconfiguredOAuth is what a deployment that has not configured the provider answers
@@ -766,9 +790,9 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 // A 404 would say the path is not a route, and it is one — it is in `DeclaredRoutes()`,
 // which this repository publishes. 501 says the route exists and this deployment does not
 // implement it, which is exactly the state.
-func (s *Server) refuseUnconfiguredOAuth(w http.ResponseWriter) {
+func (s *Server) refuseUnconfiguredOAuth(w http.ResponseWriter, next string) {
 	s.logf("github sign-in refused: no provider is configured on this deployment")
-	s.renderSignIn(w, http.StatusNotImplemented, oauthUnavailable)
+	s.renderSignIn(w, http.StatusNotImplemented, oauthUnavailable, next)
 }
 
 // providerArmed answers whether the GitHub door can work RIGHT NOW. It is asked per request
@@ -810,8 +834,8 @@ func (s *Server) providerArmed() bool {
 // ⚠ 503 RATHER THAN 501, AND THE DIFFERENCE IS THE ONE A CALLER CAN ACT ON. 501 says this
 // deployment does not implement the route; 503 says it does and cannot serve it yet. They are
 // different facts and a person retrying is only right about one of them.
-func (s *Server) refuseUnreadyOAuth(w http.ResponseWriter) {
+func (s *Server) refuseUnreadyOAuth(w http.ResponseWriter, next string) {
 	s.logf("github sign-in refused: the provider's key set has never been fetched, so no token " +
 		"it issued could be verified — the credential form is unaffected")
-	s.renderSignIn(w, http.StatusServiceUnavailable, oauthNotReady)
+	s.renderSignIn(w, http.StatusServiceUnavailable, oauthNotReady, next)
 }
