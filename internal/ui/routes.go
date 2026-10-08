@@ -135,7 +135,15 @@ var routes = map[routeKey]route{
 	// WRITER declared in a trailer. It is the one browse row keyed by a value that is NOT scoped — a
 	// session id is global — so it is the one page that AGGREGATES across scopes, and it does so only
 	// over the caller's narrowed set. GET only. See `handleSessionPage`.
-	{"GET", "/session"}:   {(*Server).handleSessionPage, classContent},
+	{"GET", "/session"}: {(*Server).handleSessionPage, classContent},
+	// 🔴 THE BELL (S5 of the arcs/presence plan): queue a terminal-bell ring at the pane a session the
+	// VIEWER owns is running in. CLASS 0, ON PURPOSE — it declares nothing, so BOTH cross-site gates
+	// reach it by METHOD (same origin before auth, the CSRF token after), exactly as they reach
+	// `/sign-out`; `TestTheRingRowIsBehindBothCrossSiteGates` asserts both by their own messages so a
+	// future class cannot quietly exempt it. Not `classContent`: it renders no answer about authority —
+	// every request is answered with the same 303 back to the session page, whether or not a ring was
+	// queued, so the response cannot say whose pane exists. See `handleRing`.
+	{"POST", "/ring"}:     {(*Server).handleRing, 0},
 	{"GET", "/share"}:     {(*Server).handleSharePage, classContent},
 	{"POST", "/share"}:    {(*Server).handleShare, 0},
 	{"POST", "/unshare"}:  {(*Server).handleUnshare, 0},
@@ -234,6 +242,9 @@ const (
 	ArcsPath = "/arcs"
 	// SessionPath is one writing session across every readable scope, keyed by `?session=<id>`.
 	SessionPath = "/session"
+	// RingPath queues a terminal-bell ring for the session named by the [FieldSession] form field,
+	// and answers 303 back to that session's page whatever happened (`handleRing`).
+	RingPath = "/ring"
 	// SharePath answers the share flow's read AND its grant write, split by method.
 	SharePath = "/share"
 	// UnsharePath is a SEPARATE path rather than an action field on `SharePath`,
@@ -402,6 +413,11 @@ const (
 	FieldVerb    = "verb"
 	FieldGrant   = "grant"
 )
+
+// FieldSession is the bell form's session id on `POST /ring`. The same string as [QuerySession], for
+// [FieldProject]'s reason: one concept, reached on the read through a URL and on the write through a
+// body.
+const FieldSession = "session"
 
 // The invite flow's form fields.
 //

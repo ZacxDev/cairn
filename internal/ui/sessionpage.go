@@ -229,7 +229,13 @@ func SessionPage(v PageView) g.Node {
 			h.Class("card"),
 			h.ID("session-summary"),
 			h.H2(h.Class("session-id"), g.Text(rep.ID)),
-			g.If(pane != nil, h.P(h.Class("card-stats"), h.Data("presence", "session"), pane)),
+			// The bell (S5, `bell.go`) rides INSIDE the badge's own `g.If`, so it can never render where
+			// the badge does not — and only with a CSRF token to carry (a bearer request with no session
+			// cookie has none, and a form it could not submit would be a dead control).
+			// ⚠ A `div`, NEVER A `p`: a `<form>` start tag closes an open `<p>`, so a parser would move
+			// the bell out of the container and leave a stray empty paragraph behind it.
+			g.If(pane != nil, h.Div(h.Class("card-stats"), h.Data("presence", "session"), pane,
+				g.If(v.CSRF != "", bellForm(rep.ID, v.CSRF)))),
 			h.P(h.Class("card-stats"),
 				stat(plural(rep.Bullets(), "bullet", "bullets")+" in "+plural(len(rep.Scopes), "scope", "scopes"), ""),
 				stat(strconv.Itoa(rep.Coverage.Attributed)+" of "+strconv.Itoa(rep.Coverage.Bullets)+" bullets attributed",

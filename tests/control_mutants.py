@@ -3363,7 +3363,7 @@ MUTANTS: tuple[Mutant, ...] = (
         old="return a.activity.After(b.activity)",
         new="return a.activity.Before(b.activity)",
         killer="TestTheTargetIsTheNewestActivityThenTheSmallerHost",
-        extra_killers=("TestARingGoesThroughTheOwnerPredicate",),
+        extra_killers=("TestARingGoesThroughTheOwnerPredicate", "TestTheRingGoesToTheBadgesHost"),
         why="a comparator's direction is the single easiest thing to flip, and a ring aimed at the "
         "STALE host lights a window the operator is not looking for.",
     ),
@@ -3373,6 +3373,7 @@ MUTANTS: tuple[Mutant, ...] = (
         old="return a.Host < b.Host",
         new="return a.Host > b.Host",
         killer="TestTheTargetIsTheNewestActivityThenTheSmallerHost",
+        extra_killers=("TestTheRingGoesToTheBadgesHost",),
         why="any tie-break is deterministic, so the wrong one looks as good as the right one — "
         "and the host side's expectation (decision 7) is the smaller label.",
     ),
@@ -3658,8 +3659,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-presence-session-page-badge-dropped",
         path="internal/ui/sessionpage.go",
-        old="g.If(pane != nil, h.P(",
-        new="g.If(false && pane != nil, h.P(",
+        old="g.If(pane != nil, h.Div(",
+        new="g.If(false && pane != nil, h.Div(",
         killer="TestTheBadgeSaysWhereTheSessionRuns",
         why="the session page is the one surface the plan's e2e names; a summary card that forgot the "
         "badge would leave every byte-identity test green.",
@@ -3707,6 +3708,133 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestTheBrowserReadsTheStoreTheAgentListenerWrites",
         why="every `internal/ui` test hands a service in itself, so the one line that connects the "
         "listener's store to the browser is visible only to a test that drives `main`.",
+    ),
+    # ---- the bell (S5): `POST /ring`, the queue behind it, and the button ---------------------
+    Mutant(
+        name="ui-ring-row-declared-public",
+        path="internal/ui/routes.go",
+        old='{"POST", "/ring"}:     {(*Server).handleRing, 0},',
+        new='{"POST", "/ring"}:     {(*Server).handleRing, classPublic},',
+        killer="TestTheRingRowIsBehindBothCrossSiteGates",
+        extra_killers=("TestTheRouteLedgerMatchesTheDispatchTable",),
+        why="a ring reads like a harmless nudge, and a class is a one-word edit — but a public row "
+        "dispatches ahead of the chain and so ahead of the CSRF gate, which is the bypass the S5 "
+        "plan names: a future class quietly exempting a state-changing row.",
+    ),
+    Mutant(
+        name="ui-ring-never-asks-presence",
+        path="internal/ui/bell.go",
+        old="if s.presence != nil && write.SessionComponent.MatchString(session) {",
+        new="if false && s.presence != nil && write.SessionComponent.MatchString(session) {",
+        killer="TestEveryRingAnswerIsTheSameRedirect",
+        extra_killers=(
+            "TestTheRingRowIsBehindBothCrossSiteGates",
+            "TestARepeatWhilePendingQueuesNoSecondRing",
+            "TestARungRingLivesSixtySeconds",
+            "TestTheRingGoesToTheBadgesHost",
+        ),
+        why="every answer is the same 303, so a handler that never queued anything passes every "
+        "check that reads only the response — the owner's queued ring is the positive control.",
+    ),
+    Mutant(
+        name="ui-ring-answers-a-queued-ring-differently",
+        path="internal/ui/bell.go",
+        old="\t\tif _, err := s.presence.Ring(id, session); err != nil {",
+        new="\t\tif ok, err := s.presence.Ring(id, session); ok {\n"
+        "\t\t\thttp.Redirect(w, r, sessionHref(session)+\"&rang=1\", http.StatusSeeOther)\n"
+        "\t\t\treturn\n"
+        "\t\t} else if err != nil {",
+        killer="TestEveryRingAnswerIsTheSameRedirect",
+        why="telling the owner \"rang\" is the obvious UX — and it makes the answer depend on whether "
+        "a live pane exists for this viewer, which is the one thing a ring must not say.",
+    ),
+    Mutant(
+        name="presence-ring-reads-the-store-without-the-predicate",
+        path="internal/presence/queue.go",
+        old="\tp, ok := s.Store.For(viewer, session)\n",
+        new="\tvar p Presence\n\tok := false\n\ts.Store.mu.Lock()\n"
+        "\tfor key, set := range s.Store.hosts {\n\t\tfor _, r := range set.rows {\n"
+        "\t\t\tif r.Session == session {\n"
+        "\t\t\t\tp, ok = Presence{Target: Located{Row: r, Owner: key.owner, Host: key.host}}, true\n"
+        "\t\t\t}\n\t\t}\n\t}\n\ts.Store.mu.Unlock()\n\t_ = viewer\n",
+        killer="TestEveryRingAnswerIsTheSameRedirect",
+        extra_killers=("TestARingGoesThroughTheOwnerPredicate",),
+        why="the ring only needs the TARGET row's host, and reading it straight out of the table is "
+        "shorter than asking on the viewer's behalf — it queues a ring at the OWNER's pane for any "
+        "caller who can name the session. `presence-ring-skips-the-predicate` files a refused ring "
+        "under the zero owner, which no claim can see; this one files it where the owner's host will.",
+    ),
+    Mutant(
+        name="presence-queue-a-repeat-replaces-the-pending-ring",
+        path="internal/presence/queue.go",
+        old="if existing, ok := q.pending[key]; ok {",
+        new="if existing, ok := q.pending[key]; false && ok {",
+        killer="TestARepeatWhilePendingQueuesNoSecondRing",
+        extra_killers=("TestOnePendingRingPerSessionAndItExpires",),
+        why="the map key already holds one ring per (owner, session), so the dedupe branch looks "
+        "redundant — but without it each click REPLACES the pending ring with a fresh one, and a "
+        "ring stays pending past 60 s for as long as somebody keeps clicking.",
+    ),
+    Mutant(
+        name="presence-ring-ttl-too-long",
+        path="internal/presence/queue.go",
+        old="const DefaultRingTTL = 60 * time.Second",
+        new="const DefaultRingTTL = 62 * time.Second",
+        killer="TestARungRingLivesSixtySeconds",
+        extra_killers=("TestARepeatWhilePendingQueuesNoSecondRing",),
+        why="a round number nearby reads as the same bound — and a ring a host claims late lights a "
+        "window the operator stopped looking for. ⚠ `TestOnePendingRingPerSessionAndItExpires` does "
+        "NOT kill this: it reads its expiry instant off `DefaultRingTTL` itself, so it moves with the "
+        "mutant — measured, it stayed green. The route test's literal 61 s is what pins the bound.",
+    ),
+    Mutant(
+        name="presence-ring-ttl-too-short",
+        path="internal/presence/queue.go",
+        old="const DefaultRingTTL = 60 * time.Second",
+        new="const DefaultRingTTL = 58 * time.Second",
+        killer="TestARungRingLivesSixtySeconds",
+        extra_killers=("TestOnePendingRingPerSessionAndItExpires",),
+        why="the other side of the same bound: a ring dropped before a ~5 s claim loop on a slow "
+        "host gets to it is a click that silently does nothing.",
+    ),
+    Mutant(
+        name="ui-bell-rendered-without-the-badge",
+        path="internal/ui/sessionpage.go",
+        old='h.Data("presence", "session"), pane,\n\t\t\t\tg.If(v.CSRF != "", bellForm(rep.ID, v.CSRF)))),',
+        new='h.Data("presence", "session"), pane)),\n\t\t\tg.If(v.CSRF != "", bellForm(rep.ID, v.CSRF)),',
+        killer="TestTheBellRendersOnlyBesideTheOwnersBadge",
+        why="the button is harmless without presence (a ring queues nothing), so placing it beside the "
+        "badge rather than inside its condition looks equivalent — and it tells every viewer of every "
+        "session page that presence is switched on, breaking decision 5's byte-identity.",
+    ),
+    Mutant(
+        name="ui-bell-container-is-a-paragraph",
+        path="internal/ui/sessionpage.go",
+        old='h.Div(h.Class("card-stats"), h.Data("presence", "session"), pane,',
+        new='h.P(h.Class("card-stats"), h.Data("presence", "session"), pane,',
+        killer="TestTheBellRendersOnlyBesideTheOwnersBadge",
+        why="every other stats row on these pages is a `<p class=\"card-stats\">`, so a paragraph reads "
+        "as the house shape — and a `<form>` start tag closes an open `<p>`, so a parser moves the bell "
+        "out of the badge's container and leaves a stray empty paragraph. This shipped in the first S5 "
+        "commit and was found by audit, not by the string-offset test that stood here.",
+    ),
+    Mutant(
+        name="ui-bell-never-rendered",
+        path="internal/ui/sessionpage.go",
+        old='g.If(v.CSRF != "", bellForm(rep.ID, v.CSRF))',
+        new='g.If(false && v.CSRF != "", bellForm(rep.ID, v.CSRF))',
+        killer="TestTheBellRendersOnlyBesideTheOwnersBadge",
+        why="a page that never renders the bell satisfies every byte-identity assertion; the owner's "
+        "form is the positive control that refuses it.",
+    ),
+    Mutant(
+        name="ui-bell-rendered-without-a-token",
+        path="internal/ui/sessionpage.go",
+        old='g.If(v.CSRF != "", bellForm(rep.ID, v.CSRF))',
+        new='g.If(true, bellForm(rep.ID, v.CSRF))',
+        killer="TestTheBellRendersOnlyBesideTheOwnersBadge",
+        why="the badge is already conditional, so a second condition looks redundant — but a form "
+        "with an empty token is a control that answers 403 every time it is pressed.",
     ),
 )
 

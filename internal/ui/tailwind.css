@@ -452,7 +452,8 @@
   }
 
   .signout,
-  .revoke {
+  .revoke,
+  .bell {
     @apply inline;
   }
 
@@ -463,6 +464,14 @@
   .revoke button[type="submit"] {
     @apply bg-transparent text-muted border-line px-2.5 py-1 text-xs;
     @apply hover:text-danger hover:border-danger/60 hover:brightness-100;
+  }
+
+  /* The presence bell (S5) is quiet too, for a plainer reason — it sits in a row of badges
+   * and must read as one more of them — and its hover is the accent, not the danger
+   * colour, because ringing a bell destroys nothing. */
+  .bell button[type="submit"] {
+    @apply bg-transparent text-muted border-line px-2.5 py-0.5 text-xs ml-1;
+    @apply hover:text-accent hover:border-accent/60 hover:brightness-100;
   }
 
   .signin-provider {

@@ -625,7 +625,7 @@
       translate: var(--tw-translate-x) var(--tw-translate-y);
     }
   }
-  .signout, .revoke {
+  .signout, .revoke, .bell {
     display: inline;
   }
   .signout button[type="submit"], .revoke button[type="submit"] {
@@ -647,6 +647,35 @@
     &:hover {
       @media (hover: hover) {
         color: var(--color-danger);
+      }
+    }
+    &:hover {
+      @media (hover: hover) {
+        --tw-brightness: brightness(100%);
+        filter: var(--tw-blur,) var(--tw-brightness,) var(--tw-contrast,) var(--tw-grayscale,) var(--tw-hue-rotate,) var(--tw-invert,) var(--tw-saturate,) var(--tw-sepia,) var(--tw-drop-shadow,);
+      }
+    }
+  }
+  .bell button[type="submit"] {
+    margin-left: var(--spacing);
+    border-color: var(--color-line);
+    background-color: transparent;
+    padding-inline: calc(var(--spacing) * 2.5);
+    padding-block: calc(var(--spacing) * 0.5);
+    font-size: var(--text-xs);
+    line-height: var(--tw-leading, var(--text-xs--line-height));
+    color: var(--color-muted);
+    &:hover {
+      @media (hover: hover) {
+        border-color: color-mix(in srgb, oklch(0.78 0.1 200) 60%, transparent);
+        @supports (color: color-mix(in lab, red, red)) {
+          border-color: color-mix(in oklab, var(--color-accent) 60%, transparent);
+        }
+      }
+    }
+    &:hover {
+      @media (hover: hover) {
+        color: var(--color-accent);
       }
     }
     &:hover {

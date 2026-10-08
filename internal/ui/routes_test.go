@@ -88,6 +88,11 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		"GET /static/filter." + scriptDigestFromBytes(t) + ".js public",
 		"POST /invite",
 		"POST /invite/revoke",
+		// 🔴 THE BELL (S5 of the arcs/presence plan). NO CLASS, and that is the line to read: both
+		// cross-site gates reach it by METHOD, which `TestTheRingRowIsBehindBothCrossSiteGates`
+		// asserts by each gate's own message. Never `content`: every answer is one 303, so it renders
+		// nothing about authority — `TestEveryRingAnswerIsTheSameRedirect` holds that.
+		"POST /ring",
 		"POST /share",
 		"POST /sign-in public",
 		"POST /sign-in/github public",
