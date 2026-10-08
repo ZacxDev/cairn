@@ -160,6 +160,7 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/cairn-presence-e2e-XXXXXX")"
 pids=()
 cleanup() {
   for p in "${pids[@]}"; do kill "$p" 2>/dev/null || true; done
+  for p in "${pids[@]}"; do wait "$p" 2>/dev/null || true; done
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -180,7 +181,12 @@ entry alpha-notes gadget-one 2000-01-05 "tuned the gadget"
 entry beta-notes widget-two 2000-01-06 "drained the widget"
 
 # A clean environment for every binary: no ambient `CAIRN_*` or `SUBSYSTEM_STORE_*` can reach them.
-run_env() { env -i PATH="$PATH" HOME="$work" CAIRN_MAX_FAILURES=1000000 "$@"; }
+# An ARRAY, not only a function, because a backgrounded FUNCTION runs in a subshell: `$!` is then the
+# subshell's pid, and killing it orphans the binary under PID 1. `env` execs its program, so
+# `"${clean_env[@]}" <binary> &` makes `$!` the binary's own pid. (Measured: the function form left
+# two `cairn-ui` processes alive after every run.)
+clean_env=(env -i PATH="$PATH" HOME="$work" CAIRN_MAX_FAILURES=1000000)
+run_env() { "${clean_env[@]}" "$@"; }
 
 journal="$work/control/journal.jsonl"
 mkdir -p "$work/control"
@@ -268,13 +274,17 @@ start_ui() {
   local port aport
   port="$(free_port)"
   aport="$(free_port)"
-  run_env "$work/bin/cairn-ui" -store "$store" -control-journal "$journal" -session-file "$work/sessions.json" \
+  "${clean_env[@]}" "$work/bin/cairn-ui" -store "$store" -control-journal "$journal" -session-file "$work/sessions.json" \
     -arc-journal "$arcs" -host 127.0.0.1 -port "$port" \
     -presence-agent-addr "127.0.0.1:$aport" -presence-tokens "$tokens" -presence-owner "$owner_a" >"$log" 2>&1 &
   ui=$!
   pids+=("$ui")
   for _ in $(seq 1 200); do
     if [[ "$(curl -fsS "http://127.0.0.1:$port/healthz" 2>/dev/null)" == "ok" ]]; then
+      # 🔴 THE PID WE WILL KILL MUST BE THE BINARY, not a wrapper around it — otherwise `stop_ui` and
+      # `cleanup` kill the wrapper and the pod outlives the run (the leak this guards).
+      [[ "$(readlink -f "/proc/$ui/exe")" == "$(readlink -f "$work/bin/cairn-ui")" ]] ||
+        couldnt "pid $ui is not the cairn-ui binary ($(readlink -f "/proc/$ui/exe")); killing it would orphan the pod"
       url="http://127.0.0.1:$port"
       agent="http://127.0.0.1:$aport"
       return 0

@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -349,10 +350,22 @@ func TestTheBellRendersOnlyBesideTheOwnersBadge(t *testing.T) {
 		t.Fatalf("the owner's page carries bell forms %q; want exactly one posting to %q with this cookie's token and %q",
 			forms, RingPath, badgeSession)
 	}
-	para := owned[strings.Index(owned, `data-presence="session">`):]
-	para = para[:strings.Index(para, "</p>")]
-	if pane, bell := strings.Index(para, `data-presence="pane"`), strings.Index(para, `data-presence="bell"`); pane < 0 || bell < pane {
-		t.Error("the bell is not inside the session badge's paragraph, after the badge")
+	// WHERE the form sits, as the elements OPEN at its start tag — never as string offsets, which an
+	// HTML parser does not respect: a `<form>` start tag closes an open `<p>`, so a form written inside
+	// a paragraph's bytes lands AFTER it in the DOM, followed by a stray empty `<p>` (the audit finding
+	// this assertion was rewritten for).
+	open := openElementsAt(t, owned, `<form class="bell"`)
+	if slices.Contains(open, "p") {
+		t.Errorf("the bell form starts inside an open <p> (open elements %v): a parser closes the paragraph there, "+
+			"so the form is NOT inside the badge's container in the DOM", open)
+	}
+	if !slices.ContainsFunc(openTags(t, owned, `<form class="bell"`), func(tag string) bool {
+		return strings.Contains(tag, `data-presence="session"`)
+	}) {
+		t.Error("the bell form is not inside the session badge's container")
+	}
+	if pane, bell := strings.Index(owned, `data-presence="pane"`), strings.Index(owned, `<form class="bell"`); pane < 0 || bell < pane {
+		t.Error("the bell does not come after the badge")
 	}
 
 	for arm, got := range map[string]string{
@@ -386,5 +399,68 @@ func TestTheBellRendersOnlyBesideTheOwnersBadge(t *testing.T) {
 		if body := cookieGet(t, badgeServer(t, src, roamer, svc), path); strings.Contains(body, `data-presence="bell"`) {
 			t.Errorf("%s renders a bell; S5 places it on the session page only", name)
 		}
+	}
+}
+
+// The tag walk reuses `browse_test.go`'s `htmlTag` (quote-aware, so a `>` inside an attribute value
+// cannot end a tag) and `voidElements` (never pushed: they take no end tag).
+
+// openTags is the stack of start tags (whole, attributes and all) still OPEN at the first occurrence of
+// `needle` in `doc`, outermost first, tracking EXPLICIT tags only.
+//
+// ⚠ WHAT IT CANNOT SEE, stated because it is not a parser (no HTML5 parser is in `depspolicy`'s
+// allowlist, and growing it for one test is not this test's decision): it does NOT apply implied end
+// tags or parser-inserted elements. So it answers "which elements does the MARKUP leave open here" —
+// and that is exactly the question for a `<p>`: a flow element starting while a `<p>` is open in the
+// bytes is the shape a parser rewrites. It cannot see the other implied-close rules (a nested `<a>`,
+// `<li>` in `<li>`, table fostering), none of which this markup uses.
+func openTags(t *testing.T, doc, needle string) []string {
+	t.Helper()
+	at := strings.Index(doc, needle)
+	if at < 0 {
+		t.Fatalf("INSTRUMENT: %q is not in the document", needle)
+	}
+	var stack []string
+	for _, m := range htmlTag.FindAllStringSubmatchIndex(doc[:at], -1) {
+		whole, name := doc[m[0]:m[1]], strings.ToLower(doc[m[4]:m[5]])
+		switch {
+		case doc[m[2]:m[3]] == "/":
+			for i := len(stack) - 1; i >= 0; i-- {
+				if tagName(stack[i]) == name {
+					stack = stack[:i]
+					break
+				}
+			}
+		case !voidElements[name] && !strings.HasSuffix(whole, "/>"):
+			stack = append(stack, whole)
+		}
+	}
+	return stack
+}
+
+// openElementsAt is [openTags] reduced to element names.
+func openElementsAt(t *testing.T, doc, needle string) []string {
+	t.Helper()
+	var names []string
+	for _, tag := range openTags(t, doc, needle) {
+		names = append(names, tagName(tag))
+	}
+	return names
+}
+
+func tagName(tag string) string {
+	return strings.ToLower(htmlTag.FindStringSubmatch(tag)[2])
+}
+
+// TestTheOpenElementTrackerSeesAnOpenParagraph is the tracker's own pair of controls, so its "no <p>
+// open" reading above is a measurement: a needle inside an unclosed <p> MUST report it, and one after
+// the paragraph closes must not.
+func TestTheOpenElementTrackerSeesAnOpenParagraph(t *testing.T) {
+	doc := `<html><body><div class="x"><p data-presence="session"><span>a</span><input type="hidden"><form id="in"></form></p><form id="out"></form></div></body></html>`
+	if got := openElementsAt(t, doc, `<form id="in"`); !slices.Equal(got, []string{"html", "body", "div", "p"}) {
+		t.Errorf("POSITIVE CONTROL: inside the paragraph the open elements are %v, want [html body div p]", got)
+	}
+	if got := openElementsAt(t, doc, `<form id="out"`); !slices.Equal(got, []string{"html", "body", "div"}) {
+		t.Errorf("NEGATIVE CONTROL: after the paragraph closed the open elements are %v, want [html body div]", got)
 	}
 }

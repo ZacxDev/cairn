@@ -3280,7 +3280,7 @@ stylesheet path moved (the regenerated `app.css` is committed; `checks.ui-styles
 
 | what | where |
 |---|---|
-| the button | a `<form class="bell" method="post" action="/ring" data-presence="bell">` with the CSRF field and a hidden `session`, INSIDE the session page's presence paragraph, after the badge |
+| the button | a `<form class="bell" method="post" action="/ring" data-presence="bell">` with the CSRF field and a hidden `session`, inside the session page's presence container — a `div`, never a `p` (a `<form>` start tag closes an open `<p>`, so a parser would move the bell out) — after the badge |
 | not rendered | anywhere the badge is not; on the scope/arc session rows and `/arcs` (S5 places it on the session page only — a ring from a row would 303 the viewer away from the list); and on a request with no session cookie (no token to carry, so the form could only ever 403) |
 | the answer | `303 Location: /session?session=<id>`, no body, for EVERY request that passes both cross-site gates |
 
@@ -3333,15 +3333,24 @@ edit in the battery.
 
 ## The RED proof
 
-Ten new rows in `tests/control_mutants.py`, each run alone with `--only` under
+Eleven new rows in `tests/control_mutants.py`, each run alone with `--only` under
 `PYTHONDONTWRITEBYTECODE=1` and killed by the test it names: the row declared `classPublic` (which skips
 the CSRF gate — the "future class" bypass), the handler never asking presence, a queued ring answered
 differently, `Service.Ring` reading the store without the predicate, the dedupe dropped, the TTL moved to
-62 s and to 58 s, the bell rendered outside the badge's condition, never rendered, and rendered with no
-token. Two existing target-pick rows now also list `TestTheRingGoesToTheBadgesHost`. ⚠ The 62 s row
+62 s and to 58 s, the bell rendered outside the badge's condition, never rendered, rendered with no
+token, and its container put back to a `<p>`. Two existing target-pick rows now also list `TestTheRingGoesToTheBadgesHost`. ⚠ The 62 s row
 first listed `TestOnePendingRingPerSessionAndItExpires` as a killer and the battery reported it STALE:
 that test reads its expiry instant off `DefaultRingTTL` itself, so it moves with the mutant. The route
 test's literal 61 s is what pins the bound.
+
+⚠ **The first S5 commit put the bell inside a `<p>`, and its test passed.** The test compared string
+offsets (the form's bytes sat between `<p …>` and `</p>`), which an HTML parser does not respect: a
+`<form>` start tag closes an open `<p>`, so in the DOM the form landed AFTER the paragraph, followed by a
+stray empty `<p>`. An audit found it. The assertion now reads the elements the markup leaves OPEN at the
+form's start tag (`openTags` in `bell_test.go`, with its own positive/negative control) and was watched
+red on that markup. It is not a parser — no HTML5 parser is in `depspolicy`'s allowlist — so it sees
+explicit tags only, not implied end tags or parser-inserted elements; for a `<p>` that is exactly the
+shape a parser rewrites.
 
 ## What these guards still cannot see
 

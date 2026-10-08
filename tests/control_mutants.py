@@ -3808,6 +3808,17 @@ MUTANTS: tuple[Mutant, ...] = (
         "session page that presence is switched on, breaking decision 5's byte-identity.",
     ),
     Mutant(
+        name="ui-bell-container-is-a-paragraph",
+        path="internal/ui/sessionpage.go",
+        old='h.Div(h.Class("card-stats"), h.Data("presence", "session"), pane,',
+        new='h.P(h.Class("card-stats"), h.Data("presence", "session"), pane,',
+        killer="TestTheBellRendersOnlyBesideTheOwnersBadge",
+        why="every other stats row on these pages is a `<p class=\"card-stats\">`, so a paragraph reads "
+        "as the house shape — and a `<form>` start tag closes an open `<p>`, so a parser moves the bell "
+        "out of the badge's container and leaves a stray empty paragraph. This shipped in the first S5 "
+        "commit and was found by audit, not by the string-offset test that stood here.",
+    ),
+    Mutant(
         name="ui-bell-never-rendered",
         path="internal/ui/sessionpage.go",
         old='g.If(v.CSRF != "", bellForm(rep.ID, v.CSRF))',
