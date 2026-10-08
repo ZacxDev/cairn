@@ -27,29 +27,35 @@ before any slice: decisions, threat model, slices S1–S5, the deploy preconditi
   `ebf1d70`, tag+digest pinned: store `sha256:f35f7061…`, ui `sha256:37fbdc9e…`). Rollback
   either: both image lines back to `sha-6edcb45` (client digests `fdcf67b6…` / `3fe4386a…`).
   Verified live on the personal pod over a port-forward (`/arcs`, `?all=1`, `/arc` tabs, 404).
-- **S2 IN FLIGHT** — claimed as `claim-work` slug `cairn-arcs-presence-3` (this host). A
-  subagent is implementing it on branch `zach/presence-store-s2` (pushed; remote head
-  `e3c51e0` when this was written) in worktree
-  `.claude/worktrees/agent-ad81d55b3d16452b4`. Its mutation battery was still running;
-  **no PR number confirmed yet** — check `gh pr list --repo ZacxDev/cairn --head
-  zach/presence-store-s2`. Nothing reviewed, merged or deployed.
-- **S2 deploy precondition NOT yet established**: #195 merged 2026-10-07 17:33Z; the actual
-  rollout time of `sha-6edcb45` on each instance has NOT been read. S2 deploys no sooner than
-  that rollout + the instance's effective session TTL (12 h default; read the manifest for
-  `-session-ttl` / `CAIRN_UI_SESSION_TTL`), AND after re-reading the control journal for any
-  credential with non-null `narrowed_scopes`.
+- **S2 MERGED, NOT DEPLOYED** — #198 squash-merged as `123d771`,
+  content-verified (`git diff 69b3e10 origin/main -- internal cmd tests .github` empty). CI at
+  head `69b3e10`: all 8 checks green; `go` job `packages with passing tests: 24`,
+  `SUMMARY mutants=257 killed=255 survived=2 misattributed=0` (the 2 are the labelled
+  equivalents; all 31 `presence-*` rows killed). Audit ladder: round 0 (D1 kept, D2/D3
+  deleted), round 1 (2🟡 3🟢, fixed in `69b3e10`), round 2 delta CLEAN ⇒ ladder ended. Claims
+  blocks are PR comments on #198.
+- **S2 deploy precondition — the TTL half is measured, the journal half is not.** #195's image
+  (`sha-6edcb45`) commits: personal deployment repo `8d37487`; client
+  infra repo `1c6145b` (read each commit time with `git log -1 --format=%cI <sha>`; the
+  rollout itself lags by minutes and was not observed). Neither manifest sets
+  `-session-ttl`/`CAIRN_UI_SESSION_TTL` ⇒ 12 h default ⇒ **earliest S2 deploy = the LATER of those
+  two commit times + 12 h, plus margin for the rollout lag**. The journal re-check (no credential with non-null
+  `narrowed_scopes`) has NOT been run.
+- `claim-work` slug `cairn-arcs-presence-3` is still HELD (deploy outstanding).
 
 ## Next steps (ranked)
 1. **#196 is MERGED** (`78fe99a`): nothing to do; kept for numbering. forcing: gate — kept for numbering.
 2. **S1 is MERGED and DEPLOYED** (#197, `45ef3d9`). Nothing to do; kept for numbering.
    forcing: user — done.
-3. **S2 — presence store + agent API** — IN FLIGHT: ZacxDev/cairn branch `zach/presence-store-s2`
-   (`internal/presence` new package, `cmd/cairn-ui` second listener + flags,
-   `tests/control_mutants.py` PKGS, `ci.yml` `ok` floor, `internal/ui/README.md`, plan decision 11).
-   Next: when the subagent reports, review its PR, RE-RUN its claimed mutation results (do not
-   trust self-reports), audit, merge; then deploy only once the precondition in State now holds.
-   Then S3 (tooling repo host agent), S4 (badges), S5 (bell).
-   forcing: user — the operator asked for tmux identity and a bell button.
+3. **S2 deploy** (#198, `123d771`) — once the TTL half in State now has elapsed: re-read each instance's control
+   journal for non-null `narrowed_scopes`, then bump both pods' images to `sha-123d771…` in the
+   deployment repo (the store and UI Deployment manifests) and the
+   client infra repo (tag+digest pinned), confirm the publish run's head sha is `123d771` before
+   reading digests. S2 is inert with no presence flags set; enabling presence on the personal
+   instance (flags, token file, `-presence-owner`) is a separate, deliberate manifest change.
+   Then `claim-work --release cairn-arcs-presence-3`. Then S3 (tooling repo host agent), S4
+   (badges), S5 (bell).
+   forcing: user — the operator asked for tmux identity and a bell button, and for S2 to deploy only after the #195 TTL precondition.
 
 ## Gotchas / decisions / dead-ends
 - **#195 adds `control.Authorization.Narrowed()`.** The plan's decision 11 derives the
@@ -84,6 +90,13 @@ before any slice: decisions, threat model, slices S1–S5, the deploy preconditi
   plan's decision-11 credential-row derivation; the S2 PR is briefed to rewrite decision 11 to
   describe what was built. A reviewer should check the edit landed. via: code
 
+- **A token-file CONTENT error at startup no longer exits `cairn-ui`** (#198 round 1): the
+  browser keeps serving, the agent listener stays OFF, and the only signal is a stderr WARNING
+  plus hosts seeing connection refused. Flag misconfigurations and an unreadable file still exit
+  78. When enabling presence, check the startup log, not just pod health. via: code
+- **`audit-dispatch.py --emit-claims` only prints the block** — post it yourself as an ISSUE
+  comment (`gh pr comment`); the next `--round` reads only those. via: command
+
 ## How to verify
 ```bash
 git fetch origin && git cat-file -e origin/main:internal/ui/arcsindex.go && echo s1-merged
@@ -91,3 +104,8 @@ gh pr view 197 --repo ZacxDev/cairn --json state,mergeCommit --jq '"\(.state) \(
 # live: port-forward deploy/cairn-ui (personal) and GET /arcs, /arcs?all=1, /arc?home=…&slug=…&tab=sessions
 # with an Authorization: Bearer header read from a 0600 file; expect 200s and an unknown arc → 404
 ```
+## Defects (batched)
+- `internal/presence/wire.go:24-30`, `internal/ui/README.md` presence section and #198's body
+  say the worst-case legal push is 638,245 B; round 2 measured a legal 662,111 B push
+  (`last_activity` may be a 128-byte RFC 3339 value with a long fraction). 1 MiB still admits
+  it; fix the number (and `TestAWorstCaseLegalPushIsAccepted`'s fixture) in the S4 PR.
