@@ -426,6 +426,8 @@ func TestPushBodyBoundsEachWithAJustUnderControl(t *testing.T) {
 		{"runtime set", field("runtime", "opencode"), field("runtime", "shell")},
 		{"last_activity", field("last_activity", "2000-01-02T03:04:05Z"), field("last_activity", "yesterday")},
 		{"control character", field("hotkey", "Alt+n"), field("hotkey", "Alt\u001b+n")},
+		{"line separator U+2028", field("hotkey", "Alt+n"), field("hotkey", "Alt\u2028n")},
+		{"paragraph separator U+2029", field("label", "notes"), field("label", "no\u2029tes")},
 		{"empty target", field("target", "notes:3"), field("target", "")},
 		{"schema", pushBody("host-a"), `{"schema":2,"host":"host-a","rows":[]}`},
 		{"missing rows key", pushBody("host-a"), `{"schema":1,"host":"host-a"}`},
@@ -492,10 +494,10 @@ func TestTheStartupReadRefusesAMalformedFile(t *testing.T) {
 	good := NewTokenRow(KindPush, ownerA, "host-a", pushA).String()
 	for _, tc := range []struct{ name, body, want string }{
 		{"three fields", "push " + ownerA.String() + " host-a\n", "want 4 fields"},
-		{"bad kind", strings.Replace(good, "push", "ring", 1) + "\n", "token kind"},
+		{"bad kind", strings.Replace(good, "push", "ring", 1) + "\n", "field 1 (kind)"},
 		{"raw token as digest", "push " + ownerA.String() + " host-a " + pushA + "\n", "not a 64-character hex"},
 		{"duplicate digest", good + "\n" + strings.Replace(good, "push", "claim", 1) + "\n", "more than one row"},
-		{"bad host", strings.Replace(good, "host-a", "host/a", 1) + "\n", "host label"},
+		{"bad host", strings.Replace(good, "host-a", "host/a", 1) + "\n", "field 3 (host)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := filepath.Join(dir, strings.ReplaceAll(tc.name, " ", "-"))

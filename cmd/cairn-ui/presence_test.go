@@ -195,10 +195,6 @@ func TestTheBinaryRefusesEachPresenceMisconfiguration(t *testing.T) {
 	_, journal := seededJournal(t, credentialLive)
 	tokens := filepath.Join(t.TempDir(), "presence-tokens")
 	writeRows(t, tokens, presence.NewTokenRow(presence.KindPush, presenceOwnerA, "host-a", childPushToken))
-	foreignTokens := filepath.Join(t.TempDir(), "presence-tokens-foreign")
-	writeRows(t, foreignTokens,
-		presence.NewTokenRow(presence.KindPush, presenceOwnerA, "host-a", childPushToken),
-		presence.NewTokenRow(presence.KindPush, presenceOwnerB, "host-a", childForeign))
 	owner := presenceOwnerA.String()
 
 	for _, arm := range []struct {
@@ -209,8 +205,10 @@ func TestTheBinaryRefusesEachPresenceMisconfiguration(t *testing.T) {
 		{"address alone", []string{"-presence-agent-addr", "127.0.0.1:0"}, "half-configuration"},
 		{"blank owner", []string{"-presence-agent-addr", "127.0.0.1:0", "-presence-tokens", tokens, "-presence-owner", "  "},
 			"reduces to nothing"},
-		{"a token row for another owner at startup", []string{"-presence-agent-addr", "127.0.0.1:0",
-			"-presence-tokens", foreignTokens, "-presence-owner", owner}, "names owner " + presenceOwnerB.String()},
+		// An UNREADABLE path is a flag misconfiguration and still refuses the process; what a
+		// readable file SAYS is `TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped`.
+		{"a token file that does not exist", []string{"-presence-agent-addr", "127.0.0.1:0",
+			"-presence-tokens", tokens + ".typo", "-presence-owner", owner}, "cannot be read"},
 		{"a reachable agent bind with no allowlist", []string{"-presence-agent-addr", "0.0.0.0:0",
 			"-presence-tokens", tokens, "-presence-owner", owner}, "refusing to serve the presence agent listener"},
 	} {
@@ -225,6 +223,65 @@ func TestTheBinaryRefusesEachPresenceMisconfiguration(t *testing.T) {
 			}
 			if strings.Contains(c.out.String(), childForeign) || strings.Contains(c.out.String(), childPushToken) {
 				t.Fatal("a refusal printed a token")
+			}
+		})
+	}
+}
+
+// TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped: a readable token file
+// whose CONTENT is refused at startup — a row for another owner (decision 15's wall), or a
+// malformed row — does NOT take the process down. The browser surface answers `/healthz` 200, the
+// agent port is connection-refused, and stderr names the file line, never a token.
+func TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped(t *testing.T) {
+	_, journal := seededJournal(t, credentialLive)
+	for _, arm := range []struct {
+		name  string
+		rows  string
+		wants []string
+	}{
+		{"a row for another owner", presence.NewTokenRow(presence.KindPush, presenceOwnerA, "host-a", childPushToken).String() +
+			"\n" + presence.NewTokenRow(presence.KindPush, presenceOwnerB, "host-a", childForeign).String() + "\n",
+			[]string{"line 2", "names owner " + presenceOwnerB.String()}},
+		{"a malformed row (a raw token in the kind column)", childForeign + " " + presenceOwnerA.String() + " host-a " +
+			presence.NewTokenRow(presence.KindPush, presenceOwnerA, "host-a", childPushToken).Digest + "\n",
+			[]string{"line 1", "field 1 (kind)"}},
+	} {
+		t.Run(arm.name, func(t *testing.T) {
+			tokens := filepath.Join(t.TempDir(), "presence-tokens")
+			if err := os.WriteFile(tokens, []byte(arm.rows), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			uiPort, agentPort := aPortNothingIsListeningOn(t), aPortNothingIsListeningOn(t)
+			agentAddr := fmt.Sprintf("127.0.0.1:%d", agentPort)
+			c := startPresenceChild(t, journal, "-port", fmt.Sprint(uiPort),
+				"-presence-agent-addr", agentAddr, "-presence-tokens", tokens, "-presence-owner", presenceOwnerA.String())
+			c.waitFor(t, "the serving line (the process must NOT exit)", func() bool {
+				return strings.Contains(c.out.String(), "serving")
+			})
+			out := c.out.String()
+			if !strings.Contains(out, "presence agent NOT started (token file refused at startup)") ||
+				!strings.Contains(out, "WARNING the presence agent listener is NOT started") {
+				t.Fatalf("the process did not come up with the agent listener stopped:\n%s", out)
+			}
+			for _, want := range arm.wants {
+				if !strings.Contains(out, want) {
+					t.Fatalf("stderr does not name %q:\n%s", want, out)
+				}
+			}
+			if strings.Contains(out, childForeign) || strings.Contains(out, childPushToken) {
+				t.Fatalf("stderr carries a token:\n%s", out)
+			}
+			resp, err := (&http.Client{Timeout: 10 * time.Second}).Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", uiPort))
+			if err != nil {
+				t.Fatalf("the browser surface is not serving: %v", err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("/healthz answered %d", resp.StatusCode)
+			}
+			if conn, err := net.DialTimeout("tcp", agentAddr, time.Second); err == nil {
+				_ = conn.Close()
+				t.Fatalf("the agent listener is accepting on %s although its token file was refused", agentAddr)
 			}
 		})
 	}

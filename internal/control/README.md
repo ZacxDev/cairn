@@ -258,16 +258,17 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 253 mutants, over EIGHT packages
+python3 tests/control_mutants.py          # 257 mutants, over EIGHT packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 253 mutants DECLARED, and the full run was NOT completed locally.** S2
-(presence) added 27 `presence-*` rows and `./internal/presence/` to `PKGS`; its local run was
-stopped on operator instruction after 153 rows — positive control GREEN, 151 killed, the two
-EQUIVALENT rows survived, 0 misattributed, and NONE of the 27 presence rows reached. The
-whole-battery split for 253 is CI's `SUMMARY` line until somebody copies it here. The last
-complete local run, at 226 mutants, read
+**Measured on this tree: 257 mutants DECLARED, and NO single whole-battery run has been taken.**
+S2 (presence) added 31 `presence-*` rows and `./internal/presence/` to `PKGS`. Two PARTIAL
+measurements, kept apart rather than summed: the first 153 pre-existing rows (positive control
+GREEN, 151 killed, the two EQUIVALENT rows survived, 0 misattributed), and the 31 presence rows run
+alone through this harness's own functions (positive control GREEN, 31 killed, each by its named
+test, 0 stale extras). The whole-battery split for 257 is CI's `SUMMARY` line until somebody copies
+it here. The last complete local run, at 226 mutants, read
 `mutants=226 killed=224 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive
 control GREEN — the S4 browser rows (`ui-arc-*`, `ui-scope-section-*`, `ui-unconfigured-*`,
 `ui-binary-*`) added ten, all killed; the recency/filter change then DELETED one (`ui-tags-key-description-loses-both-its-claims`, its pinned string removed on an operator decision); the scope-tabs / session-page change added nine (`ui-session-*`, `ui-bullet-anchor-dropped`, `ui-scope-tab-selection-ignored`, `ui-*-partial-badge-*`, `ui-arc-row-names-a-hidden-declared-scope`), all killed; the narrowed-credential fix added three (`narrowed-flag-misses-the-empty-narrowing`, `ui-sign-in-accepts-a-narrowed-credential`, `ui-invite-flow-acts-as-a-narrowed-principal`) and then five more for its `membershipActor` CALL SITES (`ui-*-bypass*-membership-actor`), all killed by the test each names; the arcs-first page and the arc page's tabs (S1 of the arcs/presence plan) added nine (`ui-arcs-index-*`, `ui-arc-tab-*`), all killed. Both survivors are the rows labelled EQUIVALENT at the code — the two
@@ -349,8 +350,9 @@ order: `internal/control`, `internal/control/tokenfile`, `internal/identity`,
 `internal/api`, `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence`. `internal/presence`
 (S2 of the arcs/presence plan) is the eighth: its owner predicate decides who may see and ring a pane
 from the same `identity.Identity` and `control.Authorization.Narrowed()` the rest of the seam produces,
-and two of its guards — the single-owner wall and the queue's owner filter — are reachable only at
-unit level. `internal/control` is the model and its
+and one of its guards — the queue's owner filter — is reachable only at unit level, because the
+single-owner wall in front of it (itself reachable end to end) lets no second owner authenticate.
+`internal/control` is the model and its
 predicate, `internal/control/tokenfile` is the projection, `internal/identity` is P4's
 authenticator and its two new backends, `internal/api` is the server that authorises from
 all of them, `cmd/cairn-server` is the program, `internal/ui` is the BROWSER surface —
@@ -407,7 +409,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 253 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 257 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test

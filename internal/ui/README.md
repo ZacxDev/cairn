@@ -3104,8 +3104,9 @@ Not a row, watched by hand: dropping the member-bullet lookup reddens
 
 Slice S2 of `claudedocs/plan-cairn-arcs-presence.md` (decisions 2–9, 11 as built, 15). It adds
 **no browser row**: the store is written by a second listener and read by nobody until S4's badge.
-`internal/presence` (stdlib-only, pinned by `TestThePackageImportsOnlyTheStandardLibraryAndThisModule`)
-holds the store, the ring queue, the token file and the agent handler; `cmd/cairn-ui` wires it.
+`internal/presence` holds the store, the ring queue, the token file and the agent handler;
+`cmd/cairn-ui` wires it and is its ONLY importer — `TestOnlyTheBrowserProgramImportsPresence` is that
+ledger, red on GROW or SHRINK (S4/S5 will add `internal/ui` to it deliberately).
 
 | route (SECOND listener) | token kind | what |
 |---|---|---|
@@ -3144,17 +3145,29 @@ included) to the byte-wise smaller host label; the other hosts are `AlsoOn`.
 - **Tokens authenticate nothing else.** They are SHA-256 digests in `-presence-tokens`, one row
   `<push|claim> <kind>:<id> <host> <hex>`, re-read on EVERY agent request (delete a row ⇒ the next
   request is 401, no restart; a vanished file ⇒ every request 401). A push token cannot claim and a
-  claim token cannot push — the kind is part of the match, so the refusal is garbage's.
-  `TestAPresenceTokenAuthenticatesNothingOnTheBrowserSurface` and
-  `…OnThePod` are INVARIANT guards (no path ever accepted one) with a real-credential positive control.
-- **The single-owner wall (decision 15)** is ONE function, `admit`: at startup a row for another
-  owner refuses the listener; a row appearing later is refused as that ROW, logged once with its
-  12-hex digest prefix, while the owner's rows keep working. The mint enforces it too.
+  claim token cannot push — the kind is part of the match, so the refusal is garbage's. Nothing
+  outside the agent listener can read a presence token because nothing else imports the package
+  (the ledger above). A refused row is reported by line number and FIELD, never its value, so a
+  token pasted into the wrong column does not reach the log; a mint appends after a `\n` when the
+  file's last line lacks one.
+- **The single-owner wall (decision 15)** is ONE function, `admit`. At startup, a row for another
+  owner — or any malformed row or duplicate digest — means the AGENT LISTENER IS NOT STARTED: the
+  process keeps serving the browser surface, prints `WARNING the presence agent listener is NOT
+  started` naming the file line, and announces `presence agent NOT started` on its startup line. An
+  UNREADABLE token file is a flag error and refuses the process (78). A row appearing after startup
+  is refused as that ROW, logged once with its 12-hex digest prefix, while the owner's rows keep
+  working. The mint enforces the wall too.
 - **The wire** (decision 8) is exact both ways: `DisallowUnknownFields` refuses every never-carried
   field (`pane_preview` first), and a MISSING key is a 400 as well. ≤ 256 rows, every string ≤ 128
-  bytes and free of control characters, sessions by `write.SessionComponent`, `runtime` ∈
+  bytes and free of control characters and U+2028/U+2029, sessions by `write.SessionComponent`, `runtime` ∈
   {claude, opencode, other}, `last_activity` empty or RFC 3339, one row per session per push. A body
-  whose `host` is not the token's is a 400 and writes nothing.
+  whose `host` is not the token's is a 400 and writes nothing. The body cap is 1 MiB: the worst
+  LEGAL push, measured with Go's default `json.Marshal` (which escapes `<` to six bytes), is
+  638,245 bytes — over the 512 KiB first chosen (`TestAWorstCaseLegalPushIsAccepted`).
+- **The claim route returns `[]` until S5** — nothing enqueues a ring yet; it exists now because S3
+  builds its claim service against it.
+- ⚠ **Revocation × lockout:** a revoked token's retries count toward the per-client lockout, and
+  hosts behind one egress address share that bucket. S3 must stop on a 401 (the plan's S3 test plan).
 - **Minting** is `cairn-ui … -issue-presence-token push|claim -presence-owner <kind:id | email |
   project name> -presence-host <label> -presence-tokens <file>`: the owner is resolved ONCE to
   `(Kind, ID)`, the digest appended (file created 0600), the token printed once on stdout, exit 0.

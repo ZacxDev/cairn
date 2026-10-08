@@ -21,9 +21,10 @@
 // the credential ROW instead, because the accessor did not exist when it was written; see its
 // decision 11 for what was built.
 //
-// 🔴 STDLIB-ONLY, LIKE THE POD. `TestThePackageImportsOnlyTheStandardLibraryAndThisModule` pins
-// the import set; nothing here may reach `internal/ui` or `internal/pgstore`, the two packages
-// that link a third-party module.
+// 🔴 ONLY `cmd/cairn-ui` IMPORTS THIS PACKAGE, AND THAT IS PINNED AS A LEDGER.
+// `TestOnlyTheBrowserProgramImportsPresence` fails when an importer is added (or removed): a
+// presence token authenticates nothing but the two agent routes because nothing else can reach
+// this code. The pod's dependency set is `internal/depspolicy`'s ban, unchanged here.
 package presence
 
 import (

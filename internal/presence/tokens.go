@@ -63,16 +63,18 @@ func parseTokenLine(line string, n int) (TokenRow, error) {
 	if len(fields) != 4 {
 		return TokenRow{}, fmt.Errorf("line %d: want 4 fields `<push|claim> <kind>:<id> <host> <sha256-hex>`, got %d", n, len(fields))
 	}
+	// 🔴 NO FIELD'S VALUE IS ECHOED — only the line and WHICH field. A raw token pasted into the
+	// wrong column is exactly the mistake these refuse, and a refusal reaches the operator's log.
 	kind := TokenKind(fields[0])
 	if !kind.Valid() {
-		return TokenRow{}, fmt.Errorf("line %d: token kind %q is not %q or %q", n, fields[0], KindPush, KindClaim)
+		return TokenRow{}, fmt.Errorf("line %d: field 1 (kind) is not %q or %q", n, KindPush, KindClaim)
 	}
 	owner, err := ParseOwner(fields[1])
 	if err != nil {
-		return TokenRow{}, fmt.Errorf("line %d: %v", n, err)
+		return TokenRow{}, fmt.Errorf("line %d: field 2 (owner) is not <user|project>:<id>", n)
 	}
 	if !ValidHostLabel(fields[2]) {
-		return TokenRow{}, fmt.Errorf("line %d: host label %q does not match %s", n, fields[2], hostLabel)
+		return TokenRow{}, fmt.Errorf("line %d: field 3 (host) does not match %s", n, hostLabel)
 	}
 	if !hexDigest.MatchString(fields[3]) {
 		// The value is NOT echoed: a raw token pasted where the digest belongs is exactly
@@ -114,6 +116,12 @@ func parseTokens(data []byte) (rows []TokenRow, problems []error) {
 	return kept, problems
 }
 
+// ErrTokenFileContent marks a startup refusal caused by what the token file SAYS — a malformed
+// row, a duplicate digest, a row for another owner — as opposed to a file that cannot be read.
+// `cmd/cairn-ui` answers it by NOT starting the agent listener while the browser surface keeps
+// serving; an unreadable path is a configuration error and still refuses the process.
+var ErrTokenFileContent = errors.New("the presence token file's content is refused")
+
 // ErrForeignOwner is the single-owner wall's refusal (decision 15).
 var ErrForeignOwner = errors.New("the row names an owner other than this instance's -presence-owner")
 
@@ -131,8 +139,9 @@ func admit(row TokenRow, owner Owner) error {
 }
 
 // LoadTokens is the STARTUP read: any malformed row, any duplicate digest and any row for an
-// owner other than `owner` refuses the whole file. A missing file is refused too — a typo'd
-// path is not an empty token set.
+// owner other than `owner` refuses the whole file ([ErrTokenFileContent]). A missing file is
+// refused too, WITHOUT that mark — a typo'd path is not an empty token set, and it is a
+// configuration error rather than content.
 func LoadTokens(path string, owner Owner) ([]TokenRow, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -140,12 +149,12 @@ func LoadTokens(path string, owner Owner) ([]TokenRow, error) {
 	}
 	rows, problems := parseTokens(data)
 	if len(problems) > 0 {
-		return nil, fmt.Errorf("the presence token file %s is malformed: %w", path, errors.Join(problems...))
+		return nil, fmt.Errorf("%w: %s is malformed: %w", ErrTokenFileContent, path, errors.Join(problems...))
 	}
 	for _, r := range rows {
 		if err := admit(r, owner); err != nil {
-			return nil, fmt.Errorf("the presence token file %s line %d (digest %s…) names owner %s: %w (%s)",
-				path, r.Line, r.DigestPrefix(), r.Owner, err, owner)
+			return nil, fmt.Errorf("%w: %s line %d (digest %s…) names owner %s: %w (%s)",
+				ErrTokenFileContent, path, r.Line, r.DigestPrefix(), r.Owner, err, owner)
 		}
 	}
 	return rows, nil
@@ -167,11 +176,20 @@ func AppendTokenRow(path string, row TokenRow) error {
 	if !row.Kind.Valid() || !row.Owner.Kind.Valid() || !ValidHostLabel(row.Host) || !hexDigest.MatchString(row.Digest) {
 		return fmt.Errorf("refusing to write a malformed presence token row")
 	}
+	// 🔴 A HAND-EDITED FILE WHOSE LAST LINE HAS NO `\n` WOULD HAVE THIS ROW GLUED ONTO IT, which
+	// corrupts BOTH rows — the existing token stops authenticating and the next startup refuses
+	// the file. So a newline is written first when the file is non-empty and does not end in one.
+	line := row.String() + "\n"
+	if existing, err := os.ReadFile(path); err == nil && len(existing) > 0 && existing[len(existing)-1] != '\n' {
+		line = "\n" + line
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
 	if err != nil {
 		return err
 	}
-	if _, err := f.WriteString(row.String() + "\n"); err != nil {
+	if _, err := f.WriteString(line); err != nil {
 		_ = f.Close()
 		return err
 	}

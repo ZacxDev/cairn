@@ -3420,7 +3420,9 @@ MUTANTS: tuple[Mutant, ...] = (
         old="\tif row.Owner != owner {\n\t\treturn ErrForeignOwner",
         new="\tif false && row.Owner != owner {\n\t\treturn ErrForeignOwner",
         killer="TestTheWallRefusesAForeignRowAtStartupAndAsARowAfterwards",
-        extra_killers=("TestTheBinaryRefusesEachPresenceMisconfiguration",),
+        # The binary-level witness moved with the audit fix: a foreign row at startup no longer
+        # exits the process, it leaves the agent listener unstarted.
+        extra_killers=("TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped",),
         why="the token file is the operator's own, so every row in it looks trustworthy — and a "
         "copied line makes a second owner's tokens authenticate on a personal instance.",
     ),
@@ -3439,9 +3441,45 @@ MUTANTS: tuple[Mutant, ...] = (
         old="\t\tif err := admit(r, owner); err != nil {",
         new="\t\tif err := admit(r, owner); false && err != nil {",
         killer="TestTheWallRefusesAForeignRowAtStartupAndAsARowAfterwards",
-        extra_killers=("TestTheBinaryRefusesEachPresenceMisconfiguration",),
+        extra_killers=("TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped",),
         why="the per-request read refuses the row anyway, so the startup check looks redundant — "
         "but a copied manifest then starts a listener for somebody else's hosts.",
+    ),
+    Mutant(
+        name="presence-token-file-content-takes-the-process-down",
+        path="cmd/cairn-ui/main.go",
+        old="\t\tcase errors.Is(err, presence.ErrTokenFileContent):\n",
+        new="\t\tcase false && errors.Is(err, presence.ErrTokenFileContent):\n",
+        killer="TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped",
+        why="every other startup error in this program exits 78, so one more looks consistent — and a "
+        "single bad row in the agent's file takes the browser surface down for every user.",
+    ),
+    Mutant(
+        name="presence-append-glues-onto-an-unterminated-line",
+        path="internal/presence/tokens.go",
+        old="len(existing) > 0 && existing[len(existing)-1] != '\\n' {",
+        new="len(existing) > 0 && false && existing[len(existing)-1] != '\\n' {",
+        killer="TestAMintIntoAFileWithoutATrailingNewlineKeepsBothRows",
+        why="O_APPEND looks like all an append needs — until a hand-edited file without a final "
+        "newline turns the next mint into one corrupt row and two dead tokens.",
+    ),
+    Mutant(
+        name="presence-line-separators-accepted",
+        path="internal/presence/wire.go",
+        old="if unicode.IsControl(r) || r == '\\u2028' || r == '\\u2029' {",
+        new="if unicode.IsControl(r) {",
+        killer="TestPushBodyBoundsEachWithAJustUnderControl",
+        why="`unicode.IsControl` reads as 'no line breaks', and U+2028/U+2029 are line breaks it "
+        "does not cover.",
+    ),
+    Mutant(
+        name="presence-imported-by-the-pod",
+        path="internal/api/server.go",
+        old='\t"github.com/ZacxDev/cairn/internal/netid"\n',
+        new='\t"github.com/ZacxDev/cairn/internal/netid"\n\t_ "github.com/ZacxDev/cairn/internal/presence"\n',
+        killer="TestOnlyTheBrowserProgramImportsPresence",
+        why="the pod authenticates bearer tokens too, so teaching it presence tokens looks like reuse "
+        "— and it is the edit that makes a presence token mean something outside the agent routes.",
     ),
     Mutant(
         name="presence-token-kind-ignored",

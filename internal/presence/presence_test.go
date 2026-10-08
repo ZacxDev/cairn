@@ -1,13 +1,8 @@
 package presence
 
 import (
-	"go/parser"
-	"go/token"
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -279,47 +274,5 @@ func TestARingGoesThroughTheOwnerPredicate(t *testing.T) {
 	}
 	if got := svc.Queue.Claim(ownerA, "host-b"); len(got) != 1 || got[0].Session != "s-0001" {
 		t.Fatalf("the ring did not reach the target host host-b: %+v", got)
-	}
-}
-
-// TestThePackageImportsOnlyTheStandardLibraryAndThisModule pins "stdlib-only": every import of
-// every non-test file is the standard library or an `internal/` package of this module, and
-// never `internal/ui` or `internal/pgstore` — the two that link a third-party module. It is an
-// INVARIANT GUARD (nothing here ever imported one); `internal/depspolicy` is unchanged by this
-// package and remains the module-level refusal.
-func TestThePackageImportsOnlyTheStandardLibraryAndThisModule(t *testing.T) {
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	checked := 0
-	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
-		}
-		src, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		parsed, err := parser.ParseFile(token.NewFileSet(), f, src, parser.ImportsOnly)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, imp := range parsed.Imports {
-			path, _ := strconv.Unquote(imp.Path.Value)
-			checked++
-			const module = "github.com/ZacxDev/cairn/internal/"
-			switch {
-			case !strings.Contains(strings.SplitN(path, "/", 2)[0], "."):
-				// standard library
-			case strings.HasPrefix(path, module) &&
-				!strings.HasPrefix(path, module+"ui") && !strings.HasPrefix(path, module+"pgstore"):
-			default:
-				t.Errorf("%s imports %s", f, path)
-			}
-		}
-	}
-	if checked == 0 {
-		t.Fatal("POSITIVE CONTROL: no import was examined, so the zero above is about nothing")
 	}
 }

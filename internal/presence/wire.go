@@ -21,9 +21,13 @@ const (
 	MaxRows = 256
 	// MaxStringBytes bounds every string on the wire.
 	MaxStringBytes = 128
-	// MaxPushBody bounds the request body before decoding. MaxRows rows of six MaxStringBytes
-	// strings with JSON escaping fit well inside it; anything larger is refused unread.
-	MaxPushBody = 512 << 10
+	// MaxPushBody bounds the request body before decoding; anything larger is refused unread.
+	//
+	// ⚠ 1 MiB, AND THE 512 KiB IT REPLACED REFUSED A LEGAL PUSH. Measured by
+	// `TestAWorstCaseLegalPushIsAccepted`: MaxRows rows, a 64-byte session, and `target`, `label`
+	// and `hotkey` each MaxStringBytes of `<`, which Go's default `json.Marshal` escapes to six
+	// bytes apiece — 638,245 bytes, over 524,288. 1 MiB leaves ~64% headroom over that.
+	MaxPushBody = 1 << 20
 	// MaxClaimBody bounds a claim request, whose only valid body is `{}`.
 	MaxClaimBody = 1 << 10
 )
@@ -86,7 +90,8 @@ func checkString(field, v string) error {
 		return fmt.Errorf("%s is not valid UTF-8", field)
 	}
 	for _, r := range v {
-		if unicode.IsControl(r) {
+		// U+2028/U+2029 are line breaks that `unicode.IsControl` does not cover (Zl, Zp).
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
 			return fmt.Errorf("%s carries a control character", field)
 		}
 	}

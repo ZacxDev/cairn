@@ -551,10 +551,11 @@ func main() {
 	}
 	limiter := netid.NewRateLimiter(maxFailures, window, lockout)
 
-	// 🔴 THE PRESENCE AGENT LISTENER, BOUND HERE SO EVERY WAY IT CAN FAIL IS A REFUSAL TO START
-	// rather than a goroutine that dies after the browser surface is already serving. Its bind
-	// gets its OWN reachability verdict, its limiter its OWN buckets, and its token file is read
-	// strictly once now — a row for another owner refuses the listener (decision 15).
+	// 🔴 THE PRESENCE AGENT LISTENER, BOUND HERE SO A CONFIGURATION THAT CANNOT WORK IS A REFUSAL
+	// TO START rather than a goroutine that dies after the browser surface is already serving. Its
+	// bind gets its OWN reachability verdict, its limiter its OWN buckets, and its token file is
+	// read strictly once now. ⚠ What the FILE SAYS (a malformed row, a row for another owner) is
+	// answered differently from a bad FLAG — see the switch below.
 	presenceMode := "presence off (no -" + flagPresenceAddr + ")"
 	var agentServer *http.Server
 	var agentListener net.Listener
@@ -571,18 +572,30 @@ func main() {
 			Limiter: netid.NewRateLimiter(maxFailures, window, lockout), TrustedProxies: trustedProxies,
 			Log: func(line string) { fmt.Fprintln(os.Stderr, "cairn-ui: "+line) },
 		})
-		if err != nil {
+		switch {
+		case errors.Is(err, presence.ErrTokenFileContent):
+			// 🔴 WHAT THE FILE SAYS IS NOT A REASON TO TAKE THE BROWSER SURFACE DOWN FOR EVERY USER.
+			// A malformed row or a row for another owner leaves the AGENT LISTENER unstarted
+			// (decision 15: the listener refuses to start) and everything else serving; the line
+			// names the file line and never a token. Correct the file and restart to arm presence.
+			// A FLAG misconfiguration — above, and an unreadable path below — still refuses the
+			// process: that is a deployment configured wrong, not a row.
+			fmt.Fprintln(os.Stderr, "cairn-ui: WARNING the presence agent listener is NOT started: "+err.Error()+
+				". The browser surface serves without it; correct the file and restart")
+			presenceMode = "presence agent NOT started (token file refused at startup)"
+		case err != nil:
 			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error()+". Refusing to start")
 			os.Exit(exitConfig)
+		default:
+			agentListener, err = net.Listen("tcp", *presenceAddr)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "cairn-ui: the presence agent listener cannot bind: "+err.Error()+". Refusing to start")
+				os.Exit(exitConfig)
+			}
+			agentServer = &http.Server{Handler: agent, ReadHeaderTimeout: 10 * time.Second}
+			presenceMode = fmt.Sprintf("presence agent on %s (sole owner %s, %d token row(s), %d route(s))",
+				agentListener.Addr(), soleOwner, len(rows), len(presence.AgentRoutes()))
 		}
-		agentListener, err = net.Listen("tcp", *presenceAddr)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "cairn-ui: the presence agent listener cannot bind: "+err.Error()+". Refusing to start")
-			os.Exit(exitConfig)
-		}
-		agentServer = &http.Server{Handler: agent, ReadHeaderTimeout: 10 * time.Second}
-		presenceMode = fmt.Sprintf("presence agent on %s (sole owner %s, %d token row(s), %d route(s))",
-			agentListener.Addr(), soleOwner, len(rows), len(presence.AgentRoutes()))
 	}
 
 	// 🔴 THE CONFIG IS A NAMED VALUE RATHER THAN AN INLINE LITERAL, AND THE REASON IS THE
