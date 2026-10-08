@@ -3284,6 +3284,12 @@ stylesheet path moved (the regenerated `app.css` is committed; `checks.ui-styles
 | not rendered | anywhere the badge is not; on the scope/arc session rows and `/arcs` (S5 places it on the session page only — a ring from a row would 303 the viewer away from the list); and on a request with no session cookie (no token to carry, so the form could only ever 403) |
 | the answer | `303 Location: /session?session=<id>`, no body, for EVERY request that passes both cross-site gates |
 
+`TestTheBellRendersOnlyBesideTheOwnersBadge` pins the first two rows: the bell renders for the owner,
+inside the presence container and not inside an open `<p>` (the open-element check at the form's start
+tag, with its own controls in `TestTheOpenElementTrackerSeesAnOpenParagraph`; it reads explicit tags only),
+and every non-owner state renders bytes identical to presence OFF **with a session cookie present** — the
+state S4's byte-identity test never built, since S4 had nothing that depends on the CSRF token.
+
 ## 🔴 One predicate, one answer
 
 `handleRing` (`bell.go`) calls `presence.Service.Ring(id, session)` with the request's WHOLE identity, and
