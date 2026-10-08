@@ -272,13 +272,25 @@ func TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped(t *te
 			if strings.Contains(out, childForeign) || strings.Contains(out, childPushToken) {
 				t.Fatalf("stderr carries a token:\n%s", out)
 			}
-			resp, err := (&http.Client{Timeout: 10 * time.Second}).Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", uiPort))
-			if err != nil {
-				t.Fatalf("the browser surface is not serving: %v", err)
-			}
-			resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("/healthz answered %d", resp.StatusCode)
+			// The "serving" line is printed BEFORE `ListenAndServe` binds the port (main.go), so a
+			// single probe right after it races the bind and fails as connection-refused — which
+			// it did in the publish workflow's nix build. Poll until the surface answers; the
+			// waitFor deadline still fails a process that never serves.
+			healthz := fmt.Sprintf("http://127.0.0.1:%d/healthz", uiPort)
+			var lastErr error
+			status := 0
+			c.waitFor(t, "the browser surface to answer /healthz", func() bool {
+				resp, err := (&http.Client{Timeout: time.Second}).Get(healthz)
+				if err != nil {
+					lastErr = err
+					return false
+				}
+				resp.Body.Close()
+				status = resp.StatusCode
+				return true
+			})
+			if status != http.StatusOK {
+				t.Fatalf("/healthz answered %d (last dial error before it answered: %v)", status, lastErr)
 			}
 			if conn, err := net.DialTimeout("tcp", agentAddr, time.Second); err == nil {
 				_ = conn.Close()
