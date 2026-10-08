@@ -3605,6 +3605,109 @@ MUTANTS: tuple[Mutant, ...] = (
         why="the listener refuses a foreign row at its next start anyway — which is exactly the "
         "outage a mint that checked first would have prevented.",
     ),
+    # ---- presence badges (S4): every surface asks `presence.Store.For` and nothing else ------
+    Mutant(
+        name="ui-presence-badge-ignores-the-predicate",
+        path="internal/ui/presence.go",
+        old="\tp, ok := l.at(session)\n\tif !ok {\n\t\treturn nil\n\t}",
+        new="\tp, ok := l.at(session)\n\tif false && !ok {\n\t\treturn nil\n\t}",
+        killer="TestPresenceIsInvisibleToEveryoneButItsOwner",
+        why="rendering the badge from whatever the lookup returned is the shortest code, and the zero "
+        "value it renders for a non-owner, a narrowed viewer or expired presence is still bytes — the "
+        "page stops being the no-presence page for everybody.",
+    ),
+    Mutant(
+        name="ui-presence-live-pane-ignores-the-predicate",
+        path="internal/ui/presence.go",
+        old="if _, ok := l.at(session); ok {",
+        new="if _, ok := l.at(session); true || ok {",
+        killer="TestPresenceIsInvisibleToEveryoneButItsOwner",
+        why="\"is any member live\" reads like a membership question about the arc rather than an "
+        "owner question about a pane, and answering it without the predicate tells every reader "
+        "of a shared arc that its owner has a pane open.",
+    ),
+    Mutant(
+        name="ui-presence-viewer-rebuilt-from-the-principal",
+        path="internal/ui/presence.go",
+        old="return store.For(id, session)",
+        new="return store.For(identity.Identity{Principal: id.Principal}, session)",
+        killer="TestPresenceIsInvisibleToEveryoneButItsOwner",
+        why="the owner key is the principal, so passing just the principal looks equivalent — but the "
+        "narrowing bit rides on `Auth`, and a viewer rebuilt without it reads a narrowed bearer "
+        "credential as its owner.",
+    ),
+    Mutant(
+        name="ui-presence-never-bound",
+        path="internal/ui/presence.go",
+        old="\tif s.presence == nil {\n\t\treturn nil\n\t}",
+        new="\tif true || s.presence == nil {\n\t\treturn nil\n\t}",
+        killer="TestTheBadgeSaysWhereTheSessionRuns",
+        extra_killers=("TestPresenceIsInvisibleToEveryoneButItsOwner", "TestTwoLiveHostsShowTheTargetAndAlsoOn"),
+        why="a surface that never renders presence satisfies every byte-identity assertion — the "
+        "positive controls are what stop that, and this is the pre-S4 behaviour they must refuse.",
+    ),
+    Mutant(
+        name="ui-presence-also-on-dropped",
+        path="internal/ui/presence.go",
+        old="g.If(len(p.AlsoOn) > 0,",
+        new="g.If(false && len(p.AlsoOn) > 0,",
+        killer="TestTwoLiveHostsShowTheTargetAndAlsoOn",
+        why="the target row is the answer a ring is aimed at, so the second host looks like noise — "
+        "and without it the operator cannot tell the session is open in two places.",
+    ),
+    Mutant(
+        name="ui-presence-session-page-badge-dropped",
+        path="internal/ui/sessionpage.go",
+        old="g.If(pane != nil, h.P(",
+        new="g.If(false && pane != nil, h.P(",
+        killer="TestTheBadgeSaysWhereTheSessionRuns",
+        why="the session page is the one surface the plan's e2e names; a summary card that forgot the "
+        "badge would leave every byte-identity test green.",
+    ),
+    Mutant(
+        name="ui-presence-session-row-badge-dropped",
+        path="internal/ui/arcs.go",
+        old="\t\tdateAgo(s.LastDate, now),\n\t\tpanes.badge(s.ID, now),",
+        new="\t\tdateAgo(s.LastDate, now),\n\t\tnil,",
+        killer="TestTheBadgeSaysWhereTheSessionRuns",
+        why="the scope page's sessions tab is a second list of sessions, rendered by a second function; "
+        "a surface the badge never reached is invisible to every byte-identity assertion.",
+    ),
+    Mutant(
+        name="ui-presence-member-row-badge-dropped",
+        path="internal/ui/arcs.go",
+        old="\t\tinstantAgo(m.FirstSeen, now),\n\t\tpanes.badge(m.Session, now),",
+        new="\t\tinstantAgo(m.FirstSeen, now),\n\t\tnil,",
+        killer="TestTheBadgeSaysWhereTheSessionRuns",
+        why="the arc page's sessions tab lists members through `memberRow`, not `sessionRow`, so "
+        "badging one list does not badge the other.",
+    ),
+    Mutant(
+        name="ui-presence-arc-summary-live-pane-dropped",
+        path="internal/ui/arcs.go",
+        old="v.Panes.liveBadge(memberIDs),",
+        new="nil,",
+        killer="TestTheBadgeSaysWhereTheSessionRuns",
+        why="the arc page's summary is the only place its scopes tab says anything about presence.",
+    ),
+    Mutant(
+        name="ui-presence-arcs-index-live-pane-dropped",
+        path="internal/ui/arcsindex.go",
+        old="panes.liveBadge(a.MemberSessions),",
+        new="nil,",
+        killer="TestTheBadgeSaysWhereTheSessionRuns",
+        why="`/arcs` lists arcs, not sessions, so it is the surface most easily forgotten when "
+        "\"session rows get a badge\" is the brief.",
+    ),
+    Mutant(
+        name="ui-main-never-hands-presence-to-the-browser",
+        path="cmd/cairn-ui/main.go",
+        old="\t\t\tbrowserPresence = service\n",
+        new="\t\t\t_ = browserPresence\n",
+        killer="TestTheBrowserReadsTheStoreTheAgentListenerWrites",
+        why="every `internal/ui` test hands a service in itself, so the one line that connects the "
+        "listener's store to the browser is visible only to a test that drives `main`.",
+    ),
 )
 
 

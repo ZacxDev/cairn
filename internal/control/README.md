@@ -258,16 +258,21 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 257 mutants, over EIGHT packages
+python3 tests/control_mutants.py          # 268 mutants, over EIGHT packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 257 mutants DECLARED, and NO single whole-battery run has been taken.**
+**Measured on this tree: 268 mutants DECLARED, and NO single whole-battery run has been taken.**
 S2 (presence) added 31 `presence-*` rows and `./internal/presence/` to `PKGS`. Two PARTIAL
 measurements, kept apart rather than summed: the first 153 pre-existing rows (positive control
 GREEN, 151 killed, the two EQUIVALENT rows survived, 0 misattributed), and the 31 presence rows run
 alone through this harness's own functions (positive control GREEN, 31 killed, each by its named
-test, 0 stale extras). The whole-battery split for 257 is CI's `SUMMARY` line until somebody copies
+test, 0 stale extras). S4 (presence badges) added 11 rows (`ui-presence-*` and
+`ui-main-never-hands-presence-to-the-browser`), each run alone with `--only` (positive control GREEN
+each time, 11 killed by the test each names, 0 misattributed, 0 stale extras) — after the first,
+`ui-presence-badge-ignores-the-predicate`, came back MISATTRIBUTED: the byte-identity test compared
+two pages that BOTH carried the mutant's zero-value badge, so it now also asserts the presence-off
+page carries none. The whole-battery split for 268 is CI's `SUMMARY` line until somebody copies
 it here. The last complete local run, at 226 mutants, read
 `mutants=226 killed=224 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive
 control GREEN — the S4 browser rows (`ui-arc-*`, `ui-scope-section-*`, `ui-unconfigured-*`,
@@ -409,7 +414,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 257 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 268 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test

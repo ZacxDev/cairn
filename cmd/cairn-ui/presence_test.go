@@ -18,6 +18,7 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/presence"
+	"github.com/ZacxDev/cairn/internal/store"
 )
 
 // The presence startup surface (S2). The in-process cases drive the predicates; the re-exec
@@ -396,5 +397,102 @@ func TestTheMintModeMintsOnceStoresTheDigestAndExits(t *testing.T) {
 	}
 	if other.stdout.String() != "" {
 		t.Fatalf("the refused mint printed a token: %q", other.stdout.String())
+	}
+}
+
+// TestTheBrowserReadsTheStoreTheAgentListenerWrites drives the WIRING S4 added to `main`: the ONE
+// presence service the agent listener writes is the one `ui.Config.Presence` reads. A push through
+// the agent listener for `s-0001` on `host-a` makes the owner's session page — fetched with the
+// owner's bearer credential from the BROWSER listener — carry `host-a · notes:3`; before the push
+// the same page has no badge (the positive control that the page is reachable and the badge is
+// not static). RED with the started listener's service never handed to the config
+// (`ui-main-never-hands-presence-to-the-browser`): every in-process `internal/ui` test hands the
+// service in itself and cannot see that line.
+func TestTheBrowserReadsTheStoreTheAgentListenerWrites(t *testing.T) {
+	const (
+		credential = "fixture-startup-credential-not-a-real-token"
+		scopeName  = "startup-notes"
+	)
+	user := control.DerivedID(control.PrefixUser, "startup-user")
+	project := control.DerivedID(control.PrefixProject, "startup-project")
+	at := time.Date(2000, 6, 1, 12, 0, 0, 0, time.UTC)
+	journal := filepath.Join(t.TempDir(), "scoped.journal")
+	js, err := control.OpenFileStore(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := js.Append(context.Background(),
+		control.Event{Kind: control.EventUserCreated, At: at, UserID: user, Provider: "fixture-provider",
+			Subject: "00000000-0000-4000-8000-000000000031", Email: "startup@notes.example.invalid"},
+		control.Event{Kind: control.EventProjectCreated, At: at, ProjectID: project, Name: "startup", UserID: user},
+		control.Event{Kind: control.EventMemberSet, At: at, ProjectID: project, UserID: user, Role: control.RoleOwner},
+		control.Event{Kind: control.EventScopeCreated, At: at, ScopeID: control.DerivedID(control.PrefixScope, scopeName),
+			DisplayName: scopeName, ProjectID: project},
+		control.Event{Kind: control.EventCredentialIssued, At: at, CredentialID: "crd_startup", SubjectKind: control.KindUser,
+			SubjectID: user, TokenHash: control.HashToken(credential), Label: "fixture"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	storeRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(storeRoot, scopeName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := "---\nservice: kettle\nscope: " + scopeName + "\n---\n\n## What it is\n\nsynthetic.\n\n" + store.NuanceHeading + "\n\n" +
+		"- 2000-01-03: boiled the kettle [cairn: fixture-bot/s-0001]\n"
+	if err := os.WriteFile(filepath.Join(storeRoot, scopeName, "kettle.md"), []byte(entry), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tokens := filepath.Join(t.TempDir(), "presence-tokens")
+	writeRows(t, tokens, presence.NewTokenRow(presence.KindPush, presenceOwnerA, "host-a", childPushToken))
+	uiPort, agentPort := aPortNothingIsListeningOn(t), aPortNothingIsListeningOn(t)
+	agentAddr := fmt.Sprintf("127.0.0.1:%d", agentPort)
+	c := startPresenceChild(t, journal, "-store", storeRoot, "-port", fmt.Sprint(uiPort),
+		"-presence-agent-addr", agentAddr, "-presence-tokens", tokens, "-presence-owner", presenceOwnerA.String())
+	c.waitFor(t, "the serving line", func() bool { return strings.Contains(c.out.String(), "serving") })
+	// The "serving" line is printed BEFORE the browser listener binds, so the first GET would race
+	// the bind; poll /healthz until it answers (the agent listener is bound before that line).
+	c.waitFor(t, "the browser surface to answer /healthz", func() bool {
+		resp, err := (&http.Client{Timeout: time.Second}).Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", uiPort))
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	})
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	page := func() string {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/session?session=s-0001", uiPort), nil)
+		req.Header.Set("Authorization", "Bearer "+credential)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("GET the session page: %v", err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the owner's session page answered %d: %s\n%s", resp.StatusCode, b, c.out.String())
+		}
+		return string(b)
+	}
+	if before := page(); strings.Contains(before, `data-presence=`) {
+		t.Fatalf("POSITIVE CONTROL: the page carries a presence badge before any push")
+	}
+	body := `{"schema":1,"host":"host-a","rows":[{"session":"s-0001","runtime":"claude","target":"notes:3",` +
+		`"label":"notes","hotkey":"","last_activity":""}]}`
+	req, _ := http.NewRequest(http.MethodPost, "http://"+agentAddr+presence.PushPath, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+childPushToken)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST to the agent listener: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the push answered %d", resp.StatusCode)
+	}
+	if after := page(); !strings.Contains(after, "host-a · notes:3 · claude · seen ") {
+		t.Fatalf("after a push through the agent listener the owner's session page shows no badge — the browser "+
+			"is not reading the store the listener writes:\n%s", after)
 	}
 }

@@ -191,6 +191,7 @@ func (s *Server) handleArcsPage(w http.ResponseWriter, r *http.Request, id ident
 	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now()}
 	view.ArcsIndex = &rep
 	view.ArcsAll = r.URL.Query().Get(QueryAll) == "1"
+	view.Panes = s.panesFor(id)
 	s.render(w, ArcsIndexPage(view))
 }
 
@@ -251,7 +252,7 @@ func ArcsIndexPage(v PageView) g.Node {
 			),
 			g.If(len(rows) == 0, h.P(h.Class("empty"), g.Text(arcsIndexEmpty(len(rep.Arcs), v.ArcsAll)))),
 			g.If(len(rows) > 0, h.Ul(h.Class("entry-list"), h.ID("arcs-list"), g.Map(rows, func(row arcIndexRow) g.Node {
-				return arcsIndexRow(row, ids, v.Now)
+				return arcsIndexRow(row, ids, v.Now, v.Panes)
 			}))),
 		),
 	)
@@ -269,7 +270,7 @@ func arcsIndexEmpty(visible int, all bool) string {
 //
 // 🔴 THE STATUS IS `report.StatusWord` IN ONE SHARED BADGE CLASS, `arcRow`'s ruling (Q4): `unknown`
 // is never styled or worded as `open`.
-func arcsIndexRow(row arcIndexRow, ids map[string]control.ID, now time.Time) g.Node {
+func arcsIndexRow(row arcIndexRow, ids map[string]control.ID, now time.Time, panes livePanes) g.Node {
 	a := row.Arc
 	label := a.Home + "/" + a.Slug
 	var name g.Node = h.Span(g.Text(label))
@@ -298,6 +299,7 @@ func arcsIndexRow(row arcIndexRow, ids map[string]control.ID, now time.Time) g.N
 		g.If(!row.Live, h.Data("live", "false")),
 		h.Span(h.Class("ref"), h.TitleAttr(label), name),
 		h.Span(h.Class("badge"), h.TitleAttr(statusTip), g.Text(report.StatusWord(a.Status))),
+		panes.liveBadge(a.MemberSessions),
 		when,
 		h.Span(h.Class("entry-count"), g.Text(plural(a.Members, "member", "members"))),
 		g.If(len(a.DeclaredVisible) > 0, h.Ul(h.Class("chips chips-scope"), h.TitleAttr("declared scopes you can read"),

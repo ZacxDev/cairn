@@ -50,6 +50,11 @@ type ArcAcross struct {
 	Home, Slug, Status string
 	// Members is the registration's member count.
 	Members int
+	// MemberSessions is the registration's member session ids, in the registration's order. The
+	// arc page already lists them to anybody who can see the arc (its home is readable); the
+	// arcs-first page carries them so it can ask `presence.Store.For` per member for its
+	// "live pane" badge (S4) — it never renders them.
+	MemberSessions []string
 	// DeclaredVisible is the declared scopes NARROWED to `visible` — a hidden one is omitted, not
 	// counted (the rule `ArcLine.DeclaredVisible` states).
 	DeclaredVisible []string
@@ -112,6 +117,7 @@ func ArcsAcross(storeRoot string, visible store.ScopeSet, snap *arcs.Snapshot) (
 		}
 		slices.Sort(line.DeclaredVisible)
 		for _, m := range reg.Members {
+			line.MemberSessions = append(line.MemberSessions, m.Session)
 			if d := newest[m.Session]; d > line.NewestMemberBullet {
 				line.NewestMemberBullet = d
 			}

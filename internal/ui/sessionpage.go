@@ -112,6 +112,9 @@ func (s *Server) handleSessionPage(w http.ResponseWriter, r *http.Request, id id
 		return
 	}
 	view.Session = &answer
+	// Presence is bound AFTER every refusal above (the plan's P5): it decorates a page that was already
+	// found and can never make one.
+	view.Panes = s.panesFor(id)
 	s.render(w, SessionPage(view))
 }
 
@@ -219,11 +222,14 @@ func SessionPage(v PageView) g.Node {
 	if answer.ArcsUnreadable {
 		badges = append(badges, partialBadge("arcs unknown", arcJournalUnreadable))
 	}
+	// nil — no node, so no bytes — unless the ONE predicate shows this viewer a pane (`presence.go`).
+	pane := v.Panes.badge(rep.ID, v.Now)
 	return shell("cairn — session "+shortID(rep.ID), v, []crumb{{Label: "session " + shortID(rep.ID)}},
 		h.Section(
 			h.Class("card"),
 			h.ID("session-summary"),
 			h.H2(h.Class("session-id"), g.Text(rep.ID)),
+			g.If(pane != nil, h.P(h.Class("card-stats"), h.Data("presence", "session"), pane)),
 			h.P(h.Class("card-stats"),
 				stat(plural(rep.Bullets(), "bullet", "bullets")+" in "+plural(len(rep.Scopes), "scope", "scopes"), ""),
 				stat(strconv.Itoa(rep.Coverage.Attributed)+" of "+strconv.Itoa(rep.Coverage.Bullets)+" bullets attributed",

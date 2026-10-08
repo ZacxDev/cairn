@@ -115,6 +115,10 @@ type PageView struct {
 	// `arcsindex.go`.
 	ArcsIndex *report.ArcsAcrossReport
 	ArcsAll   bool
+	// Panes is the presence predicate bound to THIS request's viewer ([Server.panesFor]), nil when
+	// presence is off. Set by the four pages that list a session; read only through its methods, so
+	// a viewer the predicate shows nothing renders no node at all. See `presence.go`.
+	Panes livePanes
 
 	// Now is the render-time clock reading every relative timestamp on the page is computed
 	// against — the server's injected `Config.Now`, so a test pins "5m ago" exactly.
@@ -214,7 +218,7 @@ func ScopePage(v PageView) g.Node {
 	var body g.Node
 	switch {
 	case v.Tab == TabSessions && v.Touched != nil:
-		body = sessionsPanel(*v.Touched, v.Scopes, v.Now)
+		body = sessionsPanel(*v.Touched, v.Scopes, v.Now, v.Panes)
 	case v.Tab == TabArcs && v.Touched != nil:
 		body = arcsPanel(*v.Touched, v.Scopes, v.Now)
 	default:

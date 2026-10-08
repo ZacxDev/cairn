@@ -16,6 +16,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/netid"
+	"github.com/ZacxDev/cairn/internal/presence"
 	"github.com/ZacxDev/cairn/internal/report"
 	"github.com/ZacxDev/cairn/internal/store"
 )
@@ -952,6 +953,10 @@ type Server struct {
 	// client-IP design exists to avoid.
 	trustedProxies []netip.Prefix
 	limiter        *netid.RateLimiter
+
+	// presence is the S2 presence service, NIL when this deployment has none. Read ONLY through
+	// [Server.panesFor], which binds `presence.Store.For` to the request's viewer — see `presence.go`.
+	presence *presence.Service
 }
 
 // Config is what [New] needs. A struct rather than seven positional parameters,
@@ -1061,6 +1066,10 @@ type Config struct {
 	// the same clock the session store uses, or a session can be live to one and dead
 	// to the other.
 	Now func() time.Time
+	// Presence is where live sessions are running (S2's service), and it MAY be nil: presence is off
+	// unless `cmd/cairn-ui` armed its agent listener, and then every page renders exactly as it did
+	// before presence existed. The browser reads it through `presence.Store.For` alone.
+	Presence *presence.Service
 	// Log is where operational lines go. Nil means `io.Discard`.
 	//
 	// 🔴 NOTHING WRITTEN HERE MAY CARRY A SESSION ID, A CSRF TOKEN OR A PRESENTED
@@ -1150,6 +1159,8 @@ func New(cfg Config) (*Server, error) {
 
 		trustedProxies: cfg.TrustedProxies,
 		limiter:        cfg.Limiter,
+
+		presence: cfg.Presence,
 	}, nil
 }
 
@@ -1514,6 +1525,7 @@ func (s *Server) handleScopePage(w http.ResponseWriter, r *http.Request, id iden
 	// The tab is read AFTER the refusal, for `?view=`'s reason in `handleEntryPage`: it selects which
 	// view of a scope the caller already proved they read, and is never an authority input.
 	view.Tab = scopeTab(r.URL.Query().Get(QueryTab))
+	view.Panes = s.panesFor(id)
 	s.renderScope(w, view)
 }
 

@@ -105,7 +105,8 @@ gh pr view 197 --repo ZacxDev/cairn --json state,mergeCommit --jq '"\(.state) \(
 # with an Authorization: Bearer header read from a 0600 file; expect 200s and an unknown arc → 404
 ```
 ## Defects (batched)
-- `internal/presence/wire.go:24-30`, `internal/ui/README.md` presence section and #198's body
-  say the worst-case legal push is 638,245 B; round 2 measured a legal 662,111 B push
-  (`last_activity` may be a 128-byte RFC 3339 value with a long fraction). 1 MiB still admits
-  it; fix the number (and `TestAWorstCaseLegalPushIsAccepted`'s fixture) in the S4 PR.
+- FIXED in the S4 PR (#200): the worst-case legal push figure in `internal/presence/wire.go` and
+  `internal/ui/README.md` was not the worst case (`last_activity` may be a 128-byte RFC 3339 value
+  with a long fraction; a host label may be 64 bytes). `TestAWorstCaseLegalPushIsAccepted` now
+  builds every field at its bound and is the ONE place the size is pinned; the prose no longer
+  repeats it. #198's body still quotes the old figure (a merged PR's body; not edited).
