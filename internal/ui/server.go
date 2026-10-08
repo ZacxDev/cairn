@@ -1206,8 +1206,9 @@ func New(cfg Config) (*Server, error) {
 // about who may see anything.
 //
 // 🔴 AND THE ONE CONTENT-NEGOTIATED BRANCH, WHICH IS AN OPERATOR DECISION RATHER THAN A
-// CONSEQUENCE. An unauthenticated `GET` or `HEAD` from something that `Accept`s `text/html`
-// and presented NO `Authorization` header is answered 303 to the sign-in page, carrying the
+// CONSEQUENCE. An unauthenticated `GET` (never `HEAD` — see [redirectsToSignIn]) from
+// something that `Accept`s `text/html` and presented NO `Authorization` header is answered
+// 303 to the sign-in page, carrying the
 // request-URI as `?next=` so a completed sign-in lands where the person was going. Every
 // other method, any client that did not ask for HTML, and any client that presented an
 // `Authorization` header and failed keeps the uniform 401 byte for byte — a script or a

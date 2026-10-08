@@ -3,7 +3,6 @@ package ui
 import (
 	"net/http"
 	"net/url"
-	"path"
 	"strings"
 )
 
@@ -28,29 +27,42 @@ const maxNextLen = 2048
 // SHAPE OF OPEN REDIRECT:
 //
 //   - non-empty, at most `maxNextLen` bytes;
-//   - starts with exactly ONE `/`. A first character of `/` already rules out a scheme
-//     (`https:`, `javascript:` — RFC 3986 requires a scheme to start with a letter), and a
-//     second `/` is a NETWORK-PATH reference (`//evil.invalid`), which a browser resolves to
-//     another host. So "no scheme, no host" is a consequence of these two rules, not a third
-//     check that could disagree with them;
+//   - starts with `/`, which already rules out a scheme (`https:`, `javascript:` — RFC 3986
+//     requires a scheme to start with a letter);
 //   - no backslash ANYWHERE. Browsers treat `\` as `/` in the authority position of an
 //     http(s) URL, so `/\evil.invalid` is `//evil.invalid` to the thing that follows it;
 //   - every byte printable ASCII (0x21–0x7e): no control character, no whitespace, no DEL,
 //     nothing non-ASCII. A browser STRIPS tab and newline from a URL before parsing it, so
 //     `/\t/evil.invalid` is `//evil.invalid` after the strip — rejecting the byte is what
 //     makes the second rule hold for the string the browser actually parses;
-//   - the PATH it names is not one of the sign-in rows (`/sign-in`, `/sign-out`, the two
-//     GitHub rows). Landing back on the door you just came through is a loop, not a page.
+//   - no `#` at all. A browser never sends a fragment in a request-URI, so nothing a
+//     redirect carries can have one; and a fragment carrying an invalid escape makes
+//     `url.Parse` fail, which makes `http.Redirect` skip its `path.Clean` and emit the value
+//     RAW — so a refused `#` is what keeps the next rule true of the bytes a browser receives;
+//   - the PATH (before any `?`) has no empty segment — no `//` ANYWHERE, which includes the
+//     leading `//` of a NETWORK-PATH reference (`//evil.invalid`, resolved by a browser to
+//     another host), so "no host" is this rule rather than a separate second-character check
+//     that it would shadow — and no `.` or `..` segment. `/..//evil.invalid` resolves, after a
+//     browser removes the dot segment, to the PATH `//evil.invalid` — same-origin, but one
+//     rewrite away from a network-path reference. Refusing the shape rather than relying on
+//     `http.Redirect`'s `path.Clean` to normalise it means the value validated is the value
+//     sent, byte for byte.
+//
+// ⚠ THERE IS NO SIGN-IN LOOP CHECK, AND ONE STOOD HERE. It refused `/sign-in`, `/sign-out` and
+// the two GitHub rows, decoding the path to do it, on the premise that `next=/sign-out` would
+// sign a person straight back out. False: `/sign-out` is POST-only, so a 303 there is a GET
+// that answers 404 and revokes nothing (`TestANextOfSignOutSignsNobodyOut`). What is left is a
+// nuisance landing, and the check was this function's only decode step, so it was deleted.
+// Landing on `/sign-in` cannot loop either: the signed-in shortcut strips one `next` per hop
+// and the redirect is GET-only (`TestNoUnauthenticatedRequestShapeLoops`).
 //
 // ⚠ PERCENT-ESCAPES ARE NOT DECODED FOR THE SHAPE RULES, AND THAT IS A DECISION. A browser
 // resolving a `Location` does not decode `%2F` into a delimiter — RFC 3986 §2.2 makes an
 // escaped reserved character DATA — so `/%2F%2Fevil.invalid` is a same-origin path on THIS
 // host (which answers it 404). It is accepted, and the test that pins the decision pins the
 // Location it produces. Decoding first would refuse a harmless value and would also refuse
-// a legitimate query that carries an escaped `\` or `//`, e.g. a search for a path.
-// 🔴 THE LOOP CHECK IS THE ONE PLACE A DECODE HAPPENS, because there the question is "which
-// ROUTE will this land on", and this server's dispatcher keys on the DECODED path —
-// `/sign%2Din` reaches the `/sign-in` row. An escape that does not decode is refused there.
+// a legitimate query that carries an escaped `\` or `//`, e.g. a search for a path. Nothing
+// in this function decodes.
 func safeNext(raw string) string {
 	if raw == "" || len(raw) > maxNextLen {
 		return ""
@@ -58,38 +70,33 @@ func safeNext(raw string) string {
 	if raw[0] != '/' {
 		return ""
 	}
-	if len(raw) > 1 && raw[1] == '/' {
-		return ""
-	}
 	for i := 0; i < len(raw); i++ {
-		if c := raw[i]; c == '\\' || c < 0x21 || c > 0x7e {
+		if c := raw[i]; c == '\\' || c == '#' || c < 0x21 || c > 0x7e {
 			return ""
 		}
 	}
-	p := raw
-	if i := strings.IndexAny(p, "?#"); i >= 0 {
-		p = p[:i]
-	}
-	decoded, err := url.PathUnescape(p)
-	if err != nil {
+	p, _, _ := strings.Cut(raw, "?")
+	if strings.Contains(p, "//") {
 		return ""
 	}
-	switch path.Clean(decoded) {
-	case SignInPath, SignOutPath, OAuthStartPath, OAuthCallbackPath:
-		return ""
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "." || seg == ".." {
+			return ""
+		}
 	}
 	return raw
 }
 
 // requestedNext reads the return-to value a sign-in request carries and validates it.
 //
-// 🔴 A SAFE METHOD READS THE QUERY; EVERY OTHER METHOD READS THE POSTED BODY ONLY. The two
+// 🔴 `GET` READS THE QUERY; EVERY OTHER METHOD READS THE POSTED BODY ONLY. (No row answers
+// `HEAD`, so a `HEAD` never reaches a handler that calls this.) The two
 // POST rows (`/sign-in`, `/sign-in/github`) read `PostFormValue` for the reason
 // `handleOAuthStart` records about the invitation token: `FormValue` is the body UNION the
 // query, so a value in the URL of a POST would be honoured. Here that is not a secret, but
 // one rule for every field the sign-in doors read is cheaper than a second rule to remember.
 func requestedNext(r *http.Request) string {
-	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+	if r.Method == http.MethodGet {
 		return safeNext(r.URL.Query().Get(FieldNext))
 	}
 	return safeNext(r.PostFormValue(FieldNext))
@@ -136,13 +143,20 @@ func presentedAuthorization(r *http.Request) bool {
 	return len(r.Header.Values("Authorization")) > 0
 }
 
-// redirectsToSignIn is the ONE predicate for gate (4)'s redirect branch: a SAFE navigation
-// (`GET`/`HEAD`), from something that asked for HTML, presenting no `Authorization` header.
-// Every conjunct is derived from the REQUEST, never from a route class or from what the path
-// names — the rule both cross-site gates follow, and the reason the branch cannot become an
-// oracle or a state-changing path.
+// redirectsToSignIn is the ONE predicate for gate (4)'s redirect branch: a `GET`, from
+// something that asked for HTML, presenting no `Authorization` header. Every conjunct is
+// derived from the REQUEST, never from a route class or from what the path names — the rule
+// both cross-site gates follow, and the reason the branch cannot become an oracle or a
+// state-changing path.
+//
+// 🔴 `GET` ONLY, NOT `HEAD`, AND A MEASURED LOOP IS WHY. No row in the ledger answers `HEAD`,
+// so a `HEAD` redirected to `/sign-in` falls through to this gate again and is redirected to
+// `/sign-in` again, for ever — measured on `/`, `/arcs?all=1`, `/sign-in` and `/join?token=x`
+// when this predicate admitted `HEAD`. Browsers never navigate with `HEAD`, so nothing was
+// gained by it; a `HEAD` keeps the uniform 401 it had before this branch existed.
+// `TestNoUnauthenticatedRequestShapeLoops` follows every `Location` for both methods.
 func redirectsToSignIn(r *http.Request) bool {
-	return (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+	return r.Method == http.MethodGet &&
 		acceptsHTML(r) &&
 		!presentedAuthorization(r)
 }

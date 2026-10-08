@@ -763,7 +763,7 @@ What replaced it, and what was deliberately kept:
   the redirect to every path: a browser now gets the same 303 for both, differing only in the
   echoed `?next=`.
 - **A browser navigation DOES redirect now**, 303 to `/sign-in` — first `GET /` alone, then, in
-  Phase N, every path with the request-URI carried as `?next=`. It is scoped to `GET`/`HEAD`, an
+  Phase N, every path with the request-URI carried as `?next=`. It is scoped to `GET` (not `HEAD`), an
   `Accept` carrying `text/html`, and NO `Authorization` header; every other method, every other
   client and every failed bearer keeps the uniform 401 byte for byte, so the machine contract is
   unmoved. `TestTheRootRedirectsABrowserAndRefusesEverythingElse` and Phase N's tests probe each
@@ -3376,9 +3376,10 @@ it was going, and lands back there.
 
 | request | answer |
 |---|---|
-| `GET`/`HEAD`, `Accept` containing `text/html`, NO `Authorization` header, authentication fails (no credential, or a cookie that no longer resolves) | `303 Location: /sign-in?next=<request-URI, query-encoded>`; `/sign-in` bare when the request-URI is `/` or one `safeNext` refuses |
+| `GET`, `Accept` containing `text/html`, NO `Authorization` header, authentication fails (no credential, or a cookie that no longer resolves) | `303 Location: /sign-in?next=<request-URI, query-encoded>`; `/sign-in` bare when the request-URI is `/` or one `safeNext` refuses |
 | the same, presenting an `Authorization` header (any value, including empty) | `401 unauthorized`, unchanged |
 | the same, `Accept: */*` or no `Accept` | `401 unauthorized`, unchanged |
+| `HEAD`, any shape | `401 unauthorized`, unchanged — see *No request shape loops* |
 | any other method (`POST`, `PUT`, `OPTIONS`, …) | unchanged: gate (2) then the uniform 401 |
 | `GET /sign-in?next=X` | the page, with `X` (if `safeNext` accepts it) as a hidden field in BOTH forms |
 | `GET /sign-in?next=X` while signed in | `303 Location: X` when `X` is valid; the form otherwise, as before |
@@ -3388,10 +3389,11 @@ it was going, and lands back there.
 ## 🔴 ONE validator, `safeNext`, at every read
 
 `internal/ui/returnto.go`. Accepts only a same-origin path-absolute reference: non-empty, ≤ 2048
-bytes, first byte `/`, second byte not `/`, no `\` anywhere, every byte printable ASCII (0x21–0x7e),
-and a path that does not decode-and-clean to `/sign-in`, `/sign-out` or either GitHub row. Anything
-else becomes `""`, which lands on `/` and renders no field — never an error page, never an echo.
-Reads go through it in exactly two places: `requestedNext` (the query on `GET`/`HEAD`, the posted
+bytes, first byte `/`, no `\` and no `#` anywhere, every byte printable ASCII (0x21–0x7e), and a
+path (before `?`) with no empty segment (`//` anywhere — which is also what refuses the
+network-path `//evil.invalid`) and no `.`/`..` segment. Anything else becomes `""`, which lands on
+`/` and renders no field — never an error page, never an echo. Reads go through it in exactly two
+places: `requestedNext` (the query on `GET`, the posted
 body ONLY on every other method — a `?next=` on a POST's URL is ignored, the invite token's rule) and
 `safeNext(flightNext)` in the callback, which re-validates the stored value at use. The redirect
 builder (`signInLocation`) validates the request-URI it is about to carry.
@@ -3403,9 +3405,36 @@ door's own check is reachable and was watched red.
 ⚠ **Percent-escapes are not decoded for the shape rules.** `/%2F%2Fevil.invalid` is ACCEPTED: a
 browser resolving a `Location` treats `%2F` as data, so it lands on a path on THIS origin (which
 answers 404). `TestAnEscapedSlashPairLandsOnThisOrigin` pins the Location and resolves it against
-the origin. The loop check is the one place a decode happens, because the dispatcher routes on the
-DECODED path (`/sign%2Din` reaches the sign-in row). The redirect carries `RequestURI()`, never the
-decoded `URL.Path`, so an escaped request is carried as it arrived.
+the origin. Nothing in `safeNext` decodes. The redirect carries `RequestURI()`, never the decoded
+`URL.Path`, so an escaped request is carried as it arrived.
+
+⚠ **`#` and dot/empty segments are refused because of `http.Redirect`, measured.** A fragment
+carrying an invalid escape (`/..//evil.invalid#%zz`) makes `url.Parse` fail, so `http.Redirect`
+skips its `path.Clean` and emits the value RAW; a browser then removes the dot segment and lands on
+the same-origin PATH `//evil.invalid`. Not exploitable as served, but one rewrite from a
+network-path reference — so the shape is refused rather than left to `path.Clean` to normalise, and
+the value validated is the value sent. Browsers never send a fragment in a request-URI, so the `#`
+rule loses nothing. `/..//evil.invalid` without a fragment is refused by the same rules.
+
+## 🔴 There is no sign-in loop check — it was deleted, and why
+
+The first version refused `next` values naming `/sign-in`, `/sign-out` or either GitHub row,
+decoding the path to do it, on the premise that `next=/sign-out` would sign a person straight back
+out. **False:** `/sign-out` is POST-only, so a 303 there is a GET that answers 404 and revokes
+nothing — `TestANextOfSignOutSignsNobodyOut` signs in with `next=/sign-out`, follows the landing
+(404) and requires the session to still answer 200. What remained was a nuisance landing, and the
+check was the validator's only decode step, so it went (with its mutant row).
+
+## 🔴 No request shape loops — and `HEAD` is why the redirect is `GET`-only
+
+The first version redirected `HEAD` too. No row answers `HEAD`, so a redirected `HEAD` lands on
+`/sign-in`, is not routed, reaches gate (4) again and is redirected to `/sign-in` again, for ever —
+measured on `/`, `/arcs?all=1`, `/sign-in` and `/join?token=x` (the base answered 401). Browsers
+never navigate with `HEAD`, so `HEAD` keeps the 401. `TestNoUnauthenticatedRequestShapeLoops`
+follows every `Location`, keeping the method, for `GET` and `HEAD` × signed out / signed in × with
+and without a dead cookie × nine targets (including `/sign-in?next=` nested twice, which exercises
+the signed-in shortcut stripping one level per hop), and requires a non-3xx within 5 hops; it does
+not depend on the deleted loop check.
 
 ## 🔴 The redirect is not an oracle
 
@@ -3414,8 +3443,8 @@ the ledger and before any handler, and consults no store, session table or route
 `TestTheSignInRedirectIsUniformAcrossWhatTheTargetNames` asserts both halves: responses for an
 existing scope, a missing scope, an existing entry, a missing entry and a missing arc are
 byte-identical (status, every header, body) once the echoed target is substituted, AND the source
-was consulted **0** times — against **1** on an authenticated positive control over the same
-counter. Unknown paths redirect too, so a browser cannot tell a route from a typo either.
+was consulted **0** times — against a non-zero count on an authenticated positive control over
+the same counter. Unknown paths redirect too, so a browser cannot tell a route from a typo either.
 
 ## 🔴 The bearer split is by PRESENCE of the header
 
@@ -3444,21 +3473,29 @@ Regression tests red at the base (`a20ebab`), run black-box against the base tre
 `TestAnExpiredCookieIsSentToSignInAndTheCredentialFormLandsBack` (the expired cookie answered 401).
 `TestAFailedBearerAndANonBrowserKeepTheUniform401` was GREEN at the base — an **invariant guard**
 for the machine contract, not regression coverage. `TestTheRootRedirectsABrowserAndRefusesEverythingElse`
-moved three rows (`/share`, `/admin`, `HEAD /`) from 401 to 303 deliberately and gained a
-failed-bearer row, which at the base answered **303**: the old root branch did not look at
+moved two rows (`/share`, `/admin`) from 401 to 303 deliberately, kept `HEAD /` at 401, and gained
+a failed-bearer row, which at the base answered **303**: the old root branch did not look at
 `Authorization`.
 
-Twenty-eight hand mutants, each one textual edit, each run against the named test and required to
+The audit round's fixes, red at the PR's first head (`94d3107`, the current tests dropped into an
+export of that tree) and green now: `TestNoUnauthenticatedRequestShapeLoops` (18 `HEAD` shapes
+"still redirecting after 5 hops"), `TestANextOfSignOutSignsNobodyOut` (landed on `/`, not
+`/sign-out`), `TestAFailedBearerAndANonBrowserKeepTheUniform401`'s browser-`HEAD` row (303), the
+root test's `HEAD /` row (303), and the corpus's fragment, dot-segment, empty-segment and
+now-accepted sign-in rows.
+
+Twenty-nine hand mutants, each one textual edit, each run against the named test and required to
 fail with that test's own message, the tree restored and digest-checked after each, with an unedited
-positive control running all twelve tests green: every `safeNext` rule (network path, backslash,
-control bytes, length, scheme, loop, undecoded loop check), the redirect predicate's three
-conjuncts and its presence-vs-value test, the Location dropping `next` or carrying the decoded path,
+positive control running all fourteen tests green: every `safeNext` rule (empty segment / network
+path, backslash, `#`, control bytes, dot segments, length, scheme), the loop check RESTORED, the
+redirect predicate admitting `HEAD`, admitting every method, ignoring `Accept` and ignoring
+`Authorization`, presence-vs-value, the Location dropping `next` or carrying the decoded path,
 both landings forced to `/`, the refusal dropping `next`, `FormValue` for `PostFormValue`, either
 form losing its field, the flight dropping/not clearing/not re-validating `next`, the start row not
 validating, the signed-in shortcut removed or ignoring the identity, and the redirect consulting
-the source or varying by target — 28 killed. Five of them are rows in `tests/control_mutants.py`
-(`ui-next-*`, `ui-redirect-answers-a-failed-bearer-with-html`), each run alone with `--only` under
-`PYTHONDONTWRITEBYTECODE=1`: `killed=1` each.
+the source or varying by target — 29 killed. Seven of them are rows in `tests/control_mutants.py`
+(`ui-next-*`, `ui-redirect-answers-a-failed-bearer-with-html`, `ui-redirect-admits-head`), each run
+alone with `--only` under `PYTHONDONTWRITEBYTECODE=1`: `killed=1` each.
 
 ## What these guards still cannot see
 

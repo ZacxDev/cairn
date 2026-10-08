@@ -628,10 +628,12 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 // uniform 401 byte for byte, because a script driving this surface was written against that.
 //
 // ⚠ THE PATH DIMENSION WAS WIDENED ON AN OPERATOR DECISION AND THE ROWS THAT PINNED IT MOVED
-// RATHER THAN DISAPPEARED. "a different path, asking for HTML", "an undeclared path, asking
-// for HTML" and "the root under HEAD" asserted 401 while the redirect was root-only; they now
-// assert the 303 with its `?next=`, deliberately, and the 401 half gained the
-// failed-`Authorization` row that took over the job of keeping programs out of the redirect.
+// RATHER THAN DISAPPEARED. "a different path, asking for HTML" and "an undeclared path, asking
+// for HTML" asserted 401 while the redirect was root-only; they now assert the 303 with its
+// `?next=`, deliberately, and the 401 half gained the failed-`Authorization` row that took over
+// the job of keeping programs out of the redirect. "The root under HEAD" moved to 303 with
+// them and moved BACK to 401: no row answers `HEAD`, so a redirected `HEAD` looped for ever
+// (`TestNoUnauthenticatedRequestShapeLoops`).
 // `TestAnUnauthenticatedBrowserIsSentToSignInWithItsReturnPath` and
 // `TestAFailedBearerAndANonBrowserKeepTheUniform401` carry the wider corpus.
 func TestTheRootRedirectsABrowserAndRefusesEverythingElse(t *testing.T) {
@@ -663,6 +665,7 @@ func TestTheRootRedirectsABrowserAndRefusesEverythingElse(t *testing.T) {
 		{"a client that sent no Accept at all", "GET", RootPath, "", ""},
 		{"the root, asking for HTML, presenting a bearer that failed", "GET", RootPath, "text/html", "Bearer fixture-refused"},
 		{"the root under POST, asking for HTML", "POST", RootPath, "text/html", ""},
+		{"the root under HEAD, asking for HTML", "HEAD", RootPath, "text/html", ""},
 	} {
 		r := httptest.NewRequest(tc.method, tc.path, nil)
 		if tc.accept != "" {
@@ -687,12 +690,11 @@ func TestTheRootRedirectsABrowserAndRefusesEverythingElse(t *testing.T) {
 		}
 	}
 
-	// THE WIDENED PATH DIMENSION: the three rows that used to assert 401 here, now 303 with the
+	// THE WIDENED PATH DIMENSION: two rows that used to assert 401 here, now 303 with the
 	// return path, each with a literal Location.
 	for _, tc := range []struct{ method, path, want string }{
 		{"GET", "/share", "/sign-in?next=%2Fshare"},
 		{"GET", "/admin", "/sign-in?next=%2Fadmin"},
-		{"HEAD", RootPath, SignInPath},
 	} {
 		r := httptest.NewRequest(tc.method, tc.path, nil)
 		r.Header.Set("Accept", "text/html")

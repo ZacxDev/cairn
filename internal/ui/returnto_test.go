@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ZacxDev/cairn/internal/identity"
 )
 
 // browserAccept is what a real browser sends on a top-level navigation. A literal rather than
@@ -89,14 +91,23 @@ func TestSafeNextRefusesTheOpenRedirectCorpus(t *testing.T) {
 		{"non-ASCII", "/scöpe", ""},
 		{"overlong by one byte", overlong, ""},
 		{"empty", "", ""},
-		{"the sign-in page itself", "/sign-in", ""},
-		{"a sign-in loop carrying its own next", "/sign-in?next=%2Fscope", ""},
-		{"sign-out", "/sign-out", ""},
-		{"the GitHub start row", "/sign-in/github", ""},
-		{"the GitHub callback", "/sign-in/github/callback?code=fixture-code", ""},
-		{"the sign-in page, percent-encoded", "/sign%2Din", ""},
-		{"the sign-in page via a dot segment", "/./sign-in", ""},
-		{"an escape that does not decode", "/scope%zz", ""},
+		{"a fragment", "/scope?id=scp_l#top", ""},
+		{"a fragment carrying an invalid escape (url.Parse fails, http.Redirect skips path.Clean)", "/..//evil.invalid#%zz", ""},
+		{"a dot-dot segment hiding a network path", "/..//evil.invalid", ""},
+		{"a dot-dot segment", "/arcs/../scope", ""},
+		{"a dot segment", "/./scope", ""},
+		{"an empty segment mid-path", "/scope//x", ""},
+		// 🔴 THE SIGN-IN ROWS ARE ACCEPTED NOW — the loop check was deleted (see `safeNext`):
+		// `/sign-out` is POST-only, so landing there is a 404 that signs nobody out
+		// (`TestANextOfSignOutSignsNobodyOut`), and nothing here decodes, so an escape that
+		// does not decode is just bytes.
+		{"the sign-in page itself", "/sign-in", "/sign-in"},
+		{"sign-in carrying its own next", "/sign-in?next=%2Fscope", "/sign-in?next=%2Fscope"},
+		{"sign-out", "/sign-out", "/sign-out"},
+		{"the GitHub callback", "/sign-in/github/callback?code=fixture-code", "/sign-in/github/callback?code=fixture-code"},
+		{"an escape that does not decode", "/scope%zz", "/scope%zz"},
+		{"a dot inside a segment is not a dot segment", "/static/app.css", "/static/app.css"},
+		{"a trailing slash", "/scope/", "/scope/"},
 		// 🔴 THE DECODE DECISION: an escaped slash pair is a same-origin PATH, not an authority
 		// — a browser does not decode `%2F` into a delimiter when resolving a reference — so it
 		// is ACCEPTED, verbatim. `TestAnEscapedSlashPairLandsOnThisOrigin` pins what it does.
@@ -124,7 +135,6 @@ func TestAnUnauthenticatedBrowserIsSentToSignInWithItsReturnPath(t *testing.T) {
 		method, target, want string
 	}{
 		{"GET", "/scope?id=scp_x&tab=sessions", "/sign-in?next=%2Fscope%3Fid%3Dscp_x%26tab%3Dsessions"},
-		{"HEAD", "/arcs?all=1", "/sign-in?next=%2Farcs%3Fall%3D1"},
 		{"GET", "/entry?scope=scp_y&ref=runbook", "/sign-in?next=%2Fentry%3Fscope%3Dscp_y%26ref%3Drunbook"},
 		// The root is the default landing, so it carries no `next` — exactly the redirect it
 		// answered before this change.
@@ -163,6 +173,9 @@ func TestAFailedBearerAndANonBrowserKeepTheUniform401(t *testing.T) {
 			r := navigate("GET", "/scope?id=scp_f")
 			r.Header["Authorization"] = []string{""}
 			return r
+		}},
+		{"a HEAD from a browser, no credential (no row answers HEAD; redirecting it looped)", func() *http.Request {
+			return navigate("HEAD", "/arcs?all=1")
 		}},
 		{"a HEAD presenting a bearer that failed", func() *http.Request {
 			r := navigate("HEAD", "/arcs")
@@ -514,5 +527,85 @@ func TestAnEscapedSlashPairLandsOnThisOrigin(t *testing.T) {
 	}
 	if host := base.ResolveReference(ref).Host; host != testHost {
 		t.Errorf("the landing resolves to host %q, want %q", host, testHost)
+	}
+}
+
+// TestNoUnauthenticatedRequestShapeLoops follows every `Location` the way a client does —
+// keeping the method, as `HEAD` is kept across a 303 — and requires a non-3xx within
+// `maxHops`. RED when the redirect admitted `HEAD`: no row answers `HEAD`, so `HEAD /`
+// went 303 → `/sign-in` → 303 → `/sign-in` for ever.
+//
+// It covers both identities, because a loop needs only one of them: signed out (no cookie, and
+// a cookie no session resolves) and signed in, where the `/sign-in?next=` shortcut is the one
+// redirect that targets the sign-in page itself.
+func TestNoUnauthenticatedRequestShapeLoops(t *testing.T) {
+	const maxHops = 5
+	targets := []string{
+		"/", "/arcs?all=1", "/sign-in", "/join?token=x", "/scope?id=scp_m", "/admin", "/sign-out",
+		"/sign-in?next=%2Fsign-in", "/sign-in?next=%2Fsign-in%3Fnext%3D%252Fsign-in",
+	}
+	walked, redirected := 0, 0
+	for _, srv := range []struct {
+		name string
+		s    *Server
+	}{{"signed out", newTestServer(t, refusingAuth{})}, {"signed in", newTestServer(t, staticAuth{testIdentity()})}} {
+		for _, method := range []string{"GET", "HEAD"} {
+			for _, cookie := range []bool{false, true} {
+				for _, start := range targets {
+					target, hops := start, 0
+					var codes []int
+					for {
+						r := navigate(method, target)
+						if cookie {
+							r.AddCookie(&http.Cookie{Name: identity.SessionCookieName, Value: "fixture-no-such-session"})
+						}
+						rec := serve(srv.s, r)
+						codes = append(codes, rec.Code)
+						if rec.Code < 300 || rec.Code > 399 {
+							break
+						}
+						hops++
+						if hops > maxHops {
+							t.Errorf("%s %s %s (cookie=%v) is still redirecting after %d hops: %v — a LOOP",
+								srv.name, method, start, cookie, maxHops, codes)
+							break
+						}
+						target = rec.Header().Get("Location")
+					}
+					if hops > 0 {
+						redirected++
+					}
+					walked++
+				}
+			}
+		}
+	}
+	// POSITIVE CONTROL: the walk did follow redirects, so "no loop" is not "no redirect ever".
+	if redirected == 0 {
+		t.Fatal("no request shape redirected at all, so the walk followed nothing")
+	}
+	t.Logf("loop walk: %d request shapes walked, %d of them redirected at least once, hop limit %d",
+		walked, redirected, maxHops)
+}
+
+// TestANextOfSignOutSignsNobodyOut is the measurement behind deleting `safeNext`'s loop check:
+// its premise was that `next=/sign-out` would sign a person straight back out. `/sign-out` is
+// POST-only, so the landing is a GET that answers 404 and revokes nothing.
+func TestANextOfSignOutSignsNobodyOut(t *testing.T) {
+	l := newLive(t)
+	rec := l.do(http.MethodPost, SignInPath, url.Values{FieldToken: {testCredential}, FieldNext: {SignOutPath}})
+	if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != SignOutPath {
+		t.Fatalf("sign-in with next=/sign-out answered %d → %q, want 303 → %q", rec.Code, got, SignOutPath)
+	}
+	cookie := sessionCookieOf(t, rec)
+	if cookie == nil {
+		t.Fatal("PRECONDITION: no session cookie")
+	}
+	if landing := l.do(http.MethodGet, SignOutPath, nil, cookie); landing.Code != http.StatusNotFound {
+		t.Errorf("the GET landing on /sign-out answered %d, want 404 (the row is POST-only)", landing.Code)
+	}
+	if after := l.do(http.MethodGet, RootPath, nil, cookie); after.Code != http.StatusOK {
+		t.Errorf("after landing on /sign-out the session answers %d, want 200 — the landing signed somebody out",
+			after.Code)
 	}
 }
