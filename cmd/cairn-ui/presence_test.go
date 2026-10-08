@@ -437,6 +437,16 @@ func TestTheBrowserReadsTheStoreTheAgentListenerWrites(t *testing.T) {
 	c := startPresenceChild(t, journal, "-store", storeRoot, "-port", fmt.Sprint(uiPort),
 		"-presence-agent-addr", agentAddr, "-presence-tokens", tokens, "-presence-owner", presenceOwnerA.String())
 	c.waitFor(t, "the serving line", func() bool { return strings.Contains(c.out.String(), "serving") })
+	// The "serving" line is printed BEFORE the browser listener binds, so the first GET would race
+	// the bind; poll /healthz until it answers (the agent listener is bound before that line).
+	c.waitFor(t, "the browser surface to answer /healthz", func() bool {
+		resp, err := (&http.Client{Timeout: time.Second}).Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", uiPort))
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	})
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	page := func() string {
