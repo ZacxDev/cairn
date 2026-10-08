@@ -3659,8 +3659,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-presence-session-page-badge-dropped",
         path="internal/ui/sessionpage.go",
-        old="g.If(pane != nil, h.P(",
-        new="g.If(false && pane != nil, h.P(",
+        old="g.If(pane != nil, h.Div(",
+        new="g.If(false && pane != nil, h.Div(",
         killer="TestTheBadgeSaysWhereTheSessionRuns",
         why="the session page is the one surface the plan's e2e names; a summary card that forgot the "
         "badge would leave every byte-identity test green.",
