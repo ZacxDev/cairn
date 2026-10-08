@@ -3099,3 +3099,104 @@ Not a row, watched by hand: dropping the member-bullet lookup reddens
 - **The live view on a deployment with a skewed pod clock**: a `registered_at` in the UI's future is
   not clamped (decision 10 clamps bullet dates only) and sorts first.
 - **Tooltips on touch devices**, as Phase I records.
+
+# Phase K — the presence store and its agent listener (S2 of the arcs/presence plan)
+
+Slice S2 of `claudedocs/plan-cairn-arcs-presence.md` (decisions 2–9, 11 as built, 15). It adds
+**no browser row**: the store is written by a second listener and read by nobody until S4's badge.
+`internal/presence` holds the store, the ring queue, the token file and the agent handler;
+`cmd/cairn-ui` wires it and is its ONLY importer — `TestOnlyTheBrowserProgramImportsPresence` is that
+ledger, red on GROW or SHRINK (S4/S5 will add `internal/ui` to it deliberately).
+
+| route (SECOND listener) | token kind | what |
+|---|---|---|
+| `POST /agent/v1/presence` | push | REPLACE this token's `(owner, host)` set; body `{schema, host, rows}`; `200 X-Presence-Status: presence-replaced` + `rows=N` |
+| `POST /agent/v1/rings/claim` | claim | body exactly `{}`; `200 {"schema":1,"rings":[{"ring_id","session"}]}` — this token's `(owner, host)` only, each ring once |
+
+`presence.AgentRoutes()` derives that ledger from the dispatch map and
+`TestTheAgentRouteLedgerIsExactlyTwoRows` pins it against a hand-written copy; neither row is in
+`ui.DeclaredRoutes()`, `api.DeclaredRoutes()` or the corpus.
+
+## 🔴 One owner predicate, and narrowing is read off the viewer's own identity
+
+`presence.Store.For(viewer, session)` is the only read on a viewer's behalf and `Service.Ring` reaches
+the queue only through it. Its clauses live in `visible`: the viewer is valid and NOT
+`Auth.Narrowed()`, the row's owner equals `(Principal.Kind, Principal.ID)` — both halves — and the row
+is unexpired (`pushed_at + 3 min`). Another owner's presence, expired presence, a narrowed viewer and
+no presence are one answer. **The narrowed bit is #195's `control.Authorization.Narrowed()`** — handed
+through by the machine-token backend on the bearer path, never set by the cookie backend's
+`control.Resolve`, and a session cannot be minted from a narrowed credential ("What a session can be
+minted from", above). The plan's first draft derived it from the credential row; decision 11 now
+records what was built instead.
+
+The TARGET among several hosts is the newest `last_activity`, empty sorting oldest, ties (two empties
+included) to the byte-wise smaller host label; the other hosts are `AlsoOn`.
+
+## 🔴 The agent listener: its own bind verdict, its own tokens, no cookies
+
+- **All three flags or none** — `-presence-agent-addr`, `-presence-tokens`, `-presence-owner
+  <kind>:<id>`. None ⇒ no listener (the startup line says `presence off`). A subset, a value that
+  reduces to nothing, an owner the authority does not hold, or a non-`host:port` address refuses
+  (78). Flags only, no environment spelling: presence must be a reviewable line naming its owner.
+- **The reachable-bind refusal runs on the AGENT's bind**, with the same `bindIsReachable` and the
+  same `$CAIRN_TRUSTED_PROXIES`; a loopback browser bind does not license a `0.0.0.0` agent bind. Its
+  `netid.RateLimiter` is its own, keyed by `netid.ResolveClient`. The listener is bound before
+  anything serves, so a bind failure is a refusal, not a dying goroutine.
+- **Tokens authenticate nothing else.** They are SHA-256 digests in `-presence-tokens`, one row
+  `<push|claim> <kind>:<id> <host> <hex>`, re-read on EVERY agent request (delete a row ⇒ the next
+  request is 401, no restart; a vanished file ⇒ every request 401). A push token cannot claim and a
+  claim token cannot push — the kind is part of the match, so the refusal is garbage's. Nothing
+  outside the agent listener can read a presence token because nothing else imports the package
+  (the ledger above). A refused row is reported by line number and FIELD, never its value, so a
+  token pasted into the wrong column does not reach the log; a mint appends after a `\n` when the
+  file's last line lacks one.
+- **The single-owner wall (decision 15)** is ONE function, `admit`. At startup, a row for another
+  owner — or any malformed row or duplicate digest — means the AGENT LISTENER IS NOT STARTED: the
+  process keeps serving the browser surface, prints `WARNING the presence agent listener is NOT
+  started` naming the file line, and announces `presence agent NOT started` on its startup line. An
+  UNREADABLE token file is a flag error and refuses the process (78). A row appearing after startup
+  is refused as that ROW, logged once with its 12-hex digest prefix, while the owner's rows keep
+  working. The mint enforces the wall too.
+- **The wire** (decision 8) is exact both ways: `DisallowUnknownFields` refuses every never-carried
+  field (`pane_preview` first), and a MISSING key is a 400 as well. ≤ 256 rows, every string ≤ 128
+  bytes and free of control characters and U+2028/U+2029, sessions by `write.SessionComponent`, `runtime` ∈
+  {claude, opencode, other}, `last_activity` empty or RFC 3339, one row per session per push. A body
+  whose `host` is not the token's is a 400 and writes nothing. The body cap is 1 MiB: the worst
+  LEGAL push, measured with Go's default `json.Marshal` (which escapes `<` to six bytes), is
+  638,245 bytes — over the 512 KiB first chosen (`TestAWorstCaseLegalPushIsAccepted`).
+- **The claim route returns `[]` until S5** — nothing enqueues a ring yet; it exists now because S3
+  builds its claim service against it.
+- ⚠ **Revocation × lockout:** a revoked token's retries count toward the per-client lockout, and
+  hosts behind one egress address share that bucket. S3 must stop on a 401 (the plan's S3 test plan).
+- **Minting** is `cairn-ui … -issue-presence-token push|claim -presence-owner <kind:id | email |
+  project name> -presence-host <label> -presence-tokens <file>`: the owner is resolved ONCE to
+  `(Kind, ID)`, the digest appended (file created 0600), the token printed once on stdout, exit 0.
+
+⚠ **One replica.** State is in memory (decision 2); a restart loses ≤ one push interval and any
+pending ring. A second replica would split both — the plan's open question P2.
+
+## The RED proof
+
+⚠ **PARTIAL, AND SAID SO.** 27 `presence-*` rows are in `tests/control_mutants.py`, each naming its
+killer (the predicate's three clauses and its owner check, the target pick's two comparisons,
+whole-host replace, the ring's predicate gate, the queue's owner and host filters, the wall at
+startup / on the re-read / in `admit`, the token kind, the push host check, the lockout's two
+halves, the wire's unknown-field refusal and three bounds, and five `cmd/cairn-ui` wirings). The
+local full-battery run was stopped on operator instruction before reaching them, so their
+verdicts are CI's `go` job, not a local measurement. One mutant was watched red by hand and is NOT
+a row (it needs two edits): caching the token file at the first read instead of re-reading it
+kills `TestRevocationTakesEffectWithoutARestart` alone.
+
+⚠ **Deploy precondition (decision 11):** not before #195 has been live for the instance's
+EFFECTIVE session TTL (12 h by default; `-session-ttl` / `CAIRN_UI_SESSION_TTL`), AND a journal
+re-check shows no credential with non-null `narrowed_scopes`.
+
+## What these guards still cannot see
+
+- **Any browser surface.** Nothing renders presence or rings a bell yet (S4, S5); `tests/presence/e2e.sh`
+  is S5's.
+- **The host side** (S3, the tooling repo): whether pushed rows are generation-checked and unique,
+  and whether the executor writes only `0x07`.
+- **Two replicas**, and a restart's loss of pending rings, are stated, not tested.
+- **The refused-row log under churn**: it is said once per distinct line per process, so a row that
+  is edited repeatedly is logged once per spelling.
