@@ -432,6 +432,16 @@ MUTANTS: tuple[Mutant, ...] = (
         "handling was written against — the machine contract moved with nothing saying so.",
     ),
     Mutant(
+        name="ui-signed-in-shortcut-follows-the-sign-in-page",
+        path="internal/ui/session.go",
+        old="if u, perr := url.Parse(next); perr == nil && u.Path == SignInPath {",
+        new="if u, perr := url.Parse(next); perr == nil && u.Path == \"/never-a-path\" {",
+        killer="TestNoUnauthenticatedRequestShapeLoops",
+        why="`safeNext` accepts `/sign-in` once its loop check is gone, so a shortcut that "
+        "follows any valid `next` strips one `/sign-in?next=` level per hop — 140 redirects at "
+        "depth 140, inside `maxNextLen` — and the browser reports too many redirects.",
+    ),
+    Mutant(
         name="ui-redirect-admits-head",
         path="internal/ui/returnto.go",
         old="\treturn r.Method == http.MethodGet &&",

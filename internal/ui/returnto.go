@@ -53,8 +53,12 @@ const maxNextLen = 2048
 // sign a person straight back out. False: `/sign-out` is POST-only, so a 303 there is a GET
 // that answers 404 and revokes nothing (`TestANextOfSignOutSignsNobodyOut`). What is left is a
 // nuisance landing, and the check was this function's only decode step, so it was deleted.
-// Landing on `/sign-in` cannot loop either: the signed-in shortcut strips one `next` per hop
-// and the redirect is GET-only (`TestNoUnauthenticatedRequestShapeLoops`).
+// ⚠ `/sign-in` IS THEREFORE ACCEPTED, AND THE ONE PLACE THAT MATTERS GUARDS IT ITSELF: the
+// signed-in shortcut in `handleSignInForm` sends a `next` whose path is `/sign-in` to `/` instead
+// of following it. Before that guard, a nested `/sign-in?next=/sign-in?next=…` cost one redirect
+// per level — 140 hops at depth 140, inside `maxNextLen` — which a browser reports as "too many
+// redirects". Unauthenticated, the redirect is GET-only, so `HEAD` cannot loop either
+// (`TestNoUnauthenticatedRequestShapeLoops` walks both, to depth 140).
 //
 // ⚠ PERCENT-ESCAPES ARE NOT DECODED FOR THE SHAPE RULES, AND THAT IS A DECISION. A browser
 // resolving a `Location` does not decode `%2F` into a delimiter — RFC 3986 §2.2 makes an

@@ -159,10 +159,25 @@ func csrfTokenValid(r *http.Request) bool {
 // it always did — a signed-in person may want the form to switch credentials, and a redirect
 // with nowhere particular to go would take that away. The identity is resolved through the
 // SAME chain gate (4) uses; this row is public, so the dispatcher handed it the zero value.
+//
+// 🔴 A `next` WHOSE PATH IS `/sign-in` ITSELF IS SENT TO `/`, NOT FOLLOWED. `safeNext` accepts
+// `/sign-in` (the loop check was deleted — see its comment), so without this a signed-in browser
+// at `/sign-in?next=/sign-in?next=…/scope` was redirected once per nesting level: measured 1, 21
+// and 140 hops at depths 1, 21 and 140, and a 140-deep value is ~1,966 bytes, under
+// `maxNextLen` — a browser gives up with "too many redirects" long before. A `next` naming the
+// sign-in page carries no destination a SIGNED-IN person can use, so the answer is the default
+// landing, in one hop. `/` rather than rendering the form, because the form would carry that
+// same `next` and a completed sign-in would land straight back on this branch.
+// The PATH is compared DECODED, as the dispatcher routes it, so `/sign%2Din?next=…` is caught
+// too; a value `url.Parse` refuses cannot be routed to this row at all.
+// `TestNoUnauthenticatedRequestShapeLoops` walks a 140-deep target.
 func (s *Server) handleSignInForm(w http.ResponseWriter, r *http.Request, _ identity.Identity) {
 	next := requestedNext(r)
 	if next != "" {
 		if id, err := s.auth.Authenticate(r); err == nil && id.Valid() {
+			if u, perr := url.Parse(next); perr == nil && u.Path == SignInPath {
+				next = RootPath
+			}
 			http.Redirect(w, r, next, http.StatusSeeOther)
 			return
 		}

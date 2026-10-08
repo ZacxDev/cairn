@@ -3432,9 +3432,17 @@ The first version redirected `HEAD` too. No row answers `HEAD`, so a redirected 
 measured on `/`, `/arcs?all=1`, `/sign-in` and `/join?token=x` (the base answered 401). Browsers
 never navigate with `HEAD`, so `HEAD` keeps the 401. `TestNoUnauthenticatedRequestShapeLoops`
 follows every `Location`, keeping the method, for `GET` and `HEAD` × signed out / signed in × with
-and without a dead cookie × nine targets (including `/sign-in?next=` nested twice, which exercises
-the signed-in shortcut stripping one level per hop), and requires a non-3xx within 5 hops; it does
-not depend on the deleted loop check.
+and without a dead cookie × ten targets, and requires a non-3xx within 5 hops; it does not depend
+on the deleted loop check.
+
+⚠ **The deletion opened one redirect chain, and the first version of that test could not see it.**
+With `/sign-in` accepted, the signed-in shortcut followed `next=/sign-in?next=…` one nesting level
+per hop — 1, 21 and 140 hops at depths 1, 21 and 140; 140 levels is ~1,966 bytes, inside
+`maxNextLen`, and a browser reports "too many redirects". The test's deepest target was depth 2,
+so "within 5 hops" held. Now the shortcut sends a `next` whose DECODED path is `/sign-in` to `/`
+(not the form: the form would carry that `next`, and a completed sign-in would land straight back
+here); `safeNext` is unchanged. The walk carries a 140-deep target held to ≤1 hop — red at
+`13e2008` (capped at 6 by the walk; 140 uncapped), green after (1 hop, landing `/`).
 
 ## 🔴 The redirect is not an oracle
 
@@ -3495,7 +3503,8 @@ form losing its field, the flight dropping/not clearing/not re-validating `next`
 validating, the signed-in shortcut removed or ignoring the identity, and the redirect consulting
 the source or varying by target — 29 killed. Seven of them are rows in `tests/control_mutants.py`
 (`ui-next-*`, `ui-redirect-answers-a-failed-bearer-with-html`, `ui-redirect-admits-head`), each run
-alone with `--only` under `PYTHONDONTWRITEBYTECODE=1`: `killed=1` each.
+alone with `--only` under `PYTHONDONTWRITEBYTECODE=1`: `killed=1` each. Round 2 added an eighth,
+`ui-signed-in-shortcut-follows-the-sign-in-page`, killed by the deep target's own ≤1-hop message.
 
 ## What these guards still cannot see
 

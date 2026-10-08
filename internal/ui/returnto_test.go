@@ -530,6 +530,12 @@ func TestAnEscapedSlashPairLandsOnThisOrigin(t *testing.T) {
 	}
 }
 
+// deepSignInDepth levels of `/sign-in?next=` around a real page, unescaped — the shape a query
+// parser accepts, since `?`, `/` and `=` are legal inside a query value.
+const deepSignInDepth = 140
+
+var deepSignIn = strings.Repeat(SignInPath+"?"+FieldNext+"=", deepSignInDepth) + "/scope"
+
 // TestNoUnauthenticatedRequestShapeLoops follows every `Location` the way a client does —
 // keeping the method, as `HEAD` is kept across a 303 — and requires a non-3xx within
 // `maxHops`. RED when the redirect admitted `HEAD`: no row answers `HEAD`, so `HEAD /`
@@ -538,11 +544,20 @@ func TestAnEscapedSlashPairLandsOnThisOrigin(t *testing.T) {
 // It covers both identities, because a loop needs only one of them: signed out (no cookie, and
 // a cookie no session resolves) and signed in, where the `/sign-in?next=` shortcut is the one
 // redirect that targets the sign-in page itself.
+//
+// ⚠ AND THE BOUND IS ONLY AS GOOD AS THE DEEPEST TARGET. With depth-2 targets alone, a shortcut
+// that followed `next=/sign-in` one level per hop passed "within 5 hops" while a 140-deep value —
+// ~1,966 bytes, inside `maxNextLen` — cost 140 redirects. `deepSignIn` is that value.
 func TestNoUnauthenticatedRequestShapeLoops(t *testing.T) {
+	if len(deepSignIn) > maxNextLen {
+		t.Fatalf("PRECONDITION: the deep target is %d bytes, over maxNextLen (%d), so safeNext would refuse "+
+			"it and the walk would measure the validator rather than the shortcut", len(deepSignIn), maxNextLen)
+	}
 	const maxHops = 5
 	targets := []string{
 		"/", "/arcs?all=1", "/sign-in", "/join?token=x", "/scope?id=scp_m", "/admin", "/sign-out",
 		"/sign-in?next=%2Fsign-in", "/sign-in?next=%2Fsign-in%3Fnext%3D%252Fsign-in",
+		deepSignIn,
 	}
 	walked, redirected := 0, 0
 	for _, srv := range []struct {
@@ -574,6 +589,14 @@ func TestNoUnauthenticatedRequestShapeLoops(t *testing.T) {
 					}
 					if hops > 0 {
 						redirected++
+					}
+					// 🔴 THE DEEP TARGET IS HELD TO ONE HOP, not merely to `maxHops`: a guard that
+					// stripped two levels per hop would still blow the generic bound at depth 140,
+					// but one that stripped 140 would not, and the claim is that the sign-in page
+					// is never FOLLOWED as a destination.
+					if start == deepSignIn && hops > 1 {
+						t.Errorf("%s %s the %d-deep /sign-in?next= chain (cookie=%v) took %d hop(s), want ≤1: %v",
+							srv.name, method, deepSignInDepth, cookie, hops, codes)
 					}
 					walked++
 				}
