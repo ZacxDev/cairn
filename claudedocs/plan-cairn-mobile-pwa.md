@@ -2,8 +2,17 @@
 
 This is a DESIGN, not a description of anything built. None of it exists yet. Every claim about
 today's behaviour was read off `origin/main` at `a20ebab` and carries a `file:line` so it can be
-re-checked. Claims about **PR #202** (`zach/signin-return-to` at `e6fc51c`, which is OPEN and NOT
-merged) are marked `(#202)` and must be re-read once it lands.
+re-checked. **PR #202** (an unauthenticated browser GET → 303 `/sign-in?next=`) is now MERGED on
+`main` as `0d3a1fa` and deployed to the personal instance; claims about it are marked `(#202)`.
+⚠ #202 moved `internal/ui/server.go` by a few lines (`ServeHTTP` is `:1231` at `0d3a1fa`, `:1223`
+at `a20ebab`); every other `file:line` here is still at `a20ebab`, so re-read before editing.
+
+**Revision 2** records the operator's answers to this plan's open questions as OPERATOR decisions
+(O5–O12): the iPhone checklist is a hard gate for the CLIENT instance only (and is now a concrete
+artifact below); a distinct icon per instance; pinned, synthetic install screenshots; the dismissed
+iOS hint remembered in `localStorage`; standalone Back/Reload (S5) IN scope; chromium pinned and the
+touch checks made blocking in their own slice (S6); #202 merged, so every "if #202 merges" gate is
+gone; and THIS round builds S0 + S1 only.
 
 Every number about the current mobile state names the instrument that produced it and what that
 instrument cannot see. Every claim about browsers cites a source in the research section, says
@@ -47,21 +56,27 @@ Drop the work, or the named half of it, if any of these holds:
 
 ### closing-condition
 
-- **closing-condition:** `check`. Slices S0–S4 are MERGED on cairn `main` (verified by content,
-  not ancestry), AND **`uiaudit/pwa_check.sh`** exits 0 on `main`. It exits **2** ("could not
+- **closing-condition:** `check`. Slices S0–S6 are MERGED on cairn `main` (verified by content,
+  not ancestry), AND **`uiaudit/pwa_check.sh`** exits 0 on `main`, AND the `uiaudit-touch` CI job
+  (S6) is NOT `continue-on-error` and reports the pinned chromium version (`gh api` on the
+  workflow file plus the job log — both mechanical). `pwa_check.sh` exits **2** ("could not
   vouch", never a skip and never 0) when chromium or a built `cairn-ui` is missing, or when
   either of its own controls misbehaves.
 
   It boots `cairn-ui` twice over the uiaudit synthetic world: once with
-  `-app-name 'cairn (alpha)'`, once with `-app-name 'cairn (beta)'` and a different
-  `-app-theme-color`. It then asserts these relationships, each through chromium:
+  `-app-name 'cairn (alpha)' -app-icon-variant <variant A>`, once with
+  `-app-name 'cairn (beta)' -app-icon-variant <variant B>` and a different `-app-theme-color`. It
+  then asserts these relationships, each through chromium:
 
   - **(a) installability:** `Page.getInstallabilityErrors` returns `[]` on both boots. A THIRD
     boot with `-app-name` unset returns exactly `[no-manifest]`. That boot is the negative
     control, and it pins that installability is opt-in per deployment.
   - **(b) per-instance identity:** `Page.getAppManifest` parses with 0 errors on both boots. The
     two `name`s equal their flags, the two `theme_color`s differ, and `id`, `start_url` and
-    `scope` are all `/`.
+    `scope` are all `/`. The two manifests' icon URLs DIFFER and each fetched icon's bytes equal
+    the committed file for its variant (O6). The manifest lists ≥ 1 `narrow` and ≥ 1 `wide`
+    screenshot, each fetchable, each a PNG whose IHDR size matches its declared `sizes`, and each
+    byte-equal to the committed, derivation-checked file (O7).
   - **(c) never stores private data:** the instrument is CDP `CacheStorage.requestCacheNames` +
     `requestEntries`. After a signed-in walk of every GET row at the mobile viewport, CacheStorage
     holds EXACTLY the shell set the binary declares. The assertion fails if the set GROWS or
@@ -74,6 +89,11 @@ Drop the work, or the named half of it, if any of these holds:
     violations, 0 visible text inputs with computed `font-size` < 16 px, 0 horizontal overflow.
     The first two are NEW measurements (S0).
   - **(f) no-store:** every HTML response from a non-public row carries `Cache-Control: no-store`.
+  - **(g) client-side storage is exactly what O8 allows:** after the signed-in walk,
+    `localStorage` for the origin is EMPTY (Chromium has no `navigator.standalone`, so the iOS
+    hint never renders); and on a page where the test defines `navigator.standalone = false`,
+    dismissing the hint leaves EXACTLY one key, `cairn.installHintDismissed`, with value `"1"`.
+    Set equality: a second key, or a different value, is red.
 
   `--self-test` sabotages each clause on a scratch copy of the tree. The shape follows the
   `tests/control_mutants.py` pattern, and every copy has its `.git` removed. The sabotages:
@@ -84,8 +104,9 @@ Drop the work, or the named half of it, if any of these holds:
   | (b) | hardcode the name |
   | (c) | `cache.put` navigations |
   | (d) | an offline page rendered through `shell` with a viewer |
-  | (e) | shrink `.signout` to 12 px and revert the input font rule |
+  | (e) | two sabotages, one per new measurement: shrink the scope page's `.view-tab`s to 12×12 px with no gap (the adjacent-12-px shape the S0 control measured RED — a LONE small target passes 2.5.8's spacing exception, so it would not be a sabotage), and revert the 16 px input rule |
   | (f) | restore the empty `Cache-Control` |
+  | (g) | `pwa.js` writes a second key (e.g. a timestamp) beside the dismissal flag |
 
   Each sabotage must be reported caught by its OWN clause's message, and the run prints
   `sabotaged=N caught=N`.
@@ -93,15 +114,53 @@ Drop the work, or the named half of it, if any of these holds:
   ⚠ **This is a CHECK THAT EXITS, NOT "the uiaudit CI row is green".** The `uiaudit` job is
   `continue-on-error: true` (`.github/workflows/ci.yml:1660`), so a red row does not block a merge.
   The closing condition is the script's exit status on `main`, run by CI as a step in that job,
-  or by hand. Promoting the job to blocking is open question Q6.
+  or by hand. The TOUCH checks become blocking in S6 (O11), as their own job, after chromium is
+  pinned; `pwa_check.sh` itself stays in the non-blocking job until somebody decides otherwise.
 
-Post-close rollout (NOT part of the closing condition):
-- each instance is deployed with its `-app-name`;
-- the deployed `/sw.js` digest matches the binary's startup line (decision 9);
-- an operator installs both instances on one Android phone and one iPhone, and confirms two
-  distinguishable icons and a completed GitHub sign-in inside each installed iOS app. That last
-  step is the OAuth real-device gate (R6), and it is an operator judgement over the installed
-  apps.
+### Rollout, and what THIS round builds
+
+**This round (O10):** merge this plan (PR #203), then build **S0** (uiaudit touch measurements,
+report-only) and **S1** (the mobile-first CSS, which flips S0's refusals on). Nothing installable
+ships this round. **S2–S6 come in later rounds**, in slice order; S6's two small PRs may land any
+time after S1.
+
+Per instance, once S2–S5 are built (NOT part of the closing condition):
+
+- **The personal instance may ship as soon as it is built (O5).** Deploy with its `-app-name` and
+  `-app-icon-variant`, and confirm the deployed `/sw.js` digest matches the binary's startup line
+  (decision 9).
+- **The client instance is told it can install ONLY after the operator has run the iPhone
+  checklist below and recorded a PASS (O5).** Deploying the client instance armed is fine before
+  that; *announcing* installation is what waits. The gate's closing evidence is the filled-in
+  record, judged by the operator.
+
+### The iPhone install checklist (Q1 → O5) — the artifact
+
+Run on a real iPhone on the current iOS (26 at the time of writing), against the CLIENT instance
+deployed with S2–S5 armed, signed OUT in Safari first. Each step names what PASS looks like; any
+step that is not PASS stops the announcement. Keep the filled record beside the deploy notes (not
+in this public repo if it names the deployment).
+
+| # | step | PASS looks like | covers |
+|---|---|---|---|
+| 1 | Open the instance's root URL in Safari. | 303 to the sign-in page; inputs do not zoom the page when tapped. | #202, S1 (16 px inputs) |
+| 2 | Root page shows the install hint; tap "dismiss"; reload. | Hint shown once, gone after reload (O8's `localStorage` key). | decision 11, O8 |
+| 3 | Share → Add to Home Screen. | The proposed name is the instance's `short_name`/`name`; the icon is this instance's VARIANT, visibly different from the personal instance's if both are installed. | O2, O6 |
+| 4 | Launch from the Home Screen. | Standalone: no Safari address bar or toolbar; the header is fully below the status bar; no content under a notch/home indicator. | display, decision 7 (no `viewport-fit=cover`) |
+| 5 | Tap "Sign in with GitHub". | GitHub opens in an in-app sheet (not the Safari app); after signing in, the sheet CLOSES and the app window shows a signed-in page ("signed in as …"). | **R6, the OAuth hand-back** |
+| 6 | Force-quit the app; relaunch. | Still signed in. | the app's own cookie jar |
+| 7 | Navigate root → scope → entry, then use the in-app Back and Reload controls. | Back returns to the scope page; Reload re-fetches; both visible ONLY in the installed app, not in Safari. | S5 (O9) |
+| 8 | From the entry page, use the edge-swipe back gesture. | Returns to the scope page; note whether it re-fetched (a visible reload). | Q7 (`no-store` Back cost) |
+| 9 | Ring the bell on a session page you own (personal instance only, where presence runs). | The button is easy to hit (≥ 44 px); the page returns to itself. | S1, B3 |
+| 10 | Open an invitation link (`/join?token=…`, a TEST invitation minted for this run) from Messages. | Record WHERE it opens. Expected: Safari, not the installed app (iOS does not route links into Home Screen apps — R8). Accept it there; the GitHub flow completes and lands on the scope. Then open the installed app: it needs its own sign-in (no cookie sharing with Safari, R6). | `/join` over the same flight |
+| 11 | In the installed app, Sign out; then edge-swipe back. | The sign-in page; going back does NOT show the previous private page's content. | decision 8, decision 13, T5 |
+| 12 | Turn on Airplane mode; navigate. | The offline page (no private text on it); turning the network back on and navigating recovers. | O1, decision 7 |
+
+Record template (copy outside the repo): device model · iOS version · instance (personal/client) ·
+`sw=` digest from the startup line · result per step (PASS / FAIL + one line) · operator initials.
+
+**If step 5 or 10 fails:** the credential form still works (R6), so the instance stays usable; the
+announcement waits and a `window.open` fallback becomes a separate, evidenced change.
 
 ## STEP 1 — What's current: the research pass (October 2026)
 
@@ -314,7 +373,8 @@ callback answers its existing `oauthNotStarted` refusal (`oauth.go:631-640`). Th
 no session is minted in the wrong jar. The credential form, which always renders
 (`render.go:1686`), stays a working door. **What breaks is convenience, not safety.**
 
-That is why the real-device check is a rollout gate (Q1) and not a design change.
+That is why the real-device check is a rollout gate (operator decision O5; the checklist is in
+"Rollout" above) and not a design change.
 `/join?token=…` (invitation acceptance) rides the same flight (`render.go:2388`) and needs the
 same check.
 
@@ -490,14 +550,15 @@ JavaScript at exactly the paths it names. Decision 6 adds a request-derived refu
     the filter script.
 - The hand ledger is `TestTheRouteLedgerMatchesTheDispatchTable` (`routes_test.go:55-100`). The
   routes test also carries the `bareGETAnswer` map (`:415`) and `contentAuthority` (`:702`).
-- **The unauthenticated answer on `main`:** `GET /` with `Accept: text/html` gets a 303 to
+- **The unauthenticated answer at `a20ebab`:** `GET /` with `Accept: text/html` gets a 303 to
   `/sign-in`. Every other unauthenticated request gets a uniform 401 `unauthorized`
   (`server.go:1246-1270`).
-  - (#202) widens that to every HTML GET/HEAD: a 303 to `/sign-in?next=<uri>`.
+  - (#202, MERGED as `0d3a1fa`) widens that to every HTML GET/HEAD: a 303 to
+    `/sign-in?next=<uri>`.
   - It keeps a 401 for `Accept: */*`, so curl and a worker's own fetches are unchanged.
-  - **The manifest, worker, icons and offline page MUST be public rows on either tree.** Chromium
+  - **The manifest, worker, icons, screenshots and offline page MUST be public rows.** Chromium
     fetches the manifest WITHOUT credentials unless the link says
-    `crossorigin="use-credentials"` [MDN manifest] [S], and none of the four may consult an
+    `crossorigin="use-credentials"` [MDN manifest] [S], and none of them may consult an
     authority.
 - **`/favicon.ico` is not a row.** It answers 401, and uiaudit carries a carve-out for it
   (`uiaudit/browser.go:222-242`). A `<link rel="icon">` in `pwaHead()` stops the request at its
@@ -532,7 +593,9 @@ JavaScript at exactly the paths it names. Decision 6 adds a request-derived refu
 | public-page navigation ledger | `navaffordance_test.go:207` | a new public PAGE (the offline page) |
 | `AllowedScriptSources` | `script.go:66` | a new `<script>` (`pwa.js`) |
 | `onlyGo` | `flake.nix:351-443` | any new `//go:embed` |
-| `tests/control_mutants.py` rows; pinned by `tests/test_control_mutant_count_is_pinned.py` into `ci.yml:848, 865, 930` and `internal/control/README.md:261, 265, 275, 417` | `PKGS` includes `./internal/ui/` (`control_mutants.py:115`) | any Go-side guard. Count **279** on `main`; **284** if #202 merges first (its PR body) |
+| nix regenerate-and-diff checks | `flake.nix` beside `checks.ui-stylesheet-is-current` (`:1170`) | a committed GENERATED binary: icons per variant (S2), install screenshots (S4) |
+| the uiaudit job's `continue-on-error` and its chromium install step | `ci.yml:1660`, `:1745-1751` (apt/snap, unpinned) | S6 only: pin chromium, then a SEPARATE blocking job (the promotion path `ci.yml:1655-1659` prescribes) |
+| `tests/control_mutants.py` rows; pinned by `tests/test_control_mutant_count_is_pinned.py` into `ci.yml:848, 865, 930` and `internal/control/README.md:261, 265, 275, 417` | `PKGS` includes `./internal/ui/` (`control_mutants.py:115`) | any Go-side guard. Count **279** at `a20ebab`; **287** on `main` at `0d3a1fa` (read off `ci.yml:865`'s step name there) |
 | uiaudit test floors | `ci.yml:1817` (29 top-level), `:1821` (64 total) | a new uiaudit test |
 | `internal/ui/README.md` phases; `uiaudit/README.md` | — | every slice |
 | `depspolicy` allowlist | `internal/depspolicy` | **nothing in this plan**: no new Go module, asserted |
@@ -685,11 +748,24 @@ absent today.
 | O1 | **Offline: installable, NETWORK-ONLY.** "Manifest, icons, standalone window, a minimal service worker that caches only the static shell (stylesheet/icons) plus an offline fallback page. It must NEVER store private/authenticated pages on the device." | No offline reading. Chromium shows its own offline page when there is none, so the fallback page is polish plus a guaranteed state on WebKit (R1). |
 | O2 | **Instances: BOTH installable, per-instance name.** "The manifest's name/short_name/theme come from instance config, so the personal and client installs are distinguishable." | A deploy-time config line per instance (decision 1). |
 | O3 | **Extras in scope:** app shortcuts (Arcs, Search, …), an in-page "Install" affordance and a "new version, reload" banner. Web Push and the share target are OUT (R9). | One more script on every page (decision 5). Shortcuts are invisible on iOS (R2). |
-| O4 | **Mobile priorities: all of** reading entries/scopes, arcs + sessions + the bell, search with the tag filter, and sharing/admin. | The admin forms are unmeasured today (see "Could not measure"), so S1 widens the harness world before claiming them. |
+| O4 | **Mobile priorities: all of** reading entries/scopes, arcs + sessions + the bell, search with the tag filter, and sharing/admin. | The admin forms are unmeasured today (see "Could not measure"), so S0 widens the harness world before S1 claims them. |
+
+Revision 2 — the operator's answers to this plan's open questions, quoted as relayed:
+
+| # | the operator's choice | cost accepted / where it lands |
+|---|---|---|
+| O5 | **Q1: YES.** "The client instance is told it can install only after the operator runs the iPhone checklist (install → GitHub sign-in → land signed in → `/join`). The personal instance may ship as soon as it's built." | The client announcement waits on a human with a device. The checklist is the artifact under "Rollout". |
+| O6 | **Q2: YES, a distinct icon per instance**, via the plan's own mechanism: "a flag (no default) that selects a committed, pre-generated variant, with no per-deployment binary input." | A closed set of committed icon files per variant; folded into S2 (decision 3, decision 1's `-app-icon-variant`). |
+| O7 | **Q3: YES, install screenshots**, "generated ONLY from the uiaudit synthetic world in a nix derivation, never hand-taken", pinned regenerate-and-diff like `app.css`, synthetic data only. | A chromium-in-the-sandbox derivation and committed PNGs; folded into S4 (decision 16). |
+| O8 | **Q4: YES, remember the dismissed iOS hint in `localStorage`.** | The plan's ONE client-side write; decision 11 and T9 say exactly what and when it clears. |
+| O9 | **S5 (standalone Back/Reload): IN v1 scope**, "verified on device per Q5's recommendation." | S5 is required by the closing condition's slice list; its behaviour is verified by checklist step 7, because no harness here can emulate standalone ([M]). |
+| O10 | **Scope this round:** "merge the plan, then build S0 + S1"; S2–S5 in later rounds. | Nothing installable ships this round. |
+| O11 | **Q6:** "pin CI's chromium first, then flip the uiaudit job to blocking for the touch checks in a SEPARATE small PR." | Slice S6 (two PRs), with its own closing check. |
+| O12 | **Q8 is moot:** #202 is MERGED on `main` (`0d3a1fa`) and deployed to the personal instance. | Every #202 gate in this plan is satisfied. |
 
 ### Chosen by the AGENT writing this plan (open to review)
 
-1. **Instance identity comes from three new `cairn-ui` flags, and the first one ARMS the feature.**
+1. **Instance identity comes from four new `cairn-ui` flags, and the first one ARMS the feature.**
    - `-app-name` (env `CAIRN_UI_APP_NAME`): **NO default.** Unset, there is no manifest link, no
      registration script and no worker. `/manifest.webmanifest` answers 404, and `/sw.js` answers
      the unregistering worker (decision 9).
@@ -698,8 +774,13 @@ absent today.
    - `-app-theme-color` (env `CAIRN_UI_APP_THEME_COLOR`): optional, `#rrggbb` only. If unset, it
      falls back to the stylesheet's surface colour, which is a property of the theme, not of the
      instance.
+   - `-app-icon-variant` (env `CAIRN_UI_APP_ICON_VARIANT`) — **O6**: **NO default**, and
+     **REQUIRED whenever `-app-name` is set** (startup refuses one without the other, so no
+     deployment silently gets "the" icon). Its value must be a member of the CLOSED set
+     `ui.IconVariants()` (decision 3); anything else is refused at startup, naming the set. It
+     selects among committed files; no deployment supplies image bytes.
 
-   All three refuse a blank or whitespace value at startup, the `controlJournalDefault` way
+   All four refuse a blank or whitespace value at startup, the `controlJournalDefault` way
    (`main.go:236-245`). The env spellings are new names, not renames, so `internal/envalias` does
    not move. The startup line names the armed app name, the way `signInMode` is named
    (`main.go:765-770`).
@@ -718,8 +799,9 @@ absent today.
        `background_color` (decision 1);
      - `icons` (decision 3);
      - `shortcuts` (decision 10).
-   - **No `screenshots` in v1** (Q3): a committed screenshot is a binary that `leakscan` skips by
-     name (`uiaudit/main.go:264-268`), and the richer dialog is Chromium-only.
+   - **`screenshots` (O7, added in S4):** the committed, derivation-pinned set of decision 16 —
+     `form_factor: "narrow"` and `"wide"` entries pointing at content-hashed public rows. Absent
+     from the manifest until S4 lands.
    - **No `display_override`.** Nothing beyond `standalone` is wanted.
    - Not hashed: `id` is explicit, so the URL could move, but a stable URL is simpler and the
      manifest is per-instance bytes.
@@ -733,12 +815,23 @@ absent today.
      `ui-stylesheet-is-current` does.
    - **Serving:** content-hashed `immutable` public rows, e.g. `/static/icon-192.<12 hex>.png`,
      through `hashAsset`.
-   - **The same icon for both instances in v1.** Instances are told apart by name and
-     `theme_color` (Q2).
+   - **A distinct icon per instance (O6), as a CLOSED set of committed VARIANTS.** The SVG is one
+     template with a small set of parameters (the background tint and a corner mark); each variant
+     is a named parameter tuple in ONE committed file, `internal/ui/icons/variants.json`, which
+     `ui.IconVariants()` embeds and the nix derivation reads with `builtins.fromJSON` — one list,
+     two readers, no copy (it joins `onlyGo` with the PNGs). Variant names are
+     neutral (`amber`, `teal`, …), never an instance's name, because this repo is public and must
+     not learn which deployment is which. Files: every variant × {192 any, 512 any, 512 maskable,
+     180 apple-touch}.
+   - **Every variant's files are routes** (static, finite, content-hashed), so the ledger does not
+     depend on configuration; `pwaHead()` and the manifest link only the SELECTED variant's.
+   - **Guards:** the set of embedded icon files EQUALS `IconVariants() × sizes` (fails on GROW or
+     SHRINK); `checks.ui-icons-are-current` regenerates EVERY variant and diffs; two variants'
+     512 px files must differ (a relationship, so a template that ignores its parameters is red).
 
    *Alternative considered:* rasterise in Go at init with stdlib `image/png` and manual
    supersampling. That means no binary in the repo, but a hand rasteriser is more code than the
-   problem deserves; `golang.org/x/image/vector` would be a new module. Recorded in Q2.
+   problem deserves; `golang.org/x/image/vector` would be a new module.
 4. **`pwaHead()` is the ONE place the PWA head elements are spelled**, and all three frames call
    it. It emits:
    - `<link rel="manifest">`;
@@ -758,10 +851,13 @@ absent today.
        active;
      - on Reload, `postMessage`s `SKIP_WAITING` and reloads once on `controllerchange`.
 
-     It writes only `hidden` and one `textContent`, like `filter.js`. Its spelling guard
-     (`TestThePWAScriptTouchesOnlyWhatItSays`) refuses `innerHTML`, `eval`, `fetch`,
-     `document.cookie`, `localStorage` and `caches.`; the last is the worker's business, never
-     the page's.
+     It writes only `hidden` and one `textContent`, like `filter.js`, plus the ONE storage key of
+     decision 11 (O8). Its spelling guard (`TestThePWAScriptTouchesOnlyWhatItSays`) refuses
+     `innerHTML`, `eval`, `fetch`, `document.cookie`, `sessionStorage`, `indexedDB` and `caches.`
+     (the last is the worker's business, never the page's); it allows `localStorage` ONLY as
+     `localStorage.getItem(HINT_KEY)` / `localStorage.setItem(HINT_KEY, "1")` with `HINT_KEY`
+     spelled once as `"cairn.installHintDismissed"`. It is a SPELLING guard, labelled as one;
+     closing-condition clause (g) is the STATE guard.
    - **`sw.js`** is NOT in `AllowedScriptSources`, because it is never a `<script>` element. It
      gets its own exact row at `/sw.js` (`classPublic`, `text/javascript`, `Cache-Control:
      no-cache`, `nosniff`) and its own ledger: `ServiceWorkerShell()` is the declared shell set.
@@ -823,11 +919,11 @@ absent today.
     - No shortcut icons in v1; the app icon stands in.
     - `#q` scrolls to the search field. Focusing it would need script, and plain HTML does not
       autofocus on a fragment.
-    - 🔴 **This decision HARD-DEPENDS on #202.** On `main`, a shortcut opened with an expired
-      session lands on `/arcs` → a plaintext `401 unauthorized` inside a standalone window with
-      no address bar and no back button: a dead end. With #202 it is a 303 to
-      `/sign-in?next=/arcs`. `start_url` `/` is safe on either tree, because the root already
-      redirects (`server.go:1255-1257`).
+    - 🔴 **This decision depended on #202, and that dependency is now SATISFIED (O12: merged as
+      `0d3a1fa`).** Without it, a shortcut opened with an expired session would land on `/arcs` →
+      a plaintext `401 unauthorized` inside a standalone window with no address bar and no back
+      button. With it, the answer is a 303 to `/sign-in?next=/arcs`, and sign-in lands back on
+      `/arcs`. S4's test plan pins that per shortcut, so a regression of #202 turns S4 red.
 11. **The Install affordance.**
     - **Chromium:** a hidden `<button class="install">` in the header, revealed only by
       `beforeinstallprompt`.
@@ -838,7 +934,27 @@ absent today.
     - **Everything is hidden** when `matchMedia("(display-mode: standalone)")` matches, or when
       script is off. The hidden-until-revealed rule is `filter.js`'s
       (`internal/ui/README.md` Phase H).
-    - Dismissal is not persisted. That avoids storing even UI state; Q4 covers persisting it.
+    - **The hint has a dismiss button, and the dismissal is REMEMBERED in `localStorage` (O8).**
+      This is the plan's ONE client-side write, and it is exactly:
+      - key `cairn.installHintDismissed`, value `"1"`, written only on a tap of dismiss, read only
+        to decide whether to reveal the hint. No user data, no identity, no timestamp, no URL; it
+        is a property of the DEVICE'S BROWSER, not of a session or a principal.
+      - Every access is wrapped in `try/catch`: a private window or blocked storage THROWS, and
+        then the hint simply shows (fail-visible, never fail-broken).
+      - **Where it lives:** in the browser tab's storage for this origin (the hint only renders
+        when `navigator.standalone === false`, i.e. in Safari, never in the installed app, whose
+        storage is separate anyway — R6).
+      - **When it is cleared:** when the user clears website data for the origin; when the browser
+        evicts script-writable storage (Safari's tracking prevention can cap it after days of no
+        interaction [S] — the hint then reappears, which is harmless); and NEVER by sign-out
+        (decision 13).
+      - **Sign-out does NOT clear it, deliberately.** It carries nothing about the signed-in
+        user, so there is nothing for sign-out to protect, and clearing it would re-show a
+        dismissed hint to the same person on the same device after every sign-out. Clearing it
+        would also need `Clear-Site-Data: "storage"` (which unregisters the worker, decision 13) or
+        a sign-out script hook (a second write path) — both cost more than the key is worth.
+        Turning the feature off (`-app-name` unset) leaves the key orphaned and unread; harmless,
+        and stated.
 12. **The update banner** is a hidden `role="status"` element in `shell()` with one Reload
     button. Its meaning, honestly stated: **"the static shell changed since this window loaded"**,
     not "any deploy happened". The HTML is network-only, so a stale page can only be one that has
@@ -847,7 +963,9 @@ absent today.
     bfcache, belt-and-braces over decision 8. `"cookies"` would sign the user out of a sibling
     instance under a shared registrable domain (R4); the session cookie is already cleared
     explicitly (`session.go:338`). `"storage"` would unregister the worker for no benefit, because
-    CacheStorage holds only public bytes.
+    CacheStorage holds only public bytes — and it would also wipe decision 11's dismissal flag,
+    which sign-out deliberately keeps (O8). ⚠ So `localStorage` is NOT cleared by sign-out; that is
+    the decision, not an oversight.
 14. **The mobile-first CSS is pointer-driven, not width-driven.** Every rule below sits under
     `@media (pointer: coarse)`:
     - `min-height: 44px` and a matching hit area (padding or a `::after` box) on the nav links,
@@ -869,6 +987,46 @@ absent today.
       committed beside `targets.go`. It is a ratchet, so the count can only fall.
     - **New capture after S3:** a CacheStorage enumeration after the signed-in walk (clause c),
       and `Page.getInstallabilityErrors` on `/` (clause a).
+16. **Install screenshots (O7) are BUILD OUTPUT of the synthetic world, pinned like `app.css`, and
+    land in S4.**
+    - **Generator:** a `uiScreenshots` nix derivation that builds `cairn-ui`, builds the uiaudit
+      synthetic store with `tests/reader_fixtures.py`'s own builder (the store `uiaudit/boot.go`
+      uses), boots both in the sandbox with no network, signs in with the fixture credential, and
+      captures with nixpkgs' chromium (`headless=new`, device scale 1, animations off, fonts from a
+      pinned fontconfig). Captures: `narrow` 390×844 of `/` and `/arcs`; `wide` 1440×900 of `/`.
+      Rendered with a FIXED synthetic `-app-name` (e.g. `cairn`), so no instance name is ever in a
+      committed pixel.
+    - **Pinned:** the PNGs are committed under `internal/ui/screenshots/`, embedded, served at
+      content-hashed public rows, and `checks.ui-screenshots-are-current` regenerates and diffs
+      them byte-for-byte, negative control first.
+    - **Why S4 and not S2:** a screenshot depicts the UI, so it belongs after S1's CSS and with the
+      manifest change that already moves in S4 (shortcuts); putting it in S2 would make every S3/S4
+      visual tweak a screenshot regeneration in a slice about something else.
+    - 🔴 **How `leakscan`'s binary blind spot is covered.** `leakscan` skips a PNG by name, so it
+      cannot read these files. What covers them is PROVENANCE, enforced: the committed bytes must
+      equal what the derivation renders, and the derivation's only data input is the synthetic
+      fixture world (`tests/reader_fixtures.py`, which `leakscan` DOES scan, plus the committed
+      tree). A hand-taken or hand-edited screenshot fails `ui-screenshots-are-current`; a
+      screenshot of real data cannot be produced by the derivation at all, because no real data
+      is an input. The derivation's `src` is a filtered set (the `onlyGo` pattern) so a stray
+      local file cannot become an input. ⚠ This is a guarantee about CONTENT ORIGIN, not a scan;
+      it holds only while the fixture world itself stays synthetic, which `leakscan` checks.
+    - ⚠ **Risk, unmeasured:** byte-identical PNGs across two hosts from the same nix chromium. One
+      machine was measured stable run to run (`uiaudit/README.md`: `0 changed` of 6); two hosts were
+      not. If S4 measures a cross-host difference, the check compares DECODED pixels at zero
+      tolerance instead of bytes — still exact, just not encoder-sensitive — and says so.
+17. **S6 pins CI's chromium and makes the TOUCH checks blocking, in that order, as two PRs (O11).**
+    - **S6a — pin.** The uiaudit job stops installing chromium from apt/snap (`ci.yml:1745-1751`)
+      and takes it from the flake's pinned nixpkgs (the same chromium the screenshot derivation
+      uses), printing its version. Its closing check: the job log's `chromium --version` equals the
+      version the flake lock resolves to, on two consecutive runs.
+    - **S6b — block.** A NEW job, `uiaudit-touch`, with NO `continue-on-error`, running only the
+      touch refusals (axe `target-size`, input font, overflow at the touch rungs) on the pinned
+      chromium. This is the promotion path the workflow itself prescribes — split the assertion
+      into its own blocking job, do not delete `continue-on-error` from the advisory one
+      (`ci.yml:1655-1659`). Its closing check: on a scratch branch whose scope-page `.view-tab`s are
+      shrunk to 12×12 px with no gap, `uiaudit-touch` FAILS with the target-size refusal's own message
+      (negative control), and on `main` it passes (positive control).
 
 ## Threat model
 
@@ -879,10 +1037,12 @@ absent today.
 | **T1c. …in the offline page itself** | It is a PUBLIC page built like `SignInPage`: no viewer, no CSRF token, no store read. It joins the `TestNoPublicPageOffersAuthenticatedNavigation` ledger, and clause (d) asserts no fixture string appears in it. |
 | **T2. Worker scope hijack** — another same-origin script registered as a worker, or `/sw.js` widened | The worker's scope is `/` by path, with no `Service-Worker-Allowed` anywhere (asserted: no response carries it). Decision 6 refuses `Service-Worker: script` on every other row. The route map is exact-match, so no user-controlled path serves JavaScript (an entry's raw view is `text/html`, `nosniff`). Same-SITE sibling hosts cannot register on this ORIGIN, because workers are origin-scoped. ⚠ A CDN that injects script (`uiaudit/README.md` blind set) can register `/sw.js`, but only OUR worker, and it can already do worse. |
 | **T3. An update that strands users on an old worker** | No silent `skipWaiting` (decision 7). Even a stale worker is harmless by construction: it passes everything through except the immutable hashed assets it precached. A new page's NEW hashed stylesheet misses its cache and goes to the network. 🔴 The real stranding vector is the EDGE caching `/sw.js` (measured to lengthen max-age, `stylesheet.go:40-60`), which defeats byte-diff detection. Controls: `no-cache` on the row, an edge bypass rule as a deploy requirement, and the deployed-digest probe (decision 9). Rollback leaves the old worker in place (R-1); turning the feature off removes it (decision 9). |
-| **T4. The OAuth redirect leaves standalone** | R6: expected to stay in the app on iOS via the in-app sheet and hand back to the window. The flow is top-level only, the verifier is server-side and the flight cookie is `Lax`. If it does not hand back, the callback fails CLOSED with `oauthNotStarted` (`oauth.go:631-640`) and no session is minted in a foreign jar. The credential form remains. The gate is the real-device check (Q1), not code. |
+| **T4. The OAuth redirect leaves standalone** | R6: expected to stay in the app on iOS via the in-app sheet and hand back to the window. The flow is top-level only, the verifier is server-side and the flight cookie is `Lax`. If it does not hand back, the callback fails CLOSED with `oauthNotStarted` (`oauth.go:631-640`) and no session is minted in a foreign jar. The credential form remains. The gate is the real-device check (O5: checklist steps 5 and 10, required before the CLIENT instance is told it can install), not code. |
 | **T5. Sign-out with an installed app** | `POST /sign-out` revokes server-side first (`session.go:329-341`), so even a surviving page cannot act: its CSRF token is derived from a dead session. Add `Clear-Site-Data: "cache"` (decision 13). The worker survives sign-out by design (it holds nothing private), and so does the installed icon. ⚠ Not `"cookies"`: it reaches a sibling instance under the registrable domain (R4). |
 | **T6. Manifest as an information leak** | The manifest is public and carries only the instance's configured name, colour and constant paths. A configured name is visible to anyone who can reach the sign-in page. That is accepted, and documented in the flag's help: do not put anything in `-app-name` you would not put on the sign-in page. |
-| **T7. Shortcut / start_url dead ends** | Decision 10's #202 dependency. Plain-text 401/404/500 answers have no navigation in a standalone window; see recommendation B4. |
+| **T7. Shortcut / start_url dead ends** | Closed for the expired-session case by #202 (MERGED, `0d3a1fa`): an unauthenticated HTML GET is a 303 to `/sign-in?next=…`; S4's test pins it per shortcut. Plain-text 404/500 answers still have no navigation in a standalone window — S5's in-app Back control (O9) and recommendation B4 cover that. |
+| **T9. Client-side storage** | The plan's ONE client-side write is decision 11's `cairn.installHintDismissed = "1"` (O8): no user data, no identity, written only on a tap, `try/catch`-wrapped. Nothing else is written to `localStorage`, `sessionStorage`, IndexedDB or cookies by script (spelling guard over `pwa.js`; closing-condition clause (g) as the STATE guard: exactly that key or none). It is NOT cleared at sign-out, deliberately (decision 11): it says nothing about who was signed in. An XSS that can read it learns only "this browser dismissed a hint". |
+| **T10. A committed binary carrying real data** (icons, screenshots — `leakscan` skips binaries by name) | Provenance, enforced by regenerate-and-diff: icons are rendered from the committed SVG template and `variants.json` (decision 3); screenshots only from the synthetic fixture world with a fixed synthetic app name (decision 16). A hand-made or real-data image cannot equal the derivation's output, so `ui-icons-are-current` / `ui-screenshots-are-current` go red. Residual: a non-synthetic string added to the FIXTURE world would be rendered into a screenshot — but the fixture is text, and `leakscan` scans it. |
 | **T8. Clickjacking of the installed surface** | Unchanged. The no-CSP decision (`server.go:1646-1733`) is not reopened, and installation adds no framing path. |
 
 ## Slices
@@ -891,15 +1051,17 @@ Each slice is mergeable alone, and each leaves `main` releasable.
 
 | slice | what | ledgers it moves | mergeable alone because |
 |---|---|---|---|
-| **S0** | **Measure first.** uiaudit gains decision 15's measurements: axe `target-size` enabled at the touch rungs, input `font-size`, and the < 44 px element list with a per-page ceiling ledger. They are REPORTED, not refused, because input-font is RED on `main` (3 of 3 inputs at 14 px). It also widens the uiaudit world to a CONTROL-JOURNAL boot, so the share per-scope page and the invite mint form are captured (O4). | `uiaudit/browser.go`, `main.go` (report lines), new `uiaudit/touch_test.go` (+ its controls), the `ci.yml:1817/1821` floors, `uiaudit/README.md`, `uiaudit/boot.go` (journal world). NOT `layout-smells.js` (a push contract). No product change. | Pure measurement. The uiaudit job is non-blocking. |
-| **S1** | **Mobile-first CSS** (decision 14), with the S0 refusals flipped ON: input < 16 px and `target-size` refuse at touch rungs, and the < 44 px ceiling ledger set to the post-fix counts. | `internal/ui/tailwind.css` → regenerated `app.css`, so the hashed stylesheet path moves (`routes_test.go` recomputes it); `render.go` only if a row needs a wrapping element; `internal/ui/README.md` (new phase); uiaudit ceilings. No route, no script. | CSS-only on the product side. |
-| **S2** | **Manifest, icons, instance flags, `pwaHead()`** (decisions 1–4). Installable on Chromium from here (no worker needed, [M]). | Routes: `GET /manifest.webmanifest` (public) and one hashed public row per icon, in the hand ledger and `bareGETAnswer`, with near-miss probes in `TestEveryServedPathComesFromTheLedger`. `onlyGo` gets each PNG plus the SVG if embedded. `flake.nix`: `uiIcons` + `checks.ui-icons-are-current`. `cmd/cairn-ui` flags + tests. `tests/control_mutants.py` rows, listed below. `internal/ui/README.md`; root `README.md` (the new flags). | Inert unless `-app-name` is set (a default-off flag). |
+| **S0** *(THIS round, O10)* | **Measure first.** uiaudit gains decision 15's measurements: axe `target-size` enabled at the touch rungs, input `font-size`, and the < 44 px element list with a per-page ceiling ledger. They are REPORTED, not refused, because input-font is RED on `main` (3 of 3 inputs at 14 px). It also widens the uiaudit world to a CONTROL-JOURNAL boot, so the share per-scope page and the invite mint form are captured (O4). | `uiaudit/browser.go`, `main.go` (report lines), new `uiaudit/touch_test.go` (+ its controls), the `ci.yml:1817/1821` floors, `uiaudit/README.md`, `uiaudit/boot.go` (journal world). NOT `layout-smells.js` (a push contract). No product change. | Pure measurement. The uiaudit job is non-blocking. |
+| **S1** *(THIS round, O10)* | **Mobile-first CSS** (decision 14), with the S0 refusals flipped ON: input < 16 px and `target-size` refuse at touch rungs, and the < 44 px ceiling ledger set to the post-fix counts. | `internal/ui/tailwind.css` → regenerated `app.css`, so the hashed stylesheet path moves (`routes_test.go` recomputes it); `render.go` only if a row needs a wrapping element; `internal/ui/README.md` (new phase); uiaudit ceilings. No route, no script. | CSS-only on the product side. |
+| **S2** | **Manifest, per-instance icon VARIANTS, instance flags, `pwaHead()`** (decisions 1–4; O2, O6). Installable on Chromium from here (no worker needed, [M]). | Routes: `GET /manifest.webmanifest` (public) and one hashed public row per icon FILE (every variant × 4 sizes), in the hand ledger and `bareGETAnswer`, with near-miss probes in `TestEveryServedPathComesFromTheLedger`. `onlyGo` gets every PNG, `icons/variants.json` and the SVG if embedded. `flake.nix`: `uiIcons` (all variants) + `checks.ui-icons-are-current`. `cmd/cairn-ui` flags (`-app-name`, `-app-short-name`, `-app-theme-color`, `-app-icon-variant`) + tests. `tests/control_mutants.py` rows, listed below. `internal/ui/README.md`; root `README.md` (the new flags). | Inert unless `-app-name` is set (a default-off flag). |
 | **S3** | **Worker, offline page, `no-store`, sign-out header, and the `Service-Worker` refusal** (decisions 5-sw, 6, 7, 8, 9, 13). | Routes: `GET /sw.js` (public), `GET /offline` (public page; joins the navaffordance ledger). `onlyGo` gets `internal/ui/sw.js`. `writeHTML`'s default changes and `writeHTMLNoStore` is removed. `session.go` gets the sign-out header. The dispatcher gets the decision-6 rule. Mutant rows. uiaudit: the CacheStorage clause (c), the offline clause (d) and the header clause (f), each with controls. `cmd/cairn-ui` gets the `sw=` digest in the startup line. | With `-app-name` unset the worker unregisters itself, so S3 is safe to deploy unarmed. `no-store` is a header change, rollback-safe. |
-| **S4** | **`pwa.js`: install + update UX, and shortcuts** (decisions 5-pwa, 10, 11, 12) plus `uiaudit/pwa_check.sh` (the closing check). | `AllowedScriptSources` (2nd entry); the hashed `pwa.js` row; `onlyGo` gets `internal/ui/pwa.js`; `TestEveryBrowsePageCarriesOnlyAllowlistedScripts` controls; the spelling guard; manifest `shortcuts`; mutant rows; `ci.yml` (a `pwa_check.sh` step in the uiaudit job); `internal/ui/README.md`. **Hard prerequisite: #202 merged** (decision 10). | Additive. Without it, the app is installable and updates silently on the next navigation, which is safe because HTML is network-only. |
-| **S5** *(recommended, not required by the closing condition)* | **Standalone polish:** a `display-mode: standalone` header (sticky, compact); in-app Back and Reload buttons revealed by `pwa.js` only in standalone (iOS has no back button and no pull-to-refresh, R8); `overscroll-behavior-y: contain` on `body` in standalone. | `tailwind.css`, `pwa.js`, README. ⚠ uiaudit **cannot** emulate standalone ([M]), so these rules are verified on a device; open question Q5. | Cosmetic. |
+| **S4** | **`pwa.js`: install + update UX, the iOS hint with its remembered dismissal (O8), shortcuts, and install SCREENSHOTS (O7)** (decisions 5-pwa, 10, 11, 12, 16) plus `uiaudit/pwa_check.sh` (the closing check). | `AllowedScriptSources` (2nd entry); the hashed `pwa.js` row; `onlyGo` gets `internal/ui/pwa.js` and every screenshot PNG; `TestEveryBrowsePageCarriesOnlyAllowlistedScripts` controls; the spelling guard (with its ONE allowed storage key); manifest `shortcuts` + `screenshots`; one hashed public row per screenshot; `flake.nix`: `uiScreenshots` + `checks.ui-screenshots-are-current`; mutant rows; `ci.yml` (a `pwa_check.sh` step in the uiaudit job); `internal/ui/README.md`. #202 is merged (O12), so nothing gates it. | Additive. Without it, the app is installable and updates silently on the next navigation, which is safe because HTML is network-only. |
+| **S5** *(IN v1 scope, O9)* | **Standalone Back/Reload and polish:** a `display-mode: standalone` header (sticky, compact); in-app Back and Reload buttons revealed by `pwa.js` only in standalone (iOS has no back button and no pull-to-refresh, R8); `overscroll-behavior-y: contain` on `body` in standalone. | `tailwind.css` → `app.css`; `pwa.js` (still inside its spelling guard: `history.back()` and `location.reload()` added to the allowed calls, nothing else); README. ⚠ uiaudit **cannot** emulate standalone ([M]), so behaviour is verified on a device: checklist step 7. | Additive and hidden outside standalone. |
+| **S6a** | **Pin CI's chromium** (decision 17, O11): the uiaudit job takes chromium from the flake's pinned nixpkgs instead of apt/snap. | `ci.yml:1745-1751`; `uiaudit/README.md`'s gating section (the "pin first" precondition becomes met). | CI-only. |
+| **S6b** | **Make the TOUCH checks blocking** in a SEPARATE small PR (O11): a new `uiaudit-touch` job, no `continue-on-error`, touch refusals only. | `ci.yml` (new job; the advisory job's `continue-on-error` is NOT removed, `:1655-1659`); `uiaudit/README.md`; branch protection (an operator setting, named in the PR). Needs S1 (the refusals) and S6a. | CI-only. |
 
 **Mutant rows** (names indicative). The pinned count is re-measured at each merge, starting from
-279, or 284 after #202.
+**287** on `main` at `0d3a1fa` (#202 included). S0, S1, S5 and S6 add no Go-side guard and so no row.
 
 - **S2:**
   - `ui-manifest-row-requires-auth`: class `public` → 0; killed by an unauthenticated manifest
@@ -908,6 +1070,9 @@ Each slice is mergeable alone, and each leaves `main` releasable.
   - `ui-manifest-served-when-unarmed`.
   - `ui-pwa-head-missing-from-sign-in`: killed by the frame-ledger test.
   - `ui-app-name-blank-accepted`.
+  - `ui-icon-variant-optional-when-armed`: `-app-name` without `-app-icon-variant` starts.
+  - `ui-icon-variant-outside-the-set-accepted`.
+  - `ui-manifest-links-every-variant`: the manifest links all variants instead of the selected one.
 - **S3:**
   - `ui-html-no-store-dropped`;
   - `ui-sign-out-clears-cookies-site-wide`: `"cache"` → `"cache", "cookies"`;
@@ -918,6 +1083,9 @@ Each slice is mergeable alone, and each leaves `main` releasable.
 - **S4:**
   - `ui-pwa-script-not-allowlisted`;
   - `ui-pwa-script-uses-innerhtml`.
+  - `ui-pwa-script-writes-a-second-storage-key`: killed by the spelling guard's key allowlist.
+  - `ui-manifest-screenshot-not-the-committed-file`: the row serves bytes other than the embedded
+    screenshot (killed by the byte-equality test).
 
 **`sw.js` behaviour mutants** need a browser, so they are NOT battery rows: `tests/control_mutants.py`
 runs Go tests only. They live in `pwa_check.sh --self-test` instead (clauses c and d).
@@ -956,10 +1124,15 @@ runs Go tests only. They live in `pwa_check.sh --self-test` instead (clauses c a
   - `#12345` refused, `#1a1814` accepted;
   - the env value is read, and blank env is refused even when the flag is given (the
     `journalErr` rule).
-- **Icons:**
-  - the 4 rows answer `image/png`, `immutable`;
+- **Icons (O6):**
+  - every icon row answers `image/png`, `immutable`; the set of rows EQUALS
+    `IconVariants() × {192, 512, 512-maskable, 180}` (fails on GROW or SHRINK);
   - the IHDR width and height match the declared `sizes` (a decoded-PNG check, not a byte check);
-  - `checks.ui-icons-are-current` has its negative control.
+  - two variants' 512 px files DIFFER (a template that ignores its parameters is red);
+  - two boots with different `-app-icon-variant` link different icon URLs from manifest AND
+    `pwaHead()` (relationship); `-app-name` set with the variant unset → startup refusal naming
+    the flag; a variant outside the set → refusal naming the set;
+  - `checks.ui-icons-are-current` regenerates EVERY variant and has its negative control.
 - **Chromium installability** (uiaudit): `getInstallabilityErrors == []` armed and
   `[no-manifest]` unarmed. That pair is already measured as an instrument.
 
@@ -991,40 +1164,60 @@ runs Go tests only. They live in `pwa_check.sh --self-test` instead (clauses c a
 - **Install button:** hidden by default. It is only revealed on a synthetic `beforeinstallprompt`
   dispatched in the test, which is a REACHABILITY control. Headless Chromium will not fire the
   real event without engagement.
-- **Shortcuts:** each `url` is a declared GET row. With #202, each unauthenticated HTML GET of a
-  shortcut url is a 303 to `/sign-in?next=<it>`.
-- **`pwa_check.sh --self-test`:** `sabotaged=6 caught=6`.
+- **Shortcuts:** each `url` is a declared GET row, and (with #202, now on `main`) each
+  unauthenticated HTML GET of a shortcut url is a 303 to `/sign-in?next=<it>` — so a #202
+  regression turns S4 red.
+- **The remembered hint (O8), in the browser:** with `navigator.standalone` defined `false` by the
+  test, the hint is visible; tap dismiss → `localStorage` holds exactly `{cairn.installHintDismissed:
+  "1"}`; reload → hint hidden. Controls: with storage throwing (a stubbed `setItem` that throws),
+  the hint still shows and the page logs no error; after `POST /sign-out` the key is STILL present
+  (pins decision 11's "sign-out does not clear it", so nobody "fixes" it silently).
+- **Screenshots (O7):** `checks.ui-screenshots-are-current` with its negative control (one byte
+  appended must compare unequal); the manifest's `screenshots` entries each resolve to a declared
+  row whose bytes EQUAL the embedded file and whose IHDR matches `sizes`; ≥ 1 `narrow` and ≥ 1
+  `wide`. A grep-free provenance control: rebuild the derivation with ONE fixture scope renamed
+  and confirm the check goes RED — proof the pixels really come from the fixture world.
+- **`pwa_check.sh --self-test`:** `sabotaged=8 caught=8` (clauses a–g, two for e).
 
-## Open questions (each with a recommendation)
+**S5 (O9).**
+- `pwa.js`'s Back/Reload reveal is gated on `matchMedia("(display-mode: standalone)")`; since CDP
+  cannot emulate that ([M]), the browser test stubs `matchMedia` for that one query and asserts the
+  two controls appear, and that WITHOUT the stub they stay hidden (the control).
+- The spelling guard still refuses everything decision 5 lists; `history.back` and
+  `location.reload` are the only additions.
+- **Behaviour on a device is checklist step 7** (O9 / Q5) — named as a device check, not a test.
 
-- **Q1. Must iOS sign-in be proven on a real device before the client instance is told it can
-  install?** **Recommend YES**, as a rollout gate. The deliverable is a short checklist the
-  operator runs on an iPhone on iOS 26: install → GitHub sign-in → land signed in → invitation
-  `/join` flow. If it fails, the documented answer is "use the credential form", and a
-  `window.open` fallback is a separate, evidenced change (R6 says the sources disagree).
-- **Q2. A distinct icon per instance?** **Recommend NO for v1.** On iOS the label is the
-  distinguishing mark, and so is the theme colour on Android. If two identical icons prove
-  confusing, add a `-app-icon-variant` that selects a committed, pre-generated variant: still no
-  per-deployment binary input.
-- **Q3. `screenshots` for Chromium's richer install dialog?** **Recommend NO for v1.** A committed
-  PNG is a binary `leakscan` skips by name. If wanted, generate the screenshots ONLY from the
-  uiaudit synthetic world in a nix derivation, never commit hand-taken ones.
-- **Q4. Persist dismissal of the iOS install hint?** **Recommend NO** (decision 11). It is one
-  line on one page. Persisting it means writing to `localStorage`, which this plan otherwise
-  avoids entirely.
-- **Q5. How to verify standalone-only CSS (S5) when uiaudit cannot emulate it?** **Recommend**
-  keeping S5's rules minimal and verifying them on the device in the Q1 checklist, with the gap
-  named in the README. Rejected: a `?display=standalone` test hook, because a query parameter that
-  changes rendering for everybody is a public surface, not a test seam.
-- **Q6. Promote the uiaudit job to blocking for the touch refusals?** **Recommend NOT yet.**
-  CI's chromium is unpinned (`uiaudit/README.md` gating section). Geometry and computed font size
-  are far more stable across chromium patches than pixels, but "far more" is unmeasured. Pin
-  chromium first, which is the precondition the README already names.
+**S6a.** The job log's `chromium --version` equals the flake-resolved version on two consecutive
+runs; an edit that reintroduces apt/snap is visible in review and in the version line.
+
+**S6b.** Negative control: a scratch branch with the scope page's `.view-tab`s at 12×12 px and no
+gap fails `uiaudit-touch` with the target-size refusal's message; a scratch branch with a 14 px
+input fails with the font refusal's message. Positive control: `main` passes. The job carries no
+`continue-on-error` (read off the workflow file).
+
+## Open questions
+
+### Answered by the operator (revision 2) — recorded as O5–O12, kept here so the trail is readable
+
+| Q | the question | the recommendation | the operator's answer |
+|---|---|---|---|
+| Q1 | Prove iOS sign-in on a real device before the client instance is told it can install? | YES, as a rollout gate | **YES** → O5. Client instance gated on the checklist under "Rollout"; personal instance ships when built. |
+| Q2 | A distinct icon per instance? | NO for v1 (flag mechanism offered if wanted) | **YES, with that mechanism** → O6, decision 1 (`-app-icon-variant`) and decision 3, in S2. |
+| Q3 | Install `screenshots`? | NO for v1 (only ever from the synthetic world if wanted) | **YES, synthetic-only, derivation-pinned** → O7, decision 16, in S4. |
+| Q4 | Persist the dismissed iOS hint? | NO | **YES, in `localStorage`** → O8, decision 11, T9; sign-out deliberately does not clear it. |
+| Q5 | Verify standalone-only CSS how? | minimal rules, verified on device | **As recommended**, with S5 IN scope → O9; checklist step 7. Rejected: a `?display=standalone` test hook, because a query parameter that changes rendering for everybody is a public surface, not a test seam. |
+| Q6 | Make the uiaudit touch refusals blocking? | not until chromium is pinned | **Pin first, then block in a SEPARATE small PR** → O11, decision 17, S6a/S6b. |
+| Q8 | Client installable before #202 merges? | no shortcuts until it merges | **Moot** → O12: #202 merged (`0d3a1fa`). |
+
+### Still open
+
 - **Q7. Does `no-store` (decision 8) cost anything the operator cares about?** **Recommend
-  accepting it.** The visible effect is that Safari and Firefox re-fetch on Back. Measure it
-  once on a phone in the Q1 checklist before S3 merges.
-- **Q8. Should the client instance be installable before #202 merges?** **Recommend NO**
-  shortcuts until it merges (decision 10). S2/S3 alone (`start_url` `/`) are safe on `main`.
+  accepting it.** The visible effect is that Safari and Firefox re-fetch on Back. Checklist step 8
+  measures it once on a phone; record the result before S3 merges.
+- **Q9 (new). Which variant does each instance get?** A deployment choice, not a repo one: the
+  manifests name it, and this public repo must not record which neutral variant name maps to which
+  deployment. **Recommend** the operator picks at S2 deploy time and keeps the mapping with the
+  deployment manifests.
 
 ## Recommended improvements beyond the ask (clearly recommendations)
 
@@ -1055,7 +1248,7 @@ runs Go tests only. They live in `pwa_check.sh --self-test` instead (clauses c a
 
 - **Any WebKit behaviour:** iOS input zoom, the OAuth hand-back (R6), safe-area letterboxing,
   the iOS install hint's feature detection, and back-navigation cost under `no-store`. All of
-  these are deferred to the Q1 device checklist.
+  these are deferred to the iPhone checklist (O5).
 - **Real Android or desktop installation and the install prompt.** `beforeinstallprompt` needs
   engagement that headless Chromium does not supply.
 - **Standalone display mode in any harness here.** CDP media emulation of `display-mode` had NO
@@ -1071,4 +1264,12 @@ runs Go tests only. They live in `pwa_check.sh --self-test` instead (clauses c a
 - **Whether Firefox desktop reads the manifest; Firefox Android's current display behaviour; the
   ship status of a manifest dark-colour member.** These are [S] or unverified in R1/R2. None
   changes the design, because this surface is dark always.
+- **Whether the derivation-built screenshots are byte-identical across two hosts** (decision 16).
+  One host is measured stable run to run; two are not. S4 measures it and falls back to a
+  decoded-pixel comparison if needed.
+- **How long iOS Safari keeps the O8 dismissal key.** Script-writable storage eviction is [S];
+  the only consequence is the hint reappearing.
+- **What the pinned (nixpkgs) chromium measures against the numbers above.** They are chromium
+  154 from nixpkgs on one host; S6a makes CI use the flake's chromium, which may be a different
+  build until the lock moves. S0 re-measures on that build.
 - **Sizes and effort.** Nobody has measured these slices; they are not estimated.
