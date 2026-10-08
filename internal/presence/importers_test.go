@@ -14,8 +14,14 @@ import (
 // 🔴 PRESENCE TOKENS AUTHENTICATE NOTHING BUT THE TWO AGENT ROUTES BECAUSE NOTHING ELSE CAN
 // REACH THIS PACKAGE. Wiring it into `internal/identity`, `internal/api`, `internal/ui` or the
 // pod's program is the change that would let a presence token mean something there, and it
-// GROWS this ledger. S4/S5 will add `internal/ui` here deliberately; that is the edit that has to
-// say so. Fails on SHRINK too, so a stale ledger cannot read as coverage.
+// GROWS this ledger. Fails on SHRINK too, so a stale ledger cannot read as coverage.
+//
+// 🔴 `internal/ui` WAS ADDED BY S4, DELIBERATELY, AND FOR READING ONLY. The browser renders presence
+// badges through `presence.Store.For` alone (`internal/ui/presence.go`); it never parses a token,
+// never reaches `Agent`, and adds no route. A presence token still authenticates nothing on the
+// browser surface because `identity.Backends` does not know the kind — the importer set grew, the
+// set of things a token can unlock did not. S5's `POST /ring` will reach `Service.Ring` from the
+// same package and so needs no row here; anything ELSE importing presence does.
 func TestOnlyTheBrowserProgramImportsPresence(t *testing.T) {
 	root, err := depspolicy.RepoRoot()
 	if err != nil {
@@ -36,7 +42,7 @@ func TestOnlyTheBrowserProgramImportsPresence(t *testing.T) {
 		}
 	}
 	slices.Sort(importers)
-	want := []string{depspolicy.ModulePath + "/cmd/cairn-ui"}
+	want := []string{depspolicy.ModulePath + "/cmd/cairn-ui", depspolicy.ModulePath + "/internal/ui"}
 	if !slices.Equal(importers, want) {
 		t.Fatalf("internal/presence is imported by %v, want exactly %v. A new importer is a new place a "+
 			"presence token could come to mean something; add it here only as a deliberate, reviewed decision", importers, want)

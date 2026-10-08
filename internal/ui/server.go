@@ -16,6 +16,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/netid"
+	"github.com/ZacxDev/cairn/internal/presence"
 	"github.com/ZacxDev/cairn/internal/report"
 	"github.com/ZacxDev/cairn/internal/store"
 )
@@ -952,6 +953,10 @@ type Server struct {
 	// client-IP design exists to avoid.
 	trustedProxies []netip.Prefix
 	limiter        *netid.RateLimiter
+
+	// presence is the S2 presence service, NIL when this deployment has none. Read ONLY through
+	// [Server.panesFor], which binds `presence.Store.For` to the request's viewer — see `presence.go`.
+	presence *presence.Service
 }
 
 // Config is what [New] needs. A struct rather than seven positional parameters,
@@ -1061,6 +1066,10 @@ type Config struct {
 	// the same clock the session store uses, or a session can be live to one and dead
 	// to the other.
 	Now func() time.Time
+	// Presence is where live sessions are running (S2's service), and it MAY be nil: presence is off
+	// unless `cmd/cairn-ui` armed its agent listener, and then every page renders exactly as it did
+	// before presence existed. The browser reads it through `presence.Store.For` alone.
+	Presence *presence.Service
 	// Log is where operational lines go. Nil means `io.Discard`.
 	//
 	// 🔴 NOTHING WRITTEN HERE MAY CARRY A SESSION ID, A CSRF TOKEN OR A PRESENTED
@@ -1098,6 +1107,10 @@ var ErrNoSessions = errors.New("ui: no session store was supplied, so a sign-in 
 // sign-in would appear to succeed and every subsequent request would be refused.
 var ErrNegativeTTL = errors.New("ui: the session TTL is negative, so every session would be born expired")
 
+// ErrPresenceWithoutStore refuses a presence service with no store: every badge read would
+// dereference nil on the first page that lists a session. Nil `Config.Presence` is the off state.
+var ErrPresenceWithoutStore = errors.New("ui: the presence service has no store")
+
 // New builds the server, refusing each missing part with its own sentinel.
 func New(cfg Config) (*Server, error) {
 	if cfg.Auth == nil {
@@ -1117,6 +1130,9 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.TTL < 0 {
 		return nil, ErrNegativeTTL
+	}
+	if cfg.Presence != nil && cfg.Presence.Store == nil {
+		return nil, ErrPresenceWithoutStore
 	}
 	ttl := cfg.TTL
 	if ttl == 0 {
@@ -1150,6 +1166,8 @@ func New(cfg Config) (*Server, error) {
 
 		trustedProxies: cfg.TrustedProxies,
 		limiter:        cfg.Limiter,
+
+		presence: cfg.Presence,
 	}, nil
 }
 
@@ -1514,6 +1532,7 @@ func (s *Server) handleScopePage(w http.ResponseWriter, r *http.Request, id iden
 	// The tab is read AFTER the refusal, for `?view=`'s reason in `handleEntryPage`: it selects which
 	// view of a scope the caller already proved they read, and is never an authority input.
 	view.Tab = scopeTab(r.URL.Query().Get(QueryTab))
+	view.Panes = s.panesFor(id)
 	s.renderScope(w, view)
 }
 

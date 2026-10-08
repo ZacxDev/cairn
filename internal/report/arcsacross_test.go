@@ -43,10 +43,10 @@ func TestArcsAcrossListsReadableHomesWithTheirNewestReadableMemberBullet(t *test
 		t.Fatal(err)
 	}
 	want := []ArcAcross{
-		{Home: "north-notes", Slug: "kettle-arc", Status: arcs.StatusOpen, Members: 1,
+		{Home: "north-notes", Slug: "kettle-arc", Status: arcs.StatusOpen, Members: 1, MemberSessions: []string{"s-roam-01"},
 			DeclaredVisible: []string{"north-notes", "south-notes"}, RegisteredAt: "2000-01-06T07:08:09Z",
 			ReportedAt: "2000-01-02T00:00:00Z", NewestMemberBullet: "2000-01-07"},
-		{Home: "south-notes", Slug: "hush-arc", Status: arcs.StatusClosed, Members: 1,
+		{Home: "south-notes", Slug: "hush-arc", Status: arcs.StatusClosed, Members: 1, MemberSessions: []string{"s-hide-02"},
 			DeclaredVisible: []string{"south-notes"}, RegisteredAt: "2000-01-06T07:08:09Z",
 			ReportedAt: "2000-01-02T00:00:00Z", NewestMemberBullet: ""},
 	}

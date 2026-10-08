@@ -1,8 +1,8 @@
 // Package presence holds WHERE a live session is running — host label, tmux target, hotkey —
 // for the one identity that pushed it, and the queue of terminal-bell rings aimed at it.
 //
-// It is slice S2 of `claudedocs/plan-cairn-arcs-presence.md`: the store and the agent API, with
-// no browser surface yet. Everything here is EPHEMERAL and in memory (decision 2): a restart
+// It is slice S2 of `claudedocs/plan-cairn-arcs-presence.md`: the store and the agent API. The
+// browser's read-only badges (S4) are `internal/ui/presence.go`. Everything here is EPHEMERAL and in memory (decision 2): a restart
 // loses at most one push interval of presence and any pending ring, and both self-heal. ⚠ It
 // therefore assumes ONE `cairn-ui` replica (the plan's open question P2).
 //
@@ -21,10 +21,11 @@
 // the credential ROW instead, because the accessor did not exist when it was written; see its
 // decision 11 for what was built.
 //
-// 🔴 ONLY `cmd/cairn-ui` IMPORTS THIS PACKAGE, AND THAT IS PINNED AS A LEDGER.
+// 🔴 ONLY `cmd/cairn-ui` AND `internal/ui` IMPORT THIS PACKAGE, AND THAT IS PINNED AS A LEDGER.
 // `TestOnlyTheBrowserProgramImportsPresence` fails when an importer is added (or removed): a
-// presence token authenticates nothing but the two agent routes because nothing else can reach
-// this code. The pod's dependency set is `internal/depspolicy`'s ban, unchanged here.
+// presence token authenticates nothing but the two agent routes because nothing else parses one.
+// `internal/ui` (S4) only READS presence, for its badges, through [Store.For] alone. The pod's
+// dependency set is `internal/depspolicy`'s ban, unchanged here.
 package presence
 
 import (

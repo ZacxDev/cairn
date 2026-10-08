@@ -559,13 +559,16 @@ func main() {
 	presenceMode := "presence off (no -" + flagPresenceAddr + ")"
 	var agentServer *http.Server
 	var agentListener net.Listener
+	var browserPresence *presence.Service
 	if presenceOn {
 		if err := presenceBindRefusal(*presenceAddr, proxyErr); err != nil {
 			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 			os.Exit(exitConfig)
 		}
-		// ⚠ THE SERVICE IS HANDED TO NOTHING ELSE YET: S2 has no browser surface, so presence is
-		// written here and read by nobody until the badge slice wires it into `ui.Config`.
+		// 🔴 ONE SERVICE, WRITTEN BY THE AGENT LISTENER AND READ BY THE BROWSER (S4's badges) — it is
+		// handed to `ui.Config.Presence` below ONLY when the listener actually starts, so a token
+		// file refused at startup leaves the browser rendering exactly as with presence off rather
+		// than reading a store nothing can ever write.
 		service := &presence.Service{Store: &presence.Store{}, Queue: &presence.Queue{}}
 		agent, rows, err := presence.NewAgent(presence.AgentConfig{
 			TokenFile: *presenceTokens, Owner: soleOwner, Service: service,
@@ -593,6 +596,7 @@ func main() {
 				os.Exit(exitConfig)
 			}
 			agentServer = &http.Server{Handler: agent, ReadHeaderTimeout: 10 * time.Second}
+			browserPresence = service
 			presenceMode = fmt.Sprintf("presence agent on %s (sole owner %s, %d token row(s), %d route(s))",
 				agentListener.Addr(), soleOwner, len(rows), len(presence.AgentRoutes()))
 		}
@@ -632,6 +636,9 @@ func main() {
 		// the READ answers 200 there and the WRITES 501.
 		Inviting: inviting,
 		Sessions: sessions,
+		// nil unless the agent listener started above: the browser's badges read the SAME store the
+		// listener writes, through `presence.Store.For` alone (`internal/ui/presence.go`).
+		Presence: browserPresence,
 		TTL:      *sessionTTL,
 		// nil when no provider is configured, which is a legitimate deployment and is why
 		// this field is the one on `ui.Config` that may be nil. See its own comment.

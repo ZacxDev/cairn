@@ -71,6 +71,8 @@ type World struct {
 	cmd     *exec.Cmd
 	dir     string
 	logPath string
+	// stopPushing ends the presence re-push loop (`fixturePresence.keepPushing`).
+	stopPushing context.CancelFunc
 }
 
 // BootWorld materialises the fixture store, writes a token file granting the fixture
@@ -120,6 +122,21 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*
 		return nil, err
 	}
 
+	presenceSession, err := fixtureMembers(store)
+	if err != nil {
+		return nil, err
+	}
+	pres, err := mintPresence(ctx, uiBinary, dir, store, tokenPath)
+	if err != nil {
+		return nil, err
+	}
+	agentPort, err := aFreeLoopbackPort()
+	if err != nil {
+		return nil, err
+	}
+	pres.agentURL = fmt.Sprintf("http://%s:%d", bindHost, agentPort)
+	pres.session = presenceSession[0].Session
+
 	logPath := filepath.Join(dir, "cairn-ui.log")
 	logFile, err := os.Create(logPath)
 	if err != nil {
@@ -153,6 +170,9 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*
 		"-arc-journal", arcJournal,
 		"-host", bindHost,
 		"-port", fmt.Sprint(port),
+		"-presence-agent-addr", fmt.Sprintf("%s:%d", bindHost, agentPort),
+		"-presence-tokens", pres.tokens,
+		"-presence-owner", pres.owner,
 	)
 	w.cmd.Stdout = logFile
 	w.cmd.Stderr = logFile
@@ -189,12 +209,25 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*
 		body, _ := os.ReadFile(logPath)
 		return nil, fmt.Errorf("%w\n--- cairn-ui log ---\n%s", err, body)
 	}
+	// A refused FIRST push is a boot failure, not a missing badge: the walk would otherwise capture
+	// every page in its no-presence state and report the badged surfaces covered.
+	if err := pres.push(ctx); err != nil {
+		w.Stop()
+		body, _ := os.ReadFile(logPath)
+		return nil, fmt.Errorf("%w\n--- cairn-ui log ---\n%s", err, body)
+	}
+	pushCtx, stopPushing := context.WithCancel(ctx)
+	w.stopPushing = stopPushing
+	go pres.keepPushing(pushCtx)
 	return w, nil
 }
 
 // Stop kills the pod. It is called on every exit path including the failing ones; a pod
 // left holding a port is how the NEXT run measures the PREVIOUS run's binary.
 func (w *World) Stop() {
+	if w.stopPushing != nil {
+		w.stopPushing()
+	}
 	if w.cmd != nil && w.cmd.Process != nil {
 		_ = w.cmd.Process.Kill()
 		_, _ = w.cmd.Process.Wait()

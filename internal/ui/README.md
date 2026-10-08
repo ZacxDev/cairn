@@ -3103,10 +3103,11 @@ Not a row, watched by hand: dropping the member-bullet lookup reddens
 # Phase K — the presence store and its agent listener (S2 of the arcs/presence plan)
 
 Slice S2 of `claudedocs/plan-cairn-arcs-presence.md` (decisions 2–9, 11 as built, 15). It adds
-**no browser row**: the store is written by a second listener and read by nobody until S4's badge.
+**no browser row**: the store is written by a second listener and read by the browser only through
+S4's badges (Phase L, below).
 `internal/presence` holds the store, the ring queue, the token file and the agent handler;
-`cmd/cairn-ui` wires it and is its ONLY importer — `TestOnlyTheBrowserProgramImportsPresence` is that
-ledger, red on GROW or SHRINK (S4/S5 will add `internal/ui` to it deliberately).
+`cmd/cairn-ui` wires it, and it and `internal/ui` (added by S4, read-only) are its only importers —
+`TestOnlyTheBrowserProgramImportsPresence` is that ledger, red on GROW or SHRINK.
 
 | route (SECOND listener) | token kind | what |
 |---|---|---|
@@ -3146,8 +3147,8 @@ included) to the byte-wise smaller host label; the other hosts are `AlsoOn`.
   `<push|claim> <kind>:<id> <host> <hex>`, re-read on EVERY agent request (delete a row ⇒ the next
   request is 401, no restart; a vanished file ⇒ every request 401). A push token cannot claim and a
   claim token cannot push — the kind is part of the match, so the refusal is garbage's. Nothing
-  outside the agent listener can read a presence token because nothing else imports the package
-  (the ledger above). A refused row is reported by line number and FIELD, never its value, so a
+  outside the agent listener can read a presence token because nothing else parses one (the browser
+  only calls `Store.For`; the ledger above). A refused row is reported by line number and FIELD, never its value, so a
   token pasted into the wrong column does not reach the log; a mint appends after a `\n` when the
   file's last line lacks one.
 - **The single-owner wall (decision 15)** is ONE function, `admit`. At startup, a row for another
@@ -3162,8 +3163,11 @@ included) to the byte-wise smaller host label; the other hosts are `AlsoOn`.
   bytes and free of control characters and U+2028/U+2029, sessions by `write.SessionComponent`, `runtime` ∈
   {claude, opencode, other}, `last_activity` empty or RFC 3339, one row per session per push. A body
   whose `host` is not the token's is a 400 and writes nothing. The body cap is 1 MiB: the worst
-  LEGAL push, measured with Go's default `json.Marshal` (which escapes `<` to six bytes), is
-  638,245 bytes — over the 512 KiB first chosen (`TestAWorstCaseLegalPushIsAccepted`).
+  LEGAL push, measured with Go's default `json.Marshal` (which escapes `<` to six bytes) with every
+  field at its bound — including a 128-byte `last_activity` (RFC 3339 with a long fractional second)
+  and a 64-byte host — is 662,111 bytes, over the 512 KiB first chosen
+  (`TestAWorstCaseLegalPushIsAccepted`, which pins the number exactly). ⚠ S2 shipped saying
+  638,245; that fixture left `last_activity` and the host short of their bounds.
 - **The claim route returns `[]` until S5** — nothing enqueues a ring yet; it exists now because S3
   builds its claim service against it.
 - ⚠ **Revocation × lockout:** a revoked token's retries count toward the per-client lockout, and
@@ -3193,10 +3197,75 @@ re-check shows no credential with non-null `narrowed_scopes`.
 
 ## What these guards still cannot see
 
-- **Any browser surface.** Nothing renders presence or rings a bell yet (S4, S5); `tests/presence/e2e.sh`
-  is S5's.
+- **A bell.** Nothing rings one yet (S5); `tests/presence/e2e.sh` is S5's. The badges are Phase L.
 - **The host side** (S3, the tooling repo): whether pushed rows are generation-checked and unique,
   and whether the executor writes only `0x07`.
 - **Two replicas**, and a restart's loss of pending rings, are stated, not tested.
 - **The refused-row log under churn**: it is said once per distinct line per process, so a row that
   is edited repeatedly is logged once per spelling.
+
+# Phase L — presence badges (S4 of the arcs/presence plan)
+
+Slice S4 of `claudedocs/plan-cairn-arcs-presence.md` (decisions 5, 7, 8, 11, 14; open question P5).
+**No new route, no script, no new asset**: the badges reuse `.badge`, and `routes`,
+`AllowedScriptSources`, the stylesheet rows and `flake.nix`'s `onlyGo` filter do not move.
+
+| surface | what the OWNER sees |
+|---|---|
+| `/session` | under the id: `host · target · hotkey · runtime · seen Ns ago`, plus `also on <host>` when another live host presents the session |
+| `/scope?…&tab=sessions` | the same badge on the session's row |
+| `/arc?…&tab=sessions` | the same badge on the member's row |
+| `/arc` (summary, every tab) | `live pane` when any member has one |
+| `/arcs` | `live pane` on each arc row with a live member |
+
+The hotkey segment is omitted when the host sent none. "seen" is the UI's clock against the push that
+installed the row (`Located.PushedAt`), at second precision — never the host's `last_activity`, which
+is that host's clock and appears only in the tooltip, beside the pane's label. The badge shows the
+TARGET row (decision 7: newest `last_activity`, ties to the smaller host label), so the host it names
+is the one a ring would go to.
+
+## 🔴 One predicate, and "not shown" is NO NODE
+
+Every surface asks `presence.Store.For(viewer, session)` and nothing else: `Server.panesFor` binds it
+to the request's WHOLE `identity.Identity` once (the narrowing bit rides on `Auth`, so a viewer rebuilt
+from its principal would read a narrowed bearer credential as its owner), and `internal/ui/presence.go`
+turns a `false` into no node at all. So a non-owner, a narrowed owner, expired presence, presence for
+another session, presence OFF (`Config.Presence` nil) and an empty store all render the SAME bytes —
+`TestPresenceIsInvisibleToEveryoneButItsOwner` compares them on all five surfaces as a relationship
+over one store, with the owner's page as the positive control and an absolute check that the off page
+carries no badge (without it, a renderer drawing a zero-value badge everywhere passed: the first battery
+run scored that mutant MISATTRIBUTED).
+
+**Presence never decides whether a page exists (P5).** Each handler binds `Panes` after its refusals,
+so the session page's uniform 404 is unchanged for a session the owner has a live pane for
+(`TestPresenceNeverMakesAnUnseenSessionAPage` — an INVARIANT guard; no mutant of this change reorders it).
+
+**Wiring.** `cmd/cairn-ui` hands `ui.Config.Presence` the SAME service the agent listener writes, and
+only when that listener started; a token file refused at startup leaves the browser presence-off.
+`TestTheBrowserReadsTheStoreTheAgentListenerWrites` drives that through `main`: a push on the agent
+listener puts the badge on the owner's session page fetched from the browser listener.
+
+`report.ArcAcross` grew `MemberSessions` so `/arcs` can ask the predicate per member; it is never
+rendered (the arc page already lists members to anybody who can see the arc).
+
+## The RED proof
+
+Twelve rows in `tests/control_mutants.py` (`ui-presence-*`, `ui-main-never-hands-presence-to-the-browser`),
+each run alone with `--only` and killed by the test it names: the badge and the live-pane check each
+rendering without the predicate's answer, the viewer rebuilt from its principal, presence never bound,
+`also on` dropped, each of the five surfaces' badge dropped, a store-less service admitted, and `main`
+never handing the service over. By hand, against the live tree and restored by digest: the predicate's
+owner clause, its expiry clause and its session match each turned `TestPresenceIsInvisibleToEveryoneButItsOwner`
+red on exactly the arm that clause guards, on all five surfaces.
+
+`uiaudit` boots with presence armed (a push token minted by the binary's own `-issue-presence-token`,
+the three listener flags, one row pushed through the real agent route and re-pushed every 60 s), so the
+walk captures every surface in its badged state. ⚠ OWNER ONLY, and structurally so: the single-owner wall
+refuses any token row for another owner, so a non-owner's presence cannot reach a deployed binary's store.
+
+## What these guards still cannot see
+
+- **A bell** (S5) and the end-to-end `tests/presence/e2e.sh`.
+- **A second replica**: each would hold its own store, so a badge would depend on which replica answered.
+- **Whether the host's labels are honest**: a push token can make a badge LIE for ≤ TTL (the plan's
+  threat model); the badge renders what the owner's own host sent.
