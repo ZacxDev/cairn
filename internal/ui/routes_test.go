@@ -483,8 +483,9 @@ var bareGETAnswer = map[string]int{
 //
 // ⚠ AND THE UNIFORM REFUSAL FOR AN UNAUTHENTICATED CALLER IS STILL PINNED, JUST NOT HERE:
 // `TestAnUnauthenticatedRequestReachesNoRenderer` is what measures it, and
-// `TestTheRootRedirectsABrowserAndRefusesEverythingElse` pins that the one content-negotiated
-// branch did not widen it.
+// `TestTheRootRedirectsABrowserAndRefusesEverythingElse` and
+// `TestAFailedBearerAndANonBrowserKeepTheUniform401` pin how far the one content-negotiated
+// branch reaches — every browser navigation, and no program.
 func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 	srv := newTestServer(t, staticAuth{testIdentity()})
 

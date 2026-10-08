@@ -1215,11 +1215,11 @@ func New(cfg Config) (*Server, error) {
 //
 // ⚠ IT WAS SCOPED TO THE ROOT PATH ALONE, AND THAT NARROWNESS WAS WIDENED ON AN OPERATOR
 // DECISION: a browser opening a bookmarked `/scope?id=…` with an expired session was told
-// "unauthorized" with no way in. So the paragraph above that says only the root is
-// distinguishable is now stronger than before rather than weaker — the redirect does not
-// depend on the path at all, so an undeclared path and a real row answer the same 303 to a
-// browser, and `/` is no longer the one exception. `TestTheRootRedirectsABrowserAndRefusesEverythingElse`
-// and `TestAnUnauthenticatedBrowserIsSentToSignInWithItsReturnPath` measure both halves.
+// "unauthorized" with no way in. The URL-space paragraph above is therefore true for every
+// path again rather than all-but-one — the redirect does not depend on the path at all, so an
+// undeclared path and a real row answer the same 303 to a browser, and `/` is no longer the
+// one exception. `TestTheRootRedirectsABrowserAndRefusesEverythingElse` and
+// `TestAnUnauthenticatedBrowserIsSentToSignInWithItsReturnPath` measure both halves.
 //
 // 🔴 THE CSRF GATE IS AFTER AUTHENTICATION ON PURPOSE, AND THAT IS WHAT MAKES IT
 // REACHABLE RATHER THAN SHADOWED. A token check placed ahead of the chain would refuse
