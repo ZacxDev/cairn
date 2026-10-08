@@ -96,7 +96,7 @@ Drop the work, or the named half of it, if any of these holds:
   |---|---|---|---|
   | **S2** (creates the script) | (a); (b: name, icon); **(c)**; and (d) IF S3 has already landed | 1 + 2 + 3 (+1) | **6**, or **7** if S3 landed first |
   | **S3** | (d), IF S2 has already landed (otherwise S2 wires it; see above) | +1 | **7** if S2 landed first; otherwise nothing (no script yet; (d) runs in the `go` job only) |
-  | **S4** | (b: screenshots); (e) | +2 | **9** |
+  | **S4** (lands after S2 AND S3) | (b: screenshots); (e) | +2 | **9** |
 
   **(c) goes to S2, not S0/S1 or S4.** Its three checks (the reachability refusal, axe
   `target-size` and input font size) are refusals in `refuseWalkRegressions` from S1 on. They need
@@ -135,7 +135,9 @@ Drop the work, or the named half of it, if any of these holds:
 **This round (O10):** merge this plan (PR #203), then build **S0** (uiaudit touch measurements and
 real touch emulation, report-only) and **S1** (the mobile-first CSS, which turns S0's checks into
 refusals). Nothing installable ships this round. **S2–S5 come in later rounds**, in slice order. S3
-(`no-store`) has no dependency and may land any time. S6a and S6b may land any time after S1.
+(`no-store`) has no dependency and may land any time **before S4** — S4's pinned `sabotaged=9`
+counts S3's clause (d), so S3 must have landed by then (it is the one ordering rule among S2–S4
+beyond S4 needing S2's manifest). S6a and S6b may land any time after S1.
 
 Per instance, once S2–S5 are built (NOT part of the closing condition):
 
@@ -954,7 +956,7 @@ alone (audit round 1, item 2).
 | **S1** *(THIS round)* | **Mobile-first CSS** (decision 14) plus B1–B3, with S0's `target-size` and input-font checks flipped to REFUSALS at the touch rungs. | `tailwind.css` → `app.css`, so the hashed stylesheet path moves; `render.go` only for B1's row link; `internal/ui/README.md`; uiaudit refusal switches. No route, no script. | CSS-only on the product side. |
 | **S2** | **Manifest, icon variants, the three flags, `pwaHead()` WITHOUT a script tag, and `uiaudit/pwa_check.sh`** with clauses (a), (b: name + icon) and (c), plus (d) if S3 landed first, and their sabotages (6, or 7). Installable on Chromium from here. | Routes: `GET /manifest.webmanifest` and one hashed public row per icon file, in the hand ledger, `bareGETAnswer` and the near-miss probes. `onlyGo`: PNGs, `variants.json`. `flake.nix`: `uiIcons` + `checks.ui-icons-are-current`. `cmd/cairn-ui` flags and tests. Mutant rows. READMEs. | Inert unless `-app-name` is set. |
 | **S3** | **`no-store` alone** (decision 8), plus `TestEveryNonPublicHTMLRowIsNoStore` (clause d), wired into `pwa_check.sh` by whichever of S2/S3 lands second (until then it runs in the `go` job only). | `server.go` (`writeHTML`'s default; `writeHTMLNoStore` folded in), `internal/ui/README.md`, mutant row. | A header change. No dependency, rollback-safe. |
-| **S4** | **`pwa.js`** (Install button, the iOS hint and its remembered dismissal), **shortcuts**, **screenshots**, and `pwa_check.sh` clauses (b, screenshots) and (e). | `AllowedScriptSources` (2nd entry); the hashed `pwa.js` row; `pwaHead()` gains the tag; `onlyGo`: `pwa.js` and the screenshot PNGs; the allowlist guard's controls; the spelling guard; manifest `shortcuts` + `screenshots`; screenshot rows; `flake.nix`: `uiScreenshots` + `checks.ui-screenshots-are-current`; mutant rows; `ci.yml` (`pwa_check.sh` step); README. | Additive. Needs S2's manifest. |
+| **S4** | **`pwa.js`** (Install button, the iOS hint and its remembered dismissal), **shortcuts**, **screenshots**, and `pwa_check.sh` clauses (b, screenshots) and (e). | `AllowedScriptSources` (2nd entry); the hashed `pwa.js` row; `pwaHead()` gains the tag; `onlyGo`: `pwa.js` and the screenshot PNGs; the allowlist guard's controls; the spelling guard; manifest `shortcuts` + `screenshots`; screenshot rows; `flake.nix`: `uiScreenshots` + `checks.ui-screenshots-are-current`; mutant rows; `ci.yml` (`pwa_check.sh` step); README. | Additive. Needs S2's manifest, and S3 landed first (its `sabotaged=9` pin counts S3's clause (d)). |
 | **S5** *(IN v1, O9)* | **Standalone Back/Reload and polish**: a sticky compact header in `display-mode: standalone`; Back/Reload buttons revealed by `pwa.js` in standalone only; `overscroll-behavior-y: contain`. | `tailwind.css` → `app.css`; `pwa.js`, whose spelling guard admits only `history.back` and `location.reload`; README. | Hidden outside standalone. Device behaviour is checklist step 8. |
 | **S6a** | **Pin CI's chromium** to the flake's nixpkgs (decision 17). | `ci.yml:1745-1751`; `uiaudit/README.md` gating section. | CI-only. |
 | **S6b** | **The blocking `uiaudit-touch` job**, in its own PR (O11). | `ci.yml` (a new job; the advisory job unchanged); `uiaudit/README.md`; branch protection, an operator setting named in the PR. Needs S1 and S6a. | CI-only. |
