@@ -1,0 +1,148 @@
+package ui
+
+import (
+	"net/http"
+	"net/url"
+	"path"
+	"strings"
+)
+
+// FieldNext is the ONE spelling of the return-to parameter: the query parameter on
+// `GET /sign-in`, the hidden field both sign-in forms carry, and the field the GitHub start
+// row reads. One name for all three, because a page whose form said `next` while the start
+// row read `return_to` would carry the value to the door and drop it on the floor there.
+const FieldNext = "next"
+
+// maxNextLen bounds a return-to value. A real one is a path plus a short query; 2048 is the
+// length browsers and proxies have historically tolerated in a request line, and anything
+// longer is not a page this surface links to.
+const maxNextLen = 2048
+
+// safeNext is THE ONE validator for a return-to value, and every place `next` is read goes
+// through it: the redirect the dispatcher builds, the sign-in page's hidden field, the
+// credential POST, the GitHub start row, and the GitHub callback at the moment of use.
+// It returns the value unchanged when it is acceptable and "" when it is not; "" means
+// "land on `/`", never an error page, and the rejected value is never echoed anywhere.
+//
+// 🔴 IT ACCEPTS ONLY A SAME-ORIGIN, PATH-ABSOLUTE REFERENCE, AND EVERY RULE BELOW IS ONE
+// SHAPE OF OPEN REDIRECT:
+//
+//   - non-empty, at most `maxNextLen` bytes;
+//   - starts with exactly ONE `/`. A first character of `/` already rules out a scheme
+//     (`https:`, `javascript:` — RFC 3986 requires a scheme to start with a letter), and a
+//     second `/` is a NETWORK-PATH reference (`//evil.invalid`), which a browser resolves to
+//     another host. So "no scheme, no host" is a consequence of these two rules, not a third
+//     check that could disagree with them;
+//   - no backslash ANYWHERE. Browsers treat `\` as `/` in the authority position of an
+//     http(s) URL, so `/\evil.invalid` is `//evil.invalid` to the thing that follows it;
+//   - every byte printable ASCII (0x21–0x7e): no control character, no whitespace, no DEL,
+//     nothing non-ASCII. A browser STRIPS tab and newline from a URL before parsing it, so
+//     `/\t/evil.invalid` is `//evil.invalid` after the strip — rejecting the byte is what
+//     makes the second rule hold for the string the browser actually parses;
+//   - the PATH it names is not one of the sign-in rows (`/sign-in`, `/sign-out`, the two
+//     GitHub rows). Landing back on the door you just came through is a loop, not a page.
+//
+// ⚠ PERCENT-ESCAPES ARE NOT DECODED FOR THE SHAPE RULES, AND THAT IS A DECISION. A browser
+// resolving a `Location` does not decode `%2F` into a delimiter — RFC 3986 §2.2 makes an
+// escaped reserved character DATA — so `/%2F%2Fevil.invalid` is a same-origin path on THIS
+// host (which answers it 404). It is accepted, and the test that pins the decision pins the
+// Location it produces. Decoding first would refuse a harmless value and would also refuse
+// a legitimate query that carries an escaped `\` or `//`, e.g. a search for a path.
+// 🔴 THE LOOP CHECK IS THE ONE PLACE A DECODE HAPPENS, because there the question is "which
+// ROUTE will this land on", and this server's dispatcher keys on the DECODED path —
+// `/sign%2Din` reaches the `/sign-in` row. An escape that does not decode is refused there.
+func safeNext(raw string) string {
+	if raw == "" || len(raw) > maxNextLen {
+		return ""
+	}
+	if raw[0] != '/' {
+		return ""
+	}
+	if len(raw) > 1 && raw[1] == '/' {
+		return ""
+	}
+	for i := 0; i < len(raw); i++ {
+		if c := raw[i]; c == '\\' || c < 0x21 || c > 0x7e {
+			return ""
+		}
+	}
+	p := raw
+	if i := strings.IndexAny(p, "?#"); i >= 0 {
+		p = p[:i]
+	}
+	decoded, err := url.PathUnescape(p)
+	if err != nil {
+		return ""
+	}
+	switch path.Clean(decoded) {
+	case SignInPath, SignOutPath, OAuthStartPath, OAuthCallbackPath:
+		return ""
+	}
+	return raw
+}
+
+// requestedNext reads the return-to value a sign-in request carries and validates it.
+//
+// 🔴 A SAFE METHOD READS THE QUERY; EVERY OTHER METHOD READS THE POSTED BODY ONLY. The two
+// POST rows (`/sign-in`, `/sign-in/github`) read `PostFormValue` for the reason
+// `handleOAuthStart` records about the invitation token: `FormValue` is the body UNION the
+// query, so a value in the URL of a POST would be honoured. Here that is not a secret, but
+// one rule for every field the sign-in doors read is cheaper than a second rule to remember.
+func requestedNext(r *http.Request) string {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return safeNext(r.URL.Query().Get(FieldNext))
+	}
+	return safeNext(r.PostFormValue(FieldNext))
+}
+
+// landingFor is where a completed sign-in lands: the return-to value its caller already
+// validated, or `/` when there is none.
+func landingFor(next string) string {
+	if next == "" {
+		return RootPath
+	}
+	return next
+}
+
+// signInLocation is the `Location` an unauthenticated browser GET is sent to.
+//
+// 🔴 IT IS A FUNCTION OF THE REQUEST-URI AND NOTHING ELSE, which is the uniformity property:
+// it never consults the store, the session table or the route ledger, so the answer for a
+// scope that exists, one that does not and one the caller may not read is the same bytes for
+// the same URL. A redirect that differed would be an existence oracle open to anybody.
+//
+// `RequestURI()` and not `URL.Path`, because `Path` is DECODED: a request for
+// `/%2F%2Fevil.invalid` has `Path == "//evil.invalid"`, and carrying the decoded form would
+// both lose the original URL and turn a harmless escape into a value `safeNext` refuses.
+// A return-to of `/` is the default landing, so it is omitted rather than spelled — which
+// also keeps the root's redirect exactly `/sign-in`, as it was before this existed.
+func signInLocation(r *http.Request) string {
+	next := safeNext(r.URL.RequestURI())
+	if next == "" || next == RootPath {
+		return SignInPath
+	}
+	return SignInPath + "?" + url.Values{FieldNext: {next}}.Encode()
+}
+
+// presentedAuthorization answers whether the request carried an `Authorization` header at
+// all — present, even if empty or malformed.
+//
+// 🔴 PRESENCE, NOT VALIDITY, IS THE SPLIT, BECAUSE THE QUESTION IS WHO IS ASKING. Both
+// header-borne backends (the machine token and the provider JWT) read this header; a client
+// that sends it is a program holding a credential, and a program must get the uniform 401 it
+// was written against, never an HTML redirect it cannot follow meaningfully. A browser
+// navigating sends a cookie or nothing.
+func presentedAuthorization(r *http.Request) bool {
+	return len(r.Header.Values("Authorization")) > 0
+}
+
+// redirectsToSignIn is the ONE predicate for gate (4)'s redirect branch: a SAFE navigation
+// (`GET`/`HEAD`), from something that asked for HTML, presenting no `Authorization` header.
+// Every conjunct is derived from the REQUEST, never from a route class or from what the path
+// names — the rule both cross-site gates follow, and the reason the branch cannot become an
+// oracle or a state-changing path.
+func redirectsToSignIn(r *http.Request) bool {
+	return (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+		acceptsHTML(r) &&
+		!presentedAuthorization(r)
+}

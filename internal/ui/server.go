@@ -1198,21 +1198,28 @@ func New(cfg Config) (*Server, error) {
 // ⚠ AND THE NEARBY CLAIM ABOUT THE URL SPACE IS NARROWER THAN THE ONE THIS COMMENT FIRST
 // MADE, BECAUSE THE BRANCH BELOW FALSIFIED IT IN THE SAME CHANGE. It said an unauthenticated
 // caller "still cannot tell a route from a typo", as a free consequence of gate (4) running
-// before gate (5). That is true for every path BUT ONE: a browser asking for `/` is answered
-// 303 while a browser asking for `/nonsense` is answered 401, so the root IS distinguishable
-// without a credential. Exactly one path, deliberately, and it is the path a sign-in flow has
-// to advertise anyway — the same stated narrowing the PUBLIC rows already carry. The credential
-// property above is untouched by it: the 303 discloses that `/` exists, never anything about
-// who may see it.
+// before gate (5). While the redirect was scoped to `/`, that was true for every path BUT
+// ONE. ⚠ IT IS TRUE FOR EVERY PATH AGAIN NOW, because the redirect below no longer depends on
+// the path: a browser asking for `/` and a browser asking for `/nonsense` both get a 303
+// whose only difference is the `?next=` echoing what each asked for, and a non-browser gets
+// the 401 for both. The credential property above is untouched: the 303 discloses nothing
+// about who may see anything.
 //
 // 🔴 AND THE ONE CONTENT-NEGOTIATED BRANCH, WHICH IS AN OPERATOR DECISION RATHER THAN A
-// CONSEQUENCE. An unauthenticated `GET /` from something that `Accept`s `text/html` is
-// answered 303 to the sign-in page; everything else — every other path, every other method,
-// and any client that did not ask for HTML — keeps the uniform 401 byte for byte. So a
-// browser landing on the root is shown the way in, and a script or a machine client sees
-// exactly what it saw before: the machine contract is unmoved, which is the whole reason the
-// branch is derived from `Accept` and from the path rather than from a route class.
-// `TestTheRootRedirectsABrowserAndRefusesEverythingElse` is what measures both halves.
+// CONSEQUENCE. An unauthenticated `GET` or `HEAD` from something that `Accept`s `text/html`
+// and presented NO `Authorization` header is answered 303 to the sign-in page, carrying the
+// request-URI as `?next=` so a completed sign-in lands where the person was going. Every
+// other method, any client that did not ask for HTML, and any client that presented an
+// `Authorization` header and failed keeps the uniform 401 byte for byte — a script or a
+// machine client sees exactly what it saw before.
+//
+// ⚠ IT WAS SCOPED TO THE ROOT PATH ALONE, AND THAT NARROWNESS WAS WIDENED ON AN OPERATOR
+// DECISION: a browser opening a bookmarked `/scope?id=…` with an expired session was told
+// "unauthorized" with no way in. So the paragraph above that says only the root is
+// distinguishable is now stronger than before rather than weaker — the redirect does not
+// depend on the path at all, so an undeclared path and a real row answer the same 303 to a
+// browser, and `/` is no longer the one exception. `TestTheRootRedirectsABrowserAndRefusesEverythingElse`
+// and `TestAnUnauthenticatedBrowserIsSentToSignInWithItsReturnPath` measure both halves.
 //
 // 🔴 THE CSRF GATE IS AFTER AUTHENTICATION ON PURPOSE, AND THAT IS WHAT MAKES IT
 // REACHABLE RATHER THAN SHADOWED. A token check placed ahead of the chain would refuse
@@ -1246,14 +1253,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// (4)
 	id, err := s.auth.Authenticate(r)
 	if err != nil || !id.Valid() {
-		// 🔴 THE ONE WIDENING, AND IT IS SCOPED TO THE ROOT PATH AND TO A CLIENT THAT
-		// ASKED FOR HTML. See [Server.ServeHTTP]'s own comment for the decision; what is
-		// here is its narrowness. It is NOT derived from a route class, because a class
-		// can only make a route less protected and this branch must not be reachable by
-		// declaring one; it is derived from the PATH and the `Accept` header, which is the
-		// same "derive it from the request" rule both cross-site gates follow.
-		if r.Method == http.MethodGet && r.URL.Path == RootPath && acceptsHTML(r) {
-			http.Redirect(w, r, SignInPath, http.StatusSeeOther)
+		// 🔴 THE ONE WIDENING, AND IT IS SCOPED TO A BROWSER NAVIGATION. See
+		// [Server.ServeHTTP]'s own comment for the decision and [redirectsToSignIn] for the
+		// predicate; what is here is its narrowness. It is NOT derived from a route class,
+		// because a class can only make a route less protected and this branch must not be
+		// reachable by declaring one; it is derived from the METHOD, the `Accept` header and
+		// the ABSENCE of an `Authorization` header, which is the same "derive it from the
+		// request" rule both cross-site gates follow. The `Location` carries the request-URI
+		// as `?next=` and nothing else, so it is the same bytes whether the scope, entry or
+		// session named exists, is readable, or is neither — see [signInLocation].
+		if redirectsToSignIn(r) {
+			http.Redirect(w, r, signInLocation(r), http.StatusSeeOther)
 			return
 		}
 		// 🔴 THE SAME UNIFORM REFUSAL THE POD GIVES, FOR THE SAME REASON, AND IT STILL
@@ -1312,12 +1322,14 @@ const noSuchRoute = "no such route"
 
 // acceptsHTML answers whether this client asked for HTML.
 //
-// 🔴 IT LOOKS FOR `text/html` EXPLICITLY AND DOES NOT HONOUR `*/*`, WHICH IS THE WHOLE
-// NARROWNESS OF THE ROOT REDIRECT. Every browser sends `text/html` at the front of its
-// `Accept`; `curl` sends `*/*`, and a Go client that sets nothing sends no header at all.
-// Treating `*/*` as "wants HTML" would move the machine contract — every script that GETs
-// `/` with no credential would start receiving a redirect instead of the 401 it was written
-// against — which is precisely what this branch is scoped to avoid.
+// 🔴 IT LOOKS FOR `text/html` EXPLICITLY AND DOES NOT HONOUR `*/*`, WHICH IS HALF THE
+// NARROWNESS OF THE SIGN-IN REDIRECT (the other half is [presentedAuthorization]). Every
+// browser sends `text/html` at the front of its `Accept` on a navigation; `curl` sends `*/*`,
+// and a Go client that sets nothing sends no header at all. Treating `*/*` as "wants HTML"
+// would move the machine contract — every script that GETs a page with no credential would
+// start receiving a redirect instead of the 401 it was written against — which is precisely
+// what this branch is scoped to avoid. A browser's own sub-resource fetches (`/favicon.ico`
+// asks for `image/*`) keep the 401 for the same reason.
 //
 // ⚠ IT DOES NOT PARSE `Accept` PROPERLY, AND THAT IS STATED RATHER THAN IMPLIED. A full
 // parse would weigh `q=0` — `Accept: text/html;q=0` means "anything BUT html" — so a client

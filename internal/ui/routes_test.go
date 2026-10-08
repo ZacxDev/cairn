@@ -622,11 +622,17 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 // content-negotiated branch, and it pins both halves of it.
 //
 // 🔴 THE SECOND HALF IS THE LOAD-BEARING ONE. Anybody can see that `/` now redirects; what
-// has to stay true is that NOTHING ELSE MOVED — a client that did not ask for HTML, any other
-// path, and any other method all keep the uniform 401 byte for byte, because a script driving
-// this surface was written against that. The widening is scoped to one path, one method and
-// one header, and each of those three is probed with the other two held correct so a branch
-// that dropped any of them is visible.
+// has to stay true is that NOTHING ELSE MOVED for a program — a client that did not ask for
+// HTML, a client that presented an `Authorization` header, and an unsafe method all keep the
+// uniform 401 byte for byte, because a script driving this surface was written against that.
+//
+// ⚠ THE PATH DIMENSION WAS WIDENED ON AN OPERATOR DECISION AND THE ROWS THAT PINNED IT MOVED
+// RATHER THAN DISAPPEARED. "a different path, asking for HTML", "an undeclared path, asking
+// for HTML" and "the root under HEAD" asserted 401 while the redirect was root-only; they now
+// assert the 303 with its `?next=`, deliberately, and the 401 half gained the
+// failed-`Authorization` row that took over the job of keeping programs out of the redirect.
+// `TestAnUnauthenticatedBrowserIsSentToSignInWithItsReturnPath` and
+// `TestAFailedBearerAndANonBrowserKeepTheUniform401` carry the wider corpus.
 func TestTheRootRedirectsABrowserAndRefusesEverythingElse(t *testing.T) {
 	srv := newTestServer(t, refusingAuth{})
 
@@ -650,27 +656,50 @@ func TestTheRootRedirectsABrowserAndRefusesEverythingElse(t *testing.T) {
 		method string
 		path   string
 		accept string
+		bearer string
 	}{
-		{"a client that did not ask for HTML", "GET", RootPath, "*/*"},
-		{"a client that sent no Accept at all", "GET", RootPath, ""},
-		{"a different path, asking for HTML", "GET", "/share", "text/html"},
-		{"an undeclared path, asking for HTML", "GET", "/admin", "text/html"},
-		{"the root under HEAD, asking for HTML", "HEAD", RootPath, "text/html"},
+		{"a client that did not ask for HTML", "GET", RootPath, "*/*", ""},
+		{"a client that sent no Accept at all", "GET", RootPath, "", ""},
+		{"the root, asking for HTML, presenting a bearer that failed", "GET", RootPath, "text/html", "Bearer fixture-refused"},
+		{"the root under POST, asking for HTML", "POST", RootPath, "text/html", ""},
 	} {
 		r := httptest.NewRequest(tc.method, tc.path, nil)
 		if tc.accept != "" {
 			r.Header.Set("Accept", tc.accept)
 		}
+		if tc.bearer != "" {
+			r.Header.Set("Authorization", tc.bearer)
+		}
+		if tc.method == "POST" {
+			r.Header.Set("Origin", "https://"+r.Host)
+		}
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, r)
 		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("%s answered %d, want 401 — the machine contract is that everything but a browser GET of "+
-				"the root is unmoved", tc.name, rec.Code)
+			t.Errorf("%s answered %d, want 401 — the machine contract is that everything but a browser "+
+				"navigation without an Authorization header is unmoved", tc.name, rec.Code)
 			continue
 		}
 		if body := rec.Body.String(); body != "unauthorized" {
 			t.Errorf("%s answered 401 with body %q; the refusal must stay uniform and carry no reason",
 				tc.name, body)
+		}
+	}
+
+	// THE WIDENED PATH DIMENSION: the three rows that used to assert 401 here, now 303 with the
+	// return path, each with a literal Location.
+	for _, tc := range []struct{ method, path, want string }{
+		{"GET", "/share", "/sign-in?next=%2Fshare"},
+		{"GET", "/admin", "/sign-in?next=%2Fadmin"},
+		{"HEAD", RootPath, SignInPath},
+	} {
+		r := httptest.NewRequest(tc.method, tc.path, nil)
+		r.Header.Set("Accept", "text/html")
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, r)
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != tc.want {
+			t.Errorf("an unauthenticated browser %s %s answered %d → %q, want 303 → %q",
+				tc.method, tc.path, rec.Code, rec.Header().Get("Location"), tc.want)
 		}
 	}
 

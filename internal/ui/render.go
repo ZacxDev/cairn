@@ -1683,7 +1683,15 @@ func signOutForm(csrf string) g.Node {
 // already-issued session survives an outage (`SupabaseJWT`'s own comment measures that), but
 // a NEW sign-in through the provider does not. A surface whose only way in depends on a third
 // party is a surface with a third party's availability.
-func SignInPage(message string, provider bool) g.Node {
+//
+// 🔴 `next` IS THE ONE CALLER-DERIVED VALUE THIS PAGE CARRIES, AND IT IS NEVER TEXT ON THE
+// PAGE. It is the return-to path a redirect brought the browser here with, already through
+// `safeNext`, and it goes into a hidden field in BOTH forms — a quoted attribute value
+// gomponents escapes — so whichever door the person uses lands them where they were going. The
+// "renders nothing the caller sent" sentence above is about what a person READS, and stays
+// true: a hidden field is not displayed, and a value `safeNext` accepts is a same-origin path,
+// not a sentence. "" renders no field at all.
+func SignInPage(message string, provider bool, next string) g.Node {
 	return c.HTML5(c.HTML5Props{
 		Title:    "cairn — sign in",
 		Language: "en",
@@ -1696,11 +1704,12 @@ func SignInPage(message string, provider bool) g.Node {
 				// The provider button is FIRST because it is the one door a person can use
 				// without holding a secret, and a page that leads with a `password` field
 				// teaches somebody to go looking for a credential they do not need.
-				g.If(provider, providerForm()),
+				g.If(provider, providerForm(next)),
 				h.FormEl(
 					h.Class("signin"),
 					h.Method("post"),
 					h.Action(SignInPath),
+					nextField(next),
 					h.Label(h.For("token"), g.Text("Credential")),
 					h.Input(
 						h.ID("token"),
@@ -1739,13 +1748,24 @@ func SignInPage(message string, provider bool) g.Node {
 // clause, it is simply unconstrained. Which makes the refusal above WORTH MORE, not less:
 // nothing in a browser now stands between this surface and a script, so the only thing
 // keeping the flow scriptless is that it was built that way.
-func providerForm() g.Node {
+func providerForm(next string) g.Node {
 	return h.FormEl(
 		h.Class("signin-provider"),
 		h.Method("post"),
 		h.Action(OAuthStartPath),
+		nextField(next),
 		h.Button(h.Type("submit"), g.Text("Sign in with "+GitHubLabel)),
 	)
+}
+
+// nextField is the hidden return-to field, or nothing when there is no return-to value. ONE
+// constructor for both sign-in forms, so the field's name cannot differ between the door that
+// reads `FieldNext` and the form that sends it.
+func nextField(next string) g.Node {
+	if next == "" {
+		return nil
+	}
+	return h.Input(h.Type("hidden"), h.Name(FieldNext), h.Value(next))
 }
 
 // ReplicaHonesty is the notice the share flow carries, and it is a CONSTANT so that a
