@@ -73,8 +73,9 @@ func TestATokenInTheWrongColumnIsNeverEchoed(t *testing.T) {
 }
 
 // worstCaseLegalPush is the size, in bytes, of the LARGEST body Go's default `json.Marshal` produces
-// for a push the decoder accepts — the number `MaxPushBody`'s comment and `internal/ui/README.md`
-// quote. Pinned here, beside the fixture that measures it, so a comment cannot drift from it.
+// for a push the decoder accepts. Pinned HERE ONLY, beside the fixture that measures it:
+// `MaxPushBody`'s comment and `internal/ui/README.md` point at this test rather than repeat the
+// number, so no comment can drift from it.
 //
 // ⚠ IT WAS 638,245 AND THAT WAS NOT THE WORST CASE. The first fixture spelled `last_activity` as a
 // 35-byte RFC 3339 value and the host as the 6-byte `host-a`; but `last_activity` is bounded by the
@@ -134,7 +135,7 @@ func TestAWorstCaseLegalPushIsAccepted(t *testing.T) {
 	}
 	t.Logf("worst-case legal push: %d bytes (cap %d)", len(body), MaxPushBody)
 	if len(body) != worstCaseLegalPush {
-		t.Fatalf("the worst-case legal push is %d bytes, but worstCaseLegalPush (and every comment quoting it) says %d",
+		t.Fatalf("the worst-case legal push is %d bytes, but worstCaseLegalPush says %d",
 			len(body), worstCaseLegalPush)
 	}
 	const pushLong = "fixture-presence-push-token-owner-a-long-host-not-real"

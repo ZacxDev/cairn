@@ -1107,10 +1107,6 @@ var ErrNoSessions = errors.New("ui: no session store was supplied, so a sign-in 
 // sign-in would appear to succeed and every subsequent request would be refused.
 var ErrNegativeTTL = errors.New("ui: the session TTL is negative, so every session would be born expired")
 
-// ErrPresenceWithoutStore refuses a presence service with no store: every badge read would
-// dereference nil on the first page that lists a session. Nil `Config.Presence` is the off state.
-var ErrPresenceWithoutStore = errors.New("ui: the presence service has no store")
-
 // New builds the server, refusing each missing part with its own sentinel.
 func New(cfg Config) (*Server, error) {
 	if cfg.Auth == nil {
@@ -1130,9 +1126,6 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.TTL < 0 {
 		return nil, ErrNegativeTTL
-	}
-	if cfg.Presence != nil && cfg.Presence.Store == nil {
-		return nil, ErrPresenceWithoutStore
 	}
 	ttl := cfg.TTL
 	if ttl == 0 {

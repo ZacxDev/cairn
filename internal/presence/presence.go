@@ -21,7 +21,9 @@
 // the credential ROW instead, because the accessor did not exist when it was written; see its
 // decision 11 for what was built.
 //
-// 🔴 ONLY `cmd/cairn-ui` AND `internal/ui` IMPORT THIS PACKAGE, AND THAT IS PINNED AS A LEDGER.
+// 🔴 IN THE ROOT MODULE ONLY `cmd/cairn-ui` AND `internal/ui` IMPORT THIS PACKAGE, AND THAT IS
+// PINNED AS A LEDGER (the nested `uiaudit` module, a test harness that ships in no image, imports
+// it too and is outside what the ledger can see).
 // `TestOnlyTheBrowserProgramImportsPresence` fails when an importer is added (or removed): a
 // presence token authenticates nothing but the two agent routes because nothing else parses one.
 // `internal/ui` (S4) only READS presence, for its badges, through [Store.For] alone. The pod's

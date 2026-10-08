@@ -21,7 +21,12 @@ import (
 // never reaches `Agent`, and adds no route. A presence token still authenticates nothing on the
 // browser surface because `identity.Backends` does not know the kind — the importer set grew, the
 // set of things a token can unlock did not. S5's `POST /ring` will reach `Service.Ring` from the
-// same package and so needs no row here; anything ELSE importing presence does.
+// same package and so needs no row here; any other package in the ROOT module importing presence does.
+//
+// ⚠ THE LEDGER SEES THE ROOT MODULE ONLY. `depspolicy.ImportGraph` walks `cmd/` and `internal/`
+// of this module and never descends into a nested one, so `uiaudit` — a browser-audit harness in
+// its OWN module (`uiaudit/go.mod`) that ships in no image — imports presence (`uiaudit/presence.go`,
+// to arm its fixture) and is invisible here. It is a known outside importer, not a gap in the pod.
 func TestOnlyTheBrowserProgramImportsPresence(t *testing.T) {
 	root, err := depspolicy.RepoRoot()
 	if err != nil {

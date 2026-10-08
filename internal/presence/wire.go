@@ -23,13 +23,13 @@ const (
 	MaxStringBytes = 128
 	// MaxPushBody bounds the request body before decoding; anything larger is refused unread.
 	//
-	// ⚠ 1 MiB, AND THE 512 KiB IT REPLACED REFUSED A LEGAL PUSH. Measured by
-	// `TestAWorstCaseLegalPushIsAccepted`, which pins the number exactly: MaxRows rows, a 64-byte
-	// session, `target`, `label` and `hotkey` each MaxStringBytes of `<` (which Go's default
-	// `json.Marshal` escapes to six bytes apiece), a MaxStringBytes `last_activity` (RFC 3339 with
-	// a long fractional second, which `time.Parse` accepts) and a 64-byte host — 662,111 bytes,
-	// over 524,288. 1 MiB leaves ~58% headroom over that. (An earlier count, 638,245, left
-	// `last_activity` and the host short of their bounds and was not the worst case.)
+	// ⚠ 1 MiB, AND THE 512 KiB IT REPLACED REFUSED A LEGAL PUSH. The worst legal push — every
+	// field at its bound: MaxRows rows, a 64-byte session, `target`, `label` and `hotkey` each
+	// MaxStringBytes of `<` (which Go's default `json.Marshal` escapes to six bytes apiece), a
+	// MaxStringBytes `last_activity` (RFC 3339 with a long fractional second, which `time.Parse`
+	// accepts) and a 64-byte host — is over 512 KiB and under this cap. Its size is pinned, in ONE
+	// place, by `TestAWorstCaseLegalPushIsAccepted`, which also proves the push is accepted; no
+	// number is repeated here, because a copy of it here has already gone stale once.
 	MaxPushBody = 1 << 20
 	// MaxClaimBody bounds a claim request, whose only valid body is `{}`.
 	MaxClaimBody = 1 << 10

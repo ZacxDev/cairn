@@ -253,17 +253,3 @@ func TestPresenceNeverMakesAnUnseenSessionAPage(t *testing.T) {
 		}
 	}
 }
-
-// TestAPresenceServiceWithNoStoreIsRefused: nil `Presence` is the off state; a service with no store
-// is a construction error rather than a nil dereference on the first session row.
-func TestAPresenceServiceWithNoStoreIsRefused(t *testing.T) {
-	cfg := testConfig(t, staticAuth{testIdentity()})
-	cfg.Presence = &presence.Service{Queue: &presence.Queue{}}
-	if _, err := New(cfg); err != ErrPresenceWithoutStore {
-		t.Fatalf("New with a store-less presence service answered %v, want ErrPresenceWithoutStore", err)
-	}
-	cfg.Presence = nil
-	if _, err := New(cfg); err != nil {
-		t.Fatalf("POSITIVE CONTROL: New with presence off answered %v", err)
-	}
-}

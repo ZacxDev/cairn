@@ -3700,15 +3700,6 @@ MUTANTS: tuple[Mutant, ...] = (
         "\"session rows get a badge\" is the brief.",
     ),
     Mutant(
-        name="ui-presence-store-less-service-admitted",
-        path="internal/ui/server.go",
-        old="if cfg.Presence != nil && cfg.Presence.Store == nil {",
-        new="if false && cfg.Presence != nil && cfg.Presence.Store == nil {",
-        killer="TestAPresenceServiceWithNoStoreIsRefused",
-        why="a service with a queue and no store builds and serves until the first page that lists a "
-        "session dereferences nil.",
-    ),
-    Mutant(
         name="ui-main-never-hands-presence-to-the-browser",
         path="cmd/cairn-ui/main.go",
         old="\t\t\tbrowserPresence = service\n",

@@ -3106,8 +3106,9 @@ Slice S2 of `claudedocs/plan-cairn-arcs-presence.md` (decisions 2–9, 11 as bui
 **no browser row**: the store is written by a second listener and read by the browser only through
 S4's badges (Phase L, below).
 `internal/presence` holds the store, the ring queue, the token file and the agent handler;
-`cmd/cairn-ui` wires it, and it and `internal/ui` (added by S4, read-only) are its only importers —
-`TestOnlyTheBrowserProgramImportsPresence` is that ledger, red on GROW or SHRINK.
+`cmd/cairn-ui` wires it, and it and `internal/ui` (added by S4, read-only) are its only importers IN
+THE ROOT MODULE — `TestOnlyTheBrowserProgramImportsPresence` is that ledger, red on GROW or SHRINK.
+⚠ The nested `uiaudit` module (a test harness, in no image) imports it too; the ledger cannot see it.
 
 | route (SECOND listener) | token kind | what |
 |---|---|---|
@@ -3165,9 +3166,10 @@ included) to the byte-wise smaller host label; the other hosts are `AlsoOn`.
   whose `host` is not the token's is a 400 and writes nothing. The body cap is 1 MiB: the worst
   LEGAL push, measured with Go's default `json.Marshal` (which escapes `<` to six bytes) with every
   field at its bound — including a 128-byte `last_activity` (RFC 3339 with a long fractional second)
-  and a 64-byte host — is 662,111 bytes, over the 512 KiB first chosen
-  (`TestAWorstCaseLegalPushIsAccepted`, which pins the number exactly). ⚠ S2 shipped saying
-  638,245; that fixture left `last_activity` and the host short of their bounds.
+  and a 64-byte host — is over the 512 KiB first chosen and under the cap. Its size is pinned in
+  ONE place, `TestAWorstCaseLegalPushIsAccepted`, which also proves it is accepted; it is not
+  repeated here. ⚠ S2 shipped quoting a smaller figure from a fixture that left `last_activity` and
+  the host short of their bounds.
 - **The claim route returns `[]` until S5** — nothing enqueues a ring yet; it exists now because S3
   builds its claim service against it.
 - ⚠ **Revocation × lockout:** a revoked token's retries count toward the per-client lockout, and
@@ -3250,10 +3252,10 @@ rendered (the arc page already lists members to anybody who can see the arc).
 
 ## The RED proof
 
-Twelve rows in `tests/control_mutants.py` (`ui-presence-*`, `ui-main-never-hands-presence-to-the-browser`),
+Eleven rows in `tests/control_mutants.py` (`ui-presence-*`, `ui-main-never-hands-presence-to-the-browser`),
 each run alone with `--only` and killed by the test it names: the badge and the live-pane check each
 rendering without the predicate's answer, the viewer rebuilt from its principal, presence never bound,
-`also on` dropped, each of the five surfaces' badge dropped, a store-less service admitted, and `main`
+`also on` dropped, each of the five surfaces' badge dropped, and `main`
 never handing the service over. By hand, against the live tree and restored by digest: the predicate's
 owner clause, its expiry clause and its session match each turned `TestPresenceIsInvisibleToEveryoneButItsOwner`
 red on exactly the arm that clause guards, on all five surfaces.
