@@ -78,7 +78,7 @@ Drop the work, or the named half of it, if any of these holds:
   |---|---|---|---|
   | **(a) installability** | `Page.getInstallabilityErrors` returns `[]` on both armed boots, and exactly `[no-manifest]` on a third boot with `-app-name` unset (the negative control: installability is opt-in per deployment) | `uiaudit/pwa_test.go` | — |
   | **(b) per-instance identity** | `Page.getAppManifest` parses with 0 errors; each `name` equals its flag; `id`, `start_url` and `scope` are `/`; the two boots' icon URLs DIFFER and each fetched icon's bytes equal the committed file for its variant (O6); ≥ 1 `narrow` and ≥ 1 `wide` screenshot, each byte-equal to its committed, derivation-pinned file, IHDR matching `sizes` (O7) | `uiaudit/pwa_test.go` | — |
-  | **(c) mobile ergonomics at the touch rungs** | the touch REACHABILITY control first: `matchMedia('(pointer: coarse)')` is true at `mobile`/`tablet` and false at `laptop`, or the walk refuses. Then 0 axe `target-size` violations, 0 visible inputs with computed `font-size` < 16 px, 0 horizontal overflow | `refuseWalkRegressions` (`uiaudit/main.go`) | the `uiaudit` walk; the `uiaudit-touch` job (S6b) |
+  | **(c) mobile ergonomics at the touch rungs** | the touch REACHABILITY control first: `matchMedia('(pointer: coarse)')` is true at every touch capture (`mobile`, `tablet`) and false at every non-touch capture (`laptop`, `desktop`, `ultrawide`), or the walk refuses (decision 15). Then 0 axe `target-size` violations, 0 visible inputs with computed `font-size` < 16 px, 0 horizontal overflow | `refuseWalkRegressions` (`uiaudit/main.go`) | the `uiaudit` walk; the `uiaudit-touch` job (S6b) |
   | **(d) no-store** | every HTML response from a non-public GET row carries `Cache-Control: no-store`, walked over the route ledger, so a new row is covered without editing the test | `internal/ui` Go test `TestEveryNonPublicHTMLRowIsNoStore` | the `go` CI job |
   | **(e) client-side storage** | after the signed-in walk, `localStorage` is EMPTY (Chromium has no `navigator.standalone`, so the iOS hint never renders). On a page where the test defines `navigator.standalone = false`, dismissing the hint leaves EXACTLY `{cairn.installHintDismissed: "1"}` | `uiaudit/pwa_test.go` | — |
 
@@ -88,7 +88,24 @@ Drop the work, or the named half of it, if any of these holds:
 
   `--self-test` applies one sabotage per check, each on a scratch copy of the tree with its `.git`
   removed (the `tests/control_mutants.py` pattern). Each must be caught by its OWN clause's
-  message. The run prints `sabotaged=9 caught=9`.
+  message. The run prints `sabotaged=9 caught=9` once every slice has landed.
+
+  **Which slice wires which clause into `pwa_check.sh`, and the self-test count each slice pins:**
+
+  | slice | clauses it wires | sabotages it adds | `sabotaged=N` it pins |
+  |---|---|---|---|
+  | **S2** (creates the script) | (a); (b: name, icon); **(c)**; and (d) IF S3 has already landed | 1 + 2 + 3 (+1) | **6**, or **7** if S3 landed first |
+  | **S3** | (d), IF S2 has already landed (otherwise S2 wires it; see above) | +1 | **7** if S2 landed first; otherwise nothing (no script yet; (d) runs in the `go` job only) |
+  | **S4** | (b: screenshots); (e) | +2 | **9** |
+
+  **(c) goes to S2, not S0/S1 or S4.** Its three checks (the reachability refusal, axe
+  `target-size` and input font size) are refusals in `refuseWalkRegressions` from S1 on. They need
+  no PWA code, so `pwa_check.sh` can call them the moment it exists, and S2 is where it starts to
+  exist. S0/S1 cannot wire them because there is no script yet. Waiting until S4 would leave the
+  closing instrument blind to the mobile half for two slices.
+
+  **(d) is wired by whichever of S2 and S3 lands SECOND**, because it needs both the script (S2)
+  and the test (S3). S3 has no dependency and may land first.
 
   | clause | sabotage |
   |---|---|
@@ -448,6 +465,11 @@ implemented with this same call [S, Puppeteer `EmulationManager`].
 go red): decision 14's rules move from `@media (pointer: coarse)` to a width rule, `@media
 (width < 64rem)` (Tailwind's `lg`). Every phone and portrait tablet would then get the touch sizing,
 and a narrow desktop window would too. The 16 px input rule is already width-independent.
+**The reachability control changes with it:** the check stops being `pointer: coarse` matches at
+touch captures, and becomes "the width rule's query matches at `mobile` and `tablet` (390 and 834
+px are both under 64rem = 1024 px) and does not match at `laptop`, `desktop` and `ultrawide`". The
+(c) reachability sabotage becomes "lower the width rule's breakpoint to 40rem (640 px)", which must
+make the `tablet` captures refuse.
 
 ### Sources
 
@@ -930,8 +952,8 @@ alone (audit round 1, item 2).
 |---|---|---|---|
 | **S0** *(THIS round)* | **Measure.** REAL touch emulation at the touch rungs, explicitly disabled elsewhere, with the reachability control (decision 15, R10); axe `target-size` enabled; input `font-size`. All REPORTED, because input font is red on `main`. **A journal-backed world BESIDE the token-file world** (Q10). | `uiaudit/browser.go` (emulation, `axeRunJS`, font capture), `main.go` (report lines; the reachability refusal is ON from S0, because it is about the harness, not the page), `uiaudit/boot.go` (a second, journal-backed boot), new `uiaudit/touch_test.go`, the `ci.yml:1817/1821` floors, `uiaudit/README.md` (including a new blind spot: headless is `hover: none` at every width, R10). NOT `layout-smells.js`. | No product change; the job is non-blocking. |
 | **S1** *(THIS round)* | **Mobile-first CSS** (decision 14) plus B1–B3, with S0's `target-size` and input-font checks flipped to REFUSALS at the touch rungs. | `tailwind.css` → `app.css`, so the hashed stylesheet path moves; `render.go` only for B1's row link; `internal/ui/README.md`; uiaudit refusal switches. No route, no script. | CSS-only on the product side. |
-| **S2** | **Manifest, icon variants, the three flags, `pwaHead()` WITHOUT a script tag, and `uiaudit/pwa_check.sh`** with clauses (a) and (b, name + icon) and their sabotages. Installable on Chromium from here. | Routes: `GET /manifest.webmanifest` and one hashed public row per icon file, in the hand ledger, `bareGETAnswer` and the near-miss probes. `onlyGo`: PNGs, `variants.json`. `flake.nix`: `uiIcons` + `checks.ui-icons-are-current`. `cmd/cairn-ui` flags and tests. Mutant rows. READMEs. | Inert unless `-app-name` is set. |
-| **S3** | **`no-store` alone** (decision 8), plus `TestEveryNonPublicHTMLRowIsNoStore` (clause d), wired into `pwa_check.sh` if S2 has landed, otherwise only into the `go` job. | `server.go` (`writeHTML`'s default; `writeHTMLNoStore` folded in), `internal/ui/README.md`, mutant row. | A header change. No dependency, rollback-safe. |
+| **S2** | **Manifest, icon variants, the three flags, `pwaHead()` WITHOUT a script tag, and `uiaudit/pwa_check.sh`** with clauses (a), (b: name + icon) and (c), plus (d) if S3 landed first, and their sabotages (6, or 7). Installable on Chromium from here. | Routes: `GET /manifest.webmanifest` and one hashed public row per icon file, in the hand ledger, `bareGETAnswer` and the near-miss probes. `onlyGo`: PNGs, `variants.json`. `flake.nix`: `uiIcons` + `checks.ui-icons-are-current`. `cmd/cairn-ui` flags and tests. Mutant rows. READMEs. | Inert unless `-app-name` is set. |
+| **S3** | **`no-store` alone** (decision 8), plus `TestEveryNonPublicHTMLRowIsNoStore` (clause d), wired into `pwa_check.sh` by whichever of S2/S3 lands second (until then it runs in the `go` job only). | `server.go` (`writeHTML`'s default; `writeHTMLNoStore` folded in), `internal/ui/README.md`, mutant row. | A header change. No dependency, rollback-safe. |
 | **S4** | **`pwa.js`** (Install button, the iOS hint and its remembered dismissal), **shortcuts**, **screenshots**, and `pwa_check.sh` clauses (b, screenshots) and (e). | `AllowedScriptSources` (2nd entry); the hashed `pwa.js` row; `pwaHead()` gains the tag; `onlyGo`: `pwa.js` and the screenshot PNGs; the allowlist guard's controls; the spelling guard; manifest `shortcuts` + `screenshots`; screenshot rows; `flake.nix`: `uiScreenshots` + `checks.ui-screenshots-are-current`; mutant rows; `ci.yml` (`pwa_check.sh` step); README. | Additive. Needs S2's manifest. |
 | **S5** *(IN v1, O9)* | **Standalone Back/Reload and polish**: a sticky compact header in `display-mode: standalone`; Back/Reload buttons revealed by `pwa.js` in standalone only; `overscroll-behavior-y: contain`. | `tailwind.css` → `app.css`; `pwa.js`, whose spelling guard admits only `history.back` and `location.reload`; README. | Hidden outside standalone. Device behaviour is checklist step 8. |
 | **S6a** | **Pin CI's chromium** to the flake's nixpkgs (decision 17). | `ci.yml:1745-1751`; `uiaudit/README.md` gating section. | CI-only. |
@@ -1012,8 +1034,9 @@ They are `pwa_check.sh --self-test`'s sabotages.
   - `checks.ui-icons-are-current` has its negative control.
 - **No script yet:** `AllowedScriptSources()` still has ONE entry, and every frame's armed output
   has no `<script>` beyond `filter.js` on the scope page.
-- **`pwa_check.sh`:** clauses (a) and (b: name, icon); `--self-test` prints
-  `sabotaged=3 caught=3` at S2.
+- **`pwa_check.sh`:** clauses (a), (b: name, icon) and (c), plus (d) if S3 landed first.
+  `--self-test` prints `sabotaged=6 caught=6` (or `7` if S3 landed first). The three (c)
+  sabotages need S1's refusals to be ON, which slice order guarantees.
 
 **S3.**
 - `TestEveryNonPublicHTMLRowIsNoStore` walks the ledger. Every non-public GET row must send
@@ -1021,6 +1044,8 @@ They are `pwa_check.sh --self-test`'s sabotages.
 - **RED at base** (no header today), green at head.
 - The mint response is still `no-store`, because the folded `writeHTMLNoStore` caller is covered
   by the same walk.
+- If S2 landed first, S3 wires (d) into `pwa_check.sh` and its `--self-test` then prints
+  `sabotaged=7 caught=7`.
 
 **S4.**
 - **Allowlist:** exactly `pwa.js` and `filter.js`; inline and foreign scripts are still refused.
@@ -1045,7 +1070,8 @@ They are `pwa_check.sh --self-test`'s sabotages.
     IHDR matches;
   - there is ≥ 1 `narrow` and ≥ 1 `wide`;
   - **provenance control:** rebuild with one fixture scope renamed, and the check goes RED.
-- **`pwa_check.sh --self-test`:** `sabotaged=9 caught=9`.
+- **`pwa_check.sh --self-test`:** `sabotaged=9 caught=9`. S4 adds two sabotages, (b:
+  screenshots) and (e), to S2's and S3's seven.
 
 **S5.**
 - `pwa.js` reveals Back/Reload only under `display-mode: standalone`. CDP cannot emulate that
