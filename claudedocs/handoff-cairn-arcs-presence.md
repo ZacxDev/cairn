@@ -22,40 +22,33 @@ before any slice: decisions, threat model, slices S1–S5, the deploy preconditi
   server). ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- **S1 DONE and LIVE** — #197 merged as `45ef3d9`, deployed on BOTH instances at `sha-45ef3d9`
-  (personal via deployment repo trunk `47f387f`; client via the client infra repo trunk
-  `ebf1d70`, tag+digest pinned: store `sha256:f35f7061…`, ui `sha256:37fbdc9e…`). Rollback
-  either: both image lines back to `sha-6edcb45` (client digests `fdcf67b6…` / `3fe4386a…`).
-  Verified live on the personal pod over a port-forward (`/arcs`, `?all=1`, `/arc` tabs, 404).
-- **S2 MERGED, NOT DEPLOYED** — #198 squash-merged as `123d771`,
-  content-verified (`git diff 69b3e10 origin/main -- internal cmd tests .github` empty). CI at
-  head `69b3e10`: all 8 checks green; `go` job `packages with passing tests: 24`,
-  `SUMMARY mutants=257 killed=255 survived=2 misattributed=0` (the 2 are the labelled
-  equivalents; all 31 `presence-*` rows killed). Audit ladder: round 0 (D1 kept, D2/D3
-  deleted), round 1 (2🟡 3🟢, fixed in `69b3e10`), round 2 delta CLEAN ⇒ ladder ended. Claims
-  blocks are PR comments on #198.
-- **S2 deploy precondition — the TTL half is measured, the journal half is not.** #195's image
-  (`sha-6edcb45`) commits: personal deployment repo `8d37487`; client
-  infra repo `1c6145b` (read each commit time with `git log -1 --format=%cI <sha>`; the
-  rollout itself lags by minutes and was not observed). Neither manifest sets
-  `-session-ttl`/`CAIRN_UI_SESSION_TTL` ⇒ 12 h default ⇒ **earliest S2 deploy = the LATER of those
-  two commit times + 12 h, plus margin for the rollout lag**. The journal re-check (no credential with non-null
-  `narrowed_scopes`) has NOT been run.
-- `claim-work` slug `cairn-arcs-presence-3` is still HELD (deploy outstanding).
+- **ARC CLOSED — the closing condition is ADDRESSED.** S1–S5 are merged and content-verified:
+  S1 `45ef3d9` (#197), S2 `123d771` (#198), S4 `2a73fd6` (#200), S5 `cf1c2c9` (#201) on cairn
+  `main`; S3 merged in the tooling repo as `aae6405`. Both runnable checks exit 0
+  on their `main`s: cairn `tests/presence/e2e.sh` at `cf1c2c9` → `SUMMARY e2e: passed=19
+  failed=0 expected=19`, `--self-test` → `sabotaged=7 caught=7` (0 orphaned processes after);
+  the tooling repo's `scripts/tests/test_cairn_ring.py` at `aae6405` → 45 passed, and
+  `scripts/cairn-ring-claim --self-test` → real executor `outcome=rang`, both sabotages CAUGHT,
+  `SELF-TEST: PASS`. CI on #201's head: `mutants=279 killed=277 survived=2 misattributed=0
+  harness-errors=0` (the 2 are the labelled equivalents).
+- **Deployed:** both instances run `sha-123d771` (S2, inert: `presence off`). S4/S5 are NOT
+  deployed. Presence is NOT enabled anywhere; the S3 units are NOT installed on either host.
+- Also merged this session: #199 (`ad1b087`, a test raced the UI's bind; it had failed the
+  `123d771` publish build once).
+- `claim-work` slug `cairn-arcs-presence-3` RELEASED.
 
 ## Next steps (ranked)
 1. **#196 is MERGED** (`78fe99a`): nothing to do; kept for numbering. forcing: gate — kept for numbering.
 2. **S1 is MERGED and DEPLOYED** (#197, `45ef3d9`). Nothing to do; kept for numbering.
    forcing: user — done.
-3. **S2 deploy** (#198, `123d771`) — once the TTL half in State now has elapsed: re-read each instance's control
-   journal for non-null `narrowed_scopes`, then bump both pods' images to `sha-123d771…` in the
-   deployment repo (the store and UI Deployment manifests) and the
-   client infra repo (tag+digest pinned), confirm the publish run's head sha is `123d771` before
-   reading digests. S2 is inert with no presence flags set; enabling presence on the personal
-   instance (flags, token file, `-presence-owner`) is a separate, deliberate manifest change.
-   Then `claim-work --release cairn-arcs-presence-3`. Then S3 (tooling repo host agent), S4
-   (badges), S5 (bell).
-   forcing: user — the operator asked for tmux identity and a bell button, and for S2 to deploy only after the #195 TTL precondition.
+3. **S2–S5 MERGED; arc closed.** The post-close ROLLOUT is a NEW arc and needs the operator:
+   bump both pods to the `cf1c2c9` image (inert until enabled); add `-presence-agent-addr`,
+   `-presence-tokens`, `-presence-owner` to the PERSONAL instance's UI manifest only; mint a push
+   and a claim token per host with `cairn-ui -issue-presence-token` (commands in the tooling repo PR's
+   body); write them and `~/.config/cairn-presence/agent-url` on each host; set
+   `enableCairnPresence = true` and `home-manager switch` on both hosts; then click the deployed
+   session page's bell and judge the window's status-line styling (plan: "Post-close rollout").
+   forcing: user — the operator asked for tmux identity and a bell button.
 
 ## Gotchas / decisions / dead-ends
 - **#195 adds `control.Authorization.Narrowed()`.** The plan's decision 11 derives the
@@ -97,6 +90,18 @@ before any slice: decisions, threat model, slices S1–S5, the deploy preconditi
 - **`audit-dispatch.py --emit-claims` only prints the block** — post it yourself as an ISSUE
   comment (`gh pr comment`); the next `--round` reads only those. via: command
 
+- **A mutant row is a STRING match against source, so a markup change can blind it silently.**
+  #201's `p`→`div` fix left S4's `ui-presence-session-page-badge-dropped` matching 0 times; only
+  CI's FULL battery reported it (`harness-errors=1`) — every `--only` run of the new rows was
+  green. After any edit to a file a mutant row names, sweep all rows for exactly-one matches.
+  via: command
+- **Two subagents sharing one scratchpad filename (`pr-body.md`) cross-wrote PR bodies** — one
+  PR briefly carried the other's body. Give every agent its own scratch subdirectory. via: measurement
+- **`gh pr update-branch` is the cheap way to put a PR's CI on the merged tree** after a sibling
+  lands (it was how #200 picked up #199's race fix). via: command
+- **The client infra repo's pre-push gate needs pyyaml**: push from
+  `nix-shell -p 'python3.withPackages (p: [p.pyyaml])'`; never `--no-verify` there. via: command
+
 ## How to verify
 ```bash
 git fetch origin && git cat-file -e origin/main:internal/ui/arcsindex.go && echo s1-merged
@@ -105,8 +110,8 @@ gh pr view 197 --repo ZacxDev/cairn --json state,mergeCommit --jq '"\(.state) \(
 # with an Authorization: Bearer header read from a 0600 file; expect 200s and an unknown arc → 404
 ```
 ## Defects (batched)
-- FIXED in the S4 PR (#200): the worst-case legal push figure in `internal/presence/wire.go` and
-  `internal/ui/README.md` was not the worst case (`last_activity` may be a 128-byte RFC 3339 value
-  with a long fraction; a host label may be 64 bytes). `TestAWorstCaseLegalPushIsAccepted` now
-  builds every field at its bound and is the ONE place the size is pinned; the prose no longer
-  repeats it. #198's body still quotes the old figure (a merged PR's body; not edited).
+- ~~worst-case push size stated wrongly~~ FIXED in #200.
+- Tooling repo `scripts/cairn-ring-claim:~193`: the SIGTERM handler calls `Event.set()`, which can
+  deadlock if the signal lands while the main thread holds the Event's internal lock (reproduced
+  after 81 rapid signals in a tight loop; production odds ~1e-6 per stop; cost: a 90 s stop then
+  SIGKILL). Fix: a lock-free handler (`signal.set_wakeup_fd`/self-pipe, or raise from the handler).
