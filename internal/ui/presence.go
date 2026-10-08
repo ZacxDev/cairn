@@ -26,7 +26,8 @@ import (
 //   - 🔴 PRESENCE NEVER DECIDES WHETHER A PAGE EXISTS (the plan's P5). Every handler asks its
 //     refusal first; the badge is a decoration of a page that was already found, and the session
 //     page's uniform 404 is unchanged for a session the owner has a live pane for.
-//   - No route, no script, no new asset (decision 14): the badges reuse `.badge`.
+//   - No script, no new asset (decision 14): the badges reuse `.badge`. The badges add no route; the
+//     bell beside the session page's badge (S5) is ONE route, `POST /ring` — see `bell.go`.
 //
 // What a badge says: `host · target · hotkey · runtime · seen Ns ago`, where "seen" is the UI's own
 // clock against the push that installed the row (`Located.PushedAt`) — never the host's

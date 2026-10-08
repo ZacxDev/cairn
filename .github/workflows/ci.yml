@@ -845,7 +845,7 @@ jobs:
       # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
       # killed by some other test proves the suite can fail and proves nothing about the
       # guard the row exists for, so the run reports it as MISATTRIBUTED rather than as a
-      # kill. 268 mutants over EIGHT packages, in `PKGS` order: `internal/control`,
+      # kill. 278 mutants over EIGHT packages, in `PKGS` order: `internal/control`,
       # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
       # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence` — the model, the
       # token-file projection, P4's identity backends, the server that authorises from all of
@@ -862,7 +862,7 @@ jobs:
       # buys (~3min on an IDLE developer host, measured at 62 mutants; a loaded box is
       # several times that). It is what stops the rows bit-rotting into patterns that
       # match nothing and score SURVIVED without ever running.
-      - name: prove every authz guard can go RED (268 mutants, each on the test that names it)
+      - name: prove every authz guard can go RED (278 mutants, each on the test that names it)
         run: python3 tests/control_mutants.py
 
       # 🔴 THE LEDGERS THAT ARE BLIND TO A COMPILED CLIENT, AND THIS IS THE ONLY JOB THAT
@@ -927,7 +927,7 @@ jobs:
       # ⚠ RUNTIME, MEASURED RATHER THAN GUESSED, so the next reader can judge the trade: 57
       # mutants, **614.75 s wall / 152.21 s user + 21.00 s sys** on a 24-core developer host
       # at load ~6.5, all 57 KILLED, 0 SURVIVED, 0 misattributed. That is the same order as
-      # `control_mutants.py` above (268 mutants; its own comment measures ~3 min at 62 on an
+      # `control_mutants.py` above (278 mutants; its own comment measures ~3 min at 62 on an
       # IDLE host), which this job already pays for. ⚠ The wall figure is one observation on
       # a LOADED box and is not a prediction for a runner — the CPU figure is the portable
       # half. If this step becomes the job's critical path, split it out; do not delete it
@@ -1021,6 +1021,36 @@ jobs:
           # 32 assertions, measured when the script landed; `EXPECTED` in the script moves with it.
           if [ "$passes" -lt 32 ] || [ "$fails" -ne 0 ]; then
             echo "REFUSING: $passes PASS / $fails FAIL lines, and 32 / 0 were measured"
+            exit 1
+          fi
+
+      # 🔴 THE ARCS/PRESENCE CLOSING CHECK (closing condition (1) of
+      # `claudedocs/plan-cairn-arcs-presence.md`): `cairn-ui` booted with presence armed over a
+      # synthetic store, control journal and arc journal, proving clauses (a)–(f) — the arcs page's
+      # live window, owner-only presence with a non-owner's page BYTE-IDENTICAL to no presence, the
+      # bell's queue and its uniform answer, claim-once per (owner, host), revocation, the
+      # single-owner wall at startup and after it, the target host, and both halves of narrowing —
+      # up to "the ring was claimed by the right agent token". Beside the arcs check for its reason:
+      # it needs the Go toolchain, and it exits 2 rather than skipping without one.
+      #
+      # ⚠ THE SELF-TEST RUNS FIRST AND IS NOT OPTIONAL, for the arcs check's reason. It sabotages
+      # every clause on a scratch copy of the source — (a) the 14-day window, (b) the predicate's
+      # owner clause, (c) the ring reading the store without the predicate, (d) the token reader's
+      # per-row owner check, (e) the target pick, (f) the narrowing bit and the sign-in refusal — and
+      # refuses (exit 2) unless EACH turns its own clause's named assertion RED.
+      - name: the arcs/presence end-to-end check, after proving every clause can go RED
+        run: |
+          set -o pipefail
+          tests/presence/e2e.sh --self-test | tee /tmp/presence-e2e-self.txt
+          grep -qx 'SUMMARY e2e-self-test: sabotaged=7 caught=7' /tmp/presence-e2e-self.txt
+          tests/presence/e2e.sh > /tmp/presence-e2e.txt 2>&1 || { cat /tmp/presence-e2e.txt; exit 1; }
+          cat /tmp/presence-e2e.txt
+          passes=$(grep -c '^PASS ' /tmp/presence-e2e.txt || true)
+          fails=$(grep -c '^FAIL ' /tmp/presence-e2e.txt || true)
+          echo "presence e2e: passes=$passes fails=$fails"
+          # 19 assertions, measured when the script landed; `EXPECTED` in the script moves with it.
+          if [ "$passes" -lt 19 ] || [ "$fails" -ne 0 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL lines, and 19 / 0 were measured"
             exit 1
           fi
 

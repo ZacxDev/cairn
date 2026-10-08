@@ -18,10 +18,11 @@ import (
 //
 // 🔴 `internal/ui` WAS ADDED BY S4, DELIBERATELY, AND FOR READING ONLY. The browser renders presence
 // badges through `presence.Store.For` alone (`internal/ui/presence.go`); it never parses a token,
-// never reaches `Agent`, and adds no route. A presence token still authenticates nothing on the
+// never reaches `Agent`, and adds no agent route. A presence token still authenticates nothing on the
 // browser surface because `identity.Backends` does not know the kind — the importer set grew, the
-// set of things a token can unlock did not. S5's `POST /ring` will reach `Service.Ring` from the
-// same package and so needs no row here; any other package in the ROOT module importing presence does.
+// set of things a token can unlock did not. S5's `POST /ring` (`internal/ui/bell.go`) reaches
+// `Service.Ring` from the same package and so needed no row here; any other package in the ROOT module
+// importing presence does.
 //
 // ⚠ THE LEDGER SEES THE ROOT MODULE ONLY. `depspolicy.ImportGraph` walks `cmd/` and `internal/`
 // of this module and never descends into a nested one, so `uiaudit` — a browser-audit harness in

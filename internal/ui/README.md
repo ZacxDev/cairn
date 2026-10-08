@@ -3170,8 +3170,8 @@ included) to the byte-wise smaller host label; the other hosts are `AlsoOn`.
   ONE place, `TestAWorstCaseLegalPushIsAccepted`, which also proves it is accepted; it is not
   repeated here. ⚠ S2 shipped quoting a smaller figure from a fixture that left `last_activity` and
   the host short of their bounds.
-- **The claim route returns `[]` until S5** — nothing enqueues a ring yet; it exists now because S3
-  builds its claim service against it.
+- **The claim route returned `[]` until S5** — S2 enqueued nothing; the route existed so S3 could
+  build its claim service against it. S5's `POST /ring` (Phase M) is what fills the queue.
 - ⚠ **Revocation × lockout:** a revoked token's retries count toward the per-client lockout, and
   hosts behind one egress address share that bucket. S3 must stop on a 401 (the plan's S3 test plan).
 - **Minting** is `cairn-ui … -issue-presence-token push|claim -presence-owner <kind:id | email |
@@ -3199,7 +3199,7 @@ re-check shows no credential with non-null `narrowed_scopes`.
 
 ## What these guards still cannot see
 
-- **A bell.** Nothing rings one yet (S5); `tests/presence/e2e.sh` is S5's. The badges are Phase L.
+- **A bell** — S2 had none; it is Phase M (S5), with `tests/presence/e2e.sh`. The badges are Phase L.
 - **The host side** (S3, the tooling repo): whether pushed rows are generation-checked and unique,
   and whether the executor writes only `0x07`.
 - **Two replicas**, and a restart's loss of pending rings, are stated, not tested.
@@ -3267,7 +3267,87 @@ refuses any token row for another owner, so a non-owner's presence cannot reach 
 
 ## What these guards still cannot see
 
-- **A bell** (S5) and the end-to-end `tests/presence/e2e.sh`.
+- **A bell** — Phase L had none; it is Phase M (S5), below, with the end-to-end `tests/presence/e2e.sh`.
 - **A second replica**: each would hold its own store, so a badge would depend on which replica answered.
 - **Whether the host's labels are honest**: a push token can make a badge LIE for ≤ TTL (the plan's
   threat model); the badge renders what the owner's own host sent.
+
+# Phase M — the bell (S5 of the arcs/presence plan)
+
+Slice S5 of `claudedocs/plan-cairn-arcs-presence.md` (O4 with ruling D3, decisions 5, 7, 14). ONE new
+row, `POST /ring`; no script, no new asset. The stylesheet gained one selector, `.bell`, so the hashed
+stylesheet path moved (the regenerated `app.css` is committed; `checks.ui-stylesheet-is-current` pins it).
+
+| what | where |
+|---|---|
+| the button | a `<form class="bell" method="post" action="/ring" data-presence="bell">` with the CSRF field and a hidden `session`, INSIDE the session page's presence paragraph, after the badge |
+| not rendered | anywhere the badge is not; on the scope/arc session rows and `/arcs` (S5 places it on the session page only — a ring from a row would 303 the viewer away from the list); and on a request with no session cookie (no token to carry, so the form could only ever 403) |
+| the answer | `303 Location: /session?session=<id>`, no body, for EVERY request that passes both cross-site gates |
+
+## 🔴 One predicate, one answer
+
+`handleRing` (`bell.go`) calls `presence.Service.Ring(id, session)` with the request's WHOLE identity, and
+`Service.Ring` queues only when `presence.Store.For(viewer, session)` returns the target row — the same
+call the badge renders from. So another owner's presence, expired presence, a narrowed viewer, presence
+for another session, an empty store and presence OFF all queue nothing, and all of them, the owner's
+queued ring, a repeat while pending and an id outside the trailer grammar get the SAME status, headers
+and body (`TestEveryRingAnswerIsTheSameRedirect`, a relationship against the presence-OFF answer). The
+owner gets no "rang" message on purpose: an answer that said so would depend on whether a pane exists for
+this viewer. The terminal is the feedback. The one other exit is a 500 when the ring id's randomness
+fails, reachable only by a viewer the predicate already showed a pane.
+
+**The queue is S2's, unchanged** (O4/D3): one pending ring per `(owner, session)` — a repeat while one
+is pending is a no-op that does NOT restart its 60 s clock (`TestARepeatWhilePendingQueuesNoSecondRing`:
+a keyed map would hold one ring either way, so the guard is the ring's AGE, not the count) — and the ring
+goes to the host decision 7 picks AT ENQUEUE TIME (`TestTheRingGoesToTheBadgesHost`). The TTL is pinned
+through the route at 59 s (claimed exactly once) and 61 s (gone) by `TestARungRingLivesSixtySeconds` on
+the queue's injected clock.
+
+**Both cross-site gates reach the row by METHOD** — it is class `0`, like `/sign-out`.
+`TestTheRingRowIsBehindBothCrossSiteGates` asserts no `Origin`, a foreign `Origin`, no token and another
+session's token each by its gate's OWN message, with the queue unchanged after each and a positive control
+that the same request with both gates satisfied queues one ring.
+
+⚠ **It does not ask whether the viewer can read a write of the session.** The bell is never RENDERED for
+such a session (the session page's 404 comes first, P5), but a hand-built POST naming the owner's own
+live session is queued: the predicate is about the pane, which is the owner's.
+
+## The end-to-end check: `tests/presence/e2e.sh`
+
+Closing condition (1) of the plan. It builds `cmd/cairn-ui` and `cmd/cairn-server`, seeds two users and
+three credentials (one NARROWED) with `-create-user`/`-issue-credential`, mints presence tokens with
+`-issue-presence-token`, boots `cairn-ui` with presence armed, and asserts clauses (a)–(f) — 19 `PASS`
+lines, pinned as `EXPECTED`; fewer is exit 2. A missing `go`, `curl` or `python3` is exit 2, never a skip.
+`--self-test` sabotages each clause on a scratch copy of the tree and requires THAT clause's assertion to
+go red: (a) the 14-day window, (b) the predicate's owner clause, (c) `Service.Ring` reading the store
+without the predicate, (d) the token reader's per-row owner check, (e) the target pick inverted, (f) the
+narrowing bit and the sign-in refusal — `SUMMARY e2e-self-test: sabotaged=7 caught=7`. Both run in the
+`go` CI job beside `tests/arcs/e2e.sh`, self-test first, with the exact-line checks.
+
+⚠ **Clause (c)'s sabotage is NOT `presence-ring-skips-the-predicate`.** That mutant files a refused ring
+under the ZERO owner and an empty host, which no claim token can ever see — so end to end it is
+invisible, and it is killed only in process (`TestARingGoesThroughTheOwnerPredicate` reads the `true`
+`Service.Ring` returns). The e2e's sabotage reads the target row straight out of the table, so the ring
+lands where A's claim service looks; `presence-ring-reads-the-store-without-the-predicate` is the same
+edit in the battery.
+
+## The RED proof
+
+Ten new rows in `tests/control_mutants.py`, each run alone with `--only` under
+`PYTHONDONTWRITEBYTECODE=1` and killed by the test it names: the row declared `classPublic` (which skips
+the CSRF gate — the "future class" bypass), the handler never asking presence, a queued ring answered
+differently, `Service.Ring` reading the store without the predicate, the dedupe dropped, the TTL moved to
+62 s and to 58 s, the bell rendered outside the badge's condition, never rendered, and rendered with no
+token. Two existing target-pick rows now also list `TestTheRingGoesToTheBadgesHost`. ⚠ The 62 s row
+first listed `TestOnePendingRingPerSessionAndItExpires` as a killer and the battery reported it STALE:
+that test reads its expiry instant off `DefaultRingTTL` itself, so it moves with the mutant. The route
+test's literal 61 s is what pins the bound.
+
+## What these guards still cannot see
+
+- **The executor** (S3, the tooling repo): whether a claimed ring lights the right window and writes
+  only `0x07`. The e2e stops at "claimed by the right agent token".
+- **A second replica**: the queue is in memory, so a ring enqueued on one replica is invisible to a
+  claim served by another (the plan's P2).
+- **A click in a real browser**: `uiaudit` never submits a non-GET row, so the bell is captured
+  rendered, never pressed. The e2e drives the POST with `curl` and a real session cookie.
