@@ -366,6 +366,58 @@ MUTANTS: tuple[Mutant, ...] = (
         "PRINCIPAL and re-resolves its full authority on every request, so a token narrowed "
         "to one scope opens a browser session that reads every scope its owner can.",
     ),
+    # ---- the sign-in RETURN PATH: the open-redirect validator, and the bearer split ----
+    #
+    # `safeNext` is the ONE function every read of `?next=` goes through, so a hole in it is
+    # an open redirect on every door at once; and the dispatcher's redirect must never answer
+    # a program that presented an `Authorization` header with HTML instead of the 401.
+    Mutant(
+        name="ui-next-allows-a-network-path-reference",
+        path="internal/ui/returnto.go",
+        old="\tif len(raw) > 1 && raw[1] == '/' {\n\t\treturn \"\"\n\t}",
+        new="\tif false && len(raw) > 1 && raw[1] == '/' {\n\t\treturn \"\"\n\t}",
+        killer="TestSafeNextRefusesTheOpenRedirectCorpus",
+        why="`strings.HasPrefix(next, \"/\")` is the check everybody writes first, and "
+        "`//evil.invalid` satisfies it — a browser resolves it to another HOST, so a sign-in "
+        "link anybody can craft lands a freshly authenticated victim on an attacker's page.",
+    ),
+    Mutant(
+        name="ui-next-allows-a-backslash",
+        path="internal/ui/returnto.go",
+        old="c == '\\\\' || c < 0x21",
+        new="c < 0x21",
+        killer="TestSafeNextRefusesTheOpenRedirectCorpus",
+        why="`/\\evil.invalid` passes every slash-based check and browsers read `\\` as `/` "
+        "in the authority position, so it is `//evil.invalid` to the thing that follows it.",
+    ),
+    Mutant(
+        name="ui-next-allows-control-characters",
+        path="internal/ui/returnto.go",
+        old="c == '\\\\' || c < 0x21 || c > 0x7e",
+        new="c == '\\\\' || c > 0x7e",
+        killer="TestSafeNextRefusesTheOpenRedirectCorpus",
+        why="a browser STRIPS tab and newline from a URL before parsing it, so `/<TAB>/evil` "
+        "passes the second-character check here and is `//evil` to the browser.",
+    ),
+    Mutant(
+        name="ui-next-allows-a-sign-in-loop",
+        path="internal/ui/returnto.go",
+        old="\tcase SignInPath, SignOutPath, OAuthStartPath, OAuthCallbackPath:\n\t\treturn \"\"",
+        new="\tcase \"/never-a-path\":\n\t\treturn \"\"",
+        killer="TestSafeNextRefusesTheOpenRedirectCorpus",
+        why="landing back on the door just used is a loop, and `next=/sign-out` makes a "
+        "crafted sign-in link sign the person straight back out.",
+    ),
+    Mutant(
+        name="ui-redirect-answers-a-failed-bearer-with-html",
+        path="internal/ui/returnto.go",
+        old="\t\t!presentedAuthorization(r)",
+        new="\t\ttrue",
+        killer="TestAFailedBearerAndANonBrowserKeepTheUniform401",
+        why="a program presenting a revoked token that also sends `Accept: text/html` would "
+        "be told to go and sign in through a form, instead of the uniform 401 its error "
+        "handling was written against — the machine contract moved with nothing saying so.",
+    ),
     Mutant(
         name="ui-invite-flow-acts-as-a-narrowed-principal",
         path="internal/ui/invitehandlers.go",

@@ -655,9 +655,11 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 	// matches its P2 diff on that string — so one page's axe violations would be attributed to
 	// another page forever, with nothing anywhere reporting an error.
 	//
-	// 🔴 NOT HYPOTHETICAL: the auth change makes `GET /` answer `303 /sign-in` for an
-	// `Accept: text/html` request without a session. A walk whose session dropped mid-run would
-	// capture the sign-in page under `PushURL: "/"` and call it clean.
+	// 🔴 NOT HYPOTHETICAL, AND WIDER THAN WHEN THIS WAS WRITTEN: the surface answers
+	// `303 /sign-in?next=…` to an `Accept: text/html` GET without a session on EVERY
+	// authenticated page now (it was `GET /` alone until the sign-in return-path change). A walk
+	// whose session dropped mid-run would capture the sign-in page under the target's
+	// `PushURL` and call it clean; the landed PATH is `/sign-in`, so this check refuses it.
 	//
 	// ⚠ THE COMPARISON IS ON THE PATH ONLY, AND THE NARROWING IS DELIBERATE. A server may
 	// legitimately normalise or reorder a query string, so comparing the whole URL would refuse

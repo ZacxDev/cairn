@@ -416,7 +416,7 @@ func TestAPageThatANSWEREDAnErrorIsREFUSEDRatherThanMeasured(t *testing.T) {
 		status int
 	}{
 		{"404, which is what a guessed scope id answers", http.StatusNotFound},
-		{"401, which is what every unledgered path answers", http.StatusUnauthorized},
+		{"401, which is what a refused bearer credential answers", http.StatusUnauthorized},
 		{"500, so the gate is not a 4xx-shaped guard", http.StatusInternalServerError},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -486,9 +486,10 @@ func TestAHealthyDocumentIsNOTRefused(t *testing.T) {
 // 🔴 A REDIRECT LANDS ON A 2xx, SO EVERY OTHER CHECK IN THIS HARNESS PASSES ON IT. The bytes
 // measured then belong to a different route and get filed under this target's push identity —
 // and the hub matches its P2 diff on that string, so one page's violations would be attributed
-// to another forever with nothing reporting an error. Not hypothetical: the auth change makes
-// `GET /` answer `303 /sign-in` for an `Accept: text/html` request without a session, so a walk
-// whose session dropped mid-run would capture the sign-in page and call it `/`.
+// to another forever with nothing reporting an error. Not hypothetical: an `Accept: text/html`
+// GET without a session answers `303 /sign-in?next=…` on every authenticated page (on `GET /`
+// alone before the sign-in return-path change), so a walk whose session dropped mid-run would
+// capture the sign-in page and file it under the page it asked for.
 //
 // The 303 case is the real one; 302 and 307 are driven too so the guard is not tied to one
 // status, and the SAME-PATH case is the positive control — a guard that refused every navigation
@@ -502,7 +503,7 @@ func TestAPageThatREDIRECTEDIsREFUSEDEvenThoughItAnswered200(t *testing.T) {
 		status  int
 		wantErr bool
 	}{
-		{"303, which is what the auth change answers on / without a session", http.StatusSeeOther, true},
+		{"303, which is what any page answers a browser without a session", http.StatusSeeOther, true},
 		{"302, so the guard is not tied to one status", http.StatusFound, true},
 		{"307, which preserves the method and still moves the document", http.StatusTemporaryRedirect, true},
 		{"no redirect at all — the POSITIVE CONTROL: a guard that refused everything would pass the three above", 0, false},

@@ -15,6 +15,10 @@ import (
 // "text/html", so the test drives the header shape a person's browser does.
 const browserAccept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 
+// refusedBearer is a SYNTHETIC value no fixture authority resolves; the refusing chain
+// answers it with the uniform refusal.
+const refusedBearer = "fixture-not-a-credential"
+
 // navigate builds a browser-shaped request: `Accept` as a browser sends it, the test host, and
 // an `Origin` on an unsafe method so gate (2) is never what answers.
 func navigate(method, target string) *http.Request {
@@ -152,7 +156,7 @@ func TestAFailedBearerAndANonBrowserKeepTheUniform401(t *testing.T) {
 	}{
 		{"a GET presenting a bearer that failed", func() *http.Request {
 			r := navigate("GET", "/scope?id=scp_e")
-			r.Header.Set("Authorization", "Bearer fixture-not-a-credential")
+			r.Header.Set("Authorization", "Bearer "+refusedBearer)
 			return r
 		}},
 		{"a GET presenting an EMPTY Authorization header", func() *http.Request {
@@ -162,7 +166,7 @@ func TestAFailedBearerAndANonBrowserKeepTheUniform401(t *testing.T) {
 		}},
 		{"a HEAD presenting a bearer that failed", func() *http.Request {
 			r := navigate("HEAD", "/arcs")
-			r.Header.Set("Authorization", "Bearer fixture-not-a-credential-either")
+			r.Header.Set("Authorization", "Bearer "+refusedBearer+"-other")
 			return r
 		}},
 		{"a same-origin POST from a browser, no credential", func() *http.Request {
