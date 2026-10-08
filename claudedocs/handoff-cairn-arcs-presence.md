@@ -22,33 +22,38 @@ before any slice: decisions, threat model, slices S1–S5, the deploy preconditi
   server). ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- **ARC CLOSED — the closing condition is ADDRESSED.** S1–S5 are merged and content-verified:
-  S1 `45ef3d9` (#197), S2 `123d771` (#198), S4 `2a73fd6` (#200), S5 `cf1c2c9` (#201) on cairn
-  `main`; S3 merged in the tooling repo as `aae6405`. Both runnable checks exit 0
-  on their `main`s: cairn `tests/presence/e2e.sh` at `cf1c2c9` → `SUMMARY e2e: passed=19
-  failed=0 expected=19`, `--self-test` → `sabotaged=7 caught=7` (0 orphaned processes after);
-  the tooling repo's `scripts/tests/test_cairn_ring.py` at `aae6405` → 45 passed, and
-  `scripts/cairn-ring-claim --self-test` → real executor `outcome=rang`, both sabotages CAUGHT,
-  `SELF-TEST: PASS`. CI on #201's head: `mutants=279 killed=277 survived=2 misattributed=0
-  harness-errors=0` (the 2 are the labelled equivalents).
-- **Deployed:** both instances run `sha-123d771` (S2, inert: `presence off`). S4/S5 are NOT
-  deployed. Presence is NOT enabled anywhere; the S3 units are NOT installed on either host.
-- Also merged this session: #199 (`ad1b087`, a test raced the UI's bind; it had failed the
-  `123d771` publish build once).
-- `claim-work` slug `cairn-arcs-presence-3` RELEASED.
+- **ARC CLOSED — the closing condition is ADDRESSED.** S1 `45ef3d9` (#197), S2 `123d771`
+  (#198), S4 `2a73fd6` (#200), S5 `cf1c2c9` (#201) on cairn `main`; S3 merged in the tooling
+  repo as `aae6405`; all content-verified. Both runnable checks exit 0 on their `main`s:
+  `tests/presence/e2e.sh` at `cf1c2c9` → `passed=19 failed=0 expected=19`, `--self-test` →
+  `sabotaged=7 caught=7`; the tooling repo's `test_cairn_ring.py` at `aae6405` → 45 passed,
+  `cairn-ring-claim --self-test` → `SELF-TEST: PASS` (both sabotages CAUGHT).
+- **POST-CLOSE ROLLOUT DONE except the operator's click.** Personal instance only:
+  - both pods on `sha-cf1c2c9` (S4 badges + S5 bell); presence ENABLED via `cairn-ui` args
+    `-presence-agent-addr=0.0.0.0:8105`, `-presence-tokens=<state PVC>/presence-tokens`,
+    `-presence-owner=user:<operator's GitHub-backed id>`; startup line reads
+    `presence agent on [::]:8105 (sole owner …, 4 token row(s)`;
+  - the agent listener is reachable from the operator's two hosts over the private mesh only,
+    through the deployment's mesh gateway (no public hostname), which SETS `CF-Connecting-IP` to the
+    mesh peer — the server logs the real host address on a refusal;
+  - 4 tokens (push + claim × 2 hosts) minted from the pod straight into 0600 files on each
+    host; each host's units (`cairn-presence-push.timer`, `cairn-ring-claim.service`) are
+    active; pushes acknowledged by the server on both hosts (`server=rows=N`); claim services
+    polling every 5 s;
+  - MEASURED via the operator bearer credential: this arc's own session page renders the
+    badge `<host> · <session>:<window> · <hotkey> · claude · seen 38s ago`; `/arcs` shows 13
+    `live pane` badges. No bell on that page (bearer request, no cookie) — expected.
+- **NOT verified:** a real bell click from a signed-in browser lighting the right window — the
+  operator's judgement (plan: "Post-close rollout").
+- The client instance is NOT bumped past `sha-123d771` (presence is personal-only; nothing
+  there needs S4/S5).
 
 ## Next steps (ranked)
 1. **#196 is MERGED** (`78fe99a`): nothing to do; kept for numbering. forcing: gate — kept for numbering.
 2. **S1 is MERGED and DEPLOYED** (#197, `45ef3d9`). Nothing to do; kept for numbering.
    forcing: user — done.
-3. **S2–S5 MERGED; arc closed.** The post-close ROLLOUT is a NEW arc and needs the operator:
-   bump both pods to the `cf1c2c9` image (inert until enabled); add `-presence-agent-addr`,
-   `-presence-tokens`, `-presence-owner` to the PERSONAL instance's UI manifest only; mint a push
-   and a claim token per host with `cairn-ui -issue-presence-token` (commands in the tooling repo PR's
-   body); write them and `~/.config/cairn-presence/agent-url` on each host; set
-   `enableCairnPresence = true` and `home-manager switch` on both hosts; then click the deployed
-   session page's bell and judge the window's status-line styling (plan: "Post-close rollout").
-   forcing: user — the operator asked for tmux identity and a bell button.
+3. **Rollout done; one judgement left**: the operator clicks the bell on a signed-in session page
+   and judges the window's status-line styling. forcing: user — the operator asked for a bell button.
 
 ## Gotchas / decisions / dead-ends
 - **#195 adds `control.Authorization.Narrowed()`.** The plan's decision 11 derives the
@@ -101,6 +106,19 @@ before any slice: decisions, threat model, slices S1–S5, the deploy preconditi
   lands (it was how #200 picked up #199's race fix). via: command
 - **The client infra repo's pre-push gate needs pyyaml**: push from
   `nix-shell -p 'python3.withPackages (p: [p.pyyaml])'`; never `--no-verify` there. via: command
+
+- **`args:` on the `cairn-ui` container REPLACES the image's `Cmd`** — the image has no
+  `Entrypoint` and its `Cmd` is a per-build store path, so args alone exec'd the first flag
+  (exit 128, CrashLoopBackOff, ~8 min of UI downtime under `Recreate`). The manifest now carries
+  `command: ["cairn-ui"]` (resolves via the image PATH, survives bumps) with a comment. Read the
+  image config (`Entrypoint`/`Cmd`) BEFORE adding args to any of these images. via: measurement
+- **The agent listener identifies clients ONLY by `CF-Connecting-IP` from a trusted proxy** — a
+  route that does not pass through Cloudflare must SET that header itself, or every agent
+  request is "no client identity" → 401. via: code
+- **The tooling repo's home-manager generation was unbuildable for both hosts after a
+  `flake.lock` refresh** (nixpkgs' anyio test suite fails; not cached); fixed by a
+  `doCheck = false` overlay with a removal recipe in its comment. A switch failure there
+  blocks any host-side rollout — build the generation before planning one. via: measurement
 
 ## How to verify
 ```bash
