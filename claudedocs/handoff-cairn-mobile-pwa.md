@@ -21,31 +21,28 @@ decisions O1–O13 paraphrased, slices S0–S6b, the iPhone checklist, closing-c
   of it (it gates announcing install to the client instance only). ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- **S0 MERGED** — #204 as `d4a1dda`: real CDP touch emulation at the mobile/tablet rungs
-  (`setTouchEmulationEnabled`, explicitly disabled at non-touch rungs), a reachability refusal
-  inside `refuseWalkRegressions` (coarse TRUE at every touch capture, FALSE at every other),
-  report-only axe target-size / input-font / sub-24px-box measurements, and a journal-backed
-  second uiaudit world (walks `/share` + `/invite`, never pushed). CI's chromium also matched.
-- **S1 AUDITED, CI PENDING** — #205 `zach/mobile-s1` head `b1c28ff`: touch CSS under
-  `@media (pointer: coarse)` in `internal/ui/tailwind.css` (app.css regenerated), 44px targets,
-  16px inputs, header grid in DOM order, B1 whole-row link on scope-page rows only
-  (`#entry-list > .entry-row`), long-name wrapping; input-font + target-size + header-order
-  refusals. Rounds: 0, 1 (4🟡 fixed), 2 CLEAN. CI at `b1c28ff`: 6 green, `go` + `tests` pending
-  at handoff. Measured (nixpkgs chromium 154): touch rungs boxes<24px 326→0, inputs<16px 5→0,
-  overflow 11→0; desktop rungs byte-identical capture lines.
-- NOT deployed: S1. The personal instance runs `sha-0d3a1fa` (sign-in return path, #202).
-- No claim held for this effort.
+- **S0 MERGED** — #204 as `d4a1dda`.
+- **S1 OPERATOR-APPROVED TO MERGE + DEPLOY, waiting on CI** — #205 `zach/mobile-s1` head `b1c28ff`
+  (audit rounds 0, 1 (4🟡 fixed), 2 CLEAN; measurements in the PR body). CI run `37885832874`:
+  7 green, `go` still running at 05:31Z (the previous head's `go` job took ~78 min). Operator said
+  proceed: merge once green, verify by content, bump both personal pods.
+- **S2 IN FLIGHT** — implementer subagent on branch `zach/mobile-s2`, STACKED on
+  `origin/zach/mobile-s1` (S2's clause (c) sabotages need S1's refusals). It does NOT open a PR;
+  the parent rebases onto `main` after #205 squash-merges, then runs audit rounds and opens the PR.
+  S3 has not landed, so S2 pins `sabotaged=6`.
+- Claims HELD: `cairn-mobile-pwa-1` (merge+deploy S1), `cairn-mobile-pwa-2` (S2).
+- NOT deployed: S1. The personal instance runs `sha-0d3a1fa` (both pods).
 
 ## Next steps (ranked)
-1. **Merge #205 (S1) once CI is green at `b1c28ff`**, verify by content, then bump BOTH personal
-   pods to the merge sha in the deployment repo (worktree; trunk = deploy) and check live: the
-   operator opens a page on a phone (taps, no input zoom). forcing: user — the operator asked for mobile-first.
-2. **S2** (manifest, icon variants, `-app-name`/`-app-short-name`/`-app-icon-variant` flags,
-   `pwaHead()` with no script tag, `pwa_check.sh` with clauses (a)(b-name,icon)(c), pins
-   `sabotaged=6` or 7). Then **S3** (`no-store` only — may land any time BEFORE S4), **S4**
-   (`pwa.js`, shortcuts incl. `/?q=`, screenshots via nix, iOS hint key; needs S2 AND S3),
-   **S5** (standalone Back/Reload), **S6a** (pin CI chromium) → **S6b** (blocking touch job).
-   Each slice: implementer subagent in a worktree → round 0 + round 1 → delta rounds → merge.
+1. **Merge #205 (S1) once CI is green at `b1c28ff`**, verify by content, confirm publish-image
+   pushed both images for the merge sha, then bump BOTH personal pods (the store pod's
+   `cairn-store-go` line and the UI pod's `cairn-ui` line) in the deployment repo — worktree off
+   its trunk; trunk = deploy; one commit, rollback sha `0d3a1fa8f746dfd75edc198d1f98b0d86f1f4383`
+   in the message, the same shape as the previous bump. Then check live; the operator opens a page
+   on a phone. Release `cairn-mobile-pwa-1`.
+   forcing: user — operator approved merge+deploy this session.
+2. **S2** — IN FLIGHT on `zach/mobile-s2` (see State now). Rebase onto `main` after #205, round 0 +
+   round 1 audits → delta rounds → PR → merge. Then S3, S4, S5, S6a, S6b per the plan.
    forcing: user — operator chose this scope (O10 and later answers).
 
 ## Gotchas / decisions / dead-ends
@@ -67,6 +64,9 @@ decisions O1–O13 paraphrased, slices S0–S6b, the iPhone checklist, closing-c
   `p`→`div` change once blinded a `tests/control_mutants.py` row that only CI's full battery saw). via: measurement
 - **Parallel subagents must use per-agent scratch dirs** — two once cross-wrote PR bodies via a
   shared `pr-body.md`. via: measurement
+
+- **The deployment repo's base clone can sit far behind its trunk** — read the current image line
+  off the remote ref (`git grep <pattern> origin/<trunk> -- <path>`), never its working tree. via: command
 
 ## How to verify
 ```bash
