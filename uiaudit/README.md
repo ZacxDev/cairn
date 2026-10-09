@@ -384,11 +384,12 @@ That refusal is now counted **separately and at walk level**, for two measured r
 So the claim the count supports is *"the surface refuses it when asked"*, never *"every visit
 produces one"*.
 
-## Touch — real emulation, a reachability REFUSAL, two REPORTED measurements, a second world
+## Touch — real emulation, THREE refusals at the touch rungs, a second world
 
-S0 of `claudedocs/plan-cairn-mobile-pwa.md`. Everything here is **report-only except the
-reachability check**, which refuses from S0 on because it is a claim about the HARNESS, not the
-page. S1 turns the target-size and input-font numbers into refusals.
+S0 of `claudedocs/plan-cairn-mobile-pwa.md` built the measurements; S1 made two of them refusals.
+The **reachability check** refuses from S0 on, because it is a claim about the HARNESS, not the
+page. **Since S1, axe `target-size` and the input font size are REFUSALS at the touch rungs**
+(`touchRefusals`, both worlds) — see "S1" below. The sub-24px box count stays REPORTED.
 
 🔴 **`Viewport.Touch` emulated nothing a stylesheet can see until this change — measured, not
 suspected.** It set only `SetDeviceMetricsOverride(…, mobile=true)`, which covers the viewport meta
@@ -421,8 +422,8 @@ an adjacent pair. ⚠ **The sub-24px box count is a RAW box count, not a 2.5.8 v
 applies the spacing and inline exceptions, which is why the walk reads 322 boxes and 0 axe nodes at
 mobile and both are printed.
 
-**What the walk measured** (`uiaudit/run.sh`, chromium 154.0.8037.92, both worlds, 295 captures,
-`rc=0`):
+**What the walk measured on S0's tree** (`uiaudit/run.sh`, chromium 154.0.8037.92, both worlds, 295
+captures, `rc=0`) — the BEFORE half of S1's table below:
 
 | world | rung | axe `target-size` | boxes < 24px | inputs < 16px |
 |---|---|---|---|---|
@@ -430,7 +431,7 @@ mobile and both are printed.
 | journal | every rung (6 captures each) | **0** | 30 of 57 | **4** of 4: `#subject` (the grant form's `select`), 14px |
 
 The token-file mobile row equals the plan's baseline (322; 3 distinct inputs at 14px on 5 pages).
-Every number is identical at all five rungs because no `pointer: coarse` rule exists yet.
+Every number is identical at all five rungs because no `pointer: coarse` rule existed on that tree.
 
 **The journal-backed world** (`BootJournalWorld`, `walkJournalWorld`) is booted BESIDE the
 token-file world, on a FREE loopback port picked after that world (and its randomly placed presence
@@ -444,6 +445,60 @@ captures, 20 per-scope share captures with the grant form. ⚠ **The invite MINT
 UNCAPTURED** — it needs `-db-dsn` (PostgreSQL), which this job does not have (plan Q10). ⚠ **The
 journal world is never pushed** (its bare rows share the token-file world's `PushURL`s, and its
 per-scope ids are minted fresh each run) and so writes no artifact.
+
+### S1 — the two touch refusals, and what each one is
+
+`touchRefusals` (`main.go`), called from `refuseWalkRegressions` AFTER the reachability check, reads
+every TOUCH capture of BOTH worlds and refuses on: any axe `target-size` node (`TOUCH TARGET SIZE`),
+any text-entry input under 16px (`INPUT FONT UNDER 16px`), a touch capture with no measurement
+(`NO TOUCH MEASUREMENT`), and a walk whose touch captures measured ZERO inputs between them (a
+"0 under 16px" over nothing). The non-touch rungs keep the dense desktop layout on purpose and stay
+REPORTED — `TestTheTouchRefusalsBindOnlyTheTouchRungs` pins that scope from the other side.
+
+**Before / after**, the full walk, chromium 154.0.8037.92 (nixpkgs), 295 captures each, base `d4a1dda`
+against S1:
+
+| world · rung | axe `target-size` | boxes < 24px | inputs < 16px | tap < 44 (`layout-smells`) | overflow |
+|---|---|---|---|---|---|
+| token-file · mobile | 0 → **0** | 322 → **0** of 557 | 5 → **0** of 5 | 557 → **2** | 0 → 0 |
+| token-file · tablet | 0 → **0** | 322 → **0** of 557 | 5 → **0** of 5 | 557 → **9** | 0 → 0 |
+| journal · mobile | 0 → **0** | 30 → **0** of 57 | 4 → **0** of 4 | 57 → **12** | 0 → 0 |
+| journal · tablet | 0 → **0** | 30 → **0** of 57 | 4 → **0** of 4 | 57 → **12** | 0 → 0 |
+| every laptop / desktop / ultrawide row | unchanged | unchanged (322, 30) | unchanged (5, 4) | unchanged | 0 |
+
+The journal world's remaining 12 are the share form's verb checkboxes, deliberately 24px (the
+LABEL around each is the 44px target). The content floor read 90.2% at 3440px on both trees.
+
+🔴 **THE TWO REFUSALS ARE DIFFERENT KINDS OF GUARD, AND THE MATRIX SAYS WHICH.**
+
+| run (full walk, S1's harness) | rc | refused by |
+|---|---|---|
+| S1's CSS | **0** | — (all three touch refusals PASSED, 0 of 18 inputs) |
+| the BASE stylesheet (`tailwind.css` + `app.css` from `d4a1dda`) | **1** | `INPUT FONT UNDER 16px on 18 touch input(s)` — `#q`, `#entry-filter`, `#token`, `#subject` at 14px |
+| S1's CSS minus the 16px rule only | **1** | `INPUT FONT UNDER 16px on 18 touch input(s)` |
+| S1's CSS plus `.view-tab` at 12×12, no gap (the plan's (c) sabotage) | **1** | `TOUCH TARGET SIZE … violated on 20 touch capture(s)` |
+| S1's CSS with the bell back at its pre-S1 22px | **0** | ⚠ **nothing** — reported as `boxes<24px=1`, refused by no rule |
+
+- **The input-font refusal is a REGRESSION guard**: red on the base stylesheet, green on S1's.
+- **The target-size refusal is an INVARIANT guard on this surface**: axe read 0 `target-size` nodes
+  on the base tree too, because 2.5.8's spacing and inline exceptions pass small-but-separated
+  targets. It has been watched red only by mutation (the 12×12 tabs).
+- ⚠ **So the 44px goal is NOT gated, and the bell row proves it**: a lone 22px button passes 2.5.8's
+  spacing exception. The raw sub-24px count and the `layout-smells` tap<44 count are the numbers
+  that see it, and both are REPORTED — the plan dropped the per-page < 44px ledger (audit D6).
+
+The Go-side cases (`refusals_test.go`, `touch_test.go`) were mutation-swept on a scratch copy: dropping
+either finding, leaking the refusals onto every rung, dropping the unmeasured or measured-nothing
+branch, never appending the paragraphs to the verdict, dropping the world label, and three
+threshold mutants (`<=`, rounded px, `int(px) < 15`) were each killed by the named test; the
+unmutated copy passed. The threshold mutants SURVIVED the refusal cases (they hand the gate an
+already-filtered list), which is why `TestTheInputFontThresholdIsSixteenPixelsExactly` exists.
+
+**The journal-world summary test now pins all seven fields** as one whole line over pairwise-distinct
+values (axe 1, console 2, network 3, overflow 4, missing viewport 5, text 7, tap 11; token-file tap/text
+13/17). Its previous version read three of them: with tap printed as 0 and text printed as tap, it
+PASSED; the new one fails, as it does on a tap/text swap, an overflow/viewport swap and a journal line
+that prints the token-file world's tap.
 
 ## Round 1: what an adversarial read found, and the two things it got wrong
 

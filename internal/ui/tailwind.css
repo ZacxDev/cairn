@@ -1100,6 +1100,147 @@
   .outcome {
     max-width: min(100%, var(--measure-prose));
   }
+
+  /* ---- Touch: every rule this surface applies ONLY under a coarse pointer. -----------
+   *
+   * S1 of `claudedocs/plan-cairn-mobile-pwa.md` (decision 14, B1–B3). 🔴 ONE BLOCK, AND IT
+   * IS KEYED ON THE POINTER, NEVER ON A WIDTH OR ON `hover`. A narrow desktop window has a
+   * mouse and wants the dense layout; a tablet at 834px has a thumb and does not. And
+   * `uiaudit` can DRIVE `(pointer: coarse)` — `Emulation.setTouchEmulationEnabled` makes it
+   * match at the `mobile` and `tablet` rungs and the walk REFUSES if it does not — whereas
+   * headless chromium answers `hover: none` at every width, so a `hover`-keyed rule would be
+   * unmeasurable everywhere. If emulation ever stops matching, the plan's R10 fallback moves
+   * this block to `(width < 64rem)`.
+   *
+   * 🔴 DESKTOP IS UNCHANGED BY CONSTRUCTION, AND THAT IS MEASURED RATHER THAN ASSUMED: every
+   * declaration in this file that S1 added is inside this block, so a fine pointer matches
+   * none of them. The S1 walk compared every laptop/desktop/ultrawide capture line (box
+   * counts, tap counts, `<main>` width) against the base tree — identical — and the 1440px
+   * screenshots: 45 of 53 byte-identical, the other 8 differing only inside a live timestamp,
+   * exactly as two runs of the base differ (`internal/ui/README.md`, Phase O).
+   *
+   * ⚠ THE 16px INPUT FONT IS HERE TOO, NOT AT EVERY WIDTH AS DECISION 14 FIRST SAID. The zoom it
+   * prevents is iOS Safari's, which is a coarse pointer, and keeping the rule in this block is
+   * what keeps the fine-pointer rendering byte-for-byte the base's. The cost, unmeasured here:
+   * a WebKit that reports a FINE primary pointer and still zooms on focus would keep 14px.
+   *
+   * 44px is WCAG 2.5.5 (AAA) and Apple's HIG; the GATE is 2.5.8 (AA, 24px with its spacing
+   * exception), which `uiaudit` reads through axe's `target-size` and REFUSES on at the touch
+   * rungs. `min-h-11` is 2.75rem — 44px at the default root, scaling with a reader who
+   * enlarged theirs, for the reason `--breakpoint-ultra` records. */
+  @media (pointer: coarse) {
+    /* B2 — a compact header: wordmark, viewer and sign-out on one row, the three nav links
+     * as a full-width row of equal 44px targets beneath it. The break is a zero-height
+     * `::after` with `flex-basis: 100%` ordered between the two rows, so the row assignment
+     * does not depend on how wide the viewer's name happens to be. */
+    .page-header {
+      @apply items-center gap-x-2 gap-y-0 pb-2 mb-4;
+    }
+
+    .page-header::after {
+      content: "";
+      @apply order-2 basis-full;
+    }
+
+    .page-header h1,
+    .page-header .signout {
+      @apply order-1;
+    }
+
+    .page-header .viewer {
+      @apply order-1 flex-1 min-w-0 truncate text-xs;
+    }
+
+    .nav-arcs,
+    .nav-share,
+    .nav-invite {
+      @apply order-3 flex-1 min-w-0;
+    }
+
+    .nav-arcs a,
+    .nav-share a,
+    .nav-invite a {
+      @apply flex min-h-11 items-center justify-center rounded border border-line px-2;
+    }
+
+    .page-header h1 a {
+      @apply inline-flex min-h-11 items-center;
+    }
+
+    /* Buttons and the fields they submit. The input font is `max(16px, 1em)`: iOS Safari
+     * zooms the page into any focused field whose computed font is under 16px, and every
+     * field here was `text-sm` (14px). */
+    button[type="submit"] {
+      @apply min-h-11 min-w-11 justify-center;
+    }
+
+    input[type="password"],
+    input[type="text"],
+    input[type="search"],
+    select {
+      @apply min-h-11;
+      font-size: max(16px, 1em);
+    }
+
+    /* The share form's verb checkboxes: the LABEL is the target (it wraps the box), so the
+     * label gets the 44px row and the box itself grows to 24px rather than to 44. */
+    .share fieldset label {
+      @apply min-h-11;
+    }
+
+    .share fieldset input[type="checkbox"] {
+      @apply size-6;
+    }
+
+    /* B3 — the bell was 49×22 in a row of badges. */
+    .bell button[type="submit"] {
+      @apply py-0;
+    }
+
+    /* Navigation links that were 14–28px tall: breadcrumbs, view tabs, card titles, the
+     * session/arc row links, the arcs toggle, chip links and the share/invite indexes. */
+    .crumb,
+    .view-tab,
+    .card-name,
+    .row-link,
+    .stat[href],
+    .chips a,
+    .hit-where a {
+      @apply inline-flex min-h-11 min-w-11 items-center justify-center;
+    }
+
+    /* These two are `block` rows already — full width, so only the height moves. */
+    .share-index a,
+    .invite-index a {
+      @apply flex min-h-11 items-center;
+    }
+
+    .crumbs,
+    .view-tabs {
+      @apply gap-y-1;
+    }
+
+    /* B1 — the WHOLE entry row is the target. The ref was the row's only link, about 14px
+     * tall; it grows to 44px and stretches an overlay over the row — the `.row-link` pattern
+     * session and arc rows already use — while the row's own chip links sit above it so
+     * they stay their own targets. */
+    .entry-row {
+      @apply relative;
+    }
+
+    .entry-row .ref a {
+      @apply inline-flex min-h-11 items-center;
+    }
+
+    .entry-row .ref a::after {
+      content: "";
+      @apply absolute inset-0;
+    }
+
+    .entry-row .chips {
+      @apply relative z-10;
+    }
+  }
 }
 
 /* 🔴 REDUCED MOTION REMOVES THE MOTION, IT DOES NOT SHORTEN IT — AND THE DIFFERENCE IS

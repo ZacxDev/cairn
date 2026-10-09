@@ -35,6 +35,10 @@ func cleanWalk() []*Capture {
 			// Touch emulation REACHED the page: coarse exactly where the viewport is a
 			// touch rung. `refuseUnreachableTouch` refuses any other combination.
 			Pointer: &PointerProbe{Coarse: vp.Touch, HoverNone: true},
+			// Three text-entry inputs measured, none under 16px: what the touch rungs measure on the
+			// honest tree since S1. Non-zero so the input-font refusal's "measured nothing" branch is
+			// not what a clean walk exercises.
+			Touch: &TouchMeasure{InputsMeasured: 3, TargetsMeasured: 11},
 			Content: &ContentBox{
 				InnerWidth: vp.Width,
 				BodyWidth:  vp.Width * 92 / 100,
@@ -272,6 +276,51 @@ func TestTheWalkRefusalsCanEachGoRED(t *testing.T) {
 			wantSub: "TOUCH REACHABILITY FAILED",
 		},
 		{
+			// 🔴 S1'S TARGET-SIZE REFUSAL. The id is spelled as a LITERAL, not `axeTargetSizeRule`, so a
+			// renamed constant cannot make the fixture and the gate agree on a rule axe does not emit.
+			name: "axe target-size flags a node at the MOBILE rung",
+			break_: func(cs []*Capture) {
+				captureAt(cs, Mobile).Violations = []AxeViolation{{ID: "target-size", Nodes: 2}}
+			},
+			wantSub: "TOUCH TARGET SIZE",
+		},
+		{
+			// …at the OTHER touch rung, from the JOURNAL world: both worlds are gated, and a gate that
+			// only read the first touch rung or the token-file world would pass this.
+			name: "axe target-size flags a node at the TABLET rung in the journal world",
+			break_: func(cs []*Capture) {
+				c := captureAt(cs, Tablet)
+				c.World = JournalWorld
+				c.Violations = []AxeViolation{{ID: "target-size", Nodes: 1}}
+			},
+			wantSub: "[journal] / at tablet (834px): axe target-size flagged 1 node(s)",
+		},
+		{
+			// 🔴 S1'S INPUT-FONT REFUSAL, in the shape the base tree actually had: `#q` at 14px.
+			name: "a 14px search input at the MOBILE rung",
+			break_: func(cs []*Capture) {
+				captureAt(cs, Mobile).Touch.SmallInputs = []SmallInput{{Selector: "#q", FontPx: 14}}
+			},
+			wantSub: "INPUT FONT UNDER 16px",
+		},
+		{
+			// 15.5px: under the threshold by less than a pixel, so a gate comparing ROUNDED pixels, or
+			// using <= 15, passes it.
+			name: "a 15.5px select at the TABLET rung in the journal world",
+			break_: func(cs []*Capture) {
+				c := captureAt(cs, Tablet)
+				c.World = JournalWorld
+				c.Touch.SmallInputs = []SmallInput{{Selector: "#subject", FontPx: 15.5}}
+			},
+			wantSub: "[journal] / at tablet (834px): #subject renders at 15.5px",
+		},
+		{
+			// A touch capture with no measurement: the font refusal would pass a page it never read.
+			name:    "a TOUCH capture with no touch measurement",
+			break_:  func(cs []*Capture) { captureAt(cs, Mobile).Touch = nil },
+			wantSub: "NO TOUCH MEASUREMENT",
+		},
+		{
 			// A nil content box is a MEASUREMENT that did not happen, and a floor that
 			// treated it as satisfied would be green on exactly the walk that measured
 			// nothing.
@@ -419,6 +468,64 @@ func TestTheWalkRefusalsCanEachGoRED(t *testing.T) {
 		"the sign-in card itself PASSES; a 1-width matrix, an all-exempt widest width, a moved matrix and an "+
 		"empty set are refused",
 		len(Viewports), Ultrawide.Width)
+}
+
+// TestTheTouchRefusalsBindOnlyTheTouchRungs pins the SCOPE of S1's two touch refusals from the
+// other side: the same findings at a NON-touch rung are REPORTED, not refused — the desktop layout
+// keeps its dense targets and its 14px fields on purpose — and a walk whose touch captures measured
+// no input at all is refused rather than passed.
+func TestTheTouchRefusalsBindOnlyTheTouchRungs(t *testing.T) {
+	nonTouch := 0
+	for _, vp := range Viewports {
+		if vp.Touch {
+			continue
+		}
+		nonTouch++
+		cs := cleanWalk()
+		c := captureAt(cs, vp)
+		c.Violations = []AxeViolation{{ID: "target-size", Nodes: 4}}
+		c.Touch.SmallInputs = []SmallInput{{Selector: "#token", FontPx: 14}}
+		if err := refuseWalkRegressions(cs); err != nil {
+			t.Errorf("a target-size node and a 14px input at the NON-touch %s rung were REFUSED: %v. The touch "+
+				"refusals are scoped to the rungs the `pointer: coarse` rules apply at", vp.Name, err)
+		}
+	}
+	if nonTouch == 0 {
+		t.Fatal("no NON-touch rung is declared, so the scope half above checked nothing")
+	}
+
+	cs := cleanWalk()
+	for _, c := range cs {
+		if c.Viewport.Touch {
+			c.Touch.InputsMeasured = 0
+		}
+	}
+	err := refuseWalkRegressions(cs)
+	if err == nil || !strings.Contains(err.Error(), "MEASURED 0 text-entry inputs over 2 touch capture(s)") {
+		t.Fatalf("a walk whose touch captures held NO input was not refused as a claim about nothing: %v", err)
+	}
+	// …and the measured-nothing refusal counts TOUCH captures only: inputs measured at laptop do not
+	// make the touch rungs' zero a measurement.
+	captureAt(cs, Laptop).Touch.InputsMeasured = 9
+	if err := refuseWalkRegressions(cs); err == nil || !strings.Contains(err.Error(), "MEASURED 0 text-entry inputs") {
+		t.Fatalf("inputs measured at a NON-touch rung laundered the touch rungs' zero: %v", err)
+	}
+}
+
+// TestTheInputFontThresholdIsSixteenPixelsExactly pins `smallInputs`' boundary, which the refusal
+// cases above cannot see: they hand `refuseWalkRegressions` an already-filtered `SmallInputs`. The
+// browser control (`TestTheInputFontMeasurementSeesA14pxInput`) reads 14px and 16px only, so a
+// threshold mutated to `int(px) < 15` passed both — measured, by mutation, in S1. 15.5px is the
+// value that tells them apart; 16px exactly is NOT small (iOS zooms below 16, not at it).
+func TestTheInputFontThresholdIsSixteenPixelsExactly(t *testing.T) {
+	got := smallInputs([]SmallInput{{"#a", 15.5}, {"#b", 16}, {"#c", 14}, {"#d", 17}, {"#e", 15.99}})
+	var sel []string
+	for _, in := range got {
+		sel = append(sel, in.Selector)
+	}
+	if strings.Join(sel, ",") != "#a,#c,#e" {
+		t.Fatalf("inputs under the threshold = %v, want [#a #c #e] (15.5px, 14px and 15.99px; 16px and 17px are not small)", sel)
+	}
 }
 
 // TestTheContentFloorExemptionLedgerIsExactlyThese pins the exempt SET, on GROW and on

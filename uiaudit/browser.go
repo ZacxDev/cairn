@@ -87,8 +87,8 @@ type Capture struct {
 	// `refuseUnreachableTouch`.
 	Pointer *PointerProbe
 	// Touch is the two touch-ergonomics measurements that are not axe's: input font sizes and
-	// sub-24px targets. REPORTED ONLY in S0 of the mobile plan; S1 makes the input half a
-	// refusal. See [TouchMeasure].
+	// sub-24px targets. Since S1 of the mobile plan the input half is a REFUSAL at the touch
+	// rungs (`touchRefusals`); the sub-24px count stays REPORTED. See [TouchMeasure].
 	Touch *TouchMeasure
 	// FormActions is the `action` attribute of every `<form>` on the page, as written. It is
 	// how the journal-backed world proves it reached the per-scope share page WITH its grant
@@ -908,7 +908,8 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 	}
 	c.Pointer = &pointer
 
-	// Input font sizes and sub-24px boxes. REPORTED, not refused, in S0. ⚠ They live HERE and
+	// Input font sizes and sub-24px boxes. Measured at every rung; the font half is REFUSED at the
+	// touch rungs (`touchRefusals`, since S1), the box count only reported. ⚠ They live HERE and
 	// not in `vendor-js/layout-smells.js`, whose keys are the hub's push contract.
 	var touchJSON string
 	if err := chromedp.Run(b.ctx, chromedp.Evaluate(touchMeasureJS, &touchJSON)); err != nil {

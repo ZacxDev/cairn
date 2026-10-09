@@ -1535,6 +1535,105 @@
   .card-what, .note, .empty, .missing, .replica-honesty, .read-only, .outcome {
     max-width: min(100%, var(--measure-prose));
   }
+  @media (pointer: coarse) {
+    .page-header {
+      margin-bottom: calc(var(--spacing) * 4);
+      align-items: center;
+      column-gap: calc(var(--spacing) * 2);
+      row-gap: 0px;
+      padding-bottom: calc(var(--spacing) * 2);
+    }
+    .page-header::after {
+      content: "";
+      order: 2;
+      flex-basis: 100%;
+    }
+    .page-header h1, .page-header .signout {
+      order: 1;
+    }
+    .page-header .viewer {
+      order: 1;
+      min-width: 0px;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: var(--text-xs);
+      line-height: var(--tw-leading, var(--text-xs--line-height));
+    }
+    .nav-arcs, .nav-share, .nav-invite {
+      order: 3;
+      min-width: 0px;
+      flex: 1;
+    }
+    .nav-arcs a, .nav-share a, .nav-invite a {
+      display: flex;
+      min-height: calc(var(--spacing) * 11);
+      align-items: center;
+      justify-content: center;
+      border-radius: 0.25rem;
+      border-style: var(--tw-border-style);
+      border-width: 1px;
+      border-color: var(--color-line);
+      padding-inline: calc(var(--spacing) * 2);
+    }
+    .page-header h1 a {
+      display: inline-flex;
+      min-height: calc(var(--spacing) * 11);
+      align-items: center;
+    }
+    button[type="submit"] {
+      min-height: calc(var(--spacing) * 11);
+      min-width: calc(var(--spacing) * 11);
+      justify-content: center;
+    }
+    input[type="password"], input[type="text"], input[type="search"], select {
+      min-height: calc(var(--spacing) * 11);
+      font-size: max(16px, 1em);
+    }
+    .share fieldset label {
+      min-height: calc(var(--spacing) * 11);
+    }
+    .share fieldset input[type="checkbox"] {
+      width: calc(var(--spacing) * 6);
+      height: calc(var(--spacing) * 6);
+    }
+    .bell button[type="submit"] {
+      padding-block: 0px;
+    }
+    .crumb, .view-tab, .card-name, .row-link, .stat[href], .chips a, .hit-where a {
+      display: inline-flex;
+      min-height: calc(var(--spacing) * 11);
+      min-width: calc(var(--spacing) * 11);
+      align-items: center;
+      justify-content: center;
+    }
+    .share-index a, .invite-index a {
+      display: flex;
+      min-height: calc(var(--spacing) * 11);
+      align-items: center;
+    }
+    .crumbs, .view-tabs {
+      row-gap: var(--spacing);
+    }
+    .entry-row {
+      position: relative;
+    }
+    .entry-row .ref a {
+      display: inline-flex;
+      min-height: calc(var(--spacing) * 11);
+      align-items: center;
+    }
+    .entry-row .ref a::after {
+      content: "";
+      position: absolute;
+      inset: 0px;
+    }
+    .entry-row .chips {
+      position: relative;
+      z-index: 10;
+    }
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

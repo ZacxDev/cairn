@@ -3517,3 +3517,62 @@ alone with `--only` under `PYTHONDONTWRITEBYTECODE=1`: `killed=1` each. Round 2 
 - **Browser-specific URL parsing beyond the corpus.** The rules are the WHATWG shapes known to turn
   a path into an authority (`//`, `\`, stripped tab/newline); a parser quirk outside them is not
   tested here.
+
+# Phase O — touch-first CSS (S1 of the mobile plan)
+
+`claudedocs/plan-cairn-mobile-pwa.md`, decision 14 and B1–B3. The stylesheet gains ONE block, at
+the end of `@layer components` in `tailwind.css`: `@media (pointer: coarse) { … }`. No route, no
+script, no `render.go` change. `app.css` is regenerated (`nix run .#build-ui-stylesheet`), so the
+hashed stylesheet path moves.
+
+## 🔴 Keyed on the POINTER, never on a width or on `hover`
+
+A narrow desktop window has a mouse and wants the dense layout; a tablet has a thumb and does not.
+And it is the one key the harness can DRIVE: `uiaudit` turns `(pointer: coarse)` on at its `mobile`
+and `tablet` rungs and REFUSES a walk where it does not match, while headless chromium answers
+`hover: none` at every width. The fallback if emulation ever stops matching is the plan's R10:
+the same block under `(width < 64rem)`.
+
+## What the block does, per surface
+
+| surface | before (390px) | under a coarse pointer |
+|---|---|---|
+| header (every signed-in page) | two rows, 80px; nav links 16px tall | wordmark · viewer (truncated, `text-xs`) · Sign out on one row; the three nav links as a full-width row of equal 44px targets (B2). 97px. The row break is a zero-height `::after` with `flex-basis: 100%`, so it does not depend on the viewer's name length |
+| text fields and selects (`#q`, `#entry-filter`, `#token`, `#subject`) | 14px, 38px tall | `font-size: max(16px, 1em)` (iOS zooms below 16px), 44px tall |
+| submit buttons (sign in, search, share, sign out, revoke, the bell) | 22–38px | ≥ 44×44; the bell (B3) was 49×22 |
+| breadcrumbs, view tabs, card titles, session/arc row links, the arcs toggle, chip links, search-hit links | 14–28px | ≥ 44×44 |
+| share / invite index rows | 38px | 44px, still full width |
+| scope page entry rows (B1) | the ref was the row's ONLY link, ~14px | the ref is 44px AND stretches an overlay over the whole row (the `.row-link` pattern session and arc rows already use); the row's chip links sit above it at `z-10` |
+| share form verb checkboxes | 13px | 24px; the LABEL around each is the 44px row |
+
+⚠ **Decision 14 put the 16px input rule at EVERY width; S1 keeps it inside the coarse block.** The
+zoom it prevents is iOS Safari's, which reports a coarse pointer, and keeping it in the block is what
+makes the fine-pointer rendering identical to the base. The cost, unmeasured: a WebKit that reports a
+FINE primary pointer and still zooms on focus would keep 14px.
+
+## 🔴 Desktop is unchanged — measured, not assumed
+
+The full `uiaudit` walk on the base (`d4a1dda`) and on S1, chromium 154: every laptop, desktop and
+ultrawide capture line (status, axe, tap<44, text<12, overflow, `<main>` width and fraction, coarse,
+target-size, box<24, input<16) is byte-identical between the two, in both worlds — and identical
+between two runs of the base, which is the control that says the comparison can match at all. Of the
+53 desktop (1440px) screenshots, 45 are byte-identical; the other 8 differ only inside one timestamp's
+box (≤ 1407 pixels, same bounding box as base-vs-base: a live "Ns ago"), and differ the same way
+between two runs of the base.
+
+## The gate
+
+`uiaudit`'s `touchRefusals` refuses, at the touch rungs of both worlds: any axe `target-size`
+(WCAG 2.5.8) node, and any text-entry input under 16px. The before/after table and the red/green
+matrix are in `uiaudit/README.md` ("S1"). The font refusal is RED on the base stylesheet; the
+target-size refusal was 0 on the base too and has been watched red only by mutation.
+
+## What these guards still cannot see
+
+- **Any WebKit.** The iOS zoom, iPadOS's pointer answer and every on-device behaviour are the
+  plan's iPhone checklist, not a test.
+- **The 44px goal itself.** Only 2.5.8 (24px with its spacing exception) is refused. A lone button
+  shrunk back to 22px passes — measured with the bell — and shows only in the REPORTED sub-24px count.
+- **`hover:` rules**, at every width (headless answers `hover: none`).
+- **The invite mint form**, which neither `uiaudit` world renders (no `-db-dsn`); its `select` and
+  submit are covered by the block's rules by CLASS only.

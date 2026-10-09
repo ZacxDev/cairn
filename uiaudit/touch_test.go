@@ -382,20 +382,35 @@ func captureStdout(t *testing.T, f func()) string {
 // the grant form (rendered ONLY in that world, which is never pushed) was visible only in one
 // per-capture line, while the summary printed "axe violations: 0". It reads the PRINTED summary,
 // because the defect was in what a reader of the log sees.
+//
+// 🔴 ALL SEVEN FIELDS ARE PINNED, AS ONE WHOLE LINE, OVER PAIRWISE-DISTINCT VALUES. The first draft
+// pinned axe, console and network by substring and left the four layout fields unread — so a field
+// SWAP (tap printed in text's slot) or a field printed as a constant 0 was green. Each field below has
+// a value no other field has (axe 1, console 2, network 3, overflow 4, missing-viewport 5, text 7,
+// tap 11), so a swap moves a number into a slot whose literal it cannot equal; and none is 0, so a
+// zeroed field cannot match either. The token-file capture carries its OWN distinct tap/text (13, 17)
+// so a journal line that summed the wrong world reads 24/24 and goes red.
 func TestTheJournalWorldsSignalsAreSummedOnItsOwnLine(t *testing.T) {
-	mk := func(world string) *Capture {
+	mk := func(world string, tap, text int) *Capture {
 		return &Capture{
 			Target: Target{Path: ui.SharePath + "?scope=scp_x"}, Viewport: Mobile, World: world,
-			Layout: &PushLayout{InnerWidth: Mobile.Width, ScrollWidth: Mobile.Width},
+			Layout: &PushLayout{InnerWidth: Mobile.Width, ScrollWidth: Mobile.Width, SmallTapTargets: tap, SmallText: text},
 		}
 	}
-	clean := mk("")
-	journal := mk(JournalWorld)
-	journal.Violations = []AxeViolation{{ID: "label", Nodes: 1}}
-	journal.Console = []Event{{FirstParty: true, Text: "error: x"}, {FirstParty: true, Text: "error: y"}}
-	journal.Network = []Event{{FirstParty: true, Text: "404 /x"}, {FirstParty: true, Text: "404 /y"}, {FirstParty: true, Text: "404 /z"}}
+	clean := mk("", 13, 17)
+	// Five journal captures: tap 2+2+2+2+3 = 11, text 1+1+1+2+2 = 7, overflow on 4, no viewport meta on 5.
+	var journal []*Capture
+	for i, tt := range [][2]int{{2, 1}, {2, 1}, {2, 1}, {2, 2}, {3, 2}} {
+		c := mk(JournalWorld, tt[0], tt[1])
+		c.Layout.HorizontalOverflow = i < 4
+		c.Layout.MissingViewportMeta = true
+		journal = append(journal, c)
+	}
+	journal[0].Violations = []AxeViolation{{ID: "label", Nodes: 1}}
+	journal[1].Console = []Event{{FirstParty: true, Text: "error: x"}, {FirstParty: true, Text: "error: y"}}
+	journal[2].Network = []Event{{FirstParty: true, Text: "404 /x"}, {FirstParty: true, Text: "404 /y"}, {FirstParty: true, Text: "404 /z"}}
 
-	out := captureStdout(t, func() { printSignalSummary([]*Capture{clean, journal}, 0) })
+	out := captureStdout(t, func() { printSignalSummary(append([]*Capture{clean}, journal...), 0) })
 	var journalLines []string
 	for _, l := range strings.Split(out, "\n") {
 		if strings.Contains(l, "journal world") && strings.Contains(l, "axe violations") {
@@ -407,14 +422,18 @@ func TestTheJournalWorldsSignalsAreSummedOnItsOwnLine(t *testing.T) {
 			"world's signals are summed nowhere, so its grant form's defects show only per capture:\n%s",
 			len(journalLines), out)
 	}
-	l := journalLines[0]
-	for _, want := range []string{"axe violations=1", "label", "console=2", "network=3"} {
-		if !strings.Contains(l, want) {
-			t.Errorf("the journal-world line lacks %q: %s", want, l)
-		}
+	const want = "uiaudit:   journal world (5 capture(s), never pushed): axe violations=1 across 1 rule(s): label | " +
+		"console=2 network=3 | tap targets under 44px=11, text under 12px=7, pages with horizontal overflow=4, " +
+		"pages missing <meta viewport>=5"
+	if journalLines[0] != want {
+		t.Errorf("the journal-world line is\n  %q\nwant\n  %q", journalLines[0], want)
 	}
 	if !strings.Contains(out, "uiaudit:   axe violations: 0 across 0 rule(s)") {
 		t.Errorf("the token-file axe line must stay token-file-only (0 here):\n%s", out)
+	}
+	if !strings.Contains(out, "uiaudit:   layout: tap targets under 44px=13, text under 12px=17, pages with horizontal "+
+		"overflow=0, pages missing <meta viewport>=0") {
+		t.Errorf("the token-file layout line must count the token-file capture only (13/17/0/0):\n%s", out)
 	}
 }
 
