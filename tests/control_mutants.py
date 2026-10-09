@@ -2870,12 +2870,17 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-mint-response-loses-no-store",
         path="internal/ui/invitehandlers.go",
-        old="\twriteHTMLNoStore(w, http.StatusOK, b.String())",
-        new="\twriteHTML(w, http.StatusOK, b.String())",
+        # 🔴 RE-DERIVED IN S3 OF THE MOBILE PLAN, WHEN `writeHTMLNoStore` WAS FOLDED INTO
+        # `writeHTML`'s DEFAULT: the old pattern (the mint's own `no-store` entry point swapped for
+        # the ordinary one) named a function that no longer exists, and the full battery scored it
+        # a HARNESS ERROR. The mint now gets `no-store` like every authenticated page, so the way
+        # to lose it is the one remaining opt-DOWN: the public renderer, at the mint's call site.
+        old="Expires: inv.ExpiresAt.UTC().Format(time.RFC3339),\n\t\t},\n\t}\n\ts.renderInvite(w, view)\n}",
+        new="Expires: inv.ExpiresAt.UTC().Format(time.RFC3339),\n\t\t},\n\t}\n\ts.renderPublic(w, InvitePage(view))\n}",
         killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
-        why="the ordinary render helper, reached for because it is the one every other page "
-        "uses. This response's BODY is a bearer capability that can create a principal, and a "
-        "shared cache or a back-forward store keeping it is the whole exposure.",
+        why="the public renderer, reached for because the mint page is 'just a link to hand out' — "
+        "but this response's BODY is a bearer capability that can create a principal, and `no-cache` "
+        "lets the browser's HTTP cache keep it. The ledger walk is GET-only and cannot see this POST.",
     ),
     Mutant(
         name="ui-minted-link-becomes-an-anchor",
@@ -2901,8 +2906,9 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-join-page-resolves-the-token",
         path="internal/ui/invitehandlers.go",
-        old="\ts.render(w, JoinPage(token, s.providerArmed(), s.app))",
-        new="\tif s.inviting != nil {\n\t\t_, _ = s.inviting.Outstanding(control.ID(token))\n\t}\n\ts.render(w, JoinPage(token, s.providerArmed(), s.app))",
+        # `renderPublic` since S3 of the mobile plan (the join page is a PUBLIC row, `no-cache`).
+        old="\ts.renderPublic(w, JoinPage(token, s.providerArmed(), s.app))",
+        new="\tif s.inviting != nil {\n\t\t_, _ = s.inviting.Outstanding(control.ID(token))\n\t}\n\ts.renderPublic(w, JoinPage(token, s.providerArmed(), s.app))",
         killer="TestTheJoinPageNeverConsultsTheInviteAuthority",
         why="the obvious way to make the page more helpful — look the invitation up so it can "
         "name the project. `GET /join` is dispatched BEFORE the authentication chain, so any "
