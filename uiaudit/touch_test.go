@@ -80,8 +80,8 @@ func TestTouchEmulationReachesThePageAtEveryRung(t *testing.T) {
 			t.Errorf("%s (touch=%v): (pointer: coarse)=%v maxTouchPoints=%d, want coarse=%v maxTouchPoints=%d",
 				vp.Name, vp.Touch, c.Pointer.Coarse, c.Pointer.MaxTouchPoints, vp.Touch, wantPoints)
 		}
-		t.Logf("%-9s touch=%-5v coarse=%-5v any-coarse=%-5v hover:none=%-5v maxTouchPoints=%d",
-			vp.Name, vp.Touch, c.Pointer.Coarse, c.Pointer.AnyCoarse, c.Pointer.HoverNone, c.Pointer.MaxTouchPoints)
+		t.Logf("%-9s touch=%-5v coarse=%-5v hover:none=%-5v maxTouchPoints=%d",
+			vp.Name, vp.Touch, c.Pointer.Coarse, c.Pointer.HoverNone, c.Pointer.MaxTouchPoints)
 	}
 	if err := refuseUnreachableTouch(captures); err != nil {
 		t.Fatalf("the reachability refusal fired on a walk whose emulation is correct: %v", err)
@@ -268,7 +268,11 @@ func TestTheJournalWorldReachesTheGrantForm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	captures, err := walkJournalWorld(ctx, os.Getenv("UIAUDIT_REPO_ROOT"), bin, t.TempDir(), 18781, 3*time.Minute,
+	port, err := aFreeLoopbackPort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	captures, err := walkJournalWorld(ctx, os.Getenv("UIAUDIT_REPO_ROOT"), bin, t.TempDir(), port, 3*time.Minute,
 		targets, ui.DeclaredRouteLedger())
 	if err != nil {
 		t.Fatal(err)
@@ -349,5 +353,38 @@ func TestTheJournalWorldIsNeverPushed(t *testing.T) {
 	if len(p.Pages) != 1 {
 		t.Fatalf("the payload holds %d page(s) from one token-file and one journal capture of %s; want 1",
 			len(p.Pages), ui.SharePath)
+	}
+}
+
+// TestTheWholeWalkSignalsAreTheTokenFileWorlds pins the SCOPE of `printSignalSummary`'s numbers:
+// the whole-walk lines count the token-file world only, and the digests line counts PUSHED
+// captures only. Fixture tap counts are pairwise distinct (3, 5, 700) so any wrong inclusion
+// moves the sum to a value the right one cannot produce.
+func TestTheWholeWalkSignalsAreTheTokenFileWorlds(t *testing.T) {
+	digest := []byte(`{"interactive":[{"role":"button"}],"form_controls":[],"landmarks":[]}`)
+	mk := func(vp Viewport, world string, tap int) *Capture {
+		return &Capture{
+			Target: Target{Path: "/", PushURL: "/"}, Viewport: vp, World: world, DigestJSON: digest,
+			Screenshot: []byte("\x89PNG\r\n\x1a\n"), AxeJSON: []byte(`{"violations":[]}`),
+			Layout: &PushLayout{InnerWidth: vp.Width, ScrollWidth: vp.Width, SmallTapTargets: tap},
+		}
+	}
+	all := []*Capture{mk(Mobile, "", 3), mk(Laptop, "", 5), mk(Mobile, JournalWorld, 700)}
+	s := summarizeSignals(all)
+	if s.tap != 8 || len(s.tokenFile) != 2 || s.journal != 1 {
+		t.Errorf("tap=%d token-file=%d journal=%d, want 8/2/1 — the whole-walk lines must count the token-file "+
+			"world only (3+5), never the journal world's 700", s.tap, len(s.tokenFile), s.journal)
+	}
+	if s.digests != 1 || s.pushed != 1 {
+		t.Errorf("digests=%d of pushed=%d, want 1 of 1 — only the token-file MOBILE capture is pushed; the laptop "+
+			"one is a local width and the journal one is never pushed", s.digests, s.pushed)
+	}
+	p, _, err := BuildPayload("t", all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Pages) != s.pushed {
+		t.Errorf("the payload holds %d page(s) but the summary counts %d pushed — two answers to one question",
+			len(p.Pages), s.pushed)
 	}
 }

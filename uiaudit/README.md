@@ -397,12 +397,13 @@ rungs included. `touchEmulation` (`browser.go`) now calls `Emulation.setTouchEmu
 5)` at the touch rungs and EXPLICITLY `false` at every other one, because the state **persists
 across navigations in one tab** (the walk goes mobile → tablet → laptop on one tab).
 
-**The reachability refusal** (`refuseUnreachableTouch`, called by `refuseWalkRegressions` — where
-the plan's closing clause (c) lives — and once earlier in `run` so a blind walk never prints the
-touch SUMMARY; each per-capture line prints `coarse=` first, so its own numbers carry their pointer
-state): `matchMedia('(pointer: coarse)')` must be TRUE at every touch capture and FALSE at every
-non-touch one, or the walk refuses naming each capture. Measured RED at walk level with the enable
-dropped: `rc=1`, 118 touch captures named, summary not printed. Measured on chromium 154.0.8037.92
+**The reachability refusal** (`refuseUnreachableTouch`, called in ONE place, `refuseWalkRegressions`,
+where the plan's closing clause (c) lives; the touch SUMMARY prints only after that passed, and each
+per-capture line prints `coarse=` first, so its own numbers carry their pointer state):
+`matchMedia('(pointer: coarse)')` must be TRUE at every touch capture and FALSE at every non-touch
+one, or the walk refuses naming each capture. A capture set with an EMPTY side (touch-only or
+non-touch-only) is refused too. Measured RED at walk level with the enable dropped: `rc=1`, all 118
+touch captures named by `refuseWalkRegressions`, touch summary not printed. Measured on chromium 154.0.8037.92
 (nixpkgs), the full walk: **TRUE at 118/118 touch captures, FALSE at 177/177 non-touch.**
 
 | control (`touch_test.go`, real chromium) | reading |
@@ -432,7 +433,8 @@ The token-file mobile row equals the plan's baseline (322; 3 distinct inputs at 
 Every number is identical at all five rungs because no `pointer: coarse` rule exists yet.
 
 **The journal-backed world** (`BootJournalWorld`, `walkJournalWorld`) is booted BESIDE the
-token-file world, on the next port, with its own browser (cookies are scoped by host, not port).
+token-file world, on a FREE loopback port picked after that world (and its randomly placed presence
+agent) is up, with its own browser (cookies are scoped by host, not port).
 It seeds a control journal through `control.ProvisionUser` + `control.IssueCredential` — the fixture
 user OWNS a project holding every fixture scope — and walks only `GET /share` and `GET /invite`
 (`journalWorldPaths`), the two rows an `admin`-bearing authority renders differently.

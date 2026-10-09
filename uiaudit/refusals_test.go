@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -33,7 +34,7 @@ func cleanWalk() []*Capture {
 			Layout:   &PushLayout{InnerWidth: vp.Width, ScrollWidth: vp.Width},
 			// Touch emulation REACHED the page: coarse exactly where the viewport is a
 			// touch rung. `refuseUnreachableTouch` refuses any other combination.
-			Pointer: &PointerProbe{Coarse: vp.Touch, AnyCoarse: vp.Touch, HoverNone: true},
+			Pointer: &PointerProbe{Coarse: vp.Touch, HoverNone: true},
 			Content: &ContentBox{
 				InnerWidth: vp.Width,
 				BodyWidth:  vp.Width * 92 / 100,
@@ -459,5 +460,38 @@ func TestTheContentFloorExemptionLedgerIsExactlyThese(t *testing.T) {
 		t.Errorf("a card class constant was renamed (%q, %q) — check that `internal/ui/tailwind.css` and "+
 			"`render.go` moved with it, because this exemption is matched on the rendered class string",
 			signinMainClass, joinMainClass)
+	}
+}
+
+// TestTheReachabilityRefusalRefusesAnEMPTYSide pins `refuseUnreachableTouch`'s two-sided claim: a
+// capture set that holds ONLY touch captures, or ONLY non-touch ones, is refused rather than passed
+// vacuously — every capture in each set is otherwise CORRECT, so the only defect is the empty side.
+func TestTheReachabilityRefusalRefusesAnEMPTYSide(t *testing.T) {
+	var touch, other []*Capture
+	for _, c := range cleanWalk() {
+		if c.Viewport.Touch {
+			touch = append(touch, c)
+		} else {
+			other = append(other, c)
+		}
+	}
+	if err := refuseUnreachableTouch(append(append([]*Capture{}, touch...), other...)); err != nil {
+		t.Fatalf("POSITIVE CONTROL FAILED: both sides present and correct, yet refused: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		set  []*Capture
+		want string
+	}{
+		{"ONLY non-touch captures", other, fmt.Sprintf("measured 0 touch and %d non-touch", len(other))},
+		{"ONLY touch captures", touch, fmt.Sprintf("measured %d touch and 0 non-touch", len(touch))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := refuseUnreachableTouch(tc.set)
+			if err == nil || !strings.Contains(err.Error(), "two-sided claim with an empty side") ||
+				!strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want the empty-side refusal naming %q, got %v", tc.want, err)
+			}
+		})
 	}
 }

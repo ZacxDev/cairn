@@ -124,7 +124,6 @@ type Capture struct {
 // emulation; `README.md`'s blind set records it.
 type PointerProbe struct {
 	Coarse         bool `json:"coarse"`
-	AnyCoarse      bool `json:"any_coarse"`
 	HoverNone      bool `json:"hover_none"`
 	MaxTouchPoints int  `json:"max_touch_points"`
 }
@@ -135,7 +134,6 @@ type PointerProbe struct {
 // return a zero struct whose `coarse:false` is an AFFIRMATIVE claim about a non-touch page.
 const pointerProbeJS = `JSON.stringify({
   coarse: window.matchMedia('(pointer: coarse)').matches,
-  any_coarse: window.matchMedia('(any-pointer: coarse)').matches,
   hover_none: window.matchMedia('(hover: none)').matches,
   max_touch_points: navigator.maxTouchPoints,
 })`

@@ -173,7 +173,15 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 	// only one in which the per-scope share page and its grant form exist. See [BootJournalWorld]
 	// for why this answers `boot.go`'s "a page no deployment serves" objection on its own terms,
 	// and [journalWorldPaths] for why it walks two rows rather than the ledger again.
-	journalCaptures, err := walkJournalWorld(ctx, abs, uiBinary, filepath.Join(workDir, "journal-world"), port+1, budget, targets, ledger)
+	//
+	// ⚠ ITS PORT IS PICKED FREE, NOT `port+1`. The token-file world's presence agent already holds a
+	// RANDOM free loopback port, which could be `port+1`; picking after that world is up means the
+	// agent's port is taken by then and cannot be chosen. `refusePortInUse` still guards the window.
+	journalPort, err := aFreeLoopbackPort()
+	if err != nil {
+		return err
+	}
+	journalCaptures, err := walkJournalWorld(ctx, abs, uiBinary, filepath.Join(workDir, "journal-world"), journalPort, budget, targets, ledger)
 	if err != nil {
 		return err
 	}
@@ -182,20 +190,17 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 	}
 	captures = append(captures, journalCaptures...)
 
-	// 🔴 A BLIND INSTRUMENT MUST NOT REPORT, SO TOUCH REACHABILITY IS CHECKED BEFORE THE SUMMARY
-	// PRINTS ANY TOUCH NUMBER. `refuseWalkRegressions` runs the same predicate again — that is
-	// where clause (c) of the mobile plan's closing condition lives — and this earlier call is
-	// what keeps a walk whose touch rungs were never touch from printing target sizes measured
-	// under a mouse pointer before it refuses.
-	if err := refuseUnreachableTouch(captures); err != nil {
-		return err
-	}
-
 	printSignalSummary(captures, favicons)
 
+	// 🔴 TOUCH REACHABILITY IS CHECKED IN ONE PLACE, `refuseWalkRegressions` (clause (c) of the
+	// mobile plan's closing condition), AND THE TOUCH SUMMARY PRINTS ONLY AFTER IT PASSED — so a
+	// walk whose touch rungs were never touch refuses without printing target sizes measured under
+	// a mouse pointer. ⚠ An earlier draft also called `refuseUnreachableTouch` here, BEFORE the
+	// summary; that made the call inside `refuseWalkRegressions` unreachable on a real walk.
 	if err := refuseWalkRegressions(captures); err != nil {
 		return err
 	}
+	printTouchSummary(captures)
 
 	payload, files, err := BuildPayload(label, captures)
 	if err != nil {
@@ -525,8 +530,12 @@ func slicesContains(s []string, want string) bool {
 // touch emulation persists across navigations in one tab, so a walk that forgot to switch it OFF
 // measures every laptop capture as a phone.
 //
-// ⚠ IT ALSO REFUSES A WALK THAT HAD NO CAPTURE ON ONE SIDE: "false at every non-touch capture"
+// ⚠ IT ALSO REFUSES A CAPTURE SET WITH NO CAPTURE ON ONE SIDE: "false at every non-touch capture"
 // over zero non-touch captures is the reassuring zero this program refuses everywhere else.
+// `TestTheReachabilityRefusalRefusesAnEMPTYSide` pins both directions (touch-only, non-touch-only).
+// ⚠ AN INVARIANT GUARD ON A REAL WALK, LABELLED: `Viewports` declares two touch rungs and three
+// others, and `refuseWalkRegressions` refuses a collapsed matrix first, so a walk reaches this
+// branch only if that DECLARATION changes to all-touch or no-touch — which is what it is for.
 func refuseUnreachableTouch(captures []*Capture) error {
 	var bad []string
 	touchSeen, otherSeen := 0, 0
@@ -930,18 +939,26 @@ func refuseWalkRegressions(captures []*Capture) error {
 	fmt.Printf("uiaudit:   REFUSALS: 0 horizontal overflow, 0 scripts outside the allowlist, %d/%d captures carry a decodable axe "+
 		"testEngine — over %d distinct width(s): %s\n",
 		len(captures)-len(axeless), len(captures), len(widths), viewportWidths())
-	// 🔴 THE REACHABILITY VERDICT PRINTS ITS COUNTS, NOT "OK": the pair is what makes it a
-	// measurement — coarse where touch was emulated, and NOT coarse where it was switched off.
-	touchN, otherN := 0, 0
+	// ⚠ THIS LINE IS THE RESULT OF A REFUSAL THAT PASSED, NOT AN INDEPENDENT MEASUREMENT: reaching
+	// it means `refuseUnreachableTouch` found no mismatch, so the two numerators can only equal
+	// their denominators here. What it adds is that the numerators are counted from what the PROBE
+	// READ (`Pointer.Coarse`), not from the viewport's declaration, and that it names both sides.
+	touchN, coarseAtTouch, otherN, fineAtOther := 0, 0, 0, 0
 	for _, c := range captures {
 		if c.Viewport.Touch {
 			touchN++
+			if c.Pointer != nil && c.Pointer.Coarse {
+				coarseAtTouch++
+			}
 		} else {
 			otherN++
+			if c.Pointer != nil && !c.Pointer.Coarse {
+				fineAtOther++
+			}
 		}
 	}
-	fmt.Printf("uiaudit:   TOUCH REACHABILITY: (pointer: coarse) TRUE at %d/%d touch capture(s) and FALSE at %d/%d "+
-		"non-touch capture(s)\n", touchN, touchN, otherN, otherN)
+	fmt.Printf("uiaudit:   TOUCH REACHABILITY refusal PASSED: the probe read (pointer: coarse) TRUE at %d of %d touch "+
+		"capture(s) and FALSE at %d of %d non-touch capture(s)\n", coarseAtTouch, touchN, fineAtOther, otherN)
 	// 🔴 THE FLOOR REPORTS ITS NARROWEST MEASUREMENT RATHER THAN A ZERO. "0 refusals" is
 	// produced identically by a surface that widens and by a predicate that inspected
 	// nothing; the number below moves when the layout does, which is what makes the clean
@@ -990,40 +1007,23 @@ func viewportWidths() string {
 // is counted separately (see [Browser.FaviconRefusals]) and the per-page network zero below
 // is a claim about SUBRESOURCES THE PAGE ASKED FOR, which is a narrower sentence than the one
 // that was wrong.
-func printSignalSummary(captures []*Capture, faviconRefusals int) {
-	var axe, console, netw, tap, text, overflow, noViewport, digests int
-	rules := map[string]int{}
-	for _, c := range captures {
-		axe += len(c.Violations)
-		for _, v := range c.Violations {
-			rules[v.ID]++
-		}
-		console += len(c.Console)
-		netw += len(c.Network)
-		tap += c.Layout.SmallTapTargets
-		text += c.Layout.SmallText
-		if c.Layout.HorizontalOverflow {
-			overflow++
-		}
-		if c.Layout.MissingViewportMeta {
-			noViewport++
-		}
-		if c.HasDigest() {
-			digests++
-		}
-	}
-	ids := make([]string, 0, len(rules))
-	for id := range rules {
+func printSignalSummary(all []*Capture, faviconRefusals int) {
+	s := summarizeSignals(all)
+	captures := s.tokenFile
+	ids := make([]string, 0, len(s.rules))
+	for id := range s.rules {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 
-	fmt.Println("uiaudit: --- signals over the whole walk ---")
-	fmt.Printf("uiaudit:   axe violations: %d across %d rule(s): %s\n", axe, len(ids), strings.Join(ids, ", "))
+	fmt.Printf("uiaudit: --- signals over the TOKEN-FILE world's %d capture(s); the %d journal-world capture(s) are "+
+		"never pushed and are reported in the touch summary and by the refusals ---\n", len(captures), s.journal)
+	fmt.Printf("uiaudit:   axe violations: %d across %d rule(s): %s\n", s.axe, len(ids), strings.Join(ids, ", "))
 	fmt.Printf("uiaudit:   layout: tap targets under 44px=%d, text under 12px=%d, pages with horizontal overflow=%d, pages missing <meta viewport>=%d\n",
-		tap, text, overflow, noViewport)
-	fmt.Printf("uiaudit:   a11y digests attached: %d of %d page(s) — any shortfall is a page whose digest came back EMPTY, whose ref is therefore omitted (an empty digest is a 400 on the WHOLE push)\n",
-		digests, len(captures))
+		s.tap, s.text, s.overflow, s.noViewport)
+	fmt.Printf("uiaudit:   a11y digests attached: %d of %d PUSHED page(s) — any shortfall is a page whose digest came back EMPTY, whose ref is therefore omitted (an empty digest is a 400 on the WHOLE push)\n",
+		s.digests, s.pushed)
+	console, netw := s.console, s.netw
 	// 🔴 THE STRUCTURAL CLAIM IS DERIVED FROM THE LEDGER, BECAUSE A HARDCODED ONE WENT FALSE ON A
 	// TREE THAT ALREADY EXISTS. The earlier wording said "this surface ships an inline stylesheet
 	// and NO script … there are none" over BOTH numbers. The auth change moves the stylesheet to
@@ -1074,7 +1074,56 @@ func printSignalSummary(captures []*Capture, faviconRefusals int) {
 	// an earlier draft of this line said the latter and the next run contradicted it.
 	fmt.Printf("uiaudit:   favicon refusals=%d — NOT a structural zero: no ledger row carries %s, so the dispatcher's uniform refusal answers it whenever chromium asks. WHETHER it asks is run-dependent (measured non-zero on one walk and zero on another over this same tree), which is exactly why it is counted here and kept out of the per-page totals: attributed to a page it would manufacture a P2 network delta that flaps forever.\n",
 		faviconRefusals, FaviconPath)
-	printTouchSummary(captures)
+}
+
+// signalSums is what `printSignalSummary` prints, computed apart from the printing so the
+// SCOPE of each number is testable.
+type signalSums struct {
+	tokenFile                                           []*Capture
+	journal                                             int
+	rules                                               map[string]int
+	axe, console, netw, tap, text, overflow, noViewport int
+	// digests and pushed are over PUSHED captures only ([pushedCapture]), because the line says
+	// what reaches the hub.
+	digests, pushed int
+}
+
+// summarizeSignals counts the whole-walk signals over the TOKEN-FILE world only.
+//
+// 🔴 THE JOURNAL WORLD IS EXCLUDED, BECAUSE THESE LINES DESCRIBE THE SURFACE THE PUSH CARRIES.
+// When the journal world landed it was silently folded in: "tap targets under 44px" moved from
+// 2785 to 3070 and "a11y digests attached" from 265/265 to 295/295 with no page of the token-file
+// world changing, and the digests line described captures that are never pushed at all.
+func summarizeSignals(all []*Capture) signalSums {
+	s := signalSums{rules: map[string]int{}}
+	for _, c := range all {
+		if pushedCapture(c) {
+			s.pushed++
+			if c.HasDigest() {
+				s.digests++
+			}
+		}
+		if c.World != "" {
+			s.journal++
+			continue
+		}
+		s.tokenFile = append(s.tokenFile, c)
+		s.axe += len(c.Violations)
+		for _, v := range c.Violations {
+			s.rules[v.ID]++
+		}
+		s.console += len(c.Console)
+		s.netw += len(c.Network)
+		s.tap += c.Layout.SmallTapTargets
+		s.text += c.Layout.SmallText
+		if c.Layout.HorizontalOverflow {
+			s.overflow++
+		}
+		if c.Layout.MissingViewportMeta {
+			s.noViewport++
+		}
+	}
+	return s
 }
 
 // DiffBlock renders the deterministic diff for a job log and a step summary.
