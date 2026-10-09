@@ -4011,6 +4011,18 @@ MUTANTS: tuple[Mutant, ...] = (
         why="every variant is a served row, so listing every row's icon looks like completeness — and a "
         "browser may then pick another instance's picture.",
     ),
+    # S3 of the mobile plan: decision 8, clause (d).
+    Mutant(
+        name="ui-html-no-store-dropped",
+        path="internal/ui/server.go",
+        old="\twriteHTMLCached(w, code, body, htmlCachePrivate)\n",
+        new="\twriteHTMLCached(w, code, body, htmlCachePublic)\n",
+        killer="TestEveryNonPublicHTMLRowIsNoStore",
+        extra_killers=("TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",),
+        why="`no-cache` reads as the cautious value and is not: it permits STORING the page and only "
+        "asks for revalidation, so every authenticated page would sit in the device's HTTP cache — the "
+        "invitation mint, whose body is a bearer capability, included.",
+    ),
 )
 
 

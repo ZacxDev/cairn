@@ -1658,13 +1658,23 @@ func (s *Server) renderNavigate(w http.ResponseWriter, view PageView) {
 	s.render(w, NavigatePage(view))
 }
 
+// render writes a page under [writeHTML]'s `no-store`; renderPublic under [writePublicHTML]'s
+// `no-cache`, and only a PUBLIC row's handler may call it.
 func (s *Server) render(w http.ResponseWriter, node g.Node) {
+	s.renderWith(w, node, writeHTML)
+}
+
+func (s *Server) renderPublic(w http.ResponseWriter, node g.Node) {
+	s.renderWith(w, node, writePublicHTML)
+}
+
+func (s *Server) renderWith(w http.ResponseWriter, node g.Node, write func(http.ResponseWriter, int, string)) {
 	var b strings.Builder
 	if err := node.Render(&b); err != nil {
 		writePlain(w, http.StatusInternalServerError, "the page could not be rendered")
 		return
 	}
-	writeHTML(w, http.StatusOK, b.String())
+	write(w, http.StatusOK, b.String())
 }
 
 // writeHTML is the ONE place an HTML response's headers are chosen, so the sign-in page
@@ -1758,41 +1768,61 @@ func (s *Server) render(w http.ResponseWriter, node g.Node) {
 // attribute-value escaping plus the AST ban on `Raw`/`Rawf`, measured by
 // `TestHostileEntryTextIsEscaped` and `TestNoRawNodeConstructorAppearsInTheUIPackage`. What
 // is gone is the barrier BEHIND that guard, not the guard.
+//
+// 🔴 AND ITS `Cache-Control` IS `no-store`, BY DEFAULT, FOR EVERY PAGE BUT THE PUBLIC ONES
+// (decision 8 of `claudedocs/plan-cairn-mobile-pwa.md`). This is the caching decision about the
+// whole surface that an earlier comment here declined to take; it is taken now. Every page
+// behind the authentication chain renders authority-narrowed content, and once the surface is
+// installable that content would otherwise sit in the browser's HTTP cache on a phone. With no
+// service worker on this surface, this header IS the whole device-side storage control for an
+// authenticated page.
+//   - THE DEFAULT IS THE SAFE VALUE, SO FORGETTING IS SAFE. A new handler that calls
+//     [writeHTML] gets `no-store` without anybody remembering; only a page that is public on
+//     purpose opts DOWN, through [writePublicHTML]. The opposite shape — a default of "none"
+//     and an opt-in — is what this replaced, and its failure mode is silent.
+//   - THE INVITATION MINT IS NO LONGER A SPECIAL CASE. It was the one page sent `no-store`,
+//     through a second entry point, because its body IS a bearer capability; it now gets the
+//     same value as every other authenticated page through this function, and
+//     `TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged` still pins it.
+//   - ⚠ WHAT IT COSTS IS RESEARCHED, NOT MEASURED HERE: Chromium admits `no-store` pages to the
+//     back/forward cache for at most three minutes and evicts them on any cookie change (so a
+//     sign-out always evicts); Safari and Firefox re-fetch on Back. The plan's Q7 is the
+//     measurement. Relaxing it is `htmlCachePrivate`, one value.
+//
+// `TestEveryNonPublicHTMLRowIsNoStore` walks the route LEDGER and pins both values, so a row
+// added later is covered without editing it.
 func writeHTML(w http.ResponseWriter, code int, body string) {
-	writeHTMLCached(w, code, body, "")
+	writeHTMLCached(w, code, body, htmlCachePrivate)
 }
 
-// writeHTMLNoStore is [writeHTML] plus `Cache-Control: no-store`, and it has exactly ONE
-// caller: the response that shows a freshly minted invitation token.
+// writePublicHTML is [writeHTML] for a page a PUBLIC row answers — the sign-in page and the
+// invitation landing page — and the only thing it chooses differently is `Cache-Control`.
 //
-// 🔴 IT IS A SECOND CALLER OF ONE HEADER FUNCTION RATHER THAN A SECOND HEADER FUNCTION,
-// WHICH IS THE DISTINCTION [writeHTML]'s COMMENT ASKS FOR. That comment's whole point is
-// that the sign-in page and a content page must not end up under different policies, so
-// the policy still lives in one place and the only thing either entry point chooses is a
-// `Cache-Control` value — the same shape `writeStylesheet` already has for its two rows.
+// 🔴 ONE HEADER FUNCTION, TWO CALLERS, WHICH IS THE DISTINCTION [writeHTML]'s COMMENT ASKS
+// FOR: the sign-in page and a content page must not end up under different policies, so the
+// policy lives in [writeHTMLCached] and each entry point chooses a value — the shape
+// `writeStylesheet` has for its two rows.
 //
-// 🔴 WHAT IT BUYS, AND WHY IT IS NOT NEEDED ANYWHERE ELSE ON THIS SURFACE. The mint
-// response is the ONLY page that carries a bearer capability in its body: `invite.NewToken`
-// returns the token once and nothing can re-derive it, so it is rendered directly rather
-// than survived through a redirect (see `handleInvite`). A response to a POST is not
-// cacheable by default under HTTP semantics, so this is belt-and-braces rather than the
-// guard — but the thing it guards against is a shared cache or a browser's back-forward
-// store keeping a page whose text IS an invitation, and the cost of being explicit is one
-// header. Every other page on this surface renders authority-narrowed content and no
-// credential, which is why the default stays no `Cache-Control` at all rather than
-// this value everywhere: changing that is a caching decision about the whole surface, and
-// it is not this one.
-func writeHTMLNoStore(w http.ResponseWriter, code int, body string) {
-	writeHTMLCached(w, code, body, "no-store")
+// ⚠ `no-cache` STORES AND REVALIDATES; IT IS NOT A WEAKER `no-store`. These pages carry nothing
+// about anybody's authority (no viewer, no session, no CSRF token), so keeping them is harmless,
+// and revalidating on every use means a deploy is seen at once. ⚠ The join page does reflect
+// the invitation token it was opened with into a hidden field — the same token its own URL
+// already carries in the browser's history.
+func writePublicHTML(w http.ResponseWriter, code int, body string) {
+	writeHTMLCached(w, code, body, htmlCachePublic)
 }
 
-// writeHTMLCached is the one place an HTML response's headers are chosen. An empty
-// `cacheControl` sends none, which is what every page but the mint response wants.
-func writeHTMLCached(w http.ResponseWriter, code int, body, cacheControl string) {
+// The two `Cache-Control` values an HTML page is served under, spelled once each.
+const (
+	htmlCachePrivate = "no-store"
+	htmlCachePublic  = "no-cache"
+)
+
+// writeHTMLCached is the one place an HTML response's headers are chosen. Every HTML page
+// carries a `Cache-Control`; there is no "send none" value any more.
+func writeHTMLCached(w http.ResponseWriter, code int, body, cachePolicy string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if cacheControl != "" {
-		w.Header().Set("Cache-Control", cacheControl)
-	}
+	w.Header().Set("Cache-Control", cachePolicy)
 	// 🔴 `nosniff` IS NOT DECORATION HERE. Every byte of the body below came out of
 	// a store entry somebody wrote, and a browser that content-sniffs a response it
 	// was told is HTML can be talked into a different type by the leading bytes.

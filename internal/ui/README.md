@@ -2245,8 +2245,9 @@ to keep the redirect were weighed and refused:
 ⚠ **So the accepted cost, named rather than discovered:** reloading that response re-submits the
 form and mints a SECOND invitation. Browsers prompt first, the extra is listed on the project's
 page and is revocable, and an invitation grants nothing until it is redeemed. The response
-carries `Cache-Control: no-store` — `writeHTMLNoStore`, a second CALLER of one header function
-rather than a second header function — because its body *is* the capability.
+carries `Cache-Control: no-store` because its body *is* the capability. It was once the ONLY page
+sent that, through its own `writeHTMLNoStore`; since S3 of the mobile plan (Phase Q) `no-store` is
+`writeHTML`'s default for every authenticated page, and the mint gets it the same way they do.
 
 🔴 **And the link is rendered as TEXT, not as an `<a href>`.** `MintedInvite.Link` is a PATH
 with no origin (this process cannot know its own external address — `OAuthCallbackPath`'s
@@ -3758,3 +3759,61 @@ The browser-level clauses — chromium's own installability and manifest verdict
   still asks for `/favicon.ico` there and `Browser.FaviconRefusals` still counts it; the branch is
   live, not dead. Deleting it needs the walk to boot armed, which would change every capture the
   walk pushes — a separate decision.
+
+# Phase Q — `no-store` on every authenticated page (S3 of the mobile plan)
+
+`claudedocs/plan-cairn-mobile-pwa.md`, decision 8 and R4. A header change and nothing else.
+
+## 🔴 The default is the safe value
+
+`writeHTML` — the one entry point every page handler reaches — now sends `Cache-Control: no-store`.
+Only a page a PUBLIC row answers opts down, through `writePublicHTML` (`no-cache`): the sign-in page
+(`renderSignIn`, every caller of which is a public row) and the invitation landing page (`GET /join`,
+via `renderPublic`). Both entry points go through `writeHTMLCached`, so the rest of the policy
+(`Content-Type`, `nosniff`, no CSP) cannot differ between them. Before this, every page went out with
+NO `Cache-Control` and the invitation mint alone was `no-store` through `writeHTMLNoStore`; that
+function is folded in and gone, and the mint gets `no-store` as an ordinary authenticated page.
+
+Why a default and not an opt-in: a handler somebody adds later calls `writeHTML` and is covered
+without anybody remembering; forgetting to opt DOWN costs a public page some revalidation, while
+forgetting to opt IN (the shape this replaced) stores an authenticated page on the device silently.
+With no service worker (O13), this header is the whole device-side storage control for an
+authenticated page. ⚠ What it costs (bfcache: Chromium keeps a `no-store` page ≤ 3 minutes and evicts
+it on any cookie change; Safari and Firefox re-fetch on Back) is RESEARCH, not measured here — the
+plan's Q7 measures it on a phone. Relaxing it is one constant, `htmlCachePrivate`.
+
+⚠ `no-cache` is not a weaker `no-store`: it permits storing and requires revalidation. The two public
+pages carry no viewer, no session and no CSRF token. The join page does reflect the invitation token it
+was opened with into a hidden field — the token its own URL already carries in the browser's history.
+
+## The guard: clause (d)
+
+`TestEveryNonPublicHTMLRowIsNoStore` (`cachecontrol_test.go`) walks `DeclaredRouteLedger()`: every
+non-public GET row, driven bare as an authenticated caller, must answer HTML with exactly
+`Cache-Control: no-store`; every public GET row that answers HTML (driven anonymously) exactly
+`no-cache`. A new row is covered without editing the test. A non-public GET row answering something
+other than HTML is a FAILURE, not a skip — the walk could not see the header. Expected values are
+literals, never the implementation's constants. Positive controls refuse a walk that read zero HTML
+pages on either side; it reads 8 non-public and 3 public (`/sign-in`, `/join`, and the provider
+callback's sign-in refusal) today. `uiaudit/pwa_check.sh` runs this test as clause (d); its failure
+messages carry the tag `pwa clause (d) no-store`, which the script greps.
+
+The POST rows are not walked. The one POST that answers a page — the mint — is pinned by
+`TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged`, whose old positive control ("an ordinary
+invite page carries NO `Cache-Control`") is retired: it asserted the opposite of the new contract.
+
+## The RED proof
+
+| guard | RED | green |
+|---|---|---|
+| `TestEveryNonPublicHTMLRowIsNoStore` | at `origin/main`: 11 own-message failures (8 non-public rows `present=false`, want `no-store`; 3 public, want `no-cache`) | at head: 8 + 3 read |
+| battery row `ui-html-no-store-dropped` (`writeHTML` sends `htmlCachePublic`) | `killed` by `TestEveryNonPublicHTMLRowIsNoStore`, extra killer `TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged` held | — |
+| `pwa_check.sh --self-test` sabotage (d) (`writeHTMLCached`'s `Cache-Control` line deleted — the base's empty default) | caught by clause (d)'s own message (`uiaudit/README.md`, "PWA") | — |
+
+## What these guards still cannot see
+
+- **Any real browser's cache.** The walk reads the header this process sets; whether a given browser
+  (or WebKit in standalone mode) honours it, and what Back shows after sign-out, is checklist step 10.
+- **An intermediary.** A proxy or CDN in front of the deployment may store or rewrite regardless.
+- **Non-HTML responses.** `writePlain` refusals and `http.Redirect` bodies carry no `Cache-Control`;
+  neither carries authority-narrowed content, and decision 8 is about pages.
