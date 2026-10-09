@@ -36,6 +36,16 @@
 # from every walk this script runs.
 set -uo pipefail
 
+# 🔴 `CDPATH` IS UNSET BEFORE THE FIRST `cd`, BECAUSE AN EXPORTED ONE CORRUPTS EVERY PATH BELOW. When a
+# relative `cd` is resolved through a non-empty `CDPATH` entry, bash PRINTS the directory it reached, so
+# `$(cd "$(dirname …)" && pwd)` captures the path TWICE (two lines) — and every path built from `here`
+# and `root` is then wrong, which surfaced as a misleading "missing built cairn-ui". Measured: with
+# `CDPATH=.:/tmp` exported and the script run as `uiaudit/pwa_check.sh`, `here` held two lines; with
+# `CDPATH=/tmp` alone it did not (no entry matched, so bash fell back to the cwd silently). A `CDPATH`
+# entry holding ANOTHER checkout's parent would resolve `uiaudit` to THAT checkout instead. Unsetting it
+# also keeps it out of every child this script runs (`run.sh` unsets it too, for direct callers).
+unset CDPATH
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 port="${PWA_CHECK_PORT:-18791}"

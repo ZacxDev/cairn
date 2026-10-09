@@ -590,6 +590,15 @@ deleted. `PWA_CHECK_KEEP=1` keeps it. Measured, with a run that exits 2 straight
 old script left 1 entry, the new one 0, and the new one with `KEEP=1` 1. After a full plain run and a
 full `--self-test`, 0 entries were left.
 
+🔴 **An exported `CDPATH` cannot misdirect it.** Bash PRINTS the directory a relative `cd` reached
+through a non-empty `CDPATH` entry, so `$(cd "$(dirname …)" && pwd)` captured the path twice and every
+path built from it was wrong — reported as a misleading `missing built cairn-ui`. Both `pwa_check.sh`
+and `run.sh` now `unset CDPATH` before their first `cd`. Measured, run as `uiaudit/pwa_check.sh` from
+the repo root: with `CDPATH=.:/tmp` exported the `origin/main` script exits **2** (`cd: $'…/uiaudit\n…'`,
+then `COULD NOT VOUCH — missing built cairn-ui`); this one exits **0**, 7/7 PASS. ⚠ `CDPATH=/tmp` alone
+did NOT reproduce it (no entry matched, so bash fell back to the cwd without printing) — the trigger is
+an entry that RESOLVES the directory, such as `.` or a parent of another checkout.
+
 🔴 **No walk the script runs can push to the audit hub.** `run_c` removes the four `CAIRN_AUDIT_*`
 variables for the walk's process alone. A walk that confirms a push anyway exits 2. The control pair
 used fake credentials pointing at a local recorder: `run.sh` run directly made **1** request, and
