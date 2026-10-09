@@ -23,17 +23,42 @@
 # is PASS only on its `--- PASS:` line and FAIL only on its `--- FAIL:` line; a run that printed
 # neither is a harness problem (exit 2), because a go test that never reached the subtest exits
 # non-zero exactly like one whose subtest failed. The walk's three (c) checks are PASS only on their
-# own `… refusal PASSED` lines with rc 0, and FAIL only on their own refusal headline.
+# own `… refusal PASSED` lines with rc 0, and FAIL only on their own refusal headline. A (c) check
+# with neither, in a walk that REFUSED, is NOT_MEASURED (masked by a sibling's refusal; see
+# `verdict`) — the run still exits 1, because the refusal that masked it is a FAIL. A walk that
+# refused on a (c) class none of the three names (horizontal overflow) prints `c_walk FAIL`.
+#
+# ENV: PWA_CHECK_WORK — the PARENT of the work dir (default $TMPDIR); PWA_CHECK_KEEP=1 keeps the work
+# dir (removed on every exit path otherwise); PWA_CHECK_PORT; PWA_CHECK_SABOTAGES — a subset for
+# --self-test debugging (a subset always exits 1). The CAIRN_AUDIT_* push credentials are REMOVED
+# from every walk this script runs.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/.." && pwd)"
-work="${PWA_CHECK_WORK:-$(mktemp -d -t pwa-check-XXXXXX)}"
 port="${PWA_CHECK_PORT:-18791}"
+
+# 🔴 THE WORK DIR IS ALWAYS A FRESH `mktemp` DIRECTORY THE SCRIPT OWNS, AND IT IS REMOVED ON EVERY EXIT
+# PATH. One `--self-test` leaves seven tree copies, seven builds and four walks behind — measured at
+# ~305 MB before this trap existed. `PWA_CHECK_WORK` names the PARENT it is created under (default
+# `$TMPDIR`), never the directory itself, so a caller's directory is never what gets deleted.
+# `PWA_CHECK_KEEP=1` keeps it, for reading the logs after a failure.
+work="$(mktemp -d "${PWA_CHECK_WORK:-${TMPDIR:-/tmp}}/pwa-check-XXXXXX")" || {
+  echo "pwa_check: COULD NOT VOUCH — cannot create a work dir under ${PWA_CHECK_WORK:-${TMPDIR:-/tmp}}" >&2
+  exit 2
+}
+cleanup() {
+  if [ "${PWA_CHECK_KEEP:-}" = 1 ]; then
+    echo "pwa_check: work dir KEPT (PWA_CHECK_KEEP=1): $work" >&2
+  else
+    rm -rf -- "$work"
+  fi
+}
+trap cleanup EXIT
 
 could_not_vouch() {
   echo "pwa_check: COULD NOT VOUCH — $*" >&2
-  echo "pwa_check: work dir $work" >&2
+  echo "pwa_check: (the work dir is removed on exit; re-run with PWA_CHECK_KEEP=1 to read its logs)" >&2
   exit 2
 }
 
@@ -61,7 +86,6 @@ done
 [ -n "$chromium" ] || could_not_vouch "no chromium on PATH (looked for chromium, chromium-browser, google-chrome, google-chrome-stable, headless-shell)"
 command -v go > /dev/null 2>&1 || could_not_vouch "no go toolchain on PATH, so no cairn-ui can be built"
 command -v python3 > /dev/null 2>&1 || could_not_vouch "no python3 on PATH: the synthetic world is built by tests/reader_fixtures.py"
-mkdir -p "$work" || could_not_vouch "cannot create $work"
 echo "pwa_check: chromium: $("$chromium" --version 2>/dev/null || echo "$chromium (version unreadable)")"
 echo "pwa_check: work dir $work"
 
@@ -79,13 +103,30 @@ run_ab() {
 }
 
 # run_c <tree> <out> <port>: clause (c) — the walk, through the tree's own run.sh, as CI runs it.
+#
+# 🔴 WITH THE AUDIT HUB'S CREDENTIALS REMOVED. A walk that passes PUSHES when all four are in the
+# environment, and a sabotaged tree is not something to publish as a run. `env -u` drops every one
+# for the walk's process alone; the walk then takes its documented no-credentials branch, and
+# `walk_pushed` refuses to vouch if a push confirmation appears anyway.
+audit_vars=(CAIRN_AUDIT_PUSH_URL CAIRN_AUDIT_PUSH_TOKEN CAIRN_AUDIT_API_URL CAIRN_AUDIT_API_TOKEN)
 run_c() {
-  local tree="$1" out="$2" p="$3"
-  ( UIAUDIT_WORK="$out/walk" UIAUDIT_PORT="$p" "$tree/uiaudit/run.sh" ) > "$out/c.log" 2>&1
+  local tree="$1" out="$2" p="$3" unset_args=() v
+  for v in "${audit_vars[@]}"; do unset_args+=(-u "$v"); done
+  ( env "${unset_args[@]}" UIAUDIT_WORK="$out/walk" UIAUDIT_PORT="$p" "$tree/uiaudit/run.sh" ) > "$out/c.log" 2>&1
   echo $? > "$out/c.rc"
 }
+# walk_refused: the walk ran to its verdict and REFUSED (one error carrying every refusal it found).
+walk_refused() { [ -f "$1/c.log" ] && grep -qE "the walk measured [0-9]+ regression class\(es\)" "$1/c.log"; }
+walk_pushed() { [ -f "$1/c.log" ] && grep -qF "uiaudit: PUSH CONFIRMED" "$1/c.log"; }
 
-# verdict <out> <check>: PASS, FAIL, or NONE (no result line: a harness problem).
+# verdict <out> <check>: PASS, FAIL, NOT_MEASURED, or NONE (no result line: a harness problem).
+#
+# 🔴 NOT_MEASURED EXISTS BECAUSE THE WALK PRINTS ITS `… refusal PASSED` LINES ONLY WHEN *EVERY*
+# REFUSAL PASSED (`refuseWalkRegressions` returns all refusals as ONE error first). So when one (c)
+# check fires, its siblings have no PASS line and no headline of their own — that is "masked by a
+# sibling's refusal", not "the harness produced nothing". The first version read it as NONE and exited
+# 2 naming the WRONG check on every real (c) failure. NOT_MEASURED is given only when the walk's own
+# refusal line ("the walk measured N regression class(es)") is present; without it, NONE stands.
 verdict() {
   local out="$1" check="$2"
   case "$check" in
@@ -98,6 +139,7 @@ verdict() {
       [ -f "$out/c.log" ] || { echo NONE; return; }
       if grep -qF -- "${own_message[$check]}" "$out/c.log"; then echo FAIL
       elif [ "$(cat "$out/c.rc")" = 0 ] && grep -qF -- "${walk_passed[$check]}" "$out/c.log"; then echo PASS
+      elif walk_refused "$out"; then echo NOT_MEASURED
       else echo NONE; fi ;;
   esac
 }
@@ -106,28 +148,52 @@ verdict() {
 # `pwa_test.go` says `pwa clause (a) CONTROL`, and that is a misbehaving control — exit 2, not 1.
 control_misbehaved() { [ -f "$1/ab.log" ] && grep -qF "pwa clause (a) CONTROL" "$1/ab.log"; }
 
-# ---- the plain run ----------------------------------------------------------------------------------
-if [ "${1:-}" != "--self-test" ]; then
-  [ $# -eq 0 ] || { echo "usage: $0 [--self-test]" >&2; exit 2; }
-  out="$work/check"
+# plain_run <tree> <out>: every wired check over <tree>; prints one line per check and RETURNS the exit
+# code (0, 1 or 2) instead of exiting, so `--self-test` can run this very loop over a sabotaged tree.
+plain_run() {
+  local tree="$1" out="$2" c v pass=0 fail=0 nm=0
   mkdir -p "$out"
-  run_ab "$root" "$out"
-  [ -f "$out/harness" ] && could_not_vouch "$(cat "$out/harness")"
-  control_misbehaved "$out" && could_not_vouch "clause (a)'s unarmed control did not read [no-manifest] (see $out/ab.log)"
-  run_c "$root" "$out" "$port"
-  pass=0; fail=0
+  run_ab "$tree" "$out"
+  if [ -f "$out/harness" ]; then echo "pwa_check: COULD NOT VOUCH — $(cat "$out/harness")"; return 2; fi
+  if control_misbehaved "$out"; then
+    echo "pwa_check: COULD NOT VOUCH — clause (a)'s unarmed control did not read [no-manifest]"; return 2
+  fi
+  run_c "$tree" "$out" "$port"
+  if walk_pushed "$out"; then
+    echo "pwa_check: COULD NOT VOUCH — the walk PUSHED to the audit hub although its credentials were removed"; return 2
+  fi
+  if grep -qF "push skipped (no credentials)" "$out/c.log"; then
+    echo "pwa_check: walk push           SKIPPED (CAIRN_AUDIT_* removed for the walk)"
+  fi
   for c in "${checks[@]}"; do
     v=$(verdict "$out" "$c")
     printf 'pwa_check: %-18s %s\n' "$c" "$v"
     case "$v" in
       PASS) pass=$((pass + 1)) ;;
-      FAIL) fail=$((fail + 1)); grep -F -- "${own_message[$c]}" "$out"/ab.log "$out"/c.log 2>/dev/null | head -3 | sed 's/^/pwa_check:     /' ;;
-      *) could_not_vouch "check $c produced NO verdict line (see $out/ab.log, $out/c.log)" ;;
+      FAIL) fail=$((fail + 1))
+            grep -hF -- "${own_message[$c]}" "$out"/ab.log "$out"/c.log 2>/dev/null | head -3 | cut -c1-240 | sed 's/^/pwa_check:     /' ;;
+      NOT_MEASURED) nm=$((nm + 1)) ;;
+      *) echo "pwa_check: COULD NOT VOUCH — check $c produced NO verdict line"; return 2 ;;
     esac
   done
-  echo "pwa_check: ${#checks[@]} check(s): $pass PASS, $fail FAIL"
-  [ "$fail" = 0 ] && [ "$pass" = "${#checks[@]}" ] && exit 0
-  exit 1
+  # The walk refused on a class none of the three headlines names (horizontal overflow is part of (c)
+  # too): that is a FAILURE of clause (c), printed as such, never a pass by absence.
+  if walk_refused "$out" && ! grep -qF -e "${own_message[c_reachability]}" -e "${own_message[c_target_size]}" \
+      -e "${own_message[c_input_font]}" "$out/c.log"; then
+    fail=$((fail + 1))
+    echo "pwa_check: c_walk             FAIL (the walk refused on another clause (c) class:)"
+    grep -hE -A2 "the walk measured [0-9]+ regression class" "$out/c.log" | head -3 | cut -c1-240 | sed 's/^/pwa_check:     /'
+  fi
+  echo "pwa_check: ${#checks[@]} check(s): $pass PASS, $fail FAIL, $nm not measured (masked by a sibling refusal)"
+  [ "$fail" = 0 ] && [ "$pass" = "${#checks[@]}" ] && return 0
+  return 1
+}
+
+# ---- the plain run ----------------------------------------------------------------------------------
+if [ "${1:-}" != "--self-test" ]; then
+  [ $# -eq 0 ] || { echo "usage: $0 [--self-test]" >&2; exit 2; }
+  plain_run "$root" "$work/check"
+  exit $?
 fi
 
 # ---- --self-test ------------------------------------------------------------------------------------
@@ -208,19 +274,25 @@ command -v git > /dev/null 2>&1 || could_not_vouch "no git on PATH, so the tree'
 ctl="$work/self-test/control"
 rm -rf "$ctl"; mkdir -p "$ctl/tree"
 make_copy "$ctl/tree" none || could_not_vouch "the scratch copy could not be made"
-echo "pwa_check: positive control (an UNEDITED copy) ..."
-run_ab "$ctl/tree" "$ctl"
-[ -f "$ctl/harness" ] && could_not_vouch "positive control: $(cat "$ctl/harness")"
-control_misbehaved "$ctl" && could_not_vouch "positive control: clause (a)'s unarmed control misbehaved"
-run_c "$ctl/tree" "$ctl" "$port"
-for c in "${checks[@]}"; do
-  v=$(verdict "$ctl" "$c")
-  [ "$v" = PASS ] || could_not_vouch "positive control: check $c read $v on an UNEDITED copy (see $ctl), so every sabotage below would score caught for a reason that has nothing to do with it"
-done
+echo "pwa_check: positive control (an UNEDITED copy, through the plain loop) ..."
+plain_run "$ctl/tree" "$ctl" > "$ctl/plain.out" 2>&1
+prc=$?
+if [ "$prc" != 0 ]; then
+  sed 's/^/pwa_check:     | /' "$ctl/plain.out" >&2
+  could_not_vouch "positive control: the plain loop exited $prc on an UNEDITED copy, so every sabotage below would score caught for a reason that has nothing to do with it"
+fi
 echo "pwa_check: positive control PASSED all ${#checks[@]} check(s)"
 
-sabotaged=0; caught=0
-for s in "${checks[@]}"; do
+# 🔴 THE (c) SABOTAGES RUN THE *PLAIN LOOP* (`plain_run`), NOT ONLY `verdict`. A verdict function that
+# names the right check is not a script that EXITS right: the walk prints its three `… PASSED` lines only
+# when EVERY refusal passes, so one failing (c) check leaves its siblings with no PASS line — and a loop
+# that read that as "no verdict" exited 2 ("could not vouch") on every real (c) failure. Each (c)
+# sabotage must make the plain loop exit 1 with its own check printed FAIL.
+# `PWA_CHECK_SABOTAGES` (a space-separated subset) is a debugging aid: any subset reports fewer than
+# six and so exits 1.
+selected=(${PWA_CHECK_SABOTAGES:-${checks[*]}})
+sabotaged=0; caught=0; plain_arms=0; plain_ok=0
+for s in "${selected[@]}"; do
   d="$work/self-test/$s"
   rm -rf "$d"; mkdir -p "$d/tree"
   make_copy "$d/tree" "$s" || could_not_vouch "sabotage $s could not be applied"
@@ -231,8 +303,17 @@ for s in "${checks[@]}"; do
       [ -f "$d/harness" ] && could_not_vouch "sabotage $s: $(cat "$d/harness")"
       log="$d/ab.log" ;;
     c_*)
-      run_c "$d/tree" "$d" "$port"
-      log="$d/c.log" ;;
+      plain_run "$d/tree" "$d" > "$d/plain.out" 2>&1
+      prc=$?
+      log="$d/c.log"
+      plain_arms=$((plain_arms + 1))
+      if [ "$prc" = 1 ] && grep -qE "^pwa_check: $s +FAIL\$" "$d/plain.out"; then
+        plain_ok=$((plain_ok + 1))
+        printf 'pwa_check: plain loop on %-18s exit 1, names %s FAIL\n' "$s" "$s"
+      else
+        printf 'pwa_check: plain loop on %-18s WRONG: exit %s; it printed:\n' "$s" "$prc"
+        sed 's/^/pwa_check:     | /' "$d/plain.out"
+      fi ;;
   esac
   v=$(verdict "$d" "$s")
   also=()
@@ -249,6 +330,7 @@ for s in "${checks[@]}"; do
       "${also[*]:-none}" "$d"
   fi
 done
-echo "sabotaged=$sabotaged caught=$caught"
-[ "$sabotaged" = "${#checks[@]}" ] && [ "$caught" = "$sabotaged" ] && exit 0
+echo "sabotaged=$sabotaged caught=$caught plain-loop=$plain_ok/$plain_arms"
+[ "$sabotaged" = "${#checks[@]}" ] && [ "$caught" = "$sabotaged" ] && [ "$plain_arms" = 3 ] \
+  && [ "$plain_ok" = "$plain_arms" ] && exit 0
 exit 1

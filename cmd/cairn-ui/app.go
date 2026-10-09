@@ -11,7 +11,8 @@ import (
 
 // 🔴 THE INSTALLABLE SURFACE'S THREE FLAGS (S2 of the mobile plan, decision 1). `-app-name` ARMS
 // the feature and has NO default: unset, there is no manifest link, no theme colour, no icon link,
-// and `/manifest.webmanifest` answers the dispatcher's own 404 — the surface that existed before.
+// and `/manifest.webmanifest` answers 404 (the AUTHENTICATED no-route answer — not invisible to an
+// anonymous caller; `internal/ui/pwa.go` says why).
 // `-app-icon-variant` has no default either and is REQUIRED with a name (O6): a default would give
 // two instances that both forgot it the same icon. `-app-short-name` is optional.
 //
@@ -45,36 +46,49 @@ type appLine struct {
 func (l appLine) spelling() string { return "-" + l.flag + " / $" + l.env }
 
 // resolveApp turns the three lines into a `ui.App`, refusing a blank line and any shape
-// `ui.App.Validate` refuses, worded in the flags' names.
-func resolveApp(name, short, variant appLine) (ui.App, error) {
+// `ui.App.Validate` refuses, worded in the flags' names. `warning` is non-empty when settings were
+// IGNORED: a short name or a variant with no name starts the surface UNARMED rather than refusing,
+// because deleting the name line is how an operator disarms a deployment, and a refusal there would
+// crash-loop the pod on that very edit. The warning names what was ignored.
+func resolveApp(name, short, variant appLine) (app ui.App, warning string, err error) {
 	for _, l := range []appLine{name, short, variant} {
 		if l.written && identity.ValueReducesToNothing(l.value) {
-			return ui.App{}, fmt.Errorf("%s is set to %q, which reduces to nothing, so this surface would read "+
+			return ui.App{}, "", fmt.Errorf("%s is set to %q, which reduces to nothing, so this surface would read "+
 				"it as UNSET and serve no manifest while the deployment said otherwise. Refusing to start; set "+
 				"a value or delete the line", l.spelling(), l.value)
 		}
 	}
-	app := ui.App{Name: name.value, ShortName: short.value, IconVariant: variant.value}
-	err := app.Validate()
+	if name.value == "" {
+		var ignored []string
+		for _, l := range []appLine{short, variant} {
+			if l.value != "" {
+				ignored = append(ignored, fmt.Sprintf("%s=%q", l.spelling(), l.value))
+			}
+		}
+		if len(ignored) > 0 {
+			warning = "WARNING " + strings.Join(ignored, " and ") + " IGNORED: " + name.spelling() +
+				" is not set, so the surface is UNARMED (no manifest, not installable). Set the name to arm " +
+				"it, or delete the ignored line(s)"
+		}
+		return ui.App{}, warning, nil
+	}
+	app = ui.App{Name: name.value, ShortName: short.value, IconVariant: variant.value}
+	err = app.Validate()
 	switch {
 	case err == nil:
-		return app, nil
+		return app, "", nil
 	case errors.Is(err, ui.ErrAppNoVariant):
-		return ui.App{}, fmt.Errorf("%s is set and %s is not. There is NO default variant — two instances "+
+		return ui.App{}, "", fmt.Errorf("%s is set and %s is not. There is NO default variant — two instances "+
 			"that both left it out would install with the same icon. Refusing to start; choose one of: %s",
 			name.spelling(), variant.spelling(), strings.Join(ui.IconVariants(), ", "))
 	case errors.Is(err, ui.ErrAppUnknownVariant):
-		return ui.App{}, fmt.Errorf("%s is %q, which is not a committed icon variant. Refusing to start; "+
+		return ui.App{}, "", fmt.Errorf("%s is %q, which is not a committed icon variant. Refusing to start; "+
 			"choose one of: %s", variant.spelling(), variant.value, strings.Join(ui.IconVariants(), ", "))
 	case errors.Is(err, ui.ErrAppShortNameTooLong):
-		return ui.App{}, fmt.Errorf("%s: %v. Refusing to start rather than letting a launcher cut it",
+		return ui.App{}, "", fmt.Errorf("%s: %v. Refusing to start rather than letting a launcher cut it",
 			short.spelling(), err)
-	case errors.Is(err, ui.ErrAppNotArmed):
-		return ui.App{}, fmt.Errorf("%s or %s is set without %s, which arms nothing — no manifest would be "+
-			"served. Refusing to start; set the name too, or delete the line", short.spelling(),
-			variant.spelling(), name.spelling())
 	default:
-		return ui.App{}, err
+		return ui.App{}, "", err
 	}
 }
 

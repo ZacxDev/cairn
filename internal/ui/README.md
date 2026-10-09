@@ -3629,8 +3629,11 @@ re-measures on every run.
 ## 🔴 Inert unless a deployment arms it
 
 `cmd/cairn-ui -app-name` (`$CAIRN_UI_APP_NAME`) arms it and has NO default. Unarmed:
-- `GET /manifest.webmanifest` answers the dispatcher's own `404 no such route`, byte-identical to a
-  path that is not a row;
+- `GET /manifest.webmanifest` answers `404 no such route` — what an AUTHENTICATED caller gets for a
+  path that is not a row. ⚠ NOT what an ANONYMOUS caller gets for one: the chain refuses an unrouted
+  path 401 (303 to sign-in for a browser) while this public row answers 404 ahead of it, and the 16
+  icon rows answer 200 on every deployment. So "unarmed" is not invisible; it hides nothing the
+  public repository does not already say;
 - no frame emits any PWA head element — `pwaHead(App{})` returns NO node.
 
 Armed, every frame carries four elements, once each: `<link rel="manifest">`, one
@@ -3643,7 +3646,10 @@ Armed, every frame carries four elements, once each: `<link rel="manifest">`, on
 | `-app-icon-variant` (`CAIRN_UI_APP_ICON_VARIANT`) | none — REQUIRED with a name (O6) | missing with a name (names the flag); outside `ui.IconVariants()` (names the set); written blank |
 | `-app-short-name` (`CAIRN_UI_APP_SHORT_NAME`) | omitted from the manifest | more than 12 characters (runes; 12 is admitted); written blank |
 
-A short name or a variant with NO name is refused too: it arms nothing. All three are read RAW
+A short name or a variant with NO name is NOT refused: the surface starts UNARMED and logs one
+`WARNING … IGNORED` line naming each ignored setting. Deleting the name line is how a deployment
+disarms, and a refusal there would crash-loop the pod on that edit (an earlier draft refused it; the
+plan never asked for that). All three are read RAW
 (`rawEnvNames`), for `controlJournalDefault`'s reason — through `envalias` a whitespace value reads as
 unset, and an operator who meant to arm the app would get a surface that silently is not installable.
 The shape checks live in `ui.App.Validate` (one place; `New` calls it); `cmd/cairn-ui/app.go` only
@@ -3725,6 +3731,13 @@ prefix match on `/static/icon-` → `TestEveryServedPathComesFromTheLedger`; `ma
 `TestAppValidateRefusesEachShape`; the no-name refusal dropped → `TestAppValidateRefusesEachShape` and
 `TestEachAppLineIsJudgedWithItsOwnRefusal`;
 `immutable` on the manifest, and `display: browser` → `TestTheManifestIsBuiltFromTheConfiguredApp`.
+
+Audit round 0/1 (D1): the old exit-78 refusal restored for a variant with no name →
+`TestEachAppLineIsJudgedWithItsOwnRefusal` and the binary arm of
+`TestTheBinaryServesTheManifestItWasArmedWith`; the warning never printed → the binary arm; the warning
+naming nothing → both. (F2) The anonymous arm of `TestAnUnarmedServerServesNoManifestAndNoPWAHead` pins
+404 for the unarmed manifest against 401/303 for an unrouted path; `ui-manifest-row-requires-auth` turns
+its first row into a 401.
 
 ⚠ **Two guards are INVARIANT guards, labelled:** `TestTheManifestEscapesAHostileName` (the manifest was
 `encoding/json` from its first line), and the one-entry `AllowedScriptSources` assertion in

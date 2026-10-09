@@ -26,9 +26,14 @@ import (
 // nothing in this file is stored on the device.
 //
 // 🔴 IT IS INERT UNLESS A DEPLOYMENT ARMS IT. [App] with no `Name` renders no head element and the
-// manifest row answers the dispatcher's own 404 — byte-identical to a path that is not a row — so
-// an unarmed surface is the surface that existed before this file, and the ROWS are still in the
-// ledger, which never depends on configuration.
+// manifest row answers `404 no such route` — the same status and body an AUTHENTICATED caller gets
+// for a path that is not a row. The ROWS stay in the ledger, which never depends on configuration.
+//
+// ⚠ IT IS *NOT* INVISIBLE, AND AN EARLIER DRAFT SAID IT WAS. To an ANONYMOUS caller an unrouted path
+// answers 401 (or a 303 to sign-in for a browser), because the chain runs first; the manifest row is
+// public and answers before the chain, so its 404 tells it apart. And the 16 icon rows answer 200 on
+// every deployment. Neither discloses anything the public repository does not: the build's PWA
+// surface is this file. What "unarmed" buys is no install prompt and no head elements — not secrecy.
 
 // App is one deployment's installable identity, from `cmd/cairn-ui`'s `-app-*` flags.
 //
@@ -68,11 +73,12 @@ var (
 	ErrAppUnknownVariant = errors.New("ui: the icon variant is not one of the committed variants")
 	// ErrAppShortNameTooLong: `ShortName` is longer than [AppShortNameMax] characters.
 	ErrAppShortNameTooLong = errors.New("ui: the short name is longer than the launcher label allows")
-	// ErrAppNotArmed: a short name or a variant is set with no `Name`, which arms nothing — the
-	// operator configured something that would have no effect, and saying so is cheaper than
-	// letting them look for an install prompt that cannot appear.
-	ErrAppNotArmed = errors.New("ui: an app short name or icon variant is set without an app name, which arms nothing")
 )
+
+// 🔴 THERE IS NO "SET WITHOUT A NAME" REFUSAL, AND ONE STOOD HERE (`ErrAppNotArmed`). A short name
+// or a variant with no `Name` is UNARMED and judged no further: the way to disarm a deployment is
+// to delete its name line, and a refusal there would crash-loop the pod on exactly that edit.
+// `cmd/cairn-ui` WARNS, naming the ignored setting(s); nothing here refuses.
 
 // Validate is the ONE place the shape of an [App] is judged. [New] calls it, so a server cannot be
 // built around an app the manifest could not describe; `cmd/cairn-ui` calls it to word the refusal
@@ -80,9 +86,6 @@ var (
 // whitespace flag or variable), and `cmd/cairn-ui` refuses it before a value ever reaches this.
 func (a App) Validate() error {
 	if !a.Armed() {
-		if a.ShortName != "" || a.IconVariant != "" {
-			return ErrAppNotArmed
-		}
 		return nil
 	}
 	if a.IconVariant == "" {
@@ -377,9 +380,10 @@ func buildManifest(a App) webManifest {
 	return m
 }
 
-// handleManifest serves [ManifestPath]. UNARMED, it answers exactly what a path that is not a row
-// answers — the dispatcher's own 404 and body — so an unarmed deployment does not even disclose
-// that the feature exists in its build.
+// handleManifest serves [ManifestPath]. UNARMED, it answers `404 no such route` — what an
+// AUTHENTICATED caller gets for a path that is not a row. An ANONYMOUS caller can tell the two apart
+// (an unrouted path is refused 401 by the chain this public row runs ahead of), and the icon rows are
+// served regardless, so this hides nothing; see the file comment.
 func (s *Server) handleManifest(w http.ResponseWriter, _ *http.Request, _ identity.Identity) {
 	if !s.app.Armed() {
 		writePlain(w, http.StatusNotFound, noSuchRoute)

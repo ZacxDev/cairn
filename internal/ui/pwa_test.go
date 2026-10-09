@@ -211,15 +211,38 @@ func htmlRows(t *testing.T, srv *Server) map[string]string {
 }
 
 // TestAnUnarmedServerServesNoManifestAndNoPWAHead: with no `App.Name` the feature is INERT — the
-// manifest row answers exactly what a path that is not a row answers, and no page carries a head
-// element pointing at it.
+// manifest row answers the AUTHENTICATED no-route answer, and no page carries a head element.
+//
+// ⚠ THE SCOPE OF "INERT" IS PINNED, NOT JUST ASSERTED: to an ANONYMOUS caller the unarmed manifest
+// (404, ahead of the chain) and an unrouted path (401, or 303 for a browser) DIFFER. A draft claimed
+// they were byte-identical; the anonymous arm below records what each actually answers.
 func TestAnUnarmedServerServesNoManifestAndNoPWAHead(t *testing.T) {
 	srv := newTestServer(t, staticAuth{testIdentity()})
 	rec := fetch(srv, ManifestPath, nil)
 	if rec.Code != http.StatusNotFound || rec.Body.String() != noSuchRoute {
-		t.Errorf("an UNARMED manifest answered %d %q, want 404 %q — the dispatcher's own no-route answer, so "+
-			"an unarmed deployment is indistinguishable from one built before the feature", rec.Code,
-			rec.Body.String(), noSuchRoute)
+		t.Errorf("an UNARMED manifest answered %d %q, want 404 %q — the authenticated no-route answer",
+			rec.Code, rec.Body.String(), noSuchRoute)
+	}
+	if other := fetch(srv, "/no-such-row", nil); other.Code != rec.Code || other.Body.String() != rec.Body.String() {
+		t.Errorf("AUTHENTICATED: the unarmed manifest answered %d %q and an unrouted path %d %q; these must match",
+			rec.Code, rec.Body.String(), other.Code, other.Body.String())
+	}
+	anon := newTestServer(t, refusingAuth{})
+	for _, tc := range []struct {
+		path, accept string
+		code         int
+		body         string
+	}{
+		{ManifestPath, "", http.StatusNotFound, noSuchRoute},
+		{ManifestPath, "text/html", http.StatusNotFound, noSuchRoute},
+		{"/no-such-row", "", http.StatusUnauthorized, "unauthorized"},
+		{"/no-such-row", "text/html", http.StatusSeeOther, ""},
+	} {
+		got := fetch(anon, tc.path, map[string]string{"Accept": tc.accept})
+		if got.Code != tc.code || (tc.body != "" && got.Body.String() != tc.body) {
+			t.Errorf("ANONYMOUS GET %s (Accept %q) answered %d %q, want %d %q", tc.path, tc.accept,
+				got.Code, got.Body.String(), tc.code, tc.body)
+		}
 	}
 	pages := htmlRows(t, srv)
 	if len(pages) < 10 {
@@ -382,8 +405,11 @@ func TestAppValidateRefusesEachShape(t *testing.T) {
 		{"a 13-character short name", App{Name: "n", ShortName: "abcdefghijklm", IconVariant: "teal"}, ErrAppShortNameTooLong},
 		{"a name and no variant", App{Name: "n"}, ErrAppNoVariant},
 		{"a variant outside the set", App{Name: "n", IconVariant: "chartreuse"}, ErrAppUnknownVariant},
-		{"a short name and no name", App{ShortName: "s"}, ErrAppNotArmed},
-		{"a variant and no name", App{IconVariant: "amber"}, ErrAppNotArmed},
+		// UNARMED, not refused: deleting the name line is how a deployment disarms, and a refusal there
+		// would crash-loop the pod. `cmd/cairn-ui` warns about the ignored settings instead.
+		{"a short name and no name is unarmed", App{ShortName: "s"}, nil},
+		{"a variant and no name is unarmed", App{IconVariant: "amber"}, nil},
+		{"even an unknown variant with no name is unarmed", App{IconVariant: "chartreuse"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.app.Validate()

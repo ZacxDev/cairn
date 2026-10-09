@@ -227,8 +227,9 @@ var routes = map[routeKey]route{
 	// 🔴 THE WEB APP MANIFEST (S2 of the mobile plan, `pwa.go`). A FIXED path, and `classPublic` because
 	// Chromium fetches a manifest without credentials — a manifest behind the chain would leave the
 	// sign-in page uninstallable. It consults no authority: it says only what the deployment's
-	// `-app-*` flags configured. UNARMED it answers the dispatcher's own 404, so the row is in the
-	// ledger on every deployment and the ledger never depends on configuration. The icon rows it
+	// `-app-*` flags configured. UNARMED it answers `404 no such route` — the AUTHENTICATED no-route
+	// answer; an anonymous caller, whose unrouted paths get 401/303, can tell it apart (`pwa.go`) — so
+	// the row is in the ledger on every deployment and the ledger never depends on configuration. The icon rows it
 	// links are added beside it by `pwa.go`'s `init`, one computed exact key per committed file.
 	{"GET", ManifestPath}: {(*Server).handleManifest, classPublic},
 }

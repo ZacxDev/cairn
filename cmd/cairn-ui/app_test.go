@@ -43,33 +43,48 @@ func TestEachAppLineIsJudgedWithItsOwnRefusal(t *testing.T) {
 		appName, sh, variant appLine
 		want                 string // "" = admitted
 		wantApp              ui.App
+		// wantWarning is a phrase the IGNORED-settings warning must carry; "" = no warning at all.
+		wantWarning string
 	}{
-		{"nothing written is the unarmed surface", noName, noShort, noVariant, "", ui.App{}},
+		{"nothing written is the unarmed surface", noName, noShort, noVariant, "", ui.App{}, ""},
 		{"armed", nameLine("cairn (alpha)"), noShort, variantLine("amber"), "",
-			ui.App{Name: "cairn (alpha)", IconVariant: "amber"}},
+			ui.App{Name: "cairn (alpha)", IconVariant: "amber"}, ""},
 		{"a 12-character short name is admitted", nameLine("n"), shortLine("abcdefghijkl"), variantLine("teal"), "",
-			ui.App{Name: "n", ShortName: "abcdefghijkl", IconVariant: "teal"}},
-		{"a whitespace name", nameLine("   "), noShort, variantLine("amber"), "reduces to nothing", ui.App{}},
-		{"an empty name written as a flag", nameLine(""), noShort, variantLine("amber"), "reduces to nothing", ui.App{}},
-		{"a zero-width name", nameLine("\u200b\u200b"), noShort, variantLine("amber"), "reduces to nothing", ui.App{}},
-		{"a whitespace short name", nameLine("n"), shortLine(" \t"), variantLine("amber"), "reduces to nothing", ui.App{}},
-		{"a whitespace variant", nameLine("n"), noShort, variantLine("  "), "reduces to nothing", ui.App{}},
+			ui.App{Name: "n", ShortName: "abcdefghijkl", IconVariant: "teal"}, ""},
+		{"a whitespace name", nameLine("   "), noShort, variantLine("amber"), "reduces to nothing", ui.App{}, ""},
+		{"an empty name written as a flag", nameLine(""), noShort, variantLine("amber"), "reduces to nothing", ui.App{}, ""},
+		{"a zero-width name", nameLine("\u200b\u200b"), noShort, variantLine("amber"), "reduces to nothing", ui.App{}, ""},
+		{"a whitespace short name", nameLine("n"), shortLine(" \t"), variantLine("amber"), "reduces to nothing", ui.App{}, ""},
+		{"a whitespace variant", nameLine("n"), noShort, variantLine("  "), "reduces to nothing", ui.App{}, ""},
 		{"a 13-character short name", nameLine("n"), shortLine("abcdefghijklm"), variantLine("teal"),
-			"at most 12 are accepted", ui.App{}},
+			"at most 12 are accepted", ui.App{}, ""},
 		{"a name and no variant", nameLine("n"), noShort, noVariant, "-app-icon-variant / $CAIRN_UI_APP_ICON_VARIANT is not",
-			ui.App{}},
+			ui.App{}, ""},
 		{"a variant outside the set", nameLine("n"), noShort, variantLine("chartreuse"),
-			"not a committed icon variant. Refusing to start; choose one of: amber, teal, violet, slate", ui.App{}},
-		{"a variant and no name", noName, noShort, variantLine("amber"), "which arms nothing", ui.App{}},
+			"not a committed icon variant. Refusing to start; choose one of: amber, teal, violet, slate", ui.App{}, ""},
+		// 🔴 UNARMED AND WARNED, NEVER REFUSED (audit D1): deleting the name line is how a deployment
+		// disarms, so a refusal here would crash-loop the pod on that edit. Each ignored line is named.
+		{"a variant and no name starts unarmed", noName, noShort, variantLine("amber"), "", ui.App{},
+			`-app-icon-variant / $CAIRN_UI_APP_ICON_VARIANT="amber" IGNORED`},
+		{"a short name and no name starts unarmed", noName, shortLine("s"), noVariant, "", ui.App{},
+			`-app-short-name / $CAIRN_UI_APP_SHORT_NAME="s" IGNORED`},
+		{"both, and no name, names both", noName, shortLine("s"), variantLine("chartreuse"), "", ui.App{},
+			`-app-short-name / $CAIRN_UI_APP_SHORT_NAME="s" and -app-icon-variant / $CAIRN_UI_APP_ICON_VARIANT="chartreuse" IGNORED`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			app, err := resolveApp(tc.appName, tc.sh, tc.variant)
+			app, warning, err := resolveApp(tc.appName, tc.sh, tc.variant)
 			if tc.want == "" {
 				if err != nil {
 					t.Fatalf("refused an admissible configuration: %v", err)
 				}
 				if app != tc.wantApp {
 					t.Fatalf("resolved %+v, want %+v", app, tc.wantApp)
+				}
+				if tc.wantWarning == "" && warning != "" {
+					t.Fatalf("warned %q on a configuration that ignores nothing", warning)
+				}
+				if tc.wantWarning != "" && !strings.Contains(warning, tc.wantWarning) {
+					t.Fatalf("warning %q does not contain %q", warning, tc.wantWarning)
 				}
 				return
 			}
@@ -88,7 +103,10 @@ func startAppChild(t *testing.T, env []string, extra ...string) *presenceChild {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// 15 s, not 60: a REFUSAL arrives in milliseconds, and the mutant this file must catch is a child
+	// that SERVES — so the deadline is what fails it. Two such arms at 60 s each overran the battery's
+	// `-timeout=2m`, which turned a kill into a package timeout no test name was attributed to.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	args := append([]string{
 		"-control-journal", journal,
 		"-store", t.TempDir(),
@@ -159,6 +177,10 @@ func TestTheBinaryServesTheManifestItWasArmedWith(t *testing.T) {
 		{"armed", []string{"-app-name", "cairn (alpha)", "-app-short-name", "abcdefghijkl", "-app-icon-variant", "violet"},
 			http.StatusOK, `app "cairn (alpha)" (icon variant violet)`},
 		{"unarmed", nil, http.StatusNotFound, "app unarmed (no -app-name"},
+		// 🔴 AUDIT D1 / N2, AT THE PROCESS: a variant with no name STARTS (an exit 78 here crash-loops
+		// a pod whose operator just deleted the name line), serves NO manifest, and says why on stderr.
+		{"a variant and no name starts unarmed and warns", []string{"-app-icon-variant", "teal"}, http.StatusNotFound,
+			`cairn-ui: WARNING -app-icon-variant / $CAIRN_UI_APP_ICON_VARIANT="teal" IGNORED`},
 	} {
 		t.Run(arm.name, func(t *testing.T) {
 			port := aPortNothingIsListeningOn(t)

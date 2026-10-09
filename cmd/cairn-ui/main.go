@@ -328,12 +328,15 @@ func main() {
 	appLines := func(flagName, env, value string) appLine {
 		return appLine{flag: flagName, env: env, value: value, written: written[flagName] || os.Getenv(env) != ""}
 	}
-	app, err := resolveApp(appLines(flagAppName, EnvUIAppName, *appName),
+	app, appWarning, err := resolveApp(appLines(flagAppName, EnvUIAppName, *appName),
 		appLines(flagAppShortName, EnvUIAppShortName, *appShortName),
 		appLines(flagAppIconVariant, EnvUIAppIconVariant, *appIconVariant))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(exitConfig)
+	}
+	if appWarning != "" {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+appWarning)
 	}
 
 	// 🔴 THE ARC JOURNAL IS CHECKED BEFORE ANYTHING IS SERVED, WITH THE POD'S OWN FUNCTION. A
