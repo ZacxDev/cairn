@@ -61,6 +61,13 @@ field names and types alone.
   embedded encoded secrets are declared residuals rather than closed with a new matcher; the
   decoded-text floor drops from 64 to 16 characters; flow-style YAML `Secret`s are a declared
   residual; the Goal and O9 list every hold reason.
+- *Revision 6* applies audit round 5's two definition changes in decision 3. SIMPLE becomes an
+  ALLOWLIST (no shell metacharacter; words exactly `cairn` + `recall|search` + arguments) instead of
+  a list of forbidden operators. A result has ARRIVED when it is TERMINAL — opencode `completed` OR
+  `error` (an error is header-less, so `*`) — and the 24 h backstop counts from the CALL's own
+  timestamp, not session idleness. Retracted: revision 5's example-based "simple", its "1,260 of
+  41,117 not yet completed" evidence (1,255 were finished errors, 5 were running), and its
+  idleness-keyed backstop.
 
 ## Goal and premise
 
@@ -578,9 +585,18 @@ script that prints only counts.
      `*`. A command with `--repo P` or with NO scope flag (scope derived from the working
      directory's repository) is **cwd-derived**, and by default it adds **`*`** (see the two
      callers below). **The ONE exception, deliberately narrow:** the `*` is NOT added when ALL of
-     these hold — (i) the tool call's command line is a single simple `cairn recall …` or
-     `cairn search …` invocation (no `&&`/`;`/`|` chain, no `cd`/`pushd`/`git -C`, no subshell, no
-     script); (ii) its OWN result — the `tool_result` block whose `tool_use_id` matches (Claude
+     these hold — (i) the tool call's command line is **SIMPLE**, defined as an ALLOWLIST, not a list
+     of forbidden operators: the line contains NO shell metacharacter at all — no newline, `;`, `&`,
+     `|`, `$`, backtick, `(`, `)`, `<`, `>`, `{`, `}`, `*`, `?`, `[`, `]`, `~`, `!`, `#`, `\`, and no
+     quote character — and splits on spaces and tabs into words that are EXACTLY `cairn`, then
+     `recall` or `search`, then arguments. Anything else is NOT simple and gets the `*`. That makes
+     the following not simple, deliberately and safely: a QUOTED argument (so most multi-word
+     `search` queries — a cost, Q16), an environment prefix (`VAR=x cairn …`), a
+     full or relative path to the binary, `nix run …#cairn`, the `subsystem-recall` alias, and every
+     wrapper (`eval`, `bash -c`, `xargs`, `env`, `sudo`, `timeout`). *Revision 5 described "simple"
+     by example ("no `&&`/`;`/`|` chain, …"), which an implementation checking only the listed
+     operators would let a newline-separated second command, `&`, `$(…)` or backticks through —
+     re-opening the revision-4 under-count; retracted.* (ii) its OWN result — the `tool_result` block whose `tool_use_id` matches (Claude
      Code) or the same `tool` part's `state.output` (opencode) — carries a `subsystem-recall:`
      header with a valid scope, which `R_header` has already added (R7). **Hook attachments never
      count as the call's result**, even when they carry the call's `toolUseID`, and neither does
@@ -591,12 +607,22 @@ script that prints only counts.
      a `*`. Retracted.* So **a header can ADD a scope anywhere, and can CANCEL a `*` only in case
      (i)+(ii).**
    - **A result that has not arrived yet is PENDING, not header-less.** Capture ships every 60 s,
-     and a tool's result can lag its call (opencode tool parts are mutated in place; 1,260 of 41,117
-     tool parts were not yet `completed` at one measurement by the round-4 audit, one host). A
-     cwd-derived command whose OWN result is not yet stored is held in a separate PENDING set `P`,
-     which — unlike `V` — SHRINKS: when the result arrives, the command resolves by the rule above
-     (to nothing more, or to `*`); if the session has then been idle for 24 h with the result still
-     absent, it resolves to `*`. While `P` is non-empty the session is OWNER-ONLY (decision 4) and
+     and a tool's result can lag its call. **"Arrived" means a TERMINAL result:** for Claude Code,
+     the `tool_result` block with the matching `tool_use_id` is stored; for opencode, the `tool`
+     part's `state.status` is `completed` OR `error`. An `error` part carries `state.error` and NO
+     `state.output`, so an error result is header-less and resolves to `*` by the rule above. As
+     measured on this host (round 5 of the audit): opencode had 39,859 `completed` tool parts, all
+     with `state.output`; 1,255 `error` parts, with `state.error` and no `state.output`; and 5
+     `running` — so only the 5 were genuinely late. *Revision 5 cited "1,260 of 41,117 not yet
+     completed" as lagging results; 1,255 of those were FINISHED errors, and keying arrival on
+     `state.output` would have left every failed cwd-derived call pending; retracted.* **Claude
+     Code is unaffected**: 2 of 23,545 calls lacked a result, both at the end of their file (the
+     call in flight when the file was read). A cwd-derived command whose OWN result is not yet
+     terminal is held in a separate PENDING set `P`, which — unlike `V` — SHRINKS: when the result
+     arrives, the command resolves by the rule above (to nothing more, or to `*`); if 24 h have
+     passed since THE CALL's own timestamp with no terminal result, it resolves to `*`. *Revision 5
+     keyed that backstop on the SESSION being idle 24 h, so a session used daily never resolved a
+     lost result and never shipped again; retracted.* While `P` is non-empty the session is OWNER-ONLY (decision 4) and
      the agent PAUSES shipping it (no new upload, no hold, no withdrawal — routing is re-evaluated
      when `P` empties). *Revision 4 treated a missing result as header-less, which added a
      permanent `*` (sets only grow, holds are sticky) for a result that was merely late; retracted.*
@@ -616,9 +642,9 @@ script that prints only counts.
        EVERY cwd-derived command, recall and search included, and revision 4 said a bare recall
        "costs nothing" without the pending window; both are retracted.*
      - **The agent resolves a cwd-derived command outside the exception** against the record's `cwd` with the client's own
-       `DeriveScope` — but ONLY when the command line is a single simple `cairn <verb> …`
-       invocation. Any other shape (a `cd`/`pushd`/`git -C` before it, a `&&`/`;`/`|` chain, a
-       subshell, a script) adds `*` instead. Its resolution is used for ROUTING only (decision 16)
+       `DeriveScope` — but ONLY when the command line is SIMPLE by the allowlist above, with any
+       `cairn` verb in the second word (not only `recall`/`search`). Any other line adds `*`
+       instead. Its resolution is used for ROUTING only (decision 16)
        and is sent as `D`, which can only ADD to the pod's set.
      - *Revision 2 said "the pod's copy is authoritative" without qualification; that was false for
        cwd-derived commands, which the pod cannot resolve at all.*
@@ -709,8 +735,9 @@ script that prints only counts.
    - *Base64 that hides text:* a WHOLE string of ≥ 16 base64-alphabet characters (after removing
      ASCII whitespace — see 6a's decoder) that DECODES to text (6a's text rule) is scanned decoded as
      well; a match replaces the whole encoded value. The floor buys no precision — the decoded scan
-     redacts only on a rule match — so it is set low: 16 characters is 12 decoded bytes, below any
-     credential shape the table recognises. **Residual:** an encoded secret EMBEDDED in a longer
+     redacts only on a rule match — so it is set low: 16 characters is 12 decoded bytes, and the only
+     values shorter than that which a rule recognises are tiny dotenv values (e.g. a 4-character
+     value base64'd unpadded is 14 characters), which pass this decoded scan. **Residual:** an encoded secret EMBEDDED in a longer
      string (not the whole value) is not decoded. *Revision 4 set the floor at 64 characters, which a
      base64-encoded 40-character token (56 characters) slipped under, and claimed that without the
      rule such a secret "passes every rule" as if the rule closed the case; both are retracted.*
@@ -1096,7 +1123,7 @@ GET /transcript/skeleton  ·  GET /transcript/records  ·  GET /transcript/tool 
 |---|---|
 | **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. **What is NOT controlled:** unshaped secrets (typed passwords, novel token formats), secrets inside images/PDFs (withheld rather than stored until Q2 is answered, decision 6a — if Q2 says "ship", this becomes an uncontrolled residual) EXCEPT binary payloads embedded in longer strings or in unlisted formats, which ship text-scanned only (6a's residuals), an encoded secret embedded in a longer string (not decoded), a flow-style YAML `Secret` (decision 6), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
 | **T2. Confidential but non-secret content** (client business detail, personal data in a tool output) | Redaction does not address it at all; VISIBILITY is the only control (decision 4). Stated, so nobody believes the redactor covers it. |
-| **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store plus reads from rendered headers anywhere in the content plus command-line scopes plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope, `--all-scopes`, and every cwd-derived command on the pod add `*` — EXCEPT a single simple `cairn recall|search` whose OWN result carries a valid header (never a hook attachment, never another call's result); any non-simple command line on the agent adds `*`; a command whose result has not arrived is PENDING and keeps the session owner-only and paused until it resolves; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The residual:** a read or write NO signal sees — a header-less verb (`sessions`, `arcs`, `arc-show`, `ls-entries`) or a `put`/`create` run by a script whose command line the transcript does not show; and a directory change the parser cannot see before a simple-looking `cairn` call (e.g. a shell whose working directory was changed by an EARLIER tool call while the record's `cwd` is stale), which makes the AGENT's routing resolve the wrong scope — the pod's `*` keeps visibility safe, routing is what can go wrong. |
+| **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store plus reads from rendered headers anywhere in the content plus command-line scopes plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope, `--all-scopes`, and every cwd-derived command on the pod add `*` — EXCEPT a SIMPLE `cairn recall|search` — simple by decision 3's ALLOWLIST (no shell metacharacter, words exactly `cairn` + verb + arguments) — whose OWN result carries a valid header (never a hook attachment, never another call's result); any non-simple command line on the agent adds `*`; a command whose result is not yet TERMINAL (opencode `completed` or `error`) is PENDING and keeps the session owner-only and paused until it resolves or 24 h pass since the call; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The residual:** a read or write NO signal sees — a header-less verb (`sessions`, `arcs`, `arc-show`, `ls-entries`) or a `put`/`create` run by a script whose command line the transcript does not show; and a directory change the parser cannot see before a simple-looking `cairn` call (e.g. a shell whose working directory was changed by an EARLIER tool call while the record's `cwd` is stale), which makes the AGENT's routing resolve the wrong scope — the pod's `*` keeps visibility safe, routing is what can go wrong. |
 | **T4. Viewer-set computation makes the predicate vacuous** | Clause (e), and a mutant row (`transcript-written-set-from-viewer-scopes`). |
 | **T5. A stolen capture token** | Can APPEND to its owner's transcripts from its one host — inject fake records into the owner's own sessions — can SQUAT a not-yet-uploaded session id (decision 15), and can WITHDRAW (delete) its owner's sessions uploaded from that host (decision 16). Cannot read, or touch another owner's or host's existing sessions. Revoke by deleting the row (re-read per request). |
 | **T6. A stolen plugin token** | Can read every transcript where that plugin is ON, and write outputs of its declared types. The largest single exposure the design creates; it is why toggles default OFF, require every scope's consent (decision 10), and why a plugin token is per plugin. |
@@ -1244,16 +1271,23 @@ run time).
   `beta-notes`; the hook-attachment recall with no command line → `beta-notes` (control: a parser
   that reads tool INPUTS only misses it); the hook-attachment search rendered `scope=(all scopes)`
   → `*` (mutant `scopeuse-all-scopes-header-names-a-scope`); a `renderer.go:158`-form header → `*`
-  (mutant `scopeuse-scopeless-header-dropped`); a single simple bare `cairn recall` whose OWN
+  (mutant `scopeuse-scopeless-header-dropped`); a SIMPLE (allowlist) bare `cairn recall` whose OWN
   `tool_result` carries `scope=alpha-notes` → `alpha-notes` and NO `*`, on the pod as well (mutant
   `scopeuse-paired-header-ignored`); **one call `cairn recall --scope alpha-notes && cairn
   ls-entries --repo ../beta-repo`, whose single result carries a valid `alpha-notes` header → `V`
-  holds `alpha-notes` AND `*`** (mutant `scopeuse-chained-call-header-suppresses-star`); a bare
+  holds `alpha-notes` AND `*`** (mutant `scopeuse-chained-call-header-suppresses-star`); the same
+  two commands separated by a NEWLINE instead of `&&`, and `cairn recall --scope alpha-notes & cairn
+  ls-entries --repo ../beta-repo`, each → `alpha-notes` AND `*` (the allowlist rejects the newline
+  and the `&`; control: a checker that rejects only `&&`, `;` and `|` lets both through); a bare
   `cairn ls-entries` call followed by a PostToolUse hook attachment carrying its `toolUseID` and
   a valid header → still `*` (mutant `scopeuse-hook-attachment-counts-as-result`); a bare simple
   `cairn recall` whose result is not yet stored → `P = {that call}`, NOT `*`, and after the result
   arrives with a valid header → `P` empty and no `*` (mutant
-  `scopeuse-missing-result-becomes-star`); the same call still resultless after 24 h idle → `*`;
+  `scopeuse-missing-result-becomes-star`); an opencode cwd-derived `cairn recall` part with status
+  `error` (`state.error`, no `state.output`) → TERMINAL and header-less → `*` at once, not pending
+  (control: keying arrival on `state.output` leaves it pending); the same simple call still with no
+  terminal result 24 h after ITS OWN timestamp → `*`, even while the session keeps receiving new
+  records (control: an idleness-keyed backstop never fires in that case);
   on the POD, a `--repo` `ls-entries` and a bare header-less
   `ls-entries` → `*` (mutant `scopeuse-cwd-derived-command-dropped`); on the AGENT, the same simple
   bare `ls-entries` → the scope `DeriveScope` gives for the record's `cwd`, while `cd ../other &&
@@ -1366,11 +1400,12 @@ asserted as equal SETS of viewers); a summary renders plugin name, version, mode
 journal fact; withdrawal (clause m): a capture token's `withdraw` of its own (owner, host)'s root
 answers `{"deleted": true}` and runs the same cascade; the same call for ANOTHER owner's root, for
 the SAME owner's root uploaded from ANOTHER host label, and for a root that never existed each
-answer the identical `{"deleted": false}` and delete nothing; **withdraw-twice**: the owner's own
-withdraw repeated after the first succeeded (the lost-acknowledgement case) answers `{"deleted":
-true}` again and changes nothing (mutant `transcript-withdraw-repeat-answers-false`) (mutants
+answer the identical `{"deleted": false}` and delete nothing (mutants
 `transcript-withdraw-deletes-another-owners-root` and `transcript-withdraw-host-unchecked`, the
-latter on the precedent of `transcript-capture-token-host-unchecked`); a ClickUp URL renders only through the `refurl` template from a validated canonical
+latter on the precedent of `transcript-capture-token-host-unchecked`); **withdraw-twice**: the
+owner's own withdraw repeated after the first succeeded (the lost-acknowledgement case) answers
+`{"deleted": true}` again and changes nothing (mutant `transcript-withdraw-repeat-answers-false`);
+a ClickUp URL renders only through the `refurl` template from a validated canonical
 id (control: a `javascript:` id is refused by validation and renders as text).
 
 **S7.** The owner's page lists their owner-only and shared sessions; another principal who can read
@@ -1499,12 +1534,14 @@ said Q16 shapes S3; the rule's code and mutant are in S2.*
   verbs (decision 17): agents already run `cairn`, and the Go-only mechanism exists. The alternative
   is a `cairn-transcript` reader binary that leaves `cmd/cairn`'s ledgers untouched.
 - **Q16. Cwd-derived commands make a session owner-only, except one narrow case.** A bare or
-  `--repo` `cairn recall`/`search` adds no `*` ONLY when it is a single simple invocation and its
+  `--repo` `cairn recall`/`search` adds no `*` ONLY when it is SIMPLE by the allowlist (decision 3) and its
   OWN result carries the resolved scope in its header (decision 3) — and until that result arrives
   the session is owner-only and paused, so even that case costs a window, not nothing. Everything
   else cwd-derived adds `*` and makes the session owner-only: a HEADER-LESS verb (`sessions`,
   `arcs`, `arc-show`, `validate`, `ls-entries`, `arc-register`, `append`, `put`, `create`), a recall
-  or search inside a chained or otherwise non-simple command line, and a failed call (an `append`
+  or search on a line that is not SIMPLE by decision 3's allowlist (a chain, a wrapper, an env
+  prefix, a full path, the `subsystem-recall` alias, or a QUOTED argument — so most multi-word
+  searches), and a failed call (an `append`
   among them, although its trailer also names the scope — the conservative choice, since a deduped
   re-POST leaves no trailer). *Revision 3 charged every cwd-derived command, recall included;
   revision 4 said a bare recall "costs NOTHING" and let any header in a call's result cancel the
