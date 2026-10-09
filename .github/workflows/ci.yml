@@ -1824,13 +1824,15 @@ jobs:
           # (36/88 measured on its base, chromium 154, before `touch_test.go` and the reachability
           # rows); 48 / 115 on S1 (the two touch refusals' rows, their scope test, the input-font
           # threshold test — measured, chromium 154); 50 / 119 on S1's round 1 (the reading-order
-          # rows, the shrink-to-fit control, the whole-row hit-test — measured, chromium 154). A test deleted from a file that keeps others would otherwise move nothing.
-          if [ "$passes" -lt 50 ]; then
-            echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 50 — a Test function was deleted"
+          # rows, the shrink-to-fit control, the whole-row hit-test — measured, chromium 154); 52 / 124 on the
+          # mobile plan's S2 (`TestPWAClauses` and its three clause subtests, and the script-contract
+          # test — measured, chromium 154). A test deleted from a file that keeps others would otherwise move nothing.
+          if [ "$passes" -lt 52 ]; then
+            echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 52 — a Test function was deleted"
             exit 1
           fi
-          if [ "$total" -lt 119 ]; then
-            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 119 — a table row was deleted"
+          if [ "$total" -lt 124 ]; then
+            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 124 — a table row was deleted"
             exit 1
           fi
 
