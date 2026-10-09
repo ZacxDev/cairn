@@ -223,6 +223,14 @@ var routes = map[routeKey]route{
 	// `AllowedScriptSources` may name it — see `script.go` for the allowlist that replaced this
 	// surface's zero-script property, and the three guards that hold it.
 	{"GET", FilterScriptPath}: {(*Server).handleFilterScript, classPublic},
+
+	// 🔴 THE WEB APP MANIFEST (S2 of the mobile plan, `pwa.go`). A FIXED path, and `classPublic` because
+	// Chromium fetches a manifest without credentials — a manifest behind the chain would leave the
+	// sign-in page uninstallable. It consults no authority: it says only what the deployment's
+	// `-app-*` flags configured. UNARMED it answers the dispatcher's own 404, so the row is in the
+	// ledger on every deployment and the ledger never depends on configuration. The icon rows it
+	// links are added beside it by `pwa.go`'s `init`, one computed exact key per committed file.
+	{"GET", ManifestPath}: {(*Server).handleManifest, classPublic},
 }
 
 // SignInPath and SignOutPath are spelled once and read by the dispatcher, by the

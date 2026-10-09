@@ -158,6 +158,7 @@ func membershipActor(id identity.Identity) control.Principal {
 func (s *Server) handleInvitePage(w http.ResponseWriter, r *http.Request, id identity.Identity) {
 	view := InviteView{
 		Viewer: id.Principal.Display,
+		App:    s.app,
 		// The same derivation `handlePage` and `handleSharePage` use, and for the same
 		// reason: the token comes from the COOKIE on this request, so a caller
 		// authenticated by a bearer header renders no forms.
@@ -266,6 +267,7 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request, id identit
 
 	view := InviteView{
 		Viewer:  id.Principal.Display,
+		App:     s.app,
 		CSRF:    csrfTokenFor(r),
 		NoStore: false,
 		Project: chosen,
@@ -359,7 +361,7 @@ func (s *Server) handleJoinPage(w http.ResponseWriter, r *http.Request, _ identi
 	// `providerArmed` is per-render deliberately (see its comment): a deployment whose key
 	// set has never been fetched re-arms without a restart, so a value sampled anywhere else
 	// would leave this page refusing after the provider came back.
-	s.render(w, JoinPage(token, s.providerArmed()))
+	s.render(w, JoinPage(token, s.providerArmed(), s.app))
 }
 
 // refuseWithoutInviteStore is what the two invite WRITES answer on a deployment with no

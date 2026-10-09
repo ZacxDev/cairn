@@ -3921,6 +3921,96 @@ MUTANTS: tuple[Mutant, ...] = (
         why="the badge is already conditional, so a second condition looks redundant — but a form "
         "with an empty token is a control that answers 403 every time it is pressed.",
     ),
+    # ---- the installable surface (S2 of the mobile plan): manifest, icons, `pwaHead`, the flags ------
+    Mutant(
+        name="ui-manifest-row-requires-auth",
+        path="internal/ui/routes.go",
+        old='{"GET", ManifestPath}: {(*Server).handleManifest, classPublic},',
+        new='{"GET", ManifestPath}: {(*Server).handleManifest, 0},',
+        killer="TestTheManifestAnswersAnAnonymousCaller",
+        extra_killers=("TestTheRouteLedgerMatchesTheDispatchTable",),
+        why="every other row that renders configuration sits behind the chain, so dropping the class reads "
+        "as tightening — and it leaves the sign-in page, where an install starts, linking a manifest the "
+        "browser fetches WITHOUT credentials and is refused.",
+    ),
+    Mutant(
+        name="ui-manifest-name-is-a-constant",
+        path="internal/ui/pwa.go",
+        old="Name: a.Name, ShortName: a.ShortName,",
+        new='Name: "cairn", ShortName: a.ShortName,',
+        killer="TestTheManifestIsBuiltFromTheConfiguredApp",
+        why="the product IS called cairn, so a literal looks right on every single-instance check — and "
+        "installs both instances under one title, which is the confusion the flag exists to prevent.",
+    ),
+    Mutant(
+        name="ui-manifest-served-when-unarmed",
+        path="internal/ui/pwa.go",
+        old="\tif !s.app.Armed() {\n\t\twritePlain(w, http.StatusNotFound, noSuchRoute)",
+        new="\tif false {\n\t\twritePlain(w, http.StatusNotFound, noSuchRoute)",
+        killer="TestAnUnarmedServerServesNoManifestAndNoPWAHead",
+        extra_killers=("TestEveryServedPathComesFromTheLedger",),
+        why="a manifest with an empty name still parses, so serving one unconditionally looks harmless — "
+        "and makes a deployment that never opted in advertise an installable app with no name.",
+    ),
+    Mutant(
+        name="ui-pwa-head-missing-from-sign-in",
+        path="internal/ui/render.go",
+        old='Title:    "cairn — sign in",\n\t\tLanguage: "en",\n\t\tHead:     []g.Node{stylesheetLink(), pwaHead(app)},',
+        new='Title:    "cairn — sign in",\n\t\tLanguage: "en",\n\t\tHead:     []g.Node{stylesheetLink()},',
+        killer="TestEveryFrameCallsPWAHead",
+        extra_killers=("TestEveryArmedHTMLPageCarriesThePWAHead",),
+        why="the public frames build their own `c.HTML5` on purpose, so a head element added to `shell` "
+        "silently misses them — and the sign-in page is the one an installed app opens first.",
+    ),
+    Mutant(
+        name="ui-pwa-head-emits-a-script-before-s4",
+        path="internal/ui/pwa.go",
+        old="\t\th.Link(h.Rel(\"apple-touch-icon\"), h.Href(apple.Path)),\n\t})",
+        new="\t\th.Link(h.Rel(\"apple-touch-icon\"), h.Href(apple.Path)),\n"
+        "\t\th.Script(h.Src(\"/static/pwa.js\"), h.Defer()),\n\t})",
+        killer="TestTheArmedPWAHeadAddsNoScript",
+        why="S4 adds exactly this tag to exactly this function, so landing it a slice early is the natural "
+        "slip — a script outside the allowlist on every armed page, before its spelling guard exists.",
+    ),
+    Mutant(
+        name="ui-app-name-blank-accepted",
+        path="cmd/cairn-ui/app.go",
+        old="if l.written && identity.ValueReducesToNothing(l.value) {",
+        new="if false && l.written && identity.ValueReducesToNothing(l.value) {",
+        killer="TestEachAppLineIsJudgedWithItsOwnRefusal",
+        extra_killers=("TestTheBinaryRefusesEachAppMisconfiguration",),
+        why="`Validate` already refuses an incomplete app, so a separate blank check looks redundant — "
+        "but a whitespace name is ARMED to `Validate` and installs a nameless app.",
+    ),
+    Mutant(
+        name="ui-icon-variant-optional-when-armed",
+        path="internal/ui/pwa.go",
+        old='\tif a.IconVariant == "" {\n\t\treturn ErrAppNoVariant',
+        new='\tif false {\n\t\treturn ErrAppNoVariant',
+        killer="TestAppValidateRefusesEachShape",
+        extra_killers=("TestEachAppLineIsJudgedWithItsOwnRefusal", "TestTheBinaryRefusesEachAppMisconfiguration"),
+        why="the set check below also refuses \"\", so this branch looks dead — but its sentinel is what "
+        "lets the operator be told WHICH flag is missing rather than that \"\" is not a variant.",
+    ),
+    Mutant(
+        name="ui-icon-variant-outside-the-set-accepted",
+        path="internal/ui/pwa.go",
+        old="\tif !slices.Contains(IconVariants(), a.IconVariant) {",
+        new="\tif false && !slices.Contains(IconVariants(), a.IconVariant) {",
+        killer="TestAppValidateRefusesEachShape",
+        extra_killers=("TestEachAppLineIsJudgedWithItsOwnRefusal", "TestTheBinaryRefusesEachAppMisconfiguration"),
+        why="a typo'd variant then starts, links icons at empty paths, and installs with no picture — a "
+        "failure discovered on a phone instead of at startup.",
+    ),
+    Mutant(
+        name="ui-manifest-links-every-variant",
+        path="internal/ui/pwa.go",
+        old='if f.Variant != a.IconVariant || f.Kind.ManifestPurpose == "" {',
+        new='if f.Kind.ManifestPurpose == "" {',
+        killer="TestTheManifestIsBuiltFromTheConfiguredApp",
+        why="every variant is a served row, so listing every row's icon looks like completeness — and a "
+        "browser may then pick another instance's picture.",
+    ),
 )
 
 

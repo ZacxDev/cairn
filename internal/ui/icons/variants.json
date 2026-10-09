@@ -1,0 +1,14 @@
+{
+  "kinds": [
+    {"kind": "192", "px": 192, "template": "any.svg", "manifest_purpose": "any"},
+    {"kind": "512", "px": 512, "template": "any.svg", "manifest_purpose": "any"},
+    {"kind": "512-maskable", "px": 512, "template": "full.svg", "manifest_purpose": "maskable"},
+    {"kind": "180-apple", "px": 180, "template": "full.svg", "manifest_purpose": ""}
+  ],
+  "variants": [
+    {"name": "amber", "background": "#b45309", "stone": "#fdf6e3", "shade": "#78350f"},
+    {"name": "teal", "background": "#0f766e", "stone": "#f0fdfa", "shade": "#134e4a"},
+    {"name": "violet", "background": "#6d28d9", "stone": "#f5f3ff", "shade": "#3b0764"},
+    {"name": "slate", "background": "#334155", "stone": "#f8fafc", "shade": "#0f172a"}
+  ]
+}

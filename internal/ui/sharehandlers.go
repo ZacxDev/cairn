@@ -52,6 +52,7 @@ const (
 func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request, id identity.Identity) {
 	view := ShareView{
 		Viewer: id.Principal.Display,
+		App:    s.app,
 		// The same derivation `handlePage` uses, and for the same reason: the token
 		// comes from the COOKIE on this request, so a caller authenticated by a bearer
 		// header renders no forms. See [Server.handlePage].

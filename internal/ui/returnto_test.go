@@ -385,7 +385,7 @@ func TestTheSignInPageEscapesTheReturnPathAndCarriesItInBothForms(t *testing.T) 
 	if safeNext(hostile) != hostile {
 		t.Fatalf("PRECONDITION: the fixture is meant to be a value the validator accepts")
 	}
-	page := renderNode(t, SignInPage("", true, hostile))
+	page := renderNode(t, SignInPage("", true, hostile, App{}))
 	if strings.Contains(page, `"><b>`) {
 		t.Fatal("the return-to value broke out of its attribute")
 	}
@@ -393,7 +393,7 @@ func TestTheSignInPageEscapesTheReturnPathAndCarriesItInBothForms(t *testing.T) 
 	if len(got) != 2 || got[0] != hostile || got[1] != hostile {
 		t.Errorf("return-to fields %q, want the value in BOTH forms (provider, credential)", got)
 	}
-	if n := hiddenNext(renderNode(t, SignInPage("", true, ""))); len(n) != 0 {
+	if n := hiddenNext(renderNode(t, SignInPage("", true, "", App{}))); len(n) != 0 {
 		t.Errorf("an empty return-to rendered %d field(s), want none", len(n))
 	}
 }

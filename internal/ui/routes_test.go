@@ -2,9 +2,13 @@ package ui
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -86,6 +90,10 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		// bytes to everybody, no authority consulted — and content-hashed for the stylesheet's
 		// reason, recomputed here from the embedded bytes rather than read off the implementation.
 		"GET /static/filter." + scriptDigestFromBytes(t) + ".js public",
+		// 🔴 THE WEB APP MANIFEST (S2 of the mobile plan). `public` because Chromium fetches a manifest
+		// with no credentials, and a fixed path; it answers 404 on an UNARMED deployment, which is why
+		// it is a row on every deployment rather than one that appears with a flag.
+		"GET /manifest.webmanifest public",
 		"POST /invite",
 		"POST /invite/revoke",
 		// 🔴 THE BELL (S5 of the arcs/presence plan). NO CLASS, and that is the line to read: both
@@ -98,6 +106,15 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		"POST /sign-in/github public",
 		"POST /sign-out",
 		"POST /unshare",
+	}
+	// 🔴 AND ONE ROW PER COMMITTED ICON FILE, EVERY VARIANT, ARMED OR NOT. The variants and kinds are
+	// spelled HERE, by hand, rather than read off `IconVariants()` — a variant added or dropped is a
+	// row added or dropped and must show up as a red ledger — and each path's digest is recomputed by
+	// this test from the file on disk (`iconRowFromBytes`), the stylesheet row's treatment.
+	for _, variant := range []string{"amber", "teal", "violet", "slate"} {
+		for _, kind := range []string{"192", "512", "512-maskable", "180-apple"} {
+			want = append(want, "GET "+iconRowFromBytes(t, variant, kind)+" public")
+		}
 	}
 	// ⚠ THE EXPECTATION IS SORTED RATHER THAN WRITTEN IN ORDER, AND ONLY BECAUSE ONE ROW'S
 	// POSITION IS NOT KNOWABLE WHEN THE LIST IS TYPED. `/static/app.<hex>.css` sorts before or
@@ -456,6 +473,37 @@ var bareGETAnswer = map[string]int{
 	"GET " + StylesheetHashedPath + " public": http.StatusOK,
 	// The filter script's row, computed for the same reason: a bare GET is the whole request.
 	"GET " + FilterScriptPath + " public": http.StatusOK,
+	// 🔴 THE MANIFEST ANSWERS 404 HERE, AND THAT IS THE DECISION: `testConfig` is UNARMED (no
+	// `App.Name`), and an unarmed deployment answers the dispatcher's own no-route 404 — the body is
+	// asserted by `TestAnUnarmedServerServesNoManifestAndNoPWAHead`. Armed, it is 200; that half is
+	// `TestTheManifestIsBuiltFromTheConfiguredApp`'s.
+	"GET " + ManifestPath + " public": http.StatusNotFound,
+}
+
+// The icon rows answer 200 to a bare GET, armed or not — every variant is served on every
+// deployment. Their KEYS are computed (`IconPaths`), which is acceptable here and not in the hand
+// ledger above because this map says only what a row ANSWERS; WHICH rows exist is the ledger's
+// claim, and that one spells the variants and kinds by hand.
+func init() {
+	for _, p := range IconPaths() {
+		bareGETAnswer["GET "+p+" public"] = http.StatusOK
+	}
+}
+
+// iconRowFromBytes is the hashed icon row for one committed file, digested HERE from the file on
+// disk rather than read off `iconFiles` — the `stylesheetDigestFromBytes` discipline: a path that is
+// not the digest of the bytes this binary serves is a red ledger, not a matching one.
+func iconRowFromBytes(t *testing.T, variant, kind string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("icons", variant+"-"+kind+".png"))
+	if err != nil {
+		t.Fatalf("the hand ledger names icon %s-%s and its committed file cannot be read: %v", variant, kind, err)
+	}
+	if len(b) == 0 {
+		t.Fatalf("icons/%s-%s.png is EMPTY, so its digest is the digest of nothing", variant, kind)
+	}
+	sum := sha256.Sum256(b)
+	return "/static/icon-" + variant + "-" + kind + "." + hex.EncodeToString(sum[:])[:12] + ".png"
 }
 
 // TestEveryServedPathComesFromTheLedger closes the blind spot `DeclaredRoutes`'s own
@@ -538,6 +586,13 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 	// a PREFIX match on `/static/app.` would serve, which is the shape `routes` refuses.
 	hashed := StylesheetHashedPath
 	stem := strings.TrimSuffix(hashed, ".css")
+	anIcon, ok := iconFor("amber", "192")
+	if !ok {
+		t.Fatal("no amber 192 icon is served, so the icon near-miss probes below would be built from nothing")
+	}
+	iconStem := strings.TrimSuffix(anIcon.Path, ".png")
+	iconDigest := iconStem[strings.LastIndex(iconStem, ".")+1:]
+	iconStemNoDigest := strings.TrimSuffix(iconStem, "."+iconDigest)
 	for _, probe := range [][2]string{
 		{"GET", "/entries"},
 		// A digest that is not this stylesheet's: the same shape, one character short of the
@@ -563,6 +618,17 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		{"GET", "/static/"},
 		{"GET", "/static/app.cssx"},
 		{"GET", "/static/../static/app.css"},
+		// 🔴 THE MANIFEST'S AND THE ICONS' NEAR-MISSES (S2). Every one is a string a prefix or
+		// suffix-tolerant match would serve; the icon ones are built from a LIVE icon path so they
+		// stay near-misses when the bytes change, the stylesheet probes' rule above.
+		{"GET", "/manifest.webmanifestx"},
+		{"GET", "/manifest.webmanifest/"},
+		{"GET", "/manifest.json"},
+		{"GET", iconStem + "x.png"},
+		{"GET", iconStem},
+		{"GET", iconStemNoDigest + ".000000000000.png"},
+		{"GET", iconStemNoDigest + "..png"},
+		{"GET", "/static/icon-nosuchvariant-192." + iconDigest + ".png"},
 	} {
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, httptest.NewRequest(probe[0], probe[1], nil))

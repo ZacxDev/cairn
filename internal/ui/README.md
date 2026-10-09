@@ -3618,3 +3618,130 @@ sub-24px count.
 - **Which per-scope share pages the journal world walks** is bounded and keyed on random ids. So
   whether the long-name scope's share page is captured varies run to run. A scratch probe of all
   8 at 390px read 0 overflow on S1.
+
+# Phase P — the installable surface: manifest, icons, `pwaHead` (S2 of the mobile plan)
+
+`claudedocs/plan-cairn-mobile-pwa.md`, decisions 1–4 and B6. `pwa.go` holds all of it. There is NO
+service worker (O13) and NO script: S2 is installable on Chromium from a manifest alone, which the
+plan measured (`Page.getInstallabilityErrors` = `[]` with no worker) and `uiaudit/pwa_test.go`
+re-measures on every run.
+
+## 🔴 Inert unless a deployment arms it
+
+`cmd/cairn-ui -app-name` (`$CAIRN_UI_APP_NAME`) arms it and has NO default. Unarmed:
+- `GET /manifest.webmanifest` answers the dispatcher's own `404 no such route`, byte-identical to a
+  path that is not a row;
+- no frame emits any PWA head element — `pwaHead(App{})` returns NO node.
+
+Armed, every frame carries four elements, once each: `<link rel="manifest">`, one
+`<meta name="theme-color">`, `<link rel="icon">` (the variant's 192px PNG) and
+`<link rel="apple-touch-icon">` (its 180px PNG, which iOS reads INSTEAD of the manifest icons).
+
+| flag (variable) | default | refused when |
+|---|---|---|
+| `-app-name` (`CAIRN_UI_APP_NAME`) | none — unset is unarmed | written blank (whitespace, zero-width, or an explicit `-app-name=`) |
+| `-app-icon-variant` (`CAIRN_UI_APP_ICON_VARIANT`) | none — REQUIRED with a name (O6) | missing with a name (names the flag); outside `ui.IconVariants()` (names the set); written blank |
+| `-app-short-name` (`CAIRN_UI_APP_SHORT_NAME`) | omitted from the manifest | more than 12 characters (runes; 12 is admitted); written blank |
+
+A short name or a variant with NO name is refused too: it arms nothing. All three are read RAW
+(`rawEnvNames`), for `controlJournalDefault`'s reason — through `envalias` a whitespace value reads as
+unset, and an operator who meant to arm the app would get a surface that silently is not installable.
+The shape checks live in `ui.App.Validate` (one place; `New` calls it); `cmd/cairn-ui/app.go` only
+rewords its sentinels in flag names. Every refusal exits 78 before anything is opened. The startup
+line ends `app "<name>" (icon variant <v>)` or `app unarmed (…)`, read off the `ui.Config` the server
+was handed. ⚠ `-app-name` is PUBLIC: the manifest is served before sign-in.
+
+## The rows
+
+- `GET /manifest.webmanifest` — `classPublic` (Chromium fetches a manifest WITHOUT credentials), a
+  FIXED path, `application/manifest+json`, `Cache-Control: no-cache`, `nosniff`. `encoding/json` over a
+  struct, never string assembly. Members: `id`/`start_url`/`scope` `/`, `display: standalone`, `name`,
+  optional `short_name`, a constant `description`, `theme_color` = `background_color` = the surface
+  colour, and the SELECTED variant's three manifest icons (192 any, 512 any, 512 maskable). No
+  `display_override`; `shortcuts` and `screenshots` are S4's.
+- One `GET /static/icon-<variant>-<kind>.<sha256[:12]>.png` row PER COMMITTED FILE, for EVERY variant —
+  16 rows, `classPublic`, `immutable`. The ledger never depends on configuration; only the selected
+  variant is LINKED. Added to `routes` by `pwa.go`'s `init`, one computed EXACT key each (the
+  stylesheet row's argument: the served set stays finite, and the near-misses are probed).
+
+## 🔴 Icons: committed build output of a template, ONE list, two readers
+
+`icons/variants.json` lists four neutral variants (`amber`, `teal`, `violet`, `slate` — never an
+instance's name, Q9) and four kinds. `flake.nix`'s `uiIcons` reads it with `builtins.fromJSON`,
+substitutes each variant's colours into `icons/any.svg` (rounded tile) or `icons/full.svg` (full-bleed,
+cairn scaled 0.72 into the maskable 80% safe zone) and renders every variant × kind with the pinned
+resvg. No text in either template, so no font dimension. `pwa.go` embeds the same json and the PNGs;
+`onlyGo` derives the PNG names from the json rather than listing them. Regenerate with
+`nix run .#build-ui-icons`.
+
+🔴 **The comparison is also the leak gate.** `tests/leakscan.py` skips a PNG by name. What keeps a
+committed icon free of anything private is that `checks.ui-icons-are-current` requires it to EQUAL the
+render of two scanned text files — the plan's provenance argument (T10), enforced.
+
+## 🔴 The theme colour is derived, never typed (B6)
+
+`themeColour` is read out of the EMBEDDED `app.css` at init (`--color-surface: oklch(0.21 0.008 75)`)
+and converted to sRGB (`#1a1814`). A hand-converted hex would be a second spelling of the token that
+a palette change leaves behind; an absent token panics at init. One colour, no `media` variants: the
+palette is dark always.
+
+## Ledgers moved together
+
+The hand ledger (`TestTheRouteLedgerMatchesTheDispatchTable`: variants and kinds spelled by hand, each
+digest recomputed from the file on disk), `bareGETAnswer` (manifest 404 unarmed; icons 200), the
+near-miss probes (`/manifest.webmanifestx`, `/manifest.webmanifest/`, `/manifest.json`, an icon with a
+suffixed, truncated, zero or empty digest, an unknown variant), `uiaudit`'s `notADocument`, `onlyGo`,
+`flake.nix` (`uiIcons`, `apps.build-ui-icons`, `checks.ui-icons-are-current` and its CI step),
+`rawEnvNames`, and nine `tests/control_mutants.py` rows. `AllowedScriptSources` did NOT move: one
+entry, until S4.
+
+## The RED proof
+
+Each guard was watched fail with its own test, on a scratch copy with no `.git`:
+
+| mutant | killed by |
+|---|---|
+| the manifest row loses `classPublic` | `TestTheManifestAnswersAnAnonymousCaller` (+ the hand ledger) |
+| the manifest `name` is the literal `"cairn"` | `TestTheManifestIsBuiltFromTheConfiguredApp` |
+| the unarmed 404 branch removed | `TestAnUnarmedServerServesNoManifestAndNoPWAHead` (+ `bareGETAnswer`) |
+| `SignInPage` drops `pwaHead` | `TestEveryFrameCallsPWAHead` (AST) (+ `TestEveryArmedHTMLPageCarriesThePWAHead`) |
+| `pwaHead` emits `/static/pwa.js` a slice early | `TestTheArmedPWAHeadAddsNoScript` |
+| the blank-line refusal removed | `cmd/cairn-ui` `TestEachAppLineIsJudgedWithItsOwnRefusal` (+ the binary test) |
+| the variant made optional when armed | `TestAppValidateRefusesEachShape` (a DIFFERENT sentinel fires) (+ both cmd tests) |
+| a variant outside the set admitted | `TestAppValidateRefusesEachShape` (+ both cmd tests) |
+| the manifest lists every variant's icons | `TestTheManifestIsBuiltFromTheConfiguredApp` |
+
+Those nine are battery rows (each `killed`, extras held). Outside the battery, the same way: a stray
+`amber-64.png` → `TestTheEmbeddedIconSetIsExactlyVariantsTimesKinds`; the 180px file copied over a
+192 → `TestEveryIconIsAPNGOfItsDeclaredSize`; `amber-512` copied over `teal-512` →
+`TestTwoVariantsNeverShareAnIcon`; an icon row serving one byte short →
+`TestTheIconRowsServeTheCommittedBytes`; the sRGB transfer dropped, and the colour hardcoded →
+`TestTheThemeColourIsTheStylesheetSurface`; `/arcs` or `/join` forgetting `App` →
+`TestEveryArmedHTMLPageCarriesThePWAHead`; the head linking another variant's favicon → the same; a
+prefix match on `/static/icon-` → `TestEveryServedPathComesFromTheLedger`; `main` not handing `App` to
+`ui.Config` → `TestTheBinaryServesTheManifestItWasArmedWith`; `>=` for `>` on the short name →
+`TestAppValidateRefusesEachShape`, `TestEachAppLineIsJudgedWithItsOwnRefusal` and
+`TestTheBinaryServesTheManifestItWasArmedWith`; a byte count for the rune count →
+`TestAppValidateRefusesEachShape`; the no-name refusal dropped → `TestAppValidateRefusesEachShape` and
+`TestEachAppLineIsJudgedWithItsOwnRefusal`;
+`immutable` on the manifest, and `display: browser` → `TestTheManifestIsBuiltFromTheConfiguredApp`.
+
+⚠ **Two guards are INVARIANT guards, labelled:** `TestTheManifestEscapesAHostileName` (the manifest was
+`encoding/json` from its first line), and the one-entry `AllowedScriptSources` assertion in
+`TestTheArmedPWAHeadAddsNoScript` (it held one entry before S2).
+
+The browser-level clauses — chromium's own installability and manifest verdicts — are
+`uiaudit/pwa_test.go`'s, run by `uiaudit/pwa_check.sh`; their RED proof is its `--self-test`
+(`uiaudit/README.md`, "PWA").
+
+## What these guards still cannot see
+
+- **Any WebKit**: whether iOS shows the name and the apple-touch icon, the standalone window, and the
+  OAuth hand-back — the plan's iPhone checklist, not a test.
+- **Real install engagement**: headless chromium answers installability; nothing here clicks
+  "Install".
+- **The deployed edge**: a CDN that rewrites or caches the manifest is outside every boot here.
+- **The favicon carve-out (plan B5) is NOT deleted.** The walk's worlds boot UNARMED, so chromium
+  still asks for `/favicon.ico` there and `Browser.FaviconRefusals` still counts it; the branch is
+  live, not dead. Deleting it needs the walk to boot armed, which would change every capture the
+  walk pushes — a separate decision.

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- The FULL-BLEED icon TEMPLATE, for the `maskable` manifest icon and `apple-touch-icon`. Both
+       are cropped by the platform: a maskable icon to any shape inside its central 80% circle, an
+       iOS icon to its own rounded square (and a transparent corner would be filled black). So the
+       tile is a square with no transparency and the cairn is scaled to 0.72 about the centre,
+       which keeps every stone inside the 80% safe zone. Placeholders and the build are `any.svg`'s. -->
+  <rect x="0" y="0" width="512" height="512" fill="@BACKGROUND@"/>
+  <g transform="translate(256 256) scale(0.72) translate(-256 -261)">
+    <ellipse cx="256" cy="384" rx="150" ry="52" fill="@SHADE@"/>
+    <ellipse cx="256" cy="372" rx="150" ry="52" fill="@STONE@"/>
+    <ellipse cx="250" cy="292" rx="112" ry="44" fill="@SHADE@"/>
+    <ellipse cx="250" cy="280" rx="112" ry="44" fill="@STONE@"/>
+    <ellipse cx="262" cy="212" rx="76" ry="36" fill="@SHADE@"/>
+    <ellipse cx="262" cy="200" rx="76" ry="36" fill="@STONE@"/>
+    <ellipse cx="254" cy="148" rx="42" ry="24" fill="@SHADE@"/>
+    <ellipse cx="254" cy="138" rx="42" ry="24" fill="@STONE@"/>
+  </g>
+</svg>

@@ -127,6 +127,11 @@ type PageView struct {
 	// timestamp renders as its absolute date rather than as a distance from the year 1. A
 	// view built without one (a test fixture, a future caller) cannot render "2000 years ago".
 	Now time.Time
+
+	// App is this deployment's installable identity, for [pwaHead] in the frame. The zero value is
+	// unarmed and renders no PWA head element. Every handler copies `Server.app` here; the armed
+	// route walk in `pwa_test.go` is what notices a page that forgot.
+	App App
 }
 
 // Page is the ROOT: every scope this credential may read, as cards, plus the search box.
@@ -596,7 +601,7 @@ func shell(title string, v PageView, crumbs []crumb, body ...g.Node) g.Node {
 		// head. A draft of this function added a second identical tag; the walk reported
 		// `no-viewport-meta=false` either way, which is how a duplicate would have shipped
 		// unnoticed. If gomponents ever drops it, this is the function to spell it in.
-		Head: []g.Node{stylesheetLink()},
+		Head: []g.Node{stylesheetLink(), pwaHead(v.App)},
 		Body: []g.Node{
 			h.Header(
 				h.Class("page-header"),
@@ -1694,11 +1699,11 @@ func signOutForm(csrf string) g.Node {
 // "renders nothing the caller sent" sentence above is about what a person READS, and stays
 // true: a hidden field is not displayed, and a value `safeNext` accepts is a same-origin path,
 // not a sentence. "" renders no field at all.
-func SignInPage(message string, provider bool, next string) g.Node {
+func SignInPage(message string, provider bool, next string, app App) g.Node {
 	return c.HTML5(c.HTML5Props{
 		Title:    "cairn — sign in",
 		Language: "en",
-		Head:     []g.Node{stylesheetLink()},
+		Head:     []g.Node{stylesheetLink(), pwaHead(app)},
 		Body: []g.Node{
 			h.Header(h.Class("page-header"), h.H1(g.Text("cairn"))),
 			h.Main(
@@ -1843,6 +1848,8 @@ const ReadOnlyAuthority = "This deployment's authority is read-only, so no share
 type ShareView struct {
 	// Viewer is the signed-in principal's display name. USER TEXT.
 	Viewer string
+	// App is [PageView.App], carried into the frame.
+	App App
 	// CSRF is the token from `csrfTokenFor`. Empty for a caller with no session
 	// cookie, in which case no form is rendered at all — see [Page] for the rule.
 	CSRF string
@@ -1898,7 +1905,7 @@ func SharePage(v ShareView) g.Node {
 	// page is worth having and is not this change.
 	return shell(
 		title,
-		PageView{Viewer: v.Viewer, CSRF: v.CSRF},
+		PageView{Viewer: v.Viewer, CSRF: v.CSRF, App: v.App},
 		nil,
 		// The notice is FIRST, above every answer it qualifies. A caveat under
 		// a list is a caveat most readers never reach.
@@ -2077,6 +2084,8 @@ var grantableVerbs = control.AllVerbs
 type InviteView struct {
 	// Viewer is the signed-in principal's display name. USER TEXT.
 	Viewer string
+	// App is [PageView.App], carried into the frame.
+	App App
 	// CSRF is the token from `csrfTokenFor`. Empty for a caller with no session cookie, in
 	// which case no form is rendered at all — [Page]'s rule.
 	CSRF string
@@ -2162,7 +2171,7 @@ func InvitePage(v InviteView) g.Node {
 	// through scopes this page is not about.
 	return shell(
 		title,
-		PageView{Viewer: v.Viewer, CSRF: v.CSRF},
+		PageView{Viewer: v.Viewer, CSRF: v.CSRF, App: v.App},
 		nil,
 		h.P(h.Class("invite-honesty"), g.Text(InviteHonesty)),
 		g.If(v.NoStore, h.P(h.Class("read-only"), g.Text(NoInviteStore))),
@@ -2408,11 +2417,11 @@ func mintedSection(v InviteView) g.Node {
 // accept form anyway would post an empty invitation and complete as an ordinary sign-in,
 // which for somebody who was invited is the most confusing possible outcome: they would end
 // up signed in, or refused, with no sign that the link was the problem.
-func JoinPage(token string, provider bool) g.Node {
+func JoinPage(token string, provider bool, app App) g.Node {
 	return c.HTML5(c.HTML5Props{
 		Title:    "cairn — accept an invitation",
 		Language: "en",
-		Head:     []g.Node{stylesheetLink()},
+		Head:     []g.Node{stylesheetLink(), pwaHead(app)},
 		Body: []g.Node{
 			h.Header(h.Class("page-header"), h.H1(g.Text("cairn"))),
 			h.Main(

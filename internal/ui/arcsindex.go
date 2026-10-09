@@ -188,7 +188,7 @@ func (s *Server) handleArcsPage(w http.ResponseWriter, r *http.Request, id ident
 		writePlain(w, http.StatusInternalServerError, "the store could not be read")
 		return
 	}
-	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now()}
+	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now(), App: s.app}
 	view.ArcsIndex = &rep
 	view.ArcsAll = r.URL.Query().Get(QueryAll) == "1"
 	view.Panes = s.panesFor(id)

@@ -431,6 +431,12 @@
           # `internal/ui/script.go` `//go:embed`s it, so a filtered tree without it fails
           # to COMPILE rather than failing a test. Named, never a `.js` suffix rule.
           || (rel == "internal/ui/filter.js")
+          # 🔴 AND THE INSTALLABLE SURFACE'S ICONS, FOR `app.css`'s REASON: `internal/ui/pwa.go`
+          # `//go:embed`s `variants.json` and every PNG. The PNG names are DERIVED from
+          # `variants.json` (`uiIconFiles`), the same list `uiIcons` renders and `pwa.go` reads —
+          # never a `.png` suffix rule, and never a third hand-kept list of the set.
+          || (rel == "internal/ui/icons/variants.json")
+          || builtins.elem rel (map (f: "internal/ui/icons/" + f) uiIconFiles)
           # 🔴 THE NESTED MODULE'S TWO LOCK FILES, AND NOTHING ELSE FROM THAT
           # DIRECTORY. `internal/depspolicy`'s
           # `TestTheNestedModuleSetIsExactlyTheAllowlist` walks the tree for
@@ -743,6 +749,62 @@
         cp ${./internal/ui/tailwind.css} ./tailwind.css
         tailwindcss -i ./tailwind.css -o "$out"
       '';
+
+      # 🔴 THE INSTALLABLE SURFACE'S ICONS ARE BUILD OUTPUT TOO, AND `variants.json` IS THE ONE
+      # LIST (plan decision 3). Every variant × kind is rendered from a committed SVG template
+      # with the variant's colours substituted, by resvg — no text in either template, so no
+      # font, so no fontconfig dimension. `internal/ui/pwa.go` embeds the committed PNGs and
+      # reads the SAME json; `checks.ui-icons-are-current` re-renders here and byte-compares.
+      #
+      # 🔴 THAT COMPARISON IS ALSO THE LEAK GATE FOR THESE FILES. `tests/leakscan.py` skips a
+      # binary by name, so a PNG is invisible to it; what keeps one free of anything private is
+      # that it must EQUAL this derivation's output, whose only inputs are the two templates and
+      # the json — text, and scanned. A hand-made icon cannot pass the check.
+      #
+      # ⚠ THE RESVG VERSION IS WHATEVER THE PINNED `nixpkgs` CARRIES — `uiStylesheet`'s trade
+      # exactly: a bump that changes the rendered bytes turns the check red until somebody
+      # regenerates, which is the honest failure.
+      uiIconSpec = builtins.fromJSON (builtins.readFile ./internal/ui/icons/variants.json);
+      uiIconFiles = builtins.concatMap
+        (v: map (k: "${v.name}-${k.kind}.png") uiIconSpec.kinds)
+        uiIconSpec.variants;
+      uiIcons = pkgs: pkgs.runCommand "cairn-ui-icons"
+        { nativeBuildInputs = [ pkgs.resvg pkgs.gnused pkgs.gnugrep ]; } ''
+        mkdir -p "$out"
+        ${pkgs.lib.concatMapStrings (v: pkgs.lib.concatMapStrings (k: ''
+          sed -e 's/@BACKGROUND@/${v.background}/g' -e 's/@STONE@/${v.stone}/g' \
+            -e 's/@SHADE@/${v.shade}/g' ${./internal/ui/icons + "/${k.template}"} > ./${v.name}-${k.kind}.svg
+          # A placeholder that survived substitution would render as black, silently.
+          if grep -q '@[A-Z]*@' ./${v.name}-${k.kind}.svg; then
+            echo "FAIL: ${v.name}-${k.kind}.svg still carries a placeholder" >&2
+            exit 1
+          fi
+          resvg -w ${toString k.px} -h ${toString k.px} ./${v.name}-${k.kind}.svg "$out/${v.name}-${k.kind}.png"
+        '') uiIconSpec.kinds) uiIconSpec.variants}
+      '';
+
+      # buildUIIcons writes the rendered icons into the WORKING TREE, for `buildUIStylesheet`'s
+      # reason: the output has to be committed. It replaces every PNG in the directory, so a
+      # variant REMOVED from `variants.json` loses its files rather than leaving an orphan that
+      # `TestTheEmbeddedIconSetIsExactlyVariantsTimesKinds` would then refuse.
+      buildUIIcons = pkgs: pkgs.writeShellApplication {
+        name = "build-ui-icons";
+        text = ''
+          root="''${1:-$PWD}"
+          dir="$root/internal/ui/icons"
+          if [ ! -f "$dir/variants.json" ]; then
+            echo "no $dir/variants.json — run this from the repository root, or pass the root as \$1" >&2
+            exit 1
+          fi
+          rm -f "$dir"/*.png
+          n=0
+          for f in ${uiIcons pkgs}/*.png; do
+            install -m 0644 "$f" "$dir/"
+            n=$((n + 1))
+          done
+          echo "wrote $n icon(s) into $dir"
+        '';
+      };
 
       # buildUIStylesheet is the command a person runs after editing `tailwind.css`. It
       # writes into the WORKING TREE, which is why it is an app rather than a package:
@@ -1141,6 +1203,12 @@
           type = "app";
           program = "${nixpkgs.lib.getExe (buildUIStylesheet pkgs)}";
         };
+        # The icons' equivalent: `nix run .#build-ui-icons` re-renders `internal/ui/icons/*.png`
+        # from the templates and `variants.json`. A developer command for the reason above.
+        build-ui-icons = {
+          type = "app";
+          program = "${nixpkgs.lib.getExe (buildUIIcons pkgs)}";
+        };
       });
 
       checks = forAll (pkgs: {
@@ -1196,6 +1264,63 @@
               echo "…then commit the result in the same change as the tailwind.css edit."
               exit 1
             fi
+            touch $out
+          '';
+
+        # 🔴 THE COMMITTED ICONS ARE WHAT `uiIcons` RENDERS, BYTE FOR BYTE — `ui-stylesheet-is-current`'s
+        # relationship, over a SET of files. Three claims, each of which the others cannot make:
+        # the committed set and the rendered set are the SAME NAMES (a PNG for a variant nobody
+        # listed, or a listed variant never rendered, fails here); every pair is byte-equal; and
+        # the number compared is the number `variants.json` implies, so an empty directory cannot
+        # compare equal to an empty render.
+        #
+        # 🔴 NEGATIVE CONTROL FIRST, `cmp` over a rendered icon with ONE BYTE APPENDED, which must
+        # compare unequal — or the check exits 2 ("could not vouch"), never 0.
+        ui-icons-are-current =
+          pkgs.runCommand "cairn-ui-icons-are-current"
+            { nativeBuildInputs = [ pkgs.diffutils pkgs.coreutils ]; } ''
+            generated=${uiIcons pkgs}
+            committed=${./internal/ui/icons}
+            expected=${toString (builtins.length uiIconFiles)}
+
+            first=$(ls "$generated" | head -n 1)
+            cp "$generated/$first" ./control.png
+            chmod u+w ./control.png
+            printf 'x' >> ./control.png
+            if cmp -s "$generated/$first" ./control.png; then
+              echo "FAIL (could not vouch): the negative control COMPARED EQUAL, so cmp is not"
+              echo "distinguishing files here and the comparison below would be a green about nothing."
+              exit 2
+            fi
+
+            gen=$(cd "$generated" && ls -1 -- *.png | sort)
+            com=$(cd "$committed" && ls -1 -- *.png | sort)
+            if [ "$gen" != "$com" ]; then
+              echo "FAIL: the committed icon SET is not the rendered set."
+              diff <(echo "$com") <(echo "$gen") || true
+              echo "Regenerate with: nix run .#build-ui-icons"
+              exit 1
+            fi
+            compared=0
+            stale=""
+            for f in $gen; do
+              if ! cmp -s "$committed/$f" "$generated/$f"; then
+                stale="$stale $f"
+              fi
+              compared=$((compared + 1))
+            done
+            if [ "$compared" != "$expected" ]; then
+              echo "FAIL (could not vouch): compared $compared icon(s), variants.json implies $expected."
+              exit 2
+            fi
+            if [ -n "$stale" ]; then
+              echo "FAIL: these committed icons are not what the templates render:$stale"
+              echo "They are BUILD OUTPUT and must never be hand-edited. Regenerate them:"
+              echo ""
+              echo "    nix run .#build-ui-icons"
+              exit 1
+            fi
+            echo "ui-icons-are-current: $compared icon(s) byte-equal to the render; negative control caught"
             touch $out
           '';
 

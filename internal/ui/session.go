@@ -402,7 +402,7 @@ func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request, _ identit
 // value its door read through `safeNext`, or "".
 func (s *Server) renderSignIn(w http.ResponseWriter, code int, message, next string) {
 	var b strings.Builder
-	if err := SignInPage(message, s.providerArmed(), next).Render(&b); err != nil {
+	if err := SignInPage(message, s.providerArmed(), next, s.app).Render(&b); err != nil {
 		writePlain(w, http.StatusInternalServerError, "the page could not be rendered")
 		return
 	}

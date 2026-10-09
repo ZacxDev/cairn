@@ -845,7 +845,7 @@ jobs:
       # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
       # killed by some other test proves the suite can fail and proves nothing about the
       # guard the row exists for, so the run reports it as MISATTRIBUTED rather than as a
-      # kill. 287 mutants over EIGHT packages, in `PKGS` order: `internal/control`,
+      # kill. 296 mutants over EIGHT packages, in `PKGS` order: `internal/control`,
       # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
       # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence` — the model, the
       # token-file projection, P4's identity backends, the server that authorises from all of
@@ -862,7 +862,7 @@ jobs:
       # buys (~3min on an IDLE developer host, measured at 62 mutants; a loaded box is
       # several times that). It is what stops the rows bit-rotting into patterns that
       # match nothing and score SURVIVED without ever running.
-      - name: prove every authz guard can go RED (287 mutants, each on the test that names it)
+      - name: prove every authz guard can go RED (296 mutants, each on the test that names it)
         run: python3 tests/control_mutants.py
 
       # 🔴 THE LEDGERS THAT ARE BLIND TO A COMPILED CLIENT, AND THIS IS THE ONLY JOB THAT
@@ -927,7 +927,7 @@ jobs:
       # ⚠ RUNTIME, MEASURED RATHER THAN GUESSED, so the next reader can judge the trade: 57
       # mutants, **614.75 s wall / 152.21 s user + 21.00 s sys** on a 24-core developer host
       # at load ~6.5, all 57 KILLED, 0 SURVIVED, 0 misattributed. That is the same order as
-      # `control_mutants.py` above (287 mutants; its own comment measures ~3 min at 62 on an
+      # `control_mutants.py` above (296 mutants; its own comment measures ~3 min at 62 on an
       # IDLE host), which this job already pays for. ⚠ The wall figure is one observation on
       # a LOADED box and is not a prediction for a runner — the CPU figure is the portable
       # half. If this step becomes the job's critical path, split it out; do not delete it
@@ -1559,6 +1559,14 @@ jobs:
       # SAME commit.
       - name: the served stylesheet is current with its Tailwind source
         run: nix build .#checks.x86_64-linux.ui-stylesheet-is-current --no-link --print-build-logs
+
+      # 🔴 THE INSTALLABLE SURFACE'S ICONS ARE GENERATED TOO (S2 of the mobile plan), AND THIS IS
+      # ALSO THEIR LEAK GATE. `internal/ui/icons/*.png` are resvg renders of two committed SVG
+      # templates over `variants.json`'s colours; `tests/leakscan.py` skips a PNG by name, so what
+      # keeps one free of anything private is that it must EQUAL this render. Named here in the same
+      # commit as the check, for the reason the step above gives.
+      - name: the committed icons are what their templates render
+        run: nix build .#checks.x86_64-linux.ui-icons-are-current --no-link --print-build-logs
 
       # The Go CLIENT is packaged too, and for the same reasons: a consumer will eventually pin
       # it, and its build runs the unit tests under the PINNED toolchain rather than the one

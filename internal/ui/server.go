@@ -957,6 +957,9 @@ type Server struct {
 	// presence is the S2 presence service, NIL when this deployment has none. Read ONLY through
 	// [Server.panesFor], which binds `presence.Store.For` to the request's viewer — see `presence.go`.
 	presence *presence.Service
+
+	// app is this deployment's installable identity; the zero value is unarmed. See `pwa.go`.
+	app App
 }
 
 // Config is what [New] needs. A struct rather than seven positional parameters,
@@ -1070,6 +1073,11 @@ type Config struct {
 	// unless `cmd/cairn-ui` armed its agent listener, and then every page renders exactly as it did
 	// before presence existed. The browser reads it through `presence.Store.For` alone.
 	Presence *presence.Service
+	// App arms the installable surface (`pwa.go`): the manifest row, the icon links and the theme
+	// colour. The zero value is UNARMED and renders exactly what this surface rendered before it
+	// existed. [App.Validate] is applied here, so a server cannot be built around an app the
+	// manifest could not describe.
+	App App
 	// Log is where operational lines go. Nil means `io.Discard`.
 	//
 	// 🔴 NOTHING WRITTEN HERE MAY CARRY A SESSION ID, A CSRF TOKEN OR A PRESENTED
@@ -1127,6 +1135,9 @@ func New(cfg Config) (*Server, error) {
 	if cfg.TTL < 0 {
 		return nil, ErrNegativeTTL
 	}
+	if err := cfg.App.Validate(); err != nil {
+		return nil, err
+	}
 	ttl := cfg.TTL
 	if ttl == 0 {
 		ttl = identity.DefaultSessionTTL
@@ -1161,6 +1172,8 @@ func New(cfg Config) (*Server, error) {
 		limiter:        cfg.Limiter,
 
 		presence: cfg.Presence,
+
+		app: cfg.App,
 	}, nil
 }
 
@@ -1380,6 +1393,7 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request, id identity.
 		CSRF:   csrfTokenFor(r),
 		Scopes: scopes,
 		Now:    s.now(),
+		App:    s.app,
 	}
 
 	// 🔴 THE QUERY IS A PARAMETER ON THE EXISTING ROOT ROW, NOT A ROUTE OF ITS OWN, AND
@@ -1512,7 +1526,7 @@ func (s *Server) handleScopePage(w http.ResponseWriter, r *http.Request, id iden
 		writePlain(w, http.StatusInternalServerError, "the store could not be read")
 		return
 	}
-	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now()}
+	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now(), App: s.app}
 
 	wanted := control.ID(r.URL.Query().Get(QueryID))
 	if wanted == "" {
@@ -1561,7 +1575,7 @@ func (s *Server) handleEntryPage(w http.ResponseWriter, r *http.Request, id iden
 		writePlain(w, http.StatusInternalServerError, "the store could not be read")
 		return
 	}
-	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now()}
+	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now(), App: s.app}
 
 	q := r.URL.Query()
 	wanted, ref := control.ID(q.Get(QueryScope)), q.Get(QueryRef)
