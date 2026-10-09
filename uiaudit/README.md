@@ -551,6 +551,7 @@ one place, and the script boots it and reads that place's own result line:
 | (b) name | `TestPWAClauses/b_name` | its `--- PASS/FAIL:` line |
 | (b) icon | `TestPWAClauses/b_icon` | its `--- PASS/FAIL:` line |
 | (c) reachability, target size, input font | `refuseWalkRegressions`, through `run.sh` — the walk exactly as CI runs it | each refusal's `PASSED` line with rc 0, or its own headline |
+| (d) no-store | `TestEveryNonPublicHTMLRowIsNoStore` (`internal/ui/cachecontrol_test.go`, ROOT module) — the same test the `go` CI job runs | its `--- PASS/FAIL:` line; FAIL is attributed by its `pwa clause (d) no-store` tag |
 
 `TestPWAClauses` boots three token-file worlds: `-app-name 'cairn (alpha)' -app-icon-variant amber`,
 `-app-name 'cairn (beta)' -app-icon-variant teal`, and one UNARMED. On each SIGN-IN page it asks
@@ -562,9 +563,13 @@ CHROMIUM, never this module's Go: `Page.getInstallabilityErrors` and `Page.getAp
 - **(b) icon** — every manifest icon is fetched, and its bytes must equal a committed
   `<variant>-*.png` of THAT boot's variant: 3 matches each, and no URL shared by the two boots.
 
-(d) is S3's and is NOT wired. (b: screenshots) and (e) are S4's.
+- **(d)** (wired by S3, the second of S2/S3 to land) — every non-public GET row's HTML page is
+  `Cache-Control: no-store`, every public one's `no-cache`, walked over the route ledger in-process; no
+  browser and no built binary. See `internal/ui/README.md`, Phase Q.
 
-**Exit codes:** 0 = all six checks PASS; 1 = a check FAILED; 2 = COULD NOT VOUCH. Exit 2 means: no
+(b: screenshots) and (e) are S4's.
+
+**Exit codes:** 0 = all seven checks PASS; 1 = a check FAILED; 2 = COULD NOT VOUCH. Exit 2 means: no
 chromium, go or python3 on `PATH`; a `cairn-ui` that did not build; a check with NO result line; the
 (a) control misbehaving; or a walk that pushed although its credentials were removed. Measured: a
 `PATH` without chromium exits **2**, naming it.
@@ -608,11 +613,13 @@ that exits right. On the old loop it was RED (`plain-loop=0/1`: exit 2, naming `
 | (c) reachability | `touchEmulation` always DISABLES touch |
 | (c) target size | append a coarse-pointer rule to `app.css`: `.view-tab` 12×12px, no gap (the adjacent shape; a lone small target passes 2.5.8's spacing exception) |
 | (c) input font | revert `max(16px, 1em)` to `0.875rem` |
+| (d) no-store | delete `writeHTMLCached`'s `Cache-Control` line — the base's empty default, no header on any page |
 
-Measured on this tree (chromium 154.0.8037.97 from nixpkgs, NOT CI's chromium; 581s):
+Measured on this tree after S3 wired (d) (chromium 152.0.7977.82 from the flake's nixpkgs, NOT CI's
+chromium; 580s). S2's run, before (d), read `sabotaged=6 caught=6 plain-loop=3/3` on chromium 154:
 
 ```
-pwa_check: positive control PASSED all 6 check(s)
+pwa_check: positive control PASSED all 7 check(s)
 pwa_check: sabotage a_installability   CAUGHT by its own check (also red: b_name b_icon)
 pwa_check: sabotage b_name             CAUGHT by its own check
 pwa_check: sabotage b_icon             CAUGHT by its own check
@@ -622,7 +629,8 @@ pwa_check: plain loop on c_target_size      exit 1, names c_target_size FAIL
 pwa_check: sabotage c_target_size      CAUGHT by its own check
 pwa_check: plain loop on c_input_font       exit 1, names c_input_font FAIL
 pwa_check: sabotage c_input_font       CAUGHT by its own check
-sabotaged=6 caught=6 plain-loop=3/3
+pwa_check: sabotage d_no_store         CAUGHT by its own check
+sabotaged=7 caught=7 plain-loop=3/3
 ```
 
 The "also red" entries are expected. With no manifest link there is no manifest for (b) to read. With
@@ -1317,4 +1325,4 @@ indistinguishable from a fork PR by design.
 | `control_test.go` | the positive control, the structural-zero pair, the document-status gate |
 | `touch_test.go` | touch reachability (both halves, real chromium), the `target-size` and input-font controls, the journal world |
 | `pwa_test.go` | the closing condition's clauses (a) and (b: name, icon): chromium's installability and manifest verdicts over three boots |
-| `pwa_check.sh` | the closing-condition ORCHESTRATOR: runs (a), (b) and the walk's (c); `--self-test` sabotages each |
+| `pwa_check.sh` | the closing-condition ORCHESTRATOR: runs (a), (b), the walk's (c) and the root module's (d); `--self-test` sabotages each |

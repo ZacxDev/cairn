@@ -237,9 +237,22 @@ func TestThePWAClauseNamesAreTheScriptsContract(t *testing.T) {
 		"TestPWAClauses/a_installability", "TestPWAClauses/b_name", "TestPWAClauses/b_icon",
 		"pwa clause (a) installability", "pwa clause (b) name", "pwa clause (b) icon", "pwa clause (a) CONTROL",
 		"TOUCH REACHABILITY FAILED", "TOUCH TARGET SIZE (WCAG 2.5.8", "INPUT FONT UNDER 16px",
+		"TestEveryNonPublicHTMLRowIsNoStore", "pwa clause (d) no-store",
 	} {
 		if !strings.Contains(string(script), want) {
 			t.Errorf("pwa_check.sh does not mention %q, which it must grep to attribute a clause", want)
+		}
+	}
+	// And clause (d)'s name and tag still exist where they are produced — the root module's Go test,
+	// read as a FILE because it lives in another module.
+	d, err := os.ReadFile("../internal/ui/cachecontrol_test.go")
+	if err != nil {
+		t.Fatalf("clause (d)'s test file cannot be read, so pwa_check.sh's (d) attribution is unpinned: %v", err)
+	}
+	for _, want := range []string{"func TestEveryNonPublicHTMLRowIsNoStore(", "pwa clause (d) no-store"} {
+		if !strings.Contains(string(d), want) {
+			t.Errorf("internal/ui/cachecontrol_test.go no longer produces %q, so pwa_check.sh's clause (d) "+
+				"attribution greps for nothing", want)
 		}
 	}
 	// And the (c) headlines still exist where they are produced — the walk's refusals.
