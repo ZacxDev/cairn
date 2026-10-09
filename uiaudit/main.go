@@ -808,7 +808,7 @@ func refuseWalkRegressions(captures []*Capture) error {
 	widths := map[string]bool{}
 	// Clause (c) of the mobile plan's closing condition starts here: the touch measurements
 	// are only readable if touch emulation reached the page, so that is checked first. See
-	// [refuseUnreachableTouch]; `run` also calls it before the summary prints.
+	// [refuseUnreachableTouch]. This is its ONLY call site; `run` prints the touch summary after it passed.
 	touchErr := refuseUnreachableTouch(captures)
 	// The content floor's own accounting: how many captures it actually looked at, how many
 	// it let through as the declared exemption, and the narrowest fraction it saw. All three
@@ -1010,14 +1010,14 @@ func viewportWidths() string {
 func printSignalSummary(all []*Capture, faviconRefusals int) {
 	s := summarizeSignals(all)
 	captures := s.tokenFile
-	ids := make([]string, 0, len(s.rules))
-	for id := range s.rules {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
+	ids := s.ruleIDs()
 
-	fmt.Printf("uiaudit: --- signals over the TOKEN-FILE world's %d capture(s); the %d journal-world capture(s) are "+
-		"never pushed and are reported in the touch summary and by the refusals ---\n", len(captures), s.journal)
+	// What each line covers, stated in the header because the two worlds are summed APART: every
+	// line below is the TOKEN-FILE world's except the digests line (PUSHED captures only, which are
+	// all token-file) and the one `journal world` line, which is that world's own sums.
+	fmt.Printf("uiaudit: --- signals: the lines below are the TOKEN-FILE world's %d capture(s), except the digests "+
+		"line (PUSHED captures only) and the `journal world` line (its %d capture(s), never pushed) ---\n",
+		len(captures), s.journal)
 	fmt.Printf("uiaudit:   axe violations: %d across %d rule(s): %s\n", s.axe, len(ids), strings.Join(ids, ", "))
 	fmt.Printf("uiaudit:   layout: tap targets under 44px=%d, text under 12px=%d, pages with horizontal overflow=%d, pages missing <meta viewport>=%d\n",
 		s.tap, s.text, s.overflow, s.noViewport)
@@ -1074,28 +1074,78 @@ func printSignalSummary(all []*Capture, faviconRefusals int) {
 	// an earlier draft of this line said the latter and the next run contradicted it.
 	fmt.Printf("uiaudit:   favicon refusals=%d — NOT a structural zero: no ledger row carries %s, so the dispatcher's uniform refusal answers it whenever chromium asks. WHETHER it asks is run-dependent (measured non-zero on one walk and zero on another over this same tree), which is exactly why it is counted here and kept out of the per-page totals: attributed to a page it would manufacture a P2 network delta that flaps forever.\n",
 		faviconRefusals, FaviconPath)
+	// The journal world's OWN line. Its grant form exists nowhere else and is never pushed, so this
+	// is the only summed place its defects appear.
+	if s.journal > 0 {
+		j := s.journalSums
+		fmt.Printf("uiaudit:   journal world (%d capture(s), never pushed): axe violations=%d across %d rule(s): %s | "+
+			"console=%d network=%d | tap targets under 44px=%d, text under 12px=%d, pages with horizontal "+
+			"overflow=%d, pages missing <meta viewport>=%d\n",
+			s.journal, j.axe, len(j.rules), strings.Join(j.ruleIDs(), ", "), j.console, j.netw,
+			j.tap, j.text, j.overflow, j.noViewport)
+	}
+}
+
+// worldSums is one world's whole-walk signals.
+type worldSums struct {
+	rules                                               map[string]int
+	axe, console, netw, tap, text, overflow, noViewport int
+}
+
+func (w *worldSums) add(c *Capture) {
+	if w.rules == nil {
+		w.rules = map[string]int{}
+	}
+	w.axe += len(c.Violations)
+	for _, v := range c.Violations {
+		w.rules[v.ID]++
+	}
+	w.console += len(c.Console)
+	w.netw += len(c.Network)
+	w.tap += c.Layout.SmallTapTargets
+	w.text += c.Layout.SmallText
+	if c.Layout.HorizontalOverflow {
+		w.overflow++
+	}
+	if c.Layout.MissingViewportMeta {
+		w.noViewport++
+	}
+}
+
+// ruleIDs is the sorted rule list for a log line.
+func (w worldSums) ruleIDs() []string {
+	ids := make([]string, 0, len(w.rules))
+	for id := range w.rules {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // signalSums is what `printSignalSummary` prints, computed apart from the printing so the
-// SCOPE of each number is testable.
+// SCOPE of each number is testable. The embedded [worldSums] is the TOKEN-FILE world's.
 type signalSums struct {
-	tokenFile                                           []*Capture
-	journal                                             int
-	rules                                               map[string]int
-	axe, console, netw, tap, text, overflow, noViewport int
+	worldSums
+	tokenFile []*Capture
+	// journal and journalSums are the journal-backed world's, summed APART — see
+	// [summarizeSignals].
+	journal     int
+	journalSums worldSums
 	// digests and pushed are over PUSHED captures only ([pushedCapture]), because the line says
 	// what reaches the hub.
 	digests, pushed int
 }
 
-// summarizeSignals counts the whole-walk signals over the TOKEN-FILE world only.
+// summarizeSignals counts the whole-walk signals PER WORLD.
 //
-// 🔴 THE JOURNAL WORLD IS EXCLUDED, BECAUSE THESE LINES DESCRIBE THE SURFACE THE PUSH CARRIES.
-// When the journal world landed it was silently folded in: "tap targets under 44px" moved from
-// 2785 to 3070 and "a11y digests attached" from 265/265 to 295/295 with no page of the token-file
-// world changing, and the digests line described captures that are never pushed at all.
+// 🔴 THE TWO WORLDS ARE SUMMED APART, AND NEITHER IS DROPPED — BOTH DIRECTIONS WERE A DEFECT HERE.
+// When the journal world landed it was silently folded into the token-file lines: "tap targets
+// under 44px" moved from 2785 to 3070 and "a11y digests attached" from 265/265 to 295/295 with no
+// token-file page changing. The first fix then EXCLUDED it — and summed it nowhere, so an axe
+// violation on the grant form (rendered only in that world, which is never pushed) appeared in one
+// per-capture line beside a summary saying "axe violations: 0". Separate sums are both answers.
 func summarizeSignals(all []*Capture) signalSums {
-	s := signalSums{rules: map[string]int{}}
+	s := signalSums{worldSums: worldSums{rules: map[string]int{}}, journalSums: worldSums{rules: map[string]int{}}}
 	for _, c := range all {
 		if pushedCapture(c) {
 			s.pushed++
@@ -1105,23 +1155,11 @@ func summarizeSignals(all []*Capture) signalSums {
 		}
 		if c.World != "" {
 			s.journal++
+			s.journalSums.add(c)
 			continue
 		}
 		s.tokenFile = append(s.tokenFile, c)
-		s.axe += len(c.Violations)
-		for _, v := range c.Violations {
-			s.rules[v.ID]++
-		}
-		s.console += len(c.Console)
-		s.netw += len(c.Network)
-		s.tap += c.Layout.SmallTapTargets
-		s.text += c.Layout.SmallText
-		if c.Layout.HorizontalOverflow {
-			s.overflow++
-		}
-		if c.Layout.MissingViewportMeta {
-			s.noViewport++
-		}
+		s.worldSums.add(c)
 	}
 	return s
 }

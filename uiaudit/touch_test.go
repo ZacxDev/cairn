@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -353,6 +354,67 @@ func TestTheJournalWorldIsNeverPushed(t *testing.T) {
 	if len(p.Pages) != 1 {
 		t.Fatalf("the payload holds %d page(s) from one token-file and one journal capture of %s; want 1",
 			len(p.Pages), ui.SharePath)
+	}
+}
+
+// captureStdout runs f with os.Stdout redirected and returns what it printed.
+func captureStdout(t *testing.T, f func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stdout
+	os.Stdout = w
+	done := make(chan string)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+	f()
+	os.Stdout = saved
+	w.Close()
+	return <-done
+}
+
+// TestTheJournalWorldsSignalsAreSummedOnItsOwnLine is the regression guard for the journal world's
+// whole-walk signals going UNSUMMED: an axe violation, a console error or a failed subresource on
+// the grant form (rendered ONLY in that world, which is never pushed) was visible only in one
+// per-capture line, while the summary printed "axe violations: 0". It reads the PRINTED summary,
+// because the defect was in what a reader of the log sees.
+func TestTheJournalWorldsSignalsAreSummedOnItsOwnLine(t *testing.T) {
+	mk := func(world string) *Capture {
+		return &Capture{
+			Target: Target{Path: ui.SharePath + "?scope=scp_x"}, Viewport: Mobile, World: world,
+			Layout: &PushLayout{InnerWidth: Mobile.Width, ScrollWidth: Mobile.Width},
+		}
+	}
+	clean := mk("")
+	journal := mk(JournalWorld)
+	journal.Violations = []AxeViolation{{ID: "label", Nodes: 1}}
+	journal.Console = []Event{{FirstParty: true, Text: "error: x"}, {FirstParty: true, Text: "error: y"}}
+	journal.Network = []Event{{FirstParty: true, Text: "404 /x"}, {FirstParty: true, Text: "404 /y"}, {FirstParty: true, Text: "404 /z"}}
+
+	out := captureStdout(t, func() { printSignalSummary([]*Capture{clean, journal}, 0) })
+	var journalLines []string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "journal world") && strings.Contains(l, "axe violations") {
+			journalLines = append(journalLines, l)
+		}
+	}
+	if len(journalLines) != 1 {
+		t.Fatalf("want exactly ONE journal-world signals line naming its axe violations, got %d — the journal "+
+			"world's signals are summed nowhere, so its grant form's defects show only per capture:\n%s",
+			len(journalLines), out)
+	}
+	l := journalLines[0]
+	for _, want := range []string{"axe violations=1", "label", "console=2", "network=3"} {
+		if !strings.Contains(l, want) {
+			t.Errorf("the journal-world line lacks %q: %s", want, l)
+		}
+	}
+	if !strings.Contains(out, "uiaudit:   axe violations: 0 across 0 rule(s)") {
+		t.Errorf("the token-file axe line must stay token-file-only (0 here):\n%s", out)
 	}
 }
 

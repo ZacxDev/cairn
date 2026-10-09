@@ -1812,15 +1812,15 @@ jobs:
             exit 1
           fi
           # Both floors are counts MEASURED on a tree, raised when a change adds tests: 29/64 on
-          # the tree that introduced this job; 45 top-level / 107 total on the mobile plan's S0
+          # the tree that introduced this job; 46 top-level / 108 total on the mobile plan's S0
           # (36/88 measured on its base, chromium 154, before `touch_test.go` and the reachability
           # rows). A test deleted from a file that keeps others would otherwise move nothing.
-          if [ "$passes" -lt 45 ]; then
-            echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 45 — a Test function was deleted"
+          if [ "$passes" -lt 46 ]; then
+            echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 46 — a Test function was deleted"
             exit 1
           fi
-          if [ "$total" -lt 107 ]; then
-            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 107 — a table row was deleted"
+          if [ "$total" -lt 108 ]; then
+            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 108 — a table row was deleted"
             exit 1
           fi
 
