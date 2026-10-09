@@ -28,32 +28,25 @@ before any slice: decisions, threat model, slices S1–S5, the deploy preconditi
   `tests/presence/e2e.sh` at `cf1c2c9` → `passed=19 failed=0 expected=19`, `--self-test` →
   `sabotaged=7 caught=7`; the tooling repo's `test_cairn_ring.py` at `aae6405` → 45 passed,
   `cairn-ring-claim --self-test` → `SELF-TEST: PASS` (both sabotages CAUGHT).
-- **POST-CLOSE ROLLOUT DONE except the operator's click.** Personal instance only:
-  - both pods on `sha-cf1c2c9` (S4 badges + S5 bell); presence ENABLED via `cairn-ui` args
-    `-presence-agent-addr=0.0.0.0:8105`, `-presence-tokens=<state PVC>/presence-tokens`,
-    `-presence-owner=user:<operator's GitHub-backed id>`; startup line reads
-    `presence agent on [::]:8105 (sole owner …, 4 token row(s)`;
-  - the agent listener is reachable from the operator's two hosts over the private mesh only,
-    through the deployment's mesh gateway (no public hostname), which SETS `CF-Connecting-IP` to the
-    mesh peer — the server logs the real host address on a refusal;
-  - 4 tokens (push + claim × 2 hosts) minted from the pod straight into 0600 files on each
-    host; each host's units (`cairn-presence-push.timer`, `cairn-ring-claim.service`) are
-    active; pushes acknowledged by the server on both hosts (`server=rows=N`); claim services
-    polling every 5 s;
-  - MEASURED via the operator bearer credential: this arc's own session page renders the
-    badge `<host> · <session>:<window> · <hotkey> · claude · seen 38s ago`; `/arcs` shows 13
-    `live pane` badges. No bell on that page (bearer request, no cookie) — expected.
-- **NOT verified:** a real bell click from a signed-in browser lighting the right window — the
-  operator's judgement (plan: "Post-close rollout").
-- The client instance is NOT bumped past `sha-123d771` (presence is personal-only; nothing
-  there needs S4/S5).
+- **POST-CLOSE ROLLOUT DONE, and the operator confirmed the bell works** ("ringing works"):
+  presence enabled on the personal instance only, units active on both hosts.
+- **Follow-on, also shipped:** a ring now shows a desktop notification; a ring for a session on
+  the desktop-less host is FORWARDED over the mesh to the host with the desktop, and a
+  MIDDLE-click switches the ssh-attached tmux client to the target and raises that terminal
+  (tooling repo #2095, merged `7e887df`, shipped to both hosts and verified converged). The
+  real middle-click has NOT been reported yet.
+- **Also merged and deployed to the personal instance:** an unauthenticated browser GET now
+  303s to `/sign-in?next=<path>` and both sign-in doors land back on it (#202, `0d3a1fa`).
+  Personal pods run `sha-0d3a1fa`; the client instance is still on `sha-123d771`.
+- Mobile-first / PWA work continues in its own doc: `claudedocs/handoff-cairn-mobile-pwa.md`.
 
 ## Next steps (ranked)
 1. **#196 is MERGED** (`78fe99a`): nothing to do; kept for numbering. forcing: gate — kept for numbering.
 2. **S1 is MERGED and DEPLOYED** (#197, `45ef3d9`). Nothing to do; kept for numbering.
    forcing: user — done.
-3. **Rollout done; one judgement left**: the operator clicks the bell on a signed-in session page
-   and judges the window's status-line styling. forcing: user — the operator asked for a bell button.
+3. **Rollout done and bell confirmed.** Only the ring NOTIFICATION's real middle-click (once for
+   a session on each host) is unreported; if it misreports, read the claim service's journal for
+   its `outcome=` line. forcing: user — the operator asked for a notification that focuses the session.
 
 ## Gotchas / decisions / dead-ends
 - **#195 adds `control.Authorization.Narrowed()`.** The plan's decision 11 derives the
@@ -128,8 +121,7 @@ gh pr view 197 --repo ZacxDev/cairn --json state,mergeCommit --jq '"\(.state) \(
 # with an Authorization: Bearer header read from a 0600 file; expect 200s and an unknown arc → 404
 ```
 ## Defects (batched)
-- ~~worst-case push size stated wrongly~~ FIXED in #200.
 - Tooling repo `scripts/cairn-ring-claim:~193`: the SIGTERM handler calls `Event.set()`, which can
   deadlock if the signal lands while the main thread holds the Event's internal lock (reproduced
-  after 81 rapid signals in a tight loop; production odds ~1e-6 per stop; cost: a 90 s stop then
-  SIGKILL). Fix: a lock-free handler (`signal.set_wakeup_fd`/self-pipe, or raise from the handler).
+  after 81 rapid signals; production odds ~1e-6 per stop; cost: a 90 s stop then SIGKILL). Fix: a
+  lock-free handler (`signal.set_wakeup_fd`/self-pipe, or raise from the handler).
