@@ -1112,55 +1112,47 @@
    * unmeasurable everywhere. If emulation ever stops matching, the plan's R10 fallback moves
    * this block to `(width < 64rem)`.
    *
-   * 🔴 DESKTOP IS UNCHANGED BY CONSTRUCTION, AND THAT IS MEASURED RATHER THAN ASSUMED: every
-   * declaration in this file that S1 added is inside this block, so a fine pointer matches
-   * none of them. The S1 walk compared every laptop/desktop/ultrawide capture line (box
-   * counts, tap counts, `<main>` width) against the base tree — identical — and the 1440px
-   * screenshots: 45 of 53 byte-identical, the other 8 differing only inside a live timestamp,
-   * exactly as two runs of the base differ (`internal/ui/README.md`, Phase O).
+   * 🔴 DESKTOP IS UNCHANGED BY CONSTRUCTION: every declaration S1 added is inside this block,
+   * so a fine pointer matches none of them. The measurement that backs the claim is stated
+   * ONCE, in `internal/ui/README.md` (Phase O) — not copied here.
    *
-   * ⚠ THE 16px INPUT FONT IS HERE TOO, NOT AT EVERY WIDTH AS DECISION 14 FIRST SAID. The zoom it
-   * prevents is iOS Safari's, which is a coarse pointer, and keeping the rule in this block is
-   * what keeps the fine-pointer rendering byte-for-byte the base's. The cost, unmeasured here:
-   * a WebKit that reports a FINE primary pointer and still zooms on focus would keep 14px.
+   * ⚠ THE 16px INPUT FONT IS HERE TOO, NOT AT EVERY WIDTH (an operator-accepted amendment to
+   * decision 14). The zoom it prevents is iOS Safari's, which reports a coarse pointer, and
+   * keeping the rule here is what keeps the fine-pointer rendering the base's. Residual,
+   * unmeasured: a WebKit that reports a FINE primary pointer and still zooms on focus keeps 14px.
    *
    * 44px is WCAG 2.5.5 (AAA) and Apple's HIG; the GATE is 2.5.8 (AA, 24px with its spacing
    * exception), which `uiaudit` reads through axe's `target-size` and REFUSES on at the touch
-   * rungs. `min-h-11` is 2.75rem — 44px at the default root, scaling with a reader who
-   * enlarged theirs, for the reason `--breakpoint-ultra` records. */
+   * rungs. The 44px size itself is REPORTED, not refused — an operator decision. `min-h-11` is
+   * 2.75rem — 44px at the default root, scaling with a reader who enlarged theirs, for the
+   * reason `--breakpoint-ultra` records. */
   @media (pointer: coarse) {
-    /* B2 — a compact header: wordmark, viewer and sign-out on one row, the three nav links
-     * as a full-width row of equal 44px targets beneath it. The break is a zero-height
-     * `::after` with `flex-basis: 100%` ordered between the two rows, so the row assignment
-     * does not depend on how wide the viewer's name happens to be. */
+    /* B2 — a compact header as a GRID whose auto-placement IS the DOM order: row 1 is the
+     * wordmark and the three nav links (equal 44px targets), row 2 the viewer line and Sign out.
+     *
+     * 🔴 NO `order`, AND THAT IS THE POINT. The first draft put the viewer and Sign out on row 1
+     * with `order`, AFTER three nav links rendered on row 2 — so keyboard focus and a screen
+     * reader went cairn → Arcs → Sharing → Invitations → back UP to Sign out (WCAG 2.4.3 /
+     * 1.3.2). A grid placed in source order cannot disagree with the source, and `uiaudit`'s
+     * header reading-order refusal measures that it does not. A `render.go` reorder was the other
+     * option and was not taken: it would move the desktop header's DOM, and its reading order, too. */
     .page-header {
-      @apply items-center gap-x-2 gap-y-0 pb-2 mb-4;
-    }
-
-    .page-header::after {
-      content: "";
-      @apply order-2 basis-full;
-    }
-
-    .page-header h1,
-    .page-header .signout {
-      @apply order-1;
-    }
-
-    .page-header .viewer {
-      @apply order-1 flex-1 min-w-0 truncate text-xs;
-    }
-
-    .nav-arcs,
-    .nav-share,
-    .nav-invite {
-      @apply order-3 flex-1 min-w-0;
+      @apply grid items-center gap-x-2 gap-y-1 pb-2 mb-4;
+      grid-template-columns: auto repeat(3, minmax(0, 1fr));
     }
 
     .nav-arcs a,
     .nav-share a,
     .nav-invite a {
-      @apply flex min-h-11 items-center justify-center rounded border border-line px-2;
+      @apply flex min-h-11 items-center justify-center rounded border border-line px-1;
+    }
+
+    .page-header .viewer {
+      @apply col-span-3 min-w-0 truncate text-xs;
+    }
+
+    .page-header .signout {
+      @apply justify-self-end;
     }
 
     .page-header h1 a {
@@ -1198,21 +1190,30 @@
     }
 
     /* Navigation links that were 14–28px tall: breadcrumbs, view tabs, card titles, the
-     * session/arc row links, the arcs toggle, chip links and the share/invite indexes. */
+     * session/arc row links, row refs, the arcs toggle, chip links and the search hits.
+     *
+     * 🔴 `max-w-full` + `wrap-anywhere` ARE LOAD-BEARING, AND THEIR ABSENCE SHIPPED. A flex box's
+     * text is a flex item whose minimum width is its min-content — for a name with no break
+     * opportunity, the whole name — so `inline-flex` alone defeated `.card-head h2`'s
+     * `break-words` and a long scope name pushed the page sideways at 390px. `overflow-wrap:
+     * anywhere` is the wrapping rule that ALSO shrinks min-content, which is why it, and not
+     * `break-words`, is spelled here. `uiaudit`'s world carries a 42-character unbreakable scope
+     * name so the overflow refusal can see this. */
     .crumb,
     .view-tab,
     .card-name,
     .row-link,
+    .ref a,
     .stat[href],
     .chips a,
     .hit-where a {
-      @apply inline-flex min-h-11 min-w-11 items-center justify-center;
+      @apply inline-flex min-h-11 min-w-11 max-w-full items-center justify-center wrap-anywhere;
     }
 
     /* These two are `block` rows already — full width, so only the height moves. */
     .share-index a,
     .invite-index a {
-      @apply flex min-h-11 items-center;
+      @apply flex min-h-11 items-center wrap-anywhere;
     }
 
     .crumbs,
@@ -1220,24 +1221,44 @@
       @apply gap-y-1;
     }
 
-    /* B1 — the WHOLE entry row is the target. The ref was the row's only link, about 14px
-     * tall; it grows to 44px and stretches an overlay over the row — the `.row-link` pattern
-     * session and arc rows already use — while the row's own chip links sit above it so
-     * they stay their own targets. */
-    .entry-row {
+    /* The boxes those links sit in: a flex item's default minimum width is its content, so each
+     * must be allowed to shrink below an unbreakable name for the link inside it to wrap. */
+    .ref,
+    .card-head h2,
+    .chips > li {
+      @apply min-w-0 max-w-full;
+    }
+
+    /* A document card's own heading prints the scope name as TEXT (the scope page, the arc
+     * page, the per-scope share page), so it needs the same wrap — measured overflowing at 390px
+     * with the unbreakable fixture name once the links above were fixed. */
+    .card > h2,
+    .share-scope > h2 {
+      @apply wrap-anywhere;
+    }
+
+    /* B1 — the WHOLE scope-page entry row is the target, and ONLY that row.
+     *
+     * 🔴 `#entry-list > .entry-row`, NOT `.entry-row`. `.entry-row` is also a session page's
+     * bullet, an arc page's scope and member rows and an arcs-index row; the first draft reached
+     * all of them, and there the overlay swallowed taps on excerpts and badges and blocked
+     * long-press text selection. `#entry-list` is the scope page's list alone — the id `filter.js`
+     * already finds its rows by — so no `render.go` change is needed and none moves the desktop
+     * DOM. `uiaudit`'s `TestTheWholeRowTargetIsTheScopePagesAlone` hit-tests both sides.
+     *
+     * The ref link stretches an overlay over its row (the `.row-link` pattern session and arc
+     * rows already use); the row's own chip links sit ABOVE it (`z-10`) so a tap on a chip is
+     * the chip's — the same test hit-tests that too. */
+    #entry-list > .entry-row {
       @apply relative;
     }
 
-    .entry-row .ref a {
-      @apply inline-flex min-h-11 items-center;
-    }
-
-    .entry-row .ref a::after {
+    #entry-list > .entry-row .ref a::after {
       content: "";
       @apply absolute inset-0;
     }
 
-    .entry-row .chips {
+    #entry-list > .entry-row .chips {
       @apply relative z-10;
     }
   }

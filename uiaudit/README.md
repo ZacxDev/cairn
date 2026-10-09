@@ -384,7 +384,7 @@ That refusal is now counted **separately and at walk level**, for two measured r
 So the claim the count supports is *"the surface refuses it when asked"*, never *"every visit
 produces one"*.
 
-## Touch — real emulation, THREE refusals at the touch rungs, a second world
+## Touch — real emulation, refusals at the touch rungs, a reading-order refusal, a second world
 
 S0 of `claudedocs/plan-cairn-mobile-pwa.md` built the measurements; S1 made two of them refusals.
 The **reachability check** refuses from S0 on, because it is a claim about the HARNESS, not the
@@ -446,59 +446,98 @@ UNCAPTURED** — it needs `-db-dsn` (PostgreSQL), which this job does not have (
 journal world is never pushed** (its bare rows share the token-file world's `PushURL`s, and its
 per-scope ids are minted fresh each run) and so writes no artifact.
 
-### S1 — the two touch refusals, and what each one is
+### S1 — the touch refusals, the reading-order refusal, and what each one is
 
-`touchRefusals` (`main.go`), called from `refuseWalkRegressions` AFTER the reachability check, reads
-every TOUCH capture of BOTH worlds and refuses on: any axe `target-size` node (`TOUCH TARGET SIZE`),
-any text-entry input under 16px (`INPUT FONT UNDER 16px`), a touch capture with no measurement
-(`NO TOUCH MEASUREMENT`), and a walk whose touch captures measured ZERO inputs between them (a
-"0 under 16px" over nothing). The non-touch rungs keep the dense desktop layout on purpose and stay
-REPORTED — `TestTheTouchRefusalsBindOnlyTheTouchRungs` pins that scope from the other side.
+`touchRefusals` (`main.go`) is called from `refuseWalkRegressions` AFTER the reachability check. It
+reads every TOUCH capture of BOTH worlds and refuses on:
+- any axe `target-size` node (`TOUCH TARGET SIZE`);
+- any text-entry input under 16px (`INPUT FONT UNDER 16px`);
+- a touch capture with no measurement (`NO TOUCH MEASUREMENT`). This is an invariant (refactor)
+  guard, because `CaptureTarget` always measures;
+- a WORLD whose touch captures measured zero inputs between them. It is per world, so one world's
+  inputs cannot hide the other's zero.
 
-**Before / after**, the full walk, chromium 154.0.8037.92 (nixpkgs), 295 captures each, base `d4a1dda`
-against S1:
+The non-touch rungs keep the dense desktop layout on purpose and stay REPORTED, and
+`TestTheTouchRefusalsBindOnlyTheTouchRungs` pins that scope. `headerOrderRefusal` (S1 round 1)
+refuses, at EVERY rung, a header whose next focusable element in DOM order renders on a row above
+the previous one, or to its left on the same row (WCAG 2.4.3 / 1.3.2).
+
+🔴 **The 44px size is REPORTED, not refused — an operator decision.** There is no hard floor on boxes
+under 24 or 44px at the touch rungs; the counts stay in the summary. A lone button shrunk back to 22px
+passes 2.5.8's spacing exception (the bell row below), so that case is caught only by review and by
+the reported sub-24px count.
+
+**Two instrument changes in round 1, each because the walk was blind to a defect that shipped:**
+- **An unbreakable fixture scope.** `boot.go` adds `unbreakableScope`, 42 lowercase letters (the
+  token file's ceiling for a scope name), with one synthetic entry. It goes on top of
+  `reader_fixtures.build_store`, so the renderer's differential fixture does not move. Every reader
+  fixture name is short and hyphenated, so no name could overflow.
+- **Shrink-to-fit is recorded as overflow.** At a `mobile`-flag rung, an opted-in page wider than the
+  viewport does NOT report overflow: chromium grows the layout viewport to the content.
+  - Measured: `innerWidth` 510 at 390, with `scrollWidth` equal to it. The overflow refusal could
+    never fire, and the walk died on the width assertion as a "broken emulation".
+  - `CaptureTarget` now tells the two apart. On that shape the document's `clientWidth` and
+    `visualViewport.width` still read the emulated width; an emulation that never applied leaves
+    all three at the window width. It records the shape as horizontal overflow.
+  - `TestAnOverflowingPageIsRecordedAsOverflowAtATouchRung` is the control. An unbreakable word
+    records overflow, the same word allowed to wrap records none, and a page that FIXES
+    `width=600` is still refused by the width assertion.
+
+**Before / after**: the full walk, chromium 154.0.8037.92 (nixpkgs), the round-1 harness on both trees
+(285 captures: 51 token-file and 6 journal per rung), base `d4a1dda` against S1.
 
 | world · rung | axe `target-size` | boxes < 24px | inputs < 16px | tap < 44 (`layout-smells`) | overflow |
 |---|---|---|---|---|---|
-| token-file · mobile | 0 → **0** | 322 → **0** of 557 | 5 → **0** of 5 | 557 → **2** | 0 → 0 |
-| token-file · tablet | 0 → **0** | 322 → **0** of 557 | 5 → **0** of 5 | 557 → **9** | 0 → 0 |
-| journal · mobile | 0 → **0** | 30 → **0** of 57 | 4 → **0** of 4 | 57 → **12** | 0 → 0 |
-| journal · tablet | 0 → **0** | 30 → **0** of 57 | 4 → **0** of 4 | 57 → **12** | 0 → 0 |
-| every laptop / desktop / ultrawide row | unchanged | unchanged (322, 30) | unchanged (5, 4) | unchanged | 0 |
+| token-file · mobile | 0 → **0** | 326 → **0** of 552 | 5 → **0** of 5 | 551 → **2** | **11 → 0** |
+| token-file · tablet | 0 → **0** | 326 → **0** of 552 | 5 → **0** of 5 | 551 → **8** | 0 → 0 |
+| journal · mobile | 0 → **0** | 30 → **0** of 58 | 4 → **0** of 4 | 58 → **12** | **2 → 0** |
+| journal · tablet | 0 → **0** | 30 → **0** of 58 | 4 → **0** of 4 | 58 → **12** | 0 → 0 |
+| every laptop / desktop / ultrawide row | unchanged | unchanged | unchanged | unchanged | 0 |
 
-The journal world's remaining 12 are the share form's verb checkboxes, deliberately 24px (the
-LABEL around each is the 44px target). The content floor read 90.2% at 3440px on both trees.
+- The base's mobile overflow is **pre-existing**: the unbreakable name overflowed the base tree too,
+  at the scope-list links, card headings, arc-row refs and share pages.
+- The journal world's remaining 12 are the share form's verb checkboxes, deliberately 24px inside a
+  44px label.
+- Header reading order matched the visual order on 275 captures. The content floor read 90.2% at
+  3440px on both trees.
+- **Desktop unchanged:** measured and stated ONCE, in `internal/ui/README.md` (Phase O).
 
-🔴 **THE TWO REFUSALS ARE DIFFERENT KINDS OF GUARD, AND THE MATRIX SAYS WHICH.**
+🔴 **WHICH GUARD CAN GO RED, AND ON WHAT** (full walks unless named):
 
-| run (full walk, S1's harness) | rc | refused by |
+| run | rc | refused by |
 |---|---|---|
-| S1's CSS | **0** | — (all three touch refusals PASSED, 0 of 18 inputs) |
-| the BASE stylesheet (`tailwind.css` + `app.css` from `d4a1dda`) | **1** | `INPUT FONT UNDER 16px on 18 touch input(s)` — `#q`, `#entry-filter`, `#token`, `#subject` at 14px |
-| S1's CSS minus the 16px rule only | **1** | `INPUT FONT UNDER 16px on 18 touch input(s)` |
-| S1's CSS plus `.view-tab` at 12×12, no gap (the plan's (c) sabotage) | **1** | `TOUCH TARGET SIZE … violated on 20 touch capture(s)` |
-| S1's CSS with the bell back at its pre-S1 22px | **0** | ⚠ **nothing** — reported as `boxes<24px=1`, refused by no rule |
+| S1 (round 1) | **0** | — (reachability, target-size, input font and header order all PASSED) |
+| the BASE stylesheet `d4a1dda` | **1** | `INPUT FONT UNDER 16px on 18 touch input(s)`; `HORIZONTAL OVERFLOW on 13 capture(s)` (pre-existing, above) |
+| S1's first push `6c57d71`, round-1 harness | **1** | `HORIZONTAL OVERFLOW on 14 capture(s)` (`/` at 390 → 510px, at 834 → 919px); `HEADER READING ORDER … on 110 element(s)` (`"Sign out" (focus position 5) renders on a row ABOVE "Invitations"`, at every touch capture, never at a non-touch one) |
+| `6c57d71` minus the 16px rule (round-0 harness) | **1** | `INPUT FONT UNDER 16px on 18 touch input(s)` |
+| `6c57d71` plus `.view-tab` 12×12, no gap — the plan's (c) sabotage (round-0 harness) | **1** | `TOUCH TARGET SIZE … violated on 20 touch capture(s)` |
+| `6c57d71` with the bell back at 22px (round-0 harness) | **0** | ⚠ **nothing** — reported as `boxes<24px=1` only (see the operator decision above) |
+| `TestTheWholeRowTargetIsTheScopePagesAlone` on `6c57d71` | FAIL | `1 of 1 session-page excerpt(s) resolved to a LINK` — B1 reached every `.entry-row` |
+| the same test, S1 minus `#entry-list > .entry-row .chips { z-10 }` | FAIL | `0 of 2 chip link(s) resolved to themselves` (walk rc=0 on that shape) |
+| the same test on S1 | PASS | mobile: 123/123 row titles → their ref link, 2/2 chips → themselves; laptop: 123/123 titles → no link; session page: 0 of 1 excerpt on a link |
 
-- **The input-font refusal is a REGRESSION guard**: red on the base stylesheet, green on S1's.
-- **The target-size refusal is an INVARIANT guard on this surface**: axe read 0 `target-size` nodes
-  on the base tree too, because 2.5.8's spacing and inline exceptions pass small-but-separated
-  targets. It has been watched red only by mutation (the 12×12 tabs).
-- ⚠ **So the 44px goal is NOT gated, and the bell row proves it**: a lone 22px button passes 2.5.8's
-  spacing exception. The raw sub-24px count and the `layout-smells` tap<44 count are the numbers
-  that see it, and both are REPORTED — the plan dropped the per-page < 44px ledger (audit D6).
+- **The input-font refusal is a REGRESSION guard**: red on the base stylesheet.
+- **The target-size refusal is an INVARIANT guard on this surface**: axe read 0 on the base too, so
+  it has been watched red only by mutation.
+- **The reading-order and overflow refusals are regression guards for S1's own first push.**
 
-The Go-side cases (`refusals_test.go`, `touch_test.go`) were mutation-swept on a scratch copy: dropping
-either finding, leaking the refusals onto every rung, dropping the unmeasured or measured-nothing
-branch, never appending the paragraphs to the verdict, dropping the world label, and three
-threshold mutants (`<=`, rounded px, `int(px) < 15`) were each killed by the named test; the
-unmutated copy passed. The threshold mutants SURVIVED the refusal cases (they hand the gate an
-already-filtered list), which is why `TestTheInputFontThresholdIsSixteenPixelsExactly` exists.
+**Go-side mutation sweeps** (scratch copies, restored by digest, the unmutated copy passing each time).
+Every mutant below was killed by its named test:
+- **round 0:** drop either touch finding; leak the refusals onto every rung; drop the unmeasured or
+  measured-nothing branch; never append the refusals; drop the world label; three font-threshold
+  mutants (`<=`, rounded px, `int(px) < 15`);
+- **round 1:** accept a header element on a row ABOVE; accept one LEFT on the same row; drop the
+  header measured-nothing refusal; never append the header refusal; sum the inputs across worlds
+  again; remove the shrink-to-fit branch; let it accept ANY widened touch capture.
 
-**The journal-world summary test now pins all seven fields** as one whole line over pairwise-distinct
-values (axe 1, console 2, network 3, overflow 4, missing viewport 5, text 7, tap 11; token-file tap/text
-13/17). Its previous version read three of them: with tap printed as 0 and text printed as tap, it
-PASSED; the new one fails, as it does on a tap/text swap, an overflow/viewport swap and a journal line
-that prints the token-file world's tap.
+The threshold mutants SURVIVED the refusal cases, which hand the gate an already-filtered list. That
+is why `TestTheInputFontThresholdIsSixteenPixelsExactly` exists.
+
+**The journal-world summary test pins all seven fields** as one whole line over pairwise-distinct
+values: axe 1, console 2, network 3, overflow 4, missing viewport 5, text 7, tap 11, and token-file
+tap/text 13/17. Its previous version read only three of them, and it PASSED with tap printed as 0 and
+text printed as tap. The new one fails on that mutant, on a tap/text swap, on an overflow/viewport
+swap, and on a journal line that prints the token-file world's tap.
 
 ## Round 1: what an adversarial read found, and the two things it got wrong
 
@@ -978,7 +1017,8 @@ not a finding. The mobile plan therefore keys its touch rules on `pointer: coars
 driven — and which `refuseUnreachableTouch` proves is.
 
 ⚠ **The invite MINT form** — `-db-dsn` (PostgreSQL) is needed to render it, and neither world has
-one; its controls are covered by S1's rules by CLASS only.
+one; its `select` and submit are covered only by S1's element/type selectors (`select`,
+`button[type="submit"]`), never measured.
 
 🔴 **AND ANYTHING BETWEEN THE ORIGIN AND A CLIENT, WHICH IS THE ONE BLIND SPOT THAT HAS BEEN
 MEASURED TO MATTER.** Every number this program produces is about the pod `BootWorld` starts on

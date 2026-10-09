@@ -39,6 +39,9 @@ func cleanWalk() []*Capture {
 			// honest tree since S1. Non-zero so the input-font refusal's "measured nothing" branch is
 			// not what a clean walk exercises.
 			Touch: &TouchMeasure{InputsMeasured: 3, TargetsMeasured: 11},
+			// A header whose two focusables read left to right on one row: the reading-order check
+			// measures something and finds DOM order equal to visual order.
+			HeaderOrder: []FocusBox{{"cairn", 16, 8, 80, 52}, {"Arcs", 90, 8, 180, 52}},
 			Content: &ContentBox{
 				InnerWidth: vp.Width,
 				BodyWidth:  vp.Width * 92 / 100,
@@ -315,6 +318,25 @@ func TestTheWalkRefusalsCanEachGoRED(t *testing.T) {
 			wantSub: "[journal] / at tablet (834px): #subject renders at 15.5px",
 		},
 		{
+			// 🔴 S1 ROUND 1: the touch header's first draft — nav links on row 2, then the viewer and
+			// Sign out pulled back up to row 1 by `order`. DOM order cairn → Arcs → Sign out; visual
+			// order cairn and Sign out on row 1, Arcs on row 2.
+			name: "a header focusable renders on a row ABOVE the one before it",
+			break_: func(cs []*Capture) {
+				captureAt(cs, Mobile).HeaderOrder = []FocusBox{
+					{"cairn", 16, 24, 81, 68}, {"Arcs", 16, 72, 128, 116}, {"Sign out", 300, 24, 374, 68}}
+			},
+			wantSub: `"Sign out" (focus position 3) renders on a row ABOVE "Arcs" (position 2)`,
+		},
+		{
+			// …and the same-row half, at a NON-touch rung: reading order is not a pointer question.
+			name: "a header focusable renders LEFT of the one before it on the same row, at laptop",
+			break_: func(cs []*Capture) {
+				captureAt(cs, Laptop).HeaderOrder = []FocusBox{{"Arcs", 200, 8, 240, 30}, {"Sharing", 120, 10, 180, 28}}
+			},
+			wantSub: `"Sharing" (focus position 2) renders LEFT of "Arcs"`,
+		},
+		{
 			// A touch capture with no measurement: the font refusal would pass a page it never read.
 			name:    "a TOUCH capture with no touch measurement",
 			break_:  func(cs []*Capture) { captureAt(cs, Mobile).Touch = nil },
@@ -509,6 +531,37 @@ func TestTheTouchRefusalsBindOnlyTheTouchRungs(t *testing.T) {
 	captureAt(cs, Laptop).Touch.InputsMeasured = 9
 	if err := refuseWalkRegressions(cs); err == nil || !strings.Contains(err.Error(), "MEASURED 0 text-entry inputs") {
 		t.Fatalf("inputs measured at a NON-touch rung laundered the touch rungs' zero: %v", err)
+	}
+
+	// …and PER WORLD (S1 round 1): the token-file world's inputs must not hide a journal world whose
+	// touch captures measured none.
+	mixed := cleanWalk()
+	for _, vp := range Viewports {
+		if vp.Touch {
+			mixed = append(mixed, &Capture{
+				Target: Target{Path: ui.SharePath}, Viewport: vp, World: JournalWorld,
+				AxeJSON: []byte(`{"testEngine":{"name":"axe-core","version":"4.x"},"violations":[]}`),
+				Layout:  &PushLayout{InnerWidth: vp.Width, ScrollWidth: vp.Width},
+				Pointer: &PointerProbe{Coarse: true, HoverNone: true},
+				Touch:   &TouchMeasure{InputsMeasured: 0, TargetsMeasured: 7},
+			})
+		}
+	}
+	err = refuseWalkRegressions(mixed)
+	if err == nil || !strings.Contains(err.Error(), "MEASURED 0 text-entry inputs over 2 touch capture(s) in the journal world") {
+		t.Fatalf("a journal world whose touch captures measured NO input was hidden by the token-file world's inputs: %v", err)
+	}
+	if strings.Contains(err.Error(), "in the token-file world") {
+		t.Fatalf("the token-file world measured inputs and was still named as measuring none: %v", err)
+	}
+
+	// The header reading-order check refuses a walk in which no capture had two header focusables.
+	noHeader := cleanWalk()
+	for _, c := range noHeader {
+		c.HeaderOrder = c.HeaderOrder[:1]
+	}
+	if err := refuseWalkRegressions(noHeader); err == nil || !strings.Contains(err.Error(), "HEADER READING ORDER measured 0 of") {
+		t.Fatalf("a walk whose headers held one focusable each passed the reading-order check: %v", err)
 	}
 }
 

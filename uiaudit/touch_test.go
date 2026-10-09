@@ -469,3 +469,55 @@ func TestTheWholeWalkSignalsAreTheTokenFileWorlds(t *testing.T) {
 			len(p.Pages), s.pushed)
 	}
 }
+
+// TestAnOverflowingPageIsRecordedAsOverflowAtATouchRung is the control on `CaptureTarget`'s
+// shrink-to-fit branch, in a real chromium.
+//
+// 🔴 AT A `mobile`-FLAG RUNG AN OPTED-IN PAGE WIDER THAN THE VIEWPORT DOES NOT REPORT OVERFLOW: the
+// layout viewport grows to the content (`innerWidth` 510 at a 390 rung, `scrollWidth` equal to it), so
+// `horizontal_overflow` reads false and the walk used to die on the width assertion as a "broken
+// emulation". Measured on S1's first touch CSS with a long unbreakable scope name. Two pages: an
+// unbreakable word wider than the rung must come back as overflow (scrollWidth > 390, innerWidth 390);
+// the same word allowed to wrap must come back clean — so the branch is not "every touch capture
+// overflows".
+func TestAnOverflowingPageIsRecordedAsOverflowAtATouchRung(t *testing.T) {
+	chromiumOrRefuse(t)
+	const word = `<p style="font-size:24px;%s">unbrokenscopenamewithnobreakopportunityxyz</p>`
+	for _, tc := range []struct {
+		name      string
+		style     string
+		overflows bool
+	}{
+		{"an unbreakable word", "", true},
+		{"the same word, allowed to wrap", "overflow-wrap:anywhere", false},
+	} {
+		b := browserFor(t, touchPage(t, fmt.Sprintf(word, tc.style)).URL)
+		c, err := b.CaptureTarget(Target{Path: "/", PushURL: "/wide", LedgerRow: "control"}, Mobile)
+		if err != nil {
+			t.Fatalf("%s: the capture FAILED rather than recording what it measured: %v", tc.name, err)
+		}
+		if c.Layout.HorizontalOverflow != tc.overflows || c.Layout.InnerWidth != Mobile.Width ||
+			(tc.overflows && c.Layout.ScrollWidth <= Mobile.Width) {
+			t.Errorf("%s at mobile: overflow=%v scrollWidth=%d innerWidth=%d, want overflow=%v with innerWidth=%d",
+				tc.name, c.Layout.HorizontalOverflow, c.Layout.ScrollWidth, c.Layout.InnerWidth, tc.overflows, Mobile.Width)
+		}
+		t.Logf("%s at mobile: overflow=%v scrollWidth=%d innerWidth=%d", tc.name,
+			c.Layout.HorizontalOverflow, c.Layout.ScrollWidth, c.Layout.InnerWidth)
+	}
+
+	// …and the branch must NOT launder a page that overrides the device width: there the layout
+	// viewport is 600px because the PAGE asked for it, the client width is 600 too, and the width
+	// assertion's refusal is the right answer — not a recorded overflow.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>w</title>` +
+			`<meta name="viewport" content="width=600"></head><body><main><h1>w</h1></main></body></html>`))
+	}))
+	t.Cleanup(srv.Close)
+	b := browserFor(t, srv.URL)
+	_, err := b.CaptureTarget(Target{Path: "/", PushURL: "/fixed", LedgerRow: "control"}, Mobile)
+	if err == nil || !strings.Contains(err.Error(), "declares a <meta viewport> yet reports innerWidth=600") {
+		t.Fatalf("a page that fixes its own layout width at 600px was not refused by the width assertion: %v", err)
+	}
+	t.Logf("a page fixing width=600 at mobile: refused — %s", firstLine(err))
+}

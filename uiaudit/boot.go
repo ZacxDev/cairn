@@ -230,6 +230,10 @@ func buildFixtureStore(ctx context.Context, repoRoot, dir string) (string, []str
 		fmt.Printf("uiaudit: fixture store: %s", out)
 	}
 
+	if err := addUnbreakableScope(store); err != nil {
+		return "", nil, err
+	}
+
 	scopes, err := listScopes(store)
 	if err != nil {
 		return "", nil, err
@@ -510,6 +514,39 @@ func listScopes(store string) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// unbreakableScope is a fixture scope whose name has NO break opportunity: 42 lowercase letters, no
+// hyphen, no dot. Synthetic by construction. 42 is the token file's ceiling for a scope name.
+//
+// 🔴 IT EXISTS BECAUSE THE WALK WAS BLIND TO THE SHAPE, AND A DEFECT SHIPPED THROUGH IT. Every
+// reader-fixture scope name is short and hyphenated, so it wraps or fits at 390px whatever the CSS
+// does. S1 made `.card-name` an `inline-flex` box under a coarse pointer, which defeated `.card-head
+// h2`'s `min-w-0 break-words`: a long unbreakable name pushed `/` sideways at 390px (an audit
+// measured 401px and 505px of scrollWidth), and the overflow refusal read 0 because no fixture name
+// could overflow. With this scope in the world the refusal sees it — measured RED on the tree that
+// had the defect.
+//
+// ⚠ IT IS ADDED HERE, AFTER `reader_fixtures.build_store`, AND NOT IN THAT BUILDER: the reader
+// fixture's world is pinned byte-for-byte by `internal/report/testdata/reader_fixtures.json`, and a
+// layout fixture has no business moving the renderer's differential gate.
+const unbreakableScope = "unbrokenscopenamewithnobreakopportunityxyz"
+
+// addUnbreakableScope writes [unbreakableScope] with one well-formed entry, stamped with the
+// fixture's year-2000 instant so its relative time is the same on every run.
+func addUnbreakableScope(storeRoot string) error {
+	dir := filepath.Join(storeRoot, unbreakableScope)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "wide-entry.md")
+	body := "---\nservice: wide-entry\nscope: " + unbreakableScope + "\n---\n\n" +
+		"## What it is\nA scope whose name a browser cannot break, so every place that prints it must wrap it.\n\n" +
+		"## Nuance / work-history\n- 2000-01-03: synthetic.\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		return err
+	}
+	return os.Chtimes(path, journalEpoch, journalEpoch)
 }
 
 // buildStoreShim calls `tests/reader_fixtures.py`'s own builder. It is written to a temp
