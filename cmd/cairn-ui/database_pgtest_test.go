@@ -117,21 +117,14 @@ func TestWithADatabaseTheSurfaceMovesItsStateThereAndHoldsInvitations(t *testing
 		"-host", "127.0.0.1", "-port", "0")
 	child.Env = []string{reexecEnv + "=1"}
 	var body syncBuffer
-	child.Stdout, child.Stderr = &body, &body
-	if err := child.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { cancel(); _ = child.Wait() })
+	// Through `startChild`, so the wait fails the moment the child EXITS rather than polling out
+	// its 60 s deadline — see `presenceChild.done`.
+	c := startChild(t, child, cancel, &body, &body)
 
-	deadline := time.Now().Add(60 * time.Second)
-	for !strings.Contains(body.String(), "serving") {
-		if time.Now().After(deadline) {
-			t.Fatalf("the surface never came up against a WORKING database. Every refusal this tier's "+
-				"sibling file asserts is about a configuration that fails; if the one that succeeds "+
-				"cannot start, those refusals are a binary that refuses everything.\n%s", body.String())
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	c.waitWithin(t, 60*time.Second, "the surface to come up against a WORKING database. Every refusal "+
+		"this tier's sibling file asserts is about a configuration that fails; if the one that succeeds "+
+		"cannot start, those refusals are a binary that refuses everything",
+		func() bool { return strings.Contains(body.String(), "serving") })
 	line := body.String()
 
 	// (1) The schema is applied, read out of the database rather than inferred from the log.

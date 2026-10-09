@@ -116,14 +116,7 @@ func startAppChild(t *testing.T, env []string, extra ...string) *presenceChild {
 	}, extra...)
 	cmd := exec.CommandContext(ctx, self, args...)
 	cmd.Env = append([]string{reexecEnv + "=1"}, env...)
-	c := &presenceChild{cmd: cmd, out: &syncBuffer{}, stdout: &syncBuffer{}, cancel: cancel}
-	cmd.Stdout, cmd.Stderr = c.stdout, c.out
-	if err := cmd.Start(); err != nil {
-		cancel()
-		t.Fatal(err)
-	}
-	c.reap(t)
-	return c
+	return startChild(t, cmd, cancel, &syncBuffer{}, &syncBuffer{})
 }
 
 // TestTheBinaryRefusesEachAppMisconfiguration is the END of the chain: environment or flag →
