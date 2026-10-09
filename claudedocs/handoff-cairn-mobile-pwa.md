@@ -21,29 +21,26 @@ decisions O1–O13 paraphrased, slices S0–S6b, the iPhone checklist, closing-c
   of it (it gates announcing install to the client instance only). ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- **S0 MERGED** — #204 as `d4a1dda`.
-- **S1 OPERATOR-APPROVED TO MERGE + DEPLOY, waiting on CI** — #205 `zach/mobile-s1` head `b1c28ff`
-  (audit rounds 0, 1 (4🟡 fixed), 2 CLEAN; measurements in the PR body). CI run `37885832874`:
-  7 green, `go` still running at 05:31Z (the previous head's `go` job took ~78 min). Operator said
-  proceed: merge once green, verify by content, bump both personal pods.
-- **S2 IN FLIGHT** — implementer subagent on branch `zach/mobile-s2`, STACKED on
-  `origin/zach/mobile-s1` (S2's clause (c) sabotages need S1's refusals). It does NOT open a PR;
-  the parent rebases onto `main` after #205 squash-merges, then runs audit rounds and opens the PR.
-  S3 has not landed, so S2 pins `sabotaged=6`.
-- Claims HELD: `cairn-mobile-pwa-1` (merge+deploy S1), `cairn-mobile-pwa-2` (S2).
-- NOT deployed: S1. The personal instance runs `sha-0d3a1fa` (both pods).
+- **S0 MERGED** #204 `d4a1dda`. **S1 MERGED + DEPLOYED** #205 `90d1344`: both personal pods on
+  `sha-90d1344` (rollback `sha-0d3a1fa`), served stylesheet byte-identical to S1's `app.css`
+  (pre-S1 one differs). NOT verified on a phone — the operator's check.
+- **S2 MERGED** #206 as `173f08f` (content-identical to reviewed head `32305fb`). Audit: round 0
+  (1 deletion candidate D1, deleted) → round 1 (2🟡 2🟢, all fixed in `c1fba06`) → round 2 CLEAN
+  → CI's full battery caught 2 S2 casualties (stale invite pattern; a child waiter blind to exit
+  pushing the package past `-timeout=2m`), fixed in `32305fb`, delta-audited CLEAN, CI 8/8 green,
+  battery `killed=294 survived=2` (the two declared EQUIVALENT).
+- **S2 NOT deployed.** It is inert until `-app-name` is set; arming the personal instance needs
+  the operator's name + icon variant (`amber`/`teal`/`violet`/`slate`).
+- `pwa_check.sh --self-test` pins `sabotaged=6 caught=6 plain-loop=3/3` (S3 not landed).
+- No claims held.
 
 ## Next steps (ranked)
-1. **Merge #205 (S1) once CI is green at `b1c28ff`**, verify by content, confirm publish-image
-   pushed both images for the merge sha, then bump BOTH personal pods (the store pod's
-   `cairn-store-go` line and the UI pod's `cairn-ui` line) in the deployment repo — worktree off
-   its trunk; trunk = deploy; one commit, rollback sha `0d3a1fa8f746dfd75edc198d1f98b0d86f1f4383`
-   in the message, the same shape as the previous bump. Then check live; the operator opens a page
-   on a phone. Release `cairn-mobile-pwa-1`.
-   forcing: user — operator approved merge+deploy this session.
-2. **S2** — IN FLIGHT on `zach/mobile-s2` (see State now). Rebase onto `main` after #205, round 0 +
-   round 1 audits → delta rounds → PR → merge. Then S3, S4, S5, S6a, S6b per the plan.
+1. **S3** — `no-store` alone (decision 8) + `TestEveryNonPublicHTMLRowIsNoStore`; S2 has landed,
+   so S3 wires clause (d) into `pwa_check.sh` and pins `sabotaged=7`. Then S4, S5, S6a, S6b.
    forcing: user — operator chose this scope (O10 and later answers).
+2. **Arm + deploy S2 on the personal instance** once the operator picks an app name and icon
+   variant (bump both pods to the S2 merge sha; add `-app-name`/`-app-icon-variant` args beside
+   the existing `command`). forcing: user — awaiting the operator's choice.
 
 ## Gotchas / decisions / dead-ends
 - **Operator decisions this session (paraphrased; never quote verbatim — AGENTS.md forbids
@@ -67,6 +64,16 @@ decisions O1–O13 paraphrased, slices S0–S6b, the iPhone checklist, closing-c
 
 - **The deployment repo's base clone can sit far behind its trunk** — read the current image line
   off the remote ref (`git grep <pattern> origin/<trunk> -- <path>`), never its working tree. via: command
+
+- **Run the FULL mutant battery (or every row whose `path` a slice touched) before calling a
+  slice green** — per-row `--only` runs of a slice's NEW rows missed two rows the slice broke
+  (a pattern on an edited line; a timing budget). CI's `go` job is where the full battery runs. via: measurement
+- **The `cmd/cairn-ui` battery rows that make every child refuse sit at ~86–87 s of the
+  package's 120 s `-timeout`** — two waiters still poll after child exit
+  (`database_test.go` ~:318, 60 s; `main_test.go` ~:817, 20 s). Moving them onto `presenceChild`
+  (whose `waitFor` now fails on exit) restores the margin. via: measurement
+- **`pwa_check.sh` breaks under an exported `CDPATH`** (`$(cd … && pwd)` prints the path twice →
+  a misleading "missing built cairn-ui"); pre-existing pattern, unset `CDPATH` to run it. via: measurement
 
 ## How to verify
 ```bash
