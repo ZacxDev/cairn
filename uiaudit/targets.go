@@ -130,8 +130,8 @@ type Target struct {
 // THAN A GAP. `tokenfile.Source` grants no `admin` verb, so the page renders "No scope is
 // administrable by this credential" — the state `internal/ui/README.md` describes when
 // `cairn-ui` runs against a token file rather than a control journal. The walk therefore
-// captures the index and no per-scope page, and says so. Reaching the per-scope page needs a
-// journal-backed world, which is named in `README.md` as a declared gap.
+// captures the index and no per-scope page, and says so. The per-scope page is reached by the
+// journal-backed world `run` boots beside it (`BootJournalWorld`), through this same expansion.
 // ⚠ THE BROWSE PAGES ARE IN HERE FOR THE SAME REASON AND WITH THE SAME HAZARD. `GET /`
 // renders one card per scope, each linking `/scope?id=<control.ID>`; `GET /scope?id=…`
 // lists entries, each linking `/entry?ref=…&scope=…`. Both parameters are values the

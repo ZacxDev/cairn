@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ZacxDev/cairn/internal/arcs"
+	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/store"
 	"github.com/ZacxDev/cairn/internal/touch"
 	"github.com/ZacxDev/cairn/internal/ui"
@@ -67,6 +68,9 @@ type World struct {
 	BaseURL string
 	Store   string
 	Scopes  []string
+	// Token is the credential the walk signs in with: [fixtureToken] in the token-file world,
+	// and in the journal world the one `control.IssueCredential` minted (never printed).
+	Token string
 
 	cmd     *exec.Cmd
 	dir     string
@@ -83,32 +87,9 @@ type World struct {
 // that the world stays ONE definition, and a Go transcription of it would be a copy that
 // drifts.
 func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*World, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	store := filepath.Join(dir, "store")
-
-	shim := filepath.Join(dir, "buildstore.py")
-	if err := os.WriteFile(shim, []byte(buildStoreShim), 0o600); err != nil {
-		return nil, err
-	}
-	build := exec.CommandContext(ctx, "python3", shim, filepath.Join(repoRoot, "tests"), store)
-	build.Stderr = os.Stderr
-	if out, err := build.Output(); err != nil {
-		return nil, fmt.Errorf("building the fixture store: %w", err)
-	} else if len(out) > 0 {
-		fmt.Printf("uiaudit: fixture store: %s", out)
-	}
-
-	scopes, err := listScopes(store)
+	store, scopes, err := buildFixtureStore(ctx, repoRoot, dir)
 	if err != nil {
 		return nil, err
-	}
-	if len(scopes) == 0 {
-		// A CONTENT-FLOOR refusal, not a pass. A walk over a store with no scopes would
-		// capture the "no scope is visible to this credential" page on every route and
-		// report a clean run about nothing.
-		return nil, fmt.Errorf("the fixture store %s holds no scopes: a walk over it would capture an empty surface and report success", store)
 	}
 
 	arcJournal, err := writeArcJournal(dir, store, scopes)
@@ -137,33 +118,22 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*
 	pres.agentURL = fmt.Sprintf("http://%s:%d", bindHost, agentPort)
 	pres.session = presenceSession[0].Session
 
-	logPath := filepath.Join(dir, "cairn-ui.log")
-	logFile, err := os.Create(logPath)
-	if err != nil {
-		return nil, err
-	}
-
 	w := &World{
 		BaseURL: fmt.Sprintf("http://%s:%d", bindHost, port),
 		Store:   store,
 		Scopes:  scopes,
+		Token:   fixtureToken,
 		dir:     dir,
-		logPath: logPath,
+		logPath: filepath.Join(dir, "cairn-ui.log"),
 	}
-	// ⚠ `-control-journal` IS LEFT AT ITS DEFAULT AND THE SHARE FLOW IS THEREFORE
-	// READ-ONLY. That is the deployment `internal/ui/README.md` describes for the
-	// token-file world, so it is the state worth capturing: a walk that invented a
-	// journal would render a page no deployment serves. The consequence is that
-	// `POST /share` has no effect to capture, which is fine — this walk never navigates
-	// a non-GET row anyway.
-	// 🔴 `CommandContext` RATHER THAN `Command`, AND THAT IS HOW AN ORPHAN SURVIVED. A plain
-	// `exec.Command` ties the child to nothing: if the walk's context ends — a timeout, a cancelled
-	// CI job, a panic before `Stop` — the pod keeps running and keeps the port. One was found alive
-	// on a developer's machine from an aborted run, over a DIFFERENT store, and a subsequent walk
-	// would have reported `pod up … over N scope(s)` from its own `listScopes` while the browser
-	// talked to the survivor. `Cancel` and `WaitDelay` make the kill the context's job rather than a
-	// `defer` somebody might not reach.
-	w.cmd = exec.CommandContext(ctx, uiBinary,
+	// ⚠ `-control-journal` IS LEFT AT ITS DEFAULT IN THIS WORLD AND ITS SHARE FLOW IS THEREFORE
+	// READ-ONLY. That is the token-file deployment `internal/ui/README.md` describes, and it is
+	// still a supported one, so it stays the world every existing signal is measured over. The
+	// consequence is that `POST /share` has no effect to capture, which is fine — this walk never
+	// navigates a non-GET row anyway. The journal-backed world is a SECOND boot beside it —
+	// [BootJournalWorld] — and not a replacement; its doc says why the old objection ("a walk that
+	// invented a journal would render a page no deployment serves") no longer holds.
+	if err := w.start(ctx, uiBinary, port,
 		"-store", store,
 		"-token-file", tokenPath,
 		"-session-file", filepath.Join(dir, "sessions.json"),
@@ -173,14 +143,43 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*
 		"-presence-agent-addr", fmt.Sprintf("%s:%d", bindHost, agentPort),
 		"-presence-tokens", pres.tokens,
 		"-presence-owner", pres.owner,
-	)
+	); err != nil {
+		return nil, err
+	}
+	// A refused FIRST push is a boot failure, not a missing badge: the walk would otherwise capture
+	// every page in its no-presence state and report the badged surfaces covered.
+	if err := pres.push(ctx); err != nil {
+		w.Stop()
+		return nil, fmt.Errorf("%w\n--- cairn-ui log ---\n%s", err, w.Log())
+	}
+	pushCtx, stopPushing := context.WithCancel(ctx)
+	w.stopPushing = stopPushing
+	go pres.keepPushing(pushCtx)
+	return w, nil
+}
+
+// start launches `cairn-ui` with `args`, its output to the world's log, and waits until it is
+// healthy. It is the ONE launch sequence both worlds use.
+func (w *World) start(ctx context.Context, uiBinary string, port int, args ...string) error {
+	logFile, err := os.Create(w.logPath)
+	if err != nil {
+		return err
+	}
+	// 🔴 `CommandContext` RATHER THAN `Command`, AND THAT IS HOW AN ORPHAN SURVIVED. A plain
+	// `exec.Command` ties the child to nothing: if the walk's context ends — a timeout, a cancelled
+	// CI job, a panic before `Stop` — the pod keeps running and keeps the port. One was found alive
+	// on a developer's machine from an aborted run, over a DIFFERENT store, and a subsequent walk
+	// would have reported `pod up … over N scope(s)` from its own `listScopes` while the browser
+	// talked to the survivor. `Cancel` and `WaitDelay` make the kill the context's job rather than a
+	// `defer` somebody might not reach.
+	w.cmd = exec.CommandContext(ctx, uiBinary, args...)
 	w.cmd.Stdout = logFile
 	w.cmd.Stderr = logFile
 	// A clean environment: every `CAIRN_*` and `SUBSYSTEM_STORE_*` variable the ambient
-	// shell happens to carry would otherwise reach the pod and the flags above would be
+	// shell happens to carry would otherwise reach the pod and the flags would be
 	// competing with it. `PATH` is kept because `cairn-ui` resolves nothing by bare name
 	// today and a future one might.
-	w.cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir}
+	w.cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + w.dir}
 
 	w.cmd.Cancel = func() error { return w.cmd.Process.Kill() }
 	// A grace period, then SIGKILL: `Wait` must not block forever on a child that ignores the first
@@ -196,29 +195,123 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*
 	// different risk from a survivor that has been running for hours, and it is the smaller one.
 	if err := refusePortInUse(bindHost, port); err != nil {
 		logFile.Close()
-		return nil, err
+		return err
 	}
 
 	if err := w.cmd.Start(); err != nil {
 		logFile.Close()
-		return nil, err
+		return err
 	}
 
 	if err := waitHealthy(ctx, w.BaseURL+ui.HealthPath, 20*time.Second); err != nil {
 		w.Stop()
-		body, _ := os.ReadFile(logPath)
-		return nil, fmt.Errorf("%w\n--- cairn-ui log ---\n%s", err, body)
+		return fmt.Errorf("%w\n--- cairn-ui log ---\n%s", err, w.Log())
 	}
-	// A refused FIRST push is a boot failure, not a missing badge: the walk would otherwise capture
-	// every page in its no-presence state and report the badged surfaces covered.
-	if err := pres.push(ctx); err != nil {
-		w.Stop()
-		body, _ := os.ReadFile(logPath)
-		return nil, fmt.Errorf("%w\n--- cairn-ui log ---\n%s", err, body)
+	return nil
+}
+
+// buildFixtureStore materialises `tests/reader_fixtures.py`'s world under `dir` and lists its
+// scopes. Both worlds call it, so both walk ONE fixture definition.
+func buildFixtureStore(ctx context.Context, repoRoot, dir string) (string, []string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", nil, err
 	}
-	pushCtx, stopPushing := context.WithCancel(ctx)
-	w.stopPushing = stopPushing
-	go pres.keepPushing(pushCtx)
+	store := filepath.Join(dir, "store")
+
+	shim := filepath.Join(dir, "buildstore.py")
+	if err := os.WriteFile(shim, []byte(buildStoreShim), 0o600); err != nil {
+		return "", nil, err
+	}
+	build := exec.CommandContext(ctx, "python3", shim, filepath.Join(repoRoot, "tests"), store)
+	build.Stderr = os.Stderr
+	if out, err := build.Output(); err != nil {
+		return "", nil, fmt.Errorf("building the fixture store: %w", err)
+	} else if len(out) > 0 {
+		fmt.Printf("uiaudit: fixture store: %s", out)
+	}
+
+	scopes, err := listScopes(store)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(scopes) == 0 {
+		// A CONTENT-FLOOR refusal, not a pass. A walk over a store with no scopes would
+		// capture the "no scope is visible to this credential" page on every route and
+		// report a clean run about nothing.
+		return "", nil, fmt.Errorf("the fixture store %s holds no scopes: a walk over it would capture an empty surface and report success", store)
+	}
+	return store, scopes, nil
+}
+
+// journalEpoch stamps every event the journal world's seed writes: an obviously-synthetic
+// year-2000 instant, so no real time reaches the journal.
+var journalEpoch = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// journalProvider is the provider half of the fixture user's (provider, subject) key. No
+// identity backend is configured in this world, so nothing resolves a session by it; it exists
+// because `EventUserCreated` refuses an empty one.
+const journalProvider = "uiaudit"
+
+// BootJournalWorld boots `cairn-ui` over the SAME fixture store with `-control-journal` pointing
+// at a journal seeded through `internal/control`'s own writers, making the fixture user the OWNER
+// of a project holding every fixture scope — so it holds `admin` over each, the share index
+// publishes per-scope pages, and each renders its grant form.
+//
+// 🔴 THIS ANSWERS `BootWorld`'s OLD OBJECTION ON ITS OWN TERMS RATHER THAN OVERRULING IT. The
+// token-file world left `-control-journal` unset because a walk that INVENTED a journal "would
+// render a page no deployment serves". A journal-backed authority is what a deployed instance
+// serves; the token-file one is the supported alternative. So both are booted, side by side, and
+// neither replaces the other.
+//
+// 🔴 SEEDED THROUGH `control.ProvisionUser` AND `control.IssueCredential`, NEVER A HAND-WRITTEN
+// JOURNAL LINE: a record shape the pod would DROP at replay could otherwise be captured as if it
+// were an authority. Project ownership is `Resolve`'s membership path — the one an operator's
+// `-create-user` takes — so this is the authority a deployment builds, not one built for a test.
+//
+// ⚠ NO `-db-dsn`, SO THE INVITE MINT FORM IS NOT REACHED: the invite rows render
+// `ui.NoInviteStore`, which `refuseJournalWorldFellBack` asserts is the state captured.
+// ⚠ NO `-arc-journal` AND NO PRESENCE: neither changes the two rows this world walks.
+func BootJournalWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*World, error) {
+	store, scopes, err := buildFixtureStore(ctx, repoRoot, dir)
+	if err != nil {
+		return nil, err
+	}
+	journal := filepath.Join(dir, "control", "journal.jsonl")
+	fs, err := control.OpenFileStore(journal)
+	if err != nil {
+		return nil, err
+	}
+	prov, err := control.ProvisionUser(ctx, fs, control.NewUser{
+		Provider: journalProvider, Subject: fixtureIdentity,
+		ProjectName: fixtureIdentity, ScopeNames: scopes, At: journalEpoch,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("seeding the journal world's user: %w", err)
+	}
+	issued, err := control.IssueCredential(ctx, fs, control.NewCredential{
+		SubjectKind: control.KindUser, SubjectID: prov.User, Label: fixtureIdentity, At: journalEpoch,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("issuing the journal world's credential: %w", err)
+	}
+
+	w := &World{
+		BaseURL: fmt.Sprintf("http://%s:%d", bindHost, port),
+		Store:   store,
+		Scopes:  scopes,
+		Token:   issued.Token(),
+		dir:     dir,
+		logPath: filepath.Join(dir, "cairn-ui.log"),
+	}
+	if err := w.start(ctx, uiBinary, port,
+		"-store", store,
+		"-control-journal", journal,
+		"-session-file", filepath.Join(dir, "sessions.json"),
+		"-host", bindHost,
+		"-port", fmt.Sprint(port),
+	); err != nil {
+		return nil, err
+	}
 	return w, nil
 }
 

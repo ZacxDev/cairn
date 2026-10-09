@@ -102,6 +102,10 @@ var findingTypes = map[string]bool{
 	"a11y": true, "console": true, "network": true, "perf": true, "layout": true, "other": true,
 }
 
+// pushedCapture is the ONE predicate deciding whether a capture reaches the hub: a PUSHED
+// viewport, in the token-file world. `BuildPayload` and the summary's digests line both read it.
+func pushedCapture(c *Capture) bool { return c.Viewport.Push && c.World == "" }
+
 // BuildPayload turns the captures into the metadata part and the file parts.
 //
 // Filenames are derived from the target and the viewport and are plain basenames: the
@@ -122,9 +126,15 @@ func BuildPayload(label string, captures []*Capture) (*PushPayload, map[string][
 	files := map[string][]byte{}
 
 	for _, c := range captures {
-		if !c.Viewport.Push {
+		if !pushedCapture(c) {
 			continue
 		}
+		// 🔴 THE JOURNAL-BACKED WORLD IS NEVER PUSHED — see [pushedCapture]. Its bare `/share` and `/invite` captures
+		// carry the SAME `PushURL` as the token-file world's, so pushing both would hand the hub
+		// two pages under one `url`+`viewport` key — and its per-scope share pages are addressed
+		// by `control.ID`s minted fresh each run, so every one would be "new" on every push. It is
+		// a local measurement: the walk log, the touch report, `refuseWalkRegressions` and its own
+		// fall-back refusal. ⚠ So it also writes NO artifact — the artifacts are this payload's files.
 		stem := slug(c.Target.PushURL) + "-" + c.Viewport.Name
 		shot := stem + ".png"
 		axe := stem + ".axe.json"

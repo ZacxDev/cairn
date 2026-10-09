@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -31,6 +32,9 @@ func cleanWalk() []*Capture {
 			Viewport: vp,
 			AxeJSON:  []byte(`{"testEngine":{"name":"axe-core","version":"4.x"},"violations":[]}`),
 			Layout:   &PushLayout{InnerWidth: vp.Width, ScrollWidth: vp.Width},
+			// Touch emulation REACHED the page: coarse exactly where the viewport is a
+			// touch rung. `refuseUnreachableTouch` refuses any other combination.
+			Pointer: &PointerProbe{Coarse: vp.Touch, HoverNone: true},
 			Content: &ContentBox{
 				InnerWidth: vp.Width,
 				BodyWidth:  vp.Width * 92 / 100,
@@ -83,6 +87,16 @@ func widestCapture(cs []*Capture) *Capture {
 		}
 	}
 	panic("no capture at the widest declared viewport: the fixture cannot exercise the content floor")
+}
+
+// captureAt finds a fixture capture by VIEWPORT VALUE, for `widestCapture`'s reason.
+func captureAt(cs []*Capture, vp Viewport) *Capture {
+	for _, c := range cs {
+		if c.Viewport == vp {
+			return c
+		}
+	}
+	panic("no capture at " + vp.Name)
 }
 
 // TestTheWalkRefusalsCanEachGoRED is the NEGATIVE CONTROL on the three properties this
@@ -238,6 +252,26 @@ func TestTheWalkRefusalsCanEachGoRED(t *testing.T) {
 			wantSub: "CONTENT TOO NARROW",
 		},
 		{
+			// 🔴 TOUCH EMULATION THAT NEVER REACHED THE PAGE — the state EVERY capture this
+			// harness took was in before S0: a touch rung reading `(pointer: coarse)` false.
+			name:    "a TOUCH capture that is not coarse (emulation never reached the page)",
+			break_:  func(cs []*Capture) { captureAt(cs, Mobile).Pointer.Coarse = false },
+			wantSub: "TOUCH REACHABILITY FAILED",
+		},
+		{
+			// …and the other half: emulation PERSISTS across navigations in one tab, so a walk
+			// that never switched it off measures the laptop capture as a phone.
+			name:    "a NON-TOUCH capture that IS coarse (emulation never switched off)",
+			break_:  func(cs []*Capture) { captureAt(cs, Laptop).Pointer.Coarse = true },
+			wantSub: "TOUCH REACHABILITY FAILED",
+		},
+		{
+			// A capture with no probe at all is a measurement that did not happen.
+			name:    "a capture with NO pointer probe",
+			break_:  func(cs []*Capture) { captureAt(cs, Tablet).Pointer = nil },
+			wantSub: "TOUCH REACHABILITY FAILED",
+		},
+		{
 			// A nil content box is a MEASUREMENT that did not happen, and a floor that
 			// treated it as satisfied would be green on exactly the walk that measured
 			// nothing.
@@ -302,6 +336,7 @@ func TestTheWalkRefusalsCanEachGoRED(t *testing.T) {
 		Viewport: Ultrawide,
 		AxeJSON:  []byte(`{"testEngine":{"name":"axe-core","version":"4.x"},"violations":[]}`),
 		Layout:   &PushLayout{InnerWidth: Ultrawide.Width, ScrollWidth: Ultrawide.Width},
+		Pointer:  &PointerProbe{HoverNone: true},
 		Content: &ContentBox{
 			InnerWidth: Ultrawide.Width,
 			BodyWidth:  1792,
@@ -325,6 +360,7 @@ func TestTheWalkRefusalsCanEachGoRED(t *testing.T) {
 		Viewport: Ultrawide,
 		AxeJSON:  []byte(`{"testEngine":{"name":"axe-core","version":"4.x"},"violations":[]}`),
 		Layout:   &PushLayout{InnerWidth: Ultrawide.Width, ScrollWidth: Ultrawide.Width},
+		Pointer:  &PointerProbe{HoverNone: true},
 		Content: &ContentBox{
 			InnerWidth: Ultrawide.Width,
 			// 3200, not 1792: the measurement CI actually reported for this page.
@@ -424,5 +460,38 @@ func TestTheContentFloorExemptionLedgerIsExactlyThese(t *testing.T) {
 		t.Errorf("a card class constant was renamed (%q, %q) — check that `internal/ui/tailwind.css` and "+
 			"`render.go` moved with it, because this exemption is matched on the rendered class string",
 			signinMainClass, joinMainClass)
+	}
+}
+
+// TestTheReachabilityRefusalRefusesAnEMPTYSide pins `refuseUnreachableTouch`'s two-sided claim: a
+// capture set that holds ONLY touch captures, or ONLY non-touch ones, is refused rather than passed
+// vacuously — every capture in each set is otherwise CORRECT, so the only defect is the empty side.
+func TestTheReachabilityRefusalRefusesAnEMPTYSide(t *testing.T) {
+	var touch, other []*Capture
+	for _, c := range cleanWalk() {
+		if c.Viewport.Touch {
+			touch = append(touch, c)
+		} else {
+			other = append(other, c)
+		}
+	}
+	if err := refuseUnreachableTouch(append(append([]*Capture{}, touch...), other...)); err != nil {
+		t.Fatalf("POSITIVE CONTROL FAILED: both sides present and correct, yet refused: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		set  []*Capture
+		want string
+	}{
+		{"ONLY non-touch captures", other, fmt.Sprintf("measured 0 touch and %d non-touch", len(other))},
+		{"ONLY touch captures", touch, fmt.Sprintf("measured %d touch and 0 non-touch", len(touch))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := refuseUnreachableTouch(tc.set)
+			if err == nil || !strings.Contains(err.Error(), "two-sided claim with an empty side") ||
+				!strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want the empty-side refusal naming %q, got %v", tc.want, err)
+			}
+		})
 	}
 }

@@ -151,101 +151,56 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 			}
 			fmt.Println("uiaudit: signed out (by clicking the control, so the server revoked the session)")
 		}
-		// 🔴 A QUEUE, NOT A LOOP OVER A FIXED SLICE, BECAUSE A PAGE MAY PUBLISH FURTHER
-		// TARGETS. The share index's per-scope links are `control.ID`s nobody can guess, so
-		// the only honest way to reach them is to read what the surface itself offered — see
-		// [ExpandLinks] for the measured reason a guess was worse than useless here.
-		//
-		// 🔴 AND IT DEDUPES ON `Path`, WHICH BECAME AN OBLIGATION RATHER THAN A TIDINESS
-		// WHEN A DISCOVERED PAGE STARTED PUBLISHING LINKS OF ITS OWN. The browse pages link
-		// across rows and back: `/` → `/scope?id=X` → `/entry?…` → a breadcrumb to
-		// `/scope?id=X`. Without this set that is an unbounded queue, and the symptom is a
-		// walk that never returns rather than one that reports a defect. `/scope?id=X` is
-		// also published by TWO pages — the root's cards and the parameterless `/scope`
-		// navigation list — so even without a cycle it would be captured twice, at five
-		// widths each, and pushed as ten pages the hub would diff against themselves.
-		queue := make([]Target, 0, len(targets))
-		enqueued := map[string]bool{}
+		var seed []Target
 		for _, t := range targets {
-			if t.SignedIn == signedIn && !enqueued[t.Path] {
-				enqueued[t.Path] = true
-				queue = append(queue, t)
+			if t.SignedIn == signedIn {
+				seed = append(seed, t)
 			}
 		}
-		for len(queue) > 0 {
-			t := queue[0]
-			queue = queue[1:]
-			for _, vp := range Viewports {
-				c, err := browser.CaptureTarget(t, vp)
-				if err != nil {
-					return fmt.Errorf("%w\n--- cairn-ui log ---\n%s", err, world.Log())
-				}
-				captures = append(captures, c)
-				// `main=NNNpx/MM%` is printed on EVERY capture, not only the ones the floor
-				// binds: the number is the only way a reader of this log can see the width
-				// ladder working at four widths it is not asserted at.
-				fmt.Printf("uiaudit: captured %-38s %-9s %d axe=%d layout(tap<44=%d text<12=%d overflow=%v no-viewport-meta=%v main=%dpx/%.0f%%) scripts=%d console=%d net=%d digest=%v\n",
-					t.Path, vp.Name, c.DocStatus, len(c.Violations),
-					c.Layout.SmallTapTargets, c.Layout.SmallText, c.Layout.HorizontalOverflow,
-					c.Layout.MissingViewportMeta,
-					c.Content.MainWidth, 100*float64(c.Content.MainWidth)/float64(c.Content.InnerWidth),
-					c.ScriptCount(),
-					len(c.Console), len(c.Network), c.HasDigest())
-
-				// Expansion is read from ONE viewport's render, not all five: the hrefs a
-				// page publishes are an authority answer and cannot depend on a width, and
-				// enqueueing them once per width would capture every discovered page five
-				// times. The dedupe above would absorb that, which is exactly why this
-				// narrowing is kept explicit rather than left to it — two mechanisms doing
-				// one job is how the surviving one stops being read.
-				if t.ExpandLinks && vp == Viewports[0] {
-					found, declined, bounded := ExpandLinks(t, c.Hrefs, ledger)
-					for _, d := range declined {
-						fmt.Printf("uiaudit:   declined href %q from %s (not a relative link, carries no query, or names no declared GET row)\n", d, t.Path)
-					}
-					if bounded > 0 {
-						// 🔴 PRINTED, AND NOT AS A DECLINE. These are pages the walk WOULD
-						// have visited; the hub's 200-page cap is what stops it, and the
-						// arithmetic is `targets × pushed viewports`. Silently taking the
-						// first four would make a bounded walk read as a complete one, which
-						// is the under-coverage this whole derivation exists against.
-						fmt.Printf("uiaudit:   %s published %d further target(s); BOUNDED to %d, round-robin by row over the sorted paths "+
-							"(MaxExpansionsPerPage — one template per row; the hub's page cap is %d)\n",
-							t.Path, bounded+len(found), MaxExpansionsPerPage, MaxPages)
-					}
-					if len(found) == 0 {
-						// ⚠ NOT AN ERROR, AND SAYING WHY IS THE POINT. On the token-file
-						// deployment the share index renders "No scope is administrable by
-						// this credential" — an authority answer, not an empty store — so
-						// zero links is the correct output there. `README.md` declares
-						// reaching the per-scope SHARE page as a gap needing a
-						// journal-backed world. The BROWSE pages are not in that position:
-						// a token-file row is unrestricted over the store's scopes, so
-						// `GET /` does publish scope links on this deployment.
-						fmt.Printf("uiaudit:   %s published no expandable links\n", t.Path)
-					}
-					for _, f := range found {
-						if enqueued[f.Path] {
-							fmt.Printf("uiaudit:   already queued %s (published again by %s)\n", f.Path, t.Path)
-							continue
-						}
-						enqueued[f.Path] = true
-						queue = append(queue, f)
-						fmt.Printf("uiaudit:   expanded %s -> %s\n", t.Path, f.Path)
-					}
-				}
-			}
+		got, err := walkQueue(browser, world, seed, ledger, "")
+		if err != nil {
+			return err
 		}
+		captures = append(captures, got...)
 	}
 	if len(captures) == 0 {
 		return fmt.Errorf("the walk captured nothing: %d target(s) derived from %d ledger row(s)", len(targets), len(ledger))
 	}
+	favicons := browser.FaviconRefusals()
 
-	printSignalSummary(captures, browser.FaviconRefusals())
+	// 🔴 THE JOURNAL-BACKED WORLD, BESIDE THE TOKEN-FILE ONE AND NEVER INSTEAD OF IT. Both are
+	// supported deployments; the journal one is the shape a deployed instance runs, and it is the
+	// only one in which the per-scope share page and its grant form exist. See [BootJournalWorld]
+	// for why this answers `boot.go`'s "a page no deployment serves" objection on its own terms,
+	// and [journalWorldPaths] for why it walks two rows rather than the ledger again.
+	//
+	// ⚠ ITS PORT IS PICKED FREE, NOT `port+1`. The token-file world's presence agent already holds a
+	// RANDOM free loopback port, which could be `port+1`; picking after that world is up means the
+	// agent's port is taken by then and cannot be chosen. `refusePortInUse` still guards the window.
+	journalPort, err := aFreeLoopbackPort()
+	if err != nil {
+		return err
+	}
+	journalCaptures, err := walkJournalWorld(ctx, abs, uiBinary, filepath.Join(workDir, "journal-world"), journalPort, budget, targets, ledger)
+	if err != nil {
+		return err
+	}
+	if err := refuseJournalWorldFellBack(journalCaptures); err != nil {
+		return err
+	}
+	captures = append(captures, journalCaptures...)
 
+	printSignalSummary(captures, favicons)
+
+	// 🔴 TOUCH REACHABILITY IS CHECKED IN ONE PLACE, `refuseWalkRegressions` (clause (c) of the
+	// mobile plan's closing condition), AND THE TOUCH SUMMARY PRINTS ONLY AFTER IT PASSED — so a
+	// walk whose touch rungs were never touch refuses without printing target sizes measured under
+	// a mouse pointer. ⚠ An earlier draft also called `refuseUnreachableTouch` here, BEFORE the
+	// summary; that made the call inside `refuseWalkRegressions` unreachable on a real walk.
 	if err := refuseWalkRegressions(captures); err != nil {
 		return err
 	}
+	printTouchSummary(captures)
 
 	payload, files, err := BuildPayload(label, captures)
 	if err != nil {
@@ -337,6 +292,359 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 		}
 	}
 	return nil
+}
+
+// walkQueue captures every seed target at every declared width, following the links each
+// link-expanded page publishes, and tags every capture with `worldName`.
+//
+// 🔴 A QUEUE, NOT A LOOP OVER A FIXED SLICE, BECAUSE A PAGE MAY PUBLISH FURTHER
+// TARGETS. The share index's per-scope links are `control.ID`s nobody can guess, so
+// the only honest way to reach them is to read what the surface itself offered — see
+// [ExpandLinks] for the measured reason a guess was worse than useless here.
+//
+// 🔴 AND IT DEDUPES ON `Path`, WHICH BECAME AN OBLIGATION RATHER THAN A TIDINESS
+// WHEN A DISCOVERED PAGE STARTED PUBLISHING LINKS OF ITS OWN. The browse pages link
+// across rows and back: `/` → `/scope?id=X` → `/entry?…` → a breadcrumb to
+// `/scope?id=X`. Without this set that is an unbounded queue, and the symptom is a
+// walk that never returns rather than one that reports a defect. `/scope?id=X` is
+// also published by TWO pages — the root's cards and the parameterless `/scope`
+// navigation list — so even without a cycle it would be captured twice, at five
+// widths each, and pushed as ten pages the hub would diff against themselves.
+func walkQueue(browser *Browser, world *World, seed []Target, ledger []string, worldName string) ([]*Capture, error) {
+	var captures []*Capture
+	queue := make([]Target, 0, len(seed))
+	enqueued := map[string]bool{}
+	for _, t := range seed {
+		if !enqueued[t.Path] {
+			enqueued[t.Path] = true
+			queue = append(queue, t)
+		}
+	}
+	label := ""
+	if worldName != "" {
+		label = "[" + worldName + "] "
+	}
+	for len(queue) > 0 {
+		t := queue[0]
+		queue = queue[1:]
+		for _, vp := range Viewports {
+			c, err := browser.CaptureTarget(t, vp)
+			if err != nil {
+				return nil, fmt.Errorf("%s%w\n--- cairn-ui log ---\n%s", label, err, world.Log())
+			}
+			c.World = worldName
+			captures = append(captures, c)
+			// `main=NNNpx/MM%` is printed on EVERY capture, not only the ones the floor
+			// binds: the number is the only way a reader of this log can see the width
+			// ladder working at four widths it is not asserted at. The `touch(…)` block is
+			// printed with `coarse=` FIRST, so every touch number on the line carries the
+			// pointer state it was measured under.
+			fmt.Printf("uiaudit: captured %s%-38s %-9s %d axe=%d layout(tap<44=%d text<12=%d overflow=%v no-viewport-meta=%v main=%dpx/%.0f%%) touch(coarse=%v target-size=%d box<24=%d/%d input<16px=%d/%d) scripts=%d console=%d net=%d digest=%v\n",
+				label, t.Path, vp.Name, c.DocStatus, len(c.Violations),
+				c.Layout.SmallTapTargets, c.Layout.SmallText, c.Layout.HorizontalOverflow,
+				c.Layout.MissingViewportMeta,
+				c.Content.MainWidth, 100*float64(c.Content.MainWidth)/float64(c.Content.InnerWidth),
+				c.Pointer.Coarse, c.TargetSizeNodes(), c.Touch.TargetsUnder24, c.Touch.TargetsMeasured,
+				len(c.Touch.SmallInputs), c.Touch.InputsMeasured,
+				c.ScriptCount(),
+				len(c.Console), len(c.Network), c.HasDigest())
+
+			// Expansion is read from ONE viewport's render, not all five: the hrefs a
+			// page publishes are an authority answer and cannot depend on a width, and
+			// enqueueing them once per width would capture every discovered page five
+			// times. The dedupe above would absorb that, which is exactly why this
+			// narrowing is kept explicit rather than left to it — two mechanisms doing
+			// one job is how the surviving one stops being read.
+			if t.ExpandLinks && vp == Viewports[0] {
+				found, declined, bounded := ExpandLinks(t, c.Hrefs, ledger)
+				for _, d := range declined {
+					fmt.Printf("uiaudit:   %sdeclined href %q from %s (not a relative link, carries no query, or names no declared GET row)\n", label, d, t.Path)
+				}
+				if bounded > 0 {
+					// 🔴 PRINTED, AND NOT AS A DECLINE. These are pages the walk WOULD
+					// have visited; the hub's 200-page cap is what stops it, and the
+					// arithmetic is `targets × pushed viewports`. Silently taking the
+					// first four would make a bounded walk read as a complete one, which
+					// is the under-coverage this whole derivation exists against.
+					fmt.Printf("uiaudit:   %s%s published %d further target(s); BOUNDED to %d, round-robin by row over the sorted paths "+
+						"(MaxExpansionsPerPage — one template per row; the hub's page cap is %d)\n",
+						label, t.Path, bounded+len(found), MaxExpansionsPerPage, MaxPages)
+				}
+				if len(found) == 0 {
+					// ⚠ NOT AN ERROR, AND SAYING WHY IS THE POINT. On the token-file
+					// deployment the share index renders "No scope is administrable by
+					// this credential" — an authority answer, not an empty store — so
+					// zero links is the correct output there; the journal-backed world
+					// beside it is what reaches the per-scope SHARE page. The BROWSE pages
+					// are not in that position: a token-file row is unrestricted over the
+					// store's scopes, so `GET /` does publish scope links on this deployment.
+					fmt.Printf("uiaudit:   %s%s published no expandable links\n", label, t.Path)
+				}
+				for _, f := range found {
+					if enqueued[f.Path] {
+						fmt.Printf("uiaudit:   %salready queued %s (published again by %s)\n", label, f.Path, t.Path)
+						continue
+					}
+					enqueued[f.Path] = true
+					queue = append(queue, f)
+					fmt.Printf("uiaudit:   %sexpanded %s -> %s\n", label, t.Path, f.Path)
+				}
+			}
+		}
+	}
+	return captures, nil
+}
+
+// journalWorldPaths is the set of ledger rows the journal-backed world walks.
+//
+// 🔴 TWO ROWS, NOT THE LEDGER AGAIN, AND THE NARROWING IS A STATED CHOICE RATHER THAN A BUDGET
+// ACCIDENT. These are the rows whose page an `admin`-bearing authority renders DIFFERENTLY: the
+// share index lists administrable scopes (and links each per-scope page, which carries the grant
+// form), and the invite index is where a project manager would mint. Every other row renders the
+// same templates over the same store in both worlds, and walking them twice would double the
+// walk's wall time to measure nothing the token-file walk did not.
+//
+// ⚠ THE INVITE MINT FORM IS NOT REACHED EVEN HERE, DELIBERATELY: it needs `-db-dsn`
+// (PostgreSQL), and without one the invite rows render `ui.NoInviteStore` — the state this world
+// captures and `refuseJournalWorldFellBack` asserts. Capturing the form means a `services:
+// postgres` on the uiaudit job, deferred in the mobile plan (Q10) until a defect is found there.
+var journalWorldPaths = map[string]bool{
+	ui.SharePath:  true,
+	ui.InvitePath: true,
+}
+
+// JournalWorld is the [Capture.World] label of the journal-backed world.
+const JournalWorld = "journal"
+
+// walkJournalWorld boots the journal-backed pod, signs in with the credential the journal was
+// seeded with, and walks [journalWorldPaths].
+//
+// ⚠ A SECOND BROWSER, NOT THE FIRST ONE REUSED: the two pods are on one host and differ only by
+// PORT, and cookies are scoped by host and not by port — so one jar would carry both worlds'
+// `__Host-` session cookie under one name and each sign-in would overwrite the other's.
+func walkJournalWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int, budget time.Duration,
+	targets []Target, ledger []string) ([]*Capture, error) {
+	world, err := BootJournalWorld(ctx, repoRoot, uiBinary, dir, port)
+	if err != nil {
+		return nil, err
+	}
+	defer world.Stop()
+	fmt.Printf("uiaudit: [%s] pod up at %s over %d scope(s), authority = a control journal seeded through internal/control\n",
+		JournalWorld, world.BaseURL, len(world.Scopes))
+
+	browser, err := NewBrowser(ctx, world.BaseURL, budget)
+	if err != nil {
+		return nil, err
+	}
+	defer browser.Close()
+	if _, err := browser.SignIn(world.Token); err != nil {
+		return nil, fmt.Errorf("[%s] %w\n--- cairn-ui log ---\n%s", JournalWorld, err, world.Log())
+	}
+
+	var seed []Target
+	for _, t := range targets {
+		if t.SignedIn && journalWorldPaths[t.Path] {
+			seed = append(seed, t)
+		}
+	}
+	if len(seed) != len(journalWorldPaths) {
+		return nil, fmt.Errorf("[%s] the ledger-derived targets carry %d of the %d signed-in rows this world walks "+
+			"(%v): a row was renamed or reclassified, and this world would walk less than it says",
+			JournalWorld, len(seed), len(journalWorldPaths), journalWorldPaths)
+	}
+	return walkQueue(browser, world, seed, ledger, JournalWorld)
+}
+
+// refuseJournalWorldFellBack refuses a journal-world walk that did not reach the state it
+// exists to capture.
+//
+// 🔴 IT ASSERTS THE RENDERED STATE, NOT THE FLAG THE POD WAS BOOTED WITH, because the failure it
+// guards is silent: a pod that came up on the token-file authority renders `/share` and `/invite`
+// at 200 with real-looking pages, and every collector would describe them in detail. Three
+// claims, each failing with its own line:
+//
+//   - at least one per-scope share page (`/share?…`) was captured WITH the grant form (a form
+//     posting to `ui.SharePath`) — the page the token-file world cannot reach at all;
+//   - no share capture carries `ui.ReadOnlyAuthority`, the token-file world's own sentence;
+//   - the invite index was captured carrying `ui.NoInviteStore`, which is the declared,
+//     UNCAPTURED-mint-form state of a world with no database (Q10).
+func refuseJournalWorldFellBack(captures []*Capture) error {
+	var grantForms, readOnlyShare, inviteNoStore, inviteCaptures int
+	for _, c := range captures {
+		path, _, _ := strings.Cut(c.Target.Path, "?")
+		if path == ui.SharePath {
+			if strings.Contains(c.Target.Path, "?") && slicesContains(c.FormActions, ui.SharePath) {
+				grantForms++
+			}
+			if slicesContains(c.ReadOnlyNotices, ui.ReadOnlyAuthority) {
+				readOnlyShare++
+			}
+		}
+		if path == ui.InvitePath {
+			inviteCaptures++
+			if slicesContains(c.ReadOnlyNotices, ui.NoInviteStore) {
+				inviteNoStore++
+			}
+		}
+	}
+	var bad []string
+	if grantForms == 0 {
+		bad = append(bad, fmt.Sprintf("NO per-scope share page with its grant form (a form posting to %s) was captured "+
+			"over %d capture(s) — the one page this world exists to reach", ui.SharePath, len(captures)))
+	}
+	if readOnlyShare > 0 {
+		bad = append(bad, fmt.Sprintf("%d share capture(s) carry the TOKEN-FILE authority's read-only notice — the "+
+			"pod is not serving from the control journal it was given", readOnlyShare))
+	}
+	if inviteNoStore == 0 {
+		bad = append(bad, fmt.Sprintf("the invite index was captured %d time(s) and NONE carries the no-database "+
+			"notice, so the state recorded as 'mint form uncaptured' is not the state that was measured", inviteCaptures))
+	}
+	if len(bad) > 0 {
+		return fmt.Errorf("the JOURNAL-BACKED WORLD FELL BACK or did not reach its pages:\n  %s", strings.Join(bad, "\n  "))
+	}
+	fmt.Printf("uiaudit: [%s] reached: %d per-scope share capture(s) with the grant form, 0 carrying the token-file "+
+		"notice; %d invite capture(s) in the no-database state (the MINT FORM is UNCAPTURED: it needs -db-dsn)\n",
+		JournalWorld, grantForms, inviteNoStore)
+	return nil
+}
+
+func slicesContains(s []string, want string) bool {
+	for _, v := range s {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
+// refuseUnreachableTouch refuses a walk whose touch emulation is not what each capture's
+// viewport claims: `(pointer: coarse)` must match at EVERY touch capture and must NOT match at
+// EVERY non-touch capture.
+//
+// 🔴 IT REFUSES FROM S0 ON, WHILE THE MEASUREMENTS IT VOUCHES FOR ARE ONLY REPORTED, BECAUSE IT
+// IS A CLAIM ABOUT THE HARNESS AND NOT ABOUT THE PAGE. A touch measurement taken under a mouse
+// pointer is a measurement of the desktop layout labelled "mobile", and every `@media (pointer:
+// coarse)` rule the mobile plan adds would be invisible to it — measured: before this change all
+// 265 captures read coarse=false, touch rungs included. And the OTHER half is not decoration:
+// touch emulation persists across navigations in one tab, so a walk that forgot to switch it OFF
+// measures every laptop capture as a phone.
+//
+// ⚠ IT ALSO REFUSES A CAPTURE SET WITH NO CAPTURE ON ONE SIDE: "false at every non-touch capture"
+// over zero non-touch captures is the reassuring zero this program refuses everywhere else.
+// `TestTheReachabilityRefusalRefusesAnEMPTYSide` pins both directions (touch-only, non-touch-only).
+// ⚠ AN INVARIANT GUARD ON A REAL WALK, LABELLED: `Viewports` declares two touch rungs and three
+// others, and `refuseWalkRegressions` refuses a collapsed matrix first, so a walk reaches this
+// branch only if that DECLARATION changes to all-touch or no-touch — which is what it is for.
+func refuseUnreachableTouch(captures []*Capture) error {
+	var bad []string
+	touchSeen, otherSeen := 0, 0
+	for _, c := range captures {
+		where := fmt.Sprintf("%s at %s (%dpx)", c.Target.Path, c.Viewport.Name, c.Viewport.Width)
+		if c.World != "" {
+			where = "[" + c.World + "] " + where
+		}
+		if c.Pointer == nil {
+			bad = append(bad, where+": no pointer probe was taken")
+			continue
+		}
+		if c.Viewport.Touch {
+			touchSeen++
+		} else {
+			otherSeen++
+		}
+		if c.Pointer.Coarse != c.Viewport.Touch {
+			bad = append(bad, fmt.Sprintf("%s: (pointer: coarse) is %v on a %s capture (maxTouchPoints=%d)",
+				where, c.Pointer.Coarse, touchWord(c.Viewport.Touch), c.Pointer.MaxTouchPoints))
+		}
+	}
+	if len(bad) > 0 {
+		return fmt.Errorf("TOUCH REACHABILITY FAILED on %d capture(s) — the touch measurements would describe a "+
+			"pointer the page never saw, so the walk refuses rather than reports them. A touch capture that is "+
+			"not coarse means emulation never reached the page; a non-touch capture that IS coarse means it was "+
+			"never switched off (it persists across navigations):\n    %s",
+			len(bad), strings.Join(bad, "\n    "))
+	}
+	if touchSeen == 0 || otherSeen == 0 {
+		return fmt.Errorf("TOUCH REACHABILITY measured %d touch and %d non-touch capture(s): a two-sided claim with "+
+			"an empty side is a claim about nothing", touchSeen, otherSeen)
+	}
+	return nil
+}
+
+func touchWord(touch bool) string {
+	if touch {
+		return "TOUCH"
+	}
+	return "non-touch"
+}
+
+// printTouchSummary reports the S0 touch measurements per world and viewport. REPORT ONLY.
+func printTouchSummary(captures []*Capture) {
+	type key struct{ world, vp string }
+	type agg struct {
+		captures, coarse, hoverNone, tsNodes, tsPages, under24, targets, inputs, small int
+		pages                                                                          map[string]bool
+		selectors                                                                      map[string]float64
+	}
+	sums := map[key]*agg{}
+	for _, c := range captures {
+		k := key{c.World, c.Viewport.Name}
+		a := sums[k]
+		if a == nil {
+			a = &agg{pages: map[string]bool{}, selectors: map[string]float64{}}
+			sums[k] = a
+		}
+		a.captures++
+		if c.Pointer != nil && c.Pointer.Coarse {
+			a.coarse++
+		}
+		if c.Pointer != nil && c.Pointer.HoverNone {
+			a.hoverNone++
+		}
+		if n := c.TargetSizeNodes(); n > 0 {
+			a.tsNodes += n
+			a.tsPages++
+		}
+		if c.Touch != nil {
+			a.under24 += c.Touch.TargetsUnder24
+			a.targets += c.Touch.TargetsMeasured
+			a.inputs += c.Touch.InputsMeasured
+			a.small += len(c.Touch.SmallInputs)
+			for _, in := range c.Touch.SmallInputs {
+				a.pages[c.Target.Path] = true
+				a.selectors[in.Selector] = in.FontPx
+			}
+		}
+	}
+	fmt.Println("uiaudit: --- touch measurements (REPORT ONLY in S0; S1 refuses on target-size and input font) ---")
+	for _, world := range []string{"", JournalWorld} {
+		name := "token-file world"
+		if world != "" {
+			name = world + " world"
+		}
+		for _, vp := range Viewports {
+			a := sums[key{world, vp.Name}]
+			if a == nil {
+				continue
+			}
+			sels := make([]string, 0, len(a.selectors))
+			for s, px := range a.selectors {
+				sels = append(sels, fmt.Sprintf("%s=%gpx", s, px))
+			}
+			sort.Strings(sels)
+			fmt.Printf("uiaudit:   %-16s %-9s captures=%d coarse=%d/%d axe target-size=%d node(s) on %d page(s) | boxes<24px=%d of %d | inputs<%dpx=%d of %d on %d page(s) %s\n",
+				name, vp.Name, a.captures, a.coarse, a.captures, a.tsNodes, a.tsPages, a.under24, a.targets,
+				minInputFontPx, a.small, a.inputs, len(a.pages), strings.Join(sels, " "))
+		}
+	}
+	hover, total := 0, 0
+	for _, a := range sums {
+		hover += a.hoverNone
+		total += a.captures
+	}
+	fmt.Printf("uiaudit:   (hover: none) matched on %d of %d capture(s) — ⚠ A BLIND SPOT, NOT A FINDING: headless chromium "+
+		"answers hover:none at every width, so every `hover:` rule is unmeasured by this walk (README, blind set)\n", hover, total)
 }
 
 // contentWidthFloor is the share of the viewport the page's own `<main>` must occupy at the
@@ -498,6 +806,10 @@ func refuseWalkRegressions(captures []*Capture) error {
 	}
 	var overflow, scripted, axeless, narrow []string
 	widths := map[string]bool{}
+	// Clause (c) of the mobile plan's closing condition starts here: the touch measurements
+	// are only readable if touch emulation reached the page, so that is checked first. See
+	// [refuseUnreachableTouch]. This is its ONLY call site; `run` prints the touch summary after it passed.
+	touchErr := refuseUnreachableTouch(captures)
 	// The content floor's own accounting: how many captures it actually looked at, how many
 	// it let through as the declared exemption, and the narrowest fraction it saw. All three
 	// are printed on a clean run, because "0 refusals" from a predicate that inspected
@@ -593,6 +905,9 @@ func refuseWalkRegressions(captures []*Capture) error {
 			floorMeasured, Ultrawide.Width, floorExempt)
 	}
 	var refusals []string
+	if touchErr != nil {
+		refusals = append(refusals, touchErr.Error())
+	}
 	if len(overflow) > 0 {
 		refusals = append(refusals, fmt.Sprintf("HORIZONTAL OVERFLOW on %d capture(s) — the page scrolls "+
 			"sideways, which no unit test in this repository can see:\n    %s",
@@ -624,6 +939,26 @@ func refuseWalkRegressions(captures []*Capture) error {
 	fmt.Printf("uiaudit:   REFUSALS: 0 horizontal overflow, 0 scripts outside the allowlist, %d/%d captures carry a decodable axe "+
 		"testEngine — over %d distinct width(s): %s\n",
 		len(captures)-len(axeless), len(captures), len(widths), viewportWidths())
+	// ⚠ THIS LINE IS THE RESULT OF A REFUSAL THAT PASSED, NOT AN INDEPENDENT MEASUREMENT: reaching
+	// it means `refuseUnreachableTouch` found no mismatch, so the two numerators can only equal
+	// their denominators here. What it adds is that the numerators are counted from what the PROBE
+	// READ (`Pointer.Coarse`), not from the viewport's declaration, and that it names both sides.
+	touchN, coarseAtTouch, otherN, fineAtOther := 0, 0, 0, 0
+	for _, c := range captures {
+		if c.Viewport.Touch {
+			touchN++
+			if c.Pointer != nil && c.Pointer.Coarse {
+				coarseAtTouch++
+			}
+		} else {
+			otherN++
+			if c.Pointer != nil && !c.Pointer.Coarse {
+				fineAtOther++
+			}
+		}
+	}
+	fmt.Printf("uiaudit:   TOUCH REACHABILITY refusal PASSED: the probe read (pointer: coarse) TRUE at %d of %d touch "+
+		"capture(s) and FALSE at %d of %d non-touch capture(s)\n", coarseAtTouch, touchN, fineAtOther, otherN)
 	// 🔴 THE FLOOR REPORTS ITS NARROWEST MEASUREMENT RATHER THAN A ZERO. "0 refusals" is
 	// produced identically by a surface that widens and by a predicate that inspected
 	// nothing; the number below moves when the layout does, which is what makes the clean
@@ -672,40 +1007,23 @@ func viewportWidths() string {
 // is counted separately (see [Browser.FaviconRefusals]) and the per-page network zero below
 // is a claim about SUBRESOURCES THE PAGE ASKED FOR, which is a narrower sentence than the one
 // that was wrong.
-func printSignalSummary(captures []*Capture, faviconRefusals int) {
-	var axe, console, netw, tap, text, overflow, noViewport, digests int
-	rules := map[string]int{}
-	for _, c := range captures {
-		axe += len(c.Violations)
-		for _, v := range c.Violations {
-			rules[v.ID]++
-		}
-		console += len(c.Console)
-		netw += len(c.Network)
-		tap += c.Layout.SmallTapTargets
-		text += c.Layout.SmallText
-		if c.Layout.HorizontalOverflow {
-			overflow++
-		}
-		if c.Layout.MissingViewportMeta {
-			noViewport++
-		}
-		if c.HasDigest() {
-			digests++
-		}
-	}
-	ids := make([]string, 0, len(rules))
-	for id := range rules {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
+func printSignalSummary(all []*Capture, faviconRefusals int) {
+	s := summarizeSignals(all)
+	captures := s.tokenFile
+	ids := s.ruleIDs()
 
-	fmt.Println("uiaudit: --- signals over the whole walk ---")
-	fmt.Printf("uiaudit:   axe violations: %d across %d rule(s): %s\n", axe, len(ids), strings.Join(ids, ", "))
+	// What each line covers, stated in the header because the two worlds are summed APART: every
+	// line below is the TOKEN-FILE world's except the digests line (PUSHED captures only, which are
+	// all token-file) and the one `journal world` line, which is that world's own sums.
+	fmt.Printf("uiaudit: --- signals: the lines below are the TOKEN-FILE world's %d capture(s), except the digests "+
+		"line (PUSHED captures only) and the `journal world` line (its %d capture(s), never pushed) ---\n",
+		len(captures), s.journal)
+	fmt.Printf("uiaudit:   axe violations: %d across %d rule(s): %s\n", s.axe, len(ids), strings.Join(ids, ", "))
 	fmt.Printf("uiaudit:   layout: tap targets under 44px=%d, text under 12px=%d, pages with horizontal overflow=%d, pages missing <meta viewport>=%d\n",
-		tap, text, overflow, noViewport)
-	fmt.Printf("uiaudit:   a11y digests attached: %d of %d page(s) — any shortfall is a page whose digest came back EMPTY, whose ref is therefore omitted (an empty digest is a 400 on the WHOLE push)\n",
-		digests, len(captures))
+		s.tap, s.text, s.overflow, s.noViewport)
+	fmt.Printf("uiaudit:   a11y digests attached: %d of %d PUSHED page(s) — any shortfall is a page whose digest came back EMPTY, whose ref is therefore omitted (an empty digest is a 400 on the WHOLE push)\n",
+		s.digests, s.pushed)
+	console, netw := s.console, s.netw
 	// 🔴 THE STRUCTURAL CLAIM IS DERIVED FROM THE LEDGER, BECAUSE A HARDCODED ONE WENT FALSE ON A
 	// TREE THAT ALREADY EXISTS. The earlier wording said "this surface ships an inline stylesheet
 	// and NO script … there are none" over BOTH numbers. The auth change moves the stylesheet to
@@ -756,6 +1074,94 @@ func printSignalSummary(captures []*Capture, faviconRefusals int) {
 	// an earlier draft of this line said the latter and the next run contradicted it.
 	fmt.Printf("uiaudit:   favicon refusals=%d — NOT a structural zero: no ledger row carries %s, so the dispatcher's uniform refusal answers it whenever chromium asks. WHETHER it asks is run-dependent (measured non-zero on one walk and zero on another over this same tree), which is exactly why it is counted here and kept out of the per-page totals: attributed to a page it would manufacture a P2 network delta that flaps forever.\n",
 		faviconRefusals, FaviconPath)
+	// The journal world's OWN line. Its grant form exists nowhere else and is never pushed, so this
+	// is the only summed place its defects appear.
+	if s.journal > 0 {
+		j := s.journalSums
+		fmt.Printf("uiaudit:   journal world (%d capture(s), never pushed): axe violations=%d across %d rule(s): %s | "+
+			"console=%d network=%d | tap targets under 44px=%d, text under 12px=%d, pages with horizontal "+
+			"overflow=%d, pages missing <meta viewport>=%d\n",
+			s.journal, j.axe, len(j.rules), strings.Join(j.ruleIDs(), ", "), j.console, j.netw,
+			j.tap, j.text, j.overflow, j.noViewport)
+	}
+}
+
+// worldSums is one world's whole-walk signals.
+type worldSums struct {
+	rules                                               map[string]int
+	axe, console, netw, tap, text, overflow, noViewport int
+}
+
+func (w *worldSums) add(c *Capture) {
+	if w.rules == nil {
+		w.rules = map[string]int{}
+	}
+	w.axe += len(c.Violations)
+	for _, v := range c.Violations {
+		w.rules[v.ID]++
+	}
+	w.console += len(c.Console)
+	w.netw += len(c.Network)
+	w.tap += c.Layout.SmallTapTargets
+	w.text += c.Layout.SmallText
+	if c.Layout.HorizontalOverflow {
+		w.overflow++
+	}
+	if c.Layout.MissingViewportMeta {
+		w.noViewport++
+	}
+}
+
+// ruleIDs is the sorted rule list for a log line.
+func (w worldSums) ruleIDs() []string {
+	ids := make([]string, 0, len(w.rules))
+	for id := range w.rules {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// signalSums is what `printSignalSummary` prints, computed apart from the printing so the
+// SCOPE of each number is testable. The embedded [worldSums] is the TOKEN-FILE world's.
+type signalSums struct {
+	worldSums
+	tokenFile []*Capture
+	// journal and journalSums are the journal-backed world's, summed APART — see
+	// [summarizeSignals].
+	journal     int
+	journalSums worldSums
+	// digests and pushed are over PUSHED captures only ([pushedCapture]), because the line says
+	// what reaches the hub.
+	digests, pushed int
+}
+
+// summarizeSignals counts the whole-walk signals PER WORLD.
+//
+// 🔴 THE TWO WORLDS ARE SUMMED APART, AND NEITHER IS DROPPED — BOTH DIRECTIONS WERE A DEFECT HERE.
+// When the journal world landed it was silently folded into the token-file lines: "tap targets
+// under 44px" moved from 2785 to 3070 and "a11y digests attached" from 265/265 to 295/295 with no
+// token-file page changing. The first fix then EXCLUDED it — and summed it nowhere, so an axe
+// violation on the grant form (rendered only in that world, which is never pushed) appeared in one
+// per-capture line beside a summary saying "axe violations: 0". Separate sums are both answers.
+func summarizeSignals(all []*Capture) signalSums {
+	s := signalSums{worldSums: worldSums{rules: map[string]int{}}, journalSums: worldSums{rules: map[string]int{}}}
+	for _, c := range all {
+		if pushedCapture(c) {
+			s.pushed++
+			if c.HasDigest() {
+				s.digests++
+			}
+		}
+		if c.World != "" {
+			s.journal++
+			s.journalSums.add(c)
+			continue
+		}
+		s.tokenFile = append(s.tokenFile, c)
+		s.worldSums.add(c)
+	}
+	return s
 }
 
 // DiffBlock renders the deterministic diff for a job log and a step summary.
