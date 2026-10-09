@@ -284,6 +284,18 @@ func main() {
 	dbDSN := flag.String("db-dsn", dsnDefault,
 		"PostgreSQL connection string for the session and invite tables; without one, sessions live in "+
 			"-session-file and no invitation can be held (prefer $"+EnvUIDatabase+": a flag value is in argv)")
+	// 🔴 THE INSTALLABLE SURFACE (S2 of the mobile plan): three flags, NO defaults, read raw. See
+	// `app.go` for why each is shaped the way it is and for the refusals.
+	appName := flag.String(flagAppName, os.Getenv(EnvUIAppName),
+		"the installed app's name (manifest `name`). NO DEFAULT: unset, the surface is NOT installable and "+
+			"/manifest.webmanifest answers 404. It is PUBLIC — served before sign-in — so put nothing in it you "+
+			"would not put on the sign-in page. Needs -"+flagAppIconVariant)
+	appShortName := flag.String(flagAppShortName, os.Getenv(EnvUIAppShortName),
+		fmt.Sprintf("the home-screen label (manifest `short_name`), at most %d characters; omitted when unset",
+			ui.AppShortNameMax))
+	appIconVariant := flag.String(flagAppIconVariant, os.Getenv(EnvUIAppIconVariant),
+		"which committed icon this instance installs with — one of: "+strings.Join(ui.IconVariants(), ", ")+
+			". NO DEFAULT, and REQUIRED with -"+flagAppName)
 	// ⚠ THERE IS NO `-routes` FLAG HERE, UNLIKE `cairn-server`, AND THE ASYMMETRY IS
 	// DELIBERATE. The pod prints its ledger because a Python corpus owns its served
 	// contract and cannot read a compiled binary — the printed table is the only way
@@ -308,6 +320,23 @@ func main() {
 	if dsnErr != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+dsnErr.Error())
 		os.Exit(exitConfig)
+	}
+	// The app lines are judged here, before anything is opened, because none of them depends on
+	// the authority — and a refusal that waited for a database would wait for nothing.
+	written := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { written[f.Name] = true })
+	appLines := func(flagName, env, value string) appLine {
+		return appLine{flag: flagName, env: env, value: value, written: written[flagName] || os.Getenv(env) != ""}
+	}
+	app, appWarning, err := resolveApp(appLines(flagAppName, EnvUIAppName, *appName),
+		appLines(flagAppShortName, EnvUIAppShortName, *appShortName),
+		appLines(flagAppIconVariant, EnvUIAppIconVariant, *appIconVariant))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
+		os.Exit(exitConfig)
+	}
+	if appWarning != "" {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+appWarning)
 	}
 
 	// 🔴 THE ARC JOURNAL IS CHECKED BEFORE ANYTHING IS SERVED, WITH THE POD'S OWN FUNCTION. A
@@ -663,6 +692,8 @@ func main() {
 		// thing — so they agree by both taking the default rather than by one being
 		// handed the other's.
 		Log: os.Stderr,
+		// The zero value when `-app-name` is unset, which is the unarmed surface.
+		App: app,
 	}
 	srv, err := ui.New(cfg)
 	if err != nil {
@@ -822,8 +853,8 @@ func main() {
 			}
 		}()
 	}
-	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s, %s\n",
-		len(ui.DeclaredRoutes()), addr, *store, sharingMode, signInMode, stateMode, arcsMode, presenceMode)
+	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s, %s, %s\n",
+		len(ui.DeclaredRoutes()), addr, *store, sharingMode, signInMode, stateMode, arcsMode, presenceMode, appMode(cfg.App))
 	if err := listener.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(1)
@@ -931,14 +962,15 @@ func controlJournalDefault(get func(string) string) (string, error) {
 // convention.
 //
 // 🔴 READING RAW IS WHAT MAKES THE BLANK POLICY POSSIBLE AND IT COSTS ALIAS RESOLUTION.
-// `envalias.ValueFrom` treats a blank value as absent — which IS the defect these two
-// readers exist to refuse — so neither can go through it. The price is that a DEPRECATED
-// spelling of either name would go unread, silently. Neither has one.
+// `envalias.ValueFrom` treats a blank value as absent — which IS the defect these
+// readers exist to refuse — so none can go through it. The price is that a DEPRECATED
+// spelling of any of them would go unread, silently. None has one. (Two names until the
+// mobile plan's S2 added the three `-app-*` variables, whose blank policy is `app.go`'s.)
 // `TestTheRawReadVariablesAreNotInTheAliasLedger` walks THIS SLICE against
 // `envalias.Ledger`, so the day somebody adds an alias for either, a gate goes red rather
 // than a reader going half-blind — and a THIRD raw reader added without a line here fails
 // the same test's membership check.
-var rawEnvNames = []string{EnvUIControlJournal, EnvUIDatabase}
+var rawEnvNames = []string{EnvUIControlJournal, EnvUIDatabase, EnvUIAppName, EnvUIAppShortName, EnvUIAppIconVariant}
 
 // databaseDSNDefault is the `-db-dsn` flag's default, and the SECOND place this surface's
 // configuration meets the blank policy.

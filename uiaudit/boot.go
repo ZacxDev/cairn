@@ -86,7 +86,11 @@ type World struct {
 // three-line shim rather than by reimplementing it: the point of reusing that builder is
 // that the world stays ONE definition, and a Go transcription of it would be a copy that
 // drifts.
-func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*World, error) {
+//
+// `extra` is appended to `cairn-ui`'s arguments: `pwa_test.go` arms the installable surface with it
+// (`-app-name`, `-app-icon-variant`). The walk passes none, so the walk's world stays UNARMED — the
+// deployment shape every existing signal is measured over.
+func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int, extra ...string) (*World, error) {
 	store, scopes, err := buildFixtureStore(ctx, repoRoot, dir)
 	if err != nil {
 		return nil, err
@@ -133,7 +137,7 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*
 	// navigates a non-GET row anyway. The journal-backed world is a SECOND boot beside it —
 	// [BootJournalWorld] — and not a replacement; its doc says why the old objection ("a walk that
 	// invented a journal would render a page no deployment serves") no longer holds.
-	if err := w.start(ctx, uiBinary, port,
+	if err := w.start(ctx, uiBinary, port, append([]string{
 		"-store", store,
 		"-token-file", tokenPath,
 		"-session-file", filepath.Join(dir, "sessions.json"),
@@ -143,7 +147,7 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*
 		"-presence-agent-addr", fmt.Sprintf("%s:%d", bindHost, agentPort),
 		"-presence-tokens", pres.tokens,
 		"-presence-owner", pres.owner,
-	); err != nil {
+	}, extra...)...); err != nil {
 		return nil, err
 	}
 	// A refused FIRST push is a boot failure, not a missing badge: the walk would otherwise capture

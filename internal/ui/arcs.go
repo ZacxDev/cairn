@@ -147,7 +147,7 @@ func (s *Server) handleArcPage(w http.ResponseWriter, r *http.Request, id identi
 	// ⚠ `Now` WAS MISSING HERE BEFORE THE ARCS PAGE EXISTED, so this page rendered every registration
 	// time as an absolute date while every other browse page rendered relative ones. Set now, so the
 	// arc a reader clicks on `/arcs` says "registered 3h ago" in both places.
-	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now()}
+	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now(), App: s.app}
 
 	q := r.URL.Query()
 	homeID, slug := control.ID(q.Get(QueryHome)), q.Get(QuerySlug)

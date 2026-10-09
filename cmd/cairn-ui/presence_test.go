@@ -123,6 +123,19 @@ type presenceChild struct {
 	out    *syncBuffer
 	stdout *syncBuffer
 	cancel context.CancelFunc
+	// done closes once the child has exited and been reaped. It is the ONLY caller of
+	// cmd.Wait, so `waitFor` can notice a child that died: a waiter blind to exit sat out its
+	// full 30 s per boot when a mutant made startup refuse, which pushed the package past the
+	// mutant battery's `-timeout=2m` before the row's named guard ever ran (scored
+	// MISATTRIBUTED rather than killed).
+	done chan struct{}
+}
+
+// reap starts the child's single cmd.Wait and registers the cleanup that kills and reaps it.
+func (c *presenceChild) reap(t *testing.T) {
+	c.done = make(chan struct{})
+	go func() { _ = c.cmd.Wait(); close(c.done) }()
+	t.Cleanup(func() { c.cancel(); <-c.done })
 }
 
 func startPresenceChild(t *testing.T, journal string, extra ...string) *presenceChild {
@@ -147,14 +160,14 @@ func startPresenceChild(t *testing.T, journal string, extra ...string) *presence
 		cancel()
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { cancel(); _ = cmd.Wait() })
+	c.reap(t)
 	return c
 }
 
 // exit waits for a child expected to REFUSE (or to finish a mint) and returns its exit code.
 func (c *presenceChild) exit(t *testing.T) int {
 	t.Helper()
-	_ = c.cmd.Wait()
+	<-c.done
 	st := c.cmd.ProcessState
 	if st == nil || st.ExitCode() == -1 {
 		t.Fatalf("the child did not exit by itself (it was killed at the deadline), so it SERVED:\n%s", c.out.String())
@@ -169,7 +182,15 @@ func (c *presenceChild) waitFor(t *testing.T, what string, cond func() bool) {
 		if cond() {
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
+		select {
+		case <-c.done:
+			// One last look: the condition may have become true just before the exit.
+			if cond() {
+				return
+			}
+			t.Fatalf("the child EXITED (%s) while waiting for %s:\n%s", c.cmd.ProcessState, what, c.out.String())
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 	t.Fatalf("timed out waiting for %s:\n%s", what, c.out.String())
 }
@@ -342,7 +363,7 @@ func TestTheAgentListenerExistsOnlyWhenConfigured(t *testing.T) {
 		t.Fatalf("a garbage token answered %d", code)
 	}
 	on.cancel()
-	_ = on.cmd.Wait()
+	<-on.done
 
 	off := startPresenceChild(t, journal)
 	off.waitFor(t, "the serving line", func() bool { return strings.Contains(off.out.String(), "serving") })

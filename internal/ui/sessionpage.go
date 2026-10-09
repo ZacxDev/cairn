@@ -86,7 +86,7 @@ func (s *Server) handleSessionPage(w http.ResponseWriter, r *http.Request, id id
 		writePlain(w, http.StatusInternalServerError, "the store could not be read")
 		return
 	}
-	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now()}
+	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now(), App: s.app}
 	session := r.URL.Query().Get(QuerySession)
 	if session == "" {
 		s.renderNavigate(w, view)

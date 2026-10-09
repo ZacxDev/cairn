@@ -539,6 +539,104 @@ tap/text 13/17. Its previous version read only three of them, and it PASSED with
 text printed as tap. The new one fails on that mutant, on a tap/text swap, on an overflow/viewport
 swap, and on a journal line that prints the token-file world's tap.
 
+## PWA — the closing-condition instrument (S2 of the mobile plan)
+
+`uiaudit/pwa_check.sh` is the plan's closing check: it must exit 0 on `main` once every slice has
+landed. 🔴 **It is an ORCHESTRATOR (audit D4): it never re-implements a clause.** Each check lives in
+one place, and the script boots it and reads that place's own result line:
+
+| check | the ONE place it lives | the script reads |
+|---|---|---|
+| (a) installability | `TestPWAClauses/a_installability` (`pwa_test.go`) | its `--- PASS/FAIL:` line |
+| (b) name | `TestPWAClauses/b_name` | its `--- PASS/FAIL:` line |
+| (b) icon | `TestPWAClauses/b_icon` | its `--- PASS/FAIL:` line |
+| (c) reachability, target size, input font | `refuseWalkRegressions`, through `run.sh` — the walk exactly as CI runs it | each refusal's `PASSED` line with rc 0, or its own headline |
+
+`TestPWAClauses` boots three token-file worlds: `-app-name 'cairn (alpha)' -app-icon-variant amber`,
+`-app-name 'cairn (beta)' -app-icon-variant teal`, and one UNARMED. On each SIGN-IN page it asks
+CHROMIUM, never this module's Go: `Page.getInstallabilityErrors` and `Page.getAppManifest`.
+- **(a)** both armed boots read `[]`. 🔴 **The unarmed boot is the control and is checked FIRST:** it
+  must read exactly `[no-manifest]`, or the test says `pwa clause (a) CONTROL` and the script exits 2.
+- **(b) name** — the manifest parses with 0 errors, `name` equals the flag, and `id`, `start_url` and
+  `scope` resolve to the origin's `/`.
+- **(b) icon** — every manifest icon is fetched, and its bytes must equal a committed
+  `<variant>-*.png` of THAT boot's variant: 3 matches each, and no URL shared by the two boots.
+
+(d) is S3's and is NOT wired. (b: screenshots) and (e) are S4's.
+
+**Exit codes:** 0 = all six checks PASS; 1 = a check FAILED; 2 = COULD NOT VOUCH. Exit 2 means: no
+chromium, go or python3 on `PATH`; a `cairn-ui` that did not build; a check with NO result line; the
+(a) control misbehaving; or a walk that pushed although its credentials were removed. Measured: a
+`PATH` without chromium exits **2**, naming it.
+
+🔴 **A (c) check can read `NOT_MEASURED`, and that is not a harness failure.** The walk prints its three
+`… refusal PASSED` lines only when EVERY refusal passed, because `refuseWalkRegressions` returns all of
+them as one error. So when one (c) check fails, its siblings have neither a PASS line nor a headline.
+The first version read that as "no verdict" and exited **2 naming the wrong check** on every real (c)
+failure (audit F1). Measured on the old loop over the input-font sabotage: `c_reachability NONE`, then
+`COULD NOT VOUCH — check c_reachability produced NO verdict line`, exit 2. Now a sibling reads
+`NOT_MEASURED` — but only when the walk's own refusal line is present — and the run exits **1**. A walk
+that refused on a (c) class none of the three headlines names (horizontal overflow) prints `c_walk FAIL`.
+
+🔴 **The work dir is removed on every exit path.** One `--self-test` of the first version left about
+305 MB behind. The script now always makes a fresh `mktemp -d` directory and removes it in an `EXIT`
+trap. `PWA_CHECK_WORK` names that directory's PARENT, so a caller's own directory is never the thing
+deleted. `PWA_CHECK_KEEP=1` keeps it. Measured, with a run that exits 2 straight after `mktemp`: the
+old script left 1 entry, the new one 0, and the new one with `KEEP=1` 1. After a full plain run and a
+full `--self-test`, 0 entries were left.
+
+🔴 **No walk the script runs can push to the audit hub.** `run_c` removes the four `CAIRN_AUDIT_*`
+variables for the walk's process alone. A walk that confirms a push anyway exits 2. The control pair
+used fake credentials pointing at a local recorder: `run.sh` run directly made **1** request, and
+`pwa_check.sh` with the same environment made **0**, printing `walk push SKIPPED`.
+
+### `--self-test` — each check RED on its own sabotage
+
+Each sabotage is applied to a SCRATCH COPY with no `.git`. The copy is built from the tracked plus
+untracked-not-ignored file list, never a recursive copy of the directory: a base clone can hold other
+worktrees under an ignored directory. Each edit asserts its occurrence count. First, an UNEDITED copy
+must pass the PLAIN LOOP with exit 0 (the positive control). Then each check must FAIL with its own
+message. The three (c) sabotages also run the PLAIN LOOP (`plain_run`), which must exit **1** and print
+its own check `FAIL`. That arm exists for F1: a verdict function naming the right check is not a script
+that exits right. On the old loop it was RED (`plain-loop=0/1`: exit 2, naming `c_reachability`):
+
+| check | sabotage |
+|---|---|
+| (a) | drop the manifest link from `pwaHead()` |
+| (b) name | hardcode the manifest `name` to `"cairn"` |
+| (b) icon | the manifest lists `IconVariants()[0]`'s icons, so both boots serve variant A |
+| (c) reachability | `touchEmulation` always DISABLES touch |
+| (c) target size | append a coarse-pointer rule to `app.css`: `.view-tab` 12×12px, no gap (the adjacent shape; a lone small target passes 2.5.8's spacing exception) |
+| (c) input font | revert `max(16px, 1em)` to `0.875rem` |
+
+Measured on this tree (chromium 154.0.8037.97 from nixpkgs, NOT CI's chromium; 581s):
+
+```
+pwa_check: positive control PASSED all 6 check(s)
+pwa_check: sabotage a_installability   CAUGHT by its own check (also red: b_name b_icon)
+pwa_check: sabotage b_name             CAUGHT by its own check
+pwa_check: sabotage b_icon             CAUGHT by its own check
+pwa_check: plain loop on c_reachability     exit 1, names c_reachability FAIL
+pwa_check: sabotage c_reachability     CAUGHT by its own check (also red: c_input_font)
+pwa_check: plain loop on c_target_size      exit 1, names c_target_size FAIL
+pwa_check: sabotage c_target_size      CAUGHT by its own check
+pwa_check: plain loop on c_input_font       exit 1, names c_input_font FAIL
+pwa_check: sabotage c_input_font       CAUGHT by its own check
+sabotaged=6 caught=6 plain-loop=3/3
+```
+
+The "also red" entries are expected. With no manifest link there is no manifest for (b) to read. With
+touch never enabled, S1's coarse-pointer input rule never applies.
+
+`TestThePWAClauseNamesAreTheScriptsContract` pins the strings the script greps, on both sides: the
+script's own text and `main.go`'s refusal headlines. ⚠ It is a SPELLING guard, labelled as one.
+
+⚠ **NOT a CI step yet.** S4 adds the `pwa_check.sh` step (plan, S4's ledgers). Until then,
+`TestPWAClauses` runs only inside the advisory job's `go test`.
+
+⚠ **The walk's worlds stay UNARMED** (`BootWorld` arms only when `pwa_test.go` passes `-app-*`). So the
+`/favicon.ico` carve-out is still live, and plan B5 (delete it) is not done.
+
 ## Round 1: what an adversarial read found, and the two things it got wrong
 
 Nine axes, blind. Every number this README quotes about itself was re-verified and found correct; the
@@ -1218,3 +1316,5 @@ indistinguishable from a fork PR by design.
 | `payload_test.go` | the push payload's shape offline, and the only evidence the REFUSAL path has |
 | `control_test.go` | the positive control, the structural-zero pair, the document-status gate |
 | `touch_test.go` | touch reachability (both halves, real chromium), the `target-size` and input-font controls, the journal world |
+| `pwa_test.go` | the closing condition's clauses (a) and (b: name, icon): chromium's installability and manifest verdicts over three boots |
+| `pwa_check.sh` | the closing-condition ORCHESTRATOR: runs (a), (b) and the walk's (c); `--self-test` sabotages each |

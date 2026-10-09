@@ -288,6 +288,20 @@ var notADocument = map[string]string{
 	ui.OAuthCallbackPath: "reachable only with a provider ?code= AND a live single-use flight " +
 		"cookie, so navigated bare it renders a refusal — capturing that would measure an error page and " +
 		"count it as a page",
+	ui.ManifestPath: "an application/manifest+json response and not a document — and a 404 in this walk's " +
+		"worlds, which boot UNARMED (no -app-name). `internal/ui`'s TestTheManifestIsBuiltFromTheConfiguredApp " +
+		"pins its members; `pwa_test.go` reads it the way a browser does, through Page.getAppManifest",
+}
+
+// 🔴 EVERY ICON ROW IS NOT A DOCUMENT EITHER, AND THE KEYS ARE READ OFF `ui.IconPaths()` RATHER THAN
+// WRITTEN DOWN: each is a content-hashed path that moves with the bytes, the stylesheet row's reason
+// above. `TestTheLedgerCARRIESEveryNotADocumentRow` still compares every key against the live ledger.
+func init() {
+	for _, p := range ui.IconPaths() {
+		notADocument[p] = "an image/png response and not a document — one committed icon variant. " +
+			"`internal/ui`'s TestTheIconRowsServeTheCommittedBytes asserts its bytes and headers, and " +
+			"`pwa_test.go` fetches each icon a manifest names and compares it with the committed file"
+	}
 }
 
 // classesFor is how many of the three sets claim a path, and it exists so that a path in two

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- The `any`-purpose icon TEMPLATE: a rounded tile and a cairn of four stones. `@BACKGROUND@`,
+       `@STONE@` and `@SHADE@` are substituted per variant from `variants.json` by `flake.nix`'s
+       `uiIcons`, which renders this with resvg; the PNGs beside it are that build's output and are
+       never hand-edited (`checks.ui-icons-are-current`). No text: a font is a host dimension. -->
+  <rect x="0" y="0" width="512" height="512" rx="104" ry="104" fill="@BACKGROUND@"/>
+  <g>
+    <ellipse cx="256" cy="384" rx="150" ry="52" fill="@SHADE@"/>
+    <ellipse cx="256" cy="372" rx="150" ry="52" fill="@STONE@"/>
+    <ellipse cx="250" cy="292" rx="112" ry="44" fill="@SHADE@"/>
+    <ellipse cx="250" cy="280" rx="112" ry="44" fill="@STONE@"/>
+    <ellipse cx="262" cy="212" rx="76" ry="36" fill="@SHADE@"/>
+    <ellipse cx="262" cy="200" rx="76" ry="36" fill="@STONE@"/>
+    <ellipse cx="254" cy="148" rx="42" ry="24" fill="@SHADE@"/>
+    <ellipse cx="254" cy="138" rx="42" ry="24" fill="@STONE@"/>
+  </g>
+</svg>

@@ -439,7 +439,8 @@ func TestTheRawReadVariablesAreNotInTheAliasLedger(t *testing.T) {
 	if len(envalias.Ledger) == 0 {
 		t.Fatal("the ledger is empty, so the loop below asserts nothing at all")
 	}
-	want := []string{"CAIRN_UI_CONTROL_JOURNAL", "CAIRN_UI_DB_DSN"}
+	want := []string{"CAIRN_UI_CONTROL_JOURNAL", "CAIRN_UI_DB_DSN",
+		"CAIRN_UI_APP_NAME", "CAIRN_UI_APP_SHORT_NAME", "CAIRN_UI_APP_ICON_VARIANT"}
 	if !slices.Equal(rawEnvNames, want) {
 		t.Fatalf("rawEnvNames is %v, want %v. Every variable this program reads with a raw "+
 			"`os.Getenv` has to be in that slice or the alias check below never sees it — and a "+
