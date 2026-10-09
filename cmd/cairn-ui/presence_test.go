@@ -154,8 +154,19 @@ func startPresenceChild(t *testing.T, journal string, extra ...string) *presence
 	}, extra...)
 	cmd := exec.CommandContext(ctx, self, args...)
 	cmd.Env = []string{reexecEnv + "=1"}
-	c := &presenceChild{cmd: cmd, out: &syncBuffer{}, stdout: &syncBuffer{}, cancel: cancel}
-	cmd.Stdout, cmd.Stderr = c.stdout, c.out
+	return startChild(t, cmd, cancel, &syncBuffer{}, &syncBuffer{})
+}
+
+// startChild starts an already-built `cmd` (stdout → `stdout`, stderr → `out`; pass the same
+// buffer twice for one merged stream) and hands it to `reap`, so its `waitFor` sees an exit.
+// 🔴 EVERY CHILD THIS PACKAGE RE-EXECS AND WAITS ON GOES THROUGH HERE: a waiter that polls
+// output with its own `time.Sleep` loop cannot see the child die, and sits out its whole
+// deadline when a mutant makes startup refuse (the 30 s case `done` names, then 60 s and 20 s
+// in two tests that had open-coded their own loops).
+func startChild(t *testing.T, cmd *exec.Cmd, cancel context.CancelFunc, stdout, out *syncBuffer) *presenceChild {
+	t.Helper()
+	c := &presenceChild{cmd: cmd, out: out, stdout: stdout, cancel: cancel}
+	cmd.Stdout, cmd.Stderr = stdout, out
 	if err := cmd.Start(); err != nil {
 		cancel()
 		t.Fatal(err)
@@ -177,7 +188,14 @@ func (c *presenceChild) exit(t *testing.T) int {
 
 func (c *presenceChild) waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
+	c.waitWithin(t, 30*time.Second, what, cond)
+}
+
+// waitWithin is `waitFor` with the caller's own deadline, for the tests whose deadline predates
+// this helper; it fails on the child's EXIT as soon as that happens, whatever the deadline.
+func (c *presenceChild) waitWithin(t *testing.T, d time.Duration, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return

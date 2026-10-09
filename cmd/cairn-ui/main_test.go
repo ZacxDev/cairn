@@ -808,22 +808,12 @@ func TestTheRUNNINGBinarySaysSoWhenARecordIsDroppedAfterStartup(t *testing.T) {
 		"-host", "127.0.0.1", "-port", "0")
 	child.Env = []string{reexecEnv + "=1", testRefreshEnv + "=5ms"}
 	var body syncBuffer
-	child.Stdout, child.Stderr = &body, &body
-	if err := child.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { cancel(); _ = child.Wait() })
-
+	// Through `startChild`, so both waits below fail the moment the child EXITS rather than
+	// polling out their 20 s deadline — see `presenceChild.done`.
+	c := startChild(t, child, cancel, &body, &body)
 	waitFor := func(what string, cond func() bool) {
 		t.Helper()
-		deadline := time.Now().Add(20 * time.Second)
-		for time.Now().Before(deadline) {
-			if cond() {
-				return
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
-		t.Fatalf("timed out waiting for %s. Child output so far:\n%s", what, body.String())
+		c.waitWithin(t, 20*time.Second, what, cond)
 	}
 	count := func(sub string) int { return strings.Count(body.String(), sub) }
 

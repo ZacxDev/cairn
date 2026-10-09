@@ -309,22 +309,15 @@ func TestWithNoDatabaseTheSurfaceComesUpSayingItHoldsNoInvitation(t *testing.T) 
 	// into a measurement of somebody's shell.
 	child.Env = []string{reexecEnv + "=1"}
 	var body syncBuffer
-	child.Stdout, child.Stderr = &body, &body
-	if err := child.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { cancel(); _ = child.Wait() })
+	// One merged stream, through `startChild`, so the wait below fails the moment the child
+	// EXITS rather than polling out its 60 s deadline (which, under a mutant that makes every
+	// child refuse, pushed this package towards the battery's `-timeout=2m`).
+	c := startChild(t, child, cancel, &body, &body)
 
-	deadline := time.Now().Add(60 * time.Second)
-	for !strings.Contains(body.String(), "serving") {
-		if time.Now().After(deadline) {
-			t.Fatalf("the surface never came up. If it exited, the refusals this file asserts are "+
-				"firing for a configuration that has no database and does not want one — which "+
-				"would make every one of them a claim about a binary that refuses everything.\n%s",
-				body.String())
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	c.waitWithin(t, 60*time.Second, "the surface to come up. If it exited, the refusals this file "+
+		"asserts are firing for a configuration that has no database and does not want one — which "+
+		"would make every one of them a claim about a binary that refuses everything",
+		func() bool { return strings.Contains(body.String(), "serving") })
 
 	line := body.String()
 	// The sessions half: the FILE, named, because that path is what an operator has to have
