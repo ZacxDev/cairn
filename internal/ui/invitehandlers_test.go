@@ -307,8 +307,8 @@ func TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged(t *testing.T) {
 	}
 	// ⚠ THE POSITIVE CONTROL THAT STOOD HERE IS RETIRED, NOT FORGOTTEN. It required an ordinary
 	// invite page to carry NO `Cache-Control`, proving the assertion above was about the mint
-	// response in particular. Since decision 8 of the mobile plan every authenticated page is
-	// `no-store` (`writeHTML`'s default, walked by `TestEveryNonPublicHTMLRowIsNoStore`), so the
+	// response in particular. Since S3 of the mobile plan every HTML page is
+	// `no-store` (the one value `writeHTML` sends, walked by `TestEveryNonPublicHTMLRowIsNoStore`), so the
 	// mint is no longer special and that control would now assert the opposite of the contract.
 	// What keeps the assertion above non-vacuous is that it is a literal value a different
 	// default ("" or `no-cache`) fails.

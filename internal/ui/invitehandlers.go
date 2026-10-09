@@ -228,7 +228,7 @@ func (s *Server) handleInvitePage(w http.ResponseWriter, r *http.Request, id ide
 // extra invitation is listed on the project's page and is revocable, and an invitation grants
 // nothing until it is redeemed (`internal/invite`'s package doc). The response carries
 // `Cache-Control: no-store` because its body is the capability — once its own entry point, now
-// simply [writeHTML]'s default for every authenticated page.
+// simply the one value [writeHTML] sends on every HTML page.
 func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request, id identity.Identity) {
 	if s.inviting == nil {
 		s.refuseWithoutInviteStore(w)
@@ -361,7 +361,7 @@ func (s *Server) handleJoinPage(w http.ResponseWriter, r *http.Request, _ identi
 	// `providerArmed` is per-render deliberately (see its comment): a deployment whose key
 	// set has never been fetched re-arms without a restart, so a value sampled anywhere else
 	// would leave this page refusing after the provider came back.
-	s.renderPublic(w, JoinPage(token, s.providerArmed(), s.app))
+	s.render(w, JoinPage(token, s.providerArmed(), s.app))
 }
 
 // refuseWithoutInviteStore is what the two invite WRITES answer on a deployment with no

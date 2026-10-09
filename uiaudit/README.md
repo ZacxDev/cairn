@@ -563,9 +563,10 @@ CHROMIUM, never this module's Go: `Page.getInstallabilityErrors` and `Page.getAp
 - **(b) icon** — every manifest icon is fetched, and its bytes must equal a committed
   `<variant>-*.png` of THAT boot's variant: 3 matches each, and no URL shared by the two boots.
 
-- **(d)** (wired by S3, the second of S2/S3 to land) — every non-public GET row's HTML page is
-  `Cache-Control: no-store`, every public one's `no-cache`, walked over the route ledger in-process; no
-  browser and no built binary. See `internal/ui/README.md`, Phase Q.
+- **(d)** (wired by S3, the second of S2/S3 to land) — every GET row's HTML page, public rows included,
+  is `Cache-Control: no-store`; each content row is driven at its REAL page (not the navigate fallback a
+  bare request gets), walked over the route ledger in-process; no browser and no built binary. See
+  `internal/ui/README.md`, Phase Q.
 
 (b: screenshots) and (e) are S4's.
 
@@ -622,7 +623,7 @@ that exits right. On the old loop it was RED (`plain-loop=0/1`: exit 2, naming `
 | (c) reachability | `touchEmulation` always DISABLES touch |
 | (c) target size | append a coarse-pointer rule to `app.css`: `.view-tab` 12×12px, no gap (the adjacent shape; a lone small target passes 2.5.8's spacing exception) |
 | (c) input font | revert `max(16px, 1em)` to `0.875rem` |
-| (d) no-store | delete `writeHTMLCached`'s `Cache-Control` line — the base's empty default, no header on any page |
+| (d) no-store | delete `writeHTML`'s `Cache-Control` line — the base's empty default, no header on any page |
 
 Measured on this tree after S3 wired (d) (chromium 152.0.7977.82 from the flake's nixpkgs, NOT CI's
 chromium; 580s). S2's run, before (d), read `sabotaged=6 caught=6 plain-loop=3/3` on chromium 154:

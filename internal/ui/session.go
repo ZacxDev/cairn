@@ -406,9 +406,7 @@ func (s *Server) renderSignIn(w http.ResponseWriter, code int, message, next str
 		writePlain(w, http.StatusInternalServerError, "the page could not be rendered")
 		return
 	}
-	// PUBLIC: every caller is a public row (the sign-in pair, the provider pair), and the page
-	// carries no viewer, no session and no CSRF token — so `no-cache`, not `no-store`.
-	writePublicHTML(w, code, b.String())
+	writeHTML(w, code, b.String())
 }
 
 // logf is the ONE writer of operational lines, so there is one place to audit against

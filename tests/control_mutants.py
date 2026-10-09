@@ -2870,17 +2870,19 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-mint-response-loses-no-store",
         path="internal/ui/invitehandlers.go",
-        # 🔴 RE-DERIVED IN S3 OF THE MOBILE PLAN, WHEN `writeHTMLNoStore` WAS FOLDED INTO
-        # `writeHTML`'s DEFAULT: the old pattern (the mint's own `no-store` entry point swapped for
-        # the ordinary one) named a function that no longer exists, and the full battery scored it
-        # a HARNESS ERROR. The mint now gets `no-store` like every authenticated page, so the way
-        # to lose it is the one remaining opt-DOWN: the public renderer, at the mint's call site.
+        # 🔴 RE-DERIVED TWICE IN S3 OF THE MOBILE PLAN. First when `writeHTMLNoStore` was folded into
+        # `writeHTML`'s default (the old pattern named a function that no longer existed — the full
+        # battery scored it a HARNESS ERROR); then when the public opt-down writer was deleted too, so
+        # there is ONE HTML writer and no weaker value to reach for. What is left that can lose the
+        # mint's `no-store` is BYPASSING the writer at the mint's call site: rendering straight into the
+        # ResponseWriter.
         old="Expires: inv.ExpiresAt.UTC().Format(time.RFC3339),\n\t\t},\n\t}\n\ts.renderInvite(w, view)\n}",
-        new="Expires: inv.ExpiresAt.UTC().Format(time.RFC3339),\n\t\t},\n\t}\n\ts.renderPublic(w, InvitePage(view))\n}",
+        new="Expires: inv.ExpiresAt.UTC().Format(time.RFC3339),\n\t\t},\n\t}\n"
+        "\tw.Header().Set(\"Content-Type\", \"text/html; charset=utf-8\")\n\t_ = InvitePage(view).Render(w)\n}",
         killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
-        why="the public renderer, reached for because the mint page is 'just a link to hand out' — "
-        "but this response's BODY is a bearer capability that can create a principal, and `no-cache` "
-        "lets the browser's HTTP cache keep it. The ledger walk is GET-only and cannot see this POST.",
+        why="rendering straight into the ResponseWriter to skip the buffer looks like an optimisation, "
+        "and it skips the one writer that sets `no-store` — on the response whose BODY is a bearer "
+        "capability. The ledger walk is GET-only and cannot see this POST.",
     ),
     Mutant(
         name="ui-minted-link-becomes-an-anchor",
@@ -2906,9 +2908,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-join-page-resolves-the-token",
         path="internal/ui/invitehandlers.go",
-        # `renderPublic` since S3 of the mobile plan (the join page is a PUBLIC row, `no-cache`).
-        old="\ts.renderPublic(w, JoinPage(token, s.providerArmed(), s.app))",
-        new="\tif s.inviting != nil {\n\t\t_, _ = s.inviting.Outstanding(control.ID(token))\n\t}\n\ts.renderPublic(w, JoinPage(token, s.providerArmed(), s.app))",
+        old="\ts.render(w, JoinPage(token, s.providerArmed(), s.app))",
+        new="\tif s.inviting != nil {\n\t\t_, _ = s.inviting.Outstanding(control.ID(token))\n\t}\n\ts.render(w, JoinPage(token, s.providerArmed(), s.app))",
         killer="TestTheJoinPageNeverConsultsTheInviteAuthority",
         why="the obvious way to make the page more helpful — look the invitation up so it can "
         "name the project. `GET /join` is dispatched BEFORE the authentication chain, so any "
@@ -4021,8 +4022,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-html-no-store-dropped",
         path="internal/ui/server.go",
-        old="\twriteHTMLCached(w, code, body, htmlCachePrivate)\n",
-        new="\twriteHTMLCached(w, code, body, htmlCachePublic)\n",
+        old="\tw.Header().Set(\"Cache-Control\", htmlCacheControl)\n",
+        new="\tw.Header().Set(\"Cache-Control\", \"no-cache\")\n",
         killer="TestEveryNonPublicHTMLRowIsNoStore",
         extra_killers=("TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",),
         why="`no-cache` reads as the cautious value and is not: it permits STORING the page and only "

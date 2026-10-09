@@ -279,7 +279,7 @@ SABOTAGES = {
     # Revert S1's 16px input rule to the base's `text-sm` (14px).
     "c_input_font": ("internal/ui/app.css", "font-size: max(16px, 1em);", "font-size: 0.875rem;", 1),
     # Restore the base's EMPTY default: no HTML page carries a `Cache-Control` at all.
-    "d_no_store": ("internal/ui/server.go", '\tw.Header().Set("Cache-Control", cachePolicy)\n', "", 1),
+    "d_no_store": ("internal/ui/server.go", '\tw.Header().Set("Cache-Control", htmlCacheControl)\n', "", 1),
 }
 if sabotage == "none":
     sys.exit(0)
