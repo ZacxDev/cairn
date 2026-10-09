@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"strings"
 	"sync"
@@ -87,8 +88,8 @@ type Capture struct {
 	// `refuseUnreachableTouch`.
 	Pointer *PointerProbe
 	// Touch is the two touch-ergonomics measurements that are not axe's: input font sizes and
-	// sub-24px targets. REPORTED ONLY in S0 of the mobile plan; S1 makes the input half a
-	// refusal. See [TouchMeasure].
+	// sub-24px targets. Since S1 of the mobile plan the input half is a REFUSAL at the touch
+	// rungs (`touchRefusals`); the sub-24px count stays REPORTED. See [TouchMeasure].
 	Touch *TouchMeasure
 	// FormActions is the `action` attribute of every `<form>` on the page, as written. It is
 	// how the journal-backed world proves it reached the per-scope share page WITH its grant
@@ -100,6 +101,9 @@ type Capture struct {
 	// `ui.NoInviteStore` on an invite page with no database). Read so a world's STATE is
 	// asserted rather than inferred from which flags it was booted with.
 	ReadOnlyNotices []string
+	// HeaderOrder is the header's focusable elements in DOM order with their boxes — see
+	// `refuseHeaderReadingOrder`.
+	HeaderOrder []FocusBox
 	// World names which booted world this capture came from: "" for the token-file world every
 	// existing signal is about, [JournalWorld] for the journal-backed one beside it. Captures
 	// from the journal world are NEVER pushed — see `BuildPayload`.
@@ -226,6 +230,29 @@ func smallInputs(all []SmallInput) []SmallInput {
 	}
 	return out
 }
+
+// FocusBox is one focusable element of the page header: a label for the log and its viewport box.
+type FocusBox struct {
+	Label  string  `json:"label"`
+	Left   float64 `json:"left"`
+	Top    float64 `json:"top"`
+	Right  float64 `json:"right"`
+	Bottom float64 `json:"bottom"`
+}
+
+// headerOrderJS lists the visible focusable elements of `header.page-header` in DOCUMENT order, which
+// is the sequential focus order and the screen-reader reading order (this surface sets no positive
+// `tabindex`). ⚠ NO CATCH, for `pointerProbeJS`'s reason.
+const headerOrderJS = `JSON.stringify(Array.from(document.querySelectorAll(
+  'header.page-header :is(a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"]))'
+)).filter(el => {
+  const r = el.getBoundingClientRect();
+  const cs = getComputedStyle(el);
+  return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none';
+}).map(el => {
+  const r = el.getBoundingClientRect();
+  return {label: (el.textContent || el.tagName).trim().slice(0, 24), left: r.left, top: r.top, right: r.right, bottom: r.bottom};
+}))`
 
 // formsAndNoticesJS reads [Capture.FormActions] and [Capture.ReadOnlyNotices] in one evaluation.
 const formsAndNoticesJS = `JSON.stringify({
@@ -908,7 +935,8 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 	}
 	c.Pointer = &pointer
 
-	// Input font sizes and sub-24px boxes. REPORTED, not refused, in S0. ⚠ They live HERE and
+	// Input font sizes and sub-24px boxes. Measured at every rung; the font half is REFUSED at the
+	// touch rungs (`touchRefusals`, since S1), the box count only reported. ⚠ They live HERE and
 	// not in `vendor-js/layout-smells.js`, whose keys are the hub's push contract.
 	var touchJSON string
 	if err := chromedp.Run(b.ctx, chromedp.Evaluate(touchMeasureJS, &touchJSON)); err != nil {
@@ -937,6 +965,16 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 		return nil, fmt.Errorf("reading forms on %s at %s returned %q: %w", t.Path, vp.Name, truncateForLog(formsRaw, 200), err)
 	}
 	c.FormActions, c.ReadOnlyNotices = forms.Actions, forms.Notices
+
+	// The header's focusable elements, in DOM (= sequential focus) order, with their boxes — refused
+	// in `refuseHeaderReadingOrder` when the visual order disagrees.
+	var headerRaw string
+	if err := chromedp.Run(b.ctx, chromedp.Evaluate(headerOrderJS, &headerRaw)); err != nil {
+		return nil, fmt.Errorf("reading the header order on %s at %s: %w", t.Path, vp.Name, err)
+	}
+	if err := json.Unmarshal([]byte(headerRaw), &c.HeaderOrder); err != nil {
+		return nil, fmt.Errorf("reading the header order on %s at %s returned %q: %w", t.Path, vp.Name, truncateForLog(headerRaw, 200), err)
+	}
 
 	// Layout smells, from the hub's own script, returning its own raw keys.
 	var layoutRaw string
@@ -984,6 +1022,28 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 			"`missing_viewport_meta:false` is an AFFIRMATIVE claim this harness would otherwise have "+
 			"printed as a clean layout line (raw: %q)",
 			t.Path, vp.Name, layout.InnerWidth, truncateForLog(layoutRaw, 200))
+	}
+	// 🔴 AN OPTED-IN PAGE THAT OVERFLOWS AT A `mobile` RUNG DOES NOT REPORT OVERFLOW — CHROMIUM SHRINKS
+	// IT TO FIT, AND THE LAYOUT VIEWPORT GROWS TO THE CONTENT. Measured (S1 round 1, chromium 154): a
+	// scope name with no break opportunity pushed `/` to 510px at the 390px rung, and the page read
+	// `innerWidth=510`, `scrollWidth=510`, `horizontal_overflow=false` — so the overflow refusal could
+	// never fire there, and the walk died on the width assertion below as a "broken emulation" instead.
+	// The two are told apart by the boxes that did NOT grow: on that capture
+	// `document.documentElement.clientWidth` and `visualViewport.width` both read 390 (scale 1) while
+	// `innerWidth` read 510, whereas an emulation that never applied would leave all three at the
+	// window's own width. So that shape is recorded as what it is — horizontal overflow, scrollWidth =
+	// the widened layout width — and `refuseWalkRegressions`' overflow refusal names it.
+	if !layout.MissingViewportMeta && vp.Touch && layout.InnerWidth > vp.Width {
+		var widths []float64
+		if err := chromedp.Run(b.ctx, chromedp.Evaluate(
+			`[document.documentElement.clientWidth, window.visualViewport.width]`, &widths)); err != nil || len(widths) != 2 {
+			return nil, fmt.Errorf("reading the client and visual viewport widths on %s at %s: %v", t.Path, vp.Name, err)
+		}
+		if math.Abs(widths[0]-float64(vp.Width)) <= 1 && math.Abs(widths[1]-float64(vp.Width)) <= 1 {
+			layout.HorizontalOverflow = true
+			layout.ScrollWidth = layout.InnerWidth
+			layout.InnerWidth = vp.Width
+		}
 	}
 	if !layout.MissingViewportMeta && layout.InnerWidth != vp.Width {
 		return nil, fmt.Errorf("%s at %s declares a <meta viewport> yet reports innerWidth=%d while the "+

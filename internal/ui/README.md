@@ -3517,3 +3517,104 @@ alone with `--only` under `PYTHONDONTWRITEBYTECODE=1`: `killed=1` each. Round 2 
 - **Browser-specific URL parsing beyond the corpus.** The rules are the WHATWG shapes known to turn
   a path into an authority (`//`, `\`, stripped tab/newline); a parser quirk outside them is not
   tested here.
+
+# Phase O — touch-first CSS (S1 of the mobile plan)
+
+`claudedocs/plan-cairn-mobile-pwa.md`, decision 14 and B1–B3. The stylesheet gains ONE block, at
+the end of `@layer components` in `tailwind.css`: `@media (pointer: coarse) { … }`. No route and no
+script. `render.go` gains one attribute: the header's viewer line carries a `title` with the whole
+sentence, because the touch block truncates it. `app.css` is regenerated (`nix run
+.#build-ui-stylesheet`), so the hashed stylesheet path moves.
+
+## 🔴 Keyed on the POINTER, never on a width or on `hover`
+
+A narrow desktop window has a mouse and wants the dense layout; a tablet has a thumb and does not.
+And it is the one key the harness can DRIVE: `uiaudit` turns `(pointer: coarse)` on at its `mobile`
+and `tablet` rungs and REFUSES a walk where it does not match, while headless chromium answers
+`hover: none` at every width. The fallback if emulation ever stops matching is the plan's R10:
+the same block under `(width < 64rem)`.
+
+## What the block does, per surface
+
+| surface | before (390px) | under a coarse pointer |
+|---|---|---|
+| header (every signed-in page) | two rows, 80px; nav links 16px tall | a GRID placed in DOM order: row 1 the wordmark and the three nav links (equal 44px targets, B2); row 2 the viewer line (truncated, `text-xs`, full text in `title`) and Sign out. 101px at 390 and 834 |
+| text fields and selects (`#q`, `#entry-filter`, `#token`, `#subject`) | 14px, 38px tall | `font-size: max(16px, 1em)` (iOS zooms below 16px), 44px tall |
+| submit buttons (sign in, search, share, sign out, revoke, the bell) | 22–38px | ≥ 44×44; the bell (B3) was 49×22 |
+| breadcrumbs, view tabs, card titles, row refs, session/arc row links, the arcs toggle, chip links, search-hit links | 14–28px | ≥ 44×44, and `max-w-full` + `wrap-anywhere` so a name with no break opportunity wraps |
+| share / invite index rows | 38px | 44px, still full width, wrapping |
+| document card headings that print a scope name as text | — | `wrap-anywhere` |
+| scope-page entry rows (B1) — `#entry-list > .entry-row` ONLY | the ref was the row's ONLY link, ~14px | the ref is 44px AND stretches an overlay over the whole row (the `.row-link` pattern); the row's chip links sit above it at `z-10` |
+| share form verb checkboxes | 13px | 24px; the LABEL around each is the 44px row |
+
+🔴 **The header keeps DOM order.** The first draft put the viewer and Sign out on row 1 with `order`,
+after three nav links on row 2, so focus and a screen reader jumped back up (WCAG 2.4.3 / 1.3.2).
+A grid that auto-places in source order cannot disagree with the source. A `render.go` reorder was
+the alternative and was rejected: it would move the desktop header's DOM, and its reading order.
+
+🔴 **B1 is the scope page's rows alone.** `.entry-row` is also a session page's bullet, an arc page's
+scope and member rows, and an arcs-index row. The first draft reached all of them, and there the
+overlay swallowed taps on excerpts and badges and blocked long-press text selection. `#entry-list`
+is the scope page's list alone (the id `filter.js` already uses), so no `render.go` change was needed.
+
+🔴 **`inline-flex` alone broke wrapping, and the walk could not see it.** A flex box's text is a flex
+item whose minimum width is its min-content, which for an unbreakable name is the whole name.
+`.card-head h2`'s `break-words` stopped mattering and a long scope name pushed `/` sideways at 390px.
+`overflow-wrap: anywhere` is the wrapping rule that also shrinks min-content. `uiaudit` now carries
+a 42-character unbreakable fixture scope so the overflow refusal can see this shape. That fixture
+ALSO showed that the base tree overflowed at 390px on 13 captures (the scope-list links, document card headings, arc rows' ref
+links, the share pages — measured by element). Those are fixed for coarse pointers by the same rules. ⚠ A narrow FINE-pointer
+window still overflows on such a name, as it did before S1; that is unchanged by design and unmeasured.
+
+⚠ **The 16px input rule is inside the coarse block**, not "at EVERY width" as decision 14 first said
+(amended, operator-accepted). The zoom it prevents is iOS Safari's, which reports a coarse pointer.
+Keeping it in the block is what makes the fine-pointer rendering identical to the base. Residual,
+unmeasured: a WebKit that reports a FINE primary pointer and still zooms on focus keeps 14px, and the
+iPhone checklist covers iPhone only.
+
+## 🔴 Desktop is unchanged — measured, not assumed (the ONE place this is stated)
+
+The full `uiaudit` walk, chromium 154.0.8037.92, the S1 round-1 harness (with the unbreakable fixture
+scope), on the BASE stylesheet (`d4a1dda`) and on S1:
+
+- **Capture lines.** Every laptop, desktop and ultrawide capture line is byte-identical between base
+  and S1, in both worlds. A line holds the status, axe, tap<44, text<12, overflow, `<main>` width and
+  fraction, coarse, target-size, box<24 and input<16. Two runs of the base are also identical, which
+  is the control that says the comparison can match at all.
+- **Screenshots.** Of the 51 desktop (1440px) screenshots, 44 and 43 are byte-identical against the
+  base in two S1 runs. Every other one is a session/presence page, and it differs only inside one
+  live "Ns ago" timestamp box (≤ 1398 pixels). The two S1 runs differ from EACH OTHER the same way,
+  and so did an earlier base-vs-base pair.
+- **Harness note.** The base walk REFUSES under this harness (input font, and the pre-existing
+  overflow above). So its screenshots came from a scratch copy whose refusal prints instead of exiting.
+  Nothing else in that copy differs.
+
+`uiaudit/README.md` and the touch block's comment in `tailwind.css` point here rather than restating it.
+
+## The gate
+
+`uiaudit` refuses, at the touch rungs of both worlds:
+- any axe `target-size` (WCAG 2.5.8) node;
+- any text-entry input under 16px;
+- the measured-nothing shapes of both.
+
+At every rung it refuses a header whose DOM order differs from its visual order. The before/after
+table and the red/green matrix are in `uiaudit/README.md` ("S1").
+
+🔴 **The 44px size is REPORTED, not refused — an operator decision.** There is no hard floor on boxes
+under 24 or 44px. The counts stay in the walk's summary. A lone button shrunk back to 22px passes 2.5.8's
+spacing exception (measured with the bell), so that case is caught only by review and by the REPORTED
+sub-24px count.
+
+## What these guards still cannot see
+
+- **Any WebKit.** The iOS zoom, iPadOS's pointer answer and every on-device behaviour are the
+  plan's iPhone checklist, not a test.
+- **The 44px goal itself**, by decision (above).
+- **`hover:` rules**, at every width (headless answers `hover: none`).
+- **The invite mint form**, which neither `uiaudit` world renders (no `-db-dsn`). Its `select` and
+  submit are covered only through the block's element/type selectors (`select`,
+  `button[type="submit"]`), not through any class of their own, and nothing has measured them.
+- **Which per-scope share pages the journal world walks** is bounded and keyed on random ids. So
+  whether the long-name scope's share page is captured varies run to run. A scratch probe of all
+  8 at 390px read 0 overflow on S1.

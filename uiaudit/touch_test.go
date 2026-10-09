@@ -382,20 +382,35 @@ func captureStdout(t *testing.T, f func()) string {
 // the grant form (rendered ONLY in that world, which is never pushed) was visible only in one
 // per-capture line, while the summary printed "axe violations: 0". It reads the PRINTED summary,
 // because the defect was in what a reader of the log sees.
+//
+// 🔴 ALL SEVEN FIELDS ARE PINNED, AS ONE WHOLE LINE, OVER PAIRWISE-DISTINCT VALUES. The first draft
+// pinned axe, console and network by substring and left the four layout fields unread — so a field
+// SWAP (tap printed in text's slot) or a field printed as a constant 0 was green. Each field below has
+// a value no other field has (axe 1, console 2, network 3, overflow 4, missing-viewport 5, text 7,
+// tap 11), so a swap moves a number into a slot whose literal it cannot equal; and none is 0, so a
+// zeroed field cannot match either. The token-file capture carries its OWN distinct tap/text (13, 17)
+// so a journal line that summed the wrong world reads 24/24 and goes red.
 func TestTheJournalWorldsSignalsAreSummedOnItsOwnLine(t *testing.T) {
-	mk := func(world string) *Capture {
+	mk := func(world string, tap, text int) *Capture {
 		return &Capture{
 			Target: Target{Path: ui.SharePath + "?scope=scp_x"}, Viewport: Mobile, World: world,
-			Layout: &PushLayout{InnerWidth: Mobile.Width, ScrollWidth: Mobile.Width},
+			Layout: &PushLayout{InnerWidth: Mobile.Width, ScrollWidth: Mobile.Width, SmallTapTargets: tap, SmallText: text},
 		}
 	}
-	clean := mk("")
-	journal := mk(JournalWorld)
-	journal.Violations = []AxeViolation{{ID: "label", Nodes: 1}}
-	journal.Console = []Event{{FirstParty: true, Text: "error: x"}, {FirstParty: true, Text: "error: y"}}
-	journal.Network = []Event{{FirstParty: true, Text: "404 /x"}, {FirstParty: true, Text: "404 /y"}, {FirstParty: true, Text: "404 /z"}}
+	clean := mk("", 13, 17)
+	// Five journal captures: tap 2+2+2+2+3 = 11, text 1+1+1+2+2 = 7, overflow on 4, no viewport meta on 5.
+	var journal []*Capture
+	for i, tt := range [][2]int{{2, 1}, {2, 1}, {2, 1}, {2, 2}, {3, 2}} {
+		c := mk(JournalWorld, tt[0], tt[1])
+		c.Layout.HorizontalOverflow = i < 4
+		c.Layout.MissingViewportMeta = true
+		journal = append(journal, c)
+	}
+	journal[0].Violations = []AxeViolation{{ID: "label", Nodes: 1}}
+	journal[1].Console = []Event{{FirstParty: true, Text: "error: x"}, {FirstParty: true, Text: "error: y"}}
+	journal[2].Network = []Event{{FirstParty: true, Text: "404 /x"}, {FirstParty: true, Text: "404 /y"}, {FirstParty: true, Text: "404 /z"}}
 
-	out := captureStdout(t, func() { printSignalSummary([]*Capture{clean, journal}, 0) })
+	out := captureStdout(t, func() { printSignalSummary(append([]*Capture{clean}, journal...), 0) })
 	var journalLines []string
 	for _, l := range strings.Split(out, "\n") {
 		if strings.Contains(l, "journal world") && strings.Contains(l, "axe violations") {
@@ -407,14 +422,18 @@ func TestTheJournalWorldsSignalsAreSummedOnItsOwnLine(t *testing.T) {
 			"world's signals are summed nowhere, so its grant form's defects show only per capture:\n%s",
 			len(journalLines), out)
 	}
-	l := journalLines[0]
-	for _, want := range []string{"axe violations=1", "label", "console=2", "network=3"} {
-		if !strings.Contains(l, want) {
-			t.Errorf("the journal-world line lacks %q: %s", want, l)
-		}
+	const want = "uiaudit:   journal world (5 capture(s), never pushed): axe violations=1 across 1 rule(s): label | " +
+		"console=2 network=3 | tap targets under 44px=11, text under 12px=7, pages with horizontal overflow=4, " +
+		"pages missing <meta viewport>=5"
+	if journalLines[0] != want {
+		t.Errorf("the journal-world line is\n  %q\nwant\n  %q", journalLines[0], want)
 	}
 	if !strings.Contains(out, "uiaudit:   axe violations: 0 across 0 rule(s)") {
 		t.Errorf("the token-file axe line must stay token-file-only (0 here):\n%s", out)
+	}
+	if !strings.Contains(out, "uiaudit:   layout: tap targets under 44px=13, text under 12px=17, pages with horizontal "+
+		"overflow=0, pages missing <meta viewport>=0") {
+		t.Errorf("the token-file layout line must count the token-file capture only (13/17/0/0):\n%s", out)
 	}
 }
 
@@ -449,4 +468,56 @@ func TestTheWholeWalkSignalsAreTheTokenFileWorlds(t *testing.T) {
 		t.Errorf("the payload holds %d page(s) but the summary counts %d pushed — two answers to one question",
 			len(p.Pages), s.pushed)
 	}
+}
+
+// TestAnOverflowingPageIsRecordedAsOverflowAtATouchRung is the control on `CaptureTarget`'s
+// shrink-to-fit branch, in a real chromium.
+//
+// 🔴 AT A `mobile`-FLAG RUNG AN OPTED-IN PAGE WIDER THAN THE VIEWPORT DOES NOT REPORT OVERFLOW: the
+// layout viewport grows to the content (`innerWidth` 510 at a 390 rung, `scrollWidth` equal to it), so
+// `horizontal_overflow` reads false and the walk used to die on the width assertion as a "broken
+// emulation". Measured on S1's first touch CSS with a long unbreakable scope name. Two pages: an
+// unbreakable word wider than the rung must come back as overflow (scrollWidth > 390, innerWidth 390);
+// the same word allowed to wrap must come back clean — so the branch is not "every touch capture
+// overflows".
+func TestAnOverflowingPageIsRecordedAsOverflowAtATouchRung(t *testing.T) {
+	chromiumOrRefuse(t)
+	const word = `<p style="font-size:24px;%s">unbrokenscopenamewithnobreakopportunityxyz</p>`
+	for _, tc := range []struct {
+		name      string
+		style     string
+		overflows bool
+	}{
+		{"an unbreakable word", "", true},
+		{"the same word, allowed to wrap", "overflow-wrap:anywhere", false},
+	} {
+		b := browserFor(t, touchPage(t, fmt.Sprintf(word, tc.style)).URL)
+		c, err := b.CaptureTarget(Target{Path: "/", PushURL: "/wide", LedgerRow: "control"}, Mobile)
+		if err != nil {
+			t.Fatalf("%s: the capture FAILED rather than recording what it measured: %v", tc.name, err)
+		}
+		if c.Layout.HorizontalOverflow != tc.overflows || c.Layout.InnerWidth != Mobile.Width ||
+			(tc.overflows && c.Layout.ScrollWidth <= Mobile.Width) {
+			t.Errorf("%s at mobile: overflow=%v scrollWidth=%d innerWidth=%d, want overflow=%v with innerWidth=%d",
+				tc.name, c.Layout.HorizontalOverflow, c.Layout.ScrollWidth, c.Layout.InnerWidth, tc.overflows, Mobile.Width)
+		}
+		t.Logf("%s at mobile: overflow=%v scrollWidth=%d innerWidth=%d", tc.name,
+			c.Layout.HorizontalOverflow, c.Layout.ScrollWidth, c.Layout.InnerWidth)
+	}
+
+	// …and the branch must NOT launder a page that overrides the device width: there the layout
+	// viewport is 600px because the PAGE asked for it, the client width is 600 too, and the width
+	// assertion's refusal is the right answer — not a recorded overflow.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>w</title>` +
+			`<meta name="viewport" content="width=600"></head><body><main><h1>w</h1></main></body></html>`))
+	}))
+	t.Cleanup(srv.Close)
+	b := browserFor(t, srv.URL)
+	_, err := b.CaptureTarget(Target{Path: "/", PushURL: "/fixed", LedgerRow: "control"}, Mobile)
+	if err == nil || !strings.Contains(err.Error(), "declares a <meta viewport> yet reports innerWidth=600") {
+		t.Fatalf("a page that fixes its own layout width at 600px was not refused by the width assertion: %v", err)
+	}
+	t.Logf("a page fixing width=600 at mobile: refused — %s", firstLine(err))
 }

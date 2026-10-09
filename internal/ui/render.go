@@ -654,7 +654,10 @@ func shell(title string, v PageView, crumbs []crumb, body ...g.Node) g.Node {
 				h.P(h.Class("nav-invite"), h.A(h.Href(InvitePath), g.Text("Invitations"))),
 				// The viewer's display name is USER TEXT: it comes from a
 				// `control.Principal`, which comes from a provisioned user record.
-				h.P(h.Class("viewer"), g.Text("signed in as "+v.Viewer)),
+				// The `title` carries the whole sentence because a coarse pointer TRUNCATES this line
+				// (`tailwind.css`'s touch block) — a long display name must stay readable somewhere. It
+				// is the same user text in an attribute value, escaped by the same gomponents path.
+				h.P(h.Class("viewer"), h.TitleAttr("signed in as "+v.Viewer), g.Text("signed in as "+v.Viewer)),
 				g.If(v.CSRF != "", signOutForm(v.CSRF)),
 			),
 			g.If(len(crumbs) > 0, breadcrumbs(crumbs)),

@@ -579,7 +579,174 @@ func touchWord(touch bool) string {
 	return "non-touch"
 }
 
-// printTouchSummary reports the S0 touch measurements per world and viewport. REPORT ONLY.
+// headerOrderBreaks is the header READING-ORDER check: one line per place where the next focusable
+// element in DOM order is rendered EARLIER than the one before it — on a row above it, or to its left
+// on the same row. Keyboard focus and a screen reader follow the DOM, so such a jump is WCAG 2.4.3 /
+// 1.3.2's "the order you hear is not the order you see".
+//
+// 🔴 ROWS ARE DECIDED BY THE BOXES, NOT BY A ROW INDEX: the next element is on a LATER row when its top
+// is at or below the previous one's bottom, on an EARLIER row when its bottom is at or above the
+// previous one's top, and on the SAME row otherwise (any vertical overlap), where its left edge must
+// not be left of the previous one's. A 1px tolerance absorbs sub-pixel layout. It exists because S1's
+// first touch header put the viewer and Sign out on row 1 with `order`, after three nav links that
+// render on row 2 — measured RED on that tree.
+func headerOrderBreaks(c *Capture) []string {
+	var out []string
+	for i := 1; i < len(c.HeaderOrder); i++ {
+		p, n := c.HeaderOrder[i-1], c.HeaderOrder[i]
+		switch {
+		case n.Top >= p.Bottom-1:
+			// a later row
+		case n.Bottom <= p.Top+1:
+			out = append(out, fmt.Sprintf("%q (focus position %d) renders on a row ABOVE %q (position %d)", n.Label, i+1, p.Label, i))
+		case n.Left < p.Left-1:
+			out = append(out, fmt.Sprintf("%q (focus position %d) renders LEFT of %q (position %d) on the same row", n.Label, i+1, p.Label, i))
+		}
+	}
+	return out
+}
+
+// headerOrderRefusal runs [headerOrderBreaks] over every capture, at EVERY rung — reading order is not a
+// pointer question — and returns the refusal paragraph (or "") and how many captures it measured with at
+// least two header focusables. ⚠ A walk in which NO capture had two is refused: an order check over
+// headers with one element each is a claim about nothing.
+func headerOrderRefusal(captures []*Capture) (string, int) {
+	var bad []string
+	measured := 0
+	for _, c := range captures {
+		if len(c.HeaderOrder) >= 2 {
+			measured++
+		}
+		where := fmt.Sprintf("%s at %s (%dpx)", c.Target.Path, c.Viewport.Name, c.Viewport.Width)
+		if c.World != "" {
+			where = "[" + c.World + "] " + where
+		}
+		for _, b := range headerOrderBreaks(c) {
+			bad = append(bad, where+": "+b)
+		}
+	}
+	if len(bad) > 0 {
+		return fmt.Sprintf("HEADER READING ORDER differs from the visual order on %d element(s) — keyboard focus and a "+
+			"screen reader follow the DOM (WCAG 2.4.3 / 1.3.2):\n    %s", len(bad), strings.Join(bad, "\n    ")), measured
+	}
+	if measured == 0 && len(captures) > 0 {
+		return fmt.Sprintf("HEADER READING ORDER measured 0 of %d capture(s) with two or more header focusables — "+
+			"an order check over nothing", len(captures)), 0
+	}
+	return "", measured
+}
+
+// touchFindings is the two touch refusals' input, gathered over the TOUCH captures of BOTH worlds.
+type touchFindings struct {
+	// captures and inputs are the accounting the clean verdict prints: how many touch captures
+	// the two refusals inspected, and how many text-entry inputs the font refusal measured there.
+	captures, inputs int
+	// perWorld is the same accounting split by [Capture.World] ("" is the token-file world), so the
+	// measured-nothing refusal is per world: one world's inputs cannot hide the other's zero.
+	perWorld map[string]*[2]int
+	// smallTargets, smallFonts and unmeasured are one line per offending capture.
+	smallTargets, smallFonts, unmeasured []string
+}
+
+// touchRefusals gathers [touchFindings]: axe `target-size` nodes and text-entry inputs under
+// [minInputFontPx] at every TOUCH capture, in both worlds.
+//
+// 🔴 S1 OF THE MOBILE PLAN TURNED THESE TWO FROM REPORTED NUMBERS INTO REFUSALS, AT THE TOUCH
+// RUNGS ONLY. The touch rungs are where `internal/ui/tailwind.css`'s `@media (pointer: coarse)`
+// block applies, and `refuseUnreachableTouch` — checked FIRST in the same function — is what makes
+// "touch rung" mean "a page that saw a coarse pointer". The non-touch rungs keep the dense desktop
+// layout on purpose and stay REPORTED (`printTouchSummary`).
+//
+// ⚠ THEY ARE NOT ONE KIND OF GUARD, AND THE DIFFERENCE IS MEASURED. The input-font refusal is a
+// REGRESSION guard: the base tree (`d4a1dda`) is RED on it — 5 inputs at 14px in the token-file world
+// and 4 in the journal world, at both touch rungs. The target-size refusal is an INVARIANT guard on
+// this surface: axe reported 0 `target-size` nodes at every rung on the base tree as well, because
+// 2.5.8's spacing and inline exceptions pass this surface's small-but-separated targets. It is what
+// stops the 44px touch rules regressing to the adjacent-12px shape the plan's sabotage names, and it
+// has been watched RED only by mutation — `uiaudit/README.md` records which.
+//
+// ⚠ AND BOTH REFUSE A MEASUREMENT THAT DID NOT HAPPEN: a touch capture with no [TouchMeasure], and a
+// WORLD whose touch captures held ZERO text-entry inputs between them — "0 under 16px" over nothing is
+// the reassuring zero this program refuses everywhere else. Per world since S1 round 1: summed over
+// both, the token-file world's inputs hid a journal world that measured none. That axe RAN is the existing "AXE DID NOT
+// RUN" refusal's job; that the rule is ENABLED is `TestTheTargetSizeRuleRunsOnlyBecauseItIsEnabled`'s.
+func touchRefusals(captures []*Capture) touchFindings {
+	f := touchFindings{perWorld: map[string]*[2]int{}}
+	for _, c := range captures {
+		if !c.Viewport.Touch {
+			continue
+		}
+		f.captures++
+		w := f.perWorld[c.World]
+		if w == nil {
+			w = &[2]int{}
+			f.perWorld[c.World] = w
+		}
+		w[0]++
+		where := fmt.Sprintf("%s at %s (%dpx)", c.Target.Path, c.Viewport.Name, c.Viewport.Width)
+		if c.World != "" {
+			where = "[" + c.World + "] " + where
+		}
+		if n := c.TargetSizeNodes(); n > 0 {
+			f.smallTargets = append(f.smallTargets, fmt.Sprintf("%s: axe target-size flagged %d node(s)", where, n))
+		}
+		// ⚠ AN INVARIANT (REFACTOR) GUARD, LABELLED: `CaptureTarget` always sets `Touch` or fails the
+		// capture, so a real walk never reaches this. It mirrors S0's nil-`Pointer` refusal and exists
+		// for the day a capture path stops measuring — not as regression coverage.
+		if c.Touch == nil {
+			f.unmeasured = append(f.unmeasured, where)
+			continue
+		}
+		f.inputs += c.Touch.InputsMeasured
+		w[1] += c.Touch.InputsMeasured
+		for _, in := range c.Touch.SmallInputs {
+			f.smallFonts = append(f.smallFonts, fmt.Sprintf("%s: %s renders at %gpx", where, in.Selector, in.FontPx))
+		}
+	}
+	return f
+}
+
+// refusals renders [touchFindings] as `refuseWalkRegressions`' refusal paragraphs, each with its
+// own headline so a mutant that dies here can be told apart from one that died anywhere else.
+func (f touchFindings) refusals() []string {
+	var out []string
+	if len(f.smallTargets) > 0 {
+		out = append(out, fmt.Sprintf("TOUCH TARGET SIZE (WCAG 2.5.8, axe target-size) violated on %d touch capture(s) "+
+			"— targets under 24px with no spacing exception, on a page that saw a coarse pointer:\n    %s",
+			len(f.smallTargets), strings.Join(f.smallTargets, "\n    ")))
+	}
+	if len(f.smallFonts) > 0 {
+		out = append(out, fmt.Sprintf("INPUT FONT UNDER %dpx on %d touch input(s) — iOS Safari zooms the page into a "+
+			"focused field whose computed font is under %dpx:\n    %s",
+			minInputFontPx, len(f.smallFonts), minInputFontPx, strings.Join(f.smallFonts, "\n    ")))
+	}
+	if len(f.unmeasured) > 0 {
+		out = append(out, fmt.Sprintf("NO TOUCH MEASUREMENT on %d touch capture(s) — the input-font refusal would be "+
+			"passing a page it never measured:\n    %s", len(f.unmeasured), strings.Join(f.unmeasured, "\n    ")))
+	}
+	if len(f.unmeasured) == 0 {
+		worlds := make([]string, 0, len(f.perWorld))
+		for w := range f.perWorld {
+			worlds = append(worlds, w)
+		}
+		sort.Strings(worlds)
+		for _, w := range worlds {
+			if n := f.perWorld[w]; n[1] == 0 {
+				name := "the token-file world"
+				if w != "" {
+					name = "the " + w + " world"
+				}
+				out = append(out, fmt.Sprintf("THE INPUT FONT REFUSAL MEASURED 0 text-entry inputs over %d touch capture(s) "+
+					"in %s — '0 under %dpx' over no input is a claim about nothing", n[0], name, minInputFontPx))
+			}
+		}
+	}
+	return out
+}
+
+// printTouchSummary reports the touch measurements per world and viewport. At the TOUCH rungs the
+// target-size and input-font numbers it prints have already passed their refusals ([touchRefusals]);
+// everywhere else, and the sub-24px box count everywhere, they are REPORTED only.
 func printTouchSummary(captures []*Capture) {
 	type key struct{ world, vp string }
 	type agg struct {
@@ -617,7 +784,7 @@ func printTouchSummary(captures []*Capture) {
 			}
 		}
 	}
-	fmt.Println("uiaudit: --- touch measurements (REPORT ONLY in S0; S1 refuses on target-size and input font) ---")
+	fmt.Println("uiaudit: --- touch measurements (target-size and input font are REFUSED at the touch rungs, so they read 0 there; every other number is REPORTED) ---")
 	for _, world := range []string{"", JournalWorld} {
 		name := "token-file world"
 		if world != "" {
@@ -761,7 +928,10 @@ func exemptPagesForLog() string {
 	return strings.Join(out, ", ")
 }
 
-// refuseWalkRegressions turns four per-page measurements into a FAILED WALK.
+// refuseWalkRegressions turns four per-page measurements into a FAILED WALK — and, since S1 of the
+// mobile plan, the touch reachability check and the two touch refusals in [touchRefusals]
+// (axe `target-size` and input font, at the touch rungs, both worlds), which together are clause
+// (c) of that plan's closing condition.
 //
 // 🔴 A NUMBER IN A SUMMARY LINE IS NOT A GATE, AND THIS FILE ALREADY RECORDS WHAT THAT
 // COSTS. `printSignalSummary` has printed `pages with horizontal overflow=N` since this
@@ -805,6 +975,8 @@ func refuseWalkRegressions(captures []*Capture) error {
 		return fmt.Errorf("refuseWalkRegressions was handed NO capture, so its clean verdict would be about nothing")
 	}
 	var overflow, scripted, axeless, narrow []string
+	// The two touch refusals (S1), and their own accounting: see [touchRefusals].
+	tr := touchRefusals(captures)
 	widths := map[string]bool{}
 	// Clause (c) of the mobile plan's closing condition starts here: the touch measurements
 	// are only readable if touch emulation reached the page, so that is checked first. See
@@ -932,6 +1104,11 @@ func refuseWalkRegressions(captures []*Capture) error {
 			"green on every other check here:\n    %s",
 			len(narrow), Ultrawide.Width, strings.Join(narrow, "\n    ")))
 	}
+	refusals = append(refusals, tr.refusals()...)
+	headerRefusal, headerMeasured := headerOrderRefusal(captures)
+	if headerRefusal != "" {
+		refusals = append(refusals, headerRefusal)
+	}
 	if len(refusals) > 0 {
 		return fmt.Errorf("the walk measured %d regression class(es) over %d capture(s):\n  %s",
 			len(refusals), len(captures), strings.Join(refusals, "\n  "))
@@ -959,6 +1136,12 @@ func refuseWalkRegressions(captures []*Capture) error {
 	}
 	fmt.Printf("uiaudit:   TOUCH REACHABILITY refusal PASSED: the probe read (pointer: coarse) TRUE at %d of %d touch "+
 		"capture(s) and FALSE at %d of %d non-touch capture(s)\n", coarseAtTouch, touchN, fineAtOther, otherN)
+	fmt.Printf("uiaudit:   TOUCH TARGET SIZE refusal PASSED: 0 axe target-size (WCAG 2.5.8) node(s) over %d touch "+
+		"capture(s), both worlds\n", tr.captures)
+	fmt.Printf("uiaudit:   INPUT FONT refusal PASSED: 0 of %d text-entry input(s) under %dpx over %d touch capture(s), "+
+		"both worlds\n", tr.inputs, minInputFontPx, tr.captures)
+	fmt.Printf("uiaudit:   HEADER READING ORDER refusal PASSED: DOM order matched the visual order on %d capture(s) with "+
+		"two or more header focusables, at every rung\n", headerMeasured)
 	// 🔴 THE FLOOR REPORTS ITS NARROWEST MEASUREMENT RATHER THAN A ZERO. "0 refusals" is
 	// produced identically by a surface that widens and by a predicate that inspected
 	// nothing; the number below moves when the layout does, which is what makes the clean

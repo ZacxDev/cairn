@@ -466,7 +466,8 @@ implemented with this same call [S, Puppeteer `EmulationManager`].
 **Fallback, if emulation ever stops matching** (a chromium change; the reachability control would
 go red): decision 14's rules move from `@media (pointer: coarse)` to a width rule, `@media
 (width < 64rem)` (Tailwind's `lg`). Every phone and portrait tablet would then get the touch sizing,
-and a narrow desktop window would too. The 16 px input rule is already width-independent.
+and a narrow desktop window would too. The 16 px input rule moves with them: since S1 it lives in
+the same pointer block (decision 14, amended).
 **The reachability control changes with it:** the check stops being `pointer: coarse` matches at
 touch captures, and becomes "the width rule's query matches at `mobile` and `tablet` (390 and 834
 px are both under 64rem = 1024 px) and does not match at `laptop`, `desktop` and `ultrawide`". The
@@ -888,9 +889,16 @@ comfort size (Apple HIG, 2.5.5 AAA) is missed nearly everywhere, and nothing ada
     gate able to see it (R10).
     - `min-height: 44px` and a matching hit area on: the nav links, `button[type=submit]`,
       `.view-tab`, `.crumb`, the entry-row link (the whole row is the target, B1) and the bell.
-    - Inputs at `font-size: max(16px, 1em)` at EVERY width: the zoom depends on the font, not the
-      width.
-    - The header becomes compact: the wordmark, with the nav wrapping beneath it.
+    - Inputs at `font-size: max(16px, 1em)` **under the same `(pointer: coarse)` query** —
+      *amended at S1 (operator-accepted, PR #205 round 0, R-a); it said "at EVERY width".* The
+      zoom depends on the font, not the width, and iOS Safari reports a coarse pointer; keeping
+      the rule inside the pointer block is what leaves the fine-pointer (desktop) rendering
+      unchanged. **Residual risk, unmeasured:** a WebKit that reports a FINE primary pointer and
+      still zooms on focus keeps 14 px, and the iPhone checklist covers iPhone only.
+    - The header becomes compact: the wordmark and the nav on one row, the viewer and sign-out
+      beneath it — in DOM order, so the reading/focus order matches the visual order (S1 round 1).
+    - *As built (S1), the 44 px size is REPORTED, not refused* — an operator decision (R-d): the
+      walk refuses axe `target-size` (2.5.8) and input font only.
     - *Fallback if emulation ever stops matching:* the width rule in R10.
 15. **uiaudit's touch measurements live in `browser.go`, at the touch rungs:**
     - **Real touch emulation:** `setTouchEmulationEnabled(true, maxTouchPoints=5)` at `Touch`
@@ -957,7 +965,7 @@ alone (audit round 1, item 2).
 | **S2** | **Manifest, icon variants, the three flags, `pwaHead()` WITHOUT a script tag, and `uiaudit/pwa_check.sh`** with clauses (a), (b: name + icon) and (c), plus (d) if S3 landed first, and their sabotages (6, or 7). Installable on Chromium from here. | Routes: `GET /manifest.webmanifest` and one hashed public row per icon file, in the hand ledger, `bareGETAnswer` and the near-miss probes. `onlyGo`: PNGs, `variants.json`. `flake.nix`: `uiIcons` + `checks.ui-icons-are-current`. `cmd/cairn-ui` flags and tests. Mutant rows. READMEs. | Inert unless `-app-name` is set. |
 | **S3** | **`no-store` alone** (decision 8), plus `TestEveryNonPublicHTMLRowIsNoStore` (clause d), wired into `pwa_check.sh` by whichever of S2/S3 lands second (until then it runs in the `go` job only). | `server.go` (`writeHTML`'s default; `writeHTMLNoStore` folded in), `internal/ui/README.md`, mutant row. | A header change. No dependency, rollback-safe. |
 | **S4** | **`pwa.js`** (Install button, the iOS hint and its remembered dismissal), **shortcuts**, **screenshots**, and `pwa_check.sh` clauses (b, screenshots) and (e). | `AllowedScriptSources` (2nd entry); the hashed `pwa.js` row; `pwaHead()` gains the tag; `onlyGo`: `pwa.js` and the screenshot PNGs; the allowlist guard's controls; the spelling guard; manifest `shortcuts` + `screenshots`; screenshot rows; `flake.nix`: `uiScreenshots` + `checks.ui-screenshots-are-current`; mutant rows; `ci.yml` (`pwa_check.sh` step); README. | Additive. Needs S2's manifest, and S3 landed first (its `sabotaged=9` pin counts S3's clause (d)). |
-| **S5** *(IN v1, O9)* | **Standalone Back/Reload and polish**: a sticky compact header in `display-mode: standalone`; Back/Reload buttons revealed by `pwa.js` in standalone only; `overscroll-behavior-y: contain`. | `tailwind.css` → `app.css`; `pwa.js`, whose spelling guard admits only `history.back` and `location.reload`; README. | Hidden outside standalone. Device behaviour is checklist step 8. |
+| **S5** *(IN v1, O9)* | **Standalone Back/Reload and polish**: a sticky compact header in `display-mode: standalone` (⚠ S1's touch header measured 101 px tall at 390 px and 834 px — two 44 px rows — so a STICKY header must revisit its height before pinning it); Back/Reload buttons revealed by `pwa.js` in standalone only; `overscroll-behavior-y: contain`. | `tailwind.css` → `app.css`; `pwa.js`, whose spelling guard admits only `history.back` and `location.reload`; README. | Hidden outside standalone. Device behaviour is checklist step 8. |
 | **S6a** | **Pin CI's chromium** to the flake's nixpkgs (decision 17). | `ci.yml:1745-1751`; `uiaudit/README.md` gating section. | CI-only. |
 | **S6b** | **The blocking `uiaudit-touch` job**, in its own PR (O11). | `ci.yml` (a new job; the advisory job unchanged); `uiaudit/README.md`; branch protection, an operator setting named in the PR. Needs S1 and S6a. | CI-only. |
 
