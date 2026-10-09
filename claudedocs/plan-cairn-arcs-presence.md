@@ -330,15 +330,16 @@ ring executor must share no code path with any of them (decision 9).
 
 ### Chosen by the OPERATOR (not re-litigated)
 
-Quoted as relayed in this plan's brief and in the review rulings.
+Paraphrased from this plan's brief and the review rulings (this repository carries no one's
+messages verbatim, `AGENTS.md`).
 
 | # | the operator's choice | cost accepted |
 |---|---|---|
-| O1 | **Live arcs** — "status open OR last-updated within 14 days, newest first, with a show-all toggle". **last-updated** — the option the operator picked: "last update (newest handoff, or newest bullet a member wrote)", i.e. max(newest registration time, newest attributed bullet by any member session in a scope the viewer can read). Visibility unchanged: "an arc is listed only when its HOME scope is readable". | Self-declared attribution: anyone who can write a readable scope can keep an arc live by appending a bullet whose trailer names a member session (`bullet_request.go:15-28`); the future-date clamp (decision 10) blocks only future dates. Accepted, because visibility is unchanged — it reorders what a reader could already see. |
-| O2 | "Clicking an arc resolves it: extend the existing `/arc` page (likely tabs mirroring the scope page's `?tab=`)", linking to `/scope` and `/session`. Review ruling D1: tabs are **scopes · sessions** only; no entries tab. | — |
-| O3 | **Presence** — "session id → {host label, tmux target, hotkey/label, runtime, last-seen}, pushed … to the PERSONAL instance ONLY, readable ONLY by the identity that pushed it (owner-only, never shared via scope grants), short TTL (~3 min), never sent to any other instance". | A shared arc's other readers never see where it is running. |
-| O4 | **Bell** — "queued pull: … a CSRF-protected, rate-limited POST that enqueues a ring only for a session whose live presence belongs to the viewer; the host agent (outbound-only) fetches pending rings every few seconds … nothing connects inbound to the hosts". Review ruling D3: the rate limit is one pending ring per (owner, session) plus a 60 s TTL. | Ring latency is the claim interval. |
-| O5 | "Deliverable this round = the plan doc only"; the host agent is its own slice in the tooling repo. | — |
+| O1 | **Live arcs** — an arc is live when it is open or was updated within the last 14 days; live arcs list newest first, and a toggle shows all. **Last updated** is the later of the newest handoff and the newest bullet a member wrote, i.e. max(newest registration time, newest attributed bullet by any member session in a scope the viewer can read). Visibility is unchanged: an arc is listed only when its HOME scope is readable. | Self-declared attribution: anyone who can write a readable scope can keep an arc live by appending a bullet whose trailer names a member session (`bullet_request.go:15-28`); the future-date clamp (decision 10) blocks only future dates. Accepted, because visibility is unchanged — it reorders what a reader could already see. |
+| O2 | Clicking an arc opens it on the existing `/arc` page, extended with tabs in the style of the scope page's `?tab=`, linking to `/scope` and `/session`. Review ruling D1: tabs are **scopes · sessions** only; no entries tab. | — |
+| O3 | **Presence** — a map from session id to {host label, tmux target, hotkey/label, runtime, last-seen}, pushed to the PERSONAL instance ONLY, readable ONLY by the identity that pushed it (owner-only, never shared through scope grants), with a short TTL of about 3 minutes, and never sent to any other instance. | A shared arc's other readers never see where it is running. |
+| O4 | **Bell** — a queued pull: a CSRF-protected, rate-limited POST enqueues a ring only for a session whose live presence belongs to the viewer, and an outbound-only host agent fetches pending rings every few seconds; nothing connects inbound to the hosts. Review ruling D3: the rate limit is one pending ring per (owner, session) plus a 60 s TTL. | Ring latency is the claim interval. |
+| O5 | This round delivers the plan document only; the host agent is its own slice in the tooling repo. | — |
 
 ### Chosen by the AGENT writing this plan (open to review)
 
@@ -516,7 +517,7 @@ document. Measured against that script, it cannot work, and the review ruling re
   `:28-38`) would stop the presence step — and to that unit's shared `TimeoutStartSec = 150`
   budget, most of which is the ssh collector's (`home.nix:4318-4356`);
 - that unit runs on one host and collects the other over ssh, so it would also have forced a
-  token bound to a SET of host labels and bent O3's "a host-side agent on each operator machine".
+  token bound to a SET of host labels and bent O3's host-side agent on each of the operator's machines.
 
 **So S3 is a NEW pair of user units on EACH host, sharing nothing with the snapshot unit:**
 
