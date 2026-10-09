@@ -22,6 +22,9 @@
 //
 //  3. LAYOUT AT TWO WIDTHS. This surface has never been rendered at any width. The
 //     `<meta viewport>` comes from gomponents' HTML5 template and nothing pins it.
+//     ⚠ Now five widths, and the two TOUCH rungs emulate a real touch pointer — the
+//     `(pointer: coarse)` reachability check REFUSES a walk where that did not reach the page
+//     (`README.md`, "Touch").
 //
 //  4. ⚠ RETRACTED, AND KEPT HERE RATHER THAN DELETED. This claimed the harness is the only
 //     thing that can distinguish a deployment whose session volume vanished after start —

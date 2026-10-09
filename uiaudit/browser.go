@@ -81,6 +81,193 @@ type Capture struct {
 	// the same edge rewrites are in `internal/ui/README.md`. Nothing here changes: this
 	// counter and its refusal are the right instrument for the property they can see.
 	ScriptSrcs []string
+
+	// Pointer is what the PAGE answered to the pointer media queries, read after navigation.
+	// It is the instrument check on touch emulation — see [PointerProbe] and
+	// `refuseUnreachableTouch`.
+	Pointer *PointerProbe
+	// Touch is the two touch-ergonomics measurements that are not axe's: input font sizes and
+	// sub-24px targets. REPORTED ONLY in S0 of the mobile plan; S1 makes the input half a
+	// refusal. See [TouchMeasure].
+	Touch *TouchMeasure
+	// FormActions is the `action` attribute of every `<form>` on the page, as written. It is
+	// how the journal-backed world proves it reached the per-scope share page WITH its grant
+	// form (see `refuseJournalWorldFellBack`), rather than the token-file page that renders
+	// none.
+	FormActions []string
+	// ReadOnlyNotices is the text of every `p.read-only` element: the surface's own sentences
+	// saying a write cannot happen here (`ui.ReadOnlyAuthority` on a token-file share page,
+	// `ui.NoInviteStore` on an invite page with no database). Read so a world's STATE is
+	// asserted rather than inferred from which flags it was booted with.
+	ReadOnlyNotices []string
+	// World names which booted world this capture came from: "" for the token-file world every
+	// existing signal is about, [JournalWorld] for the journal-backed one beside it. Captures
+	// from the journal world are NEVER pushed — see `BuildPayload`.
+	World string
+}
+
+// PointerProbe is the page's own answer to the pointer media queries.
+//
+// 🔴 IT EXISTS BECAUSE `Viewport.Touch` USED TO EMULATE NOTHING A STYLESHEET CAN SEE, AND THAT
+// WAS MEASURED RATHER THAN SUSPECTED. `SetDeviceMetricsOverride(…, mobile=true)` covers the
+// viewport meta tag, overlay scrollbars and text autosizing — NOT input — so every capture this
+// harness had ever taken read `(pointer: coarse)` FALSE, touch rungs included, and any
+// `@media (pointer: coarse)` rule was invisible to the walk at every width. Only
+// `Emulation.setTouchEmulationEnabled` makes the query match (measured on chromium 154 headless:
+// `setEmitTouchEventsForMouse` does not). So the harness READS the query back on every capture
+// rather than trusting the call it made, and `refuseUnreachableTouch` refuses a walk whose touch
+// captures are not coarse or whose non-touch captures are.
+//
+// ⚠ `HoverNone` IS CARRIED AS A REPORTED BLIND SPOT, NOT A CHECK. Headless chromium answers
+// `(hover: none)` TRUE AT EVERY WIDTH, emulated touch or not, so every `hover:` rule in the
+// stylesheet is unmeasured by this walk everywhere. The CDP calls measured here offer no hover
+// emulation; `README.md`'s blind set records it.
+type PointerProbe struct {
+	Coarse         bool `json:"coarse"`
+	AnyCoarse      bool `json:"any_coarse"`
+	HoverNone      bool `json:"hover_none"`
+	MaxTouchPoints int  `json:"max_touch_points"`
+}
+
+// pointerProbeJS reads the pointer media queries the way a stylesheet sees them.
+//
+// ⚠ IT DOES NOT CATCH, FOR `contentWidthJS`'s REASON: a thrown probe must fail the capture, not
+// return a zero struct whose `coarse:false` is an AFFIRMATIVE claim about a non-touch page.
+const pointerProbeJS = `JSON.stringify({
+  coarse: window.matchMedia('(pointer: coarse)').matches,
+  any_coarse: window.matchMedia('(any-pointer: coarse)').matches,
+  hover_none: window.matchMedia('(hover: none)').matches,
+  max_touch_points: navigator.maxTouchPoints,
+})`
+
+// TouchMeasure is the touch-ergonomics measurement this harness takes beside axe.
+type TouchMeasure struct {
+	// InputsMeasured is how many visible text-entry controls (`input` of a typing type,
+	// `select`, `textarea`) the page had, so "0 small inputs" can be read as "0 of N" rather
+	// than as a page with no inputs at all.
+	InputsMeasured int `json:"inputs_measured"`
+	// SmallInputs is every one of those whose COMPUTED `font-size` is under [minInputFontPx] — the size
+	// below which iOS Safari zooms the page when the control takes focus. The zoom depends on
+	// the font, not on the width, which is why this is measured at every rung.
+	SmallInputs []SmallInput `json:"small_inputs"`
+	// TargetsMeasured and TargetsUnder24 are the visible `a, button, input, select, summary,
+	// [role=button]` elements and those with EITHER side under 24 CSS px — the box size WCAG
+	// 2.5.8 names. ⚠ A RAW BOX COUNT, NOT A 2.5.8 VERDICT: axe's `target-size` applies the
+	// criterion's spacing and inline exceptions, so this number is always ≥ axe's, and the two
+	// are reported side by side precisely because they answer different questions.
+	TargetsMeasured int `json:"targets_measured"`
+	TargetsUnder24  int `json:"targets_under_24"`
+}
+
+// SmallInput is one text-entry control rendered under 16px.
+type SmallInput struct {
+	// Selector is `#id` when the control has one, else `tag[name=…]`, else the tag — enough
+	// for a reader to find it, and stable across runs over one tree.
+	Selector string  `json:"selector"`
+	FontPx   float64 `json:"font_px"`
+}
+
+// minInputFontPx is the computed font size under which iOS Safari zooms a focused input.
+// [S] in the plan's research (WebKit-specific); measured here only as a computed style.
+const minInputFontPx = 16
+
+// touchMeasureJS takes [TouchMeasure].
+//
+// 🔴 ONLY TEXT-ENTRY TYPES COUNT AS INPUTS, because the zoom it predicts happens when a control
+// takes KEYBOARD focus: a checkbox, a submit button or a hidden field never zooms the page, and
+// counting them would make the number about markup rather than about the defect. Visibility is a
+// non-empty client rect plus a computed style that is not hidden — an `input type=hidden` and a
+// `display:none` panel both have no rect.
+//
+// ⚠ NO CATCH, for `pointerProbeJS`'s reason.
+const touchMeasureJS = `(() => {
+  const nonTyping = new Set(['hidden','checkbox','radio','submit','button','reset','image','file','range','color']);
+  const visible = (el) => {
+    const r = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none';
+  };
+  const describe = (el) => {
+    const tag = el.tagName.toLowerCase();
+    if (el.id) return '#' + el.id;
+    const name = el.getAttribute('name');
+    return name ? tag + '[name=' + name + ']' : tag;
+  };
+  const inputs = [];
+  for (const el of document.querySelectorAll('input, select, textarea')) {
+    if (el.tagName === 'INPUT' && nonTyping.has((el.getAttribute('type') || 'text').toLowerCase())) continue;
+    if (!visible(el)) continue;
+    inputs.push({selector: describe(el), font_px: parseFloat(getComputedStyle(el).fontSize)});
+  }
+  let targets = 0, under = 0;
+  for (const el of document.querySelectorAll('a, button, input, select, summary, [role=button]')) {
+    if (!visible(el)) continue;
+    targets++;
+    const r = el.getBoundingClientRect();
+    if (r.width < 24 || r.height < 24) under++;
+  }
+  return JSON.stringify({inputs: inputs, targets_measured: targets, targets_under_24: under});
+})()`
+
+// touchRaw is [touchMeasureJS]'s wire shape. The script returns EVERY measured input's size and
+// the threshold is applied in Go by [smallInputs], so the 16px number lives in one place
+// ([minInputFontPx]) rather than once in each language.
+type touchRaw struct {
+	Inputs          []SmallInput `json:"inputs"`
+	TargetsMeasured int          `json:"targets_measured"`
+	TargetsUnder24  int          `json:"targets_under_24"`
+}
+
+// smallInputs keeps the inputs whose computed font is under [minInputFontPx].
+func smallInputs(all []SmallInput) []SmallInput {
+	var out []SmallInput
+	for _, in := range all {
+		if in.FontPx < minInputFontPx {
+			out = append(out, in)
+		}
+	}
+	return out
+}
+
+// formsAndNoticesJS reads [Capture.FormActions] and [Capture.ReadOnlyNotices] in one evaluation.
+const formsAndNoticesJS = `JSON.stringify({
+  actions: Array.from(document.forms).map(f => f.getAttribute('action') || ''),
+  notices: Array.from(document.querySelectorAll('p.read-only')).map(p => p.textContent.trim()),
+})`
+
+// TargetSizeNodes is how many elements axe's `target-size` rule (WCAG 2.5.8) flagged on this
+// capture. Zero is readable only because `axeRunJS` ENABLES the rule — it ships disabled in the
+// vendored axe, and `TestTheTargetSizeRuleRunsOnlyBecauseItIsEnabled` is the pair.
+func (c *Capture) TargetSizeNodes() int {
+	n := 0
+	for _, v := range c.Violations {
+		if v.ID == axeTargetSizeRule {
+			n += v.Nodes
+		}
+	}
+	return n
+}
+
+// axeTargetSizeRule is axe's id for WCAG 2.5.8 (Target Size, Minimum, AA).
+const axeTargetSizeRule = "target-size"
+
+// touchPoints is what an emulated touch rung reports as `navigator.maxTouchPoints`: five, the
+// value the plan's measurement used and a plausible phone.
+const touchPoints = 5
+
+// touchEmulation is the ONE place a viewport's touch state reaches the browser.
+//
+// 🔴 BOTH BRANCHES ARE LOAD-BEARING, AND THE SECOND IS THE ONE THAT LOOKS REDUNDANT. Touch
+// emulation PERSISTS ACROSS NAVIGATIONS IN ONE TAB — measured: after a touch rung, a laptop
+// capture that did not explicitly disable it still read `(pointer: coarse)` true and
+// `maxTouchPoints` 5. The walk captures mobile, tablet, laptop in that order on one tab, so
+// without the explicit `false` every laptop capture would be measured as a touch device.
+// `refuseUnreachableTouch`'s "false at every non-touch capture" half is what catches that.
+func touchEmulation(vp Viewport) chromedp.Action {
+	if vp.Touch {
+		return emulation.SetTouchEmulationEnabled(true).WithMaxTouchPoints(touchPoints)
+	}
+	return emulation.SetTouchEmulationEnabled(false)
 }
 
 // ScriptCount is how many script elements the browser held.
@@ -617,6 +804,9 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 		// was: a behavioural property keyed on a STRING is a property a fourth width named
 		// anything else silently loses. See [Viewport.Touch].
 		emulation.SetDeviceMetricsOverride(int64(vp.Width), int64(vp.Height), 1, vp.Touch),
+		// 🔴 THE `mobile` FLAG ABOVE IS NOT TOUCH, AND THIS IS — see [touchEmulation] for why both
+		// of its branches run, and [PointerProbe] for the measurement that found the flag inert.
+		touchEmulation(vp),
 		chromedp.Navigate(b.base+t.Path),
 		chromedp.Sleep(350*time.Millisecond),
 	); err != nil {
@@ -706,6 +896,49 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 		&c.ScriptSrcs)); err != nil {
 		return nil, fmt.Errorf("counting scripts on %s at %s: %w", t.Path, vp.Name, err)
 	}
+
+	// The pointer media queries as the PAGE sees them — the reachability measurement for touch
+	// emulation. Read here, refused in `refuseUnreachableTouch`: a capture is a measurement, and
+	// this module's own control pages must stay capturable at any rung.
+	var pointerRaw string
+	if err := chromedp.Run(b.ctx, chromedp.Evaluate(pointerProbeJS, &pointerRaw)); err != nil {
+		return nil, fmt.Errorf("pointer probe on %s at %s: %w", t.Path, vp.Name, err)
+	}
+	var pointer PointerProbe
+	if err := json.Unmarshal([]byte(pointerRaw), &pointer); err != nil {
+		return nil, fmt.Errorf("pointer probe on %s at %s returned %q: %w", t.Path, vp.Name, truncateForLog(pointerRaw, 200), err)
+	}
+	c.Pointer = &pointer
+
+	// Input font sizes and sub-24px boxes. REPORTED, not refused, in S0. ⚠ They live HERE and
+	// not in `vendor-js/layout-smells.js`, whose keys are the hub's push contract.
+	var touchJSON string
+	if err := chromedp.Run(b.ctx, chromedp.Evaluate(touchMeasureJS, &touchJSON)); err != nil {
+		return nil, fmt.Errorf("touch measurement on %s at %s: %w", t.Path, vp.Name, err)
+	}
+	var tr touchRaw
+	if err := json.Unmarshal([]byte(touchJSON), &tr); err != nil {
+		return nil, fmt.Errorf("touch measurement on %s at %s returned %q: %w", t.Path, vp.Name, truncateForLog(touchJSON, 200), err)
+	}
+	c.Touch = &TouchMeasure{
+		InputsMeasured:  len(tr.Inputs),
+		SmallInputs:     smallInputs(tr.Inputs),
+		TargetsMeasured: tr.TargetsMeasured,
+		TargetsUnder24:  tr.TargetsUnder24,
+	}
+
+	var formsRaw string
+	if err := chromedp.Run(b.ctx, chromedp.Evaluate(formsAndNoticesJS, &formsRaw)); err != nil {
+		return nil, fmt.Errorf("reading forms on %s at %s: %w", t.Path, vp.Name, err)
+	}
+	var forms struct {
+		Actions []string `json:"actions"`
+		Notices []string `json:"notices"`
+	}
+	if err := json.Unmarshal([]byte(formsRaw), &forms); err != nil {
+		return nil, fmt.Errorf("reading forms on %s at %s returned %q: %w", t.Path, vp.Name, truncateForLog(formsRaw, 200), err)
+	}
+	c.FormActions, c.ReadOnlyNotices = forms.Actions, forms.Notices
 
 	// Layout smells, from the hub's own script, returning its own raw keys.
 	var layoutRaw string
@@ -881,7 +1114,13 @@ func awaitPromise(p *runtime.EvaluateParams) *runtime.EvaluateParams {
 // `resultTypes: ["violations"]` keeps the payload bounded: a full axe result carries every
 // PASS too, which on this surface is two orders of magnitude more bytes for a set nothing
 // reads. The violations are what the hub's rule delta is computed from.
-const axeRunJS = `axe.run(document, {resultTypes: ["violations"]}).then(r => JSON.stringify({
+//
+// 🔴 `target-size` (WCAG 2.5.8) IS ENABLED HERE BECAUSE THE VENDORED AXE SHIPS IT DISABLED, AND
+// A DISABLED RULE REPORTS EXACTLY WHAT A PASSING ONE DOES: nothing. Measured on a page of two
+// adjacent 12×12 buttons: `target-size` 2 nodes with this option, NOTHING under the call this
+// constant used to make. `TestTheTargetSizeRuleRunsOnlyBecauseItIsEnabled` re-measures both halves.
+// ⚠ Its findings travel with every other violation, so they are pushed to the hub like any rule.
+const axeRunJS = `axe.run(document, {resultTypes: ["violations"], rules: {"target-size": {enabled: true}}}).then(r => JSON.stringify({
 	violations: r.violations,
 	testEngine: r.testEngine,
 	url: r.url,

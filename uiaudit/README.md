@@ -384,6 +384,65 @@ That refusal is now counted **separately and at walk level**, for two measured r
 So the claim the count supports is *"the surface refuses it when asked"*, never *"every visit
 produces one"*.
 
+## Touch — real emulation, a reachability REFUSAL, two REPORTED measurements, a second world
+
+S0 of `claudedocs/plan-cairn-mobile-pwa.md`. Everything here is **report-only except the
+reachability check**, which refuses from S0 on because it is a claim about the HARNESS, not the
+page. S1 turns the target-size and input-font numbers into refusals.
+
+🔴 **`Viewport.Touch` emulated nothing a stylesheet can see until this change — measured, not
+suspected.** It set only `SetDeviceMetricsOverride(…, mobile=true)`, which covers the viewport meta
+tag, scrollbars and text autosizing; every capture ever taken read `(pointer: coarse)` FALSE, touch
+rungs included. `touchEmulation` (`browser.go`) now calls `Emulation.setTouchEmulationEnabled(true,
+5)` at the touch rungs and EXPLICITLY `false` at every other one, because the state **persists
+across navigations in one tab** (the walk goes mobile → tablet → laptop on one tab).
+
+**The reachability refusal** (`refuseUnreachableTouch`, called by `refuseWalkRegressions` — where
+the plan's closing clause (c) lives — and once earlier in `run` so a blind walk never prints the
+touch SUMMARY; each per-capture line prints `coarse=` first, so its own numbers carry their pointer
+state): `matchMedia('(pointer: coarse)')` must be TRUE at every touch capture and FALSE at every
+non-touch one, or the walk refuses naming each capture. Measured RED at walk level with the enable
+dropped: `rc=1`, 118 touch captures named, summary not printed. Measured on chromium 154.0.8037.92
+(nixpkgs), the full walk: **TRUE at 118/118 touch captures, FALSE at 177/177 non-touch.**
+
+| control (`touch_test.go`, real chromium) | reading |
+|---|---|
+| every rung in order, then mobile → laptop again, on ONE tab | coarse true/true/false/false/false/true/false; maxTouchPoints 5 at touch, 0 elsewhere |
+| mobile metrics, emulation OFF (the pre-S0 state), driven by hand | coarse **false** → the refusal names `/ at mobile (390px)` |
+| enabled at mobile, then laptop with NO disable | coarse **true** (stale, maxTouchPoints 5) → the refusal names `/ at laptop (1280px)` |
+| axe `target-size`, two ADJACENT 12×12 buttons, the walk's call | **2** nodes |
+| the same page, axe's DEFAULT options | rule absent — it ships disabled; the enable is what reaches it |
+| two adjacent 48×48 buttons | **0** |
+| a 14px search input beside a 16px one, a 10px checkbox, a 10px hidden and a `display:none` input | exactly `[#small 14px]` of **2** measured |
+
+⚠ **A LONE small target is not a control**: 2.5.8's spacing exception passes it, so the fixture is
+an adjacent pair. ⚠ **The sub-24px box count is a RAW box count, not a 2.5.8 verdict** — axe
+applies the spacing and inline exceptions, which is why the walk reads 322 boxes and 0 axe nodes at
+mobile and both are printed.
+
+**What the walk measured** (`uiaudit/run.sh`, chromium 154.0.8037.92, both worlds, 295 captures,
+`rc=0`):
+
+| world | rung | axe `target-size` | boxes < 24px | inputs < 16px |
+|---|---|---|---|---|
+| token-file | every rung (53 captures each) | **0** | **322** of 557 | **5** of 5, on 5 pages: `#q`, `#entry-filter`, `#token`, all 14px |
+| journal | every rung (6 captures each) | **0** | 30 of 57 | **4** of 4: `#subject` (the grant form's `select`), 14px |
+
+The token-file mobile row equals the plan's baseline (322; 3 distinct inputs at 14px on 5 pages).
+Every number is identical at all five rungs because no `pointer: coarse` rule exists yet.
+
+**The journal-backed world** (`BootJournalWorld`, `walkJournalWorld`) is booted BESIDE the
+token-file world, on the next port, with its own browser (cookies are scoped by host, not port).
+It seeds a control journal through `control.ProvisionUser` + `control.IssueCredential` — the fixture
+user OWNS a project holding every fixture scope — and walks only `GET /share` and `GET /invite`
+(`journalWorldPaths`), the two rows an `admin`-bearing authority renders differently.
+`refuseJournalWorldFellBack` asserts the STATE: ≥ 1 per-scope share page with its grant form, no
+token-file read-only notice, and the invite index in its `ui.NoInviteStore` state. Measured: 30
+captures, 20 per-scope share captures with the grant form. ⚠ **The invite MINT form stays
+UNCAPTURED** — it needs `-db-dsn` (PostgreSQL), which this job does not have (plan Q10). ⚠ **The
+journal world is never pushed** (its bare rows share the token-file world's `PushURL`s, and its
+per-scope ids are minted fresh each run) and so writes no artifact.
+
 ## Round 1: what an adversarial read found, and the two things it got wrong
 
 Nine axes, blind. Every number this README quotes about itself was re-verified and found correct; the
@@ -551,13 +610,14 @@ value, so that is not an injection — but `scopeID` and `ref` are not guarantee
 HTML id tokens, and a duplicate id would make `ConcreteKeys` see one anchor where there are
 two. Whoever applies it owns that decision; this harness only measures the consequence.
 
-### 2. A per-scope share page is never reached
+### 2. ✅ A per-scope share page is now reached — in the journal-backed world
 
-Needs a journal-backed world (`-control-journal` pointing at a real journal with an `admin`
-grant). The token-file deployment the walk boots grants no `admin` verb, so the share index
-correctly publishes nothing. Closing condition: a fixture journal in `boot.go` that mints one
-admin grant over one synthetic scope, after which `ExpandLinks` reaches the page with no change
-to the derivation.
+It needed a journal-backed world, and the closing condition was "a fixture journal in `boot.go`
+that confers `admin` over a synthetic scope, after which `ExpandLinks` reaches the page with no
+change to the derivation". `BootJournalWorld` is that, seeded through `internal/control`'s own
+writers, and `ExpandLinks` reached the pages unchanged — see "Touch" above. The token-file world
+still captures the share index publishing nothing, which stays correct there. ⚠ The invite MINT
+form is the residual: it needs `-db-dsn`.
 
 ### 3. ✅ The wire leg is EXERCISED — from a workstation AND from CI
 
@@ -852,6 +912,17 @@ exercised), the **cross-site cookie attachment** on a provider callback (needs a
 residual 6), the session-volume-vanishes deployment as an actual boot condition rather than as
 the thing sign-in would catch, and any width other than 390 and 1440.
 
+🔴 **EVERY `hover:` RULE, AT EVERY WIDTH.** Headless chromium answers `(hover: none)` TRUE on every
+capture — 295 of 295 on the walk that measured it, touch emulation on or off — and the CDP calls
+measured here (`setDeviceMetricsOverride`, `setTouchEmulationEnabled`,
+`setEmitTouchEventsForMouse`) offer no hover emulation. So every existing `hover:` rule in
+`tailwind.css` is unmeasured by this walk everywhere. The walk prints the count as a blind spot,
+not a finding. The mobile plan therefore keys its touch rules on `pointer: coarse`, which CAN be
+driven — and which `refuseUnreachableTouch` proves is.
+
+⚠ **The invite MINT form** — `-db-dsn` (PostgreSQL) is needed to render it, and neither world has
+one; its controls are covered by S1's rules by CLASS only.
+
 🔴 **AND ANYTHING BETWEEN THE ORIGIN AND A CLIENT, WHICH IS THE ONE BLIND SPOT THAT HAS BEEN
 MEASURED TO MATTER.** Every number this program produces is about the pod `BootWorld` starts on
 loopback over a temp directory it created. An edge CDN in front of a deployment can inject
@@ -1038,7 +1109,7 @@ indistinguishable from a fork PR by design.
 |---|---|
 | `doc.go` | what the harness is for, what it cannot see, why it does not gate |
 | `main.go` | flags, the two-pass walk, the signal summary, the diff block, exit codes |
-| `boot.go` | the hermetic world: the fixture store, the token file, `cairn-ui`, readiness |
+| `boot.go` | the hermetic worlds: the fixture store, the token file, `cairn-ui`, readiness — and the journal-backed world beside it |
 | `targets.go` | the ledger-derived walk and `ExpandLinks` |
 | `browser.go` | Chromium, sign-in by clicking, the document-status gate, per-page capture |
 | `payload.go` | the hub's push schema mirrored exactly, plus the pre-upload refusal |
@@ -1049,3 +1120,4 @@ indistinguishable from a fork PR by design.
 | `targets_test.go` | the derivation's guards (one regression, the rest invariant, labelled) |
 | `payload_test.go` | the push payload's shape offline, and the only evidence the REFUSAL path has |
 | `control_test.go` | the positive control, the structural-zero pair, the document-status gate |
+| `touch_test.go` | touch reachability (both halves, real chromium), the `target-size` and input-font controls, the journal world |

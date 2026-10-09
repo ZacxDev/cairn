@@ -125,6 +125,15 @@ func BuildPayload(label string, captures []*Capture) (*PushPayload, map[string][
 		if !c.Viewport.Push {
 			continue
 		}
+		// 🔴 THE JOURNAL-BACKED WORLD IS NEVER PUSHED. Its bare `/share` and `/invite` captures
+		// carry the SAME `PushURL` as the token-file world's, so pushing both would hand the hub
+		// two pages under one `url`+`viewport` key — and its per-scope share pages are addressed
+		// by `control.ID`s minted fresh each run, so every one would be "new" on every push. It is
+		// a local measurement: the walk log, the touch report, `refuseWalkRegressions` and its own
+		// fall-back refusal. ⚠ So it also writes NO artifact — the artifacts are this payload's files.
+		if c.World != "" {
+			continue
+		}
 		stem := slug(c.Target.PushURL) + "-" + c.Viewport.Name
 		shot := stem + ".png"
 		axe := stem + ".axe.json"
