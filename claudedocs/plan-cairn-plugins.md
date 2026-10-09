@@ -51,6 +51,16 @@ field names and types alone.
   and the YAML `Secret` rule is line-based (no stdlib YAML parser). Retracted: "the one place the
   plan stores less than every byte", "one definition of binary governs both", the uniform withdraw
   answer, and `*` for every cwd-derived command.
+- *Revision 5* applies audit round 4, four of whose findings were in mechanisms revision 4 added,
+  by choosing the narrowest rule that is obviously safe and stating residuals. Revision 4's
+  per-call header pairing is RETRACTED: a header cancels a cwd-derived `*` only for a single simple
+  `cairn recall|search` call and only from its OWN result block, never from a hook attachment. A
+  result that has not arrived is PENDING (owner-only and paused), not header-less. A repeated
+  withdrawal by the same owner and host answers `true` (idempotent across a lost acknowledgement).
+  The base64 decoder is named (four encodings, whitespace removed); embedded binary payloads and
+  embedded encoded secrets are declared residuals rather than closed with a new matcher; the
+  decoded-text floor drops from 64 to 16 characters; flow-style YAML `Secret`s are a declared
+  residual; the Goal and O9 list every hold reason.
 
 ## Goal and premise
 
@@ -61,7 +71,9 @@ The operator asked for two things, carried in one plan because the second consum
    it ran on to cairn, redacted on that host before it leaves, and shown on the session page
    (`/session`) to the principals allowed to see it. Two exceptions narrow "every byte", each
    decided and stated where it lives: content no redactor can read is withheld pending Q2
-   (decision 6a), and a session whose scopes span two instances is held on its host (decision 16).
+   (decision 6a), and a HELD session stays on its host (decision 16) — held when its scopes route
+   to two instances, when it carries `*` or an unroutable scope name while more than one instance is
+   configured, or when a withdrawal of its earlier prefix was answered `false`.
    Agents are expected to be the main readers, so
    storage keeps every byte while READING is selective: a skeleton, filters, ranges and bounded pages
    (decision 17), and a UI that collapses tool calls and subagents (decision 18).
@@ -519,7 +531,7 @@ script that prints only counts.
 | O6 | Example plugin B: match ClickUp tickets to sessions — (a) deterministically from explicit ids/URLs in branch names, commit messages and trailers, PR bodies and transcripts; (b) LLM semantic suggestions, shown AS suggestions with a confidence. No write-back to ClickUp. | Write-back is future work (B5). |
 | O7 | An MCP server is on hold; plugins are not to be designed as MCP servers. | The plugin API is plain HTTP+JSON. |
 | O8 | The visibility set is the scopes the session WROTE to PLUS the scopes it READ through cairn — derived from its read calls in the transcript, plus declared scopes. The read scopes also feed instance routing, so a session that read the client instance cannot ship to the personal one. | `V(s)` (decision 3), clauses (f) and (h). A session that recalled many scopes becomes visible to fewer people. |
-| O9 | "Full raw" means EVERY byte — bookkeeping records, duplicate tool-result copies and subagents included. Because agents will be the main readers, selective reading is designed on top: a skeleton, filters, ranges, collapsed bookkeeping and duplicates by default, bounded pages; and a UI that collapses subagents and tool calls, truncates long assistant responses behind a reveal, and NEVER truncates a user message. | No storage-time truncation or per-session cap (decision 15); read-time limits only (decisions 17, 18). |
+| O9 | "Full raw" means EVERY byte — bookkeeping records, duplicate tool-result copies and subagents included. Because agents will be the main readers, selective reading is designed on top: a skeleton, filters, ranges, collapsed bookkeeping and duplicates by default, bounded pages; and a UI that collapses subagents and tool calls, truncates long assistant responses behind a reveal, and NEVER truncates a user message. | No storage-time truncation or per-session cap (decision 15); read-time limits only (decisions 17, 18). Two agent-side exceptions, both stated where they live and in the Goal: unredactable binary content is withheld pending Q2 (decision 6a), and held sessions stay on their host (decision 16). |
 | O10 | Sessions with no recorded write ARE shipped, visible to their OWNER only, and a "My sessions" page lists them. | Clause (g); S7. |
 
 ### Chosen by the AGENT writing this plan (open to review)
@@ -564,13 +576,30 @@ script that prints only counts.
    - `U_calls(s)` = scopes named by `cairn` read and write commands visible in tool inputs with an
      explicit `--scope X`, and file reads under a cache root. A command with `--all-scopes` adds
      `*`. A command with `--repo P` or with NO scope flag (scope derived from the working
-     directory's repository) is **cwd-derived**. Each cwd-derived command is PAIRED with its own
-     result — by `tool_use_id` (Claude Code) or `callID` (opencode). If that result carries a
-     `subsystem-recall:` header with a valid scope, the header already put the RESOLVED scope into
-     `R_header` (R7) and the command adds nothing more. Only a cwd-derived command whose paired result
-     has NO such header — every header-less verb (`sessions`, `arcs`, `arc-show`, `validate`,
-     `ls-entries`, `arc-register`, `append`, `put`, `create`), a failed call, or a call whose result
-     is missing — is handled differently by the two callers below.
+     directory's repository) is **cwd-derived**, and by default it adds **`*`** (see the two
+     callers below). **The ONE exception, deliberately narrow:** the `*` is NOT added when ALL of
+     these hold — (i) the tool call's command line is a single simple `cairn recall …` or
+     `cairn search …` invocation (no `&&`/`;`/`|` chain, no `cd`/`pushd`/`git -C`, no subshell, no
+     script); (ii) its OWN result — the `tool_result` block whose `tool_use_id` matches (Claude
+     Code) or the same `tool` part's `state.output` (opencode) — carries a `subsystem-recall:`
+     header with a valid scope, which `R_header` has already added (R7). **Hook attachments never
+     count as the call's result**, even when they carry the call's `toolUseID`, and neither does
+     any other record. *Revision 4 suppressed the `*` whenever the PAIRED result of a call had a
+     header: one call `cairn recall --scope alpha-notes && cairn ls-entries --repo ../beta-repo`
+     has one result with a valid `alpha-notes` header, so the cwd-derived `ls-entries` added nothing
+     and `beta-notes` was missing from `V`; and a hook attachment or a `cat` of a header could cancel
+     a `*`. Retracted.* So **a header can ADD a scope anywhere, and can CANCEL a `*` only in case
+     (i)+(ii).**
+   - **A result that has not arrived yet is PENDING, not header-less.** Capture ships every 60 s,
+     and a tool's result can lag its call (opencode tool parts are mutated in place; 1,260 of 41,117
+     tool parts were not yet `completed` at one measurement by the round-4 audit, one host). A
+     cwd-derived command whose OWN result is not yet stored is held in a separate PENDING set `P`,
+     which — unlike `V` — SHRINKS: when the result arrives, the command resolves by the rule above
+     (to nothing more, or to `*`); if the session has then been idle for 24 h with the result still
+     absent, it resolves to `*`. While `P` is non-empty the session is OWNER-ONLY (decision 4) and
+     the agent PAUSES shipping it (no new upload, no hold, no withdrawal — routing is re-evaluated
+     when `P` empties). *Revision 4 treated a missing result as header-less, which added a
+     permanent `*` (sets only grow, holds are sticky) for a result that was merely late; retracted.*
    - `D(s)` = scopes the capture agent declares at upload.
    - `V(s) = W_trailer ∪ R_header ∪ U_calls ∪ D`, over the root and every child stream (decision 7).
    - **One parser, two callers, and they DIFFER on cwd-derived commands.** `R_header` and
@@ -579,12 +608,14 @@ script that prints only counts.
      records at upload, so an old or lying agent cannot shrink `V`).
      - **The pod cannot resolve a cwd-derived command**: `DeriveScope` needs the repository's git
        common dir and `ScopeForRepo` runs `git` (`internal/client/reposcope.go:71, 89`), neither of
-       which exists on the pod. So the pod adds **`*`** for every cwd-derived command whose paired
-       result has no header, and such a session is owner-only. ⚠ The cost lands on the header-less
-       verbs only — a bare `cairn recall` or `search` carries its resolved scope in its header and
-       costs nothing (Q16). *Revision 3 added `*` for EVERY cwd-derived command, recall and search
-       included; that overcharged and is retracted.*
-     - **The agent resolves a header-less cwd-derived command** against the record's `cwd` with the client's own
+       which exists on the pod. So the pod adds **`*`** for every cwd-derived command outside the
+       exception above, and such a session is owner-only. ⚠ The cost lands on header-less verbs,
+       on recall/search inside a chained or otherwise non-simple command line, and on calls that
+       failed. A simple bare `cairn recall` or `search` costs nothing ONCE ITS RESULT HAS ARRIVED;
+       until then the session is owner-only and paused (`P`, above) (Q16). *Revision 3 added `*` for
+       EVERY cwd-derived command, recall and search included, and revision 4 said a bare recall
+       "costs nothing" without the pending window; both are retracted.*
+     - **The agent resolves a cwd-derived command outside the exception** against the record's `cwd` with the client's own
        `DeriveScope` — but ONLY when the command line is a single simple `cairn <verb> …`
        invocation. Any other shape (a `cd`/`pushd`/`git -C` before it, a `&&`/`;`/`|` chain, a
        subshell, a script) adds `*` instead. Its resolution is used for ROUTING only (decision 16)
@@ -592,7 +623,8 @@ script that prints only counts.
      - *Revision 2 said "the pod's copy is authoritative" without qualification; that was false for
        cwd-derived commands, which the pod cannot resolve at all.*
    - **What can go wrong, and in which direction.** A forged trailer or a quoted header in prose
-     ADDS a scope, hiding `s` from more people. A mis-parsed command is NOT always safe: an agent
+     ADDS a scope, hiding `s` from more people; a header cancels a `*` only as a simple
+     recall/search call's OWN result (the exception above), so a quoted or `cat`-ed header cannot. A mis-parsed command is NOT always safe: an agent
      resolving `cd ../other && cairn recall` against the record's `cwd` would add the WRONG scope and
      miss the right one — which is why that shape adds `*` instead, and why the pod never resolves
      cwd at all. *Revision 2's "a mis-parsed command ADDS a scope" is retracted.* The unsafe
@@ -613,7 +645,8 @@ script that prints only counts.
    transcript section, the agent read API (decision 17), the raw-record view, plugin output
    rendering, edge rendering and "My sessions". True iff EITHER
    - the **owner arm**: the viewer is UN-narrowed AND its `(Kind, ID)` equals the owner's; OR
-   - the **scope arm**: `V` is non-empty, contains no unknown name or `*`, and the viewer's
+   - the **scope arm**: `V` is non-empty, contains no unknown name or `*`, the PENDING set `P` is
+     empty (decision 3), and the viewer's
      authorization (`control.Resolve`, narrowed if the credential is) `Allows(scope, read)` for
      EVERY scope in `V`.
    An empty `V` is owner-only (clause (g)). A narrowed credential of the owner gets only the scope
@@ -665,15 +698,22 @@ script that prints only counts.
      half is LINE-based (indentation under the key), because the Go standard library has no YAML
      parser and `cmd/cairn-capture` is under the import ban; the JSON half uses `encoding/json`.
      *Revision 3 said a blob that "parses as a YAML … document" gets the structural rules; nothing
-     in a stdlib-only binary can parse YAML, so that wording is retracted.*
-   - *Base64 that hides text:* a string of ≥ 64 base64-alphabet characters that DECODES to text (6a's
-     text rule) is scanned decoded as well; a match replaces the whole encoded value. Without this, a
-     secret base64-encoded outside a `Secret` manifest passes every rule.
+     in a stdlib-only binary can parse YAML, so that wording is retracted.* **Residual:** the
+     line-based rule reads BLOCK style only; a flow-style mapping (`stringData: {password: …}` on one
+     line) is not recognised by it, and its values are caught only if another rule matches them.
      Plus a **per-host denylist** of literal strings and file-path globs in a local 0600 file —
      never in the repo. **Not shared with `tests/leakscan.py`** (D5): different predicates (a public
      tree vs a session), two regex engines. One BEHAVIOURAL containment test pins the relation:
      every realistic `credential` control string in leakscan's self-test is also caught by
      `internal/redact` (fails if a leakscan control is added that redact misses).
+   - *Base64 that hides text:* a WHOLE string of ≥ 16 base64-alphabet characters (after removing
+     ASCII whitespace — see 6a's decoder) that DECODES to text (6a's text rule) is scanned decoded as
+     well; a match replaces the whole encoded value. The floor buys no precision — the decoded scan
+     redacts only on a rule match — so it is set low: 16 characters is 12 decoded bytes, below any
+     credential shape the table recognises. **Residual:** an encoded secret EMBEDDED in a longer
+     string (not the whole value) is not decoded. *Revision 4 set the floor at 64 characters, which a
+     base64-encoded 40-character token (56 characters) slipped under, and claimed that without the
+     rule such a secret "passes every rule" as if the rule closed the case; both are retracted.*
    - *The pod re-checks, and REFUSES* (D4, kept): every received record's decoded strings AND every
      received text blob are scanned with the same table; a match is refused 422 (record index or
      blob name given, value not) and nothing in that request is stored. Kept as a refusal, not count-and-log, because storing a string the table already
@@ -711,14 +751,28 @@ script that prints only counts.
      byte-identical to its source exactly when nothing matched. The pod re-checks both kinds like a
      record (decision 6).
    - **Binary content is recognised BY CONTENT wherever it sits**, during the same traversal that
-     redacts strings — not by a list of fields: a decoded string is withheld when it is a `data:`
-     URL whose payload is not text, or a ≥ 64-character base64 value whose decoded bytes BEGIN WITH
-     A KNOWN FILE SIGNATURE (PNG, JPEG, GIF, WebP, PDF, ZIP — a closed, tested list). "Decodes to
-     non-text" alone is deliberately NOT the rule: thinking `signature` values (≈5% of bytes, R1)
-     and 64-hex digests are base64-alphabet strings that decode to arbitrary bytes, and withholding
-     them would destroy content that is neither an image nor a secret. **Residual:** a binary
-     payload in an unlisted format, base64-encoded with no `data:` prefix, ships text-scanned only.
-     The carriers measured on the one host (R1, R3), all caught by that rule rather than by name:
+     redacts strings — not by a list of fields: a decoded string is withheld when the WHOLE string
+     is a `data:` URL whose payload is not text, or the WHOLE string is a ≥ 64-character base64
+     value whose decoded bytes BEGIN WITH A KNOWN FILE SIGNATURE (PNG, JPEG, GIF, WebP, PDF, ZIP — a
+     closed, tested list). **The decoder:** Go's `encoding/base64`, trying `StdEncoding`,
+     `RawStdEncoding` (unpadded), `URLEncoding` and `RawURLEncoding` in that order, after removing
+     ASCII whitespace from the string — so padded, unpadded, URL-safe and line-wrapped encodings of
+     a whole string are all decoded. "Decodes to non-text" alone is deliberately NOT the rule:
+     thinking `signature` values (≈5% of bytes, R1) and 64-hex digests are base64-alphabet strings
+     that decode to arbitrary bytes, and withholding them would destroy content that is neither an
+     image nor a secret.
+   - **Residuals, stated rather than closed** (each ships TEXT-SCANNED ONLY, i.e. redacted by the
+     text rules but not withheld): (1) a binary payload in an unlisted format, base64-encoded with
+     no `data:` prefix; (2) a listed-format payload EMBEDDED in a longer string rather than being the
+     whole string — e.g. a shell tool's `base64` output preceded by other text, HTML carrying an
+     inline `data:image/…` URL. The round-4 audit measured, on the one host, 254 whole-string hits
+     (the 127 inline image payloads' and 127 `file.base64` duplicates' — its positive control), 3
+     embedded signature-prefixed base64 runs of 200+ characters, and 6 embedded `data:image` /
+     `data:application` URLs. Scanning inside strings for signature-prefixed runs was considered and
+     NOT adopted: it is a second, fuzzier matcher over every string, for 9 measured instances; Q2
+     names the residual so the operator can ask for it.
+     The carriers measured on the one host (R1, R3), all caught by the whole-string rule rather than
+     by name:
      - an inline `image` block's base64 payload inside a `user` record (68 blocks in the sample);
      - **its DUPLICATE**, `toolUseResult.file.base64` on the same tool result (127 records in the
        300 newest top-level files, in 26 of them);
@@ -731,7 +785,7 @@ script that prints only counts.
      (or the blob), `{"withheld": "unredactable-binary", "media_type": …, "bytes": N, "tag": <keyed
      digest>}`, and the page and the skeleton say "withheld: binary, N bytes". ⚠ **This narrows
      O9's "every byte"**, and it is ONE of TWO places the plan does — the other is decision 16's
-     hold, under which a session spanning two instances is stored on no instance. *Revision 3
+     hold, under which a held session is stored on no instance. *Revision 3
      called this "the one place the plan stores less than every byte"; retracted.* Withholding
      exists only because two operator requirements (every byte, redacted before upload) cannot both
      hold for content no redactor can read. If Q2's answer is "ship", the placeholder is removed for
@@ -844,7 +898,8 @@ script that prints only counts.
 15. **Storage: every byte that is SHIPPED, in a per-session DIRECTORY under `-transcript-dir`**, no
     default, refused inside the store root (the `internal/arcs/path.go:30-90` rule), 0700/0600.
     "Every byte" here excludes exactly two things, both decided elsewhere: unredactable binary
-    content, withheld pending Q2 (decision 6a), and sessions held on their host by decision 16.
+    content, withheld pending Q2 (decision 6a), and sessions held on their host by decision 16 (for
+    any of the reasons the Goal lists).
     - `<dir>/<root-session>/meta.json` (owner, host, runtime, the grow-only `R_header`/`U_calls`/`D`
       sets, child ids, created); `stream-<name>.jsonl.gz` segments, append-only, each record
       `{seq, src, rec}` where `src` is the source offset or part version and `rec` the redacted raw
@@ -873,7 +928,9 @@ script that prints only counts.
 16. **Where a transcript is sent: the instance that routes EVERY scope in its `V` — writes AND
     reads (O8).** The capture agent computes `V` with the same `scopeuse` parser (decision 3) and
     resolves instances with `internal/client`'s routing (stdlib, already Go). The rule is evaluated
-    on EVERY run, over `V` as it stands at that run:
+    on EVERY run, over `V` as it stands at that run — except while the PENDING set `P` is non-empty
+    (decision 3), when the session is simply paused (nothing shipped, held or withdrawn) until it
+    empties:
     - every scope routes to instance A → shipped to A only (so a session that only READ
       `beta-notes`, routed to the client instance, ships to the client instance — that is not a
       hold);
@@ -896,9 +953,13 @@ script that prints only counts.
         retracted.*
       - **held** (two instances, or `*` with several configured) → kept on the host only. Because `V`
         only grows, a held session stays held.
-      The withdrawal answer is `{"deleted": true|false}` (contracts): `true` only when the caller's
-      own `(owner, host)` held that root. The agent retries a FAILED request; a `false` answer is
-      final and is logged loudly ("prefix not withdrawn: not held by this owner and host" — e.g. the
+      The withdrawal answer is `{"deleted": true|false}` (contracts): `true` when the caller's own
+      `(owner, host)` holds that root now (it is deleted) OR already withdrew it (the withdrawal is
+      journaled with who and when, so a repeat is recognisable). That makes the call idempotent: a
+      lost acknowledgement followed by a retry answers `true` again. *Revision 4 answered `false` to
+      the retry — the root was gone — and treated `false` as final, so a timed-out response turned a
+      successful withdrawal into a permanent hold; retracted.* The agent retries a FAILED request;
+      a `false` answer is final and is logged loudly ("prefix not withdrawn: not held by this owner and host" — e.g. the
       token was reissued under another host label), and the session stays held rather than being
       re-shipped, so the prefix's presence elsewhere is surfaced instead of duplicated. Clause (m).
     - ⚠ **Re-shipping from offset 0 needs the source.** If the runtime has already deleted part of a
@@ -1007,9 +1068,11 @@ POST {worker}/capture/v1/sessions/{root}/blobs/{name}   # a persisted tool-resul
                                                          # text, or the withheld placeholder (6a);
                                                          # same CAS, frames, 409/422/507 rules
 POST {worker}/capture/v1/sessions/{root}/withdraw       # decision 16: runs the deletion cascade
-  200 {"deleted": true}       # only when this token's own (owner, host) held the root, now deleted
+  200 {"deleted": true}       # this token's own (owner, host) held the root (now deleted) OR
+                              # already withdrew it (journaled) — idempotent across a lost ack
   200 {"deleted": false}      # held by another owner, by the same owner on another host, or by
-                              # nobody — ONE answer for all three, so no oracle
+                              # nobody and never withdrawn by this caller — ONE answer for all
+                              # three, so no oracle (a `true` reveals only the caller's own root)
   # Revision 3 answered a uniform {"withdrawn": true} in every case, which made the agent's "retry
   # until acknowledged" unable to tell a deletion from a no-op; retracted.
 
@@ -1031,9 +1094,9 @@ GET /transcript/skeleton  ·  GET /transcript/records  ·  GET /transcript/tool 
 
 | threat | control |
 |---|---|
-| **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. **What is NOT controlled:** unshaped secrets (typed passwords, novel token formats), secrets inside images/PDFs (withheld rather than stored until Q2 is answered, decision 6a — if Q2 says "ship", this becomes an uncontrolled residual), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
+| **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. **What is NOT controlled:** unshaped secrets (typed passwords, novel token formats), secrets inside images/PDFs (withheld rather than stored until Q2 is answered, decision 6a — if Q2 says "ship", this becomes an uncontrolled residual) EXCEPT binary payloads embedded in longer strings or in unlisted formats, which ship text-scanned only (6a's residuals), an encoded secret embedded in a longer string (not decoded), a flow-style YAML `Secret` (decision 6), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
 | **T2. Confidential but non-secret content** (client business detail, personal data in a tool output) | Redaction does not address it at all; VISIBILITY is the only control (decision 4). Stated, so nobody believes the redactor covers it. |
-| **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store plus reads from rendered headers anywhere in the content plus command-line scopes plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope, `--all-scopes`, every cwd-derived command on the pod, and any non-simple command line on the agent add `*`; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The residual:** a read or write NO signal sees — a header-less verb (`sessions`, `arcs`, `arc-show`, `ls-entries`) or a `put`/`create` run by a script whose command line the transcript does not show; and a directory change the parser cannot see before a simple-looking `cairn` call (e.g. a shell whose working directory was changed by an EARLIER tool call while the record's `cwd` is stale), which makes the AGENT's routing resolve the wrong scope — the pod's `*` keeps visibility safe, routing is what can go wrong. |
+| **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store plus reads from rendered headers anywhere in the content plus command-line scopes plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope, `--all-scopes`, and every cwd-derived command on the pod add `*` — EXCEPT a single simple `cairn recall|search` whose OWN result carries a valid header (never a hook attachment, never another call's result); any non-simple command line on the agent adds `*`; a command whose result has not arrived is PENDING and keeps the session owner-only and paused until it resolves; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The residual:** a read or write NO signal sees — a header-less verb (`sessions`, `arcs`, `arc-show`, `ls-entries`) or a `put`/`create` run by a script whose command line the transcript does not show; and a directory change the parser cannot see before a simple-looking `cairn` call (e.g. a shell whose working directory was changed by an EARLIER tool call while the record's `cwd` is stale), which makes the AGENT's routing resolve the wrong scope — the pod's `*` keeps visibility safe, routing is what can go wrong. |
 | **T4. Viewer-set computation makes the predicate vacuous** | Clause (e), and a mutant row (`transcript-written-set-from-viewer-scopes`). |
 | **T5. A stolen capture token** | Can APPEND to its owner's transcripts from its one host — inject fake records into the owner's own sessions — can SQUAT a not-yet-uploaded session id (decision 15), and can WITHDRAW (delete) its owner's sessions uploaded from that host (decision 16). Cannot read, or touch another owner's or host's existing sessions. Revoke by deleting the row (re-read per request). |
 | **T6. A stolen plugin token** | Can read every transcript where that plugin is ON, and write outputs of its declared types. The largest single exposure the design creates; it is why toggles default OFF, require every scope's consent (decision 10), and why a plugin token is per plugin. |
@@ -1067,21 +1130,27 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 | **S9** | **Example plugin A — summaries.** `plugins/summary` in a NESTED stdlib-only module (provider HTTP API over `net/http`, no SDK), host-side user timer, incremental per decision 13, its own spend cap, a fake provider in tests. Reads through `view=conversation` by default. | `depspolicy.DeclaredNestedModules`; `flake.nix` package; `ci.yml` step for its suite. | A separate binary; nothing runs until registered and toggled. |
 | **S10** | **Example plugin B — ClickUp.** `plugins/clickup` in the same nested module: ticket list fetch (read-only token, 429-aware), deterministic matchers (decision 14) over transcript records (`gitBranch`, `pr-link`, URLs), commit messages and trailers from a host-local repo list, PR bodies via the host's own GitHub CLI, entry refs; LLM suggestions using plugin A's summaries when present (`output:read:summary` — the cross-plugin test of the abstraction). Synthetic ClickUp fixtures only. Then closing wiring: `sabotaged=13 caught=13`, measured floors, the `AGENTS.md` row with an equal eviction (Q11). | same nested module; flake package; `ci.yml`; `AGENTS.md`; READMEs. | Separate binary; inert until registered and toggled. |
 
-**Mutant rows** (indicative names). The pinned count starts at **296**; the **47** rows below would
-take it to **343** if every one lands as named — the pinned number is whatever the battery declares
+**Mutant rows** (indicative names). The pinned count starts at **296**; the **52** rows below would
+take it to **348** if every one lands as named — the pinned number is whatever the battery declares
 at each merge, never this sum. S0, S1, S9 and S10 add no row to the authz battery (S1's guards are
 measured by the redaction corpus; S9/S10 by their own suites).
 
-- **S2 (5, `scopeuse`):** `scopeuse-all-scopes-header-names-a-scope`,
+- **S2 (8, `scopeuse`):** `scopeuse-all-scopes-header-names-a-scope`,
   `scopeuse-scopeless-header-dropped` (the `renderer.go:158` form dropped instead of `*`),
   `scopeuse-cwd-derived-command-dropped` (the pod drops a header-less one instead of adding `*`),
-  `scopeuse-paired-header-ignored` (adds `*` although the paired result's header named the scope),
-  `scopeuse-chained-command-resolved` (the agent resolves cwd for a non-simple command line)
+  `scopeuse-paired-header-ignored` (adds `*` although a simple recall's OWN result named the scope),
+  `scopeuse-chained-call-header-suppresses-star` (a recall's header in the same call's result
+  cancels the `*` of a header-less verb chained after it),
+  `scopeuse-hook-attachment-counts-as-result` (a hook attachment carrying the call's `toolUseID`
+  cancels the `*`), `scopeuse-missing-result-becomes-star` (a not-yet-arrived result resolves to
+  `*` instead of PENDING), `scopeuse-chained-command-resolved` (the agent resolves cwd for a
+  non-simple command line)
 - **S3 (8):** `transcript-cas-ignores-from-offset` (a), `transcript-capture-token-host-unchecked`,
   `transcript-capture-token-reads`, `transcript-pod-recheck-skipped` (c),
   `transcript-pod-recheck-skips-blobs` (c), `transcript-root-owner-not-fixed`,
   `transcript-pod-skips-scope-rederivation`, `worker-token-accepted-by-browser-row`
-- **S4 (11):** `transcript-section-without-predicate` (d),
+- **S4 (12):** `transcript-pending-command-visible` (a non-empty `P` does not force owner-only),
+  `transcript-section-without-predicate` (d),
   `transcript-written-set-from-viewer-scopes` (e), `transcript-visibility-set-ignores-reads` (f),
   `transcript-empty-set-visible` (g), `transcript-owner-by-display-not-id`,
   `transcript-narrowed-owner-arm`, `transcript-any-scope-not-every-scope`,
@@ -1095,9 +1164,9 @@ measured by the redaction corpus; S9/S10 by their own suites).
   `plugins-transcript-read-ignores-toggle` (j), `plugins-output-type-unchecked`,
   `plugins-capability-unchecked`, `plugins-toggle-unauthorised-level`,
   `plugins-plugin-name-from-body-not-token`
-- **S6 (5):** `plugins-output-rendered-without-predicate` (k), `plugins-delete-keeps-outputs` (l),
+- **S6 (6):** `plugins-output-rendered-without-predicate` (k), `plugins-delete-keeps-outputs` (l),
   `transcript-withdraw-keeps-directory` (m), `transcript-withdraw-deletes-another-owners-root`,
-  `transcript-withdraw-host-unchecked`
+  `transcript-withdraw-host-unchecked`, `transcript-withdraw-repeat-answers-false`
 - **S7 (1):** `my-sessions-lists-another-owner`
 - **S8 (2):** `transcript-read-api-without-predicate`, `transcript-raw-view-without-predicate`
 
@@ -1132,7 +1201,10 @@ run time).
   otherwise byte-identical; a planted YAML `Secret` manifest in a `.txt` blob has its `data`
   values replaced by the line-based rule; a JSON blob whose planted secret is written with a
   unicode escape is caught by decoded traversal (control: redacting it as one raw string misses
-  it); a base64-encoded text secret outside any `Secret` manifest is caught decoded.
+  it); a re-encoded JSON blob keeps every number byte-exact (`json.Decoder.UseNumber`, so a
+  20-digit id is not rounded through a float); a base64-encoded text secret outside any `Secret`
+  manifest is caught decoded, **including a 40-character token whose encoding is 56 characters**
+  (control: with the floor back at 64 that plant is missed — the reason the floor is 16).
 - Binary BY CONTENT (decision 6a), one assertion per measured carrier, each WITHHELD with a
   placeholder carrying type, size and keyed tag: an inline `image` block's payload; **its
   `toolUseResult.file.base64` duplicate**; **an opencode `state.attachments[].url` `data:` URL**; a
@@ -1140,7 +1212,12 @@ run time).
   states). Controls: (1) a field-name list that omits `file.base64` ships the duplicate — red; (2)
   a sniff that reads only the file extension classifies a NUL-carrying `.txt` as text — red; (3)
   thinking `signature` values and 64-hex digests are NOT withheld (`clean-damaged=0`), proving the
-  rule keys on a file signature and not on "decodes to non-text".
+  rule keys on a file signature and not on "decodes to non-text". Decoder coverage: a whole-string
+  PNG payload encoded padded, unpadded, URL-safe, and line-wrapped at 76 columns is withheld in all
+  four forms (control: a decoder trying only `StdEncoding` without whitespace removal withholds one
+  of the four). Residual pinned AS a residual: the same PNG payload embedded after a line of other
+  text in one string is NOT withheld — the test asserts that, so a later in-string scanner is a
+  deliberate change that turns it red, not an accident.
 - Keyed tag: two occurrences of one secret get one tag under one host key; two keys give two tags
   for the same secret; the tag is NOT the unkeyed digest prefix (control: computing
   `sha256(secret)[:8]` does not equal it).
@@ -1167,9 +1244,17 @@ run time).
   `beta-notes`; the hook-attachment recall with no command line → `beta-notes` (control: a parser
   that reads tool INPUTS only misses it); the hook-attachment search rendered `scope=(all scopes)`
   → `*` (mutant `scopeuse-all-scopes-header-names-a-scope`); a `renderer.go:158`-form header → `*`
-  (mutant `scopeuse-scopeless-header-dropped`); a bare `cairn recall` whose PAIRED result carries
-  `scope=alpha-notes` → `alpha-notes` and NO `*`, on the pod as well (mutant
-  `scopeuse-paired-header-ignored`); on the POD, a `--repo` `ls-entries` and a bare header-less
+  (mutant `scopeuse-scopeless-header-dropped`); a single simple bare `cairn recall` whose OWN
+  `tool_result` carries `scope=alpha-notes` → `alpha-notes` and NO `*`, on the pod as well (mutant
+  `scopeuse-paired-header-ignored`); **one call `cairn recall --scope alpha-notes && cairn
+  ls-entries --repo ../beta-repo`, whose single result carries a valid `alpha-notes` header → `V`
+  holds `alpha-notes` AND `*`** (mutant `scopeuse-chained-call-header-suppresses-star`); a bare
+  `cairn ls-entries` call followed by a PostToolUse hook attachment carrying its `toolUseID` and
+  a valid header → still `*` (mutant `scopeuse-hook-attachment-counts-as-result`); a bare simple
+  `cairn recall` whose result is not yet stored → `P = {that call}`, NOT `*`, and after the result
+  arrives with a valid header → `P` empty and no `*` (mutant
+  `scopeuse-missing-result-becomes-star`); the same call still resultless after 24 h idle → `*`;
+  on the POD, a `--repo` `ls-entries` and a bare header-less
   `ls-entries` → `*` (mutant `scopeuse-cwd-derived-command-dropped`); on the AGENT, the same simple
   bare `ls-entries` → the scope `DeriveScope` gives for the record's `cwd`, while `cd ../other &&
   cairn recall` → `*` (mutant `scopeuse-chained-command-resolved`).
@@ -1233,6 +1318,9 @@ run time).
 - The trap's own control: a sabotaged predicate computing `W_trailer` from the viewer's scopes makes
   P see the transcript (clause e red).
 - Byte identity: hidden, absent and deleted render the same section bytes.
+- Pending: a session whose `V` R could otherwise read, with ONE pending call in `P`, renders the
+  no-transcript bytes to R and the transcript to the owner; once `P` empties R sees it (mutant
+  `transcript-pending-command-visible`).
 - Rendering (decision 18): a 20,000-character user message renders in full (asserted byte count);
   a 5,000-character assistant message renders 1,200 + a `<details>` holding the rest; a tool call
   renders inside `<details>`; a subagent nests at its spawning call; bookkeeping collapses to one
@@ -1278,7 +1366,9 @@ asserted as equal SETS of viewers); a summary renders plugin name, version, mode
 journal fact; withdrawal (clause m): a capture token's `withdraw` of its own (owner, host)'s root
 answers `{"deleted": true}` and runs the same cascade; the same call for ANOTHER owner's root, for
 the SAME owner's root uploaded from ANOTHER host label, and for a root that never existed each
-answer the identical `{"deleted": false}` and delete nothing (mutants
+answer the identical `{"deleted": false}` and delete nothing; **withdraw-twice**: the owner's own
+withdraw repeated after the first succeeded (the lost-acknowledgement case) answers `{"deleted":
+true}` again and changes nothing (mutant `transcript-withdraw-repeat-answers-false`) (mutants
 `transcript-withdraw-deletes-another-owners-root` and `transcript-withdraw-host-unchecked`, the
 latter on the precedent of `transcript-capture-token-host-unchecked`); a ClickUp URL renders only through the `refurl` template from a validated canonical
 id (control: a `javascript:` id is refused by validation and renders as text).
@@ -1344,6 +1434,10 @@ said Q16 shapes S3; the rule's code and mutant are in S2.*
   `toolUseResult.file.base64` (127 records), opencode `state.attachments[].url` `data:` URLs (107),
   and persisted binary tool results (`.pdf`, `.jpg`, …); and (ii) **TEXT that is not UTF-8** — a
   UTF-16 or Latin-1 file is "binary" by 6a's rule although a redactor could read it once decoded.
+  **NOT in the withheld set, and shipped text-scanned only (6a's residuals):** a binary payload in
+  an unlisted format base64-encoded with no `data:` prefix, and a listed-format payload EMBEDDED in
+  a longer string (3 embedded base64 runs and 6 embedded `data:` URLs measured on one host). A
+  "withhold" answer covers them only if the operator also asks for in-string scanning.
   Two operator requirements collide here: every byte (O9) and redacted before upload (O1). **As
   built until answered: WITHHELD** — a placeholder naming type, size and keyed digest is shipped
   instead. **Recommend keeping that** (redaction is the requirement whose failure cannot be
@@ -1404,16 +1498,19 @@ said Q16 shapes S3; the rule's code and mutant are in S2.*
 - **Q15. Agent reads through `cairn` or a separate binary?** **Recommend** Go-only `cairn transcript`
   verbs (decision 17): agents already run `cairn`, and the Go-only mechanism exists. The alternative
   is a `cairn-transcript` reader binary that leaves `cmd/cairn`'s ledgers untouched.
-- **Q16. Header-less cwd-derived commands make a session owner-only.** A bare or `--repo`
-  `cairn recall`/`search` costs NOTHING: its paired result carries the resolved scope in its header
-  (R7, decision 3). What remains is a cwd-derived HEADER-LESS verb — `sessions`, `arcs`,
-  `arc-show`, `validate`, `ls-entries`, `arc-register`, `append`, `put`, `create` — or a failed
-  call: the pod cannot resolve it, adds `*`, and the session becomes owner-only (an `append` among
-  them, although its trailer also names the scope — the conservative choice, since a deduped
+- **Q16. Cwd-derived commands make a session owner-only, except one narrow case.** A bare or
+  `--repo` `cairn recall`/`search` adds no `*` ONLY when it is a single simple invocation and its
+  OWN result carries the resolved scope in its header (decision 3) — and until that result arrives
+  the session is owner-only and paused, so even that case costs a window, not nothing. Everything
+  else cwd-derived adds `*` and makes the session owner-only: a HEADER-LESS verb (`sessions`,
+  `arcs`, `arc-show`, `validate`, `ls-entries`, `arc-register`, `append`, `put`, `create`), a recall
+  or search inside a chained or otherwise non-simple command line, and a failed call (an `append`
+  among them, although its trailer also names the scope — the conservative choice, since a deduped
   re-POST leaves no trailer). *Revision 3 charged every cwd-derived command, recall included;
-  retracted.* **Recommend** accepting the residual for v1 and measuring the owner-only share on the
+  revision 4 said a bare recall "costs NOTHING" and let any header in a call's result cancel the
+  `*`; both retracted.* **Recommend** accepting the residual for v1 and measuring the owner-only share on the
   personal instance. Options: (a) as written; (b) the CLIENT prints its resolved scope as a
-  `subsystem-recall:`-style line in every header-less verb's output, so header pairing covers them
+  `subsystem-recall:`-style line in every header-less verb's output, so the own-result exception covers them
   too (a client change, outside this plan — the cleanest fix); (c) the pod trusts the agent's
   declared resolution for those commands, which makes `V` only as trustworthy as the agent — the
   thing decision 3 exists to avoid.
