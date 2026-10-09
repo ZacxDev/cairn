@@ -30,6 +30,16 @@ field names and types alone.
   truncation, the per-session cap, the instance-level and session-ON toggles, `-plugin-admin`, the
   pod-side budget window, work leases, and the shared rule file. Removed decisions and questions
   keep their numbers, marked REMOVED, so references stay stable.
+- *Revision 3* applies audit round 2 to revision 2's own text. Persisted tool-result BLOBS get a
+  redaction rule, a pod re-check and planted secrets (text), and UNREDACTABLE binary content is
+  WITHHELD pending Q2 (decision 6a). A rendered header naming no scope — `scope=(all scopes)` or no
+  `scope=` field — maps to `*`. Classification moved from record TYPE to BLOCK and FIELD level, and a
+  "user message" is now defined as a human `text` block (decision 17). Clause (b)'s redaction-off run
+  no longer touches the pod. Clause (h), decision 16 and S2's routing test now share ONE fixture, and
+  a new clause **(m)** covers WITHDRAWING an already-shipped prefix when routing changes. Retracted:
+  "the pod is authoritative" for `--repo`/cwd-derived commands (the pod adds `*` for them), "a
+  mis-parsed command only ADDS a scope", revision 2's reason for the session opt-out (re-grounded),
+  and a `--json` read path that does not exist for recall or search.
 
 ## Goal and premise
 
@@ -73,7 +83,7 @@ Drop the work, or the named half, if any of these holds:
   1. Slices **S0–S10 are MERGED** on cairn `main`, verified by content (the named files exist with
      the named tests), not by ancestry.
   2. **`tests/plugins/e2e.sh` exits 0** in the `go` CI job, with **`--self-test` printing
-     `SUMMARY e2e-self-test: sabotaged=12 caught=12`** (one sabotage per clause below), and the
+     `SUMMARY e2e-self-test: sabotaged=13 caught=13`** (one sabotage per clause below), and the
      job's PASS floor set to the count measured when the script lands (the `tests/presence/e2e.sh`
      pattern, `.github/workflows/ci.yml:1045-1055`).
   3. **`cairn-capture --self-test` exits 0** in the `go` job and prints
@@ -91,17 +101,18 @@ Drop the work, or the named half, if any of these holds:
   | clause | relationship it asserts | the sabotage that must turn it red | slice that wires it |
   |---|---|---|---|
   | **(a) resume** | an upload interrupted mid-stream and retried lands every record exactly once; a stale `from` gets 409 naming the stored position | accept any `from` (no compare-and-swap) | S3 |
-  | **(b) nothing unredacted leaves the host** | fixture sessions carrying P runtime-generated secrets are captured; a recording relay between agent and pod sees **0** of them in the agent's OUTGOING request bodies; the same run with redaction disabled (a test-only build tag) sees **P** — the positive control, reported as the pair. Measured BEFORE the pod, so the pod's re-check (c) cannot mask it | skip redaction for `tool_result` content | S3 |
-  | **(c) the pod re-checks** | a hand-built request (bypassing the agent) carrying a value the shared rule table matches is refused 422 and NOTHING is stored; the same request with a clean value is stored (positive control) | drop the pod-side scan | S3 |
+  | **(b) nothing unredacted leaves the host** | fixture sessions carrying P runtime-generated secrets — in records AND in a persisted TEXT tool-result blob — are captured; a recording relay between agent and pod REASSEMBLES continuation frames and then sees **0** of them in the agent's OUTGOING request bodies. The positive control is a SEPARATE run with redaction disabled (a test-only build tag) in which the relay answers 200 ITSELF and forwards nothing, so no pod refusal can stall the stream: it sees **P**. Reported as the pair. Measured BEFORE the pod, so the pod's re-check (c) cannot mask it | skip redaction for `tool_result` content | S3 |
+  | **(c) the pod re-checks** | hand-built requests (bypassing the agent) carrying a value the rule table matches — one as a record, one as a text blob — are each refused 422 and NOTHING is stored; the same requests with clean values are stored (positive control) | drop the pod-side scan | S3 |
   | **(d) visibility, owner** | the uploading owner sees the transcript section; a principal with no read on any scope in `V` gets the same bytes as a session that has no transcript | render without the predicate | S4 |
   | **(e) visibility, every WRITTEN scope** | over one store, viewer R reads `alpha-notes` AND `beta-notes` (both written) and sees it; viewer P reads only `alpha-notes` and gets the no-transcript bytes, although P's session PAGE is found | compute the written set over the VIEWER's readable scopes instead of the whole store (decision 3's trap) | S4 |
   | **(f) visibility, every READ scope (O8)** | the session WROTE only `alpha-notes` and READ `beta-notes` (a rendered recall of it is in a tool result); viewer Q reads `alpha-notes` only and gets the no-transcript bytes; R sees it | drop the read half from `V` | S4 |
   | **(g) empty set is owner-only (O10)** | a session with no recorded write or read is stored, visible to its owner, listed on the owner's "My sessions" page, and absent for everyone else | treat "every scope of the empty set" as true | S4 |
-  | **(h) routing honours reads (O8)** | with a routing table sending `beta-notes` to the client instance, a session that only READ `beta-notes` is NOT uploaded to the personal instance (the relay sees 0 requests for it) and is held, logged | route on written scopes only | S3 |
+  | **(h) routing honours reads (O8)** | THE routing fixture (shared with decision 16 and S2's routing test): a routing table sending `alpha-notes` to the personal instance and `beta-notes` to the client instance, and a session that WROTE `alpha-notes` and READ `beta-notes` in its FIRST turn. It is uploaded to NEITHER instance (the relay sees 0 requests for it) and is held, logged | route on written scopes only | S3 |
   | **(i) toggles default off, and only narrow** | a plugin token's pending list is empty until a toggle is set; after `alpha-notes` is set ON it lists exactly the sessions whose every scope in `V` is ON | default a missing scope toggle to ON | S5 |
   | **(j) capability scoping** | the summary plugin's token is refused (403, uniform) on a transcript of a session where it is OFF, and on writing a `ticket-edge` output | drop the per-session toggle check on `transcript:read` | S5 |
   | **(k) outputs inherit visibility, and say what they are** | a summary is shown to exactly the principals clauses (d)–(g) admit, and its render carries plugin name, version, model and watermark | render outputs without the source predicate | S6 |
   | **(l) deletion cascades** | the owner deletes a session's transcript; its directory, its plugin outputs and its edges are gone; the plugin's next transcript read is 404 | delete the transcript but keep outputs | S6 |
+  | **(m) a shipped prefix is withdrawn when routing changes** | the same two instances; a session WROTE `alpha-notes` and shipped its prefix to the personal instance, then READ `beta-notes`. On the agent's next run no record from the read onward reaches either instance, the agent sends a withdrawal, and the personal instance's directory, outputs and edges for it are gone (the deletion cascade of (l)) | skip the withdrawal (stop shipping only) | S6 |
 
   The sabotages run on a scratch copy of the tree with its `.git` removed (the
   `tests/control_mutants.py` pattern), and each must be caught by ITS clause's own assertion. Each
@@ -255,8 +266,11 @@ database at all.
   scanners publish large pattern sets [S]; none can be the floor of a guarantee, which is why the
   residual is stated (threat T1), not designed away.
 - **No text scanner reads an image.** That is the one way binary content is genuinely different
-  from text for THIS plan: storage is identical, but redaction — a hard requirement — cannot apply
-  (Q2).
+  from text for THIS plan: storage would be identical, but redaction — a hard requirement — cannot
+  apply, so decision 6a WITHHOLDS it until Q2 is answered.
+- **A persisted tool result is a FILE, not a JSON string** (R1: `tool-results/*.txt`, `.html`,
+  `.pdf`, `.jpg`). A redactor that walks decoded JSON string values never sees it; decision 6a gives
+  text blobs their own rule.
 - **A scanner that only recognises its own textbook examples passes a real leak** (`AGENTS.md`;
   `tests/leakscan.py` runs its controls on every invocation, `:837-875`). The corpus in decision 6
   is built for that reason from RUNTIME-GENERATED values in realistic positions.
@@ -287,19 +301,31 @@ script that prints only counts.
 
 ### R7. How cairn content ENTERS a transcript — the read half of `V` (O8)
 
-- **Both rendered read answers carry a machine-readable header naming the scope.** Recall renders
-  `subsystem-recall: status=<…> scope=<scope>` (`internal/report/text.go:306-310`); search renders
-  the same prefix plus `query=…` (`internal/report/searchtext.go:20-28`); both then print the store
-  host line with the instance label (`hostid.StoreHostLine`, `text.go:310`). Pod and CLI share this
-  ONE renderer (`AGENTS.md`), so the header is the same wherever the answer was produced.
+- **Both rendered read answers carry a machine-readable header line starting
+  `subsystem-recall:`.** Recall renders `subsystem-recall: status=<…> scope=<scope>`
+  (`internal/report/text.go:306-310`); search renders the same prefix plus `query=…`
+  (`internal/report/searchtext.go:20-28`); both then print the store host line with the instance
+  label (`hostid.StoreHostLine`, `text.go:310`). Pod and CLI share this ONE renderer (`AGENTS.md`),
+  so the header is the same wherever the answer was produced.
+- 🔴 **The header does NOT always name a scope.** A store-wide search sets the scope field to the
+  literal `(all scopes)` (`internal/report/search.go:720-721`), and a third header form,
+  `subsystem-recall: <status>: all N entry file…` (`internal/report/renderer.go:158`), carries no
+  `scope=` field at all. *Revision 2 said "a header naming the scope"; that was false for both.*
+  Decision 3 therefore maps EVERY `subsystem-recall:` line whose `scope=` value is absent or is not
+  a valid scope name to the sentinel `*`.
 - That makes the header a CONTENT signal: it is found wherever the answer landed — a shell tool's
   stdout, a `toolUseResult` copy, an opencode tool `state.output`, or a hook's injected context in an
   `attachment` record — whether or not the transcript also shows the command that produced it.
 - **Other read paths, with weaker signals:** the Go client's read verbs (`recall`, `search`,
   `sessions`, `arcs`, `arc-show`, `ls-entries`, `internal/client/cli.go:47-133`) visible as a
-  command line with `--scope`/`--repo`/`--all-scopes`; a `--json` or otherwise unrendered answer
-  (no header); and a direct file read of the local cache by path. `--all-scopes` (`cli.go:76, 97`)
-  reads every scope the credential can reach.
+  command line with `--scope`/`--repo`/`--all-scopes`, or with NEITHER, in which case the scope is
+  derived from the working directory's repository (`internal/client/reposcope.go:71, 89`);
+  `sessions`, `arcs`, `arc-show` and `ls-entries` render NO `subsystem-recall:` header (only
+  `report`'s recall, search and the line at `renderer.go:158` do), so for them the command line is
+  the only signal; and a direct file read of the local cache by path. `--all-scopes` (`search` and
+  `arcs`, `cli.go:76, 97`) reads every scope the credential can reach. *Revision 2 listed a `--json`
+  read; recall and search have no `--json` flag (only `doctor` does, `cli.go:114`), so that path is
+  deleted.*
 - None of this was measured on real transcripts (that would mean reading content). S0's fixtures
   carry each path synthetically.
 
@@ -500,7 +526,8 @@ script that prints only counts.
      tool; journal revocation is applied on replay but has no writer.
    Two kinds, `-worker-tokens <file>` with no default:
    - **`capture <kind>:<id> <host> <digest>`** — bound to ONE owner and ONE host label. May only
-     append to transcripts it owns, from its host. Cannot read anything.
+     append to transcripts it owns, from its host, and WITHDRAW (delete) a session it uploaded
+     (decision 16). Cannot read anything.
    - **`plugin <name> <digest>`** — bound to ONE registered plugin name. Its capabilities are the
      plugin's manifest's, as admitted by the registry (decision 9). Cannot sign in, cannot read the
      store, cannot read a transcript unless the plugin is ON for that session.
@@ -514,21 +541,38 @@ script that prints only counts.
    - `R_header(s)` = every scope named by a rendered read header (R7) found in ANY string of ANY
      stored record of the session — tool results, structured duplicates, attachments, hook
      context, opencode tool outputs. A content signal; clause (f).
-   - `U_calls(s)` = scopes named by `cairn` read and write commands visible in tool inputs
-     (`--scope X`; `--repo P` resolved by the client's own `DeriveScope`,
-     `internal/client/reposcope.go:71`, against the record's `cwd`), and file reads under a cache
-     root. A command that reads with `--all-scopes`, or whose scope cannot be resolved, adds the
-     sentinel **`*`** — "unknown scope" — to `V`.
+   - `R_header` maps a `subsystem-recall:` line whose `scope=` is absent or not a valid scope name
+     (`(all scopes)`, the `renderer.go:158` form) to the sentinel **`*`** — "unknown scope" (R7).
+   - `U_calls(s)` = scopes named by `cairn` read and write commands visible in tool inputs with an
+     explicit `--scope X`, and file reads under a cache root. A command with `--all-scopes` adds
+     `*`. A command with `--repo P` or with NO scope flag (scope derived from the working
+     directory's repository — bare `cairn recall`, `ls-entries`, `sessions`, `arc-show`) is
+     **cwd-derived**, handled differently by the two callers below.
    - `D(s)` = scopes the capture agent declares at upload.
    - `V(s) = W_trailer ∪ R_header ∪ U_calls ∪ D`, over the root and every child stream (decision 7).
-   - **One parser, two callers.** `R_header` and `U_calls` come from ONE package
-     (`internal/transcript/scopeuse`), imported by `cmd/cairn-capture` (routing, decision 16) and by
-     `cairn-ui` (which re-derives over the STORED records at upload, so an old or lying agent cannot
-     shrink `V`). The pod's copy is authoritative; `D` can only add.
-   - **Every error is in the safe direction except under-counting.** A forged trailer, a quoted
-     header in prose, or a mis-parsed command ADDS a scope, hiding `s` from more people. The unsafe
-     direction is a read or write NO signal sees: an unrendered (`--json`) answer whose command line
-     did not name a scope, a `put`/`create` from a script the session ran, a write to the other
+   - **One parser, two callers, and they DIFFER on cwd-derived commands.** `R_header` and
+     `U_calls` come from ONE package (`internal/transcript/scopeuse`), imported by
+     `cmd/cairn-capture` (routing, decision 16) and by `cairn-ui` (which re-derives over the STORED
+     records at upload, so an old or lying agent cannot shrink `V`).
+     - **The pod cannot resolve a cwd-derived command**: `DeriveScope` needs the repository's git
+       common dir and `ScopeForRepo` runs `git` (`internal/client/reposcope.go:71, 89`), neither of
+       which exists on the pod. So the pod adds **`*`** for EVERY cwd-derived command, and such a
+       session is owner-only. ⚠ That is a real cost: a session that ran a bare `cairn recall` in a
+       repository becomes owner-only, however ordinary the read (Q16).
+     - **The agent resolves a cwd-derived command** against the record's `cwd` with the client's own
+       `DeriveScope` — but ONLY when the command line is a single simple `cairn <verb> …`
+       invocation. Any other shape (a `cd`/`pushd`/`git -C` before it, a `&&`/`;`/`|` chain, a
+       subshell, a script) adds `*` instead. Its resolution is used for ROUTING only (decision 16)
+       and is sent as `D`, which can only ADD to the pod's set.
+     - *Revision 2 said "the pod's copy is authoritative" without qualification; that was false for
+       cwd-derived commands, which the pod cannot resolve at all.*
+   - **What can go wrong, and in which direction.** A forged trailer or a quoted header in prose
+     ADDS a scope, hiding `s` from more people. A mis-parsed command is NOT always safe: an agent
+     resolving `cd ../other && cairn recall` against the record's `cwd` would add the WRONG scope and
+     miss the right one — which is why that shape adds `*` instead, and why the pod never resolves
+     cwd at all. *Revision 2's "a mis-parsed command ADDS a scope" is retracted.* The unsafe
+     residual is a read or write NO signal sees: a header-less verb run by a script whose command
+     line the transcript does not show, a `put`/`create` from such a script, a write to the other
      instance. That residual is threat T3.
    - **Unknown names fail closed.** A scope name in `V` that the control model does not know
      (renamed, deleted, on another instance) and the sentinel `*` are unreadable by everyone but the
@@ -563,12 +607,13 @@ script that prints only counts.
      least privilege. (Reading stored transcripts IS a `cairn` verb — decision 17.)
    - *Readers (every byte, O9):* Claude Code JSONL by byte offset, complete lines only (a partial
      last line waits for the next run); every subagent file and its `agent-<id>.json` as child
-     streams; every persisted `tool-results/*` file as a blob record of its stream. opencode through
+     streams; every persisted `tool-results/*` file as a BLOB of its stream (redacted, or withheld
+     if it cannot be — decision 6a). opencode through
      `opencode export <id>` as a subprocess by bare name (the `gitMinimal`-on-`PATH` precedent for
      `git`), diffing parts by `(id, time_updated)` against local state; it never opens the SQLite
      file, so the `account`/`credential` tables are structurally out of reach. *Revision 1 excluded
      persisted binaries and pre-decided Q2; that is withdrawn. What remains open is ONLY whether an
-     unredactable binary may leave the host (Q2) — storage of it is no different.*
+     unredactable binary may leave the host (Q2); until it is answered, decision 6a withholds it.*
    - *State:* a local 0600 watermark file per instance — `{stream → offset | part-version set}` —
      advanced only after the pod acknowledges.
    - *Cadence:* a user timer (`OnStartupSec` + `OnUnitActiveSec = 60s` + `AccuracySec = 1s`, the
@@ -596,9 +641,9 @@ script that prints only counts.
      tree vs a session), two regex engines. One BEHAVIOURAL containment test pins the relation:
      every realistic `credential` control string in leakscan's self-test is also caught by
      `internal/redact` (fails if a leakscan control is added that redact misses).
-   - *The pod re-checks, and REFUSES* (D4, kept): every received record is scanned with the same
-     table; a match is refused 422 (record index named, value not) and nothing in that request is
-     stored. Kept as a refusal, not count-and-log, because storing a string the table already
+   - *The pod re-checks, and REFUSES* (D4, kept): every received record's decoded strings AND every
+     received text blob are scanned with the same table; a match is refused 422 (record index or
+     blob name given, value not) and nothing in that request is stored. Kept as a refusal, not count-and-log, because storing a string the table already
      recognises as a secret is the harm the table exists to prevent, and the check costs one scan.
      ⚠ It catches a bypassed or OUT-OF-DATE agent (a host whose table is older than the pod's then
      holds that stream and logs, rather than losing it), NOT a miss: the same table cannot catch
@@ -608,12 +653,30 @@ script that prints only counts.
      formats with **P** secrets planted in realistic positions — a shell tool's stdout of a dotenv
      file, `toolUseResult.originalFile`, an edit's `oldString`, a JSON-escaped value, a Kubernetes
      `Secret` manifest, an opencode tool `state.output`, a DSN in a command line, a prompt string, a
-     bookkeeping `queue-operation` content string, a subagent's tool output. 🔴 **The planted values
+     bookkeeping `queue-operation` content string, a subagent's tool output, and a persisted TEXT
+     tool-result BLOB (a dotenv dump and a `Secret` manifest as `.txt` files). 🔴 **The planted values
      are GENERATED AT RUN TIME from a seeded RNG**, never committed: a committed credential-shaped
      fixture is itself a `leakscan` finding (and should be). The report is the pair "planted=P
      caught=P" plus `clean-damaged=0` on a clean corpus of UUIDs, commit SHAs, digests and base64
      payloads (a redactor that eats every hash makes transcripts unreadable; that is a failure too).
      A textbook example key is NOT in the corpus.
+
+6a. **Blobs and binary content: text is redacted, unredactable binary is WITHHELD until Q2.**
+   - **A blob is TEXT** when it is valid UTF-8 with no NUL byte in its first 8,000 bytes (the
+     `tests/leakscan.py` sniff, `:368, 467`, so one definition of "binary" governs both). A text
+     blob is redacted as ONE string with the same table and keyed tags; if it parses as a YAML or
+     JSON document, the structural rules (the `Secret` rule) apply too. The pod re-checks it like a
+     record (decision 6). It is stored as the redacted bytes, so a blob is byte-identical to its
+     source exactly when nothing matched.
+   - **Unredactable binary content** — a non-text blob (`.pdf`, `.jpg`, …) and the base64 payload of
+     an inline `image` block inside a record (R1) — cannot be redacted, and redaction is a hard
+     requirement (O1). Until the operator answers Q2 it is **WITHHELD**: the agent sends, in its
+     place, `{"withheld": "unredactable-binary", "media_type": …, "bytes": N, "tag": <keyed
+     digest>}` (as the blob, or in place of the image block's `data` field), and the page and the
+     skeleton say "withheld: binary, N bytes". ⚠ **This narrows O9's "every byte"** and is stated as
+     such: it is the one place the plan stores less than every byte, and only because the two
+     operator requirements (every byte, redacted before upload) cannot both hold for content no
+     redactor can read. If Q2's answer is "ship", the placeholder is removed and nothing else moves.
 
 7. **Sidechains, subagents and child sessions are CHILD STREAMS of one root session.**
    - Claude Code: a subagent file shares the parent's `sessionId` (R2), so it is stream
@@ -656,9 +719,13 @@ script that prints only counts.
       `allowed` (the scope's admins consent; nothing runs because of it alone), `on` (consent AND
       run).
     - **Arc toggle** — `unset` (default), `on`, `off`, set by `admin` on the arc's HOME scope.
-    - **Session opt-out** — the owner may turn a plugin OFF for one session. OFF only: it can never
-      enable anything. *Kept, narrowing-only, because the owner of an O10 owner-only session has no
-      scope at which to say no.*
+    - **Session opt-out** — the owner may turn a plugin OFF for one session. OFF only: a
+      session-level ON is refused 400, so it can never enable anything. *Kept because scope consent
+      is per SCOPE: when a session's every scope is ON, its owner has no other way to keep ONE
+      session — say one that handled something sensitive — away from a plugin that sends content to
+      a third party (T7).* *Revision 2's reason — that an owner-only session "has no scope at which to
+      say no" — is retracted: under this fold an empty `V`, `*` and unknown names already resolve
+      OFF, so the opt-out does nothing for owner-only sessions.*
     - **Effective value for (plugin, session):** ON iff (1) EVERY scope in `V(root)` is `allowed`
       or `on` — the consent AND, applied regardless of every other level; AND (2) EITHER every scope
       in `V` is `on`, OR some arc listing the session is `on`; AND (3) no arc listing the session is
@@ -744,21 +811,60 @@ script that prints only counts.
 
 16. **Where a transcript is sent: the instance that routes EVERY scope in its `V` — writes AND
     reads (O8).** The capture agent computes `V` with the same `scopeuse` parser (decision 3) and
-    resolves instances with `internal/client`'s routing (stdlib, already Go). Hence:
-    - every scope routes to instance A → shipped to A only;
-    - scopes route to two instances (a session that READ the client instance and wrote the personal
-      one included) → **held locally, never shipped**, logged — clause (h);
+    resolves instances with `internal/client`'s routing (stdlib, already Go). The rule is evaluated
+    on EVERY run, over `V` as it stands at that run:
+    - every scope routes to instance A → shipped to A only (so a session that only READ
+      `beta-notes`, routed to the client instance, ships to the client instance — that is not a
+      hold);
+    - scopes route to two instances → **held**, logged. THE fixture (clause (h), S2's routing test):
+      wrote `alpha-notes` (personal) and read `beta-notes` (client) in its first turn → held, 0
+      requests to either;
     - `V` holds `*` or an unroutable name with more than one instance configured → held;
     - `V` empty (O10) → the DEFAULT instance, where decision 4 makes it owner-only.
-    Q14 asks the operator to confirm both the hold-back and the default.
+    - 🔴 **Capture is incremental (60 s), so a prefix may ALREADY be on an instance when the rule
+      changes its answer.** A session that shipped its `alpha-notes` turns to the personal instance
+      and then reads `beta-notes` has a shipped prefix. When a run computes an answer other than the
+      instance holding the prefix, the agent: (1) stops shipping that session; (2) sends
+      `POST /capture/v1/sessions/{root}/withdraw` to the holding instance with that session's capture
+      token, which runs the owner-deletion cascade (directory, outputs, edges — S6) and journals the
+      withdrawal (who, when, no content); (3) marks the session held locally, and retries the
+      withdrawal until it is acknowledged. Clause (m).
+    - **What that leaves, stated:** between the prefix shipping and the withdrawal, the prefix sat on
+      the personal instance — but it was shipped BEFORE the read, so it held no `beta-notes` content
+      that cairn could see, and it was visible under its OWN `V` then. Plugin outputs already made
+      from it are deleted by the cascade; content already SENT to an LLM provider by a plugin cannot
+      be recalled (T7). And a session's prompts and code about client work that never touched cairn
+      are not a cairn read, so they never move `V`: such a session goes to the default instance,
+      owner-only (T11).
+    *Revision 2 said such sessions are "never shipped"; under 60 s incremental capture that was
+    false, and the withdrawal is what makes the rule hold after the fact.* Q14 asks the operator to
+    choose between this and the alternatives.
 
 17. **Selective reading for agents (O9): ONE read model, served as JSON on `cairn-ui` and as Go-only
     `cairn transcript` verbs.**
-    - **One classification table** in `internal/transcript` maps every record type (per runtime)
-      to `conversation`, `tool`, `bookkeeping`, `duplicate` (the `toolUseResult` copy), `runtime`
-      (compaction summaries, `away_summary`) or `unknown`. Unknown types are SHOWN in raw views and
-      COUNTED in the skeleton, never silently dropped; S0's shape ledger pins the table against the
-      fixture's record types.
+    - **One classification table** in `internal/transcript` classifies UNITS, not records — because
+      a record is not one kind of thing: a `tool_result` block (up to 656 KB, R1) lives INSIDE a
+      `user` record, and the duplicate `toolUseResult` is a FIELD of that record, not a record.
+      *Revision 2 classified by record type; under that, "user messages are shown in full"
+      rendered every tool result in full, and "omit duplicate records" had no record to omit. Both
+      are retracted.* The units and their classes:
+      - **Claude Code** — each content BLOCK of a `user`/`assistant` record; the `toolUseResult`
+        FIELD; every other record type as a whole. Classes: `human-text` (a `text` block, or string
+        content, of a `user` record that has no `tool_result` block, no `toolUseResult`, and is not
+        `isMeta` or `isCompactSummary`); `assistant-text`; `thinking`; `tool-call` (`tool_use`);
+        `tool-result` (`tool_result` block); `duplicate` (the `toolUseResult` field); `runtime`
+        (`isCompactSummary`, `isMeta` content, `system` records such as `compact_boundary` and
+        `away_summary`); `bookkeeping` (the record types of R1 that are neither — `attachment`,
+        `queue-operation`, `mode`, …); `binary` (an inline `image` block — withheld, decision 6a);
+        `unknown`.
+      - **opencode** — each PART: `text` of a `user` message → `human-text`; `text` of an
+        `assistant` message → `assistant-text`; `reasoning` → `thinking`; `tool` → `tool-call` +
+        `tool-result` (its `state.input` / `state.output`); `step-start`/`step-finish`/`patch` →
+        `bookkeeping`; `compaction` → `runtime`; `subtask` → a child-stream link; anything else →
+        `unknown`.
+      - **A "user message" is a `human-text` unit and nothing else.** Unknown units are SHOWN in raw
+        views and COUNTED in the skeleton, never silently dropped; S0's shape ledger pins the table
+        against the fixture's record types, block types and field names.
     - **Skeleton** — `GET /transcript/skeleton?session=` → the stream tree (root, subagents with
       `agentType`/`description`/`spawnDepth`, opencode children), per stream: record counts and
       bytes by class, compaction boundaries, and a TURN INDEX `[{turn, seq_from, seq_to,
@@ -766,24 +872,27 @@ script that prints only counts.
       child_stream?}]}]`. No content beyond tool NAMES.
     - **Records** — `GET /transcript/records?session=&stream=&from_seq=&to_seq=&class=&role=
       &tool=&view=conversation|raw&max_bytes=` → a page bounded by `max_bytes` (default 64 KiB,
-      ceiling 1 MiB) with `next_seq`. `view=conversation` (the DEFAULT) omits `bookkeeping` and
-      `duplicate` records and replaces each with a one-line placeholder naming its class and size;
-      `view=raw` returns the stored records byte-exact.
+      ceiling 1 MiB) with `next_seq`. `view=conversation` (the DEFAULT) drops `bookkeeping`
+      records, strips the `duplicate` FIELD from the records that carry it, and leaves a one-line
+      placeholder naming the class and size of each thing removed; `view=raw` returns the stored
+      records byte-exact.
     - **One tool call** — `GET /transcript/tool?session=&stream=&seq=&range=<start>-<end>` → the
       call, its result and its duplicate, with a byte range for long outputs.
     - **Every route asks decision 4's predicate first** and answers every miss with one 404 body.
       They are GET rows, so bearer reads pass both cross-site gates' scope by method; a narrowed
       agent credential reads exactly the sessions its narrowing covers (decision 4).
     - **The CLI:** `cairn transcript skeleton|records|tool` mirror the three routes. They talk to
-      `cairn-ui`, not the pod, through a new per-instance `CAIRN_UI_URL` (no old alias, so the env
-      ledger does not move). They are **Go-only verbs** — declared in `capability_ledger` `go_only`
+      `cairn-ui`, not the pod, through ONE new variable, `CAIRN_UI_URL`, whose value is set per
+      instance in each instance's env file the way `CAIRN_URL` is (`internal/client/instances.go:93-105`;
+      no old alias, so the env ledger does not move). They are **Go-only verbs** — declared in `capability_ledger` `go_only`
       and `want-go-only-verbs.txt`, as `sessions` and `arcs` are — so the parity corpus compares
       nothing new. Q15 asks whether the operator prefers a separate reader binary instead.
 
 18. **The UI renders a COLLAPSED reading of every byte (O3, O9) with no new script.**
-    - **User messages are ALWAYS shown in full**, never truncated, whatever their length. (The
-      runtime's compaction summary is a `user` RECORD but not a user message — it renders as a
-      labelled runtime-generated block, collapsed.)
+    - **User messages — `human-text` units (decision 17) — are ALWAYS shown in full**, never
+      truncated, whatever their length. A `tool_result` block inside the same `user` record is NOT a
+      user message and renders as a collapsed tool result (below); the runtime's compaction summary
+      and `isMeta` content are `runtime` units and render as labelled, collapsed blocks.
     - **Assistant text** longer than 1,200 characters or 15 lines renders its head, then
       `<details><summary>read more (N more characters)</summary>…the rest…</details>`. `<details>`
       needs no script, so `AllowedScriptSources` keeps its one entry.
@@ -793,8 +902,9 @@ script that prints only counts.
     - **Subagents** render as a nested, collapsed `<details>` at the tool call that spawned them,
       summarised by `agentType` and `description`; opencode children likewise at their `subtask`
       part.
-    - **Bookkeeping and duplicates** collapse into ONE `<details>` per turn ("N bookkeeping records,
-      K duplicate tool results") with a link to `view=raw`.
+    - **Bookkeeping records and duplicate FIELDS** collapse into ONE `<details>` per turn ("N
+      bookkeeping records, K duplicate tool-result copies") with a link to `view=raw`.
+    - **Withheld binary content** (decision 6a) renders as one line naming its type and size.
     - **Pages** are bounded by turns (`?turn=` paging, 50 turns per page) so a 154 MB session never
       renders in one response.
 
@@ -814,7 +924,12 @@ POST {worker}/capture/v1/sessions/{root}/streams/{stream}/records
   422 a record matched the rule table (index named, value not); nothing stored
   507 instance quota reached (named)     400 malformed / host ≠ token's host / unknown field
   401 uniform
-POST {worker}/capture/v1/sessions/{root}/blobs/{name}   # a persisted tool-result file, same rules
+POST {worker}/capture/v1/sessions/{root}/blobs/{name}   # a persisted tool-result file: redacted
+                                                         # text, or the withheld placeholder (6a);
+                                                         # same CAS, frames, 409/422/507 rules
+POST {worker}/capture/v1/sessions/{root}/withdraw       # decision 16: runs the deletion cascade
+  200 {"withdrawn": true}     # deletes only a root this token's (owner, host) holds; the same
+                              # answer for one it does not hold or that never existed — no oracle
 
 # plugin — worker listener, plugin token (name)
 GET  {worker}/plugin/v1/pending?limit=10
@@ -834,17 +949,17 @@ GET /transcript/skeleton  ·  GET /transcript/records  ·  GET /transcript/tool 
 
 | threat | control |
 |---|---|
-| **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. **What is NOT controlled:** unshaped secrets (typed passwords, novel token formats), secrets inside images/PDFs (Q2), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
+| **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. **What is NOT controlled:** unshaped secrets (typed passwords, novel token formats), secrets inside images/PDFs (withheld rather than stored until Q2 is answered, decision 6a — if Q2 says "ship", this becomes an uncontrolled residual), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
 | **T2. Confidential but non-secret content** (client business detail, personal data in a tool output) | Redaction does not address it at all; VISIBILITY is the only control (decision 4). Stated, so nobody believes the redactor covers it. |
-| **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store plus reads from rendered headers anywhere in the content plus command-line scopes plus declarations, re-derived on the pod, grow-only (decision 3); `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is not shipped (decision 16, clause h). The residual: a read or write NO signal sees — an unrendered answer whose command named no scope, or a `put` from a script the session ran. |
+| **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store plus reads from rendered headers anywhere in the content plus command-line scopes plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope, `--all-scopes`, every cwd-derived command on the pod, and any non-simple command line on the agent add `*`; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The residual:** a read or write NO signal sees — a header-less verb (`sessions`, `arcs`, `arc-show`, `ls-entries`) or a `put`/`create` run by a script whose command line the transcript does not show; and a directory change the parser cannot see before a simple-looking `cairn` call (e.g. a shell whose working directory was changed by an EARLIER tool call while the record's `cwd` is stale), which makes the AGENT's routing resolve the wrong scope — the pod's `*` keeps visibility safe, routing is what can go wrong. |
 | **T4. Viewer-set computation makes the predicate vacuous** | Clause (e), and a mutant row (`transcript-written-set-from-viewer-scopes`). |
-| **T5. A stolen capture token** | Can APPEND to its owner's transcripts from its one host — inject fake records into the owner's own sessions — and can SQUAT a not-yet-uploaded session id (decision 15). Cannot read, delete, or touch another owner's or host's existing sessions. Revoke by deleting the row (re-read per request). |
+| **T5. A stolen capture token** | Can APPEND to its owner's transcripts from its one host — inject fake records into the owner's own sessions — can SQUAT a not-yet-uploaded session id (decision 15), and can WITHDRAW (delete) its owner's sessions uploaded from that host (decision 16). Cannot read, or touch another owner's or host's existing sessions. Revoke by deleting the row (re-read per request). |
 | **T6. A stolen plugin token** | Can read every transcript where that plugin is ON, and write outputs of its declared types. The largest single exposure the design creates; it is why toggles default OFF, require every scope's consent (decision 10), and why a plugin token is per plugin. |
 | **T7. The LLM plugin sends transcripts to a third party** | By design: plugin A and B's LLM half send redacted records to a model provider. That egress is outside cairn once read; toggles are the consent, Q5 the gate for the client instance, the provider's data terms the residual. Spend is capped by the plugin itself and at the provider, NOT by the pod (decision 12, REMOVED). |
 | **T8. Prompt injection through transcript content** | A transcript can contain text that instructs the summariser. Its blast radius is the plugin's OUTPUT: a misleading summary or a false suggestion. Controls: outputs are labelled derived (decision 11), suggestions never become edges, rendering is `g.Text` only, plugins have no write path except outputs. |
 | **T9. XSS through raw records or model output** | Every rendered value through `g.Text`; the raw-node ban holds; a URL only through `safeHref` and the `refurl` template. Fixture: a record whose strings are hostile HTML, asserted escaped (the `TestHostileEntryTextIsEscaped` pattern). |
 | **T10. Existence oracle** | The transcript section, the agent read routes, the raw view and output renders answer identically for absent, hidden and deleted; a plugin gets one 403 body for every refusal; the ownership collision 409 names nobody. |
-| **T11. Cross-instance leakage** | Decision 16 on the host (reads included, O8); per-instance worker tokens; the client instance arms nothing until Q5. |
+| **T11. Cross-instance leakage** | Decision 16 on the host (reads included, O8), including withdrawal of a prefix shipped before the routing answer changed (clause m); per-instance worker tokens; the client instance arms nothing until Q5. **Residual:** a prefix sits on the first instance until the next agent run withdraws it (it predates the read, so it holds no content cairn saw from the other instance); client-related prompts and code that never touched cairn do not move `V` and land on the default instance, owner-only; content a plugin already sent to an LLM provider cannot be recalled. |
 | **T12. Storage exhaustion** | Required retention, an instance quota that delays rather than drops (decision 15). |
 | **T13. Committed fixtures leak** | Synthetic generator only; planted secrets generated at run time (decision 6); `leakscan` in CI; no captured text, ever (`AGENTS.md`). |
 | **T14. Toggle tampering, including by arc membership** | Toggles are browser POSTs behind both gates, authorised per level (decision 10), journaled with `(Kind, ID)` and pod time; an arc can only enable inside scopes whose admins already consented, so naming a session in an arc `PUT` widens nothing. |
@@ -858,49 +973,63 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 
 | slice | what | ledgers it moves | mergeable alone because |
 |---|---|---|---|
-| **S0** | **Fixtures and shape ledgers.** `tests/transcripts/gen.py` emits synthetic sessions in BOTH formats from the measured key sets (R1–R3): main stream, two subagents, an opencode child, a compaction boundary, a `pr-link`, persisted tool output, mutated opencode parts, bookkeeping and duplicate records, and every read path of R7 (a rendered recall in a tool result, one in a hook attachment, a `--json` read, an `--all-scopes` read). A shape test pins the generator's record-type set against `internal/transcript`'s classification table. | `tests/`; `onlyGo` if Go tests read the fixtures; README. | Test-only. |
-| **S1** | **`internal/redact`** — its own rule table (decision 6), decoded-string traversal, keyed tags, structural Secret rule, denylist loader; the corpus generator and the `planted/caught/clean-damaged` report; the behavioural containment test against leakscan's controls. | new package; `ok` floor; README. | Library only. |
-| **S2** | **`cmd/cairn-capture`** and **`internal/transcript/scopeuse`** — readers (JSONL by offset, subagents, blobs; `opencode export` diffing), `V` derivation, watermark state, routing (decision 16), `--dry-run`, `--self-test`, `-verbs`. No upload yet. | `cmd/cairn-capture`; new packages; `depspolicy.LinkedBinaryRoots` + its test; `flake.nix` `packages.cairn-capture` + a ledger check; `ok` floor; closing-condition part 3 step in `ci.yml`. | Inert: it sends nothing. |
+| **S0** | **Fixtures and shape ledgers.** `tests/transcripts/gen.py` emits synthetic sessions in BOTH formats from the measured key sets (R1–R3): main stream, two subagents, an opencode child, a compaction boundary, a `pr-link`, persisted tool output, mutated opencode parts, bookkeeping records and duplicate fields, a `user` record carrying a large `tool_result` block, an inline image block, a binary and a text tool-result blob, and every read path of R7 (a rendered recall in a tool result; one in a hook attachment with no command line; a store-wide search rendered `scope=(all scopes)` in a hook attachment; a bare header-less `ls-entries`; an explicit `--scope` read; a `--repo` read; a `cd … && cairn recall` chain). A shape test pins the generator's record types, block types and field names against `internal/transcript`'s classification table. | `tests/`; `onlyGo` if Go tests read the fixtures; README. | Test-only. |
+| **S1** | **`internal/redact`** — its own rule table (decision 6), decoded-string traversal, text-blob redaction and the text/binary sniff (decision 6a), keyed tags, structural Secret rule, denylist loader; the corpus generator and the `planted/caught/clean-damaged` report; the behavioural containment test against leakscan's controls. | new package; `ok` floor; README. | Library only. |
+| **S2** | **`cmd/cairn-capture`** and **`internal/transcript/scopeuse`** — readers (JSONL by offset, subagents, blobs with binary withholding; `opencode export` diffing), `V` derivation (the `*` mappings of decision 3), watermark state, routing (decision 16), `--dry-run`, `--self-test`, `-verbs`. No upload yet. | `cmd/cairn-capture`; new packages; `./internal/transcript/scopeuse/` joins `control_mutants.py` `PKGS` (+ pinned count); `depspolicy.LinkedBinaryRoots` + its test; `flake.nix` `packages.cairn-capture` + a ledger check; `ok` floor; closing-condition part 3 step in `ci.yml`. | Inert: it sends nothing. |
 | **S3** | **Transcript store + capture API.** `internal/transcript` (directory layout, CAS append, frames, ownership, quota, retention sweeper, deletion, pod-side `V` re-derivation), worker listener + ledger, `capture` token kind and `cairn-ui -issue-worker-token capture`, refusing pod re-check. Agent gains upload. `tests/plugins/e2e.sh` created with clauses (a), (b), (c), (h). | new package → `ok` floor, `control_mutants.py` `PKGS` (+ pinned count through `ci.yml` and `internal/control/README.md`); `cmd/cairn-ui` flags (`-worker-addr`, `-worker-tokens`, `-transcript-dir`, `-transcript-retention`, `-transcript-quota`) and tests; `ci.yml` e2e step. | Inert unless `-worker-addr` AND `-transcript-dir` are set. |
 | **S4** | **Visibility + the session page shows content (O3).** `transcript.Visible` (decision 4) with `V` (decision 3); the collapsed transcript section on `/session` (decision 18); the owner arm finding O10 sessions; `GET /session/transcript` raw-record view. e2e clauses (d), (e), (f), (g — the visibility half). Benchmark of the whole-store `W_trailer` walk. | UI rows → hand ledger, `contentAuthority`, uiaudit targets + a synthetic transcript in the uiaudit world; mutant rows. | Read-only over S3; renders nothing when no transcript exists. |
 | **S5** | **Plugin registry, toggles, plugin API.** `internal/plugins` (manifest validation, closed capability and output-type vocabularies, plugin token kind, the narrowing-only toggle fold + `-plugin-journal`, the stateless pending query); `/plugins` page + toggle POSTs on scope, arc and session pages. e2e clauses (i), (j). | new package → `ok` floor, `PKGS`; UI rows; `cmd/cairn-ui` flags (`-plugin-registry`, `-plugin-journal`); mutant rows; README. | Inert with no registry; every toggle OFF by construction. |
-| **S6** | **Outputs: storage, rendering, deletion cascade.** Outputs stored per session; rendered labelled-derived (decision 11) on the session page and as a one-line summary on session rows; owner "delete transcript" POST cascading to outputs and edges. e2e clauses (k), (l). | UI rows; mutant rows; README. | Nothing renders until a plugin writes. |
+| **S6** | **Outputs: storage, rendering, deletion cascade.** Outputs stored per session; rendered labelled-derived (decision 11) on the session page and as a one-line summary on session rows; owner "delete transcript" POST cascading to outputs and edges; the capture `withdraw` route running the same cascade, and the agent's withdrawal on a routing change (decision 16). e2e clauses (k), (l), (m). | UI rows; worker-listener ledger (`withdraw`); `cmd/cairn-capture`; mutant rows; README. | Nothing renders until a plugin writes; the agent withdraws nothing until a routing answer changes. |
 | **S7** | **"My sessions" (O10).** `GET /my-sessions`: the viewer's OWN sessions with a transcript (owner arm only), newest first, including owner-only ones, each linking to `/session`. e2e clause (g — the listing half). | UI row → ledgers, uiaudit; mutant row; README. | Read-only over S3/S4. |
 | **S8** | **Agent read API and CLI (decision 17).** The classification table's skeleton, records and tool routes on `cairn-ui`; `cairn transcript skeleton|records|tool` Go-only verbs over `CAIRN_UI_URL`. | UI rows; `internal/client/cli.go` verbs; `capability_ledger` `go_only`; `want-go-only-verbs.txt`; `tests/test_go_client_ledgers.py`; mutant rows. | Read-only; the pod and parity corpus untouched. |
 | **S9** | **Example plugin A — summaries.** `plugins/summary` in a NESTED stdlib-only module (provider HTTP API over `net/http`, no SDK), host-side user timer, incremental per decision 13, its own spend cap, a fake provider in tests. Reads through `view=conversation` by default. | `depspolicy.DeclaredNestedModules`; `flake.nix` package; `ci.yml` step for its suite. | A separate binary; nothing runs until registered and toggled. |
-| **S10** | **Example plugin B — ClickUp.** `plugins/clickup` in the same nested module: ticket list fetch (read-only token, 429-aware), deterministic matchers (decision 14) over transcript records (`gitBranch`, `pr-link`, URLs), commit messages and trailers from a host-local repo list, PR bodies via the host's own GitHub CLI, entry refs; LLM suggestions using plugin A's summaries when present (`output:read:summary` — the cross-plugin test of the abstraction). Synthetic ClickUp fixtures only. Then closing wiring: `sabotaged=12 caught=12`, measured floors, the `AGENTS.md` row with an equal eviction (Q11). | same nested module; flake package; `ci.yml`; `AGENTS.md`; READMEs. | Separate binary; inert until registered and toggled. |
+| **S10** | **Example plugin B — ClickUp.** `plugins/clickup` in the same nested module: ticket list fetch (read-only token, 429-aware), deterministic matchers (decision 14) over transcript records (`gitBranch`, `pr-link`, URLs), commit messages and trailers from a host-local repo list, PR bodies via the host's own GitHub CLI, entry refs; LLM suggestions using plugin A's summaries when present (`output:read:summary` — the cross-plugin test of the abstraction). Synthetic ClickUp fixtures only. Then closing wiring: `sabotaged=13 caught=13`, measured floors, the `AGENTS.md` row with an equal eviction (Q11). | same nested module; flake package; `ci.yml`; `AGENTS.md`; READMEs. | Separate binary; inert until registered and toggled. |
 
-**Mutant rows** (indicative names; the pinned count starts at **296**). S0, S1, S2, S9 and S10 add no
-row to the authz battery (S1's and S2's guards are measured by the redaction corpus and S2's own
-tests; S9/S10 by their own suites).
+**Mutant rows** (indicative names). The pinned count starts at **296**; the **45** rows below would
+take it to **341** if every one lands as named — the pinned number is whatever the battery declares
+at each merge, never this sum. S0, S1, S9 and S10 add no row to the authz battery (S1's guards are
+measured by the redaction corpus; S9/S10 by their own suites).
 
-- **S3:** `transcript-cas-ignores-from-offset`, `transcript-capture-token-host-unchecked`,
-  `transcript-capture-token-reads`, `transcript-pod-recheck-skipped`,
-  `transcript-root-owner-not-fixed`, `transcript-pod-skips-scope-rederivation`,
-  `worker-token-accepted-by-browser-row`
-- **S4:** `transcript-written-set-from-viewer-scopes` (e), `transcript-visibility-set-ignores-reads`
-  (f), `transcript-empty-set-visible` (g), `transcript-owner-by-display-not-id`,
+- **S2 (4, `scopeuse`):** `scopeuse-all-scopes-header-names-a-scope`,
+  `scopeuse-scopeless-header-dropped` (the `renderer.go:158` form dropped instead of `*`),
+  `scopeuse-cwd-derived-command-dropped` (the pod drops it instead of adding `*`),
+  `scopeuse-chained-command-resolved` (the agent resolves cwd for a non-simple command line)
+- **S3 (8):** `transcript-cas-ignores-from-offset` (a), `transcript-capture-token-host-unchecked`,
+  `transcript-capture-token-reads`, `transcript-pod-recheck-skipped` (c),
+  `transcript-pod-recheck-skips-blobs` (c), `transcript-root-owner-not-fixed`,
+  `transcript-pod-skips-scope-rederivation`, `worker-token-accepted-by-browser-row`
+- **S4 (11):** `transcript-section-without-predicate` (d),
+  `transcript-written-set-from-viewer-scopes` (e), `transcript-visibility-set-ignores-reads` (f),
+  `transcript-empty-set-visible` (g), `transcript-owner-by-display-not-id`,
   `transcript-narrowed-owner-arm`, `transcript-any-scope-not-every-scope`,
   `transcript-child-visible-without-root`, `transcript-unknown-scope-name-readable`,
-  `transcript-star-sentinel-readable`, `transcript-section-without-predicate` (d)
-- **S5:** `plugins-toggle-default-on` (i), `plugins-arc-overrides-scope-off`,
-  `plugins-unknown-scope-toggle-falls-back`, `plugins-session-opt-out-enables`,
-  `plugins-scope-toggle-any-not-every`, `plugins-transcript-read-ignores-toggle` (j),
-  `plugins-output-type-unchecked`, `plugins-capability-unchecked`,
-  `plugins-toggle-unauthorised-level`, `plugins-plugin-name-from-body-not-token`
-- **S6:** `plugins-output-rendered-without-predicate` (k), `plugins-delete-keeps-outputs` (l)
-- **S7:** `my-sessions-lists-another-owner`
-- **S8:** `transcript-read-api-without-predicate`, `transcript-raw-view-without-predicate`
+  `transcript-star-sentinel-readable`, `transcript-render-classifies-by-record-type`
+- **S5 (15).** The toggle fold, ONE row per S5 fold case: `plugins-toggle-default-on` (i; case 1),
+  `plugins-scope-on-ignored` (2), `plugins-arc-overrides-scope-off` (3), `plugins-arc-on-ignored` (4),
+  `plugins-scope-toggle-any-not-every` (5), `plugins-arc-off-ignored` (6),
+  `plugins-session-opt-out-ignored` (7), `plugins-unknown-scope-toggle-falls-back` (8),
+  `plugins-empty-set-vacuously-on` (9), `plugins-session-level-accepts-on` (10). The rest:
+  `plugins-transcript-read-ignores-toggle` (j), `plugins-output-type-unchecked`,
+  `plugins-capability-unchecked`, `plugins-toggle-unauthorised-level`,
+  `plugins-plugin-name-from-body-not-token`
+- **S6 (4):** `plugins-output-rendered-without-predicate` (k), `plugins-delete-keeps-outputs` (l),
+  `transcript-withdraw-keeps-directory` (m), `transcript-withdraw-deletes-another-owners-root`
+- **S7 (1):** `my-sessions-lists-another-owner`
+- **S8 (2):** `transcript-read-api-without-predicate`, `transcript-raw-view-without-predicate`
 
-Clause (h) is guarded in `cmd/cairn-capture`, which is not in `PKGS`; its Go-side control is S2's
-routing test plus the e2e sabotage. Clauses (a)–(c) map to the S3 rows; (b)'s sabotage targets the
-agent (S1/S2 code), measured by the e2e and the corpus.
+**Clause ↔ row ledger.** (a) cas · (b) none — its sabotage is in the AGENT's redaction call path,
+which `PKGS` does not cover; it is measured by the e2e and the corpus · (c) both re-check rows · (d)
+section · (e) viewer scopes · (f) ignores reads · (g) empty set · (h) none — guarded in
+`cmd/cairn-capture`, not in `PKGS`; its Go-side control is S2's routing test · (i) default on · (j)
+read ignores toggle · (k) output without predicate · (l) delete keeps outputs · (m) withdraw keeps
+directory.
 
 ### Test plan per slice (negative controls named)
 
 **S0.** The generator's output parses with 0 errors in both readers' unit tests; the shape test
-fails when the generator emits a record type the classification table does not declare (control:
-add one) and when the table declares one the generator never emits (control: delete one).
+fails when the generator emits a record type, block type or field the classification table does not
+declare (control: add one) and when the table declares one the generator never emits (control:
+delete one).
 `leakscan` stays clean over the fixtures (they contain no credential shapes — S1 plants those at
 run time).
 
@@ -911,8 +1040,15 @@ run time).
 - `clean-damaged=0` over UUIDs, 40-hex SHAs, sha256 digests, base64 image payloads; control: a
   deliberately greedy rule (`[A-Za-z0-9]{32,}`) makes `clean-damaged` > 0, proving the counter
   can move.
-- JSON-escaped secret: a value with `-` in the token is caught after decoding; control:
-  scanning the raw bytes instead misses it (the reason decision 6 decodes first).
+- JSON-escaped secret: a token whose hyphen is written as a six-character JSON unicode escape
+  (backslash, `u`, `002d`) is caught after decoding; control: scanning the raw bytes instead misses
+  it (the reason decision 6 decodes first). *Revisions 1 and 2 printed this escape as a bare
+  hyphen, which described no test at all.*
+- Text blobs (decision 6a): a planted dotenv value in a `.txt` blob is replaced and the blob is
+  otherwise byte-identical; a planted `Secret` manifest in a `.txt` blob has its `data` values
+  replaced; a blob with a NUL byte in its first 8,000 bytes is classified binary and withheld (its
+  placeholder carries type, size and keyed tag), and so is an inline `image` block's payload;
+  control: a sniff that reads only the file extension classifies a NUL-carrying `.txt` as text.
 - Keyed tag: two occurrences of one secret get one tag under one host key; two keys give two tags
   for the same secret; the tag is NOT the unkeyed digest prefix (control: computing
   `sha256(secret)[:8]` does not equal it).
@@ -926,18 +1062,32 @@ run time).
 - A file whose first 4 KiB changed (a rewrite, not an append) is NOT resumed: it is refused
   locally and logged — the agent never uploads from an offset into different bytes.
 - Every byte: the uploaded-record count equals the fixture's line count for every stream,
-  bookkeeping and duplicates included; persisted tool-result files become blobs byte-identical to
-  the source (control: an agent filtering `attachment` records makes the count test red).
+  bookkeeping and duplicate fields included (control: an agent filtering `attachment` records makes
+  the count test red). A persisted TEXT tool-result file with no planted value becomes a blob
+  byte-identical to the source; one with a planted value becomes the source with exactly that span
+  replaced; a BINARY one becomes the withheld placeholder (decision 6a). *Revision 2 asserted every
+  blob byte-identical to its source, which contradicted redaction; retracted.*
 - opencode: from two recorded synthetic exports where 3 parts changed `time_updated` and 1 was
   added, exactly 4 upserts are produced; control: diffing by id alone produces 1.
 - **The SQLite file is never opened:** a test runs the reader with `HOME` pointing at a tree where
   the database path is a FIFO; the reader completes (it only calls `opencode export`, here a stub).
-- `scopeuse`: each R7 path in S0's fixtures yields its scope; the hook-attachment recall yields
-  `beta-notes` though no tool call names it; `--all-scopes` and an unresolvable `--repo` yield `*`;
-  control: a parser that reads tool INPUTS only misses the attachment case.
-- Routing (decision 16): write `alpha-notes` (personal) + read `beta-notes` (client) → held, logged,
-  nothing queued; empty `V` → default instance; control: routing on writes only queues it for
-  the personal instance.
+- `scopeuse`, with literal expectations per S0 read path: an explicit `--scope beta-notes` read →
+  `beta-notes`; the hook-attachment recall with no command line → `beta-notes` (control: a parser
+  that reads tool INPUTS only misses it); the hook-attachment search rendered `scope=(all scopes)`
+  → `*` (mutant `scopeuse-all-scopes-header-names-a-scope`); a `renderer.go:158`-form header → `*`
+  (mutant `scopeuse-scopeless-header-dropped`); on the POD, a `--repo` read and a bare header-less
+  `ls-entries` → `*` (mutant `scopeuse-cwd-derived-command-dropped`); on the AGENT, the same simple
+  bare `ls-entries` → the scope `DeriveScope` gives for the record's `cwd`, while `cd ../other &&
+  cairn recall` → `*` (mutant `scopeuse-chained-command-resolved`).
+- Routing — THE fixture of clause (h) and decision 16: a table sending `alpha-notes` to the personal
+  instance and `beta-notes` to the client; wrote `alpha-notes` and read `beta-notes` in the first
+  turn → held, logged, nothing queued for either. Also: read `beta-notes` only → queued for the
+  client instance; empty `V` → the default instance; control: routing on writes only queues the
+  fixture for the personal instance.
+- Withdrawal trigger (decision 16, the agent half of clause m): a session whose first run queued
+  `alpha-notes` turns for the personal instance and whose second run adds a `beta-notes` read →
+  the second run queues NO records and queues a withdrawal for the personal instance; control: an
+  agent that only stops shipping queues no withdrawal.
 - `--dry-run` output contains no string value of any record (planted sentinel in every string
   field, grep the output: 0; positive control: the sentinel IS in the fixture).
 - `depspolicy`: the ban's walk now includes `cmd/cairn-capture`. **Negative control: a NON-test
@@ -952,7 +1102,8 @@ run time).
   a missing middle frame stores nothing.
 - Ownership: owner B's first upload of `s-0001` after owner A's → 409 with the uniform body, and
   A's directory is unchanged; the same (owner, host) continuing → 200.
-- Pod re-check (clause c), quota (507 names it; the agent holds and a later retry after retention
+- Pod re-check (clause c) on a record AND on a text blob, each with its clean positive control;
+  quota (507 names it; the agent holds and a later retry after retention
   frees space succeeds), retention sweep at retention − 1 s and + 1 s.
 - Pod-side `V`: an agent that declares nothing and whose records carry a rendered `beta-notes`
   recall gets `beta-notes` in `meta.json` anyway (control: the mutant that trusts declarations only).
@@ -962,11 +1113,15 @@ run time).
 - Startup: `-worker-addr` without `-worker-tokens`, or with `-transcript-dir` inside the store root,
   or without `-transcript-retention`, refuses; blanks refuse; a reachable bind with no trusted-proxy
   allowlist refuses.
-- Clause (b) end to end: the e2e captures the S0 world with S1's planted secrets through the real
-  agent, through a recording relay, into a real `cairn-ui`. The relay's recorded request bodies
-  (decoded) contain **0** planted values; with the redaction-off test build they contain **P**.
-  Report the pair. (The pod's directory is scanned too, but it is not the measurement: (c) would
-  refuse what (b) misses.)
+- Clause (b) end to end, as TWO runs. (1) The real agent captures the S0 world with S1's planted
+  secrets (records and a text blob) through a recording relay into a real `cairn-ui`; the relay
+  REASSEMBLES continuation frames per record and per blob, decodes, and finds **0** planted values.
+  (2) The redaction-off test build captures the same world through the relay with NO pod behind it:
+  the relay answers every request 200 itself, so no 422 can make the agent hold a stream and stop
+  sending; after reassembly it finds **P**. Report the pair; a count other than P in run (2) exits 2
+  ("could not vouch"), because it means the instrument, not the redactor, is broken. *Revision 2
+  ran the positive control against the real pod, whose 422 held the stream, and counted frames
+  unassembled — so it could never reach P.*
 
 **S4.**
 - Relationships over ONE store and journal (clauses d–g): owner sees; R (reads every scope in `V`)
@@ -984,6 +1139,12 @@ run time).
   renders inside `<details>`; a subagent nests at its spawning call; bookkeeping collapses to one
   `<details>` per turn; the compaction summary is labelled runtime-generated; `AllowedScriptSources`
   still has ONE entry. Control: a renderer that truncates user text fails the byte count.
+- **Block-level classification (decision 17):** ONE `user` record carrying a 600 KB `tool_result`
+  block renders that block COLLAPSED in a `<details>` showing its first 64 KiB with a raw-view link
+  — not in full — while a separate `user` record with a 20,000-character `human-text` block renders
+  in full; the `toolUseResult` field of the first record is counted under "duplicate tool-result
+  copies", not rendered. Control: the mutant `transcript-render-classifies-by-record-type` renders
+  the 600 KB block in full (asserted by byte count).
 - XSS: a record whose every string is `<script>…</script>` renders escaped; the raw-node ban still
   passes.
 - Cost: the benchmark reports the whole-store `W_trailer` walk against the session page's own walk
@@ -992,11 +1153,14 @@ run time).
   from the mobile plan unchanged.
 
 **S5.**
-- Toggle fold, with literal expectations: nothing set → OFF; scope `on` for every scope in `V` → ON;
-  **arc `on` + one scope `off` → OFF** (the round-1 finding's own case); arc `on` + every scope
-  `allowed` → ON; arc `on` + one scope `allowed` and one `off` → OFF; every scope `on` + an arc
-  `off` → OFF; owner opt-out → OFF; an unknown scope name or `*` in `V` → OFF; empty `V` → OFF. Each
-  shown red by its own mutant.
+- Toggle fold, ten cases with literal expectations, each red under its OWN mutant (named in the
+  mutant list by case number): (1) nothing set → OFF; (2) every scope in `V` `on` → ON; (3) **arc
+  `on` + one scope `off` → OFF** (the round-1 finding's own case); (4) arc `on` + every scope
+  `allowed` → ON; (5) arc `on` + one scope `allowed` and one `off` → OFF; (6) every scope `on` + an
+  arc `off` → OFF; (7) every scope `on` + owner opt-out → OFF; (8) an unknown scope name or `*` in
+  `V` → OFF; (9) **empty `V` → OFF** (never vacuously ON); (10) a session-level ON is refused 400
+  and changes nothing. The ON cases (2, 4) are what keep a blanket-OFF implementation from passing
+  the OFF cases.
 - Authorisation per level: a scope `write`-only principal cannot toggle the scope (403); its admin
   can; a principal who can PUT an arc but is not admin of its home scope cannot toggle the arc; a
   session's non-owner cannot opt it out.
@@ -1012,7 +1176,9 @@ run time).
 **S6.** Output visibility equals transcript visibility for every viewer in S4's matrix (clause k,
 asserted as equal SETS of viewers); a summary renders plugin name, version, model, watermark and
 "N newer turns not yet summarised" when the transcript grew; deletion cascade (clause l) and its
-journal fact; a ClickUp URL renders only through the `refurl` template from a validated canonical
+journal fact; withdrawal (clause m): a capture token's `withdraw` deletes its own (owner, host)'s
+root with the same cascade, while the same call for another owner's root answers the same 200 and
+deletes nothing (mutant `transcript-withdraw-deletes-another-owners-root`); a ClickUp URL renders only through the `refurl` template from a validated canonical
 id (control: a `javascript:` id is refused by validation and renders as text).
 
 **S7.** The owner's page lists their owner-only and shared sessions; another principal who can read
@@ -1020,7 +1186,7 @@ every scope of the owner's shared session does NOT see it listed on THEIR "My se
 theirs) but can open it; control: the mutant that lists by visibility instead of ownership.
 
 **S8.** Each route returns only what decision 4 admits (the S4 matrix replayed over the JSON
-routes); `view=conversation` omits bookkeeping and duplicates and names them in placeholders;
+routes); `view=conversation` drops bookkeeping records and strips the duplicate `toolUseResult` field, naming each in a placeholder;
 `view=raw` returns the stored bytes exactly (control: byte-compare against the stored segment);
 `max_bytes` bounds every page, including a page whose first record alone exceeds it (it is returned
 alone, with `next_seq`, never split silently); the CLI verbs appear in `cairn -verbs` and the
@@ -1043,7 +1209,7 @@ that resolves. LLM suggestions come from the fake provider with a fixed confiden
 written as edges (control: the fake returns a suggestion at confidence 1.0 — still a suggestion).
 429 handling: the fake answers 429 with a reset header and the plugin waits, asserted by the fake's
 request timestamps. **All ClickUp fixtures are synthetic** (ids `clk0000a1…`, list `list-0001`).
-Closing wiring: `--self-test` prints `sabotaged=12 caught=12`; each sabotage fails ITS clause's
+Closing wiring: `--self-test` prints `sabotaged=13 caught=13`; each sabotage fails ITS clause's
 message; the `ok` floor, mutant count and e2e floor equal the counts measured on the merged tree;
 `AGENTS.md` stays under its working budget.
 
@@ -1053,22 +1219,31 @@ message; the `ok` floor, mutant count and e2e floor equal the counts measured on
 |---|---|---|
 | D1 | the pod-side budget window | **DELETED** — cooperative only; the plugin's own cap and the provider's limit are the ceilings that hold (decision 12). |
 | D2 | work leases and acks | **DELETED** — a stateless "sessions past my watermark" query serves one worker per plugin; the one-worker assumption is stated (decision 13). |
-| D3 | instance- and session-level toggles, `-plugin-admin` | **Instance level and `-plugin-admin` DELETED** (registering a plugin is the instance act; O5 names scope and arc). **Session level KEPT as an owner opt-out that can only narrow**, because an O10 owner-only session has no scope at which its owner could otherwise say no (decision 10). |
+| D3 | instance- and session-level toggles, `-plugin-admin` | **Instance level and `-plugin-admin` DELETED** (registering a plugin is the instance act; O5 names scope and arc). **Session level KEPT as an owner opt-out that can only narrow**, because scope consent is per scope and the owner of a session in ON scopes has no other way to keep that ONE session from a third-party-egress plugin (decision 10). *Revision 2's reason — owner-only sessions have no scope to say no at — was false (they already resolve OFF) and is retracted.* |
 | D4 | drop the pod re-check, or make it count-and-log | **KEPT, as a refusal.** Storing a string the table recognises as a secret is the harm; the masking of clause (b) is removed by measuring (b) on the agent's outgoing bytes instead (decision 6). |
 | D5 | do not share a rule file with `tests/leakscan.py` | **DELETED the sharing (Q3 withdrawn).** Separate tables; one behavioural containment test (decision 6). |
 | D6 | (owner-only / "my sessions" disposition) | **SUPERSEDED by O10** — shipped, owner-only, listed on "My sessions" (S7). |
 
 ## Open questions for the operator
 
-Each has a recommendation; none blocks S0–S2.
+Each has a recommendation. S0 and S1 depend on none of them. **Q2 and Q14 shape S2's behaviour**
+(binary withholding; hold-back and withdrawal) and Q16 shapes S3's pod-side `*`: those slices build
+the RECOMMENDED answer, and because S2 uploads nothing, a different answer changes S2's code before
+any byte has left a host. No question blocks merging S0–S2; Q2, Q14 and Q16 must be answered before
+S3 ships to a real instance.
 
 - **Q1. REMOVED (O9)** — subagent transcripts are shipped.
 - **Q2. May an UNREDACTABLE binary leave the host?** Storage is not the difference — every byte is
   stored the same way. The difference is that redaction, a hard requirement (O1), cannot read an
   image or a PDF: inline `image` blocks inside the JSONL (68 in the sample) and persisted binary
-  tool results (`.pdf`, `.jpg`). **Recommend:** ship them (O9) and mark them "not redacted" in the
-  skeleton and on the page; the alternative is holding binaries on the host with a placeholder
-  record naming type, size and keyed digest.
+  tool results (`.pdf`, `.jpg`). Two operator requirements collide here: every byte (O9) and
+  redacted before upload (O1). **As built until answered (decision 6a): WITHHELD** — a placeholder
+  naming type, size and keyed digest is shipped instead. **Recommend keeping that** (redaction is
+  the requirement whose failure cannot be undone). The alternative is shipping them, marked "not
+  redacted" on the page and in the skeleton, which turns T1's binary row into an uncontrolled
+  residual. *Revision 2 recommended shipping; revision 3 reverses that recommendation because
+  revision 2's own decision 6 made redaction a hard requirement and gave no way to meet it for
+  binary content.*
 - **Q3. WITHDRAWN (D5)** — the rule table is not shared with leakscan.
 - **Q4. Real-data redaction audit.** **Recommend** a host-local script, never committed, that runs
   the rule table over the host's own transcripts and prints only per-rule COUNTS, run once before
@@ -1100,15 +1275,29 @@ Each has a recommendation; none blocks S0–S2.
 - **Q13. Commit-message and PR-body signals need host access to repositories.** **Recommend** a
   host-local list of repository paths in plugin B's config, read with `git log` and the host's
   existing GitHub CLI login — nothing new on the pod.
-- **Q14. Multi-instance hold-back and the default (decision 16).** A session whose `V` spans two
-  instances, or holds `*` with more than one instance configured, is never shipped — which NARROWS
-  "ship every session". And a session with empty `V` goes to the default instance. **Recommend**
-  both as written; the alternative for the first is shipping to the instance holding the session's
-  WRITES with the other instance's scopes still in `V` (so it is owner-only there), which keeps the
-  bytes but moves client-read content into the personal store.
+- **Q14. What happens when a session's scopes span two instances (decision 16).** What would
+  actually be built: capture ships every 60 s, so a session is shipped to the instance its `V`
+  routes to SO FAR; when a later run finds `V` spanning two instances (or holding `*` with more than
+  one instance configured), the agent stops shipping it, holds the rest on the host, and WITHDRAWS
+  the already-shipped prefix (the deletion cascade on that instance). A session with empty `V` goes
+  to the default instance, owner-only. This NARROWS "ship every session": a held session exists
+  only on its host. **Recommend** hold + withdraw as written. Alternatives: (a) keep the prefix
+  where it is and hold only the rest — the prefix stays visible under its own `V` there but is an
+  incomplete transcript presented as the session; (b) ship the whole session to the instance holding
+  its WRITES with the other instance's scopes still in `V` (owner-only there) — keeps the bytes but
+  moves client-read content into the personal store, which O8 rules out; (c) delay all shipping until
+  a session is idle — no withdrawal needed, but no continuous summaries.
 - **Q15. Agent reads through `cairn` or a separate binary?** **Recommend** Go-only `cairn transcript`
   verbs (decision 17): agents already run `cairn`, and the Go-only mechanism exists. The alternative
   is a `cairn-transcript` reader binary that leaves `cmd/cairn`'s ledgers untouched.
+- **Q16. Cwd-derived reads make a session owner-only.** The pod cannot resolve `--repo` or a bare
+  `cairn recall`/`ls-entries`/`sessions`/`arc-show` (decision 3), so it adds `*` and the session is
+  owner-only — however ordinary the read, and bare `cairn recall` in a repository is probably the
+  COMMONEST read (unmeasured). **Recommend** accepting it for v1 and measuring the owner-only share
+  on the personal instance. The alternative — the pod trusting the agent's declared resolution for
+  those commands — makes `V` only as trustworthy as the agent, which decision 3 exists to avoid; a
+  middle path is the CLIENT printing its resolved scope in every header-less verb's output, so the
+  pod reads it as content (a client change, outside this plan).
 
 ## Recommended improvements beyond the ask (clearly recommendations)
 
@@ -1136,8 +1325,9 @@ Each has a recommendation; none blocks S0–S2.
   append observation and the boundary records' presence, not traced record by record.
 - **Whether either transcript format is a documented, stable contract.** No primary source found
   either way; the shape ledger (S0) is how drift becomes a red test rather than a silent drop.
-- **How often real sessions read through each R7 path** — rendered vs `--json`, tool call vs hook
-  injection, `--all-scopes` — so how much of real traffic `*` will make owner-only is unknown.
+- **How often real sessions read through each R7 path** — rendered header vs header-less verb,
+  explicit `--scope` vs cwd-derived, tool call vs hook injection, `--all-scopes` — so how much of
+  real traffic `*` will make owner-only (Q16) is unknown.
 - **What `opencode export --sanitize` removes**, and whether `opencode export` is safe to run
   against a database a live opencode process is writing (one export, one idle session).
 - **Redaction recall on real transcripts** (R6) — deferred to Q4's host-local count.
