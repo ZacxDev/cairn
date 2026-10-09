@@ -2901,8 +2901,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-join-page-resolves-the-token",
         path="internal/ui/invitehandlers.go",
-        old="\ts.render(w, JoinPage(token, s.providerArmed()))",
-        new="\tif s.inviting != nil {\n\t\t_, _ = s.inviting.Outstanding(control.ID(token))\n\t}\n\ts.render(w, JoinPage(token, s.providerArmed()))",
+        old="\ts.render(w, JoinPage(token, s.providerArmed(), s.app))",
+        new="\tif s.inviting != nil {\n\t\t_, _ = s.inviting.Outstanding(control.ID(token))\n\t}\n\ts.render(w, JoinPage(token, s.providerArmed(), s.app))",
         killer="TestTheJoinPageNeverConsultsTheInviteAuthority",
         why="the obvious way to make the page more helpful — look the invitation up so it can "
         "name the project. `GET /join` is dispatched BEFORE the authentication chain, so any "

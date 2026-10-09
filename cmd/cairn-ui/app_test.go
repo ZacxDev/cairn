@@ -122,7 +122,7 @@ func startAppChild(t *testing.T, env []string, extra ...string) *presenceChild {
 		cancel()
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { cancel(); _ = cmd.Wait() })
+	c.reap(t)
 	return c
 }
 
