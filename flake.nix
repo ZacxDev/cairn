@@ -417,6 +417,11 @@
           # RED in the sandbox. ONE file on purpose — the Go tests materialise the session
           # layout from it — so one row carries every session, subagent, blob and ledger.
           || (rel == "internal/transcript/testdata/synthetic_world.json")
+          # 🔴 AND THE LEAK GATE ITSELF, READ AS DATA. `internal/redact`'s containment test parses
+          # leakscan's `credential` rule and its credential NEGATIVE_CONTROLS out of this file, so
+          # the relation "every leakscan credential control is redacted" is pinned to the file
+          # rather than to a copy — and without this row it is green on the dev host and RED here.
+          || (rel == "tests/leakscan.py")
           # 🔴 AND THE BROWSER SURFACE'S STYLESHEET, WHICH IS `//go:embed`ed AND THEREFORE
           # A COMPILE-TIME INPUT RATHER THAN A FIXTURE. `internal/ui/stylesheet.go` embeds
           # `app.css`; a filtered tree without it does not fail a test, it fails to

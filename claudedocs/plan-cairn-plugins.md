@@ -1411,8 +1411,13 @@ run time).
 - Keyed tag: two occurrences of one secret get one tag under one host key; two keys give two tags
   for the same secret; the tag is NOT the unkeyed digest prefix (control: computing
   `sha256(secret)[:8]` does not equal it).
-- Containment: every realistic `credential` control string from leakscan's self-test is redacted;
-  control: deleting the GitHub-token rule from `internal/redact` makes this test red.
+- Containment: every realistic `credential` control string from leakscan's self-test is redacted —
+  asserted as "the credential run inside leakscan's own match is gone", because redacting only
+  the word `Bearer` breaks leakscan's match while leaving the token. Control: deleting the
+  authorization rule makes this test red. *The plan named the GitHub-token rule as the control;
+  S1 measured that deletion GREEN — leakscan's GitHub control is a `GITHUB_TOKEN=` line, which the
+  dotenv rule also catches. The corpus's bare base64-encoded token is what that rule alone
+  catches.*
 
 **S2.**
 - Offset reader: a file grown mid-line ships only complete lines; the next run ships the rest
