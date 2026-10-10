@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"encoding/binary"
 	"regexp"
 	"sort"
 	"strings"
@@ -15,11 +16,22 @@ import (
 // every rule that had not been taught that shape. So the prefix grammar lives HERE, ONCE, and no
 // rule spells a prefix.
 //
-// It is INPUT NORMALISATION, NOT A REWRITE. A line may carry up to three layers, in this order:
+// It is INPUT NORMALISATION, NOT A REWRITE. A line may carry up to four layers, in this order:
 //
 //  1. Read's numbered copy: `     12\t`, `12→`;
-//  2. grep: `path:12:`, `path-12-` (a context line), `12:` / `12-` (one file), `path:` (no `-n`);
-//  3. a diff: `< `, `> `, `+`, `-`.
+//  2. a tool's line prefix: grep (`path:12:`, `path:12:3:` with `--column`/`rg --vimgrep`,
+//     `path-12-` for a context line, `12:` / `12:3:` / `12-` for one file, `path:` without `-n`),
+//     docker compose (`svc-1  | `), `kubectl logs --prefix` (`[pod/web/app] `), `git blame`
+//     (`1a2b3c4d (Author 2000-01-01 00:00:00 +0000 12) `);
+//  3. a log timestamp: ISO 8601 (`2000-01-01T00:00:00.123Z `, `kubectl logs --timestamps`) or
+//     syslog with its host and tag (`Jan 01 00:00:00 box unit[12]: `);
+//  4. a diff: `< `, `> `, `+`, `-`.
+//
+// 🔴 A PREFIX IS RECOGNISED BY ITS STRUCTURE, NEVER BY A WORD LIST (review round 4). A bare `path:`
+// must LOOK like a path — a `/` or a `.` in it — because `fix:`, `TODO:`, `Q:` and `Subject:` are
+// the same bytes in prose, and stripping them exposed `password reset` to a line-start rule. A
+// `path-N-` context line must look like a path for the same reason (`top-10-` is prose). The
+// numeric forms need no such test: a number glued to `:` or `-` at a line's start is grep's.
 //
 // Every subset of the layers that a line matches yields a VIEW — the text with those prefixes
 // removed from every line that carries them — and the rules run over each distinct view. The
@@ -33,11 +45,22 @@ import (
 
 var (
 	prefixRead = regexp.MustCompile(`^[ \t]*[0-9]+(?:\t|→)`)
-	// The order of the alternatives matters: leftmost-first, so `path:12:` is preferred over the
-	// shorter `path:` reading of the same bytes.
-	prefixGrep = regexp.MustCompile(`^(?:[^\s:]+:[0-9]+[:-]|[^\s:]+-[0-9]+-|[0-9]+[:-]|[^\s:]+:)`)
+	// The order of the alternatives matters: leftmost-first, so `path:12:3:` is preferred over
+	// `path:12:`, and that over the shorter `path:` reading of the same bytes.
+	prefixTool = regexp.MustCompile(`^(?:` +
+		`[^\s:]+:[0-9]+:[0-9]+:|[^\s:]+:[0-9]+[:-]|[^\s:]*[/.][^\s:]*-[0-9]+-|[0-9]+:[0-9]+:|[0-9]+[:-]|` +
+		`[^\s:]*[/.][^\s:]*:|` +
+		// docker compose: a service name, padding, `| `.
+		`[A-Za-z0-9][A-Za-z0-9_.-]* +\| |` +
+		// kubectl logs --prefix: `[pod/<name>/<container>] `.
+		`\[[a-z]+/[^\]\s]+\] |` +
+		// git blame: a hash, an optional file name, then `(<author> <date> <time> <tz> <line>) `.
+		`\^?[0-9a-f]{7,40}(?: [^\s(]+)? +\([^()\n]*? [0-9]+\) )`)
+	prefixTime = regexp.MustCompile(`^(?:` +
+		`[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.,][0-9]+)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?[ \t]+|` +
+		`[A-Z][a-z]{2} [ 0-9][0-9] [0-9]{2}:[0-9]{2}:[0-9]{2} [^\s]+ [^\s:]+: )`)
 	prefixDiff = regexp.MustCompile(`^(?:[<>] ?|[+-])`)
-	layers     = []*regexp.Regexp{prefixRead, prefixGrep, prefixDiff}
+	layers     = []*regexp.Regexp{prefixRead, prefixTool, prefixTime, prefixDiff}
 )
 
 // view is the text with a chosen set of prefixes removed, and the map back to the original.
@@ -73,32 +96,41 @@ func (v *view) toOriginal(p int, end bool) int {
 // views returns the original text and every distinct prefix-stripped view of it.
 func views(s string) []*view {
 	out := []*view{{text: s, original: true}}
-	if !strings.ContainsAny(s, "\t:-+<>→") {
+	if !strings.ContainsAny(s, "\t:-+<>→|") {
 		return out
 	}
 	lines := strings.SplitAfter(s, "\n")
 	// offs[mask][i] is line i's content offset with the layers in mask removed.
-	const combos = 1 << 3
+	const combos = 1 << 4
 	var offs [combos][]int
 	any := false
 	for mask := 1; mask < combos; mask++ {
 		offs[mask] = make([]int, len(lines))
 	}
+	// A layer's match depends only on (layer, offset), and a line has few distinct offsets, so
+	// each is computed once per line rather than once per mask.
+	type memoKey struct{ layer, off int }
+	memo := map[memoKey]int{}
 	for i, l := range lines {
 		body := strings.TrimRight(l, "\r\n")
+		clear(memo)
 		for mask := 1; mask < combos; mask++ {
 			off := 0
 			for k, re := range layers {
 				if mask&(1<<k) == 0 {
 					continue
 				}
-				if re == prefixDiff && yamlDocSep.MatchString(body[off:]) {
-					// `---` is a YAML document separator, not a diff's `-` before `--`.
-					continue
+				n, ok := memo[memoKey{k, off}]
+				if !ok {
+					n = 0
+					if re == prefixDiff && yamlDocSep.MatchString(body[off:]) {
+						// `---` is a YAML document separator, not a diff's `-` before `--`.
+					} else if m := re.FindStringIndex(body[off:]); m != nil {
+						n = m[1]
+					}
+					memo[memoKey{k, off}] = n
 				}
-				if m := re.FindStringIndex(body[off:]); m != nil {
-					off += m[1]
-				}
+				off += n
 			}
 			offs[mask][i] = off
 			if off > 0 {
@@ -111,10 +143,13 @@ func views(s string) []*view {
 	}
 	seen := map[string]bool{}
 	for mask := 1; mask < combos; mask++ {
+		// The key is every line's offset as a VARINT — self-delimiting, so it is injective at any
+		// offset (round 4 kept two bytes per offset, and two views whose prefixes differed by a
+		// multiple of 64 KiB collided and one was dropped).
 		key := make([]byte, 0, len(lines)*2)
 		nonzero := false
 		for _, o := range offs[mask] {
-			key = append(key, byte(o), byte(o>>8))
+			key = binary.AppendUvarint(key, uint64(o))
 			nonzero = nonzero || o > 0
 		}
 		if !nonzero || seen[string(key)] {

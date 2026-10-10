@@ -10,17 +10,26 @@ Three review rounds of per-format rules each fixed the cases they named while a 
 set stayed flat and damage to clean text grew. O15 changed the approach:
 
 1. **Structural first — normalisation** (`normalise.go`). Before any rule matches, a tool's line
-   prefixes are set aside: Read's numbered copy (`  12\t`, `12→`), grep (`path:12:`, `path-12-`,
-   `12:`, `12-`, `path:`), a diff (`< `, `> `, `+`, `-`). Every subset of those layers a line
-   carries yields a VIEW; the rules that read a line's start (`Anchored`) run over every view, and
-   every match is mapped back to the ORIGINAL byte offsets, where the redaction is applied once.
-   The original text is always a view too, because a prefix reading can be wrong (`password: x`
-   also parses as a grep `path:`). No rule spells a prefix any more.
-2. **Key context** (`keyed.go`, rule `key-context`). Any value attached to a name `SecretKey`
+   prefixes are set aside: Read's numbered copy (`  12\t`, `12→`); a tool's prefix — grep
+   (`path:12:`, `path:12:3:`, `path-12-`, `12:`, `12:3:`, `12-`, `path:`), docker compose
+   (`svc-1  | `), `kubectl logs --prefix`, `git blame`; a log timestamp (ISO 8601, syslog); a diff
+   (`< `, `> `, `+`, `-`). Every subset of those layers a line carries yields a VIEW; the rules that
+   read a line's start (`Anchored`) run over every view, and every match is mapped back to the
+   ORIGINAL byte offsets, where the redaction is applied once. The original text is always a view
+   too, because a prefix reading can be wrong (`password: x` also parses as a grep `path:`). No
+   rule spells a prefix any more. A prefix is recognised by its STRUCTURE, never a word list: a
+   bare `path:` must contain a `/` or a `.`, because `fix:`, `TODO:` and `Q:` are the same bytes in
+   prose (round 4 stripped them and redacted `password reset`).
+2. **Key context** (`keyed.go`, rule `key-context`). A value attached to a name `SecretKey`
    accepts is redacted, in any notation: `K=v`, `K: v`, `K := v`, `K => v`, quoted names
    (`"K": "v"`, `['K'] = 'v'`), a call's first two arguments (`os.Setenv("K", "v")`), flags
    (`--K=v`, `--K v`, `-K v`), SQL (`PASSWORD 'v'`, `IDENTIFIED BY 'v'`), XML (`<K>v</K>`), .NET
-   (`key="K" value="v"`). `Environment=K=v` and `-e K=v` need nothing special.
+   (`key="K" value="v"`). `Environment=K=v` and `-e K=v` need nothing special. **Not ANY value:**
+   one whose shape is code, a placeholder or prose is refused (below), a bare value over 1 KiB is
+   left to the entropy rule, and a WEAK name's value must also look like a secret (below). It runs
+   in LINEAR time: round 4's XML join and bracket strip were quadratic (1 MB took 18 s and 8 s),
+   and `password=` repeated took over two minutes for 256 KiB; `TestRoundFiveKeyContextIsLinearTime`
+   and an operation count pin it.
 3. **Entropy** (`entropy.go`, rule `entropy`, LAST). A run of the base64/base64url alphabet of at
    least 20 characters is redacted wherever it stands when it carries upper case, lower case AND a
    digit, is not wordy (70% of it in word-shaped letter runs, or 45% with a third of its letters
@@ -65,18 +74,38 @@ When two rules' spans overlap they merge, and the EARLIER rule in the table name
   scanned decoded unless its payload is binary; a binary payload's encoding is also exempt from the
   entropy rule.
 - **ONE predicate for "this name names a secret"** — `SecretKey` — case- and style-insensitive; the
-  secret word ends the name up to a closed suffix set; a long word may be GLUED (`PGPASSWORD`);
-  `<VENDOR>_KEY` is a closed list (now including `CLIENT`, `TLS`, `SSL`, `SSH`). Upper-case `PWD`,
-  `OLDPWD` and `PASS` alone are not secrets (`--- PASS:` is a test verdict).
+  secret word ends the name up to a closed suffix set (STRONG); a long word may be GLUED
+  (`PGPASSWORD`); `<VENDOR>_KEY` is a closed list (now including `CLIENT`, `TLS`, `SSL`, `SSH`); the
+  abbreviations `creds`, `cred`, `privkey`, `pwd`, `passwd`, `pass` end a name too. Upper-case
+  `PWD`, `OLDPWD` and `PASS` alone are not secrets (`--- PASS:` is a test verdict). Since round 5 a
+  long secret word that is a whole SEGMENT of the name (`DB_PASSWORD_PROD`, `apiTokenStaging`) makes
+  it WEAK, unless a later segment is on the closed ATTRIBUTE list (`_URL`, `_FILE`, `_HASH`, `_TTL`,
+  …); a weak name's value must also not be a word, a word slug, a number/duration/version, a URL, an
+  expression opening or a sentence. ⚠ **The cost, measured** (`TestRoundFiveSegmentNamesCostOnCleanProbes`):
+  0 of 27 attribute-shaped clean probes damaged, and one pinned cost —
+  `SECRET_BACKUP_BUCKET=s3-backups-01` IS redacted, because `BUCKET` is not on the list and the
+  value is not a word slug. Over this repository's own tracked text the round adds no damaged line
+  that round 4 left alone (diffed file by file against round 4's head).
 - **Code and prose are not secrets — refused by SHAPE** (`notCode`, `keyedValueOK`, and the
-  join-aware refusals in `unquotedValue`): calls/indexes/literals with a code-shaped head, shell
-  expansions (`${…}`, `$(…)`, a whole `$VAR` or `$VAR/…`), templates and printf verbs, placeholders (`<…>`, `***`,
-  `your…`), paths, package-qualified names, names that themselves name a secret (`CAIRN_TOKEN` is
-  an env var's NAME), sentences (stop words, a secret word, end punctuation), and code-only
-  joins. ⚠ **The cost, measured** (`TestRedactorRecallOnRealisticPasswords`, 200 values per cell,
-  seed 4, oracle: no 6-character window of the value survives): 200/200 for alnum, base64, hex,
-  dotted and dashed diceware; symbol-bearing passwords 195–199/200 in every line shape, the libpq
-  string included (196/200 for `pm-20`).
+  join-aware refusals in `bareValue`): calls/indexes/literals with a code-shaped head, shell
+  expansions (`${…}`, `$(…)`, a whole `$VAR` or `$VAR/…`), format templates (only verbs, escapes and
+  punctuation, or two of them glued at the start), placeholders (`<…>`, `***`, `your…`), YAML
+  aliases of a lower-case word (`*db_password`), paths, package-qualified names, names that
+  themselves STRONGLY name a secret (`CAIRN_TOKEN` is an env var's NAME), sentences (stop words, a
+  secret word, end punctuation), and code-only joins. 🔴 **Code notation is decided by the JOIN**
+  (a Go `:=`, a Ruby `=>`, a spaced `=`, a value ending in code punctuation, a name inside a string
+  literal): only there are a dereference `*p`/`&v`, a leading printf verb (`%T-…`) and an escape
+  read as code. In a quoted string, a dotenv/shell value or a YAML value they are a password's
+  first character — round 4 refused them everywhere and caught `*…` 20–40/200, `&…` 31–42/200 and
+  `%verb…` 0/200; now 200/200 each (`TestRoundFiveValuesStartingWithASymbol`). ⚠ **The cost,
+  measured** (`TestRedactorRecallOnRealisticPasswords` at seed 4, `TestTheRateRangeHoldsOverSeedsFourToEight`
+  over seeds 4–8; 200 values per cell; oracle: no 6-character window of the value survives):
+  200/200 for alnum, base64, hex, dotted and dashed diceware at every one of those seeds;
+  symbol-bearing passwords (`pm-20`, `pm-16-3symbols`, `pm-16-lead-symbol`) **193–200/200** over
+  seeds 4–8, the libpq string included (round 4's code: 192–200 over the same seeds). At seed 4
+  alone: 195–199.
+  *Correction: rounds 4 and earlier stated "195–199/200 in every line shape" — true at seed 4 only;
+  one seed is one measurement.*
   *Correction: through round 3 this README and the plan said 176–197/200 for the libpq string. That
   figure came from a weaker oracle than the test's own doc stated (whole value or its first half,
   not any 6-character window); under the stated oracle round 3's code measured **139/200** for
@@ -91,13 +120,24 @@ When two rules' spans overlap they merge, and the EARLIER rule in the table name
 
 - **`SelfTest`** (run by `cairn-capture --self-test`) builds a synthetic corpus in both runtimes'
   shapes with `DeclaredPlants` (79) secrets generated at run time, redacts it, and prints
-  `SUMMARY redaction: planted=P caught=P clean-damaged=0`. A plant counts as caught only when its
+  `SUMMARY redaction: planted=P caught=P clean-damaged=0` — measured at every seed 1–400, and
+  pinned at seeds 1–40 by `TestRoundFiveSelfTestHoldsAcrossSeeds`. *Round 4 scored 78/79 on about
+  one seed in six; the cause was the SCORER (a plant's `&` is JSON-escaped in its record, so the
+  "carried" check never found it and its rule was never credited), plus two rare rule misses (a
+  `/`-split base64 run, a random dotted head before `(`) — all three fixed.* A plant counts as caught only when its
   value is gone AND its OWN rule fired on the item that carried it. Two controls run first and the
   run exits 2 if either misbehaves (an identity redactor must catch 0; a greedy rule must damage a
   clean value), or if P is not the declaration.
 - **`TestTheEntropyRuleThresholds`** pins the entropy rule's recall on random tokens in prose (seed
-  15, 500 each: alnum 20/24/32/40 chars 478/479/496/499; base64 of 18/32/64 bytes 481/496/498;
-  base64url 32 bytes 496) and the clean shapes it must leave alone, with a positive control.
+  15, 500 each: alnum 20/24/32/40 chars 478/479/496/499; base64 of 18/32/64 bytes 482/497/498;
+  base64url 32 bytes 499 — round 5 moved the base64 rows up, by counting identifier segments by
+  character) and the clean shapes it must leave alone, with a positive control.
+- **The round-5 tests** (`round5_test.go`): each of review round 4's findings, shown RED at round
+  4's head unless labelled an invariant guard or a cost pin; `round5_internal_test.go` holds the
+  guards on this round's own internals (an operation count for linear time, the name prefilter
+  against `SecretKey`). Each new guard was mutation-tested against its own test; ⚠ ONE mutant
+  survives and is stated where it lives — restoring the per-character bracket recount, which the
+  1 KiB bare-value cap bounds whatever the strip does.
 - **The round-4 tests** (`round4_test.go`): every tool prefix round 3 named, before a rule only a
   line-anchored match can satisfy; PEM bodies behind each prefix; the named-key notations; round 3's
   clean probes — each measured RED on the pre-O15 code. Plus the clean lines an intermediate round-4
@@ -123,6 +163,12 @@ given; that the file is fresh and held back is a fact about who wrote it, record
 ## What no rule here can see
 
 A secret that is neither NAMED nor RANDOM-LOOKING: a typed password in prose, an all-lower-case or
-hex token with no key in front of it, an unnamed token under 20 characters. Also a flow-style YAML
+hex token with no key in front of it, an unnamed token under 20 characters. **An unnamed
+password-manager password with symbols is in that set**: the symbols split it into base64-alphabet
+runs under 20 characters, so the entropy rule sees none of it — 0–1/200 caught at 16, 20, 24 and
+32 characters (seed 9, alphanumerics plus 28 symbols; round 4's audit measured about 13/200 with its
+own alphabet). A symbol-token rule was prototyped (175/200 at 24 characters) and NOT adopted: over
+this repository's own tracked text it damaged 275 tokens — regex literals, SRI digests, transcript
+IDs, URL-encoded paths. Also a flow-style YAML
 Secret, text in an encoding other than UTF-8 or UTF-16, and anything inside a signature-bearing
 payload (a PNG text chunk included). Real recall is an operator-side, count-only measurement (Q4).

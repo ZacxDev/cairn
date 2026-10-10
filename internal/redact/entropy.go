@@ -183,22 +183,27 @@ func transitionRate(t string) float64 {
 
 var wordSegment = regexp.MustCompile(`^(?:[A-Za-z][a-z]*|[A-Z]+|[0-9]{1,4}|[A-Za-z]{1,3}[0-9]{1,3}[a-z]*)$`)
 
-// identifierSegments: split on `_`, `-` and `/`, a token of at least three segments of which two
-// thirds read as words (`Foo`, `bar`, `HTTP`, `404`, `v2`) is an identifier, a slug or a path —
-// `test_a_404_carries_ETag`, `en-US/firefox/12x/notes`. A random base64url token has a separator
-// about once in 32 characters and its pieces are not words.
+// identifierSegments: split on `_`, `-` and `/`, a token of at least three segments in which two
+// thirds of the CHARACTERS sit in segments that read as words (`Foo`, `bar`, `HTTP`, `404`, `v2`)
+// is an identifier, a slug or a path — `test_a_404_carries_ETag`, `en-US/firefox/12x/notes`. A
+// random base64url token has a separator about once in 32 characters and its pieces are not words.
+//
+// 🔴 CHARACTERS, NOT SEGMENTS (review round 5's seed sweep): counted by segment, base64 with a `/`
+// near each end (`qk/<59 random characters>/VOC`) read as a path of three segments, two of them
+// "words", and shipped — the self-test's one entropy miss in 400 seeds.
 func identifierSegments(t string) bool {
 	segs := strings.FieldsFunc(t, func(r rune) bool { return r == '_' || r == '-' || r == '/' })
 	if len(segs) < 3 {
 		return false
 	}
-	words := 0
+	words, total := 0, 0
 	for _, s := range segs {
+		total += len(s)
 		if len(s) <= 12 && wordSegment.MatchString(s) {
-			words++
+			words += len(s)
 		}
 	}
-	return 3*words >= 2*len(segs)
+	return 3*words >= 2*total
 }
 
 // sequential: most adjacent pairs ascend by one — an alphabet literal (`ABC…xyz0123…`).

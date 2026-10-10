@@ -93,12 +93,27 @@ func (c Corpus) Score(r redactor) Score {
 }
 
 // ruleFiredOn answers whether the plant's own rule produced a hit on an item that carried it.
+//
+// 🔴 "CARRIED" IS READ IN THE DECODED STRINGS TOO, not only in the raw bytes (review round 5):
+// Go's JSON encoder writes `&`, `<` and `>` as six-character escapes (a backslash, `u`, four hex
+// digits), so a plant holding one of them was never found in its own record's bytes, its rule's
+// hit was never credited, and the self-test scored 78/79 on about one seed in six — the
+// `symbol-password` plant, whose alphabet carries `&`. The leak oracle above already searched
+// decoded strings; this check did not.
 func (c Corpus) ruleFiredOn(p Plant, itemRules []map[string]bool) bool {
 	for i, it := range c.Items {
 		carried := false
 		text := string(it.Data)
 		if u, _, ok := utf16Text(it.Data); ok {
 			text = u
+		}
+		if !it.Blob {
+			var b strings.Builder
+			b.WriteString(text)
+			if v, err := decodeJSON(bytes.TrimSpace(it.Data)); err == nil {
+				collectStrings(v, &b)
+			}
+			text = b.String()
 		}
 		for _, f := range p.Forms {
 			if strings.Contains(text, f) {

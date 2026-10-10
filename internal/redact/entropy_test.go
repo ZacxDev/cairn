@@ -89,5 +89,5 @@ func TestTheEntropyRuleThresholds(t *testing.T) {
 // entropyFloor is what seed 15 measured (see the test doc).
 var entropyFloor = map[string]int{
 	"alnum-20": 478, "alnum-24": 479, "alnum-32": 496, "alnum-40": 499,
-	"base64-18B": 481, "base64-32B": 496, "base64url-32B": 496, "base64-64B": 498,
+	"base64-18B": 482, "base64-32B": 497, "base64url-32B": 499, "base64-64B": 498,
 }

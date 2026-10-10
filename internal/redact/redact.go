@@ -219,7 +219,7 @@ func (r *Redactor) walk(v any, o scanOpts) (any, []Hit) {
 				m, h := r.marker("k8s-env", s)
 				t.pairs[i].v = m
 				hits = append(hits, h)
-			case isString && SecretKey(k) && keyedValueOK(s, true):
+			case isString && secretFieldValue(k, s):
 				m, h := r.marker("secret-field", s)
 				t.pairs[i].v = m
 				hits = append(hits, h)
@@ -243,6 +243,17 @@ func (r *Redactor) walk(v any, o scanOpts) (any, []Hit) {
 	default:
 		return v, nil
 	}
+}
+
+// secretFieldValue: member `k` names a secret and its string value `s` is one. A JSON string is a
+// quoted value, never code notation; a WEAK name ([secretKeyGrade]) holds it to [weakNameValueOK]
+// too, exactly as the key-context rule does.
+func secretFieldValue(k, s string) bool {
+	strong, weak := secretKeyGrade(k)
+	if !strong && !(weak && weakNameValueOK(s)) {
+		return false
+	}
+	return keyedValueOK(s, false)
 }
 
 func (r *Redactor) redactAllStrings(v any, rule string) (any, []Hit) {

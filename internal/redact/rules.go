@@ -19,8 +19,8 @@
 // signature-bearing is scanned decoded. Residual (T1): a secret inside an image or a PDF.
 //
 // 🔴 KEY CONTEXT PLUS ENTROPY (operator decision O15). The table is two general rules and a few
-// shapes that carry no name: `key-context` redacts any value attached to a secret-sounding name in
-// any notation (keyed.go), `entropy` redacts any long random-looking token wherever it stands
+// shapes that carry no name: `key-context` redacts a value attached to a secret-sounding name in
+// any notation unless its shape is code, a placeholder or prose (keyed.go), `entropy` redacts any long random-looking token wherever it stands
 // (entropy.go), and the rest are vendor token formats, positional files (`.pgpass`, `.netrc`), URL
 // userinfo, short CLI flags, private-key blocks and the YAML structure. Every rule sees a line's
 // CONTENT: tool line prefixes are set aside before matching (normalise.go).
@@ -103,8 +103,9 @@ var (
 	// shellExpansion: `${…}`, `$(…)`, `$VAR` whole, or `$VAR/…` — not every value that starts with
 	// `$` (round 4 measured 8 of 200 symbol-bearing passwords refused by a bare `$` prefix test).
 	shellExpansion = regexp.MustCompile(`^\$(?:[{(]|[A-Za-z_][A-Za-z0-9_]*(?:$|/))`)
-	// derefOrSlice is `&x`, `*x`, `[]byte(` — an address, a dereference, a conversion.
-	derefOrSlice = regexp.MustCompile(`^[&*][A-Za-z_][A-Za-z0-9_.]*$|^\[\][A-Za-z_][A-Za-z0-9_.]*[({]`)
+	// derefOrSlice is `&x`, `*x` — an address, a dereference — and sliceConv `[]byte(`, a conversion.
+	derefOrSlice = regexp.MustCompile(`^[&*][A-Za-z_][A-Za-z0-9_.]*$`)
+	sliceConv    = regexp.MustCompile(`^\[\][A-Za-z_][A-Za-z0-9_.]*[({]`)
 	// referencePrefix is a leading segment that names a scope or a module, not a passphrase word.
 	referencePrefix = regexp.MustCompile(`^(?:var|local|data|module|each|self|this|args|cfg|conf|config|settings|opts|options|os|process|env|req|request|res|ctx|params|props|creds|credentials|secrets|vault|app|import)\.`)
 	// goQualified is a package-qualified exported identifier: `tls.RequireAnyClientCert`.
@@ -116,7 +117,18 @@ var (
 	yamlTag        = regexp.MustCompile(`^![A-Za-z_][A-Za-z0-9_]*$`)
 	bracedIdent    = regexp.MustCompile(`^\{[A-Za-z_0-9][A-Za-z0-9_.]*\}$|^\{\}$`)
 	formatVerb     = regexp.MustCompile(`^%[-+# 0-9.]*[sdvqfxXcbegtpoT](?:$|[^A-Za-z0-9])|^\\[nrt]`)
-	filePath       = regexp.MustCompile(`^(?:/|\./|\.\./|~/)[A-Za-z0-9_.@/-]*$`)
+	// formatTemplate is a value made ONLY of printf verbs, string escapes and punctuation (`%s:%s`,
+	// `%-10v`, `%s\n`, `\n%q` — a format string's tail after `token:`): a template in every notation.
+	// A verb FOLLOWED by more characters (`%T-Pap45…`) is [formatVerb]'s, and that is read as code
+	// only in code notation ([codeOnlyShape]).
+	formatTemplate = regexp.MustCompile(`^(?:%[-+# 0-9.]*[sdvqfxXcbegtpoT]|\\[nrt"\\]|[^A-Za-z0-9%\\])+$` +
+		// …or one that OPENS with two of them glued (`%s\nLOG_LEVEL=…`, the rest of a format string).
+		`|^(?:%[-+# 0-9.]*[sdvqfxXcbegtpoT]|\\[nrt])(?:%[-+# 0-9.]*[sdvqfxXcbegtpoT]|\\[nrt])`)
+	// wordRef is `*name`/`&name` over a lower-case word: a YAML alias or anchor (`*db_password`), or
+	// a dereference — in any notation. A RANDOM value after `*`/`&` is not one (it carries upper case
+	// or a digit), and is refused as a dereference only in code notation ([codeOnlyShape]).
+	wordRef  = regexp.MustCompile(`^[&*][a-z_][a-z_.]*$`)
+	filePath = regexp.MustCompile(`^(?:/|\./|\.\./|~/)[A-Za-z0-9_.@/-]*$`)
 	// An identifier OR-ed, AND-ed or ??-ed with another: `e.apiKey||null`. Both sides must be
 	// identifiers, so a password that merely contains `||` is not refused.
 	logicalExpr = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$.]*(?:\|\||&&|\?\?)[A-Za-z_$][A-Za-z0-9_$.]*$`)
@@ -127,7 +139,7 @@ var (
 // WORDY (`getToken(`, `loadSecret(`). A random password's head — `Xk9q` before a `(` — is none of those.
 func codeHead(head string) bool {
 	switch {
-	case qualifiedHead.MatchString(head):
+	case qualifiedHead.MatchString(head) && !randomSegment(head):
 		return true
 	case shortLower.MatchString(head):
 		return true
@@ -137,6 +149,22 @@ func codeHead(head string) bool {
 		n += m[1] - m[0]
 	}
 	return len(head) >= 5 && 4*n >= 3*len(head)
+}
+
+var digitInWord = regexp.MustCompile(`[A-Za-z][0-9]+[A-Za-z]`)
+
+// randomSegment: some `.`/`::` segment of a qualified head mixes upper and lower case AND carries a
+// digit between two letters (`Zq99x.FITR.Q7jVO(`) — a password's shape, not an identifier path's.
+// `x509.ParseCertificate(`, `h2c.New(`, `oauth2.Config{` and `s3.New(` are single-case or keep
+// their digits at a segment's edge. (Review round 5's seed sweep: the self-test's one remaining
+// `symbol-password` miss in 400 seeds was this head read as code.)
+func randomSegment(head string) bool {
+	for _, seg := range strings.FieldsFunc(head, func(r rune) bool { return r == '.' || r == ':' }) {
+		if strings.ToLower(seg) != seg && strings.ToUpper(seg) != seg && digitInWord.MatchString(seg) {
+			return true
+		}
+	}
+	return false
 }
 
 // notCode refuses a value whose SHAPE is code or a placeholder — and only those shapes.
@@ -150,11 +178,14 @@ func codeHead(head string) bool {
 //   - a call, an index or a literal: an identifier head immediately followed by `(`, `[` or `{`,
 //     when the head reads as code ([codeHead]: `os.Getenv(`, `getpass.getpass()`, `Optional[str]`,
 //     `struct{}{}`, `func(`), or any value containing `()` or `{}`;
-//   - an expansion, a template or a format: a value STARTING with `$`, `{{`, `%(`, a backtick, a
-//     printf verb (`%s`, `%q`) or an escape (`\n`); `{token}`; an identifier `||`/`&&`/`??` another;
+//   - an expansion, a template or a format: a value STARTING with `$`, `{{`, `%(` or a backtick; a
+//     value made only of printf verbs and punctuation (`%s:%s`); `{token}`; an identifier
+//     `||`/`&&`/`??` another;
 //   - a placeholder: a value that is ENTIRELY `<…>`, one character repeated (`********`),
 //     `your…`/`…_here`, a YAML tag (`!vault`), a keyword/type name (`None`, `string`, `await`);
 //   - a location: a path (`/run/secrets/db`, `./key.pem`, `~/.ssh/id_rsa`);
+//   - a YAML alias or a dereference of a lower-case word (`*db_password`, `&token`), a conversion
+//     (`[]byte(`);
 //   - a reference: an identifier path whose leading segment names a scope or module (`var.`,
 //     `os.`, `process.env.`, `settings.`), a package-qualified exported name
 //     (`tls.RequireAnyClientCert`), an identifier path whose LAST segment names a secret
@@ -171,7 +202,7 @@ func notCode(v string) bool {
 	case strings.Contains(v, "()"), strings.Contains(v, "{}"):
 		return false
 	case shellExpansion.MatchString(v), strings.HasPrefix(v, "{{"), strings.HasPrefix(v, "%("), strings.HasPrefix(v, "`"),
-		formatVerb.MatchString(v):
+		formatTemplate.MatchString(v):
 		return false
 	case strings.HasPrefix(v, "<") && strings.HasSuffix(v, ">"):
 		return false
@@ -185,7 +216,7 @@ func notCode(v string) bool {
 	case strings.HasPrefix(strings.ToLower(v), "your"), strings.Contains(strings.ToLower(v), "_here"),
 		strings.Contains(strings.ToLower(v), "-here"):
 		return false
-	case goQualified.MatchString(v), derefOrSlice.MatchString(v):
+	case goQualified.MatchString(v), wordRef.MatchString(v), sliceConv.MatchString(v):
 		return false
 	case attributePath.MatchString(v):
 		segs := strings.Split(v, ".")
@@ -196,13 +227,24 @@ func notCode(v string) bool {
 		if referencePrefix.MatchString(v) || hclRef || SecretKey(segs[len(segs)-1]) {
 			return false
 		}
-	case nameLike.MatchString(v) && SecretKey(v):
+	case nameLike.MatchString(v) && strongSecretName(v):
+		// A STRONG name only: `NOT-A-REAL-PASSWORD-fixture` has a secret word as a segment, which
+		// makes it a weak NAME — and, as a value, a password.
 		return false
 	}
 	if m := callHead.FindStringSubmatch(v); m != nil && codeHead(m[1]) {
 		return false
 	}
 	return true
+}
+
+// codeOnlyShape is what reads as code ONLY in code notation (the key-context rule decides that by
+// the join — see [bareValue]): a dereference or address of any identifier (`*p`, `&cfg`), a value
+// starting with a printf verb (`%s…`) or an escape (`\n`). In a dotenv, shell or YAML value or a
+// quoted string those are a password's first characters: round 4 refused them in every notation
+// and measured `*…` at 34/200, `&…` at 28/200 and `%verb-…` at 0/200 caught.
+func codeOnlyShape(v string) bool {
+	return derefOrSlice.MatchString(v) || formatVerb.MatchString(v)
 }
 
 func repeatedRune(v string) bool {
@@ -234,12 +276,92 @@ var (
 	acronymEnd    = regexp.MustCompile(`([A-Z]+)([A-Z][a-z])`)
 	// The secret word at a `_` boundary (or the start), optionally followed by a closed set of
 	// suffixes that still name the secret's content (`SECRET_KEY_BASE`, `apiKeyValue`).
-	secretWord = regexp.MustCompile(`(?:^|_)(?:SECRET|TOKEN|PASSWORD|PASSWD|PASSPHRASE|PASS|PWD|PRIVATE_?KEY|API_?KEY|ACCESS_?KEY|SECRET_?KEY|CREDENTIALS?|DSN|AUTH|AUTHORIZATION|AUTH_?TOKEN|BEARER|(?:` +
+	secretWord = regexp.MustCompile(`(?:^|_)(?:SECRET|TOKEN|PASSWORD|PASSWD|PASSPHRASE|PASS|PWD|PRIVATE_?KEY|PRIV_?KEY|API_?KEY|ACCESS_?KEY|SECRET_?KEY|CREDENTIALS?|CREDS?|DSN|AUTH|AUTHORIZATION|AUTH_?TOKEN|BEARER|(?:` +
 		keyVendors + `)_KEY)(?:_(?:BASE|VALUE|DATA|B64|BASE64))?_?[0-9]*$`)
 	// A word GLUED to a prefix: `PGPASSWORD`, `MYSECRET`, `GHTOKEN`. Only the long words — a glued
 	// `PASS` ends `BYPASS` and `COMPASS`, a glued `AUTH` ends `OAUTH`.
 	gluedWord = regexp.MustCompile(`[A-Z0-9](?:PASSWORD|PASSWD|PASSPHRASE|SECRET|TOKEN)(?:_(?:BASE|VALUE|DATA))?_?[0-9]*$`)
+	// segmentWord is a LONG secret word that is a whole segment of the name but does not end it
+	// (`DB_PASSWORD_PROD`, `apiTokenStaging`, `GITHUB_TOKEN_CI`); group 1 is what follows it.
+	segmentWord = regexp.MustCompile(`(?:^|_)(?:PASSWORD|PASSWD|PASSPHRASE|SECRET|TOKEN|CREDENTIALS?|CREDS|PRIV_?KEY|PRIVATE_KEY|API_KEY|ACCESS_KEY)_([A-Z0-9_]+)$`)
 )
+
+// attributeSegments name something ABOUT a secret rather than the secret: where it lives, how it
+// is checked, when it expires, what it is called. A secret word followed by one of these is not a
+// secret's name (`TOKEN_URL`, `DB_PASSWORD_FILE`, `password_hash`, `secretKeyRef`, `TOKEN_TTL`,
+// `password_min_length`, `SECRET_MANAGER_REGION`). ⚠ A CLOSED LIST, AND THE TRADE IS STATED: a
+// segment missing from it reads as a QUALIFIER (`_PROD`, `_CI`, `_ADMIN`), so its value is taken —
+// subject to [weakNameValueOK], which refuses the plain words, URLs, paths and numbers an attribute
+// carries. The clean damage it adds is measured by `TestRoundFiveSegmentNamesCostOnCleanProbes`.
+var attributeSegments = map[string]bool{
+	"FILE": true, "FILES": true, "PATH": true, "DIR": true, "URL": true, "URI": true, "ENDPOINT": true,
+	"HOST": true, "PORT": true, "ISSUER": true, "AUDIENCE": true, "HASH": true, "HASHED": true,
+	"DIGEST": true, "REF": true, "NAME": true, "ID": true, "IDS": true, "ARN": true, "SOURCE": true,
+	"SRC": true, "TYPE": true, "KIND": true, "COUNT": true, "NUM": true, "LEN": true, "LENGTH": true,
+	"SIZE": true, "MIN": true, "MAX": true, "LIMIT": true, "TTL": true, "EXPIRY": true, "EXPIRES": true,
+	"EXPIRE": true, "EXPIRATION": true, "AGE": true, "LIFETIME": true, "TIMEOUT": true,
+	"INTERVAL": true, "POLICY": true, "RESET": true, "ROTATION": true, "FORMAT": true, "MODE": true,
+	"ENABLED": true, "DISABLED": true, "ENABLE": true, "DISABLE": true, "REQUIRED": true,
+	"FIELD": true, "HEADER": true, "PARAM": true, "PREFIX": true, "SUFFIX": true, "ENV": true,
+	"VAR": true, "VERSION": true, "STRENGTH": true, "HINT": true, "LABEL": true, "PROMPT": true,
+	"REGEX": true, "PATTERN": true, "MANAGER": true, "STORE": true, "PROVIDER": true,
+	"BACKEND": true, "SERVICE": true, "REGION": true, "SCOPE": true, "SCOPES": true, "METHOD": true,
+	"ALGORITHM": true, "ALG": true, "LOCATION": true, "COMMAND": true, "CMD": true, "HELPER": true,
+	"CACHE": true, "STATUS": true, "STATE": true, "CHECK": true, "VALIDATION": true, "LOGIN": true,
+	"REQUEST": true, "RESPONSE": true, "ERROR": true, "INPUT": true, "CONFIRM": true,
+	"CONFIRMATION": true, "CHANGE": true, "UPDATE": true, "CREATE": true, "DELETE": true,
+	"STRATEGY": true, "GENERATOR": true, "LENGTH_MIN": true, "USAGE": true, "LOG": true,
+	"FLAG": true, "FLAGS": true, "CHARS": true, "CHARSET": true, "ALPHABET": true, "BYTES": true,
+	"BITS": true, "ENTROPY": true, "ISSUED": true, "REVOKED": true, "CREATED": true, "ROTATED": true,
+	"EXPIRED": true, "UPDATED": true, "DELETED": true,
+}
+
+// strongSecretName: the secret word ENDS the name (`CAIRN_TOKEN`) — [secretKeyGrade]'s strong grade.
+func strongSecretName(name string) bool {
+	strong, _ := secretKeyGrade(name)
+	return strong
+}
+
+// secretKeyGrade grades a name: STRONG when the secret word ends it (the SecretKey rule below),
+// WEAK when a long secret word is a whole segment followed only by segments that are not
+// [attributeSegments] (`DB_PASSWORD_PROD`). A weak name's value must also pass [weakNameValueOK].
+func secretKeyGrade(name string) (strong, weak bool) {
+	u, ok := normaliseKeyName(name)
+	if !ok {
+		return false, false
+	}
+	if secretWord.MatchString(u) || gluedWord.MatchString(u) {
+		return true, false
+	}
+	m := segmentWord.FindStringSubmatch(u)
+	if m == nil {
+		return false, false
+	}
+	for _, seg := range strings.Split(m[1], "_") {
+		if seg == "" || attributeSegments[seg] {
+			return false, false
+		}
+	}
+	return false, true
+}
+
+var (
+	plainWordValue = regexp.MustCompile(`^[A-Za-z][a-z]*$|^[A-Z]+$`)
+	numberish      = regexp.MustCompile(`^[0-9][0-9.:_-]*[A-Za-z]{0,3}$`)
+	// wordSlug is lower-case WORDS joined by `-`/`_`/`.` (`host-a`, `quarry-grade`, `-issue-credential`):
+	// a name, a flag or a fixture label. A segment mixing letters and digits (`x7k2`) is not a word.
+	wordSlug = regexp.MustCompile(`^-{0,2}[a-z]+(?:[-_.](?:[a-z]+|[0-9]+))*$`)
+)
+
+// weakNameValueOK is the extra bar a WEAK name's value clears: not a plain word (`strict`,
+// `Enabled`) or a slug of words (`host-a`), not a number or duration or version (`3600s`,
+// `1.2.3`), not a URL, not an expression or a composite literal opening (`(n*8`, `{ErrX`), and no
+// spaces. An attribute the closed list missed carries one of those far more often than a secret
+// does — the round-5 sweep over this repository's own text found each of them.
+func weakNameValueOK(v string) bool {
+	return !plainWordValue.MatchString(v) && !wordSlug.MatchString(v) && !numberish.MatchString(v) &&
+		!strings.Contains(v, "://") && !strings.ContainsAny(v, " \t") && strings.IndexAny(v[:1], "([{") < 0
+}
 
 // SecretKey is THE predicate for "this name names a secret" — for a `KEY=value` line, a YAML
 // key, a `docker -e` flag, a k8s env `name:`, a query parameter and a decoded JSON object key
@@ -249,25 +371,35 @@ var (
 // `dbPassword`, `db-password`, `SecretAccessKey`, `SessionToken`, `accessToken` and Docker's
 // `auths.<host>.auth` all reach the same table.
 //
-// 🔴 THE SECRET WORD ENDS THE NAME, up to a closed suffix set (`_BASE`, `_VALUE`/`Value`, `_DATA`):
-// `max_tokens`, `TOKEN_URL`, `DB_PASSWORD_FILE`, `passwordHash`, `secretKeyRef`, `apiKeySource`
-// and `secret_name` name a count, a URL, a path, a hash, a reference, a source and a name. A word
-// may also be GLUED to a prefix (`PGPASSWORD`), and `<VENDOR>_KEY` is a closed list (review round
-// 2: the first END rule lost `PGPASSWORD`, `SECRET_KEY_BASE` and `apiKeyValue`).
+// 🔴 THE SECRET WORD ENDS THE NAME (STRONG), up to a closed suffix set (`_BASE`, `_VALUE`/`Value`,
+// `_DATA`): `max_tokens`, `TOKEN_URL`, `DB_PASSWORD_FILE`, `passwordHash`, `secretKeyRef`,
+// `apiKeySource` and `secret_name` name a count, a URL, a path, a hash, a reference, a source and a
+// name. A word may also be GLUED to a prefix (`PGPASSWORD`), and `<VENDOR>_KEY` is a closed list
+// (review round 2: the first END rule lost `PGPASSWORD`, `SECRET_KEY_BASE` and `apiKeyValue`). The
+// abbreviations `creds`, `cred`, `privkey`, `pwd`, `passwd` and `pass` end a name too.
+//
+// 🔴 OR A LONG SECRET WORD IS A WHOLE SEGMENT OF IT (WEAK, review round 4): `DB_PASSWORD_PROD`,
+// `API_TOKEN_STAGING`, `GITHUB_TOKEN_CI` — a qualifier after the word — unless a following segment
+// is an ATTRIBUTE ([attributeSegments]). See [secretKeyGrade]; the key-context rule and the JSON
+// walk hold a weak name's value to [weakNameValueOK] as well.
 //
 // ⚠ `PWD` and `OLDPWD` in UPPER case are the shell's working directories, not passwords; `pwd` in
 // any other case (a JSON field) is a password.
 func SecretKey(name string) bool {
+	strong, weak := secretKeyGrade(name)
+	return strong || weak
+}
+
+func normaliseKeyName(name string) (string, bool) {
 	n := strings.Trim(name, `"' `)
 	if n == "PWD" || n == "OLDPWD" || n == "PASS" {
 		// `PASS` in UPPER case alone is a test runner's verdict (`--- PASS: TestX`), not a key.
-		return false
+		return "", false
 	}
 	n = acronymEnd.ReplaceAllString(n, "${1}_${2}")
 	n = camelBoundary.ReplaceAllString(n, "${1}_${2}")
 	n = strings.NewReplacer("-", "_", ".", "_", " ", "_").Replace(n)
-	u := strings.ToUpper(n)
-	return secretWord.MatchString(u) || gluedWord.MatchString(u)
+	return strings.ToUpper(n), true
 }
 
 // DefaultRules is the table, in application order: when two rules' spans overlap, the EARLIER
@@ -287,8 +419,9 @@ func DefaultRules() []Rule {
 			`-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----` +
 				`(?:\r?\n[ \t]*[A-Za-z-]+: [^\n]*)*` +
 				`(?:\s*[A-Za-z0-9+/=]{16,}\r?)*` +
-				`(?:\s*=[A-Za-z0-9+/]{4}\r?)?` +
-				`(?:\s*-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----)?`)},
+				// The LAST body line may be short (`QyNTUxOQAAACDx`) — taken only when the END line
+				// follows it, so a mention followed by a short word still loses only its header.
+				`(?:(?:\s*[A-Za-z0-9+/=]{1,15}\r?)?\s*-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|\s*=[A-Za-z0-9+/]{4}\r?)?`)},
 		{Name: "aws-access-key-id", Re: regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`)},
 		{Name: "github-token", Re: regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{22,}`)},
 		{Name: "slack-token", Re: regexp.MustCompile(`\bxox[abprse]-[A-Za-z0-9-]{10,}|\bxapp-[0-9]+-[A-Za-z0-9-]{10,}`)},
@@ -326,8 +459,9 @@ func DefaultRules() []Rule {
 		// `mysql -p<pw>` (glued — `-p <word>` is a database name), `redis-cli -a`, `sshpass -p`.
 		{Name: "cli-flag", Anchored: true, Group: 1, Accept: notCode, Re: regexp.MustCompile(
 			`(?:^|\s)docker\s+login\b[^\n]*?\s(?:-p|--password)[ =]["']?([^\s"']{4,})`)},
+		// `-p'pw'` and `-p"pw"` too: the shell strips the quotes, mysql never sees them.
 		{Name: "cli-flag", Anchored: true, Group: 1, Accept: notCode, Re: regexp.MustCompile(
-			`(?:^|\s)(?:mysql|mysqldump|mysqladmin|mariadb)\b[^\n]*?\s-p([^\s"']{4,})`)},
+			`(?:^|\s)(?:mysql|mysqldump|mysqladmin|mariadb)\b[^\n]*?\s-p["']?([^\s"']{4,})`)},
 		{Name: "cli-flag", Anchored: true, Group: 1, Accept: notCode, Re: regexp.MustCompile(
 			`(?:^|\s)redis-cli\b[^\n]*?\s-a[ \t]+["']?([^\s"']{4,})`)},
 		{Name: "cli-flag", Anchored: true, Group: 1, Accept: notCode, Re: regexp.MustCompile(
@@ -339,13 +473,55 @@ func DefaultRules() []Rule {
 			`(?m)^[^:\s]+:(?:[0-9]+|\*):[^:\s]+:[^:\s]+:((?:[^:\s\\]|\\.){4,})[ \t]*\r?$`)},
 		// `.netrc`: `machine … login … password <pw>`, on one line or its own — a whitespace join
 		// the key-context rule takes only for a flag or a quoted value.
-		{Name: "netrc-password", Anchored: true, Group: 1, Accept: notCode, Re: regexp.MustCompile(
-			`(?mi)(?:\b(?:machine|default)\b[^\n]*\bpassword|^[ \t]*password)[ \t]+(\S{4,})[ \t]*\r?$`)},
-		// KEY CONTEXT: any value attached to a [SecretKey] name, in any notation (keyed.go).
+		// 🔴 A LINE THAT IS ONLY `password <word>` NEEDS NETRC STRUCTURE (review round 4): behind a
+		// stripped `12:` or `> ` it is also `password rotation` in prose. See [netrcSpans].
+		{Name: "netrc-password", Anchored: true, Find: netrcSpans},
+		// KEY CONTEXT: a value attached to a [SecretKey] name, in any notation, that is not code-,
+		// placeholder- or prose-shaped (keyed.go).
 		{Name: "key-context", Find: keyContextSpans},
 		// ENTROPY: a long random-looking token anywhere (entropy.go). LAST, and late.
 		{Name: "entropy", Find: entropySpans, Late: true},
 	}
+}
+
+var (
+	netrcInline = regexp.MustCompile(`(?mi)\b(?:machine|default)\b[^\n]*\bpassword[ \t]+(\S{4,})[ \t]*\r?$`)
+	netrcOwn    = regexp.MustCompile(`(?mi)^[ \t]*password[ \t]+(\S{4,})[ \t]*\r?$`)
+	netrcToken  = regexp.MustCompile(`(?i)(?:^|\s)(?:machine|default|login)(?:\s|$)`)
+)
+
+// netrcSpans is the `.netrc` rule: `machine … login … password <pw>` on one line, or `password
+// <pw>` on its own line. The own-line form is taken only with NETRC STRUCTURE: a `machine`,
+// `default` or `login` token on one of the three lines before it, or a value that is not a plain
+// word (`fix: password reset`, `12: password rotation` and `> password managers` are prose a
+// stripped prefix exposes, and a plain word after `password` is what prose puts there).
+func netrcSpans(s string) [][2]int {
+	var out [][2]int
+	for _, m := range netrcInline.FindAllStringSubmatchIndex(s, -1) {
+		if notCode(s[m[2]:m[3]]) {
+			out = append(out, [2]int{m[2], m[3]})
+		}
+	}
+	for _, m := range netrcOwn.FindAllStringSubmatchIndex(s, -1) {
+		v := s[m[2]:m[3]]
+		if !notCode(v) {
+			continue
+		}
+		if plainWordValue.MatchString(v) && !netrcToken.MatchString(linesBefore(s, m[0], 3)) {
+			continue
+		}
+		out = append(out, [2]int{m[2], m[3]})
+	}
+	return out
+}
+
+// linesBefore is the text of up to n whole lines before offset at (a line start).
+func linesBefore(s string, at, n int) string {
+	lo := at
+	for i := 0; i < n && lo > 0; i++ {
+		lo = strings.LastIndexByte(s[:lo-1], '\n') + 1
+	}
+	return s[lo:at]
 }
 
 // unnamedQueryKey is the `query-param` rule's key predicate: the parameter names that carry a
