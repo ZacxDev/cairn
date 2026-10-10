@@ -176,7 +176,7 @@ func TestEveryShortcutIsADeclaredRowThatReturnsThroughSignIn(t *testing.T) {
 	want := map[string]string{
 		"/arcs":      "/sign-in?next=%2Farcs",
 		"/scopes?q=": "/sign-in?next=%2Fscopes%3Fq%3D",
-		"/share":     "/sign-in?next=%2Fshare",
+		"/team":      "/sign-in?next=%2Fteam",
 	}
 	shortcuts := appShortcuts()
 	if len(shortcuts) != len(want) {

@@ -287,10 +287,9 @@
    * affordance that looks like a label is the same defect with extra steps. */
   /* Both header links share one rule, which is a claim that they are the same KIND of
    * affordance rather than a saving. A second rule that drifted would make one of the two
-   * entry points look like metadata, which is the defect `.nav-share` exists for. */
+   * entry points look like metadata, which is the defect the header link rule exists for. */
   .nav-arcs a,
-  .nav-share a,
-  .nav-invite a {
+  .nav-team a {
     @apply text-sm text-accent no-underline;
     @apply transition-colors duration-200 ease-cairn hover:text-ink hover:underline;
   }
@@ -325,7 +324,8 @@
   .share-scope,
   .invite-index,
   .invite-project,
-  .invite-minted {
+  .invite-minted,
+  .team-links {
     @apply bg-raised border border-line rounded-card px-5 py-4 my-4;
     @apply animate-rise;
   }
@@ -335,7 +335,8 @@
   .share-scope h2,
   .invite-index h2,
   .invite-project h2,
-  .invite-minted h2 {
+  .invite-minted h2,
+  .team-links h3 {
     @apply border-b border-line pb-2 mb-3;
   }
 
@@ -504,12 +505,25 @@
     @apply mb-3;
   }
 
-  .share fieldset {
+  .share fieldset,
+  .team-link fieldset {
     @apply border border-line rounded px-3 py-2 my-1;
   }
 
-  .share fieldset label {
+  .share fieldset label,
+  .team-link fieldset label {
     @apply inline-flex items-center gap-1.5 mr-3 font-normal;
+  }
+
+  /* The team link's lifetime field: the same look as every other field. */
+  .team-link input[type="number"] {
+    @apply bg-raised text-ink border border-line rounded px-3 py-2 text-sm w-24;
+  }
+
+  /* A link's targets and its redemption log: the audit record, listed under its row. */
+  .link-targets,
+  .link-log {
+    @apply basis-full flex flex-col gap-0.5 pl-4 text-xs text-muted;
   }
 
   /* The notices. Each is a left rule plus a tint, which is what makes them legible as a
@@ -1171,7 +1185,7 @@
    * reason `--breakpoint-ultra` records. */
   @media (pointer: coarse) {
     /* B2 — a compact header as a GRID whose auto-placement IS the DOM order: row 1 is the
-     * wordmark and the three nav links (equal 44px targets), row 2 the viewer line and Sign out.
+     * wordmark and the two nav links, Arcs and Team (equal 44px targets), row 2 the viewer line and Sign out.
      *
      * 🔴 NO `order`, AND THAT IS THE POINT. The first draft put the viewer and Sign out on row 1
      * with `order`, AFTER three nav links rendered on row 2 — so keyboard focus and a screen
@@ -1181,17 +1195,16 @@
      * option and was not taken: it would move the desktop header's DOM, and its reading order, too. */
     .page-header {
       @apply grid items-center gap-x-2 gap-y-1 pb-2 mb-4;
-      grid-template-columns: auto repeat(3, minmax(0, 1fr));
+      grid-template-columns: auto repeat(2, minmax(0, 1fr));
     }
 
     .nav-arcs a,
-    .nav-share a,
-    .nav-invite a {
+    .nav-team a {
       @apply flex min-h-11 items-center justify-center rounded border border-line px-1;
     }
 
     .page-header .viewer {
-      @apply col-span-3 min-w-0 truncate text-xs;
+      @apply col-span-2 min-w-0 truncate text-xs;
     }
 
     .page-header .signout {
@@ -1225,6 +1238,7 @@
     input[type="password"],
     input[type="text"],
     input[type="search"],
+    input[type="number"],
     select {
       @apply min-h-11;
       font-size: max(16px, 1em);
@@ -1232,12 +1246,18 @@
 
     /* The share form's verb checkboxes: the LABEL is the target (it wraps the box), so the
      * label gets the 44px row and the box itself grows to 24px rather than to 44. */
-    .share fieldset label {
+    .share fieldset label,
+    .team-link fieldset label {
       @apply min-h-11;
     }
 
-    .share fieldset input[type="checkbox"] {
+    .share fieldset input[type="checkbox"],
+    .team-link fieldset input[type="checkbox"] {
       @apply size-6;
+    }
+
+    .team-link input[type="number"] {
+      @apply min-h-11;
     }
 
     /* B3 — the bell was 49×22 in a row of badges. */

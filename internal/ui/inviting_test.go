@@ -684,7 +684,7 @@ func TestTheRoleChooserIsDrivenByTheREALModelsHeldRole(t *testing.T) {
 			Projects: projects,
 			Project:  projects[0],
 		}
-		html := renderNode(t, InvitePage(view))
+		html := renderNode(t, inviteOnTeam(view))
 		if got := strings.Contains(html, `value="`+string(control.RoleOwner)+`"`); got != tc.wantOwner {
 			t.Errorf("%s (holds %s): the chooser offers `owner` = %v, want %v",
 				tc.who, tc.wantHeld, got, tc.wantOwner)

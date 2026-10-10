@@ -252,7 +252,7 @@ func (b *browser) post(path string, form url.Values) *httptest.ResponseRecorder 
 
 // sharePath is the share page for one scope.
 func sharePath(scope control.ID) string {
-	return SharePath + "?" + QueryScope + "=" + string(scope)
+	return TeamPath + "?" + QueryScope + "=" + string(scope)
 }
 
 // TestAScopeSharedFromOneUserToAnotherIsServedThroughTheBrowser is THE CLAUSE — the
@@ -457,7 +457,7 @@ func TestTheReplicaHonestyNoticeIsPinnedWhole(t *testing.T) {
 		name string
 		path string
 	}{
-		{"the share index", SharePath},
+		{"the share index", TeamPath},
 		{"one scope's share page", sharePath(shareScope)},
 	} {
 		rec := rowan.get(page.path)
@@ -827,7 +827,7 @@ func TestAReadOnlyDeploymentSaysSoOnThePageRatherThanAtTheClick(t *testing.T) {
 
 	// The READS still work. A deployment that cannot record a share can still answer
 	// "who has access to this", and withholding that would be a worse surface, not a safer one.
-	index := caller.get(SharePath)
+	index := caller.get(TeamPath)
 	if index.Code != http.StatusOK {
 		t.Fatalf("the share index answered %d against a read-only authority; the reads need no journal: %s",
 			index.Code, index.Body.String())
@@ -840,7 +840,7 @@ func TestAReadOnlyDeploymentSaysSoOnThePageRatherThanAtTheClick(t *testing.T) {
 
 	// 🔴 AND A WRITABLE DEPLOYMENT MUST NOT CARRY IT — a banner rendered unconditionally
 	// is a banner that says nothing, and it would pass the assertion above forever.
-	writable := newShareRig(t).signIn(shareRowanToken).get(SharePath)
+	writable := newShareRig(t).signIn(shareRowanToken).get(TeamPath)
 	if strings.Contains(pageText(writable.Body.String()), normalizeSpace(ReadOnlyAuthority)) {
 		t.Error("a deployment WITH a control journal also renders the read-only notice, so the assertion " +
 			"above is about a constant rather than about the authority")

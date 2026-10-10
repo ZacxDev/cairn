@@ -719,8 +719,11 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 			// event `-create-user`'s help says only an operator can cause, and the operator
 			// decision that authorised it names a 256-bit capability token as the deliberate
 			// act. An operator reading this stream must be able to find every one of them.
-			s.logf("github sign-in PROVISIONED a user by invitation: provisioned=%v project=%s role=%s (%s, %s)",
-				red.Provisioned, red.Project, red.Role, client, who)
+			// `logFields` names a TEAM LINK by digest prefix, role and target count; the
+			// project/role pair is blank for one, and a provisioning line naming nothing is
+			// a principal nobody can attribute.
+			s.logf("github sign-in PROVISIONED a user by invitation: provisioned=%v %s (%s, %s)",
+				red.Provisioned, red.logFields(), client, who)
 			s.openSession(w, r, red.Principal, "the "+GitHubLabel+" provider and an invitation", next)
 			return
 		}
@@ -754,8 +757,8 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 		red, rerr := s.inviting.RedeemFor(r.Context(), inviteToken, principal)
 		switch {
 		case rerr == nil:
-			s.logf("github sign-in: %s joined %s as %s by invitation (%s)",
-				principal.ID, red.Project, red.Role, client)
+			s.logf("github sign-in: %s joined by invitation: %s (%s)",
+				principal.ID, red.logFields(), client)
 		case errors.Is(rerr, ErrAlreadyAMember):
 			// Benign and common: somebody clicked a link for a project they are in.
 			s.logf("github sign-in: %s is already a member of the invited project (%s)",

@@ -497,8 +497,10 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-share-page-candidates-bypass-membership-actor",
         path="internal/ui/sharehandlers.go",
-        old="\tcandidates, err := s.sharing.Candidates(membershipActor(id))\n\tif err != nil {\n\t\twritePlain(w, http.StatusInternalServerError, \"the authority could not be read\")\n\t\treturn\n\t}\n\n\tview.Scope",
-        new="\tcandidates, err := s.sharing.Candidates(id.Principal)\n\tif err != nil {\n\t\twritePlain(w, http.StatusInternalServerError, \"the authority could not be read\")\n\t\treturn\n\t}\n\n\tview.Scope",
+        # Re-derived when the share page became the Team page's `shareSection` (#214, O-a): its
+        # returns carry the section's value now.
+        old="\tcandidates, err := s.sharing.Candidates(membershipActor(id))\n\tif err != nil {\n\t\twritePlain(w, http.StatusInternalServerError, \"the authority could not be read\")\n\t\treturn ShareView{}, false\n\t}\n\n\tview.Scope",
+        new="\tcandidates, err := s.sharing.Candidates(id.Principal)\n\tif err != nil {\n\t\twritePlain(w, http.StatusInternalServerError, \"the authority could not be read\")\n\t\treturn ShareView{}, false\n\t}\n\n\tview.Scope",
         killer="TestANarrowedAdminBearerIsOfferedNoShareCandidates",
         why="the share page lists every collaborator across the owner's projects to a caller "
         "whose narrowing excludes them.",
@@ -2464,8 +2466,10 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-unshare-skips-the-objects-authority-check",
         path="internal/ui/sharing.go",
-        old="\tif g.ObjectKind != control.ObjectScope || !auth.Allows(g.ObjectID, control.VerbAdmin) {",
-        new="\tif g.ObjectKind != control.ObjectScope {\n\t\t_ = auth",
+        # Re-derived when `Unshare`'s check became `mayRevokeGrant`, by object kind (#214, O-b):
+        # the SCOPE arm is where this row's question lives now.
+        old="\tcase control.ObjectScope:\n\t\treturn auth.Allows(g.ObjectID, control.VerbAdmin)",
+        new="\tcase control.ObjectScope:\n\t\treturn auth.Allows(g.ObjectID, control.VerbAdmin) || true",
         killer="TestARevokeIsAuthorisedFromTheGrantRatherThanFromTheForm",
         why="the revocation already found the grant, so re-checking authority over its "
         "object reads like belt-and-braces — it is the only thing stopping admin on scope "
@@ -2476,7 +2480,7 @@ MUTANTS: tuple[Mutant, ...] = (
         path="internal/ui/sharehandlers.go",
         old="\tif !id.Auth.Allows(scope, control.VerbAdmin) {\n"
         "\t\twritePlain(w, http.StatusNotFound, scopeRefusal)\n"
-        "\t\treturn\n"
+        "\t\treturn ShareView{}, false\n"
         "\t}",
         new="\t_ = scopeRefusal",
         killer="TestTheSharePageRefusesAScopeThisCallerCannotAdminister",
@@ -2860,7 +2864,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-invite-narrowing-skipped-before-the-unnarrowed-read",
         path="internal/ui/invitehandlers.go",
-        old="\tchosen, found := pickProject(view.Projects, project)\n\tif !found {\n\t\twritePlain(w, http.StatusNotFound, inviteRefusal)\n\t\treturn\n\t}",
+        old="\tchosen, found := pickProject(view.Projects, project)\n\tif !found {\n\t\twritePlain(w, http.StatusNotFound, inviteRefusal)\n\t\treturn InviteView{}, false\n\t}",
         new="\tchosen, _ := pickProject(view.Projects, project)",
         killer="TestAProjectThatIsNotInvitableIsRefusedBEFORETheUnnarrowedRead",
         why="`Inviting.Outstanding` performs NO authority check and says so in its own doc — "
@@ -2876,9 +2880,11 @@ MUTANTS: tuple[Mutant, ...] = (
         # there is ONE HTML writer and no weaker value to reach for. What is left that can lose the
         # mint's `no-store` is BYPASSING the writer at the mint's call site: rendering straight into the
         # ResponseWriter.
-        old="Expires: inv.ExpiresAt.UTC().Format(time.RFC3339),\n\t\t},\n\t}\n\ts.renderInvite(w, view)\n}",
-        new="Expires: inv.ExpiresAt.UTC().Format(time.RFC3339),\n\t\t},\n\t}\n"
-        "\tw.Header().Set(\"Content-Type\", \"text/html; charset=utf-8\")\n\t_ = InvitePage(view).Render(w)\n}",
+        # Re-derived a THIRD time in #214: the mint renders on the Team page now (O-a), through
+        # `renderTeamAfterMint` and so through the one writer; the bypass is still the same shape.
+        old="\ts.renderTeamAfterMint(w, r, id, func(v *TeamView) { v.Invite = view })",
+        new="\tw.Header().Set(\"Content-Type\", \"text/html; charset=utf-8\")\n"
+        "\t_ = TeamPage(TeamView{Viewer: id.Principal.Display, Invite: view}).Render(w)",
         killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
         why="rendering straight into the ResponseWriter to skip the buffer looks like an optimisation, "
         "and it skips the one writer that sets `no-store` — on the response whose BODY is a bearer "
@@ -2989,8 +2995,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-invite-read-refuses-instead-of-answering-with-no-store",
         path="internal/ui/invitehandlers.go",
-        old="\tif s.inviting == nil {\n\t\t// Nothing to ask. The page says so — see [NoInviteStore] for why this is a page\n\t\t// rather than a refusal.\n\t\ts.renderInvite(w, view)\n\t\treturn\n\t}",
-        new="\tif s.inviting == nil {\n\t\ts.refuseWithoutInviteStore(w)\n\t\treturn\n\t}",
+        old="\tif s.inviting == nil {\n\t\t// Nothing to ask. The page says so — see [NoInviteStore] for why this is a page\n\t\t// rather than a refusal.\n\t\treturn view, true\n\t}",
+        new="\tif s.inviting == nil {\n\t\ts.refuseWithoutInviteStore(w)\n\t\treturn InviteView{}, false\n\t}",
         killer="TestTheInviteRowsAnswerHonestlyWithNoInviteStore",
         why="consistency with the two WRITES, and with `refuseUnconfiguredOAuth` one file "
         "over. `shell` links this path from the header of every page unconditionally, so a "
@@ -3009,8 +3015,10 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-invite-nav-affordance-stops-linking",
         path="internal/ui/render.go",
-        old='h.P(h.Class("nav-invite"), h.A(h.Href(InvitePath), g.Text("Invitations"))),',
-        new='h.P(h.Class("nav-invite"), g.Text("Invitations")),',
+        # Re-aimed in #214: the header's ONE entry to invitations (and sharing, and team links)
+        # is the Team link now (O-a / round 0 D3); the row keeps its name and its defect.
+        old='h.P(h.Class("nav-team"), h.A(h.Href(TeamPath), g.Text("Team"))),',
+        new='h.P(h.Class("nav-team"), g.Text("Team")),',
         killer="TestEveryRenderedPageCarriesBothNavigationAffordances",
         why="an affordance that looks like a label is how the SHARE flow shipped deployed, "
         "authorised, route-registered, test-covered and reported MISSING. Same surface, same "
@@ -3054,6 +3062,296 @@ MUTANTS: tuple[Mutant, ...] = (
         "which is the intended cost' and `AGENTS.md` asserts the notice 'is pinned as a WHOLE "
         "NORMALISED STRING'. Its negative control proved only that the COMPARISON can fail, "
         "never that a change to the CONSTANT would. The row is here so the fix has a gate.",
+    ),
+
+    # ---- the Team page and its multi-target TEAM LINK (`internal/ui/team*.go`) ----------
+    #
+    # 🔴 ONE ROW PER AUTHZ RULE THE LINK ADDS, AND THE SQL HALF IS NOT HERE. The store's
+    # conditional `UPDATE`, its `CHECK` and its expiry boundary are measured by the Postgres
+    # tier (`internal/pgstore/teamlinks_pgtest_test.go`), which this battery does not run; the
+    # `invite-teamlink-*` rows mutate `TeamLink.StateAt`, which the in-memory store the UI
+    # tests drive asks inside its lock — the same predicate the SQL is pinned against.
+    Mutant(
+        name="ui-teamlink-scope-arm-stops-asking-for-every-verb",
+        path="internal/ui/teamlinks.go",
+        old="return have.Has(control.VerbAdmin) && have.Intersect(want) == want",
+        new="return have.Has(control.VerbAdmin) && !want.Empty()",
+        killer="TestALinkCannotConferVerbsItsMinterLacks",
+        why="a LINK GRANTS BEYOND ITS MINTER'S AUTHORITY. Verbs are independent bits, so 'holds "
+        "admin' reads like 'holds everything' and is not: an admin-only grantee would mint a "
+        "reader link conferring a read it does not have.",
+    ),
+    Mutant(
+        name="ui-teamlink-scope-arm-drops-the-admin-requirement",
+        path="internal/ui/teamlinks.go",
+        old="return have.Has(control.VerbAdmin) && have.Intersect(want) == want",
+        new="return have.Intersect(want) == want",
+        killer="TestAScopeLinkNeedsAdminOnTheScope",
+        why="'you may hand out what you hold' without the share flow's admin rule: every "
+        "project MEMBER could then put the project's scopes on a reusable link to anybody.",
+    ),
+    Mutant(
+        name="ui-teamlink-project-arm-stops-asking-who-may-manage",
+        path="internal/ui/teamlinks.go",
+        old="if !member || !held.CanManageMembers() {",
+        new="if !member {",
+        killer="TestAProjectLinkNeedsAMemberManager",
+        why="belonging taken for managing — a plain member minting a link that adds people to "
+        "the project, which `CanManageMembers` exists to refuse.",
+    ),
+    Mutant(
+        name="ui-teamlink-mint-skips-the-authority-check",
+        path="internal/ui/teamlinks.go",
+        old="\t\tif !mayLink(m, actor, t, role) {\n\t\t\treturn \"\", invite.TeamLink{}, ErrNotLinkable",
+        new="\t\tif false && !mayLink(m, actor, t, role) {\n\t\t\treturn \"\", invite.TeamLink{}, ErrNotLinkable",
+        killer="TestAProjectLinkNeedsAMemberManager",
+        extra_killers=("TestAScopeLinkNeedsAdminOnTheScope", "TestALinkCannotConferVerbsItsMinterLacks"),
+        why="the chooser trusted as the check. `Mintable` filters what a BROWSER is offered; a "
+        "hand-made POST names any target, and this is the only gate it meets at mint time.",
+    ),
+    Mutant(
+        name="ui-teamlink-redeem-skips-the-minter-recheck",
+        path="internal/ui/teamlinks.go",
+        old="\t\tif !mayLink(m, minter, t, link.Role) {",
+        new="\t\tif false && !mayLink(m, minter, t, link.Role) {",
+        killer="TestAMinterWhoLostAuthorityMintsNothingUsable",
+        why="REDEEM SKIPS THE RE-CHECK: authority checked once, at mint, and trusted for the "
+        "link's whole life. A reusable link outlives its minter's demotion by up to 30 days, "
+        "and without this every link a removed admin made keeps enrolling strangers.",
+    ),
+    Mutant(
+        name="invite-teamlink-single-use-stops-closing",
+        path="internal/invite/teamlink.go",
+        old="case !l.Reusable && l.Redemptions > 0:",
+        new="case false && l.Redemptions > 0:",
+        killer="TestASingleUseLinkRedeemsExactlyOnce",
+        why="REUSE UNTICKED BUT REDEEMABLE TWICE — the count stored and not consulted, which "
+        "turns every single-use link into open enrolment.",
+    ),
+    Mutant(
+        name="invite-teamlink-revoke-stops-closing",
+        path="internal/invite/teamlink.go",
+        old="\tcase !l.RevokedAt.IsZero():\n\t\treturn StateRevoked",
+        new="\tcase false:\n\t\treturn StateRevoked",
+        killer="TestARevokedLinkIsNotRedeemable",
+        why="A REVOKED LINK STILL REDEEMABLE: the tombstone written and not read, which is the "
+        "one remedy a minter has for a leaked reusable link.",
+    ),
+    Mutant(
+        name="invite-teamlink-expiry-stops-closing-at-the-boundary",
+        path="internal/invite/teamlink.go",
+        old="case !now.Before(l.ExpiresAt):",
+        new="case now.After(l.ExpiresAt):",
+        killer="TestAnExpiredLinkIsNotRedeemable",
+        why="AN EXPIRED LINK REDEEMABLE, at the one instant the two spellings differ: the closed "
+        "boundary written open, so `ExpiresAt` itself still redeems — and the SQL guard pinned "
+        "against `StateAt` would then be pinned against the wrong rule.",
+    ),
+    Mutant(
+        name="ui-teamlink-scope-target-joins-its-whole-project",
+        path="internal/ui/teamlinks.go",
+        old="if err := grant(control.ObjectScope, t.ID, want); err != nil {",
+        new="if err := grant(control.ObjectProject, m.Scopes[t.ID].ProjectID, want); err != nil {",
+        killer="TestARedemptionJoinsExactlyTheSelectedTargets",
+        why="A MULTI-TARGET LINK JOINS A TARGET NOT SELECTED: a scope 'joined' through its owning "
+        "project, which confers every sibling scope the minter never ticked.",
+    ),
+    Mutant(
+        name="ui-teamlink-revoke-skips-the-ownership-check",
+        path="internal/ui/teamlinks.go",
+        old="if !known || link.Inviter != actor.ID {",
+        new="if !known || link.Inviter == \"\" {",
+        killer="TestOnlyTheMinterCanRevokeALink",
+        why="REVOKE BY A NON-OWNER: any signed-in user who learns a digest (it is rendered into "
+        "the minter's page source) could withdraw somebody else's link.",
+    ),
+    Mutant(
+        name="ui-teamlink-overwrites-an-existing-membership",
+        path="internal/ui/teamlinks.go",
+        old="\t\t\tif _, member := m.RoleIn(t.ID, user); member {\n\t\t\t\tcontinue\n\t\t\t}\n\t\t\tif link.Role",
+        new="\t\t\tif _, member := m.RoleIn(t.ID, user); member && false {\n\t\t\t\tcontinue\n\t\t\t}\n\t\t\tif link.Role",
+        killer="TestALinkNeverOverwritesAnExistingMembership",
+        why="`ErrAlreadyAMember`'s hazard on the new writer: `apply` calls `setMembership` "
+        "unconditionally, so a member link redeemed by the sole owner DEMOTES them.",
+    ),
+    Mutant(
+        name="ui-teamlink-reuse-tick-is-ignored",
+        path="internal/ui/team.go",
+        old='reusable := r.PostFormValue(FieldReuse) != ""',
+        new="reusable := true",
+        killer="TestTheTeamLinkFormPassesEveryTickedTargetThrough",
+        why="the dangerous default: every link minted reusable whatever the box said.",
+    ),
+    Mutant(
+        name="ui-team-page-offers-the-unnarrowed-principals-targets",
+        path="internal/ui/team.go",
+        old="view.Mintable = s.teamLinks.Mintable(membershipActor(id))",
+        new="view.Mintable = s.teamLinks.Mintable(id.Principal)",
+        killer="TestANarrowedBearerHasNoTeamLinkAuthority",
+        extra_killers=("TestEveryMembershipDecisionActsAsMembershipActor",),
+        why="`membershipActor` bypassed on the new page: a credential narrowed to one scope is "
+        "shown every project its owner manages as something it can put on a link.",
+    ),
+    Mutant(
+        name="ui-team-mint-acts-as-the-unnarrowed-principal",
+        path="internal/ui/team.go",
+        old="s.teamLinks.Mint(r.Context(), membershipActor(id), targets, role, ttl, reusable)",
+        new="s.teamLinks.Mint(r.Context(), id.Principal, targets, role, ttl, reusable)",
+        killer="TestANarrowedBearerHasNoTeamLinkAuthority",
+        extra_killers=("TestEveryMembershipDecisionActsAsMembershipActor",),
+        why="the escalation `membershipActor` exists for, through the new door: a leaked "
+        "narrowed token mints a reusable link into every project its owner manages.",
+    ),
+    Mutant(
+        name="ui-team-honesty-notice-loses-its-reuse-clause",
+        path="internal/ui/team.go",
+        old='"scope it names. A link that allows reuse can be redeemed by any number of people, any " +\n\t"number of times, until it expires or is revoked. A link stops working',
+        new='"scope it names. A link stops working',
+        killer="TestTheTeamHonestyNoticeIsPinnedWhole",
+        why="the clause that makes the product sound weakest is the reuse one: a reusable link is "
+        "open enrolment until it expires, and a notice without that sentence lets a minter "
+        "believe a link is for the one person they sent it to.",
+    ),
+    # ---- #214's fix round: the audit's findings and the operator's decisions ----------------
+    Mutant(
+        name="ui-teamlink-log-confirms-before-the-authority-write",
+        path="internal/ui/teamlinks.go",
+        old="\tspent, err := c.Store.RedeemLink(token, userID, true, now)\n\tif err != nil {\n\t\treturn Redemption{}, err\n\t}",
+        new="\tspent, err := c.Store.RedeemLink(token, userID, true, now)\n\tif err != nil {\n\t\treturn Redemption{}, err\n\t}\n"
+        "\t_ = c.Store.ConfirmRedemption(spent.Digest, spent.Redemptions)",
+        killer="TestTheRedemptionLogNamesOnlyRealJoins",
+        why="round 1 🟡1, restored: the audit row trusted at the spend. Two tabs on one identity "
+        "spend one reusable link, one journal write is refused, and the log names a principal that "
+        "was never created as 'joined (account created by this link)'.",
+    ),
+    Mutant(
+        name="ui-team-log-renders-an-unconfirmed-row-as-a-join",
+        path="internal/ui/team.go",
+        old="\t\t\tif !red.Confirmed {",
+        new="\t\t\tif false {",
+        killer="TestTheRedemptionLogNamesOnlyRealJoins",
+        extra_killers=("TestTheTeamPageRendersEveryLinkWithItsLog",),
+        why="the store records the truth and the page ignores it — an attempt rendered as a join.",
+    ),
+    Mutant(
+        name="ui-share-revocable-drops-project-wide-grants",
+        path="internal/ui/sharing.go",
+        old="\t\tif !onScope && !onOwner {",
+        new="\t\tif !onScope && (!onOwner || true) {",
+        killer="TestAProjectWideGrantIsListedLabelledAndRevocable",
+        why="round 1 🟡3 and O-b, restored: the take-back list back to scope grants only, so the "
+        "page's note ('keeps it after every grant below is revoked') is false for a project-wide "
+        "grantee and their access needs the CLI to remove.",
+    ),
+    Mutant(
+        name="ui-share-audience-loses-the-project-wide-label",
+        path="internal/ui/sharing.go",
+        old="ByProjectGrant: projectGranted(m, p, owner),",
+        new="ByProjectGrant: false && projectGranted(m, p, owner),",
+        killer="TestAProjectWideGrantIsListedLabelledAndRevocable",
+        why="an audience row that says neither 'via membership' nor 'via a project-wide grant' reads "
+        "as a scope grant — which the take-back list then does not show.",
+    ),
+    Mutant(
+        name="ui-unshare-refuses-every-project-wide-grant",
+        path="internal/ui/sharing.go",
+        old="\t\treturn member && role.CanManageMembers()",
+        new="\t\treturn member && role.CanManageMembers() && false",
+        killer="TestAProjectWideGrantIsListedLabelledAndRevocable",
+        why="the pre-O-b rule ('a grant over a PROJECT is refused here'), restored: a project-wide "
+        "grant is listed with a button that cannot work.",
+    ),
+    Mutant(
+        name="ui-unshare-project-grant-ignores-the-narrowing",
+        path="internal/ui/sharing.go",
+        old="\t\tif auth.Narrowed() || actor.Kind != control.KindUser {",
+        new="\t\tif actor.Kind != control.KindUser {",
+        killer="TestANarrowedBearerCannotRevokeAProjectWideGrant",
+        extra_killers=("TestAProjectWideGrantIsListedLabelledAndRevocable",),
+        why="membership authority reached through a credential narrowed to one scope — the "
+        "escalation `membershipActor` exists for, through `handleUnshare`'s attribution principal.",
+    ),
+    Mutant(
+        name="ui-unshare-project-grant-for-any-member",
+        path="internal/ui/sharing.go",
+        old="\t\treturn member && role.CanManageMembers()",
+        new="\t\treturn member && role != \"\"",
+        killer="TestAProjectWideGrantIsListedLabelledAndRevocable",
+        why="belonging taken for managing: a plain member withdrawing a colleague's project-wide access.",
+    ),
+    Mutant(
+        name="ui-old-share-path-drops-its-query",
+        path="internal/ui/sharehandlers.go",
+        old="\tredirectToTeam(w, teamHref(r.URL.RawQuery, teamShareAnchor))",
+        new="\tredirectToTeam(w, teamHref(\"\", teamShareAnchor))",
+        killer="TestTheOldFlowPathsRedirectToTheTeamPage",
+        why="every bookmarked `/share?scope=…` and every pre-move redirect landing on the index "
+        "instead of the scope it named (O-a: the query is carried).",
+    ),
+    Mutant(
+        name="ui-old-invite-path-keeps-the-pre-move-code",
+        path="internal/ui/invitehandlers.go",
+        old="\tif q.Get(QueryOutcome) == inviteOutcomeRevokedBeforeTeam {",
+        new="\tif false {",
+        killer="TestTheOldFlowPathsRedirectToTheTeamPage",
+        why="on one page `revoked` is the SHARE flow's code: an old invite-revoke link would render "
+        "the share banner about a write that never happened.",
+    ),
+    Mutant(
+        name="ui-team-redirect-gains-an-html-body",
+        path="internal/ui/team.go",
+        old="\tw.Header().Set(\"Location\", href)\n\tw.WriteHeader(http.StatusSeeOther)",
+        new="\tw.Header().Set(\"Location\", href)\n\tw.Header().Set(\"Content-Type\", \"text/html; charset=utf-8\")\n"
+        "\tw.WriteHeader(http.StatusSeeOther)",
+        killer="TestEveryNonPublicHTMLRowIsNoStore",
+        why="`http.Redirect`'s shape: an HTML response this surface did not render through "
+        "`writeHTML`, so it carries no `no-store`.",
+    ),
+    Mutant(
+        name="ui-inviting-without-links-builds",
+        path="internal/ui/server.go",
+        old="if teamLinks = cfg.Inviting.TeamLinks(); teamLinks == nil {",
+        new="if teamLinks = cfg.Inviting.TeamLinks(); false {",
+        killer="TestAnInvitationHalfWithoutTeamLinksIsRefused",
+        why="round 0 D2 / round 1 🟡4: a half-wired server built — invitations whose store never "
+        "hands an unknown token to the link store, so every team link minted refuses at the callback.",
+    ),
+    Mutant(
+        name="main-drops-the-link-store-from-the-invitation-half",
+        path="cmd/cairn-ui/invitations.go",
+        old="\treturn ui.ControlInviting{Authority: authority, Invites: invites, Links: team}",
+        new="\t_ = team\n\treturn ui.ControlInviting{Authority: authority, Invites: invites}",
+        killer="TestTheWiredInvitationHalfRedeemsATeamLink",
+        why="round 1 🟡4, MEASURED: deleting `Links: links` in `main` left both tiers green. This is "
+        "that edit, at the one function `main` now builds both halves with.",
+    ),
+    Mutant(
+        name="ui-link-log-line-loses-the-link",
+        path="internal/ui/inviting.go",
+        old="\tif !r.Link {\n\t\treturn fmt.Sprintf(\"project=%s role=%s\", r.Project, r.Role)",
+        new="\tif true {\n\t\treturn fmt.Sprintf(\"project=%s role=%s\", r.Project, r.Role)",
+        killer="TestALinkRedemptionLogLineNamesTheLink",
+        why="round 1 🟢5, restored: a provisioning line for a team link with a blank project and "
+        "role — a principal created that nobody can attribute to a link.",
+    ),
+    # ---- #214 round 2: the revoke button and the project name are decided per viewer ----
+    Mutant(
+        name="ui-revoke-form-rendered-without-mayrevokegrant",
+        path="internal/ui/render.go",
+        old="\t\tg.If(csrf != \"\" && row.MayRevoke, h.FormEl(",
+        new="\t\tg.If(csrf != \"\", h.FormEl(",
+        killer="TestARevokeFormIsRenderedOnlyWhereTheRevokeWouldBeAuthorised",
+        why="round 2 🟡A, restored: the button gated on a session token alone, so an outsider holding "
+        "admin on one scope is offered Revoke on a project-wide grant that POST /unshare refuses (403).",
+    ),
+    Mutant(
+        name="ui-project-wide-row-names-its-project-to-outsiders",
+        path="internal/ui/sharing.go",
+        old="\t\t\t\trow.Project = \"\"",
+        new="\t\t\t\trow.Project = row.Project + \"\"",
+        killer="TestARevokeFormIsRenderedOnlyWhereTheRevokeWouldBeAuthorised",
+        why="the project-wide label naming the owning project to a scope admin who is in no project "
+        "there — a fact about a project they were never shown.",
     ),
 
     # ---- the `## Requirements` section: the boundary, the count, the attribution ----

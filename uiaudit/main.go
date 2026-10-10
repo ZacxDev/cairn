@@ -419,9 +419,13 @@ func walkQueue(browser *Browser, world *World, seed []Target, ledger []string, w
 // (PostgreSQL), and without one the invite rows render `ui.NoInviteStore` — the state this world
 // captures and `refuseJournalWorldFellBack` asserts. Capturing the form means a `services:
 // postgres` on the uiaudit job, deferred in the mobile plan (Q10) until a defect is found there.
+//
+// 🔴 ONE ROW NOW, `GET /team`, BECAUSE BOTH FLOWS MOVED THERE (operator decision O-a): the
+// share index and the invite index above are the Team page's sections, `/share` and `/invite`
+// are bodiless 303s (`notADocument`), and the per-scope page with its grant form is
+// `/team?scope=…`, reached through the Team page's expansion.
 var journalWorldPaths = map[string]bool{
-	ui.SharePath:  true,
-	ui.InvitePath: true,
+	ui.TeamPath: true,
 }
 
 // JournalWorld is the [Capture.World] label of the journal-backed world.
@@ -474,27 +478,32 @@ func walkJournalWorld(ctx context.Context, repoRoot, uiBinary, dir string, port 
 // at 200 with real-looking pages, and every collector would describe them in detail. Three
 // claims, each failing with its own line:
 //
-//   - at least one per-scope share page (`/share?…`) was captured WITH the grant form (a form
-//     posting to `ui.SharePath`) — the page the token-file world cannot reach at all;
-//   - no share capture carries `ui.ReadOnlyAuthority`, the token-file world's own sentence;
-//   - the invite index was captured carrying `ui.NoInviteStore`, which is the declared,
-//     UNCAPTURED-mint-form state of a world with no database (Q10).
+//   - at least one per-scope Team page (`/team?scope=…`) was captured WITH the grant form (a
+//     form posting to `ui.SharePath`) — the page the token-file world cannot reach at all;
+//   - no Team capture carries `ui.ReadOnlyAuthority`, the token-file world's own sentence;
+//   - the Team page was captured carrying `ui.NoInviteStore` TWICE — its invite section and its
+//     team-link section — the declared, UNCAPTURED-mint-forms state of a world with no
+//     database (Q10). Before both flows moved onto `/team` (O-a) these were three pages' claims.
 func refuseJournalWorldFellBack(captures []*Capture) error {
-	var grantForms, readOnlyShare, inviteNoStore, inviteCaptures int
+	var grantForms, readOnlyShare, teamNoStore, teamCaptures int
 	for _, c := range captures {
-		path, _, _ := strings.Cut(c.Target.Path, "?")
-		if path == ui.SharePath {
-			if strings.Contains(c.Target.Path, "?") && slicesContains(c.FormActions, ui.SharePath) {
+		path, query, _ := strings.Cut(c.Target.Path, "?")
+		if path == ui.TeamPath {
+			if strings.Contains(query, ui.QueryScope+"=") && slicesContains(c.FormActions, ui.SharePath) {
 				grantForms++
 			}
 			if slicesContains(c.ReadOnlyNotices, ui.ReadOnlyAuthority) {
 				readOnlyShare++
 			}
-		}
-		if path == ui.InvitePath {
-			inviteCaptures++
-			if slicesContains(c.ReadOnlyNotices, ui.NoInviteStore) {
-				inviteNoStore++
+			teamCaptures++
+			n := 0
+			for _, notice := range c.ReadOnlyNotices {
+				if notice == ui.NoInviteStore {
+					n++
+				}
+			}
+			if n == 2 {
+				teamNoStore++
 			}
 		}
 	}
@@ -507,16 +516,17 @@ func refuseJournalWorldFellBack(captures []*Capture) error {
 		bad = append(bad, fmt.Sprintf("%d share capture(s) carry the TOKEN-FILE authority's read-only notice — the "+
 			"pod is not serving from the control journal it was given", readOnlyShare))
 	}
-	if inviteNoStore == 0 {
-		bad = append(bad, fmt.Sprintf("the invite index was captured %d time(s) and NONE carries the no-database "+
-			"notice, so the state recorded as 'mint form uncaptured' is not the state that was measured", inviteCaptures))
+	if teamNoStore == 0 {
+		bad = append(bad, fmt.Sprintf("the Team page was captured %d time(s) and NONE carries the no-database "+
+			"notice on BOTH its invite section and its team-link section, so the state recorded as 'mint forms "+
+			"uncaptured' is not the state that was measured", teamCaptures))
 	}
 	if len(bad) > 0 {
 		return fmt.Errorf("the JOURNAL-BACKED WORLD FELL BACK or did not reach its pages:\n  %s", strings.Join(bad, "\n  "))
 	}
 	fmt.Printf("uiaudit: [%s] reached: %d per-scope share capture(s) with the grant form, 0 carrying the token-file "+
-		"notice; %d invite capture(s) in the no-database state (the MINT FORM is UNCAPTURED: it needs -db-dsn)\n",
-		JournalWorld, grantForms, inviteNoStore)
+		"notice; %d Team capture(s) in the no-database state (the MINT FORMS are UNCAPTURED: they need -db-dsn)\n",
+		JournalWorld, grantForms, teamNoStore)
 	return nil
 }
 

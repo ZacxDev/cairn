@@ -475,7 +475,9 @@ func main() {
 		// against one model and recorded against another is a page that authorises from a
 		// world that no longer exists. This is the third call site handed that value, and
 		// all three are the same object on purpose.
-		inviting = ui.ControlInviting{Authority: authority, Invites: pgstore.NewInviteStore(pgDB)}
+		// Both halves from ONE database, through `wireInvitations` — see it for why that is
+		// a function rather than two lines here.
+		inviting = wireInvitations(authority, pgstore.NewInviteStore(pgDB), pgstore.NewTeamLinkStore(pgDB))
 		// 🔴 SAY THAT `-session-file` IS NOW INERT, BECAUSE A MANIFEST CARRYING BOTH IS THE
 		// SHAPE THAT ARRIVES. It is announced rather than refused: the flag has a code
 		// DEFAULT, so "set" cannot be distinguished from "defaulted" without asking
@@ -839,9 +841,14 @@ func main() {
 		sessionsIn = "sessions in postgres"
 	}
 	invitesIn := "NO invitation store (no $" + EnvUIDatabase +
-		": /invite renders a notice and its writes answer 501)"
+		": /invite and /team render a notice and their writes answer 501)"
 	if cfg.Inviting != nil {
 		invitesIn = "invitations in postgres"
+	}
+	// Read off the wired object for the reason this whole line is: a caption from the flag
+	// would announce team links on a deployment whose branch never built them.
+	if cfg.Inviting != nil && cfg.Inviting.TeamLinks() != nil {
+		invitesIn += ", team links in postgres"
 	}
 	stateMode := sessionsIn + ", " + invitesIn
 	// 🔴 AND WHETHER ARCS CAN BE SHOWN, read off the wired SOURCE for the reason the two halves
