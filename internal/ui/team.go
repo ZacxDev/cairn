@@ -81,9 +81,14 @@ type TeamView struct {
 	// Invitable is the projects this caller may invite into — `Inviting.Invitable`. Nil
 	// with NoInviteStore when there is no invitation store.
 	Invitable []control.NamedProject
-	// NoInviteStore is true when the deployment has no database: the invite list and the
-	// whole team-link half say `NoInviteStore` instead.
+	// NoInviteStore is true when there is no INVITATION store: the invite list says
+	// `NoInviteStore` instead.
 	NoInviteStore bool
+	// NoLinkStore is true when there is no TEAM-LINK store: the link half says `NoInviteStore`
+	// (the same database is what is missing). Separate from NoInviteStore because a server may
+	// hold invitations without links, and folding the two made the invite list claim "no
+	// invitation store" on a server that had one.
+	NoLinkStore bool
 	// Mintable is the link form's target chooser.
 	Mintable []MintableTarget
 	// Links is this caller's own links, newest first.
@@ -159,7 +164,8 @@ func (s *Server) teamView(r *http.Request, id identity.Identity) TeamView {
 		App:           s.app,
 		CSRF:          csrfTokenFor(r),
 		Shareable:     s.sharing.Administrable(id.Auth),
-		NoInviteStore: s.inviting == nil || s.teamLinks == nil,
+		NoInviteStore: s.inviting == nil,
+		NoLinkStore:   s.teamLinks == nil,
 	}
 	if s.inviting != nil {
 		view.Invitable = s.inviting.Invitable(membershipActor(id))
@@ -386,8 +392,8 @@ func teamLinkSection(v TeamView) g.Node {
 	return h.Section(
 		h.Class("team-links"),
 		h.H3(g.Text("Team links")),
-		g.If(v.NoInviteStore, h.P(h.Class("read-only"), g.Text(NoInviteStore))),
-		g.If(!v.NoInviteStore, g.Group([]g.Node{
+		g.If(v.NoLinkStore, h.P(h.Class("read-only"), g.Text(NoInviteStore))),
+		g.If(!v.NoLinkStore, g.Group([]g.Node{
 			h.H4(g.Text("Create a team link")),
 			g.If(len(v.Mintable) == 0, h.P(h.Class("empty"), g.Text(
 				"No project or scope is yours to put on a link. That is an authority answer: a "+

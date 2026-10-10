@@ -218,6 +218,23 @@ func TestTheTeamPageAnswersHonestlyWithNoStore(t *testing.T) {
 	}
 }
 
+// TestInvitationsWithoutLinksSayNoStoreOnlyOnTheLinkHalf: a server holding invitations and no
+// link store must not tell the reader it has no invitation store. RED with the two flags
+// folded into one (`NoInviteStore: inviting == nil || teamLinks == nil`, the first draft).
+func TestInvitationsWithoutLinksSayNoStoreOnlyOnTheLinkHalf(t *testing.T) {
+	rig, _ := newTeamHTTPRig(t, func(cfg *Config) { cfg.TeamLinks = nil })
+	rec := rig.get(TeamPath)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /team answered %d", rec.Code)
+	}
+	if got := strings.Count(pageText(rec.Body.String()), normalizeSpace(NoInviteStore)); got != 1 {
+		t.Errorf("the page says NoInviteStore %d time(s), want exactly 1 (the link half only)", got)
+	}
+	if !strings.Contains(rec.Body.String(), `href="`+InvitePath+"?"+QueryProject+"="+string(fixtureNamedProject.ID)+`"`) {
+		t.Error("the invite list is empty on a server that HOLDS invitations")
+	}
+}
+
 // TestTheTeamPageRendersEveryLinkWithItsLog — the minter's list: state, reuse, count, each
 // target, each redemption, and a revoke form only for an OPEN link.
 func TestTheTeamPageRendersEveryLinkWithItsLog(t *testing.T) {
@@ -274,7 +291,7 @@ func TestTheTeamHonestyNoticeIsPinnedWhole(t *testing.T) {
 	}
 	for name, view := range map[string]TeamView{
 		"index":    {Viewer: "v", CSRF: renderCSRF},
-		"no-store": {Viewer: "v", CSRF: renderCSRF, NoInviteStore: true},
+		"no-store": {Viewer: "v", CSRF: renderCSRF, NoInviteStore: true, NoLinkStore: true},
 		"minted":   {Viewer: "v", CSRF: renderCSRF, Minted: &MintedTeamLink{Link: JoinPath + "?invite=x"}},
 	} {
 		if got := pageText(renderNode(t, TeamPage(view))); !strings.Contains(got, want) {
