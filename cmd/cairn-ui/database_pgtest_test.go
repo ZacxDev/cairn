@@ -139,7 +139,7 @@ func TestWithADatabaseTheSurfaceMovesItsStateThereAndHoldsInvitations(t *testing
 	}
 
 	// (3) Both halves of the announcement.
-	for _, want := range []string{"sessions in postgres", "invitations in postgres"} {
+	for _, want := range []string{"sessions in postgres", "invitations in postgres", "team links in postgres"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("the startup line does not say %q:\n%s", want, line)
 		}
