@@ -412,6 +412,11 @@
           # row that test is green on the dev host and RED in the sandbox, which is
           # the two-tier split the three rows above each paid for once.
           || (rel == "internal/pytext/testdata/decode_replace.json")
+          # 🔴 AND THE SYNTHETIC TRANSCRIPT WORLD, FOR THE SAME REASON: `internal/transcript`'s
+          # shape ledger reads it, so without this row that test is green on the dev host and
+          # RED in the sandbox. ONE file on purpose — the Go tests materialise the session
+          # layout from it — so one row carries every session, subagent, blob and ledger.
+          || (rel == "internal/transcript/testdata/synthetic_world.json")
           # 🔴 AND THE BROWSER SURFACE'S STYLESHEET, WHICH IS `//go:embed`ed AND THEREFORE
           # A COMPILE-TIME INPUT RATHER THAN A FIXTURE. `internal/ui/stylesheet.go` embeds
           # `app.css`; a filtered tree without it does not fail a test, it fails to
