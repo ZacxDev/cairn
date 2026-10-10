@@ -98,6 +98,12 @@ field names and types alone.
   covering zsh glob qualifiers and `=(…)` as well as bash substitutions; and `ls-entries` adds `*`
   whatever its flags, because both clients ignore its `--scope`. Redirections are stripped before
   splitting, zsh's `|&`/`&|`/`&!` are split on, and a repeated `--scope` is read last-wins.
+- *Revision 12* closes the two holes revision 11's nits opened: a stripped redirection target or
+  here-string that contains the name still counts as a candidate token (an input redirection can
+  feed it to a shell), and `--scope` values are read as the UNION over every spelling (`--scope X`,
+  `--scope=X`, Python prefix abbreviations), with an unclassifiable possible abbreviation adding
+  `*` — replacing revision 11's last-wins, which a literal-only parser got wrong. `sync` is named
+  as accepting and ignoring `--scope` while printing only banners.
 
 ## Goal and premise
 
@@ -629,7 +635,10 @@ script that prints only counts.
      `>|`, …) together with a PLAIN target word is removed before anything else, because nearly every
      real call carries one (`2>&1`, `2>/dev/null`) and leaving them in would turn most scoped calls
      into `*`; a redirection whose target contains any disqualifying character below is not
-     stripped, and disqualifies the line; (2) the line is split into SEGMENTS at the control
+     stripped, and disqualifies the line; and a stripped target (or here-string / here-doc text)
+     that contains a candidate substring STILL counts as a candidate token of its segment, because
+     an input redirection can feed it to a shell that executes it (`bash <<< "cairn ls-entries"`,
+     `bash < cairn-dump.sh`) — so that segment adds `*`; (2) the line is split into SEGMENTS at the control
      operators of bash and zsh (newline, `;`, `&`, `&&`, `|`, `||`, and zsh's `|&`, `&|`, `&!` —
      an operator the splitter misses leaves its text inside a segment, where it disqualifies that
      segment, so a missed operator fails safe); (3) a segment is a **recognised, fully parsed
@@ -643,14 +652,23 @@ script that prints only counts.
      recognised, fully parsed invocation; (b) EVERY candidate token in the line is either the
      program word of such an invocation or an ARGUMENT within the same segment as one (any word
      after its program word — the `--scope` value, a path, a quoted search term); (c) each such
-     invocation carries an explicit `--scope`, read LAST-WINS when repeated, as both clients read
-     it (Go `internal/client/cli.go:493-494` overwrites `opts.Scope`; Python's `argparse` keeps the
-     last value), and its verb HONOURS that `--scope`. **`ls-entries` does not**: the Go client's
+     invocation carries an explicit `--scope`, and its verb HONOURS it. **Every value given to
+     `--scope` in any spelling counts, as a UNION**: `--scope X`, `--scope=X` (the Go client splits
+     a flag at `=`, `internal/client/cli.go:444`), and any unique prefix `--s…` of `--scope` the
+     Python client's `argparse` accepts (it leaves prefix abbreviation on, `cairn:2542`; the Go
+     client documents it as a Python-only surface, `cli.go:293-295`); a flag the parser cannot
+     classify that could be such an abbreviation adds `*`. The union over-reports when a value is
+     overridden — both clients keep only the last — and over-reporting only hides the session from
+     more people, which fails safe. *Revision 11 said "read LAST-WINS", which is exact only for a
+     parser that knows every spelling: a literal-only parser reads `cairn sessions --scope
+     alpha-notes --scope=beta-notes` as `{alpha-notes}` while the client lists `beta-notes`;
+     retracted.* **`ls-entries` does not**: the Go client's
      `LsEntries` walks every scope of every instance (`internal/client/verbs.go:106-125`) and the
      Python `cmd_ls_entries` passes `scope=None` (`cairn:1203-1222`), and it prints no header — so
-     `ls-entries` adds `*` whatever its flags. Every other verb that accepts `--scope` resolves it
-     (`sessions`, `arcs`, `arc-show`, `validate` read `opts.Scope`; `arcs --all-scopes` is already
-     `*`). Arguments are exempt because the `cairn` client never executes its arguments, and in
+     `ls-entries` adds `*` whatever its flags. `sync` also accepts and ignores `--scope`
+     (`internal/client/verbs.go:69-70`) but prints only banners, so it puts no store content in the
+     transcript and needs no rule. Every other verb that accepts `--scope` resolves it (`sessions`,
+     `arcs`, `arc-show`, `validate` read `opts.Scope`; `arcs --all-scopes` is already `*`). Arguments are exempt because the `cairn` client never executes its arguments, and in
      bash and zsh an argument runs code only through the expansions the disqualifying characters
      cover; a smuggled second command (`… && bash -c "cairn recall"`, `xargs cairn …`) sits in
      another segment or behind a non-`cairn` program word, so its token still counts. *Revision 10
@@ -1214,19 +1232,19 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 | **S9** | **Example plugin A — summaries.** `plugins/summary` in a NESTED stdlib-only module (provider HTTP API over `net/http`, no SDK), host-side user timer, incremental per decision 13, its own spend cap, a fake provider in tests. Reads through `view=conversation` by default. | `depspolicy.DeclaredNestedModules`; `flake.nix` package; `ci.yml` step for its suite. | A separate binary; nothing runs until registered and toggled. |
 | **S10** | **Example plugin B — ClickUp.** `plugins/clickup` in the same nested module: ticket list fetch (read-only token, 429-aware), deterministic matchers (decision 14) over transcript records (`gitBranch`, `pr-link`, URLs), commit messages and trailers from a host-local repo list, PR bodies via the host's own GitHub CLI, entry refs; LLM suggestions using plugin A's summaries when present (`output:read:summary` — the cross-plugin test of the abstraction). Synthetic ClickUp fixtures only. Then closing wiring: `sabotaged=13 caught=13`, measured floors, the `AGENTS.md` row with an equal eviction (Q11). | same nested module; flake package; `ci.yml`; `AGENTS.md`; READMEs. | Separate binary; inert until registered and toggled. |
 
-**Mutant rows** (indicative names). The pinned count starts at **296**; the **51** rows below would
-take it to **347** if every one lands as named (revision 7 deleted six, listed where they were;
-revisions 8, 9 and 10 added one each, revision 11 two) — the pinned number is whatever the battery declares
+**Mutant rows** (indicative names). The pinned count starts at **296**; the **53** rows below would
+take it to **349** if every one lands as named (revision 7 deleted six, listed where they were;
+revisions 8, 9 and 10 added one each, revisions 11 and 12 two each) — the pinned number is whatever the battery declares
 at each merge, never this sum. S0, S1, S9 and S10 add no row to the authz battery (S1's guards are
 measured by the redaction corpus; S9/S10 by their own suites).
 
-- **S2 (8, `scopeuse`):** `scopeuse-all-scopes-header-names-a-scope`,
+- **S2 (10, `scopeuse`):** `scopeuse-all-scopes-header-names-a-scope`,
   `scopeuse-scopeless-header-dropped` (the `renderer.go:158` form dropped instead of `*`),
   `scopeuse-cwd-derived-command-dropped` (a cwd-derived invocation — no explicit `--scope` — adds
   nothing instead of `*`), `scopeuse-unrecognised-invocation-adds-nothing` (a candidate line the
   parser cannot decompose adds nothing instead of `*`), `scopeuse-unaccounted-candidate-token-ignored`
   (a line with one recognised scoped invocation and another candidate token OUTSIDE its arguments yields only the
-  explicit scope, no `*`), `scopeuse-argument-counted-as-candidate` (a cairn-containing ARGUMENT of a recognised, fully parsed, scoped invocation is counted as a candidate and adds `*`), `scopeuse-disqualifying-character-ignored` (a segment whose argument carries `(`, `)`, `$`, a backtick, `{`, `}` or a word-initial `=` is still treated as fully parsed), `scopeuse-ls-entries-scope-honoured` (`ls-entries --scope X` yields `{X}` instead of `{X, *}`). *DELETED in revision 7 with the machinery they guarded (decision 3):*
+  explicit scope, no `*`), `scopeuse-argument-counted-as-candidate` (a cairn-containing ARGUMENT of a recognised, fully parsed, scoped invocation is counted as a candidate and adds `*`), `scopeuse-disqualifying-character-ignored` (a segment whose argument carries `(`, `)`, `$`, a backtick, `{`, `}` or a word-initial `=` is still treated as fully parsed), `scopeuse-ls-entries-scope-honoured` (`ls-entries --scope X` yields `{X}` instead of `{X, *}`), `scopeuse-scope-spelling-missed` (only the literal `--scope X` is read, so `--scope=X` and prefix abbreviations are missed), `scopeuse-stripped-target-not-candidate` (a stripped redirection target or here-string containing the name is dropped instead of counting as a candidate). *DELETED in revision 7 with the machinery they guarded (decision 3):*
   `scopeuse-paired-header-ignored`, `scopeuse-chained-call-header-suppresses-star`,
   `scopeuse-hook-attachment-counts-as-result`, `scopeuse-missing-result-becomes-star`,
   `scopeuse-chained-command-resolved`.
@@ -1351,14 +1369,23 @@ run time).
   alpha-notes && bash -c "cairn recall"` → `{alpha-notes, *}` (the second segment's program word
   is `bash`), `cairn search --scope alpha-notes "$(cairn recall)"` → `{alpha-notes, *}` (command
   substitution disqualifies the segment), and an upper-case `CAIRN recall` → `*` (case-insensitive
-  match); the zsh and expansion forms, each → `{alpha-notes, *}`: `cairn search --scope
-  alpha-notes *(e:'cairn ls-entries':)` (a zsh glob qualifier — one shell word, no `$(`), `cairn
-  search --scope alpha-notes =(cairn recall)` (zsh process substitution), and `cairn recall
-  --scope {alpha-notes,beta-notes}` (brace expansion) (mutant
+  match); the zsh and expansion forms, each adding `*`: `cairn search --scope alpha-notes
+  *(e:'cairn ls-entries':)` → `{alpha-notes, *}` (a zsh glob qualifier — one shell word, no `$(`),
+  `cairn search --scope alpha-notes =(cairn recall)` → `{alpha-notes, *}` (zsh process
+  substitution), and `cairn recall --scope {alpha-notes,beta-notes}` → a set CONTAINING `*` (brace
+  expansion; the shell runs `--scope alpha-notes --scope beta-notes`, and the segment is
+  disqualified before any `--scope` is read) (mutant
   `scopeuse-disqualifying-character-ignored`; control: a test for only `$(`, backtick, `<(`, `>(`
   — revision 10's list — passes all three); `cairn ls-entries --scope alpha-notes` →
-  `{alpha-notes, *}` (mutant `scopeuse-ls-entries-scope-honoured`); `cairn recall --scope
-  beta-notes --scope alpha-notes` → `{alpha-notes}` (last wins); and `cairn recall --scope
+  `{alpha-notes, *}` (mutant `scopeuse-ls-entries-scope-honoured`); the `--scope` UNION in every
+  spelling: `cairn recall --scope beta-notes --scope alpha-notes` → `{alpha-notes, beta-notes}`,
+  `cairn sessions --scope alpha-notes --scope=beta-notes` → `{alpha-notes, beta-notes}`, `cairn
+  recall --sco beta-notes` → `{beta-notes}` and `cairn recall --sco=beta-notes` → `{beta-notes}`
+  (Python prefix abbreviations) (mutant `scopeuse-scope-spelling-missed`: a parser reading only the literal `--scope X` misses
+  the `=` and abbreviated values); the redirection-target rule: `bash <<< "cairn ls-entries";
+  cairn recall --scope alpha-notes` → `{alpha-notes, *}` and `bash < cairn-dump.sh && cairn recall
+  --scope alpha-notes` → `{alpha-notes, *}` (mutant `scopeuse-stripped-target-not-candidate`: the
+  stripped target vanishes and the line yields `{alpha-notes}`); and `cairn recall --scope
   alpha-notes 2>&1 | head` → exactly `{alpha-notes}` (the redirection is stripped before
   splitting, and the second segment holds no candidate token; control: splitting before
   stripping cuts `2>&1` at its `&` and leaves a `1` segment and a malformed first one); a
