@@ -117,6 +117,27 @@ func TestTheMintResolvesAHumanOwnerOnce(t *testing.T) {
 	}
 }
 
+// TestARenamedUserStillResolvesByEmailAndNowByDisplayName: after `user-renamed`, `PrincipalFor`
+// renders the display name — so a lookup on the rendered display ALONE stops resolving the email
+// an operator has always used. Both spellings must name the same one principal.
+func TestARenamedUserStillResolvesByEmailAndNowByDisplayName(t *testing.T) {
+	at := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	m, err := control.Replay([]control.Event{
+		{Kind: control.EventUserCreated, At: at, UserID: "usr_renamed", Provider: "notes-idp",
+			Subject: "subject-0001", Email: "rowan@notes.example.invalid"},
+		{Kind: control.EventUserRenamed, At: at, UserID: "usr_renamed", DisplayName: "octocat-example"},
+	})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	want := presence.Owner{Kind: control.KindUser, ID: "usr_renamed"}
+	for _, raw := range []string{"rowan@notes.example.invalid", "octocat-example"} {
+		if got, err := resolvePresenceOwner(m, raw); err != nil || got != want {
+			t.Errorf("resolvePresenceOwner(%q) = %s, %v; want %s", raw, got, err, want)
+		}
+	}
+}
+
 // presenceChild runs this test binary as `cairn-ui` over a seeded journal with `extra` flags.
 type presenceChild struct {
 	cmd    *exec.Cmd

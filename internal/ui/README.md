@@ -3849,3 +3849,46 @@ Each on a scratch copy with no `.git`:
 - **An intermediary.** A proxy or CDN in front of the deployment may store or rewrite regardless.
 - **Non-HTML responses.** `writePlain` refusals and `http.Redirect` bodies carry no `Cache-Control`;
   neither carries authority-narrowed content, and decision 8 is about pages.
+
+# Phase R — the instance label in every title and header
+
+`cmd/cairn-ui -instance-name` (`$CAIRN_UI_INSTANCE_NAME`) is OPTIONAL and arms nothing. It rides on
+`App.Instance` because every frame already receives an `App`; `Armed()` reads `Name` alone and the
+manifest never reads `Instance`. Read raw with the `-app-*` blank policy (a written blank is a
+refusal, exit 78); shape judged once, by `App.Validate`, armed or not: at most 32 characters, no
+surrounding whitespace, no control, format (bidi, zero-width) or line/paragraph-separator character.
+It is PUBLIC — the sign-in page renders it.
+
+## 🔴 The format, and why the label comes first
+
+| | root | any other page |
+|---|---|---|
+| unset | `cairn` | `cairn — <page>` (unchanged) |
+| set | `<instance> · cairn` | `<instance> — <page> · cairn` |
+
+A tab shows the START of a title and cuts the end; the label exists to tell two deployments' tabs
+apart, so it goes first. The page is second (it tells two tabs of ONE deployment apart), the product
+last. The heading shows the label inside the `<h1>` — not as a new header item, which would take a
+cell in the compact header's source-ordered grid.
+
+## The guards, and the one the mutation battery forced
+
+`documentTitle` is the one composer and `wordmark` the one heading. Three guards, three claims:
+`TestEveryFrameTitleIsComposedByDocumentTitle` (AST: every `c.HTML5Props` `Title` is a call to it),
+`TestEveryPageCarriesTheInstanceLabel` (behavioural: a link-following crawl of 21 pages including both
+public frames), and `TestNoPageLabelSpellsTheProductName` (AST over every label argument). The third
+exists because a `shell("cairn — arcs", …)` on the CONFIGURED arcs-index branch survived the first
+two: the AST check saw a well-formed call and the crawl never reaches that branch (the fixture has no
+arc journal). It is a guard on a word, and says so.
+
+## The RED proof
+
+- Unset is inert: 19 crawled pages compared against `origin/main` page-for-page, with the content-hashed
+  stylesheet URL normalised — 0 differ; with a label set, 19 of 19 differ (the control). The stylesheet
+  URL itself DOES change on every page, because `app.css` gained the `.instance-name` rules.
+- `TestAnUnlabelledDeploymentRendersTodaysTitlesAndHeader` is an INVARIANT guard: green at `origin/main`.
+
+## What these guards still cannot see
+
+- A label built from a VARIABLE holding "cairn — " on an uncrawled branch (the word guard reads literals).
+- How a given browser, or an installed standalone window, truncates or decorates the title.

@@ -207,7 +207,7 @@ func ArcsIndexPage(v PageView) g.Node {
 	rep := *v.ArcsIndex
 	crumbs := []crumb{{Label: "arcs"}}
 	if !rep.Configured {
-		return shell("cairn — arcs", v, crumbs,
+		return shell("arcs", v, crumbs,
 			h.Section(h.Class("card"), h.ID("arcs-index"),
 				h.H2(g.Text("Arcs")),
 				h.P(h.Class("empty"), h.TitleAttr(report.RegistrationsUnconfiguredBody), g.Text(arcsOff)),
@@ -237,7 +237,7 @@ func ArcsIndexPage(v PageView) g.Node {
 	if v.ArcsAll {
 		countText = plural(len(rows), "arc", "arcs")
 	}
-	return shell("cairn — arcs", v, crumbs,
+	return shell("arcs", v, crumbs,
 		h.Section(
 			h.Class("card"),
 			h.ID("arcs-index"),

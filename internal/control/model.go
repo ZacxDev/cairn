@@ -194,12 +194,18 @@ type (
 	// mutable at the provider and is reused across providers, so keying on it
 	// merges two people who share an address at two IdPs. Email is carried for
 	// display and for invites only.
+	//
+	// `DisplayName` is the OPERATOR-written name `displayOf` prefers over both — set by
+	// `user-created` or `user-renamed`, never by an identity provider. "" means none was
+	// written, which is every user in a journal older than the field. See
+	// `user_display.go` for the alphabet, the uniqueness rule and why each exists.
 	User struct {
-		ID        ID
-		Provider  string
-		Subject   string
-		Email     string
-		CreatedAt time.Time
+		ID          ID
+		Provider    string
+		Subject     string
+		Email       string
+		DisplayName string
+		CreatedAt   time.Time
 	}
 
 	// Project owns scopes and carries membership.

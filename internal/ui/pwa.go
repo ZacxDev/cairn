@@ -45,6 +45,13 @@ import (
 // ⚠ `Name` IS PUBLIC. The manifest is served before authentication, so whatever is configured
 // here is readable by anybody who can reach the sign-in page — put nothing in it you would not
 // put there.
+//
+// ⚠ `Instance` RIDES HERE AND ARMS NOTHING. It is the deployment's LABEL (`-instance-name`, see
+// `title.go`), carried on this struct because every frame already receives an `App` — the armed
+// route walk is what notices a page that forgot to copy it — so the label reaches every page by
+// the path the PWA head already proved, rather than by a second field each handler must remember.
+// `Armed` reads `Name` alone, and the manifest never reads `Instance`: the installed app's name is
+// `-app-name`'s, and an operator who wants the two to agree sets both.
 type App struct {
 	// Name is the manifest `name`, the install dialog's title. "" = unarmed.
 	Name string
@@ -52,6 +59,10 @@ type App struct {
 	ShortName string
 	// IconVariant selects one of [IconVariants]; REQUIRED when `Name` is set.
 	IconVariant string
+	// Instance is this deployment's label in every page title and header, "" for none — in
+	// which case every title and header is byte-identical to a build without it. See `title.go`.
+	// ⚠ PUBLIC, for `Name`'s reason: the sign-in page renders it before authentication.
+	Instance string
 }
 
 // Armed answers whether this deployment is installable at all.
@@ -85,6 +96,11 @@ var (
 // in flag names. A BLANK value is not judged here: that is a property of the operator's LINE (a
 // whitespace flag or variable), and `cmd/cairn-ui` refuses it before a value ever reaches this.
 func (a App) Validate() error {
+	// FIRST AND UNCONDITIONAL: the instance label arms nothing, so it is judged on an unarmed
+	// deployment too — it is rendered on every page whether or not the app is installable.
+	if err := validInstanceName(a.Instance); err != nil {
+		return err
+	}
 	if !a.Armed() {
 		return nil
 	}

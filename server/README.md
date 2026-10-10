@@ -1280,6 +1280,22 @@ kubectl exec -n <ns> deploy/<name> -- cairn-server -create-user \
 Exit **0** = written (the ids go to stdout); exit **78** = nothing was written, and the
 reason is on stderr.
 
+**A user's display name** — what the audit line's `identity=`, every written bullet's ACTOR and
+the browser's "signed in as" render — is the journal's answer: an operator-written
+`display_name` if one exists, else the email, else `<provider>:<subject>`. Set it at creation
+with `-display-name`, or later with one `user-renamed` record:
+
+```sh
+kubectl exec -n <ns> deploy/<name> -- cairn-server -rename-user \
+  -rename-user-id usr_… -rename-display-name <name>
+```
+
+The name is `[A-Za-z0-9]` then `[A-Za-z0-9._-]`, at most 32, and unique among users
+case-insensitively; no identity-provider claim ever reaches it. Why each rule exists (each one
+closes an attribution-spoofing shape) is in `internal/control/user_display.go`. ⚠ A journal
+holding a `user-renamed` record is **refused whole by a build older than this one** — unknown
+event kinds always are — so roll the pod forward before appending one.
+
 ⚠ **A scope's display name is the DIRECTORY name under the store root**, and creating the
 record does **not** create the directory. Two scope records whose names fold alike —
 `Quarry_Notes` and `quarry-notes` are one directory — are refused across the whole

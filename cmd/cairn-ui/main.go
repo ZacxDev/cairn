@@ -296,6 +296,12 @@ func main() {
 	appIconVariant := flag.String(flagAppIconVariant, os.Getenv(EnvUIAppIconVariant),
 		"which committed icon this instance installs with — one of: "+strings.Join(ui.IconVariants(), ", ")+
 			". NO DEFAULT, and REQUIRED with -"+flagAppName)
+	// The instance LABEL — not the app identity above; see `app.go`.
+	instanceName := flag.String(flagInstanceName, os.Getenv(EnvUIInstanceName),
+		fmt.Sprintf("this deployment's label, shown first in every page title (`<instance> — <page> · cairn`) "+
+			"and beside the wordmark, so two deployments' browser tabs can be told apart. Optional, at most %d "+
+			"characters. PUBLIC — the sign-in page renders it. Arms nothing (unlike -%s)",
+			ui.InstanceNameMax, flagAppName))
 	// ⚠ THERE IS NO `-routes` FLAG HERE, UNLIKE `cairn-server`, AND THE ASYMMETRY IS
 	// DELIBERATE. The pod prints its ledger because a Python corpus owns its served
 	// contract and cannot read a compiled binary — the printed table is the only way
@@ -337,6 +343,11 @@ func main() {
 	}
 	if appWarning != "" {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+appWarning)
+	}
+	app.Instance, err = resolveInstance(appLines(flagInstanceName, EnvUIInstanceName, *instanceName))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
+		os.Exit(exitConfig)
 	}
 
 	// 🔴 THE ARC JOURNAL IS CHECKED BEFORE ANYTHING IS SERVED, WITH THE POD'S OWN FUNCTION. A
@@ -692,7 +703,8 @@ func main() {
 		// thing — so they agree by both taking the default rather than by one being
 		// handed the other's.
 		Log: os.Stderr,
-		// The zero value when `-app-name` is unset, which is the unarmed surface.
+		// The zero value when `-app-name` is unset, which is the unarmed surface; `Instance` is
+		// `-instance-name`'s, set whether or not the app is armed.
 		App: app,
 	}
 	srv, err := ui.New(cfg)
@@ -853,8 +865,9 @@ func main() {
 			}
 		}()
 	}
-	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s, %s, %s\n",
-		len(ui.DeclaredRoutes()), addr, *store, sharingMode, signInMode, stateMode, arcsMode, presenceMode, appMode(cfg.App))
+	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s, %s, %s, %s\n",
+		len(ui.DeclaredRoutes()), addr, *store, sharingMode, signInMode, stateMode, arcsMode, presenceMode, appMode(cfg.App),
+		instanceMode(cfg.App))
 	if err := listener.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(1)
@@ -965,12 +978,14 @@ func controlJournalDefault(get func(string) string) (string, error) {
 // `envalias.ValueFrom` treats a blank value as absent — which IS the defect these
 // readers exist to refuse — so none can go through it. The price is that a DEPRECATED
 // spelling of any of them would go unread, silently. None has one. (Two names until the
-// mobile plan's S2 added the three `-app-*` variables, whose blank policy is `app.go`'s.)
+// mobile plan's S2 added the three `-app-*` variables, whose blank policy is `app.go`'s, as is
+// `-instance-name`'s, added after them.)
 // `TestTheRawReadVariablesAreNotInTheAliasLedger` walks THIS SLICE against
 // `envalias.Ledger`, so the day somebody adds an alias for either, a gate goes red rather
 // than a reader going half-blind — and a THIRD raw reader added without a line here fails
 // the same test's membership check.
-var rawEnvNames = []string{EnvUIControlJournal, EnvUIDatabase, EnvUIAppName, EnvUIAppShortName, EnvUIAppIconVariant}
+var rawEnvNames = []string{EnvUIControlJournal, EnvUIDatabase, EnvUIAppName, EnvUIAppShortName, EnvUIAppIconVariant,
+	EnvUIInstanceName}
 
 // databaseDSNDefault is the `-db-dsn` flag's default, and the SECOND place this surface's
 // configuration meets the blank policy.

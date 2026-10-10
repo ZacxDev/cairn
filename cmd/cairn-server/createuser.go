@@ -38,6 +38,7 @@ type createUserFlags struct {
 	provider *string
 	subject  *string
 	email    *string
+	display  *string
 	project  *string
 	scopes   *string
 }
@@ -75,6 +76,11 @@ func registerCreateUserFlags() *createUserFlags {
 			"display only, and optional. It is what the audit line's identity= field and every "+
 				"written bullet's ACTOR render when present; without it they carry "+
 				"`<provider>:<subject>`"),
+		display: flag.String("display-name", "",
+			"optional, OPERATOR-written: the name the audit line, every written bullet's ACTOR and the "+
+				"browser's \"signed in as\" render INSTEAD of the email — e.g. a GitHub handle. "+
+				"[A-Za-z0-9] then [A-Za-z0-9._-], at most 32, no `:` or `@`, unique among users "+
+				"(case-insensitively). Change it later with -rename-user"),
 		project: flag.String("project", "",
 			"the project created for this user, who becomes its OWNER — read, write and admin "+
 				"over every scope the project holds"),
@@ -122,6 +128,7 @@ func runCreateUser(env map[string]string, storeRoot string, f *createUserFlags, 
 		Provider:    *f.provider,
 		Subject:     *f.subject,
 		Email:       *f.email,
+		DisplayName: *f.display,
 		ProjectName: *f.project,
 		ScopeNames:  scopeNames(*f.scopes),
 	}
@@ -157,9 +164,15 @@ func runCreateUser(env map[string]string, storeRoot string, f *createUserFlags, 
 	// operator pipes somewhere and the caveats are what they read. Never a token: this
 	// path mints no credential at all — a session backend authenticates against the IdP,
 	// and `Identity.Fingerprint` is empty for it by design.
+	// ` display=` is appended ONLY when one was written, so the line an operator without one
+	// already parses is byte-identical to what it was before the flag existed.
+	display := ""
+	if req.DisplayName != "" {
+		display = " display=" + req.DisplayName
+	}
 	fmt.Fprintln(out, reloadSafe(fmt.Sprintf(
-		"cairn-control: created user=%s provider=%s subject=%s project=%s epoch=%d scopes=%s",
-		made.User, req.Provider, req.Subject, made.Project, made.Epoch, renderScopes(made.Scopes))))
+		"cairn-control: created user=%s provider=%s subject=%s project=%s epoch=%d scopes=%s%s",
+		made.User, req.Provider, req.Subject, made.Project, made.Epoch, renderScopes(made.Scopes), display)))
 
 	if len(made.Scopes) == 0 {
 		// 🔴 SAID OUT LOUD, BECAUSE FROM OUTSIDE THE POD THIS STATE IS INDISTINGUISHABLE

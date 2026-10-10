@@ -140,7 +140,7 @@ type PageView struct {
 // AND NOTHING GOES THROUGH `g.Raw`. See this package's doc comment for the measured
 // scope of gomponents' escaper and for the one place it is NOT enough.
 func Page(v PageView) g.Node {
-	return shell("cairn", v, nil,
+	return shell("", v, nil,
 		searchForm(v),
 		// 🔴 `g.Iff` AND NOT `g.If`, AND THE DIFFERENCE IS A NIL DEREFERENCE RATHER THAN
 		// A STYLE CHOICE. `g.If(cond, node)` takes a NODE, so Go evaluates the argument
@@ -189,7 +189,7 @@ func Page(v PageView) g.Node {
 // `routes` deleted `GET /entries` for. This is a short list of links with no cards, no
 // counts and no search box — a navigation answer, not a second copy of the root.
 func NavigatePage(v PageView) g.Node {
-	return shell("cairn", v, nil,
+	return shell("", v, nil,
 		h.Section(
 			h.Class("card"),
 			h.H2(g.Text("Pick a scope")),
@@ -229,7 +229,7 @@ func ScopePage(v PageView) g.Node {
 	default:
 		body = entriesPanel(s, v.Now)
 	}
-	return shell("cairn — "+s.Name, v, []crumb{{Label: s.Name}},
+	return shell(s.Name, v, []crumb{{Label: s.Name}},
 		h.Section(
 			h.Class("card"),
 			h.H2(g.Text(s.Name)),
@@ -489,7 +489,7 @@ func relativeTime(at, now time.Time) string {
 // UTF-8 is the one substitution.
 func EntryPage(v PageView) g.Node {
 	s, e := *v.Scope, *v.Entry
-	return shell("cairn — "+e.Ref, v,
+	return shell(e.Ref, v,
 		[]crumb{{Label: s.Name, Href: scopeHref(s)}, {Label: e.Ref}},
 		h.Section(
 			h.Class("card"),
@@ -586,9 +586,13 @@ type crumb struct {
 // information architecture: every page looks complete, and the only symptom is a reader
 // reaching for the browser's back button on a surface that could have told them where
 // they were. Putting it here means a page added later gets it without anybody remembering.
-func shell(title string, v PageView, crumbs []crumb, body ...g.Node) g.Node {
+//
+// 🔴 IT TAKES THE PAGE'S LABEL, NEVER A TITLE: `documentTitle` is the one place a `<title>` is
+// composed, so the instance label cannot be missed by a page that spelled its own. `""` is the
+// root's label. See `title.go`, and `TestEveryFrameTitleIsComposedByDocumentTitle`.
+func shell(page string, v PageView, crumbs []crumb, body ...g.Node) g.Node {
 	return c.HTML5(c.HTML5Props{
-		Title:    title,
+		Title:    documentTitle(v.App, page),
 		Language: "en",
 		// ⚠ NO `<meta name="viewport">` IS SPELLED HERE, AND THAT IS A MEASUREMENT RATHER
 		// THAN AN OMISSION. Without one a phone lays the page out at ~980 CSS pixels and
@@ -611,7 +615,7 @@ func shell(title string, v PageView, crumbs []crumb, body ...g.Node) g.Node {
 				// rather than reworded: the share link below is the second, and a
 				// comment claiming singularity is exactly what stops the next person
 				// adding a third where it belongs.
-				h.H1(h.A(h.Href(RootPath), g.Text("cairn"))),
+				wordmark(v.App, true),
 				// 🔴 THE ARCS PAGE'S ENTRY POINT, UNCONDITIONAL FOR THE SHARE LINK'S REASON BELOW: a
 				// page reachable only by typing its path reads as absent. Not gated on "is a journal
 				// configured" either — `GET /arcs` ANSWERS on a deployment without one, saying so.
@@ -1701,11 +1705,11 @@ func signOutForm(csrf string) g.Node {
 // not a sentence. "" renders no field at all.
 func SignInPage(message string, provider bool, next string, app App) g.Node {
 	return c.HTML5(c.HTML5Props{
-		Title:    "cairn — sign in",
+		Title:    documentTitle(app, "sign in"),
 		Language: "en",
 		Head:     []g.Node{stylesheetLink(), pwaHead(app)},
 		Body: []g.Node{
-			h.Header(h.Class("page-header"), h.H1(g.Text("cairn"))),
+			h.Header(h.Class("page-header"), wordmark(app, false)),
 			h.Main(
 				h.Class("signin-main"),
 				g.If(message != "", h.P(h.Class("refused"), g.Text(message))),
@@ -1884,9 +1888,9 @@ type ShareView struct {
 // was about to write would leave the read — the thing people do far more often —
 // unqualified.
 func SharePage(v ShareView) g.Node {
-	title := "cairn — sharing"
+	title := "sharing"
 	if v.Scope.Name != "" {
-		title = "cairn — sharing " + v.Scope.Name
+		title = "sharing " + v.Scope.Name
 	}
 	// 🔴 THROUGH `shell`, NOT A FOURTH FRAME OF ITS OWN — AND THE DUPLICATE IT REPLACES
 	// WAS ALREADY WRONG, WHICH IS THE ARGUMENT FOR CONSOLIDATING RATHER THAN A TIDINESS
@@ -2159,9 +2163,9 @@ type MintedInvite struct {
 // when they were about to create one leaves the moment they are about to SEND one
 // unqualified.
 func InvitePage(v InviteView) g.Node {
-	title := "cairn — invitations"
+	title := "invitations"
 	if v.Project.Name != "" {
-		title = "cairn — inviting to " + v.Project.Name
+		title = "inviting to " + v.Project.Name
 	}
 	// Through `shell`, for the reason `SharePage` records: one header, one place, and a
 	// navigation affordance added there reaches this page without anybody remembering.
@@ -2419,11 +2423,11 @@ func mintedSection(v InviteView) g.Node {
 // up signed in, or refused, with no sign that the link was the problem.
 func JoinPage(token string, provider bool, app App) g.Node {
 	return c.HTML5(c.HTML5Props{
-		Title:    "cairn — accept an invitation",
+		Title:    documentTitle(app, "accept an invitation"),
 		Language: "en",
 		Head:     []g.Node{stylesheetLink(), pwaHead(app)},
 		Body: []g.Node{
-			h.Header(h.Class("page-header"), h.H1(g.Text("cairn"))),
+			h.Header(h.Class("page-header"), wordmark(app, false)),
 			h.Main(
 				h.Class("join-main"),
 				h.H2(g.Text("You have been invited")),
