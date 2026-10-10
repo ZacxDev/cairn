@@ -76,6 +76,11 @@ field names and types alone.
   pod and the agent, unconditionally; output headers only ADD scopes. **Everything revisions 4–6
   say above about pairing, "simple", pending results or the backstop is superseded by this entry
   and by decision 3.** Q16 is rewritten with the measured cost and the remedies.
+- *Revision 8* adds the one rule revision 7 lacked: how `scopeuse` RECOGNISES an invocation. Any
+  command line naming the program (a `cairn`/`subsystem-recall` token, a `…/cairn` path, a `#cairn`
+  flake ref) that cannot be decomposed into invocations each carrying an explicit `--scope` adds
+  `*`. Revision 7's "a mis-parsed command ADDS a scope … for every remaining path" is retracted, the
+  `*` rule is scoped to VISIBLE invocations, and T3 names unseen program names as the residual.
 
 ## Goal and premise
 
@@ -591,11 +596,22 @@ script that prints only counts.
      (`(all scopes)`, the `renderer.go:158` form) to the sentinel **`*`** — "unknown scope" (R7).
    - `U_calls(s)` = scopes named by `cairn` read and write commands visible in tool inputs with an
      explicit `--scope X`, and file reads under a cache root. A command with `--all-scopes` adds
-     `*`. **Every `cairn` invocation whose scope does NOT come from an explicit `--scope` — a
-     `--repo P`, or no scope flag at all (scope derived from the working directory's repository) —
-     is cwd-derived and adds `*`, unconditionally, on the pod AND on the agent.** Nothing cancels
+     `*`. **Every VISIBLE `cairn` invocation whose scope does NOT come from an explicit `--scope` —
+     a `--repo P`, or no scope flag at all (scope derived from the working directory's repository)
+     — is cwd-derived and adds `*`, unconditionally, on the pod AND on the agent.** Nothing cancels
      that `*`: not a header in the call's output, not a hook attachment, not a later record.
-     Headers in output still ADD the scopes they name (`R_header`); they never REMOVE anything.
+     Headers in output still ADD the scopes they name (`R_header`); they never REMOVE anything. A
+     read run by a HOOK has no visible command line, so it adds only its header's scope.
+   - **How an invocation is RECOGNISED, failing closed.** A command line is a CANDIDATE when it
+     contains any of: a `cairn` or `subsystem-recall` program token, a path ending in `/cairn`, or
+     a flake reference ending in `#cairn`. A candidate line contributes explicit scopes ONLY when
+     the parser decomposes it into `cairn` invocations that EACH carry an explicit `--scope`;
+     otherwise it adds **`*`**. So the shapes the parser does not take apart — a full or relative
+     path to the binary, `nix run <flake>#cairn -- …`, an environment prefix (`VAR=x cairn …`), a
+     wrapper (`bash -c '…'`, `xargs cairn …`, `env`, `timeout`, `sudo`), the `subsystem-recall`
+     alias — add `*` whenever any invocation in them lacks a decomposable `--scope`. *Revision 7
+     never said how a call is recognised, so such a line added NOTHING — no scope and no `*` —
+     leaving `V` too small; that gap is closed here, and nothing else changes.*
    - *DELETED in revision 7, with no replacement:* the exception under which a header in a "simple"
      `cairn recall|search` call's own result cancelled the `*`, the allowlist defining "simple", the
      PENDING set `P` that waited for late results, and its 24 h backstop. Revisions 4–6 refined that
@@ -619,16 +635,19 @@ script that prints only counts.
      argument could each make it resolve the wrong scope, and with the rule above there is nothing
      left for it to do.* Routing uses only explicit `--scope` and output headers; anything else is
      `*`.
-   - ⚠ **The cost, measured:** on Claude Code essentially EVERY session that runs a bare or `--repo`
-     `cairn` command becomes owner-only, and with more than one instance configured it is HELD on its
+   - ⚠ **The cost, measured:** on BOTH runtimes, every session that runs a bare or `--repo` `cairn`
+     command (597 such Claude Code calls and 24 opencode calls on this host, Q16) becomes owner-only, and with more than one instance configured it is HELD on its
      host (decision 16). Q16 gives the operator the remedies.
-   - **What can go wrong, and in which direction.** A forged trailer, a quoted header in prose, or a
-     mis-parsed `--scope` ADDS a scope, hiding `s` from more people. A header can no longer remove
-     anything, so a `cat`-ed header or a hook attachment only adds. *Revision 2's "a mis-parsed
-     command ADDS a scope" was retracted because the agent's cwd resolution could add the WRONG
-     scope; with that resolution deleted, the claim holds again for every remaining path.* The
-     unsafe residual is a read or write NO signal sees: a `cairn` command run by a script whose
-     command line the transcript does not show, a `put`/`create` from such a script, a write to the
+   - **What can go wrong, and in which direction.** A forged trailer or a quoted header in prose
+     ADDS a scope, hiding `s` from more people; a header can no longer remove anything, so a
+     `cat`-ed header or a hook attachment only adds. For a command line that names the program in
+     any form the recognition rule lists, a line the parser cannot decompose adds `*`, so an
+     unrecognised SHAPE fails closed. *Revision 7 claimed "a mis-parsed command ADDS a scope … for
+     every remaining path"; with no recognition rule, an unrecognised visible call added nothing,
+     so that claim was false and is retracted — the true claim is the fail-closed rule above.* The
+     unsafe residual is a read or write NO signal sees: an invocation whose program name never
+     appears in the command line (run through a variable such as `"$BIN" put …`, an alias the rule
+     does not list, a shell function, or a script), a `put`/`create` from such a script, a write to the
      other instance. That residual is threat T3.
    - **Unknown names fail closed.** A scope name in `V` that the control model does not know
      (renamed, deleted, on another instance) and the sentinel `*` are unreadable by everyone but the
@@ -1095,7 +1114,7 @@ GET /transcript/skeleton  ·  GET /transcript/records  ·  GET /transcript/tool 
 |---|---|
 | **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. **What is NOT controlled:** unshaped secrets (typed passwords, novel token formats), secrets inside images/PDFs (withheld rather than stored until Q2 is answered, decision 6a — if Q2 says "ship", this becomes an uncontrolled residual) EXCEPT binary payloads embedded in longer strings or in unlisted formats, which ship text-scanned only (6a's residuals), an encoded secret embedded in a longer string (not decoded), a flow-style YAML `Secret` (decision 6), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
 | **T2. Confidential but non-secret content** (client business detail, personal data in a tool output) | Redaction does not address it at all; VISIBILITY is the only control (decision 4). Stated, so nobody believes the redactor covers it. |
-| **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store plus reads from rendered headers anywhere in the content plus command-line scopes plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope, `--all-scopes`, and EVERY cwd-derived `cairn` invocation (no explicit `--scope`) add `*`, unconditionally, on the pod and on the agent — nothing cancels a `*`, and no caller resolves a working directory, so a `cd`, a stale record `cwd` or an opencode `bash` call's `workdir` argument cannot misroute or mis-scope a call; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The residual:** a read or write NO signal sees — any `cairn` command (a header-less verb such as `sessions`, `arcs`, `arc-show`, `ls-entries`, or a `put`/`create`) run by a script whose command line the transcript does not show. *Revisions 3–6 listed a second residual — a directory change making the AGENT's routing resolve the wrong scope; that resolution is deleted (decision 3), so the residual is gone with it.* |
+| **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store plus reads from rendered headers anywhere in the content plus command-line scopes plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope, `--all-scopes`, and EVERY VISIBLE cwd-derived `cairn` invocation (no explicit `--scope`) add `*`, unconditionally, on the pod and on the agent, as does any command line naming the program (a `cairn`/`subsystem-recall` token, a `…/cairn` path, a `#cairn` flake ref) that the parser cannot decompose into invocations each with an explicit `--scope`; a hook-run read adds only its header's scope — nothing cancels a `*`, and no caller resolves a working directory, so a `cd`, a stale record `cwd` or an opencode `bash` call's `workdir` argument cannot misroute or mis-scope a call; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The residual:** a read or write NO signal sees — an invocation whose program name never appears in the command line (run through a variable such as `"$BIN" put …`, an unlisted alias, a shell function, or a script), or any `cairn` command run by a script whose command line the transcript does not show, when it is a header-less verb (`sessions`, `arcs`, `arc-show`, `ls-entries`) or a `put`/`create`. *Revisions 3–6 listed a second residual — a directory change making the AGENT's routing resolve the wrong scope; that resolution is deleted (decision 3), so the residual is gone with it.* |
 | **T4. Viewer-set computation makes the predicate vacuous** | Clause (e), and a mutant row (`transcript-written-set-from-viewer-scopes`). |
 | **T5. A stolen capture token** | Can APPEND to its owner's transcripts from its one host — inject fake records into the owner's own sessions — can SQUAT a not-yet-uploaded session id (decision 15), and can WITHDRAW (delete) its owner's sessions uploaded from that host (decision 16). Cannot read, or touch another owner's or host's existing sessions. Revoke by deleting the row (re-read per request). |
 | **T6. A stolen plugin token** | Can read every transcript where that plugin is ON, and write outputs of its declared types. The largest single exposure the design creates; it is why toggles default OFF, require every scope's consent (decision 10), and why a plugin token is per plugin. |
@@ -1129,15 +1148,17 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 | **S9** | **Example plugin A — summaries.** `plugins/summary` in a NESTED stdlib-only module (provider HTTP API over `net/http`, no SDK), host-side user timer, incremental per decision 13, its own spend cap, a fake provider in tests. Reads through `view=conversation` by default. | `depspolicy.DeclaredNestedModules`; `flake.nix` package; `ci.yml` step for its suite. | A separate binary; nothing runs until registered and toggled. |
 | **S10** | **Example plugin B — ClickUp.** `plugins/clickup` in the same nested module: ticket list fetch (read-only token, 429-aware), deterministic matchers (decision 14) over transcript records (`gitBranch`, `pr-link`, URLs), commit messages and trailers from a host-local repo list, PR bodies via the host's own GitHub CLI, entry refs; LLM suggestions using plugin A's summaries when present (`output:read:summary` — the cross-plugin test of the abstraction). Synthetic ClickUp fixtures only. Then closing wiring: `sabotaged=13 caught=13`, measured floors, the `AGENTS.md` row with an equal eviction (Q11). | same nested module; flake package; `ci.yml`; `AGENTS.md`; READMEs. | Separate binary; inert until registered and toggled. |
 
-**Mutant rows** (indicative names). The pinned count starts at **296**; the **46** rows below would
-take it to **342** if every one lands as named (revision 7 deleted six, listed where they were) — the pinned number is whatever the battery declares
+**Mutant rows** (indicative names). The pinned count starts at **296**; the **47** rows below would
+take it to **343** if every one lands as named (revision 7 deleted six, listed where they were;
+revision 8 added one) — the pinned number is whatever the battery declares
 at each merge, never this sum. S0, S1, S9 and S10 add no row to the authz battery (S1's guards are
 measured by the redaction corpus; S9/S10 by their own suites).
 
-- **S2 (3, `scopeuse`):** `scopeuse-all-scopes-header-names-a-scope`,
+- **S2 (4, `scopeuse`):** `scopeuse-all-scopes-header-names-a-scope`,
   `scopeuse-scopeless-header-dropped` (the `renderer.go:158` form dropped instead of `*`),
   `scopeuse-cwd-derived-command-dropped` (a cwd-derived invocation — no explicit `--scope` — adds
-  nothing instead of `*`). *DELETED in revision 7 with the machinery they guarded (decision 3):*
+  nothing instead of `*`), `scopeuse-unrecognised-invocation-adds-nothing` (a candidate line the
+  parser cannot decompose adds nothing instead of `*`). *DELETED in revision 7 with the machinery they guarded (decision 3):*
   `scopeuse-paired-header-ignored`, `scopeuse-chained-call-header-suppresses-star`,
   `scopeuse-hook-attachment-counts-as-result`, `scopeuse-missing-result-becomes-star`,
   `scopeuse-chained-command-resolved`.
@@ -1244,7 +1265,13 @@ run time).
   recall` whose result carries `scope=alpha-notes` → `alpha-notes` AND `*` (the header adds, the
   cwd-derived call still adds `*`); a `--repo` `ls-entries`, a bare `ls-entries`, and an opencode
   `bash` call running a bare `cairn recall` with its own `workdir` argument → `*` each (mutant
-  `scopeuse-cwd-derived-command-dropped`); and the agent's output for every fixture equals the
+  `scopeuse-cwd-derived-command-dropped`); the recognition rule's shapes, each WITHOUT a
+  decomposable `--scope` → `*`: `/opt/tools/cairn ls-entries --repo ../beta-repo`, `nix run
+  <flake>#cairn -- ls-entries --repo ../beta-repo`, `VAR=x cairn recall`, `bash -c 'cairn
+  recall'`, `xargs cairn ls-entries`, `timeout 30 cairn recall`, and `subsystem-recall` with no
+  `--scope` (mutant `scopeuse-unrecognised-invocation-adds-nothing`); a positive control that the
+  rule is not a blanket `*`: `cairn recall --scope alpha-notes && cairn search --scope beta-notes
+  x` → exactly `{alpha-notes, beta-notes}`, no `*`; and the agent's output for every fixture equals the
   pod's (control: an agent that resolves a working directory gives a scope where the pod gives
   `*`). *DELETED in revision 7 with decision 3's exception:* the simple-call, chained-call,
   newline/`&`, hook-attachment-as-result, pending-result, error-part and 24 h-backstop cases, and
@@ -1474,10 +1501,13 @@ said Q16 shapes S3; the rule's code and mutant are in S2.*
   routes to SO FAR; when a later run finds `V` spanning two instances (or holding `*` with more than
   one instance configured), the agent stops shipping it, holds the rest on the host, and WITHDRAWS
   the already-shipped prefix (the deletion cascade on that instance). When a later run finds `V`
-  routing to a SINGLE instance other than the one holding the prefix — the common case being run 1
-  with `V` empty (shipped to the default, personal, instance) and run 2 with `V = {beta-notes}`
-  (client) — the agent withdraws the prefix and RE-SHIPS the whole session to the new instance from
-  offset 0. A session with empty `V` goes to the default instance, owner-only. This NARROWS "ship
+  routing to a SINGLE instance other than the one holding the prefix — e.g. run 1 with `V` empty
+  (shipped to the default, personal, instance) and run 2 with `V = {beta-notes}` (client) — the
+  agent withdraws the prefix and RE-SHIPS the whole session to the new instance from offset 0. ⚠
+  That re-ship happens only when the `beta-notes` read carried an explicit `--scope`: a BARE or
+  `--repo` read adds `*` as well (decision 3), so with more than one instance configured the
+  session is HELD, not re-shipped — the usual outcome today, unless Q16(a) is adopted.
+  *Revision 7 still called this re-ship "the common case"; retracted.* A session with empty `V` goes to the default instance, owner-only. This NARROWS "ship
   every session" only for held sessions, which exist only on their host. **Recommend** hold +
   withdraw + re-ship as written. Alternatives: (a) keep the prefix
   where it is and hold only the rest — the prefix stays visible under its own `V` there but is an
@@ -1492,8 +1522,8 @@ said Q16 shapes S3; the rule's code and mutant are in S2.*
   with several instances configured, HELD on its host.** That is decision 3's rule, with no
   exception: any invocation whose scope comes from the working directory or `--repo` adds `*`.
   **The cost, measured** (round 6 of the audit, this host): among `cairn` calls with no `--scope`,
-  Claude Code had 597 and opencode 24 — so on Claude Code essentially EVERY session that runs a bare
-  or `--repo` `cairn` command becomes owner-only, and with more than one instance configured it is
+  Claude Code had 597 and opencode 24 — and under the unconditional rule EVERY session, on BOTH
+  runtimes, that runs a bare or `--repo` `cairn` command becomes owner-only, and with more than one instance configured it is
   held on its host and never shipped (decision 16). *Revisions 4–6 tried to exempt a "simple"
   recall/search whose own output named its scope; the exemption admitted 0 of the 597 Claude Code
   calls and 5 of the 24 opencode ones, and is deleted (decision 3). Every earlier wording of this
