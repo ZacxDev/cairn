@@ -442,6 +442,12 @@
           # never a `.png` suffix rule, and never a third hand-kept list of the set.
           || (rel == "internal/ui/icons/variants.json")
           || builtins.elem rel (map (f: "internal/ui/icons/" + f) uiIconFiles)
+          # 🔴 AND S4'S THREE EMBEDDED INPUTS, FOR THE SAME REASON: `pwa.go` `//go:embed`s the second
+          # script and the install screenshots. The PNG names are DERIVED from `screenshots.json`
+          # (`uiScreenshotFiles`), the list `uiaudit -screenshots` captures and `pwa.go` reads.
+          || (rel == "internal/ui/pwa.js")
+          || (rel == "internal/ui/screenshots/screenshots.json")
+          || builtins.elem rel (map (f: "internal/ui/screenshots/" + f) uiScreenshotFiles)
           # 🔴 THE NESTED MODULE'S TWO LOCK FILES, AND NOTHING ELSE FROM THAT
           # DIRECTORY. `internal/depspolicy`'s
           # `TestTheNestedModuleSetIsExactlyTheAllowlist` walks the tree for
@@ -808,6 +814,151 @@
             n=$((n + 1))
           done
           echo "wrote $n icon(s) into $dir"
+        '';
+      };
+
+      # 🔴 THE INSTALL SCREENSHOTS ARE BUILD OUTPUT OF THE SYNTHETIC WORLD (plan decision 16, O7), AND
+      # `screenshots.json` IS THE ONE LIST — `internal/ui/pwa.go` embeds it, `uiaudit -screenshots`
+      # captures it, and this file reads it for the `onlyGo` names. `uiScreenshots` builds `cairn-ui`
+      # and `uiaudit`, boots the walk's own world (`tests/reader_fixtures.py`'s builder) on loopback
+      # INSIDE the sandbox with no network, signs in through the real form and captures each entry with
+      # the pinned nixpkgs chromium under a PINNED font set. `checks.ui-screenshots-are-current`
+      # re-captures and byte-compares, and it is the leak gate for these binaries exactly as
+      # `ui-icons-are-current` is for the icons: a picture that is not what the synthetic world renders
+      # cannot pass.
+      #
+      # ⚠ THE CHROMIUM, THE FONTS AND THE GO TOOLCHAIN ARE WHATEVER THE PINNED `nixpkgs` CARRIES —
+      # `uiStylesheet`'s trade: a bump that moves the pixels turns the check red until somebody
+      # regenerates. ⚠ AND BYTE-IDENTITY ACROSS TWO HOSTS IS A MEASUREMENT, NOT AN ASSUMPTION: if the
+      # CI host and a developer host ever disagree on the same inputs, the plan's remedy is to compare
+      # decoded pixels at zero tolerance instead, and to say so here.
+      uiScreenshotSpec = builtins.fromJSON (builtins.readFile ./internal/ui/screenshots/screenshots.json);
+      uiScreenshotFiles = map (s: "${s.name}.png") uiScreenshotSpec.screenshots;
+
+      # The uiaudit harness, as a nix build. Its module is NESTED (`uiaudit/go.mod`, with
+      # `replace github.com/ZacxDev/cairn => ..`), which is what keeps chromedp out of the root
+      # module's graph — so this derivation carries the root module's `internal/` and lock files
+      # beside it and builds from `modRoot = "uiaudit"`.
+      #
+      # 🔴 `proxyVendor`, NOT A PLAIN VENDOR HASH, AND THE REASON IS THE `replace`: `go mod vendor`
+      # COPIES a directory-replaced module's packages into `vendor/`, so a plain vendor hash would
+      # cover the root module's own source and move on every commit. `proxyVendor` hashes the
+      # downloaded module cache instead, where a directory replacement does not appear.
+      #
+      # To move it: change a `uiaudit/go.mod` dependency, set this to `lib.fakeHash`, build
+      # `.#uiaudit`, and copy the hash nix prints.
+      uiauditVendorHash = "sha256-JuUCBkuw8rOxxVCu20/OwKWhkIKNwHvoX0HqL2S9S7I=";
+      uiauditSrc = pkgs: pkgs.lib.cleanSourceWith {
+        src = ./.;
+        name = "cairn-uiaudit-source";
+        filter = path: type:
+          let rel = pkgs.lib.removePrefix (toString ./. + "/") (toString path);
+          in
+          rel == "go.mod" || rel == "go.sum"
+          || rel == "internal" || pkgs.lib.hasPrefix "internal/" rel
+          || rel == "uiaudit" || pkgs.lib.hasPrefix "uiaudit/" rel;
+      };
+      mkUiaudit = pkgs: (buildGoPinned pkgs) {
+        pname = "uiaudit";
+        inherit version;
+        src = uiauditSrc pkgs;
+        modRoot = "uiaudit";
+        proxyVendor = true;
+        vendorHash = uiauditVendorHash;
+        # Its tests drive a browser over a booted pod; `uiaudit/run.sh` and CI's uiaudit job run them.
+        doCheck = false;
+      };
+
+      # The screenshot generator's data input: `tests/reader_fixtures.py`, the `lib/` it imports and
+      # the `server/server.py` it parses at import — text, scanned by `tests/leakscan.py`, and NOTHING
+      # else from the tree.
+      #
+      # 🔴 `renameScope` IS THE PROVENANCE CONTROL'S HOOK, NOT A FEATURE: it renames one fixture scope
+      # in the builder, and `checks.ui-screenshots-are-current` requires the render to CHANGE under it —
+      # so "the committed bytes equal the derivation" is a claim about the fixture world rather than
+      # about a picture that would look the same whatever the fixture said.
+      uiScreenshotFixture = pkgs: renameScope: pkgs.runCommand "cairn-ui-screenshot-fixture"
+        { nativeBuildInputs = [ pkgs.gnused pkgs.gnugrep ]; } ''
+        mkdir -p "$out/tests" "$out/server"
+        cp ${./server/server.py} "$out/server/server.py"
+        cp -r ${pkgs.lib.cleanSourceWith {
+          src = ./lib;
+          name = "cairn-fixture-lib";
+          filter = path: type: !(pkgs.lib.hasSuffix ".pyc" (toString path))
+            && baseNameOf path != "__pycache__";
+        }} "$out/lib"
+        cp ${./tests/reader_fixtures.py} "$out/tests/reader_fixtures.py"
+        chmod -R u+w "$out"
+        ${pkgs.lib.optionalString renameScope ''
+          n=$(grep -c 'alpha-notes' "$out/tests/reader_fixtures.py" || true)
+          if [ "$n" = 0 ]; then
+            echo "FAIL (could not vouch): the provenance control's scope 'alpha-notes' is not in the fixture" >&2
+            exit 2
+          fi
+          sed -i 's/alpha-notes/alpha-renamed/g' "$out/tests/reader_fixtures.py"
+        ''}
+      '';
+
+      uiScreenshotsWith = pkgs: renameScope: pkgs.runCommand
+        ("cairn-ui-screenshots" + pkgs.lib.optionalString renameScope "-provenance-control")
+        {
+          nativeBuildInputs = [ pkgs.chromium pkgs.python312 ];
+          # 🔴 A PINNED FONT SET, AND A FONTS.CONF WRITTEN HERE RATHER THAN `makeFontsConf`'s. That one
+          # also lists `/etc/fonts/conf.d`, `/usr/share/fonts` and `~/.nix-profile` — absent in the
+          # sandbox, PRESENT on a host building without one — and carries no family aliases, so the
+          # sans stack fell through to fontconfig's first face, DejaVu Math TeX Gyre: a serif with no
+          # bold (measured: the whole surface rendered serif, and every heading lost its weight). This
+          # one names ONE directory, maps both spellings of each generic (fontconfig 2.18 canonicalises
+          # `sans-serif` to `sans` before matching — measured with `fc-match`, an alias on `sans-serif`
+          # alone never fired) and chromium's Linux defaults, and — the rule that actually moved the
+          # pixels, measured by capturing with and without it — APPENDS DejaVu Sans as the strong
+          # last-resort family of every pattern, so a stack nothing above matched lands on a sans.
+          FONTCONFIG_FILE = pkgs.writeText "cairn-screenshot-fonts.conf" ''
+            <?xml version="1.0"?>
+            <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+            <fontconfig>
+              <dir>${pkgs.dejavu_fonts}/share/fonts</dir>
+              <cachedir>/tmp/cairn-screenshot-fontconfig</cachedir>
+              ${pkgs.lib.concatMapStrings (pair: ''
+                <alias binding="same"><family>${builtins.elemAt pair 0}</family><prefer><family>${builtins.elemAt pair 1}</family></prefer></alias>
+              '') [
+                [ "sans" "DejaVu Sans" ] [ "sans-serif" "DejaVu Sans" ] [ "system-ui" "DejaVu Sans" ]
+                [ "Arial" "DejaVu Sans" ]
+                [ "serif" "DejaVu Serif" ] [ "Times New Roman" "DejaVu Serif" ]
+                [ "mono" "DejaVu Sans Mono" ] [ "monospace" "DejaVu Sans Mono" ]
+              ]}
+              <match target="pattern"><edit name="family" mode="append_last" binding="strong"><string>DejaVu Sans</string></edit></match>
+            </fontconfig>
+          '';
+        } ''
+        export HOME="$TMPDIR/home" PYTHONDONTWRITEBYTECODE=1
+        mkdir -p "$HOME" "$out"
+        ${mkUiaudit pkgs}/bin/uiaudit \
+          -repo-root ${uiScreenshotFixture pkgs renameScope} \
+          -cairn-ui ${mkGoUI pkgs}/bin/cairn-ui \
+          -work "$TMPDIR/work" \
+          -port 18799 \
+          -screenshots "$out"
+      '';
+      uiScreenshots = pkgs: uiScreenshotsWith pkgs false;
+
+      # buildUIScreenshots writes the captured screenshots into the WORKING TREE — `buildUIIcons`' shape.
+      buildUIScreenshots = pkgs: pkgs.writeShellApplication {
+        name = "build-ui-screenshots";
+        text = ''
+          root="''${1:-$PWD}"
+          dir="$root/internal/ui/screenshots"
+          if [ ! -f "$dir/screenshots.json" ]; then
+            echo "no $dir/screenshots.json — run this from the repository root, or pass the root as \$1" >&2
+            exit 1
+          fi
+          rm -f "$dir"/*.png
+          n=0
+          for f in ${uiScreenshots pkgs}/*.png; do
+            install -m 0644 "$f" "$dir/"
+            n=$((n + 1))
+          done
+          echo "wrote $n screenshot(s) into $dir"
         '';
       };
 
@@ -1214,6 +1365,12 @@
           type = "app";
           program = "${nixpkgs.lib.getExe (buildUIIcons pkgs)}";
         };
+        # And the install screenshots': `nix run .#build-ui-screenshots` re-captures
+        # `internal/ui/screenshots/*.png` from the synthetic world, in the sandbox.
+        build-ui-screenshots = {
+          type = "app";
+          program = "${nixpkgs.lib.getExe (buildUIScreenshots pkgs)}";
+        };
       });
 
       checks = forAll (pkgs: {
@@ -1326,6 +1483,81 @@
               exit 1
             fi
             echo "ui-icons-are-current: $compared icon(s) byte-equal to the render; negative control caught"
+            touch $out
+          '';
+
+        # 🔴 THE COMMITTED INSTALL SCREENSHOTS ARE WHAT `uiScreenshots` CAPTURES, BYTE FOR BYTE —
+        # `ui-icons-are-current`'s three claims over `screenshots.json`'s set (same NAMES, every pair
+        # byte-equal, the count the json implies), plus a fourth the icons do not need:
+        #
+        # 🔴 THE PROVENANCE CONTROL. The render is re-captured from a fixture with ONE scope renamed and
+        # must DIFFER from the committed set in at least one file — otherwise the comparison below would
+        # equally pass for a picture that does not depend on the fixture at all (a blank page, an error
+        # page, a constant), and "equal to the derivation" would say nothing about where the pixels came
+        # from. Exit 2 ("could not vouch") if it does not.
+        #
+        # 🔴 NEGATIVE CONTROL FIRST, `cmp` over a captured screenshot with ONE BYTE APPENDED, which must
+        # compare unequal — or exit 2, never 0.
+        ui-screenshots-are-current =
+          pkgs.runCommand "cairn-ui-screenshots-are-current"
+            { nativeBuildInputs = [ pkgs.diffutils pkgs.coreutils ]; } ''
+            generated=${uiScreenshots pkgs}
+            renamed=${uiScreenshotsWith pkgs true}
+            committed=${./internal/ui/screenshots}
+            expected=${toString (builtins.length uiScreenshotFiles)}
+
+            first=$(ls "$generated" | head -n 1)
+            cp "$generated/$first" ./control.png
+            chmod u+w ./control.png
+            printf 'x' >> ./control.png
+            if cmp -s "$generated/$first" ./control.png; then
+              echo "FAIL (could not vouch): the negative control COMPARED EQUAL, so cmp is not"
+              echo "distinguishing files here and the comparison below would be a green about nothing."
+              exit 2
+            fi
+
+            moved=0
+            for f in $(cd "$generated" && ls -1 -- *.png); do
+              if ! cmp -s "$generated/$f" "$renamed/$f"; then
+                moved=$((moved + 1))
+              fi
+            done
+            if [ "$moved" = 0 ]; then
+              echo "FAIL (could not vouch): the PROVENANCE control renamed a fixture scope and NO screenshot"
+              echo "changed, so the pictures do not depend on the synthetic world and 'equal to the"
+              echo "derivation' would say nothing about where their pixels came from."
+              exit 2
+            fi
+
+            gen=$(cd "$generated" && ls -1 -- *.png | sort)
+            com=$(cd "$committed" && ls -1 -- *.png | sort)
+            if [ "$gen" != "$com" ]; then
+              echo "FAIL: the committed screenshot SET is not the captured set."
+              diff <(echo "$com") <(echo "$gen") || true
+              echo "Regenerate with: nix run .#build-ui-screenshots"
+              exit 1
+            fi
+            compared=0
+            stale=""
+            for f in $gen; do
+              if ! cmp -s "$committed/$f" "$generated/$f"; then
+                stale="$stale $f"
+              fi
+              compared=$((compared + 1))
+            done
+            if [ "$compared" != "$expected" ]; then
+              echo "FAIL (could not vouch): compared $compared screenshot(s), screenshots.json implies $expected."
+              exit 2
+            fi
+            if [ -n "$stale" ]; then
+              echo "FAIL: these committed screenshots are not what the synthetic world renders:$stale"
+              echo "They are BUILD OUTPUT and must never be hand-edited. Regenerate them:"
+              echo ""
+              echo "    nix run .#build-ui-screenshots"
+              exit 1
+            fi
+            echo "ui-screenshots-are-current: $compared screenshot(s) byte-equal to the capture; negative control"
+            echo "caught; provenance control moved $moved screenshot(s)"
             touch $out
           '';
 

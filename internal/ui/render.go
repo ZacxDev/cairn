@@ -691,6 +691,8 @@ func shell(title string, v PageView, crumbs []crumb, body ...g.Node) g.Node {
 				// is the same user text in an attribute value, escaped by the same gomponents path.
 				h.P(h.Class("viewer"), h.TitleAttr("signed in as "+v.Viewer), g.Text("signed in as "+v.Viewer)),
 				g.If(v.CSRF != "", signOutForm(v.CSRF)),
+				// The Install button (S4, `pwa.go`): hidden, and nothing at all when unarmed.
+				pwaInstallButton(v.App),
 			),
 			g.If(len(crumbs) > 0, breadcrumbs(crumbs)),
 			h.Main(h.Class("page-main"), g.Group(body)),

@@ -3969,15 +3969,18 @@ MUTANTS: tuple[Mutant, ...] = (
         why="the public frames build their own `c.HTML5` on purpose, so a head element added to `shell` "
         "silently misses them — and the sign-in page is the one an installed app opens first.",
     ),
+    # 🔴 RE-POINTED, NOT DELETED, AT S4: it was `ui-pwa-head-emits-a-script-before-s4`, guarding S2's "no
+    # script yet". S4 lands the real tag, so the plausible slip now is the UNVERSIONED spelling of it —
+    # `/static/pwa.js`, the path a service-worker-shaped draft would want — instead of the hashed row.
     Mutant(
-        name="ui-pwa-head-emits-a-script-before-s4",
+        name="ui-pwa-head-emits-an-unversioned-script",
         path="internal/ui/pwa.go",
-        old="\t\th.Link(h.Rel(\"apple-touch-icon\"), h.Href(apple.Path)),\n\t})",
+        old="\t\th.Link(h.Rel(\"apple-touch-icon\"), h.Href(apple.Path)),\n\t\tpwaScriptTag(),\n\t})",
         new="\t\th.Link(h.Rel(\"apple-touch-icon\"), h.Href(apple.Path)),\n"
         "\t\th.Script(h.Src(\"/static/pwa.js\"), h.Defer()),\n\t})",
-        killer="TestTheArmedPWAHeadAddsNoScript",
-        why="S4 adds exactly this tag to exactly this function, so landing it a slice early is the natural "
-        "slip — a script outside the allowlist on every armed page, before its spelling guard exists.",
+        killer="TestTheArmedPWAHeadAddsOnlyThePWAScript",
+        why="`/static/pwa.js` is the obvious spelling of the script's URL and the one every PWA tutorial "
+        "uses — but it is no row here, so every armed page would carry a 404ing script outside the allowlist.",
     ),
     Mutant(
         name="ui-app-name-blank-accepted",
@@ -4017,6 +4020,55 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestTheManifestIsBuiltFromTheConfiguredApp",
         why="every variant is a served row, so listing every row's icon looks like completeness — and a "
         "browser may then pick another instance's picture.",
+    ),
+    # S4 of the mobile plan: `pwa.js`, its allowlist entry and spelling guard, and the screenshots.
+    Mutant(
+        name="ui-pwa-script-not-allowlisted",
+        path="internal/ui/script.go",
+        old="\treturn []string{FilterScriptPath, PWAScriptPath}\n",
+        new="\treturn []string{FilterScriptPath}\n",
+        killer="TestTheArmedPWAHeadAddsOnlyThePWAScript",
+        why="the tag is emitted by `pwaHead`, so the page 'works' without the list knowing — and `uiaudit`'s "
+        "walk boots UNARMED, so only the armed render guard would notice a script the allowlist never admitted.",
+    ),
+    Mutant(
+        name="ui-pwa-script-uses-innerhtml",
+        path="internal/ui/pwa.js",
+        old="      deferred = event;\n      button.hidden = false;\n",
+        new="      deferred = event;\n      button.innerHTML = \"Install <b>cairn</b>\";\n      button.hidden = false;\n",
+        killer="TestThePWAScriptTouchesOnlyWhatItSays",
+        why="a richer label is the first 'improvement' anyone makes to an install button, and `innerHTML` is "
+        "the one-line way to get it — the sink the escaping story says no script here uses.",
+    ),
+    Mutant(
+        name="ui-pwa-script-writes-a-second-storage-key",
+        path="internal/ui/pwa.js",
+        old="      window.localStorage.setItem(HINT_KEY, \"1\");\n",
+        new="      window.localStorage.setItem(HINT_KEY, \"1\");\n"
+        "      window.localStorage.setItem(HINT_KEY + \"At\", String(Date.now()));\n",
+        killer="TestThePWAScriptTouchesOnlyWhatItSays",
+        why="'when was it dismissed' is the obvious next feature (re-show after a month), and it puts a "
+        "timestamp on the device — the second client-side write O8 and T9 say does not exist.",
+    ),
+    Mutant(
+        name="ui-pwa-script-registers-a-service-worker",
+        path="internal/ui/pwa.js",
+        old="  var HINT_KEY = \"cairn.installHintDismissed\";\n",
+        new="  var HINT_KEY = \"cairn.installHintDismissed\";\n"
+        "  if (navigator.serviceWorker) { navigator.serviceWorker.register(\"/sw.js\"); }\n",
+        killer="TestThePWAScriptTouchesOnlyWhatItSays",
+        why="every PWA guide's first step is registering a worker, and 'installable' reads as needing one — "
+        "O13 decided v1 has none, and this is the line that would quietly reverse it.",
+    ),
+    Mutant(
+        name="ui-manifest-screenshot-not-the-committed-file",
+        path="internal/ui/pwa.go",
+        old="\t\troutes[routeKey{http.MethodGet, f.Path}] = route{screenshotHandler(f), classPublic}\n",
+        new="\t\tf.Bytes = append(append([]byte{}, f.Bytes...), 'x')\n"
+        "\t\troutes[routeKey{http.MethodGet, f.Path}] = route{screenshotHandler(f), classPublic}\n",
+        killer="TestTheScreenshotSetIsExactlyTheCommittedFiles",
+        why="a served screenshot that is not the committed file is a picture no derivation pinned — the "
+        "provenance argument (leakscan skips PNGs) holds only while the row serves exactly those bytes.",
     ),
     # S3 of the mobile plan: decision 8, clause (d).
     Mutant(

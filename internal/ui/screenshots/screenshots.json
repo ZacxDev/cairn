@@ -1,0 +1,28 @@
+{
+  "screenshots": [
+    {
+      "name": "narrow-hub",
+      "page": "/",
+      "form_factor": "narrow",
+      "width": 390,
+      "height": 844,
+      "label": "The hub: arcs, scopes, sessions and team, on a phone"
+    },
+    {
+      "name": "narrow-arcs",
+      "page": "/arcs",
+      "form_factor": "narrow",
+      "width": 390,
+      "height": 844,
+      "label": "Arcs, live ones first, on a phone"
+    },
+    {
+      "name": "wide-hub",
+      "page": "/",
+      "form_factor": "wide",
+      "width": 1440,
+      "height": 900,
+      "label": "The hub on a desktop"
+    }
+  ]
+}

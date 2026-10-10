@@ -10,7 +10,8 @@ import (
 	"github.com/ZacxDev/cairn/internal/identity"
 )
 
-// filterScript is the scope page's entry filter: the ONE script this surface serves.
+// filterScript is the scope page's entry filter: the FIRST of the two scripts this surface serves
+// (the second, `pwa.js`, is linked only on an armed deployment — `pwa.go`).
 //
 // 🔴 THIS FILE REVERSES THE PACKAGE'S ZERO-SCRIPT PROPERTY, ON AN OPERATOR DECISION, AND WHAT
 // REPLACES IT IS AN ALLOWLIST RATHER THAN A HOPE. The surface used to render no script at all and
@@ -27,7 +28,8 @@ import (
 //   - `uiaudit`'s `refuseWalkRegressions` over the BROWSER's own `document.scripts`, which sees a
 //     script an injection or a parser recovery created and a byte scan cannot;
 //   - `TestTheFilterScriptTouchesOnlyWhatItSays`, which refuses the sinks a filter has no use for
-//     (`innerHTML`, `eval`, `fetch`, …) in THIS FILE's text.
+//     (`innerHTML`, `eval`, `fetch`, …) in `filter.js`'s text — and its twin for the second script,
+//     `TestThePWAScriptTouchesOnlyWhatItSays`, over `pwa.js`'s.
 //
 // ⚠ WHAT IT DOES NOT CHANGE: the escaping story. Every user string still reaches the page through
 // `g.Text` or a quoted attribute value; the script READS what the server already escaped into a
@@ -61,10 +63,13 @@ func hashedScriptPathFor(js string) string {
 // on a `<script>` element. A copy, so a caller cannot widen it.
 //
 // 🔴 A SCRIPT NOT NAMED HERE IS A REGRESSION WHEREVER IT APPEARS, AND SO IS AN INLINE ONE — an
-// empty `src` is never on this list. Adding a second script is an edit HERE, to a list both the
+// empty `src` is never on this list. Adding a script is an edit HERE, to a list both the
 // renderer's guard and `uiaudit`'s walk read, rather than a tag that quietly appears on a page.
+//
+// ✅ AND THE SECOND ENTRY IS `pwa.js` (S4 of the mobile plan, `pwa.go`): linked by `pwaHead` on an
+// ARMED deployment only, with its own spelling guard, `TestThePWAScriptTouchesOnlyWhatItSays`.
 func AllowedScriptSources() []string {
-	return []string{FilterScriptPath}
+	return []string{FilterScriptPath, PWAScriptPath}
 }
 
 // filterScriptTag is the ONE way a page reaches the script. `defer` so it runs after the
