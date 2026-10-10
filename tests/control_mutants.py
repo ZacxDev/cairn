@@ -4030,6 +4030,42 @@ MUTANTS: tuple[Mutant, ...] = (
         "asks for revalidation, so every authenticated page would sit in the device's HTTP cache — the "
         "invitation mint, whose body is a bearer capability, included.",
     ),
+    # 🔴 THE HUB AND THE SESSIONS LIST. Every hub count and every listed session comes out of a read
+    # narrowed by `auth.NamedScopes(VerbRead)`; each row below widens ONE of those reads (by the
+    # exported `Unrestricted` field, so the mutated file needs no new import) or skips the root's 303.
+    Mutant(
+        name="ui-sessions-list-walks-every-scope",
+        path="internal/ui/hub.go",
+        old="\tvisible := scopeSetOf(auth.NamedScopes(control.VerbRead))\n\tsnap, unreadable, err := s.arcSnapshotOrUnreadable()",
+        new="\tvisible := scopeSetOf(auth.NamedScopes(control.VerbRead))\n\tvisible.Unrestricted = true\n"
+        "\tsnap, unreadable, err := s.arcSnapshotOrUnreadable()",
+        killer="TestTheSessionsPageListsExactlyTheSessionsWhosePageIsFound",
+        extra_killers=("TestTheHubCountsOnlyWhatTheViewerCanRead",),
+        why="a list of 'every session' reads as a list over the STORE, and a session id is global — so "
+        "the unnarrowed walk is the natural first draft. It lists sessions that wrote only where the "
+        "viewer cannot read, each of which then 404s on its own page.",
+    ),
+    Mutant(
+        name="ui-hub-arcs-count-includes-unreadable-homes",
+        path="internal/ui/arcsindex.go",
+        old="\tvisible := scopeSetOf(auth.NamedScopes(control.VerbRead))\n\tsnap, err := s.arcSnapshot()\n"
+        "\tif err != nil {\n\t\treturn report.ArcsAcrossReport{}, err",
+        new="\tvisible := scopeSetOf(auth.NamedScopes(control.VerbRead))\n\tvisible.Unrestricted = true\n"
+        "\tsnap, err := s.arcSnapshot()\n\tif err != nil {\n\t\treturn report.ArcsAcrossReport{}, err",
+        killer="TestTheHubCountsOnlyWhatTheViewerCanRead",
+        extra_killers=("TestAnArcHomedInAnUnreadableScopeIsNeverListedEvenWhenItsMembersWroteWhereYouRead",),
+        why="a COUNT looks harmless next to a list — it names nothing — but 'N arcs' over every home is "
+        "an existence oracle over arcs homed where the viewer cannot read (Q1), one number at a time.",
+    ),
+    Mutant(
+        name="ui-root-scope-list-query-not-redirected",
+        path="internal/ui/hub.go",
+        old="\tif redirectsToScopes(r) {",
+        new="\tif false && redirectsToScopes(r) {",
+        killer="TestTheOldScopeListQueriesRedirectToScopes",
+        why="the hub ignores `?q=` and `?tag=` and still answers 200, so every bookmark and the Search "
+        "shortcut look like they work — they land on the hub with the search silently dropped.",
+    ),
 )
 
 

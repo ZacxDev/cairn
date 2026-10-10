@@ -24,14 +24,17 @@ import (
 // `a == a`. Each marker is checked ABSENT from the navigate page this world renders, so a fixture
 // that silently falls back to navigate goes red instead of measuring the fallback.
 var realPage = map[string]struct{ query, marker string }{
-	"GET / content":        {"", `class="scope-grid"`},
-	"GET /scope content":   {"?" + QueryID + "=" + string(fixtureScope), `<h2>platform</h2>`},
-	"GET /entry content":   {"?" + QueryScope + "=" + string(fixtureScope) + "&" + QueryRef + "=runbook", `<h2>runbook</h2>`},
-	"GET /arc content":     {"?" + QueryHome + "=" + string(fixtureScope) + "&" + QuerySlug + "=walk-arc", `<h2>Arc</h2>`},
-	"GET /arcs content":    {"", `id="arcs-index"`},
-	"GET /session content": {"?" + QuerySession + "=" + walkSession, `id="session-summary"`},
-	"GET /share content":   {"", `<title>cairn — sharing`},
-	"GET /invite content":  {"", `class="invite-honesty"`},
+	"GET / content":       {"", `id="hub"`},
+	"GET /scopes content": {"", `class="scope-grid"`},
+	// The sessions page renders its list card even when nothing is visible; the marker is that card.
+	"GET /sessions content": {"", `id="sessions-index"`},
+	"GET /scope content":    {"?" + QueryID + "=" + string(fixtureScope), `<h2>platform</h2>`},
+	"GET /entry content":    {"?" + QueryScope + "=" + string(fixtureScope) + "&" + QueryRef + "=runbook", `<h2>runbook</h2>`},
+	"GET /arc content":      {"?" + QueryHome + "=" + string(fixtureScope) + "&" + QuerySlug + "=walk-arc", `<h2>Arc</h2>`},
+	"GET /arcs content":     {"", `id="arcs-index"`},
+	"GET /session content":  {"?" + QuerySession + "=" + walkSession, `id="session-summary"`},
+	"GET /share content":    {"", `<title>cairn — sharing`},
+	"GET /invite content":   {"", `class="invite-honesty"`},
 }
 
 // walkSession is the one session id `walkSource` answers as FOUND.

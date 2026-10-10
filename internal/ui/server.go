@@ -82,6 +82,10 @@ type Source interface {
 	// member bullet over the readable scopes. On this interface for `Touched`'s reason — a second
 	// seam would be a route answering about authority through a door the walk does not count.
 	Arcs(auth control.Authorization) (report.ArcsAcrossReport, error)
+	// AllSessions answers `/sessions` and the hub's sessions count: every session this caller can see
+	// anything of. On this interface for `Session`'s reason, and over the SAME walk (`report.
+	// SessionsAcross` and `report.SessionAcross` share it), so the list and the page cannot disagree.
+	AllSessions(auth control.Authorization) (SessionsList, error)
 }
 
 // Scope is one scope's worth of entries, as the pages render them.
@@ -1362,7 +1366,9 @@ func writePlain(w http.ResponseWriter, code int, body string) {
 	_, _ = w.Write([]byte(body))
 }
 
-// handlePage is the ROOT page's handler: a card per readable scope, plus the search box.
+// handlePage is the SCOPE LIST's handler (`/scopes`): a card per readable scope, plus the search box.
+// It served the ROOT until the root became the hub (`handleHub`), and "the root row" below means this
+// one — `?q=` and `?tag=` reach it here, or through the hub's 303.
 //
 // ⚠ IT WAS ONCE THE ONE CONTENT HANDLER AND IS NOW ONE OF FOUR. That sentence has been
 // corrected twice — it said "the ONE content handler" until `GET /share` arrived and "one

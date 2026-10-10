@@ -115,6 +115,10 @@ type PageView struct {
 	// `arcsindex.go`.
 	ArcsIndex *report.ArcsAcrossReport
 	ArcsAll   bool
+	// Hub is the hub page's answer and SessionsList the sessions page's, nil everywhere else. See
+	// `hub.go`.
+	Hub          *Hub
+	SessionsList *SessionsList
 	// Panes is the presence predicate bound to THIS request's viewer ([Server.panesFor]), nil when
 	// presence is off. Set by the four pages that list a session; read only through its methods, so
 	// a viewer the predicate shows nothing renders no node at all. See `presence.go`.
@@ -134,7 +138,9 @@ type PageView struct {
 	App App
 }
 
-// Page is the ROOT: every scope this credential may read, as cards, plus the search box.
+// Page is the SCOPE LIST (`/scopes`): every scope this credential may read, as cards, plus the search
+// box. It was the ROOT until the root became the hub (`hub.go`); the page itself did not change, and
+// the comments below that say "the root" mean this page.
 //
 // 🔴 EVERY USER STRING GOES THROUGH `g.Text` OR THROUGH A QUOTED ATTRIBUTE VALUE,
 // AND NOTHING GOES THROUGH `g.Raw`. See this package's doc comment for the measured
@@ -679,7 +685,9 @@ func breadcrumbs(crumbs []crumb) g.Node {
 		h.Aria("label", "Breadcrumb"),
 		// The trail always starts at the root, so the first step is spelled here rather
 		// than by every caller.
-		h.A(h.Class("crumb"), h.Href(RootPath), g.Text("All scopes")),
+		// ⚠ `/scopes`, NOT THE ROOT, since the root became the hub: the trail's first step is still "All
+		// scopes", and that list lives at `ScopesPath` now. The wordmark is the way to the hub.
+		h.A(h.Class("crumb"), h.Href(ScopesPath), g.Text("All scopes")),
 		g.Map(crumbs, func(c crumb) g.Node {
 			if c.Href == "" {
 				return h.Span(h.Class("crumb crumb-here"), g.Text(c.Label))
@@ -720,7 +728,7 @@ func searchForm(v PageView) g.Node {
 	return h.FormEl(
 		h.Class("searchbar"),
 		h.Method("get"),
-		h.Action(RootPath),
+		h.Action(ScopesPath),
 		h.Label(h.For("q"), g.Text("Search entries")),
 		h.Input(
 			h.ID("q"),
@@ -797,7 +805,7 @@ func searchResults(v PageView) g.Node {
 			g.Text("Clear the tag and search every entry")))),
 		g.If(r.Tag != "", h.P(h.Class("note"), h.A(h.Href(tagHref(r.Tag)),
 			g.Text("Clear the search and list everything tagged `"+r.Tag+"`")))),
-		h.P(h.Class("note"), h.A(h.Href(RootPath), g.Text(clearAllLabel(r.Tag)))),
+		h.P(h.Class("note"), h.A(h.Href(ScopesPath), g.Text(clearAllLabel(r.Tag)))),
 		g.If(len(r.Hits) == 0 && r.BestBelow != "", h.P(h.Class("empty"), g.Text(
 			"Nothing cleared the threshold. The closest entry was `"+r.BestBelow+"` — "+
 				"so this is a near miss rather than a store with nothing in it."))),
@@ -827,7 +835,7 @@ func tagResults(v PageView) g.Node {
 		h.H2(g.Text("Tag")),
 		h.P(h.Class("card-what"), g.Text(tagWhat)),
 		h.P(h.Class("note"), g.Text(tagSummary(m))),
-		h.P(h.Class("note"), h.A(h.Href(RootPath), g.Text("Clear the tag and show every scope"))),
+		h.P(h.Class("note"), h.A(h.Href(ScopesPath), g.Text("Clear the tag and show every scope"))),
 		g.If(len(m.Entries) == 0 && m.Scanned > 0, h.P(h.Class("empty"), g.Text(
 			"No entry carries this tag. This query's operand is checked against no "+
 				"vocabulary, and an entry written before the write path's vocabulary closed "+
@@ -1501,7 +1509,7 @@ func entryHref(scope control.ID, ref string, raw bool) string {
 // requirement rather than a preference: every served path is a literal key in `routes`, and a
 // tag is user text.
 func tagHref(tag string) string {
-	return RootPath + "?" + url.Values{QueryTag: []string{tag}}.Encode()
+	return ScopesPath + "?" + url.Values{QueryTag: []string{tag}}.Encode()
 }
 
 // searchHref is the ONE place a `/?q=` URL is built, and it exists for the same two reasons
@@ -1513,7 +1521,7 @@ func tagHref(tag string) string {
 // off `handlePage`. The encoder is what stops `?q=` ending an attribute, and the only reason
 // this is not already a stored-XSS report is that nothing built this URL before.
 func searchHref(query string) string {
-	return RootPath + "?" + url.Values{QueryQuery: []string{query}}.Encode()
+	return ScopesPath + "?" + url.Values{QueryQuery: []string{query}}.Encode()
 }
 
 // clearAllLabel names what the bare-root link actually does, which differs by how many filters

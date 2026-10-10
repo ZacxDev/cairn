@@ -115,9 +115,20 @@ type route struct {
 // `..` a routing question. In a query parameter it is a value the handler matches
 // against the narrowed answer and never resolves. See `handleEntryPage`.
 var routes = map[routeKey]route{
-	{"GET", "/"}:      {(*Server).handlePage, classContent},
-	{"GET", "/scope"}: {(*Server).handleScopePage, classContent},
-	{"GET", "/entry"}: {(*Server).handleEntryPage, classContent},
+	// 🔴 THE ROOT IS THE HUB, AND THE SCOPE LIST MOVED TO `/scopes` (an operator decision). The hub is
+	// four cards — arcs, scopes, sessions, team — each with a count only where the count is an answer
+	// this caller is authorised to see; the scope cards, the search box and the tag filter are
+	// `/scopes`'s. `/?q=` and `/?tag=` still ANSWER, with a 303 to `/scopes` carrying the query, so a
+	// bookmark or a home-screen shortcut is never a dead link. See `handleHub`.
+	{"GET", "/"}:       {(*Server).handleHub, classContent},
+	{"GET", "/scopes"}: {(*Server).handlePage, classContent},
+	// 🔴 THE SESSIONS LIST: every session this caller can see anything of — the SAME predicate the
+	// session page is found by (`report.SessionsAcross` and `report.SessionAcross` read one walk), so a
+	// listed session's page never 404s and a hidden one is never listed. GET only. See
+	// `handleSessionsPage`.
+	{"GET", "/sessions"}: {(*Server).handleSessionsPage, classContent},
+	{"GET", "/scope"}:    {(*Server).handleScopePage, classContent},
+	{"GET", "/entry"}:    {(*Server).handleEntryPage, classContent},
 	// 🔴 THE ARC PAGE IS A FOURTH FIXED BROWSE PATH WITH ITS OPERANDS IN QUERY PARAMETERS, for the
 	// browse pair's reason above: `/arc/{home}/{slug}` would need a prefix match, and the slug is a
 	// value a registration supplied. GET only — the UI never registers an arc (its journal mount is
@@ -241,6 +252,11 @@ const (
 	SignInPath  = "/sign-in"
 	SignOutPath = "/sign-out"
 	RootPath    = "/"
+	// ScopesPath is the scope list: one card per readable scope, the search box (`?q=`) and the tag
+	// filter (`?tag=`). It was the root until the root became the hub.
+	ScopesPath = "/scopes"
+	// SessionsPath is every session this caller can see anything of, newest first.
+	SessionsPath = "/sessions"
 	// ScopePath is one scope's entry list, keyed by `?id=<control.ID>`.
 	// EntryPath is one entry, keyed by `?scope=<control.ID>&ref=<stem>`.
 	ScopePath = "/scope"
@@ -323,11 +339,11 @@ const (
 	// QueryRef is an entry ref: USER TEXT, percent-encoded on the way out by `entryHref`
 	// and matched against the narrowed answer on the way in.
 	QueryRef = "ref"
-	// QueryQuery is the search box. It rides on the ROOT row rather than on a route of
+	// QueryQuery is the search box. It rides on the SCOPE LIST row (`/scopes`, the root before the hub) rather than on a route of
 	// its own — see `routes`.
 	QueryQuery = "q"
-	// QueryTag is the CATEGORY filter: `/?tag=<name>`, the target every rendered tag links
-	// to. It rides on the ROOT row for exactly the reason [QueryQuery] and [QueryView] do,
+	// QueryTag is the CATEGORY filter: `/scopes?tag=<name>`, the target every rendered tag links
+	// to. It rides on the SCOPE LIST row for exactly the reason [QueryQuery] and [QueryView] do,
 	// and this is the one place that reason is a REQUIREMENT rather than a preference.
 	//
 	// 🔴 A QUERY PARAMETER AND NEVER A PATH SEGMENT, BECAUSE EVERY SERVED PATH IS A LITERAL

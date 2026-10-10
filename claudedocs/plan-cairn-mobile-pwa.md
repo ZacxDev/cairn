@@ -856,6 +856,9 @@ comfort size (Apple HIG, 2.5.5 AAA) is missed nearly everywhere, and nothing ada
      measured the cost here; Q7 measures it on a phone.
 9. **REMOVED (O13)** — worker currency, the deployed-digest probe and the kill switch.
 10. **Shortcuts: Arcs → `/arcs`, Search → `/?q=`, Sharing → `/share`.**
+    - **SUPERSEDED AT BUILD (UI hub change): Search targets `/scopes?q=`.** The root became a hub and
+      the scope list with its search box moved to `/scopes`; `/?q=` still answers, with a 303 to
+      `/scopes?q=` (query preserved), so S4 should point the shortcut at `/scopes?q=` directly.
     - Three items, Chrome Android's limit. No shortcut icons.
     - **Search is query-based now (audit round 1, item 3).** `/#q` could not carry a return path:
       a fragment never reaches the server, and `signInLocation` answers a bare `/sign-in` for `/`

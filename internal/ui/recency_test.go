@@ -200,7 +200,7 @@ func TestTwoEntriesInsideOneSecondAreOrderedByTheirFraction(t *testing.T) {
 // first, an exact tie by scope name.
 func TestTheRootPageOrdersScopeCardsByTheirNewestEntry(t *testing.T) {
 	root, id, _ := recencyWorld(t)
-	rec := getAs(t, recencyServer(t, root, id), RootPath)
+	rec := getAs(t, recencyServer(t, root, id), ScopesPath)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the root page answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -224,7 +224,7 @@ func TestEveryTimestampIsRelativeToTheInjectedClockWithItsInstantPinned(t *testi
 	srv := recencyServer(t, root, id)
 	const birch = `<time class="updated" datetime="2000-06-01T11:55:00Z" title="2000-06-01 11:55:00 UTC">5m ago</time>`
 
-	rootBody := getAs(t, srv, RootPath).Body.String()
+	rootBody := getAs(t, srv, ScopesPath).Body.String()
 	scopeBody := getAs(t, srv, ScopePath+"?"+QueryID+"="+string(orchard)).Body.String()
 	entryBody := getAs(t, srv, entryHref(orchard, "birch", false)).Body.String()
 

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
+
+	"github.com/ZacxDev/cairn/internal/ui"
 )
 
 // filterState is what the scope page's filter has done to the list, read off the live DOM.
@@ -90,7 +92,7 @@ func TestTheEntryFilterNarrowsRowsInARealBrowser(t *testing.T) {
 
 	var href string
 	if err := chromedp.Run(b.ctx,
-		chromedp.Navigate(world.BaseURL+"/"),
+		chromedp.Navigate(world.BaseURL+ui.ScopesPath),
 		chromedp.Evaluate(fmt.Sprintf(
 			`(Array.from(document.querySelectorAll("a.card-name")).find(a => a.textContent === %q) || {getAttribute: () => ""}).getAttribute("href")`,
 			scope), &href),
@@ -98,7 +100,7 @@ func TestTheEntryFilterNarrowsRowsInARealBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	if href == "" {
-		t.Fatalf("the root page links no card named %q", scope)
+		t.Fatalf("the scope list links no card named %q", scope)
 	}
 
 	read := func() filterState {
