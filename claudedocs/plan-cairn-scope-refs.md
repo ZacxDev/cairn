@@ -692,7 +692,7 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
 | **T12. Resource exhaustion on the auditing host** | ≤ 8 sources, a per-call timeout, a per-run PR-check cap, and a cap hit reported as could-not-look. Full mirrors are F1's price, and their size is unmeasured. |
 | **T13. A finding read as a verdict on meaning, or a stale run read as current** | The closed severity table, judgement kept out of the exit code, and every finding quoting its fetched commit and time. |
 | **T14. A committed fixture leaks a real repository** | Run-time synthetic worlds, `leakscan` in CI, no captured text. |
-| **T15. A torn or hand-damaged journal** | Arcs' read rule: damaged lines are skipped and COUNTED, the torn tail is never applied, and the GET reports the damage count. A scope whose latest line was damaged falls back to its previous record, and the response says so. |
+| **T15. A torn or hand-damaged journal** | Arcs' read rule: damaged lines are skipped and COUNTED, and the torn tail is never applied. **As built (S2), the GET reports the damage as a FACT, never as a count**: the body carries `damaged=yes` and a fixed sentence saying a declaration written only by a damaged line is not shown and an older one may be shown in its place; the counts (`Skipped`, torn tail) go to the pod's stderr. The reason is arcs' own: a damaged line cannot be attributed to a scope (it did not parse), so a count is over EVERY scope's lines — including scopes the caller cannot read — and putting it on the wire would leak activity in hidden scopes. A scope whose latest line was damaged falls back to its previous valid record. *(Revision 6 said "the GET reports the damage count"; superseded by the build for the reason above.)* |
 
 ## Slices
 
