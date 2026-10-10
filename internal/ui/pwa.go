@@ -19,11 +19,12 @@ import (
 	"github.com/ZacxDev/cairn/internal/identity"
 )
 
-// 🔴 THE INSTALLABLE HALF OF THE MOBILE PLAN (S2): a web app manifest, a closed set of icon
-// variants, and the head elements that point a browser at both. There is NO service worker and
-// NO script here — `claudedocs/plan-cairn-mobile-pwa.md`, O13 and decision 4. Installability on
-// Chromium needs a manifest with a name, 192 and 512 px icons, a `start_url` and a `display`;
-// nothing in this file is stored on the device.
+// 🔴 THE INSTALLABLE HALF OF THE MOBILE PLAN (S2 and S4): a web app manifest with its shortcuts and
+// install screenshots, a closed set of icon variants, the head elements that point a browser at
+// them, and ONE script (`pwa.js`, S4) that reveals an Install button and the iOS hint. There is NO
+// service worker — `claudedocs/plan-cairn-mobile-pwa.md`, O13. Installability on Chromium needs a
+// manifest with a name, 192 and 512 px icons, a `start_url` and a `display`. The ONE thing anything
+// here stores on the device is `pwa.js`'s dismissal flag for the iOS hint (O8, decision 11).
 //
 // 🔴 IT IS INERT UNLESS A DEPLOYMENT ARMS IT. [App] with no `Name` renders no head element and the
 // manifest row answers `404 no such route` — the same status and body an AUTHENTICATED caller gets
@@ -337,8 +338,6 @@ const manifestDescription = "Per-subsystem engineering notes, scoped by authorit
 
 // webManifest is the manifest's wire shape, marshalled by `encoding/json` and never assembled as a
 // string — so a name carrying `"`, `<` or a newline stays one JSON value.
-//
-// ⚠ NO `shortcuts` AND NO `screenshots` YET: both are S4's, beside the script that S4 adds.
 type webManifest struct {
 	ID              string         `json:"id"`
 	Name            string         `json:"name"`
@@ -350,6 +349,42 @@ type webManifest struct {
 	ThemeColor      string         `json:"theme_color"`
 	BackgroundColor string         `json:"background_color"`
 	Icons           []manifestIcon `json:"icons"`
+	// Shortcuts are the launcher's long-press menu (Chromium; iOS ignores them). See [appShortcuts].
+	Shortcuts []manifestShortcut `json:"shortcuts"`
+	// Screenshots are the richer install dialog's pictures (Chromium; iOS ignores them).
+	Screenshots []manifestScreenshot `json:"screenshots"`
+}
+
+type manifestShortcut struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+type manifestScreenshot struct {
+	Src        string `json:"src"`
+	Sizes      string `json:"sizes"`
+	Type       string `json:"type"`
+	FormFactor string `json:"form_factor"`
+	Label      string `json:"label"`
+}
+
+// appShortcuts is the manifest's `shortcuts`: three, Chrome Android's limit, no icons (plan
+// decision 10). Every `url` is a declared GET row, and each is a REAL request-URI, never a fragment:
+// an expired session answers a 303 to `/sign-in?next=<that URI>`, and a fragment never reaches the
+// server to be carried back.
+//
+// 🔴 SEARCH TARGETS `/scopes?q=`, NOT THE PLAN'S `/?q=`: the root became the hub and the search box
+// moved to `/scopes` (`/?q=` still answers, with a 303 there — one hop a launcher need not take).
+// ⚠ AND "Team" TARGETS `/share` FOR NOW, matching the hub's Team card (`hub.go`): a consolidated team
+// page is being built separately, and it repoints both. `TestTheManifestIsBuiltFromTheConfiguredApp`
+// pins all three as literals, and `TestEveryShortcutIsADeclaredRowThatReturnsThroughSignIn` pins the
+// sign-in `Location` each answers to a stranger.
+func appShortcuts() []manifestShortcut {
+	return []manifestShortcut{
+		{Name: "Arcs", URL: ArcsPath},
+		{Name: "Search", URL: ScopesPath + "?" + QueryQuery + "="},
+		{Name: "Team", URL: SharePath},
+	}
 }
 
 type manifestIcon struct {
@@ -376,6 +411,13 @@ func buildManifest(a App) webManifest {
 		px := strconv.Itoa(f.Kind.Px)
 		m.Icons = append(m.Icons, manifestIcon{Src: f.Path, Sizes: px + "x" + px, Type: "image/png",
 			Purpose: f.Kind.ManifestPurpose})
+	}
+	m.Shortcuts = appShortcuts()
+	m.Screenshots = []manifestScreenshot{}
+	for _, f := range screenshotFiles {
+		m.Screenshots = append(m.Screenshots, manifestScreenshot{Src: f.Path,
+			Sizes: strconv.Itoa(f.Width) + "x" + strconv.Itoa(f.Height), Type: "image/png",
+			FormFactor: f.FormFactor, Label: f.Label})
 	}
 	return m
 }
@@ -410,9 +452,9 @@ func (s *Server) handleManifest(w http.ResponseWriter, _ *http.Request, _ identi
 // signed-in one. `TestEveryFrameCallsPWAHead` walks the package's `c.HTML5Props` literals, so a
 // fourth frame cannot be added without it.
 //
-// 🔴 IT EMITS NO `<script>`, and that is a decision with a guard rather than an omission: the
-// install button's script is S4's, and until then [AllowedScriptSources] holds ONE entry and
-// `TestTheArmedPWAHeadAddsNoScript` reads every armed frame for a script tag.
+// 🔴 IT EMITS EXACTLY ONE `<script>`, `pwa.js` (S4), the second entry of [AllowedScriptSources] —
+// and nothing else that executes. `TestTheArmedPWAHeadAddsOnlyThePWAScript` reads every armed frame
+// for script tags beyond the allowlisted ones.
 //
 // Unarmed, it renders NOTHING — not an empty group with a comment, no node at all.
 func pwaHead(a App) g.Node {
@@ -427,5 +469,165 @@ func pwaHead(a App) g.Node {
 		h.Meta(h.Name("theme-color"), h.Content(themeColour)),
 		h.Link(h.Rel("icon"), h.Type("image/png"), g.Attr("sizes", px+"x"+px), h.Href(favicon.Path)),
 		h.Link(h.Rel("apple-touch-icon"), h.Href(apple.Path)),
+		pwaScriptTag(),
 	})
+}
+
+// pwaInstallButton is the header's Install control (decision 11): rendered `hidden`, revealed by
+// `pwa.js` only when Chromium fires `beforeinstallprompt`. `type="button"`, so it submits nothing.
+// Unarmed, no node.
+func pwaInstallButton(a App) g.Node {
+	if !a.Armed() {
+		return nil
+	}
+	return h.Button(h.Type("button"), h.Class("install"), h.ID("pwa-install"), g.Attr("hidden"),
+		g.Text("Install"))
+}
+
+// pwaInstallHintText is the iOS hint's one line. iOS has no programmatic prompt; this is the path.
+const pwaInstallHintText = "Install: Share → Add to Home Screen"
+
+// pwaInstallHint is the ROOT page's iOS install hint (decision 11, O8): rendered `hidden`, revealed
+// by `pwa.js` only where `navigator.standalone === false` (a Safari tab) and this browser has not
+// dismissed it. Unarmed, no node.
+func pwaInstallHint(a App) g.Node {
+	if !a.Armed() {
+		return nil
+	}
+	return h.Div(h.Class("install-hint"), h.ID("pwa-install-hint"), g.Attr("hidden"),
+		h.P(g.Text(pwaInstallHintText)),
+		h.Button(h.Type("button"), h.ID("pwa-install-hint-dismiss"), g.Text("Dismiss")),
+	)
+}
+
+// ---- the script --------------------------------------------------------------------------------
+
+// pwaScript is the installable surface's one script — see the header of `pwa.js` for what it may
+// touch, and `script.go` for the allowlist it is the second entry of.
+//
+// ⚠ THE SAME FLAKE RULE AS `filter.js`: `//go:embed` on a file `flake.nix`'s `onlyGo` filter does not
+// carry stops compilation in the sandbox, so the filter names this file explicitly.
+//
+//go:embed pwa.js
+var pwaScript string
+
+// PWAScriptPath is the content-hashed path `pwaHead` links, through the stylesheet's digest — so a
+// changed script is a NEW URL and the year-long `immutable` is licensed by the URL.
+var PWAScriptPath = "/static/pwa." + hashAsset(pwaScript) + ".js"
+
+// pwaScriptTag is the ONE way a page reaches the script, in the allowlisted shape (`defer`).
+func pwaScriptTag() g.Node {
+	return h.Script(h.Src(PWAScriptPath), h.Defer())
+}
+
+// handlePWAScript serves the script's hashed row: PUBLIC, `nosniff`, `immutable` — the filter
+// script's handler exactly, for its reasons (`script.go`). It serves a Go variable.
+func handlePWAScript(_ *Server, w http.ResponseWriter, _ *http.Request, _ identity.Identity) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", stylesheetCacheImmutable)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(pwaScript))
+}
+
+// ---- install screenshots ------------------------------------------------------------------------
+
+// 🔴 THE INSTALL SCREENSHOTS ARE BUILD OUTPUT OF THE SYNTHETIC WORLD, AND `screenshots.json` IS THE
+// ONE LIST THREE READERS USE (plan decision 16, O7): this package (which files exist, their sizes,
+// form factors and labels), `uiaudit -screenshots` (which page to capture at which size), and
+// `flake.nix` (the `onlyGo` names). `uiScreenshots` boots `cairn-ui` on `tests/reader_fixtures.py`'s
+// world in the nix sandbox and captures each with the pinned chromium;
+// `checks.ui-screenshots-are-current` re-captures and byte-compares.
+//
+// 🔴 PROVENANCE, NOT A SCAN — the icons' argument: `tests/leakscan.py` skips a PNG by name, so what
+// keeps a committed screenshot free of anything private is that its bytes must EQUAL what the
+// derivation renders from the synthetic fixture world, which is text and is scanned. The check's
+// provenance control renames one fixture scope and requires the render to CHANGE, so "the bytes
+// equal the derivation" is a claim about the fixture and not about a constant picture.
+//
+//go:embed screenshots/screenshots.json
+var screenshotSpecJSON []byte
+
+//go:embed screenshots/*.png
+var screenshotFS embed.FS
+
+// ScreenshotSpec is one install screenshot: what page, at what size, for which form factor.
+type ScreenshotSpec struct {
+	Name       string `json:"name"`
+	Page       string `json:"page"`
+	FormFactor string `json:"form_factor"`
+	Width      int    `json:"width"`
+	Height     int    `json:"height"`
+	Label      string `json:"label"`
+}
+
+// screenshotFile is one committed screenshot and the row that serves it.
+type screenshotFile struct {
+	ScreenshotSpec
+	Bytes []byte
+	Path  string
+}
+
+var screenshotFiles = mustLoadScreenshots(screenshotSpecJSON, screenshotFS)
+
+func mustLoadScreenshots(raw []byte, fsys embed.FS) []screenshotFile {
+	var spec struct {
+		Screenshots []ScreenshotSpec `json:"screenshots"`
+	}
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		panic("ui: screenshots/screenshots.json does not parse: " + err.Error())
+	}
+	if len(spec.Screenshots) == 0 {
+		panic("ui: screenshots/screenshots.json declares no screenshot")
+	}
+	var out []screenshotFile
+	for _, s := range spec.Screenshots {
+		b, err := fsys.ReadFile("screenshots/" + s.Name + ".png")
+		if err != nil {
+			panic("ui: screenshots.json lists " + s.Name + ".png and it is not embedded — regenerate with " +
+				"`nix run .#build-ui-screenshots`: " + err.Error())
+		}
+		out = append(out, screenshotFile{ScreenshotSpec: s, Bytes: b,
+			Path: "/static/screenshot-" + s.Name + "." + hashAsset(string(b)) + ".png"})
+	}
+	return out
+}
+
+// ScreenshotSpecs is the committed screenshot list, in `screenshots.json`'s order. A copy.
+func ScreenshotSpecs() []ScreenshotSpec {
+	out := make([]ScreenshotSpec, 0, len(screenshotFiles))
+	for _, f := range screenshotFiles {
+		out = append(out, f.ScreenshotSpec)
+	}
+	return out
+}
+
+// ScreenshotPaths is every screenshot row's served path, armed or not — `IconPaths`' reason.
+func ScreenshotPaths() []string {
+	out := make([]string, 0, len(screenshotFiles))
+	for _, f := range screenshotFiles {
+		out = append(out, f.Path)
+	}
+	return out
+}
+
+// screenshotHandler serves one screenshot's bytes — `iconHandler`'s shape, for its reasons.
+func screenshotHandler(f screenshotFile) handler {
+	return func(_ *Server, w http.ResponseWriter, _ *http.Request, _ identity.Identity) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Cache-Control", stylesheetCacheImmutable)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(f.Bytes)
+	}
+}
+
+// 🔴 THE SCRIPT ROW AND ONE ROW PER SCREENSHOT, computed exact keys in the same `routes` map — the
+// icon rows' argument (above). All PUBLIC: the install dialog fetches a screenshot with no
+// credentials, and the sign-in page an install starts from links the script.
+func init() {
+	routes[routeKey{http.MethodGet, PWAScriptPath}] = route{handlePWAScript, classPublic}
+	for _, f := range screenshotFiles {
+		routes[routeKey{http.MethodGet, f.Path}] = route{screenshotHandler(f), classPublic}
+	}
 }

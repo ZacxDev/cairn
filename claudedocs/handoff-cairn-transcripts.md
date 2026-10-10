@@ -23,44 +23,37 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
 - **Plans MERGED:** #208 `8c61b21` (15 audit rounds; read scopes via a CLIENT READ LEDGER, O11),
   #211 `a3e7de3` (agent-view trace: no hook injects cairn; 661/665 recalls are piped through
   head/grep — the v1 recall tab is #213 in the UI arc).
-- **Operator decisions this session (recorded in the plan, revision 17 on #215):** O12 binary ships
-  (coordinator's reading, recorded as reversible: only a closed list of KNOWN binary signatures ships
-  byte-identical; everything else incl. NUL-separated and invalid-byte text is scanned); O14 90 days,
-  ~20 GB per capturing host; O13 the plan's recommendations adopted as stated defaults (Q5: the
-  client instance is NOT armed without an explicit decision).
-- **S0 = #215 (`7e6d53e`): audit ladder CLEAN** (rounds 0+1, round 2 clean). Waiting on CI
-  (`uiaudit` red = hub 502).
-- **S1 = #216 (`zach/transcripts-s1` @ `d4ccf7f`, `internal/redact`): round 3 NOT CLEAN** (1🔴 3🟡).
-  Round 2's four regressions are fixed and the adopted auditor tests pass (attack set 74/75,
-  planted=72 caught=72 clean-damaged=0 at 8 seeds) — BUT a fresh blind 62-case set scored **30/62 at
-  both 2ba3e5c and d4ccf7f**: the gains concentrated on the adopted test shapes. 🔴 single-file
-  `grep -n` (`N:`), `grep` without `-n` (`path:`), context (`N-`) and `diff` `<` prefixes still leak
-  (also PEM bodies). 🟡A new clean damage 4/74 → 36/74 on blind probes (letters-only `Password:
-  hashed,`, i18n/validation strings via source-literal, `?key=getting-started`, minified JS);
-  `identifierTail`'s `,` branch unreachable. 🟡B named-key misses (systemd `Environment=`,
-  `os.environ[...] =`, CLI flags `--password=`/`-p<pw>`/`-a`, `IDENTIFIED BY`, kubeconfig
-  `client-key-data`, …). 🟡C `audit_rate_test.go:44` checks the whole value + first half, not the
-  docstring's "no 6-char window survives" — libpq pm-20 is 139/200 under the stated oracle, so the
-  README/plan's "176–197/200" is overstated.
-- **S2 = #217 (`27b812c`, `cmd/cairn-capture`, uploads NOTHING):** round 2 clean as a delta;
-  re-check rides with #216's round 3.
+- **Operator decisions (recorded in the plan, revision 17):** O12 binary ships (only a closed list
+  of KNOWN binary signatures ships byte-identical); O14 90 days, ~20 GB per capturing host; O13 the
+  plan's recommendations as stated defaults (Q5: the client instance is NOT armed without an
+  explicit decision).
+- **NEW operator decision O15 (2026-10-10, for #216; being written into the plan by round 4):**
+  change approach — redact by KEY CONTEXT (any value of a secret-named key/flag/env var/config
+  field) plus HIGH-ENTROPY tokens, accepting more clean damage; NORMALISE tool line prefixes (grep
+  `path:N:`/`path:`/`N-`, diff `<`/`>`) before any rule runs; each round's held-back set is FRESH,
+  written by an auditor the fixer never sees; and **capture is armed on NO instance until a fresh
+  held-back set scores ≥90% leaks caught AND ≤15% clean lines damaged.**
+- **S0 = #215 MERGED** as `76ddc7e` (16:43Z, branch kept); verified by content — all 10 files equal
+  the branch head `7e6d53e` except one `ci.yml` mutant-count comment that came from `main` (#213).
+  #216 was already retargeted to `main`.
+- **S1 = #216 (`zach/transcripts-s1` @ `d4ccf7f`): fix round 4 IN FLIGHT** under O15, by a
+  subagent in its own worktree (merging `main` in — the PR read CONFLICTING after #215). Round 3's
+  findings it addresses: 🔴 grep/diff prefix leaks + PEM bodies; 🟡A clean damage 36/74; 🟡B named-key
+  misses; 🟡C `audit_rate_test.go:44` vs its docstring, and the overstated "176–197/200".
+- **S2 = #217 (`27b812c`):** stacked on #216; round 4 may change the API it calls.
 - Claim held: `cairn-transcripts-s0-s2`.
 
 ## Next steps (ranked)
-1. **Merge #215 (S0)** once CI's `go` job is green — stacked parent: merge WITHOUT
-  `--delete-branch`, then retarget #216 to `main` (`gh pr edit 216 --base main`). forcing: user —
-  operator asked for S0–S2.
-2. **#216 redactor: an OPERATOR DECISION before another fix round.** Three rounds of shape-by-shape
-  rules have each fixed the named cases while a blind set stays flat (30/62) and clean damage grows.
-  Options to put to the operator: (a) keep going rule-by-rule, accepting a stated residual and
-  measuring a fixed blind set each round; (b) change approach — redact by KEY CONTEXT + entropy
-  (any value of a secret-named key/flag/env, plus high-entropy tokens near secret words) and accept
-  more clean damage; (c) keep the shape rules but do NOT arm capture on any instance until a
-  named blind-set floor (e.g. ≥90%) is met. Then fix round 4 (🔴 grep prefixes first), delta audit,
-  merge after #215, then #217 (retarget each to `main`; re-run the merged tree when the base moves).
-  forcing: security — the redactor is the only control between raw transcripts and the store (O1).
-3. **S3** (upload + transcript store in cairn-ui) and **S11** (client read ledger) — S11 must land
-   before transcripts are armed on any real instance. forcing: user — operator chose the build.
+1. **#216 round 4 → then a delta audit whose auditor WRITES A FRESH held-back set** (never shown
+   to the fixer) and scores it against O15's floor/ceiling; 🔴 grep prefixes first. Merge only
+   on a clean round and green CI; then rebase/retarget #217 and re-run the merged tree.
+   IN FLIGHT: ZacxDev/cairn#216. forcing: security — the redactor is the only control between raw
+   transcripts and the store (O1).
+2. **S3** (upload + transcript store in cairn-ui) and **S11** (client read ledger) — S11 must land
+   before transcripts are armed on any real instance, and O15's gate must pass too.
+   forcing: user — operator chose the build.
+3. **#215 follow-through** — DONE (merged, verified by content); delete `zach/transcripts-s0` once
+   no PR is based on it. forcing: user — operator asked for S0–S2.
 
 ## Gotchas / decisions / dead-ends
 - **`opencode export` silently truncates at ~8–96 KiB when piped (exit 0)** but is complete to a

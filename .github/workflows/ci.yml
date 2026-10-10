@@ -852,7 +852,7 @@ jobs:
       # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
       # killed by some other test proves the suite can fail and proves nothing about the
       # guard the row exists for, so the run reports it as MISATTRIBUTED rather than as a
-      # kill. 304 mutants over EIGHT packages, in `PKGS` order: `internal/control`,
+      # kill. 309 mutants over EIGHT packages, in `PKGS` order: `internal/control`,
       # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
       # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence` — the model, the
       # token-file projection, P4's identity backends, the server that authorises from all of
@@ -869,7 +869,7 @@ jobs:
       # buys (~3min on an IDLE developer host, measured at 62 mutants; a loaded box is
       # several times that). It is what stops the rows bit-rotting into patterns that
       # match nothing and score SURVIVED without ever running.
-      - name: prove every authz guard can go RED (304 mutants, each on the test that names it)
+      - name: prove every authz guard can go RED (309 mutants, each on the test that names it)
         run: python3 tests/control_mutants.py
 
       # 🔴 THE LEDGERS THAT ARE BLIND TO A COMPILED CLIENT, AND THIS IS THE ONLY JOB THAT
@@ -934,7 +934,7 @@ jobs:
       # ⚠ RUNTIME, MEASURED RATHER THAN GUESSED, so the next reader can judge the trade: 57
       # mutants, **614.75 s wall / 152.21 s user + 21.00 s sys** on a 24-core developer host
       # at load ~6.5, all 57 KILLED, 0 SURVIVED, 0 misattributed. That is the same order as
-      # `control_mutants.py` above (304 mutants; its own comment measures ~3 min at 62 on an
+      # `control_mutants.py` above (309 mutants; its own comment measures ~3 min at 62 on an
       # IDLE host), which this job already pays for. ⚠ The wall figure is one observation on
       # a LOADED box and is not a prediction for a runner — the CPU figure is the portable
       # half. If this step becomes the job's critical path, split it out; do not delete it
@@ -1575,6 +1575,15 @@ jobs:
       - name: the committed icons are what their templates render
         run: nix build .#checks.x86_64-linux.ui-icons-are-current --no-link --print-build-logs
 
+      # 🔴 AND THE INSTALL SCREENSHOTS (S4), FOR THE SAME TWO REASONS: they are BUILD OUTPUT of the
+      # synthetic uiaudit world, captured in the sandbox by the pinned chromium under a pinned font set,
+      # and this comparison is their LEAK GATE — a picture that is not what the synthetic world renders
+      # cannot pass. Its provenance control renames one fixture scope and requires the capture to move.
+      # ⚠ This step is ALSO the second host the bytes are measured on (the plan's decision 16 names
+      # cross-host byte-identity as unmeasured); a red here with the dev host green is that measurement.
+      - name: the committed install screenshots are what the synthetic world renders
+        run: nix build .#checks.x86_64-linux.ui-screenshots-are-current --no-link --print-build-logs
+
       # The Go CLIENT is packaged too, and for the same reasons: a consumer will eventually pin
       # it, and its build runs the unit tests under the PINNED toolchain rather than the one
       # `setup-go` installed. Two tiers, both read.
@@ -1833,13 +1842,13 @@ jobs:
           # threshold test — measured, chromium 154); 50 / 119 on S1's round 1 (the reading-order
           # rows, the shrink-to-fit control, the whole-row hit-test — measured, chromium 154); 52 / 124 on the
           # mobile plan's S2 (`TestPWAClauses` and its three clause subtests, and the script-contract
-          # test — measured, chromium 154). A test deleted from a file that keeps others would otherwise move nothing.
+          # test — measured, chromium 154); 52 / 127 on S4 (`TestPWAClauses` gained `b_screenshots`, `shortcuts` and `e_storage` — measured, chromium 152 from the flake's nixpkgs). A test deleted from a file that keeps others would otherwise move nothing.
           if [ "$passes" -lt 52 ]; then
             echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 52 — a Test function was deleted"
             exit 1
           fi
-          if [ "$total" -lt 124 ]; then
-            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 124 — a table row was deleted"
+          if [ "$total" -lt 127 ]; then
+            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 127 — a table row was deleted"
             exit 1
           fi
 
@@ -1879,6 +1888,23 @@ jobs:
             echo "credentialed=yes" >> "$GITHUB_OUTPUT"
           else
             echo "credentialed=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 🔴 THE MOBILE PLAN'S CLOSING-CONDITION INSTRUMENT (`claudedocs/plan-cairn-mobile-pwa.md`),
+      # WIRED HERE BY S4 AND IN THIS NON-BLOCKING JOB ON PURPOSE: the plan keeps `pwa_check.sh` advisory
+      # until S6b adds the blocking `uiaudit-touch` job over a PINNED chromium — this job's chromium is
+      # the runner image's, an unpinned input (see the step above). It runs the PLAIN check (all nine
+      # clauses, exit 0/1/2); `--self-test` (nine sabotaged tree copies, four of them full walks) is a
+      # local instrument validation, too heavy to repeat on every push. Exit 2 is "could not vouch" and
+      # is a failure here exactly like 1 — never a skip.
+      - name: pwa_check.sh — the mobile plan's closing-condition clauses (a)–(e)
+        run: |
+          set -uo pipefail
+          ./uiaudit/pwa_check.sh 2>&1 | tee "${{ runner.temp }}/pwa-check.log"
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" != "0" ]; then
+            echo "::error::pwa_check.sh exited $rc (1 = a clause FAILED, 2 = could not vouch)"
+            exit "$rc"
           fi
 
       # 🔴 THE `verify-push` CONTROL, AND WITHOUT IT A MISCONFIGURED TOKEN IS A SILENT
