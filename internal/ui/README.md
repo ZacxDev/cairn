@@ -3954,9 +3954,97 @@ The `hub` column is the FIRST cut, with its arcs and sessions counts: it cost ab
 page costs (≈2.2× the scope list at 3,000 entries). That measurement is why both counts were dropped
 (D1); the hub now reads `Visible` alone — the scope list's read — and was not re-measured.
 
+# Phase S — `pwa.js`, the shortcuts and the install screenshots (S4 of the mobile plan)
+
+`claudedocs/plan-cairn-mobile-pwa.md`, decisions 5, 10, 11 and 16, O3/O7/O8/O13. `pwa.go` holds all of
+it; `pwa.js` is the script. ⚠ Phase P's "NO script" and its `TestTheArmedPWAHeadAddsNoScript` row are
+S2's record: S4 replaced that test with `TestTheArmedPWAHeadAddsOnlyThePWAScript` and re-pointed its
+battery row (`ui-pwa-head-emits-an-unversioned-script`).
+
+## 🔴 One more script, admitted by the allowlist and nothing else
+
+`AllowedScriptSources()` is now exactly `[filter.js, pwa.js]`, both content-hashed `classPublic` rows.
+`pwaHead` emits `pwa.js` (`defer`) on every frame of an ARMED deployment — sign-in included, because an
+install starts there — and nothing on an unarmed one. The script:
+- reveals the header's `<button class="install" hidden>` (shell frame only) on `beforeinstallprompt`,
+  and replays that event's `prompt()` on a click;
+- reveals the ROOT page's iOS hint only where `"standalone" in navigator && navigator.standalone ===
+  false` — feature detection, never the user agent — unless this browser dismissed it;
+- does nothing at all under `display-mode: standalone`;
+- writes ONE thing, ever: `localStorage["cairn.installHintDismissed"] = "1"`, on a dismiss tap, inside a
+  `try` (blocked storage simply means the hint shows again). Sign-out does not clear it (decision 11).
+- registers NO service worker (O13).
+
+Two guards hold that, at two depths: `TestThePWAScriptTouchesOnlyWhatItSays` — a SPELLING guard, labelled
+as one (`window["local"+"Storage"]` walks it) — refuses the markup/code/network/storage sinks, `caches`,
+`serviceWorker`, and (until S5) `location`/`history`, and admits `localStorage` ONLY as the one `getItem`
+and the one `setItem(HINT_KEY, "1")`; and the STATE guard is the browser, `uiaudit`'s
+`TestPWAClauses/e_storage` (clause (e)).
+
+## Shortcuts — two departures from the plan's literal list, both forced by `main`
+
+- **Search → `/scopes?q=`**, not `/?q=`: the UI hub moved the search box to `/scopes` (`/?q=` still
+  answers, with a 303 there; a launcher need not take the hop).
+- **"Team" → `/share`**: `/team` is not on `main` at this slice's branch point; the hub's Team card
+  points at `/share` too, and the team page repoints both.
+
+`TestEveryShortcutIsADeclaredRowThatReturnsThroughSignIn` pins, as LITERALS never derived from
+`signInLocation`, the 303 each answers a stranger's browser: `/sign-in?next=%2Farcs`,
+`/sign-in?next=%2Fscopes%3Fq%3D`, `/sign-in?next=%2Fshare` — and 200 signed in.
+
+## 🔴 Install screenshots: build output, provenance enforced
+
+`screenshots/screenshots.json` is the ONE list (three readers: this package, `uiaudit -screenshots`, the
+flake's `onlyGo`). `narrow-hub`/`narrow-arcs` are 390×844 TOUCH captures of `/` and `/arcs`; `wide-hub`
+is 1440×900 of `/`. The PNGs are what `flake.nix`'s `uiScreenshots` captures from the synthetic uiaudit
+world in the sandbox; `checks.ui-screenshots-are-current` re-captures and byte-compares, with a
+one-byte-appended negative control and a PROVENANCE control (one fixture scope renamed — the capture must
+move; it moves `narrow-arcs`). `tests/leakscan.py` skips PNGs; that comparison is their leak gate. What
+the capture holds still, and the measurements behind each choice (an UNARMED world, hidden scrollbars, a
+fonts.conf of our own), is in `uiaudit/README.md`.
+
+## The RED proof
+
+Battery rows (`tests/control_mutants.py`, each `killed` by the named test, full run
+`mutants=309 killed=307 survived=2`, the two EQUIVALENT rows):
+
+| mutant | killed by |
+|---|---|
+| `pwa.js` dropped from `AllowedScriptSources` | `TestTheArmedPWAHeadAddsOnlyThePWAScript` |
+| `pwa.js` sets an `innerHTML` label | `TestThePWAScriptTouchesOnlyWhatItSays` |
+| `pwa.js` writes a second key (a timestamp) | `TestThePWAScriptTouchesOnlyWhatItSays` |
+| `pwa.js` registers a service worker | `TestThePWAScriptTouchesOnlyWhatItSays` |
+| a screenshot row serves its bytes plus one | `TestTheScreenshotSetIsExactlyTheCommittedFiles` |
+| `pwaHead` links the unversioned `/static/pwa.js` | `TestTheArmedPWAHeadAddsOnlyThePWAScript` |
+
+Outside the battery, on a scratch copy with no `.git`, each with its own message: Search pointed back at
+the plan's `/?q=` → `TestEveryShortcutIsADeclaredRowThatReturnsThroughSignIn`; the iOS hint put in the
+shell (every page) and the Install button rendered without `hidden` →
+`TestTheInstallControlsAreHiddenAndArmedOnly`; a stray `narrow-extra.png`, and `wide-hub.png` copied over
+`narrow-hub.png` → `TestTheScreenshotSetIsExactlyTheCommittedFiles`; the script row made `classContent`
+→ `TestThePWAScriptIsServedAtItsContentHashedRoute` (an anonymous 401); a `location.reload()` in
+`pwa.js` → `TestThePWAScriptTouchesOnlyWhatItSays`. The nix check went RED on one byte appended to the
+committed `wide-hub.png` (`FAIL: these committed screenshots are not what the synthetic world renders:
+wide-hub.png`), and its provenance control exited 2 when the "renamed" capture was pointed at the
+unrenamed one. The browser-level clauses' RED proof is `pwa_check.sh --self-test` (`uiaudit/README.md`).
+
+⚠ **At the base these tests do not compile** (they name `pwaScript`, `ScreenshotSpecs`, …), which is
+"red" only in the weakest sense; the mutants above are the per-guard proof.
+
+## What these guards still cannot see
+
+- **Any WebKit**: the iOS hint's feature detection, its storage lifetime, Add to Home Screen — the
+  iPhone checklist (steps 3–4), not a test.
+- **A real `beforeinstallprompt` under real engagement**, and the browser's own install dialog: the
+  button is driven by a SYNTHETIC event. Headless chromium 152 does fire a trusted one on its own; the
+  browser test intercepts it so "hidden by default" is not a race.
+- **Cross-host screenshot bytes**: byte-identical sandboxed and unsandboxed on one host; the `nix` CI
+  job is the second host.
+- **An obfuscated sink** in `pwa.js` (`window["inner"+"HTML"]`): the spelling guard's labelled limit.
+
 ---
 
-# Phase S — the instance label in every title and header
+# Phase T — the instance label in every title and header
 
 `cmd/cairn-ui -instance-name` (`$CAIRN_UI_INSTANCE_NAME`) is OPTIONAL and arms nothing. It rides on
 `App.Instance` because every frame already receives an `App`; `Armed()` reads `Name` alone and the

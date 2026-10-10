@@ -87,6 +87,8 @@ const (
 // HubPage is the root: four cards, each a way in. Only the scopes card carries a count.
 func HubPage(v PageView) g.Node {
 	return shell("", v, nil,
+		// The iOS install hint (S4, `pwa.go`): hidden, and nothing at all when unarmed.
+		pwaInstallHint(v.App),
 		h.Div(h.Class("scope-grid"), h.ID("hub"),
 			hubCard("arcs", "Arcs", ArcsPath, hubArcsWhat, nil),
 			hubCard("scopes", "Scopes", ScopesPath, hubScopesWhat,
