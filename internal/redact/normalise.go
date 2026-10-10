@@ -16,7 +16,8 @@ import (
 // every rule that had not been taught that shape. So the prefix grammar lives HERE, ONCE, and no
 // rule spells a prefix.
 //
-// It is INPUT NORMALISATION, NOT A REWRITE. A line may carry up to four layers, in this order:
+// It is INPUT NORMALISATION, NOT A REWRITE. A line may carry up to four layers, in this order (the
+// tool prefix is two entries of `layers`: grep's `path-N-` context form, then the rest):
 //
 //  1. Read's numbered copy: `     12\t`, `12→`;
 //  2. a tool's line prefix: grep (`path:12:`, `path:12:3:` with `--column`/`rg --vimgrep`,
@@ -48,7 +49,7 @@ var (
 	// The order of the alternatives matters: leftmost-first, so `path:12:3:` is preferred over
 	// `path:12:`, and that over the shorter `path:` reading of the same bytes.
 	prefixTool = regexp.MustCompile(`^(?:` +
-		`[^\s:]+:[0-9]+:[0-9]+:|[^\s:]+:[0-9]+[:-]|[^\s:]*[/.][^\s:]*-[0-9]+-|[0-9]+:[0-9]+:|[0-9]+[:-]|` +
+		`[^\s:]+:[0-9]+:[0-9]+:|[^\s:]+:[0-9]+[:-]|[0-9]+:[0-9]+:|[0-9]+[:-]|` +
 		`[^\s:]*[/.][^\s:]*:|` +
 		// docker compose: a service name, padding, `| `.
 		`[A-Za-z0-9][A-Za-z0-9_.-]* +\| |` +
@@ -60,7 +61,14 @@ var (
 		`[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.,][0-9]+)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?[ \t]+|` +
 		`[A-Z][a-z]{2} [ 0-9][0-9] [0-9]{2}:[0-9]{2}:[0-9]{2} [^\s]+ [^\s:]+: )`)
 	prefixDiff = regexp.MustCompile(`^(?:[<>] ?|[+-])`)
-	layers     = []*regexp.Regexp{prefixRead, prefixTool, prefixTime, prefixDiff}
+	// grep's CONTEXT line, `path-N-`, is its OWN layer rather than an alternative of prefixTool:
+	// in front of a line that itself starts `host:5432:` the `path:N:` alternative reads the whole
+	// of `deploy/pg.pass-3-db.example:5432:` as one prefix, and leftmost-first alternation never
+	// tries the other reading. As a layer, both readings get a view. (Round 5 read such a row only
+	// in the ORIGINAL view, with a `/` in its "host" — the reading round 6's pgpass structure
+	// test refuses.)
+	prefixCtx = regexp.MustCompile(`^[^\s:]*[/.][^\s:]*-[0-9]+-`)
+	layers    = []*regexp.Regexp{prefixRead, prefixCtx, prefixTool, prefixTime, prefixDiff}
 )
 
 // view is the text with a chosen set of prefixes removed, and the map back to the original.
@@ -70,6 +78,23 @@ type view struct {
 	// came from. Within a line the mapping is a constant shift.
 	vStart, oStart []int
 	original       bool
+	// src is the original text and lStart[i] where line i starts in it, so a rule can ask what was
+	// set aside before a line ([view.prefix]) without spelling a prefix itself.
+	src    string
+	lStart []int
+}
+
+// prefix returns the bytes this view set aside before the line holding view offset p — `""` in the
+// original view and for a line that carried no prefix.
+func (v *view) prefix(p int) string {
+	if v.original || len(v.vStart) == 0 {
+		return ""
+	}
+	i := sort.Search(len(v.vStart), func(i int) bool { return v.vStart[i] > p }) - 1
+	if i < 0 {
+		i = 0
+	}
+	return v.src[v.lStart[i]:v.oStart[i]]
 }
 
 // toOriginal maps a view offset to the original string's offset. An END offset is mapped through
@@ -93,6 +118,39 @@ func (v *view) toOriginal(p int, end bool) int {
 	return o
 }
 
+// lineNumberPrefix: what a view set aside from a line is nothing, or only a line NUMBER — Read's
+// numbered copy, grep's `N:` / `N:C:` / `N-`. A quote or diff marker, a compose service, a
+// timestamp and a `path:` are not: behind those a two-word line is far more often prose.
+func lineNumberPrefix(p string) bool { return numberOnlyPrefix.MatchString(p) }
+
+var numberOnlyPrefix = regexp.MustCompile(`^(?:[ \t]*[0-9]+(?:\t|→))?(?:[0-9]+(?::[0-9]+)?[:-])?$`)
+
+// onlyPrefix reports whether head — the bytes between a line's start and some position in it — is
+// nothing but tool prefixes: some subset of the layers, removed in order, leaves nothing. (Every
+// subset, as [views] tries: a timestamp's leading `2000-` is also grep's `N-`, and only the reading
+// without that layer consumes it.) It lets an UNANCHORED rule ask "does this name start its line?"
+// without spelling a prefix. `head` is short — callers pass at most 64 bytes.
+func onlyPrefix(head string) bool {
+	if head == "" {
+		return true
+	}
+	for mask := 1; mask < 1<<len(layers); mask++ {
+		rest := head
+		for k, re := range layers {
+			if mask&(1<<k) == 0 {
+				continue
+			}
+			if m := re.FindStringIndex(rest); m != nil {
+				rest = rest[m[1]:]
+			}
+		}
+		if rest == "" {
+			return true
+		}
+	}
+	return false
+}
+
 // views returns the original text and every distinct prefix-stripped view of it.
 func views(s string) []*view {
 	out := []*view{{text: s, original: true}}
@@ -101,8 +159,8 @@ func views(s string) []*view {
 	}
 	lines := strings.SplitAfter(s, "\n")
 	// offs[mask][i] is line i's content offset with the layers in mask removed.
-	const combos = 1 << 4
-	var offs [combos][]int
+	combos := 1 << len(layers)
+	offs := make([][]int, combos)
 	any := false
 	for mask := 1; mask < combos; mask++ {
 		offs[mask] = make([]int, len(lines))
@@ -156,11 +214,12 @@ func views(s string) []*view {
 			continue
 		}
 		seen[string(key)] = true
-		v := &view{vStart: make([]int, len(lines)), oStart: make([]int, len(lines))}
+		v := &view{vStart: make([]int, len(lines)), oStart: make([]int, len(lines)), src: s, lStart: make([]int, len(lines))}
 		var b strings.Builder
 		pos := 0
 		for i, l := range lines {
 			v.vStart[i] = b.Len()
+			v.lStart[i] = pos
 			v.oStart[i] = pos + offs[mask][i]
 			b.WriteString(l[offs[mask][i]:])
 			pos += len(l)

@@ -6,10 +6,12 @@ import (
 )
 
 // 🔴 KEY CONTEXT (operator decision O15): a value attached to a secret-sounding NAME is redacted,
-// whatever notation attaches it — unless its SHAPE is code, a placeholder or prose (below), it is a
-// bare value over [maxBareValue], or the name is only WEAK (its secret word a segment, not the end:
-// `DB_PASSWORD_PROD`) and the value fails [weakNameValueOK]. ONE detector reads every notation, and the name is judged by ONE
-// predicate ([SecretKey]); what is notation-specific is only how a name and its value are joined.
+// whatever notation attaches it — unless its SHAPE is code, a placeholder or prose (below), or the
+// name is only WEAK (its secret word a segment, not the end: `DB_PASSWORD_PROD`; or the abbreviation
+// `cred`/`creds`) and the value is not CREDENTIAL-SHAPED ([credentialShaped]). A bare value of ANY
+// length is taken: one over [maxBareValue] is judged by its first [longValueHead] bytes (below).
+// ONE detector reads every notation, and the name is judged by ONE predicate ([SecretKey]); what is
+// notation-specific is only how a name and its value are joined.
 //
 // It replaced five per-format rules (`dotenv`, `source-literal`, `libpq-password`, `docker-env`,
 // `npmrc-auth`) after three review rounds measured the per-format approach fixing each named case
@@ -35,13 +37,23 @@ import (
 // in YAML, INI and shell and a VARIABLE in source code. It is taken as a literal unless its SHAPE is
 // code — [notCode], and the join-aware refusals in [bareValue]: an identifier before trailing
 // `,`/`;`/brackets, a bare identifier after `:=`/`=>`, a letters-only identifier after a SPACED `=`,
+// an identifier followed by a binary operator, an expression opening (`(`/`[`/`{`) the value does not
+// close after a spaced `=` or `:=`, a message or a usage alternation after a flag,
 // a letters-only word followed by more words (prose), a lower-case word glued to `:`, a `<…>` with
 // spaces in it, and a lower-case mode after a name that is only `auth`. The cost of each is measured
-// by the clean-probe and rate tests, not argued here.
+// by the clean-probe, rate and tree-budget tests, not argued here.
 
-var nameRun = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_.\-]*`)
+// nameStart and nameByte are the name grammar above, read by hand in [keyContextScan]: collecting
+// every name with a regexp first allocated a slice per identifier in the text.
+func nameStart(c byte) bool {
+	return c == '_' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z'
+}
 
-// 🔴 LINEAR TIME, AND THE WAYS IT WAS NOT (review round 4 measured two; this round found a third).
+func nameByte(c byte) bool {
+	return nameStart(c) || c >= '0' && c <= '9' || c == '.' || c == '-'
+}
+
+// 🔴 LINEAR TIME, AND THE WAYS IT WAS NOT (review round 4 measured two; round 5 found a third).
 // The finder visits every name in the text, so any per-name cost that grows with the INPUT rather
 // than with the name makes the whole rule quadratic:
 //
@@ -53,13 +65,24 @@ var nameRun = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_.\-]*`)
 //     constant factor, not the linear-time guard: a mutant restoring the recount SURVIVES every
 //     test, measured, and none is claimed to pin it;
 //   - a bare value was rescanned, and re-judged, from every name inside it (`password=password=…`:
-//     256 KiB took over two minutes); its end is now memoised per stop-set, and a bare value longer
-//     than [maxBareValue] is not one — so a name costs at most that much, whatever the input.
+//     256 KiB took over two minutes); its end is now memoised per stop-set, and the JUDGING is
+//     bounded per name: a value up to [maxBareValue] is judged whole, a longer one by its first
+//     [longValueHead] bytes with no trailing-punctuation strip — so a name costs at most
+//     [maxBareValue], whatever the input. And a name INSIDE a value already taken is skipped.
+//
+// 🔴 THE BOUND IS ON THE WORK, NOT ON THE VALUE (review round 5). Round 5 bounded it by REFUSING
+// every bare value over 1 KiB "to the entropy rule" — and the entropy rule does not read hex or a
+// URL-encoded document, so `MASTER_KEY=<2048 hex>` and `AUTH_TOKEN=<1317 URL-encoded characters>`
+// shipped 93–100% intact where round 4 had caught them. `TestRoundSixLongNamedValuesAreRedacted`
+// pins 1 KiB, 2 KiB and 64 KiB.
 //
 // `TestRoundFiveKeyContextIsLinearTime` pins the XML search and the rescan by wall time at N and
 // 4N (red at round 4's head), and `TestKeyContextIsLinearTime` by an operation count, which
 // cannot flake.
-const maxBareValue = 1024
+const (
+	maxBareValue  = 1024
+	longValueHead = 64
+)
 
 // bareEnds memoises where a bare value starting at a given offset stops, per stop-set (plain, URL
 // query, `;`-separated): the stop is the first stop byte at or after the start, so every start
@@ -79,8 +102,15 @@ func keyContextSpans(s string) [][2]int {
 func keyContextScan(s string) ([][2]int, int) {
 	var out [][2]int
 	be := &bareEnds{from: [3]int{-1, -1, -1}, to: [3]int{-1, -1, -1}}
-	for _, loc := range nameRun.FindAllStringIndex(s, -1) {
-		lo, hi := loc[0], loc[1]
+	for i := 0; i < len(s); {
+		if !nameStart(s[i]) {
+			i++
+			continue
+		}
+		lo := i
+		for i++; i < len(s) && nameByte(s[i]); i++ {
+		}
+		hi := i
 		for hi > lo && (s[hi-1] == '.' || s[hi-1] == '-') {
 			hi--
 		}
@@ -94,6 +124,13 @@ func keyContextScan(s string) ([][2]int, int) {
 		}
 		if v, ok := keyedValue(s, lo, hi, name, before, be); ok {
 			out = append(out, v)
+			// A name INSIDE a value already taken is not read: whatever it would attach is redacted
+			// with the value, and re-reading it is what made `password=password=…` quadratic. The
+			// scan resumes after the value — past the rest of a name the value ended inside.
+			if v[1] > i {
+				for i = v[1]; i < len(s) && nameByte(s[i]) && nameByte(s[i-1]); i++ {
+				}
+			}
 		}
 	}
 	return out, be.ops
@@ -166,17 +203,80 @@ func keyedValue(s string, lo, hi int, name, before string, be *bareEnds) ([2]int
 	if !strong && !weak && !sqlName {
 		return [2]int{}, false
 	}
-	sp, ok := keyedJoin(s, lo, hi, name, before, prev, sqlName, be)
-	if ok && !strong && !sqlName && !weakNameValueOK(s[sp[0]:sp[1]]) {
-		// A secret word INSIDE the name rather than ending it (`DB_PASSWORD_PROD`): the value
-		// must also look like one ([weakNameValueOK]).
+	// A name that only WEAKLY names a secret: its word is a segment rather than the end
+	// (`DB_PASSWORD_PROD`), or it is the abbreviation `cred`/`creds`, which names a struct or a
+	// handle in code far more often than a credential string.
+	needShape := !sqlName && (!strong || credAbbreviation(name))
+	j := joinCtx{name: name, before: before, prev: prev, sqlName: sqlName}
+	sp, ok := keyedJoin(s, lo, hi, &j, be)
+	if !ok {
 		return [2]int{}, false
 	}
-	return sp, ok
+	if needShape && !(j.quoted && j.envAssign()) {
+		// …so the value must itself look like a credential ([credentialShaped]) — except a QUOTED
+		// value assigned to an ALL_CAPS environment-style name (`DB_PASSWORD_PROD="dragon"`), which
+		// is a shell or dotenv assignment of a literal. A long value is judged by its head, so the
+		// work per name stays bounded (and is counted: `token_x:token_x:…` is refused from every
+		// name in it, and judging the whole remainder each time is quadratic).
+		v := s[sp[0]:sp[1]]
+		if len(v) > maxBareValue {
+			v = v[:longValueHead]
+		}
+		be.ops += len(v)
+		if !credentialShaped(v) {
+			return [2]int{}, false
+		}
+	}
+	return sp, true
+}
+
+// joinCtx is what the parse of one name knows: the name and its surroundings going in, and how its
+// value was attached coming out.
+type joinCtx struct {
+	name, before string
+	prev         byte
+	sqlName      bool
+	// out: the separator read, whether it was written with spaces, and whether the value was quoted.
+	sep    string
+	spaced bool
+	quoted bool
+}
+
+var envStyleName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+
+// lineStart: the name is the first thing on its line — behind nothing, or behind tool prefixes only
+// ([onlyPrefix]). `before` holds at most 64 bytes, so a name further in than that is not at a start.
+func (j *joinCtx) lineStart() bool {
+	if nl := strings.LastIndexByte(j.before, '\n'); nl >= 0 {
+		return onlyPrefix(j.before[nl+1:])
+	}
+	return len(j.before) < 64 && onlyPrefix(j.before)
+}
+
+// iniAssign: a name at the very start of its line, a SPACED `=`, and a value that ends the line —
+// the INI, `.my.cnf` and `.properties` layout. Source code does not put `name = *x` at column 0:
+// a declaration starts with a keyword or a type, a statement is indented.
+func (j *joinCtx) iniAssign(s string, hi int) bool {
+	if j.sep != "=" || !j.spaced || !j.lineStart() {
+		return false
+	}
+	rest := s[hi:]
+	if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+		rest = rest[:nl]
+	}
+	return strings.TrimRight(rest, " \t\r") == ""
+}
+
+// envAssign: an ALL_CAPS name glued to `=` — a shell, dotenv, `docker -e` or systemd assignment.
+// It is CONFIG evidence that does not depend on what follows the value: `DB_PASSWORD=*Zq9…;` ends
+// in code punctuation and is still not a dereference.
+func (j *joinCtx) envAssign() bool {
+	return j.sep == "=" && !j.spaced && envStyleName.MatchString(j.name)
 }
 
 // keyedJoin reads the join after a secret-sounding name and returns the value's span.
-func keyedJoin(s string, lo, hi int, name, before string, prev byte, sqlName bool, be *bareEnds) ([2]int, bool) {
+func keyedJoin(s string, lo, hi int, jc *joinCtx, be *bareEnds) ([2]int, bool) {
+	name, before, prev, sqlName := jc.name, jc.before, jc.prev, jc.sqlName
 	flag := strings.HasSuffix(before, "--") || (strings.HasSuffix(before, "-") && (len(before) < 2 ||
 		before[len(before)-2] == ' ' || before[len(before)-2] == '\t'))
 	queryish := prev == '?' || prev == '&'
@@ -207,11 +307,12 @@ func keyedJoin(s string, lo, hi int, name, before string, prev byte, sqlName boo
 		if end <= 0 || s[i+1+end] != '<' || i+2+end >= len(s) || s[i+2+end] != '/' {
 			return [2]int{}, false
 		}
-		return acceptSpan(s, i+1, i+1+end, false)
+		return acceptSpan(s, i+1, i+1+end, valueShape{digits: true})
 	}
 	// .NET appSettings: key="NAME" value="v".
 	if quotedName {
 		if m := dotnetValue.FindStringIndex(s[i:]); m != nil {
+			jc.quoted = true
 			return quotedValue(s, i+m[1])
 		}
 	}
@@ -247,16 +348,24 @@ func keyedJoin(s string, lo, hi int, name, before string, prev byte, sqlName boo
 			return [2]int{}, false
 		}
 		if sqlName && (s[j] == '"' || s[j] == '\'') {
+			if s[j] == '"' && name == "by" {
+				// `the function identified by "repeat" is overwritten` — prose. Lower-case SQL
+				// quotes a password with `'`.
+				return [2]int{}, false
+			}
+			jc.quoted = true
 			return quotedValue(s, j)
 		}
 		if !flag || s[j] == '-' || s[j] == '\n' || s[j] == '\r' || negatedFlag(name) {
 			return [2]int{}, false
 		}
-		return unquotedValue(s, j, "flag", false, false, false, false, be)
+		jc.sep = "flag"
+		return unquotedValue(s, j, jc, false, false, false, be)
 	}
 	spaced := j > i
 	k := skipBlank(s, j+len(sep))
 	spaced = spaced && k > j+len(sep)
+	jc.sep, jc.spaced = sep, spaced
 	if k >= len(s) || s[k] == '\n' || s[k] == '\r' || (openQuote != 0 && s[k] == openQuote) {
 		return [2]int{}, false
 	}
@@ -265,12 +374,19 @@ func keyedJoin(s string, lo, hi int, name, before string, prev byte, sqlName boo
 		k++
 	}
 	if s[k] == '"' || s[k] == '\'' || s[k] == '`' {
-		return quotedValue(s, k)
+		jc.quoted = true
+		sp, ok := quotedValue(s, k)
+		if ok && sp[0] == k+1 && authMode(name, s[sp[0]:sp[1]]) {
+			// `auth := "fail"`, `"auth": "basic"` — the mode, quoted. Not after a scheme word:
+			// what follows `Bearer ` is the credential.
+			return [2]int{}, false
+		}
+		return sp, ok
 	}
 	if sep == "," {
 		return [2]int{}, false
 	}
-	sp, ok := unquotedValue(s, k, sep, spaced, queryish, connish, openQuote != 0, be)
+	sp, ok := unquotedValue(s, k, jc, queryish, connish, openQuote != 0, be)
 	if ok && authMode(name, s[sp[0]:sp[1]]) {
 		return [2]int{}, false
 	}
@@ -322,26 +438,42 @@ func quotedValue(s string, k int) ([2]int, bool) {
 	if m := schemeWord.FindStringIndex(s[lo:hi]); m != nil {
 		lo += m[1]
 	}
-	return acceptSpan(s, lo, hi, false)
+	// A quoted string is a literal in every notation: never a dereference, never a template head.
+	return acceptSpan(s, lo, hi, valueShape{digits: true})
 }
 
 // unquotedValue reads a bare value: to whitespace or a quote; in a URL query also to `&`/`#`, in
 // a `;`-separated connection string also to `;`. `inString` is a name inside a string literal
 // (`"token="+tok`), which is source code around it.
-func unquotedValue(s string, k int, sep string, spaced, queryish, connish, inString bool, be *bareEnds) ([2]int, bool) {
+func unquotedValue(s string, k int, jc *joinCtx, queryish, connish, inString bool, be *bareEnds) ([2]int, bool) {
 	for {
 		hi := be.end(s, k, queryish, connish)
 		if hi-k > maxBareValue {
-			// Longer than any credential a name carries; a long random run is the entropy rule's.
-			return [2]int{}, false
+			return longBareValue(s, k, hi, inString, be)
 		}
 		be.ops += hi - k
 		if hi < len(s) && (s[hi] == ' ' || s[hi] == '\t') && schemeWord.MatchString(s[k:hi]+" ") {
 			k = skipBlank(s, hi)
 			continue
 		}
-		return bareValue(s, k, hi, sep, spaced, inString)
+		return bareValue(s, k, hi, jc, inString)
 	}
+}
+
+// longBareValue takes a bare value over [maxBareValue] — a long key, a URL-encoded document, a
+// certificate on one line. It is judged by its first [longValueHead] bytes and taken WHOLE, with no
+// trailing-punctuation strip: both are what keep the work per name bounded (see [maxBareValue]). A
+// run that long with no whitespace, quote or comma in it is not an identifier or a sentence, so the
+// join-aware refusals of [bareValue] have nothing to read; what the head can still show is an
+// expansion, a call, a placeholder or — inside a string literal — a template.
+func longBareValue(s string, k, hi int, inString bool, be *bareEnds) ([2]int, bool) {
+	be.ops += longValueHead
+	head := s[k : k+longValueHead]
+	if !notCode(head) || (inString && formatVerb.MatchString(head)) || (s[k] == '<' && s[hi-1] == '>') {
+		// The last clause is [notCode]'s own `<…>` placeholder test, which needs the value's END.
+		return [2]int{}, false
+	}
+	return [2]int{k, hi}, true
 }
 
 // end is where a bare value starting at k stops, memoised (see [bareEnds]).
@@ -369,7 +501,8 @@ func (be *bareEnds) end(s string, k int, queryish, connish bool) int {
 	return hi
 }
 
-func bareValue(s string, k, hi int, sep string, spaced, inString bool) ([2]int, bool) {
+func bareValue(s string, k, hi int, jc *joinCtx, inString bool) ([2]int, bool) {
+	sep, spaced := jc.sep, jc.spaced
 	// Trailing code punctuation: `cfg.Password,` `string;` `tok})`. A value that STOPPED at a `,`
 	// has one too. A closing bracket is stripped while the value closes more of it than it opens;
 	// the brackets are counted ONCE and the count decremented as each is stripped.
@@ -398,7 +531,18 @@ func bareValue(s string, k, hi int, sep string, spaced, inString bool) ([2]int, 
 		hi--
 		tail = true
 	}
+	if hi-k >= 2 && s[hi-1] == ':' && s[hi-2] == ')' && closes[0] > opens[0] {
+		// `def f(self, password_mgr=None):` — the `):` that closes a signature.
+		hi -= 2
+		tail = true
+	}
+	if hi <= k {
+		return [2]int{}, false
+	}
 	v := s[k:hi]
+	// CODE NOTATION, by the join: a Go `:=`, a Ruby/PHP `=>`, an assignment written with spaces, a
+	// value that ended in code punctuation, or a name inside a string literal.
+	code := sep == ":=" || sep == "=>" || (sep == "=" && spaced) || tail || inString
 	switch {
 	case tail && codeIdent.MatchString(v) && (!strings.ContainsAny(v, "0123456789") || strings.Contains(v, ".")):
 		// `Password: hashed,` `token: tok})` `Token: cfg.Token,` — a reference in a literal. A
@@ -419,15 +563,55 @@ func bareValue(s string, k, hi int, sep string, spaced, inString bool) ([2]int, 
 	case (sep == ":" || sep == "flag") && proseAfter(s, k, hi, v):
 		// `The secret: keep it out of the logs.`
 		return [2]int{}, false
+	case inString && sep == ":" && bareWord.MatchString(v) && verbAfter.MatchString(s[hi:]):
+		// `t.Errorf("enc.EncodeToken: StartElement %s", err)` — a message, its argument a verb.
+		return [2]int{}, false
+	case sep == "flag" && (flagMessage.MatchString(v) || usageChoice.MatchString(v)):
+		// `-issue-credential refused: …` (a message about the flag) and `-presence-token push|claim`
+		// (a usage line's alternatives).
+		return [2]int{}, false
+	case (sep == ":" || (sep == "=" && spaced)) && codeIdent.MatchString(v) && operatorAfter.MatchString(s[hi:]):
+		// `HasToken: cfgErr == nil,` `token = base + suffix` — an identifier in an expression. Not
+		// after a GLUED `=`: `TOKEN=abc && ./run` is a shell assignment.
+		return [2]int{}, false
+	case ((sep == "=" && spaced) || sep == ":=") && unclosedOpening(v, opens, closes):
+		// `seen[r.token] = (lineno, r)`, `credentials = {f[0] for …` — an expression opening that
+		// the value does not close, after a SPACED assignment. Glued to `=` or after a YAML `:` the
+		// same bytes are a password's first character (the rate test measures that: refusing them
+		// after every code-notation join lost 34 of 4,000 symbol-bearing passwords).
+		return [2]int{}, false
 	}
-	// 🔴 CODE NOTATION is decided by the JOIN, never by the value: a Go `:=`, a Ruby/PHP `=>`, an
-	// assignment written with spaces, a value that ended in code punctuation, or a name inside a
-	// string literal. Only there are `*p`, `&v`, `%s…` and `\n` read as code ([codeOnlyShape]); in a
-	// dotenv/shell/YAML value or a quoted string they are a password's first character (round 4
-	// measured `DB_PASSWORD=&…` at 28/200 and `%T-…` at 0/200 when they were refused everywhere).
-	code := sep == ":=" || sep == "=>" || (sep == "=" && spaced) || tail || inString
-	return acceptSpan(s, k, hi, code)
+	// 🔴 WHAT READS AS CODE IS DECIDED BY EVIDENCE ABOUT THE LINE, NOT BY SPACING OR TRAILING
+	// PUNCTUATION ALONE (review round 5). Round 5 read `*p`, `&v` and a leading printf verb as code
+	// wherever the join was code notation, so `password = *Zq9xK2mL7pQw` (the INI, `.my.cnf` and
+	// `.properties` layout) and `DB_PASSWORD=*Zq9xK2mL7pQw;` shipped. Now:
+	//
+	//   - a DEREFERENCE needs code notation, NOT an env-style assignment ([joinCtx.envAssign]) and
+	//     NOT the INI layout ([joinCtx.iniAssign]: the name starts its line, the value ends it), AND
+	//     an operand that reads as an identifier rather than a random string ([valueShape.deref]);
+	//   - a leading printf VERB or escape is a template only INSIDE A STRING LITERAL — unquoted,
+	//     `x = %T-…` is not code in any language. (A value made only of verbs is a template in
+	//     every notation: [formatTemplate].)
+	//   - a digits-only value is a credential unless the notation is code (`DB_PASSWORD=482915`,
+	//     `password: 123456`; not `token = 12345`, `Token: 4096,`). Under a WEAK name it never gets
+	//     here: [credentialShaped] refuses a number — unless the value is quoted under an env-style
+	//     name, which is read as a strong one (`DB_PASSWORD_PROD="482915"`).
+	deref := code && !jc.envAssign() && !(!tail && jc.iniAssign(s, hi))
+	return acceptSpan(s, k, hi, valueShape{deref: deref, verb: inString, digits: !code})
 }
+
+// unclosedOpening: v starts with `(`, `[` or `{` and opens more of that bracket than it closes.
+func unclosedOpening(v string, opens, closes [3]int) bool {
+	p := strings.IndexByte("([{", v[0])
+	return p >= 0 && opens[p] > closes[p]
+}
+
+var (
+	flagMessage   = regexp.MustCompile(`^[A-Za-z]+:$`)
+	usageChoice   = regexp.MustCompile(`^[a-z-]+(?:\|[a-z-]+)+$`)
+	verbAfter     = regexp.MustCompile(`^[ \t]+%[-+# 0-9.]*[a-zA-Z]`)
+	operatorAfter = regexp.MustCompile(`^[ \t]+(?:==|!=|<=|>=|&&|\|\||[-+*/<>?])(?:[ \t]|$)`)
+)
 
 var (
 	codeIdent    = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$.]*$`)
@@ -452,24 +636,63 @@ func proseAfter(s string, k, hi int, v string) bool {
 	return bareWord.MatchString(v) && letterWord.MatchString(s[hi:])
 }
 
-func acceptSpan(s string, lo, hi int, code bool) ([2]int, bool) {
-	if hi <= lo || !keyedValueOK(s[lo:hi], code) {
+// valueShape is what the JOIN lets a value be read as (see the note in [bareValue]).
+type valueShape struct {
+	// deref: `*p` / `&v` over an identifier-shaped operand is a dereference or an address.
+	deref bool
+	// verb: a leading printf verb or string escape is a template (the name is inside a string).
+	verb bool
+	// digits: a digits-only value is a credential (not code notation).
+	digits bool
+}
+
+func acceptSpan(s string, lo, hi int, sh valueShape) ([2]int, bool) {
+	if hi <= lo || !keyedValueOK(s[lo:hi], sh) {
 		return [2]int{}, false
 	}
 	return [2]int{lo, hi}, true
 }
 
 // keyedValueOK is the value filter shared by the key-context rule and the JSON walk's
-// `secret-field` rule: at least 4 characters, not code-shaped ([notCode]; in CODE notation also
-// not [codeOnlyShape]), and — for a value with spaces — not a sentence.
-func keyedValueOK(v string, code bool) bool {
-	if len(v) < 4 || !notCode(v) || (code && codeOnlyShape(v)) {
+// `secret-field` rule: at least 4 characters, not code-shaped ([notCode], and what the join lets
+// read as code — [valueShape]), and — for a value with spaces — not a sentence.
+func keyedValueOK(v string, sh valueShape) bool {
+	if len(v) < 4 {
+		return false
+	}
+	if allDigits(v) {
+		// [notTrivial] refuses a number; a secret name outside code notation overrides it.
+		return sh.digits
+	}
+	if !notCode(v) || (sh.verb && formatVerb.MatchString(v)) {
+		return false
+	}
+	if sh.deref && derefOrSlice.MatchString(v) && !randomOperand(v[1:]) {
 		return false
 	}
 	if strings.ContainsAny(v, " \t") && prose(v) {
 		return false
 	}
 	return true
+}
+
+// randomOperand: what follows a `*`/`&` reads as a random string, not an identifier — at least 8
+// characters, a digit between two letters, and not WORDY ([wordy], the entropy rule's own test).
+// `tokenPtr`, `cfg.APIKey` and `secretRef` carry no such digit; `Zq9xK2mL7pQw` does. ⚠ An
+// identifier with a digit inside and few vowels (`x509Cert`) reads as random here: the measured
+// cost is in `budget_test.go`, the measured recall in
+// `TestRoundSixSymbolLeadingValuesInConfigLayouts`.
+func randomOperand(x string) bool {
+	return len(x) >= 8 && digitInWord.MatchString(x) && !wordy(x)
+}
+
+func allDigits(v string) bool {
+	for i := 0; i < len(v); i++ {
+		if v[i] < '0' || v[i] > '9' {
+			return false
+		}
+	}
+	return v != ""
 }
 
 var stopWords = map[string]bool{

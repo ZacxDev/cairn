@@ -73,6 +73,13 @@ func TestRoundFiveKeyContextIsLinearTime(t *testing.T) {
 		small, large := sh.gen(sh.n), sh.gen(4*sh.n)
 		ts := minDuration(3, func() { keyContextSpans(small) })
 		tl := minDuration(3, func() { keyContextSpans(large) })
+		if ts < 2*time.Millisecond {
+			// A reading this short is scheduler and allocator noise at three runs (round 6 made
+			// `password=` repeated a single scan — microseconds — and three runs then read 3.7x to
+			// 11x on one machine). The fastest of many is the cost.
+			ts = minDuration(41, func() { keyContextSpans(small) })
+			tl = minDuration(41, func() { keyContextSpans(large) })
+		}
 		ratio := float64(tl) / float64(max(ts, time.Microsecond))
 		t.Logf("%-32s N=%d: %v, 4N: %v, ratio %.1f", sh.name, sh.n, ts, tl, ratio)
 		if ratio >= 8 {
@@ -278,11 +285,14 @@ func TestRoundFiveSegmentNamesCostOnCleanProbes(t *testing.T) {
 		"TOKEN_PREFIX=Bearer",
 		"PASSWORD_ALGORITHM=argon2id",
 		"GITHUB_TOKEN_PERMISSIONS=write-all",
+		// Round 5's pinned COST, clean since round 6: a slug of words and short numbers is an
+		// identifier, not a credential ([credentialShaped]).
+		"SECRET_BACKUP_BUCKET=s3-backups-01",
 	}
 	costs := []string{
 		// A weak name whose following segment is not on the attribute list, with a value that is
-		// none of the shapes [weakNameValueOK] refuses. MEASURED COST, pinned rather than hidden.
-		"SECRET_BACKUP_BUCKET=s3-backups-01",
+		// none of the shapes [credentialShaped] refuses. MEASURED COST, pinned rather than hidden.
+		"SECRET_BACKUP_BUCKET=bkt-2f9a01c3",
 	}
 	damaged := 0
 	for _, l := range clean {

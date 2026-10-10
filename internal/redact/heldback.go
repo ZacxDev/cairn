@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 )
 
@@ -35,7 +36,8 @@ import (
 // A LEAK is caught when no window of [HeldBackWindow] characters of any of its secrets appears in
 // the redacted output more often than it appears in the input OUTSIDE the secrets (so a window that
 // also occurs in the surrounding text does not count as a leak) — searched in the raw output and in
-// every decoded JSON string of it. A secret shorter than the window must not appear at all.
+// every decoded JSON string of it, with every redaction MARKER masked out first (a marker's rule
+// name or tag is not surviving secret). A secret shorter than the window must not appear at all.
 // A CLEAN line is damaged when the output differs from the input by a single byte.
 //
 // IT VALIDATES ITS INSTRUMENT FIRST, and exits 2 rather than reporting when either control fails:
@@ -156,7 +158,11 @@ func leaked(c HeldBackCase, out string) bool {
 	for _, s := range c.Secrets {
 		masked = strings.ReplaceAll(masked, s, strings.Repeat("\x00", len(s)))
 	}
-	hay := hayOf(out, c.Form)
+	// 🔴 A REDACTION MARKER IS NOT SURVIVING SECRET (review round 5). `[redacted:github-token:…]`
+	// spells `github`, which is also the first window of a `github_pat_…` secret, so a FULLY
+	// redacted fine-grained PAT was reported MISSED; and a marker's eight hex digits can equal a
+	// window of a hex secret. Markers are masked out of the output before any window is counted.
+	hay := redactionMarker.ReplaceAllString(hayOf(out, c.Form), "\x00")
 	for _, s := range c.Secrets {
 		if len(s) < HeldBackWindow {
 			if strings.Count(hay, s) > strings.Count(masked, s) {
@@ -197,6 +203,9 @@ func ScoreHeldBack(cases []HeldBackCase, r textRedactor) HeldBackScore {
 	}
 	return s
 }
+
+// redactionMarker is the marker [Redactor.marker] writes: `[redacted:<rule>:<8 hex>]`.
+var redactionMarker = regexp.MustCompile(`\[redacted:[a-z0-9/-]+:[0-9a-f]{8}\]`)
 
 // eraser is the POSITIVE control: it replaces every input with a fixed marker.
 type eraser struct{}

@@ -122,7 +122,8 @@ func (r *Redactor) scanText(s string, o scanOpts) (string, []Hit) {
 
 // jsonInString re-enters a string that is ITSELF one JSON document (a tool printing a JSON file,
 // an API response), so a value escaped inside it is scanned decoded too. It reports ok only when
-// something inside matched; an unmatched document keeps its original text.
+// something inside matched; an unmatched document keeps its original text, and a matched one keeps
+// every byte outside the strings that changed.
 func (r *Redactor) jsonInString(s string, o scanOpts) (string, []Hit, bool) {
 	trimmed := strings.TrimSpace(s)
 	if len(trimmed) < 2 || (trimmed[0] != '{' && trimmed[0] != '[') {
@@ -136,6 +137,12 @@ func (r *Redactor) jsonInString(s string, o scanOpts) (string, []Hit, bool) {
 	if len(hits) == 0 {
 		return "", nil, false
 	}
+	lead := s[:strings.Index(s, trimmed[:1])]
+	trail := s[len(lead)+len(trimmed):]
+	// In place: only the strings that changed are rewritten ([spliceJSON]).
+	if enc, ok := spliceJSON([]byte(trimmed), nv); ok {
+		return lead + string(enc) + trail, hits, true
+	}
 	indent := ""
 	if strings.Contains(trimmed, "\n") {
 		indent = "  "
@@ -144,8 +151,6 @@ func (r *Redactor) jsonInString(s string, o scanOpts) (string, []Hit, bool) {
 	if err != nil {
 		return "", nil, false
 	}
-	lead := s[:strings.Index(s, trimmed[:1])]
-	trail := s[len(lead)+len(trimmed):]
 	return lead + string(enc) + trail, hits, true
 }
 
@@ -246,14 +251,22 @@ func (r *Redactor) walk(v any, o scanOpts) (any, []Hit) {
 }
 
 // secretFieldValue: member `k` names a secret and its string value `s` is one. A JSON string is a
-// quoted value, never code notation; a WEAK name ([secretKeyGrade]) holds it to [weakNameValueOK]
-// too, exactly as the key-context rule does.
+// quoted value, never code notation; a WEAK name ([secretKeyGrade]) or a `cred`/`creds`
+// abbreviation holds it to [credentialShaped] too, exactly as the key-context rule does (which
+// refuses a number), and a STRONG name takes a digits-only string (`"password": "482915"`).
 func secretFieldValue(k, s string) bool {
 	strong, weak := secretKeyGrade(k)
-	if !strong && !(weak && weakNameValueOK(s)) {
+	if !strong && !weak {
 		return false
 	}
-	return keyedValueOK(s, false)
+	needShape := !strong || credAbbreviation(k)
+	if needShape && !credentialShaped(s) {
+		return false
+	}
+	if authMode(k, s) {
+		return false
+	}
+	return keyedValueOK(s, valueShape{digits: true})
 }
 
 func (r *Redactor) redactAllStrings(v any, rule string) (any, []Hit) {
@@ -337,7 +350,9 @@ func (r *Redactor) Text(data []byte) ([]byte, []Hit) {
 //
 //   - BINARY (decision 6a's signature rule): returned byte-identical. O12: binary ships.
 //   - a JSON document, or JSON Lines: redacted by decoded traversal, so an escaped secret inside
-//     is caught; an unmatched blob keeps its original bytes.
+//     is caught; an unmatched blob keeps its original bytes, and a matched DOCUMENT keeps every
+//     byte outside the strings that changed (a JSON Lines record with a hit is re-encoded compact,
+//     as [Redactor.Record] does).
 //   - any other text: [Redactor.Text].
 func (r *Redactor) Blob(name string, data []byte) ([]byte, []Hit) {
 	if r.deny != nil && r.deny.matchesPath(name) {
@@ -353,6 +368,14 @@ func (r *Redactor) Blob(name string, data []byte) ([]byte, []Hit) {
 			nv, hits := r.walk(v, scanOpts{})
 			if len(hits) == 0 {
 				return data, nil
+			}
+			// In place ([spliceJSON]): the document's own layout, with only the changed strings
+			// rewritten. The leading and trailing white space is the original's too.
+			if enc, ok := spliceJSON(trimmed, nv); ok {
+				lead := bytes.Index(data, trimmed[:1])
+				out := append([]byte(nil), data[:lead]...)
+				out = append(out, enc...)
+				return append(out, data[lead+len(trimmed):]...), hits
 			}
 			indent := ""
 			if bytes.Contains(trimmed, []byte("\n")) {

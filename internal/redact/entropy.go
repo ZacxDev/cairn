@@ -25,8 +25,9 @@ import (
 //   - it is not WORDY ([wordy]): under [maxWordFraction] of it sits in word-shaped letter runs
 //     (`[A-Z]?[a-z]{3,}`), and not 45% with a third of its letters vowels;
 //   - it changes character class at no fewer than [minTransitionRate] of its positions;
-//   - it is not an identifier, slug or path by its `_`/`-`/`/` segments ([identifierSegments]), nor
-//     an alphabet literal ([sequential]);
+//   - it is not an identifier, slug or path by its `_`/`-`/`/` segments — two thirds of them words,
+//     holding at least 35% of its characters ([identifierSegments]) — nor an alphabet literal
+//     ([sequential]);
 //   - its Shannon entropy is at least [minEntropyBits] bits per character;
 //   - it is not a structural ID a transcript is made of (`toolu_`, `msg_`, `req_`, `ses_`, `prt_`,
 //     `call_`) or an SRI digest (`sha512-…`), and not itself the base64 of a binary payload.
@@ -181,29 +182,42 @@ func transitionRate(t string) float64 {
 	return float64(n) / float64(len(t)-1)
 }
 
-var wordSegment = regexp.MustCompile(`^(?:[A-Za-z][a-z]*|[A-Z]+|[0-9]{1,4}|[A-Za-z]{1,3}[0-9]{1,3}[a-z]*)$`)
+var wordSegment = regexp.MustCompile(`^(?:[A-Za-z][a-z]*|[A-Z]+|(?:[A-Z][a-z]+){2,}[0-9]{0,2}|[0-9]{1,4}|[A-Za-z]{1,3}[0-9]{1,3}[a-z]*)$`)
 
-// identifierSegments: split on `_`, `-` and `/`, a token of at least three segments in which two
-// thirds of the CHARACTERS sit in segments that read as words (`Foo`, `bar`, `HTTP`, `404`, `v2`)
-// is an identifier, a slug or a path — `test_a_404_carries_ETag`, `en-US/firefox/12x/notes`. A
-// random base64url token has a separator about once in 32 characters and its pieces are not words.
+// minWordChars is the share of an identifier's characters that must sit in word segments.
+const minWordChars = 0.35
+
+// identifierSegments: split on `_`, `-` and `/`, a token of at least three segments is an
+// identifier, a slug or a path — `test_a_404_carries_ETag`, `en-US/firefox/12x/notes` — when its
+// word segments (`Foo`, `bar`, `HTTP`, `ClientCert`, `ImmSigned16`, `404`, `v2`) hold two thirds of its
+// CHARACTERS, or are two thirds of its SEGMENTS and hold at least [minWordChars] of its
+// characters. A random base64url token has a separator about once in 32 characters and its pieces
+// are not words.
 //
-// 🔴 CHARACTERS, NOT SEGMENTS (review round 5's seed sweep): counted by segment, base64 with a `/`
-// near each end (`qk/<59 random characters>/VOC`) read as a path of three segments, two of them
-// "words", and shipped — the self-test's one entropy miss in 400 seeds.
+// 🔴 EITHER COUNT, WITH A FLOOR, BECAUSE EACH ALONE FAILED (review rounds 4 and 5). Counted by
+// SEGMENT alone (round 4), base64 with a `/` near each end (`qk/<59 random characters>/VOC`) read
+// as a path of three segments, two of them "words", and shipped. Counted by CHARACTER alone
+// (round 5), one non-word segment sank a real identifier — `ClientCert-RSA-AES256-GCM-SHA384`,
+// `_cgo_be59f0f25121_Cfunc_puts`, `GO_NID_X9_62_prime256v1`, the SPDX id `BSD-Systemics-W3Works` —
+// and the rule redacted them: 1,068 entropy lines of the Go standard library's source that round 4
+// had left alone. The segment count is back, and the character floor is what keeps a long random
+// run with a short word at each end from passing it; the character rule stays for the identifiers
+// only IT reads (`arg_Vd_arrangement_size_Q___8B_00__16B_01`, whose `8B`/`16B` are not words).
+// `TestRoundSixIdentifierSegments` pins both directions.
 func identifierSegments(t string) bool {
 	segs := strings.FieldsFunc(t, func(r rune) bool { return r == '_' || r == '-' || r == '/' })
 	if len(segs) < 3 {
 		return false
 	}
-	words, total := 0, 0
+	words, wordChars, total := 0, 0, 0
 	for _, s := range segs {
 		total += len(s)
-		if len(s) <= 12 && wordSegment.MatchString(s) {
-			words += len(s)
+		if len(s) <= 16 && wordSegment.MatchString(s) {
+			words++
+			wordChars += len(s)
 		}
 	}
-	return 3*words >= 2*total
+	return 3*wordChars >= 2*total || (3*words >= 2*len(segs) && float64(wordChars) >= minWordChars*float64(total))
 }
 
 // sequential: most adjacent pairs ascend by one — an alphabet literal (`ABC…xyz0123…`).

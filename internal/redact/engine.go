@@ -37,6 +37,12 @@ func (r *Redactor) ruleSpans(rule Rule, prio int, v *view) []span {
 	add := func(lo, hi int) {
 		out = append(out, span{lo: v.toOriginal(lo, false), hi: v.toOriginal(hi, true), rule: rule.Name, prio: prio})
 	}
+	if rule.FindV != nil {
+		for _, m := range rule.FindV(v) {
+			add(m[0], m[1])
+		}
+		return out
+	}
 	if rule.Find != nil {
 		for _, m := range rule.Find(v.text) {
 			add(m[0], m[1])

@@ -19,23 +19,37 @@ set stayed flat and damage to clean text grew. O15 changed the approach:
    too, because a prefix reading can be wrong (`password: x` also parses as a grep `path:`). No
    rule spells a prefix any more. A prefix is recognised by its STRUCTURE, never a word list: a
    bare `path:` must contain a `/` or a `.`, because `fix:`, `TODO:` and `Q:` are the same bytes in
-   prose (round 4 stripped them and redacted `password reset`).
+   prose (round 4 stripped them and redacted `password reset`). grep's context form `path-N-` is its
+   own layer (round 6): in front of a line that itself starts `host:5432:` the `path:N:` reading
+   swallows both, and only a separate layer gives the other reading a view. A rule may ASK what a
+   view set aside (`view.prefix`, `onlyPrefix`) — the `.netrc` rule and key context's INI test do —
+   without spelling a prefix.
 2. **Key context** (`keyed.go`, rule `key-context`). A value attached to a name `SecretKey`
    accepts is redacted, in any notation: `K=v`, `K: v`, `K := v`, `K => v`, quoted names
    (`"K": "v"`, `['K'] = 'v'`), a call's first two arguments (`os.Setenv("K", "v")`), flags
    (`--K=v`, `--K v`, `-K v`), SQL (`PASSWORD 'v'`, `IDENTIFIED BY 'v'`), XML (`<K>v</K>`), .NET
    (`key="K" value="v"`). `Environment=K=v` and `-e K=v` need nothing special. **Not ANY value:**
-   one whose shape is code, a placeholder or prose is refused (below), a bare value over 1 KiB is
-   left to the entropy rule, and a WEAK name's value must also look like a secret (below). It runs
-   in LINEAR time: round 4's XML join and bracket strip were quadratic (1 MB took 18 s and 8 s),
-   and `password=` repeated took over two minutes for 256 KiB; `TestRoundFiveKeyContextIsLinearTime`
-   and an operation count pin it.
+   one whose shape is code, a placeholder or prose is refused (below), and a WEAK name's value must
+   also look like a credential (below). **A bare value of ANY length is taken** (round 6): one over
+   1 KiB is judged by its first 64 bytes and taken whole. *Round 5 refused every bare value over
+   1 KiB "to the entropy rule", which reads neither hex nor a URL-encoded document:
+   `MASTER_KEY=<2048 hex>` and `AUTH_TOKEN=<1317 URL-encoded characters>` shipped 93–100% intact.
+   Retracted: the bound is now on the WORK per name, not on the value*
+   (`TestRoundSixLongNamedValuesAreRedacted`: hex, URL-encoded JSON and lower-case/digit values at
+   1024, 1025, 1317, 2048 and 65,536 bytes in six notations, 90/90; 72 of those 90 shipped at round
+   5). It runs in LINEAR time: round 4's XML join and bracket strip were quadratic (1 MB took 18 s
+   and 8 s), and `password=` repeated took over two minutes for 256 KiB;
+   `TestRoundFiveKeyContextIsLinearTime` and two operation counts pin it
+   (`TestKeyContextIsLinearTime`, `TestRoundSixLongValuesKeepTheFinderLinear`), and a name inside a
+   value already taken is not read at all.
 3. **Entropy** (`entropy.go`, rule `entropy`, LAST). A run of the base64/base64url alphabet of at
    least 20 characters is redacted wherever it stands when it carries upper case, lower case AND a
    digit, is not wordy (70% of it in word-shaped letter runs, or 45% with a third of its letters
    vowels), changes
    character class at ≥ 0.35 of its positions, is not an identifier/slug/path by its `_`/`-`/`/`
-   segments, not an alphabet literal, not a transcript ID (`toolu_`, `msg_`, `req_`, `ses_`, `prt_`,
+   segments (its word segments hold two thirds of its characters, or are two thirds of its segments
+   AND hold 35% of its characters — round 6, below), not an alphabet literal, not a transcript ID
+   (`toolu_`, `msg_`, `req_`, `ses_`, `prt_`,
    `call_`), not an integrity digest (`sha512-…`, `h1:…`), and not the base64 of a binary payload.
    A thinking block's `signature` is exempt by STRUCTURE, not by shape.
 
@@ -52,7 +66,8 @@ set stayed flat and damage to clean text grew. O15 changed the approach:
   dotenv, PEM, pgpass, netrc and YAML rules) in favour of the views.
 - **Kept, because neither general rule can see them:** vendor token formats (they tag a token by its
   own name, and catch short ones), `url-userinfo-password`, `curl-user`, `pgpass` and
-  `netrc-password` (positional), `pem-private-key` (a block), `authorization`/`bearer`, and the YAML
+  `netrc-password` (positional — and since round 6 each read only with the STRUCTURE of its file,
+  `positional.go`, below), `pem-private-key` (a block), `authorization`/`bearer`, and the YAML
   structure (`k8s-secret`, `k8s-env`, `yaml-block-secret`) and JSON walk (`secret-field`,
   `jwk-private`).
 
@@ -64,7 +79,12 @@ When two rules' spans overlap they merge, and the EARLIER rule in the table name
 - **Decoded, not raw.** A record is decoded (`UseNumber`, key order kept, DUPLICATE members kept),
   every string value AND every object key is scanned, and the record is re-encoded only when
   something matched; an untouched record keeps its exact bytes. A string that is itself a JSON
-  document is walked the same way.
+  document, and a JSON blob, are walked the same way and **redacted IN PLACE** (round 6,
+  `spliceJSON`): only the string tokens that changed are rewritten, so the document's indentation,
+  spacing, number text and the escapes of its other strings are the original's. *Before round 6 one
+  hit re-serialised the whole document — 1,186 changed lines for the hits in this repository's
+  one large JSON fixture, and 5,008 for the Go standard library's `vectors.json`.* ⚠ A RECORD
+  (`Redactor.Record`, one JSONL line) with a hit is still re-encoded compact: one line either way.
 - **`[redacted:<rule>:<tag>]`**, `<tag>` = first 8 hex of HMAC-SHA256 of the redacted span under the
   per-host key (`LoadOrCreateKey`, 0600, never regenerated silently).
 - **Binary = a known file signature** (`Signatures`) — the coordinator's reading of O12. Binary
@@ -80,24 +100,50 @@ When two rules' spans overlap they merge, and the EARLIER rule in the table name
   `PWD`, `OLDPWD` and `PASS` alone are not secrets (`--- PASS:` is a test verdict). Since round 5 a
   long secret word that is a whole SEGMENT of the name (`DB_PASSWORD_PROD`, `apiTokenStaging`) makes
   it WEAK, unless a later segment is on the closed ATTRIBUTE list (`_URL`, `_FILE`, `_HASH`, `_TTL`,
-  …); a weak name's value must also not be a word, a word slug, a number/duration/version, a URL, an
-  expression opening or a sentence. ⚠ **The cost, measured** (`TestRoundFiveSegmentNamesCostOnCleanProbes`):
-  0 of 27 attribute-shaped clean probes damaged, and one pinned cost —
-  `SECRET_BACKUP_BUCKET=s3-backups-01` IS redacted, because `BUCKET` is not on the list and the
-  value is not a word slug. Over this repository's own tracked text the round adds no damaged line
-  that round 4 left alone (diffed file by file against round 4's head).
+  …).
+- **A WEAK name takes only a CREDENTIAL-SHAPED value** (round 6, `credentialShaped`; `cred`/`creds`
+  are held to it too). Not one: text with a space, a URL, an expression opening; letters only (a
+  word, a mode, `TokenClient`); an identifier or slug (two or more pieces joined by single
+  `_`/`-`/`.`/`:`/`/`, each letters with at most three trailing digits, or a short number —
+  `foo_bar9`, `s3-backups-01`); a number, duration, version or hex constant; a timestamp, an e-mail
+  address, a domain name; a regex literal, a generic or pointer type. *Round 5 refused only words,
+  slugs, numbers and URLs there, and 19 of its audit's 53 clean probes were damaged (0 at round
+  4).* ⚠ **Both directions, measured:** clean — 0 of 33 weak-name probes damaged (21 at round 5),
+  with two pinned costs that ARE damaged (`TOKEN_SIGNING_KID=kid-2f9a01c3`,
+  `password_salt_hex: 9f2c4e1a7b3d5f6e`: a weak name over a value that does look random); recall —
+  generated values under 8 weak names × 3 notations, 200 each: lower-case/digit, alnum-12,
+  alnum-32, hex-32 and `Word20NN` 200/200, symbol-bearing 199–200 (the miss is `x&&y`, refused as
+  an expression under every name). 🔴 **The stated cost:** a weak name's value that is itself
+  identifier- or slug-shaped ships — `DB_PASSWORD_PROD=tiger_2024`,
+  `API_TOKEN_CI=correct-horse-battery`: 0/200 (`TestRoundSixWeakNameRecall` pins the zero; round 5
+  caught 75/200 of these, all under `cred`/`creds`, which it treated as strong). A STRONG name is
+  held to none of this.
+- **A STRONG name takes a digits-only value** of four or more digits outside code notation
+  (`DB_PASSWORD=482915`, `password: 123456`, `"password": "482915"`; round 6 — it shipped at
+  rounds 4 and 5), **and a quoted value under an ALL_CAPS environment-style weak name is a
+  literal** (`DB_PASSWORD_PROD="dragon"`). Not in code notation (`token = 12345`, `Token: 4096,`),
+  and a signed, decimal or short hex constant is a number under every name (`SCM_CREDS = 0x03`,
+  `…_TOKEN = 0x000D`). ⚠ Cost: `API_KEY=0xdeadbeef` — a hex constant of at most 8 digits — ships.
 - **Code and prose are not secrets — refused by SHAPE** (`notCode`, `keyedValueOK`, and the
   join-aware refusals in `bareValue`): calls/indexes/literals with a code-shaped head, shell
   expansions (`${…}`, `$(…)`, a whole `$VAR` or `$VAR/…`), format templates (only verbs, escapes and
   punctuation, or two of them glued at the start), placeholders (`<…>`, `***`, `your…`), YAML
   aliases of a lower-case word (`*db_password`), paths, package-qualified names, names that
   themselves STRONGLY name a secret (`CAIRN_TOKEN` is an env var's NAME), sentences (stop words, a
-  secret word, end punctuation), and code-only joins. 🔴 **Code notation is decided by the JOIN**
-  (a Go `:=`, a Ruby `=>`, a spaced `=`, a value ending in code punctuation, a name inside a string
-  literal): only there are a dereference `*p`/`&v`, a leading printf verb (`%T-…`) and an escape
-  read as code. In a quoted string, a dotenv/shell value or a YAML value they are a password's
-  first character — round 4 refused them everywhere and caught `*…` 20–40/200, `&…` 31–42/200 and
-  `%verb…` 0/200; now 200/200 each (`TestRoundFiveValuesStartingWithASymbol`). ⚠ **The cost,
+  secret word, end punctuation), and code-only joins. 🔴 **What reads as code is decided by
+  EVIDENCE ABOUT THE LINE** (round 6; round 5 used the join's spacing and trailing punctuation
+  alone). A dereference `*p`/`&v` is read only where the join is code notation (a Go `:=`, a Ruby
+  `=>`, a spaced `=`, a value ending in code punctuation, a name inside a string literal) AND the
+  line is not an ALL_CAPS name glued to `=` (an env assignment, whatever follows the value) AND it
+  is not the INI layout (the name starts its line — behind tool prefixes only — a spaced `=`, the
+  value ends the line) AND the operand reads as an identifier rather than a random string. A
+  leading printf verb or an escape is a template only INSIDE A STRING LITERAL. Round 4 refused
+  these everywhere (`*…` 20–40/200, `&…` 31–42/200, `%verb…` 0/200); round 5 fixed the quoted and
+  glued forms (`TestRoundFiveValuesStartingWithASymbol`, 200/200) and left `password =
+  *Zq9xK2mL7pQw` and `DB_PASSWORD=*…;` shipping (28–43/200, and 0/200 for `%verb`); round 6:
+  200/200 in seven of eight config layouts for five leading shapes, and 194–200 in the eighth —
+  an indented `password: v,` is a struct literal as often as YAML, so a dereference is still read
+  there unless its operand looks random (`TestRoundSixSymbolLeadingValuesInConfigLayouts`). ⚠ **The cost,
   measured** (`TestRedactorRecallOnRealisticPasswords` at seed 4, `TestTheRateRangeHoldsOverSeedsFourToEight`
   over seeds 4–8; 200 values per cell; oracle: no 6-character window of the value survives):
   200/200 for alnum, base64, hex, dotted and dashed diceware at every one of those seeds;
@@ -110,6 +156,30 @@ When two rules' spans overlap they merge, and the EARLIER rule in the table name
   figure came from a weaker oracle than the test's own doc stated (whole value or its first half,
   not any 6-character window); under the stated oracle round 3's code measured **139/200** for
   `pm-20` there. The test now implements the oracle its doc names.*
+- **`.pgpass` needs pgpass structure** (round 6, `positional.go`): a host-like first field (no
+  `/`, or an absolute socket directory), a port (`*` or 1–5 digits), a database and a user that
+  start with a letter or `_`. *Round 5 read `src/pkg/file.go:100:7://go:noescape` and
+  `a.go:12:3://nolint:errcheck` as rows in their unstripped form.* Measured over this repository's
+  neutral lines behind `path:N:C:` and `path:N:`: 6 of 22,887 at round 5, 0 now
+  (`TestRoundSixPgpassOverPrefixedNeutralLines`, pinned). ⚠ Residual, pinned: `grep -n` over a
+  line that is itself `word:word:word` (`a.go:12:foo:bar:bazqux7`) still reads as a row; a row
+  whose database or user starts with a digit is not read.
+- **`.netrc`: a plain-word password needs netrc STRUCTURE or FILE CONTEXT** (round 6): the same
+  line (a record with `machine`, or `default` with `login`), the BLOCK (a `machine …`/`default`
+  record line within 12 lines either side), the FILE (the prefix the view set aside, or one of the
+  12 lines above, names a netrc), or the record embedded in a command. A value that is not a word
+  is taken in any view unless it is a type (`*uint16`, `[]byte`). And the lone line — exactly
+  `password <word>`, keyword lower-case, no prefix or a line NUMBER only — is taken unless the word
+  is an attribute word (`reset`, `rotation`, `policy`, `managers`). *Round 4 took every `password
+  <word>` a stripped prefix exposed; round 5 required structure within three lines above and lost
+  the lone line, a far `machine` line and a `password` written first.* ⚠ **Both directions,
+  measured:** 340/340 plain-word passwords over 17 layouts (80/340 at round 5); 0 of 35 prose and
+  declaration lines damaged (7 at round 5). 🔴 **Stated residuals, pinned**
+  (`TestRoundSixNetrcStatedResiduals`): a lone password that IS an attribute word, sits behind a
+  quote/diff/compose/path prefix with no netrc context, or follows a capitalised `Password`, ships;
+  a clean line that is exactly `password <non-attribute word>`, bare or behind a line number, IS
+  redacted; a block of prose holding both a line `machine <word>` and a line `password <word>`
+  reads as a record.
 - **A private-key match is BOUNDED** to header, header lines, base64 body and END.
 - **Per-host denylist** (`LoadDenylist`, 0600, never in the repo). A `glob:` covers a blob by name
   and, in the record object naming the path, every string under the structured-copy keys. ⚠ **It
@@ -126,18 +196,56 @@ When two rules' spans overlap they merge, and the EARLIER rule in the table name
   "carried" check never found it and its rule was never credited), plus two rare rule misses (a
   `/`-split base64 run, a random dotted head before `(`) — all three fixed.* A plant counts as caught only when its
   value is gone AND its OWN rule fired on the item that carried it. Two controls run first and the
-  run exits 2 if either misbehaves (an identity redactor must catch 0; a greedy rule must damage a
-  clean value), or if P is not the declaration.
+  run exits 2 if any misbehaves (an identity redactor must catch 0; since round 6 two redactors
+  that redact nothing and only CORRUPT THE ENCODING must catch 0 too; a greedy rule must damage a
+  clean value), or if P is not the declaration. *Round 5's scorer looked for a plant in the raw
+  output and in its decoded strings; output that did not decode kept a plant holding `&` or a quote
+  in escaped form — and a UTF-16 blob with a byte appended — where neither search looked, and
+  credited them: 256 credits over 60 seeds and two corruptions — every UTF-16 plant, and the 16
+  `symbol-password` credits the audit counted as 8 with one corruption
+  (`TestRoundSixACorruptingRedactorScoresNothing`; 0 now).*
 - **`TestTheEntropyRuleThresholds`** pins the entropy rule's recall on random tokens in prose (seed
   15, 500 each: alnum 20/24/32/40 chars 478/479/496/499; base64 of 18/32/64 bytes 482/497/498;
   base64url 32 bytes 499 — round 5 moved the base64 rows up, by counting identifier segments by
-  character) and the clean shapes it must leave alone, with a positive control.
+  character) and the clean shapes it must leave alone, with a positive control. 🔴 **Round 6 kept
+  every one of those numbers and gave the damage back:** counting characters alone made the rule
+  redact real identifiers (`ClientCert-RSA-AES256-GCM-SHA384`, `_cgo_be59f0f25121_Cfunc_puts`,
+  `GO_NID_X9_62_prime256v1`, `BSD-Systemics-W3Works`) — over the Go standard library's source,
+  1,068 entropy lines that round 4 had left alone, against 207 it fixed. An identifier is now one
+  by EITHER count, with a character floor on the segment count
+  (`TestRoundSixIdentifierSegments`, `TestIdentifierSegmentsBothCounts`): lines of that corpus
+  the entropy rule changes — 4,826 (round 4) → 5,687 (round 5) → 4,617 (round 6; 8 that round 4
+  left alone, 217 fewer that it took).
+- **The clean-damage BUDGET** (`budget_test.go`, round 6) — damage measured on text nobody wrote
+  for the purpose, and pinned so a later round that widens it fails a test rather than an audit.
+  Over THIS REPOSITORY'S tracked text: every line the redactor changes in a neutral file (not a
+  test, test data or this package) is ENUMERATED by content hash in `budget_data_test.go` — a
+  damaged line not on the list fails, and the failure names it; fixture files are held to a count
+  ceiling. Over the GO STANDARD LIBRARY'S source (a 1-in-8 sample in the suite; the whole tree with
+  `-redact.stdlib-full`): a ceiling per rule. Measured, whole standard library (3,027,865 lines):
+  10,285 damaged lines at round 4, 11,182 at round 5, 4,790 at round 6 (no line round 5 left
+  alone; key-context 117 → 156 → 54 lines, `.netrc` 9 → 12 → 8) — almost all of what remains is
+  the library's own test keys, certificates and vectors, which the entropy rule exists to take.
+  This repository (300,774 lines): 1,422 → 1,419 → 224, of which neutral files 31 → 31 → 19.
+  ⚠ "Damaged" counts every changed line; it does not say the line was clean. ⚠ The standard-library
+  test SKIPS, saying so, where the toolchain's source is not on disk; inside a filtered source tree
+  (a nix build) the repository test measures the part of the tree that is there. ⚠ And the
+  repository budget is a tripwire across the tree: a change ANYWHERE that adds a line the redactor
+  would change fails this package's test, naming the line.
+- **The round-6 tests** (`round6_test.go`): each of review round 5's findings, shown RED at round
+  5's head unless labelled an invariant guard or a cost pin; `round6_internal_test.go` holds the
+  guards on this round's internals. Each new guard was mutation-tested by NAME against its own
+  test's own message: 61 mutants, 61 killed, with a no-op mutant reported SURVIVED as the
+  harness's own control (the battery is in the round-6 commit message). Round 5's one stated
+  survivor — restoring the per-character bracket recount — still survives, for the reason given
+  where it lives.
 - **The round-5 tests** (`round5_test.go`): each of review round 4's findings, shown RED at round
   4's head unless labelled an invariant guard or a cost pin; `round5_internal_test.go` holds the
   guards on this round's own internals (an operation count for linear time, the name prefilter
   against `SecretKey`). Each new guard was mutation-tested against its own test; ⚠ ONE mutant
   survives and is stated where it lives — restoring the per-character bracket recount, which the
-  1 KiB bare-value cap bounds whatever the strip does.
+  1 KiB bound on a value judged WHOLE bounds whatever the strip does (a longer value is not
+  stripped at all since round 6).
 - **The round-4 tests** (`round4_test.go`): every tool prefix round 3 named, before a rule only a
   line-anchored match can satisfy; PEM bodies behind each prefix; the named-key notations; round 3's
   clean probes — each measured RED on the pre-O15 code. Plus the clean lines an intermediate round-4
@@ -157,6 +265,10 @@ go build -o redact-heldback ./internal/redact/cmd/redact-heldback
 
 The case format, the window oracle and the controls (an identity redactor must score nothing; an
 eraser must score everything; fewer than 20 leaks or 20 clean lines refuses) are in the file's doc.
+Since round 6 the oracle masks redaction MARKERS out of the output before counting windows: a
+fully redacted fine-grained GitHub PAT was scored MISSED because `[redacted:github-token:…]` spells
+`github`, the first window of `github_pat_…` (`TestRoundSixHeldBackOracleIgnoresMarkers`, a
+known-answer test with controls for what a marker must not excuse).
 ⚠ `go run` reports every non-zero exit as 1 — build it. ⚠ A pass certifies the CASE FILE it was
 given; that the file is fresh and held back is a fact about who wrote it, recorded beside the run.
 
@@ -169,6 +281,12 @@ runs under 20 characters, so the entropy rule sees none of it — 0–1/200 caug
 32 characters (seed 9, alphanumerics plus 28 symbols; round 4's audit measured about 13/200 with its
 own alphabet). A symbol-token rule was prototyped (175/200 at 24 characters) and NOT adopted: over
 this repository's own tracked text it damaged 275 tokens — regex literals, SRI digests, transcript
-IDs, URL-encoded paths. Also a flow-style YAML
+IDs, URL-encoded paths. **And the named values the key-context rule refuses by design, each
+measured where it is pinned:** a value whose shape is code, a placeholder or prose; a WEAK name's
+identifier- or slug-shaped value (`DB_PASSWORD_PROD=tiger_2024`, 0/200); a hex constant of at
+most 8 digits or a signed/decimal number under any name; a digits-only value in code notation or
+under four digits; a generated password that is `identifier&&identifier` (1–2 in 200); a
+letters-only value after a spaced `=` (read as a variable); a bracket-led value the line does not
+close after a spaced `=`; the `.netrc` and `.pgpass` residuals above. Also a flow-style YAML
 Secret, text in an encoding other than UTF-8 or UTF-16, and anything inside a signature-bearing
 payload (a PNG text chunk included). Real recall is an operator-side, count-only measurement (Q4).

@@ -210,7 +210,7 @@ func TestSelfTestRefusesToVouchOnEachBrokenControl(t *testing.T) {
 	c := NewCorpus(5)
 	real, _ := New(SelfTestKey(5), nil)
 	greedy, _ := newWithRules(append(DefaultRules(), greedyRule), SelfTestKey(5), nil)
-	ok := selfTestParts{corpus: c, declared: DeclaredPlants, identity: identity{}, greedy: greedy, real: real}
+	ok := selfTestParts{corpus: c, declared: DeclaredPlants, identity: identity{}, corrupt: newCorrupters(c), greedy: greedy, real: real}
 	if code := selfTest(io.Discard, ok); code != SelfTestOK {
 		t.Fatalf("the unbroken parts exit %d", code)
 	}
@@ -218,6 +218,8 @@ func TestSelfTestRefusesToVouchOnEachBrokenControl(t *testing.T) {
 		"declared count wrong":        func(p *selfTestParts) { p.declared++ },
 		"identity control catches":    func(p *selfTestParts) { p.identity = real },
 		"greedy control damages none": func(p *selfTestParts) { p.greedy = identity{} },
+		"corrupt control catches":     func(p *selfTestParts) { p.corrupt = []redactor{real} },
+		"corrupt control missing":     func(p *selfTestParts) { p.corrupt = nil },
 	}
 	for name, sabotage := range cases {
 		p := ok

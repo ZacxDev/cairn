@@ -49,7 +49,8 @@ import (
 // for "this name names a secret"). `Accept`, when set, vetoes a candidate value.
 //
 // `Find`, when set, replaces `Re`: a finder returning value spans (the key-context and entropy
-// rules are parsers, not one regex). `Anchored` marks a rule that reads a line's START, and so is
+// rules are parsers, not one regex). `FindV` is a finder that also needs to know what the view set
+// aside (the `.netrc` rule asks which PREFIX a line carried — it never spells one). `Anchored` marks a rule that reads a line's START, and so is
 // also run over every prefix-stripped VIEW (normalise.go); an unanchored rule finds the same spans
 // in every view and runs once. `Late` marks the entropy rule: it runs after the whole-string base64
 // decode, and not at all on a value the caller's structure calls opaque.
@@ -61,6 +62,7 @@ type Rule struct {
 	KeyOK    func(name string) bool
 	Accept   func(secret string) bool
 	Find     func(s string) [][2]int
+	FindV    func(v *view) [][2]int
 	Anchored bool
 	Late     bool
 }
@@ -78,7 +80,7 @@ func notTrivial(v string) bool {
 			break
 		}
 	}
-	if allDigits {
+	if allDigits || numericLiteral.MatchString(v) {
 		return false
 	}
 	switch strings.ToLower(strings.Trim(v, `"'`)) {
@@ -89,6 +91,11 @@ func notTrivial(v string) bool {
 	}
 	return !strings.HasPrefix(v, "[redacted:")
 }
+
+// numericLiteral is a signed, decimal or exponent number, or a hex constant of at most 8 digits
+// (`-1000`, `-0.1234`, `0x000C`, `-0x3f879678`): the right-hand side of a constant named `…_TOKEN`
+// or `…_CREDS`. A longer `0x…` (a 20-byte address, a 32-byte key) is NOT one.
+var numericLiteral = regexp.MustCompile(`^[-+]?(?:0[xX][0-9A-Fa-f_]{1,8}|[0-9][0-9_]*(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?|\.[0-9]+)$`)
 
 var (
 	// attributePath is `a.b.c`: a reference to a setting — OR a dotted passphrase. Which one is
@@ -105,7 +112,10 @@ var (
 	shellExpansion = regexp.MustCompile(`^\$(?:[{(]|[A-Za-z_][A-Za-z0-9_]*(?:$|/))`)
 	// derefOrSlice is `&x`, `*x` — an address, a dereference — and sliceConv `[]byte(`, a conversion.
 	derefOrSlice = regexp.MustCompile(`^[&*][A-Za-z_][A-Za-z0-9_.]*$`)
-	sliceConv    = regexp.MustCompile(`^\[\][A-Za-z_][A-Za-z0-9_.]*[({]`)
+	// literalOpening is the address of a composite literal, opening: `&syscall.Credential{`,
+	// `&base.Command{`, `&T{Uid:` — the value ENDS at the bracket or at the first field's name.
+	literalOpening = regexp.MustCompile(`^[&*][A-Za-z_][A-Za-z0-9_.]*[({](?:[A-Za-z_][A-Za-z0-9_]*:)?$`)
+	sliceConv      = regexp.MustCompile(`^\[\][A-Za-z_][A-Za-z0-9_.]*[({]`)
 	// referencePrefix is a leading segment that names a scope or a module, not a passphrase word.
 	referencePrefix = regexp.MustCompile(`^(?:var|local|data|module|each|self|this|args|cfg|conf|config|settings|opts|options|os|process|env|req|request|res|ctx|params|props|creds|credentials|secrets|vault|app|import)\.`)
 	// goQualified is a package-qualified exported identifier: `tls.RequireAnyClientCert`.
@@ -119,14 +129,14 @@ var (
 	formatVerb     = regexp.MustCompile(`^%[-+# 0-9.]*[sdvqfxXcbegtpoT](?:$|[^A-Za-z0-9])|^\\[nrt]`)
 	// formatTemplate is a value made ONLY of printf verbs, string escapes and punctuation (`%s:%s`,
 	// `%-10v`, `%s\n`, `\n%q` — a format string's tail after `token:`): a template in every notation.
-	// A verb FOLLOWED by more characters (`%T-Pap45…`) is [formatVerb]'s, and that is read as code
-	// only in code notation ([codeOnlyShape]).
+	// A verb FOLLOWED by more characters (`%T-Pap45…`) is [formatVerb]'s, and that is read as a
+	// template only when the name sits inside a string literal ([valueShape]).
 	formatTemplate = regexp.MustCompile(`^(?:%[-+# 0-9.]*[sdvqfxXcbegtpoT]|\\[nrt"\\]|[^A-Za-z0-9%\\])+$` +
 		// …or one that OPENS with two of them glued (`%s\nLOG_LEVEL=…`, the rest of a format string).
 		`|^(?:%[-+# 0-9.]*[sdvqfxXcbegtpoT]|\\[nrt])(?:%[-+# 0-9.]*[sdvqfxXcbegtpoT]|\\[nrt])`)
 	// wordRef is `*name`/`&name` over a lower-case word: a YAML alias or anchor (`*db_password`), or
-	// a dereference — in any notation. A RANDOM value after `*`/`&` is not one (it carries upper case
-	// or a digit), and is refused as a dereference only in code notation ([codeOnlyShape]).
+	// a dereference — in any notation. Any other identifier after `*`/`&` is refused as a dereference
+	// only in code notation, and only when it reads as an identifier ([valueShape], [randomOperand]).
 	wordRef  = regexp.MustCompile(`^[&*][a-z_][a-z_.]*$`)
 	filePath = regexp.MustCompile(`^(?:/|\./|\.\./|~/)[A-Za-z0-9_.@/-]*$`)
 	// An identifier OR-ed, AND-ed or ??-ed with another: `e.apiKey||null`. Both sides must be
@@ -185,7 +195,7 @@ func randomSegment(head string) bool {
 //     `your…`/`…_here`, a YAML tag (`!vault`), a keyword/type name (`None`, `string`, `await`);
 //   - a location: a path (`/run/secrets/db`, `./key.pem`, `~/.ssh/id_rsa`);
 //   - a YAML alias or a dereference of a lower-case word (`*db_password`, `&token`), a conversion
-//     (`[]byte(`);
+//     (`[]byte(`), the address of a literal where it opens (`&syscall.Credential{`);
 //   - a reference: an identifier path whose leading segment names a scope or module (`var.`,
 //     `os.`, `process.env.`, `settings.`), a package-qualified exported name
 //     (`tls.RequireAnyClientCert`), an identifier path whose LAST segment names a secret
@@ -216,7 +226,7 @@ func notCode(v string) bool {
 	case strings.HasPrefix(strings.ToLower(v), "your"), strings.Contains(strings.ToLower(v), "_here"),
 		strings.Contains(strings.ToLower(v), "-here"):
 		return false
-	case goQualified.MatchString(v), wordRef.MatchString(v), sliceConv.MatchString(v):
+	case goQualified.MatchString(v), wordRef.MatchString(v), sliceConv.MatchString(v), literalOpening.MatchString(v):
 		return false
 	case attributePath.MatchString(v):
 		segs := strings.Split(v, ".")
@@ -236,15 +246,6 @@ func notCode(v string) bool {
 		return false
 	}
 	return true
-}
-
-// codeOnlyShape is what reads as code ONLY in code notation (the key-context rule decides that by
-// the join — see [bareValue]): a dereference or address of any identifier (`*p`, `&cfg`), a value
-// starting with a printf verb (`%s…`) or an escape (`\n`). In a dotenv, shell or YAML value or a
-// quoted string those are a password's first characters: round 4 refused them in every notation
-// and measured `*…` at 34/200, `&…` at 28/200 and `%verb-…` at 0/200 caught.
-func codeOnlyShape(v string) bool {
-	return derefOrSlice.MatchString(v) || formatVerb.MatchString(v)
 }
 
 func repeatedRune(v string) bool {
@@ -291,8 +292,9 @@ var (
 // secret's name (`TOKEN_URL`, `DB_PASSWORD_FILE`, `password_hash`, `secretKeyRef`, `TOKEN_TTL`,
 // `password_min_length`, `SECRET_MANAGER_REGION`). ⚠ A CLOSED LIST, AND THE TRADE IS STATED: a
 // segment missing from it reads as a QUALIFIER (`_PROD`, `_CI`, `_ADMIN`), so its value is taken —
-// subject to [weakNameValueOK], which refuses the plain words, URLs, paths and numbers an attribute
-// carries. The clean damage it adds is measured by `TestRoundFiveSegmentNamesCostOnCleanProbes`.
+// subject to [credentialShaped], which refuses the words, identifiers, URLs, numbers, timestamps and
+// types an attribute carries. The clean damage it adds is measured by
+// `TestRoundFiveSegmentNamesCostOnCleanProbes` and `TestRoundSixWeakNamesNeedACredentialShapedValue`.
 var attributeSegments = map[string]bool{
 	"FILE": true, "FILES": true, "PATH": true, "DIR": true, "URL": true, "URI": true, "ENDPOINT": true,
 	"HOST": true, "PORT": true, "ISSUER": true, "AUDIENCE": true, "HASH": true, "HASHED": true,
@@ -314,6 +316,22 @@ var attributeSegments = map[string]bool{
 	"FLAG": true, "FLAGS": true, "CHARS": true, "CHARSET": true, "ALPHABET": true, "BYTES": true,
 	"BITS": true, "ENTROPY": true, "ISSUED": true, "REVOKED": true, "CREATED": true, "ROTATED": true,
 	"EXPIRED": true, "UPDATED": true, "DELETED": true,
+	// What prose says ABOUT a password (round 6: the lone-line `.netrc` rule reads this table too).
+	"HYGIENE": true, "MANAGEMENT": true, "SECURITY": true, "AUTHENTICATION": true, "PROTECTION": true,
+	"RECOVERY": true, "COMPLEXITY": true, "REUSE": true, "SHARING": true, "STORAGE": true,
+	"RULE": true, "REQUIREMENT": true, "GUIDELINE": true, "HISTORY": true, "BREACH": true,
+	"LEAK": true, "CRACKING": true, "HASHING": true, "ENCRYPTION": true, "LOCKOUT": true,
+}
+
+// attributeWord: a word (or the first word of a slug) that names something ABOUT a secret —
+// `reset`, `rotation`, `managers`, `reset-flow`. Singular or plural.
+func attributeWord(v string) bool {
+	w := v
+	if i := strings.IndexAny(w, "-_."); i > 0 {
+		w = w[:i]
+	}
+	u := strings.ToUpper(w)
+	return attributeSegments[u] || attributeSegments[strings.TrimSuffix(u, "S")]
 }
 
 // strongSecretName: the secret word ENDS the name (`CAIRN_TOKEN`) — [secretKeyGrade]'s strong grade.
@@ -324,7 +342,7 @@ func strongSecretName(name string) bool {
 
 // secretKeyGrade grades a name: STRONG when the secret word ends it (the SecretKey rule below),
 // WEAK when a long secret word is a whole segment followed only by segments that are not
-// [attributeSegments] (`DB_PASSWORD_PROD`). A weak name's value must also pass [weakNameValueOK].
+// [attributeSegments] (`DB_PASSWORD_PROD`). A weak name's value must also be [credentialShaped].
 func secretKeyGrade(name string) (strong, weak bool) {
 	u, ok := normaliseKeyName(name)
 	if !ok {
@@ -347,20 +365,99 @@ func secretKeyGrade(name string) (strong, weak bool) {
 
 var (
 	plainWordValue = regexp.MustCompile(`^[A-Za-z][a-z]*$|^[A-Z]+$`)
-	numberish      = regexp.MustCompile(`^[0-9][0-9.:_-]*[A-Za-z]{0,3}$`)
+	lettersOnly    = regexp.MustCompile(`^[A-Za-z]+$`)
+	numberish      = regexp.MustCompile(`^[-+]?[0-9][0-9.:_-]*[A-Za-z%]{0,3}$`)
 	// wordSlug is lower-case WORDS joined by `-`/`_`/`.` (`host-a`, `quarry-grade`, `-issue-credential`):
 	// a name, a flag or a fixture label. A segment mixing letters and digits (`x7k2`) is not a word.
 	wordSlug = regexp.MustCompile(`^-{0,2}[a-z]+(?:[-_.](?:[a-z]+|[0-9]+))*$`)
+	// identPiece is one `_`/`-`/`.`-separated piece of an identifier: letters with at most three
+	// trailing digits (`foo`, `bar9`, `s3`, `Token2`), or a short number (`01`, `2024`).
+	identPiece = regexp.MustCompile(`^(?:[A-Za-z]+[0-9]{0,3}|[0-9]{1,4})$`)
+	timestamp  = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T ][0-9:.,]+(?:Z|[-+][0-9:]+)?)?$`)
+	emailAddr  = regexp.MustCompile(`^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$`)
+	domainName = regexp.MustCompile(`^\.?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$`)
+	// regexLit: `/…/flags`, `^…$`, or a `/` followed by what opens a pattern and no base64 token
+	// (`/^`, `/[`, `/(`, a `/` then a backslash) — the value may have been cut at a `,` inside `{12,}`.
+	regexLit = regexp.MustCompile(`^/.+/[a-z]*$|^\^.*\$$|^/[\^\[(\\]`)
+	// genericTy: `Stream<Uint8Array>`, or its opening when the value was cut at the `,` of
+	// `Parser<Token, ParseError>`.
+	genericTy = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*<(?:.*>[?\[\]]*|[A-Za-z_][A-Za-z0-9_.]*)$`)
+	pointerTy = regexp.MustCompile(`^[&*]+[A-Za-z_][A-Za-z0-9_.]*$`)
 )
 
-// weakNameValueOK is the extra bar a WEAK name's value clears: not a plain word (`strict`,
-// `Enabled`) or a slug of words (`host-a`), not a number or duration or version (`3600s`,
-// `1.2.3`), not a URL, not an expression or a composite literal opening (`(n*8`, `{ErrX`), and no
-// spaces. An attribute the closed list missed carries one of those far more often than a secret
-// does — the round-5 sweep over this repository's own text found each of them.
-func weakNameValueOK(v string) bool {
-	return !plainWordValue.MatchString(v) && !wordSlug.MatchString(v) && !numberish.MatchString(v) &&
-		!strings.Contains(v, "://") && !strings.ContainsAny(v, " \t") && strings.IndexAny(v[:1], "([{") < 0
+// credentialShaped is the extra bar a WEAK name's value clears ([secretKeyGrade]'s weak grade, and
+// the abbreviations `cred`/`creds`): the value must look like a credential on its own. NOT one:
+//
+//   - text with a space, a URL, an expression or a composite-literal opening (`(n*8`, `{ErrX`);
+//   - letters only — a word, a mode or a type name (`strict`, `Enabled`, `TokenClient`,
+//     `BCryptPasswordEncoder`);
+//   - an identifier or a slug: two or more pieces joined by single `_`/`-`/`.`/`:`/`/`, each letters
+//     with at most three trailing digits, or a short number (`foo_bar9`, `host-a`, `s3-backups-01`,
+//     `js.fetch:credentials`, `-issue-credential`);
+//   - a number, a duration, a version or a hex constant (`3600s`, `1.2.3`, `-0.1234`, `0x00`);
+//   - a timestamp, an e-mail address, a domain name (`2000-01-01T00:00:00Z`, `a@example.com`,
+//     `.example.com`);
+//   - a regex literal, a generic or pointer type (`/^[a-z]+$/`, `ReadableStream<Uint8Array>`,
+//     `*uint16`).
+//
+// 🔴 THE COST IS A RECALL COST, AND IT IS STATED: a weak name's value that takes one of those
+// shapes ships — `DB_PASSWORD_PROD=tiger_2024`, `API_TOKEN_CI=correct-horse-battery`, a letters-only
+// password. Review round 5 measured the opposite failure at 19 of 53 clean lines damaged when only
+// words, slugs, numbers and URLs were refused. Both directions are measured in
+// `TestRoundSixWeakNamesNeedACredentialShapedValue`; a STRONG name is held to none of this.
+func credentialShaped(v string) bool {
+	if v == "" || strings.ContainsAny(v, " \t") || strings.Contains(v, "://") || strings.IndexAny(v[:1], "([{") >= 0 {
+		return false
+	}
+	switch {
+	case lettersOnly.MatchString(v), wordSlug.MatchString(v), identifierPieces(v):
+		return false
+	case numberish.MatchString(v), numericLiteral.MatchString(v), timestamp.MatchString(v):
+		return false
+	case emailAddr.MatchString(v), domainName.MatchString(v):
+		return false
+	case regexLit.MatchString(v), genericTy.MatchString(v), pointerTy.MatchString(v):
+		return false
+	}
+	return true
+}
+
+// identifierPieces: two or more pieces joined by SINGLE separators (`_`, `-`, `.`, `:`, `/`), every
+// one an [identPiece]. Two separators in a row (`Qj.-MK`, `xk__OQ`) are not how an identifier is
+// spelled — a generated password with two adjacent symbols is — so they make it not one; leading
+// and trailing separators (`_private`, `-flag`) are allowed.
+func identifierPieces(v string) bool {
+	isSep := func(c byte) bool { return c == '_' || c == '-' || c == '.' || c == ':' || c == '/' }
+	lo, hi := 0, len(v)
+	for lo < hi && isSep(v[lo]) {
+		lo++
+	}
+	for hi > lo && isSep(v[hi-1]) {
+		hi--
+	}
+	n, start := 0, lo
+	for i := lo; i <= hi; i++ {
+		if i < hi && !isSep(v[i]) {
+			continue
+		}
+		if !identPiece.MatchString(v[start:i]) {
+			return false // an empty piece (two separators in a row) included
+		}
+		n++
+		start = i + 1
+	}
+	// One piece is an identifier only with a separator beside it (`_private`, `-flag`).
+	return n >= 2 || (n == 1 && hi-lo < len(v))
+}
+
+var credAbbrev = regexp.MustCompile(`(?:^|_)CREDS?_?[0-9]*$`)
+
+// credAbbreviation: the name's secret word is the abbreviation `cred` or `creds` (round 5 added
+// them). STRONG by position, but held to [credentialShaped] like a weak name: in code `creds` is a
+// struct, `SCM_CREDS` a constant, `jsFetchCreds` an option name.
+func credAbbreviation(name string) bool {
+	u, ok := normaliseKeyName(name)
+	return ok && credAbbrev.MatchString(u)
 }
 
 // SecretKey is THE predicate for "this name names a secret" — for a `KEY=value` line, a YAML
@@ -381,7 +478,7 @@ func weakNameValueOK(v string) bool {
 // 🔴 OR A LONG SECRET WORD IS A WHOLE SEGMENT OF IT (WEAK, review round 4): `DB_PASSWORD_PROD`,
 // `API_TOKEN_STAGING`, `GITHUB_TOKEN_CI` — a qualifier after the word — unless a following segment
 // is an ATTRIBUTE ([attributeSegments]). See [secretKeyGrade]; the key-context rule and the JSON
-// walk hold a weak name's value to [weakNameValueOK] as well.
+// walk hold a weak name's value to [credentialShaped] as well.
 //
 // ⚠ `PWD` and `OLDPWD` in UPPER case are the shell's working directories, not passwords; `pwd` in
 // any other case (a JSON field) is a password.
@@ -466,62 +563,19 @@ func DefaultRules() []Rule {
 			`(?:^|\s)redis-cli\b[^\n]*?\s-a[ \t]+["']?([^\s"']{4,})`)},
 		{Name: "cli-flag", Anchored: true, Group: 1, Accept: notCode, Re: regexp.MustCompile(
 			`(?:^|\s)sshpass\b[^\n]*?\s-p[ \t]*["']?([^\s"']{4,})`)},
-		// `.pgpass`: `host:port:database:user:password` — a POSITION, not a name. The password field
-		// holds no UNESCAPED `:` (libpq's own escape is `\:`), so a grep `path:N:` in front of a
-		// pgpass line cannot shift the fields and hand the rule `user:password` as the value.
-		{Name: "pgpass", Anchored: true, Group: 1, Accept: notCode, Re: regexp.MustCompile(
-			`(?m)^[^:\s]+:(?:[0-9]+|\*):[^:\s]+:[^:\s]+:((?:[^:\s\\]|\\.){4,})[ \t]*\r?$`)},
+		// `.pgpass`: `host:port:database:user:password` — a POSITION, not a name, so it is read only
+		// with pgpass STRUCTURE (positional.go: a host-like, a port-like, a database and a user field).
+		{Name: "pgpass", Anchored: true, Find: pgpassSpans},
 		// `.netrc`: `machine … login … password <pw>`, on one line or its own — a whitespace join
-		// the key-context rule takes only for a flag or a quoted value.
-		// 🔴 A LINE THAT IS ONLY `password <word>` NEEDS NETRC STRUCTURE (review round 4): behind a
-		// stripped `12:` or `> ` it is also `password rotation` in prose. See [netrcSpans].
-		{Name: "netrc-password", Anchored: true, Find: netrcSpans},
+		// the key-context rule takes only for a flag or a quoted value. A line that is only
+		// `password <word>` is also prose, so it needs netrc STRUCTURE or CONTEXT (positional.go).
+		{Name: "netrc-password", Anchored: true, FindV: netrcSpans},
 		// KEY CONTEXT: a value attached to a [SecretKey] name, in any notation, that is not code-,
 		// placeholder- or prose-shaped (keyed.go).
 		{Name: "key-context", Find: keyContextSpans},
 		// ENTROPY: a long random-looking token anywhere (entropy.go). LAST, and late.
 		{Name: "entropy", Find: entropySpans, Late: true},
 	}
-}
-
-var (
-	netrcInline = regexp.MustCompile(`(?mi)\b(?:machine|default)\b[^\n]*\bpassword[ \t]+(\S{4,})[ \t]*\r?$`)
-	netrcOwn    = regexp.MustCompile(`(?mi)^[ \t]*password[ \t]+(\S{4,})[ \t]*\r?$`)
-	netrcToken  = regexp.MustCompile(`(?i)(?:^|\s)(?:machine|default|login)(?:\s|$)`)
-)
-
-// netrcSpans is the `.netrc` rule: `machine … login … password <pw>` on one line, or `password
-// <pw>` on its own line. The own-line form is taken only with NETRC STRUCTURE: a `machine`,
-// `default` or `login` token on one of the three lines before it, or a value that is not a plain
-// word (`fix: password reset`, `12: password rotation` and `> password managers` are prose a
-// stripped prefix exposes, and a plain word after `password` is what prose puts there).
-func netrcSpans(s string) [][2]int {
-	var out [][2]int
-	for _, m := range netrcInline.FindAllStringSubmatchIndex(s, -1) {
-		if notCode(s[m[2]:m[3]]) {
-			out = append(out, [2]int{m[2], m[3]})
-		}
-	}
-	for _, m := range netrcOwn.FindAllStringSubmatchIndex(s, -1) {
-		v := s[m[2]:m[3]]
-		if !notCode(v) {
-			continue
-		}
-		if plainWordValue.MatchString(v) && !netrcToken.MatchString(linesBefore(s, m[0], 3)) {
-			continue
-		}
-		out = append(out, [2]int{m[2], m[3]})
-	}
-	return out
-}
-
-// linesBefore is the text of up to n whole lines before offset at (a line start).
-func linesBefore(s string, at, n int) string {
-	lo := at
-	for i := 0; i < n && lo > 0; i++ {
-		lo = strings.LastIndexByte(s[:lo-1], '\n') + 1
-	}
-	return s[lo:at]
 }
 
 // unnamedQueryKey is the `query-param` rule's key predicate: the parameter names that carry a

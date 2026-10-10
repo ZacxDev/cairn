@@ -116,6 +116,85 @@ func decodeValue(dec *json.Decoder) (any, error) {
 	}
 }
 
+// spliceJSON applies a walk's redactions to the document's ORIGINAL bytes: `raw` is one JSON
+// document, `redacted` its decoded tree after the walk. Every string token of `raw` — member keys
+// and string values, in document order — is compared with the string at the same position in the
+// tree, and only a token whose string CHANGED is replaced (re-encoded); every other byte of the
+// document — indentation, key order, number text, the escapes of untouched strings — is the
+// original's.
+//
+// 🔴 WHY (review round 5): re-serialising the whole document for one hit rewrote 695 of a 698-line
+// file's lines — every line whose indentation, spacing or escapes differed from this encoder's —
+// which is damage to clean text far beyond the secret, and the opposite of what the text path
+// promises ("only matched spans replaced").
+//
+// It reports false when the token stream and the tree do not line up (which a tree this package
+// decoded from the same bytes always does); the caller then re-encodes rather than ship a
+// half-applied result.
+func spliceJSON(raw []byte, redacted any) ([]byte, bool) {
+	var want []string
+	flattenStrings(redacted, &want)
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var out bytes.Buffer
+	last, n := 0, 0
+	for {
+		before := int(dec.InputOffset())
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, false
+		}
+		s, ok := tok.(string)
+		if !ok {
+			continue
+		}
+		after := int(dec.InputOffset())
+		if n >= len(want) {
+			return nil, false
+		}
+		if want[n] != s {
+			// Only separators and white space stand between two tokens, so the first quote after
+			// the previous token opens this one.
+			q := bytes.IndexByte(raw[before:after], '"')
+			if q < 0 {
+				return nil, false
+			}
+			out.Write(raw[last : before+q])
+			if err := writeString(&out, want[n]); err != nil {
+				return nil, false
+			}
+			last = after
+		}
+		n++
+	}
+	if n != len(want) {
+		return nil, false
+	}
+	out.Write(raw[last:])
+	return out.Bytes(), true
+}
+
+// flattenStrings lists every string of a decoded tree in document order: a member's key, then its
+// value.
+func flattenStrings(v any, out *[]string) {
+	switch t := v.(type) {
+	case *object:
+		for _, p := range t.pairs {
+			*out = append(*out, p.k)
+			flattenStrings(p.v, out)
+		}
+	case []any:
+		for _, e := range t {
+			flattenStrings(e, out)
+		}
+	case string:
+		*out = append(*out, t)
+	}
+}
+
 // encodeJSON writes v compactly. `indent` non-empty pretty-prints, for a text blob that arrived
 // pretty-printed.
 func encodeJSON(v any, indent string) ([]byte, error) {

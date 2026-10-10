@@ -166,6 +166,16 @@ field names and types alone.
   a URL (decision 6, T1). It also corrects the rate test's stated figure (one seed reported as if
   general; now a range over named seeds) and records a scorer defect that made the self-test's
   78/79 seed-dependent.
+- *Revision 21 applies S1 review round 6 under O15, and RETRACTS one clause of revision 20's
+  scoping.* "A bare value longer than 1 KiB is refused" is gone: round 5 took it to keep the rule
+  linear and it shipped a 2 KiB hex key and a URL-encoded document that round 4 had caught; a named
+  bare value of any length is now taken, judged by its first 64 bytes. The rest of the round
+  replaces evidence that was too thin in both directions — a `.netrc` password line, a weak name's
+  value, "code notation" read off spacing, an identifier counted by characters alone, a `.pgpass`
+  row read off five colons — and it adds the thing rounds 4 and 5 lacked: **damage is now measured
+  on text nobody wrote for the purpose** (this repository's tracked text, and the Go standard
+  library's source) **and pinned as a budget**, so a round that widens it fails a test. Decision 6,
+  T1 and the S1 test plan carry the measured numbers and the residuals.
 
 ## Goal and premise
 
@@ -674,7 +684,7 @@ script that prints only counts.
 | O12 | Answers Q2: content no redactor can read — images, PDFs, other binary payloads — SHIPS, every byte. The redactor scans every text-decodable string (base64 that decodes to text included) and leaves binary content as it is. **The coordinator's reading (revision 18, reversible):** O12 meant images, PDFs and binary PAYLOADS, so "binary" is a value whose bytes begin with a KNOWN binary file signature (or a base64/`data:` payload decoding to one); NUL-separated text and mostly-UTF-8 text with stray invalid bytes are TEXT and are scanned. *Reason: under revision 17's rule a `/proc/<pid>/environ` dump or an `env -0` listing — NUL-separated, all secrets — classed as binary and shipped unscanned; the narrowing costs nothing O12 asked for.* | Decision 6a's withholding is DELETED; binary is still classified, for collapsed display (decisions 17, 18). T1 names the residual: a secret inside an image, a PDF or another signature-bearing payload ships unredacted. |
 | O13 | The coordinator stated these recommended answers to the operator as the defaults it would take before the operator answered O12 and O14; the operator did not object. They cover Q4 (a host-local, never-committed, counts-only redaction audit), Q5 (the client instance is NOT armed without an explicit operator decision), Q7 (one capture owner per instance), Q8 (ClickUp ids only, titles behind a no-default flag), Q9 (keep account identifiers), Q10 (plugins on a user timer on one operator host), Q11 (an `AGENTS.md` row is paid for by evicting an equal amount of history to a README in the same change), Q12 (per-session directory, one replica) and Q15 (the proposed Go-only `transcript` verb). | Each question below is marked "recommendation adopted"; Q13, Q14 and Q16 stay open. |
 | O14 | Answers Q6: retention 90 days; an instance quota of about twice the steady state — about 20 GB compressed per capturing host on the personal instance — re-measured after a month of real uploads. | Implemented in S3 (`-transcript-retention`, `-transcript-quota`); decision 15. |
-| O15 | After S1's third review round, the redactor changes approach: redact by KEY CONTEXT (any value attached to a secret-sounding name — a key, a flag, an environment variable, a config field, SQL's `IDENTIFIED BY`) plus ENTROPY (long random-looking tokens), retiring or narrowing the per-format rules those two subsume and accepting more damage to clean text, within a ceiling. Tool line prefixes are normalised FIRST, so every rule sees a line's content, with redaction still applied to the original bytes. And an arming gate: capture is armed on NO instance until a FRESH held-back set — written by an auditor, never seen by the fixer, replaced every round — shows at least 90% of its leaks caught AND at most 15% of its clean lines damaged. | Decision 6 (S1: `internal/redact/{normalise,keyed,entropy}.go`); closing-condition part 5; the S3 arming precondition; Rollout. The gate is `internal/redact/heldback.go` + `cmd/redact-heldback`. *As built (revision 20), and no wider: "any value" means any value whose SHAPE is not code, a placeholder or prose and that is not a bare run over 1 KiB; a name whose secret word is a segment rather than its end is held to a stricter value test — decision 6 states the refusals.* |
+| O15 | After S1's third review round, the redactor changes approach: redact by KEY CONTEXT (any value attached to a secret-sounding name — a key, a flag, an environment variable, a config field, SQL's `IDENTIFIED BY`) plus ENTROPY (long random-looking tokens), retiring or narrowing the per-format rules those two subsume and accepting more damage to clean text, within a ceiling. Tool line prefixes are normalised FIRST, so every rule sees a line's content, with redaction still applied to the original bytes. And an arming gate: capture is armed on NO instance until a FRESH held-back set — written by an auditor, never seen by the fixer, replaced every round — shows at least 90% of its leaks caught AND at most 15% of its clean lines damaged. | Decision 6 (S1: `internal/redact/{normalise,keyed,entropy}.go`); closing-condition part 5; the S3 arming precondition; Rollout. The gate is `internal/redact/heldback.go` + `cmd/redact-heldback`. *As built (revision 21), and no wider: "any value" means any value whose SHAPE is not code, a placeholder or prose, at any length (revision 20's refusal of a bare run over 1 KiB is retracted); a name whose secret word is a segment rather than its end — and the abbreviation `cred`/`creds` — takes only a value that itself looks like a credential. Decision 6 states the refusals and T1 their measured cost.* |
 
 ### Chosen by the AGENT writing this plan (open to review)
 
@@ -915,15 +925,27 @@ script that prints only counts.
      over every view, and matches map back to the original bytes. Then two general rules carry the
      table: KEY CONTEXT (a value attached to a name the one secret-name predicate accepts, in any
      notation — assignment, YAML, quoted keys, call arguments, flags, SQL, XML — *unless* the value's
-     shape is code, a placeholder or prose, it is a bare value over 1 KiB, or the name is WEAK — its
-     secret word a segment, not the end: `DB_PASSWORD_PROD` — and the value is a word, a slug, a
-     number or a URL; which shapes count as code depends on the JOIN, revision 20) and ENTROPY (a long
+     shape is code, a placeholder or prose, or the name is WEAK — its secret word a segment, not the
+     end: `DB_PASSWORD_PROD`, or the abbreviation `cred`/`creds` — and the value is not itself
+     credential-shaped: a word, an identifier or slug, a number, a timestamp, an address, a URL, a
+     type or a regex. Since revision 21 a bare value of ANY length is taken, judged by its first
+     64 bytes; a digits-only value of four or more digits is taken under a strong name outside
+     code notation; and what reads as code is decided by evidence about the LINE — an ALL_CAPS
+     name glued to `=` is an environment assignment whatever follows the value, a name that starts
+     its line before a spaced `=` and a value that ends it is the INI layout, and a dereference is
+     read only over an operand that looks like an identifier) and ENTROPY (a long
      run of the base64 alphabet with all three character classes that is not wordy, not an
      identifier/path/digest/transcript ID, and not a binary payload's encoding). The per-format
      dotenv, source-literal, libpq, `docker -e` and `.npmrc` rules are RETIRED into key context; the
      query rule is narrowed to names that carry a credential without saying so; short CLI flags
      are a closed per-tool list. Vendor formats, positional files, PEM blocks and the YAML/JSON
-     structure stay. `internal/redact/README.md` is the inventory and the measured costs.
+     structure stay — and since revision 21 the two positional files are read only with their
+     file's STRUCTURE: a `.pgpass` row needs a host-like, a port-like, a database and a user field
+     (five colon fields with a number second is also `path:N:C:` in front of a comment), and a
+     `.netrc` password that is a plain word needs a `machine`/`default` record in its block, a
+     netrc file named by the line's prefix or the lines above, or — the lone line — no prefix but
+     a line number and a word that is not an attribute of a password. `internal/redact/README.md`
+     is the inventory and the measured costs.
    - *Base64 that hides text:* a WHOLE string of ≥ 16 base64-alphabet characters (after removing
      ASCII whitespace — see 6a's decoder) that DECODES to text (6a's text rule) is scanned decoded as
      well; a match replaces the whole encoded value. The floor buys no precision — the decoded scan
@@ -976,7 +998,10 @@ script that prints only counts.
      bytes AND valid UTF-8 — is retracted: it shipped an environ dump unscanned.*
    - **Text blobs.** A blob that parses as JSON (or JSON Lines) is redacted by decision 6's
      DECODED-string traversal, exactly like a record, so a JSON-escaped secret inside a blob is
-     caught; if nothing matches, the ORIGINAL bytes are stored, otherwise the re-encoded document.
+     caught; if nothing matches, the ORIGINAL bytes are stored; otherwise a JSON DOCUMENT is
+     redacted IN PLACE (revision 21: only the string tokens that changed are rewritten — one hit
+     used to re-serialise the whole document, 1,186 changed lines for four hits in this
+     repository's one large fixture) and a JSON Lines record with a hit is re-encoded compact.
      Any other text blob is redacted as ONE string with the same table, keyed tags and the
      line-based `Secret` rule, and stored as the redacted bytes — byte-identical to its source
      exactly when nothing matched. The pod re-checks both kinds like a record (decision 6).
@@ -1318,7 +1343,7 @@ GET /transcript/skeleton  ·  GET /transcript/records  ·  GET /transcript/tool 
 
 | threat | control |
 |---|---|
-| **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. **What is NOT controlled:** secrets that are neither NAMED nor RANDOM-LOOKING (typed passwords in prose, an unnamed all-lower-case, hex or short token — O15's two general rules cannot see them; a novel token format that is long and mixed-case IS caught by the entropy rule); an UNNAMED password-manager password with symbols (the symbols split it into base64-alphabet runs under 20 characters: 0–1/200 caught at 16–32 characters, measured revision 20 — a symbol-token rule that caught 175/200 at 24 was measured damaging 275 tokens of this repository's own text and not adopted); a NAMED value whose shape is code, a placeholder or prose, or a bare one over 1 KiB (the key-context rule refuses those by design — revision 20); **a secret inside an image, a PDF, an archive or any other payload that begins with a known binary file signature (a PNG carrying a token in a text chunk included) — that content SHIPS UNREDACTED by operator decision (O12, decision 6a, the coordinator's reading), because no text rule can read it**; text in an encoding other than UTF-8 or BOM-marked UTF-16 (scanned byte-wise only); an encoded secret embedded in a longer string (not decoded — caught as a token only when long and random-looking), a flow-style YAML `Secret` (decision 6), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
+| **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. **What is NOT controlled:** secrets that are neither NAMED nor RANDOM-LOOKING (typed passwords in prose, an unnamed all-lower-case, hex or short token — O15's two general rules cannot see them; a novel token format that is long and mixed-case IS caught by the entropy rule); an UNNAMED password-manager password with symbols (the symbols split it into base64-alphabet runs under 20 characters: 0–1/200 caught at 16–32 characters, measured revision 20 — a symbol-token rule that caught 175/200 at 24 was measured damaging 275 tokens of this repository's own text and not adopted); a NAMED value the key-context rule refuses by design, each MEASURED (revision 21; `internal/redact/README.md` names the test that pins each): one whose shape is code, a placeholder or prose (symbol-bearing generated passwords 193–200/200 over seeds 4–8; every symbol-free generator 200/200); a WEAK name's value that is itself identifier- or slug-shaped, e.g. `DB_PASSWORD_PROD=tiger_2024` (0/200, pinned; random values under weak names 199–200/200); a hex constant of at most 8 digits, or a signed or decimal number, under any name; a digits-only value in code notation or under four digits; a letters-only value after a spaced `=`, and a bracket-led value the line does not close there; a symbol-led password in an indented `key: value,` whose operand does not look random (194–200/200); a `.netrc` password that is a plain word AND is alone AND is an attribute word, sits behind a quote, diff, compose or non-netrc path prefix, or follows a capitalised keyword (plain-word passwords with netrc structure or file context: 340/340 over 17 layouts); a `.pgpass` row whose database or user starts with a digit. *Revision 20 also listed "a bare value over 1 KiB" here; that refusal is retracted — such a value is taken (90/90 at 1 KiB to 64 KiB).* **And what redaction costs clean text, now measured on text nobody wrote for the purpose and pinned as a budget** (`internal/redact/budget_test.go`): the Go standard library's source, 3,027,865 lines — 10,285 changed at round 4, 11,182 at round 5, 4,790 at round 6, nearly all of them the library's own test keys, certificates and vectors; this repository's tracked text, 300,774 lines — 1,422, 1,419, 224, of which 19 are in files that are not tests or fixtures and are enumerated. Stated clean-text costs, each pinned: a line that is exactly `password <non-attribute word>`, bare or behind a line number; `grep -n` output over a line that is itself three colon-separated words; a weak name over a value that does look random (a key id after a `…_KID` name; pinned in `TestRoundSixWeakNamesNeedACredentialShapedValue`); **a secret inside an image, a PDF, an archive or any other payload that begins with a known binary file signature (a PNG carrying a token in a text chunk included) — that content SHIPS UNREDACTED by operator decision (O12, decision 6a, the coordinator's reading), because no text rule can read it**; text in an encoding other than UTF-8 or BOM-marked UTF-16 (scanned byte-wise only); an encoded secret embedded in a longer string (not decoded — caught as a token only when long and random-looking), a flow-style YAML `Secret` (decision 6), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
 | **T2. Confidential but non-secret content** (client business detail, personal data in a tool output) | Redaction does not address it at all; VISIBILITY is the only control (decision 4). Stated, so nobody believes the redactor covers it. |
 | **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store, plus the client read ledger (decision 3a), plus rendered headers anywhere in the content, plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope and a ledger `*` add `*`; F1 adds `*` when any tool input names `cairn`/`subsystem-recall` and the ledger is empty, F2 when any input names the cache root `subsystem-store`; nothing cancels a `*`, no caller resolves a working directory or parses a shell line; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The ledger is SELF-REPORTED by the host**, like the write trailer: a session or anything else on the host can edit or delete it, and that can only make `V` SMALLER — an emptied ledger trips F1 if any input names the program. **The residual:** (1) a session MIXING a ledger-writing client with one that writes no record — a pre-ledger client (an older pinned revision), or a call whose environment lost the session id (`env -i`, some `sudo` setups) — has a non-empty ledger, so F1 does not fire and the unrecorded call's scope is missing; (2) a file-tool read of a local store copy whose path does not contain `subsystem-store` — a `--cache <dir>` root (`internal/client/cli.go:339`), a `CAIRN_MIRROR_ROOT` mirror (`cli.go:834`), or a moved cache root; (3) a store or transcript read that bypasses the client entirely (a direct HTTP call to the pod, or to `cairn-ui`'s `/transcript/…` routes — decision 17's CLI verbs write `*`, a raw HTTP call writes nothing). *Revisions 8–12 listed, as the residual, invocations whose program name never appears in the command line (a variable, a script, a shell function); the ledger records the read however it was invoked, so that residual is CLOSED for a current, ledger-writing client that sees the session id (residual (1) is what is left when either fails) — retracted with the parser.* |
 | **T4. Viewer-set computation makes the predicate vacuous** | Clause (e), and a mutant row (`transcript-written-set-from-viewer-scopes`). |
@@ -1508,6 +1533,27 @@ run time).
   `mysql -p'pw'`/`-p"pw"`; an injective view-dedupe key. The self-test's 78/79 on about one seed in
   six was the SCORER, not the redactor (a plant's `&` was JSON-escaped in its record, so its rule was
   never credited); with that and two rule fixes, 0 of 400 seeds fail.
+- Review round 6 (S1, O15; `round6_test.go`, each shown RED on round 5's head unless labelled an
+  invariant guard or a cost pin; `budget_test.go`). **Every heuristic is measured in both
+  directions** — recall on generated secrets, damage on neutral text — and the damage is PINNED:
+  every line of this repository's non-fixture files that the redactor changes is enumerated (a
+  new one fails), fixture files and a sample of the Go standard library's source are held to
+  ceilings, and the pgpass rule to a ceiling over this repository's lines behind grep prefixes.
+  The cases: a named bare value at 1 KiB, 2 KiB and 64 KiB (90/90, from 18/90) with the finder
+  still linear (two operation counts and two timing ratios); `.netrc` plain-word passwords from
+  structure or file context (340/340 over 17 layouts, from 80/340) against prose (0/35 damaged,
+  from 7/35) with the residuals pinned in both directions; a weak name's value held to a
+  credential shape (0/33 clean probes damaged, from 21/33; random values 199–200/200; the
+  identifier-shaped cost pinned at 0/200); identifiers the entropy rule had begun to redact
+  (the rule's lines over the standard library 4,826 → 5,687 → 4,617, its recall table unchanged);
+  a JSON document redacted in place; symbol-led values in the INI layout and before trailing
+  punctuation (200/200 in seven of eight layouts, 194–200 in the eighth, from 0–43/200); a
+  redactor that only corrupts the encoding scoring nothing (256 credits over 60 seeds, now 0,
+  and run by the self-test as a third control); the arming gate's oracle not counting a
+  redaction marker as surviving secret (a known-answer test); `.pgpass` structure (6 of 22,887
+  neutral lines behind `path:N:C:`, now 0); a digits-only value under a strong name (0/200 at
+  rounds 4 and 5, 200/200). 61 named mutants, each killed by its own guard's message; the
+  harness's no-op control survives, as it must.
 
 **S2.**
 - Offset reader: a file grown mid-line ships only complete lines; the next run ships the rest
