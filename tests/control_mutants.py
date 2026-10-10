@@ -3056,6 +3056,155 @@ MUTANTS: tuple[Mutant, ...] = (
         "never that a change to the CONSTANT would. The row is here so the fix has a gate.",
     ),
 
+    # ---- the Team page and its multi-target TEAM LINK (`internal/ui/team*.go`) ----------
+    #
+    # 🔴 ONE ROW PER AUTHZ RULE THE LINK ADDS, AND THE SQL HALF IS NOT HERE. The store's
+    # conditional `UPDATE`, its `CHECK` and its expiry boundary are measured by the Postgres
+    # tier (`internal/pgstore/teamlinks_pgtest_test.go`), which this battery does not run; the
+    # `invite-teamlink-*` rows mutate `TeamLink.StateAt`, which the in-memory store the UI
+    # tests drive asks inside its lock — the same predicate the SQL is pinned against.
+    Mutant(
+        name="ui-teamlink-scope-arm-stops-asking-for-every-verb",
+        path="internal/ui/teamlinks.go",
+        old="return have.Has(control.VerbAdmin) && have.Intersect(want) == want",
+        new="return have.Has(control.VerbAdmin) && !want.Empty()",
+        killer="TestALinkCannotConferVerbsItsMinterLacks",
+        why="a LINK GRANTS BEYOND ITS MINTER'S AUTHORITY. Verbs are independent bits, so 'holds "
+        "admin' reads like 'holds everything' and is not: an admin-only grantee would mint a "
+        "reader link conferring a read it does not have.",
+    ),
+    Mutant(
+        name="ui-teamlink-scope-arm-drops-the-admin-requirement",
+        path="internal/ui/teamlinks.go",
+        old="return have.Has(control.VerbAdmin) && have.Intersect(want) == want",
+        new="return have.Intersect(want) == want",
+        killer="TestAScopeLinkNeedsAdminOnTheScope",
+        why="'you may hand out what you hold' without the share flow's admin rule: every "
+        "project MEMBER could then put the project's scopes on a reusable link to anybody.",
+    ),
+    Mutant(
+        name="ui-teamlink-project-arm-stops-asking-who-may-manage",
+        path="internal/ui/teamlinks.go",
+        old="if !member || !held.CanManageMembers() {",
+        new="if !member {",
+        killer="TestAProjectLinkNeedsAMemberManager",
+        why="belonging taken for managing — a plain member minting a link that adds people to "
+        "the project, which `CanManageMembers` exists to refuse.",
+    ),
+    Mutant(
+        name="ui-teamlink-mint-skips-the-authority-check",
+        path="internal/ui/teamlinks.go",
+        old="\t\tif !mayLink(m, actor, t, role) {\n\t\t\treturn \"\", invite.TeamLink{}, ErrNotLinkable",
+        new="\t\tif false && !mayLink(m, actor, t, role) {\n\t\t\treturn \"\", invite.TeamLink{}, ErrNotLinkable",
+        killer="TestAProjectLinkNeedsAMemberManager",
+        extra_killers=("TestAScopeLinkNeedsAdminOnTheScope", "TestALinkCannotConferVerbsItsMinterLacks"),
+        why="the chooser trusted as the check. `Mintable` filters what a BROWSER is offered; a "
+        "hand-made POST names any target, and this is the only gate it meets at mint time.",
+    ),
+    Mutant(
+        name="ui-teamlink-redeem-skips-the-minter-recheck",
+        path="internal/ui/teamlinks.go",
+        old="\t\tif !mayLink(m, minter, t, link.Role) {",
+        new="\t\tif false && !mayLink(m, minter, t, link.Role) {",
+        killer="TestAMinterWhoLostAuthorityMintsNothingUsable",
+        why="REDEEM SKIPS THE RE-CHECK: authority checked once, at mint, and trusted for the "
+        "link's whole life. A reusable link outlives its minter's demotion by up to 30 days, "
+        "and without this every link a removed admin made keeps enrolling strangers.",
+    ),
+    Mutant(
+        name="invite-teamlink-single-use-stops-closing",
+        path="internal/invite/teamlink.go",
+        old="case !l.Reusable && l.Redemptions > 0:",
+        new="case false && l.Redemptions > 0:",
+        killer="TestASingleUseLinkRedeemsExactlyOnce",
+        why="REUSE UNTICKED BUT REDEEMABLE TWICE — the count stored and not consulted, which "
+        "turns every single-use link into open enrolment.",
+    ),
+    Mutant(
+        name="invite-teamlink-revoke-stops-closing",
+        path="internal/invite/teamlink.go",
+        old="\tcase !l.RevokedAt.IsZero():\n\t\treturn StateRevoked",
+        new="\tcase false:\n\t\treturn StateRevoked",
+        killer="TestARevokedLinkIsNotRedeemable",
+        why="A REVOKED LINK STILL REDEEMABLE: the tombstone written and not read, which is the "
+        "one remedy a minter has for a leaked reusable link.",
+    ),
+    Mutant(
+        name="invite-teamlink-expiry-stops-closing-at-the-boundary",
+        path="internal/invite/teamlink.go",
+        old="case !now.Before(l.ExpiresAt):",
+        new="case now.After(l.ExpiresAt):",
+        killer="TestAnExpiredLinkIsNotRedeemable",
+        why="AN EXPIRED LINK REDEEMABLE, at the one instant the two spellings differ: the closed "
+        "boundary written open, so `ExpiresAt` itself still redeems — and the SQL guard pinned "
+        "against `StateAt` would then be pinned against the wrong rule.",
+    ),
+    Mutant(
+        name="ui-teamlink-scope-target-joins-its-whole-project",
+        path="internal/ui/teamlinks.go",
+        old="if err := grant(control.ObjectScope, t.ID, want); err != nil {",
+        new="if err := grant(control.ObjectProject, m.Scopes[t.ID].ProjectID, want); err != nil {",
+        killer="TestARedemptionJoinsExactlyTheSelectedTargets",
+        why="A MULTI-TARGET LINK JOINS A TARGET NOT SELECTED: a scope 'joined' through its owning "
+        "project, which confers every sibling scope the minter never ticked.",
+    ),
+    Mutant(
+        name="ui-teamlink-revoke-skips-the-ownership-check",
+        path="internal/ui/teamlinks.go",
+        old="if !known || link.Inviter != actor.ID {",
+        new="if !known || link.Inviter == \"\" {",
+        killer="TestOnlyTheMinterCanRevokeALink",
+        why="REVOKE BY A NON-OWNER: any signed-in user who learns a digest (it is rendered into "
+        "the minter's page source) could withdraw somebody else's link.",
+    ),
+    Mutant(
+        name="ui-teamlink-overwrites-an-existing-membership",
+        path="internal/ui/teamlinks.go",
+        old="\t\t\tif _, member := m.RoleIn(t.ID, user); member {\n\t\t\t\tcontinue\n\t\t\t}\n\t\t\tif link.Role",
+        new="\t\t\tif _, member := m.RoleIn(t.ID, user); member && false {\n\t\t\t\tcontinue\n\t\t\t}\n\t\t\tif link.Role",
+        killer="TestALinkNeverOverwritesAnExistingMembership",
+        why="`ErrAlreadyAMember`'s hazard on the new writer: `apply` calls `setMembership` "
+        "unconditionally, so a member link redeemed by the sole owner DEMOTES them.",
+    ),
+    Mutant(
+        name="ui-teamlink-reuse-tick-is-ignored",
+        path="internal/ui/team.go",
+        old='reusable := r.PostFormValue(FieldReuse) != ""',
+        new="reusable := true",
+        killer="TestTheTeamLinkFormPassesEveryTickedTargetThrough",
+        why="the dangerous default: every link minted reusable whatever the box said.",
+    ),
+    Mutant(
+        name="ui-team-page-offers-the-unnarrowed-principals-targets",
+        path="internal/ui/team.go",
+        old="view.Mintable = s.teamLinks.Mintable(membershipActor(id))",
+        new="view.Mintable = s.teamLinks.Mintable(id.Principal)",
+        killer="TestANarrowedBearerHasNoTeamLinkAuthority",
+        extra_killers=("TestEveryMembershipDecisionActsAsMembershipActor",),
+        why="`membershipActor` bypassed on the new page: a credential narrowed to one scope is "
+        "shown every project its owner manages as something it can put on a link.",
+    ),
+    Mutant(
+        name="ui-team-mint-acts-as-the-unnarrowed-principal",
+        path="internal/ui/team.go",
+        old="s.teamLinks.Mint(r.Context(), membershipActor(id), targets, role, ttl, reusable)",
+        new="s.teamLinks.Mint(r.Context(), id.Principal, targets, role, ttl, reusable)",
+        killer="TestANarrowedBearerHasNoTeamLinkAuthority",
+        extra_killers=("TestEveryMembershipDecisionActsAsMembershipActor",),
+        why="the escalation `membershipActor` exists for, through the new door: a leaked "
+        "narrowed token mints a reusable link into every project its owner manages.",
+    ),
+    Mutant(
+        name="ui-team-honesty-notice-loses-its-reuse-clause",
+        path="internal/ui/team.go",
+        old='"scope it names. A link that allows reuse can be redeemed by any number of people, any " +\n\t"number of times, until it expires or is revoked. A link stops working',
+        new='"scope it names. A link stops working',
+        killer="TestTheTeamHonestyNoticeIsPinnedWhole",
+        why="the clause that makes the product sound weakest is the reuse one: a reusable link is "
+        "open enrolment until it expires, and a notice without that sentence lets a minter "
+        "believe a link is for the one person they sent it to.",
+    ),
+
     # ---- the `## Requirements` section: the boundary, the count, the attribution ----
     Mutant(
         name="requirements-read-the-whole-entry-body",
