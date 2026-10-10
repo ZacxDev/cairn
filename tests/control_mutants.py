@@ -4297,6 +4297,37 @@ MUTANTS: tuple[Mutant, ...] = (
         why="the directory name already IS the scope name on most hosts, so the identity function passes "
         "every lowercase fixture — and `Alpha-Notes` declared in the browser is never found by the pod.",
     ),
+    # S2 of the scope-refs plan: the pod's `sources/<scope>` route and its startup refusal. All
+    # three killers live inside `PKGS` (`internal/api`, `cmd/cairn-server`), so no `pkgs` override.
+    Mutant(
+        name="api-sources-get-distinguishes-absent-from-unreadable",
+        path="internal/report/sources.go",
+        old='\tindex, err := store.LoadStore(storeRoot, "scanned", visible)',
+        new='\tindex, err := store.LoadStore(storeRoot, "scanned", store.Unrestricted())',
+        killer="TestAScopeTheCallerCannotReadAnswersExactlyLikeAbsence",
+        why="'does the scope exist' reads as a question about the DISK, so asking it of the whole store "
+        "looks correct — and a scope the caller may not read then answers with its declaration, telling "
+        "refused apart from absent and leaking the repositories it names.",
+    ),
+    Mutant(
+        name="api-sources-journal-inside-store-accepted",
+        path="cmd/cairn-server/main.go",
+        old="\t\tresolved, err := codesrc.ResolveJournalPath(*store, raw)",
+        new="\t\tresolved, err := raw, error(nil)",
+        killer="TestTheBinaryREFUSESASourceJournalInsideTheStoreRoot",
+        why="the variable is 'just a path', and the pod only READS it, so checking where it points looks "
+        "like ceremony — and a journal beside the store becomes a scope every bare row reads, and is "
+        "overwritten by the next re-seed.",
+    ),
+    Mutant(
+        name="api-sources-unreadable-journal-answers-200",
+        path="internal/api/server.go",
+        old="\t\tif sourcesErr != nil {\n\t\t\treturn sourcesErr\n\t\t}",
+        new="\t\tif sourcesErr != nil {\n\t\t\tgot = codesrc.Snapshot{Latest: map[string]codesrc.Record{}, Missing: true}\n\t\t}",
+        killer="TestAnUnreadableSourcesJournalIsTheStoreUnreachable503",
+        why="degrading to 'empty' keeps the page up, which reads as resilience — and a journal the pod "
+        "cannot read answers `sources=undeclared`, the could-not-look state served as a fact.",
+    ),
 )
 
 

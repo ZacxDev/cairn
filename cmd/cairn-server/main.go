@@ -33,6 +33,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/api"
 	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/authz"
+	"github.com/ZacxDev/cairn/internal/codesrc"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/control/tokenfile"
 	"github.com/ZacxDev/cairn/internal/envalias"
@@ -392,6 +393,31 @@ func main() {
 			os.Exit(exitConfig)
 		}
 		srv.ArcJournal = resolved
+	}
+
+	// 🔴 THE CODE-SOURCES JOURNAL (decision 1 of the scope-refs plan): the arc journal's rule — a
+	// journal inside the store tree is a refusal to start, decided on SYMLINK-RESOLVED paths by the
+	// same resolution — but read from the ENVIRONMENT ONLY. There is no flag on purpose: a
+	// pre-feature binary handed an unknown flag refuses to start, and one handed an unknown
+	// variable ignores it, so the variable is the rollback story. Unset (or empty) is the designed
+	// OFF state, `sources-unconfigured`; a value that reduces to nothing is refused, the arc
+	// journal's `refuseBlank` reading. The pod only ever READS this file (O_RDONLY), and
+	// `internal/api`'s `TestThePodHasNoCallSiteOfJournalSet` keeps it from ever writing it.
+	// `TestTheBinaryREFUSESASourceJournalInsideTheStoreRoot` is the gate, shown RED first.
+	if raw, set := os.LookupEnv(codesrc.EnvJournal); set && raw != "" {
+		if identity.ValueReducesToNothing(raw) {
+			fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
+				"subsystem-store-api: $%s is set to a value that reduces to nothing. "+
+					"Refusing to start rather than reading it as unset; set a path or remove the line",
+				codesrc.EnvJournal)))
+			os.Exit(exitConfig)
+		}
+		resolved, err := codesrc.ResolveJournalPath(*store, raw)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: "+err.Error()+". Refusing to start"))
+			os.Exit(exitConfig)
+		}
+		srv.SourceJournal = resolved
 	}
 
 	// 🔴 IDENTITY IS CONFIGURED BEFORE THE LISTENER ACCEPTS, AND A BROKEN CONFIGURATION

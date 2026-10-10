@@ -885,6 +885,7 @@ anyone editing a routing path are in [`lib/README.md`](lib/README.md).
 | `GET /api/v1/arcs/{scope}` | registered arcs that touched the scope, `declared` or `inferred`; with `?check=1` (`&all_scopes=1`) the orphan check, `X-Store-Exit` on doctor's 0/9/10 — **Go pod only** |
 | `GET /api/v1/arc/{home}/{slug}` | one registered arc — **Go pod only**; `arc-unregistered` when it is not visible to you |
 | `PUT /api/v1/arc/{home}/{slug}` | register or update one arc (write verb on every declared scope; `409 registrations-unconfigured` with no `-arc-journal`) — **Go pod only** |
+| `GET /api/v1/sources/{scope}` | the scope's declared code sources (`git:<host>/<repo-path>[//<subpath>]@<branch>`, first is primary), read from `$CAIRN_SOURCE_JOURNAL` — an environment variable with no flag, a file OUTSIDE the store root, read-only to the pod; `sources-unconfigured` when unset, `503 store-unreachable` when it cannot be read — **Go pod only** |
 | `POST /api/v1/entry/{scope}/{ref}/bullets` | append ONE attributed bullet (the actor comes from the token, never the body) |
 | `PUT /api/v1/entry/{scope}/{ref}` | whole-file replace via `If-Match`, or create via `If-None-Match: *` |
 

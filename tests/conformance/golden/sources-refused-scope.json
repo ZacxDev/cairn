@@ -1,0 +1,53 @@
+{
+  "body": {
+    "bytes": 813,
+    "kind": "text_lines",
+    "sha256": "6d68cb59aebd31469c7021f3702f065c634d6011d6a8fc42fba1b32fa1f6d1ab",
+    "text_lines": [
+      "🔴 SNAPSHOT, NOT THE SOURCE — seeded=2000-01-04T00:00:00Z newest-entry=2000-01-03T00:00:00Z entry-files=11. This host serves a COPY of the authoritative store, pushed by `seed.sh`; nothing syncs it continuously, so it can be arbitrarily behind and it CANNOT KNOW BY HOW MUCH. The \"none omitted\" below is true of THIS DISK and says nothing about the source. Before trusting an absence — a missing entry, a missing badge, a zero — re-run the read against the local store, or re-seed. UNSTAMPED/UNREADABLE/NONE each mean the stated fact could not be established, never that it is fine.",
+      "",
+      "cairn-sources: status=scope-absent scope=alpha-notes",
+      "",
+      "NO SCOPE `alpha-notes/` IS READABLE HERE. A scope that does not exist and one this credential may not read answer identically, by design; no sources are shown for it.",
+      ""
+    ]
+  },
+  "case": "sources-refused-scope",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Length",
+      "813"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Exit",
+      "0"
+    ],
+    [
+      "X-Store-Revision",
+      "unknown"
+    ],
+    [
+      "X-Store-Snapshot",
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=11"
+    ],
+    [
+      "X-Store-Status",
+      "scope-absent"
+    ]
+  ],
+  "reason": "OK",
+  "recorded_from": "cmd/cairn-server",
+  "status": 200
+}

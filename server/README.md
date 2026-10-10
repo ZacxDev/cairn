@@ -113,6 +113,9 @@ GET  /api/v1/arc/{home}/{slug}             one registered arc — GO POD ONLY
 PUT  /api/v1/arc/{home}/{slug}             register/update an arc; needs `-arc-journal`
                                            (a file OUTSIDE the store root, or the Go pod
                                            refuses to start) — GO POD ONLY
+GET  /api/v1/sources/{scope}               the scope's declared code sources, read from
+                                           $CAIRN_SOURCE_JOURNAL (env only, OUTSIDE the
+                                           store root, never written by the pod) — GO POD ONLY
 POST /api/v1/entry/{scope}/{ref}/bullets   append ONE attributed bullet
 PUT  /api/v1/entry/{scope}/{ref}           whole-file replace, `If-Match` REQUIRED
                                            …or CREATE, with `If-None-Match: *`

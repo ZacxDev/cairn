@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import hashlib
 import json
 import socket
 import sys
@@ -671,6 +672,29 @@ def write_arc_journal(path: Path, world: dict | None = None) -> Path:
     return path
 
 
+def write_source_journal(path: Path, world: dict | None = None) -> Path:
+    """Write the world's seeded code-sources journal to `path`, one record per line.
+
+    The arc journal's rule, for the arc journal's reasons: OUTSIDE the store tree (the Go
+    server refuses $CAIRN_SOURCE_JOURNAL inside it), handed only to the Go server by
+    `run_go.sh` (the oracle serves no sources route), and one trailing newline per record so
+    the Go reader never sees a torn tail. It is an ENVIRONMENT VARIABLE on the Go server, not a
+    flag (decision 1 of the scope-refs plan), so `run_go.sh` exports it rather than passing it.
+    """
+    world = world if world is not None else oracle.load_world()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for record in world["source_journal"]["records"]:
+        record = dict(record)
+        # `codesrc.Revision`'s digest, which `internal/codesrc`'s `TestTheRevisionIsALiteralDigest`
+        # pins against this exact spelling: sha256 over the COMPACT JSON `[scope, sources]`.
+        canonical = json.dumps([record["scope"], record["sources"]], separators=(",", ":"), ensure_ascii=False)
+        record["revision"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        lines.append(json.dumps(record, separators=(",", ":")))
+    path.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+    return path
+
+
 # ---------------------------------------------------------------------------
 # record-go-only
 # ---------------------------------------------------------------------------
@@ -1029,6 +1053,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"store={root}")
         print(f"token-file={token_file}")
         print(f"arc-journal={journal}")
+        sources = write_source_journal(args.dest.parent / "sources" / "sources.jsonl")
+        print(f"source-journal={sources}")
         print("env: " + " ".join(f"{k}={v}" for k, v in oracle.ORACLE_ENV.items()))
         return 0
     if args.command == "generate":

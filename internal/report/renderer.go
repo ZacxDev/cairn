@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/ZacxDev/cairn/internal/arcs"
+	"github.com/ZacxDev/cairn/internal/codesrc"
 	"github.com/ZacxDev/cairn/internal/hostid"
 	"github.com/ZacxDev/cairn/internal/store"
 )
@@ -160,4 +161,14 @@ func ExitFor(status, label string, malformed []store.MalformedEntry) (int, strin
 		"was unavailable. This is NOT an empty scope and NOT 'nothing recorded yet'. " +
 		"Per-entry reasons are on stdout; check a scope with `cairn validate --scope <scope>`, " +
 		"which names each file that fails to parse."
+}
+
+// Sources renders one `/sources/<scope>` request. `snap` is nil when the pod has no sources
+// journal configured.
+func (rd Reader) Sources(storeRoot, scope string, visible store.ScopeSet, snap *codesrc.Snapshot) (Rendered, error) {
+	rep, err := Sources(storeRoot, scope, visible, snap)
+	if err != nil {
+		return Rendered{}, err
+	}
+	return Rendered{Status: rep.Status, Scope: rep.Scope, Exit: rep.Exit(), Text: rep.RenderText()}, nil
 }
