@@ -1,15 +1,12 @@
 package ui
 
 import (
-	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	g "maragu.dev/gomponents"
 	h "maragu.dev/gomponents/html"
 
-	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/report"
@@ -18,18 +15,15 @@ import (
 // 🔴 THE HUB AND THE SESSIONS LIST — the root became an entry page on an operator decision, and the
 // scope list it used to be moved to `/scopes` unchanged.
 //
-//   - 🔴 EVERY COUNT ON THE HUB IS AN ANSWER THE CALLER IS AUTHORISED TO SEE, AND IT IS THE SAME
-//     ANSWER THE CARD'S DESTINATION RENDERS. The scopes count is `len(Visible)`, the arcs count is
-//     `arcsIndexRows` over `Source.Arcs` (the arcs page's own live rows), and the sessions count is
-//     `len(Source.AllSessions)` (the sessions page's own rows). No count is derived a second way, so
-//     a card cannot promise a number its page does not show — and none can count what the viewer
-//     cannot read, because each comes out of a read narrowed by `auth.NamedScopes(VerbRead)`.
-//   - ⚠ THE TEAM CARD CARRIES NO COUNT, DELIBERATELY. "Who has access" is the SHARING authority
-//     (`control.Resolve`), and a hub that consulted it would be a content route answering from two
-//     authorities, which `contentAuthority` refuses to express. The card says what the page is.
-//   - ⚠ WHAT THE COUNTS COST: the hub pays `Visible`, `report.ArcsAcross` and `report.SessionsAcross`
-//     on every load — the same three reads `/scopes`, `/arcs` and `/sessions` pay. Measured in
-//     `internal/ui/README.md` (Phase R); nothing is cached, for the reason `Source` gives.
+//   - 🔴 THE HUB READS ONE THING, `Visible`, AND ITS ONE COUNT IS `len(Visible)` — the scopes this
+//     caller can read, the same list `/scopes` renders. The arcs and sessions cards carried counts in
+//     the first cut (the arcs page's live rows, the sessions page's rows); they were DROPPED in review
+//     (round 0, D1): each cost a whole-store walk on every hub load, roughly doubling its cost, for a
+//     number one click away. The cards stay, with no count — so the hub reads nothing beyond what the
+//     shell already needed, and can count nothing the viewer cannot read.
+//   - ⚠ THE TEAM CARD CARRIES NO COUNT EITHER: "who has access" is the SHARING authority, and a hub
+//     consulting it would be a content route answering from two authorities, which `contentAuthority`
+//     refuses to express.
 //   - 🔴 `/?q=` AND `/?tag=` ARE A 303 TO `/scopes` WITH THE QUERY RE-ENCODED, NEVER A 404. They were
 //     the root's own parameters, so bookmarks, typed URLs and the mobile plan's Search shortcut carry
 //     them. The `Location` is built by `url.Values.Encode` over the parsed query rather than by
@@ -59,15 +53,6 @@ func (s StoreSource) AllSessions(auth control.Authorization) (SessionsList, erro
 	return SessionsList{Report: rep, ArcsUnreadable: unreadable}, nil
 }
 
-// Hub is the hub page's data: the two reads beyond `Visible` its counts come from.
-type Hub struct {
-	// Arcs is `Source.Arcs`'s answer, nil when the journal is configured and could not be read
-	// (ArcsUnreadable).
-	Arcs           *report.ArcsAcrossReport
-	ArcsUnreadable bool
-	Sessions       SessionsList
-}
-
 // redirectsToScopes is whether a hub request carries one of the scope list's own parameters.
 // PRESENCE, not value: `/?q=` (an empty search) is the Search shortcut's own spelling.
 func redirectsToScopes(r *http.Request) bool {
@@ -86,25 +71,7 @@ func (s *Server) handleHub(w http.ResponseWriter, r *http.Request, id identity.I
 		writePlain(w, http.StatusInternalServerError, "the store could not be read")
 		return
 	}
-	var hub Hub
-	rep, err := s.source.Arcs(id.Auth)
-	switch {
-	case err == nil:
-		hub.Arcs = &rep
-	case errors.As(err, new(*arcs.JournalUnreadableError)):
-		// A card is not a page about arcs: the hub still answers, and the card says it could not look.
-		hub.ArcsUnreadable = true
-	default:
-		writePlain(w, http.StatusInternalServerError, "the store could not be read")
-		return
-	}
-	hub.Sessions, err = s.source.AllSessions(id.Auth)
-	if err != nil {
-		writePlain(w, http.StatusInternalServerError, "the store could not be read")
-		return
-	}
 	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now(), App: s.app}
-	view.Hub = &hub
 	s.render(w, HubPage(view))
 }
 
@@ -117,15 +84,14 @@ const (
 	hubTeamWhat     = "Who can read and write each scope you administer, and invitations."
 )
 
-// HubPage is the root: four cards, each a way in.
+// HubPage is the root: four cards, each a way in. Only the scopes card carries a count.
 func HubPage(v PageView) g.Node {
-	hub := *v.Hub
 	return shell("cairn", v, nil,
 		h.Div(h.Class("scope-grid"), h.ID("hub"),
-			hubCard("arcs", "Arcs", ArcsPath, hubArcsWhat, hubArcsCount(hub, v)),
+			hubCard("arcs", "Arcs", ArcsPath, hubArcsWhat, nil),
 			hubCard("scopes", "Scopes", ScopesPath, hubScopesWhat,
 				stat(plural(len(v.Scopes), "readable scope", "readable scopes"), "")),
-			hubCard("sessions", "Sessions", SessionsPath, hubSessionsWhat, hubSessionsCount(hub.Sessions)),
+			hubCard("sessions", "Sessions", SessionsPath, hubSessionsWhat, nil),
 			// ⚠ `/share` FOR NOW: a team page that consolidates sharing and invitations is being built
 			// separately and repoints this card.
 			hubCard("team", "Team", SharePath, hubTeamWhat, nil),
@@ -143,41 +109,6 @@ func hubCard(name, title, href, what string, count g.Node) g.Node {
 		h.P(h.Class("note"), g.Text(what)),
 		g.If(count != nil, h.P(h.Class("card-stats"), count)),
 	)
-}
-
-// hubArcsCount is the arcs card's number: the arcs page's own LIVE rows, with the total beside it.
-// No number when there is none to give — the journal off, or unreadable — and `≥` when the answer
-// is partial, the scope tab's rule.
-func hubArcsCount(hub Hub, v PageView) g.Node {
-	switch {
-	case hub.ArcsUnreadable:
-		return h.Span(h.Class("stat stat-quiet"), h.TitleAttr(arcJournalUnreadable), g.Text("arcs unknown"))
-	case hub.Arcs == nil || !hub.Arcs.Configured:
-		return h.Span(h.Class("stat stat-quiet"), h.TitleAttr(report.RegistrationsUnconfiguredBody), g.Text("arcs off"))
-	}
-	rows, _ := arcsIndexRows(*hub.Arcs, v.Now, false)
-	bound := ""
-	if hub.Arcs.Damaged || hub.Arcs.Partial() {
-		bound = "≥"
-	}
-	return stat(bound+strconv.Itoa(len(rows))+" live · "+bound+strconv.Itoa(len(hub.Arcs.Arcs))+" total", arcsLiveRule)
-}
-
-// hubSessionsCount is the sessions card's number: the sessions page's own rows.
-func hubSessionsCount(list SessionsList) g.Node {
-	n := strconv.Itoa(len(list.Report.Sessions))
-	if list.Report.Partial() {
-		n = "≥" + n
-	}
-	return stat(n+" "+pluralWord(len(list.Report.Sessions), "session", "sessions"), report.SessionsReadsLine)
-}
-
-// pluralWord is the noun alone, for a count that carries a prefix `plural` cannot spell.
-func pluralWord(n int, one, many string) string {
-	if n == 1 {
-		return one
-	}
-	return many
 }
 
 // handleSessionsPage renders every session this caller can see anything of.

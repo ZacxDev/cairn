@@ -3864,13 +3864,16 @@ the agent tab).
 | `GET /sessions` | `content` | every session the viewer can see anything of, newest first, each a link to `/session?session=…` |
 | `GET /scope?id=…&tab=agent` | (the `/scope` row) | the "What an agent sees" tab |
 
-## 🔴 Every hub count is the destination page's own narrowed answer
+## 🔴 The hub reads `Visible` alone, and its one count is `len(Visible)`
 
-Scopes is `len(Visible)`, Arcs is `arcsIndexRows` over `Source.Arcs` (the arcs page's live rows, with the
-total beside it), Sessions is `len(Source.AllSessions)` (the sessions page's rows). Nothing is counted a
-second way, so a card cannot promise a number its page does not show, and nothing can be counted that
-the viewer cannot read. The Team card has NO count: "who has access" is the sharing authority, and a hub
-consulting two authorities is a row `contentAuthority` cannot express.
+The scopes card's count is the scopes this viewer can read — the list `/scopes` renders. The first cut
+also counted arcs (the arcs page's live rows) and sessions (the sessions page's rows); **both were
+DROPPED in review (round 0, D1)**: each cost a whole-store walk on every hub load, roughly doubling it,
+for a number one click away. The four cards stay. The Team card never had a count: "who has access" is
+the sharing authority, and a hub consulting two authorities is a row `contentAuthority` cannot express.
+The mutant row that widened the arcs read for the hub's count was RE-POINTED rather than deleted —
+`StoreSource.Arcs` still feeds `/arcs` — as `ui-arcs-index-read-includes-unreadable-homes`, killed by
+the arcs page's own `TestAnArcHomedInAnUnreadableScopeIsNeverListedEvenWhenItsMembersWroteWhereYouRead`.
 
 ## 🔴 `/sessions` and `/session` are one predicate
 
@@ -3902,6 +3905,8 @@ caller's raw bytes; every value survives, in sorted key order. A query naming ne
 - Tag chips: squarer, tighter pill, `#` drawn by CSS (`::before`), so link text, `data-filter` and every
   test reading `<a …>tag</a>` are unchanged. Breadcrumbs: `text-xs`, pulled up toward the header, and the
   card after them drops its top margin; still wrap, and still 44px under a coarse pointer (S1's block).
+  ⚠ The breadcrumb rule is shared, so this applies on EVERY page with a trail (scope, entry, arc,
+  arcs, session, sessions), not only the entry page the ask named — deliberate: one trail, one look.
 
 ## 🔴 "What an agent sees" is the CLI's bytes, and says where an agent's own run differs
 
@@ -3916,18 +3921,22 @@ It is authorised twice: the scope page refuses an unreadable scope before any ta
 `browseRefusal`), and the recall read is itself narrowed, so a scope NAME that reached it any other way
 answers the renderer's scope-absent text (`TestTheRecallReadIsNarrowedByTheViewersAuthority`).
 
-The tab carries ONE note naming the FOUR places an agent's own run differs — same renderer, different place it ran (measured by the
-coordinator from the usage trace): the resume/handoff skills run `cairn recall --repo`, which features
+The tab carries ONE note naming the FOUR places an agent's own run differs — same renderer, different
+place it ran (from the usage trace in PR #211, `claudedocs/plan-cairn-agent-view.md`): the resume/handoff
+skills run `cairn recall --repo`, which features
 the entry the repo's newest handoff doc names (`--scope` cannot, and the server has no repo — not
 reproduced here); the client prints a state banner above the text; and the `store:`/`host:` lines name
 whoever rendered it (`store:` is the renderer's StoreRoot: this server's here, the agent's per-host cache path there) — two of the four. ⚠ So the tab DOES print this server's
 store root, which every other page here deliberately omits; it is the same line `GET
 /api/v1/recall/<scope>` already prints to every reader of the scope, and byte equality requires it.
 
-**The `head -60` mark.** Agents almost always truncate (most standalone recalls in the trace were piped
-through `head`/`grep`/`sed`, most often `head -60`), so the text is split into two `<pre>`s where that
-cut falls, with the lines and bytes above and below. The client prints its banner and a blank line
-first (`client.BannerNamed` is one line), so the cut falls after line **58** of the recall text. The two
+**The `head -60` mark.** Agents almost always truncate — the usage trace in PR #211
+(`claudedocs/plan-cairn-agent-view.md`) found most standalone recalls piped through `head`/`grep`/`sed`,
+most often `head -60` — so the text is split into two `<pre>`s where that cut falls, with the lines and
+bytes above and below. The client prints a preamble first, and the number of lines it takes is COUNTED
+from `client.RecallPreamble` — the one string `recall` now prints there (banner, blank line; the bytes
+of the two `Fprintln`s it replaced) — so a banner that grows a line moves the mark. Today that is two,
+so the cut falls after line **58** of the recall text. The two
 halves concatenate to the exact bytes. Size is the UTF-8 byte count; tokens are bytes ÷ 4, labelled an
 estimate.
 
@@ -3941,6 +3950,6 @@ than Phase I's for the same rows), ms per request:
 | 10 scopes × 30 entries | 32.7 | 25.0 | 12.6 | 22.9 | 18.0 |
 | 30 scopes × 100 entries | 299 | 201 | 134 | 303 | 142 |
 
-The hub costs about what the session page costs (≈2.2× the scope list at 3,000 entries): `Visible` plus
-the arcs walk plus the sessions walk, for three counts. Nothing is cached, for `Source`'s reason; if
-that is too much, the sessions count is the one to drop.
+The `hub` column is the FIRST cut, with its arcs and sessions counts: it cost about what the session
+page costs (≈2.2× the scope list at 3,000 entries). That measurement is why both counts were dropped
+(D1); the hub now reads `Visible` alone — the scope list's read — and was not re-measured.

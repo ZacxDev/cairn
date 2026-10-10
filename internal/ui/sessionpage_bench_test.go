@@ -118,7 +118,7 @@ func benchSessionPageAndScopeTabs(b *testing.B, scopes, entries int) {
 		{"scope-tab-arcs", ScopePath + "?" + QueryID + "=" + string(scope) + "&" + QueryTab + "=" + TabArcs},
 		// The baseline every browse page already pays: the entry page reads the whole narrowed store.
 		{"entry-page", entryHref(scope, "svc-001", false)},
-		// The hub pays `Visible` + the arcs walk + the sessions walk for its three counts; the sessions
+		// The hub pays `Visible` alone (its arcs/sessions counts were dropped in review); the sessions
 		// list pays `Visible` + the sessions walk; the scope list is the old root.
 		{"hub", RootPath},
 		{"sessions-list", SessionsPath},

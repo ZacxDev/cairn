@@ -116,8 +116,8 @@ type route struct {
 // against the narrowed answer and never resolves. See `handleEntryPage`.
 var routes = map[routeKey]route{
 	// 🔴 THE ROOT IS THE HUB, AND THE SCOPE LIST MOVED TO `/scopes` (an operator decision). The hub is
-	// four cards — arcs, scopes, sessions, team — each with a count only where the count is an answer
-	// this caller is authorised to see; the scope cards, the search box and the tag filter are
+	// four cards — arcs, scopes, sessions, team — only the scopes card carries a count (`len(Visible)`, an answer
+	// this caller is authorised to see); the scope cards, the search box and the tag filter are
 	// `/scopes`'s. `/?q=` and `/?tag=` still ANSWER, with a 303 to `/scopes` carrying the query, so a
 	// bookmark or a home-screen shortcut is never a dead link. See `handleHub`.
 	{"GET", "/"}:       {(*Server).handleHub, classContent},

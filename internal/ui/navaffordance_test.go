@@ -173,15 +173,13 @@ func everyRenderedPage(t *testing.T) map[string]string {
 		Expires: "2000-01-09T03:04:05Z",
 	}
 
-	hubView := v
-	hubView.Hub = &Hub{}
 	sessionsView := v
 	sessionsView.SessionsList = &SessionsList{}
 
 	return map[string]string{
 		// "root" is the scope LIST (`Page`, at `/scopes`); "hub" is the root since the IA change.
 		"root":        renderNode(t, Page(v)),
-		"hub":         renderNode(t, HubPage(hubView)),
+		"hub":         renderNode(t, HubPage(v)),
 		"sessions":    renderNode(t, SessionsPage(sessionsView)),
 		"navigate":    renderNode(t, NavigatePage(v)),
 		"scope":       renderNode(t, ScopePage(scopeView)),

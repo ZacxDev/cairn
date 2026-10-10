@@ -254,6 +254,14 @@ func BannerNamed(state, detail, instance string) string {
 	return trimSpaceBothEnds(line)
 }
 
+// RecallPreamble is everything `recall` prints ABOVE the recall text: the banner line, then a blank
+// line. A function rather than two `Fprintln`s at the call site so the browser's agent tab can COUNT
+// it — it marks where `head -60` cuts an agent's run, and a banner that grew a line must move that
+// mark (`internal/ui/agent.go`). The bytes are the two `Fprintln`s' exactly.
+func RecallPreamble(state, detail, instance string) string {
+	return BannerNamed(state, detail, instance) + "\n\n"
+}
+
 func trimSpaceBothEnds(s string) string {
 	// `str.strip()` on the assembled line, which is what removes the leading space when
 	// there is no marker. Spelled out rather than `strings.TrimSpace` so the intent — this

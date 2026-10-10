@@ -17,9 +17,9 @@ import (
 // 🔴 THE HUB AND THE SESSIONS LIST, DRIVEN THROUGH THE REAL DISPATCHER OVER THE REAL `StoreSource`, A
 // STORE ON DISK AND A JOURNAL OUTSIDE IT. Every name, id and date is SYNTHETIC. The world is
 // `arcsWorld`'s three principals — A reads alpha, B reads beta, W reads both — over a store and a
-// journal built so A's four hub numbers are PAIRWISE DISTINCT (1 scope, 2 live arcs, 3 arcs, 4
-// sessions) and every one of them MOVES for W (2, 3, 4, 6): a count that included an unreadable item,
-// or that read one source in place of another, lands on a different number.
+// journal built so A's numbers are PAIRWISE DISTINCT (1 scope, 2 live arcs, 3 arcs, 4 sessions) and
+// every one of them MOVES for W (2, 3, 4, 6): a list or count that included an unreadable item lands
+// on a different number.
 const (
 	hubSessionLamp   = "s-lamp-0001"   // wrote in alpha
 	hubSessionWick   = "s-wick-0002"   // wrote ONLY in beta
@@ -85,30 +85,27 @@ func hubCardText(t *testing.T, body, name string) string {
 	return strings.Join(strings.Fields(visibleText(m[1])), " ")
 }
 
-// TestTheHubCountsOnlyWhatTheViewerCanRead is the hub's authorisation guard: every count is the
-// viewer's own narrowed answer, and the SAME request from W — who reads both scopes — moves every
-// number, so a count that ignored the narrowing would read W's number for A.
+// TestTheHubCountsOnlyWhatTheViewerCanRead is the hub's authorisation guard: its ONE count, the
+// scopes card's, is the viewer's own narrowed answer, and the SAME request from W — who reads both
+// scopes — moves it, so a count that ignored the narrowing would read W's number for A. The other
+// three cards carry no number at all (the arcs and sessions counts were dropped in review, D1).
 func TestTheHubCountsOnlyWhatTheViewerCanRead(t *testing.T) {
 	readsA, _, readsW := arcsWorld(t)
-	want := map[string]map[string]string{
-		"A": {"scopes": "1 readable scope", "arcs": "2 live · 3 total", "sessions": "4 sessions"},
-		"W": {"scopes": "2 readable scopes", "arcs": "3 live · 4 total", "sessions": "6 sessions"},
-	}
+	want := map[string]string{"A": "1 readable scope", "W": "2 readable scopes"}
 	for who, id := range map[string]identity.Identity{"A": readsA, "W": readsW} {
 		rec := getAs(t, hubServer(t, id), RootPath)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: the hub answered %d: %s", who, rec.Code, rec.Body.String())
 		}
 		body := rec.Body.String()
-		for card, count := range want[who] {
-			if got := hubCardText(t, body, card); !strings.Contains(got, count) {
-				t.Errorf("%s: the %s card reads %q, want it to carry %q — the count of what THIS viewer can read",
-					who, card, got, count)
-			}
+		if got := hubCardText(t, body, "scopes"); !strings.Contains(got, want[who]) {
+			t.Errorf("%s: the scopes card reads %q, want it to carry %q — the count of what THIS viewer can read",
+				who, got, want[who])
 		}
-		// The team card carries no count: "who has access" is the sharing authority, not this one.
-		if got := hubCardText(t, body, "team"); strings.ContainsAny(got, "0123456789") {
-			t.Errorf("%s: the team card carries a number (%q); it has no count to give from this authority", who, got)
+		for _, card := range []string{"arcs", "sessions", "team"} {
+			if got := hubCardText(t, body, card); strings.ContainsAny(got, "0123456789") {
+				t.Errorf("%s: the %s card carries a number (%q); only the scopes card has a count", who, card, got)
+			}
 		}
 	}
 	// And A's hub names nothing of beta's.

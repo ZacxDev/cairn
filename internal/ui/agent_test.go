@@ -111,9 +111,16 @@ func TestTheAgentTabIsByteForByteTheCLIRecall(t *testing.T) {
 		t.Errorf("the agent tab's text is not the CLI's recall, byte for byte.\n--- tab (%d bytes)\n%s\n--- cli (%d bytes)\n%s",
 			len(got), got, len(want), want)
 	}
-	// The cut: the client prints a banner line and a blank line first, so `head -60` keeps 58 here.
-	if n := strings.Count(above, "\n"); n != agentHeadLines-agentBannerLines {
-		t.Errorf("the head -%d mark falls after %d lines of the recall, want %d", agentHeadLines, n, agentHeadLines-agentBannerLines)
+	// The cut: what an agent's `head -60` keeps of the recall text is 60 minus the lines the CLIENT prints
+	// above it — `client.RecallPreamble`, the one string `recall` prints there. Read here off the CLIENT
+	// package, with a non-live state, never off `agent.go`: a banner that grew a line moves this
+	// expectation and the mark must follow.
+	want60 := 60 - strings.Count(client.RecallPreamble(client.StateCached, "the cache is a day old", ""), "\n")
+	if want60 != 58 {
+		t.Logf("the client's preamble is now %d lines (it was 2)", 60-want60)
+	}
+	if n := strings.Count(above, "\n"); n != want60 {
+		t.Errorf("the head -60 mark falls after %d lines of the recall, want %d", n, want60)
 	}
 	// The text carries no final newline (the CLI's `Fprintln` adds it), so its last line is a line.
 	lines := strings.Count(want, "\n")

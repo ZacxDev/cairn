@@ -7,6 +7,7 @@ import (
 	g "maragu.dev/gomponents"
 	h "maragu.dev/gomponents/html"
 
+	"github.com/ZacxDev/cairn/internal/client"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/hostid"
 	"github.com/ZacxDev/cairn/internal/report"
@@ -27,21 +28,24 @@ import (
 //     from what an agent's own run shows are NAMED on the tab rather than papered over: the `--repo`
 //     featured pick (the resume skills run `cairn recall --repo`, which features the entry its repo's
 //     newest handoff doc names; `--scope` cannot, and this server has no repo to read), the client's
-//     state banner (one line, plus a blank one, above the recall), and the `store:`/`host:` lines,
-//     which name whoever rendered it — here, this server's store root and host.
-//   - ⚠ THE `head -60` MARK. Agents almost always truncate (measured by the operator: most standalone
-//     recalls were piped through `head`/`grep`/`sed`, most often `head -60`), so the tab draws where a
-//     60-line cut falls. The client prints its banner and a blank line first, so the cut falls after
-//     line 58 of the recall text; the two `<pre>` halves concatenate to the exact bytes.
+//     state banner (above the recall), the `store:` line (the renderer's store root — this server's
+//     here, the agent's per-host cache path there) and the `host:` line (whoever rendered it).
+//   - ⚠ THE `head -60` MARK. Agents almost always truncate — the usage trace in PR #211
+//     (`claudedocs/plan-cairn-agent-view.md`) found most standalone recalls piped through
+//     `head`/`grep`/`sed`, most often `head -60` — so the tab draws where a 60-line cut falls. The
+//     client prints its preamble (banner, blank line) first, so the cut falls that many lines into the
+//     recall text; the two `<pre>` halves concatenate to the exact bytes.
 //   - The size is the text's UTF-8 byte count; the token figure is bytes ÷ 4, labelled an ESTIMATE —
 //     no tokenizer runs here.
 
-// agentHeadLines is the `head -N` the tab marks, and agentBannerLines what the client prints above the
-// recall text (`client.BannerNamed`'s one line, then `fmt.Fprintln(env.Stdout)`'s blank one).
-const (
-	agentHeadLines   = 60
-	agentBannerLines = 2
-)
+// agentHeadLines is the `head -N` the tab marks.
+const agentHeadLines = 60
+
+// agentBannerLines is how many lines the client prints ABOVE the recall text, COUNTED from the
+// client's own `client.RecallPreamble` — the string `recall` prints — so a banner that grew a line
+// moves the mark. The state and detail are a live sync's; the banner is one line for every state the
+// client prints (its `BannerNamed` joins them on one line), so the count does not depend on them.
+var agentBannerLines = strings.Count(client.RecallPreamble(client.StateLive, "synced", ""), "\n")
 
 // AgentRecall is the agent tab's data: the rendered recall text, exactly.
 type AgentRecall struct {
@@ -70,7 +74,7 @@ func (s StoreSource) host() string {
 	return s.Host()
 }
 
-// agentNote is the tab's ONE note: the three ways an agent's own run differs from this text.
+// agentNote is the tab's ONE note: the four places an agent's own run differs from this text.
 const agentNote = "This is `cairn recall --scope` for this scope, rendered by the same renderer the CLI runs; " +
 	"an agent's own run differs in four places, by where it ran. (1) The resume and handoff skills run " +
 	"`cairn recall --repo`, which features the entry the repo's newest handoff doc names — `--scope` cannot. " +

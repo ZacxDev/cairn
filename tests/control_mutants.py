@@ -4040,22 +4040,24 @@ MUTANTS: tuple[Mutant, ...] = (
         new="\tvisible := scopeSetOf(auth.NamedScopes(control.VerbRead))\n\tvisible.Unrestricted = true\n"
         "\tsnap, unreadable, err := s.arcSnapshotOrUnreadable()",
         killer="TestTheSessionsPageListsExactlyTheSessionsWhosePageIsFound",
-        extra_killers=("TestTheHubCountsOnlyWhatTheViewerCanRead",),
         why="a list of 'every session' reads as a list over the STORE, and a session id is global — so "
         "the unnarrowed walk is the natural first draft. It lists sessions that wrote only where the "
         "viewer cannot read, each of which then 404s on its own page.",
     ),
+    # 🔴 RE-POINTED, NOT DELETED, when the hub's arcs count was dropped (review round 0, D1): the read it
+    # widens is `StoreSource.Arcs`, which the `/arcs` page still renders from, and that page's own guard
+    # was already this row's extra killer. It now names that guard.
     Mutant(
-        name="ui-hub-arcs-count-includes-unreadable-homes",
+        name="ui-arcs-index-read-includes-unreadable-homes",
         path="internal/ui/arcsindex.go",
         old="\tvisible := scopeSetOf(auth.NamedScopes(control.VerbRead))\n\tsnap, err := s.arcSnapshot()\n"
         "\tif err != nil {\n\t\treturn report.ArcsAcrossReport{}, err",
         new="\tvisible := scopeSetOf(auth.NamedScopes(control.VerbRead))\n\tvisible.Unrestricted = true\n"
         "\tsnap, err := s.arcSnapshot()\n\tif err != nil {\n\t\treturn report.ArcsAcrossReport{}, err",
-        killer="TestTheHubCountsOnlyWhatTheViewerCanRead",
-        extra_killers=("TestAnArcHomedInAnUnreadableScopeIsNeverListedEvenWhenItsMembersWroteWhereYouRead",),
-        why="a COUNT looks harmless next to a list — it names nothing — but 'N arcs' over every home is "
-        "an existence oracle over arcs homed where the viewer cannot read (Q1), one number at a time.",
+        killer="TestAnArcHomedInAnUnreadableScopeIsNeverListedEvenWhenItsMembersWroteWhereYouRead",
+        why="the arcs page lists arcs, and an arc 'belongs' to everybody who worked on it, so the "
+        "unnarrowed journal read looks natural — but an arc exists for a caller only if its HOME is "
+        "readable (Q1), and the unnarrowed read lists arcs homed where the viewer cannot read.",
     ),
     Mutant(
         name="ui-root-scope-list-query-not-redirected",

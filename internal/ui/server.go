@@ -82,7 +82,7 @@ type Source interface {
 	// member bullet over the readable scopes. On this interface for `Touched`'s reason — a second
 	// seam would be a route answering about authority through a door the walk does not count.
 	Arcs(auth control.Authorization) (report.ArcsAcrossReport, error)
-	// AllSessions answers `/sessions` and the hub's sessions count: every session this caller can see
+	// AllSessions answers `/sessions`: every session this caller can see
 	// anything of. On this interface for `Session`'s reason, and over the SAME walk (`report.
 	// SessionsAcross` and `report.SessionAcross` share it), so the list and the page cannot disagree.
 	AllSessions(auth control.Authorization) (SessionsList, error)

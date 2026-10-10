@@ -115,9 +115,8 @@ type PageView struct {
 	// `arcsindex.go`.
 	ArcsIndex *report.ArcsAcrossReport
 	ArcsAll   bool
-	// Hub is the hub page's answer and SessionsList the sessions page's, nil everywhere else. See
-	// `hub.go`.
-	Hub          *Hub
+	// SessionsList is the sessions page's answer, nil everywhere else. See `hub.go`. (The hub itself
+	// needs nothing beyond `Scopes`.)
 	SessionsList *SessionsList
 	// Agent is the scope page's agent-tab recall, nil on every other tab and page. See `agent.go`.
 	Agent *AgentRecall
