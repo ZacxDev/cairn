@@ -16,12 +16,27 @@ import (
 const EnvJournal = "CAIRN_ARC_JOURNAL"
 
 // InsideStoreError is the refusal to start: the journal path resolves inside the store root.
+//
+// `Noun` names WHICH journal, because more than one journal is placed by this rule (the sources
+// journal, `internal/codesrc`, reuses it): a refusal naming the wrong journal sends the operator
+// to edit the wrong variable. Empty is "arc journal", so every existing message is unchanged.
 type InsideStoreError struct {
 	Journal, Resolved, StoreRoot string
+	Noun                         string
+}
+
+// defaultNoun is the journal `ResolveJournalPath` (no noun) is about.
+const defaultNoun = "arc journal"
+
+func (e *InsideStoreError) noun() string {
+	if e.Noun == "" {
+		return defaultNoun
+	}
+	return e.Noun
 }
 
 func (e *InsideStoreError) Error() string {
-	return fmt.Sprintf("the arc journal %s resolves to %s, which is INSIDE the store root %s. "+
+	return fmt.Sprintf("the "+e.noun()+" %s resolves to %s, which is INSIDE the store root %s. "+
 		"Every directory at the store root — dot-prefixed or not — is enumerated as a scope by the "+
 		"token-file authority, so a journal there (or its directory) could become a scope a bare row "+
 		"reads. Put it on its own volume outside the store tree", e.Journal, e.Resolved, e.StoreRoot)
@@ -46,16 +61,23 @@ func (e *InsideStoreError) Error() string {
 // ⚠ WHAT IT CANNOT SEE: a symlink created at the resolved path AFTER startup. `Register` opens
 // with `O_NOFOLLOW`, which refuses that case at the write rather than following it.
 func ResolveJournalPath(storeRoot, journal string) (string, error) {
+	return ResolveJournalPathNamed(defaultNoun, storeRoot, journal)
+}
+
+// ResolveJournalPathNamed is `ResolveJournalPath` for a journal other than the arc registry's —
+// the SAME resolution (one rule for "inside the store tree", on both binaries and for every
+// journal), with every message naming `noun` instead of "arc journal".
+func ResolveJournalPathNamed(noun, storeRoot, journal string) (string, error) {
 	root, err := filepath.Abs(storeRoot)
 	if err == nil {
 		root, err = filepath.EvalSymlinks(root)
 	}
 	if err != nil {
-		return "", fmt.Errorf("the store root %s does not resolve (%v), so the arc journal cannot be checked against it", storeRoot, err)
+		return "", fmt.Errorf("the store root %s does not resolve (%v), so the "+noun+" cannot be checked against it", storeRoot, err)
 	}
 	abs, err := filepath.Abs(journal)
 	if err != nil {
-		return "", fmt.Errorf("the arc journal %s does not resolve: %v", journal, err)
+		return "", fmt.Errorf("the "+noun+" %s does not resolve: %v", journal, err)
 	}
 	var resolved string
 	isDir := false
@@ -64,7 +86,7 @@ func ResolveJournalPath(storeRoot, journal string) (string, error) {
 	case lerr == nil:
 		resolved, err = filepath.EvalSymlinks(abs)
 		if err != nil {
-			return "", fmt.Errorf("the arc journal %s is a symlink that does not resolve (%v) — the first registration would create a file wherever it points, which this check never saw", journal, err)
+			return "", fmt.Errorf("the "+noun+" %s is a symlink that does not resolve (%v) — the first registration would create a file wherever it points, which this check never saw", journal, err)
 		}
 		if target, statErr := os.Stat(resolved); statErr == nil && target.IsDir() {
 			isDir = true
@@ -72,19 +94,19 @@ func ResolveJournalPath(storeRoot, journal string) (string, error) {
 	case errors.Is(lerr, fs.ErrNotExist):
 		parent, perr := filepath.EvalSymlinks(filepath.Dir(abs))
 		if perr != nil {
-			return "", fmt.Errorf("the arc journal's directory %s does not exist or does not resolve (%v) — mount its volume first", filepath.Dir(abs), perr)
+			return "", fmt.Errorf("the "+noun+"'s directory %s does not exist or does not resolve (%v) — mount its volume first", filepath.Dir(abs), perr)
 		}
 		resolved = filepath.Join(parent, filepath.Base(abs))
 	default:
-		return "", fmt.Errorf("the arc journal %s cannot be inspected: %v", journal, lerr)
+		return "", fmt.Errorf("the "+noun+" %s cannot be inspected: %v", journal, lerr)
 	}
 	// INSIDE IS DECIDED BEFORE "IS A DIRECTORY", so the store root named as the journal is
 	// refused for the reason that matters rather than for being a directory.
 	if inside(root, resolved) {
-		return "", &InsideStoreError{Journal: journal, Resolved: resolved, StoreRoot: root}
+		return "", &InsideStoreError{Journal: journal, Resolved: resolved, StoreRoot: root, Noun: noun}
 	}
 	if isDir {
-		return "", fmt.Errorf("the arc journal %s is a directory; it must name a FILE", journal)
+		return "", fmt.Errorf("the "+noun+" %s is a directory; it must name a FILE", journal)
 	}
 	return resolved, nil
 }

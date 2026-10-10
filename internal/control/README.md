@@ -258,13 +258,17 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 304 mutants, over EIGHT packages
+python3 tests/control_mutants.py          # 317 mutants, over EIGHT packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 304 mutants DECLARED, and one whole-battery run taken (the UI hub change, which added seven `ui-sessions-*`/`ui-arcs-index-*`/`ui-root-*`/`ui-agent-*` rows): `mutants=304 killed=302 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control GREEN, the two survivors the EQUIVALENT rows. The run before it, at 297 mutants (S3 of the mobile plan):
+**Measured on this tree: 317 mutants DECLARED.** S1 of the scope-refs plan added 13 `codesrc-*`
+rows, each carrying `pkgs` (`PKGS` plus `./internal/codesrc/`) rather than growing `PKGS`; each was
+run ALONE with `--only` (positive control GREEN each time, 13 killed by the test each names, 0
+misattributed, 0 stale extras). That is a per-row measurement, not a whole-battery one. **The last
+whole-battery run** (the UI hub change, which added seven `ui-sessions-*`/`ui-arcs-index-*`/`ui-root-*`/`ui-agent-*` rows): `mutants=304 killed=302 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control GREEN, the two survivors the EQUIVALENT rows. The run before it, at 297 mutants (S3 of the mobile plan):
 `mutants=297 killed=295 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control
-GREEN, the two survivors the rows labelled EQUIVALENT.** That run is also the one that found two rows
+GREEN, the two survivors the rows labelled EQUIVALENT. That run is also the one that found two rows
 the S3 change had broken (patterns on lines it edited, scored HARNESS ERROR) which per-row `--only`
 runs did not reach; they were re-derived and the run above is after the fix. Before it:
 S2 (presence) added 31 `presence-*` rows and `./internal/presence/` to `PKGS`. Two PARTIAL
@@ -418,7 +422,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 304 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 317 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test

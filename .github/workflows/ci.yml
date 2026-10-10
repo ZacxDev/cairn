@@ -781,7 +781,9 @@ jobs:
           # 23 `ok`, 0 `FAIL`, 2 `[no test files]`. MOVED TO 24 WITH `internal/presence` (S2 of
           # the arcs/presence plan), measured the same way on that branch's tree: 24 `ok`, 0
           # `FAIL`, 2 `[no test files]` — re-measure on the MERGED tree if anything else landed.
-          # ⚠ THE NIX CHECK PHASES ARE NOT RE-MEASURED AT TWENTY-THREE OR TWENTY-FOUR. They run the same walk and
+          # MOVED TO 25 WITH `internal/codesrc` (S1 of the scope-refs plan), measured the same way
+          # on that branch's tree: 25 `ok`, 0 `FAIL`, 2 `[no test files]`.
+          # ⚠ THE NIX CHECK PHASES ARE NOT RE-MEASURED AT TWENTY-THREE, TWENTY-FOUR OR TWENTY-FIVE. They run the same walk and
           # were last read at 18 (`nix log` for both `cairn-server` and `cairn-go`, before
           # `cmd/cairn-ui` carried tests) and at 17 before that. Read those as a RECORD of the
           # tree they were taken on, never as a current reading — re-spelling a number is not
@@ -809,8 +811,8 @@ jobs:
           # this one — the merge with the share flow made the count nineteen. Adding a
           # package and not moving this number does not fail late — it stops failing at all.
           #
-          # So: `ok < 24` refuses. 24 passes (the tree, measured). 23 refuses (one
-          # package's tests gone). 25 passes (a package ADDED), which is the other half of
+          # So: `ok < 25` refuses. 25 passes (the tree, measured). 24 refuses (one
+          # package's tests gone). 26 passes (a package ADDED), which is the other half of
           # the property and the reason this is a floor rather than an equality. 🔴 THE THREE
           # NUMBERS IN THIS SENTENCE AND THE LEDGER ABOVE MOVE TOGETHER WITH THE CONDITION,
           # IN ONE COMMIT — an audit round caught the commit that moved the condition to 18
@@ -829,11 +831,11 @@ jobs:
           # behind does not fail late — it stops failing at all, once per package of lag.
           #
           # ⚠ AND IT DEFENDS THE PACKAGE, NOT THE TEST. Deleting one `func Test…` from a
-          # file that keeps others leaves `ok` at 24 and this gate green. That gap is
+          # file that keeps others leaves `ok` at 25 and this gate green. That gap is
           # stated in `internal/depspolicy`'s package doc, where the guarantee it defends
           # is written down.
           echo "packages with passing tests: $ok"
-          if [ "$ok" -lt 24 ]; then
+          if [ "$ok" -lt 25 ]; then
             echo "REFUSING: only $ok package(s) reported ok — the test walk narrowed"
             exit 1
           fi
@@ -845,7 +847,7 @@ jobs:
       # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
       # killed by some other test proves the suite can fail and proves nothing about the
       # guard the row exists for, so the run reports it as MISATTRIBUTED rather than as a
-      # kill. 304 mutants over EIGHT packages, in `PKGS` order: `internal/control`,
+      # kill. 317 mutants over EIGHT packages, in `PKGS` order: `internal/control`,
       # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
       # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence` — the model, the
       # token-file projection, P4's identity backends, the server that authorises from all of
@@ -862,7 +864,7 @@ jobs:
       # buys (~3min on an IDLE developer host, measured at 62 mutants; a loaded box is
       # several times that). It is what stops the rows bit-rotting into patterns that
       # match nothing and score SURVIVED without ever running.
-      - name: prove every authz guard can go RED (304 mutants, each on the test that names it)
+      - name: prove every authz guard can go RED (317 mutants, each on the test that names it)
         run: python3 tests/control_mutants.py
 
       # 🔴 THE LEDGERS THAT ARE BLIND TO A COMPILED CLIENT, AND THIS IS THE ONLY JOB THAT
@@ -927,7 +929,7 @@ jobs:
       # ⚠ RUNTIME, MEASURED RATHER THAN GUESSED, so the next reader can judge the trade: 57
       # mutants, **614.75 s wall / 152.21 s user + 21.00 s sys** on a 24-core developer host
       # at load ~6.5, all 57 KILLED, 0 SURVIVED, 0 misattributed. That is the same order as
-      # `control_mutants.py` above (304 mutants; its own comment measures ~3 min at 62 on an
+      # `control_mutants.py` above (317 mutants; its own comment measures ~3 min at 62 on an
       # IDLE host), which this job already pays for. ⚠ The wall figure is one observation on
       # a LOADED box and is not a prediction for a runner — the CPU figure is the portable
       # half. If this step becomes the job's critical path, split it out; do not delete it
