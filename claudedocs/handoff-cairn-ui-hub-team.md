@@ -21,24 +21,26 @@ Team page carrying sharing + invitations + multi-target team links (TTL, reuse, 
 - 🔴 **ARC CLOSED (2026-10-10): the closing condition is MET** — #213 (`23a7f21`) and #214
   (`197dd0e`) are MERGED; `internal/ui/hub.go` and `internal/ui/team.go` are on `origin/main`.
   Anything below is a NEW arc, not another round of this one.
-- **#213 DEPLOYED** to the personal instance: both pods `sha-23a7f21` (deployment-repo trunk
-  `858890362`); rollout + new stylesheet hash + `cairn sync` observed. 🔴 NOT verified signed-in
-  (every page but `/sign-in` and the manifest is 401 without a session) — operator's check.
-- **#214 MERGED, NOT DEPLOYED.** It absorbed `main` twice (after #215, then after #220 → merge
-  `1d969b2`: Team section renamed Phase T, `app.css` + the three install screenshots regenerated,
-  mutant count re-derived to 339, and the S4 Team shortcut repointed `/share` → `/team` because
-  #214's own ledger refused the old target). That merge commit got its own delta audit (CLEAN) and
-  a fully green CI run before the squash; verified by content (60 files equal the audited head).
-- Claim `cairn-team-link` RELEASED.
+- **DEPLOYED to the personal instance at `sha-197dd0e`** (both pods; deployment-repo trunk
+  `bbb6055`, operator go) — carries #213, #214 AND #220's S4. Pre-deploy backup (a manual run of the `cairn-ui-backup` CronJob, newest archive in
+  `cairn-ui-daily/`, restored+verified). Observed after rollout: migrations
+  `1` → `1,2`, `team_links` table present (was absent); manifest shortcuts Arcs `/arcs`, Search
+  `/scopes?q=`, Team `/team` (was none); stylesheet `app.70d3b32558c1.css` → `app.f531650813b2.css`;
+  cairn-ui logs "serving 48 route(s)", no error lines; store pod 0 panics, `cairn sync` live.
+  🔴 NOT verified signed-in (the Team page, minting/redeeming a link) — operator's check.
+- **ROLLBACK:** an older cairn-ui refuses a version-2 database — run
+  `DELETE FROM schema_migrations WHERE version = 2;` BEFORE reverting the image (recipe on #214).
 
 ## Next steps (ranked)
-1. **(new arc) Deploy #214 (+ #220's S4) to the personal instance** — needs the operator's go: it
-   runs pgstore migration 2 (rollback recipe on the PR), and the #213 approval does not cover it.
-   Strip the `/join` query string from gateway access logs before arming reusable links.
-   forcing: user — awaiting operator.
+1. **(new arc) Keep reusable-link tokens out of access logs BEFORE minting one** — `GET
+   /join?invite=<token>` is written by the default nginx `access_log` on BOTH relay hops (the public
+   gateway and the cluster-local gateway, both `http` blocks with no `access_log` directive),
+   and Cloudflare sees the full URL too. Operator decision pending: app-side fragment
+   (`/join#invite=…`, covers every hop incl. Cloudflare) vs nginx `access_log off` on `/join`.
+   forcing: security — a logged reusable token is a standing enrolment capability.
 2. **(new arc) Fold single-project invitations into team links** — a separate PR after #214 soaks.
    forcing: user — operator chose "fold later".
-3. **(done) #214 merge** — merged `197dd0e`. forcing: user — operator asked for the Team page.
+3. **(done) Deploy #214 + S4** — `sha-197dd0e`, trunk `bbb6055`. forcing: user — operator go.
 
 ## Gotchas / decisions / dead-ends
 - **A reusable team-link token travels in `GET /join?invite=…` and lands in gateway access logs by
@@ -60,6 +62,8 @@ Team page carrying sharing + invitations + multi-target team links (TTL, reuse, 
   scored killed in a full run and survived 3/3 alone; read CI's `go` job, not a contended local
   run. via: measurement
 ## Defects (batched)
+- The cairn-ui Deployment still sets `CAIRN_SUPABASE_ISSUER`/`CAIRN_SUPABASE_JWKS_URL`; the pod warns
+  they are deprecated aliases for `CAIRN_OIDC_*` — rename in the deployment repo.
 - `internal/control/README.md` says no whole-battery run on the merged tree is recorded; CI's `go`
   job on `1d969b2` was that run (green) — replace the sentence with its `mutants=339 …` line.
 - `cmd/cairn-ui`'s `aPortNothingIsListeningOn` can hand out the same port twice (measured 17 in
