@@ -305,13 +305,13 @@ func TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged(t *testing.T) {
 		t.Errorf("the mint response's Cache-Control is %q, want \"no-store\". Its BODY is a bearer "+
 			"capability that can create a principal", got)
 	}
-	// POSITIVE CONTROL on that header: an ordinary page must NOT carry it, or the assertion
-	// above is satisfied by a surface that sends it everywhere and says nothing about this
-	// response in particular.
-	if got := rig.get(InvitePath).Header().Get("Cache-Control"); got != "" {
-		t.Errorf("an ordinary invite page also carries Cache-Control %q, so the assertion above is not "+
-			"about the mint response", got)
-	}
+	// ⚠ THE POSITIVE CONTROL THAT STOOD HERE IS RETIRED, NOT FORGOTTEN. It required an ordinary
+	// invite page to carry NO `Cache-Control`, proving the assertion above was about the mint
+	// response in particular. Since S3 of the mobile plan every HTML page is
+	// `no-store` (the one value `writeHTML` sends, walked by `TestEveryNonPublicHTMLRowIsNoStore`), so the
+	// mint is no longer special and that control would now assert the opposite of the contract.
+	// What keeps the assertion above non-vacuous is that it is a literal value a different
+	// default ("" or `no-cache`) fails.
 
 	if logged := rig.log.String(); strings.Contains(logged, fixtureInviteToken) {
 		t.Errorf("the minted TOKEN reached the log. Hand-appending a secret to a durable stream is what "+

@@ -13,6 +13,10 @@
 # start, sign-in did not take, a capture errored, or the audit hub is half-configured.
 set -uo pipefail
 
+# An exported `CDPATH` makes a relative `cd` PRINT the directory it reached, so `$(cd … && pwd)`
+# below would capture the path twice; see `pwa_check.sh`, which unsets it for the same reason.
+unset CDPATH
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 work="${UIAUDIT_WORK:-$(mktemp -d -t uiaudit-XXXXXX)}"

@@ -258,11 +258,15 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 296 mutants, over EIGHT packages
+python3 tests/control_mutants.py          # 297 mutants, over EIGHT packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 296 mutants DECLARED, and NO single whole-battery run has been taken.**
+**Measured on this tree: 297 mutants DECLARED, and ONE whole-battery run taken (S3 of the mobile plan):
+`mutants=297 killed=295 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control
+GREEN, the two survivors the rows labelled EQUIVALENT.** That run is also the one that found two rows
+the S3 change had broken (patterns on lines it edited, scored HARNESS ERROR) which per-row `--only`
+runs did not reach; they were re-derived and the run above is after the fix. Before it:
 S2 (presence) added 31 `presence-*` rows and `./internal/presence/` to `PKGS`. Two PARTIAL
 measurements, kept apart rather than summed: the first 153 pre-existing rows (positive control
 GREEN, 151 killed, the two EQUIVALENT rows survived, 0 misattributed), and the 31 presence rows run
@@ -272,8 +276,8 @@ test, 0 stale extras). S4 (presence badges) added 11 rows (`ui-presence-*` and
 each time, 11 killed by the test each names, 0 misattributed, 0 stale extras) — after the first,
 `ui-presence-badge-ignores-the-predicate`, came back MISATTRIBUTED: the byte-identity test compared
 two pages that BOTH carried the mutant's zero-value badge, so it now also asserts the presence-off
-page carries none. The whole-battery split for 296 is CI's `SUMMARY` line until somebody copies
-it here. The last complete local run, at 226 mutants, read
+page carries none. Until the S3 run above, the whole-battery split was CI's `SUMMARY` line alone.
+The complete local run before that, at 226 mutants, read
 `mutants=226 killed=224 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive
 control GREEN — the S4 browser rows (`ui-arc-*`, `ui-scope-section-*`, `ui-unconfigured-*`,
 `ui-binary-*`) added ten, all killed; the recency/filter change then DELETED one (`ui-tags-key-description-loses-both-its-claims`, its pinned string removed on an operator decision); the scope-tabs / session-page change added nine (`ui-session-*`, `ui-bullet-anchor-dropped`, `ui-scope-tab-selection-ignored`, `ui-*-partial-badge-*`, `ui-arc-row-names-a-hidden-declared-scope`), all killed; the narrowed-credential fix added three (`narrowed-flag-misses-the-empty-narrowing`, `ui-sign-in-accepts-a-narrowed-credential`, `ui-invite-flow-acts-as-a-narrowed-principal`) and then five more for its `membershipActor` CALL SITES (`ui-*-bypass*-membership-actor`), all killed by the test each names; the arcs-first page and the arc page's tabs (S1 of the arcs/presence plan) added nine (`ui-arcs-index-*`, `ui-arc-tab-*`), all killed. Both survivors are the rows labelled EQUIVALENT at the code — the two
@@ -414,7 +418,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 296 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 297 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test

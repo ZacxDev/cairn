@@ -2870,12 +2870,19 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-mint-response-loses-no-store",
         path="internal/ui/invitehandlers.go",
-        old="\twriteHTMLNoStore(w, http.StatusOK, b.String())",
-        new="\twriteHTML(w, http.StatusOK, b.String())",
+        # 🔴 RE-DERIVED TWICE IN S3 OF THE MOBILE PLAN. First when `writeHTMLNoStore` was folded into
+        # `writeHTML`'s default (the old pattern named a function that no longer existed — the full
+        # battery scored it a HARNESS ERROR); then when the public opt-down writer was deleted too, so
+        # there is ONE HTML writer and no weaker value to reach for. What is left that can lose the
+        # mint's `no-store` is BYPASSING the writer at the mint's call site: rendering straight into the
+        # ResponseWriter.
+        old="Expires: inv.ExpiresAt.UTC().Format(time.RFC3339),\n\t\t},\n\t}\n\ts.renderInvite(w, view)\n}",
+        new="Expires: inv.ExpiresAt.UTC().Format(time.RFC3339),\n\t\t},\n\t}\n"
+        "\tw.Header().Set(\"Content-Type\", \"text/html; charset=utf-8\")\n\t_ = InvitePage(view).Render(w)\n}",
         killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
-        why="the ordinary render helper, reached for because it is the one every other page "
-        "uses. This response's BODY is a bearer capability that can create a principal, and a "
-        "shared cache or a back-forward store keeping it is the whole exposure.",
+        why="rendering straight into the ResponseWriter to skip the buffer looks like an optimisation, "
+        "and it skips the one writer that sets `no-store` — on the response whose BODY is a bearer "
+        "capability. The ledger walk is GET-only and cannot see this POST.",
     ),
     Mutant(
         name="ui-minted-link-becomes-an-anchor",
@@ -4010,6 +4017,18 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestTheManifestIsBuiltFromTheConfiguredApp",
         why="every variant is a served row, so listing every row's icon looks like completeness — and a "
         "browser may then pick another instance's picture.",
+    ),
+    # S3 of the mobile plan: decision 8, clause (d).
+    Mutant(
+        name="ui-html-no-store-dropped",
+        path="internal/ui/server.go",
+        old="\tw.Header().Set(\"Cache-Control\", htmlCacheControl)\n",
+        new="\tw.Header().Set(\"Cache-Control\", \"no-cache\")\n",
+        killer="TestEveryNonPublicHTMLRowIsNoStore",
+        extra_killers=("TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",),
+        why="`no-cache` reads as the cautious value and is not: it permits STORING the page and only "
+        "asks for revalidation, so every authenticated page would sit in the device's HTTP cache — the "
+        "invitation mint, whose body is a bearer capability, included.",
     ),
 )
 

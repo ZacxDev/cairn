@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/ZacxDev/cairn/internal/control"
@@ -228,7 +227,8 @@ func (s *Server) handleInvitePage(w http.ResponseWriter, r *http.Request, id ide
 // re-submits the form and mints a SECOND invitation. Browsers prompt before doing it, the
 // extra invitation is listed on the project's page and is revocable, and an invitation grants
 // nothing until it is redeemed (`internal/invite`'s package doc). The response carries
-// `Cache-Control: no-store` — see [writeHTMLNoStore] — because its body is the capability.
+// `Cache-Control: no-store` because its body is the capability — once its own entry point, now
+// simply the one value [writeHTML] sends on every HTML page.
 func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request, id identity.Identity) {
 	if s.inviting == nil {
 		s.refuseWithoutInviteStore(w)
@@ -284,7 +284,7 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request, id identit
 			Expires: inv.ExpiresAt.UTC().Format(time.RFC3339),
 		},
 	}
-	s.renderInviteNoStore(w, view)
+	s.renderInvite(w, view)
 }
 
 // handleInviteRevoke withdraws an outstanding invitation.
@@ -402,17 +402,6 @@ func (s *Server) refuseInviteWrite(w http.ResponseWriter, err error, what string
 
 func (s *Server) renderInvite(w http.ResponseWriter, view InviteView) {
 	s.render(w, InvitePage(view))
-}
-
-// renderInviteNoStore is the mint response, and it is a separate function ONLY so the
-// `no-store` header cannot be forgotten by the ordinary render path.
-func (s *Server) renderInviteNoStore(w http.ResponseWriter, view InviteView) {
-	var b strings.Builder
-	if err := InvitePage(view).Render(&b); err != nil {
-		writePlain(w, http.StatusInternalServerError, "the page could not be rendered")
-		return
-	}
-	writeHTMLNoStore(w, http.StatusOK, b.String())
 }
 
 // pickProject finds a project by id in the caller's narrowed list.

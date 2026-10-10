@@ -2245,8 +2245,9 @@ to keep the redirect were weighed and refused:
 ⚠ **So the accepted cost, named rather than discovered:** reloading that response re-submits the
 form and mints a SECOND invitation. Browsers prompt first, the extra is listed on the project's
 page and is revocable, and an invitation grants nothing until it is redeemed. The response
-carries `Cache-Control: no-store` — `writeHTMLNoStore`, a second CALLER of one header function
-rather than a second header function — because its body *is* the capability.
+carries `Cache-Control: no-store` because its body *is* the capability. It was once the ONLY page
+sent that, through its own `writeHTMLNoStore`; since S3 of the mobile plan (Phase Q) `no-store` is
+the one value `writeHTML` sends on every HTML page, and the mint gets it the same way.
 
 🔴 **And the link is rendered as TEXT, not as an `<a href>`.** `MintedInvite.Link` is a PATH
 with no origin (this process cannot know its own external address — `OAuthCallbackPath`'s
@@ -3758,3 +3759,93 @@ The browser-level clauses — chromium's own installability and manifest verdict
   still asks for `/favicon.ico` there and `Browser.FaviconRefusals` still counts it; the branch is
   live, not dead. Deleting it needs the walk to boot armed, which would change every capture the
   walk pushes — a separate decision.
+
+# Phase Q — `no-store` on every HTML page (S3 of the mobile plan)
+
+`claudedocs/plan-cairn-mobile-pwa.md`, decision 8 and R4. A header change and nothing else.
+
+## 🔴 One writer, one value
+
+`writeHTML` — the ONE function that writes an HTML response — sends `Cache-Control: no-store` on every
+page, public rows included: the sign-in page (`renderSignIn`), the provider callback's refusals, and the
+invitation landing page (`GET /join`). The value is the constant `htmlCacheControl`. Before this, every
+page went out with NO `Cache-Control` and the invitation mint alone was `no-store` through its own
+`writeHTMLNoStore`; that function is folded in and gone, and the mint gets the value every page does.
+
+🔴 **This deliberately departs from the plan's decision 8 wording**, which gave the public pages
+(sign-in, join) `no-cache`. The first cut of this slice built that, with a second, opt-DOWN writer; audit
+round 0 removed it, and the parent accepted it. Why:
+- **One writer means there is no way to put an authenticated page under the weaker value.** A second
+  writer is a function somebody can call from the wrong handler, silently — and a walk only sees it if
+  it drives that exact page.
+- **The public pages lose nothing that matters.** `no-store` still means a deploy is seen at once
+  (nothing stored, nothing stale); the only cost is that Back to the sign-in page re-fetches it instead
+  of restoring it from bfcache.
+- **It closes the join page's question.** That page reflects the invitation token it was opened with
+  into a hidden form field; under `no-cache` the browser could have stored it.
+
+With no service worker (O13), this header is the whole device-side storage control for an authenticated
+page. ⚠ What it costs (bfcache: Chromium keeps a `no-store` page ≤ 3 minutes and evicts it on any cookie
+change; Safari and Firefox re-fetch on Back) is RESEARCH, not measured here — the plan's Q7 measures it
+on a phone. If Q7 says the cost is unacceptable, it is relaxed by the same one constant,
+`htmlCacheControl`.
+
+## The guard: clause (d)
+
+`TestEveryNonPublicHTMLRowIsNoStore` (`cachecontrol_test.go`; the plan's name — it now walks the public
+rows too) walks `DeclaredRouteLedger()` and requires exactly `Cache-Control: no-store` on every HTML page
+it reaches. What it drives, exactly:
+- **every CONTENT GET row at its REAL page**, authenticated, through the hand-written `realPage` map: the
+  query that resolves against the fixture world (a real scope, entry and session — `walkSource` is
+  the dispatch fixture plus one FOUND session — and, for `/arc`, the arc page's
+  registrations-unconfigured state, because the fixture source has no arc journal; both arc branches
+  render through the same `s.render`, so the header is the same) and a marker only that page renders. A content row missing
+  from the map fails. Each marker is checked ABSENT from the navigate page the same world renders, so a
+  row that silently falls back to navigate goes red rather than measuring the fallback;
+- **any other non-public GET row** bare, authenticated — none exist today;
+- **every public GET row** bare and anonymous; one that answers no HTML (stylesheet, script, icons,
+  manifest) is not a page and is skipped.
+
+A non-public GET row answering something other than HTML is a FAILURE, not a skip. The expected value is
+a literal, never `htmlCacheControl`. Positive controls refuse a walk that read no HTML on either side or
+reached fewer real pages than `realPage` declares; today it reads 8 non-public pages (all 8 real) and 3
+public ones (`/sign-in`, `/join`, and the provider callback's sign-in refusal). `uiaudit/pwa_check.sh`
+runs this test as clause (d); its failure messages carry the tag `pwa clause (d) no-store`, which the
+script greps.
+
+⚠ **Why the walk drives real pages (audit round 1, F1).** The first cut drove every row BARE, and a bare
+`/scope`, `/entry`, `/arc` or `/session` answers the NAVIGATE page — so `ScopePage`, `EntryPage`,
+`ArcPage` and `SessionPage` were never checked. The audit switched each of those four to a different
+writer and `go test ./internal/ui/` stayed green; the docstring had claimed every non-public page.
+
+The POST rows are not walked. The one POST that answers a page — the mint — is pinned by
+`TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged`, whose old positive control ("an ordinary
+invite page carries NO `Cache-Control`") is retired: it asserted the opposite of the new contract.
+
+## The RED proof
+
+Each on a scratch copy with no `.git`:
+
+| case | result |
+|---|---|
+| `origin/main`, the first-cut walk | RED, 11 own-message failures (8 non-public `present=false`; 3 public) |
+| the first cut (`67c8c03`) + the first-cut walk, `ScopePage` written raw (no `Cache-Control`) | **GREEN** — the F1 gap |
+| head + this walk, `ScopePage` / `EntryPage` / `ArcPage` / `SessionPage` each written raw | RED, each naming its own row (`GET /scope?id=…`, `GET /entry?scope=…&ref=runbook`, `GET /arc?home=…&slug=walk-arc`, `GET /session?session=s-walk-01`) |
+| head + this walk, `/scope` driven bare | RED: `answered 200 without its real page's marker` |
+| the first cut's code (public `no-cache`) + this walk | RED on `/join`, `/sign-in` and the callback (D1) |
+| head + this walk | GREEN, 8 real pages + 3 public |
+| battery `ui-html-no-store-dropped` (`writeHTML` sends `no-cache`) | `killed` by this test, extra killer the mint test held |
+| battery `ui-mint-response-loses-no-store` (the mint renders straight into the ResponseWriter) | `killed` by the mint test |
+| `pwa_check.sh --self-test` sabotage (d) (`writeHTML`'s `Cache-Control` line deleted — the base's empty default) | caught by clause (d)'s own message (`uiaudit/README.md`, "PWA") |
+
+## What these guards still cannot see
+
+- **Any page a row renders under a query OTHER than the one walked** — refusals, the other tabs, the raw
+  view, a search, the join page with a token. They reach the header through the same `writeHTML`, and that
+  structural argument is what one query per row rests on; it is not a measurement of each of them. A
+  handler that wrote one of them through some other path would not be seen.
+- **Any real browser's cache.** The walk reads the header this process sets; whether a given browser
+  (or WebKit in standalone mode) honours it, and what Back shows after sign-out, is checklist step 10.
+- **An intermediary.** A proxy or CDN in front of the deployment may store or rewrite regardless.
+- **Non-HTML responses.** `writePlain` refusals and `http.Redirect` bodies carry no `Cache-Control`;
+  neither carries authority-narrowed content, and decision 8 is about pages.

@@ -843,6 +843,12 @@ comfort size (Apple HIG, 2.5.5 AAA) is missed nearly everywhere, and nothing ada
 8. **Every HTML response from a non-public row is `Cache-Control: no-store`** (S3).
    - `writeHTML`'s default becomes `no-store`, and `writeHTMLNoStore` folds into it. Public pages
      (sign-in, join) get `no-cache`.
+   - **SUPERSEDED AT BUILD (S3, #209): public pages are `no-store` too.** This was an agent
+     decision, and S3 departs from it deliberately: ONE HTML writer and ONE value means no
+     authenticated page can be opted down to a weaker header; a deploy is still seen at once under
+     `no-store`; the cost is bfcache on the sign-in page; it also settles `/join`'s hidden invitation
+     token. The reasoning and the revert (one constant, if Q7 says so) are in `internal/ui/README.md`
+     Phase Q. Do not restore a `no-cache` writer to match the sentence above.
    - With no worker, this is the WHOLE device-side storage control for authenticated pages.
    - **What it costs, as RESEARCH, not measurement (audit D3):** Chromium admits `no-store` pages
      to bfcache, keeps them for at most **3 minutes** (against 10), and evicts them on any cookie
@@ -1050,7 +1056,8 @@ They are `pwa_check.sh --self-test`'s sabotages.
 
 **S3.**
 - `TestEveryNonPublicHTMLRowIsNoStore` walks the ledger. Every non-public GET row must send
-  `no-store`, and every public HTML row `no-cache`.
+  `no-store`, and every public HTML row `no-cache`. **Superseded at build (decision 8's note):
+  every HTML row, public or not, must send `no-store`.**
 - **RED at base** (no header today), green at head.
 - The mint response is still `no-store`, because the folded `writeHTMLNoStore` caller is covered
   by the same walk.

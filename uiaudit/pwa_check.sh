@@ -12,7 +12,9 @@
 #   (b) per-instance icon         -> `TestPWAClauses/b_icon`           (uiaudit/pwa_test.go)
 #   (c) touch reachability,       -> the uiaudit WALK's `refuseWalkRegressions` (uiaudit/main.go),
 #       target size, input font      run through `uiaudit/run.sh` exactly as CI runs it
-# (d) is S3's and (b: screenshots), (e) are S4's: NOT wired here until those slices land.
+#   (d) no-store                  -> `TestEveryNonPublicHTMLRowIsNoStore` (internal/ui/cachecontrol_test.go),
+#                                    the same Go test the `go` CI job runs
+# (b: screenshots) and (e) are S4's: NOT wired here until that slice lands.
 #
 # EXIT: 0 every wired check PASSED · 1 a check FAILED (or, with --self-test, a sabotage was not
 # caught by its own clause) · 2 COULD NOT VOUCH — chromium or a built cairn-ui is missing, a
@@ -33,6 +35,16 @@
 # --self-test debugging (a subset always exits 1). The CAIRN_AUDIT_* push credentials are REMOVED
 # from every walk this script runs.
 set -uo pipefail
+
+# 🔴 `CDPATH` IS UNSET BEFORE THE FIRST `cd`, BECAUSE AN EXPORTED ONE CORRUPTS EVERY PATH BELOW. When a
+# relative `cd` is resolved through a non-empty `CDPATH` entry, bash PRINTS the directory it reached, so
+# `$(cd "$(dirname …)" && pwd)` captures the path TWICE (two lines) — and every path built from `here`
+# and `root` is then wrong, which surfaced as a misleading "missing built cairn-ui". Measured: with
+# `CDPATH=.:/tmp` exported and the script run as `uiaudit/pwa_check.sh`, `here` held two lines; with
+# `CDPATH=/tmp` alone it did not (no entry matched, so bash fell back to the cwd silently). A `CDPATH`
+# entry holding ANOTHER checkout's parent would resolve `uiaudit` to THAT checkout instead. Unsetting it
+# also keeps it out of every child this script runs (`run.sh` unsets it too, for direct callers).
+unset CDPATH
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/.." && pwd)"
@@ -62,8 +74,8 @@ could_not_vouch() {
   exit 2
 }
 
-# The six checks, in report order, and the message that is each one's OWN verdict when it fails.
-checks=(a_installability b_name b_icon c_reachability c_target_size c_input_font)
+# The seven checks, in report order, and the message that is each one's OWN verdict when it fails.
+checks=(a_installability b_name b_icon c_reachability c_target_size c_input_font d_no_store)
 declare -A own_message=(
   [a_installability]="pwa clause (a) installability"
   [b_name]="pwa clause (b) name"
@@ -71,6 +83,7 @@ declare -A own_message=(
   [c_reachability]="TOUCH REACHABILITY FAILED"
   [c_target_size]="TOUCH TARGET SIZE (WCAG 2.5.8"
   [c_input_font]="INPUT FONT UNDER 16px"
+  [d_no_store]="pwa clause (d) no-store"
 )
 declare -A walk_passed=(
   [c_reachability]="TOUCH REACHABILITY refusal PASSED"
@@ -100,6 +113,14 @@ run_ab() {
   fi
   ( cd "$tree/uiaudit" && UIAUDIT_REPO_ROOT="$tree" UIAUDIT_CAIRN_UI="$out/bin/cairn-ui" \
       go test -count=1 -v -run '^TestPWAClauses$' . ) > "$out/ab.log" 2>&1
+}
+
+# run_d <tree> <out>: clause (d) — the Go test, in the tree's own root module, where it lives. Neither a
+# browser nor a built binary: it drives the handler in-process over the route ledger.
+run_d() {
+  local tree="$1" out="$2"
+  mkdir -p "$out"
+  ( cd "$tree" && go test -count=1 -v -run '^TestEveryNonPublicHTMLRowIsNoStore$' ./internal/ui/ ) > "$out/d.log" 2>&1
 }
 
 # run_c <tree> <out> <port>: clause (c) — the walk, through the tree's own run.sh, as CI runs it.
@@ -135,6 +156,11 @@ verdict() {
       if grep -qF -- "--- FAIL: TestPWAClauses/$check " "$out/ab.log"; then echo FAIL
       elif grep -qF -- "--- PASS: TestPWAClauses/$check " "$out/ab.log"; then echo PASS
       else echo NONE; fi ;;
+    d_*)
+      [ -f "$out/d.log" ] || { echo NONE; return; }
+      if grep -qF -- "--- FAIL: TestEveryNonPublicHTMLRowIsNoStore " "$out/d.log"; then echo FAIL
+      elif grep -qF -- "--- PASS: TestEveryNonPublicHTMLRowIsNoStore " "$out/d.log"; then echo PASS
+      else echo NONE; fi ;;
     c_*)
       [ -f "$out/c.log" ] || { echo NONE; return; }
       if grep -qF -- "${own_message[$check]}" "$out/c.log"; then echo FAIL
@@ -158,6 +184,7 @@ plain_run() {
   if control_misbehaved "$out"; then
     echo "pwa_check: COULD NOT VOUCH — clause (a)'s unarmed control did not read [no-manifest]"; return 2
   fi
+  run_d "$tree" "$out"
   run_c "$tree" "$out" "$port"
   if walk_pushed "$out"; then
     echo "pwa_check: COULD NOT VOUCH — the walk PUSHED to the audit hub although its credentials were removed"; return 2
@@ -171,7 +198,7 @@ plain_run() {
     case "$v" in
       PASS) pass=$((pass + 1)) ;;
       FAIL) fail=$((fail + 1))
-            grep -hF -- "${own_message[$c]}" "$out"/ab.log "$out"/c.log 2>/dev/null | head -3 | cut -c1-240 | sed 's/^/pwa_check:     /' ;;
+            grep -hF -- "${own_message[$c]}" "$out"/ab.log "$out"/d.log "$out"/c.log 2>/dev/null | head -3 | cut -c1-240 | sed 's/^/pwa_check:     /' ;;
       NOT_MEASURED) nm=$((nm + 1)) ;;
       *) echo "pwa_check: COULD NOT VOUCH — check $c produced NO verdict line"; return 2 ;;
     esac
@@ -251,6 +278,8 @@ SABOTAGES = {
         ".view-tabs { column-gap: 0 !important; row-gap: 0 !important; } }\n", 0),
     # Revert S1's 16px input rule to the base's `text-sm` (14px).
     "c_input_font": ("internal/ui/app.css", "font-size: max(16px, 1em);", "font-size: 0.875rem;", 1),
+    # Restore the base's EMPTY default: no HTML page carries a `Cache-Control` at all.
+    "d_no_store": ("internal/ui/server.go", '\tw.Header().Set("Cache-Control", htmlCacheControl)\n', "", 1),
 }
 if sabotage == "none":
     sys.exit(0)
@@ -289,7 +318,7 @@ echo "pwa_check: positive control PASSED all ${#checks[@]} check(s)"
 # that read that as "no verdict" exited 2 ("could not vouch") on every real (c) failure. Each (c)
 # sabotage must make the plain loop exit 1 with its own check printed FAIL.
 # `PWA_CHECK_SABOTAGES` (a space-separated subset) is a debugging aid: any subset reports fewer than
-# six and so exits 1.
+# seven and so exits 1.
 selected=(${PWA_CHECK_SABOTAGES:-${checks[*]}})
 sabotaged=0; caught=0; plain_arms=0; plain_ok=0
 for s in "${selected[@]}"; do
@@ -302,6 +331,9 @@ for s in "${selected[@]}"; do
       run_ab "$d/tree" "$d"
       [ -f "$d/harness" ] && could_not_vouch "sabotage $s: $(cat "$d/harness")"
       log="$d/ab.log" ;;
+    d_*)
+      run_d "$d/tree" "$d"
+      log="$d/d.log" ;;
     c_*)
       plain_run "$d/tree" "$d" > "$d/plain.out" 2>&1
       prc=$?
