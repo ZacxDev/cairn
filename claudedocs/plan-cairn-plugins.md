@@ -122,6 +122,10 @@ field names and types alone.
   row, move from S3 to S11, which adds the ledger. And S11 makes `tests/testlib/env_pin.py` clear
   `CLAUDE_CODE_SESSION_ID`, `OPENCODE_SESSION_ID` and `XDG_STATE_HOME`, without which test runs on
   agent-run hosts would write fixture scopes into the developer's real session ledger.
+- *Revision 15* moves `arcs` and `arc-show` from the resolved-scope list to the `*` list — they print
+  arcs and member writes homed in OTHER scopes (`internal/report/arcs.go:236-239, 453-454`) — states
+  the owner-only cost of every `*`-writing verb, and makes the `env_pin` control assert nothing
+  appears under a sentinel `HOME` either.
 
 ## Goal and premise
 
@@ -709,14 +713,24 @@ script that prints only counts.
      no write.
    - **What a record holds.** One JSON line per scope ACCESSED by a served call: `{schema,
      session, verb, instance, scope, client, client_version, at}`, where `scope` is the RESOLVED
-     scope the call actually touched — not the flag as typed — for every verb: `recall`, `search`,
-     `sessions`, `arcs`, `arc-show`, `validate`, and the writes `append`, `put`, `create`,
+     scope the call actually touched — not the flag as typed — for these verbs: `recall`, `search`,
+     `sessions`, `validate`, and the writes `append`, `put`, `create`,
      `arc-register` (so an unattributed `put`/`create` is covered too); `ls-entries` writes one
      record per scope it listed, per instance; `--all-scopes` and any widening the client cannot
      enumerate write `*`. **Verbs that print store-derived content WITHOUT touching one resolvable
      scope write `*`:** decision 17's `transcript skeleton|records|tool` (they print ANOTHER
      session's transcript, whose `V` may hold any scope), `doctor` (per-scope visibility and
-     counts) and `routes` (the scope→instance table). `sync` writes nothing: it accepts and ignores
+     counts), `routes` (the scope→instance table), and **`arcs` and `arc-show`**, which print
+     content homed in OTHER scopes: `arcs --scope beta-notes` lists inferred arcs as
+     `<home>/<slug> · …` with homes elsewhere (`internal/report/arcs.go:236-239`), and `arc-show`'s
+     declared-scopes and member-writes lines name other scopes (`arcs.go:453-454`). *Revision 14
+     listed them as recording only the resolved scope; retracted.* One record per printed home or
+     declared scope was NOT chosen: it needs the client to enumerate every scope its rendered output
+     names, including summarised member lists, and a missed one fails open — `*` cannot. **The
+     cost, stated:** any session that runs `doctor`, `routes`, `arcs`, `arc-show` or a `transcript`
+     verb becomes owner-only (and held, with several instances configured). No hook in THIS
+     repository runs `doctor` (`flake.nix` only names it in checks and usage); hooks in the
+     operator's own tooling were not checked. `sync` writes nothing: it accepts and ignores
      `--scope` and prints only banners (`internal/client/verbs.go:69-70`), so no store content
      reaches the transcript through it. *Folding the read session's own `V(t)` into `V(s)` instead
      of `*` was not chosen: `V(t)` grows after the read (later trailers, later uploads), so `V(s)`
@@ -1235,7 +1249,7 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 | **S8** | **Agent read API and CLI (decision 17).** The classification table's skeleton, records and tool routes on `cairn-ui`; `cairn transcript skeleton|records|tool` Go-only verbs over `CAIRN_UI_URL`. | UI rows; `internal/client/cli.go` verbs; `capability_ledger` `go_only`; `want-go-only-verbs.txt`; `tests/test_go_client_ledgers.py`; mutant rows. | Read-only; the pod and parity corpus untouched. |
 | **S9** | **Example plugin A — summaries.** `plugins/summary` in a NESTED stdlib-only module (provider HTTP API over `net/http`, no SDK), host-side user timer, incremental per decision 13, its own spend cap, a fake provider in tests. Reads through `view=conversation` by default. | `depspolicy.DeclaredNestedModules`; `flake.nix` package; `ci.yml` step for its suite. | A separate binary; nothing runs until registered and toggled. |
 | **S10** | **Example plugin B — ClickUp.** `plugins/clickup` in the same nested module: ticket list fetch (read-only token, 429-aware), deterministic matchers (decision 14) over transcript records (`gitBranch`, `pr-link`, URLs), commit messages and trailers from a host-local repo list, PR bodies via the host's own GitHub CLI, entry refs; LLM suggestions using plugin A's summaries when present (`output:read:summary` — the cross-plugin test of the abstraction). Synthetic ClickUp fixtures only. Then closing wiring: `sabotaged=14 caught=14`, measured floors, the `AGENTS.md` row with an equal eviction (Q11). | same nested module; flake package; `ci.yml`; `AGENTS.md`; READMEs. | Separate binary; inert until registered and toggled. |
-| **S11** | **The client read ledger (O11, decision 3a)** in BOTH clients: the Go `internal/client` writes a record per scope a served call touched when `CLAUDE_CODE_SESSION_ID` or `OPENCODE_SESSION_ID` is set; the Python oracle does the same; a parity row compares the two clients' ledger files; `cmd/cairn-capture` uploads the `ledger` stream; the POD's fold of that stream into `meta.json` and `V` (moved here from S3: S11 adds the ledger, so it owns both ends); `tests/testlib/env_pin.py` clears `CLAUDE_CODE_SESSION_ID`, `OPENCODE_SESSION_ID` and `XDG_STATE_HOME`; e2e clause (n). **Must land before S3 is armed on a real instance** — without it every session that runs `cairn` is owner-only by F1. | `internal/client` (+ joins `control_mutants.py` `PKGS`, moving the pinned count and its enumerations); `internal/transcript` (the pod-side ledger fold); `tests/testlib/env_pin.py` (three cleared variables); the Python `cairn`/`lib/`; `tests/parity/` (a new row, and its README's P8 retirement ledger); `cmd/cairn-capture`; `ci.yml` e2e floor. NOT `internal/api` or `cmd/cairn-server`: the pod is untouched. | Inert without a session id in the environment; with one, the write is invisible to stdout, stderr and the exit code. |
+| **S11** | **The client read ledger (O11, decision 3a)** in BOTH clients: the Go `internal/client` writes a record per scope a served call touched when `CLAUDE_CODE_SESSION_ID` or `OPENCODE_SESSION_ID` is set; the Python oracle does the same; a parity row compares the two clients' ledger files; `cmd/cairn-capture` uploads the `ledger` stream; the POD's fold of that stream into `meta.json` and `V` (moved here from S3: S11 adds the ledger, so it owns both ends); `tests/testlib/env_pin.py` clears `CLAUDE_CODE_SESSION_ID`, `OPENCODE_SESSION_ID` and `XDG_STATE_HOME`; e2e clause (n). **Must land before S3 is armed on a real instance** — without it every session that runs `cairn` is owner-only by F1. | `internal/client` (+ joins `control_mutants.py` `PKGS`, moving the pinned count and its enumerations); `internal/transcript` (the pod-side ledger fold); `tests/testlib/env_pin.py` (three cleared variables); the Python `cairn`/`lib/`; `tests/parity/` (a new row, and its README's P8 retirement ledger); `cmd/cairn-capture`; `ci.yml` e2e floor. NOT `internal/api` or `cmd/cairn-server`: the store POD (`cmd/cairn-server`) is untouched — the ledger fold lives in `cairn-ui`'s `internal/transcript`. | Inert without a session id in the environment; with one, the write is invisible to stdout, stderr and the exit code. |
 
 **Mutant rows** (indicative names). The pinned count starts at **296**; the **51** rows below would
 take it to **347** if every one lands as named (revision 7 deleted six and revision 13 eight, each
@@ -1518,7 +1532,7 @@ Closing wiring: `--self-test` prints `sabotaged=14 caught=14`; each sabotage fai
 message; the `ok` floor, mutant count and e2e floor equal the counts measured on the merged tree;
 `AGENTS.md` stays under its working budget.
 
-**S11.** For each verb (`recall`, `search`, `sessions`, `arcs`, `arc-show`, `validate`,
+**S11.** For each resolved-scope verb (`recall`, `search`, `sessions`, `validate`,
 `ls-entries`, `append`, `put`, `create`, `arc-register`) with `CLAUDE_CODE_SESSION_ID` set and
 `XDG_STATE_HOME` on a scratch tree: exactly the records for the scopes the call RESOLVED and
 touched — a bare `recall` in a repository whose derived scope is `alpha-notes` records
@@ -1531,10 +1545,13 @@ session id (mutant `client-ledger-write-visible-in-output`). Parity: the new row
 on one cache root with one session id and compares their ledger files (timestamps normalised) —
 red if the Python oracle records a different scope; the existing rows are unchanged ONCE
 `env_pin` clears the session-id variables (control: with `CLAUDE_CODE_SESSION_ID` and a sentinel
-`XDG_STATE_HOME` exported in the harness's own environment, an existing row writes a ledger file
-into the sentinel directory before the `env_pin` change and none after it). **Content verbs:**
+`XDG_STATE_HOME` AND a sentinel `HOME` exported in the harness's own environment, an existing row
+writes a ledger file into a sentinel directory before the `env_pin` change and NOTHING under
+either sentinel after it — asserting both, because a change that cleared `XDG_STATE_HOME` but
+not the session id would merely move the write under `HOME`). **Content verbs:**
 `transcript skeleton`, `transcript records` and `transcript tool` (against a stubbed `cairn-ui`),
-`doctor` and `routes` each write exactly one `*` record; `sync` writes none (control: a client
+`doctor`, `routes`, `arcs --scope beta-notes` and `arc-show --scope beta-notes --slug x` each
+write exactly one `*` record, even when their output names only `beta-notes`; `sync` writes none (control: a client
 that records only scope-touching verbs writes nothing for `transcript records`). **Pod fold** (a
 Go test in `internal/transcript`): an uploaded `ledger` stream naming only `beta-notes`, for a
 session whose transcript carries no header and no trailer, puts `beta-notes` in `meta.json` and in
