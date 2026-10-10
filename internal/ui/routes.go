@@ -154,8 +154,14 @@ var routes = map[routeKey]route{
 	// future class cannot quietly exempt it. Not `classContent`: it renders no answer about authority —
 	// every request is answered with the same 303 back to the session page, whether or not a ring was
 	// queued, so the response cannot say whose pane exists. See `handleRing`.
+	//
+	// 🔴 `GET /share` (next row) AND `GET /invite` ARE 303s TO `/team` NOW (operator decision
+	// O-a) and so carry NO class: a redirect renders no answer about authority, so `content` —
+	// "MUST consult an authority before rendering" — no longer describes them, and keeping it
+	// would make `TestEveryContentRouteConsultsTheAuthority` demand a read from a row that does
+	// none.
 	{"POST", "/ring"}:     {(*Server).handleRing, 0},
-	{"GET", "/share"}:     {(*Server).handleSharePage, classContent},
+	{"GET", "/share"}:     {(*Server).handleSharePage, 0},
 	{"POST", "/share"}:    {(*Server).handleShare, 0},
 	{"POST", "/unshare"}:  {(*Server).handleUnshare, 0},
 	{"GET", "/sign-in"}:   {(*Server).handleSignInForm, classPublic},
@@ -180,16 +186,16 @@ var routes = map[routeKey]route{
 	// body — chosen by whoever gets one request past both cross-site gates — rather than
 	// something the route decides. Two paths are two rows in this ledger, which is where
 	// somebody reads them.
-	{"GET", "/invite"}:         {(*Server).handleInvitePage, classContent},
+	{"GET", "/invite"}:         {(*Server).handleInvitePage, 0},
 	{"POST", "/invite"}:        {(*Server).handleInvite, 0},
 	{"POST", "/invite/revoke"}: {(*Server).handleInviteRevoke, 0},
 	{"GET", "/join"}:           {(*Server).handleJoinPage, classPublic},
 
 	// 🔴 THE TEAM PAGE (`team.go`): one content read and two writes, the invite flow's
-	// shape. `GET /team` is `content` — every list on it is an authority answer. The two
-	// POST rows carry NO class, so both cross-site gates reach them by METHOD, and revoke is
-	// its own path for `UnsharePath`'s reason. `/share` and `/invite` are KEPT beside it, not
-	// redirected — `team.go`'s header says why.
+	// shape. `GET /team` is `content` — every list on it is an authority answer, and it is
+	// where the share and invite flows' forms live now. The two POST rows carry NO class, so
+	// both cross-site gates reach them by METHOD, and revoke is its own path for
+	// `UnsharePath`'s reason.
 	{"GET", "/team"}:              {(*Server).handleTeamPage, classContent},
 	{"POST", "/team/link"}:        {(*Server).handleTeamLink, 0},
 	{"POST", "/team/link/revoke"}: {(*Server).handleTeamLinkRevoke, 0},

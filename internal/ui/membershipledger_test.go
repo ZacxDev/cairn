@@ -215,7 +215,6 @@ var wantMembershipLedger = []string{
 	"ControlTeamLinks.Redeem ControlTeamLinks.RedeemFor principal",
 	"Server.handleInvite Inviting.Invitable membershipActor(id)",
 	"Server.handleInvite Inviting.Mint membershipActor(id)",
-	"Server.handleInvitePage Inviting.Invitable membershipActor(id)",
 	"Server.handleInviteRevoke Inviting.Revoke membershipActor(id)",
 	// EXEMPT: a provider identity with no credential behind it, so no narrowing to lose.
 	"Server.handleOAuthCallback Inviting.RedeemFor principal",
@@ -223,13 +222,19 @@ var wantMembershipLedger = []string{
 	// EXEMPT: ATTRIBUTION only — the journal's `actor`. The authority is checked against the
 	// narrowed `id.Auth` passed beside it.
 	"Server.handleShare Sharing.Share id.Principal",
-	"Server.handleSharePage Sharing.Candidates membershipActor(id)",
 	"Server.handleTeamLink TeamLinking.Mint membershipActor(id)",
 	"Server.handleTeamLinkRevoke TeamLinking.Revoke membershipActor(id)",
-	"Server.handleTeamPage TeamLinking.Links membershipActor(id)",
-	// EXEMPT: ATTRIBUTION only, as for `Share`; authority is the narrowed `id.Auth`.
+	// EXEMPT: ATTRIBUTION for a SCOPE grant, whose authority is the narrowed `id.Auth`. For a
+	// PROJECT-WIDE grant (operator decision O-b) the principal IS read as membership authority
+	// — and `mayRevokeGrant` refuses it outright when `auth.Narrowed()`, which is
+	// `membershipActor`'s rule applied from the authorization handed beside it;
+	// `TestANarrowedBearerCannotRevokeAProjectWideGrant` is the behavioural guard.
 	"Server.handleUnshare Sharing.Unshare id.Principal",
-	"Server.teamView Inviting.Invitable membershipActor(id)",
+	// The two old page handlers became the Team page's SECTION builders (O-a); their reads are
+	// unchanged.
+	"Server.inviteSection Inviting.Invitable membershipActor(id)",
+	"Server.shareSection Sharing.Candidates membershipActor(id)",
+	"Server.teamView TeamLinking.Links membershipActor(id)",
 	"Server.teamView TeamLinking.Mintable membershipActor(id)",
 }
 

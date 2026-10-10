@@ -101,7 +101,24 @@ type Inviting interface {
 	// would know to run. Refusing before anything is spent closes that without reaching
 	// into `internal/control` for an unexported guard.
 	RedeemFor(ctx context.Context, token string, principal control.Principal) (Redemption, error)
+
+	// TeamLinks is the Team page's multi-target link half — the SAME object this
+	// implementation redeems link tokens through. Never nil on a server: `New` refuses an
+	// `Inviting` that answers nil ([ErrInvitingWithoutTeamLinks]).
+	//
+	// 🔴 IT IS READ FROM HERE, NEVER WIRED BESIDE IT, AND THAT IS THE POINT. A separate
+	// `Config` field let a server be built half-wired either way — links nothing could
+	// redeem, or (measured: deleting `Links: links` in `cmd/cairn-ui` left both tiers green)
+	// invitations whose store never handed an unknown token to the link store, so every
+	// team link minted refused at the callback. One source makes the first shape
+	// unrepresentable and the second a startup refusal.
+	TeamLinks() TeamLinking
 }
+
+// ErrInvitingWithoutTeamLinks refuses a server whose invitation half carries no team-link
+// half. See [Inviting.TeamLinks].
+var ErrInvitingWithoutTeamLinks = errors.New("ui: the invitation half carries no team-link half, so team links " +
+	"could not be minted, or — worse — could be minted and never redeemed")
 
 // Redemption is what a completed redemption did, so a handler can say so and a log can
 // record it.
@@ -124,6 +141,28 @@ type Redemption struct {
 	// already hold.
 	Link    bool
 	Targets int
+	// LinkDigest and LinkRole name WHICH link and at what role, for the operator's log line —
+	// a link has no single Project/Role, and logging those blank left a provisioning event
+	// nobody could attribute. The log prints a digest PREFIX (`shortDigest`), never a token.
+	LinkDigest string
+	LinkRole   invite.LinkRole
+	// Unconfirmed is non-nil when the join was recorded but its audit row could not be
+	// confirmed (`ControlTeamLinks.confirmed`): the caller logs it, the person is signed in.
+	Unconfirmed error
+}
+
+// logFields is what an operator's log line says a redemption conferred: the project and role
+// for an invitation; the link's digest PREFIX, its role and how many records it wrote for a
+// team link — never a token — plus a note when the join's audit row could not be confirmed.
+func (r Redemption) logFields() string {
+	if !r.Link {
+		return fmt.Sprintf("project=%s role=%s", r.Project, r.Role)
+	}
+	out := fmt.Sprintf("link=%s role=%s targets=%d", shortDigest(r.LinkDigest), r.LinkRole, r.Targets)
+	if r.Unconfirmed != nil {
+		out += fmt.Sprintf(" AUDIT-ROW-UNCONFIRMED(%v)", r.Unconfirmed)
+	}
+	return out
 }
 
 // ErrNotInvitable refuses an invite into a project this actor may not manage.
@@ -185,6 +224,18 @@ type ControlInviting struct {
 
 var _ Inviting = ControlInviting{}
 
+// TeamLinks answers the link half this value redeems through, or nil.
+//
+// ⚠ THE NIL IS RETURNED EXPLICITLY RATHER THAN AS `*c.Links`'s interface, which would be a
+// non-nil `TeamLinking` over a zero struct whenever `Links` is nil — the typed-nil trap
+// `cmd/cairn-ui` already records for `Inviting` itself.
+func (c ControlInviting) TeamLinks() TeamLinking {
+	if c.Links == nil {
+		return nil
+	}
+	return *c.Links
+}
+
 func (c ControlInviting) now() time.Time {
 	if c.Now == nil {
 		return time.Now().UTC()
@@ -215,7 +266,7 @@ func (c ControlInviting) Invitable(actor control.Principal) []control.NamedProje
 //
 // 🔴 THE CALLER MUST HAVE NARROWED FIRST, AND THAT IS STATED BECAUSE IT IS A TRAP. This
 // returns digests, roles and timestamps for a project — a listing that would tell an
-// outsider who is being invited where. `handleInvitePage` reaches it only for a project
+// outsider who is being invited where. `inviteSection` reaches it only for a project
 // [Invitable] returned; a future caller that forgets is the defect this sentence exists to
 // prevent. It is not enforced here because the narrowing is a LIST and re-deriving it per
 // call would be the second read `Invitable`'s own comment argues against.

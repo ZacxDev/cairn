@@ -101,7 +101,14 @@ const InviteHonesty = "An invitation is a link, and the link is the authority: i
 // banner the page presents as its OWN. There is exactly one code because there is exactly
 // one write that redirects — the MINT cannot, since its whole answer is a value that
 // survives no hop. See `handleInvite`.
-const inviteOutcomeRevoked = "revoked"
+//
+// ⚠ IT IS `invite-revoked`, NOT `revoked`, SINCE THE FLOW MOVED ONTO `/team`: the share flow's
+// own code is `revoked`, and on one page one parameter cannot mean two banners. A pre-move
+// `/invite?outcome=revoked` link is translated by `handleInvitePage`'s redirect.
+const inviteOutcomeRevoked = "invite-revoked"
+
+// inviteOutcomeRevokedBeforeTeam is the code this flow redirected with before it moved.
+const inviteOutcomeRevokedBeforeTeam = "revoked"
 
 // membershipActor is the principal a MEMBERSHIP-derived decision may act as, and it is the
 // ZERO principal for a caller whose credential was narrowed.
@@ -145,8 +152,21 @@ func membershipActor(id identity.Identity) control.Principal {
 	return id.Principal
 }
 
-// handleInvitePage renders the invite flow: the index with no `?project=`, one project's
-// page with it.
+// handleInvitePage answers `GET /invite` with a 303 to the Team page's invitation section,
+// carrying the query (`?project=`, `?outcome=`) — `handleSharePage`'s ruling (operator
+// decision O-a). The one rewrite: the pre-move revoke code, which on `/team` would read as the
+// SHARE flow's "revoked" banner, is translated to this flow's own.
+func (s *Server) handleInvitePage(w http.ResponseWriter, r *http.Request, _ identity.Identity) {
+	q := r.URL.Query()
+	if q.Get(QueryOutcome) == inviteOutcomeRevokedBeforeTeam {
+		q.Set(QueryOutcome, inviteOutcomeRevoked)
+	}
+	redirectToTeam(w, teamHref(q.Encode(), teamInviteAnchor))
+}
+
+// inviteSection builds the Team page's invitation section: the index with no `?project=`,
+// one project's outstanding invitations and mint form with it. It writes the uniform refusal
+// itself and answers ok=false for a project the caller may not invite into.
 //
 // 🔴 THE NARROWING IS `Invitable`, AND `Outstanding` IS REACHED ONLY THROUGH IT. That is not
 // a stylistic ordering — `Inviting.Outstanding` performs NO authority check and its own
@@ -154,11 +174,11 @@ func membershipActor(id identity.Identity) control.Principal {
 // second model read `Invitable` argues against. So the list this function walks IS the
 // authority check, and a project that is not in it is refused before `Outstanding` is
 // called at all.
-func (s *Server) handleInvitePage(w http.ResponseWriter, r *http.Request, id identity.Identity) {
+func (s *Server) inviteSection(w http.ResponseWriter, r *http.Request, id identity.Identity) (InviteView, bool) {
 	view := InviteView{
 		Viewer: id.Principal.Display,
 		App:    s.app,
-		// The same derivation `handlePage` and `handleSharePage` use, and for the same
+		// The same derivation `handlePage` and `shareSection` use, and for the same
 		// reason: the token comes from the COOKIE on this request, so a caller
 		// authenticated by a bearer header renders no forms.
 		CSRF:    csrfTokenFor(r),
@@ -168,12 +188,11 @@ func (s *Server) handleInvitePage(w http.ResponseWriter, r *http.Request, id ide
 	if s.inviting == nil {
 		// Nothing to ask. The page says so — see [NoInviteStore] for why this is a page
 		// rather than a refusal.
-		s.renderInvite(w, view)
-		return
+		return view, true
 	}
 
 	// 🔴 POPULATED BEFORE THE BRANCH BELOW, NOT ONLY ON THE INDEX, WHICH IS THE CORRECTION
-	// `handleSharePage` ALREADY CARRIES. `InvitePage` renders the index whenever the
+	// `shareSection` ALREADY CARRIES. `TeamPage` renders the index whenever the
 	// project's NAME is empty, and a project the authority cannot name has an empty one —
 	// so filling this only on the index branch would leave a path on which the page renders
 	// "No project is yours to invite into. That is an authority answer, not an empty
@@ -182,13 +201,12 @@ func (s *Server) handleInvitePage(w http.ResponseWriter, r *http.Request, id ide
 
 	project := control.ID(r.URL.Query().Get(QueryProject))
 	if project == "" {
-		s.renderInvite(w, view)
-		return
+		return view, true
 	}
 	chosen, found := pickProject(view.Projects, project)
 	if !found {
 		writePlain(w, http.StatusNotFound, inviteRefusal)
-		return
+		return InviteView{}, false
 	}
 	rows, err := s.inviting.Outstanding(project)
 	if err != nil {
@@ -197,11 +215,11 @@ func (s *Server) handleInvitePage(w http.ResponseWriter, r *http.Request, id ide
 		// request. It goes to the operator's log, which is where this surface puts verdicts.
 		s.logf("the invitations for a project could not be read: %v", err)
 		writePlain(w, http.StatusInternalServerError, "the invitations could not be read")
-		return
+		return InviteView{}, false
 	}
 	view.Project = chosen
 	view.Outstanding = inviteRows(rows, s.now())
-	s.renderInvite(w, view)
+	return view, true
 }
 
 // handleInvite mints one invitation and renders its link ONCE.
@@ -284,7 +302,8 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request, id identit
 			Expires: inv.ExpiresAt.UTC().Format(time.RFC3339),
 		},
 	}
-	s.renderInvite(w, view)
+	// The minted invitation is rendered ON THE TEAM PAGE, once — the flow's one page (O-a).
+	s.renderTeamAfterMint(w, r, id, func(v *TeamView) { v.Invite = view })
 }
 
 // handleInviteRevoke withdraws an outstanding invitation.
@@ -322,7 +341,7 @@ func (s *Server) handleInviteRevoke(w http.ResponseWriter, r *http.Request, id i
 		q.Set(QueryProject, project)
 	}
 	q.Set(QueryOutcome, inviteOutcomeRevoked)
-	http.Redirect(w, r, InvitePath+"?"+q.Encode(), http.StatusSeeOther)
+	http.Redirect(w, r, teamHref(q.Encode(), teamInviteAnchor), http.StatusSeeOther)
 }
 
 // handleJoinPage is what an invitation LINK opens, and it is the only PUBLIC page this flow
@@ -398,10 +417,6 @@ func (s *Server) refuseInviteWrite(w http.ResponseWriter, err error, what string
 	default:
 		writePlain(w, http.StatusInternalServerError, "the invitation could not be recorded")
 	}
-}
-
-func (s *Server) renderInvite(w http.ResponseWriter, view InviteView) {
-	s.render(w, InvitePage(view))
 }
 
 // pickProject finds a project by id in the caller's narrowed list.

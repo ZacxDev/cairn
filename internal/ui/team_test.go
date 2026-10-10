@@ -17,14 +17,8 @@ import (
 // steer it and read what a handler passed through.
 func newTeamHTTPRig(t *testing.T, mutate func(*Config)) (*inviteRig, *staticTeamLinks) {
 	t.Helper()
-	links := benignTeamLinks()
-	rig := newInviteRig(t, func(cfg *Config) {
-		cfg.TeamLinks = links
-		if mutate != nil {
-			mutate(cfg)
-		}
-	})
-	return rig, links
+	rig := newInviteRig(t, mutate)
+	return rig, rig.inviting.team
 }
 
 func linkForm(targets ...invite.Target) url.Values {
@@ -193,7 +187,7 @@ func TestTheTeamWriteRefusalsAreUniform(t *testing.T) {
 // database, so no invitation half and no link half. The page answers 200 and says
 // `NoInviteStore` where the invite list and the link form would be; the writes answer 501.
 func TestTheTeamPageAnswersHonestlyWithNoStore(t *testing.T) {
-	rig, _ := newTeamHTTPRig(t, func(cfg *Config) { cfg.Inviting, cfg.TeamLinks = nil, nil })
+	rig, _ := newTeamHTTPRig(t, func(cfg *Config) { cfg.Inviting = nil })
 	rec := rig.get(TeamPath)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /team with no store answered %d, want 200", rec.Code)
@@ -206,7 +200,7 @@ func TestTheTeamPageAnswersHonestlyWithNoStore(t *testing.T) {
 		t.Error("a page with no store rendered the link form, which posts to a row that answers 501")
 	}
 	// The SHARE half still answers: it needs no database.
-	if !strings.Contains(rec.Body.String(), `href="`+SharePath+"?"+QueryScope+"="+string(fixtureNamedScope.ID)+`"`) {
+	if !strings.Contains(rec.Body.String(), `href="`+teamHref(QueryScope+"="+string(fixtureNamedScope.ID), teamShareAnchor)+`"`) {
 		t.Error("the share list vanished with the database, but sharing does not need one")
 	}
 	for _, path := range []string{TeamLinkPath, TeamLinkRevokePath} {
@@ -215,23 +209,6 @@ func TestTheTeamPageAnswersHonestlyWithNoStore(t *testing.T) {
 		if rec := rig.post(path, form); rec.Code != http.StatusNotImplemented || rec.Body.String() != NoInviteStore {
 			t.Errorf("POST %s with no store answered %d %q, want 501 NoInviteStore", path, rec.Code, rec.Body.String())
 		}
-	}
-}
-
-// TestInvitationsWithoutLinksSayNoStoreOnlyOnTheLinkHalf: a server holding invitations and no
-// link store must not tell the reader it has no invitation store. RED with the two flags
-// folded into one (`NoInviteStore: inviting == nil || teamLinks == nil`, the first draft).
-func TestInvitationsWithoutLinksSayNoStoreOnlyOnTheLinkHalf(t *testing.T) {
-	rig, _ := newTeamHTTPRig(t, func(cfg *Config) { cfg.TeamLinks = nil })
-	rec := rig.get(TeamPath)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /team answered %d", rec.Code)
-	}
-	if got := strings.Count(pageText(rec.Body.String()), normalizeSpace(NoInviteStore)); got != 1 {
-		t.Errorf("the page says NoInviteStore %d time(s), want exactly 1 (the link half only)", got)
-	}
-	if !strings.Contains(rec.Body.String(), `href="`+InvitePath+"?"+QueryProject+"="+string(fixtureNamedProject.ID)+`"`) {
-		t.Error("the invite list is empty on a server that HOLDS invitations")
 	}
 }
 
@@ -245,8 +222,11 @@ func TestTheTeamPageRendersEveryLinkWithItsLog(t *testing.T) {
 	}
 	text := pageText(rec.Body.String())
 	for _, want := range []string{
-		shortDigest(fixtureLinkDigest), "reusable", "redeemed 1 time(s)", "project " + fixtureNamedProject.Name,
+		shortDigest(fixtureLinkDigest), "reusable", "redeemed 2 time(s)", "project " + fixtureNamedProject.Name,
 		"#1 wren@notes.example.invalid joined (account created by this link)",
+		// 🔴 THE UNCONFIRMED SPEND IS RENDERED AS AN ATTEMPT, NEVER AS A JOIN (round 1 🟡1).
+		"#2 an attempt by usr_fixture_never_created at",
+		"NOT confirmed: no join was recorded for it",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the page does not carry %q", want)
@@ -291,7 +271,7 @@ func TestTheTeamHonestyNoticeIsPinnedWhole(t *testing.T) {
 	}
 	for name, view := range map[string]TeamView{
 		"index":    {Viewer: "v", CSRF: renderCSRF},
-		"no-store": {Viewer: "v", CSRF: renderCSRF, NoInviteStore: true, NoLinkStore: true},
+		"no-store": {Viewer: "v", CSRF: renderCSRF, NoInviteStore: true},
 		"minted":   {Viewer: "v", CSRF: renderCSRF, Minted: &MintedTeamLink{Link: JoinPath + "?invite=x"}},
 	} {
 		if got := pageText(renderNode(t, TeamPage(view))); !strings.Contains(got, want) {
@@ -304,12 +284,33 @@ func TestTheTeamHonestyNoticeIsPinnedWhole(t *testing.T) {
 	}
 }
 
-// TestTeamLinksWithoutAnInvitationHalfIsRefused — `ErrTeamLinksWithoutInviting`.
-func TestTeamLinksWithoutAnInvitationHalfIsRefused(t *testing.T) {
+// TestAnInvitationHalfWithoutTeamLinksIsRefused — `ErrInvitingWithoutTeamLinks`. The shape it
+// refuses is the one round 1 measured shipping green: a `ControlInviting` with no `Links`
+// serves every invite page and hands no link token anywhere, so every team link refuses at the
+// callback. Both the REAL type and the fixture are driven, because the fixture is what every
+// dispatch test builds from.
+func TestAnInvitationHalfWithoutTeamLinksIsRefused(t *testing.T) {
+	r := newTeamRig(t)
+	for name, inviting := range map[string]Inviting{
+		"ControlInviting with no Links": ControlInviting{Authority: r.authority, Invites: r.invites},
+		"the fixture with no team":      &staticInviting{},
+	} {
+		cfg := testConfig(t, staticAuth{testIdentity()})
+		cfg.Inviting = inviting
+		if _, err := New(cfg); !errors.Is(err, ErrInvitingWithoutTeamLinks) {
+			t.Errorf("%s: a half-wired server built (err=%v) — every team link it minted would be unredeemable", name, err)
+		}
+	}
+	// POSITIVE CONTROL: the same real type WITH its link half builds, and the server's link
+	// half is that very object.
 	cfg := testConfig(t, staticAuth{testIdentity()})
-	cfg.Inviting = nil
-	if _, err := New(cfg); !errors.Is(err, ErrTeamLinksWithoutInviting) {
-		t.Fatalf("a server with team links and no invitation half built (err=%v): every link it minted would be unredeemable", err)
+	cfg.Inviting = r.inviting
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("POSITIVE CONTROL FAILED: a fully wired server was refused: %v", err)
+	}
+	if got, ok := srv.teamLinks.(ControlTeamLinks); !ok || got.Store != r.team.Store {
+		t.Fatalf("the server's link half is %T, not the ControlInviting's own Links", srv.teamLinks)
 	}
 }
 
@@ -354,7 +355,7 @@ func TestAReusableTeamLinkProvisionsEveryStrangerThroughTheCallback(t *testing.T
 	stub := &stubOAuth{}
 	cfg.OAuth = stub
 	cfg.Inviting = r.inviting
-	cfg.TeamLinks = *r.team
+
 	srv, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)

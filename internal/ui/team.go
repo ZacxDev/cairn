@@ -16,18 +16,20 @@ import (
 	"github.com/ZacxDev/cairn/internal/invite"
 )
 
-// # 🔴 THE TEAM PAGE CONSOLIDATES; IT DOES NOT REPLACE
+// # 🔴 THE TEAM PAGE IS THE ONE PAGE — THE FORMS LIVE HERE (operator decision O-a)
 //
-// `GET /team` is the one page for "who can get at my notes": the scopes this caller can
-// SHARE (linking `/share?scope=…`), the projects it can INVITE into (linking
-// `/invite?project=…`), and the new multi-target TEAM LINK — its form, and every link this
-// caller minted with its redemption log and a revoke button.
+// `GET /team` carries the whole of "who can get at my notes": the SHARE flow (`?scope=` picks
+// a scope: who has access, what can be taken back, the grant form), the single-project
+// INVITE flow (`?project=` picks a project: its outstanding invitations, revoke, the mint
+// form, and its PROJECT-WIDE grants with revoke — O-b), and the multi-target TEAM LINK (its
+// form, and every link this caller minted with its redemption log and revoke).
 //
-// The `/share` and `/invite` rows are KEPT, not redirected, and that was the choice the
-// operator left open: every guard over them — the uniform refusals, the CSRF and
-// same-origin gates on their POST rows, the narrowed-actor tests, the mutation rows naming
-// their handlers — stays meaningful only while the rows keep answering what they answer
-// today. A 303 to `/team` would have turned each of those into a test of a redirect.
+// `GET /share` and `GET /invite` answer a 303 here, carrying their query. Their POST rows
+// (`/share`, `/unshare`, `/invite`, `/invite/revoke`) are UNCHANGED as routes, so both
+// cross-site gates still reach them by METHOD and every refusal they answer is the same; only
+// where they land afterwards moved, to this page. The sections are the same renderers the two
+// old pages used (`shareIndex`, `shareScopeSection`, `inviteIndex`, `inviteProjectSection`,
+// `mintedSection`), so what each guard over them read is what it still reads.
 
 // TeamHonesty is the notice the Team page carries on every shape of it.
 //
@@ -49,9 +51,41 @@ const TeamHonesty = "A team link is a link, and the link is the authority: it is
 	"it loses the authority it confers, and revoking it stops further redemptions but takes " +
 	"nothing back from anybody who already joined."
 
-// teamOutcomeRevoked is the one outcome a redirect into the Team page may carry — a CODE
-// from a closed set, never a sentence from the query string (`outcomeFrom`'s ruling).
+// teamOutcomeRevoked is the team-link flow's outcome code — a CODE from a closed set, never
+// a sentence from the query string (`outcomeFrom`'s ruling). Distinct from the share flow's
+// `revoked` and the invite flow's `invite-revoked`, because all three land on this one page.
 const teamOutcomeRevoked = "link-revoked"
+
+// The Team page's section anchors. A redirect into a flow lands at its section.
+const (
+	teamShareAnchor  = "share"
+	teamInviteAnchor = "invite"
+	teamLinksAnchor  = "links"
+)
+
+// redirectToTeam answers a GET with a bodiless 303 into the Team page.
+//
+// ⚠ NOT `http.Redirect`, WHICH WRITES A `text/html` BODY FOR A GET: that is an HTML response
+// this surface did not render through `writeHTML`, so it carried no `Cache-Control: no-store`
+// and `TestEveryNonPublicHTMLRowIsNoStore` measured it as a page. A 303 here has nothing to
+// say beyond its Location.
+func redirectToTeam(w http.ResponseWriter, href string) {
+	w.Header().Set("Location", href)
+	w.WriteHeader(http.StatusSeeOther)
+}
+
+// teamHref is the ONE builder of a URL into the Team page: the path, an already-encoded
+// query (possibly empty) and a section anchor.
+func teamHref(rawQuery, anchor string) string {
+	out := TeamPath
+	if rawQuery != "" {
+		out += "?" + rawQuery
+	}
+	if anchor != "" {
+		out += "#" + anchor
+	}
+	return out
+}
 
 // teamWriteRefusal is the uniform refusal for both team-link writes: unknown target, not
 // yours, role too high, unknown link and somebody else's link are one answer.
@@ -76,24 +110,22 @@ type TeamView struct {
 	Viewer string
 	CSRF   string
 	App    App
-	// Shareable is the scopes this caller administers — `Sharing.Administrable`.
-	Shareable []control.NamedScope
-	// Invitable is the projects this caller may invite into — `Inviting.Invitable`. Nil
-	// with NoInviteStore when there is no invitation store.
-	Invitable []control.NamedProject
-	// NoInviteStore is true when there is no INVITATION store: the invite list says
-	// `NoInviteStore` instead.
+	// Share is the share section: the index (zero `Scope`) or one scope — `shareSection`.
+	Share ShareView
+	// Invite is the invitation section: the index, one project, or a just-minted invitation
+	// — `inviteSection` / `handleInvite`.
+	Invite InviteView
+	// ProjectGrants is the project-wide grants over `Invite.Project`, revocable here (O-b).
+	ProjectGrants []GrantRow
+	// NoInviteStore is true when the deployment has no database: there is then neither an
+	// invitation half nor a link half (one is read from the other — `Inviting.TeamLinks`),
+	// and both sections say `NoInviteStore`.
 	NoInviteStore bool
-	// NoLinkStore is true when there is no TEAM-LINK store: the link half says `NoInviteStore`
-	// (the same database is what is missing). Separate from NoInviteStore because a server may
-	// hold invitations without links, and folding the two made the invite list claim "no
-	// invitation store" on a server that had one.
-	NoLinkStore bool
 	// Mintable is the link form's target chooser.
 	Mintable []MintableTarget
 	// Links is this caller's own links, newest first.
 	Links []TeamLinkRow
-	// Outcome is the banner a revoke's redirect carries, or "".
+	// Outcome is the banner a link revoke's redirect carries, or "".
 	Outcome string
 	// Minted is the link this request just created, shown ONCE.
 	Minted *MintedTeamLink
@@ -121,6 +153,9 @@ type TeamRedemptionRow struct {
 	Who         string
 	At          string
 	Provisioned bool
+	// Confirmed is whether the join it stands for was recorded — only a confirmed row is
+	// rendered as a join (`invite.LinkRedemption.Confirmed`).
+	Confirmed bool
 }
 
 // MintedTeamLink is a freshly created link, rendered exactly once — `MintedInvite`'s rule.
@@ -139,16 +174,14 @@ type MintedTeamLink struct {
 // authorization), the invite list from `Inviting.Invitable` and the link chooser from
 // `TeamLinking.Mintable` (both through `membershipActor`, so a narrowed credential sees
 // neither — `membershipActor`'s ruling).
+//
+// ⚠ `?scope=` AND `?project=` ARE REFUSED EXACTLY AS THE OLD PAGES REFUSED THEM — the
+// uniform 404 `scopeRefusal` / `inviteRefusal` — because the sections are built by the same
+// code (`shareSection`, `inviteSection`), which writes the refusal itself.
 func (s *Server) handleTeamPage(w http.ResponseWriter, r *http.Request, id identity.Identity) {
-	view := s.teamView(r, id)
-	if s.teamLinks != nil {
-		links, err := s.teamLinks.Links(membershipActor(id))
-		if err != nil {
-			s.logf("the team links could not be read: %v", err)
-			writePlain(w, http.StatusInternalServerError, "the team links could not be read")
-			return
-		}
-		view.Links = teamLinkRows(links, s.now())
+	view, ok := s.teamView(w, r, id)
+	if !ok {
+		return
 	}
 	if r.URL.Query().Get(QueryOutcome) == teamOutcomeRevoked {
 		view.Outcome = "Revoked. That link can no longer be redeemed. Anybody who already " +
@@ -157,23 +190,66 @@ func (s *Server) handleTeamPage(w http.ResponseWriter, r *http.Request, id ident
 	s.render(w, TeamPage(view))
 }
 
-// teamView fills the parts of the page every shape of it carries.
-func (s *Server) teamView(r *http.Request, id identity.Identity) TeamView {
+// teamView builds every section of the page from this request. ok=false means a refusal has
+// been written.
+func (s *Server) teamView(w http.ResponseWriter, r *http.Request, id identity.Identity) (TeamView, bool) {
+	share, ok := s.shareSection(w, r, id)
+	if !ok {
+		return TeamView{}, false
+	}
+	inv, ok := s.inviteSection(w, r, id)
+	if !ok {
+		return TeamView{}, false
+	}
 	view := TeamView{
 		Viewer:        id.Principal.Display,
 		App:           s.app,
 		CSRF:          csrfTokenFor(r),
-		Shareable:     s.sharing.Administrable(id.Auth),
+		Share:         share,
+		Invite:        inv,
 		NoInviteStore: s.inviting == nil,
-		NoLinkStore:   s.teamLinks == nil,
 	}
-	if s.inviting != nil {
-		view.Invitable = s.inviting.Invitable(membershipActor(id))
+	// 🔴 REACHED ONLY FOR A PROJECT `inviteSection` ALREADY NARROWED — `Invitable` through
+	// `membershipActor` — because `ProjectGrants` performs no check of its own, exactly as
+	// `Outstanding` performs none.
+	if inv.Project.ID != "" {
+		grants, err := s.sharing.ProjectGrants(inv.Project.ID)
+		if err != nil {
+			s.logf("the project-wide grants could not be read: %v", err)
+			writePlain(w, http.StatusInternalServerError, "the authority could not be read")
+			return TeamView{}, false
+		}
+		view.ProjectGrants = grants
 	}
 	if s.teamLinks != nil {
 		view.Mintable = s.teamLinks.Mintable(membershipActor(id))
+		links, err := s.teamLinks.Links(membershipActor(id))
+		if err != nil {
+			s.logf("the team links could not be read: %v", err)
+			writePlain(w, http.StatusInternalServerError, "the team links could not be read")
+			return TeamView{}, false
+		}
+		view.Links = teamLinkRows(links, s.now())
 	}
-	return view
+	return view, true
+}
+
+// renderTeamAfterMint renders the Team page as the response to a MINT (an invitation or a
+// team link), with `set` adding the one-time value.
+//
+// ⚠ THE SECTIONS ARE BUILT FROM A COPY OF THE REQUEST WITH NO QUERY. A POST's URL may carry
+// one (`POST /team/link?scope=…` is a string anybody can put in a form action), and a section
+// refusing a scope it names would write a 404 AFTER the capability was minted — losing the
+// one rendering of a token that cannot be recovered.
+func (s *Server) renderTeamAfterMint(w http.ResponseWriter, r *http.Request, id identity.Identity, set func(*TeamView)) {
+	bare := r.Clone(r.Context())
+	bare.URL.RawQuery = ""
+	view, ok := s.teamView(w, bare, id)
+	if !ok {
+		return
+	}
+	set(&view)
+	s.render(w, TeamPage(view))
 }
 
 // handleTeamLink mints one team link and renders it ONCE.
@@ -214,25 +290,25 @@ func (s *Server) handleTeamLink(w http.ResponseWriter, r *http.Request, id ident
 	s.logf("a team link was minted: targets=%d role=%s reusable=%v expires=%s by=%s",
 		len(link.Targets), link.Role, link.Reusable, link.ExpiresAt.UTC().Format(time.RFC3339), link.Inviter)
 
-	view := s.teamView(r, id)
-	names := map[invite.Target]string{}
-	for _, m := range view.Mintable {
-		names[m.Target] = m.Name
-	}
-	var shown []string
-	for _, t := range link.Targets {
-		shown = append(shown, targetLabel(t, names[t]))
-	}
-	view.Minted = &MintedTeamLink{
-		// A PATH AND A QUERY, NEVER AN ABSOLUTE URL — `handleInvite`'s ruling. And the SAME
-		// join path and field as an invitation: see `ControlInviting.Links`.
-		Link:     JoinPath + "?" + url.Values{inviteTokenField: []string{token}}.Encode(),
-		Role:     string(link.Role),
-		Expires:  link.ExpiresAt.UTC().Format(time.RFC3339),
-		Reusable: link.Reusable,
-		Targets:  shown,
-	}
-	s.render(w, TeamPage(view))
+	s.renderTeamAfterMint(w, r, id, func(view *TeamView) {
+		names := map[invite.Target]string{}
+		for _, m := range view.Mintable {
+			names[m.Target] = m.Name
+		}
+		var shown []string
+		for _, t := range link.Targets {
+			shown = append(shown, targetLabel(t, names[t]))
+		}
+		view.Minted = &MintedTeamLink{
+			// A PATH AND A QUERY, NEVER AN ABSOLUTE URL — `handleInvite`'s ruling. And the SAME
+			// join path and field as an invitation: see `ControlInviting.Links`.
+			Link:     JoinPath + "?" + url.Values{inviteTokenField: []string{token}}.Encode(),
+			Role:     string(link.Role),
+			Expires:  link.ExpiresAt.UTC().Format(time.RFC3339),
+			Reusable: link.Reusable,
+			Targets:  shown,
+		}
+	})
 }
 
 // handleTeamLinkRevoke withdraws one of the caller's own links. The authority is
@@ -255,7 +331,7 @@ func (s *Server) handleTeamLinkRevoke(w http.ResponseWriter, r *http.Request, id
 		s.refuseTeamWrite(w, err, "revoke")
 		return
 	}
-	http.Redirect(w, r, TeamPath+"?"+QueryOutcome+"="+teamOutcomeRevoked, http.StatusSeeOther)
+	http.Redirect(w, r, teamHref(QueryOutcome+"="+teamOutcomeRevoked, teamLinksAnchor), http.StatusSeeOther)
 }
 
 // refuseTeamWrite is the ONE status mapping for both team-link writes.
@@ -331,7 +407,8 @@ func teamLinkRows(links []LinkWithLog, now time.Time) []TeamLinkRow {
 		}
 		for _, red := range l.Log {
 			row.Log = append(row.Log, TeamRedemptionRow{
-				Seq: red.Seq, Who: red.Who, At: red.At.UTC().Format(time.RFC3339), Provisioned: red.Provisioned,
+				Seq: red.Seq, Who: red.Who, At: red.At.UTC().Format(time.RFC3339),
+				Provisioned: red.Provisioned, Confirmed: red.Confirmed,
 			})
 		}
 		out = append(out, row)
@@ -340,60 +417,75 @@ func teamLinkRows(links []LinkWithLog, now time.Time) []TeamLinkRow {
 }
 
 // TeamPage renders the Team page. Through `shell`, so it carries the frame.
+//
+// 🔴 ALL THREE NOTICES, ON EVERY SHAPE AND ABOVE EVERY ANSWER THEY QUALIFY — the rule each of
+// the two old pages stated for its own: the replica-honesty notice qualifies the audience
+// list, `InviteHonesty` the invitation link, `TeamHonesty` the team link. A notice shown only
+// on the shape about to write would leave the read — far more common — unqualified.
 func TeamPage(v TeamView) g.Node {
+	title := "cairn — team"
+	switch {
+	case v.Share.Scope.Name != "":
+		title = "cairn — team: sharing " + v.Share.Scope.Name
+	case v.Invite.Project.Name != "":
+		title = "cairn — team: inviting to " + v.Invite.Project.Name
+	}
+	share, inv := v.Share, v.Invite
+	share.CSRF, inv.CSRF = v.CSRF, v.CSRF
 	return shell(
-		"cairn — team",
+		title,
 		PageView{Viewer: v.Viewer, CSRF: v.CSRF, App: v.App},
 		nil,
 		h.H2(g.Text("Team")),
+		h.P(h.Class("replica-honesty"), g.Text(ReplicaHonesty)),
+		h.P(h.Class("invite-honesty"), g.Text(InviteHonesty)),
 		h.P(h.Class("invite-honesty"), g.Text(TeamHonesty)),
+		g.If(share.ReadOnly, h.P(h.Class("read-only"), g.Text(ReadOnlyAuthority))),
+		g.If(share.Outcome != "", h.P(h.Class("outcome"), g.Text(share.Outcome))),
+		g.If(inv.Outcome != "", h.P(h.Class("outcome"), g.Text(inv.Outcome))),
 		g.If(v.Outcome != "", h.P(h.Class("outcome"), g.Text(v.Outcome))),
-		// `g.Iff` for the pointer — `InvitePage`'s measured panic.
+		// `g.Iff` for each pointer — the measured nil-deref the old invite page recorded:
+		// `g.If` evaluates its argument before the condition.
+		g.Iff(inv.Minted != nil, func() g.Node { return mintedSection(inv) }),
 		g.Iff(v.Minted != nil, func() g.Node { return mintedLinkSection(v.Minted) }),
-		teamShareSection(v),
-		teamInviteSection(v),
+		h.Div(h.ID(teamShareAnchor),
+			g.If(share.Scope.Name == "", shareIndex(share)),
+			g.If(share.Scope.Name != "", shareScopeSection(share)),
+		),
+		h.Div(h.ID(teamInviteAnchor),
+			g.If(v.NoInviteStore, h.P(h.Class("read-only"), g.Text(NoInviteStore))),
+			g.If(!v.NoInviteStore && inv.Project.Name == "", inviteIndex(inv)),
+			g.If(!v.NoInviteStore && inv.Project.Name != "", inviteProjectSection(inv)),
+			g.If(!v.NoInviteStore && inv.Project.Name != "", projectGrantsSection(v)),
+		),
 		teamLinkSection(v),
 	)
 }
 
-func teamShareSection(v TeamView) g.Node {
+// projectGrantsSection lists the grants over the WHOLE selected project — what a team link's
+// project-`reader` writes — each revocable through `POST /unshare` (operator decision O-b), so
+// nothing a link confers needs the control CLI to take back.
+func projectGrantsSection(v TeamView) g.Node {
 	return h.Section(
-		h.Class("team-share"),
-		h.H3(g.Text("Share one scope")),
-		g.If(len(v.Shareable) == 0, h.P(h.Class("empty"), g.Text(
-			"No scope is administrable by this credential. That is an authority answer, not an "+
-				"empty store."))),
-		h.Ul(g.Map(v.Shareable, func(sc control.NamedScope) g.Node {
-			return h.Li(h.A(h.Href(SharePath+"?"+QueryScope+"="+string(sc.ID)), g.Text(sc.Name)))
+		h.Class("invite-project"),
+		h.H3(g.Text("Project-wide grants on "+v.Invite.Project.Name)),
+		h.P(h.Class("note"), g.Text(
+			"A project-wide grant reaches every scope this project owns. Revoking one withdraws "+
+				"all of them from that grantee; it does not touch project membership.")),
+		g.If(len(v.ProjectGrants) == 0, h.P(h.Class("empty"), g.Text("No project-wide grant names this project."))),
+		h.Ul(h.Class("grants"), g.Map(v.ProjectGrants, func(row GrantRow) g.Node {
+			return revocableItem(row, v.CSRF)
 		})),
-		h.P(h.Class("note"), h.A(h.Href(SharePath), g.Text("All sharing"))),
-	)
-}
-
-func teamInviteSection(v TeamView) g.Node {
-	return h.Section(
-		h.Class("team-invite"),
-		h.H3(g.Text("Invite one person to one project")),
-		g.If(v.NoInviteStore, h.P(h.Class("read-only"), g.Text(NoInviteStore))),
-		g.If(!v.NoInviteStore && len(v.Invitable) == 0, h.P(h.Class("empty"), g.Text(
-			"No project is yours to invite into. That is an authority answer, not an empty "+
-				"control plane: inviting somebody needs the owner or admin role in a project."))),
-		h.Ul(g.Map(v.Invitable, func(p control.NamedProject) g.Node {
-			return h.Li(
-				h.A(h.Href(InvitePath+"?"+QueryProject+"="+string(p.ID)), g.Text(p.Name)),
-				h.Span(h.Class("kind"), g.Text("you are "+string(p.HeldRole))),
-			)
-		})),
-		h.P(h.Class("note"), h.A(h.Href(InvitePath), g.Text("All invitations"))),
 	)
 }
 
 func teamLinkSection(v TeamView) g.Node {
 	return h.Section(
+		h.ID(teamLinksAnchor),
 		h.Class("team-links"),
 		h.H3(g.Text("Team links")),
-		g.If(v.NoLinkStore, h.P(h.Class("read-only"), g.Text(NoInviteStore))),
-		g.If(!v.NoLinkStore, g.Group([]g.Node{
+		g.If(v.NoInviteStore, h.P(h.Class("read-only"), g.Text(NoInviteStore))),
+		g.If(!v.NoInviteStore, g.Group([]g.Node{
 			h.H4(g.Text("Create a team link")),
 			g.If(len(v.Mintable) == 0, h.P(h.Class("empty"), g.Text(
 				"No project or scope is yours to put on a link. That is an authority answer: a "+
@@ -474,6 +566,14 @@ func teamLinkItem(row TeamLinkRow, csrf string) g.Node {
 		h.Span(h.Class("at"), g.Text("expires "+row.Expires)),
 		h.Ul(h.Class("link-targets"), g.Map(row.Targets, func(t string) g.Node { return h.Li(g.Text(t)) })),
 		g.If(len(row.Log) > 0, h.Ul(h.Class("link-log"), g.Map(row.Log, func(red TeamRedemptionRow) g.Node {
+			// 🔴 ONLY A CONFIRMED ROW IS A JOIN. An unconfirmed one is a spend whose authority
+			// write never landed (the double-callback round 1 measured) — or, rarely, a join whose
+			// confirmation was lost — and it is rendered as exactly that rather than as somebody
+			// who joined.
+			if !red.Confirmed {
+				return h.Li(g.Text("#" + strconv.Itoa(red.Seq) + " an attempt by " + red.Who + " at " + red.At +
+					" — NOT confirmed: no join was recorded for it (check the control journal)"))
+			}
 			what := "joined"
 			if red.Provisioned {
 				what = "joined (account created by this link)"

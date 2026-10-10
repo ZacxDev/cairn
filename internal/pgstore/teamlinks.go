@@ -197,6 +197,22 @@ func (s *TeamLinkStore) RedeemLink(presentedToken string, by control.ID, provisi
 	return l, nil
 }
 
+// ConfirmRedemption marks one redemption confirmed. A row that does not exist is an error:
+// confirming nothing would let a caller believe a join was logged that was not.
+func (s *TeamLinkStore) ConfirmRedemption(digest string, seq int) error {
+	ctx, cancel := s.db.opCtx()
+	defer cancel()
+	res, err := s.db.sql.ExecContext(ctx,
+		`UPDATE team_link_redemptions SET confirmed = TRUE WHERE digest = $1 AND seq = $2`, digest, seq)
+	if err != nil {
+		return fmt.Errorf("pgstore: confirming a team link redemption: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return fmt.Errorf("pgstore: confirming a team link redemption: %d row(s) matched (%v)", n, err)
+	}
+	return nil
+}
+
 // RevokeLink takes an open link back.
 //
 // 🔴 ITS "OPEN" IS THE REDEEM GUARD'S "OPEN", CONJUNCT FOR CONJUNCT, so a spent single-use
@@ -278,7 +294,7 @@ func (s *TeamLinkStore) LinkRedemptions(digest string) ([]invite.LinkRedemption,
 	ctx, cancel := s.db.opCtx()
 	defer cancel()
 	rows, err := s.db.sql.QueryContext(ctx,
-		`SELECT seq, redeemed_by, redeemed_at, provisioned FROM team_link_redemptions
+		`SELECT seq, redeemed_by, redeemed_at, provisioned, confirmed FROM team_link_redemptions
 		  WHERE digest = $1 ORDER BY seq ASC`, digest)
 	if err != nil {
 		return nil, fmt.Errorf("pgstore: reading a team link's redemptions: %w", err)
@@ -288,7 +304,7 @@ func (s *TeamLinkStore) LinkRedemptions(digest string) ([]invite.LinkRedemption,
 	for rows.Next() {
 		r := invite.LinkRedemption{Digest: digest}
 		var by string
-		if err := rows.Scan(&r.Seq, &by, &r.At, &r.Provisioned); err != nil {
+		if err := rows.Scan(&r.Seq, &by, &r.At, &r.Provisioned, &r.Confirmed); err != nil {
 			return nil, fmt.Errorf("pgstore: reading a team link's redemptions: %w", err)
 		}
 		r.By = control.ID(by)

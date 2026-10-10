@@ -90,10 +90,13 @@ DECLARED_TESTS = {
         "TestTheSingleUseConstraintIsTheDatabasesOwn",
         "TestATeamLinkRoundTripsWithItsTargetsAndNeverHoldsTheToken",
         "TestMigrationTwoUpgradesAVersionOneDatabase",
+        "TestTheRollbackRecipeLetsAnOlderBuildStartAndReUpgrades",
+        "TestARedemptionRowIsUnconfirmedUntilConfirmed",
     },
     "internal/pgstore/export_pgtest_test.go": set(),
     "cmd/cairn-ui/database_pgtest_test.go": {
         "TestWithADatabaseTheSurfaceMovesItsStateThereAndHoldsInvitations",
+        "TestTheWiredHalvesMintAndRedeemALinkAgainstPostgres",
     },
 }
 

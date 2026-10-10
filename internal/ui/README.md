@@ -3859,7 +3859,7 @@ the agent tab).
 
 | route | class | what |
 |---|---|---|
-| `GET /` | `content` | the HUB: four cards — Arcs (`/arcs`), Scopes (`/scopes`), Sessions (`/sessions`), Team (`/share`, until the team page repoints it). `/?q=` and `/?tag=` answer **303** to `/scopes` with the query |
+| `GET /` | `content` | the HUB: four cards — Arcs (`/arcs`), Scopes (`/scopes`), Sessions (`/sessions`), Team (`/team` — repointed from `/share` by #214, Phase S). `/?q=` and `/?tag=` answer **303** to `/scopes` with the query |
 | `GET /scopes` | `content` | the scope list, search box and tag filter — the old root, unchanged |
 | `GET /sessions` | `content` | every session the viewer can see anything of, newest first, each a link to `/session?session=…` |
 | `GET /scope?id=…&tab=agent` | (the `/scope` row) | the "What an agent sees" tab |
@@ -3870,7 +3870,7 @@ The scopes card's count is the scopes this viewer can read — the list `/scopes
 also counted arcs (the arcs page's live rows) and sessions (the sessions page's rows); **both were
 DROPPED in review (round 0, D1)**: each cost a whole-store walk on every hub load, roughly doubling it,
 for a number one click away. The four cards stay. The Team card never had a count: "who has access" is
-the sharing authority, and a hub consulting two authorities is a row `contentAuthority` cannot express.
+the sharing authority, and a hub consulting two authorities was a row `contentAuthority` could not express (it takes a list since #214 — `GET /team` declares three — but the hub still asks one).
 The mutant row that widened the arcs read for the hub's count was RE-POINTED rather than deleted —
 `StoreSource.Arcs` still feeds `/arcs` — as `ui-arcs-index-read-includes-unreadable-homes`, killed by
 the arcs page's own `TestAnArcHomedInAnUnreadableScopeIsNeverListedEvenWhenItsMembersWroteWhereYouRead`.
@@ -3957,43 +3957,68 @@ page costs (≈2.2× the scope list at 3,000 entries). That measurement is why b
 
 # Phase S — the Team page and the multi-target TEAM LINK
 
-`GET /team` is one page for "who can get at my notes": the scopes this caller can SHARE (links to
-`/share?scope=…`), the projects it can INVITE into (links to `/invite?project=…`), and the new
-**team link** — select several projects and/or scopes, choose a role, a lifetime and whether the link
-may be reused, and get ONE link. Below the form, every link this caller minted, with its targets, role,
-expiry, reuse flag, redemption count, its per-redemption log (who, when, and whether the redemption
-CREATED the account), and a revoke button while it is open. Three rows: `GET /team` (`content`),
+`GET /team` is THE page for "who can get at my notes" (operator decision **O-a**: "one page" means
+the FORMS live there). Its sections:
+
+- **Share** — `?scope=<id>` picks a scope: who has access (with HOW each principal reaches it), what
+  can be taken back, and the grant form. With no `?scope=`, the scopes this caller can share.
+- **Invite** — `?project=<id>` picks a project: its outstanding single-project invitations with
+  revoke, the mint form, and its **project-wide grants** with revoke (O-b). With no `?project=`, the
+  projects this caller can invite into.
+- **Team links** — the multi-target link form (projects and/or scopes, a role, a lifetime, an
+  "allow reuse" box), and every link this caller minted with targets, role, expiry, reuse, redemption
+  count, the per-redemption log and revoke while open.
+
+Three notices sit above every shape: the replica-honesty notice, `InviteHonesty` and `TeamHonesty`,
+each pinned as a whole normalised string against a literal. Rows: `GET /team` (`content`, answered
+from THREE authorities — `contentAuthority` requires `sharing`, `inviting` AND `team`),
 `POST /team/link` and `POST /team/link/revoke` (no class — both cross-site gates by METHOD).
 
-## 🔴 `/share` and `/invite` are KEPT, not redirected
+## 🔴 `/share` and `/invite` answer 303 to `/team`; their POST rows are unchanged
 
-The operator left the choice open; the one taken is the one that keeps every existing guard
-meaningful. Every test over those rows — the uniform refusals, both cross-site gates on their POST
-rows, the narrowed-actor tests, the mutation rows naming their handlers — measures what the rows answer
-TODAY; a 303 to `/team` would have turned each into a test of a redirect. The header gains a fourth
-link (`nav-team`) beside the two older ones; the coarse-pointer header grid is `repeat(4, …)` for it.
+`GET /share` → `/team?<same query>#share`, `GET /invite` → `/team?<same query>#invite`, bodiless
+(`redirectToTeam`, not `http.Redirect`, whose `text/html` body is an HTML response no `no-store`
+writer produced — `TestEveryNonPublicHTMLRowIsNoStore` declares both rows as redirects). A pre-move
+`/invite?outcome=revoked` is translated to `invite-revoked`: on one page the bare `revoked` code is
+the share flow's banner. Both GET rows lost the `content` class — a redirect renders no answer about
+authority. `POST /share`, `POST /unshare`, `POST /invite` and `POST /invite/revoke` are the same rows
+behind the same gates answering the same refusals; only where they LAND moved (`/team?…#share`,
+`#invite`), and a mint renders its one-time link ON the Team page. The two old page handlers became
+the page's section builders (`shareSection`, `inviteSection`) — same reads, same uniform 404s
+(`scopeRefusal`, `inviteRefusal`) — and every test over them was RE-AIMED at `/team`, none deleted.
+The header carries ONE entry, "Team" (round 0 D3); "Sharing" and "Invitations" are gone and the
+nav-affordance ledger now refuses either coming back.
 
 ## 🔴 The model: a SIBLING of the invitation, never a wider one
 
 `internal/invite/teamlink.go` (`TeamLink`, `LinkStore`) and migration **2** (`team_links`,
 `team_link_targets`, `team_link_redemptions`). Version 1 is untouched (append-only), and
 `TestMigrationTwoUpgradesAVersionOneDatabase` builds a version-1 database holding an open invitation
-and migrates it: the invitation survives, the ledger reads `[1 2]`, a link redeems. Shared with the
-invitation, on purpose: `invite.NewToken`, `invite.Digest`, 256-bit tokens, digest-only storage, the
-token shown ONCE (no redirect after the mint — `handleInvite`'s ruling), and the ONE join path:
-a link is `/join?invite=<token>`, and `ControlInviting` hands any token its own store does not know to
+and migrates it: the invitation survives, the ledger reads `[1 2]`, a link redeems. (Migration 2 was
+edited in place once, in this PR's fix round, to add `team_link_redemptions.confirmed`; it had never
+been applied outside a test.) Shared with the invitation, on purpose: `invite.NewToken`,
+`invite.Digest`, 256-bit tokens, digest-only storage, the token shown ONCE, and the ONE join path: a
+link is `/join?invite=<token>`, and `ControlInviting` hands any token its own store does not know to
 `ControlTeamLinks` (`ControlInviting.Links`). Dispatch is by STORE, never by a prefix or form field.
+
+**There is no separate team-link wiring** (round 0 D2): the server reads the link half from
+`Inviting.TeamLinks()`, and `ui.New` refuses an invitation half that carries none
+(`ErrInvitingWithoutTeamLinks`) — so a half-wired server cannot be built. `cmd/cairn-ui` builds both
+halves from one `$DB` in one function, `wireInvitations`, which `TestTheWiredInvitationHalfRedeemsATeamLink`
+(ordinary tier) and `TestTheWiredHalvesMintAndRedeemALinkAgainstPostgres` (Postgres tier) drive by
+minting through the Team page's half and redeeming through the invitation half. Round 1 🟡4
+measured the gap this closes: deleting `Links: links` from `main` left both tiers green.
 
 **Lookup is by digest, so the "constant-time compare" is the same as the invitation's: there is no
 token comparison at all** — the presented token is hashed and the database is asked for that digest.
 
-## 🔴 `reader` is not a `control.Role`, and that is a rollback decision
+## 🔴 `reader` is a read-only GRANT, not a `control.Role` — and it is listed and revocable
 
-`control.Role` is owner/admin/member — all three write. Adding a `reader` role would put a new role
-string into `member-set` records on the append-only journal, which an image ROLLBACK cannot replay
-(`Event.validate` refuses an unknown role). So the link roles are `reader | member | admin` (no
-`owner`: a reusable owner link is a transfer of the project to whoever reads a chat log), expressed
-through record kinds every deployed build already accepts:
+`control.Role` is owner/admin/member — all three write. A `reader` role would put a new role string
+into `member-set` records on the append-only journal, which an image ROLLBACK cannot replay
+(`Event.validate` refuses an unknown role). So (operator decision **O-b**, keeping this) the link
+roles are `reader | member | admin` (no `owner`: a reusable owner link is a transfer of the project
+to whoever reads a chat log), expressed through record kinds every deployed build already accepts:
 
 | target | `reader` | `member` | `admin` |
 |---|---|---|---|
@@ -4001,9 +4026,21 @@ through record kinds every deployed build already accepts:
 | scope | `granted` {read} | `granted` {read,write} | `granted` {read,write,admin} |
 
 `linkVerbs` is the one table; `TestLinkVerbsMatchTheControlRoleTable` pins `member`/`admin` against
-what membership at that role confers through `Resolve`. ⚠ A project-`reader` grant is NOT revocable
-from `/share` (that page lists scope grants only — `Revocable`'s stated narrowing); an operator removes
-it with the control CLI. Stated, not fixed.
+what membership at that role confers through `Resolve`.
+
+🔴 **A project-wide grant is SEEN and TAKEN BACK on a page, never only with the CLI** (O-b, and round
+1 🟡3, which measured the share page's note — "keeps it after every grant below is revoked" — FALSE
+for a project-wide grantee). Now: the scope's audience labels such a principal "via a project-wide
+grant" (`Viewer.ByProjectGrant`); the scope's take-back list includes project-wide grants on the
+owning project, each labelled "project-wide: every scope in <project> — revoking it withdraws all of
+them" before its button (`GrantRow.ProjectWide`); and the Team page's project section lists every
+project-wide grant with revoke (`Sharing.ProjectGrants`, reached only for a project `Invitable`
+returned). `POST /unshare` decides by the grant's OBJECT (`mayRevokeGrant`): a scope grant needs
+`admin` on that scope, as before; a project-wide grant needs `CanManageMembers` on the actor's own
+membership — never scope admin, so an outsider with admin on one scope cannot withdraw a grant over
+the whole project — and is refused outright for a NARROWED credential (membership authority is not
+in a narrowing; `membershipActor`'s rule, applied from `auth.Narrowed()` because the handler passes
+the attribution principal).
 
 ## 🔴 One authority predicate, three readers — and the third is the redemption
 
@@ -4020,7 +4057,7 @@ spent and logs nothing. Its two arms read the two authority axes and neither rea
 A link is minted whole or not at all: one target out of reach refuses it (`ErrNotLinkable`, ONE
 error for "no such target" and "not yours", so the mint is not an existence oracle). A narrowed
 credential reaches none of this — every call goes through `membershipActor`, and
-`TestEveryMembershipDecisionActsAsMembershipActor` now watches `TeamLinking`/`ControlTeamLinks` too.
+`TestEveryMembershipDecisionActsAsMembershipActor` watches `TeamLinking`/`ControlTeamLinks` too.
 A redemption never OVERWRITES a membership (the owner-demotion hazard `ErrAlreadyAMember` exists for):
 a held target is skipped, and a redeemer who already holds every target gets `ErrAlreadyAMember` with
 nothing spent. The journal's actor on every record is the MINTER.
@@ -4029,6 +4066,25 @@ nothing spent. The journal's actor on every record is the MINTER.
 co-admin cannot withdraw a colleague's leaked link from this page; what bounds that is the re-check
 (demote the minter and every link they made dies).
 
+## 🔴 The redemption log: written at the spend, a JOIN only once CONFIRMED
+
+Round 1 🟡1 measured the log naming joins that never happened: two tabs, one GitHub identity, one
+reusable link — both callbacks spend the link, the second journal write is refused (a duplicate
+provider/subject), and the page showed "#2 usr_… joined (account created by this link)" for an
+account that does not exist. The row is still WRITTEN at the spend — written after, a crash between
+the journal write and the log write would lose the audit of a REAL join, and for a reusable link the
+log is the only place an operator sees who it let in — but it is `confirmed = false` until the
+authority write succeeds (`ControlTeamLinks.confirmed`), and the page renders an unconfirmed row as
+"an attempt … NOT confirmed: no join was recorded for it". A confirmation that itself fails leaves
+the join recorded and the row unconfirmed (the conservative reading), says so on the operator's log
+line, and does not refuse the sign-in. `TestTheRedemptionLogNamesOnlyRealJoins` reproduces the
+double-callback deterministically (a store barrier holds both spends until both tabs have passed the
+"unknown subject" check).
+
+The operator's log line for a link redemption names the link — `link=<digest prefix> role=<role>
+targets=<n>` — rather than the blank `project= role=` it printed (round 1 🟢5,
+`TestALinkRedemptionLogLineNamesTheLink`); it never carries the token.
+
 ## 🔴 Reuse is UNLIMITED until expiry or revoke — the residual, stated
 
 The operator chose unlimited reuse over a capped count. **A leaked reusable link is OPEN ENROLMENT
@@ -4036,33 +4092,65 @@ until it expires or is revoked**: anybody holding it can create a principal and 
 many times as they like, at whatever rate the OAuth flow admits (the flight table's per-client and
 global caps are the only rate bound; there is no per-link rate limit). What bounds it: the TTL ceiling
 `invite.MaxLinkTTL` (**30 days**, default still 7, chosen per link in whole days), revoke, the
-minter re-check, and the per-redemption log, which names every principal a link created — one row
-per redemption, written in the SAME transaction that counts it. Unticked reuse is single use, as an
-invitation is. `TeamHonesty` says all of this on every shape of the page and is pinned as a whole
-normalised string against a LITERAL.
+minter re-check, and the per-redemption log. Unticked reuse is single use, as an invitation is.
+
+🔴 **The token travels in a URL query, so it lands in ACCESS LOGS** (round 1 🟢6). `GET
+/join?invite=<token>` is what a link opens, and nginx's default `log_format` records `$request`,
+query included — so every gateway between the reader and this pod writes a reusable, up-to-30-day
+enrolment capability to disk in plain text. **Deploy note: strip the query string from access logs
+for `/join`** (in the deployment repository, outside this PR — e.g. log `$uri` rather than `$request`
+for that location). In-app mitigation, PROPOSED and not built: mint the link with the token in the URL
+FRAGMENT (`/join#invite=…`), which a browser never sends to any server and so no access log can hold.
+It is not cheap here: the join page would need a script to move the fragment into the accept form,
+and this surface's script allowlist (`AllowedScriptSources`, one entry today) is a deliberate gate —
+a second script is a decision, not a tidy-up.
+
+## 🔴 Rolling back across migration 2
+
+A build that predates the team link knows only schema version 1 and REFUSES TO START against a
+database at version 2 ("migrated by a NEWER build") — on `cairn-ui`, that takes sign-in down (round 1
+🟡2). The recipe, run against the database BEFORE the older image starts:
+
+```sql
+DELETE FROM schema_migrations WHERE version = 2;
+```
+
+The older build then starts; it never reads the three `team_*` tables, so they stay, rows and all.
+Links minted before the rollback are not redeemable while it runs (it does not know they exist).
+Re-upgrading is safe: every version-2 statement is `IF NOT EXISTS`, so the newer build re-applies and
+re-records version 2 over the surviving tables. `TestTheRollbackRecipeLetsAnOlderBuildStartAndReUpgrades`
+measures the three steps through the same startup predicate every build runs (`refuseFromTheFuture`):
+the refusal exists, the recipe lifts it, and re-upgrading is clean with a pre-rollback link intact.
 
 ## 🔴 The SQL guard is a second spelling of `TeamLink.StateAt`, pinned
 
 `RedeemLink` is one conditional `UPDATE … RETURNING` (`revoked_at IS NULL AND expires_at > $at AND
-(reusable OR redemptions = 0)`) plus the log row, in one transaction. The `team_links_single_use`
-CHECK refuses a second redemption of a single-use row even from an unguarded statement.
-`TestTheTeamLinkRedemptionGuardAgreesWithStateAt` drives the CLOSED boundary (µs before / at / after
-the STORED expiry, with a non-µs-aligned remainder) and the revoked and spent arms; 8 concurrent
-redemptions give exactly 1 winner single-use and 8 distinct sequence numbers reusable.
+(reusable OR redemptions = 0)`) plus the (unconfirmed) log row, in one transaction. The
+`team_links_single_use` CHECK refuses a second redemption of a single-use row even from an unguarded
+statement. `TestTheTeamLinkRedemptionGuardAgreesWithStateAt` drives the CLOSED boundary (µs before /
+at / after the STORED expiry, with a non-µs-aligned remainder) and the revoked and spent arms; 8
+concurrent redemptions give exactly 1 winner single-use and 8 distinct sequence numbers reusable.
 
 ## The journal / token-file deployment
 
-No database → no invitation half and no link half (`ui.New` refuses links without invitations,
-`ErrTeamLinksWithoutInviting`). `GET /team` still answers 200: the share list (which needs no
-database) is populated from the authority, and the invite list and the team-link half each say
-`NoInviteStore`; the two writes answer 501 with it. `uiaudit`'s journal world walks `GET /team` and
-REFUSES unless a capture carries `NoInviteStore` on BOTH halves.
+No database → no invitation half, and so no link half (one is read from the other). `GET /team`
+still answers 200: the share section (which needs no database) is populated from the authority — on
+a token-file deployment it says the authority is read-only, as the share page did — and the invite
+section and the team-link section each say `NoInviteStore`; every invite and link write answers 501
+with it. `uiaudit`'s journal world walks `GET /team` (and, through its expansion, `/team?scope=…`
+with the grant form) and REFUSES unless a Team capture carries `NoInviteStore` on BOTH sections.
+
+## Not in this PR (operator decision O-c)
+
+Folding single-project invitations into team links is a separate, later change. Until then the Team
+page carries both: the single-project invitation (one project, one role, single use, may confer
+`owner`) and the team link.
 
 ## The RED proof
 
-Pre-change code has none of these symbols, so "red on base" is a compile failure and proves
-nothing about any guard. Each guard's RED is therefore its MUTANT — the narrowest edit that removes
-the rule — killed by the test that names it (`tests/control_mutants.py`, 15 rows, each run alone with
+Pre-change code has none of the first round's symbols, so "red on base" is a compile failure and
+proves nothing about any guard. Each guard's RED is therefore its MUTANT — the narrowest edit that
+removes the rule — killed by the test that names it (`tests/control_mutants.py`, each run alone with
 `--only`, positive control GREEN each time), plus the SQL half on scratch copies through
 `tests/pgtest/run.sh`:
 
@@ -4083,20 +4171,42 @@ the rule — killed by the test that names it (`tests/control_mutants.py`, 15 ro
 | narrowed token offered targets | `ui-team-page-offers-the-unnarrowed-principals-targets` | `TestANarrowedBearerHasNoTeamLinkAuthority` (+ledger) |
 | narrowed token mints | `ui-team-mint-acts-as-the-unnarrowed-principal` | `TestANarrowedBearerHasNoTeamLinkAuthority` (+ledger) |
 | notice drops the reuse clause | `ui-team-honesty-notice-loses-its-reuse-clause` | `TestTheTeamHonestyNoticeIsPinnedWhole` |
+| 🟡1 log confirmed at the spend | `ui-teamlink-log-confirms-before-the-authority-write` | `TestTheRedemptionLogNamesOnlyRealJoins` |
+| 🟡1 unconfirmed row shown as a join | `ui-team-log-renders-an-unconfirmed-row-as-a-join` | `TestTheRedemptionLogNamesOnlyRealJoins` (+1) |
+| 🟡3/O-b project-wide grants off the take-back list | `ui-share-revocable-drops-project-wide-grants` | `TestAProjectWideGrantIsListedLabelledAndRevocable` |
+| 🟡3 audience loses "via a project-wide grant" | `ui-share-audience-loses-the-project-wide-label` | `TestAProjectWideGrantIsListedLabelledAndRevocable` |
+| O-b project-wide grant not revocable | `ui-unshare-refuses-every-project-wide-grant` | `TestAProjectWideGrantIsListedLabelledAndRevocable` |
+| O-b narrowed revoke of a project-wide grant | `ui-unshare-project-grant-ignores-the-narrowing` | `TestANarrowedBearerCannotRevokeAProjectWideGrant` (+1) |
+| O-b plain member revokes a project-wide grant | `ui-unshare-project-grant-for-any-member` | `TestAProjectWideGrantIsListedLabelledAndRevocable` |
+| O-a `/share` redirect drops its query | `ui-old-share-path-drops-its-query` | `TestTheOldFlowPathsRedirectToTheTeamPage` |
+| O-a old invite code read as the share banner | `ui-old-invite-path-keeps-the-pre-move-code` | `TestTheOldFlowPathsRedirectToTheTeamPage` |
+| O-a redirect gains an HTML body (no `no-store`) | `ui-team-redirect-gains-an-html-body` | `TestEveryNonPublicHTMLRowIsNoStore` |
+| D2/🟡4 half-wired server builds | `ui-inviting-without-links-builds` | `TestAnInvitationHalfWithoutTeamLinksIsRefused` |
+| 🟡4 `main` drops the link store | `main-drops-the-link-store-from-the-invitation-half` | `TestTheWiredInvitationHalfRedeemsATeamLink` |
+| 🟢5 blank project/role on a link's log line | `ui-link-log-line-loses-the-link` | `TestALinkRedemptionLogLineNamesTheLink` |
+
+Eight pre-existing rows were RE-DERIVED (same names, same defects) because the code they mutate
+moved — the share/invite page handlers into section builders, `Unshare`'s check into
+`mayRevokeGrant`, the mint's render onto the Team page, the header's invite link into the one Team
+link — and `ui-ring-row-declared-public`'s pattern is unchanged because the route table's alignment
+was kept.
 
 SQL half (Postgres tier, scratch copies): the expiry guard opened to `>=`, the single-use conjunct
 dropped, the revoked conjunct dropped, the CHECK constraint dropped, a revoke of a spent single-use
 link reported as success, and a migration 2 that destroys version-1 rows — each RED in the team-link
-test that names it; see the commit message for the per-mutant lines.
+test that names it. The rollback test's own positive control asserts the hazard exists (an older
+build refuses a version-2 database) before asserting the recipe lifts it.
 
 ## What these guards still cannot see
 
-- **A real provider.** The seam test drives the real dispatcher, flight, `ControlInviting` and
+- **A real provider.** The seam tests drive the real dispatcher, flight, `ControlInviting` and
   `ControlTeamLinks` with a STUBBED exchange; no real GoTrue has redeemed a team link.
-- **The mint form in a browser.** It needs `-db-dsn`; `uiaudit` captures the no-database Team page
+- **The mint forms in a browser.** They need `-db-dsn`; `uiaudit` captures the no-database Team page
   only (the invite mint form's existing gap, Q10).
 - **Rate.** Nothing limits how fast one reusable link enrols; only the flight caps bound it, and no
   test drives a reusable link at volume.
 - **A revoke racing a redemption**, and two simultaneous mints — the store's conditional statements
   are the argument; neither race is driven.
-- **The project-`reader` grant's removal** has no page (see above).
+- **An access log.** The `/join` query-string residual above is a deployment fix outside this repo.
+- **A real rollback.** The recipe is measured through the startup predicate on one schema, not by
+  booting an older image against a production-shaped database.

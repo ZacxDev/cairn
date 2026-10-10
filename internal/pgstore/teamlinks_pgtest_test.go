@@ -271,3 +271,69 @@ func TestMigrationTwoUpgradesAVersionOneDatabase(t *testing.T) {
 		t.Fatalf("a second migrate of an up-to-date database: %v", err)
 	}
 }
+
+// TestTheRollbackRecipeLetsAnOlderBuildStartAndReUpgrades — round 1 🟡2. Migration 2 makes
+// the older build's "database from the future" refusal reachable on a rollback (and on
+// `cairn-ui` that refusal takes sign-in down). The recipe `migrate.go` documents —
+// `DELETE FROM schema_migrations WHERE version = 2` — is measured here in three steps: the
+// refusal EXISTS (positive control), the recipe lifts it, and re-upgrading is clean with the
+// team-link rows intact.
+func TestTheRollbackRecipeLetsAnOlderBuildStartAndReUpgrades(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	s := pgstore.NewTeamLinkStore(db)
+	_, minted := mintLink(t, s, true, fixtureNow.Add(time.Hour))
+
+	// (1) The hazard: a version-1 build refuses this database.
+	if err := pgstore.OlderBuildRefusalForTest(ctx, db, 1); err == nil {
+		t.Fatal("POSITIVE CONTROL FAILED: a version-1 build would START against a version-2 database, so the " +
+			"rollback hazard this test exists for is not there and the recipe below proves nothing")
+	}
+	// (2) The recipe — the literal statement the README hands an operator.
+	if _, err := db.SQL().ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = 2`); err != nil {
+		t.Fatalf("the rollback statement failed: %v", err)
+	}
+	if err := pgstore.OlderBuildRefusalForTest(ctx, db, 1); err != nil {
+		t.Fatalf("after the recipe a version-1 build still refuses: %v", err)
+	}
+	// …and an old build's own read path works: the invitations table is untouched.
+	if _, _, err := pgstore.NewInviteStore(db).ByToken("no-such-token"); err != nil {
+		t.Fatalf("the version-1 table is unreadable after the recipe: %v", err)
+	}
+	// (3) Re-upgrade: the newer build migrates again over the tables that are still there.
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("re-upgrading after the recipe failed: %v", err)
+	}
+	if err := pgstore.OlderBuildRefusalForTest(ctx, db, 2); err != nil {
+		t.Fatalf("after re-upgrading the current build would refuse: %v", err)
+	}
+	if got, ok, err := s.LinkByDigest(minted.Digest); err != nil || !ok || len(got.Targets) != 3 {
+		t.Fatalf("the team link minted before the rollback did not survive it: ok=%v err=%v %+v", ok, err, got)
+	}
+}
+
+// TestARedemptionRowIsUnconfirmedUntilConfirmed — round 1 🟡1's store half: `RedeemLink`
+// writes the row UNCONFIRMED, `ConfirmRedemption` confirms exactly that row, and confirming a
+// row that does not exist is an error rather than a silent no-op.
+func TestARedemptionRowIsUnconfirmedUntilConfirmed(t *testing.T) {
+	s := pgstore.NewTeamLinkStore(openTestDB(t))
+	token, link := mintLink(t, s, true, fixtureNow.Add(time.Hour))
+	spent, err := s.RedeemLink(token, fixtureJoiner, true, fixtureNow)
+	if err != nil {
+		t.Fatalf("redeeming: %v", err)
+	}
+	log, _ := s.LinkRedemptions(link.Digest)
+	if len(log) != 1 || log[0].Confirmed {
+		t.Fatalf("a fresh redemption row reads %+v, want one UNCONFIRMED row", log)
+	}
+	if err := s.ConfirmRedemption(link.Digest, spent.Redemptions); err != nil {
+		t.Fatalf("confirming: %v", err)
+	}
+	log, _ = s.LinkRedemptions(link.Digest)
+	if len(log) != 1 || !log[0].Confirmed {
+		t.Fatalf("after confirming the row reads %+v", log)
+	}
+	if err := s.ConfirmRedemption(link.Digest, spent.Redemptions+1); err == nil {
+		t.Fatal("confirming a redemption that does not exist succeeded")
+	}
+}

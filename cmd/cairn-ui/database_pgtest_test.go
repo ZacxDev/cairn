@@ -36,6 +36,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/control"
+	"github.com/ZacxDev/cairn/internal/invite"
 	"github.com/ZacxDev/cairn/internal/pgstore"
 )
 
@@ -199,4 +201,45 @@ func assertTablesExist(t *testing.T, dsn string, tables ...string) {
 		}
 	}
 	fmt.Fprintf(os.Stderr, "cairn-ui pgtest: %d table(s) confirmed present\n", len(tables))
+}
+
+// TestTheWiredHalvesMintAndRedeemALinkAgainstPostgres is round 1 🟡4's Postgres half: the
+// function `main` builds both halves with (`wireInvitations`), over the REAL stores, mints a
+// team link through the Team page's half and redeems it through the invitation half — the
+// callback's path — and the redemption row is CONFIRMED in the database (round 1 🟡1).
+// `TestTheWiredInvitationHalfRedeemsATeamLink` is the same claim in the ordinary tier.
+func TestTheWiredHalvesMintAndRedeemALinkAgainstPostgres(t *testing.T) {
+	dsn := requirePgtestDSN(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	db, err := pgstore.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("could not vouch: opening the tier's database failed: %v", err)
+	}
+	defer db.Close()
+	authority, _ := seededJournal(t, credentialLive)
+	links := pgstore.NewTeamLinkStore(db)
+	inviting := wireInvitations(authority, pgstore.NewInviteStore(db), links)
+	team := inviting.TeamLinks()
+	if team == nil {
+		t.Fatal("the wired invitation half carries no team-link half")
+	}
+	owner, ok := authority.Model().PrincipalFor(control.KindUser, control.DerivedID(control.PrefixUser, "startup-user"))
+	if !ok {
+		t.Fatal("precondition: the seeded owner is not in the model")
+	}
+	project := control.DerivedID(control.PrefixProject, "startup-project")
+	token, link, err := team.Mint(ctx, owner, []invite.Target{{Kind: invite.TargetProject, ID: project}},
+		invite.LinkReader, 0, true)
+	if err != nil {
+		t.Fatalf("minting through the wired half: %v", err)
+	}
+	red, err := inviting.Redeem(ctx, token, "fixture-provider", fmt.Sprintf("pg-wired-%d", time.Now().UnixNano()))
+	if err != nil {
+		t.Fatalf("a link minted on the Team page was not redeemable through the invitation half: %v", err)
+	}
+	log, err := links.LinkRedemptions(link.Digest)
+	if err != nil || len(log) != 1 || !log[0].Confirmed || log[0].By != red.Principal.ID {
+		t.Fatalf("the redemption log is %+v (%v); want one CONFIRMED row naming %s", log, err, red.Principal.ID)
+	}
 }

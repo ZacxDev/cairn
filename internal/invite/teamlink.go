@@ -145,6 +145,18 @@ type LinkRedemption struct {
 	// Provisioned is true when this redemption CREATED the user — the event an operator
 	// most needs to be able to find, because a reusable link makes it repeatable.
 	Provisioned bool
+	// Confirmed is true once the AUTHORITY write this redemption exists for succeeded.
+	//
+	// 🔴 THE ROW IS WRITTEN WHEN THE LINK IS SPENT AND CONFIRMED ONLY AFTER THE JOURNAL
+	// ACCEPTED THE JOIN, AND AN UNCONFIRMED ROW IS NOT A JOIN. Round 1 measured the shape this
+	// field closes: two tabs on one GitHub identity, one reusable link — both spend, the second
+	// journal write is refused (a duplicate provider/subject), and the log named a principal
+	// that was never created as "joined (account created by this link)". The row is still
+	// WRITTEN at the spend, rather than only after, because the other order loses the audit of a
+	// REAL join whenever the process dies between the journal write and the log write — and
+	// for a reusable link the log is the only place an operator can see who it let in. So every
+	// spend is visible, and only a confirmed one is rendered as a join.
+	Confirmed bool
 }
 
 // StateAt is the ONE predicate deciding what a team link is at a given instant.
@@ -209,10 +221,14 @@ type LinkStore interface {
 	// LinkByDigest resolves a digest to a link in any state. For the minter's revoke.
 	LinkByDigest(digest string) (TeamLink, bool, error)
 	// RedeemLink records one redemption, ATOMICALLY: it increments the count and appends
-	// the [LinkRedemption] in one transaction, and only if the link is open — for a
-	// single-use link, only if its count is still zero. Exactly one of two concurrent
-	// redemptions of a single-use link wins; the loser gets [ErrNotRedeemable].
+	// an UNCONFIRMED [LinkRedemption] in one transaction, and only if the link is open — for
+	// a single-use link, only if its count is still zero. Exactly one of two concurrent
+	// redemptions of a single-use link wins; the loser gets [ErrNotRedeemable]. The returned
+	// link's `Redemptions` is this redemption's `Seq`.
 	RedeemLink(presentedToken string, by control.ID, provisioned bool, at time.Time) (TeamLink, error)
+	// ConfirmRedemption marks one redemption's row CONFIRMED — called only after the
+	// authority write it stands for succeeded. See [LinkRedemption.Confirmed].
+	ConfirmRedemption(digest string, seq int) error
 	// RevokeLink takes an OPEN link back. A link that is not open is [ErrNotRedeemable].
 	RevokeLink(digest string, at time.Time) error
 	// LinksBy is every link this principal minted, newest first, in every state.

@@ -61,11 +61,13 @@ type LinkWithLog struct {
 // RedemptionEntry is one redemption with its redeemer's display name.
 type RedemptionEntry struct {
 	Seq int
-	// Who is the redeemer's display (USER TEXT), or their id if the model no longer holds
-	// them.
+	// Who is the redeemer's display (USER TEXT), or their id if the model does not hold them
+	// — which for an UNCONFIRMED row is usually because the account was never created.
 	Who         string
 	At          time.Time
 	Provisioned bool
+	// Confirmed is `invite.LinkRedemption.Confirmed`: only a confirmed row is a join.
+	Confirmed bool
 }
 
 // ErrNotLinkable refuses a mint naming a target this actor may not confer at that role —
@@ -224,7 +226,8 @@ func (c ControlTeamLinks) Links(actor control.Principal) ([]LinkWithLog, error) 
 			if p, ok := m.PrincipalFor(control.KindUser, red.By); ok {
 				who = p.Display
 			}
-			row.Log = append(row.Log, RedemptionEntry{Seq: red.Seq, Who: who, At: red.At, Provisioned: red.Provisioned})
+			row.Log = append(row.Log, RedemptionEntry{Seq: red.Seq, Who: who, At: red.At,
+				Provisioned: red.Provisioned, Confirmed: red.Confirmed})
 		}
 		out = append(out, row)
 	}
@@ -463,23 +466,41 @@ func (c ControlTeamLinks) Redeem(ctx context.Context, token, provider, subject s
 	if err != nil {
 		return Redemption{}, err
 	}
-	// 🔴 SPENT HERE — the count incremented and the audit row written — BEFORE any
-	// authority is recorded.
-	if _, err := c.Store.RedeemLink(token, userID, true, now); err != nil {
+	// 🔴 SPENT HERE — the count incremented and an UNCONFIRMED audit row written — BEFORE
+	// any authority is recorded. The row is confirmed only after the journal accepted the
+	// join; see `invite.LinkRedemption.Confirmed` for the measured double-callback this order
+	// closes and why the row is not written after instead.
+	spent, err := c.Store.RedeemLink(token, userID, true, now)
+	if err != nil {
 		return Redemption{}, err
 	}
 	all := append([]control.Event{{
 		Kind: control.EventUserCreated, At: now, UserID: userID, Provider: provider, Subject: subject,
 	}}, events...)
 	if _, err := c.Authority.ApplyNow(ctx, all...); err != nil {
-		return Redemption{}, fmt.Errorf("ui: the team link was redeemed but the authority could not be "+
-			"recorded, so the redemption is logged and confers nothing: %w", err)
+		return Redemption{}, fmt.Errorf("ui: the team link was spent but the authority could not be "+
+			"recorded, so its redemption row stays UNCONFIRMED and confers nothing: %w", err)
 	}
 	principal, ok := c.Authority.Model().PrincipalFor(control.KindUser, userID)
 	if !ok {
 		return Redemption{}, errors.New("ui: the redemption was recorded but resolves to no principal")
 	}
-	return Redemption{Principal: principal, Provisioned: true, Link: true, Targets: len(events)}, nil
+	return c.confirmed(spent, Redemption{Principal: principal, Provisioned: true, Link: true,
+		Targets: len(events), LinkDigest: link.Digest, LinkRole: link.Role}), nil
+}
+
+// confirmed marks the spend's row confirmed and returns the redemption.
+//
+// ⚠ A FAILED CONFIRMATION DOES NOT UNDO THE JOIN AND DOES NOT FAIL THE SIGN-IN: the journal
+// already holds the authority, and refusing now would turn "the log could not be updated" into
+// "you cannot sign in" for somebody who has in fact joined. It is surfaced on
+// `Redemption.Unconfirmed` for the operator's log line instead, and the row stays unconfirmed —
+// which renders as "not confirmed", the conservative reading.
+func (c ControlTeamLinks) confirmed(spent invite.TeamLink, red Redemption) Redemption {
+	if err := c.Store.ConfirmRedemption(spent.Digest, spent.Redemptions); err != nil {
+		red.Unconfirmed = err
+	}
+	return red
 }
 
 // RedeemFor redeems a team link for a principal the control plane already holds.
@@ -503,12 +524,14 @@ func (c ControlTeamLinks) RedeemFor(ctx context.Context, token string, principal
 	if len(events) == 0 {
 		return Redemption{}, ErrAlreadyAMember
 	}
-	if _, err := c.Store.RedeemLink(token, principal.ID, false, now); err != nil {
+	spent, err := c.Store.RedeemLink(token, principal.ID, false, now)
+	if err != nil {
 		return Redemption{}, err
 	}
 	if _, err := c.Authority.ApplyNow(ctx, events...); err != nil {
-		return Redemption{}, fmt.Errorf("ui: the team link was redeemed but the authority could not be "+
-			"recorded, so the redemption is logged and confers nothing: %w", err)
+		return Redemption{}, fmt.Errorf("ui: the team link was spent but the authority could not be "+
+			"recorded, so its redemption row stays UNCONFIRMED and confers nothing: %w", err)
 	}
-	return Redemption{Principal: principal, Provisioned: false, Link: true, Targets: len(events)}, nil
+	return c.confirmed(spent, Redemption{Principal: principal, Provisioned: false, Link: true,
+		Targets: len(events), LinkDigest: link.Digest, LinkRole: link.Role}), nil
 }

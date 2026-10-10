@@ -287,10 +287,8 @@
    * affordance that looks like a label is the same defect with extra steps. */
   /* Both header links share one rule, which is a claim that they are the same KIND of
    * affordance rather than a saving. A second rule that drifted would make one of the two
-   * entry points look like metadata, which is the defect `.nav-share` exists for. */
+   * entry points look like metadata, which is the defect the header link rule exists for. */
   .nav-arcs a,
-  .nav-share a,
-  .nav-invite a,
   .nav-team a {
     @apply text-sm text-accent no-underline;
     @apply transition-colors duration-200 ease-cairn hover:text-ink hover:underline;
@@ -312,8 +310,6 @@
   .invite-index,
   .invite-project,
   .invite-minted,
-  .team-share,
-  .team-invite,
   .team-links {
     @apply bg-raised border border-line rounded-card px-5 py-4 my-4;
     @apply animate-rise;
@@ -325,8 +321,6 @@
   .invite-index h2,
   .invite-project h2,
   .invite-minted h2,
-  .team-share h3,
-  .team-invite h3,
   .team-links h3 {
     @apply border-b border-line pb-2 mb-3;
   }
@@ -584,16 +578,12 @@
   }
 
   .share-index ul,
-  .invite-index ul,
-  .team-share ul,
-  .team-invite ul {
+  .invite-index ul {
     @apply flex flex-col gap-1;
   }
 
   .share-index a,
-  .invite-index a,
-  .team-share a,
-  .team-invite a {
+  .invite-index a {
     @apply block rounded px-2 py-1.5 text-accent no-underline;
     @apply transition-[background-color,padding-left] duration-200 ease-cairn;
     @apply hover:bg-accent/10 hover:pl-3;
@@ -1172,7 +1162,7 @@
    * reason `--breakpoint-ultra` records. */
   @media (pointer: coarse) {
     /* B2 — a compact header as a GRID whose auto-placement IS the DOM order: row 1 is the
-     * wordmark and the four nav links (Team added) (equal 44px targets), row 2 the viewer line and Sign out.
+     * wordmark and the two nav links, Arcs and Team (equal 44px targets), row 2 the viewer line and Sign out.
      *
      * 🔴 NO `order`, AND THAT IS THE POINT. The first draft put the viewer and Sign out on row 1
      * with `order`, AFTER three nav links rendered on row 2 — so keyboard focus and a screen
@@ -1182,18 +1172,16 @@
      * option and was not taken: it would move the desktop header's DOM, and its reading order, too. */
     .page-header {
       @apply grid items-center gap-x-2 gap-y-1 pb-2 mb-4;
-      grid-template-columns: auto repeat(4, minmax(0, 1fr));
+      grid-template-columns: auto repeat(2, minmax(0, 1fr));
     }
 
     .nav-arcs a,
-    .nav-share a,
-    .nav-invite a,
     .nav-team a {
       @apply flex min-h-11 items-center justify-center rounded border border-line px-1;
     }
 
     .page-header .viewer {
-      @apply col-span-4 min-w-0 truncate text-xs;
+      @apply col-span-2 min-w-0 truncate text-xs;
     }
 
     .page-header .signout {
@@ -1264,9 +1252,7 @@
 
     /* These two are `block` rows already — full width, so only the height moves. */
     .share-index a,
-    .invite-index a,
-    .team-share a,
-    .team-invite a {
+    .invite-index a {
       @apply flex min-h-11 items-center wrap-anywhere;
     }
 

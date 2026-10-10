@@ -81,7 +81,7 @@ const (
 	hubArcsWhat     = "Named pieces of work, and the sessions and scopes each one touched."
 	hubScopesWhat   = "Every scope you can read, newest first — with search and the tag filter."
 	hubSessionsWhat = "Every writing session you can see, newest first."
-	hubTeamWhat     = "Who can read and write each scope you administer, and invitations."
+	hubTeamWhat     = "Who can read and write each scope you administer, invitations, and team links."
 )
 
 // HubPage is the root: four cards, each a way in. Only the scopes card carries a count.
@@ -92,9 +92,9 @@ func HubPage(v PageView) g.Node {
 			hubCard("scopes", "Scopes", ScopesPath, hubScopesWhat,
 				stat(plural(len(v.Scopes), "readable scope", "readable scopes"), "")),
 			hubCard("sessions", "Sessions", SessionsPath, hubSessionsWhat, nil),
-			// ⚠ `/share` FOR NOW: a team page that consolidates sharing and invitations is being built
-			// separately and repoints this card.
-			hubCard("team", "Team", SharePath, hubTeamWhat, nil),
+			// The Team page (#214): sharing, single invitations and team links on one page —
+			// `/share` and `/invite` now only redirect there.
+			hubCard("team", "Team", TeamPath, hubTeamWhat, nil),
 		),
 	)
 }

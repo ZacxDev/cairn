@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	g "maragu.dev/gomponents"
+
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/invite"
 )
@@ -102,10 +104,15 @@ func benignTeamLinks() *staticTeamLinks {
 				Digest: fixtureLinkDigest, Targets: []invite.Target{fixtureProjectTarget()},
 				Role: invite.LinkReader, Inviter: testIdentity().Principal.ID, Reusable: true,
 				CreatedAt: fixtureInviteCreated, ExpiresAt: fixtureInviteCreated.Add(invite.MaxLinkTTL * 400),
-				Redemptions: 1,
+				Redemptions: 2,
 			},
 			TargetLabels: []string{"project " + fixtureNamedProject.Name},
-			Log:          []RedemptionEntry{{Seq: 1, Who: "wren@notes.example.invalid", At: fixtureInviteCreated, Provisioned: true}},
+			Log: []RedemptionEntry{
+				{Seq: 1, Who: "wren@notes.example.invalid", At: fixtureInviteCreated, Provisioned: true, Confirmed: true},
+				// An UNCONFIRMED spend — the double-callback's losing tab — so every page walk
+				// renders both shapes.
+				{Seq: 2, Who: "usr_fixture_never_created", At: fixtureInviteCreated, Provisioned: true},
+			},
 		}},
 	}
 }
@@ -170,6 +177,18 @@ func (m *memLinks) RedeemLink(token string, by control.ID, provisioned bool, at 
 	return l, nil
 }
 
+func (m *memLinks) ConfirmRedemption(digest string, seq int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, r := range m.log[digest] {
+		if r.Seq == seq {
+			m.log[digest][i].Confirmed = true
+			return nil
+		}
+	}
+	return errors.New("memLinks: no such redemption")
+}
+
 func (m *memLinks) RevokeLink(digest string, at time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -204,3 +223,15 @@ var _ invite.LinkStore = (*memLinks)(nil)
 
 // joinedLabels is a test helper: every label, one string, for a substring-free comparison.
 func joinedLabels(labels []string) string { return strings.Join(labels, "|") }
+
+// inviteOnTeam and shareOnTeam render the TEAM PAGE carrying one flow's section — what the
+// tests that rendered the old `InvitePage` / `SharePage` were re-aimed at when those pages
+// moved onto `/team` (operator decision O-a). Each test still reads the same section
+// renderer; it now reads it inside the page that is actually served.
+func inviteOnTeam(v InviteView) g.Node {
+	return TeamPage(TeamView{Viewer: v.Viewer, CSRF: v.CSRF, App: v.App, Invite: v, NoInviteStore: v.NoStore})
+}
+
+func shareOnTeam(v ShareView) g.Node {
+	return TeamPage(TeamView{Viewer: v.Viewer, CSRF: v.CSRF, App: v.App, Share: v})
+}

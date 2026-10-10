@@ -303,7 +303,7 @@
     line-height: var(--tw-leading, var(--text-sm--line-height));
     color: var(--color-muted);
   }
-  .nav-arcs a, .nav-share a, .nav-invite a, .nav-team a {
+  .nav-arcs a, .nav-team a {
     font-size: var(--text-sm);
     line-height: var(--tw-leading, var(--text-sm--line-height));
     color: var(--color-accent);
@@ -334,7 +334,7 @@
   .refused {
     color: var(--color-danger);
   }
-  .scope, .share-index, .share-scope, .invite-index, .invite-project, .invite-minted, .team-share, .team-invite, .team-links {
+  .scope, .share-index, .share-scope, .invite-index, .invite-project, .invite-minted, .team-links {
     margin-block: calc(var(--spacing) * 4);
     border-radius: var(--radius-card);
     border-style: var(--tw-border-style);
@@ -345,7 +345,7 @@
     padding-block: calc(var(--spacing) * 4);
     animation: var(--animate-rise);
   }
-  .scope h2, .share-index h2, .share-scope h2, .invite-index h2, .invite-project h2, .invite-minted h2, .team-share h3, .team-invite h3, .team-links h3 {
+  .scope h2, .share-index h2, .share-scope h2, .invite-index h2, .invite-project h2, .invite-minted h2, .team-links h3 {
     margin-bottom: calc(var(--spacing) * 3);
     border-bottom-style: var(--tw-border-style);
     border-bottom-width: 1px;
@@ -869,12 +869,12 @@
     color: var(--color-muted);
     font-style: italic;
   }
-  .share-index ul, .invite-index ul, .team-share ul, .team-invite ul {
+  .share-index ul, .invite-index ul {
     display: flex;
     flex-direction: column;
     gap: var(--spacing);
   }
-  .share-index a, .invite-index a, .team-share a, .team-invite a {
+  .share-index a, .invite-index a {
     display: block;
     border-radius: 0.25rem;
     padding-inline: calc(var(--spacing) * 2);
@@ -1581,9 +1581,9 @@
       column-gap: calc(var(--spacing) * 2);
       row-gap: var(--spacing);
       padding-bottom: calc(var(--spacing) * 2);
-      grid-template-columns: auto repeat(4, minmax(0, 1fr));
+      grid-template-columns: auto repeat(2, minmax(0, 1fr));
     }
-    .nav-arcs a, .nav-share a, .nav-invite a, .nav-team a {
+    .nav-arcs a, .nav-team a {
       display: flex;
       min-height: calc(var(--spacing) * 11);
       align-items: center;
@@ -1595,7 +1595,7 @@
       padding-inline: var(--spacing);
     }
     .page-header .viewer {
-      grid-column: span 4 / span 4;
+      grid-column: span 2 / span 2;
       min-width: 0px;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -1642,7 +1642,7 @@
       justify-content: center;
       overflow-wrap: anywhere;
     }
-    .share-index a, .invite-index a, .team-share a, .team-invite a {
+    .share-index a, .invite-index a {
       display: flex;
       min-height: calc(var(--spacing) * 11);
       align-items: center;

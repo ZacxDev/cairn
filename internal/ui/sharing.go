@@ -53,6 +53,16 @@ type Sharing interface {
 	// alternative is a revoke button that cannot work.
 	Revocable(scope control.ID) ([]GrantRow, error)
 
+	// ProjectGrants is every live grant whose OBJECT is this project — "project-wide"
+	// grants, which reach every scope the project owns. It performs NO authority check:
+	// the Team page reaches it only for a project `Inviting.Invitable` returned, exactly as
+	// `Inviting.Outstanding` is reached.
+	//
+	// 🔴 IT EXISTS SO A PROJECT-WIDE `reader` GRANT (what a team link's `reader` on a project
+	// writes) CAN BE SEEN AND TAKEN BACK ON A PAGE (operator decision O-b), rather than only
+	// with the control CLI.
+	ProjectGrants(project control.ID) ([]GrantRow, error)
+
 	// Candidates is who this actor may share with. See [ControlSharing.Candidates]
 	// for the rule and why it is not "every user in the model".
 	Candidates(actor control.Principal) ([]Subject, error)
@@ -96,6 +106,11 @@ type Viewer struct {
 	// sentence it drives ("revoking every grant would not remove this one") is true
 	// for them too.
 	ByMembership bool
+	// ByProjectGrant is true when this principal reaches the scope through a live grant over
+	// the WHOLE project that owns it (directly, or as a member of a project that was granted
+	// it). Like `ByMembership` it is not exclusive; it drives the "via a project-wide grant"
+	// label, so the audience says HOW somebody reaches a scope whenever it is not a scope grant.
+	ByProjectGrant bool
 }
 
 // Subject is a principal a scope may be shared WITH.
@@ -115,6 +130,11 @@ type GrantRow struct {
 	// GrantedAt is rendered as an RFC3339 UTC instant, never as "3 days ago": a
 	// relative time computed on the server is a claim about the READER's clock.
 	GrantedAt string
+	// ProjectWide is true for a grant over the whole PROJECT rather than one scope, and
+	// Project is that project's display name (USER TEXT). Revoking one withdraws every scope
+	// the project owns, and the row says so before anybody clicks.
+	ProjectWide bool
+	Project     string
 }
 
 // Effect is how a write landed, carried out of the control plane unchanged.
@@ -239,10 +259,11 @@ func (s ControlSharing) Audience(scope control.ID) ([]Viewer, error) {
 			continue
 		}
 		out = append(out, Viewer{
-			Display:      p.Display,
-			Kind:         p.Kind,
-			Verbs:        verbs.String(),
-			ByMembership: memberOf(m, p, owner),
+			Display:        p.Display,
+			Kind:           p.Kind,
+			Verbs:          verbs.String(),
+			ByMembership:   memberOf(m, p, owner),
+			ByProjectGrant: projectGranted(m, p, owner),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -272,6 +293,26 @@ func memberOf(m control.Model, p control.Principal, project control.ID) bool {
 	return member
 }
 
+// projectGranted answers whether a live grant over the WHOLE project reaches this principal —
+// naming it directly, or naming a project it is a member of (the expansion `Resolve` does).
+func projectGranted(m control.Model, p control.Principal, project control.ID) bool {
+	if project == "" {
+		return false
+	}
+	for _, g := range m.Grants {
+		if !g.Live() || g.ObjectKind != control.ObjectProject || g.ObjectID != project {
+			continue
+		}
+		if g.SubjectKind == p.Kind && g.SubjectID == p.ID {
+			return true
+		}
+		if g.SubjectKind == control.KindProject && memberOf(m, p, g.SubjectID) {
+			return true
+		}
+	}
+	return false
+}
+
 // principals is every entity in the model that a request could be, sorted.
 //
 // It is built through `PrincipalFor` rather than from the entity rows directly, so
@@ -298,21 +339,31 @@ func principals(m control.Model) []control.Principal {
 	return out
 }
 
-// Revocable is the live grant rows naming this scope.
+// Revocable is the live grant rows that reach this scope: the ones naming it, AND the
+// project-wide ones naming the project that owns it.
 //
-// ⚠ IT IS DELIBERATELY NARROWER THAN THE AUDIENCE AND THE PAGE SAYS SO. A grant
-// naming the OWNING PROJECT as its object also confers this scope; it is not listed
-// here, because revoking it from a page about one scope would silently withdraw every
-// other scope that project owns. A wider revocation is a decision somebody makes on a
-// page about the project, not a side effect of a button on this one.
+// 🔴 THE PROJECT-WIDE ROWS ARE LISTED NOW, AND THE RULING THAT KEPT THEM OFF IS REVERSED BY
+// AN OPERATOR DECISION (O-b), NOT FORGOTTEN. This said: "revoking it from a page about one
+// scope would silently withdraw every other scope that project owns", so it listed scope
+// grants only — and the page's own note ("Somebody who reaches this scope through membership
+// … keeps it after every grant below is revoked") was then FALSE for every project-wide
+// grantee, who kept access after every listed row was revoked while not being a member. Round
+// 1 measured that. The "silently" half is answered instead by the row: a project-wide grant is
+// labelled as one, names its project, and says that revoking it withdraws every scope there.
 func (s ControlSharing) Revocable(scope control.ID) ([]GrantRow, error) {
 	m := s.Authority.Model()
-	if _, known := m.Scopes[scope]; !known {
+	sc, known := m.Scopes[scope]
+	if !known {
 		return nil, ErrNoSuchScope
 	}
 	var out []GrantRow
 	for _, g := range m.Grants {
-		if !g.Live() || g.ObjectKind != control.ObjectScope || g.ObjectID != scope {
+		if !g.Live() {
+			continue
+		}
+		onScope := g.ObjectKind == control.ObjectScope && g.ObjectID == scope
+		onOwner := g.ObjectKind == control.ObjectProject && g.ObjectID == sc.ProjectID && sc.ProjectID != ""
+		if !onScope && !onOwner {
 			continue
 		}
 		p, known := m.PrincipalFor(g.SubjectKind, g.SubjectID)
@@ -323,12 +374,41 @@ func (s ControlSharing) Revocable(scope control.ID) ([]GrantRow, error) {
 			// cannot identify is a row they cannot decide about.
 			continue
 		}
-		out = append(out, GrantRow{
-			ID:        g.ID,
-			Subject:   Subject{Kind: g.SubjectKind, ID: g.SubjectID, Display: p.Display},
-			Verbs:     g.Verbs.String(),
-			GrantedAt: g.GrantedAt.UTC().Format(time.RFC3339),
-		})
+		out = append(out, grantRow(m, g, p.Display))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// grantRow projects one grant onto what a page renders, labelling a project-wide one.
+func grantRow(m control.Model, g control.Grant, display string) GrantRow {
+	row := GrantRow{
+		ID:        g.ID,
+		Subject:   Subject{Kind: g.SubjectKind, ID: g.SubjectID, Display: display},
+		Verbs:     g.Verbs.String(),
+		GrantedAt: g.GrantedAt.UTC().Format(time.RFC3339),
+	}
+	if g.ObjectKind == control.ObjectProject {
+		row.ProjectWide = true
+		row.Project = m.Projects[g.ObjectID].Name
+	}
+	return row
+}
+
+// ProjectGrants is every live project-wide grant over `project`. No authority check — see
+// the interface.
+func (s ControlSharing) ProjectGrants(project control.ID) ([]GrantRow, error) {
+	m := s.Authority.Model()
+	var out []GrantRow
+	for _, g := range m.Grants {
+		if !g.Live() || g.ObjectKind != control.ObjectProject || g.ObjectID != project {
+			continue
+		}
+		p, known := m.PrincipalFor(g.SubjectKind, g.SubjectID)
+		if !known {
+			continue
+		}
+		out = append(out, grantRow(m, g, p.Display))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
@@ -468,11 +548,9 @@ func (s ControlSharing) Unshare(ctx context.Context, actor control.Principal, au
 	if !known {
 		return Effect{}, ErrNotPermitted
 	}
-	if g.ObjectKind != control.ObjectScope || !auth.Allows(g.ObjectID, control.VerbAdmin) {
-		// A grant over a PROJECT is refused here rather than authorised against the
-		// project, because this surface has no project page and `Revocable` never
-		// offers one. Refusing with the same error an unauthorised caller gets keeps
-		// the two indistinguishable.
+	if !mayRevokeGrant(m, actor, auth, g) {
+		// Refusing with the same error an unknown grant gets keeps the two
+		// indistinguishable.
 		return Effect{}, ErrNotPermitted
 	}
 	res, err := s.Authority.ApplyNow(ctx, control.Event{
@@ -485,6 +563,33 @@ func (s ControlSharing) Unshare(ctx context.Context, actor control.Principal, au
 		return Effect{}, err
 	}
 	return effectOf(res), nil
+}
+
+// mayRevokeGrant is who may take a grant back, by the grant's OBJECT, read from the row.
+//
+//   - a SCOPE grant: `admin` on that scope in the request's own authorization — unchanged.
+//   - a PROJECT-WIDE grant (operator decision O-b): MEMBERSHIP authority over the project —
+//     `CanManageMembers` on the actor's own membership, the rule that lets them CREATE one
+//     (`mayLink`'s project arm). It is not derived from scope admin: an outsider granted
+//     `admin` on one scope must not withdraw a grant over the whole project.
+//
+// 🔴 A NARROWED CREDENTIAL TAKES BACK NO PROJECT-WIDE GRANT. Membership authority is not in an
+// `Authorization`, so a narrowing cannot bound it — `membershipActor`'s argument, applied here
+// from `auth.Narrowed()` because this method is handed the attribution principal
+// (`handleUnshare` passes `id.Principal` for the journal's actor), not `membershipActor(id)`.
+func mayRevokeGrant(m control.Model, actor control.Principal, auth control.Authorization, g control.Grant) bool {
+	switch g.ObjectKind {
+	case control.ObjectScope:
+		return auth.Allows(g.ObjectID, control.VerbAdmin)
+	case control.ObjectProject:
+		if auth.Narrowed() || actor.Kind != control.KindUser {
+			return false
+		}
+		role, member := m.RoleIn(g.ObjectID, actor.ID)
+		return member && role.CanManageMembers()
+	default:
+		return false
+	}
 }
 
 // effectOf projects a `control.WriteResult` onto what the page renders.

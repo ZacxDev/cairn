@@ -128,6 +128,11 @@ var migrations = []Migration{
 				redeemed_by TEXT        NOT NULL,
 				redeemed_at TIMESTAMPTZ NOT NULL,
 				provisioned BOOLEAN     NOT NULL,
+				-- 🔴 FALSE until the authority write the row stands for succeeded;
+				-- see invite.LinkRedemption.Confirmed. (Version 2 had never been applied
+				-- outside a test when this column was added, so it is edited in place
+				-- rather than appended as version 3.)
+				confirmed   BOOLEAN     NOT NULL DEFAULT FALSE,
 				PRIMARY KEY (digest, seq)
 			)`,
 		},
@@ -214,19 +219,8 @@ func (d *DB) migrateThrough(ctx context.Context, through int) error {
 		return err
 	}
 
-	known := map[int]bool{}
-	for _, m := range migrations {
-		known[m.Version] = true
-	}
-	for v := range applied {
-		if !known[v] {
-			return fmt.Errorf(
-				"pgstore: this database has schema version %d applied and this build knows only %v — "+
-					"it was migrated by a NEWER build. Refusing to start rather than run against a schema "+
-					"this binary has never seen: the failures that produces are query errors at request time, "+
-					"in places nobody is looking, instead of one refusal here",
-				v, knownVersions())
-		}
+	if err := refuseFromTheFuture(applied, knownVersions()); err != nil {
+		return err
 	}
 
 	for _, m := range migrations {
@@ -235,6 +229,44 @@ func (d *DB) migrateThrough(ctx context.Context, through int) error {
 		}
 		if err := d.applyOne(ctx, conn, m); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// refuseFromTheFuture is the startup refusal of a database migrated by a NEWER build, as ONE
+// predicate over (applied, known) — so the rollback recipe's test can ask what an OLDER build
+// (one that knows fewer versions) would decide, through the same code.
+//
+// # 🔴 THE ROLLBACK RECIPE, BECAUSE MIGRATION 2 MAKES THIS REFUSAL REACHABLE ON A ROLLBACK
+//
+// A build that knows only version 1, started against a database this build migrated to 2,
+// REFUSES TO START — and on `cairn-ui` that takes sign-in down. Rolling back across version 2
+// therefore needs one statement, run against the database BEFORE the old image starts:
+//
+//	DELETE FROM schema_migrations WHERE version = 2;
+//
+// The old build then finds only versions it knows and starts; it never reads the three
+// `team_*` tables, so they can stay (their rows — links and their redemption log — survive).
+// Re-upgrading is safe: every version-2 statement is `IF NOT EXISTS`, so the newer build
+// re-applies version 2 over the tables that are still there and records it again.
+// `TestTheRollbackRecipeLetsAnOlderBuildStartAndReUpgrades` measures all three steps.
+//
+// ⚠ A team link minted before the rollback is NOT redeemable while the old build runs: it
+// does not know the tables exist, so the join path answers "not redeemable" for its token.
+func refuseFromTheFuture(applied map[int]bool, known []int) error {
+	isKnown := map[int]bool{}
+	for _, v := range known {
+		isKnown[v] = true
+	}
+	for v := range applied {
+		if !isKnown[v] {
+			return fmt.Errorf(
+				"pgstore: this database has schema version %d applied and this build knows only %v — "+
+					"it was migrated by a NEWER build. Refusing to start rather than run against a schema "+
+					"this binary has never seen: the failures that produces are query errors at request time, "+
+					"in places nobody is looking, instead of one refusal here",
+				v, known)
 		}
 	}
 	return nil

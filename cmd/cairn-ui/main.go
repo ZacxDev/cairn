@@ -441,11 +441,7 @@ func main() {
 		// taken, and every invite read nil-panics on `c.Invites` at the first click. The
 		// typed-nil trap, in the one place it would be silent.
 		inviting ui.Inviting
-		// teamLinks is the Team page's link half, declared as the INTERFACE for `inviting`'s
-		// reason: a `ui.ControlTeamLinks` value here would be a non-nil interface over a zero
-		// struct, and the Team page would nil-panic instead of saying `NoInviteStore`.
-		teamLinks ui.TeamLinking
-		pgDB      *pgstore.DB
+		pgDB     *pgstore.DB
 	)
 	if *dbDSN != "" {
 		pgDB, err = openDatabase(*dbDSN)
@@ -468,14 +464,9 @@ func main() {
 		// against one model and recorded against another is a page that authorises from a
 		// world that no longer exists. This is the third call site handed that value, and
 		// all three are the same object on purpose.
-		// 🔴 ONE `ControlTeamLinks`, HANDED TO BOTH: the Team page mints and lists through
-		// it, and `ControlInviting` hands it every token its own store does not know, so a
-		// team link is redeemed through the invitation's one join path. Same authority, same
-		// database — two objects would be a link minted against one world and redeemed
-		// against another.
-		links := &ui.ControlTeamLinks{Authority: authority, Store: pgstore.NewTeamLinkStore(pgDB)}
-		inviting = ui.ControlInviting{Authority: authority, Invites: pgstore.NewInviteStore(pgDB), Links: links}
-		teamLinks = *links
+		// Both halves from ONE database, through `wireInvitations` — see it for why that is
+		// a function rather than two lines here.
+		inviting = wireInvitations(authority, pgstore.NewInviteStore(pgDB), pgstore.NewTeamLinkStore(pgDB))
 		// 🔴 SAY THAT `-session-file` IS NOW INERT, BECAUSE A MANIFEST CARRYING BOTH IS THE
 		// SHAPE THAT ARRIVES. It is announced rather than refused: the flag has a code
 		// DEFAULT, so "set" cannot be distinguished from "defaulted" without asking
@@ -675,10 +666,7 @@ func main() {
 		// in the ledger either way and say `ui.NoInviteStore` — see its own comment for why
 		// the READ answers 200 there and the WRITES 501.
 		Inviting: inviting,
-		// nil exactly when `Inviting` is — both need the database. `ui.New` refuses the one
-		// shape that is wrong (links with no invitation half to redeem them).
-		TeamLinks: teamLinks,
-		Sessions:  sessions,
+		Sessions: sessions,
 		// nil unless the agent listener started above: the browser's badges read the SAME store the
 		// listener writes, through `presence.Store.For` alone (`internal/ui/presence.go`).
 		Presence: browserPresence,
@@ -847,7 +835,7 @@ func main() {
 	}
 	// Read off the wired object for the reason this whole line is: a caption from the flag
 	// would announce team links on a deployment whose branch never built them.
-	if cfg.TeamLinks != nil {
+	if cfg.Inviting != nil && cfg.Inviting.TeamLinks() != nil {
 		invitesIn += ", team links in postgres"
 	}
 	stateMode := sessionsIn + ", " + invitesIn

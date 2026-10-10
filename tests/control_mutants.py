@@ -497,8 +497,10 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-share-page-candidates-bypass-membership-actor",
         path="internal/ui/sharehandlers.go",
-        old="\tcandidates, err := s.sharing.Candidates(membershipActor(id))\n\tif err != nil {\n\t\twritePlain(w, http.StatusInternalServerError, \"the authority could not be read\")\n\t\treturn\n\t}\n\n\tview.Scope",
-        new="\tcandidates, err := s.sharing.Candidates(id.Principal)\n\tif err != nil {\n\t\twritePlain(w, http.StatusInternalServerError, \"the authority could not be read\")\n\t\treturn\n\t}\n\n\tview.Scope",
+        # Re-derived when the share page became the Team page's `shareSection` (#214, O-a): its
+        # returns carry the section's value now.
+        old="\tcandidates, err := s.sharing.Candidates(membershipActor(id))\n\tif err != nil {\n\t\twritePlain(w, http.StatusInternalServerError, \"the authority could not be read\")\n\t\treturn ShareView{}, false\n\t}\n\n\tview.Scope",
+        new="\tcandidates, err := s.sharing.Candidates(id.Principal)\n\tif err != nil {\n\t\twritePlain(w, http.StatusInternalServerError, \"the authority could not be read\")\n\t\treturn ShareView{}, false\n\t}\n\n\tview.Scope",
         killer="TestANarrowedAdminBearerIsOfferedNoShareCandidates",
         why="the share page lists every collaborator across the owner's projects to a caller "
         "whose narrowing excludes them.",
@@ -2464,8 +2466,10 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-unshare-skips-the-objects-authority-check",
         path="internal/ui/sharing.go",
-        old="\tif g.ObjectKind != control.ObjectScope || !auth.Allows(g.ObjectID, control.VerbAdmin) {",
-        new="\tif g.ObjectKind != control.ObjectScope {\n\t\t_ = auth",
+        # Re-derived when `Unshare`'s check became `mayRevokeGrant`, by object kind (#214, O-b):
+        # the SCOPE arm is where this row's question lives now.
+        old="\tcase control.ObjectScope:\n\t\treturn auth.Allows(g.ObjectID, control.VerbAdmin)",
+        new="\tcase control.ObjectScope:\n\t\treturn auth.Allows(g.ObjectID, control.VerbAdmin) || true",
         killer="TestARevokeIsAuthorisedFromTheGrantRatherThanFromTheForm",
         why="the revocation already found the grant, so re-checking authority over its "
         "object reads like belt-and-braces — it is the only thing stopping admin on scope "
@@ -2476,7 +2480,7 @@ MUTANTS: tuple[Mutant, ...] = (
         path="internal/ui/sharehandlers.go",
         old="\tif !id.Auth.Allows(scope, control.VerbAdmin) {\n"
         "\t\twritePlain(w, http.StatusNotFound, scopeRefusal)\n"
-        "\t\treturn\n"
+        "\t\treturn ShareView{}, false\n"
         "\t}",
         new="\t_ = scopeRefusal",
         killer="TestTheSharePageRefusesAScopeThisCallerCannotAdminister",
@@ -2860,7 +2864,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-invite-narrowing-skipped-before-the-unnarrowed-read",
         path="internal/ui/invitehandlers.go",
-        old="\tchosen, found := pickProject(view.Projects, project)\n\tif !found {\n\t\twritePlain(w, http.StatusNotFound, inviteRefusal)\n\t\treturn\n\t}",
+        old="\tchosen, found := pickProject(view.Projects, project)\n\tif !found {\n\t\twritePlain(w, http.StatusNotFound, inviteRefusal)\n\t\treturn InviteView{}, false\n\t}",
         new="\tchosen, _ := pickProject(view.Projects, project)",
         killer="TestAProjectThatIsNotInvitableIsRefusedBEFORETheUnnarrowedRead",
         why="`Inviting.Outstanding` performs NO authority check and says so in its own doc — "
@@ -2876,9 +2880,11 @@ MUTANTS: tuple[Mutant, ...] = (
         # there is ONE HTML writer and no weaker value to reach for. What is left that can lose the
         # mint's `no-store` is BYPASSING the writer at the mint's call site: rendering straight into the
         # ResponseWriter.
-        old="Expires: inv.ExpiresAt.UTC().Format(time.RFC3339),\n\t\t},\n\t}\n\ts.renderInvite(w, view)\n}",
-        new="Expires: inv.ExpiresAt.UTC().Format(time.RFC3339),\n\t\t},\n\t}\n"
-        "\tw.Header().Set(\"Content-Type\", \"text/html; charset=utf-8\")\n\t_ = InvitePage(view).Render(w)\n}",
+        # Re-derived a THIRD time in #214: the mint renders on the Team page now (O-a), through
+        # `renderTeamAfterMint` and so through the one writer; the bypass is still the same shape.
+        old="\ts.renderTeamAfterMint(w, r, id, func(v *TeamView) { v.Invite = view })",
+        new="\tw.Header().Set(\"Content-Type\", \"text/html; charset=utf-8\")\n"
+        "\t_ = TeamPage(TeamView{Viewer: id.Principal.Display, Invite: view}).Render(w)",
         killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
         why="rendering straight into the ResponseWriter to skip the buffer looks like an optimisation, "
         "and it skips the one writer that sets `no-store` — on the response whose BODY is a bearer "
@@ -2989,8 +2995,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-invite-read-refuses-instead-of-answering-with-no-store",
         path="internal/ui/invitehandlers.go",
-        old="\tif s.inviting == nil {\n\t\t// Nothing to ask. The page says so — see [NoInviteStore] for why this is a page\n\t\t// rather than a refusal.\n\t\ts.renderInvite(w, view)\n\t\treturn\n\t}",
-        new="\tif s.inviting == nil {\n\t\ts.refuseWithoutInviteStore(w)\n\t\treturn\n\t}",
+        old="\tif s.inviting == nil {\n\t\t// Nothing to ask. The page says so — see [NoInviteStore] for why this is a page\n\t\t// rather than a refusal.\n\t\treturn view, true\n\t}",
+        new="\tif s.inviting == nil {\n\t\ts.refuseWithoutInviteStore(w)\n\t\treturn InviteView{}, false\n\t}",
         killer="TestTheInviteRowsAnswerHonestlyWithNoInviteStore",
         why="consistency with the two WRITES, and with `refuseUnconfiguredOAuth` one file "
         "over. `shell` links this path from the header of every page unconditionally, so a "
@@ -3009,8 +3015,10 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-invite-nav-affordance-stops-linking",
         path="internal/ui/render.go",
-        old='h.P(h.Class("nav-invite"), h.A(h.Href(InvitePath), g.Text("Invitations"))),',
-        new='h.P(h.Class("nav-invite"), g.Text("Invitations")),',
+        # Re-aimed in #214: the header's ONE entry to invitations (and sharing, and team links)
+        # is the Team link now (O-a / round 0 D3); the row keeps its name and its defect.
+        old='h.P(h.Class("nav-team"), h.A(h.Href(TeamPath), g.Text("Team"))),',
+        new='h.P(h.Class("nav-team"), g.Text("Team")),',
         killer="TestEveryRenderedPageCarriesBothNavigationAffordances",
         why="an affordance that looks like a label is how the SHARE flow shipped deployed, "
         "authorised, route-registered, test-covered and reported MISSING. Same surface, same "
@@ -3203,6 +3211,128 @@ MUTANTS: tuple[Mutant, ...] = (
         why="the clause that makes the product sound weakest is the reuse one: a reusable link is "
         "open enrolment until it expires, and a notice without that sentence lets a minter "
         "believe a link is for the one person they sent it to.",
+    ),
+    # ---- #214's fix round: the audit's findings and the operator's decisions ----------------
+    Mutant(
+        name="ui-teamlink-log-confirms-before-the-authority-write",
+        path="internal/ui/teamlinks.go",
+        old="\tspent, err := c.Store.RedeemLink(token, userID, true, now)\n\tif err != nil {\n\t\treturn Redemption{}, err\n\t}",
+        new="\tspent, err := c.Store.RedeemLink(token, userID, true, now)\n\tif err != nil {\n\t\treturn Redemption{}, err\n\t}\n"
+        "\t_ = c.Store.ConfirmRedemption(spent.Digest, spent.Redemptions)",
+        killer="TestTheRedemptionLogNamesOnlyRealJoins",
+        why="round 1 🟡1, restored: the audit row trusted at the spend. Two tabs on one identity "
+        "spend one reusable link, one journal write is refused, and the log names a principal that "
+        "was never created as 'joined (account created by this link)'.",
+    ),
+    Mutant(
+        name="ui-team-log-renders-an-unconfirmed-row-as-a-join",
+        path="internal/ui/team.go",
+        old="\t\t\tif !red.Confirmed {",
+        new="\t\t\tif false {",
+        killer="TestTheRedemptionLogNamesOnlyRealJoins",
+        extra_killers=("TestTheTeamPageRendersEveryLinkWithItsLog",),
+        why="the store records the truth and the page ignores it — an attempt rendered as a join.",
+    ),
+    Mutant(
+        name="ui-share-revocable-drops-project-wide-grants",
+        path="internal/ui/sharing.go",
+        old="\t\tif !onScope && !onOwner {",
+        new="\t\tif !onScope && (!onOwner || true) {",
+        killer="TestAProjectWideGrantIsListedLabelledAndRevocable",
+        why="round 1 🟡3 and O-b, restored: the take-back list back to scope grants only, so the "
+        "page's note ('keeps it after every grant below is revoked') is false for a project-wide "
+        "grantee and their access needs the CLI to remove.",
+    ),
+    Mutant(
+        name="ui-share-audience-loses-the-project-wide-label",
+        path="internal/ui/sharing.go",
+        old="ByProjectGrant: projectGranted(m, p, owner),",
+        new="ByProjectGrant: false && projectGranted(m, p, owner),",
+        killer="TestAProjectWideGrantIsListedLabelledAndRevocable",
+        why="an audience row that says neither 'via membership' nor 'via a project-wide grant' reads "
+        "as a scope grant — which the take-back list then does not show.",
+    ),
+    Mutant(
+        name="ui-unshare-refuses-every-project-wide-grant",
+        path="internal/ui/sharing.go",
+        old="\t\treturn member && role.CanManageMembers()",
+        new="\t\treturn member && role.CanManageMembers() && false",
+        killer="TestAProjectWideGrantIsListedLabelledAndRevocable",
+        why="the pre-O-b rule ('a grant over a PROJECT is refused here'), restored: a project-wide "
+        "grant is listed with a button that cannot work.",
+    ),
+    Mutant(
+        name="ui-unshare-project-grant-ignores-the-narrowing",
+        path="internal/ui/sharing.go",
+        old="\t\tif auth.Narrowed() || actor.Kind != control.KindUser {",
+        new="\t\tif actor.Kind != control.KindUser {",
+        killer="TestANarrowedBearerCannotRevokeAProjectWideGrant",
+        extra_killers=("TestAProjectWideGrantIsListedLabelledAndRevocable",),
+        why="membership authority reached through a credential narrowed to one scope — the "
+        "escalation `membershipActor` exists for, through `handleUnshare`'s attribution principal.",
+    ),
+    Mutant(
+        name="ui-unshare-project-grant-for-any-member",
+        path="internal/ui/sharing.go",
+        old="\t\treturn member && role.CanManageMembers()",
+        new="\t\treturn member && role != \"\"",
+        killer="TestAProjectWideGrantIsListedLabelledAndRevocable",
+        why="belonging taken for managing: a plain member withdrawing a colleague's project-wide access.",
+    ),
+    Mutant(
+        name="ui-old-share-path-drops-its-query",
+        path="internal/ui/sharehandlers.go",
+        old="\tredirectToTeam(w, teamHref(r.URL.RawQuery, teamShareAnchor))",
+        new="\tredirectToTeam(w, teamHref(\"\", teamShareAnchor))",
+        killer="TestTheOldFlowPathsRedirectToTheTeamPage",
+        why="every bookmarked `/share?scope=…` and every pre-move redirect landing on the index "
+        "instead of the scope it named (O-a: the query is carried).",
+    ),
+    Mutant(
+        name="ui-old-invite-path-keeps-the-pre-move-code",
+        path="internal/ui/invitehandlers.go",
+        old="\tif q.Get(QueryOutcome) == inviteOutcomeRevokedBeforeTeam {",
+        new="\tif false {",
+        killer="TestTheOldFlowPathsRedirectToTheTeamPage",
+        why="on one page `revoked` is the SHARE flow's code: an old invite-revoke link would render "
+        "the share banner about a write that never happened.",
+    ),
+    Mutant(
+        name="ui-team-redirect-gains-an-html-body",
+        path="internal/ui/team.go",
+        old="\tw.Header().Set(\"Location\", href)\n\tw.WriteHeader(http.StatusSeeOther)",
+        new="\tw.Header().Set(\"Location\", href)\n\tw.Header().Set(\"Content-Type\", \"text/html; charset=utf-8\")\n"
+        "\tw.WriteHeader(http.StatusSeeOther)",
+        killer="TestEveryNonPublicHTMLRowIsNoStore",
+        why="`http.Redirect`'s shape: an HTML response this surface did not render through "
+        "`writeHTML`, so it carries no `no-store`.",
+    ),
+    Mutant(
+        name="ui-inviting-without-links-builds",
+        path="internal/ui/server.go",
+        old="if teamLinks = cfg.Inviting.TeamLinks(); teamLinks == nil {",
+        new="if teamLinks = cfg.Inviting.TeamLinks(); false {",
+        killer="TestAnInvitationHalfWithoutTeamLinksIsRefused",
+        why="round 0 D2 / round 1 🟡4: a half-wired server built — invitations whose store never "
+        "hands an unknown token to the link store, so every team link minted refuses at the callback.",
+    ),
+    Mutant(
+        name="main-drops-the-link-store-from-the-invitation-half",
+        path="cmd/cairn-ui/invitations.go",
+        old="\treturn ui.ControlInviting{Authority: authority, Invites: invites, Links: team}",
+        new="\t_ = team\n\treturn ui.ControlInviting{Authority: authority, Invites: invites}",
+        killer="TestTheWiredInvitationHalfRedeemsATeamLink",
+        why="round 1 🟡4, MEASURED: deleting `Links: links` in `main` left both tiers green. This is "
+        "that edit, at the one function `main` now builds both halves with.",
+    ),
+    Mutant(
+        name="ui-link-log-line-loses-the-link",
+        path="internal/ui/inviting.go",
+        old="\tif !r.Link {\n\t\treturn fmt.Sprintf(\"project=%s role=%s\", r.Project, r.Role)",
+        new="\tif true {\n\t\treturn fmt.Sprintf(\"project=%s role=%s\", r.Project, r.Role)",
+        killer="TestALinkRedemptionLogLineNamesTheLink",
+        why="round 1 🟢5, restored: a provisioning line for a team link with a blank project and "
+        "role — a principal created that nobody can attribute to a link.",
     ),
 
     # ---- the `## Requirements` section: the boundary, the count, the attribution ----

@@ -295,12 +295,13 @@ func TestTheJournalWorldReachesTheGrantForm(t *testing.T) {
 // TestTheJournalFallBackRefusalNamesEachDefect is the negative control on `refuseJournalWorldFellBack`.
 func TestTheJournalFallBackRefusalNamesEachDefect(t *testing.T) {
 	good := func() []*Capture {
+		// Both flows live on `/team` (O-a): the bare page and one per-scope page, each with the
+		// no-database notice on its invite and link sections.
+		noStore := func() []string { return []string{ui.NoInviteStore, ui.NoInviteStore} }
 		return []*Capture{
-			{Target: Target{Path: ui.SharePath}, World: JournalWorld},
-			{Target: Target{Path: ui.SharePath + "?scope=scp_x"}, World: JournalWorld,
+			{Target: Target{Path: ui.TeamPath}, World: JournalWorld, ReadOnlyNotices: noStore()},
+			{Target: Target{Path: ui.TeamPath + "?scope=scp_x"}, World: JournalWorld, ReadOnlyNotices: noStore(),
 				FormActions: []string{ui.SignOutPath, ui.UnsharePath, ui.SharePath}},
-			{Target: Target{Path: ui.InvitePath}, World: JournalWorld, ReadOnlyNotices: []string{ui.NoInviteStore}},
-			{Target: Target{Path: ui.TeamPath}, World: JournalWorld, ReadOnlyNotices: []string{ui.NoInviteStore, ui.NoInviteStore}},
 		}
 	}
 	if err := refuseJournalWorldFellBack(good()); err != nil {
@@ -319,22 +320,18 @@ func TestTheJournalFallBackRefusalNamesEachDefect(t *testing.T) {
 			cs[0].FormActions, cs[1].FormActions = []string{ui.SharePath}, nil
 			return cs
 		}, "NO per-scope share page with its grant form"},
-		{"the share page says the authority is read-only (token-file)", func(cs []*Capture) []*Capture {
-			cs[0].ReadOnlyNotices = []string{ui.ReadOnlyAuthority}
+		{"the share section says the authority is read-only (token-file)", func(cs []*Capture) []*Capture {
+			cs[0].ReadOnlyNotices = append(cs[0].ReadOnlyNotices, ui.ReadOnlyAuthority)
 			return cs
 		}, "TOKEN-FILE authority's read-only notice"},
-		{"the invite index lacks the no-database notice", func(cs []*Capture) []*Capture {
-			cs[2].ReadOnlyNotices = nil
-			return cs
-		}, "NONE carries the no-database notice"},
 		{"the Team page lacks the no-database notice", func(cs []*Capture) []*Capture {
-			cs[3].ReadOnlyNotices = nil
+			cs[0].ReadOnlyNotices, cs[1].ReadOnlyNotices = nil, nil
 			return cs
-		}, "Team page was captured 1 time(s) and NONE"},
-		{"the Team page says it on ONE half only", func(cs []*Capture) []*Capture {
-			cs[3].ReadOnlyNotices = []string{ui.NoInviteStore}
+		}, "Team page was captured 2 time(s) and NONE"},
+		{"the Team page says it on ONE section only", func(cs []*Capture) []*Capture {
+			cs[0].ReadOnlyNotices, cs[1].ReadOnlyNotices = []string{ui.NoInviteStore}, []string{ui.NoInviteStore}
 			return cs
-		}, "Team page was captured 1 time(s) and NONE"},
+		}, "Team page was captured 2 time(s) and NONE"},
 		{"no capture at all", func([]*Capture) []*Capture { return nil }, "NO per-scope share page"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

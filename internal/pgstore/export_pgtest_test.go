@@ -33,3 +33,25 @@ func OpenThroughForTest(through int) func(context.Context, string) (*DB, error) 
 		return db, nil
 	}
 }
+
+// OlderBuildRefusalForTest is the startup decision an OLDER build — one that knows versions
+// up to `knownThrough` and nothing newer — would take against this database, through the
+// same predicate (`refuseFromTheFuture`) every build runs. nil means it would start.
+func OlderBuildRefusalForTest(ctx context.Context, db *DB, knownThrough int) error {
+	conn, err := db.sql.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	applied, err := db.appliedVersions(ctx, conn)
+	if err != nil {
+		return err
+	}
+	var known []int
+	for _, m := range migrations {
+		if m.Version <= knownThrough {
+			known = append(known, m.Version)
+		}
+	}
+	return refuseFromTheFuture(applied, known)
+}

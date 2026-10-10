@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/ZacxDev/cairn/internal/control"
@@ -47,9 +46,22 @@ const (
 	effectNow = "now"
 )
 
-// handleSharePage renders the share flow: the index with no `?scope=`, one scope's
-// page with it.
-func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request, id identity.Identity) {
+// handleSharePage answers `GET /share` with a 303 to the Team page's share section,
+// carrying the query unchanged (`?scope=`, `?outcome=`, `?by=`).
+//
+// 🔴 THE SHARE FLOW LIVES ON `/team` NOW (operator decision O-a: "one page" means the FORMS
+// move there). The row is KEPT so every link, bookmark and redirect into `/share` still lands
+// somewhere, and its POST rows are untouched — they keep both cross-site gates by METHOD. It
+// answers BEFORE any authority read: a redirect renders no answer about authority, which is
+// why the row is no longer `content` (`routes`).
+func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request, _ identity.Identity) {
+	redirectToTeam(w, teamHref(r.URL.RawQuery, teamShareAnchor))
+}
+
+// shareSection builds the Team page's share section: the index with no `?scope=`, one
+// scope's audience, take-back list and grant form with it. It writes the uniform refusal
+// itself and answers ok=false when the request named a scope it may not see.
+func (s *Server) shareSection(w http.ResponseWriter, r *http.Request, id identity.Identity) (ShareView, bool) {
 	view := ShareView{
 		Viewer: id.Principal.Display,
 		App:    s.app,
@@ -62,7 +74,7 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request, id iden
 	}
 
 	// 🔴 `Administrable` IS POPULATED ON BOTH BRANCHES, NOT JUST THE INDEX, AND THAT IS
-	// A CORRECTION RATHER THAN THOROUGHNESS. [SharePage] renders the index whenever the
+	// A CORRECTION RATHER THAN THOROUGHNESS. [TeamPage] renders the index whenever the
 	// scope's NAME is empty, and `namedScope` returns an empty one for a scope the
 	// authority cannot name. Filling this field only on the index branch therefore left
 	// one path — unreachable today, behind the `Allows` check below — on which the page
@@ -75,8 +87,7 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request, id iden
 
 	scope := control.ID(r.URL.Query().Get(QueryScope))
 	if scope == "" {
-		s.renderShare(w, view)
-		return
+		return view, true
 	}
 
 	// 🔴 THE AUTHORITY CHECK IS BEFORE EVERY READ BELOW, AND IT IS THE REQUEST'S OWN
@@ -85,7 +96,7 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request, id iden
 	// authorised against the same one.
 	if !id.Auth.Allows(scope, control.VerbAdmin) {
 		writePlain(w, http.StatusNotFound, scopeRefusal)
-		return
+		return ShareView{}, false
 	}
 
 	audience, err := s.sharing.Audience(scope)
@@ -98,31 +109,31 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request, id iden
 		// they could see a moment ago has just been deleted.
 		if errors.Is(err, ErrNoSuchScope) {
 			writePlain(w, http.StatusNotFound, scopeRefusal)
-			return
+			return ShareView{}, false
 		}
 		writePlain(w, http.StatusInternalServerError, "the authority could not be read")
-		return
+		return ShareView{}, false
 	}
 	revocable, err := s.sharing.Revocable(scope)
 	if err != nil {
 		if errors.Is(err, ErrNoSuchScope) {
 			writePlain(w, http.StatusNotFound, scopeRefusal)
-			return
+			return ShareView{}, false
 		}
 		writePlain(w, http.StatusInternalServerError, "the authority could not be read")
-		return
+		return ShareView{}, false
 	}
 	candidates, err := s.sharing.Candidates(membershipActor(id))
 	if err != nil {
 		writePlain(w, http.StatusInternalServerError, "the authority could not be read")
-		return
+		return ShareView{}, false
 	}
 
 	view.Scope = s.namedScope(id.Auth, scope)
 	view.Audience = audience
 	view.Revocable = revocable
 	view.Candidates = candidates
-	s.renderShare(w, view)
+	return view, true
 }
 
 // namedScope is the scope's (id, name) pair taken from the CALLER'S AUTHORITY.
@@ -133,7 +144,7 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request, id iden
 // display name on the page through a path that has not been narrowed, which is the
 // shape `Authorization.NamedScopes`'s own comment refuses.
 //
-// ⚠ IT RETURNS A ZERO NAME IF THE AUTHORITY DOES NOT HOLD ONE, AND [SharePage] READS AN
+// ⚠ IT RETURNS A ZERO NAME IF THE AUTHORITY DOES NOT HOLD ONE, AND [TeamPage] READS AN
 // EMPTY NAME AS "render the index". That is a safe degradation rather than a wrong
 // page: the caller sees the list they may administer instead of a scope page with a
 // blank heading. It is unreachable behind the `Allows` check above, which requires the
@@ -145,15 +156,6 @@ func (s *Server) namedScope(auth control.Authorization, scope control.ID) contro
 		}
 	}
 	return control.NamedScope{}
-}
-
-func (s *Server) renderShare(w http.ResponseWriter, view ShareView) {
-	var b strings.Builder
-	if err := SharePage(view).Render(&b); err != nil {
-		writePlain(w, http.StatusInternalServerError, "the page could not be rendered")
-		return
-	}
-	writeHTML(w, http.StatusOK, b.String())
 }
 
 // handleShare records a grant.
@@ -238,10 +240,13 @@ func (s *Server) handleUnshare(w http.ResponseWriter, r *http.Request, id identi
 		return
 	}
 	if !known {
-		// The revoke succeeded, so `Unshare` did resolve the grant; only this
-		// ancillary lookup missed it, which a concurrent refresh can cause. Redirect
-		// to the index rather than to a scope page addressed by an empty id.
-		http.Redirect(w, r, SharePath, http.StatusSeeOther)
+		// The grant named no SCOPE — a project-wide grant (operator decision O-b), or a
+		// concurrent refresh lost the row. Land on the Team page with the outcome, which
+		// renders the same banner the scope page would.
+		q := url.Values{}
+		q.Set(QueryOutcome, outcomeRevoked)
+		setEffect(q, effect)
+		http.Redirect(w, r, teamHref(q.Encode(), teamShareAnchor), http.StatusSeeOther)
 		return
 	}
 	s.redirectToScope(w, r, scope, outcomeRevoked, effect)
@@ -279,13 +284,18 @@ func (s *Server) redirectToScope(w http.ResponseWriter, r *http.Request, scope c
 	q := url.Values{}
 	q.Set(QueryScope, string(scope))
 	q.Set(QueryOutcome, outcome)
+	setEffect(q, effect)
+	http.Redirect(w, r, teamHref(q.Encode(), teamShareAnchor), http.StatusSeeOther)
+}
+
+// setEffect carries the effective-by instant on a redirect, `redirectToScope`'s encoding.
+func setEffect(q url.Values, effect Effect) {
 	switch {
 	case effect.Immediate:
 		q.Set(QueryEffectiveBy, effectNow)
 	case effect.EffectiveBy != "":
 		q.Set(QueryEffectiveBy, effect.EffectiveBy)
 	}
-	http.Redirect(w, r, SharePath+"?"+q.Encode(), http.StatusSeeOther)
 }
 
 // pick finds a candidate by id. A linear scan over a list the caller is about to be
