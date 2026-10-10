@@ -81,6 +81,12 @@ field names and types alone.
   flake ref) that cannot be decomposed into invocations each carrying an explicit `--scope` adds
   `*`. Revision 7's "a mis-parsed command ADDS a scope … for every remaining path" is retracted, the
   `*` rule is scoped to VISIBLE invocations, and T3 names unseen program names as the residual.
+- *Revision 9* replaces revision 8's recognition rule, which was vacuous over zero invocations,
+  never required every candidate token to be accounted for, and missed `#cairn-go`, `#default` and
+  the bare flake ref. A line is now a candidate when ANY token contains `cairn` or
+  `subsystem-recall`, and contributes only explicit scopes when (a) ≥ 1 invocation is parsed, (b)
+  every candidate token is a recognised invocation's program word, and (c) each carries `--scope`;
+  otherwise it adds `*` beside what it parsed.
 
 ## Goal and premise
 
@@ -602,16 +608,24 @@ script that prints only counts.
      that `*`: not a header in the call's output, not a hook attachment, not a later record.
      Headers in output still ADD the scopes they name (`R_header`); they never REMOVE anything. A
      read run by a HOOK has no visible command line, so it adds only its header's scope.
-   - **How an invocation is RECOGNISED, failing closed.** A command line is a CANDIDATE when it
-     contains any of: a `cairn` or `subsystem-recall` program token, a path ending in `/cairn`, or
-     a flake reference ending in `#cairn`. A candidate line contributes explicit scopes ONLY when
-     the parser decomposes it into `cairn` invocations that EACH carry an explicit `--scope`;
-     otherwise it adds **`*`**. So the shapes the parser does not take apart — a full or relative
-     path to the binary, `nix run <flake>#cairn -- …`, an environment prefix (`VAR=x cairn …`), a
-     wrapper (`bash -c '…'`, `xargs cairn …`, `env`, `timeout`, `sudo`), the `subsystem-recall`
-     alias — add `*` whenever any invocation in them lacks a decomposable `--scope`. *Revision 7
-     never said how a call is recognised, so such a line added NOTHING — no scope and no `*` —
-     leaving `V` too small; that gap is closed here, and nothing else changes.*
+   - **How an invocation is RECOGNISED, failing closed.** A command line is a CANDIDATE when ANY
+     whitespace-separated token in it CONTAINS the substring `cairn` or `subsystem-recall` — which
+     covers a bare `cairn`, a `…/cairn` path, every flake form (`nix run .#cairn-go -- …`,
+     `nix run github:<owner>/cairn#default -- …`, a bare `nix run github:<owner>/cairn -- …`), the
+     alias, and anything else spelling the name. Over-matching (a file or directory merely named
+     `cairn…`) only ADDS `*`, which fails safe. A candidate line contributes ONLY its explicit scopes
+     when ALL three hold: (a) the parser decomposes it into AT LEAST ONE `cairn` invocation; (b)
+     EVERY candidate token in the line is the program word of one of those recognised invocations;
+     (c) each such invocation carries an explicit `--scope`. If any of (a)–(c) fails, the line adds
+     **`*`** IN ADDITION to whatever explicit scopes it did parse. So the shapes the parser does not
+     take apart — a full or relative path, any `nix run`, an environment prefix (`VAR=x cairn …`), a
+     wrapper (`bash -c '…'`, `xargs cairn …`, `env`, `timeout`, `sudo`), the alias — add `*`, and so
+     does a line mixing a scoped call with one of them (`cairn recall --scope alpha-notes && VAR=x
+     cairn recall` → `{alpha-notes, *}`). *Revision 7 never said how a call is recognised, so such a
+     line added NOTHING. Revision 8's rule ("ONLY when the parser decomposes it into invocations
+     that EACH carry `--scope`") was vacuously true over zero invocations and never required every
+     candidate token to be accounted for, and its candidate list (`cairn` token, `/cairn` path,
+     `#cairn` ref) missed `#cairn-go`, `#default` and the bare flake ref; both are retracted.*
    - *DELETED in revision 7, with no replacement:* the exception under which a header in a "simple"
      `cairn recall|search` call's own result cancelled the `*`, the allowlist defining "simple", the
      PENDING set `P` that waited for late results, and its 24 h backstop. Revisions 4–6 refined that
@@ -636,7 +650,8 @@ script that prints only counts.
      left for it to do.* Routing uses only explicit `--scope` and output headers; anything else is
      `*`.
    - ⚠ **The cost, measured:** on BOTH runtimes, every session that runs a bare or `--repo` `cairn`
-     command (597 such Claude Code calls and 24 opencode calls on this host, Q16) becomes owner-only, and with more than one instance configured it is HELD on its
+     command becomes owner-only (the measurement is of CALLS — 597 Claude Code and 24 opencode
+     no-`--scope` calls on this host, Q16 — the number of SESSIONS affected was not measured), and with more than one instance configured it is HELD on its
      host (decision 16). Q16 gives the operator the remedies.
    - **What can go wrong, and in which direction.** A forged trailer or a quoted header in prose
      ADDS a scope, hiding `s` from more people; a header can no longer remove anything, so a
@@ -1114,7 +1129,7 @@ GET /transcript/skeleton  ·  GET /transcript/records  ·  GET /transcript/tool 
 |---|---|
 | **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. **What is NOT controlled:** unshaped secrets (typed passwords, novel token formats), secrets inside images/PDFs (withheld rather than stored until Q2 is answered, decision 6a — if Q2 says "ship", this becomes an uncontrolled residual) EXCEPT binary payloads embedded in longer strings or in unlisted formats, which ship text-scanned only (6a's residuals), an encoded secret embedded in a longer string (not decoded), a flow-style YAML `Secret` (decision 6), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
 | **T2. Confidential but non-secret content** (client business detail, personal data in a tool output) | Redaction does not address it at all; VISIBILITY is the only control (decision 4). Stated, so nobody believes the redactor covers it. |
-| **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store plus reads from rendered headers anywhere in the content plus command-line scopes plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope, `--all-scopes`, and EVERY VISIBLE cwd-derived `cairn` invocation (no explicit `--scope`) add `*`, unconditionally, on the pod and on the agent, as does any command line naming the program (a `cairn`/`subsystem-recall` token, a `…/cairn` path, a `#cairn` flake ref) that the parser cannot decompose into invocations each with an explicit `--scope`; a hook-run read adds only its header's scope — nothing cancels a `*`, and no caller resolves a working directory, so a `cd`, a stale record `cwd` or an opencode `bash` call's `workdir` argument cannot misroute or mis-scope a call; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The residual:** a read or write NO signal sees — an invocation whose program name never appears in the command line (run through a variable such as `"$BIN" put …`, an unlisted alias, a shell function, or a script), or any `cairn` command run by a script whose command line the transcript does not show, when it is a header-less verb (`sessions`, `arcs`, `arc-show`, `ls-entries`) or a `put`/`create`. *Revisions 3–6 listed a second residual — a directory change making the AGENT's routing resolve the wrong scope; that resolution is deleted (decision 3), so the residual is gone with it.* |
+| **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store plus reads from rendered headers anywhere in the content plus command-line scopes plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope, `--all-scopes`, and EVERY VISIBLE cwd-derived `cairn` invocation (no explicit `--scope`) add `*`, unconditionally, on the pod and on the agent, as does any CANDIDATE command line (any token containing `cairn` or `subsystem-recall`) unless it decomposes into ≥ 1 invocation, every candidate token is a recognised invocation's program word, and each invocation carries an explicit `--scope` (decision 3); a hook-run read adds only its header's scope — nothing cancels a `*`, and no caller resolves a working directory, so a `cd`, a stale record `cwd` or an opencode `bash` call's `workdir` argument cannot misroute or mis-scope a call; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The residual:** a read or write NO signal sees — an invocation whose program name never appears in the command line (run through a variable such as `"$BIN" put …`, an unlisted alias, a shell function, or a script), or any `cairn` command run by a script whose command line the transcript does not show, when it is a header-less verb (`sessions`, `arcs`, `arc-show`, `ls-entries`) or a `put`/`create`. *Revisions 3–6 listed a second residual — a directory change making the AGENT's routing resolve the wrong scope; that resolution is deleted (decision 3), so the residual is gone with it.* |
 | **T4. Viewer-set computation makes the predicate vacuous** | Clause (e), and a mutant row (`transcript-written-set-from-viewer-scopes`). |
 | **T5. A stolen capture token** | Can APPEND to its owner's transcripts from its one host — inject fake records into the owner's own sessions — can SQUAT a not-yet-uploaded session id (decision 15), and can WITHDRAW (delete) its owner's sessions uploaded from that host (decision 16). Cannot read, or touch another owner's or host's existing sessions. Revoke by deleting the row (re-read per request). |
 | **T6. A stolen plugin token** | Can read every transcript where that plugin is ON, and write outputs of its declared types. The largest single exposure the design creates; it is why toggles default OFF, require every scope's consent (decision 10), and why a plugin token is per plugin. |
@@ -1148,17 +1163,19 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 | **S9** | **Example plugin A — summaries.** `plugins/summary` in a NESTED stdlib-only module (provider HTTP API over `net/http`, no SDK), host-side user timer, incremental per decision 13, its own spend cap, a fake provider in tests. Reads through `view=conversation` by default. | `depspolicy.DeclaredNestedModules`; `flake.nix` package; `ci.yml` step for its suite. | A separate binary; nothing runs until registered and toggled. |
 | **S10** | **Example plugin B — ClickUp.** `plugins/clickup` in the same nested module: ticket list fetch (read-only token, 429-aware), deterministic matchers (decision 14) over transcript records (`gitBranch`, `pr-link`, URLs), commit messages and trailers from a host-local repo list, PR bodies via the host's own GitHub CLI, entry refs; LLM suggestions using plugin A's summaries when present (`output:read:summary` — the cross-plugin test of the abstraction). Synthetic ClickUp fixtures only. Then closing wiring: `sabotaged=13 caught=13`, measured floors, the `AGENTS.md` row with an equal eviction (Q11). | same nested module; flake package; `ci.yml`; `AGENTS.md`; READMEs. | Separate binary; inert until registered and toggled. |
 
-**Mutant rows** (indicative names). The pinned count starts at **296**; the **47** rows below would
-take it to **343** if every one lands as named (revision 7 deleted six, listed where they were;
-revision 8 added one) — the pinned number is whatever the battery declares
+**Mutant rows** (indicative names). The pinned count starts at **296**; the **48** rows below would
+take it to **344** if every one lands as named (revision 7 deleted six, listed where they were;
+revisions 8 and 9 added one each) — the pinned number is whatever the battery declares
 at each merge, never this sum. S0, S1, S9 and S10 add no row to the authz battery (S1's guards are
 measured by the redaction corpus; S9/S10 by their own suites).
 
-- **S2 (4, `scopeuse`):** `scopeuse-all-scopes-header-names-a-scope`,
+- **S2 (5, `scopeuse`):** `scopeuse-all-scopes-header-names-a-scope`,
   `scopeuse-scopeless-header-dropped` (the `renderer.go:158` form dropped instead of `*`),
   `scopeuse-cwd-derived-command-dropped` (a cwd-derived invocation — no explicit `--scope` — adds
   nothing instead of `*`), `scopeuse-unrecognised-invocation-adds-nothing` (a candidate line the
-  parser cannot decompose adds nothing instead of `*`). *DELETED in revision 7 with the machinery they guarded (decision 3):*
+  parser cannot decompose adds nothing instead of `*`), `scopeuse-unaccounted-candidate-token-ignored`
+  (a line with one recognised scoped invocation and another candidate token yields only the
+  explicit scope, no `*`). *DELETED in revision 7 with the machinery they guarded (decision 3):*
   `scopeuse-paired-header-ignored`, `scopeuse-chained-call-header-suppresses-star`,
   `scopeuse-hook-attachment-counts-as-result`, `scopeuse-missing-result-becomes-star`,
   `scopeuse-chained-command-resolved`.
@@ -1268,8 +1285,14 @@ run time).
   `scopeuse-cwd-derived-command-dropped`); the recognition rule's shapes, each WITHOUT a
   decomposable `--scope` → `*`: `/opt/tools/cairn ls-entries --repo ../beta-repo`, `nix run
   <flake>#cairn -- ls-entries --repo ../beta-repo`, `VAR=x cairn recall`, `bash -c 'cairn
-  recall'`, `xargs cairn ls-entries`, `timeout 30 cairn recall`, and `subsystem-recall` with no
-  `--scope` (mutant `scopeuse-unrecognised-invocation-adds-nothing`); a positive control that the
+  recall'`, `xargs cairn ls-entries`, `timeout 30 cairn recall`, `subsystem-recall` with no
+  `--scope`, and the three other flake forms `nix run .#cairn-go -- recall`, `nix run
+  github:<owner>/cairn#default -- recall` and `nix run github:<owner>/cairn -- recall` (mutant
+  `scopeuse-unrecognised-invocation-adds-nothing`; control for the flake forms: a candidate test
+  matching only the listed token shapes of revision 8 misses all three); the MIXED line `cairn
+  recall --scope alpha-notes && VAR=x cairn recall` → exactly `{alpha-notes, *}` (mutant
+  `scopeuse-unaccounted-candidate-token-ignored`: the parser returns the scoped invocation it
+  recognised and ignores the second candidate token); a positive control that the
   rule is not a blanket `*`: `cairn recall --scope alpha-notes && cairn search --scope beta-notes
   x` → exactly `{alpha-notes, beta-notes}`, no `*`; and the agent's output for every fixture equals the
   pod's (control: an agent that resolves a working directory gives a scope where the pod gives
