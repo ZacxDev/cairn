@@ -80,7 +80,8 @@ func registerCreateUserFlags() *createUserFlags {
 			"optional, OPERATOR-written: the name the audit line, every written bullet's ACTOR and the "+
 				"browser's \"signed in as\" render INSTEAD of the email — e.g. a GitHub handle. "+
 				"[A-Za-z0-9] then [A-Za-z0-9._-], at most 32, no `:` or `@`, unique among users "+
-				"(case-insensitively). Change it later with -rename-user"),
+				"(case-insensitively). Change it later with -rename-user. ⚠ An OLDER cairn-server or "+
+				"cairn-ui SILENTLY IGNORES it and renders the email — roll every reader of the journal first"),
 		project: flag.String("project", "",
 			"the project created for this user, who becomes its OWNER — read, write and admin "+
 				"over every scope the project holds"),

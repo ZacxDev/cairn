@@ -450,7 +450,9 @@ func sortedCredentials(m Model) []Credential {
 }
 
 // displayOf is THE answer to "who is this" for an audit line, a written bullet's ACTOR
-// and the browser's "signed in as" — `PrincipalFor` is its only caller.
+// and the browser's "signed in as" — reached through `PrincipalFor`. ⚠ The display-name
+// uniqueness rule and `RenameUser` (`user_display.go`) call it too, so changing what it
+// returns changes which names that rule refuses.
 //
 // 🔴 A USER'S PRECEDENCE IS DISPLAY NAME > EMAIL > `<provider>:<subject>`, and every one
 // of the three is a JOURNAL value. The display name is operator-written (`user-created`'s

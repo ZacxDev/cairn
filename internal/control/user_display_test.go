@@ -170,6 +170,85 @@ func TestTwoUsersCannotRenderTheSameDisplay(t *testing.T) {
 	}
 }
 
+// TestADisplayNameOnceHeldIsNotReissuedToAnotherUser: a bullet's ACTOR and an audit line's
+// `identity=` are STORED text, so a name a user has given up still attributes everything
+// written under it. Handing it to a different user later would make one string mean two
+// people across time — the hazard the uniqueness rule exists for, arriving by reuse.
+func TestADisplayNameOnceHeldIsNotReissuedToAnotherUser(t *testing.T) {
+	base := []Event{
+		{Kind: EventUserCreated, At: at(1), UserID: "usr_first", Provider: "notes-idp", Subject: "subject-0001",
+			DisplayName: "octocat-example"},
+		{Kind: EventUserRenamed, At: at(2), UserID: "usr_first", DisplayName: "octocat-renamed"},
+		{Kind: EventUserRenamed, At: at(3), UserID: "usr_first", DisplayName: "octocat-current"},
+		{Kind: EventUserCreated, At: at(4), UserID: "usr_second", Provider: "notes-idp", Subject: "subject-0002"},
+	}
+	for _, tc := range []struct {
+		name string
+		next Event
+	}{
+		{"a rename onto a name another user gave up", Event{Kind: EventUserRenamed, At: at(9), UserID: "usr_second", DisplayName: "octocat-example"}},
+		{"…one held only by an earlier RENAME", Event{Kind: EventUserRenamed, At: at(9), UserID: "usr_second", DisplayName: "octocat-renamed"}},
+		{"…differing only in case", Event{Kind: EventUserRenamed, At: at(9), UserID: "usr_second", DisplayName: "OCTOCAT-EXAMPLE"}},
+		{"a creation carrying a name another user gave up", Event{Kind: EventUserCreated, At: at(9), UserID: "usr_third", Provider: "notes-idp", Subject: "subject-0003", DisplayName: "Octocat-Example"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Replay(append(append([]Event(nil), base...), tc.next))
+			if !errors.Is(err, ErrUserDisplayNameTaken) {
+				t.Fatalf("replay = %v, want ErrUserDisplayNameTaken", err)
+			}
+		})
+	}
+	// The user who HELD it may take it back: their own history is one person, not two.
+	m, err := Replay(append(append([]Event(nil), base...),
+		Event{Kind: EventUserRenamed, At: at(9), UserID: "usr_first", DisplayName: "Octocat-Example"}))
+	if err != nil {
+		t.Fatalf("a user reclaiming their own former name was refused: %v", err)
+	}
+	if p, _ := m.PrincipalFor(KindUser, "usr_first"); p.Display != "Octocat-Example" {
+		t.Errorf("display %q after reclaiming a former name", p.Display)
+	}
+}
+
+// TestTheHeldNameHistorySurvivesSeparateAppends drives the history rule through a real
+// `FileStore`, one `Append` per event. The last write goes to `Append` DIRECTLY, past
+// `RenameUser`'s early refusal (which reads a fresh replay and so cannot see the defect), so
+// what refuses it is `apply` on `Append`'s clone — a clone that dropped the history would
+// accept it.
+func TestTheHeldNameHistorySurvivesSeparateAppends(t *testing.T) {
+	store, _ := journalAt(t)
+	owner, err := ProvisionUser(context.Background(), store, aUser("quarry-notes"))
+	if err != nil {
+		t.Fatalf("provisioning: %v", err)
+	}
+	second := aSecondUser(t, store)
+	for _, name := range []string{"octocat-example", "octocat-renamed"} {
+		if _, err := RenameUser(context.Background(), store, NewUserDisplayName{UserID: owner.User, DisplayName: name}); err != nil {
+			t.Fatalf("RenameUser(%s): %v", name, err)
+		}
+	}
+	if _, err := store.Append(context.Background(), Event{Kind: EventUserRenamed, UserID: second.User,
+		DisplayName: "octocat-example"}); !errors.Is(err, ErrUserDisplayNameTaken) {
+		t.Fatalf("reissuing a released name through Append = %v, want ErrUserDisplayNameTaken", err)
+	}
+}
+
+// TestADisplayNameCannotEqualAnotherUsersAuditRendering: the audit line writes every space as
+// `_`, so an `@`-less free-text email `wren example` is `identity=wren_example` there. A display
+// name `wren_example` passes the alphabet and differs from the email as a string — and is the
+// same string in the one place an attribution is read after the fact.
+func TestADisplayNameCannotEqualAnotherUsersAuditRendering(t *testing.T) {
+	base := []Event{
+		{Kind: EventUserCreated, At: at(1), UserID: "usr_spaced", Provider: "notes-idp", Subject: "subject-0001",
+			Email: "wren example"},
+		{Kind: EventUserCreated, At: at(2), UserID: "usr_other", Provider: "notes-idp", Subject: "subject-0002"},
+	}
+	_, err := Replay(append(append([]Event(nil), base...),
+		Event{Kind: EventUserRenamed, At: at(9), UserID: "usr_other", DisplayName: "Wren_Example"}))
+	if !errors.Is(err, ErrUserDisplayNameTaken) {
+		t.Fatalf("replay = %v, want ErrUserDisplayNameTaken", err)
+	}
+}
+
 // TestRenameUserWritesOneRecordAndRefusalsWriteNothing drives the library path the command
 // uses, against a real `FileStore`, and re-reads from DISK.
 func TestRenameUserWritesOneRecordAndRefusalsWriteNothing(t *testing.T) {

@@ -40,11 +40,14 @@ import (
 // refused rather than cut, because a cut name is a name nobody chose.
 //
 // 🔴 AND IT IS UNIQUE AMONG USERS, CASE-INSENSITIVELY, AGAINST EVERY OTHER USER'S *RENDERED*
-// DISPLAY — display name, else email, else `<provider>:<subject>`. Two users rendering the same
+// DISPLAY — display name, else email, else `<provider>:<subject>`, compared as the audit line
+// writes it — AND AGAINST EVERY NAME ANOTHER USER HAS EVER HELD. Two users rendering the same
 // string is two people one attribution, which is the hazard the alphabet exists for, arriving
-// by duplication instead of by spelling. Case-insensitive because `Octocat` and `octocat` read
-// as one person to a human scanning an audit stream; the alphabet is ASCII, so the fold is
-// exact. Checked in `apply`, so it binds every writer, under `Append`'s lock.
+// by duplication instead of by spelling; a released name reissued is the same hazard across
+// time, because a bullet's ACTOR and an audit line are stored text. Case-insensitive because
+// `Octocat` and `octocat` read as one person to a human scanning an audit stream; the alphabet
+// is ASCII, so the fold is exact. Checked in `apply`, so it binds every writer, under
+// `Append`'s lock.
 //
 // ⚠ WHAT IT DOES NOT COVER, DECLARED: (a) a PROJECT principal's display is its name, and a
 // project may be named like a user's display name — `identity=` carries no kind, so the two
@@ -99,19 +102,45 @@ func validUserDisplayName(kind EventKind, name string) error {
 // refuseTakenUserDisplayName is the uniqueness rule, asked by `apply` for both kinds that write
 // a display name. `self` is excluded, so re-asserting a user's own name is not a clash.
 //
-// It compares against each other user's RENDERED display (`displayOf`), so it covers a display
-// name, an email and a `<provider>:<subject>` with one predicate rather than three.
+// It refuses two things, each against a user OTHER than `self`:
+//
+//   - a name equal to their RENDERED display (`displayOf`) — one predicate over a display name,
+//     an email and a `<provider>:<subject>` rather than three — compared as the audit line's
+//     `identity=` field writes it, spaces as `_`: an `@`-less free-text email `wren example` is
+//     `wren_example` there, which is a name the alphabet accepts. (Its other rewrites cannot
+//     matter: `?` and the truncation marker's length are outside what the alphabet accepts.)
+//   - a name they HELD and gave up. A bullet's ACTOR and an audit line are stored text, so a
+//     released name still attributes everything written under it; reissuing it to someone else
+//     makes one string two people across time. The user who held it may take it back.
 func (m *Model) refuseTakenUserDisplayName(self ID, name string) error {
 	for id := range m.Users {
 		if id == self {
 			continue
 		}
-		if other := displayOf(*m, KindUser, id); strings.EqualFold(other, name) {
+		other := displayOf(*m, KindUser, id)
+		if strings.EqualFold(strings.ReplaceAll(other, " ", "_"), name) {
 			return fmt.Errorf("display name %q: user %s already displays as %q, and two users rendering one "+
 				"string is one attribution for two people: %w", name, id, other, ErrUserDisplayNameTaken)
 		}
 	}
+	if holder, held := m.heldDisplayNames[strings.ToLower(name)]; held && holder != self {
+		return fmt.Errorf("display name %q: user %s held it before, and every bullet and audit line written "+
+			"under it still reads as theirs, so it is not reissued to another user: %w",
+			name, holder, ErrUserDisplayNameTaken)
+	}
 	return nil
+}
+
+// holdUserDisplayName records that `user` has displayed as `name`, for
+// [Model.refuseTakenUserDisplayName]'s history rule. "" (no display name written) holds nothing.
+func (m *Model) holdUserDisplayName(user ID, name string) {
+	if name == "" {
+		return
+	}
+	if m.heldDisplayNames == nil {
+		m.heldDisplayNames = map[string]ID{}
+	}
+	m.heldDisplayNames[strings.ToLower(name)] = user
 }
 
 // NewUserDisplayName is a request to set an existing user's display name.

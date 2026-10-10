@@ -330,6 +330,10 @@ type Model struct {
 	// scanned at every resolve.
 	Memberships map[ID]map[ID]Membership
 	userProject map[ID]map[ID]Membership
+	// heldDisplayNames is every user display name EVER written, case-folded, to the user who
+	// wrote it — so a name one user gave up is not reissued to another. See
+	// `refuseTakenUserDisplayName` for why history and not only the current names.
+	heldDisplayNames map[string]ID
 
 	// Dropped lists the journal records this Model was built WITHOUT.
 	//
@@ -356,6 +360,8 @@ func NewModel() Model {
 		Credentials: map[ID]Credential{},
 		Memberships: map[ID]map[ID]Membership{},
 		userProject: map[ID]map[ID]Membership{},
+
+		heldDisplayNames: map[string]ID{},
 	}
 }
 
@@ -401,6 +407,7 @@ func (m Model) clone() Model {
 	for k, inner := range m.userProject {
 		out.userProject[k] = maps.Clone(inner)
 	}
+	maps.Copy(out.heldDisplayNames, m.heldDisplayNames)
 	return out
 }
 

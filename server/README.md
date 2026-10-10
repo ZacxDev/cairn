@@ -1291,10 +1291,21 @@ kubectl exec -n <ns> deploy/<name> -- cairn-server -rename-user \
 ```
 
 The name is `[A-Za-z0-9]` then `[A-Za-z0-9._-]`, at most 32, and unique among users
-case-insensitively; no identity-provider claim ever reaches it. Why each rule exists (each one
-closes an attribution-spoofing shape) is in `internal/control/user_display.go`. ⚠ A journal
-holding a `user-renamed` record is **refused whole by a build older than this one** — unknown
-event kinds always are — so roll the pod forward before appending one.
+case-insensitively — against every other user's current display AND every name another user has
+ever held, since bullets and audit lines already written under a released name still read as
+that person. No identity-provider claim ever reaches it. Why each rule exists (each one closes an
+attribution-spoofing shape) is in `internal/control/user_display.go`.
+
+⚠ **ROLL EVERY BINARY THAT READS THE JOURNAL — `cairn-server` AND `cairn-ui` — BEFORE WRITING
+EITHER FIELD, AND THE TWO FIELDS FAIL DIFFERENTLY ON AN OLDER BUILD.**
+- A `user-renamed` record is **refused whole** by an older build, as every unknown event kind
+  is. An older `cairn-ui` on the same journal then keeps serving its last good model (stale),
+  fails every share-flow or invite write (each re-replays the journal under the lock), and
+  exits 78 on its next restart.
+- A `-display-name` on `-create-user` is **silently ignored** by an older build: that field
+  already decodes on other event kinds, so the older build replays the record and renders the
+  email. No refusal, two answers to "who is this" — the newer pod's audit line says the name,
+  the older UI's header says the email. A rollback does the same.
 
 ⚠ **A scope's display name is the DIRECTORY name under the store root**, and creating the
 record does **not** create the directory. Two scope records whose names fold alike —

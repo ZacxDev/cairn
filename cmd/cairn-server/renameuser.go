@@ -32,13 +32,15 @@ func registerRenameUserFlags() *renameUserFlags {
 			"SET AN EXISTING USER'S DISPLAY NAME in the control journal named by $"+EnvControlJournal+
 				", and exit — the name the audit line, every written bullet's ACTOR and the browser's "+
 				"\"signed in as\" render instead of the email. Appends one `user-renamed` record. "+
-				"Requires -rename-user-id and -rename-display-name"),
+				"Requires -rename-user-id and -rename-display-name. ⚠ An OLDER cairn-server or cairn-ui "+
+				"refuses a journal holding this record whole — roll every binary that reads the journal first"),
 		user: flag.String("rename-user-id", "",
 			"the user's id (`usr_…`), as printed by -create-user. NOT an email and not a provider "+
 				"subject: those are not unique keys, an id is"),
 		display: flag.String("rename-display-name", "",
 			"the new display name: [A-Za-z0-9] then [A-Za-z0-9._-], at most 32, no `:` or `@`, and "+
-				"unique among users case-insensitively. OPERATOR-written; nothing an identity "+
+				"unique among users case-insensitively, including names another user once held. "+
+				"OPERATOR-written; nothing an identity "+
 				"provider sends ever reaches it"),
 	}
 }
