@@ -45,6 +45,12 @@ must not read as an instruction to run a command that does not exist.
   - The journal's three states are spelled out, and a broken journal answers 503 (🟡3).
   - The backup treats an absent journal as a pass (🟡4).
   - The four-places ledger is corrected (🟢1), and the nits are folded in.
+- *Revision 5* (`52f600c` → this) applies round 4:
+  - **one wire answer for a broken journal**: arcs' `store-unreachable` 503, mapped to exit 10 by
+    the auditor;
+  - T9 pin 1 covers every `os` mutator;
+  - "Four" parts;
+  - three wording nits.
 
   Removed decisions keep their numbers, marked REMOVED, so references stay stable.
 
@@ -79,7 +85,7 @@ Drop the work, or the named half of it, if any of these holds:
 
 ### closing-condition
 
-- **closing-condition:** `check`. Three mechanical parts, all required:
+- **closing-condition:** `check`. Four mechanical parts, all required:
   1. Slices S1–S5 are MERGED on cairn `main`, verified by content, not by ancestry.
   2. **`tests/refaudit/e2e.sh` exits 0 on `main`.** It runs in the `go` CI job, which sets
      `CAIRN_GIT_TESTS_REQUIRED` (`.github/workflows/ci.yml:722`), and the step is NOT
@@ -289,12 +295,14 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
 - The share handler authorises with `id.Auth.Allows(scope, control.VerbAdmin)`
   (`internal/ui/sharehandlers.go:170`).
 - **Every file the `cairn-ui` binary writes today** (round 3 🟡2). Measured by finding the
-  file-writing `os` calls (`WriteFile`/`OpenFile`/`Create`/`CreateTemp`/`Rename`/`Mkdir`) in every
+  file-writing `os` calls (`WriteFile`/`OpenFile`/`Create`/`CreateTemp`/`Rename`/`Mkdir`; T9's pin 1
+  uses the full mutator set) in every
   in-repo package of `go list -deps ./cmd/cairn-ui`:
   - **the control journal**, which must resolve outside `-store` (`cmd/cairn-ui/main.go:246-266`),
     through `internal/control/filestore.go`;
   - **the session table** (`-session-file`), rewritten by temp file plus rename
-    (`internal/identity/sessionstore.go:283-313`);
+    (`internal/identity/sessionstore.go:283-313`), plus its **`<session-file>.lock` sidecar**,
+    created on first use (`:197`);
   - **the presence token file**, appended only by the `issuePresenceToken` admin path
     (`cmd/cairn-ui/presence.go:161-192`; `internal/presence/tokens.go:175-188`).
 
@@ -382,8 +390,19 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
    - **Reading: arcs' three states, exactly (round 3 🟡3).**
      - **Off:** the env var is unset. The answer is `sources-unconfigured`, HTTP 200.
      - **Broken:** the file exists but cannot be read (permissions, a directory at the path, an
-       I/O error). That is `*JournalUnreadableError`. The pod answers **503**, the arcs answer
-       (`internal/api/server.go:930-935`), and the auditor treats it as could-not-look.
+       I/O error). That is `*JournalUnreadableError`. The pod answers EXACTLY as arcs do: it
+       routes the error through `storeUnreachable` (`internal/api/server.go:930-935`,
+       `:967-970`).
+       - **The wire answer:** `503`, `X-Store-Status: store-unreachable`, `X-Store-Exit: 3`, and
+         the error text as a plain-text body.
+       - **No new wire token** (round 4 🟡1).
+       - **The proposed `audit-refs` verb maps that 503 to the could-not-look reason
+         `sources-unreadable`, exit 10, REGARDLESS of `X-Store-Exit`.**
+         - The arcs client returns the pod's `X-Store-Exit` as its own exit
+           (`internal/client/arcs.go:94-100`), which would be 3. That is right for arcs and wrong
+           here, because the auditor's exit model is doctor's `0/9/10`.
+         - The proposed `sources` verb is a plain read, so it keeps the arcs behaviour and exits
+           3.
      - **Empty:** the file is absent, so it is `Missing`. Every scope reads `sources=undeclared`,
        and the response carries `journal=absent`.
 
@@ -461,15 +480,20 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
      binaries' different authorities cannot make it disagree (STEP 2, "two ID spaces"). The
      proposed `sources` and `audit-refs` verbs send the name, and the pod folds it.
    - **The consequences, stated plainly:**
-     - **a rename ORPHANS the record.** The scope reads `undeclared` under its new name until an
-       admin re-declares it, and the old record stays in the journal as history;
-     - **a delete followed by a recreate under the same name RE-ATTACHES the record.** The new
-       scope inherits the old declaration, shown with its original `set_by`/`set_at`, so the page
-       says whose declaration it is.
+     - **a DIRECTORY rename ORPHANS the record.** The scope reads `undeclared` under its new
+       directory name until an admin re-declares it, and the old record stays in the journal as
+       history. ⚠ A control-journal `scope-renamed` event ON ITS OWN renames no directory. It
+       detaches that scope's display name from its directory, which is a pre-existing property of
+       the control plane, not something this feature adds. The key follows the directory, never
+       the display name;
+     - **a directory delete followed by a recreate under the same name RE-ATTACHES the record.**
+       The new scope inherits the old declaration, shown with its original `set_by`/`set_at`, so
+       the page says whose declaration it is.
 
-     Both behave the same in every deployment, because the key is the directory name and the
-     directory is what both authorities enumerate. Revision 3's per-deployment table is deleted
-     with the ID keying. An orphaned record is not a fault; the UI shows nothing for it in v1 (Q12).
+     Both behave the same in every deployment, because the key is the directory name. On the pod,
+     the token-file projection enumerates store directories. On the UI, the STORE INDEX enumerates
+     them; the journal authority does not. Revision 3's per-deployment table is deleted with the
+     ID keying. An orphaned record is not a fault; the UI shows nothing for it in v1 (Q12).
    - ⚠ **Revision 3 keyed by scope ID through `KeyFor(model, name)`.** That design is RETRACTED
      (round 3 🔴1). Each side resolved IDs in its own space: random in the UI's control journal,
      derived in the pod's token-file projection. The pod never found the UI's record. Closing
@@ -517,7 +541,7 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
    | **unchecked by design** | `unchecked: not path-shaped` | `unchecked` | none on its own |
 
    Plus four SCOPE-level could-not-look reasons, each exit 10: `sources=undeclared` (including
-   `journal=absent`), `sources-unconfigured`, `sources-unreadable` (the pod's 503, decision 1), and
+   `journal=absent`), `sources-unconfigured`, `sources-unreadable` (the auditor's name for the pod's 503 `store-unreachable`, decision 1), and
    `checked=0`.
 
    **The mixed case, spelled out.** Exit **9** if any claim anywhere is stale. Otherwise exit
@@ -600,8 +624,10 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
     - **How it answers:**
       - authorised by `read` on the scope;
       - `sources-unconfigured` (200) when the env var is unset;
-      - **503 `sources-unreadable`** when the journal is configured but cannot be read, the arcs
-        `JournalUnreadableError` answer (`internal/api/server.go:930-935`);
+      - **503 with `X-Store-Status: store-unreachable` and `X-Store-Exit: 3`** when the journal is
+        configured but cannot be read. That is the arcs answer, through `storeUnreachable`
+        (`internal/api/server.go:930-935`, `:967-970`), and no new wire token. The auditor maps
+        it to exit 10 (decision 1);
       - for a principal who cannot read the scope, a body byte-identical to an absent scope's;
       - a scope with no record returns `sources=undeclared`, plus `journal=absent` when the file
         does not exist;
@@ -649,7 +675,7 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
 | **T6. A lost update between two admins** | The revision compare inside the lock: exactly one of two same-revision writes lands (S1, S4). A resubmitted UNCHANGED list is refused the same way, which is a harmless no-op. |
 | **T7. A re-seed silently reverting declarations** (round 2's 🔴) | The journal lives outside the store tree, on the UI's volume. `seed.sh` writes only the store copy (`seed.sh:313-316`). Pinned by the inside-store startup refusal. |
 | **T8. A feature rollback breaks something** | An env var an old binary ignores, a separate file, no control-journal event, and an untouched store tree (decision 1). |
-| **T9. The internet-facing UI's write reach** (round 2's 🟡1; round 3 🟡2, restated truthfully) | **The `cairn-ui` binary writes four files: the control journal, the session table (`-session-file`), the presence token file (admin path only), and, with S4, the sources journal.** It writes nothing in the store, whose mount STAYS read-only (`handoff-cairn-control-plane.md:502-505`). Three pins, each failing on GROW or SHRINK: (1) **`internal/ui` contains zero direct file-writing `os` calls** (`WriteFile`/`OpenFile`/`Create`/`CreateTemp`/`Rename`/`Mkdir`; measured 0 today, so an INVARIANT guard, labelled as one). An AST walk catches a raw `os.WriteFile` added to a handler; (2) **`internal/ui` has exactly one call site of `codesrc.Journal.Set` and none of `AppendBullet`/`ReplaceEntry`/`CreateEntry`**; (3) **`internal/api` has zero call sites of `Journal.Set`**, so the pod cannot become a second writer. ⚠ **What these do NOT see:** a write reached through ANOTHER package's function (the session store and control filestore are such packages, and are legitimately called); `cmd/cairn-ui` itself, which pin 1 does not walk; and the deployment's actual mounts. The pins bound the CODE in two packages, not the process. |
+| **T9. The internet-facing UI's write reach** (round 2's 🟡1; round 3 🟡2, restated truthfully) | **The `cairn-ui` binary writes four files: the control journal, the session table (`-session-file`), the presence token file (admin path only), and, with S4, the sources journal.** It writes nothing in the store, whose mount STAYS read-only (`handoff-cairn-control-plane.md:502-505`). The session table also leaves a `<session-file>.lock` sidecar (`sessionstore.go:197`). Three pins, each failing on GROW or SHRINK: (1) **`internal/ui` contains zero calls to any `os` function that MUTATES the filesystem**: `WriteFile`, `OpenFile`, `Create`, `CreateTemp`, `Rename`, `Mkdir`, `MkdirAll`, `MkdirTemp`, `Link`, `Symlink`, `Remove`, `RemoveAll`, `Truncate`, `Chmod`, `Chown`, `Lchown`, `Chtimes`, plus the `*os.File` write methods. The test DERIVES the set by enumerating package `os`'s exported functions and classifying each, failing on any unclassified one, so a new Go release's mutator cannot slip past. Measured 0 today, so this is an INVARIANT guard, labelled as one. An AST walk catches a raw `os.WriteFile` or `os.Remove` added to a handler; (2) **`internal/ui` has exactly one call site of `codesrc.Journal.Set` and none of `AppendBullet`/`ReplaceEntry`/`CreateEntry`**; (3) **`internal/api` has zero call sites of `Journal.Set`**, so the pod cannot become a second writer. ⚠ **What these do NOT see:** a write reached through ANOTHER package's function (the session store and control filestore are such packages, and are legitimately called); `cmd/cairn-ui` itself, which pin 1 does not walk; and the deployment's actual mounts. The pins bound the CODE in two packages, not the process. |
 | **T10. The pod or UI spawns `git` or reaches a code host** | Clause (e). ⚠ It is structural on `exec` only, and cannot see a `net/http` CLIENT call. |
 | **T11. Stored XSS through a source string** | gomponents `Text` only; the one href through `safeHref`; `Raw`/`Rawf` stay AST-banned. |
 | **T12. Resource exhaustion on the auditing host** | ≤ 8 sources, a per-call timeout, a per-run PR-check cap, and a cap hit reported as could-not-look. Full mirrors are F1's price, and their size is unmeasured. |
@@ -776,8 +802,12 @@ killed.
   - `read` → 200;
   - no grant → byte-identical to an absent scope's answer;
   - unconfigured → `sources-unconfigured`;
-  - a directory at the journal path → **503 `sources-unreadable`**. The mutant
-    `api-sources-unreadable-journal-answers-200` turns that into a 200 and must go red;
+  - a directory at the journal path → **exactly** `503`, `X-Store-Status: store-unreachable`,
+    `X-Store-Exit: 3`, `text/plain`, and a body that is the `*JournalUnreadableError` text,
+    pinned literally. The mutant `api-sources-unreadable-journal-answers-200` turns that into a
+    200 and must go red. **The client half**, an `internal/client` test: the proposed
+    `audit-refs` verb, handed that exact response from a stub, exits **10** with
+    `sources-unreadable`, NOT 3. The proposed `sources` verb exits 3;
   - an absent file → `sources=undeclared journal=absent`.
 - **Corpus.** `run_go.sh` exits 0 with the new rows. `record-go-only` refuses if no 2xx is seen.
   `TestTheRouteLedgerMatchesTheConformanceCorpus` goes RED with the table row present and the
@@ -888,10 +918,19 @@ killed.
 | 🔴1 the UI's and the pod's scope IDs come from different authorities, so the pod never finds the UI's record | Records are keyed by `codesrc.Key(name)`, the normalised directory name (decision 4). Rename orphans the record and recreate re-attaches it, stated plainly. The per-deployment table is deleted. A cross-binary seam test is closing-condition part 4, RED under the mutant `ui-sources-keyed-by-control-id`. The departure from O5's keying detail is Q17. |
 | 🟡1 tags auto-follow and survive `--prune`, giving a false clean exit | `--no-tags`, and `for-each-ref --contains` restricted to `refs/heads/ refs/pull/` (decisions 6 and 8). Clause (f) gains a kept-tag case. New mutant `refaudit-tags-count-as-reachable`. A test proves the restriction alone holds against a pre-existing tag. |
 | 🟡2 T9's "only the two journals" is false | Lists all four files the binary writes (STEP 2, T9). Pin 1 is widened to "zero direct file-writing `os` calls in `internal/ui`", which catches a raw `os.WriteFile`. What the pins cannot see is stated. The 5/2/1 counts are corrected to 2/1/0 (non-comment code lines). |
-| 🟡3 no answer for a configured-but-unreadable or absent journal | Arcs' three states (decision 1). A broken journal answers 503 `sources-unreadable`. An absent file means empty, with `journal=absent` on every response, and the wrong-path risk is stated (it fails safe, at exit 10). The 503 is witnessed by a literal-body `internal/api` test, because the one-boot corpus cannot send it beside the authorised rows (decision 10, Q18). |
+| 🟡3 no answer for a configured-but-unreadable or absent journal | Arcs' three states (decision 1). A broken journal answers arcs' 503 `store-unreachable` (round 4 corrected the token; see the round-4 table). An absent file means empty, with `journal=absent` on every response, and the wrong-path risk is stated (it fails safe, at exit 10). The 503 is witnessed by a literal-body `internal/api` test, because the one-boot corpus cannot send it beside the authorised rows (decision 10, Q18). |
 | 🟡4 a fail-on-absent backup is red from deploy day | Absence is a PASS, logged `sources: absent`, following the client instance's arcs backup. The reason, and the cost, are stated (decision 1). |
 | 🟢1 no dual-run ledger exists | The list is corrected to `routes.go:67-71`'s four places. The dual-run gate is named as BLIND to the head. |
-| nits | The refusal names the sources journal, pinned. The `internal/ui/README.md:654` citation is dropped. T6 notes that a resubmitted unchanged list is a harmless no-op. `Set` opens with `O_NOFOLLOW`, and a test refuses a symlink. |
+| nits (round 3) | The refusal names the sources journal, pinned. The `internal/ui/README.md:654` citation is dropped. T6 notes that a resubmitted unchanged list is a harmless no-op. `Set` opens with `O_NOFOLLOW`, and a test refuses a symlink. |
+
+## Round-4 findings → where each is fixed
+
+| finding | fix |
+|---|---|
+| 🟡1 the broken-journal 503 had two contradictory spellings | **One wire answer: arcs' `storeUnreachable`.** That is `503`, `X-Store-Status: store-unreachable`, `X-Store-Exit: 3`, and the error text as the body. No new token. The proposed `audit-refs` verb maps it to `sources-unreadable`, exit 10, regardless of `X-Store-Exit`. The proposed `sources` verb keeps arcs' exit 3. The literal-body `internal/api` test pins the exact response, and an `internal/client` test pins the 10 (decisions 1, 6 and 10; S2 test plan). |
+| 🟢1 T9 pin 1 was narrower than its sentence | Pin 1 now covers EVERY `os` mutator, derived in the test by classifying `os`'s exported functions, and failing on an unclassified one. |
+| 🟢2 "three mechanical parts" with four listed | Fixed to "Four". A sweep finds no other three-parts mention. |
+| nits (round 4) | T9 and STEP 2 list the session store's `.lock` sidecar. "A rename orphans" now reads "a DIRECTORY rename", and says a control-journal `scope-renamed` alone detaches the display name from its directory. On the UI, the STORE INDEX enumerates directories, not the journal authority. |
 
 ## Open questions
 
