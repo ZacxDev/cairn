@@ -239,7 +239,10 @@ func ScopePage(v PageView) g.Node {
 		h.Section(
 			h.Class("card"),
 			h.H2(g.Text(s.Name)),
-			scopeStats(s),
+			// ⚠ NO `scopeStats` HERE ANY MORE, ON AN OPERATOR DECISION: "N entries" is the Entries tab's own
+			// count and "N bullets declared open" read as noise on a page about the entries themselves. The
+			// scope LIST's cards keep both. What stays is when the scope last changed.
+			g.If(s.MTime() > 0, h.P(h.Class("card-stats"), updatedAgo(s.MTime(), v.Now))),
 			scopeTabs(s, v.Tab, v.Touched),
 			body,
 		),
@@ -294,9 +297,11 @@ func scopeTabHref(s Scope, tab string) string {
 // printed as a zero, and a LOWER-BOUND count carries `≥`.
 func scopeTabs(s Scope, current string, t *Touched) g.Node {
 	tab := func(label, count, tab string) g.Node {
+		// "Entries (5)" — the operator's spelling. A count that is not a measurement is still left off
+		// entirely ("Arcs", never "Arcs ()"), and a lower bound reads "(≥3)".
 		text := label
 		if count != "" {
-			text += " " + count
+			text += " (" + count + ")"
 		}
 		if tab == current {
 			return h.Span(h.Class("view-tab view-tab-here"), h.Data("tab", tabName(tab)), g.Text(text))
@@ -407,6 +412,17 @@ func newerFirstCmp(aMTime float64, aKey string, bMTime float64, bKey string) int
 // needs "when", not which nanosecond; the sub-second part is what decides a tie, and it does so in
 // [entriesNewestFirst], not here.
 func timeAgo(mtime float64, now time.Time) g.Node {
+	return mtimeNode(mtime, now, "")
+}
+
+// updatedAgo is [timeAgo] reading "updated 5m ago" — the scope page's spelling (an operator decision),
+// where a bare "5m ago" beside a row did not say WHAT happened five minutes ago. Same element, same
+// `datetime` and `title`; only the text gains the word.
+func updatedAgo(mtime float64, now time.Time) g.Node {
+	return mtimeNode(mtime, now, "updated ")
+}
+
+func mtimeNode(mtime float64, now time.Time, prefix string) g.Node {
 	if mtime <= 0 {
 		return nil
 	}
@@ -415,7 +431,7 @@ func timeAgo(mtime float64, now time.Time) g.Node {
 		h.Class("updated"),
 		h.DateTime(at.Format(time.RFC3339)),
 		h.TitleAttr(at.Format("2006-01-02 15:04:05 UTC")),
-		g.Text(relativeTime(at, now)),
+		g.Text(prefix+relativeTime(at, now)),
 	)
 }
 
@@ -998,13 +1014,21 @@ func entryRow(s Scope, e Entry, now time.Time) g.Node {
 		// format, the parser and the CLI's own words are untouched (see [historyLabel]).
 		h.Span(h.Class("entry-count"), h.TitleAttr("top-level bullets under "+store.NuanceHeading),
 			g.Text(plural(e.BulletCount, "history note", "history notes"))),
-		timeAgo(e.MTime, now),
-		// Chips: aliases are inert text, refs link where the registry resolved one, tags link to
-		// the tag filter — three containers with three modifier classes so the three read
-		// differently at a glance. The `li` classes are the ones every other test reads.
+		updatedAgo(e.MTime, now),
+		// Chips: refs link where the registry resolved one, tags link to the tag filter.
+		//
+		// 🔴 ALIASES ARE RENDERED `hidden`, AND ONLY `filter.js` REVEALS ONE — an operator decision: the
+		// card does not show aliases, but the filter still matches them, and a row the filter kept ONLY
+		// because an alias matched would otherwise be a row whose visible text does not contain what
+		// the reader typed. So each alias is in the row, hidden, and the script unhides the container
+		// and the matching alias(es) for exactly that row (and re-hides them on the next keystroke).
+		// No script, no alias — the same progressive-enhancement direction the filter control takes.
+		// The `hidden` attribute is the whole mechanism: the script WRITES only `hidden`, which is the
+		// one thing it was already allowed to write.
 		g.If(len(e.Aliases) > 0, h.Ul(
 			h.Class("aliases chips chips-alias"),
-			g.Map(e.Aliases, plainItem),
+			g.Attr("hidden"),
+			g.Map(e.Aliases, func(a string) g.Node { return h.Li(g.Attr("hidden"), g.Text(a)) }),
 		)),
 		g.If(len(e.Tasks) > 0, h.Ul(h.Class("tasks chips chips-ref"), g.Map(e.Tasks, taskItem))),
 		g.If(len(e.Tags) > 0, h.Ul(h.Class("tags chips chips-tag"), g.Map(e.Tags, tagItem))),

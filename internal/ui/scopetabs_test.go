@@ -113,9 +113,10 @@ func TestTheTabLabelsCarryPairwiseDistinctCounts(t *testing.T) {
 	srv := arcsServer(t, StoreSource{Root: tabsStore(t, false), ArcJournal: tabsJournal(t, true, false)}, readsA)
 	body := getAs(t, srv, scopeTabURL(browseScopeA, TabArcs)).Body.String()
 	for _, want := range []string{
-		`data-tab="entries" href="` + inAttr(scopeURL(browseScopeA)) + `">Entries 3</a>`,
-		`data-tab="sessions" href="` + inAttr(scopeTabURL(browseScopeA, TabSessions)) + `">Sessions 2</a>`,
-		`<span class="view-tab view-tab-here" data-tab="arcs">Arcs 1</span>`,
+		// "Entries (3)", an operator decision — it read "Entries 3".
+		`data-tab="entries" href="` + inAttr(scopeURL(browseScopeA)) + `">Entries (3)</a>`,
+		`data-tab="sessions" href="` + inAttr(scopeTabURL(browseScopeA, TabSessions)) + `">Sessions (2)</a>`,
+		`<span class="view-tab view-tab-here" data-tab="arcs">Arcs (1)</span>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the tab strip is missing %q:\n%s", want, body)

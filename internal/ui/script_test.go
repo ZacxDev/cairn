@@ -278,7 +278,8 @@ func TestUserTextEscapesInTheFiltersDataAttribute(t *testing.T) {
 	for what, want := range map[string]string{
 		"data-filter (attribute)": `data-filter="r&lt;&#34;&amp;x` + "\n" + `r&lt;&#34;&amp;x` + "\n" + `a&lt;b&#34;c&amp;d` + "\n" + `t&lt;&#34;&amp;"`,
 		"title (attribute)":       `title="r&lt;&#34;&amp;x"`,
-		"alias chip (text)":       `<li>a&lt;b&#34;c&amp;d</li>`,
+		// Rendered `hidden` since aliases left the card; `filter.js` reveals it only when it matched.
+		"alias chip (text)": `<li hidden>a&lt;b&#34;c&amp;d</li>`,
 		"ref link (text)":         `>r&lt;&#34;&amp;x</a>`,
 	} {
 		if !strings.Contains(out, want) {

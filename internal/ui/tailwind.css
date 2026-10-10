@@ -391,8 +391,19 @@
     @apply border-line font-mono;
   }
 
+  /* A tag reads as a TAG at a glance (an operator decision): a tighter, squarer pill than an
+   * alias or a ref, and a `#` drawn by CSS — so the link text, the `data-filter` payload and every
+   * test reading `<a …>timber</a>` are unchanged, and a screen reader does not read "hash" before
+   * every tag. Same 12px text and accent-on-tint colours as before, so its contrast is the one
+   * `uiaudit`'s axe pass already measured; under a coarse pointer the touch block below still
+   * grows its link to the 44px target. */
   .chips-tag > li {
-    @apply border-accent/50 bg-accent/10;
+    @apply rounded-md border-accent/50 bg-accent/10 px-1.5 py-0 leading-4;
+  }
+
+  .chips-tag > li::before {
+    content: "#";
+    @apply mr-px opacity-70;
   }
 
   /* A relative timestamp ("5m ago"). The absolute time is its `title`, so it never wraps. */
@@ -580,8 +591,17 @@
   /* The breadcrumb. `›` is a CSS-generated separator rather than a rendered character,
    * so it is not in the accessible name of any link and a screen reader does not read it
    * out between every step. */
+  /* Smaller and tighter than it was (an operator decision): `text-xs`, and the space above and below
+   * pulled in — the header's `mb-6` is offset upward, and the card directly after the trail drops its
+   * top margin — so the trail sits between the header and the page rather than floating in a band of
+   * its own. It still WRAPS at any width (`flex-wrap`, and `wrap-anywhere` on each link under a
+   * coarse pointer), and the touch block still gives every crumb its 44px target. */
   .crumbs {
-    @apply flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm text-muted mb-4;
+    @apply flex flex-wrap items-center gap-x-1 gap-y-0.5 text-xs text-muted -mt-3 mb-1;
+  }
+
+  .crumbs + .page-main > .card:first-child {
+    @apply mt-1;
   }
 
   .crumb {
