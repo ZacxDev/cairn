@@ -88,6 +88,8 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		// read must be indistinguishable from one that never wrote — an answer about authority.
 		"GET /session content",
 		"GET /share content",
+		// 🔴 THE TEAM PAGE (`team.go`). `content`: every list on it is an authority answer.
+		"GET /team content",
 		"GET /sign-in public",
 		"GET /sign-in/github/callback public",
 		"GET /static/app." + stylesheetDigestFromBytes(t) + ".css public",
@@ -111,6 +113,10 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		"POST /sign-in public",
 		"POST /sign-in/github public",
 		"POST /sign-out",
+		// The Team page's two writes. NO class — both cross-site gates reach them by METHOD,
+		// which `TestTheTeamLinkRowsAreBehindBothCrossSiteGates` asserts by each gate's message.
+		"POST /team/link",
+		"POST /team/link/revoke",
 		"POST /unshare",
 	}
 	// 🔴 AND ONE ROW PER COMMITTED ICON FILE, EVERY VARIANT, ARMED OR NOT. The variants and kinds are
@@ -378,7 +384,10 @@ func testConfig(t testing.TB, auth identity.Authenticator) Config {
 		// would leave every routing walk measuring the no-store branch and none of them
 		// measuring a handler.
 		Inviting: benignInviting(),
-		Sessions: mustSessions(t),
+		// The Team page's link half, wired for `Inviting`'s reason: the no-store shape has its
+		// own test, and a default of nil would leave every walk measuring that branch.
+		TeamLinks: benignTeamLinks(),
+		Sessions:  mustSessions(t),
 		// 🔴 A PROVIDER IS WIRED IN THE DEFAULT FIXTURE, DELIBERATELY, SO THE DISPATCH TESTS
 		// MEASURE THE CONFIGURED SHAPE. The unconfigured one is a real deployment and it has
 		// its own test (`TestTheGitHubRowsAnswerAnHonestRefusalWhenTheProviderIsNotConfigured`);
@@ -478,6 +487,10 @@ var bareGETAnswer = map[string]int{
 	// is a dead link in the frame of the whole surface. The page says `NoInviteStore`
 	// instead. `TestTheInviteRowsAnswerHonestlyWithNoInviteStore` measures both halves.
 	"GET /invite content": http.StatusOK,
+	// 🔴 `GET /team` ANSWERS 200 BARE AND ON A DEPLOYMENT WITH NO STORE, for `GET /invite`'s
+	// reason: the header links it from every page. With no store the link half says
+	// `NoInviteStore` (`TestTheTeamPageAnswersHonestlyWithNoStore`).
+	"GET /team content": http.StatusOK,
 	// 🔴 `GET /join` ANSWERS 200 TO A REQUEST CARRYING NO TOKEN, WHICH IS THE PAGE AND NOT A
 	// REFUSAL. It named no invitation, so there is nothing for a uniform refusal to protect
 	// and nothing it could learn; it gets a page saying the link carried no invitation. The
@@ -657,6 +670,13 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		{"GET", iconStemNoDigest + ".000000000000.png"},
 		{"GET", iconStemNoDigest + "..png"},
 		{"GET", "/static/icon-nosuchvariant-192." + iconDigest + ".png"},
+		// 🔴 THE TEAM ROWS' NEAR-MISSES: a prefix match on `/team` would serve each.
+		{"GET", "/team/"},
+		{"GET", "/teamx"},
+		{"GET", "/team/links"},
+		// The write paths under GET: a dispatcher keyed on path alone would serve them.
+		{"GET", "/team/link"},
+		{"GET", "/team/link/revoke"},
 	} {
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, httptest.NewRequest(probe[0], probe[1], nil))
@@ -693,6 +713,11 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		// dispatcher keyed on path alone would serve both either way.
 		{"POST", "/sign-in/github/callback"},
 		{"PUT", "/sign-in/github"},
+		// The Team page's read path under POST, and its write path under the wrong methods.
+		{"POST", "/team"},
+		{"PUT", "/team/link"},
+		{"POST", "/team/link/"},
+		{"POST", "/team/revoke"},
 	} {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(probe[0], probe[1], nil)
@@ -849,6 +874,10 @@ var contentAuthority = map[string]string{
 	// expectation while having asked the wrong question, which is exactly the sum this
 	// table replaced.
 	"GET /invite content": "inviting",
+	// 🔴 A FOURTH: the Team page's own answer is the link chooser, `TeamLinking.Mintable` —
+	// which projects and scopes this caller may confer. It also consults `sharing` and
+	// `inviting` for its two index lists; this names the one whose answer is new.
+	"GET /team content": "team",
 }
 
 // countingSource records whether the authority was consulted, and is the whole
@@ -932,10 +961,12 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 		source := &countingSource{scopes: benignWorld()}
 		sharing := benignSharing()
 		inviting := benignInviting()
+		team := benignTeamLinks()
 		cfg := testConfig(t, staticAuth{testIdentity()})
 		cfg.Source = source
 		cfg.Sharing = sharing
 		cfg.Inviting = inviting
+		cfg.TeamLinks = team
 		srv, err := New(cfg)
 		if err != nil {
 			t.Fatalf("the server did not build: %v", err)
@@ -943,7 +974,7 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 
 		// INSTRUMENT CONTROL: every counter starts at zero, so a non-zero below is the
 		// request's doing and not the constructor's.
-		if source.calls != 0 || sharing.reads != 0 || inviting.reads != 0 {
+		if source.calls != 0 || sharing.reads != 0 || inviting.reads != 0 || team.reads != 0 {
 			t.Fatalf("the counting fixtures were already called (source %d, sharing %d, inviting %d) before "+
 				"any request; their counts below would measure construction rather than routing",
 				source.calls, sharing.reads, inviting.reads)
@@ -972,7 +1003,7 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 				"WHICH authority it asked.", route)
 			continue
 		}
-		counts := map[string]int{"source": source.calls, "sharing": sharing.reads, "inviting": inviting.reads}
+		counts := map[string]int{"source": source.calls, "sharing": sharing.reads, "inviting": inviting.reads, "team": team.reads}
 		got, named := counts[want]
 		if !named {
 			t.Errorf("%s declares its authority as %q and this test has no counter for it. Add one — a "+
@@ -996,17 +1027,19 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 	health := &countingSource{scopes: benignWorld()}
 	healthSharing := benignSharing()
 	healthInviting := benignInviting()
+	healthTeam := benignTeamLinks()
 	cfg := testConfig(t, staticAuth{testIdentity()})
 	cfg.Source = health
 	cfg.Sharing = healthSharing
 	cfg.Inviting = healthInviting
+	cfg.TeamLinks = healthTeam
 	srv, err := New(cfg)
 	if err != nil {
 		t.Fatalf("the server did not build: %v", err)
 	}
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest("GET", HealthPath, nil))
-	if health.calls != 0 || healthSharing.reads != 0 || healthInviting.reads != 0 {
+	if health.calls != 0 || healthSharing.reads != 0 || healthInviting.reads != 0 || healthTeam.reads != 0 {
 		t.Errorf("the health path consulted the authority (source %d, sharing %d, inviting %d time(s)); it "+
 			"is answered before the chain runs and must read nothing",
 			health.calls, healthSharing.reads, healthInviting.reads)

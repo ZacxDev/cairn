@@ -39,7 +39,7 @@ func TestEveryRenderedPageCarriesBothNavigationAffordances(t *testing.T) {
 	// asserted so that adding one without an entry FAILS rather than passing unseen.
 	want := []string{
 		"entry", "hub", "invite-index", "invite-minted", "invite-project", "navigate", "root",
-		"scope", "search", "sessions", "share-index", "share-scope",
+		"scope", "search", "sessions", "share-index", "share-scope", "team", "team-minted",
 	}
 	got := make([]string, 0, len(pages))
 	for name := range pages {
@@ -78,6 +78,11 @@ func TestEveryRenderedPageCarriesBothNavigationAffordances(t *testing.T) {
 		// in prose, and this repository already records what a description narrower than
 		// its implementation costs. This one is the harmless direction: the name says two
 		// and the body asserts three.
+		// 🔴 THE FOURTH, ADDED BY THE TEAM PAGE — the same defect a third object over.
+		if !strings.Contains(html, `href="`+TeamPath+`"`) {
+			t.Errorf("%s: no href to TeamPath (%q) — the Team page is reachable only by typing the URL",
+				name, TeamPath)
+		}
 		if !strings.Contains(html, `href="`+InvitePath+`"`) {
 			t.Errorf("%s: no href to InvitePath (%q) — the invite flow is reachable only by "+
 				"typing the URL, which is the same defect one object over: without it the "+
@@ -195,6 +200,10 @@ func everyRenderedPage(t *testing.T) map[string]string {
 		"invite-index":   renderNode(t, InvitePage(inviteIndexView)),
 		"invite-project": renderNode(t, InvitePage(inviteProjectView)),
 		"invite-minted":  renderNode(t, InvitePage(inviteMintedView)),
+		// The Team page, and its MINTED shape for the invite-minted reason above.
+		"team": renderNode(t, TeamPage(TeamView{Viewer: "operator@example.invalid", CSRF: renderCSRF})),
+		"team-minted": renderNode(t, TeamPage(TeamView{Viewer: "operator@example.invalid", CSRF: renderCSRF,
+			Minted: &MintedTeamLink{Link: JoinPath + "?invite=" + fixtureLinkToken, Role: "reader", Expires: "2000-01-09T03:04:05Z"}})),
 	}
 }
 

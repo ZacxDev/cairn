@@ -115,9 +115,15 @@ type Redemption struct {
 	// came into existence, because that is the event `-create-user`'s help says only an
 	// operator can cause.
 	Provisioned bool
-	// Project and Role are what the invitation conferred.
+	// Project and Role are what the invitation conferred. EMPTY for a team link, which
+	// names a set rather than one project — see `Link`.
 	Project control.ID
 	Role    control.Role
+	// Link is true when the token was a TEAM LINK (`ControlTeamLinks`), and Targets is how
+	// many records the redemption wrote — one per selected target the redeemer did not
+	// already hold.
+	Link    bool
+	Targets int
 }
 
 // ErrNotInvitable refuses an invite into a project this actor may not manage.
@@ -166,6 +172,15 @@ type ControlInviting struct {
 	Invites invite.Store
 	// Now is the clock. Nil means `time.Now().UTC()`.
 	Now func() time.Time
+	// Links, when set, redeems every token `Invites` does not know.
+	//
+	// 🔴 THE TEAM LINK RIDES THE INVITATION'S ONE JOIN PATH RATHER THAN OPENING A SECOND. A
+	// link is `/join?invite=<token>` exactly as an invitation is, so `GET /join`, the flight
+	// that carries the token and the callback's two redemption arms are unchanged and serve
+	// both. The dispatch is by STORE, never by a token prefix or a form field: the two
+	// tables are disjoint by digest, and a field naming which kind to try would be a value
+	// the presenter chooses.
+	Links *ControlTeamLinks
 }
 
 var _ Inviting = ControlInviting{}
@@ -324,6 +339,10 @@ func (c ControlInviting) Redeem(ctx context.Context, token, provider, subject st
 	if err != nil {
 		return Redemption{}, err
 	}
+	if !known && c.Links != nil {
+		// Not an invitation: a team link, or nothing. See [ControlInviting.Links].
+		return c.Links.Redeem(ctx, token, provider, subject)
+	}
 	if !known || !inv.Redeemable(now) {
 		// One error for unknown, expired, revoked and already-used. The PAGE decides how
 		// much to say; see `invite.ErrNotRedeemable`.
@@ -472,6 +491,9 @@ func (c ControlInviting) RedeemFor(ctx context.Context, token string, principal 
 	inv, known, err := c.Invites.ByToken(token)
 	if err != nil {
 		return Redemption{}, err
+	}
+	if !known && c.Links != nil {
+		return c.Links.RedeemFor(ctx, token, principal)
 	}
 	if !known || !inv.Redeemable(now) {
 		return Redemption{}, invite.ErrNotRedeemable

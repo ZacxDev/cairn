@@ -35,6 +35,7 @@ var realPage = map[string]struct{ query, marker string }{
 	"GET /session content":  {"?" + QuerySession + "=" + walkSession, `id="session-summary"`},
 	"GET /share content":    {"", `<title>cairn — sharing`},
 	"GET /invite content":   {"", `class="invite-honesty"`},
+	"GET /team content":     {"", `<title>cairn — team`},
 }
 
 // walkSession is the one session id `walkSource` answers as FOUND.

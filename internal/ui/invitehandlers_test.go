@@ -174,7 +174,11 @@ func TestTheInviteWritesAreBehindBothCrossSiteGates(t *testing.T) {
 // other door. The writes are linked by nothing but a form on a page that is not rendered in
 // this configuration, so they refuse with the cause.
 func TestTheInviteRowsAnswerHonestlyWithNoInviteStore(t *testing.T) {
-	rig := newInviteRig(t, func(cfg *Config) { cfg.Inviting = nil })
+	rig := newInviteRig(t, func(cfg *Config) {
+		// Both halves of the database, as `cmd/cairn-ui` leaves them with no DSN: `New` refuses
+		// team links with no invitation half (`ErrTeamLinksWithoutInviting`).
+		cfg.Inviting, cfg.TeamLinks = nil, nil
+	})
 
 	rec := rig.get(InvitePath)
 	if rec.Code != http.StatusOK {

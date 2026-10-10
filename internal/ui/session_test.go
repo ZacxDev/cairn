@@ -103,6 +103,12 @@ func newLiveOver(
 		t.Fatalf("the chain did not build: %v", err)
 	}
 
+	// The Team page's link half rides the SAME `ControlInviting` value when it carries one —
+	// which is how `cmd/cairn-ui` wires them (one store pair, one authority).
+	var team TeamLinking
+	if ci, ok := inviting.(ControlInviting); ok && ci.Links != nil {
+		team = *ci.Links
+	}
 	srv, err := New(Config{
 		Auth:        chain,
 		Credentials: counted,
@@ -119,6 +125,7 @@ func newLiveOver(
 		TrustedProxies: trusted,
 		Limiter:        limiter,
 		Inviting:       inviting,
+		TeamLinks:      team,
 	})
 	if err != nil {
 		t.Fatalf("the server did not build: %v", err)

@@ -939,10 +939,14 @@ type Server struct {
 	// deployments that predate one must keep starting. Every consumer checks for nil, and the
 	// routes answer an honest refusal rather than being absent from the ledger.
 	inviting Inviting
-	sessions identity.SessionStore
-	ttl      time.Duration
-	now      func() time.Time
-	log      io.Writer
+	// teamLinks is the Team page's multi-target link half. NIL means no store — the same
+	// ruling `inviting` gets — and the Team page then says `NoInviteStore` where the link
+	// form would be. See `team.go`.
+	teamLinks TeamLinking
+	sessions  identity.SessionStore
+	ttl       time.Duration
+	now       func() time.Time
+	log       io.Writer
 
 	// oauth and flights are the provider sign-in, and they are one pair rather than two
 	// settings for the reason the pair below is: a flight table with no provider to send
@@ -1070,6 +1074,12 @@ type Config struct {
 	// would refuse to start every deployment without a Postgres — which is the deployment
 	// that exists today.
 	Inviting Inviting
+	// TeamLinks is the Team page's multi-target link half, and it MAY be nil — `Inviting`'s
+	// ruling, for its reason: it needs a database. When it is set `Inviting` must be too,
+	// because a team link is REDEEMED through the invitation's join path
+	// (`ControlInviting.Links`); a server that could mint links nothing can redeem is
+	// refused at construction with [ErrTeamLinksWithoutInviting].
+	TeamLinks TeamLinking
 	// Sessions is the durable session table sign-in writes to and sign-out removes
 	// from. It is the SAME store the cookie backend in `Auth` reads; two stores would
 	// be a logout that revokes a session nothing authenticates from.
@@ -1127,6 +1137,11 @@ var ErrNoSessions = errors.New("ui: no session store was supplied, so a sign-in 
 // sign-in would appear to succeed and every subsequent request would be refused.
 var ErrNegativeTTL = errors.New("ui: the session TTL is negative, so every session would be born expired")
 
+// ErrTeamLinksWithoutInviting refuses a server that could mint team links and redeem none:
+// redemption rides `Inviting` (`ControlInviting.Links`), so links with no invitation half
+// would be capabilities that look live on the Team page and refuse at every click.
+var ErrTeamLinksWithoutInviting = errors.New("ui: team links were supplied with no invitation half, so every link minted would be unredeemable")
+
 // New builds the server, refusing each missing part with its own sentinel.
 func New(cfg Config) (*Server, error) {
 	if cfg.Auth == nil {
@@ -1146,6 +1161,9 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.TTL < 0 {
 		return nil, ErrNegativeTTL
+	}
+	if cfg.TeamLinks != nil && cfg.Inviting == nil {
+		return nil, ErrTeamLinksWithoutInviting
 	}
 	if err := cfg.App.Validate(); err != nil {
 		return nil, err
@@ -1168,6 +1186,7 @@ func New(cfg Config) (*Server, error) {
 		source:      cfg.Source,
 		sharing:     cfg.Sharing,
 		inviting:    cfg.Inviting,
+		teamLinks:   cfg.TeamLinks,
 		sessions:    cfg.Sessions,
 		ttl:         ttl,
 		now:         now,

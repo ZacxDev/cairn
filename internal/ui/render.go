@@ -684,6 +684,9 @@ func shell(title string, v PageView, crumbs []crumb, body ...g.Node) g.Node {
 				// variable away from having it. `handleInvitePage` is where that is
 				// arranged, and it is what makes this line honest.
 				h.P(h.Class("nav-invite"), h.A(h.Href(InvitePath), g.Text("Invitations"))),
+				// 🔴 THE TEAM PAGE'S ENTRY POINT (`team.go`), unconditional for the two links' reason
+				// above. The two older links stay: their pages are kept, not redirected.
+				h.P(h.Class("nav-team"), h.A(h.Href(TeamPath), g.Text("Team"))),
 				// The viewer's display name is USER TEXT: it comes from a
 				// `control.Principal`, which comes from a provisioned user record.
 				// The `title` carries the whole sentence because a coarse pointer TRUNCATES this line

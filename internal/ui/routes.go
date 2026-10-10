@@ -185,6 +185,15 @@ var routes = map[routeKey]route{
 	{"POST", "/invite/revoke"}: {(*Server).handleInviteRevoke, 0},
 	{"GET", "/join"}:           {(*Server).handleJoinPage, classPublic},
 
+	// 🔴 THE TEAM PAGE (`team.go`): one content read and two writes, the invite flow's
+	// shape. `GET /team` is `content` — every list on it is an authority answer. The two
+	// POST rows carry NO class, so both cross-site gates reach them by METHOD, and revoke is
+	// its own path for `UnsharePath`'s reason. `/share` and `/invite` are KEPT beside it, not
+	// redirected — `team.go`'s header says why.
+	{"GET", "/team"}:              {(*Server).handleTeamPage, classContent},
+	{"POST", "/team/link"}:        {(*Server).handleTeamLink, 0},
+	{"POST", "/team/link/revoke"}: {(*Server).handleTeamLinkRevoke, 0},
+
 	// 🔴 THE PROVIDER PAIR, AND THE METHODS ARE NOT INTERCHANGEABLE. The START is a POST so
 	// that gate (2) — same origin, derived from the method — refuses a cross-site request to
 	// it: as a GET it would be reachable by any `<img src>` and by every link prefetcher,
@@ -296,6 +305,13 @@ const (
 	// token and says so, rather than guessing a host out of a request header that a proxy
 	// chooses.
 	JoinPath = "/join"
+
+	// TeamPath is the Team page: sharing, invitations and team links in one place.
+	TeamPath = "/team"
+	// TeamLinkPath mints a multi-target team link; TeamLinkRevokePath withdraws one — two
+	// paths, `UnsharePath`'s ruling.
+	TeamLinkPath       = "/team/link"
+	TeamLinkRevokePath = "/team/link/revoke"
 
 	// OAuthStartPath and OAuthCallbackPath are the provider pair.
 	//
