@@ -24,27 +24,25 @@ decisions O1–O13 paraphrased, slices S0–S6b, the iPhone checklist, closing-c
 - **S0–S3 MERGED.** S1 #205 `90d1344`, S2 #206 `173f08f` (+ `-app-*` flags), S3 #209 `0355c7a`
   (no-store on EVERY HTML page — public included, one writer; the plan's decision 8 + S3 test plan
   carry a SUPERSEDED-AT-BUILD note). Test-only margin fix #207 `86b5b93`.
-- **Deployed on the personal instance:** both pods `sha-0355c7a`, ARMED with `CAIRN_UI_APP_NAME=cairn`,
-  `CAIRN_UI_APP_SHORT_NAME=cairn`, `CAIRN_UI_APP_ICON_VARIANT=teal` (env, deployment repo). Verified
-  live: manifest 200 `application/manifest+json`, head tags present, 4 icons byte-equal to teal,
-  Chromium `getInstallabilityErrors=[]` (control `example.com` → `no-manifest`); `/sign-in` and `/join`
-  went from no Cache-Control → `no-store`. NOT verified on a phone (operator's check), NOT verified on
-  a signed-in page live (the store token is 401 at the UI).
-- **S4 = PR #220 (`zach/mobile-s4` @ `b348835`): audit rounds 0+1 CLEAN** (`pwa_check.sh --self-test`
-  re-run by the auditor → `sabotaged=9 caught=9 plain-loop=3/3`; six S4 rows killed by their own
-  tests). Waiting on CI's `go` job; its red `uiaudit` is the audit hub's push 502 (infrastructure).
-  Search shortcut → `/scopes?q=`, Team shortcut → `/share` (repoint to `/team` once #214 lands).
+- **Deployed on the personal instance:** both pods now `sha-23a7f21` (the UI-hub deploy, which
+  carries S0–S3 unchanged), still ARMED with `CAIRN_UI_APP_NAME=cairn`,
+  `CAIRN_UI_APP_SHORT_NAME=cairn`, `CAIRN_UI_APP_ICON_VARIANT=teal`; manifest still 200 after that
+  rollout. NOT verified on a phone (operator's check).
+- **S4 = PR #220 (`zach/mobile-s4` @ `480fbcf`, a merge of `main` @ `76ddc7e` into `b348835`):
+  audit rounds 0+1 CLEAN.** CI run 38069627525 (started 16:55Z) green except `go`, which was still
+  running at 17:45Z; the `uiaudit` red seen earlier was the audit hub's push 502. Search shortcut →
+  `/scopes?q=`, Team shortcut → `/share` (repoint to `/team` once #214 lands).
 - Claim held: `cairn-mobile-s4`.
 
 ## Next steps (ranked)
-1. **Merge #220 (S4)** once CI's `go` job is green at `b348835` (the red `uiaudit` is the hub 502,
-   non-blocking) — check the run tested the merge with current main, verify by content, release
-   `cairn-mobile-s4`. Then repoint the Team shortcut to `/team` after #214 merges.
-   forcing: user — operator asked for S4 this session.
+1. **Merge #220 (S4)** once CI's `go` job is green at `480fbcf` (its head already contains
+   `origin/main` `76ddc7e`; if main moves again first, re-merge and re-run) — verify by content,
+   release `cairn-mobile-s4`. Then repoint the Team shortcut to `/team` after #214 merges.
+   forcing: user — operator asked for S4.
 2. **S5** (standalone Back/Reload), **S6a** (pin CI chromium) → **S6b** (blocking `uiaudit-touch`
    job), per the plan. forcing: user — operator chose this scope (O9–O11).
-3. **Deploy S4 to the personal instance** — needs the operator's go (S1–S3 deploys were approved;
-   S4 was not). forcing: user — awaiting operator.
+3. **Deploy S4 to the personal instance** — needs the operator's go (the #213 deploy approval
+   does not cover it). forcing: user — awaiting operator.
 
 ## Gotchas / decisions / dead-ends
 - **Operator decisions this session (paraphrased; never quote verbatim — AGENTS.md forbids
