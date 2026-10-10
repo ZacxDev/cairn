@@ -98,13 +98,14 @@ func TestTheRevisionIsALiteralDigest(t *testing.T) {
 // and is refused. With the compare moved outside the lock, call two compares against the bytes
 // before call one's append, passes, and lands too.
 //
-// The hold is a rendezvous with a deadline: call one waits for call two to reach ITS interleave, or
-// for 300ms, whichever is first. Under the real code the deadline is what releases call one (call
-// two is parked on the lock and cannot arrive). ⚠ THE KILL IS TIMED, NOT A RENDEZVOUS, for the
-// mutant `codesrc-revision-compared-outside-the-lock` as written: its moved compare sits BEFORE the
-// lock while `interleave` stays inside it, so call two never reaches the rendezvous; what kills it is
-// that call two's pre-lock read runs within the 300ms hold — measured red on the line count (2 ≠ 1).
-// A variant that moved `interleave` out with the compare WOULD rendezvous.
+// The hold is a RENDEZVOUS with a deadline: call one waits for call two to reach ITS interleave, or
+// for 300ms, whichever is first. 🔴 THE KILL IS THE RENDEZVOUS, NOT THE DEADLINE. The seam marks the
+// compare-to-append window, so a compare moved outside the lock (the mutant
+// `codesrc-revision-compared-outside-the-lock`) carries the seam out with it: both calls compare
+// against the pre-append bytes and BOTH reach the seam before either takes the lock, so the overlap
+// is forced and the line count is 2 on every run, not on a lucky one. The deadline governs only the
+// CORRECT code's path, where call two is parked on `flock` and can never arrive — there it is what
+// releases call one, and its length decides nothing but how long the green run takes.
 func TestTwoWritesCarryingOneRevisionLandExactlyOnce(t *testing.T) {
 	j := newJournal(t)
 	if _, err := j.Set("alpha-notes", []string{srcA}, RevisionNone, "reader-one", t0, nil); err != nil {

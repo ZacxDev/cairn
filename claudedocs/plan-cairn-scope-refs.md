@@ -787,6 +787,11 @@ killed.
   revision, and the fold shows the first call's list.
   - **Negative control:** the mutant `codesrc-revision-compared-outside-the-lock` makes both land.
     The test must go red on the appended-line COUNT (2 ≠ 1).
+  - **As built (S1):** the kill is a forced RENDEZVOUS, not a timing window. The mutant moves the
+    `interleave` seam out of the lock WITH the compare (the seam marks the compare-to-append window),
+    so both calls reach the seam before either locks. Call one's 300ms deadline governs only the
+    correct code, where call two is parked on `flock`. Measured: 10 of 10 runs red on the count, each
+    released by the rendezvous (0.08–0.22s), not by the deadline.
 - **Fold.** Two records for one scope: the later wins, and reversing the fold goes red. A torn tail
   and a non-JSON line are skipped and counted. A record with an unknown field folds; that is an
   **invariant guard**, labelled, because no build writes one yet.

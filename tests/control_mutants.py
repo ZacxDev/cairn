@@ -257,6 +257,23 @@ _CODESRC_LOCKED_SPAN = (
     '\t\treturn Record{}, &JournalUnreadableError{Path: j.Path, Err: err}\n'
     '\t}\n'
     '\tcurrent := fold(data).RevisionFor(scope)\n'
+    '\tif current != ifRevision {\n'
+    '\t\treturn Record{}, &StaleRevisionError{Scope: scope, Want: ifRevision, Current: current}\n'
+    '\t}\n'
+    '\tif interleave != nil {\n'
+    '\t\tinterleave()\n'
+    '\t}\n'
+)
+
+#: The compare-and-seam tail of that span: the lines the moved-compare row lifts OUT of the lock.
+_CODESRC_COMPARE_AND_SEAM = (
+    '\tcurrent := fold(data).RevisionFor(scope)\n'
+    '\tif current != ifRevision {\n'
+    '\t\treturn Record{}, &StaleRevisionError{Scope: scope, Want: ifRevision, Current: current}\n'
+    '\t}\n'
+    '\tif interleave != nil {\n'
+    '\t\tinterleave()\n'
+    '\t}\n'
 )
 
 
@@ -4211,14 +4228,17 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="codesrc-revision-compared-outside-the-lock",
         path="internal/codesrc/journal.go",
-        # ONE pattern spanning both sites, so the compare MOVES rather than being duplicated: the
-        # revision is read before the lock is taken, and the in-lock line uses that stale value.
+        # ONE pattern spanning the lock and the compare, so the compare MOVES rather than being
+        # duplicated — and the `interleave` seam moves WITH it, because the seam marks the
+        # compare-to-append window wherever that window is. That is what makes the kill a
+        # RENDEZVOUS rather than a race: both calls reach the seam before either takes the lock.
         old=_CODESRC_LOCKED_SPAN,
-        new="\tpreRevision := RevisionNone\n"
-        "\tif pre, perr := j.Read(); perr == nil {\n\t\tpreRevision = pre.RevisionFor(scope)\n\t}\n"
-        + _CODESRC_LOCKED_SPAN.replace(
-            "\tcurrent := fold(data).RevisionFor(scope)\n", "\tcurrent := preRevision\n"
-        ),
+        new="\tif pre, perr := j.Read(); perr == nil {\n"
+        "\t\tif cur := pre.RevisionFor(scope); cur != ifRevision {\n"
+        "\t\t\treturn Record{}, &StaleRevisionError{Scope: scope, Want: ifRevision, Current: cur}\n"
+        "\t\t}\n\t}\n"
+        "\tif interleave != nil {\n\t\tinterleave()\n\t}\n"
+        + _CODESRC_LOCKED_SPAN.replace(_CODESRC_COMPARE_AND_SEAM, ""),
         killer="TestTwoWritesCarryingOneRevisionLandExactlyOnce",
         pkgs=PKGS + ("./internal/codesrc/",),
         why="checking the precondition before taking the lock is the natural order to write it in "
