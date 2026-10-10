@@ -45,7 +45,7 @@ func (g *gen) reviewRoundPlants(session, ses string) {
 		g.plant("k8s-env-pair", "k8s-env", g.pick(alnum, 20)+"7")+"\n        - name: LOG_LEVEL\n          value: debug\n", nil))
 
 	// 35 — a camelCase secret field inside a JSON document printed by a tool.
-	cfg, _ := json.Marshal(m{"credentials": m{"secretAccessKey": g.plant("camelcase-field", "secret-field", g.pick(alnum, 40)),
+	cfg, _ := json.Marshal(m{"credentials": m{"secretAccessKey": g.plant("camelcase-field", "source-literal", g.pick(alnum, 40)),
 		"region": "alpha"}})
 	g.record(g.toolResult(session, string(cfg), nil))
 

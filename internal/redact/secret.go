@@ -65,7 +65,7 @@ func joinYAML(lines []yamlLine) string {
 // rule; its values are caught only if another rule matches them (decision 6). The JSON form of a
 // Secret is handled by the structural walk, which has a real parser.
 func (r *Redactor) yamlSecret(s string) (string, []Hit) {
-	if !strings.Contains(s, "Secret") && !strings.Contains(s, "name:") {
+	if !strings.Contains(s, ":") || !strings.Contains(s, "\n") {
 		return s, nil
 	}
 	lines := splitYAML(s)
@@ -80,6 +80,7 @@ func (r *Redactor) yamlSecret(s string) (string, []Hit) {
 			}
 		}
 		hits = append(hits, r.redactYAMLEnvPairs(doc)...)
+		hits = append(hits, r.redactYAMLSecretScalars(doc)...)
 	}
 	for i, l := range lines {
 		if yamlDocSep.MatchString(l.body) {

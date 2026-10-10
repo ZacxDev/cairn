@@ -15,19 +15,38 @@ match. stdlib only — the capture binary that imports it is under the import ba
 - **Binary = a known file signature** (`Signatures`: PNG, JPEG, GIF, WebP, PDF, ZIP, gzip, bzip2,
   xz, zstd, 7z, ELF) — the coordinator's reading of O12. Binary ships byte-identical; everything
   else is TEXT and is scanned: NUL-separated text segment by segment, text with stray invalid
-  bytes with those bytes carried through (only matched spans change), BOM-marked UTF-16 decoded
-  and re-encoded. Base64 or a `data:` URL is scanned decoded unless its payload is binary.
+  bytes with those bytes carried through (only matched spans change), UTF-16 (with a BOM, or
+  without one when one byte lane is ≥ 90% NUL) decoded and re-encoded. An ASCII-spellable magic
+  (`%PDF-`, `BZh`, `GIF8?a`, `RIFF…WEBP`) counts only with a non-text byte in the first 1 KiB, so
+  text that merely starts with one is scanned. Base64 or a `data:` URL is scanned decoded unless
+  its payload is binary.
 - **ONE predicate for "this name names a secret"** — `SecretKey` — for `KEY=value` lines, YAML
   keys, `docker -e`, k8s env `name:` entries and JSON object keys. Case- and style-insensitive
-  (`dbPassword`, `SecretAccessKey`, Docker `auths.*.auth`), and the secret word must END the name
-  (`max_tokens`, `TOKEN_URL`, `DB_PASSWORD_FILE` are not secrets). The structural field rule takes
-  values of ≥ 4 characters, spaces allowed — the dotenv rule's floor.
+  (`dbPassword`, `SecretAccessKey`, Docker `auths.*.auth`). The secret word ends the name up to a
+  closed suffix set (`SECRET_KEY_BASE`, `apiKeyValue`); a long word may be GLUED to a prefix
+  (`PGPASSWORD`); `PASS`/`PWD` count (the shell's `PWD`/`OLDPWD` do not); `<VENDOR>_KEY` is a closed
+  list (`APP_KEY`, `ENCRYPTION_KEY`, `*_SIGNING_KEY`, `OPENAI_KEY`). `max_tokens`, `TOKEN_URL`,
+  `DB_PASSWORD_FILE`, `passwordHash`, `secretKeyRef` are not secrets. The structural field rule
+  takes values of ≥ 4 characters, spaces allowed — the dotenv rule's floor.
+- **Shapes beyond `KEY=value`**: URL query and `;`-separated connection-string credentials
+  (`?token=`, `X-Amz-Signature=`, Azure `AccountKey=`, ADO.NET `Password=`, JDBC `?password=`), JWK
+  private members (`d`, CRT parts, an `oct` key's `k`), YAML block scalars under a secret key,
+  `.pgpass` and `.netrc`, source literals whose NAME passes `SecretKey` (`const apiSecret = '…'`,
+  `password="…"`, `{'secret_key': '…'}`), `docker login -p`, and k8s env entries in either order.
 - **Line rules read through copy prefixes**: Read's numbered copy (`     1\t`, `1→`), `grep -n`
-  (`path:12:`) and diffs (`+`/`-`) — for the dotenv rule and the YAML Secret rule.
-- **Code is not a secret.** The line rules refuse a value that is a call, an index, a `$`
-  reference, an attribute path or a bare word (`Password: password,`), so source a session reads
-  survives: the corpus carries synthetic Go, Python, Markdown and YAML and measures them
-  undamaged. ⚠ Cost: a digit-free dictionary-word password in a `KEY=value` line is not caught.
+  (`path:12:`) and diffs (`+`/`-`) — for the dotenv rule, the YAML rules and EVERY line of a
+  private-key body (review round 2 measured a key read through Read shipping 3/3 body lines).
+- **Code is not a secret — refused by SHAPE only.** A call or index (identifier then `(`/`[`,
+  ending in a bracket), a value starting `$`/`{{`/`%(`/backtick, a value entirely `<…>`, one
+  repeated character, `your…`/`…_here`, a YAML tag, a keyword/type name, an identifier with a
+  trailing `;`/`,`, and an attribute path that is a reference (a scope/module head like `var.` or
+  `os.`, an all-lowercase `snake_case` head, or a LAST segment that names a secret). ⚠ **The cost,
+  measured** (`TestRedactorRecallOnRealisticPasswords`, 200 values per cell): 200/200 for alnum,
+  base64, hex, dotted and dashed diceware; symbol-bearing passwords 192–200/200 in `KEY=`, `export`
+  and `key:` lines and 176–197/200 in a libpq string (whose value class stops at `;` `&` and quotes).
+  *Revision 1 of this filter refused ANY bracket, `$`, dot or letters-only value and caught 13–78 of
+  200 symbol-bearing passwords and 0 of 200 dotted passphrases while this README claimed only
+  digit-free dictionary words were lost — that claim was false and is retracted.*
 - **A private-key match is BOUNDED** to header, header lines, base64 body and END; a file that
   merely mentions a header loses the header only.
 - **Per-host denylist** (`LoadDenylist`, 0600, never in the repo). A `glob:` covers a blob by name
@@ -41,7 +60,7 @@ match. stdlib only — the capture binary that imports it is under the import ba
 ## How it is measured
 
 `SelfTest` (run by `cairn-capture --self-test`) builds a synthetic corpus in both runtimes' shapes
-with `DeclaredPlants` (49) secrets GENERATED AT RUN TIME from a seeded RNG, redacts it, and prints
+with `DeclaredPlants` (72) secrets GENERATED AT RUN TIME from a seeded RNG, redacts it, and prints
 `SUMMARY redaction: planted=P caught=P clean-damaged=0`. A plant counts as caught only when its
 value is gone AND its OWN rule fired on the item that carried it (`Score` asserts `Plant.Rule`).
 Before the verdict it runs two controls and exits 2 ("could not vouch") if either misbehaves — a
@@ -50,6 +69,12 @@ not the declaration; each branch has a test.
 
 `TestAFreshAttackSet` runs shapes the corpus does not carry, from a seed it never uses, and logs
 caught/total per class. ⚠ Same author as the rules: a regression set, not blind recall.
+
+**Review round 2's own measurements are ADOPTED as permanent tests** (`audit_*_test.go`, written by
+the auditor, values drawn at run time from a seeded generator): the 75-case attack set (every case
+caught but the declared non-secret `password_hash`), the PEM-through-every-copy-shape test (0 of 3
+body lines survive), the rate test (floors pinned at the measured numbers), and the 75-line
+code-shaped clean set (0 damaged).
 
 ## Measured while building it
 

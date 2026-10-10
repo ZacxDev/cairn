@@ -16,7 +16,7 @@ import (
 
 // Seeds the corpus is measured at. More than one, because the secrets are random per seed and a
 // rule that happens to fit one draw is not a rule that fits the format.
-var seeds = []uint64{1, 2000, 987654321}
+var seeds = []uint64{1, 2000, 987654321, 7, 42, 31337, 99, 123456}
 
 func testRedactor(t *testing.T) *Redactor {
 	t.Helper()
@@ -75,7 +75,7 @@ func TestTheCorpusIsFullyCaughtAndNothingCleanIsDamaged(t *testing.T) {
 		code := SelfTest(&out, seed)
 		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 		last := lines[len(lines)-1]
-		want := "SUMMARY redaction: planted=49 caught=49 clean-damaged=0"
+		want := "SUMMARY redaction: planted=72 caught=72 clean-damaged=0"
 		if code != SelfTestOK || last != want {
 			t.Errorf("seed %d: exit %d, last line %q, want exit 0 and %q\n%s", seed, code, last, want, out.String())
 		}
@@ -86,8 +86,8 @@ func TestTheCorpusIsFullyCaughtAndNothingCleanIsDamaged(t *testing.T) {
 func TestTheCorpusPlantsExactlyTheDeclaredCount(t *testing.T) {
 	for _, seed := range seeds[:2] {
 		c := NewCorpus(seed)
-		if len(c.Plants) != DeclaredPlants || DeclaredPlants != 49 {
-			t.Fatalf("seed %d: %d plants, declared %d (literal 49)", seed, len(c.Plants), DeclaredPlants)
+		if len(c.Plants) != DeclaredPlants || DeclaredPlants != 72 {
+			t.Fatalf("seed %d: %d plants, declared %d (literal 72)", seed, len(c.Plants), DeclaredPlants)
 		}
 		labels := map[string]bool{}
 		for _, p := range c.Plants {

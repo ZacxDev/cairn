@@ -16,7 +16,7 @@ import (
 // DeclaredPlants is how many secrets [NewCorpus] plants. The self-test REFUSES (exit 2) when the
 // generator plants a different number: P is asserted against this declaration, never read off the
 // run, so a generator that silently lost a position cannot report a smaller perfect score.
-const DeclaredPlants = 49
+const DeclaredPlants = 72
 
 // Plant is one planted secret: where it sits, the rule expected to catch it, and every FORM whose
 // presence in the redacted output means it leaked (the plaintext, and its encoding when it was
@@ -324,6 +324,7 @@ func NewCorpus(seed uint64) Corpus {
 	g.record(g.toolResult(session, `{"apiVersion":"v1","kind":"Secret","metadata":{"name":"alpha-api"},"data":{"key":"`+jv+`"}}`, nil))
 
 	g.reviewRoundPlants(session, ses)
+	g.reviewRound3Plants(session)
 	g.codeShapedClean(session)
 
 	// Clean filler that must survive: hashes, digests, ids, a signature-like payload, URLs.

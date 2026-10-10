@@ -50,7 +50,7 @@ func (c Corpus) Score(r redactor) Score {
 		}
 		hay.Write(out)
 		hay.WriteByte(0)
-		if s, _, ok := utf16BOM(out); ok {
+		if s, _, ok := utf16Text(out); ok {
 			hay.WriteString(s)
 			hay.WriteByte(0)
 		}
@@ -97,7 +97,7 @@ func (c Corpus) ruleFiredOn(p Plant, itemRules []map[string]bool) bool {
 	for i, it := range c.Items {
 		carried := false
 		text := string(it.Data)
-		if u, _, ok := utf16BOM(it.Data); ok {
+		if u, _, ok := utf16Text(it.Data); ok {
 			text = u
 		}
 		for _, f := range p.Forms {

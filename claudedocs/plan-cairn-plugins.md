@@ -1428,6 +1428,16 @@ run time).
   private-key match; every `SelfTest` exit-2 branch tested; `Score` asserting each plant's own rule;
   and a fresh run-time attack set reported per class. The denylist glob's claim is NARROWED to the
   structured copies it covers — a Read `tool_result` copy and a `cat` are not joined to their path.
+- Review round 2 (S1) measured round 1 making four things WORSE, and round 3 fixed each against
+  the auditor's own tests, adopted as permanent regression tests: a private-key body read through a
+  copy prefix (3/3 lines shipped → 0/3), the code filter refusing real passwords (13–78/200
+  symbol-bearing and 0/200 dotted → 176–200/200 and 200/200, the clean-damage gain kept at 0/75),
+  the END rule losing `PGPASSWORD`/`SECRET_KEY_BASE`/`apiKeyValue` (now glued words, a closed
+  suffix set and a closed `<VENDOR>_KEY` list), and ASCII file magics letting text skip scanning
+  (now a non-text byte in the first 1 KiB is required). It also closed pre-existing gaps: URL
+  query and connection-string credentials, JWK private members, YAML block scalars, `.pgpass`,
+  `.netrc`, source literals, `docker login -p`, value-first k8s env entries, BOM-less UTF-16. The
+  corpus plants 72.
 
 **S2.**
 - Offset reader: a file grown mid-line ships only complete lines; the next run ships the rest

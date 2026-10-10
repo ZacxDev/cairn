@@ -113,7 +113,11 @@ func (r *Redactor) scanText(s string, depth int) (string, []Hit) {
 			payload, ok = r.decode(s)
 		}
 		if ok && !r.binary(payload) {
-			if _, inner := r.scanText(string(payload), depth+1); len(inner) > 0 {
+			text := string(payload)
+			if u, _, isU16 := utf16Text(payload); isU16 {
+				text = u
+			}
+			if _, inner := r.scanText(text, depth+1); len(inner) > 0 {
 				m, h := r.marker("base64/"+inner[0].Rule, s)
 				return m, append([]Hit{h}, inner...)
 			}
@@ -137,7 +141,11 @@ func (r *Redactor) applyRule(rule Rule, s string) (string, []Hit) {
 		}
 		if rule.KeyGroup > 0 {
 			klo, khi := loc[2*rule.KeyGroup], loc[2*rule.KeyGroup+1]
-			if klo < 0 || !SecretKey(s[klo:khi]) {
+			keyOK := rule.KeyOK
+			if keyOK == nil {
+				keyOK = SecretKey
+			}
+			if klo < 0 || !keyOK(s[klo:khi]) {
 				continue
 			}
 		}
@@ -196,6 +204,9 @@ var denyPathKeys = map[string]bool{
 	"old_string": true, "new_string": true, "structuredPatch": true, "edits": true,
 }
 
+// jwkPrivate are a JSON Web Key's private members (RFC 7518 §6.2.2, §6.3.2, §6.4.1).
+var jwkPrivate = map[string]bool{"d": true, "p": true, "q": true, "dp": true, "dq": true, "qi": true, "k": true}
+
 // walk redacts every string — every member VALUE, every member KEY, every duplicate — in a
 // decoded JSON value.
 func (r *Redactor) walk(v any, depth int) (any, []Hit) {
@@ -212,6 +223,7 @@ func (r *Redactor) walk(v any, depth int) (any, []Hit) {
 			}
 		}
 		// A k8s env entry as JSON: {"name": "DB_PASSWORD", "value": "…"}.
+		isJWK := len(t.strings("kty")) > 0
 		envSecret := false
 		for _, n := range t.strings("name") {
 			envSecret = envSecret || SecretKey(n)
@@ -232,6 +244,12 @@ func (r *Redactor) walk(v any, depth int) (any, []Hit) {
 				nv, hs := r.redactAllStrings(val, "denylist-path")
 				t.pairs[i].v = nv
 				hits = append(hits, hs...)
+			case isString && isJWK && jwkPrivate[k] && s != "":
+				// A JSON Web Key's PRIVATE members carry no secret-shaped name: `d` (RSA/EC/OKP),
+				// the RSA CRT parts, and `k` of a symmetric (`oct`) key.
+				m, h := r.marker("jwk-private", s)
+				t.pairs[i].v = m
+				hits = append(hits, h)
 			case isString && envSecret && k == "value" && notTrivial(s):
 				m, h := r.marker("k8s-env", s)
 				t.pairs[i].v = m
@@ -325,7 +343,7 @@ func (r *Redactor) Text(data []byte) ([]byte, []Hit) {
 	if r.binary(data) {
 		return data, nil
 	}
-	if s, order, ok := utf16BOM(data); ok {
+	if s, order, ok := utf16Text(data); ok {
 		out, hits := r.scanText(s, 0)
 		if len(hits) == 0 {
 			return data, nil
