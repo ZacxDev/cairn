@@ -262,12 +262,14 @@ python3 tests/control_mutants.py          # 305 mutants, over EIGHT packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 305 mutants DECLARED** — S2 of the transcripts/plugins plan added the four
-`scopeuse-*` rows, each ADDING `./internal/transcript/scopeuse/` through the per-row `pkgs`
-override rather than joining `PKGS`. ONE whole-battery run on that branch, on a loaded shared host:
-`mutants=301 killed=299 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control
-GREEN, the two survivors the rows labelled EQUIVALENT, the four new rows each killed by the test that
-names it. Before that, ONE whole-battery run
+**Measured on this tree: 305 mutants DECLARED** — S2 of the transcripts/plugins plan added eight
+rows (four `scopeuse-*` at first, then `scopeuse-restore-ignored` and three `capture-*` in its
+review round), each ADDING `./internal/transcript/scopeuse/` or `./internal/capture/` through the
+per-row `pkgs` override rather than joining `PKGS`. ONE whole-battery run on that branch's tip, on a
+loaded shared host:
+`mutants=305 killed=303 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control
+GREEN, the two survivors the rows labelled EQUIVALENT, every new row killed by the test that names
+it. (At 301 rows, before the review round: `killed=299 survived=2`, the same two.) Before that, ONE whole-battery run
 was taken at 297 (S3 of the mobile plan):
 `mutants=297 killed=295 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control
 GREEN, the two survivors the rows labelled EQUIVALENT. That run is also the one that found two rows
