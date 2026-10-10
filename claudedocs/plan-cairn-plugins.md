@@ -104,6 +104,16 @@ field names and types alone.
   `--scope=X`, Python prefix abbreviations), with an unclassifiable possible abbreviation adding
   `*` — replacing revision 11's last-wins, which a literal-only parser got wrong. `sync` is named
   as accepting and ignoring `--scope` while printing only banners.
+- *Revision 13 is a DELETION-led rewrite on an operator decision (O11).* The shell-command-line
+  parser that revisions 8–12 built for READ scopes is DELETED — candidate tokens, segments,
+  redirection handling, the disqualifying-character rule, the argument exemption, conditions
+  (a)–(c), the `--scope` spelling union and the `ls-entries` special case — with its fixtures and
+  eight mutant rows. **Everything the revision 8–12 entries above say about that parser is
+  superseded and retracted.** In its place: a READ LEDGER both `cairn` clients write about
+  themselves when a session id is in their environment (decision 3a, slice S11), uploaded with the
+  transcript, plus two coarse fail-closed fallbacks (F1: a cairn-naming session with an empty
+  ledger; F2: any input naming the cache root). New clause (n), six new mutant rows; Q16 and T3
+  rewritten.
 
 ## Goal and premise
 
@@ -149,10 +159,10 @@ Drop the work, or the named half, if any of these holds:
 ### closing-condition
 
 - **closing-condition:** `check`. Four mechanical parts, all required:
-  1. Slices **S0–S10 are MERGED** on cairn `main`, verified by content (the named files exist with
+  1. Slices **S0–S11 are MERGED** on cairn `main`, verified by content (the named files exist with
      the named tests), not by ancestry.
   2. **`tests/plugins/e2e.sh` exits 0** in the `go` CI job, with **`--self-test` printing
-     `SUMMARY e2e-self-test: sabotaged=13 caught=13`** (one sabotage per clause below), and the
+     `SUMMARY e2e-self-test: sabotaged=14 caught=14`** (one sabotage per clause below), and the
      job's PASS floor set to the count measured when the script lands (the `tests/presence/e2e.sh`
      pattern, `.github/workflows/ci.yml:1045-1055`).
   3. **`cairn-capture --self-test` exits 0** in the `go` job and prints
@@ -182,6 +192,7 @@ Drop the work, or the named half, if any of these holds:
   | **(k) outputs inherit visibility, and say what they are** | a summary is shown to exactly the principals clauses (d)–(g) admit, and its render carries plugin name, version, model and watermark | render outputs without the source predicate | S6 |
   | **(l) deletion cascades** | the owner deletes a session's transcript; its directory, its plugin outputs and its edges are gone; the plugin's next transcript read is 404 | delete the transcript but keep outputs | S6 |
   | **(m) a shipped prefix is withdrawn when routing changes** | the same two instances; a session WROTE `alpha-notes` and shipped its prefix to the personal instance, then READ `beta-notes`. On the agent's next run no record from the read onward reaches either instance, the agent sends a withdrawal, the personal instance answers `{"deleted": true}`, and its directory, outputs and edges for the session are gone (the deletion cascade of (l)) | skip the withdrawal (stop shipping only) | S6 |
+  | **(n) the client ledger counts (O11)** | a session that WROTE `alpha-notes` READS `beta-notes` only through `"$BIN" sessions --scope beta-notes`, where `BIN` holds the client's path — no `cairn` token in the command line, no header in the output — with the session id in its environment; the client writes a ledger record, the agent uploads it, and viewer Q (reads `alpha-notes` only) gets the no-transcript bytes while R (reads both) sees it | the pod ignores the uploaded ledger | S11 |
 
   The sabotages run on a scratch copy of the tree with its `.git` removed (the
   `tests/control_mutants.py` pattern), and each must be caught by ITS clause's own assertion. Each
@@ -388,7 +399,7 @@ script that prints only counts.
 - **The header carries the RESOLVED scope.** `RecallReport.RenderText` prints `r.Scope`
   (`text.go:308`), the scope the client resolved — so a bare or `--repo` recall or search still
   names its real scope in its own output, however the command line spelled it. That header ADDS
-  the scope to `V`; it does not cancel the `*` the cwd-derived call itself adds (decision 3).
+  the scope to `V` (decision 3); it never removes anything.
 - **Other paths, with weaker signals:** the Go client's verbs that take `--scope`/`--repo`
   (`recall`, `search`, `sessions`, `arcs`, `arc-show`, `validate`, `ls-entries`, `arc-register`,
   `append`, `put`, `create`; `internal/client/cli.go:47-133`) visible as a command line with
@@ -577,6 +588,7 @@ script that prints only counts.
 | O8 | The visibility set is the scopes the session WROTE to PLUS the scopes it READ through cairn — derived from its read calls in the transcript, plus declared scopes. The read scopes also feed instance routing, so a session that read the client instance cannot ship to the personal one. | `V(s)` (decision 3), clauses (f) and (h). A session that recalled many scopes becomes visible to fewer people. |
 | O9 | "Full raw" means EVERY byte — bookkeeping records, duplicate tool-result copies and subagents included. Because agents will be the main readers, selective reading is designed on top: a skeleton, filters, ranges, collapsed bookkeeping and duplicates by default, bounded pages; and a UI that collapses subagents and tool calls, truncates long assistant responses behind a reveal, and NEVER truncates a user message. | No storage-time truncation or per-session cap (decision 15); read-time limits only (decisions 17, 18). Two agent-side exceptions, both stated where they live and in the Goal: unredactable binary content is withheld pending Q2 (decision 6a), and held sessions stay on their host (decision 16). |
 | O10 | Sessions with no recorded write ARE shipped, visible to their OWNER only, and a "My sessions" page lists them. | Clause (g); S7. |
+| O11 | Replace the shell-command-line parser for READ scopes with a read ledger the `cairn` client writes itself, plus a simple fail-closed fallback. | Both clients change (the Python oracle while it lives), and a new parity row; decisions 3 and 3a, S11. |
 
 ### Chosen by the AGENT writing this plan (open to review)
 
@@ -617,131 +629,91 @@ script that prints only counts.
      context, opencode tool outputs. A content signal; clause (f).
    - `R_header` maps a `subsystem-recall:` line whose `scope=` is absent or not a valid scope name
      (`(all scopes)`, the `renderer.go:158` form) to the sentinel **`*`** — "unknown scope" (R7).
-   - `U_calls(s)` = scopes named by `cairn` read and write commands visible in tool inputs with an
-     explicit `--scope X`, and file reads under a cache root. A command with `--all-scopes` adds
-     `*`. **Every VISIBLE `cairn` invocation whose scope does NOT come from an explicit `--scope` —
-     a `--repo P`, or no scope flag at all (scope derived from the working directory's repository)
-     — is cwd-derived and adds `*`, unconditionally, on the pod AND on the agent.** Nothing cancels
-     that `*`: not a header in the call's output, not a hook attachment, not a later record.
-     Headers in output still ADD the scopes they name (`R_header`); they never REMOVE anything. A
-     read run by a HOOK has no visible command line, so it adds only its header's scope.
-   - **How an invocation is RECOGNISED, failing closed.** A command line is a CANDIDATE when ANY
-     whitespace-separated token in it CONTAINS the substring `cairn` or `subsystem-recall`, matched
-     CASE-INSENSITIVELY — which covers a bare `cairn`, a `…/cairn` path, every flake form
-     (`nix run .#cairn-go -- …`, `nix run github:<owner>/cairn#default -- …`, a bare
-     `nix run github:<owner>/cairn -- …`), the alias, and anything else spelling the name in any
-     case. Over-matching only ever ADDS `*`, which fails safe. Parsing runs in three steps:
-     (1) **redirections are stripped** — a redirection operator (`>`, `>>`, `<`, `2>`, `2>&1`, `&>`,
-     `>|`, …) together with a PLAIN target word is removed before anything else, because nearly every
-     real call carries one (`2>&1`, `2>/dev/null`) and leaving them in would turn most scoped calls
-     into `*`; a redirection whose target contains any disqualifying character below is not
-     stripped, and disqualifies the line; and a stripped target (or here-string / here-doc text)
-     that contains a candidate substring STILL counts as a candidate token of its segment, because
-     an input redirection can feed it to a shell that executes it (`bash <<< "cairn ls-entries"`,
-     `bash < cairn-dump.sh`) — so that segment adds `*`; (2) the line is split into SEGMENTS at the control
-     operators of bash and zsh (newline, `;`, `&`, `&&`, `|`, `||`, and zsh's `|&`, `&|`, `&!` —
-     an operator the splitter misses leaves its text inside a segment, where it disqualifies that
-     segment, so a missed operator fails safe); (3) a segment is a **recognised, fully parsed
-     invocation** when its first word is exactly `cairn`, the parser reads its verb and arguments,
-     and NO word in it contains a **disqualifying character**: `(`, `)`, `$`, a backtick, `{`, `}`,
-     or `=` at the start of a word — QUOTED OR NOT. That one blunt test covers command substitution
-     (`$(…)`, backticks), process substitution (`<(…)`, `>(…)`, zsh's `=(…)`), parameter and brace
-     expansion, and zsh glob qualifiers that run code (`*(e:'…':)`, `*(+fn)`); its cost is that a
-     scoped search whose quoted term contains one of those characters adds `*`. A candidate line
-     contributes ONLY its explicit scopes when ALL three hold: (a) at least one segment is a
-     recognised, fully parsed invocation; (b) EVERY candidate token in the line is either the
-     program word of such an invocation or an ARGUMENT within the same segment as one (any word
-     after its program word — the `--scope` value, a path, a quoted search term); (c) each such
-     invocation carries an explicit `--scope`, and its verb HONOURS it. **Every value given to
-     `--scope` in any spelling counts, as a UNION**: `--scope X`, `--scope=X` (the Go client splits
-     a flag at `=`, `internal/client/cli.go:444`), and any unique prefix `--s…` of `--scope` the
-     Python client's `argparse` accepts (it leaves prefix abbreviation on, `cairn:2542`; the Go
-     client documents it as a Python-only surface, `cli.go:293-295`); a flag the parser cannot
-     classify that could be such an abbreviation adds `*`. The union over-reports when a value is
-     overridden — both clients keep only the last — and over-reporting only hides the session from
-     more people, which fails safe. *Revision 11 said "read LAST-WINS", which is exact only for a
-     parser that knows every spelling: a literal-only parser reads `cairn sessions --scope
-     alpha-notes --scope=beta-notes` as `{alpha-notes}` while the client lists `beta-notes`;
-     retracted.* **`ls-entries` does not**: the Go client's
-     `LsEntries` walks every scope of every instance (`internal/client/verbs.go:106-125`) and the
-     Python `cmd_ls_entries` passes `scope=None` (`cairn:1203-1222`), and it prints no header — so
-     `ls-entries` adds `*` whatever its flags. `sync` also accepts and ignores `--scope`
-     (`internal/client/verbs.go:69-70`) but prints only banners, so it puts no store content in the
-     transcript and needs no rule. Every other verb that accepts `--scope` resolves it (`sessions`,
-     `arcs`, `arc-show`, `validate` read `opts.Scope`; `arcs --all-scopes` is already `*`). Arguments are exempt because the `cairn` client never executes its arguments, and in
-     bash and zsh an argument runs code only through the expansions the disqualifying characters
-     cover; a smuggled second command (`… && bash -c "cairn recall"`, `xargs cairn …`) sits in
-     another segment or behind a non-`cairn` program word, so its token still counts. *Revision 10
-     said "the shell only executes them through command substitution", which is false under zsh
-     (glob qualifiers, `=(…)`), and did not know `ls-entries` ignores `--scope`; both retracted.*
-     *Revision 9 tested every token, arguments included, so `cairn search
-     --scope alpha-notes "cairn plugin"`, `--scope cairn-notes` (this repository's own scope name
-     contains the word) and any `…/cairn/…` path on a scoped line added `*` — on this host, a
-     heuristic count found 593 of 1,343 scoped `cairn` lines carrying another cairn-containing token,
-     91 of them in the `--scope` value; retracted.* If any of (a)–(c) fails, the line adds
-     **`*`** IN ADDITION to whatever explicit scopes it did parse. So the shapes the parser does not
-     take apart — a full or relative path, any `nix run`, an environment prefix (`VAR=x cairn …`), a
-     wrapper (`bash -c '…'`, `xargs cairn …`, `env`, `timeout`, `sudo`), the alias — add `*`, and so
-     does a line mixing a scoped call with one of them (`cairn recall --scope alpha-notes && VAR=x
-     cairn recall` → `{alpha-notes, *}`). *Revision 7 never said how a call is recognised, so such a
-     line added NOTHING. Revision 8's rule ("ONLY when the parser decomposes it into invocations
-     that EACH carry `--scope`") was vacuously true over zero invocations and never required every
-     candidate token to be accounted for, and its candidate list (`cairn` token, `/cairn` path,
-     `#cairn` ref) missed at least `.#cairn-go` and `#default` (whether it caught a bare
-     `github:<owner>/cairn` depends on reading "path ending in `/cairn`" as a token suffix); both
-     are retracted.*
+   - `L(s)` = **the client READ LEDGER (O11).** Both `cairn` clients — the Go `cmd/cairn` and,
+     while it lives, the Python oracle — append one record per SERVED scope access to a local,
+     append-only ledger whenever a session id is present in their environment, and the capture
+     agent uploads the session's records beside its transcript (decision 3a). `L(s)` is the set of
+     scopes those records name, `*` included.
+   - **The fallback, fail closed and deliberately coarse** — two rules, both over the whole root
+     session (every stream), neither parsing a command line:
+     - **F1, empty ledger:** if ANY tool input in the session contains the substring `cairn` or
+       `subsystem-recall` (case-insensitive) and the session's ledger holds ZERO records, `V` gets
+       `*`. Over-matching (a session that only edits files under a `cairn` directory) costs
+       owner-only, which fails safe.
+     - **F2, cache-path reads:** if ANY tool input contains the substring `subsystem-store`
+       (case-insensitive) — the client cache root's directory name
+       (`internal/client/readstore.go:63-71`; instance caches are siblings,
+       `internal/client/instances.go:122-131`) — `V` gets `*`, because a file read from the cache
+       never passes through the client and so is never ledgered. A config path under
+       `~/.config/subsystem-store/` over-matches too; that fails safe.
+     A call is never matched to "its" ledger record: the rules ask only "is the ledger empty" and
+     "does any input name the cache", which is what keeps the shell grammar out of the design.
+   - *DELETED in revision 13 (O11), with the ledger in its place:* the shell-command-line parser
+     revisions 8–12 built for `U_calls` — candidate-token detection, the segment splitter,
+     redirection stripping and the redirection-target rule, the disqualifying-character rule, the
+     argument exemption, conditions (a)–(c), the `--scope` spelling union, the cwd-derived and
+     `--all-scopes` command rules, and the `ls-entries` special case (the ledger records what
+     `ls-entries` actually walked). Every sentence revisions 8–12 wrote about them, here and in
+     the history entries above, is retracted; five audit rounds each found a new shell form that
+     parser got wrong, and a ledger the client writes about itself has no shell form to get wrong.
    - *DELETED in revision 7, with no replacement:* the exception under which a header in a "simple"
      `cairn recall|search` call's own result cancelled the `*`, the allowlist defining "simple", the
-     PENDING set `P` that waited for late results, and its 24 h backstop. Revisions 4–6 refined that
-     exception three times; round 6 of the audit then MEASURED what it admitted on this host among
-     calls with no `--scope`: Claude Code **0 of 597** (every one contains `>` — `2>&1`,
-     `2>/dev/null` — and 587 also `|`), opencode **5 of 24** (19 rejected by a quote). A mechanism
-     admitting essentially no real traffic protects nothing and costs three moving parts, so it is
-     removed rather than refined again. Its earlier forms — revision 4's per-call header pairing,
-     revision 5's example-based "simple", revisions 5–6's pending set — are retracted with it.
-   - `D(s)` = scopes the capture agent declares at upload — under this rule only scopes it read off
-     explicit `--scope` arguments and headers, i.e. the same parser's output.
-   - `V(s) = W_trailer ∪ R_header ∪ U_calls ∪ D`, over the root and every child stream (decision 7).
-   - **One parser, two callers, the SAME answer.** `R_header` and `U_calls` come from ONE package
+     PENDING set `P` that waited for late results, and its 24 h backstop (round 6 of the audit
+     measured it admitting 0 of 597 no-`--scope` Claude Code calls and 5 of 24 opencode ones).
+   - `D(s)` = scopes the capture agent declares at upload — the same `L ∪ R_header ∪ F` it computes
+     for routing; it can only ADD to the pod's set.
+   - `V(s) = W_trailer ∪ R_header ∪ L ∪ F ∪ D`, over the root and every child stream (decision 7),
+     where `F` is `{*}` when F1 or F2 fires and empty otherwise.
+   - **One function, two callers, the SAME answer.** `R_header` and `F` come from ONE package
      (`internal/transcript/scopeuse`), imported by `cmd/cairn-capture` (routing, decision 16) and by
-     `cairn-ui` (which re-derives over the STORED records at upload, so an old or lying agent cannot
-     shrink `V`). Neither caller resolves a working directory: the pod cannot (`DeriveScope` needs
-     the repository's git common dir and `ScopeForRepo` runs `git`,
-     `internal/client/reposcope.go:71, 89`), and the agent no longer does. *Revisions 3–6 had the
-     agent resolve cwd-derived commands with `DeriveScope` for ROUTING; that path is DELETED — a
-     `cd ../other && cairn recall`, a stale record `cwd`, or an opencode `bash` call's own `workdir`
-     argument could each make it resolve the wrong scope, and with the rule above there is nothing
-     left for it to do.* Routing uses only explicit `--scope` and output headers; anything else is
-     `*`.
-   - ⚠ **The cost, measured:** on BOTH runtimes, every session that runs a bare or `--repo` `cairn`
-     command becomes owner-only (the measurement is of CALLS — 597 Claude Code and 24 opencode
-     no-`--scope` calls on this host, Q16 — the number of SESSIONS affected was not measured), and with more than one instance configured it is HELD on its
-     host (decision 16). Q16 gives the operator the remedies. A SCOPED call whose arguments mention
-     the name (a `cairn-notes` scope, a quoted search term, a `…/cairn/…` path) costs nothing
-     (condition (b)'s argument exemption). What still over-matches, unmeasured: a cairn-containing
-     token in a DIFFERENT segment of a scoped line (`cairn recall --scope alpha-notes && ls
-     ~/src/cairn`), or any segment carrying a disqualifying character (a quoted search term with `(` included) — each adds `*`, which fails safe.
-   - **What can go wrong, and in which direction.** A forged trailer or a quoted header in prose
-     ADDS a scope, hiding `s` from more people; a header can no longer remove anything, so a
-     `cat`-ed header or a hook attachment only adds. For a command line with any token containing
-     the name (in any case), a line whose candidate tokens are not all accounted for by recognised,
-     fully parsed, explicitly scoped invocations adds `*`, so an unrecognised SHAPE fails closed. *Revision 7 claimed "a mis-parsed command ADDS a scope … for
-     every remaining path"; with no recognition rule, an unrecognised visible call added nothing,
-     so that claim was false and is retracted — the true claim is the fail-closed rule above.* The
-     unsafe residual is a read or write NO signal sees: an invocation whose program name never
-     appears in the command line (run through a variable such as `"$BIN" put …`, an alias or
-     wrapper whose name does not contain `cairn` or `subsystem-recall`, a shell function, or a
-     script), a `put`/`create` from such a script, a write to the
-     other instance. That residual is threat T3.
+     `cairn-ui` (which re-derives over the STORED records and ledger at upload, so an old or lying
+     agent cannot shrink `V`). Neither resolves a working directory or parses a shell line.
+   - **What can go wrong, and in which direction.** A forged trailer, a quoted header in prose, a
+     spurious ledger record, or an over-matching F1/F2 only ADDS, hiding `s` from more people. The
+     ledger is SELF-REPORTED by the host, like the trailer: a session (or anything on the host)
+     that edits or deletes its ledger can only make `V` SMALLER — and an emptied ledger trips F1 if
+     any input names the program. The ledger CLOSES the old parser's residual of invocations whose
+     program name never appears in the command line (a variable, a script, a shell function):
+     the client records the read however it was invoked. What remains is threat T3.
    - **Unknown names fail closed.** A scope name in `V` that the control model does not know
      (renamed, deleted, on another instance) and the sentinel `*` are unreadable by everyone but the
      owner.
-   - **Cost.** `R_header`, `U_calls` and `D` are computed once per upload and stored in
+   - **Cost.** `R_header`, `L`, `F` and `D` are computed once per upload and stored in
      `meta.json` (grow-only). `W_trailer` changes whenever anyone writes a trailer, so it is a
      whole-store walk at view time — unmeasured for this design. S4 benchmarks it beside
      `BenchmarkSessionPageAndScopeTabs`; if it costs more than the session page's own walk, S4 caches
      it per session keyed on a store-change signal, which S4 must identify and name (none is
      designated here).
+
+3a. **The client read ledger (O11; this design is the agent's, under that decision).**
+   - **When it is written.** Each client checks its environment for a session id —
+     `CLAUDE_CODE_SESSION_ID` (MEASURED on this host: Claude Code sets it for tool commands, and in
+     a SUBAGENT's tool commands it equals the ROOT session id, so subagent reads attribute to their
+     root, matching decision 7) or `OPENCODE_SESSION_ID` (NOT measured here — the operator's tooling
+     documents it as set per call; verifying it, and whether it names a child session or its root,
+     is an S0 task; a child id is mapped to its root by decision 7's recorded child ids). No id →
+     no write.
+   - **What a record holds.** One JSON line per scope ACCESSED by a served call: `{schema,
+     session, verb, instance, scope, client, client_version, at}`, where `scope` is the RESOLVED
+     scope the call actually touched — not the flag as typed — for every verb: `recall`, `search`,
+     `sessions`, `arcs`, `arc-show`, `validate`, and the writes `append`, `put`, `create`,
+     `arc-register` (so an unattributed `put`/`create` is covered too); `ls-entries` writes one
+     record per scope it listed, per instance; `--all-scopes` and any widening the client cannot
+     enumerate write `*`. No content, no arguments, no query text — the ledger holds scope names
+     only, so it needs no redaction.
+   - **Where.** `$XDG_STATE_HOME/cairn/read-ledger/<session>.jsonl` (default
+     `~/.local/state/cairn/…`), directory 0700, file 0600, one `O_APPEND` write per record. No new
+     environment variable: tests point `HOME`/`XDG_STATE_HOME` at a scratch tree, so the env-alias
+     ledger does not move.
+   - **Invisible to the client's contract.** The write is best-effort: any error is swallowed —
+     nothing on stdout or stderr, no change to the exit code, no added latency beyond one local
+     append. That is what keeps `tests/parity/` (which diffs stdout, stderr and exit) unchanged; a
+     new parity row runs both clients with a session id set and compares their LEDGER FILES
+     (timestamps normalised), so the two clients cannot record different scopes; the existing rows
+     run with no session id. The Python half joins the P8 retirement ledger.
+   - **Upload.** The capture agent reads `<session>.jsonl` for the root and every child id and
+     ships the records as a `ledger` stream of the root (decision 15's CAS and caps); the pod folds
+     them into `L(s)`.
 
 4. **ONE predicate: `transcript.Visible(viewer, meta, V) bool`**, asked by every surface — the
    transcript section, the agent read API (decision 17), the raw-record view, plugin output
@@ -1003,7 +975,7 @@ script that prints only counts.
     "Every byte" here excludes exactly two things, both decided elsewhere: unredactable binary
     content, withheld pending Q2 (decision 6a), and sessions held on their host by decision 16 (for
     any of the reasons the Goal lists).
-    - `<dir>/<root-session>/meta.json` (owner, host, runtime, the grow-only `R_header`/`U_calls`/`D`
+    - `<dir>/<root-session>/meta.json` (owner, host, runtime, the grow-only `R_header`/`L`/`F`/`D`
       sets, child ids, created); `stream-<name>.jsonl.gz` segments, append-only, each record
       `{seq, src, rec}` where `src` is the source offset or part version and `rec` the redacted raw
       record; `blobs/` for persisted tool-result files; `outputs.jsonl` for plugin outputs. The
@@ -1198,7 +1170,7 @@ GET /transcript/skeleton  ·  GET /transcript/records  ·  GET /transcript/tool 
 |---|---|
 | **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. **What is NOT controlled:** unshaped secrets (typed passwords, novel token formats), secrets inside images/PDFs (withheld rather than stored until Q2 is answered, decision 6a — if Q2 says "ship", this becomes an uncontrolled residual) EXCEPT binary payloads embedded in longer strings or in unlisted formats, which ship text-scanned only (6a's residuals), an encoded secret embedded in a longer string (not decoded), a flow-style YAML `Secret` (decision 6), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
 | **T2. Confidential but non-secret content** (client business detail, personal data in a tool output) | Redaction does not address it at all; VISIBILITY is the only control (decision 4). Stated, so nobody believes the redactor covers it. |
-| **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store plus reads from rendered headers anywhere in the content plus command-line scopes plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope, `--all-scopes`, and EVERY VISIBLE cwd-derived `cairn` invocation (no explicit `--scope`) add `*`, unconditionally, on the pod and on the agent, as does any CANDIDATE command line (any token containing `cairn` or `subsystem-recall`, case-insensitively) unless it has ≥ 1 recognised, fully parsed invocation, every candidate token is such an invocation's program word or an argument in its segment, and each invocation carries an explicit, honoured `--scope` (decision 3: a segment with a disqualifying character — `(`, `)`, `$`, backtick, `{`, `}`, word-initial `=`, which covers bash command and process substitution and zsh glob qualifiers `*(e:…:)` / `*(+fn)` and `=(…)` — is not fully parsed, and `ls-entries` never honours `--scope`); a hook-run read adds only its header's scope — nothing cancels a `*`, and no caller resolves a working directory, so a `cd`, a stale record `cwd` or an opencode `bash` call's `workdir` argument cannot misroute or mis-scope a call; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The residual:** a read or write NO signal sees — an invocation whose program name never appears in the command line (run through a variable such as `"$BIN" put …`, an alias or wrapper whose name does not contain `cairn` or `subsystem-recall`, a shell function, or a script), or any `cairn` command run by a script whose command line the transcript does not show, when it is a header-less verb (`sessions`, `arcs`, `arc-show`, `ls-entries`) or a `put`/`create`. *Revisions 3–6 listed a second residual — a directory change making the AGENT's routing resolve the wrong scope; that resolution is deleted (decision 3), so the residual is gone with it.* |
+| **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store, plus the client read ledger (decision 3a), plus rendered headers anywhere in the content, plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope and a ledger `*` add `*`; F1 adds `*` when any tool input names `cairn`/`subsystem-recall` and the ledger is empty, F2 when any input names the cache root `subsystem-store`; nothing cancels a `*`, no caller resolves a working directory or parses a shell line; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The ledger is SELF-REPORTED by the host**, like the write trailer: a session or anything else on the host can edit or delete it, and that can only make `V` SMALLER — an emptied ledger trips F1 if any input names the program. **The residual:** (1) a session MIXING a ledger-writing client with one that writes no record — a pre-ledger client (an older pinned revision), or a call whose environment lost the session id (`env -i`, some `sudo` setups) — has a non-empty ledger, so F1 does not fire and the unrecorded call's scope is missing; (2) a cache read from a cache root moved away from the default `subsystem-store` name; (3) a store read that bypasses the client entirely (a direct HTTP call to the pod). *Revisions 8–12 listed, as the residual, invocations whose program name never appears in the command line (a variable, a script, a shell function); the ledger records the read however it was invoked, so that residual is CLOSED — retracted with the parser.* |
 | **T4. Viewer-set computation makes the predicate vacuous** | Clause (e), and a mutant row (`transcript-written-set-from-viewer-scopes`). |
 | **T5. A stolen capture token** | Can APPEND to its owner's transcripts from its one host — inject fake records into the owner's own sessions — can SQUAT a not-yet-uploaded session id (decision 15), and can WITHDRAW (delete) its owner's sessions uploaded from that host (decision 16). Cannot read, or touch another owner's or host's existing sessions. Revoke by deleting the row (re-read per request). |
 | **T6. A stolen plugin token** | Can read every transcript where that plugin is ON, and write outputs of its declared types. The largest single exposure the design creates; it is why toggles default OFF, require every scope's consent (decision 10), and why a plugin token is per plugin. |
@@ -1220,7 +1192,7 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 
 | slice | what | ledgers it moves | mergeable alone because |
 |---|---|---|---|
-| **S0** | **Fixtures and shape ledgers.** `tests/transcripts/gen.py` emits synthetic sessions in BOTH formats from the measured key sets (R1–R3): main stream, two subagents, an opencode child, a compaction boundary, a `pr-link`, persisted tool output, mutated opencode parts, bookkeeping records and duplicate fields, a `user` record carrying a large `tool_result` block, an inline image block AND its `toolUseResult.file.base64` duplicate, an opencode `tool` part with a `data:` URL in `state.attachments[].url`, a binary, a UTF-8 text, a UTF-16 text and a JSON text tool-result blob, thinking `signature` values and 64-hex digests (which must survive untouched), and every read path of R7 (a rendered recall in a tool result; one in a hook attachment with no command line; a store-wide search rendered `scope=(all scopes)` in a hook attachment; a bare header-less `ls-entries`; an explicit `--scope` read; a `--repo` read; a `cd … && cairn recall` chain). A shape test pins the generator's record types, block types and field names against `internal/transcript`'s classification table. | `tests/`; `onlyGo` if Go tests read the fixtures; README. | Test-only. |
+| **S0** | **Fixtures and shape ledgers.** `tests/transcripts/gen.py` emits synthetic sessions in BOTH formats from the measured key sets (R1–R3): main stream, two subagents, an opencode child, a compaction boundary, a `pr-link`, persisted tool output, mutated opencode parts, bookkeeping records and duplicate fields, a `user` record carrying a large `tool_result` block, an inline image block AND its `toolUseResult.file.base64` duplicate, an opencode `tool` part with a `data:` URL in `state.attachments[].url`, a binary, a UTF-8 text, a UTF-16 text and a JSON text tool-result blob, thinking `signature` values and 64-hex digests (which must survive untouched), and every read path of R7 (a rendered recall in a tool result; one in a hook attachment with no command line; a store-wide search rendered `scope=(all scopes)` in a hook attachment; a bare header-less `ls-entries`; an explicit `--scope` read; a `--repo` read; a `cd … && cairn recall` chain). A shape test pins the generator's record types, block types and field names against `internal/transcript`'s classification table. The generator also emits a synthetic read-ledger file per session (decision 3a), including an EMPTY one beside cairn-naming inputs (F1). And S0 MEASURES, on a host with opencode, whether `OPENCODE_SESSION_ID` reaches tool commands and which session id it carries, recording the answer for S11. | `tests/`; `onlyGo` if Go tests read the fixtures; README. | Test-only. |
 | **S1** | **`internal/redact`** — its own rule table (decision 6), decoded-string traversal, text-blob redaction and the text/binary sniff (decision 6a), keyed tags, structural Secret rule, denylist loader; the corpus generator and the `planted/caught/clean-damaged` report; the behavioural containment test against leakscan's controls. | new package; `ok` floor; README. | Library only. |
 | **S2** | **`cmd/cairn-capture`** and **`internal/transcript/scopeuse`** — readers (JSONL by offset, subagents, blobs with binary withholding; `opencode export` diffing), `V` derivation (the `*` mappings of decision 3), watermark state, routing (decision 16), `--dry-run`, `--self-test`, `-verbs`. No upload yet. | `cmd/cairn-capture`; new packages; `./internal/transcript/scopeuse/` joins `control_mutants.py` `PKGS` (+ pinned count); `depspolicy.LinkedBinaryRoots` + its test; `flake.nix` `packages.cairn-capture` + a ledger check; `ok` floor; closing-condition part 3 step in `ci.yml`. | Inert: it sends nothing. |
 | **S3** | **Transcript store + capture API.** `internal/transcript` (directory layout, CAS append, frames, ownership, quota, retention sweeper, deletion, pod-side `V` re-derivation), worker listener + ledger, `capture` token kind and `cairn-ui -issue-worker-token capture`, refusing pod re-check. Agent gains upload. `tests/plugins/e2e.sh` created with clauses (a), (b), (c), (h). | new package → `ok` floor, `control_mutants.py` `PKGS` (+ pinned count through `ci.yml` and `internal/control/README.md`); `cmd/cairn-ui` flags (`-worker-addr`, `-worker-tokens`, `-transcript-dir`, `-transcript-retention`, `-transcript-quota`) and tests; `ci.yml` e2e step. | Inert unless `-worker-addr` AND `-transcript-dir` are set. |
@@ -1230,28 +1202,32 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 | **S7** | **"My sessions" (O10).** `GET /my-sessions`: the viewer's OWN sessions with a transcript (owner arm only), newest first, including owner-only ones, each linking to `/session`. e2e clause (g — the listing half). | UI row → ledgers, uiaudit; mutant row; README. | Read-only over S3/S4. |
 | **S8** | **Agent read API and CLI (decision 17).** The classification table's skeleton, records and tool routes on `cairn-ui`; `cairn transcript skeleton|records|tool` Go-only verbs over `CAIRN_UI_URL`. | UI rows; `internal/client/cli.go` verbs; `capability_ledger` `go_only`; `want-go-only-verbs.txt`; `tests/test_go_client_ledgers.py`; mutant rows. | Read-only; the pod and parity corpus untouched. |
 | **S9** | **Example plugin A — summaries.** `plugins/summary` in a NESTED stdlib-only module (provider HTTP API over `net/http`, no SDK), host-side user timer, incremental per decision 13, its own spend cap, a fake provider in tests. Reads through `view=conversation` by default. | `depspolicy.DeclaredNestedModules`; `flake.nix` package; `ci.yml` step for its suite. | A separate binary; nothing runs until registered and toggled. |
-| **S10** | **Example plugin B — ClickUp.** `plugins/clickup` in the same nested module: ticket list fetch (read-only token, 429-aware), deterministic matchers (decision 14) over transcript records (`gitBranch`, `pr-link`, URLs), commit messages and trailers from a host-local repo list, PR bodies via the host's own GitHub CLI, entry refs; LLM suggestions using plugin A's summaries when present (`output:read:summary` — the cross-plugin test of the abstraction). Synthetic ClickUp fixtures only. Then closing wiring: `sabotaged=13 caught=13`, measured floors, the `AGENTS.md` row with an equal eviction (Q11). | same nested module; flake package; `ci.yml`; `AGENTS.md`; READMEs. | Separate binary; inert until registered and toggled. |
+| **S10** | **Example plugin B — ClickUp.** `plugins/clickup` in the same nested module: ticket list fetch (read-only token, 429-aware), deterministic matchers (decision 14) over transcript records (`gitBranch`, `pr-link`, URLs), commit messages and trailers from a host-local repo list, PR bodies via the host's own GitHub CLI, entry refs; LLM suggestions using plugin A's summaries when present (`output:read:summary` — the cross-plugin test of the abstraction). Synthetic ClickUp fixtures only. Then closing wiring: `sabotaged=14 caught=14`, measured floors, the `AGENTS.md` row with an equal eviction (Q11). | same nested module; flake package; `ci.yml`; `AGENTS.md`; READMEs. | Separate binary; inert until registered and toggled. |
+| **S11** | **The client read ledger (O11, decision 3a)** in BOTH clients: the Go `internal/client` writes a record per scope a served call touched when `CLAUDE_CODE_SESSION_ID` or `OPENCODE_SESSION_ID` is set; the Python oracle does the same; a parity row compares the two clients' ledger files; `cmd/cairn-capture` uploads the `ledger` stream; e2e clause (n). **Must land before S3 is armed on a real instance** — without it every session that runs `cairn` is owner-only by F1. | `internal/client` (+ joins `control_mutants.py` `PKGS`, moving the pinned count and its enumerations); the Python `cairn`/`lib/`; `tests/parity/` (a new row, and its README's P8 retirement ledger); `cmd/cairn-capture`; `ci.yml` e2e floor. NOT `internal/api` or `cmd/cairn-server`: the pod is untouched. | Inert without a session id in the environment; with one, the write is invisible to stdout, stderr and the exit code. |
 
-**Mutant rows** (indicative names). The pinned count starts at **296**; the **53** rows below would
-take it to **349** if every one lands as named (revision 7 deleted six, listed where they were;
-revisions 8, 9 and 10 added one each, revisions 11 and 12 two each) — the pinned number is whatever the battery declares
+**Mutant rows** (indicative names). The pinned count starts at **296**; the **51** rows below would
+take it to **347** if every one lands as named (revision 7 deleted six and revision 13 eight, each
+listed where it was; revision 13 added six for the ledger) — the pinned number is whatever the battery declares
 at each merge, never this sum. S0, S1, S9 and S10 add no row to the authz battery (S1's guards are
 measured by the redaction corpus; S9/S10 by their own suites).
 
-- **S2 (10, `scopeuse`):** `scopeuse-all-scopes-header-names-a-scope`,
+- **S2 (4, `scopeuse`):** `scopeuse-all-scopes-header-names-a-scope`,
   `scopeuse-scopeless-header-dropped` (the `renderer.go:158` form dropped instead of `*`),
-  `scopeuse-cwd-derived-command-dropped` (a cwd-derived invocation — no explicit `--scope` — adds
-  nothing instead of `*`), `scopeuse-unrecognised-invocation-adds-nothing` (a candidate line the
-  parser cannot decompose adds nothing instead of `*`), `scopeuse-unaccounted-candidate-token-ignored`
-  (a line with one recognised scoped invocation and another candidate token OUTSIDE its arguments yields only the
-  explicit scope, no `*`), `scopeuse-argument-counted-as-candidate` (a cairn-containing ARGUMENT of a recognised, fully parsed, scoped invocation is counted as a candidate and adds `*`), `scopeuse-disqualifying-character-ignored` (a segment whose argument carries `(`, `)`, `$`, a backtick, `{`, `}` or a word-initial `=` is still treated as fully parsed), `scopeuse-ls-entries-scope-honoured` (`ls-entries --scope X` yields `{X}` instead of `{X, *}`), `scopeuse-scope-spelling-missed` (only the literal `--scope X` is read, so `--scope=X` and prefix abbreviations are missed), `scopeuse-stripped-target-not-candidate` (a stripped redirection target or here-string containing the name is dropped instead of counting as a candidate). *DELETED in revision 7 with the machinery they guarded (decision 3):*
+  `scopeuse-fallback-empty-ledger-trusted` (F1: a session with a cairn-naming input and an EMPTY
+  ledger gets no `*`), `scopeuse-cache-path-read-ignored` (F2: an input naming `subsystem-store`
+  adds no `*`). *DELETED in revision 13 with the parser (O11, decision 3):*
+  `scopeuse-cwd-derived-command-dropped`, `scopeuse-unrecognised-invocation-adds-nothing`,
+  `scopeuse-unaccounted-candidate-token-ignored`, `scopeuse-argument-counted-as-candidate`,
+  `scopeuse-disqualifying-character-ignored`, `scopeuse-ls-entries-scope-honoured`,
+  `scopeuse-scope-spelling-missed`, `scopeuse-stripped-target-not-candidate`. *DELETED in
+  revision 7 with the machinery they guarded:*
   `scopeuse-paired-header-ignored`, `scopeuse-chained-call-header-suppresses-star`,
   `scopeuse-hook-attachment-counts-as-result`, `scopeuse-missing-result-becomes-star`,
   `scopeuse-chained-command-resolved`.
-- **S3 (8):** `transcript-cas-ignores-from-offset` (a), `transcript-capture-token-host-unchecked`,
+- **S3 (9):** `transcript-cas-ignores-from-offset` (a), `transcript-capture-token-host-unchecked`,
   `transcript-capture-token-reads`, `transcript-pod-recheck-skipped` (c),
   `transcript-pod-recheck-skips-blobs` (c), `transcript-root-owner-not-fixed`,
-  `transcript-pod-skips-scope-rederivation`, `worker-token-accepted-by-browser-row`
+  `transcript-pod-skips-scope-rederivation`, `transcript-pod-ignores-ledger` (n), `worker-token-accepted-by-browser-row`
 - **S4 (11):** `transcript-section-without-predicate` (d),
   `transcript-written-set-from-viewer-scopes` (e), `transcript-visibility-set-ignores-reads` (f),
   `transcript-empty-set-visible` (g), `transcript-owner-by-display-not-id`,
@@ -1272,12 +1248,13 @@ measured by the redaction corpus; S9/S10 by their own suites).
   `transcript-withdraw-host-unchecked`, `transcript-withdraw-repeat-answers-false`
 - **S7 (1):** `my-sessions-lists-another-owner`
 - **S8 (2):** `transcript-read-api-without-predicate`, `transcript-raw-view-without-predicate`
+- **S11 (3, `./internal/client/` joins `PKGS`):** `client-ledger-write-skipped` (a served call with a session id in its environment writes no record), `client-ledger-records-requested-not-resolved-scope` (the record names the flag as typed instead of the scope the call resolved and touched), `client-ledger-write-visible-in-output` (a ledger write error reaches stderr or the exit code).
 
 **Clause ↔ row ledger.** (a) cas · (b) none — its sabotage is in the AGENT's redaction call path,
 which `PKGS` does not cover; it is measured by the e2e and the corpus · (c) both re-check rows · (d)
 section · (e) viewer scopes · (f) ignores reads · (g) empty set · (h) none — guarded in
 `cmd/cairn-capture`, not in `PKGS`; its Go-side control is S2's routing test · (i) default on · (j)
-read ignores toggle · (k) output without predicate · (l) delete keeps outputs · (m) withdraw keeps
+read ignores toggle · (k) output without predicate · (l) delete keeps outputs · (n) pod ignores ledger · (m) withdraw keeps
 directory.
 
 ### Test plan per slice (negative controls named)
@@ -1343,57 +1320,24 @@ run time).
   added, exactly 4 upserts are produced; control: diffing by id alone produces 1.
 - **The SQLite file is never opened:** a test runs the reader with `HOME` pointing at a tree where
   the database path is a FIFO; the reader completes (it only calls `opencode export`, here a stub).
-- `scopeuse`, with literal expectations per S0 read path, IDENTICAL for the pod and the agent: an
-  explicit `--scope beta-notes` read → `beta-notes`; the hook-attachment recall with no command line
-  → `beta-notes` (control: a parser that reads tool INPUTS only misses it); the hook-attachment
-  search rendered `scope=(all scopes)` → `*` (mutant `scopeuse-all-scopes-header-names-a-scope`); a
-  `renderer.go:158`-form header → `*` (mutant `scopeuse-scopeless-header-dropped`); a bare `cairn
-  recall` whose result carries `scope=alpha-notes` → `alpha-notes` AND `*` (the header adds, the
-  cwd-derived call still adds `*`); a `--repo` `ls-entries`, a bare `ls-entries`, and an opencode
-  `bash` call running a bare `cairn recall` with its own `workdir` argument → `*` each (mutant
-  `scopeuse-cwd-derived-command-dropped`); the recognition rule's shapes, each WITHOUT a
-  decomposable `--scope` → `*`: `/opt/tools/cairn ls-entries --repo ../beta-repo`, `nix run
-  <flake>#cairn -- ls-entries --repo ../beta-repo`, `VAR=x cairn recall`, `bash -c 'cairn
-  recall'`, `xargs cairn ls-entries`, `timeout 30 cairn recall`, `subsystem-recall` with no
-  `--scope`, and the three other flake forms `nix run .#cairn-go -- recall`, `nix run
-  github:<owner>/cairn#default -- recall` and `nix run github:<owner>/cairn -- recall` (mutant
-  `scopeuse-unrecognised-invocation-adds-nothing`; control for the flake forms: a candidate test
-  matching only the listed token shapes of revision 8 misses at least `.#cairn-go` and `#default`); the MIXED line `cairn
-  recall --scope alpha-notes && VAR=x cairn recall` → exactly `{alpha-notes, *}` (mutant
-  `scopeuse-unaccounted-candidate-token-ignored`: the parser returns the scoped invocation it
-  recognised and ignores the second candidate token); the ARGUMENT exemption, each yielding only
-  its explicit scope and NO `*`: `cairn search --scope alpha-notes "cairn plugin"` →
-  `{alpha-notes}`, `cairn recall --scope cairn-notes` → `{cairn-notes}`, and `cairn recall --scope
-  alpha-notes --repo ~/src/cairn/x` → `{alpha-notes}` (mutant
-  `scopeuse-argument-counted-as-candidate`); and its limits, each adding `*`: `cairn recall --scope
-  alpha-notes && bash -c "cairn recall"` → `{alpha-notes, *}` (the second segment's program word
-  is `bash`), `cairn search --scope alpha-notes "$(cairn recall)"` → `{alpha-notes, *}` (command
-  substitution disqualifies the segment), and an upper-case `CAIRN recall` → `*` (case-insensitive
-  match); the zsh and expansion forms, each adding `*`: `cairn search --scope alpha-notes
-  *(e:'cairn ls-entries':)` → `{alpha-notes, *}` (a zsh glob qualifier — one shell word, no `$(`),
-  `cairn search --scope alpha-notes =(cairn recall)` → `{alpha-notes, *}` (zsh process
-  substitution), and `cairn recall --scope {alpha-notes,beta-notes}` → a set CONTAINING `*` (brace
-  expansion; the shell runs `--scope alpha-notes --scope beta-notes`, and the segment is
-  disqualified before any `--scope` is read) (mutant
-  `scopeuse-disqualifying-character-ignored`; control: a test for only `$(`, backtick, `<(`, `>(`
-  — revision 10's list — passes all three); `cairn ls-entries --scope alpha-notes` →
-  `{alpha-notes, *}` (mutant `scopeuse-ls-entries-scope-honoured`); the `--scope` UNION in every
-  spelling: `cairn recall --scope beta-notes --scope alpha-notes` → `{alpha-notes, beta-notes}`,
-  `cairn sessions --scope alpha-notes --scope=beta-notes` → `{alpha-notes, beta-notes}`, `cairn
-  recall --sco beta-notes` → `{beta-notes}` and `cairn recall --sco=beta-notes` → `{beta-notes}`
-  (Python prefix abbreviations) (mutant `scopeuse-scope-spelling-missed`: a parser reading only the literal `--scope X` misses
-  the `=` and abbreviated values); the redirection-target rule: `bash <<< "cairn ls-entries";
-  cairn recall --scope alpha-notes` → `{alpha-notes, *}` and `bash < cairn-dump.sh && cairn recall
-  --scope alpha-notes` → `{alpha-notes, *}` (mutant `scopeuse-stripped-target-not-candidate`: the
-  stripped target vanishes and the line yields `{alpha-notes}`); and `cairn recall --scope
-  alpha-notes 2>&1 | head` → exactly `{alpha-notes}` (the redirection is stripped before
-  splitting, and the second segment holds no candidate token; control: splitting before
-  stripping cuts `2>&1` at its `&` and leaves a `1` segment and a malformed first one); a
-  positive control that the
-  rule is not a blanket `*`: `cairn recall --scope alpha-notes && cairn search --scope beta-notes
-  x` → exactly `{alpha-notes, beta-notes}`, no `*`; and the agent's output for every fixture equals the
-  pod's (control: an agent that resolves a working directory gives a scope where the pod gives
-  `*`). *DELETED in revision 7 with decision 3's exception:* the simple-call, chained-call,
+- `scopeuse`, with literal expectations, IDENTICAL for the pod and the agent. Headers: the
+  hook-attachment recall with no command line → `beta-notes` (control: a reader of tool INPUTS
+  only misses it); the hook-attachment search rendered `scope=(all scopes)` → `*` (mutant
+  `scopeuse-all-scopes-header-names-a-scope`); a `renderer.go:158`-form header → `*` (mutant
+  `scopeuse-scopeless-header-dropped`). Ledger: a session whose ledger holds `{alpha-notes,
+  beta-notes}` → both, with no `*` even though its command lines are bare `cairn recall` calls in
+  chains, redirections and wrappers (the ledger, not the line, is the read record). F1: a session
+  with a `cairn ls-entries` input and an EMPTY ledger → `*` (mutant
+  `scopeuse-fallback-empty-ledger-trusted`); the same session with one ledger record → that
+  record's scope and no `*` (control: F1 is about emptiness, not per call); a session with no
+  cairn-naming input and an empty ledger → nothing (F1 does not fire on an unrelated session);
+  `CAIRN recall` with an empty ledger → `*` (case-insensitive). F2: a `Read` tool input on a path
+  under `~/.cache/subsystem-store/` → `*` (mutant `scopeuse-cache-path-read-ignored`); and the
+  agent's output for every fixture equals the pod's. *DELETED in revision 13 with the parser
+  (O11):* every command-line fixture of revisions 8–12 — the recognition shapes and flake forms,
+  the mixed line, the argument exemption and its limits, the zsh and expansion forms, `ls-entries
+  --scope`, the `--scope` spelling union, the redirection-target and redirection-stripping cases,
+  and the "not a blanket `*`" control. *DELETED in revision 7:* the simple-call, chained-call,
   newline/`&`, hook-attachment-as-result, pending-result, error-part and 24 h-backstop cases, and
   the agent-side `DeriveScope` case.
 - Routing — THE fixture of clause (h) and decision 16: a table sending `alpha-notes` to the personal
@@ -1538,9 +1482,24 @@ that resolves. LLM suggestions come from the fake provider with a fixed confiden
 written as edges (control: the fake returns a suggestion at confidence 1.0 — still a suggestion).
 429 handling: the fake answers 429 with a reset header and the plugin waits, asserted by the fake's
 request timestamps. **All ClickUp fixtures are synthetic** (ids `clk0000a1…`, list `list-0001`).
-Closing wiring: `--self-test` prints `sabotaged=13 caught=13`; each sabotage fails ITS clause's
+Closing wiring: `--self-test` prints `sabotaged=14 caught=14`; each sabotage fails ITS clause's
 message; the `ok` floor, mutant count and e2e floor equal the counts measured on the merged tree;
 `AGENTS.md` stays under its working budget.
+
+**S11.** For each verb (`recall`, `search`, `sessions`, `arcs`, `arc-show`, `validate`,
+`ls-entries`, `append`, `put`, `create`, `arc-register`) with `CLAUDE_CODE_SESSION_ID` set and
+`XDG_STATE_HOME` on a scratch tree: exactly the records for the scopes the call RESOLVED and
+touched — a bare `recall` in a repository whose derived scope is `alpha-notes` records
+`alpha-notes` (mutant `client-ledger-records-requested-not-resolved-scope`: it records the empty
+flag value instead); `ls-entries` records every scope it listed; `search --all-scopes` records `*`;
+a refused call (bad flag, unroutable scope) records nothing. With no session id: no file is
+created (control: the mutant `client-ledger-write-skipped` writes nothing WITH an id). With the
+ledger directory read-only: stdout, stderr and the exit code are byte-identical to a run with no
+session id (mutant `client-ledger-write-visible-in-output`). Parity: the new row runs both clients
+on one cache root with one session id and compares their ledger files (timestamps normalised) —
+red if the Python oracle records a different scope; the existing rows, run with no session id,
+are unchanged. `OPENCODE_SESSION_ID`: S0 first MEASURES whether opencode sets it for tool commands
+and whether it names the child or the root; S11 then pins the measured behaviour. e2e clause (n).
 
 ## Audit dispositions (round 0 deletion candidates)
 
@@ -1555,9 +1514,9 @@ message; the `ok` floor, mutant count and e2e floor equal the counts measured on
 
 ## Open questions for the operator
 
-Each has a recommendation. S0 and S1 depend on none of them. **Q2, Q14 and Q16 all shape S2**:
+Each has a recommendation. S0 and S1 depend on none of them; S11 depends on none either. **Q2, Q14 and Q16 all shape S2**:
 binary withholding (Q2), hold-back, withdrawal and re-shipping (Q14), and the pod-side `*` rule,
-which lives in S2's `scopeuse` package with its mutant `scopeuse-cwd-derived-command-dropped` and
+which lives in S2's `scopeuse` package with its fallback mutants (F1, F2) and
 first RUNS on the pod in S3 (Q16). S2 builds the RECOMMENDED answers, and because S2 uploads
 nothing, a different answer changes S2's code before any byte has left a host. No question blocks
 merging S0–S2; Q2, Q14 and Q16 must be answered before S3 ships to a real instance. *Revision 3
@@ -1624,10 +1583,10 @@ said Q16 shapes S3; the rule's code and mutant are in S2.*
   routing to a SINGLE instance other than the one holding the prefix — e.g. run 1 with `V` empty
   (shipped to the default, personal, instance) and run 2 with `V = {beta-notes}` (client) — the
   agent withdraws the prefix and RE-SHIPS the whole session to the new instance from offset 0. ⚠
-  That re-ship happens only when the `beta-notes` read carried an explicit `--scope`: a BARE or
-  `--repo` read adds `*` as well (decision 3), so with more than one instance configured the
-  session is HELD, not re-shipped — the usual outcome today, unless Q16(a) is adopted.
-  *Revision 7 still called this re-ship "the common case"; retracted.* A session with empty `V` goes to the default instance, owner-only. This NARROWS "ship
+  With the read ledger (decision 3a) a bare or `--repo` read records the scope it actually read,
+  so it re-ships too; the session is HELD instead only when F1 or F2 adds `*` (Q16). *Revision 7
+  called this re-ship "the common case" and revision 8 said a bare read always held; both are
+  superseded by the ledger.* A session with empty `V` goes to the default instance, owner-only. This NARROWS "ship
   every session" only for held sessions, which exist only on their host. **Recommend** hold +
   withdraw + re-ship as written. Alternatives: (a) keep the prefix
   where it is and hold only the rest — the prefix stays visible under its own `V` there but is an
@@ -1638,25 +1597,21 @@ said Q16 shapes S3; the rule's code and mutant are in S2.*
 - **Q15. Agent reads through `cairn` or a separate binary?** **Recommend** Go-only `cairn transcript`
   verbs (decision 17): agents already run `cairn`, and the Go-only mechanism exists. The alternative
   is a `cairn-transcript` reader binary that leaves `cmd/cairn`'s ledgers untouched.
-- **Q16. Every `cairn` call without an explicit `--scope` makes its session owner-only — and,
-  with several instances configured, HELD on its host.** That is decision 3's rule, with no
-  exception: any invocation whose scope comes from the working directory or `--repo` adds `*`.
-  **The cost, measured** (round 6 of the audit, this host): among `cairn` calls with no `--scope`,
-  Claude Code had 597 and opencode 24 — and under the unconditional rule EVERY session, on BOTH
-  runtimes, that runs a bare or `--repo` `cairn` command becomes owner-only, and with more than one instance configured it is
-  held on its host and never shipped (decision 16). *Revisions 4–6 tried to exempt a "simple"
-  recall/search whose own output named its scope; the exemption admitted 0 of the 597 Claude Code
-  calls and 5 of the 24 opencode ones, and is deleted (decision 3). Every earlier wording of this
-  question is retracted with it.* **Options:**
-  - **(a) Pass `--scope` explicitly** in the hooks, skills and agent instructions that invoke
-    `cairn`, so the scope is in the command line and nothing is cwd-derived. No cairn change; the
-    cost moves to the callers' configuration. It does not help `ls-entries`, which ignores `--scope` and always adds `*` (decision 3) — callers that need a scoped listing should use `recall --scope`. **Recommended.**
-  - **(b) FUTURE, not designed here, and needing its own audit:** the client prints its resolved
-    scope on every verb, and the pod admits a header from a call's OWN result only when that call
-    contains exactly one `cairn` invocation. It is the shape revisions 4–6 kept refining; it would
-    come back only as its own change with its own measurement of what it admits.
-  - **(c) Accept owner-only / held** for those sessions, and measure the share on the personal
-    instance.
+- **Q16. What still makes a session owner-only (and, with several instances, HELD).** Under O11
+  the read ledger (decision 3a) records the scope a bare or `--repo` `cairn` call actually read,
+  so **the bare-read cost is gone when the client is current and the session id reaches it.**
+  *Revisions 7–12 charged every bare or `--repo` call `*` (round 6 of the audit counted 597 such
+  Claude Code calls and 24 opencode calls on this host); that cost and every earlier wording of
+  this question are retracted with the parser.* What remains: (1) F1 — a session that names
+  `cairn` but whose ledger is EMPTY (a pre-ledger client, an opencode build that does not set
+  `OPENCODE_SESSION_ID`, a call run with the environment cleared); (2) F2 — any input naming the
+  cache root `subsystem-store`, including harmless mentions of the config directory; (3) a ledger
+  `*` from `--all-scopes`. **Options:** (a) **keep every client current** (both clients write
+  the ledger from S11 on) and have callers read through the client rather than the cache files —
+  **recommended**; (b) narrow F2 to `Read`-style FILE tool inputs under the cache root instead of
+  any input — a later, separately measured change; (c) accept the remaining owner-only/held
+  sessions and measure their share on the personal instance. Explicit `--scope` on callers is no
+  longer needed for visibility.
 
 ## Recommended improvements beyond the ask (clearly recommendations)
 
@@ -1684,9 +1639,13 @@ said Q16 shapes S3; the rule's code and mutant are in S2.*
   append observation and the boundary records' presence, not traced record by record.
 - **Whether either transcript format is a documented, stable contract.** No primary source found
   either way; the shape ledger (S0) is how drift becomes a red test rather than a silent drop.
-- **The SHARE of real sessions `*` makes owner-only or held.** Round 6 of the audit counted
-  `cairn` CALLS without `--scope` on this host (597 Claude Code, 24 opencode — Q16), not sessions;
-  the per-session share, the second host, and hook-injected reads were not measured.
+- **The SHARE of real sessions F1 or F2 makes owner-only or held** under the ledger (Q16):
+  unmeasured — no ledger exists yet. Also unmeasured: whether `OPENCODE_SESSION_ID` is set for
+  opencode tool commands and which id it carries (decision 3a, an S0 task); whether
+  `CLAUDE_CODE_SESSION_ID` reaches commands run under `sudo`, `env -i` or detached services; and
+  how often sessions mix a ledger-writing client with a pre-ledger one (T3's residual (1)).
+  `CLAUDE_CODE_SESSION_ID` itself was measured once, on this host, in a subagent's tool command,
+  where it equalled the root session id.
 - **What `opencode export --sanitize` removes**, and whether `opencode export` is safe to run
   against a database a live opencode process is writing (one export, one idle session).
 - **Redaction recall on real transcripts** (R6) — deferred to Q4's host-local count.
