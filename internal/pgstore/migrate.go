@@ -85,6 +85,53 @@ var migrations = []Migration{
 			`CREATE INDEX IF NOT EXISTS invites_project_id_idx ON invites (project_id)`,
 		},
 	},
+	{
+		// 🔴 THE TEAM LINK: A SIBLING OF `invites`, NOT AN `ALTER` OF IT. See
+		// `internal/invite/teamlink.go` for why widening the one-project, single-use table
+		// would change what every guard over it means. Version 1's statements are not
+		// touched — the APPEND ONLY rule above.
+		Version: 2,
+		Name:    "team-links",
+		Statements: []string{
+			// 🔴 DIGEST-KEYED, TOKEN-FREE: `invites`' rule. `redemptions` IS THE COUNT THE
+			// ATOMIC SINGLE-USE GUARD READS, and the CHECK constraint is that guard stated a
+			// second time BY THE DATABASE: a single-use row can never record a second
+			// redemption even if the conditional `UPDATE` in `RedeemLink` were edited wrong.
+			`CREATE TABLE IF NOT EXISTS team_links (
+				digest      TEXT        PRIMARY KEY,
+				role        TEXT        NOT NULL,
+				inviter     TEXT        NOT NULL,
+				reusable    BOOLEAN     NOT NULL,
+				created_at  TIMESTAMPTZ NOT NULL,
+				expires_at  TIMESTAMPTZ NOT NULL,
+				revoked_at  TIMESTAMPTZ,
+				redemptions INTEGER     NOT NULL DEFAULT 0,
+				CONSTRAINT team_links_redemptions_nonnegative CHECK (redemptions >= 0),
+				CONSTRAINT team_links_single_use CHECK (reusable OR redemptions <= 1)
+			)`,
+			// The Team page lists the caller's own links.
+			`CREATE INDEX IF NOT EXISTS team_links_inviter_idx ON team_links (inviter)`,
+			// One row per target. The kind is CHECKed so a target the consumer cannot
+			// interpret can never be stored — it would be a target a redemption skips.
+			`CREATE TABLE IF NOT EXISTS team_link_targets (
+				digest    TEXT NOT NULL REFERENCES team_links (digest),
+				kind      TEXT NOT NULL CHECK (kind IN ('project', 'scope')),
+				target_id TEXT NOT NULL,
+				PRIMARY KEY (digest, kind, target_id)
+			)`,
+			// 🔴 THE PER-REDEMPTION AUDIT RECORD. One row per redemption, keyed by the
+			// count it produced, so a reusable link's every join — and every principal it
+			// CREATED — is a row an operator can read.
+			`CREATE TABLE IF NOT EXISTS team_link_redemptions (
+				digest      TEXT        NOT NULL REFERENCES team_links (digest),
+				seq         INTEGER     NOT NULL,
+				redeemed_by TEXT        NOT NULL,
+				redeemed_at TIMESTAMPTZ NOT NULL,
+				provisioned BOOLEAN     NOT NULL,
+				PRIMARY KEY (digest, seq)
+			)`,
+		},
+	},
 }
 
 // advisoryLockKey is the `pg_advisory_lock` key the migration runner serialises on.
@@ -116,6 +163,14 @@ const advisoryLockKey int64 = 0x6361_69726e_3031 // "cairn01" as hex-ish digits
 // arm takes for a journal record from a newer build, and for the same reason: the
 // damage from proceeding is unbounded and unlocated.
 func (d *DB) Migrate(ctx context.Context) error {
+	return d.migrateThrough(ctx, migrations[len(migrations)-1].Version)
+}
+
+// migrateThrough is [DB.Migrate] stopped after `through`. It exists for the UP-PATH test,
+// which has to build a database at an OLD version and then migrate it, because a schema
+// that only ever meets fresh databases has never been measured against the deployments
+// that already exist. Production calls [DB.Migrate], which is this at the newest version.
+func (d *DB) migrateThrough(ctx context.Context, through int) error {
 	// 🔴 THE LOCK IS TAKEN **BEFORE** THE LEDGER IS CREATED, AND THE OTHER ORDER WAS A
 	// MEASURED RACE. `CREATE TABLE IF NOT EXISTS` is NOT atomic against a concurrent
 	// creator in PostgreSQL: both sessions find the table absent, both insert into the
@@ -175,7 +230,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 	}
 
 	for _, m := range migrations {
-		if applied[m.Version] {
+		if applied[m.Version] || m.Version > through {
 			continue
 		}
 		if err := d.applyOne(ctx, conn, m); err != nil {
