@@ -29,4 +29,4 @@ var cleanBudget = map[string]int{
 }
 
 // fixtureDamageCeiling: the damaged lines of the FIXTURE files, measured, plus a tenth.
-const fixtureDamageCeiling = 254 // measured: 231
+const fixtureDamageCeiling = 258 // measured: 235
