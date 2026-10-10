@@ -54,12 +54,23 @@ func main() {
 	port := flag.Int("port", 18771, "loopback port for cairn-ui")
 	label := flag.String("label", "cairn-ui", "the run label the hub shows")
 	budget := flag.Duration("budget", 8*time.Minute, "wall-clock budget for the whole walk")
+	screenshots := flag.String("screenshots", "", "instead of the walk, write the manifest's install screenshots "+
+		"(ui.ScreenshotSpecs) into this directory — see screenshots.go; `nix run .#build-ui-screenshots` is the "+
+		"pinned way to regenerate the committed ones")
 	flag.Parse()
 
 	if *uiBinary == "" || *workDir == "" {
 		fmt.Fprintln(os.Stderr, "uiaudit: -cairn-ui and -work are required")
 		flag.Usage()
 		os.Exit(exitUsage)
+	}
+
+	if *screenshots != "" {
+		if err := runScreenshots(*repoRoot, *uiBinary, *workDir, *screenshots, *port, *budget); err != nil {
+			fmt.Fprintf(os.Stderr, "uiaudit: %v\n", err)
+			os.Exit(exitHarness)
+		}
+		return
 	}
 
 	if err := run(*repoRoot, *uiBinary, *workDir, *port, *label, *budget); err != nil {

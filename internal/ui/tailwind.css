@@ -294,6 +294,21 @@
     @apply transition-colors duration-200 ease-cairn hover:text-ink hover:underline;
   }
 
+  /* The installable surface's two controls (S4 of the mobile plan, `pwa.go`). Both are rendered
+   * `hidden` and revealed only by `pwa.js` — the preflight's `[hidden]` rule is `!important`, so
+   * nothing here can un-hide them. The Install button sits in the header; the iOS hint is a one-line
+   * card on the root page with its own dismiss button. */
+  .install,
+  .install-hint button {
+    @apply text-sm text-accent border border-line rounded px-2 py-0.5 cursor-pointer;
+    @apply transition-colors duration-200 ease-cairn hover:text-ink;
+  }
+
+  .install-hint {
+    @apply flex flex-wrap items-center justify-between gap-2;
+    @apply bg-raised border border-line rounded-card px-4 py-2 mb-4 text-sm text-muted;
+  }
+
   .empty,
   .note {
     @apply text-sm text-muted;
@@ -1197,6 +1212,12 @@
      * field here was `text-sm` (14px). */
     button[type="submit"] {
       @apply min-h-11 min-w-11 justify-center;
+    }
+
+    /* S4's two `type="button"` controls, which the submit rule above does not reach. */
+    .install,
+    .install-hint button {
+      @apply min-h-11 min-w-11;
     }
 
     input[type="password"],

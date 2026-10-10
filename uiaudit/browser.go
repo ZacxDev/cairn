@@ -773,9 +773,21 @@ func (b *Browser) SignOut() error {
 	// subprocess's log text is a coupling this function should not create.
 	if err := chromedp.Run(b.ctx,
 		chromedp.Click(`form[action="`+ui.SignOutPath+`"] button[type=submit]`, chromedp.ByQuery),
-		chromedp.Sleep(400*time.Millisecond),
 	); err != nil {
 		return fmt.Errorf("clicking sign-out: %w", err)
+	}
+	// 🔴 WAIT FOR THE REDIRECT TO LAND, BOUNDED, RATHER THAN A FIXED SLEEP — the fixed 400 ms this
+	// replaced was MEASURED too short on a loaded host: `pwa_check.sh --self-test` read the jar while
+	// the POST was still in flight ("still in the jar … landed on /"). The checks below still decide;
+	// this only stops them from reading the state before the navigation finished.
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+		var at string
+		if err := chromedp.Run(b.ctx, chromedp.Location(&at)); err == nil {
+			if u, err := url.Parse(at); err == nil && u.Path == ui.SignInPath {
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	var landed string

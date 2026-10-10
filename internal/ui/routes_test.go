@@ -104,6 +104,13 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		// with no credentials, and a fixed path; it answers 404 on an UNARMED deployment, which is why
 		// it is a row on every deployment rather than one that appears with a flag.
 		"GET /manifest.webmanifest public",
+		// 🔴 THE SECOND SCRIPT ROW (S4 of the mobile plan, `pwa.go`): `pwa.js`, served on every
+		// deployment (only an ARMED one links it), `public` because the sign-in page links it.
+		"GET /static/pwa." + pwaDigestFromBytes(t) + ".js public",
+		// 🔴 THE THREE INSTALL SCREENSHOTS (S4), spelled by NAME here, each digested from its file.
+		"GET " + screenshotRowFromBytes(t, "narrow-hub") + " public",
+		"GET " + screenshotRowFromBytes(t, "narrow-arcs") + " public",
+		"GET " + screenshotRowFromBytes(t, "wide-hub") + " public",
 		"POST /invite",
 		"POST /invite/revoke",
 		// 🔴 THE BELL (S5 of the arcs/presence plan). NO CLASS, and that is the line to read: both
@@ -540,6 +547,11 @@ func init() {
 	for _, p := range IconPaths() {
 		bareGETAnswer["GET "+p+" public"] = http.StatusOK
 	}
+	// S4's rows, the same reasoning: `pwa.js` and every screenshot answer 200, armed or not.
+	bareGETAnswer["GET "+PWAScriptPath+" public"] = http.StatusOK
+	for _, p := range ScreenshotPaths() {
+		bareGETAnswer["GET "+p+" public"] = http.StatusOK
+	}
 }
 
 // iconRowFromBytes is the hashed icon row for one committed file, digested HERE from the file on
@@ -695,6 +707,14 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		// The write paths under GET: a dispatcher keyed on path alone would serve them.
 		{"GET", "/team/link"},
 		{"GET", "/team/link/revoke"},
+		// S4's near-misses: the unversioned script a worker-shaped draft would register, a wrong
+		// digest, the live script path suffixed, and a screenshot under a name nobody declared.
+		{"GET", "/static/pwa.js"},
+		{"GET", "/static/pwa.000000000000.js"},
+		{"GET", PWAScriptPath + "x"},
+		{"GET", "/sw.js"},
+		{"GET", "/static/screenshot-narrow-hub.000000000000.png"},
+		{"GET", strings.TrimSuffix(ScreenshotPaths()[0], ".png")},
 	} {
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, httptest.NewRequest(probe[0], probe[1], nil))

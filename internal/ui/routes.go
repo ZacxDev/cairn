@@ -243,7 +243,8 @@ var routes = map[routeKey]route{
 	// would serve and this map answers 404.
 	{"GET", StylesheetHashedPath}: {(*Server).handleHashedStylesheet, classPublic},
 
-	// 🔴 THE FILTER SCRIPT, AND IT IS THE ONLY SCRIPT ROW. A computed, content-hashed EXACT key for
+	// 🔴 THE FILTER SCRIPT — the only script row in THIS literal; `pwa.js`'s row (S4) is added beside
+	// the icon rows by `pwa.go`'s `init`. A computed, content-hashed EXACT key for
 	// the stylesheet row's reasons above, and `classPublic` for the stylesheet's reason: it consults
 	// no authority and answers identical bytes to everybody. Only the scope page links it, and only
 	// `AllowedScriptSources` may name it — see `script.go` for the allowlist that replaced this

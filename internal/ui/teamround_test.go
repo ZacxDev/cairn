@@ -18,7 +18,7 @@ import (
 )
 
 // The guards round 1 of #214's audit and the operator's decisions added. Each names the item it
-// closes; the RED evidence is in `internal/ui/README.md`, Phase S.
+// closes; the RED evidence is in `internal/ui/README.md`, Phase T.
 
 // barrierLinks holds every `RedeemLink` until `n` callers have arrived, which is what makes the
 // double-callback race DETERMINISTIC rather than a 39-in-40 measurement: both callers have

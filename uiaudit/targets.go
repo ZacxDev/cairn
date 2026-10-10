@@ -330,6 +330,16 @@ func init() {
 			"`internal/ui`'s TestTheIconRowsServeTheCommittedBytes asserts its bytes and headers, and " +
 			"`pwa_test.go` fetches each icon a manifest names and compares it with the committed file"
 	}
+	// S4's rows, for the same reasons: the second script and the install screenshots.
+	notADocument[ui.PWAScriptPath] = "a text/javascript response and not a document — the installable " +
+		"surface's one script, linked only by an ARMED deployment (this walk's worlds are unarmed). " +
+		"`internal/ui`'s TestThePWAScriptIsServedAtItsContentHashedRoute asserts its bytes and headers; " +
+		"`pwa_test.go` drives what it does in a real browser"
+	for _, p := range ui.ScreenshotPaths() {
+		notADocument[p] = "an image/png response and not a document — one committed install screenshot. " +
+			"`internal/ui`'s TestTheScreenshotSetIsExactlyTheCommittedFiles asserts its bytes and headers, and " +
+			"`pwa_test.go` fetches each screenshot a manifest names and compares it with the committed file"
+	}
 }
 
 // classesFor is how many of the three sets claim a path, and it exists so that a path in two

@@ -3859,7 +3859,7 @@ the agent tab).
 
 | route | class | what |
 |---|---|---|
-| `GET /` | `content` | the HUB: four cards — Arcs (`/arcs`), Scopes (`/scopes`), Sessions (`/sessions`), Team (`/team` — repointed from `/share` by #214, Phase S). `/?q=` and `/?tag=` answer **303** to `/scopes` with the query |
+| `GET /` | `content` | the HUB: four cards — Arcs (`/arcs`), Scopes (`/scopes`), Sessions (`/sessions`), Team (`/team` — repointed from `/share` by #214, Phase T). `/?q=` and `/?tag=` answer **303** to `/scopes` with the query |
 | `GET /scopes` | `content` | the scope list, search box and tag filter — the old root, unchanged |
 | `GET /sessions` | `content` | every session the viewer can see anything of, newest first, each a link to `/session?session=…` |
 | `GET /scope?id=…&tab=agent` | (the `/scope` row) | the "What an agent sees" tab |
@@ -3955,7 +3955,97 @@ page costs (≈2.2× the scope list at 3,000 entries). That measurement is why b
 (D1); the hub now reads `Visible` alone — the scope list's read — and was not re-measured.
 
 
-# Phase S — the Team page and the multi-target TEAM LINK
+# Phase S — `pwa.js`, the shortcuts and the install screenshots (S4 of the mobile plan)
+
+`claudedocs/plan-cairn-mobile-pwa.md`, decisions 5, 10, 11 and 16, O3/O7/O8/O13. `pwa.go` holds all of
+it; `pwa.js` is the script. ⚠ Phase P's "NO script" and its `TestTheArmedPWAHeadAddsNoScript` row are
+S2's record: S4 replaced that test with `TestTheArmedPWAHeadAddsOnlyThePWAScript` and re-pointed its
+battery row (`ui-pwa-head-emits-an-unversioned-script`).
+
+## 🔴 One more script, admitted by the allowlist and nothing else
+
+`AllowedScriptSources()` is now exactly `[filter.js, pwa.js]`, both content-hashed `classPublic` rows.
+`pwaHead` emits `pwa.js` (`defer`) on every frame of an ARMED deployment — sign-in included, because an
+install starts there — and nothing on an unarmed one. The script:
+- reveals the header's `<button class="install" hidden>` (shell frame only) on `beforeinstallprompt`,
+  and replays that event's `prompt()` on a click;
+- reveals the ROOT page's iOS hint only where `"standalone" in navigator && navigator.standalone ===
+  false` — feature detection, never the user agent — unless this browser dismissed it;
+- does nothing at all under `display-mode: standalone`;
+- writes ONE thing, ever: `localStorage["cairn.installHintDismissed"] = "1"`, on a dismiss tap, inside a
+  `try` (blocked storage simply means the hint shows again). Sign-out does not clear it (decision 11).
+- registers NO service worker (O13).
+
+Two guards hold that, at two depths: `TestThePWAScriptTouchesOnlyWhatItSays` — a SPELLING guard, labelled
+as one (`window["local"+"Storage"]` walks it) — refuses the markup/code/network/storage sinks, `caches`,
+`serviceWorker`, and (until S5) `location`/`history`, and admits `localStorage` ONLY as the one `getItem`
+and the one `setItem(HINT_KEY, "1")`; and the STATE guard is the browser, `uiaudit`'s
+`TestPWAClauses/e_storage` (clause (e)).
+
+## Shortcuts — two departures from the plan's literal list, both forced by `main`
+
+- **Search → `/scopes?q=`**, not `/?q=`: the UI hub moved the search box to `/scopes` (`/?q=` still
+  answers, with a 303 there; a launcher need not take the hop).
+- **"Team" → `/team`**: S4 shipped it as `/share`, because `/team` was not on `main` at its branch
+  point. Merging it with the Team page (Phase T) made `/share` a bodiless 303 to `/team` and dropped
+  its `content` class, so this section's test refused it on both counts (not a `GET … content` row,
+  and 303 rather than 200 signed in); the merge repointed it, beside the hub's Team card.
+
+`TestEveryShortcutIsADeclaredRowThatReturnsThroughSignIn` pins, as LITERALS never derived from
+`signInLocation`, the 303 each answers a stranger's browser: `/sign-in?next=%2Farcs`,
+`/sign-in?next=%2Fscopes%3Fq%3D`, `/sign-in?next=%2Fteam` — and 200 signed in.
+
+## 🔴 Install screenshots: build output, provenance enforced
+
+`screenshots/screenshots.json` is the ONE list (three readers: this package, `uiaudit -screenshots`, the
+flake's `onlyGo`). `narrow-hub`/`narrow-arcs` are 390×844 TOUCH captures of `/` and `/arcs`; `wide-hub`
+is 1440×900 of `/`. The PNGs are what `flake.nix`'s `uiScreenshots` captures from the synthetic uiaudit
+world in the sandbox; `checks.ui-screenshots-are-current` re-captures and byte-compares, with a
+one-byte-appended negative control and a PROVENANCE control (one fixture scope renamed — the capture must
+move; it moves `narrow-arcs`). `tests/leakscan.py` skips PNGs; that comparison is their leak gate. What
+the capture holds still, and the measurements behind each choice (an UNARMED world, hidden scrollbars, a
+fonts.conf of our own), is in `uiaudit/README.md`.
+
+## The RED proof
+
+Battery rows (`tests/control_mutants.py`, each `killed` by the named test, full run
+`mutants=309 killed=307 survived=2`, the two EQUIVALENT rows):
+
+| mutant | killed by |
+|---|---|
+| `pwa.js` dropped from `AllowedScriptSources` | `TestTheArmedPWAHeadAddsOnlyThePWAScript` |
+| `pwa.js` sets an `innerHTML` label | `TestThePWAScriptTouchesOnlyWhatItSays` |
+| `pwa.js` writes a second key (a timestamp) | `TestThePWAScriptTouchesOnlyWhatItSays` |
+| `pwa.js` registers a service worker | `TestThePWAScriptTouchesOnlyWhatItSays` |
+| a screenshot row serves its bytes plus one | `TestTheScreenshotSetIsExactlyTheCommittedFiles` |
+| `pwaHead` links the unversioned `/static/pwa.js` | `TestTheArmedPWAHeadAddsOnlyThePWAScript` |
+
+Outside the battery, on a scratch copy with no `.git`, each with its own message: Search pointed back at
+the plan's `/?q=` → `TestEveryShortcutIsADeclaredRowThatReturnsThroughSignIn`; the iOS hint put in the
+shell (every page) and the Install button rendered without `hidden` →
+`TestTheInstallControlsAreHiddenAndArmedOnly`; a stray `narrow-extra.png`, and `wide-hub.png` copied over
+`narrow-hub.png` → `TestTheScreenshotSetIsExactlyTheCommittedFiles`; the script row made `classContent`
+→ `TestThePWAScriptIsServedAtItsContentHashedRoute` (an anonymous 401); a `location.reload()` in
+`pwa.js` → `TestThePWAScriptTouchesOnlyWhatItSays`. The nix check went RED on one byte appended to the
+committed `wide-hub.png` (`FAIL: these committed screenshots are not what the synthetic world renders:
+wide-hub.png`), and its provenance control exited 2 when the "renamed" capture was pointed at the
+unrenamed one. The browser-level clauses' RED proof is `pwa_check.sh --self-test` (`uiaudit/README.md`).
+
+⚠ **At the base these tests do not compile** (they name `pwaScript`, `ScreenshotSpecs`, …), which is
+"red" only in the weakest sense; the mutants above are the per-guard proof.
+
+## What these guards still cannot see
+
+- **Any WebKit**: the iOS hint's feature detection, its storage lifetime, Add to Home Screen — the
+  iPhone checklist (steps 3–4), not a test.
+- **A real `beforeinstallprompt` under real engagement**, and the browser's own install dialog: the
+  button is driven by a SYNTHETIC event. Headless chromium 152 does fire a trusted one on its own; the
+  browser test intercepts it so "hidden by default" is not a race.
+- **Cross-host screenshot bytes**: byte-identical sandboxed and unsandboxed on one host; the `nix` CI
+  job is the second host.
+- **An obfuscated sink** in `pwa.js` (`window["inner"+"HTML"]`): the spelling guard's labelled limit.
+
+# Phase T — the Team page and the multi-target TEAM LINK
 
 `GET /team` is THE page for "who can get at my notes" (operator decision **O-a**: "one page" means
 the FORMS live there). Its sections:
@@ -4110,8 +4200,8 @@ for `/join`** (in the deployment repository, outside this PR — e.g. log `$uri`
 for that location). In-app mitigation, PROPOSED and not built: mint the link with the token in the URL
 FRAGMENT (`/join#invite=…`), which a browser never sends to any server and so no access log can hold.
 It is not cheap here: the join page would need a script to move the fragment into the accept form,
-and this surface's script allowlist (`AllowedScriptSources`, one entry today) is a deliberate gate —
-a second script is a decision, not a tidy-up.
+and this surface's script allowlist (`AllowedScriptSources`, two entries since S4 added `pwa.js` —
+Phase S) is a deliberate gate — a third script is a decision, not a tidy-up.
 
 ## 🔴 Rolling back across migration 2
 
