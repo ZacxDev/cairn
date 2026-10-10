@@ -258,13 +258,19 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 297 mutants, over EIGHT packages
+python3 tests/control_mutants.py          # 301 mutants, over EIGHT packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 297 mutants DECLARED, and ONE whole-battery run taken (S3 of the mobile plan):
+**Measured on this tree: 301 mutants DECLARED** — S2 of the transcripts/plugins plan added the four
+`scopeuse-*` rows, each ADDING `./internal/transcript/scopeuse/` through the per-row `pkgs`
+override rather than joining `PKGS`. ONE whole-battery run on that branch, on a loaded shared host:
+`mutants=301 killed=299 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control
+GREEN, the two survivors the rows labelled EQUIVALENT, the four new rows each killed by the test that
+names it. Before that, ONE whole-battery run
+was taken at 297 (S3 of the mobile plan):
 `mutants=297 killed=295 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control
-GREEN, the two survivors the rows labelled EQUIVALENT.** That run is also the one that found two rows
+GREEN, the two survivors the rows labelled EQUIVALENT. That run is also the one that found two rows
 the S3 change had broken (patterns on lines it edited, scored HARNESS ERROR) which per-row `--only`
 runs did not reach; they were re-derived and the run above is after the fix. Before it:
 S2 (presence) added 31 `presence-*` rows and `./internal/presence/` to `PKGS`. Two PARTIAL
@@ -418,7 +424,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 297 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 301 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test

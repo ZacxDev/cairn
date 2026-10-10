@@ -785,8 +785,10 @@ jobs:
           # classification table and its shape ledger), measured the same way on that branch's
           # tree: 25 `ok`, 0 `FAIL`, 2 `[no test files]`. MOVED TO 26 WITH `internal/redact` (S1:
           # the redactor and its corpus), measured the same way on that branch's tree: 26 `ok`, 0
-          # `FAIL`, 2 `[no test files]`.
-          # ⚠ THE NIX CHECK PHASES ARE NOT RE-MEASURED AT TWENTY-THREE THROUGH TWENTY-SIX. They run the same walk and
+          # `FAIL`, 2 `[no test files]`. MOVED TO 29 WITH S2 — `internal/transcript/scopeuse`,
+          # `internal/capture` and `cmd/cairn-capture`, three packages in one change — measured
+          # the same way on that branch's tree: 29 `ok`, 0 `FAIL`, 2 `[no test files]`.
+          # ⚠ THE NIX CHECK PHASES ARE NOT RE-MEASURED AT TWENTY-THREE THROUGH TWENTY-NINE. They run the same walk and
           # were last read at 18 (`nix log` for both `cairn-server` and `cairn-go`, before
           # `cmd/cairn-ui` carried tests) and at 17 before that. Read those as a RECORD of the
           # tree they were taken on, never as a current reading — re-spelling a number is not
@@ -814,8 +816,8 @@ jobs:
           # this one — the merge with the share flow made the count nineteen. Adding a
           # package and not moving this number does not fail late — it stops failing at all.
           #
-          # So: `ok < 26` refuses. 26 passes (the tree, measured). 25 refuses (one
-          # package's tests gone). 27 passes (a package ADDED), which is the other half of
+          # So: `ok < 29` refuses. 29 passes (the tree, measured). 28 refuses (one
+          # package's tests gone). 30 passes (a package ADDED), which is the other half of
           # the property and the reason this is a floor rather than an equality. 🔴 THE THREE
           # NUMBERS IN THIS SENTENCE AND THE LEDGER ABOVE MOVE TOGETHER WITH THE CONDITION,
           # IN ONE COMMIT — an audit round caught the commit that moved the condition to 18
@@ -834,14 +836,28 @@ jobs:
           # behind does not fail late — it stops failing at all, once per package of lag.
           #
           # ⚠ AND IT DEFENDS THE PACKAGE, NOT THE TEST. Deleting one `func Test…` from a
-          # file that keeps others leaves `ok` at 26 and this gate green. That gap is
+          # file that keeps others leaves `ok` at 29 and this gate green. That gap is
           # stated in `internal/depspolicy`'s package doc, where the guarantee it defends
           # is written down.
           echo "packages with passing tests: $ok"
-          if [ "$ok" -lt 26 ]; then
+          if [ "$ok" -lt 29 ]; then
             echo "REFUSING: only $ok package(s) reported ok — the test walk narrowed"
             exit 1
           fi
+
+      # 🔴 CLOSING-CONDITION PART 3 OF THE TRANSCRIPTS/PLUGINS PLAN: the capture agent's redaction
+      # self-test. It plants its secrets at RUN time from a seeded RNG (a committed
+      # credential-shaped fixture would be a leakscan finding), runs two controls first — a
+      # redactor that changes nothing must catch 0, a greedy rule must damage a clean value — and
+      # exits 2 ("could not vouch") if either misbehaves or the planted count is not the declared
+      # one. So this step reads the CONTENT as well as the exit code: the last line must be the
+      # SUMMARY pair with caught equal to planted and clean-damaged 0.
+      - name: the capture agent's redaction self-test (planted=P caught=P clean-damaged=0)
+        run: |
+          set -o pipefail
+          go run ./cmd/cairn-capture --self-test | tee /tmp/selftest.txt
+          tail -n 1 /tmp/selftest.txt | grep -Eq '^SUMMARY redaction: planted=([0-9]+) caught=\1 clean-damaged=0$' || {
+            echo "REFUSING: the self-test's last line is not the SUMMARY pair"; exit 1; }
 
       # 🔴 THE AUTHORIZATION MATRIX CARRIES ITS OWN POSITIVE CONTROL (32 of 60 cells must
       # ALLOW, pinned from BOTH sides, so a resolver that grants nothing or everything
@@ -850,7 +866,7 @@ jobs:
       # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
       # killed by some other test proves the suite can fail and proves nothing about the
       # guard the row exists for, so the run reports it as MISATTRIBUTED rather than as a
-      # kill. 297 mutants over EIGHT packages, in `PKGS` order: `internal/control`,
+      # kill. 301 mutants over EIGHT packages, in `PKGS` order: `internal/control`,
       # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
       # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence` — the model, the
       # token-file projection, P4's identity backends, the server that authorises from all of
@@ -867,7 +883,7 @@ jobs:
       # buys (~3min on an IDLE developer host, measured at 62 mutants; a loaded box is
       # several times that). It is what stops the rows bit-rotting into patterns that
       # match nothing and score SURVIVED without ever running.
-      - name: prove every authz guard can go RED (297 mutants, each on the test that names it)
+      - name: prove every authz guard can go RED (301 mutants, each on the test that names it)
         run: python3 tests/control_mutants.py
 
       # 🔴 THE LEDGERS THAT ARE BLIND TO A COMPILED CLIENT, AND THIS IS THE ONLY JOB THAT
@@ -932,7 +948,7 @@ jobs:
       # ⚠ RUNTIME, MEASURED RATHER THAN GUESSED, so the next reader can judge the trade: 57
       # mutants, **614.75 s wall / 152.21 s user + 21.00 s sys** on a 24-core developer host
       # at load ~6.5, all 57 KILLED, 0 SURVIVED, 0 misattributed. That is the same order as
-      # `control_mutants.py` above (297 mutants; its own comment measures ~3 min at 62 on an
+      # `control_mutants.py` above (301 mutants; its own comment measures ~3 min at 62 on an
       # IDLE host), which this job already pays for. ⚠ The wall figure is one observation on
       # a LOADED box and is not a prediction for a runner — the CPU figure is the portable
       # half. If this step becomes the job's critical path, split it out; do not delete it
@@ -1578,6 +1594,14 @@ jobs:
       # `setup-go` installed. Two tiers, both read.
       - name: the Go client package builds, and its unit tests pass under the pinned toolchain
         run: nix build .#packages.x86_64-linux.cairn-go --no-link --print-build-logs
+
+      # The transcript capture agent (S2 of the transcripts/plugins plan): its package builds and
+      # runs the module's tests under the pinned toolchain, and its mode ledger and redaction
+      # self-test are read out of the BUILT binary — the second tier of the `go` job's step.
+      - name: the capture agent builds, and its unit tests pass under the pinned toolchain
+        run: nix build .#packages.x86_64-linux.cairn-capture --no-link --print-build-logs
+      - name: the capture agent declares its modes, and its self-test passes as built
+        run: nix build .#checks.x86_64-linux.cairn-capture-declares-its-modes --no-link --print-build-logs
 
       # …and its verb and exit-code tables are read out of the running binary. This is the nix
       # tier of the claim `tests/test_go_client_ledgers.py` makes in the `go` job — a different

@@ -26,9 +26,10 @@
 //     `TestTheModuleSetIsExactlyTheAllowlist`. A module appearing is a refusal; a
 //     module DISAPPEARING is also a refusal, so the allowlist cannot quietly become
 //     a list of things that are no longer there.
-//   - The import graph out of the two binaries that are DEPLOYED or INSTALLED —
-//     `TestNoPackageTheCLIOrThePodLINKSReachesAThirdPartyModule`. The allowlist says
-//     which modules exist; this says none of them reaches the pod or the CLI.
+//   - The import graph out of the binaries that are DEPLOYED or INSTALLED —
+//     `TestNoPackageTheCLIOrThePodLINKSReachesAThirdPartyModule` over [LinkedBinaryRoots]
+//     (the pod, the CLI, and the transcript capture agent). The allowlist says which
+//     modules exist; this says none of them reaches those binaries.
 //
 // 🔴 THE SECOND IS THE ONE THAT KEEPS THE POD CLEAN, AND THE FIRST CANNOT SUBSTITUTE
 // FOR IT. An allowlist of one entry is satisfied by a tree in which `internal/api`
@@ -46,7 +47,7 @@
 // inside the derivation. `packages.default` is `mkGoClient`, so `nix run
 // github:ZacxDev/cairn` runs them; the `nix` CI job builds `cairn-server-go`,
 // `cairn-go` and `cairn-ui` by name, so they run there three times. A third-party
-// import reaching `cmd/cairn` or `cmd/cairn-server` does not produce a review comment
+// import reaching `cmd/cairn`, `cmd/cairn-server` or `cmd/cairn-capture` does not produce a review comment
 // or a red tick beside a green artefact — it produces a derivation that does not
 // build, which is the same consequence `vendorHash = null` had.
 //
@@ -440,9 +441,14 @@ func walkNestedModuleDirs(root string) ([]string, error) {
 // round instead — as the POSITIVE CONTROL. A walk that reports zero third-party
 // imports everywhere, including out of the binary that certainly has one, is a walk
 // wired to nothing, and a zero from such a walk is indistinguishable from a pass.
+//
+// `cmd/cairn-capture` is the third (S2 of the transcripts/plugins plan): it runs on every capturing
+// host with read access to every session transcript there, so it gets the CLI's discipline.
+// `TestTheBanSeesANonTestImportInTheCaptureAgent` is its negative control.
 var LinkedBinaryRoots = []string{
 	ModulePath + "/cmd/cairn",
 	ModulePath + "/cmd/cairn-server",
+	ModulePath + "/cmd/cairn-capture",
 }
 
 // UIBinaryRoot is the positive control's root: the one binary that MUST reach a

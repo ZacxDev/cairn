@@ -4030,6 +4030,55 @@ MUTANTS: tuple[Mutant, ...] = (
         "asks for revalidation, so every authenticated page would sit in the device's HTTP cache — the "
         "invitation mint, whose body is a bearer capability, included.",
     ),
+    # S2 of the transcripts/plugins plan: `internal/transcript/scopeuse`, the READ half of a session's
+    # visibility set. It is not in `PKGS` — it is an input to a predicate that does not exist until
+    # S4, not a member of the control/identity/server seam — so each row ADDS its package, the
+    # override the battery prescribes for a killer outside the seam.
+    Mutant(
+        name="scopeuse-all-scopes-header-names-a-scope",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\t\tif ValidScope(f[1]) {",
+        new="\t\t\tif ValidScope(f[1]) || strings.HasPrefix(f[1], \"(\") {",
+        killer="TestTheAllScopesHeaderAddsStar",
+        why="a store-wide search renders `scope=(all scopes)`, and reading the field as whatever "
+        "follows `scope=` is the natural parse — it turns the one header that names EVERY scope into "
+        "a scope nobody has, so `V` loses its `*` and the session becomes readable by anyone who reads "
+        "the other scopes it touched.",
+    ),
+    Mutant(
+        name="scopeuse-scopeless-header-dropped",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\tif len(fields) == 0 {\n\t\t\tout = append(out, Star)\n\t\t\tcontinue\n\t\t}",
+        new="\t\tif len(fields) == 0 {\n\t\t\tcontinue\n\t\t}",
+        killer="TestTheScopelessHeaderFormAddsStar",
+        why="the `all N entry files … MALFORMED` header carries no `scope=` field, and \"no field, "
+        "nothing to add\" reads as tidy — it drops a read whose scope the line does not say.",
+    ),
+    Mutant(
+        name="scopeuse-fallback-empty-ledger-trusted",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\tr.F1 = d.namesProgram && d.ledgerRecords == 0",
+        new="\tr.F1 = d.namesProgram && d.ledgerRecords < 0",
+        killer="TestF1EmptyLedgerAddsStar",
+        extra_killers=("TestTheVisibilityInputOfEveryFixtureSession",),
+        why="an empty ledger READS as \"this session read nothing\" — exactly what a pre-ledger "
+        "client, or one whose environment lost the session id, also produces. Trusting it makes every "
+        "unrecorded read invisible to `V`.",
+    ),
+    Mutant(
+        name="scopeuse-cache-path-read-ignored",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\tif strings.Contains(lower, \"subsystem-store\") {",
+        new="\tif false && strings.Contains(lower, \"subsystem-store\") {",
+        killer="TestF2CacheReadAddsStar",
+        why="a file-tool read of the cache never passes through the client, so it is never ledgered; "
+        "dropping F2 because \"the ledger covers reads now\" is the plausible simplification, and it "
+        "makes every cache read invisible.",
+    ),
 )
 
 

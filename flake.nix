@@ -660,6 +660,36 @@
         };
       };
 
+      # 🔴 THE TRANSCRIPT CAPTURE AGENT (S2 of the transcripts/plugins plan) — A SEPARATE BINARY,
+      # NOT A `cairn` VERB, because it reads every session transcript on its host and the reader
+      # installed everywhere should not. It is under the import ban (`internal/depspolicy`'s
+      # `LinkedBinaryRoots`), and its check phase runs the whole module's tests like the other Go
+      # derivations. ⚠ IT UPLOADS NOTHING YET: S2 writes a local spool, S3 adds the upload.
+      # ⚠ NO `opencode` ON ITS PATH, deliberately: it runs `opencode export` by bare name, and the
+      # answer has to be the opencode the host's sessions were written by — a pinned copy here
+      # could read a different database version than the one in use.
+      mkGoCapture = pkgs: (buildGoPinned pkgs) {
+        pname = "cairn-capture";
+        inherit version;
+        src = onlyGo pkgs;
+        vendorHash = goVendorHash;
+        subPackages = [ "cmd/cairn-capture" ];
+        doCheck = true;
+        checkPhase = ''
+          runHook preCheck
+          go vet ./...
+          go test ./...
+          runHook postCheck
+        '';
+        meta = with pkgs.lib; {
+          description = "The cairn session-transcript capture agent (redacts on the host; uploads nothing yet)";
+          homepage = "https://github.com/ZacxDev/cairn";
+          license = licenses.mit;
+          mainProgram = "cairn-capture";
+          platforms = platforms.unix;
+        };
+      };
+
       # 🔴 THE BROWSER SURFACE, AND THE ONLY ARTEFACT HERE THAT LINKS A THIRD-PARTY
       # MODULE. `cmd/cairn-ui` carries the entries page, cookie sessions with a
       # sign-in pair, a GitHub sign-in through the operator's GoTrue, one static
@@ -1149,6 +1179,7 @@
           # operator's GitOps repository DEPLOYS it. A missing `apps` entry never
           # implied any of that.
           cairn-ui = mkGoUI pkgs;
+          cairn-capture = mkGoCapture pkgs;
         }
         // nixpkgs.lib.optionalAttrs (builtins.elem pkgs.stdenv.hostPlatform.system linuxSystems) {
           server-image = mkServerImage pkgs;
@@ -1226,6 +1257,7 @@
         cairn-server-go = mkGoServer pkgs;
         cairn-go = mkGoClient pkgs;
         cairn-ui = mkGoUI pkgs;
+        cairn-capture = mkGoCapture pkgs;
 
         # 🔴 THE CHECKED-IN STYLESHEET IS WHAT THE BINARY SERVES, SO A STALE ONE SHIPS
         # SILENTLY. `internal/ui/app.css` is `//go:embed`ed, so nothing about editing
@@ -1533,6 +1565,45 @@
         # cache root, so it exercises the LEDGERS and nothing about reading or writing. The
         # parity harness is what measures behaviour, and it needs a running pod that a nix
         # sandbox is the wrong place for.
+        # 🔴 THE CAPTURE AGENT'S MODE LEDGER AND ITS SELF-TEST, READ OUT OF THE BUILT BINARY. The
+        # `go` job runs the same two through `go test`; this is the second tier — the stripped
+        # binary a host installs, under the pinned toolchain — so a green in one tier cannot stand
+        # for the other. ⚠ The self-test plants its secrets at RUN time and needs no host key, no
+        # store and no network, which is why the sandbox can run it at all; it says nothing about
+        # a real host's transcripts.
+        cairn-capture-declares-its-modes = pkgs.runCommand "cairn-capture-declares-its-modes"
+          { nativeBuildInputs = [ (mkGoCapture pkgs) ]; } ''
+          set -o pipefail
+          cairn-capture -verbs > modes.txt
+          if ! grep -q . modes.txt; then
+            echo "FAIL: the binary printed NO mode, so a ledger built from this output would agree with anything."
+            exit 1
+          fi
+          cat > want-modes.txt <<'EOF'
+          dry-run reads
+          run writes-spool
+          self-test reads
+          verbs reads
+          EOF
+          sed -i 's/^ *//; /^$/d' want-modes.txt
+          if ! diff -u want-modes.txt modes.txt; then
+            echo "FAIL: cairn-capture -verbs disagrees with the declared mode ledger."
+            exit 1
+          fi
+          rc=0
+          cairn-capture --self-test > selftest.txt || rc=$?
+          cat selftest.txt
+          if [ "$rc" -ne 0 ]; then
+            echo "FAIL: cairn-capture --self-test exited $rc (2 = the instrument could not vouch)."
+            exit 1
+          fi
+          if ! tail -n 1 selftest.txt | grep -Eq '^SUMMARY redaction: planted=([0-9]+) caught=\1 clean-damaged=0$'; then
+            echo "FAIL: the self-test's last line is not the SUMMARY pair with caught=planted and clean-damaged=0."
+            exit 1
+          fi
+          touch $out
+        '';
+
         go-client-declares-its-verbs = pkgs.runCommand "cairn-go-client-declares-its-verbs"
           { nativeBuildInputs = [ (mkGoClient pkgs) ]; } ''
           set -o pipefail
