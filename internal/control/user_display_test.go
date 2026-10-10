@@ -234,6 +234,27 @@ func TestAReleasedEmailDisplayIsNotReissued(t *testing.T) {
 	}
 }
 
+// TestTheFirstReleaserKeepsAReleasedDisplay: a second user can come to RENDER as a key another
+// user released — an `@`-less email is not checked at creation — and then release it too. The
+// key stays with whoever released it first: re-holding it for the second user would hand the
+// first user's history to them and lock the first user out of their own name.
+func TestTheFirstReleaserKeepsAReleasedDisplay(t *testing.T) {
+	base := []Event{
+		{Kind: EventUserCreated, At: at(1), UserID: "usr_first", Provider: "notes-idp", Subject: "subject-0001", DisplayName: "wren"},
+		{Kind: EventUserRenamed, At: at(2), UserID: "usr_first", DisplayName: "first-renamed"},
+		{Kind: EventUserCreated, At: at(3), UserID: "usr_second", Provider: "notes-idp", Subject: "subject-0002", Email: "wren"},
+		{Kind: EventUserRenamed, At: at(4), UserID: "usr_second", DisplayName: "second-renamed"},
+	}
+	if _, err := Replay(append(append([]Event(nil), base...),
+		Event{Kind: EventUserRenamed, At: at(9), UserID: "usr_second", DisplayName: "Wren"})); !errors.Is(err, ErrUserDisplayNameTaken) {
+		t.Errorf("the SECOND releaser taking the name = %v, want ErrUserDisplayNameTaken", err)
+	}
+	if _, err := Replay(append(append([]Event(nil), base...),
+		Event{Kind: EventUserRenamed, At: at(9), UserID: "usr_first", DisplayName: "Wren"})); err != nil {
+		t.Errorf("the FIRST releaser reclaiming the name was refused: %v", err)
+	}
+}
+
 // TestTheHeldNameHistorySurvivesSeparateAppends drives the history rule through a real
 // `FileStore`, one `Append` per event. The last write goes to `Append` DIRECTLY, past
 // `RenameUser`'s early refusal (which reads a fresh replay and so cannot see the defect), so

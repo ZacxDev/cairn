@@ -370,7 +370,7 @@ func NewModel() Model {
 //
 // 🔴 A STRUCT COPY OF A Model IS NOT A COPY, AND THIS FUNCTION EXISTS BECAUSE THE
 // FIRST VERSION OF `FileStore.Append` GOT IT WRONG. Every field here is a map, so
-// `next := current` copies six map HEADERS and leaves both names pointing at one
+// `next := current` copies the map HEADERS and leaves both names pointing at one
 // set of buckets. `Append` validates a batch by applying it to what it believes is
 // a scratch copy — and with a shallow copy that scratch IS the live cache, so a
 // batch rejected at its third event leaves the first two permanently applied to the

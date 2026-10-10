@@ -142,7 +142,13 @@ func (m *Model) holdReleasedDisplay(user ID) {
 	if m.heldDisplayNames == nil {
 		m.heldDisplayNames = map[string]ID{}
 	}
-	m.heldDisplayNames[strings.ToLower(auditSpelling(displayOf(*m, KindUser, user)))] = user
+	key := strings.ToLower(auditSpelling(displayOf(*m, KindUser, user)))
+	// FIRST RELEASER WINS. A second user can come to render as a key someone already released
+	// (an `@`-less email is not checked at creation) and then release it too; overwriting would
+	// hand the first user's history to the second and lock the first out of their own name.
+	if _, held := m.heldDisplayNames[key]; !held {
+		m.heldDisplayNames[key] = user
+	}
 }
 
 // auditSpelling is a display as the audit line's `identity=` field writes it, for the one
