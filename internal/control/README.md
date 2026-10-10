@@ -262,11 +262,13 @@ python3 tests/control_mutants.py          # 320 mutants, over EIGHT packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 320 mutants DECLARED.** S1 of the scope-refs plan added 13 `codesrc-*`
-rows, each carrying `pkgs` (`PKGS` plus `./internal/codesrc/`) rather than growing `PKGS`; each was
-run ALONE with `--only` (positive control GREEN each time, 13 killed by the test each names, 0
-misattributed, 0 stale extras). That is a per-row measurement, not a whole-battery one. **The last
-whole-battery run** (the UI hub change, which added seven `ui-sessions-*`/`ui-arcs-index-*`/`ui-root-*`/`ui-agent-*` rows): `mutants=304 killed=302 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control GREEN, the two survivors the EQUIVALENT rows. The run before it, at 297 mutants (S3 of the mobile plan):
+**Measured on this tree: 320 mutants DECLARED, and ONE whole-battery run taken (S2 of the scope-refs
+plan, rebased onto the UI hub change): `mutants=320 killed=318 survived=2 misattributed=0 harness-errors=0 stale-extras=0`,
+positive control GREEN, the two survivors the rows labelled EQUIVALENT.** S1 of that plan added 13
+`codesrc-*` rows, each carrying `pkgs` (`PKGS` plus `./internal/codesrc/`) rather than growing `PKGS`;
+S2 added 3 `api-sources-*` rows whose killers are already inside `PKGS`. All 16 were killed by the
+test each names in that run, and each had been run alone with `--only` first. The run before it
+(the UI hub change, which added seven `ui-sessions-*`/`ui-arcs-index-*`/`ui-root-*`/`ui-agent-*` rows): `mutants=304 killed=302 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control GREEN, the two survivors the EQUIVALENT rows. The run before it, at 297 mutants (S3 of the mobile plan):
 `mutants=297 killed=295 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control
 GREEN, the two survivors the rows labelled EQUIVALENT. That run is also the one that found two rows
 the S3 change had broken (patterns on lines it edited, scored HARNESS ERROR) which per-row `--only`
