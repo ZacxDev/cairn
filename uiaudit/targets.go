@@ -203,6 +203,12 @@ var linkExpanded = map[string]bool{
 	// visible session as `/session?session=<id>` — a second way to the session page beside the scope
 	// tabs, and the only one that does not pass through a scope.
 	ui.SessionsPath: true,
+	// 🔴 `GET /team` FOR `GET /share`'s AND `GET /invite`'s REASON, BOTH AT ONCE: the Team page
+	// publishes `/share?scope=…` and `/invite?project=…` links whose operands are minted ids, so
+	// expanding it reaches the same per-scope pages the share index does (the queue's `Path`
+	// dedupe keeps them single). Its bare path is a real page — the share list, the invite list
+	// and the team-link half, which on a world with no database says `ui.NoInviteStore`.
+	ui.TeamPath: true,
 }
 
 // plainGET is the set of ledger paths captured exactly as the ledger spells them.

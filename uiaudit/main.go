@@ -411,6 +411,11 @@ func walkQueue(browser *Browser, world *World, seed []Target, ledger []string, w
 var journalWorldPaths = map[string]bool{
 	ui.SharePath:  true,
 	ui.InvitePath: true,
+	// 🔴 THE TEAM PAGE, FOR THE SAME REASON: under an `admin`-bearing authority its share list is
+	// populated, and with no database its link half says `ui.NoInviteStore` — the state
+	// `refuseJournalWorldFellBack` asserts it captured. Its MINT FORM is unreached here for the
+	// invite mint form's reason above (it needs `-db-dsn`).
+	ui.TeamPath: true,
 }
 
 // JournalWorld is the [Capture.World] label of the journal-backed world.
@@ -467,9 +472,11 @@ func walkJournalWorld(ctx context.Context, repoRoot, uiBinary, dir string, port 
 //     posting to `ui.SharePath`) — the page the token-file world cannot reach at all;
 //   - no share capture carries `ui.ReadOnlyAuthority`, the token-file world's own sentence;
 //   - the invite index was captured carrying `ui.NoInviteStore`, which is the declared,
-//     UNCAPTURED-mint-form state of a world with no database (Q10).
+//     UNCAPTURED-mint-form state of a world with no database (Q10);
+//   - the Team page was captured carrying `ui.NoInviteStore` TWICE — its invite list and its
+//     team-link half — which is that same declared state on the consolidated page.
 func refuseJournalWorldFellBack(captures []*Capture) error {
-	var grantForms, readOnlyShare, inviteNoStore, inviteCaptures int
+	var grantForms, readOnlyShare, inviteNoStore, inviteCaptures, teamNoStore, teamCaptures int
 	for _, c := range captures {
 		path, _, _ := strings.Cut(c.Target.Path, "?")
 		if path == ui.SharePath {
@@ -486,6 +493,18 @@ func refuseJournalWorldFellBack(captures []*Capture) error {
 				inviteNoStore++
 			}
 		}
+		if path == ui.TeamPath {
+			teamCaptures++
+			n := 0
+			for _, notice := range c.ReadOnlyNotices {
+				if notice == ui.NoInviteStore {
+					n++
+				}
+			}
+			if n == 2 {
+				teamNoStore++
+			}
+		}
 	}
 	var bad []string
 	if grantForms == 0 {
@@ -500,12 +519,17 @@ func refuseJournalWorldFellBack(captures []*Capture) error {
 		bad = append(bad, fmt.Sprintf("the invite index was captured %d time(s) and NONE carries the no-database "+
 			"notice, so the state recorded as 'mint form uncaptured' is not the state that was measured", inviteCaptures))
 	}
+	if teamNoStore == 0 {
+		bad = append(bad, fmt.Sprintf("the Team page was captured %d time(s) and NONE carries the no-database "+
+			"notice on BOTH its invite list and its team-link half", teamCaptures))
+	}
 	if len(bad) > 0 {
 		return fmt.Errorf("the JOURNAL-BACKED WORLD FELL BACK or did not reach its pages:\n  %s", strings.Join(bad, "\n  "))
 	}
 	fmt.Printf("uiaudit: [%s] reached: %d per-scope share capture(s) with the grant form, 0 carrying the token-file "+
-		"notice; %d invite capture(s) in the no-database state (the MINT FORM is UNCAPTURED: it needs -db-dsn)\n",
-		JournalWorld, grantForms, inviteNoStore)
+		"notice; %d invite capture(s) and %d Team capture(s) in the no-database state (the MINT FORMS are "+
+		"UNCAPTURED: they need -db-dsn)\n",
+		JournalWorld, grantForms, inviteNoStore, teamNoStore)
 	return nil
 }
 

@@ -300,6 +300,7 @@ func TestTheJournalFallBackRefusalNamesEachDefect(t *testing.T) {
 			{Target: Target{Path: ui.SharePath + "?scope=scp_x"}, World: JournalWorld,
 				FormActions: []string{ui.SignOutPath, ui.UnsharePath, ui.SharePath}},
 			{Target: Target{Path: ui.InvitePath}, World: JournalWorld, ReadOnlyNotices: []string{ui.NoInviteStore}},
+			{Target: Target{Path: ui.TeamPath}, World: JournalWorld, ReadOnlyNotices: []string{ui.NoInviteStore, ui.NoInviteStore}},
 		}
 	}
 	if err := refuseJournalWorldFellBack(good()); err != nil {
@@ -326,6 +327,14 @@ func TestTheJournalFallBackRefusalNamesEachDefect(t *testing.T) {
 			cs[2].ReadOnlyNotices = nil
 			return cs
 		}, "NONE carries the no-database notice"},
+		{"the Team page lacks the no-database notice", func(cs []*Capture) []*Capture {
+			cs[3].ReadOnlyNotices = nil
+			return cs
+		}, "Team page was captured 1 time(s) and NONE"},
+		{"the Team page says it on ONE half only", func(cs []*Capture) []*Capture {
+			cs[3].ReadOnlyNotices = []string{ui.NoInviteStore}
+			return cs
+		}, "Team page was captured 1 time(s) and NONE"},
 		{"no capture at all", func([]*Capture) []*Capture { return nil }, "NO per-scope share page"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
