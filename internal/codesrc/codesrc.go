@@ -25,6 +25,8 @@ package codesrc
 import (
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/ZacxDev/cairn/internal/store"
 )
@@ -66,11 +68,16 @@ func (s Source) Canonical() string {
 
 // The refusal rules. Each `*ParseError` carries exactly one, and a test asserts each fixture's
 // OWN rule — a refusal for the wrong reason is how a dropped check hides behind a neighbour.
+//
+// ⚠ `#` IS NOT REFUSED (a valid branch may carry one: `git check-ref-format --branch issue#12`
+// succeeds). What stops a pasted `… # a comment` from silently JOINING the source is the
+// whitespace refusal: the comment can only be attached by a space, and a space is refused.
 const (
+	RuleUTF8        = "is not valid UTF-8"
 	RuleControl     = "contains a control character"
+	RuleFormat      = "contains an invisible formatting character (bidi override, zero-width or BOM)"
 	RuleWhitespace  = "contains whitespace (a source is one token; put one per line)"
 	RuleComma       = "contains a comma"
-	RuleHash        = "contains '#' (reserved for a ref's id and the auditor's path#Symbol form)"
 	RulePrefix      = "must start with 'git:'"
 	RuleScheme      = "carries a URL scheme ('://'); write git:<host>/<repo-path>@<branch>"
 	RuleNoBranch    = "has no '@<branch>' (the branch is required)"
@@ -105,6 +112,11 @@ func (e *ParseError) Error() string {
 
 // Parse validates ONE source and returns it parsed. It never trims: a caller splitting a form
 // strips its own line endings, and anything left that is whitespace is a refusal, not a repair.
+//
+// 🔴 EVERY STRING IT ACCEPTS SURVIVES A JSON ROUND TRIP BYTE-FOR-BYTE. Invalid UTF-8 is refused
+// first because `encoding/json` rewrites a bad byte to U+FFFD on the way out: the line written
+// would carry a different source than the one its revision digests, and the fold would SKIP the
+// writer's own record (`TestEveryAcceptedSourceRoundTripsThroughTheJournal` pins the property).
 func Parse(raw string) (Source, error) {
 	refuse := func(rule string) (Source, error) {
 		return Source{}, &ParseError{Input: raw, Rule: rule}
@@ -112,24 +124,32 @@ func Parse(raw string) (Source, error) {
 	if raw == "" {
 		return refuse(RuleEmptySource)
 	}
+	if !utf8.ValidString(raw) {
+		return refuse(RuleUTF8)
+	}
 	// Character classes FIRST, each with its own rule, before any structure is read: a control
 	// character inside the host would otherwise be reported as "not a DNS name", which is true
-	// and names the wrong problem.
+	// and names the wrong problem. Controls are C0, DEL and C1 (U+0080–U+009F, CSI included) —
+	// the whitespace ones (tab, newline, NEL) are left to the whitespace rule. Format characters
+	// (category Cf: bidi overrides and isolates, zero-width joiners/spaces, the BOM) are refused
+	// because a source is a DISPLAYED string and these make two different sources render alike.
 	for _, r := range raw {
-		if r < 0x20 && !isSpace(r) || r == 0x7f {
+		if unicode.IsControl(r) && !unicode.IsSpace(r) {
 			return refuse(RuleControl)
 		}
 	}
 	for _, r := range raw {
-		if isSpace(r) {
+		if unicode.Is(unicode.Cf, r) {
+			return refuse(RuleFormat)
+		}
+	}
+	for _, r := range raw {
+		if unicode.IsSpace(r) {
 			return refuse(RuleWhitespace)
 		}
 	}
 	if strings.ContainsRune(raw, ',') {
 		return refuse(RuleComma)
-	}
-	if strings.ContainsRune(raw, '#') {
-		return refuse(RuleHash)
 	}
 	rest, ok := strings.CutPrefix(raw, "git:")
 	if !ok {
@@ -138,20 +158,22 @@ func Parse(raw string) (Source, error) {
 	if strings.Contains(rest, "://") {
 		return refuse(RuleScheme)
 	}
-	// The branch is after the LAST '@': a branch may not contain one, so the last is the only
-	// candidate, and any EARLIER '@' sits in the host part and is userinfo.
-	at := strings.LastIndexByte(rest, '@')
-	if at < 0 {
+	// The host ends at the FIRST '/'. An '@' before it is userinfo; the branch starts after the
+	// FIRST '@' AFTER it — so a second '@' lands IN the branch and gets its own rule.
+	slash := strings.IndexByte(rest, '/')
+	if slash < 0 {
+		if strings.ContainsRune(rest, '@') {
+			return refuse(RuleRepoPath)
+		}
 		return refuse(RuleNoBranch)
 	}
-	location, branch := rest[:at], rest[at+1:]
-	slash := strings.IndexByte(location, '/')
-	host := location
-	if slash >= 0 {
-		host = location[:slash]
-	}
+	host, after := rest[:slash], rest[slash+1:]
 	if strings.ContainsRune(host, '@') {
 		return refuse(RuleUserinfo)
+	}
+	path, branch, found := strings.Cut(after, "@")
+	if !found {
+		return refuse(RuleNoBranch)
 	}
 	if strings.ContainsRune(host, ':') {
 		return refuse(RulePort)
@@ -159,10 +181,6 @@ func Parse(raw string) (Source, error) {
 	host = strings.ToLower(host)
 	if !isDNSName(host) {
 		return refuse(RuleHost)
-	}
-	path := ""
-	if slash >= 0 {
-		path = location[slash+1:]
 	}
 	repoPath, subpath, hasSub := strings.Cut(path, "//")
 	if repoPath != "" && !strings.Contains(repoPath, "/") {
@@ -213,8 +231,12 @@ func Parse(raw string) (Source, error) {
 // ParseList validates a declaration: every source parsed, duplicates (by canonical form) DROPPED
 // with the first occurrence's position KEPT — the first source is the primary — and the result
 // capped at `MaxSources`. An empty list is valid: it is an explicit "undeclared".
+//
+// Every `Index` it reports is the source's position in `raws` — the form's own line — never its
+// position in the deduped list, so the line named is the line the user sees.
 func ParseList(raws []string) ([]Source, error) {
 	out := make([]Source, 0, len(raws))
+	positions := make([]int, 0, len(raws))
 	seen := make(map[string]bool, len(raws))
 	for i, raw := range raws {
 		src, err := Parse(raw)
@@ -229,9 +251,10 @@ func ParseList(raws []string) ([]Source, error) {
 		}
 		seen[c] = true
 		out = append(out, src)
+		positions = append(positions, i+1)
 	}
 	if len(out) > MaxSources {
-		return nil, &ParseError{Index: MaxSources + 1, Input: out[MaxSources].Canonical(), Rule: RuleTooMany}
+		return nil, &ParseError{Index: positions[MaxSources], Input: raws[positions[MaxSources]-1], Rule: RuleTooMany}
 	}
 	return out, nil
 }
@@ -243,14 +266,6 @@ func Canonicals(srcs []Source) []string {
 		out[i] = s.Canonical()
 	}
 	return out
-}
-
-func isSpace(r rune) bool {
-	switch r {
-	case ' ', '\t', '\n', '\r', '\v', '\f', 0x85, 0xa0:
-		return true
-	}
-	return r > 0x7f && strings.ContainsRune("                　", r)
 }
 
 // isDNSName is a lowercased host: ≥ 2 dot-separated labels (a bare word is far more often a
@@ -294,7 +309,8 @@ func isSegment(s string) bool {
 
 // isBranchName is `git check-ref-format --branch`'s rule set, written out (git-check-ref-format(1)),
 // and checked against the real `git` by `TestTheBranchRuleAgreesWithGit` wherever git exists.
-// The leading '-', '@' and whitespace refusals are checked before this, each with its own rule.
+// The leading '-', '@' and whitespace refusals are checked before this, each with its own rule
+// (all three reachable: `TestEachRefusalIsForItsOwnRule` has a fixture for each).
 func isBranchName(b string) bool {
 	if b == "" || b == "HEAD" || b == "@" {
 		return false

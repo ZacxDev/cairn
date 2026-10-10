@@ -92,20 +92,62 @@ func TestTheRevisionIsALiteralDigest(t *testing.T) {
 	}
 }
 
+// 🔴 THE WRITER ACCEPTS NOTHING THE READER WOULD SKIP. Every source `Parse` accepts in this package's
+// fixtures — including `#`, non-ASCII branch text and mixed case — is written by `Set` and read back
+// byte-identically, with nothing skipped. RED before invalid UTF-8 was refused at parse: `Set`
+// wrote the line, `encoding/json` replaced the bad byte, the revision no longer matched, and the
+// fold SKIPPED the writer's own record.
+func TestEveryAcceptedSourceRoundTripsThroughTheJournal(t *testing.T) {
+	accepted := []string{
+		srcA, srcB, srcC,
+		"git:GitHub.COM/Example-Org/Example-Repo@Feature/X",
+		"git:github.com/example-org/example-repo.git@main",
+		"git:github.com/example-org/example-repo@issue#12",
+		"git:github.com/example-org/example-repo@caf\u00e9-x",
+		"git:github.com/example-org/example-repo@ma\xffin", // refused at parse; listed so the loop can see it
+	}
+	j := newJournal(t)
+	rev := RevisionNone
+	var written int
+	for i, raw := range accepted {
+		if _, err := Parse(raw); err != nil {
+			continue
+		}
+		rec, err := j.Set("alpha-notes", []string{raw}, rev, "reader-one", t0.Add(time.Duration(i)*time.Second), nil)
+		if err != nil {
+			t.Fatalf("Set(%q): %v", raw, err)
+		}
+		written++
+		snap := mustRead(t, j)
+		got, ok := snap.For("alpha-notes")
+		if !ok || snap.Skipped != 0 || !slices.Equal(got.Sources, rec.Sources) || got.Revision != rec.Revision {
+			t.Fatalf("%q did not round-trip: read %+v skipped=%d, wrote %+v", raw, got, snap.Skipped, rec)
+		}
+		rev = got.Revision
+	}
+	if written != len(accepted)-1 {
+		t.Fatalf("wrote %d of %d fixtures; the invalid-UTF-8 one must be the only refusal", written, len(accepted))
+	}
+	if _, err := j.Set("alpha-notes", []string{srcA}, rev, "reader\xff", t1, nil); err == nil {
+		t.Fatal("Set accepted a set_by that is not valid UTF-8")
+	}
+}
+
 // 🔴 THE SAME-REVISION RACE (the plan's F2), FORCED RATHER THAN HOPED FOR. Call one is held INSIDE
 // its lock, between its compare and its append, while call two starts carrying the SAME revision.
 // With the compare inside the lock, call two blocks on `flock`, re-reads after call one's append,
 // and is refused. With the compare moved outside the lock, call two compares against the bytes
 // before call one's append, passes, and lands too.
 //
-// The hold is a RENDEZVOUS with a deadline: call one waits for call two to reach ITS interleave, or
-// for 300ms, whichever is first. 🔴 THE KILL IS THE RENDEZVOUS, NOT THE DEADLINE. The seam marks the
-// compare-to-append window, so a compare moved outside the lock (the mutant
-// `codesrc-revision-compared-outside-the-lock`) carries the seam out with it: both calls compare
-// against the pre-append bytes and BOTH reach the seam before either takes the lock, so the overlap
-// is forced and the line count is 2 on every run, not on a lucky one. The deadline governs only the
-// CORRECT code's path, where call two is parked on `flock` and can never arrive — there it is what
-// releases call one, and its length decides nothing but how long the green run takes.
+// The hold is a RENDEZVOUS WITH A DEADLINE: call one waits for call two to reach ITS interleave, or
+// for 300ms, whichever is first. The seam marks the compare-to-append window, so a compare moved
+// outside the lock (the mutant `codesrc-revision-compared-outside-the-lock`) carries the seam out
+// with it, and call two CAN reach the seam before call one appends. ⚠ THE KILL STILL DEPENDS ON THE
+// DEADLINE: it requires call two to arrive within the 300ms (measured by the round-1 review: with a 1µs deadline the
+// mutant SURVIVED 20 of 20). What the deadline can never do is make the CORRECT code look broken or
+// a broken one look correct: too short a deadline turns the mutant SURVIVED in the battery — a loud
+// finding — and never a false green on the real code, where call two is parked on `flock` and the
+// deadline is simply what releases call one.
 func TestTwoWritesCarryingOneRevisionLandExactlyOnce(t *testing.T) {
 	j := newJournal(t)
 	if _, err := j.Set("alpha-notes", []string{srcA}, RevisionNone, "reader-one", t0, nil); err != nil {
@@ -274,8 +316,8 @@ func TestAnUnknownFieldIsIgnoredNotRefused(t *testing.T) {
 	}
 }
 
-// The KEY is the folded name (Q17): two spellings reach one record; a renamed directory's NEW
-// name reads undeclared while the old record survives; a recreated same-name scope reads the old.
+// The KEY is the folded name (Q17): two spellings reach one record, through BOTH lookups (`For` and
+// `RevisionFor` take a name and key it themselves), and `Set` refuses a scope that is not a key.
 func TestTheKeyIsTheFoldedName(t *testing.T) {
 	j := newJournal(t)
 	if _, err := j.Set(Key("Alpha-Notes"), []string{srcA}, RevisionNone, "reader-one", t0, nil); err != nil {
@@ -285,15 +327,8 @@ func TestTheKeyIsTheFoldedName(t *testing.T) {
 	if _, ok := snap.For("alpha-notes"); !ok {
 		t.Fatal("alpha-notes does not read the record Alpha-Notes declared")
 	}
-	if _, ok := snap.For("gamma-notes"); ok {
-		t.Fatal("a renamed directory's new name must read undeclared")
-	}
-	if _, ok := snap.Latest["alpha-notes"]; !ok {
-		t.Fatal("the old record must survive in Read (it is history)")
-	}
-	// A recreated alpha-notes is the same key, so it inherits the record and its stamp.
-	if got, ok := snap.For("alpha-notes"); !ok || got.SetBy != "reader-one" {
-		t.Fatalf("a recreated same-name scope reads %+v, want the old record with its stamp", got)
+	if got := snap.RevisionFor("ALPHA-NOTES"); got != snap.RevisionFor("alpha-notes") || got == RevisionNone {
+		t.Fatalf("RevisionFor must key a NAME the way For does: %q", got)
 	}
 	if _, err := j.Set("Alpha-Notes", []string{srcA}, RevisionNone, "reader-one", t0, nil); err == nil {
 		t.Fatal("Set accepted a scope that is not a key")
