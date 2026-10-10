@@ -1,0 +1,81 @@
+{{- include "cairn.preconditions" . -}}
+{{- if .Values.store.enabled }}
+---
+# Same service-link hazard as the UI, via `CAIRN_PORT` from a Service named
+# `cairn`. This is the one that actually took the ~12-minute outage: the Go
+# server resolves `CAIRN_PORT` as the new name for `SUBSYSTEM_STORE_PORT` through
+# its alias layer, whose rule is NEW NAME WINS WITHIN ONE SOURCE — and a kubelet
+# injection and a manifest `env:` are one source. The python image was immune
+# because it read only the old name, which is why the swap created the hazard and
+# the diff did not look like it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cairn.fullname" . }}-store
+  labels:
+    {{- include "cairn.labels" . | nindent 4 }}
+    app.kubernetes.io/component: store
+spec:
+  replicas: {{ .Values.store.replicas }}
+  # `Recreate`, not RollingUpdate: the store holds a ReadWriteOnce volume, so two
+  # pods cannot both be attached during a rollout.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "cairn.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: store
+  template:
+    metadata:
+      labels:
+        {{- include "cairn.labels" . | nindent 8 }}
+        app.kubernetes.io/component: store
+    spec:
+      enableServiceLinks: false
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: cairn-server
+          image: {{ .Values.image.store | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: CAIRN_PORT
+              value: {{ .Values.store.port | quote }}
+            - name: CAIRN_STORE_ROOT
+              value: {{ .Values.storage.mountPath | quote }}
+            - name: CAIRN_TOKEN_FILE
+              value: {{ printf "%s/%s" .Values.tokenFile.mountPath .Values.tokenFile.secretKey | quote }}
+            {{- with .Values.trustedProxies }}
+            - name: CAIRN_TRUSTED_PROXIES
+              value: {{ join "," . | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.store.port }}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            # NOT readOnly: the store is the writer.
+            - name: store
+              mountPath: {{ .Values.storage.mountPath }}
+            - name: token
+              mountPath: {{ .Values.tokenFile.mountPath }}
+              readOnly: true
+          {{- with .Values.store.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        {{- include "cairn.storeVolume" . | nindent 8 }}
+        - name: token
+          secret:
+            secretName: {{ .Values.tokenFile.secretName }}
+{{- end }}
