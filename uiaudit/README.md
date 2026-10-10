@@ -647,14 +647,15 @@ that exits right. On the old loop it was RED (`plain-loop=0/1`: exit 2, naming `
 | (d) no-store | delete `writeHTML`'s `Cache-Control` line — the base's empty default, no header on any page |
 | (e) storage | `pwa.js` writes a second key (a timestamp) beside the dismissal flag |
 
-Measured on this tree after S3 wired (d) (chromium 152.0.7977.82 from the flake's nixpkgs, NOT CI's
-chromium; 580s). S2's run, before (d), read `sabotaged=6 caught=6 plain-loop=3/3` on chromium 154:
+Measured on this tree after S4 wired (b: screenshots) and (e) (chromium 152.0.7977.82 from the flake's
+nixpkgs, NOT CI's chromium). S3's run read `sabotaged=7 caught=7 plain-loop=3/3`, S2's `6/6`:
 
 ```
-pwa_check: positive control PASSED all 7 check(s)
-pwa_check: sabotage a_installability   CAUGHT by its own check (also red: b_name b_icon)
+pwa_check: positive control PASSED all 9 check(s)
+pwa_check: sabotage a_installability   CAUGHT by its own check (also red: b_name b_icon b_screenshots)
 pwa_check: sabotage b_name             CAUGHT by its own check
 pwa_check: sabotage b_icon             CAUGHT by its own check
+pwa_check: sabotage b_screenshots      CAUGHT by its own check
 pwa_check: plain loop on c_reachability     exit 1, names c_reachability FAIL
 pwa_check: sabotage c_reachability     CAUGHT by its own check (also red: c_input_font)
 pwa_check: plain loop on c_target_size      exit 1, names c_target_size FAIL
@@ -662,8 +663,14 @@ pwa_check: sabotage c_target_size      CAUGHT by its own check
 pwa_check: plain loop on c_input_font       exit 1, names c_input_font FAIL
 pwa_check: sabotage c_input_font       CAUGHT by its own check
 pwa_check: sabotage d_no_store         CAUGHT by its own check
-sabotaged=7 caught=7 plain-loop=3/3
+pwa_check: sabotage e_storage          CAUGHT by its own check
+sabotaged=9 caught=9 plain-loop=3/3
 ```
+
+⚠ **The first S4 self-test also read `e_storage` red under the c_reachability sabotage, and that was a
+HARNESS flake, not the sabotage:** `Browser.SignOut` read the jar a fixed 400 ms after the click and,
+on a loaded host, the POST was still in flight (`still in the jar … landed on /`). It now waits, bounded,
+for the redirect to land; the run above is after that fix.
 
 The "also red" entries are expected. With no manifest link there is no manifest for (b) to read. With
 touch never enabled, S1's coarse-pointer input rule never applies.

@@ -176,8 +176,8 @@ verdict() {
 
 # 🔴 THE CONTROLS INSIDE CLAUSES (a) AND (e): (a)'s unarmed boot must read exactly [no-manifest]; (e)'s
 # walk must visit enough pages and its iOS hint must actually SHOW before it is dismissed. If either did
-# not, `pwa_test.go` says `pwa clause (a|e) CONTROL`, and that is a misbehaving control — exit 2, not 1.
-control_misbehaved() { [ -f "$1/ab.log" ] && grep -qE "pwa clause \((a|e)\) CONTROL" "$1/ab.log"; }
+# not, `pwa_test.go` says `pwa clause (a) CONTROL` or `pwa clause (e) CONTROL`, and that is a misbehaving control — exit 2, not 1.
+control_misbehaved() { [ -f "$1/ab.log" ] && grep -qF -e "pwa clause (a) CONTROL" -e "pwa clause (e) CONTROL" "$1/ab.log"; }
 
 # plain_run <tree> <out>: every wired check over <tree>; prints one line per check and RETURNS the exit
 # code (0, 1 or 2) instead of exiting, so `--self-test` can run this very loop over a sabotaged tree.
@@ -188,7 +188,7 @@ plain_run() {
   if [ -f "$out/harness" ]; then echo "pwa_check: COULD NOT VOUCH — $(cat "$out/harness")"; return 2; fi
   if control_misbehaved "$out"; then
     echo "pwa_check: COULD NOT VOUCH — a control inside clause (a) or (e) misbehaved:"
-    grep -hE "pwa clause \((a|e)\) CONTROL" "$out/ab.log" | head -2 | cut -c1-240 | sed 's/^/pwa_check:     /'
+    grep -hF -e "pwa clause (a) CONTROL" -e "pwa clause (e) CONTROL" "$out/ab.log" | head -2 | cut -c1-240 | sed 's/^/pwa_check:     /'
     return 2
   fi
   run_d "$tree" "$out"

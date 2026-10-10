@@ -262,7 +262,7 @@ python3 tests/control_mutants.py          # 309 mutants, over EIGHT packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 304 mutants DECLARED, and one whole-battery run taken (the UI hub change, which added seven `ui-sessions-*`/`ui-arcs-index-*`/`ui-root-*`/`ui-agent-*` rows): `mutants=304 killed=302 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control GREEN, the two survivors the EQUIVALENT rows. The run before it, at 297 mutants (S3 of the mobile plan):
+**Measured on this tree: 309 mutants DECLARED, and one whole-battery run taken (S4 of the mobile plan, which added five `ui-pwa-script-*`/`ui-manifest-screenshot-*` rows and re-pointed `ui-pwa-head-emits-a-script-before-s4` as `ui-pwa-head-emits-an-unversioned-script`): `mutants=309 killed=307 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control GREEN, the two survivors the EQUIVALENT rows. The run before it, at 304 mutants (the UI hub change, seven `ui-sessions-*`/`ui-arcs-index-*`/`ui-root-*`/`ui-agent-*` rows): `mutants=304 killed=302 survived=2 misattributed=0 harness-errors=0 stale-extras=0`. The one before that, at 297 mutants (S3 of the mobile plan):
 `mutants=297 killed=295 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control
 GREEN, the two survivors the rows labelled EQUIVALENT.** That run is also the one that found two rows
 the S3 change had broken (patterns on lines it edited, scored HARNESS ERROR) which per-row `--only`
