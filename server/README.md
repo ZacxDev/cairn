@@ -1291,8 +1291,8 @@ kubectl exec -n <ns> deploy/<name> -- cairn-server -rename-user \
 ```
 
 The name is `[A-Za-z0-9]` then `[A-Za-z0-9._-]`, at most 32, and unique among users
-case-insensitively — against every other user's current display AND every name another user has
-ever held, since bullets and audit lines already written under a released name still read as
+case-insensitively — against every other user's current display AND every display another user
+has released by a rename, since bullets and audit lines already written under it still read as
 that person. No identity-provider claim ever reaches it. Why each rule exists (each one closes an
 attribution-spoofing shape) is in `internal/control/user_display.go`.
 
@@ -1304,7 +1304,7 @@ EITHER FIELD, AND THE TWO FIELDS FAIL DIFFERENTLY ON AN OLDER BUILD.**
   exits 78 on its next restart.
 - A `-display-name` on `-create-user` is **silently ignored** by an older build: that field
   already decodes on other event kinds, so the older build replays the record and renders the
-  email. No refusal, two answers to "who is this" — the newer pod's audit line says the name,
+  email (or `<provider>:<subject>`). No refusal, two answers to "who is this" — the newer pod's audit line says the name,
   the older UI's header says the email. A rollback does the same.
 
 ⚠ **A scope's display name is the DIRECTORY name under the store root**, and creating the

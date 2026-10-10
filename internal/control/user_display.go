@@ -41,7 +41,7 @@ import (
 //
 // 🔴 AND IT IS UNIQUE AMONG USERS, CASE-INSENSITIVELY, AGAINST EVERY OTHER USER'S *RENDERED*
 // DISPLAY — display name, else email, else `<provider>:<subject>`, compared as the audit line
-// writes it — AND AGAINST EVERY NAME ANOTHER USER HAS EVER HELD. Two users rendering the same
+// writes it — AND AGAINST EVERY DISPLAY ANOTHER USER HAS EVER RENDERED AS. Two users rendering the same
 // string is two people one attribution, which is the hazard the alphabet exists for, arriving
 // by duplication instead of by spelling; a released name reissued is the same hazard across
 // time, because a bullet's ACTOR and an audit line are stored text. Case-insensitive because
@@ -109,16 +109,17 @@ func validUserDisplayName(kind EventKind, name string) error {
 //     `identity=` field writes it, spaces as `_`: an `@`-less free-text email `wren example` is
 //     `wren_example` there, which is a name the alphabet accepts. (Its other rewrites cannot
 //     matter: `?` and the truncation marker's length are outside what the alphabet accepts.)
-//   - a name they HELD and gave up. A bullet's ACTOR and an audit line are stored text, so a
-//     released name still attributes everything written under it; reissuing it to someone else
-//     makes one string two people across time. The user who held it may take it back.
+//   - a display they RELEASED by a rename — a display name, or an `@`-less email they rendered
+//     as before their first one. A bullet's ACTOR and an audit line are stored text, so a
+//     released display still attributes everything written under it; reissuing it to someone
+//     else makes one string two people across time. The user who held it may take it back.
 func (m *Model) refuseTakenUserDisplayName(self ID, name string) error {
 	for id := range m.Users {
 		if id == self {
 			continue
 		}
 		other := displayOf(*m, KindUser, id)
-		if strings.EqualFold(strings.ReplaceAll(other, " ", "_"), name) {
+		if strings.EqualFold(auditSpelling(other), name) {
 			return fmt.Errorf("display name %q: user %s already displays as %q, and two users rendering one "+
 				"string is one attribution for two people: %w", name, id, other, ErrUserDisplayNameTaken)
 		}
@@ -131,17 +132,22 @@ func (m *Model) refuseTakenUserDisplayName(self ID, name string) error {
 	return nil
 }
 
-// holdUserDisplayName records that `user` has displayed as `name`, for
-// [Model.refuseTakenUserDisplayName]'s history rule. "" (no display name written) holds nothing.
-func (m *Model) holdUserDisplayName(user ID, name string) {
-	if name == "" {
-		return
-	}
+// holdReleasedDisplay records what `user` renders as NOW — display name, else email, else
+// `<provider>:<subject>` — as theirs, for [Model.refuseTakenUserDisplayName]'s history rule.
+// `apply` calls it on a rename, before the new name replaces the old: that is the only moment
+// a display is released, since a user's CURRENT display is covered by the comparison against
+// every other user. A held value the alphabet can never spell (an `@` email, a
+// `<provider>:<subject>`) is harmless and is not filtered out.
+func (m *Model) holdReleasedDisplay(user ID) {
 	if m.heldDisplayNames == nil {
 		m.heldDisplayNames = map[string]ID{}
 	}
-	m.heldDisplayNames[strings.ToLower(name)] = user
+	m.heldDisplayNames[strings.ToLower(auditSpelling(displayOf(*m, KindUser, user)))] = user
 }
+
+// auditSpelling is a display as the audit line's `identity=` field writes it, for the one
+// rewrite a name in the alphabet can collide with: every space becomes `_`.
+func auditSpelling(display string) string { return strings.ReplaceAll(display, " ", "_") }
 
 // NewUserDisplayName is a request to set an existing user's display name.
 type NewUserDisplayName struct {

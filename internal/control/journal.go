@@ -119,7 +119,7 @@ func (e Event) validate() error {
 		// OPTIONAL here, and judged only when present: every journal written before
 		// `display_name` existed on this kind carries none, and must replay unchanged.
 		// ⚠ The other direction is NOT a refusal: `display_name` already decodes on other
-		// kinds, so an OLDER build replays this record and silently renders the email.
+		// kinds, so an OLDER build replays this record and silently falls back to the email.
 		if e.DisplayName != "" {
 			return validUserDisplayName(e.Kind, e.DisplayName)
 		}
@@ -291,7 +291,6 @@ func (m *Model) apply(e Event) error {
 			ID: e.UserID, Provider: e.Provider, Subject: e.Subject,
 			Email: e.Email, DisplayName: e.DisplayName, CreatedAt: e.At,
 		}
-		m.holdUserDisplayName(e.UserID, e.DisplayName)
 
 	case EventUserRenamed:
 		u, known := m.Users[e.UserID]
@@ -301,9 +300,11 @@ func (m *Model) apply(e Event) error {
 		if err := m.refuseTakenUserDisplayName(e.UserID, e.DisplayName); err != nil {
 			return err
 		}
+		// What the user rendered as UNTIL NOW is released here, so it is held for them — read
+		// BEFORE the write below replaces it.
+		m.holdReleasedDisplay(e.UserID)
 		u.DisplayName = e.DisplayName
 		m.Users[e.UserID] = u
-		m.holdUserDisplayName(e.UserID, e.DisplayName)
 
 	case EventProjectCreated:
 		if _, exists := m.Projects[e.ProjectID]; exists {

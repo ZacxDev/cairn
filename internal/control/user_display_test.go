@@ -176,8 +176,10 @@ func TestTwoUsersCannotRenderTheSameDisplay(t *testing.T) {
 // people across time — the hazard the uniqueness rule exists for, arriving by reuse.
 func TestADisplayNameOnceHeldIsNotReissuedToAnotherUser(t *testing.T) {
 	base := []Event{
+		// Mixed case on purpose: an all-lowercase fixture cannot see a history keyed WITHOUT the
+		// case fold, since the lowercase spelling would then be the key either way.
 		{Kind: EventUserCreated, At: at(1), UserID: "usr_first", Provider: "notes-idp", Subject: "subject-0001",
-			DisplayName: "octocat-example"},
+			DisplayName: "Octocat-Example"},
 		{Kind: EventUserRenamed, At: at(2), UserID: "usr_first", DisplayName: "octocat-renamed"},
 		{Kind: EventUserRenamed, At: at(3), UserID: "usr_first", DisplayName: "octocat-current"},
 		{Kind: EventUserCreated, At: at(4), UserID: "usr_second", Provider: "notes-idp", Subject: "subject-0002"},
@@ -206,6 +208,29 @@ func TestADisplayNameOnceHeldIsNotReissuedToAnotherUser(t *testing.T) {
 	}
 	if p, _ := m.PrincipalFor(KindUser, "usr_first"); p.Display != "Octocat-Example" {
 		t.Errorf("display %q after reclaiming a former name", p.Display)
+	}
+}
+
+// TestAReleasedEmailDisplayIsNotReissued: the history is of what a user RENDERED, not only of
+// display names. A user shown as an `@`-less free-text email (and, through the audit line's
+// space rewrite, as that email with `_` for each space) attributed everything written before
+// their rename under that string, so it is held for them exactly as a released display name is.
+func TestAReleasedEmailDisplayIsNotReissued(t *testing.T) {
+	for _, tc := range []struct{ email, taken string }{
+		{"wren_example", "WREN_example"},
+		{"wren example", "Wren_Example"},
+	} {
+		t.Run(tc.email, func(t *testing.T) {
+			_, err := Replay([]Event{
+				{Kind: EventUserCreated, At: at(1), UserID: "usr_first", Provider: "notes-idp", Subject: "subject-0001", Email: tc.email},
+				{Kind: EventUserRenamed, At: at(2), UserID: "usr_first", DisplayName: "wren"},
+				{Kind: EventUserCreated, At: at(3), UserID: "usr_second", Provider: "notes-idp", Subject: "subject-0002"},
+				{Kind: EventUserRenamed, At: at(4), UserID: "usr_second", DisplayName: tc.taken},
+			})
+			if !errors.Is(err, ErrUserDisplayNameTaken) {
+				t.Fatalf("replay = %v, want ErrUserDisplayNameTaken", err)
+			}
+		})
 	}
 }
 

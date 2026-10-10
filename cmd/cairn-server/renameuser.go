@@ -39,7 +39,7 @@ func registerRenameUserFlags() *renameUserFlags {
 				"subject: those are not unique keys, an id is"),
 		display: flag.String("rename-display-name", "",
 			"the new display name: [A-Za-z0-9] then [A-Za-z0-9._-], at most 32, no `:` or `@`, and "+
-				"unique among users case-insensitively, including names another user once held. "+
+				"unique among users case-insensitively, including any display another user once had. "+
 				"OPERATOR-written; nothing an identity "+
 				"provider sends ever reaches it"),
 	}

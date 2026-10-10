@@ -330,9 +330,10 @@ type Model struct {
 	// scanned at every resolve.
 	Memberships map[ID]map[ID]Membership
 	userProject map[ID]map[ID]Membership
-	// heldDisplayNames is every user display name EVER written, case-folded, to the user who
-	// wrote it — so a name one user gave up is not reissued to another. See
-	// `refuseTakenUserDisplayName` for why history and not only the current names.
+	// heldDisplayNames is every display a user has RELEASED by a rename — display name, email
+	// or `<provider>:<subject>`, as the audit line writes it and case-folded — to that user, so
+	// it is not reissued to another. See `refuseTakenUserDisplayName` for why history and not
+	// only the current displays.
 	heldDisplayNames map[string]ID
 
 	// Dropped lists the journal records this Model was built WITHOUT.
