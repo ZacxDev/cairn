@@ -432,6 +432,9 @@ func (c *touchCounting) Arcs(a control.Authorization) (report.ArcsAcrossReport, 
 func (c *touchCounting) AllSessions(a control.Authorization) (SessionsList, error) {
 	return c.inner.AllSessions(a)
 }
+func (c *touchCounting) Recall(a control.Authorization, scope string) (AgentRecall, error) {
+	return c.inner.Recall(a, scope)
+}
 
 // TestAnUnknownStatusIsRenderedAsUnknownAndNeverAsOpen — Q4 on both surfaces: the `lantern-arc`
 // registration carries no verdict, and its row and its page say `unknown`, never `open`.

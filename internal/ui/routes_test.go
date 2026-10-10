@@ -240,6 +240,11 @@ func (s staticSource) AllSessions(control.Authorization) (SessionsList, error) {
 	return SessionsList{}, nil
 }
 
+// Recall answers a fixed text — a DISPATCH fixture; `agent_test.go` drives the real renderer.
+func (s staticSource) Recall(control.Authorization, string) (AgentRecall, error) {
+	return AgentRecall{Text: "subsystem-recall: status=fixture\n"}, nil
+}
+
 // staticSharing is a share world with no journal behind it, so the dispatch tests
 // measure ROUTING rather than the control plane. `sharing_test.go` is what drives the
 // real `ControlSharing` against a real `control.FileStore`.
@@ -892,6 +897,11 @@ func (c *countingSource) Arcs(auth control.Authorization) (report.ArcsAcrossRepo
 func (c *countingSource) AllSessions(auth control.Authorization) (SessionsList, error) {
 	c.calls++
 	return staticSource{}.AllSessions(auth)
+}
+
+func (c *countingSource) Recall(auth control.Authorization, scope string) (AgentRecall, error) {
+	c.calls++
+	return staticSource{}.Recall(auth, scope)
 }
 
 // TestEveryContentRouteConsultsTheAuthority is a REGRESSION test, and the defect it

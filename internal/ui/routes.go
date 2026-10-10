@@ -415,6 +415,8 @@ const (
 const (
 	TabSessions = "sessions"
 	TabArcs     = "arcs"
+	// TabAgent is the scope page's "What an agent sees" tab (`agent.go`). Scope page only.
+	TabAgent = "agent"
 )
 
 // ViewRaw is the one recognised [QueryView] value: the entry's file, as bytes.

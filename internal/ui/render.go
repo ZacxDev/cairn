@@ -119,6 +119,8 @@ type PageView struct {
 	// `hub.go`.
 	Hub          *Hub
 	SessionsList *SessionsList
+	// Agent is the scope page's agent-tab recall, nil on every other tab and page. See `agent.go`.
+	Agent *AgentRecall
 	// Panes is the presence predicate bound to THIS request's viewer ([Server.panesFor]), nil when
 	// presence is off. Set by the four pages that list a session; read only through its methods, so
 	// a viewer the predicate shows nothing renders no node at all. See `presence.go`.
@@ -232,6 +234,8 @@ func ScopePage(v PageView) g.Node {
 		body = sessionsPanel(*v.Touched, v.Scopes, v.Now, v.Panes)
 	case v.Tab == TabArcs && v.Touched != nil:
 		body = arcsPanel(*v.Touched, v.Scopes, v.Now)
+	case v.Tab == TabAgent && v.Agent != nil:
+		body = agentPanel(*v.Agent)
 	default:
 		body = entriesPanel(s, v.Now)
 	}
@@ -276,7 +280,7 @@ func entriesPanel(s Scope, now time.Time) g.Node {
 // for everything else — see [TabSessions] for why an unknown value is the default and not a 400.
 func scopeTab(raw string) string {
 	switch raw {
-	case TabSessions, TabArcs:
+	case TabSessions, TabArcs, TabAgent:
 		return raw
 	}
 	return ""
@@ -319,6 +323,8 @@ func scopeTabs(s Scope, current string, t *Touched) g.Node {
 		tab("Entries", strconv.Itoa(len(s.Entries)), ""),
 		tab("Sessions", sessions, TabSessions),
 		tab("Arcs", arcsCount, TabArcs),
+		// No count: the tab is one text, and its size is on the tab itself.
+		tab("What an agent sees", "", TabAgent),
 	)
 }
 

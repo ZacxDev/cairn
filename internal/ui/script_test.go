@@ -96,6 +96,7 @@ func TestEveryBrowsePageCarriesOnlyAllowlistedScripts(t *testing.T) {
 		"session navigate": SessionPath,
 		"sessions tab":     ScopePath + "?" + QueryID + "=" + string(scopeID) + "&" + QueryTab + "=" + TabSessions,
 		"arcs tab":         ScopePath + "?" + QueryID + "=" + string(scopeID) + "&" + QueryTab + "=" + TabArcs,
+		"agent tab":        ScopePath + "?" + QueryID + "=" + string(scopeID) + "&" + QueryTab + "=" + TabAgent,
 	}
 	bodies := map[string]string{}
 	for name, path := range pages {
@@ -117,7 +118,7 @@ func TestEveryBrowsePageCarriesOnlyAllowlistedScripts(t *testing.T) {
 	// And the pages with no filter control carry no script at all: a script with nothing to drive is
 	// still a script the allowlist has to answer for.
 	for _, name := range []string{"root", "entry", "entry raw", "navigate", "tag listing", "search", "arc navigate",
-		"session navigate", "sessions tab", "arcs tab"} {
+		"session navigate", "sessions tab", "arcs tab", "agent tab"} {
 		if n := strings.Count(strings.ToLower(bodies[name]), "<script"); n != 0 {
 			t.Errorf("the %s page carries %d script element(s), want 0: only the scope page has a control to drive", name, n)
 		}
@@ -280,7 +281,7 @@ func TestUserTextEscapesInTheFiltersDataAttribute(t *testing.T) {
 		"title (attribute)":       `title="r&lt;&#34;&amp;x"`,
 		// Rendered `hidden` since aliases left the card; `filter.js` reveals it only when it matched.
 		"alias chip (text)": `<li hidden>a&lt;b&#34;c&amp;d</li>`,
-		"ref link (text)":         `>r&lt;&#34;&amp;x</a>`,
+		"ref link (text)":   `>r&lt;&#34;&amp;x</a>`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("%s: the escaped form %q is not on the page", what, want)

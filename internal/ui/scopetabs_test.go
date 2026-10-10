@@ -64,7 +64,7 @@ func tabsJournal(t *testing.T, writersMeasured, damaged bool) string {
 	return path
 }
 
-var panelIDs = []string{"scope-entries", "scope-sessions", "scope-arcs"}
+var panelIDs = []string{"scope-entries", "scope-sessions", "scope-arcs", "scope-agent"}
 
 // TestEachScopeTabRendersOnlyItsOwnPanel — the selection, the default, and unknown values. RED with
 // the `switch` in `ScopePage` always rendering the entries panel, and with `scopeTab` passing an
@@ -77,6 +77,8 @@ func TestEachScopeTabRendersOnlyItsOwnPanel(t *testing.T) {
 		{"entries", "scope-entries", "entries"},
 		{TabSessions, "scope-sessions", "sessions"},
 		{TabArcs, "scope-arcs", "arcs"},
+		{TabAgent, "scope-agent", "agent"},
+		{"Agent", "scope-entries", "entries"},
 		// UNKNOWN → the default tab, never a 400 and never an empty page (see `TabSessions`).
 		{"bogus", "scope-entries", "entries"},
 		{"Sessions", "scope-entries", "entries"}, // values are exact: a case variant is unknown
