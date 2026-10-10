@@ -117,7 +117,7 @@ func TestTheRedemptionLogNamesOnlyRealJoins(t *testing.T) {
 	if got := strings.Count(page, "joined (account created by this link)"); got != 1 {
 		t.Errorf("the page renders %d join(s) for one real account:\n%s", got, page)
 	}
-	if !strings.Contains(page, "NOT confirmed: no join was recorded for it") {
+	if !strings.Contains(page, "NOT confirmed: the join may not have been recorded") {
 		t.Error("the failed tab's spend is not rendered as an unconfirmed attempt")
 	}
 }
@@ -314,5 +314,53 @@ func TestALinkRedemptionLogLineNamesTheLink(t *testing.T) {
 	}
 	if strings.Contains(logBuf.String(), "project= role=") {
 		t.Error("the log still prints a blank project/role for a team link")
+	}
+}
+
+// TestAProjectWideRevokeFromTheProjectSectionLandsBackThere — round 2 nit: a project-wide grant
+// revoked from the Team page's PROJECT section lands on `/team?project=…#invite`, not on the share
+// section; from a scope page (no project field) it lands on the share section as before.
+func TestAProjectWideRevokeFromTheProjectSectionLandsBackThere(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		withProject bool
+	}{{"from the project section", true}, {"from a scope page", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newTeamRig(t)
+			token, _ := r.mint(invOwner, invite.LinkReader, false, projectT(invProject))
+			if _, err := r.inviting.Redeem(context.Background(), token, "fixture-provider", strangerSubject(1)); err != nil {
+				t.Fatal(err)
+			}
+			sharing := ControlSharing{Authority: r.authority, Now: func() time.Time { return invClock }}
+			grants, _ := sharing.ProjectGrants(invProject)
+			if len(grants) != 1 {
+				t.Fatalf("precondition: %d project-wide grant(s), want 1", len(grants))
+			}
+			admin := r.principal(invAdmin)
+			cfg := testConfig(t, staticAuth{identity.Identity{Principal: admin, Auth: control.Resolve(r.authority.Model(), admin)}})
+			cfg.Sharing = sharing
+			srv, err := New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			form := url.Values{FieldGrant: {string(grants[0].ID)}, FieldCSRF: {identity.CSRFTokenFor(inviteCookieValue)}}
+			if tc.withProject {
+				form.Set(FieldProject, string(invProject))
+			}
+			req := httptest.NewRequest(http.MethodPost, UnsharePath, strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("Origin", "https://"+req.Host)
+			req.AddCookie(&http.Cookie{Name: identity.SessionCookieName, Value: inviteCookieValue})
+			rec := httptest.NewRecorder()
+			srv.ServeHTTP(rec, req)
+			loc := rec.Header().Get("Location")
+			want := "#share"
+			if tc.withProject {
+				want = QueryProject + "=" + string(invProject) + "#invite"
+			}
+			if rec.Code != http.StatusSeeOther || !strings.HasSuffix(loc, want) || !strings.HasPrefix(loc, TeamPath+"?") {
+				t.Errorf("the revoke answered %d → %q, want 303 to /team…%s", rec.Code, loc, want)
+			}
+		})
 	}
 }

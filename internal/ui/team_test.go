@@ -222,11 +222,11 @@ func TestTheTeamPageRendersEveryLinkWithItsLog(t *testing.T) {
 	}
 	text := pageText(rec.Body.String())
 	for _, want := range []string{
-		shortDigest(fixtureLinkDigest), "reusable", "redeemed 2 time(s)", "project " + fixtureNamedProject.Name,
+		shortDigest(fixtureLinkDigest), "reusable", "2 redemption attempt(s), 1 confirmed", "project " + fixtureNamedProject.Name,
 		"#1 wren@notes.example.invalid joined (account created by this link)",
 		// 🔴 THE UNCONFIRMED SPEND IS RENDERED AS AN ATTEMPT, NEVER AS A JOIN (round 1 🟡1).
 		"#2 an attempt by usr_fixture_never_created at",
-		"NOT confirmed: no join was recorded for it",
+		"NOT confirmed: the join may not have been recorded",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the page does not carry %q", want)

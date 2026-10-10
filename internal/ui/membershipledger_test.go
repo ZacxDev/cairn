@@ -234,6 +234,9 @@ var wantMembershipLedger = []string{
 	// unchanged.
 	"Server.inviteSection Inviting.Invitable membershipActor(id)",
 	"Server.shareSection Sharing.Candidates membershipActor(id)",
+	// The per-viewer revoke decision (round 2 🟡A): the same predicate `POST /unshare` runs.
+	"Server.shareSection Sharing.ForViewer membershipActor(id)",
+	"Server.teamView Sharing.ForViewer membershipActor(id)",
 	"Server.teamView TeamLinking.Links membershipActor(id)",
 	"Server.teamView TeamLinking.Mintable membershipActor(id)",
 }

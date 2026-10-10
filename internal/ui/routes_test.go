@@ -306,6 +306,17 @@ func (s *staticSharing) ProjectGrants(control.ID) ([]GrantRow, error) {
 	return s.projectGrants, nil
 }
 
+// ForViewer marks every fixture row revocable: the dispatch fixtures measure ROUTING, and the
+// per-viewer decision is `ControlSharing.ForViewer`'s, driven by `revokeform_test.go`.
+func (s *staticSharing) ForViewer(rows []GrantRow, _ control.Principal, _ control.Authorization) []GrantRow {
+	out := make([]GrantRow, len(rows))
+	for i, r := range rows {
+		r.MayRevoke = true
+		out[i] = r
+	}
+	return out
+}
+
 func (s *staticSharing) Candidates(control.Principal) ([]Subject, error) {
 	s.reads++
 	return s.candidates, nil

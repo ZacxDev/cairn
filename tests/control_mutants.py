@@ -3334,6 +3334,25 @@ MUTANTS: tuple[Mutant, ...] = (
         why="round 1 🟢5, restored: a provisioning line for a team link with a blank project and "
         "role — a principal created that nobody can attribute to a link.",
     ),
+    # ---- #214 round 2: the revoke button and the project name are decided per viewer ----
+    Mutant(
+        name="ui-revoke-form-rendered-without-mayrevokegrant",
+        path="internal/ui/render.go",
+        old="\t\tg.If(csrf != \"\" && row.MayRevoke, h.FormEl(",
+        new="\t\tg.If(csrf != \"\", h.FormEl(",
+        killer="TestARevokeFormIsRenderedOnlyWhereTheRevokeWouldBeAuthorised",
+        why="round 2 🟡A, restored: the button gated on a session token alone, so an outsider holding "
+        "admin on one scope is offered Revoke on a project-wide grant that POST /unshare refuses (403).",
+    ),
+    Mutant(
+        name="ui-project-wide-row-names-its-project-to-outsiders",
+        path="internal/ui/sharing.go",
+        old="\t\t\t\trow.Project = \"\"",
+        new="\t\t\t\trow.Project = row.Project + \"\"",
+        killer="TestARevokeFormIsRenderedOnlyWhereTheRevokeWouldBeAuthorised",
+        why="the project-wide label naming the owning project to a scope admin who is in no project "
+        "there — a fact about a project they were never shown.",
+    ),
 
     # ---- the `## Requirements` section: the boundary, the count, the attribution ----
     Mutant(

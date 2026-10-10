@@ -47,11 +47,23 @@ type Sharing interface {
 	// nothing keeps.
 	Audience(scope control.ID) ([]Viewer, error)
 
-	// Revocable is the live grant rows naming this scope, which are the only thing
-	// this surface can take back. A viewer who holds authority by MEMBERSHIP appears
-	// in `Audience` and NOT here, and the page says so in as many words — the
-	// alternative is a revoke button that cannot work.
+	// Revocable is the live grant rows that REACH this scope — the grants naming it and the
+	// project-wide grants naming the project that owns it (operator decision O-b) — which are
+	// the only things this surface can take back. A viewer who holds authority by MEMBERSHIP
+	// appears in `Audience` and NOT here, and the page says so in as many words.
+	//
+	// ⚠ IT IS VIEWER-INDEPENDENT AND SO IT DOES NOT SAY WHO MAY REVOKE A ROW. A scope admin who
+	// is not the owning project's owner/admin sees project-wide rows they cannot take back; the
+	// handler passes the rows through [Sharing.ForViewer] before rendering, which is what decides
+	// the button and whether the project's name is shown.
 	Revocable(scope control.ID) ([]GrantRow, error)
+
+	// ForViewer marks, per row, whether THIS viewer may revoke it — by `mayRevokeGrant`, the
+	// predicate `POST /unshare` runs, so the page never offers a button the write refuses
+	// (round 2 🟡A of #214) — and blanks a project-wide row's project NAME for a viewer who is
+	// not a member of that project (an outsider scope admin learns a grant exists, not which
+	// project it is over).
+	ForViewer(rows []GrantRow, viewer control.Principal, auth control.Authorization) []GrantRow
 
 	// ProjectGrants is every live grant whose OBJECT is this project — "project-wide"
 	// grants, which reach every scope the project owns. It performs NO authority check:
@@ -135,6 +147,12 @@ type GrantRow struct {
 	// the project owns, and the row says so before anybody clicks.
 	ProjectWide bool
 	Project     string
+	// ProjectID is the project a project-wide grant is over — ancillary, for where its revoke
+	// lands afterwards; never an authority input.
+	ProjectID control.ID
+	// MayRevoke is whether the viewer this row was prepared for may take it back
+	// ([Sharing.ForViewer]). False until that call: a row nobody asked about renders no button.
+	MayRevoke bool
 }
 
 // Effect is how a write landed, carried out of the control plane unchanged.
@@ -391,8 +409,31 @@ func grantRow(m control.Model, g control.Grant, display string) GrantRow {
 	if g.ObjectKind == control.ObjectProject {
 		row.ProjectWide = true
 		row.Project = m.Projects[g.ObjectID].Name
+		row.ProjectID = g.ObjectID
 	}
 	return row
+}
+
+// ForViewer decides each row's button and project name for one viewer — see the interface.
+//
+// 🔴 `viewer` IS `membershipActor(id)` AND `auth` IS `id.Auth`, while `POST /unshare` hands
+// `Unshare` the ATTRIBUTION principal `id.Principal`. The two agree on every row because
+// `mayRevokeGrant` refuses a project-wide grant outright when `auth.Narrowed()` — the one case in
+// which `membershipActor(id)` and `id.Principal` differ — and its scope arm reads only `auth`.
+func (s ControlSharing) ForViewer(rows []GrantRow, viewer control.Principal, auth control.Authorization) []GrantRow {
+	m := s.Authority.Model()
+	out := make([]GrantRow, len(rows))
+	for i, row := range rows {
+		g, known := m.Grants[row.ID]
+		row.MayRevoke = known && mayRevokeGrant(m, viewer, auth, g)
+		if row.ProjectWide {
+			if _, member := m.RoleIn(row.ProjectID, viewer.ID); !member || viewer.Kind != control.KindUser {
+				row.Project = ""
+			}
+		}
+		out[i] = row
+	}
+	return out
 }
 
 // ProjectGrants is every live project-wide grant over `project`. No authority check — see

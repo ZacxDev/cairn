@@ -4035,7 +4035,14 @@ grant" (`Viewer.ByProjectGrant`); the scope's take-back list includes project-wi
 owning project, each labelled "project-wide: every scope in <project> — revoking it withdraws all of
 them" before its button (`GrantRow.ProjectWide`); and the Team page's project section lists every
 project-wide grant with revoke (`Sharing.ProjectGrants`, reached only for a project `Invitable`
-returned). `POST /unshare` decides by the grant's OBJECT (`mayRevokeGrant`): a scope grant needs
+returned). 🔴 **The Revoke button and the project's NAME are decided PER VIEWER** (round 2 🟡A):
+the take-back rows are viewer-independent, and gating the button on a session token alone offered an
+outsider scope admin Revoke on a project-wide row that the write then refused (403). `Sharing.ForViewer`
+marks each row with `mayRevokeGrant` — the SAME predicate `POST /unshare` runs — and the row renders
+"only a project owner or admin can revoke this" instead of a form when it says no; it also blanks
+the project's name for a viewer who is not in that project ("a project-wide grant — revoking it
+withdraws every scope in its project"). A project-wide revoke from the project section lands back
+on `/team?project=…#invite`. `POST /unshare` decides by the grant's OBJECT (`mayRevokeGrant`): a scope grant needs
 `admin` on that scope, as before; a project-wide grant needs `CanManageMembers` on the actor's own
 membership — never scope admin, so an outsider with admin on one scope cannot withdraw a grant over
 the whole project — and is refused outright for a NARROWED credential (membership authority is not
@@ -4075,9 +4082,10 @@ account that does not exist. The row is still WRITTEN at the spend — written a
 the journal write and the log write would lose the audit of a REAL join, and for a reusable link the
 log is the only place an operator sees who it let in — but it is `confirmed = false` until the
 authority write succeeds (`ControlTeamLinks.confirmed`), and the page renders an unconfirmed row as
-"an attempt … NOT confirmed: no join was recorded for it". A confirmation that itself fails leaves
-the join recorded and the row unconfirmed (the conservative reading), says so on the operator's log
-line, and does not refuse the sign-in. `TestTheRedemptionLogNamesOnlyRealJoins` reproduces the
+"an attempt … NOT confirmed: the join may not have been recorded" — "may", because a confirmation
+that itself fails leaves the join recorded and the row unconfirmed (the conservative reading); that
+case says so on the operator's log line and does not refuse the sign-in. The link's own row counts
+SPENDS as "N redemption attempt(s), M confirmed", never as joins. `TestTheRedemptionLogNamesOnlyRealJoins` reproduces the
 double-callback deterministically (a store barrier holds both spends until both tabs have passed the
 "unknown subject" check).
 
@@ -4184,6 +4192,8 @@ removes the rule — killed by the test that names it (`tests/control_mutants.py
 | D2/🟡4 half-wired server builds | `ui-inviting-without-links-builds` | `TestAnInvitationHalfWithoutTeamLinksIsRefused` |
 | 🟡4 `main` drops the link store | `main-drops-the-link-store-from-the-invitation-half` | `TestTheWiredInvitationHalfRedeemsATeamLink` |
 | 🟢5 blank project/role on a link's log line | `ui-link-log-line-loses-the-link` | `TestALinkRedemptionLogLineNamesTheLink` |
+| round 2 🟡A Revoke offered where the write refuses | `ui-revoke-form-rendered-without-mayrevokegrant` | `TestARevokeFormIsRenderedOnlyWhereTheRevokeWouldBeAuthorised` |
+| round 2 🟡A project named to an outsider | `ui-project-wide-row-names-its-project-to-outsiders` | `TestARevokeFormIsRenderedOnlyWhereTheRevokeWouldBeAuthorised` |
 
 Eight pre-existing rows were RE-DERIVED (same names, same defects) because the code they mutate
 moved — the share/invite page handlers into section builders, `Unshare`'s check into

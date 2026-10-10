@@ -131,7 +131,9 @@ func (s *Server) shareSection(w http.ResponseWriter, r *http.Request, id identit
 
 	view.Scope = s.namedScope(id.Auth, scope)
 	view.Audience = audience
-	view.Revocable = revocable
+	// 🔴 THE ROWS ARE PREPARED FOR THIS VIEWER BEFORE THEY ARE RENDERED: which carry a Revoke
+	// button and which may name their project (`Sharing.ForViewer`, round 2 🟡A).
+	view.Revocable = s.sharing.ForViewer(revocable, membershipActor(id), id.Auth)
 	view.Candidates = candidates
 	return view, true
 }
@@ -246,6 +248,14 @@ func (s *Server) handleUnshare(w http.ResponseWriter, r *http.Request, id identi
 		q := url.Values{}
 		q.Set(QueryOutcome, outcomeRevoked)
 		setEffect(q, effect)
+		// A project-wide grant revoked from the Team page's PROJECT section lands back there:
+		// the form carries the project (ancillary, `handleInviteRevoke`'s ruling — never an
+		// authority input; `Unshare` has already decided from the grant row).
+		if project := r.PostFormValue(FieldProject); project != "" {
+			q.Set(QueryProject, project)
+			http.Redirect(w, r, teamHref(q.Encode(), teamInviteAnchor), http.StatusSeeOther)
+			return
+		}
 		http.Redirect(w, r, teamHref(q.Encode(), teamShareAnchor), http.StatusSeeOther)
 		return
 	}

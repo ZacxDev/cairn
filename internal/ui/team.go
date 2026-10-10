@@ -219,7 +219,7 @@ func (s *Server) teamView(w http.ResponseWriter, r *http.Request, id identity.Id
 			writePlain(w, http.StatusInternalServerError, "the authority could not be read")
 			return TeamView{}, false
 		}
-		view.ProjectGrants = grants
+		view.ProjectGrants = s.sharing.ForViewer(grants, membershipActor(id), id.Auth)
 	}
 	if s.teamLinks != nil {
 		view.Mintable = s.teamLinks.Mintable(membershipActor(id))
@@ -474,7 +474,8 @@ func projectGrantsSection(v TeamView) g.Node {
 				"all of them from that grantee; it does not touch project membership.")),
 		g.If(len(v.ProjectGrants) == 0, h.P(h.Class("empty"), g.Text("No project-wide grant names this project."))),
 		h.Ul(h.Class("grants"), g.Map(v.ProjectGrants, func(row GrantRow) g.Node {
-			return revocableItem(row, v.CSRF)
+			// Its revoke lands back on THIS project's section, not the share section.
+			return revocableItemReturningTo(row, v.CSRF, v.Invite.Project.ID)
 		})),
 	)
 }
@@ -561,7 +562,9 @@ func teamLinkItem(row TeamLinkRow, csrf string) g.Node {
 		h.Span(h.Class("kind"), g.Text(row.Role)),
 		h.Span(h.Class("state"), g.Text(row.State)),
 		h.Span(h.Class("kind"), g.Text(reuse)),
-		h.Span(h.Class("at"), g.Text("redeemed "+strconv.Itoa(row.Redemptions)+" time(s)")),
+		// The count is of SPENDS — attempts — and the confirmed share of them is the joins.
+		h.Span(h.Class("at"), g.Text(strconv.Itoa(row.Redemptions)+" redemption attempt(s), "+
+			strconv.Itoa(confirmedCount(row.Log))+" confirmed")),
 		h.Span(h.Class("at"), g.Text("created "+row.Created)),
 		h.Span(h.Class("at"), g.Text("expires "+row.Expires)),
 		h.Ul(h.Class("link-targets"), g.Map(row.Targets, func(t string) g.Node { return h.Li(g.Text(t)) })),
@@ -571,8 +574,10 @@ func teamLinkItem(row TeamLinkRow, csrf string) g.Node {
 			// confirmation was lost — and it is rendered as exactly that rather than as somebody
 			// who joined.
 			if !red.Confirmed {
+				// ⚠ "NOT CONFIRMED", NOT "NOTHING WAS RECORDED": the rare lost-confirmation case is a
+				// join that WAS recorded and whose row could not be confirmed (round 2 nit).
 				return h.Li(g.Text("#" + strconv.Itoa(red.Seq) + " an attempt by " + red.Who + " at " + red.At +
-					" — NOT confirmed: no join was recorded for it (check the control journal)"))
+					" — NOT confirmed: the join may not have been recorded (check the control journal)"))
 			}
 			what := "joined"
 			if red.Provisioned {
@@ -589,6 +594,17 @@ func teamLinkItem(row TeamLinkRow, csrf string) g.Node {
 			h.Button(h.Type("submit"), g.Text("Revoke")),
 		)),
 	)
+}
+
+// confirmedCount is how many of a link's redemption rows are confirmed joins.
+func confirmedCount(log []TeamRedemptionRow) int {
+	n := 0
+	for _, r := range log {
+		if r.Confirmed {
+			n++
+		}
+	}
+	return n
 }
 
 // mintedLinkSection renders a fresh link ONCE, as TEXT — `mintedSection`'s three reasons.

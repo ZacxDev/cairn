@@ -1935,7 +1935,8 @@ func shareScopeSection(v ShareView) g.Node {
 		h.P(h.Class("note"), g.Text(
 			"Only grants appear here — grants on this scope, and project-wide grants on the "+
 				"project that owns it. Somebody who reaches this scope through membership "+
-				"of that project keeps it after every grant below is revoked.")),
+				"of that project keeps it after every grant below is revoked. A project-wide "+
+				"grant can be revoked only by an owner or admin of that project.")),
 		g.If(len(v.Revocable) == 0, h.P(h.Class("empty"), g.Text("No grant names this scope."))),
 		h.Ul(h.Class("grants"), g.Map(v.Revocable, func(row GrantRow) g.Node {
 			return revocableItem(row, v.CSRF)
@@ -1966,6 +1967,17 @@ func audienceItem(a Viewer) g.Node {
 // link-prefetcher would perform it by accident — silently withdrawing somebody's
 // access because a reader hovered a link.
 func revocableItem(row GrantRow, csrf string) g.Node {
+	return revocableItemReturningTo(row, csrf, "")
+}
+
+// revocableItemReturningTo is [revocableItem] whose revoke, for a project-wide grant, lands back
+// on that project's Team section (`project`, ancillary — never an authority input).
+//
+// 🔴 THE BUTTON IS RENDERED ONLY WHERE THE REVOKE WOULD BE AUTHORISED (`row.MayRevoke`, set by
+// `Sharing.ForViewer` from `mayRevokeGrant` — the predicate `POST /unshare` runs). Round 2 🟡A:
+// gated on the session token alone, an outsider holding `admin` on one scope was offered Revoke on
+// a project-wide grant that the write then refused with a 403.
+func revocableItemReturningTo(row GrantRow, csrf string, project control.ID) g.Node {
 	return h.Li(
 		h.Class("grant-row"),
 		h.Span(h.Class("who"), g.Text(row.Subject.Display)),
@@ -1974,15 +1986,21 @@ func revocableItem(row GrantRow, csrf string) g.Node {
 		h.Span(h.Class("at"), g.Text(row.GrantedAt)),
 		// 🔴 A PROJECT-WIDE GRANT SAYS SO, AND SAYS WHAT REVOKING IT DOES, BEFORE THE BUTTON.
 		// It reaches every scope the project owns, and this row can appear on a page about
-		// ONE of them (`ControlSharing.Revocable`'s O-b ruling).
-		g.If(row.ProjectWide, h.Span(h.Class("via"), g.Text(
+		// ONE of them (`ControlSharing.Revocable`'s O-b ruling). The project is NAMED only to a
+		// viewer who is in it (`ForViewer` blanks it otherwise).
+		g.If(row.ProjectWide && row.Project != "", h.Span(h.Class("via"), g.Text(
 			"project-wide: every scope in "+row.Project+" — revoking it withdraws all of them"))),
-		g.If(csrf != "", h.FormEl(
+		g.If(row.ProjectWide && row.Project == "", h.Span(h.Class("via"), g.Text(
+			"a project-wide grant — revoking it withdraws every scope in its project"))),
+		g.If(!row.MayRevoke && row.ProjectWide, h.Span(h.Class("via"), g.Text(
+			"only a project owner or admin can revoke this"))),
+		g.If(csrf != "" && row.MayRevoke, h.FormEl(
 			h.Class("revoke"),
 			h.Method("post"),
 			h.Action(UnsharePath),
 			h.Input(h.Type("hidden"), h.Name(FieldCSRF), h.Value(csrf)),
 			h.Input(h.Type("hidden"), h.Name(FieldGrant), h.Value(string(row.ID))),
+			g.If(project != "", h.Input(h.Type("hidden"), h.Name(FieldProject), h.Value(string(project)))),
 			h.Button(h.Type("submit"), g.Text("Revoke")),
 		)),
 	)
