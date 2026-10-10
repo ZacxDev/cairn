@@ -34,6 +34,10 @@ type Class string
 // The classes. The set is closed; a renderer switches over it.
 const (
 	HumanText     Class = "human-text"
+	// AgentPrompt is text an AGENT wrote to a subagent: a sidechain `user` record, an opencode
+	// child session's `user` text. It is never a user message — only what a human typed into a
+	// ROOT session is.
+	AgentPrompt Class = "agent-prompt"
 	AssistantText Class = "assistant-text"
 	Thinking      Class = "thinking"
 	ToolCall      Class = "tool-call"
@@ -188,6 +192,11 @@ func ClassifyClaude(rec map[string]any) []Unit {
 			}
 		}
 		textClass := HumanText
+		if truthy(rec["isSidechain"]) {
+			// Every `user` record of a subagent file was written by the PARENT agent, not a
+			// human: the prompt, and anything the runtime relays into the sidechain.
+			textClass = AgentPrompt
+		}
 		switch {
 		case runtime:
 			textClass = Runtime
@@ -256,8 +265,9 @@ func blockUnits(blocks []any, textClass Class) []Unit {
 }
 
 // ClassifyOpencodePart splits one opencode part into its units. `role` is the owning message's
-// `info.role`.
-func ClassifyOpencodePart(role string, part map[string]any) []Unit {
+// `info.role`; `child` is true for a part of a CHILD session (one whose export carries a
+// `parentID`), whose `user` text an agent wrote — [AgentPrompt], never [HumanText].
+func ClassifyOpencodePart(role string, child bool, part map[string]any) []Unit {
 	kind, _ := part["type"].(string)
 	shape, declared := OpencodeParts[kind]
 	switch {
@@ -267,6 +277,8 @@ func ClassifyOpencodePart(role string, part map[string]any) []Unit {
 		switch {
 		case truthy(part["synthetic"]):
 			return []Unit{{Class: Runtime}}
+		case role == "user" && child:
+			return []Unit{{Class: AgentPrompt}}
 		case role == "user":
 			return []Unit{{Class: HumanText}}
 		case role == "assistant":

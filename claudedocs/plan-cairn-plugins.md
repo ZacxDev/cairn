@@ -137,12 +137,22 @@ field names and types alone.
   file-signature list and every test asserting a withheld value are DELETED; binary content is
   still CLASSIFIED (for collapsed display) and shipped byte-identical. **Everything revisions 3–4
   and decision 6a's earlier text say about withholding is superseded by this entry and by the
-  rewritten decision 6a.** **O13** adopts the plan's own recommendation on Q4, Q5, Q7, Q8, Q9, Q10,
-  Q11, Q12 and Q15. **O14** answers Q6: 90-day retention, a quota of about twice the steady state,
+  rewritten decision 6a.** **O13** records the defaults the coordinator stated it would take on Q4,
+  Q5, Q7, Q8, Q9, Q10, Q11, Q12 and Q15 (the plan's own recommendations) before the operator
+  answered O12 and O14; the operator did not object. **O14** answers Q6: 90-day retention, a quota of about twice the steady state,
   re-measured after a month. S0 measured four facts about opencode that move decision 5 (R3): an
   export TRUNCATES when its stdout is a pipe, it carries no part `time_updated`, `session list`
   shows only the current project's root sessions, and `OPENCODE_SESSION_ID` is not set by opencode
   itself (decision 3a).
+- *Revision 18 applies review rounds 0 and 1 of S0–S2.* **The coordinator's reading of O12 narrows
+  "binary"** (below, and decision 6a): binary is a value whose bytes BEGIN WITH A KNOWN BINARY FILE
+  SIGNATURE, or a base64/`data:` payload that decodes to one; everything else — NUL-separated text
+  and mostly-UTF-8 text with stray invalid bytes included — is TEXT and is scanned. Revision 17's
+  "no NUL in the first 8,000 bytes AND valid UTF-8" text rule is retracted with it. A text written
+  by an AGENT to a subagent (a sidechain `user` record, an opencode child session's `user` text) is
+  its own class, `agent-prompt`, never `human-text` (decision 17). Decision 18 anchors an opencode
+  child at the `task` part that names it, not at a `subtask` part. Decision 6 now parses a `data:`
+  prefix before its base64 rule.
 
 ## Goal and premise
 
@@ -357,7 +367,8 @@ database at all.
   removes was not measured, and O1/O9 (every byte) rule it out as the redaction step anyway.
 - **Measured in S0 (same host, same version), and each one moves decision 5:**
   - 🔴 **An export TRUNCATES when its stdout is a PIPE.** Eight of eight recent sessions stopped
-    at 8, 64 or 96 KiB with **exit 0** and an unterminated document; the same exports written to a
+    somewhere between 8 and 96 KiB — the boundary VARIES (8, 64 and 96 KiB here, 16 KiB in a reviewer's run; not a closed set) — with
+    **exit 0** and an unterminated document; the same exports written to a
     REGULAR FILE were complete and parsed (about 0.9 to 18 MB). The 28,051-byte export above was
     under the boundary, which is why it measured clean. A reader sends the export to a file and
     refuses a document that does not parse; the exit code proves nothing.
@@ -637,8 +648,8 @@ script that prints only counts.
 | O9 | "Full raw" means EVERY byte — bookkeeping records, duplicate tool-result copies and subagents included. Because agents will be the main readers, selective reading is designed on top: a skeleton, filters, ranges, collapsed bookkeeping and duplicates by default, bounded pages; and a UI that collapses subagents and tool calls, truncates long assistant responses behind a reveal, and NEVER truncates a user message. | No storage-time truncation or per-session cap (decision 15); read-time limits only (decisions 17, 18). One agent-side exception, stated where it lives and in the Goal: held sessions stay on their host (decision 16). Binary content ships (O12). |
 | O10 | Sessions with no recorded write ARE shipped, visible to their OWNER only, and a "My sessions" page lists them. | Clause (g); S7. |
 | O11 | Replace the shell-command-line parser for READ scopes with a read ledger the `cairn` client writes itself, plus a simple fail-closed fallback. | Both clients change (the Python oracle while it lives), and a new parity row; decisions 3 and 3a, S11. |
-| O12 | Answers Q2: content no redactor can read — images, PDFs, other binary payloads, and text that is not UTF-8 — SHIPS, every byte. The redactor scans every text-decodable string (base64 that decodes to text included) and leaves binary content as it is. | Decision 6a's withholding is DELETED; binary is still classified, for collapsed display (decisions 17, 18). T1 names the residual: a secret inside an image, a PDF or non-UTF-8 text ships unredacted. |
-| O13 | The plan's own recommendation is adopted on Q4 (a host-local, never-committed, counts-only redaction audit), Q5 (the client instance is not armed without its own explicit decision), Q7 (one capture owner per instance), Q8 (ClickUp ids only, titles behind a no-default flag), Q9 (keep account identifiers), Q10 (plugins on a user timer on one operator host), Q11 (an `AGENTS.md` row is paid for by evicting an equal amount of history to a README in the same change), Q12 (per-session directory, one replica) and Q15 (the proposed Go-only `transcript` verb). | Each question below is marked "recommendation adopted"; Q13, Q14 and Q16 stay open. |
+| O12 | Answers Q2: content no redactor can read — images, PDFs, other binary payloads — SHIPS, every byte. The redactor scans every text-decodable string (base64 that decodes to text included) and leaves binary content as it is. **The coordinator's reading (revision 18, reversible):** O12 meant images, PDFs and binary PAYLOADS, so "binary" is a value whose bytes begin with a KNOWN binary file signature (or a base64/`data:` payload decoding to one); NUL-separated text and mostly-UTF-8 text with stray invalid bytes are TEXT and are scanned. *Reason: under revision 17's rule a `/proc/<pid>/environ` dump or an `env -0` listing — NUL-separated, all secrets — classed as binary and shipped unscanned; the narrowing costs nothing O12 asked for.* | Decision 6a's withholding is DELETED; binary is still classified, for collapsed display (decisions 17, 18). T1 names the residual: a secret inside an image, a PDF or another signature-bearing payload ships unredacted. |
+| O13 | The coordinator stated these recommended answers to the operator as the defaults it would take before the operator answered O12 and O14; the operator did not object. They cover Q4 (a host-local, never-committed, counts-only redaction audit), Q5 (the client instance is NOT armed without an explicit operator decision), Q7 (one capture owner per instance), Q8 (ClickUp ids only, titles behind a no-default flag), Q9 (keep account identifiers), Q10 (plugins on a user timer on one operator host), Q11 (an `AGENTS.md` row is paid for by evicting an equal amount of history to a README in the same change), Q12 (per-session directory, one replica) and Q15 (the proposed Go-only `transcript` verb). | Each question below is marked "recommendation adopted"; Q13, Q14 and Q16 stay open. |
 | O14 | Answers Q6: retention 90 days; an instance quota of about twice the steady state — about 20 GB compressed per capturing host on the personal instance — re-measured after a month of real uploads. | Implemented in S3 (`-transcript-retention`, `-transcript-quota`); decision 15. |
 
 ### Chosen by the AGENT writing this plan (open to review)
@@ -881,6 +892,11 @@ script that prints only counts.
      string (not the whole value) is not decoded. *Revision 4 set the floor at 64 characters, which a
      base64-encoded 40-character token (56 characters) slipped under, and claimed that without the
      rule such a secret "passes every rule" as if the rule closed the case; both are retracted.*
+     **A `data:` URL is parsed first:** the `data:<media type>[;base64],` prefix disqualifies the
+     whole string from the base64 alphabet, so a WHOLE-string `data:…;base64,<payload>` value has
+     its payload decoded and scanned exactly as above (`data:text/plain;base64,…` included); a match
+     replaces the whole URL. *Revision 17 swept the `data:` text out of decision 6 with the
+     withholding, leaving no mechanism for `data:text/…` payloads; restored (S1 implements it).*
    - *The pod re-checks, and REFUSES* (D4, kept): every received record's decoded strings AND every
      received text blob are scanned with the same table; a match is refused 422 (record index or
      blob name given, value not) and nothing in that request is stored. Kept as a refusal, not count-and-log, because storing a string the table already
@@ -905,19 +921,22 @@ script that prints only counts.
    *Revisions 3–16 WITHHELD unredactable binary pending Q2 — a placeholder naming type, size and a
    keyed digest, a closed file-signature list deciding what counted, and tests asserting each
    carrier withheld. O12 answered Q2 "ship", so all of that is DELETED, not narrowed.*
-   - **The text rule:** bytes are TEXT when there is no NUL byte in the first 8,000 bytes AND the
-     WHOLE value is valid UTF-8. The NUL half is leakscan's (git's) sniff
-     (`tests/leakscan.py:368, 467-471`); **the UTF-8 half is this plan's own** — leakscan has no
-     UTF-8 test. Consequence, stated: a UTF-16 or Latin-1 TEXT file is "binary" here and ships
-     UNREDACTED (O12). Transcoding it first would make it redactable; that is a possible later
-     change, not built.
+   - **The binary rule (revision 18, the coordinator's reading of O12):** bytes are BINARY when they
+     BEGIN WITH A KNOWN BINARY FILE SIGNATURE — PNG, JPEG, GIF, WebP, PDF, ZIP, gzip, bzip2, xz,
+     zstd, 7z, ELF; a closed, tested list — or are a base64/`data:` payload that decodes to such
+     bytes. **Everything else is TEXT and is scanned**, including NUL-separated text (a
+     `/proc/<pid>/environ` dump, `env -0`, `find -print0`: split on NUL and each segment scanned) and
+     mostly-UTF-8 text with stray invalid bytes (scanned with the invalid bytes preserved; only
+     matched spans are replaced, so every other byte stays identical). A UTF-16 text with a byte
+     order mark is decoded, scanned and re-encoded. *Revision 17's rule — no NUL in the first 8,000
+     bytes AND valid UTF-8 — is retracted: it shipped an environ dump unscanned.*
    - **Text blobs.** A blob that parses as JSON (or JSON Lines) is redacted by decision 6's
      DECODED-string traversal, exactly like a record, so a JSON-escaped secret inside a blob is
      caught; if nothing matches, the ORIGINAL bytes are stored, otherwise the re-encoded document.
      Any other text blob is redacted as ONE string with the same table, keyed tags and the
      line-based `Secret` rule, and stored as the redacted bytes — byte-identical to its source
      exactly when nothing matched. The pod re-checks both kinds like a record (decision 6).
-   - **Binary blobs and binary values ship as they are.** A blob that is not text by the rule above
+   - **Binary blobs and binary values ship as they are.** A blob that is binary by the rule above
      is shipped byte-identical. Inside a record, a string that is base64 or a `data:` URL whose
      payload is not text (an inline `image` block, its `toolUseResult.file.base64` duplicate, an
      opencode `state.attachments[].url`) is left untouched by every rule. A base64 or `data:` value
@@ -926,11 +945,13 @@ script that prints only counts.
      `URLEncoding` and `RawURLEncoding` in that order, after removing ASCII whitespace from the
      string — so padded, unpadded, URL-safe and line-wrapped encodings of a whole string are all
      decoded. Thinking `signature` values (≈5% of bytes, R1) and 64-hex digests are base64-alphabet
-     strings that decode to arbitrary bytes; they are not text, no rule matches them, and they ship
-     untouched (`clean-damaged=0`).
-   - **Residuals, stated rather than closed:** a secret inside an image, a PDF, an archive or
-     non-UTF-8 text ships unredacted (T1); an encoded secret EMBEDDED in a longer string is not
-     decoded (decision 6).
+     strings that decode to arbitrary bytes; they carry no file signature, so they are scanned
+     decoded — and no rule matches random bytes, so they ship untouched (`clean-damaged=0`).
+   - **Residuals, stated rather than closed:** a secret inside an image, a PDF, an archive or any
+     other signature-bearing payload ships unredacted (T1) — a PNG carrying a token in a text chunk
+     included; text in an encoding other than UTF-8 or BOM-marked UTF-16 is scanned byte-wise and a
+     rule matches it only where its bytes coincide; an encoded secret EMBEDDED in a longer string is
+     not decoded (decision 6).
    - **What the reader still sees.** Binary content is CLASSIFIED (decision 17's `binary` class, by
      position) so the page and the skeleton can collapse it to one line naming its type and size
      (decision 18). That is display only; nothing is withheld.
@@ -1139,7 +1160,13 @@ script that prints only counts.
         `queue-operation`, `mode`, …); `binary` (an inline `image` block, and the
         `toolUseResult.file.base64` value inside the duplicate field — shipped, collapsed, O12);
         `unknown`.
-      - **opencode** — each PART: `text` of a `user` message → `human-text`; `text` of an
+      - **Text an AGENT wrote to a subagent is `agent-prompt`, never `human-text`:** a `text`
+        block or string content of a sidechain `user` record (`isSidechain: true`, `agentId` set —
+        every record of a subagent file), and an opencode CHILD session's `user` text. Only what a
+        human typed into a ROOT session is a user message. *Revision 17 classed both as
+        `human-text`; retracted.*
+      - **opencode** — each PART: `text` of a ROOT session's `user` message → `human-text` (of a
+        CHILD session's → `agent-prompt`); a `text` part with `synthetic: true` → `runtime`; `text` of an
         `assistant` message → `assistant-text`; `reasoning` → `thinking`; `tool` → `tool-call` +
         `tool-result` (its `state.input` / `state.output`) + one `binary` unit per
         `state.attachments[]` entry (shipped, collapsed, O12); a `file` part → `binary`;
@@ -1190,8 +1217,9 @@ script that prints only counts.
       input and the result inside; a result longer than 64 KiB shows its first 64 KiB and links to
       the raw-record view for the rest (a DISPLAY limit; storage is untouched).
     - **Subagents** render as a nested, collapsed `<details>` at the tool call that spawned them,
-      summarised by `agentType` and `description`; opencode children likewise at their `subtask`
-      part.
+      summarised by `agentType` and `description`; opencode children likewise at the `task` tool
+      part whose `state.metadata.sessionId` names them (measured, R3). *Revision 17 left them
+      anchored at a `subtask` part, whose keys were never measured; corrected.*
     - **Bookkeeping records and duplicate FIELDS** collapse into ONE `<details>` per turn ("N
       bookkeeping records, K duplicate tool-result copies") with a link to `view=raw`.
     - **Binary content** (decision 17's `binary` class) renders collapsed, as one line naming its
@@ -1246,7 +1274,7 @@ GET /transcript/skeleton  ·  GET /transcript/records  ·  GET /transcript/tool 
 
 | threat | control |
 |---|---|
-| **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. **What is NOT controlled:** unshaped secrets (typed passwords, novel token formats); **a secret inside an image, a PDF, an archive or any other binary payload, or inside text that is not UTF-8 (a UTF-16 or Latin-1 file) — that content SHIPS UNREDACTED by operator decision (O12, decision 6a), because no text rule can read it**; an encoded secret embedded in a longer string (not decoded), a flow-style YAML `Secret` (decision 6), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
+| **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. **What is NOT controlled:** unshaped secrets (typed passwords, novel token formats); **a secret inside an image, a PDF, an archive or any other payload that begins with a known binary file signature (a PNG carrying a token in a text chunk included) — that content SHIPS UNREDACTED by operator decision (O12, decision 6a, the coordinator's reading), because no text rule can read it**; text in an encoding other than UTF-8 or BOM-marked UTF-16 (scanned byte-wise only); an encoded secret embedded in a longer string (not decoded), a flow-style YAML `Secret` (decision 6), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
 | **T2. Confidential but non-secret content** (client business detail, personal data in a tool output) | Redaction does not address it at all; VISIBILITY is the only control (decision 4). Stated, so nobody believes the redactor covers it. |
 | **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store, plus the client read ledger (decision 3a), plus rendered headers anywhere in the content, plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope and a ledger `*` add `*`; F1 adds `*` when any tool input names `cairn`/`subsystem-recall` and the ledger is empty, F2 when any input names the cache root `subsystem-store`; nothing cancels a `*`, no caller resolves a working directory or parses a shell line; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The ledger is SELF-REPORTED by the host**, like the write trailer: a session or anything else on the host can edit or delete it, and that can only make `V` SMALLER — an emptied ledger trips F1 if any input names the program. **The residual:** (1) a session MIXING a ledger-writing client with one that writes no record — a pre-ledger client (an older pinned revision), or a call whose environment lost the session id (`env -i`, some `sudo` setups) — has a non-empty ledger, so F1 does not fire and the unrecorded call's scope is missing; (2) a file-tool read of a local store copy whose path does not contain `subsystem-store` — a `--cache <dir>` root (`internal/client/cli.go:339`), a `CAIRN_MIRROR_ROOT` mirror (`cli.go:834`), or a moved cache root; (3) a store or transcript read that bypasses the client entirely (a direct HTTP call to the pod, or to `cairn-ui`'s `/transcript/…` routes — decision 17's CLI verbs write `*`, a raw HTTP call writes nothing). *Revisions 8–12 listed, as the residual, invocations whose program name never appears in the command line (a variable, a script, a shell function); the ledger records the read however it was invoked, so that residual is CLOSED for a current, ledger-writing client that sees the session id (residual (1) is what is left when either fails) — retracted with the parser.* |
 | **T4. Viewer-set computation makes the predicate vacuous** | Clause (e), and a mutant row (`transcript-written-set-from-viewer-scopes`). |
@@ -1365,12 +1393,15 @@ run time).
   (control: with the floor back at 64 that plant is missed — the reason the floor is 16).
 - Binary content SHIPS (O12, decision 6a), one assertion per measured carrier, each BYTE-IDENTICAL
   after redaction: an inline `image` block's payload; its `toolUseResult.file.base64` duplicate;
-  an opencode `state.attachments[].url` `data:` URL; a blob with a NUL byte in its first 8,000
-  bytes; a UTF-16 text blob. Around them the text rules still bite: a planted text secret in the
+  an opencode `state.attachments[].url` `data:` URL; a PNG that carries a token in a text chunk
+  (the residual, pinned AS one). TEXT that revision 17 called binary is now scanned: a
+  NUL-separated environ dump with a planted value is redacted segment by segment, a mostly-UTF-8
+  blob with stray invalid bytes has only the matched span replaced (every other byte identical),
+  and a BOM-marked UTF-16 dotenv blob is redacted. Around them the text rules still bite: a planted text secret in the
   same record as an image payload is caught, and a base64 value (or a `data:text/…` URL) whose
-  payload DECODES TO TEXT carrying a planted secret is caught decoded. Controls: (1) a sniff that
-  reads only the file extension classifies a NUL-carrying `.txt` as text and redacts it — red on
-  byte identity; (2) thinking `signature` values and 64-hex digests survive untouched
+  payload DECODES TO TEXT carrying a planted secret is caught decoded. Controls: (1) dropping the
+  signature check makes the token-carrying PNG's bytes scanned and altered — red on byte identity;
+  (2) thinking `signature` values and 64-hex digests survive untouched
   (`clean-damaged=0`). Decoder coverage: a whole-string base64 TEXT secret encoded padded,
   unpadded, URL-safe, and line-wrapped at 76 columns is caught in all four forms (control: a
   decoder trying only `StdEncoding` without whitespace removal misses one of the four). Residual
@@ -1623,20 +1654,20 @@ before S3 ships to a real instance. *Revision 3 said Q16 shapes S3; the rule's c
 in S2. Revisions 3–16 listed Q2 as shaping S2; O12 answered it.*
 
 - **Q1. REMOVED (O9)** — subagent transcripts are shipped.
-- **Q2. ANSWERED by O12: content no redactor can read SHIPS.** Images, PDFs, other binary payloads
-  and non-UTF-8 text leave the host byte-identical; the redactor scans every text-decodable string
-  (base64 that decodes to text included) and leaves the rest. The cost is T1's binary row, now an
-  uncontrolled residual, and the class this question's earlier text warned about — non-UTF-8 TEXT,
-  which a transcoder could make redactable — ships unredacted too; transcode-then-redact remains
-  available as a later change. *Revisions 3–16 recommended WITHHOLDING (a placeholder naming type,
+- **Q2. ANSWERED by O12: content no redactor can read SHIPS.** Images, PDFs and other binary
+  payloads — bytes that begin with a known binary file signature, by the coordinator's reading of
+  O12 (revision 18, reversible) — leave the host byte-identical; everything else is scanned as text,
+  NUL-separated and invalid-byte-bearing text included, and BOM-marked UTF-16 is transcoded,
+  scanned and re-encoded. The cost is T1's binary row, an uncontrolled residual. *Revision 17
+  shipped NUL-bearing and non-UTF-8 text unscanned too; the narrowing retracts that.* *Revisions 3–16 recommended WITHHOLDING (a placeholder naming type,
   size and a keyed digest); that recommendation and the as-built withholding are retracted.*
 - **Q3. WITHDRAWN (D5)** — the rule table is not shared with leakscan.
 - **Q4. Real-data redaction audit. Recommendation adopted (O13):** a host-local script, never
   committed, that runs the rule table over the host's own transcripts and prints only per-rule
   COUNTS, run once before arming capture and after every rule change.
-- **Q5. The client instance. Recommendation adopted (O13).** It holds client principals and
-  client-confidential content, and plugins there send transcripts to an LLM provider. Do not arm
-  capture there until
+- **Q5. The client instance. Recommendation adopted (O13): the client instance is NOT armed
+  without an explicit operator decision.** It holds client principals and client-confidential
+  content, and plugins there send transcripts to an LLM provider. Do not arm capture there until
   the personal instance has run for a while, and require an explicit decision before any LLM
   plugin's scope toggle is set to `allowed` there.
 - **Q6. Retention and quota. ANSWERED by O14** — the recommendation, as decided: 90 days and an

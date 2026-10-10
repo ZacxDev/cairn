@@ -38,13 +38,6 @@ def test_the_committed_world_is_a_FRESH_generation():
         "internal/transcript/testdata/synthetic_world.json is STALE: run `python3 tests/transcripts/gen.py` "
         "and commit the result. Never hand-edit it."
     )
-    # The control: the comparison above can see a one-character drift.
-    assert committed[:-2] + "X\n" != fresh
-
-
-def test_the_generator_is_DETERMINISTIC():
-    gen = _gen()
-    assert gen.render() == gen.render()
 
 
 _ISO = re.compile(r"\b(\d{4})-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")

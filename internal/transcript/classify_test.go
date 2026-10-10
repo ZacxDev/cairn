@@ -288,11 +288,12 @@ func TestEveryFixtureUnitIsClassified(t *testing.T) {
 	for _, docs := range w.Opencode.Exports {
 		for _, raw := range docs {
 			doc := decode(t, raw)
+			_, child := doc["info"].(map[string]any)["parentID"]
 			for _, m := range doc["messages"].([]any) {
 				mm := m.(map[string]any)
 				role := mm["info"].(map[string]any)["role"].(string)
 				for _, p := range mm["parts"].([]any) {
-					for _, u := range ClassifyOpencodePart(role, p.(map[string]any)) {
+					for _, u := range ClassifyOpencodePart(role, child, p.(map[string]any)) {
 						counts[u.Class]++
 						if u.Class == Unknown {
 							t.Errorf("opencode: a declared part classified Unknown")
@@ -303,8 +304,8 @@ func TestEveryFixtureUnitIsClassified(t *testing.T) {
 		}
 	}
 	// Every class but Unknown must be REACHED by the fixture, or a rule is untested.
-	for _, c := range []Class{HumanText, AssistantText, Thinking, ToolCall, ToolResult, Duplicate, Runtime,
-		Bookkeeping, Binary, ChildLink} {
+	for _, c := range []Class{HumanText, AgentPrompt, AssistantText, Thinking, ToolCall, ToolResult, Duplicate,
+		Runtime, Bookkeeping, Binary, ChildLink} {
 		if counts[c] == 0 {
 			t.Errorf("class %s is never reached by the synthetic world", c)
 		}
@@ -329,6 +330,9 @@ func TestDecision17UnitRules(t *testing.T) {
 		rec  string
 		want []string
 	}{
+		{"a SIDECHAIN user record is an agent's prompt, never human text",
+			`{"type":"user","isSidechain":true,"agentId":"a1","message":{"role":"user","content":"do the thing"}}`,
+			[]string{"agent-prompt@/message/content"}},
 		{"a typed prompt is the only human text",
 			`{"type":"user","message":{"role":"user","content":"hello"}}`,
 			[]string{"human-text@/message/content"}},
@@ -371,6 +375,8 @@ func TestDecision17UnitRules(t *testing.T) {
 		want             []string
 	}{
 		{"user text", "user", `{"type":"text","text":"x"}`, []string{"human-text@"}},
+		{"a CHILD session's user text is an agent prompt", "user-child", `{"type":"text","text":"x"}`,
+			[]string{"agent-prompt@"}},
 		{"assistant text", "assistant", `{"type":"text","text":"x"}`, []string{"assistant-text@"}},
 		{"synthetic text is runtime", "user", `{"type":"text","text":"x","synthetic":true}`, []string{"runtime@"}},
 		{"reasoning", "assistant", `{"type":"reasoning","text":"x"}`, []string{"thinking@"}},
@@ -385,7 +391,8 @@ func TestDecision17UnitRules(t *testing.T) {
 		{"subtask is undeclared (unmeasured shape) so unknown", "assistant", `{"type":"subtask"}`, []string{"unknown@"}},
 	}
 	for _, c := range oc {
-		if got := classes(ClassifyOpencodePart(c.role, rec(t, c.part))); !slices.Equal(got, c.want) {
+		role, child := strings.CutSuffix(c.role, "-child")
+		if got := classes(ClassifyOpencodePart(role, child, rec(t, c.part))); !slices.Equal(got, c.want) {
 			t.Errorf("opencode %s:\n  got  %v\n  want %v", c.name, got, c.want)
 		}
 	}

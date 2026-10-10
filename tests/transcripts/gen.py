@@ -186,6 +186,12 @@ class ClaudeSession:
 
     # ---- conversation records -------------------------------------------------------------
 
+    def agent_prompt(self, text: str) -> dict:
+        """The PARENT agent's prompt to a subagent: the same record shape as a typed prompt, in a
+        sidechain stream. It classifies `agent-prompt`, never `human-text` (decision 17)."""
+        assert self.agent_id is not None, "an agent prompt only exists in a subagent stream"
+        return self.human(text)
+
     def human(self, text: str, as_blocks: bool = False) -> dict:
         rec = self.envelope("user")
         rec["promptId"] = self.g.uuid()
@@ -422,7 +428,7 @@ def claude_world(g: Gen) -> tuple[dict, dict, dict]:
 
     for depth, aid in enumerate(agent_ids, start=1):
         sub = ClaudeSession(g, sid, agent_id=aid)
-        sub.human(g.words(20))
+        sub.agent_prompt(g.words(20))
         sub.attachment({"type": "hook_success", "hookName": "PreToolUse", "hookEvent": "PreToolUse",
                         "toolUseID": g.tool_id(), "command": "true", "content": "", "stdout": "", "stderr": "",
                         "exitCode": 0, "durationMs": 2})
@@ -618,6 +624,7 @@ def opencode_world(g: Gen) -> dict:
     after_root["info"]["time"]["updated"] += 30000
 
     # ---- the CHILD session (a subagent run as its own session id) ------------------------
+    # The child's `user` message is the PARENT agent's prompt: `agent-prompt`, not human text.
     cu = user_msg(child, [{"type": "text", "text": g.words(12), "time": {"start": g.ms(), "end": g.ms()}}])
     ca = asst_msg(child, cu["info"]["id"], [
         step_start(),

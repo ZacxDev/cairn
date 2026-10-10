@@ -22,6 +22,9 @@ later slices add storage, visibility and rendering here. Nothing imports this pa
 - **Units, not records.** A `tool_result` block inside a `user` record is a tool result; text
   beside it is runtime; only a `text` block (or string content) of a `user` record with no tool
   result, no `toolUseResult`, and neither `isMeta` nor `isCompactSummary` is `human-text`.
+- **An agent's prompt is not a user message.** A sidechain `user` record (every record of a
+  subagent file) and an opencode CHILD session's `user` text are `agent-prompt`; `human-text` is
+  only what a human typed into a ROOT session. `synthetic: true` opencode text is `runtime`.
 - **`binary` is a display label.** Under operator decision O12 binary content ships; the class
   says where it sits (an `image` item, `toolUseResult.file.base64`, an opencode attachment or
   `file` part) so a renderer can collapse it.
@@ -40,7 +43,7 @@ later slices add storage, visibility and rendering here. Nothing imports this pa
 ## Measured while building S0 (one host, opencode 1.18.29)
 
 - **`opencode export` TRUNCATES when its stdout is a pipe**: eight of eight sessions measured
-  stopped at 8, 64 or 96 KiB with exit 0 and an unterminated JSON document, while the same
+  stopped somewhere between 8 and 96 KiB (8, 64, 96 here; 16 in a reviewer's run — the boundary varies) with exit 0 and an unterminated JSON document, while the same
   exports written to a regular file were complete and parsed (0.9–18 MB). A reader must send the
   export to a FILE and refuse a document that does not parse — never trust the exit code.
 - **The export carries no `time_updated`** on any part (the database column exists, the export
