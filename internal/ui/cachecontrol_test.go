@@ -50,9 +50,10 @@ func (s walkSource) Session(_ control.Authorization, session string) (SessionAns
 }
 
 // TestEveryNonPublicHTMLRowIsNoStore is clause (d) of the mobile plan's closing condition
-// (`claudedocs/plan-cairn-mobile-pwa.md`): every HTML page a GET row answers carries
-// `Cache-Control: no-store`. The name is the plan's; since audit round 0 the PUBLIC rows are held
-// to the same value (one writer, one value — `writeHTML`), so it walks both. `uiaudit/pwa_check.sh`
+// (`claudedocs/plan-cairn-mobile-pwa.md`), which the plan words as every HTML response from a
+// NON-PUBLIC GET row carrying `Cache-Control: no-store`. The name is the plan's; since audit
+// round 0 the PUBLIC rows are held to the same value (one writer, one value — `writeHTML`; the
+// plan's decision 8 records that departure), so it walks both. `uiaudit/pwa_check.sh`
 // runs THIS test as clause (d) and greps its result line and the `pwa clause (d) no-store` tag
 // below; it never re-implements the check.
 //

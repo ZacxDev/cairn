@@ -3796,8 +3796,10 @@ on a phone. If Q7 says the cost is unacceptable, it is relaxed by the same one c
 rows too) walks `DeclaredRouteLedger()` and requires exactly `Cache-Control: no-store` on every HTML page
 it reaches. What it drives, exactly:
 - **every CONTENT GET row at its REAL page**, authenticated, through the hand-written `realPage` map: the
-  query that resolves against the fixture world (a real scope, entry, arc and session — `walkSource` is
-  the dispatch fixture plus one FOUND session) and a marker only that page renders. A content row missing
+  query that resolves against the fixture world (a real scope, entry and session — `walkSource` is
+  the dispatch fixture plus one FOUND session — and, for `/arc`, the arc page's
+  registrations-unconfigured state, because the fixture source has no arc journal; both arc branches
+  render through the same `s.render`, so the header is the same) and a marker only that page renders. A content row missing
   from the map fails. Each marker is checked ABSENT from the navigate page the same world renders, so a
   row that silently falls back to navigate goes red rather than measuring the fallback;
 - **any other non-public GET row** bare, authenticated — none exist today;
