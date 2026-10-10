@@ -422,6 +422,11 @@
           # the relation "every leakscan credential control is redacted" is pinned to the file
           # rather than to a copy — and without this row it is green on the dev host and RED here.
           || (rel == "tests/leakscan.py")
+          # 🔴 AND THE REDACTOR'S FROZEN CLEAN-DAMAGE CORPUS, FOR THE SAME REASON: its budget test
+          # reads these two files and REFUSES (t.Fatalf, naming this filter) when they are absent,
+          # so without these rows the sandbox build goes red rather than passing over nothing.
+          || (rel == "internal/redact/testdata/budget_corpus_repo.txt")
+          || (rel == "internal/redact/testdata/budget_corpus_go.txt")
           # 🔴 AND THE BROWSER SURFACE'S STYLESHEET, WHICH IS `//go:embed`ed AND THEREFORE
           # A COMPILE-TIME INPUT RATHER THAN A FIXTURE. `internal/ui/stylesheet.go` embeds
           # `app.css`; a filtered tree without it does not fail a test, it fails to

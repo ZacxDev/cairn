@@ -196,20 +196,20 @@ func TestOnlyPrefix(t *testing.T) {
 }
 
 // TestRoundSixPgpassOverPrefixedNeutralLines: the pgpass rule's damage on NEUTRAL text behind the
-// two grep prefixes that produced round 5's finding. Every line of this repository's neutral files
-// is given a `path:N:C:` and a `path:N:` prefix, and the lines the rule then reads as a row are
-// counted against a ceiling. (Round 5's audit measured 312 of 201,899 behind `path:N:C:`.)
+// two grep prefixes that produced round 5's finding. Every line of the FROZEN neutral corpus
+// (`budget_test.go`) is given a `path:N:C:` and a `path:N:` prefix, and the lines the rule then
+// reads as a row are counted against a ceiling. (Round 5's audit measured 312 of 201,899 behind
+// `path:N:C:`.) It read the LIVE tree until round 7, which made it red on any doc edit that
+// happened to add such a line — the brittleness the budget's file doc describes.
 func TestRoundSixPgpassOverPrefixedNeutralLines(t *testing.T) {
-	root := moduleRoot(t)
-	rels, complete := repoFiles(t, root)
-	files, _ := readCorpus(root, rels)
+	var files []corpusFile
+	for _, f := range frozenCorpusFiles {
+		files = append(files, readFrozenCorpus(t, f)...)
+	}
 	counts := map[string]int{}
 	lines := 0
 	var examples []string
 	for _, f := range files {
-		if fixtureFile(f.rel) {
-			continue
-		}
 		for _, l := range strings.Split(string(f.data), "\n") {
 			if strings.Count(l, ":") == 0 || len(l) > 400 {
 				continue
@@ -230,7 +230,7 @@ func TestRoundSixPgpassOverPrefixedNeutralLines(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("%d neutral lines holding a colon (complete tree: %v); read as a pgpass row behind each prefix: %v", lines, complete, counts)
+	t.Logf("%d frozen-corpus lines holding a colon; read as a pgpass row behind each prefix: %v", lines, counts)
 	for _, e := range examples {
 		t.Logf("  e.g. %s", e)
 	}
@@ -244,7 +244,9 @@ func TestRoundSixPgpassOverPrefixedNeutralLines(t *testing.T) {
 			t.Fatalf("control: a real row behind %q is not read", prefix)
 		}
 	}
-	if complete && lines < 20000 {
+	// 8,407 as committed. ⚠ NARROWER than the live tree it replaced (20,000+ such lines, most of
+	// them in docs the frozen corpus does not sample): the price of a deterministic gate.
+	if lines < 8000 {
 		t.Fatalf("control: only %d lines measured — the walk narrowed", lines)
 	}
 	for prefix, ceiling := range pgpassPrefixedCeilings {
@@ -254,7 +256,7 @@ func TestRoundSixPgpassOverPrefixedNeutralLines(t *testing.T) {
 	}
 }
 
-// pgpassPrefixedCeilings: measured over this repository's neutral files (see the test's log).
+// pgpassPrefixedCeilings: measured over the frozen corpus (see the test's log).
 var pgpassPrefixedCeilings = map[string]int{
 	"src/pkg/file.go:100:7:": 0,
 	"a.go:12:3:":             0,
