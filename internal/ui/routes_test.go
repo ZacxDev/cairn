@@ -77,6 +77,12 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		"GET /invite content",
 		"GET /join public",
 		"GET /scope content",
+		// 🔴 THE SCOPE LIST (moved off the root, which became the hub). `content`, never `public`: it is
+		// the list of scopes this credential can read, and `?q=`/`?tag=` search inside that set.
+		"GET /scopes content",
+		// 🔴 THE SESSIONS LIST. `content`, never `public`: which sessions exist is an answer about which
+		// scopes this credential can read — a session that wrote only where it cannot read is not listed.
+		"GET /sessions content",
 		// 🔴 THE SESSION PAGE. `content`, never `public`: it aggregates one session's writes across
 		// every scope this credential can read, and a session that wrote only in scopes it cannot
 		// read must be indistinguishable from one that never wrote — an answer about authority.
@@ -226,6 +232,17 @@ func (s staticSource) Session(_ control.Authorization, session string) (SessionA
 // `arcsindex_test.go` drives the real `StoreSource` over a store and a journal on disk.
 func (s staticSource) Arcs(control.Authorization) (report.ArcsAcrossReport, error) {
 	return report.ArcsAcrossReport{}, nil
+}
+
+// AllSessions answers "no session visible" — a DISPATCH fixture; `hub_test.go` drives the real
+// `StoreSource` over a store and a journal on disk.
+func (s staticSource) AllSessions(control.Authorization) (SessionsList, error) {
+	return SessionsList{}, nil
+}
+
+// Recall answers a fixed text — a DISPATCH fixture; `agent_test.go` drives the real renderer.
+func (s staticSource) Recall(control.Authorization, string) (AgentRecall, error) {
+	return AgentRecall{Text: "subsystem-recall: status=fixture\n"}, nil
 }
 
 // staticSharing is a share world with no journal behind it, so the dispatch tests
@@ -449,7 +466,11 @@ var bareGETAnswer = map[string]int{
 	// And the session page: a request naming no session asked about nothing, so it gets the
 	// navigation page rather than the uniform unseen-session refusal.
 	"GET /session content": http.StatusOK,
-	"GET /share content":   http.StatusOK,
+	// The scope list's bare request IS the page (it was the root's), and the sessions list's bare
+	// request is the list: neither has an operand to name, so there is nothing for a refusal to protect.
+	"GET /scopes content":   http.StatusOK,
+	"GET /sessions content": http.StatusOK,
+	"GET /share content":    http.StatusOK,
 	// 🔴 `GET /invite` ANSWERS 200 TO A PARAMETERLESS REQUEST *AND* ON A DEPLOYMENT WITH NO
 	// INVITE STORE, AND THE SECOND HALF IS THE DECISION. A 501 would have been the obvious
 	// answer for an unconfigured feature — it is what the two OAuth rows give — and it was
@@ -618,6 +639,13 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		{"GET", "/static/"},
 		{"GET", "/static/app.cssx"},
 		{"GET", "/static/../static/app.css"},
+		// 🔴 THE HUB CHANGE'S NEAR-MISSES: the two new rows sit one character from two old ones
+		// (`/scope`, `/session`), so a prefix or suffix-tolerant match would serve each of these.
+		{"GET", "/scopes/"},
+		{"GET", "/scopesx"},
+		{"GET", "/sessions/"},
+		{"GET", "/sessionsx"},
+		{"GET", "/scopes/scope"},
 		// 🔴 THE MANIFEST'S AND THE ICONS' NEAR-MISSES (S2). Every one is a string a prefix or
 		// suffix-tolerant match would serve; the icon ones are built from a LIVE icon path so they
 		// stay near-misses when the bytes change, the stylesheet probes' rule above.
@@ -808,7 +836,11 @@ var contentAuthority = map[string]string{
 	"GET /arcs content": "source",
 	// `source`, for `Source.Arc`'s reason: `Source.Session` is narrowed by the same authority.
 	"GET /session content": "source",
-	"GET /share content":   "sharing",
+	// `source`: the scope list is `Visible` (and `Search`), the root's answer before the hub.
+	"GET /scopes content": "source",
+	// `source`, for `Source.Session`'s reason: `Source.AllSessions` is narrowed by the same authority.
+	"GET /sessions content": "source",
+	"GET /share content":    "sharing",
 	// 🔴 A THIRD AUTHORITY, AND IT IS NAMED RATHER THAN FOLDED INTO `sharing`. The two are
 	// different seams answering different questions — `Sharing` is about SCOPES and
 	// `Inviting` is about PROJECT MEMBERSHIP, and `control.Role.CanManageMembers`'s own
@@ -860,6 +892,16 @@ func (c *countingSource) Session(auth control.Authorization, session string) (Se
 func (c *countingSource) Arcs(auth control.Authorization) (report.ArcsAcrossReport, error) {
 	c.calls++
 	return staticSource{}.Arcs(auth)
+}
+
+func (c *countingSource) AllSessions(auth control.Authorization) (SessionsList, error) {
+	c.calls++
+	return staticSource{}.AllSessions(auth)
+}
+
+func (c *countingSource) Recall(auth control.Authorization, scope string) (AgentRecall, error) {
+	c.calls++
+	return staticSource{}.Recall(auth, scope)
 }
 
 // TestEveryContentRouteConsultsTheAuthority is a REGRESSION test, and the defect it

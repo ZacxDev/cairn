@@ -4030,6 +4030,85 @@ MUTANTS: tuple[Mutant, ...] = (
         "asks for revalidation, so every authenticated page would sit in the device's HTTP cache — the "
         "invitation mint, whose body is a bearer capability, included.",
     ),
+    # 🔴 THE HUB AND THE SESSIONS LIST. Every hub count and every listed session comes out of a read
+    # narrowed by `auth.NamedScopes(VerbRead)`; each row below widens ONE of those reads (by the
+    # exported `Unrestricted` field, so the mutated file needs no new import) or skips the root's 303.
+    Mutant(
+        name="ui-sessions-list-walks-every-scope",
+        path="internal/ui/hub.go",
+        old="\tvisible := scopeSetOf(auth.NamedScopes(control.VerbRead))\n\tsnap, unreadable, err := s.arcSnapshotOrUnreadable()",
+        new="\tvisible := scopeSetOf(auth.NamedScopes(control.VerbRead))\n\tvisible.Unrestricted = true\n"
+        "\tsnap, unreadable, err := s.arcSnapshotOrUnreadable()",
+        killer="TestTheSessionsPageListsExactlyTheSessionsWhosePageIsFound",
+        why="a list of 'every session' reads as a list over the STORE, and a session id is global — so "
+        "the unnarrowed walk is the natural first draft. It lists sessions that wrote only where the "
+        "viewer cannot read, each of which then 404s on its own page.",
+    ),
+    # 🔴 RE-POINTED, NOT DELETED, when the hub's arcs count was dropped (review round 0, D1): the read it
+    # widens is `StoreSource.Arcs`, which the `/arcs` page still renders from, and that page's own guard
+    # was already this row's extra killer. It now names that guard.
+    Mutant(
+        name="ui-arcs-index-read-includes-unreadable-homes",
+        path="internal/ui/arcsindex.go",
+        old="\tvisible := scopeSetOf(auth.NamedScopes(control.VerbRead))\n\tsnap, err := s.arcSnapshot()\n"
+        "\tif err != nil {\n\t\treturn report.ArcsAcrossReport{}, err",
+        new="\tvisible := scopeSetOf(auth.NamedScopes(control.VerbRead))\n\tvisible.Unrestricted = true\n"
+        "\tsnap, err := s.arcSnapshot()\n\tif err != nil {\n\t\treturn report.ArcsAcrossReport{}, err",
+        killer="TestAnArcHomedInAnUnreadableScopeIsNeverListedEvenWhenItsMembersWroteWhereYouRead",
+        why="the arcs page lists arcs, and an arc 'belongs' to everybody who worked on it, so the "
+        "unnarrowed journal read looks natural — but an arc exists for a caller only if its HOME is "
+        "readable (Q1), and the unnarrowed read lists arcs homed where the viewer cannot read.",
+    ),
+    Mutant(
+        name="ui-root-scope-list-query-not-redirected",
+        path="internal/ui/hub.go",
+        old="\tif redirectsToScopes(r) {",
+        new="\tif false && redirectsToScopes(r) {",
+        killer="TestTheOldScopeListQueriesRedirectToScopes",
+        why="the hub ignores `?q=` and `?tag=` and still answers 200, so every bookmark and the Search "
+        "shortcut look like they work — they land on the hub with the search silently dropped.",
+    ),
+    # 🔴 THE SCOPE PAGE'S "WHAT AN AGENT SEES" TAB: the recall read's own narrowing, the tab being
+    # recognised at all, and the two properties its byte-equality test pins (the bytes, the cut).
+    Mutant(
+        name="ui-agent-recall-read-widened",
+        path="internal/ui/agent.go",
+        old="\tvisible := scopeSetOf(auth.NamedScopes(control.VerbRead))\n\topts := report.RecallOptions{",
+        new="\tvisible := scopeSetOf(auth.NamedScopes(control.VerbRead))\n\tvisible.Unrestricted = true\n"
+        "\topts := report.RecallOptions{",
+        killer="TestTheRecallReadIsNarrowedByTheViewersAuthority",
+        why="the page already refused an unreadable scope, so narrowing the recall again reads as "
+        "redundant — and `cairn recall` itself runs unrestricted over its cache. Here there is no cache "
+        "the pod narrowed first: an unrestricted read serves any scope NAME that reaches it.",
+    ),
+    Mutant(
+        name="ui-agent-tab-not-recognised",
+        path="internal/ui/render.go",
+        old="\tcase TabSessions, TabArcs, TabAgent:",
+        new="\tcase TabSessions, TabArcs:",
+        killer="TestTheAgentTabIsByteForByteTheCLIRecall",
+        why="an unrecognised tab silently renders the entries tab (the house ruling), so a tab link "
+        "that lost its value still answers 200 with a page — just not the one it names.",
+    ),
+    Mutant(
+        name="ui-agent-recall-rendered-under-another-label",
+        path="internal/ui/agent.go",
+        old='return AgentRecall{Text: rep.RenderText(s.host(), nil, "")}, nil',
+        new='return AgentRecall{Text: rep.RenderText(s.host(), nil, "pod")}, nil',
+        killer="TestTheAgentTabIsByteForByteTheCLIRecall",
+        why="naming the instance the text was read from looks like helpful provenance, and it adds a "
+        "clause to the caveat an agent on a single-instance host never sees — the tab stops being the "
+        "agent's bytes.",
+    ),
+    Mutant(
+        name="ui-agent-head-mark-ignores-the-banner",
+        path="internal/ui/agent.go",
+        old="\tcut := agentHeadLines - agentBannerLines\n",
+        new="\tcut := agentHeadLines\n",
+        killer="TestTheAgentTabIsByteForByteTheCLIRecall",
+        why="`head -60` reads as 'line 60 of this text', but the client prints a banner and a blank line "
+        "first, so the agent's cut falls two lines earlier than the obvious mark.",
+    ),
 )
 
 
