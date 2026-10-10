@@ -153,6 +153,12 @@ field names and types alone.
   its own class, `agent-prompt`, never `human-text` (decision 17). Decision 18 anchors an opencode
   child at the `task` part that names it, not at a `subtask` part. Decision 6 now parses a `data:`
   prefix before its base64 rule.
+- *Revision 19 records operator decision O15 (S1 review round 4).* Three rounds of per-format
+  redaction rules each closed the cases they named while a fresh held-back set stayed flat and
+  damage to clean text grew. **O15** changes the approach — key context plus entropy over
+  prefix-normalised lines (decision 6) — and adds an **arming gate**: closing-condition part 5, and
+  the S3 arming precondition. It also corrects a recall figure the plan stated (the libpq row of
+  the rate test, test plan S1).
 
 ## Goal and premise
 
@@ -211,6 +217,13 @@ Drop the work, or the named half, if any of these holds:
      not read off the run).
   4. **The two example plugins' own suites exit 0** in the `go` job against in-process fake LLM and
      fake ClickUp servers, with synthetic fixtures only.
+  5. **The arming gate (O15) passes on a FRESH held-back set**: `redact-heldback <cases.jsonl>`
+     (`internal/redact/cmd/redact-heldback`, built, not `go run`) exits 0 — at least 90% of leaks
+     caught AND at most 15% of clean lines damaged, both controls having behaved — over a case set
+     an AUDITOR wrote for the redactor commit being armed, that the fixer never saw, and that was
+     not reused from an earlier round. The exit code is mechanical; the set's freshness is a named
+     human judgement over named evidence: the PR comment recording the run names the set's author,
+     the redactor commit, and the `leaks caught=X/Y clean damaged=A/B` line verbatim.
 
   Each script exits **2** — "could not vouch", never a skip and never 0 — when a prerequisite is
   missing (a Go toolchain, a built `cairn-ui` or `cairn-capture`; the opencode leg uses a recorded
@@ -246,6 +259,9 @@ Drop the work, or the named half, if any of these holds:
 
 ### Rollout (NOT part of the closing condition)
 
+- 🔴 **Nothing is armed before closing-condition part 5 holds for the redactor being armed (O15)** —
+  not the personal instance, not one host. A rule change after the gate passed resets it: the next
+  arming needs a NEW held-back set scored against the new commit.
 - **The personal instance first**, with capture armed on one host, retention set, plugins
   registered but every toggle OFF (decision 10 — an agent decision, not an operator one). The
   operator turns on summaries for one scope, reads a week of output, and judges it. The same for
@@ -651,6 +667,7 @@ script that prints only counts.
 | O12 | Answers Q2: content no redactor can read — images, PDFs, other binary payloads — SHIPS, every byte. The redactor scans every text-decodable string (base64 that decodes to text included) and leaves binary content as it is. **The coordinator's reading (revision 18, reversible):** O12 meant images, PDFs and binary PAYLOADS, so "binary" is a value whose bytes begin with a KNOWN binary file signature (or a base64/`data:` payload decoding to one); NUL-separated text and mostly-UTF-8 text with stray invalid bytes are TEXT and are scanned. *Reason: under revision 17's rule a `/proc/<pid>/environ` dump or an `env -0` listing — NUL-separated, all secrets — classed as binary and shipped unscanned; the narrowing costs nothing O12 asked for.* | Decision 6a's withholding is DELETED; binary is still classified, for collapsed display (decisions 17, 18). T1 names the residual: a secret inside an image, a PDF or another signature-bearing payload ships unredacted. |
 | O13 | The coordinator stated these recommended answers to the operator as the defaults it would take before the operator answered O12 and O14; the operator did not object. They cover Q4 (a host-local, never-committed, counts-only redaction audit), Q5 (the client instance is NOT armed without an explicit operator decision), Q7 (one capture owner per instance), Q8 (ClickUp ids only, titles behind a no-default flag), Q9 (keep account identifiers), Q10 (plugins on a user timer on one operator host), Q11 (an `AGENTS.md` row is paid for by evicting an equal amount of history to a README in the same change), Q12 (per-session directory, one replica) and Q15 (the proposed Go-only `transcript` verb). | Each question below is marked "recommendation adopted"; Q13, Q14 and Q16 stay open. |
 | O14 | Answers Q6: retention 90 days; an instance quota of about twice the steady state — about 20 GB compressed per capturing host on the personal instance — re-measured after a month of real uploads. | Implemented in S3 (`-transcript-retention`, `-transcript-quota`); decision 15. |
+| O15 | After S1's third review round, the redactor changes approach: redact by KEY CONTEXT (any value attached to a secret-sounding name — a key, a flag, an environment variable, a config field, SQL's `IDENTIFIED BY`) plus ENTROPY (long random-looking tokens), retiring or narrowing the per-format rules those two subsume and accepting more damage to clean text, within a ceiling. Tool line prefixes are normalised FIRST, so every rule sees a line's content, with redaction still applied to the original bytes. And an arming gate: capture is armed on NO instance until a FRESH held-back set — written by an auditor, never seen by the fixer, replaced every round — shows at least 90% of its leaks caught AND at most 15% of its clean lines damaged. | Decision 6 (S1: `internal/redact/{normalise,keyed,entropy}.go`); closing-condition part 5; the S3 arming precondition; Rollout. The gate is `internal/redact/heldback.go` + `cmd/redact-heldback`. |
 
 ### Chosen by the AGENT writing this plan (open to review)
 
@@ -882,6 +899,18 @@ script that prints only counts.
      tree vs a session), two regex engines. One BEHAVIOURAL containment test pins the relation:
      every realistic `credential` control string in leakscan's self-test is also caught by
      `internal/redact` (fails if a leakscan control is added that redact misses).
+   - 🔴 *The approach since O15 (revision 19):* tool line prefixes (Read's numbered copy, grep's
+     `path:N:`/`path-N-`/`N:`/`N-`/`path:`, a diff's `<`/`>`/`+`/`-`) are set aside FIRST — every
+     prefix-stripped reading of the text is a view, the original among them, line-anchored rules run
+     over every view, and matches map back to the original bytes. Then two general rules carry the
+     table: KEY CONTEXT (any value attached to a name the one secret-name predicate accepts, in any
+     notation — assignment, YAML, quoted keys, call arguments, flags, SQL, XML) and ENTROPY (a long
+     run of the base64 alphabet with all three character classes that is not wordy, not an
+     identifier/path/digest/transcript ID, and not a binary payload's encoding). The per-format
+     dotenv, source-literal, libpq, `docker -e` and `.npmrc` rules are RETIRED into key context; the
+     query rule is narrowed to names that carry a credential without saying so; short CLI flags
+     are a closed per-tool list. Vendor formats, positional files, PEM blocks and the YAML/JSON
+     structure stay. `internal/redact/README.md` is the inventory and the measured costs.
    - *Base64 that hides text:* a WHOLE string of ≥ 16 base64-alphabet characters (after removing
      ASCII whitespace — see 6a's decoder) that DECODES to text (6a's text rule) is scanned decoded as
      well; a match replaces the whole encoded value. The floor buys no precision — the decoded scan
@@ -913,8 +942,10 @@ script that prints only counts.
      tool-result BLOB (a dotenv dump and a `Secret` manifest as `.txt` files). 🔴 **The planted values
      are GENERATED AT RUN TIME from a seeded RNG**, never committed: a committed credential-shaped
      fixture is itself a `leakscan` finding (and should be). The report is the pair "planted=P
-     caught=P" plus `clean-damaged=0` on a clean corpus of UUIDs, commit SHAs, digests and base64
-     payloads (a redactor that eats every hash makes transcripts unreadable; that is a failure too).
+     caught=P" plus `clean-damaged=0` on a clean corpus of UUIDs, commit SHAs, digests, image
+     payloads and thinking signatures (a redactor that eats every hash makes transcripts
+     unreadable; that is a failure too). *Since O15 a random base64 value in prose is a PLANT (the
+     entropy rule's), not clean filler.*
      A textbook example key is NOT in the corpus.
 
 6a. **Blobs and binary content: text is redacted, binary SHIPS byte-identical (O12).**
@@ -1274,7 +1305,7 @@ GET /transcript/skeleton  ·  GET /transcript/records  ·  GET /transcript/tool 
 
 | threat | control |
 |---|---|
-| **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. **What is NOT controlled:** unshaped secrets (typed passwords, novel token formats); **a secret inside an image, a PDF, an archive or any other payload that begins with a known binary file signature (a PNG carrying a token in a text chunk included) — that content SHIPS UNREDACTED by operator decision (O12, decision 6a, the coordinator's reading), because no text rule can read it**; text in an encoding other than UTF-8 or BOM-marked UTF-16 (scanned byte-wise only); an encoded secret embedded in a longer string (not decoded), a flow-style YAML `Secret` (decision 6), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
+| **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. **What is NOT controlled:** secrets that are neither NAMED nor RANDOM-LOOKING (typed passwords in prose, an unnamed all-lower-case, hex or short token — O15's two general rules cannot see them; a novel token format that is long and mixed-case IS caught by the entropy rule); **a secret inside an image, a PDF, an archive or any other payload that begins with a known binary file signature (a PNG carrying a token in a text chunk included) — that content SHIPS UNREDACTED by operator decision (O12, decision 6a, the coordinator's reading), because no text rule can read it**; text in an encoding other than UTF-8 or BOM-marked UTF-16 (scanned byte-wise only); an encoded secret embedded in a longer string (not decoded — caught as a token only when long and random-looking), a flow-style YAML `Secret` (decision 6), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
 | **T2. Confidential but non-secret content** (client business detail, personal data in a tool output) | Redaction does not address it at all; VISIBILITY is the only control (decision 4). Stated, so nobody believes the redactor covers it. |
 | **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store, plus the client read ledger (decision 3a), plus rendered headers anywhere in the content, plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope and a ledger `*` add `*`; F1 adds `*` when any tool input names `cairn`/`subsystem-recall` and the ledger is empty, F2 when any input names the cache root `subsystem-store`; nothing cancels a `*`, no caller resolves a working directory or parses a shell line; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The ledger is SELF-REPORTED by the host**, like the write trailer: a session or anything else on the host can edit or delete it, and that can only make `V` SMALLER — an emptied ledger trips F1 if any input names the program. **The residual:** (1) a session MIXING a ledger-writing client with one that writes no record — a pre-ledger client (an older pinned revision), or a call whose environment lost the session id (`env -i`, some `sudo` setups) — has a non-empty ledger, so F1 does not fire and the unrecorded call's scope is missing; (2) a file-tool read of a local store copy whose path does not contain `subsystem-store` — a `--cache <dir>` root (`internal/client/cli.go:339`), a `CAIRN_MIRROR_ROOT` mirror (`cli.go:834`), or a moved cache root; (3) a store or transcript read that bypasses the client entirely (a direct HTTP call to the pod, or to `cairn-ui`'s `/transcript/…` routes — decision 17's CLI verbs write `*`, a raw HTTP call writes nothing). *Revisions 8–12 listed, as the residual, invocations whose program name never appears in the command line (a variable, a script, a shell function); the ledger records the read however it was invoked, so that residual is CLOSED for a current, ledger-writing client that sees the session id (residual (1) is what is left when either fails) — retracted with the parser.* |
 | **T4. Viewer-set computation makes the predicate vacuous** | Clause (e), and a mutant row (`transcript-written-set-from-viewer-scopes`). |
@@ -1301,7 +1332,7 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 | **S0** | **Fixtures and shape ledgers.** `tests/transcripts/gen.py` emits synthetic sessions in BOTH formats from the measured key sets (R1–R3): main stream, two subagents, an opencode child, a compaction boundary, a `pr-link`, persisted tool output, mutated opencode parts, bookkeeping records and duplicate fields, a `user` record carrying a large `tool_result` block, an inline image block AND its `toolUseResult.file.base64` duplicate, an opencode `tool` part with a `data:` URL in `state.attachments[].url`, a binary (PDF and JPEG), a UTF-8 text, a UTF-16 text and a JSON text tool-result blob, thinking `signature` values and 64-hex digests (which must survive untouched), and every read path of R7 (a rendered recall in a tool result; one in a hook attachment with no command line; a store-wide search rendered `scope=(all scopes)` in a hook attachment; a bare header-less `ls-entries`; an explicit `--scope` read; a `--repo` read; a `cd … && cairn recall` chain). A shape test pins the generator's record types, block types and field names against `internal/transcript`'s classification table. The generator also emits a synthetic read-ledger file per session (decision 3a), including an EMPTY one beside cairn-naming inputs (F1). And S0 MEASURES, on a host with opencode, whether `OPENCODE_SESSION_ID` reaches tool commands and which session id it carries, recording the answer for S11 — **done: decision 3a and `internal/transcript/README.md`.** The generator writes ONE file, `internal/transcript/testdata/synthetic_world.json`, which Go tests materialise, so `onlyGo` needs one row; the table is `internal/transcript/classify.go`. | `tests/`; `onlyGo` if Go tests read the fixtures; README. | Test-only. |
 | **S1** | **`internal/redact`** — its own rule table (decision 6), decoded-string traversal, text-blob redaction and the text/binary sniff (decision 6a), keyed tags, structural Secret rule, denylist loader; the corpus generator and the `planted/caught/clean-damaged` report; the behavioural containment test against leakscan's controls. | new package; `ok` floor; README. | Library only. |
 | **S2** | **`cmd/cairn-capture`** and **`internal/transcript/scopeuse`** — readers (JSONL by offset, subagents, blobs — text redacted, binary byte-identical; `opencode export` to a file, diffing by part digest), `V` derivation (the `*` mappings of decision 3), watermark state, routing (decision 16), `--dry-run`, `--self-test`, `-verbs`. No upload yet. | `cmd/cairn-capture`; new packages; `./internal/transcript/scopeuse/` joins `control_mutants.py` `PKGS` (+ pinned count); `depspolicy.LinkedBinaryRoots` + its test; `flake.nix` `packages.cairn-capture` + a ledger check; `ok` floor; closing-condition part 3 step in `ci.yml`. | Inert: it sends nothing. |
-| **S3** | **Transcript store + capture API.** `internal/transcript` (directory layout, CAS append, frames, ownership, quota, retention sweeper, deletion, pod-side `V` re-derivation), worker listener + ledger, `capture` token kind and `cairn-ui -issue-worker-token capture`, refusing pod re-check. Agent gains upload. `tests/plugins/e2e.sh` created with clauses (a), (b), (c), (h). | new package → `ok` floor, `control_mutants.py` `PKGS` (+ pinned count through `ci.yml` and `internal/control/README.md`); `cmd/cairn-ui` flags (`-worker-addr`, `-worker-tokens`, `-transcript-dir`, `-transcript-retention`, `-transcript-quota`) and tests; `ci.yml` e2e step. | Inert unless `-worker-addr` AND `-transcript-dir` are set. |
+| **S3** | **Transcript store + capture API.** `internal/transcript` (directory layout, CAS append, frames, ownership, quota, retention sweeper, deletion, pod-side `V` re-derivation), worker listener + ledger, `capture` token kind and `cairn-ui -issue-worker-token capture`, refusing pod re-check. Agent gains upload. `tests/plugins/e2e.sh` created with clauses (a), (b), (c), (h). 🔴 **Arming precondition (O15):** S3 may MERGE inert, but capture is armed on NO instance until closing-condition part 5 holds for the redactor commit being armed (≥ 90% of a fresh held-back set's leaks caught, ≤ 15% of its clean lines damaged); S11 is a second, independent precondition. | new package → `ok` floor, `control_mutants.py` `PKGS` (+ pinned count through `ci.yml` and `internal/control/README.md`); `cmd/cairn-ui` flags (`-worker-addr`, `-worker-tokens`, `-transcript-dir`, `-transcript-retention`, `-transcript-quota`) and tests; `ci.yml` e2e step. | Inert unless `-worker-addr` AND `-transcript-dir` are set. |
 | **S4** | **Visibility + the session page shows content (O3).** `transcript.Visible` (decision 4) with `V` (decision 3); the collapsed transcript section on `/session` (decision 18); the owner arm finding O10 sessions; `GET /session/transcript` raw-record view. e2e clauses (d), (e), (f), (g — the visibility half). Benchmark of the whole-store `W_trailer` walk. | UI rows → hand ledger, `contentAuthority`, uiaudit targets + a synthetic transcript in the uiaudit world; mutant rows. | Read-only over S3; renders nothing when no transcript exists. |
 | **S5** | **Plugin registry, toggles, plugin API.** `internal/plugins` (manifest validation, closed capability and output-type vocabularies, plugin token kind, the narrowing-only toggle fold + `-plugin-journal`, the stateless pending query); `/plugins` page + toggle POSTs on scope, arc and session pages. e2e clauses (i), (j). | new package → `ok` floor, `PKGS`; UI rows; `cmd/cairn-ui` flags (`-plugin-registry`, `-plugin-journal`); mutant rows; README. | Inert with no registry; every toggle OFF by construction. |
 | **S6** | **Outputs: storage, rendering, deletion cascade.** Outputs stored per session; rendered labelled-derived (decision 11) on the session page and as a one-line summary on session rows; owner "delete transcript" POST cascading to outputs and edges; the capture `withdraw` route running the same cascade, and the agent's withdrawal on a routing change (decision 16). e2e clauses (k), (l), (m). | UI rows; worker-listener ledger (`withdraw`); `cmd/cairn-capture`; mutant rows; README. | Nothing renders until a plugin writes; the agent withdraws nothing until a routing answer changes. |
@@ -1431,13 +1462,25 @@ run time).
 - Review round 2 (S1) measured round 1 making four things WORSE, and round 3 fixed each against
   the auditor's own tests, adopted as permanent regression tests: a private-key body read through a
   copy prefix (3/3 lines shipped → 0/3), the code filter refusing real passwords (13–78/200
-  symbol-bearing and 0/200 dotted → 176–200/200 and 200/200, the clean-damage gain kept at 0/75),
+  symbol-bearing and 0/200 dotted → 176–200/200 and 200/200, the clean-damage gain kept at 0/75 —
+  *⚠ the 176 is RETRACTED (round 4): the test's body used a weaker oracle than its doc stated, and
+  under the stated one, no 6-character window surviving, round 3's code measured 139/200 for the
+  libpq string*),
   the END rule losing `PGPASSWORD`/`SECRET_KEY_BASE`/`apiKeyValue` (now glued words, a closed
   suffix set and a closed `<VENDOR>_KEY` list), and ASCII file magics letting text skip scanning
   (now a non-text byte in the first 1 KiB is required). It also closed pre-existing gaps: URL
   query and connection-string credentials, JWK private members, YAML block scalars, `.pgpass`,
   `.netrc`, source literals, `docker login -p`, value-first k8s env entries, BOM-less UTF-16. The
   corpus plants 72.
+- Review round 4 (S1, O15): regression tests for every tool prefix round 3 found hiding a line
+  (`N:`, `path:`, `N-`, `path-N-`, `<`, `>`), each in front of a value only a line-anchored rule can
+  catch, and for PEM bodies behind each; for the named-key notations round 3 found unread
+  (systemd `Environment=`, `os.environ[...] =`, `--password=`/`--password v`, `mysql -p<pw>`,
+  `redis-cli -a`, `IDENTIFIED BY`, kubeconfig, XML, .NET); and for round 3's damaged clean probes —
+  each shown RED on the pre-O15 code. The rate test now implements the oracle its doc states
+  (symbol-bearing 195–199/200 in every shape, libpq included); the entropy rule's recall and the
+  clean shapes it must spare are pinned (`TestTheEntropyRuleThresholds`). The corpus plants 79.
+  The arming gate's own tests drive both bounds at their edges and every exit-2 branch.
 
 **S2.**
 - Offset reader: a file grown mid-line ships only complete lines; the next run ships the rest

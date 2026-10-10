@@ -785,7 +785,9 @@ jobs:
           # classification table and its shape ledger), measured the same way on that branch's
           # tree: 25 `ok`, 0 `FAIL`, 2 `[no test files]`. MOVED TO 26 WITH `internal/redact` (S1:
           # the redactor and its corpus), measured the same way on that branch's tree: 26 `ok`, 0
-          # `FAIL`, 2 `[no test files]`.
+          # `FAIL`, 2 `[no test files]`. S1's review round 4 added `internal/redact/cmd/redact-heldback`
+          # (O15's arming gate, a thin `main` over tested library code): 26 `ok`, 0 `FAIL`, 3
+          # `[no test files]` — the floor does not move, because a package without tests adds no `ok`.
           # ⚠ THE NIX CHECK PHASES ARE NOT RE-MEASURED AT TWENTY-THREE THROUGH TWENTY-SIX. They run the same walk and
           # were last read at 18 (`nix log` for both `cairn-server` and `cairn-go`, before
           # `cmd/cairn-ui` carried tests) and at 17 before that. Read those as a RECORD of the
