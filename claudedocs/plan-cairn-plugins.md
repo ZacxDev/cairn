@@ -123,9 +123,14 @@ field names and types alone.
   `CLAUDE_CODE_SESSION_ID`, `OPENCODE_SESSION_ID` and `XDG_STATE_HOME`, without which test runs on
   agent-run hosts would write fixture scopes into the developer's real session ledger.
 - *Revision 15* moves `arcs` and `arc-show` from the resolved-scope list to the `*` list — they print
-  arcs and member writes homed in OTHER scopes (`internal/report/arcs.go:236-239, 453-454`) — states
+  arcs and member writes homed in OTHER scopes (`internal/report/arcs.go:236-239, 453, 406/457`) — states
   the owner-only cost of every `*`-writing verb, and makes the `env_pin` control assert nothing
   appears under a sentinel `HOME` either.
+- *Revision 16* corrects that control: the parity harness overrides `HOME` for every row, so the
+  control searches each row's harness `HOME` (`work/home`) and the sentinel `XDG_STATE_HOME` for any
+  `cairn/read-ledger` file, with a before-the-change positive control. It also corrects the
+  `arc-show` citation to `MemberLine`'s "wrote in:" list and lists the `*`-writing content verbs in
+  Q16 and the unmeasured-share note.
 
 ## Goal and premise
 
@@ -723,7 +728,9 @@ script that prints only counts.
      counts), `routes` (the scope→instance table), and **`arcs` and `arc-show`**, which print
      content homed in OTHER scopes: `arcs --scope beta-notes` lists inferred arcs as
      `<home>/<slug> · …` with homes elsewhere (`internal/report/arcs.go:236-239`), and `arc-show`'s
-     declared-scopes and member-writes lines name other scopes (`arcs.go:453-454`). *Revision 14
+     declared-scopes line (`arcs.go:453`) and each member's "wrote in:" list (`MemberLine`,
+     `arcs.go:406`, rendered at `:457`) name other scopes. *Revision 15 cited `:454`, which is
+     `MemberWritesLine` — a count, not a scope list; corrected.* *Revision 14
      listed them as recording only the resolved scope; retracted.* One record per printed home or
      declared scope was NOT chosen: it needs the client to enumerate every scope its rendered output
      names, including summarised member lists, and a missed one fails open — `*` cannot. **The
@@ -1545,10 +1552,14 @@ session id (mutant `client-ledger-write-visible-in-output`). Parity: the new row
 on one cache root with one session id and compares their ledger files (timestamps normalised) —
 red if the Python oracle records a different scope; the existing rows are unchanged ONCE
 `env_pin` clears the session-id variables (control: with `CLAUDE_CODE_SESSION_ID` and a sentinel
-`XDG_STATE_HOME` AND a sentinel `HOME` exported in the harness's own environment, an existing row
-writes a ledger file into a sentinel directory before the `env_pin` change and NOTHING under
-either sentinel after it — asserting both, because a change that cleared `XDG_STATE_HOME` but
-not the session id would merely move the write under `HOME`). **Content verbs:**
+`XDG_STATE_HOME` exported in the harness's own environment, run the existing rows and search for
+any `cairn/read-ledger` file under BOTH the sentinel `XDG_STATE_HOME` and each row's harness
+`HOME` (`work/home`; the harness overrides `HOME` for every row, `tests/parity/harness.py:1210,
+1382-1383`, applied last by `env_pin.py:147-165`, so an exported sentinel `HOME` would never
+reach the clients). Before the `env_pin` change at least one file appears — the positive control;
+after it, NONE under either root. A partial change that cleared `XDG_STATE_HOME` but not the
+session id writes under `work/home/.local/state/cairn/read-ledger/` and is caught there. *Revision
+15's sentinel-`HOME` wording could never go red; retracted.*) **Content verbs:**
 `transcript skeleton`, `transcript records` and `transcript tool` (against a stubbed `cairn-ui`),
 `doctor`, `routes`, `arcs --scope beta-notes` and `arc-show --scope beta-notes --slug x` each
 write exactly one `*` record, even when their output names only `beta-notes`; `sync` writes none (control: a client
@@ -1664,7 +1675,8 @@ said Q16 shapes S3; the rule's code and mutant are in S2.*
   `cairn` but whose ledger is EMPTY (a pre-ledger client, an opencode build that does not set
   `OPENCODE_SESSION_ID`, a call run with the environment cleared); (2) F2 — any input naming the
   cache root `subsystem-store`, including harmless mentions of the config directory; (3) a ledger
-  `*` from `--all-scopes`. **Options:** (a) **keep every client current** (both clients write
+  `*` from `--all-scopes`, or from a content verb that writes `*` — `doctor`, `routes`, `arcs`,
+  `arc-show`, or a `transcript` verb (decision 3a). **Options:** (a) **keep every client current** (both clients write
   the ledger from S11 on) and have callers read through the client rather than the cache files —
   **recommended**; (b) narrow F2 to `Read`-style FILE tool inputs under the cache root instead of
   any input — a later, separately measured change; (c) accept the remaining owner-only/held
@@ -1697,7 +1709,8 @@ said Q16 shapes S3; the rule's code and mutant are in S2.*
   append observation and the boundary records' presence, not traced record by record.
 - **Whether either transcript format is a documented, stable contract.** No primary source found
   either way; the shape ledger (S0) is how drift becomes a red test rather than a silent drop.
-- **The SHARE of real sessions F1 or F2 makes owner-only or held** under the ledger (Q16):
+- **The SHARE of real sessions F1, F2 or a `*`-writing verb (`--all-scopes`, `doctor`, `routes`,
+  `arcs`, `arc-show`, `transcript`) makes owner-only or held** under the ledger (Q16):
   unmeasured — no ledger exists yet. Also unmeasured: whether `OPENCODE_SESSION_ID` is set for
   opencode tool commands and which id it carries (decision 3a, an S0 task); whether
   `CLAUDE_CODE_SESSION_ID` reaches commands run under `sudo`, `env -i` or detached services; and
