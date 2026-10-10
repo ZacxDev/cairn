@@ -27,7 +27,9 @@ import (
 //   - it changes character class at no fewer than [minTransitionRate] of its positions;
 //   - it is not an identifier, slug or path by its `_`/`-`/`/` segments — two thirds of them words,
 //     holding at least 35% of its characters ([identifierSegments]) — nor an alphabet literal
-//     ([sequential]);
+//     ([sequential]); ⚠ a token whose first or last segment is 16+ characters and passes the
+//     class, wordy, class-change, identifier, alphabet and Shannon tests ON ITS OWN is taken
+//     regardless of the rest ([randomEdgeSegment], round 7);
 //   - its Shannon entropy is at least [minEntropyBits] bits per character;
 //   - it is not a structural ID a transcript is made of (`toolu_`, `msg_`, `req_`, `ses_`, `prt_`,
 //     `call_`) or an SRI digest (`sha512-…`), and not itself the base64 of a binary payload.
@@ -71,7 +73,7 @@ func entropySpans(s string) [][2]int {
 			for hi > lo && strings.IndexByte("-_/", s[hi-1]) >= 0 {
 				hi--
 			}
-			if hi-lo < MinEntropyToken || !looksRandom(s[lo:hi]) || idPrefix.MatchString(s[lo:hi]) || binaryBase64(s[lo:hi]) {
+			if hi-lo < MinEntropyToken || !(looksRandom(s[lo:hi]) || randomEdgeSegment(s[lo:hi])) || idPrefix.MatchString(s[lo:hi]) || binaryBase64(s[lo:hi]) {
 				continue
 			}
 			out = append(out, [2]int{lo, hi})
@@ -203,9 +205,10 @@ const minWordChars = 0.35
 // had left alone. The segment count is back, and the character floor is what keeps a long random
 // run with a short word at each end from passing it; the character rule stays for the identifiers
 // only IT reads (`arg_Vd_arrangement_size_Q___8B_00__16B_01`, whose `8B`/`16B` are not words).
-// `TestRoundSixIdentifierSegments` pins both directions.
+// `TestRoundSixIdentifierSegments` pins both directions. ⚠ It is NOT the last word on a token
+// with a long random END segment: [randomEdgeSegment] judges that segment on its own.
 func identifierSegments(t string) bool {
-	segs := strings.FieldsFunc(t, func(r rune) bool { return r == '_' || r == '-' || r == '/' })
+	segs := splitSegments(t)
 	if len(segs) < 3 {
 		return false
 	}
@@ -218,6 +221,39 @@ func identifierSegments(t string) bool {
 		}
 	}
 	return 3*wordChars >= 2*total || (3*words >= 2*len(segs) && float64(wordChars) >= minWordChars*float64(total))
+}
+
+func splitSegments(t string) []string {
+	return strings.FieldsFunc(t, func(r rune) bool { return r == '_' || r == '-' || r == '/' })
+}
+
+// edgeSegmentMin is the shortest END segment [randomEdgeSegment] judges on its own.
+const edgeSegmentMin = 16
+
+// randomEdgeSegment: the token's first or last `_`/`-`/`/` segment is at least [edgeSegmentMin]
+// characters and passes [looksRandom] ON ITS OWN.
+//
+// 🔴 WORDS MUST NOT VOUCH FOR A RANDOM SEGMENT AT AN END (review round 6). With the segment count
+// back in [identifierSegments], `prod-billing-service-api-token-<24 random>` is five word segments
+// of six holding over 35% of the characters, so a run of dictionary words in front of (or behind)
+// a random segment made the whole token an identifier and it shipped — caught at round 5's head,
+// missed at round 6's. Undoing that in [identifierSegments] alone was MEASURED insufficient (110 of
+// 480 generated tails still survived): the words also make the WHOLE token [wordy] and drag its
+// [transitionRate] down. So the end segment is judged as a token of its own, and when it reads as
+// random the whole token is redacted. `TestRoundSevenWordsDoNotShieldARandomEdgeSegment` pins it.
+// Only an END segment: a long random segment between words is not what was reported, and judging
+// every segment is a wider change than this round measured.
+func randomEdgeSegment(t string) bool {
+	segs := splitSegments(t)
+	if len(segs) < 2 {
+		return false
+	}
+	for _, s := range []string{segs[0], segs[len(segs)-1]} {
+		if len(s) >= edgeSegmentMin && looksRandom(s) {
+			return true
+		}
+	}
+	return false
 }
 
 // sequential: most adjacent pairs ascend by one — an alphabet literal (`ABC…xyz0123…`).

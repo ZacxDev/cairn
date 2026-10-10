@@ -48,7 +48,10 @@ set stayed flat and damage to clean text grew. O15 changed the approach:
    vowels), changes
    character class at ≥ 0.35 of its positions, is not an identifier/slug/path by its `_`/`-`/`/`
    segments (its word segments hold two thirds of its characters, or are two thirds of its segments
-   AND hold 35% of its characters — round 6, below), not an alphabet literal, not a transcript ID
+   AND hold 35% of its characters — round 6, below) **unless its first or last segment is 16+
+   characters and passes the token test ON ITS OWN** (round 7, `randomEdgeSegment`: words must not
+   vouch for a random tail — `prod-billing-service-api-token-<24 random>` shipped at round 6), not
+   an alphabet literal, not a transcript ID
    (`toolu_`, `msg_`, `req_`, `ses_`, `prt_`,
    `call_`), not an integrity digest (`sha512-…`, `h1:…`), and not the base64 of a binary payload.
    A thinking block's `signature` is exempt by STRUCTURE, not by shape.
@@ -160,8 +163,10 @@ When two rules' spans overlap they merge, and the EARLIER rule in the table name
   `/`, or an absolute socket directory), a port (`*` or 1–5 digits), a database and a user that
   start with a letter or `_`. *Round 5 read `src/pkg/file.go:100:7://go:noescape` and
   `a.go:12:3://nolint:errcheck` as rows in their unstripped form.* Measured over this repository's
-  neutral lines behind `path:N:C:` and `path:N:`: 6 of 22,887 at round 5, 0 now
-  (`TestRoundSixPgpassOverPrefixedNeutralLines`, pinned). ⚠ Residual, pinned: `grep -n` over a
+  neutral lines behind `path:N:C:` and `path:N:`: 6 of 22,887 at round 5, 0 at round 6; pinned
+  since round 7 over the frozen corpus's 8,407 colon-bearing lines, 0
+  (`TestRoundSixPgpassOverPrefixedNeutralLines` — it read the live tree before, the same
+  brittleness as the budget's). ⚠ Residual, pinned: `grep -n` over a
   line that is itself `word:word:word` (`a.go:12:foo:bar:bazqux7`) still reads as a row; a row
   whose database or user starts with a digit is not read.
 - **`.netrc`: a plain-word password needs netrc STRUCTURE or FILE CONTEXT** (round 6): the same
@@ -215,23 +220,42 @@ When two rules' spans overlap they merge, and the EARLIER rule in the table name
   by EITHER count, with a character floor on the segment count
   (`TestRoundSixIdentifierSegments`, `TestIdentifierSegmentsBothCounts`): lines of that corpus
   the entropy rule changes — 4,826 (round 4) → 5,687 (round 5) → 4,617 (round 6; 8 that round 4
-  left alone, 217 fewer that it took).
-- **The clean-damage BUDGET** (`budget_test.go`, round 6) — damage measured on text nobody wrote
-  for the purpose, and pinned so a later round that widens it fails a test rather than an audit.
-  Over THIS REPOSITORY'S tracked text: every line the redactor changes in a neutral file (not a
-  test, test data or this package) is ENUMERATED by content hash in `budget_data_test.go` — a
-  damaged line not on the list fails, and the failure names it; fixture files are held to a count
-  ceiling. Over the GO STANDARD LIBRARY'S source (a 1-in-8 sample in the suite; the whole tree with
-  `-redact.stdlib-full`): a ceiling per rule. Measured, whole standard library (3,027,865 lines):
-  10,285 damaged lines at round 4, 11,182 at round 5, 4,790 at round 6 (no line round 5 left
-  alone; key-context 117 → 156 → 54 lines, `.netrc` 9 → 12 → 8) — almost all of what remains is
-  the library's own test keys, certificates and vectors, which the entropy rule exists to take.
-  This repository (300,774 lines): 1,422 → 1,419 → 224, of which neutral files 31 → 31 → 19.
-  ⚠ "Damaged" counts every changed line; it does not say the line was clean. ⚠ The standard-library
-  test SKIPS, saying so, where the toolchain's source is not on disk; inside a filtered source tree
-  (a nix build) the repository test measures the part of the tree that is there. ⚠ And the
-  repository budget is a tripwire across the tree: a change ANYWHERE that adds a line the redactor
-  would change fails this package's test, naming the line.
+  left alone, 217 fewer that it took). 🔴 **Round 7 closed the hole that count opened:** a run of
+  word segments shielded a random END segment, so `prod-billing-service-api-token-<24 random>`,
+  `Correct-Horse-Battery-Staple-<20 random>` and `svc_xxx_deploy_key_<26 random>` shipped (caught at
+  round 5's head). An end segment of 16+ characters is now judged as a token of its own
+  (`TestRoundSevenWordsDoNotShieldARandomEdgeSegment`: of 480 generated tokens, 16–32-character
+  tails leading or trailing, 434 kept their tail at round 6's head, 110 at round 5's, **10** now —
+  the 10 are tails that fail the token test standing alone, the rule's documented per-token cost).
+  Measured zero change on the frozen corpus below, and every round-6 identifier above is still
+  left alone.
+- **The clean-damage BUDGET** (`budget_test.go`, round 6; rescoped round 7) — damage measured on
+  text nobody wrote for the purpose, and pinned so a later round that widens it fails a test
+  rather than an audit. 🔴 **What `go test` pins is a FROZEN corpus** (round 7):
+  `testdata/budget_corpus_repo.txt` (a sample of this repository's neutral text and code — no
+  `claudedocs/`, no tests or fixtures) and `testdata/budget_corpus_go.txt` (go1.25.14 standard
+  library files under the Go BSD license, which the file reproduces: a hash sample plus the files
+  densest in tokens the entropy rule considers), 197 sections, 41,477 lines, of which the redactor
+  changes 631 (587 by entropy — the library's test keys and vectors). Every one is ENUMERATED in
+  `budget_data_test.go` by the line AND its redacted form, and the match is EXACT both ways: a new
+  damaged line fails (naming it), and so does an entry nothing matches any more. It reads nothing
+  else, so its answer does not depend on the tree or the toolchain. *Round 6 pinned the LIVE tree
+  and GOROOT instead, and that gate was permanently one unrelated edit from red: a doc gaining a
+  changed line failed it, deleting three retired docs failed it ("6 budget entries are unused"),
+  and go1.26 failed it (entropy 1,063 against a ceiling of 845) with the redactor unchanged.* The
+  hash sample alone was measured too thin — lowering the entropy bit floor to 3.0 changed no line
+  of it — hence the near-miss files; and a key over the input line alone missed a mutant that
+  added a span to an already-damaged line, hence the redacted form in the key. Mutants that widen
+  the entropy rule (identifier test off, class-change floor 0.25, bit floor 3.0, minimum length 16)
+  each fail it. ⚠ It cannot see text unlike its own lines — prose above all.
+  **The LIVE sweeps are OPT-IN** (`-redact.live-budget`; skipped by default, so they never fail
+  `go test ./...`): this repository's tracked text, enumerated in `budget_live_data_test.go`, and
+  the toolchain's standard library (a 1-in-8 sample; the whole tree with `-redact.stdlib-full`),
+  a ceiling per rule exact at go1.25.14. Whether CI should run them is open (plan T1). Measured
+  with them at round 6, whole standard library (3,027,865 lines): 10,285 damaged lines at round 4,
+  11,182 at round 5, 4,790 at round 6 (key-context 117 → 156 → 54 lines, `.netrc` 9 → 12 → 8);
+  this repository (300,774 lines): 1,422 → 1,419 → 224, of which neutral files 31 → 31 → 19.
+  ⚠ "Damaged" counts every changed line; it does not say the line was clean.
 - **The round-6 tests** (`round6_test.go`): each of review round 5's findings, shown RED at round
   5's head unless labelled an invariant guard or a cost pin; `round6_internal_test.go` holds the
   guards on this round's internals. Each new guard was mutation-tested by NAME against its own
@@ -271,6 +295,48 @@ fully redacted fine-grained GitHub PAT was scored MISSED because `[redacted:gith
 known-answer test with controls for what a marker must not excuse).
 ⚠ `go run` reports every non-zero exit as 1 — build it. ⚠ A pass certifies the CASE FILE it was
 given; that the file is fresh and held back is a fact about who wrote it, recorded beside the run.
+
+### 🔴 The gate FAILS, and capture is UNARMED everywhere (operator decision O16)
+
+A fresh auditor-written held-back set (190 leak lines, 175 clean) scored **`leaks caught=157/190
+clean damaged=18/175`** at round 6's head (`13219d8`): 82.6% caught, under the 90% floor (damage,
+10.3%, is inside its 15% ceiling). Rounds 4–6 moved that set only 154 → 155 → 157. The operator
+stopped heuristic fix rounds after round 7: this package merges with capture UNARMED on every
+instance, O15's gate stays the arming condition, and arming is a separate future decision —
+most likely about capturing LESS (excluding or truncating raw tool output) rather than redacting
+better. Round 7 was not re-scored against that set (the fixer has not seen it).
+
+**The measured residuals — what that set's misses and damage were, by category:**
+
+| leaks MISSED (33 of 190) | missed / in category |
+|---|---|
+| a secret in prose | 11 / 15 |
+| a PIN | 9 / 10 |
+| a positional argument in code | 6 / 12 |
+| a CLI flag no rule reads | 2 |
+| a hex secret | 2 |
+| a long value | 1 |
+| a value under a strong name | 1 |
+| a symbol-led value | 1 |
+
+| clean lines DAMAGED (18 of 175) | damaged / in category |
+|---|---|
+| base64 of non-secret data | 9 / 10 |
+| a public key | 8 / 10 |
+| a type annotation | 1 |
+
+**Round 6's other findings, NOT fixed (O16) and stated here as residuals:**
+
+1. The `.netrc` context rule damages prose: `See netrc(5).` then a line `password field`; a grep
+   path containing `netrc` before `password storage`; `machine translation` then
+   `password storage` (the last two, and the first in that two-line form, reproduced here).
+2. A digits-only password in INI, `.properties`, TOML or Makefile layout ships:
+   `password = 482915`, `db.password = 482915`, `DB_PASSWORD ?= 482915` (reproduced).
+3. A Makefile `:=`, an indented INI line and an INI line with a trailing `; comment` fall
+   through config detection (`DB_PASSWORD := <12 alphanumerics>` ships, reproduced; the
+   symbol-led forms probed here were caught, so the audit's shapes are the ones to read).
+4. Minified JavaScript after `password:` is damaged (as reported; two probes here did not
+   reproduce it).
 
 ## What no rule here can see
 
