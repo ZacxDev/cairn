@@ -54,6 +54,8 @@ must not read as an instruction to run a command that does not exist.
 - *Revision 6* (`9948883` → this) applies round 5, narrowing two sentences:
   - pin 1 is scoped to PACKAGE-LEVEL `os` functions, and methods are added to what it cannot see;
   - the exit-3 and exit-10 mechanisms are cited correctly.
+- *Revision 7* (S1's branch) records the operator's answer to **Q17: key by the normalised scope
+  NAME**. O5's "keyed by scope ID" is superseded by that answer, not by the agent.
 
   Removed decisions keep their numbers, marked REMOVED, so references stay stable.
 
@@ -349,7 +351,7 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
 | O2 | "Scope-level refs" means each scope names the code it describes (repositories and branch), so an auditor can test entries' paths, symbols, commits and PR references against it. | Decisions 2, 6. |
 | O3 | The declaration belongs to the scope and is edited in the browser. **Deviation history:** the first wording was a per-scope "manifest", with a reserved file such as `_scope.md` as the example. Revision 1 measured that file loading as a MALFORMED entry on both clients, and recommended a separate journal. | Decisions 1, 4, 5. |
 | O4 | *(Superseded by O5.)* Store the sources in the scope's `README.md` front matter. It was chosen because README front matter is invisible to both loaders, as measured. Round 2 then showed that the pod's store is a copy `seed.sh` overwrites, and that the UI would need write access to the whole store. | — |
-| O5 | **An append-only journal OUTSIDE the store tree, on the arc registry's pattern.** The UI is its ONLY writer. Records are keyed by scope ID, not by name. The store pod mounts it READ-ONLY and serves one Go-only GET route, which the CLI auditor reads. The reasons the operator accepted: README edits would be silently reverted by the next re-seed; README storage would reverse the decision to keep the UI's store mount read-only; and the journal gives a who/when change history for free, which an audit feature wants. ⚠ **The agent departs from ONE detail of this, the keying**: records are keyed by the normalised scope NAME, because the UI's and the pod's scope IDs come from different authorities and never match (round 3 🔴1, decision 4). That is for the operator to confirm (Q17). | Decisions 1, 4, 5, 10. |
+| O5 | **An append-only journal OUTSIDE the store tree, on the arc registry's pattern.** The UI is its ONLY writer. ~~Records are keyed by scope ID, not by name.~~ **SUPERSEDED by the operator's Q17 answer: records are keyed by the normalised scope NAME (`codesrc.Key`).** The store pod mounts it READ-ONLY and serves one Go-only GET route, which the CLI auditor reads. The reasons the operator accepted: README edits would be silently reverted by the next re-seed; README storage would reverse the decision to keep the UI's store mount read-only; and the journal gives a who/when change history for free, which an audit feature wants. ⚠ **The agent departs from ONE detail of this, the keying**: records are keyed by the normalised scope NAME, because the UI's and the pod's scope IDs come from different authorities and never match (round 3 🔴1, decision 4). That was for the operator to confirm (Q17), and the operator CONFIRMED it (Q17, answered). | Decisions 1, 4, 5, 10. |
 
 ### Chosen by the AGENT writing this plan (open to review)
 
@@ -950,6 +952,7 @@ killed.
 | Q | question | answer |
 |---|---|---|
 | Q1 | Where are sources stored? | First the README front matter (O4); now **an append-only journal outside the store, UI-written and read-only to the pod (O5)**. |
+| Q17 | Key the journal by scope NAME rather than by scope ID, departing from O5's detail? | **Yes (paraphrased).** Records are keyed by the normalised scope name: `codesrc.Key` is `store.NormalizeRef` of the store directory name. A directory rename orphans the declaration, and an admin re-declares it. A delete followed by a recreate under the same name re-attaches the old declaration, and the page shows who declared it (`set_by`/`set_at`). O5's "keyed by scope ID" is SUPERSEDED by this answer. Recorded in S1. |
 
 ### Still open — each with the agent's recommendation
 
@@ -981,14 +984,10 @@ killed.
   **Recommend** shipping all three in the deploy that ships S2 and S4.
 - **Q16 (new). The derived HEAD.** **Recommend letting the ledger derive `HEAD` for the new head**
   (decision 10). The other reading of D5 is a GET-only exception in a ledger with one rule.
-- **Q17 (new, round 3 🔴1). Key by NAME rather than ID, departing from O5's detail.** **Recommend
-  name.** It is the only identifier the UI (journal-backed authority) and the pod (token-file
-  authority) share. The costs:
-  - a rename orphans the declaration, and the admin re-declares it;
-  - a same-name recreate inherits the old one.
-
-  The alternative is unifying the two authorities' ID spaces, which is a control-plane change far
-  outside this feature.
+- **Q17. ANSWERED — see "Answered by the operator".** The recommendation (name) was confirmed.
+  The reasoning that led to it: it is the only identifier the UI (journal-backed authority) and
+  the pod (token-file authority) share; the alternative is unifying the two authorities' ID
+  spaces, a control-plane change far outside this feature.
 - **Q18 (new, round 3 🟡3). A second corpus boot for the 503 and unconfigured rows.** **Recommend
   no.** They are witnessed by literal-body Go tests, which is the contract witness for a Go-only
   route anyway, and a second boot in the runner is a new mechanism.
