@@ -109,11 +109,19 @@ field names and types alone.
   redirection handling, the disqualifying-character rule, the argument exemption, conditions
   (a)–(c), the `--scope` spelling union and the `ls-entries` special case — with its fixtures and
   eight mutant rows. **Everything the revision 8–12 entries above say about that parser is
-  superseded and retracted.** In its place: a READ LEDGER both `cairn` clients write about
+  superseded and retracted — and so is revision 7's rule "every `cairn` invocation without an
+  explicit `--scope` adds `*`": under the ledger such a call adds the scope it actually read.** In its place: a READ LEDGER both `cairn` clients write about
   themselves when a session id is in their environment (decision 3a, slice S11), uploaded with the
   transcript, plus two coarse fail-closed fallbacks (F1: a cairn-naming session with an empty
   ledger; F2: any input naming the cache root). New clause (n), six new mutant rows; Q16 and T3
   rewritten.
+- *Revision 14* fixes three ledger gaps from audit round 12. Verbs that print store-derived content
+  without touching one resolvable scope — decision 17's `transcript` verbs, `doctor`, `routes` —
+  now write a `*` record (revision 13 wrote none for them, so a `transcript records` read of
+  another session added nothing to `V`). The pod's fold of the `ledger` stream, and its mutant
+  row, move from S3 to S11, which adds the ledger. And S11 makes `tests/testlib/env_pin.py` clear
+  `CLAUDE_CODE_SESSION_ID`, `OPENCODE_SESSION_ID` and `XDG_STATE_HOME`, without which test runs on
+  agent-run hosts would write fixture scopes into the developer's real session ledger.
 
 ## Goal and premise
 
@@ -406,8 +414,10 @@ script that prints only counts.
   `--scope`/`--repo`/`--all-scopes`, or with NEITHER, in which case the scope is derived from the
   working directory's repository (`internal/client/reposcope.go:71, 89`). Only `report`'s recall,
   search and the line at `renderer.go:158` render a `subsystem-recall:` header; every other verb
-  above is **header-less**, so for it the command line is the only signal (an `append` also leaves
-  a trailer, which `W_trailer` sees). And a direct file read of the local cache by path. `--all-scopes` (`search` and
+  above is **header-less**, so in the TRANSCRIPT the command line is its only trace — which is why
+  decision 3 does not read the transcript for it at all but the client's read ledger (decision 3a,
+  O11) (an `append` also leaves a trailer, which `W_trailer` sees). *Revision 13 left "the command
+  line is the only signal" standing here; with the ledger it was stale.* And a direct file read of the local cache by path. `--all-scopes` (`search` and
   `arcs`, `cli.go:76, 97`) reads every scope the credential can reach. *Revision 2 listed a `--json`
   read; recall and search have no `--json` flag (only `doctor` does, `cli.go:114`), so that path is
   deleted.*
@@ -645,7 +655,9 @@ script that prints only counts.
        (`internal/client/readstore.go:63-71`; instance caches are siblings,
        `internal/client/instances.go:122-131`) — `V` gets `*`, because a file read from the cache
        never passes through the client and so is never ledgered. A config path under
-       `~/.config/subsystem-store/` over-matches too; that fails safe.
+       `~/.config/subsystem-store/` over-matches too; that fails safe. ⚠ F2 does NOT see a local
+       store copy at a path without that name — a `--cache <dir>` root (`internal/client/cli.go:339`)
+       or a `CAIRN_MIRROR_ROOT` mirror (`cli.go:834`) read by file tools; T3 names it.
      A call is never matched to "its" ledger record: the rules ask only "is the ledger empty" and
      "does any input name the cache", which is what keeps the shell grammar out of the design.
    - *DELETED in revision 13 (O11), with the ledger in its place:* the shell-command-line parser
@@ -673,8 +685,10 @@ script that prints only counts.
      ledger is SELF-REPORTED by the host, like the trailer: a session (or anything on the host)
      that edits or deletes its ledger can only make `V` SMALLER — and an emptied ledger trips F1 if
      any input names the program. The ledger CLOSES the old parser's residual of invocations whose
-     program name never appears in the command line (a variable, a script, a shell function):
-     the client records the read however it was invoked. What remains is threat T3.
+     program name never appears in the command line (a variable, a script, a shell function) —
+     but only for a LEDGER-WRITING client that SEES the session id: the client records the read
+     however it was invoked, provided it is current and the id reached its environment. What
+     remains is threat T3.
    - **Unknown names fail closed.** A scope name in `V` that the control model does not know
      (renamed, deleted, on another instance) and the sentinel `*` are unreadable by everyone but the
      owner.
@@ -699,8 +713,18 @@ script that prints only counts.
      `sessions`, `arcs`, `arc-show`, `validate`, and the writes `append`, `put`, `create`,
      `arc-register` (so an unattributed `put`/`create` is covered too); `ls-entries` writes one
      record per scope it listed, per instance; `--all-scopes` and any widening the client cannot
-     enumerate write `*`. No content, no arguments, no query text — the ledger holds scope names
-     only, so it needs no redaction.
+     enumerate write `*`. **Verbs that print store-derived content WITHOUT touching one resolvable
+     scope write `*`:** decision 17's `transcript skeleton|records|tool` (they print ANOTHER
+     session's transcript, whose `V` may hold any scope), `doctor` (per-scope visibility and
+     counts) and `routes` (the scope→instance table). `sync` writes nothing: it accepts and ignores
+     `--scope` and prints only banners (`internal/client/verbs.go:69-70`), so no store content
+     reaches the transcript through it. *Folding the read session's own `V(t)` into `V(s)` instead
+     of `*` was not chosen: `V(t)` grows after the read (later trailers, later uploads), so `V(s)`
+     would have to be re-derived whenever any session it read changes — a dependency graph across
+     sessions, for a precision gain on a rare call.* *Revision 13 listed only scope-touching verbs,
+     so a `transcript` read wrote NO record and, with F1 off, `V(s)` missed the content it printed;
+     retracted.* No content, no arguments, no query text — the ledger holds scope names only, so it
+     needs no redaction.
    - **Where.** `$XDG_STATE_HOME/cairn/read-ledger/<session>.jsonl` (default
      `~/.local/state/cairn/…`), directory 0700, file 0600, one `O_APPEND` write per record. No new
      environment variable: tests point `HOME`/`XDG_STATE_HOME` at a scratch tree, so the env-alias
@@ -709,8 +733,16 @@ script that prints only counts.
      nothing on stdout or stderr, no change to the exit code, no added latency beyond one local
      append. That is what keeps `tests/parity/` (which diffs stdout, stderr and exit) unchanged; a
      new parity row runs both clients with a session id set and compares their LEDGER FILES
-     (timestamps normalised), so the two clients cannot record different scopes; the existing rows
-     run with no session id. The Python half joins the P8 retirement ledger.
+     (timestamps normalised), so the two clients cannot record different scopes. **The existing rows
+     must run with no session id, and today they would NOT on an agent-run host:**
+     `tests/testlib/env_pin.py:100-106` clears only the `SUBSYSTEM_STORE_`/`CAIRN_` prefixes and the
+     host labels, so `CLAUDE_CODE_SESSION_ID`, `OPENCODE_SESSION_ID` and `XDG_STATE_HOME` leak into
+     every client subprocess — local and CI tiers would diverge, and a test that leaves `HOME`
+     unchanged would write FIXTURE scopes into the developer's REAL session ledger, making that
+     session owner-only or held. S11 adds all three to `env_pin`'s cleared set in the same change
+     that adds the ledger; until then the risk is named here rather than incurred. *Revision 13
+     said the existing rows "run with no session id"; that was false on agent-run hosts.* The
+     Python half joins the P8 retirement ledger.
    - **Upload.** The capture agent reads `<session>.jsonl` for the root and every child id and
      ships the records as a `ledger` stream of the root (decision 15's CAS and caps); the pod folds
      them into `L(s)`.
@@ -1170,7 +1202,7 @@ GET /transcript/skeleton  ·  GET /transcript/records  ·  GET /transcript/tool 
 |---|---|
 | **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. **What is NOT controlled:** unshaped secrets (typed passwords, novel token formats), secrets inside images/PDFs (withheld rather than stored until Q2 is answered, decision 6a — if Q2 says "ship", this becomes an uncontrolled residual) EXCEPT binary payloads embedded in longer strings or in unlisted formats, which ship text-scanned only (6a's residuals), an encoded secret embedded in a longer string (not decoded), a flow-style YAML `Secret` (decision 6), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
 | **T2. Confidential but non-secret content** (client business detail, personal data in a tool output) | Redaction does not address it at all; VISIBILITY is the only control (decision 4). Stated, so nobody believes the redactor covers it. |
-| **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store, plus the client read ledger (decision 3a), plus rendered headers anywhere in the content, plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope and a ledger `*` add `*`; F1 adds `*` when any tool input names `cairn`/`subsystem-recall` and the ledger is empty, F2 when any input names the cache root `subsystem-store`; nothing cancels a `*`, no caller resolves a working directory or parses a shell line; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The ledger is SELF-REPORTED by the host**, like the write trailer: a session or anything else on the host can edit or delete it, and that can only make `V` SMALLER — an emptied ledger trips F1 if any input names the program. **The residual:** (1) a session MIXING a ledger-writing client with one that writes no record — a pre-ledger client (an older pinned revision), or a call whose environment lost the session id (`env -i`, some `sudo` setups) — has a non-empty ledger, so F1 does not fire and the unrecorded call's scope is missing; (2) a cache read from a cache root moved away from the default `subsystem-store` name; (3) a store read that bypasses the client entirely (a direct HTTP call to the pod). *Revisions 8–12 listed, as the residual, invocations whose program name never appears in the command line (a variable, a script, a shell function); the ledger records the read however it was invoked, so that residual is CLOSED — retracted with the parser.* |
+| **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store, plus the client read ledger (decision 3a), plus rendered headers anywhere in the content, plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope and a ledger `*` add `*`; F1 adds `*` when any tool input names `cairn`/`subsystem-recall` and the ledger is empty, F2 when any input names the cache root `subsystem-store`; nothing cancels a `*`, no caller resolves a working directory or parses a shell line; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The ledger is SELF-REPORTED by the host**, like the write trailer: a session or anything else on the host can edit or delete it, and that can only make `V` SMALLER — an emptied ledger trips F1 if any input names the program. **The residual:** (1) a session MIXING a ledger-writing client with one that writes no record — a pre-ledger client (an older pinned revision), or a call whose environment lost the session id (`env -i`, some `sudo` setups) — has a non-empty ledger, so F1 does not fire and the unrecorded call's scope is missing; (2) a file-tool read of a local store copy whose path does not contain `subsystem-store` — a `--cache <dir>` root (`internal/client/cli.go:339`), a `CAIRN_MIRROR_ROOT` mirror (`cli.go:834`), or a moved cache root; (3) a store or transcript read that bypasses the client entirely (a direct HTTP call to the pod, or to `cairn-ui`'s `/transcript/…` routes — decision 17's CLI verbs write `*`, a raw HTTP call writes nothing). *Revisions 8–12 listed, as the residual, invocations whose program name never appears in the command line (a variable, a script, a shell function); the ledger records the read however it was invoked, so that residual is CLOSED for a current, ledger-writing client that sees the session id (residual (1) is what is left when either fails) — retracted with the parser.* |
 | **T4. Viewer-set computation makes the predicate vacuous** | Clause (e), and a mutant row (`transcript-written-set-from-viewer-scopes`). |
 | **T5. A stolen capture token** | Can APPEND to its owner's transcripts from its one host — inject fake records into the owner's own sessions — can SQUAT a not-yet-uploaded session id (decision 15), and can WITHDRAW (delete) its owner's sessions uploaded from that host (decision 16). Cannot read, or touch another owner's or host's existing sessions. Revoke by deleting the row (re-read per request). |
 | **T6. A stolen plugin token** | Can read every transcript where that plugin is ON, and write outputs of its declared types. The largest single exposure the design creates; it is why toggles default OFF, require every scope's consent (decision 10), and why a plugin token is per plugin. |
@@ -1203,7 +1235,7 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 | **S8** | **Agent read API and CLI (decision 17).** The classification table's skeleton, records and tool routes on `cairn-ui`; `cairn transcript skeleton|records|tool` Go-only verbs over `CAIRN_UI_URL`. | UI rows; `internal/client/cli.go` verbs; `capability_ledger` `go_only`; `want-go-only-verbs.txt`; `tests/test_go_client_ledgers.py`; mutant rows. | Read-only; the pod and parity corpus untouched. |
 | **S9** | **Example plugin A — summaries.** `plugins/summary` in a NESTED stdlib-only module (provider HTTP API over `net/http`, no SDK), host-side user timer, incremental per decision 13, its own spend cap, a fake provider in tests. Reads through `view=conversation` by default. | `depspolicy.DeclaredNestedModules`; `flake.nix` package; `ci.yml` step for its suite. | A separate binary; nothing runs until registered and toggled. |
 | **S10** | **Example plugin B — ClickUp.** `plugins/clickup` in the same nested module: ticket list fetch (read-only token, 429-aware), deterministic matchers (decision 14) over transcript records (`gitBranch`, `pr-link`, URLs), commit messages and trailers from a host-local repo list, PR bodies via the host's own GitHub CLI, entry refs; LLM suggestions using plugin A's summaries when present (`output:read:summary` — the cross-plugin test of the abstraction). Synthetic ClickUp fixtures only. Then closing wiring: `sabotaged=14 caught=14`, measured floors, the `AGENTS.md` row with an equal eviction (Q11). | same nested module; flake package; `ci.yml`; `AGENTS.md`; READMEs. | Separate binary; inert until registered and toggled. |
-| **S11** | **The client read ledger (O11, decision 3a)** in BOTH clients: the Go `internal/client` writes a record per scope a served call touched when `CLAUDE_CODE_SESSION_ID` or `OPENCODE_SESSION_ID` is set; the Python oracle does the same; a parity row compares the two clients' ledger files; `cmd/cairn-capture` uploads the `ledger` stream; e2e clause (n). **Must land before S3 is armed on a real instance** — without it every session that runs `cairn` is owner-only by F1. | `internal/client` (+ joins `control_mutants.py` `PKGS`, moving the pinned count and its enumerations); the Python `cairn`/`lib/`; `tests/parity/` (a new row, and its README's P8 retirement ledger); `cmd/cairn-capture`; `ci.yml` e2e floor. NOT `internal/api` or `cmd/cairn-server`: the pod is untouched. | Inert without a session id in the environment; with one, the write is invisible to stdout, stderr and the exit code. |
+| **S11** | **The client read ledger (O11, decision 3a)** in BOTH clients: the Go `internal/client` writes a record per scope a served call touched when `CLAUDE_CODE_SESSION_ID` or `OPENCODE_SESSION_ID` is set; the Python oracle does the same; a parity row compares the two clients' ledger files; `cmd/cairn-capture` uploads the `ledger` stream; the POD's fold of that stream into `meta.json` and `V` (moved here from S3: S11 adds the ledger, so it owns both ends); `tests/testlib/env_pin.py` clears `CLAUDE_CODE_SESSION_ID`, `OPENCODE_SESSION_ID` and `XDG_STATE_HOME`; e2e clause (n). **Must land before S3 is armed on a real instance** — without it every session that runs `cairn` is owner-only by F1. | `internal/client` (+ joins `control_mutants.py` `PKGS`, moving the pinned count and its enumerations); `internal/transcript` (the pod-side ledger fold); `tests/testlib/env_pin.py` (three cleared variables); the Python `cairn`/`lib/`; `tests/parity/` (a new row, and its README's P8 retirement ledger); `cmd/cairn-capture`; `ci.yml` e2e floor. NOT `internal/api` or `cmd/cairn-server`: the pod is untouched. | Inert without a session id in the environment; with one, the write is invisible to stdout, stderr and the exit code. |
 
 **Mutant rows** (indicative names). The pinned count starts at **296**; the **51** rows below would
 take it to **347** if every one lands as named (revision 7 deleted six and revision 13 eight, each
@@ -1224,10 +1256,10 @@ measured by the redaction corpus; S9/S10 by their own suites).
   `scopeuse-paired-header-ignored`, `scopeuse-chained-call-header-suppresses-star`,
   `scopeuse-hook-attachment-counts-as-result`, `scopeuse-missing-result-becomes-star`,
   `scopeuse-chained-command-resolved`.
-- **S3 (9):** `transcript-cas-ignores-from-offset` (a), `transcript-capture-token-host-unchecked`,
+- **S3 (8):** `transcript-cas-ignores-from-offset` (a), `transcript-capture-token-host-unchecked`,
   `transcript-capture-token-reads`, `transcript-pod-recheck-skipped` (c),
   `transcript-pod-recheck-skips-blobs` (c), `transcript-root-owner-not-fixed`,
-  `transcript-pod-skips-scope-rederivation`, `transcript-pod-ignores-ledger` (n), `worker-token-accepted-by-browser-row`
+  `transcript-pod-skips-scope-rederivation`, `worker-token-accepted-by-browser-row`
 - **S4 (11):** `transcript-section-without-predicate` (d),
   `transcript-written-set-from-viewer-scopes` (e), `transcript-visibility-set-ignores-reads` (f),
   `transcript-empty-set-visible` (g), `transcript-owner-by-display-not-id`,
@@ -1248,14 +1280,14 @@ measured by the redaction corpus; S9/S10 by their own suites).
   `transcript-withdraw-host-unchecked`, `transcript-withdraw-repeat-answers-false`
 - **S7 (1):** `my-sessions-lists-another-owner`
 - **S8 (2):** `transcript-read-api-without-predicate`, `transcript-raw-view-without-predicate`
-- **S11 (3, `./internal/client/` joins `PKGS`):** `client-ledger-write-skipped` (a served call with a session id in its environment writes no record), `client-ledger-records-requested-not-resolved-scope` (the record names the flag as typed instead of the scope the call resolved and touched), `client-ledger-write-visible-in-output` (a ledger write error reaches stderr or the exit code).
+- **S11 (4, `./internal/client/` joins `PKGS`):** `transcript-pod-ignores-ledger` (n) (the pod's fold of an uploaded `ledger` stream into `meta.json` is skipped — moved here from S3 in revision 14, because S3 has no ledger fold and the battery runs `go test`, not the e2e, so the row was unkillable there), `client-ledger-write-skipped` (a served call with a session id in its environment writes no record), `client-ledger-records-requested-not-resolved-scope` (the record names the flag as typed instead of the scope the call resolved and touched), `client-ledger-write-visible-in-output` (a ledger write error reaches stderr or the exit code).
 
 **Clause ↔ row ledger.** (a) cas · (b) none — its sabotage is in the AGENT's redaction call path,
 which `PKGS` does not cover; it is measured by the e2e and the corpus · (c) both re-check rows · (d)
 section · (e) viewer scopes · (f) ignores reads · (g) empty set · (h) none — guarded in
 `cmd/cairn-capture`, not in `PKGS`; its Go-side control is S2's routing test · (i) default on · (j)
-read ignores toggle · (k) output without predicate · (l) delete keeps outputs · (n) pod ignores ledger · (m) withdraw keeps
-directory.
+read ignores toggle · (k) output without predicate · (l) delete keeps outputs · (m) withdraw keeps
+directory · (n) pod ignores ledger (S11).
 
 ### Test plan per slice (negative controls named)
 
@@ -1497,9 +1529,18 @@ created (control: the mutant `client-ledger-write-skipped` writes nothing WITH a
 ledger directory read-only: stdout, stderr and the exit code are byte-identical to a run with no
 session id (mutant `client-ledger-write-visible-in-output`). Parity: the new row runs both clients
 on one cache root with one session id and compares their ledger files (timestamps normalised) —
-red if the Python oracle records a different scope; the existing rows, run with no session id,
-are unchanged. `OPENCODE_SESSION_ID`: S0 first MEASURES whether opencode sets it for tool commands
-and whether it names the child or the root; S11 then pins the measured behaviour. e2e clause (n).
+red if the Python oracle records a different scope; the existing rows are unchanged ONCE
+`env_pin` clears the session-id variables (control: with `CLAUDE_CODE_SESSION_ID` and a sentinel
+`XDG_STATE_HOME` exported in the harness's own environment, an existing row writes a ledger file
+into the sentinel directory before the `env_pin` change and none after it). **Content verbs:**
+`transcript skeleton`, `transcript records` and `transcript tool` (against a stubbed `cairn-ui`),
+`doctor` and `routes` each write exactly one `*` record; `sync` writes none (control: a client
+that records only scope-touching verbs writes nothing for `transcript records`). **Pod fold** (a
+Go test in `internal/transcript`): an uploaded `ledger` stream naming only `beta-notes`, for a
+session whose transcript carries no header and no trailer, puts `beta-notes` in `meta.json` and in
+`V` (mutant `transcript-pod-ignores-ledger`). `OPENCODE_SESSION_ID`: S0 first MEASURES whether
+opencode sets it for tool commands and whether it names the child or the root; S11 then pins the
+measured behaviour. e2e clause (n).
 
 ## Audit dispositions (round 0 deletion candidates)
 
