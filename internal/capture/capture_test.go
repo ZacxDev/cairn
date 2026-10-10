@@ -1,7 +1,6 @@
 package capture
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -88,7 +87,8 @@ func fileBytes(t *testing.T, f map[string]string) []byte {
 }
 
 type env struct {
-	root, claude, ledger, spool string
+	root, claude, ledger string
+	sink                *memSink
 }
 
 // materialize writes the Claude Code layout and the ledgers of the sessions `keep` admits.
@@ -96,7 +96,7 @@ func materialize(t *testing.T, w world, keep ...string) env {
 	t.Helper()
 	root := t.TempDir()
 	e := env{root: root, claude: filepath.Join(root, "projects"), ledger: filepath.Join(root, "ledger"),
-		spool: filepath.Join(root, "spool")}
+		sink: newMemSink()}
 	ids := map[string]bool{}
 	for _, k := range keep {
 		ids[w.Sessions[k].ID] = true
@@ -176,7 +176,7 @@ func newAgent(t *testing.T, e env, routing client.Routing, runner OpencodeRunner
 		t.Fatal(err)
 	}
 	a := &Agent{ClaudeRoot: e.claude, Runner: runner, LedgerDir: e.ledger, Routing: routing, Redactor: r,
-		Sink: FileSpool{Dir: e.spool}, State: &State{Schema: 1, Sessions: map[string]*SessionState{}}, Log: log}
+		Sink: e.sink, State: &State{Schema: 1, Sessions: map[string]*SessionState{}}, Log: log}
 	return a
 }
 
@@ -189,29 +189,60 @@ func mustRun(t *testing.T, a *Agent) Summary {
 	return sum
 }
 
-// spooled reads one spool stream file: its records, in order.
+// memSink is the in-memory Sink the agent is tested through (S2 ships no sink of its own).
+type memSink struct {
+	records   map[string][]Record // instance/root/stream
+	blobs     map[string][]byte   // instance/root/name
+	withdrawn map[string][]string // instance → roots
+	failRoot  string              // a root whose writes fail, to test isolation
+}
+
+func newMemSink() *memSink {
+	return &memSink{records: map[string][]Record{}, blobs: map[string][]byte{}, withdrawn: map[string][]string{}}
+}
+
+func (s *memSink) Records(instance, root, stream string, recs []Record) error {
+	if root == s.failRoot {
+		return fmt.Errorf("the sink refused %s", root)
+	}
+	k := instance + "/" + root + "/" + stream
+	s.records[k] = append(s.records[k], recs...)
+	return nil
+}
+
+func (s *memSink) Blob(instance, root, name string, data []byte) error {
+	if root == s.failRoot {
+		return fmt.Errorf("the sink refused %s", root)
+	}
+	s.blobs[instance+"/"+root+"/"+name] = append([]byte(nil), data...)
+	return nil
+}
+
+func (s *memSink) Withdraw(instance, root string) error {
+	s.withdrawn[instance] = append(s.withdrawn[instance], root)
+	return nil
+}
+
+// has answers whether anything of root reached instance.
+func (s *memSink) has(instance, root string) bool {
+	p := instance + "/" + root + "/"
+	for k := range s.records {
+		if strings.HasPrefix(k, p) {
+			return true
+		}
+	}
+	for k := range s.blobs {
+		if strings.HasPrefix(k, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// spooled returns one stream's records, in order.
 func spooled(t *testing.T, e env, instance, root, stream string) []Record {
 	t.Helper()
-	p := filepath.Join(e.spool, instance, root, "stream-"+strings.ReplaceAll(stream, ":", "_")+".jsonl")
-	f, err := os.Open(p)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	var out []Record
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<20), 1<<24)
-	for sc.Scan() {
-		var r Record
-		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
-			t.Fatal(err)
-		}
-		out = append(out, r)
-	}
-	return out
+	return e.sink.records[instance+"/"+root+"/"+stream]
 }
 
 func lineCount(b []byte) int { return bytes.Count(b, []byte("\n")) }
@@ -320,13 +351,14 @@ func TestEveryByteShips(t *testing.T) {
 			checked++
 		default:
 			name := strings.SplitN(rel, rich.ID+"/", 2)[1]
-			got, err := os.ReadFile(filepath.Join(e.spool, "personal", rich.ID, "blobs", filepath.FromSlash(name)))
-			if err != nil {
+			got, ok := e.sink.blobs["personal/"+rich.ID+"/"+name]
+			if !ok {
+				err := "missing"
 				t.Errorf("blob %s was not shipped: %v", name, err)
 				continue
 			}
 			if !bytes.Equal(got, data) {
-				t.Errorf("blob %s (text=%v) is not byte-identical to its source", name, redact.IsText(data))
+				t.Errorf("blob %s (text=%v) is not byte-identical to its source", name, !redact.IsBinary(data))
 			}
 			checked++
 		}
@@ -334,9 +366,9 @@ func TestEveryByteShips(t *testing.T) {
 	if checked < 10 {
 		t.Fatalf("only %d fixture files were checked — the instrument read too little", checked)
 	}
-	got, err := os.ReadFile(filepath.Join(e.spool, "personal", rich.ID, "blobs", "tool-results", "toolu_planted.txt"))
-	if err != nil {
-		t.Fatal(err)
+	got, ok := e.sink.blobs["personal/"+rich.ID+"/tool-results/toolu_planted.txt"]
+	if !ok {
+		t.Fatal("the planted blob was not shipped")
 	}
 	want := strings.Replace(planted, val, "[redacted:dotenv:"+a.Redactor.Tag(val)+"]", 1)
 	if string(got) != want {
@@ -420,7 +452,7 @@ func TestATruncatedExportShipsNothing(t *testing.T) {
 	if sum.Refused != 1 || sum.Records != 0 || !strings.Contains(log.String(), "not one complete JSON document") {
 		t.Fatalf("a truncated export was not refused: %+v %q", sum, log.String())
 	}
-	if _, err := os.Stat(filepath.Join(e.spool, "personal", root)); !os.IsNotExist(err) {
+	if e.sink.has("personal", root) {
 		t.Fatal("a truncated export left a spool directory")
 	}
 }
@@ -473,7 +505,7 @@ func TestRoutingHonoursReads(t *testing.T) {
 		id := w.Sessions[c.session].ID
 		var shippedTo []string
 		for _, inst := range []string{"personal", "client"} {
-			if _, err := os.Stat(filepath.Join(e.spool, inst, id)); err == nil {
+			if e.sink.has(inst, id) {
 				shippedTo = append(shippedTo, inst)
 			}
 		}
@@ -526,8 +558,7 @@ func TestAMoveWithdrawsAndReshipsFromOffsetZero(t *testing.T) {
 	}
 	appendTo(t, path, betaRead)
 	mustRun(t, a)
-	wd, _ := os.ReadFile(filepath.Join(e.spool, "personal", "withdrawals.jsonl"))
-	if !strings.Contains(string(wd), s.ID) {
+	if !slices.Contains(e.sink.withdrawn["personal"], s.ID) {
 		t.Fatal("no withdrawal was queued for the personal instance")
 	}
 	client := spooled(t, e, "client", s.ID, "main")
@@ -563,11 +594,10 @@ func TestAReadOnAnotherInstanceWithdrawsTheShippedPrefix(t *testing.T) {
 	if got := len(spooled(t, e, "personal", s.ID, "main")); got != shipped {
 		t.Fatalf("the record that READ beta-notes reached the personal instance (%d → %d)", shipped, got)
 	}
-	if _, err := os.Stat(filepath.Join(e.spool, "client", s.ID)); !os.IsNotExist(err) {
+	if e.sink.has("client", s.ID) {
 		t.Fatal("a held session was queued for the client instance")
 	}
-	wd, _ := os.ReadFile(filepath.Join(e.spool, "personal", "withdrawals.jsonl"))
-	if !strings.Contains(string(wd), s.ID) {
+	if !slices.Contains(e.sink.withdrawn["personal"], s.ID) {
 		t.Fatal("no withdrawal was queued for the personal instance")
 	}
 }
@@ -612,7 +642,7 @@ func TestADryRunPrintsNoStringValue(t *testing.T) {
 				out = append(out, string(b))
 			}
 			w.Claude.Files[rel] = map[string]string{"utf8": strings.Join(out, "\n") + "\n"}
-		case redact.IsText(data):
+		case !redact.IsBinary(data):
 			w.Claude.Files[rel] = map[string]string{"utf8": string(data) + sentinel + "\n"}
 		}
 	}

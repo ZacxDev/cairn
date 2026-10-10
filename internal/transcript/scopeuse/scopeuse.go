@@ -34,6 +34,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"regexp"
 	"sort"
 	"strings"
@@ -99,9 +100,49 @@ func NewDeriver() *Deriver {
 }
 
 // Content scans one string of any record for rendered read headers.
-func (d *Deriver) Content(s string) {
+//
+// A string that is ITSELF a JSON document (a tool printing a JSON response that embeds a rendered
+// recall) is also decoded and its strings scanned: in the raw text the header's newline is the two
+// characters `\n`, so the `scope=` value runs into the next field and parses as no scope at all —
+// fail-closed `*`, but `*` where the real scope is readable (review round 1). So a string that
+// decodes is scanned through EVERY string and EVERY key it holds instead of as raw text — nothing
+// it carries goes unscanned — and one that does not decode is scanned raw.
+func (d *Deriver) Content(s string) { d.content(s, 0) }
+
+func (d *Deriver) content(s string, depth int) {
+	if depth < 3 && strings.Contains(s, HeaderMarker) {
+		t := strings.TrimSpace(s)
+		if len(t) >= 2 && (t[0] == '{' || t[0] == '[') {
+			if strs, ok := jsonStrings(t); ok {
+				for _, inner := range strs {
+					d.content(inner, depth+1)
+				}
+				return
+			}
+		}
+	}
 	for _, sc := range HeaderScopes(s) {
 		d.headers[sc] = true
+	}
+}
+
+// jsonStrings returns every string TOKEN of one JSON document — every key and every value,
+// DUPLICATE members included (a map decode keeps only the last of two equal keys, and a header in
+// the first would be lost) — or false when t is not exactly one valid document.
+func jsonStrings(t string) ([]string, bool) {
+	if !json.Valid([]byte(t)) {
+		return nil, false
+	}
+	dec := json.NewDecoder(strings.NewReader(t))
+	var out []string
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return out, err == io.EOF
+		}
+		if s, ok := tok.(string); ok {
+			out = append(out, s)
+		}
 	}
 }
 

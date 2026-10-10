@@ -205,7 +205,8 @@ Drop the work, or the named half, if any of these holds:
      `SUMMARY e2e-self-test: sabotaged=14 caught=14`** (one sabotage per clause below), and the
      job's PASS floor set to the count measured when the script lands (the `tests/presence/e2e.sh`
      pattern, `.github/workflows/ci.yml:1045-1055`).
-  3. **`cairn-capture --self-test` exits 0** in the `go` job and prints
+  3. **`cairn-capture --self-test` exits 0** in the `nix` job (the built binary, `checks.cairn-capture-self-test`; the
+     `go` job runs the same self-test as a Go test) and prints
      **`SUMMARY redaction: planted=P caught=P clean-damaged=0`** over the realistic synthetic corpus
      (decision 6), where P is the planted count declared by the corpus generator (asserted equal,
      not read off the run).
@@ -627,7 +628,7 @@ script that prints only counts.
 | depspolicy | `LinkedBinaryRoots` `depspolicy.go:443-446`; `DeclaredNestedModules` `:256-262` | `cmd/cairn-capture` joins the ban (S2); the plugins nested module (S9) |
 | `onlyGo` | `flake.nix:351-467` | any embedded non-Go file or named Go-test fixture |
 | `goVendorHash` | `flake.nix:505` | only if a module is added — none is planned |
-| flake packages and checks | `flake.nix` | `packages.cairn-capture` (S2) with a `-verbs`-style ledger check |
+| flake packages and checks | `flake.nix` | `packages.cairn-capture` (S2) with `checks.cairn-capture-self-test` (the built binary's self-test; the `-verbs` ledger check was dropped on review, D2) |
 | e2e PASS floors | `ci.yml:1015-1025` (arcs), `:1045-1055` (presence) | `tests/plugins/e2e.sh` adds its own |
 | `AGENTS.md` weight | `tests/test_agent_instructions_weight.py:133, 154` | **25 bytes of headroom today** (31,308 + 267 against a 31,600 working budget) |
 
@@ -848,14 +849,21 @@ script that prints only counts.
      only the current project's roots); children from the roots' `task` parts. It never opens the
      SQLite file, so the `account`/`credential` tables are structurally out of reach. *Revision 1
      excluded persisted binaries; revisions 3–16 withheld them pending Q2; O12 ships them.*
-   - *State:* a local 0600 watermark file per instance — `{stream → offset | part-version set}` —
-     advanced only after the pod acknowledges.
+   - *State:* a local 0600 state file — per root session `{instance holding the prefix, held,
+     V, the derivation's evidence, stream → offset | unit-version set, blob → size, mtime, digest}`
+     — each watermark advanced only after its write is acknowledged. *One file rather than one per
+     instance (S2): a session's watermarks move with it, and are reset on a move anyway.* A blob
+     whose size and modification time are unchanged is not re-read; a Claude Code stream resumes
+     only when its head fingerprint matches AND the byte before the watermark is still a newline.
    - *Cadence:* a user timer (`OnStartupSec` + `OnUnitActiveSec = 60s` + `AccuracySec = 1s`, the
      presence plan's measured lesson that `OnUnitActiveSec` alone never fires). Idle sessions cost
      one `stat` per file.
    - *Modes:* `--dry-run` prints per-session record and redaction COUNTS and the computed `V`, never
-     content; `--self-test` runs the redaction corpus (closing condition part 3); `-verbs` prints its
-     own ledger for a nix check.
+     content, and writes nothing (its tag key is ephemeral); `--self-test` runs the redaction corpus
+     (closing condition part 3). *S2's first build also had a spool-writing run mode and a `-verbs`
+     mode ledger; both were removed on review (D1, D2) — the run arrives with its upload in S3.*
+     One session's failure (a child export that fails, a write refused) is refused and logged and
+     the run continues.
 
 6. **Redaction: a rule table applied on the host, RE-CHECKED (refusing) on the pod, measured on a
    realistic synthetic corpus.**
@@ -1104,6 +1112,8 @@ script that prints only counts.
       wrote `alpha-notes` (personal) and read `beta-notes` (client) in its first turn → held, 0
       requests to either;
     - `V` holds `*` or an unroutable name with more than one instance configured → held;
+    - a scope the routing table EXPLICITLY sends to an alias this host has no config for → held, at
+      any instance count: the table says the scope lives elsewhere (S2 review round 1);
     - `V` empty (O10) → the DEFAULT instance, where decision 4 makes it owner-only.
     - 🔴 **Capture is incremental (60 s), so a prefix may ALREADY be on an instance when the rule
       changes its answer.** When a run computes an answer other than the instance holding the
@@ -1300,7 +1310,7 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 |---|---|---|---|
 | **S0** | **Fixtures and shape ledgers.** `tests/transcripts/gen.py` emits synthetic sessions in BOTH formats from the measured key sets (R1–R3): main stream, two subagents, an opencode child, a compaction boundary, a `pr-link`, persisted tool output, mutated opencode parts, bookkeeping records and duplicate fields, a `user` record carrying a large `tool_result` block, an inline image block AND its `toolUseResult.file.base64` duplicate, an opencode `tool` part with a `data:` URL in `state.attachments[].url`, a binary (PDF and JPEG), a UTF-8 text, a UTF-16 text and a JSON text tool-result blob, thinking `signature` values and 64-hex digests (which must survive untouched), and every read path of R7 (a rendered recall in a tool result; one in a hook attachment with no command line; a store-wide search rendered `scope=(all scopes)` in a hook attachment; a bare header-less `ls-entries`; an explicit `--scope` read; a `--repo` read; a `cd … && cairn recall` chain). A shape test pins the generator's record types, block types and field names against `internal/transcript`'s classification table. The generator also emits a synthetic read-ledger file per session (decision 3a), including an EMPTY one beside cairn-naming inputs (F1). And S0 MEASURES, on a host with opencode, whether `OPENCODE_SESSION_ID` reaches tool commands and which session id it carries, recording the answer for S11 — **done: decision 3a and `internal/transcript/README.md`.** The generator writes ONE file, `internal/transcript/testdata/synthetic_world.json`, which Go tests materialise, so `onlyGo` needs one row; the table is `internal/transcript/classify.go`. | `tests/`; `onlyGo` if Go tests read the fixtures; README. | Test-only. |
 | **S1** | **`internal/redact`** — its own rule table (decision 6), decoded-string traversal, text-blob redaction and the text/binary sniff (decision 6a), keyed tags, structural Secret rule, denylist loader; the corpus generator and the `planted/caught/clean-damaged` report; the behavioural containment test against leakscan's controls. | new package; `ok` floor; README. | Library only. |
-| **S2** | **`cmd/cairn-capture`** and **`internal/transcript/scopeuse`** — readers (JSONL by offset, subagents, blobs — text redacted, binary byte-identical; `opencode export` to a file, diffing by part digest), `V` derivation (the `*` mappings of decision 3), watermark state, routing (decision 16), `--dry-run`, `--self-test`, `-verbs`. No upload yet. | `cmd/cairn-capture`; new packages (`internal/capture` holds the agent, so its tests sit in a package); the four `scopeuse-*` rows join `control_mutants.py` with a per-row `pkgs` override ADDING `./internal/transcript/scopeuse/` (+ pinned count) — *as built: not `PKGS` itself, because the battery's own rule is that a killer outside the control/identity/server seam gets a per-row addition, and widening `PKGS` would re-scope every existing row and move three pinned enumerations*; `depspolicy.LinkedBinaryRoots` + its test; `flake.nix` `packages.cairn-capture` + `checks.cairn-capture-declares-its-modes` (modes and the self-test, read out of the built binary); `ok` floor; closing-condition part 3 step in `ci.yml`. | Inert: it sends nothing. |
+| **S2** | **`cmd/cairn-capture`** and **`internal/transcript/scopeuse`** — readers (JSONL by offset, subagents, blobs — text redacted, binary byte-identical; `opencode export` to a file, diffing by part digest), `V` derivation (the `*` mappings of decision 3), watermark state, routing (decision 16), `--dry-run`, `--self-test`. No upload, and no run mode, yet (D1). | `cmd/cairn-capture`; new packages (`internal/capture` holds the agent, so its tests sit in a package); the four `scopeuse-*` rows join `control_mutants.py` with a per-row `pkgs` override ADDING `./internal/transcript/scopeuse/` (+ pinned count) — *as built: not `PKGS` itself, because the battery's own rule is that a killer outside the control/identity/server seam gets a per-row addition, and widening `PKGS` would re-scope every existing row and move three pinned enumerations*; `depspolicy.LinkedBinaryRoots` + its test; `flake.nix` `packages.cairn-capture` + `checks.cairn-capture-self-test` (the built binary's self-test; CI's `nix` job builds both); `ok` floor. Review round 1 added four more battery rows (`scopeuse-restore-ignored`, `capture-v-not-a-union`, `capture-child-ledger-ignored`, `capture-unreadable-ledger-ignored`). | Inert: it sends nothing. |
 | **S3** | **Transcript store + capture API.** `internal/transcript` (directory layout, CAS append, frames, ownership, quota, retention sweeper, deletion, pod-side `V` re-derivation), worker listener + ledger, `capture` token kind and `cairn-ui -issue-worker-token capture`, refusing pod re-check. Agent gains upload. `tests/plugins/e2e.sh` created with clauses (a), (b), (c), (h). | new package → `ok` floor, `control_mutants.py` `PKGS` (+ pinned count through `ci.yml` and `internal/control/README.md`); `cmd/cairn-ui` flags (`-worker-addr`, `-worker-tokens`, `-transcript-dir`, `-transcript-retention`, `-transcript-quota`) and tests; `ci.yml` e2e step. | Inert unless `-worker-addr` AND `-transcript-dir` are set. |
 | **S4** | **Visibility + the session page shows content (O3).** `transcript.Visible` (decision 4) with `V` (decision 3); the collapsed transcript section on `/session` (decision 18); the owner arm finding O10 sessions; `GET /session/transcript` raw-record view. e2e clauses (d), (e), (f), (g — the visibility half). Benchmark of the whole-store `W_trailer` walk. | UI rows → hand ledger, `contentAuthority`, uiaudit targets + a synthetic transcript in the uiaudit world; mutant rows. | Read-only over S3; renders nothing when no transcript exists. |
 | **S5** | **Plugin registry, toggles, plugin API.** `internal/plugins` (manifest validation, closed capability and output-type vocabularies, plugin token kind, the narrowing-only toggle fold + `-plugin-journal`, the stateless pending query); `/plugins` page + toggle POSTs on scope, arc and session pages. e2e clauses (i), (j). | new package → `ok` floor, `PKGS`; UI rows; `cmd/cairn-ui` flags (`-plugin-registry`, `-plugin-journal`); mutant rows; README. | Inert with no registry; every toggle OFF by construction. |

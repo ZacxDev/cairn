@@ -108,7 +108,7 @@ func (a *Agent) dryClaude(w io.Writer, cs claudeSession) {
 			refused++
 			continue
 		}
-		if redact.IsText(data) {
+		if !redact.IsBinary(data) {
 			d.Content(string(data))
 		}
 		_, hs := a.Redactor.Blob(name, data)
@@ -146,7 +146,7 @@ func (a *Agent) dryOpencode(w io.Writer, root string) {
 			units++
 			if u.Part != nil {
 				d.OpencodePart(u.Part)
-				for _, c := range transcript.ClassifyOpencodePart(u.Role, u.Part) {
+				for _, c := range transcript.ClassifyOpencodePart(u.Role, id != root, u.Part) {
 					classes[string(c.Class)]++
 				}
 			} else {

@@ -113,6 +113,15 @@ func readNewLines(path string, st *StreamState, limit int64) ([][]byte, int64, s
 			return nil, 0, "", 0, ErrRewritten
 		}
 	}
+	if st.Offset > 0 {
+		// The byte BEFORE the watermark must still be the newline that ended the last shipped
+		// line. The head fingerprint covers only the first 4 KiB; a rewrite past it that moved a
+		// line boundary would otherwise resume mid-line into different bytes (review round 1).
+		var nl [1]byte
+		if _, err := f.ReadAt(nl[:], st.Offset-1); err != nil || nl[0] != '\n' {
+			return nil, 0, "", 0, ErrRewritten
+		}
+	}
 	if limit >= 0 {
 		size = limit
 	}

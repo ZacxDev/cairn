@@ -664,7 +664,7 @@
       # NOT A `cairn` VERB, because it reads every session transcript on its host and the reader
       # installed everywhere should not. It is under the import ban (`internal/depspolicy`'s
       # `LinkedBinaryRoots`), and its check phase runs the whole module's tests like the other Go
-      # derivations. ⚠ IT UPLOADS NOTHING YET: S2 writes a local spool, S3 adds the upload.
+      # derivations. ⚠ IT SENDS AND STORES NOTHING YET: S2 offers `--dry-run` and `--self-test` only; S3 adds the upload.
       # ⚠ NO `opencode` ON ITS PATH, deliberately: it runs `opencode export` by bare name, and the
       # answer has to be the opencode the host's sessions were written by — a pinned copy here
       # could read a different database version than the one in use.
@@ -1548,6 +1548,30 @@
             } > $out
           '';
 
+        # 🔴 THE CAPTURE AGENT'S REDACTION SELF-TEST, RUN BY THE BUILT BINARY — closing-condition part 3.
+        # This is the stripped binary a host installs, under the pinned toolchain; CI's `nix` job
+        # builds it by name. The self-test plants its secrets at RUN time and needs no host key, no
+        # store and no network, which is why the sandbox can run it at all; it says nothing about a
+        # real host's transcripts. It reads the CONTENT, not the exit code alone: the last line must
+        # be the SUMMARY pair with caught equal to planted and clean-damaged 0. (A `-verbs` mode
+        # ledger stood beside it in S2's first build and was removed on review, D2: no Python side
+        # owns that contract, so printing it and diffing a third hand list measured nothing new.)
+        cairn-capture-self-test = pkgs.runCommand "cairn-capture-self-test"
+          { nativeBuildInputs = [ (mkGoCapture pkgs) ]; } ''
+          rc=0
+          cairn-capture --self-test > selftest.txt || rc=$?
+          cat selftest.txt
+          if [ "$rc" -ne 0 ]; then
+            echo "FAIL: cairn-capture --self-test exited $rc (2 = the instrument could not vouch)."
+            exit 1
+          fi
+          if ! tail -n 1 selftest.txt | grep -Eq '^SUMMARY redaction: planted=([0-9]+) caught=\1 clean-damaged=0$'; then
+            echo "FAIL: the self-test's last line is not the SUMMARY pair with caught=planted and clean-damaged=0."
+            exit 1
+          fi
+          touch $out
+        '';
+
         # 🔴 THE GO CLIENT'S OWN LEDGER, READ OUT OF THE RUNNING BINARY — the one claim a
         # compile cannot make, and the one the PYTHON-side gates are structurally blind to.
         # `capability_ledger.cli_verbs_from_parser` asks the PYTHON argparse parser what
@@ -1565,45 +1589,6 @@
         # cache root, so it exercises the LEDGERS and nothing about reading or writing. The
         # parity harness is what measures behaviour, and it needs a running pod that a nix
         # sandbox is the wrong place for.
-        # 🔴 THE CAPTURE AGENT'S MODE LEDGER AND ITS SELF-TEST, READ OUT OF THE BUILT BINARY. The
-        # `go` job runs the same two through `go test`; this is the second tier — the stripped
-        # binary a host installs, under the pinned toolchain — so a green in one tier cannot stand
-        # for the other. ⚠ The self-test plants its secrets at RUN time and needs no host key, no
-        # store and no network, which is why the sandbox can run it at all; it says nothing about
-        # a real host's transcripts.
-        cairn-capture-declares-its-modes = pkgs.runCommand "cairn-capture-declares-its-modes"
-          { nativeBuildInputs = [ (mkGoCapture pkgs) ]; } ''
-          set -o pipefail
-          cairn-capture -verbs > modes.txt
-          if ! grep -q . modes.txt; then
-            echo "FAIL: the binary printed NO mode, so a ledger built from this output would agree with anything."
-            exit 1
-          fi
-          cat > want-modes.txt <<'EOF'
-          dry-run reads
-          run writes-spool
-          self-test reads
-          verbs reads
-          EOF
-          sed -i 's/^ *//; /^$/d' want-modes.txt
-          if ! diff -u want-modes.txt modes.txt; then
-            echo "FAIL: cairn-capture -verbs disagrees with the declared mode ledger."
-            exit 1
-          fi
-          rc=0
-          cairn-capture --self-test > selftest.txt || rc=$?
-          cat selftest.txt
-          if [ "$rc" -ne 0 ]; then
-            echo "FAIL: cairn-capture --self-test exited $rc (2 = the instrument could not vouch)."
-            exit 1
-          fi
-          if ! tail -n 1 selftest.txt | grep -Eq '^SUMMARY redaction: planted=([0-9]+) caught=\1 clean-damaged=0$'; then
-            echo "FAIL: the self-test's last line is not the SUMMARY pair with caught=planted and clean-damaged=0."
-            exit 1
-          fi
-          touch $out
-        '';
-
         go-client-declares-its-verbs = pkgs.runCommand "cairn-go-client-declares-its-verbs"
           { nativeBuildInputs = [ (mkGoClient pkgs) ]; } ''
           set -o pipefail

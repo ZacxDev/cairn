@@ -2,9 +2,9 @@
 // Code JSONL by byte offset and opencode through `opencode export`, derives each session's read
 // scopes, decides where the session may go, redacts, and hands the redacted bytes to a [Sink].
 //
-// 🔴 IT UPLOADS NOTHING (S2 of `claudedocs/plan-cairn-plugins.md`). The only [Sink] here writes a
-// local spool directory; S3 adds the upload. A spool write is this slice's "acknowledgement": the
-// watermark advances only after it succeeds.
+// 🔴 IT UPLOADS NOTHING (S2 of `claudedocs/plan-cairn-plugins.md`). This slice ships no [Sink]: the
+// agent is exercised through an in-memory one in its tests, and S3 adds the upload. A Sink write
+// is the "acknowledgement": every watermark advances only after its write succeeds.
 //
 // 🔴 STDLIB ONLY, AND MEASURED SO: `cmd/cairn-capture` is in `internal/depspolicy`'s
 // `LinkedBinaryRoots`, so its whole import closure — this package included — is under the ban.
@@ -46,8 +46,17 @@ type SessionState struct {
 	V          []string                `json:"v,omitempty"`
 	Evidence   scopeuse.Evidence       `json:"evidence"`
 	Streams    map[string]*StreamState `json:"streams,omitempty"`
-	Blobs      map[string]string       `json:"blobs,omitempty"`
-	Children   []string                `json:"children,omitempty"`
+	Blobs      map[string]BlobState    `json:"blobs,omitempty"`
+}
+
+// BlobState is what was shipped of one blob. Size and modification time are compared FIRST, so
+// an unchanged blob is never re-read: hashing every persisted tool result on every 60-second run
+// cost ~311 MB of reads per run on the measured host (review round 1); decision 5's "idle
+// sessions cost one stat per file" is what this makes true.
+type BlobState struct {
+	Size    int64  `json:"size"`
+	MtimeNs int64  `json:"mtime_ns"`
+	Digest  string `json:"digest"`
 }
 
 // State is the agent's whole local state: one 0600 file.
@@ -123,7 +132,7 @@ func (s *State) session(root, runtime string) *SessionState {
 		ss.Streams = map[string]*StreamState{}
 	}
 	if ss.Blobs == nil {
-		ss.Blobs = map[string]string{}
+		ss.Blobs = map[string]BlobState{}
 	}
 	return ss
 }
@@ -147,5 +156,5 @@ func (ss *SessionState) reset() {
 		st.Offset, st.Fingerprint, st.FPLen = 0, "", 0
 		st.Units = map[string]string{}
 	}
-	ss.Blobs = map[string]string{}
+	ss.Blobs = map[string]BlobState{}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,17 +11,6 @@ import (
 
 func envOf(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 
-func TestTheModeLedgerIsWhatVerbsPrints(t *testing.T) {
-	var out bytes.Buffer
-	if code := run([]string{"-verbs"}, &out, &bytes.Buffer{}, envOf(nil)); code != exitOK {
-		t.Fatalf("-verbs exited %d", code)
-	}
-	want := "dry-run reads\nrun writes-spool\nself-test reads\nverbs reads\n"
-	if out.String() != want {
-		t.Fatalf("-verbs printed\n%s\nwant\n%s", out.String(), want)
-	}
-}
-
 // TestTheSelfTestIsClosingConditionPart3: exit 0 and the SUMMARY pair as its last line, at the
 // default seed and one other.
 func TestTheSelfTestIsClosingConditionPart3(t *testing.T) {
@@ -28,14 +18,14 @@ func TestTheSelfTestIsClosingConditionPart3(t *testing.T) {
 		var out bytes.Buffer
 		code := run(args, &out, &bytes.Buffer{}, envOf(nil))
 		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-		if code != exitOK || lines[len(lines)-1] != "SUMMARY redaction: planted=26 caught=26 clean-damaged=0" {
+		if code != exitOK || lines[len(lines)-1] != "SUMMARY redaction: planted=49 caught=49 clean-damaged=0" {
 			t.Fatalf("%v: exit %d, output:\n%s", args, code, out.String())
 		}
 	}
 }
 
 func TestUsageRefusals(t *testing.T) {
-	for _, args := range [][]string{{}, {"-state", t.TempDir()}, {"-no-such-flag"}, {"-state", t.TempDir(), "-spool", t.TempDir(), "extra"}} {
+	for _, args := range [][]string{{}, {"-no-such-flag"}, {"--dry-run", "extra"}, {"-verbs"}} {
 		var errb bytes.Buffer
 		if code := run(args, &bytes.Buffer{}, &errb, envOf(map[string]string{"HOME": t.TempDir()})); code != exitUsage {
 			t.Errorf("%v: exit %d, want %d (%s)", args, code, exitUsage, errb.String())
@@ -43,9 +33,21 @@ func TestUsageRefusals(t *testing.T) {
 	}
 }
 
-// TestARunWritesTheSpoolAndNothingElse drives the binary's real wiring end to end over one
-// synthetic session: host key created 0600, state saved, the spool written — and no network.
-func TestARunWritesTheSpoolAndNothingElse(t *testing.T) {
+func listFiles(t *testing.T, root string) []string {
+	t.Helper()
+	var out []string
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			out = append(out, p)
+		}
+		return nil
+	})
+	return out
+}
+
+// TestADryRunWritesNothing: one synthetic session, the binary's real wiring — and not one file
+// created anywhere under HOME, the host key included (review round 1).
+func TestADryRunWritesNothing(t *testing.T) {
 	home := t.TempDir()
 	proj := filepath.Join(home, "projects", "-work-alpha")
 	if err := os.MkdirAll(proj, 0o700); err != nil {
@@ -55,24 +57,14 @@ func TestARunWritesTheSpoolAndNothingElse(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(proj, "s-0001.jsonl"), []byte(line), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	state, spool := filepath.Join(home, "state"), filepath.Join(home, "spool")
-	var errb bytes.Buffer
-	code := run([]string{"-state", state, "-spool", spool, "-claude-root", filepath.Join(home, "projects")},
-		&bytes.Buffer{}, &errb, envOf(map[string]string{"HOME": home, "XDG_STATE_HOME": filepath.Join(home, "xdg")}))
-	if code != exitOK {
-		t.Fatalf("exit %d: %s", code, errb.String())
+	before := listFiles(t, home)
+	var out, errb bytes.Buffer
+	code := run([]string{"--dry-run", "-claude-root", filepath.Join(home, "projects")}, &out, &errb,
+		envOf(map[string]string{"HOME": home, "XDG_STATE_HOME": filepath.Join(home, "xdg")}))
+	if code != exitOK || !strings.HasPrefix(out.String(), "claude s-0001 ") {
+		t.Fatalf("exit %d, out %q, err %q", code, out.String(), errb.String())
 	}
-	got, err := os.ReadFile(filepath.Join(spool, "personal", "s-0001", "stream-main.jsonl"))
-	if err != nil || !strings.Contains(string(got), `"hello"`) {
-		t.Fatalf("the spool does not hold the session: %v %q", err, got)
-	}
-	if st, err := os.Stat(filepath.Join(state, "host.key")); err != nil || st.Mode().Perm() != 0o600 {
-		t.Fatalf("host key: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(state, "state.json")); err != nil {
-		t.Fatalf("state not saved: %v", err)
-	}
-	if !strings.Contains(errb.String(), "sessions=1 shipped=1") {
-		t.Fatalf("summary line: %q", errb.String())
+	if after := listFiles(t, home); len(after) != len(before) {
+		t.Fatalf("--dry-run created files: %v", after)
 	}
 }

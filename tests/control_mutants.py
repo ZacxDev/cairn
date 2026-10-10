@@ -4079,6 +4079,50 @@ MUTANTS: tuple[Mutant, ...] = (
         "dropping F2 because \"the ledger covers reads now\" is the plausible simplification, and it "
         "makes every cache read invisible.",
     ),
+    # S2 review round 1 (F3): four guards that each SURVIVED a mutation with no test reaching them.
+    Mutant(
+        name="scopeuse-restore-ignored",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="func (d *Deriver) Restore(e Evidence) {\n",
+        new="func (d *Deriver) Restore(e Evidence) {\n\tif true {\n\t\treturn\n\t}\n",
+        killer="TestRestoreFoldsPersistedEvidence",
+        why="a later run feeds only NEW records; forgetting the earlier runs' evidence reads as "
+        "harmless because V is also persisted — and silently drops F1's 'names the program' flag "
+        "the moment the ledger changes.",
+    ),
+    Mutant(
+        name="capture-v-not-a-union",
+        pkgs=PKGS + ("./internal/capture/",),
+        path="internal/capture/agent.go",
+        old="\tss.V = union(ss.V, res.V)\n",
+        new="\tss.V = res.V\n",
+        occurrences=2,
+        killer="TestVOnlyGrowsWhenTheLedgerShrinks",
+        why="'V is what this run derived' is the natural assignment; anything on the host can delete "
+        "a ledger, and a non-union V then SHRINKS and moves the session to an instance it already "
+        "read past.",
+    ),
+    Mutant(
+        name="capture-child-ledger-ignored",
+        pkgs=PKGS + ("./internal/capture/",),
+        path="internal/capture/agent.go",
+        old="\tfor _, c := range children {\n\t\ta.foldLedger(d, c)\n\t}\n",
+        new="\tfor range children {\n\t}\n",
+        killer="TestAChildSessionsLedgerCounts",
+        why="the ledger is keyed by session id and a child is its own id in opencode; folding only "
+        "the root's file reads as complete and loses every read a subagent made.",
+    ),
+    Mutant(
+        name="capture-unreadable-ledger-ignored",
+        pkgs=PKGS + ("./internal/capture/",),
+        path="internal/capture/agent.go",
+        old="\tcase err != nil:\n\t\td.LedgerUnreadable()\n",
+        new="\tcase err != nil:\n",
+        killer="TestAnUnreadableLedgerFailsClosed",
+        why="treating a ledger that cannot be read like one that does not exist is the usual "
+        "error-tolerant reflex, and it turns an unreadable record of reads into 'read nothing'.",
+    ),
 )
 
 

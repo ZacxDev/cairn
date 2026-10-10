@@ -50,32 +50,46 @@ func (a *Agent) Run() (Summary, error) {
 			return sum, err
 		}
 		for _, cs := range sessions {
-			if err := a.runClaude(cs, &sum); err != nil {
-				return sum, err
-			}
+			a.isolate(cs.Root, &sum, func() error { return a.runClaude(cs, &sum) })
 		}
 	}
 	for _, dir := range a.OpencodeDirs {
 		raw, err := a.Runner.List(dir)
-		if err != nil {
-			return sum, err
-		}
-		roots, err := listRoots(raw)
-		if err != nil {
-			return sum, err
-		}
-		for _, root := range roots {
-			if err := a.runOpencode(root, &sum); err != nil {
-				return sum, err
+		if err == nil {
+			var roots []string
+			if roots, err = listRoots(raw); err == nil {
+				for _, root := range roots {
+					a.isolate(root, &sum, func() error { return a.runOpencode(root, &sum) })
+				}
 			}
+		}
+		if err != nil {
+			// One unreadable project directory is refused and logged like one session; the rest
+			// still run.
+			a.logf("refused opencode project %s: %v", dir, err)
+			sum.Refused++
 		}
 	}
 	return sum, nil
 }
 
-// safeID is the session-id grammar a ledger file name may be built from: one path component.
+// isolate runs one session's capture and turns its failure into a logged refusal.
+//
+// 🔴 ONE SESSION'S FAILURE MUST NOT ABORT THE RUN. Returning the first error stopped every later
+// session, on every 60-second run, for as long as the one bad session existed — a child export
+// that fails, a blob a sink refuses (review round 1). The failed session's watermarks did not
+// advance (each advances only after its own write), so the next run retries it.
+func (a *Agent) isolate(root string, sum *Summary, run func() error) {
+	if err := run(); err != nil {
+		a.logf("refused %s: %v", root, err)
+		sum.Refused++
+	}
+}
+
+// safeID is the session-id grammar a ledger file name may be built from: ONE path component,
+// tested as a component — `..` itself is refused, `a..b` is an ordinary name.
 func safeID(id string) bool {
-	return id != "" && id != "." && !strings.ContainsAny(id, `/\`) && !strings.Contains(id, "..")
+	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, `/\`)
 }
 
 func (a *Agent) foldLedger(d *scopeuse.Deriver, id string) {
@@ -206,13 +220,23 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 	}
 	sort.Strings(blobNames)
 	blobData := map[string][]byte{}
+	blobStat := map[string]BlobState{}
 	for _, n := range blobNames {
-		data, err := os.ReadFile(cs.Blobs[n])
+		info, err := os.Stat(cs.Blobs[n])
+		if err != nil {
+			return err
+		}
+		prev, seen := ss.Blobs[n]
+		if seen && prev.Size == info.Size() && prev.MtimeNs == info.ModTime().UnixNano() {
+			continue // unchanged since it shipped: one stat, no read (decision 5)
+		}
+		data, err := readFile(cs.Blobs[n])
 		if err != nil {
 			return err
 		}
 		blobData[n] = data
-		if redact.IsText(data) {
+		blobStat[n] = BlobState{Size: info.Size(), MtimeNs: info.ModTime().UnixNano(), Digest: digest(data)}
+		if !redact.IsBinary(data) {
 			d.Content(string(data))
 		}
 	}
@@ -255,16 +279,30 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 		shippedAny = true
 	}
 	for _, n := range blobNames {
-		data := blobData[n]
-		dg := digest(data)
-		if ss.Blobs[n] == dg {
+		data, read := blobData[n]
+		if !read {
+			if _, shipped := ss.Blobs[n]; shipped {
+				continue // unchanged and already on this instance
+			}
+			// A MOVE reset the blob state: an unchanged blob must re-ship to the new instance.
+			info, err := os.Stat(cs.Blobs[n])
+			if err != nil {
+				return err
+			}
+			if data, err = readFile(cs.Blobs[n]); err != nil {
+				return err
+			}
+			blobStat[n] = BlobState{Size: info.Size(), MtimeNs: info.ModTime().UnixNano(), Digest: digest(data)}
+		}
+		if prev, ok := ss.Blobs[n]; ok && prev.Digest == blobStat[n].Digest {
+			ss.Blobs[n] = blobStat[n] // touched, not changed
 			continue
 		}
 		out, _ := a.Redactor.Blob(n, data)
 		if err := a.Sink.Blob(ss.Instance, cs.Root, n, out); err != nil {
 			return err
 		}
-		ss.Blobs[n] = dg
+		ss.Blobs[n] = blobStat[n]
 		sum.Blobs++
 		shippedAny = true
 	}
@@ -285,12 +323,12 @@ func feedClaudeLine(d *scopeuse.Deriver, line []byte) {
 	d.ClaudeRecord(rec)
 }
 
+// readFile is os.ReadFile, a variable only so a test can COUNT the reads (the stat-first rule).
+var readFile = os.ReadFile
+
 func (a *Agent) redactLine(src string, line []byte) Record {
 	out, _ := a.Redactor.Record(line)
-	if json.Valid(out) {
-		return Record{Src: src, Rec: json.RawMessage(append([]byte(nil), out...))}
-	}
-	return Record{Src: src, Raw: string(out)}
+	return Record{Src: src, Rec: append([]byte(nil), out...)}
 }
 
 type ocStream struct {
@@ -356,7 +394,6 @@ func (a *Agent) runOpencode(root string, sum *Summary) error {
 	res := d.Result()
 	ss.Evidence = d.Evidence()
 	ss.V = union(ss.V, res.V)
-	ss.Children = union(ss.Children, children)
 
 	ship, reset, err := a.route(root, ss, sum)
 	if err != nil || !ship {
