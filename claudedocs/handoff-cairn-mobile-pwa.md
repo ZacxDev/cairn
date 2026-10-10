@@ -25,8 +25,9 @@ decisions O1–O13 paraphrased, slices S0–S6b, the iPhone checklist, closing-c
   `86b5b93`, **S4 #220 `f3623d4`** (merged on a fully green run at `480fbcf`; verified by content,
   27 files equal the tested head). The Team shortcut now targets `/team` (repointed inside #214's
   merge, `197dd0e`).
-- **Deployed on the personal instance:** both pods `sha-23a7f21` — S0–S3 only; **S4 is NOT
-  deployed.** Still ARMED (`CAIRN_UI_APP_NAME=cairn`, short name `cairn`, icon variant `teal`).
+- **S4 DEPLOYED on the personal instance** with #214 at `sha-197dd0e` (operator go): the live
+  manifest now carries shortcuts Arcs `/arcs`, Search `/scopes?q=`, Team `/team` (it carried none
+  before). Still ARMED (`CAIRN_UI_APP_NAME=cairn`, short name `cairn`, icon variant `teal`).
   NOT verified on a phone (operator's check).
 - `uiaudit/pwa_check.sh --self-test` on the #214+#220 merged tree: `sabotaged=9 caught=9
   plain-loop=3/3` (a subagent's local run, before the squash).
@@ -36,8 +37,7 @@ decisions O1–O13 paraphrased, slices S0–S6b, the iPhone checklist, closing-c
 1. **S5** (standalone Back/Reload), **S6a** (pin CI chromium) → **S6b** (blocking `uiaudit-touch`
    job), per the plan — the closing condition still needs S5 merged and S6b green.
    forcing: user — operator chose this scope (O9–O11).
-2. **Deploy S4 to the personal instance** — needs the operator's go; it would ride with #214's
-   deploy (migration 2). forcing: user — awaiting operator.
+2. **(done) Deploy S4** — rode with #214 at `sha-197dd0e`. forcing: user — operator go.
 3. **(done) Merge #220** — merged `f3623d4`. forcing: user — operator asked for S4.
 
 ## Gotchas / decisions / dead-ends
