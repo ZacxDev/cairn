@@ -118,8 +118,8 @@ func TestTheManifestIsBuiltFromTheConfiguredApp(t *testing.T) {
 		return m.Shortcuts, m.Screenshots
 	}
 	// 🔴 THE SHORTCUTS, AS LITERALS (plan decision 10, as superseded at build: Search moved to `/scopes`
-	// with the hub, and "Team" points at `/share` until the team page lands — the hub card's target).
-	wantShortcuts := []shortcut{{"Arcs", "/arcs"}, {"Search", "/scopes?q="}, {"Team", "/share"}}
+	// with the hub, and "Team" points at `/team` — the hub card's target since the team page landed).
+	wantShortcuts := []shortcut{{"Arcs", "/arcs"}, {"Search", "/scopes?q="}, {"Team", "/team"}}
 	// 🔴 THE SCREENSHOTS, AS LITERALS: names, sizes, form factors and labels typed here, and each `src`
 	// digested by this test from the committed file (`screenshotRowFromBytes`), never read off
 	// `screenshotFiles`. The SAME list for every armed app: they are pictures of the synthetic world,

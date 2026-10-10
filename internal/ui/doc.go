@@ -58,7 +58,7 @@
 // the share flow. Cookie sessions arrived in phase B; the share flow — "who has
 // access to this scope", a grant, a revocation, and the notice qualifying all
 // three — is phase C and is this package's `sharing.go`, `sharehandlers.go` and
-// [SharePage]; phase D is the GitHub sign-in in `oauth.go`, an authorization-code
+// [TeamPage]; phase D is the GitHub sign-in in `oauth.go`, an authorization-code
 // flow with PKCE whose verifier lives in this package's own [flights] table and
 // whose exchanged token is verified by `identity.SupabaseJWT` like any other.
 //

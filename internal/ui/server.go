@@ -939,10 +939,14 @@ type Server struct {
 	// deployments that predate one must keep starting. Every consumer checks for nil, and the
 	// routes answer an honest refusal rather than being absent from the ledger.
 	inviting Inviting
-	sessions identity.SessionStore
-	ttl      time.Duration
-	now      func() time.Time
-	log      io.Writer
+	// teamLinks is the Team page's multi-target link half, READ FROM `inviting` at
+	// construction (`Inviting.TeamLinks`) — never wired beside it. Nil exactly when `inviting`
+	// is, and the Team page then says `NoInviteStore` once for both halves. See `team.go`.
+	teamLinks TeamLinking
+	sessions  identity.SessionStore
+	ttl       time.Duration
+	now       func() time.Time
+	log       io.Writer
 
 	// oauth and flights are the provider sign-in, and they are one pair rather than two
 	// settings for the reason the pair below is: a flight table with no provider to send
@@ -1069,6 +1073,9 @@ type Config struct {
 	// 501 naming the configuration, which is MEASURED rather than asserted. Requiring it
 	// would refuse to start every deployment without a Postgres — which is the deployment
 	// that exists today.
+	//
+	// ⚠ THERE IS NO SEPARATE TEAM-LINK FIELD: the link half is `Inviting.TeamLinks()`, so the
+	// two cannot be wired apart (see that method, and [ErrInvitingWithoutTeamLinks]).
 	Inviting Inviting
 	// Sessions is the durable session table sign-in writes to and sign-out removes
 	// from. It is the SAME store the cookie backend in `Auth` reads; two stores would
@@ -1147,6 +1154,12 @@ func New(cfg Config) (*Server, error) {
 	if cfg.TTL < 0 {
 		return nil, ErrNegativeTTL
 	}
+	var teamLinks TeamLinking
+	if cfg.Inviting != nil {
+		if teamLinks = cfg.Inviting.TeamLinks(); teamLinks == nil {
+			return nil, ErrInvitingWithoutTeamLinks
+		}
+	}
 	if err := cfg.App.Validate(); err != nil {
 		return nil, err
 	}
@@ -1168,6 +1181,7 @@ func New(cfg Config) (*Server, error) {
 		source:      cfg.Source,
 		sharing:     cfg.Sharing,
 		inviting:    cfg.Inviting,
+		teamLinks:   teamLinks,
 		sessions:    cfg.Sessions,
 		ttl:         ttl,
 		now:         now,

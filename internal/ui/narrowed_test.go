@@ -35,7 +35,14 @@ const (
 
 func narrowedWorld(t *testing.T) *control.Cache {
 	t.Helper()
-	return fixtureCacheWith(t,
+	return narrowedWorldWith(t)
+}
+
+// narrowedWorldWith is [narrowedWorld] plus `extra` events — for a case that needs one more
+// record (a project-wide grant) in the same read-only world.
+func narrowedWorldWith(t *testing.T, extra ...control.Event) *control.Cache {
+	t.Helper()
+	return fixtureCacheWith(t, append([]control.Event{
 		control.Event{Kind: control.EventScopeCreated, At: fixtureClock, ScopeID: fixtureScopeTwo,
 			DisplayName: "quarry-ledger", ProjectID: fixtureProject},
 		control.Event{Kind: control.EventUserCreated, At: fixtureClock, UserID: fixtureCollaborator,
@@ -60,7 +67,7 @@ func narrowedWorld(t *testing.T) *control.Cache {
 			SubjectKind: control.KindUser, SubjectID: fixtureUser,
 			TokenHash: control.HashToken(narrowedToAllToken), Label: "narrowed to everything",
 			NarrowedScopes: []control.ID{fixtureScope, fixtureScopeTwo}},
-	)
+	}, extra...)...)
 }
 
 // sessionRows counts the records the session store holds, read from its file, so "no session
@@ -228,7 +235,7 @@ func TestANarrowedSignInCountsTowardTheLockout(t *testing.T) {
 func TestANarrowedBearerCannotMintAnInvitation(t *testing.T) {
 	authority := narrowedWorld(t)
 	inviting := ControlInviting{Authority: authority, Invites: newMemInvites(),
-		Now: func() time.Time { return fixtureClock }}
+		Now: func() time.Time { return fixtureClock }, Links: &ControlTeamLinks{Authority: authority, Store: newMemLinks()}}
 
 	mint := func(t *testing.T, bearer string) *httptest.ResponseRecorder {
 		t.Helper()
