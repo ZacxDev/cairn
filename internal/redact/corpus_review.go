@@ -12,14 +12,14 @@ import (
 // Every value is drawn at run time, like every other plant.
 func (g *gen) reviewRoundPlants(session, ses string) {
 	// 27 — Read's model-visible NUMBERED copy of a dotenv file.
-	v := g.plant("read-numbered-dotenv", "dotenv", g.pick(alnum, 22)+"9")
+	v := g.plant("read-numbered-dotenv", "key-context", g.pick(alnum, 22)+"9")
 	numbered := "     1\tLOG_LEVEL=debug\n     2\tDB_PASSWORD=" + v + "\n     3\tREGION=alpha\n"
 	g.record(g.toolResult(session, numbered, m{"type": "text", "file": m{"filePath": "/work/alpha/.env",
 		"content": "LOG_LEVEL=debug\nDB_PASSWORD=" + v + "\nREGION=alpha\n", "numLines": 3, "startLine": 1, "totalLines": 3}}))
 
 	// 28 — `grep -n` output; 29 — a diff.
-	g.record(g.toolResult(session, ".env:2:SERVICE_TOKEN="+g.plant("grep-numbered-dotenv", "dotenv", g.pick(alnum, 20)+"3")+"\n", nil))
-	g.record(g.toolResult(session, "@@ -1 +1 @@\n-API_SECRET=x\n+API_SECRET="+g.plant("diff-dotenv", "dotenv", g.pick(alnum, 24)+"1")+"\n", nil))
+	g.record(g.toolResult(session, ".env:2:SERVICE_TOKEN="+g.plant("grep-numbered-dotenv", "key-context", g.pick(alnum, 20)+"3")+"\n", nil))
+	g.record(g.toolResult(session, "@@ -1 +1 @@\n-API_SECRET=x\n+API_SECRET="+g.plant("diff-dotenv", "key-context", g.pick(alnum, 24)+"1")+"\n", nil))
 
 	// 30 — Read's numbered copy of a Secret manifest.
 	sv := g.plant("read-numbered-k8s", "k8s-secret", base64.StdEncoding.EncodeToString([]byte(g.pick(alnum, 18))))
@@ -28,24 +28,24 @@ func (g *gen) reviewRoundPlants(session, ses string) {
 
 	// 31 — `docker run -e`; 32 — `curl -u`; 46 — a libpq keyword/value string; 47 — X-Auth-Token.
 	g.record(g.toolUse(session, "Bash", m{"command": "docker run -e DB_PASSWORD=" +
-		g.plant("docker-env", "docker-env", g.pick(alnum, 18)+"5") + " -e LOG=1 alpine true"}))
+		g.plant("docker-env", "key-context", g.pick(alnum, 18)+"5") + " -e LOG=1 alpine true"}))
 	g.record(g.toolUse(session, "Bash", m{"command": "curl -u admin:" +
 		g.plant("curl-user", "curl-user", g.pick(alnum, 16)+"2") + " https://api.example.invalid/v1/items"}))
 	g.record(g.toolUse(session, "Bash", m{"command": "psql 'host=db.example port=5432 password=" +
-		g.plant("libpq-password", "libpq-password", g.pick(alnum, 18)+"6") + " dbname=alpha'"}))
+		g.plant("libpq-password", "key-context", g.pick(alnum, 18)+"6") + " dbname=alpha'"}))
 	g.record(g.toolUse(session, "Bash", m{"command": "curl -H 'X-Auth-Token: " +
 		g.plant("x-auth-token", "authorization", g.pick(alnum, 30)+"8") + "' https://api.example.invalid/v1"}))
 
 	// 33 — an `.npmrc` registry token.
 	g.blob("toolu_"+g.pick(alnum, 24)+".txt", "//registry.npmjs.org/:_authToken="+
-		g.plant("npmrc-auth", "npmrc-auth", g.pick(alnum, 30)+"4")+"\nalways-auth=true\n")
+		g.plant("npmrc-auth", "key-context", g.pick(alnum, 30)+"4")+"\nalways-auth=true\n")
 
 	// 34 — a k8s container env pair.
 	g.record(g.toolResult(session, "spec:\n  containers:\n    - name: app\n      env:\n        - name: DB_PASSWORD\n          value: "+
 		g.plant("k8s-env-pair", "k8s-env", g.pick(alnum, 20)+"7")+"\n        - name: LOG_LEVEL\n          value: debug\n", nil))
 
 	// 35 — a camelCase secret field inside a JSON document printed by a tool.
-	cfg, _ := json.Marshal(m{"credentials": m{"secretAccessKey": g.plant("camelcase-field", "source-literal", g.pick(alnum, 40)),
+	cfg, _ := json.Marshal(m{"credentials": m{"secretAccessKey": g.plant("camelcase-field", "secret-field", g.pick(alnum, 40)),
 		"region": "alpha"}})
 	g.record(g.toolResult(session, string(cfg), nil))
 
@@ -60,11 +60,11 @@ func (g *gen) reviewRoundPlants(session, ses string) {
 
 	// 38 — a NUL-separated environ dump; 39 — text with stray invalid bytes; 40 — UTF-16 with a BOM.
 	g.blob("toolu_"+g.pick(alnum, 24)+".txt", "PATH=/usr/bin\x00HOME=/home/dev\x00AWS_SECRET_ACCESS_KEY="+
-		g.plant("environ-nul", "dotenv", g.pick(alnum, 40))+"\x00TERM=xterm\x00")
+		g.plant("environ-nul", "key-context", g.pick(alnum, 40))+"\x00TERM=xterm\x00")
 	g.blob("toolu_"+g.pick(alnum, 24)+".txt", "build \xff\xfe log\nX_API_KEY="+
-		g.plant("invalid-utf8", "dotenv", g.pick(alnum, 26)+"0")+"\n\x80 end\n")
+		g.plant("invalid-utf8", "key-context", g.pick(alnum, 26)+"0")+"\n\x80 end\n")
 	g.c.Items = append(g.c.Items, Item{Blob: true, Name: "toolu_" + g.pick(alnum, 24) + ".txt",
-		Data: utf16LE("\ufeffLOG=1\nSESSION_SECRET=" + g.plant("utf16-bom", "dotenv", g.pick(alnum, 24)+"2") + "\n")})
+		Data: utf16LE("\ufeffLOG=1\nSESSION_SECRET=" + g.plant("utf16-bom", "key-context", g.pick(alnum, 24)+"2") + "\n")})
 
 	// 41 — a PGP private key block (armor: a blank line, the body, a checksum line).
 	var pgp strings.Builder

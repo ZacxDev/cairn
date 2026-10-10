@@ -10,10 +10,8 @@ import (
 // Realistic generator families; the value is "caught" only if no 6-char window of it survives.
 // TestRedactorRecallOnRealisticPasswords is the rate test: 200 values per generator per line
 // shape. At 2ba3e5c `notCode` caught 13–24/200 of symbol-bearing passwords and 0/200 dotted
-// passphrases. The floors below are what this build measured at seed 4, minus nothing: the
-// residual they leave IS the stated cost of the code-shape filter (a value that starts with `$`,
-// `{{` or `<`, or ends in a bracket after an identifier head), plus the libpq value class
-// stopping at `;` `&` and quotes.
+// passphrases. The floors below are what this build measured at seed 4, minus nothing — see
+// [rateFloor] for what the residual is.
 func TestRedactorRecallOnRealisticPasswords(t *testing.T) {
 	r2seed(4)
 	r, _ := New(bytes.Repeat([]byte{7}, 32), nil)
@@ -41,7 +39,7 @@ func TestRedactorRecallOnRealisticPasswords(t *testing.T) {
 				v := gens[gname]()
 				in := strings.Replace(k, "%s", v, 1) + "\n"
 				out, _ := r.String(in)
-				if !strings.Contains(out, v) && !strings.Contains(out, v[:len(v)/2]) {
+				if noWindowSurvives(v, out, 6) {
 					caught++
 				}
 			}
@@ -53,16 +51,34 @@ func TestRedactorRecallOnRealisticPasswords(t *testing.T) {
 	}
 }
 
+// noWindowSurvives is the oracle the test's doc states: NO w-character window of v appears in
+// out. (Through round 3 the body checked only the whole value and its first half, which is a
+// weaker oracle than its doc claimed: a value whose redaction stopped early — leaving a tail —
+// counted as caught. Round 4 made the body match the doc and re-measured the floors under it.)
+func noWindowSurvives(v, out string, w int) bool {
+	if len(v) < w {
+		return !strings.Contains(out, v)
+	}
+	for i := 0; i+w <= len(v); i++ {
+		if strings.Contains(out, v[i:i+w]) {
+			return false
+		}
+	}
+	return true
+}
+
 // rateFloor is the measured floor per generator and line shape (see the test doc).
 //
 // Every generator without symbols is 200/200. The symbol-bearing ones are pinned at exactly what
-// seed 4 measured, so ANY loss is red: their residual is the code-shape filter's stated cost plus,
-// for `host=db password=…`, the libpq value class ending at `;` `&` or a quote (a value whose first
-// half survives is counted as missed).
+// seed 4 measured under the window oracle ([noWindowSurvives], w=6), so ANY loss is red: their
+// residual is the code-shape filter's stated cost ([notCode]: a shell expansion, a code-shaped head
+// before `(`/`[`/`{`, an adjacent `()`/`{}`, a letters-only head before trailing brackets). Since
+// round 4 the libpq shape is the key-context rule's, whose bare value runs to whitespace, so `;`
+// and `&` no longer cut it.
 func rateFloor(gen, shape string) int {
 	measured := map[string][4]int{
-		"pm-20-with-symbols": {192, 197, 199, 176},
-		"pm-16-3symbols":     {200, 196, 199, 197},
+		"pm-20-with-symbols": {198, 197, 199, 196},
+		"pm-16-3symbols":     {198, 199, 199, 195},
 	}
 	shapes := map[string]int{"DB_PASSWORD=%s": 0, "export API_SECRET=%s": 1, "password: %s": 2, "host=db password=%s dbname=x": 3}
 	if m, ok := measured[gen]; ok {

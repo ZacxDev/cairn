@@ -121,7 +121,8 @@ const MinBase64 = 16
 //
 // ⚠ AN ENCODED SECRET EMBEDDED IN A LONGER STRING IS NOT DECODED, and that is a declared residual
 // (decision 6), pinned as one by the tests so that adding an in-string decoder is a deliberate
-// change rather than an accident.
+// change rather than an accident. Since O15 such an encoding is still CAUGHT when it is long and
+// random-looking — by the entropy rule, as a token — but its decoded content is never read.
 func decodeWholeBase64(s string) ([]byte, bool) { return decodeBase64Floor(s, MinBase64) }
 
 func decodeBase64Floor(s string, floor int) ([]byte, bool) {

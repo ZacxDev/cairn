@@ -222,9 +222,11 @@ func r2cases() []r2case {
 	return cs
 }
 
-// auditExpectedMisses are the attack cases that are NOT secrets by this package's predicate, and
-// are asserted to stay uncaught so a change here is deliberate: a password HASH is not a password.
-var auditExpectedMisses = map[string]bool{"json password_hash (ok to skip)": true}
+// auditExpectedMisses are the attack cases asserted to stay uncaught, so a change is deliberate.
+// EMPTY since round 4: `json password_hash` was listed (a hash is not a password, and [SecretKey]
+// still refuses the NAME), but its value is a 32-character mixed-case token, which the entropy
+// rule (O15) redacts whatever names it — measured caught at both seeds.
+var auditExpectedMisses = map[string]bool{}
 
 // TestAuditAttackSetIsCaught: at 2ba3e5c the auditor measured 39 of 75 cases caught (url-query
 // 0/4, jwk 0/2, key-name 1/10, symbol-pw 1/9, source 2/9, conn 1/5, sig-smuggle 1/5, …); every case

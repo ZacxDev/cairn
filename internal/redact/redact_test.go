@@ -51,13 +51,19 @@ func without(t *testing.T, name string) *Redactor {
 // rawScan applies the rule TABLE to a string exactly as given — no JSON decoding, no base64
 // decoding. It is the "regex over raw bytes" the decoded pipeline exists to improve on, and the
 // controls below use it to prove that decoding, not the table, is what catches an escaped value.
+//
+// It runs every rule but the LATE (entropy) one: the controls ask whether the TABLE can see an
+// escaped token in raw bytes, and a 20-character run of an escaped token's tail is the entropy
+// rule's whatever the encoding.
 func rawScan(r *Redactor, s string) []Hit {
-	var hits []Hit
-	for _, rule := range r.rules {
-		var hs []Hit
-		s, hs = r.applyRule(rule, s)
-		hits = append(hits, hs...)
+	var spans []span
+	v := &view{text: s, original: true}
+	for prio, rule := range r.rules {
+		if !rule.Late {
+			spans = append(spans, r.ruleSpans(rule, prio, v)...)
+		}
 	}
+	_, hits := r.apply(s, spans)
 	return hits
 }
 
@@ -75,7 +81,7 @@ func TestTheCorpusIsFullyCaughtAndNothingCleanIsDamaged(t *testing.T) {
 		code := SelfTest(&out, seed)
 		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 		last := lines[len(lines)-1]
-		want := "SUMMARY redaction: planted=72 caught=72 clean-damaged=0"
+		want := "SUMMARY redaction: planted=79 caught=79 clean-damaged=0"
 		if code != SelfTestOK || last != want {
 			t.Errorf("seed %d: exit %d, last line %q, want exit 0 and %q\n%s", seed, code, last, want, out.String())
 		}
@@ -86,8 +92,8 @@ func TestTheCorpusIsFullyCaughtAndNothingCleanIsDamaged(t *testing.T) {
 func TestTheCorpusPlantsExactlyTheDeclaredCount(t *testing.T) {
 	for _, seed := range seeds[:2] {
 		c := NewCorpus(seed)
-		if len(c.Plants) != DeclaredPlants || DeclaredPlants != 72 {
-			t.Fatalf("seed %d: %d plants, declared %d (literal 72)", seed, len(c.Plants), DeclaredPlants)
+		if len(c.Plants) != DeclaredPlants || DeclaredPlants != 79 {
+			t.Fatalf("seed %d: %d plants, declared %d (literal 79)", seed, len(c.Plants), DeclaredPlants)
 		}
 		labels := map[string]bool{}
 		for _, p := range c.Plants {
@@ -99,19 +105,19 @@ func TestTheCorpusPlantsExactlyTheDeclaredCount(t *testing.T) {
 	}
 }
 
-// TestWithoutTheDotenvRuleTheReportNamesIt is the plan's NEGATIVE control for the measurement.
-func TestWithoutTheDotenvRuleTheReportNamesIt(t *testing.T) {
+// TestWithoutTheKeyContextRuleTheReportNamesIt is the plan's NEGATIVE control for the measurement.
+func TestWithoutTheKeyContextRuleTheReportNamesIt(t *testing.T) {
 	c := NewCorpus(seeds[0])
-	s := c.Score(without(t, "dotenv"))
+	s := c.Score(without(t, "key-context"))
 	if s.Caught >= s.Planted {
-		t.Fatalf("with the dotenv rule removed, caught=%d planted=%d: the corpus cannot see that rule", s.Caught, s.Planted)
+		t.Fatalf("with the key-context rule removed, caught=%d planted=%d: the corpus cannot see that rule", s.Caught, s.Planted)
 	}
 	var named []string
 	for _, p := range s.Missed {
 		named = append(named, p.Rule)
 	}
-	if !slices.Contains(named, "dotenv") {
-		t.Fatalf("the report does not name the dotenv rule among the misses: %v", named)
+	if !slices.Contains(named, "key-context") {
+		t.Fatalf("the report does not name the key-context rule among the misses: %v", named)
 	}
 }
 
@@ -130,8 +136,12 @@ func TestTheSelfTestControlsCanEachGoRed(t *testing.T) {
 // TestTheStructuralSecretRule: a YAML Secret's data values are replaced and metadata.name survives.
 func TestTheStructuralSecretRule(t *testing.T) {
 	r := testRedactor(t)
-	v1 := base64.StdEncoding.EncodeToString([]byte(rnd(1, alnum, 16)))
-	v2 := rnd(2, alnum, 18)
+	// Lower-case values: a random MIXED-case value is the entropy rule's in any document (O15),
+	// so it would be redacted in the ConfigMap control too and the control would prove nothing
+	// about the Secret rule.
+	lowerDigit := "abcdefghijklmnopqrstuvwxyz0123456789"
+	v1 := rnd(1, lowerDigit, 24)
+	v2 := rnd(2, lowerDigit, 18)
 	src := "apiVersion: v1\nkind: Secret\nmetadata:\n  name: alpha-db\ndata:\n  username: " + v1 +
 		"\nstringData:\n  note.txt: " + v2 + "\n"
 	out, hits := r.String(src)
@@ -172,7 +182,7 @@ func TestTextBlobs(t *testing.T) {
 	val := rnd(5, alnum, 24)
 	src := "LOG_LEVEL=debug\nDB_PASSWORD=" + val + "\nREGION=alpha\n"
 	out, hits := r.Blob("x.txt", []byte(src))
-	want := strings.Replace(src, val, "[redacted:dotenv:"+r.Tag(val)+"]", 1)
+	want := strings.Replace(src, val, "[redacted:key-context:"+r.Tag(val)+"]", 1)
 	if string(out) != want || len(hits) != 1 {
 		t.Fatalf("a dotenv blob is not the source with exactly that span replaced:\n%s", out)
 	}
@@ -207,8 +217,10 @@ func TestBase64TextIsScannedDecoded(t *testing.T) {
 	if out, hits := r.String(enc); len(hits) == 0 || out == enc {
 		t.Fatal("a 56-character base64 encoding of a 40-character token was not caught")
 	}
-	// Control: with the floor back at 64 the same plant is missed.
-	high := testRedactor(t)
+	// Control: with the floor back at 64 the same plant is missed. The entropy rule is removed for
+	// every control here: a 56-character encoding is mixed-case and random-looking, so it would
+	// catch the plant itself and no control could reach the decoder.
+	high := without(t, "entropy")
 	high.decode = func(s string) ([]byte, bool) { return decodeBase64Floor(s, 64) }
 	if _, hits := high.String(enc); len(hits) != 0 {
 		t.Fatal("a floor of 64 still caught a 56-character encoding — the floor control is not reaching the decoder")
@@ -226,7 +238,7 @@ func TestBase64TextIsScannedDecoded(t *testing.T) {
 		"urlsafe":  base64.URLEncoding.EncodeToString([]byte(secret + "??>>")),
 		"wrapped":  wrapped.String(),
 	}
-	stdOnly := testRedactor(t)
+	stdOnly := without(t, "entropy")
 	stdOnly.decode = func(s string) ([]byte, bool) {
 		if len(s) < MinBase64 {
 			return nil, false
@@ -246,10 +258,14 @@ func TestBase64TextIsScannedDecoded(t *testing.T) {
 	if missedByStdOnly == 0 {
 		t.Error("a StdEncoding-only decoder caught all four forms, so the four-encoding decoder is untested")
 	}
-	// Residual pinned AS a residual: the same encoding after a line of other text is NOT decoded.
+	// The EMBEDDED encoding: still not DECODED (no in-string decoder exists — pinned on the table
+	// without entropy), and since O15 caught anyway, as a random-looking token, by the entropy rule.
 	embedded := "the file holds:\n" + padded
-	if _, hits := r.String(embedded); len(hits) != 0 {
-		t.Fatalf("an EMBEDDED encoding was caught (%v): that residual closed — make it deliberate and update decision 6", hits)
+	if _, hits := without(t, "entropy").String(embedded); len(hits) != 0 {
+		t.Fatalf("an EMBEDDED encoding was decoded (%v): an in-string decoder appeared — make it deliberate and update decision 6", hits)
+	}
+	if out, hits := r.String(embedded); len(hits) == 0 || strings.Contains(out, padded[:40]) || hits[0].Rule != "entropy" {
+		t.Fatalf("an embedded encoding of a secret survived the entropy rule (hits %v)", hits)
 	}
 }
 
@@ -276,13 +292,21 @@ func TestBinaryContentShipsByteIdentical(t *testing.T) {
 		t.Fatalf("beside an image: hits=%v, secret gone=%v, image intact=%v", hits, !bytes.Contains(out, []byte(npm)),
 			bytes.Contains(out, []byte(img)))
 	}
-	// Thinking signatures and 64-hex digests are not text-bearing base64 and survive.
-	sig := base64.StdEncoding.EncodeToString(g.bytes(240))
+	// A 64-hex digest is not a candidate for the entropy rule (no upper case) and survives.
 	dig := hex.EncodeToString(g.bytes(32))
-	for _, v := range []string{sig, dig} {
-		if out, hits := r.String(v); out != v || len(hits) != 0 {
-			t.Errorf("a clean value was damaged: %d hits", len(hits))
-		}
+	if out, hits := r.String(dig); out != dig || len(hits) != 0 {
+		t.Errorf("a digest was damaged: %d hits", len(hits))
+	}
+	// A thinking signature is random base64 BY CONSTRUCTION: it survives because the record's
+	// STRUCTURE says it is an opaque signature, and the same bytes anywhere else are a token.
+	sig := base64.StdEncoding.EncodeToString(g.bytes(240))
+	think := `{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"plan","signature":"` + sig + `"}]}}`
+	if out, hits := r.Record([]byte(think)); !bytes.Equal(out, []byte(think)) || len(hits) != 0 {
+		t.Errorf("a thinking signature was damaged (hits %v)", hits)
+	}
+	elsewhere := `{"type":"user","message":{"content":"` + sig + `"}}`
+	if out, _ := r.Record([]byte(elsewhere)); bytes.Contains(out, []byte(sig[:40])) {
+		t.Error("control: the same random base64 OUTSIDE a thinking block survived — the structural exemption is not what keeps the signature")
 	}
 }
 
@@ -380,7 +404,8 @@ func TestEveryLeakscanCredentialControlIsRedacted(t *testing.T) {
 			// The credential is the longest token-alphabet run inside leakscan's own match —
 			// the token, not the keyword. Asserting leakscan's regex no longer MATCHES would be
 			// walkable: redacting the word `Bearer` alone breaks the match and leaves the token
-			// (measured — that is how the dotenv rule "contains" the bearer control by itself).
+			// (measured — that is how the dotenv rule, since folded into key-context, "contained"
+			// the bearer control by itself).
 			run := ""
 			for _, m := range tokenRun.FindAllString(re.FindString(c), -1) {
 				if len(m) > len(run) {

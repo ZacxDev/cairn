@@ -28,7 +28,7 @@ func TestTheLineRulesReadThroughEveryCopyPrefix(t *testing.T) {
 	} {
 		v := rnd(uint64(100+i), alnum, 20) + "7"
 		in := strings.Replace(shape, "%s", v, 1)
-		if out, hits := r.String(in); strings.Contains(out, v) || len(hits) == 0 || hits[0].Rule != "dotenv" {
+		if out, hits := r.String(in); strings.Contains(out, v) || len(hits) == 0 || hits[0].Rule != "key-context" {
 			t.Errorf("shape %d: the value survived (hits %v):\n%s", i, hits, out)
 		}
 	}
@@ -86,7 +86,7 @@ func TestSecretKeyIsOnePredicate(t *testing.T) {
 			t.Errorf("SecretKey(%q) = true, want false", k)
 		}
 	}
-	// The structural rule uses it — camelCase, spaces in the value, the dotenv length floor.
+	// The structural rule uses it — camelCase, spaces in the value, the key-context length floor.
 	r := testRedactor(t)
 	for _, rec := range []string{
 		`{"SecretAccessKey":"%s"}`, `{"auths":{"registry.example":{"auth":"%s"}}}`, `{"refreshToken":"%s"}`,
@@ -97,7 +97,7 @@ func TestSecretKeyIsOnePredicate(t *testing.T) {
 		}
 	}
 	if out, _ := r.Record([]byte(`{"token":"Zq9x"}`)); bytes.Contains(out, []byte("Zq9x")) {
-		t.Error("a 4-character secret field survived; the floor must match the dotenv rule's")
+		t.Error("a 4-character secret field survived; the floor must match the key-context rule's")
 	}
 }
 
@@ -114,14 +114,14 @@ func TestNULSeparatedAndInvalidByteTextIsScanned(t *testing.T) {
 	w := rnd(114, alnum, 24) + "1"
 	bad := []byte("x \xff\xfe y\nX_API_KEY=" + w + "\n\x80 z\n")
 	out, _ = r.Blob("log.txt", bad)
-	want := bytes.Replace(bad, []byte(w), []byte("[redacted:dotenv:"+r.Tag(w)+"]"), 1)
+	want := bytes.Replace(bad, []byte(w), []byte("[redacted:key-context:"+r.Tag(w)+"]"), 1)
 	if !bytes.Equal(out, want) {
 		t.Fatalf("invalid-byte text: only the matched span may change:\n got %q\nwant %q", out, want)
 	}
 	u := utf16LE("\ufeffSESSION_SECRET=" + w + "\n")
 	out, _ = r.Blob("notes.txt", u)
 	dec, _, ok := utf16BOM(out)
-	if !ok || strings.Contains(dec, w) || !strings.Contains(dec, "SESSION_SECRET=[redacted:dotenv:") {
+	if !ok || strings.Contains(dec, w) || !strings.Contains(dec, "SESSION_SECRET=[redacted:key-context:") {
 		t.Fatalf("UTF-16: decoded=%v %q", ok, dec)
 	}
 	if bytes.Equal(out, u) {
@@ -235,11 +235,11 @@ func TestSelfTestRefusesToVouchOnEachBrokenControl(t *testing.T) {
 	}
 }
 
-// TestScoreAssertsEachPlantsOwnRule: with the dotenv rule gone, a value the Secret rule then
+// TestScoreAssertsEachPlantsOwnRule: with the key-context rule gone, a value the Secret rule then
 // removes is gone from the output — and still NOT caught, because the rule it was planted for
 // never fired.
 func TestScoreAssertsEachPlantsOwnRule(t *testing.T) {
-	s := NewCorpus(seeds[0]).Score(without(t, "dotenv"))
+	s := NewCorpus(seeds[0]).Score(without(t, "key-context"))
 	var wrong []string
 	for _, p := range s.WrongRule {
 		wrong = append(wrong, p.Label)
