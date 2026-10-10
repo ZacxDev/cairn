@@ -3850,7 +3850,113 @@ Each on a scratch copy with no `.git`:
 - **Non-HTML responses.** `writePlain` refusals and `http.Redirect` bodies carry no `Cache-Control`;
   neither carries authority-narrowed content, and decision 8 is about pages.
 
-# Phase R — the instance label in every title and header
+---
+
+# Phase R — the hub, `/scopes`, `/sessions`, the scope page's polish, and "What an agent sees"
+
+Operator asks, implemented together on one branch in three commits (IA/routes; scope and entry polish;
+the agent tab).
+
+| route | class | what |
+|---|---|---|
+| `GET /` | `content` | the HUB: four cards — Arcs (`/arcs`), Scopes (`/scopes`), Sessions (`/sessions`), Team (`/share`, until the team page repoints it). `/?q=` and `/?tag=` answer **303** to `/scopes` with the query |
+| `GET /scopes` | `content` | the scope list, search box and tag filter — the old root, unchanged |
+| `GET /sessions` | `content` | every session the viewer can see anything of, newest first, each a link to `/session?session=…` |
+| `GET /scope?id=…&tab=agent` | (the `/scope` row) | the "What an agent sees" tab |
+
+## 🔴 The hub reads `Visible` alone, and its one count is `len(Visible)`
+
+The scopes card's count is the scopes this viewer can read — the list `/scopes` renders. The first cut
+also counted arcs (the arcs page's live rows) and sessions (the sessions page's rows); **both were
+DROPPED in review (round 0, D1)**: each cost a whole-store walk on every hub load, roughly doubling it,
+for a number one click away. The four cards stay. The Team card never had a count: "who has access" is
+the sharing authority, and a hub consulting two authorities is a row `contentAuthority` cannot express.
+The mutant row that widened the arcs read for the hub's count was RE-POINTED rather than deleted —
+`StoreSource.Arcs` still feeds `/arcs` — as `ui-arcs-index-read-includes-unreadable-homes`, killed by
+the arcs page's own `TestAnArcHomedInAnUnreadableScopeIsNeverListedEvenWhenItsMembersWroteWhereYouRead`.
+
+## 🔴 `/sessions` and `/session` are one predicate
+
+`report.SessionsAcross` and `report.SessionAcross` share ONE walk (`walkReadable`): the narrowed index,
+`touch.Writes` per readable scope, and the arc rule (home readable, Q1). So "listed" and "the session
+page is found" cannot disagree, and `TestTheSessionsPageListsExactlyTheSessionsWhosePageIsFound` pins the
+RELATION — every listed id's page answers 200, every unlisted id's answers the uniform unseen 404 — for a
+viewer of one scope and a viewer of both. A session's date and scope chips are computed over the
+viewer's scopes only: `s-both-0003` sorts by its alpha bullet for A even though its beta one is newer.
+No printed byte moved (structured answer only); the parity harness was re-run: `SUMMARY cases=123
+passes=126 failures=0 dead-normalizations=0`.
+
+## The redirect
+
+`/?q=…` and `/?tag=…` (presence, not value — `/?q=` is the mobile plan's Search shortcut) answer 303 to
+`/scopes?` + the PARSED query re-encoded by `url.Values.Encode`, so the `Location` never carries a
+caller's raw bytes; every value survives, in sorted key order. A query naming neither parameter is the hub.
+
+## The scope page's polish (operator decisions)
+
+- The scope-level "N entries" and "N bullets declared open" badges are gone from the scope page; the
+  scope LIST's cards keep both. The scope's own line reads "updated 5m ago", and so does every row.
+- Tabs read `Entries (N)`, `Sessions (N)`, `Arcs (N)`; a count that is not a measurement is still left
+  off entirely, a lower bound reads `(≥N)`.
+- 🔴 **Aliases are rendered `hidden` on the entry card, and `filter.js` reveals one only when it is WHY
+  the row matched** — a term that matches the alias and no other field on that row. The script still
+  writes only `hidden` (and the count's text), so `TestTheFilterScriptTouchesOnlyWhatItSays` and the
+  one-entry `AllowedScriptSources` are unchanged. Without script, no alias is visible.
+- Tag chips: squarer, tighter pill, `#` drawn by CSS (`::before`), so link text, `data-filter` and every
+  test reading `<a …>tag</a>` are unchanged. Breadcrumbs: `text-xs`, pulled up toward the header, and the
+  card after them drops its top margin; still wrap, and still 44px under a coarse pointer (S1's block).
+  ⚠ The breadcrumb rule is shared, so this applies on EVERY page with a trail (scope, entry, arc,
+  arcs, session, sessions), not only the entry page the ask named — deliberate: one trail, one look.
+
+## 🔴 "What an agent sees" is the CLI's bytes, and says where an agent's own run differs
+
+`StoreSource.Recall` builds `report.RecallOptions` exactly as `cairn recall --scope <scope>` does (no
+`--list`/`--limit`/`--page`: digest mode, the default entry limit, page 1; a scope named, so no focus
+window), runs `report.Recall` over the viewer's narrowed set and prints `RenderText(host, nil, "")` —
+the renderer the CLI and the pod run, never a re-render. `TestTheAgentTabIsByteForByteTheCLIRecall`
+builds the expectation from the CLIENT package's own option builder (`client.RecallSelectionFor`) and
+compares the unescaped `<pre>` text byte for byte.
+
+It is authorised twice: the scope page refuses an unreadable scope before any tab is chosen (the one
+`browseRefusal`), and the recall read is itself narrowed, so a scope NAME that reached it any other way
+answers the renderer's scope-absent text (`TestTheRecallReadIsNarrowedByTheViewersAuthority`).
+
+The tab carries ONE note naming the FOUR places an agent's own run differs — same renderer, different
+place it ran (from the usage trace in PR #211, `claudedocs/plan-cairn-agent-view.md`): the resume/handoff
+skills run `cairn recall --repo`, which features
+the entry the repo's newest handoff doc names (`--scope` cannot, and the server has no repo — not
+reproduced here); the client prints a state banner above the text; and the `store:`/`host:` lines name
+whoever rendered it (`store:` is the renderer's StoreRoot: this server's here, the agent's per-host cache path there) — two of the four. ⚠ So the tab DOES print this server's
+store root, which every other page here deliberately omits; it is the same line `GET
+/api/v1/recall/<scope>` already prints to every reader of the scope, and byte equality requires it.
+
+**The `head -60` mark.** Agents almost always truncate — the usage trace in PR #211
+(`claudedocs/plan-cairn-agent-view.md`) found most standalone recalls piped through `head`/`grep`/`sed`,
+most often `head -60` — so the text is split into two `<pre>`s where that cut falls, with the lines and
+bytes above and below. The client prints a preamble first, and the number of lines it takes is COUNTED
+from `client.RecallPreamble` — the one string `recall` now prints there (banner, blank line; the bytes
+of the two `Fprintln`s it replaced) — so a banner that grows a line moves the mark. Today that is two,
+so the cut falls after line **58** of the recall text. The two
+halves concatenate to the exact bytes. Size is the UTF-8 byte count; tokens are bytes ÷ 4, labelled an
+estimate.
+
+## Cost, measured
+
+`BenchmarkSessionPageAndScopeTabs -benchtime 20x`, one host, NOT idle (the absolute numbers are higher
+than Phase I's for the same rows), ms per request:
+
+| size | hub | sessions list | scopes list | session page | entry page |
+|---|---|---|---|---|---|
+| 10 scopes × 30 entries | 32.7 | 25.0 | 12.6 | 22.9 | 18.0 |
+| 30 scopes × 100 entries | 299 | 201 | 134 | 303 | 142 |
+
+The `hub` column is the FIRST cut, with its arcs and sessions counts: it cost about what the session
+page costs (≈2.2× the scope list at 3,000 entries). That measurement is why both counts were dropped
+(D1); the hub now reads `Visible` alone — the scope list's read — and was not re-measured.
+
+---
+
+# Phase S — the instance label in every title and header
 
 `cmd/cairn-ui -instance-name` (`$CAIRN_UI_INSTANCE_NAME`) is OPTIONAL and arms nothing. It rides on
 `App.Instance` because every frame already receives an `App`; `Armed()` reads `Name` alone and the

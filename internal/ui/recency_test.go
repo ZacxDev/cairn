@@ -200,7 +200,7 @@ func TestTwoEntriesInsideOneSecondAreOrderedByTheirFraction(t *testing.T) {
 // first, an exact tie by scope name.
 func TestTheRootPageOrdersScopeCardsByTheirNewestEntry(t *testing.T) {
 	root, id, _ := recencyWorld(t)
-	rec := getAs(t, recencyServer(t, root, id), RootPath)
+	rec := getAs(t, recencyServer(t, root, id), ScopesPath)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the root page answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -224,7 +224,7 @@ func TestEveryTimestampIsRelativeToTheInjectedClockWithItsInstantPinned(t *testi
 	srv := recencyServer(t, root, id)
 	const birch = `<time class="updated" datetime="2000-06-01T11:55:00Z" title="2000-06-01 11:55:00 UTC">5m ago</time>`
 
-	rootBody := getAs(t, srv, RootPath).Body.String()
+	rootBody := getAs(t, srv, ScopesPath).Body.String()
 	scopeBody := getAs(t, srv, ScopePath+"?"+QueryID+"="+string(orchard)).Body.String()
 	entryBody := getAs(t, srv, entryHref(orchard, "birch", false)).Body.String()
 
@@ -234,11 +234,15 @@ func TestEveryTimestampIsRelativeToTheInjectedClockWithItsInstantPinned(t *testi
 			`<time class="updated" datetime="2000-05-30T12:00:00Z" title="2000-05-30 12:00:00 UTC">2d ago</time>`,
 			`<time class="updated" datetime="2000-06-01T06:00:00Z" title="2000-06-01 06:00:00 UTC">6h ago</time>`,
 		},
+		// 🔴 THE SCOPE PAGE READS "updated …" (an operator decision): a bare "5m ago" beside a row did
+		// not say what happened. The element, its `datetime` and its `title` are unchanged.
 		"scope rows": {
-			birch,
-			`<time class="updated" datetime="2000-06-01T09:00:00Z" title="2000-06-01 09:00:00 UTC">3h ago</time>`,
+			`<time class="updated" datetime="2000-06-01T11:55:00Z" title="2000-06-01 11:55:00 UTC">updated 5m ago</time>`,
+			`<time class="updated" datetime="2000-06-01T09:00:00Z" title="2000-06-01 09:00:00 UTC">updated 3h ago</time>`,
 			// past 30 days the text is the DATE, not a distance
-			`<time class="updated" datetime="2000-04-22T12:00:00Z" title="2000-04-22 12:00:00 UTC">2000-04-22</time>`,
+			`<time class="updated" datetime="2000-04-22T12:00:00Z" title="2000-04-22 12:00:00 UTC">updated 2000-04-22</time>`,
+			// and the scope's own line under its heading: its newest entry, birch.
+			`<p class="card-stats"><time class="updated" datetime="2000-06-01T11:55:00Z" title="2000-06-01 11:55:00 UTC">updated 5m ago</time></p>`,
 		},
 		"entry provenance": {
 			`<dt class="prov-key">updated</dt><dd class="prov-val">` + birch + `</dd>`,
@@ -251,9 +255,13 @@ func TestEveryTimestampIsRelativeToTheInjectedClockWithItsInstantPinned(t *testi
 			}
 		}
 	}
-	// The scope page carries one timestamp per row and the root one per card — not one per page.
-	if n := strings.Count(scopeBody, `<time class="updated"`); n != 5 {
-		t.Errorf("the scope page carries %d timestamps, want one per row (5)", n)
+	// The scope page carries one timestamp per row plus the scope's own, and the root one per card.
+	if n := strings.Count(scopeBody, `<time class="updated"`); n != 6 {
+		t.Errorf("the scope page carries %d timestamps, want one per row (5) and the scope's own (1)", n)
+	}
+	// And every one of them reads "updated …" — none the bare form.
+	if n := strings.Count(scopeBody, `UTC">updated `); n != 6 {
+		t.Errorf("the scope page carries %d \"updated …\" timestamps, want all 6", n)
 	}
 	if n := strings.Count(rootBody, `<time class="updated"`); n != 4 {
 		t.Errorf("the root page carries %d timestamps, want one per card (4)", n)

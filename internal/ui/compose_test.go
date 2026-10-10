@@ -203,7 +203,7 @@ func TestTheQueryAndTheTagComposeIntoOneCard(t *testing.T) {
 
 	get := func(t *testing.T, params url.Values) string {
 		t.Helper()
-		rec := getAs(t, srv, RootPath+"?"+params.Encode())
+		rec := getAs(t, srv, ScopesPath+"?"+params.Encode())
 		if rec.Code != http.StatusOK {
 			t.Fatalf("GET /?%s answered %d, want 200: %s", params.Encode(), rec.Code, rec.Body.String())
 		}
@@ -316,7 +316,7 @@ func TestTheSearchFormRoundTripsTheTag(t *testing.T) {
 	hidden := `<input type="hidden" name="` + QueryTag + `" value="` + composeTag + `">`
 
 	t.Run("a tag listing carries it", func(t *testing.T) {
-		markup := getAs(t, srv, RootPath+"?"+url.Values{QueryTag: []string{composeTag}}.Encode()).Body.String()
+		markup := getAs(t, srv, ScopesPath+"?"+url.Values{QueryTag: []string{composeTag}}.Encode()).Body.String()
 		if !strings.Contains(markup, hidden) {
 			t.Errorf("the search form on a tag listing does not carry the tag, so typing into "+
 				"the box discards it.\nwant: %s\ngot:\n%s", hidden, markup)
@@ -324,7 +324,7 @@ func TestTheSearchFormRoundTripsTheTag(t *testing.T) {
 	})
 
 	t.Run("a composed page carries it", func(t *testing.T) {
-		markup := getAs(t, srv, RootPath+"?"+url.Values{
+		markup := getAs(t, srv, ScopesPath+"?"+url.Values{
 			QueryQuery: []string{composeWord},
 			QueryTag:   []string{composeTag},
 		}.Encode()).Body.String()
@@ -336,8 +336,8 @@ func TestTheSearchFormRoundTripsTheTag(t *testing.T) {
 
 	t.Run("a page with no tag carries no tag input", func(t *testing.T) {
 		for _, path := range []string{
-			RootPath,
-			RootPath + "?" + url.Values{QueryQuery: []string{composeWord}}.Encode(),
+			ScopesPath,
+			ScopesPath + "?" + url.Values{QueryQuery: []string{composeWord}}.Encode(),
 		} {
 			markup := getAs(t, srv, path).Body.String()
 			if strings.Contains(markup, `name="`+QueryTag+`"`) {
@@ -352,7 +352,7 @@ func TestTheSearchFormRoundTripsTheTag(t *testing.T) {
 		// `/?tag=Marketing` reaches the same entries as `/?tag=marketing`, and the form must
 		// carry the FOLDED spelling — otherwise the next submission re-folds a string the
 		// page already folded, and the two spellings diverge the day the fold changes.
-		markup := getAs(t, srv, RootPath+"?"+url.Values{QueryTag: []string{"MARKETING"}}.Encode()).Body.String()
+		markup := getAs(t, srv, ScopesPath+"?"+url.Values{QueryTag: []string{"MARKETING"}}.Encode()).Body.String()
 		if !strings.Contains(markup, hidden) {
 			t.Errorf("an unfolded `?tag=` round-trips unfolded.\nwant: %s\ngot:\n%s", hidden, markup)
 		}
@@ -367,7 +367,7 @@ func TestTheSearchFormRoundTripsTheTag(t *testing.T) {
 func TestTheComposedCardOffersEveryWayBack(t *testing.T) {
 	id := composeWorld(t)
 	srv := browseServer(t, composeStore(t), id)
-	markup := getAs(t, srv, RootPath+"?"+url.Values{
+	markup := getAs(t, srv, ScopesPath+"?"+url.Values{
 		QueryQuery: []string{composeWord},
 		QueryTag:   []string{composeTag},
 	}.Encode()).Body.String()
@@ -379,7 +379,7 @@ func TestTheComposedCardOffersEveryWayBack(t *testing.T) {
 	}{
 		{searchHref(composeWord), "drop the tag, keep the words"},
 		{tagHref(composeTag), "drop the words, keep the tag"},
-		{RootPath, "drop both"},
+		{ScopesPath, "drop both"},
 	} {
 		if !strings.Contains(markup, `href="`+want.href+`"`) {
 			t.Errorf("the composed card offers no way to %s (no link to %q):\n%s",
@@ -396,7 +396,7 @@ func TestTheComposedCardOffersEveryWayBack(t *testing.T) {
 
 	// The UNCOMPOSED search card keeps the label it has always had, so this is a composed-state
 	// change rather than a reword of every search page.
-	plain := pageText(getAs(t, srv, RootPath+"?"+url.Values{QueryQuery: []string{composeWord}}.Encode()).Body.String())
+	plain := pageText(getAs(t, srv, ScopesPath+"?"+url.Values{QueryQuery: []string{composeWord}}.Encode()).Body.String())
 	if !strings.Contains(plain, "Clear the search and show every scope") {
 		t.Errorf("an untagged search card lost its own way back:\n%s", plain)
 	}

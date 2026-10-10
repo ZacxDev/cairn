@@ -40,7 +40,7 @@ func TestEveryRenderedTagLinksToTheRootQueryAndNeverToAPath(t *testing.T) {
 		"tag page":   renderNode(t, Page(tagView(t, world, tags[0]))),
 	} {
 		for _, tag := range tags {
-			want := `href="` + RootPath + "?" + url.Values{QueryTag: []string{tag}}.Encode() + `"`
+			want := `href="` + ScopesPath + "?" + url.Values{QueryTag: []string{tag}}.Encode() + `"`
 			if !strings.Contains(markup, want) {
 				t.Errorf("%s: tag %q does not link to the root query.\nwant: %s", name, tag, want)
 			}
@@ -221,7 +221,7 @@ func TestTheTagParameterAddsNoRoute(t *testing.T) {
 	srv := newTestServer(t, staticAuth{testIdentity()})
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
-		RootPath+"?"+url.Values{QueryTag: []string{"marketing"}}.Encode(), nil))
+		ScopesPath+"?"+url.Values{QueryTag: []string{"marketing"}}.Encode(), nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("`%s?tag=marketing` answered %d, want 200 — the absence below would then be "+
 			"about a parameter nothing reads", RootPath, rec.Code)
@@ -270,7 +270,7 @@ func TestARepeatedTagParameterIsLASTWinsLikeThePod(t *testing.T) {
 		srv := newTestServer(t, staticAuth{testIdentity()})
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
-			RootPath+"?"+url.Values{QueryTag: sent[:]}.Encode(), nil))
+			ScopesPath+"?"+url.Values{QueryTag: sent[:]}.Encode(), nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("`?tag=%s&tag=%s` answered %d, want 200", sent[0], sent[1], rec.Code)
 		}

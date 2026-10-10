@@ -115,6 +115,11 @@ type PageView struct {
 	// `arcsindex.go`.
 	ArcsIndex *report.ArcsAcrossReport
 	ArcsAll   bool
+	// SessionsList is the sessions page's answer, nil everywhere else. See `hub.go`. (The hub itself
+	// needs nothing beyond `Scopes`.)
+	SessionsList *SessionsList
+	// Agent is the scope page's agent-tab recall, nil on every other tab and page. See `agent.go`.
+	Agent *AgentRecall
 	// Panes is the presence predicate bound to THIS request's viewer ([Server.panesFor]), nil when
 	// presence is off. Set by the four pages that list a session; read only through its methods, so
 	// a viewer the predicate shows nothing renders no node at all. See `presence.go`.
@@ -134,7 +139,9 @@ type PageView struct {
 	App App
 }
 
-// Page is the ROOT: every scope this credential may read, as cards, plus the search box.
+// Page is the SCOPE LIST (`/scopes`): every scope this credential may read, as cards, plus the search
+// box. It was the ROOT until the root became the hub (`hub.go`); the page itself did not change, and
+// the comments below that say "the root" mean this page.
 //
 // 🔴 EVERY USER STRING GOES THROUGH `g.Text` OR THROUGH A QUOTED ATTRIBUTE VALUE,
 // AND NOTHING GOES THROUGH `g.Raw`. See this package's doc comment for the measured
@@ -226,6 +233,8 @@ func ScopePage(v PageView) g.Node {
 		body = sessionsPanel(*v.Touched, v.Scopes, v.Now, v.Panes)
 	case v.Tab == TabArcs && v.Touched != nil:
 		body = arcsPanel(*v.Touched, v.Scopes, v.Now)
+	case v.Tab == TabAgent && v.Agent != nil:
+		body = agentPanel(*v.Agent)
 	default:
 		body = entriesPanel(s, v.Now)
 	}
@@ -233,7 +242,10 @@ func ScopePage(v PageView) g.Node {
 		h.Section(
 			h.Class("card"),
 			h.H2(g.Text(s.Name)),
-			scopeStats(s),
+			// ⚠ NO `scopeStats` HERE ANY MORE, ON AN OPERATOR DECISION: "N entries" is the Entries tab's own
+			// count and "N bullets declared open" read as noise on a page about the entries themselves. The
+			// scope LIST's cards keep both. What stays is when the scope last changed.
+			g.If(s.MTime() > 0, h.P(h.Class("card-stats"), updatedAgo(s.MTime(), v.Now))),
 			scopeTabs(s, v.Tab, v.Touched),
 			body,
 		),
@@ -267,7 +279,7 @@ func entriesPanel(s Scope, now time.Time) g.Node {
 // for everything else — see [TabSessions] for why an unknown value is the default and not a 400.
 func scopeTab(raw string) string {
 	switch raw {
-	case TabSessions, TabArcs:
+	case TabSessions, TabArcs, TabAgent:
 		return raw
 	}
 	return ""
@@ -288,9 +300,11 @@ func scopeTabHref(s Scope, tab string) string {
 // printed as a zero, and a LOWER-BOUND count carries `≥`.
 func scopeTabs(s Scope, current string, t *Touched) g.Node {
 	tab := func(label, count, tab string) g.Node {
+		// "Entries (5)" — the operator's spelling. A count that is not a measurement is still left off
+		// entirely ("Arcs", never "Arcs ()"), and a lower bound reads "(≥3)".
 		text := label
 		if count != "" {
-			text += " " + count
+			text += " (" + count + ")"
 		}
 		if tab == current {
 			return h.Span(h.Class("view-tab view-tab-here"), h.Data("tab", tabName(tab)), g.Text(text))
@@ -308,6 +322,8 @@ func scopeTabs(s Scope, current string, t *Touched) g.Node {
 		tab("Entries", strconv.Itoa(len(s.Entries)), ""),
 		tab("Sessions", sessions, TabSessions),
 		tab("Arcs", arcsCount, TabArcs),
+		// No count: the tab is one text, and its size is on the tab itself.
+		tab("What an agent sees", "", TabAgent),
 	)
 }
 
@@ -401,6 +417,17 @@ func newerFirstCmp(aMTime float64, aKey string, bMTime float64, bKey string) int
 // needs "when", not which nanosecond; the sub-second part is what decides a tie, and it does so in
 // [entriesNewestFirst], not here.
 func timeAgo(mtime float64, now time.Time) g.Node {
+	return mtimeNode(mtime, now, "")
+}
+
+// updatedAgo is [timeAgo] reading "updated 5m ago" — the scope page's spelling (an operator decision),
+// where a bare "5m ago" beside a row did not say WHAT happened five minutes ago. Same element, same
+// `datetime` and `title`; only the text gains the word.
+func updatedAgo(mtime float64, now time.Time) g.Node {
+	return mtimeNode(mtime, now, "updated ")
+}
+
+func mtimeNode(mtime float64, now time.Time, prefix string) g.Node {
 	if mtime <= 0 {
 		return nil
 	}
@@ -409,7 +436,7 @@ func timeAgo(mtime float64, now time.Time) g.Node {
 		h.Class("updated"),
 		h.DateTime(at.Format(time.RFC3339)),
 		h.TitleAttr(at.Format("2006-01-02 15:04:05 UTC")),
-		g.Text(relativeTime(at, now)),
+		g.Text(prefix+relativeTime(at, now)),
 	)
 }
 
@@ -683,7 +710,9 @@ func breadcrumbs(crumbs []crumb) g.Node {
 		h.Aria("label", "Breadcrumb"),
 		// The trail always starts at the root, so the first step is spelled here rather
 		// than by every caller.
-		h.A(h.Class("crumb"), h.Href(RootPath), g.Text("All scopes")),
+		// ⚠ `/scopes`, NOT THE ROOT, since the root became the hub: the trail's first step is still "All
+		// scopes", and that list lives at `ScopesPath` now. The wordmark is the way to the hub.
+		h.A(h.Class("crumb"), h.Href(ScopesPath), g.Text("All scopes")),
 		g.Map(crumbs, func(c crumb) g.Node {
 			if c.Href == "" {
 				return h.Span(h.Class("crumb crumb-here"), g.Text(c.Label))
@@ -724,7 +753,7 @@ func searchForm(v PageView) g.Node {
 	return h.FormEl(
 		h.Class("searchbar"),
 		h.Method("get"),
-		h.Action(RootPath),
+		h.Action(ScopesPath),
 		h.Label(h.For("q"), g.Text("Search entries")),
 		h.Input(
 			h.ID("q"),
@@ -801,7 +830,7 @@ func searchResults(v PageView) g.Node {
 			g.Text("Clear the tag and search every entry")))),
 		g.If(r.Tag != "", h.P(h.Class("note"), h.A(h.Href(tagHref(r.Tag)),
 			g.Text("Clear the search and list everything tagged `"+r.Tag+"`")))),
-		h.P(h.Class("note"), h.A(h.Href(RootPath), g.Text(clearAllLabel(r.Tag)))),
+		h.P(h.Class("note"), h.A(h.Href(ScopesPath), g.Text(clearAllLabel(r.Tag)))),
 		g.If(len(r.Hits) == 0 && r.BestBelow != "", h.P(h.Class("empty"), g.Text(
 			"Nothing cleared the threshold. The closest entry was `"+r.BestBelow+"` — "+
 				"so this is a near miss rather than a store with nothing in it."))),
@@ -831,7 +860,7 @@ func tagResults(v PageView) g.Node {
 		h.H2(g.Text("Tag")),
 		h.P(h.Class("card-what"), g.Text(tagWhat)),
 		h.P(h.Class("note"), g.Text(tagSummary(m))),
-		h.P(h.Class("note"), h.A(h.Href(RootPath), g.Text("Clear the tag and show every scope"))),
+		h.P(h.Class("note"), h.A(h.Href(ScopesPath), g.Text("Clear the tag and show every scope"))),
 		g.If(len(m.Entries) == 0 && m.Scanned > 0, h.P(h.Class("empty"), g.Text(
 			"No entry carries this tag. This query's operand is checked against no "+
 				"vocabulary, and an entry written before the write path's vocabulary closed "+
@@ -994,13 +1023,21 @@ func entryRow(s Scope, e Entry, now time.Time) g.Node {
 		// format, the parser and the CLI's own words are untouched (see [historyLabel]).
 		h.Span(h.Class("entry-count"), h.TitleAttr("top-level bullets under "+store.NuanceHeading),
 			g.Text(plural(e.BulletCount, "history note", "history notes"))),
-		timeAgo(e.MTime, now),
-		// Chips: aliases are inert text, refs link where the registry resolved one, tags link to
-		// the tag filter — three containers with three modifier classes so the three read
-		// differently at a glance. The `li` classes are the ones every other test reads.
+		updatedAgo(e.MTime, now),
+		// Chips: refs link where the registry resolved one, tags link to the tag filter.
+		//
+		// 🔴 ALIASES ARE RENDERED `hidden`, AND ONLY `filter.js` REVEALS ONE — an operator decision: the
+		// card does not show aliases, but the filter still matches them, and a row the filter kept ONLY
+		// because an alias matched would otherwise be a row whose visible text does not contain what
+		// the reader typed. So each alias is in the row, hidden, and the script unhides the container
+		// and the matching alias(es) for exactly that row (and re-hides them on the next keystroke).
+		// No script, no alias — the same progressive-enhancement direction the filter control takes.
+		// The `hidden` attribute is the whole mechanism: the script WRITES only `hidden`, which is the
+		// one thing it was already allowed to write.
 		g.If(len(e.Aliases) > 0, h.Ul(
 			h.Class("aliases chips chips-alias"),
-			g.Map(e.Aliases, plainItem),
+			g.Attr("hidden"),
+			g.Map(e.Aliases, func(a string) g.Node { return h.Li(g.Attr("hidden"), g.Text(a)) }),
 		)),
 		g.If(len(e.Tasks) > 0, h.Ul(h.Class("tasks chips chips-ref"), g.Map(e.Tasks, taskItem))),
 		g.If(len(e.Tags) > 0, h.Ul(h.Class("tags chips chips-tag"), g.Map(e.Tags, tagItem))),
@@ -1505,7 +1542,7 @@ func entryHref(scope control.ID, ref string, raw bool) string {
 // requirement rather than a preference: every served path is a literal key in `routes`, and a
 // tag is user text.
 func tagHref(tag string) string {
-	return RootPath + "?" + url.Values{QueryTag: []string{tag}}.Encode()
+	return ScopesPath + "?" + url.Values{QueryTag: []string{tag}}.Encode()
 }
 
 // searchHref is the ONE place a `/?q=` URL is built, and it exists for the same two reasons
@@ -1517,7 +1554,7 @@ func tagHref(tag string) string {
 // off `handlePage`. The encoder is what stops `?q=` ending an attribute, and the only reason
 // this is not already a stored-XSS report is that nothing built this URL before.
 func searchHref(query string) string {
-	return RootPath + "?" + url.Values{QueryQuery: []string{query}}.Encode()
+	return ScopesPath + "?" + url.Values{QueryQuery: []string{query}}.Encode()
 }
 
 // clearAllLabel names what the bare-root link actually does, which differs by how many filters

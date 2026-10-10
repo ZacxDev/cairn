@@ -437,8 +437,7 @@ func Report(env Env, opts Options, isSearch bool) (int, error) {
 		}
 	}
 
-	fmt.Fprintln(env.Stdout, BannerNamed(state.Name, state.Detail, label))
-	fmt.Fprintln(env.Stdout)
+	fmt.Fprint(env.Stdout, RecallPreamble(state.Name, state.Detail, label))
 	fmt.Fprintln(env.Stdout, text)
 	// 🔴 THE READER'S OWN EXIT CODE, PASSED THROUGH. Hardcoding 0 here was a measured defect:
 	// on an all-malformed scope the reader exited 3 and the client exited 0. The stdout text

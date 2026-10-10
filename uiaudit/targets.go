@@ -178,7 +178,10 @@ type Target struct {
 // terminates that cycle, as for the entry pair. `boot.go`'s `writeArcJournal` is what puts one arc
 // in the world, because with no journal the card lists nothing to follow.
 var linkExpanded = map[string]bool{
-	ui.RootPath:   true,
+	// 🔴 `GET /scopes` TOOK THE ROOT'S PLACE HERE WHEN THE ROOT BECAME THE HUB: it is the page whose
+	// cards link `/scope?id=<control.ID>`, so it is the one that must expand for any scope page to be
+	// reached. The root moved to `plainGET` — see there.
+	ui.ScopesPath: true,
 	ui.ScopePath:  true,
 	ui.SharePath:  true,
 	ui.EntryPath:  true,
@@ -196,6 +199,10 @@ var linkExpanded = map[string]bool{
 	// `writeArcJournal` registers a recent, an open-old and a closed-old arc so the live view, the
 	// hidden count and the toggle all render.
 	ui.ArcsPath: true,
+	// 🔴 `GET /sessions` FOR `GET /arcs`'s REASON: its bare path IS the page, and it PUBLISHES every
+	// visible session as `/session?session=<id>` — a second way to the session page beside the scope
+	// tabs, and the only one that does not pass through a scope.
+	ui.SessionsPath: true,
 }
 
 // plainGET is the set of ledger paths captured exactly as the ledger spells them.
@@ -225,7 +232,14 @@ var linkExpanded = map[string]bool{
 //
 // ⚠ IT IS A PUBLIC ROW, SO THE WALK CAPTURES IT WITHOUT A SESSION — derived from the
 // ledger's CLASS, never from the path, which is what `Targets` does for every row.
+//
+// 🔴 `GET /` IS HERE SINCE IT BECAME THE HUB, AND WAS IN `linkExpanded` BEFORE. The hub links only
+// BARE ledger paths (`/arcs`, `/scopes`, `/sessions`, `/share`), each already its own row, which
+// [ExpandLinks] declines by design ("no query: already its own row") — so expanding it would buy
+// nothing and claim a discovery the walk never makes. The scope cards it used to publish are
+// `/scopes`'s now, and that row expands.
 var plainGET = map[string]bool{
+	ui.RootPath:   true,
 	ui.SignInPath: true,
 	ui.JoinPath:   true,
 }

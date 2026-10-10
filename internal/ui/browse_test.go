@@ -307,7 +307,7 @@ func TestTheBrowsePagesRefuseAnotherPrincipalsScopeWithTheSameBytesAsAnAbsentOne
 	// therefore still refused — while the ROOT page listed the other tenant's scope name,
 	// its entry refs and its bullet counts as an unlinked card. The refusal held and the
 	// data leaked anyway, which is exactly the shape a refusal-only guard cannot see.
-	rootAsA := getAs(t, srvA, RootPath)
+	rootAsA := getAs(t, srvA, ScopesPath)
 	if rootAsA.Code != http.StatusOK {
 		t.Fatalf("the root page answered %d for A, want 200; the narrowing assertions below are about a refusal",
 			rootAsA.Code)
@@ -416,7 +416,7 @@ func TestTheRootPageSearchBoxDrivesTheEngineThroughTheRoute(t *testing.T) {
 	root := twoScopeStore(t)
 	srv := browseServer(t, root, readsB)
 
-	hitPage := getAs(t, srv, RootPath+"?"+url.Values{QueryQuery: []string{onlyInBeta}}.Encode())
+	hitPage := getAs(t, srv, ScopesPath+"?"+url.Values{QueryQuery: []string{onlyInBeta}}.Encode())
 	if hitPage.Code != http.StatusOK {
 		t.Fatalf("GET /?q= answered %d, want 200: %s", hitPage.Code, hitPage.Body.String())
 	}
@@ -426,7 +426,7 @@ func TestTheRootPageSearchBoxDrivesTheEngineThroughTheRoute(t *testing.T) {
 
 	// A word that is in no entry at all: the page must say so in words rather than render
 	// a blank, which is the whole reason `BestBelow` is carried onto the view.
-	missPage := getAs(t, srv, RootPath+"?"+url.Values{QueryQuery: []string{"zzzznothingmatchesthis"}}.Encode())
+	missPage := getAs(t, srv, ScopesPath+"?"+url.Values{QueryQuery: []string{"zzzznothingmatchesthis"}}.Encode())
 	if missPage.Code != http.StatusOK {
 		t.Fatalf("a no-match search answered %d, want 200", missPage.Code)
 	}
@@ -436,7 +436,7 @@ func TestTheRootPageSearchBoxDrivesTheEngineThroughTheRoute(t *testing.T) {
 	}
 
 	// An EMPTY `?q=` is not a search. It is how a reader clears one.
-	cleared := getAs(t, srv, RootPath+"?"+QueryQuery+"=")
+	cleared := getAs(t, srv, ScopesPath+"?"+QueryQuery+"=")
 	if cleared.Code != http.StatusOK {
 		t.Fatalf("GET /?q= (empty) answered %d, want 200", cleared.Code)
 	}
@@ -850,7 +850,7 @@ func TestTheDocumentCardIsCappedAndTheGridsCardsAreNot(t *testing.T) {
 	}{
 		{
 			name:     "the root page: the grid is the child, the cards are not",
-			path:     RootPath,
+			path:     ScopesPath,
 			wantCard: false,
 			why: "the root page's cards are the layout the ultrawide rung exists for — 9 uniform " +
 				"columns at a 3004px viewport. A card here that became a direct child of `<main>` " +
@@ -877,7 +877,7 @@ func TestTheDocumentCardIsCappedAndTheGridsCardsAreNot(t *testing.T) {
 		},
 		{
 			name:     "the root page carrying a query, which renders a search answer and no grid",
-			path:     RootPath + "?" + QueryQuery + "=" + onlyInAlpha,
+			path:     ScopesPath + "?" + QueryQuery + "=" + onlyInAlpha,
 			wantCard: true,
 			why: "🔴 A FOURTH PAGE STATE, AND IT IS THE ONE A READER OF THE COMMIT MESSAGE WOULD " +
 				"MISS. `/` is the grid page only while no query is in force; with one it renders " +
