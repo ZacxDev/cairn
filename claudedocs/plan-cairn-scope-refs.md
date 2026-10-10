@@ -48,9 +48,12 @@ must not read as an instruction to run a command that does not exist.
 - *Revision 5* (`52f600c` → this) applies round 4:
   - **one wire answer for a broken journal**: arcs' `store-unreachable` 503, mapped to exit 10 by
     the auditor;
-  - T9 pin 1 covers every `os` mutator;
+  - T9 pin 1 covers every PACKAGE-LEVEL `os` mutator; revision 6 narrowed this from "every";
   - "Four" parts;
   - three wording nits.
+- *Revision 6* (`9948883` → this) applies round 5, narrowing two sentences:
+  - pin 1 is scoped to PACKAGE-LEVEL `os` functions, and methods are added to what it cannot see;
+  - the exit-3 and exit-10 mechanisms are cited correctly.
 
   Removed decisions keep their numbers, marked REMOVED, so references stay stable.
 
@@ -296,7 +299,7 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
   (`internal/ui/sharehandlers.go:170`).
 - **Every file the `cairn-ui` binary writes today** (round 3 🟡2). Measured by finding the
   file-writing `os` calls (`WriteFile`/`OpenFile`/`Create`/`CreateTemp`/`Rename`/`Mkdir`; T9's pin 1
-  uses the full mutator set) in every
+  uses the full PACKAGE-LEVEL mutator set) in every
   in-repo package of `go list -deps ./cmd/cairn-ui`:
   - **the control journal**, which must resolve outside `-store` (`cmd/cairn-ui/main.go:246-266`),
     through `internal/control/filestore.go`;
@@ -397,10 +400,16 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
          the error text as a plain-text body.
        - **No new wire token** (round 4 🟡1).
        - **The proposed `audit-refs` verb maps that 503 to the could-not-look reason
-         `sources-unreadable`, exit 10, REGARDLESS of `X-Store-Exit`.**
-         - The arcs client returns the pod's `X-Store-Exit` as its own exit
-           (`internal/client/arcs.go:94-100`), which would be 3. That is right for arcs and wrong
-           here, because the auditor's exit model is doctor's `0/9/10`.
+         `sources-unreadable`, exit 10, on any non-200 fetch failure.** Like every read verb, it
+         never reads `X-Store-Exit` on a 503.
+         - **Where a plain read's 3 actually comes from** (round 5 🟢1). On a non-200,
+           `FetchReport` discards the headers and returns `*StoreUnreachable`
+           (`internal/client/arcs.go:76-85`). `cli.go:661-676` maps that to
+           `ExitUnreachableNoCache`, which is 3 (`exit.go:42`). `X-Store-Exit` is never read on a
+           503: `printPodReport` runs only on a 200.
+         - **The precedent the auditor follows for 10 is `arcsCheck`**. It returns
+           `doctor.ExitUnmeasured` when `FetchReport` fails (`arcs.go:166-169`), under the comment
+           "THE POD DID NOT ANSWER IS ALSO 10, NOT 3" (`:143-145`).
          - The proposed `sources` verb is a plain read, so it keeps the arcs behaviour and exits
            3.
      - **Empty:** the file is absent, so it is `Missing`. Every scope reads `sources=undeclared`,
@@ -675,7 +684,7 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
 | **T6. A lost update between two admins** | The revision compare inside the lock: exactly one of two same-revision writes lands (S1, S4). A resubmitted UNCHANGED list is refused the same way, which is a harmless no-op. |
 | **T7. A re-seed silently reverting declarations** (round 2's 🔴) | The journal lives outside the store tree, on the UI's volume. `seed.sh` writes only the store copy (`seed.sh:313-316`). Pinned by the inside-store startup refusal. |
 | **T8. A feature rollback breaks something** | An env var an old binary ignores, a separate file, no control-journal event, and an untouched store tree (decision 1). |
-| **T9. The internet-facing UI's write reach** (round 2's 🟡1; round 3 🟡2, restated truthfully) | **The `cairn-ui` binary writes four files: the control journal, the session table (`-session-file`), the presence token file (admin path only), and, with S4, the sources journal.** It writes nothing in the store, whose mount STAYS read-only (`handoff-cairn-control-plane.md:502-505`). The session table also leaves a `<session-file>.lock` sidecar (`sessionstore.go:197`). Three pins, each failing on GROW or SHRINK: (1) **`internal/ui` contains zero calls to any `os` function that MUTATES the filesystem**: `WriteFile`, `OpenFile`, `Create`, `CreateTemp`, `Rename`, `Mkdir`, `MkdirAll`, `MkdirTemp`, `Link`, `Symlink`, `Remove`, `RemoveAll`, `Truncate`, `Chmod`, `Chown`, `Lchown`, `Chtimes`, plus the `*os.File` write methods. The test DERIVES the set by enumerating package `os`'s exported functions and classifying each, failing on any unclassified one, so a new Go release's mutator cannot slip past. Measured 0 today, so this is an INVARIANT guard, labelled as one. An AST walk catches a raw `os.WriteFile` or `os.Remove` added to a handler; (2) **`internal/ui` has exactly one call site of `codesrc.Journal.Set` and none of `AppendBullet`/`ReplaceEntry`/`CreateEntry`**; (3) **`internal/api` has zero call sites of `Journal.Set`**, so the pod cannot become a second writer. ⚠ **What these do NOT see:** a write reached through ANOTHER package's function (the session store and control filestore are such packages, and are legitimately called); `cmd/cairn-ui` itself, which pin 1 does not walk; and the deployment's actual mounts. The pins bound the CODE in two packages, not the process. |
+| **T9. The internet-facing UI's write reach** (round 2's 🟡1; round 3 🟡2, restated truthfully) | **The `cairn-ui` binary writes four files: the control journal, the session table (`-session-file`), the presence token file (admin path only), and, with S4, the sources journal.** It writes nothing in the store, whose mount STAYS read-only (`handoff-cairn-control-plane.md:502-505`). The session table also leaves a `<session-file>.lock` sidecar (`sessionstore.go:197`). Three pins, each failing on GROW or SHRINK: (1) **`internal/ui` contains zero calls to any PACKAGE-LEVEL `os` function that mutates the filesystem**: `WriteFile`, `OpenFile`, `Create`, `CreateTemp`, `Rename`, `Mkdir`, `MkdirAll`, `MkdirTemp`, `Link`, `Symlink`, `Remove`, `RemoveAll`, `Truncate`, `Chmod`, `Chown`, `Lchown`, `Chtimes` and `CopyFS`. The test parses `$(go env GOROOT)/src/os`, not `runtime.GOROOT()`, which can be empty under `-trimpath`. It classifies every exported package-level function as mutator or not, and fails on an unclassified one, so a toolchain bump that adds a package-level mutator goes red until it is classified. Measured 0 today, so this is an INVARIANT guard, labelled as one. An AST walk catches a raw `os.WriteFile` or `os.Remove` in a handler; (2) **`internal/ui` has exactly one call site of `codesrc.Journal.Set` and none of `AppendBullet`/`ReplaceEntry`/`CreateEntry`**; (3) **`internal/api` has zero call sites of `Journal.Set`**, so the pod cannot become a second writer. ⚠ **What these do NOT see:** **METHODS on `*os.File` and `*os.Root`**. That includes everything reached through `os.OpenRoot` (on go1.25, `*os.Root` has `WriteFile`, `Create`, `OpenFile`, `Mkdir`, `MkdirAll`, `Remove`, `RemoveAll`, `Rename`, `Link`, `Symlink`, `Chmod`, `Chown`, `Lchown` and `Chtimes`), so `os.OpenRoot(…)` followed by `r.WriteFile(…)` passes pin 1. A method call on an imported type cannot be resolved by an AST walk, nor by the repo's no-importer `go/types` precedent, which silently drops such calls (`internal/ui/membershipledger_test.go:36-43`). Pin 1 also does not see a write reached through ANOTHER package's function (the session store and control filestore are such packages, and are legitimately called); `cmd/cairn-ui` itself, which pin 1 does not walk; and the deployment's actual mounts. The pins bound the CODE in two packages, not the process. |
 | **T10. The pod or UI spawns `git` or reaches a code host** | Clause (e). ⚠ It is structural on `exec` only, and cannot see a `net/http` CLIENT call. |
 | **T11. Stored XSS through a source string** | gomponents `Text` only; the one href through `safeHref`; `Raw`/`Rawf` stay AST-banned. |
 | **T12. Resource exhaustion on the auditing host** | ≤ 8 sources, a per-call timeout, a per-run PR-check cap, and a cap hit reported as could-not-look. Full mirrors are F1's price, and their size is unmeasured. |
@@ -927,9 +936,11 @@ killed.
 
 | finding | fix |
 |---|---|
-| 🟡1 the broken-journal 503 had two contradictory spellings | **One wire answer: arcs' `storeUnreachable`.** That is `503`, `X-Store-Status: store-unreachable`, `X-Store-Exit: 3`, and the error text as the body. No new token. The proposed `audit-refs` verb maps it to `sources-unreadable`, exit 10, regardless of `X-Store-Exit`. The proposed `sources` verb keeps arcs' exit 3. The literal-body `internal/api` test pins the exact response, and an `internal/client` test pins the 10 (decisions 1, 6 and 10; S2 test plan). |
-| 🟢1 T9 pin 1 was narrower than its sentence | Pin 1 now covers EVERY `os` mutator, derived in the test by classifying `os`'s exported functions, and failing on an unclassified one. |
+| 🟡1 the broken-journal 503 had two contradictory spellings | **One wire answer: arcs' `storeUnreachable`.** That is `503`, `X-Store-Status: store-unreachable`, `X-Store-Exit: 3`, and the error text as the body. No new token. The proposed `audit-refs` verb maps it to `sources-unreadable`, exit 10, as `arcsCheck` does. The proposed `sources` verb gets the plain-read exit 3. *(Round 5 corrected which mechanism produces each code.)* The literal-body `internal/api` test pins the exact response, and an `internal/client` test pins the 10 (decisions 1, 6 and 10; S2 test plan). |
+| 🟢1 T9 pin 1 was narrower than its sentence | Pin 1 now covers every PACKAGE-LEVEL `os` mutator, classified in the test, and failing on an unclassified one. *(Round 5 narrowed this sentence further; see below.)* |
 | 🟢2 "three mechanical parts" with four listed | Fixed to "Four". A sweep finds no other three-parts mention. |
+| *(round 5)* 🟡1 pin 1 claimed "every `os` mutator", but methods are invisible to it | The claim is narrowed to PACKAGE-LEVEL `os` functions, with `CopyFS` added. The set is read by parsing `$(go env GOROOT)/src/os`. "Methods on `*os.File`/`*os.Root`, and their reach via `os.OpenRoot`" now heads T9's "do NOT see" list, citing the no-importer limit (`membershipledger_test.go:36-43`). |
+| *(round 5)* 🟢1 the wrong mechanism was cited for exit 3 | The 3 comes from `FetchReport` → `*StoreUnreachable` → `cli.go:661-676` → `ExitUnreachableNoCache`. `X-Store-Exit` is unread on a 503. The 10 follows the `arcsCheck` precedent (`arcs.go:143-145`, `:166-169`). |
 | nits (round 4) | T9 and STEP 2 list the session store's `.lock` sidecar. "A rename orphans" now reads "a DIRECTORY rename", and says a control-journal `scope-renamed` alone detaches the display name from its directory. On the UI, the STORE INDEX enumerates directories, not the journal authority. |
 
 ## Open questions
