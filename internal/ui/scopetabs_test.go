@@ -64,7 +64,7 @@ func tabsJournal(t *testing.T, writersMeasured, damaged bool) string {
 	return path
 }
 
-var panelIDs = []string{"scope-entries", "scope-sessions", "scope-arcs"}
+var panelIDs = []string{"scope-entries", "scope-sessions", "scope-arcs", "scope-agent"}
 
 // TestEachScopeTabRendersOnlyItsOwnPanel — the selection, the default, and unknown values. RED with
 // the `switch` in `ScopePage` always rendering the entries panel, and with `scopeTab` passing an
@@ -77,6 +77,8 @@ func TestEachScopeTabRendersOnlyItsOwnPanel(t *testing.T) {
 		{"entries", "scope-entries", "entries"},
 		{TabSessions, "scope-sessions", "sessions"},
 		{TabArcs, "scope-arcs", "arcs"},
+		{TabAgent, "scope-agent", "agent"},
+		{"Agent", "scope-entries", "entries"},
 		// UNKNOWN → the default tab, never a 400 and never an empty page (see `TabSessions`).
 		{"bogus", "scope-entries", "entries"},
 		{"Sessions", "scope-entries", "entries"}, // values are exact: a case variant is unknown
@@ -113,9 +115,10 @@ func TestTheTabLabelsCarryPairwiseDistinctCounts(t *testing.T) {
 	srv := arcsServer(t, StoreSource{Root: tabsStore(t, false), ArcJournal: tabsJournal(t, true, false)}, readsA)
 	body := getAs(t, srv, scopeTabURL(browseScopeA, TabArcs)).Body.String()
 	for _, want := range []string{
-		`data-tab="entries" href="` + inAttr(scopeURL(browseScopeA)) + `">Entries 3</a>`,
-		`data-tab="sessions" href="` + inAttr(scopeTabURL(browseScopeA, TabSessions)) + `">Sessions 2</a>`,
-		`<span class="view-tab view-tab-here" data-tab="arcs">Arcs 1</span>`,
+		// "Entries (3)", an operator decision — it read "Entries 3".
+		`data-tab="entries" href="` + inAttr(scopeURL(browseScopeA)) + `">Entries (3)</a>`,
+		`data-tab="sessions" href="` + inAttr(scopeTabURL(browseScopeA, TabSessions)) + `">Sessions (2)</a>`,
+		`<span class="view-tab view-tab-here" data-tab="arcs">Arcs (1)</span>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the tab strip is missing %q:\n%s", want, body)

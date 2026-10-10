@@ -82,6 +82,13 @@ type Source interface {
 	// member bullet over the readable scopes. On this interface for `Touched`'s reason — a second
 	// seam would be a route answering about authority through a door the walk does not count.
 	Arcs(auth control.Authorization) (report.ArcsAcrossReport, error)
+	// AllSessions answers `/sessions`: every session this caller can see
+	// anything of. On this interface for `Session`'s reason, and over the SAME walk (`report.
+	// SessionsAcross` and `report.SessionAcross` share it), so the list and the page cannot disagree.
+	AllSessions(auth control.Authorization) (SessionsList, error)
+	// Recall answers the scope page's agent tab: `cairn recall --scope <scope>`'s text, narrowed by the
+	// same authority. On this interface for `Touched`'s reason. See `agent.go`.
+	Recall(auth control.Authorization, scope string) (AgentRecall, error)
 }
 
 // Scope is one scope's worth of entries, as the pages render them.
@@ -581,6 +588,11 @@ type StoreSource struct {
 	// `arcs.ResolveJournalPath` (outside the store tree), or "" — the designed OFF state, in which
 	// every arc answer is `registrations-unconfigured`. READ ONLY: see `arcSnapshot`.
 	ArcJournal string
+
+	// Host is "whose disk is this" for the agent tab's recall header — the `host:` line `RenderText`
+	// prints. nil means `hostid.ThisHost`, which is what the pod and the CLI default to; injected so a
+	// test pins the bytes.
+	Host func() string
 }
 
 // refBase is `RefBase` with the nil case folded in, so `readEntry` does not branch.
@@ -1362,7 +1374,9 @@ func writePlain(w http.ResponseWriter, code int, body string) {
 	_, _ = w.Write([]byte(body))
 }
 
-// handlePage is the ROOT page's handler: a card per readable scope, plus the search box.
+// handlePage is the SCOPE LIST's handler (`/scopes`): a card per readable scope, plus the search box.
+// It served the ROOT until the root became the hub (`handleHub`), and "the root row" below means this
+// one — `?q=` and `?tag=` reach it here, or through the hub's 303.
 //
 // ⚠ IT WAS ONCE THE ONE CONTENT HANDLER AND IS NOW ONE OF FOUR. That sentence has been
 // corrected twice — it said "the ONE content handler" until `GET /share` arrived and "one
@@ -1552,6 +1566,16 @@ func (s *Server) handleScopePage(w http.ResponseWriter, r *http.Request, id iden
 	// The tab is read AFTER the refusal, for `?view=`'s reason in `handleEntryPage`: it selects which
 	// view of a scope the caller already proved they read, and is never an authority input.
 	view.Tab = scopeTab(r.URL.Query().Get(QueryTab))
+	// 🔴 THE AGENT TAB'S RECALL IS READ ONLY FOR THAT TAB, AND ONLY AFTER THE REFUSAL ABOVE — by the
+	// name out of the narrowed answer, through a read narrowed again by the same authority (`agent.go`).
+	if view.Tab == TabAgent {
+		recall, err := s.source.Recall(id.Auth, scope.Name)
+		if err != nil {
+			writePlain(w, http.StatusInternalServerError, "the store could not be read")
+			return
+		}
+		view.Agent = &recall
+	}
 	view.Panes = s.panesFor(id)
 	s.renderScope(w, view)
 }

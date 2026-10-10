@@ -38,8 +38,8 @@ func TestEveryRenderedPageCarriesBothNavigationAffordances(t *testing.T) {
 	// The ledger. A page added to the surface must be added here, and the count is
 	// asserted so that adding one without an entry FAILS rather than passing unseen.
 	want := []string{
-		"entry", "invite-index", "invite-minted", "invite-project", "navigate", "root",
-		"scope", "search", "share-index", "share-scope",
+		"entry", "hub", "invite-index", "invite-minted", "invite-project", "navigate", "root",
+		"scope", "search", "sessions", "share-index", "share-scope",
 	}
 	got := make([]string, 0, len(pages))
 	for name := range pages {
@@ -173,8 +173,14 @@ func everyRenderedPage(t *testing.T) map[string]string {
 		Expires: "2000-01-09T03:04:05Z",
 	}
 
+	sessionsView := v
+	sessionsView.SessionsList = &SessionsList{}
+
 	return map[string]string{
+		// "root" is the scope LIST (`Page`, at `/scopes`); "hub" is the root since the IA change.
 		"root":        renderNode(t, Page(v)),
+		"hub":         renderNode(t, HubPage(v)),
+		"sessions":    renderNode(t, SessionsPage(sessionsView)),
 		"navigate":    renderNode(t, NavigatePage(v)),
 		"scope":       renderNode(t, ScopePage(scopeView)),
 		"entry":       renderNode(t, EntryPage(entryView)),

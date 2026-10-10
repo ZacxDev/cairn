@@ -49,7 +49,10 @@ func TestNoPageCarriesALegendOrTheScopeExplainer(t *testing.T) {
 	root, id, orchard := recencyWorld(t)
 	srv := recencyServer(t, root, id)
 	pages := map[string]string{
-		"root":      RootPath,
+		// "root" is the scope LIST, which was the root until the root became the hub; the hub is walked
+		// too, for the no-legend half.
+		"root":      ScopesPath,
+		"hub":       RootPath,
 		"scope":     ScopePath + "?" + QueryID + "=" + string(orchard),
 		"entry":     entryHref(orchard, "birch", false),
 		"entry raw": entryHref(orchard, "birch", true),
@@ -103,7 +106,7 @@ func TestTheRemovedDefinitionCopyIsAbsentAndChipsArePresent(t *testing.T) {
 		}
 		return rec.Body.String()
 	}
-	rootBody := get(RootPath)
+	rootBody := get(ScopesPath)
 	scopeBody := get(ScopePath + "?" + QueryID + "=" + string(orchard))
 	entryBody := get(entryHref(orchard, "birch", false))
 
@@ -158,7 +161,7 @@ func TestTheRemovedDefinitionCopyIsAbsentAndChipsArePresent(t *testing.T) {
 		}
 	}
 	// Tags stay LINKS to the tag filter; aliases are NOT links.
-	if !strings.Contains(entryBody, `<li class="tag"><a href="/?tag=timber">timber</a></li>`) {
+	if !strings.Contains(entryBody, `<li class="tag"><a href="/scopes?tag=timber">timber</a></li>`) {
 		t.Error("a tag chip is not a link to its tag filter")
 	}
 	if !strings.Contains(entryBody, `<ul class="aliases chips chips-alias"><li>birch-alias</li></ul>`) {

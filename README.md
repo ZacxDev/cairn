@@ -487,12 +487,13 @@ route at all — `internal/ui` declares `/share`, `/unshare`, the session pair, 
   written `tags: [marketing]` and vice versa. A tag you can write is one you can ask for.
 
 **On the browse pages** the entry and scope pages render an entry's tags, each a link to
-`/?tag=<name>` — a **query parameter on the root**, never a path segment, so no served path
-changed. That root listing shows every visible entry carrying the tag, across scopes, and reports
-how many entries it LOOKED at so an empty answer is legible.
+`/scopes?tag=<name>` — a **query parameter on the scope list**, never a path segment. (The scope
+list was the root until the root became a hub; `/?tag=` and `/?q=` still answer, with a 303 to
+`/scopes` carrying the query.) That listing shows every visible entry carrying the tag, across
+scopes, and reports how many entries it LOOKED at so an empty answer is legible.
 
-🔴 **And `?q=` and `?tag=` COMPOSE on that root, the same way they compose on the pod.**
-`/?q=lease&tag=marketing` is **one** card: a search over the entries carrying `marketing` and
+🔴 **And `?q=` and `?tag=` COMPOSE on the scope list, the same way they compose on the pod.**
+`/scopes?q=lease&tag=marketing` is **one** card: a search over the entries carrying `marketing` and
 nothing else, narrowed by the same `report.Search` call `GET /api/v1/search/<scope>?q=…&tag=…`
 makes. ⚠ **This changed what a URL that already worked answers** — the page used to render two
 independent cards, a search over everything beside a listing of everything tagged, neither

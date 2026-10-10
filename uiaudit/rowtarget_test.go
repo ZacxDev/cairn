@@ -105,7 +105,7 @@ func TestTheWholeRowTargetIsTheScopePagesAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	root, err := b.CaptureTarget(Target{Path: "/", PushURL: "/", LedgerRow: "control", ExpandLinks: true}, Mobile)
+	root, err := b.CaptureTarget(Target{Path: "/scopes", PushURL: "/scopes", LedgerRow: "control", ExpandLinks: true}, Mobile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestTheWholeRowTargetIsTheScopePagesAlone(t *testing.T) {
 		}
 	}
 	if len(scopePages) == 0 {
-		t.Fatalf("the root page linked no scope page, so there is no row to hit-test (hrefs: %v)", root.Hrefs)
+		t.Fatalf("the scope list (/scopes) linked no scope page, so there is no row to hit-test (hrefs: %v)", root.Hrefs)
 	}
 
 	sum := map[string]*rowHits{}

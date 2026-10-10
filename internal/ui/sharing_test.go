@@ -278,7 +278,7 @@ func TestAScopeSharedFromOneUserToAnotherIsServedThroughTheBrowser(t *testing.T)
 	// BEFORE: wren's own page does not carry the scope, and wren's own authority does
 	// not reach it. Both are asserted — the page could omit it for a rendering reason
 	// and the authority is the thing under test.
-	before := wren.get(RootPath)
+	before := wren.get(ScopesPath)
 	if before.Code != http.StatusOK {
 		t.Fatalf("wren's page answered %d before the share; the comparison below needs a served page", before.Code)
 	}
@@ -311,7 +311,7 @@ func TestAScopeSharedFromOneUserToAnotherIsServedThroughTheBrowser(t *testing.T)
 	// AFTER: wren's page carries the scope AND its entry. The entry matters — a page
 	// listing a scope heading with no entries would mean the authority moved and the
 	// store narrowing did not.
-	after := wren.get(RootPath)
+	after := wren.get(ScopesPath)
 	if after.Code != http.StatusOK {
 		t.Fatalf("wren's page answered %d after the share: %s", after.Code, after.Body.String())
 	}
@@ -702,7 +702,7 @@ func TestRevokingRemovesTheViewerFromTheAudience(t *testing.T) {
 	if rec := rowan.post(SharePath, form); rec.Code != http.StatusSeeOther {
 		t.Fatalf("the share answered %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(wren.get(RootPath).Body.String(), shareScopeName) {
+	if !strings.Contains(wren.get(ScopesPath).Body.String(), shareScopeName) {
 		t.Fatal("wren cannot see the scope after the share, so the revocation below would prove nothing")
 	}
 
@@ -718,7 +718,7 @@ func TestRevokingRemovesTheViewerFromTheAudience(t *testing.T) {
 		t.Fatalf("the revoke answered %d, want 303: %s", rec.Code, rec.Body.String())
 	}
 
-	if body := wren.get(RootPath).Body.String(); strings.Contains(body, shareScopeName) {
+	if body := wren.get(ScopesPath).Body.String(); strings.Contains(body, shareScopeName) {
 		t.Errorf("wren STILL sees %q after the grant was revoked. `ApplyNow` materializes before returning, "+
 			"so this cache is serving the written epoch and no read through it may honour the grant.",
 			shareScopeName)
