@@ -36,6 +36,15 @@ must not read as an instruction to run a command that does not exist.
   - Every piece of README machinery is deleted: the front-matter reader and splice,
     `SetScopeSources`, the Python-ignores test and the parity-world README.
   - Round 2's findings (R2-1 to R2-5) are applied.
+- *Revision 4* (`e7a7238` → this) applies round 3 (`e7a7238`'s delta audit):
+  - **Records are keyed by the NORMALISED SCOPE NAME, not by scope ID.** The UI and the pod resolve
+    scope IDs in DIFFERENT ID spaces, so ID keying could never be read back (🔴1, decision 4). This
+    departs from O5's keying detail, so it is flagged for the operator as Q17.
+  - Tags are kept out of reachability (🟡1).
+  - T9 lists every file the UI writes (🟡2).
+  - The journal's three states are spelled out, and a broken journal answers 503 (🟡3).
+  - The backup treats an absent journal as a pass (🟡4).
+  - The four-places ledger is corrected (🟢1), and the nits are folded in.
 
   Removed decisions keep their numbers, marked REMOVED, so references stay stable.
 
@@ -78,6 +87,16 @@ Drop the work, or the named half of it, if any of these holds:
   3. **`tests/conformance/run_go.sh` exits 0 with the new `go_only` rows present**, and
      `python3 tests/conformance/suite.py run` still reports 0 failures. The oracle skips those rows
      by id, counted, with their reason.
+  4. **The cross-binary seam test (🔴1) passes in the `go` job:**
+     `TestAUIWrittenDeclarationIsWhatThePodServes` (S4). It builds BOTH halves the way their `main`s
+     build them:
+     - the UI's handler over a JOURNAL-backed `control` model, POSTing a declaration;
+     - the pod's `api.New` over a TOKEN-FILE projection (`cmd/cairn-server/main.go:358`), serving
+       it.
+
+     It asserts that the GET returns the POSTed list. It is shown RED under the ID-keyed design of
+     revision 3, through the mutant `ui-sources-keyed-by-control-id`. `e2e.sh`'s clause (a) cannot see
+     this defect, because its writer chooses its own key. That is why this is a separate part.
 
   `e2e.sh` follows the repository's harness convention: it exits **2** ("could not vouch") when
   `git` or a built binary is missing, or when one of its own controls misbehaves. That is the
@@ -98,7 +117,7 @@ Drop the work, or the named half of it, if any of these holds:
   | **(c) stale world** | exactly one missing path, one symbol absent from its file and one PR answering 404 → exit **9**. The finding set EQUALS the planted set, by entry, claim and state | removing each planted defect drops exactly its own finding |
   | **(d) could not look** | exit **10**, with the reason named, for each of: a remote that does not exist; an undeclared scope; a declared scope with `checked=0`; one mapped source clean beside one unmapped source | the same scope with the remote present, one claim, and only mapped sources exits 0 |
   | **(e) the pod and UI never fetch** | `go list -deps` finds no `os/exec` and no `internal/refaudit` in `cmd/cairn-server` or `cmd/cairn-ui` | the same query on `cmd/cairn` finds both, so the count can move |
-  | **(f) reachability, not presence** | a `RESOLVED` SHA reachable ONLY from `refs/pull/1/head` reports `exists-off-branch` (informational), and the exit is unaffected. After that ref is DELETED on the remote and the run repeats, the SHA reports `not-reachable` (could-not-look, exit 10), even though the previous run left the object in the mirror | the run with the pull refspec removed also reports `not-reachable` |
+  | **(f) reachability, not presence, not tags** | a `RESOLVED` SHA reachable ONLY from `refs/pull/1/head` reports `exists-off-branch` (informational), and the exit is unaffected. Then that ref is DELETED on the remote while a TAG pointing at the same SHA is KEPT, and the run repeats. The SHA now reports `not-reachable` (could-not-look, exit 10). That holds even though the previous run left the object in the mirror, and even though the tag still contains it (🟡1) | the run with the pull refspec removed also reports `not-reachable` |
 
   **`--self-test`** applies one sabotage per clause on a scratch copy of the tree with its `.git`
   removed (the `tests/control_mutants.py` pattern). Each must be caught by its OWN clause's
@@ -113,8 +132,8 @@ Drop the work, or the named half of it, if any of these holds:
   ⚠ **NOT covered:**
   - stored findings (Q4) and a recall-header line (Q5). Both are open questions, not slices;
   - the PR check against the REAL GitHub API. That is a one-time operator check (S5).
-  - S2 and S4 are covered by their own Go tests, not by `e2e.sh`. That is stated so nobody reads
-    the six clauses as covering the UI write.
+  - S2 and S4 are covered by their own Go tests and part 4, not by `e2e.sh`. That is stated so
+    nobody reads the six clauses as covering the UI write.
 
 ## STEP 1 — What audits exist today
 
@@ -199,48 +218,67 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
 - **Placement.** The pod refuses to start if the journal resolves inside the store root, through
   `arcs.ResolveJournalPath` (`cmd/cairn-server/main.go:381-394`). Inside the root, the journal
   would become a scope.
-- **The write.** An exclusive `flock` covers the whole read-merge-append. There is one `write(2)`
-  under `O_APPEND`, then `fsync` (`internal/arcs/journal.go:160-191`). Its comment names the limit:
-  `flock` is advisory-only across hosts on a network filesystem (`:167`).
-- **The read.** A missing file is an empty snapshot flagged `Missing` (`:86-96`). Damaged lines are
-  skipped and counted, and a torn tail is decided by the last byte (`:98-105`, `Snapshot.Damaged`
-  at `:65`). That tolerance is right for non-authority data.
+- **The write.** The journal is opened with `O_NOFOLLOW` (`internal/arcs/journal.go:178`). An
+  exclusive `flock` covers the whole read-merge-append, then there is one `write(2)` under
+  `O_APPEND`, then `fsync` (`:160-191`). Its comment names the limit: `flock` is advisory-only
+  across hosts on a network filesystem (`:167`).
+- **The read, in THREE states.**
+  - **Off:** unset, which answers `registrations-unconfigured`.
+  - **Empty:** a missing file is an empty snapshot flagged `Missing` (`:86-96`).
+  - **Broken:** any other read failure is a `*JournalUnreadableError`, which the pod answers as
+    **503** (`internal/api/server.go:930-935`, `:1424-1428`).
+
+  Damaged lines are skipped and counted, and a torn tail is decided by the last byte (`:98-105`,
+  `Snapshot.Damaged` at `:65`).
 - **Provenance.** The pod stamps who pushed and when; every other field is the writer's own word
   (`arcs.go:15-19`).
 - **The deployment facts arcs already carry:**
-  - the journal is BACKED UP on both instances: staged under `arcs/` by the personal instance's
-    UI backup job, uploaded beside the archive by the client instance's backup job
-    (`claudedocs/handoff-cairn-arcs-sessions.md:46-50`);
+  - the journal is BACKED UP on both instances (`claudedocs/handoff-cairn-arcs-sessions.md:46-51`):
+    - the personal instance's UI backup job FAILS if `arcs.jsonl` is absent;
+    - the client instance's backup job PASSES on absence, logging `arcs: absent`, because nothing
+      had registered there yet;
   - a second pod mounting a ReadWriteOnce, node-local volume must run on the SAME node;
   - on one storage driver, a claim-level `readOnly` breaks co-mounting, so read-only is enforced on
-    the CONTAINER mount (`handoff-cairn-arcs-sessions.md:122-126`; `internal/ui/README.md:654`).
-- **Go-only.** The arc routes are Go-only by decision (`internal/api/routes.go:67-77`). Four
-  places move together:
+    the CONTAINER mount (`handoff-cairn-arcs-sessions.md:122-126`).
+- **Go-only.** The arc routes are Go-only by decision. `internal/api/routes.go:67-71` names the
+  FOUR places a Go-only head moves together:
   - that table;
   - the `go_only` rows of `tests/conformance/requests.json`;
   - the `go_only` rows of `tests/testlib/capability_ledger.py` (`:39-43`, `:112-128`);
   - `flake.nix`'s `want-go-only.txt`.
 
-  A Go-only golden is a change detector (`tests/conformance/README.md`, "…and the mirror"). The
-  dual-run gate DECLARES such a head go-only rather than sending it (same README, the `flagParam`
-  paragraph).
+  A Go-only golden is a change detector (`tests/conformance/README.md`, "…and the mirror").
+  ⚠ Revision 3 named a fifth, "the dual-run gate's go-only declaration for the head". **No such
+  ledger exists** (round 3 🟢1). The dual-run gate discovers routes from the oracle, and its
+  `go_only_params` is a list of query parameters. So a new Go-only head is simply INVISIBLE to
+  dual-run, which is a blind spot and not a ledger to move.
 - ⚠ **Every read head is served on GET AND HEAD.** The ledger expands each head over
   `safeReadMethods` (`routes.go:84`, `:96-102`). So "one GET route" (O5) and D5 ("no HEAD") are
   reconciled in decision 10.
 
-### Scope identity: two authorities, two ID rules
+### Scope identity: two authorities, two ID SPACES — inside ONE deployment (round 3 🔴1)
 
 - The control model's `Scope` has an immutable `ID`, a mutable `DisplayName` and a `ProjectID`
   (`internal/control/model.go:228-243`).
-- **Journal-backed deployment.**
-  - Scope IDs are RANDOM at creation (`internal/control/provision.go:113`, `NewID`).
-  - A rename is a `scope-renamed` event that keeps the ID (`internal/control/journal.go:22`).
-  - There is no scope-deletion event (none found by `grep` over `internal/control`).
-- **Token-file deployment.** Scope IDs are DERIVED from the folded directory name
-  (`internal/control/tokenfile/source.go:580-586`, `DerivedID`).
-- **Name to ID.** `Model.ScopeByName` REFUSES a name that two projects share rather than picking
-  one, because picking would be a cross-tenant read (`model.go:450-480`).
-- **Authorisation is keyed on the ID** (`internal/control/resolve.go:89`).
+- **There are two ID rules:**
+  - **In a control journal**, scope IDs are RANDOM at creation (`internal/control/provision.go:113`,
+    `NewID`). A rename keeps the ID (`scope-renamed`, `internal/control/journal.go:22`), and there
+    is no scope-deletion event.
+  - **In the token-file projection**, scope IDs are DERIVED from the folded directory name
+    (`internal/control/tokenfile/source.go:580-586`, `DerivedID`).
+- **Both rules are live in ONE deployment, on opposite sides of this feature.**
+  - Only a journal-backed UI can edit, because the token file confers `admin` on nobody
+    (`tokenfile/source.go:424-425`).
+  - The pod authorises bearer tokens from the TOKEN-FILE projection
+    (`api.New(*store, tokens, …)`, `cmd/cairn-server/main.go:358`). Its control journal is only a
+    SESSION authority (`:410-423`).
+
+  So a record keyed by the UI's scope ID could never be found by the pod's lookup. Revision 3's
+  design would have answered `undeclared` for every scope, forever. **The one identifier both
+  authorities and the store share is the folded DIRECTORY NAME** (`store.NormalizeRef`), which is
+  what decision 4 now keys on.
+- Authorisation stays keyed on each authority's own ID (`internal/control/resolve.go:89`). Keying
+  the RECORD by name does not change who may read or write it.
 
 ### The browser surface: the share flow is the edit-flow precedent
 
@@ -250,12 +288,28 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
   same-origin before auth, and a per-session CSRF token after it (`:1305-1306`).
 - The share handler authorises with `id.Auth.Allows(scope, control.VerbAdmin)`
   (`internal/ui/sharehandlers.go:170`).
-- **The UI's filesystem writes today are the control journal only.** It must resolve outside
-  `-store` (`cmd/cairn-ui/main.go:246-266`).
-- **The UI calls three `internal/write` functions, and all are pure string helpers:**
-  `write.SessionComponent` (5 sites), `write.WithoutTrailers` (2) and `write.Attribution` (1).
-  This was MEASURED by `grep` over `internal/ui/*.go`, excluding tests. ⚠ Revision 2's T9 premise,
-  "the UI calls exactly one write function", was false (round 2's 🟡1). It is restated in T9.
+- **Every file the `cairn-ui` binary writes today** (round 3 🟡2). Measured by finding the
+  file-writing `os` calls (`WriteFile`/`OpenFile`/`Create`/`CreateTemp`/`Rename`/`Mkdir`) in every
+  in-repo package of `go list -deps ./cmd/cairn-ui`:
+  - **the control journal**, which must resolve outside `-store` (`cmd/cairn-ui/main.go:246-266`),
+    through `internal/control/filestore.go`;
+  - **the session table** (`-session-file`), rewritten by temp file plus rename
+    (`internal/identity/sessionstore.go:283-313`);
+  - **the presence token file**, appended only by the `issuePresenceToken` admin path
+    (`cmd/cairn-ui/presence.go:161-192`; `internal/presence/tokens.go:175-188`).
+
+  `internal/write` and `internal/arcs` are in the graph but write nothing from it. The UI never
+  calls `AppendBullet`/`ReplaceEntry`/`CreateEntry` or `arcs.Register`, and `internal/ui` itself
+  contains **zero** direct file-writing `os` calls. Revision 3 said "the control journal only",
+  which was false.
+- **The UI's `internal/write` uses are pure helpers:**
+  - `write.SessionComponent` at 2 sites. It is a regexp VARIABLE (`bell.go:45`,
+    `sessionpage.go:97`);
+  - `write.WithoutTrailers` at 1 site (`sessionpage.go:334`);
+  - `write.Attribution` at 0 sites.
+
+  Revision 3 printed 5/2/1, which counted comment mentions. These counts are non-comment code
+  lines.
 
 ### The CLI: the one `git` caller, and the exit model the auditor reuses
 
@@ -284,7 +338,7 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
 | O2 | "Scope-level refs" means each scope names the code it describes (repositories and branch), so an auditor can test entries' paths, symbols, commits and PR references against it. | Decisions 2, 6. |
 | O3 | The declaration belongs to the scope and is edited in the browser. **Deviation history:** the first wording was a per-scope "manifest", with a reserved file such as `_scope.md` as the example. Revision 1 measured that file loading as a MALFORMED entry on both clients, and recommended a separate journal. | Decisions 1, 4, 5. |
 | O4 | *(Superseded by O5.)* Store the sources in the scope's `README.md` front matter. It was chosen because README front matter is invisible to both loaders, as measured. Round 2 then showed that the pod's store is a copy `seed.sh` overwrites, and that the UI would need write access to the whole store. | — |
-| O5 | **An append-only journal OUTSIDE the store tree, on the arc registry's pattern.** The UI is its ONLY writer. Records are keyed by scope ID, not by name. The store pod mounts it READ-ONLY and serves one Go-only GET route, which the CLI auditor reads. The reasons the operator accepted: README edits would be silently reverted by the next re-seed; README storage would reverse the decision to keep the UI's store mount read-only; and the journal gives a who/when change history for free, which an audit feature wants. | Decisions 1, 4, 5, 10. |
+| O5 | **An append-only journal OUTSIDE the store tree, on the arc registry's pattern.** The UI is its ONLY writer. Records are keyed by scope ID, not by name. The store pod mounts it READ-ONLY and serves one Go-only GET route, which the CLI auditor reads. The reasons the operator accepted: README edits would be silently reverted by the next re-seed; README storage would reverse the decision to keep the UI's store mount read-only; and the journal gives a who/when change history for free, which an audit feature wants. ⚠ **The agent departs from ONE detail of this, the keying**: records are keyed by the normalised scope NAME, because the UI's and the pod's scope IDs come from different authorities and never match (round 3 🔴1, decision 4). That is for the operator to confirm (Q17). | Decisions 1, 4, 5, 10. |
 
 ### Chosen by the AGENT writing this plan (open to review)
 
@@ -296,19 +350,20 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
        rollback story.
      - It has no default. Unset means the pod answers `sources-unconfigured` and the UI renders
        that state on the page.
-     - Both binaries refuse to start if the path resolves inside the store root, reusing
-       `arcs.ResolveJournalPath`.
+     - Both binaries refuse to start if the path resolves inside the store root. They reuse
+       `arcs.ResolveJournalPath`'s resolution, but the refusal message must name the SOURCES
+       journal and `CAIRN_SOURCE_JOURNAL`, never "arc journal". A test pins the message.
      - The file lives on the UI-owned volume, beside the control journal
        (`handoff-cairn-control-plane.md:502-505`).
-   - **Records.** One JSON line each: `{schema, scope_id, scope_name_at_write, sources:[…],
-     set_by, set_at, revision}`.
+   - **Records.** One JSON line each: `{schema, scope, sources:[…], set_by, set_at, revision}`.
+     - `scope` is the key: `codesrc.Key(name)` (decision 4).
      - `set_by` is the signed-in principal and `set_at` is the UI's clock. Both are stamped by the
        UI, never taken from the form.
-     - `scope_name_at_write` is for humans reading the journal. It is never used as a key.
-     - `revision` is a digest of the record's `scope_id` plus `sources`.
-     - The fold is LATEST-WINS per `scope_id`. The journal is the history.
-   - **Writing (R1's F2, re-specified for O5).** `Journal.Set(scopeID, sources, ifRevision, by,
-     now, interleave)` runs entirely under ONE exclusive `flock`:
+     - `revision` is a digest of `scope` plus `sources`.
+     - The fold is LATEST-WINS per `scope`. The journal is the history.
+   - **Writing (R1's F2, re-specified for O5).** `Journal.Set(scope, sources, ifRevision, by, now,
+     interleave)` opens the file with `O_NOFOLLOW`, as arcs does (`internal/arcs/journal.go:178`),
+     and runs entirely under ONE exclusive `flock`:
      1. take the lock;
      2. re-read through the locked descriptor;
      3. fold;
@@ -321,11 +376,24 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
      **Exactly one of two writes carrying the same revision lands.** The other gets
      `*StaleRevisionError` carrying the current revision. `interleave` runs inside the lock,
      between the compare and the append, in `internal/write`'s seam pattern
-     (`internal/write/write.go:284-286`; `write_test.go:188-215`).
-   - **Reading.** `Journal.Read()` follows arcs exactly: a missing file is empty plus `Missing`;
-     damaged lines are skipped and counted; a torn tail is never applied. An UNKNOWN FIELD in a
-     record is ignored, not refused, so a record written by a newer build still folds in an older
-     one.
+     (`internal/write/write.go:284-286`; `write_test.go:188-215`). A second submission of an
+     UNCHANGED list with the now-stale revision is refused the same way. That is a harmless no-op
+     the user sees as "already current", not a lost update.
+   - **Reading: arcs' three states, exactly (round 3 🟡3).**
+     - **Off:** the env var is unset. The answer is `sources-unconfigured`, HTTP 200.
+     - **Broken:** the file exists but cannot be read (permissions, a directory at the path, an
+       I/O error). That is `*JournalUnreadableError`. The pod answers **503**, the arcs answer
+       (`internal/api/server.go:930-935`), and the auditor treats it as could-not-look.
+     - **Empty:** the file is absent, so it is `Missing`. Every scope reads `sources=undeclared`,
+       and the response carries `journal=absent`.
+
+       ⚠ **A wrong path looks exactly like this**: nothing was ever written, and every scope is
+       undeclared. Arcs accept the same ambiguity. Here it is visible on every response through
+       `journal=absent`, and it fails safe, because an undeclared scope exits 10 and is never
+       reported clean.
+
+     Damaged lines are skipped and counted, and a torn tail is never applied. An UNKNOWN FIELD is
+     ignored, not refused, so a record written by a newer build still folds in an older one.
    - **Rollback.**
      - A pre-feature pod or UI ignores `CAIRN_SOURCE_JOURNAL` and never opens the file.
      - The journal is a separate file, not an event in the control journal, so the control
@@ -339,7 +407,12 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
        arcs' storage-driver lesson), so it must schedule on the UI's NODE, because the volume is
        ReadWriteOnce and node-local. Arcs already carry this constraint;
      - the backup jobs stage `sources.jsonl` beside `arcs.jsonl`, with the same restore-verify
-       step, and fail if it is absent once configured.
+       step. **An absent file is a PASS, logged as `sources: absent`** (round 3 🟡4), which is the
+       client instance's arcs precedent. Nothing creates the file until the first POST, so a
+       fail-on-absent rule would be red from deploy day. The alternative, the UI creating the file
+       at startup, adds a write on a path the read-only state otherwise never takes. The cost:
+       absence on a deployment that HAS been edited would also pass. It is visible as
+       `sources: absent` in the backup log and as `journal=absent` on every GET.
 
 2. **The source grammar: one string per source.**
 
@@ -375,28 +448,32 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
    Python-ignores test and the parity-world README are deleted.** The only new served shape is a
    Go-only route (decision 10), which follows the arcs precedent.
 
-4. **Who may edit, and the ONE resolver (round 2's 🟡4).**
+4. **Who may edit, and the ONE key (round 2's 🟡4; round 3 🔴1).**
    - **Edit:** a principal holding `admin` on the scope. That is the share flow's verb
      (`sharehandlers.go:170`), and only the UI asks for it.
    - **Read:** a principal holding `read`. The GET answers uniformly for "not visible" and
      "absent".
    - ⚠ **A token-file deployment confers `admin` on nobody** (`tokenfile/source.go:424-425`), so
      nobody can edit there. Stated so nobody files it as a bug.
-   - **The resolver.** `codesrc.KeyFor(model control.Model, scopeName string) (control.ID, error)`
-     is the ONE function from a scope name to the journal key. It is called by the UI's GET and
-     POST, the pod's GET handler, and nothing else. The proposed `sources` and `audit-refs` verbs
-     send a NAME and the pod resolves it, so the CLI never derives an ID.
-     - It folds the name with `store.NormalizeRef`, the directory rule.
-     - It resolves with `Model.ScopeByName`, which REFUSES a name two projects share
-       (`model.go:450-480`). That refusal surfaces as a could-not-look reason, never as a guess.
-   - **What ID keying means in each deployment, pinned by S1 tests in both:**
+   - **The key.** `codesrc.Key(scopeName string) string` is `store.NormalizeRef` of the store
+     DIRECTORY name. It is the ONE function from a scope to the journal key, called by the UI's GET
+     and POST, the pod's GET handler, and nothing else. It needs no `control.Model`, so the two
+     binaries' different authorities cannot make it disagree (STEP 2, "two ID spaces"). The
+     proposed `sources` and `audit-refs` verbs send the name, and the pod folds it.
+   - **The consequences, stated plainly:**
+     - **a rename ORPHANS the record.** The scope reads `undeclared` under its new name until an
+       admin re-declares it, and the old record stays in the journal as history;
+     - **a delete followed by a recreate under the same name RE-ATTACHES the record.** The new
+       scope inherits the old declaration, shown with its original `set_by`/`set_at`, so the page
+       says whose declaration it is.
 
-     | event | journal-backed deployment (IDs random, `NewID`) | token-file deployment (IDs derived from the name) |
-     |---|---|---|
-     | scope renamed | **sources follow**: the `scope-renamed` event keeps the ID | **sources are orphaned**: the new name derives a new ID, so the scope reads `undeclared` and the old record stays in the journal unreferenced |
-     | scope recreated under the same name | **sources do NOT follow**: a fresh `NewID`, so the scope reads `undeclared` | **sources re-attach**: same name, same derived ID |
-
-     An orphaned record is history, not a fault. The UI shows nothing for it in v1 (Q12).
+     Both behave the same in every deployment, because the key is the directory name and the
+     directory is what both authorities enumerate. Revision 3's per-deployment table is deleted
+     with the ID keying. An orphaned record is not a fault; the UI shows nothing for it in v1 (Q12).
+   - ⚠ **Revision 3 keyed by scope ID through `KeyFor(model, name)`.** That design is RETRACTED
+     (round 3 🔴1). Each side resolved IDs in its own space: random in the UI's control journal,
+     derived in the pod's token-file projection. The pod never found the UI's record. Closing
+     condition part 4 is the test that would have shown it.
 
 5. **The edit flow: the UI is the ONLY writer (D1, O5).**
    - **Routes.** `GET /scope/sources?scope=<s>` renders a form and `POST /scope/sources` writes.
@@ -405,7 +482,7 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
      - Authorisation is decision 4.
      - With the journal unconfigured, the page renders that state, as `ReadOnlyAuthority` does.
    - **The form.** ONE `<textarea>`, one source per line (Q6), plus a hidden `revision`.
-     - The POST calls `codesrc.Journal.Set` with the resolved ID and the form's revision.
+     - The POST calls `codesrc.Journal.Set` with `codesrc.Key(scope)` and the form's revision.
      - A stale revision writes nothing and re-renders the CURRENT list.
      - An invalid line is refused, naming its line number and rule, with the text preserved.
      - An empty textarea writes a record with `sources: []`. That is an explicit
@@ -422,7 +499,7 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
    | claim, and where it comes from | check | states |
    |---|---|---|
    | **path** — the first backticked span of a `## Pointers` row, or its first token before ` — `, if path-shaped (contains `/` or a `.<ext>`, no scheme, no whitespace, no leading `-`) | **Normalise first (round 2's 🟡2):** strip one leading `./` and any trailing `/`. Then run `git ls-tree -z <commit> -- <path>` and branch on CONTENT: the path is present when a NUL-terminated record's path field EQUALS the normalised path. `ls-tree` exits 0 on a missing path (round-1 F8). A `tree` record (a directory) is present. Try repo-root-relative first, then subpath-relative (Q7). | `holds(root)` · `holds(subpath)` · `missing` · `unchecked: not path-shaped` |
-   | **commit** — `RESOLVED <sha>:` (`openness.go:47-53`) | **Reachability, never object presence (round 2's 🟡3):** `git rev-parse --disambiguate`, then `git for-each-ref --contains <sha>` over the refs fetched IN THIS RUN. `on-branch` if the declared branch's ref contains it; `exists-off-branch` if only another fetched ref does; `not-reachable` if none does. | `on-branch` · `exists-off-branch` · `not-reachable` · `ambiguous` |
+   | **commit** — `RESOLVED <sha>:` (`openness.go:47-53`) | **Reachability, never object presence (round 2's 🟡3):** `git rev-parse --disambiguate`, then `git for-each-ref --contains <sha> refs/heads/ refs/pull/`. The pattern RESTRICTS the answer to the two namespaces this run fetched, so a TAG can never count (round 3 🟡1). `on-branch` if the declared branch's ref contains it; `exists-off-branch` if only another fetched ref does; `not-reachable` if none does. | `on-branch` · `exists-off-branch` · `not-reachable` · `ambiguous` |
    | **PR** — a `refs:` item `github:<owner>/<repo>#N` (`refurl.go:104-118`) | GitHub REST `GET /repos/<owner>/<repo>/pulls/N`, falling back to `/issues/N` on 404 | `open` · `merged` · `closed-unmerged` · `not-found` · `unchecked: rate-limited / no token` |
    | **ref outside the declaration** — a `github:` ref whose owner/repo is none of the scope's sources | string comparison | `outside-sources` |
    | **symbol** — ONLY the structural form `path#Symbol` in a `## Pointers` row (Q8) | the path normalisation above, then `git grep -w -F -e <Symbol> <commit> -- <path>` | `present` · `absent-from-file` · `file-missing` |
@@ -439,8 +516,9 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
    | **could not look** | `not-reachable`, `ambiguous`, `unchecked: rate-limited / no token`, `unchecked: host not mapped`, `unchecked: remote unreachable` | `unchecked` | **10**, unless something is stale |
    | **unchecked by design** | `unchecked: not path-shaped` | `unchecked` | none on its own |
 
-   Plus three SCOPE-level could-not-look reasons, each exit 10: `sources=undeclared`,
-   `sources-unconfigured`, and `checked=0`.
+   Plus four SCOPE-level could-not-look reasons, each exit 10: `sources=undeclared` (including
+   `journal=absent`), `sources-unconfigured`, `sources-unreadable` (the pod's 503, decision 1), and
+   `checked=0`.
 
    **The mixed case, spelled out.** Exit **9** if any claim anywhere is stale. Otherwise exit
    **10** if any claim or source could not be looked at. That includes a declared source on an
@@ -476,12 +554,20 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
      `GET /api/v1/sources/<scope>` with the client's existing token.
    - **Fetching (F1, and round 2's 🟡3).** For each source it updates a mirror at
      `$XDG_CACHE_HOME/cairn/mirrors/<sha256(canonical source)>.git` with
-     `git fetch --prune` IN FULL (no partial-clone filter), using these refspecs:
+     `git fetch --prune --no-tags` IN FULL (no partial-clone filter), using these refspecs:
      - `+refs/heads/*:refs/heads/*`;
      - `+refs/pull/*/head:refs/pull/*/head`, which on a host with no pull refs fetches nothing.
 
-     Reachability is computed only over the refs that fetch left (decision 6). An object
-     surviving in the mirror from an earlier run never counts.
+     Reachability is computed only over `refs/heads/` and `refs/pull/` as that fetch left them
+     (decision 6). An object surviving in the mirror from an earlier run never counts.
+
+     **`--no-tags` AND the restricted `for-each-ref`: both, and each for its own reason (round 3
+     🟡1).** Tags auto-follow by default, and `--prune` does not delete them. Round 3 measured
+     this on git 2.55: a branch and a tag deleted on the remote left `refs/heads/feat` pruned and
+     `refs/tags/v1` kept. An unrestricted `for-each-ref --contains` then reported the SHA reachable,
+     which is a false clean exit 0.
+     - `--no-tags` stops new tags arriving.
+     - The namespace restriction ignores any tag already in a mirror that an older build created.
      - Every `git` call runs with `GIT_NO_LAZY_FETCH=1`.
      - Round 1 measured, on one squash-shaped world: 128 resolved with a full single-branch
        fetch, 128 with no lazy fetch, and **0** with lazy fetch on a `blob:none` mirror.
@@ -513,24 +599,39 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
 10. **The pod's ONE route: `GET /api/v1/sources/<scope>`, Go-only, on the arcs precedent (O5).**
     - **How it answers:**
       - authorised by `read` on the scope;
-      - `sources-unconfigured` when the env var is unset;
+      - `sources-unconfigured` (200) when the env var is unset;
+      - **503 `sources-unreadable`** when the journal is configured but cannot be read, the arcs
+        `JournalUnreadableError` answer (`internal/api/server.go:930-935`);
       - for a principal who cannot read the scope, a body byte-identical to an absent scope's;
-      - a scope with no record returns `sources=undeclared`;
+      - a scope with no record returns `sources=undeclared`, plus `journal=absent` when the file
+        does not exist;
       - otherwise the latest record's canonical sources, `set_by`, `set_at` and `revision`.
+
+      All of these go through `codesrc.Key(<scope>)`.
     - **⚠ HEAD vs D5.** D5 removed a separately designed HEAD route. The route ledger nonetheless
       derives `HEAD` from every read head (`routes.go:84`, `:96-102`). **Recommend letting the
       ledger derive it:** no extra code, and the corpus's existing head-matches-get relation
       covers it. The alternative, a per-head GET-only exception, adds a second rule to a ledger
       that has one (Q16).
-    - **The ledgers it moves:**
+    - **The ledgers it moves.** These are the four places `routes.go:67-71` names, plus the
+      route-declaration check:
       - `readHeads`;
       - `go_only` rows in `tests/conformance/requests.json` (authorised, unauthorised,
-        unconfigured, refused-equals-absent), recorded by `run_go.sh record-go-only` with the
-        journal path handed over the way `arc-journal=` is;
+        refused-equals-absent), recorded by `run_go.sh record-go-only` with the journal path
+        handed over the way `arc-journal=` is;
       - `capability_ledger` `go_only` rows;
       - `want-go-only.txt`;
-      - `checks.go-server-declares-its-routes`;
-      - the dual-run gate's go-only declaration for the head.
+      - `checks.go-server-declares-its-routes`.
+    - **What the corpus cannot send, and what witnesses it instead.** `run_go.sh` boots ONE server
+      with ONE journal path per run. So the configured-but-unreadable 503 and the unconfigured 200
+      cannot both be rows beside the authorised ones. Each would need its own boot.
+
+      Both are therefore witnessed by **literal-body Go tests in `internal/api`**, which are the
+      contract witnesses for a Go-only route anyway (`tests/conformance/README.md`, "…and the
+      mirror"). A second boot in the runner is a new mechanism, and this plan does not add it
+      (Q18).
+    - **The dual-run gate does NOT see this head.** It discovers routes from the oracle, which has
+      no such route (STEP 2). That is named as a blind spot.
     - The oracle is never told about it.
 
 11. **Recall gets no source line (Q5).** The proposed `sources` verb and the UI scope page answer
@@ -545,10 +646,10 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
 | **T3. Pathspec magic, globs, odd spellings of a cited path** | `GIT_LITERAL_PATHSPECS=1`; the `./` and trailing-`/` normalisation; `ls-tree -z` with an exact path compare. |
 | **T4. Mirror-path traversal** | The mirror directory is `sha256(canonical source)`. |
 | **T5. Repointing a scope's audit** | Only `admin`, only through the UI, behind both method-derived gates. Every change is a journal line with `set_by` and `set_at`. |
-| **T6. A lost update between two admins** | The revision compare inside the lock: exactly one of two same-revision writes lands (S1, S4). |
+| **T6. A lost update between two admins** | The revision compare inside the lock: exactly one of two same-revision writes lands (S1, S4). A resubmitted UNCHANGED list is refused the same way, which is a harmless no-op. |
 | **T7. A re-seed silently reverting declarations** (round 2's 🔴) | The journal lives outside the store tree, on the UI's volume. `seed.sh` writes only the store copy (`seed.sh:313-316`). Pinned by the inside-store startup refusal. |
 | **T8. A feature rollback breaks something** | An env var an old binary ignores, a separate file, no control-journal event, and an untouched store tree (decision 1). |
-| **T9. The internet-facing UI's write reach** (round 2's 🟡1, restated) | **The UI writes only the control journal, which it already wrote, and the sources journal.** Its store mount STAYS read-only (`handoff-cairn-control-plane.md:502-505`). Two pins, both failing on GROW or SHRINK: (1) **a write-call ledger over `internal/ui`**: no call to any file-writing `internal/write` function (`AppendBullet`, `ReplaceEntry`, `CreateEntry`; an INVARIANT guard today, labelled as one), and exactly one call site of `codesrc.Journal.Set`; (2) **the same ledger over `internal/api`**: zero call sites of `Journal.Set`, so the pod cannot become a second writer. ⚠ These pin the CODE. The read-only store mount and the pod's container-level `readOnly` are deployment facts this repository cannot see. |
+| **T9. The internet-facing UI's write reach** (round 2's 🟡1; round 3 🟡2, restated truthfully) | **The `cairn-ui` binary writes four files: the control journal, the session table (`-session-file`), the presence token file (admin path only), and, with S4, the sources journal.** It writes nothing in the store, whose mount STAYS read-only (`handoff-cairn-control-plane.md:502-505`). Three pins, each failing on GROW or SHRINK: (1) **`internal/ui` contains zero direct file-writing `os` calls** (`WriteFile`/`OpenFile`/`Create`/`CreateTemp`/`Rename`/`Mkdir`; measured 0 today, so an INVARIANT guard, labelled as one). An AST walk catches a raw `os.WriteFile` added to a handler; (2) **`internal/ui` has exactly one call site of `codesrc.Journal.Set` and none of `AppendBullet`/`ReplaceEntry`/`CreateEntry`**; (3) **`internal/api` has zero call sites of `Journal.Set`**, so the pod cannot become a second writer. ⚠ **What these do NOT see:** a write reached through ANOTHER package's function (the session store and control filestore are such packages, and are legitimately called); `cmd/cairn-ui` itself, which pin 1 does not walk; and the deployment's actual mounts. The pins bound the CODE in two packages, not the process. |
 | **T10. The pod or UI spawns `git` or reaches a code host** | Clause (e). ⚠ It is structural on `exec` only, and cannot see a `net/http` CLIENT call. |
 | **T11. Stored XSS through a source string** | gomponents `Text` only; the one href through `safeHref`; `Raw`/`Rawf` stay AST-banned. |
 | **T12. Resource exhaustion on the auditing host** | ≤ 8 sources, a per-call timeout, a per-run PR-check cap, and a cap hit reported as could-not-look. Full mirrors are F1's price, and their size is unmeasured. |
@@ -563,8 +664,8 @@ alone.
 
 | slice | what | ledgers it moves | mergeable alone because |
 |---|---|---|---|
-| **S1** | **`internal/codesrc`**: `Parse`/`Canonical` (decision 2); `Journal` with `Read`/`fold`/`Set` (decision 1); `KeyFor` (decision 4); `ResolveJournalPath` reuse. | new package → `go` job `ok` floor; `tests/control_mutants.py` `PKGS` plus its pinned count. | A library nothing imports. |
-| **S2** | **Pod**: `CAIRN_SOURCE_JOURNAL` (read-only open, inside-store refusal shown RED first); `GET /api/v1/sources/<scope>` (decision 10). | `internal/api/routes.go` `readHeads`; `requests.json` `go_only` rows plus `record-go-only` goldens; `capability_ledger`; `want-go-only.txt`; `checks.go-server-declares-its-routes`; dual-run go-only declaration; the `internal/api` half of T9's ledger; README rows. | Unset means `sources-unconfigured`, and nothing writes the journal yet. |
+| **S1** | **`internal/codesrc`**: `Parse`/`Canonical` (decision 2); `Journal` with `Read`/`fold`/`Set` and the three read states (decision 1); `Key` (decision 4); `ResolveJournalPath` reuse with its own refusal message. | new package → `go` job `ok` floor; `tests/control_mutants.py` `PKGS` plus its pinned count. | A library nothing imports. |
+| **S2** | **Pod**: `CAIRN_SOURCE_JOURNAL` (read-only open, inside-store refusal shown RED first); `GET /api/v1/sources/<scope>` (decision 10). | `internal/api/routes.go` `readHeads`; `requests.json` `go_only` rows plus `record-go-only` goldens; `capability_ledger`; `want-go-only.txt`; `checks.go-server-declares-its-routes`; T9's pin 3; README rows. | Unset means `sources-unconfigured`, and nothing writes the journal yet. |
 | **S3** | **The proposed `sources` verb** (read-only, Go-only). | `internal/client` verb table → `-verbs`; `want-go-only-verbs.txt`; `capability_ledger` `go_only` row. | An additive read verb. Needs S2. |
 | **S4** | **UI**: `CAIRN_SOURCE_JOURNAL` (inside-store refusal); the Sources block; `GET`/`POST /scope/sources` (decision 5); the `internal/ui` half of T9's ledger. | `internal/ui/routes.go` table; hand ledger and near-miss probes; the uiaudit world gains a seeded sources journal; mutant rows; `internal/ui/README.md` (including the deployment requirements of decision 1). | Unset means the page renders the unconfigured state. |
 | **S5** | **`internal/refaudit` + the proposed `audit-refs` verb** (decisions 6–9); the import-graph test (clause e); `tests/refaudit/e2e.sh` with clauses (a)–(f) and `--self-test` (`sabotaged=6`); its `go`-job step. | new package → `ok` floor and `PKGS`; `internal/depspolicy` (the pod/UI ban); verb ledgers as in S3; `ci.yml`; README. Clause (a) needs S2 and S3. | A read-only verb that writes only its own mirror cache. |
@@ -573,11 +674,13 @@ alone.
 - Part 3 of the closing condition (the conformance rows) lands in **S2**.
 - `e2e.sh` and all six clauses land in **S5**, which comes after S2 and S3. `sabotaged=6` is
   pinned once, in S5.
-- **S1 and S4 have no e2e clause.** Their witnesses are their own tests: S1's same-revision race,
-  and S4's POST, gates and T9 ledger.
+- **Part 4 (the cross-binary seam test) lands in S4**, which comes after S2, since it needs the
+  pod's GET.
+- **S1 and S4 have no e2e clause.** Their witnesses are their own tests: S1's same-revision race
+  and three read states, and S4's POST, gates, T9 pins and the part-4 seam test.
 
 **Mutant rows** (indicative names; they join `tests/control_mutants.py` and move its pinned
-count). Recounted for this revision: **28**.
+count). Recounted for this revision: **31** (S1 13, S2 3, S4 4, S5 11).
 
 - **S1 (13):**
   - `codesrc-accepts-a-non-dns-host`
@@ -592,15 +695,19 @@ count). Recounted for this revision: **28**.
   - `codesrc-fold-earliest-wins`
   - `codesrc-damaged-line-refuses-whole-journal`
   - `codesrc-unknown-field-refused`
-  - `codesrc-keyfor-picks-one-of-an-ambiguous-name`
-- **S2 (2):**
+  - `codesrc-key-not-normalised`
+- **S2 (3):**
   - `api-sources-get-distinguishes-absent-from-unreadable`
   - `api-sources-journal-inside-store-accepted`
-- **S4 (3):**
+  - `api-sources-unreadable-journal-answers-200`
+- **S4 (4):**
   - `ui-sources-post-skips-the-admin-check`
   - `ui-sources-links-a-non-github-host`
   - `ui-sources-set-by-taken-from-the-form`
-- **S5 (10):**
+  - `ui-sources-keyed-by-control-id`: revision 3's design, which closing-condition part 4 must
+    kill
+- **S5 (11):**
+  - `refaudit-tags-count-as-reachable`
   - `refaudit-off-branch-counted-stale`
   - `refaudit-not-reachable-counted-stale`
   - `refaudit-presence-counted-as-reachability`
@@ -643,14 +750,20 @@ killed.
   revision, and the fold shows the first call's list.
   - **Negative control:** the mutant `codesrc-revision-compared-outside-the-lock` makes both land.
     The test must go red on the appended-line COUNT (2 ≠ 1).
-- **Fold.** Two records for one ID: the later wins, and reversing the fold goes red. A torn tail
+- **Fold.** Two records for one scope: the later wins, and reversing the fold goes red. A torn tail
   and a non-JSON line are skipped and counted. A record with an unknown field folds; that is an
   **invariant guard**, labelled, because no build writes one yet.
-- **`KeyFor`, in both authorities.** Each is built with the existing fixtures: a journal-backed
-  `Model` from events, and a token-file `Model` from the projection.
-  - **The four rows of decision 4's table.** Rename and recreate in each deployment, with a
-    literal expectation per cell.
-  - **An ambiguous name** (two projects) is refused with `ScopeByName`'s own message.
+- **`Key`.**
+  - `Alpha-Notes` and `alpha-notes` give one key, as a literal.
+  - A renamed scope's new name reads `undeclared` and the old record survives in `Read`.
+  - A recreated same-name scope reads the old record.
+- **The three read states.** Each is pinned by a literal:
+  - unset → off;
+  - a DIRECTORY at the path → `*JournalUnreadableError`;
+  - an absent file → `Missing`.
+- **Two refusals:**
+  - the inside-store refusal names the SOURCES journal, never the arc journal;
+  - a symlink at the journal path is refused (`O_NOFOLLOW`).
 
 **S2.**
 - **RED first:** a journal inside the store root refuses startup with its own message. Two
@@ -658,8 +771,14 @@ killed.
 - **The read-only open.** The pod's journal descriptor is opened `O_RDONLY`. A test hands the pod a
   journal file with mode `0444` and a GET still answers. The negative control is the same test with
   `Set` reachable from `internal/api`; T9's ledger refuses it.
-- **Authz matrix, with literal bodies.** `read` → 200. No grant → byte-identical to an absent
-  scope's answer. Unconfigured → `sources-unconfigured`.
+- **Authz and state matrix, with literal bodies** (the Go witnesses for what the corpus cannot
+  send):
+  - `read` → 200;
+  - no grant → byte-identical to an absent scope's answer;
+  - unconfigured → `sources-unconfigured`;
+  - a directory at the journal path → **503 `sources-unreadable`**. The mutant
+    `api-sources-unreadable-journal-answers-200` turns that into a 200 and must go red;
+  - an absent file → `sources=undeclared journal=absent`.
 - **Corpus.** `run_go.sh` exits 0 with the new rows. `record-go-only` refuses if no 2xx is seen.
   `TestTheRouteLedgerMatchesTheConformanceCorpus` goes RED with the table row present and the
   corpus row absent (shown once).
@@ -684,8 +803,23 @@ killed.
   - a token-file deployment → the refusal for every principal.
 - **Links.** A `github.com` source renders exactly one `href`, equal to the literal
   `https://github.com/example-org/example-repo/tree/main`. A `git.example.com` source renders none.
-- **T9's `internal/ui` ledger** goes red when a call to `write.CreateEntry` is added, and when a
-  second `Journal.Set` call site is added (each shown once).
+- **T9's pins** go red, each shown once, when:
+  - a raw `os.WriteFile` is added to an `internal/ui` handler (pin 1);
+  - a call to `write.CreateEntry` is added (pin 2);
+  - a second `Journal.Set` call site is added (pin 2).
+- **The cross-binary seam (closing-condition part 4; round 3 🔴1).**
+  `TestAUIWrittenDeclarationIsWhatThePodServes` lives in an external test package, so it can
+  import both `internal/ui` and `internal/api`. It runs over one temp journal and one store
+  directory `alpha-notes`:
+  - **the UI half** is built over a control-JOURNAL model in which `alpha-notes` has a RANDOM ID,
+    and holds an admin session. It POSTs two sources;
+  - **the pod half** is built with `api.New` over a TOKEN-FILE projection, so `alpha-notes` has a
+    DERIVED ID, the way `cmd/cairn-server/main.go:358` builds it. It GETs `alpha-notes`.
+
+  It asserts the GET body carries exactly the two sources. **RED under
+  `ui-sources-keyed-by-control-id`**: the GET answers `sources=undeclared`, because the two IDs
+  differ. The test also asserts that precondition, so it cannot go green by the two fixtures
+  happening to share an ID.
 
 **S5.**
 - **The e2e.** Clauses (a)–(f), and `--self-test` → `sabotaged=6 caught=6`.
@@ -711,6 +845,11 @@ killed.
 - **Reachability (round 2's 🟡3).** After run 1 fetches a SHA, its only ref is deleted on the
   remote. Run 2 reports `not-reachable`. Under the mutant `refaudit-presence-counted-as-reachability`
   it reports `exists-off-branch`, because the object is still in the mirror, and the test goes red.
+- **Tags (round 3 🟡1).** On the remote, a tag `v1` points at a SHA whose only branch is then
+  deleted. The run reports `not-reachable`. Under `refaudit-tags-count-as-reachable` (dropping
+  `--no-tags` and the namespace restriction together) it reports reachable, and the test goes red.
+  A second case pre-plants `refs/tags/v1` in an existing mirror, with `--no-tags` kept, to prove
+  the namespace restriction ALONE also holds.
 - **Exit codes.**
   - Undeclared, `checked=0` and mixed mapped/unmapped each exit 10 — never 0 and never 2.
   - One stale claim beside one unmapped host exits 9.
@@ -734,13 +873,25 @@ killed.
 | finding | fix |
 |---|---|
 | 🔴 the store is a re-seeded copy; README storage would make the UI a whole-store writer | O5: storage moved out of the store tree (decision 1, T7, T9). |
-| 🟡1 T9's "one write function" premise is false | Measured the UI's actual `internal/write` calls (three pure helpers). T9 restated as "the UI writes only the two journals", pinned by two grow/shrink ledgers. |
+| 🟡1 T9's "one write function" premise is false | Measured the UI's actual `internal/write` calls (three pure helpers). T9 restated as "the UI writes only the two journals", pinned by two grow/shrink ledgers. *(That restatement was itself false; it is superseded by round 3 🟡2, below.)* |
 | 🟡2 path normalisation, `-z`, directories | Decision 6's path row and S5's path tests. |
 | 🟡3 presence vs reachability, mirror age | `for-each-ref --contains` over this run's refs, `fetch --prune`, clause (f), the stated squash-and-delete and force-push costs. "Harmlessly" is gone. |
-| 🟡4 one resolver; ID-keying behaviour | `codesrc.KeyFor` (decision 4), with the rename/recreate table for both deployments. |
+| 🟡4 one resolver; ID-keying behaviour | `codesrc.Key` (decision 4). Revision 3's ID keying is retracted by round 3 🔴1, below. |
 | 🟡5 a closed severity table | Decision 6's five-class table, the scope-level reasons, the mixed case, and the key-set test. |
 | 🟢 BOM, CRLF, create semantics | **Moot, confirmed.** They were properties of the README splice, which is deleted. The journal is JSONL written only by `codesrc`. The textarea is split on `\n` with a trailing `\r` stripped per line, and any other whitespace in a line is a parse refusal. |
-| nit: mutant count | Recounted: 28 (S1 13, S2 2, S4 3, S5 10). |
+| nit: mutant count | Recounted: 28 (S1 13, S2 2, S4 3, S5 10) in revision 3; 31 after round 3. |
+
+## Round-3 findings → where each is fixed
+
+| finding | fix |
+|---|---|
+| 🔴1 the UI's and the pod's scope IDs come from different authorities, so the pod never finds the UI's record | Records are keyed by `codesrc.Key(name)`, the normalised directory name (decision 4). Rename orphans the record and recreate re-attaches it, stated plainly. The per-deployment table is deleted. A cross-binary seam test is closing-condition part 4, RED under the mutant `ui-sources-keyed-by-control-id`. The departure from O5's keying detail is Q17. |
+| 🟡1 tags auto-follow and survive `--prune`, giving a false clean exit | `--no-tags`, and `for-each-ref --contains` restricted to `refs/heads/ refs/pull/` (decisions 6 and 8). Clause (f) gains a kept-tag case. New mutant `refaudit-tags-count-as-reachable`. A test proves the restriction alone holds against a pre-existing tag. |
+| 🟡2 T9's "only the two journals" is false | Lists all four files the binary writes (STEP 2, T9). Pin 1 is widened to "zero direct file-writing `os` calls in `internal/ui`", which catches a raw `os.WriteFile`. What the pins cannot see is stated. The 5/2/1 counts are corrected to 2/1/0 (non-comment code lines). |
+| 🟡3 no answer for a configured-but-unreadable or absent journal | Arcs' three states (decision 1). A broken journal answers 503 `sources-unreadable`. An absent file means empty, with `journal=absent` on every response, and the wrong-path risk is stated (it fails safe, at exit 10). The 503 is witnessed by a literal-body `internal/api` test, because the one-boot corpus cannot send it beside the authorised rows (decision 10, Q18). |
+| 🟡4 a fail-on-absent backup is red from deploy day | Absence is a PASS, logged `sources: absent`, following the client instance's arcs backup. The reason, and the cost, are stated (decision 1). |
+| 🟢1 no dual-run ledger exists | The list is corrected to `routes.go:67-71`'s four places. The dual-run gate is named as BLIND to the head. |
+| nits | The refusal names the sources journal, pinned. The `internal/ui/README.md:654` citation is dropped. T6 notes that a resubmitted unchanged list is a harmless no-op. `Set` opens with `O_NOFOLLOW`, and a test refuses a symlink. |
 
 ## Open questions
 
@@ -766,9 +917,9 @@ killed.
 - **Q9. The default host map.** **Recommend `github.com=https://github.com` only.**
 - **Q10. Who may edit.** **Recommend `admin`.**
 - **Q11. A `RESOLVED` SHA found only off-branch.** **Recommend informational.**
-- **Q12. Orphaned records** (a token-file rename, a journal-deployment recreate). **Recommend
-  showing nothing in v1.** The journal keeps them as history. A later "orphaned declarations" admin
-  view can list records whose ID no longer resolves.
+- **Q12. Orphaned records** (left by a rename). **Recommend showing nothing in v1.** The journal
+  keeps them as history. A later admin view could list records whose name matches no scope
+  directory.
 - **Q13. A per-entry source override.** **Recommend deferring** until a measured case exists.
 - **Q14. The ≤ 8 cap.** **Recommend keeping it.**
 - **Q15. The deployment changes (rewritten for O5).** They are:
@@ -780,6 +931,17 @@ killed.
   **Recommend** shipping all three in the deploy that ships S2 and S4.
 - **Q16 (new). The derived HEAD.** **Recommend letting the ledger derive `HEAD` for the new head**
   (decision 10). The other reading of D5 is a GET-only exception in a ledger with one rule.
+- **Q17 (new, round 3 🔴1). Key by NAME rather than ID, departing from O5's detail.** **Recommend
+  name.** It is the only identifier the UI (journal-backed authority) and the pod (token-file
+  authority) share. The costs:
+  - a rename orphans the declaration, and the admin re-declares it;
+  - a same-name recreate inherits the old one.
+
+  The alternative is unifying the two authorities' ID spaces, which is a control-plane change far
+  outside this feature.
+- **Q18 (new, round 3 🟡3). A second corpus boot for the 503 and unconfigured rows.** **Recommend
+  no.** They are witnessed by literal-body Go tests, which is the contract witness for a Go-only
+  route anyway, and a second boot in the runner is a new mechanism.
 
 ## Recommended improvements beyond the ask (clearly recommendations)
 
