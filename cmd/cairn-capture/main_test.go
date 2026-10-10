@@ -18,7 +18,7 @@ func TestTheSelfTestIsClosingConditionPart3(t *testing.T) {
 		var out bytes.Buffer
 		code := run(args, &out, &bytes.Buffer{}, envOf(nil))
 		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-		if code != exitOK || lines[len(lines)-1] != "SUMMARY redaction: planted=49 caught=49 clean-damaged=0" {
+		if code != exitOK || lines[len(lines)-1] != "SUMMARY redaction: planted=72 caught=72 clean-damaged=0" {
 			t.Fatalf("%v: exit %d, output:\n%s", args, code, out.String())
 		}
 	}
