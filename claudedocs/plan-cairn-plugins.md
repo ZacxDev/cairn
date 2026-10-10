@@ -1103,8 +1103,8 @@ script that prints only counts.
     false, and the withdrawal is what makes the rule hold after the fact.* Q14 asks the operator to
     choose between this and the alternatives.
 
-17. **Selective reading for agents (O9): ONE read model, served as JSON on `cairn-ui` and as Go-only
-    `cairn transcript` verbs.**
+17. **Selective reading for agents (O9): ONE read model, served as JSON on `cairn-ui` and as a proposed
+    Go-only `transcript` verb.**
     - **One classification table** in `internal/transcript` classifies UNITS, not records — because
       a record is not one kind of thing: a `tool_result` block (up to 656 KB, R1) lives INSIDE a
       `user` record, and the duplicate `toolUseResult` is a FIELD of that record, not a record.
@@ -1148,7 +1148,11 @@ script that prints only counts.
     - **Every route asks decision 4's predicate first** and answers every miss with one 404 body.
       They are GET rows, so bearer reads pass both cross-site gates' scope by method; a narrowed
       agent credential reads exactly the sessions its narrowing covers (decision 4).
-    - **The CLI:** `cairn transcript skeleton|records|tool` mirror the three routes. They talk to
+    - **The CLI:** the proposed `transcript` verb (`transcript skeleton|records|tool`) mirrors the
+      three routes. *It is PROPOSED, not registered, and is spelled throughout this plan without the
+      `cairn` prefix on purpose: `tests/test_no_scrubbed_identifiers.py` refuses any backticked
+      `cairn <verb>` citation of a verb no shipped client registers, and that guard should keep
+      meaning "this exists".* They talk to
       `cairn-ui`, not the pod, through ONE new variable, `CAIRN_UI_URL`, whose value is set per
       instance in each instance's env file the way `CAIRN_URL` is (`internal/client/transport.go:128-162`;
       no old alias, so the env ledger does not move). They are **Go-only verbs** — declared in `capability_ledger` `go_only`
@@ -1253,7 +1257,7 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 | **S5** | **Plugin registry, toggles, plugin API.** `internal/plugins` (manifest validation, closed capability and output-type vocabularies, plugin token kind, the narrowing-only toggle fold + `-plugin-journal`, the stateless pending query); `/plugins` page + toggle POSTs on scope, arc and session pages. e2e clauses (i), (j). | new package → `ok` floor, `PKGS`; UI rows; `cmd/cairn-ui` flags (`-plugin-registry`, `-plugin-journal`); mutant rows; README. | Inert with no registry; every toggle OFF by construction. |
 | **S6** | **Outputs: storage, rendering, deletion cascade.** Outputs stored per session; rendered labelled-derived (decision 11) on the session page and as a one-line summary on session rows; owner "delete transcript" POST cascading to outputs and edges; the capture `withdraw` route running the same cascade, and the agent's withdrawal on a routing change (decision 16). e2e clauses (k), (l), (m). | UI rows; worker-listener ledger (`withdraw`); `cmd/cairn-capture`; mutant rows; README. | Nothing renders until a plugin writes; the agent withdraws nothing until a routing answer changes. |
 | **S7** | **"My sessions" (O10).** `GET /my-sessions`: the viewer's OWN sessions with a transcript (owner arm only), newest first, including owner-only ones, each linking to `/session`. e2e clause (g — the listing half). | UI row → ledgers, uiaudit; mutant row; README. | Read-only over S3/S4. |
-| **S8** | **Agent read API and CLI (decision 17).** The classification table's skeleton, records and tool routes on `cairn-ui`; `cairn transcript skeleton|records|tool` Go-only verbs over `CAIRN_UI_URL`. | UI rows; `internal/client/cli.go` verbs; `capability_ledger` `go_only`; `want-go-only-verbs.txt`; `tests/test_go_client_ledgers.py`; mutant rows. | Read-only; the pod and parity corpus untouched. |
+| **S8** | **Agent read API and CLI (decision 17).** The classification table's skeleton, records and tool routes on `cairn-ui`; the proposed Go-only `transcript` verb (`transcript skeleton|records|tool`) over `CAIRN_UI_URL`. | UI rows; `internal/client/cli.go` verbs; `capability_ledger` `go_only`; `want-go-only-verbs.txt`; `tests/test_go_client_ledgers.py`; mutant rows. | Read-only; the pod and parity corpus untouched. |
 | **S9** | **Example plugin A — summaries.** `plugins/summary` in a NESTED stdlib-only module (provider HTTP API over `net/http`, no SDK), host-side user timer, incremental per decision 13, its own spend cap, a fake provider in tests. Reads through `view=conversation` by default. | `depspolicy.DeclaredNestedModules`; `flake.nix` package; `ci.yml` step for its suite. | A separate binary; nothing runs until registered and toggled. |
 | **S10** | **Example plugin B — ClickUp.** `plugins/clickup` in the same nested module: ticket list fetch (read-only token, 429-aware), deterministic matchers (decision 14) over transcript records (`gitBranch`, `pr-link`, URLs), commit messages and trailers from a host-local repo list, PR bodies via the host's own GitHub CLI, entry refs; LLM suggestions using plugin A's summaries when present (`output:read:summary` — the cross-plugin test of the abstraction). Synthetic ClickUp fixtures only. Then closing wiring: `sabotaged=14 caught=14`, measured floors, the `AGENTS.md` row with an equal eviction (Q11). | same nested module; flake package; `ci.yml`; `AGENTS.md`; READMEs. | Separate binary; inert until registered and toggled. |
 | **S11** | **The client read ledger (O11, decision 3a)** in BOTH clients: the Go `internal/client` writes a record per scope a served call touched when `CLAUDE_CODE_SESSION_ID` or `OPENCODE_SESSION_ID` is set; the Python oracle does the same; a parity row compares the two clients' ledger files; `cmd/cairn-capture` uploads the `ledger` stream; the POD's fold of that stream into `meta.json` and `V` (moved here from S3: S11 adds the ledger, so it owns both ends); `tests/testlib/env_pin.py` clears `CLAUDE_CODE_SESSION_ID`, `OPENCODE_SESSION_ID` and `XDG_STATE_HOME`; e2e clause (n). **Must land before S3 is armed on a real instance** — without it every session that runs `cairn` is owner-only by F1. | `internal/client` (+ joins `control_mutants.py` `PKGS`, moving the pinned count and its enumerations); `internal/transcript` (the pod-side ledger fold); `tests/testlib/env_pin.py` (three cleared variables); the Python `cairn`/`lib/`; `tests/parity/` (a new row, and its README's P8 retirement ledger); `cmd/cairn-capture`; `ci.yml` e2e floor. NOT `internal/api` or `cmd/cairn-server`: the store POD (`cmd/cairn-server`) is untouched — the ledger fold lives in `cairn-ui`'s `internal/transcript`. | Inert without a session id in the environment; with one, the write is invisible to stdout, stderr and the exit code. |
@@ -1663,7 +1667,7 @@ said Q16 shapes S3; the rule's code and mutant are in S2.*
   its WRITES with the other instance's scopes still in `V` (owner-only there) — keeps the bytes but
   moves client-read content into the personal store, which O8 rules out; (c) delay all shipping until
   a session is idle — no withdrawal needed, but no continuous summaries.
-- **Q15. Agent reads through `cairn` or a separate binary?** **Recommend** Go-only `cairn transcript`
+- **Q15. Agent reads through `cairn` or a separate binary?** **Recommend** the proposed Go-only `transcript`
   verbs (decision 17): agents already run `cairn`, and the Go-only mechanism exists. The alternative
   is a `cairn-transcript` reader binary that leaves `cmd/cairn`'s ledgers untouched.
 - **Q16. What still makes a session owner-only (and, with several instances, HELD).** Under O11
