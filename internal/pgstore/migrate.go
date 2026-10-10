@@ -85,6 +85,58 @@ var migrations = []Migration{
 			`CREATE INDEX IF NOT EXISTS invites_project_id_idx ON invites (project_id)`,
 		},
 	},
+	{
+		// 🔴 THE TEAM LINK: A SIBLING OF `invites`, NOT AN `ALTER` OF IT. See
+		// `internal/invite/teamlink.go` for why widening the one-project, single-use table
+		// would change what every guard over it means. Version 1's statements are not
+		// touched — the APPEND ONLY rule above.
+		Version: 2,
+		Name:    "team-links",
+		Statements: []string{
+			// 🔴 DIGEST-KEYED, TOKEN-FREE: `invites`' rule. `redemptions` IS THE COUNT THE
+			// ATOMIC SINGLE-USE GUARD READS, and the CHECK constraint is that guard stated a
+			// second time BY THE DATABASE: a single-use row can never record a second
+			// redemption even if the conditional `UPDATE` in `RedeemLink` were edited wrong.
+			`CREATE TABLE IF NOT EXISTS team_links (
+				digest      TEXT        PRIMARY KEY,
+				role        TEXT        NOT NULL,
+				inviter     TEXT        NOT NULL,
+				reusable    BOOLEAN     NOT NULL,
+				created_at  TIMESTAMPTZ NOT NULL,
+				expires_at  TIMESTAMPTZ NOT NULL,
+				revoked_at  TIMESTAMPTZ,
+				redemptions INTEGER     NOT NULL DEFAULT 0,
+				CONSTRAINT team_links_redemptions_nonnegative CHECK (redemptions >= 0),
+				CONSTRAINT team_links_single_use CHECK (reusable OR redemptions <= 1)
+			)`,
+			// The Team page lists the caller's own links.
+			`CREATE INDEX IF NOT EXISTS team_links_inviter_idx ON team_links (inviter)`,
+			// One row per target. The kind is CHECKed so a target the consumer cannot
+			// interpret can never be stored — it would be a target a redemption skips.
+			`CREATE TABLE IF NOT EXISTS team_link_targets (
+				digest    TEXT NOT NULL REFERENCES team_links (digest),
+				kind      TEXT NOT NULL CHECK (kind IN ('project', 'scope')),
+				target_id TEXT NOT NULL,
+				PRIMARY KEY (digest, kind, target_id)
+			)`,
+			// 🔴 THE PER-REDEMPTION AUDIT RECORD. One row per redemption, keyed by the
+			// count it produced, so a reusable link's every join — and every principal it
+			// CREATED — is a row an operator can read.
+			`CREATE TABLE IF NOT EXISTS team_link_redemptions (
+				digest      TEXT        NOT NULL REFERENCES team_links (digest),
+				seq         INTEGER     NOT NULL,
+				redeemed_by TEXT        NOT NULL,
+				redeemed_at TIMESTAMPTZ NOT NULL,
+				provisioned BOOLEAN     NOT NULL,
+				-- 🔴 FALSE until the authority write the row stands for succeeded;
+				-- see invite.LinkRedemption.Confirmed. (Version 2 had never been applied
+				-- outside a test when this column was added, so it is edited in place
+				-- rather than appended as version 3.)
+				confirmed   BOOLEAN     NOT NULL DEFAULT FALSE,
+				PRIMARY KEY (digest, seq)
+			)`,
+		},
+	},
 }
 
 // advisoryLockKey is the `pg_advisory_lock` key the migration runner serialises on.
@@ -116,6 +168,14 @@ const advisoryLockKey int64 = 0x6361_69726e_3031 // "cairn01" as hex-ish digits
 // arm takes for a journal record from a newer build, and for the same reason: the
 // damage from proceeding is unbounded and unlocated.
 func (d *DB) Migrate(ctx context.Context) error {
+	return d.migrateThrough(ctx, migrations[len(migrations)-1].Version)
+}
+
+// migrateThrough is [DB.Migrate] stopped after `through`. It exists for the UP-PATH test,
+// which has to build a database at an OLD version and then migrate it, because a schema
+// that only ever meets fresh databases has never been measured against the deployments
+// that already exist. Production calls [DB.Migrate], which is this at the newest version.
+func (d *DB) migrateThrough(ctx context.Context, through int) error {
 	// 🔴 THE LOCK IS TAKEN **BEFORE** THE LEDGER IS CREATED, AND THE OTHER ORDER WAS A
 	// MEASURED RACE. `CREATE TABLE IF NOT EXISTS` is NOT atomic against a concurrent
 	// creator in PostgreSQL: both sessions find the table absent, both insert into the
@@ -159,27 +219,54 @@ func (d *DB) Migrate(ctx context.Context) error {
 		return err
 	}
 
-	known := map[int]bool{}
+	if err := refuseFromTheFuture(applied, knownVersions()); err != nil {
+		return err
+	}
+
 	for _, m := range migrations {
-		known[m.Version] = true
+		if applied[m.Version] || m.Version > through {
+			continue
+		}
+		if err := d.applyOne(ctx, conn, m); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// refuseFromTheFuture is the startup refusal of a database migrated by a NEWER build, as ONE
+// predicate over (applied, known) — so the rollback recipe's test can ask what an OLDER build
+// (one that knows fewer versions) would decide, through the same code.
+//
+// # 🔴 THE ROLLBACK RECIPE, BECAUSE MIGRATION 2 MAKES THIS REFUSAL REACHABLE ON A ROLLBACK
+//
+// A build that knows only version 1, started against a database this build migrated to 2,
+// REFUSES TO START — and on `cairn-ui` that takes sign-in down. Rolling back across version 2
+// therefore needs one statement, run against the database BEFORE the old image starts:
+//
+//	DELETE FROM schema_migrations WHERE version = 2;
+//
+// The old build then finds only versions it knows and starts; it never reads the three
+// `team_*` tables, so they can stay (their rows — links and their redemption log — survive).
+// Re-upgrading is safe: every version-2 statement is `IF NOT EXISTS`, so the newer build
+// re-applies version 2 over the tables that are still there and records it again.
+// `TestTheRollbackRecipeLetsAnOlderBuildStartAndReUpgrades` measures all three steps.
+//
+// ⚠ A team link minted before the rollback is NOT redeemable while the old build runs: it
+// does not know the tables exist, so the join path answers "not redeemable" for its token.
+func refuseFromTheFuture(applied map[int]bool, known []int) error {
+	isKnown := map[int]bool{}
+	for _, v := range known {
+		isKnown[v] = true
 	}
 	for v := range applied {
-		if !known[v] {
+		if !isKnown[v] {
 			return fmt.Errorf(
 				"pgstore: this database has schema version %d applied and this build knows only %v — "+
 					"it was migrated by a NEWER build. Refusing to start rather than run against a schema "+
 					"this binary has never seen: the failures that produces are query errors at request time, "+
 					"in places nobody is looking, instead of one refusal here",
-				v, knownVersions())
-		}
-	}
-
-	for _, m := range migrations {
-		if applied[m.Version] {
-			continue
-		}
-		if err := d.applyOne(ctx, conn, m); err != nil {
-			return err
+				v, known)
 		}
 	}
 	return nil

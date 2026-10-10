@@ -245,7 +245,7 @@ func TestPWAClauses(t *testing.T) {
 	// TestEveryShortcutIsADeclaredRowThatReturnsThroughSignIn pins their answers); this pins that a
 	// browser accepts all three, in scope.
 	t.Run("shortcuts", func(t *testing.T) {
-		want := []string{alpha.base + "/arcs", alpha.base + "/scopes?q=", alpha.base + "/share"}
+		want := []string{alpha.base + "/arcs", alpha.base + "/scopes?q=", alpha.base + "/team"}
 		var got []string
 		if alpha.manifest != nil {
 			for _, s := range alpha.manifest.Shortcuts {

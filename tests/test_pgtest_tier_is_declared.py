@@ -42,6 +42,11 @@ TIER_FILES = (
     # any gate here. The compile-time `var _ identity.SessionStore` assertion says the
     # methods EXIST; it says nothing about what the SQL does.
     "internal/pgstore/sessions_pgtest_test.go",
+    # The TEAM LINK tables (migration 2) and the up-path from version 1. The export file
+    # carries no test: it is the tagged, package-internal opener the up-path needs, and it is
+    # declared so that the tag on it is asserted like every other tier file's.
+    "internal/pgstore/teamlinks_pgtest_test.go",
+    "internal/pgstore/export_pgtest_test.go",
     # 🔴 THE TIER IS TWO PACKAGES NOW, AND THE SECOND ONE IS THE PROGRAM RATHER THAN THE
     # SQL. `cmd/cairn-ui`'s DSN branch — schema applied, session table moved off disk, an
     # `Inviting` that is not nil — is invisible without a server, exactly like the SQL, so
@@ -79,8 +84,19 @@ DECLARED_TESTS = {
         "TestPruneDeletesStrictlyLessThanLiveRejects",
         "TestReCreatingASessionDigestReplacesRatherThanDuplicates",
     },
+    "internal/pgstore/teamlinks_pgtest_test.go": {
+        "TestTheTeamLinkRedemptionGuardAgreesWithStateAt",
+        "TestSimultaneousRedemptionsRespectTheReuseFlag",
+        "TestTheSingleUseConstraintIsTheDatabasesOwn",
+        "TestATeamLinkRoundTripsWithItsTargetsAndNeverHoldsTheToken",
+        "TestMigrationTwoUpgradesAVersionOneDatabase",
+        "TestTheRollbackRecipeLetsAnOlderBuildStartAndReUpgrades",
+        "TestARedemptionRowIsUnconfirmedUntilConfirmed",
+    },
+    "internal/pgstore/export_pgtest_test.go": set(),
     "cmd/cairn-ui/database_pgtest_test.go": {
         "TestWithADatabaseTheSurfaceMovesItsStateThereAndHoldsInvitations",
+        "TestTheWiredHalvesMintAndRedeemALinkAgainstPostgres",
     },
 }
 

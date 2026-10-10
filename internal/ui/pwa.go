@@ -375,15 +375,16 @@ type manifestScreenshot struct {
 //
 // 🔴 SEARCH TARGETS `/scopes?q=`, NOT THE PLAN'S `/?q=`: the root became the hub and the search box
 // moved to `/scopes` (`/?q=` still answers, with a 303 there — one hop a launcher need not take).
-// ⚠ AND "Team" TARGETS `/share` FOR NOW, matching the hub's Team card (`hub.go`): a consolidated team
-// page is being built separately, and it repoints both. `TestTheManifestIsBuiltFromTheConfiguredApp`
+// "Team" TARGETS `/team`, the hub's Team card's target (`hub.go`). It pointed at `/share` until the
+// Team page (#214) landed; `/share` now answers 303 to `/team`, and the `GET … content` ledger check
+// below refused the old target once the two were merged. `TestTheManifestIsBuiltFromTheConfiguredApp`
 // pins all three as literals, and `TestEveryShortcutIsADeclaredRowThatReturnsThroughSignIn` pins the
 // sign-in `Location` each answers to a stranger.
 func appShortcuts() []manifestShortcut {
 	return []manifestShortcut{
 		{Name: "Arcs", URL: ArcsPath},
 		{Name: "Search", URL: ScopesPath + "?" + QueryQuery + "="},
-		{Name: "Team", URL: SharePath},
+		{Name: "Team", URL: TeamPath},
 	}
 }
 

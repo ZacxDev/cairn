@@ -338,6 +338,11 @@ func TestWithNoDatabaseTheSurfaceComesUpSayingItHoldsNoInvitation(t *testing.T) 
 		t.Errorf("the startup line claims invitations are in postgres, with no connection string "+
 			"configured anywhere:\n%s", line)
 	}
+	// The Team page's link half follows the same rule: no database, no team links.
+	if strings.Contains(line, "team links in postgres") {
+		t.Errorf("the startup line claims team links are in postgres, with no connection string "+
+			"configured anywhere:\n%s", line)
+	}
 	// And the NOTE about an ignored session file must NOT appear: nothing is ignoring it.
 	if strings.Contains(line, "is IGNORED") {
 		t.Errorf("the surface announced that -session-file is ignored while it is the only session "+

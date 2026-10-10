@@ -888,7 +888,7 @@ func TestTheDocumentCardIsCappedAndTheGridsCardsAreNot(t *testing.T) {
 		},
 		{
 			name:     "the share flow, which renders no card at all",
-			path:     SharePath,
+			path:     TeamPath,
 			wantCard: false,
 			why: "the share flow is the page a reader ASKS about when they hear `.page-main > .card`, " +
 				"so the answer is measured here rather than asserted in a commit message. It renders " +

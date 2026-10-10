@@ -74,7 +74,9 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		// is specific to it: `handleJoinPage` never resolves the token, so the row cannot be
 		// driven to ask which invitations exist. If that ever changes, this row is the line
 		// that has to change with it.
-		"GET /invite content",
+		// 🔴 `GET /invite` AND `GET /share` CARRY NO CLASS NOW: each is a bodiless 303 to the
+		// Team page (operator decision O-a), which renders no answer about authority.
+		"GET /invite",
 		"GET /join public",
 		"GET /scope content",
 		// 🔴 THE SCOPE LIST (moved off the root, which became the hub). `content`, never `public`: it is
@@ -87,7 +89,9 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		// every scope this credential can read, and a session that wrote only in scopes it cannot
 		// read must be indistinguishable from one that never wrote — an answer about authority.
 		"GET /session content",
-		"GET /share content",
+		"GET /share",
+		// 🔴 THE TEAM PAGE (`team.go`). `content`: every list on it is an authority answer.
+		"GET /team content",
 		"GET /sign-in public",
 		"GET /sign-in/github/callback public",
 		"GET /static/app." + stylesheetDigestFromBytes(t) + ".css public",
@@ -118,6 +122,10 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		"POST /sign-in public",
 		"POST /sign-in/github public",
 		"POST /sign-out",
+		// The Team page's two writes. NO class — both cross-site gates reach them by METHOD,
+		// which `TestTheTeamLinkRowsAreBehindBothCrossSiteGates` asserts by each gate's message.
+		"POST /team/link",
+		"POST /team/link/revoke",
 		"POST /unshare",
 	}
 	// 🔴 AND ONE ROW PER COMMITTED ICON FILE, EVERY VARIANT, ARMED OR NOT. The variants and kinds are
@@ -267,6 +275,7 @@ type staticSharing struct {
 	administrable []control.NamedScope
 	audience      []Viewer
 	revocable     []GrantRow
+	projectGrants []GrantRow
 	candidates    []Subject
 	// reads counts every authority QUESTION this fixture is asked, and it is what
 	// `TestEveryContentRouteConsultsTheAuthority` reads for the share routes — the
@@ -296,6 +305,23 @@ func (s *staticSharing) Audience(control.ID) ([]Viewer, error) {
 func (s *staticSharing) Revocable(control.ID) ([]GrantRow, error) {
 	s.reads++
 	return s.revocable, nil
+}
+
+// ProjectGrants counts for `Revocable`'s reason: it answers which grants exist.
+func (s *staticSharing) ProjectGrants(control.ID) ([]GrantRow, error) {
+	s.reads++
+	return s.projectGrants, nil
+}
+
+// ForViewer marks every fixture row revocable: the dispatch fixtures measure ROUTING, and the
+// per-viewer decision is `ControlSharing.ForViewer`'s, driven by `revokeform_test.go`.
+func (s *staticSharing) ForViewer(rows []GrantRow, _ control.Principal, _ control.Authorization) []GrantRow {
+	out := make([]GrantRow, len(rows))
+	for i, r := range rows {
+		r.MayRevoke = true
+		out[i] = r
+	}
+	return out
 }
 
 func (s *staticSharing) Candidates(control.Principal) ([]Subject, error) {
@@ -384,6 +410,8 @@ func testConfig(t testing.TB, auth identity.Authenticator) Config {
 		// (`TestTheInviteRowsAnswerHonestlyWithNoInviteStore`); making it the default here
 		// would leave every routing walk measuring the no-store branch and none of them
 		// measuring a handler.
+		// The Team page's link half rides this fixture (`staticInviting.team`), as production's
+		// rides `ControlInviting.Links` — there is no separate field to wire.
 		Inviting: benignInviting(),
 		Sessions: mustSessions(t),
 		// 🔴 A PROVIDER IS WIRED IN THE DEFAULT FIXTURE, DELIBERATELY, SO THE DISPATCH TESTS
@@ -477,14 +505,17 @@ var bareGETAnswer = map[string]int{
 	// request is the list: neither has an operand to name, so there is nothing for a refusal to protect.
 	"GET /scopes content":   http.StatusOK,
 	"GET /sessions content": http.StatusOK,
-	"GET /share content":    http.StatusOK,
-	// 🔴 `GET /invite` ANSWERS 200 TO A PARAMETERLESS REQUEST *AND* ON A DEPLOYMENT WITH NO
-	// INVITE STORE, AND THE SECOND HALF IS THE DECISION. A 501 would have been the obvious
-	// answer for an unconfigured feature — it is what the two OAuth rows give — and it was
-	// refused because `shell` links this path from the header of every page, so a 501 here
-	// is a dead link in the frame of the whole surface. The page says `NoInviteStore`
-	// instead. `TestTheInviteRowsAnswerHonestlyWithNoInviteStore` measures both halves.
-	"GET /invite content": http.StatusOK,
+	// 🔴 `GET /share` AND `GET /invite` ANSWER 303 — TO `/team#share` AND `/team#invite` — the
+	// moved flows' landing (operator decision O-a). `TestTheOldFlowPathsRedirectToTheTeamPage`
+	// pins the Location and that the query is carried.
+	"GET /share":  http.StatusSeeOther,
+	"GET /invite": http.StatusSeeOther,
+	// 🔴 `GET /team` ANSWERS 200 BARE *AND* ON A DEPLOYMENT WITH NO INVITE STORE, AND THE SECOND
+	// HALF IS THE DECISION `GET /invite` USED TO CARRY: the header links it from every page, so
+	// a 501 here would be a dead link in the frame of the whole surface. With no store the
+	// invite and link halves say `NoInviteStore`
+	// `NoInviteStore` (`TestTheTeamPageAnswersHonestlyWithNoStore`).
+	"GET /team content": http.StatusOK,
 	// 🔴 `GET /join` ANSWERS 200 TO A REQUEST CARRYING NO TOKEN, WHICH IS THE PAGE AND NOT A
 	// REFUSAL. It named no invitation, so there is nothing for a uniform refusal to protect
 	// and nothing it could learn; it gets a page saying the link carried no invitation. The
@@ -669,6 +700,13 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		{"GET", iconStemNoDigest + ".000000000000.png"},
 		{"GET", iconStemNoDigest + "..png"},
 		{"GET", "/static/icon-nosuchvariant-192." + iconDigest + ".png"},
+		// 🔴 THE TEAM ROWS' NEAR-MISSES: a prefix match on `/team` would serve each.
+		{"GET", "/team/"},
+		{"GET", "/teamx"},
+		{"GET", "/team/links"},
+		// The write paths under GET: a dispatcher keyed on path alone would serve them.
+		{"GET", "/team/link"},
+		{"GET", "/team/link/revoke"},
 		// S4's near-misses: the unversioned script a worker-shaped draft would register, a wrong
 		// digest, the live script path suffixed, and a screenshot under a name nobody declared.
 		{"GET", "/static/pwa.js"},
@@ -713,6 +751,11 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		// dispatcher keyed on path alone would serve both either way.
 		{"POST", "/sign-in/github/callback"},
 		{"PUT", "/sign-in/github"},
+		// The Team page's read path under POST, and its write path under the wrong methods.
+		{"POST", "/team"},
+		{"PUT", "/team/link"},
+		{"POST", "/team/link/"},
+		{"POST", "/team/revoke"},
 	} {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(probe[0], probe[1], nil)
@@ -860,15 +903,14 @@ var contentAuthority = map[string]string{
 	"GET /scopes content": "source",
 	// `source`, for `Source.Session`'s reason: `Source.AllSessions` is narrowed by the same authority.
 	"GET /sessions content": "source",
-	"GET /share content":    "sharing",
-	// 🔴 A THIRD AUTHORITY, AND IT IS NAMED RATHER THAN FOLDED INTO `sharing`. The two are
-	// different seams answering different questions — `Sharing` is about SCOPES and
-	// `Inviting` is about PROJECT MEMBERSHIP, and `control.Role.CanManageMembers`'s own
-	// comment records that a scope grant confers nothing over who belongs to the project
-	// that owns it. A route that consulted the share authority would satisfy a two-way
-	// expectation while having asked the wrong question, which is exactly the sum this
-	// table replaced.
-	"GET /invite content": "inviting",
+	// 🔴 THE TEAM PAGE ANSWERS FROM THREE AUTHORITIES, AND EACH IS NAMED AND EACH IS REQUIRED —
+	// the `sharing`/`inviting` expectations `GET /share` and `GET /invite` carried moved here
+	// with their flows (O-a). They are separate seams answering separate questions: `Sharing`
+	// is about SCOPES, `Inviting` about PROJECT MEMBERSHIP (`control.Role.CanManageMembers`'s
+	// comment: a scope grant confers nothing over who belongs to a project), and `team` is the
+	// link chooser, `TeamLinking.Mintable`. A list, not one name, because a page that asked
+	// two of the three would render the third section's authority sentence unlicensed.
+	"GET /team content": "sharing,inviting,team",
 }
 
 // countingSource records whether the authority was consulted, and is the whole
@@ -952,6 +994,7 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 		source := &countingSource{scopes: benignWorld()}
 		sharing := benignSharing()
 		inviting := benignInviting()
+		team := inviting.team
 		cfg := testConfig(t, staticAuth{testIdentity()})
 		cfg.Source = source
 		cfg.Sharing = sharing
@@ -963,7 +1006,7 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 
 		// INSTRUMENT CONTROL: every counter starts at zero, so a non-zero below is the
 		// request's doing and not the constructor's.
-		if source.calls != 0 || sharing.reads != 0 || inviting.reads != 0 {
+		if source.calls != 0 || sharing.reads != 0 || inviting.reads != 0 || team.reads != 0 {
 			t.Fatalf("the counting fixtures were already called (source %d, sharing %d, inviting %d) before "+
 				"any request; their counts below would measure construction rather than routing",
 				source.calls, sharing.reads, inviting.reads)
@@ -992,21 +1035,23 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 				"WHICH authority it asked.", route)
 			continue
 		}
-		counts := map[string]int{"source": source.calls, "sharing": sharing.reads, "inviting": inviting.reads}
-		got, named := counts[want]
-		if !named {
-			t.Errorf("%s declares its authority as %q and this test has no counter for it. Add one — a "+
-				"`want` value with no counter reads as zero, which would fail the route for the wrong "+
-				"reason and be fixed by deleting the row.", route, want)
-			continue
-		}
-		if got == 0 {
-			t.Errorf("%s rendered a page WITHOUT consulting the %s authority it answers from (source %d, "+
-				"sharing %d). Both pages carry a sentence that only an authority answer licenses — `Page`'s "+
-				"\"No scope is visible to this credential. That is an authority answer, not an empty store.\" "+
-				"and the share index's \"No scope is administrable by this credential\" — and either is FALSE "+
-				"for a caller who can in fact see one. Consulting the OTHER authority does not license "+
-				"either sentence.", route, want, source.calls, sharing.reads)
+		counts := map[string]int{"source": source.calls, "sharing": sharing.reads, "inviting": inviting.reads, "team": team.reads}
+		for _, want := range strings.Split(want, ",") {
+			got, named := counts[want]
+			if !named {
+				t.Errorf("%s declares its authority as %q and this test has no counter for it. Add one — a "+
+					"`want` value with no counter reads as zero, which would fail the route for the wrong "+
+					"reason and be fixed by deleting the row.", route, want)
+				continue
+			}
+			if got == 0 {
+				t.Errorf("%s rendered a page WITHOUT consulting the %s authority it answers from (source %d, "+
+					"sharing %d). Both pages carry a sentence that only an authority answer licenses — `Page`'s "+
+					"\"No scope is visible to this credential. That is an authority answer, not an empty store.\" "+
+					"and the share index's \"No scope is administrable by this credential\" — and either is FALSE "+
+					"for a caller who can in fact see one. Consulting the OTHER authority does not license "+
+					"either sentence.", route, want, source.calls, sharing.reads)
+			}
 		}
 	}
 
@@ -1016,6 +1061,7 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 	health := &countingSource{scopes: benignWorld()}
 	healthSharing := benignSharing()
 	healthInviting := benignInviting()
+	healthTeam := healthInviting.team
 	cfg := testConfig(t, staticAuth{testIdentity()})
 	cfg.Source = health
 	cfg.Sharing = healthSharing
@@ -1026,7 +1072,7 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest("GET", HealthPath, nil))
-	if health.calls != 0 || healthSharing.reads != 0 || healthInviting.reads != 0 {
+	if health.calls != 0 || healthSharing.reads != 0 || healthInviting.reads != 0 || healthTeam.reads != 0 {
 		t.Errorf("the health path consulted the authority (source %d, sharing %d, inviting %d time(s)); it "+
 			"is answered before the chain runs and must read nothing",
 			health.calls, healthSharing.reads, healthInviting.reads)
