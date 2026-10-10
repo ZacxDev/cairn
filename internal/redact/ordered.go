@@ -8,21 +8,52 @@ import (
 	"strings"
 )
 
-// object is a decoded JSON object that REMEMBERS its key order.
+// pair is one member of a decoded JSON object.
+type pair struct {
+	k string
+	v any
+}
+
+// object is a decoded JSON object that keeps EVERY member, in arrival order.
 //
 // 🔴 A RE-ENCODED RECORD KEEPS ITS KEY ORDER AND ITS NUMBERS. `encoding/json` decodes an object
 // into a map and re-encodes it sorted, and decodes a number into a float64 — so a 20-digit id
 // would come back rounded and every record that needed one redaction would come back reshuffled.
-// Numbers are kept as `json.Number` (the literal text) and keys in arrival order, so a redacted
-// record differs from its source only in the strings that were redacted (and in JSON escaping,
-// which is re-chosen by the encoder).
+// Numbers are kept as `json.Number` and members in arrival order.
+//
+// 🔴 AND A DUPLICATE KEY IS KEPT, NOT COLLAPSED. A decoder that keeps only the last of two
+// members with one name never SCANS the first — and when nothing else in the record matches, the
+// ORIGINAL bytes ship, first member included. So a secret in `{"note":"<secret>","note":"ok"}`
+// would leave the host unread. Every member is a pair here, every pair's value is walked, and a
+// re-encode writes every pair back.
 type object struct {
-	keys []string
-	vals map[string]any
+	pairs []pair
 }
 
-// decodeJSON parses exactly one JSON value from raw, preserving order and number text. Trailing
-// non-space input is an error: a "JSON" that is a prefix of something else is not one document.
+// get answers whether ANY member named k has value want — every duplicate counts, so a
+// `"kind":"Secret"` hidden behind a second `"kind"` still makes the object a Secret.
+func (o *object) has(k string, want any) bool {
+	for _, p := range o.pairs {
+		if p.k == k && p.v == want {
+			return true
+		}
+	}
+	return false
+}
+
+// strings returns every string value of the members named k.
+func (o *object) strings(k string) []string {
+	var out []string
+	for _, p := range o.pairs {
+		if s, ok := p.v.(string); ok && p.k == k {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// decodeJSON parses exactly one JSON value from raw, preserving order, duplicates and number
+// text. Trailing non-space input is an error.
 func decodeJSON(raw []byte) (any, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
@@ -45,7 +76,7 @@ func decodeValue(dec *json.Decoder) (any, error) {
 	case json.Delim:
 		switch t {
 		case '{':
-			o := &object{vals: map[string]any{}}
+			o := &object{}
 			for dec.More() {
 				kt, err := dec.Token()
 				if err != nil {
@@ -59,10 +90,7 @@ func decodeValue(dec *json.Decoder) (any, error) {
 				if err != nil {
 					return nil, err
 				}
-				if _, dup := o.vals[key]; !dup {
-					o.keys = append(o.keys, key)
-				}
-				o.vals[key] = v
+				o.pairs = append(o.pairs, pair{key, v})
 			}
 			if _, err := dec.Token(); err != nil {
 				return nil, err
@@ -120,24 +148,24 @@ func newline(buf *bytes.Buffer, indent string, depth int) {
 func writeValue(buf *bytes.Buffer, v any, indent string, depth int) error {
 	switch t := v.(type) {
 	case *object:
-		if len(t.keys) == 0 {
+		if len(t.pairs) == 0 {
 			buf.WriteString("{}")
 			return nil
 		}
 		buf.WriteByte('{')
-		for i, k := range t.keys {
+		for i, p := range t.pairs {
 			if i > 0 {
 				buf.WriteByte(',')
 			}
 			newline(buf, indent, depth+1)
-			if err := writeString(buf, k); err != nil {
+			if err := writeString(buf, p.k); err != nil {
 				return err
 			}
 			buf.WriteByte(':')
 			if indent != "" {
 				buf.WriteByte(' ')
 			}
-			if err := writeValue(buf, t.vals[k], indent, depth+1); err != nil {
+			if err := writeValue(buf, p.v, indent, depth+1); err != nil {
 				return err
 			}
 		}

@@ -32,6 +32,16 @@ const (
 	SelfTestNoVouch = 2
 )
 
+// selfTestParts is everything one self-test run reads, injectable so each exit-2 branch can be
+// driven by a test rather than asserted in prose.
+type selfTestParts struct {
+	corpus   Corpus
+	declared int
+	identity redactor
+	greedy   redactor
+	real     redactor
+}
+
 // SelfTest runs the corpus measurement for one seed and prints, as its last line,
 //
 //	SUMMARY redaction: planted=P caught=C clean-damaged=D
@@ -44,39 +54,42 @@ const (
 //
 // Missed plants and damaged values are printed by LABEL and rule — never by value.
 func SelfTest(w io.Writer, seed uint64) int {
-	c := NewCorpus(seed)
-	if len(c.Plants) != DeclaredPlants {
-		fmt.Fprintf(w, "COULD NOT VOUCH: the corpus planted %d secrets but declares %d\n", len(c.Plants), DeclaredPlants)
-		return SelfTestNoVouch
-	}
 	key := SelfTestKey(seed)
-
-	neg := c.Score(identity{})
-	fmt.Fprintf(w, "control identity-redactor: planted=%d caught=%d (must be 0)\n", neg.Planted, neg.Caught)
-	if neg.Caught != 0 {
-		fmt.Fprintln(w, "COULD NOT VOUCH: a redactor that changes nothing scored catches, so the scorer cannot see a leak")
-		return SelfTestNoVouch
-	}
 	greedy, err := newWithRules(append(DefaultRules(), greedyRule), key, nil)
 	if err != nil {
 		fmt.Fprintf(w, "COULD NOT VOUCH: %v\n", err)
 		return SelfTestNoVouch
 	}
-	pos := c.Score(greedy)
+	real, err := New(key, nil)
+	if err != nil {
+		fmt.Fprintf(w, "COULD NOT VOUCH: %v\n", err)
+		return SelfTestNoVouch
+	}
+	return selfTest(w, selfTestParts{corpus: NewCorpus(seed), declared: DeclaredPlants, identity: identity{},
+		greedy: greedy, real: real})
+}
+
+func selfTest(w io.Writer, p selfTestParts) int {
+	c := p.corpus
+	if len(c.Plants) != p.declared {
+		fmt.Fprintf(w, "COULD NOT VOUCH: the corpus planted %d secrets but declares %d\n", len(c.Plants), p.declared)
+		return SelfTestNoVouch
+	}
+	neg := c.Score(p.identity)
+	fmt.Fprintf(w, "control identity-redactor: planted=%d caught=%d (must be 0)\n", neg.Planted, neg.Caught)
+	if neg.Caught != 0 {
+		fmt.Fprintln(w, "COULD NOT VOUCH: a redactor that changes nothing scored catches, so the scorer cannot see a leak")
+		return SelfTestNoVouch
+	}
+	pos := c.Score(p.greedy)
 	fmt.Fprintf(w, "control greedy-rule: clean-damaged=%d (must be > 0)\n", pos.CleanDamaged)
 	if pos.CleanDamaged == 0 {
 		fmt.Fprintln(w, "COULD NOT VOUCH: a rule that eats every long run damaged nothing, so clean-damaged=0 would mean nothing")
 		return SelfTestNoVouch
 	}
-
-	r, err := New(key, nil)
-	if err != nil {
-		fmt.Fprintf(w, "COULD NOT VOUCH: %v\n", err)
-		return SelfTestNoVouch
-	}
-	s := c.Score(r)
-	for _, p := range s.Missed {
-		fmt.Fprintf(w, "MISSED %s (expected rule %s)\n", p.Label, p.Rule)
+	s := c.Score(p.real)
+	for _, m := range s.Missed {
+		fmt.Fprintf(w, "MISSED %s (expected rule %s)\n", m.Label, m.Rule)
 	}
 	for _, d := range s.Damaged {
 		fmt.Fprintf(w, "DAMAGED %s\n", d.Label)

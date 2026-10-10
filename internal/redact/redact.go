@@ -26,6 +26,8 @@ type Redactor struct {
 	// floor and decoder-coverage CONTROLS through the real pipeline; production uses
 	// decodeWholeBase64.
 	decode func(string) ([]byte, bool)
+	// binary is the binary rule, a field for the same reason (the O12 guard's control).
+	binary func([]byte) bool
 }
 
 // MinKeyBytes is the shortest host key accepted.
@@ -41,7 +43,8 @@ func newWithRules(rules []Rule, key []byte, deny *Denylist) (*Redactor, error) {
 	if len(key) < MinKeyBytes {
 		return nil, errors.New("redact: the host key is shorter than 16 bytes; a short key makes the tag guessable")
 	}
-	return &Redactor{rules: rules, key: append([]byte(nil), key...), deny: deny, decode: decodeWholeBase64}, nil
+	return &Redactor{rules: rules, key: append([]byte(nil), key...), deny: deny, decode: decodeWholeBase64,
+		binary: IsBinary}, nil
 }
 
 // Tag is the keyed tag for one secret: the first 8 hex of HMAC-SHA256(key, secret).
@@ -64,6 +67,18 @@ const maxNesting = 3
 func (r *Redactor) String(s string) (string, []Hit) { return r.scanText(s, 0) }
 
 func (r *Redactor) scanText(s string, depth int) (string, []Hit) {
+	if strings.IndexByte(s, 0) >= 0 {
+		// NUL-SEPARATED text (an environ dump, `env -0`, `find -print0`): each segment is a line
+		// to the rules, which a `^`-anchored rule would otherwise never see past the first.
+		segs := strings.Split(s, "\x00")
+		var hits []Hit
+		for i, seg := range segs {
+			var hs []Hit
+			segs[i], hs = r.scanText(seg, depth)
+			hits = append(hits, hs...)
+		}
+		return strings.Join(segs, "\x00"), hits
+	}
 	var hits []Hit
 	out := s
 	if r.deny != nil {
@@ -90,15 +105,14 @@ func (r *Redactor) scanText(s string, depth int) (string, []Hit) {
 		}
 	}
 	if len(hits) == 0 && depth < maxNesting {
-		// A WHOLE value that is base64 (or a base64 `data:` URL) whose payload is TEXT is scanned
-		// decoded; a match replaces the whole encoded value, because a partially-redacted
-		// encoding would still decode to the rest of the secret's context. A payload that is NOT
-		// text (an image, a PDF) is left exactly as it is — O12.
+		// A WHOLE value that is base64 (or a base64 `data:` URL — its prefix parsed first) is
+		// scanned decoded unless its payload is BINARY (O12); a match replaces the whole encoded
+		// value, because a partly-redacted encoding still decodes to the secret's context.
 		payload, ok := dataURLPayload(s)
 		if !ok {
 			payload, ok = r.decode(s)
 		}
-		if ok && IsText(payload) {
+		if ok && !r.binary(payload) {
 			if _, inner := r.scanText(string(payload), depth+1); len(inner) > 0 {
 				m, h := r.marker("base64/"+inner[0].Rule, s)
 				return m, append([]Hit{h}, inner...)
@@ -120,6 +134,12 @@ func (r *Redactor) applyRule(rule Rule, s string) (string, []Hit) {
 		lo, hi := loc[2*rule.Group], loc[2*rule.Group+1]
 		if lo < 0 || lo < last {
 			continue
+		}
+		if rule.KeyGroup > 0 {
+			klo, khi := loc[2*rule.KeyGroup], loc[2*rule.KeyGroup+1]
+			if klo < 0 || !SecretKey(s[klo:khi]) {
+				continue
+			}
 		}
 		secret := s[lo:hi]
 		if strings.HasPrefix(secret, "[redacted:") || (rule.Accept != nil && !rule.Accept(secret)) {
@@ -164,32 +184,65 @@ func (r *Redactor) jsonInString(s string, depth int) (string, []Hit, bool) {
 	return lead + string(enc) + trail, hits, true
 }
 
-// Value redacts every string in a decoded JSON value (as produced by this package's decoder).
+// denyPathKeys are the members a denylisted PATH covers, in the object that names the path
+// (`filePath`, `file_path` or `path`): what Read's, Edit's and Write's structured copies carry.
+//
+// ⚠ WHAT THE GLOB DOES NOT COVER, stated rather than implied: the numbered `tool_result` block
+// of a Read (a different block, linked only by `tool_use_id`), and the output of a shell command
+// that prints the file (`cat`). Correlating a result block to its call is a cross-record join the
+// redactor, which sees one record at a time, does not do.
+var denyPathKeys = map[string]bool{
+	"content": true, "originalFile": true, "base64": true, "oldString": true, "newString": true,
+	"old_string": true, "new_string": true, "structuredPatch": true, "edits": true,
+}
+
+// walk redacts every string — every member VALUE, every member KEY, every duplicate — in a
+// decoded JSON value.
 func (r *Redactor) walk(v any, depth int) (any, []Hit) {
 	switch t := v.(type) {
 	case *object:
 		var hits []Hit
-		isSecret := t.vals["kind"] == "Secret"
-		denyPath := r.deny != nil && (r.deny.matchesPath(t.vals["filePath"]) || r.deny.matchesPath(t.vals["file_path"]))
-		for _, k := range t.keys {
-			val := t.vals[k]
-			switch s, isString := val.(string); {
+		isSecret := t.has("kind", "Secret")
+		denyPath := false
+		if r.deny != nil {
+			for _, k := range []string{"filePath", "file_path", "path"} {
+				for _, p := range t.strings(k) {
+					denyPath = denyPath || r.deny.matchesPath(p)
+				}
+			}
+		}
+		// A k8s env entry as JSON: {"name": "DB_PASSWORD", "value": "…"}.
+		envSecret := false
+		for _, n := range t.strings("name") {
+			envSecret = envSecret || SecretKey(n)
+		}
+		for i := range t.pairs {
+			k, val := t.pairs[i].k, t.pairs[i].v
+			if nk, hs := r.scanText(k, depth); len(hs) > 0 {
+				t.pairs[i].k = nk
+				hits = append(hits, hs...)
+			}
+			s, isString := val.(string)
+			switch {
 			case isSecret && (k == "data" || k == "stringData"):
 				nv, hs := r.redactAllStrings(val, "k8s-secret")
-				t.vals[k] = nv
+				t.pairs[i].v = nv
 				hits = append(hits, hs...)
-			case denyPath && isString && (k == "content" || k == "originalFile" || k == "base64"):
-				m, h := r.marker("denylist-path", s)
-				t.vals[k] = m
+			case denyPath && denyPathKeys[k]:
+				nv, hs := r.redactAllStrings(val, "denylist-path")
+				t.pairs[i].v = nv
+				hits = append(hits, hs...)
+			case isString && envSecret && k == "value" && notTrivial(s):
+				m, h := r.marker("k8s-env", s)
+				t.pairs[i].v = m
 				hits = append(hits, h)
-			case isString && secretFieldRe.MatchString(k) && len(s) >= 8 && notTrivial(s) &&
-				!strings.Contains(s, " "):
+			case isString && SecretKey(k) && len(s) >= 4 && notTrivial(s) && !strings.HasPrefix(s, "${"):
 				m, h := r.marker("secret-field", s)
-				t.vals[k] = m
+				t.pairs[i].v = m
 				hits = append(hits, h)
 			default:
 				nv, hs := r.walk(val, depth)
-				t.vals[k] = nv
+				t.pairs[i].v = nv
 				hits = append(hits, hs...)
 			}
 		}
@@ -213,9 +266,9 @@ func (r *Redactor) redactAllStrings(v any, rule string) (any, []Hit) {
 	switch t := v.(type) {
 	case *object:
 		var hits []Hit
-		for _, k := range t.keys {
-			nv, hs := r.redactAllStrings(t.vals[k], rule)
-			t.vals[k] = nv
+		for i := range t.pairs {
+			nv, hs := r.redactAllStrings(t.pairs[i].v, rule)
+			t.pairs[i].v = nv
 			hits = append(hits, hs...)
 		}
 		return t, hits
@@ -241,19 +294,13 @@ func (r *Redactor) redactAllStrings(v any, rule string) (any, []Hit) {
 // Record redacts one JSON document — one JSONL line without its newline, or one opencode part.
 //
 // 🔴 AN UNTOUCHED RECORD IS RETURNED BYTE-IDENTICAL. Only a record with at least one hit is
-// re-encoded (compact, key order and number text preserved). A line that is not JSON is redacted
-// as text, and returned unchanged when it is not text either.
+// re-encoded (compact; key order, duplicate members and number text preserved). A line that is not
+// JSON is redacted as TEXT bytes ([Redactor.Text]) — invalid bytes carried through — and a binary
+// one is returned as it is.
 func (r *Redactor) Record(raw []byte) ([]byte, []Hit) {
 	v, err := decodeJSON(raw)
 	if err != nil {
-		if !IsText(raw) {
-			return raw, nil
-		}
-		out, hits := r.scanText(string(raw), 0)
-		if len(hits) == 0 {
-			return raw, nil
-		}
-		return []byte(out), hits
+		return r.Text(raw)
 	}
 	nv, hits := r.walk(v, 0)
 	if len(hits) == 0 {
@@ -268,18 +315,42 @@ func (r *Redactor) Record(raw []byte) ([]byte, []Hit) {
 	return enc, hits
 }
 
+// Text redacts a byte string that is not one JSON document.
+//
+//   - BINARY by the signature rule: returned as it is (O12).
+//   - BOM-marked UTF-16: decoded, scanned, and re-encoded in the same byte order on a hit.
+//   - anything else: scanned AS IS — NUL-separated segments each scanned, invalid UTF-8 bytes
+//     carried through — and only matched spans replaced, so every other byte is identical.
+func (r *Redactor) Text(data []byte) ([]byte, []Hit) {
+	if r.binary(data) {
+		return data, nil
+	}
+	if s, order, ok := utf16BOM(data); ok {
+		out, hits := r.scanText(s, 0)
+		if len(hits) == 0 {
+			return data, nil
+		}
+		return encodeUTF16(out, order), hits
+	}
+	out, hits := r.scanText(string(data), 0)
+	if len(hits) == 0 {
+		return data, nil
+	}
+	return []byte(out), hits
+}
+
 // Blob redacts one persisted tool-result file.
 //
-//   - NOT TEXT (decision 6a's rule): returned byte-identical. O12: binary ships.
+//   - BINARY (decision 6a's signature rule): returned byte-identical. O12: binary ships.
 //   - a JSON document, or JSON Lines: redacted by decoded traversal, so an escaped secret inside
 //     is caught; an unmatched blob keeps its original bytes.
-//   - any other text: redacted as ONE string with the same table and the line-based Secret rule.
+//   - any other text: [Redactor.Text].
 func (r *Redactor) Blob(name string, data []byte) ([]byte, []Hit) {
 	if r.deny != nil && r.deny.matchesPath(name) {
 		m, h := r.marker("denylist-path", string(data))
 		return []byte(m + "\n"), []Hit{h}
 	}
-	if !IsText(data) {
+	if r.binary(data) {
 		return data, nil
 	}
 	trimmed := bytes.TrimSpace(data)
@@ -318,11 +389,7 @@ func (r *Redactor) Blob(name string, data []byte) ([]byte, []Hit) {
 			return out.Bytes(), hits
 		}
 	}
-	out, hits := r.scanText(string(data), 0)
-	if len(hits) == 0 {
-		return data, nil
-	}
-	return []byte(out), hits
+	return r.Text(data)
 }
 
 // jsonLines reports whether every non-empty line of data is one JSON document.
@@ -342,9 +409,8 @@ func jsonLines(data []byte) ([][]byte, bool) {
 	return lines, n > 0
 }
 
-func (d *Denylist) matchesPath(v any) bool {
-	p, ok := v.(string)
-	if !ok || p == "" {
+func (d *Denylist) matchesPath(p string) bool {
+	if p == "" {
 		return false
 	}
 	for _, g := range d.Globs {

@@ -75,7 +75,7 @@ func TestTheCorpusIsFullyCaughtAndNothingCleanIsDamaged(t *testing.T) {
 		code := SelfTest(&out, seed)
 		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 		last := lines[len(lines)-1]
-		want := "SUMMARY redaction: planted=26 caught=26 clean-damaged=0"
+		want := "SUMMARY redaction: planted=49 caught=49 clean-damaged=0"
 		if code != SelfTestOK || last != want {
 			t.Errorf("seed %d: exit %d, last line %q, want exit 0 and %q\n%s", seed, code, last, want, out.String())
 		}
@@ -86,8 +86,8 @@ func TestTheCorpusIsFullyCaughtAndNothingCleanIsDamaged(t *testing.T) {
 func TestTheCorpusPlantsExactlyTheDeclaredCount(t *testing.T) {
 	for _, seed := range seeds[:2] {
 		c := NewCorpus(seed)
-		if len(c.Plants) != DeclaredPlants || DeclaredPlants != 26 {
-			t.Fatalf("seed %d: %d plants, declared %d (literal 26)", seed, len(c.Plants), DeclaredPlants)
+		if len(c.Plants) != DeclaredPlants || DeclaredPlants != 49 {
+			t.Fatalf("seed %d: %d plants, declared %d (literal 49)", seed, len(c.Plants), DeclaredPlants)
 		}
 		labels := map[string]bool{}
 		for _, p := range c.Plants {
@@ -276,22 +276,6 @@ func TestBinaryContentShipsByteIdentical(t *testing.T) {
 		t.Fatalf("beside an image: hits=%v, secret gone=%v, image intact=%v", hits, !bytes.Contains(out, []byte(npm)),
 			bytes.Contains(out, []byte(img)))
 	}
-	// A `.txt` blob with a NUL in its first 8,000 bytes is binary by CONTENT and ships as is.
-	val := rnd(14, alnum, 24)
-	nul := append([]byte("header\x00\n"), []byte("DB_PASSWORD="+val+"\n")...)
-	if out, _ := r.Blob("report.txt", nul); !bytes.Equal(out, nul) {
-		t.Fatal("a NUL-carrying .txt blob was altered: binary must ship byte-identical (O12)")
-	}
-	// Control: a sniff keyed on the EXTENSION would have called it text — and the table WOULD
-	// redact it then, so the byte-identity above is the content sniff's doing.
-	if out, _ := r.String(string(nul)); out == string(nul) {
-		t.Fatal("control: the table does not redact the NUL blob's text, so the sniff is untested")
-	}
-	// UTF-16 text is "binary" by the text rule: it ships unredacted (the stated residual).
-	u16 := utf16le("\ufeffDB_PASSWORD=" + val + "\n")
-	if out, _ := r.Blob("notes.txt", u16); !bytes.Equal(out, u16) {
-		t.Fatal("a UTF-16 blob was altered; O12 ships non-UTF-8 text as it is")
-	}
 	// Thinking signatures and 64-hex digests are not text-bearing base64 and survive.
 	sig := base64.StdEncoding.EncodeToString(g.bytes(240))
 	dig := hex.EncodeToString(g.bytes(32))
@@ -300,14 +284,6 @@ func TestBinaryContentShipsByteIdentical(t *testing.T) {
 			t.Errorf("a clean value was damaged: %d hits", len(hits))
 		}
 	}
-}
-
-func utf16le(s string) []byte {
-	var b []byte
-	for _, r := range s {
-		b = append(b, byte(r), byte(r>>8))
-	}
-	return b
 }
 
 func TestTheTagIsKeyed(t *testing.T) {
@@ -420,9 +396,10 @@ func TestEveryLeakscanCredentialControlIsRedacted(t *testing.T) {
 	if failed := check(testRedactor(t)); len(failed) > 0 {
 		t.Fatalf("leakscan credential controls NOT redacted by internal/redact: %v", failed)
 	}
-	// Control: without the authorization rule the bearer control survives.
-	if failed := check(without(t, "authorization")); len(failed) == 0 {
-		t.Fatal("removing the authorization rule left every control redacted — the test cannot see a missing rule")
+	// Control: without the private-key rule the OPENSSH header control survives — no other rule reads it.
+	// (The authorization rule is no longer a control: the bearer rule independently covers that one.)
+	if failed := check(without(t, "pem-private-key")); len(failed) == 0 {
+		t.Fatal("removing the private-key rule left every control redacted — the test cannot see a missing rule")
 	}
 	t.Logf("%d leakscan credential controls, all redacted", len(controls))
 }

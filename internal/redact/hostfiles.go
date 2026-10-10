@@ -17,9 +17,17 @@ import (
 //
 // The file is one entry per line: `literal:<text>` (redacted wherever it appears, rule
 // `denylist`) or `glob:<pattern>` (`path.Match` syntax, matched against a persisted blob's name and
-// against a record object's `filePath`/`file_path`; a match redacts the blob, or that object's
-// `content`/`originalFile`/`base64` value, WHOLE — rule `denylist-path`). Blank lines and `#`
-// comments are ignored; anything else is an error.
+// against a record object's `filePath`/`file_path`/`path`; a match redacts the blob WHOLE, or —
+// in that one object — every string under `content`, `originalFile`, `base64`, `oldString`,
+// `newString`, `old_string`, `new_string`, `structuredPatch` and `edits`: Read's, Edit's and
+// Write's structured copies and the Edit/Write tool INPUT. Rule `denylist-path`).
+//
+// ⚠ A GLOB DOES NOT COVER Read's numbered `tool_result` block (a separate block linked only by
+// `tool_use_id`) or a shell command's output that prints the file (`cat`): the redactor sees one
+// record at a time and does not join a result to its call. Those copies are redacted by the
+// literal entries and the rule table only.
+//
+// Blank lines and `#` comments are ignored; anything else is an error.
 type Denylist struct {
 	Literals []string
 	Globs    []string

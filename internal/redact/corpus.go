@@ -16,7 +16,7 @@ import (
 // DeclaredPlants is how many secrets [NewCorpus] plants. The self-test REFUSES (exit 2) when the
 // generator plants a different number: P is asserted against this declaration, never read off the
 // run, so a generator that silently lost a position cannot report a smaller perfect score.
-const DeclaredPlants = 26
+const DeclaredPlants = 49
 
 // Plant is one planted secret: where it sits, the rule expected to catch it, and every FORM whose
 // presence in the redacted output means it leaked (the plaintext, and its encoding when it was
@@ -225,7 +225,7 @@ func NewCorpus(seed uint64) Corpus {
 		"description": g.words(2)}))
 
 	// 11 — a PROMPT string carrying a bearer header.
-	bearer := g.plant("prompt-bearer", "authorization", g.pick(alnum, 40))
+	bearer := g.plant("prompt-bearer", "authorization", g.pick(alnum, 39)+"7")
 	prompt := g.envelope("user", session)
 	prompt["message"] = m{"role": "user", "content": "the call fails with this header: Authorization: Bearer " + bearer + " — why?"}
 	g.record(prompt)
@@ -249,7 +249,8 @@ func NewCorpus(seed uint64) Corpus {
 	// 17, 18 — a persisted TEXT blob: a Secret manifest, two documents, the second a ConfigMap
 	// whose `data` must survive.
 	b1 := g.plant("blob-k8s-data-1", "k8s-secret", base64.StdEncoding.EncodeToString([]byte(g.pick(alnum, 24))))
-	b2 := g.plant("blob-k8s-data-2", "k8s-secret", base64.StdEncoding.EncodeToString([]byte(g.pick(alnum, 24))))
+	// `token:` names a secret, so the dotenv rule reaches this value before the Secret rule does.
+	b2 := g.plant("blob-k8s-data-2", "dotenv", base64.StdEncoding.EncodeToString([]byte(g.pick(alnum, 24))))
 	cm := g.clean("configmap-value", "replicas-"+g.pick(digit, 3))
 	g.blob("toolu_"+g.pick(alnum, 24)+".txt", "apiVersion: v1\nkind: Secret\nmetadata:\n  name: alpha-db\ndata:\n  password: |\n    "+
 		b1+"\n  token: "+b2+"\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: alpha-config\ndata:\n  mode: "+cm+"\n")
@@ -322,6 +323,9 @@ func NewCorpus(seed uint64) Corpus {
 	jv := g.plant("assistant-text-k8s-json", "k8s-secret", base64.StdEncoding.EncodeToString([]byte(g.pick(alnum, 22))))
 	g.record(g.toolResult(session, `{"apiVersion":"v1","kind":"Secret","metadata":{"name":"alpha-api"},"data":{"key":"`+jv+`"}}`, nil))
 
+	g.reviewRoundPlants(session, ses)
+	g.codeShapedClean(session)
+
 	// Clean filler that must survive: hashes, digests, ids, a signature-like payload, URLs.
 	g.record(g.toolResult(session, "commit "+sha()+"\nAuthor: someone\n\n    "+g.words(6)+"\n\ndigest sha256:"+digest()+
 		"\nsee https://github.com/example-org/alpha-notes/pull/7 and git@github.com:example-org/alpha-notes.git\n"+
@@ -330,83 +334,4 @@ func NewCorpus(seed uint64) Corpus {
 	g.record(g.toolResult(session, g.clean("build-uuid", g.uuid())+" "+digest()+" "+sha(), nil))
 	g.blob("toolu_"+g.pick(alnum, 24)+".txt", "no secrets here: "+g.words(12)+"\n"+digest()+"\n")
 	return c
-}
-
-// redactor is what the scorer drives: the real one, or a control.
-type redactor interface {
-	Record(raw []byte) ([]byte, []Hit)
-	Blob(name string, data []byte) ([]byte, []Hit)
-}
-
-// Score is the corpus measurement: the pair the closing condition reports, and which plants and
-// clean values went wrong (by LABEL and rule — never by value).
-type Score struct {
-	Planted, Caught, CleanDamaged int
-	Missed                        []Plant
-	Damaged                       []Clean
-}
-
-// Score redacts every item and counts.
-//
-// A plant is CAUGHT when none of its forms appears in the output — searched in the raw output
-// bytes AND in every decoded JSON string of it, so a secret that survives only in escaped form
-// still counts as leaked. A clean value is DAMAGED when it no longer appears anywhere.
-func (c Corpus) Score(r redactor) Score {
-	var hay strings.Builder
-	for _, it := range c.Items {
-		var out []byte
-		if it.Blob {
-			out, _ = r.Blob(it.Name, it.Data)
-		} else {
-			out, _ = r.Record(it.Data)
-		}
-		hay.Write(out)
-		hay.WriteByte(0)
-		for _, line := range bytes.Split(out, []byte("\n")) {
-			if v, err := decodeJSON(bytes.TrimSpace(line)); err == nil {
-				collectStrings(v, &hay)
-			}
-		}
-		if v, err := decodeJSON(bytes.TrimSpace(out)); err == nil {
-			collectStrings(v, &hay)
-		}
-	}
-	h := hay.String()
-	s := Score{Planted: len(c.Plants)}
-	for _, p := range c.Plants {
-		leaked := false
-		for _, f := range p.Forms {
-			if strings.Contains(h, f) {
-				leaked = true
-			}
-		}
-		if leaked {
-			s.Missed = append(s.Missed, p)
-		} else {
-			s.Caught++
-		}
-	}
-	for _, cl := range c.Clean {
-		if !strings.Contains(h, cl.Value) {
-			s.CleanDamaged++
-			s.Damaged = append(s.Damaged, cl)
-		}
-	}
-	return s
-}
-
-func collectStrings(v any, b *strings.Builder) {
-	switch t := v.(type) {
-	case *object:
-		for _, k := range t.keys {
-			collectStrings(t.vals[k], b)
-		}
-	case []any:
-		for _, e := range t {
-			collectStrings(e, b)
-		}
-	case string:
-		b.WriteString(t)
-		b.WriteByte(0)
-	}
 }

@@ -1414,10 +1414,20 @@ run time).
 - Containment: every realistic `credential` control string from leakscan's self-test is redacted —
   asserted as "the credential run inside leakscan's own match is gone", because redacting only
   the word `Bearer` breaks leakscan's match while leaving the token. Control: deleting the
-  authorization rule makes this test red. *The plan named the GitHub-token rule as the control;
+  private-key rule makes this test red. *The plan named the GitHub-token rule as the control;
   S1 measured that deletion GREEN — leakscan's GitHub control is a `GITHUB_TOKEN=` line, which the
-  dotenv rule also catches. The corpus's bare base64-encoded token is what that rule alone
-  catches.*
+  dotenv rule also catches. S1's first build then used the authorization rule; the review round's
+  short-bearer rule covers that control too, so it went green as well. The private-key rule is the
+  only one reading leakscan's OPENSSH header control.*
+- Review rounds 0–1 (S1): copy-prefixed lines (Read's numbered copy, `grep -n`, diffs); ONE
+  `SecretKey` predicate, case- and style-insensitive; duplicate JSON keys and object KEYS scanned;
+  NUL-separated, invalid-byte and BOM-UTF-16 text scanned (the narrowed binary rule); new shapes
+  (PGP blocks, `redis://:pw@`, Slack `xapp-` and webhooks, `whsec_`, libpq `password=`,
+  `docker -e`, `curl -u`, `X-Auth-Token`, `Authorization` in a JSON headers map, bearer ≥ 8, `.npmrc`
+  `_authToken`, k8s env pairs); a code-shaped clean corpus at `clean-damaged=0`; a bounded
+  private-key match; every `SelfTest` exit-2 branch tested; `Score` asserting each plant's own rule;
+  and a fresh run-time attack set reported per class. The denylist glob's claim is NARROWED to the
+  structured copies it covers — a Read `tool_result` copy and a `cat` are not joined to their path.
 
 **S2.**
 - Offset reader: a file grown mid-line ships only complete lines; the next run ships the rest
