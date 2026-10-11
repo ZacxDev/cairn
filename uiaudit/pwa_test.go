@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"image/png"
 	"io"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/ui"
 	"github.com/chromedp/cdproto/page"
+	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 )
 
@@ -108,7 +110,7 @@ func TestPWAClauses(t *testing.T) {
 		t.Fatal("UIAUDIT_CAIRN_UI and UIAUDIT_REPO_ROOT must name a built cairn-ui and its checkout: these " +
 			"clauses boot three worlds, and a skip would be a green about nothing")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	var boots []pwaBoot
 	for _, b := range pwaBoots {
@@ -189,6 +191,285 @@ func TestPWAClauses(t *testing.T) {
 			}
 		}
 	})
+
+	// 🔴 (b: screenshots), S4: what CHROMIUM parsed as the manifest's screenshots, each fetched and
+	// compared byte for byte with a committed, derivation-pinned file (`checks.ui-screenshots-are-current`
+	// is what pins the committed file to the synthetic world); its IHDR must match the `sizes` chromium
+	// read; and there must be at least one `narrow` and one `wide`.
+	t.Run("b_screenshots", func(t *testing.T) {
+		for _, b := range []pwaBoot{alpha, beta} {
+			if b.manifest == nil {
+				t.Errorf("pwa clause (b) screenshots: the %s boot has no parsed manifest to read screenshots from", b.label)
+				continue
+			}
+			forms := map[string]int{}
+			matched := map[string]bool{}
+			for _, s := range b.manifest.Screenshots {
+				if s.Image == nil {
+					t.Errorf("pwa clause (b) screenshots: the %s boot's manifest has a screenshot with no image", b.label)
+					continue
+				}
+				// CDP spells the manifest's `narrow`/`wide` as its enum, `kNarrow`/`kWide` (measured, chromium 152).
+				forms[strings.ToLower(strings.TrimPrefix(s.FormFactor, "k"))]++
+				got, err := fetchBytes(s.Image.URL)
+				if err != nil {
+					t.Errorf("pwa clause (b) screenshots: fetching %s: %v", s.Image.URL, err)
+					continue
+				}
+				name := committedScreenshotFor(t, root, got)
+				if name == "" {
+					t.Errorf("pwa clause (b) screenshots: the %s boot served %s whose %d byte(s) equal NO committed "+
+						"internal/ui/screenshots/*.png — bytes the derivation did not render", b.label, s.Image.URL, len(got))
+					continue
+				}
+				cfg, err := png.DecodeConfig(bytes.NewReader(got))
+				if err != nil || fmt.Sprintf("%dx%d", cfg.Width, cfg.Height) != s.Image.Sizes {
+					t.Errorf("pwa clause (b) screenshots: %s (%s) is %dx%d (%v), chromium read sizes %q", s.Image.URL,
+						name, cfg.Width, cfg.Height, err, s.Image.Sizes)
+					continue
+				}
+				matched[name] = true
+			}
+			if forms["narrow"] < 1 || forms["wide"] < 1 {
+				t.Errorf("pwa clause (b) screenshots: the %s boot's form factors are %v — the richer install dialog "+
+					"needs at least one narrow and one wide", b.label, forms)
+			}
+			if want := committedScreenshotCount(t, root); len(matched) != want {
+				t.Errorf("pwa clause (b) screenshots: the %s boot's manifest matched %d committed screenshot(s), want "+
+					"all %d", b.label, len(matched), want)
+			}
+		}
+	})
+
+	// The shortcuts as chromium RESOLVED them — not a closing-condition clause (`internal/ui`'s
+	// TestEveryShortcutIsADeclaredRowThatReturnsThroughSignIn pins their answers); this pins that a
+	// browser accepts all three, in scope.
+	t.Run("shortcuts", func(t *testing.T) {
+		want := []string{alpha.base + "/arcs", alpha.base + "/scopes?q=", alpha.base + "/team"}
+		var got []string
+		if alpha.manifest != nil {
+			for _, s := range alpha.manifest.Shortcuts {
+				got = append(got, s.URL)
+			}
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("chromium resolved the alpha boot's shortcuts to %v, want %v", got, want)
+		}
+	})
+
+	// 🔴 (e) CLIENT-SIDE STORAGE, S4 — the STATE guard over `pwa.js` (its Go test is the SPELLING one).
+	t.Run("e_storage", func(t *testing.T) {
+		pwaClauseE(ctx, t, alpha.base)
+	})
+}
+
+// committedScreenshotFor returns the committed `internal/ui/screenshots/*.png` whose bytes equal `got`.
+func committedScreenshotFor(t *testing.T, root string, got []byte) string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(root, "internal", "ui", "screenshots", "*.png"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no committed screenshot under %s (%v), so nothing could be compared", root, err)
+	}
+	for _, f := range files {
+		want, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Equal(got, want) {
+			return filepath.Base(f)
+		}
+	}
+	return ""
+}
+
+func committedScreenshotCount(t *testing.T, root string) int {
+	t.Helper()
+	files, _ := filepath.Glob(filepath.Join(root, "internal", "ui", "screenshots", "*.png"))
+	return len(files)
+}
+
+// The scripts every (e) browser runs before any page script, so they reach `pwa.js` first.
+const (
+	// iosSafariTab: chromium has no `navigator.standalone`; iOS Safari defines it, false in a tab.
+	iosSafariTab = `Object.defineProperty(Navigator.prototype, "standalone", {value: false, configurable: true});`
+	// blockedStorage: storage that refuses writes, as a private window or a blocked-site policy does.
+	blockedStorage = `Storage.prototype.setItem = function () { throw new DOMException("blocked", "SecurityError"); };`
+)
+
+// storageOf is this origin's whole `localStorage`, as a map.
+func storageOf(ctx context.Context) (map[string]string, error) {
+	var out map[string]string
+	err := chromedp.Run(ctx, chromedp.Evaluate(`Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)]))`, &out))
+	return out, err
+}
+
+func hintHidden(ctx context.Context) (bool, error) {
+	var hidden bool
+	err := chromedp.Run(ctx, chromedp.Evaluate(`document.getElementById("pwa-install-hint").hidden`, &hidden))
+	return hidden, err
+}
+
+// pwaClauseE is clause (e). Four browsers, each a fresh profile:
+//
+//  1. THE WALK: signed in, every signed-in target the ledger derives is navigated — after it,
+//     `localStorage` is EMPTY (chromium defines no `navigator.standalone`, so the hint never renders and
+//     nothing is ever written). The page count is the positive control.
+//  2. THE HINT: with `navigator.standalone = false`, the root's hint SHOWS; one dismiss tap leaves EXACTLY
+//     `{cairn.installHintDismissed: "1"}`; after a reload the hint stays hidden; and after signing out
+//     through the real control the key is STILL there (decision 11: sign-out says nothing about it).
+//  3. BLOCKED STORAGE: with `setItem` throwing, the hint still shows, dismissing it raises no uncaught
+//     exception and stores nothing, and the next load shows it again.
+//  4. THE INSTALL BUTTON: hidden until a `beforeinstallprompt` arrives — the browser's OWN events are
+//     intercepted first, because headless chromium was MEASURED firing one on its own — and then revealed
+//     by a SYNTHETIC one (the reachability control); clicking it calls that event's `prompt()` once.
+func pwaClauseE(ctx context.Context, t *testing.T, base string) {
+	t.Helper()
+	newBrowser := func(t *testing.T, scripts ...string) *Browser {
+		br, err := NewBrowser(ctx, base, 3*time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(br.Close)
+		for _, s := range scripts {
+			if err := chromedp.Run(br.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+				_, err := page.AddScriptToEvaluateOnNewDocument(s).Do(ctx)
+				return err
+			})); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := br.SignIn(fixtureToken); err != nil {
+			t.Fatal(err)
+		}
+		return br
+	}
+
+	// 1. THE WALK.
+	walker := newBrowser(t)
+	targets, _, err := Targets(ui.DeclaredRouteLedger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	visited := 0
+	for _, tg := range targets {
+		if !tg.SignedIn {
+			continue
+		}
+		if err := chromedp.Run(walker.ctx, chromedp.Navigate(base+tg.Path), chromedp.WaitReady("body")); err != nil {
+			t.Fatalf("navigating %s: %v", tg.Path, err)
+		}
+		visited++
+	}
+	if visited < 8 {
+		t.Fatalf("pwa clause (e) CONTROL: the signed-in walk visited %d page(s), so an empty storage would be "+
+			"measured over almost nothing", visited)
+	}
+	if got, err := storageOf(walker.ctx); err != nil || len(got) != 0 {
+		t.Errorf("pwa clause (e) storage: after the signed-in walk (%d page(s)) localStorage is %v (%v), want EMPTY "+
+			"— chromium defines no navigator.standalone, so nothing may have been written", visited, got, err)
+	}
+
+	// 2. THE HINT, AND THE ONE KEY.
+	ios := newBrowser(t, iosSafariTab)
+	var dismissed map[string]string
+	if err := chromedp.Run(ios.ctx, chromedp.Navigate(base+ui.RootPath), chromedp.WaitReady("body")); err != nil {
+		t.Fatal(err)
+	}
+	if hidden, err := hintHidden(ios.ctx); err != nil || hidden {
+		t.Fatalf("pwa clause (e) CONTROL: with navigator.standalone = false the root's iOS hint is hidden=%v (%v) — "+
+			"the dismissal below would be measured on a hint that never showed", hidden, err)
+	}
+	if err := chromedp.Run(ios.ctx, chromedp.Click(`#pwa-install-hint-dismiss`, chromedp.ByQuery)); err != nil {
+		t.Fatal(err)
+	}
+	dismissed, err = storageOf(ios.ctx)
+	if err != nil || len(dismissed) != 1 || dismissed["cairn.installHintDismissed"] != "1" {
+		t.Errorf("pwa clause (e) storage: after ONE dismiss tap localStorage is %v (%v), want EXACTLY "+
+			"{cairn.installHintDismissed: \"1\"} — O8 allows one key and one value, nothing beside it", dismissed, err)
+	}
+	if err := chromedp.Run(ios.ctx, chromedp.Reload(), chromedp.WaitReady("body")); err != nil {
+		t.Fatal(err)
+	}
+	if hidden, err := hintHidden(ios.ctx); err != nil || !hidden {
+		t.Errorf("pwa clause (e) hint: after a dismiss and a reload the hint is hidden=%v (%v), want hidden — the "+
+			"dismissal was not remembered", hidden, err)
+	}
+	if err := ios.SignOut(); err != nil {
+		t.Fatal(err)
+	}
+	if after, err := storageOf(ios.ctx); err != nil || after["cairn.installHintDismissed"] != "1" || len(after) != 1 {
+		t.Errorf("pwa clause (e) hint: after signing out localStorage is %v (%v), want the one key still there "+
+			"(decision 11 keeps it deliberately)", after, err)
+	}
+
+	// 3. BLOCKED STORAGE.
+	blocked := newBrowser(t, iosSafariTab, blockedStorage)
+	var thrown []string
+	chromedp.ListenTarget(blocked.ctx, func(ev any) {
+		if e, ok := ev.(*cdpruntime.EventExceptionThrown); ok {
+			thrown = append(thrown, e.ExceptionDetails.Error())
+		}
+	})
+	if err := chromedp.Run(blocked.ctx, cdpruntime.Enable(), chromedp.Navigate(base+ui.RootPath),
+		chromedp.WaitReady("body")); err != nil {
+		t.Fatal(err)
+	}
+	if hidden, err := hintHidden(blocked.ctx); err != nil || hidden {
+		t.Errorf("pwa clause (e) hint: with storage refusing writes the hint is hidden=%v (%v), want SHOWN", hidden, err)
+	}
+	if err := chromedp.Run(blocked.ctx, chromedp.Click(`#pwa-install-hint-dismiss`, chromedp.ByQuery),
+		chromedp.Sleep(200*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if len(thrown) != 0 {
+		t.Errorf("pwa clause (e) hint: dismissing with storage refusing writes raised %d uncaught exception(s): %v",
+			len(thrown), thrown)
+	}
+	if got, err := storageOf(blocked.ctx); err != nil || len(got) != 0 {
+		t.Errorf("pwa clause (e) storage: with writes refused localStorage is %v (%v), want EMPTY", got, err)
+	}
+	if err := chromedp.Run(blocked.ctx, chromedp.Reload(), chromedp.WaitReady("body")); err != nil {
+		t.Fatal(err)
+	}
+	if hidden, err := hintHidden(blocked.ctx); err != nil || hidden {
+		t.Errorf("pwa clause (e) hint: after a dismissal storage refused, the next load hides the hint (%v, %v); "+
+			"it must show again", hidden, err)
+	}
+
+	// 4. THE INSTALL BUTTON.
+	const interceptTrusted = `window.__trustedPrompts = 0;
+window.addEventListener("beforeinstallprompt", function (e) {
+  if (e.isTrusted) { window.__trustedPrompts++; e.stopImmediatePropagation(); e.preventDefault(); }
+}, true);`
+	installer := newBrowser(t, interceptTrusted)
+	var before, after, afterClick bool
+	var prompted, trusted int
+	if err := chromedp.Run(installer.ctx,
+		chromedp.Navigate(base+ui.RootPath), chromedp.WaitReady("body"), chromedp.Sleep(500*time.Millisecond),
+		chromedp.Evaluate(`document.getElementById("pwa-install").hidden`, &before),
+		chromedp.Evaluate(`window.__prompted = 0;
+var e = new Event("beforeinstallprompt", {cancelable: true});
+e.prompt = function () { window.__prompted++; return Promise.resolve(); };
+window.dispatchEvent(e); true`, nil),
+		chromedp.Evaluate(`document.getElementById("pwa-install").hidden`, &after),
+		chromedp.Click(`#pwa-install`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.getElementById("pwa-install").hidden`, &afterClick),
+		chromedp.Evaluate(`window.__prompted`, &prompted),
+		chromedp.Evaluate(`window.__trustedPrompts`, &trusted),
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("the browser fired %d trusted beforeinstallprompt event(s) of its own (intercepted)", trusted)
+	if !before {
+		t.Errorf("pwa install button: VISIBLE before any beforeinstallprompt — it must be hidden by default")
+	}
+	if after {
+		t.Errorf("pwa install button: a synthetic beforeinstallprompt did NOT reveal it (the reachability control)")
+	}
+	if !afterClick || prompted != 1 {
+		t.Errorf("pwa install button: clicking it left hidden=%v and called prompt() %d time(s), want hidden and once",
+			afterClick, prompted)
+	}
 }
 
 func fetchBytes(url string) ([]byte, error) {
@@ -236,6 +517,8 @@ func TestThePWAClauseNamesAreTheScriptsContract(t *testing.T) {
 	for _, want := range []string{
 		"TestPWAClauses/a_installability", "TestPWAClauses/b_name", "TestPWAClauses/b_icon",
 		"pwa clause (a) installability", "pwa clause (b) name", "pwa clause (b) icon", "pwa clause (a) CONTROL",
+		"TestPWAClauses/b_screenshots", "pwa clause (b) screenshots",
+		"TestPWAClauses/e_storage", "pwa clause (e) storage", "pwa clause (e) CONTROL",
 		"TOUCH REACHABILITY FAILED", "TOUCH TARGET SIZE (WCAG 2.5.8", "INPUT FONT UNDER 16px",
 		"TestEveryNonPublicHTMLRowIsNoStore", "pwa clause (d) no-store",
 	} {

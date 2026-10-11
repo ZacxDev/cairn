@@ -449,10 +449,23 @@ func sortedCredentials(m Model) []Credential {
 	return out
 }
 
+// displayOf is THE answer to "who is this" for an audit line, a written bullet's ACTOR
+// and the browser's "signed in as" — reached through `PrincipalFor`. ⚠ The display-name
+// uniqueness rule and `RenameUser` (`user_display.go`) call it too, so changing what it
+// returns changes which names that rule refuses.
+//
+// 🔴 A USER'S PRECEDENCE IS DISPLAY NAME > EMAIL > `<provider>:<subject>`, and every one
+// of the three is a JOURNAL value. The display name is operator-written (`user-created`'s
+// optional `display_name`, or `user-renamed`); no identity-provider claim reaches it, so a
+// header and an audit line cannot disagree about who somebody is. Its alphabet excludes
+// `@` and `:`, so it can never be spelled like either fallback — see `user_display.go`.
 func displayOf(m Model, kind Kind, id ID) string {
 	switch kind {
 	case KindUser:
 		if u, known := m.Users[id]; known {
+			if u.DisplayName != "" {
+				return u.DisplayName
+			}
 			if u.Email != "" {
 				return u.Email
 			}

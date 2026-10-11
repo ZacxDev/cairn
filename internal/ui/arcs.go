@@ -471,7 +471,7 @@ func ArcPage(v PageView) g.Node {
 	rep := *v.Arc
 	if rep.Status != report.StatusArcFound {
 		// The off state. One page for every caller and every arc; nothing about the request is on it.
-		return shell("cairn — arcs", v, []crumb{{Label: "arc"}},
+		return shell("arcs", v, []crumb{{Label: "arc"}},
 			h.Section(
 				h.Class("card"),
 				h.H2(g.Text("Arc")),
@@ -500,7 +500,7 @@ func ArcPage(v PageView) g.Node {
 	case rep.CarriedLine() != "":
 		badge = partialBadge("carried", rep.CarriedLine())
 	}
-	return shell("cairn — "+reg.Home+"/"+reg.Slug, v,
+	return shell(reg.Home+"/"+reg.Slug, v,
 		[]crumb{{Label: s.Name, Href: scopeHref(s)}, {Label: reg.Slug}},
 		h.Section(
 			h.Class("card"),

@@ -41,12 +41,12 @@ func TestAGuessedQueryParameterIsNotHowAPageIsReached(t *testing.T) {
 	// And the row that needs expansion must SAY so, or the walk never reads its links.
 	var sawExpander bool
 	for _, tg := range targets {
-		if tg.Path == ui.SharePath {
+		if tg.Path == ui.TeamPath {
 			sawExpander = tg.ExpandLinks
 		}
 	}
 	if !sawExpander {
-		t.Errorf("%s must be marked ExpandLinks, or its per-scope pages are never reached at all", ui.SharePath)
+		t.Errorf("%s must be marked ExpandLinks, or its per-scope pages are never reached at all", ui.TeamPath)
 	}
 }
 
@@ -58,19 +58,19 @@ func TestAGuessedQueryParameterIsNotHowAPageIsReached(t *testing.T) {
 // below is a shape the expansion must decline, with the reason it is dangerous rather than
 // merely irrelevant.
 func TestExpandLinksAcceptsOnlyWhatTheSurfacePublishedForThisPage(t *testing.T) {
-	from := Target{Path: ui.SharePath, PushURL: ui.SharePath, SignedIn: true, LedgerRow: "GET /share content", ExpandLinks: true}
+	from := Target{Path: ui.TeamPath, PushURL: ui.TeamPath, SignedIn: true, LedgerRow: "GET /team content", ExpandLinks: true}
 
 	ledger := ui.DeclaredRouteLedger()
 	accepted, declined, bounded := ExpandLinks(from, []string{
-		// The real shape: the share index's per-scope link.
-		"/share?scope=scp_0000000000000000",
-		"/share?scope=scp_1111111111111111",
+		// The real shape: the Team page's per-scope link (the share section moved there, O-a).
+		"/team?scope=scp_0000000000000000",
+		"/team?scope=scp_1111111111111111",
 		// A duplicate: one target, not two.
-		"/share?scope=scp_0000000000000000",
+		"/team?scope=scp_0000000000000000",
 		// Declined, each for its own reason.
 		"https://example.invalid/share?scope=x", // absolute: would leave the origin entirely
 		"//example.invalid/share?scope=x",       // protocol-relative: same, less obviously
-		"/share",                                // the page itself, with no query: an infinite queue
+		"/team",                                 // the page itself, with no query: an infinite queue
 		"mailto:nobody@example.invalid",         // a scheme `safeHref` may legitimately allow
 		"/nowhere?x=1",                          // a query, relative — and NO declared GET row
 	}, ledger)
@@ -85,7 +85,7 @@ func TestExpandLinksAcceptsOnlyWhatTheSurfacePublishedForThisPage(t *testing.T) 
 			t.Errorf("an expanded target must stay attributable to the ledger row it came from; got %q", a.LedgerRow)
 		}
 	}
-	want := "/share?scope=scp_0000000000000000|/share?scope=scp_1111111111111111"
+	want := "/team?scope=scp_0000000000000000|/team?scope=scp_1111111111111111"
 	if strings.Join(gotPaths, "|") != want {
 		t.Fatalf("accepted %v, want %v", gotPaths, strings.Split(want, "|"))
 	}
@@ -431,7 +431,7 @@ func TestTheREALLedgerIsFullyACCOUNTEDFor(t *testing.T) {
 	for _, tg := range targets {
 		captured[tg.Path] = true
 	}
-	for _, want := range []string{ui.RootPath, ui.SharePath, ui.SignInPath} {
+	for _, want := range []string{ui.RootPath, ui.TeamPath, ui.SignInPath} {
 		if !captured[want] {
 			t.Errorf("%s must be captured", want)
 		}

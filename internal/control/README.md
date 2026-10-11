@@ -258,19 +258,15 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 317 mutants, over EIGHT packages
+python3 tests/control_mutants.py          # 352 mutants, over EIGHT packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 317 mutants DECLARED.** S1 of the scope-refs plan added 13 `codesrc-*`
-rows, each carrying `pkgs` (`PKGS` plus `./internal/codesrc/`) rather than growing `PKGS`; each was
-run ALONE with `--only` (positive control GREEN each time, 13 killed by the test each names, 0
-misattributed, 0 stale extras). That is a per-row measurement, not a whole-battery one. **The last
-whole-battery run** (the UI hub change, which added seven `ui-sessions-*`/`ui-arcs-index-*`/`ui-root-*`/`ui-agent-*` rows): `mutants=304 killed=302 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control GREEN, the two survivors the EQUIVALENT rows. The run before it, at 297 mutants (S3 of the mobile plan):
+**Measured on this tree: 352 mutants DECLARED** — `main` at 339 merged into S1 of the scope-refs plan, the row sets disjoint. S1 added 13 `codesrc-*` rows, each carrying `pkgs` (`PKGS` plus `./internal/codesrc/`) rather than growing `PKGS`; each was run ALONE with `--only` on S1's own tree (positive control GREEN each time, 13 killed by the test each names, 0 misattributed, 0 stale extras). ⚠ No whole-battery run on this MERGED tree is recorded here; the `go` CI job on the merge commit is that measurement. `main`'s 339: #214 (the team link) and #220 (S4 of the mobile plan) merged, their row sets disjoint: #214 added 30 rows (15 for the team link, 13 for its fix round, 2 for its round-2 fix), each killed alone with `--only`; S4 added five `ui-pwa-script-*`/`ui-manifest-screenshot-*` rows and re-pointed `ui-pwa-head-emits-a-script-before-s4` as `ui-pwa-head-emits-an-unversioned-script`. ⚠ No whole-battery run on the MERGED tree is recorded here: the merge was pushed with one still in flight, so the `go` CI job on the merge commit is that measurement. The runs before the merge, one per side: #214's, on its tree rebased onto #213 and BEFORE its round 2 added two rows (so at 332): `mutants=332 killed=330 survived=2 misattributed=0 harness-errors=0 stale-extras=0`; S4's, at 309: `mutants=309 killed=307 survived=2 misattributed=0 harness-errors=0 stale-extras=0` — each with its positive control GREEN and the two survivors the EQUIVALENT rows. The run before both, at 304 mutants (the UI hub change, seven `ui-sessions-*`/`ui-arcs-index-*`/`ui-root-*`/`ui-agent-*` rows): `mutants=304 killed=302 survived=2 misattributed=0 harness-errors=0 stale-extras=0`. The one before that, at 297 mutants (S3 of the mobile plan):
 `mutants=297 killed=295 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control
 GREEN, the two survivors the rows labelled EQUIVALENT. That run is also the one that found two rows
 the S3 change had broken (patterns on lines it edited, scored HARNESS ERROR) which per-row `--only`
-runs did not reach; they were re-derived and the run above is after the fix. Before it:
+runs did not reach; they were re-derived and that run is after the fix. Before it:
 S2 (presence) added 31 `presence-*` rows and `./internal/presence/` to `PKGS`. Two PARTIAL
 measurements, kept apart rather than summed: the first 153 pre-existing rows (positive control
 GREEN, 151 killed, the two EQUIVALENT rows survived, 0 misattributed), and the 31 presence rows run
@@ -422,7 +418,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 317 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 352 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test

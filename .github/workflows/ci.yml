@@ -781,9 +781,19 @@ jobs:
           # 23 `ok`, 0 `FAIL`, 2 `[no test files]`. MOVED TO 24 WITH `internal/presence` (S2 of
           # the arcs/presence plan), measured the same way on that branch's tree: 24 `ok`, 0
           # `FAIL`, 2 `[no test files]` — re-measure on the MERGED tree if anything else landed.
-          # MOVED TO 25 WITH `internal/codesrc` (S1 of the scope-refs plan), measured the same way
-          # on that branch's tree: 25 `ok`, 0 `FAIL`, 2 `[no test files]`.
-          # ⚠ THE NIX CHECK PHASES ARE NOT RE-MEASURED AT TWENTY-THREE, TWENTY-FOUR OR TWENTY-FIVE. They run the same walk and
+          # MOVED TO 25 WITH `internal/transcript` (S0 of the transcripts/plugins plan: the
+          # classification table and its shape ledger), measured the same way on that branch's
+          # tree: 25 `ok`, 0 `FAIL`, 2 `[no test files]`. MOVED TO 26 WITH `internal/redact` (S1:
+          # the redactor and its corpus), measured the same way on that branch's tree: 26 `ok`, 0
+          # `FAIL`, 2 `[no test files]`. S1's review round 4 added `internal/redact/cmd/redact-heldback`
+          # (O15's arming gate, a thin `main` over tested library code): 26 `ok`, 0 `FAIL`, 3
+          # `[no test files]` — the floor does not move, because a package without tests adds no `ok`.
+          # MOVED TO 27 WITH `internal/codesrc` (S1 of the scope-refs plan), which was 25 on its own
+          # branch's tree before `main` (at 26) was merged into it. ⚠ 27 on the MERGED tree is a
+          # STATIC count, not a `go test` reading: the package directories of the root module that
+          # hold a `_test.go` (27; the nested `uiaudit` module excluded). The `go` CI job on the
+          # merge commit is the measurement.
+          # ⚠ THE NIX CHECK PHASES ARE NOT RE-MEASURED AT TWENTY-THREE THROUGH TWENTY-SEVEN. They run the same walk and
           # were last read at 18 (`nix log` for both `cairn-server` and `cairn-go`, before
           # `cmd/cairn-ui` carried tests) and at 17 before that. Read those as a RECORD of the
           # tree they were taken on, never as a current reading — re-spelling a number is not
@@ -811,8 +821,8 @@ jobs:
           # this one — the merge with the share flow made the count nineteen. Adding a
           # package and not moving this number does not fail late — it stops failing at all.
           #
-          # So: `ok < 25` refuses. 25 passes (the tree, measured). 24 refuses (one
-          # package's tests gone). 26 passes (a package ADDED), which is the other half of
+          # So: `ok < 27` refuses. 27 passes (the tree, counted). 26 refuses (one
+          # package's tests gone). 28 passes (a package ADDED), which is the other half of
           # the property and the reason this is a floor rather than an equality. 🔴 THE THREE
           # NUMBERS IN THIS SENTENCE AND THE LEDGER ABOVE MOVE TOGETHER WITH THE CONDITION,
           # IN ONE COMMIT — an audit round caught the commit that moved the condition to 18
@@ -831,11 +841,11 @@ jobs:
           # behind does not fail late — it stops failing at all, once per package of lag.
           #
           # ⚠ AND IT DEFENDS THE PACKAGE, NOT THE TEST. Deleting one `func Test…` from a
-          # file that keeps others leaves `ok` at 25 and this gate green. That gap is
+          # file that keeps others leaves `ok` at 27 and this gate green. That gap is
           # stated in `internal/depspolicy`'s package doc, where the guarantee it defends
           # is written down.
           echo "packages with passing tests: $ok"
-          if [ "$ok" -lt 25 ]; then
+          if [ "$ok" -lt 27 ]; then
             echo "REFUSING: only $ok package(s) reported ok — the test walk narrowed"
             exit 1
           fi
@@ -847,7 +857,7 @@ jobs:
       # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
       # killed by some other test proves the suite can fail and proves nothing about the
       # guard the row exists for, so the run reports it as MISATTRIBUTED rather than as a
-      # kill. 317 mutants over EIGHT packages, in `PKGS` order: `internal/control`,
+      # kill. 352 mutants over EIGHT packages, in `PKGS` order: `internal/control`,
       # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
       # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence` — the model, the
       # token-file projection, P4's identity backends, the server that authorises from all of
@@ -864,7 +874,7 @@ jobs:
       # buys (~3min on an IDLE developer host, measured at 62 mutants; a loaded box is
       # several times that). It is what stops the rows bit-rotting into patterns that
       # match nothing and score SURVIVED without ever running.
-      - name: prove every authz guard can go RED (317 mutants, each on the test that names it)
+      - name: prove every authz guard can go RED (352 mutants, each on the test that names it)
         run: python3 tests/control_mutants.py
 
       # 🔴 THE LEDGERS THAT ARE BLIND TO A COMPILED CLIENT, AND THIS IS THE ONLY JOB THAT
@@ -929,7 +939,7 @@ jobs:
       # ⚠ RUNTIME, MEASURED RATHER THAN GUESSED, so the next reader can judge the trade: 57
       # mutants, **614.75 s wall / 152.21 s user + 21.00 s sys** on a 24-core developer host
       # at load ~6.5, all 57 KILLED, 0 SURVIVED, 0 misattributed. That is the same order as
-      # `control_mutants.py` above (317 mutants; its own comment measures ~3 min at 62 on an
+      # `control_mutants.py` above (352 mutants; its own comment measures ~3 min at 62 on an
       # IDLE host), which this job already pays for. ⚠ The wall figure is one observation on
       # a LOADED box and is not a prediction for a runner — the CPU figure is the portable
       # half. If this step becomes the job's critical path, split it out; do not delete it
@@ -1570,6 +1580,15 @@ jobs:
       - name: the committed icons are what their templates render
         run: nix build .#checks.x86_64-linux.ui-icons-are-current --no-link --print-build-logs
 
+      # 🔴 AND THE INSTALL SCREENSHOTS (S4), FOR THE SAME TWO REASONS: they are BUILD OUTPUT of the
+      # synthetic uiaudit world, captured in the sandbox by the pinned chromium under a pinned font set,
+      # and this comparison is their LEAK GATE — a picture that is not what the synthetic world renders
+      # cannot pass. Its provenance control renames one fixture scope and requires the capture to move.
+      # ⚠ This step is ALSO the second host the bytes are measured on (the plan's decision 16 names
+      # cross-host byte-identity as unmeasured); a red here with the dev host green is that measurement.
+      - name: the committed install screenshots are what the synthetic world renders
+        run: nix build .#checks.x86_64-linux.ui-screenshots-are-current --no-link --print-build-logs
+
       # The Go CLIENT is packaged too, and for the same reasons: a consumer will eventually pin
       # it, and its build runs the unit tests under the PINNED toolchain rather than the one
       # `setup-go` installed. Two tiers, both read.
@@ -1828,13 +1847,13 @@ jobs:
           # threshold test — measured, chromium 154); 50 / 119 on S1's round 1 (the reading-order
           # rows, the shrink-to-fit control, the whole-row hit-test — measured, chromium 154); 52 / 124 on the
           # mobile plan's S2 (`TestPWAClauses` and its three clause subtests, and the script-contract
-          # test — measured, chromium 154). A test deleted from a file that keeps others would otherwise move nothing.
+          # test — measured, chromium 154); 52 / 127 on S4 (`TestPWAClauses` gained `b_screenshots`, `shortcuts` and `e_storage` — measured, chromium 152 from the flake's nixpkgs). A test deleted from a file that keeps others would otherwise move nothing.
           if [ "$passes" -lt 52 ]; then
             echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 52 — a Test function was deleted"
             exit 1
           fi
-          if [ "$total" -lt 124 ]; then
-            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 124 — a table row was deleted"
+          if [ "$total" -lt 127 ]; then
+            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 127 — a table row was deleted"
             exit 1
           fi
 
@@ -1874,6 +1893,23 @@ jobs:
             echo "credentialed=yes" >> "$GITHUB_OUTPUT"
           else
             echo "credentialed=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 🔴 THE MOBILE PLAN'S CLOSING-CONDITION INSTRUMENT (`claudedocs/plan-cairn-mobile-pwa.md`),
+      # WIRED HERE BY S4 AND IN THIS NON-BLOCKING JOB ON PURPOSE: the plan keeps `pwa_check.sh` advisory
+      # until S6b adds the blocking `uiaudit-touch` job over a PINNED chromium — this job's chromium is
+      # the runner image's, an unpinned input (see the step above). It runs the PLAIN check (all nine
+      # clauses, exit 0/1/2); `--self-test` (nine sabotaged tree copies, four of them full walks) is a
+      # local instrument validation, too heavy to repeat on every push. Exit 2 is "could not vouch" and
+      # is a failure here exactly like 1 — never a skip.
+      - name: pwa_check.sh — the mobile plan's closing-condition clauses (a)–(e)
+        run: |
+          set -uo pipefail
+          ./uiaudit/pwa_check.sh 2>&1 | tee "${{ runner.temp }}/pwa-check.log"
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" != "0" ]; then
+            echo "::error::pwa_check.sh exited $rc (1 = a clause FAILED, 2 = could not vouch)"
+            exit "$rc"
           fi
 
       # 🔴 THE `verify-push` CONTROL, AND WITHOUT IT A MISCONFIGURED TOKEN IS A SILENT

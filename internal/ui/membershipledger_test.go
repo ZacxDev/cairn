@@ -44,7 +44,10 @@ import (
 // rather than a clean zero: a short ledger does not equal it.
 
 // membershipTypes are the types whose actor-taking methods the ledger watches.
-var membershipTypes = []string{"Inviting", "Sharing", "ControlInviting", "ControlSharing"}
+// 🔴 `TeamLinking`/`ControlTeamLinks` WERE ADDED WITH THE TEAM PAGE: a project target on a
+// team link is MEMBERSHIP authority exactly as an invitation is, so its actor-taking methods
+// are watched by the same ledger rather than by a second one.
+var membershipTypes = []string{"Inviting", "Sharing", "TeamLinking", "ControlInviting", "ControlSharing", "ControlTeamLinks"}
 
 // ledgerNotCalled marks a method used as a VALUE rather than called in place. It is never in
 // the wanted ledger: a method value's actor is decided wherever it is eventually called, which
@@ -93,7 +96,7 @@ func membershipLedger(t *testing.T, fset *token.FileSet, files []*ast.File) []st
 	for _, f := range files {
 		ast.Inspect(f, func(n ast.Node) bool {
 			ts, ok := n.(*ast.TypeSpec)
-			if !ok || (ts.Name.Name != "Inviting" && ts.Name.Name != "Sharing") {
+			if !ok || (ts.Name.Name != "Inviting" && ts.Name.Name != "Sharing" && ts.Name.Name != "TeamLinking") {
 				return true
 			}
 			it, ok := ts.Type.(*ast.InterfaceType)
@@ -204,9 +207,14 @@ var wantMembershipLedger = []string{
 	// The implementation delegating to itself: `Redeem` hands the principal it just
 	// provisioned or found to `RedeemFor`. No request identity is involved.
 	"ControlInviting.Redeem ControlInviting.RedeemFor principal",
+	// The invitation path HANDING a token its store does not know to the team-link store
+	// (`ControlInviting.Links`): the same principal it was itself handed, no request identity.
+	"ControlInviting.RedeemFor ControlTeamLinks.RedeemFor principal",
+	// `ControlInviting.Redeem`'s delegation, one type over: a provider identity the model
+	// already holds, found by `UserByProviderSubject`.
+	"ControlTeamLinks.Redeem ControlTeamLinks.RedeemFor principal",
 	"Server.handleInvite Inviting.Invitable membershipActor(id)",
 	"Server.handleInvite Inviting.Mint membershipActor(id)",
-	"Server.handleInvitePage Inviting.Invitable membershipActor(id)",
 	"Server.handleInviteRevoke Inviting.Revoke membershipActor(id)",
 	// EXEMPT: a provider identity with no credential behind it, so no narrowing to lose.
 	"Server.handleOAuthCallback Inviting.RedeemFor principal",
@@ -214,9 +222,23 @@ var wantMembershipLedger = []string{
 	// EXEMPT: ATTRIBUTION only — the journal's `actor`. The authority is checked against the
 	// narrowed `id.Auth` passed beside it.
 	"Server.handleShare Sharing.Share id.Principal",
-	"Server.handleSharePage Sharing.Candidates membershipActor(id)",
-	// EXEMPT: ATTRIBUTION only, as for `Share`; authority is the narrowed `id.Auth`.
+	"Server.handleTeamLink TeamLinking.Mint membershipActor(id)",
+	"Server.handleTeamLinkRevoke TeamLinking.Revoke membershipActor(id)",
+	// EXEMPT: ATTRIBUTION for a SCOPE grant, whose authority is the narrowed `id.Auth`. For a
+	// PROJECT-WIDE grant (operator decision O-b) the principal IS read as membership authority
+	// — and `mayRevokeGrant` refuses it outright when `auth.Narrowed()`, which is
+	// `membershipActor`'s rule applied from the authorization handed beside it;
+	// `TestANarrowedBearerCannotRevokeAProjectWideGrant` is the behavioural guard.
 	"Server.handleUnshare Sharing.Unshare id.Principal",
+	// The two old page handlers became the Team page's SECTION builders (O-a); their reads are
+	// unchanged.
+	"Server.inviteSection Inviting.Invitable membershipActor(id)",
+	"Server.shareSection Sharing.Candidates membershipActor(id)",
+	// The per-viewer revoke decision (round 2 🟡A): the same predicate `POST /unshare` runs.
+	"Server.shareSection Sharing.ForViewer membershipActor(id)",
+	"Server.teamView Sharing.ForViewer membershipActor(id)",
+	"Server.teamView TeamLinking.Links membershipActor(id)",
+	"Server.teamView TeamLinking.Mintable membershipActor(id)",
 }
 
 // TestEveryMembershipDecisionActsAsMembershipActor pins the ledger against the real package.

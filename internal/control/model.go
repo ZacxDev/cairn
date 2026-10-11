@@ -194,12 +194,18 @@ type (
 	// mutable at the provider and is reused across providers, so keying on it
 	// merges two people who share an address at two IdPs. Email is carried for
 	// display and for invites only.
+	//
+	// `DisplayName` is the OPERATOR-written name `displayOf` prefers over both — set by
+	// `user-created` or `user-renamed`, never by an identity provider. "" means none was
+	// written, which is every user in a journal older than the field. See
+	// `user_display.go` for the alphabet, the uniqueness rule and why each exists.
 	User struct {
-		ID        ID
-		Provider  string
-		Subject   string
-		Email     string
-		CreatedAt time.Time
+		ID          ID
+		Provider    string
+		Subject     string
+		Email       string
+		DisplayName string
+		CreatedAt   time.Time
 	}
 
 	// Project owns scopes and carries membership.
@@ -324,6 +330,11 @@ type Model struct {
 	// scanned at every resolve.
 	Memberships map[ID]map[ID]Membership
 	userProject map[ID]map[ID]Membership
+	// heldDisplayNames is every display a user has RELEASED by a rename — display name, email
+	// or `<provider>:<subject>`, as the audit line writes it and case-folded — to that user, so
+	// it is not reissued to another. See `refuseTakenUserDisplayName` for why history and not
+	// only the current displays.
+	heldDisplayNames map[string]ID
 
 	// Dropped lists the journal records this Model was built WITHOUT.
 	//
@@ -350,6 +361,8 @@ func NewModel() Model {
 		Credentials: map[ID]Credential{},
 		Memberships: map[ID]map[ID]Membership{},
 		userProject: map[ID]map[ID]Membership{},
+
+		heldDisplayNames: map[string]ID{},
 	}
 }
 
@@ -357,7 +370,7 @@ func NewModel() Model {
 //
 // 🔴 A STRUCT COPY OF A Model IS NOT A COPY, AND THIS FUNCTION EXISTS BECAUSE THE
 // FIRST VERSION OF `FileStore.Append` GOT IT WRONG. Every field here is a map, so
-// `next := current` copies six map HEADERS and leaves both names pointing at one
+// `next := current` copies the map HEADERS and leaves both names pointing at one
 // set of buckets. `Append` validates a batch by applying it to what it believes is
 // a scratch copy — and with a shallow copy that scratch IS the live cache, so a
 // batch rejected at its third event leaves the first two permanently applied to the
@@ -395,6 +408,7 @@ func (m Model) clone() Model {
 	for k, inner := range m.userProject {
 		out.userProject[k] = maps.Clone(inner)
 	}
+	maps.Copy(out.heldDisplayNames, m.heldDisplayNames)
 	return out
 }
 

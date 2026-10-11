@@ -118,11 +118,11 @@ func TestTheHubCountsOnlyWhatTheViewerCanRead(t *testing.T) {
 }
 
 // TestTheHubIsFourCardsEachLinkingItsPage pins the hub's shape: the four ways in, each title a link
-// to its page — the team card to `/share` until the team page lands.
+// to its page — the team card to `/team` (#214), which `/share` and `/invite` now redirect to.
 func TestTheHubIsFourCardsEachLinkingItsPage(t *testing.T) {
 	readsA, _, _ := arcsWorld(t)
 	body := getAs(t, hubServer(t, readsA), RootPath).Body.String()
-	for card, href := range map[string]string{"arcs": "/arcs", "scopes": "/scopes", "sessions": "/sessions", "team": "/share"} {
+	for card, href := range map[string]string{"arcs": "/arcs", "scopes": "/scopes", "sessions": "/sessions", "team": "/team"} {
 		re := regexp.MustCompile(`(?s)<section class="card" data-hub="` + card + `">.*?<a class="card-name" href="` +
 			regexp.QuoteMeta(href) + `">`)
 		if !re.MatchString(body) {

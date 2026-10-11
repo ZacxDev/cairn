@@ -234,7 +234,7 @@ func SessionPage(v PageView) g.Node {
 	}
 	// nil — no node, so no bytes — unless the ONE predicate shows this viewer a pane (`presence.go`).
 	pane := v.Panes.badge(rep.ID, v.Now)
-	return shell("cairn — session "+shortID(rep.ID), v, []crumb{{Label: "session " + shortID(rep.ID)}},
+	return shell("session "+shortID(rep.ID), v, []crumb{{Label: "session " + shortID(rep.ID)}},
 		h.Section(
 			h.Class("card"),
 			h.ID("session-summary"),

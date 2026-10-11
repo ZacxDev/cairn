@@ -2,6 +2,8 @@ package ui
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"go/ast"
@@ -88,14 +90,48 @@ func TestTheManifestIsBuiltFromTheConfiguredApp(t *testing.T) {
 		if err := json.Unmarshal(raw["icons"], &icons); err != nil {
 			t.Fatalf("manifest icons: %v", err)
 		}
+		// S4 adds `shortcuts` and `screenshots`; each is checked below against literals of its own.
 		allowed := []string{"id", "name", "short_name", "description", "start_url", "scope", "display",
-			"theme_color", "background_color", "icons"}
+			"theme_color", "background_color", "icons", "shortcuts", "screenshots"}
 		for k := range raw {
 			if !slices.Contains(allowed, k) {
-				t.Errorf("the manifest carries an undeclared member %q — S2 declares exactly %v", k, allowed)
+				t.Errorf("the manifest carries an undeclared member %q — S2+S4 declare exactly %v", k, allowed)
 			}
 		}
 		return w, icons
+	}
+	type shortcut struct{ Name, URL string }
+	type shot struct {
+		Src, Sizes, Type string
+		FormFactor       string `json:"form_factor"`
+		Label            string
+	}
+	decodeS4 := func(t *testing.T, body []byte) ([]shortcut, []shot) {
+		t.Helper()
+		var m struct {
+			Shortcuts   []shortcut `json:"shortcuts"`
+			Screenshots []shot     `json:"screenshots"`
+		}
+		if err := json.Unmarshal(body, &m); err != nil {
+			t.Fatalf("manifest shortcuts/screenshots: %v", err)
+		}
+		return m.Shortcuts, m.Screenshots
+	}
+	// 🔴 THE SHORTCUTS, AS LITERALS (plan decision 10, as superseded at build: Search moved to `/scopes`
+	// with the hub, and "Team" points at `/team` — the hub card's target since the team page landed).
+	wantShortcuts := []shortcut{{"Arcs", "/arcs"}, {"Search", "/scopes?q="}, {"Team", "/team"}}
+	// 🔴 THE SCREENSHOTS, AS LITERALS: names, sizes, form factors and labels typed here, and each `src`
+	// digested by this test from the committed file (`screenshotRowFromBytes`), never read off
+	// `screenshotFiles`. The SAME list for every armed app: they are pictures of the synthetic world,
+	// not of a deployment.
+	wantShots := func(t *testing.T) []shot {
+		return []shot{
+			{screenshotRowFromBytes(t, "narrow-hub"), "390x844", "image/png", "narrow",
+				"The hub: arcs, scopes, sessions and team, on a phone"},
+			{screenshotRowFromBytes(t, "narrow-arcs"), "390x844", "image/png", "narrow",
+				"Arcs, live ones first, on a phone"},
+			{screenshotRowFromBytes(t, "wide-hub"), "1440x900", "image/png", "wide", "The hub on a desktop"},
+		}
 	}
 
 	for _, tc := range []struct {
@@ -147,6 +183,13 @@ func TestTheManifestIsBuiltFromTheConfiguredApp(t *testing.T) {
 			}
 			if got != want {
 				t.Errorf("manifest members\n  %+v\nwant\n  %+v", got, want)
+			}
+			gotShortcuts, gotShots := decodeS4(t, rec.Body.Bytes())
+			if !slices.Equal(gotShortcuts, wantShortcuts) {
+				t.Errorf("manifest shortcuts are %v, want exactly %v", gotShortcuts, wantShortcuts)
+			}
+			if ws := wantShots(t); !slices.Equal(gotShots, ws) {
+				t.Errorf("manifest screenshots are\n  %v\nwant exactly\n  %v", gotShots, ws)
 			}
 		})
 	}
@@ -250,7 +293,8 @@ func TestAnUnarmedServerServesNoManifestAndNoPWAHead(t *testing.T) {
 			"almost nothing", len(pages))
 	}
 	for row, html := range pages {
-		for _, marker := range []string{`rel="manifest"`, `name="theme-color"`, `rel="apple-touch-icon"`, `rel="icon"`} {
+		for _, marker := range []string{`rel="manifest"`, `name="theme-color"`, `rel="apple-touch-icon"`, `rel="icon"`,
+			`/static/pwa.`, `id="pwa-install"`, `id="pwa-install-hint"`} {
 			if strings.Contains(html, marker) {
 				t.Errorf("%s: an UNARMED server rendered %s", row, marker)
 			}
@@ -364,28 +408,64 @@ func TestEveryFrameCallsPWAHead(t *testing.T) {
 	}
 }
 
-// TestTheArmedPWAHeadAddsNoScript: S2 adds NO script (decision 4) — `pwa.js` is S4's. The head
-// itself renders no `<script`, and no armed page carries a script element other than the ONE
-// allowlisted filter tag.
+// TestTheArmedPWAHeadAddsOnlyThePWAScript: S4 adds ONE script (decision 5), `pwa.js`, and only through
+// `pwaHead`. The head renders exactly one `<script`, the allowlisted `pwa.js` tag; and every armed page
+// carries `pwa.js` exactly once and no script element beyond the two allowlisted tags.
 //
-// ⚠ The first assertion is an INVARIANT GUARD, labelled: `AllowedScriptSources` already held one
-// entry before S2. It is here because S2 is where a second entry would most plausibly be slipped in.
-func TestTheArmedPWAHeadAddsNoScript(t *testing.T) {
-	if n := len(AllowedScriptSources()); n != 1 {
-		t.Errorf("AllowedScriptSources has %d entries, want 1 until S4 adds pwa.js", n)
+// The allowlist is pinned as a LITERAL list of the two paths, each digested here from the embedded
+// bytes — a third entry, or `pwa.js` dropped from the list, is red.
+func TestTheArmedPWAHeadAddsOnlyThePWAScript(t *testing.T) {
+	want := []string{"/static/filter." + scriptDigestFromBytes(t) + ".js", "/static/pwa." + pwaDigestFromBytes(t) + ".js"}
+	if got := AllowedScriptSources(); !slices.Equal(got, want) {
+		t.Errorf("AllowedScriptSources() = %v, want exactly %v", got, want)
 	}
 	for _, app := range []App{appAlpha, appBeta} {
-		if html := renderNode(t, pwaHead(app)); strings.Contains(html, "<script") || !strings.Contains(html, `rel="manifest"`) {
-			t.Errorf("pwaHead(%+v) rendered %q: it must carry the manifest link and no script element", app, html)
+		html := renderNode(t, pwaHead(app))
+		if n := strings.Count(strings.ToLower(html), "<script"); n != 1 || !strings.Contains(html, allowedScriptTag(want[1])) ||
+			!strings.Contains(html, `rel="manifest"`) {
+			t.Errorf("pwaHead(%+v) rendered %q: it must carry the manifest link and exactly ONE script, the "+
+				"allowlisted pwa.js tag (%d script element(s) seen)", app, html, n)
 		}
 	}
 	srv := armedServerWith(t, testConfig(t, staticAuth{testIdentity()}), appAlpha)
-	for row, html := range htmlRows(t, srv) {
-		rest := strings.ReplaceAll(html, allowedScriptTag(FilterScriptPath), "")
-		if strings.Contains(rest, "<script") {
-			t.Errorf("%s: an armed page carries a script element beyond the allowlisted filter tag", row)
+	pages := htmlRows(t, srv)
+	if len(pages) < 10 {
+		t.Fatalf("only %d HTML page(s) rendered; the per-page assertions below need the frame set", len(pages))
+	}
+	for row, html := range pages {
+		if n := strings.Count(html, allowedScriptTag(want[1])); n != 1 {
+			t.Errorf("%s: an armed page carries the pwa.js tag %d time(s), want exactly 1", row, n)
+		}
+		if v := scriptViolations(html); len(v) != 0 {
+			t.Errorf("%s: an armed page carries a script outside the allowlist:\n  %s", row, strings.Join(v, "\n  "))
 		}
 	}
+}
+
+// pwaDigestFromBytes is `scriptDigestFromBytes` for `pwa.js`: recomputed from the embedded bytes, never
+// read off `hashAsset`.
+func pwaDigestFromBytes(t *testing.T) string {
+	t.Helper()
+	if len(pwaScript) == 0 {
+		t.Fatal("the embedded pwa.js is EMPTY, so its digest is the digest of nothing")
+	}
+	sum := sha256.Sum256([]byte(pwaScript))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// screenshotRowFromBytes is `iconRowFromBytes` for a committed screenshot: the hashed row, digested
+// HERE from the file on disk.
+func screenshotRowFromBytes(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("screenshots", name+".png"))
+	if err != nil {
+		t.Fatalf("screenshot %s is named by this test and its committed file cannot be read: %v", name, err)
+	}
+	if len(b) == 0 {
+		t.Fatalf("screenshots/%s.png is EMPTY, so its digest is the digest of nothing", name)
+	}
+	sum := sha256.Sum256(b)
+	return "/static/screenshot-" + name + "." + hex.EncodeToString(sum[:])[:12] + ".png"
 }
 
 // TestAppValidateRefusesEachShape: every refusal fires with ITS OWN sentinel, so a check that is

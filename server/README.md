@@ -1280,6 +1280,33 @@ kubectl exec -n <ns> deploy/<name> -- cairn-server -create-user \
 Exit **0** = written (the ids go to stdout); exit **78** = nothing was written, and the
 reason is on stderr.
 
+**A user's display name** — what the audit line's `identity=`, every written bullet's ACTOR and
+the browser's "signed in as" render — is the journal's answer: an operator-written
+`display_name` if one exists, else the email, else `<provider>:<subject>`. Set it at creation
+with `-display-name`, or later with one `user-renamed` record:
+
+```sh
+kubectl exec -n <ns> deploy/<name> -- cairn-server -rename-user \
+  -rename-user-id usr_… -rename-display-name <name>
+```
+
+The name is `[A-Za-z0-9]` then `[A-Za-z0-9._-]`, at most 32, and unique among users
+case-insensitively — against every other user's current display AND every display another user
+has released by a rename, since bullets and audit lines already written under it still read as
+that person. No identity-provider claim ever reaches it. Why each rule exists (each one closes an
+attribution-spoofing shape) is in `internal/control/user_display.go`.
+
+⚠ **ROLL EVERY BINARY THAT READS THE JOURNAL — `cairn-server` AND `cairn-ui` — BEFORE WRITING
+EITHER FIELD, AND THE TWO FIELDS FAIL DIFFERENTLY ON AN OLDER BUILD.**
+- A `user-renamed` record is **refused whole** by an older build, as every unknown event kind
+  is. An older `cairn-ui` on the same journal then keeps serving its last good model (stale),
+  fails every share-flow or invite write (each re-replays the journal under the lock), and
+  exits 78 on its next restart.
+- A `-display-name` on `-create-user` is **silently ignored** by an older build: that field
+  already decodes on other event kinds, so the older build replays the record and renders the
+  email (or `<provider>:<subject>`). No refusal, two answers to "who is this" — the newer pod's audit line says the name,
+  the older UI's header says the email. A rollback does the same.
+
 ⚠ **A scope's display name is the DIRECTORY name under the store root**, and creating the
 record does **not** create the directory. Two scope records whose names fold alike —
 `Quarry_Notes` and `quarry-notes` are one directory — are refused across the whole

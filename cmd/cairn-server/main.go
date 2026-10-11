@@ -90,10 +90,13 @@ const (
 	// exit-code contract belongs to the CLIENT: `cmd/cairn` registers an `exit-codes`
 	// flag and `internal/client/exit.go` is the table it prints. THIS program registers
 	// six flags in `main` — `store`, `host`, `port`, `token-file`, `routes`, `arc-journal` — plus
-	// `-create-user`'s six, `-issue-credential`'s six and `-set-member`'s four, and no
-	// exit-code flag among
-	// them; measured at `e11c3a7` by reading every file under `cmd/cairn-server/` in that
-	// tree (positive control: the same sweep hits `-routes` in three of them). So this
+	// `-create-user`'s seven, `-issue-credential`'s six, `-set-member`'s four and
+	// `-rename-user`'s three (counts pinned against the code by
+	// `TestTheRegisteredFlagCountInProseMatchesTheCode`), and no exit-code flag among them.
+	// The no-exit-code-flag sweep was measured at `e11c3a7` by reading every file under
+	// `cmd/cairn-server/` in that tree (positive control: the same sweep hits `-routes` in
+	// three of them) — before `-display-name` and `-rename-user` existed; none of those
+	// four flags is an exit-code flag, read from the source that added them. So this
 	// program declares its exit codes to nothing, and no runbook, test or script branches
 	// on 65. A distinction with no consumer, no gate and a known-wrong classification is
 	// worth less than the codes left: 0, 78 for every refusal to act, and
@@ -234,6 +237,7 @@ func main() {
 	create := registerCreateUserFlags()
 	issue := registerIssueCredentialFlags()
 	setMember := registerSetMemberFlags()
+	rename := registerRenameUserFlags()
 	flag.Parse()
 
 	// 🔴 TWO MODES AT ONCE IS A REFUSAL, NOT A PRECEDENCE. Checking `-routes` first and
@@ -256,6 +260,7 @@ func main() {
 		{"-create-user", *create.enabled},
 		{"-issue-credential", *issue.enabled},
 		{"-set-member", *setMember.enabled},
+		{"-rename-user", *rename.enabled},
 	}
 	var asked []string
 	for _, m := range modes {
@@ -302,6 +307,11 @@ func main() {
 		// addresses a project and a user by id, and an id that names nothing is reported
 		// from the JOURNAL rather than from disk.
 		os.Exit(runSetMember(envalias.Environ(), setMember, os.Stdout, os.Stderr))
+	}
+	if *rename.enabled {
+		// No `*store`, for `-set-member`'s reason: a display name names a person, not a
+		// directory, so there is nothing the store root could answer about it.
+		os.Exit(runRenameUser(envalias.Environ(), rename, os.Stdout, os.Stderr))
 	}
 	if *issue.enabled {
 		// No `*store` here, unlike `-create-user`: this mode chooses no scope display name,

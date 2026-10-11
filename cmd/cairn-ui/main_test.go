@@ -139,8 +139,9 @@ func TestAJournalWithUsersAndNoCredentialIsRefused(t *testing.T) {
 // A PROJECT AS WELL AS A USER (`control.Kind.Valid()` accepts both). (a) `control.FileStore`
 // refuses a `credential-issued` naming a subject the model does not hold
 // (`event N (credential-issued): subject … does not exist`); (b) `AllEventKinds` has no
-// user-deletion, project-removal or project-RENAME kind — only `scope-renamed` — so a held
-// principal cannot stop being held or lose its name; and (c) `Event.validate` requires a
+// user-deletion, project-removal or project-RENAME kind — only `scope-renamed`, and
+// `user-renamed`, whose `display_name` `Event.validate` requires NON-EMPTY and `displayOf`
+// prefers — so a held principal cannot stop being held or lose its name; and (c) `Event.validate` requires a
 // non-empty `name` on `project-created`, which is the only thing stopping `displayOf`
 // returning "" for a project the model DOES hold, which is how `PrincipalFor` reports
 // false. No journal can reach the state this clause guards, so a test for it would mean
@@ -440,7 +441,7 @@ func TestTheRawReadVariablesAreNotInTheAliasLedger(t *testing.T) {
 		t.Fatal("the ledger is empty, so the loop below asserts nothing at all")
 	}
 	want := []string{"CAIRN_UI_CONTROL_JOURNAL", "CAIRN_UI_DB_DSN",
-		"CAIRN_UI_APP_NAME", "CAIRN_UI_APP_SHORT_NAME", "CAIRN_UI_APP_ICON_VARIANT"}
+		"CAIRN_UI_APP_NAME", "CAIRN_UI_APP_SHORT_NAME", "CAIRN_UI_APP_ICON_VARIANT", "CAIRN_UI_INSTANCE_NAME"}
 	if !slices.Equal(rawEnvNames, want) {
 		t.Fatalf("rawEnvNames is %v, want %v. Every variable this program reads with a raw "+
 			"`os.Getenv` has to be in that slice or the alias check below never sees it — and a "+

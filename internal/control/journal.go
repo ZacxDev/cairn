@@ -15,6 +15,7 @@ type EventKind string
 
 const (
 	EventUserCreated       EventKind = "user-created"
+	EventUserRenamed       EventKind = "user-renamed"
 	EventProjectCreated    EventKind = "project-created"
 	EventMemberSet         EventKind = "member-set"
 	EventMemberRemoved     EventKind = "member-removed"
@@ -31,6 +32,7 @@ const (
 // against `apply`'s switch rather than against a second hand-written list.
 var AllEventKinds = []EventKind{
 	EventUserCreated,
+	EventUserRenamed,
 	EventProjectCreated,
 	EventMemberSet,
 	EventMemberRemoved,
@@ -108,10 +110,27 @@ func (e Event) validate() error {
 	}
 	switch e.Kind {
 	case EventUserCreated:
-		return firstErr(
+		if err := firstErr(
 			need("user_id", string(e.UserID)),
 			need("provider", e.Provider),
-			need("subject", e.Subject))
+			need("subject", e.Subject)); err != nil {
+			return err
+		}
+		// OPTIONAL here, and judged only when present: every journal written before
+		// `display_name` existed on this kind carries none, and must replay unchanged.
+		// ⚠ The other direction is NOT a refusal: `display_name` already decodes on other
+		// kinds, so an OLDER build replays this record and silently falls back to the email.
+		if e.DisplayName != "" {
+			return validUserDisplayName(e.Kind, e.DisplayName)
+		}
+		return nil
+	case EventUserRenamed:
+		if err := firstErr(
+			need("user_id", string(e.UserID)),
+			need("display_name", e.DisplayName)); err != nil {
+			return err
+		}
+		return validUserDisplayName(e.Kind, e.DisplayName)
 	case EventProjectCreated:
 		return firstErr(
 			need("project_id", string(e.ProjectID)),
@@ -263,10 +282,29 @@ func (m *Model) apply(e Event) error {
 					e.UserID, id)
 			}
 		}
+		if e.DisplayName != "" {
+			if err := m.refuseTakenUserDisplayName(e.UserID, e.DisplayName); err != nil {
+				return err
+			}
+		}
 		m.Users[e.UserID] = User{
 			ID: e.UserID, Provider: e.Provider, Subject: e.Subject,
-			Email: e.Email, CreatedAt: e.At,
+			Email: e.Email, DisplayName: e.DisplayName, CreatedAt: e.At,
 		}
+
+	case EventUserRenamed:
+		u, known := m.Users[e.UserID]
+		if !known {
+			return fmt.Errorf("user-renamed names user %s, who does not exist", e.UserID)
+		}
+		if err := m.refuseTakenUserDisplayName(e.UserID, e.DisplayName); err != nil {
+			return err
+		}
+		// What the user rendered as UNTIL NOW is released here, so it is held for them — read
+		// BEFORE the write below replaces it.
+		m.holdReleasedDisplay(e.UserID)
+		u.DisplayName = e.DisplayName
+		m.Users[e.UserID] = u
 
 	case EventProjectCreated:
 		if _, exists := m.Projects[e.ProjectID]; exists {
