@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -105,17 +106,90 @@ func (a memoAnswer) notFound() bool {
 	return a.status == http.StatusNotFound && ok && e.Error == memowire.ErrorNotFound
 }
 
-// decodeStrict decodes exactly one JSON value of `into`'s shape, refusing unknown fields.
-func decodeStrict(data []byte, into any) error {
+// decodeAnswer decodes exactly ONE JSON object of `into`'s shape from a listener ANSWER, and
+// requires each of `required` to be present and non-null in it.
+//
+// 🔴 A RESPONSE IS READ TOLERANTLY, AND THE TOLERANCE IS ONE-SIDED ON PURPOSE (the rule is stated
+// once, beside the wire, in `internal/memowire`'s package doc). An UNKNOWN field is ignored: the
+// list's memos are `memo.Rendered`'s fields, so refusing extras (as S3 first did) made a listener
+// release that ADDS a field break every older client's `memo-check` at exit 5 `malformed` — two
+// releases that must deploy in lockstep across every host. A MISSING field this client reads is
+// still `malformed`: without that half, a field renamed on the listener would decode here as the
+// empty string with no error, which is the drift `internal/memowire` exists to prevent.
+func decodeAnswer(data []byte, into any, required ...string) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(into); err != nil {
 		return err
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return errors.New("trailing data after the JSON value")
 	}
+	return requireKeys(data, required)
+}
+
+// requireKeys refuses a JSON object lacking any of `keys`, or carrying one as `null`.
+func requireKeys(object []byte, keys []string) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(object, &fields); err != nil {
+		return err
+	}
+	for _, k := range keys {
+		if v, ok := fields[k]; !ok || bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
+			return fmt.Errorf("the answer has no %q field", k)
+		}
+	}
 	return nil
+}
+
+// renderedKeys is every JSON key of a wire memo — `memo.Rendered`'s Go field names (the type IS the
+// wire format, `internal/memowire`) — read off the type, so a field added there is required here
+// without a second list to forget.
+var renderedKeys = func() []string {
+	t := reflect.TypeOf(memo.Rendered{})
+	keys := make([]string, 0, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		keys = append(keys, t.Field(i).Name)
+	}
+	return keys
+}()
+
+// decodeList reads a `ListBody` answer: the `memos` key is required, and so is every key of every
+// memo in it.
+func decodeList(data []byte) ([]memo.Rendered, error) {
+	var list memowire.ListBody
+	if err := decodeAnswer(data, &list, "memos"); err != nil {
+		return nil, err
+	}
+	var raw struct {
+		Memos []json.RawMessage `json:"memos"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	for i, m := range raw.Memos {
+		if err := requireKeys(m, renderedKeys); err != nil {
+			return nil, fmt.Errorf("memo %d of the list: %w", i+1, err)
+		}
+	}
+	return list.Memos, nil
+}
+
+// decodeOne reads a `MemoBody` answer: the `memo` key and every key of the memo are required.
+func decodeOne(data []byte) (memo.Rendered, error) {
+	var one memowire.MemoBody
+	if err := decodeAnswer(data, &one, "memo"); err != nil {
+		return memo.Rendered{}, err
+	}
+	var raw struct {
+		Memo json.RawMessage `json:"memo"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return memo.Rendered{}, err
+	}
+	if err := requireKeys(raw.Memo, renderedKeys); err != nil {
+		return memo.Rendered{}, err
+	}
+	return one.Memo, nil
 }
 
 // toStored turns wire memos into the renderer's input; one that does not parse is MALFORMED.
@@ -207,7 +281,14 @@ func MemoCheck(env Env, opts Options) (int, error) {
 	scope := opts.Scope
 	if scope == "" {
 		derived, err := ScopeForRepo(opts.Repo)
-		if err != nil || derived == "" {
+		// 🔴 THE TOKEN AND THE EXIT STAY `no-scope`/0 ON AN ERROR — that is the hook's contract (a
+		// directory that is not a repository is the common case, and silent) — but the ERROR is not
+		// dropped: a missing or failing `git` reads exactly like "not a repository" otherwise, and
+		// only this line, after the token, can tell the two apart.
+		if err != nil {
+			return status("no-scope", ExitOK, "no scope could be derived from --repo, so there is nothing to check: "+err.Error())
+		}
+		if derived == "" {
 			return status("no-scope", ExitOK, "no scope could be derived from --repo, so there is nothing to check")
 		}
 		scope = derived
@@ -268,35 +349,43 @@ func MemoCheck(env Env, opts Options) (int, error) {
 	case a.err != nil || a.status != http.StatusOK:
 		return status("malformed", ExitCorrupt, fmt.Sprintf("%s answered HTTP %d%s", cfg.URL, a.status, oneLineSuffix(a.body)))
 	}
-	var list memowire.ListBody
-	if err := decodeStrict(a.body, &list); err != nil {
+	memos, err := decodeList(a.body)
+	if err != nil {
 		return status("malformed", ExitCorrupt, fmt.Sprintf("%s answered an unreadable list: %v", cfg.URL, err))
 	}
-	fresh := cursor.unseen(list.Memos)
+	fresh := cursor.unseen(memos)
 	stored, err := toStored(fresh)
 	if err != nil {
 		return status("malformed", ExitCorrupt, fmt.Sprintf("%s answered an unreadable memo: %v", cfg.URL, err))
 	}
-	cursor.observe(list.Memos)
-	saveProblem := ""
-	switch {
-	case dirErr != nil:
-		saveProblem = dirErr.Error()
-	default:
-		if err := saveCursor(cursorPath, cursor); err != nil {
-			saveProblem = err.Error()
+	cursor.observe(memos)
+	save := func() string {
+		if dirErr != nil {
+			return dirErr.Error()
 		}
-	}
-	if saveProblem != "" && len(fresh) > 0 {
-		// 🔴 DELIVERY BEATS BOOKKEEPING, AND THE COST IS SAID OUT LOUD: the block is printed and the
-		// exit is 0, and the next check shows the same memos again because nothing recorded them.
-		notes = append(notes, "the cursor was NOT saved ("+saveProblem+"); the next check re-delivers these memos")
+		if err := saveCursor(cursorPath, cursor); err != nil {
+			return err.Error()
+		}
+		return ""
 	}
 	if len(fresh) == 0 {
+		// Nothing is printed, so there is no delivery to order the save against; a failed save here
+		// costs nothing a reader would see (the next check asks the same question again).
+		_ = save()
 		return status("none", ExitOK, notes...)
 	}
+	// 🔴 DELIVERY BEATS BOOKKEEPING, SO THE BLOCK IS PRINTED *BEFORE* THE CURSOR IS SAVED. A process
+	// killed between the two then re-delivers these memos at the next check (a DUPLICATE) instead of
+	// recording them as seen without ever having shown them (a LOSS) — S3 first saved first, which
+	// contradicted this very sentence (#239 round 1). The status token is still the FIRST stderr line:
+	// it is written before the block, and the save's own note follows the block.
 	code, _ := status("new", ExitOK, notes...)
 	fmt.Fprint(env.Stdout, memo.RenderPreview(stored))
+	if problem := save(); problem != "" {
+		// The cost is said out loud: the exit is still 0, and the next check shows the same memos
+		// again because nothing recorded them.
+		fmt.Fprintln(env.Stderr, "cairn: memo-check: the cursor was NOT saved ("+problem+"); the next check re-delivers these memos")
+	}
 	return code, nil
 }
 
@@ -404,12 +493,12 @@ func MemoRead(env Env, opts Options) (int, error) {
 		if code, done := refused(a); done {
 			return code, nil
 		}
-		var one memowire.MemoBody
-		if err := decodeStrict(a.body, &one); err != nil {
+		one, err := decodeOne(a.body)
+		if err != nil {
 			fmt.Fprintf(env.Stderr, "🔴 cairn: memo-read: %s answered an unreadable memo: %v\n", cfg.URL, err)
 			return ExitCorrupt, nil
 		}
-		memos = []memo.Rendered{one.Memo}
+		memos = []memo.Rendered{one}
 	} else {
 		// 🔴 PAGED, AND THE PAGE BOUNDARY IS ONE SECOND EARLY ON PURPOSE. A listing WITH tombstones can
 		// exceed one page (≤ 50 a day for up to 30 days), and the wire's times are whole seconds, so a
@@ -426,23 +515,23 @@ func MemoRead(env Env, opts Options) (int, error) {
 			if code, done := refused(a); done {
 				return code, nil
 			}
-			var page memowire.ListBody
-			if err := decodeStrict(a.body, &page); err != nil {
+			page, err := decodeList(a.body)
+			if err != nil {
 				fmt.Fprintf(env.Stderr, "🔴 cairn: memo-read: %s answered an unreadable list: %v\n", cfg.URL, err)
 				return ExitCorrupt, nil
 			}
 			added := 0
-			for _, m := range page.Memos {
+			for _, m := range page {
 				if !seen[m.ID] {
 					seen[m.ID] = true
 					memos = append(memos, m)
 					added++
 				}
 			}
-			if len(page.Memos) < memoListPage || added == 0 {
+			if len(page) < memoListPage || added == 0 {
 				break
 			}
-			last, err := time.Parse(time.RFC3339, page.Memos[len(page.Memos)-1].CreatedAt)
+			last, err := time.Parse(time.RFC3339, page[len(page)-1].CreatedAt)
 			if err != nil {
 				fmt.Fprintf(env.Stderr, "🔴 cairn: memo-read: %s answered an unreadable time: %v\n", cfg.URL, err)
 				return ExitCorrupt, nil
@@ -502,6 +591,15 @@ func MemoSend(env Env, opts Options) (int, error) {
 			store.PyRepr(opts.TTL))
 		return ExitUsage, nil
 	}
+	// 🔴 AN EXPLICIT TTL THAT ROUNDS TO 0 SECONDS IS REFUSED, NOT SENT. The wire carries whole
+	// seconds and `ttl_seconds` 0 is the listener's DEFAULT (3 days), so `--ttl 500ms` or `--ttl 0`
+	// asked for "almost no time" and stored a memo for three days at exit 0. Refused rather than
+	// rounded up to 1 s: a TTL nobody can read in time is a mistake to name, not a value to guess.
+	if strings.TrimSpace(opts.TTL) != "" && ttl/time.Second == 0 {
+		fmt.Fprintf(env.Stderr, "cairn: memo-send --ttl %s is less than one second, and the wire carries whole seconds — "+
+			"0 would be the listener's DEFAULT TTL. Give at least 1s, or omit --ttl for the default.\n", store.PyRepr(opts.TTL))
+		return ExitUsage, nil
+	}
 	scope := ResolveScope(opts.Scope, opts.Repo, env.Stderr)
 	if scope == "" {
 		return ExitUsage, nil
@@ -529,7 +627,7 @@ func MemoSend(env Env, opts Options) (int, error) {
 		return code, nil
 	}
 	var sent memowire.SentBody
-	if a.status != http.StatusCreated || decodeStrict(a.body, &sent) != nil || sent.ID < 1 {
+	if a.status != http.StatusCreated || decodeAnswer(a.body, &sent, "id", "created_at") != nil || sent.ID < 1 {
 		fmt.Fprintf(env.Stderr, "🔴 cairn: the memo listener answered the send HTTP %d%s — whether it was stored is "+
 			"UNKNOWN; read the scope before re-sending\n", a.status, oneLineSuffix(a.body))
 		return ExitWriteUnreachable, nil
@@ -539,7 +637,9 @@ func MemoSend(env Env, opts Options) (int, error) {
 }
 
 // parseMemoTTL reads `--ttl`: "" is the listener's default (sent as 0), Go's duration syntax, or a
-// whole number of days with `d`. A value the listener's ceiling refuses is ITS refusal (exit 6).
+// whole number of days with `d`. A value the listener's ceiling refuses is ITS refusal (exit 6); an
+// explicit value under one second is refused by `MemoSend` itself (exit 2), since it would be sent
+// as that same 0.
 func parseMemoTTL(raw string) (time.Duration, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -631,7 +731,7 @@ func MemoRetract(env Env, opts Options) (int, error) {
 		return code, nil
 	}
 	var done memowire.RetractedBody
-	if decodeStrict(a.body, &done) != nil || done.Retracted != id {
+	if decodeAnswer(a.body, &done, "retracted") != nil || done.Retracted != id {
 		fmt.Fprintf(env.Stderr, "🔴 cairn: the memo listener answered the retraction HTTP %d%s — whether it happened "+
 			"is UNKNOWN; read the memo to see\n", a.status, oneLineSuffix(a.body))
 		return ExitWriteUnreachable, nil

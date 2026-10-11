@@ -14,6 +14,24 @@
 // `memo.Rendered`, every text field already passed through `memo.Unsafe`'s replacement (decision
 // 19, Guard C). The JSON keys of a memo are `memo.Rendered`'s Go field names, deliberately — the
 // type IS the wire format.
+//
+// 🔴 HOW THE TWO ENDS DECODE, AND THEREFORE WHAT A RELEASE MAY CHANGE — one rule, two directions:
+//
+//   - REQUESTS (`SendRequest`, `RetractRequest`) are decoded STRICTLY by the listener — an unknown
+//     field is a 400. The client is the only writer, and a request field the listener does not know
+//     is a client that believes it asked for something the listener will not do.
+//   - RESPONSES (`ListBody`, `MemoBody`, `SentBody`, `RetractedBody`) are decoded TOLERANTLY by the
+//     client: an unknown field is ignored, and every field the client reads is REQUIRED (absent or
+//     `null` is `malformed`). S3 first refused unknown response fields too, and since a listed memo
+//     IS `memo.Rendered`, a listener release that added one field would have broken every older
+//     host's `memo-check` at exit 5 — client and listener coupled into one lockstep deploy (#239
+//     round 1).
+//
+// So the listener may ADD a response field in any release, and older clients keep working. It may
+// never REMOVE or RENAME one until every client that reads it has been released without it — that is
+// what the required half catches, loudly, instead of an empty string decoded with no error. The
+// client side is `decodeAnswer` in `internal/client/memo.go`, pinned by
+// `TestAResponseFieldTheClientDoesNotKnowIsTolerated` and `TestAResponseMissingAFieldTheClientReadsIsMalformed`.
 package memowire
 
 import "github.com/ZacxDev/cairn/internal/memo"
