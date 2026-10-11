@@ -4389,13 +4389,24 @@ The plan says "a sticky compact header in `display-mode: standalone`". CDP canno
 keys every S5 rule on `.page-header:has(> .standalone-nav:not([hidden]))` instead — true exactly when
 `pwa.js` decided the window is standalone — so the browser test's `matchMedia` stub, which reveals the
 controls, renders the REAL standalone layout:
-- the header is `sticky top-0` on an opaque surface (there is no address bar to scroll back to);
 - at a coarse pointer the grid widens to `auto repeat(4, 1fr)` and the viewer line spans four, so Back
-  and Reload join ROW 1 and the header stays at S1's two rows (~100px, the plan's warning about pinning
-  a 101px header) instead of opening a third;
+  and Reload join ROW 1 and the header stays at S1's two rows (~100px) instead of opening a third;
 - the root gets `overscroll-behavior-y: contain`.
 
-The cost, stated: a standalone window with script OFF gets none of it — and it has no Back to pin either.
+The cost, stated: a standalone window with script OFF gets none of it — and it has no Back to show either.
+
+## 🔴 The header is NOT sticky in standalone — an operator decision
+
+The plan asked for "a sticky compact header", and S5's first commit (#223) built one: `sticky top-0
+z-20` on an opaque surface. **It was dropped by operator decision in the follow-up**, for three reasons:
+pinned, the two-row header held about 12% of a phone screen on every page; it covered in-page anchor
+targets (the audit's 🟡 "sticky header covers in-page anchors"); and the recorded ask was working Back
+and Reload, which do not need a pinned header. So the standalone header scrolls away exactly like a
+tab's, the whole rule (position, offset, z-index, the opaque background and the padding that existed only
+for pinning) is gone, and **no `scroll-padding` is needed** — the occlusion it would have compensated for
+no longer exists. Back/Reload stay in the header, and `overscroll-behavior-y: contain` stays.
+`TestStandaloneBackAndReload` now refuses `sticky`/`fixed` and requires the header to have scrolled away
+after 400px, so re-adding it is a red test, not a style choice.
 
 ## The guards
 
@@ -4409,7 +4420,7 @@ The cost, stated: a standalone window with script OFF gets none of it — and it
   STANDALONE window (the stub): hidden in the tab (the control), shown in standalone at mobile and laptop
   with the Install button still hidden and each control ≥ 44px tall at the touch rung; at mobile and
   tablet, no header row added, the walk's own reading-order check (`headerOrderBreaks`), no overflow,
-  `sticky` (and still at the top after a 400px scroll while the tab's header scrolled away), and
+  NOT `sticky`/`fixed` (and scrolled away after a 400px scroll, like the tab's header — the control), and
   `overscroll-behavior-y` `contain` vs `auto`; then scope → entry → Back lands on the scope page, and
   Reload loads a fresh document at the same URL.
 
@@ -4426,7 +4437,13 @@ No battery row: the plan's mutant list gives S5 none, and none was added.
   flake's pin, S6a's CI chromium).
 - Once, by hand, the three standalone rules removed from `app.css` (the 4-column grid, `sticky`, the
   overscroll rule): the browser test RED at mobile and tablet on 3 rows instead of 2, `position: static`,
-  `overscroll-behavior-y: auto` and a header at −376px after the scroll — each its own message.
+  `overscroll-behavior-y: auto` and a header at −376px after the scroll — each its own message. (That
+  was S5's first commit, when the header was sticky; the not-sticky follow-up, next bullet, inverts that reading.)
+- **The not-sticky follow-up**, chromium 152 (the flake's pin): with the `sticky` rule removed the test
+  is green; with it re-added BY HAND to `app.css` (`position: sticky; top: 0; z-index: 20`, the removed
+  rule verbatim) it is RED at mobile and tablet on BOTH readings, each its own message — `position
+  "sticky" in standalone and "static" in a tab`, and the standalone header's top at 0px after the scroll
+  while the tab's was at −376px (mobile) / −358px (tablet). Then restored and checksummed.
 - ⚠ Local runs were limited to these focused tests (operator instruction); the full suites, the battery,
   the walk and `pwa_check.sh` ran only in CI.
 

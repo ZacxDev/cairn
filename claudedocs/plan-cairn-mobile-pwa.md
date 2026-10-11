@@ -974,7 +974,7 @@ alone (audit round 1, item 2).
 | **S2** | **Manifest, icon variants, the three flags, `pwaHead()` WITHOUT a script tag, and `uiaudit/pwa_check.sh`** with clauses (a), (b: name + icon) and (c), plus (d) if S3 landed first, and their sabotages (6, or 7). Installable on Chromium from here. | Routes: `GET /manifest.webmanifest` and one hashed public row per icon file, in the hand ledger, `bareGETAnswer` and the near-miss probes. `onlyGo`: PNGs, `variants.json`. `flake.nix`: `uiIcons` + `checks.ui-icons-are-current`. `cmd/cairn-ui` flags and tests. Mutant rows. READMEs. | Inert unless `-app-name` is set. |
 | **S3** | **`no-store` alone** (decision 8), plus `TestEveryNonPublicHTMLRowIsNoStore` (clause d), wired into `pwa_check.sh` by whichever of S2/S3 lands second (until then it runs in the `go` job only). | `server.go` (`writeHTML`'s default; `writeHTMLNoStore` folded in), `internal/ui/README.md`, mutant row. | A header change. No dependency, rollback-safe. |
 | **S4** | **`pwa.js`** (Install button, the iOS hint and its remembered dismissal), **shortcuts**, **screenshots**, and `pwa_check.sh` clauses (b, screenshots) and (e). | `AllowedScriptSources` (2nd entry); the hashed `pwa.js` row; `pwaHead()` gains the tag; `onlyGo`: `pwa.js` and the screenshot PNGs; the allowlist guard's controls; the spelling guard; manifest `shortcuts` + `screenshots`; screenshot rows; `flake.nix`: `uiScreenshots` + `checks.ui-screenshots-are-current`; mutant rows; `ci.yml` (`pwa_check.sh` step); README. | Additive. Needs S2's manifest, and S3 landed first (its `sabotaged=9` pin counts S3's clause (d)). |
-| **S5** *(IN v1, O9)* | **Standalone Back/Reload and polish**: a sticky compact header in `display-mode: standalone` (⚠ S1's touch header measured 101 px tall at 390 px and 834 px — two 44 px rows — so a STICKY header must revisit its height before pinning it); Back/Reload buttons revealed by `pwa.js` in standalone only; `overscroll-behavior-y: contain`. | `tailwind.css` → `app.css`; `pwa.js`, whose spelling guard admits only `history.back` and `location.reload`; README. | Hidden outside standalone. Device behaviour is checklist step 8. |
+| **S5** *(IN v1, O9)* | **Standalone Back/Reload and polish**: ~~a sticky compact header in `display-mode: standalone`~~ *(dropped by operator decision in the S5 follow-up: S1's touch header measured 101 px tall at 390 px and 834 px — two 44 px rows, ~12% of a phone screen when pinned — and it occluded in-page anchors; the header is compact, two rows, and scrolls away)*; Back/Reload buttons revealed by `pwa.js` in standalone only; `overscroll-behavior-y: contain`. | `tailwind.css` → `app.css`; `pwa.js`, whose spelling guard admits only `history.back` and `location.reload`; README. | Hidden outside standalone. Device behaviour is checklist step 8. |
 | **S6a** | **Pin CI's chromium** to the flake's nixpkgs (decision 17). | `ci.yml:1745-1751`; `uiaudit/README.md` gating section. | CI-only. |
 | **S6b** | **The blocking `uiaudit-touch` job**, in its own PR (O11). | `ci.yml` (a new job; the advisory job unchanged); `uiaudit/README.md`; branch protection, an operator setting named in the PR. Needs S1 and S6a. | CI-only. |
 
@@ -1100,12 +1100,20 @@ They are `pwa_check.sh --self-test`'s sabotages.
 - The spelling guard admits only `history.back` and `location.reload` as additions.
 - **Device behaviour is checklist step 8**, a device check rather than a test, and not part of the
   closing condition.
-- **AS BUILT (S5):** the standalone CSS (sticky header, the widened first row, overscroll) is keyed
+- **AS BUILT (S5):** the standalone CSS (the widened first row, overscroll) is keyed
   on the REVEALED controls (`.page-header:has(> .standalone-nav:not([hidden]))`), not on `@media
   (display-mode: standalone)` — same condition in practice (only `pwa.js`'s standalone check reveals
   them), but measurable under the test's stub. The browser test (`uiaudit/standalone_test.go`) also
-  reads the layout: no header row added, reading order, sticky, overscroll. Reasoning:
+  reads the layout: no header row added, reading order, NOT sticky, overscroll. Reasoning:
   `internal/ui/README.md` Phase V.
+- **DROPPED BY OPERATOR DECISION (S5 follow-up): the sticky header.** S5's first commit (#223) pinned
+  the standalone header; the follow-up removed it. Pinned, the two-row header cost about 12% of a phone
+  screen on every page and occluded in-page anchor targets, and the recorded ask was working Back and
+  Reload, which do not need it. The header now scrolls away like a tab's, so the audit's 🟡 "sticky
+  header covers in-page anchors" is closed by removal and **no `scroll-padding` is needed**. Back/Reload
+  stay in the header; `overscroll-behavior-y: contain` stays. `TestStandaloneBackAndReload` refuses
+  `sticky`/`fixed` and requires the header to have scrolled away after 400px — watched RED with the
+  sticky rule re-added.
 
 **S6a.**
 - The job log's `chromium --version` equals the flake-resolved version on two consecutive runs.

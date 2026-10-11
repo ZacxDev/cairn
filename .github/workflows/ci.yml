@@ -1870,13 +1870,13 @@ jobs:
           # threshold test — measured, chromium 154); 50 / 119 on S1's round 1 (the reading-order
           # rows, the shrink-to-fit control, the whole-row hit-test — measured, chromium 154); 52 / 124 on the
           # mobile plan's S2 (`TestPWAClauses` and its three clause subtests, and the script-contract
-          # test — measured, chromium 154); 52 / 127 on S4 (`TestPWAClauses` gained `b_screenshots`, `shortcuts` and `e_storage` — measured, chromium 152 from the flake's nixpkgs); 53 / 128 on S5 (`TestStandaloneBackAndReload`, one top-level test with no subtests — DERIVED as S4's floors plus one, NOT measured on a full run: the operator skipped local suite runs for that slice, so this job's own count line is the measurement). A test deleted from a file that keeps others would otherwise move nothing.
+          # test — measured, chromium 154); 52 / 127 on S4 (`TestPWAClauses` gained `b_screenshots`, `shortcuts` and `e_storage` — measured, chromium 152 from the flake's nixpkgs); 53 / 129 on S5 (`TestStandaloneBackAndReload`, one top-level test with no subtests — measured on #223's CI run: `top-level PASS=53 subtest PASS=76 total=129`, chromium 152 from the flake's nixpkgs; the S5 commit had DERIVED 128 as S4's floors plus one, and the measurement came in one above it, so the derivation is retracted rather than carried; the not-sticky follow-up changes assertions inside that test and adds or removes no test or subtest). A test deleted from a file that keeps others would otherwise move nothing.
           if [ "$passes" -lt 53 ]; then
             echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 53 — a Test function was deleted"
             exit 1
           fi
-          if [ "$total" -lt 128 ]; then
-            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 128 — a table row was deleted"
+          if [ "$total" -lt 129 ]; then
+            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 129 — a table row was deleted"
             exit 1
           fi
 
