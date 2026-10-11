@@ -7,7 +7,8 @@ import (
 )
 
 // Unsafe reports whether the RENDERER must replace r: every code point in General Category C*
-// — Cc, Cf, Co, Cs and Cn (unassigned) — plus Zl, Zp and the Variation_Selector property.
+// — Cc, Cf, Co, Cs and Cn (unassigned) — plus Zl, Zp, the Variation_Selector property and the
+// Other_Default_Ignorable_Code_Point property (invisible letters and marks such as U+3164).
 //
 // It is computed as "in NONE of L, M, N, P, S, Z", which is exactly C* — Cn included — because
 // every code point has exactly one General Category and C* is what the other six leave. It
@@ -26,6 +27,18 @@ func Unsafe(r rune) bool {
 	case unicode.In(r, unicode.Zl, unicode.Zp):
 		return true
 	case unicode.Is(unicode.Variation_Selector, r):
+		return true
+	case unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r):
+		// 🔴 DEFAULT-IGNORABLE LETTERS AND MARKS, WHICH THE CATEGORY TEST ABOVE PASSES. A
+		// Default_Ignorable code point renders as NOTHING by Unicode's own rule, and most of
+		// them are already Cf or Variation_Selector — but Other_Default_Ignorable_Code_Point
+		// holds the rest: Hangul fillers U+115F, U+1160, U+3164 and U+FFA0 (category Lo), the
+		// combining grapheme joiner U+034F and the Khmer U+17B4/U+17B5 (Mn), and reserved
+		// ranges. An S0 audit measured U+3164 passing this predicate — an invisible LETTER
+		// that could pad a line or spell a word nobody sees. Default_Ignorable is (this table
+		// ∪ Cf ∪ Variation_Selector) minus white space and a few format characters, so with
+		// the arms above every Default_Ignorable code point is now Unsafe;
+		// `TestEveryDefaultIgnorableCodePointIsUnsafe` sweeps the whole range.
 		return true
 	}
 	return false
