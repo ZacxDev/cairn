@@ -40,12 +40,13 @@
 #                       listener's OWN body — the listener answered, not an ingress
 #   cache-sync          `sync` of the probe's own cache from the pod exits 0
 #   send                `memo-send` to the probe scope exits 0
-#   check-one-block     a probe session's `memo-check` prints exactly ONE block holding the probe's
-#                       subject (the POSITIVE control)
+#   check-one-block     a probe session's `memo-check` prints exactly ONE block, of `count=1`, holding
+#                       the probe's subject (the POSITIVE control)
 #   retract             `memo-retract` exits 0
 #   new-session-silent  a NEW probe session's `memo-check` prints nothing (`memo-status=none`)
 # Exit 0 all passed; 1 a step failed (the run stops at the first failure — later steps would only
-# measure the wreckage); 2 could not vouch — the input file is missing, not 0600, or lacks a key
+# measure the wreckage — and its EXIT trap retracts a memo it sent and had not yet retracted, printing
+# `CLEANUP …` either way); 2 could not vouch — the input file is missing, not 0600, or lacks a key
 # (CAIRN_UI_URL absent FROM THE FILE is exit 2), or a tool is missing.
 set -uo pipefail
 
@@ -82,7 +83,29 @@ cairn_bin="${in[CAIRN_BIN]:-$(command -v cairn || true)}"
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/cairn-live-probe-XXXXXX")"
 chmod 700 "$tmp"
-trap 'rm -rf "$tmp"' EXIT
+# 🔴 A FAILED RUN MUST NOT POISON THE NEXT ONE. `step` exits at the first failure, so a failure after
+# `send` and before `retract` used to leave the probe's memo LIVE (TTL 1 h) — and every rerun inside
+# that hour then saw it, and failed at `new-session-silent` for a reason that had nothing to do with
+# what it measured. So on EVERY exit, a memo this run sent and has not retracted is retracted here,
+# and the outcome is printed either way (the id only, never a token). The trap keeps the run's own
+# exit code. `check-one-block` asserting `count=1` is the other half: a memo left by an EARLIER run
+# (or anyone else's) on the probe scope is then named at the positive control, not three steps later.
+id=""
+retracted=no
+on_exit() {
+  local code=$?
+  if [[ -n "$id" && $retracted != yes ]]; then
+    pc memo-retract --scope "$scope" --id "$id"
+    if [[ $rc == 0 ]]; then
+      echo "CLEANUP retracted the probe memo id=$id, which this run sent and did not retract"
+    else
+      echo "CLEANUP FAILED: retracting the probe memo id=$id exited $rc — already retracted, or still live until its 1 h TTL; check it by hand" >&2
+    fi
+  fi
+  rm -rf "$tmp"
+  exit "$code"
+}
+trap on_exit EXIT
 echo "workdir=$tmp"
 mkdir -p "$tmp/home" "$tmp/state"
 ( umask 077
@@ -138,9 +161,12 @@ step send eval '[[ $rc == 0 && -n "$id" ]]'
 
 pc memo-check --scope "$scope" --session "probe-$nonce"
 blocks="$(grep -c '^<<<cairn-memo untrusted ' "$tmp/out" || true)"
-step check-one-block eval '[[ $rc == 0 && $blocks == 1 ]] && grep -qF "|   subject: $subject" "$tmp/out" && grep -qx "memo-status=new" <<<"$(head -n1 "$tmp/err")"'
+# The block's own `count=` — exactly ONE memo, the probe's: a leftover from an earlier run is a FAIL
+# here, named, rather than a FAIL at `new-session-silent` that reads as a retraction defect.
+step check-one-block eval '[[ $rc == 0 && $blocks == 1 ]] && head -n1 "$tmp/out" | grep -q " count=1>>>\$" && grep -qF "|   subject: $subject" "$tmp/out" && grep -qx "memo-status=new" <<<"$(head -n1 "$tmp/err")"'
 
 pc memo-retract --scope "$scope" --id "$id"
+[[ $rc == 0 ]] && retracted=yes
 step retract eval '[[ $rc == 0 ]]'
 
 pc memo-check --scope "$scope" --session "probe-$nonce-new"

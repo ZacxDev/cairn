@@ -2428,12 +2428,13 @@ jobs:
       # The live probe (closing-condition part 5) is RUN by the operator against the deployment
       # after S7; what CI owns is its SELF-TEST against a local world: it passes, refuses its inputs
       # at exit 2, holds its isolation property with every name the client reads exported as a decoy
-      # (and goes red under each of the plan's isolation mutants), and fails AT its 401 control and AT
-      # its positive control when those are broken.
+      # (and goes red under each of the plan's isolation mutants), fails AT its 401 control and AT
+      # its positive control when those are broken, and a run that fails between `send` and
+      # `retract` retracts its own memo on exit, so it cannot poison the next run.
       - name: the scope-mail live probe's self-test, against a local world
         env:
           CAIRN_PGTEST_DSN: host=127.0.0.1 port=5432 user=cairn_pgtest password=cairn_pgtest dbname=cairn_pgtest sslmode=disable
         run: |
           set -o pipefail
           tests/memo/live-probe.sh --self-test | tee /tmp/memo-probe-self.txt
-          grep -qx 'SUMMARY live-probe-self-test: passed=16 failed=0 expected=16' /tmp/memo-probe-self.txt
+          grep -qx 'SUMMARY live-probe-self-test: passed=20 failed=0 expected=20' /tmp/memo-probe-self.txt
