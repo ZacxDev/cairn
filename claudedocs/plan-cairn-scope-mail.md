@@ -25,6 +25,17 @@ document uses it as the DESCRIPTION. The proposed verbs, routes, tables, skill a
 "mail", "inbox", "send" and "check" (`tooling:claude/skills/mailbox/SKILL.md:3`). Nothing in this
 plan that an agent or a skill router reads says "mail".
 
+**Revision history.**
+- *Revision 1* (`187b89e`) — the plan as first opened on #221.
+- *Revision 2* (this) records the operator's answers to four of revision 1's questions as decisions
+  **O5–O8**: the memo listener also accepts the pod's token-file rows (Q4, against the recommendation);
+  storage is PostgreSQL in `cairn-ui` (Q2); an acknowledgement is a record only (Q5); and the sender or
+  any scope admin may retract, journaled and shown (Q6). O5 is designed WITHOUT a second
+  authenticator — decision 16 names the one mechanism, read off the code, and what it costs. The
+  remaining questions keep their numbers and their defaults, marked "default adopted unless the
+  operator objects"; one new question (Q12) is about O5's blast radius. Removed or answered questions
+  keep their numbers so references stay stable.
+
 ## Goal and premise
 
 Any party authorised to WRITE a scope can leave a short message on it. Every agent session working
@@ -67,7 +78,7 @@ Drop the work, or the named half, if any of these holds:
      tooling slices on the tooling repo's `main` — verified by CONTENT, not by ancestry.
   2. **cairn: `tests/memo/e2e.sh` exits 0 on `main` in the `pgtest` CI job**
      (`.github/workflows/ci.yml:1995-2040`, the only job with a PostgreSQL service, `:2010`), and its
-     `--self-test` prints **`sabotaged=9 caught=9`**. It exits **2** — "could not vouch", never a
+     `--self-test` prints **`sabotaged=11 caught=11`**. It exits **2** — "could not vouch", never a
      skip and never 0 — when `CAIRN_PGTEST_DSN` is unset and no local `initdb` is available (the
      `tests/pgtest/run.sh:80, :167` convention), when a built binary is missing, or when one of its
      own controls misbehaves.
@@ -83,9 +94,10 @@ Drop the work, or the named half, if any of these holds:
   **What `e2e.sh` asserts.** Everything runs over a SYNTHETIC world built at run time: a store with
   `alpha-notes` and `beta-notes`, a control journal with four principals (`writer-a` with write on
   `alpha-notes`; `reader-b` with read only; `outsider-c` with nothing on `alpha-notes`; and
-  `writer-a`'s second credential narrowed to `beta-notes`), a scratch database, and `cairn-ui` booted
-  with `-db-dsn`, `-control-journal` and the proposed `-client-api-addr`. The memo verbs run from
-  the built Go client.
+  `writer-a`'s second credential narrowed to `beta-notes`), a TOKEN FILE with three rows (`agent-t`
+  mapped to `alpha-notes`, `agent-u` mapped to `beta-notes` only, and one bare row), a scratch
+  database, and `cairn-ui` booted with `-db-dsn`, `-control-journal`, `-token-file` and the proposed
+  `-client-api-addr`. The memo verbs run from the built Go client.
 
   | clause | what it asserts | negative control inside the clause |
   |---|---|---|
@@ -95,16 +107,19 @@ Drop the work, or the named half, if any of these holds:
   | **(d) the fence holds** | the hostile memo set (decision 5) is sent, and the check's output parses as exactly ONE block with exactly N memos, every content line carrying the content prefix | a renderer with the prefix removed is caught by this clause (`--self-test`) |
   | **(e) secret refusal** | a memo whose body carries a synthetic token shaped like one of leakscan's credential patterns (`tests/leakscan.py:274-294`) exits 6, and nothing is stored | the same body with the token removed is accepted |
   | **(f) quota** | the sender's 11th send to one scope inside one hour exits 6 | a second sender's send to the same scope in the same hour succeeds |
-  | **(g) retract** | after `writer-a` retracts, a check for a NEW session prints nothing; the stored subject and body are NULL; the event rows are exactly `sent` then `retracted`, each with its actor's `(kind, id)` | `reader-b`'s retract of the same memo exits 6 and changes nothing |
+  | **(g) retract (O8)** | after `writer-a` retracts, a check for a NEW session prints nothing; `memo-read` of the id shows the tombstone `retracted by writer-a (user) at <time>` and no subject or body; the stored subject and body are NULL; the event rows are exactly `sent` then `retracted`, each with its actor's `(kind, id)`. A scope ADMIN's retraction of a second memo is shown as retracted by the admin | `reader-b`'s retract of a third memo exits 6 and changes nothing |
   | **(h) expiry** | with the server clock advanced past `expires_at`, a new session's check prints nothing | at one second before expiry it prints the memo |
   | **(i) grant withdrawn** | after `reader-b`'s read grant on `alpha-notes` is revoked in the journal, `memo-read` of the already-delivered memo answers the uniform not-found | `writer-a`'s read of the same id still works |
+  | **(j) two credential kinds, one predicate (O5)** | `agent-t` (token-file row, write on `alpha-notes`) and `writer-a` (journal credential, write on `alpha-notes`) each send one memo and each read the scope: send status, exit code and response body are byte-identical once the server-minted `id` and `created_at` are masked; the two read listings are byte-identical. `agent-u` (token-file row, no grant on `alpha-notes`) and `outsider-c` (journal, no grant) get byte-identical refusals on send AND read, equal to the answer for a scope that does not exist. The bare row reads `alpha-notes` and its send exits 6 exactly as `reader-b`'s does | the stored `sender_kind`/`sender_id` of the two successful sends DIFFER (identity is not collapsed by the merge) |
+  | **(k) token-file revocation** | `agent-t`'s row is deleted from the token file and `cairn-ui` is sent SIGHUP: `agent-t`'s next send AND read answer 401, byte-identical to a random token's | before the SIGHUP the edited file is NOT yet in force (the pod's semantics, decision 16), and `writer-a` keeps working throughout |
 
   `--self-test` applies one sabotage per clause on a scratch copy of the tree with its `.git`
   removed (the `tests/control_mutants.py` pattern), and each must be caught by its OWN clause's
   message: (a) the cursor never advances; (b) send checks `read` instead of `write`; (c) send ignores
   `Narrowed()`; (d) the content-line prefix is dropped; (e) the scan is skipped; (f) the quota counts
   every sender together; (g) retract keeps the body; (h) the expiry filter is dropped; (i) read is
-  authorised at SEND time instead of at read time.
+  authorised at SEND time instead of at read time; (j) the listener's authority is built from the
+  journal alone; (k) the SIGHUP reload is not installed.
 
   ⚠ **NOT covered by `e2e.sh`:** the hook (part 4 covers it); the browser send form (S5's own Go
   tests, which assert both cross-site gates); the urgent bell (S6, not part of this condition); and
@@ -178,7 +193,7 @@ Drop the work, or the named half, if any of these holds:
   the directory name (`claudedocs/plan-cairn-scope-refs.md:268-290`, round 3 🔴1 there). Memos live
   wholly inside `cairn-ui`, so they are written and read under ONE authority — but the CLIENT names a
   scope by its directory name (`internal/client/reposcope.go:60-89`), so the wire key is the
-  normalised scope NAME and the server resolves it to its own ID (decision 4).
+  normalised scope NAME and the predicate is the pod's name-keyed one (decision 4).
 - **The control journal is the wrong home for the audit.** Its event kinds are a closed set, and an
   unknown kind refuses the WHOLE journal (`internal/control/journal.go:238-245`), so a new
   `memo-sent` event would make every older build unable to start. The audit lives in the memo
@@ -316,6 +331,10 @@ instead.
 | O2 | **Sending needs WRITE on the scope**, through the same predicate that authorises writing an entry. Read-only grantees receive and cannot send. A narrowed credential stays narrowed for both sending and reading. | Decision 9; e2e (b), (c). |
 | O3 | **Delivery is a pointer plus a preview.** The hook prints one compact fenced block — a count, then per memo the sender's identity, the scope, the time, the subject and roughly the first 200 characters — explicitly labelled as untrusted data. Full bodies come from a read verb. Nothing at all is printed when there is nothing new. | Decision 5; S0. |
 | O4 | **Plan first:** this document, then an audit, then slices. | — |
+| O5 | *(answers Q4, revision 2)* **The memo listener ALSO accepts the pod's token-file rows**, so an agent needs nothing it does not already hold. The alternative — issuing each agent environment a narrowed JOURNAL credential, which this plan and the coordinator recommended — was offered and DECLINED. | Decision 16: the token file is merged into the ONE model the listener authenticates against, so there is still one authenticator; `cairn-ui` gains a SIGHUP reload of the token file, and a rotation must now reach TWO processes. e2e (j), (k). |
+| O6 | *(answers Q2)* **Storage is PostgreSQL in `cairn-ui`, migration 3**, as revision 1 proposed. | Decision 2 is DECIDED; the pod-served journal alternative is closed. |
+| O7 | *(answers Q5)* **An acknowledgement is a RECORD only.** The sender can see it; it changes nobody's delivery; each session still sees each memo once. | Decision 10. |
+| O8 | *(answers Q6)* **The sender and any admin of the scope may retract.** Every retraction is journaled with its actor, and readers are shown that the memo was retracted and by whom. A retracted memo is never delivered to a session that has not already seen it. | Decision 10; e2e (g). "Journaled" means the append-only `memo_events` table, not the control journal, whose closed event set refuses a newer kind whole (STEP 1). |
 
 ### Coordinator recommendations adopted as stated defaults (each REVERSIBLE)
 
@@ -340,7 +359,7 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
    `mail-check` would put three of its four trigger words in every hook preview, and a skill router
    reading "check mail" has two plausible targets. Alternatives in Q1.
 
-2. **Storage: three tables in `internal/pgstore`, migration 3 [R2].**
+2. **Storage: three tables in `internal/pgstore`, migration 3 [R2] — DECIDED by the operator (O6).**
    - `memos(id BIGSERIAL PK, scope_name TEXT, sender_kind TEXT, sender_id TEXT,
      sender_display_at_send TEXT, subject TEXT NULL, body TEXT NULL, urgent BOOL,
      created_at TIMESTAMPTZ DEFAULT now(), expires_at TIMESTAMPTZ NOT NULL,
@@ -371,27 +390,33 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
      to (STEP 1). They go to a SEPARATE listener, as presence's agent routes do, with its own route
      ledger `ClientRoutes()`, the reachable-bind/trusted-proxy refusal applied to ITS bind
      (`cmd/cairn-ui/presence.go:99-115`'s predicate), and the `netid` failed-auth lockout.
-   - **It authenticates the MACHINE-TOKEN backend only** — no cookie, no JWT — over the UI's own
-     authority. Every header-borne credential the browser accepts is a superset of this; the
-     listener accepts the narrowest one agents actually hold.
+   - **It authenticates the MACHINE-TOKEN backend only** — no cookie, no JWT — through the ONE
+     `control.Authenticate`, over a model that holds BOTH the journal's credentials and the token
+     file's rows (O5; the mechanism and its costs are decision 16).
    - **Reads live there too**, so the client has ONE base URL for memos. The browser listener's
      scope page reads the same store in-process.
    - **Not the presence listener** (its single-owner wall and presence tokens are the wrong
      authority) and **not the plugins plan's proposed `-worker-addr`** (worker and plugin tokens are
      not principals). Q3 asks whether one listener should serve both client-credential surfaces.
-   - ⚠ **This requires the agent's credential to be one `cairn-ui` accepts.** On a journal-backed
-     UI that is a JOURNAL credential (issued by `cairn-server -issue-credential`,
-     `cmd/cairn-server/issuecredential.go:75-108`), not the pod's token-file row. Whether the
-     deployed instances' agents already hold one could NOT be measured here (the manifests are
-     private) — stated in "What could not be measured", and the S3 rollout step that closes it.
+   - **The agent's credential is the one it already holds (O5):** the token-file row the pod
+     accepts. *Revision 1 required a journal credential here; O5 retired that requirement.*
 
-4. **The wire names a scope by its normalised NAME; authority is checked on the UI's own ID.** The
-   client derives a scope from a repo by directory name (`reposcope.go:60-89`), and the
-   `scope-refs` plan measured that ID keying across the two authorities could never be read back
-   (round 3 🔴1 there). The server folds the name with `store.NormalizeRef`, resolves it to its
-   authority's scope ID, and asks `Allows` on that ID. A scope the caller cannot read and a scope
-   that does not exist get ONE byte-identical answer. ⚠ A RENAMED scope orphans its live memos
-   (they are keyed by the old name); with a 7-day default TTL that is accepted, and named.
+4. **The wire names a scope by its normalised NAME, and authority is the pod's NAME-KEYED
+   predicate.** The client derives a scope from a repo by directory name (`reposcope.go:60-89`),
+   and the `scope-refs` plan measured that ID keying across the two authorities could never be read
+   back (round 3 🔴1 there). So the memo predicate is EXACTLY the pod's entry-write predicate:
+   `auth.VisibleScopes(control.VerbWrite).Allows(name)` to send and
+   `auth.VisibleScopes(control.VerbRead).Allows(name)` to read (`internal/api/server.go:784-785`,
+   `:1817-1820`). `VisibleScopes` is the ONE id-to-name seam ("deliberately the only one",
+   `internal/control/resolve.go:107-130`), it folds every name with `store.NormalizeRef`
+   (`internal/store/classify.go:180-186`), and `ScopeSet.Allows` folds the asked name the same way
+   (`:192-198`). Keying on the name is what lets ONE predicate answer for a journal credential and a
+   token-file row alike, although their scope IDs live in different ID spaces (decision 16).
+   *Revision 1 said "resolves it to its authority's scope ID, and asks `Allows` on that ID"; under
+   O5 a name can have TWO scope IDs in the listener's model, so that sentence is retracted.* A scope
+   the caller cannot read and a scope that does not exist get ONE byte-identical answer. ⚠ A
+   RENAMED journal scope orphans its live memos (they are keyed by the old name); with a 7-day
+   default TTL that is accepted, and named.
 
 5. **The trust boundary [R1] — S0, before any storage.** One renderer, `internal/memo`'s
    `RenderPreview`, used by the CLI's `memo-check` and pinned by goldens; the hook passes its stdout
@@ -505,9 +530,9 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
      re-invented), set per instance the way `CAIRN_URL` is. New name, no alias: the env ledger
      (`internal/envalias`) does not move — asserted.
 
-9. **Send predicate, quota, live-set bound — one function [O2].** `memo.MaySend(auth, scopeID)`
-   is `auth.Allows(scopeID, control.VerbWrite)` and nothing else; every send surface (client
-   listener, browser form) calls it. Inside the send transaction, under
+9. **Send predicate, quota, live-set bound — one function [O2].** `memo.MaySend(auth, name)` is
+   `auth.VisibleScopes(control.VerbWrite).Allows(name)` and nothing else — the pod's entry-write
+   predicate (decision 4); every send surface (client listener, browser form) calls it. Inside the send transaction, under
    `pg_advisory_xact_lock(hash(scope_name))` (the package already serialises with advisory locks,
    `migrate.go:154`):
    - ≤ **10 sends per sender per scope per rolling hour**;
@@ -517,14 +542,27 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
    Each refusal is exit 6 with a reason naming the limit. The lock makes the counts exact across
    replicas; without it two concurrent sends could each see 9 and both commit.
 
-10. **Audit, retract, no edit [R10].** Every send writes `memo_events(kind='sent')` with the
-    authenticated actor in the same transaction as the row. **Retract** is allowed to the SENDER
-    `(kind, id)` — even after the sender's grant on the scope is withdrawn, because retraction only
-    reduces exposure — and to any principal with `admin` on the scope (moderation, Q6). It sets
-    `retracted_at`, NULLs `subject` and `body`, and appends `kind='retracted'` with the retracting
-    actor. **There is no edit route**: a correction is a retract plus a new memo, so the audit never
-    holds two versions of one id. ⚠ A retraction cannot recall a preview already printed into a
-    session's context or a transcript; it stops FURTHER delivery only, and the UI says so.
+10. **Audit, retract, acknowledge, no edit [R10, O7, O8].** Every send writes
+    `memo_events(kind='sent')` with the authenticated actor in the same transaction as the row.
+    - **Retract (O8)** is allowed to the SENDER `(kind, id)` — even after the sender's grant on the
+      scope is withdrawn, because retraction only reduces exposure — and to any principal for whom
+      `auth.VisibleScopes(control.VerbAdmin).Allows(name)` holds. It sets `retracted_at`, NULLs
+      `subject` and `body`, and appends `kind='retracted'` with the retracting actor, in one
+      transaction. ⚠ A token-file row can never be a scope admin — the projection confers `admin`
+      on nobody (`internal/control/tokenfile/source.go:420-427`) — so a token-file principal can
+      retract only its own memos.
+    - **Readers see the tombstone.** `memo-read`, the listing and the UI tab render a retracted memo
+      as `retracted by <actor display> (<kind>) at <time>`, with no subject or body; the actor is
+      resolved with `displayOf` exactly as a sender is (decision 5).
+    - **A retracted memo is never delivered to a session that has not seen it.** The check route
+      returns only unretracted memos, so the hook prints nothing for it. A session that ALREADY saw
+      the preview is not told of the retraction in v1 (Q13).
+    - **Acknowledge (O7)** writes a `memo_acks` row and nothing else. The sender sees who
+      acknowledged, from which session, and when (listing and UI); delivery is unchanged — each
+      session still sees each memo once.
+    - **There is no edit route**: a correction is a retract plus a new memo, so the audit never
+      holds two versions of one id. ⚠ A retraction cannot recall a preview already printed into a
+      session's context or a transcript; it stops FURTHER delivery only, and the UI says so.
 
 11. **Secret scan on send: refuse only on a CONFIDENT credential hit [R5].** The send path runs the
     credential patterns `tests/leakscan.py:274-294` already gates the repository on (private-key and
@@ -539,7 +577,7 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
     memos at that rate. Q7 asks whether to run it as a WARNING.
 
 12. **Visibility is decided at READ time, every time.** A memo is returned to a caller only if
-    `Allows(scopeID, VerbRead)` holds NOW, so a withdrawn grant stops delivery and `memo-read`
+    `auth.VisibleScopes(control.VerbRead).Allows(name)` holds NOW, so a withdrawn grant stops delivery and `memo-read`
     immediately (e2e (i)), and a narrowed credential sees exactly the scopes its narrowing covers.
     A memo sent by a principal whose write grant is LATER withdrawn stays delivered — it was
     authorised when sent — and its sender line still names them; the UI marks the sender
@@ -572,6 +610,104 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
     session cannot exist on the browser (sign-in refuses narrowed credentials,
     `claudedocs/plan-cairn-arcs-presence.md`, decision 11 as built). No script, no new asset.
 
+16. **O5 with ONE authenticator: the token file is MERGED INTO THE MODEL, never authenticated
+    beside it.** Revision 2; read off `b2ba3ac`.
+
+    **What forbids a second path.** `internal/authz` used to authorise requests and no longer does:
+    `Authorize`, `ErrRejected` and `TokenRecord.VisibleScopes` "were deleted rather than left beside
+    the new path", because a second authenticator over a second spelling of "what may this see" is
+    the shape the codebase refuses (`internal/authz/token.go:1-17`). It now only PARSES the token
+    file, and its output is the input to `internal/control/tokenfile`, which "projects the table
+    into a `control.Model`" (`tokenfile/source.go:1`). `control.Authenticate(m Model, token)` is
+    "the only function that resolves a credential to a principal" (`token.go:5-6`;
+    `internal/control/resolve.go:307-335`).
+
+    **Why a single predicate is possible.** `control.Authenticate` takes ONE `Model` and matches the
+    presented token's hash against every live `Credential` in it (`resolve.go:312-324`). The token
+    file does not have to be a second authenticator, because the projection already turns every row
+    into the SAME kind of record a journal holds: a `credential-issued` event carrying the token's
+    hash (`tokenfile/source.go:383`), a project principal per identity, and grants built in ONE place
+    — a mapped row gets `read,write` on its listed scopes, a bare row gets `read` on the synthetic
+    project that holds every scope, and nobody gets `admin` (`grantsFor`, `source.go:420-466`).
+    `Source.Events` is exported for exactly this kind of use: the projection and any conversion
+    "cannot describe two different worlds, because they are one function" (`source.go:303-310`).
+    A journal is read the same way: `ReadEvents` then `Replay` (`internal/control/filestore.go:153-175`,
+    `journal.go:678, :768`).
+
+    **The mechanism.** A read-only `control.Source` in `cmd/cairn-ui`, used ONLY by the memo
+    listener, whose `Model` is
+
+    `control.Replay(append(journalEvents, tokenfileSource.Events()...))`
+
+    — the journal's events (read through the SAME `ReadEvents` the `FileStore` uses) followed by the
+    projection's (the SAME `tokenfile.Source` `openAuthority` already builds,
+    `cmd/cairn-ui/main.go:1291-1312`, over the SAME `authz.LoadTokens` parser). It sits behind an
+    ordinary `control.Cache` and the ordinary `identity.MachineToken` backend. So one request is:
+    one machine-token backend → one `control.Authenticate` over one model → one
+    `Narrow(Resolve(m, p), matched.NarrowedScopes)` (`resolve.go:334`) → decision 4's one name-keyed
+    predicate. No new authenticator, no new backend in `identity.Backends`, no second spelling of
+    a grant.
+
+    **Why the merge is COHERENT, measured against `Replay`'s refusals, not assumed:**
+    - Scope names are unique WITHIN a project, not globally (`journal.go:348-351`). The projection
+      puts every scope it knows in its own synthetic project (`source.go:135-145`), so `alpha-notes`
+      exists TWICE in the merged model — once with the journal's random ID, once with the
+      projection's derived ID (`source.go:584-586`) — and `Replay` accepts that. Decision 4's
+      name-keyed predicate is what makes both kinds reach one memo set through it.
+    - IDs cannot collide by accident: derived IDs are a SHA-256 of a prefixed key
+      (`internal/control/ids.go:72-75`), journal IDs are random (`NewID`, `ids.go:41`; the scope's at
+      `internal/control/provision.go:114`).
+    - 🔴 **They DO collide on purpose in one case, and the merge must refuse it whole:** a journal
+      that was ever seeded by appending `tokenfile.Source.Events()` — the conversion `source.go:303-309`
+      anticipates and nothing performs today (`:305`) — holds the same derived user, projects,
+      grants and credentials, and `Replay` refuses a duplicate user, project, scope, grant or
+      credential (`journal.go:262, :311, :343, :387, :419`). The listener therefore REFUSES TO START
+      with a line naming the duplicate, and on a later refresh the cache keeps its last-known-good
+      model (`source.go:290-293` states that contract for the projection). A test plants the
+      converted journal and asserts the refusal.
+    - **The merge is ADDITIVE for every principal**, and that is the seam guard: for every journal
+      principal `p`, `Resolve(merged, p)` equals `Resolve(journalOnly, p)`, and for every token-file
+      principal `q`, `Resolve(merged, q)` equals `Resolve(tokenfileOnly, q)`, compared through
+      `NamedScopes` per verb. The projection's grants name only its own per-identity projects as
+      subjects (`source.go:441-462`) and no journal user is a member of them, so neither side can
+      widen the other — but that is asserted over a synthetic world, not argued, and shown RED by a
+      mutant that grants the projection's scopes project to a journal user.
+
+    **How narrowing, revocation and the allowlist apply — identically, because it is one path:**
+    - **Allowlist.** A mapped row's scopes become `read,write` grants; a bare row becomes `read` on
+      every scope. So a mapped row may send to its scopes and read them, a bare row may read every
+      scope and send to none, and a journal credential gets whatever `Resolve` gives its principal.
+      All three are then asked decision 4's predicate and nothing else.
+    - **Narrowing.** `Authenticate` applies the credential's `NarrowedScopes` to whatever it matched
+      (`resolve.go:334`). A token-file row carries none, because its narrowing IS its grant set; a
+      narrowed journal credential is narrowed exactly as on the pod. Same call, both kinds.
+    - **Revocation — this is the COST of O5.** A journal credential is revoked by its event, picked
+      up on the cache's refresh. A token-file row is revoked on the pod by editing the file and
+      sending SIGHUP, the pod's ONLY revocation path (`cmd/cairn-server/main.go:595-655`;
+      `SetTokens` swaps the table and refreshes, `internal/api/server.go:291-296`). **`cairn-ui` has
+      no such path today: its token table is fixed at startup and a revoked row "takes a restart to
+      stop working"** (`cmd/cairn-ui/main.go:1305-1307`). So S2 adds a SIGHUP handler to `cairn-ui`
+      that re-reads the file through the same `authz.LoadTokens`, swaps the merged source's table and
+      refreshes — the pod's `installReload` shape, and `cairn-ui`'s only SIGHUP consumer. e2e (k)
+      proves it.
+    - ⚠ **And the operational cost that no code removes:** the pod and `cairn-ui` are two processes
+      with two mounts of one secret. A rotation that SIGHUPs only the pod leaves the revoked row
+      working on the memo listener until `cairn-ui` is reloaded too. The rotation runbook must name
+      both, and the startup line of each prints its loaded token ids (the pod already does,
+      `cmd/cairn-server/main.go:560`) so a mismatch is visible.
+
+    **What this does NOT change.** The browser listener keeps its journal-only authority: token-file
+    rows still cannot sign in to the browser, and the share flow's "who has access" is unchanged.
+    The merged model is the memo listener's alone (Q12 asks whether it should be the whole UI's).
+    ⚠ That means `cairn-ui` holds TWO `control.Cache` instances — two models, one predicate function.
+    A journal revocation reaches each on its own refresh, so the two can disagree for up to one
+    refresh interval; stated, and bounded by the same `authorityMaxAge` both use.
+
+    **If the merge were impossible**, the alternative would have been a second machine-token backend
+    over a token-file-only cache in the listener's chain — a second authenticator, two answers to
+    "who is this", and the exact shape `token.go:1-17` records deleting. It is not needed, so it is
+    not designed.
+
 ## Threat and abuse cases
 
 | threat | control |
@@ -584,7 +720,9 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
 | **T6. A reader's grant is withdrawn** | Read is re-authorised on every request (decision 12); e2e (i). Previews already printed into a past context are not recalled — stated. |
 | **T7. A narrowed credential** | `Allows` on the narrowed authorization, for both send and read (STEP 1: `Narrow` only intersects); e2e (c). |
 | **T8. A secret in a memo** | Confident-credential refusal (decision 11); retraction NULLs the body (decision 10); retention deletes the row 30 days after expiry (decision 2). Residual: everything a pattern scanner misses. |
-| **T9. A stolen agent credential** | Can send within quota to scopes it can write, and read memos where it can read — exactly what it can already do with entries, at a lower blast radius (memos expire). The listener's failed-auth lockout limits guessing. |
+| **T9. A stolen agent credential** (a journal credential or, under O5, a token-file row) | Can send within quota to scopes it can write, and read memos where it can read — exactly what it can already do with entries, at a lower blast radius (memos expire). The listener's failed-auth lockout limits guessing. |
+| **T14. A revoked token-file row keeps working on the memo listener** (O5) | `cairn-ui` gains the pod's SIGHUP reload (decision 16); e2e (k). **Residual:** a rotation that reloads only the pod leaves the row live on `cairn-ui` until it is reloaded too — two processes, one secret. The runbook names both, and both startup lines print the loaded token ids. |
+| **T15. The merge widens someone** (O5) | Decision 16's additive seam test: every principal's authority over the merged model equals its authority over its own source. A journal seeded from the projection is refused whole at startup. |
 | **T10. Cursor confusion** — a subagent or a shared shell consumes another session's memos | Subagent payloads skipped (decision 6); `--session` has no env fallback; the per-host cursor is explicit and labelled. |
 | **T11. The hook blocks or slows a session** | 2 s wall bound inside the hook, `--timeout 1` on the call, throttle, always exit 0 (decision 7); S0's tests run it against a server that never answers. |
 | **T12. Probing which scopes exist** | Unreadable and absent scopes answer one byte-identical body on every memo route (decision 4); e2e (a)'s control. |
@@ -615,9 +753,9 @@ why the quota exists.
 |---|---|---|---|---|
 | **S0** | cairn **and** tooling | **The trust boundary and the hook's silence, before any storage.** cairn: `internal/memo` with `RenderPreview`, the render-side sanitiser and `Sanitise` (the send-side refusal predicate, unused until S1), the hostile corpus generator `tests/memo/hostile.py` → `internal/memo/testdata/hostile.json`, and goldens. tooling: `scripts/claude-hooks/cairn-memo-hook.py` (stdin parse, subagent skip, throttle, 2 s bound, one loud line, silence) against a STUB `cairn` on `PATH` that replays the goldens, sleeps forever, or exits 3; NOT yet registered. **Plus one MEASUREMENT, recorded in this plan:** whether an opencode `tool.execute.after` hook can add text the model sees (for example by appending to the tool's output), on one host, with a synthetic tool call. | cairn: new package → `ok` floor (`ci.yml:839`, set to the count MEASURED on the merged tree); `onlyGo` for the testdata file. tooling: the runner's target list (`run-tests.sh:955-1028`). | Pure functions and an unregistered hook; nothing calls either. |
 | **S1** | cairn | **Storage.** Migration 3 (decision 2) with its rollback note; `pgstore.MemoStore` (send with quota + live bound under the advisory lock, list-after, get, ack, retract, prune-on-send); `memo.MaySend` / `memo.MayRead`; the Go credential scan and its seam test against `tests/leakscan.py`. | pgtest tier (tests live in `internal/pgstore`, already in `PGTEST_PKGS`); `tests/control_mutants.py` `PKGS` gains `./internal/memo/` (the predicates ARE an authz seam), which `tests/test_control_mutant_count_is_pinned.py` forces through `ci.yml` and `internal/control/README.md`. | Inert: no listener calls it. A rollback across it needs the recipe — stated. |
-| **S2** | cairn | **The client listener.** `cmd/cairn-ui` `-client-api-addr` (no default; requires `-db-dsn`, refuses to start otherwise), machine-token-only auth, `ClientRoutes()` ledger + test, reachable-bind refusal, lockout. Routes: `GET /client/v1/memos?scope=&after=&limit=`, `GET /client/v1/memo?id=`, `POST /client/v1/memos`, `POST /client/v1/memo/ack`, `POST /client/v1/memo/retract`. `tests/memo/e2e.sh` created with clauses (b), (c), (e), (f), (g), (h), (i) driven by `curl`, and its `--self-test`; wired into the `pgtest` job. | `cmd/cairn-ui` flag tests; `ci.yml` (the e2e step and its PASS floor); `internal/ui/README.md` or a new `internal/memo/README.md`. NOT `api.DeclaredRoutes()`, NOT the conformance corpus (part 3 asserts it). | Inert unless `-client-api-addr` is set. |
+| **S2** | cairn | **The client listener.** `cmd/cairn-ui` `-client-api-addr` (no default; requires `-db-dsn`, refuses to start otherwise), machine-token-only auth over the MERGED journal + token-file source and its own `control.Cache` (decision 16, O5), the SIGHUP reload of the token file, `ClientRoutes()` ledger + test, reachable-bind refusal, lockout. Routes: `GET /client/v1/memos?scope=&after=&limit=`, `GET /client/v1/memo?id=`, `POST /client/v1/memos`, `POST /client/v1/memo/ack`, `POST /client/v1/memo/retract`. `tests/memo/e2e.sh` created with clauses (b), (c), (e), (f), (g), (h), (i), (j), (k) driven by `curl`, and its `--self-test`; wired into the `pgtest` job. | `cmd/cairn-ui` flag tests; `ci.yml` (the e2e step and its PASS floor); `internal/ui/README.md` or a new `internal/memo/README.md`. NOT `api.DeclaredRoutes()`, NOT the conformance corpus (part 3 asserts it). | Inert unless `-client-api-addr` is set. |
 | **S3** | cairn | **The Go client verbs** (decision 8), `CAIRN_UI_URL`, the local cursor, `memo-check` rendering through S0's `RenderPreview`. e2e clauses (a) and (d) switch from `curl` to the built client. | `internal/client/cli.go` `Verbs()`; `capability_ledger` `go_only` rows; `flake.nix` `want-go-only-verbs.txt`; `tests/test_go_client_ledgers.py`; `tests/parity/README.md` residual 11. | Read-only for every existing verb. |
-| **S4** | tooling | **Delivery.** Register `cairn-memo-hook` on SessionStart, UserPromptSubmit and PostToolUse (no matcher) through `register-nudge-hook.py`'s tables; the `cairn-memo` skill (`claude/skills/cairn-memo/SKILL.md`) describing `memo-send`/`memo-read`/`memo-ack`, the standing line and what the secret scan cannot promise — its description built from "memo", "scope notice" and "cairn", never "mail"/"inbox"; the opencode plugin per S0's measurement, or the documented pull-only fallback if it measured impossible. **Rollout step (not CI):** each agent environment gets `CAIRN_UI_URL` and a credential `cairn-ui` accepts (decision 3's ⚠). | The tooling repo's own suite and runner list; the registrar's tables and its tests. | Silent until S2 and S3 are deployed: the hook's `memo-check` exits 3 `not configured`, which it prints once per session. ⚠ So S4 is deployed LAST, or that line appears in every session — sequenced, not hidden. |
+| **S4** | tooling | **Delivery.** Register `cairn-memo-hook` on SessionStart, UserPromptSubmit and PostToolUse (no matcher) through `register-nudge-hook.py`'s tables; the `cairn-memo` skill (`claude/skills/cairn-memo/SKILL.md`) describing `memo-send`/`memo-read`/`memo-ack`, the standing line and what the secret scan cannot promise — its description built from "memo", "scope notice" and "cairn", never "mail"/"inbox"; the opencode plugin per S0's measurement, or the documented pull-only fallback if it measured impossible. **Rollout step (not CI):** each agent environment gets `CAIRN_UI_URL`; its existing token-file credential is accepted unchanged (O5), provided `cairn-ui` mounts the same token file the pod does. | The tooling repo's own suite and runner list; the registrar's tables and its tests. | Silent until S2 and S3 are deployed: the hook's `memo-check` exits 3 `not configured`, which it prints once per session. ⚠ So S4 is deployed LAST, or that line appears in every session — sequenced, not hidden. |
 | **S5** | cairn | **UI.** `?tab=memos` on the scope page; `POST /memo` and `POST /memo/retract` (class `0`); plain-text rendering; "retraction stops further delivery only" copy. | `internal/ui/routes.go` rows + `routes_test.go` hand ledger; `tests/control_mutants.py` rows; `uiaudit` fixtures for the tab; `internal/ui/README.md`. | Read-only over S1 plus two gated forms. |
 | **S6** | cairn | **OPTIONAL — urgent bell** (decision 13), only if Q8 is answered yes. | `internal/presence`'s importer ledger (`TestOnlyTheBrowserProgramImportsPresence`, `presence.go:24-28`) if the call crosses a package; mutant rows. | Not part of the closing condition. |
 
@@ -677,6 +815,35 @@ Sizes are not estimated; nobody has measured these.
   garbage; a valid machine token → 200 (positive control). Lockout after N failures.
 - Route ledger: `ClientRoutes()` equals the dispatch table, failing on GROW or SHRINK.
 - Uniform miss: unreadable scope, absent scope and unknown id → byte-identical bodies.
+- **Two credential kinds, one predicate (O5) — `TestATokenFileRowAndAJournalCredentialGetTheSameMemoAnswers`,**
+  in process over the REAL merged source, the REAL machine-token backend and the listener's
+  handler, with a synthetic journal and token file:
+  - a token-file row mapped to `alpha-notes` and a journal credential whose principal has write on
+    `alpha-notes`: send → identical status and body once `id`/`created_at` are masked; read of the
+    scope → byte-identical listings; `memo-read` of a third party's memo → byte-identical;
+  - a token-file row mapped ONLY to `beta-notes` and a journal credential with no grant on
+    `alpha-notes`: send and read of `alpha-notes` → byte-identical refusals, and both equal the
+    answer for a scope that does not exist;
+  - a BARE token-file row and a read-only journal grantee: read succeeds identically, send is
+    refused identically;
+  - **positive control** that the comparison can see a difference: the two successful sends store
+    DIFFERENT `sender_kind`/`sender_id`, and a token-file row mapped to `alpha-notes` vs one mapped
+    to `beta-notes` get DIFFERENT answers on `alpha-notes`.
+  - **RED proofs:** (i) build the listener's authority from the journal alone → the token-file
+    rows answer 401 and the first bullet fails; (ii) a mutant that authorises a token-file row from its
+    `TokenRecord.Scopes` list instead of decision 4's predicate (the deleted
+    `authz.VisibleScopes` shape) → the BARE-row bullet fails, because a bare row lists no scopes
+    and reads every one; (iii) key the predicate on a scope ID
+    instead of the name → the token-file row is refused on `alpha-notes` (its grant names the
+    projection's ID, not the journal's).
+- **Additive merge** (decision 16): for every principal of the synthetic world, `NamedScopes` per
+  verb over the merged model equals that over its own source. RED with a mutant granting the
+  projection's scopes project to a journal user. **Converted journal:** a journal containing
+  `tokenfile.Source.Events()` → the listener refuses to start, naming the duplicate.
+- **Revocation:** delete a row from the token file and deliver SIGHUP → that row's next request is
+  401, byte-identical to a random token's; a malformed edit + SIGHUP → refused, the previous table
+  keeps serving, and the line says so (the pod's three-outcome reload messages). A journal
+  credential revoked by its event → 401 after one refresh.
 - The e2e clauses listed in the slice row and their sabotages.
 
 **S3.**
@@ -698,47 +865,63 @@ REAL built cairn client against a stub HTTP server, not a stub binary.
 (asserted so no future class bypasses them); a read-only viewer sees the tab but no form, and a
 forged POST from them is refused by `MaySend`; memo text with `<script>` renders as text.
 
-## Open questions (each with a recommendation)
+## Open questions
 
-- **Q1. Naming.** Recommend `memo` (decision 1). Alternatives: `notice` (reads naturally as
-  "scope notice", but is close to the hook "nudge" vocabulary the tooling repo already uses);
-  `bulletin` (unambiguous, long); `mail` with the email skill's description narrowed to name its
-  domain (cheapest to type, and the only option that depends on another skill never drifting).
-- **Q2. Storage home.** Recommend pgstore in `cairn-ui` (decision 2, R2). Alternative: an
-  append-only JSONL journal outside the store tree, served by the POD on the arc registry's pattern
-  (`internal/arcs/journal.go`) — keeps one base URL and the agents' existing pod credential, but has
-  no expiry, retention or quota machinery, and the arc journal's `flock` is advisory across hosts.
-- **Q3. One client-credential listener or several.** Recommend `-client-api-addr` for memos now,
-  and that the plugins plan's agent READ routes (its decision 17) move onto it when they are built,
-  so agents hold one `CAIRN_UI_URL` and one listener. Alternative: the browser listener for reads,
-  this listener for writes.
-- **Q4. The agent credential.** Recommend issuing each agent environment a journal credential
-  narrowed to the scopes it works in, at S4's rollout. Alternative: let `-client-api-addr`
-  authenticate the pod's token-file rows as well — a second authority on one listener, which is the
-  two-ID-space hazard this plan otherwise avoids.
-- **Q5. Ack semantics.** Recommend: an ack is a RECORD (who, which session, when), visible to the
-  sender and in the UI, that changes nobody's delivery — O1 says every session sees each memo once.
-  Alternative: an ack by a principal suppresses delivery to that principal's other sessions.
-- **Q6. Moderation.** Recommend scope `admin` may retract any memo on the scope. Alternative:
-  sender-only retraction.
-- **Q7. `internal/redact` as a warning.** Recommend NO in v1: a warning nobody can act on before the
-  send is noise. Alternative: run it after #216 merges and print its hits to the SENDER only.
-- **Q8. Waking idle sessions.** Recommend v1 ships without it; if wanted, S6's operator-only bell
-  (decision 13). Alternative: none that reaches the agent without `send-keys`, which this plan
-  declines to pair with store-originated text.
-- **Q9. Arc as a target.** Recommend NO in v1 (send per scope). Alternative: `--arc <home>/<slug>`
-  fans out to the arc's declared scopes the sender can write, one memo each.
-- **Q10. Throttle interval and caps.** Recommend 5 min, 5 previews, 10/hour, 50/day, 200 live, 7-day
-  default TTL. Each is a constant in one place; the token table above is the trade.
-- **Q11. Opencode without a surfacing path.** If S0 measures none: recommend the skill tells the
-  agent to run `memo-check` at the start of a task, stated as pull-only and therefore unreliable in
-  exactly the way R3 warns of. Alternative: no opencode support until opencode offers a hook.
+### Answered by the operator (revision 2)
+
+- **Q2. Storage home** → **O6**: PostgreSQL in `cairn-ui`, migration 3. DECIDED; the pod-served
+  journal alternative is closed.
+- **Q4. The agent credential** → **O5**: the memo listener ALSO accepts the pod's token-file rows.
+  The recommended alternative — a narrowed journal credential per agent environment — was offered
+  and declined. Designed with one authenticator (decision 16).
+- **Q5. Ack semantics** → **O7**: a record only, visible to the sender; delivery unchanged.
+- **Q6. Moderation** → **O8**: the sender and any scope admin may retract; journaled with the actor;
+  readers see who retracted it; never delivered to a session that has not seen it.
+
+### Still open — default adopted unless the operator objects
+
+- **Q1. Naming.** *Default adopted unless the operator objects:* `memo` (decision 1). Alternatives:
+  `notice` (reads naturally as "scope notice", but is close to the hook "nudge" vocabulary the
+  tooling repo already uses); `bulletin` (unambiguous, long); `mail` with the email skill's
+  description narrowed to name its domain (cheapest to type, and the only option that depends on
+  another skill never drifting).
+- **Q3. One client-credential listener or several.** *Default adopted unless the operator objects:*
+  `-client-api-addr` for memos now, and the plugins plan's agent READ routes (its decision 17) move
+  onto it when they are built, so agents hold one `CAIRN_UI_URL` and one listener. Alternative: the
+  browser listener for reads, this listener for writes.
+- **Q7. `internal/redact` as a warning.** *Default adopted unless the operator objects:* NO in v1 —
+  a warning nobody can act on before the send is noise. Alternative: run it after #216 merges and
+  print its hits to the SENDER only.
+- **Q8. Waking idle sessions.** *Default adopted unless the operator objects:* v1 ships without it;
+  if wanted, S6's operator-only bell (decision 13). Alternative: none that reaches the agent without
+  `send-keys`, which this plan declines to pair with store-originated text.
+- **Q9. Arc as a target.** *Default adopted unless the operator objects:* NO in v1 (send per scope).
+  Alternative: `--arc <home>/<slug>` fans out to the arc's declared scopes the sender can write, one
+  memo each.
+- **Q10. Throttle interval and caps.** *Default adopted unless the operator objects:* 5 min, 5
+  previews, 10/hour, 50/day, 200 live, 7-day default TTL. Each is a constant in one place; the token
+  table above is the trade.
+- **Q11. Opencode without a surfacing path.** *Default adopted unless the operator objects:* if S0
+  measures none, the skill tells the agent to run `memo-check` at the start of a task, stated as
+  pull-only and therefore unreliable in exactly the way R3 warns of. Alternative: no opencode support
+  until opencode offers a hook.
+
+### New in revision 2 — default adopted unless the operator objects
+
+- **Q12. The merged model's reach (O5).** *Default:* the merged journal + token-file model backs the
+  MEMO LISTENER ONLY (decision 16), so token-file rows still cannot sign in to the browser and the
+  share flow is unchanged; the cost is a second `control.Cache` in `cairn-ui`. Alternative: make it
+  the whole UI's authority — one cache, but a token-file row could then sign in to the browser, a
+  widening this plan does not take without a decision.
+- **Q13. Telling a session that already saw a memo that it was retracted.** *Default:* no, in v1
+  (O8 asks only that unseen sessions never receive it). Alternative: the next check prints a
+  one-line `retracted by <actor>` notice to sessions whose seen-set holds the id.
 
 ## What could not be measured
 
-- **Whether the deployed instances' agents hold a credential `cairn-ui` accepts**, and whether
-  `cairn-ui` runs with `-db-dsn` on each instance — the manifests are private. Decision 3 depends on
-  both.
+- **Whether `cairn-ui` runs with `-db-dsn` on each instance, and whether it mounts the same token
+  file the pod does** — the manifests are private. Decisions 3 and 16 depend on both. (Revision 1
+  listed the agents' credential here; O5 made it the one they already hold.)
 - **Whether an opencode plugin can surface text to its model** — S0 measures it on one host.
 - **Whether Claude Code delivers PostToolUse `additionalContext` inside a SUBAGENT to the subagent
   only** — irrelevant while the hook skips `agent_id` payloads, and recorded so nobody relies on it.
