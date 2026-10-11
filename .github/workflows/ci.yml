@@ -2393,3 +2393,47 @@ jobs:
         env:
           CAIRN_PGTEST_DSN: host=127.0.0.1 port=5432 user=cairn_pgtest password=cairn_pgtest dbname=cairn_pgtest sslmode=disable
         run: tests/pgtest/run.sh
+
+      # 🔴 THE SCOPE-MAIL CLOSING CHECK (closing-condition part 2 of
+      # `claudedocs/plan-cairn-scope-mail.md`; S3, decision 18): the BUILT memo verbs against a real
+      # `cairn-ui` client listener over THIS job's pinned PostgreSQL, a real pod and a real journal,
+      # proving clauses (a)–(k) — once per session, who may send, narrowing both ways, the fence on
+      # both output paths (a real listener AND a RAW-serving stub), the secret refusal, the per-scope
+      # quota, retraction and decision 17's control, expiry, a withdrawn grant, two credentials of
+      # one principal told apart, and revocation within one refresh. HERE because it needs a database
+      # (each run takes its own schema of the service and drops it) and the Go toolchain.
+      #
+      # ⚠ THE SELF-TEST RUNS FIRST AND IS NOT OPTIONAL: thirteen sabotaged copies of the source, each
+      # required to turn its OWN clause's named assertion red (exit 2 names one that does not). The
+      # script itself refuses (exit 2) when fewer assertions ran than it declares, and the floor
+      # below re-counts its PASS lines rather than reading its exit code.
+      - name: the scope-mail end-to-end check, after proving every clause can go RED
+        env:
+          CAIRN_PGTEST_DSN: host=127.0.0.1 port=5432 user=cairn_pgtest password=cairn_pgtest dbname=cairn_pgtest sslmode=disable
+        run: |
+          set -o pipefail
+          tests/memo/e2e.sh --self-test | tee /tmp/memo-e2e-self.txt
+          grep -qx 'SUMMARY e2e-self-test: sabotaged=13 caught=13' /tmp/memo-e2e-self.txt
+          tests/memo/e2e.sh > /tmp/memo-e2e.txt 2>&1 || { cat /tmp/memo-e2e.txt; exit 1; }
+          cat /tmp/memo-e2e.txt
+          passes=$(grep -c '^PASS ' /tmp/memo-e2e.txt || true)
+          fails=$(grep -c '^FAIL ' /tmp/memo-e2e.txt || true)
+          echo "memo e2e: passes=$passes fails=$fails"
+          # 35 assertions, measured when the script landed; `EXPECTED` in the script moves with it.
+          if [ "$passes" -lt 35 ] || [ "$fails" -ne 0 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL lines, and 35 / 0 were measured"
+            exit 1
+          fi
+
+      # The live probe (closing-condition part 5) is RUN by the operator against the deployment
+      # after S7; what CI owns is its SELF-TEST against a local world: it passes, refuses its inputs
+      # at exit 2, holds its isolation property with every name the client reads exported as a decoy
+      # (and goes red under each of the plan's isolation mutants), and fails AT its 401 control and AT
+      # its positive control when those are broken.
+      - name: the scope-mail live probe's self-test, against a local world
+        env:
+          CAIRN_PGTEST_DSN: host=127.0.0.1 port=5432 user=cairn_pgtest password=cairn_pgtest dbname=cairn_pgtest sslmode=disable
+        run: |
+          set -o pipefail
+          tests/memo/live-probe.sh --self-test | tee /tmp/memo-probe-self.txt
+          grep -qx 'SUMMARY live-probe-self-test: passed=16 failed=0 expected=16' /tmp/memo-probe-self.txt
