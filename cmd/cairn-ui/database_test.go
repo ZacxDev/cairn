@@ -371,6 +371,12 @@ func TestWithNoDatabaseTheSurfaceComesUpSayingItHoldsNoInvitation(t *testing.T) 
 // and the child's dial in which something could take the port; it is the standard one, and
 // the direction is safe — a taken port produces a noisy failure here, never a false green,
 // because the assertion is that the process REFUSED.
+//
+// 🔴 SO IT IS ONLY FOR AN ADDRESS THAT MUST *NOT* ANSWER. Handed to a child as its OWN listen
+// port, the same window runs the other way: a stranger that takes the port answers in the child's
+// place, and its body is read as the child's — measured, when a parallel package's store server's
+// `unauthorized` was asserted against as the sign-in page and failed a publish. A child that must
+// answer binds `-port 0` and is reached through `presenceChild.serving`.
 func aPortNothingIsListeningOn(t *testing.T) int {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

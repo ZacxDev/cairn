@@ -872,10 +872,28 @@ func main() {
 			}
 		}()
 	}
+	// 🔴 THE PORT IS BOUND BEFORE THE LINE THAT SAYS "serving", AND THE LINE NAMES THE PORT
+	// THAT WAS BOUND. It used to be printed first and `ListenAndServe` bound afterwards, so the
+	// line was a claim the process had not yet made true: a reader that took it as "the port is
+	// mine" raced the bind, and — with the port picked by somebody else and briefly free — could
+	// read ANOTHER process's answer on it as this one's. That shipped as a red publish twice: a
+	// probe answered connection-refused, and then a probe read a parallel store server's plain
+	// `unauthorized` as the sign-in page. Bound first, the line cannot appear unless the port is
+	// held, and a lost bind is this process's own exit-1 refusal rather than a stranger's body.
+	// The host is the CONFIGURED spelling, never `Addr()`'s (a wildcard bind reports `[::]`), so
+	// for any non-zero port the line is byte-identical to what it was; only `-port 0` changes,
+	// from the meaningless `:0` to the port the kernel chose — which is what lets a test bind
+	// `-port 0` and read its address off this line instead of guessing a free one.
+	bound, err := net.Listen("tcp", addr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
+		os.Exit(1)
+	}
+	boundAddr := net.JoinHostPort(*host, strconv.Itoa(bound.Addr().(*net.TCPAddr).Port))
 	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s, %s, %s, %s\n",
-		len(ui.DeclaredRoutes()), addr, *store, sharingMode, signInMode, stateMode, arcsMode, presenceMode, appMode(cfg.App),
+		len(ui.DeclaredRoutes()), boundAddr, *store, sharingMode, signInMode, stateMode, arcsMode, presenceMode, appMode(cfg.App),
 		instanceMode(cfg.App))
-	if err := listener.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := listener.Serve(bound); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(1)
 	}

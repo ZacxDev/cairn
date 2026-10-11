@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -37,7 +36,6 @@ func TestTheHeaderSaysWhoTheJournalSays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	port := aPortNothingIsListeningOn(t)
 	// Generous on purpose: this child is a real process, and under a loaded host (the mutation
 	// battery runs this package once per mutant) a 2-second single-shot request timed out at
 	// sign-in and was scored as the killer of mutants it never saw.
@@ -48,12 +46,10 @@ func TestTheHeaderSaysWhoTheJournalSays(t *testing.T) {
 		"-session-file", filepath.Join(t.TempDir(), "sessions"),
 		"-token-file", filepath.Join(t.TempDir(), "absent-token"),
 		"-host", "127.0.0.1",
-		"-port", fmt.Sprint(port))
+		"-port", "0")
 	cmd.Env = []string{reexecEnv + "=1"}
 	c := startChild(t, cmd, cancel, &syncBuffer{}, &syncBuffer{})
-	c.waitFor(t, "the serving line", func() bool { return strings.Contains(c.out.String(), "serving") })
-
-	base := fmt.Sprintf("http://127.0.0.1:%d", port)
+	base := c.serving(t)
 	noRedirect := &http.Client{Timeout: 20 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	req, _ := http.NewRequest(http.MethodPost, base+ui.SignInPath,
