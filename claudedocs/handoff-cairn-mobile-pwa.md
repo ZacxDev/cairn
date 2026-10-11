@@ -21,23 +21,29 @@ decisions O1–O13 paraphrased, slices S0–S6b, the iPhone checklist, closing-c
   of it (it gates announcing install to the client instance only). ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- **S0–S4 MERGED.** S1 #205 `90d1344`, S2 #206 `173f08f`, S3 #209 `0355c7a`, test fix #207
-  `86b5b93`, **S4 #220 `f3623d4`** (merged on a fully green run at `480fbcf`; verified by content,
-  27 files equal the tested head). The Team shortcut now targets `/team` (repointed inside #214's
-  merge, `197dd0e`).
-- **S4 DEPLOYED on the personal instance** with #214 at `sha-197dd0e` (operator go): the live
-  manifest now carries shortcuts Arcs `/arcs`, Search `/scopes?q=`, Team `/team` (it carried none
-  before). Still ARMED (`CAIRN_UI_APP_NAME=cairn`, short name `cairn`, icon variant `teal`).
-  NOT verified on a phone (operator's check).
-- `uiaudit/pwa_check.sh --self-test` on the #214+#220 merged tree: `sabotaged=9 caught=9
-  plain-loop=3/3` (a subagent's local run, before the squash).
-- Claim `cairn-mobile-s4` RELEASED.
+- **S0–S5 and S6a MERGED.** S1 #205, S2 #206, S3 #209, S4 #220 `f3623d4`; **S5 + S6a #223** through
+  merge train 1 (`b06f15c`); **the S5 follow-up #231** through merge train 2 (#234, merge commit
+  `9292da2`, tree equal to the CI-tested train tree). S5 = standalone Back/Reload in `pwa.js`;
+  S6a = CI's `uiaudit` job runs chromium built from `flake.lock`'s nixpkgs (152.0.7977.82),
+  asserting the version and that `chromium` on PATH is that store path.
+- **The standalone header is NOT sticky** (operator decision, #231): it cost ~12% of a phone screen
+  and covered in-page anchors; `TestStandaloneBackAndReload` refuses `sticky`/`fixed` and reads the
+  header leaving the viewport after a 400px scroll. `overscroll-behavior-y: contain` stays.
+- **uiaudit counts:** top-level is DERIVED (#228); the subtest-total floor is the measured 129.
+- **Deployed:** personal instance at `sha-9292da2` (deployment trunk `faa94f1`); manifest shortcuts
+  `/arcs`, `/scopes?q=`, `/team`, still ARMED (name `cairn`, icon `teal`). NOT verified on a phone.
+- 🔴 **Closing condition NOT met:** S6b (a BLOCKING `uiaudit-touch` job) is unbuilt. The pinned
+  chromium has now run green in CI on several heads (#223, #229, #234) — the plan's "same version on
+  two consecutive runs" precondition for S6b is satisfied, read from those logs.
+- ⚠ The `uiaudit` job's `verify-push` step fails while the audit hub's push endpoint is down; the
+  TEST step is what to read (`uiaudit tests: top-level PASS=… FAIL=0`).
+- Claims: all released.
 
 ## Next steps (ranked)
-1. **S5** (standalone Back/Reload), **S6a** (pin CI chromium) → **S6b** (blocking `uiaudit-touch`
-   job), per the plan — the closing condition still needs S5 merged and S6b green.
-   forcing: user — operator chose this scope (O9–O11).
-2. **(done) Deploy S4** — rode with #214 at `sha-197dd0e`. forcing: user — operator go.
+1. **S6b** — make the `uiaudit-touch` job BLOCKING per the plan (S5 and S6a are DONE). forcing: user
+   — operator chose this scope (O9–O11).
+2. **(done) Deploy S4** — rode with #214 at `sha-197dd0e`; S5 is now live at `sha-9292da2`.
+   forcing: user — operator go.
 3. **(done) Merge #220** — merged `f3623d4`. forcing: user — operator asked for S4.
 
 ## Gotchas / decisions / dead-ends
@@ -84,6 +90,11 @@ decisions O1–O13 paraphrased, slices S0–S6b, the iPhone checklist, closing-c
 
 - **S3 put `no-store` on EVERY HTML page — public ones included, from one writer**; the plan's
   decision 8 and S3 test plan carry a SUPERSEDED-AT-BUILD note saying so. via: change
+
+- **The standalone CSS keys off the revealed controls** (`.page-header:has(> .standalone-nav:not([hidden]))`),
+  not `@media (display-mode: standalone)`, because headless chromium cannot emulate that media
+  query and the layout would be unmeasurable; cost: a standalone window with script off gets none
+  of it. `:has()` needs Safari 15.4, the same floor the manifest icons already need. via: change
 
 ## How to verify
 ```bash
