@@ -20,40 +20,37 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
   clean-damaged=0`, and both example plugins' suites pass against fake LLM / fake ClickUp servers.
 
 ## State now
-- **Plans MERGED:** #208 `8c61b21` (15 audit rounds; read scopes via a CLIENT READ LEDGER, O11),
-  #211 `a3e7de3` (agent-view trace: no hook injects cairn; 661/665 recalls are piped through
-  head/grep — the v1 recall tab is #213 in the UI arc).
-- **Operator decisions (recorded in the plan, revision 17):** O12 binary ships (only a closed list
-  of KNOWN binary signatures ships byte-identical); O14 90 days, ~20 GB per capturing host; O13 the
-  plan's recommendations as stated defaults (Q5: the client instance is NOT armed without an
-  explicit decision).
-- **NEW operator decision O15 (2026-10-10, for #216; being written into the plan by round 4):**
-  change approach — redact by KEY CONTEXT (any value of a secret-named key/flag/env var/config
-  field) plus HIGH-ENTROPY tokens, accepting more clean damage; NORMALISE tool line prefixes (grep
-  `path:N:`/`path:`/`N-`, diff `<`/`>`) before any rule runs; each round's held-back set is FRESH,
-  written by an auditor the fixer never sees; and **capture is armed on NO instance until a fresh
-  held-back set scores ≥90% leaks caught AND ≤15% clean lines damaged.**
-- **S0 = #215 MERGED** as `76ddc7e` (16:43Z, branch kept); verified by content — all 10 files equal
-  the branch head `7e6d53e` except one `ci.yml` mutant-count comment that came from `main` (#213).
-  #216 was already retargeted to `main`.
-- **S1 = #216 (`zach/transcripts-s1` @ `d4ccf7f`): fix round 4 IN FLIGHT** under O15, by a
-  subagent in its own worktree (merging `main` in — the PR read CONFLICTING after #215). Round 3's
-  findings it addresses: 🔴 grep/diff prefix leaks + PEM bodies; 🟡A clean damage 36/74; 🟡B named-key
-  misses; 🟡C `audit_rate_test.go:44` vs its docstring, and the overstated "176–197/200".
-- **S2 = #217 (`27b812c`):** stacked on #216; round 4 may change the API it calls.
-- Claim held: `cairn-transcripts-s0-s2`.
+- **Plans MERGED:** #208 `8c61b21` (read scopes via a CLIENT READ LEDGER, O11), #211 `a3e7de3`.
+- **Operator decisions:** O12 binary ships (closed list of known signatures); O13 the plan's
+  recommendations as defaults (Q5: the client instance is NOT armed without an explicit decision);
+  O14 90 days, ~20 GB per capturing host; **O15** redact by key context + entropy, tool line
+  prefixes normalised first, arming gated on a FRESH auditor-written held-back set scoring ≥90%
+  leaks caught AND ≤15% clean damaged; **O16** heuristic redactor rounds ENDED after round 7, S1
+  merged with capture UNARMED everywhere; arming is a separate future decision, expected to be
+  about capturing LESS (e.g. dropping or truncating raw tool output), not redacting better.
+- **S0–S3 MERGED:** S0 #215 `76ddc7e`; S1 #216 `7ca2e25` (`internal/redact`, rounds 4–7); S2 #217
+  and S3 #224 through merge train 1 (#229, merge commit `b06f15c`, whose tree equals the CI-tested
+  train tree). S3 = transcript upload + per-session store in cairn-ui, DISARMED: every upload is
+  answered 503 `capture-disarmed` unless cairn-ui starts with `-arm-transcript-capture` (no env
+  spelling, no default).
+- 🔴 **CAPTURE IS UNARMED AND CANNOT YET BE ARMED.** Blocking: (1) O15's gate FAILS — the latest
+  fresh held-back set scored `leaks caught=157/190 clean damaged=18/175` (82.6%, round-6 head);
+  (2) S11 (client read ledger) is unbuilt; (3) arming preconditions **AP1–AP4** in
+  `claudedocs/plan-cairn-plugins.md` (S3 row + Rollout) are open — `-transcript-dir` can collide
+  with cairn-ui's control journal (an outage on restart), no cap on an assembled framed record
+  (OOM at the pod's 256 Mi), sessions without meta never swept, and blob names/cursors not re-checked.
+- **Deployed:** the personal instance runs `sha-9292da2` (deployment trunk `faa94f1`) with NO worker
+  flags set — cairn-ui logs "serving 49 route(s)" and starts no worker listener.
+- Claims: all released.
 
 ## Next steps (ranked)
-1. **#216 round 4 → then a delta audit whose auditor WRITES A FRESH held-back set** (never shown
-   to the fixer) and scores it against O15's floor/ceiling; 🔴 grep prefixes first. Merge only
-   on a clean round and green CI; then rebase/retarget #217 and re-run the merged tree.
-   IN FLIGHT: ZacxDev/cairn#216. forcing: security — the redactor is the only control between raw
-   transcripts and the store (O1).
-2. **S3** (upload + transcript store in cairn-ui) and **S11** (client read ledger) — S11 must land
-   before transcripts are armed on any real instance, and O15's gate must pass too.
-   forcing: user — operator chose the build.
-3. **#215 follow-through** — DONE (merged, verified by content); delete `zach/transcripts-s0` once
-   no PR is based on it. forcing: user — operator asked for S0–S2.
+1. **(done) #216 redactor** — merged `7ca2e25` under O16; capture unarmed. forcing: security —
+   the redactor is the only control between raw transcripts and the store (O1).
+2. **S11** (client read ledger) next; then **S4–S10** per the plan. S3 is DONE (#224). Arming needs
+   S11 AND O15's gate AND AP1–AP4 — and probably a narrower capture scope (O16), so weigh S4+ against
+   that decision before building them. forcing: user — operator chose the build.
+3. **(done) #215 follow-through** — delete the now-unused `zach/transcripts-s0`, `-s1`, `-s2` and
+   `-s3` branches (every PR based on them is merged). forcing: user — operator asked for S0–S2.
 
 ## Gotchas / decisions / dead-ends
 - **`opencode export` silently truncates at ~8–96 KiB when piped (exit 0)** but is complete to a
@@ -67,3 +64,17 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
   (`tests/test_no_scrubbed_identifiers.py`) — spell proposed verbs without the prefix. via: command
 - **Real-transcript dry run (counts only):** 204 of 269 Claude sessions would be HELD (`*` in V)
   until the read ledger (S11) exists. via: measurement
+
+- **Heuristic redactor rounds did not converge on unseen data** — four fresh auditor-written
+  held-back sets scored 154 → 155 → 157 of 190 across rounds 4–6 while each round's own fixes
+  opened a new defect class (prose damage, identifier recovery hiding random tails, a budget test
+  coupled to the live tree and GOROOT). Do not resume rule-by-rule rounds; O16 records why. via: measurement
+- **A held-back set is spent once a fixer has seen it** — every round needs a NEW set written by an
+  auditor the fixer never saw, kept out of the repo and PRs. via: measurement
+- **`internal/redact` used to match its own `[redacted:…]` markers** (1,502 re-hits over seeds 1–40),
+  which would have made the pod re-check refuse every upload. S3 cuts marker regions out of a span
+  instead of dropping it; a value glued AFTER a marker (and a word-like value before one) still
+  leaks, at base too — declared residuals pinned by `TestAMarkerDoesNotShieldASecretBesideIt`. via: measurement
+- **The damage budget pins a FROZEN corpus** (`internal/redact/testdata/`); the live-tree and GOROOT
+  sweeps are opt-in (`-redact.live-budget`) because the live form failed on unrelated doc edits and
+  under Go 1.26. A whole-stdlib sweep still sees +112 lines the frozen corpus cannot. via: measurement
