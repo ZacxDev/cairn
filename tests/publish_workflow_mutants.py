@@ -139,11 +139,6 @@ MUTANTS = [
         "test_no_publish_can_be_cancelled_or_dropped_by_a_later_push",
     ),
     (
-        "cancel-an-in-progress-publish",
-        lambda t: t.replace("  cancel-in-progress: false\n", "  cancel-in-progress: true\n", 1),
-        "test_no_publish_can_be_cancelled_or_dropped_by_a_later_push",
-    ),
-    (
         "make-the-checkout-shallow",
         lambda t: t.replace("          fetch-depth: 0\n", "          fetch-depth: 1\n", 1),
         "test_the_checkout_is_not_shallow",

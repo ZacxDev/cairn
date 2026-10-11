@@ -507,22 +507,20 @@ def test_the_workflow_asks_for_exactly_the_permissions_it_needs(text: str) -> No
 
 
 def test_no_publish_can_be_cancelled_or_dropped_by_a_later_push(text: str) -> None:
-    """Every run is its own concurrency group, and nothing cancels it.
+    """Every run is its own concurrency group, so no other run can displace it.
 
     A group shared by more than one run is not enough even with
     `cancel-in-progress: false`: GitHub keeps one PENDING run per group, so a
     third push replaces the second one's waiting publish and that commit never
-    gets an image. Only a group no other run can join prevents that.
+    gets an image. Only a group no other run can join prevents that. The block
+    is pinned WHOLE, so a `cancel-in-progress` key added later fails here too —
+    it is inert in a per-run group, and in a shared one it is a second hazard.
     """
     conc = workflow_concurrency(text)
-    assert conc == {
-        "group": "publish-image-${{ github.run_id }}",
-        "cancel-in-progress": "false",
-    }, (
+    assert conc == {"group": "publish-image-${{ github.run_id }}"}, (
         f"the concurrency block is {conc!r}. Any group another run can join — "
         "`github.ref`, `github.workflow`, a constant — lets a later push drop a "
-        "PENDING publish, and `cancel-in-progress: true` cancels a running one; "
-        "either way a commit on `main` can end up with no `sha-` image."
+        "PENDING publish, so a commit on `main` can end up with no `sha-` image."
     )
 
 
