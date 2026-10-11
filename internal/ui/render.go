@@ -643,6 +643,9 @@ func shell(page string, v PageView, crumbs []crumb, body ...g.Node) g.Node {
 				// comment claiming singularity is exactly what stops the next person
 				// adding a third where it belongs.
 				wordmark(v.App, true),
+				// S5's Back and Reload (`pwa.go`): hidden outside an installed app's window, nothing at all
+				// when unarmed — and HERE, right after the wordmark, so the touch grid puts them on row 1.
+				pwaStandaloneNav(v.App),
 				// 🔴 THE ARCS PAGE'S ENTRY POINT, UNCONDITIONAL FOR THE SHARE LINK'S REASON BELOW: a
 				// page reachable only by typing its path reads as absent. Not gated on "is a journal
 				// configured" either — `GET /arcs` ANSWERS on a deployment without one, saying so.

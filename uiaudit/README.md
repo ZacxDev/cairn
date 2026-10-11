@@ -709,6 +709,31 @@ chromium were byte-identical, and two consecutive unsandboxed runs were too. ⚠
 ⚠ **The walk's worlds stay UNARMED** (`BootWorld` arms only when `pwa_test.go` passes `-app-*`). So the
 `/favicon.ico` carve-out is still live, and plan B5 (delete it) is not done.
 
+### S5 — standalone Back and Reload: a browser test, NOT a closing-condition clause
+
+`standalone_test.go`'s `TestStandaloneBackAndReload` boots ONE armed world and drives two browsers: a
+TAB, and a STANDALONE window made by stubbing `matchMedia("(display-mode: standalone)")` before any page
+script runs (CDP cannot emulate the query — the plan's measurement). The stub is the reachability
+control: the controls must be hidden without it and shown with it. Because `tailwind.css` keys the
+standalone layout on the REVEALED controls (`:has(…)`) rather than on the media query, the same stub
+renders the real standalone stylesheet, so the test READS it: no header row added at mobile/tablet (2
+rows either way), the walk's own `headerOrderBreaks`, no overflow, `position: sticky` (the header still
+at the top after a 400px scroll while the tab's has scrolled away), `overscroll-behavior-y: contain` vs
+`auto`; then scope → entry → Back lands on the scope page and Reload loads a fresh document.
+
+⚠ **`pwa_check.sh` does not read it.** The plan gives S5 no clause: the closing condition covers S5 by
+"merged, with its test plan", and its device behaviour only by the iPhone checklist (step 8). So this
+test runs in the module's own step (`go test ./...`) and counts toward its floors, nothing more.
+
+⚠ **The clicks are DISPATCHED** (`HTMLElement.click()`): chromedp's selector-based `Click` on Reload,
+after a Back, hung until the browser's budget ran out (measured once, chromium 154; the cause was not
+isolated). What the clicks test is the listeners; whether a finger can hit them is the box and layout
+reading.
+
+Measured at the head of the S5 branch: PASS under chromium 154.0.8037.92 (nixpkgs) and 152.0.7977.82
+(the flake's pin); RED at its parent (no controls); RED, with four messages per touch rung, against a
+binary whose `app.css` lost the three standalone rules.
+
 ## Round 1: what an adversarial read found, and the two things it got wrong
 
 Nine axes, blind. Every number this README quotes about itself was re-verified and found correct; the
@@ -1389,5 +1414,6 @@ indistinguishable from a fork PR by design.
 | `control_test.go` | the positive control, the structural-zero pair, the document-status gate |
 | `touch_test.go` | touch reachability (both halves, real chromium), the `target-size` and input-font controls, the journal world |
 | `pwa_test.go` | the closing condition's clauses (a), (b: name, icon, screenshots) and (e): chromium's installability and manifest verdicts over three boots, and `pwa.js`'s storage in four browsers |
+| `standalone_test.go` | S5: the standalone window's Back/Reload — hidden in a tab, revealed under a `matchMedia` stub, the sticky two-row header, and Back/Reload behaviour, in one armed world |
 | `pwa_check.sh` | the closing-condition ORCHESTRATOR: runs (a), (b), the walk's (c), the root module's (d) and (e); `--self-test` sabotages each |
 | `screenshots.go` | `uiaudit -screenshots <dir>`: the manifest's install screenshots, captured from the walk's world — the generator `flake.nix`'s `uiScreenshots` runs in the sandbox |
