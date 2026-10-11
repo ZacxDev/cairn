@@ -702,7 +702,15 @@ jobs:
           # 2883 passed, on the branch rebased onto `main` at the mutant-sharding merge (#233) —
           # a full local run with `--junitxml` — so at 2730 the gap would be 153, past `MAX_GAP`.
           # `2883 - min(50, max(1, 2883/20)) = 2833`.
-          FLOOR = 2833
+          # ⚠ 2833 -> 2835 FOR THE XDIST BRANCH, AND THIS TRANSITION AVERTED NOTHING. That
+          # branch adds NO collected test: `--collect-only` lists the SAME 2885 names on it
+          # and on `main` at the path-tiering merge (`comm -3` empty). So `main` itself
+          # already measured 2885, not the 2883 recorded above — a 2-test difference this
+          # line does not attribute — and the gap was 52 against a `MAX_GAP` of 100, passing
+          # unedited. The literal moves to put the margin back at 50, the same choice as
+          # the transitions above. Measured 2885 collected (2885 passed, `-n auto`), so
+          # `2885 - min(50, max(1, 2885/20)) = 2835`.
+          FLOOR = 2835
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
