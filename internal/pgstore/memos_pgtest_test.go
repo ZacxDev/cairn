@@ -262,6 +262,12 @@ func TestConcurrentSendsAtQuotaMinusOneCommitExactlyOne(t *testing.T) {
 	for i := 0; i < memo.SendsPerScopePerWindow-1; i++ {
 		r.mustSend(t, w, "alpha-notes", 0)
 	}
+	// 🔴 EVERY SEND THAT GETS AS FAR AS INSERTING THEN HOLDS ITS ROW UNCOMMITTED FOR 200 ms. Without
+	// this the race window was measured TOO NARROW TO BE A RACE: with the advisory lock REMOVED
+	// the test stayed green (1 committed, 19 refused), because the first send finished on the
+	// pool's one warm connection while the others were still OPENING theirs. Holding the commit
+	// makes the window wider than connection setup, so the lock is what serialises — not the pool.
+	defer pgstore.HoldMemoSendBeforeCommitForTest(r.store, func(*sql.Tx) { time.Sleep(200 * time.Millisecond) })()
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	ok, quota, other := 0, 0, []error{}
