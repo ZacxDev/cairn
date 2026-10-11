@@ -100,18 +100,21 @@ func TestEveryFrameTitleIsComposedByDocumentTitle(t *testing.T) {
 // call's LABEL argument is read from the AST, and a string literal in it carrying "cairn" is the old
 // pre-composed title coming back — `documentTitle` is the only place the product name is spelled.
 //
-// ⚠ IT IS A GUARD ON A WORD, AND THAT IS STATED RATHER THAN HIDDEN. It follows a label that is an
-// IDENTIFIER to every assignment of that name in the enclosing function — `title := "cairn — team"`
-// then `shell(title, …)` is the shape a merged-in page arrived with, on two branches the crawl does
-// not reach — and no further: a label returned by a helper, or held in a package-level variable,
-// walks past it.
+// ⚠ IT IS A GUARD ON A WORD, AND THAT IS STATED RATHER THAN HIDDEN. It follows every IDENTIFIER in
+// a label to every value that name is given — `:=`/`=`/`+=` and `var`/`const` in the enclosing
+// function, and `var`/`const` at package level in any file — and from there to the identifiers in
+// THOSE values, transitively. `title := "cairn — team"` then `shell(title, …)` is the shape a
+// merged-in page arrived with, on two branches the crawl does not reach. What still walks past
+// it: a label returned by a FUNCTION, a struct field or map value, and a name reused for an
+// unrelated value elsewhere in the same function is read too (keyed by name, so it over-reads
+// rather than under-reads).
 func TestNoPageLabelSpellsTheProductName(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	fset := token.NewFileSet()
-	calls, followed := 0, 0
+	var parsed []*ast.File
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") || f == "title.go" {
 			continue
@@ -120,30 +123,67 @@ func TestNoPageLabelSpellsTheProductName(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		parsed = append(parsed, file)
+	}
+	// collect records every value a name is given inside `root`: assignments (any operator)
+	// and `var`/`const` specs. An unpaired multi-assign (`a, b := f()`) gives nothing to read.
+	collect := func(into map[string][]ast.Expr, root ast.Node) {
+		ast.Inspect(root, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.AssignStmt:
+				if len(x.Lhs) == len(x.Rhs) {
+					for i, lhs := range x.Lhs {
+						if id, ok := lhs.(*ast.Ident); ok {
+							into[id.Name] = append(into[id.Name], x.Rhs[i])
+						}
+					}
+				}
+			case *ast.ValueSpec:
+				for i, name := range x.Names {
+					if i < len(x.Values) {
+						into[name.Name] = append(into[name.Name], x.Values[i])
+					}
+				}
+			}
+			return true
+		})
+	}
+	pkgLevel := map[string][]ast.Expr{}
+	for _, file := range parsed {
+		for _, decl := range file.Decls {
+			if gd, ok := decl.(*ast.GenDecl); ok {
+				collect(pkgLevel, gd)
+			}
+		}
+	}
+	calls, followed := 0, 0
+	for _, file := range parsed {
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil {
 				continue
 			}
-			// Every value assigned to each local name in this function, so a label passed as
-			// an identifier can be read through to the literals it may hold.
-			assigned := map[string][]ast.Expr{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				as, ok := n.(*ast.AssignStmt)
-				if !ok || len(as.Lhs) != len(as.Rhs) {
-					return true
-				}
-				for i, lhs := range as.Lhs {
-					if id, ok := lhs.(*ast.Ident); ok {
-						assigned[id.Name] = append(assigned[id.Name], as.Rhs[i])
-					}
-				}
-				return true
-			})
-			refuse := func(e ast.Expr) {
+			local := map[string][]ast.Expr{}
+			collect(local, fn.Body)
+			// read reports every "cairn" literal in e, then follows each identifier in it to the
+			// values its name is given — once per name, so a self-referencing `title += …` ends.
+			var read func(e ast.Expr, seen map[string]bool)
+			read = func(e ast.Expr, seen map[string]bool) {
 				ast.Inspect(e, func(m ast.Node) bool {
-					if lit, ok := m.(*ast.BasicLit); ok && lit.Kind == token.STRING && strings.Contains(lit.Value, "cairn") {
-						t.Errorf("%s: the page label %s spells the product name — `documentTitle` adds it", fset.Position(lit.Pos()), lit.Value)
+					switch x := m.(type) {
+					case *ast.BasicLit:
+						if x.Kind == token.STRING && strings.Contains(x.Value, "cairn") {
+							t.Errorf("%s: the page label %s spells the product name — `documentTitle` adds it", fset.Position(x.Pos()), x.Value)
+						}
+					case *ast.Ident:
+						if seen[x.Name] {
+							return true
+						}
+						seen[x.Name] = true
+						for _, v := range append(append([]ast.Expr(nil), local[x.Name]...), pkgLevel[x.Name]...) {
+							followed++
+							read(v, seen)
+						}
 					}
 					return true
 				})
@@ -157,40 +197,28 @@ func TestNoPageLabelSpellsTheProductName(t *testing.T) {
 				if !ok {
 					return true
 				}
-				var label ast.Expr
 				switch {
 				case id.Name == "shell" && len(call.Args) > 0:
-					label = call.Args[0]
+					calls++
+					read(call.Args[0], map[string]bool{})
 				case id.Name == "documentTitle" && len(call.Args) > 1:
-					label = call.Args[1]
-				default:
-					return true
+					calls++
+					read(call.Args[1], map[string]bool{})
 				}
-				calls++
-				refuse(label)
-				ast.Inspect(label, func(m ast.Node) bool {
-					if name, ok := m.(*ast.Ident); ok {
-						for _, rhs := range assigned[name.Name] {
-							followed++
-							refuse(rhs)
-						}
-					}
-					return true
-				})
 				return true
 			})
 		}
 	}
-	// Fewer than ten label call sites means the walk is not reaching them, and no followed
-	// assignment at all means the identifier half is reading nothing (the Team page's label is
-	// a local variable assigned three times).
+	// Fewer than ten label call sites means the walk is not reaching them, and no followed value
+	// at all means the identifier half is reading nothing (the Team page's label is a local
+	// assigned three times).
 	if calls < 10 {
 		t.Fatalf("found %d label call site(s) — the walk is reaching nothing", calls)
 	}
 	if followed == 0 {
-		t.Fatalf("followed no label identifier to an assignment — the variable half is reaching nothing")
+		t.Fatalf("followed no label identifier to a value — the identifier half is reading nothing")
 	}
-	t.Logf("%d label call site(s) read, %d assignment(s) followed", calls, followed)
+	t.Logf("%d label call site(s) read, %d value(s) followed", calls, followed)
 }
 
 // TestEveryPageCarriesTheInstanceLabel is the BEHAVIOURAL half: on a labelled deployment every

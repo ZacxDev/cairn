@@ -4345,12 +4345,15 @@ frames — the test logs how many pages it reached; a count written here went st
 saw a well-formed call and the crawl never reaches that branch (the fixture has no arc journal). It
 is a guard on a word, and says so.
 
-⚠ **It follows a label IDENTIFIER to its assignments in the enclosing function, because a merge
-needed it to.** The Team page arrived from `main` with `title := "cairn — team"` and two more
-assignments on branches, passed as `shell(title, …)`. The crawl caught the bare `/team` and neither
-scoped shape; the word guard, reading only literals in the argument, caught none. It now reads the
-right-hand side of every assignment to a name the label mentions (red on all three before the labels
-were fixed), and fails if it followed no assignment at all.
+⚠ **It follows a label's IDENTIFIERS to the values they are given, because a merge needed it to.**
+The Team page arrived from `main` with `title := "cairn — team"` and two more assignments on
+branches, passed as `shell(title, …)`. The crawl caught the bare `/team` and neither scoped shape;
+the word guard, reading only literals in the argument, caught none. It now follows every identifier
+in a label to every value that name is given — assignments (`:=`, `=`, `+=`) and `var`/`const` in
+the enclosing function, and `var`/`const` at package level — and on through the identifiers in those
+values, transitively (red on all three Team labels before they were fixed, and on a `var`, a local
+`const`, a two-hop local and a package-level `var`, each of which a one-hop, assignment-only first
+draft let through). It fails if it followed no value at all.
 
 ## The RED proof
 
@@ -4362,6 +4365,6 @@ were fixed), and fails if it followed no assignment at all.
 
 ## What these guards still cannot see
 
-- A label spelling "cairn — " that reaches `shell` from a HELPER'S RETURN or a package-level variable,
-  on an uncrawled branch (the word guard follows a local identifier's assignments and nothing further).
+- A label spelling "cairn — " that reaches `shell` from a FUNCTION'S RETURN, a struct field or a map
+  value, on an uncrawled branch (the word guard follows names, not calls or selectors).
 - How a given browser, or an installed standalone window, truncates or decorates the title.

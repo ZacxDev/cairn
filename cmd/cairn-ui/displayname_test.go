@@ -38,7 +38,10 @@ func TestTheHeaderSaysWhoTheJournalSays(t *testing.T) {
 		t.Fatal(err)
 	}
 	port := aPortNothingIsListeningOn(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	// Generous on purpose: this child is a real process, and under a loaded host (the mutation
+	// battery runs this package once per mutant) a 2-second single-shot request timed out at
+	// sign-in and was scored as the killer of mutants it never saw.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	cmd := exec.CommandContext(ctx, self,
 		"-control-journal", journal,
 		"-store", t.TempDir(),
@@ -51,7 +54,7 @@ func TestTheHeaderSaysWhoTheJournalSays(t *testing.T) {
 	c.waitFor(t, "the serving line", func() bool { return strings.Contains(c.out.String(), "serving") })
 
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
-	noRedirect := &http.Client{Timeout: 2 * time.Second,
+	noRedirect := &http.Client{Timeout: 20 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	req, _ := http.NewRequest(http.MethodPost, base+ui.SignInPath,
 		strings.NewReader(url.Values{ui.FieldToken: {"fixture-startup-credential-not-a-real-token"}}.Encode()))
