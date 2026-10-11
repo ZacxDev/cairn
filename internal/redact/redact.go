@@ -215,7 +215,7 @@ func (r *Redactor) walk(v any, o scanOpts) (any, []Hit) {
 				t.pairs[i].v = nv
 				hits = append(hits, hs...)
 			// A value that is ALREADY a marker is left alone by every whole-value case below
-			// ([touchesMarker] says why the table must be quiet on its own output).
+			// ([withoutMarkers] says why the table must be quiet on its own output).
 			case isString && isMarker(s):
 			case isString && isJWK && jwkPrivate[k] && s != "":
 				// A JSON Web Key's PRIVATE members carry no secret-shaped name: `d` (RSA/EC/OKP),

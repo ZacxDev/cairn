@@ -4597,6 +4597,17 @@ MUTANTS: tuple[Mutant, ...] = (
         "trust — and a row appended afterwards would authenticate a second owner (Q7's wall).",
         pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
     ),
+    Mutant(
+        name="redact-marker-drops-the-whole-span",
+        path="internal/redact/marker.go",
+        old="\t\tif m[0] < sp.lo {",
+        new="\t\tif m[0] < sp.hi {",
+        killer="TestAMarkerDoesNotShieldASecretBesideIt",
+        why="a span that touches a marker reads as ABOUT the marker, so dropping it whole looks like the "
+        "obvious way to keep the table quiet on its own output — and it ships a key-context value "
+        "glued directly before a marker, which the base caught.",
+        pkgs=PKGS + ("./internal/redact/",),
+    ),
 )
 
 
