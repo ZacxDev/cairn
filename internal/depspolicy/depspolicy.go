@@ -26,9 +26,10 @@
 //     `TestTheModuleSetIsExactlyTheAllowlist`. A module appearing is a refusal; a
 //     module DISAPPEARING is also a refusal, so the allowlist cannot quietly become
 //     a list of things that are no longer there.
-//   - The import graph out of the two binaries that are DEPLOYED or INSTALLED —
-//     `TestNoPackageTheCLIOrThePodLINKSReachesAThirdPartyModule`. The allowlist says
-//     which modules exist; this says none of them reaches the pod or the CLI.
+//   - The import graph out of the binaries that are DEPLOYED or INSTALLED —
+//     `TestNoPackageTheCLIOrThePodLINKSReachesAThirdPartyModule` over [LinkedBinaryRoots]
+//     (the pod, the CLI, and the transcript capture agent). The allowlist says which
+//     modules exist; this says none of them reaches those binaries.
 //
 // 🔴 THE SECOND IS THE ONE THAT KEEPS THE POD CLEAN, AND THE FIRST CANNOT SUBSTITUTE
 // FOR IT. An allowlist of one entry is satisfied by a tree in which `internal/api`
@@ -46,7 +47,7 @@
 // inside the derivation. `packages.default` is `mkGoClient`, so `nix run
 // github:ZacxDev/cairn` runs them; the `nix` CI job builds `cairn-server-go`,
 // `cairn-go` and `cairn-ui` by name, so they run there three times. A third-party
-// import reaching `cmd/cairn` or `cmd/cairn-server` does not produce a review comment
+// import reaching `cmd/cairn`, `cmd/cairn-server` or `cmd/cairn-capture` does not produce a review comment
 // or a red tick beside a green artefact — it produces a derivation that does not
 // build, which is the same consequence `vendorHash = null` had.
 //
@@ -58,13 +59,22 @@
 // applying. Deleting `depspolicy_test.go` deletes the refusal, and every derivation
 // above then builds green over a tree with no policy in it at all.
 //
-// What defends against that is the `ok` floor in `.github/workflows/ci.yml`'s `go`
-// job: it counts the packages that report `ok` and refuses below the measured count,
-// so a package whose tests disappear takes CI red. That defence is exactly one
-// package wide, and it is worth knowing its edges:
+// What defends against that is the `go` job in `.github/workflows/ci.yml`, in two
+// steps that replaced a hand-measured `ok` floor: the `ok` lines of `go test -race ./...`
+// must EQUAL the packages `go list -race ./...` reports as having test files for that
+// build, and `tests/go_tested_packages.py` runs that same `go list` in a detached
+// worktree of the base commit and refuses a package that was tested there, is not tested
+// in this run, and whose directory still holds any `.go` file. So a package whose tests
+// stop RUNNING takes CI red — deleted, tagged out (`//go:build never`, `//go:build !race`),
+// or renamed to a name `go` ignores (`_x_test.go`, `.x_test.go`) alike, because both sides
+// ask `go list` rather than reading file names. That defence is exactly one package wide,
+// and it is worth knowing its edges:
 //
-//   - It notices this FILE going, because `internal/depspolicy` would stop reporting
-//     `ok` and the count would drop.
+//   - It notices this FILE going — by the base comparison, NOT by the equality: deleting
+//     a package's last `_test.go` removes it from both sides of the equality at once.
+//     That half needs a base commit; with none the step refuses rather than passing.
+//   - A package removed OUTRIGHT (no `.go` file left in its directory) passes: that is not
+//     a narrowing, and it is also how deleting this whole package would read.
 //   - It does NOT notice one `func Test…` being deleted from a file that keeps
 //     others. The package still reports `ok`, the count does not move, and nothing in
 //     this repository observes the difference.
@@ -76,7 +86,8 @@
 // `THE IMPORT BAN FAILED for …/cmd/cairn` naming the edge. With that import still there
 // and `depspolicy_test.go` DELETED, the same `nix build .#cairn-go` exits **0** over a
 // tree that links the HTML library into the installed CLI — 16 `ok` lines in its check
-// phase instead of 17 — and the `go` job's floor is the only thing that refuses.
+// phase instead of 17 — and the `go` job (then a floor, now the base comparison above) is
+// the only thing that refuses.
 //
 // The honest summary: the replacement is as strong as `vendorHash = null` against ADDING
 // a dependency, and weaker against REMOVING the thing that checks. If the last
@@ -100,10 +111,10 @@
 //     checked. (It would be unreachable ANYWAY — a package in another module cannot be
 //     imported by `cmd/cairn` without a `require` in the root `go.mod`, which the allowlist
 //     WOULD see. So this surface is belt-and-braces; the two above are the real holes.)
-//   - The `ok` floor. `go build ./...` and `go test ./...` do not descend into a nested
-//     module, so its packages never report `ok`, the count does not move, and the floor in
-//     `.github/workflows/ci.yml`'s `go` job is blind to the module existing, to its tests
-//     being deleted, and to its dependencies.
+//   - The `ok` count. `go build ./...` and `go test ./...` do not descend into a nested
+//     module, so its packages never report `ok`, and neither the derived count nor the
+//     base comparison in `.github/workflows/ci.yml`'s `go` job (both exclude nested
+//     modules) sees the module existing, its tests being deleted, or its dependencies.
 //   - `flake.nix`'s `onlyGo` filter. That filter is an ALLOWLIST — `cmd`, `internal`,
 //     `tests`, `tests/conformance` and four named files — so a new top-level directory
 //     reaches no Go derivation at all. Nothing in it is built or tested by any `nix build`.
@@ -440,9 +451,14 @@ func walkNestedModuleDirs(root string) ([]string, error) {
 // round instead — as the POSITIVE CONTROL. A walk that reports zero third-party
 // imports everywhere, including out of the binary that certainly has one, is a walk
 // wired to nothing, and a zero from such a walk is indistinguishable from a pass.
+//
+// `cmd/cairn-capture` is the third (S2 of the transcripts/plugins plan): it runs on every capturing
+// host with read access to every session transcript there, so it gets the CLI's discipline.
+// `TestTheBanSeesANonTestImportInTheCaptureAgent` is its negative control.
 var LinkedBinaryRoots = []string{
 	ModulePath + "/cmd/cairn",
 	ModulePath + "/cmd/cairn-server",
+	ModulePath + "/cmd/cairn-capture",
 }
 
 // UIBinaryRoot is the positive control's root: the one binary that MUST reach a

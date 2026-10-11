@@ -51,6 +51,7 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/authz"
+	"github.com/ZacxDev/cairn/internal/codesrc"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/control/tokenfile"
 	"github.com/ZacxDev/cairn/internal/identity"
@@ -139,6 +140,13 @@ type Server struct {
 	// `registrations-unconfigured` (operator decision Q2). Set by `cmd/cairn-server` before
 	// serving; nothing here resolves or checks it again.
 	ArcJournal string
+	// SourceJournal is the code-sources journal's path (`internal/codesrc`), already resolved and
+	// checked by `codesrc.ResolveJournalPath`, or "" — the designed OFF state, in which
+	// `sources/<scope>` answers `sources-unconfigured`. Set by `cmd/cairn-server` from
+	// $CAIRN_SOURCE_JOURNAL (an environment variable and NO flag: an old binary ignores an unknown
+	// variable and refuses an unknown flag, so the variable is the rollback story). The pod only
+	// ever READS it — `TestThePodHasNoCallSiteOfJournalSet` is what keeps it so.
+	SourceJournal string
 
 	tokens atomic.Pointer[[]authz.TokenRecord]
 
@@ -234,6 +242,7 @@ func New(storeRoot string, tokens []authz.TokenRecord, trustedProxies []netip.Pr
 		"sessions": {arity: 2, handler: s.sessions},
 		"arcs":     {arity: 2, handler: s.arcsList},
 		"arc":      {arity: 3, handler: s.arcShow},
+		"sources":  {arity: 2, handler: s.sourcesShow},
 	}
 	s.writeRoutes = map[writeKey]writeRoute{
 		{"POST", "entry"}: {arity: 4, tail: []string{"bullets"}, handler: s.appendBullet},
@@ -931,11 +940,16 @@ func (rq *request) finish(err error) {
 	var unreadable *store.EntryUnreadableError
 	var revisionUnreadable *store.RevisionUnreadableError
 	var journalUnreadable *arcs.JournalUnreadableError
+	var sourcesUnreadable *codesrc.JournalUnreadableError
 	switch {
 	case errors.As(err, &journalUnreadable):
 		// The arc journal is CONFIGURED and could not be read: "could not look", never "no arc
 		// registered" — the four-state rule, for the registry.
 		rq.storeUnreachable(journalUnreadable.Error() + "\n")
+	case errors.As(err, &sourcesUnreadable):
+		// The sources journal: the same rule and the SAME wire answer (no new token). A configured
+		// journal that cannot be read is "could not look", never "undeclared".
+		rq.storeUnreachable(sourcesUnreadable.Error() + "\n")
 	case errors.As(err, &badReq):
 		// A caller error, and the caller is authenticated, so it may be told what it
 		// did wrong.
@@ -1372,6 +1386,39 @@ func (s *Server) arcShow(rq *request, parts []string, _ url.Values) error {
 		return err
 	}
 	rendered, err := s.Renderer.Arc(s.StoreRoot, parts[0], parts[1], rq.visible, snap)
+	if err != nil {
+		return err
+	}
+	return rq.serveReport(parts[0], rendered)
+}
+
+// sourcesShow is the Go-only `GET`/`HEAD sources/<scope>`: the scope's declared code sources
+// (decision 10 of `claudedocs/plan-cairn-scope-refs.md`).
+//
+// 🔴 AUTHORISED BY `rq.visible` AND NOTHING ELSE — the scope's existence is the narrowed index's
+// answer inside `report.Sources`, so a scope this caller cannot read answers exactly like one that
+// does not exist. The journal is re-read on every request (no cache, the arcs arrangement): a
+// declaration the browser surface writes is visible the moment its append returns.
+//
+// 🔴 THE THREE JOURNAL STATES: unset → `sources-unconfigured` (200); configured but unreadable →
+// `*codesrc.JournalUnreadableError`, which `finish` answers as `store-unreachable` (503); configured
+// and absent → every scope undeclared, with `journal=absent` on the body.
+func (s *Server) sourcesShow(rq *request, parts []string, _ url.Values) error {
+	var snap *codesrc.Snapshot
+	if s.SourceJournal != "" {
+		got, sourcesErr := codesrc.Journal{Path: s.SourceJournal}.Read()
+		if sourcesErr != nil {
+			return sourcesErr
+		}
+		if got.Damaged() {
+			// The counts go to the operator log, never the wire: they count lines over EVERY
+			// scope, including ones this caller cannot read (the arcs rule).
+			s.warn(fmt.Sprintf("cairn: sources journal %s: %d unreadable record(s) skipped, torn tail: %v",
+				s.SourceJournal, got.Skipped, got.TornTail))
+		}
+		snap = &got
+	}
+	rendered, err := s.Renderer.Sources(s.StoreRoot, parts[0], rq.visible, snap)
 	if err != nil {
 		return err
 	}

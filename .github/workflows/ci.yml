@@ -71,15 +71,16 @@ jobs:
       # and the run-history measurement that retired it are recorded once, in
       # `tests/test_publish_workflow.py`'s ordering test, rather than restated here.
       #
-      # 🔴 THE COUNT ON THE STEP NAME IS PINNED TO `MUTANTS` BY
-      # `tests/test_control_mutant_count_is_pinned.py`. The authz battery's
-      # number went stale twice in this same file, once in a step NAME — which
-      # is the copy a reader sees in the Actions UI — so this one is not left to
-      # prose. 22 mutants, each required to be killed by the test that NAMES its
-      # property; a kill by any other test is reported MISATTRIBUTED. It runs
-      # BEFORE the suite because a suite green over an inert guard is the thing
-      # it exists to rule out, and it takes about six seconds.
-      - name: prove every publish-workflow guard can go RED (22 mutants)
+      # 🔴 THE STEP NAME CARRIES NO COUNT, AND `tests/test_control_mutant_count_is_pinned.py`
+      # REFUSES ONE COMING BACK. The authz battery's number went stale twice in this same
+      # file, once in a step NAME, and a pinned copy fixed staleness but made every PR that
+      # adds a row edit the same line as every other such PR. The battery prints its own
+      # count (`<N> mutants, <K> problem(s)`), which is the only copy that cannot disagree
+      # with `MUTANTS`. Every mutant is required to be killed by the test that NAMES its
+      # property; a kill by any other test is reported MISATTRIBUTED. It runs BEFORE the
+      # suite because a suite green over an inert guard is the thing it exists to rule out,
+      # and it takes about six seconds.
+      - name: prove every publish-workflow guard can go RED (each mutant on the test that names it)
         run: python3 tests/publish_workflow_mutants.py
 
       # 🔴 READ THE COLLECTED COUNT, NOT JUST THE EXIT CODE. pytest can collect
@@ -612,7 +613,14 @@ jobs:
           # reason that paragraph gives.
           # Measured 2727 collected on the branch, so
           # `2727 - min(50, max(1, 2727/20)) = 2677`.
-          FLOOR = 2677
+          # ⚠ 2677 -> 2730 FOR THE DERIVED-COUNTS BRANCH'S FIX ROUND, AND THIS ONE WOULD HAVE
+          # FIRED. The tree measured 2772 collected without the round (gap 95, already near
+          # the bound), and the round adds the 8 parametrised cases of
+          # `tests/test_go_tested_packages.py` — collected here, SKIPPED here (no Go
+          # toolchain), run by the `go` job — taking the gap to 103 against a `MAX_GAP` of
+          # 100. Measured 2780 collected on the branch, so
+          # `2780 - min(50, max(1, 2780/20)) = 2730`.
+          FLOOR = 2730
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -728,11 +736,11 @@ jobs:
       # over a module with no test files exits 0 — and that is not hypothetical
       # here: the flake's own check phase was measured running ZERO tests while
       # reporting green, because a `subPackages` narrowing had scoped the test
-      # walk to the one directory that has none. The floor makes that impossible.
+      # walk to the one directory that has none.
       #
       # 🔴 AND `-race` IS ON THE SAME INVOCATION RATHER THAN A SECOND STEP, SO THE `ok`
-      # FLOOR BELOW COVERS THE RUN THAT ACTUALLY HAPPENED. A separate race step would
-      # leave the floor enforced on the plain run and the race run ungated — a test walk
+      # COUNT BELOW COVERS THE RUN THAT ACTUALLY HAPPENED. A separate race step would
+      # leave the count enforced on the plain run and the race run ungated — a test walk
       # that narrowed under `-race` would then report nothing. Measured cost on one
       # machine, cold build cache (which is what this job has: `cache: false` above):
       # 14 s plain -> 22 s with `-race`, 15 `ok` lines either way, zero races. The
@@ -747,103 +755,119 @@ jobs:
       # a DATA race, and only on an interleaving some test actually produces. It is green
       # on a LOGICAL race — `internal/control/cache_test.go` carries one it cannot see,
       # two refreshes perfectly synchronised and committing in the wrong order.
-      - name: go test, under `-race`, with an `ok` floor
+      - name: go test, under `-race`, with the `ok` count derived from `go list`
+        env:
+          # 🔴 ONE PATTERN, PINNED. Narrowing the run's pattern and the derivation's to the
+          # SAME subtree keeps an equality green, so the run reads it from here and refuses
+          # anything but the whole module; the derivation (`--list`) and the base comparison
+          # below walk `./...` unconditionally (`PATTERN` in `tests/go_tested_packages.py`).
+          GO_PKGS: ./...
         run: |
           set -o pipefail
-          go test -race ./... | tee /tmp/go-test.txt
-          ok=$(grep -c '^ok  ' /tmp/go-test.txt || true)
-          # NINETEEN packages carry tests, measured on the MERGED tree: api, authz, client,
-          # cmd/cairn-server, cmd/cairn-ui, control, control/tokenfile, depspolicy, doctor,
-          # envalias, hostid, identity, netid, pytext, report, snapshot, store, ui, write.
-          # 🔴 NINETEEN IS A MERGE RESULT, AND NEITHER SIDE COULD SEE IT. Two branches each
-          # added ONE package and each measured EIGHTEEN correctly for its own tree —
-          # `cmd/cairn-ui` with the share flow, `envalias` with the `CAIRN_*` ledger. Taking
-          # either side's number wholesale puts the floor one BELOW the merged count, which
-          # is the free-deletion defect this comment already documents twice. The count was
-          # re-measured on the merged tree rather than computed from either side. It was
-          # NINE at P1b; `client` and
-          # `doctor` arrived with the Go CLIENT, `control` with P3a, `control/tokenfile`
-          # with the control-plane wiring, `cmd/cairn-server` with the gate on the
-          # authority refresh loop — which is the only thing bounding the token-file
-          # adapter's declared divergence and had no test of any kind before it — and
-          # `identity` with P4's authenticator interface and its two new backends, and
-          # `depspolicy` + `ui` with the web UI's phase A — `depspolicy` is the module
-          # allowlist and the import ban that replaced `vendorHash = null`, `ui` is the
-          # renderer, its escaping guard and its raw-node ban. TWO packages arrived last and
-          # independently: `cmd/cairn-ui`, with the share flow's startup refusals — the
-          # control-journal guard, whose first two spellings were each walked around by a
-          # state nobody had tested — and `envalias`, with the `SUBSYSTEM_STORE_*` → `CAIRN_*`
-          # ledger, the resolver and the whitespace-blank regression arm. Measured at 19 then; the
-          # floor was not moved as `write`, `snapshot`, `netid`, `pgstore`, `invite`, `touch` and
-          # `arcs` gained tests, and stood 4 below the count for weeks. RE-MEASURED AT 23 over the
-          # package set `./...` of module `github.com/ZacxDev/cairn` on a developer host (go
-          # 1.25, `nix develop`), on `main` at the merge of the narrowed-credential fix (#195):
-          # 23 `ok`, 0 `FAIL`, 2 `[no test files]`. MOVED TO 24 WITH `internal/presence` (S2 of
-          # the arcs/presence plan), measured the same way on that branch's tree: 24 `ok`, 0
-          # `FAIL`, 2 `[no test files]` — re-measure on the MERGED tree if anything else landed.
-          # MOVED TO 25 WITH `internal/transcript` (S0 of the transcripts/plugins plan: the
-          # classification table and its shape ledger), measured the same way on that branch's
-          # tree: 25 `ok`, 0 `FAIL`, 2 `[no test files]`. MOVED TO 26 WITH `internal/redact` (S1:
-          # the redactor and its corpus), measured the same way on that branch's tree: 26 `ok`, 0
-          # `FAIL`, 2 `[no test files]`. S1's review round 4 added `internal/redact/cmd/redact-heldback`
-          # (O15's arming gate, a thin `main` over tested library code): 26 `ok`, 0 `FAIL`, 3
-          # `[no test files]` — the floor does not move, because a package without tests adds no `ok`.
-          # ⚠ THE NIX CHECK PHASES ARE NOT RE-MEASURED AT TWENTY-THREE THROUGH TWENTY-SIX. They run the same walk and
-          # were last read at 18 (`nix log` for both `cairn-server` and `cairn-go`, before
-          # `cmd/cairn-ui` carried tests) and at 17 before that. Read those as a RECORD of the
-          # tree they were taken on, never as a current reading — re-spelling a number is not
-          # re-measuring it.
-          #
-          # 🔴 THE FLOOR IS THE COUNT ITSELF — **NOT** ONE BELOW IT, AND THE ARITHMETIC IS
-          # WRITTEN OUT HERE RATHER THAN ASSERTED AS A PROPERTY, BECAUSE THE PROPERTY WAS
-          # ASSERTED AND WAS FALSE. This comment used to read "the floor is ONE BELOW that,
-          # so deleting a package's tests fails here" while the test was `-lt 16` against
-          # seventeen packages. Deleting one package's tests gives 16, and 16 is not
-          # `< 16` — measured: with `internal/depspolicy`'s tests removed, `ok=16` and the
-          # old condition PASSED. A floor one below the count buys exactly one free
-          # deletion, which is the only deletion anybody would make. The same defect was in
-          # the pair this branch inherited (fifteen packages, `-lt 14`), so it is carried
-          # forward rather than introduced here.
-          #
-          # 🔴 AND IT REGENERATED ON THIS VERY BRANCH, WHICH IS WHY THE "MOVE IT" LINE BELOW
-          # IS NOT ENOUGH ON ITS OWN. `internal/envalias` was added here and the floor was
-          # left at 17, so the arithmetic was back to one-below-the-count and the free
-          # deletion was `internal/envalias/envalias_test.go` — the very file this branch
-          # exists to add. Measured on the PRE-MERGE branch, where the module had eighteen
-          # test packages: unmutated `ok=18`; with that file removed `ok=17`, and
-          # `17 -lt 17` is FALSE, so the old gate reported success while the branch's own
-          # regression arm was gone. ⚠ Those two numbers are a RECORD of that tree, not of
-          # this one — the merge with the share flow made the count nineteen. Adding a
-          # package and not moving this number does not fail late — it stops failing at all.
-          #
-          # So: `ok < 26` refuses. 26 passes (the tree, measured). 25 refuses (one
-          # package's tests gone). 27 passes (a package ADDED), which is the other half of
-          # the property and the reason this is a floor rather than an equality. 🔴 THE THREE
-          # NUMBERS IN THIS SENTENCE AND THE LEDGER ABOVE MOVE TOGETHER WITH THE CONDITION,
-          # IN ONE COMMIT — an audit round caught the commit that moved the condition to 18
-          # leaving all of them at 17, including this sentence saying in bold that 17 passes.
-          # A maintainer whose deletion failed the gate would have read that, concluded the
-          # gate was misconfigured, and set it back — restoring the exact off-by-one this
-          # block was written about. 🔴 AND THE NUMBERS MOVE ON A MERGE TOO, NOT ONLY ON AN
-          # EDIT: two branches each adding one package each measured 18 CORRECTLY for their
-          # own tree, and 18 is one BELOW the merged count. Re-measure on the merged tree;
-          # neither side's number is the answer. It is the same shape as the
-          # Python collected-test floor, and for the same reason: `go test` over a package
-          # with no test files exits 0, so the exit code alone cannot tell a green suite
-          # from an absent one.
-          #
-          # 🔴 MOVE THIS NUMBER WITH THE PACKAGE COUNT, IN THE SAME COMMIT. A floor left
-          # behind does not fail late — it stops failing at all, once per package of lag.
-          #
-          # ⚠ AND IT DEFENDS THE PACKAGE, NOT THE TEST. Deleting one `func Test…` from a
-          # file that keeps others leaves `ok` at 26 and this gate green. That gap is
-          # stated in `internal/depspolicy`'s package doc, where the guarantee it defends
-          # is written down.
-          echo "packages with passing tests: $ok"
-          if [ "$ok" -lt 26 ]; then
-            echo "REFUSING: only $ok package(s) reported ok — the test walk narrowed"
+          if [ "$GO_PKGS" != "./..." ]; then
+            echo "REFUSING: the test walk's pattern is '$GO_PKGS', not './...' — a narrowed walk"
             exit 1
           fi
+          go test -race "$GO_PKGS" | tee /tmp/go-test.txt
+          ok=$(grep -c '^ok  ' /tmp/go-test.txt || true)
+          # 🔴 THE EXPECTED COUNT IS DERIVED, NOT WRITTEN DOWN, AND THE CHECK IS AN EQUALITY.
+          # This used to be `[ "$ok" -lt N ]` with N a hand-measured literal, and that literal
+          # failed every way a hand-stated count can: it sat one BELOW the count (buying one
+          # free deletion — measured, `ok=16` passed `-lt 16` with a package's tests removed),
+          # it stood four below for weeks while packages gained tests, and two branches that
+          # each added a package each measured their own tree correctly and wrote a number one
+          # below the MERGED count. Every PR adding a tested package edited the same line, so
+          # every pair of such PRs conflicted on it.
+          #
+          # `go list` with the SAME build flags as the run (`-race` sets the `race` tag) names
+          # every package of this module that has a `_test.go` file for that build; `go test`
+          # prints exactly one `ok  ` line for each of them that passes, and none for a package
+          # with no test files. So the two must be EQUAL. A package whose tests silently stop
+          # running — a narrowed walk, a package that drops out of the run — makes `ok` SMALLER
+          # than the derived count and refuses here, which the old floor also did; a package
+          # ADDED needs no edit anywhere, which is the point. `./...` excludes the nested
+          # `uiaudit` module on both sides alike.
+          #
+          # ⚠ WHAT THE EQUALITY CANNOT SEE ON ITS OWN, AND THE NEXT STEP COVERS: deleting a
+          # package's LAST `_test.go` file removes it from BOTH sides, so `ok == expected`
+          # stays green. The old floor caught that (it is how `internal/depspolicy`'s package
+          # doc says its own deletion is noticed), so the next step compares the set of tested
+          # packages against the base commit instead of against a number.
+          #
+          # ⚠ AND IT DEFENDS THE PACKAGE, NOT THE TEST. Deleting one `func Test…` from a file
+          # that keeps others leaves both counts unchanged and this gate green. That gap is
+          # stated in `internal/depspolicy`'s package doc, where the guarantee it defends is
+          # written down.
+          #
+          # The list comes from `tests/go_tested_packages.py --list` rather than an inline
+          # `go list` so that this count and BOTH sides of the base comparison below are one
+          # template, one flag set and one pattern — the comparison's whole premise.
+          python3 tests/go_tested_packages.py --list > /tmp/go-tested-packages.txt
+          expected=$(wc -l < /tmp/go-tested-packages.txt)
+          echo "packages with test files (go list -race ./...): $expected"
+          echo "packages with passing tests (ok lines):   $ok"
+          # The POSITIVE CONTROL on the derivation itself: a `go list` that printed nothing
+          # (a template typo, a wrong pattern) would make `expected` 0, and 0 == 0 would pass
+          # a run that tested nothing.
+          if [ "$expected" -lt 1 ]; then
+            echo "REFUSING: go list derived 0 tested packages — the derivation is broken, not the tree"
+            exit 1
+          fi
+          if [ "$ok" -ne "$expected" ]; then
+            echo "REFUSING: $ok package(s) reported ok, but $expected have test files — the test walk narrowed"
+            grep '^ok  ' /tmp/go-test.txt | awk '{print $2}' | sort > /tmp/go-ok-packages.txt
+            echo "tested packages with no ok line:"
+            comm -23 /tmp/go-tested-packages.txt /tmp/go-ok-packages.txt
+            exit 1
+          fi
+
+      # 🔴 THE HALF THE EQUALITY ABOVE IS BLIND TO: A PACKAGE THAT HAD TESTS ON THE BASE AND
+      # HAS NONE NOW, WHILE ITS CODE IS STILL HERE. That is deleting `depspolicy_test.go` —
+      # the deletion `internal/depspolicy`'s package doc says CI refuses — and it moves the
+      # derived count and the `ok` count down together. So the HEAD list the step above
+      # wrote is compared against the SAME `go list -race ./...` run in a detached worktree of
+      # the commit this change is measured from (the PR's base, the merge queue's base, or
+      # the previous `main` on a push), and a package that LOST its tests while its
+      # directory still holds `.go` files refuses. A package removed outright passes.
+      #
+      # 🔴 THE SAME INSTRUMENT ON BOTH SIDES, BECAUSE A STATIC ONE WAS WALKED FOUR WAYS. The
+      # first draft read both sides with a rule over `git ls-tree`; `//go:build never`,
+      # `//go:build !race`, and a rename to `_x_test.go` or `.x_test.go` each dropped a
+      # package from the run while it still looked tested to that rule, and both gates stayed
+      # green. The script's docstring has the detail.
+      #
+      # The script's END-TO-END control runs first, over a two-commit repository it builds:
+      # a base with a test and a head with it tagged out must exit 1. It is the only thing
+      # that exercises the READER (a base side silently read at HEAD passes every real
+      # tree), so a skip here refuses like the ledger step's does.
+      - name: no package lost its tests relative to the base commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pytest
+          python3 -m pytest tests/test_go_tested_packages.py -q -p no:randomly \
+            --junitxml=/tmp/go-tested.xml
+          python3 - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          t = ET.parse("/tmp/go-tested.xml").getroot()
+          suites = [t] if t.tag == "testsuite" else list(t)
+          ran = sum(int(s.get("tests", 0)) for s in suites)
+          skipped = sum(int(s.get("skipped", 0)) for s in suites)
+          fail = sum(int(s.get("failures", 0)) + int(s.get("errors", 0)) for s in suites)
+          print(f"collected={ran} skipped={skipped} failed={fail}")
+          if skipped or fail or ran < 1:
+              print("REFUSING: the comparison's end-to-end control did not run green")
+              sys.exit(1)
+          PY
+          # Fail CLOSED: with no base there is nothing to compare against, and a skipped
+          # comparison would be a pass nobody earned.
+          if [ -z "${BASE_SHA:-}" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "REFUSING: no base commit to compare the tested-package set against"
+            exit 1
+          fi
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          python3 tests/go_tested_packages.py --base "$BASE_SHA" --head-list /tmp/go-tested-packages.txt
 
       # 🔴 THE AUTHORIZATION MATRIX CARRIES ITS OWN POSITIVE CONTROL (32 of 60 cells must
       # ALLOW, pinned from BOTH sides, so a resolver that grants nothing or everything
@@ -852,7 +876,7 @@ jobs:
       # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
       # killed by some other test proves the suite can fail and proves nothing about the
       # guard the row exists for, so the run reports it as MISATTRIBUTED rather than as a
-      # kill. 339 mutants over EIGHT packages, in `PKGS` order: `internal/control`,
+      # kill. The battery runs over EIGHT packages, in `PKGS` order: `internal/control`,
       # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
       # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence` — the model, the
       # token-file projection, P4's identity backends, the server that authorises from all of
@@ -864,12 +888,16 @@ jobs:
       # and presence decides who may see and ring a pane from the same identities. That enumeration is pinned to `PKGS` as
       # a whole string by `tests/test_control_mutant_count_is_pinned.py` — membership and
       # order, not just the count, because a swap that kept the count left it stale.
-      # Four of the cache rows are killed
+      # 🔴 THE MUTANT COUNT IS NOT WRITTEN HERE OR IN THE STEP NAME: the run prints it on
+      # its own `SUMMARY mutants=<N> …` line, read from `MUTANTS`. A pinned copy stopped it
+      # going stale but made every PR that adds a row edit these same lines, so every two
+      # such PRs conflicted; `tests/test_control_mutant_count_is_pinned.py` now refuses a
+      # present-tense count coming back instead. Four of the cache rows are killed
       # by a TIMEOUT rather than by an assertion, which is what the bulk of the wall time
       # buys (~3min on an IDLE developer host, measured at 62 mutants; a loaded box is
       # several times that). It is what stops the rows bit-rotting into patterns that
       # match nothing and score SURVIVED without ever running.
-      - name: prove every authz guard can go RED (339 mutants, each on the test that names it)
+      - name: prove every authz guard can go RED (each mutant on the test that names it)
         run: python3 tests/control_mutants.py
 
       # 🔴 THE LEDGERS THAT ARE BLIND TO A COMPILED CLIENT, AND THIS IS THE ONLY JOB THAT
@@ -931,15 +959,16 @@ jobs:
       # pytest` in the ledger step above is what puts the Python half on the runner. A
       # separate job would mean a third toolchain setup for no isolation anyone reads.
       #
-      # ⚠ RUNTIME, MEASURED RATHER THAN GUESSED, so the next reader can judge the trade: 57
-      # mutants, **614.75 s wall / 152.21 s user + 21.00 s sys** on a 24-core developer host
+      # ⚠ RUNTIME, MEASURED RATHER THAN GUESSED, so the next reader can judge the trade: at
+      # 57 mutants, **614.75 s wall / 152.21 s user + 21.00 s sys** on a 24-core developer host
       # at load ~6.5, all 57 KILLED, 0 SURVIVED, 0 misattributed. That is the same order as
-      # `control_mutants.py` above (339 mutants; its own comment measures ~3 min at 62 on an
-      # IDLE host), which this job already pays for. ⚠ The wall figure is one observation on
+      # `control_mutants.py` above (its own comment measures ~3 min at 62 mutants on an IDLE
+      # host; it is several times that size now), which this job already pays for. The
+      # current size of either battery is the count its own run prints, not a number here. ⚠ The wall figure is one observation on
       # a LOADED box and is not a prediction for a runner — the CPU figure is the portable
       # half. If this step becomes the job's critical path, split it out; do not delete it
       # and leave the rationale asserting it runs.
-      - name: prove every routing and ANCHOR guard can go RED (57 mutants)
+      - name: prove every routing and ANCHOR guard can go RED
         run: python3 tests/routing_mutants.py
 
       # 🔴 THE P1 GATE ITSELF: the conformance corpus, replayed against the Go
@@ -1241,7 +1270,7 @@ jobs:
       # EQUAL AND THIS GATE'S WHOLE OUTPUT IS AN EQUALITY. The P2 parity gate's first full
       # run reported 72 PASS / 0 FAIL while every request was refused; there is no reason
       # this shape would be safer.
-      - name: prove every ARM can go RED (7 mutants, each on the comparison it names)
+      - name: prove every ARM can go RED (each mutant on the comparison it names)
         run: python3 tests/dualrun/harness.py --self-test
 
       - name: prove the PRE-FLIGHT refuses two servers that both answer nothing
@@ -1590,6 +1619,18 @@ jobs:
       - name: the Go client package builds, and its unit tests pass under the pinned toolchain
         run: nix build .#packages.x86_64-linux.cairn-go --no-link --print-build-logs
 
+      # The transcript capture agent (S2 of the transcripts/plugins plan): its package builds and
+      # runs the module's tests under the pinned toolchain, and CLOSING-CONDITION PART 3 — its
+      # redaction self-test — runs as the BUILT binary, content-checked (the SUMMARY pair with
+      # caught = planted and clean-damaged = 0). 🔴 THIS JOB IS THE ONLY TIER THAT RUNS THE BINARY:
+      # a `go run … --self-test` step in the `go` job was removed on review (D3) because this job
+      # runs unconditionally on every pull request; the `go` job still runs the same self-test as
+      # a Go test (`cmd/cairn-capture`'s TestTheSelfTestIsClosingConditionPart3).
+      - name: the capture agent builds, and its unit tests pass under the pinned toolchain
+        run: nix build .#packages.x86_64-linux.cairn-capture --no-link --print-build-logs
+      - name: the capture agent's redaction self-test passes as built (planted=P caught=P clean-damaged=0)
+        run: nix build .#checks.x86_64-linux.cairn-capture-self-test --no-link --print-build-logs
+
       # …and its verb and exit-code tables are read out of the running binary. This is the nix
       # tier of the claim `tests/test_go_client_ledgers.py` makes in the `go` job — a different
       # instrument in a different environment, which is the point: greening one tier while the
@@ -1656,10 +1697,11 @@ jobs:
     # third-party CDN — the precise half the old comment claimed to prevent.
     #
     # ⚠ WHAT IT ACTUALLY BUYS, WHICH IS STILL WORTH HAVING: this job cannot block a merge. That
-    # matters because it installs chromium from the runner image on every run, over the network, at
-    # whatever version that image currently ships — so an `apt` hiccup, a snap fallback or a chromium
-    # change would otherwise gate a tree nobody touched. A permanently-blocking gate on a third
-    # party's release schedule is the category this repository refuses.
+    # matters because it reaches third parties on every run — the audit hub's edge, a CDN, and the
+    # nix binary cache its chromium comes from — any of which would otherwise gate a tree nobody
+    # touched. (Its chromium is now PINNED to the flake's nixpkgs, S6a; it used to be whatever the
+    # runner image shipped.) A permanently-blocking gate on a third party's availability is the
+    # category this repository refuses; S6b promotes the touch refusals into their own job instead.
     #
     # ⚠ AND WHAT IT DOES NOT BUY, SAID PLAINLY RATHER THAN PAPERED OVER: **the row can still go red,
     # and a reader of the checks list will see it.** That is accepted, not fixed. The alternative
@@ -1747,32 +1789,59 @@ jobs:
         with:
           python-version: "3.12"
 
-      # ⚠ CHROMIUM COMES FROM THE RUNNER IMAGE, WHICH MAKES ITS VERSION AN INPUT NOBODY
-      # HERE PINS — so it is PRINTED. Every claim this job makes about browser behaviour
-      # (the `__Host-` cookie being stored over plaintext loopback; axe executing under
-      # `default-src 'none'`) is a claim about the build that ran, and a log without the
-      # version is a measurement without its scope. The spikes in `uiaudit/README.md`
-      # record which build they were measured under for the same reason.
+      # 🔴 CHROMIUM COMES FROM THE FLAKE'S PINNED NIXPKGS (S6a of the mobile plan, decision 17), NOT
+      # FROM THE RUNNER IMAGE. It used to be `apt-get install chromium-browser || snap install
+      # chromium` — whatever the image shipped that day — and that was MEASURED to move the result:
+      # two runs on one machine (chromium 153.0.8010.52) diffed `0 changed` of 6 pages; a CI run on
+      # 153.0.8010.36, the runner's snap, diffed **4 changed** of 6 against the same baseline, with
+      # `0 size-changed` — four pages moved on a PATCH difference. Pinning is the precondition for any
+      # pixel gate and for S6b's blocking touch job (O11); it is not, by itself, a reason to promote
+      # anything (`uiaudit/README.md`'s gating section).
       #
-      # 🔴 AND IT IS A FLAPPING INPUT ON THE PIXEL DIFF, WHICH IS MEASURED RATHER THAN FEARED.
-      # Two runs on one machine (chromium 153.0.8010.52) diffed `0 changed` of 6 pages; a CI run
-      # on 153.0.8010.36 — the runner's snap — diffed **4 changed** of 6 against that same
-      # baseline, with `0 size-changed`, so four pages moved on a PATCH difference with no page
-      # height change to explain it.
+      # `--inputs-from .` resolves `nixpkgs` to the revision `flake.lock` pins — the SAME chromium the
+      # `uiScreenshots` derivation captures with — so the install screenshots, the walk and these tests
+      # now run one build. A `flake.lock` bump moves it, deliberately and visibly.
       #
-      # That is why the pixel diff cannot gate, and it is a stronger reason than the inherited
-      # cross-producer regression figure because it is about this harness. 🔴 **PINNING CHROMIUM
-      # IS THE PRECONDITION FOR ANY PIXEL GATE** — a nix-pinned build or a version-pinned
-      # container — and until that exists the signal flips on somebody else's release schedule
-      # whatever its numbers look like. Do not promote a visual predicate while this step
-      # installs whatever the image currently ships. See `uiaudit/README.md`'s gating section.
-      - name: chromium, and its version, which is an unpinned input
+      # 🔴 THE VERSION IS ASSERTED, NOT ONLY PRINTED: the binary's own `--version` must name the version
+      # nix evaluated for the lock, and the `chromium` this job's later steps resolve must be the store
+      # path — the runner image ALSO carries browsers, and chromedp and `pwa_check.sh` both find theirs
+      # by NAME on `PATH` (chromedp tries `headless_shell`/`headless-shell` before `chromium`, so those
+      # must not resolve either). A pin that is set but not the one that runs is the `GOTOOLCHAIN` no-op
+      # above, reached through `PATH`.
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: chromium from the flake's pinned nixpkgs, its version asserted
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq chromium-browser || sudo snap install chromium
-          command -v chromium || command -v chromium-browser
-          chromium --version || chromium-browser --version
+          rev=$(python3 -c 'import json; print(json.load(open("flake.lock"))["nodes"]["nixpkgs"]["locked"]["rev"])')
+          want=$(nix eval --raw --inputs-from . nixpkgs#chromium.version)
+          out=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#chromium)
+          got=$("$out/bin/chromium" --version)
+          echo "flake.lock nixpkgs: $rev"
+          echo "flake-resolved chromium: $want ($out)"
+          echo "the binary says: $got"
+          case "$got" in
+            *" $want"|*" $want "*) ;;
+            *) echo "::error::the pinned chromium reports '$got', but nix evaluated $want for flake.lock's nixpkgs"; exit 1 ;;
+          esac
+          echo "$out/bin" >> "$GITHUB_PATH"
+      - name: the pinned chromium is the one on PATH
+        run: |
+          set -euo pipefail
+          for name in headless_shell headless-shell; do
+            if p=$(command -v "$name"); then
+              echo "::error::$name resolves to $p, and chromedp would launch it before the pinned chromium"; exit 1
+            fi
+          done
+          p=$(command -v chromium)
+          echo "chromium on PATH: $p"
+          case "$p" in
+            /nix/store/*) ;;
+            *) echo "::error::chromium resolves to $p, not the flake-pinned store path"; exit 1 ;;
+          esac
+          chromium --version
 
       # 🔴 THE MODULE'S OWN GUARDS FIRST, AND THEY INCLUDE THE POSITIVE CONTROL. The walk
       # below reports small numbers, two of which are zero BY CONSTRUCTION; without an
@@ -1782,6 +1851,7 @@ jobs:
       # signal that the step above installed nothing.
       - name: the harness's own guards, including the positive control
         env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
           UIAUDIT_REPO_ROOT: ${{ github.workspace }}
           UIAUDIT_CAIRN_UI: /tmp/cairn-ui
         run: |
@@ -1835,20 +1905,71 @@ jobs:
             echo "::error::uiaudit skipped $skips test(s); a skipped instrument validation is a pass nobody earned"
             exit 1
           fi
-          # Both floors are counts MEASURED on a tree, raised when a change adds tests: 29/64 on
-          # the tree that introduced this job; 46 top-level / 108 total on the mobile plan's S0
-          # (36/88 measured on its base, chromium 154, before `touch_test.go` and the reachability
-          # rows); 48 / 115 on S1 (the two touch refusals' rows, their scope test, the input-font
-          # threshold test — measured, chromium 154); 50 / 119 on S1's round 1 (the reading-order
-          # rows, the shrink-to-fit control, the whole-row hit-test — measured, chromium 154); 52 / 124 on the
-          # mobile plan's S2 (`TestPWAClauses` and its three clause subtests, and the script-contract
-          # test — measured, chromium 154); 52 / 127 on S4 (`TestPWAClauses` gained `b_screenshots`, `shortcuts` and `e_storage` — measured, chromium 152 from the flake's nixpkgs). A test deleted from a file that keeps others would otherwise move nothing.
-          if [ "$passes" -lt 52 ]; then
-            echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 52 — a Test function was deleted"
+          # 🔴 THE TOP-LEVEL COUNT IS DERIVED, NOT WRITTEN DOWN — TWO WAYS, BECAUSE ONE CANNOT
+          # SEE A DELETION. It used to be `-lt N` with N hand-measured, raised by every change
+          # that added a test (29, 46, 48, 50, 52 across five changes), so two such changes in
+          # flight conflicted on the literal every time.
+          #   (1) EQUALITY with `go test -list`: every top-level `Test`/`Example`/`Fuzz` the
+          #       compiled module declares must have printed a top-level PASS. That catches a
+          #       test that silently did not run; it CANNOT catch one deleted from the source,
+          #       which moves both sides.
+          #   (2) NO NET DECREASE against the base commit: the same declarations, counted by
+          #       one static rule over `git grep` at the base and at HEAD. That is what the
+          #       floor's message ("a Test function was deleted") claimed, now without a number.
+          #       A change that deletes tests on purpose and adds none is refused here — the job
+          #       is advisory (`continue-on-error` above), so it marks the run rather than
+          #       blocking it. The static rule is cross-checked against `go test -list` at HEAD,
+          #       so a rule that miscounts refuses rather than comparing two wrong numbers.
+          #
+          # ⚠ THE STATIC RULE MIRRORS WHAT `go test` TREATS AS A TEST, NOT EVERY `func Test…`:
+          # `TestMain` is the harness's entry point and `-list` never prints it, and a name whose
+          # suffix opens lower-case (`Testify`) is a plain helper, so both are excluded — without
+          # that, adding a `TestMain` red the cross-check on an honest tree. ⚠ STILL NOT MIRRORED:
+          # an `Example` with no `// Output:` comment is compiled but not run, so `-list` omits it
+          # and the cross-check refuses; give a new Example an Output comment.
+          listed=$(go test -list '.*' ./... | grep -cE '^(Test|Example|Fuzz)' || true)
+          declared() {
+            { git grep -hE '^func (Test|Example|Fuzz)([A-Z0-9_][A-Za-z0-9_]*)?\(' "$1" -- '*_test.go' || true; } \
+              | { grep -cvE '^func TestMain\(' || true; }
+          }
+          if [ -z "${BASE_SHA:-}" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "::error::no base commit to compare the uiaudit test count against"
             exit 1
           fi
-          if [ "$total" -lt 127 ]; then
-            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 127 — a table row was deleted"
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          base_declared=$(declared "$BASE_SHA")
+          head_declared=$(declared HEAD)
+          echo "uiaudit top-level tests: listed=$listed passed=$passes declared-at-HEAD=$head_declared declared-at-base=$base_declared"
+          if [ "$listed" -lt 1 ] || [ "$base_declared" -lt 1 ]; then
+            echo "::error::a derived uiaudit test count is 0 (listed=$listed base=$base_declared) — the derivation is broken, not the tree"
+            exit 1
+          fi
+          if [ "$head_declared" -ne "$listed" ]; then
+            echo "::error::the static count ($head_declared) disagrees with go test -list ($listed) at HEAD, so its reading of the base cannot be trusted"
+            exit 1
+          fi
+          if [ "$passes" -ne "$listed" ]; then
+            echo "::error::uiaudit reported $passes top-level PASS line(s), but $listed top-level tests are declared — a test did not run"
+            exit 1
+          fi
+          if [ "$head_declared" -lt "$base_declared" ]; then
+            echo "::error::uiaudit declares $head_declared top-level tests, $base_declared at the base — a Test function was deleted"
+            exit 1
+          fi
+          # ⚠ THE TOTAL (TOP-LEVEL PLUS SUBTESTS) IS STILL A HAND-MEASURED FLOOR, AND THAT IS NOT
+          # AN OVERSIGHT: subtests are created at RUN time (`t.Run` in a loop over a table, in a
+          # helper, under a condition), so no reading of the source gives their number, and
+          # counting `t.Run(` call sites counts declarations, not instances. Its history: 64 on
+          # the tree that introduced this job; 108 on the mobile plan's S0 (88 measured on its
+          # base, chromium 154); 115 on S1; 119 on S1's round 1; 124 on S2; 127 on S4
+          # (`TestPWAClauses` gained `b_screenshots`, `shortcuts` and `e_storage` — measured,
+          # chromium 152 from the flake's nixpkgs); 128 on S5 (`TestStandaloneBackAndReload`, one
+          # top-level test with no subtests — DERIVED as S4's floor plus one, NOT measured on a
+          # full run: the operator skipped local suite runs for that slice, so this job's own count
+          # line is the measurement). It notices a ROW deleted from a table, which neither derived
+          # check above can see.
+          if [ "$total" -lt 128 ]; then
+            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 128 — a table row was deleted"
             exit 1
           fi
 
@@ -1892,8 +2013,8 @@ jobs:
 
       # 🔴 THE MOBILE PLAN'S CLOSING-CONDITION INSTRUMENT (`claudedocs/plan-cairn-mobile-pwa.md`),
       # WIRED HERE BY S4 AND IN THIS NON-BLOCKING JOB ON PURPOSE: the plan keeps `pwa_check.sh` advisory
-      # until S6b adds the blocking `uiaudit-touch` job over a PINNED chromium — this job's chromium is
-      # the runner image's, an unpinned input (see the step above). It runs the PLAIN check (all nine
+      # until S6b adds the blocking `uiaudit-touch` job — this job's chromium is pinned since S6a, but
+      # the job itself stays advisory (see `continue-on-error` above). It runs the PLAIN check (all nine
       # clauses, exit 0/1/2); `--self-test` (nine sabotaged tree copies, four of them full walks) is a
       # local instrument validation, too heavy to repeat on every push. Exit 2 is "could not vouch" and
       # is a failure here exactly like 1 — never a skip.

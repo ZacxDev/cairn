@@ -133,6 +133,23 @@ func (r *Redactor) apply(s string, spans []span) (string, []Hit) {
 		}
 		return spans[i].prio < spans[j].prio
 	})
+	// An existing marker is never part of a span: each span loses the marker regions it overlaps
+	// and what is left of it is redacted ([withoutMarkers]). Pieces stay in (lo, prio) order
+	// because a span's pieces are disjoint and ascending, and they replace it in place.
+	regions := markerRegions(s)
+	if len(regions) > 0 {
+		var cut []span
+		for _, sp := range spans {
+			cut = append(cut, withoutMarkers(sp, regions)...)
+		}
+		spans = cut
+		sort.SliceStable(spans, func(i, j int) bool {
+			if spans[i].lo != spans[j].lo {
+				return spans[i].lo < spans[j].lo
+			}
+			return spans[i].prio < spans[j].prio
+		})
+	}
 	var merged []span
 	for _, sp := range spans {
 		if sp.lo < 0 || sp.hi > len(s) || sp.lo >= sp.hi {
@@ -149,6 +166,9 @@ func (r *Redactor) apply(s string, spans []span) (string, []Hit) {
 			continue
 		}
 		merged = append(merged, sp)
+	}
+	if len(merged) == 0 {
+		return s, nil
 	}
 	var b strings.Builder
 	var hits []Hit

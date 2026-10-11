@@ -538,12 +538,13 @@ class TestTheGoOnlyDeclaration:
     def test_the_real_declared_sets_are_exactly_todays(self):
         """An INVARIANT GUARD on today's state, spelled by hand: the arcs/sessions S2
         slice declared the first Go-only verb and route (`sessions`), and S3 the arc
-        registry (`arcs`, `arc-show`, `arc-register`). The next one moves this test in
-        the same commit."""
+        registry (`arcs`, `arc-show`, `arc-register`); S2 of the scope-refs plan the
+        `sources` ROUTE, with no verb yet. The next one moves this test in the same
+        commit."""
         assert GO_ONLY_VERBS == frozenset({"sessions", "arcs", "arc-show", "arc-register"})
         assert go_only_route_names() == frozenset({
             "GET sessions", "HEAD sessions", "GET arcs", "HEAD arcs",
-            "GET arc", "HEAD arc", "PUT arc",
+            "GET arc", "HEAD arc", "PUT arc", "GET sources", "HEAD sources",
         })
 
     def test_RED_a_go_only_row_with_no_reason_is_refused(self):
@@ -568,7 +569,7 @@ class TestTheGoOnlyDeclaration:
         assert go_only_route_names(ledger) == {
             "GET synthetic-go-only", "HEAD synthetic-go-only",
             "GET sessions", "HEAD sessions", "GET arcs", "HEAD arcs",
-            "GET arc", "HEAD arc", "PUT arc",
+            "GET arc", "HEAD arc", "PUT arc", "GET sources", "HEAD sources",
         }
         # …and a go_only route is NOT one the oracle-side gate expects `server.py` to
         # have.
