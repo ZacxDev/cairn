@@ -166,6 +166,25 @@ def workflow_permissions(text: str) -> dict[str, str]:
     return out
 
 
+def workflow_concurrency(text: str) -> dict[str, str]:
+    """The top-level `concurrency:` block as a dict, comments skipped."""
+    lines = text.splitlines()
+    try:
+        start = next(
+            i for i, line in enumerate(lines) if line.rstrip() == "concurrency:"
+        )
+    except StopIteration:
+        return {}
+    out: dict[str, str] = {}
+    for line in lines[start + 1:]:
+        if line.strip() and not line.startswith((" ", "\t", "#")):
+            break
+        m = re.match(r"^  ([\w-]+):\s*(\S.*?)\s*$", line)
+        if m:
+            out[m.group(1)] = m.group(2)
+    return out
+
+
 def commands(text: str) -> list[str]:
     """The file's lines as SHELL sees them: comments dropped, continuations joined.
 
@@ -432,6 +451,7 @@ def test_the_extractors_find_something(text: str) -> None:
     """
     assert workflow_triggers(text), "the `on:` extractor found no triggers at all"
     assert workflow_permissions(text), "the `permissions:` extractor found nothing"
+    assert workflow_concurrency(text), "the `concurrency:` extractor found nothing"
     assert push_destinations(text), "no `docker://` destination found — nothing is pushed"
     assert inspect_invocations(text), "no `skopeo inspect` found — nothing is verified"
     assert fetch_depths(text), "the `fetch-depth:` extractor found no setting at all"
@@ -483,6 +503,35 @@ def test_the_workflow_asks_for_exactly_the_permissions_it_needs(text: str) -> No
         f"`contents` is {perms.get('contents')!r}. Declaring the block at all "
         "drops every other scope to none, which is the point of declaring it; "
         "`contents: read` is what the checkout needs and nothing here writes."
+    )
+
+
+def test_no_publish_can_be_cancelled_or_dropped_by_a_later_push(text: str) -> None:
+    """Every run is its own concurrency group, so no other run can displace it.
+
+    A group shared by more than one run is not enough even with
+    `cancel-in-progress: false`: GitHub keeps one PENDING run per group, so a
+    third push replaces the second one's waiting publish and that commit never
+    gets an image. Only a group no other run can join prevents that. The block
+    is pinned WHOLE, so a `cancel-in-progress` key added later fails here too —
+    it is inert in a per-run group, and in a shared one it is a second hazard.
+    """
+    conc = workflow_concurrency(text)
+    assert conc == {"group": "publish-image-${{ github.run_id }}"}, (
+        f"the concurrency block is {conc!r}. Any group another run can join — "
+        "`github.ref`, `github.workflow`, a constant — lets a later push drop a "
+        "PENDING publish, so a commit on `main` can end up with no `sha-` image."
+    )
+    # A JOB-level group gets the same one-pending-per-group replacement, and the
+    # extractor above reads only the top-level block, so the per-run promise
+    # needs the absence of every other `concurrency:` key as well.
+    nested = [
+        line for line in text.splitlines()
+        if re.match(r"^\s+concurrency:", line)
+    ]
+    assert nested == [], (
+        f"found a job-level concurrency key: {nested!r}. A job group shared "
+        "across runs drops a pending publish exactly as a workflow-level one does."
     )
 
 
