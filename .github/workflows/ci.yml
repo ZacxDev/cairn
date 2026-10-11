@@ -941,8 +941,8 @@ jobs:
             | awk '{for (i = 2; i <= NF; i++) if ($i == "github.com/ZacxDev/cairn/internal/racegate") { print $1; next }}')
           n=$(printf '%s\n' "$pkgs" | grep -c . || true)
           echo "packages declaring race exemptions: $n"
-          # POSITIVE CONTROL on the derivation: two packages declare one today, and a template
-          # or import-path typo would make this zero and the comparisons below vacuous.
+          # POSITIVE CONTROL on the derivation: `internal/redact` declares one today, and a
+          # template or import-path typo would make this zero and the comparisons below vacuous.
           if [ "$n" -lt 1 ]; then
             echo "REFUSING: no package's tests import internal/racegate — the derivation is broken"
             exit 1

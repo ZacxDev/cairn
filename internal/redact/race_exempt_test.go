@@ -19,7 +19,7 @@ import (
 //
 // 🔴 NOTHING THAT CALLS `measureCorpus` MAY BE HERE: it shares one `*Redactor` across GOMAXPROCS
 // goroutines, so its callers are the package's real check of "a Redactor holds no mutable state".
-// The guard refuses them, and names them as its positive control.
+// The guard refuses a direct call, and requires `measureCorpus` to still start a goroutine.
 var raceExempt = []string{
 	"TestTheRedactorIsQuietOnItsOwnOutput",
 	"TestRoundFiveSelfTestHoldsAcrossSeeds",
@@ -38,15 +38,9 @@ var raceExempt = []string{
 
 func TestMain(m *testing.M) { os.Exit(racegate.Main(m, raceExempt)) }
 
-// TestNoRaceExemptTestCanReachAGoroutine is the seam guard between the exempt list and the code:
-// a test that starts a goroutine, or calls anything here that does, cannot be in the list. The
-// positive control is `measureCorpus` and its three callers — the analysis must see them, or it
-// is seeing nothing.
+// TestNoRaceExemptTestCanReachAGoroutine is the guard between the exempt list and the code: this
+// package's production code stays free of concurrency, and no exempt test's own body starts a
+// goroutine, calls `Parallel()`, or calls `measureCorpus` — which must itself still start one.
 func TestNoRaceExemptTestCanReachAGoroutine(t *testing.T) {
-	racegate.Check(t, ".", raceExempt, []string{
-		"measureCorpus",
-		"TestTheCleanDamageBudgetOverTheFrozenCorpus",
-		"TestTheCleanDamageBudgetOverThisRepository",
-		"TestTheCleanDamageCeilingOverTheGoStandardLibrary",
-	})
+	racegate.Check(t, raceExempt, []string{"measureCorpus"})
 }

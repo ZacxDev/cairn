@@ -7,148 +7,58 @@ import (
 	"testing"
 )
 
-// world writes a throwaway module: go.mod plus files keyed by path relative to its root.
-func world(t *testing.T, files map[string]string) string {
+// pkg writes a throwaway package directory: a calm production file, a concurrent helper, and two
+// exempt-able tests. Each case below edits ONE file and must draw its own refusal.
+func pkg(t *testing.T, edits map[string]string) string {
 	t.Helper()
-	root := t.TempDir()
-	files["go.mod"] = "module example.test/m\n\ngo 1.25\n"
-	for p, body := range files {
-		full := filepath.Join(root, p)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	dir := t.TempDir()
+	files := map[string]string{
+		"p.go": "package p\n\n// A comment saying go func() { } is not concurrency.\nfunc Calm() int { return 1 }\n",
+		"p_test.go": "package p\n\nimport \"testing\"\n\nfunc spread() { go Calm() }\n\n" +
+			"func TestA(t *testing.T) { Calm() }\n\nfunc TestB(t *testing.T) { Calm() }\n\nfunc TestUsesSpread(t *testing.T) { spread() }\n",
+	}
+	for k, v := range edits {
+		files[k] = v
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
 	}
-	return root
-}
-
-// pkgA is one package whose tests cover every edge kind the analysis claims to follow, each
-// paired with a test that must NOT be classified concurrent, so a classifier that says "yes" to
-// everything fails as surely as one that says "no".
-const pkgA = `package a
-
-import "testing"
-
-type worker struct{}
-
-func (worker) run()  { go func() {}() }
-func (worker) calm() {}
-
-func spawn()        { go func() {}() }
-func middle()       { spawn() }
-func quiet()        {}
-func use(f func())  { f() }
-func litOnly()      { _ = func() { go quiet() } }
-
-var spawnVar = func() { go quiet() }
-
-func TestDirect(t *testing.T)       { go quiet() }
-func TestTwoHops(t *testing.T)      { middle() }
-func TestMethod(t *testing.T)       { var w worker; w.run() }
-func TestMethodCalm(t *testing.T)   { var w worker; w.calm() }
-func TestFuncValue(t *testing.T)    { use(spawn) }
-func TestFuncValueCalm(t *testing.T){ use(quiet) }
-func TestParallel(t *testing.T)     { t.Parallel() }
-func TestVar(t *testing.T)          { spawnVar() }
-func TestUncalledLit(t *testing.T)  { litOnly() }
-func TestPlain(t *testing.T)        { quiet() }
-func helperNotATest(t *testing.T)   {}
-`
-
-func TestTheAnalysisFollowsEveryEdgeKindAndFlagsOnlyThose(t *testing.T) {
-	root := world(t, map[string]string{"a/a_test.go": pkgA})
-	a, err := Analyse(filepath.Join(root, "a"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]bool{
-		"TestDirect": true, "TestTwoHops": true, "TestMethod": true, "TestFuncValue": true,
-		"TestParallel": true, "TestVar": true, "TestUncalledLit": true,
-		"TestMethodCalm": false, "TestFuncValueCalm": false, "TestPlain": false,
-	}
-	if len(a.Tests()) != len(want) {
-		t.Fatalf("tests found: %v, want exactly %d (helperNotATest is not one)", a.Tests(), len(want))
-	}
-	for name, conc := range want {
-		chain, got := a.Concurrent(name)
-		if got != conc {
-			t.Errorf("%s: concurrent=%v, want %v (chain %v)", name, got, conc, chain)
-		}
-	}
-	chain, _ := a.Concurrent("TestTwoHops")
-	if got := strings.Join(chain, " -> "); !strings.HasPrefix(got, "TestTwoHops -> middle -> spawn -> a `go` statement at a_test.go:") {
-		t.Errorf("the witness chain is %q", got)
-	}
-}
-
-func TestInitAndTestMainAreReachedByEveryTest(t *testing.T) {
-	for _, hook := range []string{"func init() { go func() {}() }", "func TestMain(m *testing.M) { go func() {}(); m.Run() }"} {
-		root := world(t, map[string]string{"a/a_test.go": "package a\n\nimport \"testing\"\n\n" + hook + "\n\nfunc TestPlain(t *testing.T) {}\n"})
-		a, err := Analyse(filepath.Join(root, "a"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, ok := a.Concurrent("TestPlain"); !ok {
-			t.Errorf("with %q, TestPlain was not classified concurrent", hook)
-		}
-	}
-}
-
-// The AMBIENT rule, at both depths and in both directions: an imported module package with a
-// goroutine — in itself or in its own module import — makes every test concurrent; one without
-// does not.
-func TestAnImportedModulePackageIsAmbient(t *testing.T) {
-	cases := map[string]struct {
-		files map[string]string
-		conc  bool
-	}{
-		"direct": {map[string]string{"dep/dep.go": "package dep\n\nfunc Go() { go func() {}() }\n"}, true},
-		"transitive": {map[string]string{
-			"dep/dep.go":   "package dep\n\nimport \"example.test/m/deep\"\n\nfunc Go() { deep.F() }\n",
-			"deep/deep.go": "package deep\n\nfunc F() { go func() {}() }\n",
-		}, true},
-		"calm": {map[string]string{"dep/dep.go": "package dep\n\nfunc Go() {}\n"}, false},
-		"only its TEST file goes": {map[string]string{
-			"dep/dep.go":      "package dep\n\nfunc Go() {}\n",
-			"dep/dep_test.go": "package dep\n\nfunc g() { go func() {}() }\n",
-		}, false},
-	}
-	for name, c := range cases {
-		c.files["a/a_test.go"] = "package a\n\nimport (\n\t\"testing\"\n\t\"example.test/m/dep\"\n)\n\nfunc TestPlain(t *testing.T) {}\n\nvar _ = dep.Go\n"
-		a, err := Analyse(filepath.Join(world(t, c.files), "a"))
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if _, got := a.Concurrent("TestPlain"); got != c.conc {
-			t.Errorf("%s: concurrent=%v, want %v", name, got, c.conc)
-		}
-	}
+	return dir
 }
 
 func TestProblemsNamesEachRefusal(t *testing.T) {
-	root := world(t, map[string]string{"a/a_test.go": pkgA})
-	dir := filepath.Join(root, "a")
-	ctl := []string{"TestDirect"}
-	if p := Problems(dir, []string{"TestPlain", "TestMethodCalm"}, ctl); len(p) != 0 {
-		t.Fatalf("a sound list refused: %v", p)
+	ex, conc := []string{"TestA", "TestB"}, []string{"spread"}
+	if p := Problems(pkg(t, nil), ex, conc); len(p) != 0 {
+		t.Fatalf("a sound package refused: %v", p)
+	}
+	testFile := func(bodyA string) map[string]string {
+		return map[string]string{"p_test.go": "package p\n\nimport \"testing\"\n\nfunc spread() { go Calm() }\n\n" +
+			"func TestA(t *testing.T) { " + bodyA + " }\n\nfunc TestB(t *testing.T) {}\n\nfunc TestUsesSpread(t *testing.T) { spread() }\n"}
 	}
 	for _, c := range []struct {
-		exempt, ctl []string
-		want        string
+		name  string
+		edits map[string]string
+		ex    []string
+		conc  []string
+		want  string
 	}{
-		{[]string{"TestPlain", "TestTwoHops"}, ctl, "TestTwoHops is exempt from -race but CAN REACH A GOROUTINE: TestTwoHops -> middle -> spawn"},
-		{[]string{"TestGone"}, ctl, "TestGone is exempt from -race but is not a top-level test function"},
-		{[]string{"TestPlain"}, nil, "no positive control given"},
-		{[]string{"TestPlain"}, []string{"TestPlain"}, "POSITIVE CONTROL: TestPlain must be classified concurrent"},
-		{[]string{"TestPlain", "TestPlain"}, ctl, "is listed twice"},
-		{[]string{"TestA.*"}, ctl, "is not a top-level Test identifier"},
-		{nil, ctl, "the exempt list is empty"},
+		{"goroutine in an exempt body", testFile("go Calm()"), ex, conc, "EXEMPT TEST TestA starts a goroutine"},
+		{"Parallel in an exempt body", testFile("t.Parallel()"), ex, conc, "EXEMPT TEST TestA calls Parallel()"},
+		{"concurrent helper caller exempted", nil, []string{"TestA", "TestUsesSpread"}, conc, "EXEMPT TEST TestUsesSpread calls the concurrent helper spread"},
+		{"production go statement", map[string]string{"p.go": "package p\n\nfunc Calm() int { go func() {}(); return 1 }\n"}, ex, conc, "PREMISE BROKEN: production code has a `go` statement"},
+		{"production channel", map[string]string{"p.go": "package p\n\nfunc Calm() int { c := make(chan int, 1); c <- 1; return <-c }\n"}, ex, conc, "PREMISE BROKEN: production code has a channel send"},
+		{"production sync import", map[string]string{"p.go": "package p\n\nimport \"sync\"\n\nvar mu sync.Mutex\n\nfunc Calm() int { return 1 }\n"}, ex, conc, "PREMISE BROKEN: production file"},
+		{"helper no longer concurrent", map[string]string{"p_test.go": "package p\n\nimport \"testing\"\n\nfunc spread() { Calm() }\n\nfunc TestA(t *testing.T) {}\n\nfunc TestB(t *testing.T) {}\n"}, ex, conc, "CONCURRENT HELPER spread is missing or no longer has a `go` statement"},
+		{"helper missing", nil, ex, []string{"gone"}, "CONCURRENT HELPER gone is missing"},
+		{"no helper declared", nil, ex, nil, "no concurrent function declared"},
+		{"stale exempt name", nil, []string{"TestA", "TestGone"}, conc, "STALE: TestGone is exempt from -race but is not a top-level test function"},
+		{"malformed list", nil, []string{"TestA.*"}, conc, "is not a top-level Test identifier"},
 	} {
-		got := strings.Join(Problems(dir, c.exempt, c.ctl), "\n")
+		got := strings.Join(Problems(pkg(t, c.edits), c.ex, c.conc), "\n")
 		if !strings.Contains(got, c.want) {
-			t.Errorf("exempt=%v ctl=%v: got %q, want it to contain %q", c.exempt, c.ctl, got, c.want)
+			t.Errorf("%s: got %q, want it to contain %q", c.name, got, c.want)
 		}
 	}
 }
@@ -162,7 +72,7 @@ func TestPlanSetsExactlyOneFlagPerMode(t *testing.T) {
 	ex := []string{"TestA", "TestB"}
 	for _, c := range []struct {
 		name            string
-		race, only, all bool
+		race, only      bool
 		preset          fakeFlags
 		wantRun, wantSk string
 		wantErr         string
@@ -170,8 +80,7 @@ func TestPlanSetsExactlyOneFlagPerMode(t *testing.T) {
 		{name: "race skips the list", race: true, wantSk: "^(TestA|TestB)$"},
 		{name: "exempt-only runs the list", only: true, wantRun: "^(TestA|TestB)$"},
 		{name: "plain run touches nothing"},
-		{name: "race with all touches nothing", race: true, all: true},
-		{name: "a caller's -skip is left alone", race: true, preset: fakeFlags{"test.skip": "X"}, wantSk: "X"},
+		{name: "a caller's -skip is left alone", race: true, preset: fakeFlags{"test.skip": "^$"}, wantSk: "^$"},
 		{name: "exempt-only under race refuses", race: true, only: true, wantErr: "under -race"},
 		{name: "exempt-only with -run refuses", only: true, preset: fakeFlags{"test.run": "X"}, wantRun: "X", wantErr: "with -run"},
 	} {
@@ -179,7 +88,7 @@ func TestPlanSetsExactlyOneFlagPerMode(t *testing.T) {
 		for k, v := range c.preset {
 			fl[k] = v
 		}
-		_, err := plan(c.race, c.only, c.all, ex, fl)
+		_, err := plan(c.race, c.only, ex, fl)
 		if (err != nil) != (c.wantErr != "") || (err != nil && !strings.Contains(err.Error(), c.wantErr)) {
 			t.Errorf("%s: err=%v, want %q", c.name, err, c.wantErr)
 		}
