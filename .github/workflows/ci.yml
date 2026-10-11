@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
   merge_group:
+  # 🔴 THE NIGHTLY FULL RUN IS WHAT MAKES THE PATH TIERING BELOW AFFORDABLE TO GET WRONG. A pull
+  # request may skip the jobs its paths cannot reach, and a docs-only push to `main` takes the
+  # docs lane (see the `changes` job); this run never skips anything,
+  # so a classifier that skipped something it should not have is caught within a day on `main`
+  # rather than never. `workflow_dispatch` is the same full run, on demand.
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,6 +37,48 @@ jobs:
 
       - name: scan the tree
         run: python3 tests/leakscan.py
+
+  # 🔴 THE PATH CLASSIFIER, AND THE ONLY PLACE A JOB HERE IS TOLD WHAT A CHANGE TOUCHED. Every
+  # gated job and step below reads one of its outputs; the path lists and the event rules live
+  # ONCE, in `tests/ci_paths.py`, unit-tested in `tests/test_ci_paths.py` — never as glob lists
+  # spread across `if:` lines, which is how two copies of one predicate come to disagree.
+  #
+  # 🔴 IT FAILS OPEN AT THREE LAYERS, AND THE TWO IN THIS FILE ARE PINNED AS WHOLE STRINGS BY
+  # THAT TEST. The script answers FULL for any event, base or `git` state it cannot vouch for
+  # (and for an empty change list); a gated job runs when this job did not SUCCEED
+  # (`needs.changes.result != 'success'`); and it runs when an output is ABSENT, because each
+  # gate compares `!= 'false'` rather than `== 'true'`. A `merge_group`, the nightly `schedule`
+  # and `workflow_dispatch` always classify FULL. A push to `main` is diffed `before..after`
+  # under the same fail-open rules: docs-only takes the docs lane, and ANY other path classifies
+  # FULL — never the partial `nix`/`uiaudit` lanes a pull request may take.
+  #
+  # ⚠ `leakscan` AND `tests` DO NOT `need` THIS JOB, ON PURPOSE: they run on every event, and a
+  # dependency would only make the leak gate wait on a classifier it never consults.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      heavy: ${{ steps.classify.outputs.heavy }}
+      nix: ${{ steps.classify.outputs.nix }}
+      uiaudit: ${{ steps.classify.outputs.uiaudit }}
+    steps:
+      # The whole history, because a pull request is diffed from its MERGE-BASE and a shallow
+      # clone has none; a missing commit makes the diff fail, which classifies FULL.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: classify the change into lanes
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.event.after }}
+        run: python3 tests/ci_paths.py --github-output "$GITHUB_OUTPUT"
 
   tests:
     runs-on: ubuntu-latest
@@ -612,7 +662,16 @@ jobs:
           # reason that paragraph gives.
           # Measured 2727 collected on the branch, so
           # `2727 - min(50, max(1, 2727/20)) = 2677`.
-          FLOOR = 2677
+          # ⚠ 2677 -> 2795 FOR THE CI PATH-TIERING BRANCH, AND THE DRIFT GUARD FORCED THIS ONE.
+          # That branch adds `tests/test_ci_paths.py` (71 collected: the classifier's literal
+          # lanes, its fail-open arms, the docs-only/strict-for-code rules for a push to `main`,
+          # the `NIX`/`UIAUDIT` lists against `flake.nix` and the `uiaudit` job, and the
+          # workflow wiring). Measured 2845 collected on the branch by a full local run with
+          # `--junitxml`, so at 2677 the gap would be 168, past `MAX_GAP` — and the base was
+          # already at 97 by the same subtraction (2845 - 71 = 2774), so the drift had been
+          # carried in, not made here. (An intermediate commit on that branch set 2785 from 2835.)
+          # `2845 - min(50, max(1, 2845/20)) = 2795`.
+          FLOOR = 2795
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -658,6 +717,13 @@ jobs:
   # same discipline the Python 3.12 pin is under, and for the same reason.
   go:
     runs-on: ubuntu-latest
+    # 🔴 THIS JOB ALWAYS RUNS; ONLY ITS CONFORMANCE AND END-TO-END STEPS ARE TIERED. `go vet` and
+    # `go test` stay on every event, the docs lane included — they are the cheap Go tier, and
+    # the only one a docs-only change keeps. `!cancelled()` rather than the implicit `success()`,
+    # so a FAILED classifier cannot skip the job. The `needs` exists only so those steps can read
+    # `needs.changes`. ⚠ The mutation-battery steps are NOT tiered here.
+    needs: changes
+    if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -952,6 +1018,7 @@ jobs:
       # corpus from an absent one, which is the same reason the Python job counts
       # collected tests instead of reading an exit code.
       - name: the conformance corpus against the Go server
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}
         run: |
           set -o pipefail
           tests/conformance/run_go.sh > /tmp/conformance.txt 2>&1 || true
@@ -1016,6 +1083,7 @@ jobs:
       # assertions ran than it declares, and the floor below re-counts its PASS lines rather than
       # reading its exit code.
       - name: the arcs/sessions end-to-end check, after proving it can go RED
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}
         run: |
           set -o pipefail
           tests/arcs/e2e.sh --self-test | tee /tmp/arcs-e2e-self.txt
@@ -1046,6 +1114,7 @@ jobs:
       # per-row owner check, (e) the target pick, (f) the narrowing bit and the sign-in refusal — and
       # refuses (exit 2) unless EACH turns its own clause's named assertion RED.
       - name: the arcs/presence end-to-end check, after proving every clause can go RED
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}
         run: |
           set -o pipefail
           tests/presence/e2e.sh --self-test | tee /tmp/presence-e2e-self.txt
@@ -1067,6 +1136,8 @@ jobs:
   # so it is the one job that pins both pins.
   parity:
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -1227,6 +1298,8 @@ jobs:
   # cannot stand in for; CI can only ever run the synthetic one.
   dualrun:
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -1486,6 +1559,10 @@ jobs:
   # fails on an ImportError. Neither can pass by doing nothing.
   nix:
     runs-on: ubuntu-latest
+    # Tiered on the `nix` lane: `tests/ci_paths.py`'s `NIX` list, derived from this flake's own
+    # source ALLOWLISTS and re-derived from `flake.nix` by `tests/test_ci_paths.py` on every run.
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.nix != 'false') }}
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
@@ -1646,6 +1723,11 @@ jobs:
   # before adding a dependency to that module, because nothing in this repository will.
   uiaudit:
     runs-on: ubuntu-latest
+    # Tiered on the `uiaudit` lane: `tests/ci_paths.py`'s `UIAUDIT` list — what THIS job builds and
+    # runs. `tests/test_ci_paths.py` refuses a repository path named in this job's commands that
+    # the list does not cover.
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.uiaudit != 'false') }}
     # 🔴 NON-BLOCKING, AND THE COMMENT THAT USED TO STAND HERE CLAIMED AN OUTCOME THIS LINE DOES
     # NOT PRODUCE — MEASURED ON THIS BRANCH RATHER THAN ASSUMED.
     #
@@ -1998,6 +2080,8 @@ jobs:
   # `ci.yml` untouched, and would have shipped the guard inert.
   pgtest:
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false') }}
     # 🔴 THE MAJOR IS PINNED, NOT INHERITED, AND IT AGREES WITH TWO OTHER SITES — the
     # devShell's `pkgs.postgresql_18` and `wantServerMajor` in the tier's own harness.
     # `tests/test_pgtest_tier_is_declared.py` asserts the three agree. A fourth site, the
