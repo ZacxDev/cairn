@@ -5137,6 +5137,8 @@ MUTANTS: tuple[Mutant, ...] = (
         old="\treturn a.VisibleScopes(control.VerbWrite).Allows(scope)\n",
         new="\treturn a.VisibleScopes(control.VerbRead).Allows(scope)\n",
         killer="TestThePredicatesAreRelationshipsOverOneModel",
+        # S5: the browser's forged send from a read-only viewer is refused by this predicate too.
+        extra_killers=("TestAForgedSendFromAReadOnlyViewerIsRefusedByMaySend",),
         why="a reader sending looks harmless — and O2 is that sending needs exactly the entry-write "
         "predicate (e2e sabotage (b)).",
     ),
@@ -5286,6 +5288,120 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestTheBinaryRefusesEachClientAPIMisconfiguration",
         why="the predicate is tested in-process, so the call looks covered — whether `main` ACTS on it "
         "is wiring only a re-exec can see.",
+    ),
+    # ---- scope mail S5: the browser's MEMOS TAB, `POST /memo` and `POST /memo/retract` ----------
+    # Its Postgres-tier guard (`TestTheMemoTabsForgedSendIsRefusedByTheRealStore`, the real binary over
+    # the real store) cannot run here — this battery runs no database — and its matrix is in the S5 PR.
+    Mutant(
+        name="ui-memo-send-row-declared-public",
+        path="internal/ui/routes.go",
+        old='{"POST", MemoPath}:        {(*Server).handleMemoSend, 0},',
+        new='{"POST", MemoPath}:        {(*Server).handleMemoSend, classPublic},',
+        killer="TestTheMemoRowsAreBehindBothCrossSiteGates",
+        extra_killers=("TestTheRouteLedgerMatchesTheDispatchTable",),
+        why="a send form reads like any other form, and a class is a one-word edit — but a public row "
+        "dispatches ahead of the chain and so ahead of the CSRF gate (the S5 plan's named bypass).",
+    ),
+    Mutant(
+        name="ui-memo-retract-row-declared-public",
+        path="internal/ui/routes.go",
+        old='{"POST", MemoRetractPath}: {(*Server).handleMemoRetract, 0},',
+        new='{"POST", MemoRetractPath}: {(*Server).handleMemoRetract, classPublic},',
+        killer="TestTheMemoRowsAreBehindBothCrossSiteGates",
+        extra_killers=("TestTheRouteLedgerMatchesTheDispatchTable",),
+        why="retracting only REDUCES exposure, so exempting it reads as safe — and a cross-site "
+        "retraction is still a write somebody else chose.",
+    ),
+    Mutant(
+        name="ui-memo-form-ignores-maysend",
+        path="internal/ui/memos.go",
+        old="tab := MemoTab{CanSend: memo.MaySend(id.Auth, scope.Name),",
+        new="tab := MemoTab{CanSend: memo.MayRead(id.Auth, scope.Name),",
+        killer="TestAReadOnlyViewerSeesTheMemosTabButNoSendForm",
+        why="'anyone who can see the tab can use it' is the obvious condition, and it offers a reader "
+        "a form the store then refuses.",
+    ),
+    Mutant(
+        name="ui-memo-retract-button-asks-maysend",
+        path="internal/ui/memos.go",
+        old='row.Retractable = row.Tombstone == "" && memo.MayRetractMemo(id.Principal, id.Auth, st)',
+        new='row.Retractable = row.Tombstone == "" && memo.MaySend(id.Auth, scope.Name)',
+        killer="TestTheRetractButtonFollowsMayRetractMemo",
+        why="'writers may retract' is a plausible rule and it is not Q19's: it offers a member another's "
+        "memo and hides a reader's own.",
+    ),
+    Mutant(
+        name="ui-memo-retract-button-on-a-tombstone",
+        path="internal/ui/memos.go",
+        old='row.Retractable = row.Tombstone == "" && memo.MayRetractMemo(',
+        new='row.Retractable = memo.MayRetractMemo(',
+        killer="TestTheRetractButtonFollowsMayRetractMemo",
+        why="the predicate does not know a memo is retracted, so it answers true for an admin and "
+        "offers a button the store answers `not-found`.",
+    ),
+    Mutant(
+        name="ui-memo-body-rendered-raw",
+        path="internal/ui/memos.go",
+        old='h.Data("memo", "body"), g.Text(row.Body))',
+        new='h.Data("memo", "body"), g.Raw(row.Body))',
+        killer="TestMemoTextRendersAsTextAndThroughTheRenderSideReplacement",
+        extra_killers=("TestNoRawNodeConstructorAppearsInTheUIPackage",),
+        why="the body is 'already rendered', so writing it raw reads as avoiding a double escape — and "
+        "rendering stops invisible code points, not markup.",
+    ),
+    Mutant(
+        name="memo-render-skips-the-body-replacement",
+        path="internal/memo/stored.go",
+        old="\n\tr.Body = sanitize(t.body)\n\treturn r\n}",
+        new="\n\tr.Body = t.body\n\treturn r\n}",
+        killer="TestMemoTextRendersAsTextAndThroughTheRenderSideReplacement",
+        extra_killers=("TestEveryFieldsStringIsSanitisedOnEveryOutput",),
+        why="the store's send-side fence already refused the dangerous runes, so the render-side pass "
+        "reads as redundant — and the store holds Cf and variation selectors by design (decision 5).",
+    ),
+    Mutant(
+        name="ui-memo-lapsed-mark-never-shown",
+        path="internal/ui/memos.go",
+        old="SenderLapsed: !memo.SenderMaySend(m, st)}",
+        new="SenderLapsed: false}",
+        killer="TestTheMemosTabIsNewestFirstWithTombstonesAndLapsedSenders",
+        why="a memo stays delivered after the grant goes (decision 12), so the mark looks optional — "
+        "it is the only thing telling a reader the sender has lost write.",
+    ),
+    Mutant(
+        name="ui-memo-listing-boundary-not-one-second-early",
+        path="internal/ui/memos.go",
+        old="after = last.Add(-time.Second)",
+        new="after = last",
+        killer="TestTheMemoListingPagesPastOnePageWithoutLosingASharedSecond",
+        why="'strictly after the last one we saw' is the obvious cursor — and the rendered time is whole "
+        "seconds, so it skips every memo sharing that second.",
+    ),
+    Mutant(
+        name="ui-memo-write-skips-the-scope-lookup",
+        path="internal/ui/memos.go",
+        old="\tif !found {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn Scope{}, false\n",
+        new="\tif !found && false {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn Scope{}, false\n",
+        killer="TestAWriteNamingAScopeTheViewerCannotReadIsTheBrowseRefusal",
+        why="the store refuses an unwritable scope anyway, so the lookup reads as redundant — and the "
+        "redirect it falls through to is not the browse surface's one miss.",
+    ),
+    Mutant(
+        name="memo-mayretractmemo-asks-of-the-retractor",
+        path="internal/memo/policy.go",
+        old="return MayRetract(p, a, t.scope, t.senderKind, t.senderID)",
+        new="return MayRetract(p, a, t.scope, t.retractorKind, t.retractorID)",
+        killer="TestMayRetractMemoAsksMayRetractOfTheMemosOwnScopeAndSender",
+        why="two (kind, id) pairs sit side by side in the stored memo, and the wrong one compiles.",
+    ),
+    Mutant(
+        name="memo-sendermaysend-ignores-the-scope",
+        path="internal/memo/policy.go",
+        old="return MaySend(control.Resolve(m, p), t.scope)",
+        new="return len(control.Resolve(m, p).NamedScopes(control.VerbWrite)) > 0",
+        killer="TestSenderMaySendIsTheSendersOwnAuthorityNow",
+        why="'can the sender still write' without saying WHERE reads as the question; a sender who "
+        "writes elsewhere then hides a lapse here.",
     ),
 )
 

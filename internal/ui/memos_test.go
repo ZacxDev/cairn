@@ -638,19 +638,19 @@ func TestTheMemoOutcomeBannerIsAClosedSet(t *testing.T) {
 }
 
 // TestTheMemoListingPagesPastOnePageWithoutLosingASharedSecond — a listing WITH tombstones can exceed
-// one page. 250 memos where the page boundary falls inside one SECOND that four of them share: every
-// memo is listed exactly once. RED with the boundary asked strictly after the page's last time
+// one page. 250 memos where the page boundary falls inside one INSTANT that four of them share (the
+// store's own tie, broken by id): every memo is listed exactly once. RED with the boundary asked strictly after the page's last time
 // (`ui-memo-listing-boundary-not-one-second-early`), which skips the second's later members.
 func TestTheMemoListingPagesPastOnePageWithoutLosingASharedSecond(t *testing.T) {
 	w := memoWorld(t)
 	var rows []fakeRow
 	at := memoClock
 	for i := 0; i < 250; i++ {
-		// Rows 198..201 share one second (sub-second apart); every other row is a second later.
-		if i < 198 || i > 201 {
+		// Rows 198..201 share ONE INSTANT, on a whole second — page one (200 rows) ends inside them, so
+		// "strictly after the last time seen" skips the two that did not fit. Every other row is a
+		// second later than the one before.
+		if i <= 198 || i > 201 {
 			at = at.Add(time.Second)
-		} else {
-			at = at.Add(100 * time.Millisecond)
 		}
 		rows = append(rows, fakeRow{id: int64(1000 + i), scope: "alpha-notes", senderKind: control.KindUser,
 			senderID: memoWriter, subject: "s", body: "b", created: at, expires: memoClock.Add(time.Hour)})
