@@ -96,11 +96,18 @@ permissions:
   packages: write
 
 concurrency:
-  # Two runs on the same ref would compute the same immutable tag and push
-  # byte-identical content, so a race here cannot clobber anything. Serialised
-  # anyway, and NOT cancelled: a cancelled publish leaves a half-known state,
-  # which is worse than a duplicated one.
-  group: publish-image-${{ github.ref }}
+  # ONE GROUP PER RUN, so no publish is ever cancelled OR DROPPED. A group keyed
+  # on the ref looked like "serialised, never cancelled", and was not:
+  # `cancel-in-progress: false` spares only the RUNNING member, and GitHub keeps
+  # at most ONE pending run per group, so a third push to `main` while one
+  # publish runs and a second waits REPLACES the waiting one. That commit then
+  # never gets its `sha-<40 hex>` image, and nothing says so until someone tries
+  # to deploy or roll back to it. Running unserialised is safe because every tag
+  # this job writes is a function of the commit (`sha-<full sha>`, or the
+  # version tag of a tag push) and there is no mutable tag: two concurrent runs
+  # for different commits write disjoint tags, and two for the same commit write
+  # byte-identical content. Pinned by `tests/test_publish_workflow.py`.
+  group: publish-image-${{ github.run_id }}
   cancel-in-progress: false
 
 jobs:
