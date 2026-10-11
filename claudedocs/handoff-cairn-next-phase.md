@@ -631,3 +631,5 @@ git diff --quiet b2b54e4 origin/main -- internal/store/openness.go; echo rc=$?  
 # the tree that shipped IS the tree that was gated — expect ONLY the base-move docs file
 git diff --name-only cc9452e origin/main
 ```
+
+<!-- docs-lane probe: throwaway, never merged -->
