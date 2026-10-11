@@ -927,7 +927,10 @@ no longer reversible: the operator ruled to keep it (Q16).
       `auth.VisibleScopes(control.VerbAdmin).Allows(name)` holds — which, after decision 17, an
       AGENT credential never does, so moderation is a human's act. **The two rules compose:** an
       agent credential retracts the memos its OWN principal sent, through the sender rule, and
-      nothing else, even when that principal is a scope admin (e2e (g)'s decision-17 control). It sets `retracted_at`, NULLs
+      nothing else, even when that principal is a scope admin (e2e (g)'s decision-17 control).
+      ⚠ **S2 narrowed the moderator to an admin who can also READ the scope** — one predicate for
+      both rules, no existence oracle for an admin-only grant (see "S2 — measurements and
+      corrections"). It sets `retracted_at`, NULLs
       `subject` and `body`, and appends `kind='retracted'` with the retracting actor and credential,
       in one transaction.
     - **Readers see the tombstone.** `memo-read`, the listing and the UI tab render a retracted memo
@@ -1688,6 +1691,40 @@ S1's author on one host: go1.25.14 (the devShell's), PostgreSQL **18.6** through
   the up-path test now asserts a contiguous ledger from 1, and the version-2 rollback test builds
   its database at version 2 — rolling back past BOTH needs both recipes, 3 first (stated on
   `refuseFromTheFuture`).
+
+## S2 — measurements and corrections recorded by the slice
+
+S2 (`internal/clientapi`, `cairn-ui -client-api-addr`, and #235's round-1 findings) recorded these
+where building it found the plan silent, or the code different from the plan. Measured by S2's
+author on one host: go1.25.14 (the devShell's), PostgreSQL 18.6 through `tests/pgtest/run.sh`.
+
+- **The retraction rule is now ONE predicate, and it is narrower than O8's wording.** Through S1,
+  `memo.MayRetract` let any scope admin retract while `pgstore.Retract` first refused every caller
+  who could not READ the scope (the uniform miss, T12) — so an ADMIN-ONLY grant (the share form
+  allows one) was "may" in the predicate and `not-found` at the store. Ruled the safe way: the read
+  clause moved INTO `MayRetract`, gating both the sender and the moderator, so the store, the
+  listener and S5's button ask one rule and no caller who cannot read a scope learns anything about
+  its ids. O8's "any admin of the scope" is therefore "any admin who can also read it". The store
+  keeps its read check FIRST, as decision 4's uniform miss, not as a second retract rule.
+- **The listener's handler is a package, `internal/clientapi`**, and its wire carries `memo.Rendered`
+  itself: the JSON keys are that type's Go field names (`ID`, `Scope`, `Sender`, …), deliberately,
+  so there is no copy step between `memo.Render` and the encoder. S3's client decodes the same type.
+- **`Config.Auth` is a `*identity.MachineToken`, not an `identity.Authenticator`** — decision 3's
+  "machine-token backend only" is a TYPE fact, so the browser's chain cannot be handed over by a
+  wiring edit alone. The mutant that does hand it over (three edits, the type included) is killed by
+  the binary test that signs a real cookie in next door.
+- **`GET /client/v1/memos` takes a fourth parameter, `tombstones=1`**, which the route table above
+  does not name: S1 left "how the listener exposes" `MemoQuery.IncludeRetracted` to S2, and decision
+  10 needs `memo-read`'s listing to show tombstones while the check never does. Default off.
+- **`-client-api-addr` is judged with the flags, before the authority or the database is opened** —
+  journal, database, blank value, host:port and the reachable-bind refusal — because each reads only
+  the command line and the environment. So the plan's "set without `-control-journal` → exit 78" is
+  measured with a database that ANSWERS too (`TestTheClientListenerNeverServesTheTokenFileProjection`,
+  pgtest tier): without the refusal, that child comes up serving.
+- **A send to a scope the caller cannot write is one body** (`403 … "no-write"`) whether the scope
+  is absent, unreadable or read-only — T12 on the send route, which the plan stated only for reads.
+- **Not built here, stated:** the plugins plan's agent read routes moving onto this listener (Q3's
+  default) — no such routes exist yet.
 
 ## Open questions
 

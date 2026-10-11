@@ -158,7 +158,8 @@ PKGS = (
     # `memo.MaySend`, `MayRead` and `MayRetract` decide who may send, read and retract a memo
     # from a `control.Authorization` — so a mutant in `internal/control`'s narrowing (decision
     # 17's verb argument) is killed HERE, by the retraction rule's decision-17 case, and the
-    # predicates' own guards are reachable only at unit level until a listener exists (S2).
+    # predicates' own guards are reachable at unit level here; through S2's listener they are
+    # reached only in the Postgres tier, which this battery does not run (the S2 PR's matrix).
     "./internal/memo/",
 )
 
@@ -5202,6 +5203,89 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestEveryDefaultIgnorableCodePointIsUnsafe",
         extra_killers=("TestUnsafeByCategoryIncludingTagsAndVariationSelectors",),
         why="the category test reads as complete — and U+3164, an invisible LETTER, passed it (S0 audit).",
+    ),
+    # ---- scope mail S2: the CLIENT LISTENER (`internal/clientapi`, `cmd/cairn-ui -client-api-addr`) ----
+    # 🔴 EVERY `internal/clientapi` ROW CARRIES `pkgs` RATHER THAN `PKGS` GROWING, the codesrc rows'
+    # convention: the listener asks no authz predicate of its own (the store does), so it is not a
+    # member of the seam — but its authentication, lockout, ledger and wire are guards, and these
+    # rows prove each can go red. Its Postgres-tier guards (the uniform miss, the scope match, O9)
+    # cannot run here — this battery runs no database — and their matrix is in the S2 PR.
+    Mutant(
+        name="clientapi-ledger-grows-a-route",
+        path="internal/clientapi/clientapi.go",
+        old="\t{http.MethodPost, RetractPath}: (*Handler).retract,\n",
+        new="\t{http.MethodPost, RetractPath}: (*Handler).retract,\n\t{http.MethodDelete, MemoPath}: (*Handler).retract,\n",
+        killer="TestTheClientRouteLedgerMatchesTheDispatchTable",
+        pkgs=PKGS + ("./internal/clientapi/",),
+        why="a DELETE spelling of retract reads as REST hygiene — and it is an endpoint an agent "
+        "credential reaches that nobody wrote down.",
+    ),
+    Mutant(
+        name="clientapi-lockout-never-consulted",
+        path="internal/clientapi/clientapi.go",
+        old="\tif h.cfg.Limiter.LockedOut(client) {\n",
+        new="\tif false && h.cfg.Limiter.LockedOut(client) {\n",
+        killer="TestFailedCredentialsLockTheClientOut",
+        pkgs=PKGS + ("./internal/clientapi/",),
+        why="a valid token is valid, so checking the lockout first looks like it only refuses honest "
+        "callers — and it is the whole of the guessing bound (T9).",
+    ),
+    Mutant(
+        name="clientapi-failure-never-recorded",
+        path="internal/clientapi/clientapi.go",
+        old="\t\tif h.cfg.Limiter.RecordFailure(client) {\n",
+        new="\t\tif false {\n",
+        killer="TestFailedCredentialsLockTheClientOut",
+        pkgs=PKGS + ("./internal/clientapi/",),
+        why="the line reads as logging; the call inside the condition is what feeds the lockout.",
+    ),
+    Mutant(
+        name="clientapi-wire-encodes-stored",
+        path="internal/clientapi/clientapi.go",
+        old="\twriteJSON(w, http.StatusOK, MemoBody{Memo: memo.Render(st)})\n",
+        new="\twriteJSON(w, http.StatusOK, MemoBody{}); _ = st\n",
+        killer="TestTheWireCarriesRenderedTextNeverStored",
+        pkgs=PKGS + ("./internal/clientapi/",),
+        why="decision 19, Guard C: a body built without `memo.Render` carries none of the rendered "
+        "fields (encoding `memo.Stored` itself gives `{}`, the same observable).",
+    ),
+    Mutant(
+        name="cairn-ui-client-api-without-a-journal-admitted",
+        path="cmd/cairn-ui/clientapi.go",
+        old="\tif journal == \"\" {\n",
+        new="\tif false && journal == \"\" {\n",
+        killer="TestTheClientAPIFlagNeedsAJournalADatabaseAndAnAllowlist",
+        extra_killers=("TestTheBinaryRefusesEachClientAPIMisconfiguration",),
+        why="the flag only needs a database to store memos, so the journal looks optional — and "
+        "without it the authority is the token file's shared row (O5, reversed by O9).",
+    ),
+    Mutant(
+        name="cairn-ui-client-api-without-a-database-admitted",
+        path="cmd/cairn-ui/clientapi.go",
+        old="\tif dsn == \"\" {\n",
+        new="\tif false && dsn == \"\" {\n",
+        killer="TestTheClientAPIFlagNeedsAJournalADatabaseAndAnAllowlist",
+        extra_killers=("TestTheBinaryRefusesEachClientAPIMisconfiguration",),
+        why="the listener would still bind and announce itself, and answer every route with an error.",
+    ),
+    Mutant(
+        name="cairn-ui-client-api-bind-reachability-unchecked",
+        path="cmd/cairn-ui/clientapi.go",
+        old="\treturn listenerBindRefusal(\"client API listener\", flagClientAPIAddr, addr, proxyErr)\n",
+        new="\treturn nil\n",
+        killer="TestTheClientAPIFlagNeedsAJournalADatabaseAndAnAllowlist",
+        extra_killers=("TestTheBinaryRefusesEachClientAPIMisconfiguration",),
+        why="the browser listener's bind already passed this check — and a loopback browser bind says "
+        "nothing about a 0.0.0.0 client bind.",
+    ),
+    Mutant(
+        name="cairn-ui-main-ignores-the-client-api-refusal",
+        path="cmd/cairn-ui/main.go",
+        old="trustedProxiesErr()); err != nil {",
+        new="trustedProxiesErr()); false && err != nil {",
+        killer="TestTheBinaryRefusesEachClientAPIMisconfiguration",
+        why="the predicate is tested in-process, so the call looks covered — whether `main` ACTS on it "
+        "is wiring only a re-exec can see.",
     ),
 )
 

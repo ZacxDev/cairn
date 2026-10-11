@@ -60,6 +60,12 @@ TIER_FILES = (
     # `PGTEST_PKGS` in the runner are two halves of one move; `test_the_runner_names_every_
     # package_the_tier_lives_in` is what refuses to let them drift.
     "cmd/cairn-ui/database_pgtest_test.go",
+    # SCOPE MAIL's CLIENT LISTENER (S2): the real handler over the real `MemoStore`, and the real
+    # binary with `-client-api-addr` against a migrated database — the rendered wire for a row
+    # planted by SQL, the uniform miss, the scope match on id routes, two credentials of one
+    # principal, a cookie signed in next door, and the no-journal refusal with a database that
+    # answers. None of it is visible without a server.
+    "cmd/cairn-ui/clientapi_pgtest_test.go",
 )
 RUNNER = "tests/pgtest/run.sh"
 CI = ".github/workflows/ci.yml"
@@ -128,6 +134,15 @@ DECLARED_TESTS = {
     "cmd/cairn-ui/database_pgtest_test.go": {
         "TestWithADatabaseTheSurfaceMovesItsStateThereAndHoldsInvitations",
         "TestTheWiredHalvesMintAndRedeemALinkAgainstPostgres",
+    },
+    "cmd/cairn-ui/clientapi_pgtest_test.go": {
+        "TestTheListenerServesRenderedTextForARowPlantedBySQL",
+        "TestEveryMissOnTheClientListenerIsOneBody",
+        "TestTheIdRoutesMatchTheScope",
+        "TestTwoCredentialsOfOnePrincipalOnTheClientListener",
+        "TestTheClientListenerExistsOnlyWhenConfigured",
+        "TestACookieSignedInNextDoorIsGarbageToTheClientListener",
+        "TestTheClientListenerNeverServesTheTokenFileProjection",
     },
 }
 

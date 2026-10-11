@@ -31,7 +31,8 @@ import (
 // `TestGuardCNoExportedResultOrFieldCarriesMemoText` is the ledger. Parameters are not
 // constrained: `Send` takes the subject and body to store.
 //
-// ⚠ INERT IN S1: no listener, no route and no verb calls it yet (S2, S3).
+// ⚠ INERT UNLESS `cairn-ui -client-api-addr` IS SET: S2's client listener (`internal/clientapi`) is
+// its one request-reachable caller; the verbs (S3) and the browser tab (S5) are later slices.
 type MemoStore struct {
 	db   *DB
 	scan *secretscan.Redactor
