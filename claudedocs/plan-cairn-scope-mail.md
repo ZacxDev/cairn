@@ -69,12 +69,19 @@ plan that an agent or a skill router reads says "mail".
   check reads the RUNNING workloads; the live probe isolates `HOME`; and e2e (d) plants the
   fence-breaking members by SQL with a pinned count. Ledger: "Round-3 findings → where each is
   fixed".
-- *Revision 7* (this) applies round 4 of #221 (delta `b30b351..18837a1`: 3 🟡, 1 🟢). Decision 19's
+- *Revision 7* (`98c6d36`) applies round 4 of #221 (delta `b30b351..18837a1`: 3 🟡, 1 🟢). Decision 19's
   guard now covers exported METHODS and `fmt` output as well as fields, reaches the SERVER side
   (`pgstore` and the listener's JSON, which now carries rendered fields), and its claim is scoped
   to what it checks; the live probe runs under `env -i` with an explicit allowlist, because revision
   6's `HOME`-only isolation was defeated by `CAIRN_CONFIG` and its alias. Ledger: "Round-4
   findings → where each is fixed".
+- *Revision 8* (this) applies round 5 of #221 (delta `18837a1..98c6d36`: 4 🟡, two of them
+  regressions from revision 7). **The last three rounds each found a defect in a guard MECHANISM the
+  previous revision had written into this plan**, so revision 8 re-specifies each guard as a
+  PROPERTY, the MUTANTS it must turn red, and the CODE FACTS that constrain it — and removes the
+  implementation detail it cannot pin to code or a measurement, leaving that to the slice that
+  builds the guard and that slice's own audit. What was removed is listed in "Round-5 findings →
+  where each is fixed".
 
 ## Goal and premise
 
@@ -143,39 +150,52 @@ Drop the work, or the named half, if any of these holds:
      exactly ONE block containing the probe's subject (the POSITIVE control); `memo-retract` exits
      0; and a NEW probe session's check prints nothing. It exits 2 when the probe credential or
      `CAIRN_UI_URL` is absent.
-     - **How the probe credential reaches the client, without touching the operator's real
-       client state (rounds 3–4):** the script creates a temporary directory (0700) and runs EVERY
-       client call under **`env -i`** with an explicit ALLOWLIST and nothing else: `PATH` (the
-       client runs `git` by bare name, `internal/client/reposcope.go:43`), `HOME`, `XDG_STATE_HOME`
-       and `XDG_CACHE_HOME` all pointed into the temporary directory, and `CAIRN_CONFIG` set to the
-       temporary env file.
-       - **Why an allowlist, not a list of unsets (round 4 🟡3):** revision 6 isolated `HOME` only,
-         and the client reads `$CAIRN_CONFIG` BEFORE `HOME` (`ConfigPath`,
-         `internal/client/instances.go:399-402`), with `SUBSYSTEM_STORE_CONFIG` resolved as its alias
-         (`internal/envalias/envalias.go:165`); an operator shell exporting either made the probe
-         read the operator's real config. A denylist has to name every variable the client reads,
-         including ones added later; `env -i` clears them all by construction.
-       - **What it clears, read off the code rather than from memory** — every environment variable
-         the Go client reads for the default instance, from the alias ledger
-         (`internal/envalias/envalias.go:164-185`) and the client's own constants:
-         `CAIRN_CONFIG`/`SUBSYSTEM_STORE_CONFIG` (`instances.go:88`; ledger `:165`),
-         `CAIRN_URL`/`SUBSYSTEM_STORE_URL` and `CAIRN_TOKEN`/`SUBSYSTEM_STORE_TOKEN` (read through
-         `pick`, `internal/client/transport.go:154-162`; ledger `:184`, `:181`), `CAIRN_ROUTES`
-         (`instances.go:93`, no alias — an exported routing table could route the probe scope to
-         another instance), `CAIRN_MIRROR_ROOT` (`internal/client/cli.go:834`, no alias), and the new
-         `CAIRN_UI_URL` and `CAIRN_UI_TOKEN` (no alias, decision 8). The ledger's other pairs are
-         server settings the client does not read, and are cleared anyway. That
-       matters because the cache root has NO override — it is always `$HOME/.cache/subsystem-store`
-       (`internal/client/readstore.go:55-71`) — and `sync` REPLACES it with what the syncing token
-       sees (`internal/client/verbs.go:69-81`); moving only the config file would have overwritten
-       the operator's real cache with the probe's view. `CAIRN_CONFIG` names ONE default-instance env file
-       (0600): `CAIRN_URL` and `CAIRN_TOKEN` for the pod, so the probe can sync the cache decision 7's
-       `no-scope` rule reads, and `CAIRN_UI_URL` and `CAIRN_UI_TOKEN` for the probe credential,
-       copied from a path the operator passes. The directory is deleted on exit. A default instance
-       is used because a non-default one reads only its own file
-       (`internal/client/transport.go:121-126`). *Revision 5 cited that as a bare `:121-126` right
-       after an `instances.go` citation, where it resolves to `ValidAlias`/`CacheRootFor`; the file
-       is now named.*
+     - **The probe's inputs arrive through ONE channel (round 5 🟡4a-ii):** a single argument, the
+       path of a probe-input file (0600) the operator prepares, holding the pod URL and token, the
+       memo listener URL, the probe credential and the probe scope. Nothing the script uses is read
+       from its own environment, and no token is ever on argv. *Revision 7 took these from "a path
+       the operator passes" but did not exclude the ambient environment.*
+     - **Isolation — the PROPERTY:** no client call made by the probe reads any of the operator's
+       client configuration, routing, cache or credentials, and none writes to them; the probe's
+       answer depends only on its input file.
+     - **Code facts that constrain it:**
+       - the config path is `$CAIRN_CONFIG` before `$HOME` (`internal/client/instances.go:399-402`),
+         and `SUBSYSTEM_STORE_CONFIG` resolves as its alias (`internal/envalias/envalias.go:165`);
+       - for the DEFAULT instance the process environment BEATS the config file for the pod URL and
+         token (`internal/client/transport.go:154-161`), through the alias resolver, which takes the
+         new name when set and the old name otherwise (`internal/envalias/envalias.go:292-301`);
+       - the routing table is `$CAIRN_ROUTES` (`internal/client/instances.go:93`, no alias), and an
+         exported one could route the probe scope to another instance;
+       - the cache root is always `$HOME/.cache/subsystem-store`, with no override
+         (`internal/client/readstore.go:55-71`), and `sync` REPLACES it with what the syncing token
+         sees (`internal/client/verbs.go:69-81`);
+       - the client runs `git` by bare name (`internal/client/reposcope.go:43`), so `PATH` is needed;
+       - the client reads NO `XDG_*` variable today (round 5's auditor; a search of
+         `internal/client` finds none). The memo cursor (decision 6) will read `XDG_STATE_HOME`.
+       - a default instance is used because a non-default one reads only its own file
+         (`internal/client/transport.go:121-126`).
+     - **Chosen means:** every client call runs under `env -i` with an ALLOWLIST: `PATH`; `HOME` and
+       `XDG_STATE_HOME` pointed into a temporary directory (0700); `CAIRN_CONFIG` naming the one
+       default-instance env file written there (0600) from the probe-input file; and, passed
+       through unchanged, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`
+       and their lower-case forms — they change how the network is reached, never which
+       configuration is read, and an operator host may need them to reach the listener at all.
+       `XDG_CACHE_HOME` is DROPPED from the allowlist: the client reads no such variable. An
+       allowlist was chosen over a list of unsets because a denylist has to name every variable the
+       client reads, including ones added later; the directory is deleted on exit.
+     - **What it clears:** everything outside that allowlist. The client-read names at risk, from
+       the code: `CAIRN_CONFIG`/`SUBSYSTEM_STORE_CONFIG`, `CAIRN_URL`/`SUBSYSTEM_STORE_URL`,
+       `CAIRN_TOKEN`/`SUBSYSTEM_STORE_TOKEN` (alias ledger, `internal/envalias/envalias.go:164-185`),
+       `CAIRN_ROUTES`, `CAIRN_MIRROR_ROOT` (`internal/client/cli.go:834`), and the new
+       `CAIRN_UI_URL`/`CAIRN_UI_TOKEN` (decision 8).
+     - **Mutants the isolation test (S3) must turn red:** isolating `HOME` only (revision 6's
+       mechanism — the decoy config is read); replacing `env -i` with a list of unsets that omits
+       `SUBSYSTEM_STORE_URL` or `SUBSYSTEM_STORE_TOKEN` (the decoy pod URL beats the config file,
+       `transport.go:154-161`); one that omits `CAIRN_ROUTES` (the decoy table routes the probe scope
+       away); and reading the probe credential from the environment instead of the input file.
+       *Revision 7 named a mutant omitting `SUBSYSTEM_STORE_CONFIG`; it cannot go red, because the
+       probe always sets `CAIRN_CONFIG` and the resolver prefers the new name
+       (`envalias.go:292-301`). Replaced.*
      - **Where the result is recorded:** the operator pastes the script's final summary line (counts
        and exit code, never a token) as a comment on S7's change in the deployment repository and in
        the arc's handoff. That record is the evidence part 5 was met.
@@ -200,7 +220,7 @@ Drop the work, or the named half, if any of these holds:
   | **(a) once per session** | `agents@host-a` sends one memo to `alpha-notes`. `agents@host-r`'s check for `s-0001` prints exactly one block holding exactly one memo; the SECOND check for `s-0001` prints zero bytes, exits 0 and reports `memo-status=none`; a check for `s-0002` prints it once more | `outsider-c`'s HTTP answer for `alpha-notes` is byte-identical to the answer for a scope that does not exist |
   | **(b) who may send** | `agents@host-r`'s send exits **6** and the table row count does not move | `agents@host-a` sending the same request succeeds (positive control) |
   | **(c) narrowing holds both ways** | `agents@host-b` (narrowed to `beta-notes`): a send to `alpha-notes` exits 6, and its check of `alpha-notes` prints nothing and reports `memo-status=scope-unreadable` — although its principal can write there | `agents@host-a` sees and sends |
-  | **(d) the fence holds, on BOTH output paths** | the hostile set is exactly S0's corpus (decision 5): its **8 SEND-ACCEPTED** members are sent through `agents@host-a` and each exits 0; its **8 FENCE-BREAKING** members, which the send rule refuses, are PLANTED by SQL (as clause (h) plants rows) so the renderer still meets them. A new session's check then prints exactly ONE block with `count=16`, exactly 5 previews and the line `and 11 more`; and `memo-read --scope alpha-notes` prints exactly ONE block holding all 16 bodies. In both outputs every content line carries the content prefix, and no code point satisfies `memo.Unsafe` | positive control: the 8 fence-breaking members, sent through the CLIENT, each exit 6. `--self-test`'s (d1) drops the content prefix; (d2) makes `memo-read` print stored bodies raw — both turn THIS clause red |
+  | **(d) the fence holds, on BOTH output paths** | the hostile set is exactly S0's corpus (decision 5): its **8 SEND-ACCEPTED** members are sent through `agents@host-a` and each exits 0; its **8 FENCE-BREAKING** members, which the send rule refuses, are PLANTED by SQL (as clause (h) plants rows) so the renderer still meets them. A new session's check then prints exactly ONE block with `count=16`, exactly 5 previews and the line `and 11 more`; and `memo-read --scope alpha-notes` prints exactly ONE block holding all 16 bodies. In both outputs every content line carries the content prefix, and no code point satisfies `memo.Unsafe` | positive control: the 8 fence-breaking members, sent through the CLIENT, each exit 6. **Because the real listener now renders server-side (decision 19), the clause ALSO runs both verbs against a RAW-serving listener STUB** (an S3 test fixture that answers the listener's routes with the same 16 rows UNRENDERED), and asserts the same properties of the client's output there — that half is what keeps an end-to-end guard on the CLIENT renderer. `--self-test`'s (d1) drops the content prefix (red on both halves); (d2) makes `memo-read` print without the client-side replacement (red on the STUB half only — against the real listener the text is already rendered, which is the point of the stub) |
   | **(e) secret refusal** | a memo whose body carries a run-time-generated vendor-prefixed token that one of decision 11's CONFIDENT rules matches exits 6 naming the rule, and nothing is stored | the same body with the token removed is accepted; a body only the `entropy` or `key-context` rule would match is ALSO accepted |
   | **(f) quota (O12)** | the 51st send to `alpha-notes` inside one rolling day exits 6 whichever sender makes it (the 50 are split between `agents@host-a` and `agents@host-c`) | a send to `beta-notes` through `agents@host-b` in the same minute succeeds |
   | **(g) retract (O8)** | after `agents@host-a` retracts its memo, a NEW session's check prints nothing; `memo-read --scope alpha-notes --id <id>` shows the tombstone `retracted by writer-a via agents@host-a (user) at <time>` and no subject or body; the stored subject and body are NULL; the event rows are exactly `sent` then `retracted`, each with its actor. `admin@host-d`'s retraction of a second memo shows `retracted by admin-d …` | `agents@host-r`'s retract of a third memo exits 6 and changes nothing. **And the decision-17 control:** `agents@host-c` tries to retract a memo `admin@host-d` sent — `agents@host-c` is not the sender, and its principal `writer-a` IS an admin of `alpha-notes`, so only the credential's verb narrowing refuses it: exit 6, memo unchanged |
@@ -1146,59 +1166,71 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
     clauses between a `curl`-driven S2 and S3, which could not assert an exit code; that split is
     retracted.*
 
-19. **One renderer for stored memo text, guarded by a type plus a ledger test (rounds 3–4).**
-    Revision 5 sanitised the preview and let `memo-read` print stored bodies raw, so a
-    variation-selector-encoded instruction accepted at send (decision 5) reached the agent intact
-    through the very command the preview tells it to run. The rule now has a mechanism, and the
-    claim below is scoped to exactly what that mechanism checks.
-    - **`memo.Stored` holds stored text in UNEXPORTED string fields.** `memo.Decode` (client side)
-      and `memo.NewStored` (server side) fill it by decoding into a PRIVATE wire struct and copying
-      from it. *Revision 6 said `encoding/json` "cannot set unexported fields from outside" the
-      package, which implied it can from inside; it cannot — an in-package `Unmarshal` leaves them
-      empty with a nil error (measured by round 4's auditor) — hence the private wire struct.*
-    - **`Stored` prints a fixed placeholder through `fmt`.** `fmt`'s `%v`, `%+v` and `%#v` print
-      unexported fields raw (round 4's auditor measured a planted U+200B surviving), so `Stored`
-      implements `String`, `GoString` and `Format`, each printing `memo.Stored{…}` and nothing it
-      holds.
-    - **The only exported ways out are the renderers:** `RenderPreview` (for `memo-check`) and
-      `RenderFull` (for `memo-read`) return the fenced block, and `Render` returns `memo.Rendered`,
-      every string field of which has passed `memo.Unsafe`'s replacement. The S5 tab is built from
-      `memo.Rendered` and then HTML-escaped (decision 15).
-    - **The SERVER side holds the same line.** `pgstore.MemoStore` returns `memo.Stored`, built by
-      `memo.NewStored` from the scanned row — never an exported `pgstore` row type. The listener
-      encodes each memo through `memo.Rendered`'s own `MarshalJSON`, so **the JSON on the wire
-      carries RENDERED fields** (the replacement applied server-side); the client decodes it and
-      renders again, which is idempotent because U+FFFD is category So and is never itself replaced
-      (asserted). Any HTTP consumer of the listener therefore receives replaced text, though without
-      the fence, which only the client draws.
-    - **The ledger test** (type-checked with `go/types`, not regex) fails when ANY of these appears:
-      - an exported FIELD of `memo.Stored` (any type, not only `string`);
-      - an exported METHOD or FUNCTION in package `memo` that takes or has a `memo.Stored` and
-        returns `string`, `[]byte`, `[]rune`, an `io.Reader`, a `fmt.Stringer`, an `error`, or a
-        struct with an exported string field — except an allowlist of exactly `Render`,
-        `RenderPreview`, `RenderFull`, `String`, `GoString` and `Format`, each of which is then
-        exercised with a `Stored` carrying a planted U+200B and its output asserted to contain
-        neither the rune nor the planted text (for the three `fmt` methods) or to carry `�` in its
-        place (for the renderers). *Revision 6's test checked fields only; an exported `Raw()`
-        method left it green (round 4's auditor measured 0 exported fields, 1 exported method), so
-        its "the ledger test AND e2e (d) both go red" was false for that mutant.*
-      - an exported type in package `pgstore` whose method set or fields expose memo text: every
-        exported method of `pgstore.MemoStore` must have only `memo.Stored`, `[]memo.Stored`, ids,
-        counts, times and `error` in its signature, and no exported `pgstore` struct may carry a
-        string field named for, or holding, a memo column — checked as a signature ledger that fails
-        on GROW or SHRINK.
-    - **Mutants, each with the guard that must go red:** an exported `Raw()` method on `Stored`
-      used by `memo-read` → the ledger test AND e2e (d)'s `memo-read` half (sabotage (d2)); `%+v` of
-      a `Stored` printed by a verb → the `fmt` assertion; a `pgstore` method returning a raw row →
-      the signature ledger; the listener encoding `Stored` instead of `Rendered` → an S2 test that
-      reads the wire bytes and finds the planted rune.
-    - **What the mechanism covers, and what it does NOT (round 4 🟡2c).** It covers Go code OUTSIDE
-      `internal/memo` that reaches stored text through the package's exported API, through `fmt`, or
-      through the listener's JSON. It does NOT cover: code inside `internal/memo` itself (reviewed,
-      not guarded); a deliberate `reflect` or `unsafe` read of the unexported fields; reads of the
-      table that bypass Go — an operator's SQL session, a backup, a replica; and anything a person
-      copies out of a rendered page. Those are out of scope, named so the sentence is no wider than
-      its guard.
+19. **One renderer for stored memo text — specified as PROPERTIES, MUTANTS and CODE FACTS (rounds
+    3–5).** Revision 5 let `memo-read` print stored bodies raw, so a variation-selector-encoded
+    instruction accepted at send (decision 5) reached the agent through the very command the
+    preview tells it to run. Rounds 4 and 5 then found defects in each guard MECHANISM this plan
+    wrote down. So this decision now states what each guard must GUARANTEE and what it must CATCH,
+    and leaves how it is built to S0, S1 and S2 and their audits.
+
+    **Guard A — the `memo` package's exported surface.**
+    - *Property:* outside `internal/memo`, stored memo text is obtainable only through a fixed,
+      listed set of exported names, each of which applies `memo.Unsafe`'s replacement before the
+      text leaves.
+    - *Mechanism class (the only part fixed here):* an ALLOWLIST LEDGER — every exported function,
+      method, type and package-level variable in `memo` whose signature or type mentions `Stored`
+      is listed by name, and the ledger fails on GROW or SHRINK. Every listed name that can emit
+      text — at least `Render`, `RenderPreview`, `RenderFull` and the `fmt` methods of Guard B — is
+      exercised against a `Stored` carrying a planted invisible rune, and its output must not carry
+      it. *Revision 7 used a DENYLIST of return types; it was closed, and round 5 listed what
+      escapes it.*
+    - *Mutants it must turn red* (round 5's escape list, plus revision 7's): an exported `Raw()`
+      method; `Emit(w io.Writer)`; a result of `[]string`, a `map`, `any`, a pointer, or a generic
+      type; a struct result with an exported `[]byte` field; an exported package variable
+      `var Peek = func(Stored) string`; an exported wrapper type holding a `Stored`.
+    - *Code fact:* `encoding/json` cannot fill unexported fields, from outside the package or
+      inside it (an in-package `Unmarshal` leaves them empty with a nil error — round 4's auditor),
+      so decoding goes through a private wire value and is copied in.
+
+    **Guard B — `fmt`.**
+    - *Property:* no stored text is reachable through `fmt`'s `%v`, `%+v` or `%#v`, at ANY nesting
+      depth — a `Stored` printed directly, inside an exported field, or inside an UNEXPORTED field of
+      another struct.
+    - *Code facts:* `fmt` prints unexported fields; a `Stored` nested in an unexported field
+      bypasses its own `String`/`GoString`/`Format` (round 5's auditor, go1.25.14:
+      `%#v` of `struct{ s memo.Stored }` printed the body); holding the text behind a POINTER inside
+      `Stored` makes nested `%v`/`%+v`/`%#v` print only an address (the same auditor's
+      measurement). The pointer indirection is therefore the requirement this plan adopts, as the
+      measured way to meet the property — not as a design preference.
+    - *Mutants it must turn red:* `Stored` holding the text in a value field (not behind a pointer)
+      printed nested in an unexported field; `Stored` without its `fmt` methods printed directly;
+      either printed with each of the three verbs.
+
+    **Guard C — the SERVER side (`pgstore` and the listener).**
+    - *Property:* no exported RESULT or exported FIELD in `internal/pgstore` carries memo text in any
+      type other than `memo.Stored`; the listener writes memo text to the wire only as
+      `memo.Rendered` fields — **the JSON on the wire is RENDERED**.
+    - *Scope correction (round 5 🟡4b):* PARAMETERS are not constrained — `MemoStore.Send` takes the
+      subject and body to store, and revision 7's "only `memo.Stored`… in its signature" forbade
+      exactly that. Results and exported fields only.
+    - *Mutants it must turn red:* a `MemoStore` method returning a raw row type or `[]string` of
+      bodies; an exported `pgstore` struct with a string field holding a memo column; the listener
+      encoding `Stored` instead of `Rendered` — caught by the S2 wire test because `Stored` has no
+      exported fields and so encodes as `{}`, leaving the rendered fields the test requires absent.
+      *Revision 7 attributed that failure to finding the planted rune; it fails earlier, and for
+      the reason given here.*
+    - *Kept, as confirmed by round 5's auditor:* the client renders the already-rendered text again,
+      which is a no-op (U+FFFD is category So and is never itself replaced), and the client loses
+      nothing it needs, since retraction is by id.
+
+    **Guard D — end to end.** e2e clause (d) runs `memo-check` and `memo-read` against the REAL
+    listener and against a RAW-serving STUB. With server-side rendering, only the stub half can see
+    a client that prints without the replacement; that is why the stub exists (round 5 🟡3), and
+    why sabotage (d2) is red on the stub half only.
+
+    **Out of scope, named so no sentence above is wider than its guards:** code INSIDE
+    `internal/memo`; a deliberate `reflect` or `unsafe` read; reads of the table that bypass Go — an
+    operator's SQL session, a backup, a replica; and text a person copies out of a rendered page.
 
 ## Threat and abuse cases
 
@@ -1259,7 +1291,7 @@ guarantees.
 | **S0** | cairn **and** tooling | **The trust boundary and the hook's silence, before any storage.** cairn: `internal/memo` with `RenderPreview`, the render-side sanitiser and `memo.BreaksFence` (the send-side refusal predicate, unused until S1), `memo.Stored`/`memo.Rendered` and the type ledger (decision 19), the hostile corpus generator `tests/memo/hostile.py` → `internal/memo/testdata/hostile.json`, and goldens. tooling: `scripts/claude-hooks/cairn-memo-hook.py` (stdin parse, subagent skip, no-session-id line, status-token branching, throttle, 2 s bound, silence) against a STUB `cairn` on `PATH` that replays the goldens, prints each status token, sleeps forever, or exits 3; NOT yet registered. **Plus one MEASUREMENT, recorded in this plan:** whether an opencode `tool.execute.after` hook can add text the model sees (for example by appending to the tool's output), on one host, with a synthetic tool call. | cairn: new package → `ok` floor (`ci.yml:839`, set to the count MEASURED on the merged tree); `onlyGo` for the testdata file. tooling: the runner's target list (`run-tests.sh:955-1028`). | Pure functions and an unregistered hook; nothing calls either. |
 | **S1** | cairn | **Storage.** Migration 3 (decision 2) with its rollback note; `pgstore.MemoStore` (send with the per-scope quota + live bound under the advisory lock, list-after, get, retract, prune-on-send); `memo.MaySend` / `memo.MayRead`; the send scan over `internal/redact`'s confident subset (decision 11 — so S1 waits for #216); `cairn-server -revoke-credential` (decision 16); and VERB narrowing — `control.Narrow`'s verb argument, the `credential-verbs-narrowed` event kind and `-issue-credential -narrow-verbs` (decision 17), deployed in BOTH binaries before any agent credential is issued. | pgtest tier (tests live in `internal/pgstore`, already in `PGTEST_PKGS`); `tests/control_mutants.py` `PKGS` gains `./internal/memo/` (the predicates ARE an authz seam), which `tests/test_control_mutant_count_is_pinned.py` forces through `ci.yml` and `internal/control/README.md`; mutant rows for the revoke command (a second journal writer). NOT `api.DeclaredRoutes()`: the revoke mode is a command, like `-issue-credential`. | Inert: no listener calls it; the revoke command only appends an event the code already applies. A rollback across it needs the recipe — stated. |
 | **S2** | cairn | **The client listener.** `cmd/cairn-ui` `-client-api-addr` (no default; refuses to start without `-db-dsn` AND without `-control-journal`), machine-token-only auth over the browser surface's own control-journal authority (decision 3), `ClientRoutes()` ledger + test, reachable-bind refusal, lockout. Routes: `GET /client/v1/memos?scope=&after=&limit=`, `GET /client/v1/memo?scope=&id=`, `POST /client/v1/memos`, `POST /client/v1/memo/retract` (scope + id). In-process Go tests only (decision 18). | `cmd/cairn-ui` flag tests; `internal/ui/README.md` or a new `internal/memo/README.md`. NOT `api.DeclaredRoutes()`, NOT the conformance corpus (part 3 asserts it). | Inert unless `-client-api-addr` is set. |
-| **S3** | cairn | **The Go client verbs** (decision 8), `CAIRN_UI_URL` and `CAIRN_UI_TOKEN`, the local cursor, the status tokens, `memo-check` rendering through S0's `RenderPreview`; and **`tests/memo/e2e.sh` with all eleven clauses and its `--self-test` (thirteen sabotages), wired into the `pgtest` job** (decision 18); and **`tests/memo/live-probe.sh`** (closing-condition part 5), run against the deployment by the operator after S7. | `ci.yml` (the e2e step and its PASS floor); `internal/client/cli.go` `Verbs()`; `capability_ledger` `go_only` rows; `flake.nix` `want-go-only-verbs.txt`; `tests/test_go_client_ledgers.py`; `tests/parity/README.md` residual 11. | Read-only for every existing verb. |
+| **S3** | cairn | **The Go client verbs** (decision 8), `CAIRN_UI_URL` and `CAIRN_UI_TOKEN`, the local cursor, the status tokens, `memo-check` rendering through S0's `RenderPreview`; and **`tests/memo/e2e.sh` with all eleven clauses and its `--self-test` (thirteen sabotages), wired into the `pgtest` job** (decision 18); and **`tests/memo/live-probe.sh`** (closing-condition part 5), run against the deployment by the operator after S7; the RAW-serving listener stub e2e (d) uses (decision 19, Guard D); and the client environment-read ledger refactor (S3 test plan). | `ci.yml` (the e2e step and its PASS floor); `internal/client/cli.go` `Verbs()`; `capability_ledger` `go_only` rows; `flake.nix` `want-go-only-verbs.txt`; `tests/test_go_client_ledgers.py`; `tests/parity/README.md` residual 11. | Read-only for every existing verb. |
 | **S4** | tooling | **Delivery.** Register `cairn-memo-hook` on SessionStart, UserPromptSubmit and PostToolUse (no matcher) through `register-nudge-hook.py`'s tables; the `cairn-memo` skill (`claude/skills/cairn-memo/SKILL.md`) describing `memo-send`/`memo-read`/`memo-retract`, the standing line and what the secret scan cannot promise — its description built from "memo", "scope notice" and "cairn", never "mail"/"inbox"; the opencode plugin per S0's measurement, or the documented pull-only fallback if it measured impossible. **Rollout step (not CI):** precondition — S7's recorded deploy-order check (decision 17). Then, for each (host, instance) the operator issues `agents@<host>` with `-narrow-verbs read,write` (decisions 16, 17) and writes `CAIRN_UI_URL` and `CAIRN_UI_TOKEN` into that instance's env file; a check asserts the file is still 0600. | The tooling repo's own suite and runner list; the registrar's tables and its tests. | Silent until S2, S3 and S7 are deployed: `memo-check` reports `unconfigured`, which the hook prints once per session. ⚠ So S4 is deployed LAST, or that line appears in every session — sequenced, not hidden. |
 | **S5** | cairn | **UI.** `?tab=memos` on the scope page; `POST /memo` and `POST /memo/retract` (class `0`); plain-text rendering; "retraction stops further delivery only" copy. | `internal/ui/routes.go` rows + `routes_test.go` hand ledger; `tests/control_mutants.py` rows; `uiaudit` fixtures for the tab; `internal/ui/README.md`. | Read-only over S1 plus two gated forms. |
 | ~~S6~~ | — | **REMOVED in revision 3 (O10).** The urgent bell is out of v1; Q8. | — | — |
@@ -1398,7 +1430,8 @@ Sizes are not estimated; nobody has measured these.
 - Uniform miss: unreadable scope, absent scope and unknown id → byte-identical bodies.
 - **Rendered on the wire (decision 19):** a memo row planted by SQL with U+200B and a
   variation-selector payload is read through the listener, and the RAW response bytes contain
-  neither code point and do contain `�` (RED with the listener encoding `memo.Stored`).
+  neither code point and do contain `�` (RED with the listener encoding `memo.Stored`, which has no
+  exported fields and so encodes as `{}` — the required rendered fields are absent).
 - **Scope match on id routes (round 1 🔴3):** a memo in `alpha-notes` asked for as
   `?scope=beta-notes&id=<its id>` by a caller who can read BOTH scopes → the uniform `not-found`,
   byte-identical to an absent id; the same request with `scope=alpha-notes` → the memo. Retract the
@@ -1441,16 +1474,26 @@ REAL built cairn client against a stub HTTP server, not a stub binary.
 **S3 also:** `tests/memo/live-probe.sh --self-test` against a LOCAL `cairn-ui` (the e2e world):
 the script exits 0; with the listener stopped it exits non-zero at the 401 control; with the probe
 scope's memo already retracted it exits non-zero at the positive control; its temporary directory
-is gone after every run; and the isolation test runs the probe WITH every variable in closing-condition
-part 5's cleared list EXPORTED and pointing at REAL decoy files — a decoy config whose
-`CAIRN_UI_TOKEN` is a random token the listener has never seen, a decoy routing table sending the
-probe scope to a non-existent instance, a decoy cache under a decoy `HOME` — and asserts that the
-probe still exits 0 (so it used its own config, not the decoys) and that every decoy file is
-BYTE-UNCHANGED (hashed before and after). The variable list is read by the test from
-`envalias.Ledger` plus the client's `ConfigEnv`/`RoutesEnv` constants, not typed into it, so a new
-variable joins the test when it joins the code. RED under two mutants: revision 6's `HOME`-only
-isolation (the decoy config is read), and dropping `env -i` for a list of unsets that omits
-`SUBSYSTEM_STORE_CONFIG`.
+is gone after every run.
+
+**S3 — the probe isolation test (round 5 🟡4a).** *Property:* closing-condition part 5's isolation
+property. The test exports EVERY client-read environment name (below), each pointing at a real decoy
+— a decoy config whose UI token the listener has never seen, a decoy pod URL, a decoy routing table
+that sends the probe scope to a non-existent instance, a decoy cache under a decoy `HOME` — runs the
+probe with its probe-input file, and requires exit 0 and every decoy file BYTE-UNCHANGED (hashed
+before and after). Mutants it must turn red: those listed in part 5.
+
+**S3 — the client's environment reads become ONE enumerable ledger (round 5 🟡4a-iii).** Today two
+of the names the test needs are not enumerable from code: `CAIRN_MIRROR_ROOT` is a string literal
+at `internal/client/cli.go:834`, and `CAIRN_UI_URL`/`CAIRN_UI_TOKEN` do not exist yet. S3 therefore
+makes a small, stated refactor: every environment variable the client reads is a named constant in
+one exported ledger, alongside `ConfigEnv` and `RoutesEnv` (`internal/client/instances.go:88, :93`)
+and the alias ledger's pairs. *Property:* every environment read in `internal/client` and
+`cmd/cairn` names a constant in that ledger; the ledger fails on GROW or SHRINK; and the isolation
+test decoys exactly the ledger plus each name's aliases. *Mutants it must turn red:* a new
+`os.Getenv("…")` with a literal anywhere in the client; a ledger entry with no read site; the
+isolation test built from a typed copy of the list. *Revision 7 claimed the list was "read from
+code" while two names were not in it; this replaces that claim with a mechanism.*
 
 **S7 (deployment).** That repository's own render/lint checks over the manifest change; `SHOW
 server_version` ≥ 17; the deploy-order check against the RUNNING workloads (decision 17), recorded;
@@ -1517,6 +1560,19 @@ Each was checked against the code before it was applied; none was disputed.
 | 🟡2 "enforced by a type" wider than the mechanism | Confirmed for all three parts: `fmt` prints unexported fields (auditor-measured); the server side was unstated; the sentence was unscoped. | Decision 19 (`fmt` methods, `pgstore` signature ledger, rendered JSON on the wire, scope paragraph); decision 5 |
 | 🟡3 probe relies on `HOME` alone | Confirmed: `ConfigPath` reads `CAIRN_CONFIG` first (`internal/client/instances.go:399-402`) and resolves `SUBSYSTEM_STORE_CONFIG` (`internal/envalias/envalias.go:165`); the client ALSO reads `CAIRN_ROUTES` (`instances.go:93`), which the finding did not list. | Closing-condition part 5 (`env -i` allowlist, enumerated cleared set); S3 isolation test |
 | 🟢 `encoding/json` and unexported fields | Confirmed (auditor-measured). | Decision 19 (private wire struct) |
+
+## Round-5 findings → where each is fixed
+
+Each was checked against the code before it was applied; none was disputed.
+
+| finding | verdict | where | over-specification removed |
+|---|---|---|---|
+| 🟡1 return-type denylist is closed | Confirmed. | Decision 19, Guard A (allowlist ledger; round 5's escape list as required red mutants) | Revision 7's named implementation (`go/types`, the enumerated return-type list) is replaced by the property, the mechanism CLASS and the mutants; the test's construction is S0's. |
+| 🟡2 `fmt` through an unexported field | Confirmed (round 5's auditor, go1.25.14). | Decision 19, Guard B (property at any nesting; pointer indirection adopted as the MEASURED way to meet it) | The exact placeholder spelling (`memo.Stored{…}`) is dropped; the property is "no stored text", not a string. |
+| 🟡3 REGRESSION: (d2) cannot go red after server-side rendering | Confirmed. Chosen: a RAW-serving STUB half in e2e (d), keeping an end-to-end guard on the client renderer. | e2e (d); decision 19, Guard D. **`sabotaged=13`, unchanged** — no sabotage is added or removed; (d2) is now red on the stub half, and (d1) on both. | — |
+| 🟡4a probe isolation spec | Confirmed: (i) `ValueFrom` prefers the new name (`internal/envalias/envalias.go:292-301`), so the `SUBSYSTEM_STORE_CONFIG` mutant could not go red; (ii) the script's inputs could come from the ambient environment; (iii) `CAIRN_MIRROR_ROOT` is a literal (`internal/client/cli.go:834`) and `CAIRN_UI_*` are new. Chosen: one probe-input file; `XDG_CACHE_HOME` dropped (unread); TLS and proxy variables passed through; the mechanical env-read ledger (S3). | Closing-condition part 5; S3 tests | "Read from `envalias.Ledger` plus `ConfigEnv`/`RoutesEnv`" is replaced by a ledger the S3 refactor creates. |
+| 🟡4b REGRESSION: `pgstore` ledger forbade `Send`'s parameters | Confirmed. | Decision 19, Guard C (results and exported fields only) | The "ids, counts, times and `error`" signature list is dropped for the property. |
+| reword: S2 wire mutant | Confirmed: `Stored` encodes as `{}`. | S2 test plan; Guard C | — |
 
 ## Open questions
 
