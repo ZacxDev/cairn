@@ -26,6 +26,13 @@ const (
 	EventGrantRevoked      EventKind = "grant-revoked"
 	EventCredentialIssued  EventKind = "credential-issued"
 	EventCredentialRevoked EventKind = "credential-revoked"
+	// EventCredentialVerbsNarrowed narrows an issued credential's VERBS (scope-mail plan,
+	// decision 17). 🔴 A NEW KIND RATHER THAN A FIELD ON `credential-issued`, AND THE
+	// DIFFERENCE IS THE ROLLBACK DIRECTION: `ReadEvents` decodes with plain
+	// `json.Unmarshal`, so an OLDER build silently DROPS a field it does not know — a verb
+	// narrowing carried as one would vanish and the credential would regain `admin` — while
+	// an unknown KIND refuses the whole journal (`validate`'s `default:` arm). Fail closed.
+	EventCredentialVerbsNarrowed EventKind = "credential-verbs-narrowed"
 )
 
 // AllEventKinds is the closed set, declared once so a ledger test can assert it
@@ -43,6 +50,7 @@ var AllEventKinds = []EventKind{
 	EventGrantRevoked,
 	EventCredentialIssued,
 	EventCredentialRevoked,
+	EventCredentialVerbsNarrowed,
 }
 
 // Event is one durable record in the journal.
@@ -235,6 +243,18 @@ func (e Event) validate() error {
 		return nil
 	case EventCredentialRevoked:
 		return need("credential_id", string(e.CredentialID))
+	case EventCredentialVerbsNarrowed:
+		if err := need("credential_id", string(e.CredentialID)); err != nil {
+			return err
+		}
+		// 🔴 AN EMPTY SET IS REFUSED, NOT APPLIED. A credential that should reach nothing is
+		// REVOKED; narrowing one to no verbs would be a second, quieter spelling of
+		// revocation that no surface reports as one. (Two NON-empty events can still
+		// intersect to nothing in `apply` — that is applied, and fails closed.)
+		if e.Verbs.Empty() {
+			return fmt.Errorf("%s: verbs is empty — a credential that should reach nothing is revoked, not narrowed to nothing", e.Kind)
+		}
+		return nil
 	default:
 		// 🔴 NO DEFAULT-ACCEPT ARM. An event kind this build does not know was
 		// written by a build that knew more, and applying the ones around it while
@@ -480,6 +500,25 @@ func (m *Model) apply(e Event) error {
 		}
 		at := e.At
 		c.RevokedAt = &at
+		m.Credentials[e.CredentialID] = c
+
+	case EventCredentialVerbsNarrowed:
+		// 🔴 AN UNKNOWN CREDENTIAL IS REFUSED, as `credential-revoked` refuses one: a
+		// narrowing of nothing is a line somebody wrote against the wrong id, and applying it
+		// would hide that the credential they meant is still un-narrowed.
+		c, known := m.Credentials[e.CredentialID]
+		if !known {
+			return fmt.Errorf("credential %s does not exist", e.CredentialID)
+		}
+		// 🔴 INTERSECT, NEVER REPLACE: a second event naming a WIDER set is applied as the
+		// intersection, so narrowing is monotone by construction rather than by a refusal
+		// somebody could later relax. A REVOKED credential is narrowed too — it can only
+		// narrow, and the credential authenticates nothing either way.
+		verbs := e.Verbs
+		if c.NarrowedVerbs != nil {
+			verbs = c.NarrowedVerbs.Intersect(e.Verbs)
+		}
+		c.NarrowedVerbs = &verbs
 		m.Credentials[e.CredentialID] = c
 
 	default:

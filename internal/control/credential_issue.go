@@ -91,9 +91,8 @@ var ErrNoSuchPrincipal = errors.New("control: no such principal in this control 
 // nothing. That is a legitimate intermediate state (issue the credential, decide access
 // after) and it is indistinguishable from the outside from a broken deployment, which is
 // why `cmd/cairn-server -issue-credential` says so on stderr rather than this function
-// refusing. It also does not REVOKE: `EventCredentialRevoked` exists and has no writer,
-// which is the same gap this function closes one event over, and it is NOT closed here —
-// rotation is a separate operator action with its own refusals to think about.
+// refusing. It also does not REVOKE: that is [RevokeCredential], a separate operator action
+// with its own refusals (an unknown id, an already-revoked one).
 func IssueCredential(ctx context.Context, s Store, req NewCredential) (Issued, error) {
 	at := req.At
 	if at.IsZero() {
@@ -177,7 +176,7 @@ func IssueCredential(ctx context.Context, s Store, req NewCredential) (Issued, e
 	token := base64.RawURLEncoding.EncodeToString(buf)
 	digest := HashToken(token)
 
-	after, err := s.Append(ctx, Event{
+	batch := []Event{{
 		Kind: EventCredentialIssued, At: at, Actor: req.Actor,
 		CredentialID: credentialID,
 		SubjectKind:  req.SubjectKind, SubjectID: req.SubjectID,
@@ -190,7 +189,18 @@ func IssueCredential(ctx context.Context, s Store, req NewCredential) (Issued, e
 		// credential issued to see nothing would see everything its principal does, and the
 		// flattening happens inside a line that reads like defensive copying.
 		NarrowedScopes: copyIDs(req.NarrowedScopes),
-	})
+	}}
+	// 🔴 THE VERB NARROWING RIDES IN THE SAME BATCH (scope-mail plan, decision 17). Two
+	// appends could leave a credential the operator was told about whose verbs were never
+	// narrowed — a live `admin` on every scope it reaches — and `Append` validates the whole
+	// batch against one clone before a byte reaches disk.
+	if req.NarrowedVerbs != nil {
+		batch = append(batch, Event{
+			Kind: EventCredentialVerbsNarrowed, At: at, Actor: req.Actor,
+			CredentialID: credentialID, Verbs: *req.NarrowedVerbs,
+		})
+	}
+	after, err := s.Append(ctx, batch...)
 	if err != nil {
 		return Issued{}, err
 	}
@@ -248,6 +258,11 @@ type NewCredential struct {
 	// `Event.NarrowedScopes`), and `Narrow` applies it by INTERSECTION at authenticate time
 	// — so naming a scope the principal does not have confers nothing, now or later.
 	NarrowedScopes []ID
+	// NarrowedVerbs restricts this credential's VERBS on every scope it reaches (decision
+	// 17): nil means no verb narrowing; a set is appended as a `credential-verbs-narrowed`
+	// event in the SAME batch as the issue. An EMPTY set is refused by the journal — a
+	// credential that should reach nothing is revoked, not narrowed to nothing.
+	NarrowedVerbs *VerbSet
 	// Actor is recorded as the `actor` of the event. Empty is accepted: an operator running
 	// a command in a pod has no `control.ID` of their own to name.
 	Actor ID

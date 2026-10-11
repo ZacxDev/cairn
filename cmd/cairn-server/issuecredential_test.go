@@ -22,15 +22,25 @@ import (
 //
 // ⚠ SO THIS FILE DOES NOT PROVE THE FLAGS ARE REGISTERED.
 // `TestTheBinaryActuallyDispatchesIssueCredential` runs the real `main` for that half.
+//
+// ⚠ A NON-EMPTY `narrow` ALSO SETS `-narrow-verbs read,write`, because the command refuses
+// `-narrow-scopes` without it (decision 17) and every case here that narrows scopes is about
+// the SCOPE half. The refusal itself is `TestNarrowScopesWithoutNarrowVerbsIsRefusedAndWritesNothing`,
+// which builds its flags without this default.
 func issueFlagsFor(kind, principal, label, narrow string) *issueCredentialFlags {
 	enabled := true
 	stdout := ""
+	verbs := ""
+	if narrow != "" {
+		verbs = "read,write"
+	}
 	return &issueCredentialFlags{
 		enabled:       &enabled,
 		principalKind: &kind,
 		principal:     &principal,
 		label:         &label,
 		narrowScopes:  &narrow,
+		narrowVerbs:   &verbs,
 		// The zero value, which is the stdout default every case below reads from.
 		tokenOut: &stdout,
 	}
@@ -384,6 +394,35 @@ func TestTheBinaryActuallyDispatchesIssueCredential(t *testing.T) {
 		t.Fatal("the child echoed the token on stderr as well as stdout")
 	}
 
+	// 🔴 AND THE REVOKE MODE IS DISPATCHED BY THE REAL `main` TOO (decision 16): the id the
+	// issue line printed, revoked through the built binary, and the token then authenticates
+	// nothing against the journal the child wrote.
+	credential := ""
+	for _, field := range strings.Fields(errOut) {
+		if after, found := strings.CutPrefix(field, "credential="); found && strings.HasPrefix(after, "crd_") {
+			credential = after
+			break
+		}
+	}
+	if credential == "" {
+		t.Fatalf("no credential id on the issue line:\n%s", errOut)
+	}
+	code, out, errOut = run("-revoke-credential", "-credential", credential)
+	if code != 0 || !strings.Contains(out, "revoked credential="+credential) || !strings.Contains(out, `label="rowan laptop"`) {
+		t.Fatalf("`-revoke-credential` exited %d\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	revokedStore, err := control.OpenFileStore(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := revokedStore.Model(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := control.Authenticate(m, token); !errors.Is(err, control.ErrNoCredential{}) {
+		t.Fatalf("the revoked token still authenticates against the journal: %v", err)
+	}
+
 	// 🔴 EVERY MODE, PAIRWISE, BECAUSE THE LEDGER IN `main` IS WHAT REPLACED THE PAIRWISE
 	// `&&` CHECKS AND A LEDGER CAN BE WRONG IN A WAY A PAIR CANNOT: it could refuse the
 	// pair it was written for and admit the one it was not.
@@ -396,10 +435,11 @@ func TestTheBinaryActuallyDispatchesIssueCredential(t *testing.T) {
 	// as the enumeration `main`'s own refusal message just lost twice. Add a mode to
 	// `modeArgs` and its pairs appear here by construction.
 	modeArgs := map[string][]string{
-		"-routes":           {"-routes"},
-		"-create-user":      {"-create-user", "-provider", "x", "-subject", "y", "-project", "z"},
-		"-issue-credential": {"-issue-credential", "-principal", user},
-		"-set-member":       {"-set-member", "-member-project", "prj_x", "-member-user", "usr_y", "-member-role", "member"},
+		"-routes":            {"-routes"},
+		"-create-user":       {"-create-user", "-provider", "x", "-subject", "y", "-project", "z"},
+		"-issue-credential":  {"-issue-credential", "-principal", user},
+		"-revoke-credential": {"-revoke-credential", "-credential", "crd_x"},
+		"-set-member":        {"-set-member", "-member-project", "prj_x", "-member-user", "usr_y", "-member-role", "member"},
 	}
 	// Sorted, so a failure names the same pair on every run rather than a map-order one.
 	names := make([]string, 0, len(modeArgs))
@@ -617,13 +657,11 @@ func TestTheStdoutGuidanceDoesNotPrescribeAWorldReadableRedirect(t *testing.T) {
 	}
 }
 
-// TestTheLostTokenAdviceDoesNotPROMISEAREVOCATIONCOMMAND.
-//
-// 🔴 THE TEXT PROMISED AN ACTION NO TOOL HERE CAN PERFORM: "issue another and revoke this
-// one by its credential id". `control.EventCredentialRevoked` is in the closed event set
-// and has NO WRITER in this repository, so an operator following that sentence hunts for a
-// flag that does not exist and leaves the old credential live. Shipping issuance before
-// revocation is the right scope; saying so on the surface the operator reads is the fix.
+// TestTheLostTokenAdviceDoesNotPromiseARevocationCommand — the name is history: the text once
+// promised "revoke this one by its credential id" while nothing wrote `credential-revoked`,
+// and was corrected to "BY HAND". `-revoke-credential` now exists (decision 16), so the
+// advice must name THAT command with THIS credential's id — a promise the binary keeps, which
+// `TestTheBinaryActuallyDispatchesIssueCredential` runs.
 func TestTheLostTokenAdviceDoesNotPromiseARevocationCommand(t *testing.T) {
 	_, env, made := aJournalWithAnOwner(t)
 	var out, errOut bytes.Buffer
@@ -631,9 +669,11 @@ func TestTheLostTokenAdviceDoesNotPromiseARevocationCommand(t *testing.T) {
 		t.Fatalf("exit %d, want 0:\nstderr: %s", code, errOut.String())
 	}
 	stderr := errOut.String()
-	if !strings.Contains(stderr, "credential-revoked") || !strings.Contains(stderr, "BY HAND") {
-		t.Errorf("the lost-token advice does not say that revoking is a hand-appended "+
-			"`credential-revoked` record today:\n%s", stderr)
+	if !strings.Contains(stderr, "cairn-server -revoke-credential -credential crd_") {
+		t.Errorf("the lost-token advice does not name the revoke command with this credential's id:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "BY HAND") {
+		t.Errorf("the lost-token advice still prescribes a hand edit of the journal:\n%s", stderr)
 	}
 	// And the positive control on this arm: the advice is still THERE. A text that said
 	// nothing about a lost token would satisfy a check for the absence of a false promise.

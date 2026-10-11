@@ -96,7 +96,7 @@ func TestPresenceIsInvisibleToEveryoneButItsOwner(t *testing.T) {
 	roamer, easterner := sessionWorld(t)
 	src := StoreSource{Root: sessionStore(t), ArcJournal: sessionJournal(t)}
 	narrowed := roamer
-	narrowed.Auth = control.Narrow(roamer.Auth, []control.ID{sessNorth, sessSouth})
+	narrowed.Auth = control.Narrow(roamer.Auth, []control.ID{sessNorth, sessSouth}, nil)
 	if !narrowed.Auth.Narrowed() || !narrowed.Auth.Allows(sessNorth, control.VerbRead) || !narrowed.Auth.Allows(sessSouth, control.VerbRead) {
 		t.Fatal("INSTRUMENT: the narrowed roamer is not a narrowing to EVERY scope the roamer reads")
 	}

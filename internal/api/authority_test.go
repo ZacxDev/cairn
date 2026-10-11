@@ -476,13 +476,13 @@ func TestTheWriteVerbIsWhatTheWriteRouteASKS(t *testing.T) {
 
 	// 🔴 A `request` CARRYING A READ-ONLY AUTHORITY. `mayWriteAnywhere` is the exact
 	// expression the dispatcher branches on, so this asks the thing the route asks.
-	readOnly := &request{auth: control.Narrow(auth, nil)}
+	readOnly := &request{auth: control.Narrow(auth, nil, nil)}
 	if !readOnly.mayWriteAnywhere() {
 		t.Fatal("an unnarrowed wide-reader may write")
 	}
 	// Narrowing to the empty (non-nil) set is "this credential sees nothing" — the
 	// opposite of nil. It must take the write verb with it.
-	none := &request{auth: control.Narrow(auth, []control.ID{})}
+	none := &request{auth: control.Narrow(auth, []control.ID{}, nil)}
 	if none.mayWriteAnywhere() {
 		t.Fatal("a credential narrowed to nothing holds the write verb nowhere")
 	}

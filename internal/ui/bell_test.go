@@ -143,7 +143,7 @@ func TestEveryRingAnswerIsTheSameRedirect(t *testing.T) {
 	roamer, easterner := sessionWorld(t)
 	src := StoreSource{Root: sessionStore(t), ArcJournal: sessionJournal(t)}
 	narrowed := roamer
-	narrowed.Auth = control.Narrow(roamer.Auth, []control.ID{sessNorth, sessSouth})
+	narrowed.Auth = control.Narrow(roamer.Auth, []control.ID{sessNorth, sessSouth}, nil)
 	if !narrowed.Auth.Narrowed() || ownerOf(narrowed) != ownerOf(roamer) {
 		t.Fatal("INSTRUMENT: the narrowed viewer is not the owner, narrowed")
 	}
@@ -332,7 +332,7 @@ func TestTheBellRendersOnlyBesideTheOwnersBadge(t *testing.T) {
 	roamer, easterner := sessionWorld(t)
 	src := StoreSource{Root: sessionStore(t), ArcJournal: sessionJournal(t)}
 	narrowed := roamer
-	narrowed.Auth = control.Narrow(roamer.Auth, []control.ID{sessNorth, sessSouth})
+	narrowed.Auth = control.Narrow(roamer.Auth, []control.ID{sessNorth, sessSouth}, nil)
 	row := wireRow(badgeSession, "claude", "notes:3", badgeHotkey, "")
 	page := sessionURL(badgeSession)
 
