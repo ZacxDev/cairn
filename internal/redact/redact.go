@@ -214,6 +214,9 @@ func (r *Redactor) walk(v any, o scanOpts) (any, []Hit) {
 				nv, hs := r.redactAllStrings(val, "denylist-path")
 				t.pairs[i].v = nv
 				hits = append(hits, hs...)
+			// A value that is ALREADY a marker is left alone by every whole-value case below
+			// ([touchesMarker] says why the table must be quiet on its own output).
+			case isString && isMarker(s):
 			case isString && isJWK && jwkPrivate[k] && s != "":
 				// A JSON Web Key's PRIVATE members carry no secret-shaped name: `d` (RSA/EC/OKP),
 				// the RSA CRT parts, and `k` of a symmetric (`oct`) key.
@@ -288,7 +291,7 @@ func (r *Redactor) redactAllStrings(v any, rule string) (any, []Hit) {
 		}
 		return t, hits
 	case string:
-		if t == "" {
+		if t == "" || isMarker(t) {
 			return t, nil
 		}
 		m, h := r.marker(rule, t)

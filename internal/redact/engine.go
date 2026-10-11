@@ -134,8 +134,13 @@ func (r *Redactor) apply(s string, spans []span) (string, []Hit) {
 		return spans[i].prio < spans[j].prio
 	})
 	var merged []span
+	regions := markerRegions(s)
 	for _, sp := range spans {
 		if sp.lo < 0 || sp.hi > len(s) || sp.lo >= sp.hi {
+			continue
+		}
+		// A span that touches an existing marker is about the marker ([touchesMarker]).
+		if touchesMarker(sp.lo, sp.hi, regions) {
 			continue
 		}
 		if n := len(merged); n > 0 && sp.lo < merged[n-1].hi {
@@ -149,6 +154,9 @@ func (r *Redactor) apply(s string, spans []span) (string, []Hit) {
 			continue
 		}
 		merged = append(merged, sp)
+	}
+	if len(merged) == 0 {
+		return s, nil
 	}
 	var b strings.Builder
 	var hits []Hit
