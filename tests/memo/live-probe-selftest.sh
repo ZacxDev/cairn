@@ -20,6 +20,10 @@
 #                   list of unsets that omits SUBSYSTEM_STORE_URL, one that omits
 #                   SUBSYSTEM_STORE_TOKEN, one that omits CAIRN_ROUTES; and the probe credential read
 #                   from the environment instead of the input file;
+#   no poisoning    a failure between `send` and `retract` is red AND its EXIT trap retracts the memo
+#                   (read from the STORE); the next run then passes; the control (the trap reduced to
+#                   the old `rm -rf`) leaves the memo live, and a run over that leftover fails AT
+#                   `check-one-block` (its `count=1`), not later;
 #   red controls    with the probe's memo already retracted, it fails AT the positive control; with
 #                   the listener stopped, it fails AT the 401 control;
 #   cleanup         its temporary directory is gone after EVERY run above.
@@ -27,7 +31,7 @@ set -uo pipefail
 
 repo="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 src="$repo"
-EXPECTED=16
+EXPECTED=20
 work="$(mktemp -d "${TMPDIR:-/tmp}/cairn-live-probe-selftest-XXXXXX")"
 # shellcheck source=tests/memo/world.sh
 source "$repo/tests/memo/world.sh"
@@ -77,6 +81,19 @@ run_probe() {
   [[ -n "$w" ]] && workdirs+=("$w")
 }
 steps_passed() { [[ "$(grep -c '^PASS ' <<<"$pout")" == "$1" ]]; }
+# make_mutant <source> <name> <anchor> <replacement> — `$work/mut-<name>.sh`: the source with ONE
+# exact anchor (which must occur exactly once) replaced.
+make_mutant() {
+  python3 - "$1" "$work/mut-$2.sh" "$3" "$4" <<'PY' || couldnt "mutant $2: the anchor is not exactly once in $1"
+import sys
+src, dst, anchor, repl = sys.argv[1:5]
+text = open(src).read()
+if text.count(anchor) != 1:
+    sys.exit(1)
+open(dst, "w").write(text.replace(anchor, repl))
+PY
+  chmod +x "$work/mut-$2.sh"
+}
 
 # --- positive -------------------------------------------------------------------------------------
 write_input
@@ -96,6 +113,32 @@ chmod 644 "$input"
 run_probe "$probe"
 check exit-2-when-the-input-file-is-not-0600 eval '[[ $prc == 2 ]] && grep -qF "not 0600" <<<"$pout"'
 chmod 600 "$input"
+
+# --- a failed run does not poison the next -----------------------------------------------------------
+# `step` exits at the first failure; the probe's EXIT trap retracts a memo it sent and had not retracted.
+# The QUERY reads the store itself (never the probe's own report): the probe scope's LIVE memos.
+live_probe_memos() { sql query "SELECT count(*) FROM memos WHERE scope_name = 'probe-notes' AND retracted_at IS NULL"; }
+make_mutant "$probe" fail-after-send '# @after-send' 'step injected-failure false'
+run_probe "$work/mut-fail-after-send.sh"
+check a-failure-between-send-and-retract-is-red-and-its-memo-is-retracted eval '[[ $prc == 1 ]] && grep -q "^FAIL injected-failure" <<<"$pout" &&
+  grep -q "^CLEANUP retracted the probe memo id=[0-9]" <<<"$pout" && [[ "$(live_probe_memos)" == 0 ]]'
+write_input
+run_probe "$probe"
+check the-next-run-after-a-failed-one-passes eval '[[ $prc == 0 ]] && steps_passed 6'
+# The CONTROL, which is also the positive control of the query above: the same failure with the trap
+# reduced to the old `rm -rf`, and the memo is LEFT LIVE (the query can see one).
+make_mutant "$work/mut-fail-after-send.sh" fail-after-send-no-trap 'trap on_exit EXIT' "trap 'rm -rf \"\$tmp\"' EXIT"
+run_probe "$work/mut-fail-after-send-no-trap.sh"
+check control-without-the-trap-the-memo-is-left-live eval '[[ $prc == 1 ]] && grep -q "^FAIL injected-failure" <<<"$pout" &&
+  ! grep -q "^CLEANUP" <<<"$pout" && [[ "$(live_probe_memos)" == 1 ]]'
+# With that leftover live, the next run fails AT its positive control (`count=1`), not three steps later
+# at `new-session-silent` — and its own memo is still retracted by its trap, so exactly one stays live.
+run_probe "$probe"
+check a-leftover-memo-fails-the-next-run-at-check-one-block eval '[[ $prc == 1 ]] && grep -q "^FAIL check-one-block" <<<"$pout" &&
+  grep -q "^CLEANUP retracted the probe memo id=[0-9]" <<<"$pout" && [[ "$(live_probe_memos)" == 1 ]]'
+sql exec "UPDATE memos SET retracted_at = now(), subject = NULL, body = NULL WHERE scope_name = 'probe-notes' AND retracted_at IS NULL" >/dev/null ||
+  couldnt "the control's leftover probe memo could not be retracted by SQL"
+[[ "$(live_probe_memos)" == 0 ]] || couldnt "the probe scope still holds a live memo after the SQL cleanup"
 
 # --- isolation ------------------------------------------------------------------------------------
 decoy="$work/decoy"
@@ -148,16 +191,8 @@ check isolation-decoyed-names-are-exactly-the-clients-ledger eval '[[ "$(printf 
 # Each mutant is a COPY of the probe with ONE line changed; under the same decoys each must go RED.
 pc_line='  env -i PATH="$PATH" HOME="$tmp/home" XDG_STATE_HOME="$tmp/state" CAIRN_CONFIG="$tmp/env" "${pass[@]}" "$cairn_bin" "$@" >"$tmp/out" 2>"$tmp/err"'
 unsets='env -u CAIRN_CONFIG -u SUBSYSTEM_STORE_CONFIG -u CAIRN_URL -u SUBSYSTEM_STORE_URL -u CAIRN_TOKEN -u SUBSYSTEM_STORE_TOKEN -u CAIRN_ROUTES -u CAIRN_UI_URL -u CAIRN_UI_TOKEN -u CAIRN_MIRROR_ROOT'
-mutant() { # mutant <name> <anchor> <replacement>
-  python3 - "$probe" "$work/mut-$1.sh" "$2" "$3" <<'PY' || couldnt "mutant $1: the anchor is not exactly once in the probe"
-import sys
-src, dst, anchor, repl = sys.argv[1:5]
-text = open(src).read()
-if text.count(anchor) != 1:
-    sys.exit(1)
-open(dst, "w").write(text.replace(anchor, repl))
-PY
-  chmod +x "$work/mut-$1.sh"
+mutant() { # mutant <name> <anchor> <replacement> — a copy of the probe, run under the decoys
+  make_mutant "$probe" "$@"
   run_probe "$work/mut-$1.sh" "${decoys[@]}"
 }
 mutant home-only "$pc_line" '  env HOME="$tmp/home" "$cairn_bin" "$@" >"$tmp/out" 2>"$tmp/err"'
@@ -182,7 +217,7 @@ check red-at-the-401-control-when-the-listener-is-stopped eval '[[ $prc == 1 ]] 
 # --- cleanup -----------------------------------------------------------------------------------------
 left=()
 for w in "${workdirs[@]}"; do [[ -e "$w" ]] && left+=("$w"); done
-check the-probes-temporary-directory-is-gone-after-every-run eval '[[ ${#workdirs[@]} -ge 9 && ${#left[@]} -eq 0 ]]'
+check the-probes-temporary-directory-is-gone-after-every-run eval '[[ ${#workdirs[@]} -ge 13 && ${#left[@]} -eq 0 ]]'
 
 echo "SUMMARY live-probe-self-test: passed=$passed failed=$failed expected=$EXPECTED"
 [[ $((passed + failed)) -eq $EXPECTED ]] || couldnt "$((passed + failed)) checks ran, $EXPECTED are declared"

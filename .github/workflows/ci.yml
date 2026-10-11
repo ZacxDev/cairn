@@ -2485,6 +2485,10 @@ jobs:
       # required to turn its OWN clause's named assertion red (exit 2 names one that does not). The
       # script itself refuses (exit 2) when fewer assertions ran than it declares, and the floor
       # below re-counts its PASS lines rather than reading its exit code.
+      # ⚠ EACH SABOTAGED RUN IS NARROWED (`E2E_CLAUSES`) to its own clause(s) plus one CONTROL clause
+      # that must stay all-green — the whole script thirteen times made this step ~15.5 min, most of
+      # it (i)'s and (k)'s refresh waits. An assertion the selection left out is exit 2, never a catch;
+      # the full, un-narrowed run below is unchanged.
       - name: the scope-mail end-to-end check, after proving every clause can go RED
         env:
           CAIRN_PGTEST_DSN: host=127.0.0.1 port=5432 user=cairn_pgtest password=cairn_pgtest dbname=cairn_pgtest sslmode=disable
@@ -2497,7 +2501,7 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/memo-e2e.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/memo-e2e.txt || true)
           echo "memo e2e: passes=$passes fails=$fails"
-          # 35 assertions, measured when the script landed; `EXPECTED` in the script moves with it.
+          # 35 assertions, measured when the script landed; `EXPECTED_FULL` in the script moves with it.
           if [ "$passes" -lt 35 ] || [ "$fails" -ne 0 ]; then
             echo "REFUSING: $passes PASS / $fails FAIL lines, and 35 / 0 were measured"
             exit 1
@@ -2506,12 +2510,13 @@ jobs:
       # The live probe (closing-condition part 5) is RUN by the operator against the deployment
       # after S7; what CI owns is its SELF-TEST against a local world: it passes, refuses its inputs
       # at exit 2, holds its isolation property with every name the client reads exported as a decoy
-      # (and goes red under each of the plan's isolation mutants), and fails AT its 401 control and AT
-      # its positive control when those are broken.
+      # (and goes red under each of the plan's isolation mutants), fails AT its 401 control and AT
+      # its positive control when those are broken, and a run that fails between `send` and
+      # `retract` retracts its own memo on exit, so it cannot poison the next run.
       - name: the scope-mail live probe's self-test, against a local world
         env:
           CAIRN_PGTEST_DSN: host=127.0.0.1 port=5432 user=cairn_pgtest password=cairn_pgtest dbname=cairn_pgtest sslmode=disable
         run: |
           set -o pipefail
           tests/memo/live-probe.sh --self-test | tee /tmp/memo-probe-self.txt
-          grep -qx 'SUMMARY live-probe-self-test: passed=16 failed=0 expected=16' /tmp/memo-probe-self.txt
+          grep -qx 'SUMMARY live-probe-self-test: passed=20 failed=0 expected=20' /tmp/memo-probe-self.txt
