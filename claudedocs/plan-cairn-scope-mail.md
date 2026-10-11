@@ -1804,6 +1804,34 @@ go1.25.14 (the devShell's), PostgreSQL 18.6 (a throwaway server per run, and the
   whole-environment SITES, not names. `internal/hostid`'s display-label variables are outside the
   two packages and are folded into the probe's decoy set by reference.
 
+**After merge — #239's round-1 findings, closed in the S3 follow-up PR.** Measured on one host
+(go1.25, PostgreSQL 18.6 from the devShell):
+
+- **Response decoding is TOLERANT, request decoding stays STRICT.** S3 refused unknown fields in
+  the listener's answers; since a listed memo IS `memo.Rendered`, a listener release adding one field
+  would have broken every older `memo-check` at exit 5. Now an unknown response field is ignored and
+  every field the client reads is REQUIRED (absent or `null` → `malformed`). The rule — the listener
+  may ADD a response field in any release, never remove or rename one ahead of the clients — is
+  stated once, in `internal/memowire`'s package doc.
+- **`--ttl` under one second is refused at 2** (`500ms`, `0`, `0d`): the wire carries whole seconds
+  and 0 is the listener's 3-day DEFAULT, so it used to store a three-day memo at exit 0. Refused
+  rather than rounded up.
+- **`memo-check` prints the block BEFORE saving the cursor** — a kill between them now duplicates
+  instead of losing, which is what "delivery beats bookkeeping" always said.
+- **A `ScopeForRepo` error stays `no-scope`/0** (the hook contract) but is printed after the token.
+- **Mechanism guards for the cursor margin, the `after` parameter, `memo-read`'s paging (including
+  two memos sharing the page-boundary second) and `memo-check`'s own two-instance routing** — each
+  mutant SURVIVED at `0d9ba01`, each is now a `tests/control_mutants.py` row with its named killer.
+- **The live probe retracts its own memo on ANY exit** after `send`, and `check-one-block` asserts
+  `count=1`: a failure between send and retract used to leave a live memo for an hour, and every
+  rerun mis-failed at `new-session-silent`. Its self-test proves both (16 → 20 checks).
+- **`e2e.sh --self-test` runs each sabotage over ITS clause(s) plus one all-green CONTROL clause**
+  (`E2E_CLAUSES`), not the whole script: measured 2 min 31 s locally against ~15.5 min of CI step
+  time before, the floor being (i)'s and (k)'s refresh waits (~43 s each, sabotaged). Still
+  `sabotaged=13 caught=13`; an assertion the selection left out is exit 2, and three harness
+  mutants (selection drops the named clauses; a gate that never opens; a control the sabotage also
+  breaks) each refuse.
+
 ## Open questions
 
 ### Answered by the operator

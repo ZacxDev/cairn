@@ -9,6 +9,9 @@
 #   usage: tests/memo/e2e.sh              # the check: exits 0 iff every assertion PASSes
 #          tests/memo/e2e.sh --self-test  # the negative control: thirteen sabotaged builds, each
 #                                         # of which must turn ITS OWN clause's assertion RED
+#          E2E_CLAUSES="a i" tests/memo/e2e.sh   # only those clauses (the self-test's narrowing);
+#                                         # each selected clause must run EXACTLY its declared
+#                                         # assertions and an unselected one none, or exit 2
 #
 # The eleven clauses, and the assertion(s) that carry each (one `PASS <name>` / `FAIL <name>` line
 # per assertion, then `SUMMARY e2e: passed=N failed=M expected=E`):
@@ -45,15 +48,28 @@
 # `.git` — never the working tree), rebuilds, reruns this script against the broken build and
 # requires THAT clause's named assertion to go RED. Prints `sabotaged=13 caught=13`; a sabotage that
 # leaves its clause green is exit 2, named.
+#
+# 🔴 EACH SABOTAGED RUN IS NARROWED TO THE CLAUSES THAT CAN JUDGE IT, AND THE NARROWING CANNOT
+# MANUFACTURE A CATCH. It runs the clause of every assertion it names (must-FAIL and must-PASS) plus
+# ONE CONTROL clause that must stay ENTIRELY green — not the whole script thirteen times, which put
+# (i)'s and (k)'s ~30 s refresh waits in every run and made this CI's critical path (~15.5 min). Three
+# refusals keep `caught` meaning what it meant: this script exits 2 when a selected clause ran other
+# than exactly its declared assertions (or an unselected one ran any); the self-test exits 2 when an
+# assertion it names printed neither PASS nor FAIL (never ran — not a catch, and not a miss either);
+# and the control clause must report all of its assertions PASS, so a build that broke EVERYTHING —
+# which the full run used to show as a sea of red — still reads as a miss.
 set -uo pipefail
 
 repo="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 # `E2E_SOURCE` is the tree the binaries are BUILT from; the self-test points it at a sabotaged copy.
 src="${E2E_SOURCE:-$repo}"
 
-# The number of assertions a full run makes. 🔴 PINNED, so an assertion that silently stopped
-# running is exit 2 rather than a smaller green.
-EXPECTED=35
+# The clauses, in run order, and the assertions each makes. 🔴 PINNED, so an assertion that silently
+# stopped running is exit 2 rather than a smaller green — per clause, so that a narrowed run is held to
+# the same standard as a full one. A full run makes EXPECTED_FULL; the sum below is checked against it.
+ALL_CLAUSES="a b c d e f g h i j k"
+declare -A CLAUSE_ASSERTS=([a]=4 [b]=2 [c]=3 [d]=6 [e]=3 [f]=3 [g]=6 [h]=2 [i]=2 [j]=2 [k]=2)
+EXPECTED_FULL=35
 
 if [[ "${1:-}" == "--self-test" ]]; then
   for tool in go git python3; do
@@ -64,11 +80,29 @@ if [[ "${1:-}" == "--self-test" ]]; then
   sabotaged=0
   caught=0
   missed=()
-  # sabotage <name> <file> <anchor> <replacement> <must FAIL (space-separated)> [must PASS …]
-  # The anchor is EXACT text, possibly several lines, and must occur exactly ONCE in the file.
+  # selection_for <control> <assertion…> — the clauses a sabotaged run needs, in run order: the
+  # clause of each named assertion (its letter is the name's first field) and the control clause.
+  selection_for() {
+    local want=" $1 " a c sel=""
+    shift
+    for a in "$@"; do want+="${a%%-*} "; done
+    for c in $ALL_CLAUSES; do [[ "$want" == *" $c "* ]] && sel+="${sel:+ }$c"; done
+    echo "$sel"
+  }
+  # sabotage <name> <file> <anchor> <replacement> <control clause> <must FAIL (space-separated)> [must PASS …]
+  # The anchor is EXACT text, possibly several lines, and must occur exactly ONCE in the file. The
+  # control clause is one the sabotage cannot touch, and it must stay ENTIRELY green.
   sabotage() {
-    local name="$1" file="$2" anchor="$3" replacement="$4" must_fail="$5" must_pass="${6:-}"
-    local tree="$stwork/$name"
+    local name="$1" file="$2" anchor="$3" replacement="$4" control="$5" must_fail="$6" must_pass="${7:-}"
+    local tree="$stwork/$name" clauses a
+    # shellcheck disable=SC2086 # the assertion lists are space-separated on purpose
+    clauses="$(selection_for "$control" $must_fail $must_pass)"
+    for a in $must_fail; do
+      if [[ "${a%%-*}" == "$control" ]]; then
+        echo "HARNESS ERROR: sabotage $name: the control clause ($control) is the clause it must turn red" >&2
+        exit 2
+      fi
+    done
     mkdir -p "$tree"
     (cd "$src" && git ls-files -z -co --exclude-standard | xargs -0 cp --parents -t "$tree" 2>/dev/null)
     python3 - "$tree/$file" "$anchor" "$replacement" <<'PY' || exit 2
@@ -86,8 +120,8 @@ PY
       exit 2
     fi
     sabotaged=$((sabotaged + 1))
-    local out rc ok=yes a
-    out="$(E2E_SOURCE="$tree" "$repo/tests/memo/e2e.sh" 2>&1)"
+    local out rc ok=yes started=$SECONDS
+    out="$(E2E_SOURCE="$tree" E2E_CLAUSES="$clauses" "$repo/tests/memo/e2e.sh" 2>&1)"
     rc=$?
     rm -rf "$tree"
     if [[ $rc -eq 2 ]]; then
@@ -95,88 +129,100 @@ PY
       echo "HARNESS ERROR: sabotage $name: the sabotaged run could not vouch (exit 2)" >&2
       exit 2
     fi
+    # 🔴 AN ASSERTION THAT NEVER RAN IS NEITHER CAUGHT NOR MISSED — IT IS "COULD NOT VOUCH". Without
+    # this, a selection that left the sabotage's own clause out would read as a MISS at best; with a
+    # must-PASS list it is worse, and the shape is the one this whole self-test exists to refuse.
+    for a in $must_fail $must_pass; do
+      if ! grep -qxE "(PASS|FAIL) $a" <<<"$out"; then
+        echo "$out" | tail -20
+        echo "COULD NOT VOUCH: sabotage $name: assertion $a never ran (clauses run: $clauses)" >&2
+        exit 2
+      fi
+    done
     for a in $must_fail; do grep -qxF "FAIL $a" <<<"$out" || ok=no; done
     for a in $must_pass; do grep -qxF "PASS $a" <<<"$out" || ok=no; done
+    # The control clause: every one of its declared assertions PASS, counted by the run's own line.
+    grep -qxF "CLAUSE $control passed=${CLAUSE_ASSERTS[$control]} failed=0" <<<"$out" || ok=no
     if [[ $rc -eq 1 && $ok == yes ]]; then
       caught=$((caught + 1))
-      echo "CAUGHT $name: exit $rc; FAIL $must_fail${must_pass:+; PASS $must_pass} ($(grep -c '^FAIL ' <<<"$out") assertion(s) red)"
+      echo "CAUGHT $name: exit $rc; clauses [$clauses]; FAIL $must_fail${must_pass:+; PASS $must_pass}; control ($control) green ($(grep -c '^FAIL ' <<<"$out") assertion(s) red, $((SECONDS - started)) s)"
     else
       missed+=("$name")
-      echo "MISSED $name: exit $rc; wanted FAIL [$must_fail]${must_pass:+ and PASS [$must_pass]}; red were: $(grep '^FAIL ' <<<"$out" | tr '\n' ' ')"
+      echo "MISSED $name: exit $rc; clauses [$clauses]; wanted FAIL [$must_fail]${must_pass:+ and PASS [$must_pass]} and control ($control) green: $(grep -x "CLAUSE $control .*" <<<"$out"); red were: $(grep '^FAIL ' <<<"$out" | tr '\n' ' ')"
     fi
   }
   # (a) the cursor never advances: nothing is recorded, so a session's second check re-delivers.
   sabotage a-cursor-never-advances internal/client/memo.go \
     $'\t\tif err := saveCursor(cursorPath, cursor); err != nil {' \
     $'\t\tif err := error(nil); err != nil {' \
-    "a-second-check-of-the-session-is-silent"
+    b "a-second-check-of-the-session-is-silent"
   # (b) the send predicate asks READ instead of WRITE.
   sabotage b-send-checks-read internal/memo/policy.go \
     $'\treturn a.VisibleScopes(control.VerbWrite).Allows(scope)' \
     $'\treturn a.VisibleScopes(control.VerbRead).Allows(scope)' \
-    "b-read-only-send-refused-nothing-stored"
+    a "b-read-only-send-refused-nothing-stored"
   # (c) narrowing ignored. ⚠ NOT "send ignores Narrowed()" as the plan words it: no send-only seam
   #     exists — a credential's scope narrowing is applied ONCE, at authentication, by
   #     `control.Narrow`, and every surface inherits it. This breaks that one seam.
   sabotage c-scope-narrowing-ignored internal/control/resolve.go \
     $'\t\tif keep != nil {\n\t\t\tif _, wanted := keep[id]; !wanted {' \
     $'\t\tif false {\n\t\t\tif _, wanted := keep[id]; !wanted {' \
-    "c-narrowed-credential-cannot-send-elsewhere"
+    a "c-narrowed-credential-cannot-send-elsewhere"
   # (d1) the content-line prefix dropped: red on BOTH halves.
   sabotage d1-content-prefix-dropped internal/memo/block.go \
     $'\tcontentPrefix = "| "' \
     $'\tcontentPrefix = ""' \
-    "d-real-check-one-block-count-16 d-stub-check-one-block-count-16"
+    b "d-real-check-one-block-count-16 d-stub-check-one-block-count-16"
   # (d2) `memo-read` prints the stored body without the render-side replacement: red on the STUB
   #      half only — the real listener's text is already rendered, which is why the stub exists.
   sabotage d2-full-body-unsanitised internal/memo/block.go \
     $'\t\t\tcontent = append(content, "  body: "+r.Body)' \
     $'\t\t\tcontent = append(content, "  body: "+memos[i].t().body)' \
-    "d-stub-read-one-block-sixteen-bodies" "d-real-read-one-block-sixteen-bodies"
+    a "d-stub-read-one-block-sixteen-bodies" "d-real-read-one-block-sixteen-bodies"
   # (e) the secret scan skipped.
   sabotage e-scan-skipped internal/memo/policy.go \
     $'\t\t_, hits := scan.String(text)' \
     $'\t\t_, hits := scan.String(text[:0])' \
-    "e-confident-secret-refused-naming-its-rule"
+    a "e-confident-secret-refused-naming-its-rule"
   # (f) the quota counted per SENDER (credential) instead of per scope.
   sabotage f-quota-per-sender internal/pgstore/memos.go \
     $'\t\t`SELECT count(*) FROM memos WHERE scope_name = $1 AND created_at > $2`,' \
     $'\t\t`SELECT count(*) FROM memos WHERE scope_name = $1 AND created_at > $2 AND sender_credential_id IS NOT DISTINCT FROM \'`+string(caller.CredentialID)+`\'`,' \
-    "f-fifty-first-send-refused-whoever-sends-it"
+    a "f-fifty-first-send-refused-whoever-sends-it"
   # (g1) retraction keeps the body.
   sabotage g1-retract-keeps-body internal/pgstore/memos.go \
     $'\t\t`UPDATE memos SET retracted_at = $1, subject = NULL, body = NULL WHERE id = $2`, now, id); err != nil {' \
     $'\t\t`UPDATE memos SET retracted_at = $1 WHERE id = $2`, now, id); err != nil {' \
-    "g-stored-text-nulled-events-sent-then-retracted"
+    a "g-stored-text-nulled-events-sent-then-retracted"
   # (g2) `control.Narrow` ignores its VERB argument — which only (g)'s decision-17 control can see.
   sabotage g2-verb-narrowing-ignored internal/control/resolve.go \
     $'\t\tif verbs != nil {\n\t\t\tvs = vs.Intersect(*verbs)\n\t\t}' \
     $'\t\tif verbs != nil {\n\t\t\tvs = vs.Intersect(AllSet)\n\t\t}' \
-    "g-agent-of-an-admin-principal-cannot-moderate"
+    a "g-agent-of-an-admin-principal-cannot-moderate"
   # (h) the expiry filter dropped from the live set.
   sabotage h-expiry-filter-dropped internal/pgstore/memos.go \
     $'const memoLive = `retracted_at IS NULL AND expires_at > $1`' \
     $'const memoLive = `retracted_at IS NULL AND $1::timestamptz IS NOT NULL`' \
-    "h-expired-row-not-delivered"
+    a "h-expired-row-not-delivered"
   # (i) read authorised at SEND time instead of read time: `Get` no longer asks `MayRead` now, so a
   #     memo delivered while the grant stood stays readable after it is withdrawn.
   sabotage i-read-not-reauthorised internal/pgstore/memos.go \
     $'\tif !memo.MayRead(auth, scope) {\n\t\treturn memo.Stored{}, memo.ErrNotFound\n\t}' \
     $'\tif false {\n\t\treturn memo.Stored{}, memo.ErrNotFound\n\t}' \
-    "i-withdrawn-grant-read-is-not-found"
+    a "i-withdrawn-grant-read-is-not-found"
   # (j) the sender line renders the principal without the credential label.
   sabotage j-sender-line-drops-the-label internal/memo/stored.go \
     $'\tb.WriteString(sanitize(display))\n\tif label != "" {\n\t\tb.WriteString(" via " + sanitize(label))\n\t}' \
     $'\tb.WriteString(sanitize(display))' \
-    "j-sender-lines-name-each-credential"
+    a "j-sender-lines-name-each-credential"
   # (k) the revoke mode reports success without appending the event.
   sabotage k-revoke-appends-nothing cmd/cairn-server/revokecredential.go \
     $'\tr, err := control.RevokeCredential(ctx, store, id, "", time.Now().UTC())' \
     $'\tr, err := control.Revoked{}, error(nil)\n\t_ = time.Now\n\tif m, merr := store.Model(ctx); merr == nil {\n\t\tif c, ok := m.Credentials[id]; ok {\n\t\t\tr.Credential = c\n\t\t}\n\t}' \
-    "k-revoked-credential-refused-within-deadline"
+    a "k-revoked-credential-refused-within-deadline"
   echo "SUMMARY e2e-self-test: sabotaged=$sabotaged caught=$caught"
   if [[ ${#missed[@]} -gt 0 ]]; then
-    echo "a sabotage that leaves its clause green is a clause that cannot fail: ${missed[*]}" >&2
+    echo "a sabotage that leaves its clause green is a clause that cannot fail, and one that turns its CONTROL red proves nothing about its clause: ${missed[*]}" >&2
     exit 2
   fi
   [[ $sabotaged -eq 13 && $caught -eq $sabotaged ]] && exit 0
@@ -186,16 +232,41 @@ fi
 work="$(mktemp -d "${TMPDIR:-/tmp}/cairn-memo-e2e-XXXXXX")"
 # shellcheck source=tests/memo/world.sh
 source "$repo/tests/memo/world.sh"
+
+# The selection: every clause unless `E2E_CLAUSES` names some. A name that is not a clause is exit 2
+# (never "nothing selected, nothing failed"), and so is a declared table that disagrees with the
+# pinned full count.
+declared=0
+for c in $ALL_CLAUSES; do declared=$((declared + CLAUSE_ASSERTS[$c])); done
+[[ $declared -eq $EXPECTED_FULL ]] || couldnt "the clause table declares $declared assertions, the full run $EXPECTED_FULL"
+clauses="${E2E_CLAUSES-$ALL_CLAUSES}"
+[[ -n "${clauses// }" ]] || couldnt "E2E_CLAUSES selects no clause"
+EXPECTED=0
+for c in $clauses; do
+  [[ " $ALL_CLAUSES " == *" $c "* ]] || couldnt "E2E_CLAUSES names \`$c\`, which is not a clause ($ALL_CLAUSES)"
+  EXPECTED=$((EXPECTED + CLAUSE_ASSERTS[$c]))
+done
+echo "CLAUSES $clauses"
 world_up
 
 passed=0
 failed=0
+declare -A clause_passed=() clause_failed=()
+current_clause=""
+# clause <letter> — true when the clause is selected; it is then the clause every `assert` must belong to.
+clause() {
+  current_clause="$1"
+  [[ " $clauses " == *" $1 "* ]]
+}
 assert() { # assert <name> <command…>
   local name="$1"; shift
+  # 🔴 AN ASSERTION IS COUNTED TO THE CLAUSE ITS NAME NAMES, AND THAT MUST BE THE CLAUSE RUNNING —
+  # so a misplaced assertion cannot make one clause's tally whole by borrowing from another's.
+  [[ "${name%%-*}" == "$current_clause" ]] || couldnt "assertion $name ran inside clause ($current_clause)"
   if "$@"; then
-    echo "PASS $name"; passed=$((passed + 1))
+    echo "PASS $name"; passed=$((passed + 1)); clause_passed[$current_clause]=$((${clause_passed[$current_clause]:-0} + 1))
   else
-    echo "FAIL $name"; failed=$((failed + 1))
+    echo "FAIL $name"; failed=$((failed + 1)); clause_failed[$current_clause]=$((${clause_failed[$current_clause]:-0} + 1))
     { echo "  rc=$rc status=$status_line"; echo "  --- stdout"; sed 's/^/  | /' <<<"${out:0:1500}"; echo "  --- stderr"; sed 's/^/  | /' <<<"${err:0:800}"; } >&2
   fi
 }
@@ -215,6 +286,7 @@ http_answer() { # http_answer <token> <path> → "<status>\n<body>"
 }
 
 # --- (a) once per session ------------------------------------------------------------------------
+if clause a; then
 truncate_memos
 send host-a alpha-notes "a-first"
 [[ $rc == 0 ]] || couldnt "the first send failed (rc=$rc): $err"
@@ -227,8 +299,11 @@ assert a-another-session-sees-it-once eval '[[ $rc == 0 && $status_line == memo-
 outsider_alpha="$(http_answer "$outsider_tok" "/client/v1/memos?scope=alpha-notes")"
 outsider_absent="$(http_answer "$outsider_tok" "/client/v1/memos?scope=no-such-notes")"
 assert a-outsider-answer-byte-identical-to-an-absent-scope eval '[[ "$outsider_alpha" == "$outsider_absent" && "$outsider_alpha" == 404* ]]'
+fi # (a)
 
 # --- (b) who may send ----------------------------------------------------------------------------
+if clause b; then
+truncate_memos
 before="$(count_memos)"
 send host-r alpha-notes "b-from-a-reader"
 reader_rc=$rc
@@ -236,8 +311,15 @@ after="$(count_memos)"
 assert b-read-only-send-refused-nothing-stored eval '[[ $reader_rc == 6 && "$before" == "$after" ]]'
 send host-a alpha-notes "b-from-a-writer"
 assert b-writer-send-accepted eval '[[ $rc == 0 && "$(count_memos)" == $((after + 1)) ]]'
+fi # (b)
 
 # --- (c) narrowing holds both ways -----------------------------------------------------------------
+if clause c; then
+# 🔴 SELF-CONTAINED: host-a's check below needs a memo on alpha-notes, which (a) and (b) used to leave
+# behind — a narrowed run (the self-test) may run (c) without them.
+truncate_memos
+send host-a alpha-notes "c-seed"
+[[ $rc == 0 ]] || couldnt "(c): the seed send failed (rc=$rc): $err"
 before="$(count_memos)"
 send host-b alpha-notes "c-from-beta"
 assert c-narrowed-credential-cannot-send-elsewhere eval '[[ $rc == 6 && "$(count_memos)" == "$before" ]]'
@@ -247,8 +329,10 @@ cairn host-a memo-check --scope alpha-notes --session s-c002
 a_sees="$rc/$status_line"
 send host-a alpha-notes "c-from-alpha"
 assert c-unnarrowed-credential-sees-and-sends eval '[[ $a_sees == 0/memo-status=new && $rc == 0 ]]'
+fi # (c)
 
 # --- (d) the fence holds, on BOTH output paths -----------------------------------------------------
+if clause d; then
 truncate_memos
 mkdir -p "$work/hostile"
 python3 - "$src/internal/memo/testdata/hostile.json" "$work/hostile" "$user_a" "$hosta_crd" <<'PY' || couldnt "the hostile corpus could not be laid out"
@@ -316,8 +400,10 @@ cairn stub memo-check --scope alpha-notes --session s-d002
 assert d-stub-check-one-block-count-16 eval '[[ $rc == 0 && $status_line == memo-status=new ]] && block_ok preview 16'
 cairn stub memo-read --scope alpha-notes
 assert d-stub-read-one-block-sixteen-bodies eval '[[ $rc == 0 ]] && block_ok full 16'
+fi # (d)
 
 # --- (e) secret refusal -----------------------------------------------------------------------------
+if clause e; then
 truncate_memos
 # Vendor-shaped tokens are GENERATED here from a seeded RNG, never committed (the #216 corpus rule).
 read -r gh_token entropy_text key_context_text < <(python3 -c '
@@ -334,8 +420,10 @@ cairn host-a memo-send --scope alpha-notes --subject "e-entropy" --body "the bui
 e1=$rc
 cairn host-a memo-send --scope alpha-notes --subject "e-key-context" --body "set $key_context_text before the run"
 assert e-entropy-and-key-context-only-bodies-accepted eval '[[ $e1 == 0 && $rc == 0 && "$(count_memos)" == 3 ]]'
+fi # (e)
 
 # --- (f) the per-scope quota (O12) --------------------------------------------------------------------
+if clause f; then
 truncate_memos
 quota_ok=0
 for i in $(seq 1 25); do
@@ -350,8 +438,10 @@ send host-c alpha-notes "f-c-51"
 assert f-fifty-first-send-refused-whoever-sends-it eval '[[ $fa == 6 && $rc == 6 && "$(count_memos)" == 50 ]] && grep -qF "[quota]" <<<"$fa_err"'
 send host-b beta-notes "f-beta-same-minute"
 assert f-another-scope-is-unaffected eval '[[ $rc == 0 ]]'
+fi # (f)
 
 # --- (g) retraction (O8) --------------------------------------------------------------------------------
+if clause g; then
 truncate_memos
 send host-a alpha-notes "g-one";   g1="$(sent_id)"
 send host-a alpha-notes "g-two";   g2="$(sent_id)"
@@ -379,8 +469,10 @@ assert g-a-reader-cannot-retract eval '[[ $rc == 6 && "$(sql query "SELECT retra
 # principal writer-a IS an admin of alpha-notes — so only the credential's VERB narrowing refuses.
 cairn host-c memo-retract --scope alpha-notes --id "$g4"
 assert g-agent-of-an-admin-principal-cannot-moderate eval '[[ $rc == 6 && "$(sql query "SELECT retracted_at IS NULL FROM memos WHERE id = \$1" "$g4")" == true ]]'
+fi # (g)
 
 # --- (h) expiry ---------------------------------------------------------------------------------------------
+if clause h; then
 truncate_memos
 for row in "h-expired:now() - interval '1 second'" "h-live:now() + interval '1 minute'"; do
   sql exec "INSERT INTO memos (scope_name, sender_kind, sender_id, sender_credential_id, sender_display_at_send, subject, body, created_at, expires_at)
@@ -390,8 +482,10 @@ done
 cairn host-r memo-check --scope alpha-notes --session s-h001
 assert h-expired-row-not-delivered eval '[[ $rc == 0 ]] && lacks "h-expired"'
 assert h-unexpired-row-delivered eval '[[ $rc == 0 && $status_line == memo-status=new ]] && block_ok preview 1 && has "subject: h-live"'
+fi # (h)
 
 # --- (i) a withdrawn grant --------------------------------------------------------------------------------
+if clause i; then
 truncate_memos
 send host-a alpha-notes "i-one"; i1="$(sent_id)"
 cairn host-r memo-read --scope alpha-notes --id "$i1"
@@ -409,8 +503,10 @@ echo "  (i) the withdrawn grant took effect after $((SECONDS - i_start)) s (dead
 assert i-withdrawn-grant-read-is-not-found eval '[[ $i_seen == yes && -z "$out" ]]'
 cairn host-a memo-read --scope alpha-notes --id "$i1"
 assert i-the-writers-read-of-the-same-id-still-works eval '[[ $rc == 0 ]] && has "subject: i-one"'
+fi # (i)
 
 # --- (j) which agent sent it (O9) ---------------------------------------------------------------------------
+if clause j; then
 truncate_memos
 send host-a alpha-notes "j-from-a"
 send host-c alpha-notes "j-from-c"
@@ -419,8 +515,10 @@ assert j-sender-lines-name-each-credential eval '[[ $rc == 0 ]] && block_ok prev
   has "from writer-a via agents@host-a (user) · alpha-notes" && has "from writer-a via agents@host-c (user) · alpha-notes"'
 j_creds="$(sql query "SELECT count(DISTINCT sender_credential_id), count(DISTINCT (sender_kind, sender_id)) FROM memos")"
 assert j-one-principal-two-credentials-stored eval '[[ "$j_creds" == "$(printf "2\t1")" ]]'
+fi # (j)
 
 # --- (k) agent revocation (O9) ------------------------------------------------------------------------------
+if clause k; then
 truncate_memos
 random_tok="$(token)"
 journal_cmd -revoke-credential -credential "$hosta_crd" >"$work/revoke.log" 2>&1 || couldnt "(k): -revoke-credential failed: $(cat "$work/revoke.log")"
@@ -451,7 +549,21 @@ k_client="$rc/$status_line"
 assert k-revoked-credential-refused-within-deadline eval '[[ $k_done == yes && $k_client == 3/memo-status=unconfigured ]]'
 send host-c alpha-notes "k-sibling-sends"
 assert k-sibling-credential-keeps-working-throughout eval '[[ $sibling_ok == yes && $rc == 0 ]]'
+fi # (k)
 
+# One `CLAUSE <x> passed=N failed=M` line per SELECTED clause (the self-test reads its control's), and
+# the per-clause refusal: a selected clause that ran other than exactly its declared assertions, or an
+# unselected one that ran any, is exit 2 — the total alone could hide one clause's shortfall behind
+# another's surplus.
+for c in $ALL_CLAUSES; do
+  ran=$(( ${clause_passed[$c]:-0} + ${clause_failed[$c]:-0} ))
+  if [[ " $clauses " == *" $c "* ]]; then
+    echo "CLAUSE $c passed=${clause_passed[$c]:-0} failed=${clause_failed[$c]:-0}"
+    [[ $ran -eq ${CLAUSE_ASSERTS[$c]} ]] || couldnt "clause ($c) ran $ran assertion(s), ${CLAUSE_ASSERTS[$c]} are declared"
+  else
+    [[ $ran -eq 0 ]] || couldnt "clause ($c) was not selected and ran $ran assertion(s)"
+  fi
+done
 echo "SUMMARY e2e: passed=$passed failed=$failed expected=$EXPECTED"
 if [[ $((passed + failed)) -ne $EXPECTED ]]; then
   couldnt "$((passed + failed)) assertions ran, $EXPECTED are declared"
