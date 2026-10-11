@@ -686,8 +686,11 @@ def write_source_journal(path: Path, world: dict | None = None) -> Path:
     lines = []
     for record in world["source_journal"]["records"]:
         record = dict(record)
-        # `codesrc.Revision`'s digest, which `internal/codesrc`'s `TestTheRevisionIsALiteralDigest`
-        # pins against this exact spelling: sha256 over the COMPACT JSON `[scope, sources]`.
+        # `codesrc.Revision`'s digest: sha256 over the COMPACT JSON `[scope, sources]`. ⚠ Nothing
+        # pins THIS spelling against Go's. `internal/codesrc`'s `TestTheRevisionIsALiteralDigest`
+        # pins Go's `Revision` against LITERAL digests; the cross-check that this line agrees with
+        # Go is the `sources-authorized` golden, which reads `sources-undeclared` if the fold skips a
+        # seeded line for a wrong revision.
         canonical = json.dumps([record["scope"], record["sources"]], separators=(",", ":"), ensure_ascii=False)
         record["revision"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         lines.append(json.dumps(record, separators=(",", ":")))

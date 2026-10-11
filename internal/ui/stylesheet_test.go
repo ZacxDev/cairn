@@ -81,7 +81,7 @@ func TestThePageLinksTheStylesheetByItsOwnDigest(t *testing.T) {
 	srv := newTestServer(t, staticAuth{testIdentity()})
 
 	checked := 0
-	for _, page := range []string{RootPath, SignInPath, SharePath} {
+	for _, page := range []string{RootPath, SignInPath, TeamPath} {
 		href := hrefFromPage(t, srv, page)
 
 		rec := httptest.NewRecorder()
@@ -303,7 +303,7 @@ func TestNoPageLinksTheUnversionedStylesheetPath(t *testing.T) {
 	}
 
 	srv := newTestServer(t, staticAuth{testIdentity()})
-	for _, page := range []string{RootPath, SignInPath, SharePath} {
+	for _, page := range []string{RootPath, SignInPath, TeamPath} {
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, httptest.NewRequest("GET", page, nil))
 		if rec.Code != http.StatusOK {

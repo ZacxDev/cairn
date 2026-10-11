@@ -49,7 +49,8 @@ var narrowedBearers = []string{narrowedToOneToken, narrowedToNoneToken, narrowed
 func seededInvite(t *testing.T, authority *control.Cache) (ControlInviting, *memInvites, string) {
 	t.Helper()
 	store := newMemInvites()
-	inviting := ControlInviting{Authority: authority, Invites: store, Now: func() time.Time { return fixtureClock }}
+	inviting := ControlInviting{Authority: authority, Invites: store, Now: func() time.Time { return fixtureClock },
+		Links: &ControlTeamLinks{Authority: authority, Store: newMemLinks()}}
 	owner, ok := authority.Model().PrincipalFor(control.KindUser, fixtureUser)
 	if !ok {
 		t.Fatal("precondition: the fixture user is not in the model")
@@ -67,7 +68,7 @@ func seededInvite(t *testing.T, authority *control.Cache) (ControlInviting, *mem
 func TestANarrowedBearerSeesNoInvitations(t *testing.T) {
 	authority := narrowedWorld(t)
 	inviting, _, _ := seededInvite(t, authority)
-	path := InvitePath + "?" + url.Values{QueryProject: {string(fixtureProject)}}.Encode()
+	path := TeamPath + "?" + url.Values{QueryProject: {string(fixtureProject)}}.Encode()
 
 	// POSITIVE CONTROL: the un-narrowed bearer sees the project page and the invitation on it.
 	rec := newLiveOver(t, authority, inviting, nil, nil).bearerDo(http.MethodGet, path, testCredential, nil)
@@ -115,7 +116,7 @@ func TestANarrowedBearerCannotRevokeAnInvitation(t *testing.T) {
 // narrowing has nothing to do with.
 func TestANarrowedAdminBearerIsOfferedNoShareCandidates(t *testing.T) {
 	authority := narrowedWorld(t)
-	page := SharePath + "?" + url.Values{QueryScope: {string(fixtureScope)}}.Encode()
+	page := TeamPath + "?" + url.Values{QueryScope: {string(fixtureScope)}}.Encode()
 	share := url.Values{FieldScope: {string(fixtureScope)}, FieldSubject: {string(fixtureCollaborator)},
 		FieldVerb: {string(control.VerbRead)}}
 

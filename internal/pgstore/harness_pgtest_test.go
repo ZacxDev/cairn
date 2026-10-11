@@ -132,6 +132,14 @@ func nextSchema(t *testing.T) string {
 // exists to do — unexercised by every test in this tier.
 func openTestDB(t *testing.T) *pgstore.DB {
 	t.Helper()
+	return openTestDBWith(t, pgstore.Open)
+}
+
+// openTestDBWith is [openTestDB] with the opener chosen by the caller. The one other
+// opener is `pgstore.OpenThroughForTest`, which the UP-PATH test uses to build a database
+// at an OLD schema version before migrating it.
+func openTestDBWith(t *testing.T, open func(context.Context, string) (*pgstore.DB, error)) *pgstore.DB {
+	t.Helper()
 	dsn := requireDSN(t)
 	schema := nextSchema(t)
 
@@ -162,9 +170,9 @@ func openTestDB(t *testing.T) *pgstore.DB {
 		}
 	})
 
-	db, err := pgstore.Open(ctx, withSearchPath(dsn, schema))
+	db, err := open(ctx, withSearchPath(dsn, schema))
 	if err != nil {
-		t.Fatalf("pgstore.Open against schema %q failed: %v", schema, err)
+		t.Fatalf("opening against schema %q failed: %v", schema, err)
 	}
 	t.Cleanup(func() { db.Close() })
 	return db

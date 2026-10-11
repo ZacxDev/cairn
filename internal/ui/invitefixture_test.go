@@ -55,6 +55,20 @@ type staticInviting struct {
 	redeemedForToken     string
 	redeemedForPrincipal control.Principal
 	redeemForErr         error
+
+	// team is the link half this fixture answers from `TeamLinks` — the dispatch tests'
+	// `staticTeamLinks`, read back by the server exactly as production reads
+	// `ControlInviting.Links`.
+	team *staticTeamLinks
+}
+
+// TeamLinks answers the fixture's link half, and an explicit nil for a nil pointer (the
+// typed-nil trap `ControlInviting.TeamLinks` records).
+func (s *staticInviting) TeamLinks() TeamLinking {
+	if s.team == nil {
+		return nil
+	}
+	return s.team
 }
 
 func (s *staticInviting) Invitable(control.Principal) []control.NamedProject {
@@ -174,6 +188,7 @@ var fixtureNamedProject = control.NamedProject{
 // benignInviting is the wired fixture `testConfig` uses, mirroring `benignSharing`.
 func benignInviting() *staticInviting {
 	return &staticInviting{
+		team:      benignTeamLinks(),
 		invitable: []control.NamedProject{fixtureNamedProject},
 		token:     fixtureInviteToken,
 		outstanding: []invite.Invite{{

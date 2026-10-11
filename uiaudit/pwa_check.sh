@@ -10,11 +10,13 @@
 #   (a) installability            -> `TestPWAClauses/a_installability` (uiaudit/pwa_test.go)
 #   (b) per-instance name         -> `TestPWAClauses/b_name`           (uiaudit/pwa_test.go)
 #   (b) per-instance icon         -> `TestPWAClauses/b_icon`           (uiaudit/pwa_test.go)
+#   (b) install screenshots       -> `TestPWAClauses/b_screenshots`    (uiaudit/pwa_test.go)
 #   (c) touch reachability,       -> the uiaudit WALK's `refuseWalkRegressions` (uiaudit/main.go),
 #       target size, input font      run through `uiaudit/run.sh` exactly as CI runs it
 #   (d) no-store                  -> `TestEveryNonPublicHTMLRowIsNoStore` (internal/ui/cachecontrol_test.go),
 #                                    the same Go test the `go` CI job runs
-# (b: screenshots) and (e) are S4's: NOT wired here until that slice lands.
+#   (e) client-side storage       -> `TestPWAClauses/e_storage`        (uiaudit/pwa_test.go)
+# Every clause the plan names is wired (S4 wired the last two), so `--self-test` pins sabotaged=9.
 #
 # EXIT: 0 every wired check PASSED · 1 a check FAILED (or, with --self-test, a sabotage was not
 # caught by its own clause) · 2 COULD NOT VOUCH — chromium or a built cairn-ui is missing, a
@@ -51,7 +53,7 @@ root="$(cd "$here/.." && pwd)"
 port="${PWA_CHECK_PORT:-18791}"
 
 # 🔴 THE WORK DIR IS ALWAYS A FRESH `mktemp` DIRECTORY THE SCRIPT OWNS, AND IT IS REMOVED ON EVERY EXIT
-# PATH. One `--self-test` leaves seven tree copies, seven builds and four walks behind — measured at
+# PATH. One `--self-test` (then seven checks) left seven tree copies, seven builds and four walks behind — measured at
 # ~305 MB before this trap existed. `PWA_CHECK_WORK` names the PARENT it is created under (default
 # `$TMPDIR`), never the directory itself, so a caller's directory is never what gets deleted.
 # `PWA_CHECK_KEEP=1` keeps it, for reading the logs after a failure.
@@ -74,16 +76,18 @@ could_not_vouch() {
   exit 2
 }
 
-# The seven checks, in report order, and the message that is each one's OWN verdict when it fails.
-checks=(a_installability b_name b_icon c_reachability c_target_size c_input_font d_no_store)
+# The nine checks, in report order, and the message that is each one's OWN verdict when it fails.
+checks=(a_installability b_name b_icon b_screenshots c_reachability c_target_size c_input_font d_no_store e_storage)
 declare -A own_message=(
   [a_installability]="pwa clause (a) installability"
   [b_name]="pwa clause (b) name"
   [b_icon]="pwa clause (b) icon"
+  [b_screenshots]="pwa clause (b) screenshots"
   [c_reachability]="TOUCH REACHABILITY FAILED"
   [c_target_size]="TOUCH TARGET SIZE (WCAG 2.5.8"
   [c_input_font]="INPUT FONT UNDER 16px"
   [d_no_store]="pwa clause (d) no-store"
+  [e_storage]="pwa clause (e) storage"
 )
 declare -A walk_passed=(
   [c_reachability]="TOUCH REACHABILITY refusal PASSED"
@@ -151,7 +155,7 @@ walk_pushed() { [ -f "$1/c.log" ] && grep -qF "uiaudit: PUSH CONFIRMED" "$1/c.lo
 verdict() {
   local out="$1" check="$2"
   case "$check" in
-    a_*|b_*)
+    a_*|b_*|e_*)
       [ -f "$out/ab.log" ] || { echo NONE; return; }
       if grep -qF -- "--- FAIL: TestPWAClauses/$check " "$out/ab.log"; then echo FAIL
       elif grep -qF -- "--- PASS: TestPWAClauses/$check " "$out/ab.log"; then echo PASS
@@ -170,9 +174,10 @@ verdict() {
   esac
 }
 
-# 🔴 THE CONTROL INSIDE CLAUSE (a): its unarmed boot must read exactly [no-manifest]. If it did not,
-# `pwa_test.go` says `pwa clause (a) CONTROL`, and that is a misbehaving control — exit 2, not 1.
-control_misbehaved() { [ -f "$1/ab.log" ] && grep -qF "pwa clause (a) CONTROL" "$1/ab.log"; }
+# 🔴 THE CONTROLS INSIDE CLAUSES (a) AND (e): (a)'s unarmed boot must read exactly [no-manifest]; (e)'s
+# walk must visit enough pages and its iOS hint must actually SHOW before it is dismissed. If either did
+# not, `pwa_test.go` says `pwa clause (a) CONTROL` or `pwa clause (e) CONTROL`, and that is a misbehaving control — exit 2, not 1.
+control_misbehaved() { [ -f "$1/ab.log" ] && grep -qF -e "pwa clause (a) CONTROL" -e "pwa clause (e) CONTROL" "$1/ab.log"; }
 
 # plain_run <tree> <out>: every wired check over <tree>; prints one line per check and RETURNS the exit
 # code (0, 1 or 2) instead of exiting, so `--self-test` can run this very loop over a sabotaged tree.
@@ -182,7 +187,9 @@ plain_run() {
   run_ab "$tree" "$out"
   if [ -f "$out/harness" ]; then echo "pwa_check: COULD NOT VOUCH — $(cat "$out/harness")"; return 2; fi
   if control_misbehaved "$out"; then
-    echo "pwa_check: COULD NOT VOUCH — clause (a)'s unarmed control did not read [no-manifest]"; return 2
+    echo "pwa_check: COULD NOT VOUCH — a control inside clause (a) or (e) misbehaved:"
+    grep -hF -e "pwa clause (a) CONTROL" -e "pwa clause (e) CONTROL" "$out/ab.log" | head -2 | cut -c1-240 | sed 's/^/pwa_check:     /'
+    return 2
   fi
   run_d "$tree" "$out"
   run_c "$tree" "$out" "$port"
@@ -267,6 +274,12 @@ SABOTAGES = {
     "b_icon": ("internal/ui/pwa.go",
         'if f.Variant != a.IconVariant || f.Kind.ManifestPurpose == "" {',
         'if f.Variant != IconVariants()[0] || f.Kind.ManifestPurpose == "" {', 1),
+    # ONE screenshot row serves its committed bytes with one byte appended — still listed, still 200,
+    # still a PNG to a lenient decoder, and no longer the derivation-pinned file.
+    "b_screenshots": ("internal/ui/pwa.go",
+        "\t\troutes[routeKey{http.MethodGet, f.Path}] = route{screenshotHandler(f), classPublic}\n",
+        "\t\tif f.Name == \"wide-hub\" {\n\t\t\tf.Bytes = append(append([]byte{}, f.Bytes...), 'x')\n\t\t}\n"
+        "\t\troutes[routeKey{http.MethodGet, f.Path}] = route{screenshotHandler(f), classPublic}\n", 1),
     "c_reachability": ("uiaudit/browser.go",
         "return emulation.SetTouchEmulationEnabled(true).WithMaxTouchPoints(touchPoints)",
         "return emulation.SetTouchEmulationEnabled(false)", 1),
@@ -280,6 +293,11 @@ SABOTAGES = {
     "c_input_font": ("internal/ui/app.css", "font-size: max(16px, 1em);", "font-size: 0.875rem;", 1),
     # Restore the base's EMPTY default: no HTML page carries a `Cache-Control` at all.
     "d_no_store": ("internal/ui/server.go", '\tw.Header().Set("Cache-Control", htmlCacheControl)\n', "", 1),
+    # `pwa.js` writes a second key — a timestamp — beside the dismissal flag (the plan's (e) sabotage).
+    "e_storage": ("internal/ui/pwa.js",
+        '      window.localStorage.setItem(HINT_KEY, "1");\n',
+        '      window.localStorage.setItem(HINT_KEY, "1");\n'
+        '      window.localStorage.setItem(HINT_KEY + "At", String(Date.now()));\n', 1),
 }
 if sabotage == "none":
     sys.exit(0)
@@ -318,7 +336,7 @@ echo "pwa_check: positive control PASSED all ${#checks[@]} check(s)"
 # that read that as "no verdict" exited 2 ("could not vouch") on every real (c) failure. Each (c)
 # sabotage must make the plain loop exit 1 with its own check printed FAIL.
 # `PWA_CHECK_SABOTAGES` (a space-separated subset) is a debugging aid: any subset reports fewer than
-# seven and so exits 1.
+# nine and so exits 1.
 selected=(${PWA_CHECK_SABOTAGES:-${checks[*]}})
 sabotaged=0; caught=0; plain_arms=0; plain_ok=0
 for s in "${selected[@]}"; do
@@ -327,7 +345,7 @@ for s in "${selected[@]}"; do
   make_copy "$d/tree" "$s" || could_not_vouch "sabotage $s could not be applied"
   sabotaged=$((sabotaged + 1))
   case "$s" in
-    a_*|b_*)
+    a_*|b_*|e_*)
       run_ab "$d/tree" "$d"
       [ -f "$d/harness" ] && could_not_vouch "sabotage $s: $(cat "$d/harness")"
       log="$d/ab.log" ;;

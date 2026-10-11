@@ -81,20 +81,22 @@ const (
 	hubArcsWhat     = "Named pieces of work, and the sessions and scopes each one touched."
 	hubScopesWhat   = "Every scope you can read, newest first — with search and the tag filter."
 	hubSessionsWhat = "Every writing session you can see, newest first."
-	hubTeamWhat     = "Who can read and write each scope you administer, and invitations."
+	hubTeamWhat     = "Who can read and write each scope you administer, invitations, and team links."
 )
 
 // HubPage is the root: four cards, each a way in. Only the scopes card carries a count.
 func HubPage(v PageView) g.Node {
-	return shell("cairn", v, nil,
+	return shell("", v, nil,
+		// The iOS install hint (S4, `pwa.go`): hidden, and nothing at all when unarmed.
+		pwaInstallHint(v.App),
 		h.Div(h.Class("scope-grid"), h.ID("hub"),
 			hubCard("arcs", "Arcs", ArcsPath, hubArcsWhat, nil),
 			hubCard("scopes", "Scopes", ScopesPath, hubScopesWhat,
 				stat(plural(len(v.Scopes), "readable scope", "readable scopes"), "")),
 			hubCard("sessions", "Sessions", SessionsPath, hubSessionsWhat, nil),
-			// ⚠ `/share` FOR NOW: a team page that consolidates sharing and invitations is being built
-			// separately and repoints this card.
-			hubCard("team", "Team", SharePath, hubTeamWhat, nil),
+			// The Team page (#214): sharing, single invitations and team links on one page —
+			// `/share` and `/invite` now only redirect there.
+			hubCard("team", "Team", TeamPath, hubTeamWhat, nil),
 		),
 	)
 }
@@ -152,7 +154,7 @@ func SessionsPage(v PageView) g.Node {
 	if list.ArcsUnreadable {
 		badges = append(badges, partialBadge("arcs unknown", arcJournalUnreadable))
 	}
-	return shell("cairn — sessions", v, []crumb{{Label: "sessions"}},
+	return shell("sessions", v, []crumb{{Label: "sessions"}},
 		h.Section(
 			h.Class("card"),
 			h.ID("sessions-index"),

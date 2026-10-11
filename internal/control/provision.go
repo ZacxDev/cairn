@@ -92,6 +92,7 @@ func ProvisionUser(ctx context.Context, s Store, req NewUser) (Provisioned, erro
 		{
 			Kind: EventUserCreated, At: at, Actor: req.Actor,
 			UserID: userID, Provider: req.Provider, Subject: req.Subject, Email: req.Email,
+			DisplayName: req.DisplayName,
 		},
 		{
 			Kind: EventProjectCreated, At: at, Actor: req.Actor,
@@ -161,6 +162,10 @@ type NewUser struct {
 	// provider and reused across providers. It is what `Principal.Display` renders when
 	// present, so the audit line names a person rather than a provider id.
 	Email string
+	// DisplayName is the OPERATOR-written name `Principal.Display` prefers over the email.
+	// Optional; "" writes no `display_name`. Its shape and uniqueness are `Event.validate`'s
+	// and `apply`'s — see `user_display.go`.
+	DisplayName string
 	// ProjectName is the project created for this user, who becomes its owner. Required —
 	// `EventProjectCreated` refuses an unnamed project.
 	ProjectName string

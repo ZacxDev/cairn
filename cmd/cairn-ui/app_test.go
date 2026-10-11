@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -176,21 +175,15 @@ func TestTheBinaryServesTheManifestItWasArmedWith(t *testing.T) {
 			`cairn-ui: WARNING -app-icon-variant / $CAIRN_UI_APP_ICON_VARIANT="teal" IGNORED`},
 	} {
 		t.Run(arm.name, func(t *testing.T) {
-			port := aPortNothingIsListeningOn(t)
-			c := startAppChild(t, nil, append([]string{"-port", fmt.Sprint(port)}, arm.args...)...)
-			c.waitFor(t, "the serving line", func() bool { return strings.Contains(c.out.String(), "serving") })
+			c := startAppChild(t, nil, append([]string{"-port", "0"}, arm.args...)...)
+			base := c.serving(t)
 			if !strings.Contains(c.out.String(), arm.wantLine) {
 				t.Errorf("the startup line does not say %q:\n%s", arm.wantLine, c.out.String())
 			}
-			var resp *http.Response
-			c.waitFor(t, "the manifest row to answer", func() bool {
-				r, err := (&http.Client{Timeout: time.Second}).Get(fmt.Sprintf("http://127.0.0.1:%d%s", port, ui.ManifestPath))
-				if err != nil {
-					return false
-				}
-				resp = r
-				return true
-			})
+			resp, err := (&http.Client{Timeout: 10 * time.Second}).Get(base + ui.ManifestPath)
+			if err != nil {
+				t.Fatalf("GET %s: %v", ui.ManifestPath, err)
+			}
 			defer resp.Body.Close()
 			body, _ := io.ReadAll(resp.Body)
 			if resp.StatusCode != arm.wantCode {
