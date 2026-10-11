@@ -22,44 +22,40 @@ UNTRUSTED pointer-plus-preview block. Per `claudedocs/plan-cairn-scope-mail.md` 
   DEPLOYED listener.
 
 ## State now
-- **Plan MERGED** `4413feb` (#221). **Q16 ANSWERED by the operator:** KEEP decision 17's verb narrowing over Q15's
-  per-host project principal, accepting the stricter rollback (recorded in the plan, `a7ee397`). Round-0 D2 kept:
-  migration 3 stays registered in S1.
-- **S0 MERGED** (cairn #230; tooling #2125, hook UNREGISTERED).
-- **S1 MERGED: #235 squash `8b7ef0d`** (2026-10-11), `main`'s tree byte-identical to the audited head `a7ee397`.
-  Landed: verb narrowing (`credential-verbs-narrowed`, `-issue-credential -narrow-verbs`), `cairn-server
-  -revoke-credential`, `memo.MaySend/MayRead/MayRetract` + `CheckSend`, migration 3 + `pgstore.MemoStore`, Guard A on
-  name+type (`internal/surface`), Guard C over pgstore's exported surface. Audit: round 0 (Q16 questioned → operator
-  kept it), round 1 no 🔴 (2 🟡 + nits, batched below) — merged under the operator's "no 🔴 in the latest round" rule.
-- ⚠ **NOT DEPLOYED.** The next cairn-ui deploy applies migration 3 (`pgstore.Open` migrates); from then a rollback
-  below S1 needs the version-3 recipe on #235, and older binaries refuse a journal holding `credential-verbs-narrowed`
-  (exit 78, measured on the base build). Nothing reads the memo tables until S2.
-- Claims: all released.
+- **Plan MERGED** `4413feb` (#221). Operator rulings since: **Q16** keep decision 17's verb narrowing; **Q19**
+  retraction requires READ for sender AND scope admin (narrows O8; recorded in the plan by #239). **Q20** (empty memo
+  accepted) is OPEN, behaviour unchanged.
+- **MERGED:** S0 #230; **S1 #235 `8b7ef0d`**; **S2 #236 `862d3cb`**; **S3 #239 `0d9ba01`**. Each: round 0 + round 1,
+  no 🔴, merged under the operator's "merge if the latest round has no high-severity finding" rule.
+- **DEPLOYED `sha-0d9ba01`** to both pods (deployment trunk `fd6aa85`), 2026-10-11. Verified: running imageIDs equal
+  the tag digests, 0 restarts; `schema_migrations` = 1,2,3 (memos/memo_events empty); cairn-ui logs `client API off
+  (no -client-api-addr)`; `/sign-in` 200, `/` 401 unauthenticated; store answered the client's authenticated sync
+  (304) and refuses an unauthenticated snapshot (401). Pre-deploy backups `cairn-ui-backup-pre-memo` and
+  `subsystem-store-backup-pre-memo` restored+verified. NOT verified: any memo path (listener off until S7).
+- 🔴 **ROLLBACK below `sha-0d9ba01` needs the migration-3 recipe (#235);** once any credential is narrowed by verbs,
+  the journal recipe too.
+- **IN FLIGHT:** S5 (`zach/scope-mail-s5`, the scope page's memos tab) and S3 follow-ups
+  (`zach/scope-mail-s3-followups`: #239's round-1 🟡s + the e2e self-test CI time), both by subagents.
 
 ## Next steps (ranked)
 1. **S1** — DONE, #235 `8b7ef0d`. forcing: user — operator asked for scope mail.
-2. **S2 → S3 → S5 (cairn) and S4 (tooling, last) and S7 (deployment)** per the plan's slice table. S2 first: the
-   `-client-api-addr` listener; fix the S1 defects below in it. forcing: user — operator asked for scope mail.
+2. **S5** (cairn UI tab) — IN FLIGHT; then **S7** (deployment: listener port/Service/ingress, trusted proxies,
+   probe scope + credential, deploy-order check), then **S4** (tooling hook registration, LAST).
+   forcing: user — operator asked for scope mail.
+3. **S3 follow-ups** — IN FLIGHT: the Defects (batched) list below plus round-0 D1 (e2e `--self-test` made `pgtest`
+   CI's critical path: 1m07s → 16m36s). forcing: user — operator asked to fix audit findings before S7's live probe.
 
 ## Defects (batched)
-- **From #235 round 1 (fix in S2, before these paths are exposed):** two CORRECT-but-untested guards — `Retract`'s
-  read check (`internal/pgstore/memos.go:266`; without it a caller who cannot read scope X distinguishes existing
-  memo ids there via `not-permitted` vs `not-found`, T12) and scope folding on send (`memos.go:110`; without it
-  `ALPHA-NOTES` gets its own quota, T3). The auditor proved each hazard with a throwaway test, red under the mutant.
-  Nits, also untested: quota counting retracted rows (`:131`), `Retract`'s transaction timeout (`:274`), `List`'s
-  200 cap (`:200`), `-narrow-verbs ","` refusal (`cmd/cairn-server/issuecredential.go:705`); `Narrowed()`'s doc at
-  `internal/control/resolve.go:64` still says only a non-nil list narrows.
-- **Rule in two places:** `MayRetract`'s doc and decision 10 say admin alone may retract, but `Retract` also
-  requires read, so an admin-only grant (the share form allows one) gets `not-found`. Decide which is intended and
-  make the predicate S5 draws its retract button from carry the whole rule.
-- **Carried to S3:** restore the live probe's cache-sync step (it is what lets the
-  omit-`SUBSYSTEM_STORE_URL`/`_TOKEN` mutants go red); "exits 2 when `CAIRN_UI_URL` is absent"
-  means absent from the probe-input file; decide whether `os.UserHomeDir()`, `reposcope`'s
-  `os.Environ()` and `envalias.OSDeprecations()` join the env-read ledger.
+- **From #239 round 1 (being fixed in S3 follow-ups):** cursor margin / `after` / `memo-read` paging have no failing
+  test (`internal/client/memocursor.go:90-96`, `memo.go:414-451`); `memo-check`'s own instance routing untested
+  (`memo.go:228-238`); strict response decoding couples client and listener releases (`memo.go:108-119`); a failed
+  live probe leaves its memo live for an hour (`tests/memo/live-probe.sh`); `--ttl` under 1 s silently means 3 days;
+  cursor saved before the block prints; `ScopeForRepo` errors swallowed as `no-scope`.
 - **Carried to S4 (before the hook is registered):** a descendant that `setsid`s and keeps stdout open
   defeats the 2 s bound (measured 12.03 s) — close the pipes after `killpg`; relayed output is
   uncapped (64 MiB passed through) — cap it and treat overflow as `malformed`.
-- (The S1/S2 Guard A carry-overs and the Low `Unsafe`/`\u`-escape items were FIXED in #235.)
+- **Closing-condition part 3's wording** diffs `-routes` against `b2ba3ac`, which predates scope-refs' `sources`
+  route — re-anchor it on a post-scope-refs base before reading it.
 
 ## Gotchas / decisions / dead-ends
 - **Go's `unicode.C` already includes unassigned code points** — "unassigned" computed as "in no
@@ -81,9 +77,18 @@ UNTRUSTED pointer-plus-preview block. Per `claudedocs/plan-cairn-scope-mail.md` 
   Wrong — #235 had already merged both (`dce97bf`) and its CI covered them; only #227 arrived later. Read the PR's
   own merge commits before claiming a base moved. via: command
 
+- **Deploy recipe that worked (this arc):** `kubectl create job --from=cronjob/cairn-ui-backup <name>` and the same
+  for `subsystem-store-backup`, read the `OK: … restored and verified` line; ghcr anonymous manifest GET 200 for the
+  tag AND 404 for an all-zero control tag; bump both pins in a deployment-repo worktree off its trunk, push to
+  trunk; `flux reconcile kustomization subsystem-store -n flux-system --with-source`; compare running `imageID` to
+  the tag's `docker-content-digest`. Cluster access: the deployment repo's own kubeconfig. via: command
+- **The base-clone write guard refuses `git -C $VAR …`** for ANY repo (it cannot resolve the variable) — spell the
+  worktree path literally. via: command
+- **S3's e2e self-test reruns the whole e2e per sabotage**, ~14.5 min per PR. via: measurement
+
 ## How to verify
 ```bash
-git -C ~/workspace/cairn log --oneline -1 -- internal/memo internal/pgstore
-nix develop ~/workspace/cairn -c go -C ~/workspace/cairn test ./internal/memo ./internal/control
-grep -c cairn-memo-hook ~/.claude/settings.json   # 0 until S4 registers it
+KUBECONFIG=<deployment kubeconfig> kubectl -n subsystem-store get deploy -o wide
+KUBECONFIG=<deployment kubeconfig> kubectl -n subsystem-store logs deploy/cairn-ui --tail=1   # "client API off" until S7
+gh pr list --repo ZacxDev/cairn --state open
 ```
