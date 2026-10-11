@@ -86,7 +86,7 @@ const (
 
 // HubPage is the root: four cards, each a way in. Only the scopes card carries a count.
 func HubPage(v PageView) g.Node {
-	return shell("cairn", v, nil,
+	return shell("", v, nil,
 		// The iOS install hint (S4, `pwa.go`): hidden, and nothing at all when unarmed.
 		pwaInstallHint(v.App),
 		h.Div(h.Class("scope-grid"), h.ID("hub"),
@@ -154,7 +154,7 @@ func SessionsPage(v PageView) g.Node {
 	if list.ArcsUnreadable {
 		badges = append(badges, partialBadge("arcs unknown", arcJournalUnreadable))
 	}
-	return shell("cairn — sessions", v, []crumb{{Label: "sessions"}},
+	return shell("sessions", v, []crumb{{Label: "sessions"}},
 		h.Section(
 			h.Class("card"),
 			h.ID("sessions-index"),

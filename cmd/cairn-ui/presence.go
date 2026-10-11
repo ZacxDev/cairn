@@ -117,9 +117,14 @@ func presenceBindRefusal(addr string, proxyErr error) error {
 	return nil
 }
 
-// resolvePresenceOwner turns a HUMAN-supplied owner — `<kind>:<id>`, an email, or a token-file
-// identity (a project name) — into the stable `(Kind, ID)`, ONCE, at mint time (decision 3).
-// It must name exactly one principal.
+// resolvePresenceOwner turns a HUMAN-supplied owner — `<kind>:<id>`, an email, a user's display
+// name, or a token-file identity (a project name) — into the stable `(Kind, ID)`, ONCE, at mint
+// time (decision 3). It must name exactly one principal.
+//
+// 🔴 A USER MATCHES ON THEIR RENDERED DISPLAY *OR* THEIR STORED EMAIL. Once a user has a display
+// name, `PrincipalFor` renders that instead of the email, so matching the display alone would
+// make the documented email spelling stop resolving the moment somebody is renamed. One user
+// matching both ways is still ONE principal: it is appended once.
 func resolvePresenceOwner(m control.Model, raw string) (presence.Owner, error) {
 	if o, err := presence.ParseOwner(raw); err == nil {
 		if _, known := m.PrincipalFor(o.Kind, o.ID); known {
@@ -129,7 +134,7 @@ func resolvePresenceOwner(m control.Model, raw string) (presence.Owner, error) {
 	}
 	var found []presence.Owner
 	for id := range m.Users {
-		if p, ok := m.PrincipalFor(control.KindUser, id); ok && p.Display == raw {
+		if p, ok := m.PrincipalFor(control.KindUser, id); ok && (p.Display == raw || m.Users[id].Email == raw) {
 			found = append(found, presence.OwnerOf(p))
 		}
 	}
@@ -142,7 +147,7 @@ func resolvePresenceOwner(m control.Model, raw string) (presence.Owner, error) {
 	case 1:
 		return found[0], nil
 	case 0:
-		return presence.Owner{}, fmt.Errorf("-%s %q matches no user email or project name this authority holds",
+		return presence.Owner{}, fmt.Errorf("-%s %q matches no user email, user display name or project name this authority holds",
 			flagPresenceOwner, raw)
 	default:
 		return presence.Owner{}, fmt.Errorf("-%s %q matches %d principals; name one as <kind>:<id>",

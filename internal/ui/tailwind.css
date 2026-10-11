@@ -617,6 +617,14 @@
     @apply transition-colors duration-200 ease-cairn hover:text-accent;
   }
 
+  /* The deployment's label beside the wordmark (`-instance-name`, `title.go`). Muted and
+   * smaller, because it qualifies the wordmark rather than competing with it; rendered ONLY
+   * when a label is configured, so a deployment without one renders no element this rule
+   * matches. */
+  .instance-name {
+    @apply text-sm font-normal text-muted;
+  }
+
   /* The breadcrumb. `›` is a CSS-generated separator rather than a rendered character,
    * so it is not in the accessible name of any link and a screen reader does not read it
    * out between every step. */
@@ -1205,6 +1213,13 @@
 
     .page-header h1 a {
       @apply inline-flex min-h-11 items-center;
+    }
+
+    /* The label sits in the wordmark's `auto` column; capped and truncated so a long one cannot
+     * widen that column and squeeze the three equal nav targets beside it. Its full text is
+     * still the page title. */
+    .page-header .instance-name {
+      @apply block max-w-24 truncate text-xs;
     }
 
     /* Buttons and the fields they submit. The input font is `max(16px, 1em)`: iOS Safari

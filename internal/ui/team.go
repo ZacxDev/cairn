@@ -423,12 +423,12 @@ func teamLinkRows(links []LinkWithLog, now time.Time) []TeamLinkRow {
 // list, `InviteHonesty` the invitation link, `TeamHonesty` the team link. A notice shown only
 // on the shape about to write would leave the read — far more common — unqualified.
 func TeamPage(v TeamView) g.Node {
-	title := "cairn — team"
+	title := "team"
 	switch {
 	case v.Share.Scope.Name != "":
-		title = "cairn — team: sharing " + v.Share.Scope.Name
+		title = "team: sharing " + v.Share.Scope.Name
 	case v.Invite.Project.Name != "":
-		title = "cairn — team: inviting to " + v.Invite.Project.Name
+		title = "team: inviting to " + v.Invite.Project.Name
 	}
 	share, inv := v.Share, v.Invite
 	share.CSRF, inv.CSRF = v.CSRF, v.CSRF

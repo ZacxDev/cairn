@@ -4310,3 +4310,63 @@ build refuses a version-2 database) before asserting the recipe lifts it.
 - **An access log.** The `/join` query-string residual above is a deployment fix outside this repo.
 - **A real rollback.** The recipe is measured through the startup predicate on one schema, not by
   booting an older image against a production-shaped database.
+
+---
+
+# Phase U — the instance label in every title and header
+
+`cmd/cairn-ui -instance-name` (`$CAIRN_UI_INSTANCE_NAME`) is OPTIONAL and arms nothing. It rides on
+`App.Instance` because every frame already receives an `App`; `Armed()` reads `Name` alone and the
+manifest never reads `Instance`. Read raw with the `-app-*` blank policy (a written blank is a
+refusal, exit 78); shape judged once, by `App.Validate`, armed or not: at most 32 characters, no
+surrounding whitespace, no control, format (bidi, zero-width) or line/paragraph-separator character.
+It is PUBLIC — the sign-in page renders it.
+
+## 🔴 The format, and why the label comes first
+
+| | root | any other page |
+|---|---|---|
+| unset | `cairn` | `cairn — <page>` (unchanged) |
+| set | `<instance> · cairn` | `<instance> — <page> · cairn` |
+
+A tab shows the START of a title and cuts the end; the label exists to tell two deployments' tabs
+apart, so it goes first. The page is second (it tells two tabs of ONE deployment apart), the product
+last. The heading shows the label inside the `<h1>` — not as a new header item, which would take a
+cell in the compact header's source-ordered grid.
+
+## The guards, and the one the mutation battery forced
+
+`documentTitle` is the one composer and `wordmark` the one heading. Three guards, three claims:
+`TestEveryFrameTitleIsComposedByDocumentTitle` (AST: every `c.HTML5Props` `Title` is a call to it),
+`TestEveryPageCarriesTheInstanceLabel` (behavioural: a link-following crawl including both public
+frames — the test logs how many pages it reached; a count written here went stale twice), and
+`TestNoPageLabelSpellsTheProductName` (AST over every label argument). The third exists because a
+`shell("cairn — arcs", …)` on the CONFIGURED arcs-index branch survived the first two: the AST check
+saw a well-formed call and the crawl never reaches that branch (the fixture has no arc journal). It
+is a guard on a word, and says so.
+
+⚠ **It follows a label's IDENTIFIERS to the values they are given, because a merge needed it to.**
+The Team page arrived from `main` with `title := "cairn — team"` and two more assignments on
+branches, passed as `shell(title, …)`. The crawl caught the bare `/team` and neither scoped shape;
+the word guard, reading only literals in the argument, caught none. It now follows every identifier
+in a label to the values that name is given by assignments (`:=`, `=`, `+=`) and `var`/`const` in
+the enclosing function, and `var`/`const` at package level — and on through the identifiers in those
+values, transitively (red on all three Team labels before they were fixed, and on a `var`, a local
+`const`, a two-hop local and a package-level `var`, each of which a one-hop, assignment-only first
+draft let through). It fails if it followed no value at all.
+
+## The RED proof
+
+- Unset is inert: 19 crawled pages compared against `origin/main` page-for-page, with the content-hashed
+  stylesheet URL normalised — 0 differ; with a label set, 19 of 19 differ (the control). The stylesheet
+  URL itself DOES change on every page, because `app.css` gained the `.instance-name` rules. Re-measured
+  after `main`'s hub and Team pages were merged in: 22 pages, title, heading and normalised body — 0 differ.
+- `TestAnUnlabelledDeploymentRendersTodaysTitlesAndHeader` is an INVARIANT guard: green at `origin/main`.
+
+## What these guards still cannot see
+
+- A label spelling "cairn — " that reaches `shell` from a FUNCTION'S RETURN, a struct field, a map
+  value, a FUNCTION PARAMETER (a wrapper taking its label as an argument) or a RANGE variable, on an
+  uncrawled branch (the word guard follows names to values written in the function or at package
+  level, not calls, selectors, parameters or `range`).
+- How a given browser, or an installed standalone window, truncates or decorates the title.

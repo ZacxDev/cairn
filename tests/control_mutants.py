@@ -3027,8 +3027,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-join-page-gains-authenticated-navigation",
         path="internal/ui/render.go",
-        old='\t\t\th.Header(h.Class("page-header"), h.H1(g.Text("cairn"))),\n\t\t\th.Main(\n\t\t\t\th.Class("join-main"),',
-        new='\t\t\th.Header(h.Class("page-header"), h.H1(g.Text("cairn")),\n\t\t\t\th.P(h.Class("nav-share"), h.A(h.Href(SharePath), g.Text("Sharing")))),\n\t\t\th.Main(\n\t\t\t\th.Class("join-main"),',
+        old='\t\t\th.Header(h.Class("page-header"), wordmark(app, false)),\n\t\t\th.Main(\n\t\t\t\th.Class("join-main"),',
+        new='\t\t\th.Header(h.Class("page-header"), wordmark(app, false),\n\t\t\t\th.P(h.Class("nav-share"), h.A(h.Href(SharePath), g.Text("Sharing")))),\n\t\t\th.Main(\n\t\t\t\th.Class("join-main"),',
         killer="TestNoPublicPageOffersAuthenticatedNavigation",
         why="the duplicate-header tidy-up, which is what `TestTheSignInPageOffersNoAuthenticated"
         "Navigation` already exists to refuse on the OTHER public page. A `Sharing` link in "
@@ -4260,8 +4260,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-pwa-head-missing-from-sign-in",
         path="internal/ui/render.go",
-        old='Title:    "cairn — sign in",\n\t\tLanguage: "en",\n\t\tHead:     []g.Node{stylesheetLink(), pwaHead(app)},',
-        new='Title:    "cairn — sign in",\n\t\tLanguage: "en",\n\t\tHead:     []g.Node{stylesheetLink()},',
+        old='Title:    documentTitle(app, "sign in"),\n\t\tLanguage: "en",\n\t\tHead:     []g.Node{stylesheetLink(), pwaHead(app)},',
+        new='Title:    documentTitle(app, "sign in"),\n\t\tLanguage: "en",\n\t\tHead:     []g.Node{stylesheetLink()},',
         killer="TestEveryFrameCallsPWAHead",
         extra_killers=("TestEveryArmedHTMLPageCarriesThePWAHead",),
         why="the public frames build their own `c.HTML5` on purpose, so a head element added to `shell` "
@@ -4283,8 +4283,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-app-name-blank-accepted",
         path="cmd/cairn-ui/app.go",
-        old="if l.written && identity.ValueReducesToNothing(l.value) {",
-        new="if false && l.written && identity.ValueReducesToNothing(l.value) {",
+        old="range []appLine{name, short, variant} {\n\t\tif l.written && identity.ValueReducesToNothing(l.value) {",
+        new="range []appLine{name, short, variant} {\n\t\tif false && l.written && identity.ValueReducesToNothing(l.value) {",
         killer="TestEachAppLineIsJudgedWithItsOwnRefusal",
         extra_killers=("TestTheBinaryRefusesEachAppMisconfiguration",),
         why="`Validate` already refuses an incomplete app, so a separate blank check looks redundant — "
