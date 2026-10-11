@@ -13,6 +13,7 @@ import (
 	"slices"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ZacxDev/cairn/internal/arcs"
 )
@@ -141,9 +142,10 @@ func (s Snapshot) For(scopeName string) (Record, bool) {
 	return r, ok
 }
 
-// RevisionFor is the scope's current revision, `RevisionNone` when it has no record.
-func (s Snapshot) RevisionFor(key string) string {
-	if r, ok := s.Latest[key]; ok {
+// RevisionFor is the scope's current revision, `RevisionNone` when it has no record. Like `For`,
+// it takes a scope NAME and keys it here — one rule, in one place, for both lookups.
+func (s Snapshot) RevisionFor(scopeName string) string {
+	if r, ok := s.Latest[Key(scopeName)]; ok {
 		return r.Revision
 	}
 	return RevisionNone
@@ -241,7 +243,7 @@ const tornSeal = " !torn-tail-sealed\n"
 // appended.
 //
 // `scope` must already be a KEY (`Key(name)`); `sources` are re-validated through `ParseList`, so
-// the writer accepts nothing the reader would skip.
+// the writer accepts nothing the reader would skip (`TestEveryAcceptedSourceRoundTripsThroughTheJournal`).
 //
 // 🔴 THE REVISION IS COMPARED *INSIDE* THE LOCK, AND THAT IS THE WHOLE GUARANTEE: exactly one of
 // two writes carrying the same revision lands; the other gets `*StaleRevisionError`. An exclusive
@@ -262,6 +264,11 @@ func (j Journal) Set(scope string, sources []string, ifRevision, by string, now 
 	}
 	if by == "" {
 		return Record{}, errors.New("codesrc: set_by is empty; the caller stamps the signed-in principal")
+	}
+	if !utf8.ValidString(by) {
+		// The same reason `Parse` refuses invalid UTF-8: the JSON encoder would rewrite it, and the
+		// record read back would not carry the principal that was stamped.
+		return Record{}, errors.New("codesrc: set_by is not valid UTF-8")
 	}
 	srcs, err := ParseList(sources)
 	if err != nil {

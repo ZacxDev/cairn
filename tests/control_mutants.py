@@ -4177,8 +4177,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="codesrc-whitespace-in-branch-accepted",
         path="internal/codesrc/codesrc.go",
-        old="\t\tif isSpace(r) {\n\t\t\treturn refuse(RuleWhitespace)",
-        new="\t\tif false && isSpace(r) {\n\t\t\treturn refuse(RuleWhitespace)",
+        old="\t\tif unicode.IsSpace(r) {\n\t\t\treturn refuse(RuleWhitespace)",
+        new="\t\tif false && unicode.IsSpace(r) {\n\t\t\treturn refuse(RuleWhitespace)",
         killer="TestEachRefusalIsForItsOwnRule",
         pkgs=PKGS + ("./internal/codesrc/",),
         why="the branch rule refuses a space anyway, so the whitespace check reads as redundant — and "

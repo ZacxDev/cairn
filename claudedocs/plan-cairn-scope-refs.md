@@ -458,6 +458,17 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
    - `@<branch>` is REQUIRED. It must be a valid `git check-ref-format --branch` name, with no
      leading `-`, no `@` and no whitespace.
    - No comma and no control characters anywhere.
+   - **As built (S1, after round 1):** the string must be valid UTF-8 (the JSON encoder would
+     otherwise rewrite a bad byte and the reader would skip the writer's own record); "control"
+     is `unicode.IsControl` (C0, DEL and C1, CSI included); Unicode FORMAT characters (category
+     Cf: bidi overrides and isolates, zero-width characters, the BOM) are refused, because a
+     source is a displayed string and these make two sources render alike; whitespace is
+     `unicode.IsSpace`. The host ends at the FIRST `/`; an `@` before it is userinfo, and the
+     branch starts after the FIRST `@` after it, so a second `@` is refused as an `@` in the
+     branch. **`#` is NOT refused**: git accepts it in a branch (`issue#12`), and a pasted
+     `… # comment` still cannot join a source, because it can only be attached by whitespace,
+     which is refused. An over-cap refusal names the source's ORIGINAL line, duplicates
+     included.
    - The canonical form is the normalised string. Duplicates are DEDUPED and order is KEPT, so
      the first source is the primary.
    - At most 8 sources (Q14).
@@ -787,11 +798,12 @@ killed.
   revision, and the fold shows the first call's list.
   - **Negative control:** the mutant `codesrc-revision-compared-outside-the-lock` makes both land.
     The test must go red on the appended-line COUNT (2 ≠ 1).
-  - **As built (S1):** the kill is a forced RENDEZVOUS, not a timing window. The mutant moves the
-    `interleave` seam out of the lock WITH the compare (the seam marks the compare-to-append window),
-    so both calls reach the seam before either locks. Call one's 300ms deadline governs only the
-    correct code, where call two is parked on `flock`. Measured: 10 of 10 runs red on the count, each
-    released by the rendezvous (0.08–0.22s), not by the deadline.
+  - **As built (S1):** the mutant moves the `interleave` seam out of the lock WITH the compare (the
+    seam marks the compare-to-append window), so call two CAN reach the seam before call one
+    appends; call one waits for it with a 300ms deadline. ⚠ The kill still depends on that deadline:
+    call two must arrive within it (round 1 measured a 1µs deadline turning the mutant SURVIVED 20 of
+    20). Measured at 300ms: 10 of 10 runs red on the count, each in 0.08–0.22s. Too short a deadline
+    fails LOUD (a SURVIVED row in the battery), never as a false green on the real code.
 - **Fold.** Two records for one scope: the later wins, and reversing the fold goes red. A torn tail
   and a non-JSON line are skipped and counted. A record with an unknown field folds; that is an
   **invariant guard**, labelled, because no build writes one yet.

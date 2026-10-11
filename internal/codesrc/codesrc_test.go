@@ -21,6 +21,8 @@ func TestEveryExampleParsesToItsLiteralCanonicalForm(t *testing.T) {
 		{"git:GitHub.COM/Example-Org/Example-Repo@Feature/X", "git:github.com/Example-Org/Example-Repo@Feature/X"},
 		// A trailing `.git` is a spelling of the same repository.
 		{"git:github.com/example-org/example-repo.git@main", "git:github.com/example-org/example-repo@main"},
+		// `#` is NOT refused: git accepts it in a branch (`git check-ref-format --branch issue#12`).
+		{"git:github.com/example-org/example-repo@issue#12", "git:github.com/example-org/example-repo@issue#12"},
 	}
 	for _, tc := range cases {
 		src, err := Parse(tc.in)
@@ -49,7 +51,19 @@ func TestEachRefusalIsForItsOwnRule(t *testing.T) {
 		{"a branch with a space", "git:github.com/example-org/example-repo@my branch", RuleWhitespace},
 		{"a comma", "git:github.com/example-org/example-repo@main,dev", RuleComma},
 		{"a control character", "git:github.com/example-org/example-repo@ma\x01in", RuleControl},
-		{"a #", "git:github.com/example-org/example-repo@issue#12", RuleHash},
+		{"invalid UTF-8", "git:github.com/example-org/example-repo@ma\xffin", RuleUTF8},
+		{"a C1 control (CSI)", "git:github.com/example-org/example-repo@ma\u009bin", RuleControl},
+		{"DEL", "git:github.com/example-org/example-repo@ma\x7fin", RuleControl},
+		{"a bidi override", "git:github.com/example-org/example-repo@ma\u202ein", RuleFormat},
+		{"a bidi isolate", "git:github.com/example-org/example-repo@ma\u2066in", RuleFormat},
+		{"a zero-width space", "git:github.com/example-org/example-repo@ma\u200bin", RuleFormat},
+		{"a zero-width joiner", "git:github.com/example-org/example-repo@ma\u200din", RuleFormat},
+		{"a BOM", "git:github.com/example-org/example-repo@ma\ufeffin", RuleFormat},
+		{"a no-break space", "git:github.com/example-org/example-repo@ma\u00a0in", RuleWhitespace},
+		{"NEL", "git:github.com/example-org/example-repo@ma\u0085in", RuleWhitespace},
+		{"a trailing # comment", "git:github.com/example-org/example-repo@main # primary", RuleWhitespace},
+		{"a second @ (in the branch)", "git:github.com/example-org/example-repo@a@b", RuleBranchAt},
+		{"no repo path at all", "git:github.com@main", RuleRepoPath},
 		{"no git: prefix", "github.com/example-org/example-repo@main", RulePrefix},
 		{"a segment with a leading dot", "git:github.com/example-org/.hidden@main", RuleSegment},
 		{"an empty subpath", "git:github.com/example-org/example-mono//@main", RuleEmptySub},
@@ -74,7 +88,9 @@ func TestEachRefusalIsForItsOwnRule(t *testing.T) {
 	}
 }
 
-// Nine distinct sources are refused (Q14's cap), naming the ninth; eight are accepted.
+// Nine distinct sources are refused (Q14's cap), naming the ninth; eight are accepted. With a
+// DUPLICATE before them, the refusal names the ninth distinct source's ORIGINAL line (10), never its
+// position in the deduped list.
 func TestNineSourcesAreRefusedAndEightAreNot(t *testing.T) {
 	var nine []string
 	for _, r := range []string{"r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9"} {
@@ -87,6 +103,11 @@ func TestNineSourcesAreRefusedAndEightAreNot(t *testing.T) {
 	var pe *ParseError
 	if !errors.As(err, &pe) || pe.Rule != RuleTooMany || pe.Index != 9 {
 		t.Fatalf("nine sources: got %v, want rule %q at index 9", err, RuleTooMany)
+	}
+	withDup := append([]string{nine[0]}, nine...)
+	_, err = ParseList(withDup)
+	if !errors.As(err, &pe) || pe.Rule != RuleTooMany || pe.Index != 10 || pe.Input != nine[8] {
+		t.Fatalf("nine distinct after a duplicate: got %v, want rule %q at the ORIGINAL line 10 naming %q", err, RuleTooMany, nine[8])
 	}
 }
 
