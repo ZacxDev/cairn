@@ -5289,6 +5289,115 @@ MUTANTS: tuple[Mutant, ...] = (
         why="the predicate is tested in-process, so the call looks covered — whether `main` ACTS on it "
         "is wiring only a re-exec can see.",
     ),
+    # ---- scope mail S3: the memo VERBS (`internal/client/memo.go`, `memocursor.go`) ----
+    # 🔴 EVERY ROW HERE SURVIVED AT `0d9ba01` (S3 as merged) OR RE-INTRODUCES A BEHAVIOUR #239's
+    # ROUND 1 FIXED, and each carries `pkgs` (the clientapi rows' convention): the client asks no
+    # authz predicate, so it is not a member of the seam, but its cursor, paging, routing and wire
+    # decoding are what deliver a memo exactly once to the right session, and these rows prove each
+    # guard can go red. What only a real listener can show is `tests/memo/e2e.sh`.
+    Mutant(
+        name="memo-cursor-margin-removed",
+        path="internal/client/memocursor.go",
+        old="\treturn hw.Add(-memo.CursorMargin).UTC().Format(time.RFC3339Nano)\n",
+        new="\treturn hw.UTC().Format(time.RFC3339Nano)\n",
+        killer="TestALateCommitterInsideTheMarginIsDelivered",
+        pkgs=PKGS + ("./internal/client/",),
+        why="asking from the high-water itself looks exact, and the seen-set already drops repeats — "
+        "but `created_at` is allocation order, so a memo that commits late is older than the mark and LOST.",
+    ),
+    Mutant(
+        name="memo-check-after-never-sent",
+        path="internal/client/memo.go",
+        old="\tif after := cursor.after(); after != \"\" {\n\t\tq.Set(\"after\", after)\n",
+        new="\tif after := cursor.after(); after != \"\" {\n\t\t_ = after\n",
+        killer="TestTheCheckSendsItsCursorSoAPrunedMemoIsNotReDelivered",
+        pkgs=PKGS + ("./internal/client/",),
+        why="the seen-set alone looks sufficient for once-only delivery — until it prunes, and the "
+        "listener's full list hands back a memo it no longer remembers, on every check.",
+    ),
+    Mutant(
+        name="memo-read-stops-after-one-page",
+        path="internal/client/memo.go",
+        old="\t\t\tif len(page) < memoListPage || added == 0 {\n",
+        new="\t\t\tif true || added == 0 {\n",
+        killer="TestMemoReadPagesPastOneListingPage",
+        pkgs=PKGS + ("./internal/client/",),
+        why="one page of 200 holds every LIVE memo of a scope (the live bound), so a second request "
+        "looks dead — but the listing carries tombstones too, and the oldest 200 is all it would show.",
+    ),
+    Mutant(
+        name="memo-read-page-boundary-at-the-last-time",
+        path="internal/client/memo.go",
+        old="\t\t\tafter = last.Add(-time.Second).UTC().Format(time.RFC3339Nano)\n",
+        new="\t\t\tafter = last.UTC().Format(time.RFC3339Nano)\n",
+        killer="TestMemoReadPagesPastOneListingPage",
+        pkgs=PKGS + ("./internal/client/",),
+        why="the ids already held are dropped anyway, so asking from the last time itself looks "
+        "exact — and a memo sharing that whole second with the page's last one is never asked for.",
+    ),
+    Mutant(
+        name="memo-check-config-from-the-default-instance",
+        path="internal/client/memo.go",
+        old="\tcfg, err := LoadUIConfigFor(alias)\n\tif err != nil {\n",
+        new="\tcfg, err := LoadUIConfigFor(DefaultAlias)\n\tif err != nil {\n",
+        killer="TestMemoCheckRoutesByScopeAcrossTwoInstances",
+        pkgs=PKGS + ("./internal/client/",),
+        why="a one-instance host cannot tell the two apart, and the id verbs' routing test exercises "
+        "`memoRoute`, which `memo-check` does not call.",
+    ),
+    Mutant(
+        name="memo-response-unknown-field-refused",
+        path="internal/client/memo.go",
+        old="\tdec := json.NewDecoder(bytes.NewReader(data))\n\tif err := dec.Decode(into); err != nil {\n",
+        new="\tdec := json.NewDecoder(bytes.NewReader(data))\n\tdec.DisallowUnknownFields()\n"
+        "\tif err := dec.Decode(into); err != nil {\n",
+        killer="TestAResponseFieldTheClientDoesNotKnowIsTolerated",
+        pkgs=PKGS + ("./internal/client/",),
+        why="strict decoding is this repository's default everywhere else, and reads as hardening — "
+        "here it couples every client release to every listener release (S3 as merged).",
+    ),
+    Mutant(
+        name="memo-response-required-keys-unchecked",
+        path="internal/client/memo.go",
+        old="\t\tif v, ok := fields[k]; !ok || bytes.Equal(bytes.TrimSpace(v), []byte(\"null\")) {\n",
+        new="\t\tif v, ok := fields[k]; false && (!ok || bytes.Equal(bytes.TrimSpace(v), []byte(\"null\"))) {\n",
+        killer="TestAResponseMissingAFieldTheClientReadsIsMalformed",
+        pkgs=PKGS + ("./internal/client/",),
+        why="the decoder already fails on a wrong TYPE, so presence looks checked — and a renamed field "
+        "decodes as the empty string with no error.",
+    ),
+    Mutant(
+        name="memo-send-sub-second-ttl-sent-as-the-default",
+        path="internal/client/memo.go",
+        old="\tif strings.TrimSpace(opts.TTL) != \"\" && ttl/time.Second == 0 {\n",
+        new="\tif false && strings.TrimSpace(opts.TTL) != \"\" && ttl/time.Second == 0 {\n",
+        killer="TestASubSecondTTLIsRefusedNotSentAsTheDefault",
+        pkgs=PKGS + ("./internal/client/",),
+        why="the parser accepted the value, so the send looks right — and 0 seconds on the wire is the "
+        "listener's three-day DEFAULT, at exit 0 (S3 as merged).",
+    ),
+    Mutant(
+        name="memo-check-saves-the-cursor-before-printing",
+        path="internal/client/memo.go",
+        old="\tcode, _ := status(\"new\", ExitOK, notes...)\n\tfmt.Fprint(env.Stdout, memo.RenderPreview(stored))\n"
+        "\tif problem := save(); problem != \"\" {\n",
+        new="\tproblem := save()\n\tcode, _ := status(\"new\", ExitOK, notes...)\n"
+        "\tfmt.Fprint(env.Stdout, memo.RenderPreview(stored))\n\tif problem != \"\" {\n",
+        killer="TestTheBlockIsPrintedBeforeTheCursorIsSaved",
+        pkgs=PKGS + ("./internal/client/",),
+        why="saving first reads as tidy bookkeeping, and every output is identical — only a process "
+        "killed between the two sees the order, and it LOSES the memos (S3 as merged).",
+    ),
+    Mutant(
+        name="memo-check-derivation-error-dropped",
+        path="internal/client/memo.go",
+        old="\"no scope could be derived from --repo, so there is nothing to check: \"+err.Error())\n",
+        new="\"no scope could be derived from --repo, so there is nothing to check\")\n",
+        killer="TestADerivationErrorIsSaidAfterTheNoScopeToken",
+        pkgs=PKGS + ("./internal/client/",),
+        why="the token and the exit are the contract and both are unchanged, so the error looks like "
+        "noise — and without it a broken `git` is indistinguishable from a directory that is no repo.",
+    ),
     # ---- scope mail S5: the browser's MEMOS TAB, `POST /memo` and `POST /memo/retract` ----------
     # Its Postgres-tier guard (`TestTheMemoTabsForgedSendIsRefusedByTheRealStore`, the real binary over
     # the real store) cannot run here — this battery runs no database — and its matrix is in the S5 PR.

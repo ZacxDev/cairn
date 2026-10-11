@@ -409,7 +409,10 @@ def test_the_go_job_ALWAYS_runs_and_only_its_expensive_steps_are_tiered():
             raise AssertionError(f"a go step reads `needs.changes` in another shape: {step[:120]}")
     assert gated == GATED_GO_STEPS
     names = {m.group(1) for s in steps if (m := re.match(r"name: (.+)", s))}
-    assert {"go vet", "go test, under `-race`, with the `ok` count derived from `go list`"} <= names - gated
+    assert {"go vet", "go test, under `-race`, with the `ok` count derived from `go list`",
+            # its other half: the tests the race walk skips, run without the detector. Gating it
+            # would leave those tests unrun on exactly the events the race walk still covers.
+            "the race walk's declared exemptions, run without `-race` and counted by name"} <= names - gated
 
 
 def test_leakscan_and_the_pytest_suite_are_NEVER_gated():

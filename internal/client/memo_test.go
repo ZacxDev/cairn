@@ -91,6 +91,11 @@ func (s *memoStub) serve(w http.ResponseWriter, r *http.Request) {
 				body.Memos = append(body.Memos, s.rendered(m))
 			}
 		}
+		// `limit` caps the page as the store does (oldest first): what makes `memo-read`'s paging
+		// reachable at all.
+		if n, err := strconv.Atoi(q.Get("limit")); err == nil && n > 0 && len(body.Memos) > n {
+			body.Memos = body.Memos[:n]
+		}
 		if !held {
 			notFound()
 			return

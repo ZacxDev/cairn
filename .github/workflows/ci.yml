@@ -853,6 +853,13 @@ jobs:
       # a DATA race, and only on an interleaving some test actually produces. It is green
       # on a LOGICAL race — `internal/control/cache_test.go` carries one it cannot see,
       # two refreshes perfectly synchronised and committing in the wrong order.
+      #
+      # ⚠ IT SKIPS A DECLARED SET OF TESTS, AND THE NEXT STEP RUNS EXACTLY THAT SET WITHOUT THE
+      # DETECTOR. A package whose `TestMain` calls `racegate.Main` skips its `raceExempt` list
+      # under `-race`: slow, single-goroutine tests the detector has nothing to compare in,
+      # each held single-goroutine by that package's `TestNoRaceExemptTestCanReachAGoroutine`.
+      # The `ok` count is unchanged by it — every package still runs and reports. Why, and what
+      # the guard cannot see: `internal/racegate`'s package doc.
       - name: go test, under `-race`, with the `ok` count derived from `go list`
         env:
           # 🔴 ONE PATTERN, PINNED. Narrowing the run's pattern and the derivation's to the
@@ -916,6 +923,48 @@ jobs:
             grep '^ok  ' /tmp/go-test.txt | awk '{print $2}' | sort > /tmp/go-ok-packages.txt
             echo "tested packages with no ok line:"
             comm -23 /tmp/go-tested-packages.txt /tmp/go-ok-packages.txt
+            exit 1
+          fi
+
+      # 🔴 THE OTHER HALF OF THE RACE WALK: THE TESTS IT SKIPPED, RUN WITHOUT `-race`, AND COUNTED
+      # BACK BY NAME. The packages are DERIVED — every one whose tests import `internal/racegate` —
+      # and each binary prints the list it was given (`racegate: exempt-only <N>: <names>`), read
+      # from the same Go slice its `-race` skip was built from. The step refuses unless every
+      # package entered that mode, and the top-level `--- PASS` names equal the declared names
+      # EXACTLY: a name that matches no test, a test that skips itself, or a package whose
+      # binary never saw the variable each leaves the sets unequal. So the union of the two runs
+      # is every test, and no test is in both.
+      - name: the race walk's declared exemptions, run without `-race` and counted by name
+        run: |
+          set -o pipefail
+          pkgs=$(go list -f '{{.ImportPath}} {{join .TestImports " "}} {{join .XTestImports " "}}' ./... \
+            | awk '{for (i = 2; i <= NF; i++) if ($i == "github.com/ZacxDev/cairn/internal/racegate") { print $1; next }}')
+          n=$(printf '%s\n' "$pkgs" | grep -c . || true)
+          echo "packages declaring race exemptions: $n"
+          # POSITIVE CONTROL on the derivation: `internal/redact` declares one today, and a
+          # template or import-path typo would make this zero and the comparisons below vacuous.
+          if [ "$n" -lt 1 ]; then
+            echo "REFUSING: no package's tests import internal/racegate — the derivation is broken"
+            exit 1
+          fi
+          # `-count=1` IS LOAD-BEARING: the variable is read in `TestMain` before `m.Run`, where
+          # `go test`'s cache does not record it — measured: a later run WITHOUT it replayed the
+          # cached exempt-only output, `racegate:` lines and all.
+          # shellcheck disable=SC2086 # one package per word, by construction
+          CAIRN_RACE_EXEMPT_ONLY=1 go test -count=1 -v $pkgs | tee /tmp/go-exempt.txt
+          modes=$(grep -c '^racegate: exempt-only ' /tmp/go-exempt.txt || true)
+          oks=$(grep -c '^ok  ' /tmp/go-exempt.txt || true)
+          grep '^racegate: exempt-only ' /tmp/go-exempt.txt | cut -d: -f3 | tr ' ' '\n' | grep . | sort > /tmp/go-exempt-declared.txt
+          grep '^--- PASS: ' /tmp/go-exempt.txt | awk '{print $3}' | sort > /tmp/go-exempt-passed.txt
+          other=$(grep -cE '^--- (FAIL|SKIP): ' /tmp/go-exempt.txt || true)
+          echo "packages in exempt-only mode: $modes, ok: $oks; declared: $(wc -l < /tmp/go-exempt-declared.txt), passed: $(wc -l < /tmp/go-exempt-passed.txt), failed or skipped: $other"
+          if [ "$modes" -ne "$n" ] || [ "$oks" -ne "$n" ]; then
+            echo "REFUSING: $n package(s) declare exemptions, $modes ran in exempt-only mode, $oks reported ok"
+            exit 1
+          fi
+          if [ ! -s /tmp/go-exempt-declared.txt ] || [ "$other" -ne 0 ] || ! cmp -s /tmp/go-exempt-declared.txt /tmp/go-exempt-passed.txt; then
+            echo "REFUSING: the exempt tests that PASSED are not exactly the ones declared"
+            diff /tmp/go-exempt-declared.txt /tmp/go-exempt-passed.txt || true
             exit 1
           fi
 
@@ -2436,6 +2485,10 @@ jobs:
       # required to turn its OWN clause's named assertion red (exit 2 names one that does not). The
       # script itself refuses (exit 2) when fewer assertions ran than it declares, and the floor
       # below re-counts its PASS lines rather than reading its exit code.
+      # ⚠ EACH SABOTAGED RUN IS NARROWED (`E2E_CLAUSES`) to its own clause(s) plus one CONTROL clause
+      # that must stay all-green — the whole script thirteen times made this step ~15.5 min, most of
+      # it (i)'s and (k)'s refresh waits. An assertion the selection left out is exit 2, never a catch;
+      # the full, un-narrowed run below is unchanged.
       - name: the scope-mail end-to-end check, after proving every clause can go RED
         env:
           CAIRN_PGTEST_DSN: host=127.0.0.1 port=5432 user=cairn_pgtest password=cairn_pgtest dbname=cairn_pgtest sslmode=disable
@@ -2448,7 +2501,7 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/memo-e2e.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/memo-e2e.txt || true)
           echo "memo e2e: passes=$passes fails=$fails"
-          # 35 assertions, measured when the script landed; `EXPECTED` in the script moves with it.
+          # 35 assertions, measured when the script landed; `EXPECTED_FULL` in the script moves with it.
           if [ "$passes" -lt 35 ] || [ "$fails" -ne 0 ]; then
             echo "REFUSING: $passes PASS / $fails FAIL lines, and 35 / 0 were measured"
             exit 1
@@ -2457,12 +2510,13 @@ jobs:
       # The live probe (closing-condition part 5) is RUN by the operator against the deployment
       # after S7; what CI owns is its SELF-TEST against a local world: it passes, refuses its inputs
       # at exit 2, holds its isolation property with every name the client reads exported as a decoy
-      # (and goes red under each of the plan's isolation mutants), and fails AT its 401 control and AT
-      # its positive control when those are broken.
+      # (and goes red under each of the plan's isolation mutants), fails AT its 401 control and AT
+      # its positive control when those are broken, and a run that fails between `send` and
+      # `retract` retracts its own memo on exit, so it cannot poison the next run.
       - name: the scope-mail live probe's self-test, against a local world
         env:
           CAIRN_PGTEST_DSN: host=127.0.0.1 port=5432 user=cairn_pgtest password=cairn_pgtest dbname=cairn_pgtest sslmode=disable
         run: |
           set -o pipefail
           tests/memo/live-probe.sh --self-test | tee /tmp/memo-probe-self.txt
-          grep -qx 'SUMMARY live-probe-self-test: passed=16 failed=0 expected=16' /tmp/memo-probe-self.txt
+          grep -qx 'SUMMARY live-probe-self-test: passed=20 failed=0 expected=20' /tmp/memo-probe-self.txt
