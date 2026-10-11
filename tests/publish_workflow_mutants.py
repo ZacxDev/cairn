@@ -96,6 +96,22 @@ def _drop_data_block(text: str, index: int) -> str:
     return text[: found.start()] + text[found.end():]
 
 
+def _replace_nth(text: str, old: str, new: str, index: int) -> str:
+    """Replace the `index`-th occurrence of `old` (file order), or nothing.
+
+    The three anonymous-pull proofs end in the same two lines, so a mutant aimed
+    at ONE of them has to be selected by position — `str.replace(…, 1)` only
+    ever reaches the first, which would leave two of three sites unmutated under
+    three row names.
+    """
+    start = -1
+    for _ in range(index + 1):
+        start = text.find(old, start + 1)
+        if start < 0:
+            return text
+    return text[:start] + new + text[start + len(old):]
+
+
 MUTANTS = [
     (
         "add-pull_request-trigger",
@@ -372,6 +388,58 @@ MUTANTS = [
             1,
         ),
         "test_the_conditional_pushes_keep_their_CONDITION",
+    ),
+    # 🔴 THE SIX BELOW ARE ONE DEFECT AT ITS SIX SITES: a reader that stops before
+    # its input ends, under `pipefail`, over an output that grows. The three
+    # previews are attributed to the BEHAVIOURAL test — it runs the step's own
+    # shell over an inspect several pipe buffers long and is the only guard that
+    # reproduces the failure rather than recognising its spelling. The other
+    # three have no deterministic behavioural kill (a matched-lines pipe is far
+    # under a buffer, and the UI control has no stub here), so they are attributed
+    # to the reader LEDGER. Every one is also killed by the whole-body pin, which
+    # is why the attribution matters: a kill by the pin alone would say the step
+    # was reworded, not that it can no longer publish.
+    *[
+        (
+            f"reintroduce-head-20-in-the-{leg}-proof",
+            lambda t, index=index: _replace_nth(
+                t,
+                "          sed -n '1,20p' <<<\"$out\"\n          digest=",
+                '          echo "$out" | head -20\n          digest=',
+                index,
+            ),
+            "test_the_anonymous_proofs_survive_an_inspect_larger_than_a_pipe_buffer",
+        )
+        # File order: the Go half publishes first, then Python, then the UI.
+        for index, leg in enumerate(("GO", "PYTHON", "UI"))
+    ],
+    (
+        # The digest's reader. `sed` prints one line per layer after the
+        # manifest's, so `head -1` leaves a writer behind it too.
+        "reintroduce-head-1-on-the-digest",
+        lambda t: t.replace("<<<\"$out\" | sed -n '1p')\n", "<<<\"$out\" | head -1)\n", 1),
+        "test_no_pipeline_reader_can_exit_before_its_writer_finishes",
+    ),
+    (
+        "reintroduce-head-20-in-the-UI-control",
+        lambda t: t.replace(
+            "          sed -n '1,20p' <<<\"$out\"\n          if [ \"$code\" -eq 0 ]; then\n",
+            '          echo "$out" | head -20\n          if [ "$code" -eq 0 ]; then\n',
+            1,
+        ),
+        "test_no_pipeline_reader_can_exit_before_its_writer_finishes",
+    ),
+    (
+        # The GROW direction with a reader the early-exit predicate has never
+        # heard of — the ledger's equality is what has to see it.
+        "pipe-the-preview-into-an-UNLISTED-reader",
+        lambda t: t.replace(
+            "          sed -n '1,20p' <<<\"$out\"\n          digest=",
+            '          echo "$out" | python3 -c "import sys; print(sys.stdin.readline())"\n'
+            "          digest=",
+            1,
+        ),
+        "test_no_pipeline_reader_can_exit_before_its_writer_finishes",
     ),
 ]
 
