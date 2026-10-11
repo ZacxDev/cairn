@@ -24,8 +24,8 @@ func TestAnAuthorizationSaysWhetherACredentialNarrowedIt(t *testing.T) {
 		{"a list EQUAL to today's full set is still narrowed", everything, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := Narrow(full, tc.only).Narrowed(); got != tc.want {
-				t.Fatalf("Narrow(full, %#v).Narrowed() = %v, want %v", tc.only, got, tc.want)
+			if got := Narrow(full, tc.only, nil).Narrowed(); got != tc.want {
+				t.Fatalf("Narrow(full, %#v, nil).Narrowed() = %v, want %v", tc.only, got, tc.want)
 			}
 		})
 	}

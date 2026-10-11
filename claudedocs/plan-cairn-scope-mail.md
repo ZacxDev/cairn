@@ -49,8 +49,8 @@ plan that an agent or a skill router reads says "mail".
   decisions, slices and questions keep their numbers, marked REMOVED.
 - *Revision 4* (`0903cb6`) applies round 1 of #221 (audited `3f0d802`: 3 🔴, 9 🟡, 5 🟢). New: VERB
   narrowing for issued credentials, so an agent credential never carries `admin` (decision 17, a
-  reversible coordinator default); a sanitiser by Unicode GENERAL CATEGORY over every interpolated
-  field; `--id` verbs that route by scope, with a server-side scope match; a structural status
+  reversible coordinator default at the time; the operator has since ruled to keep it, Q16); a
+  sanitiser by Unicode GENERAL CATEGORY over every interpolated field; `--id` verbs that route by scope, with a server-side scope match; a structural status
   line for the hook; the memo listener refusing to start without a control journal; a deployment
   slice (S7) and a LIVE closing clause; the 3-day TTL default; and a re-done token model. Two
   findings were checked against the code and are recorded as PARTLY WRONG, with evidence, under
@@ -85,6 +85,10 @@ plan that an agent or a skill router reads says "mail".
 
 - *Revision 9* (S0's branch) records S0's opencode measurement and the two guard mechanisms S0
   measured wrong — Guard B's plain pointer and `memo.Unsafe`'s Cn — in "S0 — measurements and
+  corrections recorded by the slice". No decision is re-opened.
+- *Revision 10* (S1's branch) records what building S1 measured or found the plan silent on —
+  the stamp taken under the scope lock, `transaction_timeout` read back on 18.6, Guard A/C keyed
+  on printed types, the cross-build refusal decision 17 relies on — in "S1 — measurements and
   corrections recorded by the slice". No decision is re-opened.
 
 ## Goal and premise
@@ -579,7 +583,8 @@ alternatives are in "Open questions". Labelled where the agent decisions below i
 (decision 11); **[R6]** session identity and its fallback (decision 6); **[R7]** naming that cannot
 collide with the email skill (decision 1); **[R8]** the client and route contract (decisions 3, 8);
 **[R9]** a UI tab and a gated send form (decision 15); **[R10]** an audit, retraction, no edit
-(decision 10); **[R11]** the tooling-repo half, read-only here and named per slice (Slices). **[R12]** (round 1) verb narrowing so an agent credential never carries `admin` (decision 17).
+(decision 10); **[R11]** the tooling-repo half, read-only here and named per slice (Slices). **[R12]** (round 1) verb narrowing so an agent credential never carries `admin` (decision 17) —
+no longer reversible: the operator ruled to keep it (Q16).
 
 ### Chosen by the AGENT writing this plan (open to review)
 
@@ -1017,8 +1022,8 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
       hosts are told apart by `via agents@host-a` / `via agents@host-b` without a second identity;
     - a PROJECT principal per host (the service-account case `-principal-kind project` supports)
       would reach no scope until someone granted it one, one grant per scope, through the share
-      flow — more journal records and a second thing to keep in step with the scopes. Q15 asks
-      whether the operator wants that instead.
+      flow — more journal records and a second thing to keep in step with the scopes. Q15 asked
+      whether the operator wants that instead; the operator kept decision 17 (Q16).
 
     **Issuing — who, how, what is recorded.**
     1. **The operator, by hand, once per (host, instance).** It is the same act as every existing
@@ -1083,7 +1088,7 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
     and therefore inside `tests/control_mutants.py`'s reach.
 
 17. **VERB narrowing for issued credentials: an agent credential never carries `admin` (round 1
-    🔴1) [R12 — a coordinator default, REVERSIBLE].** STEP 1 measured that narrowing keeps each
+    🔴1) [R12 — a coordinator default, since RULED by the operator: kept (Q16)].** STEP 1 measured that narrowing keeps each
     scope's full verb set, so a stolen `agents@<host>` token under an owner can revoke other
     principals' grants on its scopes through `POST /unshare`, and would retract any memo there as a
     scope admin. The fix is in the ONE narrowing path, so every surface inherits it:
@@ -1158,8 +1163,7 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
     - **What a stolen agent credential can still do** is T9's row, at its real scope.
     - *The recorded alternative is Q15:* a PROJECT principal per host with read+write GRANTS only,
       which gets the same "never admin" from grants instead of narrowing, at the cost of more
-      records. Which of the two the operator prefers is not established; this plan's default keeps
-      one principal and the per-host label.
+      records. The operator ruled for verb narrowing (Q16): one principal and the per-host label.
 
 18. **Who owns which test: S2 tests the listener IN PROCESS; S3 owns `tests/memo/e2e.sh`** (round 1
     🟡9). The e2e clauses assert client EXIT CODES, status tokens and `memo-read` output, which only
@@ -1616,6 +1620,75 @@ wrong. Each was measured by S0's author on one host, go1.25.14 (the devShell's),
   because of this document's citation rule; a block an agent may act on prints the runnable form,
   and a scope that is not a plain word is shell-quoted in it.
 
+## S1 — measurements and corrections recorded by the slice
+
+S1 (migration 3 and `pgstore.MemoStore`, `memo.MaySend`/`MayRead`/`MayRetract` and
+`memo.CheckSend`, `cairn-server -revoke-credential`, and decision 17's verb narrowing) recorded
+these where building it found the plan silent, or the code different from the plan. Measured by
+S1's author on one host: go1.25.14 (the devShell's), PostgreSQL **18.6** through
+`tests/pgtest/run.sh`. **17.x was NOT measured** by this slice.
+
+- **#216 had merged.** `internal/redact` is on `main` at the slice's base, so decision 11's
+  "S1 waits for #216" was already satisfied; every name in the confident subset is a rule
+  `redact.DefaultRules()` holds (asserted, `TestTheConfidentSubsetIsExactlyThisSet`).
+- **The send stamps `created_at` AFTER the per-scope advisory lock, not only after the
+  `SET LOCAL`.** Decision 6 requires "after the SET"; taking the stamp under the lock also makes
+  the rows of ONE scope commit in `created_at` order (the second send waits for the first's
+  commit before it stamps). So the S1 test-plan row "a send held open for 25 s while a later send
+  commits" cannot happen within one scope and is measured ACROSS two scopes
+  (`TestALateCommitterIsReturnedInsideTheCursorMargin`): the margin's remaining work is one
+  per-session cursor read across scopes, plus backward clock steps. The margin and its 2 min
+  value are unchanged.
+- **`SET LOCAL transaction_timeout` is issued as `set_config('transaction_timeout', $1, true)`**
+  — the same transaction-scoped setting, parameterised. Measured on 18.6: read back INSIDE a send
+  it is `30s`, and on the same pooled connection after the send it is `0`
+  (`TestTheSendArmsTheProductionTimeout`); a send held IDLE 2.5 s past a 1 s timeout is
+  terminated by the server (`driver: bad connection` at `COMMIT`) and stores nothing. The
+  "18.6 NOT measured" sentence in decision 6 is closed by this; 17.x still is not.
+- **The tier SHORTENS the timeout rather than sleeping 30 s,** through a package variable only a
+  pgtest file assigns (shorten-only; the production value is read back as above). The pool-wait
+  row (4) is measured with the injected clock moved 60 s while the send waits on a held pool,
+  not with a 60 s real wait.
+- **`Retract` arms the same timeout**, refuses an already-retracted memo as the uniform
+  `not-found` (one retraction per memo, so the audit is exactly `sent, retracted`), and answers a
+  caller who CAN read the scope but is neither sender nor admin with a distinct
+  `not-permitted` refusal — the caller can read the scope, so the distinction probes nothing.
+- **The database restates decision 10:** `memos` carries two CHECKs — a retracted row holds no
+  subject or body, a live one holds both — so an edit that "keeps the body" fails at the
+  database as well as at the test.
+- **`scope_name` is stored FOLDED by `store.NormalizeRef`**, the fold `VisibleScopes` and
+  `ScopeSet.Allows` apply, so `ALPHA-NOTES` and `alpha-notes` are one scope at the store as they
+  are at the predicate.
+- **`MayRetract` lives in `internal/memo` beside `MaySend`/`MayRead`** (the plan names only the
+  two): decision 10's sender-or-admin rule is one predicate, and it is where e2e (g)'s
+  decision-17 case is decided.
+- **`List` serves both the check and `memo-read`'s listing** (`IncludeRetracted`); its limit is
+  capped at `memo.MaxLivePerScope`. The live set never exceeds that, but a listing WITH
+  tombstones can (≤ 50 a day for up to 30 days), so it pages by `After`. How the listener exposes
+  that is S2's.
+- **Guard A is keyed on name AND printed type** (the S0 audit's carried finding), through a new
+  `internal/surface` that reads a package's exported surface from source — embedded fields
+  recorded by printed type whatever their package. Guard C is a ledger of `internal/pgstore`'s
+  WHOLE exported surface on the same reader, plus a structural rule that `MemoStore`'s results are
+  ids, times, errors or `memo.Stored`. Both read SOURCE, not types: an alias or a named type that
+  hides a string is a name they show, not an underlying type they resolve.
+- **`memo.Unsafe` also covers `Other_Default_Ignorable_Code_Point`** (U+3164 and the other
+  Hangul fillers, U+034F, the Khmer inherent vowels — the S0 audit's "Low" item); a whole-range
+  sweep requires every Default_Ignorable candidate Unsafe.
+- **Decision 17's fail-closed premise, measured across builds:** a journal written by this
+  slice's `cairn-server` (`-issue-credential -narrow-scopes … -narrow-verbs read,write`) was read
+  by the base commit's `cairn-server -issue-credential`, which refused it WHOLE — exit 78,
+  `unknown event kind "credential-verbs-narrowed"` — and appended nothing. That is the older-build
+  behaviour decision 17's rollback recipe is written for.
+- **`-narrow-verbs` REFUSES an unknown verb** rather than dropping it (`control.NewVerbSet`'s
+  drop is the narrowing direction for an untrusted caller; an operator's typo dropped silently
+  would issue a narrower credential than asked with nothing said), and refuses a value with no
+  verb in it.
+- **Two pre-existing tier tests assumed migration 2 was the newest** and went red on migration 3;
+  the up-path test now asserts a contiguous ledger from 1, and the version-2 rollback test builds
+  its database at version 2 — rolling back past BOTH needs both recipes, 3 first (stated on
+  `refuseFromTheFuture`).
+
 ## Open questions
 
 ### Answered by the operator
@@ -1630,6 +1703,12 @@ wrong. Each was measured by S0's author on one host, go1.25.14 (the devShell's),
   record-only ack). Later, it would be a new migration (Q14).
 - **Q6. Moderation** → **O8**: the sender and any scope admin may retract; journaled with the actor;
   readers see who retracted it; never delivered to a session that has not seen it.
+- **Q16. Verb narrowing (decision 17) versus Q15's per-host project principal** → the operator
+  ruled to KEEP decision 17's verb narrowing, and accepted its stricter rollback: once a journal
+  holds a `credential-verbs-narrowed` event, an older build refuses that journal (decision 17's
+  rollback recipe). Q15 stays recorded as the alternative, not adopted. Migration 3 also stays
+  registered in S1 (S1's round-0 D2 kept): its rollback recipe is stated, and S1 must deploy
+  before S4 regardless.
 
 ### Still open — default adopted unless the operator objects
 
@@ -1677,9 +1756,9 @@ wrong. Each was measured by S0's author on one host, go1.25.14 (the devShell's),
   verb-narrowed (decision 17). Alternative: `-principal-kind project` per host with read+write
   GRANTS only — senders become distinct PRINCIPALS rather than distinct labels, and "never admin"
   comes from the grants instead of from verb narrowing, at the cost of more journal records and
-  grants kept in step with the scopes.
-- **Q16. Verb narrowing (decision 17) is a coordinator DEFAULT, reversible.** Alternative: Q15's
-  project principal, which closes the same escalation without changing `control.Narrow`.
+  grants kept in step with the scopes. *Settled by Q16's ruling:* the default stands; the
+  alternative is recorded, not adopted.
+- **Q16.** *MOVED to "Answered by the operator" above.*
 - **Q18. The send-side fence rule (decision 5) is a coordinator DEFAULT, reversible.** Alternatives:
   revision 4's full category refusal at send (safer storage, refuses ordinary text as measured), or
   additionally ALLOWING LRM/RLM at send, which is not established to be safe.
@@ -1698,8 +1777,9 @@ wrong. Each was measured by S0's author on one host, go1.25.14 (the devShell's),
 - **The longest real send transaction** — the 30 s `transaction_timeout` is what makes decision 6's
   margin a bound; the typical duration is not measured.
 - **The deployed PostgreSQL server's running version** (the manifest pins 18.6; S7 reads it).
-- **Whether `SET LOCAL transaction_timeout` after `BEGIN` arms the current transaction** (S1's test
-  establishes it).
+- **Whether `SET LOCAL transaction_timeout` after `BEGIN` arms the current transaction** — MEASURED
+  by S1 on PostgreSQL 18.6 (yes: read back `30s` inside, `0` after; an idle send past it is
+  terminated). 17.x is not measured by the slice.
 - **The deployment's ingress and Service shapes** for S7 beyond what the read manifest shows.
 - **Whether an opencode plugin can surface text to its model** — MEASURED by S0 on ONE host (yes, via
   `tool.execute.after`; see "S0 — measurements and corrections"); the second host is not measured.

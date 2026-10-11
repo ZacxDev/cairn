@@ -91,8 +91,8 @@ const (
 	// exit-code contract belongs to the CLIENT: `cmd/cairn` registers an `exit-codes`
 	// flag and `internal/client/exit.go` is the table it prints. THIS program registers
 	// six flags in `main` — `store`, `host`, `port`, `token-file`, `routes`, `arc-journal` — plus
-	// `-create-user`'s seven, `-issue-credential`'s six, `-set-member`'s four and
-	// `-rename-user`'s three (counts pinned against the code by
+	// `-create-user`'s seven, `-issue-credential`'s seven, `-revoke-credential`'s two,
+	// `-set-member`'s four and `-rename-user`'s three (counts pinned against the code by
 	// `TestTheRegisteredFlagCountInProseMatchesTheCode`), and no exit-code flag among them.
 	// The no-exit-code-flag sweep was measured at `e11c3a7` by reading every file under
 	// `cmd/cairn-server/` in that tree (positive control: the same sweep hits `-routes` in
@@ -237,6 +237,7 @@ func main() {
 			"as a scope")
 	create := registerCreateUserFlags()
 	issue := registerIssueCredentialFlags()
+	revoke := registerRevokeCredentialFlags()
 	setMember := registerSetMemberFlags()
 	rename := registerRenameUserFlags()
 	flag.Parse()
@@ -260,6 +261,7 @@ func main() {
 		{"-routes", *routes},
 		{"-create-user", *create.enabled},
 		{"-issue-credential", *issue.enabled},
+		{"-revoke-credential", *revoke.enabled},
 		{"-set-member", *setMember.enabled},
 		{"-rename-user", *rename.enabled},
 	}
@@ -313,6 +315,10 @@ func main() {
 		// No `*store`, for `-set-member`'s reason: a display name names a person, not a
 		// directory, so there is nothing the store root could answer about it.
 		os.Exit(runRenameUser(envalias.Environ(), rename, os.Stdout, os.Stderr))
+	}
+	if *revoke.enabled {
+		// No `*store`: a revocation names a credential by id and touches no scope.
+		os.Exit(runRevokeCredential(envalias.Environ(), revoke, os.Stdout, os.Stderr))
 	}
 	if *issue.enabled {
 		// No `*store` here, unlike `-create-user`: this mode chooses no scope display name,

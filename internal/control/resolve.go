@@ -331,7 +331,7 @@ func Authenticate(m Model, token string) (Principal, Authorization, error) {
 		return Principal{}, Authorization{}, ErrNoCredential{}
 	}
 	p.CredentialID = matched.ID
-	return p, Narrow(Resolve(m, p), matched.NarrowedScopes), nil
+	return p, Narrow(Resolve(m, p), matched.NarrowedScopes, matched.NarrowedVerbs), nil
 }
 
 // PrincipalFor builds the Principal for an entity the model holds, or reports that
@@ -416,13 +416,29 @@ func (m Model) UserByProviderSubject(provider, subject string) (User, bool) {
 // ⚠ `nil` MEANS NO NARROWING; A NON-NIL EMPTY SLICE MEANS NOTHING IS VISIBLE. They
 // are opposites. The journal format preserves the distinction on purpose (see
 // `Event.NarrowedScopes`), and `copyIDs` preserves it across every copy.
-func Narrow(a Authorization, only []ID) Authorization {
-	if only == nil {
+//
+// 🔴 AND IT NARROWS VERBS TOO (scope-mail plan, decision 17), BECAUSE SCOPE NARROWING
+// ALONE KEPT EACH KEPT SCOPE'S *FULL* VERB SET. A credential narrowed to one scope under
+// an owner still carried `admin` there, so a stolen agent token could revoke other
+// principals' grants through `POST /unshare`. `verbs` is the credential's verb narrowing:
+// nil means none, and a set INTERSECTS every kept scope's verbs; a scope whose
+// intersection is empty is DROPPED, so an absent scope and a zero-verb one stay the same
+// observable (the rule `Resolve` states).
+//
+// 🔴 THE EARLY RETURN IS TAKEN ONLY WHEN *BOTH* ARE ABSENT. Before verbs existed this
+// returned on `only == nil`, so a credential narrowed by VERBS alone — nil scope list —
+// would have passed through un-narrowed and kept `admin`. With a nil scope list and a verb
+// set, every scope is kept and each is intersected. `Narrowed()` is true for either kind.
+func Narrow(a Authorization, only []ID, verbs *VerbSet) Authorization {
+	if only == nil && verbs == nil {
 		return a
 	}
-	keep := make(map[ID]struct{}, len(only))
-	for _, id := range only {
-		keep[id] = struct{}{}
+	var keep map[ID]struct{}
+	if only != nil {
+		keep = make(map[ID]struct{}, len(only))
+		for _, id := range only {
+			keep[id] = struct{}{}
+		}
 	}
 	out := Authorization{
 		byScope:  map[ID]VerbSet{},
@@ -431,7 +447,15 @@ func Narrow(a Authorization, only []ID) Authorization {
 		narrowed: true,
 	}
 	for id, vs := range a.byScope {
-		if _, wanted := keep[id]; !wanted {
+		if keep != nil {
+			if _, wanted := keep[id]; !wanted {
+				continue
+			}
+		}
+		if verbs != nil {
+			vs = vs.Intersect(*verbs)
+		}
+		if vs.Empty() {
 			continue
 		}
 		out.byScope[id] = vs

@@ -18,10 +18,9 @@ package main
 // capability whose one caller is a human with `exec` into the pod. `api.DeclaredRoutes()`
 // is unchanged by this file, which is the checkable half of that sentence.
 //
-// 🔴 AND IT IS NOT A ROTATION TOOL. It issues; it does not revoke. `EventCredentialRevoked`
-// still has no writer in this repository, so a rotation here is "issue the new one, then
-// hand-append the revocation" — stated because an operator who assumes otherwise leaves the
-// old credential live, and because the gap is the same shape as the one this file closes.
+// 🔴 AND IT IS NOT A ROTATION TOOL ON ITS OWN. It issues; `-revoke-credential`
+// (`revokecredential.go`) revokes. A rotation is issue-new, deliver it, then revoke-old —
+// three commands in that order, so the host is never without a live credential.
 
 import (
 	"context"
@@ -64,6 +63,7 @@ type issueCredentialFlags struct {
 	principal     *string
 	label         *string
 	narrowScopes  *string
+	narrowVerbs   *string
 	tokenOut      *string
 }
 
@@ -96,6 +96,12 @@ func registerIssueCredentialFlags() *issueCredentialFlags {
 			"comma-separated scope IDS (`scp_…`) this credential is restricted to, INTERSECTED "+
 				"with whatever its principal can reach at the moment it is asked. Empty means NO "+
 				"narrowing — the credential carries its principal's full authority"),
+		narrowVerbs: flag.String("narrow-verbs", "",
+			"comma-separated VERBS (`read`, `write`, `admin`) this credential is restricted to on every "+
+				"scope it reaches, INTERSECTED with what its principal holds there. REQUIRED with "+
+				"-narrow-scopes, so a scope-narrowed credential's verbs are always written down; an agent "+
+				"credential is issued `read,write` and so never carries `admin`. Empty means no verb "+
+				"narrowing"),
 		tokenOut: flag.String("token-out", "",
 			"write the token to this PATH at mode 0600, creating it and refusing if it already "+
 				"exists, instead of printing it. `-` means stdout explicitly. The file is one token "+
@@ -194,6 +200,25 @@ func runIssueCredential(env map[string]string, f *issueCredentialFlags, out, err
 		warn("subsystem-store-api: -issue-credential refused: " + err.Error())
 		return exitConfig
 	}
+	verbs, err := narrowedVerbs(*f.narrowVerbs)
+	if err != nil {
+		warn("subsystem-store-api: -issue-credential refused: " + err.Error())
+		return exitConfig
+	}
+	// 🔴 -narrow-scopes WITHOUT -narrow-verbs IS REFUSED (scope-mail plan, decision 17).
+	// Narrowing keeps a subset of SCOPES, each with its principal's FULL verb set, so a
+	// credential narrowed to one scope under an owner still carried `admin` there — and could
+	// revoke other principals' grants through `POST /unshare`. Requiring the verbs whenever the
+	// scopes are narrowed means a scope-narrowed credential's verbs are always a decision
+	// somebody wrote down, never an inheritance nobody noticed. Refused BEFORE the mint, so
+	// nothing is appended.
+	if narrowed != nil && verbs == nil {
+		warn("subsystem-store-api: -issue-credential refused: -narrow-scopes needs -narrow-verbs. A " +
+			"scope narrowing keeps each scope's FULL verb set, so without a verb narrowing this " +
+			"credential would carry `admin` wherever its principal does. Say which verbs it gets — an " +
+			"agent credential is `-narrow-verbs read,write`")
+		return exitConfig
+	}
 
 	ctx := context.Background()
 	store, err := control.OpenFileStore(journal)
@@ -228,6 +253,7 @@ func runIssueCredential(env map[string]string, f *issueCredentialFlags, out, err
 		SubjectID:      principal,
 		Label:          strings.TrimSpace(*f.label),
 		NarrowedScopes: narrowed,
+		NarrowedVerbs:  verbs,
 	})
 	if err != nil {
 		// The file this command created is removed again: it is empty, nothing else can have
@@ -315,19 +341,16 @@ func runIssueCredential(env map[string]string, f *issueCredentialFlags, out, err
 	// script greps the same shape. Only the stream differs, and the stream differs because
 	// stdout belongs to the secret.
 	warn(fmt.Sprintf(
-		"cairn-control: issued credential=%s principal=%s:%s epoch=%d digest=%s label=%q narrowed=%s",
+		"cairn-control: issued credential=%s principal=%s:%s epoch=%d digest=%s label=%q narrowed=%s verbs=%s",
 		issued.Credential, kind, principal, issued.Epoch, issued.TokenHash,
-		*f.label, renderNarrowing(narrowed)))
+		*f.label, renderNarrowing(narrowed), renderVerbNarrowing(verbs)))
 
-	// 🔴 REVOCATION IS A HAND-APPEND TODAY, AND THE PREVIOUS WORDING PROMISED AN ACTION NO
-	// TOOL HERE CAN PERFORM. It said to "revoke this one by its credential id";
-	// `EventCredentialRevoked` is in the closed event set and has NO WRITER, so an operator
-	// following that sentence looks for a flag that does not exist and leaves the old
-	// credential live. The code comments and `internal/control/README.md` already say this;
-	// the surface the operator actually reads now says it too.
-	lost := "if it is lost, issue another and retire this one by appending a `credential-revoked` " +
-		"record to the journal BY HAND — nothing in this repository writes that event yet, so there " +
-		"is no -revoke-credential to reach for"
+	// 🔴 THE ADVICE NAMES THE REVOKE COMMAND BY ITS EXACT SPELLING AND THIS CREDENTIAL'S ID.
+	// It once said "revoke this one by its credential id" while nothing wrote
+	// `credential-revoked`, and then — correctly — "BY HAND"; `-revoke-credential` now exists
+	// (scope-mail plan, decision 16), so the sentence points at it rather than at a hand edit.
+	lost := fmt.Sprintf("if it is lost, issue another and retire this one with "+
+		"`cairn-server -revoke-credential -credential %s`", issued.Credential)
 	// 🔴 GUARDED ON `delivered` ON BOTH ARMS. "The token is on stdout and this is the only
 	// time it will ever be shown" is the single most misleading sentence this command can
 	// print when the write that was supposed to put it there failed — the operator goes
@@ -653,6 +676,46 @@ func narrowedScopeIDs(raw string) ([]control.ID, error) {
 			raw)
 	}
 	return out, nil
+}
+
+// narrowedVerbs parses -narrow-verbs. "" is NO verb narrowing (nil); anything else must name
+// at least one known verb and nothing else.
+//
+// 🔴 AN UNKNOWN VERB IS REFUSED, NOT DROPPED. `control.NewVerbSet` drops one silently — the
+// narrowing direction, safe for an untrusted caller — but here an operator typed it, and a
+// typo (`wirte`) silently dropped would issue a credential narrower than asked with nothing
+// said. And a value with no verb in it (`","`) is refused rather than read as either "none"
+// or "nothing", for `narrowedScopeIDs`'s reason: the two readings are opposites.
+func narrowedVerbs(raw string) (*control.VerbSet, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var verbs []control.Verb
+	for _, part := range strings.Split(raw, ",") {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		v := control.Verb(trimmed)
+		if !v.Valid() {
+			return nil, fmt.Errorf("-narrow-verbs names %q, which is not a verb; the verbs are %v", trimmed, control.AllVerbs)
+		}
+		verbs = append(verbs, v)
+	}
+	if len(verbs) == 0 {
+		return nil, fmt.Errorf("-narrow-verbs %q has no verb in it. OMIT the flag for no verb narrowing; "+
+			"a credential that should reach nothing is revoked, not narrowed to nothing", raw)
+	}
+	set := control.NewVerbSet(verbs...)
+	return &set, nil
+}
+
+// renderVerbNarrowing is `none` for no verb narrowing, else the set.
+func renderVerbNarrowing(v *control.VerbSet) string {
+	if v == nil {
+		return "none"
+	}
+	return v.String()
 }
 
 // renderNarrowing describes the narrowing for the record line.

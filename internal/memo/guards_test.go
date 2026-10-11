@@ -8,10 +8,7 @@ package memo_test
 import (
 	"encoding/hex"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"path/filepath"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -19,267 +16,242 @@ import (
 	"time"
 
 	"github.com/ZacxDev/cairn/internal/memo"
+	"github.com/ZacxDev/cairn/internal/surface"
 )
 
 // ---------------------------------------------------------------- Guard A
 
+// entry is one exported name's ledger row: its CLASS, and its SIGNATURE as printed from the
+// source with parameter names stripped.
+//
+// 🔴 KEYED ON NAME **AND** PRINTED TYPE, NOT NAME ALONE. A name-only ledger (S0's) stayed green
+// when an EXISTING name's signature changed — `Statuses() []string` becoming
+// `Statuses(...Stored) []string` returns stored text under a name the ledger already trusted
+// (S0 audit, carried to S1). Every row now pins what the name IS, so a changed signature is a
+// CHANGED row and red.
+type entry struct{ class, sig string }
+
 // exportLedger is EVERY exported name in package memo — not only those whose signature mentions
 // `Stored` (audit round 6 🟡1: a `DecodeText([]byte) (string, string, error)` mentions no
-// Stored and returns raw text). Methods are `Type.Method`, struct fields `Type.Field`. The
-// ledger fails on GROW or SHRINK, so a new way for text to leave the package is a deliberate,
-// reviewed edit here, never an accident.
+// Stored and returns raw text). Methods are `Type.Method`, struct fields `Type.Field`, and an
+// EMBEDDED field is `Type.<its printed type>` WHATEVER its package or exportedness — an embedded
+// `json.RawMessage` in `Rendered` was invisible to S0's ledger (it skipped a qualified name),
+// and its promoted bytes would have been invisible to the emitter check too. The ledger fails on
+// GROW, SHRINK or CHANGE, so a new way for text to leave the package is a deliberate, reviewed
+// edit here, never an accident.
 //
-// Each entry carries its CLASS. Every `emits` entry is exercised by `emitters` below against a
+// Each row carries its CLASS. Every `emits` row is exercised by `emitters` below against a
 // Stored carrying a planted invisible code point, and the two sets are pinned equal.
-var exportLedger = map[string]string{
+var exportLedger = map[string]entry{
 	// predicates and the send-side fold: take the caller's own string, never a Stored.
-	"Unsafe":             "predicate",
-	"BreaksFence":        "predicate",
-	"SubjectBreaksFence": "predicate",
-	"Normalize":          "input",
+	"Unsafe":             {"predicate", "func(rune) bool"},
+	"BreaksFence":        {"predicate", "func(string) bool"},
+	"SubjectBreaksFence": {"predicate", "func(string) bool"},
+	"Normalize":          {"input", "func(string) string"},
+	// the authority predicates (S1): booleans over an authorization, no text.
+	"MaySend":    {"predicate", "func(control.Authorization, string) bool"},
+	"MayRead":    {"predicate", "func(control.Authorization, string) bool"},
+	"MayRetract": {"predicate", "func(control.Principal, control.Authorization, string, string, string) bool"},
+	// the send-side content rules (S1): the caller's OWN text in, normalised, on its way to
+	// storage — never stored text on its way out.
+	"CheckSend":        {"input", "func(string, string, time.Duration, *redact.Redactor) (Outgoing, error)"},
+	"Outgoing":         {"input", "struct"},
+	"Outgoing.Subject": {"input", "string"},
+	"Outgoing.Body":    {"input", "string"},
+	"Outgoing.TTL":     {"input", "time.Duration"},
+	"NewScanner":       {"input", "func() (*redact.Redactor, error)"},
+	// refusals: a closed reason and a RULE NAME — never content.
+	"Refusal":             {"refusal", "struct"},
+	"Refusal.Reason":      {"refusal", "RefusalReason"},
+	"Refusal.Rule":        {"refusal", "string"},
+	"Refusal.Error":       {"refusal", "(*Refusal) func() string"},
+	"RefusalReason":       {"refusal", "string"},
+	"RefusedNoWrite":      {"refusal", "const RefusalReason"},
+	"RefusedQuota":        {"refusal", "const RefusalReason"},
+	"RefusedLiveLimit":    {"refusal", "const RefusalReason"},
+	"RefusedSubjectSize":  {"refusal", "const RefusalReason"},
+	"RefusedBodySize":     {"refusal", "const RefusalReason"},
+	"RefusedCharacters":   {"refusal", "const RefusalReason"},
+	"RefusedSecret":       {"refusal", "const RefusalReason"},
+	"RefusedTTL":          {"refusal", "const RefusalReason"},
+	"RefusedNotPermitted": {"refusal", "const RefusalReason"},
+	"ErrNotFound":         {"refusal", `var = errors.New("memo: not found")`},
+	// limits: numbers, no text.
+	"MaxSubjectBytes":        {"table", "const"},
+	"MaxBodyBytes":           {"table", "const"},
+	"DefaultTTL":             {"table", "const"},
+	"MaxTTL":                 {"table", "const"},
+	"RetentionAfterExpiry":   {"table", "const"},
+	"SendsPerScopePerWindow": {"table", "const"},
+	"QuotaWindow":            {"table", "const"},
+	"MaxLivePerScope":        {"table", "const"},
+	"TransactionTimeout":     {"table", "const"},
+	"CursorMargin":           {"table", "const"},
+	"ConfidentSecretRules":   {"table", "func() []string"},
 	// the input type and its constructor: text goes IN; nothing returns a Fields.
-	"Fields":                  "input",
-	"Fields.ID":               "input",
-	"Fields.Scope":            "input",
-	"Fields.SenderKind":       "input",
-	"Fields.SenderID":         "input",
-	"Fields.SenderDisplay":    "input",
-	"Fields.CredentialLabel":  "input",
-	"Fields.Subject":          "input",
-	"Fields.Body":             "input",
-	"Fields.CreatedAt":        "input",
-	"Fields.ExpiresAt":        "input",
-	"Fields.RetractedAt":      "input",
-	"Fields.RetractorKind":    "input",
-	"Fields.RetractorID":      "input",
-	"Fields.RetractorDisplay": "input",
-	"Fields.RetractorLabel":   "input",
-	"NewStored":               "input",
+	"Fields":                  {"input", "struct"},
+	"Fields.ID":               {"input", "int64"},
+	"Fields.Scope":            {"input", "string"},
+	"Fields.SenderKind":       {"input", "string"},
+	"Fields.SenderID":         {"input", "string"},
+	"Fields.SenderDisplay":    {"input", "string"},
+	"Fields.CredentialLabel":  {"input", "string"},
+	"Fields.Subject":          {"input", "string"},
+	"Fields.Body":             {"input", "string"},
+	"Fields.CreatedAt":        {"input", "time.Time"},
+	"Fields.ExpiresAt":        {"input", "time.Time"},
+	"Fields.RetractedAt":      {"input", "time.Time"},
+	"Fields.RetractorKind":    {"input", "string"},
+	"Fields.RetractorID":      {"input", "string"},
+	"Fields.RetractorDisplay": {"input", "string"},
+	"Fields.RetractorLabel":   {"input", "string"},
+	"NewStored":               {"input", "func(Fields) Stored"},
 	// the carrier: no exported field, no method.
-	"Stored": "carrier",
-	// the rendered type: every string field already replaced (pinned by reflection in
-	// TestEveryFieldsStringIsSanitisedOnEveryOutput, and by the `Render` emitter here).
-	"Rendered":           "rendered",
-	"Rendered.ID":        "rendered",
-	"Rendered.Scope":     "rendered",
-	"Rendered.Sender":    "rendered",
-	"Rendered.CreatedAt": "rendered",
-	"Rendered.ExpiresAt": "rendered",
-	"Rendered.Subject":   "rendered",
-	"Rendered.Body":      "rendered",
-	"Rendered.Tombstone": "rendered",
+	"Stored": {"carrier", "struct"},
+	// the rendered type: every field already replaced (pinned by reflection in
+	// TestEveryFieldsStringIsSanitisedOnEveryOutput and TestEveryRenderedFieldIsAStringOrTheID,
+	// and by the `Render` emitter here).
+	"Rendered":           {"rendered", "struct"},
+	"Rendered.ID":        {"rendered", "int64"},
+	"Rendered.Scope":     {"rendered", "string"},
+	"Rendered.Sender":    {"rendered", "string"},
+	"Rendered.CreatedAt": {"rendered", "string"},
+	"Rendered.ExpiresAt": {"rendered", "string"},
+	"Rendered.Subject":   {"rendered", "string"},
+	"Rendered.Body":      {"rendered", "string"},
+	"Rendered.Tombstone": {"rendered", "string"},
 	// the only names that can carry stored text OUT.
-	"Render":        "emits",
-	"RenderPreview": "emits",
-	"RenderFull":    "emits",
+	"Render":        {"emits", "func(Stored) Rendered"},
+	"RenderPreview": {"emits", "func([]Stored) string"},
+	"RenderFull":    {"emits", "func([]Stored) string"},
 	// a constant table; no text.
-	"Statuses": "table",
+	"Statuses": {"table", "func() []string"},
 }
 
-// exportedNames reads the package's NON-test sources plus any `extra` file and returns every
-// exported identifier: top-level functions (generic ones too), methods on ANY receiver, types,
-// struct fields (embedded ones by type name) and interface methods of ANY struct/interface type,
-// and package-level variables and constants.
-func exportedNames(t *testing.T, extra map[string]string) []string {
+// exportedSurface is the package's exported surface as `internal/surface` reads it from source,
+// with `override` replacing a file and `extra` adding one.
+func exportedSurface(t *testing.T, override, extra map[string]string) map[string]string {
 	t.Helper()
-	fset := token.NewFileSet()
-	paths, err := filepath.Glob("*.go")
+	got, err := surface.Exported(".", "memo", override, extra)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var files []*ast.File
-	for _, p := range paths {
-		if strings.HasSuffix(p, "_test.go") {
-			continue
-		}
-		f, err := parser.ParseFile(fset, p, nil, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		files = append(files, f)
+	if len(got) < 40 {
+		t.Fatalf("read only %d exported names — the ledger would be compared against nothing", len(got))
 	}
-	for name, src := range extra {
-		f, err := parser.ParseFile(fset, name, src, 0)
-		if err != nil {
-			t.Fatalf("mutant %s does not parse: %v", name, err)
-		}
-		files = append(files, f)
+	return got
+}
+
+func ledgerSigs() map[string]string {
+	out := map[string]string{}
+	for k, e := range exportLedger {
+		out[k] = e.sig
 	}
-	if len(files) < 4 {
-		t.Fatalf("read only %d source files — the ledger would be built from nothing", len(files))
-	}
-	seen := map[string]bool{}
-	add := func(s string) { seen[s] = true }
-	for _, f := range files {
-		if f.Name.Name != "memo" {
-			t.Fatalf("%s is package %s", fset.File(f.Pos()).Name(), f.Name.Name)
-		}
-		for _, d := range f.Decls {
-			switch d := d.(type) {
-			case *ast.FuncDecl:
-				if !d.Name.IsExported() {
-					continue
-				}
-				if d.Recv == nil {
-					add(d.Name.Name)
-					continue
-				}
-				add(recvName(d.Recv.List[0].Type) + "." + d.Name.Name)
-			case *ast.GenDecl:
-				for _, s := range d.Specs {
-					switch s := s.(type) {
-					case *ast.TypeSpec:
-						if s.Name.IsExported() {
-							add(s.Name.Name)
-						}
-						members(s.Name.Name, s.Type, add)
-					case *ast.ValueSpec:
-						for _, n := range s.Names {
-							if n.IsExported() {
-								add(n.Name)
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	var out []string
-	for s := range seen {
-		out = append(out, s)
-	}
-	sort.Strings(out)
 	return out
 }
 
-func recvName(e ast.Expr) string {
-	switch e := e.(type) {
-	case *ast.StarExpr:
-		return recvName(e.X)
-	case *ast.IndexExpr:
-		return recvName(e.X)
-	case *ast.IndexListExpr:
-		return recvName(e.X)
-	case *ast.Ident:
-		return e.Name
-	}
-	return fmt.Sprintf("%T", e)
-}
-
-// members records the exported fields of a struct type and the exported methods of an
-// interface type — of ANY type, exported or not, because an unexported type's exported field is
-// reachable through any exported name that returns a value of it.
-func members(typeName string, e ast.Expr, add func(string)) {
-	var list *ast.FieldList
-	switch e := e.(type) {
-	case *ast.StructType:
-		list = e.Fields
-	case *ast.InterfaceType:
-		list = e.Methods
-	default:
-		return
-	}
-	for _, fl := range list.List {
-		if len(fl.Names) == 0 { // embedded
-			n := recvName(fl.Type)
-			if ast.IsExported(n) {
-				add(typeName + "." + n)
-			}
-			continue
-		}
-		for _, n := range fl.Names {
-			if n.IsExported() {
-				add(typeName + "." + n.Name)
-			}
-		}
-	}
-}
-
-func ledgerNames() []string {
-	var out []string
-	for k := range exportLedger {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func diff(got, want []string) (grew, shrank []string) {
-	g, w := map[string]bool{}, map[string]bool{}
-	for _, s := range got {
-		g[s] = true
-	}
-	for _, s := range want {
-		w[s] = true
-	}
-	for _, s := range got {
-		if !w[s] {
-			grew = append(grew, s)
-		}
-	}
-	for _, s := range want {
-		if !g[s] {
-			shrank = append(shrank, s)
-		}
-	}
-	return
-}
-
-// TestGuardATheExportedSurfaceIsTheLedger is the ledger's GROW-or-SHRINK check over the real
-// package.
+// TestGuardATheExportedSurfaceIsTheLedger is the ledger's GROW / SHRINK / CHANGE check over the
+// real package.
 func TestGuardATheExportedSurfaceIsTheLedger(t *testing.T) {
-	grew, shrank := diff(exportedNames(t, nil), ledgerNames())
-	if len(grew) > 0 || len(shrank) > 0 {
+	grew, shrank, changed := surface.Diff(exportedSurface(t, nil, nil), ledgerSigs())
+	if len(grew)+len(shrank)+len(changed) > 0 {
 		t.Fatalf("package memo's exported surface moved (decision 19, Guard A).\n"+
 			"  new names (each is a new way for stored text to leave the package — list it in "+
-			"exportLedger with its class, and if it can emit text, exercise it in `emitters`): %v\n"+
-			"  names gone from the package (remove them from exportLedger): %v", grew, shrank)
+			"exportLedger with its class, and if it can emit text, exercise it in `emitters`):\n    %s\n"+
+			"  names gone from the package (remove them from exportLedger): %v\n"+
+			"  names whose SIGNATURE changed (a changed signature can return stored text under a "+
+			"trusted name — re-review it, then update its row):\n    %s",
+			strings.Join(grew, "\n    "), shrank, strings.Join(changed, "\n    "))
 	}
 }
 
-// guardAMutants are the escapes rounds 5 and 6 named, each as the source a maintainer would ADD.
-// Each must make the ledger GROW, and by the name the mutant introduces.
-var guardAMutants = []struct{ name, src, adds string }{
-	{"raw-method", "func (s Stored) Raw() string { return \"\" }", "Stored.Raw"},
-	{"emit-writer", "func Emit(w io.Writer, s Stored) {}", "Emit"},
-	{"string-slice", "func Bodies(s []Stored) []string { return nil }", "Bodies"},
-	{"map-result", "func ByID(s []Stored) map[int64]string { return nil }", "ByID"},
-	{"any-result", "func Any(s Stored) any { return nil }", "Any"},
-	{"pointer-result", "func Ptr(s Stored) *string { return nil }", "Ptr"},
-	{"generic-result", "func Gen[T any](s Stored) T { var z T; return z }", "Gen"},
-	{"bytes-field-result", "type Out struct{ B []byte }\nfunc Bytes(s Stored) Out { return Out{} }", "Out.B"},
-	{"exported-func-var", "var Peek = func(Stored) string { return \"\" }", "Peek"},
-	{"wrapper-type", "type Wrapper struct{ S Stored }", "Wrapper.S"},
-	{"no-stored-in-signature", "func DecodeText(b []byte) (string, string, error) { return \"\", \"\", nil }", "DecodeText"},
-	{"field-on-rendered", "type rendered2 struct{ RawBody string }", "rendered2.RawBody"},
-	{"method-on-unexported", "func (s stored) Text() string { return s.body }", "stored.Text"},
+// guardAMutants are the escapes rounds 5 and 6 and the S0 audit named, each as the source a
+// maintainer would ADD (`src`) or the EDIT they would make to an existing file (`file`/`old`/
+// `new`). Each must make the ledger move BY THE NAME the mutant introduces or changes.
+var guardAMutants = []struct {
+	name, src      string
+	file, old, new string
+	grows, changes string
+}{
+	{name: "raw-method", src: "func (s Stored) Raw() string { return \"\" }", grows: "Stored.Raw"},
+	{name: "emit-writer", src: "func Emit(w io.Writer, s Stored) {}", grows: "Emit"},
+	{name: "string-slice", src: "func Bodies(s []Stored) []string { return nil }", grows: "Bodies"},
+	{name: "map-result", src: "func ByID(s []Stored) map[int64]string { return nil }", grows: "ByID"},
+	{name: "any-result", src: "func Any(s Stored) any { return nil }", grows: "Any"},
+	{name: "pointer-result", src: "func Ptr(s Stored) *string { return nil }", grows: "Ptr"},
+	{name: "generic-result", src: "func Gen[T any](s Stored) T { var z T; return z }", grows: "Gen"},
+	{name: "bytes-field-result", src: "type Out struct{ B []byte }\nfunc Bytes(s Stored) Out { return Out{} }", grows: "Out.B"},
+	{name: "exported-func-var", src: "var Peek = func(Stored) string { return \"\" }", grows: "Peek"},
+	{name: "wrapper-type", src: "type Wrapper struct{ S Stored }", grows: "Wrapper.S"},
+	{name: "no-stored-in-signature", src: "func DecodeText(b []byte) (string, string, error) { return \"\", \"\", nil }", grows: "DecodeText"},
+	{name: "field-on-rendered", src: "type rendered2 struct{ RawBody string }", grows: "rendered2.RawBody"},
+	{name: "method-on-unexported", src: "func (s stored) Text() string { return s.body }", grows: "stored.Text"},
+	// S0 audit, carried to S1: a CHANGED signature on a name the ledger already trusted.
+	{name: "changed-signature-on-existing-name", file: "status.go",
+		old: "func Statuses() []string {", new: "func Statuses(s ...Stored) []string {", changes: "Statuses"},
+	// S0 audit, carried to S1: an EMBEDDED field from ANOTHER package in Rendered.
+	{name: "embedded-foreign-field-in-rendered", file: "stored.go",
+		old: "type Rendered struct {\n", new: "type Rendered struct {\n\tjson.RawMessage\n", grows: "Rendered.json.RawMessage"},
+	// …and an existing Rendered field whose TYPE changes to bytes.
+	{name: "rendered-field-type-changed", file: "stored.go",
+		old: "\tSubject, Body, Tombstone string\n", new: "\tSubject, Tombstone string\n\tBody []byte\n", changes: "Rendered.Body"},
 }
 
 // TestGuardACatchesEveryRequiredMutant applies each required mutant to the source the ledger
 // reads and requires the ledger to go RED naming it. POSITIVE CONTROL first: with no mutant the
 // ledger is green, so a red below is the mutant's doing.
 func TestGuardACatchesEveryRequiredMutant(t *testing.T) {
-	if grew, shrank := diff(exportedNames(t, nil), ledgerNames()); len(grew)+len(shrank) != 0 {
-		t.Fatalf("control: unmutated ledger is not green: %v %v", grew, shrank)
+	if g, s, c := surface.Diff(exportedSurface(t, nil, nil), ledgerSigs()); len(g)+len(s)+len(c) != 0 {
+		t.Fatalf("control: unmutated ledger is not green: %v %v %v", g, s, c)
 	}
 	caught := 0
 	for _, m := range guardAMutants {
-		src := "package memo\n\nimport \"io\"\n\nvar _ io.Writer\n\n" + m.src + "\n"
-		grew, _ := diff(exportedNames(t, map[string]string{"mutant_" + m.name + ".go": src}), ledgerNames())
-		found := false
-		for _, g := range grew {
-			if g == m.adds {
-				found = true
+		var override, extra map[string]string
+		if m.src != "" {
+			extra = map[string]string{"mutant_" + m.name + ".go": "package memo\n\nimport \"io\"\n\nvar _ io.Writer\n\n" + m.src + "\n"}
+		} else {
+			raw, err := os.ReadFile(m.file)
+			if err != nil {
+				t.Fatal(err)
 			}
+			if n := strings.Count(string(raw), m.old); n != 1 {
+				t.Fatalf("mutant %s: pattern occurs %d times in %s, want 1 — re-derive it", m.name, n, m.file)
+			}
+			override = map[string]string{m.file: strings.Replace(string(raw), m.old, m.new, 1)}
 		}
-		if !found {
-			t.Errorf("mutant %s SURVIVED: the ledger did not grow by %s (grew: %v)", m.name, m.adds, grew)
+		grew, _, changed := surface.Diff(exportedSurface(t, override, extra), ledgerSigs())
+		if !surface.Moved(grew, changed, m.grows+m.changes) {
+			t.Errorf("mutant %s SURVIVED: the ledger did not move by %s%s (grew: %v, changed: %v)",
+				m.name, m.grows, m.changes, grew, changed)
 			continue
 		}
 		caught++
 	}
 	if caught != len(guardAMutants) {
 		t.Fatalf("caught %d of %d Guard A mutants", caught, len(guardAMutants))
+	}
+}
+
+// TestEveryRenderedFieldIsAStringOrTheID — S0 audit, carried to S1: the emitter check below reads
+// `Rendered`'s STRING fields, so a field of any other type — a `[]byte`, an embedded
+// `json.RawMessage`, a nested struct — would carry text past it unseen. Every field, embedded
+// ones included, must be a plain `string` or the `int64` ID; anything else is red here rather
+// than invisible there.
+func TestEveryRenderedFieldIsAStringOrTheID(t *testing.T) {
+	rt := reflect.TypeOf(memo.Rendered{})
+	strs := 0
+	for _, f := range reflect.VisibleFields(rt) {
+		switch {
+		case f.Type == reflect.TypeOf(""):
+			strs++
+		case f.Name == "ID" && f.Type == reflect.TypeOf(int64(0)):
+		default:
+			t.Errorf("Rendered.%s is a %s — only plain strings (each passed through the render-side "+
+				"replacement and checked below) and the int64 ID may be fields of the rendered type", f.Name, f.Type)
+		}
+	}
+	if strs < 7 {
+		t.Fatalf("Rendered has only %d string fields — the reflection walked nothing", strs)
 	}
 }
 
@@ -296,7 +268,7 @@ func plantedStored(t *testing.T, retracted bool) memo.Stored {
 	n := 0
 	for i := 0; i < v.NumField(); i++ {
 		if v.Field(i).Kind() == reflect.String {
-			v.Field(i).SetString(v.Type().Field(i).Name + "​" + string(rune(0xE0100)) + "x")
+			v.Field(i).SetString(v.Type().Field(i).Name + "\u200b" + string(rune(0xE0100)) + "x")
 			n++
 		}
 	}
@@ -332,8 +304,8 @@ var emitters = map[string]func([]memo.Stored) string{
 
 func TestGuardAEveryEmitterAppliesTheReplacement(t *testing.T) {
 	var want []string
-	for k, class := range exportLedger {
-		if class == "emits" {
+	for k, e := range exportLedger {
+		if e.class == "emits" {
 			want = append(want, k)
 		}
 	}

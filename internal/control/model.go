@@ -289,8 +289,18 @@ type (
 		// Label is what a human calls this credential in the UI. Never secret.
 		Label          string
 		NarrowedScopes []ID
-		CreatedAt      time.Time
-		RevokedAt      *time.Time
+		// NarrowedVerbs is the credential's VERB narrowing (scope-mail plan, decision 17):
+		// nil means NOT narrowed by verbs — no `credential-verbs-narrowed` event ever
+		// applied — and a set is what every scope's verbs are INTERSECTED with at
+		// authenticate time. Only `apply` writes it, and only by intersecting, so a later
+		// event can narrow it further and never widen it.
+		//
+		// ⚠ A POINTER, AND `apply` ALWAYS STORES A FRESH ONE: `Model.clone` copies the
+		// Credential by value, so a pointer mutated in place would be shared between the
+		// live model and `Append`'s scratch clone.
+		NarrowedVerbs *VerbSet
+		CreatedAt     time.Time
+		RevokedAt     *time.Time
 	}
 )
 

@@ -254,8 +254,16 @@ func TestMigrationTwoUpgradesAVersionOneDatabase(t *testing.T) {
 		versions = append(versions, v)
 	}
 	rows.Close()
-	if len(versions) != 2 || versions[0] != 1 || versions[1] != 2 {
-		t.Fatalf("the ledger records %v, want [1 2]", versions)
+	// Every version from 1 up, contiguous: migrating a version-1 database applies 2 AND every
+	// later version this build knows (3 is the memos, S1 of the scope-mail plan), so the ledger
+	// is asserted as "1, 2, … with no gap" rather than as a list that goes stale per migration.
+	if len(versions) < 2 {
+		t.Fatalf("the ledger records %v, want at least [1 2]", versions)
+	}
+	for i, v := range versions {
+		if v != i+1 {
+			t.Fatalf("the ledger records %v, want 1, 2, … with no gap", versions)
+		}
 	}
 	inv, ok, err := invites.ByToken(invToken)
 	if err != nil || !ok || !inv.Redeemable(fixtureNow) {
@@ -280,7 +288,10 @@ func TestMigrationTwoUpgradesAVersionOneDatabase(t *testing.T) {
 // team-link rows intact.
 func TestTheRollbackRecipeLetsAnOlderBuildStartAndReUpgrades(t *testing.T) {
 	ctx := context.Background()
-	db := openTestDB(t)
+	// Built at version 2 — the version this recipe is about. A database at version 3 (memos)
+	// needs version 3's recipe FIRST to roll back past it; that one is measured by
+	// `TestTheMemoRollbackRecipeLetsAnOlderBuildStartAndReUpgrades`.
+	db := openTestDBWith(t, pgstore.OpenThroughForTest(2))
 	s := pgstore.NewTeamLinkStore(db)
 	_, minted := mintLink(t, s, true, fixtureNow.Add(time.Hour))
 
@@ -304,7 +315,7 @@ func TestTheRollbackRecipeLetsAnOlderBuildStartAndReUpgrades(t *testing.T) {
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatalf("re-upgrading after the recipe failed: %v", err)
 	}
-	if err := pgstore.OlderBuildRefusalForTest(ctx, db, 2); err != nil {
+	if err := pgstore.OlderBuildRefusalForTest(ctx, db, thisBuild); err != nil {
 		t.Fatalf("after re-upgrading the current build would refuse: %v", err)
 	}
 	if got, ok, err := s.LinkByDigest(minted.Digest); err != nil || !ok || len(got.Targets) != 3 {
@@ -337,3 +348,7 @@ func TestARedemptionRowIsUnconfirmedUntilConfirmed(t *testing.T) {
 		t.Fatal("confirming a redemption that does not exist succeeded")
 	}
 }
+
+// thisBuild, passed to `OlderBuildRefusalForTest`, is "every version this build knows" — the
+// current build's own startup decision — without a version number that goes stale per migration.
+const thisBuild = 1 << 30

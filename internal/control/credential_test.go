@@ -127,7 +127,7 @@ func TestNarrowingIntersectsAndCannotWiden(t *testing.T) {
 	full := Resolve(withCredentials(t), user(uCarol))
 
 	t.Run("nil narrows nothing", func(t *testing.T) {
-		got := Narrow(full, nil)
+		got := Narrow(full, nil, nil)
 		for scopeID, want := range expectedMatrix[uCarol] {
 			if have := verbsOrEmpty(got.VerbsOn(scopeID)); have != want {
 				t.Errorf("%s = %q, want %q", scopeID, have, want)
@@ -139,7 +139,7 @@ func TestNarrowingIntersectsAndCannotWiden(t *testing.T) {
 		// 🔴 THE OPPOSITE OF nil, AND THE WHOLE REASON THE JOURNAL FORMAT
 		// DISTINGUISHES THEM. If these two ever collapse, a credential meant to
 		// see nothing sees everything its principal does.
-		got := Narrow(full, []ID{})
+		got := Narrow(full, []ID{}, nil)
 		for scopeID := range expectedMatrix[uCarol] {
 			if have := verbsOrEmpty(got.VerbsOn(scopeID)); have != "" {
 				t.Errorf("%s = %q under an empty narrowing, want nothing", scopeID, have)
@@ -148,7 +148,7 @@ func TestNarrowingIntersectsAndCannotWiden(t *testing.T) {
 	})
 
 	t.Run("a subset keeps exactly that subset, verbs intact", func(t *testing.T) {
-		got := Narrow(full, []ID{sBeaconNotes})
+		got := Narrow(full, []ID{sBeaconNotes}, nil)
 		if have := verbsOrEmpty(got.VerbsOn(sBeaconNotes)); have != "read" {
 			t.Errorf("beacon-notes = %q, want read", have)
 		}
@@ -162,7 +162,7 @@ func TestNarrowingIntersectsAndCannotWiden(t *testing.T) {
 		// route or another, so the id used here names a scope no grant and no
 		// membership can reach — which is exactly the input a narrowing must not
 		// be able to turn into access.
-		got := Narrow(full, []ID{sBeaconNotes, "scp_not_hers"})
+		got := Narrow(full, []ID{sBeaconNotes, "scp_not_hers"}, nil)
 		if got.Allows("scp_not_hers", VerbRead) {
 			t.Fatal("a narrowing that names a scope the principal does not hold GRANTED it — the list must intersect, never widen")
 		}

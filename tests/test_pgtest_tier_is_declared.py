@@ -47,6 +47,11 @@ TIER_FILES = (
     # declared so that the tag on it is asserted like every other tier file's.
     "internal/pgstore/teamlinks_pgtest_test.go",
     "internal/pgstore/export_pgtest_test.go",
+    # SCOPE MAIL's storage (migration 3, `MemoStore`): the quota and live bound under the
+    # advisory lock, the `transaction_timeout` the cursor margin rests on, retraction and its
+    # audit, retention that keeps events, and the rollback recipe — all SQL, all invisible to
+    # `go test ./...`.
+    "internal/pgstore/memos_pgtest_test.go",
     # 🔴 THE TIER IS TWO PACKAGES NOW, AND THE SECOND ONE IS THE PROGRAM RATHER THAN THE
     # SQL. `cmd/cairn-ui`'s DSN branch — schema applied, session table moved off disk, an
     # `Inviting` that is not nil — is invisible without a server, exactly like the SQL, so
@@ -94,6 +99,26 @@ DECLARED_TESTS = {
         "TestARedemptionRowIsUnconfirmedUntilConfirmed",
     },
     "internal/pgstore/export_pgtest_test.go": set(),
+    "internal/pgstore/memos_pgtest_test.go": {
+        "TestASendIsStoredWithTheStoresClockAndItsSentEvent",
+        "TestTheQuotaIsOnePerScopeAcrossSendersAndRolls",
+        "TestTheLiveBoundRefusesThe201stAndPassesAgainAfterOneExpires",
+        "TestConcurrentSendsAtQuotaMinusOneCommitExactlyOne",
+        "TestALateCommitterIsReturnedInsideTheCursorMargin",
+        "TestASendHeldOpenPastTheTimeoutIsTerminated",
+        "TestTheTimeoutDoesNotLeakOntoTheNextTransaction",
+        "TestTheSendArmsTheProductionTimeout",
+        "TestAPoolWaitBeforeBeginCannotAgeTheRow",
+        "TestRetractionIsTheSenderOrAnAdminAndLeavesATombstoneAndTwoEvents",
+        "TestAnAgentCredentialOfAnAdminCannotModerate",
+        "TestPruneDeletesTheRowAndKeepsItsEvents",
+        "TestAMemoIsLiveUntilItsExpiryInstantAndNotAt",
+        "TestReadIsAuthorisedAtReadTimeAndMissesAreUniform",
+        "TestSendIsAuthorisedAndScannedBeforeAnythingIsStored",
+        "TestTwoAgentsOfOnePrincipalAreToldApartByCredential",
+        "TestMigrationThreeUpgradesAVersionTwoDatabase",
+        "TestTheMemoRollbackRecipeLetsAnOlderBuildStartAndReUpgrades",
+    },
     "cmd/cairn-ui/database_pgtest_test.go": {
         "TestWithADatabaseTheSurfaceMovesItsStateThereAndHoldsInvitations",
         "TestTheWiredHalvesMintAndRedeemALinkAgainstPostgres",

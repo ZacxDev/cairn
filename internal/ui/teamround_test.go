@@ -243,7 +243,7 @@ func TestAProjectWideGrantIsListedLabelledAndRevocable(t *testing.T) {
 	}
 	// …a NARROWED manager may not (membership authority is not in a narrowing)…
 	admin := r.principal(invAdmin)
-	narrowed := control.Narrow(control.Resolve(r.authority.Model(), admin), []control.ID{tlA})
+	narrowed := control.Narrow(control.Resolve(r.authority.Model(), admin), []control.ID{tlA}, nil)
 	if _, err := sharing.Unshare(ctx, admin, narrowed, grant.ID); !errors.Is(err, ErrNotPermitted) {
 		t.Errorf("a NARROWED credential revoked a project-wide grant (err=%v)", err)
 	}

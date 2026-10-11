@@ -137,6 +137,59 @@ var migrations = []Migration{
 			)`,
 		},
 	},
+	{
+		// 🔴 SCOPE MAIL ("memos"), S1 of `claudedocs/plan-cairn-scope-mail.md`, decision 2.
+		// A NEW version, never an edit of 1 or 2 — version 2's one in-place edit was licensed
+		// only because it had never been applied outside a test, and version 3 gets no such
+		// exemption once it ships. ⚠ It makes a `cairn-ui` ROLLBACK refuse to start until the
+		// recipe on `refuseFromTheFuture` is run.
+		Version: 3,
+		Name:    "memos",
+		Statements: []string{
+			// 🔴 NO `DEFAULT now()` ON ANY TIMESTAMP. Every time is written from the store's
+			// injectable clock (`DB.now`), so expiry, retention and the cursor window are
+			// testable without sleeping — and `now()` in SQL is the TRANSACTION START, the very
+			// trap the client's cursor margin has to cover (decision 6).
+			//
+			// The two CHECKs state decision 10's retraction rule a second time, BY THE DATABASE:
+			// a retracted row holds no subject or body, and a live one holds both — so an
+			// `UPDATE` in `Retract` edited to keep the text fails rather than storing it.
+			`CREATE TABLE IF NOT EXISTS memos (
+				id                     BIGSERIAL   PRIMARY KEY,
+				scope_name             TEXT        NOT NULL,
+				sender_kind            TEXT        NOT NULL,
+				sender_id              TEXT        NOT NULL,
+				sender_credential_id   TEXT,
+				sender_display_at_send TEXT        NOT NULL,
+				subject                TEXT,
+				body                   TEXT,
+				created_at             TIMESTAMPTZ NOT NULL,
+				expires_at             TIMESTAMPTZ NOT NULL,
+				retracted_at           TIMESTAMPTZ,
+				CONSTRAINT memos_retracted_holds_no_text CHECK (retracted_at IS NULL OR (subject IS NULL AND body IS NULL)),
+				CONSTRAINT memos_live_holds_its_text CHECK (retracted_at IS NOT NULL OR (subject IS NOT NULL AND body IS NOT NULL))
+			)`,
+			// Delivery and the quota read a scope by time.
+			`CREATE INDEX IF NOT EXISTS memos_scope_created_idx ON memos (scope_name, created_at)`,
+			// The retention prune deletes by expiry on every send.
+			`CREATE INDEX IF NOT EXISTS memos_expires_at_idx ON memos (expires_at)`,
+			// 🔴 THE AUDIT, AND IT HAS NO FOREIGN KEY TO `memos`, DELIBERATELY: pruning a memo
+			// row must neither CASCADE into its events nor be BLOCKED by them (a `NO ACTION` key
+			// would block it). Append-only is a BEHAVIOUR, tested as one — prune, then count the
+			// events (`TestPruneDeletesTheRowAndKeepsItsEvents`) — not a grep.
+			`CREATE TABLE IF NOT EXISTS memo_events (
+				memo_id             BIGINT      NOT NULL,
+				seq                 INTEGER     NOT NULL,
+				kind                TEXT        NOT NULL CHECK (kind IN ('sent', 'retracted')),
+				actor_kind          TEXT        NOT NULL,
+				actor_id            TEXT        NOT NULL,
+				actor_credential_id TEXT,
+				actor_display       TEXT        NOT NULL,
+				at                  TIMESTAMPTZ NOT NULL,
+				PRIMARY KEY (memo_id, seq)
+			)`,
+		},
+	},
 }
 
 // advisoryLockKey is the `pg_advisory_lock` key the migration runner serialises on.
@@ -254,6 +307,18 @@ func (d *DB) migrateThrough(ctx context.Context, through int) error {
 //
 // ⚠ A team link minted before the rollback is NOT redeemable while the old build runs: it
 // does not know the tables exist, so the join path answers "not redeemable" for its token.
+//
+// 🔴 VERSION 3 (MEMOS) HAS THE SAME RECIPE, ONE NUMBER UP — a build that knows 1 and 2 refuses
+// a database at 3. Before starting it:
+//
+//	DELETE FROM schema_migrations WHERE version = 3;
+//
+// `memos` and `memo_events` stay and are ignored by the older build; re-upgrading re-applies
+// version 3's `IF NOT EXISTS` statements over them. Memos sent before the rollback are not
+// served while the older build runs (it has no memo code at all), and they keep expiring.
+// `TestTheMemoRollbackRecipeLetsAnOlderBuildStartAndReUpgrades` measures the three steps.
+// ⚠ Rolling back PAST version 2 as well (to a build that knows only 1) needs BOTH statements,
+// 3 first: an older build refuses ANY version it does not know.
 func refuseFromTheFuture(applied map[int]bool, known []int) error {
 	isKnown := map[int]bool{}
 	for _, v := range known {

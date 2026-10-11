@@ -293,10 +293,11 @@ func TestTheBinaryActuallyDispatchesSetMember(t *testing.T) {
 // functions moves the number here and fails until the sentence moves with it.
 func TestTheRegisteredFlagCountInProseMatchesTheCode(t *testing.T) {
 	spelled := map[string]string{
-		"registerCreateUserFlags":      "-create-user",
-		"registerIssueCredentialFlags": "-issue-credential",
-		"registerSetMemberFlags":       "-set-member",
-		"registerRenameUserFlags":      "-rename-user",
+		"registerCreateUserFlags":       "-create-user",
+		"registerIssueCredentialFlags":  "-issue-credential",
+		"registerRevokeCredentialFlags": "-revoke-credential",
+		"registerSetMemberFlags":        "-set-member",
+		"registerRenameUserFlags":       "-rename-user",
 	}
 	words := map[int]string{
 		1: "one", 2: "two", 3: "three", 4: "four", 5: "five",

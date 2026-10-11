@@ -1205,12 +1205,12 @@ jobs:
       # guard the row exists for, so it is never scored as a kill: each row runs ONLY the
       # tests it names (`-run` over its `killer` and `extra_killers`), so a row whose named
       # killer stays green reads SURVIVED, and MISATTRIBUTED now means one narrower thing — a
-      # listed extra killer fired while the named one did not. The battery runs over EIGHT packages, in `PKGS` order: `internal/control`,
+      # listed extra killer fired while the named one did not. The battery runs over NINE packages, in `PKGS` order: `internal/control`,
       # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
-      # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence` — the model, the
-      # token-file projection, P4's identity backends, the server that authorises from all of
-      # them, the pod's program, the browser surface, the browser surface's program and the
-      # presence owner predicate, because a mutant in one is killed by a guard in another, the
+      # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence`, `internal/memo` —
+      # the model, the token-file projection, P4's identity backends, the server that authorises
+      # from all of them, the pod's program, the browser surface, the browser surface's program,
+      # the presence owner predicate and scope mail's send/read/retract predicates, because a mutant in one is killed by a guard in another, the
       # refresh loop that bounds the adapter's declared divergence exists only in `main`, the
       # share flow is the second consumer of the same authority, the browser's startup refusals
       # are the only thing between a misconfigured deployment and a surface that serves nobody,

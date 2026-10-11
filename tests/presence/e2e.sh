@@ -211,7 +211,11 @@ read -r user_b _scope_b < <(create_user subject-e2e-b b@e2e.example.invalid proj
 
 issue() { # issue <file> <principal> <label> [narrow-scopes]
   local extra=()
-  [[ -n "${4:-}" ]] && extra=(-narrow-scopes "$4")
+  # `-issue-credential` refuses `-narrow-scopes` without `-narrow-verbs` (scope-mail plan, decision
+  # 17). Every verb is named, so the narrowed credential keeps exactly the authority the scope
+  # narrowing alone gave it — this script measures the SCOPE narrowing's effect on presence, not
+  # verbs.
+  [[ -n "${4:-}" ]] && extra=(-narrow-scopes "$4" -narrow-verbs read,write,admin)
   run_env CAIRN_CONTROL_JOURNAL="$journal" "$work/bin/cairn-server" -store "$store" -issue-credential \
     -principal "$2" -label "$3" -token-out "$1" "${extra[@]}" 2>>"$work/issue.log" ||
     couldnt "issue-credential $3 failed: $(cat "$work/issue.log")"

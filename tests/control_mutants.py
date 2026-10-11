@@ -154,6 +154,12 @@ PKGS = (
     # mutant in `internal/identity` or `internal/control` can be killed here, and its own guards
     # (the single-owner wall, the queue's owner filter) are reachable only at unit level.
     "./internal/presence/",
+    # 🔴 SCOPE MAIL'S PREDICATES (S1 of the scope-mail plan), BECAUSE THEY ARE AN AUTHZ SEAM.
+    # `memo.MaySend`, `MayRead` and `MayRetract` decide who may send, read and retract a memo
+    # from a `control.Authorization` — so a mutant in `internal/control`'s narrowing (decision
+    # 17's verb argument) is killed HERE, by the retraction rule's decision-17 case, and the
+    # predicates' own guards are reachable only at unit level until a listener exists (S2).
+    "./internal/memo/",
 )
 
 
@@ -374,17 +380,29 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="empty-narrowing-means-no-narrowing",
         path="internal/control/resolve.go",
-        old="\tif only == nil {\n\t\treturn a\n\t}",
-        new="\tif len(only) == 0 {\n\t\treturn a\n\t}",
+        # Re-derived when decision 17 gave `Narrow` a verb argument (scope-mail S1): the early
+        # return now needs BOTH narrowings absent, and the nil-vs-empty collapse is the same edit.
+        old="\tif only == nil && verbs == nil {\n\t\treturn a\n\t}",
+        new="\tif len(only) == 0 && verbs == nil {\n\t\treturn a\n\t}",
         killer="TestNarrowingIntersectsAndCannotWiden",
         why="the single most likely edit anybody makes to this function — `len(x) == 0` "
         "reads as the idiomatic nil check and collapses the two opposite states.",
     ),
     Mutant(
+        name="narrow-builds-no-filter-for-an-empty-list",
+        path="internal/control/resolve.go",
+        old="\tif only != nil {\n\t\tkeep = make(",
+        new="\tif len(only) > 0 {\n\t\tkeep = make(",
+        killer="TestNarrowingIntersectsAndCannotWiden",
+        why="the SECOND place the nil-vs-empty distinction lives since `Narrow` took a verb "
+        "argument (scope-mail S1): a nil `keep` means 'no scope filter', so building it only for a "
+        "non-empty list turns the see-nothing credential into an unrestricted one.",
+    ),
+    Mutant(
         name="narrowing-does-not-narrow",
         path="internal/control/resolve.go",
-        old="\t\tif _, wanted := keep[id]; !wanted {\n\t\t\tcontinue\n\t\t}",
-        new="\t\tif false {\n\t\t\tcontinue\n\t\t}",
+        old="\t\t\tif _, wanted := keep[id]; !wanted {\n\t\t\t\tcontinue\n\t\t\t}",
+        new="\t\t\tif false {\n\t\t\t\tcontinue\n\t\t\t}",
         killer="TestNarrowingIntersectsAndCannotWiden",
         why="a narrowing that is computed, stored and then not applied.",
     ),
@@ -411,7 +429,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="narrowing-not-applied-at-authenticate",
         path="internal/control/resolve.go",
-        old="return p, Narrow(Resolve(m, p), matched.NarrowedScopes), nil",
+        old="return p, Narrow(Resolve(m, p), matched.NarrowedScopes, matched.NarrowedVerbs), nil",
         new="return p, Resolve(m, p), nil",
         killer="TestACredentialNarrowedAtIssueTimeIsAppliedAtAuthenticateTime",
         why="a restriction that is stored, displayed in the UI, and never enforced. "
@@ -617,8 +635,10 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="empty-verb-grant-accepted",
         path="internal/control/journal.go",
-        old='\t\tif e.Verbs.Empty() {\n\t\t\treturn fmt.Errorf("%s: verbs is empty',
-        new='\t\tif false {\n\t\t\treturn fmt.Errorf("%s: verbs is empty',
+        # Re-derived (scope-mail S1): `credential-verbs-narrowed` has an empty-verbs refusal too,
+        # so the grant's is named by its own message.
+        old='\t\tif e.Verbs.Empty() {\n\t\t\treturn fmt.Errorf("%s: verbs is empty — a grant',
+        new='\t\tif false {\n\t\t\treturn fmt.Errorf("%s: verbs is empty — a grant',
         killer="TestTheJournalRefusesWhatItCannotEnforce",
         why="a row that reads like access in a grant log and confers none.",
     ),
@@ -5019,6 +5039,165 @@ MUTANTS: tuple[Mutant, ...] = (
         "obvious way to keep the table quiet on its own output — and it ships a key-context value "
         "glued directly before a marker, which the base caught.",
         pkgs=PKGS + ("./internal/redact/",),
+    ),
+    # ---- scope mail S1: VERB narrowing (decision 17), the revoke command (decision 16), and the
+    # memo predicates (decisions 9, 10, 12) — `internal/memo` is in `PKGS` for these ----------
+    Mutant(
+        name="narrow-ignores-its-verb-argument",
+        path="internal/control/resolve.go",
+        old="\t\t\tvs = vs.Intersect(*verbs)\n",
+        new="\t\t\tvs = vs.Intersect(AllSet)\n",
+        killer="TestAVerbNarrowedCredentialLacksAdmin",
+        extra_killers=("TestAVerbNarrowedAgentCredentialCannotRevokeAGrant",
+                       "TestMayRetractComposesTheSenderAndTheModerator",
+                       "TestThePredicatesAreRelationshipsOverOneModel"),
+        why="the base behaviour: scope narrowing kept each scope's FULL verb set, so an agent "
+        "credential carried admin — `POST /unshare` and memo moderation both reachable (decision 17).",
+    ),
+    Mutant(
+        name="narrow-returns-early-on-a-nil-scope-list",
+        path="internal/control/resolve.go",
+        old="\tif only == nil && verbs == nil {\n",
+        new="\tif only == nil {\n",
+        killer="TestVerbsOnlyNarrowingIsNotPassedThrough",
+        extra_killers=("TestAVerbNarrowedAgentCredentialCannotRevokeAGrant",),
+        why="the base `Narrow` returned on a nil scope list, so a credential narrowed by VERBS alone "
+        "passed through un-narrowed and kept admin (round 2 🟡1).",
+    ),
+    Mutant(
+        name="authenticate-drops-the-credentials-verbs",
+        path="internal/control/resolve.go",
+        old="matched.NarrowedScopes, matched.NarrowedVerbs), nil",
+        new="matched.NarrowedScopes, nil), nil",
+        killer="TestAVerbNarrowedCredentialLacksAdmin",
+        why="the narrowing is recorded and applied in the model and then not passed at the one place "
+        "authority is computed — every surface would serve the un-narrowed credential.",
+    ),
+    Mutant(
+        name="verbs-narrowed-replaces-rather-than-intersects",
+        path="internal/control/journal.go",
+        old="\t\t\tverbs = c.NarrowedVerbs.Intersect(e.Verbs)\n",
+        new="\t\t\tverbs = e.Verbs\n",
+        killer="TestVerbNarrowingIntersectsAndASecondEventCannotWiden",
+        why="'the latest event is the credential's verbs' reads naturally — and a second, wider "
+        "line then hands admin back (round 2 🟡1 (1)).",
+    ),
+    Mutant(
+        name="verbs-narrowed-to-nothing-accepted",
+        path="internal/control/journal.go",
+        old="\t\tif e.Verbs.Empty() {\n\t\t\treturn fmt.Errorf(\"%s: verbs is empty — a credential that should reach nothing",
+        new="\t\tif false {\n\t\t\treturn fmt.Errorf(\"%s: verbs is empty — a credential that should reach nothing",
+        killer="TestAVerbNarrowingOfNothingOrOfNobodyIsRefusedAndAppendsNothing",
+        why="an empty set is a quieter second spelling of revocation that no surface reports as one.",
+    ),
+    Mutant(
+        name="issue-drops-the-verb-narrowing-event",
+        path="internal/control/credential_issue.go",
+        old="\tif req.NarrowedVerbs != nil {\n",
+        new="\tif false && req.NarrowedVerbs != nil {\n",
+        killer="TestIssuingWithNarrowedVerbsAppendsBothEventsInOneBatch",
+        extra_killers=("TestNarrowVerbsIssuesACredentialWithoutAdmin",),
+        why="the flag parsed, the record line printing `verbs=read,write`, and the journal never told "
+        "— an agent credential issued with admin while the operator was told otherwise.",
+    ),
+    Mutant(
+        name="issue-command-accepts-narrow-scopes-without-narrow-verbs",
+        path="cmd/cairn-server/issuecredential.go",
+        old="\tif narrowed != nil && verbs == nil {\n",
+        new="\tif false && narrowed != nil && verbs == nil {\n",
+        killer="TestNarrowScopesWithoutNarrowVerbsIsRefusedAndWritesNothing",
+        why="'verbs are optional' is the obvious flag design, and it is how a scope-narrowed "
+        "agent credential inherits admin without anybody deciding it should (decision 17).",
+    ),
+    Mutant(
+        name="revoke-reports-success-without-appending",
+        path="internal/control/credential_revoke.go",
+        old="\tafter, err := s.Append(ctx, Event{Kind: EventCredentialRevoked, At: at, Actor: actor, CredentialID: id})\n",
+        new="\tafter, err := s.Model(ctx)\n",
+        killer="TestRevokeCredentialAppendsOneEventAndRefusesUnknownAndRevoked",
+        extra_killers=("TestRevokeCredentialAppendsOneEventPrintsTheLabelAndTheTokenStopsAuthenticating",
+                       "TestTheBinaryActuallyDispatchesIssueCredential"),
+        why="a revocation that prints the label and exits 0 is the whole operator-visible surface; "
+        "only the journal and a re-authentication can tell the host was never cut off.",
+    ),
+    Mutant(
+        name="revoke-accepts-an-already-revoked-credential",
+        path="internal/control/credential_revoke.go",
+        old="\tif !c.Live() {\n",
+        new="\tif false {\n",
+        killer="TestRevokeCredentialAppendsOneEventAndRefusesUnknownAndRevoked",
+        extra_killers=("TestRevokeCredentialRefusesUnknownAndAlreadyRevokedInTheirOwnWordsAndAppendsNothing",),
+        why="`apply` accepts a second revocation as a no-op, so success is the natural answer — and "
+        "it tells an operator who typed the dead credential's id that the live one is cut off.",
+    ),
+    Mutant(
+        name="memo-maysend-asks-read",
+        path="internal/memo/policy.go",
+        old="\treturn a.VisibleScopes(control.VerbWrite).Allows(scope)\n",
+        new="\treturn a.VisibleScopes(control.VerbRead).Allows(scope)\n",
+        killer="TestThePredicatesAreRelationshipsOverOneModel",
+        why="a reader sending looks harmless — and O2 is that sending needs exactly the entry-write "
+        "predicate (e2e sabotage (b)).",
+    ),
+    Mutant(
+        name="memo-mayread-asks-write",
+        path="internal/memo/policy.go",
+        old="\treturn a.VisibleScopes(control.VerbRead).Allows(scope)\n",
+        new="\treturn a.VisibleScopes(control.VerbWrite).Allows(scope)\n",
+        killer="TestThePredicatesAreRelationshipsOverOneModel",
+        extra_killers=("TestMayRetractComposesTheSenderAndTheModerator",),
+        why="one verb confused for the other at the second of two near-identical lines.",
+    ),
+    Mutant(
+        name="memo-mayretract-sender-needs-no-read",
+        path="internal/memo/policy.go",
+        old=" && MayRead(a, scope) {\n",
+        new=" {\n",
+        killer="TestMayRetractComposesTheSenderAndTheModerator",
+        why="'the sender may always retract' — through a credential narrowed AWAY from the scope "
+        "too, which decision 10 refuses.",
+    ),
+    Mutant(
+        name="memo-mayretract-without-the-moderator-rule",
+        path="internal/memo/policy.go",
+        old="\treturn a.VisibleScopes(control.VerbAdmin).Allows(scope)\n",
+        new="\treturn false\n",
+        killer="TestMayRetractComposesTheSenderAndTheModerator",
+        why="O8 names two retractors; a predicate written from the sender case alone drops moderation.",
+    ),
+    Mutant(
+        name="memo-mayretract-ignores-the-senders-kind",
+        path="internal/memo/policy.go",
+        old="string(p.Kind) == senderKind && ",
+        new="",
+        killer="TestMayRetractComposesTheSenderAndTheModerator",
+        why="ids look unique, but a project and a user are two principals; the stable key is (kind, id).",
+    ),
+    Mutant(
+        name="memo-send-scan-skipped",
+        path="internal/memo/policy.go",
+        old="\t\t_, hits := scan.String(text)\n",
+        new="\t\tvar hits []redact.Hit\n\t\t_ = text\n",
+        killer="TestEachConfidentRuleRefusesAndTheTextWithoutTheValueIsAccepted",
+        why="the positive control that the scan RUNS at all (e2e sabotage (e)).",
+    ),
+    Mutant(
+        name="memo-send-refuses-on-any-redactor-hit",
+        path="internal/memo/policy.go",
+        old="\t\t\tif confidentSecretRules[h.Rule] {\n",
+        new="\t\t\tif h.Rule != \"\" {\n",
+        killer="TestNonConfidentHitsAreAccepted",
+        why="'refuse anything the redactor flags' is the safe-sounding rule, and it turns away honest "
+        "memos at the measured ~10% clean-line damage rate (decision 11).",
+    ),
+    Mutant(
+        name="memo-unsafe-passes-default-ignorable-letters",
+        path="internal/memo/predicates.go",
+        old="\tcase unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r):\n",
+        new="\tcase false:\n",
+        killer="TestEveryDefaultIgnorableCodePointIsUnsafe",
+        extra_killers=("TestUnsafeByCategoryIncludingTagsAndVariationSelectors",),
+        why="the category test reads as complete — and U+3164, an invisible LETTER, passed it (S0 audit).",
     ),
 )
 

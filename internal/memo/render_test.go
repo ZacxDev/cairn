@@ -233,18 +233,18 @@ func TestBreaksFenceRefusesEachHostileClass(t *testing.T) {
 		refuse = append(refuse, "x"+string(r)+"y")
 	}
 	refuse = append(refuse,
-		"x y", "x y", // Zl, Zp
-		"x\xed\xa0\x80y",        // a lone surrogate's three-byte encoding
-		"x\xffy",                // an invalid byte
-		"x\ry",                  // a LONE CR is Cc; only "\r\n" is folded
-		"‮", "⁦", "‎", "‏", "؜", // named, so the table walk above has a control
+		"x\u2028y", "x\u2029y", // Zl, Zp
+		"x\xed\xa0\x80y",                                 // a lone surrogate's three-byte encoding
+		"x\xffy",                                         // an invalid byte
+		"x\ry",                                           // a LONE CR is Cc; only "\r\n" is folded
+		"\u202e", "\u2066", "\u200e", "\u200f", "\u061c", // named, so the table walk above has a control
 	)
 	for _, s := range refuse {
 		if !BreaksFence(s) {
 			t.Errorf("ACCEPTED at send: %q", s)
 		}
 	}
-	for _, s := range []string{"a\nb", "a\tb", "a\r\nb", "plain", "​", "️", "", "͸"} {
+	for _, s := range []string{"a\nb", "a\tb", "a\r\nb", "plain", "\u200b", "\ufe0f", "\ue000", "\u0378"} {
 		if BreaksFence(s) {
 			t.Errorf("REFUSED at send, but the send rule is narrow: %q", s)
 		}
@@ -263,7 +263,7 @@ func TestSubjectRefusesNewlineAndTab(t *testing.T) {
 	if SubjectBreaksFence("one line subject") {
 		t.Errorf("an ordinary subject was refused")
 	}
-	if !SubjectBreaksFence("x‮y") {
+	if !SubjectBreaksFence("x\u202ey") {
 		t.Errorf("a subject must also refuse everything a body refuses")
 	}
 }
@@ -285,6 +285,8 @@ func TestUnsafeByCategoryIncludingTagsAndVariationSelectors(t *testing.T) {
 		0x0378, 0xFFFE, 0xFFFF, // Cn (unassigned, noncharacters)
 		0x2028, 0x2029, // Zl, Zp
 		0xFE00, 0xFE0F, 0x180B, 0xE0100, 0xE01EF, // Variation_Selector (Mn)
+		0x3164, 0x115F, 0x1160, 0xFFA0, // Hangul fillers (Lo, Default_Ignorable)
+		0x034F, 0x17B4, 0x17B5, // combining grapheme joiner, Khmer inherent vowels (Mn, Default_Ignorable)
 	}
 	for _, r := range unsafe {
 		if !Unsafe(r) {
@@ -299,12 +301,40 @@ func TestUnsafeByCategoryIncludingTagsAndVariationSelectors(t *testing.T) {
 	}
 }
 
+// TestEveryDefaultIgnorableCodePointIsUnsafe sweeps every code point and requires each
+// Default_Ignorable_Code_Point candidate — the superset its Unicode definition subtracts from,
+// Other_Default_Ignorable_Code_Point ∪ Cf ∪ Variation_Selector — to be Unsafe: a code point
+// Unicode says renders as NOTHING must never reach an agent as itself. An S0 audit measured
+// U+3164 (a Hangul filler, category Lo) passing.
+//
+// ⚠ THE SWEEP IS OVER THE SUPERSET, so the code points the definition subtracts (white space,
+// U+FFF9..U+FFFB, the Egyptian format controls, prepended concatenation marks) are required
+// Unsafe too — stronger than the property, and true today because each is Cf.
+func TestEveryDefaultIgnorableCodePointIsUnsafe(t *testing.T) {
+	n := 0
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if !(unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) || unicode.Is(unicode.Cf, r) ||
+			unicode.Is(unicode.Variation_Selector, r)) {
+			continue
+		}
+		n++
+		if !Unsafe(r) {
+			t.Errorf("Default_Ignorable U+%04X is not Unsafe", r)
+		}
+	}
+	// POSITIVE CONTROL on the sweep: the superset is thousands of code points (the reserved
+	// E0000 block alone is 4,096); a sweep that found almost none is a broken instrument.
+	if n < 4000 {
+		t.Fatalf("the sweep found only %d candidate code points — the instrument is wired to nothing", n)
+	}
+}
+
 func TestSanitizeReplacesEveryUnsafeCodePointWithLiteralExpectations(t *testing.T) {
 	cases := map[string]string{
 		"func f() {\n\tif x {\n\t\treturn\n\t}\n}\n": "func f() { ⏎  if x { ⏎   return ⏎  } ⏎ } ⏎ ",
 		"first line\r\nsecond line":                  "first line ⏎ second line",
-		"careful ⚠️ here":                            "careful ⚠� here",
-		"a​b⁠c":                                      "a�b�c",
+		"careful ⚠\ufe0f here":                       "careful ⚠� here",
+		"a\u200bb\u2060c":                            "a�b�c",
 		"x" + string(rune(0xE0041)) + "y":            "x�y",
 		"looks empty:" + string(rune(0xE0100)):       "looks empty:�",
 		"esc\x1b[2J":                                 "esc�[2J",
