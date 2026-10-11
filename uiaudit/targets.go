@@ -335,6 +335,11 @@ func init() {
 		"surface's one script, linked only by an ARMED deployment (this walk's worlds are unarmed). " +
 		"`internal/ui`'s TestThePWAScriptIsServedAtItsContentHashedRoute asserts its bytes and headers; " +
 		"`pwa_test.go` drives what it does in a real browser"
+	// The join-fragment row, for the same reason: the third script, linked only by `GET /join`.
+	notADocument[ui.JoinScriptPath] = "a text/javascript response and not a document — the join page's " +
+		"script, which moves a link's token out of the URL fragment into the accept form. " +
+		"`internal/ui`'s join-fragment tests assert its bytes, headers and spelling guard; " +
+		"`join_test.go` drives what it does in a real browser"
 	for _, p := range ui.ScreenshotPaths() {
 		notADocument[p] = "an image/png response and not a document — one committed install screenshot. " +
 			"`internal/ui`'s TestTheScreenshotSetIsExactlyTheCommittedFiles asserts its bytes and headers, and " +
