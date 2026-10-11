@@ -101,13 +101,15 @@ func TestEveryFrameTitleIsComposedByDocumentTitle(t *testing.T) {
 // pre-composed title coming back — `documentTitle` is the only place the product name is spelled.
 //
 // ⚠ IT IS A GUARD ON A WORD, AND THAT IS STATED RATHER THAN HIDDEN. It follows every IDENTIFIER in
-// a label to every value that name is given — `:=`/`=`/`+=` and `var`/`const` in the enclosing
+// a label to the values that name is given by `:=`/`=`/`+=` and `var`/`const` in the enclosing
 // function, and `var`/`const` at package level in any file — and from there to the identifiers in
 // THOSE values, transitively. `title := "cairn — team"` then `shell(title, …)` is the shape a
 // merged-in page arrived with, on two branches the crawl does not reach. What still walks past
-// it: a label returned by a FUNCTION, a struct field or map value, and a name reused for an
-// unrelated value elsewhere in the same function is read too (keyed by name, so it over-reads
-// rather than under-reads).
+// it: a label returned by a FUNCTION, a struct field or map value, a FUNCTION PARAMETER (a
+// wrapper `func frame(label string, …) { shell(label, …) }` — the value arrives at a call site
+// the walk does not connect), and a RANGE variable. A name reused for an unrelated value
+// elsewhere in the same function is read too (keyed by name, so it over-reads rather than
+// under-reads).
 func TestNoPageLabelSpellsTheProductName(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
