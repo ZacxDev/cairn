@@ -318,19 +318,17 @@
    * cannot emulate `display-mode: standalone` (measured: `setEmulatedMedia` had no effect), so a rule
    * under that query would be unmeasurable by any harness here; keyed on the controls, it renders under
    * the same `matchMedia` stub that reveals them, and `uiaudit`'s `TestStandaloneBackAndReload` reads
-   * the sticky header, its row count, its reading order and the overscroll value in a real chromium.
-   * The cost: a standalone window with script off gets none of it — it also has no Back to pin.
+   * the header's position, its row count, its reading order and the overscroll value in a real chromium.
+   * The cost: a standalone window with script off gets none of it — it also has no Back to show.
    *
-   * The header is STICKY there because the window has no address bar to scroll back to: the way
-   * around (wordmark, Back, Reload, nav) stays on screen. ⚠ It is ~100px tall at the touch rungs
-   * (two 44px rows, S1's measurement), so the touch block below WIDENS row 1 for the two controls
-   * rather than letting them open a third row — the test pins "no row added". The overscroll rule
-   * stops a scroll at the page's end from chaining into the window (Android's pull-to-refresh, a
-   * rubber-band on the sticky header). */
-  .page-header:has(> .standalone-nav:not([hidden])) {
-    @apply sticky top-0 z-20 bg-surface pt-2;
-  }
-
+   * 🔴 THE HEADER IS NOT STICKY THERE — AN OPERATOR DECISION, AND DO NOT RE-ADD IT. S5 first pinned it
+   * (`sticky top-0` on an opaque surface): it held ~12% of a phone screen on every page (two 44px rows,
+   * S1's measurement) and covered every in-page anchor target, and the recorded ask was working Back and
+   * Reload, not a pinned header. So it scrolls away like a tab's, and no `scroll-padding` is needed;
+   * `TestStandaloneBackAndReload` refuses `sticky` and reads the header leaving the viewport after a
+   * 400px scroll. The touch block below still WIDENS row 1 for the two controls rather than letting
+   * them open a third row — the test pins "no row added". The overscroll rule stops a scroll at the
+   * page's end from chaining into the window (Android's pull-to-refresh). */
   html:has(.page-header > .standalone-nav:not([hidden])) {
     @apply overscroll-y-contain;
   }
@@ -1236,7 +1234,7 @@
     /* S5 — in an installed app's window, Back and Reload join ROW 1 (the DOM puts them right after
      * the wordmark, so auto-placement does it with no `order`): four equal targets beside the
      * wordmark, and the viewer line widens to keep Sign out in the last column of row 2. The header
-     * stays two rows — it is sticky there (above), and a third row would cover every page. */
+     * stays two rows — a third would push every page's content down another 44px. */
     .page-header:has(> .standalone-nav:not([hidden])) {
       grid-template-columns: auto repeat(4, minmax(0, 1fr));
     }

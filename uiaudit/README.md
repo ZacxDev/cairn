@@ -717,8 +717,9 @@ script runs (CDP cannot emulate the query — the plan's measurement). The stub 
 control: the controls must be hidden without it and shown with it. Because `tailwind.css` keys the
 standalone layout on the REVEALED controls (`:has(…)`) rather than on the media query, the same stub
 renders the real standalone stylesheet, so the test READS it: no header row added at mobile/tablet (2
-rows either way), the walk's own `headerOrderBreaks`, no overflow, `position: sticky` (the header still
-at the top after a 400px scroll while the tab's has scrolled away), `overscroll-behavior-y: contain` vs
+rows either way), the walk's own `headerOrderBreaks`, no overflow, the header NOT `sticky`/`fixed` and
+scrolled away after a 400px scroll exactly like the tab's (an operator decision: a pinned two-row header
+held ~12% of a phone screen and covered in-page anchors), `overscroll-behavior-y: contain` vs
 `auto`; then scope → entry → Back lands on the scope page and Reload loads a fresh document.
 
 ⚠ **`pwa_check.sh` does not read it.** The plan gives S5 no clause: the closing condition covers S5 by
@@ -1426,6 +1427,6 @@ indistinguishable from a fork PR by design.
 | `control_test.go` | the positive control, the structural-zero pair, the document-status gate |
 | `touch_test.go` | touch reachability (both halves, real chromium), the `target-size` and input-font controls, the journal world |
 | `pwa_test.go` | the closing condition's clauses (a), (b: name, icon, screenshots) and (e): chromium's installability and manifest verdicts over three boots, and `pwa.js`'s storage in four browsers |
-| `standalone_test.go` | S5: the standalone window's Back/Reload — hidden in a tab, revealed under a `matchMedia` stub, the sticky two-row header, and Back/Reload behaviour, in one armed world |
+| `standalone_test.go` | S5: the standalone window's Back/Reload — hidden in a tab, revealed under a `matchMedia` stub, the two-row header that is NOT sticky, and Back/Reload behaviour, in one armed world |
 | `pwa_check.sh` | the closing-condition ORCHESTRATOR: runs (a), (b), the walk's (c), the root module's (d) and (e); `--self-test` sabotages each |
 | `screenshots.go` | `uiaudit -screenshots <dir>`: the manifest's install screenshots, captured from the walk's world — the generator `flake.nix`'s `uiScreenshots` runs in the sandbox |

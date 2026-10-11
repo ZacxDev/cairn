@@ -368,13 +368,6 @@
     line-height: var(--tw-leading, var(--text-sm--line-height));
     color: var(--color-muted);
   }
-  .page-header:has(> .standalone-nav:not([hidden])) {
-    position: sticky;
-    top: 0px;
-    z-index: 20;
-    background-color: var(--color-surface);
-    padding-top: calc(var(--spacing) * 2);
-  }
   html:has(.page-header > .standalone-nav:not([hidden])) {
     overscroll-behavior-y: contain;
   }

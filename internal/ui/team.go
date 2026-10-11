@@ -3,7 +3,6 @@ package ui
 import (
 	"errors"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -300,9 +299,9 @@ func (s *Server) handleTeamLink(w http.ResponseWriter, r *http.Request, id ident
 			shown = append(shown, targetLabel(t, names[t]))
 		}
 		view.Minted = &MintedTeamLink{
-			// A PATH AND A QUERY, NEVER AN ABSOLUTE URL — `handleInvite`'s ruling. And the SAME
+			// A PATH AND A FRAGMENT, NEVER AN ABSOLUTE URL — `handleInvite`'s ruling. And the SAME
 			// join path and field as an invitation: see `ControlInviting.Links`.
-			Link:     JoinPath + "?" + url.Values{inviteTokenField: []string{token}}.Encode(),
+			Link:     joinLink(token),
 			Role:     string(link.Role),
 			Expires:  link.ExpiresAt.UTC().Format(time.RFC3339),
 			Reusable: link.Reusable,
@@ -622,7 +621,8 @@ func mintedLinkSection(m *MintedTeamLink) g.Node {
 		h.P(h.Class("invite-link"), g.Text(m.Link)),
 		h.P(h.Class("note"), g.Text(
 			"Put this deployment's own address in front of that path before sending it. "+
-				"cairn cannot know the address you reach it by, so it does not guess one.")),
+				"cairn cannot know the address you reach it by, so it does not guess one. Send all of "+
+				"it: the part after # is the invitation, and no browser sends that part to any server.")),
 		h.P(h.Class("note"), g.Text(reuse)),
 		h.Ul(h.Class("invites"), h.Li(
 			h.Class("invite-row"),

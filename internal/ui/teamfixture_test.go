@@ -26,9 +26,12 @@ type staticTeamLinks struct {
 
 	minted, revoked int
 	token           string
-	mintErr         error
-	revokeErr       error
-	readErr         error
+	// reusable is what `ReusableLink` answers for `token`.
+	reusable    bool
+	reusableErr error
+	mintErr     error
+	revokeErr   error
+	readErr     error
 
 	lastActor    control.Principal
 	lastTargets  []invite.Target
@@ -71,6 +74,15 @@ func (s *staticTeamLinks) Revoke(_ context.Context, actor control.Principal, dig
 	}
 	s.revoked++
 	return nil
+}
+
+// ReusableLink answers `reusable` for the fixture's own token and false for anything else, or
+// `reusableErr` when set.
+func (s *staticTeamLinks) ReusableLink(token string) (bool, error) {
+	if s.reusableErr != nil {
+		return false, s.reusableErr
+	}
+	return token != "" && token == s.token && s.reusable, nil
 }
 
 var _ TeamLinking = (*staticTeamLinks)(nil)

@@ -109,6 +109,17 @@ const (
 	maxFlightsPerClient = 8
 )
 
+// flightInvite is the invitation token a flight carries, and HOW it reached the start row.
+//
+// 🔴 `viaQuery` IS WHAT LETS THE CALLBACK REFUSE A REUSABLE TEAM LINK THAT TRAVELLED IN A URL
+// (`admitQueryBorne`). It is set when the token came in [inviteQueryTokenField] — the field only a
+// LEGACY `/join?invite=` page posts — and it is the reason the two fields are not one: by the time
+// the token is on the flight, nothing else remembers whether a server's access log saw it.
+type flightInvite struct {
+	token    string
+	viaQuery bool
+}
+
 // flight is one started, uncompleted sign-in.
 //
 // 🔴 IT HOLDS THE PKCE VERIFIER AND THE VERIFIER NEVER LEAVES THIS PROCESS. The alternative
@@ -138,7 +149,7 @@ type flight struct {
 	// ⚠ IT IS CLEARED WHEN THE RECORD IS CONSUMED, for the reason `verifier` is — see
 	// [flights.take]. A spent record keeping it would leave a live capability in memory for
 	// the rest of the TTL, and unlike a spent verifier this one would still be redeemable.
-	invite string
+	invite flightInvite
 	// next is the validated return-to value this sign-in should land on, or "" for `/`.
 	//
 	// 🔴 IT RIDES THE FLIGHT FOR THE INVITE TOKEN'S REASONS, MINUS THE SECRECY ONE. It is not a
@@ -250,7 +261,7 @@ func (r flightRefusal) String() string {
 // per-client cap allows. The token is resolved once, at the callback, where it is being
 // redeemed anyway and where its refusal is indistinguishable from every other reason a
 // sign-in did not complete.
-func (f *flights) start(client, verifier, invite, next string, ttl time.Duration) (string, flightRefusal) {
+func (f *flights) start(client, verifier string, invite flightInvite, next string, ttl time.Duration) (string, flightRefusal) {
 	id, err := newFlightID()
 	if err != nil {
 		return "", flightRefusedNoID
@@ -305,15 +316,15 @@ func (f *flights) start(client, verifier, invite, next string, ttl time.Duration
 // of the TTL for no reason — which matters more now that a spent record is KEPT until expiry
 // rather than deleted. `TestAFlightIsSingleUseAndBoundToItsBrowser` asserts it on the table's
 // own internals, because nothing observable from outside can see a field that is not read.
-func (f *flights) take(id string) (verifier, invite, next string, ok bool) {
+func (f *flights) take(id string) (verifier string, invite flightInvite, next string, ok bool) {
 	if id == "" {
-		return "", "", "", false
+		return "", flightInvite{}, "", false
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	rec, held := f.open[id]
 	if !held || rec.consumed || !f.now().Before(rec.expires) {
-		return "", "", "", false
+		return "", flightInvite{}, "", false
 	}
 	verifier, invite, next = rec.verifier, rec.invite, rec.next
 	rec.consumed = true
@@ -325,7 +336,7 @@ func (f *flights) take(id string) (verifier, invite, next string, ok bool) {
 	// The return-to value is cleared with them: it is no secret, but a consumed record is
 	// one nothing may read again, and a field that survived consumption would be the one a
 	// later change started reading.
-	rec.verifier, rec.invite, rec.next = "", "", ""
+	rec.verifier, rec.invite, rec.next = "", flightInvite{}, ""
 	f.open[id] = rec
 	return verifier, invite, next, true
 }
@@ -556,8 +567,15 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request, _ iden
 	// `PostFormValue` returned `""`. `handleJoinPage` records the mirror image of the same
 	// distinction — there the value must come from the QUERY, because a link is the only
 	// thing that can carry it — so the two reads are deliberately spelled differently.
-	inviteToken := r.PostFormValue(inviteTokenField)
-	id, outcome := s.flights.start(client, verifier, inviteToken, next, FlightTTL)
+	//
+	// 🔴 AND A LEGACY `/join?invite=` PAGE POSTS IT IN [inviteQueryTokenField], WHICH MARKS THE
+	// FLIGHT QUERY-BORNE — read with `PostFormValue` too, for the same reason. If BOTH fields
+	// arrive the query-borne one wins: the mark only ever makes the callback refuse MORE.
+	carried := flightInvite{token: r.PostFormValue(inviteTokenField)}
+	if legacy := r.PostFormValue(inviteQueryTokenField); legacy != "" {
+		carried = flightInvite{token: legacy, viaQuery: true}
+	}
+	id, outcome := s.flights.start(client, verifier, carried, next, FlightTTL)
 	if outcome != flightOpened {
 		// The log names WHICH bound refused, because "the table is full" and "you have spent
 		// your own share" send an operator to completely different places — and a surface
@@ -650,7 +668,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 	if cookie, err := r.Cookie(oauthFlightCookieName); err == nil {
 		flightID = cookie.Value
 	}
-	verifier, inviteToken, flightNext, held := s.flights.take(flightID)
+	verifier, carried, flightNext, held := s.flights.take(flightID)
 	if !held {
 		// No cookie, an expired flight, or a replay. All three are the same observable
 		// deliberately: a callback that said which would tell a caller whether a given
@@ -683,6 +701,12 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 		s.renderSignIn(w, http.StatusBadRequest, oauthIncomplete, next)
 		return
 	}
+	// 🔴 A REUSABLE TEAM LINK THAT TRAVELLED IN A QUERY STRING IS DROPPED HERE, BEFORE EITHER
+	// REDEMPTION ARM CAN READ IT. Dropping it is the refusal: a stranger then has no way past the
+	// exchange's `UnprovisionedSubject` and gets the uniform `signInRefused`, exactly as for a dead
+	// link; a known user is signed in and joins nothing — the house rule that a failed redemption
+	// never locks an existing user out (see the success path below). See `admitQueryBorne`.
+	inviteToken := s.admitQueryBorne(carried, client)
 
 	principal, err := s.oauth.Exchange(r.Context(), code, verifier)
 	if err != nil {

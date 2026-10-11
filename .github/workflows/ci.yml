@@ -1963,13 +1963,15 @@ jobs:
           # the tree that introduced this job; 108 on the mobile plan's S0 (88 measured on its
           # base, chromium 154); 115 on S1; 119 on S1's round 1; 124 on S2; 127 on S4
           # (`TestPWAClauses` gained `b_screenshots`, `shortcuts` and `e_storage` — measured,
-          # chromium 152 from the flake's nixpkgs); 128 on S5 (`TestStandaloneBackAndReload`, one
-          # top-level test with no subtests — DERIVED as S4's floor plus one, NOT measured on a
-          # full run: the operator skipped local suite runs for that slice, so this job's own count
-          # line is the measurement). It notices a ROW deleted from a table, which neither derived
-          # check above can see.
-          if [ "$total" -lt 128 ]; then
-            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 128 — a table row was deleted"
+          # chromium 152 from the flake's nixpkgs); 129 on S5 (`TestStandaloneBackAndReload`, one
+          # top-level test with no subtests — measured on #223's CI run: `top-level PASS=53
+          # subtest PASS=76 total=129`, chromium 152 from the flake's nixpkgs; the S5 commit had
+          # DERIVED 128 as S4's floor plus one, and the measurement came in one above it, so the
+          # derivation is retracted rather than carried; the not-sticky follow-up changes
+          # assertions inside that test and adds or removes no test or subtest). It notices a ROW
+          # deleted from a table, which neither derived check above can see.
+          if [ "$total" -lt 129 ]; then
+            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 129 — a table row was deleted"
             exit 1
           fi
 

@@ -290,14 +290,14 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request, id identit
 		NoStore: false,
 		Project: chosen,
 		Minted: &MintedInvite{
-			// 🔴 A PATH AND A QUERY, NEVER AN ABSOLUTE URL, BECAUSE THIS PROCESS DOES NOT
+			// 🔴 A PATH AND A FRAGMENT (`joinLink`), NEVER AN ABSOLUTE URL, BECAUSE THIS PROCESS DOES NOT
 			// KNOW ITS OWN EXTERNAL ORIGIN. The scheme and host a reader must send are
 			// configuration — the identical reason `OAuthCallbackPath` is spelled as a path
 			// and its full URL is not — and the only candidate available here is a `Host`
 			// header a proxy chooses. A page that guessed it would hand somebody a link to
 			// the wrong hostname, which for a single-use capability means a link they cannot
 			// re-issue. [MintedInvite.Link] says so on the page instead.
-			Link:    JoinPath + "?" + url.Values{inviteTokenField: []string{token}}.Encode(),
+			Link:    joinLink(token),
 			Role:    inv.Role,
 			Expires: inv.ExpiresAt.UTC().Format(time.RFC3339),
 		},
@@ -375,6 +375,11 @@ func (s *Server) handleJoinPage(w http.ResponseWriter, r *http.Request, _ identi
 	// navigation uses. The query is the only place an invitation LINK can put it. (The draft
 	// said "`FormValue` rather than `URL.Query().Get`" beside a line doing the reverse; the
 	// code was right and the sentence was not.)
+	//
+	// 🔴 SINCE THE FRAGMENT, AN EMPTY `token` IS WHAT EVERY NEW LINK ARRIVES WITH: the token is
+	// after the `#`, which no browser sends, so this handler sees `/join` bare and `JoinPage`
+	// renders the script-driven page. A non-empty one is a LEGACY `?invite=` link, rendered into
+	// `inviteQueryTokenField` so the callback can refuse a reusable team link on it.
 	token := r.URL.Query().Get(inviteTokenField)
 	// 🔴 THE PROVIDER PREDICATE IS THE SAME ONE THE SIGN-IN PAGE ASKS, NOT A NEW CHECK.
 	// `providerArmed` is per-render deliberately (see its comment): a deployment whose key

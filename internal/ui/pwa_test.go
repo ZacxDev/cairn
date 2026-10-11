@@ -412,10 +412,12 @@ func TestEveryFrameCallsPWAHead(t *testing.T) {
 // `pwaHead`. The head renders exactly one `<script`, the allowlisted `pwa.js` tag; and every armed page
 // carries `pwa.js` exactly once and no script element beyond the two allowlisted tags.
 //
-// The allowlist is pinned as a LITERAL list of the two paths, each digested here from the embedded
-// bytes — a third entry, or `pwa.js` dropped from the list, is red.
+// The allowlist is pinned as a LITERAL list of the three paths, each digested here from the committed
+// bytes — a fourth entry, or any one dropped from the list, is red. The third is `join.js` (the
+// team-link fragment), linked by the fragment join page alone (`joinfragment_test.go`).
 func TestTheArmedPWAHeadAddsOnlyThePWAScript(t *testing.T) {
-	want := []string{"/static/filter." + scriptDigestFromBytes(t) + ".js", "/static/pwa." + pwaDigestFromBytes(t) + ".js"}
+	want := []string{"/static/filter." + scriptDigestFromBytes(t) + ".js", "/static/pwa." + pwaDigestFromBytes(t) + ".js",
+		"/static/join." + joinDigestFromBytes(t) + ".js"}
 	if got := AllowedScriptSources(); !slices.Equal(got, want) {
 		t.Errorf("AllowedScriptSources() = %v, want exactly %v", got, want)
 	}

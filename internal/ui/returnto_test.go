@@ -497,7 +497,7 @@ func TestTheGitHubFlightCarriesTheReturnPathServerSide(t *testing.T) {
 // the landing to be `/`.
 func TestTheCallbackRevalidatesTheReturnPathAtUse(t *testing.T) {
 	srv := providerServer(t, &stubOAuth{})
-	id, outcome := srv.flights.start("198.51.100.20", "fixture-verifier-planted", "", "//evil.invalid", time.Minute)
+	id, outcome := srv.flights.start("198.51.100.20", "fixture-verifier-planted", flightInvite{}, "//evil.invalid", time.Minute)
 	if outcome != flightOpened {
 		t.Fatalf("PRECONDITION: %v", outcome)
 	}

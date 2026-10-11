@@ -509,8 +509,9 @@ func pwaInstallButton(a App) g.Node {
 //
 // 🔴 THE SHELL PLACES THEM IMMEDIATELY AFTER THE WORDMARK. The touch header is a grid whose
 // auto-placement IS the DOM order (`tailwind.css`, B2), so that position is what puts them on the
-// header's first row with the nav links — and the stylesheet keys the whole standalone layout (sticky
-// header, the wider first row, `overscroll-behavior-y`) on these controls being REVEALED, not on a media
+// header's first row with the nav links — and the stylesheet keys the whole standalone layout (the
+// wider first row, `overscroll-behavior-y`; the header is NOT sticky, by operator decision) on these
+// controls being REVEALED, not on a media
 // query a harness cannot drive (`uiaudit`'s `TestStandaloneBackAndReload`).
 //
 // ⚠ BACK IS A NO-OP ON THE FIRST PAGE OF A WINDOW (nothing to go back to). It is not hidden there:

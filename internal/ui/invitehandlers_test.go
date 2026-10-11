@@ -284,7 +284,7 @@ func TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged(t *testing.T) {
 	body := rec.Body.String()
 
 	// The link, as the page renders it: a PATH plus the token, and no origin.
-	wantLink := JoinPath + "?" + url.Values{inviteTokenField: []string{fixtureInviteToken}}.Encode()
+	wantLink := JoinPath + "#" + url.Values{inviteTokenField: []string{fixtureInviteToken}}.Encode()
 	if !strings.Contains(body, wantLink) {
 		t.Errorf("the minted page does not carry the join link %q. The token is returned once and cannot "+
 			"be re-derived, so a page that does not render it has produced an invitation nobody can use",
@@ -471,6 +471,12 @@ func TestTheJoinPageNeverConsultsTheInviteAuthority(t *testing.T) {
 // ⚠ IT IS NOT AN ORACLE, WHICH IS WHY IT IS ALLOWED WHERE EVERY OTHER DISTINCTION IS NOT:
 // "the URL carried no token" is a fact about the caller's own address bar — a truncated
 // paste, a retyped link — and no token was presented for the answer to be about.
+//
+// 🔴 SINCE THE FRAGMENT, A BARE `GET /join` IS ALSO WHAT EVERY NEW LINK OPENS — the token is after
+// the `#`, which the server never sees. So the server renders the no-invitation sentence and the
+// accept form BOTH `hidden`, and `join.js` reveals exactly one of them; what this pins is that the
+// server never renders a VISIBLE form with an empty token (the script's half is
+// `TestTheJoinScriptTouchesOnlyWhatItSays`).
 func TestTheJoinPageWithoutATokenSaysSoAndOffersNoForm(t *testing.T) {
 	rig := newInviteRig(t, nil)
 	rec := rig.anonymousGet(JoinPath)
@@ -479,31 +485,36 @@ func TestTheJoinPageWithoutATokenSaysSoAndOffersNoForm(t *testing.T) {
 	}
 	body := rec.Body.String()
 	if !strings.Contains(pageText(body), "carries no invitation") {
-		t.Errorf("a bare join page does not say the link carried no invitation, so a person with a "+
-			"truncated link is given no way to tell that IS the problem. Body: %q", body)
+		t.Errorf("a bare join page does not carry the no-invitation sentence for the script to reveal, so a "+
+			"person with a truncated link is given no way to tell that IS the problem. Body: %q", body)
 	}
-	// 🔴 NO ACCEPT FORM, BECAUSE AN EMPTY ONE COMPLETES AS AN ORDINARY SIGN-IN. The flight
+	// 🔴 NO VISIBLE ACCEPT FORM, BECAUSE AN EMPTY ONE COMPLETES AS AN ORDINARY SIGN-IN. The flight
 	// would carry no invitation, the callback would take the non-provisioning path, and
 	// somebody who was invited would end up either signed in as nobody or refused — with
-	// nothing anywhere saying the link was at fault.
-	if strings.Contains(body, `action="`+OAuthStartPath+`"`) {
-		t.Error("a join page with no token still renders the accept form. Submitting it opens a flight " +
-			"carrying no invitation, which completes as an ordinary sign-in")
+	// nothing anywhere saying the link was at fault. The one form on the page must sit inside
+	// the `hidden` accept block.
+	formAt := strings.Index(body, `action="`+OAuthStartPath+`"`)
+	blockAt := strings.Index(body, `<div id="join-accept" hidden>`)
+	if strings.Count(body, `action="`+OAuthStartPath+`"`) != 1 || blockAt < 0 || formAt < blockAt ||
+		strings.Contains(body[blockAt:formAt], "</div>") {
+		t.Error("a join page with no token renders an accept form OUTSIDE the hidden accept block. Submitting " +
+			"it opens a flight carrying no invitation, which completes as an ordinary sign-in")
 	}
 
-	// POSITIVE CONTROL: with a token, the form IS there — so the absence above is about the
-	// missing token and not about a page that never renders a form.
+	// POSITIVE CONTROL: with a QUERY token the form is there and VISIBLE — so the hiding above is
+	// about the missing token and not about a page that never renders a visible form.
 	with := rig.anonymousGet(JoinPath + "?" + inviteTokenField + "=" + fixtureInviteToken).Body.String()
-	if !strings.Contains(with, `action="`+OAuthStartPath+`"`) {
-		t.Fatal("the join page renders no accept form even WITH a token, so the assertion above is a " +
+	if !strings.Contains(with, `action="`+OAuthStartPath+`"`) || strings.Contains(with, `<div id="join-accept" hidden>`) {
+		t.Fatal("the join page renders no visible accept form even WITH a token, so the assertion above is a " +
 			"fact about the page rather than about the missing token")
 	}
 	// The form must post to the provider START row, which is where the invitation is bound
-	// onto the server-side flight. A second route here would be a second place a flight is
+	// onto the server-side flight — in the LEGACY field, which marks the flight query-borne
+	// (`inviteQueryTokenField`). A second route here would be a second place a flight is
 	// opened — see `joinForm`.
-	if !strings.Contains(with, `name="`+inviteTokenField+`"`) {
-		t.Error("the accept form does not carry the invitation field, so the token would never reach the " +
-			"flight and the redemption branch in `handleOAuthCallback` would be unreachable")
+	if !strings.Contains(with, `name="`+inviteQueryTokenField+`" value="`+fixtureInviteToken+`"`) {
+		t.Error("the query link's accept form does not carry the token in the legacy field, so the callback " +
+			"cannot tell a query-borne token from a fragment one")
 	}
 }
 

@@ -75,13 +75,17 @@ plan that an agent or a skill router reads says "mail".
   to what it checks; the live probe runs under `env -i` with an explicit allowlist, because revision
   6's `HOME`-only isolation was defeated by `CAIRN_CONFIG` and its alias. Ledger: "Round-4
   findings → where each is fixed".
-- *Revision 8* (this) applies round 5 of #221 (delta `18837a1..98c6d36`: 4 🟡, two of them
+- *Revision 8* applies round 5 of #221 (delta `18837a1..98c6d36`: 4 🟡, two of them
   regressions from revision 7). **The last three rounds each found a defect in a guard MECHANISM the
   previous revision had written into this plan**, so revision 8 re-specifies each guard as a
   PROPERTY, the MUTANTS it must turn red, and the CODE FACTS that constrain it — and removes the
   implementation detail it cannot pin to code or a measurement, leaving that to the slice that
   builds the guard and that slice's own audit. What was removed is listed in "Round-5 findings →
   where each is fixed".
+
+- *Revision 9* (S0's branch) records S0's opencode measurement and the two guard mechanisms S0
+  measured wrong — Guard B's plain pointer and `memo.Unsafe`'s Cn — in "S0 — measurements and
+  corrections recorded by the slice". No decision is re-opened.
 
 ## Goal and premise
 
@@ -1574,6 +1578,44 @@ Each was checked against the code before it was applied; none was disputed.
 | 🟡4b REGRESSION: `pgstore` ledger forbade `Send`'s parameters | Confirmed. | Decision 19, Guard C (results and exported fields only) | The "ids, counts, times and `error`" signature list is dropped for the property. |
 | reword: S2 wire mutant | Confirmed: `Stored` encodes as `{}`. | S2 test plan; Guard C | — |
 
+## S0 — measurements and corrections recorded by the slice
+
+S0 (`internal/memo`, the hostile corpus, and the tooling repo's unregistered hook) recorded the
+plan's one MEASUREMENT here, and two places where building the guard found the plan's mechanism
+wrong. Each was measured by S0's author on one host, go1.25.14 (the devShell's), opencode 1.18.29.
+
+- **Opencode CAN surface text to its model from `tool.execute.after`.** A project-local plugin
+  appended a random canary line to `output.output` (a string; `output`'s keys were `title`,
+  `metadata`, `output`, `attachments`) after a synthetic `echo` bash call, and the model, asked to
+  repeat the tool output verbatim, printed the canary: **1 of 1**. Control, same plugin firing with
+  nothing appended: the canary appeared **0 of 1** times, and the plugin's own log shows it ran
+  both times. One model (`openrouter/deepseek/deepseek-v4-flash`), one host; **not measured on the
+  second host**, nor for any hook other than `tool.execute.after` — so opencode delivery is
+  per-TOOL-CALL (the PostToolUse analogue), with no session-start surface established. `input.
+  sessionID` was a string in both runs. What that changes: the "opencode cannot surface text"
+  bullet under "What would make this unnecessary" does NOT hold on this host; Q11's pull-only
+  fallback is not needed for the tool-call path. S4 decides the plugin.
+- 🔴 **Guard B: a plain POINTER does not keep stored text out of `fmt`.** The plan adopted the
+  pointer from a measurement of `%v`/`%+v`/`%#v` only. Over every verb `%a`–`%z`, `%A`–`%Z` plus
+  those three, and eight holders (direct, behind a pointer, exported field, UNEXPORTED field, two
+  unexported levels deep, slice, map, `any`): a value field leaked in **429 of 440**; a plain
+  pointer in **344 of 440** — every verb invalid for a pointer (`%s`, `%q`, …) takes `fmt`'s
+  bad-verb path, which prints `%!s(*memo.stored=&{…})`, the pointee's contents; a
+  pointer-to-pointer and a `func` carrier each **0 of 440**. `memo.Stored` holds its text behind
+  a `func() *stored`, Guard B's test covers the whole grid, and both the value field (round 6's
+  required mutant) and the plain pointer are mutants it was watched turn red.
+- **`memo.Unsafe`'s Cn half: Go's `unicode.C` table already contains unassigned code points**
+  (U+0378 and U+FFFE are in it). A first draft computed Cn as "in no table, C included" and so
+  called every Cn assigned; its test went red on U+0378, U+FFFE and U+FFFF. The predicate is now
+  "in none of L, M, N, P, S, Z", plus Zl/Zp and Variation_Selector — it never consults
+  `unicode.C`.
+- **Guard D is e2e clause (d), which only S3 can build.** S0 holds its RENDERER half —
+  `TestGuardDTheHostileCorpusIsOneBlockOnBothPaths` (16 hostile memos: preview count=16, five
+  previews, "and 11 more"; full: 16 bodies) with sabotages (d1)/(d2) watched red at the renderer.
+- **The block's commands carry the client name.** Decision 5's example prints the verb bare
+  because of this document's citation rule; a block an agent may act on prints the runnable form,
+  and a scope that is not a plain word is shell-quoted in it.
+
 ## Open questions
 
 ### Answered by the operator
@@ -1659,7 +1701,8 @@ Each was checked against the code before it was applied; none was disputed.
 - **Whether `SET LOCAL transaction_timeout` after `BEGIN` arms the current transaction** (S1's test
   establishes it).
 - **The deployment's ingress and Service shapes** for S7 beyond what the read manifest shows.
-- **Whether an opencode plugin can surface text to its model** — S0 measures it on one host.
+- **Whether an opencode plugin can surface text to its model** — MEASURED by S0 on ONE host (yes, via
+  `tool.execute.after`; see "S0 — measurements and corrections"); the second host is not measured.
 - **Whether Claude Code delivers PostToolUse `additionalContext` inside a SUBAGENT to the subagent
   only** — irrelevant while the hook skips `agent_id` payloads, and recorded so nobody relies on it.
 - **Real memo rates.** The token table is assumption-driven; nobody has sent one.

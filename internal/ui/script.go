@@ -10,8 +10,9 @@ import (
 	"github.com/ZacxDev/cairn/internal/identity"
 )
 
-// filterScript is the scope page's entry filter: the FIRST of the two scripts this surface serves
-// (the second, `pwa.js`, is linked only on an armed deployment — `pwa.go`).
+// filterScript is the scope page's entry filter: the FIRST of the three scripts this surface serves
+// (the second, `pwa.js`, is linked only on an armed deployment — `pwa.go`; the third, `join.js`, only
+// by the fragment join page — `join.go`).
 //
 // 🔴 THIS FILE REVERSES THE PACKAGE'S ZERO-SCRIPT PROPERTY, ON AN OPERATOR DECISION, AND WHAT
 // REPLACES IT IS AN ALLOWLIST RATHER THAN A HOPE. The surface used to render no script at all and
@@ -28,8 +29,9 @@ import (
 //   - `uiaudit`'s `refuseWalkRegressions` over the BROWSER's own `document.scripts`, which sees a
 //     script an injection or a parser recovery created and a byte scan cannot;
 //   - `TestTheFilterScriptTouchesOnlyWhatItSays`, which refuses the sinks a filter has no use for
-//     (`innerHTML`, `eval`, `fetch`, …) in `filter.js`'s text — and its twin for the second script,
-//     `TestThePWAScriptTouchesOnlyWhatItSays`, over `pwa.js`'s.
+//     (`innerHTML`, `eval`, `fetch`, …) in `filter.js`'s text — and its twins for the second and
+//     third scripts, `TestThePWAScriptTouchesOnlyWhatItSays` over `pwa.js`'s and
+//     `TestTheJoinScriptTouchesOnlyWhatItSays` over `join.js`'s.
 //
 // ⚠ WHAT IT DOES NOT CHANGE: the escaping story. Every user string still reaches the page through
 // `g.Text` or a quoted attribute value; the script READS what the server already escaped into a
@@ -68,8 +70,13 @@ func hashedScriptPathFor(js string) string {
 //
 // ✅ AND THE SECOND ENTRY IS `pwa.js` (S4 of the mobile plan, `pwa.go`): linked by `pwaHead` on an
 // ARMED deployment only, with its own spelling guard, `TestThePWAScriptTouchesOnlyWhatItSays`.
+//
+// ✅ AND THE THIRD IS `join.js` (`join.go`), by operator decision: a team-link token travels in the
+// URL FRAGMENT so no server's access log can hold it, and only script can move a fragment into a
+// form. Linked by the fragment join page alone, with its own spelling guard,
+// `TestTheJoinScriptTouchesOnlyWhatItSays`.
 func AllowedScriptSources() []string {
-	return []string{FilterScriptPath, PWAScriptPath}
+	return []string{FilterScriptPath, PWAScriptPath, JoinScriptPath}
 }
 
 // filterScriptTag is the ONE way a page reaches the script. `defer` so it runs after the
