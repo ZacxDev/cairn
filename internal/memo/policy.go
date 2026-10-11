@@ -71,14 +71,15 @@ func MayRead(a control.Authorization, scope string) bool {
 // principal who IS a scope admin retracts only that principal's OWN memos, because its `a`
 // carries no admin.
 //
-// 🔴 READ GATES THE MODERATOR TOO — A DECISION TAKEN IN S2, NOT AN ACCIDENT, AND NARROWER THAN
-// O8's WORDING. Through S1 the admin branch asked admin alone while the store additionally
-// refused every caller who could not read the scope (uniform `not-found`, T12) — so the rule
-// lived in two places and they disagreed for an ADMIN-ONLY grant, which the share form allows:
-// this predicate said "may", the store answered `not-found`. The ruling is the safe one: a
-// caller who cannot read a scope learns nothing about its memo ids, retraction included, so an
-// admin-only grantee cannot retract (and cannot see the memo it would be retracting either).
-// Recorded in the plan's "S2 — measurements and corrections" section.
+// 🔴 READ GATES THE SENDER AND THE MODERATOR ALIKE — THE OPERATOR'S RULING (the plan's Q19),
+// NARROWER THAN O8's WORDING. Through S1 the admin branch asked admin alone while the store
+// additionally refused every caller who could not read the scope (uniform `not-found`, T12) — so
+// the rule lived in two places and they disagreed for an ADMIN-ONLY grant, which the share form
+// allows: this predicate said "may", the store answered `not-found`. S2 took the safe reading and
+// the operator has since ruled it: a caller who cannot read a scope learns nothing about its memo
+// ids, retraction included, so an admin-only grantee cannot retract (and cannot see the memo it
+// would be retracting either). Recorded as Q19, and in the plan's "S2 — measurements and
+// corrections" section.
 func MayRetract(p control.Principal, a control.Authorization, scope, senderKind, senderID string) bool {
 	if !MayRead(a, scope) {
 		return false

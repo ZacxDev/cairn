@@ -90,6 +90,10 @@ plan that an agent or a skill router reads says "mail".
   the stamp taken under the scope lock, `transaction_timeout` read back on 18.6, Guard A/C keyed
   on printed types, the cross-build refusal decision 17 relies on — in "S1 — measurements and
   corrections recorded by the slice". No decision is re-opened.
+- *Revision 11* (S3's branch) records the operator's ruling on retraction authority as **Q19**
+  (the read requirement S2 introduced, now the operator's rule rather than a slice's), adds the
+  open question **Q20** (an empty memo is accepted), and records what building S3 measured in
+  "S3 — measurements and corrections recorded by the slice".
 
 ## Goal and premise
 
@@ -570,7 +574,7 @@ every agent one indistinguishable sender. The operator re-decided (O9).
 | O11 | *(revision 3, round 0 D4)* **No per-host cursor.** With no session id the hook delivers NOTHING and says so in one line, never silently. | Decision 6; S0's hook test. |
 | O12 | *(revision 3, round 0 D5)* **One quota, per scope**, under the advisory lock; no per-sender hourly limit. | Decision 9; e2e (f). |
 | O13 | *(revision 3, round 0 D6)* **Keep a secret scan on send, without a Go mirror of leakscan's patterns or a cross-language seam test.** | Decision 11. |
-| O8 | *(answers Q6)* **The sender and any admin of the scope may retract.** Every retraction is journaled with its actor, and readers are shown that the memo was retracted and by whom. A retracted memo is never delivered to a session that has not already seen it. | Decision 10; e2e (g). "Journaled" means the append-only `memo_events` table, not the control journal, whose closed event set refuses a newer kind whole (STEP 1). |
+| O8 | *(answers Q6; narrowed by **Q19**)* **The sender and any admin of the scope may retract** — each only while they can READ the scope (Q19). Every retraction is journaled with its actor, and readers are shown that the memo was retracted and by whom. A retracted memo is never delivered to a session that has not already seen it. | Decision 10; e2e (g). "Journaled" means the append-only `memo_events` table, not the control journal, whose closed event set refuses a newer kind whole (STEP 1). |
 
 ### Coordinator recommendations adopted as stated defaults (each REVERSIBLE)
 
@@ -928,9 +932,10 @@ no longer reversible: the operator ruled to keep it (Q16).
       AGENT credential never does, so moderation is a human's act. **The two rules compose:** an
       agent credential retracts the memos its OWN principal sent, through the sender rule, and
       nothing else, even when that principal is a scope admin (e2e (g)'s decision-17 control).
-      ⚠ **S2 narrowed the moderator to an admin who can also READ the scope** — one predicate for
-      both rules, no existence oracle for an admin-only grant (see "S2 — measurements and
-      corrections"). It sets `retracted_at`, NULLs
+      ⚠ **Retraction requires READ on the scope, for the sender AND the moderator — the
+      operator's ruling (Q19)**, which S2 had first taken as a slice-level safe default: one
+      predicate for both rules, no existence oracle for an admin-only grant (see "S2 —
+      measurements and corrections"). It sets `retracted_at`, NULLs
       `subject` and `body`, and appends `kind='retracted'` with the retracting actor and credential,
       in one transaction.
     - **Readers see the tombstone.** `memo-read`, the listing and the UI tab render a retracted memo
@@ -1701,10 +1706,11 @@ author on one host: go1.25.14 (the devShell's), PostgreSQL 18.6 through `tests/p
 - **The retraction rule is now ONE predicate, and it is narrower than O8's wording.** Through S1,
   `memo.MayRetract` let any scope admin retract while `pgstore.Retract` first refused every caller
   who could not READ the scope (the uniform miss, T12) — so an ADMIN-ONLY grant (the share form
-  allows one) was "may" in the predicate and `not-found` at the store. Ruled the safe way: the read
+  allows one) was "may" in the predicate and `not-found` at the store. S2 took the safe reading — the read
   clause moved INTO `MayRetract`, gating both the sender and the moderator, so the store, the
   listener and S5's button ask one rule and no caller who cannot read a scope learns anything about
-  its ids. O8's "any admin of the scope" is therefore "any admin who can also read it". The store
+  its ids — and the OPERATOR has since ruled it so (**Q19**): O8's "any admin of the scope" is
+  "any admin who can also read it", and the sender likewise. The store
   keeps its read check FIRST, as decision 4's uniform miss, not as a second retract rule.
 - **The listener's handler is a package, `internal/clientapi`**, and its wire carries `memo.Rendered`
   itself: the JSON keys are that type's Go field names (`ID`, `Scope`, `Sender`, …), deliberately,
@@ -1726,6 +1732,78 @@ author on one host: go1.25.14 (the devShell's), PostgreSQL 18.6 through `tests/p
 - **Not built here, stated:** the plugins plan's agent read routes moving onto this listener (Q3's
   default) — no such routes exist yet.
 
+## S3 — measurements and corrections recorded by the slice
+
+S3 (the four Go client verbs, the cursor, `tests/memo/e2e.sh`, `tests/memo/live-probe.sh`, the
+client's environment-read ledger, and #236's round-1 findings) recorded these where building it
+found the plan silent, or the code different from the plan. Measured by S3's author on one host:
+go1.25.14 (the devShell's), PostgreSQL 18.6 (a throwaway server per run, and the devShell's).
+
+- **The wire is spelled once, in a new `internal/memowire`.** The client cannot import
+  `internal/clientapi` — it imports `internal/pgstore`, which imports a third-party driver, and
+  `internal/depspolicy` bans that from `cmd/cairn`'s graph — so the paths and bodies moved to a
+  stdlib-only package both ends use; `clientapi` re-exports them (type aliases), and S2's callers
+  did not move.
+- **The client's way in is `memo.FromRendered`**, a new Guard A ledger row (class `input`): it
+  rebuilds a `Stored` from the listener's `Rendered` — sender and tombstone lines carried whole —
+  so `memo-check` and `memo-read` print through S0's ONE renderer (`RenderPreview`/`RenderFull`),
+  which re-applies the replacement to every field (a no-op on a real listener's text; the whole
+  point against the RAW stub). Every `Rendered` string field is planted by reflection.
+- **The seen-set is pruned one second WIDER than the margin**, because the wire's `created_at` is
+  whole seconds (S1/S2 corrections): a memo whose true time is just past `high_water − margin`
+  arrives up to one second EARLIER, and a prune at the margin exactly forgets it and shows it twice
+  (`TestTheSeenSetOutlivesTheWholeSecondTruncation`, red with the second removed). The high-water
+  itself, being truncated DOWN, errs in the safe direction (more asked, the seen-set drops repeats).
+- **`memo-check` consults the cache for `--scope` as well as `--repo`**: "does any configured
+  instance's cache hold this scope" is asked before any request in both cases (a scope directory
+  under an instance's cache root, compared by `store.NormalizeRef`). It is what makes the live
+  probe's cache-sync step load-bearing (below).
+- **The status line is FIRST even under a deprecation warning.** `Run` warns about deprecated
+  variables before parsing, which would have pushed the token to line two; for `memo-check` alone
+  the warnings are held until the token is out (`TestTheStatusTokenIsTheFirstStderrLineEvenWith-
+  ADeprecationWarning`). The other verbs keep their order — `tests/parity/` diffs their stderr.
+- **Exits 2 and 11 print NO status token.** Decision 7 says the token is written "on every run",
+  but the closed set has no token for "the command line, or the routing table, must change", and
+  growing a set the hook carries a copy of is S0/S4's decision, not S3's. The hook reads a
+  token-less run as `malformed` (loud, once per throttle interval). `--statuses` prints the table
+  and no token.
+- **A 401 from the listener is `unconfigured` (exit 3)** in `memo-check` — a revoked or mistyped
+  `CAIRN_UI_TOKEN` is persistent configuration, so the hook says it once per session — and exit 6
+  for the write verbs (the listener answered no). A missing `CAIRN_UI_URL`/`CAIRN_UI_TOKEN` is 3 for
+  the reads and **7 for the writes** — the same code `append` gives a missing `CAIRN_TOKEN`.
+- **`memo-check` takes `--timeout` after the verb** (the S0 hook passes it there); it sets the same
+  bound as the global flag, refused the same way. `--ttl` accepts Go durations and whole days.
+- **`memo-send` refuses invalid UTF-8 itself** (exit 6, `characters`): JSON encoding silently
+  replaces an invalid byte with U+FFFD, so the listener would receive a different, acceptable body.
+  Every other content rule stays the listener's.
+- **e2e (d): PostgreSQL TEXT cannot hold U+0000** — measured, `pq: null character not permitted
+  (54000)` on 18.6 — so the corpus's `nul` member is PLANTED with U+0001 (also Cc, also refused at
+  send) on the real-listener half, keeping `count=16`; the RAW stub serves the member verbatim. And
+  argv cannot carry a NUL either, so every hostile member reaches the client as `--body-file`.
+- **e2e sabotage (c) is not "send ignores `Narrowed()`"**: there is no send-only seam — scope
+  narrowing is applied once, at authentication, by `control.Narrow`. The sabotage disables that
+  scope intersection, and (c)'s send assertion is what goes red. **(f)** counts per CREDENTIAL:
+  `agents@host-a` and `agents@host-c` are ONE principal, so a per-principal quota would still count
+  50 and the sabotage would be invisible. **(i)** removes `Get`'s read-time `MayRead`. **(k)** fakes
+  the revoke command's append. Each is listed, with its anchor, in `e2e.sh --self-test`.
+- **e2e (k)'s send probe is a MALFORMED body**, not a real send: authentication is decided before
+  the body is read, so it answers 401 once revoked and 400 before, and can never store a memo — a
+  real send polled for up to 35 s ate the scope's quota on the script's first run (measured).
+  Revocation latency measured locally: 30 s; the withdrawn grant of (i): 29 s (one refresh each).
+- **`-create-user` always creates a project** (a missing project name is refused, measured), so the
+  e2e world's `reader-b` and `admin-d` each own an empty one and reach `alpha-notes` by a grant and
+  an `admin` membership. No `cairn-server` command writes a GRANT, so the read grant (and its
+  revocation, for (i)) is appended through `control.FileStore.Append` by the e2e helper
+  (`tests/memo/memotool`), which validates it against the replayed model.
+- **The live probe takes `CAIRN_BIN` from its input file** (default: `cairn` on PATH), so the
+  operator chooses the client explicitly; nothing is read from the probe's environment.
+- **The environment-read ledger (`internal/client/envreads.go`) decided S2's three carried cases:**
+  `os.UserHomeDir()` IS a read — `HOME` joins the ledger, read only through `homeDir`;
+  `reposcope`'s `os.Environ()` (the whole environment handed to `git`) and
+  `envalias.OSDeprecations()` (a scan for the OLD spellings of ledger names, to warn) are declared
+  whole-environment SITES, not names. `internal/hostid`'s display-label variables are outside the
+  two packages and are folded into the probe's decoy set by reference.
+
 ## Open questions
 
 ### Answered by the operator
@@ -1739,13 +1817,19 @@ author on one host: go1.25.14 (the devShell's), PostgreSQL 18.6 through `tests/p
 - **Q5. Ack semantics** → **O7**: no acknowledgement in v1 (revision 3; revision 2 had recorded a
   record-only ack). Later, it would be a new migration (Q14).
 - **Q6. Moderation** → **O8**: the sender and any scope admin may retract; journaled with the actor;
-  readers see who retracted it; never delivered to a session that has not seen it.
+  readers see who retracted it; never delivered to a session that has not seen it. *Narrowed by
+  Q19: both retractors must be able to READ the scope.*
 - **Q16. Verb narrowing (decision 17) versus Q15's per-host project principal** → the operator
   ruled to KEEP decision 17's verb narrowing, and accepted its stricter rollback: once a journal
   holds a `credential-verbs-narrowed` event, an older build refuses that journal (decision 17's
   rollback recipe). Q15 stays recorded as the alternative, not adopted. Migration 3 also stays
   registered in S1 (S1's round-0 D2 kept): its rollback recipe is stated, and S1 must deploy
   before S4 regardless.
+- **Q19. Who may retract, precisely** → the operator ruled (after S2) that retraction requires
+  READ on the scope for BOTH the sender and the scope admin, narrowing O8's "any admin of the
+  scope": no caller who cannot read a scope can probe which memo ids exist in it. This is the rule
+  `memo.MayRetract` already carries (S2), so no code moved; it is now a decision, not a slice's
+  default. *Numbered Q19 because Q17 (the status line) and Q18 (the send-side fence) were taken.*
 
 ### Still open — default adopted unless the operator objects
 
@@ -1799,6 +1883,12 @@ author on one host: go1.25.14 (the devShell's), PostgreSQL 18.6 through `tests/p
 - **Q18. The send-side fence rule (decision 5) is a coordinator DEFAULT, reversible.** Alternatives:
   revision 4's full category refusal at send (safer storage, refuses ordinary text as measured), or
   additionally ALLOWING LRM/RLM at send, which is not established to be safe.
+- **Q20. An EMPTY memo is accepted.** A send with a blank subject AND a blank body is stored and
+  answered 201 (`memo.CheckSend` has size ceilings but no floor; flagged by S2's audit and confirmed
+  by reading the code in S3). This plan is silent on it. *Behaviour left UNCHANGED, and no default
+  adopted, pending the operator:* refuse a blank subject (the preview's one identifying line) or
+  a blank subject and body together — each a new refusal reason, so a `CheckSend` edit with tests
+  and a client message — or keep accepting it.
 - **Q17. A status LINE or new EXIT CODES for the hook.** *Default:* the `memo-status=` first stderr
   line from a closed, binary-printed table (decision 7), which keeps the existing exit-code ledger.
   Alternative: new codes for `unconfigured` and `scope-unreadable`, moving `-exit-codes` and its
