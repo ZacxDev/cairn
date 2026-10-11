@@ -1054,6 +1054,8 @@ jobs:
   # can save an entry anyway. It also needed a trust argument (`GOCACHE` is not verified the way
   # the module cache is), which a step that buys nothing should not carry.
   mutants:
+    # A ceiling, not an estimate: shards take 2-4 min, so a shard still running at 20 is hung.
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

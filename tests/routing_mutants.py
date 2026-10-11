@@ -662,7 +662,7 @@ MUTANTS: list[Mutant] = [
     # FALSE OF THIS FILE WHEN IT WAS WRITTEN: measured, `routing_mutants.py` was the only
     # one of the three batteries `ci.yml` did NOT run, so the mutants were placed in the
     # un-gated file on a rationale about avoiding un-gated files. The module docstring
-    # carries the measurement; the `go` job now runs this battery, which is what makes the
+    # carries the measurement; the `mutants` job now runs this battery, which is what makes the
     # sentence above true. Do not remove that step without rewriting this. The Go arm already targets
     # `./internal/client/` for twenty rows above, so hosting these costs one section header.
     # ⚠ THE COST IS THAT THIS FILE'S NAME NOW UNDER-DESCRIBES IT; the module docstring says

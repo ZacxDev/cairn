@@ -5360,6 +5360,15 @@ def main() -> int:
                     fatal.append(f"{m.name}: {exc}")
                 abort.set()
                 return
+            except BaseException:
+                # 🔴 ANY OTHER EXCEPTION STOPS THE RUN, LOUDLY. A `UnicodeDecodeError` out of
+                # `subprocess.run(text=True)`, an `OSError`: before this arm the tree never came
+                # back, `abort` stayed clear, and every later task spun on `free.get` forever —
+                # MEASURED, the run hung rather than failing. Nothing else starts (the tree's
+                # state is unknown), and the exception re-raises out of `fut.result()` so the run
+                # exits non-zero with its traceback, as the serial loop this replaced did.
+                abort.set()
+                raise
             free.put(tree)
             with lock:
                 if green:

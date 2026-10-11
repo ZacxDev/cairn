@@ -36,7 +36,7 @@ enumeration are pinned against `PKGS` below. Unlike the mutant count, they move 
 pin does not make unrelated PRs conflict, and it is kept.
 
 🔴 AND THE ROUTING BATTERY'S WIRING CLAIM STAYS PINNED: its header argues the anchor mutants
-may live there BECAUSE the `go` job runs it, and that argument was false when written. That
+may live there BECAUSE the `mutants` job runs it, and that argument was false when written. That
 is a claim about CI behaviour, not a count, and it is checked against the job's own steps.
 
 The precedent is `tests/test_flake_image_matches_dockerfile.py`: two files stating one

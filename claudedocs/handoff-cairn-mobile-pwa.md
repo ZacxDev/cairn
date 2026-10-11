@@ -65,7 +65,7 @@ decisions O1–O13 paraphrased, slices S0–S6b, the iPhone checklist, closing-c
 
 - **Run the FULL mutant battery (or every row whose `path` a slice touched) before calling a
   slice green** — per-row `--only` runs of a slice's NEW rows missed two rows the slice broke
-  (a pattern on an edited line; a timing budget). CI's `go` job is where the full battery runs. via: measurement
+  (a pattern on an edited line; a timing budget). CI's `mutants` job is where the full battery runs (sharded; `mutants-aggregate` prints its one SUMMARY). via: measurement
 - **The `cmd/cairn-ui` battery rows that make every child refuse sit at ~86–87 s of the
   package's 120 s `-timeout`** — two waiters still poll after child exit
   (`database_test.go` ~:318, 60 s; `main_test.go` ~:817, 20 s). Moving them onto `presenceChild`
