@@ -171,6 +171,80 @@ func TestMayRetractComposesTheSenderAndTheModerator(t *testing.T) {
 	}
 }
 
+// TestMayRetractMemoAsksMayRetractOfTheMemosOwnScopeAndSender — S5's per-memo form of the rule,
+// which the browser tab renders its retract button from. Each row varies ONE of the memo's own
+// fields against the caller, so a wrapper that read the wrong field (the retractor's key, or a
+// fixed scope) flips a named row, and every row is ALSO compared with [memo.MayRetract] over the
+// same values — the wrapper may add no clause.
+func TestMayRetractMemoAsksMayRetractOfTheMemosOwnScopeAndSender(t *testing.T) {
+	m := world(t)
+	agentP, agentA := authn(t, m, tokAgentAlpha) // writer-a, narrowed to alpha-notes, read+write
+	writerP, writerA := authn(t, m, tokWriter)
+	stored := func(scope string, sender control.ID) memo.Stored {
+		return memo.NewStored(memo.Fields{ID: 7, Scope: scope, SenderKind: string(control.KindUser), SenderID: string(sender),
+			SenderDisplay: "someone", Subject: "s", Body: "b", CreatedAt: w0, ExpiresAt: w0.Add(time.Hour),
+			// A retractor key that is the CALLER's, so a wrapper reading it instead of the sender's
+			// answers true on the rows that must be false.
+			RetractorKind: string(control.KindUser), RetractorID: string(uWriter)})
+	}
+	for _, tc := range []struct {
+		who   string
+		p     control.Principal
+		a     control.Authorization
+		scope string
+		from  control.ID
+		want  bool
+	}{
+		{"the agent, its principal's own memo, in its scope", agentP, agentA, "alpha-notes", uWriter, true},
+		{"the agent, ANOTHER's memo, in its scope (decision 17: no admin)", agentP, agentA, "alpha-notes", uAdmin, false},
+		{"the agent, its principal's own memo, OUTSIDE its narrowing", agentP, agentA, "beta-notes", uWriter, false},
+		{"the owner moderating another's memo", writerP, writerA, "alpha-notes", uReader, true},
+	} {
+		st := stored(tc.scope, tc.from)
+		got := memo.MayRetractMemo(tc.p, tc.a, st)
+		if got != tc.want {
+			t.Errorf("%s: MayRetractMemo = %v, want %v", tc.who, got, tc.want)
+		}
+		if direct := memo.MayRetract(tc.p, tc.a, tc.scope, string(control.KindUser), string(tc.from)); direct != got {
+			t.Errorf("%s: MayRetractMemo = %v but MayRetract over the same values = %v — the wrapper added a clause",
+				tc.who, got, direct)
+		}
+	}
+}
+
+// TestSenderMaySendIsTheSendersOwnAuthorityNow — decision 12's "no longer has write here" mark:
+// the SENDER principal's un-narrowed authority over the memo's own scope, resolved from the model
+// passed in. writer-a writes both scopes; reader-b only reads alpha-notes; admin-d holds admin only;
+// a principal the model does not hold resolves to nothing.
+func TestSenderMaySendIsTheSendersOwnAuthorityNow(t *testing.T) {
+	m := world(t)
+	of := func(scope string, kind control.Kind, sender control.ID) memo.Stored {
+		return memo.NewStored(memo.Fields{ID: 3, Scope: scope, SenderKind: string(kind), SenderID: string(sender),
+			Subject: "s", Body: "b", CreatedAt: w0, ExpiresAt: w0.Add(time.Hour)})
+	}
+	for _, tc := range []struct {
+		who  string
+		st   memo.Stored
+		want bool
+	}{
+		{"writer-a on alpha-notes (POSITIVE CONTROL)", of("alpha-notes", control.KindUser, uWriter), true},
+		{"writer-a on beta-notes", of("beta-notes", control.KindUser, uWriter), true},
+		{"reader-b on alpha-notes: read only now", of("alpha-notes", control.KindUser, uReader), false},
+		{"admin-d on beta-notes: admin is not write", of("beta-notes", control.KindUser, uAdmin), false},
+		{"a principal the model no longer holds", of("alpha-notes", control.KindUser, "usr_gone"), false},
+		{"writer-a's id under the wrong KIND", of("alpha-notes", control.KindProject, uWriter), false},
+		{"writer-a on a scope that does not exist", of("gamma-notes", control.KindUser, uWriter), false},
+	} {
+		if got := memo.SenderMaySend(m, tc.st); got != tc.want {
+			t.Errorf("%s: SenderMaySend = %v, want %v", tc.who, got, tc.want)
+		}
+	}
+	// The resolution is the MODEL passed in, NOW: the same memo against an empty model is false.
+	if memo.SenderMaySend(control.Model{}, of("alpha-notes", control.KindUser, uWriter)) {
+		t.Error("SenderMaySend answered true against an EMPTY model — it is not reading the model it was handed")
+	}
+}
+
 // ---------------------------------------------------------------- the send-side content rules
 
 func scanner(t *testing.T) *redact.Redactor {

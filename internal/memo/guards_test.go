@@ -52,6 +52,9 @@ var exportLedger = map[string]entry{
 	"MaySend":    {"predicate", "func(control.Authorization, string) bool"},
 	"MayRead":    {"predicate", "func(control.Authorization, string) bool"},
 	"MayRetract": {"predicate", "func(control.Principal, control.Authorization, string, string, string) bool"},
+	// S5: the same two rules asked of ONE stored memo, for the browser tab — booleans, no text.
+	"MayRetractMemo": {"predicate", "func(control.Principal, control.Authorization, Stored) bool"},
+	"SenderMaySend":  {"predicate", "func(control.Model, Stored) bool"},
 	// the send-side content rules (S1): the caller's OWN text in, normalised, on its way to
 	// storage — never stored text on its way out.
 	"CheckSend":        {"input", "func(string, string, time.Duration, *redact.Redactor) (Outgoing, error)"},

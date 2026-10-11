@@ -773,6 +773,14 @@ func main() {
 	// with the Postgres tier's own case green. Reading the field back off `cfg` is what
 	// makes that mutant a red test. ⚠ The same argument applies to `Sessions`, which is
 	// why both halves of the line read `cfg` and neither reads the local.
+	// 🔴 THE BROWSER'S MEMO STORE (S5 of the scope-mail plan): the SAME database and the SAME
+	// `authority`, and only with a control journal — see `wireBrowserMemos`.
+	browserMemoStore, err := wireBrowserMemos(pgDB, *controlJournal, authority)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error()+". Refusing to start")
+		os.Exit(exitConfig)
+	}
+
 	cfg := ui.Config{
 		Auth: chain,
 		// ⚠ THE SAME `authority` THE MACHINE-TOKEN BACKEND HOLDS, WHICH IS THE POINT.
@@ -801,7 +809,9 @@ func main() {
 		// nil unless the agent listener started above: the browser's badges read the SAME store the
 		// listener writes, through `presence.Store.For` alone (`internal/ui/presence.go`).
 		Presence: browserPresence,
-		TTL:      *sessionTTL,
+		// nil unless both a database and a control journal are configured (`wireBrowserMemos`).
+		Memos: browserMemoStore,
+		TTL:   *sessionTTL,
 		// nil when no provider is configured, which is a legitimate deployment and is why
 		// this field is the one on `ui.Config` that may be nil. See its own comment.
 		OAuth: oauth,
@@ -970,7 +980,7 @@ func main() {
 	if cfg.Inviting != nil && cfg.Inviting.TeamLinks() != nil {
 		invitesIn += ", team links in postgres"
 	}
-	stateMode := sessionsIn + ", " + invitesIn
+	stateMode := sessionsIn + ", " + invitesIn + ", " + memoMode(cfg.Memos)
 	// 🔴 AND WHETHER ARCS CAN BE SHOWN, read off the wired SOURCE for the reason the two halves
 	// above read `cfg`: a caption derived from the flag would say "journal" for a source that was
 	// never handed one.

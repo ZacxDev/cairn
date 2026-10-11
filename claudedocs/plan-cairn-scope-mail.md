@@ -94,6 +94,8 @@ plan that an agent or a skill router reads says "mail".
   (the read requirement S2 introduced, now the operator's rule rather than a slice's), adds the
   open question **Q20** (an empty memo is accepted), and records what building S3 measured in
   "S3 — measurements and corrections recorded by the slice".
+- *Revision 12* (S5's branch) records what building the browser tab found the plan silent on, in
+  "S5 — measurements and corrections recorded by the slice". No decision is re-opened.
 
 ## Goal and premise
 
@@ -1831,6 +1833,51 @@ go1.25.14 (the devShell's), PostgreSQL 18.6 (a throwaway server per run, and the
   `sabotaged=13 caught=13`; an assertion the selection left out is exit 2, and three harness
   mutants (selection drops the named clauses; a gate that never opens; a control the sabotage also
   breaks) each refuse.
+
+## S5 — measurements and corrections recorded by the slice
+
+S5 (`?tab=memos`, `POST /memo`, `POST /memo/retract`; `internal/ui/memos.go`,
+`cmd/cairn-ui/memotab.go`) recorded these where building it found the plan silent, or the code
+different from the plan. Measured by S5's author on one host: go1.25.14 (the devShell's), PostgreSQL
+18.6 through `tests/pgtest/run.sh`.
+
+- **`internal/ui` cannot import `internal/pgstore`.** The nested `uiaudit` module imports
+  `internal/ui`, so the PostgreSQL driver would enter its graph and move `internal/depspolicy`'s
+  nested allowlist. The tab therefore reads a `ui.Memos` interface (Model, List-with-tombstones, Send,
+  Retract) that `cmd/cairn-ui` adapts the store to — a translation only; every predicate stays the
+  store's (decision 9's "every send surface calls it" is met by the store asking it).
+- **Two predicates over ONE stored memo are new in `internal/memo`** — `MayRetractMemo` (decision
+  10/Q19's `MayRetract`, asked of the memo's own scope and sender key) and `SenderMaySend` (decision
+  12's mark: the sender PRINCIPAL's un-narrowed authority, resolved now). `memo.Rendered` carries no
+  sender key and `memo.Stored` lets none out (Guard A), so the button and the mark could not be
+  decided otherwise; both are Guard A ledger rows of class `predicate` (booleans, no text).
+- **The browser's memo store is wired only with a database AND a control journal** — the client
+  listener's two conditions, for O9's reason (a token-file authority's shared rows would make every
+  browser sender one sender). The plan did not say; the listener's rule was the plan's default for the
+  nearest surface. Without them the tab says so and the two writes answer 501, the `NoInviteStore`
+  ruling — not a startup refusal, because the tab is one view of a page that has others.
+- **A browser send carries no credential**, so its sender line reads `writer-a (user)` with no `via`
+  label (decision 5's label names a credential, and a session has none). Measured in the pgtest tier.
+- **The tab lists tombstones** (decision 10), which can exceed one store page, so the tab pages the
+  store with S3's `memo-read` rule (the boundary one second early, held ids dropped). The paging test's
+  first fixture used sub-second offsets and the "strictly after" mutant SURVIVED it; the boundary
+  hazard is a TIE at one instant (the store breaks it by id), which the fixture now plants.
+- **A refusal redirects back to the tab** with a closed-set outcome, a refusal reason and, for a
+  secret, the rule name only if it is in `memo.ConfidentSecretRules()`. ⚠ The typed text is lost on a
+  refusal (no script, no draft store).
+- **A write naming a scope the viewer cannot read is the browse surface's one miss** (404,
+  byte-identical to an absent scope) and never reaches the store; the forged-send bullet of the test
+  plan is a scope the viewer CAN read, which the store's `MaySend` refuses.
+- **The lifetime field is whole days, 1–30, default 3**; past the ceiling is handed to the store as
+  just past it, so `memo.CheckSend` owns the `ttl` refusal (`clientapi`'s `ttlFrom` shape).
+- **No new GET row and no count on the tab label** (a count would read the database on every tab of
+  every scope page). `cairn-server -routes` is byte-identical across the slice — measured, an
+  invariant guard (closing-condition part 3).
+- **`uiaudit`'s worlds have no database**, so the browser walk captures the tab in its no-store state
+  only — the invite mint form's residual (`uiaudit/README.md`).
+- **The operator ruled the tab ships ON at deploy** — no flag gates it. The populated-tab `uiaudit`
+  fixtures (a world with a database, so the walk captures a listed memo) are deferred to a follow-up
+  PR that lands before S4.
 
 ## Open questions
 

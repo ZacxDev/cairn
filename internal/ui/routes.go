@@ -196,6 +196,14 @@ var routes = map[routeKey]route{
 	// where the share and invite flows' forms live now. The two POST rows carry NO class, so
 	// both cross-site gates reach them by METHOD, and revoke is its own path for
 	// `UnsharePath`'s reason.
+	// 🔴 SCOPE MAIL'S TWO WRITES (S5 of the scope-mail plan, `memos.go`). CLASS 0, for the bell's
+	// reason: both cross-site gates reach them by METHOD, and
+	// `TestTheMemoRowsAreBehindBothCrossSiteGates` asserts each by its own message. Never `content`:
+	// each answers a 303 back to the memos tab. The READ is no row at all — it is `?tab=memos` on
+	// `GET /scope`. Retract is its own path for `UnsharePath`'s reason.
+	{"POST", MemoPath}:        {(*Server).handleMemoSend, 0},
+	{"POST", MemoRetractPath}: {(*Server).handleMemoRetract, 0},
+
 	{"GET", "/team"}:              {(*Server).handleTeamPage, classContent},
 	{"POST", "/team/link"}:        {(*Server).handleTeamLink, 0},
 	{"POST", "/team/link/revoke"}: {(*Server).handleTeamLinkRevoke, 0},

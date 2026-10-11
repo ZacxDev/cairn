@@ -544,6 +544,28 @@
     @apply bg-raised text-ink border border-line rounded px-3 py-2 text-sm w-24;
   }
 
+  /* Scope mail's send form (S5, `memos.go`): its text box and lifetime field take the look of every
+   * other field; the box spans the card because a memo is up to 4 KiB of prose. */
+  .memo-send textarea,
+  .memo-send input[type="number"] {
+    @apply bg-raised text-ink border border-line rounded px-3 py-2 text-sm;
+    @apply transition-[border-color,box-shadow] duration-200 ease-cairn;
+    @apply hover:border-accent/60 focus:border-accent focus:ring-2 focus:ring-accent/25;
+  }
+
+  .memo-send textarea {
+    @apply w-full;
+  }
+
+  .memo-send input[type="number"] {
+    @apply w-24;
+  }
+
+  /* The memo list: one row per memo, the invitation list's shape. */
+  .memo-list {
+    @apply flex flex-col gap-1;
+  }
+
   /* A link's targets and its redemption log: the audit record, listed under its row. */
   .link-targets,
   .link-log {

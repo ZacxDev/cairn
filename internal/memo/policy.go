@@ -90,6 +90,30 @@ func MayRetract(p control.Principal, a control.Authorization, scope, senderKind,
 	return a.VisibleScopes(control.VerbAdmin).Allows(scope)
 }
 
+// MayRetractMemo is [MayRetract] asked of ONE stored memo — its own scope and its own sender key,
+// which [Stored] does not let out (Guard A). It exists for the browser tab (S5), which decides
+// whether to RENDER a retract button from the same rule the store's `Retract` enforces, so the
+// page never offers a button the write refuses. It adds no clause: a memo rebuilt from the wire
+// ([FromRendered]) carries no sender key, so only the admin branch can hold for it.
+func MayRetractMemo(p control.Principal, a control.Authorization, s Stored) bool {
+	t := s.t()
+	return MayRetract(p, a, t.scope, t.senderKind, t.senderID)
+}
+
+// SenderMaySend reports whether the memo's SENDER PRINCIPAL may still send to its scope, resolved
+// against `m` NOW — decision 12's "no longer has write here" mark. A memo stays delivered after its
+// sender's grant is withdrawn (it was authorised when sent); this only lets a reader see that.
+// It asks [MaySend] of the principal's own, UN-narrowed authorization (a credential's narrowing is
+// how it sent, not what its principal holds), and a principal the model no longer holds is false.
+func SenderMaySend(m control.Model, s Stored) bool {
+	t := s.t()
+	p, ok := m.PrincipalFor(control.Kind(t.senderKind), control.ID(t.senderID))
+	if !ok {
+		return false
+	}
+	return MaySend(control.Resolve(m, p), t.scope)
+}
+
 // RefusalReason is the CLOSED set of reasons a send or a retraction is refused with (each is
 // exit 6 at the client, decision 8). It names a LIMIT, never content.
 type RefusalReason string
