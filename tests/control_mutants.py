@@ -4694,6 +4694,99 @@ MUTANTS: tuple[Mutant, ...] = (
         why="'a damaged journal is as good as no journal' reads as caution — and a torn line in a scope the "
         "caller cannot read flips every other scope's answer, a signal about hidden activity on the wire.",
     ),
+    # S2 of the transcripts/plugins plan: `internal/transcript/scopeuse`, the READ half of a session's
+    # visibility set. It is not in `PKGS` — it is an input to a predicate that does not exist until
+    # S4, not a member of the control/identity/server seam — so each row ADDS its package, the
+    # override the battery prescribes for a killer outside the seam.
+    Mutant(
+        name="scopeuse-all-scopes-header-names-a-scope",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\t\tif ValidScope(f[1]) {",
+        new="\t\t\tif ValidScope(f[1]) || strings.HasPrefix(f[1], \"(\") {",
+        killer="TestTheAllScopesHeaderAddsStar",
+        why="a store-wide search renders `scope=(all scopes)`, and reading the field as whatever "
+        "follows `scope=` is the natural parse — it turns the one header that names EVERY scope into "
+        "a scope nobody has, so `V` loses its `*` and the session becomes readable by anyone who reads "
+        "the other scopes it touched.",
+    ),
+    Mutant(
+        name="scopeuse-scopeless-header-dropped",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\tif len(fields) == 0 {\n\t\t\tout = append(out, Star)\n\t\t\tcontinue\n\t\t}",
+        new="\t\tif len(fields) == 0 {\n\t\t\tcontinue\n\t\t}",
+        killer="TestTheScopelessHeaderFormAddsStar",
+        why="the `all N entry files … MALFORMED` header carries no `scope=` field, and \"no field, "
+        "nothing to add\" reads as tidy — it drops a read whose scope the line does not say.",
+    ),
+    Mutant(
+        name="scopeuse-fallback-empty-ledger-trusted",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\tr.F1 = d.namesProgram && d.ledgerRecords == 0",
+        new="\tr.F1 = d.namesProgram && d.ledgerRecords < 0",
+        killer="TestF1EmptyLedgerAddsStar",
+        extra_killers=("TestTheVisibilityInputOfEveryFixtureSession",),
+        why="an empty ledger READS as \"this session read nothing\" — exactly what a pre-ledger "
+        "client, or one whose environment lost the session id, also produces. Trusting it makes every "
+        "unrecorded read invisible to `V`.",
+    ),
+    Mutant(
+        name="scopeuse-cache-path-read-ignored",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\tif strings.Contains(lower, \"subsystem-store\") {",
+        new="\tif false && strings.Contains(lower, \"subsystem-store\") {",
+        killer="TestF2CacheReadAddsStar",
+        why="a file-tool read of the cache never passes through the client, so it is never ledgered; "
+        "dropping F2 because \"the ledger covers reads now\" is the plausible simplification, and it "
+        "makes every cache read invisible.",
+    ),
+    # S2 review round 1 (F3): four guards that each SURVIVED a mutation with no test reaching them.
+    Mutant(
+        name="scopeuse-restore-ignored",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="func (d *Deriver) Restore(e Evidence) {\n",
+        new="func (d *Deriver) Restore(e Evidence) {\n\tif true {\n\t\treturn\n\t}\n",
+        killer="TestRestoreFoldsPersistedEvidence",
+        why="a later run feeds only NEW records; forgetting the earlier runs' evidence reads as "
+        "harmless because V is also persisted — and silently drops F1's 'names the program' flag "
+        "the moment the ledger changes.",
+    ),
+    Mutant(
+        name="capture-v-not-a-union",
+        pkgs=PKGS + ("./internal/capture/",),
+        path="internal/capture/agent.go",
+        old="\tss.V = union(ss.V, res.V)\n",
+        new="\tss.V = res.V\n",
+        occurrences=2,
+        killer="TestVOnlyGrowsWhenTheLedgerShrinks",
+        why="'V is what this run derived' is the natural assignment; anything on the host can delete "
+        "a ledger, and a non-union V then SHRINKS and moves the session to an instance it already "
+        "read past.",
+    ),
+    Mutant(
+        name="capture-child-ledger-ignored",
+        pkgs=PKGS + ("./internal/capture/",),
+        path="internal/capture/agent.go",
+        old="\tfor _, c := range children {\n\t\ta.foldLedger(d, c)\n\t}\n",
+        new="\tfor range children {\n\t}\n",
+        killer="TestAChildSessionsLedgerCounts",
+        why="the ledger is keyed by session id and a child is its own id in opencode; folding only "
+        "the root's file reads as complete and loses every read a subagent made.",
+    ),
+    Mutant(
+        name="capture-unreadable-ledger-ignored",
+        pkgs=PKGS + ("./internal/capture/",),
+        path="internal/capture/agent.go",
+        old="\tcase err != nil:\n\t\td.LedgerUnreadable()\n",
+        new="\tcase err != nil:\n",
+        killer="TestAnUnreadableLedgerFailsClosed",
+        why="treating a ledger that cannot be read like one that does not exist is the usual "
+        "error-tolerant reflex, and it turns an unreadable record of reads into 'read nothing'.",
+    ),
 )
 
 

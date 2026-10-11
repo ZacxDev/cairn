@@ -1574,6 +1574,18 @@ jobs:
       - name: the Go client package builds, and its unit tests pass under the pinned toolchain
         run: nix build .#packages.x86_64-linux.cairn-go --no-link --print-build-logs
 
+      # The transcript capture agent (S2 of the transcripts/plugins plan): its package builds and
+      # runs the module's tests under the pinned toolchain, and CLOSING-CONDITION PART 3 — its
+      # redaction self-test — runs as the BUILT binary, content-checked (the SUMMARY pair with
+      # caught = planted and clean-damaged = 0). 🔴 THIS JOB IS THE ONLY TIER THAT RUNS THE BINARY:
+      # a `go run … --self-test` step in the `go` job was removed on review (D3) because this job
+      # runs unconditionally on every pull request; the `go` job still runs the same self-test as
+      # a Go test (`cmd/cairn-capture`'s TestTheSelfTestIsClosingConditionPart3).
+      - name: the capture agent builds, and its unit tests pass under the pinned toolchain
+        run: nix build .#packages.x86_64-linux.cairn-capture --no-link --print-build-logs
+      - name: the capture agent's redaction self-test passes as built (planted=P caught=P clean-damaged=0)
+        run: nix build .#checks.x86_64-linux.cairn-capture-self-test --no-link --print-build-logs
+
       # …and its verb and exit-code tables are read out of the running binary. This is the nix
       # tier of the claim `tests/test_go_client_ledgers.py` makes in the `go` job — a different
       # instrument in a different environment, which is the point: greening one tier while the
