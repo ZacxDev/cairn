@@ -89,6 +89,11 @@ func ResolveJournalPath(storeRoot, journal string) (string, error) {
 	return resolved, nil
 }
 
+// Inside is [inside], exported so the transcript store's directory check
+// (`internal/transcript/archive`, plan decision 15: "refused inside the store root, the
+// `internal/arcs/path.go` rule") is this rule rather than a second spelling of it.
+func Inside(root, path string) bool { return inside(root, path) }
+
 // inside is "path is root or a descendant of it", over two CLEAN absolute paths.
 func inside(root, path string) bool {
 	rel, err := filepath.Rel(root, path)
