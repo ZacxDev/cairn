@@ -612,7 +612,15 @@ jobs:
           # reason that paragraph gives.
           # Measured 2727 collected on the branch, so
           # `2727 - min(50, max(1, 2727/20)) = 2677`.
-          FLOOR = 2677
+          # ⚠ 2677 -> 2752 WHEN THE MUTATION BATTERIES WERE SHARDED, AND THIS ONE WAS FORCED:
+          # the step REFUSED on that branch with `collected=2802 failed=0 floor=2677`, a gap
+          # of 125 against `MAX_GAP` 100. The branch adds 28 tests
+          # (`tests/test_mutant_sharding.py`, the seam guard over the shards), so the tree it
+          # forked from sat at a gap of 97 by that arithmetic — the margin had crept to the
+          # bound across PRs that each passed, which is the drift the ceiling exists to stop.
+          # Measured 2802 collected in CI on the branch, so
+          # `2802 - min(50, max(1, 2802/20)) = 2752`.
+          FLOOR = 2752
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
