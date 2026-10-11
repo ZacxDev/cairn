@@ -15,16 +15,18 @@ import (
 // 🔴 A FORM FIELD AND NEVER A QUERY PARAMETER, because the value is a bearer capability that
 // can create a principal. A query parameter lands in browser history, in the referrer the
 // next hop receives and in every access log on the way; a POST body lands in none of those.
-// The one place a token legitimately appears in a URL is the invitation LINK itself, which
-// is the thing being sent to a person — and the page it opens moves it into this field
-// before anything is redeemed.
+// The LINK itself carries it in the URL FRAGMENT (`/join#invite=<token>`), which no browser
+// sends to any server, and `join.js` moves it from there into this field before anything is
+// redeemed. A link minted before the fragment carries it in the query and posts it in
+// [inviteQueryTokenField] instead.
 //
 // ⚠ THE RULE IS ONLY AS TRUE AS THE READ AT EACH CONSUMER, WHICH IS WHY THIS SENTENCE NOW
 // NAMES THE READ. `r.FormValue` merges the URL query into the posted body, so a handler
 // spelling it that way accepts the token in a query string however firmly the field is
 // declared body-only — `handleOAuthStart` did, for one release. Every consumer that must
 // take this value from a BODY uses `r.PostFormValue`; `handleJoinPage` is the one that must
-// take it from a QUERY and uses `r.URL.Query().Get`. Neither may be `FormValue`.
+// take it from a QUERY — a LEGACY link's, during the transition — and uses `r.URL.Query().Get`.
+// Neither may be `FormValue`.
 //
 // 🔴 ONLY THE START ROW'S HALF IS MEASURED, AND SAYING SO IS THE POINT.
 // `TestTheGitHubStartRowIgnoresAnInvitationTokenInTheQUERYString` measures
@@ -37,6 +39,22 @@ import (
 // filed separately; a ban is SPELLED rather than structural, so it would WIDEN this rather
 // than replace the behavioural test.
 const inviteTokenField = "invite"
+
+// inviteQueryTokenField is the form field a LEGACY `/join?invite=<token>` link's page posts the
+// token in, so the start row can mark that flight QUERY-BORNE.
+//
+// 🔴 WHY A SECOND FIELD: the token in a query string has ALREADY reached every access log on the
+// way, so a REUSABLE team link arriving that way is refused at the callback (`admitQueryBorne`) —
+// otherwise the logged `?invite=` shape keeps working and keeps being sent. Single-use tokens (an
+// invitation, a team link with reuse unticked) are still redeemed on it, so links sent before the
+// fragment keep working. Every mint now renders `/join#invite=<token>`, whose page posts
+// [inviteTokenField] instead.
+//
+// ⚠ THE MARK IS CHOSEN BY THE PAGE THE SERVER RENDERED, SO IT IS ONLY AS STRONG AS THAT PAGE — a
+// hand-built POST can put a query-borne token in [inviteTokenField]. That walks nothing the
+// refusal protects: the token is in the logs already, and what is refused is the ordinary browser
+// following an ordinary `?invite=` link, which is the thing that would keep the shape alive.
+const inviteQueryTokenField = "invite-query"
 
 // Inviting is the invitation half of the browser surface, as an interface for the reason
 // [Sharing] is one: the handlers are then testable without a database and without a control
@@ -214,7 +232,7 @@ type ControlInviting struct {
 	// Links, when set, redeems every token `Invites` does not know.
 	//
 	// 🔴 THE TEAM LINK RIDES THE INVITATION'S ONE JOIN PATH RATHER THAN OPENING A SECOND. A
-	// link is `/join?invite=<token>` exactly as an invitation is, so `GET /join`, the flight
+	// link is `/join#invite=<token>` exactly as an invitation is (`joinLink`), so `GET /join`, the flight
 	// that carries the token and the callback's two redemption arms are unchanged and serve
 	// both. The dispatch is by STORE, never by a token prefix or a form field: the two
 	// tables are disjoint by digest, and a field naming which kind to try would be a value

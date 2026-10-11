@@ -2356,7 +2356,8 @@ func mintedSection(v InviteView) g.Node {
 		h.P(h.Class("invite-link"), g.Text(m.Link)),
 		h.P(h.Class("note"), g.Text(
 			"Put this deployment's own address in front of that path before sending it. "+
-				"cairn cannot know the address you reach it by, so it does not guess one.")),
+				"cairn cannot know the address you reach it by, so it does not guess one. Send all of "+
+				"it: the part after # is the invitation, and no browser sends that part to any server.")),
 		h.Ul(h.Class("invites"), h.Li(
 			h.Class("invite-row"),
 			h.Span(h.Class("kind"), g.Text(string(m.Role))),
@@ -2386,35 +2387,58 @@ func mintedSection(v InviteView) g.Node {
 // the project or the role, and it cannot say that a link is dead. It can only say what will
 // happen if it is live.
 //
-// ⚠ THE ONE DISTINCTION IT DOES DRAW IS "the URL carried no token at all", WHICH IS NOT AN
-// ORACLE. That is a fact about the caller's own address bar — a truncated paste, a link
-// somebody retyped — and no token was presented for the answer to be about. Rendering the
-// accept form anyway would post an empty invitation and complete as an ordinary sign-in,
-// which for somebody who was invited is the most confusing possible outcome: they would end
-// up signed in, or refused, with no sign that the link was the problem.
-func JoinPage(token string, provider bool, app App) g.Node {
+// 🔴 THE TOKEN ARRIVES ONE OF TWO WAYS, AND THE PAGE IS SHAPED BY WHICH (operator decision: a
+// reusable team-link token must never travel in a URL a server receives).
+//
+//   - `/join#invite=<token>` — what every mint renders now. The FRAGMENT never reaches this server,
+//     so `queryToken` is "" and the page cannot know whether there is a token at all: it renders
+//     the accept form `hidden` with an EMPTY field, the no-invitation sentence `hidden`, a
+//     `<noscript>` notice, and `join.js`, which reads the fragment, clears it, and reveals one or
+//     the other. The person's click posts the token in the BODY.
+//   - `/join?invite=<token>` — a link minted before the fragment, kept working during the
+//     transition. The server already holds the token, so the form is rendered visible with it in
+//     the LEGACY field ([inviteQueryTokenField]); the start row marks that flight query-borne and
+//     the callback refuses a REUSABLE team link on it (`admitQueryBorne`).
+//
+// ⚠ "THE LINK CARRIES NO INVITATION" IS NOW THE SCRIPT'S TO SAY, NOT THE SERVER'S. It is still not
+// an oracle — a fact about the caller's own address bar — and the empty form still never shows:
+// the script reveals the form only for a non-empty token, so submitting it cannot complete as an
+// ordinary sign-in for somebody who was invited.
+func JoinPage(queryToken string, provider bool, app App) g.Node {
+	var body []g.Node
+	switch {
+	case !provider:
+		body = []g.Node{h.P(h.Class("refused"), g.Text(
+			"This deployment cannot accept an invitation right now: signing in with "+
+				GitHubLabel+" is unavailable, and that is the only way to redeem one."))}
+	case queryToken != "":
+		body = []g.Node{joinNote(), joinForm(inviteQueryTokenField, queryToken)}
+	default:
+		body = []g.Node{
+			h.NoScript(h.P(h.Class("refused"), g.Text(JoinFragmentNeedsScript))),
+			h.P(h.Class("refused"), h.ID(joinMissingID), g.Attr("hidden"), g.Text(
+				"This link carries no invitation. Ask whoever sent it for the whole "+
+					"link — it may have been cut short on the way.")),
+			h.Div(h.ID(joinAcceptID), g.Attr("hidden"), joinNote(), joinForm(inviteTokenField, "")),
+			joinScriptTag(),
+		}
+	}
 	return c.HTML5(c.HTML5Props{
 		Title:    documentTitle(app, "accept an invitation"),
 		Language: "en",
 		Head:     []g.Node{stylesheetLink(), pwaHead(app)},
 		Body: []g.Node{
 			h.Header(h.Class("page-header"), wordmark(app, false)),
-			h.Main(
-				h.Class("join-main"),
-				h.H2(g.Text("You have been invited")),
-				g.If(token == "", h.P(h.Class("refused"), g.Text(
-					"This link carries no invitation. Ask whoever sent it for the whole "+
-						"link — it may have been cut short on the way."))),
-				g.If(token != "" && !provider, h.P(h.Class("refused"), g.Text(
-					"This deployment cannot accept an invitation right now: signing in with "+
-						GitHubLabel+" is unavailable, and that is the only way to redeem one."))),
-				g.If(token != "" && provider, h.P(h.Class("note"), g.Text(
-					"Signing in with "+GitHubLabel+" accepts the invitation and creates your "+
-						"account here if you do not have one. Nothing is recorded until you do."))),
-				g.If(token != "" && provider, joinForm(token)),
-			),
+			h.Main(append([]g.Node{h.Class("join-main"), h.H2(g.Text("You have been invited"))}, body...)...),
 		},
 	})
+}
+
+// joinNote says what accepting does, beside the form on both shapes of the page.
+func joinNote() g.Node {
+	return h.P(h.Class("note"), g.Text(
+		"Signing in with "+GitHubLabel+" accepts the invitation and creates your "+
+			"account here if you do not have one. Nothing is recorded until you do."))
 }
 
 // joinForm is the accept button: a POST that starts the provider flight carrying the token.
@@ -2424,26 +2448,34 @@ func JoinPage(token string, provider bool, app App) g.Node {
 // on that SERVER-SIDE flight record rather than on a cookie or on the provider redirect's
 // query string — the operator decision and its two rejected alternatives are recorded at
 // `flight.invite`. A second route here would be a second place the flight is opened, and the
-// copy that forgot the per-client bound would be the one on the newer door.
+// copy that forgot the per-client bound would be the one on the newer door. That flight is ALSO
+// what carries a signed-out person's token across the sign-in round trip, so the fragment flow
+// needed no new state: the token goes body -> flight -> callback and never enters a URL.
 //
 // 🔴 A FORM AND NOT A LINK, FOR `providerForm`'s REASON: `stateChanging` calls `GET` safe, so
 // a link would be reachable by any `<img src>` in the world and by every link prefetcher,
 // each of which would mint a flight and overwrite the visitor's flight cookie. Here that
-// would also SPEND the invitation's one flight slot before the person clicked anything.
+// would also SPEND the invitation's one flight slot before the person clicked anything —
+// which is also why `join.js` FILLS this form and never submits it: a scanner that runs
+// script would otherwise do exactly that.
 //
 // ⚠ NO CSRF TOKEN, AND ITS ABSENCE IS A CONSEQUENCE RATHER THAN AN OVERSIGHT — there is no
 // session yet, so there is nothing to derive one from. Gate (2), the same-origin check, is
 // what stands in front of this row, and it runs on every state-changing request before
 // authentication for exactly this case.
-func joinForm(token string) g.Node {
+//
+// `field` is [inviteTokenField] on the fragment page (empty; `join.js` fills it, by id) or
+// [inviteQueryTokenField] on a query link's page (the server already holds the token).
+func joinForm(field, token string) g.Node {
 	return h.FormEl(
 		h.Class("signin-provider"),
+		h.ID(joinFormID),
 		h.Method("post"),
 		h.Action(OAuthStartPath),
 		// The visitor's own token, going back into the request that spends it, in a quoted
 		// attribute value gomponents escapes. See `handleJoinPage` for why this is not the
 		// reflected-sentence shape `outcomeFrom` refuses.
-		h.Input(h.Type("hidden"), h.Name(inviteTokenField), h.Value(token)),
+		h.Input(h.Type("hidden"), h.Name(field), g.If(field == inviteTokenField, h.ID(joinFieldID)), h.Value(token)),
 		h.Button(h.Type("submit"), g.Text("Accept with "+GitHubLabel)),
 	)
 }

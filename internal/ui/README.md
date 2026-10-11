@@ -2201,7 +2201,8 @@ reachable over HTTP**; this phase is the surface.
 | `GET /invite?project=<control.ID>` | `content` | that project's invitations, in every state, plus the mint form |
 | `POST /invite` | — | mints one invitation and renders its link **once** |
 | `POST /invite/revoke` | — | withdraws an open invitation, by DIGEST |
-| `GET /join?invite=<token>` | `public` | what an invited person opens |
+| `GET /join` (link: `/join#invite=<token>`) | `public` | what an invited person opens — the token is in the FRAGMENT, which the server never receives (Phase V) |
+| `GET /join?invite=<token>` | `public` | a LEGACY link, minted before Phase V; still opens, and a REUSABLE team link on it is refused at the callback |
 
 ## 🔴 `GET /join` is PUBLIC, and what makes that safe is that it resolves nothing
 
@@ -2336,7 +2337,10 @@ Two consumers, two different correct spellings, and neither may be `FormValue`:
 | consumer | read | why |
 |---|---|---|
 | `handleOAuthStart` (POST) | `r.PostFormValue` | the token must come out of the body the accept form posted, never out of a URL |
-| `handleJoinPage` (GET) | `r.URL.Query().Get` | the invitation LINK is the one place the token legitimately appears in a URL, and `FormValue` on a GET would ALSO read a **multipart** body no browser navigation sends |
+| `handleJoinPage` (GET) | `r.URL.Query().Get` | a LEGACY invitation link (`?invite=`, pre-Phase V) is the one place the token appears in a URL a server receives, and `FormValue` on a GET would ALSO read a **multipart** body no browser navigation sends |
+
+Since Phase V the start row reads a SECOND body field, `inviteQueryTokenField` (`invite-query`), the
+same way — `PostFormValue` — and it is what a legacy page posts, so the flight is marked query-borne.
 
 ⚠ **THAT LAST CLAUSE IS TRUE FOR MULTIPART AND FALSE FOR THE COMMONER SPELLING, WHICH IS WHY IT
 NOW NAMES THE TYPE.** Measured on the pinned toolchain: `GET` + `application/x-www-form-urlencoded`
@@ -4088,7 +4092,7 @@ and migrates it: the invitation survives, the ledger reads `[1 2]`, a link redee
 edited in place once, in this PR's fix round, to add `team_link_redemptions.confirmed`; it had never
 been applied outside a test.) Shared with the invitation, on purpose: `invite.NewToken`,
 `invite.Digest`, 256-bit tokens, digest-only storage, the token shown ONCE, and the ONE join path: a
-link is `/join?invite=<token>`, and `ControlInviting` hands any token its own store does not know to
+link is `/join#invite=<token>` since Phase V (`/join?invite=<token>` before it), and `ControlInviting` hands any token its own store does not know to
 `ControlTeamLinks` (`ControlInviting.Links`). Dispatch is by STORE, never by a prefix or form field.
 
 **There is no separate team-link wiring** (round 0 D2): the server reads the link half from
@@ -4192,16 +4196,23 @@ global caps are the only rate bound; there is no per-link rate limit). What boun
 `invite.MaxLinkTTL` (**30 days**, default still 7, chosen per link in whole days), revoke, the
 minter re-check, and the per-redemption log. Unticked reuse is single use, as an invitation is.
 
-🔴 **The token travels in a URL query, so it lands in ACCESS LOGS** (round 1 🟢6). `GET
-/join?invite=<token>` is what a link opens, and nginx's default `log_format` records `$request`,
-query included — so every gateway between the reader and this pod writes a reusable, up-to-30-day
-enrolment capability to disk in plain text. **Deploy note: strip the query string from access logs
-for `/join`** (in the deployment repository, outside this PR — e.g. log `$uri` rather than `$request`
-for that location). In-app mitigation, PROPOSED and not built: mint the link with the token in the URL
-FRAGMENT (`/join#invite=…`), which a browser never sends to any server and so no access log can hold.
-It is not cheap here: the join page would need a script to move the fragment into the accept form,
-and this surface's script allowlist (`AllowedScriptSources`, two entries since S4 added `pwa.js` —
-Phase S) is a deliberate gate — a third script is a decision, not a tidy-up.
+✅ **CLOSED FOR REUSABLE LINKS BY PHASE V — the token no longer travels in a URL a server receives.**
+The residual read: *"The token travels in a URL query, so it lands in ACCESS LOGS (round 1 🟢6). `GET
+/join?invite=<token>` is what a link opens, and nginx's default `log_format` records `$request`, query
+included — so every gateway between the reader and this pod writes a reusable, up-to-30-day enrolment
+capability to disk in plain text."* Every mint now renders `/join#invite=<token>`; a fragment is never
+sent in a request, so no access log, referrer or request line at any hop holds it, and `join.js` (the
+deliberate third entry of `AllowedScriptSources`) moves it into the accept form's BODY. **A reusable
+team link arriving in a query string is REFUSED**, so the logged shape cannot come back into use.
+⚠ **WHAT REMAINS, EXACTLY:** (1) links minted BEFORE Phase V are still `?invite=` links — a SINGLE-USE
+one (an invitation, or a team link with reuse unticked) still redeems on that shape, so its token is
+in the logs of every hop it crossed until it is spent or expires (≤ 7 days by default for an invitation,
+≤ `invite.MaxLinkTTL` for a link); a REUSABLE pre-Phase-V link stops working and must be re-minted —
+and, since its token is in those logs already, **revoked**; (2) the deploy note stands for that window
+— **strip the query string from `/join` access logs** in the deployment repository (log `$uri` rather
+than `$request`) — and is unnecessary once no pre-Phase-V link is live; (3) the token is still in
+the BROWSER until the script runs — the history entry is replaced on the script's first statement,
+but a browser extension or a synced-history service that records the URL before scripts run sees it.
 
 ## 🔴 Rolling back across migration 2
 
@@ -4307,7 +4318,10 @@ build refuses a version-2 database) before asserting the recipe lifts it.
   test drives a reusable link at volume.
 - **A revoke racing a redemption**, and two simultaneous mints — the store's conditional statements
   are the argument; neither race is driven.
-- **An access log.** The `/join` query-string residual above is a deployment fix outside this repo.
+- **An access log.** The `/join` query-string residual above is CLOSED for reusable links by Phase V;
+  what is left (pre-Phase-V single-use links) is a deployment fix outside this repo. No test reads a
+  real gateway's log; `uiaudit`'s `TestTheJoinFragmentIsClearedAndPosted` reads every request line a
+  browser sent its own server.
 - **A real rollback.** The recipe is measured through the startup predicate on one schema, not by
   booting an older image against a production-shaped database.
 
@@ -4370,3 +4384,99 @@ draft let through). It fails if it followed no value at all.
   uncrawled branch (the word guard follows names to values written in the function or at package
   level, not calls, selectors, parameters or `range`).
 - How a given browser, or an installed standalone window, truncates or decorates the title.
+
+---
+
+# Phase V — team-link tokens travel in the URL FRAGMENT, never a logged query string
+
+**Operator decision:** a reusable team-link token must never travel in a URL a server receives, so no
+access log at any hop (a CDN, a relay, this pod's own gateway) can hold one. Closes Phase T's
+access-log residual for reusable links; what remains is stated there.
+
+## The flow
+
+1. **Every mint renders `/join#invite=<token>`** — an invitation, a single-use team link and a
+   reusable one alike, through ONE builder, `joinLink` (`join.go`). The fragment is never sent in a
+   request, so `GET /join` arrives bare.
+2. **The fragment join page** (`JoinPage` with no query token, provider armed) renders the accept
+   form inside `<div id="join-accept" hidden>` with an EMPTY `invite` field, the no-invitation
+   sentence `hidden`, a `<noscript>` notice (`JoinFragmentNeedsScript` — with script off the page
+   says so; never a silent failure), and `join.js`. `no-store`, as every HTML page is.
+3. **`join.js`** reads `location.hash`, IMMEDIATELY replaces the history entry's URL with the literal
+   `/join` (`history.replaceState`), and then either fills the field and reveals the form or reveals
+   the no-invitation sentence. It runs on load AND on `hashchange`: pasting the whole link into a tab
+   already showing `/join` — what the no-invitation sentence asks a person to do — is a same-document
+   navigation that does not reload. **It fills the form and never submits it**: a mail scanner that
+   runs script would otherwise open a flight on every link it saw (`joinForm`'s reason for being a
+   form). The person's click POSTs the token in the BODY to `POST /sign-in/github`.
+4. **The redemption path is the existing one, unchanged**: same-origin gate (2) before auth, derived
+   from the METHOD (the row is public and there is no session, so there is no CSRF token to ask for —
+   `joinForm`'s standing reason); the token rides the server-side FLIGHT; the callback redeems.
+
+## 🔴 The signed-out round trip needed NO new state — the flight already carries it
+
+The token must survive the provider redirect without entering a URL. The existing invite flow already
+does exactly that: `POST /sign-in/github` puts the token on the server-side flight record (`flight.invite`
+— unguessable id in an HttpOnly cookie, single use, `FlightTTL`, bounded per client), and the callback
+reads it back from there. A pending-redemption table keyed by its own cookie would be a second copy of
+that record. **No new POST route exists**; the route ledger gains one row, `GET /static/join.<hash>.js
+public`, the script.
+
+## 🔴 The transition, and the one rule it adds
+
+`?invite=` links minted before this phase keep opening. Their page renders the token into a DIFFERENT
+field, `inviteQueryTokenField` (`invite-query`), so the start row marks the flight QUERY-BORNE
+(`flightInvite.viaQuery`). At the callback `admitQueryBorne` decides, before either redemption arm runs:
+
+| query-borne token | answer | why |
+|---|---|---|
+| a single-use INVITATION | redeemed | already-sent links keep working |
+| a single-use TEAM LINK (reuse unticked) | redeemed | one redemption closes it — the exposure an invitation already has |
+| a REUSABLE team link | **refused** | open enrolment until expiry; a logged copy IS the leak, and accepting it keeps the logged shape in use |
+| unclassifiable (link store error) | refused | fail closed |
+
+The refusal DROPS the token, so it is the uniform one: a stranger gets `signInRefused`, byte-identical
+to a dead link's; a known user is signed in and joins nothing (a failed redemption never locks an
+existing user out — the callback's standing rule). The lookup (`TeamLinking.ReusableLink`) is asked at
+the callback only, where the token is being redeemed anyway — never on the public `GET /join`, which
+still resolves nothing.
+
+⚠ **The mark is chosen by the page the server rendered, so a hand-built POST can put a query-borne
+token in the fragment field.** That walks nothing the refusal protects: the token is in the logs
+already, and what is refused is an ordinary browser following an ordinary `?invite=` link.
+
+## The RED proof
+
+Each new test reads only pre-change symbols plus `join.js` from disk, so its RED on the base is an
+assertion failing, not a build error — measured on `origin/main` before any non-test edit:
+
+- `TestNoMintedLinkCarriesItsTokenInAQueryString` — RED (all three mint kinds rendered `/join?invite=`).
+- `TestAReusableTeamLinkInTheQUERYStringIsRefusedAndNotRedeemed` — RED in both subtests (the link was
+  redeemed, 1 row; the stranger got 303; the known user gained `read`). Its positive control is the
+  fragment path, which must redeem.
+- `TestTheFragmentJoinPageMovesTheTokenThroughTheScript` — RED (no noscript, no hidden form, no script).
+- `TestTheJoinScriptTouchesOnlyWhatItSays` (spelling guard, labelled as one; nine negative controls)
+  and `TestTheRouteLedgerMatchesTheDispatchTable` — RED (`join.js` absent).
+- `TestASingleUseTokenInTheQUERYStringStillRedeems` — an INVARIANT guard, green on the base too.
+- `TestAQueryBorneTokenThatCannotBeClassifiedIsNotRedeemed` — new behaviour; proven by mutation
+  (fail-open), not by the base.
+- `uiaudit`'s `TestTheJoinFragmentIsClearedAndPosted` (real Chromium): red on a `join.js` with the
+  `replaceState` line deleted ("the fragment was not cleared", both the fresh-load and the
+  same-document case), and red on the first draft's script, which had no `hashchange` subscription
+  (the same-document paste never revealed the form).
+
+`control_mutants.py` gained `ui-join-reusable-team-link-accepted-via-query`,
+`ui-start-row-drops-the-query-borne-mark`, `ui-query-borne-classification-fails-open`,
+`ui-minted-link-travels-in-the-query` and `ui-join-script-not-allowlisted`, and re-aimed four rows
+whose anchors moved.
+
+## What these guards still cannot see
+
+- **A real gateway's access log.** The browser test reads every request line ITS OWN server received;
+  no test reads nginx.
+- **The browser before the script runs** — history sync or an extension recording the URL on
+  navigation sees the fragment.
+- **A messaging app that strips the fragment** — the person then sees the no-invitation sentence,
+  which is the visible failure, not a silent one; nothing measures which apps do this.
+- **`<noscript>` in a browser.** The notice is pinned in the served bytes; no test drives a
+  script-disabled browser.

@@ -107,6 +107,9 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		// 🔴 THE SECOND SCRIPT ROW (S4 of the mobile plan, `pwa.go`): `pwa.js`, served on every
 		// deployment (only an ARMED one links it), `public` because the sign-in page links it.
 		"GET /static/pwa." + pwaDigestFromBytes(t) + ".js public",
+		// 🔴 THE THIRD SCRIPT ROW (`join.go`): `join.js`, which moves a team-link token from the URL
+		// FRAGMENT into the accept form. `public` because `/join` is, and digested from the committed file.
+		"GET /static/join." + joinDigestFromBytes(t) + ".js public",
 		// 🔴 THE THREE INSTALL SCREENSHOTS (S4), spelled by NAME here, each digested from its file.
 		"GET " + screenshotRowFromBytes(t, "narrow-hub") + " public",
 		"GET " + screenshotRowFromBytes(t, "narrow-arcs") + " public",
@@ -549,6 +552,12 @@ func init() {
 	}
 	// S4's rows, the same reasoning: `pwa.js` and every screenshot answer 200, armed or not.
 	bareGETAnswer["GET "+PWAScriptPath+" public"] = http.StatusOK
+	// The join script's row, digested from the committed file (`joinDigestFromBytes`'s source): it
+	// answers 200 to a bare GET. A missing file adds no expectation, and the ledger test says why.
+	if js, err := os.ReadFile("join.js"); err == nil {
+		sum := sha256.Sum256(js)
+		bareGETAnswer["GET /static/join."+hex.EncodeToString(sum[:])[:12]+".js public"] = http.StatusOK
+	}
 	for _, p := range ScreenshotPaths() {
 		bareGETAnswer["GET "+p+" public"] = http.StatusOK
 	}

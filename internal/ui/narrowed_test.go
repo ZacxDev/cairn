@@ -244,13 +244,13 @@ func TestANarrowedBearerCannotMintAnInvitation(t *testing.T) {
 			url.Values{FieldProject: {string(fixtureProject)}, FieldRole: {string(control.RoleMember)}})
 	}
 
-	if rec := mint(t, testCredential); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), JoinPath+"?") {
+	if rec := mint(t, testCredential); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), JoinPath+"#") {
 		t.Fatalf("POSITIVE CONTROL FAILED: the un-narrowed bearer could not mint (status %d), so a refusal "+
 			"below would not be about the narrowing:\n%s", rec.Code, rec.Body.String())
 	}
 	for _, token := range []string{narrowedToOneToken, narrowedToNoneToken, narrowedToAllToken} {
 		rec := mint(t, token)
-		if strings.Contains(rec.Body.String(), JoinPath+"?") {
+		if strings.Contains(rec.Body.String(), JoinPath+"#") {
 			t.Fatalf("A NARROWED BEARER MINTED AN INVITATION into the owner's project (status %d): "+
 				"membership authority is not bounded by a scope narrowing", rec.Code)
 		}
