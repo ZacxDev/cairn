@@ -31,6 +31,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -414,6 +415,74 @@ func TestTwoCredentialsOfOnePrincipalOnTheClientListener(t *testing.T) {
 	}
 	if got := call(t, r.base, http.MethodGet, clientapi.MemosPath+"?scope=beta-notes", capiTokAgentB, ""); got.status != http.StatusOK {
 		t.Fatalf("host-b stopped working when host-a was revoked: %d %s", got.status, got.body)
+	}
+}
+
+// TestTheListRouteParametersReachTheRealStore — the list route's `after`, `limit` and `tombstones`
+// against the REAL store (S2 round 1: none of the three had a test that could fail). Three memos are
+// sent, their `created_at` moved by SQL to WHOLE seconds an hour apart — the wire carries whole-second
+// RFC 3339, so `after` can only name a memo's own instant if that instant has no fraction — and the
+// middle one is retracted through the listener. Then: no parameters lists the two live memos; with
+// `tombstones=1` the retracted one appears between them as a tombstone; `after` = the first memo's
+// time drops it (STRICTLY after); `limit=1` keeps the oldest; and they compose. RED under each of:
+// `after` dropped (the first memo comes back), `limit` dropped (more than one row), `IncludeRetracted`
+// defaulting to true (the tombstone appears unasked), and `tombstones=1` ignored (it never appears).
+func TestTheListRouteParametersReachTheRealStore(t *testing.T) {
+	r := newListenerRig(t)
+	ids := []int64{
+		mustSendVia(t, r.base, capiTokWriter, "alpha-notes"),
+		mustSendVia(t, r.base, capiTokWriter, "alpha-notes"),
+		mustSendVia(t, r.base, capiTokWriter, "alpha-notes"),
+	}
+	for i, id := range ids {
+		if _, err := r.db.SQL().Exec(`UPDATE memos SET created_at = date_trunc('second', now()) - make_interval(hours => $1)
+		      WHERE id = $2`, 3-i, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, _ := json.Marshal(clientapi.RetractRequest{Scope: "alpha-notes", ID: ids[1]})
+	if got := call(t, r.base, http.MethodPost, clientapi.RetractPath, capiTokWriter, string(b)); got.status != http.StatusOK {
+		t.Fatalf("retracting the middle memo: %d %s", got.status, got.body)
+	}
+	list := func(params string) string {
+		got := call(t, r.base, http.MethodGet, clientapi.MemosPath+"?scope=alpha-notes"+params, capiTokWriter, "")
+		var lb clientapi.ListBody
+		if got.status != http.StatusOK || json.Unmarshal([]byte(got.body), &lb) != nil {
+			t.Fatalf("list%s: %d %s", params, got.status, got.body)
+		}
+		var out []string
+		for _, m := range lb.Memos {
+			s := strconv.FormatInt(m.ID, 10)
+			if m.Tombstone != "" {
+				s += "(tombstone)"
+			}
+			out = append(out, s)
+		}
+		return strings.Join(out, " ")
+	}
+	firstAt := list("&limit=1")
+	got := call(t, r.base, http.MethodGet, fmt.Sprintf("%s?scope=alpha-notes&id=%d", clientapi.MemoPath, ids[0]), capiTokWriter, "")
+	var one clientapi.MemoBody
+	if got.status != http.StatusOK || json.Unmarshal([]byte(got.body), &one) != nil {
+		t.Fatalf("reading the first memo: %d %s", got.status, got.body)
+	}
+	after := "&after=" + url.QueryEscape(one.Memo.CreatedAt)
+	n := func(i int) string { return strconv.FormatInt(ids[i], 10) }
+	for _, tc := range []struct{ params, want string }{
+		{"", n(0) + " " + n(2)},
+		{"&tombstones=0", n(0) + " " + n(2)},
+		{"&tombstones=1", n(0) + " " + n(1) + "(tombstone) " + n(2)},
+		{after, n(2)},
+		{after + "&tombstones=1", n(1) + "(tombstone) " + n(2)},
+		{"&limit=1", n(0)},
+		{after + "&tombstones=1&limit=1", n(1) + "(tombstone)"},
+	} {
+		if got := list(tc.params); got != tc.want {
+			t.Errorf("list%s = %q, want %q", tc.params, got, tc.want)
+		}
+	}
+	if firstAt != n(0) {
+		t.Fatalf("limit=1 answered %q, want the oldest memo %s", firstAt, n(0))
 	}
 }
 

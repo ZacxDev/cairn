@@ -372,7 +372,12 @@ type RetractedBody struct {
 	Retracted int64 `json:"retracted"`
 }
 
-// decode reads one JSON object into `into`, bounded, refusing unknown fields and trailing data.
+// decode reads one JSON object into `into`, bounded, refusing unknown fields and ANY trailing data.
+//
+// 🔴 END OF INPUT IS REQUIRED, NOT `!dec.More()`. `More` answers "is there another element in the
+// CURRENT array or object", and at the top level it reports false before a `]` or `}` — so `{…}}`
+// passed a `More` check while its doc said trailing data was refused (S2 round 1). Asking for the
+// next token and requiring `io.EOF` refuses every trailing byte that is not whitespace.
 func decode(w http.ResponseWriter, r *http.Request, into any) bool {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxRequestBody))
 	dec.DisallowUnknownFields()
@@ -381,8 +386,8 @@ func decode(w http.ResponseWriter, r *http.Request, into any) bool {
 			strconv.Itoa(MaxRequestBody)+" bytes")
 		return false
 	}
-	if dec.More() {
-		badRequest(w, "the body must be ONE JSON object")
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		badRequest(w, "the body must be ONE JSON object and nothing after it")
 		return false
 	}
 	return true

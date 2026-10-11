@@ -44,22 +44,34 @@ const (
 	garbage = "clientapi-test-garbage-never-issued-0000000000"
 )
 
-// stubStore records whether the store was reached at all, and answers with `stored`.
+// stubStore records whether the store was reached at all, and answers with `stored`. It also
+// RECORDS what the handler asked it — the list query and the send's TTL — because a parameter the
+// handler parses and then drops is invisible to every test that looks only at the answer: before
+// these fields existed, the list route's `after`, `limit` and `tombstones` had no test that could
+// fail (S2 round 1).
 type stubStore struct {
-	mu     sync.Mutex
-	calls  int
-	stored []memo.Stored
+	mu        sync.Mutex
+	calls     int
+	stored    []memo.Stored
+	lastQuery *pgstore.MemoQuery
+	lastTTL   *time.Duration
 }
 
 func (s *stubStore) hit()   { s.mu.Lock(); s.calls++; s.mu.Unlock() }
 func (s *stubStore) n() int { s.mu.Lock(); defer s.mu.Unlock(); return s.calls }
 
-func (s *stubStore) Send(context.Context, control.Principal, control.Authorization, string, string, string, time.Duration) (int64, time.Time, error) {
+func (s *stubStore) Send(_ context.Context, _ control.Principal, _ control.Authorization, _, _, _ string, ttl time.Duration) (int64, time.Time, error) {
 	s.hit()
+	s.mu.Lock()
+	s.lastTTL = &ttl
+	s.mu.Unlock()
 	return 7, t0, nil
 }
-func (s *stubStore) List(context.Context, control.Model, control.Authorization, pgstore.MemoQuery) ([]memo.Stored, error) {
+func (s *stubStore) List(_ context.Context, _ control.Model, _ control.Authorization, q pgstore.MemoQuery) ([]memo.Stored, error) {
 	s.hit()
+	s.mu.Lock()
+	s.lastQuery = &q
+	s.mu.Unlock()
 	return s.stored, nil
 }
 func (s *stubStore) Get(context.Context, control.Model, control.Authorization, string, int64) (memo.Stored, error) {
@@ -349,7 +361,14 @@ func TestMalformedRequestsAreRefusedBeforeTheStore(t *testing.T) {
 		{"send with an unknown field", http.MethodPost, clientapi.MemosPath, `{"scope":"alpha-notes","subject":"s","body":"b","from":"someone-else"}`},
 		{"send with no scope", http.MethodPost, clientapi.MemosPath, `{"subject":"s","body":"b"}`},
 		{"send with two objects", http.MethodPost, clientapi.MemosPath, `{"scope":"alpha-notes"}{"scope":"alpha-notes"}`},
-		{"send past the body bound", http.MethodPost, clientapi.MemosPath, `{"scope":"alpha-notes","body":"` + strings.Repeat("x", clientapi.MaxRequestBody) + `"}`},
+		// 🔴 A LITERAL, NOT `clientapi.MaxRequestBody`: a size derived from the constant moves WITH
+		// it, so raising the bound to a megabyte kept this row green. 65536 is the bound as
+		// documented; `TestTheBodyBoundIsALiteral64KiBWithAPositiveControl` pins the other edge.
+		{"send past the body bound", http.MethodPost, clientapi.MemosPath, `{"scope":"alpha-notes","body":"` + strings.Repeat("x", 65536) + `"}`},
+		// `{…}}`: one object, then a stray closing brace. `dec.More()` reports false before a `}`,
+		// so the "ONE JSON object" check let this through until `decode` required end of input.
+		{"send with a trailing brace", http.MethodPost, clientapi.MemosPath, `{"scope":"alpha-notes","subject":"s","body":"b"}}`},
+		{"send with trailing garbage", http.MethodPost, clientapi.MemosPath, `{"scope":"alpha-notes","subject":"s","body":"b"} x`},
 		{"retract without an id", http.MethodPost, clientapi.RetractPath, `{"scope":"alpha-notes"}`},
 		{"retract with a string id", http.MethodPost, clientapi.RetractPath, `{"scope":"alpha-notes","id":"1"}`},
 	} {
@@ -363,5 +382,91 @@ func TestMalformedRequestsAreRefusedBeforeTheStore(t *testing.T) {
 	}
 	if r.store.n() != 0 {
 		t.Fatalf("malformed requests reached the store %d time(s)", r.store.n())
+	}
+}
+
+// TestTheListRouteHandsTheStoreEveryParameter — the list route's parameters, asserted on the QUERY
+// the store receives rather than on the answer, which a stub store cannot vary. Every value is
+// distinct from its zero AND from the default the store would substitute (`limit` 17, not the cap
+// 200; `after` a sub-second instant, not the zero time), so a handler that drops a parameter, or
+// hardcodes its default, cannot satisfy the comparison by coincidence. RED under each of: `after`
+// parsed and not assigned; `limit` parsed and not assigned; `IncludeRetracted` defaulting to true;
+// `tombstones=1` ignored. The same four against the REAL store are
+// `TestTheListRouteParametersReachTheRealStore` (Postgres tier).
+func TestTheListRouteHandsTheStoreEveryParameter(t *testing.T) {
+	r := newRig(t, nil)
+	after := time.Date(2000, 2, 3, 4, 5, 6, 500_000_000, time.UTC)
+	for _, tc := range []struct {
+		target string
+		want   pgstore.MemoQuery
+	}{
+		{clientapi.MemosPath + "?scope=alpha-notes", pgstore.MemoQuery{Scope: "alpha-notes"}},
+		{clientapi.MemosPath + "?scope=alpha-notes&tombstones=0", pgstore.MemoQuery{Scope: "alpha-notes"}},
+		{clientapi.MemosPath + "?scope=alpha-notes&after=2000-02-03T04:05:06.5Z&limit=17&tombstones=1",
+			pgstore.MemoQuery{Scope: "alpha-notes", After: after, Limit: 17, IncludeRetracted: true}},
+		{clientapi.MemosPath + "?scope=alpha-notes&limit=1", pgstore.MemoQuery{Scope: "alpha-notes", Limit: 1}},
+		{clientapi.MemosPath + "?scope=alpha-notes&after=2000-02-03T04:05:06.5Z", pgstore.MemoQuery{Scope: "alpha-notes", After: after}},
+	} {
+		r.store.lastQuery = nil
+		got := r.do(http.MethodGet, tc.target, "", peerA, bearer(tokA))
+		if got.status != http.StatusOK {
+			t.Fatalf("%s: answered %d %q", tc.target, got.status, got.body)
+		}
+		if r.store.lastQuery == nil {
+			t.Fatalf("%s: the store was never asked", tc.target)
+		}
+		q := *r.store.lastQuery
+		if q.Scope != tc.want.Scope || !q.After.Equal(tc.want.After) || q.Limit != tc.want.Limit ||
+			q.IncludeRetracted != tc.want.IncludeRetracted {
+			t.Errorf("%s: the store was asked %+v, want %+v", tc.target, q, tc.want)
+		}
+	}
+}
+
+// TestTheSendTTLIsClampedWithoutOverflow — `ttlFrom`'s clamp, measured through the route. A
+// `ttl_seconds` past `memo.MaxTTL` reaches the store as one second past it (which `memo.CheckSend`
+// refuses as `ttl`), a hugely negative one as -1 s, and nothing in between overflows. RED with the
+// clamp removed: `time.Duration(math.MaxInt64) * time.Second` wraps, and the store is handed a value
+// that is neither the caller's nor a refusal.
+func TestTheSendTTLIsClampedWithoutOverflow(t *testing.T) {
+	r := newRig(t, nil)
+	if memo.MaxTTL != 30*24*time.Hour {
+		t.Fatalf("memo.MaxTTL moved to %v: the literal 2592000 rows below no longer sit on its edge", memo.MaxTTL)
+	}
+	for _, tc := range []struct {
+		seconds string
+		want    time.Duration
+	}{
+		{"0", 0},
+		{"3600", time.Hour},
+		{"2592000", memo.MaxTTL},
+		{"2592001", memo.MaxTTL + time.Second},
+		{"9223372036854775807", memo.MaxTTL + time.Second},
+		{"-9223372036854775807", -time.Second},
+		{"-60", -time.Minute},
+	} {
+		r.store.lastTTL = nil
+		got := r.do(http.MethodPost, clientapi.MemosPath,
+			`{"scope":"alpha-notes","subject":"s","body":"b","ttl_seconds":`+tc.seconds+`}`, peerA, bearer(tokA))
+		if got.status != http.StatusCreated || r.store.lastTTL == nil {
+			t.Fatalf("ttl_seconds=%s: answered %d %q", tc.seconds, got.status, got.body)
+		}
+		if *r.store.lastTTL != tc.want {
+			t.Errorf("ttl_seconds=%s reached the store as %v, want %v", tc.seconds, *r.store.lastTTL, tc.want)
+		}
+	}
+}
+
+// TestTheBodyBoundIsALiteral64KiBWithAPositiveControl — the other edge of the bound the malformed
+// table pins from above: a send body just UNDER 64 KiB is decoded and reaches the store, so the
+// refusal there is the bound and not a decoder that refuses everything large.
+func TestTheBodyBoundIsALiteral64KiBWithAPositiveControl(t *testing.T) {
+	r := newRig(t, nil)
+	body := `{"scope":"alpha-notes","subject":"s","body":"` + strings.Repeat("x", 65536-64) + `"}`
+	if len(body) >= 65536 {
+		t.Fatalf("the positive control is %d bytes, not under the bound", len(body))
+	}
+	if got := r.do(http.MethodPost, clientapi.MemosPath, body, peerA, bearer(tokA)); got.status != http.StatusCreated {
+		t.Fatalf("a %d-byte send answered %d %q, want it decoded and handed to the store", len(body), got.status, got.body)
 	}
 }
