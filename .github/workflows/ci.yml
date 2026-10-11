@@ -1951,8 +1951,8 @@ jobs:
     # blocker again.
     continue-on-error: true
     # 🔴 TWO LEGS, SPLIT ONLY WHERE NO STATE CROSSES THE LINE — `tests/test_uiaudit_job_ledger.py`
-    # pins every step to its leg. It ran as one serial job (~9.5 min: guards ~2.0, walk ~3.7,
-    # `pwa_check.sh` ~3.2); the legs run in parallel on separate runners.
+    # pins every step to its leg. It ran as one serial job, guards then walk then `pwa_check.sh`;
+    # the legs run in parallel on separate runners, so the job takes the longer leg, not the sum.
     #   walk — the guards, then the walk, then `verify-push`, the summary and the upload, IN THE
     #          ORDER THEY HAD. The guards stay AHEAD of the walk in the same leg because they hold
     #          the positive control: a walk that pushes before the instrument was validated would
@@ -2268,12 +2268,18 @@ jobs:
       # clauses, exit 0/1/2); `--self-test` (nine sabotaged tree copies, four of them full walks) is a
       # local instrument validation, too heavy to repeat on every push. Exit 2 is "could not vouch" and
       # is a failure here exactly like 1 — never a skip.
+      #
+      # ⚠ `|| rc=$?`, NOT A PIPELINE INTO `tee`: GitHub runs this under `bash -eo pipefail`, so a
+      # failing pipeline ended the script AT that line — the step still exited with the script's
+      # code, but the `::error::` annotation below was unreachable. Measured with a stub exiting
+      # 0/1/2: the step exit is 0/1/2 both ways; the annotation printed 0 times before, once now.
+      # The tee's file was read by nothing; the step log already holds the output.
       - name: pwa_check.sh — the mobile plan's closing-condition clauses (a)–(e)
         if: matrix.part == 'pwa'
         run: |
           set -uo pipefail
-          ./uiaudit/pwa_check.sh 2>&1 | tee "${{ runner.temp }}/pwa-check.log"
-          rc=${PIPESTATUS[0]}
+          rc=0
+          ./uiaudit/pwa_check.sh 2>&1 || rc=$?
           if [ "$rc" != "0" ]; then
             echo "::error::pwa_check.sh exited $rc (1 = a clause FAILED, 2 = could not vouch)"
             exit "$rc"

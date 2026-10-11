@@ -680,7 +680,7 @@ script's own text and `main.go`'s refusal headlines. ⚠ It is a SPELLING guard,
 
 ✅ **A CI step since S4** — the PLAIN check, in the advisory `uiaudit` job (exit 1 or 2 fails the step;
 the job stays `continue-on-error` until S6b). It runs in that job's `pwa` matrix leg, in parallel with
-the `walk` leg; it shares no state with the walk (own work dir, own port, credentials stripped), and
+the `walk` leg, so the job takes the longer leg rather than the sum; it shares no state with the walk (own work dir, own port, credentials stripped), and
 `tests/test_uiaudit_job_ledger.py` pins which leg every step of the job runs in. `--self-test` is NOT run in CI: nine tree copies and four
 full walks per push buy nothing the committed self-test record below does not, until the tree changes.
 

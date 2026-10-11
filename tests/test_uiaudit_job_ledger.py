@@ -62,21 +62,13 @@ def test_every_step_is_in_the_ledger_in_order_with_its_leg_as_a_WHOLE_string():
     assert got == LEDGER
 
 
-def test_the_matrix_declares_exactly_the_legs_the_steps_name_and_never_fails_fast():
-    job = JOBS["uiaudit"]
-    assert re.search(r"^    strategy:\n      fail-fast: false\n      matrix:\n        part: \[walk, pwa\]$", job, re.M)
-    named = {m for s in _steps(job) for m in re.findall(r"matrix\.part == '([a-z]+)'", _if(s) or "")}
-    assert named == {"walk", "pwa"}
+def test_the_matrix_declares_exactly_the_two_legs_and_never_fails_fast():
+    """With the ledger's `if:` strings pinned whole, this is what makes every leg a step names exist."""
+    assert re.search(r"^    strategy:\n      fail-fast: false\n      matrix:\n        part: \[walk, pwa\]$",
+                     JOBS["uiaudit"], re.M)
 
 
 def test_the_hub_secrets_reach_ONE_step_in_ONE_leg():
     """One leg pushes, so one run pushes at most once — the property the split must not break."""
     holders = [(_label(s), _if(s)) for s in _steps(JOBS["uiaudit"]) if "secrets." in s]
     assert holders == [("the walk — boot cairn-ui, drive chromium, push, read the diff back", WALK)]
-
-
-def test_the_walk_leg_keeps_guards_then_walk_then_verify_push():
-    order = [_label(s) for s in _steps(JOBS["uiaudit"]) if (_if(s) or "").find(WALK) >= 0]
-    assert order.index("the harness's own guards, including the positive control") \
-        < order.index("the walk — boot cairn-ui, drive chromium, push, read the diff back") \
-        < order.index("verify-push — the push actually landed")
