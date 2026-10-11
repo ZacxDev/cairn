@@ -106,6 +106,9 @@ var exportLedger = map[string]entry{
 	"Fields.RetractorDisplay": {"input", "string"},
 	"Fields.RetractorLabel":   {"input", "string"},
 	"NewStored":               {"input", "func(Fields) Stored"},
+	// S3: the client's way in — a `Rendered` the listener SENT, treated as untrusted text and
+	// sanitised again on every output (`TestFromRenderedSanitisesEveryWireFieldOnEveryOutput`).
+	"FromRendered": {"input", "func(Rendered) (Stored, error)"},
 	// the carrier: no exported field, no method.
 	"Stored": {"carrier", "struct"},
 	// the rendered type: every field already replaced (pinned by reflection in

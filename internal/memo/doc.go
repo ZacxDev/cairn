@@ -5,7 +5,8 @@
 // ([CheckSend], over `internal/redact`'s confident subset) and the limits, and
 // `internal/pgstore.MemoStore` is their one caller. S2's client listener (`internal/clientapi`,
 // `cairn-ui -client-api-addr`) is the first thing reachable from a request that reaches it, and
-// only when that flag is set; the verbs (S3) are a later slice.
+// only when that flag is set; S3's four client verbs (`internal/client`'s memo.go) read what it
+// serves back in through [FromRendered] and print it through [RenderPreview] and [RenderFull].
 //
 // 🔴 MEMO TEXT IS THE FIRST STORE-ORIGINATED TEXT AUTO-INJECTED INTO AN AGENT'S CONTEXT, so
 // this package states what it guarantees at the scope its tests check, and no wider.

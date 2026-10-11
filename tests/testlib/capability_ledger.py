@@ -226,6 +226,56 @@ LEDGER: tuple[Capability, ...] = (
         go_only_why="decision 3 of the arcs/sessions plan: the arc registry (S3) is "
                     "Go-only",
     ),
+    # Scope mail's four verbs (S3 of `claudedocs/plan-cairn-scope-mail.md`, decision 8). Each
+    # is a client of `cairn-ui`'s CLIENT LISTENER (`internal/clientapi`, `-client-api-addr`),
+    # NOT of the pod, so no row names a route: the pod's ledger does not move (closing-condition
+    # part 3), and the listener's own route ledger is `clientapi.ClientRoutes()`, pinned by
+    # `TestTheClientRouteLedgerMatchesTheDispatchTable`.
+    Capability(
+        name="memo-check",
+        effect=READS,
+        cli="memo-check",
+        route=None,
+        no_route_because="reads `GET /client/v1/memos` on `cairn-ui`'s client listener, never "
+                         "the pod; that listener's routes are `clientapi.ClientRoutes()`",
+        note="the delivery hook's verb: one fenced preview block of the memos this session has "
+             "not seen, with a `memo-status=` token as its first stderr line",
+        go_only=True,
+        go_only_why="decision 8 of the scope-mail plan: the memo verbs are Go-only and the "
+                    "Python oracle is not extended — P8 retires it",
+    ),
+    Capability(
+        name="memo-read",
+        effect=READS,
+        cli="memo-read",
+        route=None,
+        no_route_because="reads `GET /client/v1/memo` and `/client/v1/memos` on `cairn-ui`'s "
+                         "client listener, never the pod",
+        note="full bodies through the same fenced renderer as the preview",
+        go_only=True,
+        go_only_why="decision 8 of the scope-mail plan: Go-only",
+    ),
+    Capability(
+        name="memo-send",
+        effect=WRITES,
+        cli="memo-send",
+        route=None,
+        no_route_because="writes `POST /client/v1/memos` on `cairn-ui`'s client listener; a "
+                         "memo lives in `cairn-ui`'s database, never in the store tree",
+        note="WRITES a memo row and its `sent` event, which other sessions then read",
+        go_only=True,
+        go_only_why="decision 8 of the scope-mail plan: Go-only",
+    ),
+    Capability(
+        name="memo-retract",
+        effect=WRITES,
+        cli="memo-retract",
+        route=None,
+        no_route_because="writes `POST /client/v1/memo/retract` on `cairn-ui`'s client listener",
+        note="NULLs the memo's text and appends a `retracted` event",
+        go_only=True,
+        go_only_why="decision 8 of the scope-mail plan: Go-only",
+    ),
     Capability(
         name="scope-sources",
         effect=READS,

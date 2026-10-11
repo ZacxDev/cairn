@@ -539,9 +539,11 @@ class TestTheGoOnlyDeclaration:
         """An INVARIANT GUARD on today's state, spelled by hand: the arcs/sessions S2
         slice declared the first Go-only verb and route (`sessions`), and S3 the arc
         registry (`arcs`, `arc-show`, `arc-register`); S2 of the scope-refs plan the
-        `sources` ROUTE, with no verb yet. The next one moves this test in the same
-        commit."""
-        assert GO_ONLY_VERBS == frozenset({"sessions", "arcs", "arc-show", "arc-register"})
+        `sources` ROUTE, with no verb yet; S3 of the scope-mail plan the four `memo-*`
+        verbs, with NO route (they are clients of `cairn-ui`'s client listener, not the
+        pod). The next one moves this test in the same commit."""
+        assert GO_ONLY_VERBS == frozenset({"sessions", "arcs", "arc-show", "arc-register",
+                                           "memo-check", "memo-read", "memo-send", "memo-retract"})
         assert go_only_route_names() == frozenset({
             "GET sessions", "HEAD sessions", "GET arcs", "HEAD arcs",
             "GET arc", "HEAD arc", "PUT arc", "GET sources", "HEAD sources",
@@ -564,6 +566,7 @@ class TestTheGoOnlyDeclaration:
         # The real go_only rows (spelled by hand) plus the synthetic one.
         assert go_only_verbs(ledger) == {
             SYNTHETIC_VERB, "sessions", "arcs", "arc-show", "arc-register",
+            "memo-check", "memo-read", "memo-send", "memo-retract",
         }
         # A GET route is ALSO a HEAD route on the Go server.
         assert go_only_route_names(ledger) == {

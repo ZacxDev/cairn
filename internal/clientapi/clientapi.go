@@ -52,15 +52,18 @@ import (
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/memo"
+	"github.com/ZacxDev/cairn/internal/memowire"
 	"github.com/ZacxDev/cairn/internal/netid"
 	"github.com/ZacxDev/cairn/internal/pgstore"
 )
 
-// The four routes' paths (decision 8). `MemosPath` carries two methods: GET lists, POST sends.
+// The four routes' paths (decision 8), re-exported from `internal/memowire`, which is where the
+// wire is spelled ONCE for the listener and the client (S3). `MemosPath` carries two methods: GET
+// lists, POST sends.
 const (
-	MemosPath   = "/client/v1/memos"
-	MemoPath    = "/client/v1/memo"
-	RetractPath = "/client/v1/memo/retract"
+	MemosPath   = memowire.MemosPath
+	MemoPath    = memowire.MemoPath
+	RetractPath = memowire.RetractPath
 )
 
 // MaxRequestBody bounds a POST body. A memo is at most `memo.MaxBodyBytes` + `memo.MaxSubjectBytes`
@@ -75,7 +78,7 @@ const (
 	// resolvable identity all read the same.
 	UnauthorizedBody = `{"error":"unauthorized"}` + "\n"
 	// NotFoundBody is the ONE miss (T12).
-	NotFoundBody = `{"error":"not-found"}` + "\n"
+	NotFoundBody = `{"error":"` + memowire.ErrorNotFound + `"}` + "\n"
 )
 
 // Store is what the listener needs of the memo store; `*pgstore.MemoStore` is the production one.
@@ -233,11 +236,7 @@ func badRequest(w http.ResponseWriter, what string) {
 
 // RefusalBody is a send or retraction the store's rules refused (exit 6 at the client, decision 8):
 // the reason names a LIMIT, and `rule` a redaction RULE NAME for a secret — never content.
-type RefusalBody struct {
-	Error  string `json:"error"`
-	Reason string `json:"reason"`
-	Rule   string `json:"rule,omitempty"`
-}
+type RefusalBody = memowire.ErrorBody
 
 // storeError answers an error from the store: the uniform miss, a refusal, or — for anything else
 // — a 500 whose body says nothing and whose log line says what failed.
@@ -247,7 +246,7 @@ func (h *Handler) storeError(w http.ResponseWriter, route string, err error) {
 	case errors.Is(err, memo.ErrNotFound):
 		notFound(w)
 	case errors.As(err, &ref):
-		writeJSON(w, http.StatusForbidden, RefusalBody{Error: "refused", Reason: string(ref.Reason), Rule: ref.Rule})
+		writeJSON(w, http.StatusForbidden, RefusalBody{Error: memowire.ErrorRefused, Reason: string(ref.Reason), Rule: ref.Rule})
 	default:
 		h.cfg.Log("client-api: " + route + " failed: " + err.Error())
 		writeRaw(w, http.StatusInternalServerError, `{"error":"internal"}`+"\n")
@@ -255,14 +254,10 @@ func (h *Handler) storeError(w http.ResponseWriter, route string, err error) {
 }
 
 // ListBody is `GET /client/v1/memos`'s answer: the scope's memos, oldest first, RENDERED.
-type ListBody struct {
-	Memos []memo.Rendered `json:"memos"`
-}
+type ListBody = memowire.ListBody
 
 // MemoBody is `GET /client/v1/memo`'s answer: one memo, RENDERED.
-type MemoBody struct {
-	Memo memo.Rendered `json:"memo"`
-}
+type MemoBody = memowire.MemoBody
 
 // list answers `GET /client/v1/memos?scope=&after=&limit=&tombstones=`.
 //
@@ -348,31 +343,23 @@ func scopeAndID(w http.ResponseWriter, scope, rawID string) (string, int64, bool
 }
 
 // SendRequest is `POST /client/v1/memos`'s body. `ttl_seconds` 0 means the default TTL.
-type SendRequest struct {
-	Scope      string `json:"scope"`
-	Subject    string `json:"subject"`
-	Body       string `json:"body"`
-	TTLSeconds int64  `json:"ttl_seconds"`
-}
+type SendRequest = memowire.SendRequest
 
 // SentBody is a send's answer: the new memo's id and its server-stamped creation time.
-type SentBody struct {
-	ID        int64  `json:"id"`
-	CreatedAt string `json:"created_at"`
-}
+type SentBody = memowire.SentBody
 
 // RetractRequest is `POST /client/v1/memo/retract`'s body: the scope the caller routed by, and the id.
-type RetractRequest struct {
-	Scope string `json:"scope"`
-	ID    int64  `json:"id"`
-}
+type RetractRequest = memowire.RetractRequest
 
 // RetractedBody is a retraction's answer.
-type RetractedBody struct {
-	Retracted int64 `json:"retracted"`
-}
+type RetractedBody = memowire.RetractedBody
 
-// decode reads one JSON object into `into`, bounded, refusing unknown fields and trailing data.
+// decode reads one JSON object into `into`, bounded, refusing unknown fields and ANY trailing data.
+//
+// 🔴 END OF INPUT IS REQUIRED, NOT `!dec.More()`. `More` answers "is there another element in the
+// CURRENT array or object", and at the top level it reports false before a `]` or `}` — so `{…}}`
+// passed a `More` check while its doc said trailing data was refused (S2 round 1). Asking for the
+// next token and requiring `io.EOF` refuses every trailing byte that is not whitespace.
 func decode(w http.ResponseWriter, r *http.Request, into any) bool {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxRequestBody))
 	dec.DisallowUnknownFields()
@@ -381,8 +368,8 @@ func decode(w http.ResponseWriter, r *http.Request, into any) bool {
 			strconv.Itoa(MaxRequestBody)+" bytes")
 		return false
 	}
-	if dec.More() {
-		badRequest(w, "the body must be ONE JSON object")
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		badRequest(w, "the body must be ONE JSON object and nothing after it")
 		return false
 	}
 	return true

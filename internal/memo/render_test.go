@@ -423,6 +423,101 @@ func TestEveryFieldsStringIsSanitisedOnEveryOutput(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------- the client's way in (S3)
+
+// TestFromRenderedRoundTripsALiveAndARetractedMemo — what the client rebuilds from the wire
+// renders EXACTLY what the listener rendered: a live memo and a retracted one (its tombstone, no
+// subject or body) both survive `Render(FromRendered(Render(s))) == Render(s)`, and the two
+// renderers print the same block for either. RED with the sender or tombstone line rebuilt from
+// fields the wire never carries (`who` over empty kind/id prints `: (no longer known)`).
+func TestFromRenderedRoundTripsALiveAndARetractedMemo(t *testing.T) {
+	live := NewStored(baseFields(17))
+	f := baseFields(18)
+	f.RetractedAt = t0.Add(2 * time.Hour)
+	f.RetractorKind, f.RetractorID, f.RetractorDisplay, f.RetractorLabel = "user", "u-0004", "admin-d", "admin@host-d"
+	retracted := NewStored(f)
+	for _, s := range []Stored{live, retracted} {
+		want := Render(s)
+		back, err := FromRendered(want)
+		if err != nil {
+			t.Fatalf("FromRendered(%+v): %v", want, err)
+		}
+		if got := Render(back); got != want {
+			t.Errorf("round trip changed the memo:\n got %+v\nwant %+v", got, want)
+		}
+		if a, b := renderBlock([]Stored{s}, "n", false), renderBlock([]Stored{back}, "n", false); a != b {
+			t.Errorf("the full block differs after the round trip:\n%s\nvs\n%s", a, b)
+		}
+		if a, b := renderBlock([]Stored{s}, "n", true), renderBlock([]Stored{back}, "n", true); a != b {
+			t.Errorf("the preview block differs after the round trip:\n%s\nvs\n%s", a, b)
+		}
+	}
+	if got := Render(retracted); got.Tombstone == "" || got.Subject != "" || got.Body != "" {
+		t.Fatalf("POSITIVE CONTROL: the retracted fixture does not render as a tombstone: %+v", got)
+	}
+}
+
+// TestFromRenderedSanitisesEveryWireFieldOnEveryOutput — Guard D's premise at the renderer: a
+// RAW listener (the e2e stub) can send ANY text in ANY field, so every corpus member is planted
+// in EVERY string field of `Rendered` (by reflection, so a field added later is planted too)
+// except the two times, which must parse, and every output — both blocks and every field of
+// `Render` — must hold no unsafe code point. RED with any one field passed through unsanitised.
+func TestFromRenderedSanitisesEveryWireFieldOnEveryOutput(t *testing.T) {
+	c := loadCorpus(t)
+	names := stringFields(reflect.ValueOf(Rendered{}))
+	planted := 0
+	for _, field := range names {
+		if field == "CreatedAt" || field == "ExpiresAt" {
+			continue
+		}
+		for _, m := range c.all() {
+			r := Render(NewStored(baseFields(9)))
+			reflect.ValueOf(&r).Elem().FieldByName(field).SetString(m.Text)
+			s, err := FromRendered(r)
+			if err != nil {
+				t.Fatalf("%s in %s: %v", m.Name, field, err)
+			}
+			for _, out := range []string{renderBlock([]Stored{s}, c.FixedNonce, true), renderBlock([]Stored{s}, c.FixedNonce, false)} {
+				if b := parseBlock(t, out); b.count != 1 || len(b.headers) != 1 {
+					t.Fatalf("%s in Rendered.%s: count=%d headers=%d", m.Name, field, b.count, len(b.headers))
+				}
+			}
+			rv := reflect.ValueOf(Render(s))
+			for _, rf := range stringFields(rv) {
+				for _, cp := range rv.FieldByName(rf).String() {
+					if Unsafe(cp) {
+						t.Fatalf("%s planted in the wire's %s reached Rendered.%s as U+%04X", m.Name, field, rf, cp)
+					}
+				}
+			}
+			planted++
+		}
+	}
+	if planted < 5*len(c.all()) {
+		t.Fatalf("planted %d — the reflection found too few fields: %v", planted, names)
+	}
+}
+
+// TestFromRenderedRefusesTimesItCannotParse — a listener answer whose times are not RFC 3339 /
+// a date is MALFORMED, never a memo ordered by a zero time.
+func TestFromRenderedRefusesTimesItCannotParse(t *testing.T) {
+	good := Render(NewStored(baseFields(3)))
+	for _, mutate := range []func(*Rendered){
+		func(r *Rendered) { r.CreatedAt = "yesterday" },
+		func(r *Rendered) { r.CreatedAt = "" },
+		func(r *Rendered) { r.ExpiresAt = "2000-13-45" },
+	} {
+		r := good
+		mutate(&r)
+		if _, err := FromRendered(r); err == nil {
+			t.Errorf("FromRendered accepted %+v", r)
+		}
+	}
+	if _, err := FromRendered(good); err != nil {
+		t.Fatalf("POSITIVE CONTROL: a rendered memo did not parse back: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------- Guard D, the renderer half
 
 // TestGuardDTheHostileCorpusIsOneBlockOnBothPaths is the renderer half of e2e clause (d): the

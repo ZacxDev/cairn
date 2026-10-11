@@ -143,6 +143,7 @@ DECLARED_TESTS = {
         "TestTheClientListenerExistsOnlyWhenConfigured",
         "TestACookieSignedInNextDoorIsGarbageToTheClientListener",
         "TestTheClientListenerNeverServesTheTokenFileProjection",
+        "TestTheListRouteParametersReachTheRealStore",
     },
 }
 

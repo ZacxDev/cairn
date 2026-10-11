@@ -1,6 +1,7 @@
 package memo
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -71,6 +72,12 @@ type stored struct {
 	createdAt, expiresAt, retractedAt   time.Time
 	retractorKind, retractorID          string
 	retractorDisplay, retractorLabel    string
+
+	// wire marks a memo rebuilt by [FromRendered] from what a listener SENT: its sender and
+	// tombstone lines arrived already composed, so they are carried whole (and sanitised again on
+	// every output) instead of being rebuilt from kind/id/display/label the client never sees.
+	wire                      bool
+	senderLine, tombstoneLine string
 }
 
 var zero stored
@@ -98,6 +105,37 @@ func NewStored(f Fields) Stored {
 	return Stored{text: func() *stored { return p }}
 }
 
+// FromRendered rebuilds a [Stored] from a [Rendered] that arrived OVER THE WIRE — the memo
+// verbs' (S3) only way in, because the client listener sends `Rendered` (decision 19, Guard C) and
+// [RenderPreview]/[RenderFull] are the only renderers (decision 5: ONE renderer, used by
+// `memo-check` and `memo-read` alike).
+//
+// 🔴 IT TREATS EVERY FIELD AS UNTRUSTED TEXT, NOT AS ALREADY-SAFE TEXT. A real listener's fields
+// are rendered, and rendering them again is a no-op (`TestRenderingRenderedTextIsANoOp`); but the
+// client cannot know it is talking to a real listener, so the same replacement runs on every
+// output here — which is exactly what e2e clause (d)'s RAW-serving stub exists to keep honest
+// (Guard D). The sender and tombstone lines are carried WHOLE, since the client never sees the
+// kind/id/display/label they were built from; each is sanitised on every output like any field.
+//
+// The two times must parse (`CreatedAt` RFC 3339, `ExpiresAt` a date): they order the preview and
+// drive the cursor, and a listener that sent something else is a malformed answer, not a memo.
+func FromRendered(r Rendered) (Stored, error) {
+	created, err := time.Parse(time.RFC3339, r.CreatedAt)
+	if err != nil {
+		return Stored{}, fmt.Errorf("memo %d: created time %q is not RFC 3339", r.ID, sanitize(r.CreatedAt))
+	}
+	expires, err := time.Parse(time.DateOnly, r.ExpiresAt)
+	if err != nil {
+		return Stored{}, fmt.Errorf("memo %d: expiry %q is not a date", r.ID, sanitize(r.ExpiresAt))
+	}
+	p := &stored{
+		id: r.ID, scope: r.Scope, subject: r.Subject, body: r.Body,
+		createdAt: created, expiresAt: expires,
+		wire: true, senderLine: r.Sender, tombstoneLine: r.Tombstone,
+	}
+	return Stored{text: func() *stored { return p }}, nil
+}
+
 // Rendered is one memo with EVERY text field already passed through the render-side
 // replacement — the type the listener's JSON (S2) and the browser tab (S5) are built from
 // (decision 19). Its string fields are display strings, never stored text.
@@ -123,6 +161,16 @@ func Render(s Stored) Rendered {
 		Sender:    who(t.senderKind, t.senderID, t.senderDisplay, t.credentialLabel),
 		CreatedAt: t.createdAt.UTC().Format(time.RFC3339),
 		ExpiresAt: t.expiresAt.UTC().Format(time.DateOnly),
+	}
+	if t.wire {
+		r.Sender = sanitize(t.senderLine)
+		if t.tombstoneLine != "" {
+			r.Tombstone = sanitize(t.tombstoneLine)
+			return r
+		}
+		r.Subject = sanitize(t.subject)
+		r.Body = sanitize(t.body)
+		return r
 	}
 	if !t.retractedAt.IsZero() {
 		r.Tombstone = "retracted by " +
