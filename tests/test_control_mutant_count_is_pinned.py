@@ -253,10 +253,10 @@ ROUTING_RUN = "python3 tests/routing_mutants.py"
 def _job_spans(text: str) -> dict[str, tuple[int, int]]:
     """Line spans of each top-level job in `ci.yml`, derived rather than transcribed.
 
-    🔴 ANCHORED TO THE `jobs:` KEY, BECAUSE THE INDENT ALONE IS AMBIGUOUS. `on:` carries
-    `push:`, `pull_request:` and `merge_group:` at the SAME two-space indent as a job name,
-    so a bare indent scan invents three jobs that do not exist and would happily place a
-    step inside one of them.
+    🔴 ANCHORED TO THE `jobs:` KEY, BECAUSE THE INDENT ALONE IS AMBIGUOUS. `on:` carries its
+    event names (`push:`, `pull_request:`) at the SAME two-space indent as a job name, so a
+    bare indent scan invents jobs that do not exist and would happily place a step inside
+    one of them.
     """
     lines = text.splitlines()
     try:
