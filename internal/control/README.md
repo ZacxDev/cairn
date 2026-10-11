@@ -264,6 +264,8 @@ python3 tests/control_mutants.py --show    # print each edit without running it
 
 🔴 **THE CURRENT COUNT IS NOT WRITTEN IN THIS FILE.** It is `len(MUTANTS)`, which every run prints on its `SUMMARY mutants=<N> …` line (and `--show` enumerates); a present-tense copy here made every change that adds a row edit this paragraph, so any two such changes conflicted, and `tests/test_control_mutant_count_is_pinned.py` now refuses one coming back. What follows is the RECORD of runs, each at the size it was measured at.
 
+**At 353 mutants DECLARED** (S3 of the transcripts/plugins plan, on its own branch) — the S3 marker-shield fix added one row (`redact-marker-drops-the-whole-span`, adding `internal/redact` to its own `pkgs`), killed by `TestAMarkerDoesNotShieldASecretBesideIt` alone in a hand mutation of that one package, with no battery run (the same operator instruction as below). Before it, at 352: S3 of the transcripts plan added 13 rows (`transcript-*`/`worker-*`, each adding `internal/worker` and `internal/transcript/archive` to its own `pkgs`; `PKGS` unmoved), each killed by its named test in a hand mutation of one focused package — ⚠ NO battery run was made for them on this tree (operator instruction: local gates skipped, CI is the gate), so the `go` job on that PR is their first whole-battery measurement.
+
 **At 347 mutants DECLARED** (S2 of the transcripts/plugins plan, on its own branch) — the merge of S2 of the transcripts/plugins plan
 with `main` after S1 (#216) landed, the two row sets disjoint: `main`'s 339 and S2's eight. S2's
 rows (four `scopeuse-*` at first, then `scopeuse-restore-ignored` and three `capture-*` in its review

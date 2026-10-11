@@ -104,15 +104,21 @@ func presenceListener(s presenceSettings, m control.Model) (presence.Owner, bool
 // `0.0.0.0`; without an allowlist the failed-token lockout would key on the proxy's address,
 // one bucket for every caller behind it. Same predicate (`bindIsReachable`), same allowlist.
 func presenceBindRefusal(addr string, proxyErr error) error {
+	return listenerBindRefusal("presence agent listener", flagPresenceAddr, addr, proxyErr)
+}
+
+// listenerBindRefusal is the ONE spelling of that refusal for every second listener — presence's
+// agent listener and the worker listener (S3 of the transcripts plan) — so the two cannot drift.
+func listenerBindRefusal(what, flagName, addr string, proxyErr error) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		host = addr // unparseable reads as reachable, `bindIsReachable`'s safe direction
 	}
 	if bindIsReachable(host) && proxyErr != nil {
-		return fmt.Errorf("refusing to serve the presence agent listener on %s: %v. It is reachable from "+
+		return fmt.Errorf("refusing to serve the %s on %s: %v. It is reachable from "+
 			"outside this machine, so the %s header cannot be trusted from an unlisted peer and the failed-token "+
 			"lockout would have one bucket for every caller behind your proxy. Set $%s, or bind -%s to a "+
-			"loopback address", addr, proxyErr, netid.ClientIPHeader, netid.EnvTrustedProxies, flagPresenceAddr)
+			"loopback address", what, addr, proxyErr, netid.ClientIPHeader, netid.EnvTrustedProxies, flagName)
 	}
 	return nil
 }
