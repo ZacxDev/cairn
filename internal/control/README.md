@@ -455,8 +455,10 @@ row declares, so drift is a loud HARNESS ERROR rather than a quiet false finding
 
 Attribution is by **which test failed**, not by "something went red": a mutant killed by
 the wrong guard proves the suite can fail and proves nothing about the guard it was built
-to exercise. A kill by anything other than the row's named test is reported as
-MISATTRIBUTED, which is a finding rather than a pass.
+to exercise. A kill by anything other than the row's named test is never scored as a kill.
+Each row runs only the tests it names (`-run` over its `killer` and `extra_killers`), so a
+row whose named test stays green reads SURVIVED; MISATTRIBUTED is left for the one case
+still reachable — a listed extra killer fired and the named one did not. Both fail the run.
 
 The two survivors are `constant-time-compare-becomes-equality` and P4's
 `the-proxy-secret-is-compared-with-equality` — replacing `subtle.ConstantTimeCompare` with

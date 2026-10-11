@@ -1048,14 +1048,11 @@ jobs:
   # ran NOWHERE. `mutants-aggregate` refuses unless the shards' rows are the table's rows, each
   # exactly once, and prints the one SUMMARY an unsharded run prints.
   #
-  # ⚠ THE BUILD CACHE IS RESTORED HERE AND THE MODULE CACHE IS NOT. The `go` job's `cache: false`
-  # is about `go mod verify` and the module cache (see the comment there), and that job is left
-  # exactly as it was; here modules are still downloaded fresh and checked against `go.sum`.
-  # `GOCACHE` is NOT a verified store — go trusts a cached compile output for its input hash —
-  # so its trust boundary is GitHub's cache scoping (a pull request's saves are visible only to
-  # that pull request's ref), and it feeds only this job, which publishes nothing. The worker
-  # trees sit at a STABLE path for the same reason the cache is worth restoring at all: the
-  # build cache keys a package on its directory.
+  # ⚠ NO BUILD CACHE IS RESTORED, AND THAT WAS MEASURED RATHER THAN OVERLOOKED. A restored
+  # `GOCACHE` hit in every shard and moved the control shards' times by nothing readable: the
+  # reused worker tree warms its own cache after its first row, and only one shard per battery
+  # can save an entry anyway. It also needed a trust argument (`GOCACHE` is not verified the way
+  # the module cache is), which a step that buys nothing should not carry.
   mutants:
     runs-on: ubuntu-latest
     strategy:
@@ -1093,13 +1090,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: restore the Go build cache (GOCACHE only)
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/go-build
-          key: go-build-mutants-${{ matrix.battery }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            go-build-mutants-${{ matrix.battery }}-${{ hashFiles('go.sum') }}-
 
       # 🔴 THE AUTHORIZATION MATRIX CARRIES ITS OWN POSITIVE CONTROL (32 of 60 cells must
       # ALLOW, pinned from BOTH sides, so a resolver that grants nothing or everything
@@ -1107,8 +1097,10 @@ jobs:
       # around it. This battery is the other half: it breaks each guard on purpose and
       # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
       # killed by some other test proves the suite can fail and proves nothing about the
-      # guard the row exists for, so the run reports it as MISATTRIBUTED rather than as a
-      # kill. The battery runs over EIGHT packages, in `PKGS` order: `internal/control`,
+      # guard the row exists for, so it is never scored as a kill: each row runs ONLY the
+      # tests it names (`-run` over its `killer` and `extra_killers`), so a row whose named
+      # killer stays green reads SURVIVED, and MISATTRIBUTED now means one narrower thing — a
+      # listed extra killer fired while the named one did not. The battery runs over EIGHT packages, in `PKGS` order: `internal/control`,
       # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
       # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence` — the model, the
       # token-file projection, P4's identity backends, the server that authorises from all of
@@ -1137,7 +1129,6 @@ jobs:
         if: matrix.battery == 'control'
         run: >-
           python3 tests/control_mutants.py --shard ${{ matrix.shard }} --jobs 2
-          --workdir "$RUNNER_TEMP/mutant-trees"
           --results "$RUNNER_TEMP/mutant-results/control-${{ strategy.job-index }}.json"
 
       # 🔴 THE THIRD MUTATION BATTERY, WIRED IN BECAUSE ITS OWN RATIONALE DEPENDED ON IT

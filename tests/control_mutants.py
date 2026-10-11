@@ -14,8 +14,10 @@ module is the other half: it proves each individual guard can go RED.
 by the wrong guard proves the suite can fail and proves nothing about the guard it was
 built to exercise — the same lesson `tests/dualrun/mutants.py` states one layer down,
 where attribution is by which COMPARISON failed. Each row below names the test that
-must kill it, and a mutant killed only by some OTHER test is reported as a MISATTRIBUTED
-kill, which is a finding rather than a pass.
+must kill it, and a mutant killed only by some OTHER test is a finding rather than a pass.
+Each row runs ONLY the tests it names (`scope_for`), so an unnamed test cannot fire: a row
+whose named killer stays green reads SURVIVED, and MISATTRIBUTED is the one narrower case
+still reachable — a listed `extra_killers` entry failed while the named killer did not.
 
 🔴 THE MUTATION IS THE NARROWEST EXPRESSION THAT CAN BE WRONG. A mutant that removes a
 guard together with its enclosing condition dies for the wrong reason and says nothing
@@ -175,7 +177,8 @@ class Mutant:
     path: str
     old: str
     new: str
-    # The Go test function that must fail. A kill by anything else is MISATTRIBUTED.
+    # The Go test function that must fail. Only it and `extra_killers` are run (`scope_for`);
+    # it staying green reads SURVIVED, or MISATTRIBUTED when a listed extra failed instead.
     killer: str
     # Why this edit is a plausible thing somebody would actually write, rather than a
     # textbook mutation the code happens to be shaped against.
@@ -4970,10 +4973,9 @@ MUTANTS: tuple[Mutant, ...] = (
 #: SHARD AND MAKE IT THE JOB'S CRITICAL PATH. `partition` deals these round-robin before anything
 #: else, which puts up to N of them in N different shards. MEASURED, not guessed: the rows that
 #: took 40 s or more in a full serial run of the narrowed battery (24-core host, load ~6-11) —
-#: each waits out a deadline inside its killing test. Plus the one row that ran into the 2m
-#: `-timeout` in a `--no-run-filter` run: its named killer fails in seconds, and the timeout came
-#: from a DIFFERENT test in the same package deadlocking on the mutant, which the `-run` filter no
-#: longer starts — so it is only slow when that filter is off.
+#: each waits out a deadline inside its killing test. (One more row ran into the 2m `-timeout`
+#: when measured WITHOUT the `-run` filter — a different test in its package deadlocks on the
+#: mutant — and is not listed: with the filter that test never starts and the row takes seconds.)
 #:
 #: Named here, in the RUNNER, rather than as a field on the row: the rows are shared with other
 #: branches and this is a scheduling hint, not a claim about the guard. ⚠ A name here that no row
@@ -4985,7 +4987,6 @@ SLOW_ROWS: frozenset[str] = frozenset({
     "unconfigured-deployment-gets-a-TYPED-nil-session-authority",
     "an-unreadable-store-root-is-swallowed",
     "ui-startup-serves-an-unreachable-database",
-    "refresh-holds-the-lock-across-the-authority",
 })
 
 
@@ -5053,8 +5054,7 @@ def apply_mutation(tree: Path, m: Mutant):
     )
 
 
-def scope_for(m: Mutant, index: dict[str, set[str]],
-              narrow_run: bool = True) -> tuple[tuple[str, ...], str | None]:
+def scope_for(m: Mutant, index: dict[str, set[str]]) -> tuple[tuple[str, ...], str | None]:
     """The packages (and the `-run` filter) a row's verdict needs — and nothing more.
 
     🔴 NARROWED TO WHERE THE NAMED TESTS LIVE, LOCATED MECHANICALLY. Every package holding
@@ -5091,7 +5091,7 @@ def scope_for(m: Mutant, index: dict[str, set[str]],
         )
     found = set().union(*(index[n] for n in names)) | (set(m.pkgs) - set(PKGS))
     ordered = tuple(p for p in PKGS if p in found) + tuple(sorted(found - set(PKGS)))
-    return ordered, (mutant_tree.run_pattern(names) if narrow_run else None)
+    return ordered, mutant_tree.run_pattern(names)
 
 
 @dataclass
@@ -5228,11 +5228,6 @@ def main() -> int:
     ap.add_argument("--aggregate", type=Path, metavar="DIR",
                     help="check the shard results in DIR cover the battery exactly once, and "
                     "print the battery's SUMMARY from them; runs no mutant")
-    ap.add_argument("--workdir", type=Path,
-                    help="put the worker trees here (default: a fresh temp dir). A STABLE path "
-                    "is what lets a restored Go build cache hit, since it keys on the directory")
-    ap.add_argument("--no-run-filter", action="store_true",
-                    help="run every test in each row's packages instead of only the named ones")
     args = ap.parse_args()
 
     stale_hint = sorted(SLOW_ROWS - {m.name for m in MUTANTS})
@@ -5281,7 +5276,7 @@ def main() -> int:
     scopes: dict[str, tuple[tuple[str, ...], str | None]] = {}
     for m in selected:
         try:
-            scopes[m.name] = scope_for(m, index, narrow_run=not args.no_run_filter)
+            scopes[m.name] = scope_for(m, index)
         except MutationError as exc:
             t.broken[m.name] = str(exc)
     # The positive control covers every package any selected row runs — `PKGS` and whatever
@@ -5289,19 +5284,9 @@ def main() -> int:
     control_pkgs = PKGS + tuple(sorted(
         {p for pk, _ in scopes.values() for p in pk} - set(PKGS)))
 
-    owned_tmp = None
-    if args.workdir:
-        work = args.workdir
-        work.mkdir(parents=True, exist_ok=True)
-    else:
-        owned_tmp = tempfile.TemporaryDirectory(prefix="cairn-control-mutants-")
-        work = Path(owned_tmp.name)
+    owned_tmp = tempfile.TemporaryDirectory(prefix="cairn-control-mutants-")
+    work = Path(owned_tmp.name)
     trees = [work / f"w{k}" for k in range(jobs)]
-    for tree in trees:
-        if tree.exists():
-            print(f"control_mutants: REFUSING — {tree} already exists; this run would mutate "
-                  "a tree it did not copy.", file=sys.stderr)
-            return 2
     positive = "red"
     try:
         for tree in trees:
@@ -5420,10 +5405,7 @@ def main() -> int:
             return 2
         print(f"\nworker trees restored: {len(trees)} tree(s) hash {before[:16]}… before and after")
     finally:
-        for tree in trees:
-            shutil.rmtree(tree, ignore_errors=True)
-        if owned_tmp:
-            owned_tmp.cleanup()
+        owned_tmp.cleanup()
         if args.results:
             args.results.parent.mkdir(parents=True, exist_ok=True)
             args.results.write_text(json.dumps({
