@@ -1051,8 +1051,9 @@ snap)** and **153.0.8010.52 (the workstation)**. Two workstation runs against ea
 `0 changed`.
 
 So the pixel diff is stable across runs on one machine and **not** across chromium builds. Since the
-runner's chromium is an unpinned input installed fresh every run, a pixel gate would flip on somebody
-else's release schedule. That is now a measured reason rather than an inherited one.
+runner's chromium was an unpinned input installed fresh every run, a pixel gate would have flipped on
+somebody else's release schedule. That is now a measured reason rather than an inherited one. (S6a has
+since pinned CI's chromium to the flake's nixpkgs — see "Gating".)
 
 #### What was fixed here, and it is about DIAGNOSIS
 
@@ -1255,13 +1256,24 @@ repository already refuses, reached from a new direction.
   So the pixel diff is stable across runs on one machine and **not across chromium builds** — and
   four of six pages moved on a *patch* difference, with no page-height change to explain it.
 
-  🔴 **THE RUNNER'S CHROMIUM IS AN UNPINNED INPUT, INSTALLED FRESH OVER THE NETWORK EVERY RUN.** So
-  a pixel gate would flip on somebody else's release schedule, on a signal a future reader will
-  eventually propose promoting. **Pinning chromium is the thing that would have to happen first** —
-  a fixed build (a nix-pinned one, or a version-pinned container) is the precondition, not a nicety,
-  and until it exists this signal cannot gate whatever its numbers look like. A full-page height
-  shift also reads as a near-100% pixel change, which is why the log annotates a `size_changed`
-  page as a layout change rather than a regression.
+  🔴 **CI'S CHROMIUM IS PINNED NOW (S6a of the mobile plan), AND THAT IS A PRECONDITION MET, NOT A
+  PROMOTION.** It was the runner image's — `apt`, falling back to a snap — installed fresh every run,
+  so a pixel gate would have flipped on somebody else's release schedule. The `uiaudit` job now builds
+  `chromium` from the nixpkgs revision `flake.lock` pins (`nix build --inputs-from . nixpkgs#chromium`,
+  the same build `uiScreenshots` captures with), REFUSES unless the binary's `--version` names the
+  version nix evaluated for that lock, and refuses unless the `chromium` on `PATH` is that store path
+  and no `headless_shell`/`headless-shell` resolves (chromedp tries those first). A `flake.lock` bump
+  moves the browser, deliberately and in a diff.
+  ⚠ **What the pin does NOT establish:** that the pixel diff is stable run-to-run under it in CI (not
+  measured), or that the hub's stored baseline was captured under it (it was not — those captures ran
+  on the runner's chromium). So the pixel diff stays advisory for the reasons above; S6b promotes only
+  the walk's TOUCH refusals, into their own blocking job. A full-page height shift also reads as a
+  near-100% pixel change, which is why the log annotates a `size_changed` page as a layout change
+  rather than a regression.
+  ⚠ **Local runs are not CI's browser** unless they use the same build: `nix shell --inputs-from .
+  nixpkgs#chromium` gives it; a host's own `nix-shell -p chromium` follows that host's channel (154 at
+  the time of S6a, against the pin's 152). On a host whose `LD_LIBRARY_PATH` names a newer glibc, the
+  pinned binary fails to start (`GLIBC_2.43 not found`, measured) — unset it.
 - **Nothing LLM-derived gates anything, ever.** Blocker-key stability there is measured 0.22
   and synthesis 0.00. The read-back deliberately decodes only `summary` and `diff`; the
   persona evaluator's output is not read at all, so it cannot be printed beside the
