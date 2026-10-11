@@ -313,19 +313,13 @@ JOB_GATE = ("if: ${{ !cancelled() && (needs.changes.result != 'success' "
 STEP_GATE = "if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}"
 
 #: 🔴 THE LEDGER of jobs the docs lane skips. Fails on GROW or SHRINK.
-GATED_JOBS = {"parity", "dualrun", "nix", "uiaudit", "pgtest"}
+GATED_JOBS = {"parity", "dualrun", "nix", "uiaudit", "pgtest", "mutants", "mutants-aggregate"}
 GATED_GO_STEPS = {
     "the conformance corpus against the Go server",
     "the arcs/sessions end-to-end check, after proving it can go RED",
     "the arcs/presence end-to-end check, after proving every clause can go RED",
 }
 UNGATED_JOBS = {"leakscan", "tests", "changes"}
-#: ⚠ THE ONE DELIBERATE HOLE IN THE LEDGER, WITH ITS CLOSING CONDITION. The sharded mutation
-#: batteries (`mutants`, `mutants-aggregate`) arrive in a sibling change and run UNGATED until
-#: it merges; gating them on `heavy` is the follow-up. They may be present or absent here, and
-#: the gated-jobs equality above still refuses either one reading the lane in the meantime.
-#: Closing condition: these names move into `GATED_JOBS` and this set is deleted.
-NOT_YET_TIERED = {"mutants", "mutants-aggregate"}
 
 
 def _job_header(body: str) -> dict[str, str]:
@@ -354,7 +348,9 @@ def test_the_GATED_JOBS_ledger_with_the_fail_open_expression_as_a_WHOLE_string()
     assert gated == GATED_JOBS
     for name in GATED_JOBS:
         hdr = _job_header(JOBS[name])
-        assert hdr.get("needs") == "changes", name
+        needs = hdr.get("needs", "")
+        # `needs: changes`, or a list that names it (`mutants-aggregate` also needs `mutants`).
+        assert needs == "changes" or "changes" in re.findall(r"[\w-]+", needs.strip("[]")), name
         assert "if: " + hdr["if"] == JOB_GATE, (name, hdr["if"])
 
 
@@ -383,7 +379,7 @@ def test_leakscan_and_the_pytest_suite_are_NEVER_gated():
 
 
 def test_every_job_is_in_exactly_one_ledger():
-    assert set(JOBS) - NOT_YET_TIERED == GATED_JOBS | UNGATED_JOBS | {"go"}
+    assert set(JOBS) == GATED_JOBS | UNGATED_JOBS | {"go"}
 
 
 def test_the_TRIGGER_set_is_exactly_the_events_the_classifier_has_a_rule_for():

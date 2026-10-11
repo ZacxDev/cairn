@@ -665,13 +665,13 @@ jobs:
           # toolchain), run by the `go` job — taking the gap to 103 against a `MAX_GAP` of
           # 100. Measured 2780 collected on the branch, so
           # `2780 - min(50, max(1, 2780/20)) = 2730`.
-          # ⚠ 2730 -> 2792 FOR THE CI PATH-TIERING BRANCH, AND THE DRIFT GUARD FORCED THIS ONE.
+          # ⚠ 2730 -> 2833 FOR THE CI PATH-TIERING BRANCH, AND THE DRIFT GUARD FORCED THIS ONE.
           # It adds `tests/test_ci_paths.py` (58 collected: the docs-vs-everything classifier's
-          # literal lanes and fail-open arms, and the workflow wiring). Measured 2842 collected,
-          # 2842 passed, on the branch rebased onto `main` — a full local run with `--junitxml` —
-          # so at 2730 the gap would be 112, past `MAX_GAP`.
-          # `2842 - min(50, max(1, 2842/20)) = 2792`.
-          FLOOR = 2792
+          # literal lanes and fail-open arms, and the workflow wiring). Measured 2883 collected,
+          # 2883 passed, on the branch rebased onto `main` at the mutant-sharding merge (#233) —
+          # a full local run with `--junitxml` — so at 2730 the gap would be 153, past `MAX_GAP`.
+          # `2883 - min(50, max(1, 2883/20)) = 2833`.
+          FLOOR = 2833
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -721,7 +721,8 @@ jobs:
     # `go test` stay on every event, the docs lane included — they are the cheap Go tier, and
     # the only one a docs-only change keeps. `!cancelled()` rather than the implicit `success()`,
     # so a FAILED classifier cannot skip the job. The `needs` exists only so those steps can read
-    # `needs.changes`. ⚠ The mutation-battery steps are NOT tiered here.
+    # `needs.changes`. The mutation batteries are no longer steps here: they are the `mutants`
+    # job, which IS tiered, with `mutants-aggregate`.
     needs: changes
     if: ${{ !cancelled() }}
     steps:
@@ -1118,6 +1119,8 @@ jobs:
     # A ceiling, not an estimate: shards take 2-4 min, so a shard still running at 20 is hung.
     timeout-minutes: 20
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false') }}
     strategy:
       fail-fast: false
       matrix:
@@ -1240,9 +1243,15 @@ jobs:
   # 🔴 THE SEAM GUARD OVER BOTH BATTERIES' SHARDS. `!cancelled()` rather than the default, so a FAILED
   # shard still gets its union checked — a shard that crashed before writing its verdicts is
   # then a named missing shard here, not a silently skipped job.
+  #
+  # 🔴 AND IT IS GATED ON THE SAME LANE AS `mutants`, NOT ON `!cancelled()` ALONE. On a docs-only
+  # change every shard is SKIPPED, and an aggregate that still ran would find no shard artifacts —
+  # which it is built to report as missing shards (see above), a red row caused by the tiering and
+  # not the tree. (Reasoned from that design, not run.) It names `changes` as well as `mutants`
+  # so it can read the lane; when `changes` fails, both run, exactly as every other gated job does.
   mutants-aggregate:
-    needs: mutants
-    if: ${{ !cancelled() }}
+    needs: [changes, mutants]
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
