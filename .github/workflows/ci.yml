@@ -665,7 +665,13 @@ jobs:
           # toolchain), run by the `go` job — taking the gap to 103 against a `MAX_GAP` of
           # 100. Measured 2780 collected on the branch, so
           # `2780 - min(50, max(1, 2780/20)) = 2730`.
-          FLOOR = 2730
+          # ⚠ 2730 -> 2792 FOR THE CI PATH-TIERING BRANCH, AND THE DRIFT GUARD FORCED THIS ONE.
+          # It adds `tests/test_ci_paths.py` (58 collected: the docs-vs-everything classifier's
+          # literal lanes and fail-open arms, and the workflow wiring). Measured 2842 collected,
+          # 2842 passed, on the branch rebased onto `main` — a full local run with `--junitxml` —
+          # so at 2730 the gap would be 112, past `MAX_GAP`.
+          # `2842 - min(50, max(1, 2842/20)) = 2792`.
+          FLOOR = 2792
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
