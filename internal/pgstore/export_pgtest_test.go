@@ -12,6 +12,7 @@ package pgstore
 import (
 	"context"
 	"database/sql"
+	"time"
 )
 
 // OpenThroughForTest is [Open] that stops migrating after version `through`.
@@ -54,4 +55,21 @@ func OlderBuildRefusalForTest(ctx context.Context, db *DB, knownThrough int) err
 		}
 	}
 	return refuseFromTheFuture(applied, known)
+}
+
+// HoldMemoSendBeforeCommitForTest installs `hook` as the memo store's before-COMMIT seam — the
+// send's row is then written, stamped and invisible, and its transaction IDLE — and returns the
+// function that removes it. It is how the tier measures what decision 6's cursor margin rests on.
+func HoldMemoSendBeforeCommitForTest(s *MemoStore, hook func(*sql.Tx)) func() {
+	s.beforeCommit = hook
+	return func() { s.beforeCommit = nil }
+}
+
+// ShortenMemoTransactionTimeoutForTest lowers the send's `transaction_timeout` so the tier can
+// watch it FIRE without a 30 s sleep, and returns the restore. Shortening only: the production
+// value is `memo.TransactionTimeout`, which `TestTheSendArmsTheProductionTimeout` reads back.
+func ShortenMemoTransactionTimeoutForTest(d time.Duration) func() {
+	prev := memoTransactionTimeout
+	memoTransactionTimeout = d
+	return func() { memoTransactionTimeout = prev }
 }
