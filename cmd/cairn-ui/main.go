@@ -308,6 +308,11 @@ func main() {
 			", append its digest to -"+flagWorkerTokens+", print the token once on stdout, and exit")
 	workerHost := flag.String(flagWorkerHost, "",
 		"the ONE host label a token minted by -"+flagIssueWorker+" is bound to")
+	// 🔴 SCOPE MAIL'S CLIENT LISTENER (S2 of the scope-mail plan): one flag, NO default and no
+	// environment spelling — see `clientapi.go` beside this file for why, and for its refusals.
+	clientAPIAddr := flag.String(flagClientAPIAddr, "",
+		"host:port of the THIRD listener serving the four memo routes to agents' narrowed journal credentials "+
+			"(machine tokens only). NO DEFAULT: unset, there is no listener. Needs -control-journal and -db-dsn")
 	dsnDefault, dsnErr := databaseDSNDefault(os.Getenv)
 	dbDSN := flag.String("db-dsn", dsnDefault,
 		"PostgreSQL connection string for the session and invite tables; without one, sessions live in "+
@@ -353,6 +358,13 @@ func main() {
 	// on whether the flag was also given: the policy is about the LINE the operator wrote.
 	if dsnErr != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+dsnErr.Error())
+		os.Exit(exitConfig)
+	}
+	// 🔴 THE CLIENT LISTENER'S FLAG IS JUDGED HERE, BEFORE ANYTHING IS OPENED: what it needs (a journal,
+	// a database, an allowlist for a reachable bind) is all on the command line and in the
+	// environment, so a refusal that waited for the authority or a database would wait for nothing.
+	if err := clientAPIRefusal(*clientAPIAddr, *controlJournal, *dbDSN, trustedProxiesErr()); err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(exitConfig)
 	}
 	// The app lines are judged here, before anything is opened, because none of them depends on
@@ -735,6 +747,23 @@ func main() {
 		}
 	}
 
+	// 🔴 THE CLIENT LISTENER (S2 of the scope-mail plan), bound here for presence's reason: a
+	// configuration that cannot work is a refusal to start. Its flags were judged before anything
+	// was opened; what is left is the store, the handler and the bind. The authenticator is the SAME
+	// `machine` the browser chain holds — the one machine-token backend over the one journal
+	// authority — and `clientapi.Config.Auth`'s type admits nothing else.
+	clientAPIModeLine := "client API off (no -" + flagClientAPIAddr + ")"
+	var clientAPIServer *http.Server
+	var clientAPINet net.Listener
+	if *clientAPIAddr != "" {
+		clientAPIServer, clientAPINet, clientAPIModeLine, err = openClientAPI(*clientAPIAddr, machine, authority, pgDB,
+			netid.NewRateLimiter(maxFailures, window, lockout), trustedProxies)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error()+". Refusing to start")
+			os.Exit(exitConfig)
+		}
+	}
+
 	// 🔴 THE CONFIG IS A NAMED VALUE RATHER THAN AN INLINE LITERAL, AND THE REASON IS THE
 	// STARTUP LINE BELOW. That line reports where the mutable state is, and it has to
 	// report what the SERVER WAS GIVEN — not what this program computed and might have
@@ -978,6 +1007,20 @@ func main() {
 		}()
 		go runRetentionSweep(ctx.Done(), transcripts, func(line string) { fmt.Fprintln(os.Stderr, line) })
 	}
+	if clientAPIServer != nil {
+		go func() {
+			<-ctx.Done()
+			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = clientAPIServer.Shutdown(shutdown)
+		}()
+		go func() {
+			if err := clientAPIServer.Serve(clientAPINet); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				fmt.Fprintln(os.Stderr, "cairn-ui: the client API listener stopped: "+err.Error())
+				os.Exit(1)
+			}
+		}()
+	}
 	// 🔴 THE PORT IS BOUND BEFORE THE LINE THAT SAYS "serving", AND THE LINE NAMES THE PORT
 	// THAT WAS BOUND. It used to be printed first and `ListenAndServe` bound afterwards, so the
 	// line was a claim the process had not yet made true: a reader that took it as "the port is
@@ -996,9 +1039,9 @@ func main() {
 		os.Exit(1)
 	}
 	boundAddr := net.JoinHostPort(*host, strconv.Itoa(bound.Addr().(*net.TCPAddr).Port))
-	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s, %s, %s, %s, %s\n",
+	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s, %s, %s, %s, %s, %s\n",
 		len(ui.DeclaredRoutes()), boundAddr, *store, sharingMode, signInMode, stateMode, arcsMode, presenceMode, appMode(cfg.App),
-		instanceMode(cfg.App), workerModeLine)
+		instanceMode(cfg.App), workerModeLine, clientAPIModeLine)
 	if err := listener.Serve(bound); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(1)

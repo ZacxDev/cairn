@@ -153,6 +153,22 @@ func TestMayRetractComposesTheSenderAndTheModerator(t *testing.T) {
 			t.Errorf("%s: MayRetract = %v, want %v", tc.who, got, tc.want)
 		}
 	}
+
+	// 🔴 READ GATES THE MODERATOR TOO (S2's ruling on the S1 "rule in two places" finding).
+	// admin-d holds an ADMIN-ONLY grant on beta-notes: admin, no read. Through S1 this predicate
+	// answered TRUE for it while the store refused it `not-found`; the predicate now carries the
+	// read clause itself, so every surface asking it agrees with the store. RED at `c48cfd6`.
+	adminP, adminA := authn(t, m, tokAdminD)
+	if !adminA.VisibleScopes(control.VerbAdmin).Allows("beta-notes") || memo.MayRead(adminA, "beta-notes") {
+		t.Fatal("precondition: admin-d does not hold an admin-ONLY grant on beta-notes, so the case below measures nothing")
+	}
+	if memo.MayRetract(adminP, adminA, "beta-notes", sentByWriter[0], sentByWriter[1]) {
+		t.Error("an ADMIN-ONLY grantee (no read) may retract on beta-notes: the moderator branch skipped the read clause")
+	}
+	// POSITIVE CONTROL for the same scope: the un-narrowed owner reads AND administers it.
+	if !memo.MayRetract(writerP, writerA, "beta-notes", sentByReader[0], sentByReader[1]) {
+		t.Error("POSITIVE CONTROL FAILED: the owner (read+admin) cannot moderate beta-notes")
+	}
 }
 
 // ---------------------------------------------------------------- the send-side content rules
@@ -333,7 +349,7 @@ func TestCheckSendCapsFenceAndTTL(t *testing.T) {
 	if _, err := memo.CheckSend("two\nlines", "b", 0, scan); !refused(err, memo.RefusedCharacters) {
 		t.Errorf("a subject with a newline: %v", err)
 	}
-	if _, err := memo.CheckSend("s", "x‮y", 0, scan); !refused(err, memo.RefusedCharacters) {
+	if _, err := memo.CheckSend("s", "x\u202ey", 0, scan); !refused(err, memo.RefusedCharacters) {
 		t.Errorf("a body with U+202E: %v", err)
 	}
 	if out, err := memo.CheckSend("s", "b", 0, scan); err != nil || out.TTL != memo.DefaultTTL {

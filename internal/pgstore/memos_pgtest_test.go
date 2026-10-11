@@ -739,3 +739,187 @@ func TestTheMemoRollbackRecipeLetsAnOlderBuildStartAndReUpgrades(t *testing.T) {
 		t.Fatalf("after rollback and re-upgrade, %d memo rows, want the 1 sent before", n)
 	}
 }
+
+// ---------------------------------------------------------------- S1 round-1 findings, fixed in S2
+//
+// #235's round-1 audit found two CORRECT guards nobody had watched fail (the retraction's read
+// check and the scope fold on send) and four untested details (the quota counting retracted rows,
+// the retraction's transaction timeout, `List`'s cap). Each test below was shown RED under the
+// mutant its comment names; the matrix is in the S2 PR.
+
+// The admin-ONLY grantee the S1 world lacks: admin on alpha-notes, and no read. The share form
+// allows such a grant, which is what made the retraction rule's two places disagree (S2 ruling,
+// `memo.MayRetract`).
+const (
+	mAdminOnly = control.ID("usr_madminonly")
+	tAdminOnly = "pgtest-memo-admin-only-credential-000000000000"
+)
+
+func adminOnlyEvents() []control.Event {
+	return []control.Event{
+		{Kind: control.EventUserCreated, At: m0, UserID: mAdminOnly, Provider: "p", Subject: "m4", DisplayName: "admin-only-e"},
+		{Kind: control.EventGranted, At: m0, GrantID: "grt_madminonly", SubjectKind: control.KindUser, SubjectID: mAdminOnly,
+			ObjectKind: control.ObjectScope, ObjectID: mAlpha, Verbs: control.NewVerbSet(control.VerbAdmin)},
+		{Kind: control.EventCredentialIssued, At: m0, CredentialID: "crd_madminonly", SubjectKind: control.KindUser,
+			SubjectID: mAdminOnly, TokenHash: control.HashToken(tAdminOnly), Label: "admin-only laptop"},
+	}
+}
+
+// TestARetractByACallerWhoCannotReadIsTheSameMissForAnyId — T12 on the retraction route: a caller
+// who cannot read the scope gets EXACTLY `memo.ErrNotFound` for an id that exists there and for one
+// that does not, so retraction cannot be used to learn which ids a scope holds. Two such callers:
+// reader-b on beta-notes (no grant at all there) and an ADMIN-ONLY grantee on alpha-notes (admin,
+// no read — the S2 ruling). RED with `Retract`'s up-front `MayRead` check deleted: the existing id
+// then answers `not-permitted`. POSITIVE CONTROL: the same calls by a caller who CAN read answer
+// `not-permitted` for the existing id, so the mutant's observable is reachable.
+func TestARetractByACallerWhoCannotReadIsTheSameMissForAnyId(t *testing.T) {
+	r := newMemoRig(t)
+	r.m = memoWorld(t, adminOnlyEvents()...)
+	ctx := context.Background()
+	w := as(t, r.m, tWriter)
+	inBeta := r.mustSend(t, w, "beta-notes", 0)
+	inAlpha := r.mustSend(t, w, "alpha-notes", 0)
+	reader, adminOnly := as(t, r.m, tReader), as(t, r.m, tAdminOnly)
+	if memo.MayRead(adminOnly.a, "alpha-notes") || !adminOnly.a.VisibleScopes(control.VerbAdmin).Allows("alpha-notes") {
+		t.Fatal("precondition: the admin-only grantee is not admin-without-read on alpha-notes")
+	}
+	for _, tc := range []struct {
+		who    string
+		c      who
+		scope  string
+		exists int64
+	}{
+		{"reader-b on a scope it has no grant on", reader, "beta-notes", inBeta},
+		{"an ADMIN-ONLY grantee (no read)", adminOnly, "alpha-notes", inAlpha},
+	} {
+		existing := r.store.Retract(ctx, tc.c.p, tc.c.a, tc.scope, tc.exists)
+		absent := r.store.Retract(ctx, tc.c.p, tc.c.a, tc.scope, tc.exists+100000)
+		if existing != memo.ErrNotFound || absent != memo.ErrNotFound {
+			t.Errorf("%s: existing id -> %v, absent id -> %v; want exactly memo.ErrNotFound for both", tc.who, existing, absent)
+		}
+	}
+	if n := r.count(t, `SELECT count(*) FROM memos WHERE retracted_at IS NOT NULL`); n != 0 {
+		t.Fatalf("a caller who cannot read retracted %d memo(s)", n)
+	}
+	// POSITIVE CONTROL: reader-b CAN read alpha-notes, and its refusal for the existing id there is
+	// the DISTINCT not-permitted — the answer the mutant would leak on the unreadable scope.
+	if err := r.store.Retract(ctx, reader.p, reader.a, "alpha-notes", inAlpha); !refusedWith(err, memo.RefusedNotPermitted) {
+		t.Fatalf("POSITIVE CONTROL FAILED: a reader of alpha-notes retracting another's memo: %v, want not-permitted", err)
+	}
+}
+
+// TestAScopeNamedInAnotherCaseSharesItsQuota — T3: `ALPHA-NOTES` and `alpha-notes` are ONE scope at
+// the predicate (`ScopeSet.Allows` folds), so they must be one scope at the store: one quota, one
+// stored name. RED with `Send`'s `store.NormalizeRef(scope)` replaced by the raw name — each spelling
+// then gets its own 50 and the 51st send passes.
+func TestAScopeNamedInAnotherCaseSharesItsQuota(t *testing.T) {
+	r := newMemoRig(t)
+	w := as(t, r.m, tWriter)
+	for i := 0; i < memo.SendsPerScopePerWindow; i++ {
+		scope := "alpha-notes"
+		if i%2 == 1 {
+			scope = "ALPHA-NOTES"
+		}
+		r.mustSend(t, w, scope, 0)
+	}
+	for _, scope := range []string{"ALPHA-NOTES", "alpha-notes", "Alpha-Notes"} {
+		if _, err := r.send(t, w, scope, 0); !refusedWith(err, memo.RefusedQuota) {
+			t.Errorf("send %d to %q: %v, want the quota refusal — the spelling bought a second quota",
+				memo.SendsPerScopePerWindow+1, scope, err)
+		}
+	}
+	if n := r.count(t, `SELECT count(*) FROM memos WHERE scope_name <> 'alpha-notes'`); n != 0 {
+		t.Fatalf("%d row(s) stored under an unfolded scope name", n)
+	}
+}
+
+// TestTheQuotaCountsRetractedSends — O12 counts SENDS: a memo retracted after it was sent still used
+// its slot, so retracting cannot be used to send a 51st memo in a day. RED with the quota count
+// restricted to unretracted rows (`AND retracted_at IS NULL`). POSITIVE CONTROL: the live bound,
+// which DOES exclude retracted rows, is not what refuses here (only 50 rows exist, 25 of them live).
+func TestTheQuotaCountsRetractedSends(t *testing.T) {
+	r := newMemoRig(t)
+	ctx := context.Background()
+	w := as(t, r.m, tWriter)
+	for i := 0; i < memo.SendsPerScopePerWindow; i++ {
+		id := r.mustSend(t, w, "alpha-notes", 0)
+		if i%2 == 0 {
+			if err := r.store.Retract(ctx, w.p, w.a, "alpha-notes", id); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := r.send(t, w, "alpha-notes", 0); !refusedWith(err, memo.RefusedQuota) {
+		t.Fatalf("send 51 after 25 retractions: %v, want the quota refusal (retraction must not refund a send)", err)
+	}
+}
+
+// TestTheRetractionIsBoundedByTheTransactionTimeout — the retraction arms decision 6's
+// `transaction_timeout` the way the send does: a retraction BLOCKED on the memo's row lock (another
+// transaction holds it `FOR UPDATE`) is terminated by the server once the (shortened) timeout passes,
+// instead of waiting for the blocker. RED with the retraction's `set_config` removed: it then waits
+// out the blocker and succeeds. POSITIVE CONTROL: after the blocker is gone the same retraction
+// commits, so the timeout — not the lock — is what failed the first one.
+func TestTheRetractionIsBoundedByTheTransactionTimeout(t *testing.T) {
+	defer pgstore.ShortenMemoTransactionTimeoutForTest(time.Second)()
+	r := newMemoRig(t)
+	ctx := context.Background()
+	w := as(t, r.m, tWriter)
+	id := r.mustSend(t, w, "alpha-notes", 0)
+	blocker, err := r.db.SQL().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := blocker.Exec(`SELECT id FROM memos WHERE id = $1 FOR UPDATE`, id); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { done <- r.store.Retract(ctx, w.p, w.a, "alpha-notes", id) }()
+	var got error
+	select {
+	case got = <-done:
+	case <-time.After(4 * time.Second):
+		_ = blocker.Rollback()
+		got = <-done
+		t.Fatalf("a retraction blocked on a row lock was still waiting %v later (it then returned %v) — "+
+			"no transaction_timeout bounds it", time.Since(start).Round(time.Millisecond), got)
+	}
+	_ = blocker.Rollback()
+	if got == nil {
+		t.Fatal("a retraction blocked past its transaction_timeout COMMITTED")
+	}
+	t.Logf("the terminated retraction's error after %v: %v", time.Since(start).Round(time.Millisecond), got)
+	if err := r.store.Retract(ctx, w.p, w.a, "alpha-notes", id); err != nil {
+		t.Fatalf("POSITIVE CONTROL FAILED: with the blocker gone the retraction still fails: %v", err)
+	}
+}
+
+// TestAListingIsCappedAtTheLiveBound — `List`'s limit is capped at `memo.MaxLivePerScope` whatever the
+// caller asks: a listing WITH tombstones can hold more rows than the live bound (≤ 50 a day for up to
+// 30 days), so the cap is the only thing bounding one response. 250 rows are planted by SQL (the send
+// path's own bounds would stop at 200 live). RED with the `limit > memo.MaxLivePerScope` clause
+// removed (a 1000-row ask then returns 250). POSITIVE CONTROLS: a small limit is honoured exactly, and
+// limit 0 means the cap rather than nothing.
+func TestAListingIsCappedAtTheLiveBound(t *testing.T) {
+	r := newMemoRig(t)
+	ctx := context.Background()
+	const planted = memo.MaxLivePerScope + 50
+	if _, err := r.db.SQL().Exec(`INSERT INTO memos (scope_name, sender_kind, sender_id, sender_display_at_send, subject, body, created_at, expires_at)
+	     SELECT 'alpha-notes', 'user', $1, 'writer-a', 's', 'b', $2::timestamptz + make_interval(secs => g), $3
+	       FROM generate_series(1, $4) AS g`, string(mWriter), m0, m0.Add(memo.MaxTTL), planted); err != nil {
+		t.Fatal(err)
+	}
+	reader := as(t, r.m, tReader)
+	for _, tc := range []struct {
+		limit, want int
+	}{{1000, memo.MaxLivePerScope}, {0, memo.MaxLivePerScope}, {-1, memo.MaxLivePerScope}, {5, 5}} {
+		got, err := r.store.List(ctx, r.m, reader.a, pgstore.MemoQuery{Scope: "alpha-notes", Limit: tc.limit, IncludeRetracted: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != tc.want {
+			t.Errorf("Limit %d over %d rows returned %d, want %d", tc.limit, planted, len(got), tc.want)
+		}
+	}
+}

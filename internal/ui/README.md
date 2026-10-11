@@ -4601,3 +4601,41 @@ whose anchors moved.
   which is the visible failure, not a silent one; nothing measures which apps do this.
 - **`<noscript>` in a browser.** The notice is pinned in the served bytes; no test drives a
   script-disabled browser.
+
+---
+
+# Phase X — scope mail's client listener (S2 of the scope-mail plan)
+
+`cairn-ui -client-api-addr host:port` starts a THIRD listener, `internal/clientapi`, serving four
+memo routes to host-side agents: `GET /client/v1/memos?scope=&after=&limit=&tombstones=`,
+`GET /client/v1/memo?scope=&id=`, `POST /client/v1/memos` and `POST /client/v1/memo/retract`.
+`clientapi.ClientRoutes()` is its ledger; it is NOT a row of this package's ledger, NOT
+`api.DeclaredRoutes()`, and the pod's `-routes` output is byte-identical across the slice.
+
+## The binding rules
+
+- **Machine tokens only, by TYPE.** `clientapi.Config.Auth` is a `*identity.MachineToken`, the same
+  one this surface's chain holds, over the same control-journal authority. A cookie signed in on the
+  browser listener next door is garbage there (`TestACookieSignedInNextDoorIsGarbageToTheClientListener`).
+- **No default, no environment spelling.** The flag REFUSES TO START (exit 78) without
+  `-control-journal` — otherwise the authority is the token file's shared row and every sender is one
+  sender (O9) — without `-db-dsn`, with a blank value, and on a reachable bind with no
+  `$CAIRN_TRUSTED_PROXIES` (`listenerBindRefusal`, presence's predicate). All judged before anything
+  is opened. Its own `netid` limiter: N failed credentials lock the client out.
+- **No authz in the listener.** `pgstore.MemoStore` asks `memo.MaySend`/`MayRead`/`MayRetract`
+  itself; the handler parses, dispatches and renders.
+- **The wire is `memo.Rendered`** (decision 19), keys being its own field names, so no copy step can
+  drop a field's sanitising.
+- **One miss.** Unreadable scope, absent scope, unknown id, an id under the wrong scope, and an
+  expired memo are all `404 {"error":"not-found"}`, byte for byte; a send to any scope the caller
+  cannot write is the one `403 … "no-write"` body.
+- **`tombstones=1`** is the one parameter the plan's route table does not name: S1 left how the
+  store's `IncludeRetracted` is exposed to S2 (plan, "S2 — measurements and corrections").
+
+## What these guards still cannot see
+
+- The CLIENT: exit codes, status tokens and `memo-read` output are S3's e2e (decision 18).
+- A provider JWT that VERIFIES: no test here arms a provider, so the JWT arms are invariant guards.
+- Concurrency between a revocation and an in-flight request: revocation is one refresh of latency,
+  tested by forcing `control.Cache.Refresh`, never by timing the 30 s loop.
+- The deployment: S7 makes the listener reachable; nothing here measures an ingress.
