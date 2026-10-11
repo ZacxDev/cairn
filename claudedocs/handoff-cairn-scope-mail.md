@@ -22,36 +22,36 @@ UNTRUSTED pointer-plus-preview block. Per `claudedocs/plan-cairn-scope-mail.md` 
   DEPLOYED listener.
 
 ## State now
-- **Plan MERGED** `4413feb` (#221). Operator decisions O1–O13 and D2–D6 cuts are recorded in the plan; O9 (per-host
-  narrowed journal credential) and decision 17 (agent credentials carry read+write, never admin) bind S1–S4.
-- **S0 MERGED** (cairn #230 via train 2 → `9292da2`; tooling #2125, hook UNREGISTERED).
-- **S1 IN FLIGHT: ZacxDev/cairn#235** (`zach/scope-mail-s1`, head `92673ed`, NOT merged). Built: verb narrowing
-  (`control.Narrow` verb arg, `credential-verbs-narrowed` event, `-issue-credential -narrow-verbs`), `cairn-server
-  -revoke-credential`, `memo.MaySend/MayRead/MayRetract` + `CheckSend` (confident-secret scan pinned as a set),
-  migration 3 + `pgstore.MemoStore`, Guard A keyed on name+printed type (`internal/surface`), U+3164-class
-  Default_Ignorable in `Unsafe`, `\u` escapes in test sources. All 26 CI checks green on `92673ed`; pgtest 209/209;
-  20/20 hand-run pgtest mutants killed; `control_mutants.py` 399/401 (2 pre-labelled equivalent). Self-reported by
-  the implementing agent — CI green was re-read by the coordinator; the mutation matrix was NOT re-run by it.
-- 🔴 **The base MOVED under #235 after its CI ran:** #233 (mutant batteries sharded into their own job,
-  `tests/testlib/mutant_tree.py`) and #225 (CI tiered by changed paths) merged at `0276a51`/`50c56f1`. #235 adds
-  mutant rows and edits `ci.yml` enumerations, so it needs `main` merged in and CI re-run before merging — a clean
-  textual merge is not enough (semantic conflict over the mutant rows/ledgers).
-- **Audit:** round 0 (requirements & deletion) dispatched on `92673ed`; checklist rounds not yet run. Merge rule:
-  once the latest round has no 🔴.
-- Nothing deployed for memos; no route, no verb. Claim `cairn-scope-mail-1` HELD by this session.
+- **Plan MERGED** `4413feb` (#221). **Q16 ANSWERED by the operator:** KEEP decision 17's verb narrowing over Q15's
+  per-host project principal, accepting the stricter rollback (recorded in the plan, `a7ee397`). Round-0 D2 kept:
+  migration 3 stays registered in S1.
+- **S0 MERGED** (cairn #230; tooling #2125, hook UNREGISTERED).
+- **S1 MERGED: #235 squash `8b7ef0d`** (2026-10-11), `main`'s tree byte-identical to the audited head `a7ee397`.
+  Landed: verb narrowing (`credential-verbs-narrowed`, `-issue-credential -narrow-verbs`), `cairn-server
+  -revoke-credential`, `memo.MaySend/MayRead/MayRetract` + `CheckSend`, migration 3 + `pgstore.MemoStore`, Guard A on
+  name+type (`internal/surface`), Guard C over pgstore's exported surface. Audit: round 0 (Q16 questioned → operator
+  kept it), round 1 no 🔴 (2 🟡 + nits, batched below) — merged under the operator's "no 🔴 in the latest round" rule.
+- ⚠ **NOT DEPLOYED.** The next cairn-ui deploy applies migration 3 (`pgstore.Open` migrates); from then a rollback
+  below S1 needs the version-3 recipe on #235, and older binaries refuse a journal holding `credential-verbs-narrowed`
+  (exit 78, measured on the base build). Nothing reads the memo tables until S2.
+- Claims: all released.
 
 ## Next steps (ranked)
-1. **S1** — IN FLIGHT: ZacxDev/cairn#235. Finish round 0, merge `main` into the branch (post-#233/#225) and re-run
-   CI, then checklist audit rounds until one has no 🔴; then merge and `claim-work --release cairn-scope-mail-1`.
-   forcing: user — operator asked for scope mail.
-2. **S2 → S3 → S5 (cairn) and S4 (tooling, last) and S7 (deployment)** per the plan's slice table.
-   forcing: user — operator asked for scope mail.
+1. **S1** — DONE, #235 `8b7ef0d`. forcing: user — operator asked for scope mail.
+2. **S2 → S3 → S5 (cairn) and S4 (tooling, last) and S7 (deployment)** per the plan's slice table. S2 first: the
+   `-client-api-addr` listener; fix the S1 defects below in it. forcing: user — operator asked for scope mail.
 
 ## Defects (batched)
-- **Carried to S1/S2 (from #221 round 6 and the S0 audit):** Guard A keys its ledger on NAMES, so a
-  changed signature on an existing name can return stored text — key it on name + printed type;
-  embedded fields from another package (e.g. `json.RawMessage` in `Rendered`) are invisible to
-  Guard A and the emitter check — record qualified names and check every field of `Rendered`.
+- **From #235 round 1 (fix in S2, before these paths are exposed):** two CORRECT-but-untested guards — `Retract`'s
+  read check (`internal/pgstore/memos.go:266`; without it a caller who cannot read scope X distinguishes existing
+  memo ids there via `not-permitted` vs `not-found`, T12) and scope folding on send (`memos.go:110`; without it
+  `ALPHA-NOTES` gets its own quota, T3). The auditor proved each hazard with a throwaway test, red under the mutant.
+  Nits, also untested: quota counting retracted rows (`:131`), `Retract`'s transaction timeout (`:274`), `List`'s
+  200 cap (`:200`), `-narrow-verbs ","` refusal (`cmd/cairn-server/issuecredential.go:705`); `Narrowed()`'s doc at
+  `internal/control/resolve.go:64` still says only a non-nil list narrows.
+- **Rule in two places:** `MayRetract`'s doc and decision 10 say admin alone may retract, but `Retract` also
+  requires read, so an admin-only grant (the share form allows one) gets `not-found`. Decide which is intended and
+  make the predicate S5 draws its retract button from carry the whole rule.
 - **Carried to S3:** restore the live probe's cache-sync step (it is what lets the
   omit-`SUBSYSTEM_STORE_URL`/`_TOKEN` mutants go red); "exits 2 when `CAIRN_UI_URL` is absent"
   means absent from the probe-input file; decide whether `os.UserHomeDir()`, `reposcope`'s
@@ -59,9 +59,7 @@ UNTRUSTED pointer-plus-preview block. Per `claudedocs/plan-cairn-scope-mail.md` 
 - **Carried to S4 (before the hook is registered):** a descendant that `setsid`s and keeps stdout open
   defeats the 2 s bound (measured 12.03 s) — close the pipes after `killpg`; relayed output is
   uncapped (64 MiB passed through) — cap it and treat overflow as `malformed`.
-- **Low:** Default_Ignorable letters/marks (e.g. U+3164) pass `Unsafe` — add them or state a residual;
-  `tests/memo/hostile.py` and `render_test.go` carry raw invisible/bidi characters — write them as
-  `\u` escapes.
+- (The S1/S2 Guard A carry-overs and the Low `Unsafe`/`\u`-escape items were FIXED in #235.)
 
 ## Gotchas / decisions / dead-ends
 - **Go's `unicode.C` already includes unassigned code points** — "unassigned" computed as "in no
@@ -79,10 +77,13 @@ UNTRUSTED pointer-plus-preview block. Per `claudedocs/plan-cairn-scope-mail.md` 
 - **The `-narrow-scopes` without `-narrow-verbs` refusal broke `tests/presence/e2e.sh`**; it now passes all three
   verbs. Any other script issuing narrowed credentials needs the same. via: command
 
+- **Correction to this doc's previous `State now`:** it said the base moved under #235 after its CI ran (#233/#225).
+  Wrong — #235 had already merged both (`dce97bf`) and its CI covered them; only #227 arrived later. Read the PR's
+  own merge commits before claiming a base moved. via: command
+
 ## How to verify
 ```bash
-gh pr view 235 --repo ZacxDev/cairn --json state,headRefOid,mergeStateStatus
-gh pr checks 235 --repo ZacxDev/cairn
 git -C ~/workspace/cairn log --oneline -1 -- internal/memo internal/pgstore
+nix develop ~/workspace/cairn -c go -C ~/workspace/cairn test ./internal/memo ./internal/control
 grep -c cairn-memo-hook ~/.claude/settings.json   # 0 until S4 registers it
 ```
