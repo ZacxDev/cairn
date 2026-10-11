@@ -76,8 +76,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 #: appending a sixth entry here left `tests/test_control_mutant_count_is_pinned.py` at
 #: 3 passed — its whole content then — with every one of them still reading FIVE.
 #: They are pinned to `len(PKGS)` by `tests/test_control_mutant_count_is_pinned.py` now,
-#: which is the same treatment the mutant count already has — so a `PKGS` edit that leaves
-#: prose stale is a red test rather than an instruction nobody reads.
+#: so a `PKGS` edit that leaves prose stale is a red test rather than an instruction nobody
+#: reads. (The MUTANT count went further: it is no longer stated in prose at all, because every
+#: PR adds rows and a pinned copy made each pair of them conflict; this file's run prints it.)
 #:
 #: The seam itself, which is the reason a battery scoped to ONE package would be wrong: a
 #: mutant in the token-file projection is killed by a guard in the server and vice versa,

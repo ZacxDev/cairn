@@ -977,21 +977,17 @@ def test_the_credential_step_is_pinned_WHOLE(text: str) -> None:
 #   1. `log in to ghcr` — the one `run:` step handling a secret.  → PINNED below,
 #      whole-body, plus a GROW arm refusing a SECOND secret-handling step.
 #   2. the step-level `if:` on the two version-tag pushes.        → PINNED below.
-#   3. `ci.yml`'s ARM-battery count — *"prove every ARM can go RED (7 mutants…)"*.
-#      → **A WRITTEN LINE, NOT A PR, AND HERE IT IS.**
+#   3. `ci.yml`'s ARM-battery count — the step read *"prove every ARM can go RED
+#      (7 mutants…)"*.                                              → CLOSED BY DELETION.
 #
-# ⚠ ON (3), AND WHY IT IS THE ONE THAT GETS THE LINE. It is the same defect class
-# `tests/test_control_mutant_count_is_pinned.py` already closes twice — a count in
-# a CI step NAME that nothing derives from the battery it describes — and closing
-# it means extending that file's anchor ledger to a THIRD battery, in a different
-# job, whose module this file does not read. That is coherent work with a clear
-# shape and it is not this PR's: this file is about `publish-image.yml`, and the
-# ARM battery is about `ci.yml`'s ARM job. Doing it here would mean a second file
-# growing a third ledger as a side effect of a PR that names neither.
-# **Closing condition, so it reads as open rather than absent:** an entry in
-# `test_control_mutant_count_is_pinned.py`'s anchor ledger for the ARM battery,
-# derived from its own `len(MUTANTS)`, with the same GROW/SHRINK shape as the
-# control and publish ledgers beside it.
+# ⚠ ON (3): it was the defect class `tests/test_control_mutant_count_is_pinned.py`
+# closed for the other batteries — a count in a CI step NAME that nothing derives from
+# the battery it describes. The closing condition written here was an anchor-ledger
+# entry pinning it to `len(MUTANTS)`. It was closed the other way instead: no mutation
+# step in `ci.yml` names a count any more (the ARM self-test prints its own
+# `SELF-TEST mutants=<N> caught=<K>`), because a pinned count is a line every PR that
+# adds a mutant must edit, and two such PRs then conflict on it. A count coming back
+# into `ci.yml` is refused by that file's sweep.
 
 
 #: `- name: <step>` → the step-level `if:` expression guarding it, for every step
