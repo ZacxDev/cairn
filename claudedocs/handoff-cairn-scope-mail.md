@@ -22,26 +22,28 @@ UNTRUSTED pointer-plus-preview block. Per `claudedocs/plan-cairn-scope-mail.md` 
   DEPLOYED listener.
 
 ## State now
-- **Plan MERGED** `4413feb` (#221, 6 audit rounds; ladder stopped on the operator's "merge once the
-  latest round has no 🔴" rule). Operator decisions: O1 per-session read state; O2 senders need
-  WRITE; O3 pointer + preview, silent when empty; O6 Postgres in cairn-ui (migration 3); O7 no ack
-  in v1; O8 sender or scope admin retracts; **O9** agents use a per-host NARROWED JOURNAL credential
-  (O5's token-file rows were REVERSED: the deployed UI deliberately holds no store token file, and
-  that file's single row is shared by every client); D2–D6 cut (urgent bell, ack, per-host cursor,
-  per-sender quota, a Go copy of leakscan's patterns). Decision 17 (coordinator default, reversible):
-  verb narrowing — agent credentials carry read+write, never admin.
-- **S0 MERGED:** cairn #230 (`internal/memo` trust-boundary renderer, via merge train 2 → `9292da2`)
-  and tooling #2125 (the hook, `8b43e7f`, UNREGISTERED — `~/.claude/settings.json` does not
-  reference it). Stored text sits behind a `func() *stored` carrier: a plain pointer leaked under
-  `%s`/`%q` (344/440), the func carrier 0/440, and an independent audit measured 0 leaks over
-  25,631 fmt/encoder/template/slog/panic cases.
-- **opencode can show text to its model only through a tool-call plugin** (`tool.execute.after`
-  appending to output; 1 canary run vs 1 control, one host, opencode 1.18.29).
-- Nothing is deployed for memos beyond the library; no route, no verb.
+- **Plan MERGED** `4413feb` (#221). Operator decisions O1–O13 and D2–D6 cuts are recorded in the plan; O9 (per-host
+  narrowed journal credential) and decision 17 (agent credentials carry read+write, never admin) bind S1–S4.
+- **S0 MERGED** (cairn #230 via train 2 → `9292da2`; tooling #2125, hook UNREGISTERED).
+- **S1 IN FLIGHT: ZacxDev/cairn#235** (`zach/scope-mail-s1`, head `92673ed`, NOT merged). Built: verb narrowing
+  (`control.Narrow` verb arg, `credential-verbs-narrowed` event, `-issue-credential -narrow-verbs`), `cairn-server
+  -revoke-credential`, `memo.MaySend/MayRead/MayRetract` + `CheckSend` (confident-secret scan pinned as a set),
+  migration 3 + `pgstore.MemoStore`, Guard A keyed on name+printed type (`internal/surface`), U+3164-class
+  Default_Ignorable in `Unsafe`, `\u` escapes in test sources. All 26 CI checks green on `92673ed`; pgtest 209/209;
+  20/20 hand-run pgtest mutants killed; `control_mutants.py` 399/401 (2 pre-labelled equivalent). Self-reported by
+  the implementing agent — CI green was re-read by the coordinator; the mutation matrix was NOT re-run by it.
+- 🔴 **The base MOVED under #235 after its CI ran:** #233 (mutant batteries sharded into their own job,
+  `tests/testlib/mutant_tree.py`) and #225 (CI tiered by changed paths) merged at `0276a51`/`50c56f1`. #235 adds
+  mutant rows and edits `ci.yml` enumerations, so it needs `main` merged in and CI re-run before merging — a clean
+  textual merge is not enough (semantic conflict over the mutant rows/ledgers).
+- **Audit:** round 0 (requirements & deletion) dispatched on `92673ed`; checklist rounds not yet run. Merge rule:
+  once the latest round has no 🔴.
+- Nothing deployed for memos; no route, no verb. Claim `cairn-scope-mail-1` HELD by this session.
 
 ## Next steps (ranked)
-1. **S1** — migration 3, the memo store, send/read authorization, the per-scope quota, the send-time
-   secret scan, AND the round-6 + S0-audit carry-overs below. forcing: user — operator asked for scope mail.
+1. **S1** — IN FLIGHT: ZacxDev/cairn#235. Finish round 0, merge `main` into the branch (post-#233/#225) and re-run
+   CI, then checklist audit rounds until one has no 🔴; then merge and `claim-work --release cairn-scope-mail-1`.
+   forcing: user — operator asked for scope mail.
 2. **S2 → S3 → S5 (cairn) and S4 (tooling, last) and S7 (deployment)** per the plan's slice table.
    forcing: user — operator asked for scope mail.
 
@@ -67,9 +69,20 @@ UNTRUSTED pointer-plus-preview block. Per `claudedocs/plan-cairn-scope-mail.md` 
 - **The tooling repo's `scripts/leakscan.py` reports 13 findings already on its `main`**, none from
   this work. via: command
 
+- **S1's first hand-run "advisory lock removed" mutant SURVIVED** — the 20-goroutine race window was narrower than
+  connection setup; the test was fixed to hold connections first (`1cbfc16`). A concurrency guard needs its mutant
+  run, not its design read. via: measurement
+- **S1 stamps `created_at` AFTER taking the per-scope lock**, so one scope's rows commit in time order and the
+  plan's "late committer" cursor test had to span two scopes; recorded in the plan's S1 corrections section. via: change
+- **An older `cairn-server` refuses a journal holding `credential-verbs-narrowed` whole** (exit 78, "unknown event
+  kind", nothing appended) — the fail-closed rollback premise, measured on the base build. via: measurement
+- **The `-narrow-scopes` without `-narrow-verbs` refusal broke `tests/presence/e2e.sh`**; it now passes all three
+  verbs. Any other script issuing narrowed credentials needs the same. via: command
+
 ## How to verify
 ```bash
-git -C ~/workspace/cairn log --oneline -1 -- internal/memo
-nix develop ~/workspace/cairn -c go -C ~/workspace/cairn test ./internal/memo
+gh pr view 235 --repo ZacxDev/cairn --json state,headRefOid,mergeStateStatus
+gh pr checks 235 --repo ZacxDev/cairn
+git -C ~/workspace/cairn log --oneline -1 -- internal/memo internal/pgstore
 grep -c cairn-memo-hook ~/.claude/settings.json   # 0 until S4 registers it
 ```
