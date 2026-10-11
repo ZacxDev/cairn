@@ -4459,6 +4459,144 @@ MUTANTS: tuple[Mutant, ...] = (
         why="`head -60` reads as 'line 60 of this text', but the client prints a banner and a blank line "
         "first, so the agent's cut falls two lines earlier than the obvious mark.",
     ),
+    # 🔴 TRANSCRIPT UPLOAD AND STORE (S3 of `claudedocs/plan-cairn-plugins.md`). The plan's eight S3
+    # rows, less `transcript-capture-token-reads` (S3 has no read route for a capture token to reach
+    # — the kind check it guards arrives with S5's plugin routes), plus the DISARM gate's two (O16),
+    # and four more for guards whose hand mutation each went red on its own test. Every row's
+    # killer lives in `internal/worker` or `internal/transcript/archive`, so each ADDS those to the
+    # seam (`pkgs`), and `PKGS` itself — pinned in prose — does not move.
+    Mutant(
+        name="transcript-capture-armed-by-default",
+        path="internal/worker/worker.go",
+        old="\tif !w.cfg.Armed {",
+        new="\tif false && !w.cfg.Armed {",
+        killer="TestADisarmedListenerRefusesEveryUploadAndStoresNothing",
+        why="a listener that is configured looks like a listener that is meant to accept; the arming "
+        "is a separate operator decision (O16) and the configuration is not it.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-main-arms-regardless",
+        path="cmd/cairn-ui/main.go",
+        old="Armed: workerFlags.armed,",
+        new="Armed: true,",
+        killer="TestTheWorkerListenerIsDisarmedUnlessArmedByFlag",
+        why="every in-process worker test sets `Armed` itself, so the one line in `main` that hands the "
+        "flag through is visible only to a test that runs the binary.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-cas-ignores-from-offset",
+        path="internal/transcript/archive/archive.go",
+        old="\tpos := Position{}\n\tif m != nil {\n\t\tpos = m.Streams[stream]\n\t}\n\tif u.From != pos.StoredTo {",
+        new="\tpos := Position{}\n\tif m != nil {\n\t\tpos = m.Streams[stream]\n\t}\n\tif false && u.From != pos.StoredTo {",
+        killer="TestAResumedUploadLandsEveryRecordExactlyOnce",
+        why="appending whatever arrives is the obvious store; without the compare-and-swap a retried "
+        "upload after a lost acknowledgement lands every record twice (clause a).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-capture-token-host-unchecked",
+        path="internal/worker/worker.go",
+        old="\tif req.Host != row.Host {\n\t\tbadRequest(rw, fmt.Errorf(\"host %q is not this token's host\", req.Host))\n"
+        "\t\treturn\n\t}\n\treq.Upload.Root = r.PathValue(\"root\")\n\tst, err := w.cfg.Archive.AppendRecords",
+        new="\tif false && req.Host != row.Host {\n\t\tbadRequest(rw, fmt.Errorf(\"host %q is not this token's host\", req.Host))\n"
+        "\t\treturn\n\t}\n\treq.Upload.Root = r.PathValue(\"root\")\n\tst, err := w.cfg.Archive.AppendRecords",
+        killer="TestAHostTheTokenIsNotBoundToIs400AndWritesNothing",
+        why="the store keys on the TOKEN's host anyway, so the body's host looks decorative — and a "
+        "token file copied to the wrong machine uploads that machine's sessions as this one's.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-pod-recheck-skipped",
+        path="internal/transcript/archive/archive.go",
+        old="if _, hits := a.cfg.Recheck.Record(c.Bytes()); len(hits) > 0 {",
+        new="if _, hits := a.cfg.Recheck.Record(c.Bytes()); false && len(hits) > 0 {",
+        killer="TestThePodRefusesARecordTheTableMatches",
+        why="the host already redacted, so a second scan reads as redundant — and it is the only thing "
+        "between a bypassed or out-of-date agent and the store (clause c).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-pod-recheck-skips-blobs",
+        path="internal/transcript/archive/archive.go",
+        old="if _, hits := a.cfg.Recheck.Blob(name, data); len(hits) > 0 {",
+        new="if _, hits := a.cfg.Recheck.Blob(name, data); false && len(hits) > 0 {",
+        killer="TestThePodRefusesATextBlobTheTableMatches",
+        why="a persisted tool result is a FILE, not a record, and a re-check written for records "
+        "passes every blob unscanned (R4, clause c).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-root-owner-not-fixed",
+        path="internal/transcript/archive/archive.go",
+        old="return m == nil || (m.Owner == who.Owner && m.Host == who.Host)",
+        new="return m == nil || m.Owner == who.Owner || m.Host == who.Host || true",
+        killer="TestTheFirstUploadFixesTheOwnerAndHost",
+        why="every uploader holds a valid token, so ownership looks settled by authentication — and a "
+        "second host appends into a session it never ran (decision 15).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-pod-skips-scope-rederivation",
+        path="internal/transcript/archive/archive.go",
+        old="func derivedScopes() []string { return []string{Star} }",
+        new="func derivedScopes() []string { return nil }",
+        killer="TestThePodDerivesStarNotTheDeclarationAlone",
+        why="with no `scopeuse` on `main` an empty derivation reads as 'nothing found' — and it makes "
+        "the agent's DECLARATION the whole read half of V, which decision 3 exists to refuse.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="worker-token-accepted-by-browser-row",
+        path="internal/ui/auth.go",
+        old="import (\n",
+        new="import (\n\t_ \"github.com/ZacxDev/cairn/internal/worker\"\n",
+        killer="TestOnlyTheBrowserProgramImportsWorker",
+        why="the browser chain authenticates bearer tokens too, so teaching it worker tokens looks like "
+        "reuse — and it is the edit that lets a capture token mean something on a browser row.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-missing-middle-frame-stored",
+        path="internal/transcript/archive/frames.go",
+        old="} else if st == nil || st.next != f.Index ||",
+        new="} else if st == nil || st.next > f.Index ||",
+        killer="TestAMissingMiddleFrameStoresNothing",
+        why="'not a frame we already have' reads as the whole order check, and a skipped frame then "
+        "reassembles into a record with a hole in it.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-quota-unchecked",
+        path="internal/transcript/archive/archive.go",
+        old="\tif a.used+n > a.cfg.Quota {",
+        new="\tif false && a.used+n > a.cfg.Quota {",
+        killer="TestTheQuotaRefusesAndRetentionFreesIt",
+        why="the retention sweep already bounds the disk eventually, so a quota looks redundant — at "
+        "gigabytes a week, 'eventually' is the outage (T12).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-retention-boundary-inclusive",
+        path="internal/transcript/archive/sweep.go",
+        old="return now.Sub(m.UpdatedAt) > a.cfg.Retention }",
+        new="return now.Sub(m.UpdatedAt) >= a.cfg.Retention }",
+        killer="TestRetentionSweepsAtItsBoundary",
+        why="`>=` and `>` read the same in a review; the boundary decides whether a session lives "
+        "through the last instant of its retention.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="worker-wall-skipped-on-the-reread",
+        path="internal/worker/worker.go",
+        old="\t\tif err := admit(row, w.cfg.Owner); err != nil {\n\t\t\tw.once(",
+        new="\t\tif err := admit(row, row.Owner); err != nil {\n\t\t\tw.once(",
+        killer="TestTheWallRefusesAForeignRowAtStartupAndAsARowAfterwards",
+        why="the startup read already refused foreign rows, so the per-request re-read looks safe to "
+        "trust — and a row appended afterwards would authenticate a second owner (Q7's wall).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
 )
 
 

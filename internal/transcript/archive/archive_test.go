@@ -439,7 +439,11 @@ func TestRetentionSweepsAtItsBoundary(t *testing.T) {
 	if deleted, _ := g.a.Sweep(); len(deleted) != 0 {
 		t.Fatalf("a session at retention − 1 s was swept: %v", deleted)
 	}
-	g.clk.Add(2 * time.Second)
+	g.clk.Add(time.Second)
+	if deleted, _ := g.a.Sweep(); len(deleted) != 0 {
+		t.Fatalf("a session at EXACTLY the retention was swept (the boundary belongs to the session): %v", deleted)
+	}
+	g.clk.Add(time.Second)
 	if deleted, _ := g.a.Sweep(); !slices.Equal(deleted, []string{"s-0001"}) {
 		t.Fatalf("a session at retention + 1 s was not swept: %v", deleted)
 	}

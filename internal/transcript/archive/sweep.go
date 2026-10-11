@@ -36,18 +36,16 @@ func (a *Archive) Sweep() ([]string, error) {
 		return nil, err
 	}
 	now := a.cfg.Now().UTC()
+	// ONE predicate for the survey and for the re-check under the lock: two spellings let a
+	// mutant in either be masked by the other.
+	expired := func(m *Meta) bool { return now.Sub(m.UpdatedAt) > a.cfg.Retention }
 	var deleted []string
 	for _, root := range roots {
 		m, err := a.ReadMeta(root)
-		if err != nil || m == nil {
+		if err != nil || m == nil || !expired(m) {
 			continue
 		}
-		if now.Sub(m.UpdatedAt) <= a.cfg.Retention {
-			continue
-		}
-		ok, err := a.Delete(root, ReasonRetention, func(cur *Meta) bool {
-			return now.Sub(cur.UpdatedAt) > a.cfg.Retention
-		})
+		ok, err := a.Delete(root, ReasonRetention, expired)
 		if err != nil {
 			return deleted, err
 		}
