@@ -1652,10 +1652,11 @@ jobs:
     # third-party CDN — the precise half the old comment claimed to prevent.
     #
     # ⚠ WHAT IT ACTUALLY BUYS, WHICH IS STILL WORTH HAVING: this job cannot block a merge. That
-    # matters because it installs chromium from the runner image on every run, over the network, at
-    # whatever version that image currently ships — so an `apt` hiccup, a snap fallback or a chromium
-    # change would otherwise gate a tree nobody touched. A permanently-blocking gate on a third
-    # party's release schedule is the category this repository refuses.
+    # matters because it reaches third parties on every run — the audit hub's edge, a CDN, and the
+    # nix binary cache its chromium comes from — any of which would otherwise gate a tree nobody
+    # touched. (Its chromium is now PINNED to the flake's nixpkgs, S6a; it used to be whatever the
+    # runner image shipped.) A permanently-blocking gate on a third party's availability is the
+    # category this repository refuses; S6b promotes the touch refusals into their own job instead.
     #
     # ⚠ AND WHAT IT DOES NOT BUY, SAID PLAINLY RATHER THAN PAPERED OVER: **the row can still go red,
     # and a reader of the checks list will see it.** That is accepted, not fixed. The alternative
@@ -1743,32 +1744,59 @@ jobs:
         with:
           python-version: "3.12"
 
-      # ⚠ CHROMIUM COMES FROM THE RUNNER IMAGE, WHICH MAKES ITS VERSION AN INPUT NOBODY
-      # HERE PINS — so it is PRINTED. Every claim this job makes about browser behaviour
-      # (the `__Host-` cookie being stored over plaintext loopback; axe executing under
-      # `default-src 'none'`) is a claim about the build that ran, and a log without the
-      # version is a measurement without its scope. The spikes in `uiaudit/README.md`
-      # record which build they were measured under for the same reason.
+      # 🔴 CHROMIUM COMES FROM THE FLAKE'S PINNED NIXPKGS (S6a of the mobile plan, decision 17), NOT
+      # FROM THE RUNNER IMAGE. It used to be `apt-get install chromium-browser || snap install
+      # chromium` — whatever the image shipped that day — and that was MEASURED to move the result:
+      # two runs on one machine (chromium 153.0.8010.52) diffed `0 changed` of 6 pages; a CI run on
+      # 153.0.8010.36, the runner's snap, diffed **4 changed** of 6 against the same baseline, with
+      # `0 size-changed` — four pages moved on a PATCH difference. Pinning is the precondition for any
+      # pixel gate and for S6b's blocking touch job (O11); it is not, by itself, a reason to promote
+      # anything (`uiaudit/README.md`'s gating section).
       #
-      # 🔴 AND IT IS A FLAPPING INPUT ON THE PIXEL DIFF, WHICH IS MEASURED RATHER THAN FEARED.
-      # Two runs on one machine (chromium 153.0.8010.52) diffed `0 changed` of 6 pages; a CI run
-      # on 153.0.8010.36 — the runner's snap — diffed **4 changed** of 6 against that same
-      # baseline, with `0 size-changed`, so four pages moved on a PATCH difference with no page
-      # height change to explain it.
+      # `--inputs-from .` resolves `nixpkgs` to the revision `flake.lock` pins — the SAME chromium the
+      # `uiScreenshots` derivation captures with — so the install screenshots, the walk and these tests
+      # now run one build. A `flake.lock` bump moves it, deliberately and visibly.
       #
-      # That is why the pixel diff cannot gate, and it is a stronger reason than the inherited
-      # cross-producer regression figure because it is about this harness. 🔴 **PINNING CHROMIUM
-      # IS THE PRECONDITION FOR ANY PIXEL GATE** — a nix-pinned build or a version-pinned
-      # container — and until that exists the signal flips on somebody else's release schedule
-      # whatever its numbers look like. Do not promote a visual predicate while this step
-      # installs whatever the image currently ships. See `uiaudit/README.md`'s gating section.
-      - name: chromium, and its version, which is an unpinned input
+      # 🔴 THE VERSION IS ASSERTED, NOT ONLY PRINTED: the binary's own `--version` must name the version
+      # nix evaluated for the lock, and the `chromium` this job's later steps resolve must be the store
+      # path — the runner image ALSO carries browsers, and chromedp and `pwa_check.sh` both find theirs
+      # by NAME on `PATH` (chromedp tries `headless_shell`/`headless-shell` before `chromium`, so those
+      # must not resolve either). A pin that is set but not the one that runs is the `GOTOOLCHAIN` no-op
+      # above, reached through `PATH`.
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: chromium from the flake's pinned nixpkgs, its version asserted
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq chromium-browser || sudo snap install chromium
-          command -v chromium || command -v chromium-browser
-          chromium --version || chromium-browser --version
+          rev=$(python3 -c 'import json; print(json.load(open("flake.lock"))["nodes"]["nixpkgs"]["locked"]["rev"])')
+          want=$(nix eval --raw --inputs-from . nixpkgs#chromium.version)
+          out=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#chromium)
+          got=$("$out/bin/chromium" --version)
+          echo "flake.lock nixpkgs: $rev"
+          echo "flake-resolved chromium: $want ($out)"
+          echo "the binary says: $got"
+          case "$got" in
+            *" $want"|*" $want "*) ;;
+            *) echo "::error::the pinned chromium reports '$got', but nix evaluated $want for flake.lock's nixpkgs"; exit 1 ;;
+          esac
+          echo "$out/bin" >> "$GITHUB_PATH"
+      - name: the pinned chromium is the one on PATH
+        run: |
+          set -euo pipefail
+          for name in headless_shell headless-shell; do
+            if p=$(command -v "$name"); then
+              echo "::error::$name resolves to $p, and chromedp would launch it before the pinned chromium"; exit 1
+            fi
+          done
+          p=$(command -v chromium)
+          echo "chromium on PATH: $p"
+          case "$p" in
+            /nix/store/*) ;;
+            *) echo "::error::chromium resolves to $p, not the flake-pinned store path"; exit 1 ;;
+          esac
+          chromium --version
 
       # 🔴 THE MODULE'S OWN GUARDS FIRST, AND THEY INCLUDE THE POSITIVE CONTROL. The walk
       # below reports small numbers, two of which are zero BY CONSTRUCTION; without an
@@ -1883,10 +1911,13 @@ jobs:
           # the tree that introduced this job; 108 on the mobile plan's S0 (88 measured on its
           # base, chromium 154); 115 on S1; 119 on S1's round 1; 124 on S2; 127 on S4
           # (`TestPWAClauses` gained `b_screenshots`, `shortcuts` and `e_storage` — measured,
-          # chromium 152 from the flake's nixpkgs). It notices a ROW deleted from a table,
-          # which neither derived check above can see.
-          if [ "$total" -lt 127 ]; then
-            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 127 — a table row was deleted"
+          # chromium 152 from the flake's nixpkgs); 128 on S5 (`TestStandaloneBackAndReload`, one
+          # top-level test with no subtests — DERIVED as S4's floor plus one, NOT measured on a
+          # full run: the operator skipped local suite runs for that slice, so this job's own count
+          # line is the measurement). It notices a ROW deleted from a table, which neither derived
+          # check above can see.
+          if [ "$total" -lt 128 ]; then
+            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 128 — a table row was deleted"
             exit 1
           fi
 
@@ -1930,8 +1961,8 @@ jobs:
 
       # 🔴 THE MOBILE PLAN'S CLOSING-CONDITION INSTRUMENT (`claudedocs/plan-cairn-mobile-pwa.md`),
       # WIRED HERE BY S4 AND IN THIS NON-BLOCKING JOB ON PURPOSE: the plan keeps `pwa_check.sh` advisory
-      # until S6b adds the blocking `uiaudit-touch` job over a PINNED chromium — this job's chromium is
-      # the runner image's, an unpinned input (see the step above). It runs the PLAIN check (all nine
+      # until S6b adds the blocking `uiaudit-touch` job — this job's chromium is pinned since S6a, but
+      # the job itself stays advisory (see `continue-on-error` above). It runs the PLAIN check (all nine
       # clauses, exit 0/1/2); `--self-test` (nine sabotaged tree copies, four of them full walks) is a
       # local instrument validation, too heavy to repeat on every push. Exit 2 is "could not vouch" and
       # is a failure here exactly like 1 — never a skip.

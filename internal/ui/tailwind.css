@@ -299,7 +299,8 @@
    * nothing here can un-hide them. The Install button sits in the header; the iOS hint is a one-line
    * card on the root page with its own dismiss button. */
   .install,
-  .install-hint button {
+  .install-hint button,
+  .standalone-nav {
     @apply text-sm text-accent border border-line rounded px-2 py-0.5 cursor-pointer;
     @apply transition-colors duration-200 ease-cairn hover:text-ink;
   }
@@ -307,6 +308,31 @@
   .install-hint {
     @apply flex flex-wrap items-center justify-between gap-2;
     @apply bg-raised border border-line rounded-card px-4 py-2 mb-4 text-sm text-muted;
+  }
+
+  /* S5 of the mobile plan: an INSTALLED app's window, which has no browser chrome. `pwa.js` reveals
+   * the header's Back and Reload (`.standalone-nav`) only when `(display-mode: standalone)` matches,
+   * and every standalone rule below is keyed on that REVEALED state — never on the media query.
+   *
+   * 🔴 THE KEY IS `:has(> .standalone-nav:not([hidden]))`, AND THAT IS A MEASUREMENT DECISION. CDP
+   * cannot emulate `display-mode: standalone` (measured: `setEmulatedMedia` had no effect), so a rule
+   * under that query would be unmeasurable by any harness here; keyed on the controls, it renders under
+   * the same `matchMedia` stub that reveals them, and `uiaudit`'s `TestStandaloneBackAndReload` reads
+   * the sticky header, its row count, its reading order and the overscroll value in a real chromium.
+   * The cost: a standalone window with script off gets none of it — it also has no Back to pin.
+   *
+   * The header is STICKY there because the window has no address bar to scroll back to: the way
+   * around (wordmark, Back, Reload, nav) stays on screen. ⚠ It is ~100px tall at the touch rungs
+   * (two 44px rows, S1's measurement), so the touch block below WIDENS row 1 for the two controls
+   * rather than letting them open a third row — the test pins "no row added". The overscroll rule
+   * stops a scroll at the page's end from chaining into the window (Android's pull-to-refresh, a
+   * rubber-band on the sticky header). */
+  .page-header:has(> .standalone-nav:not([hidden])) {
+    @apply sticky top-0 z-20 bg-surface pt-2;
+  }
+
+  html:has(.page-header > .standalone-nav:not([hidden])) {
+    @apply overscroll-y-contain;
   }
 
   .empty,
@@ -1207,6 +1233,18 @@
       @apply col-span-2 min-w-0 truncate text-xs;
     }
 
+    /* S5 — in an installed app's window, Back and Reload join ROW 1 (the DOM puts them right after
+     * the wordmark, so auto-placement does it with no `order`): four equal targets beside the
+     * wordmark, and the viewer line widens to keep Sign out in the last column of row 2. The header
+     * stays two rows — it is sticky there (above), and a third row would cover every page. */
+    .page-header:has(> .standalone-nav:not([hidden])) {
+      grid-template-columns: auto repeat(4, minmax(0, 1fr));
+    }
+
+    .page-header:has(> .standalone-nav:not([hidden])) .viewer {
+      @apply col-span-4;
+    }
+
     .page-header .signout {
       @apply justify-self-end;
     }
@@ -1229,10 +1267,15 @@
       @apply min-h-11 min-w-11 justify-center;
     }
 
-    /* S4's two `type="button"` controls, which the submit rule above does not reach. */
+    /* S4's two `type="button"` controls and S5's two, which the submit rule above does not reach. */
     .install,
-    .install-hint button {
+    .install-hint button,
+    .standalone-nav {
       @apply min-h-11 min-w-11;
+    }
+
+    .standalone-nav {
+      @apply px-1;
     }
 
     input[type="password"],
