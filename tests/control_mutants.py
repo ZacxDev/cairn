@@ -350,17 +350,29 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="empty-narrowing-means-no-narrowing",
         path="internal/control/resolve.go",
-        old="\tif only == nil {\n\t\treturn a\n\t}",
-        new="\tif len(only) == 0 {\n\t\treturn a\n\t}",
+        # Re-derived when decision 17 gave `Narrow` a verb argument (scope-mail S1): the early
+        # return now needs BOTH narrowings absent, and the nil-vs-empty collapse is the same edit.
+        old="\tif only == nil && verbs == nil {\n\t\treturn a\n\t}",
+        new="\tif len(only) == 0 && verbs == nil {\n\t\treturn a\n\t}",
         killer="TestNarrowingIntersectsAndCannotWiden",
         why="the single most likely edit anybody makes to this function — `len(x) == 0` "
         "reads as the idiomatic nil check and collapses the two opposite states.",
     ),
     Mutant(
+        name="narrow-builds-no-filter-for-an-empty-list",
+        path="internal/control/resolve.go",
+        old="\tif only != nil {\n\t\tkeep = make(",
+        new="\tif len(only) > 0 {\n\t\tkeep = make(",
+        killer="TestNarrowingIntersectsAndCannotWiden",
+        why="the SECOND place the nil-vs-empty distinction lives since `Narrow` took a verb "
+        "argument (scope-mail S1): a nil `keep` means 'no scope filter', so building it only for a "
+        "non-empty list turns the see-nothing credential into an unrestricted one.",
+    ),
+    Mutant(
         name="narrowing-does-not-narrow",
         path="internal/control/resolve.go",
-        old="\t\tif _, wanted := keep[id]; !wanted {\n\t\t\tcontinue\n\t\t}",
-        new="\t\tif false {\n\t\t\tcontinue\n\t\t}",
+        old="\t\t\tif _, wanted := keep[id]; !wanted {\n\t\t\t\tcontinue\n\t\t\t}",
+        new="\t\t\tif false {\n\t\t\t\tcontinue\n\t\t\t}",
         killer="TestNarrowingIntersectsAndCannotWiden",
         why="a narrowing that is computed, stored and then not applied.",
     ),
@@ -387,7 +399,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="narrowing-not-applied-at-authenticate",
         path="internal/control/resolve.go",
-        old="return p, Narrow(Resolve(m, p), matched.NarrowedScopes), nil",
+        old="return p, Narrow(Resolve(m, p), matched.NarrowedScopes, matched.NarrowedVerbs), nil",
         new="return p, Resolve(m, p), nil",
         killer="TestACredentialNarrowedAtIssueTimeIsAppliedAtAuthenticateTime",
         why="a restriction that is stored, displayed in the UI, and never enforced. "
@@ -593,8 +605,10 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="empty-verb-grant-accepted",
         path="internal/control/journal.go",
-        old='\t\tif e.Verbs.Empty() {\n\t\t\treturn fmt.Errorf("%s: verbs is empty',
-        new='\t\tif false {\n\t\t\treturn fmt.Errorf("%s: verbs is empty',
+        # Re-derived (scope-mail S1): `credential-verbs-narrowed` has an empty-verbs refusal too,
+        # so the grant's is named by its own message.
+        old='\t\tif e.Verbs.Empty() {\n\t\t\treturn fmt.Errorf("%s: verbs is empty — a grant',
+        new='\t\tif false {\n\t\t\treturn fmt.Errorf("%s: verbs is empty — a grant',
         killer="TestTheJournalRefusesWhatItCannotEnforce",
         why="a row that reads like access in a grant log and confers none.",
     ),
