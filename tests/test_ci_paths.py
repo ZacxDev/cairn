@@ -337,6 +337,47 @@ def test_the_changes_job_declares_EXACTLY_the_lanes_the_classifier_writes():
     assert "fetch-depth: 0" in body
 
 
+#: 🔴 THE EVENT FIELDS THE CLASSIFIER IS HANDED, AS WHOLE STRINGS. Every arm above is tested by
+#: passing `env` directly, so none of them can see the workflow handing it the WRONG field: with
+#: `PR_BASE`/`PR_HEAD` swapped, a PR changing Go on a base that moved only by a `claudedocs/`
+#: commit diffs `merge-base..BASE` and classifies docs-only — every heavy gate skipped, every
+#: other test green (measured: the suite passed 58/58 under that swap before this pin).
+CLASSIFY_ENV = {
+    "EVENT": "${{ github.event_name }}",
+    "PR_BASE": "${{ github.event.pull_request.base.sha }}",
+    "PR_HEAD": "${{ github.event.pull_request.head.sha }}",
+    "PUSH_BEFORE": "${{ github.event.before }}",
+    "PUSH_AFTER": "${{ github.event.after }}",
+}
+
+
+def classify_step_env(job: str) -> dict[str, str]:
+    """The `env:` mapping of the step with `id: classify`, read by indentation."""
+    steps = re.split(r"^      - ", job, flags=re.M)[1:]
+    (step,) = [s for s in steps if re.search(r"^        id: classify$", s, re.M)]
+    lines = step.splitlines()
+    start = lines.index("        env:") + 1
+    env = {}
+    for ln in lines[start:]:
+        m = re.fullmatch(r"          ([A-Z_]+): (.+)", ln)
+        if not m:
+            break
+        env[m.group(1)] = m.group(2)
+    return env
+
+
+def test_the_classify_step_hands_the_script_EXACTLY_the_right_event_fields():
+    assert classify_step_env(JOBS["changes"]) == CLASSIFY_ENV
+
+
+def test_the_classify_env_is_EXACTLY_what_the_script_reads():
+    """Both directions: a variable the script reads that the step does not pass is always empty
+    (and silently FULL, or worse), and one the step passes that nothing reads is a dead pin."""
+    src = (ROOT / "tests" / "ci_paths.py").read_text(encoding="utf-8")
+    read = set(re.findall(r'env\.get\("([A-Z_]+)"', src))
+    assert read == set(CLASSIFY_ENV), read
+
+
 def test_every_lane_is_READ_and_nothing_reads_a_lane_that_does_not_exist():
     read = set(re.findall(r"needs\.changes\.outputs\.([a-z_]+)", CI_TEXT))
     assert read == set(ci_paths.LANES)
