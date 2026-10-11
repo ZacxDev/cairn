@@ -363,7 +363,10 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
        rollback story.
      - It has no default. Unset means the pod answers `sources-unconfigured` and the UI renders
        that state on the page.
-     - Both binaries refuse to start if the path resolves inside the store root. They reuse
+     - Both binaries refuse to start if the path resolves inside the store root. **As built (S2):**
+       every refusal — a value that reduces to nothing, a path inside the store root, and a path
+       that resolves to the ARC journal (each reader would read the other's lines as damaged) —
+       lives in `codesrc.FromEnv`, the variable's ONE reader, which every binary calls. They reuse
        `arcs.ResolveJournalPath`'s resolution, but the refusal message must name the SOURCES
        journal and `CAIRN_SOURCE_JOURNAL`, never "arc journal". A test pins the message.
      - The file lives on the UI-owned volume, beside the control journal
@@ -703,7 +706,7 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
 | **T12. Resource exhaustion on the auditing host** | ≤ 8 sources, a per-call timeout, a per-run PR-check cap, and a cap hit reported as could-not-look. Full mirrors are F1's price, and their size is unmeasured. |
 | **T13. A finding read as a verdict on meaning, or a stale run read as current** | The closed severity table, judgement kept out of the exit code, and every finding quoting its fetched commit and time. |
 | **T14. A committed fixture leaks a real repository** | Run-time synthetic worlds, `leakscan` in CI, no captured text. |
-| **T15. A torn or hand-damaged journal** | Arcs' read rule: damaged lines are skipped and COUNTED, and the torn tail is never applied. **As built (S2), the GET reports the damage as a FACT, never as a count**: the body carries `damaged=yes` and a fixed sentence saying a declaration written only by a damaged line is not shown and an older one may be shown in its place; the counts (`Skipped`, torn tail) go to the pod's stderr. The reason is arcs' own: a damaged line cannot be attributed to a scope (it did not parse), so a count is over EVERY scope's lines — including scopes the caller cannot read — and putting it on the wire would leak activity in hidden scopes. A scope whose latest line was damaged falls back to its previous valid record. *(Revision 6 said "the GET reports the damage count"; superseded by the build for the reason above.)* |
+| **T15. A torn or hand-damaged journal** | Arcs' read rule: damaged lines are skipped and COUNTED, and the torn tail is never applied. A scope whose latest line was damaged falls back to its previous valid record. **As built (S2, after round 1): the damage is NOT on the wire at all — no count, no flag.** A damaged line cannot be attributed to a scope (it did not parse), so anything the body said about it would be a statement about every scope: a count leaks activity in scopes the caller cannot read, and a flag (round 0 shipped `damaged=yes`) is journal-wide, permanent after one sealed torn write, and tells the reader of an untouched scope that an older declaration "may be shown". The counts go to the pod's stderr. `TestAHiddenScopesDamagedLineChangesNothingOnTheWire` pins a narrow caller's answer byte-identical across a hidden scope's damage (mutant `api-sources-damage-leaks-onto-the-wire`). *(Revision 6's "reports the damage count" and the round-0 flag are both superseded.)* |
 
 ## Slices
 
@@ -728,7 +731,7 @@ alone.
   and three read states, and S4's POST, gates, T9 pins and the part-4 seam test.
 
 **Mutant rows** (indicative names; they join `tests/control_mutants.py` and move its pinned
-count). Recounted for this revision: **31** (S1 13, S2 3, S4 4, S5 11).
+count). Recounted after S2's round-1 fix: **32** (S1 13, S2 4, S4 4, S5 11).
 
 - **S1 (13):**
   - `codesrc-accepts-a-non-dns-host`
@@ -744,10 +747,11 @@ count). Recounted for this revision: **31** (S1 13, S2 3, S4 4, S5 11).
   - `codesrc-damaged-line-refuses-whole-journal`
   - `codesrc-unknown-field-refused`
   - `codesrc-key-not-normalised`
-- **S2 (3):**
+- **S2 (4):**
   - `api-sources-get-distinguishes-absent-from-unreadable`
   - `api-sources-journal-inside-store-accepted`
   - `api-sources-unreadable-journal-answers-200`
+  - `api-sources-damage-leaks-onto-the-wire` (added by S2's round-1 fix, with T15's rewrite)
 - **S4 (4):**
   - `ui-sources-post-skips-the-admin-check`
   - `ui-sources-links-a-non-github-host`

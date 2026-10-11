@@ -164,8 +164,10 @@ The `sources-*` rows (S2 of the scope-refs plan) follow the same arrangement wit
 `build-store` prints `source-journal=<path>`, and `run_go.sh` hands it over as the ENVIRONMENT
 variable `CAIRN_SOURCE_JOURNAL`, because the pod has no flag for it by decision. Each seeded
 record's `revision` is computed by `write_source_journal` rather than written into `world.json`
-(a 64-hex run is a credential-shaped literal there); `internal/codesrc`'s
-`TestTheRevisionIsALiteralDigest` pins the two spellings of that digest against each other. The
+(a 64-hex run is a credential-shaped literal there). ⚠ Two different checks, neither of which is the
+other: `internal/codesrc`'s `TestTheRevisionIsALiteralDigest` pins Go's `Revision` against a LITERAL
+digest; the cross-check that Python's spelling equals Go's is the `sources-authorized` golden, which
+would read `sources-undeclared` if the fold skipped a seeded line for a wrong revision. The
 corpus boots ONE server with ONE journal, so the unconfigured 200 and the unreadable-journal 503
 are NOT rows: their witnesses are the literal-body tests in `internal/api/sources_test.go`.
 The oracle is never told. The seed holds an EARLIER and a LATER registration of one arc, so the
