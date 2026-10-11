@@ -342,14 +342,14 @@ func TestTheThreeReadStates(t *testing.T) {
 
 	t.Run("unset is off", func(t *testing.T) {
 		for _, env := range []map[string]string{{}, {EnvJournal: ""}} {
-			_, ok, err := FromEnv(root, func(k string) (string, bool) { v, ok := env[k]; return v, ok })
+			_, ok, err := FromEnv(root, func(k string) (string, bool) { v, ok := env[k]; return v, ok }, "")
 			if ok || err != nil {
 				t.Fatalf("env %v: ok=%v err=%v, want off", env, ok, err)
 			}
 		}
 	})
 	t.Run("an absent file is empty and Missing", func(t *testing.T) {
-		j, ok, err := FromEnv(root, func(k string) (string, bool) { return filepath.Join(outside, "absent.jsonl"), k == EnvJournal })
+		j, ok, err := FromEnv(root, func(k string) (string, bool) { return filepath.Join(outside, "absent.jsonl"), k == EnvJournal }, "")
 		if !ok || err != nil {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
@@ -380,7 +380,7 @@ func TestTheThreeReadStates(t *testing.T) {
 func TestTheRefusals(t *testing.T) {
 	t.Run("inside the store root names the sources journal", func(t *testing.T) {
 		root := t.TempDir()
-		_, _, err := FromEnv(root, func(k string) (string, bool) { return filepath.Join(root, "sources.jsonl"), k == EnvJournal })
+		_, _, err := FromEnv(root, func(k string) (string, bool) { return filepath.Join(root, "sources.jsonl"), k == EnvJournal }, "")
 		var inside *arcs.InsideStoreError
 		if !errors.As(err, &inside) {
 			t.Fatalf("got %v, want *arcs.InsideStoreError", err)
@@ -413,6 +413,36 @@ func TestTheRefusals(t *testing.T) {
 			t.Fatalf("Read through a symlink = %v, want a refusal", err)
 		}
 	})
+}
+
+// 🔴 THE ONE READER REFUSES WHAT THE POD REFUSES. `FromEnv` is called by every binary, so its
+// refusals are tested HERE, directly: a blank value (RED before the round-1 fix: `"   "` came back
+// ok with the path `<cwd>/   ` while the pod's own guard exited 78), and a path that resolves to
+// the arc journal. CONTROL: the same arc journal with a DIFFERENT sources path is accepted.
+func TestFromEnvRefusesABlankValueAndTheArcJournal(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	env := func(v string) func(string) (string, bool) {
+		return func(k string) (string, bool) { return v, k == EnvJournal }
+	}
+	for _, blank := range []string{"   ", "\t", " \n "} {
+		_, ok, err := FromEnv(root, env(blank), "")
+		var be *BlankError
+		if !errors.As(err, &be) || ok {
+			t.Fatalf("FromEnv(%q) = ok=%v err=%v, want *BlankError", blank, ok, err)
+		}
+	}
+	arc, err := ResolveJournalPath(root, filepath.Join(outside, "journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = FromEnv(root, env(filepath.Join(outside, "journal.jsonl")), arc)
+	var shared *SharedWithArcJournalError
+	if !errors.As(err, &shared) || !strings.Contains(err.Error(), "ARC journal") {
+		t.Fatalf("a sources journal that IS the arc journal: %v, want *SharedWithArcJournalError", err)
+	}
+	if _, ok, err := FromEnv(root, env(filepath.Join(outside, "sources.jsonl")), arc); !ok || err != nil {
+		t.Fatalf("control: a different path beside the arc journal must be accepted: ok=%v err=%v", ok, err)
+	}
 }
 
 // An empty list is an explicit "undeclared, by <who> at <when>": it is written, and it reads as a

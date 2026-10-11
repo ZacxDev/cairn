@@ -400,24 +400,19 @@ func main() {
 	// same resolution — but read from the ENVIRONMENT ONLY. There is no flag on purpose: a
 	// pre-feature binary handed an unknown flag refuses to start, and one handed an unknown
 	// variable ignores it, so the variable is the rollback story. Unset (or empty) is the designed
-	// OFF state, `sources-unconfigured`; a value that reduces to nothing is refused, the arc
-	// journal's `refuseBlank` reading. The pod only ever READS this file (O_RDONLY), and
-	// `internal/api`'s `TestThePodHasNoCallSiteOfJournalSet` keeps it from ever writing it.
-	// `TestTheBinaryREFUSESASourceJournalInsideTheStoreRoot` is the gate, shown RED first.
-	if raw, set := os.LookupEnv(codesrc.EnvJournal); set && raw != "" {
-		if identity.ValueReducesToNothing(raw) {
-			fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
-				"subsystem-store-api: $%s is set to a value that reduces to nothing. "+
-					"Refusing to start rather than reading it as unset; set a path or remove the line",
-				codesrc.EnvJournal)))
-			os.Exit(exitConfig)
-		}
-		resolved, err := codesrc.ResolveJournalPath(*store, raw)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: "+err.Error()+". Refusing to start"))
-			os.Exit(exitConfig)
-		}
-		srv.SourceJournal = resolved
+	// OFF state, `sources-unconfigured`. EVERY refusal — a blank value, a path inside the store,
+	// a path that IS the arc journal — is `codesrc.FromEnv`'s, the variable's ONE reader, so this
+	// program and the browser surface cannot disagree about a value. The pod only ever READS this
+	// file (O_RDONLY), and `internal/api`'s `TestThePodHasNoCallSiteOfJournalSet` keeps it from
+	// ever writing it. `TestTheBinaryREFUSESASourceJournalInsideTheStoreRoot` is the gate, shown
+	// RED first.
+	sourceJournal, sourcesOn, err := codesrc.FromEnv(*store, os.LookupEnv, srv.ArcJournal)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: "+err.Error()+". Refusing to start"))
+		os.Exit(exitConfig)
+	}
+	if sourcesOn {
+		srv.SourceJournal = sourceJournal.Path
 	}
 
 	// 🔴 IDENTITY IS CONFIGURED BEFORE THE LISTENER ACCEPTS, AND A BROKEN CONFIGURATION

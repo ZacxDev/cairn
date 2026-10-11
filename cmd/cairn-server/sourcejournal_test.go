@@ -92,6 +92,23 @@ func TestTheBinaryREFUSESASourceJournalInsideTheStoreRoot(t *testing.T) {
 		})
 	}
 
+	// The sources journal resolving to the ARC journal: each reader would read the other's records
+	// as damaged lines. Refused at startup, through the variable's one reader (`codesrc.FromEnv`).
+	t.Run("the same file as the arc journal", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		shared := filepath.Join(outside, "journal.jsonl")
+		child := command(ctx, freePort(t), &shared)
+		child.Args = append(child.Args, "-arc-journal", shared)
+		out, _ := child.CombinedOutput()
+		if ctx.Err() != nil {
+			t.Fatalf("the child CAME UP with one file as both journals:\n%s", out)
+		}
+		if code := child.ProcessState.ExitCode(); code != 78 || !strings.Contains(string(out), "is the ARC journal") {
+			t.Fatalf("must exit 78 naming the arc journal, got %d:\n%s", code, out)
+		}
+	})
+
 	serve := func(t *testing.T, journal *string) string {
 		t.Helper()
 		port := freePort(t)

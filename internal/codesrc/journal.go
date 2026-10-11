@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ZacxDev/cairn/internal/arcs"
+	"github.com/ZacxDev/cairn/internal/identity"
 )
 
 // 🔴 THE JOURNAL: ONE JSON OBJECT PER LINE, APPEND-ONLY, NEVER COMPACTED — the arc registry's
@@ -154,18 +155,47 @@ func (s Snapshot) RevisionFor(scopeName string) string {
 // Journal is the sources file. `Path` must be one `ResolveJournalPath` returned.
 type Journal struct{ Path string }
 
-// FromEnv reads `EnvJournal` and resolves it against the store root. `ok` false is the designed
-// OFF state (unset, or set to the empty string); any error is a refusal to start.
-func FromEnv(storeRoot string, lookup func(string) (string, bool)) (j Journal, ok bool, err error) {
+// FromEnv is the ONE reader of `EnvJournal`: every binary that configures the journal calls it,
+// so they cannot disagree about a value. `ok` false is the designed OFF state (unset, or set to
+// the empty string); any error is a refusal to start:
+//   - a value that REDUCES TO NOTHING (whitespace, or nothing graphic — `identity`'s one rule for a
+//     blank setting): an operator who wrote the line meant a journal, and `"   "` would otherwise
+//     resolve to a file named `   ` in the working directory;
+//   - a path resolving inside the store root (`ResolveJournalPath`);
+//   - a path resolving to `arcJournal` — the arc registry's journal, already resolved, or "" when
+//     none is configured. Each reader would read the other's lines as damaged records, and the
+//     sources writer would append into the arc registry.
+func FromEnv(storeRoot string, lookup func(string) (string, bool), arcJournal string) (j Journal, ok bool, err error) {
 	v, set := lookup(EnvJournal)
 	if !set || v == "" {
 		return Journal{}, false, nil
+	}
+	if identity.ValueReducesToNothing(v) {
+		return Journal{}, false, &BlankError{}
 	}
 	resolved, err := ResolveJournalPath(storeRoot, v)
 	if err != nil {
 		return Journal{}, false, err
 	}
+	if arcJournal != "" && resolved == arcJournal {
+		return Journal{}, false, &SharedWithArcJournalError{Path: resolved}
+	}
 	return Journal{Path: resolved}, true, nil
+}
+
+// BlankError is `EnvJournal` set to a value that reduces to nothing.
+type BlankError struct{}
+
+func (*BlankError) Error() string {
+	return "$" + EnvJournal + " is set to a value that reduces to nothing; set a path or remove the line"
+}
+
+// SharedWithArcJournalError is the sources journal resolving to the arc registry's journal.
+type SharedWithArcJournalError struct{ Path string }
+
+func (e *SharedWithArcJournalError) Error() string {
+	return fmt.Sprintf("$%s resolves to %s, which is the ARC journal: each reader would read the other's "+
+		"records as damaged lines. Give the sources journal its own file", EnvJournal, e.Path)
 }
 
 // ResolveJournalPath is `arcs.ResolveJournalPath`'s resolution — ONE rule for "outside the store
