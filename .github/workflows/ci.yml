@@ -165,14 +165,14 @@ jobs:
       #
       # 🔴 `-n auto` (pytest-xdist, one worker per runner vCPU), BECAUSE THE SERIAL
       # SUITE WAS ~10 MINUTES OF ONE CORE ON A FOUR-CORE RUNNER. Isolation was
-      # MEASURED, not assumed: serial against `-n 4`/`-n 8`/`-n 24`, the same 2774
-      # test ids with the same outcome in every run. It found ONE shared-clock
-      # flake — a gzip `MTIME` byte compared across two requests — fixed in the
-      # test, not retried. The floor below is UNCHANGED and still correct: xdist
-      # merges every worker into ONE junit `testsuite` whose `tests` is the whole
-      # run, measured moving to 2775 on an added test and refusing at 1970 on a
-      # narrowed collection. ⚠ A local reproduction of a failure seen here can
-      # still run serially; ordering under xdist differs, so try both.
+      # MEASURED, not assumed — serial against several worker counts, compared by
+      # test ID and outcome rather than by total. It found ONE shared-clock flake
+      # (a gzip `MTIME` byte compared across two requests), fixed in the test, not
+      # retried. The floor below is UNCHANGED and still correct: xdist merges every
+      # worker into ONE junit `testsuite` whose `tests` is the whole run, measured
+      # moving on an added test and refusing on a narrowed collection. ⚠ A local
+      # reproduction of a failure seen here can still run serially; ordering
+      # under xdist differs, so try both.
       - name: run the suite with a collected-test floor
         run: |
           set -o pipefail
