@@ -417,6 +417,14 @@
           # RED in the sandbox. ONE file on purpose — the Go tests materialise the session
           # layout from it — so one row carries every session, subagent, blob and ledger.
           || (rel == "internal/transcript/testdata/synthetic_world.json")
+          # 🔴 AND THE MEMO TRUST BOUNDARY'S HOSTILE CORPUS AND GOLDENS, FOR THE SAME REASON:
+          # `internal/memo`'s tests read all four and REFUSE (t.Fatalf, naming this filter) when
+          # one is absent, so without these rows the sandbox build goes red rather than passing
+          # over nothing. Named file by file, like every fixture row above.
+          || (rel == "internal/memo/testdata/hostile.json")
+          || (rel == "internal/memo/testdata/golden/preview_one.golden")
+          || (rel == "internal/memo/testdata/golden/preview_hostile.golden")
+          || (rel == "internal/memo/testdata/golden/full_hostile.golden")
           # 🔴 AND THE LEAK GATE ITSELF, READ AS DATA. `internal/redact`'s containment test parses
           # leakscan's `credential` rule and its credential NEGATIVE_CONTROLS out of this file, so
           # the relation "every leakscan credential control is redacted" is pinned to the file
