@@ -20,23 +20,21 @@ CLI auditor can deterministically check entries' paths, SHAs and PR refs against
   run stays at 0 failures, and the UI/pod seam test passes.
 
 ## State now
-- **Plan MERGED** #210 `80daba4` (6 audit rounds). Storage went manifest → `_scope.md` (measured
-  MALFORMED in both loaders) → README front matter (rejected: `seed.sh` overwrites the pod's store
-  copy, and the UI would need store write access) → an **append-only journal, arcs pattern (O5)**,
-  UI the only writer, pod read-only. **Keyed by normalised scope NAME (Q17, operator-confirmed)**
-  because the UI and the pod live in different ID spaces.
-- **S1 = #218 (`zach/scope-refs-s1` @ `eeae65d`, `internal/codesrc`) and S2 = #219
-  (`zach/scope-refs-s2` @ `a43f0a8`, read-only `GET /api/v1/sources/<scope>`): rounds 0+1 done, FIX
-  ROUND RUNNING** — invalid UTF-8 and C1/format characters refused, `#` refusal dropped, one env
-  reader (`codesrc.FromEnv`), on-wire `damaged=yes` dropped, sources-path == arc-path refused.
-- Claim held: `cairn-scope-refs-s1-s2`.
+- **Plan MERGED** #210 `80daba4`. **S1 #218 and S2 #219 MERGED** through merge train 1 (#229, merge
+  commit `b06f15c`, tree equal to the CI-tested train tree). #219 was CLOSED as landed (its stacked
+  base made GitHub refuse to mark it merged; its head `108a292` is an ancestor of `main`).
+- The stranded round-1 fix round was recovered and finished (S1 `d0a24fb`, S2 `af77d81`); its single
+  final audit found no 🔴. Merge-prep re-pointed a mutant row whose anchor the fix had deleted.
+- **Deployed:** personal instance at `sha-9292da2`. `GET /api/v1/sources/<scope>` answers 401 without
+  a credential and 200 `status=sources-unconfigured` with one — the pod has no source journal
+  configured, so nothing is served yet.
+- Claims: all released.
 
 ## Next steps (ranked)
-1. **#218/#219: post round-1 claims with the fix heads, run a delta round 2; when clean, merge #218
-   (WITHOUT `--delete-branch`), retarget #219 to `main`, re-test the merged tree, merge #219.**
-   forcing: user — operator asked for scope refs S1–S2.
-2. **S3** (CLI `sources` verb), **S4** (UI edit form + the seam test), **S5** (`audit-refs` verb +
-   `tests/refaudit/e2e.sh`). forcing: user — operator chose this scope.
+1. **(done) #218/#219** — merged via train 1. forcing: user — operator asked for scope refs S1–S2.
+2. **S3** (CLI `sources` verb), **S4** (UI edit form + the seam test; the UI is the journal's only
+   writer), **S5** (`audit-refs` verb + `tests/refaudit/e2e.sh`). Then configure a source journal on
+   the deployment. forcing: user — operator chose this scope.
 
 ## Gotchas / decisions / dead-ends
 - **The pod's store is a COPY that `seed.sh` overwrites** (`tar -xf` over `/data`) — anything the UI
@@ -45,3 +43,10 @@ CLI auditor can deterministically check entries' paths, SHAs and PR refs against
 - **Arc journal: `/var/lib/cairn-arcs/arcs.jsonl` on PVC `cairn-arc-journal` (local-path RWO);
   the store pod writes, cairn-ui mounts it read-only** — both pods must share a node. The sources
   journal reverses the direction (UI writes, pod reads). via: command
+
+- **`internal/codesrc` imports `internal/identity`**, so the Go client binary now links identity,
+  control and netid for a five-line value check — no cycle, no import-ban hit, no `init()`; a small
+  standalone helper package would avoid it. via: code
+- **The sources-journal ≠ arc-journal refusal compares resolved PATHS** (symlinks are followed), so
+  a hardlink, bind mount or second mount path to the same file gets past it; both journals are
+  append-only and line-flocked, so the cost is cross-read noise, not corruption. via: code
