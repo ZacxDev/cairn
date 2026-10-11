@@ -69,7 +69,12 @@ type writeKey struct {
 // `tests/conformance/requests.json` is marked `go_only`. The four places a head moves together are
 // this table, those rows, the `go_only` rows of `tests/testlib/capability_ledger.LEDGER`, and
 // `flake.nix`'s `want-go-only.txt`.
-var readHeads = []string{"recall", "search", "snapshot", "sessions", "arcs", "arc"}
+//
+// ⚠ `sources` IS GO-ONLY ON THE SAME PRECEDENT (decision 10 of the scope-refs plan): the read of a
+// scope's declared code sources, from a journal the browser surface writes and this pod only READS.
+// Its derived `HEAD` is the ledger's one rule, kept (the plan's Q16). The dual-run gate discovers
+// routes from the oracle, so it is BLIND to this head — a named gap, not a fifth ledger.
+var readHeads = []string{"recall", "search", "snapshot", "sessions", "arcs", "arc", "sources"}
 
 var writeKeys = []writeKey{
 	{"POST", "entry"},

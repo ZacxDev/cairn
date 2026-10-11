@@ -671,6 +671,36 @@
         };
       };
 
+      # 🔴 THE TRANSCRIPT CAPTURE AGENT (S2 of the transcripts/plugins plan) — A SEPARATE BINARY,
+      # NOT A `cairn` VERB, because it reads every session transcript on its host and the reader
+      # installed everywhere should not. It is under the import ban (`internal/depspolicy`'s
+      # `LinkedBinaryRoots`), and its check phase runs the whole module's tests like the other Go
+      # derivations. ⚠ IT SENDS AND STORES NOTHING YET: S2 offers `--dry-run` and `--self-test` only; S3 adds the upload.
+      # ⚠ NO `opencode` ON ITS PATH, deliberately: it runs `opencode export` by bare name, and the
+      # answer has to be the opencode the host's sessions were written by — a pinned copy here
+      # could read a different database version than the one in use.
+      mkGoCapture = pkgs: (buildGoPinned pkgs) {
+        pname = "cairn-capture";
+        inherit version;
+        src = onlyGo pkgs;
+        vendorHash = goVendorHash;
+        subPackages = [ "cmd/cairn-capture" ];
+        doCheck = true;
+        checkPhase = ''
+          runHook preCheck
+          go vet ./...
+          go test ./...
+          runHook postCheck
+        '';
+        meta = with pkgs.lib; {
+          description = "The cairn session-transcript capture agent (redacts on the host; uploads nothing yet)";
+          homepage = "https://github.com/ZacxDev/cairn";
+          license = licenses.mit;
+          mainProgram = "cairn-capture";
+          platforms = platforms.unix;
+        };
+      };
+
       # 🔴 THE BROWSER SURFACE, AND THE ONLY ARTEFACT HERE THAT LINKS A THIRD-PARTY
       # MODULE. `cmd/cairn-ui` carries the entries page, cookie sessions with a
       # sign-in pair, a GitHub sign-in through the operator's GoTrue, one static
@@ -1305,6 +1335,7 @@
           # operator's GitOps repository DEPLOYS it. A missing `apps` entry never
           # implied any of that.
           cairn-ui = mkGoUI pkgs;
+          cairn-capture = mkGoCapture pkgs;
         }
         // nixpkgs.lib.optionalAttrs (builtins.elem pkgs.stdenv.hostPlatform.system linuxSystems) {
           server-image = mkServerImage pkgs;
@@ -1388,6 +1419,7 @@
         cairn-server-go = mkGoServer pkgs;
         cairn-go = mkGoClient pkgs;
         cairn-ui = mkGoUI pkgs;
+        cairn-capture = mkGoCapture pkgs;
 
         # 🔴 THE CHECKED-IN STYLESHEET IS WHAT THE BINARY SERVES, SO A STALE ONE SHIPS
         # SILENTLY. `internal/ui/app.css` is `//go:embed`ed, so nothing about editing
@@ -1753,6 +1785,30 @@
             } > $out
           '';
 
+        # 🔴 THE CAPTURE AGENT'S REDACTION SELF-TEST, RUN BY THE BUILT BINARY — closing-condition part 3.
+        # This is the stripped binary a host installs, under the pinned toolchain; CI's `nix` job
+        # builds it by name. The self-test plants its secrets at RUN time and needs no host key, no
+        # store and no network, which is why the sandbox can run it at all; it says nothing about a
+        # real host's transcripts. It reads the CONTENT, not the exit code alone: the last line must
+        # be the SUMMARY pair with caught equal to planted and clean-damaged 0. (A `-verbs` mode
+        # ledger stood beside it in S2's first build and was removed on review, D2: no Python side
+        # owns that contract, so printing it and diffing a third hand list measured nothing new.)
+        cairn-capture-self-test = pkgs.runCommand "cairn-capture-self-test"
+          { nativeBuildInputs = [ (mkGoCapture pkgs) ]; } ''
+          rc=0
+          cairn-capture --self-test > selftest.txt || rc=$?
+          cat selftest.txt
+          if [ "$rc" -ne 0 ]; then
+            echo "FAIL: cairn-capture --self-test exited $rc (2 = the instrument could not vouch)."
+            exit 1
+          fi
+          if ! tail -n 1 selftest.txt | grep -Eq '^SUMMARY redaction: planted=([0-9]+) caught=\1 clean-damaged=0$'; then
+            echo "FAIL: the self-test's last line is not the SUMMARY pair with caught=planted and clean-damaged=0."
+            exit 1
+          fi
+          touch $out
+        '';
+
         # 🔴 THE GO CLIENT'S OWN LEDGER, READ OUT OF THE RUNNING BINARY — the one claim a
         # compile cannot make, and the one the PYTHON-side gates are structurally blind to.
         # `capability_ledger.cli_verbs_from_parser` asks the PYTHON argparse parser what
@@ -1891,14 +1947,17 @@
           # the arcs/sessions plan). `tests/test_capability_ledger.py` pins the list above
           # against the oracle's tables and this one against the `go_only` rows of
           # `tests/conformance/requests.json` AND of the capability ledger. The first,
-          # `sessions/<scope>`, is the arcs/sessions S2 slice; `arcs`/`arc` are S3's.
+          # `sessions/<scope>`, is the arcs/sessions S2 slice; `arcs`/`arc` are S3's;
+          # `sources/<scope>` is S2 of the scope-refs plan.
           cat > want-go-only.txt <<'EOF'
           GET arc
           GET arcs
           GET sessions
+          GET sources
           HEAD arc
           HEAD arcs
           HEAD sessions
+          HEAD sources
           PUT arc
           EOF
           sed -i 's/^ *//; /^$/d' want.txt want-go-only.txt

@@ -1,0 +1,58 @@
+{
+  "body": {
+    "bytes": 1095,
+    "kind": "text_lines",
+    "sha256": "3c4e678f187990f0dc3e4faa7346a2bf894429a24736577ea5509e0caea140e3",
+    "text_lines": [
+      "🔴 SNAPSHOT, NOT THE SOURCE — seeded=2000-01-04T00:00:00Z newest-entry=2000-01-03T00:00:00Z entry-files=11. This host serves a COPY of the authoritative store, pushed by `seed.sh`; nothing syncs it continuously, so it can be arbitrarily behind and it CANNOT KNOW BY HOW MUCH. The \"none omitted\" below is true of THIS DISK and says nothing about the source. Before trusting an absence — a missing entry, a missing badge, a zero — re-run the read against the local store, or re-seed. UNSTAMPED/UNREADABLE/NONE each mean the stated fact could not be established, never that it is fine.",
+      "",
+      "cairn-sources: status=sources-declared scope=alpha-notes",
+      "  provenance: a declaration is set in the browser by an admin of the scope and is that admin's word — the pod checks its grammar, never that the code exists",
+      "  journal=present",
+      "  set_by=wide-reader set_at=2000-01-03T01:00:00Z revision=sha256:0e37bb88a79f9c6389c735b829db35a851aa4c77a7cfc4a272c1012d9d92563f",
+      "",
+      "sources=declared count=2",
+      "source=git:github.com/example-org/example-repo@main",
+      "source=git:git.example.com/team/sub-group/example-repo@trunk",
+      ""
+    ]
+  },
+  "case": "sources-authorized",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Length",
+      "1095"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Exit",
+      "0"
+    ],
+    [
+      "X-Store-Revision",
+      "a11ba11ba11ba11ba11ba11ba11ba11ba11ba11b"
+    ],
+    [
+      "X-Store-Snapshot",
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=11"
+    ],
+    [
+      "X-Store-Status",
+      "sources-declared"
+    ]
+  ],
+  "reason": "OK",
+  "recorded_from": "cmd/cairn-server",
+  "status": 200
+}

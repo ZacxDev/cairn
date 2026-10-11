@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 )
 
@@ -204,8 +203,8 @@ func ScoreHeldBack(cases []HeldBackCase, r textRedactor) HeldBackScore {
 	return s
 }
 
-// redactionMarker is the marker [Redactor.marker] writes: `[redacted:<rule>:<8 hex>]`.
-var redactionMarker = regexp.MustCompile(`\[redacted:[a-z0-9/-]+:[0-9a-f]{8}\]`)
+// redactionMarker is [Marker], the marker [Redactor.marker] writes.
+var redactionMarker = Marker
 
 // eraser is the POSITIVE control: it replaces every input with a fixed marker.
 type eraser struct{}

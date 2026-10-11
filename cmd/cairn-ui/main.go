@@ -63,7 +63,9 @@ import (
 	// on every route.
 	"github.com/ZacxDev/cairn/internal/pgstore"
 	"github.com/ZacxDev/cairn/internal/presence"
+	"github.com/ZacxDev/cairn/internal/transcript/archive"
 	"github.com/ZacxDev/cairn/internal/ui"
+	"github.com/ZacxDev/cairn/internal/worker"
 )
 
 const (
@@ -280,6 +282,32 @@ func main() {
 			", append its digest to -"+flagPresenceTokens+", print the token once on stdout, and exit")
 	presenceHost := flag.String(flagPresenceHost, "",
 		"the ONE host label a token minted by -"+flagIssuePresence+" is bound to")
+	// 🔴 THE WORKER LISTENER AND THE TRANSCRIPT STORE (S3 of the transcripts plan): SIX FLAGS THAT
+	// CONFIGURE ONE THING TOGETHER, ONE THAT ARMS CAPTURE, AND A MINT MODE. No default and no
+	// environment spelling — see `worker.go` beside this file for why and for each refusal.
+	workerAddr := flag.String(flagWorkerAddr, "",
+		"host:port of the WORKER listener (capture uploads). NO DEFAULT: unset, there is no listener. Needs -"+
+			flagWorkerTokens+", -"+flagWorkerOwner+", -"+flagTranscriptDir+", -"+flagTranscriptRetention+" and -"+
+			flagTranscriptQuota+"; assumes ONE replica")
+	workerTokens := flag.String(flagWorkerTokens, "",
+		"the worker token file (digests only), re-read on every request so deleting a row revokes it")
+	workerOwner := flag.String(flagWorkerOwner, "",
+		"<kind>:<id> of this instance's SOLE capture owner; a token row for anybody else is refused")
+	transcriptDir := flag.String(flagTranscriptDir, "",
+		"the transcript store's DIRECTORY; it must exist and must resolve OUTSIDE -store")
+	transcriptRetention := flag.String(flagTranscriptRetention, "",
+		"how long a session is kept after its last upload (`90d`, or a Go duration); REQUIRED with the listener")
+	transcriptQuota := flag.String(flagTranscriptQuota, "",
+		"the instance's transcript byte ceiling (`20GB`, `20GiB`); uploads past it answer 507; REQUIRED with the listener")
+	armCapture := flag.Bool(flagArmCapture, false,
+		"ARM transcript capture. Unset — the default, and every instance today (operator decision O16) — every upload "+
+			"answers 503 and nothing is stored. Set it only once the plan's arming preconditions hold (O15's held-back "+
+			"gate for this redactor, and S11's read ledger)")
+	issueWorker := flag.String(flagIssueWorker, "",
+		"capture: mint ONE worker token for -"+flagWorkerOwner+" on -"+flagWorkerHost+
+			", append its digest to -"+flagWorkerTokens+", print the token once on stdout, and exit")
+	workerHost := flag.String(flagWorkerHost, "",
+		"the ONE host label a token minted by -"+flagIssueWorker+" is bound to")
 	dsnDefault, dsnErr := databaseDSNDefault(os.Getenv)
 	dbDSN := flag.String("db-dsn", dsnDefault,
 		"PostgreSQL connection string for the session and invite tables; without one, sessions live in "+
@@ -417,6 +445,23 @@ func main() {
 	}
 	if presenceFlags.issue != "" {
 		if err := issuePresenceToken(os.Stdout, os.Stderr, authority.Model(), presenceFlags); err != nil {
+			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
+			os.Exit(exitConfig)
+		}
+		os.Exit(0)
+	}
+	// The worker flags are judged at the same point and for the same reasons as presence's: the
+	// owner must be a principal the authority holds, and the mint mode exits here.
+	workerFlags := workerSettings{addr: *workerAddr, tokens: *workerTokens, owner: *workerOwner,
+		dir: *transcriptDir, retention: *transcriptRetention, quota: *transcriptQuota, armed: *armCapture,
+		issue: *issueWorker, host: *workerHost}
+	workerConf, workerOn, err := workerListener(workerFlags, authority.Model(), *store)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
+		os.Exit(exitConfig)
+	}
+	if workerFlags.issue != "" {
+		if err := issueWorkerToken(os.Stdout, os.Stderr, authority.Model(), workerFlags); err != nil {
 			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 			os.Exit(exitConfig)
 		}
@@ -641,6 +686,52 @@ func main() {
 			browserPresence = service
 			presenceMode = fmt.Sprintf("presence agent on %s (sole owner %s, %d token row(s), %d route(s))",
 				agentListener.Addr(), soleOwner, len(rows), len(presence.AgentRoutes()))
+		}
+	}
+
+	// 🔴 THE WORKER LISTENER (S3), bound here for presence's reason: a configuration that cannot work
+	// is a refusal to start, not a goroutine that dies after the browser surface is serving. What the
+	// token FILE says is answered as presence answers it — the listener stays down and the browser
+	// serves. The ARMING is separate and defaults off (O16): a started listener refuses every upload
+	// 503 until `-arm-transcript-capture` is set.
+	workerModeLine := "worker listener off (no -" + flagWorkerAddr + "), transcript capture DISARMED"
+	var workerServer *http.Server
+	var workerNet net.Listener
+	var transcripts *archive.Archive
+	if workerOn {
+		if err := workerBindRefusal(*workerAddr, proxyErr); err != nil {
+			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
+			os.Exit(exitConfig)
+		}
+		transcripts, err = openTranscriptArchive(workerConf)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "cairn-ui: the transcript store cannot be opened: "+err.Error()+". Refusing to start")
+			os.Exit(exitConfig)
+		}
+		handler, rows, err := worker.New(worker.Config{
+			TokenFile: *workerTokens, Owner: workerConf.owner, Archive: transcripts, Armed: workerFlags.armed,
+			Limiter: netid.NewRateLimiter(maxFailures, window, lockout), TrustedProxies: trustedProxies,
+			Log: func(line string) { fmt.Fprintln(os.Stderr, "cairn-ui: "+line) },
+		})
+		switch {
+		case errors.Is(err, worker.ErrTokenFileContent):
+			fmt.Fprintln(os.Stderr, "cairn-ui: WARNING the worker listener is NOT started: "+err.Error()+
+				". The browser surface serves without it; correct the file and restart")
+			workerModeLine = "worker listener NOT started (token file refused at startup), transcript capture DISARMED"
+		case err != nil:
+			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error()+". Refusing to start")
+			os.Exit(exitConfig)
+		default:
+			workerNet, err = net.Listen("tcp", *workerAddr)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "cairn-ui: the worker listener cannot bind: "+err.Error()+". Refusing to start")
+				os.Exit(exitConfig)
+			}
+			workerServer = &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+			workerModeLine = workerMode(workerNet.Addr().String(), workerConf.owner, len(rows), workerConf.dir, workerFlags.armed)
+			if workerFlags.armed {
+				fmt.Fprintln(os.Stderr, armedWarning)
+			}
 		}
 	}
 
@@ -872,6 +963,21 @@ func main() {
 			}
 		}()
 	}
+	if workerServer != nil {
+		go func() {
+			<-ctx.Done()
+			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = workerServer.Shutdown(shutdown)
+		}()
+		go func() {
+			if err := workerServer.Serve(workerNet); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				fmt.Fprintln(os.Stderr, "cairn-ui: the worker listener stopped: "+err.Error())
+				os.Exit(1)
+			}
+		}()
+		go runRetentionSweep(ctx.Done(), transcripts, func(line string) { fmt.Fprintln(os.Stderr, line) })
+	}
 	// 🔴 THE PORT IS BOUND BEFORE THE LINE THAT SAYS "serving", AND THE LINE NAMES THE PORT
 	// THAT WAS BOUND. It used to be printed first and `ListenAndServe` bound afterwards, so the
 	// line was a claim the process had not yet made true: a reader that took it as "the port is
@@ -890,9 +996,9 @@ func main() {
 		os.Exit(1)
 	}
 	boundAddr := net.JoinHostPort(*host, strconv.Itoa(bound.Addr().(*net.TCPAddr).Port))
-	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s, %s, %s, %s\n",
+	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s, %s, %s, %s, %s\n",
 		len(ui.DeclaredRoutes()), boundAddr, *store, sharingMode, signInMode, stateMode, arcsMode, presenceMode, appMode(cfg.App),
-		instanceMode(cfg.App))
+		instanceMode(cfg.App), workerModeLine)
 	if err := listener.Serve(bound); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(1)
