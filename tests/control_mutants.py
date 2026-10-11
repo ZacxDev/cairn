@@ -4645,6 +4645,14 @@ def judge(by_name: dict[str, Mutant], selected: list[str], t: Tally) -> bool:
     )
 
     ok = True
+    # A row with NO verdict — a shard that stopped early still writes its results — must not
+    # simply be absent from every count, or the SUMMARY reads short and nothing refuses.
+    judged = set(t.killed) | set(t.survived) | set(t.misattributed) | set(t.broken)
+    unjudged = [n for n in selected if n not in judged]
+    if unjudged:
+        print(f"\n🔴 NO VERDICT for {unjudged} — a count that omits rows is not a count of the "
+              "battery.", file=sys.stderr)
+        ok = False
     for name, exc in t.broken.items():
         print(f"\n🔴 HARNESS: {name}\n{exc}", file=sys.stderr)
         ok = False
@@ -4714,41 +4722,14 @@ def aggregate(results_dir: Path) -> int:
     shard count, cut from one table. Exit 2 for that — "could not vouch", never "failed" —
     and then `judge` over the union, which is the old single run's SUMMARY and refusals.
     """
-    files = sorted(results_dir.glob("*.json"))
-    loaded = [json.loads(f.read_text(encoding="utf-8")) for f in files]
-    loaded = [r for r in loaded if r.get("battery") == "control"]
-    problems: list[str] = []
-    if not loaded:
-        problems.append(f"no control-battery shard results in {results_dir}")
-    counts = {r["shard"][1] for r in loaded}
-    if len(counts) > 1:
-        problems.append(f"shard results disagree on the shard COUNT: {sorted(counts)}")
-    digests = {r["table"] for r in loaded} | {table_digest()}
-    if len(digests) > 1:
-        problems.append("a shard was cut from a different MUTANTS table than this one")
-    by_shard: dict[int, list[str]] = {}
-    for r in loaded:
-        i = r["shard"][0]
-        if i in by_shard:
-            problems.append(f"two results claim shard {i}")
-            by_shard[i] = by_shard[i] + r["selected"]
-        else:
-            by_shard[i] = list(r["selected"])
-        if r.get("positive_control") != "green":
-            problems.append(f"shard {i}/{r['shard'][1]}: positive control was not GREEN")
-    n = max(counts) if counts else 0
     expected = [m.name for m in MUTANTS]
-    problems += mutant_tree.seam_violations(expected, by_shard, n)
-    print(f"aggregate: {len(loaded)} shard result(s) from {results_dir}, shard count {n}")
+    loaded, problems = mutant_tree.load_shard_results(
+        results_dir, "control", table_digest(), expected)
     if problems:
-        for p in problems:
-            print(f"🔴 SEAM: {p}", file=sys.stderr)
-        print("control_mutants: REFUSING TO VOUCH — the shards do not cover the battery "
-              "exactly once, so no per-shard green adds up to a battery green.", file=sys.stderr)
         return 2
 
     t = Tally()
-    for r in sorted(loaded, key=lambda r: r["shard"][0]):
+    for r in loaded:
         v = r["tally"]
         t.killed += v["killed"]
         t.survived += v["survived"]

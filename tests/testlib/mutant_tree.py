@@ -24,9 +24,11 @@ package directory, say.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Sequence, TypeVar
@@ -169,6 +171,65 @@ def seam_violations(expected: Sequence[str], shard_rows: dict[int, Sequence[str]
     if unknown:
         problems.append(f"row(s) no table declares: {unknown}")
     return problems
+
+
+def shard_rows(rows: Sequence[T], spec: tuple[int, int], key: Callable[[T], str],
+               front: Iterable[str] = (), always: Iterable[str] = ()) -> list[T]:
+    """Shard `spec` of `rows`: the `always` rows first — in EVERY shard — then this shard's part.
+
+    `always` is for a battery whose positive control is a ROW: every shard must carry its own,
+    or every shard but one would have nothing proving its runner executes the tree it edits.
+    """
+    always = set(always)
+    keep = [r for r in rows if key(r) in always]
+    rest = [r for r in rows if key(r) not in always]
+    return keep + partition(rest, spec[1], key=key, front=front)[spec[0] - 1]
+
+
+def load_shard_results(results_dir: Path, battery: str, table: str, expected: Sequence[str],
+                       always: Iterable[str] = ()) -> tuple[list[dict], list[str]]:
+    """Read every `battery` shard result in `results_dir`; return them and every SEAM problem.
+
+    🔴 ONE LOADER FOR BOTH BATTERIES, so the union check cannot be stricter for one than the
+    other. A problem is: no results at all; shards disagreeing on N; a shard cut from another
+    table (`table` is the caller's digest of its own rows); two results for one shard index;
+    a shard whose positive control was not green; an `always` row missing from any shard; and
+    everything `seam_violations` refuses over the remaining rows.
+    """
+    docs = [json.loads(f.read_text(encoding="utf-8")) for f in sorted(results_dir.glob("*.json"))]
+    docs = [d for d in docs if d.get("battery") == battery]
+    always = set(always)
+    problems: list[str] = []
+    if not docs:
+        problems.append(f"no {battery}-battery shard results in {results_dir}")
+    counts = {d["shard"][1] for d in docs}
+    if len(counts) > 1:
+        problems.append(f"shard results disagree on the shard COUNT: {sorted(counts)}")
+    if {d["table"] for d in docs} - {table}:
+        problems.append("a shard was cut from a different MUTANTS table than this one")
+    by_shard: dict[int, list[str]] = {}
+    for d in docs:
+        i, n_of = d["shard"]
+        rows = [r for r in d["selected"] if r not in always]
+        lost = sorted(always - set(d["selected"]))
+        if lost:
+            problems.append(f"shard {i}/{n_of}: does not carry {lost}, which every shard must")
+        if i in by_shard:
+            problems.append(f"two results claim shard {i}")
+            by_shard[i] = by_shard[i] + rows
+        else:
+            by_shard[i] = rows
+        if d.get("positive_control") != "green":
+            problems.append(f"shard {i}/{n_of}: positive control was not GREEN")
+    n = max(counts) if counts else 0
+    problems += seam_violations([r for r in expected if r not in always], by_shard, n)
+    print(f"aggregate: {len(docs)} shard result(s) from {results_dir}, shard count {n}")
+    for p in problems:
+        print(f"🔴 SEAM: {p}", file=sys.stderr)
+    if problems:
+        print(f"{battery}: REFUSING TO VOUCH — the shards do not cover the battery exactly once, "
+              "so no per-shard green adds up to a battery green.", file=sys.stderr)
+    return sorted(docs, key=lambda d: d["shard"][0]), problems
 
 
 # ── locating a Go test function ──────────────────────────────────────────────────────

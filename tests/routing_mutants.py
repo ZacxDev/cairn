@@ -44,7 +44,13 @@ phrasing.
 python3 tests/routing_mutants.py             # the whole battery
 python3 tests/routing_mutants.py --only row3-refusal-deleted
 python3 tests/routing_mutants.py --list      # the ids, without running anything
+python3 tests/routing_mutants.py --shard 3/8 --results out/routing-3.json   # one CI shard
+python3 tests/routing_mutants.py --aggregate out/   # every row in ONE shard, the control in ALL
 ```
+
+A shard runs `positive-control` plus its share of the rest, and enforces every refusal below
+over them; `--aggregate` is the seam check over all shards and prints the one SUMMARY an
+unsharded run prints.
 
 🔴 WHY A SCRIPT AND NOT A NOTE. "Twenty mutants killed" written in a PR body is a claim nobody
 can re-run; an auditor reading it has to take the number on trust, and a self-reported mutation
@@ -75,12 +81,15 @@ pass.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -970,11 +979,94 @@ def run_suites(tree: Path, mutant: Mutant) -> tuple[int, str, int]:
     return proc.returncode, output, collected
 
 
+CONTROL = "positive-control"
+
+def slow_rows() -> frozenset[str]:
+    """The PYTEST rows, dealt first when sharding, so each shard gets an even share of them.
+
+    🔴 MEASURED, AND DERIVED RATHER THAN LISTED. One full run on one reused tree (24-core host,
+    load ~2-19): the 24 pytest rows took 595 s together, ~20-28 s each, while the 33 go rows took
+    28 s together — 95% of the battery is the Python half, so balancing shards means balancing
+    pytest rows. Derived from `go_package` rather than kept as a list of ids, so a row added to
+    either half lands on the right side with nothing to update.
+    """
+    return frozenset(m.id for m in MUTANTS if not m.go_package)
+
+
+def table_digest() -> str:
+    """Ids plus edits of every row, so an aggregate refuses shards cut from another table."""
+    h = hashlib.sha256()
+    for m in MUTANTS:
+        h.update(repr((m.id, m.target, m.old, m.new, m.kills, m.go_package, m.suites)).encode())
+    return h.hexdigest()
+
+
+def judge(selected: list[str], killed: list[str], survived: list[str],
+          wrong_reason: list[str]) -> int:
+    """Print the SUMMARY and every refusal for `selected`; return the exit code.
+
+    🔴 ONE FUNCTION, CALLED BY AN UNSHARDED RUN, BY EACH SHARD AND BY `--aggregate`, so the
+    refusals cannot drift apart between them — a shard enforcing a weaker rule than the whole
+    battery would be a gate that loosened by being split.
+    """
+    print(f"SUMMARY mutants={len(selected)} killed={len(killed)} "
+          f"survived={len(survived)} killed-by-the-wrong-test={len(wrong_reason)}")
+    if survived:
+        print("surviving: " + ", ".join(survived))
+    if wrong_reason:
+        print("wrong reason: " + ", ".join(wrong_reason))
+    unjudged = [m for m in selected if m not in set(killed) | set(survived) | set(wrong_reason)]
+    if unjudged:
+        print(f"REFUSING TO VOUCH: no verdict for {unjudged} — a count that omits rows is not "
+              "a count of the battery.", file=sys.stderr)
+        return 2
+    if CONTROL in selected and CONTROL not in killed:
+        print("REFUSING TO VOUCH: the positive control SURVIVED, so this runner did not "
+              "execute the tree it edited and every verdict above is a fact about the "
+              "harness.", file=sys.stderr)
+        return 2
+    return 1 if (survived or wrong_reason) else 0
+
+
+def aggregate(results_dir: Path) -> int:
+    """The SEAM GUARD over the shards, then the one SUMMARY an unsharded run prints.
+
+    Every shard carries its own copy of `positive-control`, so that row is checked to be in
+    EVERY shard and KILLED in every shard — and counted once. Every other row must be in
+    exactly one shard; `mutant_tree.load_shard_results` is the same loader the authz battery's
+    aggregate uses.
+    """
+    expected = [m.id for m in MUTANTS]
+    docs, problems = mutant_tree.load_shard_results(
+        results_dir, "routing", table_digest(), expected, always={CONTROL})
+    if problems:
+        return 2
+    killed: list[str] = []
+    survived: list[str] = []
+    wrong: list[str] = []
+    for d in docs:
+        killed += [x for x in d["killed"] if x not in killed]
+        survived += d["survived"]
+        wrong += d["wrong_reason"]
+    order = {m: k for k, m in enumerate(expected)}
+    return judge(expected, sorted(killed, key=order.get), sorted(survived, key=order.get),
+                 sorted(wrong, key=order.get))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="tests/routing_mutants.py")
     parser.add_argument("--only", default=None, help="a comma-separated subset of mutant ids")
     parser.add_argument("--list", action="store_true", help="print the ids and stop")
+    parser.add_argument("--shard", help="run shard i of N (`i/N`); `positive-control` runs in "
+                        "EVERY shard, every other row in exactly one")
+    parser.add_argument("--results", type=Path, help="write this run's verdicts as JSON here")
+    parser.add_argument("--aggregate", type=Path, metavar="DIR",
+                        help="check the shard results in DIR cover the battery exactly once, "
+                        "and print the battery's SUMMARY from them; runs no mutant")
     args = parser.parse_args(argv)
+
+    if args.aggregate:
+        return aggregate(args.aggregate)
 
     if args.list:
         for mutant in MUTANTS:
@@ -986,14 +1078,25 @@ def main(argv: list[str] | None = None) -> int:
     if not selected:
         print(f"REFUSING: --only {args.only!r} selected no mutant", file=sys.stderr)
         return 2
+    shard = (1, 1)
+    if args.shard:
+        try:
+            shard = mutant_tree.parse_shard(args.shard)
+        except ValueError as exc:
+            print(f"REFUSING: {exc}", file=sys.stderr)
+            return 2
+        selected = mutant_tree.shard_rows(selected, shard, key=lambda m: m.id,
+                                          front=slow_rows(), always={CONTROL})
+        print(f"SHARD {shard[0]}/{shard[1]}: {len(selected)} of {len(MUTANTS)} rows "
+              f"(`{CONTROL}` in every shard)", flush=True)
 
     work = Path(tempfile.mkdtemp(prefix="cairn-mutants-"))
     killed, survived, wrong_reason = [], [], []
-    control_died = False
     try:
         tree = build_tree(work)
         before = mutant_tree.tree_digest(tree)
         for mutant in selected:
+            started = time.monotonic()
             try:
                 with apply_mutation(tree, mutant):
                     rc, output, collected = run_suites(tree, mutant)
@@ -1007,6 +1110,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"REFUSING TO VOUCH: `{mutant.id}` could not run — {missing}. Nothing "
                       f"above or below is a claim about the guards.", file=sys.stderr)
                 return 2
+            took = f"[{time.monotonic() - started:.1f}s]"
             # 🔴 THE POSITIVE CONTROL, READ BEFORE THE VERDICT AND NOT AFTER. Zero result lines
             # means the runner never executed the tree it edited, so every word below — KILLED,
             # SURVIVED, the summary — would be a fact about this shell. Exit 2 is "could not
@@ -1020,17 +1124,15 @@ def main(argv: list[str] | None = None) -> int:
             failures = failing_tests(output, bool(mutant.go_package))
             if rc == 0:
                 survived.append(mutant.id)
-                print(f"SURVIVED {mutant.id} — nothing failed. {mutant.why}")
+                print(f"SURVIVED {mutant.id} {took} — nothing failed. {mutant.why}", flush=True)
             elif mutant.kills and mutant.kills not in failures:
                 wrong_reason.append(mutant.id)
-                print(f"KILLED-BY-THE-WRONG-TEST {mutant.id} — expected {mutant.kills}, "
-                      f"got {failures}")
+                print(f"KILLED-BY-THE-WRONG-TEST {mutant.id} {took} — expected {mutant.kills}, "
+                      f"got {failures}", flush=True)
             else:
                 killed.append(mutant.id)
-                print(f"KILLED {mutant.id} by {failures[:4]}"
-                      f"{' …' if len(failures) > 4 else ''}")
-                if mutant.id == "positive-control":
-                    control_died = True
+                print(f"KILLED {mutant.id} {took} by {failures[:4]}"
+                      f"{' …' if len(failures) > 4 else ''}", flush=True)
 
         # 🔴 THE WHOLE-TREE CHECK: each restore is verified as it happens, and this is the
         # coarser claim that nothing ELSE in the reused tree moved — a suite writing into the
@@ -1042,22 +1144,24 @@ def main(argv: list[str] | None = None) -> int:
                   file=sys.stderr)
             return 2
         print(f"reused tree restored: hash {before[:16]}… before and after")
-
-        print(f"SUMMARY mutants={len(selected)} killed={len(killed)} "
-              f"survived={len(survived)} killed-by-the-wrong-test={len(wrong_reason)}")
-        if survived:
-            print("surviving: " + ", ".join(survived))
-        if wrong_reason:
-            print("wrong reason: " + ", ".join(wrong_reason))
-        control_selected = any(m.id == "positive-control" for m in selected)
-        if control_selected and not control_died:
-            print("REFUSING TO VOUCH: the positive control SURVIVED, so this runner did not "
-                  "execute the tree it edited and every verdict above is a fact about the "
-                  "harness.", file=sys.stderr)
-            return 2
-        return 1 if (survived or wrong_reason) else 0
+        return judge([m.id for m in selected], killed, survived, wrong_reason)
     finally:
         shutil.rmtree(work, ignore_errors=True)
+        if args.results:
+            # Written on EVERY exit, refusals included: a shard that stopped early then reaches
+            # the aggregate as rows with no verdict, which `judge` refuses, rather than as a
+            # missing file that might be read as "nothing to report".
+            args.results.parent.mkdir(parents=True, exist_ok=True)
+            args.results.write_text(json.dumps({
+                "battery": "routing",
+                "shard": list(shard),
+                "table": table_digest(),
+                "selected": [m.id for m in selected],
+                "positive_control": "green" if CONTROL in killed else "red",
+                "killed": killed,
+                "survived": survived,
+                "wrong_reason": wrong_reason,
+            }, indent=1, sort_keys=True), encoding="utf-8")
 
 
 if __name__ == "__main__":

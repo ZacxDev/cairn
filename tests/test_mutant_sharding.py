@@ -302,3 +302,146 @@ def test_a_copy_never_carries_the_git_link(tmp_path: Path) -> None:
     mutant_tree.copy_module(src, tmp_path / "dst")
     assert not (tmp_path / "dst" / ".git").exists()
     assert (tmp_path / "dst" / "f").read_text() == "x"
+
+
+def test_the_aggregate_refuses_a_row_with_no_verdict(tmp_path: Path) -> None:
+    # A shard that stopped early still writes its results; its unfinished rows must not just
+    # vanish from every count.
+    def unfinished(i, doc):
+        if i == 6:
+            gone = doc["tally"]["killed"].pop()
+            assert gone in doc["selected"]
+    _write_results(tmp_path, 8, mutate=unfinished)
+    proc = _aggregate(tmp_path)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "🔴 NO VERDICT for" in proc.stderr
+
+
+# ── the ROUTING battery: the same seam, with its positive control in EVERY shard ─────
+
+
+def _load_routing():
+    spec = importlib.util.spec_from_file_location(
+        "cairn_routing_mutants_sharding", REPO_ROOT / "tests" / "routing_mutants.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+rm = _load_routing()
+RIDS = [m.id for m in rm.MUTANTS]
+
+
+def _routing_shards(n: int):
+    return [rm.mutant_tree.shard_rows(rm.MUTANTS, (i, n), key=lambda m: m.id,
+                                      front=rm.slow_rows(), always={rm.CONTROL})
+            for i in range(1, n + 1)]
+
+
+@pytest.mark.parametrize("n", [1, 4, 8])
+def test_every_routing_row_lands_once_and_the_control_lands_everywhere(n: int) -> None:
+    shards = _routing_shards(n)
+    assert all(s[0].id == rm.CONTROL for s in shards)
+    rest = [m.id for s in shards for m in s[1:]]
+    assert sorted(rest) == sorted(r for r in RIDS if r != rm.CONTROL)
+    assert len(rest) == len(set(rest))
+    # The pytest half is ~95% of the wall clock, so it is what must be balanced.
+    py = [sum(1 for m in s if not m.go_package) for s in shards]
+    assert max(py) - min(py) <= 1
+
+
+def _write_routing(tmp: Path, n: int, mutate=None) -> None:
+    for i, rows in enumerate(_routing_shards(n), 1):
+        ids = [m.id for m in rows]
+        doc = {"battery": "routing", "shard": [i, n], "table": rm.table_digest(),
+               "selected": ids, "positive_control": "green",
+               "killed": list(ids), "survived": [], "wrong_reason": []}
+        if mutate:
+            mutate(i, doc)
+        (tmp / f"routing-{i}.json").write_text(json.dumps(doc), encoding="utf-8")
+
+
+def _aggregate_routing(tmp: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(REPO_ROOT / "tests" / "routing_mutants.py"), "--aggregate", str(tmp)],
+        capture_output=True, text=True)
+
+
+def test_the_routing_aggregate_of_a_clean_split_is_the_unsharded_summary(tmp_path: Path) -> None:
+    _write_routing(tmp_path, 8)
+    proc = _aggregate_routing(tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    # The control ran in all eight shards and is counted ONCE.
+    assert (f"SUMMARY mutants={len(RIDS)} killed={len(RIDS)} survived=0 "
+            "killed-by-the-wrong-test=0") in proc.stdout.splitlines(), proc.stdout
+
+
+def test_the_routing_aggregate_refuses_a_dropped_row(tmp_path: Path) -> None:
+    def drop(i, doc):
+        if i == 3:
+            gone = doc["selected"].pop()
+            doc["killed"].remove(gone)
+    _write_routing(tmp_path, 8, mutate=drop)
+    proc = _aggregate_routing(tmp_path)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "🔴 SEAM: row(s) run by NO shard:" in proc.stderr
+    # The SEAM refusal returns before any SUMMARY; without this line the no-verdict refusal
+    # (also exit 2) kept this test green with the seam check deleted — measured.
+    assert "SUMMARY" not in proc.stdout, proc.stdout
+
+
+def test_the_routing_aggregate_refuses_a_duplicated_row(tmp_path: Path) -> None:
+    other = _routing_shards(8)[0][1].id
+    def dup(i, doc):
+        if i == 5:
+            doc["selected"].append(other)
+            doc["killed"].append(other)
+    _write_routing(tmp_path, 8, mutate=dup)
+    proc = _aggregate_routing(tmp_path)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "🔴 SEAM: row(s) run by more than one shard:" in proc.stderr
+    assert "SUMMARY" not in proc.stdout, proc.stdout
+
+
+def test_the_routing_aggregate_refuses_a_shard_without_its_control(tmp_path: Path) -> None:
+    def strip(i, doc):
+        if i == 2:
+            doc["selected"].remove(rm.CONTROL)
+            doc["killed"].remove(rm.CONTROL)
+    _write_routing(tmp_path, 8, mutate=strip)
+    proc = _aggregate_routing(tmp_path)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert f"shard 2/8: does not carry ['{rm.CONTROL}'], which every shard must" in proc.stderr
+
+
+def test_the_routing_aggregate_refuses_a_red_control(tmp_path: Path) -> None:
+    def red(i, doc):
+        if i == 7:
+            doc["positive_control"] = "red"
+    _write_routing(tmp_path, 8, mutate=red)
+    proc = _aggregate_routing(tmp_path)
+    assert proc.returncode == 2
+    assert "shard 7/8: positive control was not GREEN" in proc.stderr
+
+
+def test_the_routing_aggregate_refuses_a_row_with_no_verdict(tmp_path: Path) -> None:
+    def unfinished(i, doc):
+        if i == 4:
+            doc["killed"].pop()
+    _write_routing(tmp_path, 8, mutate=unfinished)
+    proc = _aggregate_routing(tmp_path)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "REFUSING TO VOUCH: no verdict for" in proc.stderr
+
+
+def test_the_routing_aggregate_still_refuses_a_survivor(tmp_path: Path) -> None:
+    victim = _routing_shards(8)[0][1].id
+    def survive(i, doc):
+        if victim in doc["killed"]:
+            doc["killed"].remove(victim)
+            doc["survived"].append(victim)
+    _write_routing(tmp_path, 8, mutate=survive)
+    proc = _aggregate_routing(tmp_path)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert f"surviving: {victim}" in proc.stdout

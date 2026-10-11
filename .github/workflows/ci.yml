@@ -1054,7 +1054,14 @@ jobs:
           - { battery: control, shard: 6/8 }
           - { battery: control, shard: 7/8 }
           - { battery: control, shard: 8/8 }
-          - { battery: routing, shard: 1/1 }
+          - { battery: routing, shard: 1/8 }
+          - { battery: routing, shard: 2/8 }
+          - { battery: routing, shard: 3/8 }
+          - { battery: routing, shard: 4/8 }
+          - { battery: routing, shard: 5/8 }
+          - { battery: routing, shard: 6/8 }
+          - { battery: routing, shard: 7/8 }
+          - { battery: routing, shard: 8/8 }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -1112,15 +1119,6 @@ jobs:
           --workdir "$RUNNER_TEMP/mutant-trees"
           --results "$RUNNER_TEMP/mutant-results/control-${{ strategy.job-index }}.json"
 
-      - name: upload this shard's verdicts for the seam check
-        if: always() && matrix.battery == 'control'
-        uses: actions/upload-artifact@v4
-        with:
-          name: mutants-control-${{ strategy.job-index }}
-          path: ${{ runner.temp }}/mutant-results/
-          if-no-files-found: error
-          retention-days: 3
-
       # 🔴 THE THIRD MUTATION BATTERY, WIRED IN BECAUSE ITS OWN RATIONALE DEPENDED ON IT
       # BEING WIRED IN. `tests/routing_mutants.py` argues that its anchor-rule mutants live
       # there rather than in a fourth file partly to avoid "a fourth command in whatever
@@ -1132,23 +1130,39 @@ jobs:
       # prose. It was the only UN-GATED battery of the three, chosen on a rationale about
       # avoiding un-gated batteries. This step is what makes that sentence true.
       #
-      # ⚠ ONE MATRIX ENTRY, UNSHARDED: its own positive control is a ROW (`positive-control`),
-      # so splitting it would leave every shard but one with nothing proving its runner
-      # executes the tree it edits. It needs both toolchains — it mutates Go and Python
-      # sources and kills them with `go test` and `pytest` — which is why it lives in this job
-      # and why the step below installs pytest.
+      # ⚠ SHARDED TOO, AND ITS POSITIVE CONTROL IS COPIED INTO EVERY SHARD. That control is a
+      # ROW (`positive-control`), so a plain split would leave every shard but one with nothing
+      # proving its runner executes the tree it edits; `mutants-aggregate` checks the row is in
+      # every shard and killed in each, and counts it once. It needs both toolchains — it
+      # mutates Go and Python sources and kills them with `go test` and `pytest` — which is why
+      # it lives in this job and why the step below installs pytest.
       #
-      # ⚠ RUNTIME: 614.75 s wall / 152.21 s user + 21.00 s sys at 57 mutants on a 24-core
-      # developer host at load ~6.5, measured when it was wired into the `go` job, where it
-      # then took 11-12 min of runner time. That was a fresh copy per row; it now reuses one tree.
+      # ⚠ RUNTIME, AND WHICH HALF IT IS: 614.75 s wall / 152.21 s user + 21.00 s sys at 57
+      # mutants on a 24-core developer host at load ~6.5, when it was wired into the `go` job,
+      # where it then took 11-12 min of runner time — and still ~11.5 min unsharded here after
+      # the tree reuse, because the reuse only helps the Go half. MEASURED per row on one reused
+      # tree: the 24 pytest rows 595 s together (~20-28 s each, a whole suite file per row), the
+      # 33 go rows 28 s together. So the shards deal the PYTEST rows evenly first
+      # (`slow_rows()`), and N is eight because that leaves each shard three or four of them.
       - name: install pytest for the routing battery
         if: matrix.battery == 'routing'
         run: python3 -m pip install --quiet pytest
       - name: prove every routing and ANCHOR guard can go RED (57 mutants)
         if: matrix.battery == 'routing'
-        run: python3 tests/routing_mutants.py
+        run: >-
+          python3 tests/routing_mutants.py --shard ${{ matrix.shard }}
+          --results "$RUNNER_TEMP/mutant-results/routing-${{ strategy.job-index }}.json"
 
-  # 🔴 THE SEAM GUARD OVER THE AUTHZ SHARDS. `!cancelled()` rather than the default, so a FAILED
+      - name: upload this shard's verdicts for the seam check
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-${{ matrix.battery }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/mutant-results/
+          if-no-files-found: error
+          retention-days: 3
+
+  # 🔴 THE SEAM GUARD OVER BOTH BATTERIES' SHARDS. `!cancelled()` rather than the default, so a FAILED
   # shard still gets its union checked — a shard that crashed before writing its verdicts is
   # then a named missing shard here, not a silently skipped job.
   mutants-aggregate:
@@ -1162,11 +1176,14 @@ jobs:
           python-version: "3.12"
       - uses: actions/download-artifact@v4
         with:
-          pattern: mutants-control-*
+          pattern: mutants-*
           path: mutant-results
           merge-multiple: true
       - name: every authz mutant ran in exactly one shard, and the battery's one SUMMARY
         run: python3 tests/control_mutants.py --aggregate mutant-results
+      - name: every routing mutant ran in exactly one shard, the control in all, and one SUMMARY
+        if: ${{ !cancelled() }}
+        run: python3 tests/routing_mutants.py --aggregate mutant-results
 
   # 🔴 THE P2 GATE, AND IT IS ITS OWN JOB FOR THE SAME REASON THE CORPUS IS: its verdict is
   # readable on its own in the checks list, and a failure in either language can never mask it.
