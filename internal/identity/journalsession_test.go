@@ -47,7 +47,7 @@ package identity
 //     chain. Measured red on BOTH of that test's arms.
 //
 // The mutations that reproduce each red on the CURRENT tree, which is the cheaper route
-// and the one the battery runs on every CI `go` job — `python3 tests/control_mutants.py
+// and the one the battery runs on every CI push, in the `mutants` job — `python3 tests/control_mutants.py
 // --show` prints them exactly:
 //
 //   - `a-session-backend-with-no-authority-comes-up-quietly` — `internal/identity/config.go`,
