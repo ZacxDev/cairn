@@ -11,7 +11,9 @@
 //   READS   `location.hash`, as the first thing each run does.
 //   WRITES  the history entry's URL, IMMEDIATELY after that read, to the literal join path, so
 //           the token leaves the address bar and the history entry before anything else runs.
-//           Then the accept form's hidden field's `value`, and `hidden` on two blocks.
+//           Then the accept form's hidden field's `value`, and `hidden` on two blocks — and, on a
+//           `pageshow` that restores the page from the back-forward cache, the field EMPTIED and
+//           the form hidden again, so Back from the accept POST never shows a filled form.
 //   NEVER   a navigation, a form submission or retarget, a request, storage, or any API that
 //           turns text into markup or code. Nothing read from the URL can become a target.
 //
@@ -26,6 +28,7 @@
 
   take();
   window.addEventListener("hashchange", take);
+  window.addEventListener("pageshow", restored);
 
   function take() {
     var hash = location.hash;
@@ -61,5 +64,24 @@
     } catch (e) {
       return "";
     }
+  }
+
+  // restored: Back from the accept POST can restore this page from the back-forward cache with
+  // the field still FILLED and the form shown. The URL is already the bare join path, so the
+  // restored page is put back in that state: the field emptied, the form hidden, the
+  // no-invitation sentence shown. A fresh load (`persisted` false) is `take`'s job.
+  function restored(event) {
+    if (!event.persisted) {
+      return;
+    }
+    var accept = document.getElementById("join-accept");
+    var field = document.getElementById("join-invite");
+    var missing = document.getElementById("join-missing");
+    if (!accept || !field || !missing) {
+      return;
+    }
+    field.value = "";
+    accept.hidden = true;
+    missing.hidden = false;
   }
 })();

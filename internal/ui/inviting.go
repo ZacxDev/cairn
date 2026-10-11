@@ -45,15 +45,17 @@ const inviteTokenField = "invite"
 //
 // 🔴 WHY A SECOND FIELD: the token in a query string has ALREADY reached every access log on the
 // way, so a REUSABLE team link arriving that way is refused at the callback (`admitQueryBorne`) —
-// otherwise the logged `?invite=` shape keeps working and keeps being sent. Single-use tokens (an
+// otherwise honest browsers keep following and re-sending the logged `?invite=` shape. Single-use tokens (an
 // invitation, a team link with reuse unticked) are still redeemed on it, so links sent before the
 // fragment keep working. Every mint now renders `/join#invite=<token>`, whose page posts
 // [inviteTokenField] instead.
 //
-// ⚠ THE MARK IS CHOSEN BY THE PAGE THE SERVER RENDERED, SO IT IS ONLY AS STRONG AS THAT PAGE — a
-// hand-built POST can put a query-borne token in [inviteTokenField]. That walks nothing the
-// refusal protects: the token is in the logs already, and what is refused is the ordinary browser
-// following an ordinary `?invite=` link, which is the thing that would keep the shape alive.
+// 🔴 THE MARK IS CHOSEN BY THE PAGE THE SERVER RENDERED, SO IT IS CLIENT-REPORTED AND BINDS ONLY AN
+// HONEST BROWSER — a hand-built POST can put a query-borne token in [inviteTokenField], and
+// `/join#invite=<token>` does the same from any browser. So the refusal retires the logged SHAPE
+// (an ordinary browser stops following and re-sending `?invite=`), NEVER the logged TOKEN: whoever
+// read a reusable token out of an access log can still redeem it. For any reusable link that ever
+// travelled in a query string the protection is REVOCATION BY ITS MINTER, or its expiry.
 const inviteQueryTokenField = "invite-query"
 
 // Inviting is the invitation half of the browser surface, as an interface for the reason

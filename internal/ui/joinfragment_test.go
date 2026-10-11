@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -196,6 +197,8 @@ func TestAReusableTeamLinkInTheQUERYStringIsRefusedAndNotRedeemed(t *testing.T) 
 			r := newTeamRig(t)
 			token, link := r.mint(invOwner, invite.LinkReader, true, scopeT(tlA))
 			srv, stub := joinServer(t, r.inviting)
+			var logBuf bytes.Buffer
+			srv.log = &logBuf
 			before := ""
 			if who == "a stranger" {
 				stub.err = &identity.UnprovisionedSubject{Provider: "fixture-provider", Subject: strangerSubject(1)}
@@ -208,7 +211,14 @@ func TestAReusableTeamLinkInTheQUERYStringIsRefusedAndNotRedeemed(t *testing.T) 
 
 			if log, _ := r.links.LinkRedemptions(link.Digest); len(log) != 0 {
 				t.Errorf("a REUSABLE link arriving in a query string was REDEEMED (%d row(s)). Accepting it is what "+
-					"keeps the logged `?invite=` shape alive", len(log))
+					"keeps honest browsers following the logged `?invite=` shape", len(log))
+			}
+			// The refusal's log line must name the remedy and who holds it, and must NOT claim the
+			// token is retired — the positive control below redeems that very token. Pinned as the
+			// WHOLE fixed text plus the digest, so a reword back to "stops working" fails here.
+			wantLine := "cairn-ui: " + queryBorneReusableRefusedLog + ": link=" + shortDigest(link.Digest) + " ("
+			if !strings.Contains(logBuf.String(), wantLine) {
+				t.Errorf("the refusal log line is missing or reworded; want a line starting %q, got:\n%s", wantLine, logBuf.String())
 			}
 			if who == "a stranger" {
 				if rec.Code != http.StatusUnauthorized || !strings.Contains(pageText(rec.Body.String()), signInRefused) {
@@ -227,6 +237,9 @@ func TestAReusableTeamLinkInTheQUERYStringIsRefusedAndNotRedeemed(t *testing.T) 
 			}
 
 			// POSITIVE CONTROL: the fragment path — the body field the script fills — redeems the SAME link.
+			// 🔴 It is ALSO the measured residual: this token is the one that "travelled in a query
+			// string", and posting it unmarked redeems it. The query refusal retires the logged SHAPE,
+			// not the logged TOKEN; only the minter's revoke (or expiry) does that.
 			ok := joinCallback(srv, startAFlightCarryingAnInvite(t, srv, token))
 			if ok.Code != http.StatusSeeOther {
 				t.Fatalf("the fragment path answered %d: %s", ok.Code, ok.Body.String())
@@ -364,9 +377,10 @@ var joinBannedSinks = []string{
 // collapsed: `location` only as the ONE read `location.hash`, which is the first statement of
 // `take`; `history` only as the ONE `history.replaceState(null, "", "<JoinPath>")` — a LITERAL
 // target, so nothing URL-controlled reaches it — IMMEDIATELY after that read, so the fragment is
-// cleared before the page is touched; the only event subscription `hashchange` -> `take`; the token
-// written to exactly one place, `field.value`; and the form revealed only past the empty-token
-// return.
+// cleared before the page is touched; the only event subscriptions `hashchange` -> `take` and
+// `pageshow` -> `restored`; the token written to exactly one place, `field.value`, whose only other
+// write is `restored` EMPTYING it on a back-forward-cache restore; and the form revealed only past
+// the empty-token return.
 func joinScriptViolations(code string) []string {
 	code = strings.Join(strings.Fields(code), " ")
 	var out []string
@@ -379,10 +393,15 @@ func joinScriptViolations(code string) []string {
 	count("location", 1)
 	count("history", 1)
 	count(read, 1)
-	count("addEventListener(", 1)
+	count("addEventListener(", 2)
 	count(`window.addEventListener("hashchange", take);`, 1)
-	count(".value = ", 1)
+	count(`window.addEventListener("pageshow", restored);`, 1)
+	count(".value = ", 2)
 	count("field.value = token;", 1)
+	// The back-forward-cache restore: only on `persisted`, and it EMPTIES the field and hides the
+	// form, so Back from the accept POST never shows a filled form (the only other write to `.value`).
+	count(`function restored(event) { if (!event.persisted) { return; }`, 1)
+	count(`field.value = ""; accept.hidden = true; missing.hidden = false; }`, 1)
 	if r, g := strings.Index(code, read), strings.Index(code, "getElementById"); r < 0 || g < 0 || r > g {
 		out = append(out, "the fragment is not read and cleared before the page is touched")
 	}
@@ -428,9 +447,11 @@ func TestTheJoinScriptTouchesOnlyWhatItSays(t *testing.T) {
 			`history.replaceState(null, "", "`+JoinPath+`");`, "", 1) + "\nhistory.replaceState(null, \"\", \"" + JoinPath + "\");\n",
 		"the clear's target taken from the URL": strings.Replace(code,
 			`history.replaceState(null, "", "`+JoinPath+`");`, `history.replaceState(null, "", hash.slice(1));`, 1),
-		"the token copied to a second sink": code + "\nmissing.textContent = token; other.value = token;\n",
-		"the empty-token return dropped":    strings.Replace(code, `if (token === "") {`, `if (false) {`, 1),
-		"a second event subscription":       code + "\nwindow.addEventListener(\"message\", take);\n",
+		"the token copied to a second sink":       code + "\nmissing.textContent = token; other.value = token;\n",
+		"the empty-token return dropped":          strings.Replace(code, `if (token === "") {`, `if (false) {`, 1),
+		"a second event subscription":             code + "\nwindow.addEventListener(\"message\", take);\n",
+		"the restore no longer empties the field": strings.Replace(code, `field.value = "";`, `field.value = field.value;`, 1),
+		"the restore subscription dropped":        strings.Replace(code, `window.addEventListener("pageshow", restored);`, "", 1),
 	} {
 		if mutated == code || len(joinScriptViolations(mutated)) == 0 {
 			t.Errorf("NEGATIVE CONTROL FAILED: %s produced no violation, so the guard above cannot go red", name)

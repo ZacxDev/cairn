@@ -71,8 +71,15 @@ func joinLink(token string) string {
 //   - a single-use TEAM LINK (reuse unticked) is redeemed too, for the same reason: one redemption
 //     closes it, which is the exposure an invitation already has;
 //   - a REUSABLE team link is REFUSED — it is open enrolment until it expires or is revoked, so a
-//     logged copy is the leak the fragment exists to close, and accepting it would keep the logged
-//     shape working and therefore being sent.
+//     logged copy is the leak the fragment exists to close, and accepting it would keep honest
+//     browsers following and re-sending the logged shape.
+//
+// 🔴 THIS DOES NOT PROTECT A LOGGED TOKEN, AND MUST NOT BE READ AS IF IT DID. The query-borne mark
+// is CLIENT-REPORTED (it exists only because the legacy page posts [inviteQueryTokenField]), so a
+// holder of a logged token who posts it in [inviteTokenField], or opens `/join#invite=<token>`,
+// arrives unmarked and redeems. What protects a reusable link that ever travelled in a query string
+// is REVOCATION BY ITS MINTER — the only person who can revoke it ([ControlTeamLinks.Revoke]) — or
+// its expiry, and the refusal's log line names that remedy and who holds it.
 //
 // 🔴 REFUSED BY DROPPING THE TOKEN, SO THE ANSWER IS THE UNIFORM ONE. With no token neither
 // redemption arm runs: a stranger falls to `signInRefused`, byte-identical to a dead link's; a known
@@ -89,13 +96,20 @@ func (s *Server) admitQueryBorne(carried flightInvite, client string) string {
 		return ""
 	}
 	if reusable {
-		s.logf("github sign-in: a REUSABLE team link arrived in a URL query string and is refused — its token has "+
-			"been in every access log on the way, so revoke it and mint a new one: link=%s (%s)",
-			shortDigest(invite.Digest(carried.token)), client)
+		s.logf(queryBorneReusableRefusedLog+": link=%s (%s)", shortDigest(invite.Digest(carried.token)), client)
 		return ""
 	}
 	return carried.token
 }
+
+// queryBorneReusableRefusedLog is the fixed text of the line `admitQueryBorne` writes when it refuses a
+// reusable link that arrived in a query string. 🔴 IT MUST NOT SAY THE LINK STOPS WORKING: the refusal
+// binds only an honest browser, and the token still redeems through the fragment shape or a
+// hand-built POST. It names the remedy and the one person who holds it — the link's minter.
+const queryBorneReusableRefusedLog = "github sign-in: a REUSABLE team link arrived in a URL query string and " +
+	"was refused for this browser, but its token is NOT retired: it has been in every access log on the way " +
+	"and still redeems through /join#invite= or a hand-built POST until it expires or is revoked. Only the " +
+	"user who minted it can revoke it (their Team page); tell them, and they should mint a new one"
 
 // JoinFragmentNeedsScript is what the fragment join page says with script OFF — the link's token is
 // in the fragment, which only script can move, so the page fails VISIBLY rather than silently.

@@ -4203,15 +4203,22 @@ The residual read: *"The token travels in a URL query, so it lands in ACCESS LOG
 included — so every gateway between the reader and this pod writes a reusable, up-to-30-day enrolment
 capability to disk in plain text."* Every mint now renders `/join#invite=<token>`; a fragment is never
 sent in a request, so no access log, referrer or request line at any hop holds it, and `join.js` (the
-deliberate third entry of `AllowedScriptSources`) moves it into the accept form's BODY. **A reusable
-team link arriving in a query string is REFUSED**, so the logged shape cannot come back into use.
+deliberate third entry of `AllowedScriptSources`) moves it into the accept form's BODY. An honest
+browser opening a reusable team link's `?invite=` shape is refused (`admitQueryBorne`), so that shape
+stops being followed and re-sent — 🔴 **but that refusal is NOT a protection against anyone holding a
+logged copy of the token.** The query-borne mark is CLIENT-REPORTED: it is set only because the legacy
+page posts the token in `invite-query`, so whoever read the token out of an access log can post it in
+the ordinary `invite` field, or simply open `/join#invite=<token>`, and it redeems like any fresh
+link. 🔴 **THE PROTECTION FOR ANY REUSABLE LINK THAT EVER TRAVELLED IN A QUERY STRING IS REVOCATION BY
+ITS MINTER** (the Team page's revoke; only the minter can, see `ControlTeamLinks.Revoke`), or its expiry.
 ⚠ **WHAT REMAINS, EXACTLY:** (1) links minted BEFORE Phase W are still `?invite=` links — a SINGLE-USE
 one (an invitation, or a team link with reuse unticked) still redeems on that shape, so its token is
 in the logs of every hop it crossed until it is spent or expires (≤ 7 days by default for an invitation,
-≤ `invite.MaxLinkTTL` for a link); a REUSABLE pre-Phase-V link stops working and must be re-minted —
-and, since its token is in those logs already, **revoked**; (2) the deploy note stands for that window
+≤ `invite.MaxLinkTTL` for a link); a REUSABLE pre-Phase-W link stays REDEEMABLE by anyone holding its
+token, through the fragment shape or a hand-built POST, until its minter **revokes** it or it expires —
+re-minting alone does not retire the old token; (2) the deploy note stands for that window
 — **strip the query string from `/join` access logs** in the deployment repository (log `$uri` rather
-than `$request`) — and is unnecessary once no pre-Phase-V link is live; (3) the token is still in
+than `$request`) — and is unnecessary once no pre-Phase-W link is live; (3) the token is still in
 the BROWSER until the script runs — the history entry is replaced on the script's first statement,
 but a browser extension or a synced-history service that records the URL before scripts run sees it.
 
@@ -4320,7 +4327,8 @@ build refuses a version-2 database) before asserting the recipe lifts it.
 - **A revoke racing a redemption**, and two simultaneous mints — the store's conditional statements
   are the argument; neither race is driven.
 - **An access log.** The `/join` query-string residual above is CLOSED for reusable links by Phase W;
-  what is left (pre-Phase-V single-use links) is a deployment fix outside this repo. No test reads a
+  what is left is pre-Phase-W single-use links (a deployment fix outside this repo) and any pre-Phase-W
+  REUSABLE link not yet revoked by its minter (redeemable by whoever holds a logged copy). No test reads a
   real gateway's log; `uiaudit`'s `TestTheJoinFragmentIsClearedAndPosted` reads every request line a
   browser sent its own server.
 - **A real rollback.** The recipe is measured through the startup predicate on one schema, not by
@@ -4502,7 +4510,7 @@ field, `inviteQueryTokenField` (`invite-query`), so the start row marks the flig
 |---|---|---|
 | a single-use INVITATION | redeemed | already-sent links keep working |
 | a single-use TEAM LINK (reuse unticked) | redeemed | one redemption closes it — the exposure an invitation already has |
-| a REUSABLE team link | **refused** | open enrolment until expiry; a logged copy IS the leak, and accepting it keeps the logged shape in use |
+| a REUSABLE team link | **refused** | open enrolment until expiry; refusing it stops honest browsers following and re-sending the logged shape — it does NOT stop a holder of the logged token (below) |
 | unclassifiable (link store error) | refused | fail closed |
 
 The refusal DROPS the token, so it is the uniform one: a stranger gets `signInRefused`, byte-identical
@@ -4511,9 +4519,14 @@ existing user out — the callback's standing rule). The lookup (`TeamLinking.Re
 the callback only, where the token is being redeemed anyway — never on the public `GET /join`, which
 still resolves nothing.
 
-⚠ **The mark is chosen by the page the server rendered, so a hand-built POST can put a query-borne
-token in the fragment field.** That walks nothing the refusal protects: the token is in the logs
-already, and what is refused is an ordinary browser following an ordinary `?invite=` link.
+🔴 **The mark is chosen by the page the server rendered, so it is CLIENT-REPORTED, and the refusal binds
+only an honest browser.** Anyone who read a reusable token out of an access log can post it in the
+`invite` field, or open `/join#invite=<token>`, and it redeems. So the refusal retires the logged
+SHAPE (no ordinary browser keeps following or re-sending `?invite=`), never the logged TOKEN: for any
+reusable link that ever travelled in a query string, **revocation by its minter** — the only person
+who can revoke it — or its expiry is the protection, and the refusal's log line says so.
+⚠ Refusing such links server-side by their stored mint time (`invite.TeamLink.CreatedAt` before this phase's deploy)
+would close it without the minter, but needs a deploy-time cutoff the pod is not told; not done here.
 
 ## The RED proof
 
@@ -4525,7 +4538,7 @@ assertion failing, not a build error — measured on `origin/main` before any no
   redeemed, 1 row; the stranger got 303; the known user gained `read`). Its positive control is the
   fragment path, which must redeem.
 - `TestTheFragmentJoinPageMovesTheTokenThroughTheScript` — RED (no noscript, no hidden form, no script).
-- `TestTheJoinScriptTouchesOnlyWhatItSays` (spelling guard, labelled as one; nine negative controls)
+- `TestTheJoinScriptTouchesOnlyWhatItSays` (spelling guard, labelled as one; nine negative controls, eleven after the audit round below)
   and `TestTheRouteLedgerMatchesTheDispatchTable` — RED (`join.js` absent).
 - `TestASingleUseTokenInTheQUERYStringStillRedeems` — an INVARIANT guard, green on the base too.
 - `TestAQueryBorneTokenThatCannotBeClassifiedIsNotRedeemed` — new behaviour; proven by mutation
@@ -4539,6 +4552,27 @@ assertion failing, not a build error — measured on `origin/main` before any no
 `ui-start-row-drops-the-query-borne-mark`, `ui-query-borne-classification-fails-open`,
 `ui-minted-link-travels-in-the-query` and `ui-join-script-not-allowlisted`, and re-aimed four rows
 whose anchors moved.
+
+## The audit round (Y1, G1)
+
+- **Y1, a CORRECTION rather than a code fix.** This section and Phase T's residual said a pre-Phase-W
+  reusable link "stops working" and that "the logged shape cannot come back into use". Both overstated
+  the refusal: the query-borne mark is client-reported, so a holder of a logged token redeems it through
+  the `invite` field or `/join#invite=<token>`. `TestAReusableTeamLinkInTheQUERYStringIsRefusedAndNotRedeemed`'s
+  own positive control is that redemption. The README, `inviteQueryTokenField`'s and `admitQueryBorne`'s
+  docs now say the refusal binds an honest browser only, and that **revocation by the minter** (or
+  expiry) protects a reusable link that ever travelled in a query string. The refusal's log line
+  (`queryBorneReusableRefusedLog`) says the token is NOT retired and that only its minter can revoke
+  it; that test now pins the whole fixed text. ⚠ Refusing such links by stored mint time was NOT done:
+  the pod is not told when this phase was deployed, and a cutoff it guessed would refuse links minted
+  after it. ⚠ The pin's RED was not run locally (operator: local gates skipped); CI is its first run.
+- **G1.** Back from the accept POST could restore the page from the back-forward cache with the
+  field FILLED and the form shown. `join.js` now listens for `pageshow` and, on `persisted` only,
+  empties the field, hides the form and shows the no-invitation sentence (the URL is already the bare
+  `/join`). `TestTheJoinScriptTouchesOnlyWhatItSays` admits exactly that subscription and that one
+  emptying write, with two more negative controls (the emptying replaced, the subscription dropped).
+  ⚠ No browser test drives a back-forward-cache restore; the spelling guard is all that pins it, and
+  neither it nor its negative controls were run locally.
 
 ## What these guards still cannot see
 
