@@ -49,8 +49,8 @@ plan that an agent or a skill router reads says "mail".
   decisions, slices and questions keep their numbers, marked REMOVED.
 - *Revision 4* (`0903cb6`) applies round 1 of #221 (audited `3f0d802`: 3 🔴, 9 🟡, 5 🟢). New: VERB
   narrowing for issued credentials, so an agent credential never carries `admin` (decision 17, a
-  reversible coordinator default); a sanitiser by Unicode GENERAL CATEGORY over every interpolated
-  field; `--id` verbs that route by scope, with a server-side scope match; a structural status
+  reversible coordinator default at the time; the operator has since ruled to keep it, Q16); a
+  sanitiser by Unicode GENERAL CATEGORY over every interpolated field; `--id` verbs that route by scope, with a server-side scope match; a structural status
   line for the hook; the memo listener refusing to start without a control journal; a deployment
   slice (S7) and a LIVE closing clause; the 3-day TTL default; and a re-done token model. Two
   findings were checked against the code and are recorded as PARTLY WRONG, with evidence, under
@@ -583,7 +583,8 @@ alternatives are in "Open questions". Labelled where the agent decisions below i
 (decision 11); **[R6]** session identity and its fallback (decision 6); **[R7]** naming that cannot
 collide with the email skill (decision 1); **[R8]** the client and route contract (decisions 3, 8);
 **[R9]** a UI tab and a gated send form (decision 15); **[R10]** an audit, retraction, no edit
-(decision 10); **[R11]** the tooling-repo half, read-only here and named per slice (Slices). **[R12]** (round 1) verb narrowing so an agent credential never carries `admin` (decision 17).
+(decision 10); **[R11]** the tooling-repo half, read-only here and named per slice (Slices). **[R12]** (round 1) verb narrowing so an agent credential never carries `admin` (decision 17) —
+no longer reversible: the operator ruled to keep it (Q16).
 
 ### Chosen by the AGENT writing this plan (open to review)
 
@@ -1021,8 +1022,8 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
       hosts are told apart by `via agents@host-a` / `via agents@host-b` without a second identity;
     - a PROJECT principal per host (the service-account case `-principal-kind project` supports)
       would reach no scope until someone granted it one, one grant per scope, through the share
-      flow — more journal records and a second thing to keep in step with the scopes. Q15 asks
-      whether the operator wants that instead.
+      flow — more journal records and a second thing to keep in step with the scopes. Q15 asked
+      whether the operator wants that instead; the operator kept decision 17 (Q16).
 
     **Issuing — who, how, what is recorded.**
     1. **The operator, by hand, once per (host, instance).** It is the same act as every existing
@@ -1087,7 +1088,7 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
     and therefore inside `tests/control_mutants.py`'s reach.
 
 17. **VERB narrowing for issued credentials: an agent credential never carries `admin` (round 1
-    🔴1) [R12 — a coordinator default, REVERSIBLE].** STEP 1 measured that narrowing keeps each
+    🔴1) [R12 — a coordinator default, since RULED by the operator: kept (Q16)].** STEP 1 measured that narrowing keeps each
     scope's full verb set, so a stolen `agents@<host>` token under an owner can revoke other
     principals' grants on its scopes through `POST /unshare`, and would retract any memo there as a
     scope admin. The fix is in the ONE narrowing path, so every surface inherits it:
@@ -1162,8 +1163,7 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
     - **What a stolen agent credential can still do** is T9's row, at its real scope.
     - *The recorded alternative is Q15:* a PROJECT principal per host with read+write GRANTS only,
       which gets the same "never admin" from grants instead of narrowing, at the cost of more
-      records. Which of the two the operator prefers is not established; this plan's default keeps
-      one principal and the per-host label.
+      records. The operator ruled for verb narrowing (Q16): one principal and the per-host label.
 
 18. **Who owns which test: S2 tests the listener IN PROCESS; S3 owns `tests/memo/e2e.sh`** (round 1
     🟡9). The e2e clauses assert client EXIT CODES, status tokens and `memo-read` output, which only
@@ -1703,6 +1703,12 @@ S1's author on one host: go1.25.14 (the devShell's), PostgreSQL **18.6** through
   record-only ack). Later, it would be a new migration (Q14).
 - **Q6. Moderation** → **O8**: the sender and any scope admin may retract; journaled with the actor;
   readers see who retracted it; never delivered to a session that has not seen it.
+- **Q16. Verb narrowing (decision 17) versus Q15's per-host project principal** → the operator
+  ruled to KEEP decision 17's verb narrowing, and accepted its stricter rollback: once a journal
+  holds a `credential-verbs-narrowed` event, an older build refuses that journal (decision 17's
+  rollback recipe). Q15 stays recorded as the alternative, not adopted. Migration 3 also stays
+  registered in S1 (S1's round-0 D2 kept): its rollback recipe is stated, and S1 must deploy
+  before S4 regardless.
 
 ### Still open — default adopted unless the operator objects
 
@@ -1750,9 +1756,9 @@ S1's author on one host: go1.25.14 (the devShell's), PostgreSQL **18.6** through
   verb-narrowed (decision 17). Alternative: `-principal-kind project` per host with read+write
   GRANTS only — senders become distinct PRINCIPALS rather than distinct labels, and "never admin"
   comes from the grants instead of from verb narrowing, at the cost of more journal records and
-  grants kept in step with the scopes.
-- **Q16. Verb narrowing (decision 17) is a coordinator DEFAULT, reversible.** Alternative: Q15's
-  project principal, which closes the same escalation without changing `control.Narrow`.
+  grants kept in step with the scopes. *Settled by Q16's ruling:* the default stands; the
+  alternative is recorded, not adopted.
+- **Q16.** *MOVED to "Answered by the operator" above.*
 - **Q18. The send-side fence rule (decision 5) is a coordinator DEFAULT, reversible.** Alternatives:
   revision 4's full category refusal at send (safer storage, refuses ordinary text as measured), or
   additionally ALLOWING LRM/RLM at send, which is not established to be safe.
