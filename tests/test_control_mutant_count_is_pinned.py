@@ -279,8 +279,8 @@ ROUTING_ANCHORS = (
 # The battery's own wiring claim, and the job it names. Pinned as a ledger entry so that
 # REWORDING or DELETING it fails too: the sentence is only true while the step exists, and the
 # battery's header says so in as many words.
-ROUTING_WIRING_CLAIM = "the `go` job now runs this file"
-ROUTING_JOB = "go"
+ROUTING_WIRING_CLAIM = "the `mutants` job now runs this file"
+ROUTING_JOB = "mutants"
 ROUTING_RUN = "python3 tests/routing_mutants.py"
 
 
@@ -371,12 +371,12 @@ def test_the_routing_battery_is_RUN_BY_THE_JOB_ITS_HEADER_NAMES(routing_count: i
     """🔴 THE WIRING CLAIM IS A CLAIM LIKE ANY OTHER, AND IT IS THE ONE THAT WENT FALSE.
 
     `tests/routing_mutants.py` argues that placing the anchor mutants in it is acceptable
-    *because* the `go` job runs it — and its own header records that the same argument was
+    *because* the `mutants` job runs it — and its own header records that the same argument was
     FALSE of this file when it was written: the battery was invoked by nothing. Its header
     then says "correct this paragraph in the SAME commit" if the step ever comes out. That
     instruction is prose, and prose is what this module exists to stop relying on.
 
-    So: the claim must be present, and it must be true — the `go` job must actually carry a
+    So: the claim must be present, and it must be true — the `mutants` job must actually carry a
     `run:` for the battery. Deleting the step now fails here rather than leaving a rationale
     asserting a step that does not exist.
     """

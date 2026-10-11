@@ -16,9 +16,11 @@ ran `tests/publish_workflow_mutants.py` and `tests/control_mutants.py`, and `tes
 was invoked by NOTHING — not that workflow, not `publish-image.yml`, not `flake.nix`, not
 `AGENTS.md`/`CLAUDE.md`, not any test; every other mention of it in the tree is prose. So the
 anchor mutants were placed in the ONLY un-gated battery of the three, on a rationale about not
-creating un-gated batteries. Fixed by wiring rather than by rewording: the `go` job now runs this
-file (it is the one job carrying both a Go toolchain and `pytest`, which this battery needs
-because it mutates and kills on both sides). The battery is 57 mutants. Timing behind that
+creating un-gated batteries. Fixed by wiring rather than by rewording: the `mutants` job now runs
+this file, as its own matrix entry beside the authz battery's shards (the job sets up both a Go
+toolchain and `pytest`, which this battery needs because it mutates and kills on both sides; it
+moved out of the `go` job when the batteries became that job's critical path).
+The battery is 57 mutants. Timing behind that
 decision, so the trade is re-derivable rather than asserted, measured at 57 mutants: 614.75 s
 wall / 152.21 s user + 21.00 s sys on a 24-core host at load ~6.5, 57 killed / 0 survived / 0
 misattributed — the same order as `control_mutants.py`, which that job already pays for. If this
@@ -83,6 +85,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests"))
+
+from testlib import mutant_tree  # noqa: E402
 
 PY_ROUTING = "tests/test_cairn_instances.py"
 PY_STORE = "tests/test_subsystem_read_store.py"
@@ -856,18 +861,19 @@ MUTANTS: list[Mutant] = [
 ]
 
 
-def build_tree(work: Path, index: int) -> Path:
-    """A COPY of the working tree, without its `.git`.
+def build_tree(work: Path) -> Path:
+    """ONE copy of the working tree, without its `.git`, reused by every mutant in turn.
 
     🔴 A COPY OF A WORKTREE SHARES ITS GIT DIR UNLESS THE `.git` LINK IS DROPPED — it is a FILE
     holding `gitdir: …`, not a directory — so a stray `git` command inside the copy would act on
-    the REAL branch. `ignore_patterns` drops it and the assertion below is what proves it did.
+    the REAL branch. `mutant_tree.copy_module` drops it and refuses if it arrived anyway.
+
+    ⚠ ONE TREE, NOT ONE PER MUTANT. A fresh directory per row made every Go row a cold build
+    (the build cache keys on the directory); each mutation is now undone after its run and the
+    undo is VERIFIED by hash — `testlib/mutant_tree.py` says why both halves are needed.
     """
-    target = work / f"mutant-{index:02d}"
-    shutil.copytree(
-        ROOT, target,
-        ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", "*.pyc"))
-    assert not (target / ".git").exists(), "the mutant tree must not carry a .git link"
+    target = work / "tree"
+    mutant_tree.copy_module(ROOT, target)
     return target
 
 
@@ -876,16 +882,14 @@ def sweep_pycache(tree: Path) -> None:
         shutil.rmtree(cached, ignore_errors=True)
 
 
-def apply_mutation(tree: Path, mutant: Mutant) -> None:
-    path = tree / mutant.target
-    text = path.read_text(encoding="utf-8")
-    occurrences = text.count(mutant.old)
-    if occurrences != 1:
-        raise SystemExit(
+def apply_mutation(tree: Path, mutant: Mutant):
+    """The edit, as a context manager that restores the original bytes and verifies it."""
+    return mutant_tree.mutated(
+        tree / mutant.target, mutant.old, mutant.new, 1,
+        lambda occurrences: SystemExit(
             f"REFUSING: mutant `{mutant.id}` anchors on a string that occurs {occurrences} "
             f"times in {mutant.target}, not once. A substitution that matched nothing scores "
-            f"SURVIVED and reads as an untested guard.")
-    path.write_text(text.replace(mutant.old, mutant.new), encoding="utf-8")
+            f"SURVIVED and reads as an untested guard."))
 
 
 def failing_tests(output: str, is_go: bool) -> list[str]:
@@ -987,11 +991,15 @@ def main(argv: list[str] | None = None) -> int:
     killed, survived, wrong_reason = [], [], []
     control_died = False
     try:
-        for index, mutant in enumerate(selected):
-            tree = build_tree(work, index)
-            apply_mutation(tree, mutant)
+        tree = build_tree(work)
+        before = mutant_tree.tree_digest(tree)
+        for mutant in selected:
             try:
-                rc, output, collected = run_suites(tree, mutant)
+                with apply_mutation(tree, mutant):
+                    rc, output, collected = run_suites(tree, mutant)
+            except mutant_tree.RestoreError as exc:
+                print(f"REFUSING TO VOUCH: {exc}", file=sys.stderr)
+                return 2
             except ToolchainMissing as missing:
                 # 🔴 EXIT 2, NOT 1 — "could not vouch", the same refusal the zero-collected
                 # case makes below. Letting this propagate exited 1, which this battery also
@@ -1023,7 +1031,17 @@ def main(argv: list[str] | None = None) -> int:
                       f"{' …' if len(failures) > 4 else ''}")
                 if mutant.id == "positive-control":
                     control_died = True
-            shutil.rmtree(tree, ignore_errors=True)
+
+        # 🔴 THE WHOLE-TREE CHECK: each restore is verified as it happens, and this is the
+        # coarser claim that nothing ELSE in the reused tree moved — a suite writing into the
+        # tree it runs in would otherwise carry its writes into every later row.
+        after = mutant_tree.tree_digest(tree)
+        if after != before:
+            print(f"REFUSING TO VOUCH: the reused tree hashed {before[:16]}… before the run and "
+                  f"{after[:16]}… after it, so later rows ran on a tree nobody declared.",
+                  file=sys.stderr)
+            return 2
+        print(f"reused tree restored: hash {before[:16]}… before and after")
 
         print(f"SUMMARY mutants={len(selected)} killed={len(killed)} "
               f"survived={len(survived)} killed-by-the-wrong-test={len(wrong_reason)}")

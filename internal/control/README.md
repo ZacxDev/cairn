@@ -414,7 +414,11 @@ at the **same** pinned instant, which makes the two expressions identical — th
 would have SURVIVED a fully green test that appeared to assert the deadline. The fixture
 now moves its clock 20s between the two, and the test says why.
 
-🔴 **IT RUNS IN CI, IN THE `go` JOB, RATHER THAN BEING A NUMBER IN THIS FILE.** The one
+🔴 **IT RUNS IN CI, IN THE `mutants` JOB (EIGHT SHARDS, THEIR UNION CHECKED BY
+`mutants-aggregate`), RATHER THAN BEING A NUMBER IN THIS FILE.** It moved out of the `go`
+job, whose critical path it was; each row now runs only the packages holding its named
+tests, in one reused tree per worker — `scope_for` and `tests/testlib/mutant_tree.py` say
+why the verdicts did not change, and the pull request that split it carries the timings. The one
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
