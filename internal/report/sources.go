@@ -25,10 +25,13 @@ import (
 // to the plan's Q17) — never a control-plane scope ID, which the browser surface and the pod mint
 // from different authorities.
 //
-// ⚠ THE DAMAGE IS REPORTED AS A FACT, NEVER AS A COUNT. The plan's T15 says the GET "reports the
-// damage count"; the arc registry's reason for refusing that is the same here and wins: a count of
-// unreadable lines is a count over EVERY scope's records, including scopes this caller cannot
-// read, so the count goes to the pod log and the body carries only `damaged=yes`.
+// 🔴 JOURNAL DAMAGE IS NOT ON THE WIRE AT ALL — neither a count nor a flag. A damaged line cannot be
+// attributed to a scope (it did not parse), so anything the body said about it would be a statement
+// about EVERY scope: a count leaks activity in scopes the caller cannot read, and a flag (round 0
+// shipped `damaged=yes`) is journal-wide, permanent after one sealed torn write, and tells a reader
+// of a scope the damage never touched that an older declaration "may be shown". The counts go to the
+// pod's stderr (`sourcesShow`); `TestAHiddenScopesDamagedLineChangesNothingOnTheWire` pins the
+// absence.
 
 // The status tokens. Each is a distinct mechanism:
 //
@@ -49,7 +52,6 @@ const (
 // The fixed lines. Pinned as WHOLE strings by the literal-body tests.
 const (
 	SourcesProvenanceLine = "provenance: a declaration is set in the browser by an admin of the scope and is that admin's word — the pod checks its grammar, never that the code exists"
-	SourcesDamagedLine    = "⚠ the sources journal holds line(s) that could not be read; a declaration written only by such a line is NOT shown, and an older one may be shown in its place"
 )
 
 // SourcesUnconfiguredBody is the off state's sentence.
@@ -63,7 +65,6 @@ type SourcesReport struct {
 	Scope string
 	// JournalAbsent is the journal's EMPTY state: configured, never written.
 	JournalAbsent bool
-	Damaged       bool
 	// Record is the scope's latest declaration, when it has one (an empty list included).
 	Record *codesrc.Record
 }
@@ -82,7 +83,7 @@ func Sources(storeRoot, scope string, visible store.ScopeSet, snap *codesrc.Snap
 	if !index.HasScope(key) {
 		return SourcesReport{Status: StatusScopeAbsent, Scope: key}, nil
 	}
-	rep := SourcesReport{Status: StatusSourcesUndeclared, Scope: key, JournalAbsent: snap.Missing, Damaged: snap.Damaged()}
+	rep := SourcesReport{Status: StatusSourcesUndeclared, Scope: key, JournalAbsent: snap.Missing}
 	if rec, ok := snap.Latest[key]; ok {
 		rep.Record = &rec
 		if len(rec.Sources) > 0 {
@@ -114,10 +115,6 @@ func (r SourcesReport) RenderText() string {
 		b.WriteString("  journal=absent\n")
 	} else {
 		b.WriteString("  journal=present\n")
-	}
-	if r.Damaged {
-		b.WriteString("  damaged=yes\n")
-		b.WriteString("  " + SourcesDamagedLine + "\n")
 	}
 	if r.Record != nil {
 		fmt.Fprintf(&b, "  set_by=%s set_at=%s revision=%s\n", r.Record.SetBy, r.Record.SetAt, r.Record.Revision)

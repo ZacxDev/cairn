@@ -171,6 +171,44 @@ func TestAScopeTheCallerCannotReadAnswersExactlyLikeAbsence(t *testing.T) {
 	}
 }
 
+// 🔴 A HIDDEN SCOPE'S DAMAGED LINE CHANGES NOTHING ON THE WIRE. The narrow reader may read
+// `beta-notes` and not `alpha-notes`; a hand-damaged alpha line (a record whose revision no longer
+// matches its sources) and a torn tail are appended, and the narrow reader's `beta-notes` answer is
+// BYTE-IDENTICAL before and after — no flag, no count, no state flip. RED under round 0's design
+// (`damaged=yes` and a fixed sentence on every configured answer). CONTROL: the damage is real —
+// the pod's warn sink receives the counts.
+func TestAHiddenScopesDamagedLineChangesNothingOnTheWire(t *testing.T) {
+	h := newHarness(t)
+	var warned []string
+	h.srv.Warn = func(line string) { warned = append(warned, line) }
+	path := withSourceJournal(t, h, map[string][]string{"alpha-notes": {srcPrimary}, "beta-notes": {srcSecondary}})
+	before := h.do(t, "GET", "/api/v1/sources/beta-notes", narrowToken, nil, "")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := `{"schema":1,"scope":"alpha-notes","sources":["` + srcSecondary + `"],"set_by":"x","set_at":"2000-01-04T00:00:00Z","revision":"sha256:00"}` + "\n"
+	if _, err := f.WriteString(forged + `{"schema":1,"scope":"alpha-no`); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	after := h.do(t, "GET", "/api/v1/sources/beta-notes", narrowToken, nil, "")
+	if before.status != 200 || before.body != after.body {
+		t.Fatalf("a hidden scope's damage changed the narrow reader's answer:\n--- before\n%s\n--- after\n%s", before.body, after.body)
+	}
+	for _, name := range []string{"X-Store-Status", "X-Store-Exit", "Content-Length"} {
+		if before.headers.Get(name) != after.headers.Get(name) {
+			t.Fatalf("%s moved: %q -> %q", name, before.headers.Get(name), after.headers.Get(name))
+		}
+	}
+	if strings.Contains(after.body, "damaged") {
+		t.Fatalf("the body speaks of damage:\n%s", after.body)
+	}
+	if len(warned) == 0 || !strings.Contains(warned[len(warned)-1], "1 unreadable record(s) skipped, torn tail: true") {
+		t.Fatalf("control: the damage must reach the pod log with its counts, got %q", warned)
+	}
+}
+
 // 🔴 READ-ONLY: the pod never needs to write the journal. A file the pod's user cannot write (mode
 // 0444) still answers — the read opens `O_RDONLY` — and is byte-identical afterwards.
 func TestAReadOnlyJournalStillAnswers(t *testing.T) {
@@ -190,9 +228,10 @@ func TestAReadOnlyJournalStillAnswers(t *testing.T) {
 	}
 }
 
-// 🔴 T9'S PIN 3 — THE POD CANNOT BECOME A SECOND WRITER. `internal/api`'s non-test source holds
-// ZERO call sites of any method named `Set`, which is the only spelling `codesrc.Journal.Set` can
-// take. ⚠ AN INVARIANT GUARD, LABELLED AS ONE: measured 0 before this route existed, and the route
+// 🔴 T9'S PIN 3 — `internal/api` CANNOT BECOME A SECOND WRITER. This package's non-test source
+// holds ZERO call sites of any method named `Set`, which is the only spelling `codesrc.Journal.Set`
+// can take. ⚠ SCOPED TO `internal/api`: it walks this directory only, so a write reached through
+// another package (or from `cmd/cairn-server`) is outside what it sees. ⚠ AN INVARIANT GUARD, LABELLED AS ONE: measured 0 before this route existed, and the route
 // did not change it. It is a GROW guard on a set of size zero: any `.Set(` call — a journal write or
 // anything else — is refused and must be argued for here. A method value (`f := j.Set`) is caught
 // too, because it is the selector, not the call, that is counted.

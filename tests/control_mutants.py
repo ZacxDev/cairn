@@ -4328,6 +4328,15 @@ MUTANTS: tuple[Mutant, ...] = (
         why="degrading to 'empty' keeps the page up, which reads as resilience — and a journal the pod "
         "cannot read answers `sources=undeclared`, the could-not-look state served as a fact.",
     ),
+    Mutant(
+        name="api-sources-damage-leaks-onto-the-wire",
+        path="internal/report/sources.go",
+        old="JournalAbsent: snap.Missing}",
+        new="JournalAbsent: snap.Missing || snap.Damaged()}",
+        killer="TestAHiddenScopesDamagedLineChangesNothingOnTheWire",
+        why="'a damaged journal is as good as no journal' reads as caution — and a torn line in a scope the "
+        "caller cannot read flips every other scope's answer, a signal about hidden activity on the wire.",
+    ),
 )
 
 
