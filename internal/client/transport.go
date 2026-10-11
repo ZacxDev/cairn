@@ -127,39 +127,12 @@ func LoadConfig() (Config, error) { return LoadConfigFor(DefaultAlias) }
 // non-default alias reads its own file and nothing else.
 func LoadConfigFor(alias string) (Config, error) {
 	isDefault := alias == DefaultAlias
-	path := DefaultConfigPath()
-	if !isDefault {
-		dir, err := InstanceDir(nil)
-		if err != nil {
-			return Config{}, err
-		}
-		path = filepath.Join(dir, alias+InstanceSuffix)
-	}
-	fromFile := map[string]string{}
-	if data, err := os.ReadFile(path); err == nil {
-		for _, line := range splitLines(string(data)) {
-			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
-				continue
-			}
-			key, value, _ := strings.Cut(line, "=")
-			fromFile[strings.TrimSpace(key)] = strings.TrimSpace(value)
-		}
+	path, fromFile, err := instanceFile(alias)
+	if err != nil {
+		return Config{}, err
 	}
 	WarnDeprecations(envalias.FileDeprecations(fromFile, path))
-	// 🔴 BOTH LOOKUPS GO THROUGH `envalias`, AND THE FILE IS AS MUCH AN ALIAS SURFACE AS
-	// THE ENVIRONMENT IS. `SUBSYSTEM_STORE_URL=` is a KEY inside `~/.config/subsystem-store/env`
-	// as well as an exported variable, and an operator who renamed only one of the two would
-	// otherwise get a silent half-migration: the file key ignored, the environment honoured.
-	pick := func(name string) string {
-		if isDefault {
-			if v := envalias.OSValue(name); v != "" {
-				return v
-			}
-		}
-		return envalias.Value(fromFile, name)
-	}
-	cfg := Config{URL: pick(EnvURL), Token: pick(EnvToken)}
+	cfg := Config{URL: pickConfig(isDefault, fromFile, EnvURL), Token: pickConfig(isDefault, fromFile, EnvToken)}
 	where := fmt.Sprintf("(looked in %s and the environment)", path)
 	if !isDefault {
 		where = fmt.Sprintf("(looked in %s; the environment is NOT consulted for a "+
@@ -176,6 +149,109 @@ func LoadConfigFor(alias string) (Config, error) {
 	if len(missing) > 0 {
 		return Config{}, unreachable(
 			"config incomplete: %s not set %s", strings.Join(missing, ", "), where)
+	}
+	cfg.URL = strings.TrimRight(cfg.URL, "/")
+	return cfg, nil
+}
+
+// instanceFile is `(path, keys)` for ONE instance's env file: `DefaultConfigPath()` for the
+// default instance, `<instances>/<alias>.env` for any other. A missing or unreadable file is an
+// EMPTY key set, not an error — the caller decides which missing key is a refusal.
+//
+// 🔴 ONE READER FOR BOTH KEY PAIRS. The memo listener's `CAIRN_UI_URL`/`CAIRN_UI_TOKEN` (scope-mail
+// decision 8) live in the same file as `CAIRN_URL`/`CAIRN_TOKEN`; a second parser of that file
+// would be a second place for the "which file does a non-default instance read" rule to drift.
+func instanceFile(alias string) (string, map[string]string, error) {
+	path := DefaultConfigPath()
+	if alias != DefaultAlias {
+		dir, err := InstanceDir(nil)
+		if err != nil {
+			return "", nil, err
+		}
+		path = filepath.Join(dir, alias+InstanceSuffix)
+	}
+	fromFile := map[string]string{}
+	if data, err := os.ReadFile(path); err == nil {
+		for _, line := range splitLines(string(data)) {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
+				continue
+			}
+			key, value, _ := strings.Cut(line, "=")
+			fromFile[strings.TrimSpace(key)] = strings.TrimSpace(value)
+		}
+	}
+	return path, fromFile, nil
+}
+
+// pickConfig is ONE configuration key's value: for the DEFAULT instance the process environment
+// first, then the file; for any other instance the file alone (see `LoadConfigFor` for why the
+// asymmetry is the whole reason a second instance is safe to add).
+//
+// 🔴 BOTH LOOKUPS GO THROUGH `envalias`, AND THE FILE IS AS MUCH AN ALIAS SURFACE AS
+// THE ENVIRONMENT IS. `SUBSYSTEM_STORE_URL=` is a KEY inside `~/.config/subsystem-store/env`
+// as well as an exported variable, and an operator who renamed only one of the two would
+// otherwise get a silent half-migration: the file key ignored, the environment honoured.
+//
+// ⚠ IT IS A FORWARDER OF THE ENVIRONMENT-READ LEDGER (`envreads.go`): its `name` reaches
+// [getenv], so `TestEveryEnvironmentReadIsInTheLedger` requires every CALL of it to pass a ledger
+// constant, exactly as it does for `getenv` itself.
+func pickConfig(isDefault bool, fromFile map[string]string, name string) string {
+	if isDefault {
+		if v := getenv(name); v != "" {
+			return v
+		}
+	}
+	return envalias.Value(fromFile, name)
+}
+
+// UIConfig is the memo listener's `(url, token)` for one instance (scope-mail decision 8): the
+// listener's base URL and the agent's OWN narrowed journal credential (decision 16).
+type UIConfig struct {
+	URL   string
+	Token string
+}
+
+// UIConfigMissing is "this instance has no memo listener configured": the key(s) absent from both
+// the environment (default instance only) and the instance's env file. Never a network fact.
+type UIConfigMissing struct {
+	Missing []string
+	// Where is what was consulted, in `LoadConfigFor`'s wording.
+	Where string
+}
+
+func (e *UIConfigMissing) Error() string {
+	return fmt.Sprintf("memo listener not configured: %s not set %s", strings.Join(e.Missing, ", "), e.Where)
+}
+
+// LoadUIConfigFor is [UIConfig] for ONE named instance, read from the SAME file, through the SAME
+// [pickConfig], as `LoadConfigFor` reads the pod's pair — so a non-default instance reads only its
+// own file, and for the default instance an exported value wins over the file exactly as it does
+// for `CAIRN_TOKEN` (which is why the tooling never exports one, decision 16).
+//
+// 🔴 EACH KEY IS REQUIRED ON ITS OWN, AND THE REFUSAL NAMES WHICH. One present does not make the
+// other optional: a URL with no token would send an unauthenticated request whose 401 reads as a
+// revoked credential, and a token with no URL has nowhere to go.
+func LoadUIConfigFor(alias string) (UIConfig, error) {
+	path, fromFile, err := instanceFile(alias)
+	if err != nil {
+		return UIConfig{}, err
+	}
+	isDefault := alias == DefaultAlias
+	cfg := UIConfig{URL: pickConfig(isDefault, fromFile, EnvUIURL), Token: pickConfig(isDefault, fromFile, EnvUIToken)}
+	var missing []string
+	if cfg.URL == "" {
+		missing = append(missing, EnvUIURL)
+	}
+	if cfg.Token == "" {
+		missing = append(missing, EnvUIToken)
+	}
+	if len(missing) > 0 {
+		where := fmt.Sprintf("(looked in %s and the environment)", path)
+		if !isDefault {
+			where = fmt.Sprintf("(looked in %s; the environment is NOT consulted for a non-default instance)", path)
+		}
+		return UIConfig{}, &UIConfigMissing{Missing: missing, Where: where}
 	}
 	cfg.URL = strings.TrimRight(cfg.URL, "/")
 	return cfg, nil

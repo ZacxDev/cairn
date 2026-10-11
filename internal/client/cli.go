@@ -3,7 +3,6 @@ package client
 import (
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -129,7 +128,28 @@ func Verbs() []Verb {
 		// that it grades a single row.
 		{Name: "routes", Help: "print the scope->instance table, and grade it against reality",
 			Flags: []string{"--check", "--no-sync"}, Run: Routes},
+		// 🔴 GO-ONLY, DECLARED: scope mail's four verbs (S3 of the scope-mail plan, decision 8) —
+		// the `memo-*` rows of `capability_ledger.LEDGER` and `flake.nix`'s `want-go-only-verbs.txt`
+		// make that legal. FLAT and hyphenated for the arc verbs' reason: ONE `Writes` bit each. They
+		// talk to `cairn-ui`'s client listener (`CAIRN_UI_URL`), never the pod — see `memo.go`.
+		{Name: "memo-check", Help: "print memos this session has not seen, as one fenced UNTRUSTED block (asks the memo listener)",
+			Flags: []string{"--scope", "--repo", "--session", "--timeout", "--statuses"}, Run: MemoCheck},
+		{Name: "memo-read", Help: "one memo, or every live memo of the scope, with full bodies (asks the memo listener)",
+			Flags: []string{"--scope", "--repo", "--id"}, Run: MemoRead},
+		{Name: "memo-send", Writes: true, Help: "send a short memo to the scope (writes to the memo listener)",
+			Flags: []string{"--scope", "--repo", "--subject", "--body", "--body-file", "--ttl"}, Run: MemoSend},
+		{Name: "memo-retract", Writes: true, Help: "retract a memo you sent, or moderate one as a scope admin (writes to the memo listener)",
+			Flags: []string{"--scope", "--repo", "--id"}, Run: MemoRetract},
 	}
+}
+
+// requiredOneOf is which verbs refuse to run without AT LEAST ONE of a flag group. 🔴 THE ID VERBS
+// REQUIRE A SCOPE, AND `--repo`'s DEFAULT OF "." DOES NOT COUNT AS ONE: an id is unique only within
+// one instance's database (scope-mail round 1 🔴3), so the scope that routes the request must be
+// one the caller NAMED, never the directory they happened to be standing in.
+var requiredOneOf = map[string][]string{
+	"memo-read":    {"--scope", "--repo"},
+	"memo-retract": {"--scope", "--repo"},
 }
 
 // requiredFlags is which flags a verb refuses to run without. Kept beside the table rather than
@@ -147,6 +167,10 @@ var requiredFlags = map[string][]string{
 	// scope, so only the slug (and, to register, the payload) is required.
 	"arc-show":     {"--slug"},
 	"arc-register": {"--slug", "--from"},
+	// The memo verbs (scope-mail decision 8). `memo-check`'s `--session` is checked by the verb,
+	// because `--statuses` alone needs none; `memo-send`'s body is one of TWO flags, also the verb's.
+	"memo-send":    {"--subject"},
+	"memo-retract": {"--id"},
 }
 
 // DeclaredVerbs is `<name> <writes|reads>` per line, sorted, for a ledger to read out of the
@@ -460,7 +484,7 @@ func Parse(argv []string) (Verb, Options, error) {
 		// token as its value; missing from the switch, it parses and sets nothing. Both leave
 		// a well-formed command line doing the wrong thing at exit 0.
 		needsValue := name != "--no-sync" && name != "--list" && name != "--all-scopes" &&
-			name != "--json" && name != "--check"
+			name != "--json" && name != "--check" && name != "--statuses"
 		if !needsValue {
 			if hasValue {
 				return verb, opts, usagef("cairn: %s takes no value", name)
@@ -476,6 +500,8 @@ func Parse(argv []string) (Verb, Options, error) {
 				opts.JSON = true
 			case "--check":
 				opts.Check = true
+			case "--statuses":
+				opts.Statuses = true
 			}
 			i++
 			continue
@@ -529,6 +555,24 @@ func Parse(argv []string) (Verb, Options, error) {
 			opts.Slug = value
 		case "--from":
 			opts.From = value
+		// `--timeout` AFTER the verb is `memo-check`'s alone (the hook passes `--timeout 1` there,
+		// decision 7); it sets the same bound the global flag does, refused the same way.
+		case "--timeout":
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				return verb, opts, usagef("cairn: --timeout expects an integer, got %q", value)
+			}
+			opts.Timeout = n
+		case "--id":
+			opts.ID, opts.HasID = value, true
+		case "--subject":
+			opts.Subject = value
+		case "--body":
+			opts.Body, opts.HasBody = value, true
+		case "--body-file":
+			opts.BodyFile = value
+		case "--ttl":
+			opts.TTL = value
 		}
 		i++
 	}
@@ -541,6 +585,17 @@ func Parse(argv []string) (Verb, Options, error) {
 	for _, need := range requiredFlags[verb.Name] {
 		if _, ok := seen[need]; !ok {
 			return verb, opts, usagef("cairn: %s requires %s", verb.Name, need)
+		}
+	}
+	if group := requiredOneOf[verb.Name]; len(group) > 0 {
+		found := false
+		for _, need := range group {
+			if _, ok := seen[need]; ok {
+				found = true
+			}
+		}
+		if !found {
+			return verb, opts, usagef("cairn: %s requires %s", verb.Name, strings.Join(group, " or "))
 		}
 	}
 	if len(positionals) != positionalsWanted {
@@ -589,6 +644,13 @@ func Run(env Env, argv []string) int {
 	// The FILE-key half of the sweep cannot happen here — the config path is not known until
 	// an alias has been resolved — so `LoadConfigFor` emits that half through the same sink.
 	SetDeprecationSink(func(line string) { fmt.Fprintln(env.Stderr, "cairn: "+line) })
+	// ⚠ EXCEPT FOR `memo-check`, whose FIRST stderr line must be its `memo-status=` token
+	// (scope-mail decision 7): its warnings are held and written right after the token. It is
+	// Go-only, so no parity row compares its stderr; every other verb keeps the order above.
+	if firstVerb(argv) == "memo-check" {
+		deferMemoWarnings(env)
+		defer flushMemoWarnings(env)
+	}
 	WarnDeprecations(envalias.OSDeprecations())
 
 	verb, opts, err := Parse(argv)
@@ -600,6 +662,7 @@ func Run(env Env, argv []string) int {
 		return ExitOK
 	}
 	if err != nil {
+		flushMemoWarnings(env)
 		fmt.Fprintln(env.Stderr, err)
 		return ExitUsage
 	}
@@ -620,6 +683,7 @@ func Run(env Env, argv []string) int {
 		return ExitUsage
 	}
 	code, runErr := verb.Run(env, opts)
+	flushMemoWarnings(env)
 	if runErr == nil {
 		return code
 	}
@@ -831,7 +895,7 @@ func doctorInstance(opts Options, routing Routing, instance Instance) ([]doctor.
 // claiming "it does not exist" about a path nobody configured would be a statement about the
 // operator's disk that this code cannot support.
 func MirrorRoot() string {
-	raw := strings.TrimSpace(os.Getenv("CAIRN_MIRROR_ROOT"))
+	raw := strings.TrimSpace(getenv(MirrorRootEnv))
 	if raw == "" {
 		return ""
 	}

@@ -61,7 +61,7 @@ const (
 // already exists on every verb and a second mechanism reaching the same value is the shape that
 // leaves the first one silently dead.
 func DefaultCacheRoot() string {
-	home, err := os.UserHomeDir()
+	home, err := homeDir()
 	if err != nil {
 		// The oracle's `Path.home()` RAISES here, and a client that guessed `/` instead
 		// would write a cache into somebody's root. Naming the absence is the honest
@@ -79,7 +79,7 @@ func expandUser(p string) string {
 	if p != "~" && !strings.HasPrefix(p, "~/") {
 		return p
 	}
-	home, err := os.UserHomeDir()
+	home, err := homeDir()
 	if err != nil {
 		return p
 	}

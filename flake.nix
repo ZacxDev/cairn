@@ -1867,11 +1867,16 @@
           # pins the one above against the PYTHON parser and this one against
           # `capability_ledger.GO_ONLY_VERBS` (the `go_only` rows), so a verb cannot be
           # moved between them, or declared Go-only here alone, without a red test. The
-          # first, `sessions`, is the arcs/sessions S2 slice; the arc registry is S3.
+          # first, `sessions`, is the arcs/sessions S2 slice; the arc registry is S3; the four
+          # `memo-*` verbs are scope mail's S3 (decision 8 of the scope-mail plan).
           cat > want-go-only-verbs.txt <<'EOF'
           arc-register writes
           arc-show reads
           arcs reads
+          memo-check reads
+          memo-read reads
+          memo-retract writes
+          memo-send writes
           sessions reads
           EOF
           sed -i 's/^ *//; /^$/d' want-verbs.txt want-go-only-verbs.txt

@@ -388,7 +388,7 @@ func lookup(env envLookup) envLookup {
 	if env != nil {
 		return envalias.Resolving(env)
 	}
-	return envalias.OSValue
+	return getenv
 }
 
 // ConfigPath is the DEFAULT instance's config file — `$CAIRN_CONFIG` or the
@@ -400,7 +400,7 @@ func ConfigPath(env envLookup) string {
 	if raw := strings.TrimSpace(lookup(env)(ConfigEnv)); raw != "" {
 		return expandUser(raw)
 	}
-	home, err := os.UserHomeDir()
+	home, err := homeDir()
 	if err != nil {
 		return ""
 	}

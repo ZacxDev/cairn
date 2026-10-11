@@ -74,6 +74,19 @@ type Options struct {
 	// scope, and `--from` is the registration payload's JSON file (`-` for stdin).
 	Slug string
 	From string
+
+	// The memo verbs' operands (scope-mail decision 8). `--id` is kept as the TEXT given, with a
+	// `Has…`, so the verb can refuse a malformed id at exit 2 with the value named; `--body` carries
+	// a `Has…` because an EMPTY body given on purpose and no body at all are different requests
+	// (`--body-file` is then the other one).
+	Statuses bool
+	ID       string
+	HasID    bool
+	Subject  string
+	Body     string
+	HasBody  bool
+	BodyFile string
+	TTL      string
 }
 
 // Selection is recall's FLAGS mapped onto the reader's arguments.
