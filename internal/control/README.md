@@ -258,7 +258,7 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # over EIGHT packages; prints its own mutant count
+python3 tests/control_mutants.py          # over NINE packages; prints its own mutant count
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
@@ -372,9 +372,12 @@ survivor did not exist while that survivor was the round's most important findin
 `python3 tests/control_mutants.py` prints the `SUMMARY` line these are copied from, and
 the survivor paragraph below must name exactly the mutants that actually survived.
 
-🔴 **IT RUNS OVER EIGHT PACKAGES NOW, BECAUSE THE GUARDS SPAN A SEAM.** The set, in `PKGS`
+🔴 **IT RUNS OVER NINE PACKAGES NOW, BECAUSE THE GUARDS SPAN A SEAM.** The set, in `PKGS`
 order: `internal/control`, `internal/control/tokenfile`, `internal/identity`,
-`internal/api`, `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence`. `internal/presence`
+`internal/api`, `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence`, `internal/memo`.
+`internal/memo` (S1 of the scope-mail plan) is the ninth: `MaySend`, `MayRead` and `MayRetract` decide
+memo authority from the same `control.Authorization`, and the retraction rule's decision-17 case is
+where a `control.Narrow` that ignored its verb argument is killed. `internal/presence`
 (S2 of the arcs/presence plan) is the eighth: its owner predicate decides who may see and ring a pane
 from the same `identity.Identity` and `control.Authorization.Narrowed()` the rest of the seam produces,
 and one of its guards — the queue's owner filter — is reachable only at unit level, because the
@@ -1060,10 +1063,34 @@ inherit any of it. On the RENDER side — the four sites a program says it out l
 a credential carries its principal's authority, computed at the moment it is asked, so one
 issued to a principal that can reach nothing authenticates and sees nothing (which is why
 `cairn-server -issue-credential` asks `Authenticate` with the token it just minted and says
-what it reaches). It does not REVOKE: `EventCredentialRevoked` still has no writer in this
-repository, so a rotation is "issue, then hand-append the revocation" — the same shape as
-the gap this path closed, one event over. And it does not RE-ISSUE: there is no recovery
-from a lost token, by construction, because the journal holds only the digest.
+what it reaches). It does not REVOKE — `RevokeCredential` and `cairn-server
+-revoke-credential` do (scope-mail plan, decision 16): one `credential-revoked` event through the
+same `Append`, the label printed so the operator sees WHICH credential they cut off, and an
+unknown or ALREADY-revoked id refused in its own words with nothing appended (`apply` would
+accept a second revocation as a no-op, so success there would tell an operator who typed the
+dead credential's id that the live one is gone). Before it, a rotation was "issue, then
+hand-append the revocation". And it does not RE-ISSUE: there is no recovery from a lost token,
+by construction, because the journal holds only the digest.
+
+## Verb narrowing (scope-mail plan, decision 17)
+
+🔴 **SCOPE NARROWING KEPT EACH SCOPE'S FULL VERB SET.** A credential narrowed to one scope under
+an owner still carried `admin` there — enough to revoke other principals' grants through
+`POST /unshare`. `Narrow` therefore takes the credential's VERB narrowing beside its scope
+narrowing and intersects every kept scope's verbs with it, dropping a scope whose intersection is
+empty; `Authenticate` passes `Credential.NarrowedVerbs`. The early return now needs BOTH absent —
+the old `only == nil` return passed a verbs-only narrowing through un-narrowed. `Narrowed()` is
+true for either kind, so a verb-narrowed credential can no more sign in than a scope-narrowed one.
+
+The narrowing is a NEW EVENT KIND, `credential-verbs-narrowed {credential_id, verbs}`, written in
+the SAME batch as `credential-issued` by `IssueCredential` (and by `-issue-credential
+-narrow-verbs`, which refuses `-narrow-scopes` without it). A kind, not a field: an older build
+silently drops an unknown FIELD (a narrowing would vanish and `admin` return) but refuses an
+unknown KIND whole. Apply semantics: INTERSECT (a second, wider event cannot restore a verb); an
+EMPTY set and an unknown credential are refused; a revoked credential is narrowed anyway (it
+authenticates nothing either way). ⚠ **Credentials issued before this change keep every verb
+until re-issued**, and an older build's rollback needs the recipe in the plan's decision 17 —
+remove only the `credential-verbs-narrowed` lines, after revoking the credential.
 
 ## What this package structurally cannot see
 

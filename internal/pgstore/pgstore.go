@@ -1,5 +1,8 @@
 // Package pgstore is the PostgreSQL backend for the browser surface's MUTABLE state:
-// the session table and the invite table.
+// the session table, the invite and team-link tables, and — migration 3, S1 of
+// `claudedocs/plan-cairn-scope-mail.md` — scope mail's `memos` and `memo_events`
+// ([MemoStore], whose own doc carries its rules: its liveness predicate IS written in SQL,
+// once, because a memo has no Go spelling for it to disagree with).
 //
 // # 🔴 WHAT IS IN HERE AND WHAT IS DELIBERATELY NOT
 //

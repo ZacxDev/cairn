@@ -1,7 +1,10 @@
 // Package memo is scope mail's TRUST BOUNDARY: the two code-point predicates, the one type
 // stored memo text travels in, and the one renderer that turns it into the fenced block an
-// agent reads. S0 of `claudedocs/plan-cairn-scope-mail.md` (decisions 5 and 19). Nothing calls
-// it yet: storage (S1), the listener (S2) and the verbs (S3) are later slices.
+// agent reads. S0 of `claudedocs/plan-cairn-scope-mail.md` (decisions 5 and 19). S1 added the
+// authority predicates ([MaySend], [MayRead], [MayRetract]), the send-side content rules
+// ([CheckSend], over `internal/redact`'s confident subset) and the limits, and
+// `internal/pgstore.MemoStore` is their one caller; the listener (S2) and the verbs (S3) are
+// later slices, so nothing reachable from a request calls any of it yet.
 //
 // 🔴 MEMO TEXT IS THE FIRST STORE-ORIGINATED TEXT AUTO-INJECTED INTO AN AGENT'S CONTEXT, so
 // this package states what it guarantees at the scope its tests check, and no wider.
