@@ -1950,6 +1950,26 @@ jobs:
     # into its own blocking job — not deleting this line, which would make chromium's version a merge
     # blocker again.
     continue-on-error: true
+    # 🔴 TWO LEGS, SPLIT ONLY WHERE NO STATE CROSSES THE LINE — `tests/test_uiaudit_job_ledger.py`
+    # pins every step to its leg. It ran as one serial job (~9.5 min: guards ~2.0, walk ~3.7,
+    # `pwa_check.sh` ~3.2); the legs run in parallel on separate runners.
+    #   walk — the guards, then the walk, then `verify-push`, the summary and the upload, IN THE
+    #          ORDER THEY HAD. The guards stay AHEAD of the walk in the same leg because they hold
+    #          the positive control: a walk that pushes before the instrument was validated would
+    #          publish numbers indistinguishable from a collector wired to nothing. This is the ONLY
+    #          leg holding the hub secrets, so one run pushes at most once, as before.
+    #   pwa  — `pwa_check.sh` alone. It shares nothing with the walk leg: its own `mktemp` work dir,
+    #          its own port, its own cairn-ui build, and it strips the four CAIRN_AUDIT_* variables
+    #          from the walk it runs and exits 2 if a push confirmation appears anyway.
+    # ⚠ Two orderings CHANGED, both toward more checking: `pwa_check.sh` used to be skipped when the
+    # walk failed, and `verify-push` used to be skipped when `pwa_check.sh` failed (it had no
+    # `always()`). Each now runs regardless of the other. And re-running only the failed `pwa` leg
+    # no longer re-runs — and re-pushes — the walk.
+    # `fail-fast: false` so one leg going red never cancels the other mid-push.
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [walk, pwa]
     # 🔴 `GOTOOLCHAIN=local` FORBIDS THE SWITCH, AND WITHOUT IT THIS JOB'S PIN WAS A MEASURED
     # NO-OP. Go 1.21+ defaults to `GOTOOLCHAIN=auto`, which DOWNLOADS a newer toolchain when a
     # `go` directive in the module graph asks for one — silently, and with the pinned compiler
@@ -2076,6 +2096,7 @@ jobs:
       # REFUSES rather than skips when chromium is absent — so this step failing is also the
       # signal that the step above installed nothing.
       - name: the harness's own guards, including the positive control
+        if: matrix.part == 'walk'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
           UIAUDIT_REPO_ROOT: ${{ github.workspace }}
@@ -2203,6 +2224,7 @@ jobs:
 
       - name: the walk — boot cairn-ui, drive chromium, push, read the diff back
         id: walk
+        if: matrix.part == 'walk'
         env:
           # 🔴 ENV/SECRET ONLY, NEVER LITERALS. `tests/leakscan.py`'s `reachable-hostname`
           # rule is a general unbounded regex over several domains applied line-by-line to
@@ -2247,6 +2269,7 @@ jobs:
       # local instrument validation, too heavy to repeat on every push. Exit 2 is "could not vouch" and
       # is a failure here exactly like 1 — never a skip.
       - name: pwa_check.sh — the mobile plan's closing-condition clauses (a)–(e)
+        if: matrix.part == 'pwa'
         run: |
           set -uo pipefail
           ./uiaudit/pwa_check.sh 2>&1 | tee "${{ runner.temp }}/pwa-check.log"
@@ -2269,7 +2292,7 @@ jobs:
       # something has been seen to produce it; the positive side is that `pushConfirmation`
       # is printed on the ONLY path that follows a 2xx push with a non-empty `run_id`.
       - name: verify-push — the push actually landed
-        if: steps.walk.outputs.credentialed == 'yes'
+        if: matrix.part == 'walk' && steps.walk.outputs.credentialed == 'yes'
         env:
           UIAUDIT_WORK: ${{ runner.temp }}/uiaudit
         run: |
@@ -2287,7 +2310,7 @@ jobs:
           grep -F "$needle" "$UIAUDIT_WORK/walk.log"
 
       - name: the deterministic diff, in the log and in the step summary
-        if: always()
+        if: always() && matrix.part == 'walk'
         env:
           UIAUDIT_WORK: ${{ runner.temp }}/uiaudit
         run: |
@@ -2322,7 +2345,7 @@ jobs:
       # `transportFailure`, which is the reason a transport error's message is classified rather
       # than reproduced.
       - name: upload the captures
-        if: always()
+        if: always() && matrix.part == 'walk'
         uses: actions/upload-artifact@v4
         with:
           name: uiaudit-captures
