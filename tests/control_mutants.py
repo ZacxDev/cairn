@@ -29,22 +29,39 @@ for a reason that has nothing to do with the guard.
 
     python3 tests/control_mutants.py            # run the battery
     python3 tests/control_mutants.py --show      # print each edit without running
+    python3 tests/control_mutants.py --jobs 4    # four reused worker trees in parallel
+    python3 tests/control_mutants.py --shard 3/8 --results out/3.json   # one CI shard
+    python3 tests/control_mutants.py --aggregate out/   # every shard ran every row ONCE
 
-Exit 0 only when the positive control is GREEN, every mutant is KILLED, and every kill
-is attributed to the test that claims it. Anything else exits 1 and says which.
+A shard enforces every refusal below over its own rows; `--aggregate` is the seam check over
+all of them and prints the one SUMMARY an unsharded run prints.
+
+Exit 0 only when the positive control is GREEN, every mutant is KILLED, and every kill is
+attributed to the test that claims it. Anything else exits 1 and says which; exit 2 is "could
+not vouch" — no toolchain, a failed restore, a drifted tree, or shards that do not cover the
+battery exactly once.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import queue
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass, field
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "tests"))
+
+from testlib import mutant_tree  # noqa: E402
 
 #: 🔴 MORE THAN ONE PACKAGE, BECAUSE THE GUARDS THIS BATTERY EXERCISES SPAN A SEAM — AND
 #: NO TOTAL IS WRITTEN DOWN HERE ON PURPOSE. This header opened "FOUR PACKAGES, NOT ONE"
@@ -86,6 +103,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 #: either side alone scores those SURVIVED while the suite that catches them was never run.
 #: A SURVIVED mutant that only means "the killing test did not run" is a false finding that
 #: reads as a coverage gap and sends the next reader to write a test that already exists.
+#:
+#: 🔴 WHAT THIS TUPLE SCOPES NOW, SINCE A ROW NO LONGER RUNS ALL OF IT. A killed-by row runs
+#: only the packages that hold its named `killer` and `extra_killers` — LOCATED from the
+#: `*_test.go` sources, wherever they sit, so the cross-seam killer above is always run and
+#: the false SURVIVED it describes cannot arise from scoping. `scope_for` holds the rule and
+#: the one verdict shift it causes. This tuple is still the scope of the POSITIVE CONTROL and
+#: of every `equivalent` row, whose claim is that nothing anywhere in the seam notices.
 PKGS = (
     # The model and the ONE authz predicate everything above authorises from.
     "./internal/control/",
@@ -211,9 +235,12 @@ class Mutant:
     #: load-bearing, and reporting a confident `killed=1` with nothing noticing, because
     #: the count pin counts ROWS and not SCOPE.
     #:
-    #: So the field now means "the seam PLUS these", and `run_tests` receives the union.
-    #: A row naming a package already in `PKGS` is accepted and redundant; a row that omits
-    #: one cannot exist.
+    #: So the field now means "the seam PLUS these". A row naming a package already in
+    #: `PKGS` is accepted and redundant; a row that omits one cannot exist.
+    #:
+    #: ⚠ WHAT A RUN RECEIVES IS NARROWER THAN THAT UNION SINCE THE BATTERY WAS SHARDED: a
+    #: killed-by row runs the packages its named tests are LOCATED in, plus what this field
+    #: ADDS beyond `PKGS`; an `equivalent` row still runs the whole union. `scope_for` says why.
 
     def __post_init__(self) -> None:
         if self.pkgs:
@@ -4939,6 +4966,29 @@ MUTANTS: tuple[Mutant, ...] = (
 )
 
 
+#: 🔴 THE SLOWEST ROWS, DEALT FIRST WHEN THE BATTERY IS SHARDED, SO THEY CANNOT STACK IN ONE
+#: SHARD AND MAKE IT THE JOB'S CRITICAL PATH. `partition` deals these round-robin before anything
+#: else, which puts up to N of them in N different shards. MEASURED, not guessed: the rows that
+#: took 40 s or more in a full serial run of the narrowed battery (24-core host, load ~6-11) —
+#: each waits out a deadline inside its killing test. Plus the one row that ran into the 2m
+#: `-timeout` in a `--no-run-filter` run: its named killer fails in seconds, and the timeout came
+#: from a DIFFERENT test in the same package deadlocking on the mutant, which the `-run` filter no
+#: longer starts — so it is only slow when that filter is off.
+#:
+#: Named here, in the RUNNER, rather than as a field on the row: the rows are shared with other
+#: branches and this is a scheduling hint, not a claim about the guard. ⚠ A name here that no row
+#: carries is REFUSED at start-up, so a renamed row cannot leave the hint pointing at nothing —
+#: and a slow row MISSING from it costs wall clock, never a verdict.
+SLOW_ROWS: frozenset[str] = frozenset({
+    "presence-main-ignores-the-agent-bind-refusal",
+    "presence-agent-bind-reachability-unchecked",
+    "unconfigured-deployment-gets-a-TYPED-nil-session-authority",
+    "an-unreadable-store-root-is-swallowed",
+    "ui-startup-serves-an-unreachable-database",
+    "refresh-holds-the-lock-across-the-authority",
+})
+
+
 def go_available() -> bool:
     return shutil.which("go") is not None
 
@@ -4951,22 +5001,13 @@ def prepare_tree(dest: Path) -> None:
     is a FILE holding `gitdir: ...`), so a stray command inside the copy lands on the real
     branch. Excluding it also means a mutated tree can never be committed by accident,
     which is the failure mode that matters for a battery that edits source in place.
+    `mutant_tree.copy_module` refuses if one arrives anyway.
     """
-    shutil.copytree(
-        REPO_ROOT,
-        dest,
-        ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", ".direnv", "result"),
-        symlinks=True,
-    )
-    stray = dest / ".git"
-    if stray.exists():  # belt and braces; the ignore above should have handled it
-        if stray.is_dir():
-            shutil.rmtree(stray)
-        else:
-            stray.unlink()
+    mutant_tree.copy_module(REPO_ROOT, dest)
 
 
-def run_tests(tree: Path, pkgs: tuple[str, ...] = ()) -> tuple[bool, set[str], str]:
+def run_tests(tree: Path, pkgs: tuple[str, ...] = (),
+              run: str | None = None) -> tuple[bool, set[str], str]:
     """Run the package's tests, returning (green, failing test names, raw output).
 
     🔴 THE FAILING TEST NAMES COME FROM `--- FAIL:` LINES, NOT FROM THE EXIT CODE. An
@@ -4984,7 +5025,8 @@ def run_tests(tree: Path, pkgs: tuple[str, ...] = ()) -> tuple[bool, set[str], s
         # `sync.Mutex` — the mutant is still KILLED, but at the default it costs ten
         # minutes of wall clock per occurrence instead of two, in a battery this job
         # runs on every push. The shortest real package here finishes in seconds.
-        ["go", "test", "-count=1", "-timeout=2m", "-v", *(pkgs or PKGS)],
+        ["go", "test", "-count=1", "-timeout=2m", "-v",
+         *(["-run", run] if run else []), *(pkgs or PKGS)],
         cwd=tree,
         capture_output=True,
         text=True,
@@ -4999,24 +5041,207 @@ def run_tests(tree: Path, pkgs: tuple[str, ...] = ()) -> tuple[bool, set[str], s
     return green, failing, out
 
 
-def apply_mutation(tree: Path, m: Mutant) -> None:
-    target = tree / m.path
-    text = target.read_text()
-    found = text.count(m.old)
-    if found != m.occurrences:
-        raise MutationError(
+def apply_mutation(tree: Path, m: Mutant):
+    """The edit, as a context manager that restores the original bytes and VERIFIES it."""
+    return mutant_tree.mutated(
+        tree / m.path, m.old, m.new, m.occurrences,
+        lambda found: MutationError(
             f"{m.name}: pattern occurs {found} time(s) in {m.path}, expected {m.occurrences}. "
             "A pattern that matches nothing scores the mutant SURVIVED without ever running; "
             "a pattern that matches too much mutates code this row does not name. Re-derive it."
+        ),
+    )
+
+
+def scope_for(m: Mutant, index: dict[str, set[str]],
+              narrow_run: bool = True) -> tuple[tuple[str, ...], str | None]:
+    """The packages (and the `-run` filter) a row's verdict needs — and nothing more.
+
+    🔴 NARROWED TO WHERE THE NAMED TESTS LIVE, LOCATED MECHANICALLY. Every package holding
+    `killer` or an `extra_killers` entry — found by `func TestX(` in a `*_test.go`, not by a
+    hand-kept map — plus whatever `pkgs` ADDS to the seam. That is every test whose result
+    the verdict below reads: KILLED needs `killer` in `failing`, the ledger needs every extra
+    there too. Running the other packages of `PKGS` bought one thing only, the chance that
+    some OTHER guard went red and the row read MISATTRIBUTED; it cost a full recompile and
+    run of the whole seam per row, which was most of the battery's wall clock.
+
+    ⚠ THAT IS THE ONE SEMANTIC SHIFT, AND IT CANNOT TURN A FAILING ROW INTO A PASSING ONE.
+    A row whose named killer did NOT fire, while some unnamed test did, used to read
+    MISATTRIBUTED; now the unnamed test may not have run and the row reads SURVIVED. Both are
+    refusals of the battery. A row whose killer DID fire reads exactly as before, because
+    the killer and every extra still run.
+
+    ⚠ A NAME THAT CANNOT BE LOCATED IS REFUSED, NEVER NARROWED TO NOTHING. A row naming a
+    test that does not exist would otherwise run zero tests and the empty `go test` would
+    be scored by whatever its exit code happened to be.
+
+    ⚠ TWO ROW SHAPES KEEP THE WHOLE SEAM, ON PURPOSE: an `equivalent` row, whose claim is
+    that NO test in the seam notices, so narrowing it would weaken the claim it makes; and a
+    row with an empty `killer`, whose claim is "any failure counts" and which names nothing
+    to locate.
+    """
+    if m.equivalent or not m.killer:
+        return tuple(m.pkgs or PKGS), None
+    names = (m.killer, *m.extra_killers)
+    unlocated = [n for n in names if not index.get(n)]
+    if unlocated:
+        raise MutationError(
+            f"{m.name}: cannot locate {unlocated} as `func <name>(` in any *_test.go. A row "
+            "whose named guard does not exist would run nothing and be scored by an exit code."
         )
-    target.write_text(text.replace(m.old, m.new))
+    found = set().union(*(index[n] for n in names)) | (set(m.pkgs) - set(PKGS))
+    ordered = tuple(p for p in PKGS if p in found) + tuple(sorted(found - set(PKGS)))
+    return ordered, (mutant_tree.run_pattern(names) if narrow_run else None)
+
+
+@dataclass
+class Tally:
+    """One run's verdicts, by row name — the unit a shard writes and the aggregate sums."""
+
+    killed: list[str] = field(default_factory=list)
+    survived: list[str] = field(default_factory=list)
+    misattributed: dict[str, list[str]] = field(default_factory=dict)
+    broken: dict[str, str] = field(default_factory=dict)
+    stale_extras: dict[str, dict[str, list[str]]] = field(default_factory=dict)
+
+
+def judge(by_name: dict[str, Mutant], selected: list[str], t: Tally) -> bool:
+    """Print the SUMMARY and every refusal for `selected`; True when the run may pass.
+
+    🔴 ONE FUNCTION, CALLED BY AN UNSHARDED RUN, BY EACH SHARD AND BY THE AGGREGATE, so the
+    refusals cannot drift apart between them — a shard that enforced a weaker rule than the
+    whole battery would be a gate that loosened by being split.
+    """
+    print()
+    expected_survivors = {n for n in selected if by_name[n].equivalent}
+    actual_survivors = set(t.survived)
+    print(
+        f"SUMMARY mutants={len(selected)} killed={len(t.killed)} survived={len(t.survived)} "
+        f"misattributed={len(t.misattributed)} harness-errors={len(t.broken)} "
+        f"stale-extras={len(t.stale_extras)}"
+    )
+
+    ok = True
+    # A row with NO verdict — a shard that stopped early still writes its results — must not
+    # simply be absent from every count, or the SUMMARY reads short and nothing refuses.
+    judged = set(t.killed) | set(t.survived) | set(t.misattributed) | set(t.broken)
+    unjudged = [n for n in selected if n not in judged]
+    if unjudged:
+        print(f"\n🔴 NO VERDICT for {unjudged} — a count that omits rows is not a count of the "
+              "battery.", file=sys.stderr)
+        ok = False
+    for name, exc in t.broken.items():
+        print(f"\n🔴 HARNESS: {name}\n{exc}", file=sys.stderr)
+        ok = False
+    for name, failing in t.misattributed.items():
+        print(
+            f"\n🔴 MISATTRIBUTED: {name} was killed by {sorted(failing)}, not by its named "
+            f"guard {by_name[name].killer}. That proves the suite can fail and proves nothing "
+            "about the guard this row exists for.",
+            file=sys.stderr,
+        )
+        ok = False
+
+    # 🔴 A LISTED EXTRA KILLER THAT DID NOT FAIL IS A FAILURE, NOT A NOTE. The whole point
+    # of making the field real is that a guard which quietly stopped noticing is exactly
+    # what a battery is for; reporting it without failing would be the inert field again,
+    # one layer up. The remedy is per row and is a DECISION: either the guard was moved out
+    # from under this mutant's observable — fix the guard — or the row's list was aspirational
+    # and must be narrowed, with the reason written down beside it.
+    for name, row in t.stale_extras.items():
+        print(
+            f"\n🔴 STALE extra_killers: {name} lists {sorted(row['absent'])}, which did NOT "
+            f"fail. What actually failed: {sorted(row['failing'])}. A listed killer that has "
+            "stopped killing reads as coverage and provides none — decide whether the GUARD "
+            "moved or the LIST was wrong, and say which in the row.",
+            file=sys.stderr,
+        )
+        ok = False
+
+    unexpected = actual_survivors - expected_survivors
+    if unexpected:
+        print(f"\n🔴 SURVIVED WITHOUT AN EQUIVALENT LABEL: {sorted(unexpected)}", file=sys.stderr)
+        print("  Each is a guard the suite does not actually have.", file=sys.stderr)
+        ok = False
+
+    mislabelled = expected_survivors - actual_survivors
+    if mislabelled:
+        # Not a failure: a mutant labelled EQUIVALENT that gets KILLED means the label was
+        # too generous and a real guard exists. It is reported so the label gets corrected.
+        print(
+            f"\n⚠ LABELLED EQUIVALENT BUT KILLED: {sorted(mislabelled)} — the label is wrong "
+            "and should be removed; a guard does see this.",
+            file=sys.stderr,
+        )
+
+    for name in t.survived:
+        if by_name[name].equivalent:
+            print(f"\nEQUIVALENT {name}: {by_name[name].equivalent_reason}")
+
+    return ok
+
+
+def table_digest(rows=None) -> str:
+    """Names plus edits of every row, so an aggregate refuses shards cut from another table."""
+    h = hashlib.sha256()
+    for m in rows if rows is not None else MUTANTS:
+        h.update(repr((m.name, m.path, m.old, m.new, m.killer, m.extra_killers)).encode())
+    return h.hexdigest()
+
+
+def aggregate(results_dir: Path) -> int:
+    """The SEAM GUARD over the shards, and the battery's one SUMMARY rebuilt from them.
+
+    🔴 EVERY SHARD CAN BE GREEN WHILE THE BATTERY IS NOT. A shard enforces the refusals over
+    the rows it was handed; a row handed to NO shard is enforced by nobody, and a whole shard
+    whose result never arrived leaves the others green. `mutant_tree.seam_violations` refuses
+    unless the union of the shards' rows is this table's rows, each exactly once, from one
+    shard count, cut from one table. Exit 2 for that — "could not vouch", never "failed" —
+    and then `judge` over the union, which is the old single run's SUMMARY and refusals.
+    """
+    expected = [m.name for m in MUTANTS]
+    loaded, problems = mutant_tree.load_shard_results(
+        results_dir, "control", table_digest(), expected)
+    if problems:
+        return 2
+
+    t = Tally()
+    for r in loaded:
+        v = r["tally"]
+        t.killed += v["killed"]
+        t.survived += v["survived"]
+        t.misattributed.update(v["misattributed"])
+        t.broken.update(v["broken"])
+        t.stale_extras.update(v["stale_extras"])
+    by_name = {m.name: m for m in MUTANTS}
+    return 0 if judge(by_name, expected, t) else 1
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--show", action="store_true", help="print each edit and exit without running")
     ap.add_argument("--only", help="run one mutant by name")
+    ap.add_argument("--shard", help="run shard i of N (`i/N`), a deterministic partition")
+    ap.add_argument("--jobs", type=int, default=1,
+                    help="worker trees run in parallel (default 1); each gets its own copy")
+    ap.add_argument("--results", type=Path, help="write this run's verdicts as JSON here")
+    ap.add_argument("--aggregate", type=Path, metavar="DIR",
+                    help="check the shard results in DIR cover the battery exactly once, and "
+                    "print the battery's SUMMARY from them; runs no mutant")
+    ap.add_argument("--workdir", type=Path,
+                    help="put the worker trees here (default: a fresh temp dir). A STABLE path "
+                    "is what lets a restored Go build cache hit, since it keys on the directory")
+    ap.add_argument("--no-run-filter", action="store_true",
+                    help="run every test in each row's packages instead of only the named ones")
     args = ap.parse_args()
+
+    stale_hint = sorted(SLOW_ROWS - {m.name for m in MUTANTS})
+    if stale_hint:
+        print(f"control_mutants: SLOW_ROWS names no row: {stale_hint}", file=sys.stderr)
+        return 2
+
+    if args.aggregate:
+        return aggregate(args.aggregate)
 
     if args.show:
         for m in MUTANTS:
@@ -5039,17 +5264,67 @@ def main() -> int:
     if args.only and not selected:
         print(f"control_mutants: no mutant named {args.only!r}", file=sys.stderr)
         return 2
+    shard = (1, 1)
+    if args.shard:
+        try:
+            shard = mutant_tree.parse_shard(args.shard)
+        except ValueError as exc:
+            print(f"control_mutants: {exc}", file=sys.stderr)
+            return 2
+        selected = mutant_tree.partition(selected, shard[1], key=lambda m: m.name,
+                                         front=SLOW_ROWS)[shard[0] - 1]
+        print(f"SHARD {shard[0]}/{shard[1]}: {len(selected)} of {len(MUTANTS)} rows")
+    jobs = max(1, min(args.jobs, len(selected) or 1))
 
-    with tempfile.TemporaryDirectory(prefix="cairn-control-mutants-") as tmp:
-        base = Path(tmp) / "base"
-        prepare_tree(base)
+    index = mutant_tree.go_test_index(REPO_ROOT)
+    t = Tally()
+    scopes: dict[str, tuple[tuple[str, ...], str | None]] = {}
+    for m in selected:
+        try:
+            scopes[m.name] = scope_for(m, index, narrow_run=not args.no_run_filter)
+        except MutationError as exc:
+            t.broken[m.name] = str(exc)
+    # The positive control covers every package any selected row runs — `PKGS` and whatever
+    # a row's located killers add — so no row's KILLED can be a package that was red unedited.
+    control_pkgs = PKGS + tuple(sorted(
+        {p for pk, _ in scopes.values() for p in pk} - set(PKGS)))
+
+    owned_tmp = None
+    if args.workdir:
+        work = args.workdir
+        work.mkdir(parents=True, exist_ok=True)
+    else:
+        owned_tmp = tempfile.TemporaryDirectory(prefix="cairn-control-mutants-")
+        work = Path(owned_tmp.name)
+    trees = [work / f"w{k}" for k in range(jobs)]
+    for tree in trees:
+        if tree.exists():
+            print(f"control_mutants: REFUSING — {tree} already exists; this run would mutate "
+                  "a tree it did not copy.", file=sys.stderr)
+            return 2
+    positive = "red"
+    try:
+        for tree in trees:
+            prepare_tree(tree)
+        before = mutant_tree.tree_digest(trees[0])
+        # The positive control runs in the FIRST tree only, so every other tree must be
+        # byte-identical to it or the control vouches for a tree the rows do not run in.
+        unlike = [str(tr) for tr in trees[1:] if mutant_tree.tree_digest(tr) != before]
+        if unlike:
+            print(f"control_mutants: REFUSING — worker trees {unlike} differ from {trees[0]}",
+                  file=sys.stderr)
+            return 2
 
         # 🔴 THE POSITIVE CONTROL, FIRST. Without it a KILLED verdict cannot be told
         # apart from a tree that never compiled.
         print("positive control (the copied tree, UNEDITED) ... ", end="", flush=True)
-        green, failing, out = run_tests(base)
+        green, failing, out = run_tests(trees[0], control_pkgs)
         if not green:
             print("RED")
+            # The verdict lines FIRST: with every package in one run, the failing one is
+            # usually far above the last 4000 characters.
+            verdicts = re.findall(r"^(?:\s*--- FAIL: .*|FAIL\s.*|panic: .*)$", out, re.MULTILINE)
+            print("\n".join(verdicts) or "(no FAIL lines)", file=sys.stderr)
             print(out[-4000:], file=sys.stderr)
             print(
                 "\ncontrol_mutants: REFUSING TO VOUCH — the unedited copy is not green, so "
@@ -5058,107 +5333,114 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-        print("GREEN")
+        positive = "green"
+        print("GREEN", flush=True)
 
-        killed: list[Mutant] = []
-        survived: list[Mutant] = []
-        misattributed: list[tuple[Mutant, set[str]]] = []
-        broken: list[tuple[Mutant, str]] = []
-        stale_extras: list[tuple[Mutant, list[str], set[str]]] = []
+        lock = threading.Lock()
+        free: queue.Queue[Path] = queue.Queue()
+        for tree in trees:
+            free.put(tree)
 
-        for m in selected:
-            work = Path(tmp) / f"m-{m.name}"
-            shutil.copytree(base, work, symlinks=True)
+        abort = threading.Event()
+        fatal: list[str] = []
+
+        def one(m: Mutant) -> None:
+            if m.name in t.broken:
+                with lock:
+                    print(f"  {m.name:<46} HARNESS ERROR", flush=True)
+                return
+            pkgs, run = scopes[m.name]
+            tree = None
+            while tree is None:
+                if abort.is_set():
+                    return
+                try:
+                    tree = free.get(timeout=1)
+                except queue.Empty:
+                    pass
+            started = time.monotonic()
             try:
-                apply_mutation(work, m)
+                with apply_mutation(tree, m):
+                    green, failing, out = run_tests(tree, pkgs, run)
             except MutationError as exc:
-                print(f"  {m.name:<46} HARNESS ERROR")
-                broken.append((m, str(exc)))
-                continue
+                free.put(tree)
+                with lock:
+                    print(f"  {m.name:<46} HARNESS ERROR", flush=True)
+                    t.broken[m.name] = str(exc)
+                return
+            except mutant_tree.RestoreError as exc:
+                # The tree is NOT handed back, and nothing else starts: no row may run on a
+                # tree whose contents are no longer known.
+                with lock:
+                    fatal.append(f"{m.name}: {exc}")
+                abort.set()
+                return
+            free.put(tree)
+            with lock:
+                if green:
+                    verdict = "SURVIVED"
+                    t.survived.append(m.name)
+                elif not failing:
+                    # Non-zero with no `--- FAIL:` line: the tree did not build. That is a
+                    # harness problem, not a kill.
+                    verdict = "DID NOT BUILD"
+                    t.broken[m.name] = out[-1500:]
+                elif m.killer and m.killer not in failing:
+                    verdict = f"MISATTRIBUTED ({', '.join(sorted(failing))})"
+                    t.misattributed[m.name] = sorted(failing)
+                else:
+                    # 🔴 THE `extra_killers` LEDGER IS CHECKED HERE, AND ONLY ON A KILL. The
+                    # row has already been attributed to its named guard; what is left is the
+                    # claim that the OTHER listed guards saw it too. A missing entry is a
+                    # finding, not a verdict downgrade: the mutant WAS killed, and what has
+                    # gone stale is the ledger's description of who noticed.
+                    absent = [k for k in m.extra_killers if k not in failing]
+                    verdict = "killed" if not absent else f"killed, STALE EXTRAS ({', '.join(sorted(absent))})"
+                    if absent:
+                        t.stale_extras[m.name] = {"absent": absent, "failing": sorted(failing)}
+                    t.killed.append(m.name)
+                print(f"  {m.name:<46} {verdict}  [{time.monotonic() - started:.1f}s]", flush=True)
 
-            green, failing, out = run_tests(work, m.pkgs)
-            if green:
-                verdict = "SURVIVED"
-                survived.append(m)
-            elif not failing:
-                # Non-zero with no `--- FAIL:` line: the tree did not build. That is a
-                # harness problem, not a kill.
-                verdict = "DID NOT BUILD"
-                broken.append((m, out[-1500:]))
-            elif m.killer and m.killer not in failing:
-                verdict = f"MISATTRIBUTED ({', '.join(sorted(failing))})"
-                misattributed.append((m, failing))
-            else:
-                # 🔴 THE `extra_killers` LEDGER IS CHECKED HERE, AND ONLY ON A KILL. The
-                # row has already been attributed to its named guard; what is left is the
-                # claim that the OTHER listed guards saw it too. A missing entry is a
-                # finding, not a verdict downgrade: the mutant WAS killed, and what has
-                # gone stale is the ledger's description of who noticed.
-                absent = [k for k in m.extra_killers if k not in failing]
-                verdict = "killed" if not absent else f"killed, STALE EXTRAS ({', '.join(sorted(absent))})"
-                if absent:
-                    stale_extras.append((m, absent, failing))
-                killed.append(m)
-            print(f"  {m.name:<46} {verdict}")
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            for fut in [pool.submit(one, m) for m in selected]:
+                fut.result()
+        if fatal:
+            print("\ncontrol_mutants: REFUSING TO VOUCH — a restore FAILED, so the run stopped:\n  "
+                  + "\n  ".join(fatal), file=sys.stderr)
+            return 2
 
-    print()
-    expected_survivors = {m.name for m in selected if m.equivalent}
-    actual_survivors = {m.name for m in survived}
-    print(
-        f"SUMMARY mutants={len(selected)} killed={len(killed)} survived={len(survived)} "
-        f"misattributed={len(misattributed)} harness-errors={len(broken)} "
-        f"stale-extras={len(stale_extras)}"
-    )
+        # 🔴 THE WHOLE-TREE CHECK. Per-file restores are verified as they happen; this is
+        # the coarser claim that NOTHING else in a reused tree moved either — a test that
+        # writes into its own package, say — since every later row would run on top of it.
+        drifted = [str(tr) for tr in trees if mutant_tree.tree_digest(tr) != before]
+        if drifted:
+            print(f"\ncontrol_mutants: REFUSING TO VOUCH — worker tree(s) {drifted} no longer "
+                  "match the copy they started as; verdicts after the drift describe a tree "
+                  "nobody declared.", file=sys.stderr)
+            return 2
+        print(f"\nworker trees restored: {len(trees)} tree(s) hash {before[:16]}… before and after")
+    finally:
+        for tree in trees:
+            shutil.rmtree(tree, ignore_errors=True)
+        if owned_tmp:
+            owned_tmp.cleanup()
+        if args.results:
+            args.results.parent.mkdir(parents=True, exist_ok=True)
+            args.results.write_text(json.dumps({
+                "battery": "control",
+                "shard": list(shard),
+                "table": table_digest(),
+                "selected": [m.name for m in selected],
+                "positive_control": positive,
+                "tally": asdict(t),
+            }, indent=1, sort_keys=True), encoding="utf-8")
 
-    ok = True
-    for m, exc in broken:
-        print(f"\n🔴 HARNESS: {m.name}\n{exc}", file=sys.stderr)
-        ok = False
-    for m, failing in misattributed:
-        print(
-            f"\n🔴 MISATTRIBUTED: {m.name} was killed by {sorted(failing)}, not by its named "
-            f"guard {m.killer}. That proves the suite can fail and proves nothing about the "
-            "guard this row exists for.",
-            file=sys.stderr,
-        )
-        ok = False
-
-    # 🔴 A LISTED EXTRA KILLER THAT DID NOT FAIL IS A FAILURE, NOT A NOTE. The whole point
-    # of making the field real is that a guard which quietly stopped noticing is exactly
-    # what a battery is for; reporting it without failing would be the inert field again,
-    # one layer up. The remedy is per row and is a DECISION: either the guard was moved out
-    # from under this mutant's observable — fix the guard — or the row's list was aspirational
-    # and must be narrowed, with the reason written down beside it.
-    for m, absent, failing in stale_extras:
-        print(
-            f"\n🔴 STALE extra_killers: {m.name} lists {sorted(absent)}, which did NOT fail. "
-            f"What actually failed: {sorted(failing)}. A listed killer that has stopped "
-            "killing reads as coverage and provides none — decide whether the GUARD moved "
-            "or the LIST was wrong, and say which in the row.",
-            file=sys.stderr,
-        )
-        ok = False
-
-    unexpected = actual_survivors - expected_survivors
-    if unexpected:
-        print(f"\n🔴 SURVIVED WITHOUT AN EQUIVALENT LABEL: {sorted(unexpected)}", file=sys.stderr)
-        print("  Each is a guard the suite does not actually have.", file=sys.stderr)
-        ok = False
-
-    mislabelled = expected_survivors - actual_survivors
-    if mislabelled:
-        # Not a failure: a mutant labelled EQUIVALENT that gets KILLED means the label was
-        # too generous and a real guard exists. It is reported so the label gets corrected.
-        print(
-            f"\n⚠ LABELLED EQUIVALENT BUT KILLED: {sorted(mislabelled)} — the label is wrong "
-            "and should be removed; a guard does see this.",
-            file=sys.stderr,
-        )
-
-    for m in survived:
-        print(f"\nEQUIVALENT {m.name}: {m.equivalent_reason}")
-
-    return 0 if ok else 1
+    # Table order, so a sharded or parallel run reads the same as a serial one.
+    order = {m.name: k for k, m in enumerate(MUTANTS)}
+    t.killed.sort(key=order.get)
+    t.survived.sort(key=order.get)
+    by_name = {m.name: m for m in MUTANTS}
+    return 0 if judge(by_name, [m.name for m in selected], t) else 1
 
 
 if __name__ == "__main__":
