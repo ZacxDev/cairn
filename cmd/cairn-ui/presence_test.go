@@ -234,6 +234,57 @@ func (c *presenceChild) waitWithin(t *testing.T, d time.Duration, what string, c
 	t.Fatalf("timed out waiting for %s:\n%s", what, c.out.String())
 }
 
+// servingLine is `main`'s startup line, capturing the browser listener's BOUND address.
+var servingLine = regexp.MustCompile(`cairn-ui: serving \d+ route\(s\) on (127\.0\.0\.1:(\d+)),`)
+
+// serving waits for a child started with `-port 0` (both `start*Child` helpers pass it) to
+// announce the port it BOUND, then for `/healthz` there to answer 200, and returns the base URL.
+//
+// 🔴 EVERY TEST THAT EXPECTS A `cairn-ui` CHILD TO ANSWER AN HTTP REQUEST GETS ITS ADDRESS FROM
+// HERE, NEVER FROM `aPortNothingIsListeningOn`. That helper's port is free only at the instant it
+// returns; handed to a child, it races every other process on the machine — and the nix build runs
+// every package's tests in parallel, so a sibling package's store server took one and its plain
+// `unauthorized` was read as the sign-in page. Here the kernel picks the port for the CHILD, and
+// `main` binds before it prints the line, so the address on the line is held by this child for as
+// long as it lives: nothing else can answer on it. A `main` that announced before binding would
+// print `:0` and is refused below, so that ordering cannot quietly come back.
+//
+// The `/healthz` poll is #199's, kept: it is what still fails at the deadline a child that
+// announces and then never serves, and it fails fast — through `waitFor` — on one that exits.
+func (c *presenceChild) serving(t *testing.T) string {
+	t.Helper()
+	var base, port string
+	c.waitFor(t, "the serving line", func() bool {
+		m := servingLine.FindStringSubmatch(c.out.String())
+		if m == nil {
+			return false
+		}
+		base, port = "http://"+m[1], m[2]
+		return true
+	})
+	if port == "0" {
+		t.Fatalf("the serving line names port 0 — the configured `-port 0`, not the port a listener BOUND — so "+
+			"it says nothing about where this child answers:\n%s", c.out.String())
+	}
+	var lastErr error
+	status := 0
+	c.waitFor(t, "the browser surface to answer /healthz at "+base, func() bool {
+		resp, err := (&http.Client{Timeout: time.Second}).Get(base + "/healthz")
+		if err != nil {
+			lastErr = err
+			return false
+		}
+		resp.Body.Close()
+		status = resp.StatusCode
+		return true
+	})
+	if status != http.StatusOK {
+		t.Fatalf("/healthz at %s answered %d (last dial error before it answered: %v)\n%s",
+			base, status, lastErr, c.out.String())
+	}
+	return base
+}
+
 func writeRows(t *testing.T, path string, rows ...presence.TokenRow) {
 	t.Helper()
 	var b strings.Builder
@@ -312,13 +363,14 @@ func TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped(t *te
 			if err := os.WriteFile(tokens, []byte(arm.rows), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			uiPort, agentPort := aPortNothingIsListeningOn(t), aPortNothingIsListeningOn(t)
-			agentAddr := fmt.Sprintf("127.0.0.1:%d", agentPort)
-			c := startPresenceChild(t, journal, "-port", fmt.Sprint(uiPort),
+			// ⚠ The agent port is still a closed one, because this case asserts that NOTHING answers
+			// there — the direction in which a stranger taking it is a loud false RED, never a false
+			// green. The browser port is the child's own (`serving`): that one must ANSWER.
+			agentAddr := fmt.Sprintf("127.0.0.1:%d", aPortNothingIsListeningOn(t))
+			c := startPresenceChild(t, journal,
 				"-presence-agent-addr", agentAddr, "-presence-tokens", tokens, "-presence-owner", presenceOwnerA.String())
-			c.waitFor(t, "the serving line (the process must NOT exit)", func() bool {
-				return strings.Contains(c.out.String(), "serving")
-			})
+			// `serving` fails fast if the process EXITS, which it must not.
+			c.serving(t)
 			out := c.out.String()
 			if !strings.Contains(out, "presence agent NOT started (token file refused at startup)") ||
 				!strings.Contains(out, "WARNING the presence agent listener is NOT started") {
@@ -332,26 +384,7 @@ func TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped(t *te
 			if strings.Contains(out, childForeign) || strings.Contains(out, childPushToken) {
 				t.Fatalf("stderr carries a token:\n%s", out)
 			}
-			// The "serving" line is printed BEFORE `ListenAndServe` binds the port (main.go), so a
-			// single probe right after it races the bind and fails as connection-refused — which
-			// it did in the publish workflow's nix build. Poll until the surface answers; the
-			// waitFor deadline still fails a process that never serves.
-			healthz := fmt.Sprintf("http://127.0.0.1:%d/healthz", uiPort)
-			var lastErr error
-			status := 0
-			c.waitFor(t, "the browser surface to answer /healthz", func() bool {
-				resp, err := (&http.Client{Timeout: time.Second}).Get(healthz)
-				if err != nil {
-					lastErr = err
-					return false
-				}
-				resp.Body.Close()
-				status = resp.StatusCode
-				return true
-			})
-			if status != http.StatusOK {
-				t.Fatalf("/healthz answered %d (last dial error before it answered: %v)", status, lastErr)
-			}
+			// The browser surface answering `/healthz` 200 was asserted by `serving` above.
 			if conn, err := net.DialTimeout("tcp", agentAddr, time.Second); err == nil {
 				_ = conn.Close()
 				t.Fatalf("the agent listener is accepting on %s although its token file was refused", agentAddr)
@@ -362,6 +395,19 @@ func TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped(t *te
 
 var agentLine = regexp.MustCompile(`presence agent on (127\.0\.0\.1:\d+) \(sole owner (\S+), (\d+) token row\(s\), 2 route\(s\)\)`)
 
+// agentAddr is `serving` for the SECOND listener: a child started with `-presence-agent-addr
+// 127.0.0.1:0` announces the address it bound (`main` binds it before the startup line), and the
+// test reads it from there rather than handing over a port another process can take first. Call
+// it after `serving`, which is what waits for the line.
+func (c *presenceChild) agentAddr(t *testing.T) (addr string, m []string) {
+	t.Helper()
+	m = agentLine.FindStringSubmatch(c.out.String())
+	if m == nil || strings.HasSuffix(m[1], ":0") {
+		t.Fatalf("the startup line does not announce the agent listener on a bound loopback port:\n%s", c.out.String())
+	}
+	return m[1], m
+}
+
 // TestTheAgentListenerExistsOnlyWhenConfigured: with the three flags, a SECOND listener answers
 // the agent routes (a push with a real token is `rows=1`, garbage is 401); without them the same
 // port is connection-refused and the startup line says presence is off.
@@ -369,15 +415,16 @@ func TestTheAgentListenerExistsOnlyWhenConfigured(t *testing.T) {
 	_, journal := seededJournal(t, credentialLive)
 	tokens := filepath.Join(t.TempDir(), "presence-tokens")
 	writeRows(t, tokens, presence.NewTokenRow(presence.KindPush, presenceOwnerA, "host-a", childPushToken))
-	port := aPortNothingIsListeningOn(t)
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-
-	on := startPresenceChild(t, journal, "-presence-agent-addr", addr, "-presence-tokens", tokens,
+	// The agent listener binds `:0` and the test reads the address it BOUND off the startup line —
+	// `serving`'s argument, for the second listener: a port picked here and handed over is one
+	// another process can take first.
+	on := startPresenceChild(t, journal, "-presence-agent-addr", "127.0.0.1:0", "-presence-tokens", tokens,
 		"-presence-owner", presenceOwnerA.String())
-	on.waitFor(t, "the serving line", func() bool { return strings.Contains(on.out.String(), "serving") })
-	m := agentLine.FindStringSubmatch(on.out.String())
-	if m == nil || m[1] != addr || m[2] != presenceOwnerA.String() || m[3] != "1" {
-		t.Fatalf("the startup line does not announce the agent listener on %s:\n%s", addr, on.out.String())
+	on.serving(t)
+	addr, m := on.agentAddr(t)
+	if m[2] != presenceOwnerA.String() || m[3] != "1" {
+		t.Fatalf("the startup line does not announce the agent listener for the sole owner with one row:\n%s",
+			on.out.String())
 	}
 	post := func(token, body string) (int, string) {
 		t.Helper()
@@ -405,7 +452,7 @@ func TestTheAgentListenerExistsOnlyWhenConfigured(t *testing.T) {
 	<-on.done
 
 	off := startPresenceChild(t, journal)
-	off.waitFor(t, "the serving line", func() bool { return strings.Contains(off.out.String(), "serving") })
+	off.serving(t)
 	if !strings.Contains(off.out.String(), "presence off (no -presence-agent-addr)") {
 		t.Fatalf("an unconfigured child does not say presence is off:\n%s", off.out.String())
 	}
@@ -504,26 +551,16 @@ func TestTheBrowserReadsTheStoreTheAgentListenerWrites(t *testing.T) {
 	}
 	tokens := filepath.Join(t.TempDir(), "presence-tokens")
 	writeRows(t, tokens, presence.NewTokenRow(presence.KindPush, presenceOwnerA, "host-a", childPushToken))
-	uiPort, agentPort := aPortNothingIsListeningOn(t), aPortNothingIsListeningOn(t)
-	agentAddr := fmt.Sprintf("127.0.0.1:%d", agentPort)
-	c := startPresenceChild(t, journal, "-store", storeRoot, "-port", fmt.Sprint(uiPort),
-		"-presence-agent-addr", agentAddr, "-presence-tokens", tokens, "-presence-owner", presenceOwnerA.String())
-	c.waitFor(t, "the serving line", func() bool { return strings.Contains(c.out.String(), "serving") })
-	// The "serving" line is printed BEFORE the browser listener binds, so the first GET would race
-	// the bind; poll /healthz until it answers (the agent listener is bound before that line).
-	c.waitFor(t, "the browser surface to answer /healthz", func() bool {
-		resp, err := (&http.Client{Timeout: time.Second}).Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", uiPort))
-		if err != nil {
-			return false
-		}
-		resp.Body.Close()
-		return resp.StatusCode == http.StatusOK
-	})
+	// Both listeners bind `:0` and both addresses are read back off the startup line (`serving`).
+	c := startPresenceChild(t, journal, "-store", storeRoot,
+		"-presence-agent-addr", "127.0.0.1:0", "-presence-tokens", tokens, "-presence-owner", presenceOwnerA.String())
+	base := c.serving(t)
+	agentAddr, _ := c.agentAddr(t)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	page := func() string {
 		t.Helper()
-		req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/session?session=s-0001", uiPort), nil)
+		req, _ := http.NewRequest(http.MethodGet, base+"/session?session=s-0001", nil)
 		req.Header.Set("Authorization", "Bearer "+credential)
 		resp, err := client.Do(req)
 		if err != nil {

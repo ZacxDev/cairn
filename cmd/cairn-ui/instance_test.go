@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -64,22 +63,17 @@ func TestTheBinaryLabelsItsPagesAndSaysSo(t *testing.T) {
 		{"unset", nil, nil, "instance unlabelled (no -instance-name)", "<title>cairn — sign in</title>"},
 	} {
 		t.Run(arm.name, func(t *testing.T) {
-			port := aPortNothingIsListeningOn(t)
-			c := startAppChild(t, arm.env, append([]string{"-port", fmt.Sprint(port)}, arm.args...)...)
-			c.waitFor(t, "the serving line", func() bool { return strings.Contains(c.out.String(), "serving") })
+			c := startAppChild(t, arm.env, append([]string{"-port", "0"}, arm.args...)...)
+			base := c.serving(t)
 			if !strings.Contains(c.out.String(), arm.line) {
 				t.Errorf("the startup line does not say %q:\n%s", arm.line, c.out.String())
 			}
-			var body []byte
-			c.waitFor(t, "the sign-in page", func() bool {
-				r, err := (&http.Client{Timeout: time.Second}).Get(fmt.Sprintf("http://127.0.0.1:%d%s", port, ui.SignInPath))
-				if err != nil {
-					return false
-				}
-				defer r.Body.Close()
-				body, _ = io.ReadAll(r.Body)
-				return true
-			})
+			r, err := (&http.Client{Timeout: 10 * time.Second}).Get(base + ui.SignInPath)
+			if err != nil {
+				t.Fatalf("GET %s: %v", ui.SignInPath, err)
+			}
+			defer r.Body.Close()
+			body, _ := io.ReadAll(r.Body)
 			if !strings.Contains(string(body), arm.title) {
 				t.Errorf("the served sign-in page does not carry %s:\n%s", arm.title, body)
 			}
