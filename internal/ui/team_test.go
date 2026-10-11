@@ -105,7 +105,7 @@ func TestTheTeamLinkFormPassesEveryTickedTargetThrough(t *testing.T) {
 		t.Errorf("Mint acted as %q, want the caller", links.lastActor.ID)
 	}
 	body := rec.Body.String()
-	wantLink := JoinPath + "?" + url.Values{inviteTokenField: {fixtureLinkToken}}.Encode()
+	wantLink := JoinPath + "#" + url.Values{inviteTokenField: {fixtureLinkToken}}.Encode()
 	if strings.Count(body, wantLink) != 1 {
 		t.Errorf("the link %q appears %d time(s) on the page, want exactly once", wantLink, strings.Count(body, wantLink))
 	}
