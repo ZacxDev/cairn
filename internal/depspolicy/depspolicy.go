@@ -60,14 +60,21 @@
 // above then builds green over a tree with no policy in it at all.
 //
 // What defends against that is the `go` job in `.github/workflows/ci.yml`, in two
-// steps that replaced a hand-measured `ok` floor: the `ok` lines must EQUAL the packages
-// `go list` reports as having test files, and `tests/go_tested_packages.py` refuses a
-// package that had tests at the base commit and has none now while its code remains.
-// So a package whose tests disappear takes CI red. That defence is exactly one package
-// wide, and it is worth knowing its edges:
+// steps that replaced a hand-measured `ok` floor: the `ok` lines of `go test -race ./...`
+// must EQUAL the packages `go list -race ./...` reports as having test files for that
+// build, and `tests/go_tested_packages.py` runs that same `go list` in a detached
+// worktree of the base commit and refuses a package that was tested there, is not tested
+// in this run, and whose directory still holds any `.go` file. So a package whose tests
+// stop RUNNING takes CI red — deleted, tagged out (`//go:build never`, `//go:build !race`),
+// or renamed to a name `go` ignores (`_x_test.go`, `.x_test.go`) alike, because both sides
+// ask `go list` rather than reading file names. That defence is exactly one package wide,
+// and it is worth knowing its edges:
 //
 //   - It notices this FILE going — by the base comparison, NOT by the equality: deleting
 //     a package's last `_test.go` removes it from both sides of the equality at once.
+//     That half needs a base commit; with none the step refuses rather than passing.
+//   - A package removed OUTRIGHT (no `.go` file left in its directory) passes: that is not
+//     a narrowing, and it is also how deleting this whole package would read.
 //   - It does NOT notice one `func Test…` being deleted from a file that keeps
 //     others. The package still reports `ok`, the count does not move, and nothing in
 //     this repository observes the difference.
