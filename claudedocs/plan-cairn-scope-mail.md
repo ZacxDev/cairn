@@ -55,13 +55,20 @@ plan that an agent or a skill router reads says "mail".
   slice (S7) and a LIVE closing clause; the 3-day TTL default; and a re-done token model. Two
   findings were checked against the code and are recorded as PARTLY WRONG, with evidence, under
   "Round-1 findings → where each is fixed".
-- *Revision 5* (this) applies round 2 of #221 (delta `3f0d802..0903cb6`: 0 🔴, 6 🟡, 3 🟢): decision
+- *Revision 5* (`b30b351`) applies round 2 of #221 (delta `3f0d802..0903cb6`: 0 🔴, 6 🟡, 3 🟢): decision
   17's apply semantics (intersect, verbs-only, nil vs empty, unknown and revoked credentials, existing
   credentials); a corrected rollback recipe with an OWNED deploy-order check (S7); the cursor margin
   re-based on `transaction_timeout` (PostgreSQL ≥ 17); a SPLIT sanitiser — a narrow fence rule at
   send, the full category replacement at render — re-measured on ordinary text; an e2e clause (g)
   that can see a decision-17 regression; and `tests/memo/live-probe.sh` assigned to S3. Ledger:
   "Round-2 findings → where each is fixed".
+- *Revision 6* (this) applies round 3 of #221 (delta `0903cb6..b30b351`: 1 🔴, 4 🟡). The render-side
+  replacement now covers EVERY agent-facing output path, enforced by a type rather than by
+  discipline (decision 19); `created_at` is required to be taken after the `SET LOCAL`, with round
+  3's measurements on PostgreSQL 17.11 closing the "not established" sentence; the deploy-order
+  check reads the RUNNING workloads; the live probe isolates `HOME`; and e2e (d) plants the
+  fence-breaking members by SQL with a pinned count. Ledger: "Round-3 findings → where each is
+  fixed".
 
 ## Goal and premise
 
@@ -106,7 +113,7 @@ Drop the work, or the named half, if any of these holds:
      main branch — verified by CONTENT, not by ancestry.
   2. **cairn: `tests/memo/e2e.sh` exits 0 on `main` in the `pgtest` CI job** (the job is
      `.github/workflows/ci.yml:1995-2040`; its PostgreSQL service is declared at `:2007-2009`), and
-     its `--self-test` prints **`sabotaged=12 caught=12`**. It exits **2** — "could not vouch",
+     its `--self-test` prints **`sabotaged=13 caught=13`**. It exits **2** — "could not vouch",
      never a skip and never 0 — when `CAIRN_PGTEST_DSN` is unset and no local `initdb` is available
      (the `tests/pgtest/run.sh:80, :167` convention), when a built binary is missing, or when one of
      its own controls misbehaves. It is created in S3, which owns the verbs it drives (decision 18).
@@ -130,14 +137,21 @@ Drop the work, or the named half, if any of these holds:
      exactly ONE block containing the probe's subject (the POSITIVE control); `memo-retract` exits
      0; and a NEW probe session's check prints nothing. It exits 2 when the probe credential or
      `CAIRN_UI_URL` is absent.
-     - **How the probe credential reaches the client:** the script never touches the operator's
-       real client configuration. It creates a temporary config directory (0700) holding ONE
-       default-instance env file (0600) — `CAIRN_URL` and `CAIRN_TOKEN` for the pod, so it can sync
-       the cache that decision 7's `no-scope` rule reads, and `CAIRN_UI_URL` and `CAIRN_UI_TOKEN`
-       for the probe credential — copied from a path the operator passes, points the client at it
-       through the existing config-path variable (`ConfigPath`/`ConfigEnv`, `internal/client/instances.go:399-408`), and deletes it on exit. A
-       NON-default instance would read only its own file (`:121-126`), which is why the probe uses a
-       default instance in an isolated directory instead.
+     - **How the probe credential reaches the client, without touching the operator's real
+       client state (round 3 🟡3):** the script creates a temporary directory (0700) and runs every
+       client call with **`HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME` all pointed into it**. That
+       matters because the cache root has NO override — it is always `$HOME/.cache/subsystem-store`
+       (`internal/client/readstore.go:55-71`) — and `sync` REPLACES it with what the syncing token
+       sees (`internal/client/verbs.go:69-81`); moving only the config file would have overwritten
+       the operator's real cache with the probe's view. Inside that `HOME`, the default config path
+       (`ConfigPath`, `internal/client/instances.go:399-408`) holds ONE default-instance env file
+       (0600): `CAIRN_URL` and `CAIRN_TOKEN` for the pod, so the probe can sync the cache decision 7's
+       `no-scope` rule reads, and `CAIRN_UI_URL` and `CAIRN_UI_TOKEN` for the probe credential,
+       copied from a path the operator passes. The directory is deleted on exit. A default instance
+       is used because a non-default one reads only its own file
+       (`internal/client/transport.go:121-126`). *Revision 5 cited that as a bare `:121-126` right
+       after an `instances.go` citation, where it resolves to `ValidAlias`/`CacheRootFor`; the file
+       is now named.*
      - **Where the result is recorded:** the operator pastes the script's final summary line (counts
        and exit code, never a token) as a comment on S7's change in the deployment repository and in
        the arc's handoff. That record is the evidence part 5 was met.
@@ -162,7 +176,7 @@ Drop the work, or the named half, if any of these holds:
   | **(a) once per session** | `agents@host-a` sends one memo to `alpha-notes`. `agents@host-r`'s check for `s-0001` prints exactly one block holding exactly one memo; the SECOND check for `s-0001` prints zero bytes, exits 0 and reports `memo-status=none`; a check for `s-0002` prints it once more | `outsider-c`'s HTTP answer for `alpha-notes` is byte-identical to the answer for a scope that does not exist |
   | **(b) who may send** | `agents@host-r`'s send exits **6** and the table row count does not move | `agents@host-a` sending the same request succeeds (positive control) |
   | **(c) narrowing holds both ways** | `agents@host-b` (narrowed to `beta-notes`): a send to `alpha-notes` exits 6, and its check of `alpha-notes` prints nothing and reports `memo-status=scope-unreadable` — although its principal can write there | `agents@host-a` sees and sends |
-  | **(d) the fence holds** | the hostile memo set (decision 5) is sent through `agents@host-a`, and the check's output parses as exactly ONE block with exactly N memos, every content line carrying the content prefix and no code point of general category C* | a renderer with the prefix removed is caught by this clause (`--self-test`) |
+  | **(d) the fence holds, on BOTH output paths** | the hostile set is exactly S0's corpus (decision 5): its **8 SEND-ACCEPTED** members are sent through `agents@host-a` and each exits 0; its **8 FENCE-BREAKING** members, which the send rule refuses, are PLANTED by SQL (as clause (h) plants rows) so the renderer still meets them. A new session's check then prints exactly ONE block with `count=16`, exactly 5 previews and the line `and 11 more`; and `memo-read --scope alpha-notes` prints exactly ONE block holding all 16 bodies. In both outputs every content line carries the content prefix, and no code point satisfies `memo.Unsafe` | positive control: the 8 fence-breaking members, sent through the CLIENT, each exit 6. `--self-test`'s (d1) drops the content prefix; (d2) makes `memo-read` print stored bodies raw — both turn THIS clause red |
   | **(e) secret refusal** | a memo whose body carries a run-time-generated vendor-prefixed token that one of decision 11's CONFIDENT rules matches exits 6 naming the rule, and nothing is stored | the same body with the token removed is accepted; a body only the `entropy` or `key-context` rule would match is ALSO accepted |
   | **(f) quota (O12)** | the 51st send to `alpha-notes` inside one rolling day exits 6 whichever sender makes it (the 50 are split between `agents@host-a` and `agents@host-c`) | a send to `beta-notes` through `agents@host-b` in the same minute succeeds |
   | **(g) retract (O8)** | after `agents@host-a` retracts its memo, a NEW session's check prints nothing; `memo-read --scope alpha-notes --id <id>` shows the tombstone `retracted by writer-a via agents@host-a (user) at <time>` and no subject or body; the stored subject and body are NULL; the event rows are exactly `sent` then `retracted`, each with its actor. `admin@host-d`'s retraction of a second memo shows `retracted by admin-d …` | `agents@host-r`'s retract of a third memo exits 6 and changes nothing. **And the decision-17 control:** `agents@host-c` tries to retract a memo `admin@host-d` sent — `agents@host-c` is not the sender, and its principal `writer-a` IS an admin of `alpha-notes`, so only the credential's verb narrowing refuses it: exit 6, memo unchanged |
@@ -171,10 +185,12 @@ Drop the work, or the named half, if any of these holds:
   | **(j) which agent sent it (O9)** | `agents@host-a` and `agents@host-c` each send one memo: the previews' sender lines read `writer-a via agents@host-a` and `writer-a via agents@host-c`, and the stored `sender_credential_id`s differ | the two memos' `sender_kind`/`sender_id` are EQUAL (one principal), so the label is the only thing telling them apart — which is what this clause pins |
   | **(k) agent revocation (O9)** | `cairn-server -revoke-credential` revokes `agents@host-a`; the clause then POLLS, with a deadline of `refreshInterval` + 5 s (`cmd/cairn-ui/main.go:202`, 30 s), until that credential's check AND send answer 401, byte-identical to a random token's, and records the latency it measured | `agents@host-c`, same principal, keeps working throughout; a deadline overrun fails the clause rather than waiting longer. The in-process S2 test forces the refresh instead (`control.Cache.Refresh`, `internal/control/cache.go:158`), because `cairn-ui` exposes no external refresh trigger and adding one would be a new revocation-relevant surface |
 
-  `--self-test` applies twelve sabotages — one per clause, and a second for (g) — on a scratch copy
+  `--self-test` applies thirteen sabotages — one per clause, and a second for each of (d) and (g) —
+  on a scratch copy
   of the tree with its `.git` removed (the `tests/control_mutants.py` pattern), and each must be
   caught by its OWN clause's message: (a) the cursor never advances; (b) send checks `read` instead
-  of `write`; (c) send ignores `Narrowed()`; (d) the content-line prefix is dropped; (e) the scan is
+  of `write`; (c) send ignores `Narrowed()`; (d1) the content-line prefix is dropped; (d2)
+  `memo-read` prints stored bodies without the render-side replacement; (e) the scan is
   skipped; (f) the quota counts per sender instead of per scope; (g1) retract keeps the body; (g2)
   `control.Narrow` ignores its verb argument — which only (g)'s decision-17 control can see; (h) the
   expiry filter is dropped; (i)
@@ -633,8 +649,9 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
        point in **C\*** — Cc, Cf, Co, Cs, Cn (unassigned) — plus **Zl/Zp** and the
        **Variation_Selector** property (U+180B–U+180D, U+180F, U+FE00–U+FE0F, U+E0100–U+E01EF, which
        are category Mn and would otherwise pass). The renderer REPLACES each with a visible `�`,
-       except `\n` (rendered ` ⏎ `) and `\t` (rendered as one space). This is what the AGENT sees,
-       and it covers, without naming them, the bidi controls, zero-width characters, U+2060–U+2064,
+       except `\n` (rendered ` ⏎ `) and `\t` (rendered as one space). It applies on EVERY path an
+       agent or a person reads a stored memo through — decision 19 — and it covers, without naming
+       them, the bidi controls, zero-width characters, U+2060–U+2064,
        U+00AD, U+180E, U+FEFF and the TAG block used for "ASCII smuggling".
      - **SEND — `memo.BreaksFence`, narrow:** refuse (exit 6) only what can break the fence or
        reorder text — Cc other than `\n` and `\t` (with `\r\n` normalised to `\n` first), the
@@ -642,8 +659,12 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
        and the tag block U+E0000–U+E007F — plus invalid UTF-8. A subject additionally refuses `\n`
        and `\t`.
      - *Revision 4 refused the whole render predicate at SEND too. Round 2 measured that it refused
-       ordinary text; the re-measurement is below.* The stored text keeps what the sender wrote;
-       the agent still never sees an unsafe rune.
+       ordinary text; the re-measurement is below.* The stored text keeps what the sender wrote, so
+       the store DOES hold Cf, variation selectors, private-use and unassigned code points. The
+       claim is therefore about OUTPUT, and it is only as true as decision 19 makes it: no agent-
+       facing path prints a stored field without the render-side replacement. *Revision 5 said "the
+       agent still never sees an unsafe rune" while `memo-read` printed bodies raw — false as
+       written (round 3 🔴1), and retracted.*
    - **Measured, both predicates, over a synthetic sample** (this plan's author; instrument:
      Python's `unicodedata` 15.0.0, the Unicode version Go 1.25's tables carry; the script lived in a
      scratch directory and is not committed):
@@ -717,11 +738,21 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
      client's clock, never an id. A check asks for memos with `created_at > high_water − margin`,
      drops ids already in the seen-set, then sets `high_water` to the largest `created_at` it was
      handed and prunes seen ids older than `high_water − margin`.
-   - **The margin is defined, not guessed:** `created_at` is stamped by the server inside the send
-     transaction, and the row becomes visible only at COMMIT; so a row can become visible with a
-     `created_at` older than one already delivered. The bound is **`transaction_timeout` = 30 s**,
-     set explicitly on the memo send transaction, so no committed row's `created_at` precedes its
-     commit by more than 30 s; the margin is **2 minutes**, four times that.
+   - **The margin is defined, not guessed — and its premise is now REQUIRED, not assumed (round 3
+     🟡1).** The send is, in this order: `BEGIN`; `SET LOCAL transaction_timeout = '30s'`; THEN read
+     the store's Go clock for `created_at` (decision 2); then the inserts; `COMMIT`. The row becomes
+     visible only at commit, so it can surface with a `created_at` older than a row already
+     delivered. Because the timer starts at the `SET` and `created_at` is read after it, no
+     committed row's `created_at` precedes its commit by more than 30 s; the margin is **2
+     minutes**, four times that. Time spent waiting for a pooled connection or before `BEGIN` is
+     BEFORE the stamp and cannot age the row. *Revision 5 said "stamped by the server", which
+     contradicted decision 2's Go clock and left the ORDER unrequired.*
+     - **Backward clock steps are the residual.** `created_at` is wall-clock time from the
+       `cairn-ui` process, and a wall clock can step BACKWARD (a time sync). A step of D seconds
+       lets a later commit carry a `created_at` D seconds earlier; the margin absorbs D + 30 s ≤
+       120 s, so steps up to 90 s are covered and a larger backward step can let a memo be skipped by
+       a session whose cursor already passed it. Stated, not fixed: the monotonic reading Go keeps
+       cannot be stored.
      - *Revision 4 named `statement_timeout`; that bounds each STATEMENT, and the send is five or
        more statements with Go time between them, so it bounded nothing that matters (round 2 🟡3).*
      - `transaction_timeout` exists from **PostgreSQL 17**, which is this feature's minimum. CI runs
@@ -730,11 +761,17 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
        — the RUNNING server's version is **UNMEASURED**; S7's checks read `SHOW server_version`.
      - **Nothing in `internal/pgstore` sets either timeout today** (a search of the package for both
        names finds none). S1 sets it in `MemoStore.Send` as the transaction's first statement,
-       `SET LOCAL transaction_timeout = '30s'`. ⚠ Whether a `SET LOCAL` issued AFTER `BEGIN` arms
-       the timer for THAT transaction is **not established** here; S1's test is what establishes it,
-       and if it does not, the setting moves to the memo store's connections as a session parameter.
-       PostgreSQL ends the SESSION, not only the transaction, when the timer fires, so the store
-       must treat that error as a lost connection. *Why not an id high-water:* `BIGSERIAL`
+       `SET LOCAL transaction_timeout = '30s'`.
+     - **Measured by round 3's auditor on PostgreSQL 17.11** (not by this plan's author; 18.6 NOT
+       measured): a `SET LOCAL` issued after `BEGIN` DOES arm the timer for that transaction; the
+       timer counts from the `SET`, not from `BEGIN` — which is why `created_at` must be read after
+       it; firing TERMINATES the connection, so the store treats it as a lost connection; and a
+       SESSION-level `SET` carries over to later transactions on the same connection. *Revision 5's
+       "not established" sentence is closed by that measurement.*
+     - **No session-level fallback.** Revision 5 offered to move the setting onto the store's
+       connections if `SET LOCAL` did not work. It does work, and the fallback is deleted: there is
+       ONE shared connection pool (`internal/pgstore/pgstore.go:248-255`), so a session-level
+       timeout would carry over onto the session and team-link transactions that share it. *Why not an id high-water:* `BIGSERIAL`
      order is allocation order, not commit order, so `id > cursor` skips a late committer; the
      seen-set covers the overlap the margin creates.
    - **A session with no cursor sees every LIVE memo** (O1: each session sees each memo once),
@@ -796,6 +833,11 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
      scope; a mismatch is the SAME uniform `not-found` as an absent id, so the pair cannot be used
      to probe which scope an id belongs to. The preview prints the exact command, scope included
      (decision 5).
+   - **`memo-read` prints through the SAME renderer as the preview** (decision 19): the same fenced,
+     `| `-prefixed, untrusted-labelled block, carrying full bodies instead of 200-rune previews, with
+     the same render-side replacement on every field. There is no other memo verb that prints stored
+     text (four verbs, this table), and no verb has a JSON output in v1; one added later is built from
+     the same rendered type.
    - **`memo-read` of an id the caller cannot read, or that does not exist, exits `3`** with status
      `not-found` — the read bucket's "nothing was read". Not `6`: that is a WRITE outcome
      (`exit.go:52-54`), and borrowing it would break the read/write split the `Writes` bit encodes.
@@ -897,7 +939,11 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
     verb does not change.
 
 15. **UI [R9].** The scope page gains a `?tab=memos` value (no new route row): live memos newest
-    first, sender (with the credential label), time, expiry, and the body as plain text; a send form and a retract
+    first, sender (with the credential label), time, expiry, and the body as plain text — built
+    from the SAME rendered type (decision 19), so every field carries the render-side replacement,
+    THEN HTML-escaped by gomponents' text nodes. Both, because they stop different things: escaping
+    stops markup, the replacement stops invisible and reordering code points that escaping leaves
+    intact; a send form and a retract
     button, both `POST` rows with class `0`, so both cross-site gates apply by METHOD
     (`server.go:1278, :1331`). The form calls the same `MaySend` and the same scan; a narrowed
     session cannot exist on the browser (sign-in refuses narrowed credentials,
@@ -952,7 +998,7 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
       and no new place a rotation must remember.
     - It is NEVER placed in the process environment by the tooling, never on argv, and never in a
       hook's settings entry. The client reads it with the same `pick` that reads `CAIRN_TOKEN`
-      (`transport.go:154-162`): a non-default instance reads ONLY its own file (`:121-126`), and for
+      (`transport.go:154-162`): a non-default instance reads ONLY its own file (`transport.go:121-126`), and for
       the default instance an exported value would win over the file, exactly as it does for
       `CAIRN_TOKEN` — which is why the tooling never exports one.
     - Transport from the issuing machine to the host is out of band (the tooling repo's existing
@@ -1004,7 +1050,10 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
       whose intersected set is empty is dropped.
     - **Nil versus empty.** The credential record carries `NarrowedVerbs` as "absent" (no event
       ever applied: not narrowed by verbs) or a SET. An event naming an EMPTY set is refused at
-      apply — a credential that should reach nothing is revoked, not narrowed to nothing.
+      apply — a credential that should reach nothing is revoked, not narrowed to nothing. Two
+      NON-empty events can still intersect to the empty set; that is applied, and the credential then
+      reaches no scope (`Narrow` drops every scope whose set is empty) — fail-closed, stated rather
+      than refused.
     - **Apply semantics: INTERSECT.** A `credential-verbs-narrowed` event sets the credential's verbs
       to (its current set ∩ the event's set), or to the event's set when none is present. A second
       event for the same credential can therefore only narrow further; one naming a WIDER set is
@@ -1042,14 +1091,22 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
       *Revision 4's "remove the two lines" would have produced exactly that failure.* Restoring a
       pre-issue backup instead also UNDOES every event written after it — grants, revocations,
       members — and is the last resort, stated as such.
-    - **The deploy-order rule has an OWNER and a check:** S7 owns it. Before S4's rollout issues the
-      first agent credential, S7 runs a verification that BOTH deployed images are at or after the
-      S1 merge commit — the deployment pins each image by a `sha-<40-hex>` tag (the publish scheme in
-      `AGENTS.md`), and the deployment does pin both
-      (`deployment:clusters/<cluster>/apps/subsystem-store/ui-deployment.yaml:450`, `deployment.yaml:380`),
-      so the check is a merge-base ancestry test of `<S1 merge sha>` against `<deployed sha>` for
-      each image, exit 0 required — and records the result beside the S7 change. S4's rollout step
-      names that record as its precondition.
+    - **The deploy-order rule has an OWNER and a check that reads what is RUNNING (round 3 🟡2):**
+      S7 owns it. A manifest check is not enough: a stalled rollout leaves the manifest new and an
+      OLD pod serving — exactly the older-build hazard above. So, before S4's rollout issues the
+      first agent credential, the operator runs, for EACH of the two workloads (the pod and
+      `cairn-ui`), and records the output beside the S7 change:
+      1. the cluster's rollout-status command for that workload, which must report the rollout
+         COMPLETE (every replica updated and available), exit 0;
+      2. the image reference of every RUNNING container of that workload, read from the live pod
+         status (the resolved digest, not the manifest's tag), which must equal the digest that the
+         expected `sha-<40-hex>` tag resolves to — the publish scheme in `AGENTS.md`, and the
+         manifests do pin both workloads by such a tag
+         (`deployment:clusters/<cluster>/apps/subsystem-store/ui-deployment.yaml:450`,
+         `deployment.yaml:380`);
+      3. a merge-base ancestry test of the S1 merge commit against that `<40-hex>` commit, exit 0.
+      S4's rollout step names that record as its precondition. The deployment-specific spelling of
+      these commands (namespaces, selectors) belongs to the deployment repository, not here.
     - **What a stolen agent credential can still do** is T9's row, at its real scope.
     - *The recorded alternative is Q15:* a PROJECT principal per host with read+write GRANTS only,
       which gets the same "never admin" from grants instead of narrowing, at the cost of more
@@ -1058,12 +1115,30 @@ collide with the email skill (decision 1); **[R8]** the client and route contrac
 
 18. **Who owns which test: S2 tests the listener IN PROCESS; S3 owns `tests/memo/e2e.sh`** (round 1
     🟡9). The e2e clauses assert client EXIT CODES, status tokens and `memo-read` output, which only
-    the built verbs produce, so the script is created in S3 with all eleven clauses (twelve
+    the built verbs produce, so the script is created in S3 with all eleven clauses (thirteen
     sabotages). S2's own
     coverage is Go tests over the real handler, the real machine-token backend and a real control
     cache (listed under S2), including the forced-refresh revocation test. *Revision 1–3 split the
     clauses between a `curl`-driven S2 and S3, which could not assert an exit code; that split is
     retracted.*
+
+19. **One renderer, every output path — enforced by a TYPE (round 3 🔴1).** Revision 5 sanitised the
+    preview and let `memo-read` print stored bodies raw, so a variation-selector-encoded instruction
+    accepted at send (decision 5) reached the agent intact through the very command the preview
+    tells it to run. The rule is now structural:
+    - the client hands the listener's raw answer to `memo.Decode`, which fills `memo.Stored` INSIDE
+      the package (`encoding/json` cannot set unexported fields from outside it). Its string fields
+      are UNEXPORTED, so no package outside `internal/memo` can read a stored subject, body, label,
+      scope or display name at all;
+    - the only way out is `memo.Render…` (`RenderPreview` for `memo-check`, `RenderFull` for
+      `memo-read`), which returns `memo.Rendered`, every string field of which has passed
+      `memo.Unsafe`'s replacement; the S5 tab is built from `memo.Rendered` too (decision 15);
+    - **ledger test:** a test enumerates `memo.Stored`'s fields by reflection and fails if any
+      string field is EXPORTED, and enumerates `memo.Rendered`'s and fails if any string field
+      skips the replacement (planting a hostile rune in each and reading it back) — so a field added
+      later fails the build until it is routed through the renderer;
+    - **mutant:** give `memo.Stored` an exported raw accessor and make `memo-read` print through it —
+      the ledger test AND e2e clause (d)'s `memo-read` half both go red (sabotage (d2)).
 
 ## Threat and abuse cases
 
@@ -1121,10 +1196,10 @@ guarantees.
 
 | slice | repo | what | ledgers it moves | mergeable alone because |
 |---|---|---|---|---|
-| **S0** | cairn **and** tooling | **The trust boundary and the hook's silence, before any storage.** cairn: `internal/memo` with `RenderPreview`, the render-side sanitiser and `Sanitise` (the send-side refusal predicate, unused until S1), the hostile corpus generator `tests/memo/hostile.py` → `internal/memo/testdata/hostile.json`, and goldens. tooling: `scripts/claude-hooks/cairn-memo-hook.py` (stdin parse, subagent skip, no-session-id line, status-token branching, throttle, 2 s bound, silence) against a STUB `cairn` on `PATH` that replays the goldens, prints each status token, sleeps forever, or exits 3; NOT yet registered. **Plus one MEASUREMENT, recorded in this plan:** whether an opencode `tool.execute.after` hook can add text the model sees (for example by appending to the tool's output), on one host, with a synthetic tool call. | cairn: new package → `ok` floor (`ci.yml:839`, set to the count MEASURED on the merged tree); `onlyGo` for the testdata file. tooling: the runner's target list (`run-tests.sh:955-1028`). | Pure functions and an unregistered hook; nothing calls either. |
+| **S0** | cairn **and** tooling | **The trust boundary and the hook's silence, before any storage.** cairn: `internal/memo` with `RenderPreview`, the render-side sanitiser and `memo.BreaksFence` (the send-side refusal predicate, unused until S1), `memo.Stored`/`memo.Rendered` and the type ledger (decision 19), the hostile corpus generator `tests/memo/hostile.py` → `internal/memo/testdata/hostile.json`, and goldens. tooling: `scripts/claude-hooks/cairn-memo-hook.py` (stdin parse, subagent skip, no-session-id line, status-token branching, throttle, 2 s bound, silence) against a STUB `cairn` on `PATH` that replays the goldens, prints each status token, sleeps forever, or exits 3; NOT yet registered. **Plus one MEASUREMENT, recorded in this plan:** whether an opencode `tool.execute.after` hook can add text the model sees (for example by appending to the tool's output), on one host, with a synthetic tool call. | cairn: new package → `ok` floor (`ci.yml:839`, set to the count MEASURED on the merged tree); `onlyGo` for the testdata file. tooling: the runner's target list (`run-tests.sh:955-1028`). | Pure functions and an unregistered hook; nothing calls either. |
 | **S1** | cairn | **Storage.** Migration 3 (decision 2) with its rollback note; `pgstore.MemoStore` (send with the per-scope quota + live bound under the advisory lock, list-after, get, retract, prune-on-send); `memo.MaySend` / `memo.MayRead`; the send scan over `internal/redact`'s confident subset (decision 11 — so S1 waits for #216); `cairn-server -revoke-credential` (decision 16); and VERB narrowing — `control.Narrow`'s verb argument, the `credential-verbs-narrowed` event kind and `-issue-credential -narrow-verbs` (decision 17), deployed in BOTH binaries before any agent credential is issued. | pgtest tier (tests live in `internal/pgstore`, already in `PGTEST_PKGS`); `tests/control_mutants.py` `PKGS` gains `./internal/memo/` (the predicates ARE an authz seam), which `tests/test_control_mutant_count_is_pinned.py` forces through `ci.yml` and `internal/control/README.md`; mutant rows for the revoke command (a second journal writer). NOT `api.DeclaredRoutes()`: the revoke mode is a command, like `-issue-credential`. | Inert: no listener calls it; the revoke command only appends an event the code already applies. A rollback across it needs the recipe — stated. |
 | **S2** | cairn | **The client listener.** `cmd/cairn-ui` `-client-api-addr` (no default; refuses to start without `-db-dsn` AND without `-control-journal`), machine-token-only auth over the browser surface's own control-journal authority (decision 3), `ClientRoutes()` ledger + test, reachable-bind refusal, lockout. Routes: `GET /client/v1/memos?scope=&after=&limit=`, `GET /client/v1/memo?scope=&id=`, `POST /client/v1/memos`, `POST /client/v1/memo/retract` (scope + id). In-process Go tests only (decision 18). | `cmd/cairn-ui` flag tests; `internal/ui/README.md` or a new `internal/memo/README.md`. NOT `api.DeclaredRoutes()`, NOT the conformance corpus (part 3 asserts it). | Inert unless `-client-api-addr` is set. |
-| **S3** | cairn | **The Go client verbs** (decision 8), `CAIRN_UI_URL` and `CAIRN_UI_TOKEN`, the local cursor, the status tokens, `memo-check` rendering through S0's `RenderPreview`; and **`tests/memo/e2e.sh` with all eleven clauses and its `--self-test` (twelve sabotages), wired into the `pgtest` job** (decision 18); and **`tests/memo/live-probe.sh`** (closing-condition part 5), run against the deployment by the operator after S7. | `ci.yml` (the e2e step and its PASS floor); `internal/client/cli.go` `Verbs()`; `capability_ledger` `go_only` rows; `flake.nix` `want-go-only-verbs.txt`; `tests/test_go_client_ledgers.py`; `tests/parity/README.md` residual 11. | Read-only for every existing verb. |
+| **S3** | cairn | **The Go client verbs** (decision 8), `CAIRN_UI_URL` and `CAIRN_UI_TOKEN`, the local cursor, the status tokens, `memo-check` rendering through S0's `RenderPreview`; and **`tests/memo/e2e.sh` with all eleven clauses and its `--self-test` (thirteen sabotages), wired into the `pgtest` job** (decision 18); and **`tests/memo/live-probe.sh`** (closing-condition part 5), run against the deployment by the operator after S7. | `ci.yml` (the e2e step and its PASS floor); `internal/client/cli.go` `Verbs()`; `capability_ledger` `go_only` rows; `flake.nix` `want-go-only-verbs.txt`; `tests/test_go_client_ledgers.py`; `tests/parity/README.md` residual 11. | Read-only for every existing verb. |
 | **S4** | tooling | **Delivery.** Register `cairn-memo-hook` on SessionStart, UserPromptSubmit and PostToolUse (no matcher) through `register-nudge-hook.py`'s tables; the `cairn-memo` skill (`claude/skills/cairn-memo/SKILL.md`) describing `memo-send`/`memo-read`/`memo-retract`, the standing line and what the secret scan cannot promise — its description built from "memo", "scope notice" and "cairn", never "mail"/"inbox"; the opencode plugin per S0's measurement, or the documented pull-only fallback if it measured impossible. **Rollout step (not CI):** precondition — S7's recorded deploy-order check (decision 17). Then, for each (host, instance) the operator issues `agents@<host>` with `-narrow-verbs read,write` (decisions 16, 17) and writes `CAIRN_UI_URL` and `CAIRN_UI_TOKEN` into that instance's env file; a check asserts the file is still 0600. | The tooling repo's own suite and runner list; the registrar's tables and its tests. | Silent until S2, S3 and S7 are deployed: `memo-check` reports `unconfigured`, which the hook prints once per session. ⚠ So S4 is deployed LAST, or that line appears in every session — sequenced, not hidden. |
 | **S5** | cairn | **UI.** `?tab=memos` on the scope page; `POST /memo` and `POST /memo/retract` (class `0`); plain-text rendering; "retraction stops further delivery only" copy. | `internal/ui/routes.go` rows + `routes_test.go` hand ledger; `tests/control_mutants.py` rows; `uiaudit` fixtures for the tab; `internal/ui/README.md`. | Read-only over S1 plus two gated forms. |
 | ~~S6~~ | — | **REMOVED in revision 3 (O10).** The urgent bell is out of v1; Q8. | — | — |
@@ -1145,6 +1220,13 @@ Sizes are not estimated; nobody has measured these.
   unassigned code point. And the SAME hostile set planted in EACH interpolated field — subject,
   sender display name, credential label, scope name, retracting actor's display — not only the
   body.
+- **The corpus is PARTITIONED, and the two halves are pinned as exact sets (round 3 🟡4):** the
+  generator emits exactly **8 FENCE-BREAKING** members (an ESC CSI sequence, an OSC title sequence,
+  NUL, U+202E, U+2066, U+2028, U+2029, a tag-character smuggling payload) — each refused by
+  `memo.BreaksFence` — and exactly **8 SEND-ACCEPTED** members (the closing marker at column 0, the
+  closing marker mid-line, a guessed nonce, the marker word in a subject, a fake standing line, a
+  `| ` fake header, a variation-selector-encoded payload in U+E0100–U+E01EF, a U+200B/U+2060 mix) —
+  each accepted at send and neutralised at render. e2e (d) depends on these counts (16 = 8 + 8).
 - **Assertion, structural:** parse the rendered output — exactly one opening and one closing marker,
   both at column 0, nonces equal; every line between them starts with `| `; the memo count line
   equals N; NO CODE POINT for which `memo.Unsafe` is true — decoded as runes, never matched as
@@ -1206,13 +1288,17 @@ Sizes are not estimated; nobody has measured these.
   goes RED because the prune fails.
 - Injectable clock: every timestamp in a send, retract and prune comes from the store's `now`
   (the test sets it to year-2000 values and reads them back exactly).
-- Cursor margin (round 2 🟡3): (1) a send transaction held open, IDLE, past 30 s is terminated by
-  `transaction_timeout` — run on PostgreSQL ≥ 17, and RED under `statement_timeout` alone, which an
-  idle open transaction never trips; this test is also what establishes whether `SET LOCAL` after
-  `BEGIN` arms the timer (decision 6); (2) a send held open for 25 s while a later send commits —
-  the EARLIER row, committed late, is still delivered to a session whose `high_water` already passed
-  the later row's `created_at` (the margin's whole claim); (3) with the margin set to 0 the same
-  test goes RED (the late row is skipped).
+- Cursor margin (rounds 2–3 🟡3/🟡1): (1) a send transaction held open, IDLE, past 30 s after its
+  `SET LOCAL` is terminated by `transaction_timeout` — run on PostgreSQL ≥ 17, and RED under
+  `statement_timeout` alone, which an idle open transaction never trips; (2) a send held open for
+  25 s while a later send commits — the EARLIER row, committed late, is still delivered to a session
+  whose `high_water` already passed the later row's `created_at`; (3) with the margin set to 0 the
+  same test goes RED; (4) **pool wait and pre-`BEGIN` delay cannot age a row:** with all 8 pooled
+  connections held, a send waits 60 s for one and then commits — its `created_at` is within 30 s of
+  its commit, and it is delivered; RED under a mutant that reads the clock BEFORE `BEGIN`; (5) after
+  a memo send on a pooled connection, a SESSION-store transaction on the SAME connection runs
+  longer than 30 s without being terminated (the `SET LOCAL` did not leak) — RED under a mutant
+  that issues a plain `SET`.
 - **Verb narrowing semantics (round 2 🟡1):** (1) a credential with `credential-verbs-narrowed
   {read,write}` followed by a SECOND event `{read,write,admin}` still lacks `admin` — RED under a
   "replace, not intersect" mutant; (2) a credential narrowed by VERBS ONLY (nil scope list) is
@@ -1291,11 +1377,14 @@ REAL built cairn client against a stub HTTP server, not a stub binary.
 
 **S3 also:** `tests/memo/live-probe.sh --self-test` against a LOCAL `cairn-ui` (the e2e world):
 the script exits 0; with the listener stopped it exits non-zero at the 401 control; with the probe
-scope's memo already retracted it exits non-zero at the positive control; and its temporary config
-directory is gone after every run.
+scope's memo already retracted it exits non-zero at the positive control; its temporary directory
+is gone after every run; and the operator-side `$HOME/.cache/subsystem-store` and config file are
+BYTE-UNCHANGED across a probe run (hashed before and after; RED under a mutant that sets only
+`CAIRN_CONFIG` and leaves `HOME` alone).
 
 **S7 (deployment).** That repository's own render/lint checks over the manifest change; `SHOW
-server_version` ≥ 17; the deploy-order check (decision 17), recorded; then closing-condition part 5
+server_version` ≥ 17; the deploy-order check against the RUNNING workloads (decision 17), recorded;
+then closing-condition part 5
 run LIVE by the operator — the probe's 401 control, its positive send and check, its retract and its
 silent new session — with its summary recorded (part 5).
 
@@ -1334,6 +1423,19 @@ Each was checked against the code before it was applied; none was disputed.
 | 🟡5 e2e (g) cannot see decision 17 | Confirmed. | World (writer-a admin on `alpha-notes`); clause (g); sabotage (g2); `sabotaged=12`; decision 10 |
 | 🟡6 no slice creates `live-probe.sh` | Confirmed. | S3; part 5 (credential path, record) |
 | 🟢 tombstone, stale S2 bullet, Q10 cost, off-by-ones | Confirmed: `exitConfig = 78` is `cmd/cairn-ui/main.go:164`, `authorityMaxAge` is `:168`. | Decision 10; S2 tests; Q10; STEP 1; decision 3; round-1 table |
+
+## Round-3 findings → where each is fixed
+
+Each was checked against the code before it was applied.
+
+| finding | verdict | where |
+|---|---|---|
+| 🔴1 `memo-read` prints raw bodies | Confirmed: the render replacement was stated for the preview only, while `memo-read` prints full bodies. One part of the finding has no object here: there is no `memo-ls` verb and no JSON output (decision 8's table has four verbs); the rule covers any added later. | Decisions 5, 8, 15, 19; e2e (d) and sabotage (d2); `sabotaged=13` |
+| 🟡1 the margin's premise | Confirmed (decision 2 vs revision 5's decision 6). The measured PostgreSQL behaviour is round 3's auditor's, on 17.11; 18.6 unmeasured. | Decision 6; S1 tests (4), (5) |
+| 🟡2 manifest-only deploy check | Confirmed. | Decision 17; S7 test plan |
+| 🟡3 probe writes the real cache | Confirmed: `internal/client/readstore.go:55-71`, `internal/client/verbs.go:69-81`. On the citation: the bare `:121-126` resolved to `instances.go` because it followed an `instances.go` citation; the intended content is at `internal/client/transport.go:121-126`, now named. | Closing-condition part 5; S3 test |
+| 🟡4 e2e (d) never reaches the renderer with fence-breakers | Confirmed. | e2e (d); S0 corpus partition (8 + 8) |
+| non-findings | `Sanitise` → `memo.BreaksFence` in the S0 row; two events intersecting to the empty set is applied and fails closed. | S0 row; decision 17 |
 
 ## Open questions
 
