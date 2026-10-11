@@ -227,6 +227,19 @@ LEDGER: tuple[Capability, ...] = (
                     "Go-only",
     ),
     Capability(
+        name="scope-sources",
+        effect=READS,
+        cli=None,
+        route=("GET", "/api/v1/sources/{scope}"),
+        no_cli_because="S2 of the scope-refs plan lands the ROUTE alone; the proposed sources "
+                       "verb, its client, is S3. Until then the route's readers are the browser "
+                       "surface (S4) and the auditor (S5), neither of which is a verb yet",
+        go_only=True,
+        go_only_why="decision 10 of the scope-refs plan: the sources read is added to "
+                    "`cmd/cairn-server` only, on the arcs precedent, and the Python oracle is "
+                    "not extended",
+    ),
+    Capability(
         name="cache-validate",
         effect=READS,
         cli="validate",

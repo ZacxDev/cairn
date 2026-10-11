@@ -6,21 +6,26 @@
 //
 //   READS   `navigator.standalone` (iOS's own flag — feature detection, never the user
 //           agent), `display-mode: standalone`, and the ONE storage key below.
-//   WRITES  `hidden` on the header's Install button and on the root page's iOS hint, and the
-//           ONE storage key — only on a dismiss tap, only the value "1". No timestamp, no
-//           identity, no second key.
+//   WRITES  `hidden` on the header's Install button, on the root page's iOS hint and on the
+//           header's standalone Back/Reload (S5), and the ONE storage key — only on a dismiss
+//           tap, only the value "1". No timestamp, no identity, no second key.
+//   GOES    only where a tap on S5's Back or Reload asks, through exactly `history.back()` and
+//           `location.reload()` — the browser's own two buttons, for a window that has none.
 //   NEVER   a service worker (there is none in v1, by operator decision), a cache, a cookie,
-//           a request of its own, or any API that turns text into markup or code.
+//           a request or navigation of its own, or any API that turns text into markup or code.
 //
-// Without it nothing is lost: the button and the hint are rendered `hidden` and stay hidden,
-// and an installed app is still one browser-menu click away.
+// Without it nothing is lost: the controls and the hint are rendered `hidden` and stay hidden,
+// an installed app is still one browser-menu click away, and an installed window keeps the
+// wordmark and breadcrumbs as its way around.
 (function () {
   "use strict";
 
   var HINT_KEY = "cairn.installHintDismissed";
 
-  // An installed app's window is already the app: nothing here has anything to offer it.
+  // An installed app's window is already the app, so it has nothing to install — and it has no
+  // browser chrome either (S5): its Back and Reload are ours to show, and that is all done here.
   if (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) {
+    revealStandaloneNav();
     return;
   }
 
@@ -68,6 +73,23 @@
       return;
     }
   });
+
+  // S5: both controls or neither, so a half-rendered header never offers Reload without Back.
+  function revealStandaloneNav() {
+    var back = document.getElementById("pwa-back");
+    var reload = document.getElementById("pwa-reload");
+    if (!back || !reload) {
+      return;
+    }
+    back.addEventListener("click", function () {
+      window.history.back();
+    });
+    reload.addEventListener("click", function () {
+      window.location.reload();
+    });
+    back.hidden = false;
+    reload.hidden = false;
+  }
 
   function wasDismissed() {
     try {

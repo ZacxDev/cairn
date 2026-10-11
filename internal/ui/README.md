@@ -2201,8 +2201,8 @@ reachable over HTTP**; this phase is the surface.
 | `GET /invite?project=<control.ID>` | `content` | that project's invitations, in every state, plus the mint form |
 | `POST /invite` | — | mints one invitation and renders its link **once** |
 | `POST /invite/revoke` | — | withdraws an open invitation, by DIGEST |
-| `GET /join` (link: `/join#invite=<token>`) | `public` | what an invited person opens — the token is in the FRAGMENT, which the server never receives (Phase V) |
-| `GET /join?invite=<token>` | `public` | a LEGACY link, minted before Phase V; still opens, and a REUSABLE team link on it is refused at the callback |
+| `GET /join` (link: `/join#invite=<token>`) | `public` | what an invited person opens — the token is in the FRAGMENT, which the server never receives (Phase W) |
+| `GET /join?invite=<token>` | `public` | a LEGACY link, minted before Phase W; still opens, and a REUSABLE team link on it is refused at the callback |
 
 ## 🔴 `GET /join` is PUBLIC, and what makes that safe is that it resolves nothing
 
@@ -2337,9 +2337,9 @@ Two consumers, two different correct spellings, and neither may be `FormValue`:
 | consumer | read | why |
 |---|---|---|
 | `handleOAuthStart` (POST) | `r.PostFormValue` | the token must come out of the body the accept form posted, never out of a URL |
-| `handleJoinPage` (GET) | `r.URL.Query().Get` | a LEGACY invitation link (`?invite=`, pre-Phase V) is the one place the token appears in a URL a server receives, and `FormValue` on a GET would ALSO read a **multipart** body no browser navigation sends |
+| `handleJoinPage` (GET) | `r.URL.Query().Get` | a LEGACY invitation link (`?invite=`, pre-Phase W) is the one place the token appears in a URL a server receives, and `FormValue` on a GET would ALSO read a **multipart** body no browser navigation sends |
 
-Since Phase V the start row reads a SECOND body field, `inviteQueryTokenField` (`invite-query`), the
+Since Phase W the start row reads a SECOND body field, `inviteQueryTokenField` (`invite-query`), the
 same way — `PostFormValue` — and it is what a legacy page posts, so the flight is marked query-borne.
 
 ⚠ **THAT LAST CLAUSE IS TRUE FOR MULTIPART AND FALSE FOR THE COMMONER SPELLING, WHICH IS WHY IT
@@ -3975,14 +3975,15 @@ install starts there — and nothing on an unarmed one. The script:
   and replays that event's `prompt()` on a click;
 - reveals the ROOT page's iOS hint only where `"standalone" in navigator && navigator.standalone ===
   false` — feature detection, never the user agent — unless this browser dismissed it;
-- does nothing at all under `display-mode: standalone`;
+- under `display-mode: standalone` does ONE thing: reveals S5's Back/Reload (Phase V) — never the
+  Install button or the hint;
 - writes ONE thing, ever: `localStorage["cairn.installHintDismissed"] = "1"`, on a dismiss tap, inside a
   `try` (blocked storage simply means the hint shows again). Sign-out does not clear it (decision 11).
 - registers NO service worker (O13).
 
 Two guards hold that, at two depths: `TestThePWAScriptTouchesOnlyWhatItSays` — a SPELLING guard, labelled
 as one (`window["local"+"Storage"]` walks it) — refuses the markup/code/network/storage sinks, `caches`,
-`serviceWorker`, and (until S5) `location`/`history`, and admits `localStorage` ONLY as the one `getItem`
+`serviceWorker`, and `location`/`history` except S5's two calls (Phase V), and admits `localStorage` ONLY as the one `getItem`
 and the one `setItem(HINT_KEY, "1")`; and the STATE guard is the browser, `uiaudit`'s
 `TestPWAClauses/e_storage` (clause (e)).
 
@@ -4092,7 +4093,7 @@ and migrates it: the invitation survives, the ledger reads `[1 2]`, a link redee
 edited in place once, in this PR's fix round, to add `team_link_redemptions.confirmed`; it had never
 been applied outside a test.) Shared with the invitation, on purpose: `invite.NewToken`,
 `invite.Digest`, 256-bit tokens, digest-only storage, the token shown ONCE, and the ONE join path: a
-link is `/join#invite=<token>` since Phase V (`/join?invite=<token>` before it), and `ControlInviting` hands any token its own store does not know to
+link is `/join#invite=<token>` since Phase W (`/join?invite=<token>` before it), and `ControlInviting` hands any token its own store does not know to
 `ControlTeamLinks` (`ControlInviting.Links`). Dispatch is by STORE, never by a prefix or form field.
 
 **There is no separate team-link wiring** (round 0 D2): the server reads the link half from
@@ -4204,7 +4205,7 @@ capability to disk in plain text."* Every mint now renders `/join#invite=<token>
 sent in a request, so no access log, referrer or request line at any hop holds it, and `join.js` (the
 deliberate third entry of `AllowedScriptSources`) moves it into the accept form's BODY. **A reusable
 team link arriving in a query string is REFUSED**, so the logged shape cannot come back into use.
-⚠ **WHAT REMAINS, EXACTLY:** (1) links minted BEFORE Phase V are still `?invite=` links — a SINGLE-USE
+⚠ **WHAT REMAINS, EXACTLY:** (1) links minted BEFORE Phase W are still `?invite=` links — a SINGLE-USE
 one (an invitation, or a team link with reuse unticked) still redeems on that shape, so its token is
 in the logs of every hop it crossed until it is spent or expires (≤ 7 days by default for an invitation,
 ≤ `invite.MaxLinkTTL` for a link); a REUSABLE pre-Phase-V link stops working and must be re-minted —
@@ -4318,7 +4319,7 @@ build refuses a version-2 database) before asserting the recipe lifts it.
   test drives a reusable link at volume.
 - **A revoke racing a redemption**, and two simultaneous mints — the store's conditional statements
   are the argument; neither race is driven.
-- **An access log.** The `/join` query-string residual above is CLOSED for reusable links by Phase V;
+- **An access log.** The `/join` query-string residual above is CLOSED for reusable links by Phase W;
   what is left (pre-Phase-V single-use links) is a deployment fix outside this repo. No test reads a
   real gateway's log; `uiaudit`'s `TestTheJoinFragmentIsClearedAndPosted` reads every request line a
   browser sent its own server.
@@ -4385,9 +4386,78 @@ draft let through). It fails if it followed no value at all.
   level, not calls, selectors, parameters or `range`).
 - How a given browser, or an installed standalone window, truncates or decorates the title.
 
+# Phase V — standalone Back and Reload (S5 of the mobile plan)
+
+`claudedocs/plan-cairn-mobile-pwa.md`, S5 and O9. An installed app's window has no browser chrome, so
+the shell's header carries `<button class="standalone-nav" id="pwa-back" hidden>Back</button>` and
+`…id="pwa-reload"…Reload`, IMMEDIATELY after the wordmark (`pwaStandaloneNav`, `pwa.go`): every
+authenticated page of an ARMED deployment, no public page, no node at all unarmed (no `pwa.js` is
+linked, so nothing could reveal them). `pwa.js` reveals both — and wires `window.history.back()` and
+`window.location.reload()`, each on a tap — only when `(display-mode: standalone)` matches, and does
+nothing else in that window.
+
+## 🔴 The standalone layout is keyed on the REVEALED controls, not on the media query
+
+The plan says "a sticky compact header in `display-mode: standalone`". CDP cannot emulate that query
+(the plan's measurement), so a rule under it would be unmeasured by every harness here. The stylesheet
+keys every S5 rule on `.page-header:has(> .standalone-nav:not([hidden]))` instead — true exactly when
+`pwa.js` decided the window is standalone — so the browser test's `matchMedia` stub, which reveals the
+controls, renders the REAL standalone layout:
+- the header is `sticky top-0` on an opaque surface (there is no address bar to scroll back to);
+- at a coarse pointer the grid widens to `auto repeat(4, 1fr)` and the viewer line spans four, so Back
+  and Reload join ROW 1 and the header stays at S1's two rows (~100px, the plan's warning about pinning
+  a 101px header) instead of opening a third;
+- the root gets `overscroll-behavior-y: contain`.
+
+The cost, stated: a standalone window with script OFF gets none of it — and it has no Back to pin either.
+
+## The guards
+
+- `TestTheStandaloneControlsAreHiddenArmedOnlyAndBesideTheWordmark` — the exact markup, once per
+  authenticated page, zero on public ones, ids unique, and the position (`</h1>` then the controls then
+  `<p class="nav-arcs">`), which is what auto-placement turns into "row 1".
+- `TestThePWAScriptTouchesOnlyWhatItSays` — the spelling guard now admits EXACTLY
+  `window.history.back()` and `window.location.reload()`, once each, and still refuses every other
+  `history`/`location` (negative controls: `location.assign`, `history.pushState`, a second reload).
+- `uiaudit`'s `TestStandaloneBackAndReload` — the browser test, over an armed world, a TAB and a
+  STANDALONE window (the stub): hidden in the tab (the control), shown in standalone at mobile and laptop
+  with the Install button still hidden and each control ≥ 44px tall at the touch rung; at mobile and
+  tablet, no header row added, the walk's own reading-order check (`headerOrderBreaks`), no overflow,
+  `sticky` (and still at the top after a 400px scroll while the tab's header scrolled away), and
+  `overscroll-behavior-y` `contain` vs `auto`; then scope → entry → Back lands on the scope page, and
+  Reload loads a fresh document at the same URL.
+
+No battery row: the plan's mutant list gives S5 none, and none was added.
+
+## The RED proof
+
+- At the base (this branch's parent, with only `pwaStandaloneNav` added so the tests compile):
+  `TestTheStandaloneControlsAreHiddenArmedOnlyAndBesideTheWordmark` RED (0 renderings on 9 authenticated
+  rows, then its positive control), `TestThePWAScriptTouchesOnlyWhatItSays` RED (its instrument control:
+  no `getElementById("pwa-back")`), `TestStandaloneBackAndReload` RED (its control: no controls on an
+  armed page; chromium 154).
+- At head: all three green — the browser test under chromium 154 (nixpkgs) and 152.0.7977.82 (the
+  flake's pin, S6a's CI chromium).
+- Once, by hand, the three standalone rules removed from `app.css` (the 4-column grid, `sticky`, the
+  overscroll rule): the browser test RED at mobile and tablet on 3 rows instead of 2, `position: static`,
+  `overscroll-behavior-y: auto` and a header at −376px after the scroll — each its own message.
+- ⚠ Local runs were limited to these focused tests (operator instruction); the full suites, the battery,
+  the walk and `pwa_check.sh` ran only in CI.
+
+## What these guards still cannot see
+
+- **A real standalone window.** Whether iOS/Android report `(display-mode: standalone)` to script, the
+  header under the status bar, Back across the OAuth hand-back: the iPhone checklist's steps 5 and 8,
+  a device check outside the closing condition.
+- **`overscroll-behavior` doing anything**: the test reads the computed value, not a pull gesture.
+- **Back on the first page of a window** is a no-op, by design (hiding it would need `history.length`,
+  a second spelling the guard refuses).
+- **A plain-text 404/500 page** has no header and no script, so S5's Back is not on it — the plan's T7
+  row credits S5 with covering it; only B4 (HTML refusal pages) would.
+
 ---
 
-# Phase V — team-link tokens travel in the URL FRAGMENT, never a logged query string
+# Phase W — team-link tokens travel in the URL FRAGMENT, never a logged query string
 
 **Operator decision:** a reusable team-link token must never travel in a URL a server receives, so no
 access log at any hop (a CDN, a relay, this pod's own gateway) can hold one. Closes Phase T's

@@ -3,7 +3,7 @@
 
     python3 tests/dualrun/harness.py                      # the generated store (mode 2)
     python3 tests/dualrun/harness.py --store ~/some/store # the operator's own (mode 1)
-    python3 tests/dualrun/harness.py --self-test          # the NEGATIVE controls, seven mutants
+    python3 tests/dualrun/harness.py --self-test          # the NEGATIVE controls; prints its own count
     python3 tests/dualrun/harness.py --break-both         # the PRE-FLIGHT's control (rc 2)
     python3 tests/dualrun/harness.py --positive-control   # the count MOVES with the store
     python3 tests/dualrun/harness.py --only recall-digest:alpha-index --keep

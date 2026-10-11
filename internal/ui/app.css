@@ -326,7 +326,7 @@
       }
     }
   }
-  .install, .install-hint button {
+  .install, .install-hint button, .standalone-nav {
     cursor: pointer;
     border-radius: 0.25rem;
     border-style: var(--tw-border-style);
@@ -367,6 +367,16 @@
     font-size: var(--text-sm);
     line-height: var(--tw-leading, var(--text-sm--line-height));
     color: var(--color-muted);
+  }
+  .page-header:has(> .standalone-nav:not([hidden])) {
+    position: sticky;
+    top: 0px;
+    z-index: 20;
+    background-color: var(--color-surface);
+    padding-top: calc(var(--spacing) * 2);
+  }
+  html:has(.page-header > .standalone-nav:not([hidden])) {
+    overscroll-behavior-y: contain;
   }
   .empty, .note {
     font-size: var(--text-sm);
@@ -1652,6 +1662,12 @@
       font-size: var(--text-xs);
       line-height: var(--tw-leading, var(--text-xs--line-height));
     }
+    .page-header:has(> .standalone-nav:not([hidden])) {
+      grid-template-columns: auto repeat(4, minmax(0, 1fr));
+    }
+    .page-header:has(> .standalone-nav:not([hidden])) .viewer {
+      grid-column: span 4 / span 4;
+    }
     .page-header .signout {
       justify-self: flex-end;
     }
@@ -1674,9 +1690,12 @@
       min-width: calc(var(--spacing) * 11);
       justify-content: center;
     }
-    .install, .install-hint button {
+    .install, .install-hint button, .standalone-nav {
       min-height: calc(var(--spacing) * 11);
       min-width: calc(var(--spacing) * 11);
+    }
+    .standalone-nav {
+      padding-inline: var(--spacing);
     }
     input[type="password"], input[type="text"], input[type="search"], input[type="number"], select {
       min-height: calc(var(--spacing) * 11);

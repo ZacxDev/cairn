@@ -249,6 +249,7 @@ func TestEveryDeclaredRouteIsActuallyDISPATCHED(t *testing.T) {
 		"sessions": "/api/v1/sessions/alpha-notes",
 		"arcs":     "/api/v1/arcs/alpha-notes",
 		"arc":      "/api/v1/arc/alpha-notes/gadget-rollout",
+		"sources":  "/api/v1/sources/alpha-notes",
 		"entry":    "/api/v1/entry/alpha-notes/gadget-one",
 	}
 	for _, route := range DeclaredRoutes() {
@@ -285,7 +286,7 @@ func TestTheLedgerGuardCanGoRed(t *testing.T) {
 	// not name must be an error, or the agreement test is comparing a set with itself.
 	srv := &Server{
 		readRoutes: map[string]readRoute{"recall": {}, "search": {}, "snapshot": {}, "sessions": {},
-			"arcs": {}, "arc": {}, "raw_dump": {}},
+			"arcs": {}, "arc": {}, "sources": {}, "raw_dump": {}},
 		writeRoutes: map[writeKey]writeRoute{{"POST", "entry"}: {}, {"PUT", "entry"}: {}, {"PUT", "arc"}: {}},
 	}
 	err := srv.checkLedger()

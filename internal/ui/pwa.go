@@ -501,6 +501,31 @@ func pwaInstallButton(a App) g.Node {
 		g.Text("Install"))
 }
 
+// pwaStandaloneNav is S5's pair of controls for an INSTALLED app's window, which has no browser chrome:
+// Back and Reload, rendered `hidden` and revealed by `pwa.js` only when `(display-mode: standalone)`
+// matches, so a tab — which has the browser's own — never shows them. `type="button"`: they submit
+// nothing, and each does exactly one thing on a tap (`history.back()`, `location.reload()`; the spelling
+// guard admits no other navigation). Unarmed, no node: no `pwa.js` is linked, so nothing could reveal them.
+//
+// 🔴 THE SHELL PLACES THEM IMMEDIATELY AFTER THE WORDMARK. The touch header is a grid whose
+// auto-placement IS the DOM order (`tailwind.css`, B2), so that position is what puts them on the
+// header's first row with the nav links — and the stylesheet keys the whole standalone layout (sticky
+// header, the wider first row, `overscroll-behavior-y`) on these controls being REVEALED, not on a media
+// query a harness cannot drive (`uiaudit`'s `TestStandaloneBackAndReload`).
+//
+// ⚠ BACK IS A NO-OP ON THE FIRST PAGE OF A WINDOW (nothing to go back to). It is not hidden there:
+// telling would mean reading `history.length`, a second spelling of `history` for a control the
+// wordmark and the breadcrumbs already cover — every authenticated page has a way "up".
+func pwaStandaloneNav(a App) g.Node {
+	if !a.Armed() {
+		return nil
+	}
+	return g.Group([]g.Node{
+		h.Button(h.Type("button"), h.Class("standalone-nav"), h.ID("pwa-back"), g.Attr("hidden"), g.Text("Back")),
+		h.Button(h.Type("button"), h.Class("standalone-nav"), h.ID("pwa-reload"), g.Attr("hidden"), g.Text("Reload")),
+	})
+}
+
 // pwaInstallHintText is the iOS hint's one line. iOS has no programmatic prompt; this is the path.
 const pwaInstallHintText = "Install: Share → Add to Home Screen"
 

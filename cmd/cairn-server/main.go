@@ -33,6 +33,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/api"
 	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/authz"
+	"github.com/ZacxDev/cairn/internal/codesrc"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/control/tokenfile"
 	"github.com/ZacxDev/cairn/internal/envalias"
@@ -402,6 +403,26 @@ func main() {
 			os.Exit(exitConfig)
 		}
 		srv.ArcJournal = resolved
+	}
+
+	// 🔴 THE CODE-SOURCES JOURNAL (decision 1 of the scope-refs plan): the arc journal's rule — a
+	// journal inside the store tree is a refusal to start, decided on SYMLINK-RESOLVED paths by the
+	// same resolution — but read from the ENVIRONMENT ONLY. There is no flag on purpose: a
+	// pre-feature binary handed an unknown flag refuses to start, and one handed an unknown
+	// variable ignores it, so the variable is the rollback story. Unset (or empty) is the designed
+	// OFF state, `sources-unconfigured`. EVERY refusal — a blank value, a path inside the store,
+	// a path that IS the arc journal — is `codesrc.FromEnv`'s, the variable's ONE reader, so this
+	// program and the browser surface cannot disagree about a value. The pod only ever READS this
+	// file (O_RDONLY), and `internal/api`'s `TestThePodHasNoCallSiteOfJournalSet` keeps it from
+	// ever writing it. `TestTheBinaryREFUSESASourceJournalInsideTheStoreRoot` is the gate, shown
+	// RED first.
+	sourceJournal, sourcesOn, err := codesrc.FromEnv(*store, os.LookupEnv, srv.ArcJournal)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: "+err.Error()+". Refusing to start"))
+		os.Exit(exitConfig)
+	}
+	if sourcesOn {
+		srv.SourceJournal = sourceJournal.Path
 	}
 
 	// 🔴 IDENTITY IS CONFIGURED BEFORE THE LISTENER ACCEPTS, AND A BROKEN CONFIGURATION

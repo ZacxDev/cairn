@@ -957,7 +957,7 @@ comfort size (Apple HIG, 2.5.5 AAA) is missed nearly everywhere, and nothing ada
 | **T4. The OAuth redirect leaves standalone** | R6: expected to stay in the app on iOS. A callback without the flight cookie fails CLOSED (`oauthIncomplete` 400, `oauth.go:653-660`), and the credential form remains. The gate is checklist steps 6 and 9 (O5), not code. |
 | **T5. Sign-out with an installed app** | `POST /sign-out` revokes server-side and clears the cookie (`session.go:370-382`), so a surviving page cannot act: its CSRF token is derived from a dead session. `no-store` plus Chromium's cookie-change eviction keeps the page out of Back (checklist step 10). The installed icon survives by design; it holds nothing. |
 | **T6. The manifest as an information leak** | Public, but it carries only the configured name, the icon variant's paths and constant paths. The flag's help says: put nothing in `-app-name` you would not put on the sign-in page. |
-| **T7. Shortcut / start_url dead ends** | Closed by #202 for the expired-session case; S4 pins each shortcut's `Location`. Plain-text 404/500 answers still lack navigation in standalone; S5's Back control and B4 cover them. |
+| **T7. Shortcut / start_url dead ends** | Closed by #202 for the expired-session case; S4 pins each shortcut's `Location`. Plain-text 404/500 answers still lack navigation in standalone; B4 covers them. *Corrected at S5: S5's Back is NOT on such a page — it has no header and no script.* |
 | **T8. Clickjacking** | Unchanged: the no-CSP decision is not reopened, and installation adds no framing path. |
 | **T9. Client-side storage** | Exactly one key, `cairn.installHintDismissed = "1"` (O8): no user data, written only on a tap, `try/catch`-wrapped. Nothing else is written by script. The spelling guard, plus clause (e) as the STATE guard, enforce it. It is deliberately NOT cleared at sign-out (decision 11). An XSS that reads it learns only "this browser dismissed a hint". |
 | **T10. A committed binary carrying real data** (`leakscan` skips binaries) | Provenance, enforced by regenerate-and-diff. Icons come from the committed SVG template plus `variants.json`; screenshots come only from the synthetic world with a fixed synthetic name. A real-data image cannot equal the derivation's output. The residual: a non-synthetic string added to the FIXTURE would be rendered, but the fixture is text and `leakscan` scans it. |
@@ -1100,6 +1100,12 @@ They are `pwa_check.sh --self-test`'s sabotages.
 - The spelling guard admits only `history.back` and `location.reload` as additions.
 - **Device behaviour is checklist step 8**, a device check rather than a test, and not part of the
   closing condition.
+- **AS BUILT (S5):** the standalone CSS (sticky header, the widened first row, overscroll) is keyed
+  on the REVEALED controls (`.page-header:has(> .standalone-nav:not([hidden]))`), not on `@media
+  (display-mode: standalone)` — same condition in practice (only `pwa.js`'s standalone check reveals
+  them), but measurable under the test's stub. The browser test (`uiaudit/standalone_test.go`) also
+  reads the layout: no header row added, reading order, sticky, overscroll. Reasoning:
+  `internal/ui/README.md` Phase V.
 
 **S6a.**
 - The job log's `chromium --version` equals the flake-resolved version on two consecutive runs.
