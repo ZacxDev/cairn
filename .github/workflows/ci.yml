@@ -613,7 +613,14 @@ jobs:
           # reason that paragraph gives.
           # Measured 2727 collected on the branch, so
           # `2727 - min(50, max(1, 2727/20)) = 2677`.
-          FLOOR = 2677
+          # ⚠ 2677 -> 2730 FOR THE DERIVED-COUNTS BRANCH'S FIX ROUND, AND THIS ONE WOULD HAVE
+          # FIRED. The tree measured 2772 collected without the round (gap 95, already near
+          # the bound), and the round adds the 8 parametrised cases of
+          # `tests/test_go_tested_packages.py` — collected here, SKIPPED here (no Go
+          # toolchain), run by the `go` job — taking the gap to 103 against a `MAX_GAP` of
+          # 100. Measured 2780 collected on the branch, so
+          # `2780 - min(50, max(1, 2780/20)) = 2730`.
+          FLOOR = 2730
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -749,9 +756,19 @@ jobs:
       # on a LOGICAL race — `internal/control/cache_test.go` carries one it cannot see,
       # two refreshes perfectly synchronised and committing in the wrong order.
       - name: go test, under `-race`, with the `ok` count derived from `go list`
+        env:
+          # 🔴 ONE PATTERN, PINNED. Narrowing the run's pattern and the derivation's to the
+          # SAME subtree keeps an equality green, so the run reads it from here and refuses
+          # anything but the whole module; the derivation (`--list`) and the base comparison
+          # below walk `./...` unconditionally (`PATTERN` in `tests/go_tested_packages.py`).
+          GO_PKGS: ./...
         run: |
           set -o pipefail
-          go test -race ./... | tee /tmp/go-test.txt
+          if [ "$GO_PKGS" != "./..." ]; then
+            echo "REFUSING: the test walk's pattern is '$GO_PKGS', not './...' — a narrowed walk"
+            exit 1
+          fi
+          go test -race "$GO_PKGS" | tee /tmp/go-test.txt
           ok=$(grep -c '^ok  ' /tmp/go-test.txt || true)
           # 🔴 THE EXPECTED COUNT IS DERIVED, NOT WRITTEN DOWN, AND THE CHECK IS AN EQUALITY.
           # This used to be `[ "$ok" -lt N ]` with N a hand-measured literal, and that literal
@@ -781,10 +798,13 @@ jobs:
           # that keeps others leaves both counts unchanged and this gate green. That gap is
           # stated in `internal/depspolicy`'s package doc, where the guarantee it defends is
           # written down.
-          go list -race -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... \
-            | sed '/^$/d' | sort > /tmp/go-tested-packages.txt
+          #
+          # The list comes from `tests/go_tested_packages.py --list` rather than an inline
+          # `go list` so that this count and BOTH sides of the base comparison below are one
+          # template, one flag set and one pattern — the comparison's whole premise.
+          python3 tests/go_tested_packages.py --list > /tmp/go-tested-packages.txt
           expected=$(wc -l < /tmp/go-tested-packages.txt)
-          echo "packages with test files (go list -race): $expected"
+          echo "packages with test files (go list -race ./...): $expected"
           echo "packages with passing tests (ok lines):   $ok"
           # The POSITIVE CONTROL on the derivation itself: a `go list` that printed nothing
           # (a template typo, a wrong pattern) would make `expected` 0, and 0 == 0 would pass
@@ -804,17 +824,42 @@ jobs:
       # 🔴 THE HALF THE EQUALITY ABOVE IS BLIND TO: A PACKAGE THAT HAD TESTS ON THE BASE AND
       # HAS NONE NOW, WHILE ITS CODE IS STILL HERE. That is deleting `depspolicy_test.go` —
       # the deletion `internal/depspolicy`'s package doc says CI refuses — and it moves the
-      # derived count and the `ok` count down together. So the set of directories holding a
-      # `_test.go` is compared against the commit this change is measured from (the PR's
-      # base, the merge queue's base, or the previous `main` on a push), and a directory that
-      # LOST its tests while keeping its `.go` files refuses. A package removed outright is
-      # not a narrowing and passes. Both sides are read by the same static rule over
-      # `git ls-tree`, so a build-tag-only test file counts identically on both.
+      # derived count and the `ok` count down together. So the HEAD list the step above
+      # wrote is compared against the SAME `go list -race ./...` run in a detached worktree of
+      # the commit this change is measured from (the PR's base, the merge queue's base, or
+      # the previous `main` on a push), and a package that LOST its tests while its
+      # directory still holds `.go` files refuses. A package removed outright passes.
+      #
+      # 🔴 THE SAME INSTRUMENT ON BOTH SIDES, BECAUSE A STATIC ONE WAS WALKED FOUR WAYS. The
+      # first draft read both sides with a rule over `git ls-tree`; `//go:build never`,
+      # `//go:build !race`, and a rename to `_x_test.go` or `.x_test.go` each dropped a
+      # package from the run while it still looked tested to that rule, and both gates stayed
+      # green. The script's docstring has the detail.
+      #
+      # The script's END-TO-END control runs first, over a two-commit repository it builds:
+      # a base with a test and a head with it tagged out must exit 1. It is the only thing
+      # that exercises the READER (a base side silently read at HEAD passes every real
+      # tree), so a skip here refuses like the ledger step's does.
       - name: no package lost its tests relative to the base commit
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
         run: |
           set -euo pipefail
+          python3 -m pip install --quiet pytest
+          python3 -m pytest tests/test_go_tested_packages.py -q -p no:randomly \
+            --junitxml=/tmp/go-tested.xml
+          python3 - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          t = ET.parse("/tmp/go-tested.xml").getroot()
+          suites = [t] if t.tag == "testsuite" else list(t)
+          ran = sum(int(s.get("tests", 0)) for s in suites)
+          skipped = sum(int(s.get("skipped", 0)) for s in suites)
+          fail = sum(int(s.get("failures", 0)) + int(s.get("errors", 0)) for s in suites)
+          print(f"collected={ran} skipped={skipped} failed={fail}")
+          if skipped or fail or ran < 1:
+              print("REFUSING: the comparison's end-to-end control did not run green")
+              sys.exit(1)
+          PY
           # Fail CLOSED: with no base there is nothing to compare against, and a skipped
           # comparison would be a pass nobody earned.
           if [ -z "${BASE_SHA:-}" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
@@ -822,7 +867,7 @@ jobs:
             exit 1
           fi
           git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          python3 tests/go_tested_packages.py --base "$BASE_SHA" --head HEAD
+          python3 tests/go_tested_packages.py --base "$BASE_SHA" --head-list /tmp/go-tested-packages.txt
 
       # 🔴 THE AUTHORIZATION MATRIX CARRIES ITS OWN POSITIVE CONTROL (32 of 60 cells must
       # ALLOW, pinned from BOTH sides, so a resolver that grants nothing or everything
@@ -1835,10 +1880,17 @@ jobs:
           #       is advisory (`continue-on-error` above), so it marks the run rather than
           #       blocking it. The static rule is cross-checked against `go test -list` at HEAD,
           #       so a rule that miscounts refuses rather than comparing two wrong numbers.
+          #
+          # ⚠ THE STATIC RULE MIRRORS WHAT `go test` TREATS AS A TEST, NOT EVERY `func Test…`:
+          # `TestMain` is the harness's entry point and `-list` never prints it, and a name whose
+          # suffix opens lower-case (`Testify`) is a plain helper, so both are excluded — without
+          # that, adding a `TestMain` red the cross-check on an honest tree. ⚠ STILL NOT MIRRORED:
+          # an `Example` with no `// Output:` comment is compiled but not run, so `-list` omits it
+          # and the cross-check refuses; give a new Example an Output comment.
           listed=$(go test -list '.*' ./... | grep -cE '^(Test|Example|Fuzz)' || true)
           declared() {
-            { git grep -hcE '^func (Test|Example|Fuzz)[A-Za-z0-9_]*\(' "$1" -- '*_test.go' || true; } \
-              | awk '{s+=$1} END {print s+0}'
+            { git grep -hE '^func (Test|Example|Fuzz)([A-Z0-9_][A-Za-z0-9_]*)?\(' "$1" -- '*_test.go' || true; } \
+              | { grep -cvE '^func TestMain\(' || true; }
           }
           if [ -z "${BASE_SHA:-}" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
             echo "::error::no base commit to compare the uiaudit test count against"

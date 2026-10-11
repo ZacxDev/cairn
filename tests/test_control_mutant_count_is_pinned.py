@@ -58,6 +58,8 @@ PUBLISH_BATTERY = REPO_ROOT / "tests" / "publish_workflow_mutants.py"
 ROUTING_BATTERY = REPO_ROOT / "tests" / "routing_mutants.py"
 README = REPO_ROOT / "internal" / "control" / "README.md"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+PARITY_README = REPO_ROOT / "tests" / "parity" / "README.md"
+DUALRUN_HARNESS = REPO_ROOT / "tests" / "dualrun" / "harness.py"
 
 
 def _battery(path: Path = BATTERY, name: str = "cairn_control_mutants"):
@@ -99,22 +101,38 @@ def _flatten(text: str) -> str:
 # The files that carried a present-tense mutant count before this file stopped pinning one.
 # A count reappearing ANYWHERE in them reds, not only at the old anchors — a new sentence is
 # the way the class would come back.
-COUNT_FREE = (README, CI, ROUTING_BATTERY)
+#
+# ⚠ THE FIRST THREE WERE THE SITES THAT CARRIED ONE; THE OTHER THREE ARE WHERE A BATTERY'S SIZE
+# IS ALSO DESCRIBED (each battery's own header, the P2 record) and were added after an audit
+# found the sweep did not read them.
+COUNT_FREE = (README, CI, ROUTING_BATTERY, PUBLISH_BATTERY, PARITY_README, DUALRUN_HARNESS)
 
-MUTANT_COUNT = re.compile(r"(\d+)\s+mutants\b")
-# A window wide enough to hold `at` plus the single space `_flatten` leaves.
+# 🔴 CASE-INSENSITIVE, AND `mutant` WITH OR WITHOUT THE `s`, JOINED BY SPACE OR HYPHEN. The first
+# spelling, `(\d+)\s+mutants\b`, was measured missing `339 MUTANTS` (a shouted heading),
+# `339-mutant` (an adjective), and `339 mutant rows` — three ways the same claim is written.
+# ⚠ DIGITS ONLY: a spelled-out count (`seven mutants`) is NOT swept, because these files use
+# number words for descriptions that are not a battery's size ("the two mutants written for
+# those arms"), and a sweep that red on those would train its reader to reword correct prose.
+MUTANT_COUNT = re.compile(r"(?i)\b(\d+)[\s-]+mutants?\b")
+# Both read a window ending at the match (24 characters back covers `currently at` + the number).
 # Case-insensitive: a sentence may open with it (`**At 339 mutants DECLARED …`).
-HISTORICAL = re.compile(r"(?i)\bat\s+\d+\s+mutants\b")
+HISTORICAL = re.compile(r"(?i)\bat\s+\d+[\s-]+mutants?$")
+# 🔴 BUT `at N mutants` IS NOT HISTORICAL WHEN A PRESENT-TENSE WORD OPENS IT: "now at 339
+# mutants" walked the exemption while stating the current size, which is the exact claim the
+# exemption exists to keep out.
+PRESENT_AT = re.compile(r"(?i)\b(?:now|currently|is|stands|sits)\s+at\s+\d+[\s-]+mutants?$")
 
 
 def present_tense_counts(text: str) -> list[str]:
-    """Every `<N> mutants` in `text` that is NOT phrased `at <N> mutants`, in order."""
+    """Every `<N> mutant(s)` in `text` NOT phrased as history (`at <N> mutants`), in order."""
     flat = _flatten(text)
-    return [
-        m.group(0)
-        for m in MUTANT_COUNT.finditer(flat)
-        if not HISTORICAL.search(flat[max(0, m.start() - 8) : m.end()])
-    ]
+    hits = []
+    for m in MUTANT_COUNT.finditer(flat):
+        window = flat[max(0, m.start() - 24) : m.end()]
+        if HISTORICAL.search(window) and not PRESENT_AT.search(window):
+            continue
+        hits.append(m.group(0))
+    return hits
 
 
 def test_the_sweep_is_an_instrument() -> None:
@@ -134,21 +152,41 @@ def test_the_sweep_is_an_instrument() -> None:
     assert present_tense_counts("the same battery at\n      # 9137 mutants over three") == []
     # A `mutants=<N>` record of a run is a different spelling and never a hit.
     assert present_tense_counts("`mutants=9137 killed=9135`") == []
+    # The four shapes the first spelling of `MUTANT_COUNT` was measured missing.
+    assert present_tense_counts("## THE BATTERY: 9137 MUTANTS") == ["9137 MUTANTS"]
+    assert present_tense_counts("a 9137-mutant battery") == ["9137-mutant"]
+    assert present_tense_counts("it holds 9137 mutant rows") == ["9137 mutant"]
+    assert present_tense_counts("the battery is now at 9137 mutants") == ["9137 mutants"]
+    assert present_tense_counts("currently at\n      # 9137 mutants") == ["9137 mutants"]
+    # …and the historical exemption still covers the hyphenated and singular forms.
+    assert present_tense_counts("measured at 9137-mutant size") == []
 
 
 def test_the_sweep_reads_the_real_files() -> None:
     """A POSITIVE CONTROL ON THE INPUT: the sweep must SEE a count in each guarded file.
 
-    Each of these files carries at least one historical `at N mutants` measurement today, so a
-    sweep that finds no `N mutants` at all — present or historical — in one of them is reading
-    the wrong file or an empty one, and its clean verdict would mean nothing.
+    Every file but the dual-run harness carries at least one historical `at N mutants`
+    measurement today, so a sweep that finds no `N mutants` at all — present or historical — in
+    one of them is reading the wrong file or an empty one, and its clean verdict would mean
+    nothing. The harness carries none, so for EVERY file the control is also planted: a
+    present-tense count appended to the file's real text must be the one hit reported, which
+    fails if the file's own content (an unclosed fence, a stray `#`) swallows what follows.
     """
+    historical_bearing = [p for p in COUNT_FREE if p != DUALRUN_HARNESS]
     blind = [
         str(p.relative_to(REPO_ROOT))
-        for p in COUNT_FREE
+        for p in historical_bearing
         if not MUTANT_COUNT.search(_flatten(p.read_text(encoding="utf-8")))
     ]
     assert not blind, f"the sweep finds no `N mutants` at all in {blind}; it is reading nothing"
+    unplanted = [
+        str(p.relative_to(REPO_ROOT))
+        for p in COUNT_FREE
+        if "9137 mutants" not in present_tense_counts(
+            p.read_text(encoding="utf-8") + "\nThe battery holds 9137 mutants.\n"
+        )
+    ]
+    assert not unplanted, f"a count planted in the real text of {unplanted} was not seen"
 
 
 def test_no_guarded_file_hand_states_a_mutant_count() -> None:

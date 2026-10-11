@@ -35,7 +35,7 @@ SENTENCE VERBATIM ANYWHERE IN THIS FILE. Measured: an earlier draft of this para
 and the ledger then found the quotation after the real sentence had been reworded away — the
 mutant SURVIVED a fully green run. The pin now refuses a second occurrence for that reason.
 The `at 57 mutants` timing figure is deliberately left standing and exempt: it is a
-measurement of a 57-mutant battery and stays exactly as true as the day it was taken, so a guard
+measurement of the battery at 57 mutants and stays exactly as true as the day it was taken, so a guard
 demanding it be relabelled with a new count would be demanding a falsehood. That is the same
 historical-versus-present-tense split that file already draws for the authz battery, in the same
 phrasing.
