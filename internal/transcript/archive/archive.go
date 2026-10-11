@@ -250,6 +250,12 @@ func Open(cfg Config) (*Archive, error) {
 	if err := os.MkdirAll(filepath.Join(cfg.Dir, sessionsDir), dirMode); err != nil {
 		return nil, err
 	}
+	// Staged frames from a previous process can never be continued — the index that would
+	// continue them was in memory — so they are discarded rather than counted against the quota
+	// forever. The agent restarts any such record at frame 0.
+	if err := os.RemoveAll(filepath.Join(cfg.Dir, framesDir)); err != nil {
+		return nil, err
+	}
 	used, err := treeBytes(cfg.Dir)
 	if err != nil {
 		return nil, err

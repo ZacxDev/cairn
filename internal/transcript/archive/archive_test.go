@@ -251,6 +251,35 @@ func TestAMissingMiddleFrameStoresNothing(t *testing.T) {
 	}
 }
 
+// TestARestartDiscardsStagedFramesAndCountsWhatIsStored: a reopened archive counts the committed
+// bytes already on disk against the quota, and drops frames a previous process staged (nothing can
+// continue them).
+func TestARestartDiscardsStagedFramesAndCountsWhatIsStored(t *testing.T) {
+	g := newRig(t, 1<<30)
+	if _, err := g.a.AppendRecords(ownerA, up("s-0001", "", "100"), "main", recs(0, 2)); err != nil {
+		t.Fatal(err)
+	}
+	u := up("s-0002", "", "100")
+	u.Frame = &Frame{Index: 0, Count: 2}
+	if _, err := g.a.AppendRecords(ownerA, u, "main", []Record{{Src: "0", Rec: []byte(`{"half":`)}}); err != nil {
+		t.Fatal(err)
+	}
+	committed, err := treeBytes(filepath.Join(g.dir, sessionsDir))
+	if err != nil || committed == 0 {
+		t.Fatalf("POSITIVE CONTROL: %d committed bytes (%v)", committed, err)
+	}
+	again, err := Open(g.a.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Used() != committed {
+		t.Fatalf("the reopened archive counts %d bytes, want the %d committed (staged frames dropped)", again.Used(), committed)
+	}
+	if _, err := os.Stat(filepath.Join(g.dir, framesDir)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the staged frames survived a reopen (%v)", err)
+	}
+}
+
 // TestTheFirstUploadFixesTheOwnerAndHost is decision 15's ownership: owner B's first upload of a
 // root owner A holds is refused with the ONE uniform error and A's directory is byte-unchanged;
 // so is owner A from ANOTHER host; A continuing from its own host succeeds.
