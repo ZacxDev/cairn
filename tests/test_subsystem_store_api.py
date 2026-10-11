@@ -748,6 +748,17 @@ def _comparable(headers: dict) -> tuple:
     )
 
 
+def _gzip_without_mtime(body: bytes) -> bytes:
+    """A gzip member with its header `MTIME` (bytes 4-7) zeroed, and nothing else.
+
+    The body version of `_comparable`'s `Date` exception: the one field that
+    records WHEN a response was built. Refuses anything that is not a deflate
+    gzip member, so it can never mask four bytes of some other format.
+    """
+    assert body[:3] == b"\x1f\x8b\x08", f"not a gzip member: {body[:16]!r}"
+    return body[:4] + b"\x00\x00\x00\x00" + body[8:]
+
+
 AUDIT_PREFIX = "store-api audit "
 
 
@@ -12963,7 +12974,17 @@ class TestEnumerationChannelsAreClosed:
             f"headers differ:\n denied ={_comparable(denied[1])}\n"
             f" phantom={_comparable(phantom[1])}"
         )
-        assert denied[2] == phantom[2], (
+        # ⚠ EVERY BYTE EXCEPT THE GZIP HEADER'S `MTIME` (bytes 4-7, RFC 1952).
+        # The oracle's `GzipFile` takes no `mtime=`, so that field is the wall
+        # clock at response time: two requests straddling a second boundary
+        # differ there and nowhere else, whatever the scope. That is a property
+        # of WHEN each was asked, not of WHAT was asked, so it cannot
+        # discriminate a refused scope from an absent one. It flaked exactly
+        # that way under `pytest -n 4` on a loaded host (`b0` vs `b1` at index
+        # 4), and red is reproducible on demand with a gzip clock that ticks a
+        # second per call. Masking those four bytes and nothing else keeps the
+        # comparison as exact as the docstring promises everywhere else.
+        assert _gzip_without_mtime(denied[2]) == _gzip_without_mtime(phantom[2]), (
             "the tar BYTES differ — a refused scope is distinguishable from an "
             f"absent one:\n denied ={denied[2]!r}\n phantom={phantom[2]!r}"
         )
