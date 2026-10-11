@@ -493,7 +493,7 @@ network and no cache-root HOME, so each exercises a LEDGER and nothing about beh
 harness is what measures behaviour instead, and it needs a running pod that a nix sandbox is
 the wrong place for.
 
-## The mutation battery over P2 — 61 mutants, 58 killed, 3 labelled equivalent at the code
+## The mutation battery over P2 — at 61 mutants: 58 killed, 3 labelled equivalent at the code
 
 🔴 **Also relocated here from `AGENTS.md`, for the same reason: this is a round-by-round record,
 not a rule.** The three survivors' authority is the label **in the code**, beside the thing

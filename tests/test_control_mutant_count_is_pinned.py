@@ -1,7 +1,7 @@
-"""Each battery's mutant and PACKAGE counts are quoted in prose. Pin them to the code.
+"""No battery's MUTANT count is hand-stated in prose; its PACKAGE set is pinned to the code.
 
 🔴 A NUMBER QUOTED IN PROSE AND DERIVABLE FROM CODE IS A CLAIM WITH NO GATE, AND THIS
-ONE HAS GONE STALE TWICE. Measured history of `internal/control/README.md`'s headline:
+ONE WENT STALE TWICE. Measured history of `internal/control/README.md`'s headline:
 28/27/1 at the commit that introduced the battery, 61/60/1 when it grew to three
 packages, 62/61/1 when it grew again — and it then sat at `62/61/1` across a commit
 where the tree measured **72/70/2**, because that round added ten mutants and edited
@@ -9,50 +9,35 @@ forty-four lines of the same README without re-deriving its own headline. The ro
 after it corrected the number and left `.github/workflows/ci.yml` carrying the stale one
 in TWO places, one of them a step NAME, which is the string a reader sees in the CI UI.
 
-🔴 THE PREVIOUS REMEDY WAS PROSE AND PROSE IS WHAT FAILED. The file carries a
-`⚠ RE-DERIVE THESE` instruction; it was present for both staleness events. The same
-round that wrote it gave a *different* stale number — the epoch citation — a real pin
-(`tokenfile.TestARevocationMakesTheEpochGoDOWN`) and that one has not drifted since.
-This is that treatment for the count.
+🔴 THE FIRST REMEDY WAS A PIN, AND THE PIN TURNED STALENESS INTO MERGE CONFLICTS. This
+file used to require every present-tense copy (the README's three anchors, the CI step
+NAMES and comments of all three batteries, the routing battery's header) to equal
+`len(MUTANTS)`. That stopped the copies drifting, but every PR that added a row then had to
+edit the same five-to-seven lines, so ANY two PRs adding rows conflicted on them — and the
+merged value was neither side's number. The copies are therefore GONE: each battery prints
+its own count when it runs (`SUMMARY mutants=<N> …` for the authz and routing batteries,
+`<N> mutants, <K> problem(s)` for the publish one), which is the only copy that cannot
+disagree with `MUTANTS`. What this file pins now is that NO present-tense count comes back
+at the sites that carried one, so the class cannot regrow one PR at a time.
 
-🔴 AND THE **PACKAGE** COUNT IS THE SAME CLAIM ONE LEVEL OVER, ADDED AFTER A ROUND FIXED
-THE WRONG COPY. `control_mutants.py`'s header carried a stale `FOUR PACKAGES` above a tuple
-of five; the round that noticed deleted that copy and wrote "the tuple below is the only
-place the set is stated" — which was measured FALSE on the same tree: `FIVE packages` was
-also written at two places in `internal/control/README.md` and one in
-`.github/workflows/ci.yml`, none of them pinned, and appending a sixth entry to `PKGS` left
-this file green with all three still reading FIVE. The copy that was deleted sat three
-lines above `PKGS` and would have been in a `PKGS` edit's own diff; the three that survived
-are the ones a `PKGS` editor never opens. So they are pinned here instead, which is the
-remedy this file already exists to apply.
+⚠ WHAT IS STILL ALLOWED: a HISTORICAL count, phrased `at N mutants` — a measurement of an
+older battery, as true as the day it was taken (the README's `2m46s at 62 mutants …`
+timing comparison is the canonical one). That exemption is a PHRASING, and a phrasing is
+walkable: a new present-tense claim written as "at 99 mutants" evades the sweep. Accepted,
+because it is the form both documents already use for history and a looser exemption is a
+larger hole; the failure message tells a writer which phrasing to reach for.
 
-⚠ WHAT THIS PINS, AND WHAT IT DOES NOT. It pins the **mutant count** and the **package
-count** — the two numbers mechanically derivable from `MUTANTS` and `PKGS`. The
-kill/survivor split beside them is the OUTCOME of a run and cannot be asserted without
-running the battery, which takes minutes and belongs in the `go` CI job where it already
-lives; it is deliberately not quoted here either, because a second copy of it in this file
-would be one more of exactly what this file exists to delete. So a wrong split can still
-ship; this closes the halves that never had to.
+🔴 THE **PACKAGE** SET IS A DIFFERENT CASE AND STAYS PINNED. `control_mutants.py`'s header
+once carried a stale `FOUR PACKAGES` above a tuple of five, and `FIVE packages` was also
+written at two places in `internal/control/README.md` and one in `.github/workflows/ci.yml`,
+none pinned. The package cardinal, the ordinal of `cmd/cairn-server` and the full ordered
+enumeration are pinned against `PKGS` below. Unlike the mutant count, they move only when
+`PKGS` moves — new rows add packages through each row's own `pkgs` override instead — so the
+pin does not make unrelated PRs conflict, and it is kept.
 
-🔴 AND IT COVERS **BOTH** BATTERIES, BECAUSE THE SECOND ONE WAS PINNED BY NOTHING AND THE
-FIRST ONE'S HISTORY IS THE WHOLE ARGUMENT. `tests/publish_workflow_mutants.py` declares its
-own `MUTANTS`; `.github/workflows/ci.yml` quoted the number in a step NAME — the same
-string, in the same file, in the same UI, as the copy this module docstring records going
-stale twice — and NOTHING in the tree referenced either the battery module or that step.
-The count moved 8 -> 14 -> 19 across three rounds of one pull request. A number that has
-moved three times and is checked by nothing is a stale number that has not happened yet.
-
-⚠ THE PUBLISH BATTERY HAS NO PACKAGE COUNT AND NO README, so only the mutant-count half of
-this file applies to it. Its sites are a ledger of exact strings (`PUBLISH_ANCHORS`) rather
-than a file-wide sweep: `ci.yml` also carries the AUTHZ battery's counts and a historical
-`at 62 mutants` timing note, so a sweep for `N mutants` over that file would have to
-discriminate BY PHRASING among every such claim it carries — which is the walkable
-discriminator this file already declares as a limit, multiplied. ⚠ THE COUNT THAT STOOD
-HERE IS DELETED RATHER THAN CORRECTED: it read "three claims", an audit measured four,
-and today `grep -coE '[0-9]+ mutants' .github/workflows/ci.yml` answers six. A number
-that has been wrong at every reading is not worth a fourth; the instruction to count it
-yourself is the part that stays true. A ledger fails on a DELETED anchor too, which is the
-other way prose and code come apart.
+🔴 AND THE ROUTING BATTERY'S WIRING CLAIM STAYS PINNED: its header argues the anchor mutants
+may live there BECAUSE the `go` job runs it, and that argument was false when written. That
+is a claim about CI behaviour, not a count, and it is checked against the job's own steps.
 
 The precedent is `tests/test_flake_image_matches_dockerfile.py`: two files stating one
 fact, pinned against each other, red when one moves alone.
@@ -70,8 +55,11 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BATTERY = REPO_ROOT / "tests" / "control_mutants.py"
 PUBLISH_BATTERY = REPO_ROOT / "tests" / "publish_workflow_mutants.py"
+ROUTING_BATTERY = REPO_ROOT / "tests" / "routing_mutants.py"
 README = REPO_ROOT / "internal" / "control" / "README.md"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+PARITY_README = REPO_ROOT / "tests" / "parity" / "README.md"
+DUALRUN_HARNESS = REPO_ROOT / "tests" / "dualrun" / "harness.py"
 
 
 def _battery(path: Path = BATTERY, name: str = "cairn_control_mutants"):
@@ -95,254 +83,171 @@ def count() -> int:
 
 
 @pytest.fixture(scope="module")
-def publish_count() -> int:
-    return len(_battery(PUBLISH_BATTERY, "cairn_publish_workflow_mutants").MUTANTS)
-
-
-@pytest.fixture(scope="module")
 def packages() -> tuple[str, ...]:
     return tuple(_battery().PKGS)
 
 
+def _flatten(text: str) -> str:
+    """The file with comment markers and line wrapping normalised away.
+
+    Both documents wrap their prose and one of them is a YAML comment, so a literal
+    substring search would be a test about where the lines happen to break.
+    """
+    return re.sub(r"\s+", " ", re.sub(r"(?m)^\s*#+\s?", " ", text))
+
+
+# ── NO HAND-STATED MUTANT COUNT ──────────────────────────────────────────────────────
+#
+# The files that carried a present-tense mutant count before this file stopped pinning one.
+# A count reappearing ANYWHERE in them reds, not only at the old anchors — a new sentence is
+# the way the class would come back.
+#
+# ⚠ THE FIRST THREE WERE THE SITES THAT CARRIED ONE; THE OTHER THREE ARE WHERE A BATTERY'S SIZE
+# IS ALSO DESCRIBED (each battery's own header, the P2 record) and were added after an audit
+# found the sweep did not read them.
+COUNT_FREE = (README, CI, ROUTING_BATTERY, PUBLISH_BATTERY, PARITY_README, DUALRUN_HARNESS)
+
+# 🔴 CASE-INSENSITIVE, AND `mutant` WITH OR WITHOUT THE `s`, JOINED BY SPACE OR HYPHEN. The first
+# spelling, `(\d+)\s+mutants\b`, was measured missing `339 MUTANTS` (a shouted heading),
+# `339-mutant` (an adjective), and `339 mutant rows` — three ways the same claim is written.
+# ⚠ DIGITS ONLY: a spelled-out count (`seven mutants`) is NOT swept, because these files use
+# number words for descriptions that are not a battery's size ("the two mutants written for
+# those arms"), and a sweep that red on those would train its reader to reword correct prose.
+MUTANT_COUNT = re.compile(r"(?i)\b(\d+)[\s-]+mutants?\b")
+# Both read a window ending at the match (24 characters back covers `currently at` + the number).
+# Case-insensitive: a sentence may open with it (`**At 339 mutants DECLARED …`).
+HISTORICAL = re.compile(r"(?i)\bat\s+\d+[\s-]+mutants?$")
+# 🔴 BUT `at N mutants` IS NOT HISTORICAL WHEN A PRESENT-TENSE WORD OPENS IT: "now at 339
+# mutants" walked the exemption while stating the current size, which is the exact claim the
+# exemption exists to keep out.
+PRESENT_AT = re.compile(r"(?i)\b(?:now|currently|is|stands|sits)\s+at\s+\d+[\s-]+mutants?$")
+
+
+def present_tense_counts(text: str) -> list[str]:
+    """Every `<N> mutant(s)` in `text` NOT phrased as history (`at <N> mutants`), in order."""
+    flat = _flatten(text)
+    hits = []
+    for m in MUTANT_COUNT.finditer(flat):
+        window = flat[max(0, m.start() - 24) : m.end()]
+        if HISTORICAL.search(window) and not PRESENT_AT.search(window):
+            continue
+        hits.append(m.group(0))
+    return hits
+
+
+def test_the_sweep_is_an_instrument() -> None:
+    """🔴 BOTH CONTROLS, ON THE SWEEP ITSELF, BEFORE ANY VERDICT IS READ FROM IT.
+
+    A sweep that matches nothing reports every file clean. So: a planted present-tense count
+    MUST be found (positive control) — including one split across a YAML comment wrap, the
+    shape `ci.yml` actually has — and the historical form MUST be exempt, including across the
+    same wrap (negative control). The numbers are chosen to equal no battery's size.
+    """
+    assert present_tense_counts("The battery is 9137 mutants now.") == ["9137 mutants"]
+    assert present_tense_counts("      # kill. 9137\n      # mutants over EIGHT packages") == [
+        "9137 mutants"
+    ]
+    assert present_tense_counts("timing at 9137 mutants, against 2m01s") == []
+    assert present_tense_counts("**At 9137 mutants DECLARED** — a run record") == []
+    assert present_tense_counts("the same battery at\n      # 9137 mutants over three") == []
+    # A `mutants=<N>` record of a run is a different spelling and never a hit.
+    assert present_tense_counts("`mutants=9137 killed=9135`") == []
+    # The four shapes the first spelling of `MUTANT_COUNT` was measured missing.
+    assert present_tense_counts("## THE BATTERY: 9137 MUTANTS") == ["9137 MUTANTS"]
+    assert present_tense_counts("a 9137-mutant battery") == ["9137-mutant"]
+    assert present_tense_counts("it holds 9137 mutant rows") == ["9137 mutant"]
+    assert present_tense_counts("the battery is now at 9137 mutants") == ["9137 mutants"]
+    assert present_tense_counts("currently at\n      # 9137 mutants") == ["9137 mutants"]
+    # …and the historical exemption still covers the hyphenated and singular forms.
+    assert present_tense_counts("measured at 9137-mutant size") == []
+
+
+def test_the_sweep_reads_the_real_files() -> None:
+    """A POSITIVE CONTROL ON THE INPUT: the sweep must SEE a count in each guarded file.
+
+    Every file but the dual-run harness carries at least one historical `at N mutants`
+    measurement today, so a sweep that finds no `N mutants` at all — present or historical — in
+    one of them is reading the wrong file or an empty one, and its clean verdict would mean
+    nothing. The harness carries none, so for EVERY file the control is also planted: a
+    present-tense count appended to the file's real text must be the one hit reported, which
+    fails if the file's own content (an unclosed fence, a stray `#`) swallows what follows.
+    """
+    historical_bearing = [p for p in COUNT_FREE if p != DUALRUN_HARNESS]
+    blind = [
+        str(p.relative_to(REPO_ROOT))
+        for p in historical_bearing
+        if not MUTANT_COUNT.search(_flatten(p.read_text(encoding="utf-8")))
+    ]
+    assert not blind, f"the sweep finds no `N mutants` at all in {blind}; it is reading nothing"
+    unplanted = [
+        str(p.relative_to(REPO_ROOT))
+        for p in COUNT_FREE
+        if "9137 mutants" not in present_tense_counts(
+            p.read_text(encoding="utf-8") + "\nThe battery holds 9137 mutants.\n"
+        )
+    ]
+    assert not unplanted, f"a count planted in the real text of {unplanted} was not seen"
+
+
+def test_no_guarded_file_hand_states_a_mutant_count() -> None:
+    hits = {
+        str(p.relative_to(REPO_ROOT)): present_tense_counts(p.read_text(encoding="utf-8"))
+        for p in COUNT_FREE
+    }
+    hits = {k: v for k, v in hits.items() if v}
+    assert not hits, (
+        f"these state a mutant count in the present tense: {hits}\n"
+        "Every battery prints its own count when it runs; a copy in prose is what every PR "
+        "adding a row would have to edit, so any two such PRs conflict on it. Delete the "
+        "number. If the sentence is a correct measurement of an OLDER battery, phrase it "
+        "`… at <N> mutants …`, which is the form the exemption recognises."
+    )
+
+
+# The sites that claim a battery prints its own count. Pinned because three documents now
+# point a reader at that output INSTEAD of a number; if the print went, they would point at
+# nothing.
+PRINTS_ITS_COUNT = (
+    (BATTERY, 'f"SUMMARY mutants={len(selected)} '),
+    (ROUTING_BATTERY, 'f"SUMMARY mutants={len(selected)} '),
+    (PUBLISH_BATTERY, 'f"\\n{len(MUTANTS)} mutants, {bad} problem(s)"'),
+)
+
+
+def test_each_battery_prints_its_own_count() -> None:
+    missing = [
+        f"{p.relative_to(REPO_ROOT)}: {s!r}"
+        for p, s in PRINTS_ITS_COUNT
+        if s not in p.read_text(encoding="utf-8")
+    ]
+    assert not missing, (
+        "the documents send a reader to the battery's own output for its count, and these no "
+        "longer print it:\n  " + "\n  ".join(missing)
+    )
+
+
 def test_the_battery_declares_a_plausible_number_of_mutants(count: int) -> None:
-    """A POSITIVE CONTROL on this file's own instrument.
+    """A POSITIVE CONTROL kept for the package tests below, which share `_battery()`.
 
-    🔴 EVERY ASSERTION BELOW SEARCHES FOR A NUMBER, AND A SEARCH FOR THE WRONG NUMBER
-    FAILS THE SAME WAY A STALE DOCUMENT DOES. If the `count` fixture ever returned 0, the
-    other tests would go red naming the documents, and a reader would edit the documents. So
-    the count is checked for sanity before anything is checked against it.
-
-    ⚠ ONLY AN *EMPTIED* `MUTANTS` PRODUCES THAT 0, AND THE OBVIOUS SECOND CAUSE IS MEASURED
-    FALSE. A RENAMED `MUTANTS` raises `AttributeError` while the fixture is being set up, so
-    this control never runs — measured both ways: renaming it in `publish_workflow_mutants.py`
-    gives 7 passed / 2 errors, and in `control_mutants.py` 5 passed / 4 errors, with `count`
-    returning 0 in neither. Naming a cause the code cannot reach reads as coverage of it.
+    ⚠ ONLY AN *EMPTIED* `MUTANTS` PRODUCES A 0; a RENAMED one raises `AttributeError` while
+    the fixture is being set up, so this control never runs (measured on this file's previous
+    shape, where it showed as errors rather than this failure).
     """
-    assert count > 1, (
-        f"the battery declares {count} mutant(s) — this file's instrument is broken, "
-        "and the failures below would blame the documents for it"
-    )
+    assert count > 1, f"the battery declares {count} mutant(s) — this file's instrument is broken"
 
 
-# The README states the count in the PRESENT tense at these anchors, and each must
-# carry the current number. Declared as a ledger rather than matched loosely, so
-# DELETING an anchor fails too — a silently-dropped claim is the other way prose and
-# code come apart.
-PRESENT_TENSE_ANCHORS = (
-    "python3 tests/control_mutants.py          # {n} mutants",
-    "Measured on this tree: {n} mutants",
-    "The battery is {n} mutants",
-)
-
-# 🔴 A HISTORICAL MENTION IS NOT A STALE ONE, AND THE FIRST DRAFT OF THIS FILE COULD NOT
-# TELL THEM APART. It matched every `N mutants` in the file and went RED on correct
-# prose: the README's timing comparison says "2m46s **at 62 mutants** … against 2m01s for
-# the same battery **at 61 mutants**", which is a measurement of two OLDER batteries on
-# one host and is exactly as true as the day it was written. A guard that reds on a
-# sentence nobody should change trains its reader to edit the sentence.
+# ── The ROUTING-and-ANCHOR battery's WIRING claim ───────────────────────────────────
 #
-# ⚠ THE DISCRIMINATOR IS A PHRASING, AND A PHRASING IS WALKABLE — say so rather than
-# imply otherwise. `at N mutants` reads as historical and is exempt; a NEW present-tense
-# claim written as "at 99 mutants" would evade this. That is accepted: the anchors above
-# are the sites that have actually gone stale, the exemption is the form the file already
-# uses for history, and pinning whole normalised paragraphs would red on every reword.
+# 🔴 ITS COUNT IS NOT PINNED ANY MORE — it is in neither its header nor the step name — but
+# the claim its header makes about WHERE it runs is a claim about CI behaviour, and it is the
+# one that was false when written.
 #
-# ⚠ `\s+`, NOT A LITERAL SPACE, AND THE FIRST DRAFT USED A SPACE AND WAS WRONG. The
-# README wraps this very phrase across a line break — `…the same battery at\n61 mutants
-# over three…` — so a literal space misses the one historical mention in the file and
-# reds on it. A prose guard that cannot see a line wrap is a prose guard that fires on
-# correctly-formatted prose.
-HISTORICAL = re.compile(r"\bat\s+\d+\s+mutants\b")
-
-
-def test_the_README_present_tense_claims_match_the_battery(count: int) -> None:
-    text = README.read_text(encoding="utf-8")
-
-    missing = [a.format(n=count) for a in PRESENT_TENSE_ANCHORS if a.format(n=count) not in text]
-    assert not missing, (
-        f"{README.relative_to(REPO_ROOT)} does not carry these present-tense claims at "
-        f"{count} mutants:\n  " + "\n  ".join(repr(m) for m in missing) + "\n"
-        "Either the count moved and the prose did not, or an anchor was reworded/deleted. "
-        "Re-derive from `python3 tests/control_mutants.py` rather than editing the number "
-        "to match — the kill/survivor split beside it is NOT pinned by anything, and it is "
-        "the half that has been wrong before."
-    )
-
-    # And nothing ELSE in the file may state a different count in the present tense.
-    stale = sorted(
-        {
-            m.group(1)
-            for m in re.finditer(r"(\d+) mutants", text)
-            if int(m.group(1)) != count
-            # A window wide enough to hold `at` plus a line wrap plus the number.
-            and not HISTORICAL.search(text[max(0, m.start() - 8) : m.end()])
-        }
-    )
-    assert not stale, (
-        f"{README.relative_to(REPO_ROOT)} states {stale} mutants outside a historical "
-        f"`at N mutants` phrasing; the battery declares {count}."
-    )
-
-
-def test_the_CI_step_matches_the_battery(count: int) -> None:
-    """🔴 THE STEP *NAME* IS IN SCOPE, NOT ONLY THE COMMENT.
-
-    The name is what appears in the GitHub Actions UI, so a stale one is the most-read
-    copy of the number. It carried `62` for a whole round while the comment above it had
-    already been corrected.
-    """
-    text = CI.read_text(encoding="utf-8")
-    step = [ln for ln in text.splitlines() if "prove every authz guard can go RED" in ln]
-    assert len(step) == 1, f"expected exactly one battery step in {CI}, found {len(step)}"
-    found = re.search(r"\((\d+) mutants", step[0])
-    assert found, f"the battery step name quotes no count: {step[0].strip()}"
-    assert int(found.group(1)) == count, (
-        f"the CI step NAME says {found.group(1)} mutants; the battery declares {count}. "
-        "That string is what a reader sees in the Actions UI."
-    )
-
-
-# ── The PUBLISH-WORKFLOW battery ─────────────────────────────────────────────────────
-#
-# The sites that state, in the PRESENT tense, how many mutants
-# `tests/publish_workflow_mutants.py` declares. A ledger of exact strings, so DELETING an
-# anchor fails as loudly as a stale one — which is how the authz battery's count came
-# apart the first time. The step NAME is first because it is the copy a reader sees in
-# the Actions UI, and the copy that carried a stale number for a whole round.
-PUBLISH_ANCHORS = (
-    "- name: prove every publish-workflow guard can go RED ({n} mutants)",
-    "# prose. {n} mutants, each required to be killed by the test that NAMES its",
-)
-
-
-def test_the_publish_battery_declares_a_plausible_number_of_mutants(publish_count: int) -> None:
-    """A POSITIVE CONTROL on this file's fourth instrument, in the shape of the first.
-
-    Every assertion below searches for a number. A `publish_count` of 0 would send a
-    reader to edit correct prose in `ci.yml` rather than to fix the instrument.
-
-    ⚠ AND THE ONE WAY THAT CAN HAPPEN IS NARROWER THAN THIS DOCSTRING USED TO SAY. It
-    named "a renamed `MUTANTS`" as a cause, and that is MEASURED FALSE: a rename raises
-    `AttributeError` at collection (2 errors, 7 passed), so this control never runs and
-    nobody is sent anywhere. Only an EMPTIED `MUTANTS` — the tuple still there, the rows
-    gone — yields the 0 this control exists to catch. A docstring naming a failure mode
-    the code cannot reach reads as coverage of it.
-    """
-    assert publish_count > 1, (
-        f"the publish battery declares {publish_count} mutant(s) — this file's instrument "
-        "is broken, and the failure below would blame `ci.yml` for it"
-    )
-
-
-def test_the_publish_battery_CI_anchors_match_its_own_count(publish_count: int) -> None:
-    """🔴 THE COUNT MOVED 8 -> 14 -> 19 ACROSS THREE ROUNDS AND NOTHING READ IT.
-
-    Measured on the tree this test was added to: `git grep publish_workflow_mutants`
-    matched the battery itself and one `run:` line in `ci.yml`; nothing referenced the
-    step NAME, and nothing derived the number in it from `MUTANTS`. That is the exact
-    state `internal/control/README.md` was in when its headline went stale twice — the
-    second time in a step name, in this same file.
-    """
-    text = CI.read_text(encoding="utf-8")
-    missing = [a.format(n=publish_count) for a in PUBLISH_ANCHORS if a.format(n=publish_count) not in text]
-    assert not missing, (
-        f"{CI.relative_to(REPO_ROOT)} does not carry these present-tense claims at "
-        f"{publish_count} mutants:\n  " + "\n  ".join(repr(m) for m in missing) + "\n"
-        "Either the count moved and the prose did not, or an anchor was reworded/deleted. "
-        "Re-derive it from `len(MUTANTS)` in `tests/publish_workflow_mutants.py` rather "
-        "than editing the number to match — and note that the kill/survivor split is NOT "
-        "pinned by anything, exactly as for the authz battery above."
-    )
-
-
-# ── The ROUTING-and-ANCHOR battery ───────────────────────────────────────────────────
-#
-# 🔴 THE THIRD BATTERY, ADDED IN THE SAME STATE THE SECOND ONE WAS FOUND IN: a count in a CI
-# step NAME, a count in the battery's own header, and NOTHING in the tree reading either.
-# Measured on the tree this arm was added to: `git grep -n routing_mutants` matched the battery
-# itself, one `run:` line and one comment in `ci.yml`, and prose — `routing_mutants` appeared
-# NOWHERE in this file. That is bit-for-bit the state the module docstring above records for
-# the publish battery, whose count moved 8 -> 14 -> 19 while nothing read it.
-#
-# ⚠ THIS BATTERY HAS NO `PKGS` AND NO README, so — like the publish one — only the
-# mutant-count half of this file applies to it. Its sites are a ledger of exact strings for
-# the same reason: `ci.yml` carries SIX `N mutants` claims across three batteries, so a
-# file-wide sweep there would have to discriminate among them by phrasing, which is the
-# walkable discriminator this file already declares as a limit.
-ROUTING_BATTERY = REPO_ROOT / "tests" / "routing_mutants.py"
-
-ROUTING_ANCHORS = (
-    (CI, "- name: prove every routing and ANCHOR guard can go RED ({n} mutants)"),
-    (ROUTING_BATTERY, "The battery is {n} mutants"),
-)
-
 # The battery's own wiring claim, and the job it names. Pinned as a ledger entry so that
 # REWORDING or DELETING it fails too: the sentence is only true while the step exists, and the
 # battery's header says so in as many words.
 ROUTING_WIRING_CLAIM = "the `mutants` job now runs this file"
 ROUTING_JOB = "mutants"
 ROUTING_RUN = "python3 tests/routing_mutants.py"
-
-
-@pytest.fixture(scope="module")
-def routing_count() -> int:
-    return len(_battery(ROUTING_BATTERY, "cairn_routing_mutants").MUTANTS)
-
-
-def test_the_routing_battery_declares_a_plausible_number_of_mutants(routing_count: int) -> None:
-    """A POSITIVE CONTROL on this file's fifth instrument, in the shape of the first two.
-
-    Every assertion below searches for a number. A `routing_count` of 0 would send a reader
-    to edit correct prose in `ci.yml` and in the battery's own header rather than to fix the
-    instrument. Only an EMPTIED `MUTANTS` produces it — a rename raises `AttributeError`
-    while the fixture is being set up, so this control never runs at all, which is the
-    measurement the two controls above already record.
-    """
-    assert routing_count > 1, (
-        f"the routing battery declares {routing_count} mutant(s) — this file's instrument "
-        "is broken, and the failures below would blame the documents for it"
-    )
-
-
-def test_the_routing_battery_anchors_match_its_own_count(routing_count: int) -> None:
-    """🔴 A COUNT IN A CI STEP NAME AND IN A DOCSTRING, READ BY NOTHING — TWICE OVER NOW.
-
-    The step NAME is first because it is the copy a reader sees in the Actions UI, and it is
-    the copy that carried a stale number for a whole round in the authz battery's history.
-    """
-    missing = []
-    for path, anchor in ROUTING_ANCHORS:
-        wanted = anchor.format(n=routing_count)
-        if wanted not in path.read_text(encoding="utf-8"):
-            missing.append(f"{path.relative_to(REPO_ROOT)}: {wanted!r}")
-    assert not missing, (
-        f"these present-tense claims do not read as {routing_count} mutants:\n  "
-        + "\n  ".join(missing)
-        + "\n"
-        "Either the count moved and the prose did not, or an anchor was reworded/deleted. "
-        "Re-derive it from `len(MUTANTS)` in `tests/routing_mutants.py` rather than editing "
-        "the number to match — and note that the kill/survivor split is NOT pinned by "
-        "anything, exactly as for the two batteries above."
-    )
-
-    # And nothing ELSE in the battery's own source may state a different count in the present
-    # tense. Scoped to that file, NOT to `ci.yml`: the workflow carries every battery's count.
-    text = ROUTING_BATTERY.read_text(encoding="utf-8")
-    stale = sorted(
-        {
-            m.group(1)
-            for m in re.finditer(r"(\d+) mutants", text)
-            if int(m.group(1)) != routing_count
-            # A window wide enough to hold `at` plus a line wrap plus the number.
-            and not HISTORICAL.search(text[max(0, m.start() - 8) : m.end()])
-        }
-    )
-    assert not stale, (
-        f"{ROUTING_BATTERY.relative_to(REPO_ROOT)} states {stale} mutants outside a "
-        f"historical `at N mutants` phrasing; the battery declares {routing_count}. If the "
-        "sentence is a correct measurement of an OLDER battery, write it as `… at <N> "
-        "mutants …`, which is the form the exemption recognises."
-    )
 
 
 def _job_spans(text: str) -> dict[str, tuple[int, int]]:
@@ -367,7 +272,7 @@ def _job_spans(text: str) -> dict[str, tuple[int, int]]:
     return {name: (bounds[k], bounds[k + 1]) for k, (_, name) in enumerate(keys)}
 
 
-def test_the_routing_battery_is_RUN_BY_THE_JOB_ITS_HEADER_NAMES(routing_count: int) -> None:
+def test_the_routing_battery_is_RUN_BY_THE_JOB_ITS_HEADER_NAMES() -> None:
     """🔴 THE WIRING CLAIM IS A CLAIM LIKE ANY OTHER, AND IT IS THE ONE THAT WENT FALSE.
 
     `tests/routing_mutants.py` argues that placing the anchor mutants in it is acceptable
@@ -420,9 +325,8 @@ def test_the_routing_battery_is_RUN_BY_THE_JOB_ITS_HEADER_NAMES(routing_count: i
     assert any(ROUTING_RUN in ln for ln in span), (
         f"{ROUTING_BATTERY.relative_to(REPO_ROOT)} says {ROUTING_WIRING_CLAIM!r}, but the "
         f"`{ROUTING_JOB}` job (lines {lo + 1}-{hi} of "
-        f"{CI.relative_to(REPO_ROOT)}) carries no `{ROUTING_RUN}`. The battery declares "
-        f"{routing_count} mutants that nothing would then run — which is the exact state its "
-        "own header says it was fixed out of."
+        f"{CI.relative_to(REPO_ROOT)}) carries no `{ROUTING_RUN}`. Nothing would then run the "
+        "battery's mutants — which is the exact state its own header says it was fixed out of."
     )
 
 
@@ -496,15 +400,14 @@ def _spell(table: dict[int, str], n: int, what: str) -> str:
 # The sites that state, in the PRESENT tense, how many packages the battery runs over.
 # A ledger of exact strings rather than a loose match, so DELETING one fails too.
 #
-# ⚠ THE `{n}` IN THE CI ANCHOR IS THE MUTANT COUNT, DELIBERATELY. That line states both
-# numbers in one breath, and pinning the whole phrase is what stops a round correcting one
-# of them and walking past the other — which is the exact history the module docstring
-# above records for the step NAME.
+# ⚠ THESE ANCHORS USED TO CARRY THE MUTANT COUNT TOO (`{n} mutants over {W} packages`), and
+# it is deleted from them rather than kept: the module docstring says why the mutant count no
+# longer appears in prose at all.
 PRESENT_TENSE_PACKAGE_ANCHORS = (
-    (README, "python3 tests/control_mutants.py          # {n} mutants, over {W} packages"),
+    (README, "python3 tests/control_mutants.py          # over {W} packages; prints its own mutant count"),
     (README, "IT RUNS OVER {W} PACKAGES NOW"),
     (README, "`cmd/cairn-server` IS THE {O}"),
-    (CI, "{n} mutants over {W} packages"),
+    (CI, "The battery runs over {W} packages, in `PKGS` order"),
 )
 
 # 🔴 A HISTORICAL MENTION IS NOT A STALE ONE — THE SAME TRAP THE MUTANT-COUNT SWEEP FELL
@@ -557,9 +460,7 @@ def test_the_battery_declares_a_plausible_number_of_packages(packages: tuple[str
     )
 
 
-def test_the_present_tense_package_claims_match_the_battery(
-    packages: tuple[str, ...], count: int
-) -> None:
+def test_the_present_tense_package_claims_match_the_battery(packages: tuple[str, ...]) -> None:
     n = len(packages)
     word = _spell(NUMBER_WORDS, n, "a cardinal")
     # 🔴 TWO DIFFERENT QUANTITIES, AND CONFLATING THEM IS WHAT THIS LINE EXISTS TO STOP.
@@ -568,7 +469,7 @@ def test_the_present_tense_package_claims_match_the_battery(
 
     missing = []
     for path, anchor in PRESENT_TENSE_PACKAGE_ANCHORS:
-        wanted = anchor.format(n=count, W=word.upper(), O=ordinal.upper())
+        wanted = anchor.format(W=word.upper(), O=ordinal.upper())
         if wanted not in path.read_text(encoding="utf-8"):
             missing.append(f"{path.relative_to(REPO_ROOT)}: {wanted!r}")
     assert not missing, (
@@ -581,15 +482,6 @@ def test_the_present_tense_package_claims_match_the_battery(
         f"(index {packages.index(CMD_SERVER)} + 1 = {_ordinal_position(packages)}) — the two "
         "are different quantities and agree only while that entry is last."
     )
-
-
-def _flatten(text: str) -> str:
-    """The file with comment markers and line wrapping normalised away.
-
-    Both documents wrap the enumeration and one of them is a YAML comment, so a literal
-    substring search would be a test about where the lines happen to break.
-    """
-    return re.sub(r"\s+", " ", re.sub(r"(?m)^\s*#+\s?", " ", text))
 
 
 def _enumeration(packages: tuple[str, ...]) -> str:

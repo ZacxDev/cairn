@@ -19,23 +19,25 @@ anchor mutants were placed in the ONLY un-gated battery of the three, on a ratio
 creating un-gated batteries. Fixed by wiring rather than by rewording: the `mutants` job now runs
 this file, as its own matrix entry beside the authz battery's shards (the job sets up both a Go
 toolchain and `pytest`, which this battery needs because it mutates and kills on both sides; it
-moved out of the `go` job when the batteries became that job's critical path).
-The battery is 57 mutants. Timing behind that
+moved out of the `go` job when the batteries became that job's critical path). Its size is
+`len(MUTANTS)`, printed on every run's `SUMMARY mutants=<N>` line and listed by `--list`,
+never restated here. Timing behind that
 decision, so the trade is re-derivable rather than asserted, measured at 57 mutants: 614.75 s
 wall / 152.21 s user + 21.00 s sys on a 24-core host at load ~6.5, 57 killed / 0 survived / 0
 misattributed — the same order as `control_mutants.py`, which that job already pays for. If this
 ever has to come back out of CI, correct this paragraph in the SAME commit; the sentence above is
 only true while the step exists.
 
-🔴 AND BOTH OF THOSE ARE NOW READ BY SOMETHING, WHICH THEY WERE NOT WHEN THEY WERE WRITTEN.
-`tests/test_control_mutant_count_is_pinned.py` pins the inventory count above against
-`.github/workflows/ci.yml`'s step NAME, and pins the wiring sentence above — the one naming the
-job — against that job actually carrying a `run:` for this battery. ⚠ DO NOT RE-QUOTE THAT
+🔴 AND THE WIRING SENTENCE ABOVE IS NOW READ BY SOMETHING, WHICH IT WAS NOT WHEN IT WAS WRITTEN.
+`tests/test_control_mutant_count_is_pinned.py` pins the sentence naming the job against that job
+actually carrying a `run:` for this battery, and refuses a present-tense mutant count in this
+header or in `.github/workflows/ci.yml` (one used to be pinned to the step NAME instead; the copy
+is gone, so there is nothing left to go stale). ⚠ DO NOT RE-QUOTE THAT
 SENTENCE VERBATIM ANYWHERE IN THIS FILE. Measured: an earlier draft of this paragraph quoted it,
 and the ledger then found the quotation after the real sentence had been reworded away — the
 mutant SURVIVED a fully green run. The pin now refuses a second occurrence for that reason.
-The `at 57 mutants` timing figure beside the count is deliberately NOT pinned: it is a
-measurement of a 57-mutant battery and stays exactly as true as the day it was taken, so a guard
+The `at 57 mutants` timing figure is deliberately left standing and exempt: it is a
+measurement of the battery at 57 mutants and stays exactly as true as the day it was taken, so a guard
 demanding it be relabelled with a new count would be demanding a falsehood. That is the same
 historical-versus-present-tense split that file already draws for the authz battery, in the same
 phrasing.

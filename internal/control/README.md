@@ -258,13 +258,29 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 339 mutants, over EIGHT packages
+python3 tests/control_mutants.py          # over EIGHT packages; prints its own mutant count
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 339 mutants DECLARED — #214 (the team link) and #220 (S4 of the mobile plan) merged, their row sets disjoint: #214 added 30 rows (15 for the team link, 13 for its fix round, 2 for its round-2 fix), each killed alone with `--only`; S4 added five `ui-pwa-script-*`/`ui-manifest-screenshot-*` rows and re-pointed `ui-pwa-head-emits-a-script-before-s4` as `ui-pwa-head-emits-an-unversioned-script`. ⚠ No whole-battery run on the MERGED tree is recorded here: the merge was pushed with one still in flight, so the `go` CI job on the merge commit is that measurement. The runs before the merge, one per side: #214's, on its tree rebased onto #213 and BEFORE its round 2 added two rows (so at 332): `mutants=332 killed=330 survived=2 misattributed=0 harness-errors=0 stale-extras=0`; S4's, at 309: `mutants=309 killed=307 survived=2 misattributed=0 harness-errors=0 stale-extras=0` — each with its positive control GREEN and the two survivors the EQUIVALENT rows. The run before both, at 304 mutants (the UI hub change, seven `ui-sessions-*`/`ui-arcs-index-*`/`ui-root-*`/`ui-agent-*` rows): `mutants=304 killed=302 survived=2 misattributed=0 harness-errors=0 stale-extras=0`. The one before that, at 297 mutants (S3 of the mobile plan):
+🔴 **THE CURRENT COUNT IS NOT WRITTEN IN THIS FILE.** It is `len(MUTANTS)`, which every run prints on its `SUMMARY mutants=<N> …` line (and `--show` enumerates); a present-tense copy here made every change that adds a row edit this paragraph, so any two such changes conflicted, and `tests/test_control_mutant_count_is_pinned.py` now refuses one coming back. What follows is the RECORD of runs, each at the size it was measured at.
+
+**At 353 mutants DECLARED** (S3 of the transcripts/plugins plan, on its own branch) — the S3 marker-shield fix added one row (`redact-marker-drops-the-whole-span`, adding `internal/redact` to its own `pkgs`), killed by `TestAMarkerDoesNotShieldASecretBesideIt` alone in a hand mutation of that one package, with no battery run (the same operator instruction as below). Before it, at 352: S3 of the transcripts plan added 13 rows (`transcript-*`/`worker-*`, each adding `internal/worker` and `internal/transcript/archive` to its own `pkgs`; `PKGS` unmoved), each killed by its named test in a hand mutation of one focused package — ⚠ NO battery run was made for them on this tree (operator instruction: local gates skipped, CI is the gate), so the `go` job on that PR is their first whole-battery measurement.
+
+**At 347 mutants DECLARED** (S2 of the transcripts/plugins plan, on its own branch) — the merge of S2 of the transcripts/plugins plan
+with `main` after S1 (#216) landed, the two row sets disjoint: `main`'s 339 and S2's eight. S2's
+rows (four `scopeuse-*` at first, then `scopeuse-restore-ignored` and three `capture-*` in its review
+round) each ADD `./internal/transcript/scopeuse/` or `./internal/capture/` through the per-row `pkgs`
+override rather than joining `PKGS`. The 347 is COUNTED, by loading the merged `MUTANTS` tuple, not
+added up; ⚠ no whole-battery run on the MERGED tree is recorded here, so the `go` CI job on the merge
+commit is that measurement. S2's own run, ONE whole-battery run on its tip before the merge, on a
+loaded shared host: `mutants=305 killed=303 survived=2 misattributed=0 harness-errors=0
+stale-extras=0`, positive control GREEN, the two survivors the rows labelled EQUIVALENT, every new
+row killed by the test that names it (at 301 rows, before its review round: `killed=299 survived=2`,
+the same two).
+
+**At 356 mutants DECLARED** (S2 of the scope-refs plan) — S1 of the scope-refs plan (352, after `main` was merged into it) merged into S2, which adds 4 `api-sources-*` rows whose killers are already inside `PKGS`; the row sets are disjoint. ⚠ No whole-battery run on this MERGED tree is recorded here; the `go` CI job on the merge commit is that measurement. S2's last whole-battery run was at 320, on S2 rebased onto the UI hub change and BEFORE `main`'s 339 arrived: `mutants=320 killed=318 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control GREEN, the two survivors the rows labelled EQUIVALENT. In that run the 13 `codesrc-*` rows and S2's first 3 `api-sources-*` rows were each killed by the test it names. ⚠ That run PREDATES S2's round 1, and two of S2's rows have NOT been run since, alone or in a battery: round 1 added `api-sources-damage-leaks-onto-the-wire`, and it moved the reading of `$CAIRN_SOURCE_JOURNAL` out of `main` into `codesrc.FromEnv`, deleting the `main.go` line `api-sources-journal-inside-store-accepted` targeted. That row now targets the same call in `internal/codesrc/journal.go` (the pattern occurs exactly once there), with the same killer, which runs the binary. S1's side: S1 added 13 `codesrc-*` rows, each carrying `pkgs` (`PKGS` plus `./internal/codesrc/`) rather than growing `PKGS`; each was run ALONE with `--only` on S1's own tree (positive control GREEN each time, 13 killed by the test each names, 0 misattributed, 0 stale extras). ⚠ No whole-battery run on this MERGED tree is recorded here; the `go` CI job on the merge commit is that measurement. `main`'s 339: #214 (the team link) and #220 (S4 of the mobile plan) merged, their row sets disjoint: #214 added 30 rows (15 for the team link, 13 for its fix round, 2 for its round-2 fix), each killed alone with `--only`; S4 added five `ui-pwa-script-*`/`ui-manifest-screenshot-*` rows and re-pointed `ui-pwa-head-emits-a-script-before-s4` as `ui-pwa-head-emits-an-unversioned-script`. ⚠ No whole-battery run on the MERGED tree is recorded here: the merge was pushed with one still in flight, so the `go` CI job on the merge commit is that measurement. The runs before the merge, one per side: #214's, on its tree rebased onto #213 and BEFORE its round 2 added two rows (so at 332): `mutants=332 killed=330 survived=2 misattributed=0 harness-errors=0 stale-extras=0`; S4's, at 309: `mutants=309 killed=307 survived=2 misattributed=0 harness-errors=0 stale-extras=0` — each with its positive control GREEN and the two survivors the EQUIVALENT rows. The run before both, at 304 mutants (the UI hub change, seven `ui-sessions-*`/`ui-arcs-index-*`/`ui-root-*`/`ui-agent-*` rows): `mutants=304 killed=302 survived=2 misattributed=0 harness-errors=0 stale-extras=0`. The one before that, at 297 mutants (S3 of the mobile plan):
 `mutants=297 killed=295 survived=2 misattributed=0 harness-errors=0 stale-extras=0`, positive control
-GREEN, the two survivors the rows labelled EQUIVALENT.** That run is also the one that found two rows
+GREEN, the two survivors the rows labelled EQUIVALENT. That run is also the one that found two rows
 the S3 change had broken (patterns on lines it edited, scored HARNESS ERROR) which per-row `--only`
 runs did not reach; they were re-derived and that run is after the fix. Before it:
 S2 (presence) added 31 `presence-*` rows and `./internal/presence/` to `PKGS`. Two PARTIAL
@@ -422,8 +438,8 @@ why the verdicts did not change, and the pull request that split it carries the 
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 339 mutants
-now, so neither number describes what a run takes today, and a run on a loaded box is
+fourth package costs a measurement rather than an impression. ⚠ The battery is several times
+that size now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test
 binary to rebuild. An earlier `~80s` here was measured on a different host and is
