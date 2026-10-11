@@ -464,6 +464,9 @@
           # script and the install screenshots. The PNG names are DERIVED from `screenshots.json`
           # (`uiScreenshotFiles`), the list `uiaudit -screenshots` captures and `pwa.go` reads.
           || (rel == "internal/ui/pwa.js")
+          # 🔴 AND THE JOIN PAGE'S FRAGMENT SCRIPT, FOR `filter.js`'s REASON: `internal/ui/join.go`
+          # `//go:embed`s it, so a filtered tree without it fails to COMPILE.
+          || (rel == "internal/ui/join.js")
           || (rel == "internal/ui/screenshots/screenshots.json")
           || builtins.elem rel (map (f: "internal/ui/screenshots/" + f) uiScreenshotFiles)
           # 🔴 THE NESTED MODULE'S TWO LOCK FILES, AND NOTHING ELSE FROM THAT

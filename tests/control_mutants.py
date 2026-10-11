@@ -2969,8 +2969,8 @@ MUTANTS: tuple[Mutant, ...] = (
         # spellings compile, both return a string, and the difference is only WHICH half of
         # `r.Form` the value may come from — which is why nothing but a request carrying the
         # field in the query alone can tell them apart.
-        old="\tinviteToken := r.PostFormValue(inviteTokenField)",
-        new="\tinviteToken := r.FormValue(inviteTokenField)",
+        old="\tcarried := flightInvite{token: r.PostFormValue(inviteTokenField)}",
+        new="\tcarried := flightInvite{token: r.FormValue(inviteTokenField)}",
         killer="TestTheGitHubStartRowIgnoresAnInvitationTokenInTheQUERYString",
         why="this IS the shipped defect, restored: `FormValue` is the reflex reach for a form "
         "field and it reads the posted body UNION the URL query, so "
@@ -2982,16 +2982,70 @@ MUTANTS: tuple[Mutant, ...] = (
         "the mirror image of the same distinction and was corrected for it separately, which "
         "is what makes the wrong spelling here a thing a reader walks past twice.",
     ),
+    # ---- the team-link FRAGMENT (`join.go`, `join.js`): a reusable token never in a logged URL ----
+    Mutant(
+        name="ui-join-reusable-team-link-accepted-via-query",
+        path="internal/ui/join.go",
+        # The narrowest expression that can be wrong: the one branch that refuses.
+        old="\tif reusable {\n",
+        new="\tif false && reusable {\n",
+        killer="TestAReusableTeamLinkInTheQUERYStringIsRefusedAndNotRedeemed",
+        why="'already-sent links must keep working' read one step too wide. A REUSABLE link is open "
+        "enrolment until it expires, and a `/join?invite=` token has already been written to every "
+        "access log on the way — accepting it keeps the logged shape working, and therefore being "
+        "sent, which is the leak the fragment exists to close.",
+    ),
+    Mutant(
+        name="ui-start-row-drops-the-query-borne-mark",
+        path="internal/ui/oauth.go",
+        old="carried = flightInvite{token: legacy, viaQuery: true}",
+        new="carried = flightInvite{token: legacy}",
+        killer="TestAReusableTeamLinkInTheQUERYStringIsRefusedAndNotRedeemed",
+        why="the tidy-up that treats the two fields as one value, since both carry 'the token'. The "
+        "mark is the ONLY thing that remembers, by the callback, that a server's access log saw it.",
+    ),
+    Mutant(
+        name="ui-query-borne-classification-fails-open",
+        path="internal/ui/join.go",
+        old="\t\t\terr, client)\n\t\treturn \"\"\n",
+        new="\t\t\terr, client)\n\t\treturn carried.token\n",
+        killer="TestAQueryBorneTokenThatCannotBeClassifiedIsNotRedeemed",
+        why="'a lookup failure should not break sign-in' — it does not either way (a known user is "
+        "signed in regardless); what failing open buys is redeeming a link this function could not "
+        "rule out as reusable, exactly when the link store is misbehaving.",
+    ),
+    Mutant(
+        name="ui-minted-link-travels-in-the-query",
+        path="internal/ui/join.go",
+        old='return JoinPath + "#" + url.Values',
+        new='return JoinPath + "?" + url.Values',
+        killer="TestNoMintedLinkCarriesItsTokenInAQueryString",
+        why="one character, and the familiar one: every link on the web carries its parameters after "
+        "`?`. The link still works — which is the problem: every gateway between the reader and this "
+        "pod writes the token to disk.",
+    ),
+    Mutant(
+        name="ui-join-script-not-allowlisted",
+        path="internal/ui/script.go",
+        old="\treturn []string{FilterScriptPath, PWAScriptPath, JoinScriptPath}\n",
+        new="\treturn []string{FilterScriptPath, PWAScriptPath}\n",
+        killer="TestTheFragmentJoinPageMovesTheTokenThroughTheScript",
+        why="`JoinPage` emits the tag itself, so the page works without the list knowing — and "
+        "`uiaudit`'s walk boots with no provider, where the join page renders no script at all.",
+    ),
     Mutant(
         name="ui-join-page-offers-a-form-with-no-token",
         path="internal/ui/render.go",
-        old='\t\t\t\tg.If(token != "" && provider, joinForm(token)),',
-        new="\t\t\t\tg.If(provider, joinForm(token)),",
+        # Re-aimed with the fragment link: a bare `/join` is what every new link opens, so the
+        # server renders the accept form inside a `hidden` block for `join.js` to reveal, and the
+        # defect is that block rendered visible with its EMPTY field. The row keeps its name.
+        old='h.Div(h.ID(joinAcceptID), g.Attr("hidden"), joinNote(), joinForm(inviteTokenField, "")),',
+        new='h.Div(h.ID(joinAcceptID), joinNote(), joinForm(inviteTokenField, "")),',
         killer="TestTheJoinPageWithoutATokenSaysSoAndOffersNoForm",
-        why="a simplification of a two-part condition. Submitting the empty form opens a "
-        "flight carrying no invitation and completes as an ORDINARY sign-in, so somebody who "
-        "was invited ends up signed in as nobody — or refused — with nothing saying the link "
-        "was at fault.",
+        why="`hidden` on a wrapper reads as cosmetic, and the script reveals it anyway. With script "
+        "off — or a fragment carrying nothing — the visible empty form opens a flight carrying no "
+        "invitation and completes as an ORDINARY sign-in, so somebody who was invited ends up signed "
+        "in as nobody — or refused — with nothing saying the link was at fault.",
     ),
     Mutant(
         name="ui-role-chooser-stops-filtering",
@@ -3068,8 +3122,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-join-page-gains-authenticated-navigation",
         path="internal/ui/render.go",
-        old='\t\t\th.Header(h.Class("page-header"), wordmark(app, false)),\n\t\t\th.Main(\n\t\t\t\th.Class("join-main"),',
-        new='\t\t\th.Header(h.Class("page-header"), wordmark(app, false),\n\t\t\t\th.P(h.Class("nav-share"), h.A(h.Href(SharePath), g.Text("Sharing")))),\n\t\t\th.Main(\n\t\t\t\th.Class("join-main"),',
+        old='\t\t\th.Header(h.Class("page-header"), wordmark(app, false)),\n\t\t\th.Main(append([]g.Node{h.Class("join-main")',
+        new='\t\t\th.Header(h.Class("page-header"), wordmark(app, false),\n\t\t\t\th.P(h.Class("nav-share"), h.A(h.Href(SharePath), g.Text("Sharing")))),\n\t\t\th.Main(append([]g.Node{h.Class("join-main")',
         killer="TestNoPublicPageOffersAuthenticatedNavigation",
         why="the duplicate-header tidy-up, which is what `TestTheSignInPageOffersNoAuthenticated"
         "Navigation` already exists to refuse on the OTHER public page. A `Sharing` link in "
@@ -4364,8 +4418,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-pwa-script-not-allowlisted",
         path="internal/ui/script.go",
-        old="\treturn []string{FilterScriptPath, PWAScriptPath}\n",
-        new="\treturn []string{FilterScriptPath}\n",
+        old="\treturn []string{FilterScriptPath, PWAScriptPath, JoinScriptPath}\n",
+        new="\treturn []string{FilterScriptPath, JoinScriptPath}\n",
         killer="TestTheArmedPWAHeadAddsOnlyThePWAScript",
         why="the tag is emitted by `pwaHead`, so the page 'works' without the list knowing — and `uiaudit`'s "
         "walk boots UNARMED, so only the armed render guard would notice a script the allowlist never admitted.",

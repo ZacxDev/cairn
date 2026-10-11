@@ -35,6 +35,13 @@ type TeamLinking interface {
 
 	// Revoke withdraws one of the actor's OWN open links, by digest.
 	Revoke(ctx context.Context, actor control.Principal, digest string) error
+
+	// ReusableLink answers whether `token` names a REUSABLE team link, in any state. It exists
+	// for ONE reader, the callback's `admitQueryBorne`, which refuses such a link when its token
+	// travelled in a URL query string. It is asked only at the callback, where the token is being
+	// redeemed anyway and a refusal is indistinguishable from a dead link — never on a public
+	// row, where it would be an oracle (`handleJoinPage`).
+	ReusableLink(token string) (bool, error)
 }
 
 // MintableTarget is one row of the link form's target chooser.
@@ -313,6 +320,19 @@ func (c ControlTeamLinks) Revoke(ctx context.Context, actor control.Principal, d
 		return invite.ErrNotRedeemable
 	}
 	return c.Store.RevokeLink(digest, c.now())
+}
+
+// ReusableLink reads the link's stored `Reusable`. The flag is fixed at mint, so this read cannot
+// race the redemption that follows it into a different answer.
+func (c ControlTeamLinks) ReusableLink(token string) (bool, error) {
+	if token == "" {
+		return false, nil
+	}
+	link, known, err := c.Store.LinkByToken(token)
+	if err != nil {
+		return false, err
+	}
+	return known && link.Reusable, nil
 }
 
 // openLink reads a presented link and asks every question a redemption must ask BEFORE it
