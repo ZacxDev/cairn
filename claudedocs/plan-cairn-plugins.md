@@ -1573,7 +1573,10 @@ run time).
   pgpass guard over grep-prefixed neutral lines reads the same frozen corpus. The entropy rule
   judges a 16+-character END segment on its own, so words no longer shield a random tail (of 480
   generated tokens, 434 kept their tail at round 6's head, 110 at round 5's, 10 now), with zero
-  change on the frozen corpus.
+  change on the frozen corpus — and, measured by the round-7 audit over the WHOLE go1.25.14
+  standard library, **+112 damaged lines** (4,790 → 4,902, all entropy) on 63 ordinary identifiers
+  with a 16–19-character camelCase or acronym end segment, which neither the frozen corpus nor the
+  sampled sweep contains. A STATED cost under O16, not fixed.
 
 **S2.**
 - Offset reader: a file grown mid-line ships only complete lines; the next run ships the rest

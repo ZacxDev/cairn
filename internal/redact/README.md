@@ -228,7 +228,13 @@ When two rules' spans overlap they merge, and the EARLIER rule in the table name
   tails leading or trailing, 434 kept their tail at round 6's head, 110 at round 5's, **10** now —
   the 10 are tails that fail the token test standing alone, the rule's documented per-token cost).
   Measured zero change on the frozen corpus below, and every round-6 identifier above is still
-  left alone.
+  left alone. 🔴 **But it has a COST the frozen corpus cannot see** (round-7 audit, an opt-in sweep
+  of the WHOLE go1.25.14 standard library): damaged lines 4,790 → 4,902, all **+112** from the
+  entropy rule, over 63 distinct ordinary identifiers whose 16–19-character camelCase or acronym
+  END segment now reads as random — mostly compiler SSA rewrite names (`rewriteValueARM64_Op…`),
+  plus a benchmark name, two JSON test names and mangled C++ symbols. This repository's own tree
+  is unchanged (19 neutral lines). Stated, not fixed: O16 ended the heuristic rounds, and raising
+  the edge minimum for camelCase segments would reopen the round-7 test.
 - **The clean-damage BUDGET** (`budget_test.go`, round 6; rescoped round 7) — damage measured on
   text nobody wrote for the purpose, and pinned so a later round that widens it fails a test
   rather than an audit. 🔴 **What `go test` pins is a FROZEN corpus** (round 7):
