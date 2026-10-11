@@ -11,6 +11,7 @@ later slices add storage, visibility and rendering here. Nothing imports this pa
 | `classify.go` | decision 17's ONE table: declared record/block/part types, their key sets, and the class each UNIT takes (`ClassifyClaude`, `ClassifyOpencodePart`) |
 | `testdata/synthetic_world.json` | written by `tests/transcripts/gen.py` — regenerate and diff, never hand-edit |
 | `classify_test.go` | the shape ledger (both directions), its comparator's own control, and decision 17's rules over literal records |
+| `archive/` | S3's transcript STORE on `cairn-ui` (decision 15): per-session directories, CAS append, frames, ownership, the refusing re-check, quota, retention. Reached only through `internal/worker`, whose upload routes are DISARMED unless `cairn-ui -arm-transcript-capture` (O16). Its package doc states what it does not do yet — it records `*` for every session's derived scopes until S2's `scopeuse` is on `main` |
 
 `tests/test_transcript_fixtures.py` refuses a stale world and any date outside the year 2000.
 

@@ -54,6 +54,9 @@ tokens="$(sed -n 's/^token-file=//p' <<<"$declaration")"
 # this script passes it: the oracle serves no arc route, and the `go_only` arc rows are recorded
 # (`record-go-only`) and replayed against a server holding exactly the world's seeded records.
 arc_journal="$(sed -n 's/^arc-journal=//p' <<<"$declaration")"
+# The seeded code-sources journal, the same arrangement — but handed over as the ENVIRONMENT
+# variable the pod reads ($CAIRN_SOURCE_JOURNAL has no flag, by decision), so it rides `env`.
+source_journal="$(sed -n 's/^source-journal=//p' <<<"$declaration")"
 env_line="$(sed -n 's/^env: //p' <<<"$declaration")"
 
 port="$(python3 -c 'import socket
@@ -63,7 +66,7 @@ print(s.getsockname()[1])
 s.close()')"
 
 # shellcheck disable=SC2086  # the env line is a deliberate word-split of KEY=VALUE pairs
-env $env_line "$binary" \
+env $env_line CAIRN_SOURCE_JOURNAL="$source_journal" "$binary" \
   --store "$store" --host 127.0.0.1 --port "$port" --token-file "$tokens" \
   --arc-journal "$arc_journal" \
   >"$work/server.log" 2>&1 &

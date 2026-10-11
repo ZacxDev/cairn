@@ -54,6 +54,8 @@ must not read as an instruction to run a command that does not exist.
 - *Revision 6* (`9948883` → this) applies round 5, narrowing two sentences:
   - pin 1 is scoped to PACKAGE-LEVEL `os` functions, and methods are added to what it cannot see;
   - the exit-3 and exit-10 mechanisms are cited correctly.
+- *Revision 7* (S1's branch) records the operator's answer to **Q17: key by the normalised scope
+  NAME**. O5's "keyed by scope ID" is superseded by that answer, not by the agent.
 
   Removed decisions keep their numbers, marked REMOVED, so references stay stable.
 
@@ -349,7 +351,7 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
 | O2 | "Scope-level refs" means each scope names the code it describes (repositories and branch), so an auditor can test entries' paths, symbols, commits and PR references against it. | Decisions 2, 6. |
 | O3 | The declaration belongs to the scope and is edited in the browser. **Deviation history:** the first wording was a per-scope "manifest", with a reserved file such as `_scope.md` as the example. Revision 1 measured that file loading as a MALFORMED entry on both clients, and recommended a separate journal. | Decisions 1, 4, 5. |
 | O4 | *(Superseded by O5.)* Store the sources in the scope's `README.md` front matter. It was chosen because README front matter is invisible to both loaders, as measured. Round 2 then showed that the pod's store is a copy `seed.sh` overwrites, and that the UI would need write access to the whole store. | — |
-| O5 | **An append-only journal OUTSIDE the store tree, on the arc registry's pattern.** The UI is its ONLY writer. Records are keyed by scope ID, not by name. The store pod mounts it READ-ONLY and serves one Go-only GET route, which the CLI auditor reads. The reasons the operator accepted: README edits would be silently reverted by the next re-seed; README storage would reverse the decision to keep the UI's store mount read-only; and the journal gives a who/when change history for free, which an audit feature wants. ⚠ **The agent departs from ONE detail of this, the keying**: records are keyed by the normalised scope NAME, because the UI's and the pod's scope IDs come from different authorities and never match (round 3 🔴1, decision 4). That is for the operator to confirm (Q17). | Decisions 1, 4, 5, 10. |
+| O5 | **An append-only journal OUTSIDE the store tree, on the arc registry's pattern.** The UI is its ONLY writer. ~~Records are keyed by scope ID, not by name.~~ **SUPERSEDED by the operator's Q17 answer: records are keyed by the normalised scope NAME (`codesrc.Key`).** The store pod mounts it READ-ONLY and serves one Go-only GET route, which the CLI auditor reads. The reasons the operator accepted: README edits would be silently reverted by the next re-seed; README storage would reverse the decision to keep the UI's store mount read-only; and the journal gives a who/when change history for free, which an audit feature wants. ⚠ **The agent departs from ONE detail of this, the keying**: records are keyed by the normalised scope NAME, because the UI's and the pod's scope IDs come from different authorities and never match (round 3 🔴1, decision 4). That was for the operator to confirm (Q17), and the operator CONFIRMED it (Q17, answered). | Decisions 1, 4, 5, 10. |
 
 ### Chosen by the AGENT writing this plan (open to review)
 
@@ -361,7 +363,10 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
        rollback story.
      - It has no default. Unset means the pod answers `sources-unconfigured` and the UI renders
        that state on the page.
-     - Both binaries refuse to start if the path resolves inside the store root. They reuse
+     - Both binaries refuse to start if the path resolves inside the store root. **As built (S2):**
+       every refusal — a value that reduces to nothing, a path inside the store root, and a path
+       that resolves to the ARC journal (each reader would read the other's lines as damaged) —
+       lives in `codesrc.FromEnv`, the variable's ONE reader, which every binary calls. They reuse
        `arcs.ResolveJournalPath`'s resolution, but the refusal message must name the SOURCES
        journal and `CAIRN_SOURCE_JOURNAL`, never "arc journal". A test pins the message.
      - The file lives on the UI-owned volume, beside the control journal
@@ -456,6 +461,17 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
    - `@<branch>` is REQUIRED. It must be a valid `git check-ref-format --branch` name, with no
      leading `-`, no `@` and no whitespace.
    - No comma and no control characters anywhere.
+   - **As built (S1, after round 1):** the string must be valid UTF-8 (the JSON encoder would
+     otherwise rewrite a bad byte and the reader would skip the writer's own record); "control"
+     is `unicode.IsControl` (C0, DEL and C1, CSI included); Unicode FORMAT characters (category
+     Cf: bidi overrides and isolates, zero-width characters, the BOM) are refused, because a
+     source is a displayed string and these make two sources render alike; whitespace is
+     `unicode.IsSpace`. The host ends at the FIRST `/`; an `@` before it is userinfo, and the
+     branch starts after the FIRST `@` after it, so a second `@` is refused as an `@` in the
+     branch. **`#` is NOT refused**: git accepts it in a branch (`issue#12`), and a pasted
+     `… # comment` still cannot join a source, because it can only be attached by whitespace,
+     which is refused. An over-cap refusal names the source's ORIGINAL line, duplicates
+     included.
    - The canonical form is the normalised string. Duplicates are DEDUPED and order is KEPT, so
      the first source is the primary.
    - At most 8 sources (Q14).
@@ -690,7 +706,7 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
 | **T12. Resource exhaustion on the auditing host** | ≤ 8 sources, a per-call timeout, a per-run PR-check cap, and a cap hit reported as could-not-look. Full mirrors are F1's price, and their size is unmeasured. |
 | **T13. A finding read as a verdict on meaning, or a stale run read as current** | The closed severity table, judgement kept out of the exit code, and every finding quoting its fetched commit and time. |
 | **T14. A committed fixture leaks a real repository** | Run-time synthetic worlds, `leakscan` in CI, no captured text. |
-| **T15. A torn or hand-damaged journal** | Arcs' read rule: damaged lines are skipped and COUNTED, the torn tail is never applied, and the GET reports the damage count. A scope whose latest line was damaged falls back to its previous record, and the response says so. |
+| **T15. A torn or hand-damaged journal** | Arcs' read rule: damaged lines are skipped and COUNTED, and the torn tail is never applied. A scope whose latest line was damaged falls back to its previous valid record. **As built (S2, after round 1): the damage is NOT on the wire at all — no count, no flag.** A damaged line cannot be attributed to a scope (it did not parse), so anything the body said about it would be a statement about every scope: a count leaks activity in scopes the caller cannot read, and a flag (round 0 shipped `damaged=yes`) is journal-wide, permanent after one sealed torn write, and tells the reader of an untouched scope that an older declaration "may be shown". The counts go to the pod's stderr. `TestAHiddenScopesDamagedLineChangesNothingOnTheWire` pins a narrow caller's answer byte-identical across a hidden scope's damage (mutant `api-sources-damage-leaks-onto-the-wire`). *(Revision 6's "reports the damage count" and the round-0 flag are both superseded.)* |
 
 ## Slices
 
@@ -715,7 +731,7 @@ alone.
   and three read states, and S4's POST, gates, T9 pins and the part-4 seam test.
 
 **Mutant rows** (indicative names; they join `tests/control_mutants.py` and move its pinned
-count). Recounted for this revision: **31** (S1 13, S2 3, S4 4, S5 11).
+count). Recounted after S2's round-1 fix: **32** (S1 13, S2 4, S4 4, S5 11).
 
 - **S1 (13):**
   - `codesrc-accepts-a-non-dns-host`
@@ -731,10 +747,11 @@ count). Recounted for this revision: **31** (S1 13, S2 3, S4 4, S5 11).
   - `codesrc-damaged-line-refuses-whole-journal`
   - `codesrc-unknown-field-refused`
   - `codesrc-key-not-normalised`
-- **S2 (3):**
+- **S2 (4):**
   - `api-sources-get-distinguishes-absent-from-unreadable`
   - `api-sources-journal-inside-store-accepted`
   - `api-sources-unreadable-journal-answers-200`
+  - `api-sources-damage-leaks-onto-the-wire` (added by S2's round-1 fix, with T15's rewrite)
 - **S4 (4):**
   - `ui-sources-post-skips-the-admin-check`
   - `ui-sources-links-a-non-github-host`
@@ -785,6 +802,12 @@ killed.
   revision, and the fold shows the first call's list.
   - **Negative control:** the mutant `codesrc-revision-compared-outside-the-lock` makes both land.
     The test must go red on the appended-line COUNT (2 ≠ 1).
+  - **As built (S1):** the mutant moves the `interleave` seam out of the lock WITH the compare (the
+    seam marks the compare-to-append window), so call two CAN reach the seam before call one
+    appends; call one waits for it with a 300ms deadline. ⚠ The kill still depends on that deadline:
+    call two must arrive within it (round 1 measured a 1µs deadline turning the mutant SURVIVED 20 of
+    20). Measured at 300ms: 10 of 10 runs red on the count, each in 0.08–0.22s. Too short a deadline
+    fails LOUD (a SURVIVED row in the battery), never as a false green on the real code.
 - **Fold.** Two records for one scope: the later wins, and reversing the fold goes red. A torn tail
   and a non-JSON line are skipped and counted. A record with an unknown field folds; that is an
   **invariant guard**, labelled, because no build writes one yet.
@@ -950,6 +973,7 @@ killed.
 | Q | question | answer |
 |---|---|---|
 | Q1 | Where are sources stored? | First the README front matter (O4); now **an append-only journal outside the store, UI-written and read-only to the pod (O5)**. |
+| Q17 | Key the journal by scope NAME rather than by scope ID, departing from O5's detail? | **Yes (paraphrased).** Records are keyed by the normalised scope name: `codesrc.Key` is `store.NormalizeRef` of the store directory name. A directory rename orphans the declaration, and an admin re-declares it. A delete followed by a recreate under the same name re-attaches the old declaration, and the page shows who declared it (`set_by`/`set_at`). O5's "keyed by scope ID" is SUPERSEDED by this answer. Recorded in S1. |
 
 ### Still open — each with the agent's recommendation
 
@@ -981,14 +1005,10 @@ killed.
   **Recommend** shipping all three in the deploy that ships S2 and S4.
 - **Q16 (new). The derived HEAD.** **Recommend letting the ledger derive `HEAD` for the new head**
   (decision 10). The other reading of D5 is a GET-only exception in a ledger with one rule.
-- **Q17 (new, round 3 🔴1). Key by NAME rather than ID, departing from O5's detail.** **Recommend
-  name.** It is the only identifier the UI (journal-backed authority) and the pod (token-file
-  authority) share. The costs:
-  - a rename orphans the declaration, and the admin re-declares it;
-  - a same-name recreate inherits the old one.
-
-  The alternative is unifying the two authorities' ID spaces, which is a control-plane change far
-  outside this feature.
+- **Q17. ANSWERED — see "Answered by the operator".** The recommendation (name) was confirmed.
+  The reasoning that led to it: it is the only identifier the UI (journal-backed authority) and
+  the pod (token-file authority) share; the alternative is unifying the two authorities' ID
+  spaces, a control-plane change far outside this feature.
 - **Q18 (new, round 3 🟡3). A second corpus boot for the 503 and unconfigured rows.** **Recommend
   no.** They are witnessed by literal-body Go tests, which is the contract witness for a Go-only
   route anyway, and a second boot in the runner is a new mechanism.

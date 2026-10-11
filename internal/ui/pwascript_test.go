@@ -55,13 +55,32 @@ const pwaHintKey = "cairn.installHintDismissed"
 
 // bannedPWASinks: what an install button and a dismissable hint have no use for. Each turns text into
 // markup or code, sends something off the page, or stores something — and `serviceWorker`/`caches` pin
-// O13 (no service worker in v1) in the script itself. `location` and `history` are banned until S5,
-// whose Back/Reload controls admit exactly `history.back` and `location.reload`.
+// O13 (no service worker in v1) in the script itself. `location` and `history` stay banned: S5's
+// Back/Reload admit exactly the two spellings in [pwaStandaloneCalls], which the scan removes first.
 var bannedPWASinks = []string{
 	"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "Function(",
 	"setTimeout(", "setInterval(", "fetch(", "XMLHttpRequest", "sendBeacon", "WebSocket",
 	"document.cookie", "sessionStorage", "indexedDB", "caches", "serviceWorker", "import(",
 	"createElement", "setAttribute", "src=", "href", "location", "history", "removeItem", "clear(",
+}
+
+// pwaStandaloneCalls are the ONLY spellings of `history` and `location` `pwa.js` may carry (S5 of the
+// mobile plan): the standalone window's Back and Reload, each EXACTLY once. Nothing else navigates —
+// no `location.href =`, no `history.pushState`, no second reload on a timer.
+var pwaStandaloneCalls = []string{"window.history.back()", "window.location.reload()"}
+
+// pwaNavigationScan returns `code` with each admitted call removed — what the banned-sink scan then
+// reads, so any OTHER `history`/`location` is still a hit — and a violation per admitted call whose
+// count is not exactly one.
+func pwaNavigationScan(code string) (rest string, out []string) {
+	rest = code
+	for _, call := range pwaStandaloneCalls {
+		if n := strings.Count(code, call); n != 1 {
+			out = append(out, "the standalone call "+call+" appears "+strconv.Itoa(n)+" time(s), want 1")
+		}
+		rest = strings.ReplaceAll(rest, call, "")
+	}
+	return rest, out
 }
 
 // pwaStorageViolations is the localStorage half of the spelling guard: `localStorage` may appear ONLY
@@ -93,8 +112,9 @@ func pwaStorageViolations(code string) []string {
 	return out
 }
 
-// TestThePWAScriptTouchesOnlyWhatItSays pins the header of `pwa.js`: it reveals two controls, reads
-// and writes ONE storage key, and reaches nothing else — no worker, no cache, no request, no markup.
+// TestThePWAScriptTouchesOnlyWhatItSays pins the header of `pwa.js`: it reveals its controls, reads
+// and writes ONE storage key, navigates ONLY through S5's Back and Reload, and reaches nothing else —
+// no worker, no cache, no request of its own, no markup.
 //
 // ⚠ A SPELLING GUARD, AND LABELLED AS ONE (decision 5): `window["local"+"Storage"]` walks it. What it
 // catches is the ordinary edit — a timestamp beside the flag, an `innerHTML` label, a worker
@@ -104,30 +124,39 @@ func TestThePWAScriptTouchesOnlyWhatItSays(t *testing.T) {
 	code := scriptCode(pwaScript)
 	// INSTRUMENT CONTROL: the strip left the code — the calls the script is built from are there.
 	for _, must := range []string{`addEventListener("beforeinstallprompt"`, ".hidden = false", "navigator.standalone",
-		`getElementById("pwa-install-hint")`} {
+		`getElementById("pwa-install-hint")`, `getElementById("pwa-back")`, `getElementById("pwa-reload")`} {
 		if !strings.Contains(code, must) {
 			t.Fatalf("the comment-stripped pwa.js lacks %q, so the scan below is reading something other than the code", must)
 		}
 	}
+	scan, navigation := pwaNavigationScan(code)
+	for _, v := range navigation {
+		t.Errorf("pwa.js navigation: %s — S5 admits exactly one Back and one Reload, each on a tap", v)
+	}
 	for _, sink := range bannedPWASinks {
-		if strings.Contains(code, sink) {
-			t.Errorf("pwa.js uses %q, which the install button and the iOS hint have no use for — see the header "+
-				"of pwa.js and plan decisions 5 and 11", sink)
+		if strings.Contains(scan, sink) {
+			t.Errorf("pwa.js uses %q, which the install button, the iOS hint and the standalone Back/Reload have no "+
+				"use for — see the header of pwa.js and plan decisions 5 and 11, and S5", sink)
 		}
 	}
 	for _, v := range pwaStorageViolations(code) {
 		t.Errorf("pwa.js storage: %s — O8 allows ONE key, %q = \"1\", written only on a dismiss tap", v, pwaHintKey)
 	}
-	// NEGATIVE CONTROLS, in code position, each realistic: a second key, a worker, an innerHTML label.
+	// NEGATIVE CONTROLS, in code position, each realistic: a second key, a worker, an innerHTML label —
+	// and S5's: a navigation of its own, a history write, a second reload (the admitted call, twice).
 	for name, extra := range map[string]string{
 		"a second storage key": "\nwindow.localStorage.setItem(HINT_KEY + \"At\", String(Date.now()));\n",
 		"a service worker":     "\nnavigator.serviceWorker.register(\"/sw.js\");\n",
 		"an innerHTML label":   "\nbutton.innerHTML = \"<b>Install</b>\";\n",
+		"a navigation":         "\nwindow.location.assign(\"/\");\n",
+		"a history write":      "\nwindow.history.pushState({}, \"\", \"/x\");\n",
+		"a second reload":      "\nwindow.location.reload();\n",
 	} {
 		mutated := scriptCode(pwaScript + extra)
-		red := len(pwaStorageViolations(mutated)) > 0
+		mutatedScan, nav := pwaNavigationScan(mutated)
+		red := len(pwaStorageViolations(mutated)) > 0 || len(nav) > 0
 		for _, sink := range bannedPWASinks {
-			red = red || strings.Contains(mutated, sink)
+			red = red || strings.Contains(mutatedScan, sink)
 		}
 		if !red {
 			t.Errorf("NEGATIVE CONTROL FAILED: %s produced no violation, so the guard above cannot go red", name)
@@ -165,6 +194,47 @@ func TestTheInstallControlsAreHiddenAndArmedOnly(t *testing.T) {
 	// Unarmed, neither is a node at all.
 	if pwaInstallButton(App{}) != nil || pwaInstallHint(App{}) != nil {
 		t.Error("an UNARMED app rendered an install control")
+	}
+}
+
+// TestTheStandaloneControlsAreHiddenArmedOnlyAndBesideTheWordmark pins S5's two controls' markup,
+// exactly: on EVERY authenticated page (they are in the shell's header) and on NO public one, rendered
+// `hidden` so a tab — and a page with script off — shows neither, and placed IMMEDIATELY after the
+// wordmark, before the nav links. The placement is load-bearing: the touch header is a grid whose
+// auto-placement IS the DOM order (`tailwind.css`, B2), so this is what puts Back and Reload on the
+// header's FIRST row in standalone and keeps the reading order equal to the visual order (`uiaudit`'s
+// `TestStandaloneBackAndReload` measures both in a browser).
+func TestTheStandaloneControlsAreHiddenArmedOnlyAndBesideTheWordmark(t *testing.T) {
+	const controls = `<button type="button" class="standalone-nav" id="pwa-back" hidden>Back</button>` +
+		`<button type="button" class="standalone-nav" id="pwa-reload" hidden>Reload</button>`
+	srv := armedServerWith(t, testConfig(t, staticAuth{testIdentity()}), appAlpha)
+	seen := 0
+	for row, html := range htmlRows(t, srv) {
+		public := strings.HasSuffix(row, " public")
+		n := strings.Count(html, controls)
+		if (public && n != 0) || (!public && n != 1) {
+			t.Errorf("%s: the standalone controls appear %d time(s); want 1 on an authenticated page, 0 on a public one", row, n)
+			continue
+		}
+		for _, id := range []string{`id="pwa-back"`, `id="pwa-reload"`} {
+			if c := strings.Count(html, id); c != n {
+				t.Errorf("%s: %s appears %d time(s) beside %d rendering(s) of the controls — a second element "+
+					"would be the one `getElementById` finds", row, id, c, n)
+			}
+		}
+		if n == 1 {
+			if !strings.Contains(html, "</h1>"+controls+`<p class="nav-arcs">`) {
+				t.Errorf("%s: the standalone controls are not IMMEDIATELY after the wordmark and before the nav links", row)
+			}
+			seen++
+		}
+	}
+	// POSITIVE CONTROL: the walk saw the controls at all, so the public-page zeros mean something.
+	if seen < 8 {
+		t.Fatalf("the walk saw the standalone controls on %d page(s) — the assertions above read almost nothing", seen)
+	}
+	if pwaStandaloneNav(App{}) != nil {
+		t.Error("an UNARMED app rendered the standalone controls — with no pwa.js linked, nothing could reveal them")
 	}
 }
 

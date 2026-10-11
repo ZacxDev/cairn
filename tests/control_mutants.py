@@ -76,8 +76,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 #: appending a sixth entry here left `tests/test_control_mutant_count_is_pinned.py` at
 #: 3 passed — its whole content then — with every one of them still reading FIVE.
 #: They are pinned to `len(PKGS)` by `tests/test_control_mutant_count_is_pinned.py` now,
-#: which is the same treatment the mutant count already has — so a `PKGS` edit that leaves
-#: prose stale is a red test rather than an instruction nobody reads.
+#: so a `PKGS` edit that leaves prose stale is a red test rather than an instruction nobody
+#: reads. (The MUTANT count went further: it is no longer stated in prose at all, because every
+#: PR adds rows and a pinned copy made each pair of them conflict; this file's run prints it.)
 #:
 #: The seam itself, which is the reason a battery scoped to ONE package would be wrong: a
 #: mutant in the token-file projection is killed by a guard in the server and vice versa,
@@ -235,6 +236,46 @@ class Mutant:
                 "An equivalent mutant is expected to leave the suite green, so those can "
                 "never fail — the row is claiming two incompatible things."
             )
+
+
+#: The lock-to-compare span of `codesrc.Journal.Set`, verbatim — the one row that MOVES a
+#: statement across the lock needs both ends of it in one pattern.
+_CODESRC_LOCKED_SPAN = (
+    '\tf, err := os.OpenFile(j.Path, os.O_CREATE|os.O_RDWR|os.O_APPEND|syscall.O_NOFOLLOW, 0o600)\n'
+    '\tif err != nil {\n'
+    '\t\treturn Record{}, &JournalUnreadableError{Path: j.Path, Err: err}\n'
+    '\t}\n'
+    '\tdefer f.Close()\n'
+    '\tif err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {\n'
+    '\t\treturn Record{}, &JournalUnreadableError{Path: j.Path, Err: err}\n'
+    '\t}\n'
+    '\tdefer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)\n'
+    '\tif _, err := f.Seek(0, io.SeekStart); err != nil {\n'
+    '\t\treturn Record{}, &JournalUnreadableError{Path: j.Path, Err: err}\n'
+    '\t}\n'
+    '\tdata, err := io.ReadAll(f)\n'
+    '\tif err != nil {\n'
+    '\t\treturn Record{}, &JournalUnreadableError{Path: j.Path, Err: err}\n'
+    '\t}\n'
+    '\tcurrent := fold(data).RevisionFor(scope)\n'
+    '\tif current != ifRevision {\n'
+    '\t\treturn Record{}, &StaleRevisionError{Scope: scope, Want: ifRevision, Current: current}\n'
+    '\t}\n'
+    '\tif interleave != nil {\n'
+    '\t\tinterleave()\n'
+    '\t}\n'
+)
+
+#: The compare-and-seam tail of that span: the lines the moved-compare row lifts OUT of the lock.
+_CODESRC_COMPARE_AND_SEAM = (
+    '\tcurrent := fold(data).RevisionFor(scope)\n'
+    '\tif current != ifRevision {\n'
+    '\t\treturn Record{}, &StaleRevisionError{Scope: scope, Want: ifRevision, Current: current}\n'
+    '\t}\n'
+    '\tif interleave != nil {\n'
+    '\t\tinterleave()\n'
+    '\t}\n'
+)
 
 
 MUTANTS: tuple[Mutant, ...] = (
@@ -4458,6 +4499,442 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestTheAgentTabIsByteForByteTheCLIRecall",
         why="`head -60` reads as 'line 60 of this text', but the client prints a banner and a blank line "
         "first, so the agent's cut falls two lines earlier than the obvious mark.",
+    ),
+    # S1 of the scope-refs plan (`claudedocs/plan-cairn-scope-refs.md`): `internal/codesrc`, the
+    # code-source grammar and its journal. 🔴 EVERY ROW CARRIES `pkgs` RATHER THAN `PKGS` GROWING:
+    # the killers live in `internal/codesrc` alone, and adding it to `PKGS` would re-scope every
+    # other row (the field's own comment measures why that turns correct rows MISATTRIBUTED).
+    Mutant(
+        name="codesrc-accepts-a-non-dns-host",
+        path="internal/codesrc/codesrc.go",
+        old="\tif !isDNSName(host) {",
+        new="\tif false && !isDNSName(host) {",
+        killer="TestEachRefusalIsForItsOwnRule",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="a host check that trusts whatever sits before the first '/' — which makes a forgotten host "
+        "(`git:example-org/example-repo@main`) a declaration of a host called `example-org`.",
+    ),
+    Mutant(
+        name="codesrc-branch-may-lead-with-a-dash",
+        path="internal/codesrc/codesrc.go",
+        old='\tif strings.HasPrefix(branch, "-") {',
+        new='\tif false && strings.HasPrefix(branch, "-") {',
+        killer="TestEachRefusalIsForItsOwnRule",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="the ref-format rule written out from git-check-ref-format(1) has no leading-dash clause — "
+        "only `--branch` adds it — so dropping the explicit check is invisible to a reader, and a branch "
+        "of `-…` is an option to the auditor's `git` (T2).",
+    ),
+    Mutant(
+        name="codesrc-whitespace-in-branch-accepted",
+        path="internal/codesrc/codesrc.go",
+        old="\t\tif unicode.IsSpace(r) {\n\t\t\treturn refuse(RuleWhitespace)",
+        new="\t\tif false && unicode.IsSpace(r) {\n\t\t\treturn refuse(RuleWhitespace)",
+        killer="TestEachRefusalIsForItsOwnRule",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="the branch rule refuses a space anyway, so the whitespace check reads as redundant — and "
+        "deleting it turns the form's one actionable message into a ref-format one.",
+    ),
+    Mutant(
+        name="codesrc-repo-path-case-folded",
+        path="internal/codesrc/codesrc.go",
+        old='\tsrc := Source{Host: host, RepoPath: strings.Join(segs, "/"), Branch: branch}',
+        new='\tsrc := Source{Host: host, RepoPath: strings.ToLower(strings.Join(segs, "/")), Branch: branch}',
+        killer="TestEveryExampleParsesToItsLiteralCanonicalForm",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="the host IS lowercased two lines up, so lowercasing the path beside it looks like "
+        "consistency — and a self-hosted forge with case-sensitive paths then names another repository.",
+    ),
+    Mutant(
+        name="codesrc-subpath-dotdot-accepted",
+        path="internal/codesrc/codesrc.go",
+        old='\t\t\tif s == ".." {\n\t\t\t\treturn refuse(RuleDotDot)',
+        new='\t\t\tif false && s == ".." {\n\t\t\t\treturn refuse(RuleDotDot)',
+        killer="TestEachRefusalIsForItsOwnRule",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="the segment rule refuses a leading '.', so the '..' check looks dead; it is what names the "
+        "traversal rather than reporting it as a spelling problem.",
+    ),
+    Mutant(
+        name="codesrc-duplicate-refused-not-deduped",
+        path="internal/codesrc/codesrc.go",
+        old="\t\tif seen[c] {\n\t\t\tcontinue\n\t\t}",
+        new='\t\tif seen[c] {\n\t\t\treturn nil, &ParseError{Index: i + 1, Input: raw, Rule: "is a duplicate"}\n\t\t}',
+        killer="TestDuplicatesAreDroppedAndOrderIsKept",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="refusing a duplicate reads as the stricter choice; it refuses a pasted list for a line that "
+        "two spellings (`.git`, host case) make identical, which the user cannot see.",
+    ),
+    Mutant(
+        name="codesrc-order-not-kept",
+        path="internal/codesrc/codesrc.go",
+        old="\tif len(out) > MaxSources {",
+        new="\tfor i := 1; i < len(out); i++ {\n\t\tfor k := i; k > 0 && out[k].Canonical() < out[k-1].Canonical(); k-- {\n"
+        "\t\t\tout[k], out[k-1] = out[k-1], out[k]\n\t\t}\n\t}\n\tif len(out) > MaxSources {",
+        killer="TestDuplicatesAreDroppedAndOrderIsKept",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="sorting for a deterministic answer — and the first source, the PRIMARY, becomes whichever "
+        "sorts first.",
+    ),
+    Mutant(
+        name="codesrc-revision-compared-outside-the-lock",
+        path="internal/codesrc/journal.go",
+        # ONE pattern spanning the lock and the compare, so the compare MOVES rather than being
+        # duplicated — and the `interleave` seam moves WITH it, because the seam marks the
+        # compare-to-append window wherever that window is. That is what lets call two REACH the
+        # seam before call one appends; call one waits for it with a 300ms DEADLINE. ⚠ So the kill
+        # still depends on that deadline — call two must arrive within it (a 1µs deadline left this
+        # row SURVIVED 20 of 20). Too short a deadline fails LOUD, as a SURVIVED row here, never as
+        # a false green on the real code, where call two is parked on `flock`.
+        old=_CODESRC_LOCKED_SPAN,
+        new="\tif pre, perr := j.Read(); perr == nil {\n"
+        "\t\tif cur := pre.RevisionFor(scope); cur != ifRevision {\n"
+        "\t\t\treturn Record{}, &StaleRevisionError{Scope: scope, Want: ifRevision, Current: cur}\n"
+        "\t\t}\n\t}\n"
+        "\tif interleave != nil {\n\t\tinterleave()\n\t}\n"
+        + _CODESRC_LOCKED_SPAN.replace(_CODESRC_COMPARE_AND_SEAM, ""),
+        killer="TestTwoWritesCarryingOneRevisionLandExactlyOnce",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="checking the precondition before taking the lock is the natural order to write it in "
+        "(validate, then act) — and it is the lost update the revision exists to prevent.",
+    ),
+    Mutant(
+        name="codesrc-stale-revision-accepted",
+        path="internal/codesrc/journal.go",
+        old="\tif current != ifRevision {",
+        new="\tif false && current != ifRevision {",
+        killer="TestAStaleRevisionWritesNothing",
+        extra_killers=("TestTwoWritesCarryingOneRevisionLandExactlyOnce",),
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="a revision that is carried, stored and compared nowhere — the form still round-trips it, so "
+        "nothing reads wrong until two admins edit at once.",
+    ),
+    Mutant(
+        name="codesrc-fold-earliest-wins",
+        path="internal/codesrc/journal.go",
+        old="\t\tsnap.Latest[r.Scope] = r\n",
+        new="\t\tif _, dup := snap.Latest[r.Scope]; !dup {\n\t\t\tsnap.Latest[r.Scope] = r\n\t\t}\n",
+        killer="TestTheFoldIsLatestWins",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="'first write wins' is a common dedupe idiom; on an append-only journal it freezes every "
+        "scope at its first declaration.",
+    ),
+    Mutant(
+        name="codesrc-damaged-line-refuses-whole-journal",
+        path="internal/codesrc/journal.go",
+        old="\t\tif err := dec.Decode(&r); err != nil || !r.valid() {\n\t\t\tsnap.Skipped++\n\t\t\tcontinue\n\t\t}",
+        new="\t\tif err := dec.Decode(&r); err != nil || !r.valid() {\n"
+        "\t\t\treturn Snapshot{Latest: map[string]Record{}, Skipped: 1}\n\t\t}",
+        killer="TestDamagedLinesAreSkippedAndCounted",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="refusing on corruption is the control journal's rule (refuse-whole), so copying it here "
+        "looks principled — and one hand-edited line makes every scope undeclared.",
+    ),
+    Mutant(
+        name="codesrc-unknown-field-refused",
+        path="internal/codesrc/journal.go",
+        old="\t\tdec := json.NewDecoder(bytes.NewReader(line))\n\t\tif err := dec.Decode(&r)",
+        new="\t\tdec := json.NewDecoder(bytes.NewReader(line))\n\t\tdec.DisallowUnknownFields()\n\t\tif err := dec.Decode(&r)",
+        killer="TestAnUnknownFieldIsIgnoredNotRefused",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="arcs' fold, which this one is copied from, DOES disallow unknown fields — the one line a "
+        "faithful copy carries over, and a newer UI's record then reads as damaged on an older pod.",
+    ),
+    Mutant(
+        name="codesrc-key-not-normalised",
+        path="internal/codesrc/codesrc.go",
+        old="\treturn store.NormalizeRef(scopeName)",
+        new="\t_ = store.NormalizeRef\n\treturn scopeName",
+        killer="TestKeyFoldsTheScopeNameToOneLiteral",
+        extra_killers=("TestTheKeyIsTheFoldedName",),
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="the directory name already IS the scope name on most hosts, so the identity function passes "
+        "every lowercase fixture — and `Alpha-Notes` declared in the browser is never found by the pod.",
+    ),
+    # S2 of the scope-refs plan: the pod's `sources/<scope>` route and its startup refusal. All
+    # three killers live inside `PKGS` (`internal/api`, `cmd/cairn-server`), so no `pkgs` override.
+    Mutant(
+        name="api-sources-get-distinguishes-absent-from-unreadable",
+        path="internal/report/sources.go",
+        old='\tindex, err := store.LoadStore(storeRoot, "scanned", visible)',
+        new='\tindex, err := store.LoadStore(storeRoot, "scanned", store.Unrestricted())',
+        killer="TestAScopeTheCallerCannotReadAnswersExactlyLikeAbsence",
+        why="'does the scope exist' reads as a question about the DISK, so asking it of the whole store "
+        "looks correct — and a scope the caller may not read then answers with its declaration, telling "
+        "refused apart from absent and leaking the repositories it names.",
+    ),
+    Mutant(
+        name="api-sources-journal-inside-store-accepted",
+        # Re-pointed when S2's round 1 moved the variable's reading out of `main` into
+        # `codesrc.FromEnv`, its ONE reader: the old pattern named a line `main.go` no longer has.
+        # The killer still reaches it — the test runs the BINARY, and `main` calls `FromEnv`.
+        path="internal/codesrc/journal.go",
+        old="\tresolved, err := ResolveJournalPath(storeRoot, v)",
+        new="\tresolved, err := v, error(nil)",
+        killer="TestTheBinaryREFUSESASourceJournalInsideTheStoreRoot",
+        why="the variable is 'just a path', and the pod only READS it, so checking where it points looks "
+        "like ceremony — and a journal beside the store becomes a scope every bare row reads, and is "
+        "overwritten by the next re-seed.",
+    ),
+    Mutant(
+        name="api-sources-unreadable-journal-answers-200",
+        path="internal/api/server.go",
+        old="\t\tif sourcesErr != nil {\n\t\t\treturn sourcesErr\n\t\t}",
+        new="\t\tif sourcesErr != nil {\n\t\t\tgot = codesrc.Snapshot{Latest: map[string]codesrc.Record{}, Missing: true}\n\t\t}",
+        killer="TestAnUnreadableSourcesJournalIsTheStoreUnreachable503",
+        why="degrading to 'empty' keeps the page up, which reads as resilience — and a journal the pod "
+        "cannot read answers `sources=undeclared`, the could-not-look state served as a fact.",
+    ),
+    Mutant(
+        name="api-sources-damage-leaks-onto-the-wire",
+        path="internal/report/sources.go",
+        old="JournalAbsent: snap.Missing}",
+        new="JournalAbsent: snap.Missing || snap.Damaged()}",
+        killer="TestAHiddenScopesDamagedLineChangesNothingOnTheWire",
+        why="'a damaged journal is as good as no journal' reads as caution — and a torn line in a scope the "
+        "caller cannot read flips every other scope's answer, a signal about hidden activity on the wire.",
+    ),
+    # S2 of the transcripts/plugins plan: `internal/transcript/scopeuse`, the READ half of a session's
+    # visibility set. It is not in `PKGS` — it is an input to a predicate that does not exist until
+    # S4, not a member of the control/identity/server seam — so each row ADDS its package, the
+    # override the battery prescribes for a killer outside the seam.
+    Mutant(
+        name="scopeuse-all-scopes-header-names-a-scope",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\t\tif ValidScope(f[1]) {",
+        new="\t\t\tif ValidScope(f[1]) || strings.HasPrefix(f[1], \"(\") {",
+        killer="TestTheAllScopesHeaderAddsStar",
+        why="a store-wide search renders `scope=(all scopes)`, and reading the field as whatever "
+        "follows `scope=` is the natural parse — it turns the one header that names EVERY scope into "
+        "a scope nobody has, so `V` loses its `*` and the session becomes readable by anyone who reads "
+        "the other scopes it touched.",
+    ),
+    Mutant(
+        name="scopeuse-scopeless-header-dropped",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\tif len(fields) == 0 {\n\t\t\tout = append(out, Star)\n\t\t\tcontinue\n\t\t}",
+        new="\t\tif len(fields) == 0 {\n\t\t\tcontinue\n\t\t}",
+        killer="TestTheScopelessHeaderFormAddsStar",
+        why="the `all N entry files … MALFORMED` header carries no `scope=` field, and \"no field, "
+        "nothing to add\" reads as tidy — it drops a read whose scope the line does not say.",
+    ),
+    Mutant(
+        name="scopeuse-fallback-empty-ledger-trusted",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\tr.F1 = d.namesProgram && d.ledgerRecords == 0",
+        new="\tr.F1 = d.namesProgram && d.ledgerRecords < 0",
+        killer="TestF1EmptyLedgerAddsStar",
+        extra_killers=("TestTheVisibilityInputOfEveryFixtureSession",),
+        why="an empty ledger READS as \"this session read nothing\" — exactly what a pre-ledger "
+        "client, or one whose environment lost the session id, also produces. Trusting it makes every "
+        "unrecorded read invisible to `V`.",
+    ),
+    Mutant(
+        name="scopeuse-cache-path-read-ignored",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\tif strings.Contains(lower, \"subsystem-store\") {",
+        new="\tif false && strings.Contains(lower, \"subsystem-store\") {",
+        killer="TestF2CacheReadAddsStar",
+        why="a file-tool read of the cache never passes through the client, so it is never ledgered; "
+        "dropping F2 because \"the ledger covers reads now\" is the plausible simplification, and it "
+        "makes every cache read invisible.",
+    ),
+    # S2 review round 1 (F3): four guards that each SURVIVED a mutation with no test reaching them.
+    Mutant(
+        name="scopeuse-restore-ignored",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="func (d *Deriver) Restore(e Evidence) {\n",
+        new="func (d *Deriver) Restore(e Evidence) {\n\tif true {\n\t\treturn\n\t}\n",
+        killer="TestRestoreFoldsPersistedEvidence",
+        why="a later run feeds only NEW records; forgetting the earlier runs' evidence reads as "
+        "harmless because V is also persisted — and silently drops F1's 'names the program' flag "
+        "the moment the ledger changes.",
+    ),
+    Mutant(
+        name="capture-v-not-a-union",
+        pkgs=PKGS + ("./internal/capture/",),
+        path="internal/capture/agent.go",
+        old="\tss.V = union(ss.V, res.V)\n",
+        new="\tss.V = res.V\n",
+        occurrences=2,
+        killer="TestVOnlyGrowsWhenTheLedgerShrinks",
+        why="'V is what this run derived' is the natural assignment; anything on the host can delete "
+        "a ledger, and a non-union V then SHRINKS and moves the session to an instance it already "
+        "read past.",
+    ),
+    Mutant(
+        name="capture-child-ledger-ignored",
+        pkgs=PKGS + ("./internal/capture/",),
+        path="internal/capture/agent.go",
+        old="\tfor _, c := range children {\n\t\ta.foldLedger(d, c)\n\t}\n",
+        new="\tfor range children {\n\t}\n",
+        killer="TestAChildSessionsLedgerCounts",
+        why="the ledger is keyed by session id and a child is its own id in opencode; folding only "
+        "the root's file reads as complete and loses every read a subagent made.",
+    ),
+    Mutant(
+        name="capture-unreadable-ledger-ignored",
+        pkgs=PKGS + ("./internal/capture/",),
+        path="internal/capture/agent.go",
+        old="\tcase err != nil:\n\t\td.LedgerUnreadable()\n",
+        new="\tcase err != nil:\n",
+        killer="TestAnUnreadableLedgerFailsClosed",
+        why="treating a ledger that cannot be read like one that does not exist is the usual "
+        "error-tolerant reflex, and it turns an unreadable record of reads into 'read nothing'.",
+    ),
+    # 🔴 TRANSCRIPT UPLOAD AND STORE (S3 of `claudedocs/plan-cairn-plugins.md`). The plan's eight S3
+    # rows, less `transcript-capture-token-reads` (S3 has no read route for a capture token to reach
+    # — the kind check it guards arrives with S5's plugin routes), plus the DISARM gate's two (O16),
+    # and four more for guards whose hand mutation each went red on its own test. Every row's
+    # killer lives in `internal/worker` or `internal/transcript/archive`, so each ADDS those to the
+    # seam (`pkgs`), and `PKGS` itself — pinned in prose — does not move.
+    Mutant(
+        name="transcript-capture-armed-by-default",
+        path="internal/worker/worker.go",
+        old="\tif !w.cfg.Armed {",
+        new="\tif false && !w.cfg.Armed {",
+        killer="TestADisarmedListenerRefusesEveryUploadAndStoresNothing",
+        why="a listener that is configured looks like a listener that is meant to accept; the arming "
+        "is a separate operator decision (O16) and the configuration is not it.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-main-arms-regardless",
+        path="cmd/cairn-ui/main.go",
+        old="Armed: workerFlags.armed,",
+        new="Armed: true,",
+        killer="TestTheWorkerListenerIsDisarmedUnlessArmedByFlag",
+        why="every in-process worker test sets `Armed` itself, so the one line in `main` that hands the "
+        "flag through is visible only to a test that runs the binary.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-cas-ignores-from-offset",
+        path="internal/transcript/archive/archive.go",
+        old="\tpos := Position{}\n\tif m != nil {\n\t\tpos = m.Streams[stream]\n\t}\n\tif u.From != pos.StoredTo {",
+        new="\tpos := Position{}\n\tif m != nil {\n\t\tpos = m.Streams[stream]\n\t}\n\tif false && u.From != pos.StoredTo {",
+        killer="TestAResumedUploadLandsEveryRecordExactlyOnce",
+        why="appending whatever arrives is the obvious store; without the compare-and-swap a retried "
+        "upload after a lost acknowledgement lands every record twice (clause a).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-capture-token-host-unchecked",
+        path="internal/worker/worker.go",
+        old="\tif req.Host != row.Host {\n\t\tbadRequest(rw, fmt.Errorf(\"host %q is not this token's host\", req.Host))\n"
+        "\t\treturn\n\t}\n\treq.Upload.Root = r.PathValue(\"root\")\n\tst, err := w.cfg.Archive.AppendRecords",
+        new="\tif false && req.Host != row.Host {\n\t\tbadRequest(rw, fmt.Errorf(\"host %q is not this token's host\", req.Host))\n"
+        "\t\treturn\n\t}\n\treq.Upload.Root = r.PathValue(\"root\")\n\tst, err := w.cfg.Archive.AppendRecords",
+        killer="TestAHostTheTokenIsNotBoundToIs400AndWritesNothing",
+        why="the store keys on the TOKEN's host anyway, so the body's host looks decorative — and a "
+        "token file copied to the wrong machine uploads that machine's sessions as this one's.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-pod-recheck-skipped",
+        path="internal/transcript/archive/archive.go",
+        old="if _, hits := a.cfg.Recheck.Record(c.Bytes()); len(hits) > 0 {",
+        new="if _, hits := a.cfg.Recheck.Record(c.Bytes()); false && len(hits) > 0 {",
+        killer="TestThePodRefusesARecordTheTableMatches",
+        why="the host already redacted, so a second scan reads as redundant — and it is the only thing "
+        "between a bypassed or out-of-date agent and the store (clause c).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-pod-recheck-skips-blobs",
+        path="internal/transcript/archive/archive.go",
+        old="if _, hits := a.cfg.Recheck.Blob(name, data); len(hits) > 0 {",
+        new="if _, hits := a.cfg.Recheck.Blob(name, data); false && len(hits) > 0 {",
+        killer="TestThePodRefusesATextBlobTheTableMatches",
+        why="a persisted tool result is a FILE, not a record, and a re-check written for records "
+        "passes every blob unscanned (R4, clause c).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-root-owner-not-fixed",
+        path="internal/transcript/archive/archive.go",
+        old="return m == nil || (m.Owner == who.Owner && m.Host == who.Host)",
+        new="return m == nil || m.Owner == who.Owner || m.Host == who.Host || true",
+        killer="TestTheFirstUploadFixesTheOwnerAndHost",
+        why="every uploader holds a valid token, so ownership looks settled by authentication — and a "
+        "second host appends into a session it never ran (decision 15).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-pod-skips-scope-rederivation",
+        path="internal/transcript/archive/archive.go",
+        old="func derivedScopes() []string { return []string{Star} }",
+        new="func derivedScopes() []string { return nil }",
+        killer="TestThePodDerivesStarNotTheDeclarationAlone",
+        why="with no `scopeuse` on `main` an empty derivation reads as 'nothing found' — and it makes "
+        "the agent's DECLARATION the whole read half of V, which decision 3 exists to refuse.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="worker-token-accepted-by-browser-row",
+        path="internal/ui/auth.go",
+        old="import (\n",
+        new="import (\n\t_ \"github.com/ZacxDev/cairn/internal/worker\"\n",
+        killer="TestOnlyTheBrowserProgramImportsWorker",
+        why="the browser chain authenticates bearer tokens too, so teaching it worker tokens looks like "
+        "reuse — and it is the edit that lets a capture token mean something on a browser row.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-missing-middle-frame-stored",
+        path="internal/transcript/archive/frames.go",
+        old="} else if st == nil || st.next != f.Index ||",
+        new="} else if st == nil || st.next > f.Index ||",
+        killer="TestAMissingMiddleFrameStoresNothing",
+        why="'not a frame we already have' reads as the whole order check, and a skipped frame then "
+        "reassembles into a record with a hole in it.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-quota-unchecked",
+        path="internal/transcript/archive/archive.go",
+        old="\tif a.used+n > a.cfg.Quota {",
+        new="\tif false && a.used+n > a.cfg.Quota {",
+        killer="TestTheQuotaRefusesAndRetentionFreesIt",
+        why="the retention sweep already bounds the disk eventually, so a quota looks redundant — at "
+        "gigabytes a week, 'eventually' is the outage (T12).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-retention-boundary-inclusive",
+        path="internal/transcript/archive/sweep.go",
+        old="return now.Sub(m.UpdatedAt) > a.cfg.Retention }",
+        new="return now.Sub(m.UpdatedAt) >= a.cfg.Retention }",
+        killer="TestRetentionSweepsAtItsBoundary",
+        why="`>=` and `>` read the same in a review; the boundary decides whether a session lives "
+        "through the last instant of its retention.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="worker-wall-skipped-on-the-reread",
+        path="internal/worker/worker.go",
+        old="\t\tif err := admit(row, w.cfg.Owner); err != nil {\n\t\t\tw.once(",
+        new="\t\tif err := admit(row, row.Owner); err != nil {\n\t\t\tw.once(",
+        killer="TestTheWallRefusesAForeignRowAtStartupAndAsARowAfterwards",
+        why="the startup read already refused foreign rows, so the per-request re-read looks safe to "
+        "trust — and a row appended afterwards would authenticate a second owner (Q7's wall).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="redact-marker-drops-the-whole-span",
+        path="internal/redact/marker.go",
+        old="\t\tif m[0] < sp.lo {",
+        new="\t\tif m[0] < sp.hi {",
+        killer="TestAMarkerDoesNotShieldASecretBesideIt",
+        why="a span that touches a marker reads as ABOUT the marker, so dropping it whole looks like the "
+        "obvious way to keep the table quiet on its own output — and it ships a key-context value "
+        "glued directly before a marker, which the base caught.",
+        pkgs=PKGS + ("./internal/redact/",),
     ),
 )
 

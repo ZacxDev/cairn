@@ -160,6 +160,16 @@ For the arc registry: `internal/report/arcs_test.go`, `internal/api/arcs_test.go
 writes the world's `arc_journal.records` to a file BESIDE the token file — outside the store
 tree, because the Go server refuses to start with a journal inside it — and prints
 `arc-journal=<path>`; `run_go.sh` hands that to the server for both `run` and `record-go-only`.
+The `sources-*` rows (S2 of the scope-refs plan) follow the same arrangement with one difference:
+`build-store` prints `source-journal=<path>`, and `run_go.sh` hands it over as the ENVIRONMENT
+variable `CAIRN_SOURCE_JOURNAL`, because the pod has no flag for it by decision. Each seeded
+record's `revision` is computed by `write_source_journal` rather than written into `world.json`
+(a 64-hex run is a credential-shaped literal there). ⚠ Two different checks, neither of which is the
+other: `internal/codesrc`'s `TestTheRevisionIsALiteralDigest` pins Go's `Revision` against a LITERAL
+digest; the cross-check that Python's spelling equals Go's is the `sources-authorized` golden, which
+would read `sources-undeclared` if the fold skipped a seeded line for a wrong revision. The
+corpus boots ONE server with ONE journal, so the unconfigured 200 and the unreadable-journal 503
+are NOT rows: their witnesses are the literal-body tests in `internal/api/sources_test.go`.
 The oracle is never told. The seed holds an EARLIER and a LATER registration of one arc, so the
 latest-wins fold is on the wire, and an arc homed in `alpha-notes` that DECLARES `beta-notes`, so
 `arcs-hidden-home` (narrow-reader, which cannot read alpha) pins the home-scope visibility rule

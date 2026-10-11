@@ -37,6 +37,7 @@ import (
 	"strings"
 
 	"github.com/ZacxDev/cairn/internal/arcs"
+	"github.com/ZacxDev/cairn/internal/codesrc"
 	"github.com/ZacxDev/cairn/internal/pytext"
 	"github.com/ZacxDev/cairn/internal/store"
 )
@@ -177,6 +178,9 @@ type Renderer interface {
 	Arc(storeRoot, home, slug string, visible store.ScopeSet, snap *arcs.Snapshot) (Rendered, error)
 	// ArcsCheck is the Go-only orphan check, `arcs/<scope>?check=1` — see `arcscheck.go`.
 	ArcsCheck(storeRoot, scope string, allScopes bool, visible store.ScopeSet, snap *arcs.Snapshot) (Rendered, error)
+	// Sources is the Go-only `sources/<scope>` answer — see `sources.go`. `snap` is nil when the
+	// pod has no sources journal configured (the `sources-unconfigured` off state).
+	Sources(storeRoot, scope string, visible store.ScopeSet, snap *codesrc.Snapshot) (Rendered, error)
 }
 
 // ValidateRecall is the guard ladder a recall's options must pass, IN THIS ORDER,
