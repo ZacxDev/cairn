@@ -4,7 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
-  merge_group:
+  # ⚠ NO `merge_group:`. It was listed here and never fired: `main` has no branch
+  # protection and no ruleset (both read back empty from the API when this was
+  # removed), so there is no merge queue to emit the event, and `gh run list
+  # --event merge_group` had never returned a run. Re-add it WITH the queue, not before.
+  # `workflow_dispatch` is a full run on demand. There is NO nightly `schedule`: a push to
+  # `main` that touches anything outside `claudedocs/` already runs every job (see `changes`).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,6 +35,45 @@ jobs:
 
       - name: scan the tree
         run: python3 tests/leakscan.py
+
+  # 🔴 THE PATH CLASSIFIER, AND THE ONLY PLACE A JOB HERE IS TOLD WHAT A CHANGE TOUCHED. Every
+  # gated job and step below reads its one output, `heavy`: `false` only when every changed path
+  # is under `claudedocs/`. The rule lives ONCE, in `tests/ci_paths.py`, unit-tested in
+  # `tests/test_ci_paths.py` — never as glob lists spread across `if:` lines, which is how two
+  # copies of one predicate come to disagree.
+  #
+  # 🔴 IT FAILS OPEN AT THREE LAYERS, AND THE TWO IN THIS FILE ARE PINNED AS WHOLE STRINGS BY
+  # THAT TEST. The script answers FULL for any event, base or `git` state it cannot vouch for
+  # (and for an empty change list); a gated job runs when this job did not SUCCEED
+  # (`needs.changes.result != 'success'`); and it runs when an output is ABSENT, because each
+  # gate compares `!= 'false'` rather than `== 'true'`. `workflow_dispatch` always classifies
+  # FULL. A push to `main` is diffed `before..after` and a pull request from its merge-base;
+  # docs-only takes the docs lane and ANY other path runs everything.
+  #
+  # ⚠ `leakscan` AND `tests` DO NOT `need` THIS JOB, ON PURPOSE: they run on every event, and a
+  # dependency would only make the leak gate wait on a classifier it never consults.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      heavy: ${{ steps.classify.outputs.heavy }}
+    steps:
+      # The whole history, because a pull request is diffed from its MERGE-BASE and a shallow
+      # clone has none; a missing commit makes the diff fail, which classifies FULL.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: classify the change as docs-only or not
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.event.after }}
+        run: python3 tests/ci_paths.py --github-output "$GITHUB_OUTPUT"
 
   tests:
     runs-on: ubuntu-latest
@@ -620,7 +665,13 @@ jobs:
           # toolchain), run by the `go` job — taking the gap to 103 against a `MAX_GAP` of
           # 100. Measured 2780 collected on the branch, so
           # `2780 - min(50, max(1, 2780/20)) = 2730`.
-          FLOOR = 2730
+          # ⚠ 2730 -> 2833 FOR THE CI PATH-TIERING BRANCH, AND THE DRIFT GUARD FORCED THIS ONE.
+          # It adds `tests/test_ci_paths.py` (58 collected: the docs-vs-everything classifier's
+          # literal lanes and fail-open arms, and the workflow wiring). Measured 2883 collected,
+          # 2883 passed, on the branch rebased onto `main` at the mutant-sharding merge (#233) —
+          # a full local run with `--junitxml` — so at 2730 the gap would be 153, past `MAX_GAP`.
+          # `2883 - min(50, max(1, 2883/20)) = 2833`.
+          FLOOR = 2833
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -666,6 +717,14 @@ jobs:
   # same discipline the Python 3.12 pin is under, and for the same reason.
   go:
     runs-on: ubuntu-latest
+    # 🔴 THIS JOB ALWAYS RUNS; ONLY ITS CONFORMANCE AND END-TO-END STEPS ARE TIERED. `go vet` and
+    # `go test` stay on every event, the docs lane included — they are the cheap Go tier, and
+    # the only one a docs-only change keeps. `!cancelled()` rather than the implicit `success()`,
+    # so a FAILED classifier cannot skip the job. The `needs` exists only so those steps can read
+    # `needs.changes`. The mutation batteries are no longer steps here: they are the `mutants`
+    # job, which IS tiered, with `mutants-aggregate`.
+    needs: changes
+    if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -869,36 +928,9 @@ jobs:
           git fetch --no-tags --depth=1 origin "$BASE_SHA"
           python3 tests/go_tested_packages.py --base "$BASE_SHA" --head-list /tmp/go-tested-packages.txt
 
-      # 🔴 THE AUTHORIZATION MATRIX CARRIES ITS OWN POSITIVE CONTROL (32 of 60 cells must
-      # ALLOW, pinned from BOTH sides, so a resolver that grants nothing or everything
-      # fails) — and that is a claim about the matrix, not about the individual guards
-      # around it. This battery is the other half: it breaks each guard on purpose and
-      # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
-      # killed by some other test proves the suite can fail and proves nothing about the
-      # guard the row exists for, so the run reports it as MISATTRIBUTED rather than as a
-      # kill. The battery runs over NINE packages, in `PKGS` order: `internal/control`,
-      # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
-      # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence`, `internal/memo` —
-      # the model, the token-file projection, P4's identity backends, the server that authorises
-      # from all of them, the pod's program, the browser surface, the browser surface's program,
-      # the presence owner predicate and scope mail's send/read/retract predicates, because a mutant in one is killed by a guard in another, the
-      # refresh loop that bounds the adapter's declared divergence exists only in `main`, the
-      # share flow is the second consumer of the same authority, the browser's startup refusals
-      # are the only thing between a misconfigured deployment and a surface that serves nobody,
-      # and presence decides who may see and ring a pane from the same identities. That enumeration is pinned to `PKGS` as
-      # a whole string by `tests/test_control_mutant_count_is_pinned.py` — membership and
-      # order, not just the count, because a swap that kept the count left it stale.
-      # 🔴 THE MUTANT COUNT IS NOT WRITTEN HERE OR IN THE STEP NAME: the run prints it on
-      # its own `SUMMARY mutants=<N> …` line, read from `MUTANTS`. A pinned copy stopped it
-      # going stale but made every PR that adds a row edit these same lines, so every two
-      # such PRs conflicted; `tests/test_control_mutant_count_is_pinned.py` now refuses a
-      # present-tense count coming back instead. Four of the cache rows are killed
-      # by a TIMEOUT rather than by an assertion, which is what the bulk of the wall time
-      # buys (~3min on an IDLE developer host, measured at 62 mutants; a loaded box is
-      # several times that). It is what stops the rows bit-rotting into patterns that
-      # match nothing and score SURVIVED without ever running.
-      - name: prove every authz guard can go RED (each mutant on the test that names it)
-        run: python3 tests/control_mutants.py
+      # 🔴 THE MUTATION BATTERIES (`control_mutants.py`, `routing_mutants.py`) ARE NOT HERE: they
+      # are the `mutants` job below, sharded, with `mutants-aggregate` checking the union. They
+      # were this job's critical path; nothing in them depends on a step above.
 
       # 🔴 THE LEDGERS THAT ARE BLIND TO A COMPILED CLIENT, AND THIS IS THE ONLY JOB THAT
       # CAN READ THEM. `capability_ledger.cli_verbs_from_parser` asks the PYTHON argparse
@@ -942,35 +974,6 @@ jobs:
           sys.exit(1 if fail else 0)
           PY
 
-      # 🔴 THE THIRD MUTATION BATTERY, WIRED IN BECAUSE ITS OWN RATIONALE DEPENDED ON IT
-      # BEING WIRED IN. `tests/routing_mutants.py` argues that its anchor-rule mutants live
-      # there rather than in a fourth file partly to avoid "a fourth command in whatever
-      # gate list the next reader reads — and a battery nobody runs measures nothing".
-      # MEASURED at the commit that added those mutants: `publish_workflow_mutants.py` and
-      # `control_mutants.py` were each run by this workflow and `routing_mutants.py` was
-      # invoked by NOTHING — not this file, not `publish-image.yml`, not `flake.nix`, not
-      # `AGENTS.md`/`CLAUDE.md`, not any test; every other mention of it in the tree is
-      # prose. It was the only UN-GATED battery of the three, chosen on a rationale about
-      # avoiding un-gated batteries. This step is what makes that sentence true.
-      #
-      # ⚠ IT BELONGS IN **THIS** JOB AND NOT A NEW ONE. The battery mutates Go sources and
-      # Python sources and kills the mutants with `go test` and `pytest` respectively, so it
-      # needs both toolchains; this job is the only one that has both, and the `pip install
-      # pytest` in the ledger step above is what puts the Python half on the runner. A
-      # separate job would mean a third toolchain setup for no isolation anyone reads.
-      #
-      # ⚠ RUNTIME, MEASURED RATHER THAN GUESSED, so the next reader can judge the trade: at
-      # 57 mutants, **614.75 s wall / 152.21 s user + 21.00 s sys** on a 24-core developer host
-      # at load ~6.5, all 57 KILLED, 0 SURVIVED, 0 misattributed. That is the same order as
-      # `control_mutants.py` above (its own comment measures ~3 min at 62 mutants on an IDLE
-      # host; it is several times that size now), which this job already pays for. The
-      # current size of either battery is the count its own run prints, not a number here. ⚠ The wall figure is one observation on
-      # a LOADED box and is not a prediction for a runner — the CPU figure is the portable
-      # half. If this step becomes the job's critical path, split it out; do not delete it
-      # and leave the rationale asserting it runs.
-      - name: prove every routing and ANCHOR guard can go RED
-        run: python3 tests/routing_mutants.py
-
       # 🔴 THE P1 GATE ITSELF: the conformance corpus, replayed against the Go
       # server. At P1a it was expected to be PARTIAL — the `/recall` and `/search`
       # rendering was P1b's — so this asserted a SPLIT. P1b landed the renderer and
@@ -981,6 +984,7 @@ jobs:
       # corpus from an absent one, which is the same reason the Python job counts
       # collected tests instead of reading an exit code.
       - name: the conformance corpus against the Go server
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}
         run: |
           set -o pipefail
           tests/conformance/run_go.sh > /tmp/conformance.txt 2>&1 || true
@@ -1045,6 +1049,7 @@ jobs:
       # assertions ran than it declares, and the floor below re-counts its PASS lines rather than
       # reading its exit code.
       - name: the arcs/sessions end-to-end check, after proving it can go RED
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}
         run: |
           set -o pipefail
           tests/arcs/e2e.sh --self-test | tee /tmp/arcs-e2e-self.txt
@@ -1075,6 +1080,7 @@ jobs:
       # per-row owner check, (e) the target pick, (f) the narrowing bit and the sign-in refusal — and
       # refuses (exit 2) unless EACH turns its own clause's named assertion RED.
       - name: the arcs/presence end-to-end check, after proving every clause can go RED
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}
         run: |
           set -o pipefail
           tests/presence/e2e.sh --self-test | tee /tmp/presence-e2e-self.txt
@@ -1090,12 +1096,187 @@ jobs:
             exit 1
           fi
 
+  # 🔴 THE MUTATION BATTERIES, IN THEIR OWN JOB BECAUSE THEY WERE THE `go` JOB'S CRITICAL PATH.
+  # Measured from that job's step timings over five runs: 74-103 min for the job, of which the
+  # authz battery was 61-83 min and the routing battery 11-12 min — so every push waited an hour
+  # on two steps that do not depend on anything else the `go` job checks. Moving them here buys
+  # parallelism; what bought most of the speed is in `tests/testlib/mutant_tree.py` and
+  # `scope_for` in `tests/control_mutants.py`: ONE reused worker tree per worker instead of a
+  # fresh copy per mutant (a fresh directory is a cold Go build), and each row run over the
+  # packages holding its NAMED tests rather than all of `PKGS`.
+  #
+  # 🔴 A SHARDED GATE IS ONLY AS STRONG AS ITS UNION, SO THE UNION HAS ITS OWN JOB. Every shard
+  # enforces the full set of refusals over its own rows, and every shard can be green while a row
+  # ran NOWHERE. `mutants-aggregate` refuses unless the shards' rows are the table's rows, each
+  # exactly once, and prints the one SUMMARY an unsharded run prints.
+  #
+  # ⚠ NO BUILD CACHE IS RESTORED, AND THAT WAS MEASURED RATHER THAN OVERLOOKED. A restored
+  # `GOCACHE` hit in every shard and moved the control shards' times by nothing readable: the
+  # reused worker tree warms its own cache after its first row, and only one shard per battery
+  # can save an entry anyway. It also needed a trust argument (`GOCACHE` is not verified the way
+  # the module cache is), which a step that buys nothing should not carry.
+  mutants:
+    # A ceiling, not an estimate: shards take 2-4 min, so a shard still running at 20 is hung.
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { battery: control, shard: 1/8 }
+          - { battery: control, shard: 2/8 }
+          - { battery: control, shard: 3/8 }
+          - { battery: control, shard: 4/8 }
+          - { battery: control, shard: 5/8 }
+          - { battery: control, shard: 6/8 }
+          - { battery: control, shard: 7/8 }
+          - { battery: control, shard: 8/8 }
+          - { battery: routing, shard: 1/8 }
+          - { battery: routing, shard: 2/8 }
+          - { battery: routing, shard: 3/8 }
+          - { battery: routing, shard: 4/8 }
+          - { battery: routing, shard: 5/8 }
+          - { battery: routing, shard: 6/8 }
+          - { battery: routing, shard: 7/8 }
+          - { battery: routing, shard: 8/8 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+      # The same pin as the `go` job, asserted rather than assumed: a battery run on another
+      # toolchain is a measurement of that toolchain.
+      - name: the toolchain that will run the mutants
+        run: |
+          go version
+          go version | grep -q ' go1\.25\.'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 🔴 THE AUTHORIZATION MATRIX CARRIES ITS OWN POSITIVE CONTROL (32 of 60 cells must
+      # ALLOW, pinned from BOTH sides, so a resolver that grants nothing or everything
+      # fails) — and that is a claim about the matrix, not about the individual guards
+      # around it. This battery is the other half: it breaks each guard on purpose and
+      # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
+      # killed by some other test proves the suite can fail and proves nothing about the
+      # guard the row exists for, so it is never scored as a kill: each row runs ONLY the
+      # tests it names (`-run` over its `killer` and `extra_killers`), so a row whose named
+      # killer stays green reads SURVIVED, and MISATTRIBUTED now means one narrower thing — a
+      # listed extra killer fired while the named one did not. The battery runs over NINE packages, in `PKGS` order: `internal/control`,
+      # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
+      # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence`, `internal/memo` —
+      # the model, the token-file projection, P4's identity backends, the server that authorises
+      # from all of them, the pod's program, the browser surface, the browser surface's program,
+      # the presence owner predicate and scope mail's send/read/retract predicates, because a mutant in one is killed by a guard in another, the
+      # refresh loop that bounds the adapter's declared divergence exists only in `main`, the
+      # share flow is the second consumer of the same authority, the browser's startup refusals
+      # are the only thing between a misconfigured deployment and a surface that serves nobody,
+      # and presence decides who may see and ring a pane from the same identities. That enumeration is pinned to `PKGS` as
+      # a whole string by `tests/test_control_mutant_count_is_pinned.py` — membership and
+      # order, not just the count, because a swap that kept the count left it stale.
+      # 🔴 THE MUTANT COUNT IS NOT WRITTEN HERE OR IN THE STEP NAME: the run prints it on
+      # its own `SUMMARY mutants=<N> …` line, read from `MUTANTS`. A pinned copy stopped it
+      # going stale but made every PR that adds a row edit these same lines, so every two
+      # such PRs conflicted; `tests/test_control_mutant_count_is_pinned.py` now refuses a
+      # present-tense count coming back instead.
+      # The slowest rows (a deadline inside their killing test) are named in `SLOW_ROWS` in
+      # the battery and dealt across shards first so they cannot stack in one. The battery is
+      # what stops the rows bit-rotting into patterns that match nothing and score SURVIVED
+      # without ever running. RUNTIME, measured at 339 mutants on one 24-core developer host: the
+      # copy-per-row runner took 5393 s serially (load ~10-27); this one 836 s serially (load
+      # ~6-11), and 159-185 s wall for all eight shards side by side at `--jobs 2` (load rising
+      # to ~37-44) — with an identical per-row verdict list each time. Runner minutes for this
+      # job are in the pull request that split it; a runner is not that host.
+      - name: prove every authz guard can go RED (each mutant on the test that names it)
+        if: matrix.battery == 'control'
+        run: >-
+          python3 tests/control_mutants.py --shard ${{ matrix.shard }} --jobs 2
+          --results "$RUNNER_TEMP/mutant-results/control-${{ strategy.job-index }}.json"
+
+      # 🔴 THE THIRD MUTATION BATTERY, WIRED IN BECAUSE ITS OWN RATIONALE DEPENDED ON IT
+      # BEING WIRED IN. `tests/routing_mutants.py` argues that its anchor-rule mutants live
+      # there rather than in a fourth file partly to avoid "a fourth command in whatever
+      # gate list the next reader reads — and a battery nobody runs measures nothing".
+      # MEASURED at the commit that added those mutants: `publish_workflow_mutants.py` and
+      # `control_mutants.py` were each run by this workflow and `routing_mutants.py` was
+      # invoked by NOTHING — not this file, not `publish-image.yml`, not `flake.nix`, not
+      # `AGENTS.md`/`CLAUDE.md`, not any test; every other mention of it in the tree is
+      # prose. It was the only UN-GATED battery of the three, chosen on a rationale about
+      # avoiding un-gated batteries. This step is what makes that sentence true.
+      #
+      # ⚠ SHARDED TOO, AND ITS POSITIVE CONTROL IS COPIED INTO EVERY SHARD. That control is a
+      # ROW (`positive-control`), so a plain split would leave every shard but one with nothing
+      # proving its runner executes the tree it edits; `mutants-aggregate` checks the row is in
+      # every shard and killed in each, and counts it once. It needs both toolchains — it
+      # mutates Go and Python sources and kills them with `go test` and `pytest` — which is why
+      # it lives in this job and why the step below installs pytest.
+      #
+      # ⚠ RUNTIME, AND WHICH HALF IT IS: 614.75 s wall / 152.21 s user + 21.00 s sys at 57
+      # mutants on a 24-core developer host at load ~6.5, when it was wired into the `go` job,
+      # where it then took 11-12 min of runner time — and still ~11.5 min unsharded here after
+      # the tree reuse, because the reuse only helps the Go half. MEASURED per row on one reused
+      # tree: the 24 pytest rows 595 s together (~20-28 s each, a whole suite file per row), the
+      # 33 go rows 28 s together. So the shards deal the PYTEST rows evenly first
+      # (`slow_rows()`), and N is eight because that leaves each shard three or four of them.
+      - name: install pytest for the routing battery
+        if: matrix.battery == 'routing'
+        run: python3 -m pip install --quiet pytest
+      - name: prove every routing and ANCHOR guard can go RED
+        if: matrix.battery == 'routing'
+        run: >-
+          python3 tests/routing_mutants.py --shard ${{ matrix.shard }}
+          --results "$RUNNER_TEMP/mutant-results/routing-${{ strategy.job-index }}.json"
+
+      - name: upload this shard's verdicts for the seam check
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-${{ matrix.battery }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/mutant-results/
+          if-no-files-found: error
+          retention-days: 3
+
+  # 🔴 THE SEAM GUARD OVER BOTH BATTERIES' SHARDS. `!cancelled()` rather than the default, so a FAILED
+  # shard still gets its union checked — a shard that crashed before writing its verdicts is
+  # then a named missing shard here, not a silently skipped job.
+  #
+  # 🔴 AND IT IS GATED ON THE SAME LANE AS `mutants`, NOT ON `!cancelled()` ALONE. On a docs-only
+  # change every shard is SKIPPED, and an aggregate that still ran would find no shard artifacts —
+  # which it is built to report as missing shards (see above), a red row caused by the tiering and
+  # not the tree. (Reasoned from that design, not run.) It names `changes` as well as `mutants`
+  # so it can read the lane; when `changes` fails, both run, exactly as every other gated job does.
+  mutants-aggregate:
+    needs: [changes, mutants]
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mutants-*
+          path: mutant-results
+          merge-multiple: true
+      - name: every authz mutant ran in exactly one shard, and the battery's one SUMMARY
+        run: python3 tests/control_mutants.py --aggregate mutant-results
+      - name: every routing mutant ran in exactly one shard, the control in all, and one SUMMARY
+        if: ${{ !cancelled() }}
+        run: python3 tests/routing_mutants.py --aggregate mutant-results
+
   # 🔴 THE P2 GATE, AND IT IS ITS OWN JOB FOR THE SAME REASON THE CORPUS IS: its verdict is
   # readable on its own in the checks list, and a failure in either language can never mask it.
   # It needs BOTH runtimes — the Python client is the oracle and the Go client is under test —
   # so it is the one job that pins both pins.
   parity:
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -1256,6 +1437,8 @@ jobs:
   # cannot stand in for; CI can only ever run the synthetic one.
   dualrun:
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -1515,6 +1698,8 @@ jobs:
   # fails on an ImportError. Neither can pass by doing nothing.
   nix:
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false') }}
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
@@ -1687,6 +1872,8 @@ jobs:
   # before adding a dependency to that module, because nothing in this repository will.
   uiaudit:
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false') }}
     # 🔴 NON-BLOCKING, AND THE COMMENT THAT USED TO STAND HERE CLAIMED AN OUTCOME THIS LINE DOES
     # NOT PRODUCE — MEASURED ON THIS BRANCH RATHER THAN ASSUMED.
     #
@@ -2121,6 +2308,8 @@ jobs:
   # `ci.yml` untouched, and would have shipped the guard inert.
   pgtest:
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false') }}
     # 🔴 THE MAJOR IS PINNED, NOT INHERITED, AND IT AGREES WITH TWO OTHER SITES — the
     # devShell's `pkgs.postgresql_18` and `wantServerMajor` in the tier's own harness.
     # `tests/test_pgtest_tier_is_declared.py` asserts the three agree. A fourth site, the
