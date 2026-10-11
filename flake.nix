@@ -1891,14 +1891,17 @@
           # the arcs/sessions plan). `tests/test_capability_ledger.py` pins the list above
           # against the oracle's tables and this one against the `go_only` rows of
           # `tests/conformance/requests.json` AND of the capability ledger. The first,
-          # `sessions/<scope>`, is the arcs/sessions S2 slice; `arcs`/`arc` are S3's.
+          # `sessions/<scope>`, is the arcs/sessions S2 slice; `arcs`/`arc` are S3's;
+          # `sources/<scope>` is S2 of the scope-refs plan.
           cat > want-go-only.txt <<'EOF'
           GET arc
           GET arcs
           GET sessions
+          GET sources
           HEAD arc
           HEAD arcs
           HEAD sessions
+          HEAD sources
           PUT arc
           EOF
           sed -i 's/^ *//; /^$/d' want.txt want-go-only.txt

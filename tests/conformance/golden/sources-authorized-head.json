@@ -1,0 +1,48 @@
+{
+  "body": {
+    "bytes": 0,
+    "kind": "text_lines",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "text_lines": [
+      ""
+    ]
+  },
+  "case": "sources-authorized-head",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Length",
+      "1095"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Exit",
+      "0"
+    ],
+    [
+      "X-Store-Revision",
+      "a11ba11ba11ba11ba11ba11ba11ba11ba11ba11b"
+    ],
+    [
+      "X-Store-Snapshot",
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=11"
+    ],
+    [
+      "X-Store-Status",
+      "sources-declared"
+    ]
+  ],
+  "reason": "OK",
+  "recorded_from": "cmd/cairn-server",
+  "status": 200
+}

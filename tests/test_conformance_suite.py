@@ -80,15 +80,18 @@ def _raw_corpus() -> dict:
 #: 🔴 THE REAL `go_only` ROWS, SPELLED BY HAND — never derived from the corpus under test,
 #: so a row that lost (or gained) its mark moves the assertions that read this. The
 #: arcs/sessions S2 slice added the `sessions-*` rows, S3 the arc registry's, and S5 the four
-#: `arcs-check-*` rows (the orphan check, a `?check=1` mode of the `arcs` head); the next
-#: Go-only route moves this set in its commit.
+#: `arcs-check-*` rows (the orphan check, a `?check=1` mode of the `arcs` head), and S2 of the
+#: scope-refs plan the six `sources-*` rows; the next Go-only route moves this set in its commit.
 GO_ONLY_IDS = (
     "sessions-authorized", "sessions-authorized-head", "sessions-legacy-token",
     "sessions-refused-scope", "sessions-absent-scope", "sessions-empty-scope",
     "sessions-unreadable-scope", "sessions-unauthenticated", "sessions-arity-too-long",
     "arcs-authorized", "arcs-authorized-head", "arcs-declared-elsewhere", "arcs-hidden-home",
     "arcs-legacy-token", "arcs-refused-scope", "arcs-absent-scope", "arcs-no-arc",
-    "arcs-unauthenticated", "arcs-check-all-scopes", "arcs-check-scoped",
+    "arcs-unauthenticated",
+    "sources-authorized", "sources-authorized-head", "sources-undeclared",
+    "sources-refused-scope", "sources-absent-scope", "sources-unauthenticated",
+    "arcs-check-all-scopes", "arcs-check-scoped",
     "arcs-check-refused-scope", "arcs-check-absent-scope",
     "arc-authorized", "arc-authorized-head", "arc-unregistered-slug",
     "arc-refused-home", "arc-absent-home", "arc-unauthenticated", "arc-arity-too-short",
@@ -98,8 +101,9 @@ GO_ONLY_IDS = (
 
 #: The relation-level skips those rows cause against the oracle, spelled by hand: four
 #: uniform-401 members, five refused-equals-absent pairs (S5 added `arcs-check`) and three
-#: head-matches-get pairs.
-GO_ONLY_RELATION_SKIPS = 12
+#: head-matches-get pairs — plus, from S2 of the scope-refs plan, the `sources` route's one
+#: uniform-401 member, one refused-equals-absent pair and one head-matches-get pair.
+GO_ONLY_RELATION_SKIPS = 15
 
 
 def _raw_corpus_without_go_only() -> dict:
@@ -510,7 +514,7 @@ class TestTheGoOnlyMark:
         # The real corpus's own go_only routes, spelled by hand, plus the synthetic one.
         assert cases_mod.go_only_routes(corpus) == {
             SYNTHETIC_GO_ONLY_ROUTE, "GET sessions", "HEAD sessions", "GET arcs", "HEAD arcs",
-            "GET arc", "HEAD arc", "PUT arc",
+            "GET arc", "HEAD arc", "PUT arc", "GET sources", "HEAD sources",
         }
         # …and it is NOT counted as oracle coverage, so the oracle's ledger is unmoved.
         assert cases_mod.addressed_routes(corpus) == EXPECTED_ROUTES
@@ -902,6 +906,8 @@ class TestTheFramingClaim:
             "arcs-authorized": 17,
             "arc-authorized-head": 19,
             "arc-authorized": 19,
+            "sources-authorized-head": 23,
+            "sources-authorized": 23,
         }
         suite.check_head_pairs(corpus, _records_answering(corpus, 200), outcome)
         assert len(outcome.failures) == 1

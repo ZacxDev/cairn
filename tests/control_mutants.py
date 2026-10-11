@@ -238,6 +238,46 @@ class Mutant:
             )
 
 
+#: The lock-to-compare span of `codesrc.Journal.Set`, verbatim — the one row that MOVES a
+#: statement across the lock needs both ends of it in one pattern.
+_CODESRC_LOCKED_SPAN = (
+    '\tf, err := os.OpenFile(j.Path, os.O_CREATE|os.O_RDWR|os.O_APPEND|syscall.O_NOFOLLOW, 0o600)\n'
+    '\tif err != nil {\n'
+    '\t\treturn Record{}, &JournalUnreadableError{Path: j.Path, Err: err}\n'
+    '\t}\n'
+    '\tdefer f.Close()\n'
+    '\tif err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {\n'
+    '\t\treturn Record{}, &JournalUnreadableError{Path: j.Path, Err: err}\n'
+    '\t}\n'
+    '\tdefer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)\n'
+    '\tif _, err := f.Seek(0, io.SeekStart); err != nil {\n'
+    '\t\treturn Record{}, &JournalUnreadableError{Path: j.Path, Err: err}\n'
+    '\t}\n'
+    '\tdata, err := io.ReadAll(f)\n'
+    '\tif err != nil {\n'
+    '\t\treturn Record{}, &JournalUnreadableError{Path: j.Path, Err: err}\n'
+    '\t}\n'
+    '\tcurrent := fold(data).RevisionFor(scope)\n'
+    '\tif current != ifRevision {\n'
+    '\t\treturn Record{}, &StaleRevisionError{Scope: scope, Want: ifRevision, Current: current}\n'
+    '\t}\n'
+    '\tif interleave != nil {\n'
+    '\t\tinterleave()\n'
+    '\t}\n'
+)
+
+#: The compare-and-seam tail of that span: the lines the moved-compare row lifts OUT of the lock.
+_CODESRC_COMPARE_AND_SEAM = (
+    '\tcurrent := fold(data).RevisionFor(scope)\n'
+    '\tif current != ifRevision {\n'
+    '\t\treturn Record{}, &StaleRevisionError{Scope: scope, Want: ifRevision, Current: current}\n'
+    '\t}\n'
+    '\tif interleave != nil {\n'
+    '\t\tinterleave()\n'
+    '\t}\n'
+)
+
+
 MUTANTS: tuple[Mutant, ...] = (
     # ---- the resolver: the two sources of authority, and the union of them --------
     Mutant(
@@ -4459,6 +4499,200 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestTheAgentTabIsByteForByteTheCLIRecall",
         why="`head -60` reads as 'line 60 of this text', but the client prints a banner and a blank line "
         "first, so the agent's cut falls two lines earlier than the obvious mark.",
+    ),
+    # S1 of the scope-refs plan (`claudedocs/plan-cairn-scope-refs.md`): `internal/codesrc`, the
+    # code-source grammar and its journal. 🔴 EVERY ROW CARRIES `pkgs` RATHER THAN `PKGS` GROWING:
+    # the killers live in `internal/codesrc` alone, and adding it to `PKGS` would re-scope every
+    # other row (the field's own comment measures why that turns correct rows MISATTRIBUTED).
+    Mutant(
+        name="codesrc-accepts-a-non-dns-host",
+        path="internal/codesrc/codesrc.go",
+        old="\tif !isDNSName(host) {",
+        new="\tif false && !isDNSName(host) {",
+        killer="TestEachRefusalIsForItsOwnRule",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="a host check that trusts whatever sits before the first '/' — which makes a forgotten host "
+        "(`git:example-org/example-repo@main`) a declaration of a host called `example-org`.",
+    ),
+    Mutant(
+        name="codesrc-branch-may-lead-with-a-dash",
+        path="internal/codesrc/codesrc.go",
+        old='\tif strings.HasPrefix(branch, "-") {',
+        new='\tif false && strings.HasPrefix(branch, "-") {',
+        killer="TestEachRefusalIsForItsOwnRule",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="the ref-format rule written out from git-check-ref-format(1) has no leading-dash clause — "
+        "only `--branch` adds it — so dropping the explicit check is invisible to a reader, and a branch "
+        "of `-…` is an option to the auditor's `git` (T2).",
+    ),
+    Mutant(
+        name="codesrc-whitespace-in-branch-accepted",
+        path="internal/codesrc/codesrc.go",
+        old="\t\tif unicode.IsSpace(r) {\n\t\t\treturn refuse(RuleWhitespace)",
+        new="\t\tif false && unicode.IsSpace(r) {\n\t\t\treturn refuse(RuleWhitespace)",
+        killer="TestEachRefusalIsForItsOwnRule",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="the branch rule refuses a space anyway, so the whitespace check reads as redundant — and "
+        "deleting it turns the form's one actionable message into a ref-format one.",
+    ),
+    Mutant(
+        name="codesrc-repo-path-case-folded",
+        path="internal/codesrc/codesrc.go",
+        old='\tsrc := Source{Host: host, RepoPath: strings.Join(segs, "/"), Branch: branch}',
+        new='\tsrc := Source{Host: host, RepoPath: strings.ToLower(strings.Join(segs, "/")), Branch: branch}',
+        killer="TestEveryExampleParsesToItsLiteralCanonicalForm",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="the host IS lowercased two lines up, so lowercasing the path beside it looks like "
+        "consistency — and a self-hosted forge with case-sensitive paths then names another repository.",
+    ),
+    Mutant(
+        name="codesrc-subpath-dotdot-accepted",
+        path="internal/codesrc/codesrc.go",
+        old='\t\t\tif s == ".." {\n\t\t\t\treturn refuse(RuleDotDot)',
+        new='\t\t\tif false && s == ".." {\n\t\t\t\treturn refuse(RuleDotDot)',
+        killer="TestEachRefusalIsForItsOwnRule",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="the segment rule refuses a leading '.', so the '..' check looks dead; it is what names the "
+        "traversal rather than reporting it as a spelling problem.",
+    ),
+    Mutant(
+        name="codesrc-duplicate-refused-not-deduped",
+        path="internal/codesrc/codesrc.go",
+        old="\t\tif seen[c] {\n\t\t\tcontinue\n\t\t}",
+        new='\t\tif seen[c] {\n\t\t\treturn nil, &ParseError{Index: i + 1, Input: raw, Rule: "is a duplicate"}\n\t\t}',
+        killer="TestDuplicatesAreDroppedAndOrderIsKept",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="refusing a duplicate reads as the stricter choice; it refuses a pasted list for a line that "
+        "two spellings (`.git`, host case) make identical, which the user cannot see.",
+    ),
+    Mutant(
+        name="codesrc-order-not-kept",
+        path="internal/codesrc/codesrc.go",
+        old="\tif len(out) > MaxSources {",
+        new="\tfor i := 1; i < len(out); i++ {\n\t\tfor k := i; k > 0 && out[k].Canonical() < out[k-1].Canonical(); k-- {\n"
+        "\t\t\tout[k], out[k-1] = out[k-1], out[k]\n\t\t}\n\t}\n\tif len(out) > MaxSources {",
+        killer="TestDuplicatesAreDroppedAndOrderIsKept",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="sorting for a deterministic answer — and the first source, the PRIMARY, becomes whichever "
+        "sorts first.",
+    ),
+    Mutant(
+        name="codesrc-revision-compared-outside-the-lock",
+        path="internal/codesrc/journal.go",
+        # ONE pattern spanning the lock and the compare, so the compare MOVES rather than being
+        # duplicated — and the `interleave` seam moves WITH it, because the seam marks the
+        # compare-to-append window wherever that window is. That is what lets call two REACH the
+        # seam before call one appends; call one waits for it with a 300ms DEADLINE. ⚠ So the kill
+        # still depends on that deadline — call two must arrive within it (a 1µs deadline left this
+        # row SURVIVED 20 of 20). Too short a deadline fails LOUD, as a SURVIVED row here, never as
+        # a false green on the real code, where call two is parked on `flock`.
+        old=_CODESRC_LOCKED_SPAN,
+        new="\tif pre, perr := j.Read(); perr == nil {\n"
+        "\t\tif cur := pre.RevisionFor(scope); cur != ifRevision {\n"
+        "\t\t\treturn Record{}, &StaleRevisionError{Scope: scope, Want: ifRevision, Current: cur}\n"
+        "\t\t}\n\t}\n"
+        "\tif interleave != nil {\n\t\tinterleave()\n\t}\n"
+        + _CODESRC_LOCKED_SPAN.replace(_CODESRC_COMPARE_AND_SEAM, ""),
+        killer="TestTwoWritesCarryingOneRevisionLandExactlyOnce",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="checking the precondition before taking the lock is the natural order to write it in "
+        "(validate, then act) — and it is the lost update the revision exists to prevent.",
+    ),
+    Mutant(
+        name="codesrc-stale-revision-accepted",
+        path="internal/codesrc/journal.go",
+        old="\tif current != ifRevision {",
+        new="\tif false && current != ifRevision {",
+        killer="TestAStaleRevisionWritesNothing",
+        extra_killers=("TestTwoWritesCarryingOneRevisionLandExactlyOnce",),
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="a revision that is carried, stored and compared nowhere — the form still round-trips it, so "
+        "nothing reads wrong until two admins edit at once.",
+    ),
+    Mutant(
+        name="codesrc-fold-earliest-wins",
+        path="internal/codesrc/journal.go",
+        old="\t\tsnap.Latest[r.Scope] = r\n",
+        new="\t\tif _, dup := snap.Latest[r.Scope]; !dup {\n\t\t\tsnap.Latest[r.Scope] = r\n\t\t}\n",
+        killer="TestTheFoldIsLatestWins",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="'first write wins' is a common dedupe idiom; on an append-only journal it freezes every "
+        "scope at its first declaration.",
+    ),
+    Mutant(
+        name="codesrc-damaged-line-refuses-whole-journal",
+        path="internal/codesrc/journal.go",
+        old="\t\tif err := dec.Decode(&r); err != nil || !r.valid() {\n\t\t\tsnap.Skipped++\n\t\t\tcontinue\n\t\t}",
+        new="\t\tif err := dec.Decode(&r); err != nil || !r.valid() {\n"
+        "\t\t\treturn Snapshot{Latest: map[string]Record{}, Skipped: 1}\n\t\t}",
+        killer="TestDamagedLinesAreSkippedAndCounted",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="refusing on corruption is the control journal's rule (refuse-whole), so copying it here "
+        "looks principled — and one hand-edited line makes every scope undeclared.",
+    ),
+    Mutant(
+        name="codesrc-unknown-field-refused",
+        path="internal/codesrc/journal.go",
+        old="\t\tdec := json.NewDecoder(bytes.NewReader(line))\n\t\tif err := dec.Decode(&r)",
+        new="\t\tdec := json.NewDecoder(bytes.NewReader(line))\n\t\tdec.DisallowUnknownFields()\n\t\tif err := dec.Decode(&r)",
+        killer="TestAnUnknownFieldIsIgnoredNotRefused",
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="arcs' fold, which this one is copied from, DOES disallow unknown fields — the one line a "
+        "faithful copy carries over, and a newer UI's record then reads as damaged on an older pod.",
+    ),
+    Mutant(
+        name="codesrc-key-not-normalised",
+        path="internal/codesrc/codesrc.go",
+        old="\treturn store.NormalizeRef(scopeName)",
+        new="\t_ = store.NormalizeRef\n\treturn scopeName",
+        killer="TestKeyFoldsTheScopeNameToOneLiteral",
+        extra_killers=("TestTheKeyIsTheFoldedName",),
+        pkgs=PKGS + ("./internal/codesrc/",),
+        why="the directory name already IS the scope name on most hosts, so the identity function passes "
+        "every lowercase fixture — and `Alpha-Notes` declared in the browser is never found by the pod.",
+    ),
+    # S2 of the scope-refs plan: the pod's `sources/<scope>` route and its startup refusal. All
+    # three killers live inside `PKGS` (`internal/api`, `cmd/cairn-server`), so no `pkgs` override.
+    Mutant(
+        name="api-sources-get-distinguishes-absent-from-unreadable",
+        path="internal/report/sources.go",
+        old='\tindex, err := store.LoadStore(storeRoot, "scanned", visible)',
+        new='\tindex, err := store.LoadStore(storeRoot, "scanned", store.Unrestricted())',
+        killer="TestAScopeTheCallerCannotReadAnswersExactlyLikeAbsence",
+        why="'does the scope exist' reads as a question about the DISK, so asking it of the whole store "
+        "looks correct — and a scope the caller may not read then answers with its declaration, telling "
+        "refused apart from absent and leaking the repositories it names.",
+    ),
+    Mutant(
+        name="api-sources-journal-inside-store-accepted",
+        # Re-pointed when S2's round 1 moved the variable's reading out of `main` into
+        # `codesrc.FromEnv`, its ONE reader: the old pattern named a line `main.go` no longer has.
+        # The killer still reaches it — the test runs the BINARY, and `main` calls `FromEnv`.
+        path="internal/codesrc/journal.go",
+        old="\tresolved, err := ResolveJournalPath(storeRoot, v)",
+        new="\tresolved, err := v, error(nil)",
+        killer="TestTheBinaryREFUSESASourceJournalInsideTheStoreRoot",
+        why="the variable is 'just a path', and the pod only READS it, so checking where it points looks "
+        "like ceremony — and a journal beside the store becomes a scope every bare row reads, and is "
+        "overwritten by the next re-seed.",
+    ),
+    Mutant(
+        name="api-sources-unreadable-journal-answers-200",
+        path="internal/api/server.go",
+        old="\t\tif sourcesErr != nil {\n\t\t\treturn sourcesErr\n\t\t}",
+        new="\t\tif sourcesErr != nil {\n\t\t\tgot = codesrc.Snapshot{Latest: map[string]codesrc.Record{}, Missing: true}\n\t\t}",
+        killer="TestAnUnreadableSourcesJournalIsTheStoreUnreachable503",
+        why="degrading to 'empty' keeps the page up, which reads as resilience — and a journal the pod "
+        "cannot read answers `sources=undeclared`, the could-not-look state served as a fact.",
+    ),
+    Mutant(
+        name="api-sources-damage-leaks-onto-the-wire",
+        path="internal/report/sources.go",
+        old="JournalAbsent: snap.Missing}",
+        new="JournalAbsent: snap.Missing || snap.Damaged()}",
+        killer="TestAHiddenScopesDamagedLineChangesNothingOnTheWire",
+        why="'a damaged journal is as good as no journal' reads as caution — and a torn line in a scope the "
+        "caller cannot read flips every other scope's answer, a signal about hidden activity on the wire.",
     ),
 )
 
