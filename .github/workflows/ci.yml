@@ -12,6 +12,23 @@ on:
   # `main` that touches anything outside `claudedocs/` already runs every job (see `changes`).
   workflow_dispatch:
 
+# 🔴 ONE RUN PER PR AT A TIME, AND ONLY A PR'S RUNS ARE CANCELLED. Every push to a PR
+# branch started a fresh full run while the previous ones kept going — one branch was
+# measured with five overlapping ~70-minute runs, each verdict already stale. A newer
+# push supersedes an older run of the SAME PR, so that one is cancelled. A `push` to
+# `main` is never cancelled: each commit there is a distinct state of the trunk, and a
+# cancelled run is a commit nobody ever got a verdict on.
+#
+# ⚠ SO A NON-PR RUN GETS A GROUP OF ITS OWN (`run_id`), NOT MERELY
+# `cancel-in-progress: false`. A concurrency group holds one running and ONE pending
+# run, and a newer pending run REPLACES the older pending one whatever
+# `cancel-in-progress` says — three quick pushes to `main` sharing a group would
+# silently cancel the middle one. A group nothing else can join has no pending slot
+# to lose.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -82,8 +99,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # `pytest-xdist` is PINNED, unlike `pytest`: it decides how the suite is split
+      # across processes and how the junit file below is merged, and the floor reads
+      # that file — so a new release is a change to the instrument, taken on purpose.
       - name: install
-        run: python3 -m pip install --upgrade pip pytest
+        run: python3 -m pip install --upgrade pip pytest pytest-xdist==3.8.0
 
       # 🔴 THE PUBLISH WORKFLOW'S GUARDS, PROVED TO GO RED BEFORE THE SUITE IS
       # BELIEVED. `tests/test_publish_workflow.py` pins properties of
@@ -142,10 +162,21 @@ jobs:
       #
       # ⚠ THIS IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE. No bug ever
       # narrowed this suite; it pins a property so that one cannot pass unseen.
+      #
+      # 🔴 `-n auto` (pytest-xdist, one worker per runner vCPU), BECAUSE THE SERIAL
+      # SUITE WAS ~10 MINUTES OF ONE CORE ON A FOUR-CORE RUNNER. Isolation was
+      # MEASURED, not assumed — serial against several worker counts, compared by
+      # test ID and outcome rather than by total. It found ONE shared-clock flake
+      # (a gzip `MTIME` byte compared across two requests), fixed in the test, not
+      # retried. The floor below is UNCHANGED and still correct: xdist merges every
+      # worker into ONE junit `testsuite` whose `tests` is the whole run, measured
+      # moving on an added test and refusing on a narrowed collection. ⚠ A local
+      # reproduction of a failure seen here can still run serially; ordering
+      # under xdist differs, so try both.
       - name: run the suite with a collected-test floor
         run: |
           set -o pipefail
-          python3 -m pytest tests -q -p no:randomly --junitxml=/tmp/r.xml | tee /tmp/out.txt
+          python3 -m pytest tests -q -p no:randomly -n auto --junitxml=/tmp/r.xml | tee /tmp/out.txt
           python3 - <<'PY'
           import sys, xml.etree.ElementTree as ET
           # 1856 collected, measured on the server dual-run branch: 1839 plus the seventeen
@@ -671,7 +702,15 @@ jobs:
           # 2883 passed, on the branch rebased onto `main` at the mutant-sharding merge (#233) —
           # a full local run with `--junitxml` — so at 2730 the gap would be 153, past `MAX_GAP`.
           # `2883 - min(50, max(1, 2883/20)) = 2833`.
-          FLOOR = 2833
+          # ⚠ 2833 -> 2835 FOR THE XDIST BRANCH, AND THIS TRANSITION AVERTED NOTHING. That
+          # branch adds NO collected test: `--collect-only` lists the SAME 2885 names on it
+          # and on `main` at the path-tiering merge (`comm -3` empty). So `main` itself
+          # already measured 2885, not the 2883 recorded above — a 2-test difference this
+          # line does not attribute — and the gap was 52 against a `MAX_GAP` of 100, passing
+          # unedited. The literal moves to put the margin back at 50, the same choice as
+          # the transitions above. Measured 2885 collected (2885 passed, `-n auto`), so
+          # `2885 - min(50, max(1, 2885/20)) = 2835`.
+          FLOOR = 2835
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -2179,8 +2218,8 @@ jobs:
           # event `github.sha` is the EPHEMERAL MERGE COMMIT, which exists only on the runner and
           # cannot be resolved from a clone — so a run label built from it names a commit nobody can
           # look up, on a design whose whole point is run-to-run attribution. The head sha is the
-          # commit a reader actually has. `github.sha` is kept as the fallback for the `push` and
-          # `merge_group` events, where there is no pull-request head.
+          # commit a reader actually has. `github.sha` is kept as the fallback for the `push`
+          # event, where there is no pull-request head.
           UIAUDIT_LABEL: cairn-ui ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -uo pipefail
