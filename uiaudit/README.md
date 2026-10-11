@@ -539,7 +539,7 @@ tap/text 13/17. Its previous version read only three of them, and it PASSED with
 text printed as tap. The new one fails on that mutant, on a tap/text swap, on an overflow/viewport
 swap, and on a journal line that prints the token-file world's tap.
 
-## PWA — the closing-condition instrument (S2 of the mobile plan)
+## PWA — the closing-condition instrument (S2–S4 of the mobile plan)
 
 `uiaudit/pwa_check.sh` is the plan's closing check: it must exit 0 on `main` once every slice has
 landed. 🔴 **It is an ORCHESTRATOR (audit D4): it never re-implements a clause.** Each check lives in
@@ -550,8 +550,10 @@ one place, and the script boots it and reads that place's own result line:
 | (a) installability | `TestPWAClauses/a_installability` (`pwa_test.go`) | its `--- PASS/FAIL:` line |
 | (b) name | `TestPWAClauses/b_name` | its `--- PASS/FAIL:` line |
 | (b) icon | `TestPWAClauses/b_icon` | its `--- PASS/FAIL:` line |
+| (b) screenshots | `TestPWAClauses/b_screenshots` | its `--- PASS/FAIL:` line |
 | (c) reachability, target size, input font | `refuseWalkRegressions`, through `run.sh` — the walk exactly as CI runs it | each refusal's `PASSED` line with rc 0, or its own headline |
 | (d) no-store | `TestEveryNonPublicHTMLRowIsNoStore` (`internal/ui/cachecontrol_test.go`, ROOT module) — the same test the `go` CI job runs | its `--- PASS/FAIL:` line; FAIL is attributed by its `pwa clause (d) no-store` tag |
+| (e) client-side storage | `TestPWAClauses/e_storage` | its `--- PASS/FAIL:` line; FAIL is attributed by its `pwa clause (e) storage` tag |
 
 `TestPWAClauses` boots three token-file worlds: `-app-name 'cairn (alpha)' -app-icon-variant amber`,
 `-app-name 'cairn (beta)' -app-icon-variant teal`, and one UNARMED. On each SIGN-IN page it asks
@@ -568,11 +570,29 @@ CHROMIUM, never this module's Go: `Page.getInstallabilityErrors` and `Page.getAp
   bare request gets), walked over the route ledger in-process; no browser and no built binary. See
   `internal/ui/README.md`, Phase Q.
 
-(b: screenshots) and (e) are S4's.
+- **(b) screenshots** (S4) — every screenshot CHROMIUM parsed out of the manifest is fetched, and its
+  bytes must equal a committed `internal/ui/screenshots/*.png` (which `checks.ui-screenshots-are-current`
+  pins to the synthetic world); its IHDR must match the `sizes` chromium read; all committed files must
+  be matched, with at least one `narrow` and one `wide`. ⚠ CDP spells the form factors `kNarrow`/`kWide`
+  (measured, chromium 152) — the test normalises them.
+- **(e) client-side storage** (S4) — four fresh-profile browsers on the alpha boot: (1) signed in, every
+  signed-in target the ledger derives is navigated, and `localStorage` must then be EMPTY (chromium has no
+  `navigator.standalone`, so the iOS hint never renders); (2) with `navigator.standalone = false` the
+  root's hint SHOWS, one dismiss tap leaves EXACTLY `{cairn.installHintDismissed: "1"}`, a reload keeps it
+  hidden, and signing out through the real control leaves the key in place (decision 11); (3) with
+  `setItem` throwing, the hint shows, dismissing raises no uncaught exception and stores nothing, and the
+  next load shows it again; (4) the Install button is hidden until a `beforeinstallprompt`, revealed by a
+  SYNTHETIC one (the reachability control), and clicking it calls that event's `prompt()` once.
+  🔴 **Headless chromium fires `beforeinstallprompt` ON ITS OWN** on an armed page (measured, chromium
+  152, no engagement-bypass flag: 1 trusted event per load), so arm (4) intercepts trusted events in the
+  capture phase before `pwa.js` sees them — otherwise "hidden by default" would be a race. The walk's
+  page count (≥ 8) and arm (2)'s showing hint are the (e) CONTROLS; either misbehaving prints
+  `pwa clause (e) CONTROL` and the script exits 2. Arm (2)'s one-key read is also the positive control
+  for the reader arm (1)'s EMPTY is measured with.
 
-**Exit codes:** 0 = all seven checks PASS; 1 = a check FAILED; 2 = COULD NOT VOUCH. Exit 2 means: no
+**Exit codes:** 0 = all nine checks PASS; 1 = a check FAILED; 2 = COULD NOT VOUCH. Exit 2 means: no
 chromium, go or python3 on `PATH`; a `cairn-ui` that did not build; a check with NO result line; the
-(a) control misbehaving; or a walk that pushed although its credentials were removed. Measured: a
+(a) or (e) control misbehaving; or a walk that pushed although its credentials were removed. Measured: a
 `PATH` without chromium exits **2**, naming it.
 
 🔴 **A (c) check can read `NOT_MEASURED`, and that is not a harness failure.** The walk prints its three
@@ -623,16 +643,19 @@ that exits right. On the old loop it was RED (`plain-loop=0/1`: exit 2, naming `
 | (c) reachability | `touchEmulation` always DISABLES touch |
 | (c) target size | append a coarse-pointer rule to `app.css`: `.view-tab` 12×12px, no gap (the adjacent shape; a lone small target passes 2.5.8's spacing exception) |
 | (c) input font | revert `max(16px, 1em)` to `0.875rem` |
+| (b) screenshots | the `wide-hub` row serves its committed bytes with ONE byte appended |
 | (d) no-store | delete `writeHTML`'s `Cache-Control` line — the base's empty default, no header on any page |
+| (e) storage | `pwa.js` writes a second key (a timestamp) beside the dismissal flag |
 
-Measured on this tree after S3 wired (d) (chromium 152.0.7977.82 from the flake's nixpkgs, NOT CI's
-chromium; 580s). S2's run, before (d), read `sabotaged=6 caught=6 plain-loop=3/3` on chromium 154:
+Measured on this tree after S4 wired (b: screenshots) and (e) (chromium 152.0.7977.82 from the flake's
+nixpkgs, NOT CI's chromium). S3's run read `sabotaged=7 caught=7 plain-loop=3/3`, S2's `6/6`:
 
 ```
-pwa_check: positive control PASSED all 7 check(s)
-pwa_check: sabotage a_installability   CAUGHT by its own check (also red: b_name b_icon)
+pwa_check: positive control PASSED all 9 check(s)
+pwa_check: sabotage a_installability   CAUGHT by its own check (also red: b_name b_icon b_screenshots)
 pwa_check: sabotage b_name             CAUGHT by its own check
 pwa_check: sabotage b_icon             CAUGHT by its own check
+pwa_check: sabotage b_screenshots      CAUGHT by its own check
 pwa_check: plain loop on c_reachability     exit 1, names c_reachability FAIL
 pwa_check: sabotage c_reachability     CAUGHT by its own check (also red: c_input_font)
 pwa_check: plain loop on c_target_size      exit 1, names c_target_size FAIL
@@ -640,8 +663,14 @@ pwa_check: sabotage c_target_size      CAUGHT by its own check
 pwa_check: plain loop on c_input_font       exit 1, names c_input_font FAIL
 pwa_check: sabotage c_input_font       CAUGHT by its own check
 pwa_check: sabotage d_no_store         CAUGHT by its own check
-sabotaged=7 caught=7 plain-loop=3/3
+pwa_check: sabotage e_storage          CAUGHT by its own check
+sabotaged=9 caught=9 plain-loop=3/3
 ```
+
+⚠ **The first S4 self-test also read `e_storage` red under the c_reachability sabotage, and that was a
+HARNESS flake, not the sabotage:** `Browser.SignOut` read the jar a fixed 400 ms after the click and,
+on a loaded host, the POST was still in flight (`still in the jar … landed on /`). It now waits, bounded,
+for the redirect to land; the run above is after that fix.
 
 The "also red" entries are expected. With no manifest link there is no manifest for (b) to read. With
 touch never enabled, S1's coarse-pointer input rule never applies.
@@ -649,8 +678,33 @@ touch never enabled, S1's coarse-pointer input rule never applies.
 `TestThePWAClauseNamesAreTheScriptsContract` pins the strings the script greps, on both sides: the
 script's own text and `main.go`'s refusal headlines. ⚠ It is a SPELLING guard, labelled as one.
 
-⚠ **NOT a CI step yet.** S4 adds the `pwa_check.sh` step (plan, S4's ledgers). Until then,
-`TestPWAClauses` runs only inside the advisory job's `go test`.
+✅ **A CI step since S4** — the PLAIN check, in the advisory `uiaudit` job (exit 1 or 2 fails the step;
+the job stays `continue-on-error` until S6b). `--self-test` is NOT run in CI: nine tree copies and four
+full walks per push buy nothing the committed self-test record below does not, until the tree changes.
+
+### The install screenshots — generated here, pinned in nix (S4)
+
+`uiaudit -screenshots <dir>` boots the walk's own token-file world (`BootWorld`, over
+`tests/reader_fixtures.py`'s builder), signs in through the real form and captures each entry of
+`ui.ScreenshotSpecs()` — `internal/ui/screenshots/screenshots.json`, the one list `internal/ui` embeds and
+`flake.nix` reads — at EXACTLY its size, refusing a capture that landed on another page or came out another
+size. `narrow` captures are TOUCH captures, so they show S1's coarse-pointer rendering. `nix run
+.#build-ui-screenshots` runs it in the sandbox with the pinned chromium and a pinned font set;
+`checks.ui-screenshots-are-current` re-captures, byte-compares, and runs a one-byte-appended negative
+control and a PROVENANCE control (one fixture scope renamed: the capture must move). Held still, each
+MEASURED to move the bytes otherwise:
+- **scrollbars hidden** — two back-to-back captures differed in 3348 pixels, all in the 4 px overlay-
+  scrollbar column (x 386–389) of the 390 px capture;
+- **an UNARMED world**, a departure from the plan's "fixed synthetic `-app-name`": armed, chromium fired
+  `beforeinstallprompt` itself and `pwa.js` revealed the Install button in the captures — a race no
+  byte-compared picture can carry;
+- **a fonts.conf written in `flake.nix`**, not `makeFontsConf`'s, which left the sans stack on DejaVu Math
+  (a serif with no bold); see the comment there;
+- `prefers-reduced-motion: reduce` (the entrance animations) and `document.fonts.ready`.
+
+Measured on one host: the sandbox capture and an unsandboxed capture under the SAME fonts.conf and
+chromium were byte-identical, and two consecutive unsandboxed runs were too. ⚠ Cross-HOST identity is the
+`nix` CI job's first run of the check; the plan's fallback, if it disagrees, is decoded-pixel comparison.
 
 ⚠ **The walk's worlds stay UNARMED** (`BootWorld` arms only when `pwa_test.go` passes `-app-*`). So the
 `/favicon.ico` carve-out is still live, and plan B5 (delete it) is not done.
@@ -1334,5 +1388,6 @@ indistinguishable from a fork PR by design.
 | `payload_test.go` | the push payload's shape offline, and the only evidence the REFUSAL path has |
 | `control_test.go` | the positive control, the structural-zero pair, the document-status gate |
 | `touch_test.go` | touch reachability (both halves, real chromium), the `target-size` and input-font controls, the journal world |
-| `pwa_test.go` | the closing condition's clauses (a) and (b: name, icon): chromium's installability and manifest verdicts over three boots |
-| `pwa_check.sh` | the closing-condition ORCHESTRATOR: runs (a), (b), the walk's (c) and the root module's (d); `--self-test` sabotages each |
+| `pwa_test.go` | the closing condition's clauses (a), (b: name, icon, screenshots) and (e): chromium's installability and manifest verdicts over three boots, and `pwa.js`'s storage in four browsers |
+| `pwa_check.sh` | the closing-condition ORCHESTRATOR: runs (a), (b), the walk's (c), the root module's (d) and (e); `--self-test` sabotages each |
+| `screenshots.go` | `uiaudit -screenshots <dir>`: the manifest's install screenshots, captured from the walk's world — the generator `flake.nix`'s `uiScreenshots` runs in the sandbox |

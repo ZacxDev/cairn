@@ -111,7 +111,7 @@ type Target struct {
 // 🔴 THE PARAMETER IS A `control.ID`, NOT A NAME, AND GUESSING IT PRODUCED A WALK OVER
 // TWELVE 404 PAGES THAT REPORTED SUCCESS. Measured on this tree, not imagined: the first
 // draft of this file expanded `GET /share` into one target per scope NAME read off the store
-// (`/share?scope=alpha-notes`). `handleSharePage` reads that parameter as a
+// (`/share?scope=alpha-notes`). `shareSection` (now the Team page) reads that parameter as a
 // `control.ID` — a `crypto/rand` value, unguessable by construction and deliberately so,
 // because a 404-for-unknown beside a 403-for-somebody-else's would make the page an
 // existence oracle over every scope in the deployment. So every one of those targets 404'd,
@@ -157,7 +157,7 @@ type Target struct {
 // `Path` (query included), so the second visit is already enqueued and is not re-walked.
 //
 // 🔴 `GET /invite` IS HERE AND NOT IN `plainGET`, FOR THE REASON `GET /share` IS, AND THE
-// PARAMETER IS THE SAME KIND OF VALUE. `handleInvitePage` reads `?project=` as a
+// PARAMETER IS THE SAME KIND OF VALUE. `inviteSection` (the Team page) reads `?project=` as a
 // `control.ID` — a `crypto/rand` value, unguessable by construction so that a
 // 404-for-unknown beside a 403-for-somebody-else's cannot enumerate every project in the
 // deployment. Guessing it would reproduce, one object over, the walk over twelve 404 pages
@@ -177,12 +177,19 @@ type Target struct {
 // page links back to `/scope?id=…` (breadcrumb, declared scopes); the queue's `Path` dedupe is what
 // terminates that cycle, as for the entry pair. `boot.go`'s `writeArcJournal` is what puts one arc
 // in the world, because with no journal the card lists nothing to follow.
+//
+// 🔴 `GET /share` AND `GET /invite` LEFT THIS MAP WHEN THEIR FLOWS MOVED ONTO `/team` (operator
+// decision O-a): both are bodiless 303s now, listed in `notADocument`, and the per-scope and
+// per-project pages they published are published by the Team page as `/team?scope=…` and
+// `/team?project=…` — reached through `ui.TeamPath`'s expansion below, by the reasoning the
+// two paragraphs above give for the values being minted ids.
 var linkExpanded = map[string]bool{
-	ui.RootPath:   true,
+	// 🔴 `GET /scopes` TOOK THE ROOT'S PLACE HERE WHEN THE ROOT BECAME THE HUB: it is the page whose
+	// cards link `/scope?id=<control.ID>`, so it is the one that must expand for any scope page to be
+	// reached. The root moved to `plainGET` — see there.
+	ui.ScopesPath: true,
 	ui.ScopePath:  true,
-	ui.SharePath:  true,
 	ui.EntryPath:  true,
-	ui.InvitePath: true,
 	ui.ArcPath:    true,
 	// 🔴 `GET /session` FOR `GET /arc`'s REASON: its operand is a session id the SURFACE publishes (the
 	// scope page's sessions tab, an arc's member chips), so guessing one would capture the uniform
@@ -196,6 +203,16 @@ var linkExpanded = map[string]bool{
 	// `writeArcJournal` registers a recent, an open-old and a closed-old arc so the live view, the
 	// hidden count and the toggle all render.
 	ui.ArcsPath: true,
+	// 🔴 `GET /sessions` FOR `GET /arcs`'s REASON: its bare path IS the page, and it PUBLISHES every
+	// visible session as `/session?session=<id>` — a second way to the session page beside the scope
+	// tabs, and the only one that does not pass through a scope.
+	ui.SessionsPath: true,
+	// 🔴 `GET /team`, WHICH CARRIES BOTH MOVED FLOWS: its share index publishes
+	// `/team?scope=…` and its invite index `/team?project=…`, each a minted id, so expanding it
+	// reaches every per-scope page (the grant form) and per-project page (the mint form) the old
+	// rows reached. Its bare path is a real page — the share list, the invite list and the
+	// team-link half, which on a world with no database says `ui.NoInviteStore` twice.
+	ui.TeamPath: true,
 }
 
 // plainGET is the set of ledger paths captured exactly as the ledger spells them.
@@ -225,7 +242,14 @@ var linkExpanded = map[string]bool{
 //
 // ⚠ IT IS A PUBLIC ROW, SO THE WALK CAPTURES IT WITHOUT A SESSION — derived from the
 // ledger's CLASS, never from the path, which is what `Targets` does for every row.
+//
+// 🔴 `GET /` IS HERE SINCE IT BECAME THE HUB, AND WAS IN `linkExpanded` BEFORE. The hub links only
+// BARE ledger paths (`/arcs`, `/scopes`, `/sessions`, `/share`), each already its own row, which
+// [ExpandLinks] declines by design ("no query: already its own row") — so expanding it would buy
+// nothing and claim a discovery the walk never makes. The scope cards it used to publish are
+// `/scopes`'s now, and that row expands.
 var plainGET = map[string]bool{
+	ui.RootPath:   true,
 	ui.SignInPath: true,
 	ui.JoinPath:   true,
 }
@@ -288,6 +312,10 @@ var notADocument = map[string]string{
 	ui.OAuthCallbackPath: "reachable only with a provider ?code= AND a live single-use flight " +
 		"cookie, so navigated bare it renders a refusal — capturing that would measure an error page and " +
 		"count it as a page",
+	ui.SharePath: "a bodiless 303 to /team#share since the share flow moved onto the Team page " +
+		"(operator decision O-a) — there is no document; the walk captures /team and its /team?scope=… pages",
+	ui.InvitePath: "a bodiless 303 to /team#invite since the invite flow moved onto the Team page " +
+		"(O-a) — there is no document; the walk captures /team and its /team?project=… pages",
 	ui.ManifestPath: "an application/manifest+json response and not a document — and a 404 in this walk's " +
 		"worlds, which boot UNARMED (no -app-name). `internal/ui`'s TestTheManifestIsBuiltFromTheConfiguredApp " +
 		"pins its members; `pwa_test.go` reads it the way a browser does, through Page.getAppManifest",
@@ -301,6 +329,16 @@ func init() {
 		notADocument[p] = "an image/png response and not a document — one committed icon variant. " +
 			"`internal/ui`'s TestTheIconRowsServeTheCommittedBytes asserts its bytes and headers, and " +
 			"`pwa_test.go` fetches each icon a manifest names and compares it with the committed file"
+	}
+	// S4's rows, for the same reasons: the second script and the install screenshots.
+	notADocument[ui.PWAScriptPath] = "a text/javascript response and not a document — the installable " +
+		"surface's one script, linked only by an ARMED deployment (this walk's worlds are unarmed). " +
+		"`internal/ui`'s TestThePWAScriptIsServedAtItsContentHashedRoute asserts its bytes and headers; " +
+		"`pwa_test.go` drives what it does in a real browser"
+	for _, p := range ui.ScreenshotPaths() {
+		notADocument[p] = "an image/png response and not a document — one committed install screenshot. " +
+			"`internal/ui`'s TestTheScreenshotSetIsExactlyTheCommittedFiles asserts its bytes and headers, and " +
+			"`pwa_test.go` fetches each screenshot a manifest names and compares it with the committed file"
 	}
 }
 

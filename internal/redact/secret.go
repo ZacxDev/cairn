@@ -6,55 +6,46 @@ import (
 )
 
 var (
-	// copyPrefix is [linePrefix] as a line-start match: what a Read copy, `grep -n` or a diff
-	// puts before a line. YAML is read AFTER it, so indentation is measured on the real line.
-	copyPrefix     = regexp.MustCompile(`^` + linePrefix)
 	yamlSecretKind = regexp.MustCompile(`^[ \t]*kind:[ \t]*["']?Secret["']?[ \t]*\r?$`)
 	yamlDataKey    = regexp.MustCompile(`^(?:data|stringData):[ \t]*$`)
 	yamlKeyValue   = regexp.MustCompile(`^([^:#\s][^:]*):[ \t]*(.*)$`)
 	yamlDocSep     = regexp.MustCompile(`^---[ \t]*\r?$`)
-	// The list dash is optional: at column 0 the copy prefix's `-` (a diff's) and a list item's
-	// dash are the same byte, and either reading must find the pair.
+	// The list dash is optional: an env entry's `name:` may be the item's first key or a later one.
 	yamlEnvName  = regexp.MustCompile(`^(?:-[ \t]*)?name:[ \t]*["']?([A-Za-z_][A-Za-z0-9_.-]*)["']?[ \t]*\r?$`)
 	yamlEnvValue = regexp.MustCompile(`^value:[ \t]*(.+?)[ \t]*\r?$`)
 )
 
-// yamlLine is one line split into the copy prefix (kept verbatim) and the YAML body.
+// yamlLine is one line of a view: its body (no line break) and where the body starts in the view.
 type yamlLine struct {
-	prefix, body, eol string
+	body  string
+	start int
+}
+
+// ySpan is a structural YAML match, in the coordinates of the text it was found in.
+type ySpan struct {
+	lo, hi int
+	rule   string
 }
 
 func splitYAML(s string) []yamlLine {
 	raw := strings.SplitAfter(s, "\n")
 	out := make([]yamlLine, 0, len(raw))
+	pos := 0
 	for _, l := range raw {
-		body := strings.TrimRight(l, "\r\n")
-		eol := l[len(body):]
-		p := copyPrefix.FindString(body)
-		if yamlDocSep.MatchString(body) {
-			// `---` is a document separator, not a diff's `-` before `--`.
-			p = ""
-		}
-		out = append(out, yamlLine{prefix: p, body: body[len(p):], eol: eol})
+		out = append(out, yamlLine{body: strings.TrimRight(l, "\r\n"), start: pos})
+		pos += len(l)
 	}
 	return out
 }
 
-func joinYAML(lines []yamlLine) string {
-	var b strings.Builder
-	for _, l := range lines {
-		b.WriteString(l.prefix + l.body + l.eol)
-	}
-	return b.String()
-}
-
-// yamlSecret is the STRUCTURAL rule over YAML text: in a document carrying a `kind: Secret` line,
+// yamlSpans is the STRUCTURAL rule over YAML text: in a document carrying a `kind: Secret` line,
 // every value nested under a `data` or `stringData` key is redacted; and, in ANY document, a k8s
-// env pair whose `name:` names a secret ([SecretKey]) has its `value:` redacted.
+// env pair whose `name:` names a secret ([SecretKey]) has its `value:` redacted, and a block
+// scalar under a secret key has its lines redacted.
 //
-// 🔴 IT READS THROUGH A COPY PREFIX. Read's numbered copy (`     1\tkind: Secret`), `grep -n` and a
-// diff put bytes before every line; the prefix is set aside and indentation is measured on the
-// real YAML, so the model-visible copy of a manifest is redacted like the file.
+// 🔴 IT DOES NOT READ COPY PREFIXES ITSELF. It runs over every VIEW of the text (normalise.go), so
+// Read's numbered copy, a grep's `N:`/`path:`/`N-` and a diff's `<`/`>`/`+`/`-` are set aside
+// before indentation is measured — the same normalisation every other rule gets.
 //
 // 🔴 IT IS LINE-BASED, BECAUSE THE STANDARD LIBRARY HAS NO YAML PARSER AND THE CAPTURE BINARY IS
 // UNDER THE IMPORT BAN. "Nested under" means indented deeper than the key; a block scalar (`|` or
@@ -64,23 +55,23 @@ func joinYAML(lines []yamlLine) string {
 // ⚠ RESIDUAL: a FLOW-style mapping (`stringData: {password: …}` on one line) is not read by this
 // rule; its values are caught only if another rule matches them (decision 6). The JSON form of a
 // Secret is handled by the structural walk, which has a real parser.
-func (r *Redactor) yamlSecret(s string) (string, []Hit) {
+func yamlSpans(s string) []ySpan {
 	if !strings.Contains(s, ":") || !strings.Contains(s, "\n") {
-		return s, nil
+		return nil
 	}
 	lines := splitYAML(s)
-	var hits []Hit
+	var out []ySpan
 	start := 0
 	flush := func(end int) {
 		doc := lines[start:end]
 		for _, l := range doc {
 			if yamlSecretKind.MatchString(l.body) {
-				hits = append(hits, r.redactYAMLSecretDoc(doc)...)
+				out = append(out, yamlSecretDoc(doc)...)
 				break
 			}
 		}
-		hits = append(hits, r.redactYAMLEnvPairs(doc)...)
-		hits = append(hits, r.redactYAMLSecretScalars(doc)...)
+		out = append(out, yamlEnvPairs(doc)...)
+		out = append(out, yamlSecretScalars(doc)...)
 	}
 	for i, l := range lines {
 		if yamlDocSep.MatchString(l.body) {
@@ -89,10 +80,7 @@ func (r *Redactor) yamlSecret(s string) (string, []Hit) {
 		}
 	}
 	flush(len(lines))
-	if len(hits) == 0 {
-		return s, nil
-	}
-	return joinYAML(lines), hits
+	return out
 }
 
 func indentOf(body string) (string, int) {
@@ -100,8 +88,17 @@ func indentOf(body string) (string, int) {
 	return trimmed, len(body) - len(trimmed)
 }
 
-func (r *Redactor) redactYAMLSecretDoc(lines []yamlLine) []Hit {
-	var hits []Hit
+// valueSpan is the span of `val` (a substring of the line at byte offset off), quotes excluded.
+func valueSpan(l yamlLine, off int, val, rule string) ySpan {
+	lo, hi := off, off+len(val)
+	if len(val) >= 2 && (val[0] == '"' || val[0] == '\'') && val[len(val)-1] == val[0] {
+		lo, hi = lo+1, hi-1
+	}
+	return ySpan{lo: l.start + lo, hi: l.start + hi, rule: rule}
+}
+
+func yamlSecretDoc(lines []yamlLine) []ySpan {
+	var out []ySpan
 	inData, dataIndent, scalarIndent := false, -1, -1
 	for i := range lines {
 		trimmed, indent := indentOf(lines[i].body)
@@ -119,11 +116,7 @@ func (r *Redactor) redactYAMLSecretDoc(lines []yamlLine) []Hit {
 		}
 		if scalarIndent >= 0 {
 			if indent > scalarIndent {
-				if !strings.HasPrefix(trimmed, "[redacted:") {
-					m, h := r.marker("k8s-secret", trimmed)
-					lines[i].body = lines[i].body[:indent] + m
-					hits = append(hits, h)
-				}
+				out = append(out, valueSpan(lines[i], indent, strings.TrimRight(trimmed, " \t\r"), "k8s-secret"))
 				continue
 			}
 			scalarIndent = -1
@@ -132,30 +125,27 @@ func (r *Redactor) redactYAMLSecretDoc(lines []yamlLine) []Hit {
 		if kv == nil {
 			continue
 		}
-		val := strings.TrimSpace(trimmed[kv[4]:kv[5]])
+		raw := trimmed[kv[4]:kv[5]]
+		val := strings.TrimSpace(raw)
 		switch {
 		case val == "":
 			continue
 		case strings.HasPrefix(val, "|") || strings.HasPrefix(val, ">"):
 			scalarIndent = indent
 			continue
-		case strings.HasPrefix(val, "[redacted:"), strings.HasPrefix(val, "\"[redacted:"):
-			continue
 		}
-		secret := strings.Trim(val, `"'`)
-		m, h := r.marker("k8s-secret", secret)
-		lines[i].body = lines[i].body[:indent] + trimmed[:kv[4]] + m
-		hits = append(hits, h)
+		off := indent + kv[4] + (len(raw) - len(strings.TrimLeft(raw, " \t")))
+		out = append(out, valueSpan(lines[i], off, val, "k8s-secret"))
 	}
-	return hits
+	return out
 }
 
-// redactYAMLEnvPairs redacts the `value:` of a container env entry whose `name:` names a secret:
+// yamlEnvPairs redacts the `value:` of a container env entry whose `name:` names a secret:
 //
 //   - name: DB_PASSWORD
 //     value: <redacted>
-func (r *Redactor) redactYAMLEnvPairs(lines []yamlLine) []Hit {
-	var hits []Hit
+func yamlEnvPairs(lines []yamlLine) []ySpan {
+	var out []ySpan
 	for i := range lines {
 		trimmed, indent := indentOf(lines[i].body)
 		m := yamlEnvName.FindStringSubmatch(trimmed)
@@ -175,15 +165,12 @@ func (r *Redactor) redactYAMLEnvPairs(lines []yamlLine) []Hit {
 				continue
 			}
 			val := t2[v[2]:v[3]]
-			secret := strings.Trim(val, `"'`)
-			if !notTrivial(secret) || strings.HasPrefix(secret, "[redacted:") {
+			if !notTrivial(strings.Trim(val, `"'`)) {
 				break
 			}
-			mk, h := r.marker("k8s-env", secret)
-			lines[j].body = lines[j].body[:ind2] + t2[:v[2]] + mk
-			hits = append(hits, h)
+			out = append(out, valueSpan(lines[j], ind2+v[2], val, "k8s-env"))
 			break
 		}
 	}
-	return hits
+	return out
 }

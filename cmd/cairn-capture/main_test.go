@@ -12,13 +12,16 @@ import (
 func envOf(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 
 // TestTheSelfTestIsClosingConditionPart3: exit 0 and the SUMMARY pair as its last line, at the
-// default seed and one other.
+// default seed and one other. The three `control …` lines `redact.SelfTest` prints first are not
+// pinned here; only the last line is the closing condition. 79 is the corpus's declared plant
+// count, written as a literal rather than read from `redact.DeclaredPlants`, so a corpus that
+// shrinks has to move this line too.
 func TestTheSelfTestIsClosingConditionPart3(t *testing.T) {
 	for _, args := range [][]string{{"--self-test"}, {"--self-test", "-seed", "42"}} {
 		var out bytes.Buffer
 		code := run(args, &out, &bytes.Buffer{}, envOf(nil))
 		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-		if code != exitOK || lines[len(lines)-1] != "SUMMARY redaction: planted=72 caught=72 clean-damaged=0" {
+		if code != exitOK || lines[len(lines)-1] != "SUMMARY redaction: planted=79 caught=79 clean-damaged=0" {
 			t.Fatalf("%v: exit %d, output:\n%s", args, code, out.String())
 		}
 	}

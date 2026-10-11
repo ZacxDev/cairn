@@ -96,7 +96,7 @@ func (r *inviteRig) post(path string, form url.Values) *httptest.ResponseRecorde
 
 // invitePath is one project's invite page.
 func invitePath(project control.ID) string {
-	return InvitePath + "?" + QueryProject + "=" + string(project)
+	return TeamPath + "?" + QueryProject + "=" + string(project)
 }
 
 // TestTheInviteWritesAreBehindBothCrossSiteGates is the instrument control for every POST
@@ -174,9 +174,12 @@ func TestTheInviteWritesAreBehindBothCrossSiteGates(t *testing.T) {
 // other door. The writes are linked by nothing but a form on a page that is not rendered in
 // this configuration, so they refuse with the cause.
 func TestTheInviteRowsAnswerHonestlyWithNoInviteStore(t *testing.T) {
-	rig := newInviteRig(t, func(cfg *Config) { cfg.Inviting = nil })
+	rig := newInviteRig(t, func(cfg *Config) {
+		// No database: no invitation half, and so no link half (`Inviting.TeamLinks`).
+		cfg.Inviting = nil
+	})
 
-	rec := rig.get(InvitePath)
+	rec := rig.get(TeamPath)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET %s with no invite store answered %d, want 200. A refusal here is a dead link in "+
 			"every page's header. Body: %q", InvitePath, rec.Code, rec.Body.String())
@@ -225,7 +228,7 @@ func TestTheInviteRowsAnswerHonestlyWithNoInviteStore(t *testing.T) {
 // 🔴 `Inviting.Outstanding` PERFORMS NO AUTHORITY CHECK AND SAYS SO IN ITS OWN DOC. It
 // returns digests, roles and timestamps for any project it is handed — a listing that would
 // tell an outsider who is being invited where. The only thing standing in front of it is
-// that `handleInvitePage` reaches it exclusively for a project `Invitable` returned. A guard
+// that `inviteSection` reaches it exclusively for a project `Invitable` returned. A guard
 // on the 404 alone cannot see that: a handler that called `Outstanding` first and refused
 // afterwards would answer the same 404 while having already read the rows.
 func TestAProjectThatIsNotInvitableIsRefusedBEFORETheUnnarrowedRead(t *testing.T) {
@@ -442,7 +445,7 @@ func TestTheJoinPageNeverConsultsTheInviteAuthority(t *testing.T) {
 
 	// POSITIVE CONTROL: this rig's counter DOES move for a route that asks, so the zero
 	// above is a measurement rather than a counter wired to nothing.
-	if rig.get(InvitePath); rig.inviting.reads == 0 {
+	if rig.get(TeamPath); rig.inviting.reads == 0 {
 		t.Fatal("the invite page did not move the counter either, so the zero above is about the fixture")
 	}
 
@@ -529,7 +532,7 @@ func TestTheRoleChooserOffersOnlyWhatTheCallerMayConfer(t *testing.T) {
 			Projects: []control.NamedProject{project},
 			Project:  project,
 		}
-		html := renderNode(t, InvitePage(view))
+		html := renderNode(t, inviteOnTeam(view))
 
 		for _, r := range tc.wantOffered {
 			if !strings.Contains(html, `value="`+string(r)+`"`) {
@@ -557,7 +560,7 @@ func TestTheRoleChooserOffersOnlyWhatTheCallerMayConfer(t *testing.T) {
 	// absent, or `strings.Contains` on `value="…"` is matching something else on the page.
 	view := InviteView{Viewer: "v", CSRF: renderCSRF, Project: fixtureNamedProject,
 		Projects: []control.NamedProject{fixtureNamedProject}}
-	if html := renderNode(t, InvitePage(view)); strings.Contains(html, `value="emperor"`) {
+	if html := renderNode(t, inviteOnTeam(view)); strings.Contains(html, `value="emperor"`) {
 		t.Error("the matcher reports a role nothing defines as offered, so its verdicts above are about " +
 			"the matcher")
 	}
@@ -597,7 +600,7 @@ func TestTheRevokeButtonIsOfferedOnlyForAnOpenInvitation(t *testing.T) {
 		}
 		view := InviteView{Viewer: "v", CSRF: renderCSRF, Project: fixtureNamedProject,
 			Projects: []control.NamedProject{fixtureNamedProject}, Outstanding: rows}
-		html := renderNode(t, InvitePage(view))
+		html := renderNode(t, inviteOnTeam(view))
 
 		hasButton := strings.Contains(html, `action="`+InviteRevokePath+`"`)
 		if name == "open" && !hasButton {
@@ -660,7 +663,7 @@ func TestTheInviteHonestyNoticeIsPinnedWhole(t *testing.T) {
 			Minted: &MintedInvite{Link: JoinPath + "?invite=x", Role: control.RoleMember, Expires: "2000-01-09T03:04:05Z"}},
 		"no-store": {Viewer: "v", CSRF: renderCSRF, NoStore: true},
 	} {
-		got := pageText(renderNode(t, InvitePage(view)))
+		got := pageText(renderNode(t, inviteOnTeam(view)))
 		if !strings.Contains(got, want) {
 			t.Errorf("%s: the page does not carry the whole notice.\nwant: %q\n got: %q", name, want, got)
 		}
@@ -669,7 +672,7 @@ func TestTheInviteHonestyNoticeIsPinnedWhole(t *testing.T) {
 	// POSITIVE CONTROL: the comparison can FAIL. A `strings.Contains` against a normalised
 	// page is exactly the shape that silently always passes if the normalisation collapses
 	// too much.
-	if strings.Contains(pageText(renderNode(t, InvitePage(InviteView{Viewer: "v"}))),
+	if strings.Contains(pageText(renderNode(t, inviteOnTeam(InviteView{Viewer: "v"}))),
 		normalizeSpace(InviteHonesty+" and one clause nobody wrote")) {
 		t.Error("the comparison is satisfied by a string the page does not contain, so its verdicts above " +
 			"are about the matcher")
@@ -690,7 +693,7 @@ func TestTheInviteIndexSaysAnEmptyListIsAnAuthorityAnswer(t *testing.T) {
 		empty.invitable = nil
 		cfg.Inviting = empty
 	})
-	rec := rig.get(InvitePath)
+	rec := rig.get(TeamPath)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("an empty invite index answered %d, want 200", rec.Code)
 	}
@@ -702,7 +705,7 @@ func TestTheInviteIndexSaysAnEmptyListIsAnAuthorityAnswer(t *testing.T) {
 	// POSITIVE CONTROL: a NON-empty index does not carry that sentence, so the assertion
 	// above is about the empty branch.
 	full := newInviteRig(t, nil)
-	if strings.Contains(pageText(full.get(InvitePath).Body.String()), "That is an authority answer") {
+	if strings.Contains(pageText(full.get(TeamPath).Body.String()), "That is an authority answer") {
 		t.Error("a populated index also renders the empty-branch sentence")
 	}
 }

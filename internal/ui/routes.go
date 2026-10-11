@@ -115,9 +115,20 @@ type route struct {
 // `..` a routing question. In a query parameter it is a value the handler matches
 // against the narrowed answer and never resolves. See `handleEntryPage`.
 var routes = map[routeKey]route{
-	{"GET", "/"}:      {(*Server).handlePage, classContent},
-	{"GET", "/scope"}: {(*Server).handleScopePage, classContent},
-	{"GET", "/entry"}: {(*Server).handleEntryPage, classContent},
+	// 🔴 THE ROOT IS THE HUB, AND THE SCOPE LIST MOVED TO `/scopes` (an operator decision). The hub is
+	// four cards — arcs, scopes, sessions, team — only the scopes card carries a count (`len(Visible)`, an answer
+	// this caller is authorised to see); the scope cards, the search box and the tag filter are
+	// `/scopes`'s. `/?q=` and `/?tag=` still ANSWER, with a 303 to `/scopes` carrying the query, so a
+	// bookmark or a home-screen shortcut is never a dead link. See `handleHub`.
+	{"GET", "/"}:       {(*Server).handleHub, classContent},
+	{"GET", "/scopes"}: {(*Server).handlePage, classContent},
+	// 🔴 THE SESSIONS LIST: every session this caller can see anything of — the SAME predicate the
+	// session page is found by (`report.SessionsAcross` and `report.SessionAcross` read one walk), so a
+	// listed session's page never 404s and a hidden one is never listed. GET only. See
+	// `handleSessionsPage`.
+	{"GET", "/sessions"}: {(*Server).handleSessionsPage, classContent},
+	{"GET", "/scope"}:    {(*Server).handleScopePage, classContent},
+	{"GET", "/entry"}:    {(*Server).handleEntryPage, classContent},
 	// 🔴 THE ARC PAGE IS A FOURTH FIXED BROWSE PATH WITH ITS OPERANDS IN QUERY PARAMETERS, for the
 	// browse pair's reason above: `/arc/{home}/{slug}` would need a prefix match, and the slug is a
 	// value a registration supplied. GET only — the UI never registers an arc (its journal mount is
@@ -143,8 +154,14 @@ var routes = map[routeKey]route{
 	// future class cannot quietly exempt it. Not `classContent`: it renders no answer about authority —
 	// every request is answered with the same 303 back to the session page, whether or not a ring was
 	// queued, so the response cannot say whose pane exists. See `handleRing`.
+	//
+	// 🔴 `GET /share` (next row) AND `GET /invite` ARE 303s TO `/team` NOW (operator decision
+	// O-a) and so carry NO class: a redirect renders no answer about authority, so `content` —
+	// "MUST consult an authority before rendering" — no longer describes them, and keeping it
+	// would make `TestEveryContentRouteConsultsTheAuthority` demand a read from a row that does
+	// none.
 	{"POST", "/ring"}:     {(*Server).handleRing, 0},
-	{"GET", "/share"}:     {(*Server).handleSharePage, classContent},
+	{"GET", "/share"}:     {(*Server).handleSharePage, 0},
 	{"POST", "/share"}:    {(*Server).handleShare, 0},
 	{"POST", "/unshare"}:  {(*Server).handleUnshare, 0},
 	{"GET", "/sign-in"}:   {(*Server).handleSignInForm, classPublic},
@@ -169,10 +186,19 @@ var routes = map[routeKey]route{
 	// body — chosen by whoever gets one request past both cross-site gates — rather than
 	// something the route decides. Two paths are two rows in this ledger, which is where
 	// somebody reads them.
-	{"GET", "/invite"}:         {(*Server).handleInvitePage, classContent},
+	{"GET", "/invite"}:         {(*Server).handleInvitePage, 0},
 	{"POST", "/invite"}:        {(*Server).handleInvite, 0},
 	{"POST", "/invite/revoke"}: {(*Server).handleInviteRevoke, 0},
 	{"GET", "/join"}:           {(*Server).handleJoinPage, classPublic},
+
+	// 🔴 THE TEAM PAGE (`team.go`): one content read and two writes, the invite flow's
+	// shape. `GET /team` is `content` — every list on it is an authority answer, and it is
+	// where the share and invite flows' forms live now. The two POST rows carry NO class, so
+	// both cross-site gates reach them by METHOD, and revoke is its own path for
+	// `UnsharePath`'s reason.
+	{"GET", "/team"}:              {(*Server).handleTeamPage, classContent},
+	{"POST", "/team/link"}:        {(*Server).handleTeamLink, 0},
+	{"POST", "/team/link/revoke"}: {(*Server).handleTeamLinkRevoke, 0},
 
 	// 🔴 THE PROVIDER PAIR, AND THE METHODS ARE NOT INTERCHANGEABLE. The START is a POST so
 	// that gate (2) — same origin, derived from the method — refuses a cross-site request to
@@ -217,7 +243,8 @@ var routes = map[routeKey]route{
 	// would serve and this map answers 404.
 	{"GET", StylesheetHashedPath}: {(*Server).handleHashedStylesheet, classPublic},
 
-	// 🔴 THE FILTER SCRIPT, AND IT IS THE ONLY SCRIPT ROW. A computed, content-hashed EXACT key for
+	// 🔴 THE FILTER SCRIPT — the only script row in THIS literal; `pwa.js`'s row (S4) is added beside
+	// the icon rows by `pwa.go`'s `init`. A computed, content-hashed EXACT key for
 	// the stylesheet row's reasons above, and `classPublic` for the stylesheet's reason: it consults
 	// no authority and answers identical bytes to everybody. Only the scope page links it, and only
 	// `AllowedScriptSources` may name it — see `script.go` for the allowlist that replaced this
@@ -241,6 +268,11 @@ const (
 	SignInPath  = "/sign-in"
 	SignOutPath = "/sign-out"
 	RootPath    = "/"
+	// ScopesPath is the scope list: one card per readable scope, the search box (`?q=`) and the tag
+	// filter (`?tag=`). It was the root until the root became the hub.
+	ScopesPath = "/scopes"
+	// SessionsPath is every session this caller can see anything of, newest first.
+	SessionsPath = "/sessions"
 	// ScopePath is one scope's entry list, keyed by `?id=<control.ID>`.
 	// EntryPath is one entry, keyed by `?scope=<control.ID>&ref=<stem>`.
 	ScopePath = "/scope"
@@ -280,6 +312,13 @@ const (
 	// token and says so, rather than guessing a host out of a request header that a proxy
 	// chooses.
 	JoinPath = "/join"
+
+	// TeamPath is the Team page: sharing, invitations and team links in one place.
+	TeamPath = "/team"
+	// TeamLinkPath mints a multi-target team link; TeamLinkRevokePath withdraws one — two
+	// paths, `UnsharePath`'s ruling.
+	TeamLinkPath       = "/team/link"
+	TeamLinkRevokePath = "/team/link/revoke"
 
 	// OAuthStartPath and OAuthCallbackPath are the provider pair.
 	//
@@ -323,11 +362,11 @@ const (
 	// QueryRef is an entry ref: USER TEXT, percent-encoded on the way out by `entryHref`
 	// and matched against the narrowed answer on the way in.
 	QueryRef = "ref"
-	// QueryQuery is the search box. It rides on the ROOT row rather than on a route of
+	// QueryQuery is the search box. It rides on the SCOPE LIST row (`/scopes`, the root before the hub) rather than on a route of
 	// its own — see `routes`.
 	QueryQuery = "q"
-	// QueryTag is the CATEGORY filter: `/?tag=<name>`, the target every rendered tag links
-	// to. It rides on the ROOT row for exactly the reason [QueryQuery] and [QueryView] do,
+	// QueryTag is the CATEGORY filter: `/scopes?tag=<name>`, the target every rendered tag links
+	// to. It rides on the SCOPE LIST row for exactly the reason [QueryQuery] and [QueryView] do,
 	// and this is the one place that reason is a REQUIREMENT rather than a preference.
 	//
 	// 🔴 A QUERY PARAMETER AND NEVER A PATH SEGMENT, BECAUSE EVERY SERVED PATH IS A LITERAL
@@ -399,6 +438,8 @@ const (
 const (
 	TabSessions = "sessions"
 	TabArcs     = "arcs"
+	// TabAgent is the scope page's "What an agent sees" tab (`agent.go`). Scope page only.
+	TabAgent = "agent"
 )
 
 // ViewRaw is the one recognised [QueryView] value: the entry's file, as bytes.

@@ -338,6 +338,11 @@ func TestWithNoDatabaseTheSurfaceComesUpSayingItHoldsNoInvitation(t *testing.T) 
 		t.Errorf("the startup line claims invitations are in postgres, with no connection string "+
 			"configured anywhere:\n%s", line)
 	}
+	// The Team page's link half follows the same rule: no database, no team links.
+	if strings.Contains(line, "team links in postgres") {
+		t.Errorf("the startup line claims team links are in postgres, with no connection string "+
+			"configured anywhere:\n%s", line)
+	}
 	// And the NOTE about an ignored session file must NOT appear: nothing is ignoring it.
 	if strings.Contains(line, "is IGNORED") {
 		t.Errorf("the surface announced that -session-file is ignored while it is the only session "+
@@ -366,6 +371,12 @@ func TestWithNoDatabaseTheSurfaceComesUpSayingItHoldsNoInvitation(t *testing.T) 
 // and the child's dial in which something could take the port; it is the standard one, and
 // the direction is safe — a taken port produces a noisy failure here, never a false green,
 // because the assertion is that the process REFUSED.
+//
+// 🔴 SO IT IS ONLY FOR AN ADDRESS THAT MUST *NOT* ANSWER. Handed to a child as its OWN listen
+// port, the same window runs the other way: a stranger that takes the port answers in the child's
+// place, and its body is read as the child's — measured, when a parallel package's store server's
+// `unauthorized` was asserted against as the sign-in page and failed a publish. A child that must
+// answer binds `-port 0` and is reached through `presenceChild.serving`.
 func aPortNothingIsListeningOn(t *testing.T) int {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

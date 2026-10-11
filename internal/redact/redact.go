@@ -64,9 +64,21 @@ func (r *Redactor) marker(rule, secret string) (string, Hit) {
 const maxNesting = 3
 
 // String redacts one decoded string.
-func (r *Redactor) String(s string) (string, []Hit) { return r.scanText(s, 0) }
+func (r *Redactor) String(s string) (string, []Hit) { return r.scanText(s, scanOpts{}) }
 
-func (r *Redactor) scanText(s string, depth int) (string, []Hit) {
+// scanText is the pipeline for one decoded string:
+//
+//  1. NUL-separated text is split, and each segment scanned on its own;
+//  2. a string that is itself ONE JSON document is walked decoded, so a value escaped inside it is
+//     scanned as the value it encodes;
+//  3. every non-entropy rule runs over every VIEW of the text (normalise.go: tool line prefixes
+//     set aside), and its spans are mapped back to the original offsets;
+//  4. if nothing matched, a WHOLE-string base64 value (or a base64 `data:` URL) whose payload is
+//     not binary is scanned decoded, and a match replaces the whole encoded value;
+//  5. the entropy rule runs last — unless the caller's structure says the value is opaque, or the
+//     whole string is the encoding of a binary payload (O12: binary ships);
+//  6. the merged spans are replaced on the ORIGINAL string; nothing else changes.
+func (r *Redactor) scanText(s string, o scanOpts) (string, []Hit) {
 	if strings.IndexByte(s, 0) >= 0 {
 		// NUL-SEPARATED text (an environ dump, `env -0`, `find -print0`): each segment is a line
 		// to the rules, which a `^`-anchored rule would otherwise never see past the first.
@@ -74,99 +86,45 @@ func (r *Redactor) scanText(s string, depth int) (string, []Hit) {
 		var hits []Hit
 		for i, seg := range segs {
 			var hs []Hit
-			segs[i], hs = r.scanText(seg, depth)
+			segs[i], hs = r.scanText(seg, o)
 			hits = append(hits, hs...)
 		}
 		return strings.Join(segs, "\x00"), hits
 	}
-	var hits []Hit
-	out := s
-	if r.deny != nil {
-		for _, lit := range r.deny.Literals {
-			if strings.Contains(out, lit) {
-				m, h := r.marker("denylist", lit)
-				out = strings.ReplaceAll(out, lit, m)
-				hits = append(hits, h)
-			}
+	if o.depth < maxNesting {
+		if replaced, hs, ok := r.jsonInString(s, o); ok {
+			return replaced, hs
 		}
 	}
-	for _, rule := range r.rules {
-		var hs []Hit
-		out, hs = r.applyRule(rule, out)
-		hits = append(hits, hs...)
+	spans := r.detect(s)
+	payload, isB64 := dataURLPayload(s)
+	if !isB64 {
+		payload, isB64 = r.decode(s)
 	}
-	var hs []Hit
-	out, hs = r.yamlSecret(out)
-	hits = append(hits, hs...)
-	if depth < maxNesting {
-		if replaced, hs, ok := r.jsonInString(out, depth); ok {
-			out = replaced
-			hits = append(hits, hs...)
+	binaryPayload := isB64 && r.binary(payload)
+	if len(spans) == 0 && isB64 && !binaryPayload && o.depth < maxNesting {
+		text := string(payload)
+		if u, _, isU16 := utf16Text(payload); isU16 {
+			text = u
 		}
-	}
-	if len(hits) == 0 && depth < maxNesting {
-		// A WHOLE value that is base64 (or a base64 `data:` URL — its prefix parsed first) is
-		// scanned decoded unless its payload is BINARY (O12); a match replaces the whole encoded
-		// value, because a partly-redacted encoding still decodes to the secret's context.
-		payload, ok := dataURLPayload(s)
-		if !ok {
-			payload, ok = r.decode(s)
-		}
-		if ok && !r.binary(payload) {
-			text := string(payload)
-			if u, _, isU16 := utf16Text(payload); isU16 {
-				text = u
-			}
-			if _, inner := r.scanText(text, depth+1); len(inner) > 0 {
-				m, h := r.marker("base64/"+inner[0].Rule, s)
-				return m, append([]Hit{h}, inner...)
-			}
+		// The decoded bytes are scanned WITHOUT the entropy rule: random bytes decoded are not a
+		// token, and the encoded string itself meets the entropy rule in step 5.
+		if _, inner := r.scanText(text, scanOpts{depth: o.depth + 1, noEntropy: true}); len(inner) > 0 {
+			m, h := r.marker("base64/"+inner[0].Rule, s)
+			return m, append([]Hit{h}, inner...)
 		}
 	}
-	return out, hits
-}
-
-func (r *Redactor) applyRule(rule Rule, s string) (string, []Hit) {
-	locs := rule.Re.FindAllStringSubmatchIndex(s, -1)
-	if len(locs) == 0 {
-		return s, nil
+	if !o.noEntropy && !binaryPayload {
+		spans = append(spans, r.lateSpans(s)...)
 	}
-	var b strings.Builder
-	var hits []Hit
-	last := 0
-	for _, loc := range locs {
-		lo, hi := loc[2*rule.Group], loc[2*rule.Group+1]
-		if lo < 0 || lo < last {
-			continue
-		}
-		if rule.KeyGroup > 0 {
-			klo, khi := loc[2*rule.KeyGroup], loc[2*rule.KeyGroup+1]
-			keyOK := rule.KeyOK
-			if keyOK == nil {
-				keyOK = SecretKey
-			}
-			if klo < 0 || !keyOK(s[klo:khi]) {
-				continue
-			}
-		}
-		secret := s[lo:hi]
-		if strings.HasPrefix(secret, "[redacted:") || (rule.Accept != nil && !rule.Accept(secret)) {
-			continue
-		}
-		m, h := r.marker(rule.Name, secret)
-		b.WriteString(s[last:lo])
-		b.WriteString(m)
-		hits = append(hits, h)
-		last = hi
-	}
-	b.WriteString(s[last:])
-	return b.String(), hits
+	return r.apply(s, spans)
 }
 
 // jsonInString re-enters a string that is ITSELF one JSON document (a tool printing a JSON file,
 // an API response), so a value escaped inside it is scanned decoded too. It reports ok only when
-// something inside matched; an unmatched document keeps its original text.
-func (r *Redactor) jsonInString(s string, depth int) (string, []Hit, bool) {
+// something inside matched; an unmatched document keeps its original text, and a matched one keeps
+// every byte outside the strings that changed.
+func (r *Redactor) jsonInString(s string, o scanOpts) (string, []Hit, bool) {
 	trimmed := strings.TrimSpace(s)
 	if len(trimmed) < 2 || (trimmed[0] != '{' && trimmed[0] != '[') {
 		return "", nil, false
@@ -175,9 +133,15 @@ func (r *Redactor) jsonInString(s string, depth int) (string, []Hit, bool) {
 	if err != nil {
 		return "", nil, false
 	}
-	nv, hits := r.walk(v, depth+1)
+	nv, hits := r.walk(v, scanOpts{depth: o.depth + 1, noEntropy: o.noEntropy})
 	if len(hits) == 0 {
 		return "", nil, false
+	}
+	lead := s[:strings.Index(s, trimmed[:1])]
+	trail := s[len(lead)+len(trimmed):]
+	// In place: only the strings that changed are rewritten ([spliceJSON]).
+	if enc, ok := spliceJSON([]byte(trimmed), nv); ok {
+		return lead + string(enc) + trail, hits, true
 	}
 	indent := ""
 	if strings.Contains(trimmed, "\n") {
@@ -187,8 +151,6 @@ func (r *Redactor) jsonInString(s string, depth int) (string, []Hit, bool) {
 	if err != nil {
 		return "", nil, false
 	}
-	lead := s[:strings.Index(s, trimmed[:1])]
-	trail := s[len(lead)+len(trimmed):]
 	return lead + string(enc) + trail, hits, true
 }
 
@@ -209,7 +171,7 @@ var jwkPrivate = map[string]bool{"d": true, "p": true, "q": true, "dp": true, "d
 
 // walk redacts every string — every member VALUE, every member KEY, every duplicate — in a
 // decoded JSON value.
-func (r *Redactor) walk(v any, depth int) (any, []Hit) {
+func (r *Redactor) walk(v any, o scanOpts) (any, []Hit) {
 	switch t := v.(type) {
 	case *object:
 		var hits []Hit
@@ -228,9 +190,17 @@ func (r *Redactor) walk(v any, depth int) (any, []Hit) {
 		for _, n := range t.strings("name") {
 			envSecret = envSecret || SecretKey(n)
 		}
+		// A thinking block's `signature` (and a redacted block's `data`) is an opaque blob the
+		// model API issued, not a credential: it is random base64 by construction, so the entropy
+		// rule would destroy every one. Every OTHER rule still reads it.
+		opaque := t.has("type", "thinking") || t.has("type", "redacted_thinking")
 		for i := range t.pairs {
 			k, val := t.pairs[i].k, t.pairs[i].v
-			if nk, hs := r.scanText(k, depth); len(hs) > 0 {
+			mo := o
+			if opaque && (k == "signature" || k == "data") {
+				mo.noEntropy = true
+			}
+			if nk, hs := r.scanText(k, o); len(hs) > 0 {
 				t.pairs[i].k = nk
 				hits = append(hits, hs...)
 			}
@@ -254,12 +224,12 @@ func (r *Redactor) walk(v any, depth int) (any, []Hit) {
 				m, h := r.marker("k8s-env", s)
 				t.pairs[i].v = m
 				hits = append(hits, h)
-			case isString && SecretKey(k) && len(s) >= 4 && notTrivial(s) && !strings.HasPrefix(s, "${"):
+			case isString && secretFieldValue(k, s):
 				m, h := r.marker("secret-field", s)
 				t.pairs[i].v = m
 				hits = append(hits, h)
 			default:
-				nv, hs := r.walk(val, depth)
+				nv, hs := r.walk(val, mo)
 				t.pairs[i].v = nv
 				hits = append(hits, hs...)
 			}
@@ -268,16 +238,35 @@ func (r *Redactor) walk(v any, depth int) (any, []Hit) {
 	case []any:
 		var hits []Hit
 		for i, e := range t {
-			nv, hs := r.walk(e, depth)
+			nv, hs := r.walk(e, o)
 			t[i] = nv
 			hits = append(hits, hs...)
 		}
 		return t, hits
 	case string:
-		return r.scanText(t, depth)
+		return r.scanText(t, o)
 	default:
 		return v, nil
 	}
+}
+
+// secretFieldValue: member `k` names a secret and its string value `s` is one. A JSON string is a
+// quoted value, never code notation; a WEAK name ([secretKeyGrade]) or a `cred`/`creds`
+// abbreviation holds it to [credentialShaped] too, exactly as the key-context rule does (which
+// refuses a number), and a STRONG name takes a digits-only string (`"password": "482915"`).
+func secretFieldValue(k, s string) bool {
+	strong, weak := secretKeyGrade(k)
+	if !strong && !weak {
+		return false
+	}
+	needShape := !strong || credAbbreviation(k)
+	if needShape && !credentialShaped(s) {
+		return false
+	}
+	if authMode(k, s) {
+		return false
+	}
+	return keyedValueOK(s, valueShape{digits: true})
 }
 
 func (r *Redactor) redactAllStrings(v any, rule string) (any, []Hit) {
@@ -320,7 +309,7 @@ func (r *Redactor) Record(raw []byte) ([]byte, []Hit) {
 	if err != nil {
 		return r.Text(raw)
 	}
-	nv, hits := r.walk(v, 0)
+	nv, hits := r.walk(v, scanOpts{})
 	if len(hits) == 0 {
 		return raw, nil
 	}
@@ -344,13 +333,13 @@ func (r *Redactor) Text(data []byte) ([]byte, []Hit) {
 		return data, nil
 	}
 	if s, order, ok := utf16Text(data); ok {
-		out, hits := r.scanText(s, 0)
+		out, hits := r.scanText(s, scanOpts{})
 		if len(hits) == 0 {
 			return data, nil
 		}
 		return encodeUTF16(out, order), hits
 	}
-	out, hits := r.scanText(string(data), 0)
+	out, hits := r.scanText(string(data), scanOpts{})
 	if len(hits) == 0 {
 		return data, nil
 	}
@@ -361,7 +350,9 @@ func (r *Redactor) Text(data []byte) ([]byte, []Hit) {
 //
 //   - BINARY (decision 6a's signature rule): returned byte-identical. O12: binary ships.
 //   - a JSON document, or JSON Lines: redacted by decoded traversal, so an escaped secret inside
-//     is caught; an unmatched blob keeps its original bytes.
+//     is caught; an unmatched blob keeps its original bytes, and a matched DOCUMENT keeps every
+//     byte outside the strings that changed (a JSON Lines record with a hit is re-encoded compact,
+//     as [Redactor.Record] does).
 //   - any other text: [Redactor.Text].
 func (r *Redactor) Blob(name string, data []byte) ([]byte, []Hit) {
 	if r.deny != nil && r.deny.matchesPath(name) {
@@ -374,9 +365,17 @@ func (r *Redactor) Blob(name string, data []byte) ([]byte, []Hit) {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
 		if v, err := decodeJSON(trimmed); err == nil {
-			nv, hits := r.walk(v, 0)
+			nv, hits := r.walk(v, scanOpts{})
 			if len(hits) == 0 {
 				return data, nil
+			}
+			// In place ([spliceJSON]): the document's own layout, with only the changed strings
+			// rewritten. The leading and trailing white space is the original's too.
+			if enc, ok := spliceJSON(trimmed, nv); ok {
+				lead := bytes.Index(data, trimmed[:1])
+				out := append([]byte(nil), data[:lead]...)
+				out = append(out, enc...)
+				return append(out, data[lead+len(trimmed):]...), hits
 			}
 			indent := ""
 			if bytes.Contains(trimmed, []byte("\n")) {

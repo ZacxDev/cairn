@@ -296,6 +296,12 @@ func main() {
 	appIconVariant := flag.String(flagAppIconVariant, os.Getenv(EnvUIAppIconVariant),
 		"which committed icon this instance installs with — one of: "+strings.Join(ui.IconVariants(), ", ")+
 			". NO DEFAULT, and REQUIRED with -"+flagAppName)
+	// The instance LABEL — not the app identity above; see `app.go`.
+	instanceName := flag.String(flagInstanceName, os.Getenv(EnvUIInstanceName),
+		fmt.Sprintf("this deployment's label, shown first in every page title (`<instance> — <page> · cairn`) "+
+			"and beside the wordmark, so two deployments' browser tabs can be told apart. Optional, at most %d "+
+			"characters. PUBLIC — the sign-in page renders it. Arms nothing (unlike -%s)",
+			ui.InstanceNameMax, flagAppName))
 	// ⚠ THERE IS NO `-routes` FLAG HERE, UNLIKE `cairn-server`, AND THE ASYMMETRY IS
 	// DELIBERATE. The pod prints its ledger because a Python corpus owns its served
 	// contract and cannot read a compiled binary — the printed table is the only way
@@ -337,6 +343,11 @@ func main() {
 	}
 	if appWarning != "" {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+appWarning)
+	}
+	app.Instance, err = resolveInstance(appLines(flagInstanceName, EnvUIInstanceName, *instanceName))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
+		os.Exit(exitConfig)
 	}
 
 	// 🔴 THE ARC JOURNAL IS CHECKED BEFORE ANYTHING IS SERVED, WITH THE POD'S OWN FUNCTION. A
@@ -464,7 +475,9 @@ func main() {
 		// against one model and recorded against another is a page that authorises from a
 		// world that no longer exists. This is the third call site handed that value, and
 		// all three are the same object on purpose.
-		inviting = ui.ControlInviting{Authority: authority, Invites: pgstore.NewInviteStore(pgDB)}
+		// Both halves from ONE database, through `wireInvitations` — see it for why that is
+		// a function rather than two lines here.
+		inviting = wireInvitations(authority, pgstore.NewInviteStore(pgDB), pgstore.NewTeamLinkStore(pgDB))
 		// 🔴 SAY THAT `-session-file` IS NOW INERT, BECAUSE A MANIFEST CARRYING BOTH IS THE
 		// SHAPE THAT ARRIVES. It is announced rather than refused: the flag has a code
 		// DEFAULT, so "set" cannot be distinguished from "defaulted" without asking
@@ -692,7 +705,8 @@ func main() {
 		// thing — so they agree by both taking the default rather than by one being
 		// handed the other's.
 		Log: os.Stderr,
-		// The zero value when `-app-name` is unset, which is the unarmed surface.
+		// The zero value when `-app-name` is unset, which is the unarmed surface; `Instance` is
+		// `-instance-name`'s, set whether or not the app is armed.
 		App: app,
 	}
 	srv, err := ui.New(cfg)
@@ -827,9 +841,14 @@ func main() {
 		sessionsIn = "sessions in postgres"
 	}
 	invitesIn := "NO invitation store (no $" + EnvUIDatabase +
-		": /invite renders a notice and its writes answer 501)"
+		": /invite and /team render a notice and their writes answer 501)"
 	if cfg.Inviting != nil {
 		invitesIn = "invitations in postgres"
+	}
+	// Read off the wired object for the reason this whole line is: a caption from the flag
+	// would announce team links on a deployment whose branch never built them.
+	if cfg.Inviting != nil && cfg.Inviting.TeamLinks() != nil {
+		invitesIn += ", team links in postgres"
 	}
 	stateMode := sessionsIn + ", " + invitesIn
 	// 🔴 AND WHETHER ARCS CAN BE SHOWN, read off the wired SOURCE for the reason the two halves
@@ -853,9 +872,28 @@ func main() {
 			}
 		}()
 	}
-	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s, %s, %s\n",
-		len(ui.DeclaredRoutes()), addr, *store, sharingMode, signInMode, stateMode, arcsMode, presenceMode, appMode(cfg.App))
-	if err := listener.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	// 🔴 THE PORT IS BOUND BEFORE THE LINE THAT SAYS "serving", AND THE LINE NAMES THE PORT
+	// THAT WAS BOUND. It used to be printed first and `ListenAndServe` bound afterwards, so the
+	// line was a claim the process had not yet made true: a reader that took it as "the port is
+	// mine" raced the bind, and — with the port picked by somebody else and briefly free — could
+	// read ANOTHER process's answer on it as this one's. That shipped as a red publish twice: a
+	// probe answered connection-refused, and then a probe read a parallel store server's plain
+	// `unauthorized` as the sign-in page. Bound first, the line cannot appear unless the port is
+	// held, and a lost bind is this process's own exit-1 refusal rather than a stranger's body.
+	// The host is the CONFIGURED spelling, never `Addr()`'s (a wildcard bind reports `[::]`), so
+	// for any non-zero port the line is byte-identical to what it was; only `-port 0` changes,
+	// from the meaningless `:0` to the port the kernel chose — which is what lets a test bind
+	// `-port 0` and read its address off this line instead of guessing a free one.
+	bound, err := net.Listen("tcp", addr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
+		os.Exit(1)
+	}
+	boundAddr := net.JoinHostPort(*host, strconv.Itoa(bound.Addr().(*net.TCPAddr).Port))
+	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s, %s, %s, %s\n",
+		len(ui.DeclaredRoutes()), boundAddr, *store, sharingMode, signInMode, stateMode, arcsMode, presenceMode, appMode(cfg.App),
+		instanceMode(cfg.App))
+	if err := listener.Serve(bound); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(1)
 	}
@@ -965,12 +1003,14 @@ func controlJournalDefault(get func(string) string) (string, error) {
 // `envalias.ValueFrom` treats a blank value as absent — which IS the defect these
 // readers exist to refuse — so none can go through it. The price is that a DEPRECATED
 // spelling of any of them would go unread, silently. None has one. (Two names until the
-// mobile plan's S2 added the three `-app-*` variables, whose blank policy is `app.go`'s.)
+// mobile plan's S2 added the three `-app-*` variables, whose blank policy is `app.go`'s, as is
+// `-instance-name`'s, added after them.)
 // `TestTheRawReadVariablesAreNotInTheAliasLedger` walks THIS SLICE against
 // `envalias.Ledger`, so the day somebody adds an alias for either, a gate goes red rather
 // than a reader going half-blind — and a THIRD raw reader added without a line here fails
 // the same test's membership check.
-var rawEnvNames = []string{EnvUIControlJournal, EnvUIDatabase, EnvUIAppName, EnvUIAppShortName, EnvUIAppIconVariant}
+var rawEnvNames = []string{EnvUIControlJournal, EnvUIDatabase, EnvUIAppName, EnvUIAppShortName, EnvUIAppIconVariant,
+	EnvUIInstanceName}
 
 // databaseDSNDefault is the `-db-dsn` flag's default, and the SECOND place this surface's
 // configuration meets the blank policy.

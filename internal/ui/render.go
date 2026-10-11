@@ -115,6 +115,11 @@ type PageView struct {
 	// `arcsindex.go`.
 	ArcsIndex *report.ArcsAcrossReport
 	ArcsAll   bool
+	// SessionsList is the sessions page's answer, nil everywhere else. See `hub.go`. (The hub itself
+	// needs nothing beyond `Scopes`.)
+	SessionsList *SessionsList
+	// Agent is the scope page's agent-tab recall, nil on every other tab and page. See `agent.go`.
+	Agent *AgentRecall
 	// Panes is the presence predicate bound to THIS request's viewer ([Server.panesFor]), nil when
 	// presence is off. Set by the four pages that list a session; read only through its methods, so
 	// a viewer the predicate shows nothing renders no node at all. See `presence.go`.
@@ -134,13 +139,15 @@ type PageView struct {
 	App App
 }
 
-// Page is the ROOT: every scope this credential may read, as cards, plus the search box.
+// Page is the SCOPE LIST (`/scopes`): every scope this credential may read, as cards, plus the search
+// box. It was the ROOT until the root became the hub (`hub.go`); the page itself did not change, and
+// the comments below that say "the root" mean this page.
 //
 // 🔴 EVERY USER STRING GOES THROUGH `g.Text` OR THROUGH A QUOTED ATTRIBUTE VALUE,
 // AND NOTHING GOES THROUGH `g.Raw`. See this package's doc comment for the measured
 // scope of gomponents' escaper and for the one place it is NOT enough.
 func Page(v PageView) g.Node {
-	return shell("cairn", v, nil,
+	return shell("", v, nil,
 		searchForm(v),
 		// 🔴 `g.Iff` AND NOT `g.If`, AND THE DIFFERENCE IS A NIL DEREFERENCE RATHER THAN
 		// A STYLE CHOICE. `g.If(cond, node)` takes a NODE, so Go evaluates the argument
@@ -189,7 +196,7 @@ func Page(v PageView) g.Node {
 // `routes` deleted `GET /entries` for. This is a short list of links with no cards, no
 // counts and no search box — a navigation answer, not a second copy of the root.
 func NavigatePage(v PageView) g.Node {
-	return shell("cairn", v, nil,
+	return shell("", v, nil,
 		h.Section(
 			h.Class("card"),
 			h.H2(g.Text("Pick a scope")),
@@ -226,14 +233,19 @@ func ScopePage(v PageView) g.Node {
 		body = sessionsPanel(*v.Touched, v.Scopes, v.Now, v.Panes)
 	case v.Tab == TabArcs && v.Touched != nil:
 		body = arcsPanel(*v.Touched, v.Scopes, v.Now)
+	case v.Tab == TabAgent && v.Agent != nil:
+		body = agentPanel(*v.Agent)
 	default:
 		body = entriesPanel(s, v.Now)
 	}
-	return shell("cairn — "+s.Name, v, []crumb{{Label: s.Name}},
+	return shell(s.Name, v, []crumb{{Label: s.Name}},
 		h.Section(
 			h.Class("card"),
 			h.H2(g.Text(s.Name)),
-			scopeStats(s),
+			// ⚠ NO `scopeStats` HERE ANY MORE, ON AN OPERATOR DECISION: "N entries" is the Entries tab's own
+			// count and "N bullets declared open" read as noise on a page about the entries themselves. The
+			// scope LIST's cards keep both. What stays is when the scope last changed.
+			g.If(s.MTime() > 0, h.P(h.Class("card-stats"), updatedAgo(s.MTime(), v.Now))),
 			scopeTabs(s, v.Tab, v.Touched),
 			body,
 		),
@@ -267,7 +279,7 @@ func entriesPanel(s Scope, now time.Time) g.Node {
 // for everything else — see [TabSessions] for why an unknown value is the default and not a 400.
 func scopeTab(raw string) string {
 	switch raw {
-	case TabSessions, TabArcs:
+	case TabSessions, TabArcs, TabAgent:
 		return raw
 	}
 	return ""
@@ -288,9 +300,11 @@ func scopeTabHref(s Scope, tab string) string {
 // printed as a zero, and a LOWER-BOUND count carries `≥`.
 func scopeTabs(s Scope, current string, t *Touched) g.Node {
 	tab := func(label, count, tab string) g.Node {
+		// "Entries (5)" — the operator's spelling. A count that is not a measurement is still left off
+		// entirely ("Arcs", never "Arcs ()"), and a lower bound reads "(≥3)".
 		text := label
 		if count != "" {
-			text += " " + count
+			text += " (" + count + ")"
 		}
 		if tab == current {
 			return h.Span(h.Class("view-tab view-tab-here"), h.Data("tab", tabName(tab)), g.Text(text))
@@ -308,6 +322,8 @@ func scopeTabs(s Scope, current string, t *Touched) g.Node {
 		tab("Entries", strconv.Itoa(len(s.Entries)), ""),
 		tab("Sessions", sessions, TabSessions),
 		tab("Arcs", arcsCount, TabArcs),
+		// No count: the tab is one text, and its size is on the tab itself.
+		tab("What an agent sees", "", TabAgent),
 	)
 }
 
@@ -401,6 +417,17 @@ func newerFirstCmp(aMTime float64, aKey string, bMTime float64, bKey string) int
 // needs "when", not which nanosecond; the sub-second part is what decides a tie, and it does so in
 // [entriesNewestFirst], not here.
 func timeAgo(mtime float64, now time.Time) g.Node {
+	return mtimeNode(mtime, now, "")
+}
+
+// updatedAgo is [timeAgo] reading "updated 5m ago" — the scope page's spelling (an operator decision),
+// where a bare "5m ago" beside a row did not say WHAT happened five minutes ago. Same element, same
+// `datetime` and `title`; only the text gains the word.
+func updatedAgo(mtime float64, now time.Time) g.Node {
+	return mtimeNode(mtime, now, "updated ")
+}
+
+func mtimeNode(mtime float64, now time.Time, prefix string) g.Node {
 	if mtime <= 0 {
 		return nil
 	}
@@ -409,7 +436,7 @@ func timeAgo(mtime float64, now time.Time) g.Node {
 		h.Class("updated"),
 		h.DateTime(at.Format(time.RFC3339)),
 		h.TitleAttr(at.Format("2006-01-02 15:04:05 UTC")),
-		g.Text(relativeTime(at, now)),
+		g.Text(prefix+relativeTime(at, now)),
 	)
 }
 
@@ -489,7 +516,7 @@ func relativeTime(at, now time.Time) string {
 // UTF-8 is the one substitution.
 func EntryPage(v PageView) g.Node {
 	s, e := *v.Scope, *v.Entry
-	return shell("cairn — "+e.Ref, v,
+	return shell(e.Ref, v,
 		[]crumb{{Label: s.Name, Href: scopeHref(s)}, {Label: e.Ref}},
 		h.Section(
 			h.Class("card"),
@@ -586,9 +613,13 @@ type crumb struct {
 // information architecture: every page looks complete, and the only symptom is a reader
 // reaching for the browser's back button on a surface that could have told them where
 // they were. Putting it here means a page added later gets it without anybody remembering.
-func shell(title string, v PageView, crumbs []crumb, body ...g.Node) g.Node {
+//
+// 🔴 IT TAKES THE PAGE'S LABEL, NEVER A TITLE: `documentTitle` is the one place a `<title>` is
+// composed, so the instance label cannot be missed by a page that spelled its own. `""` is the
+// root's label. See `title.go`, and `TestEveryFrameTitleIsComposedByDocumentTitle`.
+func shell(page string, v PageView, crumbs []crumb, body ...g.Node) g.Node {
 	return c.HTML5(c.HTML5Props{
-		Title:    title,
+		Title:    documentTitle(v.App, page),
 		Language: "en",
 		// ⚠ NO `<meta name="viewport">` IS SPELLED HERE, AND THAT IS A MEASUREMENT RATHER
 		// THAN AN OMISSION. Without one a phone lays the page out at ~980 CSS pixels and
@@ -611,52 +642,24 @@ func shell(title string, v PageView, crumbs []crumb, body ...g.Node) g.Node {
 				// rather than reworded: the share link below is the second, and a
 				// comment claiming singularity is exactly what stops the next person
 				// adding a third where it belongs.
-				h.H1(h.A(h.Href(RootPath), g.Text("cairn"))),
+				wordmark(v.App, true),
 				// 🔴 THE ARCS PAGE'S ENTRY POINT, UNCONDITIONAL FOR THE SHARE LINK'S REASON BELOW: a
 				// page reachable only by typing its path reads as absent. Not gated on "is a journal
 				// configured" either — `GET /arcs` ANSWERS on a deployment without one, saying so.
 				h.P(h.Class("nav-arcs"), h.A(h.Href(ArcsPath), g.Text("Arcs"))),
-				// 🔴 THE SHARE FLOW'S ONLY ENTRY POINT, AND IT IS UNCONDITIONAL ON
-				// PURPOSE. It shipped reachable only by TYPING `/share`: every route
-				// was registered, the authority was seeded, `sharing writable` was in
-				// the startup line — and no rendered page linked to it, so the feature
-				// read as absent on a deployment where it was live.
+				// 🔴 THE ONE ENTRY POINT TO SHARING, INVITATIONS AND TEAM LINKS — `GET /team`, which
+				// replaced the "Sharing" and "Invitations" links (operator decision O-a / round 0
+				// D3: one page, one header entry). UNCONDITIONAL, for the reason the two it replaced
+				// recorded: the share flow once shipped reachable only by TYPING its path and read
+				// as absent where it was live.
 				//
-				// ⚠ NOT gated on "does this caller administer anything", which was the
-				// first draft. That needs a `control.Resolve` on every page render — a
-				// new authority read on the browse path, for a link whose destination
-				// ALREADY answers the question properly: `shareIndex` renders "No scope
-				// is administrable by this credential. That is an authority answer, not
-				// an empty store." Hiding the link would replace that sentence with
-				// silence, which is the failure mode this surface is built against.
-				h.P(h.Class("nav-share"), h.A(h.Href(SharePath), g.Text("Sharing"))),
-				// 🔴 THE INVITE FLOW'S ONLY ENTRY POINT, AND IT IS UNCONDITIONAL FOR
-				// THE REASON THE SHARE LINK ABOVE IS — the same defect, the same
-				// remedy, and the link is here rather than on the share page because
-				// the share page is not where somebody who wants to add a colleague
-				// starts looking.
-				//
-				// ⚠ NOT GATED ON "does this caller manage a project", which would need
-				// a model read on every page render for a link whose destination
-				// already answers the question properly: `inviteIndex` renders "No
-				// project is yours to invite into. That is an authority answer, not an
-				// empty control plane." Hiding the link would replace that sentence
-				// with silence.
-				//
-				// 🔴 AND NOT GATED ON "does this deployment HAVE an invite store"
-				// EITHER, WHICH IS A DECISION THIS COMMENT EXISTS TO RECORD BECAUSE THE
-				// OPPOSITE HAS A PRECEDENT ONE FILE OVER. `SignInPage` withholds the
-				// GitHub button when no provider is configured, on the stated grounds
-				// that "a control that is present and cannot work teaches a user that
-				// sign-in is unreliable". That argument does not transfer, because the
-				// two destinations differ: the button POSTS and a POST it cannot serve
-				// is a 501 with no page around it, whereas `GET /invite` ANSWERS — it
-				// renders the frame and says [NoInviteStore] in the body. So the link
-				// leads somewhere that explains itself, and gating it would make the
-				// feature read as absent on a deployment that is one environment
-				// variable away from having it. `handleInvitePage` is where that is
-				// arranged, and it is what makes this line honest.
-				h.P(h.Class("nav-invite"), h.A(h.Href(InvitePath), g.Text("Invitations"))),
+				// ⚠ NOT gated on "does this caller administer or manage anything" — that is a model
+				// read on every page render for a link whose destination already answers the
+				// question ("No scope is administrable by this credential …"). And NOT gated on
+				// "does this deployment have an invite store": `GET /team` ANSWERS without one and
+				// says [NoInviteStore] in the body, unlike the GitHub button `SignInPage` withholds,
+				// whose POST would be a bare 501.
+				h.P(h.Class("nav-team"), h.A(h.Href(TeamPath), g.Text("Team"))),
 				// The viewer's display name is USER TEXT: it comes from a
 				// `control.Principal`, which comes from a provisioned user record.
 				// The `title` carries the whole sentence because a coarse pointer TRUNCATES this line
@@ -664,6 +667,8 @@ func shell(title string, v PageView, crumbs []crumb, body ...g.Node) g.Node {
 				// is the same user text in an attribute value, escaped by the same gomponents path.
 				h.P(h.Class("viewer"), h.TitleAttr("signed in as "+v.Viewer), g.Text("signed in as "+v.Viewer)),
 				g.If(v.CSRF != "", signOutForm(v.CSRF)),
+				// The Install button (S4, `pwa.go`): hidden, and nothing at all when unarmed.
+				pwaInstallButton(v.App),
 			),
 			g.If(len(crumbs) > 0, breadcrumbs(crumbs)),
 			h.Main(h.Class("page-main"), g.Group(body)),
@@ -679,7 +684,9 @@ func breadcrumbs(crumbs []crumb) g.Node {
 		h.Aria("label", "Breadcrumb"),
 		// The trail always starts at the root, so the first step is spelled here rather
 		// than by every caller.
-		h.A(h.Class("crumb"), h.Href(RootPath), g.Text("All scopes")),
+		// ⚠ `/scopes`, NOT THE ROOT, since the root became the hub: the trail's first step is still "All
+		// scopes", and that list lives at `ScopesPath` now. The wordmark is the way to the hub.
+		h.A(h.Class("crumb"), h.Href(ScopesPath), g.Text("All scopes")),
 		g.Map(crumbs, func(c crumb) g.Node {
 			if c.Href == "" {
 				return h.Span(h.Class("crumb crumb-here"), g.Text(c.Label))
@@ -720,7 +727,7 @@ func searchForm(v PageView) g.Node {
 	return h.FormEl(
 		h.Class("searchbar"),
 		h.Method("get"),
-		h.Action(RootPath),
+		h.Action(ScopesPath),
 		h.Label(h.For("q"), g.Text("Search entries")),
 		h.Input(
 			h.ID("q"),
@@ -797,7 +804,7 @@ func searchResults(v PageView) g.Node {
 			g.Text("Clear the tag and search every entry")))),
 		g.If(r.Tag != "", h.P(h.Class("note"), h.A(h.Href(tagHref(r.Tag)),
 			g.Text("Clear the search and list everything tagged `"+r.Tag+"`")))),
-		h.P(h.Class("note"), h.A(h.Href(RootPath), g.Text(clearAllLabel(r.Tag)))),
+		h.P(h.Class("note"), h.A(h.Href(ScopesPath), g.Text(clearAllLabel(r.Tag)))),
 		g.If(len(r.Hits) == 0 && r.BestBelow != "", h.P(h.Class("empty"), g.Text(
 			"Nothing cleared the threshold. The closest entry was `"+r.BestBelow+"` — "+
 				"so this is a near miss rather than a store with nothing in it."))),
@@ -827,7 +834,7 @@ func tagResults(v PageView) g.Node {
 		h.H2(g.Text("Tag")),
 		h.P(h.Class("card-what"), g.Text(tagWhat)),
 		h.P(h.Class("note"), g.Text(tagSummary(m))),
-		h.P(h.Class("note"), h.A(h.Href(RootPath), g.Text("Clear the tag and show every scope"))),
+		h.P(h.Class("note"), h.A(h.Href(ScopesPath), g.Text("Clear the tag and show every scope"))),
 		g.If(len(m.Entries) == 0 && m.Scanned > 0, h.P(h.Class("empty"), g.Text(
 			"No entry carries this tag. This query's operand is checked against no "+
 				"vocabulary, and an entry written before the write path's vocabulary closed "+
@@ -990,13 +997,21 @@ func entryRow(s Scope, e Entry, now time.Time) g.Node {
 		// format, the parser and the CLI's own words are untouched (see [historyLabel]).
 		h.Span(h.Class("entry-count"), h.TitleAttr("top-level bullets under "+store.NuanceHeading),
 			g.Text(plural(e.BulletCount, "history note", "history notes"))),
-		timeAgo(e.MTime, now),
-		// Chips: aliases are inert text, refs link where the registry resolved one, tags link to
-		// the tag filter — three containers with three modifier classes so the three read
-		// differently at a glance. The `li` classes are the ones every other test reads.
+		updatedAgo(e.MTime, now),
+		// Chips: refs link where the registry resolved one, tags link to the tag filter.
+		//
+		// 🔴 ALIASES ARE RENDERED `hidden`, AND ONLY `filter.js` REVEALS ONE — an operator decision: the
+		// card does not show aliases, but the filter still matches them, and a row the filter kept ONLY
+		// because an alias matched would otherwise be a row whose visible text does not contain what
+		// the reader typed. So each alias is in the row, hidden, and the script unhides the container
+		// and the matching alias(es) for exactly that row (and re-hides them on the next keystroke).
+		// No script, no alias — the same progressive-enhancement direction the filter control takes.
+		// The `hidden` attribute is the whole mechanism: the script WRITES only `hidden`, which is the
+		// one thing it was already allowed to write.
 		g.If(len(e.Aliases) > 0, h.Ul(
 			h.Class("aliases chips chips-alias"),
-			g.Map(e.Aliases, plainItem),
+			g.Attr("hidden"),
+			g.Map(e.Aliases, func(a string) g.Node { return h.Li(g.Attr("hidden"), g.Text(a)) }),
 		)),
 		g.If(len(e.Tasks) > 0, h.Ul(h.Class("tasks chips chips-ref"), g.Map(e.Tasks, taskItem))),
 		g.If(len(e.Tags) > 0, h.Ul(h.Class("tags chips chips-tag"), g.Map(e.Tags, tagItem))),
@@ -1501,7 +1516,7 @@ func entryHref(scope control.ID, ref string, raw bool) string {
 // requirement rather than a preference: every served path is a literal key in `routes`, and a
 // tag is user text.
 func tagHref(tag string) string {
-	return RootPath + "?" + url.Values{QueryTag: []string{tag}}.Encode()
+	return ScopesPath + "?" + url.Values{QueryTag: []string{tag}}.Encode()
 }
 
 // searchHref is the ONE place a `/?q=` URL is built, and it exists for the same two reasons
@@ -1513,7 +1528,7 @@ func tagHref(tag string) string {
 // off `handlePage`. The encoder is what stops `?q=` ending an attribute, and the only reason
 // this is not already a stored-XSS report is that nothing built this URL before.
 func searchHref(query string) string {
-	return RootPath + "?" + url.Values{QueryQuery: []string{query}}.Encode()
+	return ScopesPath + "?" + url.Values{QueryQuery: []string{query}}.Encode()
 }
 
 // clearAllLabel names what the bare-root link actually does, which differs by how many filters
@@ -1701,11 +1716,11 @@ func signOutForm(csrf string) g.Node {
 // not a sentence. "" renders no field at all.
 func SignInPage(message string, provider bool, next string, app App) g.Node {
 	return c.HTML5(c.HTML5Props{
-		Title:    "cairn — sign in",
+		Title:    documentTitle(app, "sign in"),
 		Language: "en",
 		Head:     []g.Node{stylesheetLink(), pwaHead(app)},
 		Body: []g.Node{
-			h.Header(h.Class("page-header"), h.H1(g.Text("cairn"))),
+			h.Header(h.Class("page-header"), wordmark(app, false)),
 			h.Main(
 				h.Class("signin-main"),
 				g.If(message != "", h.P(h.Class("refused"), g.Text(message))),
@@ -1875,47 +1890,11 @@ type ShareView struct {
 	ReadOnly bool
 }
 
-// SharePage renders the share flow.
-//
-// 🔴 THE NOTICE IS RENDERED ON BOTH SHAPES OF THIS PAGE, AND UNCONDITIONALLY. It is
-// not attached to the form, because the AUDIENCE LIST is the claim that needs it most:
-// "these four principals can see this" is a statement about one replica's cached model
-// and reads as a statement about the world. A notice that appeared only when somebody
-// was about to write would leave the read — the thing people do far more often —
-// unqualified.
-func SharePage(v ShareView) g.Node {
-	title := "cairn — sharing"
-	if v.Scope.Name != "" {
-		title = "cairn — sharing " + v.Scope.Name
-	}
-	// 🔴 THROUGH `shell`, NOT A FOURTH FRAME OF ITS OWN — AND THE DUPLICATE IT REPLACES
-	// WAS ALREADY WRONG, WHICH IS THE ARGUMENT FOR CONSOLIDATING RATHER THAN A TIDINESS
-	// ONE. `shell`'s own comment says it exists "so three pages cannot end up with three
-	// headers"; this page was a fourth, and its copy of the header rendered the wordmark
-	// as `h.H1(g.Text("cairn"))` — PLAIN TEXT. So the share flow had no way back to the
-	// browse surface, in a surface whose frame comment calls a missing way back "the
-	// standard failure of this information architecture". One header, one place: a
-	// navigation affordance added to `shell` now reaches this page too, which is how the
-	// share link above arrives here without anybody remembering to add it twice.
-	//
-	// ⚠ `crumbs` IS NIL DELIBERATELY. `PageView.Scopes` is the narrowed browse answer and
-	// this view does not carry it — `Administrable` is a DIFFERENT set, from
-	// `control.Resolve` rather than from the store walk — so a trail built from it would
-	// be a trail through scopes this page is not about. A breadcrumb for the share scope
-	// page is worth having and is not this change.
-	return shell(
-		title,
-		PageView{Viewer: v.Viewer, CSRF: v.CSRF, App: v.App},
-		nil,
-		// The notice is FIRST, above every answer it qualifies. A caveat under
-		// a list is a caveat most readers never reach.
-		h.P(h.Class("replica-honesty"), g.Text(ReplicaHonesty)),
-		g.If(v.ReadOnly, h.P(h.Class("read-only"), g.Text(ReadOnlyAuthority))),
-		g.If(v.Outcome != "", h.P(h.Class("outcome"), g.Text(v.Outcome))),
-		g.If(v.Scope.Name == "", shareIndex(v)),
-		g.If(v.Scope.Name != "", shareScopeSection(v)),
-	)
-}
+// The share flow's PAGE is the Team page (`TeamPage`, `team.go`): `GET /share` answers a
+// 303 there (operator decision O-a). The SECTIONS below — `shareIndex`,
+// `shareScopeSection`, `shareForm` — are what it renders, and the replica-honesty notice
+// rides the Team page on every shape of it, for the reason this page's comment gave: the
+// AUDIENCE LIST is the claim that needs it most.
 
 // shareIndex lists the scopes this caller may administer.
 func shareIndex(v ShareView) g.Node {
@@ -1932,7 +1911,7 @@ func shareIndex(v ShareView) g.Node {
 			// chosen to be safe in a URL without quoting, which is exactly the property
 			// being relied on here. `safeHref` is not reached and must not be — it
 			// ALLOWLISTS absolute http(s), and this is a same-origin path.
-			href := SharePath + "?" + QueryScope + "=" + string(s.ID)
+			href := teamHref(QueryScope+"="+string(s.ID), teamShareAnchor)
 			return h.Li(h.A(h.Href(href), g.Text(s.Name)))
 		})),
 	)
@@ -1954,9 +1933,16 @@ func shareScopeSection(v ShareView) g.Node {
 		// SOME BUTTONS MISSING. A reader who revokes every row here and expects the
 		// audience to empty has misunderstood the model; saying it once, where they are
 		// looking, is cheaper than the support conversation.
+		//
+		// ⚠ IT IS TRUE NOW BECAUSE THE LIST GREW, NOT BECAUSE THE SENTENCE SHRANK. It was
+		// FALSE for a project-wide grantee (round 1): they reach the scope through no
+		// membership and through no listed row. Project-wide grants are listed below now,
+		// labelled, so "every grant below" covers every grant that reaches this scope.
 		h.P(h.Class("note"), g.Text(
-			"Only grants appear here. Somebody who reaches this scope through membership "+
-				"of the project that owns it keeps it after every grant below is revoked.")),
+			"Only grants appear here — grants on this scope, and project-wide grants on the "+
+				"project that owns it. Somebody who reaches this scope through membership "+
+				"of that project keeps it after every grant below is revoked. A project-wide "+
+				"grant can be revoked only by an owner or admin of that project.")),
 		g.If(len(v.Revocable) == 0, h.P(h.Class("empty"), g.Text("No grant names this scope."))),
 		h.Ul(h.Class("grants"), g.Map(v.Revocable, func(row GrantRow) g.Node {
 			return revocableItem(row, v.CSRF)
@@ -1976,6 +1962,7 @@ func audienceItem(a Viewer) g.Node {
 		h.Span(h.Class("kind"), g.Text(string(a.Kind))),
 		h.Span(h.Class("verbs"), g.Text(a.Verbs)),
 		g.If(a.ByMembership, h.Span(h.Class("via"), g.Text("via project membership"))),
+		g.If(a.ByProjectGrant, h.Span(h.Class("via"), g.Text("via a project-wide grant"))),
 	)
 }
 
@@ -1986,18 +1973,40 @@ func audienceItem(a Viewer) g.Node {
 // link-prefetcher would perform it by accident — silently withdrawing somebody's
 // access because a reader hovered a link.
 func revocableItem(row GrantRow, csrf string) g.Node {
+	return revocableItemReturningTo(row, csrf, "")
+}
+
+// revocableItemReturningTo is [revocableItem] whose revoke, for a project-wide grant, lands back
+// on that project's Team section (`project`, ancillary — never an authority input).
+//
+// 🔴 THE BUTTON IS RENDERED ONLY WHERE THE REVOKE WOULD BE AUTHORISED (`row.MayRevoke`, set by
+// `Sharing.ForViewer` from `mayRevokeGrant` — the predicate `POST /unshare` runs). Round 2 🟡A:
+// gated on the session token alone, an outsider holding `admin` on one scope was offered Revoke on
+// a project-wide grant that the write then refused with a 403.
+func revocableItemReturningTo(row GrantRow, csrf string, project control.ID) g.Node {
 	return h.Li(
 		h.Class("grant-row"),
 		h.Span(h.Class("who"), g.Text(row.Subject.Display)),
 		h.Span(h.Class("kind"), g.Text(string(row.Subject.Kind))),
 		h.Span(h.Class("verbs"), g.Text(row.Verbs)),
 		h.Span(h.Class("at"), g.Text(row.GrantedAt)),
-		g.If(csrf != "", h.FormEl(
+		// 🔴 A PROJECT-WIDE GRANT SAYS SO, AND SAYS WHAT REVOKING IT DOES, BEFORE THE BUTTON.
+		// It reaches every scope the project owns, and this row can appear on a page about
+		// ONE of them (`ControlSharing.Revocable`'s O-b ruling). The project is NAMED only to a
+		// viewer who is in it (`ForViewer` blanks it otherwise).
+		g.If(row.ProjectWide && row.Project != "", h.Span(h.Class("via"), g.Text(
+			"project-wide: every scope in "+row.Project+" — revoking it withdraws all of them"))),
+		g.If(row.ProjectWide && row.Project == "", h.Span(h.Class("via"), g.Text(
+			"a project-wide grant — revoking it withdraws every scope in its project"))),
+		g.If(!row.MayRevoke && row.ProjectWide, h.Span(h.Class("via"), g.Text(
+			"only a project owner or admin can revoke this"))),
+		g.If(csrf != "" && row.MayRevoke, h.FormEl(
 			h.Class("revoke"),
 			h.Method("post"),
 			h.Action(UnsharePath),
 			h.Input(h.Type("hidden"), h.Name(FieldCSRF), h.Value(csrf)),
 			h.Input(h.Type("hidden"), h.Name(FieldGrant), h.Value(string(row.ID))),
+			g.If(project != "", h.Input(h.Type("hidden"), h.Name(FieldProject), h.Value(string(project)))),
 			h.Button(h.Type("submit"), g.Text("Revoke")),
 		)),
 	)
@@ -2026,7 +2035,7 @@ func shareForm(v ShareView) g.Node {
 			g.Text("There is nobody this credential can share with. Sharing is offered with "+
 				"the people and projects you already share a project with; reaching anybody "+
 				"else means inviting them into a project first — "),
-			h.A(h.Href(InvitePath), g.Text("Invitations")),
+			h.A(h.Href(teamHref("", teamInviteAnchor)), g.Text("Invite them")),
 			g.Text("."))
 	}
 	return h.FormEl(
@@ -2151,44 +2160,10 @@ type MintedInvite struct {
 	Expires string
 }
 
-// InvitePage renders the invite flow.
-//
-// 🔴 THE NOTICE IS RENDERED ON EVERY SHAPE AND UNCONDITIONALLY, WHICH IS `SharePage`'s
-// RULING. It is not attached to the mint form, because the thing that needs it most is the
-// LINK: a page that hands somebody a bearer capability and explains its properties only
-// when they were about to create one leaves the moment they are about to SEND one
-// unqualified.
-func InvitePage(v InviteView) g.Node {
-	title := "cairn — invitations"
-	if v.Project.Name != "" {
-		title = "cairn — inviting to " + v.Project.Name
-	}
-	// Through `shell`, for the reason `SharePage` records: one header, one place, and a
-	// navigation affordance added there reaches this page without anybody remembering.
-	//
-	// ⚠ `crumbs` IS NIL for `SharePage`'s reason — `PageView.Scopes` is the narrowed BROWSE
-	// answer and this view does not carry it, so a trail built from it would be a trail
-	// through scopes this page is not about.
-	return shell(
-		title,
-		PageView{Viewer: v.Viewer, CSRF: v.CSRF, App: v.App},
-		nil,
-		h.P(h.Class("invite-honesty"), g.Text(InviteHonesty)),
-		g.If(v.NoStore, h.P(h.Class("read-only"), g.Text(NoInviteStore))),
-		g.If(v.Outcome != "", h.P(h.Class("outcome"), g.Text(v.Outcome))),
-		// 🔴 `g.Iff` AND NOT `g.If`, FOR EXACTLY THE REASON [Page] RECORDS ABOUT
-		// `searchResults` — AND THE FACT THAT THE LESSON WAS ALREADY WRITTEN DOWN THERE AND
-		// WAS HIT AGAIN HERE IS WHY IT IS RESTATED RATHER THAN CROSS-REFERENCED.
-		// `g.If(cond, node)` takes a NODE, so Go evaluates the argument before the condition
-		// is consulted: `mintedSection(v)` ran on every index and project render and
-		// dereferenced a nil `v.Minted`. Measured as a panic inside the page-frame ledger,
-		// not reasoned about. The two branches below stay `g.If` because neither reads a
-		// pointer; the rule is per-argument, not per-file.
-		g.Iff(v.Minted != nil, func() g.Node { return mintedSection(v) }),
-		g.If(v.Minted == nil && v.Project.Name == "", inviteIndex(v)),
-		g.If(v.Minted == nil && v.Project.Name != "", inviteProjectSection(v)),
-	)
-}
+// The invite flow's PAGE is the Team page too (`TeamPage`): `GET /invite` answers a 303
+// there, and a mint renders its one-time link ON it. `inviteIndex`,
+// `inviteProjectSection` and `mintedSection` below are its sections, and
+// `InviteHonesty` rides every shape of the Team page.
 
 // inviteIndex lists the projects this caller may invite into.
 func inviteIndex(v InviteView) g.Node {
@@ -2209,7 +2184,7 @@ func inviteIndex(v InviteView) g.Node {
 			// name — `shareIndex`'s ruling, and `control.NewID`'s URL-safe alphabet is the
 			// property being relied on. `safeHref` is not reached and must not be: it
 			// allowlists absolute http(s) and this is a same-origin path.
-			href := InvitePath + "?" + QueryProject + "=" + string(p.ID)
+			href := teamHref(QueryProject+"="+string(p.ID), teamInviteAnchor)
 			return h.Li(
 				h.A(h.Href(href), g.Text(p.Name)),
 				// The caller's own role is rendered beside each project because it is what
@@ -2389,7 +2364,7 @@ func mintedSection(v InviteView) g.Node {
 		)),
 		g.If(v.Project.ID != "", h.P(h.Class("note"),
 			h.A(
-				h.Href(InvitePath+"?"+QueryProject+"="+string(v.Project.ID)),
+				h.Href(teamHref(QueryProject+"="+string(v.Project.ID), teamInviteAnchor)),
 				g.Text("Back to this project's invitations"),
 			),
 		)),
@@ -2419,11 +2394,11 @@ func mintedSection(v InviteView) g.Node {
 // up signed in, or refused, with no sign that the link was the problem.
 func JoinPage(token string, provider bool, app App) g.Node {
 	return c.HTML5(c.HTML5Props{
-		Title:    "cairn — accept an invitation",
+		Title:    documentTitle(app, "accept an invitation"),
 		Language: "en",
 		Head:     []g.Node{stylesheetLink(), pwaHead(app)},
 		Body: []g.Node{
-			h.Header(h.Class("page-header"), h.H1(g.Text("cairn"))),
+			h.Header(h.Class("page-header"), wordmark(app, false)),
 			h.Main(
 				h.Class("join-main"),
 				h.H2(g.Text("You have been invited")),

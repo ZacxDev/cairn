@@ -101,3 +101,48 @@ func appMode(app ui.App) string {
 	}
 	return fmt.Sprintf("app %q (icon variant %s)", app.Name, app.IconVariant)
 }
+
+// 🔴 THE INSTANCE LABEL: `-instance-name` / $CAIRN_UI_INSTANCE_NAME, OPTIONAL, NO DEFAULT. Set, every
+// page title reads `<instance> — <page> · cairn` and the header shows it beside the wordmark;
+// unset, every title and header is what it was before the flag existed (`internal/ui/title.go`).
+//
+// ⚠ IT IS DELIBERATELY NOT `-app-name`. That flag ARMS installability — a manifest, a theme
+// colour, an icon — and requires a variant; a deployment that only wants its tabs told apart must
+// not have to become installable to get it, and one that is installable keeps the manifest's name
+// independent of its tab label.
+//
+// Read RAW, with the `-app-*` lines' blank policy and for their reason: a whitespace-only value
+// resolved through `envalias` would read as UNSET, so an operator who wrote the line would get
+// unlabelled tabs and no signal. A brand-new name has no deprecated spelling, so it needs no
+// `envalias` pair — and `TestTheRawReadVariablesAreNotInTheAliasLedger` pins that it has none.
+const (
+	flagInstanceName = "instance-name"
+	// EnvUIInstanceName is `-instance-name`'s variable.
+	EnvUIInstanceName = "CAIRN_UI_INSTANCE_NAME"
+)
+
+// resolveInstance judges the instance line: a blank is refused, the shape is `ui.App.Validate`'s
+// (the ONE place it is judged), reworded in the flag's name.
+func resolveInstance(l appLine) (string, error) {
+	if l.written && identity.ValueReducesToNothing(l.value) {
+		return "", fmt.Errorf("%s is set to %q, which reduces to nothing, so this surface would read it as "+
+			"UNSET and label no page while the deployment said otherwise. Refusing to start; set a value or "+
+			"delete the line", l.spelling(), l.value)
+	}
+	if err := (ui.App{Instance: l.value}).Validate(); err != nil {
+		if errors.Is(err, ui.ErrInstanceName) {
+			return "", fmt.Errorf("%s: %v. Refusing to start", l.spelling(), err)
+		}
+		return "", err
+	}
+	return l.value, nil
+}
+
+// instanceMode is the startup line's half about the label, read off the CONFIG the server was
+// handed — `appMode`'s rule — so a resolved label that never reached `ui.Config` reads as unset.
+func instanceMode(app ui.App) string {
+	if app.Instance == "" {
+		return "instance unlabelled (no -" + flagInstanceName + ")"
+	}
+	return fmt.Sprintf("instance %q", app.Instance)
+}

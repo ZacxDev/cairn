@@ -3849,3 +3849,524 @@ Each on a scratch copy with no `.git`:
 - **An intermediary.** A proxy or CDN in front of the deployment may store or rewrite regardless.
 - **Non-HTML responses.** `writePlain` refusals and `http.Redirect` bodies carry no `Cache-Control`;
   neither carries authority-narrowed content, and decision 8 is about pages.
+
+---
+
+# Phase R — the hub, `/scopes`, `/sessions`, the scope page's polish, and "What an agent sees"
+
+Operator asks, implemented together on one branch in three commits (IA/routes; scope and entry polish;
+the agent tab).
+
+| route | class | what |
+|---|---|---|
+| `GET /` | `content` | the HUB: four cards — Arcs (`/arcs`), Scopes (`/scopes`), Sessions (`/sessions`), Team (`/team` — repointed from `/share` by #214, Phase T). `/?q=` and `/?tag=` answer **303** to `/scopes` with the query |
+| `GET /scopes` | `content` | the scope list, search box and tag filter — the old root, unchanged |
+| `GET /sessions` | `content` | every session the viewer can see anything of, newest first, each a link to `/session?session=…` |
+| `GET /scope?id=…&tab=agent` | (the `/scope` row) | the "What an agent sees" tab |
+
+## 🔴 The hub reads `Visible` alone, and its one count is `len(Visible)`
+
+The scopes card's count is the scopes this viewer can read — the list `/scopes` renders. The first cut
+also counted arcs (the arcs page's live rows) and sessions (the sessions page's rows); **both were
+DROPPED in review (round 0, D1)**: each cost a whole-store walk on every hub load, roughly doubling it,
+for a number one click away. The four cards stay. The Team card never had a count: "who has access" is
+the sharing authority, and a hub consulting two authorities was a row `contentAuthority` could not express (it takes a list since #214 — `GET /team` declares three — but the hub still asks one).
+The mutant row that widened the arcs read for the hub's count was RE-POINTED rather than deleted —
+`StoreSource.Arcs` still feeds `/arcs` — as `ui-arcs-index-read-includes-unreadable-homes`, killed by
+the arcs page's own `TestAnArcHomedInAnUnreadableScopeIsNeverListedEvenWhenItsMembersWroteWhereYouRead`.
+
+## 🔴 `/sessions` and `/session` are one predicate
+
+`report.SessionsAcross` and `report.SessionAcross` share ONE walk (`walkReadable`): the narrowed index,
+`touch.Writes` per readable scope, and the arc rule (home readable, Q1). So "listed" and "the session
+page is found" cannot disagree, and `TestTheSessionsPageListsExactlyTheSessionsWhosePageIsFound` pins the
+RELATION — every listed id's page answers 200, every unlisted id's answers the uniform unseen 404 — for a
+viewer of one scope and a viewer of both. A session's date and scope chips are computed over the
+viewer's scopes only: `s-both-0003` sorts by its alpha bullet for A even though its beta one is newer.
+No printed byte moved (structured answer only); the parity harness was re-run: `SUMMARY cases=123
+passes=126 failures=0 dead-normalizations=0`.
+
+## The redirect
+
+`/?q=…` and `/?tag=…` (presence, not value — `/?q=` is the mobile plan's Search shortcut) answer 303 to
+`/scopes?` + the PARSED query re-encoded by `url.Values.Encode`, so the `Location` never carries a
+caller's raw bytes; every value survives, in sorted key order. A query naming neither parameter is the hub.
+
+## The scope page's polish (operator decisions)
+
+- The scope-level "N entries" and "N bullets declared open" badges are gone from the scope page; the
+  scope LIST's cards keep both. The scope's own line reads "updated 5m ago", and so does every row.
+- Tabs read `Entries (N)`, `Sessions (N)`, `Arcs (N)`; a count that is not a measurement is still left
+  off entirely, a lower bound reads `(≥N)`.
+- 🔴 **Aliases are rendered `hidden` on the entry card, and `filter.js` reveals one only when it is WHY
+  the row matched** — a term that matches the alias and no other field on that row. The script still
+  writes only `hidden` (and the count's text), so `TestTheFilterScriptTouchesOnlyWhatItSays` and the
+  one-entry `AllowedScriptSources` are unchanged. Without script, no alias is visible.
+- Tag chips: squarer, tighter pill, `#` drawn by CSS (`::before`), so link text, `data-filter` and every
+  test reading `<a …>tag</a>` are unchanged. Breadcrumbs: `text-xs`, pulled up toward the header, and the
+  card after them drops its top margin; still wrap, and still 44px under a coarse pointer (S1's block).
+  ⚠ The breadcrumb rule is shared, so this applies on EVERY page with a trail (scope, entry, arc,
+  arcs, session, sessions), not only the entry page the ask named — deliberate: one trail, one look.
+
+## 🔴 "What an agent sees" is the CLI's bytes, and says where an agent's own run differs
+
+`StoreSource.Recall` builds `report.RecallOptions` exactly as `cairn recall --scope <scope>` does (no
+`--list`/`--limit`/`--page`: digest mode, the default entry limit, page 1; a scope named, so no focus
+window), runs `report.Recall` over the viewer's narrowed set and prints `RenderText(host, nil, "")` —
+the renderer the CLI and the pod run, never a re-render. `TestTheAgentTabIsByteForByteTheCLIRecall`
+builds the expectation from the CLIENT package's own option builder (`client.RecallSelectionFor`) and
+compares the unescaped `<pre>` text byte for byte.
+
+It is authorised twice: the scope page refuses an unreadable scope before any tab is chosen (the one
+`browseRefusal`), and the recall read is itself narrowed, so a scope NAME that reached it any other way
+answers the renderer's scope-absent text (`TestTheRecallReadIsNarrowedByTheViewersAuthority`).
+
+The tab carries ONE note naming the FOUR places an agent's own run differs — same renderer, different
+place it ran (from the usage trace in PR #211, `claudedocs/plan-cairn-agent-view.md`): the resume/handoff
+skills run `cairn recall --repo`, which features
+the entry the repo's newest handoff doc names (`--scope` cannot, and the server has no repo — not
+reproduced here); the client prints a state banner above the text; and the `store:`/`host:` lines name
+whoever rendered it (`store:` is the renderer's StoreRoot: this server's here, the agent's per-host cache path there) — two of the four. ⚠ So the tab DOES print this server's
+store root, which every other page here deliberately omits; it is the same line `GET
+/api/v1/recall/<scope>` already prints to every reader of the scope, and byte equality requires it.
+
+**The `head -60` mark.** Agents almost always truncate — the usage trace in PR #211
+(`claudedocs/plan-cairn-agent-view.md`) found most standalone recalls piped through `head`/`grep`/`sed`,
+most often `head -60` — so the text is split into two `<pre>`s where that cut falls, with the lines and
+bytes above and below. The client prints a preamble first, and the number of lines it takes is COUNTED
+from `client.RecallPreamble` — the one string `recall` now prints there (banner, blank line; the bytes
+of the two `Fprintln`s it replaced) — so a banner that grows a line moves the mark. Today that is two,
+so the cut falls after line **58** of the recall text. The two
+halves concatenate to the exact bytes. Size is the UTF-8 byte count; tokens are bytes ÷ 4, labelled an
+estimate.
+
+## Cost, measured
+
+`BenchmarkSessionPageAndScopeTabs -benchtime 20x`, one host, NOT idle (the absolute numbers are higher
+than Phase I's for the same rows), ms per request:
+
+| size | hub | sessions list | scopes list | session page | entry page |
+|---|---|---|---|---|---|
+| 10 scopes × 30 entries | 32.7 | 25.0 | 12.6 | 22.9 | 18.0 |
+| 30 scopes × 100 entries | 299 | 201 | 134 | 303 | 142 |
+
+The `hub` column is the FIRST cut, with its arcs and sessions counts: it cost about what the session
+page costs (≈2.2× the scope list at 3,000 entries). That measurement is why both counts were dropped
+(D1); the hub now reads `Visible` alone — the scope list's read — and was not re-measured.
+
+
+# Phase S — `pwa.js`, the shortcuts and the install screenshots (S4 of the mobile plan)
+
+`claudedocs/plan-cairn-mobile-pwa.md`, decisions 5, 10, 11 and 16, O3/O7/O8/O13. `pwa.go` holds all of
+it; `pwa.js` is the script. ⚠ Phase P's "NO script" and its `TestTheArmedPWAHeadAddsNoScript` row are
+S2's record: S4 replaced that test with `TestTheArmedPWAHeadAddsOnlyThePWAScript` and re-pointed its
+battery row (`ui-pwa-head-emits-an-unversioned-script`).
+
+## 🔴 One more script, admitted by the allowlist and nothing else
+
+`AllowedScriptSources()` is now exactly `[filter.js, pwa.js]`, both content-hashed `classPublic` rows.
+`pwaHead` emits `pwa.js` (`defer`) on every frame of an ARMED deployment — sign-in included, because an
+install starts there — and nothing on an unarmed one. The script:
+- reveals the header's `<button class="install" hidden>` (shell frame only) on `beforeinstallprompt`,
+  and replays that event's `prompt()` on a click;
+- reveals the ROOT page's iOS hint only where `"standalone" in navigator && navigator.standalone ===
+  false` — feature detection, never the user agent — unless this browser dismissed it;
+- does nothing at all under `display-mode: standalone`;
+- writes ONE thing, ever: `localStorage["cairn.installHintDismissed"] = "1"`, on a dismiss tap, inside a
+  `try` (blocked storage simply means the hint shows again). Sign-out does not clear it (decision 11).
+- registers NO service worker (O13).
+
+Two guards hold that, at two depths: `TestThePWAScriptTouchesOnlyWhatItSays` — a SPELLING guard, labelled
+as one (`window["local"+"Storage"]` walks it) — refuses the markup/code/network/storage sinks, `caches`,
+`serviceWorker`, and (until S5) `location`/`history`, and admits `localStorage` ONLY as the one `getItem`
+and the one `setItem(HINT_KEY, "1")`; and the STATE guard is the browser, `uiaudit`'s
+`TestPWAClauses/e_storage` (clause (e)).
+
+## Shortcuts — two departures from the plan's literal list, both forced by `main`
+
+- **Search → `/scopes?q=`**, not `/?q=`: the UI hub moved the search box to `/scopes` (`/?q=` still
+  answers, with a 303 there; a launcher need not take the hop).
+- **"Team" → `/team`**: S4 shipped it as `/share`, because `/team` was not on `main` at its branch
+  point. Merging it with the Team page (Phase T) made `/share` a bodiless 303 to `/team` and dropped
+  its `content` class, so this section's test refused it on both counts (not a `GET … content` row,
+  and 303 rather than 200 signed in); the merge repointed it, beside the hub's Team card.
+
+`TestEveryShortcutIsADeclaredRowThatReturnsThroughSignIn` pins, as LITERALS never derived from
+`signInLocation`, the 303 each answers a stranger's browser: `/sign-in?next=%2Farcs`,
+`/sign-in?next=%2Fscopes%3Fq%3D`, `/sign-in?next=%2Fteam` — and 200 signed in.
+
+## 🔴 Install screenshots: build output, provenance enforced
+
+`screenshots/screenshots.json` is the ONE list (three readers: this package, `uiaudit -screenshots`, the
+flake's `onlyGo`). `narrow-hub`/`narrow-arcs` are 390×844 TOUCH captures of `/` and `/arcs`; `wide-hub`
+is 1440×900 of `/`. The PNGs are what `flake.nix`'s `uiScreenshots` captures from the synthetic uiaudit
+world in the sandbox; `checks.ui-screenshots-are-current` re-captures and byte-compares, with a
+one-byte-appended negative control and a PROVENANCE control (one fixture scope renamed — the capture must
+move; it moves `narrow-arcs`). `tests/leakscan.py` skips PNGs; that comparison is their leak gate. What
+the capture holds still, and the measurements behind each choice (an UNARMED world, hidden scrollbars, a
+fonts.conf of our own), is in `uiaudit/README.md`.
+
+## The RED proof
+
+Battery rows (`tests/control_mutants.py`, each `killed` by the named test, full run
+`mutants=309 killed=307 survived=2`, the two EQUIVALENT rows):
+
+| mutant | killed by |
+|---|---|
+| `pwa.js` dropped from `AllowedScriptSources` | `TestTheArmedPWAHeadAddsOnlyThePWAScript` |
+| `pwa.js` sets an `innerHTML` label | `TestThePWAScriptTouchesOnlyWhatItSays` |
+| `pwa.js` writes a second key (a timestamp) | `TestThePWAScriptTouchesOnlyWhatItSays` |
+| `pwa.js` registers a service worker | `TestThePWAScriptTouchesOnlyWhatItSays` |
+| a screenshot row serves its bytes plus one | `TestTheScreenshotSetIsExactlyTheCommittedFiles` |
+| `pwaHead` links the unversioned `/static/pwa.js` | `TestTheArmedPWAHeadAddsOnlyThePWAScript` |
+
+Outside the battery, on a scratch copy with no `.git`, each with its own message: Search pointed back at
+the plan's `/?q=` → `TestEveryShortcutIsADeclaredRowThatReturnsThroughSignIn`; the iOS hint put in the
+shell (every page) and the Install button rendered without `hidden` →
+`TestTheInstallControlsAreHiddenAndArmedOnly`; a stray `narrow-extra.png`, and `wide-hub.png` copied over
+`narrow-hub.png` → `TestTheScreenshotSetIsExactlyTheCommittedFiles`; the script row made `classContent`
+→ `TestThePWAScriptIsServedAtItsContentHashedRoute` (an anonymous 401); a `location.reload()` in
+`pwa.js` → `TestThePWAScriptTouchesOnlyWhatItSays`. The nix check went RED on one byte appended to the
+committed `wide-hub.png` (`FAIL: these committed screenshots are not what the synthetic world renders:
+wide-hub.png`), and its provenance control exited 2 when the "renamed" capture was pointed at the
+unrenamed one. The browser-level clauses' RED proof is `pwa_check.sh --self-test` (`uiaudit/README.md`).
+
+⚠ **At the base these tests do not compile** (they name `pwaScript`, `ScreenshotSpecs`, …), which is
+"red" only in the weakest sense; the mutants above are the per-guard proof.
+
+## What these guards still cannot see
+
+- **Any WebKit**: the iOS hint's feature detection, its storage lifetime, Add to Home Screen — the
+  iPhone checklist (steps 3–4), not a test.
+- **A real `beforeinstallprompt` under real engagement**, and the browser's own install dialog: the
+  button is driven by a SYNTHETIC event. Headless chromium 152 does fire a trusted one on its own; the
+  browser test intercepts it so "hidden by default" is not a race.
+- **Cross-host screenshot bytes**: byte-identical sandboxed and unsandboxed on one host; the `nix` CI
+  job is the second host.
+- **An obfuscated sink** in `pwa.js` (`window["inner"+"HTML"]`): the spelling guard's labelled limit.
+
+# Phase T — the Team page and the multi-target TEAM LINK
+
+`GET /team` is THE page for "who can get at my notes" (operator decision **O-a**: "one page" means
+the FORMS live there). Its sections:
+
+- **Share** — `?scope=<id>` picks a scope: who has access (with HOW each principal reaches it), what
+  can be taken back, and the grant form. With no `?scope=`, the scopes this caller can share.
+- **Invite** — `?project=<id>` picks a project: its outstanding single-project invitations with
+  revoke, the mint form, and its **project-wide grants** with revoke (O-b). With no `?project=`, the
+  projects this caller can invite into.
+- **Team links** — the multi-target link form (projects and/or scopes, a role, a lifetime, an
+  "allow reuse" box), and every link this caller minted with targets, role, expiry, reuse, redemption
+  count, the per-redemption log and revoke while open.
+
+Three notices sit above every shape: the replica-honesty notice, `InviteHonesty` and `TeamHonesty`,
+each pinned as a whole normalised string against a literal. Rows: `GET /team` (`content`, answered
+from THREE authorities — `contentAuthority` requires `sharing`, `inviting` AND `team`),
+`POST /team/link` and `POST /team/link/revoke` (no class — both cross-site gates by METHOD).
+
+## 🔴 `/share` and `/invite` answer 303 to `/team`; their POST rows are unchanged
+
+`GET /share` → `/team?<same query>#share`, `GET /invite` → `/team?<same query>#invite`, bodiless
+(`redirectToTeam`, not `http.Redirect`, whose `text/html` body is an HTML response no `no-store`
+writer produced — `TestEveryNonPublicHTMLRowIsNoStore` declares both rows as redirects). A pre-move
+`/invite?outcome=revoked` is translated to `invite-revoked`: on one page the bare `revoked` code is
+the share flow's banner. Both GET rows lost the `content` class — a redirect renders no answer about
+authority. `POST /share`, `POST /unshare`, `POST /invite` and `POST /invite/revoke` are the same rows
+behind the same gates answering the same refusals; only where they LAND moved (`/team?…#share`,
+`#invite`), and a mint renders its one-time link ON the Team page. The two old page handlers became
+the page's section builders (`shareSection`, `inviteSection`) — same reads, same uniform 404s
+(`scopeRefusal`, `inviteRefusal`) — and every test over them was RE-AIMED at `/team`, none deleted.
+The header carries ONE entry, "Team" (round 0 D3); "Sharing" and "Invitations" are gone and the
+nav-affordance ledger now refuses either coming back.
+
+## 🔴 The model: a SIBLING of the invitation, never a wider one
+
+`internal/invite/teamlink.go` (`TeamLink`, `LinkStore`) and migration **2** (`team_links`,
+`team_link_targets`, `team_link_redemptions`). Version 1 is untouched (append-only), and
+`TestMigrationTwoUpgradesAVersionOneDatabase` builds a version-1 database holding an open invitation
+and migrates it: the invitation survives, the ledger reads `[1 2]`, a link redeems. (Migration 2 was
+edited in place once, in this PR's fix round, to add `team_link_redemptions.confirmed`; it had never
+been applied outside a test.) Shared with the invitation, on purpose: `invite.NewToken`,
+`invite.Digest`, 256-bit tokens, digest-only storage, the token shown ONCE, and the ONE join path: a
+link is `/join?invite=<token>`, and `ControlInviting` hands any token its own store does not know to
+`ControlTeamLinks` (`ControlInviting.Links`). Dispatch is by STORE, never by a prefix or form field.
+
+**There is no separate team-link wiring** (round 0 D2): the server reads the link half from
+`Inviting.TeamLinks()`, and `ui.New` refuses an invitation half that carries none
+(`ErrInvitingWithoutTeamLinks`) — so a half-wired server cannot be built. `cmd/cairn-ui` builds both
+halves from one `$DB` in one function, `wireInvitations`, which `TestTheWiredInvitationHalfRedeemsATeamLink`
+(ordinary tier) and `TestTheWiredHalvesMintAndRedeemALinkAgainstPostgres` (Postgres tier) drive by
+minting through the Team page's half and redeeming through the invitation half. Round 1 🟡4
+measured the gap this closes: deleting `Links: links` from `main` left both tiers green.
+
+**Lookup is by digest, so the "constant-time compare" is the same as the invitation's: there is no
+token comparison at all** — the presented token is hashed and the database is asked for that digest.
+
+## 🔴 `reader` is a read-only GRANT, not a `control.Role` — and it is listed and revocable
+
+`control.Role` is owner/admin/member — all three write. A `reader` role would put a new role string
+into `member-set` records on the append-only journal, which an image ROLLBACK cannot replay
+(`Event.validate` refuses an unknown role). So (operator decision **O-b**, keeping this) the link
+roles are `reader | member | admin` (no `owner`: a reusable owner link is a transfer of the project
+to whoever reads a chat log), expressed through record kinds every deployed build already accepts:
+
+| target | `reader` | `member` | `admin` |
+|---|---|---|---|
+| project | `granted` {read} over the PROJECT | `member-set` member | `member-set` admin |
+| scope | `granted` {read} | `granted` {read,write} | `granted` {read,write,admin} |
+
+`linkVerbs` is the one table; `TestLinkVerbsMatchTheControlRoleTable` pins `member`/`admin` against
+what membership at that role confers through `Resolve`.
+
+🔴 **A project-wide grant is SEEN and TAKEN BACK on a page, never only with the CLI** (O-b, and round
+1 🟡3, which measured the share page's note — "keeps it after every grant below is revoked" — FALSE
+for a project-wide grantee). Now: the scope's audience labels such a principal "via a project-wide
+grant" (`Viewer.ByProjectGrant`); the scope's take-back list includes project-wide grants on the
+owning project, each labelled "project-wide: every scope in <project> — revoking it withdraws all of
+them" before its button (`GrantRow.ProjectWide`); and the Team page's project section lists every
+project-wide grant with revoke (`Sharing.ProjectGrants`, reached only for a project `Invitable`
+returned). 🔴 **The Revoke button and the project's NAME are decided PER VIEWER** (round 2 🟡A):
+the take-back rows are viewer-independent, and gating the button on a session token alone offered an
+outsider scope admin Revoke on a project-wide row that the write then refused (403). `Sharing.ForViewer`
+marks each row with `mayRevokeGrant` — the SAME predicate `POST /unshare` runs — and the row renders
+"only a project owner or admin can revoke this" instead of a form when it says no; it also blanks
+the project's name for a viewer who is not in that project ("a project-wide grant — revoking it
+withdraws every scope in its project"). A project-wide revoke from the project section lands back
+on `/team?project=…#invite`. `POST /unshare` decides by the grant's OBJECT (`mayRevokeGrant`): a scope grant needs
+`admin` on that scope, as before; a project-wide grant needs `CanManageMembers` on the actor's own
+membership — never scope admin, so an outsider with admin on one scope cannot withdraw a grant over
+the whole project — and is refused outright for a NARROWED credential (membership authority is not
+in a narrowing; `membershipActor`'s rule, applied from `auth.Narrowed()` because the handler passes
+the attribution principal).
+
+## 🔴 One authority predicate, three readers — and the third is the redemption
+
+`mayLink(model, minter, target, role)` is asked by `Mintable` (the chooser), by `Mint`, and by
+EVERY redemption, of the MINTER, against the model as it is at redemption (`reCheckMinter`). A
+minter demoted, removed or deleted after minting mints nothing usable — the link refuses whole, is not
+spent and logs nothing. Its two arms read the two authority axes and neither reads `Model.Grants`:
+
+- **project** — membership authority: `CanManageMembers` on the minter's own membership, and
+  `CanConfer` for member/admin (the invite flow's `mayManage` + `Mint` rules, unchanged);
+- **scope** — `control.Resolve` of the minter: `admin` on the scope (the share flow's rule) AND every
+  verb the role confers. Verbs are independent bits, so an admin-only grantee cannot hand out `read`.
+
+A link is minted whole or not at all: one target out of reach refuses it (`ErrNotLinkable`, ONE
+error for "no such target" and "not yours", so the mint is not an existence oracle). A narrowed
+credential reaches none of this — every call goes through `membershipActor`, and
+`TestEveryMembershipDecisionActsAsMembershipActor` watches `TeamLinking`/`ControlTeamLinks` too.
+A redemption never OVERWRITES a membership (the owner-demotion hazard `ErrAlreadyAMember` exists for):
+a held target is skipped, and a redeemer who already holds every target gets `ErrAlreadyAMember` with
+nothing spent. The journal's actor on every record is the MINTER.
+
+**Ownership of a link is the minter alone** — listed only to them, revocable only by them. A
+co-admin cannot withdraw a colleague's leaked link from this page; what bounds that is the re-check
+(demote the minter and every link they made dies).
+
+## 🔴 The redemption log: written at the spend, a JOIN only once CONFIRMED
+
+Round 1 🟡1 measured the log naming joins that never happened: two tabs, one GitHub identity, one
+reusable link — both callbacks spend the link, the second journal write is refused (a duplicate
+provider/subject), and the page showed "#2 usr_… joined (account created by this link)" for an
+account that does not exist. The row is still WRITTEN at the spend — written after, a crash between
+the journal write and the log write would lose the audit of a REAL join, and for a reusable link the
+log is the only place an operator sees who it let in — but it is `confirmed = false` until the
+authority write succeeds (`ControlTeamLinks.confirmed`), and the page renders an unconfirmed row as
+"an attempt … NOT confirmed: the join may not have been recorded" — "may", because a confirmation
+that itself fails leaves the join recorded and the row unconfirmed (the conservative reading); that
+case says so on the operator's log line and does not refuse the sign-in. The link's own row counts
+SPENDS as "N redemption attempt(s), M confirmed", never as joins. `TestTheRedemptionLogNamesOnlyRealJoins` reproduces the
+double-callback deterministically (a store barrier holds both spends until both tabs have passed the
+"unknown subject" check).
+
+The operator's log line for a link redemption names the link — `link=<digest prefix> role=<role>
+targets=<n>` — rather than the blank `project= role=` it printed (round 1 🟢5,
+`TestALinkRedemptionLogLineNamesTheLink`); it never carries the token.
+
+## 🔴 Reuse is UNLIMITED until expiry or revoke — the residual, stated
+
+The operator chose unlimited reuse over a capped count. **A leaked reusable link is OPEN ENROLMENT
+until it expires or is revoked**: anybody holding it can create a principal and join every target, as
+many times as they like, at whatever rate the OAuth flow admits (the flight table's per-client and
+global caps are the only rate bound; there is no per-link rate limit). What bounds it: the TTL ceiling
+`invite.MaxLinkTTL` (**30 days**, default still 7, chosen per link in whole days), revoke, the
+minter re-check, and the per-redemption log. Unticked reuse is single use, as an invitation is.
+
+🔴 **The token travels in a URL query, so it lands in ACCESS LOGS** (round 1 🟢6). `GET
+/join?invite=<token>` is what a link opens, and nginx's default `log_format` records `$request`,
+query included — so every gateway between the reader and this pod writes a reusable, up-to-30-day
+enrolment capability to disk in plain text. **Deploy note: strip the query string from access logs
+for `/join`** (in the deployment repository, outside this PR — e.g. log `$uri` rather than `$request`
+for that location). In-app mitigation, PROPOSED and not built: mint the link with the token in the URL
+FRAGMENT (`/join#invite=…`), which a browser never sends to any server and so no access log can hold.
+It is not cheap here: the join page would need a script to move the fragment into the accept form,
+and this surface's script allowlist (`AllowedScriptSources`, two entries since S4 added `pwa.js` —
+Phase S) is a deliberate gate — a third script is a decision, not a tidy-up.
+
+## 🔴 Rolling back across migration 2
+
+A build that predates the team link knows only schema version 1 and REFUSES TO START against a
+database at version 2 ("migrated by a NEWER build") — on `cairn-ui`, that takes sign-in down (round 1
+🟡2). The recipe, run against the database BEFORE the older image starts:
+
+```sql
+DELETE FROM schema_migrations WHERE version = 2;
+```
+
+The older build then starts; it never reads the three `team_*` tables, so they stay, rows and all.
+Links minted before the rollback are not redeemable while it runs (it does not know they exist).
+Re-upgrading is safe: every version-2 statement is `IF NOT EXISTS`, so the newer build re-applies and
+re-records version 2 over the surviving tables. `TestTheRollbackRecipeLetsAnOlderBuildStartAndReUpgrades`
+measures the three steps through the same startup predicate every build runs (`refuseFromTheFuture`):
+the refusal exists, the recipe lifts it, and re-upgrading is clean with a pre-rollback link intact.
+
+## 🔴 The SQL guard is a second spelling of `TeamLink.StateAt`, pinned
+
+`RedeemLink` is one conditional `UPDATE … RETURNING` (`revoked_at IS NULL AND expires_at > $at AND
+(reusable OR redemptions = 0)`) plus the (unconfirmed) log row, in one transaction. The
+`team_links_single_use` CHECK refuses a second redemption of a single-use row even from an unguarded
+statement. `TestTheTeamLinkRedemptionGuardAgreesWithStateAt` drives the CLOSED boundary (µs before /
+at / after the STORED expiry, with a non-µs-aligned remainder) and the revoked and spent arms; 8
+concurrent redemptions give exactly 1 winner single-use and 8 distinct sequence numbers reusable.
+
+## The journal / token-file deployment
+
+No database → no invitation half, and so no link half (one is read from the other). `GET /team`
+still answers 200: the share section (which needs no database) is populated from the authority — on
+a token-file deployment it says the authority is read-only, as the share page did — and the invite
+section and the team-link section each say `NoInviteStore`; every invite and link write answers 501
+with it. `uiaudit`'s journal world walks `GET /team` (and, through its expansion, `/team?scope=…`
+with the grant form) and REFUSES unless a Team capture carries `NoInviteStore` on BOTH sections.
+
+## Not in this PR (operator decision O-c)
+
+Folding single-project invitations into team links is a separate, later change. Until then the Team
+page carries both: the single-project invitation (one project, one role, single use, may confer
+`owner`) and the team link.
+
+## The RED proof
+
+Pre-change code has none of the first round's symbols, so "red on base" is a compile failure and
+proves nothing about any guard. Each guard's RED is therefore its MUTANT — the narrowest edit that
+removes the rule — killed by the test that names it (`tests/control_mutants.py`, each run alone with
+`--only`, positive control GREEN each time), plus the SQL half on scratch copies through
+`tests/pgtest/run.sh`:
+
+| rule broken | mutant | killed by |
+|---|---|---|
+| link grants a verb its minter lacks | `ui-teamlink-scope-arm-stops-asking-for-every-verb` | `TestALinkCannotConferVerbsItsMinterLacks` |
+| scope link without admin | `ui-teamlink-scope-arm-drops-the-admin-requirement` | `TestAScopeLinkNeedsAdminOnTheScope` |
+| project link by a plain member | `ui-teamlink-project-arm-stops-asking-who-may-manage` | `TestAProjectLinkNeedsAMemberManager` |
+| mint trusts the chooser | `ui-teamlink-mint-skips-the-authority-check` | `TestAProjectLinkNeedsAMemberManager` (+2) |
+| redeem skips the re-check | `ui-teamlink-redeem-skips-the-minter-recheck` | `TestAMinterWhoLostAuthorityMintsNothingUsable` |
+| reuse unticked, redeemable twice | `invite-teamlink-single-use-stops-closing` | `TestASingleUseLinkRedeemsExactlyOnce` |
+| revoked link redeemable | `invite-teamlink-revoke-stops-closing` | `TestARevokedLinkIsNotRedeemable` |
+| expired link redeemable (boundary) | `invite-teamlink-expiry-stops-closing-at-the-boundary` | `TestAnExpiredLinkIsNotRedeemable` |
+| joins a target not selected | `ui-teamlink-scope-target-joins-its-whole-project` | `TestARedemptionJoinsExactlyTheSelectedTargets` |
+| revoke by a non-owner | `ui-teamlink-revoke-skips-the-ownership-check` | `TestOnlyTheMinterCanRevokeALink` |
+| owner demoted by a member link | `ui-teamlink-overwrites-an-existing-membership` | `TestALinkNeverOverwritesAnExistingMembership` |
+| reuse box ignored | `ui-teamlink-reuse-tick-is-ignored` | `TestTheTeamLinkFormPassesEveryTickedTargetThrough` |
+| narrowed token offered targets | `ui-team-page-offers-the-unnarrowed-principals-targets` | `TestANarrowedBearerHasNoTeamLinkAuthority` (+ledger) |
+| narrowed token mints | `ui-team-mint-acts-as-the-unnarrowed-principal` | `TestANarrowedBearerHasNoTeamLinkAuthority` (+ledger) |
+| notice drops the reuse clause | `ui-team-honesty-notice-loses-its-reuse-clause` | `TestTheTeamHonestyNoticeIsPinnedWhole` |
+| 🟡1 log confirmed at the spend | `ui-teamlink-log-confirms-before-the-authority-write` | `TestTheRedemptionLogNamesOnlyRealJoins` |
+| 🟡1 unconfirmed row shown as a join | `ui-team-log-renders-an-unconfirmed-row-as-a-join` | `TestTheRedemptionLogNamesOnlyRealJoins` (+1) |
+| 🟡3/O-b project-wide grants off the take-back list | `ui-share-revocable-drops-project-wide-grants` | `TestAProjectWideGrantIsListedLabelledAndRevocable` |
+| 🟡3 audience loses "via a project-wide grant" | `ui-share-audience-loses-the-project-wide-label` | `TestAProjectWideGrantIsListedLabelledAndRevocable` |
+| O-b project-wide grant not revocable | `ui-unshare-refuses-every-project-wide-grant` | `TestAProjectWideGrantIsListedLabelledAndRevocable` |
+| O-b narrowed revoke of a project-wide grant | `ui-unshare-project-grant-ignores-the-narrowing` | `TestANarrowedBearerCannotRevokeAProjectWideGrant` (+1) |
+| O-b plain member revokes a project-wide grant | `ui-unshare-project-grant-for-any-member` | `TestAProjectWideGrantIsListedLabelledAndRevocable` |
+| O-a `/share` redirect drops its query | `ui-old-share-path-drops-its-query` | `TestTheOldFlowPathsRedirectToTheTeamPage` |
+| O-a old invite code read as the share banner | `ui-old-invite-path-keeps-the-pre-move-code` | `TestTheOldFlowPathsRedirectToTheTeamPage` |
+| O-a redirect gains an HTML body (no `no-store`) | `ui-team-redirect-gains-an-html-body` | `TestEveryNonPublicHTMLRowIsNoStore` |
+| D2/🟡4 half-wired server builds | `ui-inviting-without-links-builds` | `TestAnInvitationHalfWithoutTeamLinksIsRefused` |
+| 🟡4 `main` drops the link store | `main-drops-the-link-store-from-the-invitation-half` | `TestTheWiredInvitationHalfRedeemsATeamLink` |
+| 🟢5 blank project/role on a link's log line | `ui-link-log-line-loses-the-link` | `TestALinkRedemptionLogLineNamesTheLink` |
+| round 2 🟡A Revoke offered where the write refuses | `ui-revoke-form-rendered-without-mayrevokegrant` | `TestARevokeFormIsRenderedOnlyWhereTheRevokeWouldBeAuthorised` |
+| round 2 🟡A project named to an outsider | `ui-project-wide-row-names-its-project-to-outsiders` | `TestARevokeFormIsRenderedOnlyWhereTheRevokeWouldBeAuthorised` |
+
+Eight pre-existing rows were RE-DERIVED (same names, same defects) because the code they mutate
+moved — the share/invite page handlers into section builders, `Unshare`'s check into
+`mayRevokeGrant`, the mint's render onto the Team page, the header's invite link into the one Team
+link — and `ui-ring-row-declared-public`'s pattern is unchanged because the route table's alignment
+was kept.
+
+SQL half (Postgres tier, scratch copies): the expiry guard opened to `>=`, the single-use conjunct
+dropped, the revoked conjunct dropped, the CHECK constraint dropped, a revoke of a spent single-use
+link reported as success, and a migration 2 that destroys version-1 rows — each RED in the team-link
+test that names it. The rollback test's own positive control asserts the hazard exists (an older
+build refuses a version-2 database) before asserting the recipe lifts it.
+
+## What these guards still cannot see
+
+- **A real provider.** The seam tests drive the real dispatcher, flight, `ControlInviting` and
+  `ControlTeamLinks` with a STUBBED exchange; no real GoTrue has redeemed a team link.
+- **The mint forms in a browser.** They need `-db-dsn`; `uiaudit` captures the no-database Team page
+  only (the invite mint form's existing gap, Q10).
+- **Rate.** Nothing limits how fast one reusable link enrols; only the flight caps bound it, and no
+  test drives a reusable link at volume.
+- **A revoke racing a redemption**, and two simultaneous mints — the store's conditional statements
+  are the argument; neither race is driven.
+- **An access log.** The `/join` query-string residual above is a deployment fix outside this repo.
+- **A real rollback.** The recipe is measured through the startup predicate on one schema, not by
+  booting an older image against a production-shaped database.
+
+---
+
+# Phase U — the instance label in every title and header
+
+`cmd/cairn-ui -instance-name` (`$CAIRN_UI_INSTANCE_NAME`) is OPTIONAL and arms nothing. It rides on
+`App.Instance` because every frame already receives an `App`; `Armed()` reads `Name` alone and the
+manifest never reads `Instance`. Read raw with the `-app-*` blank policy (a written blank is a
+refusal, exit 78); shape judged once, by `App.Validate`, armed or not: at most 32 characters, no
+surrounding whitespace, no control, format (bidi, zero-width) or line/paragraph-separator character.
+It is PUBLIC — the sign-in page renders it.
+
+## 🔴 The format, and why the label comes first
+
+| | root | any other page |
+|---|---|---|
+| unset | `cairn` | `cairn — <page>` (unchanged) |
+| set | `<instance> · cairn` | `<instance> — <page> · cairn` |
+
+A tab shows the START of a title and cuts the end; the label exists to tell two deployments' tabs
+apart, so it goes first. The page is second (it tells two tabs of ONE deployment apart), the product
+last. The heading shows the label inside the `<h1>` — not as a new header item, which would take a
+cell in the compact header's source-ordered grid.
+
+## The guards, and the one the mutation battery forced
+
+`documentTitle` is the one composer and `wordmark` the one heading. Three guards, three claims:
+`TestEveryFrameTitleIsComposedByDocumentTitle` (AST: every `c.HTML5Props` `Title` is a call to it),
+`TestEveryPageCarriesTheInstanceLabel` (behavioural: a link-following crawl including both public
+frames — the test logs how many pages it reached; a count written here went stale twice), and
+`TestNoPageLabelSpellsTheProductName` (AST over every label argument). The third exists because a
+`shell("cairn — arcs", …)` on the CONFIGURED arcs-index branch survived the first two: the AST check
+saw a well-formed call and the crawl never reaches that branch (the fixture has no arc journal). It
+is a guard on a word, and says so.
+
+⚠ **It follows a label's IDENTIFIERS to the values they are given, because a merge needed it to.**
+The Team page arrived from `main` with `title := "cairn — team"` and two more assignments on
+branches, passed as `shell(title, …)`. The crawl caught the bare `/team` and neither scoped shape;
+the word guard, reading only literals in the argument, caught none. It now follows every identifier
+in a label to the values that name is given by assignments (`:=`, `=`, `+=`) and `var`/`const` in
+the enclosing function, and `var`/`const` at package level — and on through the identifiers in those
+values, transitively (red on all three Team labels before they were fixed, and on a `var`, a local
+`const`, a two-hop local and a package-level `var`, each of which a one-hop, assignment-only first
+draft let through). It fails if it followed no value at all.
+
+## The RED proof
+
+- Unset is inert: 19 crawled pages compared against `origin/main` page-for-page, with the content-hashed
+  stylesheet URL normalised — 0 differ; with a label set, 19 of 19 differ (the control). The stylesheet
+  URL itself DOES change on every page, because `app.css` gained the `.instance-name` rules. Re-measured
+  after `main`'s hub and Team pages were merged in: 22 pages, title, heading and normalised body — 0 differ.
+- `TestAnUnlabelledDeploymentRendersTodaysTitlesAndHeader` is an INVARIANT guard: green at `origin/main`.
+
+## What these guards still cannot see
+
+- A label spelling "cairn — " that reaches `shell` from a FUNCTION'S RETURN, a struct field, a map
+  value, a FUNCTION PARAMETER (a wrapper taking its label as an argument) or a RANGE variable, on an
+  uncrawled branch (the word guard follows names to values written in the function or at package
+  level, not calls, selectors, parameters or `range`).
+- How a given browser, or an installed standalone window, truncates or decorates the title.

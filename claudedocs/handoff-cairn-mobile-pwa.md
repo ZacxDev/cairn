@@ -21,26 +21,24 @@ decisions O1–O13 paraphrased, slices S0–S6b, the iPhone checklist, closing-c
   of it (it gates announcing install to the client instance only). ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- **S0 MERGED** #204 `d4a1dda`. **S1 MERGED + DEPLOYED** #205 `90d1344`: both personal pods on
-  `sha-90d1344` (rollback `sha-0d3a1fa`), served stylesheet byte-identical to S1's `app.css`
-  (pre-S1 one differs). NOT verified on a phone — the operator's check.
-- **S2 MERGED** #206 as `173f08f` (content-identical to reviewed head `32305fb`). Audit: round 0
-  (1 deletion candidate D1, deleted) → round 1 (2🟡 2🟢, all fixed in `c1fba06`) → round 2 CLEAN
-  → CI's full battery caught 2 S2 casualties (stale invite pattern; a child waiter blind to exit
-  pushing the package past `-timeout=2m`), fixed in `32305fb`, delta-audited CLEAN, CI 8/8 green,
-  battery `killed=294 survived=2` (the two declared EQUIVALENT).
-- **S2 NOT deployed.** It is inert until `-app-name` is set; arming the personal instance needs
-  the operator's name + icon variant (`amber`/`teal`/`violet`/`slate`).
-- `pwa_check.sh --self-test` pins `sabotaged=6 caught=6 plain-loop=3/3` (S3 not landed).
-- No claims held.
+- **S0–S4 MERGED.** S1 #205 `90d1344`, S2 #206 `173f08f`, S3 #209 `0355c7a`, test fix #207
+  `86b5b93`, **S4 #220 `f3623d4`** (merged on a fully green run at `480fbcf`; verified by content,
+  27 files equal the tested head). The Team shortcut now targets `/team` (repointed inside #214's
+  merge, `197dd0e`).
+- **S4 DEPLOYED on the personal instance** with #214 at `sha-197dd0e` (operator go): the live
+  manifest now carries shortcuts Arcs `/arcs`, Search `/scopes?q=`, Team `/team` (it carried none
+  before). Still ARMED (`CAIRN_UI_APP_NAME=cairn`, short name `cairn`, icon variant `teal`).
+  NOT verified on a phone (operator's check).
+- `uiaudit/pwa_check.sh --self-test` on the #214+#220 merged tree: `sabotaged=9 caught=9
+  plain-loop=3/3` (a subagent's local run, before the squash).
+- Claim `cairn-mobile-s4` RELEASED.
 
 ## Next steps (ranked)
-1. **S3** — `no-store` alone (decision 8) + `TestEveryNonPublicHTMLRowIsNoStore`; S2 has landed,
-   so S3 wires clause (d) into `pwa_check.sh` and pins `sabotaged=7`. Then S4, S5, S6a, S6b.
-   forcing: user — operator chose this scope (O10 and later answers).
-2. **Arm + deploy S2 on the personal instance** once the operator picks an app name and icon
-   variant (bump both pods to the S2 merge sha; add `-app-name`/`-app-icon-variant` args beside
-   the existing `command`). forcing: user — awaiting the operator's choice.
+1. **S5** (standalone Back/Reload), **S6a** (pin CI chromium) → **S6b** (blocking `uiaudit-touch`
+   job), per the plan — the closing condition still needs S5 merged and S6b green.
+   forcing: user — operator chose this scope (O9–O11).
+2. **(done) Deploy S4** — rode with #214 at `sha-197dd0e`. forcing: user — operator go.
+3. **(done) Merge #220** — merged `f3623d4`. forcing: user — operator asked for S4.
 
 ## Gotchas / decisions / dead-ends
 - **Operator decisions this session (paraphrased; never quote verbatim — AGENTS.md forbids
@@ -74,6 +72,18 @@ decisions O1–O13 paraphrased, slices S0–S6b, the iPhone checklist, closing-c
   (whose `waitFor` now fails on exit) restores the margin. via: measurement
 - **`pwa_check.sh` breaks under an exported `CDPATH`** (`$(cd … && pwd)` prints the path twice →
   a misleading "missing built cairn-ui"); pre-existing pattern, unset `CDPATH` to run it. via: measurement
+
+- **`opencode export`, chromium and the uiaudit walk all misbehave on a loaded host** — the S4
+  screenshot world is UNARMED (armed headless chromium fires `beforeinstallprompt` itself → racy
+  captures), scrollbars hidden, a flake-local `fonts.conf` (nixpkgs' rendered DejaVu Math). Run
+  `pwa_check.sh` with `PWA_CHECK_PORT=<free>` and `LD_LIBRARY_PATH` unset; a long `TMPDIR` overflows
+  chromium's SingletonSocket. via: measurement
+- **The audit hub's push endpoint answered 502 (intermediary) during this arc's S4 window**, making every PR's
+  non-blocking `uiaudit` job red at `verify-push`; `main`'s earlier run passed. Not caused by any
+  PR. via: command
+
+- **S3 put `no-store` on EVERY HTML page — public ones included, from one writer**; the plan's
+  decision 8 and S3 test plan carry a SUPERSEDED-AT-BUILD note saying so. via: change
 
 ## How to verify
 ```bash

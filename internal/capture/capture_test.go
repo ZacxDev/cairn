@@ -370,7 +370,7 @@ func TestEveryByteShips(t *testing.T) {
 	if !ok {
 		t.Fatal("the planted blob was not shipped")
 	}
-	want := strings.Replace(planted, val, "[redacted:dotenv:"+a.Redactor.Tag(val)+"]", 1)
+	want := strings.Replace(planted, val, "[redacted:key-context:"+a.Redactor.Tag(val)+"]", 1)
 	if string(got) != want {
 		t.Fatalf("the planted blob is not its source with exactly that span replaced:\n%s", got)
 	}

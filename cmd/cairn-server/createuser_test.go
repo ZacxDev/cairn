@@ -25,11 +25,13 @@ import (
 // the real `main` for exactly that half.
 func flagsFor(provider, subject, email, project, scopes string) *createUserFlags {
 	enabled := true
+	display := ""
 	return &createUserFlags{
 		enabled:  &enabled,
 		provider: &provider,
 		subject:  &subject,
 		email:    &email,
+		display:  &display,
 		project:  &project,
 		scopes:   &scopes,
 	}

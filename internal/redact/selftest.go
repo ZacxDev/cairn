@@ -13,6 +13,49 @@ type identity struct{}
 func (identity) Record(raw []byte) ([]byte, []Hit)          { return raw, nil }
 func (identity) Blob(_ string, data []byte) ([]byte, []Hit) { return data, nil }
 
+// corrupter is the SCORER's second negative control: it redacts NOTHING, corrupts the encoding of
+// what it returns — bytes appended after the document, or (`double`) a record encoded a second
+// time as one JSON string — and claims a hit for every rule a plant names. A scorer that looks for
+// a plant only in output it can decode credits this redactor with every plant the encoder escaped
+// and every UTF-16 blob; it must score 0.
+type corrupter struct {
+	rules  []string
+	double bool
+}
+
+func (c corrupter) hits() []Hit {
+	out := make([]Hit, 0, len(c.rules))
+	for _, r := range c.rules {
+		out = append(out, Hit{Rule: r})
+	}
+	return out
+}
+
+func (c corrupter) Record(raw []byte) ([]byte, []Hit) {
+	if c.double {
+		return []byte(`"` + jsonEscape(string(raw), true) + `"`), c.hits()
+	}
+	return append(append([]byte(nil), raw...), " trailing-bytes"...), c.hits()
+}
+
+func (c corrupter) Blob(_ string, data []byte) ([]byte, []Hit) {
+	// An ODD number of bytes, so a UTF-16 blob stops decoding.
+	return append(append([]byte(nil), data...), " trailing-bytes"...), c.hits()
+}
+
+// newCorrupters claims every rule name a plant is planted for, in both corruptions.
+func newCorrupters(c Corpus) []redactor {
+	seen := map[string]bool{}
+	var rules []string
+	for _, p := range c.Plants {
+		if !seen[p.Rule] {
+			seen[p.Rule] = true
+			rules = append(rules, p.Rule)
+		}
+	}
+	return []redactor{corrupter{rules: rules}, corrupter{rules: rules, double: true}}
+}
+
 // greedyRule is the damage counter's control: a rule that eats every long alphanumeric run, which
 // a real table must never be. If the corpus cannot see THAT damage, `clean-damaged=0` means nothing.
 var greedyRule = Rule{Name: "greedy-control", Re: regexp.MustCompile(`[A-Za-z0-9]{32,}`)}
@@ -38,6 +81,7 @@ type selfTestParts struct {
 	corpus   Corpus
 	declared int
 	identity redactor
+	corrupt  []redactor
 	greedy   redactor
 	real     redactor
 }
@@ -46,11 +90,13 @@ type selfTestParts struct {
 //
 //	SUMMARY redaction: planted=P caught=C clean-damaged=D
 //
-// 🔴 IT VALIDATES ITS OWN INSTRUMENT BEFORE READING THE VERDICT. Two controls run first and each
+// 🔴 IT VALIDATES ITS OWN INSTRUMENT BEFORE READING THE VERDICT. Three controls run first and each
 // must misbehave in the expected direction, or the run exits 2 ("could not vouch") instead of
-// reporting: the IDENTITY redactor must catch 0 plants (the scorer can see a leak), and a GREEDY
-// rule must damage at least one clean value (the damage counter can move). And P must equal
-// [DeclaredPlants], asserted rather than read off the run.
+// reporting: the IDENTITY redactor must catch 0 plants (the scorer can see a leak), a redactor
+// that only CORRUPTS THE ENCODING must catch 0 too (a plant cannot hide in an escape the scorer
+// does not decode — [corrupter]), and a GREEDY rule must damage at least one clean value (the
+// damage counter can move). And P must equal [DeclaredPlants], asserted rather than read off the
+// run.
 //
 // Missed plants and damaged values are printed by LABEL and rule — never by value.
 func SelfTest(w io.Writer, seed uint64) int {
@@ -65,8 +111,9 @@ func SelfTest(w io.Writer, seed uint64) int {
 		fmt.Fprintf(w, "COULD NOT VOUCH: %v\n", err)
 		return SelfTestNoVouch
 	}
-	return selfTest(w, selfTestParts{corpus: NewCorpus(seed), declared: DeclaredPlants, identity: identity{},
-		greedy: greedy, real: real})
+	corpus := NewCorpus(seed)
+	return selfTest(w, selfTestParts{corpus: corpus, declared: DeclaredPlants, identity: identity{},
+		corrupt: newCorrupters(corpus), greedy: greedy, real: real})
 }
 
 func selfTest(w io.Writer, p selfTestParts) int {
@@ -79,6 +126,15 @@ func selfTest(w io.Writer, p selfTestParts) int {
 	fmt.Fprintf(w, "control identity-redactor: planted=%d caught=%d (must be 0)\n", neg.Planted, neg.Caught)
 	if neg.Caught != 0 {
 		fmt.Fprintln(w, "COULD NOT VOUCH: a redactor that changes nothing scored catches, so the scorer cannot see a leak")
+		return SelfTestNoVouch
+	}
+	corCaught := 0
+	for _, cr := range p.corrupt {
+		corCaught += c.Score(cr).Caught
+	}
+	fmt.Fprintf(w, "control corrupt-encoding-redactors: planted=%d caught=%d (must be 0)\n", neg.Planted, corCaught)
+	if corCaught != 0 || len(p.corrupt) == 0 {
+		fmt.Fprintln(w, "COULD NOT VOUCH: a redactor that only corrupts the encoding scored catches, so a plant can hide in an escape")
 		return SelfTestNoVouch
 	}
 	pos := c.Score(p.greedy)

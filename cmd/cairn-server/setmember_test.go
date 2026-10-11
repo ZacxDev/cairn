@@ -296,6 +296,7 @@ func TestTheRegisteredFlagCountInProseMatchesTheCode(t *testing.T) {
 		"registerCreateUserFlags":      "-create-user",
 		"registerIssueCredentialFlags": "-issue-credential",
 		"registerSetMemberFlags":       "-set-member",
+		"registerRenameUserFlags":      "-rename-user",
 	}
 	words := map[int]string{
 		1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
@@ -360,6 +361,30 @@ func TestTheRegisteredFlagCountInProseMatchesTheCode(t *testing.T) {
 	}
 	if counted != len(spelled) {
 		t.Fatalf("checked %d of %d modes", counted, len(spelled))
+	}
+	// 🔴 AND `spelled` ITSELF IS A HAND LIST, SO IT IS CHECKED AGAINST THE PACKAGE: every
+	// `func register…Flags(` in a non-test file must be in it. Without this a FIFTH mode's
+	// flags would be counted by nobody while the sentence stayed green.
+	registerFunc := regexp.MustCompile(`(?m)^func (register\w+Flags)\(`)
+	declared := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(e.Name())
+		if err != nil {
+			t.Fatalf("reading %s: %v", e.Name(), err)
+		}
+		for _, m := range registerFunc.FindAllStringSubmatch(string(src), -1) {
+			declared++
+			if _, ok := spelled[m[1]]; !ok {
+				t.Errorf("%s declares %s, which this test's `spelled` ledger does not list — its "+
+					"flags are in no sentence's count", e.Name(), m[1])
+			}
+		}
+	}
+	if declared != len(spelled) {
+		t.Errorf("the package declares %d register…Flags function(s) and `spelled` lists %d", declared, len(spelled))
 	}
 
 	// 🔴 AND `main`'s OWN COUNT, WHICH THIS TEST DID NOT COVER AND AN AUDIT MEASURED

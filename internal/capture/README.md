@@ -4,6 +4,12 @@ hands redacted bytes to a `Sink`, S2 ships no Sink of its own (a local spool sto
 removed on review, D1), and the binary offers `--dry-run` and `--self-test` only. S3 adds the
 upload. stdlib-only, under `internal/depspolicy`'s import ban.
 
+🔴 **The upload does not arm capture, and capture is UNARMED on every instance (plan O16).** The
+arming gate is O15's held-back measurement (closing-condition part 5, `internal/redact`'s
+`redact-heldback`), and it currently FAILS: 157/190 leaks caught, under the 90% floor. A green
+`--self-test` is closing-condition part 3, over a corpus the redactor's authors wrote; it is not
+that gate and does not license arming.
+
 ## What one run does, per ROOT session
 
 1. **Reads what is new.** Claude Code: every stream's complete lines after its byte offset (the

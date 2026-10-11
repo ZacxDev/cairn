@@ -51,20 +51,30 @@ type SessionAnswer struct {
 // Session answers the session page through the caller's visible set.
 func (s StoreSource) Session(auth control.Authorization, session string) (SessionAnswer, error) {
 	visible := scopeSetOf(auth.NamedScopes(control.VerbRead))
-	snap, err := s.arcSnapshot()
-	unreadable := false
+	snap, unreadable, err := s.arcSnapshotOrUnreadable()
 	if err != nil {
-		var u *arcs.JournalUnreadableError
-		if !errors.As(err, &u) {
-			return SessionAnswer{}, err
-		}
-		unreadable, snap = true, nil
+		return SessionAnswer{}, err
 	}
 	rep, err := report.SessionAcross(s.Root, session, visible, snap)
 	if err != nil {
 		return SessionAnswer{}, err
 	}
 	return SessionAnswer{Report: rep, ArcsUnreadable: unreadable}, nil
+}
+
+// arcSnapshotOrUnreadable is [StoreSource.arcSnapshot] for the two session reads, which answer the
+// WRITES half even when a configured journal cannot be read: such a journal comes back as a nil
+// snapshot and `unreadable`, and any other error is returned.
+func (s StoreSource) arcSnapshotOrUnreadable() (snap *arcs.Snapshot, unreadable bool, err error) {
+	snap, err = s.arcSnapshot()
+	if err != nil {
+		var u *arcs.JournalUnreadableError
+		if !errors.As(err, &u) {
+			return nil, false, err
+		}
+		return nil, true, nil
+	}
+	return snap, false, nil
 }
 
 // sessionUnseenBody is the ONE answer for every session this caller cannot see anything of. It names
@@ -224,7 +234,7 @@ func SessionPage(v PageView) g.Node {
 	}
 	// nil — no node, so no bytes — unless the ONE predicate shows this viewer a pane (`presence.go`).
 	pane := v.Panes.badge(rep.ID, v.Now)
-	return shell("cairn — session "+shortID(rep.ID), v, []crumb{{Label: "session " + shortID(rep.ID)}},
+	return shell("session "+shortID(rep.ID), v, []crumb{{Label: "session " + shortID(rep.ID)}},
 		h.Section(
 			h.Class("card"),
 			h.ID("session-summary"),

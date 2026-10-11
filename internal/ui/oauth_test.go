@@ -1069,7 +1069,7 @@ func TestTheStartRowIsRefusedCrossSite(t *testing.T) {
 func TestTheStylesheetIsServedAsItsOwnRoute(t *testing.T) {
 	srv := newTestServer(t, staticAuth{testIdentity()})
 
-	for _, page := range []string{RootPath, SignInPath, SharePath} {
+	for _, page := range []string{RootPath, SignInPath, TeamPath} {
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, httptest.NewRequest("GET", page, nil))
 		body := rec.Body.String()

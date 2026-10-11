@@ -38,8 +38,8 @@ func TestEveryRenderedPageCarriesBothNavigationAffordances(t *testing.T) {
 	// The ledger. A page added to the surface must be added here, and the count is
 	// asserted so that adding one without an entry FAILS rather than passing unseen.
 	want := []string{
-		"entry", "invite-index", "invite-minted", "invite-project", "navigate", "root",
-		"scope", "search", "share-index", "share-scope",
+		"entry", "hub", "invite-index", "invite-minted", "invite-project", "navigate", "root",
+		"scope", "search", "sessions", "share-index", "share-scope", "team", "team-minted",
 	}
 	got := make([]string, 0, len(pages))
 	for name := range pages {
@@ -68,21 +68,21 @@ func TestEveryRenderedPageCarriesBothNavigationAffordances(t *testing.T) {
 			t.Errorf("%s: no href to RootPath (%q) — the page has no way back to the browse "+
 				"surface", name, RootPath)
 		}
-		if !strings.Contains(html, `href="`+SharePath+`"`) {
-			t.Errorf("%s: no href to SharePath (%q) — the share flow is reachable only by "+
-				"typing the URL, which is the defect this test pins", name, SharePath)
+		// 🔴 THE SECOND AFFORDANCE IS `TeamPath` NOW, AND IT IS THE ONE ENTRY TO SHARING,
+		// INVITATIONS AND TEAM LINKS (operator decision O-a / round 0 D3: one header entry). This
+		// asserted an href to `SharePath` and to `InvitePath`; both flows live on `/team` now and
+		// those GETs only redirect there, so the defect this test pins — a flow reachable only by
+		// typing its URL — is now "no href to the Team page". The name still says "both": the
+		// root and the Team page.
+		if !strings.Contains(html, `href="`+TeamPath+`"`) {
+			t.Errorf("%s: no href to TeamPath (%q) — sharing, invitations and team links are reachable "+
+				"only by typing the URL, which is the defect this test pins", name, TeamPath)
 		}
-		// 🔴 THE THIRD AFFORDANCE, ADDED BY THE INVITE FLOW, AND THE TEST'S NAME NOW
-		// UNDERSTATES IT — WHICH IS SAID HERE RATHER THAN FIXED BY A RENAME. A Go test
-		// cannot be renamed without breaking every `-run` filter and every reference to it
-		// in prose, and this repository already records what a description narrower than
-		// its implementation costs. This one is the harmless direction: the name says two
-		// and the body asserts three.
-		if !strings.Contains(html, `href="`+InvitePath+`"`) {
-			t.Errorf("%s: no href to InvitePath (%q) — the invite flow is reachable only by "+
-				"typing the URL, which is the same defect one object over: without it the "+
-				"share page's empty-candidates sentence names a remedy nobody can reach",
-				name, InvitePath)
+		// …and the two retired header links are GONE, which is the other half of "one entry".
+		for _, retired := range []string{`class="nav-share"`, `class="nav-invite"`} {
+			if strings.Contains(html, retired) {
+				t.Errorf("%s: the header still carries %s — round 0 D3 replaced both with one Team entry", name, retired)
+			}
 		}
 	}
 }
@@ -121,11 +121,15 @@ func TestTheSignInPageOffersNoAuthenticatedNavigation(t *testing.T) {
 				"stylesheet href, so any absence below would prove nothing", provider)
 		}
 
-		if strings.Contains(html, `href="`+SharePath+`"`) {
-			t.Errorf("provider=%v: the PUBLIC sign-in page offers a link to SharePath (%q). "+
-				"There is no session here, so it is a dead link to a 401 — and the likely "+
-				"cause is `SignInPage` being routed through `shell` to deduplicate its "+
-				"header. It must keep its own frame.", provider, SharePath)
+		// `TeamPath` is the header's entry now (O-a), so it is the href `shell` would bring;
+		// `SharePath` stays for the hand-copied header a tidy-up would most likely paste.
+		for _, authenticated := range []string{SharePath, TeamPath} {
+			if strings.Contains(html, `href="`+authenticated+`"`) {
+				t.Errorf("provider=%v: the PUBLIC sign-in page offers a link to %q. "+
+					"There is no session here, so it is a dead link to a 401 — and the likely "+
+					"cause is `SignInPage` being routed through `shell` to deduplicate its "+
+					"header. It must keep its own frame.", provider, authenticated)
+			}
 		}
 		if strings.Contains(html, "signed in as") {
 			t.Errorf("provider=%v: the public sign-in page claims a signed-in viewer", provider)
@@ -173,22 +177,32 @@ func everyRenderedPage(t *testing.T) map[string]string {
 		Expires: "2000-01-09T03:04:05Z",
 	}
 
+	sessionsView := v
+	sessionsView.SessionsList = &SessionsList{}
+
 	return map[string]string{
+		// "root" is the scope LIST (`Page`, at `/scopes`); "hub" is the root since the IA change.
 		"root":        renderNode(t, Page(v)),
+		"hub":         renderNode(t, HubPage(v)),
+		"sessions":    renderNode(t, SessionsPage(sessionsView)),
 		"navigate":    renderNode(t, NavigatePage(v)),
 		"scope":       renderNode(t, ScopePage(scopeView)),
 		"entry":       renderNode(t, EntryPage(entryView)),
 		"search":      renderNode(t, Page(searchView)),
-		"share-index": renderNode(t, SharePage(shareIndexView)),
-		"share-scope": renderNode(t, SharePage(shareScopeView)),
+		"share-index": renderNode(t, shareOnTeam(shareIndexView)),
+		"share-scope": renderNode(t, shareOnTeam(shareScopeView)),
 		// 🔴 ALL THREE INVITE SHAPES, BECAUSE THE MINTED ONE IS THE PAGE MOST LIKELY TO BE
 		// WRITTEN WITHOUT THE FRAME. It is the response to a POST rather than a navigation,
 		// so it is the one a later change would be tempted to render as a bare fragment —
 		// and a page holding a single-use capability with no way back to the rest of the
 		// surface is the worst place for a reader to be stranded.
-		"invite-index":   renderNode(t, InvitePage(inviteIndexView)),
-		"invite-project": renderNode(t, InvitePage(inviteProjectView)),
-		"invite-minted":  renderNode(t, InvitePage(inviteMintedView)),
+		"invite-index":   renderNode(t, inviteOnTeam(inviteIndexView)),
+		"invite-project": renderNode(t, inviteOnTeam(inviteProjectView)),
+		"invite-minted":  renderNode(t, inviteOnTeam(inviteMintedView)),
+		// The Team page, and its MINTED shape for the invite-minted reason above.
+		"team": renderNode(t, TeamPage(TeamView{Viewer: "operator@example.invalid", CSRF: renderCSRF})),
+		"team-minted": renderNode(t, TeamPage(TeamView{Viewer: "operator@example.invalid", CSRF: renderCSRF,
+			Minted: &MintedTeamLink{Link: JoinPath + "?invite=" + fixtureLinkToken, Role: "reader", Expires: "2000-01-09T03:04:05Z"}})),
 	}
 }
 
@@ -255,6 +269,7 @@ func TestNoPublicPageOffersAuthenticatedNavigation(t *testing.T) {
 		}{
 			{"SharePath", SharePath},
 			{"InvitePath", InvitePath},
+			{"TeamPath", TeamPath},
 			{"RootPath", RootPath},
 		} {
 			if strings.Contains(html, `href="`+authenticated.href+`"`) {

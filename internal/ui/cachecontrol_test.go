@@ -24,14 +24,26 @@ import (
 // `a == a`. Each marker is checked ABSENT from the navigate page this world renders, so a fixture
 // that silently falls back to navigate goes red instead of measuring the fallback.
 var realPage = map[string]struct{ query, marker string }{
-	"GET / content":        {"", `class="scope-grid"`},
-	"GET /scope content":   {"?" + QueryID + "=" + string(fixtureScope), `<h2>platform</h2>`},
-	"GET /entry content":   {"?" + QueryScope + "=" + string(fixtureScope) + "&" + QueryRef + "=runbook", `<h2>runbook</h2>`},
-	"GET /arc content":     {"?" + QueryHome + "=" + string(fixtureScope) + "&" + QuerySlug + "=walk-arc", `<h2>Arc</h2>`},
-	"GET /arcs content":    {"", `id="arcs-index"`},
-	"GET /session content": {"?" + QuerySession + "=" + walkSession, `id="session-summary"`},
-	"GET /share content":   {"", `<title>cairn — sharing`},
-	"GET /invite content":  {"", `class="invite-honesty"`},
+	"GET / content":       {"", `id="hub"`},
+	"GET /scopes content": {"", `class="scope-grid"`},
+	// The sessions page renders its list card even when nothing is visible; the marker is that card.
+	"GET /sessions content": {"", `id="sessions-index"`},
+	"GET /scope content":    {"?" + QueryID + "=" + string(fixtureScope), `<h2>platform</h2>`},
+	"GET /entry content":    {"?" + QueryScope + "=" + string(fixtureScope) + "&" + QueryRef + "=runbook", `<h2>runbook</h2>`},
+	"GET /arc content":      {"?" + QueryHome + "=" + string(fixtureScope) + "&" + QuerySlug + "=walk-arc", `<h2>Arc</h2>`},
+	"GET /arcs content":     {"", `id="arcs-index"`},
+	"GET /session content":  {"?" + QuerySession + "=" + walkSession, `id="session-summary"`},
+	"GET /team content":     {"", `<title>cairn — team`},
+}
+
+// redirectRows is every non-public GET row that answers a BODILESS 303 rather than a page —
+// the decision this test's own refusal asks to have written down. They carry no
+// `Cache-Control` because there is nothing to cache: `redirectToTeam` writes a Location and no
+// body (operator decision O-a moved both flows onto `/team`). Each is asserted to be exactly
+// that, so a row that started answering HTML through some other path would fail here.
+var redirectRows = map[string]string{
+	"GET /share":  TeamPath + "#share",
+	"GET /invite": TeamPath + "#invite",
 }
 
 // walkSession is the one session id `walkSource` answers as FOUND.
@@ -130,6 +142,15 @@ func TestEveryNonPublicHTMLRowIsNoStore(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, httptest.NewRequest(method, target, nil))
+		if wantLoc, redirect := redirectRows[line]; redirect {
+			if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != wantLoc || rec.Body.Len() != 0 ||
+				rec.Header().Get("Content-Type") != "" {
+				t.Errorf("pwa clause (d) no-store: %s is declared a bodiless redirect to %q and answered %d Location=%q "+
+					"Content-Type=%q with %d body byte(s)", line, wantLoc, rec.Code, rec.Header().Get("Location"),
+					rec.Header().Get("Content-Type"), rec.Body.Len())
+			}
+			continue
+		}
 		if !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") {
 			if !public {
 				t.Errorf("pwa clause (d) no-store: GET %s answered %d with Content-Type %q, so this walk cannot see the "+

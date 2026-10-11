@@ -2,6 +2,8 @@ package redact
 
 import (
 	"bytes"
+	"encoding/binary"
+	"encoding/json"
 	"strings"
 )
 
@@ -31,6 +33,15 @@ type Score struct {
 // OWN rule fired on the item that carried it. (2) is what makes `Plant.Rule` a claim: without it a
 // rule could stop matching while a broader one quietly took over, and every per-rule test the
 // corpus is supposed to underwrite would still read green.
+//
+// 🔴 AND A FORM IS SEARCHED IN ITS JSON-ESCAPED SPELLINGS TOO (review round 5). The decoded-string
+// search finds a plant the encoder escaped only when the output DECODES. An output that does not —
+// trailing bytes after the document, a document encoded twice — kept a plant holding `&`, `<`, `>`
+// or a quote in escaped form, where no search looked: it read as "gone", and [ruleFiredOn] then
+// credited it. A redactor that changes nothing but corrupts the encoding scored 8 plants over 60
+// seeds — and, the same hole through a different door, a UTF-16 blob with one byte appended no
+// longer decodes as UTF-16, so its plant was "gone" too. [encodedForms] closes both without
+// depending on a decode; `SelfTest` runs such redactors as a third control.
 //
 // A clean value is DAMAGED when it no longer appears anywhere.
 func (c Corpus) Score(r redactor) Score {
@@ -64,6 +75,7 @@ func (c Corpus) Score(r redactor) Score {
 		}
 	}
 	h := hay.String()
+	carried := c.carriedTexts()
 	s := Score{Planted: len(c.Plants)}
 	for _, p := range c.Plants {
 		leaked := false
@@ -71,12 +83,17 @@ func (c Corpus) Score(r redactor) Score {
 			if strings.Contains(h, f) {
 				leaked = true
 			}
+			for _, e := range encodedForms(f) {
+				if strings.Contains(h, e) {
+					leaked = true
+				}
+			}
 		}
 		if leaked {
 			s.Missed = append(s.Missed, p)
 			continue
 		}
-		if !c.ruleFiredOn(p, itemRules) {
+		if !ruleFiredOn(p, carried, itemRules) {
 			s.Missed = append(s.Missed, p)
 			s.WrongRule = append(s.WrongRule, p)
 			continue
@@ -93,23 +110,87 @@ func (c Corpus) Score(r redactor) Score {
 }
 
 // ruleFiredOn answers whether the plant's own rule produced a hit on an item that carried it.
-func (c Corpus) ruleFiredOn(p Plant, itemRules []map[string]bool) bool {
+//
+// 🔴 "CARRIED" IS READ IN THE DECODED STRINGS TOO, not only in the raw bytes (review round 5):
+// Go's JSON encoder writes `&`, `<` and `>` as six-character escapes (a backslash, `u`, four hex
+// digits), so a plant holding one of them was never found in its own record's bytes, its rule's
+// hit was never credited, and the self-test scored 78/79 on about one seed in six — the
+// `symbol-password` plant, whose alphabet carries `&`. The leak oracle above already searched
+// decoded strings; this check did not.
+func ruleFiredOn(p Plant, carried []string, itemRules []map[string]bool) bool {
+	for i, text := range carried {
+		if !itemRules[i][p.Rule] {
+			continue
+		}
+		for _, f := range p.Forms {
+			if strings.Contains(text, f) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// carriedTexts is, per item, the text a plant is looked for in to decide the item CARRIED it: the
+// bytes (UTF-16 decoded), and for a record every decoded string of it. Built once per score — it
+// was rebuilt, JSON decode included, for every plant.
+func (c Corpus) carriedTexts() []string {
+	out := make([]string, len(c.Items))
 	for i, it := range c.Items {
-		carried := false
 		text := string(it.Data)
 		if u, _, ok := utf16Text(it.Data); ok {
 			text = u
 		}
-		for _, f := range p.Forms {
-			if strings.Contains(text, f) {
-				carried = true
+		if !it.Blob {
+			var b strings.Builder
+			b.WriteString(text)
+			if v, err := decodeJSON(bytes.TrimSpace(it.Data)); err == nil {
+				collectStrings(v, &b)
 			}
+			text = b.String()
 		}
-		if carried && itemRules[i][p.Rule] {
-			return true
+		out[i] = text
+	}
+	return out
+}
+
+// encodedForms returns the spellings of f a leak can survive in without decoding: inside a JSON
+// string, with and without HTML escaping (`&` as a six-character escape, or literal), each also
+// escaped a SECOND time — what a document encoded twice holds — and as UTF-16 bytes in either
+// byte order.
+func encodedForms(f string) []string {
+	var out []string
+	seen := map[string]bool{f: true}
+	add := func(s string) {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
 		}
 	}
-	return false
+	once := []string{jsonEscape(f, true), jsonEscape(f, false)}
+	for _, e := range once {
+		add(e)
+	}
+	for _, e := range once {
+		add(jsonEscape(e, true))
+		add(jsonEscape(e, false))
+	}
+	for _, order := range []binary.ByteOrder{binary.LittleEndian, binary.BigEndian} {
+		add(string(encodeUTF16(f, order)))
+	}
+	return out
+}
+
+// jsonEscape is s as the body of a JSON string literal (no surrounding quotes).
+func jsonEscape(s string, html bool) string {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(html)
+	if err := enc.Encode(s); err != nil {
+		return s
+	}
+	t := bytes.TrimSuffix(b.Bytes(), []byte("\n"))
+	return string(t[1 : len(t)-1])
 }
 
 func collectStrings(v any, b *strings.Builder) {

@@ -16,7 +16,7 @@ import (
 // DeclaredPlants is how many secrets [NewCorpus] plants. The self-test REFUSES (exit 2) when the
 // generator plants a different number: P is asserted against this declaration, never read off the
 // run, so a generator that silently lost a position cannot report a smaller perfect score.
-const DeclaredPlants = 72
+const DeclaredPlants = 79
 
 // Plant is one planted secret: where it sits, the rule expected to catch it, and every FORM whose
 // presence in the redacted output means it leaked (the plaintext, and its encoding when it was
@@ -183,7 +183,7 @@ func NewCorpus(seed uint64) Corpus {
 
 	// 1, 2 — a shell tool's stdout printing a dotenv file.
 	dotenv := fmt.Sprintf("# generated %s\nDB_HOST=db.example\nDB_PASSWORD=%s\nGITHUB_TOKEN=%s\nLOG_LEVEL=debug\nmax_tokens = 4096\n",
-		sha(), g.plant("shell-stdout-dotenv", "dotenv", g.pick(alnum, 24)),
+		sha(), g.plant("shell-stdout-dotenv", "key-context", g.pick(alnum, 24)),
 		g.plant("shell-stdout-github", "github-token", "ghp_"+g.pick(alnum, 36)))
 	g.record(g.toolUse(session, "Bash", m{"command": "cat .env", "description": g.words(3)}))
 	g.record(g.toolResult(session, dotenv, m{"stdout": dotenv, "stderr": "", "interrupted": false}))
@@ -244,13 +244,13 @@ func NewCorpus(seed uint64) Corpus {
 	g.blob("toolu_"+g.pick(alnum, 24)+".txt", fmt.Sprintf("STRIPE_SECRET_KEY=%s\nCLICKUP_TOKEN=%s\nSESSION_SECRET=%s\nBUILD=%s\nTOKEN_COUNT=12\n",
 		g.plant("blob-dotenv-stripe", "stripe-key", "sk_live_"+g.pick(alnum, 24)),
 		g.plant("blob-dotenv-clickup", "clickup-token", "pk_"+g.pick(digit, 8)+"_"+g.pick(upper, 32)),
-		g.plant("blob-dotenv-plain", "dotenv", g.pick(alnum, 28)), sha()))
+		g.plant("blob-dotenv-plain", "key-context", g.pick(alnum, 28)), sha()))
 
 	// 17, 18 — a persisted TEXT blob: a Secret manifest, two documents, the second a ConfigMap
 	// whose `data` must survive.
 	b1 := g.plant("blob-k8s-data-1", "k8s-secret", base64.StdEncoding.EncodeToString([]byte(g.pick(alnum, 24))))
-	// `token:` names a secret, so the dotenv rule reaches this value before the Secret rule does.
-	b2 := g.plant("blob-k8s-data-2", "dotenv", base64.StdEncoding.EncodeToString([]byte(g.pick(alnum, 24))))
+	// `token:` names a secret, so the key-context rule names this value before the Secret rule does.
+	b2 := g.plant("blob-k8s-data-2", "key-context", base64.StdEncoding.EncodeToString([]byte(g.pick(alnum, 24))))
 	cm := g.clean("configmap-value", "replicas-"+g.pick(digit, 3))
 	g.blob("toolu_"+g.pick(alnum, 24)+".txt", "apiVersion: v1\nkind: Secret\nmetadata:\n  name: alpha-db\ndata:\n  password: |\n    "+
 		b1+"\n  token: "+b2+"\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: alpha-config\ndata:\n  mode: "+cm+"\n")
@@ -325,13 +325,15 @@ func NewCorpus(seed uint64) Corpus {
 
 	g.reviewRoundPlants(session, ses)
 	g.reviewRound3Plants(session)
+	g.roundFourPlants(session)
 	g.codeShapedClean(session)
 
-	// Clean filler that must survive: hashes, digests, ids, a signature-like payload, URLs.
+	// Clean filler that must survive — hashes, digests, ids, URLs — around ONE plant: a random base64
+	// value in prose, which was clean filler until O15 made a long random-looking token a secret.
 	g.record(g.toolResult(session, "commit "+sha()+"\nAuthor: someone\n\n    "+g.words(6)+"\n\ndigest sha256:"+digest()+
 		"\nsee https://github.com/example-org/alpha-notes/pull/7 and git@github.com:example-org/alpha-notes.git\n"+
 		"the bearer of this note keeps the token count low\nrandom "+
-		g.clean("random-base64", base64.StdEncoding.EncodeToString(g.bytes(48)))+"\n", nil))
+		g.plant("random-base64-in-output", "entropy", base64.StdEncoding.EncodeToString(g.bytes(48)))+"\n", nil))
 	g.record(g.toolResult(session, g.clean("build-uuid", g.uuid())+" "+digest()+" "+sha(), nil))
 	g.blob("toolu_"+g.pick(alnum, 24)+".txt", "no secrets here: "+g.words(12)+"\n"+digest()+"\n")
 	return c

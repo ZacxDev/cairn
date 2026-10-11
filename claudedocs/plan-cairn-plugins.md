@@ -153,6 +153,36 @@ field names and types alone.
   its own class, `agent-prompt`, never `human-text` (decision 17). Decision 18 anchors an opencode
   child at the `task` part that names it, not at a `subtask` part. Decision 6 now parses a `data:`
   prefix before its base64 rule.
+- *Revision 19 records operator decision O15 (S1 review round 4).* Three rounds of per-format
+  redaction rules each closed the cases they named while a fresh held-back set stayed flat and
+  damage to clean text grew. **O15** changes the approach — key context plus entropy over
+  prefix-normalised lines (decision 6) — and adds an **arming gate**: closing-condition part 5, and
+  the S3 arming precondition. It also corrects a recall figure the plan stated (the libpq row of
+  the rate test, test plan S1).
+- *Revision 20 applies S1 review round 5 under O15, and scopes what O15's key-context rule does as
+  BUILT.* "Any value attached to a secret-sounding name" was wider than the code: a named value is
+  redacted unless its SHAPE is code, a placeholder or prose, a bare value is longer than 1 KiB, or —
+  for a name whose secret word is a segment rather than its end — it is a word, a slug, a number or
+  a URL (decision 6, T1). It also corrects the rate test's stated figure (one seed reported as if
+  general; now a range over named seeds) and records a scorer defect that made the self-test's
+  78/79 seed-dependent.
+- *Revision 21 applies S1 review round 6 under O15, and RETRACTS one clause of revision 20's
+  scoping.* "A bare value longer than 1 KiB is refused" is gone: round 5 took it to keep the rule
+  linear and it shipped a 2 KiB hex key and a URL-encoded document that round 4 had caught; a named
+  bare value of any length is now taken, judged by its first 64 bytes. The rest of the round
+  replaces evidence that was too thin in both directions — a `.netrc` password line, a weak name's
+  value, "code notation" read off spacing, an identifier counted by characters alone, a `.pgpass`
+  row read off five colons — and it adds the thing rounds 4 and 5 lacked: **damage is now measured
+  on text nobody wrote for the purpose** (this repository's tracked text, and the Go standard
+  library's source) **and pinned as a budget**, so a round that widens it fails a test. Decision 6,
+  T1 and the S1 test plan carry the measured numbers and the residuals.
+- *Revision 22 records operator decision O16 and applies S1 review round 7, the LAST heuristic
+  fix round.* The arming gate FAILS on a fresh held-back set (157/190 leaks caught at round 6's
+  head, under the 90% floor) and S1 merges with capture UNARMED everywhere; T1 now states that
+  set's misses and damage by category, and round 6's four unfixed findings, as the measured
+  residuals. Round 7 rescopes the clean-damage budget to a FROZEN committed corpus — round 6's
+  live-tree budget went red on unrelated doc edits, on deleting docs and on go1.26 — and closes
+  the one round-6 regression in the entropy rule (words shielding a random end segment).
 
 ## Goal and premise
 
@@ -212,6 +242,13 @@ Drop the work, or the named half, if any of these holds:
      not read off the run).
   4. **The two example plugins' own suites exit 0** in the `go` job against in-process fake LLM and
      fake ClickUp servers, with synthetic fixtures only.
+  5. **The arming gate (O15) passes on a FRESH held-back set**: `redact-heldback <cases.jsonl>`
+     (`internal/redact/cmd/redact-heldback`, built, not `go run`) exits 0 — at least 90% of leaks
+     caught AND at most 15% of clean lines damaged, both controls having behaved — over a case set
+     an AUDITOR wrote for the redactor commit being armed, that the fixer never saw, and that was
+     not reused from an earlier round. The exit code is mechanical; the set's freshness is a named
+     human judgement over named evidence: the PR comment recording the run names the set's author,
+     the redactor commit, and the `leaks caught=X/Y clean damaged=A/B` line verbatim.
 
   Each script exits **2** — "could not vouch", never a skip and never 0 — when a prerequisite is
   missing (a Go toolchain, a built `cairn-ui` or `cairn-capture`; the opencode leg uses a recorded
@@ -247,6 +284,14 @@ Drop the work, or the named half, if any of these holds:
 
 ### Rollout (NOT part of the closing condition)
 
+- 🔴 **Nothing is armed before closing-condition part 5 holds for the redactor being armed (O15)** —
+  not the personal instance, not one host. A rule change after the gate passed resets it: the next
+  arming needs a NEW held-back set scored against the new commit.
+- 🔴 **Today the gate FAILS and capture is armed NOWHERE (O16).** S1 merges unarmed; no rule
+  round is scheduled to change that. Arming waits for a separate operator decision, expected to
+  narrow WHAT is captured (raw tool output excluded or truncated) rather than to redact better,
+  and that decision still has to pass part 5 on a fresh set. The steps below describe what
+  happens after it, not now.
 - **The personal instance first**, with capture armed on one host, retention set, plugins
   registered but every toggle OFF (decision 10 — an agent decision, not an operator one). The
   operator turns on summaries for one scope, reads a week of output, and judges it. The same for
@@ -652,6 +697,8 @@ script that prints only counts.
 | O12 | Answers Q2: content no redactor can read — images, PDFs, other binary payloads — SHIPS, every byte. The redactor scans every text-decodable string (base64 that decodes to text included) and leaves binary content as it is. **The coordinator's reading (revision 18, reversible):** O12 meant images, PDFs and binary PAYLOADS, so "binary" is a value whose bytes begin with a KNOWN binary file signature (or a base64/`data:` payload decoding to one); NUL-separated text and mostly-UTF-8 text with stray invalid bytes are TEXT and are scanned. *Reason: under revision 17's rule a `/proc/<pid>/environ` dump or an `env -0` listing — NUL-separated, all secrets — classed as binary and shipped unscanned; the narrowing costs nothing O12 asked for.* | Decision 6a's withholding is DELETED; binary is still classified, for collapsed display (decisions 17, 18). T1 names the residual: a secret inside an image, a PDF or another signature-bearing payload ships unredacted. |
 | O13 | The coordinator stated these recommended answers to the operator as the defaults it would take before the operator answered O12 and O14; the operator did not object. They cover Q4 (a host-local, never-committed, counts-only redaction audit), Q5 (the client instance is NOT armed without an explicit operator decision), Q7 (one capture owner per instance), Q8 (ClickUp ids only, titles behind a no-default flag), Q9 (keep account identifiers), Q10 (plugins on a user timer on one operator host), Q11 (an `AGENTS.md` row is paid for by evicting an equal amount of history to a README in the same change), Q12 (per-session directory, one replica) and Q15 (the proposed Go-only `transcript` verb). | Each question below is marked "recommendation adopted"; Q13, Q14 and Q16 stay open. |
 | O14 | Answers Q6: retention 90 days; an instance quota of about twice the steady state — about 20 GB compressed per capturing host on the personal instance — re-measured after a month of real uploads. | Implemented in S3 (`-transcript-retention`, `-transcript-quota`); decision 15. |
+| O15 | After S1's third review round, the redactor changes approach: redact by KEY CONTEXT (any value attached to a secret-sounding name — a key, a flag, an environment variable, a config field, SQL's `IDENTIFIED BY`) plus ENTROPY (long random-looking tokens), retiring or narrowing the per-format rules those two subsume and accepting more damage to clean text, within a ceiling. Tool line prefixes are normalised FIRST, so every rule sees a line's content, with redaction still applied to the original bytes. And an arming gate: capture is armed on NO instance until a FRESH held-back set — written by an auditor, never seen by the fixer, replaced every round — shows at least 90% of its leaks caught AND at most 15% of its clean lines damaged. | Decision 6 (S1: `internal/redact/{normalise,keyed,entropy}.go`); closing-condition part 5; the S3 arming precondition; Rollout. The gate is `internal/redact/heldback.go` + `cmd/redact-heldback`. *As built (revision 21), and no wider: "any value" means any value whose SHAPE is not code, a placeholder or prose, at any length (revision 20's refusal of a bare run over 1 KiB is retracted); a name whose secret word is a segment rather than its end — and the abbreviation `cred`/`creds` — takes only a value that itself looks like a credential. Decision 6 states the refusals and T1 their measured cost.* |
+| O16 | After S1's sixth review round, the operator ends the heuristic fix rounds: round 7 is the last, and S1 (#216) merges with capture UNARMED on every instance. O15's gate stays the arming condition, and today it FAILS: a fresh auditor-written held-back set of 190 leak lines and 175 clean ones scored `leaks caught=157/190 clean damaged=18/175` at the round-6 head `13219d8` — 82.6% caught, under the 90% floor; 10.3% damaged, inside the 15% ceiling — and rounds 4, 5 and 6 moved that set only from 154 to 155 to 157. Arming is a separate decision for later, and is expected to be about capturing LESS — for example excluding or truncating raw tool output — rather than about redacting better. | Revision 22. T1 states the scorecard and its misses and damage by category as the measured residuals, plus round 6's unfixed findings; `internal/redact/README.md` ("The gate FAILS"); closing-condition part 5 and S3's arming precondition stand unchanged; Rollout. |
 
 ### Chosen by the AGENT writing this plan (open to review)
 
@@ -890,6 +937,36 @@ script that prints only counts.
      tree vs a session), two regex engines. One BEHAVIOURAL containment test pins the relation:
      every realistic `credential` control string in leakscan's self-test is also caught by
      `internal/redact` (fails if a leakscan control is added that redact misses).
+   - 🔴 *The approach since O15 (revision 19):* tool line prefixes (Read's numbered copy, grep's
+     `path:N:`/`path-N-`/`N:`/`N-`/`path:`, a diff's `<`/`>`/`+`/`-`; since revision 20 also
+     `path:N:C:`, docker compose's `svc | `, `kubectl logs --prefix`, a log timestamp and `git
+     blame`, each recognised by STRUCTURE — a bare `path:` must look like a path, because `fix:`
+     and `TODO:` are the same bytes in prose) are set aside FIRST — every
+     prefix-stripped reading of the text is a view, the original among them, line-anchored rules run
+     over every view, and matches map back to the original bytes. Then two general rules carry the
+     table: KEY CONTEXT (a value attached to a name the one secret-name predicate accepts, in any
+     notation — assignment, YAML, quoted keys, call arguments, flags, SQL, XML — *unless* the value's
+     shape is code, a placeholder or prose, or the name is WEAK — its secret word a segment, not the
+     end: `DB_PASSWORD_PROD`, or the abbreviation `cred`/`creds` — and the value is not itself
+     credential-shaped: a word, an identifier or slug, a number, a timestamp, an address, a URL, a
+     type or a regex. Since revision 21 a bare value of ANY length is taken, judged by its first
+     64 bytes; a digits-only value of four or more digits is taken under a strong name outside
+     code notation; and what reads as code is decided by evidence about the LINE — an ALL_CAPS
+     name glued to `=` is an environment assignment whatever follows the value, a name that starts
+     its line before a spaced `=` and a value that ends it is the INI layout, and a dereference is
+     read only over an operand that looks like an identifier) and ENTROPY (a long
+     run of the base64 alphabet with all three character classes that is not wordy, not an
+     identifier/path/digest/transcript ID, and not a binary payload's encoding). The per-format
+     dotenv, source-literal, libpq, `docker -e` and `.npmrc` rules are RETIRED into key context; the
+     query rule is narrowed to names that carry a credential without saying so; short CLI flags
+     are a closed per-tool list. Vendor formats, positional files, PEM blocks and the YAML/JSON
+     structure stay — and since revision 21 the two positional files are read only with their
+     file's STRUCTURE: a `.pgpass` row needs a host-like, a port-like, a database and a user field
+     (five colon fields with a number second is also `path:N:C:` in front of a comment), and a
+     `.netrc` password that is a plain word needs a `machine`/`default` record in its block, a
+     netrc file named by the line's prefix or the lines above, or — the lone line — no prefix but
+     a line number and a word that is not an attribute of a password. `internal/redact/README.md`
+     is the inventory and the measured costs.
    - *Base64 that hides text:* a WHOLE string of ≥ 16 base64-alphabet characters (after removing
      ASCII whitespace — see 6a's decoder) that DECODES to text (6a's text rule) is scanned decoded as
      well; a match replaces the whole encoded value. The floor buys no precision — the decoded scan
@@ -921,8 +998,10 @@ script that prints only counts.
      tool-result BLOB (a dotenv dump and a `Secret` manifest as `.txt` files). 🔴 **The planted values
      are GENERATED AT RUN TIME from a seeded RNG**, never committed: a committed credential-shaped
      fixture is itself a `leakscan` finding (and should be). The report is the pair "planted=P
-     caught=P" plus `clean-damaged=0` on a clean corpus of UUIDs, commit SHAs, digests and base64
-     payloads (a redactor that eats every hash makes transcripts unreadable; that is a failure too).
+     caught=P" plus `clean-damaged=0` on a clean corpus of UUIDs, commit SHAs, digests, image
+     payloads and thinking signatures (a redactor that eats every hash makes transcripts
+     unreadable; that is a failure too). *Since O15 a random base64 value in prose is a PLANT (the
+     entropy rule's), not clean filler.*
      A textbook example key is NOT in the corpus.
 
 6a. **Blobs and binary content: text is redacted, binary SHIPS byte-identical (O12).**
@@ -940,7 +1019,10 @@ script that prints only counts.
      bytes AND valid UTF-8 — is retracted: it shipped an environ dump unscanned.*
    - **Text blobs.** A blob that parses as JSON (or JSON Lines) is redacted by decision 6's
      DECODED-string traversal, exactly like a record, so a JSON-escaped secret inside a blob is
-     caught; if nothing matches, the ORIGINAL bytes are stored, otherwise the re-encoded document.
+     caught; if nothing matches, the ORIGINAL bytes are stored; otherwise a JSON DOCUMENT is
+     redacted IN PLACE (revision 21: only the string tokens that changed are rewritten — one hit
+     used to re-serialise the whole document, 1,186 changed lines for four hits in this
+     repository's one large fixture) and a JSON Lines record with a hit is re-encoded compact.
      Any other text blob is redacted as ONE string with the same table, keyed tags and the
      line-based `Secret` rule, and stored as the redacted bytes — byte-identical to its source
      exactly when nothing matched. The pod re-checks both kinds like a record (decision 6).
@@ -1284,7 +1366,7 @@ GET /transcript/skeleton  ·  GET /transcript/records  ·  GET /transcript/tool 
 
 | threat | control |
 |---|---|
-| **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. **What is NOT controlled:** unshaped secrets (typed passwords, novel token formats); **a secret inside an image, a PDF, an archive or any other payload that begins with a known binary file signature (a PNG carrying a token in a text chunk included) — that content SHIPS UNREDACTED by operator decision (O12, decision 6a, the coordinator's reading), because no text rule can read it**; text in an encoding other than UTF-8 or BOM-marked UTF-16 (scanned byte-wise only); an encoded secret embedded in a longer string (not decoded), a flow-style YAML `Secret` (decision 6), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
+| **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. 🔴 **THE MEASURED RESIDUAL IS LARGE ENOUGH THAT CAPTURE IS UNARMED (O16).** A fresh auditor-written held-back set (190 leak lines, 175 clean) scored `leaks caught=157/190 clean damaged=18/175` at the round-6 head, under the arming gate's 90% floor, and three fix rounds moved it 154 → 155 → 157. Its 33 MISSES by category: a secret in prose 11 of 15 missed; a PIN 9 of 10; a positional argument in code 6 of 12; a CLI flag no rule reads 2; a hex secret 2; a long value 1; a value under a strong name 1; a symbol-led value 1. Its 18 DAMAGED clean lines: base64 of non-secret data 9 of 10; a public key 8 of 10; a type annotation 1. Round 6's findings left unfixed by O16, stated as residuals: (1) the `.netrc` context rule damages prose — `See netrc(5).` then `password field`, a grep path containing `netrc`, `machine translation` then `password storage`; (2) a digits-only password in INI, `.properties`, TOML or Makefile layout ships — `password = 482915`, `db.password = 482915`, `DB_PASSWORD ?= 482915`; (3) a Makefile `:=`, an indented INI line and an INI line with a trailing `; comment` fall through config detection; (4) minified JavaScript after `password:` is damaged. **What is NOT controlled:** secrets that are neither NAMED nor RANDOM-LOOKING (typed passwords in prose, an unnamed all-lower-case, hex or short token — O15's two general rules cannot see them; a novel token format that is long and mixed-case IS caught by the entropy rule); an UNNAMED password-manager password with symbols (the symbols split it into base64-alphabet runs under 20 characters: 0–1/200 caught at 16–32 characters, measured revision 20 — a symbol-token rule that caught 175/200 at 24 was measured damaging 275 tokens of this repository's own text and not adopted); a NAMED value the key-context rule refuses by design, each MEASURED (revision 21; `internal/redact/README.md` names the test that pins each): one whose shape is code, a placeholder or prose (symbol-bearing generated passwords 193–200/200 over seeds 4–8; every symbol-free generator 200/200); a WEAK name's value that is itself identifier- or slug-shaped, e.g. `DB_PASSWORD_PROD=tiger_2024` (0/200, pinned; random values under weak names 199–200/200); a hex constant of at most 8 digits, or a signed or decimal number, under any name; a digits-only value in code notation or under four digits; a letters-only value after a spaced `=`, and a bracket-led value the line does not close there; a symbol-led password in an indented `key: value,` whose operand does not look random (194–200/200); a `.netrc` password that is a plain word AND is alone AND is an attribute word, sits behind a quote, diff, compose or non-netrc path prefix, or follows a capitalised keyword (plain-word passwords with netrc structure or file context: 340/340 over 17 layouts); a `.pgpass` row whose database or user starts with a digit. *Revision 20 also listed "a bare value over 1 KiB" here; that refusal is retracted — such a value is taken (90/90 at 1 KiB to 64 KiB).* **And what redaction costs clean text, now measured on text nobody wrote for the purpose and pinned as a budget** (`internal/redact/budget_test.go`): the Go standard library's source, 3,027,865 lines — 10,285 changed at round 4, 11,182 at round 5, 4,790 at round 6, nearly all of them the library's own test keys, certificates and vectors; this repository's tracked text, 300,774 lines — 1,422, 1,419, 224, of which 19 are in files that are not tests or fixtures and are enumerated. *Since revision 22 what `go test` pins is a FROZEN committed corpus (41,477 lines of this repository's neutral text and of go1.25.14 standard-library files; 631 lines damaged, enumerated, matched exactly both ways), because the live-tree budget went red on unrelated doc edits, on deleting docs and on go1.26; the live sweeps are opt-in (`-redact.live-budget`). Open, and no job is added for it: whether CI should run the live sweeps, which would see new prose and a new toolchain but would bring back the red-on-unrelated-edit failure unless they only REPORT.* Stated clean-text costs, each pinned: a line that is exactly `password <non-attribute word>`, bare or behind a line number; `grep -n` output over a line that is itself three colon-separated words; a weak name over a value that does look random (a key id after a `…_KID` name; pinned in `TestRoundSixWeakNamesNeedACredentialShapedValue`); **a secret inside an image, a PDF, an archive or any other payload that begins with a known binary file signature (a PNG carrying a token in a text chunk included) — that content SHIPS UNREDACTED by operator decision (O12, decision 6a, the coordinator's reading), because no text rule can read it**; text in an encoding other than UTF-8 or BOM-marked UTF-16 (scanned byte-wise only); an encoded secret embedded in a longer string (not decoded — caught as a token only when long and random-looking), a flow-style YAML `Secret` (decision 6), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). |
 | **T2. Confidential but non-secret content** (client business detail, personal data in a tool output) | Redaction does not address it at all; VISIBILITY is the only control (decision 4). Stated, so nobody believes the redactor covers it. |
 | **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store, plus the client read ledger (decision 3a), plus rendered headers anywhere in the content, plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope and a ledger `*` add `*`; F1 adds `*` when any tool input names `cairn`/`subsystem-recall` and the ledger is empty, F2 when any input names the cache root `subsystem-store`; nothing cancels a `*`, no caller resolves a working directory or parses a shell line; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The ledger is SELF-REPORTED by the host**, like the write trailer: a session or anything else on the host can edit or delete it, and that can only make `V` SMALLER — an emptied ledger trips F1 if any input names the program. **The residual:** (1) a session MIXING a ledger-writing client with one that writes no record — a pre-ledger client (an older pinned revision), or a call whose environment lost the session id (`env -i`, some `sudo` setups) — has a non-empty ledger, so F1 does not fire and the unrecorded call's scope is missing; (2) a file-tool read of a local store copy whose path does not contain `subsystem-store` — a `--cache <dir>` root (`internal/client/cli.go:339`), a `CAIRN_MIRROR_ROOT` mirror (`cli.go:834`), or a moved cache root; (3) a store or transcript read that bypasses the client entirely (a direct HTTP call to the pod, or to `cairn-ui`'s `/transcript/…` routes — decision 17's CLI verbs write `*`, a raw HTTP call writes nothing). *Revisions 8–12 listed, as the residual, invocations whose program name never appears in the command line (a variable, a script, a shell function); the ledger records the read however it was invoked, so that residual is CLOSED for a current, ledger-writing client that sees the session id (residual (1) is what is left when either fails) — retracted with the parser.* |
 | **T4. Viewer-set computation makes the predicate vacuous** | Clause (e), and a mutant row (`transcript-written-set-from-viewer-scopes`). |
@@ -1311,7 +1393,7 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 | **S0** | **Fixtures and shape ledgers.** `tests/transcripts/gen.py` emits synthetic sessions in BOTH formats from the measured key sets (R1–R3): main stream, two subagents, an opencode child, a compaction boundary, a `pr-link`, persisted tool output, mutated opencode parts, bookkeeping records and duplicate fields, a `user` record carrying a large `tool_result` block, an inline image block AND its `toolUseResult.file.base64` duplicate, an opencode `tool` part with a `data:` URL in `state.attachments[].url`, a binary (PDF and JPEG), a UTF-8 text, a UTF-16 text and a JSON text tool-result blob, thinking `signature` values and 64-hex digests (which must survive untouched), and every read path of R7 (a rendered recall in a tool result; one in a hook attachment with no command line; a store-wide search rendered `scope=(all scopes)` in a hook attachment; a bare header-less `ls-entries`; an explicit `--scope` read; a `--repo` read; a `cd … && cairn recall` chain). A shape test pins the generator's record types, block types and field names against `internal/transcript`'s classification table. The generator also emits a synthetic read-ledger file per session (decision 3a), including an EMPTY one beside cairn-naming inputs (F1). And S0 MEASURES, on a host with opencode, whether `OPENCODE_SESSION_ID` reaches tool commands and which session id it carries, recording the answer for S11 — **done: decision 3a and `internal/transcript/README.md`.** The generator writes ONE file, `internal/transcript/testdata/synthetic_world.json`, which Go tests materialise, so `onlyGo` needs one row; the table is `internal/transcript/classify.go`. | `tests/`; `onlyGo` if Go tests read the fixtures; README. | Test-only. |
 | **S1** | **`internal/redact`** — its own rule table (decision 6), decoded-string traversal, text-blob redaction and the text/binary sniff (decision 6a), keyed tags, structural Secret rule, denylist loader; the corpus generator and the `planted/caught/clean-damaged` report; the behavioural containment test against leakscan's controls. | new package; `ok` floor; README. | Library only. |
 | **S2** | **`cmd/cairn-capture`** and **`internal/transcript/scopeuse`** — readers (JSONL by offset, subagents, blobs — text redacted, binary byte-identical; `opencode export` to a file, diffing by part digest), `V` derivation (the `*` mappings of decision 3), watermark state, routing (decision 16), `--dry-run`, `--self-test`. No upload, and no run mode, yet (D1). | `cmd/cairn-capture`; new packages (`internal/capture` holds the agent, so its tests sit in a package); the four `scopeuse-*` rows join `control_mutants.py` with a per-row `pkgs` override ADDING `./internal/transcript/scopeuse/` (+ pinned count) — *as built: not `PKGS` itself, because the battery's own rule is that a killer outside the control/identity/server seam gets a per-row addition, and widening `PKGS` would re-scope every existing row and move three pinned enumerations*; `depspolicy.LinkedBinaryRoots` + its test; `flake.nix` `packages.cairn-capture` + `checks.cairn-capture-self-test` (the built binary's self-test; CI's `nix` job builds both); `ok` floor. Review round 1 added four more battery rows (`scopeuse-restore-ignored`, `capture-v-not-a-union`, `capture-child-ledger-ignored`, `capture-unreadable-ledger-ignored`). | Inert: it sends nothing. |
-| **S3** | **Transcript store + capture API.** `internal/transcript` (directory layout, CAS append, frames, ownership, quota, retention sweeper, deletion, pod-side `V` re-derivation), worker listener + ledger, `capture` token kind and `cairn-ui -issue-worker-token capture`, refusing pod re-check. Agent gains upload. `tests/plugins/e2e.sh` created with clauses (a), (b), (c), (h). | new package → `ok` floor, `control_mutants.py` `PKGS` (+ pinned count through `ci.yml` and `internal/control/README.md`); `cmd/cairn-ui` flags (`-worker-addr`, `-worker-tokens`, `-transcript-dir`, `-transcript-retention`, `-transcript-quota`) and tests; `ci.yml` e2e step. | Inert unless `-worker-addr` AND `-transcript-dir` are set. |
+| **S3** | **Transcript store + capture API.** `internal/transcript` (directory layout, CAS append, frames, ownership, quota, retention sweeper, deletion, pod-side `V` re-derivation), worker listener + ledger, `capture` token kind and `cairn-ui -issue-worker-token capture`, refusing pod re-check. Agent gains upload. `tests/plugins/e2e.sh` created with clauses (a), (b), (c), (h). 🔴 **Arming precondition (O15):** S3 may MERGE inert, but capture is armed on NO instance until closing-condition part 5 holds for the redactor commit being armed (≥ 90% of a fresh held-back set's leaks caught, ≤ 15% of its clean lines damaged); S11 is a second, independent precondition. | new package → `ok` floor, `control_mutants.py` `PKGS` (+ pinned count through `ci.yml` and `internal/control/README.md`); `cmd/cairn-ui` flags (`-worker-addr`, `-worker-tokens`, `-transcript-dir`, `-transcript-retention`, `-transcript-quota`) and tests; `ci.yml` e2e step. | Inert unless `-worker-addr` AND `-transcript-dir` are set. |
 | **S4** | **Visibility + the session page shows content (O3).** `transcript.Visible` (decision 4) with `V` (decision 3); the collapsed transcript section on `/session` (decision 18); the owner arm finding O10 sessions; `GET /session/transcript` raw-record view. e2e clauses (d), (e), (f), (g — the visibility half). Benchmark of the whole-store `W_trailer` walk. | UI rows → hand ledger, `contentAuthority`, uiaudit targets + a synthetic transcript in the uiaudit world; mutant rows. | Read-only over S3; renders nothing when no transcript exists. |
 | **S5** | **Plugin registry, toggles, plugin API.** `internal/plugins` (manifest validation, closed capability and output-type vocabularies, plugin token kind, the narrowing-only toggle fold + `-plugin-journal`, the stateless pending query); `/plugins` page + toggle POSTs on scope, arc and session pages. e2e clauses (i), (j). | new package → `ok` floor, `PKGS`; UI rows; `cmd/cairn-ui` flags (`-plugin-registry`, `-plugin-journal`); mutant rows; README. | Inert with no registry; every toggle OFF by construction. |
 | **S6** | **Outputs: storage, rendering, deletion cascade.** Outputs stored per session; rendered labelled-derived (decision 11) on the session page and as a one-line summary on session rows; owner "delete transcript" POST cascading to outputs and edges; the capture `withdraw` route running the same cascade, and the agent's withdrawal on a routing change (decision 16). e2e clauses (k), (l), (m). | UI rows; worker-listener ledger (`withdraw`); `cmd/cairn-capture`; mutant rows; README. | Nothing renders until a plugin writes; the agent withdraws nothing until a routing answer changes. |
@@ -1441,13 +1523,70 @@ run time).
 - Review round 2 (S1) measured round 1 making four things WORSE, and round 3 fixed each against
   the auditor's own tests, adopted as permanent regression tests: a private-key body read through a
   copy prefix (3/3 lines shipped → 0/3), the code filter refusing real passwords (13–78/200
-  symbol-bearing and 0/200 dotted → 176–200/200 and 200/200, the clean-damage gain kept at 0/75),
+  symbol-bearing and 0/200 dotted → 176–200/200 and 200/200, the clean-damage gain kept at 0/75 —
+  *⚠ the 176 is RETRACTED (round 4): the test's body used a weaker oracle than its doc stated, and
+  under the stated one, no 6-character window surviving, round 3's code measured 139/200 for the
+  libpq string*),
   the END rule losing `PGPASSWORD`/`SECRET_KEY_BASE`/`apiKeyValue` (now glued words, a closed
   suffix set and a closed `<VENDOR>_KEY` list), and ASCII file magics letting text skip scanning
   (now a non-text byte in the first 1 KiB is required). It also closed pre-existing gaps: URL
   query and connection-string credentials, JWK private members, YAML block scalars, `.pgpass`,
   `.netrc`, source literals, `docker login -p`, value-first k8s env entries, BOM-less UTF-16. The
   corpus plants 72.
+- Review round 4 (S1, O15): regression tests for every tool prefix round 3 found hiding a line
+  (`N:`, `path:`, `N-`, `path-N-`, `<`, `>`), each in front of a value only a line-anchored rule can
+  catch, and for PEM bodies behind each; for the named-key notations round 3 found unread
+  (systemd `Environment=`, `os.environ[...] =`, `--password=`/`--password v`, `mysql -p<pw>`,
+  `redis-cli -a`, `IDENTIFIED BY`, kubeconfig, XML, .NET); and for round 3's damaged clean probes —
+  each shown RED on the pre-O15 code. The rate test now implements the oracle its doc states
+  (symbol-bearing 195–199/200 in every shape, libpq included); the entropy rule's recall and the
+  clean shapes it must spare are pinned (`TestTheEntropyRuleThresholds`). The corpus plants 79.
+  The arming gate's own tests drive both bounds at their edges and every exit-2 branch.
+  *Correction (revision 20): "195–199/200" held at seed 4 only; over seeds 4–8 round 4's code
+  measured 192–200, and the README now states the range with the seeds it was measured at.*
+- Review round 5 (S1, O15; `round5_test.go`, each shown RED on round 4's head unless labelled an
+  invariant guard): the key-context finder in LINEAR time (a 4N/N timing ratio under 8, measured
+  13.1–15.6 at round 4; plus a clock-free operation count); a stripped prefix-shaped word (`fix:`,
+  `12:`, `> `) no longer exposing prose to the `.netrc` rule, whose own-line form now needs netrc
+  structure or a non-word value; values that START with `*`, `&` or a printf verb outside code
+  notation (200/200 each, from 0–42/200); `path:N:C:`, `N:C:`, docker compose, `kubectl
+  --prefix`, ISO and syslog timestamps and `git blame` as prefixes, with a PEM block's SHORT final
+  body line now bounded by its END line (it leaked with no prefix at all); a secret word as a
+  SEGMENT of the name (`DB_PASSWORD_PROD`) and `creds`/`cred`/`privkey` (200/200, from 0/200);
+  `mysql -p'pw'`/`-p"pw"`; an injective view-dedupe key. The self-test's 78/79 on about one seed in
+  six was the SCORER, not the redactor (a plant's `&` was JSON-escaped in its record, so its rule was
+  never credited); with that and two rule fixes, 0 of 400 seeds fail.
+- Review round 6 (S1, O15; `round6_test.go`, each shown RED on round 5's head unless labelled an
+  invariant guard or a cost pin; `budget_test.go`). **Every heuristic is measured in both
+  directions** — recall on generated secrets, damage on neutral text — and the damage is PINNED:
+  every line of this repository's non-fixture files that the redactor changes is enumerated (a
+  new one fails), fixture files and a sample of the Go standard library's source are held to
+  ceilings, and the pgpass rule to a ceiling over this repository's lines behind grep prefixes.
+  The cases: a named bare value at 1 KiB, 2 KiB and 64 KiB (90/90, from 18/90) with the finder
+  still linear (two operation counts and two timing ratios); `.netrc` plain-word passwords from
+  structure or file context (340/340 over 17 layouts, from 80/340) against prose (0/35 damaged,
+  from 7/35) with the residuals pinned in both directions; a weak name's value held to a
+  credential shape (0/33 clean probes damaged, from 21/33; random values 199–200/200; the
+  identifier-shaped cost pinned at 0/200); identifiers the entropy rule had begun to redact
+  (the rule's lines over the standard library 4,826 → 5,687 → 4,617, its recall table unchanged);
+  a JSON document redacted in place; symbol-led values in the INI layout and before trailing
+  punctuation (200/200 in seven of eight layouts, 194–200 in the eighth, from 0–43/200); a
+  redactor that only corrupts the encoding scoring nothing (256 credits over 60 seeds, now 0,
+  and run by the self-test as a third control); the arming gate's oracle not counting a
+  redaction marker as surviving secret (a known-answer test); `.pgpass` structure (6 of 22,887
+  neutral lines behind `path:N:C:`, now 0); a digits-only value under a strong name (0/200 at
+  rounds 4 and 5, 200/200). 61 named mutants, each killed by its own guard's message; the
+  harness's no-op control survives, as it must.
+- Review round 7 (S1, O16 — the last heuristic round; `round7_test.go`, `budget_test.go`). The
+  clean-damage budget pins a FROZEN corpus under `internal/redact/testdata/`, exactly, so
+  `go test` no longer depends on the live tree or on GOROOT; the live sweeps are opt-in. The
+  pgpass guard over grep-prefixed neutral lines reads the same frozen corpus. The entropy rule
+  judges a 16+-character END segment on its own, so words no longer shield a random tail (of 480
+  generated tokens, 434 kept their tail at round 6's head, 110 at round 5's, 10 now), with zero
+  change on the frozen corpus — and, measured by the round-7 audit over the WHOLE go1.25.14
+  standard library, **+112 damaged lines** (4,790 → 4,902, all entropy) on 63 ordinary identifiers
+  with a 16–19-character camelCase or acronym end segment, which neither the frozen corpus nor the
+  sampled sweep contains. A STATED cost under O16, not fixed.
 
 **S2.**
 - Offset reader: a file grown mid-line ships only complete lines; the next run ships the rest

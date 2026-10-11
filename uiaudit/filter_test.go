@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
+
+	"github.com/ZacxDev/cairn/internal/ui"
 )
 
 // filterState is what the scope page's filter has done to the list, read off the live DOM.
@@ -21,6 +23,9 @@ type filterState struct {
 	Count         string   `json:"count"`
 	EmptyHidden   bool     `json:"emptyHidden"`
 	ControlHidden bool     `json:"controlHidden"`
+	// AliasShown is every alias chip that is actually RENDERED (has a layout box), as "ref:alias".
+	// The server renders every alias hidden; only the script may reveal one.
+	AliasShown []string `json:"aliasShown"`
 }
 
 const filterStateJS = `(() => {
@@ -32,6 +37,9 @@ const filterStateJS = `(() => {
     count: document.getElementById("entry-filter-count").textContent,
     emptyHidden: document.getElementById("entry-filter-empty").hidden,
     controlHidden: document.getElementById("entry-filter-control").hidden,
+    aliasShown: rows.flatMap(r => Array.from(r.querySelectorAll("ul.chips-alias > li"))
+      .filter(li => li.getClientRects().length > 0)
+      .map(li => r.getAttribute("data-filter").split("\n")[0] + ":" + li.textContent)),
   };
 })()`
 
@@ -90,7 +98,7 @@ func TestTheEntryFilterNarrowsRowsInARealBrowser(t *testing.T) {
 
 	var href string
 	if err := chromedp.Run(b.ctx,
-		chromedp.Navigate(world.BaseURL+"/"),
+		chromedp.Navigate(world.BaseURL+ui.ScopesPath),
 		chromedp.Evaluate(fmt.Sprintf(
 			`(Array.from(document.querySelectorAll("a.card-name")).find(a => a.textContent === %q) || {getAttribute: () => ""}).getAttribute("href")`,
 			scope), &href),
@@ -98,7 +106,7 @@ func TestTheEntryFilterNarrowsRowsInARealBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	if href == "" {
-		t.Fatalf("the root page links no card named %q", scope)
+		t.Fatalf("the scope list links no card named %q", scope)
 	}
 
 	read := func() filterState {
@@ -142,6 +150,10 @@ func TestTheEntryFilterNarrowsRowsInARealBrowser(t *testing.T) {
 	if before.Count != all {
 		t.Errorf("before any query the count reads %q, want %q", before.Count, all)
 	}
+	// The card does not show aliases (an operator decision): with no query, none is rendered.
+	if len(before.AliasShown) != 0 {
+		t.Errorf("before any query alias chips are on screen: %v — the card must not show aliases", before.AliasShown)
+	}
 
 	// --- A query matching ONLY one entry's ALIAS. ---
 	typeQuery("xzyplgh")
@@ -163,6 +175,22 @@ func TestTheEntryFilterNarrowsRowsInARealBrowser(t *testing.T) {
 	if len(got.HiddenDisplay) != got.Total-1 {
 		t.Errorf("%d rows hidden, want %d", len(got.HiddenDisplay), got.Total-1)
 	}
+	// 🔴 THE ROW MATCHED ONLY THROUGH ITS ALIAS, SO THAT ALIAS — AND ONLY IT — IS NOW ON SCREEN.
+	if !slices.Equal(got.AliasShown, []string{"zz-filter-aardvark:xyzzy-plugh"}) {
+		t.Errorf("after an alias-only match the rendered alias chips are %v, want [zz-filter-aardvark:xyzzy-plugh]: "+
+			"a row kept only by an alias must show the alias that kept it", got.AliasShown)
+	}
+
+	// --- The same row kept by its REF: no alias is the reason, so none is revealed. ---
+	open()
+	typeQuery("aardvark")
+	byRef := read()
+	if !slices.Contains(byRef.Visible, "zz-filter-aardvark") {
+		t.Fatalf("a query on the ref did not keep the row: %v", byRef.Visible)
+	}
+	if len(byRef.AliasShown) != 0 {
+		t.Errorf("a row kept by its REF reveals alias chips %v; only an alias-only match may", byRef.AliasShown)
+	}
 
 	// --- A query matching nothing. ---
 	open()
@@ -176,6 +204,9 @@ func TestTheEntryFilterNarrowsRowsInARealBrowser(t *testing.T) {
 	}
 	if none.EmptyHidden {
 		t.Error("nothing matches and the empty-state line is still hidden")
+	}
+	if len(none.AliasShown) != 0 {
+		t.Errorf("a query matching nothing left alias chips on screen: %v", none.AliasShown)
 	}
 	t.Logf("filter in a real browser: %d rows; alias-only query -> %v (%q); no-match query -> %d visible (%q), empty state shown",
 		got.Total, got.Visible, got.Count, len(none.Visible), none.Count)
