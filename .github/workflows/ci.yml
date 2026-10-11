@@ -4,7 +4,27 @@ on:
   push:
     branches: [main]
   pull_request:
-  merge_group:
+  # ⚠ NO `merge_group:`. It was listed here and never fired: `main` has no branch
+  # protection and no ruleset (both read back empty from the API when this was
+  # removed), so there is no merge queue to emit the event, and `gh run list
+  # --event merge_group` had never returned a run. Re-add it WITH the queue, not before.
+
+# 🔴 ONE RUN PER PR AT A TIME, AND ONLY A PR'S RUNS ARE CANCELLED. Every push to a PR
+# branch started a fresh full run while the previous ones kept going — one branch was
+# measured with five overlapping ~70-minute runs, each verdict already stale. A newer
+# push supersedes an older run of the SAME PR, so that one is cancelled. A `push` to
+# `main` is never cancelled: each commit there is a distinct state of the trunk, and a
+# cancelled run is a commit nobody ever got a verdict on.
+#
+# ⚠ SO A NON-PR RUN GETS A GROUP OF ITS OWN (`run_id`), NOT MERELY
+# `cancel-in-progress: false`. A concurrency group holds one running and ONE pending
+# run, and a newer pending run REPLACES the older pending one whatever
+# `cancel-in-progress` says — three quick pushes to `main` sharing a group would
+# silently cancel the middle one. A group nothing else can join has no pending slot
+# to lose.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -37,8 +57,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # `pytest-xdist` is PINNED, unlike `pytest`: it decides how the suite is split
+      # across processes and how the junit file below is merged, and the floor reads
+      # that file — so a new release is a change to the instrument, taken on purpose.
       - name: install
-        run: python3 -m pip install --upgrade pip pytest
+        run: python3 -m pip install --upgrade pip pytest pytest-xdist==3.8.0
 
       # 🔴 THE PUBLISH WORKFLOW'S GUARDS, PROVED TO GO RED BEFORE THE SUITE IS
       # BELIEVED. `tests/test_publish_workflow.py` pins properties of
@@ -96,10 +119,21 @@ jobs:
       #
       # ⚠ THIS IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE. No bug ever
       # narrowed this suite; it pins a property so that one cannot pass unseen.
+      #
+      # 🔴 `-n auto` (pytest-xdist, one worker per runner vCPU), BECAUSE THE SERIAL
+      # SUITE WAS ~10 MINUTES OF ONE CORE ON A FOUR-CORE RUNNER. Isolation was
+      # MEASURED, not assumed: serial against `-n 4`/`-n 8`/`-n 24`, the same 2774
+      # test ids with the same outcome in every run. It found ONE shared-clock
+      # flake — a gzip `MTIME` byte compared across two requests — fixed in the
+      # test, not retried. The floor below is UNCHANGED and still correct: xdist
+      # merges every worker into ONE junit `testsuite` whose `tests` is the whole
+      # run, measured moving to 2775 on an added test and refusing at 1970 on a
+      # narrowed collection. ⚠ A local reproduction of a failure seen here can
+      # still run serially; ordering under xdist differs, so try both.
       - name: run the suite with a collected-test floor
         run: |
           set -o pipefail
-          python3 -m pytest tests -q -p no:randomly --junitxml=/tmp/r.xml | tee /tmp/out.txt
+          python3 -m pytest tests -q -p no:randomly -n auto --junitxml=/tmp/r.xml | tee /tmp/out.txt
           python3 - <<'PY'
           import sys, xml.etree.ElementTree as ET
           # 1856 collected, measured on the server dual-run branch: 1839 plus the seventeen
@@ -1869,8 +1903,8 @@ jobs:
           # event `github.sha` is the EPHEMERAL MERGE COMMIT, which exists only on the runner and
           # cannot be resolved from a clone — so a run label built from it names a commit nobody can
           # look up, on a design whose whole point is run-to-run attribution. The head sha is the
-          # commit a reader actually has. `github.sha` is kept as the fallback for the `push` and
-          # `merge_group` events, where there is no pull-request head.
+          # commit a reader actually has. `github.sha` is kept as the fallback for the `push`
+          # event, where there is no pull-request head.
           UIAUDIT_LABEL: cairn-ui ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -uo pipefail
