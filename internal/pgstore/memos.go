@@ -31,8 +31,10 @@ import (
 // `TestGuardCNoExportedResultOrFieldCarriesMemoText` is the ledger. Parameters are not
 // constrained: `Send` takes the subject and body to store.
 //
-// ⚠ INERT UNLESS `cairn-ui -client-api-addr` IS SET: S2's client listener (`internal/clientapi`) is
-// its one request-reachable caller; the verbs (S3) and the browser tab (S5) are later slices.
+// ⚠ TWO REQUEST-REACHABLE CALLERS, BOTH IN `cairn-ui`: S2's client listener (`internal/clientapi`,
+// only with `-client-api-addr`) and S5's browser tab (`internal/ui`'s memos tab through
+// `cmd/cairn-ui/memotab.go`, only with a database AND a control journal). The verbs (S3) reach it
+// through the listener.
 type MemoStore struct {
 	db   *DB
 	scan *secretscan.Redactor

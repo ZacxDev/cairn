@@ -4580,8 +4580,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-agent-tab-not-recognised",
         path="internal/ui/render.go",
-        old="\tcase TabSessions, TabArcs, TabAgent:",
-        new="\tcase TabSessions, TabArcs:",
+        old="\tcase TabSessions, TabArcs, TabAgent, TabMemos:",
+        new="\tcase TabSessions, TabArcs, TabMemos:",
         killer="TestTheAgentTabIsByteForByteTheCLIRecall",
         why="an unrecognised tab silently renders the entries tab (the house ruling), so a tab link "
         "that lost its value still answers 200 with a page — just not the one it names.",
@@ -5311,6 +5311,16 @@ MUTANTS: tuple[Mutant, ...] = (
         extra_killers=("TestTheRouteLedgerMatchesTheDispatchTable",),
         why="retracting only REDUCES exposure, so exempting it reads as safe — and a cross-site "
         "retraction is still a write somebody else chose.",
+    ),
+    Mutant(
+        name="ui-memo-tab-not-recognised",
+        path="internal/ui/render.go",
+        old="\tcase TabSessions, TabArcs, TabAgent, TabMemos:",
+        new="\tcase TabSessions, TabArcs, TabAgent:",
+        killer="TestAReadOnlyViewerSeesTheMemosTabButNoSendForm",
+        extra_killers=("TestEachScopeTabRendersOnlyItsOwnPanel",),
+        why="`ui-agent-tab-not-recognised`'s shape one tab over: the link still answers 200 with the "
+        "entries tab, so nothing but the panel's own id can tell.",
     ),
     Mutant(
         name="ui-memo-form-ignores-maysend",

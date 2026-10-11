@@ -675,3 +675,24 @@ func TestTheMemoListingPagesPastOnePageWithoutLosingASharedSecond(t *testing.T) 
 		t.Error("a failing store listed as empty")
 	}
 }
+
+// TestAForgedOrStaleRetractionIsAnsweredByTheStoresRule — the retract write's two refusals, back on
+// the tab: member-m (no admin) retracting writer-a's memo by hand is `not-permitted` and changes
+// nothing; a second retraction of a memo already retracted (a stale page) is the `memo-gone` banner.
+// POSITIVE CONTROL: the first retraction by the sender succeeds.
+func TestAForgedOrStaleRetractionIsAnsweredByTheStoresRule(t *testing.T) {
+	w := memoWorld(t)
+	memos := &fakeMemos{model: w.model, rows: memoRows()}
+	out, reason := outcomeOf(t, gatedPost(memoServer(t, w.member, memos), MemoRetractPath, retractForm(browseScopeA, 11)), browseScopeA)
+	if out != memoOutcomeRefused || reason != string(memo.RefusedNotPermitted) || memos.retracts != 0 {
+		t.Errorf("member-m retracting another's memo answered %q %q with %d retraction(s), want refused not-permitted and none",
+			out, reason, memos.retracts)
+	}
+	srv := memoServer(t, w.writer, memos)
+	if out, _ := outcomeOf(t, gatedPost(srv, MemoRetractPath, retractForm(browseScopeA, 11)), browseScopeA); out != memoOutcomeRetracted || memos.retracts != 1 {
+		t.Fatalf("POSITIVE CONTROL FAILED: the sender's retraction answered %q (%d)", out, memos.retracts)
+	}
+	if out, _ := outcomeOf(t, gatedPost(srv, MemoRetractPath, retractForm(browseScopeA, 11)), browseScopeA); out != memoOutcomeGone || memos.retracts != 1 {
+		t.Errorf("a second retraction answered %q with %d retraction(s), want %q and still 1", out, memos.retracts, memoOutcomeGone)
+	}
+}

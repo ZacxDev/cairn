@@ -1217,6 +1217,12 @@ driven — and which `refuseUnreachableTouch` proves is.
 one; its `select` and submit are covered only by S1's element/type selectors (`select`,
 `button[type="submit"]`), never measured.
 
+⚠ **The scope page's MEMOS tab (S5 of the scope-mail plan), populated** — the same `-db-dsn`, plus a
+control journal. The tab is a `?tab=memos` link the scope page publishes, so `ExpandLinks` reaches it
+with no change here (a tab adds no ledger row), but only in its `ui.NoMemoStore` state: its send form,
+memo rows and retract buttons are measured by `internal/ui`'s Go tests and the pgtest tier, never in a
+real browser.
+
 🔴 **AND ANYTHING BETWEEN THE ORIGIN AND A CLIENT, WHICH IS THE ONE BLIND SPOT THAT HAS BEEN
 MEASURED TO MATTER.** Every number this program produces is about the pod `BootWorld` starts on
 loopback over a temp directory it created. An edge CDN in front of a deployment can inject

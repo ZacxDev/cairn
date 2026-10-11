@@ -4639,3 +4639,79 @@ memo routes to host-side agents: `GET /client/v1/memos?scope=&after=&limit=&tomb
 - Concurrency between a revocation and an in-flight request: revocation is one refresh of latency,
   tested by forcing `control.Cache.Refresh`, never by timing the 30 s loop.
 - The deployment: S7 makes the listener reachable; nothing here measures an ingress.
+
+---
+
+# Phase Y — scope mail's memos tab (S5 of the scope-mail plan)
+
+`?tab=memos` on the scope page, and two writes, `POST /memo` and `POST /memo/retract` (`memos.go`).
+The tab is NOT a row: it is a `?tab=` value on `GET /scope`, read after that handler's uniform
+refusal, by the scope NAME out of the narrowed answer. The two writes ARE rows, class 0.
+
+## The binding rules
+
+- 🔴 **Both writes are class 0, so both cross-site gates reach them by METHOD.**
+  `TestTheMemoRowsAreBehindBothCrossSiteGates` drives each with no `Origin`, a foreign one, no CSRF
+  token and another session's token, asserts each gate's OWN message, and asserts the store was never
+  called.
+- 🔴 **Every authorisation decision is the store's.** `pgstore.MemoStore` asks `memo.MaySend`,
+  `memo.MayRead` and `memo.MayRetract` itself. The UI asks the predicates only to decide what to
+  RENDER — the send form (`memo.MaySend`) and each retract button (`memo.MayRetractMemo`, the ONE
+  retraction rule, Q19, asked of the stored memo) — so a forged POST from a viewer shown no form is
+  refused by the predicate an agent's send meets (`TestAForgedSendFromAReadOnlyViewerIsRefusedByMaySend`
+  over a fake that asks the same predicates; `cmd/cairn-ui`'s pgtest-tier
+  `TestTheMemoTabsForgedSendIsRefusedByTheRealStore` on the real binary over the real store).
+- 🔴 **Text comes from `memo.Rendered` only, then gomponents' text nodes.** Escaping stops markup;
+  the render-side replacement stops invisible and reordering code points escaping leaves intact.
+  `TestMemoTextRendersAsTextAndThroughTheRenderSideReplacement` plants `<script>`, U+200B and U+202E.
+  Plain text, never Markdown, and no href is built from memo content.
+- **This package cannot import `internal/pgstore`**: it would put the PostgreSQL driver into the
+  nested `uiaudit` module's graph. So `Memos` is this package's interface and `cmd/cairn-ui`
+  (`memotab.go`) adapts the store — a translation only.
+- **Wired only with a database AND a control journal** (`wireBrowserMemos`), the client listener's
+  two conditions: without a journal the authority is the token file's shared rows, and every browser
+  sender would be one sender. Otherwise the tab says `NoMemoStore` and the writes answer 501 — the
+  `NoInviteStore` ruling.
+- **A write naming a scope the viewer cannot read is the browse refusal** (404, byte-identical to an
+  absent scope), before the store is called.
+- **A write redirects back to the tab** with an outcome from a CLOSED set (`memoOutcome`): a refusal's
+  reason renders as a fixed sentence and a secret's rule name only if it is in
+  `memo.ConfidentSecretRules()`. Nothing the address bar carries is reflected. ⚠ The typed text is
+  lost on a refusal.
+- **Decision 10:** tombstones are listed with their line and no subject or body; no retract button
+  on a tombstone; the copy `MemoRetractionNote` ("stops further delivery only") is pinned WHOLE.
+  **Decision 12:** a sender who can no longer write the scope is marked (`memo.SenderMaySend`).
+- **Paging:** the tab lists tombstones, which can exceed one store page; the page boundary is asked
+  one second early and held ids dropped — `memo-read`'s rule in `internal/client`, for its reason
+  (whole-second times, ties at one instant).
+- **No count on the tab label**: it would read the database on every tab of every scope page.
+
+## The RED proof
+
+`tests/control_mutants.py`, each row run alone (`--only`), positive control GREEN each time, each
+killed by the test it names: `ui-memo-send-row-declared-public`, `ui-memo-retract-row-declared-public`,
+`ui-memo-tab-not-recognised`, `ui-memo-form-ignores-maysend`, `ui-memo-retract-button-asks-maysend`,
+`ui-memo-retract-button-on-a-tombstone`, `ui-memo-body-rendered-raw`,
+`memo-render-skips-the-body-replacement`, `ui-memo-lapsed-mark-never-shown`,
+`ui-memo-listing-boundary-not-one-second-early`, `ui-memo-write-skips-the-scope-lookup`,
+`memo-mayretractmemo-asks-of-the-retractor`, `memo-sendermaysend-ignores-the-scope`; and
+`memo-maysend-asks-read` gained `TestAForgedSendFromAReadOnlyViewerIsRefusedByMaySend` as an
+extra killer. ⚠ The listing row SURVIVED its first run: sub-second offsets in the fixture let
+"strictly after" pass; the fixture now plants four memos at ONE instant across the page boundary.
+
+The pgtest tier cannot run in that battery; three HAND mutations, restored by digest, each red in
+the test that names it: the store's `MaySend` check skipped → `TestTheMemoTabsForgedSendIsRefusedByTheRealStore`
+("answered … outcome=memo-sent"); `main` handing `ui.Config` a nil store → the same test (the
+startup line does not announce the store); `wireBrowserMemos` ignoring the journal →
+`TestWireBrowserMemosNeedsADatabaseAndAJournal`.
+
+## What these guards still cannot see
+
+- **The browser walk captures the tab only in its `NoMemoStore` state**: neither `uiaudit` world
+  has `-db-dsn`, the invite mint form's residual, so the populated tab, its form and its buttons
+  are unmeasured in a real browser.
+- Concurrency: two admins retracting one memo at once. A stale page's second retraction answers the
+  `memo-gone` banner over the fake (`TestAForgedOrStaleRetractionIsAnsweredByTheStoresRule`); the real
+  store's answer to it is S1's (`not-found` for an already-retracted memo).
+- A browser send carries no credential, so its sender line has no `via` label — measured in the
+  pgtest tier, and by design (decision 5's label names an agent credential).
