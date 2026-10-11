@@ -120,6 +120,8 @@ type PageView struct {
 	SessionsList *SessionsList
 	// Agent is the scope page's agent-tab recall, nil on every other tab and page. See `agent.go`.
 	Agent *AgentRecall
+	// Memos is the scope page's memos tab, nil on every other tab and page. See `memos.go`.
+	Memos *MemoTab
 	// Panes is the presence predicate bound to THIS request's viewer ([Server.panesFor]), nil when
 	// presence is off. Set by the four pages that list a session; read only through its methods, so
 	// a viewer the predicate shows nothing renders no node at all. See `presence.go`.
@@ -235,6 +237,8 @@ func ScopePage(v PageView) g.Node {
 		body = arcsPanel(*v.Touched, v.Scopes, v.Now)
 	case v.Tab == TabAgent && v.Agent != nil:
 		body = agentPanel(*v.Agent)
+	case v.Tab == TabMemos && v.Memos != nil:
+		body = memosPanel(s, *v.Memos, v.CSRF)
 	default:
 		body = entriesPanel(s, v.Now)
 	}
@@ -279,7 +283,7 @@ func entriesPanel(s Scope, now time.Time) g.Node {
 // for everything else — see [TabSessions] for why an unknown value is the default and not a 400.
 func scopeTab(raw string) string {
 	switch raw {
-	case TabSessions, TabArcs, TabAgent:
+	case TabSessions, TabArcs, TabAgent, TabMemos:
 		return raw
 	}
 	return ""
@@ -324,6 +328,9 @@ func scopeTabs(s Scope, current string, t *Touched) g.Node {
 		tab("Arcs", arcsCount, TabArcs),
 		// No count: the tab is one text, and its size is on the tab itself.
 		tab("What an agent sees", "", TabAgent),
+		// No count either: a count would read the memo store on EVERY tab of every scope page, and
+		// the store is a database the other tabs never touch.
+		tab("Memos", "", TabMemos),
 	)
 }
 

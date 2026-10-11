@@ -116,6 +116,12 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		"GET " + screenshotRowFromBytes(t, "wide-hub") + " public",
 		"POST /invite",
 		"POST /invite/revoke",
+		// 🔴 SCOPE MAIL'S TWO WRITES (S5 of the scope-mail plan). NO CLASS — both cross-site gates reach
+		// them by METHOD, which `TestTheMemoRowsAreBehindBothCrossSiteGates` asserts by each gate's own
+		// message. Never `content`: each answers a 303 back to the memos tab, which is `?tab=memos` on
+		// `GET /scope` and so adds no read row here.
+		"POST /memo",
+		"POST /memo/retract",
 		// 🔴 THE BELL (S5 of the arcs/presence plan). NO CLASS, and that is the line to read: both
 		// cross-site gates reach it by METHOD, which `TestTheRingRowIsBehindBothCrossSiteGates`
 		// asserts by each gate's own message. Never `content`: every answer is one 303, so it renders
@@ -716,6 +722,10 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		// The write paths under GET: a dispatcher keyed on path alone would serve them.
 		{"GET", "/team/link"},
 		{"GET", "/team/link/revoke"},
+		// The memo write paths under GET, and their near-misses (S5).
+		{"GET", "/memo"},
+		{"GET", "/memo/retract"},
+		{"GET", "/memos"},
 		// S4's near-misses: the unversioned script a worker-shaped draft would register, a wrong
 		// digest, the live script path suffixed, and a screenshot under a name nobody declared.
 		{"GET", "/static/pwa.js"},
@@ -765,6 +775,11 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		{"PUT", "/team/link"},
 		{"POST", "/team/link/"},
 		{"POST", "/team/revoke"},
+		// The memo rows' near-misses (S5): a prefix or suffix-tolerant match would serve each.
+		{"POST", "/memos"},
+		{"POST", "/memo/"},
+		{"POST", "/memo/retractx"},
+		{"PUT", "/memo"},
 	} {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(probe[0], probe[1], nil)

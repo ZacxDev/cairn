@@ -974,6 +974,9 @@ type Server struct {
 	// [Server.panesFor], which binds `presence.Store.For` to the request's viewer — see `presence.go`.
 	presence *presence.Service
 
+	// memos is the memo store, NIL when this deployment has none. See `memos.go`.
+	memos Memos
+
 	// app is this deployment's installable identity; the zero value is unarmed. See `pwa.go`.
 	app App
 }
@@ -1092,6 +1095,11 @@ type Config struct {
 	// unless `cmd/cairn-ui` armed its agent listener, and then every page renders exactly as it did
 	// before presence existed. The browser reads it through `presence.Store.For` alone.
 	Presence *presence.Service
+	// Memos is scope mail's store (S5 of the scope-mail plan, `memos.go`), and it MAY be nil: `Inviting`'s
+	// ruling — the two memo rows stay in the ledger and answer 501 [NoMemoStore], and the tab says so,
+	// rather than the rows appearing with a flag. `cmd/cairn-ui` wires it only with a database AND a
+	// control journal.
+	Memos Memos
 	// App arms the installable surface (`pwa.go`): the manifest row, the icon links and the theme
 	// colour. The zero value is UNARMED and renders exactly what this surface rendered before it
 	// existed. [App.Validate] is applied here, so a server cannot be built around an app the
@@ -1198,6 +1206,7 @@ func New(cfg Config) (*Server, error) {
 		limiter:        cfg.Limiter,
 
 		presence: cfg.Presence,
+		memos:    cfg.Memos,
 
 		app: cfg.App,
 	}, nil
@@ -1589,6 +1598,17 @@ func (s *Server) handleScopePage(w http.ResponseWriter, r *http.Request, id iden
 			return
 		}
 		view.Agent = &recall
+	}
+	// 🔴 THE MEMOS TAB IS READ ONLY FOR THAT TAB, AND ONLY AFTER THE REFUSAL ABOVE — by the name out of
+	// the narrowed answer, through a store that asks the read predicate again itself (`memos.go`).
+	if view.Tab == TabMemos {
+		tab, err := s.memoTab(r, id, scope)
+		if err != nil {
+			s.logf("memo tab: the memo store could not be read: %v", err)
+			writePlain(w, http.StatusInternalServerError, "the memo store could not be read")
+			return
+		}
+		view.Memos = &tab
 	}
 	view.Panes = s.panesFor(id)
 	s.renderScope(w, view)
