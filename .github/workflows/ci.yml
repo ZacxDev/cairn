@@ -6,7 +6,8 @@ on:
   pull_request:
   merge_group:
   # 🔴 THE NIGHTLY FULL RUN IS WHAT MAKES THE PATH TIERING BELOW AFFORDABLE TO GET WRONG. A pull
-  # request may skip the jobs its paths cannot reach (see the `changes` job); this run never does,
+  # request may skip the jobs its paths cannot reach, and a docs-only push to `main` takes the
+  # docs lane (see the `changes` job); this run never skips anything,
   # so a classifier that skipped something it should not have is caught within a day on `main`
   # rather than never. `workflow_dispatch` is the same full run, on demand.
   schedule:
@@ -46,8 +47,10 @@ jobs:
   # THAT TEST. The script answers FULL for any event, base or `git` state it cannot vouch for
   # (and for an empty change list); a gated job runs when this job did not SUCCEED
   # (`needs.changes.result != 'success'`); and it runs when an output is ABSENT, because each
-  # gate compares `!= 'false'` rather than `== 'true'`. A push to `main`, a `merge_group`, the
-  # nightly `schedule` and `workflow_dispatch` always classify FULL.
+  # gate compares `!= 'false'` rather than `== 'true'`. A `merge_group`, the nightly `schedule`
+  # and `workflow_dispatch` always classify FULL. A push to `main` is diffed `before..after`
+  # under the same fail-open rules: docs-only takes the docs lane, and ANY other path classifies
+  # FULL — never the partial `nix`/`uiaudit` lanes a pull request may take.
   #
   # ⚠ `leakscan` AND `tests` DO NOT `need` THIS JOB, ON PURPOSE: they run on every event, and a
   # dependency would only make the leak gate wait on a classifier it never consults.
@@ -659,15 +662,16 @@ jobs:
           # reason that paragraph gives.
           # Measured 2727 collected on the branch, so
           # `2727 - min(50, max(1, 2727/20)) = 2677`.
-          # ⚠ 2677 -> 2785 FOR THE CI PATH-TIERING BRANCH, AND THE DRIFT GUARD FORCED THIS ONE.
-          # That branch adds `tests/test_ci_paths.py` (61 collected: the classifier's literal
-          # lanes, its fail-open arms, the `NIX`/`UIAUDIT` lists against `flake.nix` and the
-          # `uiaudit` job, and the workflow wiring). Measured 2835 passed / 0 failed on the
-          # branch by a full local run with `--junitxml`, so at 2677 the gap would be 158,
-          # past `MAX_GAP` — and the base was already at 97 by the same subtraction (2835 - 61
-          # = 2774), so the drift had been carried in, not made here.
-          # `2835 - min(50, max(1, 2835/20)) = 2785`.
-          FLOOR = 2785
+          # ⚠ 2677 -> 2795 FOR THE CI PATH-TIERING BRANCH, AND THE DRIFT GUARD FORCED THIS ONE.
+          # That branch adds `tests/test_ci_paths.py` (71 collected: the classifier's literal
+          # lanes, its fail-open arms, the docs-only/strict-for-code rules for a push to `main`,
+          # the `NIX`/`UIAUDIT` lists against `flake.nix` and the `uiaudit` job, and the
+          # workflow wiring). Measured 2845 collected on the branch by a full local run with
+          # `--junitxml`, so at 2677 the gap would be 168, past `MAX_GAP` — and the base was
+          # already at 97 by the same subtraction (2845 - 71 = 2774), so the drift had been
+          # carried in, not made here. (An intermediate commit on that branch set 2785 from 2835.)
+          # `2845 - min(50, max(1, 2845/20)) = 2795`.
+          FLOOR = 2795
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)

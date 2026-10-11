@@ -157,11 +157,47 @@ def test_the_ALWAYS_FULL_events_never_consult_the_diff(event):
     assert git.calls == []
 
 
-def test_a_push_to_MAIN_runs_everything_even_when_the_diff_is_docs_only():
+MAIN_PUSH = {"EVENT": "push", "REF": "refs/heads/main", "PUSH_BEFORE": B, "PUSH_AFTER": H}
+
+
+def test_a_DOCS_ONLY_push_to_MAIN_takes_the_docs_lane():
     git = FakeGit(DOCS_DIFF)
-    env = {"EVENT": "push", "REF": "refs/heads/main", "PUSH_BEFORE": B, "PUSH_AFTER": H}
+    assert lanes(for_event(MAIN_PUSH, git)) == DOCS
+    assert git.calls == [
+        ["merge-base", "--is-ancestor", B, H],
+        ["diff", "--name-only", "--no-renames", B, H],
+    ]
+
+
+@pytest.mark.parametrize("diff", [
+    ["claudedocs/handoff-x.md", "internal/api/server.go"],
+    # 🔴 Paths a PULL REQUEST would run only PARTIALLY for (heavy, but not nix/uiaudit):
+    # `main` is strict for code, so each must still run EVERYTHING.
+    ["AGENTS.md"],
+    ["tests/test_cairn_cli.py"],
+    ["cmd/cairn-server/main.go"],
+    ["flake.lock"],
+])
+def test_a_push_to_MAIN_touching_ANY_non_docs_path_runs_EVERYTHING(diff):
+    assert lanes(for_event(MAIN_PUSH, FakeGit(diff))) == FULL
+
+
+@pytest.mark.parametrize("env, git", [
+    ({**MAIN_PUSH, "PUSH_BEFORE": "0" * 40}, FakeGit(DOCS_DIFF)),
+    ({**MAIN_PUSH, "PUSH_BEFORE": ""}, FakeGit(DOCS_DIFF)),
+    (MAIN_PUSH, FakeGit(DOCS_DIFF, ancestor=False)),
+    (MAIN_PUSH, FakeGit([])),
+])
+def test_a_push_to_MAIN_keeps_every_FAIL_OPEN_rule(env, git):
+    """New-branch sha, missing `before`, force-push, empty diff — each runs everything on
+    `main` exactly as on any other ref, even when the diff git WOULD return is docs-only."""
     assert lanes(for_event(env, git)) == FULL
-    assert git.calls == []
+
+
+def test_a_push_to_MAIN_with_a_GIT_ERROR_runs_everything():
+    def git(args):
+        raise subprocess.CalledProcessError(128, ["git", *args])
+    assert lanes(safe_for_event(MAIN_PUSH, git)) == FULL
 
 
 def test_a_push_elsewhere_is_diffed_before_to_after():
@@ -465,15 +501,16 @@ def test_every_job_is_in_exactly_one_ledger():
 
 def test_every_TRIGGER_in_ci_yml_has_a_defined_classification():
     """The `on:` keys, read from the file: each must reach a rule rather than the unknown-event
-    arm, and every one except a pull request must classify FULL with no diff consulted."""
+    arm, and every one except a pull request and a push must classify FULL with no diff
+    consulted. (A push to `main` is diffed — its two rules are pinned above.)"""
     text = CI.read_text(encoding="utf-8")
     on_block = text.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
     events = set(re.findall(r"^  ([a-z_]+):", on_block, re.M))
     assert events == {"push", "pull_request", "merge_group", "schedule", "workflow_dispatch"}
     assert re.search(r"^  push:\n    branches: \[main\]$", on_block, re.M), (
-        "push is no longer main-only; `ci_paths.for_event`'s push-to-main rule is then not the "
-        "only push rule that runs")
-    for ev in events - {"pull_request"}:
+        "push is no longer main-only; `ci_paths.for_event`'s strict-for-code `main` rule is then "
+        "not the only push rule that runs")
+    for ev in events - {"pull_request", "push"}:
         env = {"EVENT": ev, "REF": "refs/heads/main", "PUSH_BEFORE": B, "PUSH_AFTER": H}
         git = FakeGit(DOCS_DIFF)
         assert lanes(for_event(env, git)) == FULL, ev

@@ -165,8 +165,6 @@ def for_event(env: dict[str, str], git: Git = _git) -> Lanes:
     if event in ("schedule", "workflow_dispatch", "merge_group"):
         return full(f"a {event} run always pays for every gate")
     if event == "push":
-        if env.get("REF") == "refs/heads/main":
-            return full("a push to main always pays for every gate")
         before, after = env.get("PUSH_BEFORE", ""), env.get("PUSH_AFTER", "")
         if not after or not before or before == ZERO_SHA:
             return full("a push with no usable `before` (a new branch) has no base to diff")
@@ -174,7 +172,14 @@ def for_event(env: dict[str, str], git: Git = _git) -> Lanes:
             git(["merge-base", "--is-ancestor", before, after])
         except subprocess.CalledProcessError:
             return full("`before` is not an ancestor of `after` (a force-push)")
-        return classify(_diff(before, after, git))
+        lanes = classify(_diff(before, after, git))
+        # 🔴 `main` IS STRICT FOR CODE: a docs-only push takes the docs lane (most of the cost
+        # this tiering exists to remove was `claudedocs/` commits pushed straight to `main`), but
+        # a push touching ANY other path pays for every gate, never the partial `nix`/`uiaudit`
+        # lanes a pull request may take. The nightly full run is the net under the docs half.
+        if env.get("REF") == "refs/heads/main" and lanes.heavy:
+            return full("a push to main touching code pays for every gate")
+        return lanes
     if event == "pull_request":
         base, head = env.get("PR_BASE", ""), env.get("PR_HEAD", "")
         if not base or not head or ZERO_SHA in (base, head):
