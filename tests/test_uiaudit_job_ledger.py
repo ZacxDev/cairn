@@ -68,7 +68,21 @@ def test_the_matrix_declares_exactly_the_two_legs_and_never_fails_fast():
                      JOBS["uiaudit"], re.M)
 
 
+HUB_SECRETS = ["CAIRN_AUDIT_PUSH_URL", "CAIRN_AUDIT_PUSH_TOKEN", "CAIRN_AUDIT_API_URL", "CAIRN_AUDIT_API_TOKEN"]
+
+
 def test_the_hub_secrets_reach_ONE_step_in_ONE_leg():
-    """One leg pushes, so one run pushes at most once — the property the split must not break."""
-    holders = [(_label(s), _if(s)) for s in _steps(JOBS["uiaudit"]) if "secrets." in s]
-    assert holders == [("the walk — boot cairn-ui, drive chromium, push, read the diff back", WALK)]
+    """One leg pushes, so one run pushes at most once — the property the split must not break.
+
+    🔴 COUNTED OVER THE WHOLE JOB TEXT, NOT OVER `_steps()`: the step split drops the job header,
+    so a secret in the JOB-level `env:` (beside `GOTOOLCHAIN`) — which reaches BOTH legs — was
+    invisible to a steps-only scan and left this test green.
+    """
+    job = JOBS["uiaudit"]
+    (walk,) = [s for s in _steps(job)
+               if _label(s) == "the walk — boot cairn-ui, drive chromium, push, read the diff back"]
+    assert _if(walk) == WALK
+    in_job = re.findall(r"secrets\.([A-Z_]+)", job)
+    in_walk = re.findall(r"secrets\.([A-Z_]+)", walk)
+    assert in_walk == HUB_SECRETS
+    assert in_job == in_walk, f"a secret is referenced outside the walk step: {in_job}"
