@@ -788,7 +788,12 @@ jobs:
           # `FAIL`, 2 `[no test files]`. S1's review round 4 added `internal/redact/cmd/redact-heldback`
           # (O15's arming gate, a thin `main` over tested library code): 26 `ok`, 0 `FAIL`, 3
           # `[no test files]` — the floor does not move, because a package without tests adds no `ok`.
-          # ⚠ THE NIX CHECK PHASES ARE NOT RE-MEASURED AT TWENTY-THREE THROUGH TWENTY-SIX. They run the same walk and
+          # MOVED TO 27 WITH `internal/memo` (S0 of the scope-mail plan: the trust-boundary renderer),
+          # and ⚠ NOT MEASURED LOCALLY: the operator skipped local full-suite runs for that slice, so
+          # 27 is 26 plus one new package with tests, and THIS JOB'S printed count on that PR is the
+          # measurement. If it prints anything but 27, the arithmetic was wrong — re-measure, never
+          # adjust this line to match.
+          # ⚠ THE NIX CHECK PHASES ARE NOT RE-MEASURED AT TWENTY-THREE THROUGH TWENTY-SEVEN. They run the same walk and
           # were last read at 18 (`nix log` for both `cairn-server` and `cairn-go`, before
           # `cmd/cairn-ui` carried tests) and at 17 before that. Read those as a RECORD of the
           # tree they were taken on, never as a current reading — re-spelling a number is not
@@ -816,8 +821,8 @@ jobs:
           # this one — the merge with the share flow made the count nineteen. Adding a
           # package and not moving this number does not fail late — it stops failing at all.
           #
-          # So: `ok < 26` refuses. 26 passes (the tree, measured). 25 refuses (one
-          # package's tests gone). 27 passes (a package ADDED), which is the other half of
+          # So: `ok < 27` refuses. 27 passes (the tree, by arithmetic — see above). 26 refuses (one
+          # package's tests gone). 28 passes (a package ADDED), which is the other half of
           # the property and the reason this is a floor rather than an equality. 🔴 THE THREE
           # NUMBERS IN THIS SENTENCE AND THE LEDGER ABOVE MOVE TOGETHER WITH THE CONDITION,
           # IN ONE COMMIT — an audit round caught the commit that moved the condition to 18
@@ -836,11 +841,11 @@ jobs:
           # behind does not fail late — it stops failing at all, once per package of lag.
           #
           # ⚠ AND IT DEFENDS THE PACKAGE, NOT THE TEST. Deleting one `func Test…` from a
-          # file that keeps others leaves `ok` at 26 and this gate green. That gap is
+          # file that keeps others leaves `ok` at 27 and this gate green. That gap is
           # stated in `internal/depspolicy`'s package doc, where the guarantee it defends
           # is written down.
           echo "packages with passing tests: $ok"
-          if [ "$ok" -lt 26 ]; then
+          if [ "$ok" -lt 27 ]; then
             echo "REFUSING: only $ok package(s) reported ok — the test walk narrowed"
             exit 1
           fi
