@@ -522,6 +522,17 @@ def test_no_publish_can_be_cancelled_or_dropped_by_a_later_push(text: str) -> No
         "`github.ref`, `github.workflow`, a constant — lets a later push drop a "
         "PENDING publish, so a commit on `main` can end up with no `sha-` image."
     )
+    # A JOB-level group gets the same one-pending-per-group replacement, and the
+    # extractor above reads only the top-level block, so the per-run promise
+    # needs the absence of every other `concurrency:` key as well.
+    nested = [
+        line for line in text.splitlines()
+        if re.match(r"^\s+concurrency:", line)
+    ]
+    assert nested == [], (
+        f"found a job-level concurrency key: {nested!r}. A job group shared "
+        "across runs drops a pending publish exactly as a workflow-level one does."
+    )
 
 
 def test_every_published_tag_is_one_of_the_two_immutable_ones(text: str) -> None:

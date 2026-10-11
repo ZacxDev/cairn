@@ -139,6 +139,15 @@ MUTANTS = [
         "test_no_publish_can_be_cancelled_or_dropped_by_a_later_push",
     ),
     (
+        "share-one-concurrency-group-per-job",
+        lambda t: t.replace(
+            "jobs:\n  publish:\n",
+            "jobs:\n  publish:\n    concurrency:\n      group: publish\n",
+            1,
+        ),
+        "test_no_publish_can_be_cancelled_or_dropped_by_a_later_push",
+    ),
+    (
         "make-the-checkout-shallow",
         lambda t: t.replace("          fetch-depth: 0\n", "          fetch-depth: 1\n", 1),
         "test_the_checkout_is_not_shallow",
