@@ -159,7 +159,15 @@ func TestNarrowVerbsIssuesACredentialWithoutAdmin(t *testing.T) {
 	if _, a, _ := control.Authenticate(modelOf(t, journal), full); !a.Allows(scope, control.VerbAdmin) {
 		t.Fatal("POSITIVE CONTROL FAILED: the un-narrowed credential lacks admin, so the absence above proves nothing")
 	}
-	for _, bad := range []string{"read,wirte", " , "} {
+	// 🔴 EACH REFUSAL IS ASSERTED IN ITS OWN WORDS (#235 round 1, fixed in S2). An exit code alone
+	// was satisfied by the WRONG refusal: with the "has no verb in it" clause deleted, `,` and ` , `
+	// still exit 78 — from the journal refusing an empty verb set at apply — so the clause had no
+	// guard. `,` (the bare separator) is the case the finding named; ` , ` is the padded spelling.
+	for bad, want := range map[string]string{
+		"read,wirte": "is not a verb",
+		" , ":        "has no verb in it",
+		",":          "has no verb in it",
+	} {
 		before, _ := os.ReadFile(journal)
 		f := issueFlagsFor("user", string(made.User), "x", string(scope))
 		v := bad
@@ -167,6 +175,9 @@ func TestNarrowVerbsIssuesACredentialWithoutAdmin(t *testing.T) {
 		var o, e bytes.Buffer
 		if code := runIssueCredential(env, f, &o, &e); code != exitConfig {
 			t.Errorf("-narrow-verbs %q: exit %d, want %d\n%s", bad, code, exitConfig, e.String())
+		}
+		if !strings.Contains(e.String(), want) {
+			t.Errorf("-narrow-verbs %q: the refusal does not say %q, so another refusal answered:\n%s", bad, want, e.String())
 		}
 		if after, _ := os.ReadFile(journal); !bytes.Equal(before, after) {
 			t.Errorf("-narrow-verbs %q appended to the journal", bad)

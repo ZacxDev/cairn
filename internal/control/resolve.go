@@ -61,7 +61,9 @@ type Authorization struct {
 }
 
 // Narrowed reports whether this authority came out of a credential carrying a narrowing,
-// i.e. whether [Narrow] was handed a NON-NIL list.
+// i.e. whether [Narrow] was handed a NON-NIL scope list OR a non-nil verb set (decision 17 of
+// the scope-mail plan). ⚠ This said "a NON-NIL list" alone through S1, which had already made
+// a VERBS-ONLY narrowing narrow: `Narrow` returns its input unchanged only when BOTH are nil.
 //
 // 🔴 IT IS A FACT ABOUT HOW THE VALUE WAS PRODUCED, NOT A COMPARISON OF ITS CONTENTS, AND
 // THAT IS THE ONLY SPELLING THAT CANNOT BE FOOLED. A caller asking "is this narrower than

@@ -118,6 +118,12 @@ DECLARED_TESTS = {
         "TestTwoAgentsOfOnePrincipalAreToldApartByCredential",
         "TestMigrationThreeUpgradesAVersionTwoDatabase",
         "TestTheMemoRollbackRecipeLetsAnOlderBuildStartAndReUpgrades",
+        # #235's round-1 findings, fixed in S2 — each shown RED under its mutant (the S2 PR's matrix).
+        "TestARetractByACallerWhoCannotReadIsTheSameMissForAnyId",
+        "TestAScopeNamedInAnotherCaseSharesItsQuota",
+        "TestTheQuotaCountsRetractedSends",
+        "TestTheRetractionIsBoundedByTheTransactionTimeout",
+        "TestAListingIsCappedAtTheLiveBound",
     },
     "cmd/cairn-ui/database_pgtest_test.go": {
         "TestWithADatabaseTheSurfaceMovesItsStateThereAndHoldsInvitations",

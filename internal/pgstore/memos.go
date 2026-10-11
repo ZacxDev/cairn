@@ -262,6 +262,13 @@ func (s *MemoStore) Get(ctx context.Context, m control.Model, auth control.Autho
 // A memo the caller cannot read, an absent id, an id of another scope, an expired memo and one
 // already retracted are all [memo.ErrNotFound]; a memo the caller CAN read but may not retract
 // (not the sender, not a scope admin) is a [*memo.Refusal] with [memo.RefusedNotPermitted].
+//
+// 🔴 WHO MAY RETRACT IS [memo.MayRetract] ALONE; THE READ CHECK BELOW IS A DIFFERENT RULE. It is
+// decision 4's uniform miss (T12), asked BEFORE the row is looked up: without it a caller who
+// cannot read the scope would get `not-permitted` for an id that EXISTS and `not-found` for one
+// that does not — an existence oracle over another scope's ids. `MayRetract` also refuses that
+// caller (it carries the read clause since S2), so the two agree; the order is what keeps the
+// answer uniform. `TestARetractByACallerWhoCannotReadIsTheSameMissForAnyId` pins it.
 func (s *MemoStore) Retract(ctx context.Context, caller control.Principal, auth control.Authorization, scope string, id int64) error {
 	if !memo.MayRead(auth, scope) {
 		return memo.ErrNotFound

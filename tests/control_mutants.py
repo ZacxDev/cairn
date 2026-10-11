@@ -5149,13 +5149,17 @@ MUTANTS: tuple[Mutant, ...] = (
         why="one verb confused for the other at the second of two near-identical lines.",
     ),
     Mutant(
-        name="memo-mayretract-sender-needs-no-read",
+        # S2 moved the read clause out of the sender branch to gate BOTH retractors (the S1 "rule in
+        # two places" ruling), so this one row now covers the sender narrowed away AND the admin-only
+        # grantee; the killer carries a case for each.
+        name="memo-mayretract-needs-no-read",
         path="internal/memo/policy.go",
-        old=" && MayRead(a, scope) {\n",
-        new=" {\n",
+        old="\tif !MayRead(a, scope) {\n\t\treturn false\n",
+        new="\tif false && !MayRead(a, scope) {\n\t\treturn false\n",
         killer="TestMayRetractComposesTheSenderAndTheModerator",
-        why="'the sender may always retract' — through a credential narrowed AWAY from the scope "
-        "too, which decision 10 refuses.",
+        why="'the sender may always retract' and 'an admin may always moderate' — through a credential "
+        "narrowed AWAY from the scope, or an admin-only grant with no read, which decision 10 and the "
+        "uniform miss (T12) both refuse.",
     ),
     Mutant(
         name="memo-mayretract-without-the-moderator-rule",
