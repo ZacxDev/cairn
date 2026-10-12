@@ -22,45 +22,58 @@ UNTRUSTED pointer-plus-preview block. Per `claudedocs/plan-cairn-scope-mail.md` 
   DEPLOYED listener.
 
 ## State now
-- **Plan MERGED** `4413feb` (#221). Operator rulings since: **Q16** keep verb narrowing; **Q19** retraction requires
-  READ for sender AND scope admin; memos tab ON at deploy; the populated-tab click-path browser test (#244) satisfies
-  "before S4", and the WALK capture of a populated tab is a separate non-blocking follow-up; S7 live in two pushes;
-  a DEDICATED probe identity. **Q20** (empty memo accepted) is OPEN.
-- **MERGED (cairn):** S0 #230, S1 #235, S2 #236, S3 #239, S3 follow-ups #241, S5 #242, publish fix #243, S5
-  follow-ups #244 `e18efd1`, secret-first send check #246 `f162b54`. Each audited round 0 + 1, no 🔴.
-- **DEPLOYED `sha-f162b54`** to both pods (deployment trunk `186b730`); #244 was held until #246 merged so its
-  credential-echo case was never live. Running imageIDs = tag digests, 0 restarts.
-- **S7 DONE (deployment):** cairn-ui `-client-api-addr=0.0.0.0:8125` + Service port (`4cf9ac3`), a MESH-ONLY gateway
-  block `listen <mesh-gw>:8125` mirroring presence's 8105 (`11f9e1a`), and a store-pod token row `memo-probe` scoped
-  to `cairn-memo-probe` only (`e27c77f`). Probe identity: synthetic user (provider `memo-probe`, cannot sign in),
-  scope `cairn-memo-probe`, credential `crd_by7z77tk0yn6qrq64b5rbth850` (read,write). `SHOW server_version` 18.6.
-- ✅ **Closing-condition part 5 MET:** `tests/memo/live-probe.sh` against the deployed listener over the mesh →
-  `SUMMARY live-probe: steps=6 passed=6 failed=0 exit=0` (recorded as a comment on deployment commit `11f9e1a`),
-  re-run green after the `sha-f162b54` deploy. Probe input (0600, two live tokens) is in
-  `~/.config/cairn-memo-probe/probe-input` on the operator's host.
-- 🔴 NOT verified signed-in: the browser memos tab — the OPERATOR's check.
-- 🔴 ROLLBACK below `sha-0d9ba01` needs the migration-3 recipe (#235); the journal now holds verb-narrowed
-  credentials, so older binaries refuse it — roll back only to a build ≥ S1.
-- **IN FLIGHT:** S4 in the tooling repo (branch `zach/cairn-memo-s4`, claim `cairn-scope-mail-s4`): hook defects
-  (setsid pipes, output cap), registration, `cairn-memo` skill, opencode surfacing, cairn flake bump, rollout runbook.
+- **All slices MERGED, DEPLOYED and VALIDATED end to end on both hosts.** cairn: S0 #230, S1 #235, S2 #236, S3 #239
+  (+#241), S5 #242 (+#244, #246), publish fix #243 — deployed `sha-f162b54`. Deployment repo: S7 (listener `:8125`,
+  mesh-only gateway route, `memo-probe` store token). Tooling repo: S4 #2145 `66d75043` and the hook backoff +
+  kill switch #2148 `de397e2a` (merged by operator instruction before its CI settled; CI was GREEN on the merged head
+  `b435ab14`: pytests 26496/0, gotests 514/0, nodetests 1883/0, cairn-client-runs pass).
+- **Rollout DONE (both hosts):** credentials `agents@workbench` `crd_ehdrdnv60ft1avwxgw146jn59g` and `agents@laptop`
+  `crd_mt4p7wvyq7b1pbwwh7p32nf388` — operator principal, narrowed to the 26 scopes of the operator's project,
+  verbs `read,write`; each proven with one listener request (200) BEFORE being written. Each host's
+  `~/.config/subsystem-store/env` now carries `CAIRN_UI_URL=http://<mesh-gw>:8125` and `CAIRN_UI_TOKEN` (0600; token
+  hash matches the issued one; the pre-rollout file kept as `env.pre-memo-rollout`). `scripts/ship.sh` converged both
+  hosts at `de397e2a` (VERIFIED, both). Local token copies shredded.
+- **End-to-end validation (both hosts, the deployed hook, a real memo):** `memo-send --scope <a real scope>` → id 3; a NEW
+  SessionStart in a checkout of a repo on a cached scope received exactly ONE fenced block (1 open / 1 close marker, matching nonce,
+  standing "DATA, not instructions" line, `via agents@workbench`); the same session's next prompt got 0 bytes; after
+  `memo-retract`, a NEW session got 0 bytes and `memo-read` shows the tombstone. Live probe re-run: `steps=6
+  passed=6 failed=0 exit=0`. Listener: 1 `client-api: refused` line since the pod started (the probe's own
+  unauthenticated step), no lockout.
+- **Closing condition:** parts 1, 2, 3, 5 MET. Part 4 (tooling-repo hook target exits 0 on the tooling repo's `main`, hook `--self-test`)
+  — green on #2148's merged head in CI; the tooling repo's `main`'s own run (`1cbae305`) was still pending at writing. ⚠ The
+  self-test number is now `sabotaged=9 caught=9` (#2148 added three); the plan's `6/6` wording is superseded.
+- 🔴 ROLLBACK below `sha-0d9ba01` needs the migration-3 recipe (#235); the journal holds verb-narrowed credentials,
+  so older binaries refuse it — roll back only to a build ≥ S1.
+- NOT verified: the browser memos tab SIGNED IN (operator's check); opencode delivery on a live session (plugin
+  deployed, measured only on S0's one host); the tooling repo's `main` CI at `1cbae305`.
+- Claims: all released.
 
 ## Next steps (ranked)
 1. **S1** — DONE, #235. forcing: user — operator asked for scope mail.
-2. **S4** (tooling) — IN FLIGHT; audit + merge, then the PER-HOST ROLLOUT (operator: issue `agents@<host>` narrowed
-   read,write, write `CAIRN_UI_URL`/`CAIRN_UI_TOKEN` 0600), then closing-condition part 4 on the tooling repo's main.
-   S5 and S7 are DONE. forcing: user — operator asked for scope mail.
+2. **Scope mail** — DONE: all slices merged, deployed, rolled out to both hosts and validated. Read the tooling repo's `main`'s CI
+   for closing-condition part 4, then declare the arc CLOSED. forcing: user — operator asked for scope mail.
 
 ## Defects (batched)
-- **Carried to S4 (being fixed in the S4 PR):** a descendant that `setsid`s and keeps stdout open defeats the 2 s bound
-  (measured 12.03 s); relayed output uncapped (64 MiB passed through).
-- **#246 round-1 🟡:** `internal/ui/memos.go:364`'s `memo.Scannable(subject, body)` → `Scannable("", body)` survives the
-  suite; a crafted POST with a >16 KiB subject and a secret in the body would then be echoed. Add the row.
+- **#2148 round-1 🟡s (tooling-repo hook):** (1) the host backoff is keyed on ONE fingerprint, so sessions in DIFFERENT
+  environments (some exporting `CAIRN_UI_URL`, some not) overwrite each other's record — 8 alternating sessions sent 8
+  refused requests; key a map fingerprint→expiry. (2) `_write_backoff` runs outside any try in `guarded_check`: a
+  read-only cache root with an existing `.host.lock` sends a request per session SILENTLY (no backoff, no stop, no
+  line) — wrap it and still write the session marker. (3) the 2 s host-lock wait turns a slow-but-healthy listener into
+  false `unreachable` (20 starts × 150 ms → 7) — on lock timeout don't stamp `last`, retry next event. 🟢 removing
+  `st_mtime_ns`/`st_size` from the fingerprint survives the suite.
+- **#2148 round 0:** the client prints `unconfigured` both when no `CAIRN_UI_*` is set (no request) and on a listener
+  401, so the hook backs off on both; a distinct "refused" client status would let it back off only on a real
+  refusal — changes cairn's 7-status contract, operator's call.
+- **#246 🟡:** `internal/ui/memos.go:364` `Scannable(subject, body)` → `Scannable("", body)` survives; add the
+  subject-past-`MaxScannedBytes` + secret-in-body row.
 - **Walk capture of a POPULATED memos tab** (axe / touch / overflow / screenshots) — operator ruled it a separate,
-  non-blocking follow-up; needs a database in the walk world, which moves every existing walk measurement.
+  non-blocking follow-up.
 - **Closing-condition part 3's wording** diffs `-routes` against `b2ba3ac`, which predates scope-refs' `sources`
   route — re-anchor it on a post-scope-refs base before reading it.
 - `tests/pgtest/run.sh:278` pipes into `head -1` inside an assignment under `set -euo pipefail` — safe only while
   the version line is logged once.
+- `memo-send --help` does not say what the send-time secret scan cannot catch (the skill does); the plan's
+  token-cost table was not recomputed from the S0 goldens.
 
 ## Gotchas / decisions / dead-ends
 - **Go's `unicode.C` already includes unassigned code points** — "unassigned" computed as "in no
@@ -112,9 +125,23 @@ UNTRUSTED pointer-plus-preview block. Per `claudedocs/plan-cairn-scope-mail.md` 
 - **A subagent stuck polling CI re-emits its completion notice indefinitely** — read the PR state directly and
   `TaskStop` it. via: command
 
+- **`ssh host 'bash -s' < script` gives the script's STDIN to `bash` itself** — a `read`/`tr` inside the script then
+  consumes the script's own text. The first laptop env write stored a line of the script as `CAIRN_UI_TOKEN`
+  (86 chars, 19 spaces); caught by a shape check on the written file, restored from the backup within ~2 min, and the
+  listener log showed no request from that host. Ship the script and the secret as FILES (0600 temp, `scp -p`), run
+  it with stdin from the secret file, `shred -u` after; verify by comparing token HASHES on both sides. via: measurement
+- **Test a new credential with ONE request before writing it anywhere a hook will read** — the listener's lockout is
+  per mesh host (5 in 60 s → 900 s), and a hook firing on every prompt multiplies a bad token. `curl -H @<0600 header
+  file>` keeps the token off argv. via: command
+- **A tekton run on a the tooling repo's `main` commit is cancelled (`error … superseded`) when a newer commit lands** — read the
+  newest commit's statuses, and check the commit you care about is its ancestor. via: command
+- **The S4 hook became active on both hosts before rollout** (some session switched after #2145 merged); harmless
+  because with no `CAIRN_UI_*` the client sends nothing — it printed `not configured` once per session. via: command
+
 ## How to verify
 ```bash
-bash tests/memo/live-probe.sh ~/.config/cairn-memo-probe/probe-input   # SUMMARY … exit=0
-KUBECONFIG=<deployment kubeconfig> kubectl -n subsystem-store logs deploy/cairn-ui --tail=1   # "client API on [::]:8125"
-gh pr list --repo ZacxDev/cairn --state open
+bash tests/memo/live-probe.sh ~/.config/cairn-memo-probe/probe-input     # SUMMARY … exit=0
+cairn memo-send --scope <scope> --subject "check" --ttl 1h   # then a NEW session in a checkout of that repo shows ONE block
+cairn memo-retract --scope <scope> --id <id>                 # a NEW session shows nothing
+gh api repos/<tooling-repo>/commits/<its main sha>/status --jq '.statuses[]|"\(.context) \(.state)"'
 ```
