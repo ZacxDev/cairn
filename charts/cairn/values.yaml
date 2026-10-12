@@ -1,0 +1,88 @@
+# cairn — chart values.
+#
+# 🔴 WHAT THIS CHART IS FOR, STATED SO THE SCOPE IS NOT RE-LITIGATED. It exists to
+# encode the MANIFEST knowledge that has already cost real debugging on two
+# deployments — not to make authentication turnkey. The evaluation that scoped it
+# rejected bundling an identity provider for three measured reasons, the first
+# being that the burden is AUTHORIZATION rather than authentication: a federated
+# user signs in and then sees "No scope is visible to this credential" until
+# someone grants scopes, so a bundled IdP buys "no token pasting" and nothing
+# against the thing that actually consumes operator time.
+#
+# 🔴 AND THE HARDEST PART IS DELIBERATELY NOT SOLVED HERE. The two existing
+# deployments achieve RWO co-location of the store volume by DIFFERENT mechanisms
+# — a linstor PV's `nodeAffinity` versus `local-path` node-locality — so this
+# chart takes an EXISTING claim and expresses no opinion about how it is placed.
+# A chart that guessed would be wrong on one of the two clusters.
+
+image:
+  # 🔴 REQUIRED for each ENABLED workload, and the chart refuses anything that is
+  # not immutable. There is no `latest`: the publish workflow pushes only
+  # `sha-<40-hex commit>` (and a version tag, refused here because re-pushing a git
+  # tag re-points it). So a `:latest` default was an ImagePullBackOff on every
+  # install. Accepted: `…:sha-<40 hex>` or any `…@sha256:<64 hex>`, e.g.
+  #   ghcr.io/<owner>/cairn-store-go:sha-<40-hex commit>
+  #   ghcr.io/<owner>/cairn-ui:sha-<40-hex commit>
+  store: ""
+  ui: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+store:
+  enabled: true
+  port: 8102
+  # 🔴 MUST BE 1 AND THE CHART REFUSES ANYTHING ELSE: the store is the single
+  # writer on a ReadWriteOnce claim, which is why its strategy is `Recreate`.
+  replicas: 1
+  resources: {}
+
+ui:
+  # The browser surface is optional: a deployment that only serves the API does
+  # not need it, and the NetworkPolicy below narrows accordingly.
+  enabled: true
+  port: 8103
+  # 🔴 MUST BE 1 AND THE CHART REFUSES ANYTHING ELSE: the session table is a file on
+  # a per-pod emptyDir, so a second replica would not know the first one's cookies.
+  replicas: 1
+  resources: {}
+
+storage:
+  # 🔴 REQUIRED, AND THE CHART REFUSES TO RENDER WITHOUT IT. The chart does not
+  # create the PVC: on one cluster the volume's placement is expressed by a PV
+  # nodeAffinity and on the other by the storage class, and owning that here
+  # would mean guessing. Create the claim, then name it.
+  existingClaim: ""
+  # Where the store root is mounted in both containers.
+  mountPath: /data
+
+tokenFile:
+  # 🔴 THE BINARY REFUSES TO START WITHOUT ONE, AND THE DEFAULT PATH IS WHY A
+  # WORKING MANIFEST CAN LOOK LIKE IT NEEDS NO CONFIGURATION. With no
+  # CAIRN_TOKEN_FILE it falls back to /run/secrets/subsystem-store/token and
+  # exits if that is not a file — so a deployment that "sets nothing" is really
+  # mounting a secret at that default path. Do not read an absent variable in a
+  # working manifest as an absent requirement.
+  secretName: ""
+  secretKey: token
+  mountPath: /run/secrets/subsystem-store
+
+# 🔴 TRUSTED PROXIES: THE TEMPLATE APPLIES THE BINARY'S OWN RULE (`internal/netid`),
+# so what renders is what starts. Each entry is an address (one host) or a CIDR; the
+# floor is per family — IPv4 /24, IPv6 /64 — and /0 is refused. Listing every /24 of
+# a /16 is that same /16 respelled: it satisfies the floor while defeating its point.
+# 🔴 AND IT IS REQUIRED: both binaries refuse to start with it empty on a reachable
+# bind, so the chart refuses to render with it empty.
+trustedProxies: []
+
+networkPolicy:
+  # A `podSelector: {}` policy covers a new pod the INSTANT it exists, by denying
+  # everything — which presents as a UI bug, not a policy one: Deployment 1/1
+  # Ready, probes green, and the ingress controller unable to open a socket.
+  enabled: true
+  # Peers (e.g. a namespaceSelector for whatever fronts these pods).
+  # ⚠ EMPTY ADMITS EVERY SOURCE on the served ports: an empty `from` is the API's
+  # "all peers", so the default narrows ports only, never callers.
+  ingressFrom: []
+
+nameOverride: ""
+fullnameOverride: ""
