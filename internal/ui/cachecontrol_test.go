@@ -34,6 +34,7 @@ var realPage = map[string]struct{ query, marker string }{
 	"GET /arcs content":     {"", `id="arcs-index"`},
 	"GET /session content":  {"?" + QuerySession + "=" + walkSession, `id="session-summary"`},
 	"GET /team content":     {"", `<title>cairn — team`},
+	"GET /scope/sources content": {"?" + QueryScope + "=" + string(fixtureScope), `<h2>Code sources · platform</h2>`},
 }
 
 // redirectRows is every non-public GET row that answers a BODILESS 303 rather than a page —

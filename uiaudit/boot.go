@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ZacxDev/cairn/internal/arcs"
+	"github.com/ZacxDev/cairn/internal/codesrc"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/store"
 	"github.com/ZacxDev/cairn/internal/touch"
@@ -75,6 +76,8 @@ type World struct {
 	cmd     *exec.Cmd
 	dir     string
 	logPath string
+	// env is extra environment for the pod — the sources journal in the token-file world.
+	env []string
 	// stopPushing ends the presence re-push loop (`fixturePresence.keepPushing`).
 	stopPushing context.CancelFunc
 }
@@ -97,6 +100,10 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int, ex
 	}
 
 	arcJournal, err := writeArcJournal(dir, store, scopes)
+	if err != nil {
+		return nil, err
+	}
+	sourceJournal, err := writeSourceJournal(dir, scopes)
 	if err != nil {
 		return nil, err
 	}
@@ -129,6 +136,9 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int, ex
 		Token:   fixtureToken,
 		dir:     dir,
 		logPath: filepath.Join(dir, "cairn-ui.log"),
+		// The scope page's Sources block renders only over a configured journal (S4 of the scope-refs
+		// plan), so this world configures one — through the variable, the only spelling there is.
+		env: []string{codesrc.EnvJournal + "=" + sourceJournal},
 	}
 	// ⚠ `-control-journal` IS LEFT AT ITS DEFAULT IN THIS WORLD AND ITS SHARE FLOW IS THEREFORE
 	// READ-ONLY. That is the token-file deployment `internal/ui/README.md` describes, and it is
@@ -183,7 +193,7 @@ func (w *World) start(ctx context.Context, uiBinary string, port int, args ...st
 	// shell happens to carry would otherwise reach the pod and the flags would be
 	// competing with it. `PATH` is kept because `cairn-ui` resolves nothing by bare name
 	// today and a future one might.
-	w.cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + w.dir}
+	w.cmd.Env = append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + w.dir}, w.env...)
 
 	w.cmd.Cancel = func() error { return w.cmd.Process.Kill() }
 	// A grace period, then SIGKILL: `Wait` must not block forever on a child that ignores the first
@@ -437,6 +447,25 @@ func fixtureMembers(storeRoot string) ([]arcs.Member, error) {
 		return nil, fmt.Errorf("the fixture store %s carries no attributed bullet, so no session page can be reached", storeRoot)
 	}
 	return []arcs.Member{{Session: first, Role: "wrote", FirstSeen: "2000-01-01T00:00:00Z"}}, nil
+}
+
+// writeSourceJournal seeds the code-sources journal OUTSIDE the store, through its ONE writer
+// (`codesrc.Journal.Set`), with a declaration on the first normalized fixture scope: one GitHub source
+// (rendered as a link) and one self-hosted source (rendered as text), so the walk captures both shapes
+// of the scope page's Sources block. A CONTENT-FLOOR refusal when no scope can carry it.
+func writeSourceJournal(dir string, scopes []string) (string, error) {
+	path := filepath.Join(dir, "sources.jsonl")
+	for _, scope := range scopes {
+		if codesrc.Key(scope) != scope {
+			continue
+		}
+		_, err := codesrc.Journal{Path: path}.Set(scope, []string{
+			"git:github.com/example-org/example-repo@main",
+			"git:git.example.com/team/sub-group/example-repo@trunk",
+		}, codesrc.RevisionNone, fixtureIdentity, time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), nil)
+		return path, err
+	}
+	return "", fmt.Errorf("no fixture scope name is already normalized, so no sources can be declared on one: %v", scopes)
 }
 
 func writeArcJournal(dir, storeRoot string, scopes []string) (string, error) {

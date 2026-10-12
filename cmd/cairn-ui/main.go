@@ -50,6 +50,7 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/authz"
+	"github.com/ZacxDev/cairn/internal/codesrc"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/control/tokenfile"
 	"github.com/ZacxDev/cairn/internal/envalias"
@@ -400,6 +401,22 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(exitConfig)
+	}
+
+	// 🔴 THE CODE-SOURCES JOURNAL (S4 of the scope-refs plan): this surface is its ONLY WRITER, and
+	// it is configured by `$CAIRN_SOURCE_JOURNAL` alone — no flag, for the rollback reason the pod's
+	// `main` gives. EVERY refusal (a blank value, a path inside the store root, the arc journal's own
+	// file) is `codesrc.FromEnv`'s, the variable's ONE reader, so the pod that READS this file and the
+	// surface that WRITES it cannot disagree about a value. Unset is the designed OFF state: no
+	// Sources block on the scope page, and the edit page says so.
+	sourceJournal, sourcesOn, err := codesrc.FromEnv(*store, os.LookupEnv, resolvedArcJournal)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error()+". Refusing to start")
+		os.Exit(exitConfig)
+	}
+	sourcesMode := "code sources unconfigured (no $" + codesrc.EnvJournal + ")"
+	if sourcesOn {
+		sourcesMode = "code sources written to " + sourceJournal.Path
 	}
 
 	authority, err := openAuthority(*controlJournal, *store, *tokenFile)
@@ -811,7 +828,9 @@ func main() {
 		Presence: browserPresence,
 		// nil unless both a database and a control journal are configured (`wireBrowserMemos`).
 		Memos: browserMemoStore,
-		TTL:   *sessionTTL,
+		// The zero value when `$CAIRN_SOURCE_JOURNAL` is unset — the designed off state.
+		SourceJournal: sourceJournal,
+		TTL:           *sessionTTL,
 		// nil when no provider is configured, which is a legitimate deployment and is why
 		// this field is the one on `ui.Config` that may be nil. See its own comment.
 		OAuth: oauth,
@@ -1054,8 +1073,8 @@ func main() {
 		os.Exit(1)
 	}
 	boundAddr := net.JoinHostPort(*host, strconv.Itoa(bound.Addr().(*net.TCPAddr).Port))
-	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s, %s, %s, %s, %s, %s\n",
-		len(ui.DeclaredRoutes()), boundAddr, *store, sharingMode, signInMode, stateMode, arcsMode, presenceMode, appMode(cfg.App),
+	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s, %s, %s, %s, %s, %s, %s\n",
+		len(ui.DeclaredRoutes()), boundAddr, *store, sharingMode, signInMode, stateMode, arcsMode, sourcesMode, presenceMode, appMode(cfg.App),
 		instanceMode(cfg.App), workerModeLine, clientAPIModeLine)
 	if err := listener.Serve(bound); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
