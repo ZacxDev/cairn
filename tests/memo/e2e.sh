@@ -66,10 +66,14 @@ src="${E2E_SOURCE:-$repo}"
 
 # The clauses, in run order, and the assertions each makes. 🔴 PINNED, so an assertion that silently
 # stopped running is exit 2 rather than a smaller green — per clause, so that a narrowed run is held to
-# the same standard as a full one. A full run makes EXPECTED_FULL; the sum below is checked against it.
+# the same standard as a full one.
+#
+# ⚠ THIS TABLE IS THE SCRIPT'S ONE STATEMENT OF THE COUNT. A third pin — a full-run total beside it,
+# checked against the table's own sum — was two spellings of one number in one file and could only
+# ever disagree with itself (#241 round 0, D1); it is gone. The INDEPENDENT pin is the CI step's
+# floor, which re-counts this script's `PASS` lines rather than reading anything here.
 ALL_CLAUSES="a b c d e f g h i j k"
 declare -A CLAUSE_ASSERTS=([a]=4 [b]=2 [c]=3 [d]=6 [e]=3 [f]=3 [g]=6 [h]=2 [i]=2 [j]=2 [k]=2)
-EXPECTED_FULL=35
 
 if [[ "${1:-}" == "--self-test" ]]; then
   for tool in go git python3; do
@@ -234,11 +238,7 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/cairn-memo-e2e-XXXXXX")"
 source "$repo/tests/memo/world.sh"
 
 # The selection: every clause unless `E2E_CLAUSES` names some. A name that is not a clause is exit 2
-# (never "nothing selected, nothing failed"), and so is a declared table that disagrees with the
-# pinned full count.
-declared=0
-for c in $ALL_CLAUSES; do declared=$((declared + CLAUSE_ASSERTS[$c])); done
-[[ $declared -eq $EXPECTED_FULL ]] || couldnt "the clause table declares $declared assertions, the full run $EXPECTED_FULL"
+# (never "nothing selected, nothing failed").
 clauses="${E2E_CLAUSES-$ALL_CLAUSES}"
 [[ -n "${clauses// }" ]] || couldnt "E2E_CLAUSES selects no clause"
 EXPECTED=0
