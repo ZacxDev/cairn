@@ -5442,6 +5442,16 @@ MUTANTS: tuple[Mutant, ...] = (
         "listener's full list hands back a memo it no longer remembers, on every check.",
     ),
     Mutant(
+        name="memo-check-401-reported-as-unconfigured",
+        path="internal/client/memo.go",
+        old="\t\treturn status(\"refused\", ExitUnreachableNoCache, fmt.Sprintf(",
+        new="\t\treturn status(\"unconfigured\", ExitUnreachableNoCache, fmt.Sprintf(",
+        killer="TestEveryStatusTokenHasACaseThatProducesIt",
+        pkgs=PKGS + ("./internal/client/",),
+        why="both are exit 3 and both say 'memos not checked', so one token reads as enough — but only a "
+        "401 SENT a credential the listener's per-host lockout counted, and the hook backs a host off on it.",
+    ),
+    Mutant(
         name="memo-read-stops-after-one-page",
         path="internal/client/memo.go",
         old="\t\t\tif len(page) < memoListPage || added == 0 {\n",
