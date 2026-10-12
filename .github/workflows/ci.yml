@@ -1131,6 +1131,29 @@ jobs:
             exit 1
           fi
 
+      # 🔴 THE SCOPE-REFS CLOSING CHECK (part 2 of `claudedocs/plan-cairn-scope-refs.md`'s closing
+      # condition): bare repositories over `file://`, a loopback GitHub stub, a pod serving a sources
+      # journal written through `internal/codesrc`, and `cairn sources` / `cairn audit-refs` asserted
+      # over clauses (a)-(f). In THIS job because it sets CAIRN_GIT_TESTS_REQUIRED and has the Go
+      # toolchain and git; NOT continue-on-error. The self-test first, for the arcs step's reason below:
+      # six sabotaged builds, each required to turn its OWN clause's assertion red.
+      - name: the scope-refs end-to-end check, after proving it can go RED
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}
+        run: |
+          set -o pipefail
+          tests/refaudit/e2e.sh --self-test | tee /tmp/refaudit-e2e-self.txt
+          grep -qx 'SUMMARY e2e-self-test: sabotaged=6 caught=6' /tmp/refaudit-e2e-self.txt
+          tests/refaudit/e2e.sh > /tmp/refaudit-e2e.txt 2>&1 || { cat /tmp/refaudit-e2e.txt; exit 1; }
+          cat /tmp/refaudit-e2e.txt
+          passes=$(grep -c '^PASS ' /tmp/refaudit-e2e.txt || true)
+          fails=$(grep -c '^FAIL ' /tmp/refaudit-e2e.txt || true)
+          echo "refaudit e2e: passes=$passes fails=$fails"
+          # 27 assertions, measured when the script landed; `EXPECTED` in the script moves with it.
+          if [ "$passes" -lt 27 ] || [ "$fails" -ne 0 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL lines, and 27 / 0 were measured"
+            exit 1
+          fi
+
       # 🔴 THE ARCS/SESSIONS CLOSING CHECK (S5): both Go binaries, a synthetic store, an arc journal
       # outside it, real `append`/`arc-register` writes, and what `sessions`/`arcs`/`arc-show`/
       # `arcs --check` answer — including the not-found answer for a principal without the home

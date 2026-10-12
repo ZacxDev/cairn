@@ -5055,11 +5055,93 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-retention-boundary-inclusive",
         path="internal/transcript/archive/sweep.go",
-        old="return now.Sub(m.UpdatedAt) > a.cfg.Retention }",
-        new="return now.Sub(m.UpdatedAt) >= a.cfg.Retention }",
+        old="return now.Sub(last) > a.cfg.Retention }",
+        new="return now.Sub(last) >= a.cfg.Retention }",
         killer="TestRetentionSweepsAtItsBoundary",
         why="`>=` and `>` read the same in a review; the boundary decides whether a session lives "
         "through the last instant of its retention.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    # 🔴 THE ARMING PRECONDITIONS AP1–AP3 (`claudedocs/plan-cairn-plugins.md`, "### Rollout"): one
+    # row per guard, each killed by the test its precondition's closing check names.
+    Mutant(
+        name="transcript-dir-ownership-unchecked",
+        path="internal/transcript/archive/archive.go",
+        old="\tif err := CheckOwnership(cfg.Dir); err != nil {\n\t\treturn nil, err\n\t}\n",
+        new="",
+        killer="TestOpenAcceptsAFreshAndItsOwnDirectoryAndNothingElse",
+        why="`ResolveDir` already refuses the store root, so the directory looks vetted — and a control "
+        "journal under the store's journal name receives a deletion line the next replay refuses whole (AP1).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-main-skips-state-paths",
+        path="cmd/cairn-ui/main.go",
+        old="if err := stateInsideTranscriptDir(workerConf.dir, statePaths); err != nil {",
+        new="if err := stateInsideTranscriptDir(workerConf.dir, nil); err != nil {",
+        killer="TestTheBinaryRefusesATranscriptDirHoldingItsOwnState",
+        why="the store's own ownership check refuses what is THERE at startup, so a second check reads as "
+        "redundant — and a state file this process creates later is refused one restart afterwards (AP1).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-state-path-compared-by-spelling",
+        path="cmd/cairn-ui/worker.go",
+        old="\t\tresolved, err := resolveMaybeAbsent(p.path)\n",
+        new="\t\tresolved, err := filepath.Abs(p.path)\n",
+        killer="TestStateInsideTheTranscriptDirIsResolvedNotSpelled",
+        why="`Abs` is the obvious normalisation, and a symlinked spelling of the transcript directory then "
+        "walks past it (AP1).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-assembled-record-uncapped",
+        path="internal/transcript/archive/frames.go",
+        old="if st.bytes+int64(len(chunk)) > MaxAssembledBytes {",
+        new="if false && st.bytes+int64(len(chunk)) > MaxAssembledBytes {",
+        killer="TestOneFramePastTheCapIs413AndStoresNothing",
+        why="each REQUEST is already bounded, so the record looks bounded too — and the final frame reads "
+        "every staged byte into memory, which the audit measured as an OOM kill in a 256 Mi pod (AP2).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-uncommitted-session-never-swept",
+        path="internal/transcript/archive/sweep.go",
+        old="\t\t\tok, err = a.deleteUncommitted(root, stale)\n",
+        new="",
+        killer="TestASessionWithNoMetaIsSweptByRetention",
+        why="retention is read off `meta.json`, so a root without one looks like nothing to sweep — and it "
+        "holds quota forever (AP3).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-abandoned-frames-hold-quota",
+        path="internal/transcript/archive/sweep.go",
+        old="\ta.sweepFrames(now)\n",
+        new="",
+        killer="TestAbandonedFramesStopHoldingQuotaWithoutARestart",
+        why="a restart discards staged frames, so they look bounded — and an agent that never finishes a "
+        "record holds its bytes against the quota until somebody restarts the pod (AP3).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-names-not-rechecked",
+        path="internal/transcript/archive/archive.go",
+        old="\t\tif _, hits := a.cfg.Recheck.String(f.value); len(hits) > 0 {",
+        new="\t\tif _, hits := a.cfg.Recheck.String(f.value); false && len(hits) > 0 {",
+        killer="TestTheRecheckReadsNamesSrcAndCursors",
+        why="names and cursors are pattern-checked, so they look inert — and a 40-character token fits "
+        "every one of those patterns and is stored as a file name or on every line (AP3).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="worker-owner-checked-only-at-startup",
+        path="internal/worker/worker.go",
+        old="\tif !w.cfg.OwnerHeld() {",
+        new="\tif false && !w.cfg.OwnerHeld() {",
+        killer="TestTheOwnerIsCheckedOnEveryRequest",
+        why="startup already refused an owner the authority does not hold, so a per-request check looks "
+        "redundant — and a principal removed afterwards keeps uploading until a restart (AP3).",
         pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
     ),
     Mutant(
@@ -5358,6 +5440,16 @@ MUTANTS: tuple[Mutant, ...] = (
         pkgs=PKGS + ("./internal/client/",),
         why="the seen-set alone looks sufficient for once-only delivery — until it prunes, and the "
         "listener's full list hands back a memo it no longer remembers, on every check.",
+    ),
+    Mutant(
+        name="memo-check-401-reported-as-unconfigured",
+        path="internal/client/memo.go",
+        old="\t\treturn status(\"refused\", ExitUnreachableNoCache, fmt.Sprintf(",
+        new="\t\treturn status(\"unconfigured\", ExitUnreachableNoCache, fmt.Sprintf(",
+        killer="TestEveryStatusTokenHasACaseThatProducesIt",
+        pkgs=PKGS + ("./internal/client/",),
+        why="both are exit 3 and both say 'memos not checked', so one token reads as enough — but only a "
+        "401 SENT a credential the listener's per-host lockout counted, and the hook backs a host off on it.",
     ),
     Mutant(
         name="memo-read-stops-after-one-page",
@@ -5691,6 +5783,114 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestSenderMaySendIsTheSendersOwnAuthorityNow",
         why="'can the sender still write' without saying WHERE reads as the question; a sender who "
         "writes elsewhere then hides a lapse here.",
+    ),
+    # S5 of the scope-refs plan: `internal/refaudit`, the auditor, and the `audit-refs` verb. Each row
+    # ADDS `./internal/refaudit/` (outside the seam). The git-backed killers follow the two-tier rule:
+    # the `go` job sets CAIRN_GIT_TESTS_REQUIRED, where a skip is a failure, never a kill.
+    Mutant(
+        name="refaudit-tags-count-as-reachable",
+        path="internal/refaudit/gitcli.go",
+        old='"--contains", sha,\n\t\t"refs/heads/", "refs/pull/")',
+        new='"--contains", sha)',
+        killer="TestATagInAnOlderMirrorNeverCountsAsReachable",
+        why="'any ref that contains it' reads as reachability — and a tag an older mirror kept makes a "
+        "SHA whose branch is gone look reachable: a false clean exit (round 3 of the plan).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-off-branch-counted-stale",
+        path="internal/refaudit/refaudit.go",
+        old="ExistsOffBranch: ClassInformational",
+        new="ExistsOffBranch: ClassStale",
+        killer="TestTheExitIsTheMixedCase",
+        why="'not on the branch' reads as wrong — and every PR-merged-by-squash SHA would fail the audit.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-not-reachable-counted-stale",
+        path="internal/refaudit/refaudit.go",
+        old="NotReachable: ClassCouldNotLook",
+        new="NotReachable: ClassStale",
+        killer="TestTheExitIsTheMixedCase",
+        why="absence from the fetched refs proves nothing about the remote (squash-and-delete, "
+        "force-push); calling it stale is a verdict the auditor cannot support.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-presence-counted-as-reachability",
+        path="internal/refaudit/audit.go",
+        old="\t\tif len(refs) > 0 {",
+        new="\t\tif true {",
+        killer="TestReachabilityIsRecomputedFromTheRemotesCurrentRefs",
+        why="'the commit object exists' is what the out-of-tree audit checked — and a SHA whose only ref "
+        "was deleted stays in the mirror forever.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-ls-tree-exit-code-trusted",
+        path="internal/refaudit/gitcli.go",
+        old='"ls-tree", "-z", commit, "--", path)\n\tif err != nil {\n\t\treturn false, err\n\t}',
+        new='"ls-tree", "-z", commit, "--", path)\n\tif err != nil {\n\t\treturn false, err\n\t}\n\treturn true, nil',
+        killer="TestEachPlantedClaimMapsToOneLiteralState",
+        why="`ls-tree` exiting 0 reads as 'found' — it exits 0 on a missing path (round 1 F8).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-directory-counted-missing",
+        path="internal/refaudit/gitcli.go",
+        old='ok && name == path {',
+        new='ok && name == path && strings.Contains(rec, " blob ") {',
+        killer="TestEachPlantedClaimMapsToOneLiteralState",
+        why="'a path is a file' — and every `internal/` pointer row becomes a stale finding.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-literal-pathspecs-dropped",
+        path="internal/refaudit/gitcli.go",
+        old='"GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_LITERAL_PATHSPECS=1",',
+        new='"GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1",',
+        killer="TestEachPlantedClaimMapsToOneLiteralState",
+        why="the variable looks like noise beside two others — and a cited `a*.go` greps every file the "
+        "glob matches (T3).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-undeclared-scope-exits-0",
+        path="internal/refaudit/run.go",
+        old='res, detail = Result{ScopeReason: ReasonUndeclared}, "status="+r.SourcesStatus',
+        new='return ReasonUndeclared + "\\n", "", ExitClean',
+        killer="TestAuditRefsCouldNotLookIsTenForEveryScopeLevelReason",
+        why="'nothing declared, nothing to audit' reads as a clean answer — and an undeclared scope is "
+        "reported clean forever (decision 8).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-checked-zero-exits-0",
+        path="internal/refaudit/refaudit.go",
+        old="\tif checked == 0 {\n\t\treturn ExitCouldNotLook",
+        new="\tif checked < 0 {\n\t\treturn ExitCouldNotLook",
+        killer="TestTheExitIsTheMixedCase",
+        why="'no findings' reads as clean — and a scope whose entries cite nothing checkable passes.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-unmapped-host-counted-clean",
+        path="internal/refaudit/refaudit.go",
+        old="\tif r.unlookedSource() {",
+        new="\tif false {",
+        killer="TestTheExitIsTheMixedCase",
+        why="'the claims all held' reads as clean — while half the declaration was never fetched.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-mirror-dir-from-path-components",
+        path="internal/refaudit/gitcli.go",
+        old='return filepath.Join(g.MirrorRoot, hex.EncodeToString(sum[:])+".git")',
+        new='_ = hex.EncodeToString(sum[:])\n\treturn filepath.Join(g.MirrorRoot, strings.ReplaceAll(canonical, ":", "/")+".git")',
+        killer="TestTheMirrorDirectoryIsADigest",
+        why="a readable mirror path is friendlier — and a declaration then chooses where on disk the "
+        "auditor writes (T4).",
+        pkgs=PKGS + ("./internal/refaudit/",),
     ),
 )
 

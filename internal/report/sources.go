@@ -130,3 +130,61 @@ func (r SourcesReport) RenderText() string {
 	}
 	return b.String()
 }
+
+// ParsedSources is a `sources/<scope>` body read back: what the proposed auditor needs.
+type ParsedSources struct {
+	Status        string
+	Scope         string
+	JournalAbsent bool
+	Sources       []string
+}
+
+// ParseSourcesBody reads a `sources/<scope>` body back into its facts — the INVERSE of
+// `SourcesReport.RenderText`, kept beside it so the two cannot drift: `TestParseSourcesBodyInvertsRenderText`
+// round-trips every status. Anything before the `cairn-sources:` line (the pod's freshness preamble,
+// a client's instance label) is skipped. A body with no such line, or whose declared count disagrees
+// with the `source=` lines that follow, is an error rather than an empty list — an unreadable answer
+// must never read as "undeclared".
+func ParseSourcesBody(body string) (ParsedSources, error) {
+	var out ParsedSources
+	lines := strings.Split(body, "\n")
+	start := -1
+	for i, line := range lines {
+		if rest, ok := strings.CutPrefix(line, "cairn-sources: "); ok {
+			for _, field := range strings.Fields(rest) {
+				if v, ok := strings.CutPrefix(field, "status="); ok {
+					out.Status = v
+				} else if v, ok := strings.CutPrefix(field, "scope="); ok {
+					out.Scope = v
+				}
+			}
+			start = i
+			break
+		}
+	}
+	if start < 0 || out.Status == "" {
+		return ParsedSources{}, fmt.Errorf("not a sources answer: no `cairn-sources: status=…` line")
+	}
+	declared := -1
+	for _, line := range lines[start+1:] {
+		switch {
+		case line == "  journal=absent":
+			out.JournalAbsent = true
+		case strings.HasPrefix(line, "sources=declared count="):
+			n := 0
+			if _, err := fmt.Sscanf(strings.TrimPrefix(line, "sources=declared count="), "%d", &n); err != nil {
+				return ParsedSources{}, fmt.Errorf("unreadable count line %q", line)
+			}
+			declared = n
+		case strings.HasPrefix(line, "source="):
+			out.Sources = append(out.Sources, strings.TrimPrefix(line, "source="))
+		}
+	}
+	if out.Status == StatusSourcesDeclared && declared != len(out.Sources) {
+		return ParsedSources{}, fmt.Errorf("the body declares %d source(s) and lists %d", declared, len(out.Sources))
+	}
+	if out.Status != StatusSourcesDeclared && len(out.Sources) > 0 {
+		return ParsedSources{}, fmt.Errorf("status %s with %d source line(s)", out.Status, len(out.Sources))
+	}
+	return out, nil
+}

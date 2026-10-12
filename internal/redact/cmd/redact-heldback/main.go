@@ -1,5 +1,5 @@
-// Command redact-heldback scores a held-back case file against the redactor and enforces O15's
-// arming gate: exit 0 when at least 90% of leaks are caught AND at most 15% of clean lines are
+// Command redact-heldback scores a held-back case file against the redactor against O15's bounds
+// (an arming gate until operator decision O17 waived it; now a recorded measurement): exit 0 when at least 90% of leaks are caught AND at most 15% of clean lines are
 // damaged, 1 outside either bound, 2 when the instrument cannot vouch. The case format, the oracle
 // and the controls are documented on [redact.HeldBackGate] (internal/redact/heldback.go).
 //

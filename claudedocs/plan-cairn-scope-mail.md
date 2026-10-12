@@ -858,6 +858,9 @@ no longer reversible: the operator ruled to keep it (Q16).
      alone means "nothing was read" for three different reasons, so `memo-check` ALSO writes, as its
      FIRST stderr line on every run, `memo-status=<token>` from a CLOSED set: `new` (a block is on
      stdout), `none`, `no-scope`, `scope-unreadable`, `unconfigured`, `unreachable`, `malformed`.
+     ⚠ SUPERSEDED after the arc closed: an eighth token, `refused` (a listener 401), split from
+     `unconfigured` (no key, no request) by operator decision, so the hook can back a host off
+     only for a credential the listener actually counted. `internal/memo/status.go` is the table.
      The set is a table in `internal/memo`, printed by `memo-check --statuses`, and the hook's test
      reads it out of the BUILT binary and compares it with the hook's own table — the `-verbs`
      pattern, so neither side can grow a token silently. Exit codes stay the existing ledger's
@@ -1773,7 +1776,8 @@ go1.25.14 (the devShell's), PostgreSQL 18.6 (a throwaway server per run, and the
   growing a set the hook carries a copy of is S0/S4's decision, not S3's. The hook reads a
   token-less run as `malformed` (loud, once per throttle interval). `--statuses` prints the table
   and no token.
-- **A 401 from the listener is `unconfigured` (exit 3)** in `memo-check` — a revoked or mistyped
+- **A 401 from the listener is `unconfigured` (exit 3)** ⚠ SUPERSEDED: it is `refused` now, still exit 3
+  (see the status-token decision above) in `memo-check` — a revoked or mistyped
   `CAIRN_UI_TOKEN` is persistent configuration, so the hook says it once per session — and exit 6
   for the write verbs (the listener answered no). A missing `CAIRN_UI_URL`/`CAIRN_UI_TOKEN` is 3 for
   the reads and **7 for the writes** — the same code `append` gives a missing `CAIRN_TOKEN`.

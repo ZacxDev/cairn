@@ -26,19 +26,24 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
   O14 90 days, ~20 GB per capturing host; **O15** redact by key context + entropy, tool line
   prefixes normalised first, arming gated on a FRESH auditor-written held-back set scoring ≥90%
   leaks caught AND ≤15% clean damaged; **O16** heuristic redactor rounds ENDED after round 7, S1
-  merged with capture UNARMED everywhere; arming is a separate future decision, expected to be
-  about capturing LESS (e.g. dropping or truncating raw tool output), not redacting better.
+  merged with capture UNARMED everywhere; **O17** the held-back gate (closing-condition part 5) is
+  WAIVED as an arming precondition — ship capture without perfect redaction; part 5 stays a
+  measurement, last score `leaks caught=157/190 clean damaged=18/175`.
 - **S0–S3 MERGED:** S0 #215 `76ddc7e`; S1 #216 `7ca2e25` (`internal/redact`, rounds 4–7); S2 #217
   and S3 #224 through merge train 1 (#229, merge commit `b06f15c`, whose tree equals the CI-tested
   train tree). S3 = transcript upload + per-session store in cairn-ui, DISARMED: every upload is
   answered 503 `capture-disarmed` unless cairn-ui starts with `-arm-transcript-capture` (no env
   spelling, no default).
-- 🔴 **CAPTURE IS UNARMED AND CANNOT YET BE ARMED.** Blocking: (1) O15's gate FAILS — the latest
-  fresh held-back set scored `leaks caught=157/190 clean damaged=18/175` (82.6%, round-6 head);
-  (2) S11 (client read ledger) is unbuilt; (3) arming preconditions **AP1–AP4** in
-  `claudedocs/plan-cairn-plugins.md` (S3 row + Rollout) are open — `-transcript-dir` can collide
-  with cairn-ui's control journal (an outage on restart), no cap on an assembled framed record
-  (OOM at the pod's 256 Mi), sessions without meta never swept, and blob names/cursors not re-checked.
+- 🔴 **CAPTURE IS UNARMED, AND ARMING IT WOULD CAPTURE NOTHING.** Still blocking: (1) **S3b** — S3
+  (#224) built only the POD half; there is no host-side uploader (`internal/capture/sink.go` has
+  no HTTP sink, nothing calls `capture/v1`) and `tests/plugins/e2e.sh` (clauses a, b, c, h) does
+  not exist; built as the next PR in this lane; (2) S11 (client read ledger) is unbuilt. NOT blocking any
+  more: O15's held-back gate — waived as an arming gate by O17, kept as a measurement (last score
+  `leaks caught=157/190 clean damaged=18/175`, 82.6%, round-6 head); arming preconditions
+  **AP1–AP3** — closed by #258 (transcript-dir ownership + state-path refusal; a 4 MiB cap on an
+  assembled record, 413; meta-less sessions and idle frames swept; names/cursors re-checked; the
+  owner re-asked per request); **AP4** — now a re-measure-and-record step on the commit being
+  armed, not a gate. Arming itself stays the operator's act (`-arm-transcript-capture`).
 - **Deployed:** the personal instance runs `sha-9292da2` (deployment trunk `faa94f1`) with NO worker
   flags set — cairn-ui logs "serving 49 route(s)" and starts no worker listener.
 - Claims: all released.
@@ -46,9 +51,11 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
 ## Next steps (ranked)
 1. **(done) #216 redactor** — merged `7ca2e25` under O16; capture unarmed. forcing: security —
    the redactor is the only control between raw transcripts and the store (O1).
-2. **S11** (client read ledger) next; then **S4–S10** per the plan. S3 is DONE (#224). Arming needs
-   S11 AND O15's gate AND AP1–AP4 — and probably a narrower capture scope (O16), so weigh S4+ against
-   that decision before building them. forcing: user — operator chose the build.
+2. **S3b** (the agent upload + `tests/plugins/e2e.sh`, incl. the uploader's 413 handling for a
+   record over the 4 MiB cap) next, then **S11** (client read ledger); then **S4–S10** per the
+   plan. S3's POD half is done (#224). Arming needs S3b, S11 and the AP4 re-measure-and-record
+   step (O15's gate waived by O17; AP1–AP3 closed by #258).
+   forcing: user — operator chose the build.
 3. **(done) #215 follow-through** — delete the now-unused `zach/transcripts-s0`, `-s1`, `-s2` and
    `-s3` branches (every PR based on them is merged). forcing: user — operator asked for S0–S2.
 

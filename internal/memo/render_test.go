@@ -736,7 +736,7 @@ func TestGoldens(t *testing.T) {
 // A pinned CONTRACT with the delivery hook in the tooling repository (decision 7), which keeps
 // its own copy; from S4 that hook's test reads this table out of the built binary.
 func TestStatusesIsTheClosedSet(t *testing.T) {
-	want := "new none no-scope scope-unreadable unconfigured unreachable malformed"
+	want := "new none no-scope scope-unreadable unconfigured refused unreachable malformed"
 	if got := strings.Join(Statuses(), " "); got != want {
 		t.Fatalf("Statuses() = %q, want %q", got, want)
 	}

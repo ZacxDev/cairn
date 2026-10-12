@@ -58,11 +58,23 @@ const (
 	// StateHomeEnv is where the memo cursor lives (decision 6): `$XDG_STATE_HOME/cairn/memo/…`,
 	// defaulting to `~/.local/state` when unset.
 	StateHomeEnv = "XDG_STATE_HOME"
+	// The `audit-refs` verb's reads (S5 of the scope-refs plan). AuditHostsEnv is the host → base-URL
+	// map and AuditGitHubAPIEnv the PR check's REST base — the SAME spellings as `refaudit.EnvHosts` /
+	// `refaudit.EnvGitHubAPI`, pinned equal by `TestTheAuditEnvNamesAreTheLibrarysOwn` (the library
+	// reads no environment itself). GHTokenEnv/GitHubTokenEnv are the PR check's credential, first set
+	// wins, never printed, logged or sent to the pod. CacheHomeEnv is where the mirrors live:
+	// `$XDG_CACHE_HOME/cairn/mirrors`, `~/.cache` when unset.
+	AuditHostsEnv     = "CAIRN_AUDIT_HOSTS"
+	AuditGitHubAPIEnv = "CAIRN_AUDIT_GITHUB_API"
+	GHTokenEnv        = "GH_TOKEN"
+	GitHubTokenEnv    = "GITHUB_TOKEN"
+	CacheHomeEnv      = "XDG_CACHE_HOME"
 )
 
 // EnvReads is every environment variable the client reads BY NAME, sorted — the ledger.
 func EnvReads() []string {
 	out := []string{ConfigEnv, EnvURL, EnvToken, RoutesEnv, MirrorRootEnv, EnvUIURL, EnvUIToken,
+		AuditHostsEnv, AuditGitHubAPIEnv, GHTokenEnv, GitHubTokenEnv, CacheHomeEnv,
 		StateHomeEnv, HomeEnv}
 	sort.Strings(out)
 	return out

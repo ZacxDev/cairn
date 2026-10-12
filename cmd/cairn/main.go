@@ -31,6 +31,7 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/client"
 	"github.com/ZacxDev/cairn/internal/doctor"
+	"github.com/ZacxDev/cairn/internal/refaudit"
 )
 
 func main() {
@@ -73,5 +74,23 @@ func main() {
 	}
 
 	env := client.Env{Stdout: os.Stdout, Stderr: os.Stderr}
+	// 🔴 THE AUDITOR IS JOINED HERE AND NOWHERE ELSE: `internal/client` must not import
+	// `internal/refaudit` (the browser surface links `internal/client`), so this binary — the one that
+	// may hold both — installs it. See `internal/client/auditrefs.go`.
+	client.SetAuditRunner(runAudit)
 	os.Exit(client.Run(env, argv))
+}
+
+// runAudit is `client.AuditRequest` → `refaudit.Execute`: a field-for-field copy, no decision.
+func runAudit(req client.AuditRequest) (string, string, int) {
+	entries := make([]refaudit.EntryInput, 0, len(req.Entries))
+	for _, e := range req.Entries {
+		entries = append(entries, refaudit.EntryInput{Ref: e.Ref, Text: e.Text, Refs: e.Refs})
+	}
+	return refaudit.Execute(refaudit.Run{
+		SourcesStatus: req.SourcesStatus, SourcesDetail: req.SourcesDetail, JournalAbsent: req.JournalAbsent,
+		Sources: req.Sources, Entries: entries, EntriesDetail: req.EntriesDetail,
+		Hosts: req.Hosts, GitHubAPI: req.GitHubAPI, Token: req.Token, MirrorRoot: req.MirrorRoot,
+		Timeout: req.Timeout, JSON: req.JSON, Label: req.Label,
+	})
 }
