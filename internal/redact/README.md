@@ -282,11 +282,12 @@ When two rules' spans overlap they merge, and the EARLIER rule in the table name
   build damaged (labelled as this round's own guards, not round-3 coverage).
 - Review round 2's adopted auditor tests (`audit_*_test.go`) still run.
 
-## The arming gate (O15)
+## The held-back gate (O15) — a measurement since O17, not an arming gate
 
-Capture is not armed on ANY instance until a FRESH held-back case set — written by an auditor,
-never seen by the fixer, replaced each round — shows **≥ 90% of leaks caught AND ≤ 15% of clean
-lines damaged**. `heldback.go` makes that a deterministic check:
+O15 made arming wait until a FRESH held-back case set — written by an auditor, never seen by the
+fixer, replaced each round — shows **≥ 90% of leaks caught AND ≤ 15% of clean lines damaged**.
+Operator decision O17 waived that as an arming precondition; the check below is still run and its
+line recorded. `heldback.go` makes it deterministic:
 
 ```bash
 go build -o redact-heldback ./internal/redact/cmd/redact-heldback

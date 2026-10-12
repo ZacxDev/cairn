@@ -69,7 +69,12 @@ func (a *Archive) stageFrame(u Upload, target, src string, chunk []byte) ([]byte
 		a.dropFrames(u.Root, target)
 		return nil, false, &TooLargeError{Limit: MaxAssembledBytes}
 	}
-	st.touched = a.cfg.Now()
+	// Under `a.mu`, because the sweep's survey reads `touched` holding `a.mu` and NOT this root's
+	// lock — a data race, measured under `-race`, when it was written under the root lock alone.
+	now := a.cfg.Now()
+	a.mu.Lock()
+	st.touched = now
+	a.mu.Unlock()
 	if f.Index == f.Count-1 {
 		staged, err := os.ReadFile(st.path)
 		if err != nil {

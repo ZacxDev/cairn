@@ -58,6 +58,16 @@ func TestOpenAcceptsAFreshAndItsOwnDirectoryAndNothingElse(t *testing.T) {
 	if _, err := Open(g.a.cfg); err != nil {
 		t.Fatalf("the store's own directory was refused on reopen: %v", err)
 	}
+	// A fresh ext volume's root carries `lost+found`; that volume must open too.
+	vol := t.TempDir()
+	if err := os.Mkdir(filepath.Join(vol, "lost+found"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	volCfg := g.a.cfg
+	volCfg.Dir = vol
+	if _, err := Open(volCfg); err != nil {
+		t.Fatalf("a fresh volume with lost+found was refused: %v", err)
+	}
 
 	// A control journal line: `kind`, never `event` (internal/control/journal.go).
 	controlLine := `{"kind":"user-created","at":"2000-01-02T03:04:05Z","user_id":"usr_fixture","provider":"fixture",` +
@@ -375,3 +385,36 @@ func TestTheRecheckReadsNamesSrcAndCursors(t *testing.T) {
 
 // write40 is the session-id class a root and a stream id are matched against.
 func write40(s string) bool { return streamName.MatchString("subagent:"+s) && scopeName.MatchString(s) }
+
+// TestTheFrameSweepDoesNotRaceStaging: the sweep's survey and a frame being staged on the same
+// root run at once. Under `-race` (the `go` CI job) this was a reported DATA RACE on
+// `frameState.touched` — written under the root lock, read under `a.mu` — before the write took
+// `a.mu`. Without `-race` it is an invariant guard only.
+func TestTheFrameSweepDoesNotRaceStaging(t *testing.T) {
+	g := newRig(t, 1<<30)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 300 {
+			_, _ = g.a.Sweep()
+		}
+	}()
+	for i := range 300 {
+		u := up("s-0001", "", "1")
+		u.Frame = &Frame{Index: i % 2, Count: 2}
+		chunk := `{"a":`
+		if i%2 == 1 {
+			chunk = `1}`
+		}
+		if _, err := g.a.AppendRecords(ownerA, u, "main", []Record{{Src: "0", Rec: []byte(chunk)}}); err != nil {
+			var st *StaleError
+			if !errors.As(err, &st) {
+				t.Fatal(err)
+			}
+		}
+		if i%2 == 1 {
+			_ = os.RemoveAll(filepath.Join(g.dir, sessionsDir, "s-0001"))
+		}
+	}
+	<-done
+}

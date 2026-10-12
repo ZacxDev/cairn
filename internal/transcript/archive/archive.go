@@ -83,8 +83,10 @@ const (
 	// record (an upper bound on its live peak), linearly at 1, 2 and 4 MiB — ≈72 MiB at this cap.
 	// `TestTheAssembledRecordCapFitsThePod` re-measures it on every run against a 100 MiB budget,
 	// under half the limit, so two roots assembling at once still leave the rest of the process
-	// room. A larger record is refused 413 and the agent truncates it; raise this only with the
-	// limit, and re-measure.
+	// room. ⚠ The bound is PER RECORD, not per request: an unframed request of two records near
+	// the cap (one 8 MiB body) was measured allocating ≈129 MiB, a shape the S3 head already
+	// admitted and this change does not narrow. A larger record is refused 413 and the agent
+	// truncates it; raise this only with the limit, and re-measure.
 	MaxAssembledBytes = 4 << 20
 	// FrameIdle is how long a staged frame sequence may wait for its next frame before the sweep
 	// discards it and returns its bytes to the quota (AP3: an abandoned sequence must not hold
@@ -331,6 +333,7 @@ var frameFile = regexp.MustCompile(`^[0-9a-f]{32}$`)
 //   - `sessions` must be a directory whose entries are all session-id directories (a browser
 //     session FILE is refused by type).
 //   - `frames` must be a directory of staged-frame files only, because [Open] removes it whole.
+//   - a `lost+found` DIRECTORY is admitted: a fresh ext volume carries one and only fsck writes it.
 //   - anything else, and any symlink, is refused.
 //
 // An EMPTY directory (a fresh volume) and the store's own populated directory (a restart) both
@@ -371,6 +374,8 @@ func CheckOwnership(dir string) error {
 			if err := checkChildren(filepath.Join(dir, name), false, frameFile); err != nil {
 				return foreign(name, err.Error())
 			}
+		case name == "lost+found" && e.IsDir():
+			// A fresh ext2/3/4 volume carries it at its root; nothing writes there but fsck.
 		default:
 			return foreign(name, "not one of journal.jsonl, sessions/ or frames/")
 		}
