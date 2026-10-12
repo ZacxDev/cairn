@@ -360,10 +360,12 @@ func MemoCheck(env Env, opts Options) (int, error) {
 			"this host's cache holds %s, but the memo listener answers not-found for it with this credential — "+
 				"it is narrowed away from the scope, or cannot read it", store.PyRepr(scope)))
 	case a.status == http.StatusUnauthorized:
-		// `refused`, never `unconfigured`: this request reached the listener and COUNTED toward its
-		// per-host lockout, which is the one thing the hook backs a whole host off for.
+		// `refused`, never `unconfigured`: this request reached the listener. Its 401 is one uniform
+		// answer for a bad credential (counted toward the per-host lockout), a host already locked
+		// out, and no client identity — each a reason for the hook to back the whole host off.
 		return status("refused", ExitUnreachableNoCache, fmt.Sprintf(
-			"%s refused the credential in %s (HTTP 401) — revoked, mistyped, or for another listener", cfg.URL, EnvUIToken))
+			"%s refused the credential in %s (HTTP 401) — revoked, mistyped, for another listener, "+
+				"or this host is locked out by earlier failures (up to 15 min)", cfg.URL, EnvUIToken))
 	case a.err != nil || a.status != http.StatusOK:
 		return status("malformed", ExitCorrupt, fmt.Sprintf("%s answered HTTP %d%s", cfg.URL, a.status, oneLineSuffix(a.body)))
 	}
@@ -495,7 +497,8 @@ func MemoRead(env Env, opts Options) (int, error) {
 				"(an id or scope that does not exist and one you cannot read are the same answer)\n", what)
 			return ExitUnreachableNoCache, true
 		case a.status == http.StatusUnauthorized:
-			fmt.Fprintf(env.Stderr, "🔴 cairn: memo-read: nothing was read — %s refused the credential in %s (HTTP 401)\n",
+			fmt.Fprintf(env.Stderr, "🔴 cairn: memo-read: nothing was read — %s refused the credential in %s (HTTP 401; or this host "+
+				"is locked out by earlier failures, up to 15 min)\n",
 				cfg.URL, EnvUIToken)
 			return ExitUnreachableNoCache, true
 		case a.err != nil || a.status != http.StatusOK:
