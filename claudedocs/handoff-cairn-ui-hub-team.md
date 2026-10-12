@@ -39,7 +39,19 @@ Team page carrying sharing + invitations + multi-target team links (TTL, reuse, 
 1. **(done) Keep reusable-link tokens out of access logs** — fragment links, #232, deployed.
    forcing: security — a logged reusable token is a standing enrolment capability.
 2. **Fold single-project invitations into team links** — a separate PR now that #214 has soaked.
-   forcing: user — operator chose "fold later".
+   forcing: user — operator chose "fold later". 🔴 **BLOCKED ON AN OPERATOR RULING, not built:** a
+   single-project invitation and a one-project single-use team link differ in three ways, and
+   "fold" picks a side on each — (i) invitations may confer `owner` (an owner may invite an owner,
+   `control.Role.CanConfer`); team links refuse `owner` by design; (ii) an invitation is listed to and
+   revocable by EVERY manager of its project (`mayManage`); a team link only by its minter;
+   (iii) open `invites` rows already exist in the version-1 table. **Recommended (no migration):** the
+   Team page keeps ONE mint form (the team-link form, `?project=` preselecting that project);
+   `POST /invite` stops minting and 303s to it; outstanding invitations stay listed, revocable and
+   redeemable until they expire; owner invitations become CLI-only. Alternatives: widen team links to
+   carry (i)+(ii) for one-project single-use links (an authz-model change), or a migration-3 move of
+   open invitations into `team_links` (stop before deploy). The older invite branches
+   (`feat/ui-invite-flow`, `p6/invite-*`, `fix/rank-33-…`) are squash-merged via #139/#144, predate
+   team links, and neither implement the fold nor conflict with it.
 3. **(done) Deploy #214 + S4** — `sha-197dd0e`, trunk `bbb6055`. forcing: user — operator go.
 
 ## Gotchas / decisions / dead-ends
@@ -68,10 +80,13 @@ Team page carrying sharing + invitations + multi-target team links (TTL, reuse, 
   `uiaudit/targets.go`): #232 added `join.js`'s route without one and `TestPWAClauses/e_storage`
   plus `TestTheREALLedgerIsFullyACCOUNTEDFor` went red until it joined `notADocument`. via: measurement
 ## Defects (batched)
-- `cmd/cairn-ui`'s `aPortNothingIsListeningOn` can hand out the same port twice (measured 17 in
-  200,000 pairs), which makes `TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped`
-  flake under load — keep the two picked ports distinct, or assert on WHAT answers.
-- `internal/ui/render.go` (~:496) and `routes_test.go` (~:99) still say the surface has ONE script;
-  there are now three (`filter.js`, `pwa.js`, `join.js`).
+- ✅ **CLOSED by #252** (`429e953`, test-only): `aPortNothingIsListeningOn` now HOLDS a bound,
+  non-listening socket for the whole test instead of closing it (old shape: 38 duplicates in 200,000
+  pairs; held: 0). 🟡 left: the agent address uses `127.0.0.2`, unconfigured by default on macOS —
+  moot while `cmd/cairn{,-ui}` do not build for macOS (`st.Mtim`, `internal/report/entry.go`).
+  The same close-then-reuse shape remains in `cmd/cairn-server/main_test.go` `freePort` and
+  `uiaudit/payload_test.go` — not fixed.
+- ✅ **CLOSED by #253** (`c8aab6b`): every "the surface has ONE script" claim now names three
+  (`filter.js`, `pwa.js`, `join.js`); per-page "one script" claims, which are true, stay.
 - The deployed cairn-ui still sets `CAIRN_SUPABASE_ISSUER`/`CAIRN_SUPABASE_JWKS_URL`, which it warns
   are deprecated aliases for `CAIRN_OIDC_*` — rename them in the deployment repo.

@@ -77,8 +77,13 @@ UNTRUSTED pointer-plus-preview block. Per `claudedocs/plan-cairn-scope-mail.md` 
   in one home-manager generation). An old hook reads `refused` as `malformed` (no stop, no backoff → lockout burst).
 - ✅ CLOSED (#251) — **#246 🟡:** the subject-past-`MaxScannedBytes` + secret-in-body row; mutant
   `ui-memo-scannable-asks-about-the-body-only` killed (survived the old table).
-- **Walk capture of a POPULATED memos tab** (axe / touch / overflow / screenshots) — operator ruled it a separate,
-  non-blocking follow-up.
+- ✅ CLOSED (#254, `09b5a56`) — **Walk capture of a POPULATED memos tab**: `memos_check.py` clause (f)
+  captures the owner's tab holding synthetic memos at all 5 viewports through `refuseWalkRegressions`
+  (plus any axe violation), screenshots uploaded as `uiaudit-memos-captures`; self-test
+  `sabotaged=11 caught=11`. It found and fixed two defects (an unbroken memo token overflowing at 4
+  widths; memo send fields at 14px on touch) — 🔴 those CSS fixes reach users only with a cairn-ui
+  image rollout. 🟡 left: only the owner's view is captured; the `.team-link` 16px restatement is
+  unmeasured in a browser.
 - ✅ CLOSED (#251) — **Closing-condition part 3** re-anchored on `b06f15c` (first `main` commit with the `sources`
   route, last before S0); measured EMPTY against `be6662e`.
 - ✅ CLOSED (#251) — `tests/pgtest/run.sh` summary line is one `awk` (old: exit 1 on no match, 141 on many).
