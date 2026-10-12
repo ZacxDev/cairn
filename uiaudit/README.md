@@ -679,7 +679,7 @@ touch never enabled, S1's coarse-pointer input rule never applies.
 script's own text and `main.go`'s refusal headlines. ⚠ It is a SPELLING guard, labelled as one.
 
 ✅ **A CI step since S4** — the PLAIN check, in the advisory `uiaudit` job (exit 1 or 2 fails the step;
-the job stays `continue-on-error` until S6b). It runs in that job's `pwa` matrix leg, in parallel with
+the job stays `continue-on-error`; S6b promoted only the walk's touch refusals, into `uiaudit-touch`). It runs in that job's `pwa` matrix leg, in parallel with
 the `walk` leg, so the job takes the longer leg rather than the sum; it shares no state with the walk (own work dir, own port, credentials stripped), and
 `tests/test_uiaudit_job_ledger.py` pins which leg every step of the job runs in. `--self-test` is NOT run in CI: nine tree copies and four
 full walks per push buy nothing the committed self-test record below does not, until the tree changes.
@@ -1353,8 +1353,8 @@ repository already refuses, reached from a new direction.
   moves the browser, deliberately and in a diff.
   ⚠ **What the pin does NOT establish:** that the pixel diff is stable run-to-run under it in CI (not
   measured), or that the hub's stored baseline was captured under it (it was not — those captures ran
-  on the runner's chromium). So the pixel diff stays advisory for the reasons above; S6b promotes only
-  the walk's TOUCH refusals, into their own blocking job. A full-page height shift also reads as a
+  on the runner's chromium). So the pixel diff stays advisory for the reasons above; S6b promoted only
+  the walk's TOUCH refusals, into their own blocking job (below). A full-page height shift also reads as a
   near-100% pixel change, which is why the log annotates a `size_changed` page as a layout change
   rather than a regression.
   ⚠ **Local runs are not CI's browser** unless they use the same build: `nix shell --inputs-from .

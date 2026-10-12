@@ -34,8 +34,8 @@ committed prose in a public repository); the pytest suite, because tests READ `c
 public-IP scan walks it); and the `go` job's `vet`/`test`, which are cheap and are the only
 Go tier left running — `internal/redact`'s live clean-damage sweep reads `claudedocs/`, though
 only behind its opt-in flag, so the default `go test` is NOT measured to read it. What it
-skips: `parity`, `dualrun`, `nix`, `uiaudit`, `pgtest`, `mutants`, `mutants-aggregate`, and the
-`go` job's conformance and end-to-end steps.
+skips: `parity`, `dualrun`, `nix`, `uiaudit`, `uiaudit-touch`, `pgtest`, `mutants`,
+`mutants-aggregate`, and the `go` job's conformance and end-to-end steps.
 
 Usage (the workflow's form; the event fields arrive as environment variables):
 

@@ -141,3 +141,64 @@ def test_the_hub_secrets_reach_ONE_step_in_ONE_leg():
     in_walk = re.findall(r"secrets\.([A-Z_]+)", walk)
     assert in_walk == HUB_SECRETS
     assert in_job == in_walk, f"a secret is referenced outside the walk step: {in_job}"
+
+
+# --- `uiaudit-touch`: the BLOCKING job (S6b of the mobile plan) ------------------------------------
+
+#: The steps `uiaudit-touch` SHARES with `uiaudit`, by label. They must be byte-identical in both jobs:
+#: the browser that blocks a merge is S6a's pinned chromium only while its install is the SAME text.
+SHARED_WITH_UIAUDIT = [label for label, leg in LEDGER[:7]]
+TOUCH_LEDGER = SHARED_WITH_UIAUDIT + ["the walk's touch refusals — BLOCKING"]
+
+
+def _step(job: str, label: str) -> str:
+    """One step's text WITHOUT the comment block that follows it: `_steps` splits on the dash, so a
+    step's tail is the NEXT step's leading comment, which legitimately differs between the jobs."""
+    (s,) = [s for s in _steps(job) if _label(s) == label]
+    lines = s.splitlines()
+    while lines and (not lines[-1].strip() or lines[-1].lstrip().startswith("#")):
+        lines.pop()
+    return "\n".join(lines)
+
+
+def test_the_touch_job_is_exactly_these_steps_and_shares_the_pinned_install_BYTE_FOR_BYTE():
+    touch = JOBS["uiaudit-touch"]
+    assert [_label(s) for s in _steps(touch)] == TOUCH_LEDGER
+    assert SHARED_WITH_UIAUDIT[-2:] == ["chromium from the flake's pinned nixpkgs, its version asserted",
+                                        "the pinned chromium is the one on PATH"]
+    for label in SHARED_WITH_UIAUDIT:
+        assert _step(touch, label) == _step(JOBS["uiaudit"], label), f"{label!r} drifted from the advisory job's"
+    # And the version is ASSERTED, not only printed (the plan's closing condition reads it off the log).
+    pin = _step(touch, "chromium from the flake's pinned nixpkgs, its version asserted")
+    assert 'echo "the binary says: $got"' in pin and "::error::the pinned chromium reports" in pin
+
+
+def test_the_touch_job_BLOCKS_holds_no_secret_and_runs_the_walk_under_the_touch_gate():
+    """The plan's closing condition, part 3, read off the workflow file: NOT `continue-on-error`."""
+    touch = JOBS["uiaudit-touch"]
+    assert "continue-on-error" not in touch
+    assert "secrets." not in touch
+    # The advisory job is unchanged in this respect: it stays non-blocking.
+    assert re.search(r"^    continue-on-error: true$", JOBS["uiaudit"], re.M)
+    gate = _step(touch, "the walk's touch refusals — BLOCKING")
+    assert _if(gate) is None, "the gate step must run whenever the job does"
+    assert re.search(r"^          UIAUDIT_GATE: touch$", gate, re.M)
+    assert "./uiaudit/run.sh" in gate
+    assert "env -u CAIRN_AUDIT_PUSH_URL -u CAIRN_AUDIT_PUSH_TOKEN -u CAIRN_AUDIT_API_URL -u CAIRN_AUDIT_API_TOKEN" in gate
+
+
+def test_the_touch_gates_needle_and_verdict_lines_are_ones_uiaudit_actually_prints():
+    """The step greps four verdict lines and a needle. Each must be a string `uiaudit/main.go` can
+    print — a needle nothing produces is a gate that can only ever fail (or, with an inverted test,
+    only ever pass). Text only: that the walk prints them is the live run's claim."""
+    from pathlib import Path
+    main = (Path(__file__).resolve().parent.parent / "uiaudit/main.go").read_text(encoding="utf-8")
+    gate = _step(JOBS["uiaudit-touch"], "the walk's touch refusals — BLOCKING")
+    (needle,) = re.findall(r"^          needle='([^']+)'$", gate, re.M)
+    assert f'const touchGatePassed = "{needle}' in main
+    lines = re.findall(r"'(uiaudit:   [^']+)'", gate)
+    assert len(lines) == 4, lines
+    for line in lines:
+        # The Go source spells each as a Printf format: compare up to the first verb.
+        head = line.split("%")[0]
+        assert f'"{head}' in main, f"{line!r} is not a prefix uiaudit/main.go prints"
