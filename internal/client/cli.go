@@ -103,6 +103,13 @@ func Verbs() []Verb {
 		{Name: "arc-register", Writes: true,
 			Help:  "register or update an arc from a JSON payload (writes to the pod)",
 			Flags: []string{"--scope", "--repo", "--slug", "--from"}, Run: ArcRegister},
+		// 🔴 GO-ONLY, DECLARED: the scope's declared code sources (S3 of the scope-refs plan) — the
+		// `scope-sources` row of `capability_ledger.LEDGER` and `flake.nix`'s
+		// `want-go-only-verbs.txt` make that legal. Read-only: the browser surface is the ONLY
+		// writer (decision 5), so there is no `sources-set` verb and there must not be one. Asks the
+		// pod and prints its body verbatim, the arc verbs' shape — see `SourcesShow`.
+		{Name: "sources", Help: "which code (repositories and branch) the scope declares it describes (asks the pod)",
+			Flags: []string{"--scope", "--repo"}, Run: SourcesShow},
 		{Name: "validate", Help: "the post-write check: parse, dropped lines, marker reachability",
 			Flags: commonReadFlags, Run: Validate},
 		{Name: "ls-entries", Help: "one `<scope>/<entry>.md` per line",
