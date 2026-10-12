@@ -11,8 +11,12 @@ README it replaces.
 helm template rel charts/cairn \
   --set storage.existingClaim=cairn-data \
   --set tokenFile.secretName=cairn-token \
-  --set 'trustedProxies[0]=192.0.2.0/24'
+  --set 'trustedProxies[0]=192.0.2.0/24' \
+  --set image.store=ghcr.io/<owner>/cairn-store-go:sha-<40-hex commit> \
+  --set image.ui=ghcr.io/<owner>/cairn-ui:sha-<40-hex commit>
 ```
+
+Those five are the whole required set; everything else has a default.
 
 ## What it refuses, and why each one is here
 
@@ -20,10 +24,11 @@ helm template rel charts/cairn \
 |---|---|
 | `storage.existingClaim` required | the two known deployments place the store volume by **different mechanisms** — a linstor PV `nodeAffinity` vs `local-path` node-locality — so a claim created here is wrong on one of them |
 | `tokenFile.secretName` required | the binary refuses to start without a token file and **falls back to `/run/secrets/subsystem-store/token`**, so a manifest that "sets nothing" is really mounting a secret at that default path |
-| `trustedProxies` wider than /24 | the binary itself refuses a /16 (*"/16 covers 65536 peers; the floor is /24"*). ⚠ And listing every /24 inside a /16 is **that same /16 respelled** — it satisfies the floor while defeating its point |
-| a bare address in `trustedProxies` | a host where a network belongs |
+| a `trustedProxies` entry wider than the binary's floor | the floor is **per family** and the chart applies `internal/netid`'s own rule: IPv4 **/24**, IPv6 **/64**, and `/0` refused outright. Anything wider renders a release whose pods exit 78. ⚠ And listing every /24 inside a /16 is **that same /16 respelled** — it satisfies the floor while defeating its point. A **bare address is accepted** as one host, as the binary accepts it: refusing it pushes an operator toward the `/0` the floor exists to stop |
+| `image.store` / `image.ui` missing, or not immutable | the publish workflow pushes **no `latest`**, only `sha-<40-hex commit>` (and version tags), so a `:latest` default was an ImagePullBackOff on every install. Accepted: a `sha-<40 hex>` tag or an `@sha256:<64 hex>` digest. Version tags are refused because re-pushing a git tag re-points them |
+| `store.replicas` other than 1 | the store is the single writer on a ReadWriteOnce claim (hence `Recreate`): a second replica cannot attach, or is a second writer |
 | an EMPTY `trustedProxies` | both binaries exit 78 without `CAIRN_TRUSTED_PROXIES` on a reachable bind — `cairn-server` always, `cairn-ui` on any non-loopback one, and this chart binds `0.0.0.0` — so an empty list installs two crash-looping pods. Measured by running both |
-| `ui.replicas` above 1 | the session table is a file on a per-pod `emptyDir` (below), so a cookie one replica issued is unknown to the next: random sign-outs behind a Deployment reporting Ready |
+| `ui.replicas` other than 1 | the session table is a file on a per-pod `emptyDir` (below), so a cookie one replica issued is unknown to the next: random sign-outs behind a Deployment reporting Ready |
 | both workloads disabled | a release that renders nothing is a typo, not a configuration |
 
 ## What it hardcodes, and why those are NOT values
@@ -56,7 +61,9 @@ value they could take other than this one is a known outage:
   set explicitly into it.** The root filesystem is read-only and the UI's
   browser session table defaults to `/var/lib/cairn-ui/sessions`; without a
   writable volume there the binary **exits 78 at startup** ("mount a writable
-  volume for it"). ⚠ An `emptyDir` means a pod restart signs every browser out —
+  volume for it"). Both the path and the mount come from one helper. ⚠ An
+  `emptyDir` lives as long as the POD: a container restart keeps sessions, but a
+  pod REPLACEMENT (rollout, eviction, drain, delete) signs every browser out —
   the price of not owning a second claim.
 - **The NetworkPolicy's port list, derived from the same `enabled` flags the
   Deployments use.** A namespace-wide `podSelector: {}` covers a new pod the

@@ -23,6 +23,9 @@ spec:
       app.kubernetes.io/instance: {{ .Release.Name }}
   policyTypes: [Ingress]
   ingress:
+    # ⚠ AN EMPTY `from` ADMITS EVERY SOURCE — that is the API's meaning of an empty
+    # or absent peer list, not "nobody". With `networkPolicy.ingressFrom` unset this
+    # policy narrows the PORTS only; set it to narrow the callers.
     - from:
         {{- if .Values.networkPolicy.ingressFrom }}
         {{- toYaml .Values.networkPolicy.ingressFrom | nindent 8 }}

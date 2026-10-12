@@ -16,16 +16,23 @@
 # A chart that guessed would be wrong on one of the two clusters.
 
 image:
-  # Pin by digest in production. A tag is mutable and the pod will not tell you
-  # it moved.
-  store: ghcr.io/zacxdev/cairn-store-go:latest
-  ui: ghcr.io/zacxdev/cairn-ui:latest
+  # 🔴 REQUIRED for each ENABLED workload, and the chart refuses anything that is
+  # not immutable. There is no `latest`: the publish workflow pushes only
+  # `sha-<40-hex commit>` (and a version tag, refused here because re-pushing a git
+  # tag re-points it). So a `:latest` default was an ImagePullBackOff on every
+  # install. Accepted: `…:sha-<40 hex>` or any `…@sha256:<64 hex>`, e.g.
+  #   ghcr.io/<owner>/cairn-store-go:sha-<40-hex commit>
+  #   ghcr.io/<owner>/cairn-ui:sha-<40-hex commit>
+  store: ""
+  ui: ""
   pullPolicy: IfNotPresent
   pullSecrets: []
 
 store:
   enabled: true
   port: 8102
+  # 🔴 MUST BE 1 AND THE CHART REFUSES ANYTHING ELSE: the store is the single
+  # writer on a ReadWriteOnce claim, which is why its strategy is `Recreate`.
   replicas: 1
   resources: {}
 
@@ -59,11 +66,10 @@ tokenFile:
   secretKey: token
   mountPath: /run/secrets/subsystem-store
 
-# 🔴 TRUSTED PROXIES MUST BE /24 OR NARROWER AND THE TEMPLATE ENFORCES IT.
-# The binary itself refuses a /16 ("/16 covers 65536 peers; the floor is /24"),
-# and listing every node /24 of a /16 is that same /16 respelled — it satisfies
-# the floor while defeating its stated point. Tightness is the property, not the
-# prefix length.
+# 🔴 TRUSTED PROXIES: THE TEMPLATE APPLIES THE BINARY'S OWN RULE (`internal/netid`),
+# so what renders is what starts. Each entry is an address (one host) or a CIDR; the
+# floor is per family — IPv4 /24, IPv6 /64 — and /0 is refused. Listing every /24 of
+# a /16 is that same /16 respelled: it satisfies the floor while defeating its point.
 # 🔴 AND IT IS REQUIRED: both binaries refuse to start with it empty on a reachable
 # bind, so the chart refuses to render with it empty.
 trustedProxies: []
@@ -73,7 +79,9 @@ networkPolicy:
   # everything — which presents as a UI bug, not a policy one: Deployment 1/1
   # Ready, probes green, and the ingress controller unable to open a socket.
   enabled: true
-  # Namespace selector for whatever fronts these pods.
+  # Peers (e.g. a namespaceSelector for whatever fronts these pods).
+  # ⚠ EMPTY ADMITS EVERY SOURCE on the served ports: an empty `from` is the API's
+  # "all peers", so the default narrows ports only, never callers.
   ingressFrom: []
 
 nameOverride: ""

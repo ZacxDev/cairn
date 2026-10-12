@@ -56,12 +56,15 @@ spec:
             # 🔴 THE SESSION TABLE NEEDS A WRITABLE DIRECTORY, AND THE ROOT FS IS
             # READ-ONLY. Without the `sessions` emptyDir below the binary exits 78
             # ("the session table … cannot be opened … mount a writable volume"),
-            # measured by running it. Explicit rather than the binary's default so the
-            # path and the mount below cannot drift apart. An emptyDir means a pod
-            # restart signs every browser out; that is the price of not owning a
-            # second claim, and it is why `ui.replicas` is refused above 1.
+            # measured by running it. The file path and the mount below are BOTH
+            # derived from `cairn.uiSessionDir`, one string, so they cannot drift
+            # apart (and test.sh pins the relationship on the rendered output).
+            # ⚠ An emptyDir lives as long as the POD, not the container: a container
+            # restart keeps every session, while a pod REPLACEMENT — rollout,
+            # eviction, node drain, delete — signs every browser out. That is the
+            # price of not owning a second claim, and why `ui.replicas` must be 1.
             - name: CAIRN_UI_SESSION_FILE
-              value: /var/lib/cairn-ui/sessions
+              value: {{ printf "%s/sessions" (include "cairn.uiSessionDir" .) | quote }}
             {{- with .Values.trustedProxies }}
             - name: CAIRN_TRUSTED_PROXIES
               value: {{ join "," . | quote }}
@@ -93,7 +96,7 @@ spec:
               mountPath: {{ .Values.tokenFile.mountPath }}
               readOnly: true
             - name: sessions
-              mountPath: /var/lib/cairn-ui
+              mountPath: {{ include "cairn.uiSessionDir" . }}
           {{- with .Values.ui.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
