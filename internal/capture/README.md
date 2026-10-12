@@ -57,10 +57,10 @@ environment, never printed); `-host` is the label the token was minted for.
 | answer | what the agent does |
 |---|---|
 | 200 / 202 | stored / a staged non-final continuation frame |
-| 409 `{"stored_to":…}` | **resume**: the position is the end of a record this write carries (a lost acknowledgement) → continue after it, every record once. An opencode stream also matches it against the PLAN of every sent, unacknowledged write (`StreamState.Pending`, saved before the request leaves) — opencode mutates units in place, so the position may be one the current export cannot reproduce. Any other position → `UnresumableError`, nothing guessed |
+| 409 `{"stored_to":…}` | **resume**: the position is the end of a record this write carries (a lost acknowledgement) → continue after it, every record once; any other position → `UnresumableError`, nothing guessed. An opencode stream — whose units opencode mutates in place, so the stored position may be one the current export cannot reproduce — keeps the PLAN of its one unacknowledged write (`pending`, saved before the request leaves); while it is pending no new write is sent: the instance is first ASKED where the stream is (a probe that stores nothing) and the plan is settled against the answer |
 | 409 uniform | `ErrNotOwner`: another (owner, host) holds the root; logged every run |
 | 413 | the record or blob is replaced by a **placeholder** naming its size and the bound, under the SAME `src` and cursor; the stream moves on and is never wedged. A record over `MaxRecordBytes` (= `archive.MaxAssembledBytes`) is replaced BEFORE it is sent. Counted as `omitted=` |
-| 422 naming a record or the blob | EXACTLY that record or blob is replaced by a `refused-by-recheck` **placeholder** and the stream moves on; its bytes are sent once, never again, and nothing the pod refused is stored. Counted as `recheck-omitted=`. ⚠ An agent decision under O17: a hold was built first, and the pod's re-check was measured refusing clean data, which would freeze a stream for good |
+| 422 naming a record or the blob | EXACTLY that record or blob is replaced by a `refused-by-recheck` **placeholder** and the stream moves on. Nothing the pod refused is stored, and its bytes are sent once: the refusal is saved in the state (`rechecked`) BEFORE the placeholder leaves, so a later run — after a lost acknowledgement, or a full pod — sends the placeholder at once. Residual: a process killed between the 422 and that save sends them one more time. Counted as `recheck-omitted=`. ⚠ An agent decision under O17: a hold was built first, and the pod's re-check was measured refusing clean data, which would freeze a stream for good |
 | 422 naming a request field | a name or cursor matched: that stream (or blob version) is **held for good** (`refused` in state) and never resent; the session's other streams continue |
 | 3xx | an error — a redirect is NEVER followed (it would carry the token and the body) |
 | 503 / 507 | `HeldError`: nothing advances, nothing is lost, the instance gets no further request this run, sessions bound for it are skipped UNREAD (`skipped=`), the next run retries |
@@ -91,9 +91,10 @@ AccuracySec=1s
 ```
 
 A run takes `<state>.lock` (`flock`); an overlapping run exits 0 having done nothing. The state is
-saved after every session and before every opencode write, so a killed run keeps each
-acknowledgement, each hold and each sent plan. A write that fails part-way commits the prefix that
-was acknowledged. The token file may be a symlink (a secret manager's); the 0600 check is on its target.
+saved only when it CHANGED: at once where a crash must not lose a decision (an opencode write's
+plan, a re-check refusal), after a changed session at most every two seconds, and when the run
+ends with unsaved changes — an idle run writes nothing. A write that fails part-way commits the
+prefix that was acknowledged. The token file may be a symlink (a secret manager's); the 0600 check is on its target.
 
 ## Not built here
 

@@ -47,6 +47,13 @@ type pod struct {
 	// lose, when set, is the request number (1-based) whose answer is LOST: the pod handles it
 	// and stores what it stores, and the client gets a 502 instead of its acknowledgement.
 	lose atomic.Int64
+	// down answers every request 502 without handling it; failFrom does so from that request on.
+	down     atomic.Bool
+	failFrom atomic.Int64
+	// loseAfter422 loses the answer of the ONE request that follows the next 422.
+	loseAfter422, loseNext atomic.Bool
+	// at422 is the number of the last request answered 422.
+	at422 atomic.Int64
 }
 
 type podOpts struct {
@@ -82,12 +89,29 @@ func newPod(t *testing.T, o podOpts) *pod {
 	}
 	p := &pod{t: t, arc: arc}
 	p.srv = httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		if n := p.requests.Add(1); n == p.lose.Load() {
+		n := p.requests.Add(1)
+		if p.down.Load() || (p.failFrom.Load() > 0 && n >= p.failFrom.Load()) {
+			rw.WriteHeader(http.StatusBadGateway) // unreachable: nothing is handled, nothing stored
+			return
+		}
+		if n == p.lose.Load() || p.loseNext.CompareAndSwap(true, false) {
 			w.ServeHTTP(httptest.NewRecorder(), r)
 			rw.WriteHeader(http.StatusBadGateway)
 			return
 		}
-		w.ServeHTTP(rw, r)
+		rec := httptest.NewRecorder()
+		w.ServeHTTP(rec, r)
+		if rec.Code == http.StatusUnprocessableEntity {
+			p.at422.Store(n)
+			if p.loseAfter422.CompareAndSwap(true, false) {
+				p.loseNext.Store(true)
+			}
+		}
+		for k, v := range rec.Header() {
+			rw.Header()[k] = v
+		}
+		rw.WriteHeader(rec.Code)
+		_, _ = rw.Write(rec.Body.Bytes())
 	}))
 	t.Cleanup(p.srv.Close)
 	return p
@@ -318,8 +342,9 @@ func TestAnOverBoundRecordIsAPlaceholderAndTheCursorMovesOn(t *testing.T) {
 }
 
 // TestARecordThePodsRecheckRefusesBecomesAPlaceholder: a 422 naming a record replaces EXACTLY
-// that record with a `refused-by-recheck` placeholder — the refused bytes are sent once, never
-// again, and never stored — and every other record of the write is stored. The same for a blob.
+// that record with a `refused-by-recheck` placeholder — within the write the refused bytes are sent
+// once and they are never stored — and every other record of the write is stored. The same for a
+// blob. (Across RUNS: `TestARefusedRecordsBytesAreNotResentByALaterRun`.)
 // A 422 naming a request FIELD has no placeholder and is returned.
 func TestARecordThePodsRecheckRefusesBecomesAPlaceholder(t *testing.T) {
 	p := newPod(t, podOpts{})

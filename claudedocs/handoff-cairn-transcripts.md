@@ -36,7 +36,7 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
   spelling, no default).
 - 🔴 **CAPTURE IS UNARMED.** Still blocking: **S11** (client read ledger) is unbuilt. ✅ **S3b is
   BUILT** (#260): the host-side uploader `internal/capture.HTTPSink` + `cairn-capture --run` (one
-  pass for a user timer), and `tests/plugins/e2e.sh` clauses (a, b, c, h), `sabotaged=4 caught=4`,
+  pass for a user timer), and `tests/plugins/e2e.sh` clauses (a, b, c, h), `sabotaged=5 caught=5`,
   in the CI `go` job. A record/blob over 4 MiB ships as a PLACEHOLDER under the same cursor (plan,
   AP2 note). NOT blocking any more: O15's held-back gate — waived as an arming gate by O17, kept as a measurement (last score
   `leaks caught=157/190 clean damaged=18/175`, 82.6%, round-6 head); arming preconditions

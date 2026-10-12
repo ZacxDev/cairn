@@ -74,8 +74,12 @@ type Endpoint struct {
 //     [HTTPSink.Omitted] and logged; the record's bytes never leave the host.
 //   - 422 (`recheck`) naming a RECORD or the BLOB: the pod's own redaction table matched something
 //     this agent already redacted. That one record (the pod names its index) or blob is replaced
-//     by a `refused-by-recheck` PLACEHOLDER — its bytes are never sent again and nothing the pod
-//     refused is ever stored — and the stream moves on; counted in [HTTPSink.Rechecked] and
+//     by a `refused-by-recheck` PLACEHOLDER and the stream moves on. Nothing the pod refused is
+//     ever stored, and the refused bytes are sent ONCE: the refusal is handed to `Upload.OnRecheck`
+//     — the agent saves it in the state — BEFORE the placeholder leaves, and `Upload.Rechecked`
+//     makes a later write send the placeholder at once (so a lost acknowledgement, or a pod whose
+//     quota refuses after its re-check, does not resend them). The residual: a process killed
+//     between the 422 and that save sends them one more time. Counted in [HTTPSink.Rechecked] and
 //     logged. ⚠ An agent decision, under O17 ("imperfect redaction accepted"): a hold was built
 //     first, and the pod's re-check was then MEASURED refusing clean data (its entropy rule on an
 //     encoded line), so a hold would freeze a stream for good on a false positive.
@@ -534,6 +538,10 @@ func (s *HTTPSink) Records(u Upload, stream string, recs []Record) (int, error) 
 			return 0, fmt.Errorf("record %d of %s/%s carries no end cursor", i, u.Root, stream)
 		}
 		wire[i] = wireRec(r.Rec)
+		if u.Rechecked[r.Src] {
+			wire[i] = recheckPlaceholder(len(wire[i])) // refused by an earlier run: never its bytes again
+			continue
+		}
 		if len(wire[i]) > s.maxRecord() {
 			wire[i] = s.omit(u, stream, r.Src, len(wire[i]), int64(s.maxRecord()))
 		}
@@ -569,10 +577,16 @@ func (s *HTTPSink) Records(u Upload, stream string, recs []Record) (int, error) 
 		var rc *RecheckRefusal
 		if errors.As(err, &rc) && rc.Field == "" && rc.Record >= 0 && i+rc.Record < j {
 			// The pod names the record's index in the REQUEST: exactly that record becomes a
-			// placeholder and the request is sent again. Its bytes are never resent.
+			// placeholder and the request is sent again. `OnRecheck` has the agent SAVE the refusal
+			// first, so its bytes are not resent by this write or by a later run.
 			k := i + rc.Record
 			if bytes.HasPrefix(wire[k], []byte(omittedPrefix)) {
 				return i, fmt.Errorf("instance %s refused even the placeholder for record %s (422)", u.Instance, recs[k].Src)
+			}
+			if u.OnRecheck != nil {
+				if err := u.OnRecheck(recs[k].Src); err != nil {
+					return i, err
+				}
 			}
 			s.Rechecked++
 			s.logf("omitted record %s of %s/%s: the instance's redaction re-check refused it (422); a placeholder naming "+
@@ -611,6 +625,26 @@ func (s *HTTPSink) Records(u Upload, stream string, recs []Record) (int, error) 
 		}
 	}
 	return i, nil
+}
+
+// probeCursor is a `from` no stream is ever stored at (a Claude Code cursor is digits, an opencode
+// one starts `c`, a blob's `b`), so a request carrying it is answered by the compare-and-swap —
+// 409 naming the stored position — before anything is read, staged or stored.
+const probeCursor = "cairn-capture-position-probe"
+
+// Position implements [Sink].
+func (s *HTTPSink) Position(u Upload, stream string) (string, error) {
+	var b bytes.Buffer
+	b.Write(s.header(u, probeCursor, probeCursor))
+	b.WriteString(`,"records":[{"src":"probe","rec":{}}]}`)
+	status, ans, err := s.post(u.Instance, s.recordsPath(u.Root, stream), b.Bytes())
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusConflict || ans.StoredTo == nil {
+		return "", fmt.Errorf("instance %s answered %d to a position probe, not the 409 naming where the stream is", u.Instance, status)
+	}
+	return *ans.StoredTo, nil
 }
 
 // resumeAt is the index of the first record NOT yet stored when the instance holds the stream at
@@ -734,7 +768,9 @@ func (s *HTTPSink) Blob(u Upload, name, to string, data []byte) error {
 	if _, err := s.endpoint(u.Instance); err != nil {
 		return err
 	}
-	if len(data) > s.maxRecord() {
+	if u.Rechecked[""] {
+		data = recheckBlobPlaceholder(len(data)) // refused by an earlier run: never its bytes again
+	} else if len(data) > s.maxRecord() {
 		data = s.omitBlob(u, name, len(data), int64(s.maxRecord()))
 	}
 	path := s.blobPath(u.Root, name)
@@ -756,6 +792,11 @@ func (s *HTTPSink) Blob(u Upload, name, to string, data []byte) error {
 		}
 		var rc *RecheckRefusal
 		if errors.As(err, &rc) && rc.Blob && !bytes.HasPrefix(data, []byte("cairn-capture: this file was omitted")) {
+			if u.OnRecheck != nil {
+				if err := u.OnRecheck(""); err != nil {
+					return err
+				}
+			}
 			s.Rechecked++
 			s.logf("omitted blob %s of %s: the instance's redaction re-check refused it (422); a placeholder naming the "+
 				"omission is stored in its place and its bytes are not sent again", name, u.Root)

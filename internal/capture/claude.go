@@ -73,6 +73,9 @@ func discoverClaude(root string) ([]claudeSession, error) {
 	return out, nil
 }
 
+// openStream is os.Open, a variable only so a test can see WHICH stream files a run opened.
+var openStream = os.Open
+
 // FingerprintBytes is how much of a file's head the rewrite check remembers.
 const FingerprintBytes = 4096
 
@@ -91,7 +94,7 @@ var ErrRewritten = errors.New("capture: the file was rewritten, not appended; re
 //
 // `limit` >= 0 stops at that offset: a re-ship from 0 reads only up to what the derivation saw.
 func readNewLines(path string, st *StreamState, limit int64) ([][]byte, int64, string, int, error) {
-	f, err := os.Open(path)
+	f, err := openStream(path)
 	if err != nil {
 		return nil, 0, "", 0, err
 	}

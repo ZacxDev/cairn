@@ -11,7 +11,8 @@
 #                                            # turns its clause's named assertion RED
 #
 # The clauses wired now (slice S3b; the plan's table names fourteen, and the rest land with their
-# slices — the self-test count is the number wired, not the plan's final 14):
+# slices — the self-test count is the sabotages wired, five over four clauses because (a) has a
+# Claude Code leg and an opencode leg, not the plan's final 14):
 #   (a) resume — an upload whose acknowledgement is LOST mid-stream (the relay forwards a request,
 #       the pod stores it, the agent gets a 502) is retried by the next run and every record lands
 #       EXACTLY once; a request with a stale `from` gets 409 naming the stored position; and the
@@ -111,6 +112,12 @@ PY
     $'\tif u.From != pos.StoredTo {\n\t\ta.dropFrames(u.Root, "stream:"+stream)' \
     $'\tif false {\n\t\ta.dropFrames(u.Root, "stream:"+stream)' \
     "a-stale-from-409-names-stored-position"
+  # (a, the opencode leg) The plan saved before a write is never matched against the position the
+  #     pod holds, so a stream whose sent units opencode then mutated cannot be resumed.
+  sabotage a-opencode-plan-never-matched internal/capture/state.go \
+    $'\t\tif u.End != storedTo {' \
+    $'\t\tif u.End != storedTo || true {' \
+    "a-opencode-resume-after-sent-units-changed"
   # (b) The agent skips redaction for persisted tool_result content (the blob path). The pod's
   #     re-check then refuses the blob and the agent stores a placeholder — but the relay already
   #     saw the secret leave, which is what (b) measures.

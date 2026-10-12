@@ -39,6 +39,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ZacxDev/cairn/internal/capture"
 	"github.com/ZacxDev/cairn/internal/client"
@@ -275,6 +276,7 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 		return fail(err)
 	}
 	defer release()
+	capture.CleanStateTemps(c.state)
 	state, err := capture.LoadState(c.state)
 	if err != nil {
 		return fail(err)
@@ -307,16 +309,14 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 		Sink:         sink,
 		State:        state,
 		Log:          stderr,
-		// 🔴 SAVED AS IT GOES, not only at the end: a run killed mid-pass keeps every acknowledgement
-		// and hold it had reached, and an opencode write's plan is on disk before the request leaves.
-		Checkpoint: func() error { return state.Save(c.state) },
+		// 🔴 THE AGENT SAVES THE STATE, AND ONLY WHEN IT CHANGED: at once where a crash must not lose
+		// a decision (an opencode write's plan, a re-check refusal), after a changed session at most
+		// every two seconds, and once more when the run ends with unsaved changes — including a run
+		// that ends loudly. An idle run writes nothing.
+		Checkpoint:      func() error { return state.Save(c.state) },
+		CheckpointEvery: 2 * time.Second,
 	}
 	sum, runErr := agent.Run()
-	// 🔴 THE STATE IS SAVED EVEN WHEN THE RUN ENDS LOUDLY: every watermark in it advanced on a 200,
-	// so what it records is stored, and dropping it would re-send those bytes as 409-resumes.
-	if err := state.Save(c.state); err != nil {
-		return fail(fmt.Errorf("the state file %s could not be saved: %w", c.state, err))
-	}
 	fmt.Fprintf(stderr, "cairn-capture: run %s omitted=%d recheck-omitted=%d requests=%d\n", sum, sink.Omitted, sink.Rechecked, sink.Requests)
 	if runErr != nil {
 		return fail(runErr)

@@ -1224,15 +1224,16 @@ jobs:
       # than skipping without one.
       #
       # ⚠ THE SELF-TEST RUNS FIRST AND IS NOT OPTIONAL: it sabotages each wired clause on a scratch
-      # copy of the source — (a) the stream CAS, (b) the agent's blob redaction, (c) the pod's record
-      # scan, (h) routing on one scope — and refuses (exit 2) unless EACH turns its own clause's named
-      # assertion RED. The count is the clauses wired now; the plan's 14 is the count at S10.
+      # copy of the source — (a) the stream CAS, and for its opencode leg the saved plan never being
+      # matched, (b) the agent's blob redaction, (c) the pod's record scan, (h) routing on one scope
+      # — and refuses (exit 2) unless EACH turns its own named assertion RED. Five sabotages over
+      # the four clauses wired now; the plan's 14 is the count at S10.
       - name: the transcripts end-to-end check, after proving every wired clause can go RED
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}
         run: |
           set -o pipefail
           tests/plugins/e2e.sh --self-test | tee /tmp/plugins-e2e-self.txt
-          grep -qx 'SUMMARY e2e-self-test: sabotaged=4 caught=4' /tmp/plugins-e2e-self.txt
+          grep -qx 'SUMMARY e2e-self-test: sabotaged=5 caught=5' /tmp/plugins-e2e-self.txt
           tests/plugins/e2e.sh > /tmp/plugins-e2e.txt 2>&1 || { cat /tmp/plugins-e2e.txt; exit 1; }
           cat /tmp/plugins-e2e.txt
           passes=$(grep -c '^PASS ' /tmp/plugins-e2e.txt || true)

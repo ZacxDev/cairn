@@ -141,10 +141,12 @@ func materialize(t *testing.T, w world, keep ...string) env {
 type fakeRunner struct {
 	exports map[string][]byte
 	list    []byte
+	calls   int // exports asked for
 }
 
 func (f *fakeRunner) List(string) ([]byte, error) { return f.list, nil }
 func (f *fakeRunner) Export(id string) ([]byte, error) {
+	f.calls++
 	b, ok := f.exports[id]
 	if !ok {
 		return nil, fmt.Errorf("no export %s", id)
@@ -246,6 +248,10 @@ func (s *memSink) Blob(u Upload, name, to string, data []byte) error {
 	s.blobs[u.Instance+"/"+u.Root+"/"+name] = append([]byte(nil), data...)
 	s.pos[k] = to
 	return nil
+}
+
+func (s *memSink) Position(u Upload, stream string) (string, error) {
+	return s.pos[u.Instance+"/"+u.Root+"/"+stream], nil
 }
 
 func (s *memSink) Withdraw(instance, root string) error {

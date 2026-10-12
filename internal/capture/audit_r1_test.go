@@ -77,7 +77,7 @@ func TestAnOpencodeStreamSurvivesALostAckWhenUnitsChange(t *testing.T) {
 			matched++
 		}
 		if st := a.State.Sessions[root].Streams["main"]; len(st.Pending) != 0 {
-			t.Fatalf("lost %d: %d plan(s) are still pending after the stream settled", lost, len(st.Pending))
+			t.Fatalf("lost %d: a plan of %d units is still pending after the stream settled", lost, len(st.Pending))
 		}
 	}
 }
@@ -235,8 +235,8 @@ func TestAKilledRunKeepsItsPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := st.Sessions[root].Streams["main"]; got.Cursor != "" || len(got.Pending) != 1 {
-		t.Fatalf("the surviving state: cursor %q, %d pending plan(s) — want no cursor and the one plan", got.Cursor, len(got.Pending))
+	if got := st.Sessions[root].Streams["main"]; got.Cursor != "" || len(got.Pending) == 0 {
+		t.Fatalf("the surviving state: cursor %q, a pending plan of %d units — want no cursor and the plan", got.Cursor, len(got.Pending))
 	}
 	next, _ := podAgent(t, e, p, 0, &log)
 	next.State = st
@@ -250,7 +250,7 @@ func TestAKilledRunKeepsItsPlan(t *testing.T) {
 // EXCEPT what was refused for good — a stream's refusal and a blob's alike.
 func TestAResetKeepsABlobsRefusalAsItKeepsAStreams(t *testing.T) {
 	ss := &SessionState{
-		Streams: map[string]*StreamState{"main": {Offset: 9, Refused: "rewritten", Pending: [][]PendingUnit{{{Key: "k"}}}}},
+		Streams: map[string]*StreamState{"main": {Offset: 9, Refused: "rewritten", Pending: []PendingUnit{{Key: "k"}}}},
 		Blobs: map[string]BlobState{"held.txt": {Size: 1, Digest: "d", Cursor: "b1", Refused: "refused"},
 			"shipped.txt": {Size: 2, Digest: "e", Cursor: "b2"}},
 	}

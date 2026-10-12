@@ -26,6 +26,13 @@ type Upload struct {
 	Instance, Root, Runtime string
 	Declared                []string
 	From                    string
+	// Rechecked names what the pod's re-check ALREADY refused, by record `src` ("" is the blob of
+	// a Blob write): the sink sends its placeholder at once and never its bytes.
+	Rechecked map[string]bool
+	// OnRecheck, when set, is called when the pod's re-check refuses a record (its `src`) or the
+	// blob (""), BEFORE the placeholder is sent in its place — so the decision is saved first, and
+	// a run that dies before the placeholder is acknowledged does not resend the bytes.
+	OnRecheck func(src string) error
 }
 
 // Sink receives what the agent uploads. [HTTPSink] is the real one (the capture/v1 contract); the
@@ -43,6 +50,9 @@ type Sink interface {
 	Records(u Upload, stream string, recs []Record) (stored int, err error)
 	// Blob replaces one persisted tool-result file, from the version u.From to the version `to`.
 	Blob(u Upload, name, to string, data []byte) error
+	// Position asks where the instance holds a stream ("" for one never written). It stores
+	// NOTHING: it is how an unacknowledged opencode write is settled before another is sent.
+	Position(u Upload, stream string) (string, error)
 	// Withdraw is decision 16's withdrawal of a shipped prefix (S6).
 	Withdraw(instance, root string) error
 }

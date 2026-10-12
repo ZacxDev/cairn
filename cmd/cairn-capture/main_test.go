@@ -165,6 +165,10 @@ func TestARunUploadsOnceAndAnIdleRunSendsNothing(t *testing.T) {
 	if code := run(args, &bytes.Buffer{}, &errb, env); code != exitOK || p.requests.Load() != before {
 		t.Fatalf("an idle run: exit %d, %d requests", code, p.requests.Load()-before)
 	}
+	// An idle run does not rewrite the state: a save renames a NEW file over it.
+	if again, _ := os.Stat(filepath.Join(home, "xdg", "cairn", "capture", "state.json")); !os.SameFile(info, again) {
+		t.Fatal("an idle run saved the state")
+	}
 	if strings.Contains(errb.String(), runToken) {
 		t.Fatal("the token reached the log")
 	}

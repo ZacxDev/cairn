@@ -29,8 +29,9 @@ import (
 // unit already shipped, because opencode MUTATES parts and its export carries no `time_updated`.
 //
 // `Cursor` is an opencode stream's position on the instance ([chainCursor]); a Claude Code
-// stream's is its `Offset`. `Refused` is FINAL for the stream: a rewritten file, or a write the
-// pod's re-check refused (422) — that stream is held and never resent.
+// stream's is its `Offset`. `Refused` is FINAL for the stream: a rewritten file, or a write whose
+// 422 named a request FIELD (the stream's own name or a cursor matched the pod's table) — that
+// stream is held and never resent. A 422 naming a RECORD does not hold the stream; see `Rechecked`.
 type StreamState struct {
 	Offset      int64             `json:"offset,omitempty"`
 	Fingerprint string            `json:"fp,omitempty"`
@@ -38,15 +39,25 @@ type StreamState struct {
 	Cursor      string            `json:"cursor,omitempty"`
 	Refused     string            `json:"refused,omitempty"`
 	Units       map[string]string `json:"units,omitempty"`
-	// Pending is every write of an opencode stream that was SENT and not acknowledged whole, each
-	// as the units it carried and the cursor after each — saved BEFORE the request leaves.
+	// Pending is THE write of an opencode stream that was sent and not acknowledged whole: the
+	// units it carried and the cursor after each — saved BEFORE the request leaves.
 	//
 	// 🔴 WHY IT IS PERSISTED: an opencode cursor is a hash chain over the units as they were when
 	// sent, and opencode MUTATES units in place. When an acknowledgement is lost (a dropped answer,
 	// a kill before the state is saved) the instance holds a position the NEXT export can no longer
 	// reproduce, so its 409 would name a cursor nothing recomputes — the stream wedged for good,
-	// measured. The plan is what the 409 is matched against instead ([StreamState.reconcile]).
-	Pending [][]PendingUnit `json:"pending,omitempty"`
+	// measured. The plan is what the instance's position is matched against instead
+	// ([StreamState.reconcile]).
+	//
+	// 🔴 AND THERE IS AT MOST ONE. While a plan is pending NO new write is planned or sent: the
+	// agent first ASKS the instance where the stream is ([Sink.Position], which stores nothing) and
+	// settles the plan against the answer. A list of plans with an eviction bound was built first;
+	// enough failed runs over a changing export evicted the one plan the instance held.
+	Pending []PendingUnit `json:"pending,omitempty"`
+	// Rechecked is every record of this stream the pod's re-check refused (422) and that is not
+	// stored yet: its `src` → the digest of the bytes that were refused. Saved BEFORE the
+	// placeholder is sent, so a later run sends the placeholder at once and never those bytes.
+	Rechecked map[string]string `json:"rechecked,omitempty"`
 }
 
 // PendingUnit is one unit of a sent, unacknowledged write: its key, the version (digest of its
@@ -57,36 +68,24 @@ type PendingUnit struct {
 	End    string `json:"end"`
 }
 
-// maxPendingPlans bounds [StreamState.Pending]; the oldest plan goes first.
-const maxPendingPlans = 16
-
-// plan records a write about to be sent. A plan identical to the last one is not recorded twice.
-func (st *StreamState) plan(units []PendingUnit) {
-	if n := len(st.Pending); n > 0 && len(st.Pending[n-1]) == len(units) && len(units) > 0 &&
-		st.Pending[n-1][len(units)-1] == units[len(units)-1] {
-		return
-	}
-	st.Pending = append(st.Pending, units)
-	if len(st.Pending) > maxPendingPlans {
-		st.Pending = st.Pending[len(st.Pending)-maxPendingPlans:]
-	}
-}
-
-// reconcile adopts the position the instance says it holds when that position is the end of a
-// unit of a pending plan: every unit up to it is stored AS IT WAS SENT, and the cursor is that
-// position. It reports whether the position was found.
+// reconcile settles the pending plan against the position the instance says it holds. At the
+// cursor the agent already has, nothing of the plan landed; at the end of one of the plan's units,
+// every unit up to it is stored AS IT WAS SENT and the cursor is that position. Either way the
+// plan is settled; any other position is reported false and the plan is kept.
 func (st *StreamState) reconcile(storedTo string) bool {
-	for _, plan := range st.Pending {
-		for k, u := range plan {
-			if u.End != storedTo {
-				continue
-			}
-			for _, done := range plan[:k+1] {
-				st.Units[done.Key] = done.Digest
-			}
-			st.Cursor, st.Pending = storedTo, nil
-			return true
+	if storedTo == st.Cursor {
+		st.Pending = nil
+		return true
+	}
+	for k, u := range st.Pending {
+		if u.End != storedTo {
+			continue
 		}
+		for _, done := range st.Pending[:k+1] {
+			st.Units[done.Key] = done.Digest
+		}
+		st.Cursor, st.Pending = storedTo, nil
+		return true
 	}
 	return false
 }
@@ -110,14 +109,17 @@ type SessionState struct {
 // cost ~311 MB of reads per run on the measured host (review round 1); decision 5's "idle
 // sessions cost one stat per file" is what this makes true.
 //
-// `Cursor` is the version the instance holds ([blobCursor]); `Refused` marks a version the pod's
-// re-check refused (422) — held, and not resent until the file changes.
+// `Cursor` is the version the instance holds ([blobCursor]); `Refused` marks a version whose 422
+// named a request FIELD (the blob's name matched the pod's table) — held, and not resent until the
+// file changes. `Rechecked` is the digest of a version whose CONTENT the pod's re-check refused:
+// saved before its placeholder is sent, so those bytes are not sent by a later run.
 type BlobState struct {
-	Size    int64  `json:"size"`
-	MtimeNs int64  `json:"mtime_ns"`
-	Digest  string `json:"digest"`
-	Cursor  string `json:"cursor,omitempty"`
-	Refused string `json:"refused,omitempty"`
+	Size      int64  `json:"size"`
+	MtimeNs   int64  `json:"mtime_ns"`
+	Digest    string `json:"digest"`
+	Cursor    string `json:"cursor,omitempty"`
+	Refused   string `json:"refused,omitempty"`
+	Rechecked string `json:"rechecked,omitempty"`
 }
 
 // State is the agent's whole local state: one 0600 file.
@@ -221,7 +223,12 @@ func (ss *SessionState) reset() {
 	}
 	kept := map[string]BlobState{}
 	for name, b := range ss.Blobs {
-		if b.Refused != "" {
+		if b.Refused != "" || b.Rechecked != "" {
+			// Size and mtime go too unless it is held: a rechecked blob must be read again so its
+			// placeholder ships to the new instance.
+			if b.Refused == "" {
+				b = BlobState{Rechecked: b.Rechecked}
+			}
 			b.Cursor = ""
 			kept[name] = b
 		}
@@ -248,4 +255,13 @@ func LockState(path string) (release func(), err error) {
 		return nil, fmt.Errorf("capture: the run lock %s.lock cannot be taken: %w", path, err)
 	}
 	return func() { f.Close() }, nil
+}
+
+// CleanStateTemps removes the `.state-*` files a killed [State.Save] left beside the state file.
+// Called under the run lock, so no live save owns one.
+func CleanStateTemps(path string) {
+	stale, _ := filepath.Glob(filepath.Join(filepath.Dir(path), ".state-*"))
+	for _, p := range stale {
+		_ = os.Remove(p)
+	}
 }
