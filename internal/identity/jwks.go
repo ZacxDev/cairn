@@ -54,6 +54,12 @@ type KeySet struct {
 	interval   time.Duration
 	now        func() time.Time
 	maxBodyLen int64
+	// retryMin is `Run`'s first wait after a failed attempt; see `jwksRetryMin`.
+	retryMin time.Duration
+	// after is `Run`'s timer. nil means `time.NewTimer`. It is a seam for the tests, which
+	// record the waits `Run` asks for and fire them at once, so the retry schedule is
+	// asserted as a sequence of durations rather than slept through.
+	after func(time.Duration) (<-chan time.Time, func())
 
 	// mu guards everything below. 🔴 IT IS NEVER HELD ACROSS THE HTTP CALL — the same
 	// rule `control.Cache.mu` states, for the same reason: a hung provider holding the
@@ -104,6 +110,27 @@ type JWKSOptions struct {
 // deploy window, long enough that this pod is not a meaningful load on the provider's
 // JWKS endpoint. It bounds the rotated-out-key window in the other direction.
 const DefaultJWKSInterval = 10 * time.Minute
+
+// jwksRetryMin is `Run`'s first wait after a failed attempt. Each further consecutive
+// failure doubles it, capped at the refresh interval; a success ends the failing run, and
+// the next failure after it starts again from this floor.
+//
+// 🔴 WITHOUT IT, A KEY SET THAT FAILED ITS FIRST FETCH WAITED A WHOLE INTERVAL TO TRY AGAIN.
+// `cmd/cairn-ui` does not exit on that failure — it withholds the provider button until
+// `KeySetStatus.Fetched` flips — so a provider that became reachable seconds after startup
+// left the button shut for up to two intervals: the next tick could still fail on a
+// negative-cached DNS answer, and only the tick after it re-armed the door. Five seconds,
+// doubling, reaches the interval cap in seven failures (5s…320s, then 10m), so a provider
+// that is genuinely down is asked about as often as a healthy one after the first ~10
+// minutes, and one that just came up is found within seconds of its cached refusal
+// expiring.
+//
+// ⚠ THE SAME SCHEDULE RUNS AFTER A PREVIOUSLY-GOOD SET STARTS FAILING, not only before the
+// first success. Last-known-good keeps serving either way (`Refresh` never discards it), but
+// a key ADDED at the provider is refused until a fetch succeeds, so recovering in seconds
+// rather than an interval narrows that window too, and the extra load is bounded by the
+// same doubling.
+const jwksRetryMin = 5 * time.Second
 
 // jwksFetchTimeout bounds one fetch.
 //
@@ -156,6 +183,7 @@ func NewKeySet(opts JWKSOptions) (*KeySet, error) {
 		interval:   interval,
 		now:        opts.Now,
 		maxBodyLen: maxJWKSBytes,
+		retryMin:   jwksRetryMin,
 		keys:       map[string]jwkKey{},
 	}, nil
 }
@@ -264,23 +292,101 @@ func (k *KeySet) fetch(ctx context.Context) (map[string]jwkKey, error) {
 	return parseJWKS(body)
 }
 
-// Run refreshes on the schedule until ctx is done.
+// Run refreshes on the schedule until ctx is done, logging every failed attempt through
+// logf (nil discards).
 //
 // 🔴 A FAILED REFRESH DOES NOT STOP THE LOOP — the same rule `control.Cache.Run` states.
 // Returning on the first error turns a transient provider outage into a permanently
 // stale key set that never tries again, with the mechanism that could fix it already
 // dead.
-func (k *KeySet) Run(ctx context.Context) error {
-	ticker := time.NewTicker(k.interval)
-	defer ticker.Stop()
+//
+// 🔴 AND WHILE THE LAST ATTEMPT FAILED — OR NO ATTEMPT HAS EVER SUCCEEDED — THE NEXT ONE IS
+// ON A SHORT BACKOFF, NOT THE INTERVAL. See `jwksRetryMin`. The state is read from the set
+// itself when the loop starts, so a caller's failed startup `Refresh` puts the loop straight
+// onto the backoff rather than a full interval away from its first retry.
+//
+// 🔴 A FAILED ATTEMPT IS LOGGED EVERY TIME, NOT ONLY ON A STATE CHANGE, AND THE ERROR USED
+// TO BE DISCARDED OUTRIGHT. A swallowed error left a pod whose provider was unreachable
+// saying nothing at all for the whole interval after its one startup warning — the operator
+// could not tell "still failing" from "never retried". Logging only the transition into
+// failure would recreate that silence one line later: a week-long outage would be one line
+// that has long since rotated out of the log a reader tails. The volume is bounded by the
+// backoff itself — at most seven lines before the cap, then one per interval, which is the
+// refresh's own cadence — and each line carries the failure count and the next wait, so it
+// is a progress report rather than a repeat. A SUCCESS is logged only when it ends a failing
+// run, because that line is the "the door re-armed" signal; logging every healthy refresh
+// would be noise at exactly the cadence nobody needs.
+func (k *KeySet) Run(ctx context.Context, logf func(string)) error {
+	if logf == nil {
+		logf = func(string) {}
+	}
+	k.mu.RLock()
+	failing := !k.fetched || k.lastErr != nil
+	// A caller's failed startup `Refresh` is the first failure of the run this loop
+	// inherits, so the count it logs is consecutive across that boundary.
+	streak := 0
+	if k.lastErr != nil {
+		streak = 1
+	}
+	k.mu.RUnlock()
+	backoff := k.retryMin
 	for {
+		wait := k.interval
+		if failing {
+			wait = min(backoff, k.interval)
+		}
+		fire, stop := k.timer(wait)
 		select {
 		case <-ctx.Done():
+			stop()
 			return ctx.Err()
-		case <-ticker.C:
-			_ = k.Refresh(ctx)
+		case <-fire:
 		}
+		err := k.Refresh(ctx)
+		if ctx.Err() != nil {
+			// A refresh interrupted by shutdown is not a provider failure to report.
+			return ctx.Err()
+		}
+		if err != nil {
+			// The ONE place the backoff is set: doubled within a failing run, back to its
+			// floor on the first failure after a success.
+			if failing {
+				backoff = min(backoff*2, k.interval)
+			} else {
+				backoff = k.retryMin
+			}
+			failing = true
+			streak++
+			next := min(backoff, k.interval)
+			logf(fmt.Sprintf("WARNING identity: JWKS refresh failed (%s); %d consecutive failure(s); %s; retrying in %s",
+				err.Error(), streak, k.servingClause(), next))
+			continue
+		}
+		if failing {
+			st := k.Status()
+			logf(fmt.Sprintf("identity: JWKS refresh succeeded, ending a failing run; serving %d key(s); %d failure(s) since start; back to every %s",
+				st.Keys, st.Failures, k.interval))
+		}
+		failing, streak = false, 0
 	}
+}
+
+// servingClause says what a failure leaves serving, which is the half of the line that
+// tells an operator whether sessions are affected.
+func (k *KeySet) servingClause() string {
+	st := k.Status()
+	if !st.Fetched {
+		return "the key set has NEVER been fetched, so no token can verify"
+	}
+	return fmt.Sprintf("still serving the last-known-good %d key(s)", st.Keys)
+}
+
+func (k *KeySet) timer(d time.Duration) (<-chan time.Time, func()) {
+	if k.after != nil {
+		return k.after(d)
+	}
+	t := time.NewTimer(d)
+	return t.C, func() { t.Stop() }
 }
 
 // key resolves a kid and an algorithm to a verification key. THE HOT PATH. No network.

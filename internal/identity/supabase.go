@@ -284,8 +284,11 @@ func (s *SupabaseJWT) AuthenticateToken(presented string) (Identity, error) {
 // before the change too, since the old body dereferenced `s` just as this one does.
 func (s *SupabaseJWT) RefreshKeys(ctx context.Context) error { return s.keys.Refresh(ctx) }
 
-// RunKeyRefresh keeps the key set current until ctx is done.
-func (s *SupabaseJWT) RunKeyRefresh(ctx context.Context) error { return s.keys.Run(ctx) }
+// RunKeyRefresh keeps the key set current until ctx is done, reporting each failed
+// refresh (and the recovery that ends a failing run) through logf. See `KeySet.Run`.
+func (s *SupabaseJWT) RunKeyRefresh(ctx context.Context, logf func(string)) error {
+	return s.keys.Run(ctx, logf)
+}
 
 // KeyStatus reports the cached key set's age.
 func (s *SupabaseJWT) KeyStatus() KeySetStatus { return s.keys.Status() }

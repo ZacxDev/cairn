@@ -1394,7 +1394,7 @@ complete at the provider and be refused here, with nothing naming the disagreeme
 | no verifier variable in either spelling | the deployment that existed before this change | credential form only; the two OAuth rows answer **501** |
 | the ledger armed, no redirect URL | a bearer JWT authenticates; no browser flow | credential form only; rows answer 501; the startup line says so |
 | both, key set fetched | the button is live | both doors |
-| both, key set **never fetched** | the provider was unreachable at startup, or is now | credential form only; rows answer **503**; a `WARNING` on stderr; **re-arms by itself** when a fetch succeeds |
+| both, key set **never fetched** | the provider was unreachable at startup, or is now | credential form only; rows answer **503**; a `WARNING` on stderr, then one per failed retry; **re-arms by itself** when a fetch succeeds — retried on a 5s-doubling backoff capped at the refresh interval, not once per interval |
 | a redirect URL and no verifier | half-configured | **refuses to start**, naming the variable that unblocks it |
 | a redirect URL whose path does not end with the callback route | a typo, or a line copied from another app | **refuses to start**, naming both paths |
 | a redirect URL that does not parse | a broken template substitution | **refuses to start** |
