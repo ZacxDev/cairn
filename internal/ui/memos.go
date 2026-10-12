@@ -170,6 +170,14 @@ type MemoDraft struct {
 // never emit raw, and a textarea would show it as nothing at all. A NEW reason is not kept until
 // somebody adds it here — the set fails toward losing a draft, never toward echoing one.
 //
+// 🔴 A KEPT REASON IS SAFE TO ECHO ONLY BECAUSE THE TEXT WAS SCANNED FIRST. [memo.CheckSend] runs
+// the secret scan BEFORE the size and TTL checks, and quota and the live bound are asked only after
+// CheckSend passed — so a kept refusal means "scanned, no confident secret". Until that order was
+// fixed, text carrying a credential AND breaking a size or TTL limit was refused as the size and
+// the credential was echoed here. The one size refusal that is NOT scanned is past
+// [memo.MaxScannedBytes]; [Server.handleMemoSend] asks [memo.Scannable] and redirects that draft
+// away rather than echo it.
+//
 // ⚠ WHY THIS EXISTS (#242 round 1): the form's `maxlength` counts UTF-16 code units and
 // [memo.CheckSend] counts UTF-8 BYTES, so non-ASCII text the form accepted is refused by the store —
 // and the redirect that used to answer every refusal threw the typed text away. No attribute can
@@ -186,7 +194,8 @@ var memoDraftKept = map[memo.RefusalReason]bool{
 // MemoLimitsNote is the form's statement of its two size limits, in the unit the store counts.
 var MemoLimitsNote = fmt.Sprintf("The subject holds %d bytes and the text %d — bytes, not characters: an accented "+
 	"letter, a CJK character or an emoji counts for two to four. A memo over a limit is refused and your text is "+
-	"kept in this form.", memo.MaxSubjectBytes, memo.MaxBodyBytes)
+	"kept in this form — unless it looks like it carries a credential, or runs past %d bytes in all.",
+	memo.MaxSubjectBytes, memo.MaxBodyBytes, memo.MaxScannedBytes)
 
 // MemoRow is one memo as the tab renders it: the RENDERED type (decision 19) plus two decisions
 // asked of the stored memo, which the rendered one cannot answer.
@@ -352,7 +361,7 @@ func (s *Server) handleMemoSend(w http.ResponseWriter, r *http.Request, id ident
 	}
 	_, _, err := s.memos.Send(r.Context(), id.Principal, id.Auth, scope.Name, draft.Subject, draft.Body, ttl)
 	var ref *memo.Refusal
-	if errors.As(err, &ref) && memoDraftKept[ref.Reason] {
+	if errors.As(err, &ref) && memoDraftKept[ref.Reason] && memo.Scannable(draft.Subject, draft.Body) {
 		s.memoSendRefusedWithDraft(w, r, id, scopes, scope, ref, draft)
 		return
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -573,6 +574,72 @@ func TestOnlyTheClosedSetOfRefusalsKeepsTheDraft(t *testing.T) {
 		case !want && (rec.Code != http.StatusSeeOther || echoed):
 			t.Errorf("%s: answered %d (draft present=%v), want a 303 that carries none of the typed text", reason, rec.Code, echoed)
 		}
+	}
+}
+
+// TestASecretOverALimitIsNeverEchoed — the audit of #244: a send carrying a credential AND breaking a
+// size or TTL limit, through the REAL handler over `fakeMemos`, which runs the REAL `memo.CheckSend`
+// and the real scanner (no injected refusal — the bug was CheckSend's ORDER, which an injected refusal
+// cannot see). Every row must be a 303 to the `secret` refusal whose answer — body AND Location —
+// carries none of the token's bytes. Rows: the secret alone; with a 5000-byte text; with a 130-byte
+// subject; with a 31-day lifetime; and past `memo.MaxScannedBytes`, where the text is NOT scanned, is
+// refused as the size, and is redirected rather than echoed because `memo.Scannable` is false.
+//
+// The token is generated at run time from a seeded RNG — never committed (`internal/redact/corpus.go`).
+// POSITIVE CONTROL per in-bound row: the SAME form with the token overwritten by same-length filler IS
+// the 422 page echoing that filler — so each row reaches the kept-draft path, and the echo detector
+// sees an echo when there is one.
+// RED at e18efd1 (the three limit rows answered 422 and echoed the token), under
+// `memo-secret-scan-after-size`, and (the past-the-bound row) under `ui-memo-draft-kept-unscanned`.
+func TestASecretOverALimitIsNeverEchoed(t *testing.T) {
+	w := memoWorld(t)
+	rng := rand.New(rand.NewSource(20000103))
+	const alnum = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	tok := make([]byte, 36)
+	for i := range tok {
+		tok[i] = alnum[rng.Intn(len(alnum))]
+	}
+	secret := "gh" + "p_" + string(tok)
+	filler := strings.Repeat("q", len(secret))
+	for _, tc := range []struct {
+		name          string
+		form          func(v string) url.Values
+		reason        memo.RefusalReason // what the SECRET form is refused as
+		controlEchoes bool               // the filler form is the 422 echo (false: past the scan bound)
+	}{
+		{"alone", func(v string) url.Values { return sendForm(browseScopeA, "rotation", "value "+v) }, memo.RefusedSecret, false},
+		{"5000-byte text", func(v string) url.Values {
+			return sendForm(browseScopeA, "rotation", "value "+v+"\n"+strings.Repeat("b", 5000))
+		}, memo.RefusedSecret, true},
+		{"130-byte subject", func(v string) url.Values {
+			return sendForm(browseScopeA, "value "+v+" "+strings.Repeat("s", 130-len(v)-7), "b")
+		}, memo.RefusedSecret, true},
+		{"31-day lifetime", func(v string) url.Values {
+			f := sendForm(browseScopeA, "rotation", "value "+v)
+			f.Set(FieldTTLDays, "31")
+			return f
+		}, memo.RefusedSecret, true},
+		{"past the scan bound", func(v string) url.Values {
+			return sendForm(browseScopeA, "rotation", "value "+v+"\n"+strings.Repeat("b", memo.MaxScannedBytes))
+		}, memo.RefusedBodySize, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			memos := &fakeMemos{model: w.model, rows: memoRows()}
+			rec := gatedPost(memoServer(t, w.writer, memos), MemoPath, tc.form(secret))
+			if strings.Contains(rec.Body.String(), string(tok)) || strings.Contains(rec.Header().Get("Location"), string(tok)) {
+				t.Errorf("the answer (%d) carries the token's bytes", rec.Code)
+			}
+			if _, reason := outcomeOf(t, rec, browseScopeA); reason != string(tc.reason) {
+				t.Errorf("refused as %q, want %q", reason, tc.reason)
+			}
+			if memos.sends != 0 {
+				t.Errorf("the send was stored")
+			}
+			ctl := gatedPost(memoServer(t, w.writer, &fakeMemos{model: w.model, rows: memoRows()}), MemoPath, tc.form(filler))
+			if echoed := ctl.Code == http.StatusUnprocessableEntity && strings.Contains(ctl.Body.String(), filler); echoed != tc.controlEchoes {
+				t.Fatalf("POSITIVE CONTROL FAILED: the filler form answered %d (echoed=%v), want echoed=%v", ctl.Code, echoed, tc.controlEchoes)
+			}
+		})
 	}
 }
 

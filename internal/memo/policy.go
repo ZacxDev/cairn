@@ -17,6 +17,16 @@ const (
 	// MaxSubjectBytes and MaxBodyBytes cap a memo AFTER [Normalize] (decision 5).
 	MaxSubjectBytes = 120
 	MaxBodyBytes    = 4 * 1024
+	// MaxScannedBytes bounds what [CheckSend] hands the secret scan: subject and body TOGETHER,
+	// after [Normalize]. Text over it is refused as a size WITHOUT being scanned ([Scannable]).
+	//
+	// 🔴 WHY A BOUND AND NOT "SCAN EVERYTHING": the scan is linear but not cheap — measured at
+	// ~1.6–3.5 ms for 4 KiB, ~27–54 ms for 64 KiB and ~4–9 s for 10 MiB (prose, one long line,
+	// base64 and a JSON string, the slowest shape last), and the browser form reaches here
+	// through `net/http`'s 10 MiB url-encoded form cap, not the client listener's 64 KiB one.
+	// Four times the body cap holds a cap-sized draft of 3-byte characters and keeps one send's
+	// scan to milliseconds.
+	MaxScannedBytes = 4 * MaxBodyBytes
 	// DefaultTTL is what a send without a TTL gets, and MaxTTL is the ceiling (decision 2;
 	// the 3-day default is the token model's, the 30-day ceiling the invitation one).
 	DefaultTTL = 3 * 24 * time.Hour
@@ -211,9 +221,27 @@ func TTLOf(n int64, unit time.Duration) time.Duration {
 	return time.Duration(n) * unit
 }
 
+// Scannable reports whether [CheckSend] runs the secret scan over this subject and body: their
+// lengths TOGETHER are within [MaxScannedBytes]. Text that is not scannable is refused as a size
+// and was never scanned, so a surface that would hand refused text BACK (the browser form's kept
+// draft) must ask this first and never echo text it is false for. Lengths are measured as given;
+// [CheckSend] measures after [Normalize], which only shrinks text, so false here can be true there
+// — the safe direction for a caller deciding whether to echo.
+func Scannable(subject, body string) bool {
+	return len(subject)+len(body) <= MaxScannedBytes
+}
+
 // CheckSend applies every CONTENT rule a send must pass, in one place: the send-side fence
-// predicates ([SubjectBreaksFence], [BreaksFence]), the size caps, the TTL bounds, and the
-// confident-secret scan over subject AND body. A refusal is a [*Refusal] naming the limit.
+// predicates ([SubjectBreaksFence], [BreaksFence]), the confident-secret scan over subject AND
+// body, the size caps and the TTL bounds — IN THAT ORDER. A refusal is a [*Refusal] naming the
+// limit.
+//
+// 🔴 THE SCAN RUNS BEFORE THE SIZE AND TTL CHECKS, AND THAT ORDER IS A SECURITY PROPERTY. The
+// browser form re-renders the typed text for a size or TTL refusal (its kept draft) and never for
+// `secret` or `characters`; with the scan last, text that carried a credential AND broke a size or
+// TTL limit was refused as the size and the credential was served back in the page. So a size or
+// TTL refusal now means the text was scanned and found clean — except past [MaxScannedBytes],
+// where the size refusal comes unscanned, which [Scannable] lets a caller see.
 //
 // 🔴 A NIL SCANNER IS REFUSED, NOT SKIPPED. A send path that forgot to wire the scan would
 // otherwise store secrets with every other check green (e2e sabotage (e)).
@@ -229,6 +257,22 @@ func CheckSend(subject, body string, ttl time.Duration, scan *redact.Redactor) (
 	if SubjectBreaksFence(subject) || BreaksFence(body) {
 		return Outgoing{}, &Refusal{Reason: RefusedCharacters}
 	}
+	if !Scannable(subject, body) {
+		// Past the scan's bound, so over a size cap by construction (MaxScannedBytes exceeds
+		// both caps together, pinned by a test): refused as that size, unscanned.
+		if len(subject) > MaxSubjectBytes {
+			return Outgoing{}, &Refusal{Reason: RefusedSubjectSize}
+		}
+		return Outgoing{}, &Refusal{Reason: RefusedBodySize}
+	}
+	for _, text := range []string{subject, body} {
+		_, hits := scan.String(text)
+		for _, h := range hits {
+			if confidentSecretRules[h.Rule] {
+				return Outgoing{}, &Refusal{Reason: RefusedSecret, Rule: h.Rule}
+			}
+		}
+	}
 	if len(subject) > MaxSubjectBytes {
 		return Outgoing{}, &Refusal{Reason: RefusedSubjectSize}
 	}
@@ -240,14 +284,6 @@ func CheckSend(subject, body string, ttl time.Duration, scan *redact.Redactor) (
 		ttl = DefaultTTL
 	case ttl < 0 || ttl > MaxTTL:
 		return Outgoing{}, &Refusal{Reason: RefusedTTL}
-	}
-	for _, text := range []string{subject, body} {
-		_, hits := scan.String(text)
-		for _, h := range hits {
-			if confidentSecretRules[h.Rule] {
-				return Outgoing{}, &Refusal{Reason: RefusedSecret, Rule: h.Rule}
-			}
-		}
 	}
 	return Outgoing{Subject: subject, Body: body, TTL: ttl}, nil
 }

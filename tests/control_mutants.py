@@ -5532,6 +5532,71 @@ MUTANTS: tuple[Mutant, ...] = (
         "serves back the text the scan just called a credential.",
     ),
     Mutant(
+        name="memo-secret-scan-after-size",
+        path="internal/memo/policy.go",
+        # The defect IS an order, so the edit is the order: the scan block moved back below the
+        # two size checks, as it stood at e18efd1. Nothing else in either block changes.
+        old="\tfor _, text := range []string{subject, body} {\n"
+        "\t\t_, hits := scan.String(text)\n"
+        "\t\tfor _, h := range hits {\n"
+        "\t\t\tif confidentSecretRules[h.Rule] {\n"
+        "\t\t\t\treturn Outgoing{}, &Refusal{Reason: RefusedSecret, Rule: h.Rule}\n"
+        "\t\t\t}\n"
+        "\t\t}\n"
+        "\t}\n"
+        "\tif len(subject) > MaxSubjectBytes {\n"
+        "\t\treturn Outgoing{}, &Refusal{Reason: RefusedSubjectSize}\n"
+        "\t}\n"
+        "\tif len(body) > MaxBodyBytes {\n"
+        "\t\treturn Outgoing{}, &Refusal{Reason: RefusedBodySize}\n"
+        "\t}\n",
+        new="\tif len(subject) > MaxSubjectBytes {\n"
+        "\t\treturn Outgoing{}, &Refusal{Reason: RefusedSubjectSize}\n"
+        "\t}\n"
+        "\tif len(body) > MaxBodyBytes {\n"
+        "\t\treturn Outgoing{}, &Refusal{Reason: RefusedBodySize}\n"
+        "\t}\n"
+        "\tfor _, text := range []string{subject, body} {\n"
+        "\t\t_, hits := scan.String(text)\n"
+        "\t\tfor _, h := range hits {\n"
+        "\t\t\tif confidentSecretRules[h.Rule] {\n"
+        "\t\t\t\treturn Outgoing{}, &Refusal{Reason: RefusedSecret, Rule: h.Rule}\n"
+        "\t\t\t}\n"
+        "\t\t}\n"
+        "\t}\n",
+        killer="TestTheSecretRefusalWinsOverSizeAndTTL",
+        extra_killers=("TestASecretOverALimitIsNeverEchoed",),
+        why="checking the cheap limits first and the expensive scan last is the obvious order — and "
+        "the browser form echoes the text for a size refusal, so a credential over a limit is served "
+        "back in the page.",
+    ),
+    Mutant(
+        name="memo-scannable-off-by-one",
+        path="internal/memo/policy.go",
+        old="\treturn len(subject)+len(body) <= MaxScannedBytes\n",
+        new="\treturn len(subject)+len(body) < MaxScannedBytes\n",
+        killer="TestTheScanIsBoundedAndScannableSaysWhere",
+        why="a bound is a bound either way — and text exactly at it is refused as a size unscanned.",
+    ),
+    Mutant(
+        name="memo-scan-unbounded",
+        path="internal/memo/policy.go",
+        old="\tMaxScannedBytes = 4 * MaxBodyBytes\n",
+        new="\tMaxScannedBytes = 1 << 30\n",
+        killer="TestTheScanIsBoundedAndScannableSaysWhere",
+        why="'scan everything' reads as the safe choice — and the browser form reaches the scan through "
+        "a 10 MiB form cap, which is seconds of CPU per POST.",
+    ),
+    Mutant(
+        name="ui-memo-draft-kept-unscanned",
+        path="internal/ui/memos.go",
+        old="memoDraftKept[ref.Reason] && memo.Scannable(draft.Subject, draft.Body) {",
+        new="memoDraftKept[ref.Reason] && true {",
+        killer="TestASecretOverALimitIsNeverEchoed",
+        why="a size refusal is in the kept set, so the extra clause reads as redundant — and past the "
+        "scan's bound the size refusal comes UNSCANNED, so the draft echoed can carry a credential.",
+    ),
+    Mutant(
         name="memo-ttlof-multiplies-unguarded",
         path="internal/memo/policy.go",
         old="\tcase n > limit:\n\t\treturn MaxTTL + unit\n",

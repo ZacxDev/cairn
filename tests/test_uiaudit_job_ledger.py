@@ -71,6 +71,22 @@ def test_the_matrix_declares_exactly_the_three_legs_and_never_fails_fast():
                      JOBS["uiaudit"], re.M)
 
 
+#: Every function `go test` would run from a file: a top-level `Test`/`Example`/`Fuzz`/`Benchmark`.
+GO_TEST_FUNC = re.compile(r"^func ((?:Test|Example|Fuzz|Benchmark)\w*)\(", re.M)
+
+
+def _go_test_funcs(src: str) -> list[str]:
+    return GO_TEST_FUNC.findall(src)
+
+
+def test_the_go_test_func_finder_sees_each_kind_and_skips_methods_and_helpers():
+    """The instrument's controls: it must find a second test of each kind (positive) and must not
+    count a helper or a method whose name merely starts with `Test` (negative)."""
+    src = ("func TestA(t *testing.T) {\n}\nfunc ExampleB() {\n}\nfunc FuzzC(f *testing.F) {\n}\n"
+           "func BenchmarkD(b *testing.B) {\n}\nfunc helperTest() {\n}\nfunc (w world) TestE() {\n}\n")
+    assert _go_test_funcs(src) == ["TestA", "ExampleB", "FuzzC", "BenchmarkD"]
+
+
 def test_the_memos_leg_runs_the_tagged_browser_test_through_its_one_runner():
     """`TestTheMemosTabInARealBrowser` is behind `//go:build memobrowser`, so the module's own
     `go test ./...` (the walk leg) cannot see it, and the walk leg's declared-test count excludes
@@ -85,6 +101,9 @@ def test_the_memos_leg_runs_the_tagged_browser_test_through_its_one_runner():
     test = (repo / "uiaudit/memos_browser_test.go").read_text(encoding="utf-8")
     assert test.startswith("//go:build memobrowser\n")
     assert "\nfunc TestTheMemosTabInARealBrowser(t *testing.T) {\n" in test
+    # 🔴 AND IT IS THE ONLY ONE. The walk leg excludes this FILE by name and the runner names this
+    # one TEST, so a second test function here would run in neither leg — and nothing would fail.
+    assert _go_test_funcs(test) == ["TestTheMemosTabInARealBrowser"], _go_test_funcs(test)
     assert "t.Skip" not in test, "the browser test must refuse, never skip"
     clauses = re.findall(r'^\tt\.Run\("([a-e]_[a-z]+)", ', test, re.M)
     assert clauses == ["a_seeded", "b_send", "c_draft", "d_retract", "e_reader"]
