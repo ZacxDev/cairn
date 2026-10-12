@@ -3638,8 +3638,10 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-scope-section-fetched-before-the-refusal",
         path="internal/ui/server.go",
-        old="\tscope, found := pickScope(scopes, wanted)\n\tif !found {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn\n\t}\n\t// 🔴 THE SESSIONS",
-        new="\t_, _ = s.source.Touched(id.Auth, string(wanted))\n\tscope, found := pickScope(scopes, wanted)\n\tif !found {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn\n\t}\n\t// 🔴 THE SESSIONS",
+        # ⚠ The anchor's tail moved when the scope page's body became `scopeView` (the S5 follow-up);
+        # the mutation itself — a read keyed on the caller's `wanted` ahead of the refusal — did not.
+        old="\tscope, found := pickScope(scopes, wanted)\n\tif !found {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn\n\t}\n\t// The tab is read AFTER",
+        new="\t_, _ = s.source.Touched(id.Auth, string(wanted))\n\tscope, found := pickScope(scopes, wanted)\n\tif !found {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn\n\t}\n\t// The tab is read AFTER",
         killer="TestAScopeTheCallerCannotReadGetsTheExistingRefusalAndNoSection",
         why="fetching the page's data up front and refusing afterwards is an ordinary "
         "refactor, and it puts a read keyed on caller-chosen input ahead of the refusal that "
@@ -5553,8 +5555,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-memo-write-skips-the-scope-lookup",
         path="internal/ui/memos.go",
-        old="\tif !found {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn Scope{}, false\n",
-        new="\tif !found && false {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn Scope{}, false\n",
+        old="\tif !found {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn nil, Scope{}, false\n",
+        new="\tif !found && false {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn nil, Scope{}, false\n",
         killer="TestAWriteNamingAScopeTheViewerCannotReadIsTheBrowseRefusal",
         why="the store refuses an unwritable scope anyway, so the lookup reads as redundant — and the "
         "redirect it falls through to is not the browse surface's one miss.",

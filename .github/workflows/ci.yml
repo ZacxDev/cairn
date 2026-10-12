@@ -2356,7 +2356,9 @@ jobs:
         if: matrix.part == 'memos'
         run: |
           set -euo pipefail
-          out=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#postgresql_18 | head -n1)
+          # `^out` NAMES THE OUTPUT: postgresql is multi-output, and the first path printed was
+          # measured to be `-man`, which has no `bin/` (exit 127 on this step's first run).
+          out=$(nix build --no-link --print-out-paths --inputs-from . 'nixpkgs#postgresql_18^out')
           got=$("$out/bin/postgres" --version)
           echo "flake-resolved postgres: $got ($out)"
           case "$got" in
