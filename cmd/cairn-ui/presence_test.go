@@ -241,8 +241,9 @@ var servingLine = regexp.MustCompile(`cairn-ui: serving \d+ route\(s\) on (127\.
 // announce the port it BOUND, then for `/healthz` there to answer 200, and returns the base URL.
 //
 // 🔴 EVERY TEST THAT EXPECTS A `cairn-ui` CHILD TO ANSWER AN HTTP REQUEST GETS ITS ADDRESS FROM
-// HERE, NEVER FROM `aPortNothingIsListeningOn`. That helper's port is free only at the instant it
-// returns; handed to a child, it races every other process on the machine — and the nix build runs
+// HERE, NEVER FROM `aPortNothingIsListeningOn`. That helper's port is held BOUND by the test so that
+// it refuses, which no child can listen on; its earlier close-and-hand-back shape, given to a child,
+// raced every other process on the machine — and the nix build runs
 // every package's tests in parallel, so a sibling package's store server took one and its plain
 // `unauthorized` was read as the sign-in page. Here the kernel picks the port for the CHILD, and
 // `main` binds before it prints the line, so the address on the line is held by this child for as
@@ -343,7 +344,7 @@ func TestTheBinaryRefusesEachPresenceMisconfiguration(t *testing.T) {
 // TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped: a readable token file
 // whose CONTENT is refused at startup — a row for another owner (decision 15's wall), or a
 // malformed row — does NOT take the process down. The browser surface answers `/healthz` 200, the
-// agent port is connection-refused, and stderr names the file line, never a token.
+// agent address is connection-refused, and stderr names the file line, never a token.
 func TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped(t *testing.T) {
 	_, journal := seededJournal(t, credentialLive)
 	for _, arm := range []struct {
@@ -363,10 +364,17 @@ func TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped(t *te
 			if err := os.WriteFile(tokens, []byte(arm.rows), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			// ⚠ The agent port is still a closed one, because this case asserts that NOTHING answers
-			// there — the direction in which a stranger taking it is a loud false RED, never a false
-			// green. The browser port is the child's own (`serving`): that one must ANSWER.
-			agentAddr := fmt.Sprintf("127.0.0.1:%d", aPortNothingIsListeningOn(t))
+			// 🔴 THE AGENT ADDRESS IS THE HELD PORT ON A *SECOND* LOOPBACK ADDRESS. A port closed and
+			// handed over was measured coming back from the very next `:0` bind — here the child's own
+			// browser listener, which then answered the dial below and failed the case under load. So
+			// the port is HELD on 127.0.0.1 (`aPortNothingIsListeningOn`): no `:0` choice and no
+			// wildcard bind can take it while the test runs. The child is pointed at 127.0.0.2 on that
+			// SAME port, which only an explicit bind of exactly 127.0.0.2:<port> can take — so the dial
+			// below stays REACHABLE: a child that bound the agent listener despite the refused file,
+			// however it worded or swallowed any error, is accepting there and fails this case.
+			// `TestAPortNothingIsListeningOnCannotBeTakenWhileTheTestHoldsIt` pins both halves. The
+			// browser port is the child's own (`serving`): that one must ANSWER.
+			agentAddr := fmt.Sprintf("127.0.0.2:%d", aPortNothingIsListeningOn(t))
 			c := startPresenceChild(t, journal,
 				"-presence-agent-addr", agentAddr, "-presence-tokens", tokens, "-presence-owner", presenceOwnerA.String())
 			// `serving` fails fast if the process EXITS, which it must not.
