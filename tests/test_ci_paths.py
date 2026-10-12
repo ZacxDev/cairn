@@ -313,7 +313,7 @@ JOB_GATE = ("if: ${{ !cancelled() && (needs.changes.result != 'success' "
 STEP_GATE = "if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}"
 
 #: 🔴 THE LEDGER of jobs the docs lane skips. Fails on GROW or SHRINK.
-GATED_JOBS = {"parity", "dualrun", "nix", "uiaudit", "pgtest", "mutants", "mutants-aggregate"}
+GATED_JOBS = {"parity", "dualrun", "nix", "uiaudit", "uiaudit-touch", "pgtest", "mutants", "mutants-aggregate"}
 GATED_GO_STEPS = {
     "the conformance corpus against the Go server",
     "the arcs/sessions end-to-end check, after proving it can go RED",

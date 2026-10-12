@@ -141,3 +141,150 @@ def test_the_hub_secrets_reach_ONE_step_in_ONE_leg():
     in_walk = re.findall(r"secrets\.([A-Z_]+)", walk)
     assert in_walk == HUB_SECRETS
     assert in_job == in_walk, f"a secret is referenced outside the walk step: {in_job}"
+
+
+# --- `uiaudit-touch`: the BLOCKING job (S6b of the mobile plan) ------------------------------------
+
+#: The steps `uiaudit-touch` SHARES with `uiaudit`, by label. They must be byte-identical in both jobs:
+#: the browser that blocks a merge is S6a's pinned chromium only while its install is the SAME text.
+SHARED_WITH_UIAUDIT = [label for label, leg in LEDGER[:7]]
+GUARDS = "the touch gate's own guards and browser controls, under the pinned chromium"
+GATE = "the walk's touch refusals — BLOCKING"
+TOUCH_LEDGER = SHARED_WITH_UIAUDIT + [GUARDS, GATE]
+
+
+def _step(job: str, label: str) -> str:
+    """One step's text WITHOUT the comment block that follows it: `_steps` splits on the dash, so a
+    step's tail is the NEXT step's leading comment, which legitimately differs between the jobs."""
+    (s,) = [s for s in _steps(job) if _label(s) == label]
+    lines = s.splitlines()
+    while lines and (not lines[-1].strip() or lines[-1].lstrip().startswith("#")):
+        lines.pop()
+    return "\n".join(lines)
+
+
+def test_the_touch_job_is_exactly_these_steps_and_shares_the_pinned_install_BYTE_FOR_BYTE():
+    touch = JOBS["uiaudit-touch"]
+    assert [_label(s) for s in _steps(touch)] == TOUCH_LEDGER
+    assert SHARED_WITH_UIAUDIT[-2:] == ["chromium from the flake's pinned nixpkgs, its version asserted",
+                                        "the pinned chromium is the one on PATH"]
+    for label in SHARED_WITH_UIAUDIT:
+        assert _step(touch, label) == _step(JOBS["uiaudit"], label), f"{label!r} drifted from the advisory job's"
+    # And the version is ASSERTED, not only printed (the plan's closing condition reads it off the log).
+    pin = _step(touch, "chromium from the flake's pinned nixpkgs, its version asserted")
+    assert 'echo "the binary says: $got"' in pin and "::error::the pinned chromium reports" in pin
+
+
+def test_the_touch_job_BLOCKS_holds_no_secret_and_runs_the_walk_under_the_touch_gate():
+    """The plan's closing condition, part 3, read off the workflow file: NOT `continue-on-error`."""
+    touch = JOBS["uiaudit-touch"]
+    # As a KEY, at the job or at any step — the job's comments may name the word.
+    assert not re.search(r"^\s+continue-on-error:", touch, re.M)
+    assert "secrets." not in touch
+    # The advisory job is unchanged in this respect: it stays non-blocking.
+    assert re.search(r"^    continue-on-error: true$", JOBS["uiaudit"], re.M)
+    assert re.search(r"^    timeout-minutes: 30$", touch, re.M), "a hung required check holds every merge"
+    for label in (GUARDS, GATE):
+        assert _if(_step(touch, label)) is None, f"{label!r} must run whenever the job does"
+    assert re.search(r"^          UIAUDIT_GATE: touch$", _step(touch, GATE), re.M)
+
+
+def _normalised(step: str) -> str:
+    return "\n".join(ln.rstrip() for ln in step.splitlines() if ln.strip())
+
+
+#: 🔴 THE TWO STEPS THIS JOB OWNS, PINNED AS WHOLE NORMALISED STRINGS. A substring check was walkable:
+#: an `exit 0` as the step's first line, a dropped rc check, an inverted count, `|| true` for
+#: `|| rc=$?`, or `UIAUDIT_GATE=all` inline each left every assertion above green (measured in
+#: round 1 of the PR's audit). Any edit to these steps must edit this literal too, in the same diff.
+GUARDS_STEP = r"""name: the touch gate's own guards and browser controls, under the pinned chromium
+        run: |
+          set -uo pipefail
+          tests='TestTheTouchGateBindsExactlyTheTouchRefusals TestTheWalkGateFlagAcceptsExactlyTwoValues TestTheRefusalLineIsTheOnePwaCheckGreps TestTheWalkRefusalsCanEachGoRED TestTheTouchRefusalsBindOnlyTheTouchRungs TestTheReachabilityRefusalRefusesAnEMPTYSide TestTheInputFontThresholdIsSixteenPixelsExactly TestTouchEmulationReachesThePageAtEveryRung TestTheReachabilityRefusalGoesREDWhenEmulationIsOff TestTheTargetSizeRuleRunsOnlyBecauseItIsEnabled TestTheInputFontMeasurementSeesA14pxInput TestAnOverflowingPageIsRecordedAsOverflowAtATouchRung'
+          pattern="^($(echo $tests | tr ' ' '|'))\$"
+          rc=0
+          ( cd uiaudit && go test -count=1 -v -run "$pattern" . ) > /tmp/touch-guards.log 2>&1 || rc=$?
+          grep -E '^(=== RUN|--- |[[:space:]]+--- (FAIL|SKIP)|ok|FAIL|panic)' /tmp/touch-guards.log || true
+          if [ "$rc" != "0" ] || grep -qE '^[[:space:]]*--- (FAIL|SKIP)' /tmp/touch-guards.log; then
+            echo "::error::the touch gate's guards failed or skipped (go test rc $rc)"
+            exit 1
+          fi
+          for t in $tests; do
+            if ! grep -qE "^--- PASS: $t \(" /tmp/touch-guards.log; then
+              echo "::error::$t printed no top-level PASS line — it did not run"
+              exit 1
+            fi
+          done
+          echo "touch gate guards: $(echo $tests | wc -w) named, each PASSED"
+"""
+
+GATE_STEP = r"""name: the walk's touch refusals — BLOCKING
+        env:
+          UIAUDIT_WORK: ${{ runner.temp }}/uiaudit-touch
+          UIAUDIT_GATE: touch
+        run: |
+          set -uo pipefail
+          needle='uiaudit: TOUCH GATE PASSED'
+          if ! grep -qF "const touchGatePassed = \"$needle" uiaudit/main.go; then
+            echo "::error::this step greps for '$needle', which uiaudit/main.go's touchGatePassed no longer starts with; the gate would match nothing"
+            exit 1
+          fi
+          mkdir -p "$UIAUDIT_WORK"
+          rc=0
+          ./uiaudit/run.sh 2>&1 | tee "$UIAUDIT_WORK/walk.log" || rc=$?
+          if [ "$rc" != "0" ]; then
+            echo "::error::the touch-gated walk exited $rc — a touch refusal (its message is above, under 'regression class'), or a harness that could not measure"
+            exit 1
+          fi
+          if ! grep -qF "$needle" "$UIAUDIT_WORK/walk.log"; then
+            echo "::error::the walk exited 0 without printing '$needle', so it never reached the touch verdict"
+            exit 1
+          fi
+          for line in 'uiaudit:   GATE touch — REFUSALS: 0 horizontal overflow over ' \
+                      'uiaudit:   TOUCH REACHABILITY refusal PASSED: ' \
+                      'uiaudit:   TOUCH TARGET SIZE refusal PASSED: ' \
+                      'uiaudit:   INPUT FONT refusal PASSED: '; do
+            n=$(grep -cF "$line" "$UIAUDIT_WORK/walk.log" || true)
+            if [ "$n" != "1" ]; then
+              echo "::error::'$line' printed $n time(s), want exactly 1"
+              exit 1
+            fi
+            grep -F "$line" "$UIAUDIT_WORK/walk.log"
+          done
+"""
+
+
+def test_the_touch_jobs_own_steps_are_pinned_WHOLE():
+    touch = JOBS["uiaudit-touch"]
+    assert _normalised(_step(touch, GUARDS)) == _normalised(GUARDS_STEP)
+    assert _normalised(_step(touch, GATE)) == _normalised(GATE_STEP)
+
+
+def test_every_test_the_guards_step_names_is_declared_in_the_uiaudit_module():
+    """A name that matches no `func Test…` would be refused at run time (no PASS line); this says so
+    before CI does, and pins the list against a rename on the Go side."""
+    from pathlib import Path
+    mod = Path(__file__).resolve().parent.parent / "uiaudit"
+    declared = set()
+    for f in mod.glob("*_test.go"):
+        declared |= set(_go_test_funcs(f.read_text(encoding="utf-8")))
+    (names,) = re.findall(r"^          tests='([^']+)'$", _step(JOBS["uiaudit-touch"], GUARDS), re.M)
+    missing = [n for n in names.split() if n not in declared]
+    assert len(names.split()) == 12 and not missing, missing
+
+
+def test_the_touch_gates_needle_and_verdict_lines_are_ones_uiaudit_actually_prints():
+    """The step greps four verdict lines and a needle. Each must be a string `uiaudit/main.go` can
+    print — a needle nothing produces is a gate that can only ever fail (or, with an inverted test,
+    only ever pass). Text only: that the walk prints them is the live run's claim."""
+    from pathlib import Path
+    main = (Path(__file__).resolve().parent.parent / "uiaudit/main.go").read_text(encoding="utf-8")
+    gate = _step(JOBS["uiaudit-touch"], GATE)
+    (needle,) = re.findall(r"^          needle='([^']+)'$", gate, re.M)
+    assert f'const touchGatePassed = "{needle}' in main
+    lines = re.findall(r"'(uiaudit:   [^']+)'", gate)
+    assert len(lines) == 4, lines
+    for line in lines:
+        # The Go source spells each as a Printf format: compare up to the first verb.
+        head = line.split("%")[0]
+        assert f'"{head}' in main, f"{line!r} is not a prefix uiaudit/main.go prints"

@@ -1982,7 +1982,8 @@ jobs:
     # nix binary cache its chromium comes from — any of which would otherwise gate a tree nobody
     # touched. (Its chromium is now PINNED to the flake's nixpkgs, S6a; it used to be whatever the
     # runner image shipped.) A permanently-blocking gate on a third party's availability is the
-    # category this repository refuses; S6b promotes the touch refusals into their own job instead.
+    # category this repository refuses; S6b promoted the touch refusals into their own job instead —
+    # `uiaudit-touch`, below, which reaches no hub and holds no secret.
     #
     # ⚠ AND WHAT IT DOES NOT BUY, SAID PLAINLY RATHER THAN PAPERED OVER: **the row can still go red,
     # and a reader of the checks list will see it.** That is accepted, not fixed. The alternative
@@ -2330,8 +2331,9 @@ jobs:
 
       # 🔴 THE MOBILE PLAN'S CLOSING-CONDITION INSTRUMENT (`claudedocs/plan-cairn-mobile-pwa.md`),
       # WIRED HERE BY S4 AND IN THIS NON-BLOCKING JOB ON PURPOSE: the plan keeps `pwa_check.sh` advisory
-      # until S6b adds the blocking `uiaudit-touch` job — this job's chromium is pinned since S6a, but
-      # the job itself stays advisory (see `continue-on-error` above). It runs the PLAIN check (all nine
+      # for good — S6b promoted only the walk's TOUCH refusals, into the blocking `uiaudit-touch` job —
+      # so although this job's chromium is pinned since S6a, the job itself stays advisory (see
+      # `continue-on-error` above). It runs the PLAIN check (all nine
       # clauses, exit 0/1/2); `--self-test` (nine sabotaged tree copies, four of them full walks) is a
       # local instrument validation, too heavy to repeat on every push. Exit 2 is "could not vouch" and
       # is a failure here exactly like 1 — never a skip.
@@ -2479,6 +2481,201 @@ jobs:
             ${{ runner.temp }}/uiaudit/walk.log
           retention-days: 7
           if-no-files-found: warn
+
+  # 🔴 THE BLOCKING HALF OF THE BROWSER WALK — S6b OF `claudedocs/plan-cairn-mobile-pwa.md` — AND THE
+  # ONLY BROWSER JOB WITHOUT `continue-on-error`. It runs the SAME walk as `uiaudit`'s walk leg,
+  # through the same `uiaudit/run.sh`, with `UIAUDIT_GATE=touch`: the verdict is decided by the touch
+  # refusals in `refuseWalkRegressions` (`uiaudit/main.go`; `walkGate`'s doc is the ONE list of which
+  # classes bind) — plus the walk's own harness preconditions, which run before any verdict under
+  # either gate (the pod boots, sign-in takes, the ledger accounts, the journal world did not fall
+  # back). No clause is re-implemented here; this job selects, the Go function decides.
+  #
+  # 🔴 WHY THIS CAN BLOCK WHEN `uiaudit` CANNOT. `uiaudit` is advisory because it reaches third
+  # parties on every run (the audit hub's edge, a CDN) and because its pixel diff moved on a chromium
+  # PATCH difference. Neither reaches this job: under the touch gate the walk builds no payload and
+  # pushes nothing, and this job holds NO secret (`tests/test_uiaudit_job_ledger.py` pins both). Its
+  # chromium is S6a's pin, installed by steps that are BYTE-IDENTICAL to `uiaudit`'s (the same test
+  # pins that), so the browser that blocks a merge is the version `flake.lock` names, asserted from
+  # the binary. ⚠ The one third party left is the nix binary cache the pinned chromium is fetched
+  # from; a cache outage reds this job. That is accepted and named, not hidden: it is the same
+  # dependency the `nix` job, which also blocks, already has.
+  #
+  # ⚠ "REQUIRED" IS AN OPERATOR SETTING, NOT THIS FILE. Without branch protection naming
+  # `uiaudit-touch` a red row here does not stop a merge button; the PR that added this job names
+  # the exact `gh api` call. On a docs-only change the job is SKIPPED like every gated job, and a
+  # skipped required check counts as passed.
+  uiaudit-touch:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false') }}
+    # A required check that hangs holds every merge; the walk caps itself at 8 minutes, the nix
+    # fetch and the builds before it do not. Measured: ~4 minutes end to end on the controls' runs,
+    # before the guards step (~35s locally) was added.
+    timeout-minutes: 30
+    # The same pin as `uiaudit`, for the reason written there: without it a `go` directive in the
+    # module graph downloads a newer toolchain silently.
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v4
+      # 🔴 THE SAME 1.25 THE `go` JOB PINS. The nested module's own `go` directive says
+      # 1.25.0 for this reason: it is not governed by `internal/depspolicy` or by any nix
+      # derivation, so the ONLY thing keeping its toolchain from drifting away from the
+      # root module's is that both are pinned here and in `uiaudit/go.mod`.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+      # 🔴 READ THE PIN OUT OF THE COMPILER, BECAUSE SETTING IT IS NOT OBSERVING IT. This is
+      # the step that would have caught the no-op above: `GOTOOLCHAIN=local` makes a switch
+      # impossible, and this makes the version an assertion rather than a log line nobody reads.
+      - name: the toolchain that will actually run, asserted rather than assumed
+        run: |
+          set -euo pipefail
+          got=$(go version)
+          echo "$got"
+          case "$got" in
+            *go1.25*) ;;
+            *) echo "::error::this job must run go1.25 (the pin) but the compiler reports: $got"; exit 1 ;;
+          esac
+          # And the nested module's own directive, which is the other half of the pin.
+          directive=$(grep -m1 '^go ' uiaudit/go.mod)
+          echo "uiaudit/go.mod: $directive"
+          case "$directive" in
+            "go 1.25"*) ;;
+            *) echo "::error::uiaudit/go.mod says '$directive'; a go mod tidy on a newer host raises this silently and GOTOOLCHAIN=auto would then download that toolchain"; exit 1 ;;
+          esac
+      # 🔴 THE INTERPRETER IS PINNED TOO, BECAUSE THE FIXTURE WORLD IS PYTHON.
+      # `uiaudit/boot.go` calls `tests/reader_fixtures.py`'s own `build_store` rather than
+      # transcribing it, so this job runs that file — and running it on whatever
+      # interpreter the runner image ships would materialise the store with a tool nothing
+      # else in this repository has ever used. Same reason, same version, as every other
+      # job here.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 🔴 CHROMIUM COMES FROM THE FLAKE'S PINNED NIXPKGS (S6a of the mobile plan, decision 17), NOT
+      # FROM THE RUNNER IMAGE. It used to be `apt-get install chromium-browser || snap install
+      # chromium` — whatever the image shipped that day — and that was MEASURED to move the result:
+      # two runs on one machine (chromium 153.0.8010.52) diffed `0 changed` of 6 pages; a CI run on
+      # 153.0.8010.36, the runner's snap, diffed **4 changed** of 6 against the same baseline, with
+      # `0 size-changed` — four pages moved on a PATCH difference. Pinning is the precondition for any
+      # pixel gate and for S6b's blocking touch job (O11); it is not, by itself, a reason to promote
+      # anything (`uiaudit/README.md`'s gating section).
+      #
+      # `--inputs-from .` resolves `nixpkgs` to the revision `flake.lock` pins — the SAME chromium the
+      # `uiScreenshots` derivation captures with — so the install screenshots, the walk and these tests
+      # now run one build. A `flake.lock` bump moves it, deliberately and visibly.
+      #
+      # 🔴 THE VERSION IS ASSERTED, NOT ONLY PRINTED: the binary's own `--version` must name the version
+      # nix evaluated for the lock, and the `chromium` this job's later steps resolve must be the store
+      # path — the runner image ALSO carries browsers, and chromedp and `pwa_check.sh` both find theirs
+      # by NAME on `PATH` (chromedp tries `headless_shell`/`headless-shell` before `chromium`, so those
+      # must not resolve either). A pin that is set but not the one that runs is the `GOTOOLCHAIN` no-op
+      # above, reached through `PATH`.
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: chromium from the flake's pinned nixpkgs, its version asserted
+        run: |
+          set -euo pipefail
+          rev=$(python3 -c 'import json; print(json.load(open("flake.lock"))["nodes"]["nixpkgs"]["locked"]["rev"])')
+          want=$(nix eval --raw --inputs-from . nixpkgs#chromium.version)
+          out=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#chromium)
+          got=$("$out/bin/chromium" --version)
+          echo "flake.lock nixpkgs: $rev"
+          echo "flake-resolved chromium: $want ($out)"
+          echo "the binary says: $got"
+          case "$got" in
+            *" $want"|*" $want "*) ;;
+            *) echo "::error::the pinned chromium reports '$got', but nix evaluated $want for flake.lock's nixpkgs"; exit 1 ;;
+          esac
+          echo "$out/bin" >> "$GITHUB_PATH"
+      - name: the pinned chromium is the one on PATH
+        run: |
+          set -euo pipefail
+          for name in headless_shell headless-shell; do
+            if p=$(command -v "$name"); then
+              echo "::error::$name resolves to $p, and chromedp would launch it before the pinned chromium"; exit 1
+            fi
+          done
+          p=$(command -v chromium)
+          echo "chromium on PATH: $p"
+          case "$p" in
+            /nix/store/*) ;;
+            *) echo "::error::chromium resolves to $p, not the flake-pinned store path"; exit 1 ;;
+          esac
+          chromium --version
+
+      # 🔴 THE GATE'S OWN GUARDS, IN THE JOB THAT BLOCKS. They also run in `uiaudit`'s walk leg, but
+      # that job is `continue-on-error`, so without this step an edit that silently widened or emptied
+      # the touch selection (`bound := all`), or disabled axe's `target-size` rule, would leave this
+      # job green and only an advisory row red. The named set: the selection, the refusals it selects,
+      # the `pwa_check.sh` contract, and the real-chromium controls that each touch measurement can
+      # go non-zero. Each name must print its OWN `--- PASS` line; a name that matched nothing fails.
+      - name: the touch gate's own guards and browser controls, under the pinned chromium
+        run: |
+          set -uo pipefail
+          tests='TestTheTouchGateBindsExactlyTheTouchRefusals TestTheWalkGateFlagAcceptsExactlyTwoValues TestTheRefusalLineIsTheOnePwaCheckGreps TestTheWalkRefusalsCanEachGoRED TestTheTouchRefusalsBindOnlyTheTouchRungs TestTheReachabilityRefusalRefusesAnEMPTYSide TestTheInputFontThresholdIsSixteenPixelsExactly TestTouchEmulationReachesThePageAtEveryRung TestTheReachabilityRefusalGoesREDWhenEmulationIsOff TestTheTargetSizeRuleRunsOnlyBecauseItIsEnabled TestTheInputFontMeasurementSeesA14pxInput TestAnOverflowingPageIsRecordedAsOverflowAtATouchRung'
+          pattern="^($(echo $tests | tr ' ' '|'))\$"
+          rc=0
+          ( cd uiaudit && go test -count=1 -v -run "$pattern" . ) > /tmp/touch-guards.log 2>&1 || rc=$?
+          grep -E '^(=== RUN|--- |[[:space:]]+--- (FAIL|SKIP)|ok|FAIL|panic)' /tmp/touch-guards.log || true
+          if [ "$rc" != "0" ] || grep -qE '^[[:space:]]*--- (FAIL|SKIP)' /tmp/touch-guards.log; then
+            echo "::error::the touch gate's guards failed or skipped (go test rc $rc)"
+            exit 1
+          fi
+          for t in $tests; do
+            if ! grep -qE "^--- PASS: $t \(" /tmp/touch-guards.log; then
+              echo "::error::$t printed no top-level PASS line — it did not run"
+              exit 1
+            fi
+          done
+          echo "touch gate guards: $(echo $tests | wc -w) named, each PASSED"
+
+      # 🔴 THE GATE. Three things must ALL hold, and each is read from the walk's own output rather than
+      # inferred from an exit code alone:
+      #   1. `run.sh` exited 0 (a refusal exits 1, a harness failure 1, a bad `-gate` 2);
+      #   2. the walk printed `touchGatePassed` — the constant in `uiaudit/main.go`, checked to still
+      #      say so before it is used as a needle (the `verify-push` pattern), so an early `return nil`
+      #      added before the verdict cannot pass for one;
+      #   3. each of the four touch verdict lines printed exactly once — the only check that sees an
+      #      early return INSIDE `refuseWalkRegressionsUnder`, since the needle prints after it returns.
+      - name: the walk's touch refusals — BLOCKING
+        env:
+          UIAUDIT_WORK: ${{ runner.temp }}/uiaudit-touch
+          UIAUDIT_GATE: touch
+        run: |
+          set -uo pipefail
+          needle='uiaudit: TOUCH GATE PASSED'
+          if ! grep -qF "const touchGatePassed = \"$needle" uiaudit/main.go; then
+            echo "::error::this step greps for '$needle', which uiaudit/main.go's touchGatePassed no longer starts with; the gate would match nothing"
+            exit 1
+          fi
+          mkdir -p "$UIAUDIT_WORK"
+          rc=0
+          ./uiaudit/run.sh 2>&1 | tee "$UIAUDIT_WORK/walk.log" || rc=$?
+          if [ "$rc" != "0" ]; then
+            echo "::error::the touch-gated walk exited $rc — a touch refusal (its message is above, under 'regression class'), or a harness that could not measure"
+            exit 1
+          fi
+          if ! grep -qF "$needle" "$UIAUDIT_WORK/walk.log"; then
+            echo "::error::the walk exited 0 without printing '$needle', so it never reached the touch verdict"
+            exit 1
+          fi
+          for line in 'uiaudit:   GATE touch — REFUSALS: 0 horizontal overflow over ' \
+                      'uiaudit:   TOUCH REACHABILITY refusal PASSED: ' \
+                      'uiaudit:   TOUCH TARGET SIZE refusal PASSED: ' \
+                      'uiaudit:   INPUT FONT refusal PASSED: '; do
+            n=$(grep -cF "$line" "$UIAUDIT_WORK/walk.log" || true)
+            if [ "$n" != "1" ]; then
+              echo "::error::'$line' printed $n time(s), want exactly 1"
+              exit 1
+            fi
+            grep -F "$line" "$UIAUDIT_WORK/walk.log"
+          done
 
   # 🔴 THE POSTGRES TIER, AND IT IS ITS OWN JOB FOR THE REASON `parity` IS: its verdict is
   # readable on its own in the checks list, and it is the ONLY job in this workflow that
