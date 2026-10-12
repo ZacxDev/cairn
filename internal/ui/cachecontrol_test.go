@@ -27,13 +27,14 @@ var realPage = map[string]struct{ query, marker string }{
 	"GET / content":       {"", `id="hub"`},
 	"GET /scopes content": {"", `class="scope-grid"`},
 	// The sessions page renders its list card even when nothing is visible; the marker is that card.
-	"GET /sessions content": {"", `id="sessions-index"`},
-	"GET /scope content":    {"?" + QueryID + "=" + string(fixtureScope), `<h2>platform</h2>`},
-	"GET /entry content":    {"?" + QueryScope + "=" + string(fixtureScope) + "&" + QueryRef + "=runbook", `<h2>runbook</h2>`},
-	"GET /arc content":      {"?" + QueryHome + "=" + string(fixtureScope) + "&" + QuerySlug + "=walk-arc", `<h2>Arc</h2>`},
-	"GET /arcs content":     {"", `id="arcs-index"`},
-	"GET /session content":  {"?" + QuerySession + "=" + walkSession, `id="session-summary"`},
-	"GET /team content":     {"", `<title>cairn — team`},
+	"GET /sessions content":      {"", `id="sessions-index"`},
+	"GET /scope content":         {"?" + QueryID + "=" + string(fixtureScope), `<h2>platform</h2>`},
+	"GET /entry content":         {"?" + QueryScope + "=" + string(fixtureScope) + "&" + QueryRef + "=runbook", `<h2>runbook</h2>`},
+	"GET /arc content":           {"?" + QueryHome + "=" + string(fixtureScope) + "&" + QuerySlug + "=walk-arc", `<h2>Arc</h2>`},
+	"GET /arcs content":          {"", `id="arcs-index"`},
+	"GET /session content":       {"?" + QuerySession + "=" + walkSession, `id="session-summary"`},
+	"GET /team content":          {"", `<title>cairn — team`},
+	"GET /scope/sources content": {"?" + QueryScope + "=" + string(fixtureScope), `<h2>Code sources · platform</h2>`},
 }
 
 // redirectRows is every non-public GET row that answers a BODILESS 303 rather than a page —
