@@ -293,8 +293,9 @@ func TestEveryEnvironmentReadIsInTheLedger(t *testing.T) {
 	}
 	// POSITIVE CONTROL: the discovery read the names it is meant to; a parser that found nothing
 	// would agree with an empty ledger.
-	want := []string{"CAIRN_CONFIG", "CAIRN_MIRROR_ROOT", "CAIRN_ROUTES", "CAIRN_TOKEN", "CAIRN_UI_TOKEN",
-		"CAIRN_UI_URL", "CAIRN_URL", "HOME", "XDG_STATE_HOME"}
+	want := []string{"CAIRN_AUDIT_GITHUB_API", "CAIRN_AUDIT_HOSTS", "CAIRN_CONFIG", "CAIRN_MIRROR_ROOT",
+		"CAIRN_ROUTES", "CAIRN_TOKEN", "CAIRN_UI_TOKEN", "CAIRN_UI_URL", "CAIRN_URL", "GH_TOKEN", "GITHUB_TOKEN",
+		"HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"}
 	if !reflect.DeepEqual(EnvReads(), want) {
 		t.Fatalf("EnvReads() = %v, want the literal %v — move this list with the ledger, deliberately", EnvReads(), want)
 	}

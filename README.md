@@ -562,6 +562,7 @@ renaming a human-read label breaks nobody.
 | one registered arc: status, tooling coverage, members (Go client only; asks the pod) | `cairn arc-show --slug S` (home from `--scope`/`--repo`) |
 | register or update an arc from a JSON payload (Go client only) | `cairn arc-register --slug S --from F` (home from `--scope`/`--repo`) |
 | which code — repositories and branch — a scope declares it describes (Go client only; asks the pod; read-only, the browser is the only writer) | `cairn sources --scope X` (or `--repo P`) |
+| check a scope's entries — `## Pointers` paths and `path#Symbol` rows, `RESOLVED <sha>` markers, `github:` PR refs — against its declared code sources, fetched into a local mirror (Go client only; exits on doctor's 0/9/10; see below) | `cairn audit-refs --scope X` (`--json`, `--no-sync`) |
 | the post-write check: parse, dropped lines, marker reachability | `cairn validate` |
 | one call of diagnostics | `cairn doctor` (`--json`, `--no-sync`) |
 | append one dated, attributed bullet | `cairn append --scope S --ref R --text '…' --session ID` |
@@ -583,6 +584,30 @@ session id is the writer's own word). `scope-absent`, `scope-empty`, `no-attribu
 `scope-unreadable` are four different statements and render differently; a scope you may not read
 answers exactly like one that does not exist. Exit codes are the read set below — `0` for every
 answer, `3` when nothing in the scope could be scanned.
+
+### `cairn audit-refs` — do the entries still hold against the code they describe?
+
+A scope declares its code sources in the browser (`git:<host>/<repo-path>[//<subpath>]@<branch>`;
+`cairn sources` prints them). `cairn audit-refs` reads them from the pod, reads the scope's entries
+from the synced cache, fetches each source into a full mirror under `$XDG_CACHE_HOME/cairn/mirrors`
+(`git fetch --prune --no-tags` of `refs/heads/*` and `refs/pull/*/head`), and checks every
+CHECKABLE claim at the fetched commit: a `## Pointers` path (repo-root-relative, then
+subpath-relative), a structural `path#Symbol` row, a `RESOLVED <sha>:` marker (reachable from the
+declared branch, from another fetched ref, or not at all — never by object presence, never through a
+tag) and a `github:<owner>/<repo>#N` ref (GitHub's API; `GH_TOKEN`/`GITHUB_TOKEN` if set). It prints
+`sources=…`, `checked=N stale=S unchecked=U`, then one line per finding quoting the commit.
+
+- **Exit 9**: a claim was measured stale (a missing path, a symbol absent from its file, a PR that
+  does not exist). **Exit 10**: something could not be looked at — an undeclared scope, an
+  unconfigured or unreadable sources journal, an unmapped or unreachable source, an ambiguous or
+  unreachable sha, a rate-limited PR check, or a run that checked nothing. **Exit 0** only when
+  `checked > 0` and neither of those. A SHA reachable only off-branch, an open/merged/closed PR and a
+  ref to a repository the scope does not declare are informational.
+- **Only hosts the auditing host maps are ever contacted**: `CAIRN_AUDIT_HOSTS=host=base[,…]`, default
+  `github.com=https://github.com`; bases are `https://` or `file://` (no SSH in v1).
+  `CAIRN_AUDIT_GITHUB_API` overrides the API base.
+- **What it does not judge**: whether a file still says what the entry claims, whether a commit
+  implements it, whether an `OPEN:` item is still open. Those stay out of the exit code.
 
 ### `cairn arcs`, `cairn arc-show`, `cairn arc-register` — the arc registry
 
