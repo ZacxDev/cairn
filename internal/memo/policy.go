@@ -195,6 +195,22 @@ type Outgoing struct {
 	TTL           time.Duration
 }
 
+// TTLOf converts a caller's whole count of `unit`s (the wire's seconds, the form's days) into a TTL
+// WITHOUT OVERFLOWING: a count past [MaxTTL] is handed on as just past it, and one below its
+// negation as just below zero, so [CheckSend] refuses both with [RefusedTTL] — the ceiling stays
+// CheckSend's rule, and this is the one place the multiplication is guarded on the way to it. 0 is
+// 0, which CheckSend reads as [DefaultTTL].
+func TTLOf(n int64, unit time.Duration) time.Duration {
+	limit := int64(MaxTTL / unit)
+	switch {
+	case n > limit:
+		return MaxTTL + unit
+	case n < -limit:
+		return -unit
+	}
+	return time.Duration(n) * unit
+}
+
 // CheckSend applies every CONTENT rule a send must pass, in one place: the send-side fence
 // predicates ([SubjectBreaksFence], [BreaksFence]), the size caps, the TTL bounds, and the
 // confident-secret scan over subject AND body. A refusal is a [*Refusal] naming the limit.

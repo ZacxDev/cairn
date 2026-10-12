@@ -230,6 +230,54 @@ func (s *MemoStore) List(ctx context.Context, m control.Model, auth control.Auth
 	return out, nil
 }
 
+// MaxUnexpiredPerScope is the most UNEXPIRED rows — live memos and tombstones together — one scope
+// can hold: [memo.SendsPerScopePerWindow] sends per [memo.QuotaWindow], each kept at most
+// [memo.MaxTTL]. (The quota is per scope, all senders; a row past its expiry is not unexpired.)
+const MaxUnexpiredPerScope = memo.SendsPerScopePerWindow * int(memo.MaxTTL/memo.QuotaWindow)
+
+// All returns EVERY unexpired memo of a scope — live ones and tombstones (decision 10) — oldest
+// first, in ONE query: what the browser's memos tab shows (S5).
+//
+// 🔴 IT EXISTS SO THAT NO IN-PROCESS CALLER PAGES. [MemoStore.List] caps a page at the live bound
+// because it is the WIRE's listing, and the client's `memo-read` pages it over HTTP with a
+// boundary rule of its own (whole-second times, one second early, ids deduplicated —
+// `internal/client/memo.go`). The tab used to re-spell that rule in process; a caller holding
+// the store needs no pages and therefore no boundary rule, so the rule now has one spelling.
+//
+// The read predicate, the uniform miss and the read-time resolution are [MemoStore.List]'s. The
+// bound is [MaxUnexpiredPerScope], asked for with one row to spare: a store holding MORE than its
+// own send rules allow is an error, never a silently truncated listing.
+func (s *MemoStore) All(ctx context.Context, m control.Model, auth control.Authorization, scope string) ([]memo.Stored, error) {
+	if !memo.MayRead(auth, scope) {
+		return nil, memo.ErrNotFound
+	}
+	ctx, cancel := withStatementTimeout(ctx)
+	defer cancel()
+	rows, err := s.db.sql.QueryContext(ctx, memoSelect+
+		` WHERE expires_at > $1 AND m.scope_name = $2 ORDER BY m.created_at, m.id LIMIT $3`,
+		s.db.now(), store.NormalizeRef(scope), MaxUnexpiredPerScope+1)
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: listing a scope's memos: %w", err)
+	}
+	defer rows.Close()
+	var out []memo.Stored
+	for rows.Next() {
+		st, err := scanMemo(rows, m)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("pgstore: listing a scope's memos: %w", err)
+	}
+	if len(out) > MaxUnexpiredPerScope {
+		return nil, fmt.Errorf("pgstore: a scope holds more than %d unexpired memos, which the send rules cannot produce — "+
+			"refusing to return a truncated listing", MaxUnexpiredPerScope)
+	}
+	return out, nil
+}
+
 // Get returns ONE memo — a retracted one as its tombstone — if the caller may read `scope` NOW
 // and the memo is unexpired and belongs to THAT scope.
 //

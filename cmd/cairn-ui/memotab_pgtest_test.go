@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -182,6 +183,97 @@ func TestTheMemoTabsForgedSendIsRefusedByTheRealStore(t *testing.T) {
 	// A browser session sends with NO credential, so the sender line carries no `via` label.
 	if strings.Contains(page, "writer-a via") {
 		t.Errorf("a browser send was labelled with a credential:\n%s", page)
+	}
+}
+
+// memoRowState is one `memos` row as the database holds it: whether it is retracted, and whether its
+// subject and body are still there.
+func memoRowState(t *testing.T, dsn string, id int64) (retracted, hasText bool) {
+	t.Helper()
+	db, err := sql.Open(pgstore.DriverName, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.QueryRow(`SELECT retracted_at IS NOT NULL, subject IS NOT NULL OR body IS NOT NULL FROM memos WHERE id = $1`, id).
+		Scan(&retracted, &hasText); err != nil {
+		t.Fatalf("reading memo %d: %v", id, err)
+	}
+	return retracted, hasText
+}
+
+// TestTheMemosTabRetractsThroughTheRealStoreAndShowsTheTombstone — the adapter's other two methods
+// (#242 round 1): `browserMemos.All` and `browserMemos.Retract` had never been driven against the
+// real store, so an adapter that listed only LIVE memos and one whose `Retract` did nothing both left
+// every Go test and this tier green. On the REAL binary over a real PostgreSQL, as writer-a:
+//
+//   - send through the tab's own form; the page shows the memo with a Retract form naming its id
+//     (the id read from the database, so the form is checked against the row, not against itself);
+//   - CONTROL, before retracting: the row's `retracted_at` is NULL and its text is there;
+//   - `POST /memo/retract` answers the `memo-retracted` redirect;
+//   - the ROW: `retracted_at` set, subject and body NULLed — the retraction happened in the store,
+//     which a redirect alone cannot show;
+//   - the TAB, re-read: the memo is still listed, as its TOMBSTONE line naming the retractor, with
+//     no subject, no body and no Retract form — for writer-a AND for reader-b.
+//
+// RED with `browserMemos.Retract` returning nil without calling the store (the ROW assertion), with
+// `browserMemos.All` returning nothing, and with `pgstore.MemoStore.All` selecting only live rows
+// (the TOMBSTONE assertion, each).
+func TestTheMemosTabRetractsThroughTheRealStoreAndShowsTheTombstone(t *testing.T) {
+	journal, _ := memoJournal(t)
+	dsn := schemaDSN(t)
+	c := startMemoChild(t, journal, dsn, "-store", memoTabStore(t))
+	browser := c.serving(t)
+	tab := ui.ScopePath + "?" + url.Values{ui.QueryID: {string(capiAlpha)}, ui.QueryTab: {ui.TabMemos}}.Encode()
+	const subject, body = "glaze batch seven", "cured overnight; safe to load"
+
+	cookie, csrf := browserSession(t, browser, capiTokWriter)
+	resp := browserPost(t, browser, cookie, csrf, ui.MemoPath, url.Values{ui.FieldScope: {string(capiAlpha)},
+		ui.FieldMemoSubject: {subject}, ui.FieldMemoBody: {body}, ui.FieldTTLDays: {"5"}})
+	if loc, _ := url.Parse(resp.Header.Get("Location")); resp.StatusCode != http.StatusSeeOther || loc == nil || loc.Query().Get("outcome") != "memo-sent" {
+		t.Fatalf("could not vouch: writer-a's send answered %d Location=%q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	var id int64
+	func() {
+		db, err := sql.Open(pgstore.DriverName, dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		if err := db.QueryRow(`SELECT id FROM memos WHERE subject = $1`, subject).Scan(&id); err != nil {
+			t.Fatalf("could not vouch: the sent memo's row: %v", err)
+		}
+	}()
+	retractForm := `name="` + ui.FieldMemoID + `" value="` + strconv.FormatInt(id, 10) + `"`
+	page := browserGet(t, browser, cookie, tab)
+	if !strings.Contains(page, subject) || !strings.Contains(page, body) || !strings.Contains(page, retractForm) {
+		t.Fatalf("writer-a's tab does not show the sent memo with a Retract form for id %d:\n%s", id, page)
+	}
+	// CONTROL: live before the retraction, so the assertions after it measure a change.
+	if retracted, hasText := memoRowState(t, dsn, id); retracted || !hasText {
+		t.Fatalf("CONTROL FAILED: before retracting, the row is retracted=%v hasText=%v", retracted, hasText)
+	}
+
+	resp = browserPost(t, browser, cookie, csrf, ui.MemoRetractPath, url.Values{ui.FieldScope: {string(capiAlpha)},
+		ui.FieldMemoID: {strconv.FormatInt(id, 10)}})
+	if loc, _ := url.Parse(resp.Header.Get("Location")); resp.StatusCode != http.StatusSeeOther || loc == nil || loc.Query().Get("outcome") != "memo-retracted" {
+		t.Fatalf("the retraction answered %d Location=%q, want the memo-retracted redirect", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if retracted, hasText := memoRowState(t, dsn, id); !retracted || hasText {
+		t.Fatalf("after the tab's retraction the ROW is retracted=%v hasText=%v, want retracted with its text gone — "+
+			"the tab reported a retraction the store did not make", retracted, hasText)
+	}
+
+	readerCookie, _ := browserSession(t, browser, capiTokReader)
+	for who, ck := range map[string]string{"writer-a": cookie, "reader-b": readerCookie} {
+		page := browserGet(t, browser, ck, tab)
+		if !strings.Contains(page, `data-memo-id="`+strconv.FormatInt(id, 10)+`"`) ||
+			!strings.Contains(page, `data-memo="tombstone"`) || !strings.Contains(page, "retracted by writer-a (user) at ") {
+			t.Errorf("%s: the retracted memo is not listed as its tombstone naming the retractor:\n%s", who, page)
+		}
+		if strings.Contains(page, subject) || strings.Contains(page, body) || strings.Contains(page, retractForm) {
+			t.Errorf("%s: the tombstone still shows the memo's text or a Retract form:\n%s", who, page)
+		}
 	}
 }
 

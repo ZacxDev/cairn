@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
@@ -116,8 +118,10 @@ type fakeMemos struct {
 	sends    int // successful sends
 	retracts int // successful retractions
 	writes   int // every Send/Retract CALL, refused or not
-	lists    int
 	listErr  error
+	// sendErr, when set, is what EVERY send answers, before any predicate — for the tests about what
+	// the UI does WITH a store's refusal, which must not depend on this fake deciding one.
+	sendErr error
 }
 
 func (f *fakeMemos) Model() control.Model { return f.model }
@@ -133,8 +137,7 @@ func (f *fakeMemos) stored(r fakeRow) memo.Stored {
 		RetractorDisplay: d(r.retractorKind, r.retractorID)})
 }
 
-func (f *fakeMemos) List(_ context.Context, m control.Model, auth control.Authorization, scope string, after time.Time, limit int) ([]memo.Stored, error) {
-	f.lists++
+func (f *fakeMemos) All(_ context.Context, m control.Model, auth control.Authorization, scope string) ([]memo.Stored, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -143,8 +146,7 @@ func (f *fakeMemos) List(_ context.Context, m control.Model, auth control.Author
 	}
 	var rows []fakeRow
 	for _, r := range f.rows {
-		// The store's wire time is whole seconds; `after` is compared at the row's own precision.
-		if r.scope == store.NormalizeRef(scope) && r.created.After(after) {
+		if r.scope == store.NormalizeRef(scope) {
 			rows = append(rows, r)
 		}
 	}
@@ -154,9 +156,6 @@ func (f *fakeMemos) List(_ context.Context, m control.Model, auth control.Author
 		}
 		return int(a.id - b.id)
 	})
-	if len(rows) > limit {
-		rows = rows[:limit]
-	}
 	out := make([]memo.Stored, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, f.stored(r))
@@ -166,6 +165,9 @@ func (f *fakeMemos) List(_ context.Context, m control.Model, auth control.Author
 
 func (f *fakeMemos) Send(_ context.Context, caller control.Principal, auth control.Authorization, scope, subject, body string, ttl time.Duration) (int64, time.Time, error) {
 	f.writes++
+	if f.sendErr != nil {
+		return 0, time.Time{}, f.sendErr
+	}
 	if !memo.MaySend(auth, scope) {
 		return 0, time.Time{}, &memo.Refusal{Reason: memo.RefusedNoWrite}
 	}
@@ -405,35 +407,181 @@ func TestAReadOnlyViewerSeesTheMemosTabButNoSendForm(t *testing.T) {
 	}
 }
 
-// TestAForgedSendFromAReadOnlyViewerIsRefusedByMaySend — the S5 test plan's second item, its WRITE
-// half: reader-r, who was shown no form, builds the POST by hand with BOTH gates satisfied; the store's
-// `memo.MaySend` refuses it as `no-write` and nothing is stored. member-m's identical request is
-// stored (POSITIVE CONTROL). RED with `MaySend` asking `read` instead of `write`
-// (`memo-maysend-asks-read`, a mutant in `internal/memo`). The REAL store's refusal is
-// `cmd/cairn-ui`'s pgtest-tier `TestTheMemoTabsForgedSendIsRefusedByTheRealStore`.
-func TestAForgedSendFromAReadOnlyViewerIsRefusedByMaySend(t *testing.T) {
+// TestAStoresNoWriteRefusalComesBackAsTheClosedSentenceOnTheTab — what THIS package does with a
+// store's refusal of a send: the 303 back to the tab carries the closed reason, nothing else, and the
+// tab renders that reason's one sentence. POSITIVE CONTROL: the same request against a store that
+// accepts it answers `memo-sent`.
+//
+// ⚠ IT DOES NOT MEASURE WHO IS REFUSED, AND IT USED TO CLAIM TO (#242 round 0, D3). Its first half
+// drove a read-only viewer's forged POST and asserted `no-write` — over `fakeMemos`, which calls
+// `memo.MaySend` ITSELF, so the assertion was about the fake. The refusal here is HANDED to the
+// handler (`sendErr`). That a real read-only viewer's forged send is refused is measured where the
+// real store is: `cmd/cairn-ui`'s pgtest-tier `TestTheMemoTabsForgedSendIsRefusedByTheRealStore`;
+// that the PAGE asks `memo.MaySend` is `TestAReadOnlyViewerSeesTheMemosTabButNoSendForm`.
+func TestAStoresNoWriteRefusalComesBackAsTheClosedSentenceOnTheTab(t *testing.T) {
 	w := memoWorld(t)
-	memos := &fakeMemos{model: w.model, rows: memoRows()}
+	memos := &fakeMemos{model: w.model, rows: memoRows(), sendErr: &memo.Refusal{Reason: memo.RefusedNoWrite}}
 	before := len(memos.rows)
-	out, reason := outcomeOf(t, gatedPost(memoServer(t, w.reader, memos), MemoPath, sendForm(browseScopeA, "forged", "a forged memo")), browseScopeA)
+	srv := memoServer(t, w.writer, memos)
+	out, reason := outcomeOf(t, gatedPost(srv, MemoPath, sendForm(browseScopeA, "refused", "a refused memo")), browseScopeA)
 	if out != memoOutcomeRefused || reason != string(memo.RefusedNoWrite) {
-		t.Errorf("a forged send from a read-only viewer answered outcome %q reason %q, want %q %q",
+		t.Errorf("a send the store refused as no-write answered outcome %q reason %q, want %q %q",
 			out, reason, memoOutcomeRefused, memo.RefusedNoWrite)
 	}
-	if memos.writes != 1 || len(memos.rows) != before || memos.sends != 0 {
-		t.Errorf("the forged send did not reach the store exactly once and store nothing: %d call(s), %d → %d rows",
-			memos.writes, before, len(memos.rows))
+	if memos.writes != 1 || len(memos.rows) != before {
+		t.Errorf("the send did not reach the store exactly once: %d call(s), %d → %d rows", memos.writes, before, len(memos.rows))
 	}
-	// POSITIVE CONTROL: the same request from a writer is stored.
-	pos := &fakeMemos{model: w.model, rows: memoRows()}
-	if out, _ := outcomeOf(t, gatedPost(memoServer(t, w.member, pos), MemoPath, sendForm(browseScopeA, "forged", "a forged memo")), browseScopeA); out != memoOutcomeSent || pos.sends != 1 {
-		t.Fatalf("POSITIVE CONTROL FAILED: member-m's send answered %q and stored %d", out, pos.sends)
-	}
-	// And the refusal renders as the closed sentence, back on the tab.
-	page := memoGet(t, memoServer(t, w.reader, memos), scopeTabURL(browseScopeA, TabMemos)+"&"+
+	page := memoGet(t, srv, scopeTabURL(browseScopeA, TabMemos)+"&"+
 		url.Values{QueryOutcome: {out}, QueryMemoReason: {reason}}.Encode())
 	if want := "The memo was refused: " + memoReasons[memo.RefusedNoWrite] + "."; !strings.Contains(pageText(page.Body.String()), want) {
 		t.Errorf("the refusal banner does not read %q", want)
+	}
+	// POSITIVE CONTROL: the same request, to a store that accepts it.
+	pos := &fakeMemos{model: w.model, rows: memoRows()}
+	if out, _ := outcomeOf(t, gatedPost(memoServer(t, w.writer, pos), MemoPath, sendForm(browseScopeA, "refused", "a refused memo")), browseScopeA); out != memoOutcomeSent || pos.sends != 1 {
+		t.Fatalf("POSITIVE CONTROL FAILED: an accepted send answered %q and stored %d", out, pos.sends)
+	}
+}
+
+// The send form's two text fields as the page renders them, and its lifetime field.
+var (
+	draftSubjectRe = regexp.MustCompile(`<input type="text" id="memo-subject" name="memo_subject"[^>]* value="([^"]*)">`)
+	draftBodyRe    = regexp.MustCompile(`(?s)<textarea id="memo-body" name="memo_body"[^>]*>(.*?)</textarea>`)
+	draftTTLRe     = regexp.MustCompile(`<input type="number" id="memo-ttl" name="ttl_days"[^>]* value="([^"]*)">`)
+)
+
+// formDraft is what the send form on `body` holds: subject, text and lifetime, unescaped.
+func formDraft(t *testing.T, body string) (subject, text, ttl string) {
+	t.Helper()
+	s, b, d := draftSubjectRe.FindStringSubmatch(body), draftBodyRe.FindStringSubmatch(body), draftTTLRe.FindStringSubmatch(body)
+	if s == nil || b == nil || d == nil {
+		t.Fatalf("the page carries no send form with all three fields (subject %v, text %v, ttl %v):\n%s", s != nil, b != nil, d != nil, body)
+	}
+	return html.UnescapeString(s[1]), html.UnescapeString(b[1]), html.UnescapeString(d[1])
+}
+
+// TestARefusedOverLongSendKeepsTheTypedTextInTheForm — #242 round 1: the form's `maxlength` counts
+// UTF-16 units and the store counts UTF-8 BYTES, so non-ASCII text the form accepts is refused by the
+// store. The refusal must not cost the text: the answer is the memos tab itself (422, `no-store`, no
+// redirect) with the refusal's sentence and the form holding exactly what was typed — subject, text
+// and the lifetime, which is 7 here because the form's default is 3.
+//
+// Two points on the dimension, each UNDER its field's `maxlength` in UTF-16 units and OVER the store's
+// limit in bytes: a 61-character subject of two-byte letters (122 bytes > 120) and a 1400-character
+// text of three-byte characters (4200 bytes > 4096). POSITIVE CONTROL, per row: the SAME number of
+// ASCII characters is stored — so it is the bytes that refuse, and the form really does send.
+//
+// RED with the draft branch removed (`ui-memo-refusal-drops-the-draft`: a 303), and with either field
+// not re-rendered (`ui-memo-draft-subject-not-rendered`, `ui-memo-draft-body-not-rendered`).
+func TestARefusedOverLongSendKeepsTheTypedTextInTheForm(t *testing.T) {
+	w := memoWorld(t)
+	for _, tc := range []struct {
+		name, subject, body string
+		reason              memo.RefusalReason
+		asciiSubject, ascii string
+	}{
+		{"subject", strings.Repeat("é", 61), "the kiln <b>cools</b> & \"rests\"\nuntil the fourth", memo.RefusedSubjectSize,
+			strings.Repeat("e", 61), "the kiln cools until the fourth"},
+		{"text", "kiln: second firing", strings.Repeat("語", 1400), memo.RefusedBodySize,
+			"kiln: second firing", strings.Repeat("g", 1400)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if n := len(utf16.Encode([]rune(tc.subject))); n > memo.MaxSubjectBytes {
+				t.Fatalf("the fixture's subject is %d UTF-16 units, over the form's own maxlength — it would not be typed", n)
+			}
+			if n := len(utf16.Encode([]rune(tc.body))); n > memo.MaxBodyBytes {
+				t.Fatalf("the fixture's text is %d UTF-16 units, over the form's own maxlength — it would not be typed", n)
+			}
+			memos := &fakeMemos{model: w.model, rows: memoRows()}
+			before := len(memos.rows)
+			form := sendForm(browseScopeA, tc.subject, tc.body)
+			form.Set(FieldTTLDays, "7")
+			rec := gatedPost(memoServer(t, w.writer, memos), MemoPath, form)
+			if rec.Code != http.StatusUnprocessableEntity || rec.Header().Get("Location") != "" {
+				t.Fatalf("an over-long send answered %d Location=%q, want a 422 page and no redirect — a redirect drops the typed text",
+					rec.Code, rec.Header().Get("Location"))
+			}
+			if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+				t.Errorf("the re-rendered form is Cache-Control %q, want no-store: it carries the sender's draft", cc)
+			}
+			page := rec.Body.String()
+			if want := "The memo was refused: " + memoReasons[tc.reason] + "."; !strings.Contains(pageText(page), want) {
+				t.Errorf("the page does not carry the refusal %q", want)
+			}
+			if !strings.Contains(page, `id="scope-memos"`) || !strings.Contains(pageText(page), MemoLimitsNote) {
+				t.Error("the page is not the memos tab with its byte-limits note")
+			}
+			subject, text, ttl := formDraft(t, page)
+			if subject != tc.subject {
+				t.Errorf("the form's subject is %q, want what was typed (%q)", subject, tc.subject)
+			}
+			if text != tc.body {
+				t.Errorf("the form's text is %d bytes, want the %d typed", len(text), len(tc.body))
+			}
+			if ttl != "7" {
+				t.Errorf("the form's lifetime is %q, want the 7 that was typed", ttl)
+			}
+			if len(memos.rows) != before || memos.sends != 0 {
+				t.Errorf("the refused send stored a memo: %d → %d rows", before, len(memos.rows))
+			}
+			// POSITIVE CONTROL: as many ASCII characters fit, and are stored.
+			pos := &fakeMemos{model: w.model, rows: memoRows()}
+			if out, _ := outcomeOf(t, gatedPost(memoServer(t, w.writer, pos), MemoPath, sendForm(browseScopeA, tc.asciiSubject, tc.ascii)), browseScopeA); out != memoOutcomeSent || pos.sends != 1 {
+				t.Fatalf("POSITIVE CONTROL FAILED: the ASCII memo of the same length answered %q and stored %d", out, pos.sends)
+			}
+		})
+	}
+	// A GET of the tab holds no draft: the form is empty and its lifetime is the default.
+	subject, text, ttl := formDraft(t, memoGet(t, memoServer(t, w.writer, &fakeMemos{model: w.model}), scopeTabURL(browseScopeA, TabMemos)).Body.String())
+	if subject != "" || text != "" || ttl != "3" {
+		t.Errorf("a plain GET's form holds %q / %q / %q, want empty, empty and the default 3", subject, text, ttl)
+	}
+}
+
+// TestOnlyTheClosedSetOfRefusalsKeepsTheDraft — `memoDraftKept`, over every reason the store has: the
+// five a sender fixes by editing or waiting re-render the form with the draft; `secret` and
+// `characters` REDIRECT and their answer does not carry the typed text anywhere (a suspected
+// credential is never served back; text with a disguising code point is never emitted raw); `no-write`
+// and `not-permitted` redirect too. A reason this table does not name fails it, so a new
+// `memo.RefusalReason` is a decision taken here.
+//
+// The refusal is HANDED to the handler (`sendErr`), with a `secret` rule name, so the row is about
+// what the UI does with each reason and not about whether this fake's scan fires.
+// RED for `secret` under `ui-memo-draft-kept-for-a-suspected-secret`.
+func TestOnlyTheClosedSetOfRefusalsKeepsTheDraft(t *testing.T) {
+	w := memoWorld(t)
+	const subject, body = "typed-subject-marker", "typed-text-marker"
+	kept := map[memo.RefusalReason]bool{
+		memo.RefusedSubjectSize: true, memo.RefusedBodySize: true, memo.RefusedTTL: true,
+		memo.RefusedQuota: true, memo.RefusedLiveLimit: true,
+		memo.RefusedSecret: false, memo.RefusedCharacters: false, memo.RefusedNoWrite: false, memo.RefusedNotPermitted: false,
+	}
+	if len(kept) != len(memoReasons) {
+		t.Fatalf("this table names %d refusal reasons and memoReasons %d — decide whether the new one keeps the draft", len(kept), len(memoReasons))
+	}
+	for reason, want := range kept {
+		if _, ok := memoReasons[reason]; !ok {
+			t.Fatalf("%q is not a reason the tab has a sentence for", reason)
+		}
+		memos := &fakeMemos{model: w.model, sendErr: &memo.Refusal{Reason: reason, Rule: "github-token"}}
+		rec := gatedPost(memoServer(t, w.writer, memos), MemoPath, sendForm(browseScopeA, subject, body))
+		echoed := strings.Contains(rec.Body.String(), subject) || strings.Contains(rec.Body.String(), body) ||
+			strings.Contains(rec.Header().Get("Location"), "typed-")
+		switch {
+		case want && (rec.Code != http.StatusUnprocessableEntity || !echoed):
+			t.Errorf("%s: answered %d (draft present=%v), want the 422 form holding the draft", reason, rec.Code, echoed)
+		case !want && (rec.Code != http.StatusSeeOther || echoed):
+			t.Errorf("%s: answered %d (draft present=%v), want a 303 that carries none of the typed text", reason, rec.Code, echoed)
+		}
+	}
+}
+
+// TestAFailingMemoStoreIsA500AndNeverAnEmptyTab — a store error is the caller's, not a short list.
+func TestAFailingMemoStoreIsA500AndNeverAnEmptyTab(t *testing.T) {
+	w := memoWorld(t)
+	rec := memoGet(t, memoServer(t, w.writer, &fakeMemos{model: w.model, listErr: errors.New("boom")}), scopeTabURL(browseScopeA, TabMemos))
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "No memo on this scope") {
+		t.Errorf("a failing memo store answered %d %q, want a 500 and no empty-tab copy", rec.Code, rec.Body.String())
 	}
 }
 
@@ -634,45 +782,6 @@ func TestTheMemoOutcomeBannerIsAClosedSet(t *testing.T) {
 		if memoReasons[r] == "" {
 			t.Errorf("refusal reason %q has no sentence", r)
 		}
-	}
-}
-
-// TestTheMemoListingPagesPastOnePageWithoutLosingASharedSecond — a listing WITH tombstones can exceed
-// one page. 250 memos where the page boundary falls inside one INSTANT that four of them share (the
-// store's own tie, broken by id): every memo is listed exactly once. RED with the boundary asked strictly after the page's last time
-// (`ui-memo-listing-boundary-not-one-second-early`), which skips the second's later members.
-func TestTheMemoListingPagesPastOnePageWithoutLosingASharedSecond(t *testing.T) {
-	w := memoWorld(t)
-	var rows []fakeRow
-	at := memoClock
-	for i := 0; i < 250; i++ {
-		// Rows 198..201 share ONE INSTANT, on a whole second — page one (200 rows) ends inside them, so
-		// "strictly after the last time seen" skips the two that did not fit. Every other row is a
-		// second later than the one before.
-		if i <= 198 || i > 201 {
-			at = at.Add(time.Second)
-		}
-		rows = append(rows, fakeRow{id: int64(1000 + i), scope: "alpha-notes", senderKind: control.KindUser,
-			senderID: memoWriter, subject: "s", body: "b", created: at, expires: memoClock.Add(time.Hour)})
-	}
-	f := &fakeMemos{model: w.model, rows: rows}
-	got, err := listAllMemos(context.Background(), f, w.model, w.writer.Auth, "alpha-notes")
-	if err != nil {
-		t.Fatal(err)
-	}
-	seen := map[int64]int{}
-	for _, st := range got {
-		seen[memo.Render(st).ID]++
-	}
-	if len(got) != 250 || len(seen) != 250 {
-		t.Errorf("listed %d memo(s), %d distinct, want 250 each — a page boundary lost or repeated one", len(got), len(seen))
-	}
-	if f.lists < 2 {
-		t.Errorf("the listing took %d page(s); 250 rows need at least 2, so paging was not exercised", f.lists)
-	}
-	// And a store error is the caller's, not a short list.
-	if _, err := listAllMemos(context.Background(), &fakeMemos{model: w.model, listErr: errors.New("boom")}, w.model, w.writer.Auth, "alpha-notes"); err == nil {
-		t.Error("a failing store listed as empty")
 	}
 }
 

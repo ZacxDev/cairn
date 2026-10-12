@@ -923,3 +923,114 @@ func TestAListingIsCappedAtTheLiveBound(t *testing.T) {
 		}
 	}
 }
+
+// TestAllIsEveryUnexpiredMemoOfOneScopeInOneCall — `All`, the browser tab's listing (S5 follow-up, D2
+// of #242's round 0: the tab used to page `List` with a second spelling of the client's boundary rule).
+// 253 alpha-notes rows are planted by SQL — more than one `List` page (200), in PAIRS sharing one
+// instant, the shape a strictly-after page boundary loses — plus one beta-notes row and one EXPIRED
+// alpha-notes row; one alpha-notes memo is then retracted through the store.
+//
+// `All` returns exactly the 253: oldest first with the id breaking each shared instant, the tombstone
+// INCLUDED as a tombstone, the expired row and the other scope's row absent. CONTROLS: `List` over the
+// same rows stops at its 200-row page, so the 253 is not a page; a caller who cannot read the scope
+// gets the uniform `ErrNotFound`.
+//
+// RED with `All` selecting only LIVE rows (252, no tombstone), and with its scope clause removed.
+func TestAllIsEveryUnexpiredMemoOfOneScopeInOneCall(t *testing.T) {
+	r := newMemoRig(t)
+	ctx := context.Background()
+	const planted = memo.MaxLivePerScope + 53
+	plant := func(scope string, n int, created, expires time.Time) {
+		t.Helper()
+		if _, err := r.db.SQL().Exec(`INSERT INTO memos (scope_name, sender_kind, sender_id, sender_display_at_send, subject, body, created_at, expires_at)
+		     SELECT $1, 'user', $2, 'writer-a', 's', 'b', $3::timestamptz + make_interval(secs => g / 2), $4
+		       FROM generate_series(1, $5) AS g`, scope, string(mWriter), created, expires, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plant("alpha-notes", planted, m0, m0.Add(memo.MaxTTL))
+	plant("beta-notes", 1, m0, m0.Add(memo.MaxTTL))
+	plant("alpha-notes", 1, m0.Add(-2*time.Hour), m0.Add(-time.Hour)) // expired before the rig's clock
+	var retracted int64
+	if err := r.db.SQL().QueryRow(`SELECT id FROM memos WHERE scope_name = 'alpha-notes' AND expires_at > $1 ORDER BY created_at, id OFFSET 7 LIMIT 1`, m0).Scan(&retracted); err != nil {
+		t.Fatal(err)
+	}
+	w := as(t, r.m, tWriter)
+	if err := r.store.Retract(ctx, w.p, w.a, "alpha-notes", retracted); err != nil {
+		t.Fatalf("retracting memo %d: %v", retracted, err)
+	}
+
+	reader := as(t, r.m, tReader)
+	got, err := r.store.All(ctx, r.m, reader.a, "alpha-notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != planted {
+		t.Fatalf("All returned %d memo(s), want the %d unexpired alpha-notes rows (tombstone included, expired and beta-notes rows not)", len(got), planted)
+	}
+	tombstones, prevAt, prevID := 0, "", int64(0)
+	for i, st := range got {
+		rd := memo.Render(st)
+		if rd.Scope != "alpha-notes" {
+			t.Fatalf("row %d is scope %q", i, rd.Scope)
+		}
+		if rd.CreatedAt < prevAt || (rd.CreatedAt == prevAt && rd.ID <= prevID) {
+			t.Fatalf("row %d (%s, id %d) is not after row %d (%s, id %d): not oldest first with the id breaking a tie",
+				i, rd.CreatedAt, rd.ID, i-1, prevAt, prevID)
+		}
+		prevAt, prevID = rd.CreatedAt, rd.ID
+		if rd.Tombstone != "" {
+			tombstones++
+			if rd.ID != retracted || rd.Subject != "" || rd.Body != "" {
+				t.Errorf("tombstone on memo %d (subject %q body %q), want only on %d with no text", rd.ID, rd.Subject, rd.Body, retracted)
+			}
+		}
+	}
+	if tombstones != 1 {
+		t.Errorf("All returned %d tombstone(s), want the 1 retracted memo", tombstones)
+	}
+	// CONTROL: the wire's listing over the same rows is ONE PAGE, so the count above is not one.
+	page, err := r.store.List(ctx, r.m, reader.a, pgstore.MemoQuery{Scope: "alpha-notes", IncludeRetracted: true})
+	if err != nil || len(page) != memo.MaxLivePerScope {
+		t.Fatalf("CONTROL FAILED: List returned %d (err %v), want its %d-row page", len(page), err, memo.MaxLivePerScope)
+	}
+	// The read predicate is asked: reader-b holds nothing on beta-notes.
+	if _, err := r.store.All(ctx, r.m, reader.a, "beta-notes"); !errors.Is(err, memo.ErrNotFound) {
+		t.Errorf("All for a scope the caller cannot read: %v, want the uniform not-found", err)
+	}
+	if beta, err := r.store.All(ctx, r.m, w.a, "beta-notes"); err != nil || len(beta) != 1 {
+		t.Errorf("All for beta-notes as its owner returned %d (err %v), want its 1 row", len(beta), err)
+	}
+}
+
+// TestAllRefusesAScopeHoldingMoreThanItsSendRulesAllow — `All` has no page, so it has a BOUND:
+// `MaxUnexpiredPerScope`, what the quota and the TTL ceiling let one scope hold. Measured at the bound
+// (returned whole) and one row past it (an error, never a listing cut to the bound). The bound itself
+// is pinned to the two send rules it is derived from, as a literal: 50 a day for 30 days.
+func TestAllRefusesAScopeHoldingMoreThanItsSendRulesAllow(t *testing.T) {
+	if pgstore.MaxUnexpiredPerScope != 1500 || memo.SendsPerScopePerWindow != 50 || memo.MaxTTL != 30*memo.QuotaWindow {
+		t.Fatalf("MaxUnexpiredPerScope is %d with a quota of %d per %s and a %s TTL ceiling — re-derive the bound",
+			pgstore.MaxUnexpiredPerScope, memo.SendsPerScopePerWindow, memo.QuotaWindow, memo.MaxTTL)
+	}
+	r := newMemoRig(t)
+	ctx := context.Background()
+	plant := func(n int) {
+		t.Helper()
+		if _, err := r.db.SQL().Exec(`INSERT INTO memos (scope_name, sender_kind, sender_id, sender_display_at_send, subject, body, created_at, expires_at)
+		     SELECT 'alpha-notes', 'user', $1, 'writer-a', 's', 'b', $2::timestamptz + make_interval(secs => g), $3
+		       FROM generate_series(1, $4) AS g`, string(mWriter), m0, m0.Add(memo.MaxTTL), n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reader := as(t, r.m, tReader)
+	plant(pgstore.MaxUnexpiredPerScope)
+	got, err := r.store.All(ctx, r.m, reader.a, "alpha-notes")
+	if err != nil || len(got) != pgstore.MaxUnexpiredPerScope {
+		t.Fatalf("at the bound All returned %d (err %v), want all %d", len(got), err, pgstore.MaxUnexpiredPerScope)
+	}
+	plant(1)
+	got, err = r.store.All(ctx, r.m, reader.a, "alpha-notes")
+	if err == nil || !strings.Contains(err.Error(), "refusing to return a truncated listing") {
+		t.Fatalf("one row past the bound All returned %d row(s) and %v, want its own refusal", len(got), err)
+	}
+}
