@@ -737,6 +737,83 @@ Measured at the head of the S5 branch: PASS under chromium 154.0.8037.92 (nixpkg
 (the flake's pin); RED at its parent (no controls); RED, with four messages per touch rung, against a
 binary whose `app.css` lost the three standalone rules.
 
+## The memos tab — a THIRD world, with a database, and a runner of its own
+
+Scope mail's S5 added `?tab=memos` to the scope page, and its plan row asked for "`uiaudit` fixtures
+for the tab". Neither world the walk boots has a database, so until this section a browser had only
+ever rendered the tab saying it has no store: the send form, the Retract button and a tombstone had
+never been laid out, typed into or clicked.
+
+`memoworld.go`'s `BootMemoWorld` boots the real `cairn-ui` with `-db-dsn`, `-control-journal` and
+`-client-api-addr` over the same fixture store: `writer-a` OWNS a project holding every fixture scope,
+`reader-b` holds one READ grant, and `agents@host-a` is the writer's machine credential (the scope-mail
+suites' own synthetic names). `memos_browser_test.go` drives it.
+
+🔴 **THIS MODULE STILL IMPORTS NO DATABASE DRIVER.** `internal/ui` may not import `internal/pgstore`
+because the driver would enter this module's graph; the same rule binds this world. So nothing here
+opens a connection: the DSN goes to the real binary, which migrates its own schema; the seed memos are
+SENT through that binary's client listener, the way an agent sends one; the schema each run takes is
+created and dropped by the runner, with `tests/memo/memotool` from the ROOT module. `go.mod` and
+`go.sum` did not move.
+
+🔴 **BEHIND `//go:build memobrowser`, WITH ONE RUNNER.** This module's `go test ./...` runs in the walk
+leg with chromium and no PostgreSQL, where a test must refuse rather than skip — an untagged test
+would red that leg on every run. A tag moves the hazard (a tagged test nobody runs is as green as one
+that skips), so `memos_check.py` is the invocation, the `memos` leg of the `uiaudit` CI job runs it,
+and `tests/test_uiaudit_job_ledger.py` pins the tag, the runner, the leg and the counts against each
+other. ⚠ The walk leg's derived test count excludes `memos_browser_test.go` BY NAME — measured
+without the exclusion: 55 declared against 54 listed, which that step refuses.
+
+| clause | what a browser shows that nothing else did |
+|---|---|
+| `a_seeded` | the tab is reached by CLICKING it; two memos an agent sent are listed newest first with the authority's sender line |
+| `b_send` | the form's fields accept typing and its button submits: the memo appears, sender `writer-a (user)`, and the form is empty again |
+| `c_draft` | a subject the browser's `maxlength` ACCEPTS (61 two-byte letters = 61 UTF-16 units) and the store refuses (122 bytes) comes back in the form with what was typed |
+| `d_retract` | the Retract button submits: that row becomes its tombstone line, text gone, button gone; the other memo is untouched |
+| `e_reader` | the read-only viewer sees the tab and the same memos, the read-only note, no form and no Retract button — beside an owner who, on the same page, has both |
+
+```bash
+uiaudit/memos_check.py              # the five clauses: exit 0 / 1 / 2 (could not vouch)
+uiaudit/memos_check.py --self-test  # each clause RED under a sabotage of its own
+```
+
+It needs chromium, the Go toolchain, python3 and a database: `$CAIRN_PGTEST_DSN`, or
+`initdb`/`pg_ctl`/`createdb`/`postgres` on PATH (the dev shell's), from which it starts a throwaway
+server on a unix socket and removes it. ⚠ Inside `nix develop` the pinned chromium does not start
+until `LD_LIBRARY_PATH` is unset, and a long `TMPDIR` overflows its singleton socket — the mobile
+handoff's gotcha, measured again here (the refusal is exit 2 and names chromium's own error).
+
+Measured on one host (chromium 152.0.7977.82 from the flake's nixpkgs, PostgreSQL 18.6 from the dev
+shell, go1.25.14):
+
+```
+memos_check: positive control PASSED all 5 clause(s)
+memos_check: sabotage listing-oldest-first           CAUGHT by a_seeded (also red: b_send)
+memos_check: sabotage send-form-never-rendered       CAUGHT by b_send (also red: c_draft e_reader)
+memos_check: sabotage refusal-drops-the-draft        CAUGHT by c_draft
+memos_check: sabotage retract-is-a-no-op             CAUGHT by d_retract
+memos_check: sabotage tombstones-not-listed          CAUGHT by d_retract
+memos_check: sabotage reader-shown-the-send-form     CAUGHT by e_reader
+memos_check: sabotage reader-shown-retract-buttons   CAUGHT by e_reader
+SUMMARY memos-check-self-test: sabotaged=7 caught=7
+```
+
+Each is caught by its OWN clause's message; "also red" is a later clause that needs what the sabotage
+removed. The sabotages run on ONE scratch copy with no `.git` (`tests/testlib/mutant_tree`), each edit
+restored and the restore verified by digest. With no chromium the script exits 2, never 0.
+
+⚠ **What this does NOT measure — it is a test, not a walk.**
+- **No capture of the populated tab is taken or pushed.** No axe run, no touch-target or input-font
+  measurement, no overflow reading at the five widths, no screenshot. The walk still reaches the tab
+  only in its `ui.NoMemoStore` state, so the populated tab's accessibility and layout are unmeasured.
+  Closing that means a database in the WALK's world, which changes what every existing signal is
+  measured over; it is not done here.
+- **Authorisation.** A reader shown no button could still forge the POST; that the store refuses it
+  is `cmd/cairn-ui`'s pgtest tier.
+- **The other refusals in a browser** (quota, the live bound, a suspected secret), a tombstone left by
+  ANOTHER principal, the sender-lapsed mark, and two sessions racing one retraction.
+- **One desktop viewport**, one browser engine.
+
 ## Round 1: what an adversarial read found, and the two things it got wrong
 
 Nine axes, blind. Every number this README quotes about itself was re-verified and found correct; the
@@ -1219,11 +1296,12 @@ driven — and which `refuseUnreachableTouch` proves is.
 one; its `select` and submit are covered only by S1's element/type selectors (`select`,
 `button[type="submit"]`), never measured.
 
-⚠ **The scope page's MEMOS tab (S5 of the scope-mail plan), populated** — the same `-db-dsn`, plus a
-control journal. The tab is a `?tab=memos` link the scope page publishes, so `ExpandLinks` reaches it
-with no change here (a tab adds no ledger row), but only in its `ui.NoMemoStore` state: its send form,
-memo rows and retract buttons are measured by `internal/ui`'s Go tests and the pgtest tier, never in a
-real browser.
+⚠ **The scope page's MEMOS tab, populated, AS A WALKED PAGE** — the same `-db-dsn`, plus a control
+journal. The tab is a `?tab=memos` link the scope page publishes, so `ExpandLinks` reaches it with no
+change here (a tab adds no ledger row), but only in its `ui.NoMemoStore` state. ✅ Its send form, memo
+rows and Retract buttons are now DRIVEN in a real browser by `memos_check.py` (the section above);
+what stays blind is every WALK signal over the populated tab — axe, touch targets, overflow, the
+capture itself.
 
 🔴 **AND ANYTHING BETWEEN THE ORIGIN AND A CLIENT, WHICH IS THE ONE BLIND SPOT THAT HAS BEEN
 MEASURED TO MATTER.** Every number this program produces is about the pod `BootWorld` starts on
@@ -1436,5 +1514,8 @@ indistinguishable from a fork PR by design.
 | `touch_test.go` | touch reachability (both halves, real chromium), the `target-size` and input-font controls, the journal world |
 | `pwa_test.go` | the closing condition's clauses (a), (b: name, icon, screenshots) and (e): chromium's installability and manifest verdicts over three boots, and `pwa.js`'s storage in four browsers |
 | `standalone_test.go` | S5: the standalone window's Back/Reload — hidden in a tab, revealed under a `matchMedia` stub, the two-row header that is NOT sticky, and Back/Reload behaviour, in one armed world |
+| `memoworld.go` | the THIRD world: `cairn-ui` with a database, a control journal and a client listener — for the memos tab, never walked |
+| `memos_browser_test.go` | behind `//go:build memobrowser`: the populated memos tab's five clauses, as an owner and a read-only viewer |
+| `memos_check.py` | that test's ONE runner: the database, the schema, each clause's own result line; `--self-test` sabotages each |
 | `pwa_check.sh` | the closing-condition ORCHESTRATOR: runs (a), (b), the walk's (c), the root module's (d) and (e); `--self-test` sabotages each |
 | `screenshots.go` | `uiaudit -screenshots <dir>`: the manifest's install screenshots, captured from the walk's world — the generator `flake.nix`'s `uiScreenshots` runs in the sandbox |

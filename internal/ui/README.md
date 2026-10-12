@@ -4658,9 +4658,12 @@ refusal, by the scope NAME out of the narrowed answer. The two writes ARE rows, 
   `memo.MayRead` and `memo.MayRetract` itself. The UI asks the predicates only to decide what to
   RENDER — the send form (`memo.MaySend`) and each retract button (`memo.MayRetractMemo`, the ONE
   retraction rule, Q19, asked of the stored memo) — so a forged POST from a viewer shown no form is
-  refused by the predicate an agent's send meets (`TestAForgedSendFromAReadOnlyViewerIsRefusedByMaySend`
-  over a fake that asks the same predicates; `cmd/cairn-ui`'s pgtest-tier
-  `TestTheMemoTabsForgedSendIsRefusedByTheRealStore` on the real binary over the real store).
+  refused by the predicate an agent's send meets: `cmd/cairn-ui`'s pgtest-tier
+  `TestTheMemoTabsForgedSendIsRefusedByTheRealStore`, on the real binary over the real store. ⚠ This
+  bullet used to cite a `internal/ui` test for it as well; that test drove the forged send over a
+  fake which called `memo.MaySend` itself, so its refusal was the fake's. What this package's tests
+  measure is what the page RENDERS (`TestAReadOnlyViewerSeesTheMemosTabButNoSendForm`) and what it
+  does with a refusal it is handed (`TestAStoresNoWriteRefusalComesBackAsTheClosedSentenceOnTheTab`).
 - 🔴 **Text comes from `memo.Rendered` only, then gomponents' text nodes.** Escaping stops markup;
   the render-side replacement stops invisible and reordering code points escaping leaves intact.
   `TestMemoTextRendersAsTextAndThroughTheRenderSideReplacement` plants `<script>`, U+200B and U+202E.
@@ -4676,14 +4679,27 @@ refusal, by the scope NAME out of the narrowed answer. The two writes ARE rows, 
   absent scope), before the store is called.
 - **A write redirects back to the tab** with an outcome from a CLOSED set (`memoOutcome`): a refusal's
   reason renders as a fixed sentence and a secret's rule name only if it is in
-  `memo.ConfidentSecretRules()`. Nothing the address bar carries is reflected. ⚠ The typed text is
-  lost on a refusal.
+  `memo.ConfidentSecretRules()`. Nothing the address bar carries is reflected.
+- 🔴 **EXCEPT A REFUSED SEND WHOSE FIX IS "EDIT AND RESEND": THAT ONE RE-RENDERS THE TAB WITH THE
+  DRAFT** (`memoDraftKept`: the two sizes, the lifetime, the quota, the live bound) — 422, `no-store`,
+  no redirect. The form's `maxlength` counts UTF-16 units and `memo.CheckSend` counts UTF-8 BYTES, so
+  non-ASCII text the form accepted was refused by the store and thrown away by the redirect. No
+  attribute counts bytes and no script runs here, so the limits stay the store's, the form's note
+  says they are bytes (`MemoLimitsNote`), and the refusal stops costing the text. The draft comes from
+  the body of a POST that passed both cross-site gates, never from a URL. **`secret` and `characters`
+  are NOT in the set and echo nothing**: one would serve back what looks like a credential, the other
+  text carrying a code point the render side exists to never emit raw. A new reason is not kept until
+  somebody adds it — `TestOnlyTheClosedSetOfRefusalsKeepsTheDraft` names every reason.
 - **Decision 10:** tombstones are listed with their line and no subject or body; no retract button
   on a tombstone; the copy `MemoRetractionNote` ("stops further delivery only") is pinned WHOLE.
   **Decision 12:** a sender who can no longer write the scope is marked (`memo.SenderMaySend`).
-- **Paging:** the tab lists tombstones, which can exceed one store page; the page boundary is asked
-  one second early and held ids dropped — `memo-read`'s rule in `internal/client`, for its reason
-  (whole-second times, ties at one instant).
+- **No paging here.** The tab lists tombstones, which can exceed one page of the wire's listing — so
+  the tab asks the store for the whole scope in ONE call (`Memos.All` → `pgstore.MemoStore.All`,
+  bounded by `MaxUnexpiredPerScope`: what the quota and the TTL ceiling let a scope hold, past which
+  it errors rather than truncating). This package used to page with a copy of `memo-read`'s boundary
+  rule; that rule now has one spelling, `internal/client/memo.go`'s.
+- **The lifetime is whole days; `memo.TTLOf` converts it**, the one overflow-safe conversion, shared
+  with the client listener's `ttl_seconds`. The ceiling is `memo.CheckSend`'s.
 - **No count on the tab label**: it would read the database on every tab of every scope page.
 
 ## The RED proof
@@ -4693,11 +4709,15 @@ killed by the test it names: `ui-memo-send-row-declared-public`, `ui-memo-retrac
 `ui-memo-tab-not-recognised`, `ui-memo-form-ignores-maysend`, `ui-memo-retract-button-asks-maysend`,
 `ui-memo-retract-button-on-a-tombstone`, `ui-memo-body-rendered-raw`,
 `memo-render-skips-the-body-replacement`, `ui-memo-lapsed-mark-never-shown`,
-`ui-memo-listing-boundary-not-one-second-early`, `ui-memo-write-skips-the-scope-lookup`,
-`memo-mayretractmemo-asks-of-the-retractor`, `memo-sendermaysend-ignores-the-scope`; and
-`memo-maysend-asks-read` gained `TestAForgedSendFromAReadOnlyViewerIsRefusedByMaySend` as an
-extra killer. ⚠ The listing row SURVIVED its first run: sub-second offsets in the fixture let
-"strictly after" pass; the fixture now plants four memos at ONE instant across the page boundary.
+`ui-memo-write-skips-the-scope-lookup`, `memo-mayretractmemo-asks-of-the-retractor`,
+`memo-sendermaysend-ignores-the-scope`. (`ui-memo-listing-boundary-not-one-second-early` left with
+the paging it mutated.)
+
+**The S5 follow-up** added `ui-memo-refusal-drops-the-draft`, `ui-memo-draft-subject-not-rendered`,
+`ui-memo-draft-body-not-rendered`, `ui-memo-draft-kept-for-a-suspected-secret` and
+`memo-ttlof-multiplies-unguarded`, and RE-POINTED `memo-maysend-asks-read`'s extra killer from the
+fake-driven test to `TestAReadOnlyViewerSeesTheMemosTabButNoSendForm`, which reads the production
+call. The matrix, and which rows were run where, is in that PR.
 
 The pgtest tier cannot run in that battery; three HAND mutations, restored by digest, each red in
 the test that names it: the store's `MaySend` check skipped → `TestTheMemoTabsForgedSendIsRefusedByTheRealStore`
@@ -4705,11 +4725,36 @@ the test that names it: the store's `MaySend` check skipped → `TestTheMemoTabs
 startup line does not announce the store); `wireBrowserMemos` ignoring the journal →
 `TestWireBrowserMemosNeedsADatabaseAndAJournal`.
 
+🔴 **TWO MUTANTS SURVIVED ALL OF THE ABOVE, AND THE S5 FOLLOW-UP IS WHERE THEY DIE** (#242 round 1).
+The adapter's listing-with-tombstones and its `Retract` pass-through were never driven against the
+real store, so an adapter listing only LIVE memos and one whose `Retract` returned nil each left
+every Go test and the pgtest tier green. `TestTheMemosTabRetractsThroughTheRealStoreAndShowsTheTombstone`
+sends, retracts and re-reads on the real binary: the ROW's `retracted_at` is set and its text NULLed
+(a redirect alone cannot show that), and the tab lists the tombstone line for the sender and for a
+reader. Six hand mutations against PostgreSQL 18.6, one edit each, restored by digest, behind a
+no-edit positive control — `browserMemos.Retract` → `return nil`; `browserMemos.All` → nothing;
+`MemoStore.All` selecting live rows only; `All` without its scope clause; without its bound; without
+its read predicate — each red in the test that names it, with that test's own message
+(`TestAllIsEveryUnexpiredMemoOfOneScopeInOneCall` and
+`TestAllRefusesAScopeHoldingMoreThanItsSendRulesAllow` for the store's half).
+
+**In a real browser:** `uiaudit/memos_check.py --self-test`, `sabotaged=7 caught=7`
+(`uiaudit/README.md`, "The memos tab").
+
 ## What these guards still cannot see
 
-- **The browser walk captures the tab only in its `NoMemoStore` state**: neither `uiaudit` world
-  has `-db-dsn`, the invite mint form's residual, so the populated tab, its form and its buttons
-  are unmeasured in a real browser.
+- **The browser WALK captures the tab only in its `NoMemoStore` state**: neither walked `uiaudit`
+  world has `-db-dsn`. ✅ The populated tab's form, its Retract button, a tombstone, the kept draft
+  and the read-only view are DRIVEN in a real browser by `uiaudit/memos_check.py`, over a third world
+  that is never walked — so what is still unmeasured is every walk signal over the populated tab: axe,
+  touch-target size, overflow at the five widths, the capture. `uiaudit/README.md` lists the rest of
+  that test's blind set.
+- **The kept draft, beyond the two size refusals a browser was driven through.** The `ttl`, quota and
+  live-bound branches of `memoDraftKept` are measured over a refusal HANDED to the handler
+  (`TestOnlyTheClosedSetOfRefusalsKeepsTheDraft`), not produced by a store. A reload of the 422 page
+  re-submits the POST; no test drives the browser's own confirmation of that.
+- **`MemoStore.All`'s cost at its bound.** It is one query of at most 1500 rows of at most ~4 KiB
+  each, measured correct at the bound and one past it; how long it takes on a loaded server is not.
 - Concurrency: two admins retracting one memo at once. A stale page's second retraction answers the
   `memo-gone` banner over the fake (`TestAForgedOrStaleRetractionIsAnsweredByTheStoresRule`); the real
   store's answer to it is S1's (`not-found` for an already-retracted memo).
