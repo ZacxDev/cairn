@@ -5498,8 +5498,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-memo-refusal-drops-the-draft",
         path="internal/ui/memos.go",
-        old="\tif errors.As(err, &ref) && memoDraftKept[ref.Reason] {\n",
-        new="\tif errors.As(err, &ref) && false {\n",
+        old="\tif errors.As(err, &ref) && memoDraftKept[ref.Reason] && memo.Scannable(draft.Subject, draft.Body) {\n",
+        new="\tif errors.As(err, &ref) && false && memo.Scannable(draft.Subject, draft.Body) {\n",
         killer="TestARefusedOverLongSendKeepsTheTypedTextInTheForm",
         extra_killers=("TestOnlyTheClosedSetOfRefusalsKeepsTheDraft",),
         why="every other write outcome is a redirect, so one uniform answer reads as tidier — and the "
