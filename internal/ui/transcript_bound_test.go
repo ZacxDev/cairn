@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -54,4 +55,56 @@ func TestOneTurnOfTwentyThousandCallsIsABoundedPage(t *testing.T) {
 	if !strings.Contains(body, `href="/session/transcript?seq=2002&amp;session=s-render-03&amp;stream=main&amp;to=40001"`) {
 		t.Error("the count of items not carried does not link to the raw records that hold them (from call 1,000's record, seq 2002, to the turn's last)")
 	}
+}
+
+// TestEveryCallIsReachableByFollowingThePager (#261 round 3): fifty turns of thirty calls are
+// 1,500 items, over the page's 1,000-item allowance. Following the transcript pager's NEXT link from
+// the session page must render every call's command in the collapsed view, and no page may say a
+// turn holds items it does not carry. Round 2 rendered all fifty turns on one page with turns 34–50
+// reduced to "N more items in this turn", and no link reached them: `?turn=34` folded back onto the
+// same page.
+//
+// RED on #261 round 2's head (6dd486e): one page, 1,000 of the 1,500 commands.
+func TestEveryCallIsReachableByFollowingThePager(t *testing.T) {
+	const turns, perTurn = 50, 30
+	w := transcriptWorld(t)
+	a := transcripttest.OpenAt(t, w.clock.Now)
+	var lines []string
+	for n := 1; n <= turns; n++ {
+		lines = append(lines, trUser(fmt.Sprintf("message number %d.", n)))
+		for i := range perTurn {
+			lines = append(lines,
+				fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_r%02d%02d",`+
+					`"name":"Bash","input":{"command":"echo c%d-%d."}}]}}`, n, i, n, i),
+				fmt.Sprintf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_r%02d%02d",`+
+					`"content":"ok"}]}}`, n, i))
+		}
+	}
+	transcripttest.Append(t, a, w.session("s-render-03"), "main", lines)
+	srv := w.server(t, "owner", a)
+	// The fragment is the browser's, never sent: the request carries the path and query only.
+	next := regexp.MustCompile(`href="([^"#]*turn=\d+)#transcript">from turn \d+ →`)
+	seen := map[string]bool{}
+	url, pages := sessionURL("s-render-03"), 0
+	for url != "" && pages < turns {
+		body := getAs(t, srv, url).Body.String()
+		pages++
+		if strings.Contains(visibleText(body), "more items in this turn") || strings.Contains(visibleText(body), "more item in this turn") {
+			t.Errorf("page %d (%s) says a turn holds items it does not carry", pages, url)
+		}
+		for _, m := range regexp.MustCompile(`echo c(\d+-\d+)\.`).FindAllStringSubmatch(body, -1) {
+			seen[m[1]] = true
+		}
+		url = ""
+		if m := next.FindStringSubmatch(body); m != nil {
+			url = strings.ReplaceAll(m[1], "&amp;", "&")
+		}
+	}
+	if len(seen) != turns*perTurn {
+		t.Fatalf("following the pager over %d page(s) renders %d of the %d calls", pages, len(seen), turns*perTurn)
+	}
+	if pages < 2 {
+		t.Fatalf("CONTROL: %d calls rendered on one page, so no page boundary was crossed", turns*perTurn)
+	}
+	t.Logf("%d calls over %d pages", len(seen), pages)
 }

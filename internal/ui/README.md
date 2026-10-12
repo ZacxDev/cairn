@@ -4897,20 +4897,26 @@ records as stored (`transcript.go`). The plan is `claudedocs/plan-cairn-plugins.
   characters or 15 lines, then `<details><summary>read more (N more characters)</summary>`. A tool
   call is one `<details>` (`Bash · exit 1 · 3.2 KB`) over its input and the first 64 KiB of its
   result; a subagent nests under the call that spawned it; bookkeeping records and duplicate
-  tool-result copies are ONE `<details>` per turn; binary payloads are one line. 50 turns a page
-  (`?turn=`). Every reveal is a `<details>`: **no script**, and `AllowedScriptSources` is unchanged.
+  tool-result copies are ONE `<details>` per turn; binary payloads are one line. At most 50 turns a
+  page, starting at the turn `?turn=` names. Every reveal is a `<details>`: **no script**, and `AllowedScriptSources` is unchanged.
 - **Four read-time bounds the plan does not name, added here:** a page carries at most 2 MiB of
   COLLAPSED content (`transcript.CollapsedBudget`; past it a block keeps its summary and its
   raw-record link), at most 1,000 items (`PageItemCap`, every item but a user message, children
-  included; the rest are counted per turn with a link to the raw records from the first one left
-  out), a child stream at most 200 items inline (`ChildItemCap`; the rest are counted), and a
+  included — the page ENDS before the first turn that does not fit whole, and its pager's next link
+  is that turn; only a page's FIRST turn, when it alone is over 1,000 items, is cut, the rest counted
+  with a link to the raw records from the first one left out), a child stream at most 200 items inline (`ChildItemCap`; the rest are counted), and a
   raw-record page at most 512 KiB (`rawPageBytes`; at least one record, then a next link). User
   messages and assistant text are never charged to the budget, and only what the page CARRIES is:
   an earlier page's records and a child's items past its cap are refunded. 🔴 *#261 round 2:* the
   item bound is new — fifty turns and 2 MiB bounded neither one turn's ITEM count, and one turn of
   20,000 small calls rendered 7.5 MB (now 375 KB; `TestOneTurnOfTwentyThousandCallsIsABoundedPage`
   holds it under 1 MiB). User messages (O9) and assistant text are still carried whole, so the page
-  is bounded EXCEPT for what a human or the assistant wrote.
+  is bounded EXCEPT for what a human or the assistant wrote. 🔴 *#261 round 3:* round 2's cap was
+  PAGE-wide and `?turn=` folded onto a fifty-turn grid, so fifty turns of thirty calls showed turns
+  34–50 as "N more items" and `?turn=34` folded back to page one — those calls were reachable only
+  as raw records. A page now starts at the turn asked for and ends at a turn boundary
+  (`TestEveryCallIsReachableByFollowingThePager`, `TestEveryCallIsReachableAcrossPages`; a turn
+  whose CHILD does not fit moves too, `TestATurnWhoseChildDoesNotFitStartsTheNextPage`).
 - **Text only.** Every transcript value is a `g.Text` or an attribute value; no link is ever built
   from content — every href is this surface's own ledger path with encoded operands
   (`TestHostileTranscriptTextIsEscaped`).

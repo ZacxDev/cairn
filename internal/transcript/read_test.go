@@ -205,7 +205,9 @@ func TestAToolResultInsideAUserRecordIsNotAUserMessage(t *testing.T) {
 }
 
 // TestTurnsPageByFifty: 120 human messages are 120 turns; a page holds fifty of them, numbered from
-// the page's first; a turn past the end is an empty page that still knows the total.
+// the page's first — the turn asked for, since #261 round 3 (it used to fold onto a fifty-turn
+// grid) — and names the next page's first; a turn past the end is an empty page that still knows
+// the total.
 func TestTurnsPageByFifty(t *testing.T) {
 	a := transcripttest.Open(t)
 	sess := transcripttest.Session{Root: "s-0001", Owner: readOwner}
@@ -214,15 +216,16 @@ func TestTurnsPageByFifty(t *testing.T) {
 		lines = append(lines, claudeUser(fmt.Sprintf("message %d", i)), claudeAssistant(fmt.Sprintf("answer %d", i)))
 	}
 	transcripttest.Append(t, a, sess, "main", lines)
-	for _, tc := range []struct{ ask, first, turns int }{
-		{1, 1, 50}, {0, 1, 50}, {50, 1, 50}, {51, 51, 50}, {77, 51, 50}, {101, 101, 20}, {120, 101, 20}, {999, 951, 0},
+	for _, tc := range []struct{ ask, first, turns, next int }{
+		{1, 1, 50, 51}, {0, 1, 50, 51}, {50, 50, 50, 100}, {51, 51, 50, 101}, {77, 77, 44, 0}, {101, 101, 20, 0},
+		{120, 120, 1, 0}, {999, 999, 0, 0},
 		// A request past MaxTurn reads as MaxTurn — no page arithmetic may overflow (#261's audit).
-		{math.MaxInt, PageStart(MaxTurn), 0}, {MaxTurn + 1, PageStart(MaxTurn), 0},
+		{math.MaxInt, MaxTurn, 0, 0}, {MaxTurn + 1, MaxTurn, 0, 0},
 	} {
 		rd := readAll(t, a, "s-0001", tc.ask)
-		if rd.TotalTurns != 120 || rd.FirstTurn != tc.first || len(rd.Turns) != tc.turns {
-			t.Errorf("turn %d: page starts at %d with %d turns of %d, want start %d with %d of 120",
-				tc.ask, rd.FirstTurn, len(rd.Turns), rd.TotalTurns, tc.first, tc.turns)
+		if rd.TotalTurns != 120 || rd.FirstTurn != tc.first || len(rd.Turns) != tc.turns || rd.NextTurn != tc.next {
+			t.Errorf("turn %d: page starts at %d with %d turns of %d and the next at %d, want start %d with %d of 120 and the next at %d",
+				tc.ask, rd.FirstTurn, len(rd.Turns), rd.TotalTurns, rd.NextTurn, tc.first, tc.turns, tc.next)
 			continue
 		}
 		for i, turn := range rd.Turns {

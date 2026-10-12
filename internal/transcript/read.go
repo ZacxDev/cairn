@@ -29,8 +29,9 @@ import (
 // full. Reading the record's TYPE instead would render every tool result — up to hundreds of
 // kilobytes — in full as something a human typed.
 
-// TurnsPerPage is how many turns one page of a reading holds (decision 18: `?turn=` paging), so a
-// very large session never renders in one response.
+// TurnsPerPage is the most turns one page of a reading holds (decision 18: `?turn=` paging), so a
+// very large session never renders in one response. A page holds FEWER when [PageItemCap] runs out
+// first: it then ends before the first turn it cannot carry whole, and the next page starts there.
 const TurnsPerPage = 50
 
 // ChildItemCap bounds how many items of ONE child stream are carried inline under the tool call
@@ -54,9 +55,19 @@ const CollapsedBudget = 2 << 20
 
 // PageItemCap bounds how many items one page carries — every item but a user message, counted
 // across the page's turns AND the child streams nested in them, in reading order (a turn's own
-// items first, then children). Past it an item is not carried: a turn counts it ([Turn.More]) and
-// names the first record it is in ([Turn.MoreFrom]), a child counts it in [Child.More]; the raw
-// records hold it.
+// items, then its children, then the next turn).
+//
+// 🔴 THE PAGE ENDS WHERE THE ALLOWANCE RUNS OUT, AT A TURN BOUNDARY. A turn after the page's first
+// that does not fit whole, children included, is not carried at all: the page stops before it and
+// [Reading.NextTurn] names it, so `?turn=` reaches it whole on a page of its own. Round 2 carried
+// such a turn's user message and COUNTED the rest — and since `?turn=` folded onto fixed
+// fifty-turn pages, a turn counted that way could only ever be reached as raw records (#261 round
+// 3: fifty turns of thirty calls showed turns 34–50 as "N more items").
+//
+// ⚠ ONE TURN LARGER THAN THE WHOLE ALLOWANCE IS STILL CUT, because no page could carry it: as the
+// FIRST turn of its page it carries what fits, counts the rest ([Turn.More]) and names the first
+// record holding one ([Turn.MoreFrom]) — those are reachable only as raw records. A child stream's
+// items past its own [ChildItemCap] are counted in [Child.More] whichever turn it is in.
 //
 // 🔴 IT EXISTS BECAUSE THE TWO BOUNDS ABOVE DO NOT BOUND A PAGE: fifty turns bound the TURNS and the
 // budget bounds collapsed BYTES, and one turn of 20,000 small tool calls fits both and rendered a
@@ -145,7 +156,8 @@ type Turn struct {
 	Bookkeeping, Duplicates int
 	// More is how many of the turn's items [PageItemCap] left out — a tool call and its result are
 	// one — and MoreFrom the first record holding one, so `MoreFrom`–`SeqTo` in the raw records
-	// holds every one of them. Zero when the turn is carried whole.
+	// holds every one of them. Zero when the turn is carried whole, which every turn but a page's
+	// FIRST is (a later one that does not fit starts the next page instead).
 	More     int
 	MoreFrom int64
 }
@@ -159,10 +171,14 @@ type StreamRef struct {
 // Reading is one page of a session's collapsed reading.
 type Reading struct {
 	// Turns are the page's turns; TotalTurns is how many the session has; FirstTurn is the page's
-	// first turn number (1, 51, 101, …).
+	// first turn number — the turn `?turn=` asked for, clamped ([PageStart]).
 	Turns      []Turn
 	TotalTurns int
 	FirstTurn  int
+	// NextTurn is the first turn this page does not carry — where the next page starts — or 0 when
+	// the page reaches the session's last turn (or is past it). It is FirstTurn + len(Turns): the
+	// page ended there for [TurnsPerPage] or for [PageItemCap].
+	NextTurn int
 	// Streams is every stored stream, `main` first — so a child stream no tool call on this page
 	// names is still reachable, through the raw-record view.
 	Streams []StreamRef
@@ -173,14 +189,19 @@ type Reading struct {
 // rendered negative page links).
 const MaxTurn = 1 << 30
 
-// PageStart folds a requested turn number onto the first turn of its page: 1 for anything that is
-// not a positive number, and a request past [MaxTurn] as [MaxTurn].
+// PageStart is the first turn of the page `?turn=` asks for: that turn itself — 1 for anything
+// that is not a positive number, and a request past [MaxTurn] as [MaxTurn].
+//
+// ⚠ IT NO LONGER FOLDS ONTO A FIFTY-TURN GRID. It did until #261 round 3, and a page that ended
+// early for [PageItemCap] then left the turns after it unreachable: every `?turn=` among them
+// folded back onto the page that could not carry them. A page now starts at exactly the turn
+// asked for, so [Reading.NextTurn] is always the start of a page of its own.
 func PageStart(turn int) int {
 	if turn < 1 {
 		return 1
 	}
 	turn = min(turn, MaxTurn)
-	return (turn-1)/TurnsPerPage*TurnsPerPage + 1
+	return turn
 }
 
 // readSession builds the page of `meta`'s session that holds turn `turn`. UNEXPORTED: outside this
@@ -211,10 +232,10 @@ func readSession(a *archive.Archive, meta *archive.Meta, turn int) (Reading, err
 		return Reading{}, err
 	}
 	w.close()
-	for i := range w.turns {
-		r.children(w.turns[i].Items, 0)
-	}
 	out.Turns, out.TotalTurns = w.turns, w.n
+	if next := out.FirstTurn + len(out.Turns); len(out.Turns) > 0 && next <= out.TotalTurns {
+		out.NextTurn = next
+	}
 	return out, nil
 }
 
@@ -234,6 +255,9 @@ type reader struct {
 	room    int
 	entered map[string]bool
 	dropped map[string]bool
+	// roomOut is set when an item is left out because the PAGE allowance is spent (not a child's
+	// own cap): the turn being built does not fit whole.
+	roomOut bool
 }
 
 // piece is what ONE stored record contributes: its items, what it only counts, and whether it
@@ -254,6 +278,8 @@ type window struct {
 	cur         *Turn
 	curHuman    bool
 	turns       []Turn
+	// full is set once a turn did not fit the page's item allowance: the page ends before it.
+	full bool
 }
 
 // add folds one record's piece into the turn it belongs to.
@@ -266,8 +292,9 @@ func (w *window) add(p piece) {
 		w.close()
 		w.n++
 		w.curHuman = false
-		if w.n >= w.first && w.n <= w.last {
+		if w.n >= w.first && w.n <= w.last && !w.full {
 			w.cur = &Turn{N: w.n, SeqFrom: p.seq}
+			w.r.roomOut = false
 		}
 	}
 	w.curHuman = w.curHuman || p.human
@@ -290,13 +317,35 @@ func (w *window) add(p piece) {
 			w.cur.More++
 		}
 	}
+	if w.r.roomOut && len(w.turns) > 0 {
+		// Not the page's first turn, and it no longer fits whole: the page ends before it. Waiting
+		// for the turn to end would only spend reading on a turn this page will not carry.
+		w.drop()
+	}
 }
 
+// close finishes the turn being built: its child streams are read in (they spend the same
+// allowance), and it is kept — unless it is not the page's first turn and it, children included,
+// did not fit, in which case the page ends before it ([PageItemCap]).
 func (w *window) close() {
-	if w.cur != nil {
-		w.turns = append(w.turns, *w.cur)
-		w.cur = nil
+	if w.cur == nil {
+		return
 	}
+	w.r.children(w.cur.Items, 0)
+	if w.r.roomOut && len(w.turns) > 0 {
+		w.drop()
+		return
+	}
+	w.turns = append(w.turns, *w.cur)
+	w.cur = nil
+}
+
+// drop abandons the turn being built and ends the page before it: no later turn is carried on this
+// page. What the dropped turn was charged is NOT refunded, and need not be: a turn's children are
+// read when it closes, so nothing the page carries is charged after this point (a mutant that
+// refunded nothing was measured to change no answer, so the refund walk is gone).
+func (w *window) drop() {
+	w.cur, w.full = nil, true
 }
 
 // place puts one item into `items` — the ONE rule for a turn and a child stream alike — and reports
@@ -332,6 +381,9 @@ func (r *reader) place(items []Item, it Item, limit int) ([]Item, bool) {
 	}
 	if it.Class != HumanText {
 		if r.room <= 0 || (limit >= 0 && len(items) >= limit) {
+			if r.room <= 0 {
+				r.roomOut = true
+			}
 			r.refund(it)
 			if it.Class == ToolCall && it.Tool != nil && it.Tool.ID != "" {
 				r.dropped[it.Tool.ID] = true

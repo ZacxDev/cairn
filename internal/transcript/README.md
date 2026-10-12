@@ -14,7 +14,7 @@ collapsed reading model the browser surface renders. `claudedocs/plan-cairn-plug
 | `classify_test.go` | the shape ledger (both directions), its comparator's own control, and decision 17's rules over literal records |
 | `archive/` | S3's transcript STORE on `cairn-ui` (decision 15): per-session directories, CAS append, frames, ownership, the refusing re-check, quota, retention. Written only through `internal/worker`, whose upload routes are DISARMED unless `cairn-ui -arm-transcript-capture` (O16). Since S4 it derives the READ half of a session's visibility set itself, through `scopeuse`, over every record and text blob it stores |
 | `visible.go` | S4: `Visible` (decision 4), `VisibilitySet` and the whole-store `WrittenScopes` walk (decision 3), and `Store.View` — the only way a stored session's content leaves this package |
-| `read.go` | S4: the collapsed reading (decision 18) — turns of classified items, 50 turns a page, child streams nested under the call that spawned them |
+| `read.go` | S4: the collapsed reading (decision 18) — turns of classified items, at most 50 turns and 1,000 items a page (ending at a turn boundary), child streams nested under the call that spawned them |
 | `transcripttest/` | a fixture archive for tests in this package and `internal/ui`; nothing that ships imports it |
 
 `tests/test_transcript_fixtures.py` refuses a stale world and any date outside the year 2000.

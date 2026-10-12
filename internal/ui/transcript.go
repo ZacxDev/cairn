@@ -49,9 +49,9 @@ const SessionTranscriptPath = "/session/transcript"
 
 // The transcript rows' query parameters.
 const (
-	// QueryTurn selects the PAGE of the session page's transcript section: the page holding that
-	// turn (`transcript.TurnsPerPage` turns each). A view selector, never an authority input — an
-	// unrecognised value is page one.
+	// QueryTurn selects the PAGE of the session page's transcript section: the page STARTING at that
+	// turn (at most `transcript.TurnsPerPage` turns, fewer when `transcript.PageItemCap` runs out
+	// first). A view selector, never an authority input — an unrecognised value is page one.
 	QueryTurn = "turn"
 	// QueryStream names a stored stream on the raw-record view (`main`, `subagent:<id>`,
 	// `child:<id>`); absent means `main`. MATCHED against the session's stored streams, never
@@ -125,7 +125,7 @@ func (s *Server) transcriptView(id identity.Identity, session string) *transcrip
 	return view
 }
 
-// turnParam reads `?turn=` as the first turn of its page. A value that does not parse — a wider one
+// turnParam reads `?turn=` as the first turn of the page. A value that does not parse — a wider one
 // than `int` included — is page one, like any other unrecognised value.
 //
 // The clamp is `transcript.PageStart`'s and only its: this package kept a copy, so removing the
@@ -152,7 +152,7 @@ func transcriptRawHref(session, stream string, seq, to int64) string {
 	return SessionTranscriptPath + "?" + q.Encode()
 }
 
-// transcriptPageHref is the session page at the transcript page holding `turn`.
+// transcriptPageHref is the session page at the transcript page starting at `turn`.
 func transcriptPageHref(session string, turn int) string {
 	q := url.Values{QuerySession: []string{session}}
 	if turn > 1 {
@@ -243,24 +243,30 @@ func transcriptSection(v TranscriptView) g.Node {
 
 // transcriptPager links the previous and next page of turns, and renders nothing for a transcript
 // that fits one page.
+//
+// 🔴 THE NEXT PAGE IS `Reading.NextTurn`, NEVER `FirstTurn + TurnsPerPage`: a page ends early when
+// `transcript.PageItemCap` runs out, and a link computed from the turn count would skip every turn
+// between where it ended and the fifty-turn mark (#261 round 3). Where a page ENDS is only known by
+// reading it, so neither link names a range — the previous one is the page starting
+// `TurnsPerPage` turns back, which reaches every turn before this one by its own next links.
 func transcriptPager(v TranscriptView) g.Node {
 	rd := v.Reading
-	if rd.TotalTurns <= transcript.TurnsPerPage && rd.FirstTurn == 1 {
+	if rd.FirstTurn == 1 && rd.NextTurn == 0 {
 		return nil
 	}
 	var links []g.Node
 	if rd.FirstTurn > 1 {
-		prev := rd.FirstTurn - transcript.TurnsPerPage
-		// A page past the end links back to the LAST real page, not to another empty one.
+		prev := max(rd.FirstTurn-transcript.TurnsPerPage, 1)
+		// A page past the end links back to the session's last turns, not to another empty page.
 		if prev > rd.TotalTurns {
-			prev = transcript.PageStart(max(rd.TotalTurns, 1))
+			prev = max(rd.TotalTurns-transcript.TurnsPerPage+1, 1)
 		}
 		links = append(links, h.A(h.Href(transcriptPageHref(v.Session, prev)),
-			g.Text("← turns "+strconv.Itoa(prev)+"–"+strconv.Itoa(min(prev+transcript.TurnsPerPage-1, rd.TotalTurns)))))
+			g.Text("← from turn "+strconv.Itoa(prev))))
 	}
-	if next := rd.FirstTurn + transcript.TurnsPerPage; next <= rd.TotalTurns {
-		links = append(links, h.A(h.Href(transcriptPageHref(v.Session, next)),
-			g.Text("turns "+strconv.Itoa(next)+"–"+strconv.Itoa(min(next+transcript.TurnsPerPage-1, rd.TotalTurns))+" →")))
+	if rd.NextTurn > 0 {
+		links = append(links, h.A(h.Href(transcriptPageHref(v.Session, rd.NextTurn)),
+			g.Text("from turn "+strconv.Itoa(rd.NextTurn)+" →")))
 	}
 	return h.Nav(h.Class("pager"), g.Attr("aria-label", "transcript pages"), g.Group(links))
 }

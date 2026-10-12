@@ -486,8 +486,9 @@ func TestHostileTranscriptTextIsEscaped(t *testing.T) {
 	}
 }
 
-// TestTheTranscriptPagesByFiftyTurns — `?turn=`: 120 turns are three pages; each page links its
-// neighbours; a turn past the end is an empty page that links back to the last real one.
+// TestTheTranscriptPagesByFiftyTurns — `?turn=`: 120 turns are three pages; a page starts at the
+// turn asked for and links the page fifty turns back and the next page's first turn; a turn past the
+// end is an empty page that links back to the session's last turns.
 func TestTheTranscriptPagesByFiftyTurns(t *testing.T) {
 	w := transcriptWorld(t)
 	a := transcripttest.OpenAt(t, w.clock.Now)
@@ -502,11 +503,13 @@ func TestTheTranscriptPagesByFiftyTurns(t *testing.T) {
 		first, last int
 		links       []string
 	}{
-		{"", 1, 50, []string{"turn=51"}},
-		{"&turn=1", 1, 50, []string{"turn=51"}},
-		{"&turn=nonsense", 1, 50, []string{"turn=51"}},
-		{"&turn=60", 51, 100, []string{`session=s-full-01#transcript`, "turn=101"}},
-		{"&turn=101", 101, 120, []string{"turn=51"}},
+		{"", 1, 50, []string{"turn=51#transcript"}},
+		{"&turn=1", 1, 50, []string{"turn=51#transcript"}},
+		{"&turn=nonsense", 1, 50, []string{"turn=51#transcript"}},
+		// A page starts AT the turn asked for (#261 round 3); the previous link is fifty turns back.
+		{"&turn=60", 60, 109, []string{"turn=10#transcript", "turn=110#transcript"}},
+		{"&turn=51", 51, 100, []string{`session=s-full-01#transcript`, "turn=101#transcript"}},
+		{"&turn=101", 101, 120, []string{"turn=51#transcript"}},
 	} {
 		body := getAs(t, srv, sessionURL("s-full-01")+tc.query).Body.String()
 		if n := strings.Count(body, `class="turn"`); n != tc.last-tc.first+1 {
@@ -532,7 +535,7 @@ func TestTheTranscriptPagesByFiftyTurns(t *testing.T) {
 	// page one, like any other unrecognised value — the `nonsense` row above).
 	for _, beyond := range []string{"5000", "9223372036854775807"} {
 		past := getAs(t, srv, sessionURL("s-full-01")+"&turn="+beyond).Body.String()
-		if strings.Contains(past, `class="turn"`) || !strings.Contains(past, "turn=101") || !strings.Contains(visibleText(past), "of 120") ||
+		if strings.Contains(past, `class="turn"`) || !strings.Contains(past, "turn=71#transcript") || !strings.Contains(visibleText(past), "of 120") ||
 			strings.Contains(visibleText(past), "turns -") {
 			t.Errorf("?turn=%s is not an empty page linking back to the last real one (or it renders a negative page)", beyond)
 		}

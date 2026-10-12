@@ -1457,7 +1457,9 @@ script that prints only counts.
       type and size, with the bytes in the raw view. *Revisions 3–16 rendered a "withheld"
       placeholder here; O12 retracted it.*
     - **Pages** are bounded by turns (`?turn=` paging, 50 turns per page) so a 154 MB session never
-      renders in one response.
+      renders in one response. *As built (#261 round 3): also by 1,000 items, the page ending at a
+      turn boundary, and `?turn=N` starts the page AT turn N rather than folding onto a fifty-turn
+      grid — so a turn the item bound pushes off a page is the next page's first.*
 
 ## The contracts
 
