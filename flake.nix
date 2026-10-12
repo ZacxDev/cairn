@@ -686,7 +686,8 @@
       # NOT A `cairn` VERB, because it reads every session transcript on its host and the reader
       # installed everywhere should not. It is under the import ban (`internal/depspolicy`'s
       # `LinkedBinaryRoots`), and its check phase runs the whole module's tests like the other Go
-      # derivations. ⚠ IT SENDS AND STORES NOTHING YET: S2 offers `--dry-run` and `--self-test` only; S3 adds the upload.
+      # derivations. `--run` (S3b) uploads over the capture/v1 contract — to an instance that is
+      # armed; every instance is unarmed today (O16) and answers 503, which the agent holds on.
       # ⚠ NO `opencode` ON ITS PATH, deliberately: it runs `opencode export` by bare name, and the
       # answer has to be the opencode the host's sessions were written by — a pinned copy here
       # could read a different database version than the one in use.

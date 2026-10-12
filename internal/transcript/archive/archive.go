@@ -86,8 +86,10 @@ const (
 	// room. ⚠ The bound is PER RECORD, not per request: an unframed request of two records near
 	// the cap (one 8 MiB body) was measured allocating ≈129 MiB, a shape the S3 head already
 	// admitted and this change does not narrow. A larger record is refused 413 and NOTHING of it
-	// is stored; no uploader exists on `main` yet, so what an agent does with that 413 is S3b's to
-	// decide (the plan, AP2). Raise this only with the limit, and re-measure.
+	// is stored. The uploader (S3b, `internal/capture.HTTPSink`) never sends one: it replaces such a
+	// record with a placeholder naming its size and this bound, under the same `src` and cursor, so
+	// the stream moves on (the plan, decision 15's AP2 note). Raise this only with the limit, and
+	// re-measure — and `capture.MaxRecordBytes` with it (`TestTheSinkBoundsFitThePod` pins the two).
 	MaxAssembledBytes = 4 << 20
 	// FrameIdle is how long a staged frame sequence may wait for its next frame before the sweep
 	// discards it and returns its bytes to the quota (AP3: an abandoned sequence must not hold

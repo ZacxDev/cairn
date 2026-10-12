@@ -88,7 +88,7 @@ func fileBytes(t *testing.T, f map[string]string) []byte {
 
 type env struct {
 	root, claude, ledger string
-	sink                *memSink
+	sink                 *memSink
 }
 
 // materialize writes the Claude Code layout and the ledgers of the sessions `keep` admits.
@@ -141,10 +141,12 @@ func materialize(t *testing.T, w world, keep ...string) env {
 type fakeRunner struct {
 	exports map[string][]byte
 	list    []byte
+	calls   int // exports asked for
 }
 
 func (f *fakeRunner) List(string) ([]byte, error) { return f.list, nil }
 func (f *fakeRunner) Export(id string) ([]byte, error) {
+	f.calls++
 	b, ok := f.exports[id]
 	if !ok {
 		return nil, fmt.Errorf("no export %s", id)
@@ -189,37 +191,76 @@ func mustRun(t *testing.T, a *Agent) Summary {
 	return sum
 }
 
-// memSink is the in-memory Sink the agent is tested through (S2 ships no sink of its own).
+// memSink is the in-memory Sink the agent is tested through. It keeps the instance's
+// compare-and-swap: a write whose `From` is not the position it holds is refused, so a test that
+// ships twice sees the agent's cursor bookkeeping, not only its records.
 type memSink struct {
 	records   map[string][]Record // instance/root/stream
 	blobs     map[string][]byte   // instance/root/name
+	pos       map[string]string   // instance/root/stream-or-blob → stored cursor
 	withdrawn map[string][]string // instance → roots
 	failRoot  string              // a root whose writes fail, to test isolation
+	fail      map[string]error    // stream name, or "blob:"+name → the error its write returns
+	attempts  map[string]int      // stream name, or "blob:"+name → writes attempted
+	declared  map[string][]string // instance/root → the last declared set
 }
 
 func newMemSink() *memSink {
-	return &memSink{records: map[string][]Record{}, blobs: map[string][]byte{}, withdrawn: map[string][]string{}}
+	return &memSink{records: map[string][]Record{}, blobs: map[string][]byte{}, pos: map[string]string{},
+		withdrawn: map[string][]string{}, declared: map[string][]string{}, attempts: map[string]int{}}
 }
 
-func (s *memSink) Records(instance, root, stream string, recs []Record) error {
-	if root == s.failRoot {
-		return fmt.Errorf("the sink refused %s", root)
+func (s *memSink) Records(u Upload, stream string, recs []Record) (int, error) {
+	s.attempts[stream]++
+	if err := s.fail[stream]; err != nil {
+		return 0, err
 	}
-	k := instance + "/" + root + "/" + stream
+	if u.Root == s.failRoot {
+		return 0, fmt.Errorf("the sink refused %s", u.Root)
+	}
+	k := u.Instance + "/" + u.Root + "/" + stream
+	if s.pos[k] != u.From {
+		return 0, fmt.Errorf("stale from %q: the sink holds %s at %q", u.From, k, s.pos[k])
+	}
+	for _, r := range recs {
+		if r.End == "" {
+			return 0, fmt.Errorf("record %s carries no end cursor", r.Src)
+		}
+	}
 	s.records[k] = append(s.records[k], recs...)
+	s.pos[k] = recs[len(recs)-1].End
+	s.declared[u.Instance+"/"+u.Root] = u.Declared
+	return len(recs), nil
+}
+
+func (s *memSink) Blob(u Upload, name, to string, data []byte) error {
+	s.attempts["blob:"+name]++
+	if err := s.fail["blob:"+name]; err != nil {
+		return err
+	}
+	if u.Root == s.failRoot {
+		return fmt.Errorf("the sink refused %s", u.Root)
+	}
+	k := u.Instance + "/" + u.Root + "/blob:" + name
+	if s.pos[k] != u.From {
+		return fmt.Errorf("stale from %q: the sink holds %s at %q", u.From, k, s.pos[k])
+	}
+	s.blobs[u.Instance+"/"+u.Root+"/"+name] = append([]byte(nil), data...)
+	s.pos[k] = to
 	return nil
 }
 
-func (s *memSink) Blob(instance, root, name string, data []byte) error {
-	if root == s.failRoot {
-		return fmt.Errorf("the sink refused %s", root)
-	}
-	s.blobs[instance+"/"+root+"/"+name] = append([]byte(nil), data...)
-	return nil
+func (s *memSink) Position(u Upload, stream string) (string, error) {
+	return s.pos[u.Instance+"/"+u.Root+"/"+stream], nil
 }
 
 func (s *memSink) Withdraw(instance, root string) error {
 	s.withdrawn[instance] = append(s.withdrawn[instance], root)
+	for k := range s.pos {
+		if strings.HasPrefix(k, instance+"/"+root+"/") {
+			delete(s.pos, k)
+		}
+	}
 	return nil
 }
 

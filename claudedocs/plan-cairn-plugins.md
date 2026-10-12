@@ -191,6 +191,16 @@ field names and types alone.
   and-record step rather than a gate. Capture is still armed on NO instance: arming remains the
   operator's act, and two preconditions stay open — S11's read ledger, and **S3b**, the agent
   upload half and `tests/plugins/e2e.sh` that S3 (#224) did not build.
+- *Revision 24 records S3b as BUILT (#260).* `internal/capture.HTTPSink` speaks capture/v1 (CAS with
+  resume on 409, continuation frames, blobs, declared scopes; withdrawal still S6's);
+  `cairn-capture --run` is one pass for a user timer; `tests/plugins/e2e.sh` wires clauses (a), (b),
+  (c) and (h) (`sabotaged=5 caught=5`, 11 assertions, the CI `go` job). The 413 decision is in
+  Rollout's AP2 note and decision 15; the 422 decision (a placeholder, not a hold) under decision
+  6's pod re-check. An opencode write's plan is saved BEFORE it is sent, because opencode mutates
+  units in place and a lost acknowledgement would otherwise leave a cursor nothing can recompute;
+  there is one pending plan at most, settled by asking the instance its position before anything
+  new is sent.
+  The one arming precondition left is **S11**.
 
 ## Goal and premise
 
@@ -302,14 +312,13 @@ Drop the work, or the named half, if any of these holds:
   score is re-run and recorded for the redactor commit being armed (AP4), and the last one —
   `leaks caught=157/190 clean damaged=18/175`, under the 90% floor — stays on record. A secret the
   redactor misses is stored (T1).
-- 🔴 **Capture is still armed NOWHERE — AND ARMING IT TODAY WOULD CAPTURE NOTHING.** S1 and S3
-  merged unarmed (O16), and O17 waived a gate — it did not arm anything. 🔴 **S3 BUILT ONLY THE
-  POD HALF.** On `main` there is NO host-side uploader: `internal/capture/sink.go` ships no HTTP
-  sink ("until S3 brings the real one"), nothing calls the `capture/v1` routes, and
-  `tests/plugins/e2e.sh` (clauses a, b, c, h) does not exist although the S3 row said S3 created
-  it. That half is **S3b**, an arming blocker, built as the next PR in this lane. The preconditions
-  still open are therefore **S3b** and **S11's read ledger**; arming is then the operator's act
-  (`-arm-transcript-capture`). The steps below describe what happens after it, not now.
+- 🔴 **Capture is still armed NOWHERE.** S1 and S3 merged unarmed (O16), and O17 waived a gate — it
+  did not arm anything. S3 (#224) built only the POD half; **S3b is now BUILT**: the host-side
+  uploader (`internal/capture.HTTPSink`, `cairn-capture --run`) and `tests/plugins/e2e.sh` with
+  clauses (a), (b), (c) and (h), gated in the CI `go` job. ✅ S3b CLOSED as a precondition. The one
+  still open is **S11's read ledger** — without it every session that runs `cairn` is owner-only by
+  F1; arming is then the operator's act (`-arm-transcript-capture`). The steps below describe what
+  happens after it, not now.
 - 🔴 **AND FOUR S3 ARMING PRECONDITIONS: AP1–AP3 ARE CLOSED (#258); AP4 IS A STEP, NOT A
   GATE.** Each was found by #224's audit against the S3 head, was harmless while capture is
   disarmed, and becomes reachable the moment it is armed. Recorded, not fixed, in #224; AP1–AP3
@@ -351,8 +360,16 @@ Drop the work, or the named half, if any of these holds:
     ⚠ **THE CAP NARROWS O9 — an agent decision, stated rather than implied.** Decision 15 says
     nothing is truncated at storage; a record or blob over 4 MiB is now REFUSED whole (413), so it is
     not stored at all unless the uploader splits or truncates it. Measured on one host: 0 Claude Code
-    JSONL lines over 4 MiB and 40 over 1 MiB (character length). What the uploader does with a 413
-    is **S3b's** to build and state. ⚠ **DISCLOSED RESIDUAL:** concurrent UNFRAMED requests (each up
+    JSONL lines over 4 MiB and 40 over 1 MiB (character length). ✅ **S3b's decision — a
+    PLACEHOLDER, not a truncation:** a record or blob over the bound (`capture.MaxRecordBytes`,
+    pinned equal to `archive.MaxAssembledBytes`) is replaced, BEFORE it is sent, by
+    `{"cairn_capture":"omitted","reason":"too-large","bytes":N,"max_bytes":M}` (a blob: one text
+    line saying the same), under the SAME `src` and cursor; a pod whose bound is smaller answers 413
+    and gets the same placeholder. The stream moves on, so the session's cursor is never wedged, the
+    omission is visible in the stored transcript, the run logs it (`omitted=` on its summary line),
+    and none of the record's bytes leave the host. A truncation was rejected: a cut JSON record is
+    not a JSON value (the pod stores only those), and a "first 4 MiB" of a record is content the
+    operator never chose to keep in that shape. `TestAnOverBoundRecordIsAPlaceholderAndTheCursorMovesOn`. ⚠ **DISCLOSED RESIDUAL:** concurrent UNFRAMED requests (each up
     to 8 MiB, `worker.DefaultMaxBody`; two near-cap records in one were measured allocating ≈129
     MiB) have NO in-flight limit — only the sole capture owner's tokens can reach the route, which
     bounds who, not how many.
@@ -1074,6 +1091,20 @@ script that prints only counts.
      holds that stream and logs, rather than losing it), NOT a miss: the same table cannot catch
      what it does not recognise. Clause (b) is measured on the agent's outgoing bytes precisely so
      this refusal cannot mask it.
+     ⚠ **AGENT DECISION (S3b, #260's audit; under O17's "imperfect redaction accepted") — the host
+     does NOT hold the stream on a 422, which the sentence above said it would.** A hold was built
+     first, and the pod's re-check was then MEASURED refusing clean data (its entropy rule over an
+     encoded non-secret line), so a hold freezes a stream for good on a false positive — and a
+     session's later records can never pass the stuck one, because the stream is one
+     compare-and-swap chain. Instead the uploader replaces EXACTLY the refused record (the pod names
+     its index) or blob with a placeholder — `{"cairn_capture":"omitted","reason":
+     "refused-by-recheck","bytes":N}`, or one text line for a blob — and the stream moves on. The
+     refused bytes are sent once — the refusal is saved in the agent's state BEFORE the placeholder
+     leaves, so a later run sends the placeholder at once (residual: a process killed between the
+     422 and that save sends them one more time); **nothing the pod refused is ever stored**; the
+     omission is counted (`recheck-omitted=`) and logged. The one 422 that still holds is one
+     naming a request FIELD (a name or cursor matched the table): no placeholder can answer that,
+     so that stream or blob version is held and logged.
    - *Measurement (closing condition part 3):* a generator emits synthetic transcripts in BOTH
      formats with **P** secrets planted in realistic positions — a shell tool's stdout of a dotenv
      file, `toolUseResult.originalFile`, an edit's `oldString`, a JSON-escaped value, a Kubernetes
@@ -1245,8 +1276,9 @@ script that prints only counts.
       record; `blobs/` for persisted tool-result files; `outputs.jsonl` for plugin outputs. The
       server assigns `seq` per stream, so ONE watermark shape serves both runtimes.
     - **Nothing is truncated at storage** (O9) — ⚠ *except that, since #258 (AP2), ONE record or blob
-      over 4 MiB is refused whole (413) rather than stored; Rollout's AP2 note states the narrowing
-      and its measurement.* *Revision 1's per-record 1 MiB truncation and
+      over 4 MiB is refused whole (413) rather than stored, and the uploader (S3b) stores a
+      PLACEHOLDER naming its size in its place, under the same cursor, so the stream moves on;
+      Rollout's AP2 note states the narrowing, the placeholder and its measurement.* *Revision 1's per-record 1 MiB truncation and
       per-session cap are REMOVED*: the measured p99 root session is 72 MB and the max 154 MB, so a
       per-session cap would have cut exactly the large sessions. Size limits exist only at READ time
       (decisions 17, 18). A request body is bounded; a record larger than one request is sent as
@@ -1479,7 +1511,7 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 | **S0** | **Fixtures and shape ledgers.** `tests/transcripts/gen.py` emits synthetic sessions in BOTH formats from the measured key sets (R1–R3): main stream, two subagents, an opencode child, a compaction boundary, a `pr-link`, persisted tool output, mutated opencode parts, bookkeeping records and duplicate fields, a `user` record carrying a large `tool_result` block, an inline image block AND its `toolUseResult.file.base64` duplicate, an opencode `tool` part with a `data:` URL in `state.attachments[].url`, a binary (PDF and JPEG), a UTF-8 text, a UTF-16 text and a JSON text tool-result blob, thinking `signature` values and 64-hex digests (which must survive untouched), and every read path of R7 (a rendered recall in a tool result; one in a hook attachment with no command line; a store-wide search rendered `scope=(all scopes)` in a hook attachment; a bare header-less `ls-entries`; an explicit `--scope` read; a `--repo` read; a `cd … && cairn recall` chain). A shape test pins the generator's record types, block types and field names against `internal/transcript`'s classification table. The generator also emits a synthetic read-ledger file per session (decision 3a), including an EMPTY one beside cairn-naming inputs (F1). And S0 MEASURES, on a host with opencode, whether `OPENCODE_SESSION_ID` reaches tool commands and which session id it carries, recording the answer for S11 — **done: decision 3a and `internal/transcript/README.md`.** The generator writes ONE file, `internal/transcript/testdata/synthetic_world.json`, which Go tests materialise, so `onlyGo` needs one row; the table is `internal/transcript/classify.go`. | `tests/`; `onlyGo` if Go tests read the fixtures; README. | Test-only. |
 | **S1** | **`internal/redact`** — its own rule table (decision 6), decoded-string traversal, text-blob redaction and the text/binary sniff (decision 6a), keyed tags, structural Secret rule, denylist loader; the corpus generator and the `planted/caught/clean-damaged` report; the behavioural containment test against leakscan's controls. | new package; `ok` floor; README. | Library only. |
 | **S2** | **`cmd/cairn-capture`** and **`internal/transcript/scopeuse`** — readers (JSONL by offset, subagents, blobs — text redacted, binary byte-identical; `opencode export` to a file, diffing by part digest), `V` derivation (the `*` mappings of decision 3), watermark state, routing (decision 16), `--dry-run`, `--self-test`. No upload, and no run mode, yet (D1). | `cmd/cairn-capture`; new packages (`internal/capture` holds the agent, so its tests sit in a package); the four `scopeuse-*` rows join `control_mutants.py` with a per-row `pkgs` override ADDING `./internal/transcript/scopeuse/` (+ pinned count) — *as built: not `PKGS` itself, because the battery's own rule is that a killer outside the control/identity/server seam gets a per-row addition, and widening `PKGS` would re-scope every existing row and move three pinned enumerations*; `depspolicy.LinkedBinaryRoots` + its test; `flake.nix` `packages.cairn-capture` + `checks.cairn-capture-self-test` (the built binary's self-test; CI's `nix` job builds both); `ok` floor. Review round 1 added four more battery rows (`scopeuse-restore-ignored`, `capture-v-not-a-union`, `capture-child-ledger-ignored`, `capture-unreadable-ledger-ignored`). | Inert: it sends nothing. |
-| **S3** | **Transcript store + capture API.** `internal/transcript` (directory layout, CAS append, frames, ownership, quota, retention sweeper, deletion, pod-side `V` re-derivation), worker listener + ledger, `capture` token kind and `cairn-ui -issue-worker-token capture`, refusing pod re-check. Agent gains upload. `tests/plugins/e2e.sh` created with clauses (a), (b), (c), (h). 🔴 **AS BUILT (#224), ONLY THE POD HALF:** the store, the worker listener and its routes, the `capture` token and the pod re-check landed; the agent upload and `tests/plugins/e2e.sh` (clauses a, b, c, h) did NOT — no HTTP sink exists, nothing calls `capture/v1`. That half is **S3b**, an arming blocker, built as the next PR in this lane. 🔴 **Arming:** S3 merged inert and capture is armed on NO instance. Closing-condition part 5 (O15's held-back gate) is **WAIVED as an arming precondition by O17** and kept as a measurement; S11 is still a precondition. 🔴 **The four S3 ARMING PRECONDITIONS under Rollout, recorded by #224's audit: AP1–AP3 are CLOSED by #258, each by its own stated check; AP4 is a re-measure-and-record step, not a gate.** | new package → `ok` floor, `control_mutants.py` `PKGS` (+ pinned count through `ci.yml` and `internal/control/README.md`); `cmd/cairn-ui` flags (`-worker-addr`, `-worker-tokens`, `-transcript-dir`, `-transcript-retention`, `-transcript-quota`) and tests; `ci.yml` e2e step. | Inert unless `-worker-addr` AND `-transcript-dir` are set. |
+| **S3** | **Transcript store + capture API.** `internal/transcript` (directory layout, CAS append, frames, ownership, quota, retention sweeper, deletion, pod-side `V` re-derivation), worker listener + ledger, `capture` token kind and `cairn-ui -issue-worker-token capture`, refusing pod re-check. Agent gains upload. `tests/plugins/e2e.sh` created with clauses (a), (b), (c), (h). 🔴 **AS BUILT (#224), ONLY THE POD HALF:** the store, the worker listener and its routes, the `capture` token and the pod re-check landed; the agent upload and `tests/plugins/e2e.sh` (clauses a, b, c, h) did NOT. ✅ **That half is S3b, BUILT (#260):** `internal/capture.HTTPSink` (CAS + resume on 409 — an opencode stream against the plan saved before sending — frames, blobs, the 413 placeholder, a 422 placeholder for the one refused record or blob, 503/507 hold the run, 401/403 stop it loudly, no redirect followed), `cairn-capture --run` (state saved as it goes), and `tests/plugins/e2e.sh` with clauses (a) — Claude Code and opencode legs — (b), (c), (h): `--self-test` `sabotaged=5 caught=5`, 11 assertions, a CI `go`-job step with a PASS floor of 11. *As built, two deviations:* blob names are mapped onto the pod's one-component grammar (`capture.WireBlobName`; S2 named them by relative path, which the pod refused 400), and a record that is not JSON ships wrapped (`{"cairn_capture":"not-json","parts":[…]}`, bytes exact). 🔴 **Arming:** S3 merged inert and capture is armed on NO instance. Closing-condition part 5 (O15's held-back gate) is **WAIVED as an arming precondition by O17** and kept as a measurement; S11 is still a precondition. 🔴 **The four S3 ARMING PRECONDITIONS under Rollout, recorded by #224's audit: AP1–AP3 are CLOSED by #258, each by its own stated check; AP4 is a re-measure-and-record step, not a gate.** | new package → `ok` floor, `control_mutants.py` `PKGS` (+ pinned count through `ci.yml` and `internal/control/README.md`); `cmd/cairn-ui` flags (`-worker-addr`, `-worker-tokens`, `-transcript-dir`, `-transcript-retention`, `-transcript-quota`) and tests; `ci.yml` e2e step. | Inert unless `-worker-addr` AND `-transcript-dir` are set. |
 | **S4** | **Visibility + the session page shows content (O3).** `transcript.Visible` (decision 4) with `V` (decision 3); the collapsed transcript section on `/session` (decision 18); the owner arm finding O10 sessions; `GET /session/transcript` raw-record view. e2e clauses (d), (e), (f), (g — the visibility half). Benchmark of the whole-store `W_trailer` walk. | UI rows → hand ledger, `contentAuthority`, uiaudit targets + a synthetic transcript in the uiaudit world; mutant rows. | Read-only over S3; renders nothing when no transcript exists. |
 | **S5** | **Plugin registry, toggles, plugin API.** `internal/plugins` (manifest validation, closed capability and output-type vocabularies, plugin token kind, the narrowing-only toggle fold + `-plugin-journal`, the stateless pending query); `/plugins` page + toggle POSTs on scope, arc and session pages. e2e clauses (i), (j). | new package → `ok` floor, `PKGS`; UI rows; `cmd/cairn-ui` flags (`-plugin-registry`, `-plugin-journal`); mutant rows; README. | Inert with no registry; every toggle OFF by construction. |
 | **S6** | **Outputs: storage, rendering, deletion cascade.** Outputs stored per session; rendered labelled-derived (decision 11) on the session page and as a one-line summary on session rows; owner "delete transcript" POST cascading to outputs and edges; the capture `withdraw` route running the same cascade, and the agent's withdrawal on a routing change (decision 16). e2e clauses (k), (l), (m). | UI rows; worker-listener ledger (`withdraw`); `cmd/cairn-capture`; mutant rows; README. | Nothing renders until a plugin writes; the agent withdraws nothing until a routing answer changes. |

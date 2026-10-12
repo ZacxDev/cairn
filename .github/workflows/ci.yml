@@ -1213,6 +1213,38 @@ jobs:
             exit 1
           fi
 
+      # 🔴 THE TRANSCRIPTS CLOSING CHECK (closing-condition part 2 of `claudedocs/plan-cairn-plugins.md`),
+      # clauses (a), (b), (c) and (h) — the ones slice S3b wires: `cairn-ui` booted with its worker
+      # listener ARMED over a scratch transcript directory, and the REAL capture agent's `--run` driven
+      # through a recording relay — a lost acknowledgement resumed with every record stored once (a),
+      # 0 of the run's planted secrets in the agent's reassembled outgoing bodies with the
+      # redaction-off build's control seeing all of them (b), the pod's refusing re-check on a record
+      # and a text blob (c), and a session that read another instance's scope sending nothing (h).
+      # Beside the presence check for its reason: it needs the Go toolchain, and it exits 2 rather
+      # than skipping without one.
+      #
+      # ⚠ THE SELF-TEST RUNS FIRST AND IS NOT OPTIONAL: it sabotages each wired clause on a scratch
+      # copy of the source — (a) the stream CAS, and for its opencode leg the saved plan never being
+      # matched, (b) the agent's blob redaction, (c) the pod's record scan, (h) routing on one scope
+      # — and refuses (exit 2) unless EACH turns its own named assertion RED. Five sabotages over
+      # the four clauses wired now; the plan's 14 is the count at S10.
+      - name: the transcripts end-to-end check, after proving every wired clause can go RED
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}
+        run: |
+          set -o pipefail
+          tests/plugins/e2e.sh --self-test | tee /tmp/plugins-e2e-self.txt
+          grep -qx 'SUMMARY e2e-self-test: sabotaged=5 caught=5' /tmp/plugins-e2e-self.txt
+          tests/plugins/e2e.sh > /tmp/plugins-e2e.txt 2>&1 || { cat /tmp/plugins-e2e.txt; exit 1; }
+          cat /tmp/plugins-e2e.txt
+          passes=$(grep -c '^PASS ' /tmp/plugins-e2e.txt || true)
+          fails=$(grep -c '^FAIL ' /tmp/plugins-e2e.txt || true)
+          echo "plugins e2e: passes=$passes fails=$fails"
+          # 11 assertions, measured when the script landed (S3b); `EXPECTED` in the script moves with it.
+          if [ "$passes" -lt 11 ] || [ "$fails" -ne 0 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL lines, and 11 / 0 were measured"
+            exit 1
+          fi
+
   # 🔴 THE MUTATION BATTERIES, IN THEIR OWN JOB BECAUSE THEY WERE THE `go` JOB'S CRITICAL PATH.
   # Measured from that job's step timings over five runs: 74-103 min for the job, of which the
   # authz battery was 61-83 min and the routing battery 11-12 min — so every push waited an hour

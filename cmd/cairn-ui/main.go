@@ -302,8 +302,8 @@ func main() {
 		"the instance's transcript byte ceiling (`20GB`, `20GiB`); uploads past it answer 507; REQUIRED with the listener")
 	armCapture := flag.Bool(flagArmCapture, false,
 		"ARM transcript capture. Unset — the default, and every instance today (operator decision O16) — every upload "+
-			"answers 503 and nothing is stored. Set it only once the plan's arming preconditions hold (S3b's agent upload "+
-			"and e2e gate, and S11's read ledger; "+
+			"answers 503 and nothing is stored. Set it only once the plan's arming preconditions hold (S11's read "+
+			"ledger; S3b's agent upload and e2e gate have landed; "+
 			"O15's held-back gate is WAIVED by operator decision O17, not passed)")
 	issueWorker := flag.String(flagIssueWorker, "",
 		"capture: mint ONE worker token for -"+flagWorkerOwner+" on -"+flagWorkerHost+

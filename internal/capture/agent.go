@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ZacxDev/cairn/internal/client"
 	"github.com/ZacxDev/cairn/internal/redact"
@@ -28,11 +29,66 @@ type Agent struct {
 	Sink         Sink
 	State        *State
 	Log          io.Writer
+
+	// Checkpoint, when set, saves the state. It is called AT ONCE where a crash must not lose a
+	// decision — before an opencode write leaves (its plan), before a re-check placeholder is sent
+	// — and after a session whose state CHANGED, at most once per CheckpointEvery, with one last
+	// save when the run ends with unsaved changes.
+	//
+	// 🔴 NOT AFTER EVERY SESSION. That was built first: an idle run over 861 sessions rewrote and
+	// fsynced the whole state 861 times (measured: 4.7 s and 196 MB per run, every minute).
+	Checkpoint      func() error
+	CheckpointEvery time.Duration
+
+	// fatal is the first error that ends the run's uploads loudly (a refused token).
+	fatal error
+	// dirty is whether the state holds a change no checkpoint has saved; saved is when it last was.
+	dirty bool
+	saved time.Time
+}
+
+// checkpoint saves the state now.
+func (a *Agent) checkpoint() error {
+	if a.Checkpoint == nil {
+		return nil
+	}
+	if err := a.Checkpoint(); err != nil {
+		return err
+	}
+	a.dirty, a.saved = false, time.Now()
+	return nil
+}
+
+// sessionImage is one session's state as it would be saved, for telling whether a run changed it.
+func (a *Agent) sessionImage(root string) []byte {
+	raw, _ := json.Marshal(a.State.Sessions[root])
+	return raw
+}
+
+// stopped reports whether the instance a session is bound for is not taking uploads in this run.
+// A session with no instance yet is bound for the sole instance when there is only one.
+func (a *Agent) stopped(instance string) bool {
+	s, ok := a.Sink.(interface{ Stopped(string) error })
+	if !ok {
+		return false
+	}
+	if instance == "" && !a.Routing.MultiInstance() && len(a.Routing.Instances) == 1 {
+		instance = a.Routing.Instances[0].Alias
+	}
+	return instance != "" && s.Stopped(instance) != nil
 }
 
 // Summary counts one run. It carries no content.
 type Summary struct {
 	Sessions, Shipped, Held, Withdrawn, Records, Blobs, Refused int
+	// Skipped counts sessions not read at all because their instance is not taking uploads.
+	Skipped int
+}
+
+// String is the run's one summary line.
+func (s Summary) String() string {
+	return fmt.Sprintf("sessions=%d shipped=%d held=%d withdrawn=%d records=%d blobs=%d refused=%d skipped=%d",
+		s.Sessions, s.Shipped, s.Held, s.Withdrawn, s.Records, s.Blobs, s.Refused, s.Skipped)
 }
 
 func (a *Agent) logf(format string, args ...any) {
@@ -41,7 +97,9 @@ func (a *Agent) logf(format string, args ...any) {
 	}
 }
 
-// Run captures every session once.
+// Run captures every session once. It returns an error only for what ends the run's uploads — a
+// session tree that cannot be listed, or an instance that refused the capture token
+// ([FatalError]); every other failure is one session's, logged and counted in Refused.
 func (a *Agent) Run() (Summary, error) {
 	var sum Summary
 	if a.ClaudeRoot != "" {
@@ -70,7 +128,12 @@ func (a *Agent) Run() (Summary, error) {
 			sum.Refused++
 		}
 	}
-	return sum, nil
+	if a.dirty {
+		if err := a.checkpoint(); err != nil && a.fatal == nil {
+			a.fatal = fmt.Errorf("capture: the state could not be saved: %w", err)
+		}
+	}
+	return sum, a.fatal
 }
 
 // isolate runs one session's capture and turns its failure into a logged refusal.
@@ -80,11 +143,90 @@ func (a *Agent) Run() (Summary, error) {
 // that fails, a blob a sink refuses (review round 1). The failed session's watermarks did not
 // advance (each advances only after its own write), so the next run retries it.
 func (a *Agent) isolate(root string, sum *Summary, run func() error) {
+	before := a.sessionImage(root)
 	if err := run(); err != nil {
 		a.logf("refused %s: %v", root, err)
 		sum.Refused++
 	}
+	if !bytes.Equal(before, a.sessionImage(root)) {
+		a.dirty = true
+	}
+	if a.dirty && time.Since(a.saved) >= a.CheckpointEvery {
+		if err := a.checkpoint(); err != nil && a.fatal == nil {
+			a.fatal = fmt.Errorf("capture: the state could not be saved: %w", err)
+		}
+	}
 }
+
+// rechecks is the half of an [Upload] that carries the pod's re-check refusals for one stream:
+// which of recs it already refused (same `src`, same bytes), and the hook that records a new one
+// in the state and SAVES it before the placeholder is sent.
+func (a *Agent) rechecks(up *Upload, st *StreamState, recs []Record) {
+	byDigest := map[string]string{}
+	up.Rechecked = map[string]bool{}
+	for _, r := range recs {
+		byDigest[r.Src] = digest(r.Rec)
+		if st.Rechecked[r.Src] == byDigest[r.Src] {
+			up.Rechecked[r.Src] = true
+		}
+	}
+	up.OnRecheck = func(src string) error {
+		if st.Rechecked == nil {
+			st.Rechecked = map[string]string{}
+		}
+		st.Rechecked[src] = byDigest[src]
+		return a.checkpoint()
+	}
+}
+
+// settled forgets the re-check refusals of records that are now stored (as placeholders).
+func settled(st *StreamState, stored []Record) {
+	for _, r := range stored {
+		delete(st.Rechecked, r.Src)
+	}
+	if len(st.Rechecked) == 0 {
+		st.Rechecked = nil
+	}
+}
+
+// held is every failed write's first stop. A re-check refusal the sink could not answer with a
+// placeholder — a 422 naming a request FIELD, where the name or cursor itself matched — HOLDS that
+// stream or blob version for good: recorded in `mark`, logged, never resent. Any other error is
+// returned for the session to report, and the next run retries it.
+//
+// 🔴 AND A REFUSED TOKEN IS RECORDED HERE, WHEREVER IT ARRIVES. A session reports its FIRST
+// failure; a 401 on a later stream behind an ordinary error was masked and the run exited 0.
+func (a *Agent) held(err error, mark *string, what string, sum *Summary) error {
+	var fatal *FatalError
+	if errors.As(err, &fatal) && a.fatal == nil {
+		a.fatal = err
+	}
+	var rc *RecheckRefusal
+	if !errors.As(err, &rc) {
+		return err
+	}
+	*mark = rc.Error()
+	a.logf("HOLD %s: %v — held on this host for good and never resent", what, rc)
+	sum.Refused++
+	return nil
+}
+
+// offsetCursor is a Claude Code stream's cursor: its byte offset, "" for nothing written.
+func offsetCursor(off int64) string {
+	if off == 0 {
+		return ""
+	}
+	return strconv.FormatInt(off, 10)
+}
+
+// chainCursor is an opencode stream's cursor after one more unit: a hash chain over every unit
+// key and the digest of its REDACTED bytes, so it names a position and carries no content.
+func chainCursor(prev, key string, rec []byte) string {
+	return "c" + digest([]byte(prev + "\x00" + key + "\x00" + digest(rec)))[:32]
+}
+
+// blobCursor is a blob version's cursor: the digest of its REDACTED bytes.
+func blobCursor(out []byte) string { return "b" + digest(out)[:32] }
 
 // safeID is the session-id grammar a ledger file name may be built from: ONE path component,
 // tested as a component — `..` itself is refused, `a..b` is an ordinary name.
@@ -183,6 +325,12 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 	if ss.Held {
 		return nil
 	}
+	// 🔴 BEFORE ANYTHING IS READ: an instance that is not taking uploads would have this session
+	// read, derived and redacted on every run for nothing (measured at megabytes a second).
+	if a.stopped(ss.Instance) {
+		sum.Skipped++
+		return nil
+	}
 	d := scopeuse.NewDeriver()
 	d.Restore(ss.Evidence)
 
@@ -249,6 +397,10 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 	if err != nil || !ship {
 		return err
 	}
+	if a.stopped(ss.Instance) {
+		sum.Skipped++
+		return nil
+	}
 	if reset {
 		// A MOVE re-ships the whole session from offset 0 — but only up to what was DERIVED above,
 		// so nothing un-derived can ship.
@@ -261,22 +413,45 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 			pend[i].lines, pend[i].starts, pend[i].fp, pend[i].fpLen = lines, splitWithOffsets(lines, 0), fp, fpLen
 		}
 	}
+	// 🔴 ONE STREAM'S FAILURE DOES NOT STOP THE SESSION'S OTHER STREAMS: each advances on its own
+	// acknowledgement, and the first error is the session's answer for this run.
+	var failed error
+	fail := func(err error) {
+		if err != nil && failed == nil {
+			failed = err
+		}
+	}
+	up := Upload{Instance: ss.Instance, Root: cs.Root, Runtime: "claude", Declared: ss.V}
 	shippedAny := false
 	for _, p := range pend {
 		if len(p.lines) == 0 {
 			continue
 		}
+		st := ss.stream(p.name)
 		recs := make([]Record, 0, len(p.lines))
 		for i, l := range p.lines {
-			recs = append(recs, a.redactLine(strconv.FormatInt(p.starts[i], 10), l))
+			r := a.redactLine(strconv.FormatInt(p.starts[i], 10), l)
+			r.End = strconv.FormatInt(p.starts[i]+int64(len(l))+1, 10)
+			recs = append(recs, r)
 		}
-		if err := a.Sink.Records(ss.Instance, cs.Root, p.name, recs); err != nil {
-			return err
+		up.From = offsetCursor(st.Offset)
+		a.rechecks(&up, st, recs)
+		n, err := a.Sink.Records(up, p.name, recs)
+		settled(st, recs[:n])
+		// 🔴 THE ACKNOWLEDGED PREFIX IS COMMITTED EVEN WHEN THE WRITE FAILED: each record of it
+		// answered 200, and its end is a line boundary.
+		if n > 0 {
+			st.Offset = p.end
+			if n < len(recs) {
+				st.Offset = p.starts[n]
+			}
+			st.Fingerprint, st.FPLen = p.fp, p.fpLen
+			sum.Records += n
+			shippedAny = true
 		}
-		st := ss.stream(p.name)
-		st.Offset, st.Fingerprint, st.FPLen = p.end, p.fp, p.fpLen
-		sum.Records += len(recs)
-		shippedAny = true
+		if err != nil {
+			fail(a.held(err, &st.Refused, cs.Root+"/"+p.name, sum))
+		}
 	}
 	for _, n := range blobNames {
 		data, read := blobData[n]
@@ -294,22 +469,45 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 			}
 			blobStat[n] = BlobState{Size: info.Size(), MtimeNs: info.ModTime().UnixNano(), Digest: digest(data)}
 		}
-		if prev, ok := ss.Blobs[n]; ok && prev.Digest == blobStat[n].Digest {
-			ss.Blobs[n] = blobStat[n] // touched, not changed
+		prev, seen := ss.Blobs[n]
+		next := blobStat[n]
+		next.Cursor, next.Refused = prev.Cursor, ""
+		if seen && prev.Digest == next.Digest {
+			next.Refused = prev.Refused
+			ss.Blobs[n] = next // touched, not changed
 			continue
 		}
-		out, _ := a.Redactor.Blob(n, data)
-		if err := a.Sink.Blob(ss.Instance, cs.Root, n, out); err != nil {
-			return err
+		out := a.redactBlob(n, data)
+		to := blobCursor(out)
+		up.From = prev.Cursor
+		up.Rechecked = map[string]bool{"": prev.Rechecked == next.Digest}
+		up.OnRecheck = func(string) error {
+			// Saved under the PREVIOUS version's size and mtime, so the next run reads the file again
+			// and, finding this digest, sends the placeholder at once.
+			prev.Rechecked, next.Rechecked = next.Digest, next.Digest
+			ss.Blobs[n] = prev
+			return a.checkpoint()
 		}
-		ss.Blobs[n] = blobStat[n]
+		if prev.Rechecked == next.Digest {
+			next.Rechecked = prev.Rechecked
+		}
+		if err := a.Sink.Blob(up, n, to, out); err != nil {
+			if err = a.held(err, &next.Refused, cs.Root+" blob "+n, sum); err != nil {
+				fail(err)
+				continue
+			}
+			ss.Blobs[n] = next // held: the stored version is still prev.Cursor
+			continue
+		}
+		next.Cursor = to
+		ss.Blobs[n] = next
 		sum.Blobs++
 		shippedAny = true
 	}
 	if shippedAny {
 		sum.Shipped++
 	}
-	return nil
+	return failed
 }
 
 func feedClaudeLine(d *scopeuse.Deriver, line []byte) {
@@ -327,8 +525,19 @@ func feedClaudeLine(d *scopeuse.Deriver, line []byte) {
 var readFile = os.ReadFile
 
 func (a *Agent) redactLine(src string, line []byte) Record {
+	if redactionOff {
+		return Record{Src: src, Rec: append([]byte(nil), line...)}
+	}
 	out, _ := a.Redactor.Record(line)
 	return Record{Src: src, Rec: append([]byte(nil), out...)}
+}
+
+func (a *Agent) redactBlob(name string, data []byte) []byte {
+	if redactionOff {
+		return data
+	}
+	out, _ := a.Redactor.Blob(name, data)
+	return out
 }
 
 type ocStream struct {
@@ -341,6 +550,10 @@ func (a *Agent) runOpencode(root string, sum *Summary) error {
 	ss := a.State.session(root, "opencode")
 	sum.Sessions++
 	if ss.Held {
+		return nil
+	}
+	if a.stopped(ss.Instance) {
+		sum.Skipped++
 		return nil
 	}
 	// Export the root and, recursively, every child its `task` parts name.
@@ -395,35 +608,96 @@ func (a *Agent) runOpencode(root string, sum *Summary) error {
 	ss.Evidence = d.Evidence()
 	ss.V = union(ss.V, res.V)
 
-	ship, reset, err := a.route(root, ss, sum)
+	ship, _, err := a.route(root, ss, sum)
 	if err != nil || !ship {
 		return err
 	}
+	if a.stopped(ss.Instance) {
+		sum.Skipped++
+		return nil
+	}
+	var failed error
+	up := Upload{Instance: ss.Instance, Root: root, Runtime: "opencode", Declared: ss.V}
 	shippedAny := false
 	for _, s := range streams {
-		todo := s.changed
-		if reset {
-			todo = s.all
-		}
-		if len(todo) == 0 {
+		st := ss.stream(s.name)
+		if st.Refused != "" {
 			continue
 		}
-		recs := make([]Record, 0, len(todo))
-		for _, u := range todo {
-			recs = append(recs, a.redactLine(u.Key+"@"+digest(u.Raw)[:12], u.Raw))
+		n, err := a.shipUnits(up, s, st)
+		if n > 0 {
+			sum.Records += n
+			shippedAny = true
 		}
-		if err := a.Sink.Records(ss.Instance, root, s.name, recs); err != nil {
-			return err
+		if err != nil {
+			if err = a.held(err, &st.Refused, root+"/"+s.name, sum); err != nil && failed == nil {
+				failed = err
+			}
 		}
-		st := ss.stream(s.name)
-		for _, u := range todo {
-			st.Units[u.Key] = digest(u.Raw)
-		}
-		sum.Records += len(recs)
-		shippedAny = true
 	}
 	if shippedAny {
 		sum.Shipped++
 	}
-	return nil
+	return failed
+}
+
+// shipUnits sends every unit of one opencode stream whose version is not the one shipped, and
+// commits the acknowledged prefix.
+//
+// 🔴 A PENDING WRITE IS SETTLED FIRST, AND NOTHING NEW IS SENT UNTIL IT IS. If an earlier write
+// went unacknowledged, the instance is asked where the stream is ([Sink.Position] — it stores
+// nothing) and the plan is settled against the answer ([StreamState.reconcile]). An instance that
+// cannot be asked gets no new write, so there is only ever ONE plan and never one to evict.
+//
+// The write's own plan — each unit, its version, the cursor after it — is then put in the state
+// AND SAVED before the request leaves. The upsert set is recomputed from the state HERE rather
+// than taken from the derivation, so a move's reset (every unit again) and a settled position
+// (only what the instance lacks) are the same computation.
+func (a *Agent) shipUnits(up Upload, s ocStream, st *StreamState) (int, error) {
+	if len(st.Pending) > 0 {
+		at, err := a.Sink.Position(up, s.name)
+		if err != nil {
+			return 0, err
+		}
+		was := st.Cursor
+		if !st.reconcile(at) {
+			return 0, &UnresumableError{StoredTo: at}
+		}
+		if at != was {
+			a.logf("resume %s/%s at %s: matched against a sent, unacknowledged write", up.Root, s.name, at)
+		}
+	}
+	todo := diffUnits(s.all, st.Units)
+	if len(todo) == 0 {
+		return 0, nil
+	}
+	recs := make([]Record, 0, len(todo))
+	plan := make([]PendingUnit, 0, len(todo))
+	cur := st.Cursor
+	for _, u := range todo {
+		r := a.redactLine(u.Key+"@"+digest(u.Raw)[:12], u.Raw)
+		cur = chainCursor(cur, u.Key, r.Rec)
+		r.End = cur
+		recs = append(recs, r)
+		plan = append(plan, PendingUnit{Key: u.Key, Digest: digest(u.Raw), End: cur})
+	}
+	st.Pending = plan
+	if err := a.checkpoint(); err != nil {
+		return 0, fmt.Errorf("capture: the write's plan could not be saved, so it is not sent: %w", err)
+	}
+	up.From = st.Cursor
+	a.rechecks(&up, st, recs)
+	n, err := a.Sink.Records(up, s.name, recs)
+	settled(st, recs[:n])
+	if n > 0 {
+		for _, done := range plan[:n] {
+			st.Units[done.Key] = done.Digest
+		}
+		// The instance is known to be at this cursor; what is left of the plan still chains from it.
+		st.Cursor, st.Pending = plan[n-1].End, plan[n:]
+		if n == len(plan) {
+			st.Pending = nil
+		}
+	}
+	return n, err
 }
