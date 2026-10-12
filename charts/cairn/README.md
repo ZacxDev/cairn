@@ -10,7 +10,8 @@ README it replaces.
 ./charts/cairn/test.sh            # needs helm; nix-shell -p kubernetes-helm
 helm template rel charts/cairn \
   --set storage.existingClaim=cairn-data \
-  --set tokenFile.secretName=cairn-token
+  --set tokenFile.secretName=cairn-token \
+  --set 'trustedProxies[0]=192.0.2.0/24'
 ```
 
 ## What it refuses, and why each one is here
@@ -21,6 +22,8 @@ helm template rel charts/cairn \
 | `tokenFile.secretName` required | the binary refuses to start without a token file and **falls back to `/run/secrets/subsystem-store/token`**, so a manifest that "sets nothing" is really mounting a secret at that default path |
 | `trustedProxies` wider than /24 | the binary itself refuses a /16 (*"/16 covers 65536 peers; the floor is /24"*). ⚠ And listing every /24 inside a /16 is **that same /16 respelled** — it satisfies the floor while defeating its point |
 | a bare address in `trustedProxies` | a host where a network belongs |
+| an EMPTY `trustedProxies` | both binaries exit 78 without `CAIRN_TRUSTED_PROXIES` on a reachable bind — `cairn-server` always, `cairn-ui` on any non-loopback one, and this chart binds `0.0.0.0` — so an empty list installs two crash-looping pods. Measured by running both |
+| `ui.replicas` above 1 | the session table is a file on a per-pod `emptyDir` (below), so a cookie one replica issued is unknown to the next: random sign-outs behind a Deployment reporting Ready |
 | both workloads disabled | a release that renders nothing is a typo, not a configuration |
 
 ## What it hardcodes, and why those are NOT values
@@ -49,6 +52,12 @@ value they could take other than this one is a known outage:
   ⚠ **On hostPath the wrong one silently works**, which is exactly why it
   survives a port between the two clusters. The claim reference is emitted from
   one helper with no knob so it cannot grow the flag.
+- **A writable `emptyDir` at `/var/lib/cairn-ui`, and `CAIRN_UI_SESSION_FILE`
+  set explicitly into it.** The root filesystem is read-only and the UI's
+  browser session table defaults to `/var/lib/cairn-ui/sessions`; without a
+  writable volume there the binary **exits 78 at startup** ("mount a writable
+  volume for it"). ⚠ An `emptyDir` means a pod restart signs every browser out —
+  the price of not owning a second claim.
 - **The NetworkPolicy's port list, derived from the same `enabled` flags the
   Deployments use.** A namespace-wide `podSelector: {}` covers a new pod the
   instant it exists — by denying everything — so a UI added on a second port

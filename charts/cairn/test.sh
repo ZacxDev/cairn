@@ -4,7 +4,7 @@
 # guard nobody watched refuse is decoration.
 set -u
 C="$(cd "$(dirname "${BASH_SOURCE[0]}")" && CDPATH= pwd -P)"
-OK="--set storage.existingClaim=cairn-data --set tokenFile.secretName=cairn-token"
+OK="--set storage.existingClaim=cairn-data --set tokenFile.secretName=cairn-token --set trustedProxies[0]=192.0.2.0/24"
 pass=0; fail=0
 
 t_render() {  # label, extra-args  -> MUST render
@@ -32,6 +32,7 @@ echo "=== POSITIVE CONTROL — the happy path must render ==="
 t_render "complete values render" ""
 t_render "trustedProxies at /24 accepted" "--set trustedProxies[0]=192.0.2.0/24"
 t_render "ui disabled still renders the store" "--set ui.enabled=false"
+t_render "ui.replicas is not checked when ui is off" "--set ui.enabled=false --set ui.replicas=2"
 
 echo
 echo "=== NEGATIVE CONTROLS — each guard must refuse, with ITS OWN message ==="
@@ -40,10 +41,12 @@ t_refuse "missing tokenFile.secretName"  "--set storage.existingClaim=c" "tokenF
 t_refuse "trustedProxies /16 refused"    "$OK --set trustedProxies[0]=192.0.2.0/16" "wider than /24"
 t_refuse "bare address refused"          "$OK --set trustedProxies[0]=192.0.2.1" "not CIDR notation"
 t_refuse "both workloads disabled"       "$OK --set store.enabled=false --set ui.enabled=false" "no workload at all"
+t_refuse "empty trustedProxies refused"  "--set storage.existingClaim=c --set tokenFile.secretName=t" "trustedProxies is required"
+t_refuse "ui.replicas=2 refused"         "$OK --set ui.replicas=2" "ui.replicas must be 1"
 
 echo
 echo "=== the rendered output must CARRY the landmine answers ==="
-R=$(helm template rel "$C" $OK --set trustedProxies[0]=192.0.2.0/24 2>/dev/null)
+R=$(helm template rel "$C" $OK 2>/dev/null)
 chk() { n=$(printf '%s' "$R" | grep -c "$2"); if [ "$n" -ge "$3" ]; then echo "  ✅ $1 ($n)"; pass=$((pass+1)); else echo "  🔴 $1 — found $n, want >=$3"; fail=$((fail+1)); fi; }
 chk "enableServiceLinks: false on both pods" 'enableServiceLinks: false' 2
 chk "explicit CAIRN_UI_PORT"                 'CAIRN_UI_PORT' 1
@@ -51,6 +54,9 @@ chk "explicit CAIRN_PORT"                    'name: CAIRN_PORT' 1
 chk "/healthz is the only probe path"        'path: /healthz' 4
 chk "UI mount is readOnly"                   'readOnly: true' 3
 chk "netpol names both ports"                'port: 810' 2
+chk "UI session file set explicitly"        'name: CAIRN_UI_SESSION_FILE' 1
+chk "UI session dir is a writable emptyDir" 'mountPath: /var/lib/cairn-ui$' 1
+chk "sessions volume is an emptyDir"        'emptyDir: {}' 1
 
 echo
 echo "=== 🔴 THE ONE THAT MATTERS: no readOnly on the CLAIM REFERENCE ==="

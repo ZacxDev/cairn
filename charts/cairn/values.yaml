@@ -34,6 +34,8 @@ ui:
   # not need it, and the NetworkPolicy below narrows accordingly.
   enabled: true
   port: 8103
+  # 🔴 MUST BE 1 AND THE CHART REFUSES ANYTHING ELSE: the session table is a file on
+  # a per-pod emptyDir, so a second replica would not know the first one's cookies.
   replicas: 1
   resources: {}
 
@@ -62,6 +64,8 @@ tokenFile:
 # and listing every node /24 of a /16 is that same /16 respelled — it satisfies
 # the floor while defeating its stated point. Tightness is the property, not the
 # prefix length.
+# 🔴 AND IT IS REQUIRED: both binaries refuse to start with it empty on a reachable
+# bind, so the chart refuses to render with it empty.
 trustedProxies: []
 
 networkPolicy:

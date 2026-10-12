@@ -44,6 +44,26 @@ node /24 inside a /16 is the same /16 respelled: it satisfies the floor while
 defeating the point. This checks the PREFIX LENGTH, which is the property, and
 not the count of entries, which is not.
 */}}
+{{/*
+🔴 AN EMPTY LIST IS REFUSED TOO, BECAUSE BOTH BINARIES REFUSE IT — MEASURED BY RUNNING
+THEM. `cairn-server` exits 78 without `CAIRN_TRUSTED_PROXIES` whatever its bind
+address ("there is deliberately no default"), and `cairn-ui` exits 78 without it on
+any non-loopback bind, which `0.0.0.0` here always is. A chart that rendered an empty
+list would install two pods that crash-loop, so the refusal moves to render time.
+*/}}
+{{- if not .Values.trustedProxies -}}
+{{- fail "cairn: trustedProxies is required. Both binaries refuse to start without CAIRN_TRUSTED_PROXIES when reachable from outside the pod (cairn-server always; cairn-ui on any non-loopback bind, and this chart binds 0.0.0.0), so an empty list renders two pods that crash-loop. List the network(s) of the proxy that fronts them, /24 or narrower." -}}
+{{- end -}}
+
+{{/*
+🔴 ONE UI REPLICA, BECAUSE THE SESSION TABLE IS A FILE ON A PER-POD VOLUME. A cookie
+issued by one replica is unknown to another, so a second replica signs browsers out
+at random, and a Deployment reporting 2/2 Ready gives no sign of it.
+*/}}
+{{- if and .Values.ui.enabled (gt (int .Values.ui.replicas) 1) -}}
+{{- fail "cairn: ui.replicas must be 1. The UI keeps its browser session table in a file on a per-pod emptyDir, so a session issued by one replica is unknown to the next and sign-ins break at random while every pod reports Ready." -}}
+{{- end -}}
+
 {{- range .Values.trustedProxies -}}
   {{- $cidr := . -}}
   {{- $parts := splitList "/" $cidr -}}
