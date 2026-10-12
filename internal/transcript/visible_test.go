@@ -404,6 +404,35 @@ func TestAnUnscannedEntryPutsItsScopeInV(t *testing.T) {
 	}
 }
 
+// TestARepairedEntryGivesTheTranscriptBack (#261 round 3): an unscanned scope is a property of the
+// STORE as it is now — any scope holding a malformed entry — not of the session, so it must not be
+// KEPT the way a found trailer is. Round 2 folded it into the grow-only `meta.Written`, and one
+// transient malformed file then hid every transcript a walk ran over during it, from every
+// non-owner, forever after the repair. The control: during the damage the reader of alpha alone is
+// refused (the unscanned scope is in `V`), and the session's own written half is still kept.
+//
+// RED on #261 round 2's head (6dd486e): after the repair `one` was still refused, and
+// meta.Written held delta-notes, a scope s-only-04 never wrote.
+func TestARepairedEntryGivesTheTranscriptBack(t *testing.T) {
+	w := visBuild(t)
+	broken := filepath.Join(w.store, "delta-notes", "broken.md")
+	if err := os.WriteFile(broken, []byte("no front matter here\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if w.sees(t, w.viewers["one"], "s-only-04") {
+		t.Fatal("CONTROL: during the damage the reader of alpha-notes alone still sees s-only-04")
+	}
+	if err := os.Remove(broken); err != nil {
+		t.Fatal(err)
+	}
+	if !w.sees(t, w.viewers["one"], "s-only-04") {
+		t.Error("after the malformed entry was repaired the reader of alpha-notes is still refused s-only-04")
+	}
+	if m, _ := w.arc.ReadMeta("s-only-04"); !slices.Equal(m.Written, []string{"alpha-notes"}) {
+		t.Errorf("meta.Written = %v, want only the scope s-only-04 wrote, [alpha-notes]", m.Written)
+	}
+}
+
 // TestARewrittenEntryCannotShrinkV (#261 round 2): the written half of `V` is a walk of the store as
 // it is NOW, and a trailer leaves the store when its entry is rewritten without it (a put, a hygiene
 // pass). s-both-08 wrote alpha and beta; `one` reads alpha only and is refused. Rewriting

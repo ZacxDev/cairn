@@ -534,11 +534,16 @@ type Meta struct {
 	Declared []string `json:"declared_scopes"`
 	// Derived is the pod's own `R_header ∪ F` over the stored records and text blobs ([derive]).
 	Derived []string `json:"derived_scopes"`
-	// Written is every `W_trailer` scope a store walk has EVER found for the session (and every
-	// scope a walk could not fully scan), grow-only ([Archive.RecordWritten]). The walk itself
+	// Written is every `W_trailer` scope a store walk has EVER found for the session — a scope
+	// where its trailer was actually seen — grow-only ([Archive.RecordWritten]). The walk itself
 	// answers about the store as it is NOW, and a trailer can leave it — an entry rewritten by a put
 	// or a hygiene pass without the session's trailer — so a set recomputed per view SHRANK, turning a
 	// refusal into a 200 (#261 round 2). Absent in a meta written before it existed: empty.
+	//
+	// 🔴 A scope the walk could NOT fully scan is NOT kept here. Round 2 kept it, and it is a
+	// property of the store (any scope holding a malformed entry), not of the session: one transient
+	// malformed file then hid every transcript walked during it, permanently (#261 round 3). The
+	// reader puts such a scope in `V` for the view that saw it, and only while it lasts.
 	Written []string `json:"written_scopes,omitempty"`
 	// Children is every opencode child id uploaded as a `child:` stream (decision 7: trailers
 	// naming the child count toward the root's `V`).

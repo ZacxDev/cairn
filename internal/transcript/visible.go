@@ -156,8 +156,8 @@ func writtenWithin(storeRoot string, within store.ScopeSet, ids []string) (Writt
 // store whenever its entry is rewritten without it (a put, a hygiene pass), and a walk then no
 // longer finds that scope. This used to read "the one direction every part of this set refuses",
 // and the written half did not refuse it: it was recomputed per view and never kept, so rewriting
-// one entry turned a refusal into a 200 (#261 round 2). [Store.View] now folds every walk into the
-// grow-only `meta.Written`, which this unions in.
+// one entry turned a refusal into a 200 (#261 round 2). [Store.View] now folds every walk's FOUND
+// scopes into the grow-only `meta.Written`, which this unions in.
 //
 // ⚠ WHAT IS STILL OPEN: a trailer removed before ANY walk saw it — no non-owner view between the
 // write and the rewrite — was never recorded, so it is still lost. Persisting narrows the window
@@ -166,7 +166,9 @@ func writtenWithin(storeRoot string, within store.ScopeSet, ids []string) (Writt
 // 🔴 A SCOPE THE WALK COULD NOT FULLY SCAN IS IN `V` TOO. `touch` reports such a scope's edges as a
 // LOWER bound: a trailer in a malformed or unreadable entry is not seen, so the scope counts as
 // written — which costs a viewer who cannot read it the transcript, and costs a viewer who can
-// nothing.
+// nothing. ⚠ ONLY WHILE THE DAMAGE LASTS: `written.Unscanned` comes from THIS walk and is never
+// kept in `meta.Written` — a malformed file is a fact about the store, not about the session, and
+// keeping it made one transient file a permanent refusal (#261 round 3).
 func VisibilitySet(meta *archive.Meta, written Written) []string {
 	out := slices.Concat(written.Scopes, written.Unscanned, meta.Written, meta.Derived, meta.Declared)
 	slices.Sort(out)
@@ -263,9 +265,17 @@ func (s *Store) View(viewer Viewer, root string) (*View, error) {
 		if err != nil {
 			return nil, err
 		}
-		// Keep what this walk found, so a trailer that later leaves the store cannot shrink `V`.
-		// A failure to record is a failure to decide: nil, the same as any other error here.
-		if meta, err = s.archive.RecordWritten(meta.Root, slices.Concat(written.Scopes, written.Unscanned)); err != nil || meta == nil {
+		// Keep the scopes where this walk FOUND the session's trailer, so a trailer that later
+		// leaves the store cannot shrink `V`. A failure to record is a failure to decide: nil, the
+		// same as any other error here.
+		//
+		// 🔴 NEVER `written.Unscanned`. It is a property of the whole STORE as it is now (any scope
+		// holding an entry the walk cannot scan), not of this session, so keeping it turned one
+		// TRANSIENT malformed file into a permanent refusal of every transcript a walk ran over
+		// while it lasted — repair did not give them back (#261 round 3,
+		// `TestARepairedEntryGivesTheTranscriptBack`). It is in `v` below for THIS view only,
+		// which is the fail-closed answer while the damage lasts.
+		if meta, err = s.archive.RecordWritten(meta.Root, written.Scopes); err != nil || meta == nil {
 			return nil, err
 		}
 		v = VisibilitySet(meta, written)
