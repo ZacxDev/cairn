@@ -37,7 +37,7 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
 - 🔴 **CAPTURE IS UNARMED.** Still blocking: S11 (client read ledger) is unbuilt. NOT blocking any
   more: O15's held-back gate — waived as an arming gate by O17, kept as a measurement (last score
   `leaks caught=157/190 clean damaged=18/175`, 82.6%, round-6 head); arming preconditions
-  **AP1–AP3** — closed by #PRNUM (transcript-dir ownership + state-path refusal; a 4 MiB cap on an
+  **AP1–AP3** — closed by #258 (transcript-dir ownership + state-path refusal; a 4 MiB cap on an
   assembled record, 413; meta-less sessions and idle frames swept; names/cursors re-checked; the
   owner re-asked per request); **AP4** — now a re-measure-and-record step on the commit being
   armed, not a gate. Arming itself stays the operator's act (`-arm-transcript-capture`).
@@ -49,7 +49,7 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
 1. **(done) #216 redactor** — merged `7ca2e25` under O16; capture unarmed. forcing: security —
    the redactor is the only control between raw transcripts and the store (O1).
 2. **S11** (client read ledger) next; then **S4–S10** per the plan. S3 is DONE (#224). Arming needs
-   S11 and the AP4 re-measure-and-record step (O15's gate waived by O17; AP1–AP3 closed by #PRNUM).
+   S11 and the AP4 re-measure-and-record step (O15's gate waived by O17; AP1–AP3 closed by #258).
    forcing: user — operator chose the build.
 3. **(done) #215 follow-through** — delete the now-unused `zach/transcripts-s0`, `-s1`, `-s2` and
    `-s3` branches (every PR based on them is merged). forcing: user — operator asked for S0–S2.
