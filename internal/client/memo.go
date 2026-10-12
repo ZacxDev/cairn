@@ -47,6 +47,16 @@ import (
 // memoStatusPrefix begins `memo-check`'s FIRST stderr line (decision 7).
 const memoStatusPrefix = "memo-status="
 
+// memoSendScanNotes is `memo-send --help`'s statement of what the send-time secret scan CANNOT
+// catch (decision 11; `memo.CheckSend`'s doc says the same). The scan refuses only the confident
+// rules' shapes, so a sender reading only `--help` would otherwise take a clean send for a clean
+// memo. Pinned as one whole string by `TestMemoSendHelpSaysWhatTheScanCannotCatch`.
+const memoSendScanNotes = "The send-time secret scan refuses only a credential recognisable by its own shape\n" +
+	"(a PEM private key, a vendor-prefixed token, a JWT, an Authorization or Bearer value,\n" +
+	"a password in a URL). Everything else goes through: a password in prose, a short or\n" +
+	"unnamed token, an unprefixed hex secret, any novel format. Never put a secret in a\n" +
+	"memo; if one gets through, `cairn memo-retract` it at once."
+
 // memoTTLDays is the `<n>d` spelling `--ttl` accepts beside Go's own durations.
 const memoTTLDays = 24 * time.Hour
 
