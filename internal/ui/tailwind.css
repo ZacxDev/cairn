@@ -1332,9 +1332,8 @@
     }
 
     /* 🔴 THE GENERIC FIELD RULE ABOVE LOSES TO A FORM'S OWN FIELD RULE, so each form that sizes its
-     * fields with `text-sm` restates the 16px here. `.memo-send textarea` and `.memo-send
-     * input[type="number"]` are (0,2,1) against the generic rule's (0,1,1), and `textarea` was in
-     * no rule at all: both memo fields rendered 14px at the touch rungs — measured by `uiaudit`'s
+     * fields with `text-sm` restates the 16px here. `.memo-send input[type="number"]` is (0,2,1)
+     * against the generic rule's (0,1,1), and `textarea` was in no generic rule at all: both memo fields rendered 14px at the touch rungs — measured by `uiaudit`'s
      * memo-world walk (clause (f)), which is the first capture of the send form. ⚠
      * `.team-link input[type="number"]` has the same specificity shape and is restated with them,
      * but NO walk captures it (the team-link form needs a database the journal world does not
@@ -1343,10 +1342,6 @@
     .memo-send input[type="number"],
     .team-link input[type="number"] {
       font-size: max(16px, 1em);
-    }
-
-    .memo-send input[type="number"] {
-      @apply min-h-11;
     }
 
     /* B3 — the bell was 49×22 in a row of badges. */

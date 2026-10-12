@@ -435,11 +435,22 @@ func TestTheMemosTabInARealBrowser(t *testing.T) {
 		if err := refuseWalkRegressions(captures); err != nil {
 			t.Fatalf("memos clause (f) walk: the populated memos tab fails the walk's refusals: %v", err)
 		}
-		violations := 0
+		// 🔴 AND EVERY AXE VIOLATION IS REFUSED HERE, WHICH `refuseWalkRegressions` DOES NOT DO: it
+		// refuses only an axe that did not run and the target-size rule, because the walk hands every
+		// other rule to the hub's baseline. These captures never reach the hub, so without this a new
+		// violation on the populated tab would be a number in a log line. Pinned at ZERO because zero
+		// is what this tab measured at all five rungs when the clause was written.
+		var axe []string
 		for _, c := range captures {
-			violations += len(c.Violations)
+			for _, v := range c.Violations {
+				axe = append(axe, fmt.Sprintf("%s: %s (%s, %d node(s))", c.Viewport.Name, v.ID, v.Impact, v.Nodes))
+			}
 		}
-		t.Logf("memos clause (f) walk: %d capture(s), %d axe violation(s) reported, screenshots in %s", len(captures), violations, artifacts)
+		if len(axe) > 0 {
+			t.Fatalf("memos clause (f) walk: AXE VIOLATIONS on the populated memos tab, %d finding(s) — the hub never sees "+
+				"these captures, so this clause is the only place they can go red:\n    %s", len(axe), strings.Join(axe, "\n    "))
+		}
+		t.Logf("memos clause (f) walk: %d capture(s), 0 axe violations, screenshots in %s", len(captures), artifacts)
 	})
 }
 

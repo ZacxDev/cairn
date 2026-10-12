@@ -76,9 +76,10 @@ CONTROL_MARK = "CONTROL:"
 #: ⚠ THE OPTIONAL NEEDLE IS FOR A CLAUSE THAT CAN FAIL MORE THAN ONE WAY. Clause (f) fails on its
 #: positive control OR on any of the walk's refusals, so "(f) went red" alone cannot say the guard a
 #: sabotage targets is the one that fired; the needle is text only THAT guard prints, and it must be
-#: in the run's output too. The three (f) rows are its positive control (the listing gone: the walk
-#: would otherwise measure an empty tab) and the two defects the clause found on its first run, each
-#: reverted in the GENERATED stylesheet the binary embeds — `app.css`, not `tailwind.css`, because the
+#: in the run's output too. The four (f) rows are its positive control (the listing gone: the walk
+#: would otherwise measure an empty tab), its own axe refusal (a send-form field losing its label),
+#: and the two defects the clause found on its first run, each reverted in the GENERATED stylesheet
+#: the binary embeds — `app.css`, not `tailwind.css`, because the
 #: binary reads only the former.
 SABOTAGES = (
     ("listing-oldest-first", "a_seeded", "internal/ui/memos.go",
@@ -110,6 +111,10 @@ SABOTAGES = (
      "gap: var(--spacing);\n    overflow-wrap: anywhere;\n  }\n  .link-targets, .link-log {",
      "gap: var(--spacing);\n  }\n  .link-targets, .link-log {",
      "HORIZONTAL OVERFLOW"),
+    ("memo-subject-unlabelled", "f_walk", "internal/ui/memos.go",
+     'h.Label(h.For("memo-subject"), g.Text("Subject")),',
+     'h.Span(g.Text("Subject")),',
+     "AXE VIOLATIONS on the populated memos tab"),
     ("memo-fields-zoom-on-touch", "f_walk", "internal/ui/app.css",
      '.memo-send textarea, .memo-send input[type="number"], .team-link input[type="number"] {',
      ".memo-send-sabotaged {",

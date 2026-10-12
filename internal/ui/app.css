@@ -1759,9 +1759,6 @@
     .memo-send textarea, .memo-send input[type="number"], .team-link input[type="number"] {
       font-size: max(16px, 1em);
     }
-    .memo-send input[type="number"] {
-      min-height: calc(var(--spacing) * 11);
-    }
     .bell button[type="submit"] {
       padding-block: 0px;
     }

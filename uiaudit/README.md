@@ -771,13 +771,13 @@ without the exclusion: 55 declared against 54 listed, which that step refuses.
 | `c_draft` | a subject the browser's `maxlength` ACCEPTS (61 two-byte letters = 61 UTF-16 units) and the store refuses (122 bytes) comes back in the form with what was typed |
 | `d_retract` | the Retract button submits: that row becomes its tombstone line, text gone, button gone; the other memo is untouched |
 | `e_reader` | the read-only viewer sees the tab and the same memos, the read-only note, no form and no Retract button — beside an owner who, on the same page, has both |
-| `f_walk` | the WALK's capture of the populated tab (owner's view, plus one memo whose subject and text are each ONE unbroken token) at every rung of `Viewports`: axe, layout, the touch measurements, a screenshot — refused by `refuseWalkRegressions`, the function `run` calls, never a copy. 🔴 Behind a POSITIVE CONTROL at every rung: the page each capture measured lists both named memos whole and lays out the send form, so a capture of an EMPTY tab cannot pass |
+| `f_walk` | the WALK's capture of the populated tab (owner's view, plus one memo whose subject and text are each ONE unbroken token) at every rung of `Viewports`: axe, layout, the touch measurements, a screenshot — refused by `refuseWalkRegressions`, the function `run` calls, never a copy, PLUS any axe violation at all (that function hands general axe rules to the hub, which never sees these captures; pinned at the 0 measured). 🔴 Behind a POSITIVE CONTROL at every rung: the page each capture measured lists both named memos whole and lays out the send form, so a capture of an EMPTY tab cannot pass |
 
 🔴 **CLAUSE (f) IS THE WALK'S INSTRUMENT IN THIS WORLD, NOT THE WALK GROWING A THIRD WORLD — A
 CHOICE, AND WHY.** The other route was a database in the walk leg and a memo world booted by `run`.
 It was not taken: the walk leg is the one holding the hub secrets, `pwa_check.sh` runs that same walk
 and would need a database too, and the hub would gain a third world's pages on every push. Here the
-tab gets every walk signal — `Browser.CaptureTarget` at all five widths, both touch rungs touch — in
+tab gets every walk signal — `Browser.CaptureTarget` at all five widths, the two touch rungs emulated — in
 the one leg that already has a database, and nothing the walk pushes moves. ⚠ What that costs: the
 populated tab is NOT in the hub's visual diff or its axe baseline; its captures are a CI artifact
 (`uiaudit-memos-captures`) and its refusals a clause verdict.
@@ -786,8 +786,8 @@ populated tab is NOT in the hub's visual diff or its axe baseline; its captures 
 the generated `app.css` to keep them caught.** (1) A memo whose subject or text is one unbroken token
 made the PAGE scroll sideways at every width up to 1440px (`scrollWidth=1560 > innerWidth=390` at
 mobile): `.memo-list` now carries `wrap-anywhere`. (2) `#memo-body` and `#memo-ttl` rendered 14px at
-both touch rungs — the coarse-pointer 16px rule is (0,1,1) and `.memo-send`'s own field rule (0,2,1)
-beat it, and `textarea` was in no rule at all. ⚠ `.team-link input[type="number"]` has the same
+both touch rungs — the coarse-pointer 16px rule is (0,1,1), `.memo-send input[type="number"]` (0,2,1)
+beat it, and `textarea` was in no generic rule at all. ⚠ `.team-link input[type="number"]` has the same
 shape and is restated in the same rule, but no world captures that form (it needs a database), so
 that half is read off the generated CSS, not measured.
 
@@ -816,13 +816,14 @@ memos_check: sabotage reader-shown-the-send-form     CAUGHT by e_reader
 memos_check: sabotage reader-shown-retract-buttons   CAUGHT by e_reader
 memos_check: sabotage walk-sees-an-empty-tab         CAUGHT by f_walk (also red: a_seeded b_send d_retract e_reader)
 memos_check: sabotage unbroken-memo-overflows        CAUGHT by f_walk
+memos_check: sabotage memo-subject-unlabelled        CAUGHT by f_walk
 memos_check: sabotage memo-fields-zoom-on-touch      CAUGHT by f_walk
-SUMMARY memos-check-self-test: sabotaged=10 caught=10
+SUMMARY memos-check-self-test: sabotaged=11 caught=11
 ```
 
 Each is caught by its OWN clause's message — and each (f) row also by the text only ITS guard prints
-(the positive control's "did not see a POPULATED memos tab", "HORIZONTAL OVERFLOW", "INPUT FONT UNDER
-16px"), since (f) can fail several ways; "also red" is another clause that needs what the sabotage
+(the positive control's "did not see a POPULATED memos tab", "HORIZONTAL OVERFLOW", "AXE VIOLATIONS
+on the populated memos tab", "INPUT FONT UNDER 16px"), since (f) can fail several ways; "also red" is another clause that needs what the sabotage
 removed. The sabotages run on ONE scratch copy with no `.git` (`tests/testlib/mutant_tree`), each edit
 restored and the restore verified by digest. With no chromium the script exits 2, never 0.
 

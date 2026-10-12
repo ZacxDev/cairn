@@ -114,12 +114,12 @@ def test_the_memos_leg_runs_the_tagged_browser_test_through_its_one_runner():
     assert 'TAG = "memobrowser"' in runner
     assert re.findall(r'^    "([a-z]_[a-z]+)": "memos clause \(', runner, re.M) == clauses
     sabotages = re.findall(r'^    \("[a-z-]+", "([a-z]_[a-z]+)", ', runner, re.M)
-    assert len(sabotages) == 10 and set(sabotages) == set(clauses), sabotages
+    assert len(sabotages) == 11 and set(sabotages) == set(clauses), sabotages
 
     job = JOBS["uiaudit"]
     (step,) = [s for s in _steps(job) if _label(s).startswith("memos_check.py")]
     assert "./uiaudit/memos_check.py --self-test" in step
-    assert "'SUMMARY memos-check-self-test: sabotaged=10 caught=10'" in step
+    assert "'SUMMARY memos-check-self-test: sabotaged=11 caught=11'" in step
     assert '[ "$passes" != "6" ]' in step
     # The count regex must reach the LAST clause's letter: a `[a-e]` left behind when (f) was added
     # counts five of six PASS lines and refuses an honest run.

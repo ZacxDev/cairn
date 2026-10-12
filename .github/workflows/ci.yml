@@ -2382,7 +2382,7 @@ jobs:
       # capture of the populated tab at every rung — axe, touch, overflow, a screenshot — refused by
       # the walk's own `refuseWalkRegressions`; its screenshots are uploaded by the step after this.
       #
-      # ⚠ THE SELF-TEST RUNS FIRST: ten sabotages on a scratch copy, each required to turn its OWN
+      # ⚠ THE SELF-TEST RUNS FIRST: eleven sabotages on a scratch copy, each required to turn its OWN
       # clause red with that clause's own message, behind a positive control on the unedited copy.
       # Then the plain run, whose six PASS lines are COUNTED here rather than its exit code read.
       # Exit 2 is "could not vouch" and fails the step exactly like 1 — never a skip.
@@ -2394,8 +2394,8 @@ jobs:
           set -uo pipefail
           rc=0
           ./uiaudit/memos_check.py --self-test 2>&1 | tee /tmp/memos-self.txt || rc=$?
-          if [ "$rc" != "0" ] || ! grep -qx 'SUMMARY memos-check-self-test: sabotaged=10 caught=10' /tmp/memos-self.txt; then
-            echo "::error::memos_check.py --self-test exited $rc without 'sabotaged=10 caught=10' (1 = a sabotage was not caught, 2 = could not vouch)"
+          if [ "$rc" != "0" ] || ! grep -qx 'SUMMARY memos-check-self-test: sabotaged=11 caught=11' /tmp/memos-self.txt; then
+            echo "::error::memos_check.py --self-test exited $rc without 'sabotaged=11 caught=11' (1 = a sabotage was not caught, 2 = could not vouch)"
             exit 1
           fi
           rc=0
