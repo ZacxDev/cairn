@@ -36,6 +36,7 @@ pattern that no longer matches.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -142,7 +143,22 @@ SABOTAGE: dict[str, tuple[str, list[str]]] = {
     # with an empty stdout where the oracle prints its help at 0 — so this one mutant exercises
     # BOTH of that mode's assertions at once.
     "help-top-level": ("replace", ["telepathy"]),
+    # the READ LEDGER (S11): an `env` sabotage, and it has to be one. The ledger is INVISIBLE to
+    # stdout, stderr and the exit code by contract, so no argv change can move it without moving
+    # one of those first — the row would then fail on THEM and vouch for nothing about the ledger
+    # comparison. Blanking the Go side's session id leaves every byte the other three comparisons
+    # read identical and writes no ledger file at all: only the ledger comparison can see it.
+    "ledger-recall-bare": ("env", ["CLAUDE_CODE_SESSION_ID="]),
 }
+
+#: The session id the `ledger` rows hand BOTH clients (decision 3a), and the one the leak check
+#: exports into the harness's OWN environment, where `env_pin` must clear it.
+LEDGER_SESSION = "parity-ledger-0001"
+LEAK_SESSION = "parity-leak-sentinel"
+#: What a ledger record may differ in between the two clients, each a declared licence: the wall
+#: clock (`at`), and which client wrote it (`client`, `client_version`) — the second is the one
+#: field that MUST differ.
+LEDGER_NORMALISED = ("at", "client", "client_version")
 
 
 # =============================================================================
@@ -298,6 +314,17 @@ class Case:
     #: direction, and no `unreadable_in_cache` row could reach it: chmodding the file leaves
     #: the directory readable.
     unreadable_dir_in_cache: str | None = None
+    #: Run both clients WITH a session id (`LEDGER_SESSION`) and each with its OWN scratch
+    #: `XDG_STATE_HOME`, then compare the two READ LEDGER files they wrote, record for record,
+    #: with `LEDGER_NORMALISED` replaced (S11, decision 3a).
+    #:
+    #: 🔴 A COMPARISON OF ITS OWN, BECAUSE THE LEDGER IS INVISIBLE TO THE OTHER THREE BY
+    #: CONTRACT. Both clients swallow every ledger error and print nothing about it, so a client
+    #: that recorded the FLAG instead of the resolved scope, recorded nothing, or recorded a
+    #: different instance would PASS every stdout/stderr/exit row in this file. The row's
+    #: stdout, stderr and exit code are still compared as usual — a session id must not move
+    #: them either.
+    ledger: bool = False
 
 
 def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
@@ -1034,6 +1061,47 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              ["put", "--scope", "gamma-notes", "--ref", "gauge-api", "--file", "<PUTFILE>"],
              no_cache_flag=True,
              env={"SUBSYSTEM_STORE_CONFIG": "<MULTICFG>", "CAIRN_ROUTES": "<ROUTES2>"}),
+
+        # --- the client READ LEDGER (S11, decision 3a) ---------------------------
+        # Each row runs both clients with ONE session id and compares the ledger FILES they wrote
+        # (see `Case.ledger`). 🔴 THE PYTHON HALF IS ON THE P8 RETIREMENT LEDGER: these rows exist
+        # only while the oracle writes a ledger at all (`tests/parity/README.md`).
+        Case("ledger-recall-bare",
+             "🔴 THE RESOLVED SCOPE, NOT THE FLAG. No `--scope`, in a repository named "
+             "`alpha-notes`: each client records the scope `--repo .` DERIVED. A client that "
+             "recorded the empty flag, or nothing, prints the same digest and differs only here",
+             ["recall"], in_repo=True, ledger=True, wipe_cache=True),
+        Case("ledger-search-all-scopes",
+             "a call whose reach the client cannot enumerate records ONE `*` — the pod reads it as "
+             "an unknown scope and makes the session owner-only",
+             ["search", "lease", "--all-scopes"], ledger=True, wipe_cache=True),
+        Case("ledger-ls-entries",
+             "one record per scope LISTED, in one order on both sides (sorted by scope, whatever "
+             "order each client prints its lines in)",
+             ["ls-entries"], ledger=True, wipe_cache=True),
+        Case("ledger-validate-every-scope",
+             "no `--scope` validates every held scope, so it records every one",
+             ["validate"], ledger=True, wipe_cache=True),
+        Case("ledger-doctor",
+             "a content verb whose output names every scope: one `*`, with no instance",
+             ["doctor", "--no-sync"], ledger=True),
+        Case("ledger-routes",
+             "the scope->instance table names every routed scope: one `*`, with no instance",
+             ["routes"], env={"CAIRN_ROUTES": "<ROUTES>"}, ledger=True),
+        Case("ledger-append",
+             "a WRITE records the scope it wrote, once it is served",
+             ["append", "--scope", "alpha-notes", "--ref", "widget-cfg",
+              "--text", "a synthetic ledger bullet.", "--session", "parity-session"], ledger=True),
+        Case("ledger-sync-records-nothing",
+             "`sync` prints only banners, so neither client writes a record — the two EMPTY "
+             "ledgers agree, and the rows above are what show the comparison can see a record",
+             ["sync"], ledger=True),
+        Case("ledger-put-routed-to-a-NON-DEFAULT-instance",
+             "the record's `instance` is the ALIAS the call was routed to — `secondary` here, "
+             "where every row above records `personal`",
+             ["put", "--scope", "gamma-notes", "--ref", "gauge-api", "--file", "<PUTFILE>"],
+             no_cache_flag=True, ledger=True,
+             env={"SUBSYSTEM_STORE_CONFIG": "<MULTICFG>", "CAIRN_ROUTES": "<ROUTES2>"}),
     ]
 
 
@@ -1168,6 +1236,27 @@ def run_client(cmd: list[str], cwd: Path, env: dict[str, str]) -> Outcome:
         stdout=proc.stdout.decode("utf-8", "replace"),
         stderr=proc.stderr.decode("utf-8", "replace"),
     )
+
+
+def read_ledger_records(state: Path) -> list[dict]:
+    """Every record of `LEDGER_SESSION`'s ledger under one scratch `XDG_STATE_HOME`, in file
+    order, with `LEDGER_NORMALISED` replaced by a placeholder. A missing file is no records; a line
+    that does not parse is kept as itself, so it differs from the other side rather than vanishing."""
+    path = state / "cairn" / "read-ledger" / f"{LEDGER_SESSION}.jsonl"
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            out.append({"unparsed": line})
+            continue
+        for key in LEDGER_NORMALISED:
+            if key in rec:
+                rec[key] = f"<{key}>"
+        out.append(rec)
+    return out
 
 
 def unified(a: str, b: str, label_a: str, label_b: str) -> str:
@@ -1379,6 +1468,20 @@ def main(argv: list[str] | None = None) -> int:
             # that can. Do not "modernise" these three names without moving that claim
             # somewhere it is still made. (The POD's env above is on the NEW names: its
             # stderr is a log file nobody diffs, so the old spellings bought nothing there.)
+            # 🔴 THE READ-LEDGER LEAK CONTROL (S11): the harness EXPORTS a session id and a
+            # sentinel `XDG_STATE_HOME` into its OWN environment on every run — the state of an
+            # agent-run host — so `env_pin` must clear them or every client below appends FIXTURE
+            # scopes to a ledger. After the rows, `read-ledger` files are counted under BOTH the
+            # sentinel and every row's `HOME` (`work/home`; `HOME` is overridden below, so an
+            # exported sentinel `HOME` would never reach a client). Before `env_pin` cleared the
+            # three names this count was non-zero (the positive control, measured on S11's tree
+            # with `READ_LEDGER_ENV` emptied); a change that cleared `XDG_STATE_HOME` and not the
+            # session id writes under `work/home/.local/state/` and is caught there.
+            leak_state = work / "leak-state"
+            for name, value in (("CLAUDE_CODE_SESSION_ID", LEAK_SESSION),
+                                ("OPENCODE_SESSION_ID", LEAK_SESSION),
+                                ("XDG_STATE_HOME", str(leak_state))):
+                os.environ[name] = value
             base_env = env_pin.sanitized_env(
                 HOME=str(home),
                 CAIRN_HOST=PARITY_HOST,
@@ -1460,6 +1563,10 @@ def main(argv: list[str] | None = None) -> int:
             saw_tag_narrowing = False
             saw_tag_match = False
             saw_req_open = False
+            #: The READ LEDGER rows: how many ran, and how many records the ORACLE wrote across
+            #: them — the positive control that the ledger comparison ever compared a record.
+            ledger_rows = 0
+            ledger_records = 0
             wanted = None if args.only is None else set(args.only.split(","))
             selected = [c for c in cases(closed, hostile_port)
                         if wanted is None or c.id in wanted]
@@ -1616,6 +1723,13 @@ def main(argv: list[str] | None = None) -> int:
                     finally:
                         target.chmod(0o644)
 
+                ledger_states = {}
+                if case.ledger:
+                    env["CLAUDE_CODE_SESSION_ID"] = LEDGER_SESSION
+                    for side in ("oracle", "go"):
+                        ledger_states[side] = work / "ledger-state" / side
+                        shutil.rmtree(ledger_states[side], ignore_errors=True)
+                    env["XDG_STATE_HOME"] = str(ledger_states["oracle"])
                 py = once([sys.executable, str(ROOT / "cairn")] + shared + argv_case)
                 # 🔴 THE SABOTAGE IS APPLIED TO THE GO SIDE ONLY, AND WITH REALISTIC ARGUMENTS.
                 # A textbook mutant (an empty argv, a nonexistent binary) would prove the runner
@@ -1623,9 +1737,16 @@ def main(argv: list[str] | None = None) -> int:
                 # controlled for is the differ, and it has to be fed two well-formed runs that
                 # genuinely disagree.
                 go_argv = argv_case
+                if case.ledger:
+                    env["XDG_STATE_HOME"] = str(ledger_states["go"])
                 if args.self_test and case.id in SABOTAGE:
                     how, extra = SABOTAGE[case.id]
-                    go_argv = (argv_case + extra) if how == "append" else extra
+                    if how == "env":
+                        for pair in extra:
+                            key, _, value = pair.partition("=")
+                            env[key] = value
+                    else:
+                        go_argv = (argv_case + extra) if how == "append" else extra
                 go = once([go_binary] + shared + go_argv)
 
                 if case.compare == COMPARE_EXIT_AND_STDOUT_NONEMPTY:
@@ -1706,6 +1827,17 @@ def main(argv: list[str] | None = None) -> int:
                 py_out, go_out = norm(py.stdout), norm(go.stdout)
                 py_err, go_err = norm(py.stderr), norm(go.stderr)
                 problems = []
+                if case.ledger:
+                    py_ledger = read_ledger_records(ledger_states["oracle"])
+                    go_ledger = read_ledger_records(ledger_states["go"])
+                    ledger_rows += 1
+                    ledger_records += len(py_ledger)
+                    if py_ledger != go_ledger:
+                        problems.append(
+                            "the READ LEDGER differs\n" + unified(
+                                "\n".join(json.dumps(r, sort_keys=True) for r in py_ledger),
+                                "\n".join(json.dumps(r, sort_keys=True) for r in go_ledger),
+                                "oracle", "go"))
                 if py.rc != go.rc:
                     problems.append(f"exit {py.rc} (oracle) vs {go.rc} (go)")
                 if py_out != go_out:
@@ -1946,6 +2078,28 @@ def main(argv: list[str] | None = None) -> int:
                           "stdout, over a cache holding a fifo named `*.md`)")
                     passes += 1
 
+            # 🔴 THE LEAK CHECK (S11). Any `read-ledger` file anywhere under the world OTHER than
+            # the `ledger` rows' own scratch states is a client that wrote with a session id it
+            # was never handed — the exported sentinel leaking through `env_pin`.
+            leaked = sorted(
+                str(p.relative_to(work)) for p in work.rglob("*.jsonl")
+                if p.parent.name == "read-ledger" and "ledger-state" not in p.parts)
+            print(f"READ-LEDGER rows={ledger_rows} oracle-records={ledger_records} "
+                  f"leak-files={len(leaked)}")
+            if leaked:
+                failures.append("read-ledger-leak")
+                print("FAIL read-ledger-leak — a client wrote a read ledger the harness never "
+                      "asked for, so `env_pin` let a session id through: " + ", ".join(leaked[:5]))
+            else:
+                print("PASS read-ledger-leak (no ledger file outside the ledger rows' own states, "
+                      "with a session id and XDG_STATE_HOME exported to the harness)")
+                passes += 1
+            ledger_floor_broken = (wanted is None or ledger_rows > 0) and ledger_records == 0
+            if ledger_floor_broken and not args.self_test:
+                print("REFUSING TO VOUCH: the READ LEDGER rows compared no record at all — two "
+                      "clients that both write nothing agree on every ledger row.",
+                      file=sys.stderr)
+
             if args.self_test:
                 # 🔴 THE CONTROL IS READ AS A SET, NOT AS "SOMETHING WENT RED". Each sabotaged
                 # row exercises a DIFFERENT comparison — stdout, stderr, exit code — and a
@@ -2011,7 +2165,7 @@ def main(argv: list[str] | None = None) -> int:
                   f"dead-normalizations={len(dead)}")
             if failures:
                 print("failing: " + ", ".join(failures))
-            if floor_broken:
+            if floor_broken or ledger_floor_broken:
                 return 2
             return 1 if (failures or (dead and dead_is_fatal)) else 0
         finally:

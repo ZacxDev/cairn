@@ -549,8 +549,9 @@ func TestUploadsAreValidated(t *testing.T) {
 			_, err := g.a.AppendRecords(ownerA, up("../etc", "", "1"), "main", recs(0, 1))
 			return err
 		},
-		"the ledger stream (S11's)": func() error {
-			_, err := g.a.AppendRecords(ownerA, up("s-0001", "", "1"), "ledger", recs(0, 1))
+		// S11 made `ledger` a stream (its fold reads it); a name merely LIKE it is still refused.
+		"a stream named like the ledger": func() error {
+			_, err := g.a.AppendRecords(ownerA, up("s-0001", "", "1"), "ledger:s-0002", recs(0, 1))
 			return err
 		},
 		"a stream outside the vocabulary": func() error {

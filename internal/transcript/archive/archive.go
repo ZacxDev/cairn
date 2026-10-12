@@ -118,9 +118,10 @@ const idClass = `[A-Za-z0-9][A-Za-z0-9_.-]{0,63}`
 
 var (
 	// streamName is decision 7's stream vocabulary: the root's own `main`, a Claude Code subagent,
-	// an opencode child session. `ledger` is S11's and is refused until S11 adds its fold — a
-	// stream the pod stored and never read would be a `V` input nobody consumes.
-	streamName = regexp.MustCompile(`^(main|subagent:` + idClass + `|child:` + idClass + `)$`)
+	// an opencode child session — and S11's [LedgerStream], the client read ledger, which is
+	// accepted only because [foldLedger] reads it: a stream the pod stored and never read would
+	// be a `V` input nobody consumes.
+	streamName = regexp.MustCompile(`^(main|subagent:` + idClass + `|child:` + idClass + `|` + LedgerStream + `)$`)
 	// blobName is a persisted tool-result file's base name (`toolu_….txt`, `….pdf`).
 	blobName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 	// scopeName is a declared scope: a bounded identifier, or [Star]. An unknown NAME is not
@@ -526,6 +527,12 @@ type Meta struct {
 	Declared []string `json:"declared_scopes"`
 	// Derived is the pod's own `R_header ∪ F` — today `{*}` ([derivedScopes]).
 	Derived []string `json:"derived_scopes"`
+	// Ledger is `L(s)`: every scope the session's uploaded client read ledger names, `*` for a
+	// record that names none it can read ([foldLedger]); grow-only. LedgerRecords counts the
+	// records folded, which is what F1 ("the ledger is EMPTY") asks. Absent in a meta written
+	// before S11: empty, zero.
+	Ledger        []string `json:"ledger_scopes,omitempty"`
+	LedgerRecords int      `json:"ledger_records,omitempty"`
 	// Children is every opencode child id uploaded as a `child:` stream (decision 7: trailers
 	// naming the child count toward the root's `V`).
 	Children []string            `json:"child_ids"`
@@ -709,7 +716,7 @@ func (a *Archive) AppendRecords(who Uploader, u Upload, stream string, recs []Re
 		return Stored{}, err
 	}
 	if !streamName.MatchString(stream) {
-		return Stored{}, invalid("stream %q is not main, subagent:<id> or child:<id>", stream)
+		return Stored{}, invalid("stream %q is not main, subagent:<id>, child:<id> or ledger", stream)
 	}
 	if len(recs) == 0 || len(recs) > MaxRecords {
 		return Stored{}, invalid("a records upload carries 1–%d records, not %d", MaxRecords, len(recs))
@@ -805,6 +812,9 @@ func (a *Archive) AppendRecords(who Uploader, u Upload, stream string, recs []Re
 		return Stored{}, err
 	}
 	m.Streams[stream] = Position{StoredTo: u.To, SeqTo: seq, Bytes: size}
+	if stream == LedgerStream {
+		foldLedger(m, lines)
+	}
 	if child, ok := cutPrefix(stream, "child:"); ok && !slices.Contains(m.Children, child) {
 		m.Children = union(m.Children, []string{child})
 	}

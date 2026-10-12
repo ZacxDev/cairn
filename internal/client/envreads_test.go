@@ -294,8 +294,8 @@ func TestEveryEnvironmentReadIsInTheLedger(t *testing.T) {
 	// POSITIVE CONTROL: the discovery read the names it is meant to; a parser that found nothing
 	// would agree with an empty ledger.
 	want := []string{"CAIRN_AUDIT_GITHUB_API", "CAIRN_AUDIT_HOSTS", "CAIRN_CONFIG", "CAIRN_MIRROR_ROOT",
-		"CAIRN_ROUTES", "CAIRN_TOKEN", "CAIRN_UI_TOKEN", "CAIRN_UI_URL", "CAIRN_URL", "GH_TOKEN", "GITHUB_TOKEN",
-		"HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"}
+		"CAIRN_ROUTES", "CAIRN_TOKEN", "CAIRN_UI_TOKEN", "CAIRN_UI_URL", "CAIRN_URL", "CLAUDE_CODE_SESSION_ID",
+		"GH_TOKEN", "GITHUB_TOKEN", "HOME", "OPENCODE_SESSION_ID", "XDG_CACHE_HOME", "XDG_STATE_HOME"}
 	if !reflect.DeepEqual(EnvReads(), want) {
 		t.Fatalf("EnvReads() = %v, want the literal %v — move this list with the ledger, deliberately", EnvReads(), want)
 	}
@@ -321,7 +321,7 @@ func TestTheEnvReadLedgerCatchesItsMutants(t *testing.T) {
 			"getenv(MirrorRootEnv)", "\"\"",
 			"ledger name CAIRN_MIRROR_ROOT has NO read site"},
 		{"a ledger name added with no read", "internal/client/envreads.go",
-			"StateHomeEnv, HomeEnv}", "StateHomeEnv, HomeEnv, SyncStamp}",
+			"StateHomeEnv, HomeEnv,\n", "StateHomeEnv, HomeEnv, SyncStamp,\n",
 			"ledger name .sync-stamp has NO read site"},
 		{"getenv smuggled out as a value", "internal/client/cli.go",
 			"func MirrorRoot() string {", "func leak() func(string) string { return getenv }\n\nfunc MirrorRoot() string {",

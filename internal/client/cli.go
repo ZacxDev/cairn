@@ -703,6 +703,9 @@ func Run(env Env, argv []string) int {
 			"and no --cache was given, so there is nowhere to read or write the store cache.")
 		return ExitUsage
 	}
+	// 🔴 THE READ LEDGER IS OPENED HERE, AFTER EVERY USAGE REFUSAL ABOVE, SO A REFUSED CALL CANNOT
+	// RECORD. Each verb records at the point its content is in hand (`readledger.go`).
+	env.ledger = openReadLedger(verb.Name)
 	code, runErr := verb.Run(env, opts)
 	flushMemoWarnings(env)
 	if runErr == nil {
@@ -799,6 +802,8 @@ func Doctor(env Env, opts Options) (int, error) {
 	if refusal := refuseSharedCache(env, routing, opts, "doctor"); refusal != 0 {
 		return refusal, nil
 	}
+	// `*`: per-scope visibility and counts name every scope (decision 3a).
+	env.recordRead("", LedgerAllScopes)
 	var checks []doctor.Check
 	for _, instance := range routing.Instances {
 		rows, rowErr := doctorInstance(opts, routing, instance)

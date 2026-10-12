@@ -159,6 +159,7 @@ from subsystem_read_store import SYNC_STAMP  # noqa: E402
 # the kind of fact a test repoints. One import style for both.
 import cairn_instances  # noqa: E402
 import env_aliases  # noqa: E402
+import read_ledger  # noqa: E402
 
 # The two names that configure the default instance, in their current spelling. Each
 # reads from an exported variable OR from a key of the config file, and each has a
@@ -559,6 +560,7 @@ def _search_every_instance(
             max_hits=rc.DEFAULT_MAX_HITS,
             all_scopes=True,
         )
+        read_ledger.record(instance.alias, read_ledger.ALL_SCOPES)
         print(banner(state, detail, instance.alias))
         print()
         print(rc.render_search(report, instance=instance.alias))
@@ -1228,6 +1230,8 @@ def cmd_ls_entries(args: argparse.Namespace) -> int:
             worst = max(worst, hint)
             continue
         prefix = "" if label is None else f"[{label}] "
+        listed: list[str] = []
+        scopes: set[str] = set()
         # ⚠ THIS `glob` SWALLOWS `EACCES` ON A SCOPE DIRECTORY, AND IS NOT CHANGED
         # HERE — SAID PLAINLY SO IT IS NOT MISTAKEN FOR COVERED. `Path.glob("*/*.md")`
         # skips a mode-000 child and lists its siblings, so this verb answers **0**
@@ -1287,7 +1291,12 @@ def cmd_ls_entries(args: argparse.Namespace) -> int:
             # direction, which is a behaviour change to a verb's stdout.
             if not subsystem_resolver.is_entry_filename(path.name):
                 continue
-            print(f"{prefix}{path.parent.name}/{path.name}")
+            listed.append(f"{prefix}{path.parent.name}/{path.name}")
+            scopes.add(path.parent.name)
+        # The read ledger: one record per scope LISTED, sorted — the Go client's `listedScopes`.
+        read_ledger.record_all(instance.alias, sorted(scopes))
+        for line in listed:
+            print(line)
     return worst
 
 
@@ -1372,6 +1381,7 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
         except ValueError as exc:
             print(f"cairn: {exc}", file=sys.stderr)
             return EXIT_USAGE
+        read_ledger.record(alias, read_ledger.ALL_SCOPES if args.all_scopes else scope)
         text = rc.render_search(report, instance=label)
     else:
         # 🔴 THE DIGEST'S OWN FOOTER PRESCRIBES THESE FLAGS, so the client has to
@@ -1439,6 +1449,7 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
         except ValueError as exc:
             print(f"cairn: {exc}", file=sys.stderr)
             return EXIT_USAGE
+        read_ledger.record(alias, scope)
         text = rc.render_text(report, instance=label)
 
     # An empty scope reached through a LIVE fetch is `scope-empty`; the same
@@ -1595,6 +1606,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
             verb="validated",
             visible_scopes=[scope],
         )
+        read_ledger.record(alias, scope)
         malformed = index.malformed
         for entry in malformed:
             print(f"cairn: {scope}: malformed: {entry}", file=sys.stderr)
@@ -1966,6 +1978,7 @@ def cmd_append(args: argparse.Namespace) -> int:
         url, token, method="POST", path=quoted, body=payload,
         timeout=_store_timeout(args),
     )
+    read_ledger.record(alias, scope)
     status = headers.get("X-Store-Status", "unknown")
     revision = (headers.get("ETag") or "").strip('"')
     # 🔴 `duplicate` IS PRINTED, NOT SWALLOWED, and it exits 0. The server
@@ -2081,6 +2094,7 @@ def cmd_put(args: argparse.Namespace) -> int:
         timeout=_store_timeout(args),
         extra_headers={"If-Match": f'"{revision}"'},
     )
+    read_ledger.record(alias, scope)
     new_rev = (headers.get("ETag") or "").strip('"')
     # The instance is named unconditionally — see `cmd_append`.
     print(
@@ -2134,6 +2148,7 @@ def cmd_create(args: argparse.Namespace) -> int:
         timeout=_store_timeout(args),
         extra_headers={"If-None-Match": "*"},
     )
+    read_ledger.record(alias, scope)
     revision = (headers.get("ETag") or "").strip('"')
     # The instance is named unconditionally — see `cmd_append`.
     print(
@@ -2263,6 +2278,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     refusal = _refuse_shared_cache(args, routing, "doctor")
     if refusal is not None:
         return refusal
+    # `*`: per-scope visibility and counts name every scope (decision 3a).
+    read_ledger.record("", read_ledger.ALL_SCOPES)
     checks: list = []
     for instance in routing.instances:
         checks.extend(_doctor_instance(args, doctor, routing, instance))
@@ -2439,6 +2456,8 @@ def cmd_routes(args: argparse.Namespace) -> int:
     `Routing.alias_for` for the third direction rather than re-deriving it.
     """
     routing = _routing()
+    # `*`: the table names every routed scope (decision 3a).
+    read_ledger.record("", read_ledger.ALL_SCOPES)
     print(f"instances: {', '.join(routing.aliases)}")
     if routing.routes is None:
         print(
@@ -2784,6 +2803,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if not hasattr(args, "no_sync"):
         args.no_sync = False
+    # 🔴 AFTER `parse_args`, so a usage refusal (argparse exits 2 above) cannot record.
+    read_ledger.begin(args.cmd)
     try:
         return args.func(args)
     except cairn_instances.UnroutedScope as exc:

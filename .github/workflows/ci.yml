@@ -1315,12 +1315,13 @@ jobs:
       # guard the row exists for, so it is never scored as a kill: each row runs ONLY the
       # tests it names (`-run` over its `killer` and `extra_killers`), so a row whose named
       # killer stays green reads SURVIVED, and MISATTRIBUTED now means one narrower thing — a
-      # listed extra killer fired while the named one did not. The battery runs over NINE packages, in `PKGS` order: `internal/control`,
+      # listed extra killer fired while the named one did not. The battery runs over TEN packages, in `PKGS` order: `internal/control`,
       # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
-      # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence`, `internal/memo` —
+      # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence`, `internal/memo`, `internal/client` —
       # the model, the token-file projection, P4's identity backends, the server that authorises
       # from all of them, the pod's program, the browser surface, the browser surface's program,
-      # the presence owner predicate and scope mail's send/read/retract predicates, because a mutant in one is killed by a guard in another, the
+      # the presence owner predicate, scope mail's send/read/retract predicates and the client's read
+      # ledger (an input to the transcript visibility set), because a mutant in one is killed by a guard in another, the
       # refresh loop that bounds the adapter's declared divergence exists only in `main`, the
       # share flow is the second consumer of the same authority, the browser's startup refusals
       # are the only thing between a misconfigured deployment and a surface that serves nobody,
@@ -1467,9 +1468,13 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 126 PASS lines measured on this head: 123 cases plus THREE structural checks —
+          # 136 PASS lines measured on this head: 132 cases plus FOUR structural checks —
           # re-derived by RUNNING the harness on this tree and reading `grep -c '^PASS '`, never
           # by arithmetic on the previous literal.
+          # ⚠ 126 -> 136 WHEN S11's READ LEDGER LANDED: nine `ledger-*` rows (each also compares
+          # the two clients' ledger FILES) and a fourth structural check, `read-ledger-leak`,
+          # which counts ledger files a client wrote with a session id the harness exported into
+          # its OWN environment — `env_pin` must clear it. Its line is asserted below.
           # ⚠ 127 -> 126 WHEN `recall-tag-repeated-is-AND` WAS DELETED: `--tag` became SCALAR on
           # an operator decision, so the row comparing the two clients on a REPEATED flag has
           # nothing left to measure — a repeated scalar flag is last-wins by the same
@@ -1528,8 +1533,8 @@ jobs:
           # zero failures too; the floor is what tells a green gate from an absent one.
           # 🔴 AND IT IS RAISED WITH EVERY ROW THAT LANDS. It sat at 98 for four rows after the
           # rows were added, which is a floor that cannot see the four newest disappear.
-          if [ "$passes" -lt 126 ]; then
-            echo "REFUSING: $passes passes, and 126 were measured — the gate got smaller"
+          if [ "$passes" -lt 136 ]; then
+            echo "REFUSING: $passes passes, and 136 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then
@@ -1573,6 +1578,10 @@ jobs:
           # every corpus change.
           grep -q '^CONTENT-FLOOR live-banner=True rendered-digest=True unreadable-entry=True unreadable-scope-dir=True tag-narrowing=True tag-match=True req-open=True' /tmp/parity.txt
           grep -q 'dead-normalizations=0' /tmp/parity.txt
+          # 🔴 THE READ LEDGER (S11): every row compared at least one record (`oracle-records`
+          # non-zero — two clients that both write nothing agree on every ledger row), and NO
+          # client wrote a ledger with the session id exported into the harness's environment.
+          grep -Eq '^READ-LEDGER rows=9 oracle-records=[1-9][0-9]* leak-files=0$' /tmp/parity.txt
 
   # 🔴 P1's LAST STEP, AND IT IS ITS OWN JOB FOR THE SAME REASON THE CORPUS AND THE PARITY
   # GATE ARE: its verdict is readable on its own in the checks list, and a failure in either

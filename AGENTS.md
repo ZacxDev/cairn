@@ -240,17 +240,17 @@ renderer still ships as `packages.cairn` until the oracle is deleted, so until t
 the comparison rather than the absence of one.
 
 🔴 **THE HEADLINE READS WIDER THAN THE GATE, SO KNOW WHICH ROWS ARE LOAD-BEARING BEFORE
-TRUSTING ONE.** "123 cases, 126 PASS, 0 failures, 0 dead normalizations" is NOT 123 byte
-diffs: 92 rows compare stdout, stderr AND the exit code; 23 compare the exit code ONLY; 8
-compare the exit code plus "both sides put something on stdout" — so **31 of 123 never
+TRUSTING ONE.** "132 cases, 136 PASS, 0 failures, 0 dead normalizations" is NOT 132 byte
+diffs: 101 rows compare stdout, stderr AND the exit code; 23 compare the exit code ONLY; 8
+compare the exit code plus "both sides put something on stdout" — so **31 of 132 never
 compare output text.** Declared per row; what the corpus covers is in `tests/parity/README.md`.
 
 🔴 **TWO CLIENTS FAILING IDENTICALLY COMPARE EQUAL** — its first full run reported 72 PASS / 0
 FAIL against a pod that refused every request. Three controls stand against that, they are three
 different claims, and each refuses with exit **2** ("could not vouch", never "failed"):
 `PREFLIGHT` (the POD answers a non-empty snapshot for this token), `CONTENT-FLOOR` (the CLIENTS
-reached a live fetch and a rendered digest), and `--self-test` → `sabotaged=4 caught=4` (the differ
-goes red on stdout, on stderr, on the exit code **and** on `exit+stdout`). `--break-pod` is the
+reached a live fetch and a rendered digest), and `--self-test` → `sabotaged=5 caught=5` (the differ
+goes red on stdout, on stderr, on the exit code, on `exit+stdout` **and** on the read ledger). `--break-pod` is the
 negative control on the first. Read all three; a green without them is a green about nothing.
 
 📄 **READ ON DEMAND RATHER THAN HERE, all in `tests/parity/README.md`:** the worked example behind
