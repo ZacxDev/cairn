@@ -58,7 +58,9 @@ a file no test would otherwise read, pinned so it goes red when it moves.
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -1355,10 +1357,10 @@ PINNED_CONTROL_STEPS = {
         'rn-store/settings" echo " -> Danger Zone -> Change visibility -> P'
         'ublic" echo echo " Until then no cluster outside this repository c'
         'an pull this image," echo " which is the entire reason this workfl'
-        'ow exists." exit 1 fi echo "$out" | head -20 digest=$(printf \'%s\' '
-        '"$out" | sed -n \'s/.*"Digest": "\\([^"]*\\)".*/\\1/p\' | head -1) echo'
-        ' echo "ANONYMOUS PULL OK: $ref" echo "digest: $digest" echo "pin t'
-        'his in a deployment: $ref"'
+        'ow exists." exit 1 fi sed -n \'1,20p\' <<<"$out" digest=$(sed -n \'s/'
+        '.*"Digest": "\\([^"]*\\)".*/\\1/p\' <<<"$out" | sed -n \'1p\') echo echo'
+        ' "ANONYMOUS PULL OK: $ref" echo "digest: $digest" echo "pin this i'
+        'n a deployment: $ref"'
     ),
     GO_PROOF_STEP: (
         "set -euo pipefail ref='${{ steps.ref.outputs.image_go }}:${{ steps"
@@ -1381,10 +1383,10 @@ PINNED_CONTROL_STEPS = {
         's" echo " -> Danger Zone -> Change visibility -> Public" echo echo'
         ' " Then re-run this workflow (workflow_dispatch). Until it is done'
         ', no" echo " cluster outside this repository can pull the Go pod."'
-        ' exit 1 fi echo "$out" | head -20 digest=$(printf \'%s\' "$out" | se'
-        'd -n \'s/.*"Digest": "\\([^"]*\\)".*/\\1/p\' | head -1) echo echo "ANON'
-        'YMOUS PULL OK: $ref" echo "digest: $digest" echo "pin this in a de'
-        'ployment: $ref"'
+        ' exit 1 fi sed -n \'1,20p\' <<<"$out" digest=$(sed -n \'s/.*"Digest":'
+        ' "\\([^"]*\\)".*/\\1/p\' <<<"$out" | sed -n \'1p\') echo echo "ANONYMOUS'
+        ' PULL OK: $ref" echo "digest: $digest" echo "pin this in a deploym'
+        'ent: $ref"'
     ),
     # 🔴 THE UI LEG'S TWO STEPS, AND PINNING THEM CLOSED A GAP RATHER THAN FOLLOWING
     # A CONVENTION. Adding the leg left this dict at FOUR while SIX control/proof
@@ -1396,48 +1398,49 @@ PINNED_CONTROL_STEPS = {
     # them; the same blind spot exists in `PINNED_PUSH_STEPS` and is closed there too.
     'control — the UI image owns its session dir, runs, and refuses by name': (
         'set -euo pipefail archive="${{ steps.build-ui.outputs.archive }}" '
-        'ref=$(docker load -i "$archive" | sed -n \'s/^Loaded image: //p\' | head '
-        '-1) if [ -z "$ref" ]; then echo "REFUSING TO PUBLISH: docker load named '
-        'no image." exit 1 fi echo "loaded $ref" want_uid=$(docker image inspect '
-        '"$ref" --format \'{{.Config.User}}\' | cut -d: -f1) if [ -z "$want_uid" ] '
-        '|| [ "$want_uid" = "0" ]; then echo "REFUSING TO PUBLISH: the image '
-        'declares User \'$want_uid\'." echo " A browser surface holding a live '
-        'session table must not run as root." exit 1 fi owner=$(docker run --rm '
-        '--entrypoint /bin/busybox "$ref" stat -c \'%u\' /var/lib/cairn-ui) if [ '
-        '"$owner" != "$want_uid" ]; then echo "REFUSING TO PUBLISH: '
-        '/var/lib/cairn-ui is owned by $owner, not $want_uid." echo " The session '
-        'table cannot be written, so the surface refuses to start (78)." exit 1 '
-        'fi echo "control: /var/lib/cairn-ui is owned by $owner, and User is '
-        '$want_uid — OK" set +e out=$(docker run --rm "$ref" 2>&1) code=$? set -e '
-        'echo "$out" | head -20 if [ "$code" -eq 0 ]; then echo "REFUSING TO '
-        'PUBLISH: the UI image exited 0 with no configuration." echo " It must '
-        'refuse: a surface that comes up misconfigured looks healthy." exit 1 fi '
-        'case "$out" in *"cairn-ui:"*) echo "control: the UI image runs and '
-        'refuses by name — OK" ;; *) echo "REFUSING TO PUBLISH: it exited $code '
-        'without naming itself." echo " Expected a \'cairn-ui:\' prefixed refusal; '
-        'got the above." exit 1 ;; esac'
+        'ref=$(docker load -i "$archive" | sed -n \'s/^Loaded image: //p\' | '
+        'sed -n \'1p\') if [ -z "$ref" ]; then echo "REFUSING TO PUBLISH: doc'
+        'ker load named no image." exit 1 fi echo "loaded $ref" want_uid=$('
+        'docker image inspect "$ref" --format \'{{.Config.User}}\' | cut -d: '
+        '-f1) if [ -z "$want_uid" ] || [ "$want_uid" = "0" ]; then echo "RE'
+        'FUSING TO PUBLISH: the image declares User \'$want_uid\'." echo " A '
+        'browser surface holding a live session table must not run as root.'
+        '" exit 1 fi owner=$(docker run --rm --entrypoint /bin/busybox "$re'
+        'f" stat -c \'%u\' /var/lib/cairn-ui) if [ "$owner" != "$want_uid" ];'
+        ' then echo "REFUSING TO PUBLISH: /var/lib/cairn-ui is owned by $ow'
+        'ner, not $want_uid." echo " The session table cannot be written, s'
+        'o the surface refuses to start (78)." exit 1 fi echo "control: /va'
+        'r/lib/cairn-ui is owned by $owner, and User is $want_uid — OK" set'
+        ' +e out=$(docker run --rm "$ref" 2>&1) code=$? set -e sed -n \'1,20'
+        'p\' <<<"$out" if [ "$code" -eq 0 ]; then echo "REFUSING TO PUBLISH:'
+        ' the UI image exited 0 with no configuration." echo " It must refu'
+        'se: a surface that comes up misconfigured looks healthy." exit 1 f'
+        'i case "$out" in *"cairn-ui:"*) echo "control: the UI image runs a'
+        'nd refuses by name — OK" ;; *) echo "REFUSING TO PUBLISH: it exite'
+        'd $code without naming itself." echo " Expected a \'cairn-ui:\' pref'
+        'ixed refusal; got the above." exit 1 ;; esac'
     ),
     'PROVE the published UI image is pullable with NO credentials': (
-        "set -euo pipefail ref='${{ steps.ref.outputs.image_ui }}:${{ "
-        "steps.ref.outputs.sha_tag }}' skopeo='${{ steps.skopeo.outputs.bin }}' "
-        'set +e $skopeo inspect --no-creds "docker://${{ '
-        'steps.ref.outputs.image_ui '
-        '}}:sha-0000000000000000000000000000000000000000" >/dev/null 2>&1 '
-        'control_rc=$? set -e if [ "$control_rc" -eq 0 ]; then echo "REFUSING: an '
-        'anonymous inspect of a tag that does not exist SUCCEEDED." echo " This '
-        'check cannot distinguish a public image from anything." exit 1 fi echo '
-        '"negative control: absent tag refused anonymously (rc=$control_rc) — OK" '
-        'set +e out=$($skopeo inspect --no-creds "docker://$ref" 2>&1) rc=$? set '
-        '-e if [ "$rc" -ne 0 ]; then echo "$out" echo echo "REFUSING: $ref was '
-        'PUSHED but cannot be pulled without credentials." echo echo " If this is '
-        'the FIRST publish of this package it may have been" echo " created '
-        'private. GitHub exposes no REST route for the flip, so" echo " this URL '
-        'is the whole remedy:" echo " https://github.com/users/${{ '
-        'github.repository_owner }}/packages/container/cairn-ui/settings" echo " '
-        '-> Danger Zone -> Change visibility -> Public" exit 1 fi echo "$out" | '
-        'head -20 digest=$(printf \'%s\' "$out" | sed -n \'s/.*"Digest": '
-        '"\\([^"]*\\)".*/\\1/p\' | head -1) echo echo "ANONYMOUS PULL OK: $ref" echo '
-        '"digest: $digest" echo "pin this in a deployment: $ref"'
+        "set -euo pipefail ref='${{ steps.ref.outputs.image_ui }}:${{ steps"
+        ".ref.outputs.sha_tag }}' skopeo='${{ steps.skopeo.outputs.bin }}' "
+        'set +e $skopeo inspect --no-creds "docker://${{ steps.ref.outputs.'
+        'image_ui }}:sha-0000000000000000000000000000000000000000" >/dev/nu'
+        'll 2>&1 control_rc=$? set -e if [ "$control_rc" -eq 0 ]; then echo'
+        ' "REFUSING: an anonymous inspect of a tag that does not exist SUCC'
+        'EEDED." echo " This check cannot distinguish a public image from a'
+        'nything." exit 1 fi echo "negative control: absent tag refused ano'
+        'nymously (rc=$control_rc) — OK" set +e out=$($skopeo inspect --no-'
+        'creds "docker://$ref" 2>&1) rc=$? set -e if [ "$rc" -ne 0 ]; then '
+        'echo "$out" echo echo "REFUSING: $ref was PUSHED but cannot be pul'
+        'led without credentials." echo echo " If this is the FIRST publish'
+        ' of this package it may have been" echo " created private. GitHub '
+        'exposes no REST route for the flip, so" echo " this URL is the who'
+        'le remedy:" echo " https://github.com/users/${{ github.repository_'
+        'owner }}/packages/container/cairn-ui/settings" echo " -> Danger Zo'
+        'ne -> Change visibility -> Public" exit 1 fi sed -n \'1,20p\' <<<"$o'
+        'ut" digest=$(sed -n \'s/.*"Digest": "\\([^"]*\\)".*/\\1/p\' <<<"$out" |'
+        ' sed -n \'1p\') echo echo "ANONYMOUS PULL OK: $ref" echo "digest: $d'
+        'igest" echo "pin this in a deployment: $ref"'
     ),
 }
 
@@ -1618,6 +1621,326 @@ def test_no_control_step_can_REFUSE_and_exit_ZERO(text: str) -> None:
         "it, `/data holds 0 files` is the only measurement left — and a zero is "
         "what an image with no filesystem reports too."
     )
+
+
+# ---------------------------------------------------------------------------
+# A READER THAT EXITS EARLY, UNDER `pipefail`, OVER AN OUTPUT THAT GROWS.
+#
+# 🔴 THE MECHANISM, AND WHY NO GREEN RUN COULD SHOW IT. Every `run:` block here is
+# `set -euo pipefail`. A pipeline whose READER stops before its input ends —
+# `head`, `grep -q`, `sed …q`, `awk … exit` — is harmless while the writer's
+# whole output fits in the kernel's pipe buffer: the writer finishes into the
+# buffer and never learns nobody is reading. Past that size the writer is still
+# writing when the reader exits, takes EPIPE (or dies of SIGPIPE), and `pipefail`
+# turns that into the STEP's failure. `skopeo inspect` prints one `RepoTags`
+# entry per tag the package has ever carried, and this workflow adds one tag per
+# published commit — so the proof step printing `echo "$out" | head -20` passed
+# on every run until the tag list crossed the buffer and then failed on every
+# run after it, AFTER the image had been pushed and proved pullable, stranding
+# every later leg of the job.
+#
+# 🔴 SO TWO GUARDS, AND THEY ARE DIFFERENT CLAIMS. The LEDGER below is
+# structural: every reader stage of every pipeline in the file, by equality, so
+# a new reader is a decision somebody makes rather than a line nobody reads. The
+# BEHAVIOURAL test runs the three proof steps' real shell against a stub
+# `skopeo` at two output sizes and two SIGPIPE dispositions. Neither implies the
+# other: the ledger cannot tell whether a listed reader really drains its input,
+# and the behavioural test only reaches the three steps it has a stub for.
+
+
+def pipeline_readers(block: str) -> list[str]:
+    """Every command that READS from a `|` in a shell block, normalised.
+
+    Quote-aware on purpose. `entr(y|ies)` inside an `echo "…"` and the `|` in
+    `sh -c 'ls -A /data | wc -l'` are not pipelines of THIS shell — the second
+    one is a pipeline, but of the container's `sh`, which `pipefail` here does
+    not govern — and a splitter that counted them would pin prose.
+
+    ⚠ WHAT IT DOES NOT SEE: a here-string (`cmd <<<"$v"`) has no writer process
+    and is correctly absent; a reader reached through `$(…)` INSIDE a
+    double-quoted string is absent too, and no step has one.
+    """
+    readers: list[str] = []
+    for line in block.splitlines():
+        quote = ""
+        current: list[str] | None = None
+
+        def close() -> None:
+            nonlocal current
+            if current is not None:
+                readers.append(" ".join("".join(current).split()))
+            current = None
+
+        i = 0
+        while i < len(line):
+            ch = line[i]
+            if quote:
+                if ch == quote:
+                    quote = ""
+            elif ch in "'\"":
+                quote = ch
+            elif ch == "|" and line[i + 1 : i + 2] == "|":
+                close()
+                i += 2
+                continue
+            elif ch == "|":
+                close()
+                current = []
+                i += 1
+                continue
+            elif ch in ");&":
+                close()
+            if current is not None:
+                current.append(ch)
+            i += 1
+        close()
+    return readers
+
+
+def exits_before_end_of_input(reader: str) -> bool:
+    """True for a reader that can stop reading before its input ends.
+
+    ⚠ A CLOSED LIST OF FOUR SHAPES, NOT A PROOF. It names the readers this
+    hazard has actually arrived as; a fifth spelling (`read -r x`, `true`, a
+    `python -c` that returns early) is invisible to it. That is why the ledger
+    below is an EQUALITY rather than a sweep with this predicate: the predicate
+    explains a failure, the equality is what forces the question.
+    """
+    words = reader.split()
+    if not words:
+        return False
+    command, rest = words[0], reader[len(words[0]):]
+    if command == "head":
+        return True
+    if command == "grep":
+        return any(
+            w in ("--quiet", "--silent", "--max-count")
+            or w.startswith("--max-count=")
+            or bool(re.fullmatch(r"-[A-Za-z0-9]+", w) and ("q" in w or "m" in w))
+            for w in words[1:]
+        )
+    if command == "sed":
+        return bool(re.search(r"(?:^|[\s'\";{}/\d$])[qQ]\s*\d*\s*(?:[;}'\"]|$)", rest))
+    if command == "awk":
+        return bool(re.search(r"\bexit\b", rest))
+    return False
+
+
+# 🔴 EVERY READER STAGE IN THE FILE, BY EQUALITY — it fails when the set GROWS
+# and when it SHRINKS. Each one below drains its input: `tr`, `cut`, `grep -c`
+# and a `sed -n` with no `q` read to end-of-file by construction, and
+# `login --password-stdin` reads its whole stdin as the password. Adding a
+# reader means adding it HERE, which is the moment to ask whether it drains.
+PINNED_PIPELINE_READERS = {
+    "tr '[:upper:]' '[:lower:]'",
+    "\"${{ steps.skopeo.outputs.bin }}\" login ghcr.io -u '${{ github.actor }}' --password-stdin",
+    "sed -n 's/^Loaded image: //p'",
+    "grep -c .",
+    "sed -n '1p'",
+    "cut -d: -f1",
+}
+
+
+def test_no_pipeline_reader_can_exit_before_its_writer_finishes(text: str) -> None:
+    """The reader ledger, and the four early-exit shapes named when it moves.
+
+    This is the STRUCTURAL half: it covers every step, including the ones the
+    behavioural test below has no stub for (the UI control prints a container's
+    whole refusal, which is as unbounded as a tag list).
+    """
+    blocks = step_blocks(text)
+    found = {reader for block in blocks.values() for reader in pipeline_readers(block)}
+    early = {
+        step: [r for r in pipeline_readers(block) if exits_before_end_of_input(r)]
+        for step, block in blocks.items()
+    }
+    early = {step: readers for step, readers in early.items() if readers}
+    assert not early, (
+        f"these steps pipe into a reader that stops before end-of-input: {early}\n"
+        "Every step is `set -euo pipefail`. Once the writer's output outgrows "
+        "the pipe buffer it is still writing when the reader exits, gets EPIPE, "
+        "and the step fails — after the push, stranding every later leg. Use a "
+        "reader that drains its input (`sed -n '1,20p'`, `sed -n '1p'`) or a "
+        "here-string, which has no writer to break."
+    )
+    assert found == PINNED_PIPELINE_READERS, (
+        "the set of commands reading from a pipe moved.\n"
+        f"  new:     {sorted(found - PINNED_PIPELINE_READERS)}\n"
+        f"  missing: {sorted(PINNED_PIPELINE_READERS - found)}\n"
+        "A new reader is fine IF it reads to end-of-file; decide that, then add "
+        "it to `PINNED_PIPELINE_READERS`. `exits_before_end_of_input` knows four "
+        "shapes only and its silence is not that decision."
+    )
+
+
+# The synthetic digest the stub's manifest carries. Deliberately NOT the layer
+# digests below it, so "the first `Digest` line" and "the last" are different
+# strings and a reader that picked the wrong one is visible.
+STUB_DIGEST = "sha256:" + "5a" * 32
+STUB_LAYER_DIGESTS = ["sha256:" + f"{n:02x}" * 32 for n in (0x11, 0x22, 0x33)]
+STUB_OWNER = "example-owner"
+STUB_REGISTRY = "registry.example"
+STUB_SHA_TAG = "sha-" + "ab" * 20
+
+# 🔴 TWO SIZES, AND THE LARGE ONE OVERSHOOTS RATHER THAN SITTING ON A BOUNDARY.
+# The pipe buffer is 64 KiB on Linux; three tags is the shape every early run
+# had, and 3701 tags is a little over three buffers and not a power-of-two
+# multiple of anything, so the writer cannot finish into the buffer by luck.
+STUB_TAG_COUNTS = {"small": 3, "large": 3701}
+PIPE_BUFFER = 64 * 1024
+
+
+def stub_inspect_json(image: str, tags: int) -> str:
+    """What `skopeo inspect` prints, in its own layout: one key per line, one
+    `RepoTags` entry per line, and a `Digest` per layer BELOW the manifest's."""
+    lines = [
+        "{",
+        f'    "Name": "{image}",',
+        f'    "Digest": "{STUB_DIGEST}",',
+        '    "RepoTags": [',
+    ]
+    lines += [
+        f'        "sha-{n:040x}"' + ("," if n < tags - 1 else "") for n in range(tags)
+    ]
+    lines += [
+        "    ],",
+        '    "Created": "2000-01-01T00:00:00Z",',
+        '    "Architecture": "amd64",',
+        '    "Os": "linux",',
+        '    "LayersData": [',
+    ]
+    for n, digest in enumerate(STUB_LAYER_DIGESTS):
+        lines += [
+            "        {",
+            '            "MIMEType": "application/vnd.oci.image.layer.v1.tar+gzip",',
+            f'            "Digest": "{digest}",',
+            '            "Size": 1',
+            "        }" + ("," if n < len(STUB_LAYER_DIGESTS) - 1 else ""),
+        ]
+    lines += ["    ]", "}"]
+    return "\n".join(lines) + "\n"
+
+
+STUB_SKOPEO = """#!/usr/bin/env bash
+# A stand-in for `skopeo inspect`: the tag that must not exist is refused, and
+# every other reference answers with the prepared manifest.
+case "$*" in
+  *sha-0000000000000000000000000000000000000000*)
+    echo "manifest unknown" >&2
+    exit 1 ;;
+esac
+cat "$STUB_INSPECT_JSON"
+"""
+
+
+def runnable_step(block: str, skopeo: Path) -> str:
+    """A step's shell with every `${{ … }}` replaced by a synthetic literal.
+
+    Actions substitutes these textually before bash sees the script, so the same
+    substitution is what makes the step's OWN text runnable here.
+    """
+    values = {
+        "steps.skopeo.outputs.bin": str(skopeo),
+        "steps.ref.outputs.image": f"{STUB_REGISTRY}/{STUB_OWNER}/{PACKAGE}",
+        "steps.ref.outputs.image_go": f"{STUB_REGISTRY}/{STUB_OWNER}/{PACKAGE_GO}",
+        "steps.ref.outputs.image_ui": f"{STUB_REGISTRY}/{STUB_OWNER}/{PACKAGE_UI}",
+        "steps.ref.outputs.sha_tag": STUB_SHA_TAG,
+        "github.repository_owner": STUB_OWNER,
+    }
+    script = re.sub(
+        r"\$\{\{\s*([\w.-]+)\s*\}\}",
+        lambda m: values.get(m.group(1), m.group(0)),
+        block,
+    )
+    assert "${{" not in script, (
+        "the step names an expression this harness has no value for: "
+        f"{sorted(set(re.findall(r'[$][{][{][^}]*[}][}]', script)))}"
+    )
+    return script
+
+
+# 🔴 THE DISPOSITION OF SIGPIPE IS A DIMENSION, SO IT IS MEASURED AT BOTH POINTS.
+# A hosted runner starts the step with SIGPIPE IGNORED, which is why the writer
+# there reports `write error: Broken pipe` and exits 1; an ordinary shell leaves
+# it at the default and the writer dies of the signal (141) with no message.
+# `pipefail` fails the step either way, and a fix proved under one disposition
+# has not been proved under the other. A signal ignored on entry to a shell
+# stays ignored in everything it starts, which is what the first launcher uses.
+SIGPIPE_LAUNCHERS = {
+    "sigpipe-ignored": ["bash", "-c", "trap '' PIPE; exec bash -e \"$0\""],
+    "sigpipe-default": ["bash", "-e"],
+}
+
+
+@pytest.mark.parametrize("disposition", sorted(SIGPIPE_LAUNCHERS))
+@pytest.mark.parametrize("size", sorted(STUB_TAG_COUNTS))
+@pytest.mark.parametrize("step", sorted(PROOF_STEP_PACKAGES))
+def test_the_anonymous_proofs_survive_an_inspect_larger_than_a_pipe_buffer(
+    text: str, tmp_path: Path, step: str, size: str, disposition: str
+) -> None:
+    """Run each proof step's REAL shell against a stub `skopeo`, small and large.
+
+    🔴 THE REGRESSION THIS PINS: with `echo "$out" | head -20` in the step, the
+    `large` rows fail — `echo: write error: Broken pipe` and exit 1 where SIGPIPE
+    is ignored, exit 141 where it is not — while the `small` rows pass, which is
+    exactly the history: green until the tag list outgrew the buffer.
+
+    ⚠ WHAT IT DOES NOT REACH: the registry, `--no-creds` (the stub ignores its
+    flags — `test_every_inspect_is_anonymous` owns that), and any step other
+    than the three proofs.
+    """
+    _, package = PROOF_STEP_PACKAGES[step]
+    image = f"{STUB_REGISTRY}/{STUB_OWNER}/{package}"
+    manifest = stub_inspect_json(image, STUB_TAG_COUNTS[size])
+    if size == "large":
+        assert len(manifest) > 3 * PIPE_BUFFER, (
+            f"the large manifest is {len(manifest)} bytes; it must overshoot the "
+            "pipe buffer several times over or the writer can finish into it"
+        )
+    else:
+        assert len(manifest) < PIPE_BUFFER // 8
+
+    skopeo = tmp_path / "skopeo"
+    skopeo.write_text(STUB_SKOPEO)
+    skopeo.chmod(0o755)
+    inspect_json = tmp_path / "inspect.json"
+    inspect_json.write_text(manifest)
+    script = tmp_path / "step.sh"
+    script.write_text(runnable_step(step_blocks(text)[step], skopeo))
+
+    # 🔴 A MINIMAL ENVIRONMENT, NOT THE CALLER'S, AND THAT IS MEASURED. The step
+    # assigns `out=…`; a variable that ARRIVES exported stays exported when it is
+    # reassigned, and a nix dev shell exports one named `out`. The large manifest
+    # then lands in the environment of every command the step starts, a single
+    # environment string over 128 KiB makes `execve` fail, and the step dies of
+    # `Argument list too long` (126) — a red that has nothing to do with the pipe
+    # and would have been read as the regression.
+    done = subprocess.run(
+        [*SIGPIPE_LAUNCHERS[disposition], str(script)],
+        capture_output=True, text=True, timeout=60,
+        env={"PATH": os.environ["PATH"], "STUB_INSPECT_JSON": str(inspect_json)},
+    )
+    printed = done.stdout.splitlines()
+    assert done.returncode == 0, (
+        f"{step!r} exited {done.returncode} over a {len(manifest)}-byte inspect "
+        f"({disposition}).\nstderr: {done.stderr.strip()!r}\n"
+        f"last stdout lines: {printed[-3:]}"
+    )
+    # The stub's own controls: the absent tag WAS refused, so the pass below went
+    # through the negative control rather than around it.
+    assert "negative control: absent tag refused anonymously (rc=1) — OK" in printed
+    assert f"ANONYMOUS PULL OK: {image}:{STUB_SHA_TAG}" in printed
+    # The MANIFEST's digest, on its own line — not empty, and not a layer's.
+    assert f"digest: {STUB_DIGEST}" in printed, (
+        f"{step!r} printed {[l for l in printed if l.startswith('digest:')]}; the "
+        f"manifest's digest is {STUB_DIGEST}"
+    )
+    # …and a PREVIEW, not the whole thing: the head of the manifest is shown and
+    # the tail of a large one is not.
+    assert f'    "Name": "{image}",' in printed
+    if size == "large":
+        last_tag = f'        "sha-{STUB_TAG_COUNTS[size] - 1:040x}"'
+        assert last_tag not in printed, "the step printed the whole manifest"
 
 
 def test_the_controls_can_fail() -> None:
@@ -1839,6 +2162,34 @@ def test_the_controls_can_fail() -> None:
     ) == ["${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.sha_tag }}"]
     assert proof_refs("skopeo inspect --no-creds \"docker://$ref\"") == []
 
+    # The pipeline-reader extractor SEES each stage that reads from a `|`, stops
+    # a stage at `)`, `||` and `;`, and does NOT read a quoted `|` as a pipe —
+    # neither the one in an `echo`'s prose nor the one inside `sh -c '…'`.
+    assert pipeline_readers(
+        "x=$(printf '%s' \"$out\" | sed -n 's/a/b/p' | head -1)\n"
+        "n=$(printf '%s\\n' \"$r\" | grep -c . || true)\n"
+        "echo \"entr(y|ies)\"; docker run x sh -c 'ls -A /data | wc -l'\n"
+        "echo \"$out\" | head -20\n"
+    ) == ["sed -n 's/a/b/p'", "head -1", "grep -c .", "head -20"]
+    # …and a here-string is not a pipeline: it has no writer to break.
+    assert pipeline_readers("sed -n '1,20p' <<<\"$out\"") == []
+
+    # The early-exit predicate fires on each of its four shapes, and stays quiet
+    # on the draining spelling of the SAME command — a predicate that fired on
+    # every `sed` would make the ledger's error message useless.
+    for early in (
+        "head -20", "head -1", "grep -q x", "grep -qE 'a|b'", "grep -m1 x",
+        "grep --quiet x", "sed 5q", "sed -n '/x/{p;q}'", "sed -n '1{p;q;}'",
+        "awk '/x/ {print; exit}'",
+    ):
+        assert exits_before_end_of_input(early), early
+    for draining in (
+        "sed -n '1,20p'", "sed -n '1p'", "sed -n 's/^Loaded image: //p'",
+        "grep -c .", "grep -E 'quiet|more'", "awk '{print $1}'", "cut -d: -f1",
+        "tr '[:upper:]' '[:lower:]'",
+    ):
+        assert not exits_before_end_of_input(draining), draining
+
 
 def test_an_EMPTY_file_does_not_satisfy_the_extractors() -> None:
     """The other half of the control: nothing must read as agreement.
@@ -1863,3 +2214,4 @@ def test_an_EMPTY_file_does_not_satisfy_the_extractors() -> None:
     assert exit_statements("") == []
     assert guard_branches("", "$leaked") == []
     assert proof_refs("") == []
+    assert pipeline_readers("") == []
