@@ -2,6 +2,7 @@ package memo_test
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 	"reflect"
 	"sort"
@@ -439,6 +440,103 @@ func TestCheckSendCapsFenceAndTTL(t *testing.T) {
 	}
 	if _, err := memo.CheckSend("s", "b", 0, nil); err == nil {
 		t.Error("a nil scanner was accepted — the send would store unscanned text")
+	}
+}
+
+// TestTheSecretRefusalWinsOverSizeAndTTL — text that carries a confident secret AND breaks a size
+// or TTL limit is refused as `secret`, never as the limit: the browser form echoes the typed text
+// back for a size or TTL refusal and never for `secret`, so with the scan last a credential over a
+// limit was served back in the page. Over the REAL scanner, for two rules (one in the subject, one
+// in the body), against each of subject-size, body-size and both TTL bounds.
+//
+// POSITIVE CONTROL per row: the SAME text with the secret overwritten by same-length filler is
+// refused with the row's limit — so each row really does break that limit, and the `secret` answer
+// is the ordering's doing. `characters` still wins over `secret` (it runs first, unchanged).
+// RED at e18efd1 (scan after the size and TTL checks) and under `memo-secret-scan-after-size`.
+func TestTheSecretRefusalWinsOverSizeAndTTL(t *testing.T) {
+	scan := scanner(t)
+	samples := secretSamples()
+	refusedAs := func(err error) memo.RefusalReason {
+		var r *memo.Refusal
+		if errors.As(err, &r) {
+			return r.Reason
+		}
+		return memo.RefusalReason(fmt.Sprintf("<not a refusal: %v>", err))
+	}
+	day := 24 * time.Hour
+	for _, rule := range []string{"github-token", "aws-access-key-id"} {
+		secret := samples[rule]
+		filler := strings.Repeat("q", len(secret))
+		longSubject := func(s string) string { return "value " + s + " " + strings.Repeat("s", memo.MaxSubjectBytes) }
+		longBody := func(s string) string { return "value " + s + "\n" + strings.Repeat("b", memo.MaxBodyBytes+800) }
+		for _, tc := range []struct {
+			name          string
+			subject, body func(string) string
+			ttl           time.Duration
+			limit         memo.RefusalReason
+		}{
+			{"secret in an over-long subject", longSubject, func(string) string { return "b" }, 0, memo.RefusedSubjectSize},
+			{"secret in the body, subject over-long", func(string) string { return strings.Repeat("s", memo.MaxSubjectBytes+10) },
+				func(s string) string { return "value " + s }, 0, memo.RefusedSubjectSize},
+			{"secret in an over-long body", func(string) string { return "s" }, longBody, 0, memo.RefusedBodySize},
+			{"secret in the body, TTL past the ceiling", func(string) string { return "s" },
+				func(s string) string { return "value " + s }, memo.MaxTTL + day, memo.RefusedTTL},
+			{"secret in the subject, negative TTL", func(s string) string { return "value " + s },
+				func(string) string { return "b" }, -day, memo.RefusedTTL},
+		} {
+			if got := refusedAs(func() error { _, err := memo.CheckSend(tc.subject(filler), tc.body(filler), tc.ttl, scan); return err }()); got != tc.limit {
+				t.Fatalf("POSITIVE CONTROL FAILED: %s/%s without the secret is refused as %q, not %q — the row does not break its limit",
+					rule, tc.name, got, tc.limit)
+			}
+			_, err := memo.CheckSend(tc.subject(secret), tc.body(secret), tc.ttl, scan)
+			if got := refusedAs(err); got != memo.RefusedSecret {
+				t.Errorf("%s/%s: refused as %q, want %q — a size or TTL refusal is one the browser echoes", rule, tc.name, got, memo.RefusedSecret)
+			}
+		}
+	}
+	// characters still runs first.
+	if got := refusedAs(func() error {
+		_, err := memo.CheckSend("s", "x‮y "+samples["github-token"], 0, scan)
+		return err
+	}()); got != memo.RefusedCharacters {
+		t.Errorf("a secret beside U+202E: refused as %q, want %q", got, memo.RefusedCharacters)
+	}
+}
+
+// TestTheScanIsBoundedAndScannableSaysWhere — the scan runs over subject and body together up to
+// [memo.MaxScannedBytes] and not past it (an unbounded scan of the browser form's 10 MiB is seconds
+// of CPU per POST). AT the bound a secret is still refused as `secret`; ONE BYTE past it the same
+// text is refused as the size, unscanned, and [memo.Scannable] is false for it — which is what the
+// browser asks before echoing a draft. The bound is pinned as a literal (a mutant raising it to an
+// unbounded value is red here) and must exceed both caps together, so an unscannable text is always
+// over a cap. RED under `memo-scannable-off-by-one`.
+func TestTheScanIsBoundedAndScannableSaysWhere(t *testing.T) {
+	scan := scanner(t)
+	if memo.MaxScannedBytes != 16384 {
+		t.Fatalf("MaxScannedBytes is %d, want 16384 (4 × the body cap; its cost is measured in policy.go)", memo.MaxScannedBytes)
+	}
+	if memo.MaxScannedBytes <= memo.MaxSubjectBytes+memo.MaxBodyBytes {
+		t.Fatalf("MaxScannedBytes %d does not exceed both caps together (%d): an unscannable text could be inside every cap",
+			memo.MaxScannedBytes, memo.MaxSubjectBytes+memo.MaxBodyBytes)
+	}
+	secret := secretSamples()["github-token"]
+	const subject = "rotation"
+	head := "value " + secret + "\n"
+	at := head + strings.Repeat("b", memo.MaxScannedBytes-len(subject)-len(head))
+	over := at + "b"
+	if !memo.Scannable(subject, at) || memo.Scannable(subject, over) {
+		t.Fatalf("Scannable at the bound = %v, one past = %v; want true, false", memo.Scannable(subject, at), memo.Scannable(subject, over))
+	}
+	var r *memo.Refusal
+	if _, err := memo.CheckSend(subject, at, 0, scan); !errors.As(err, &r) || r.Reason != memo.RefusedSecret {
+		t.Errorf("a secret in text exactly AT the scan bound: %v, want %q", err, memo.RefusedSecret)
+	}
+	if _, err := memo.CheckSend(subject, over, 0, scan); !errors.As(err, &r) || r.Reason != memo.RefusedBodySize {
+		t.Errorf("text one byte PAST the scan bound: %v, want %q unscanned", err, memo.RefusedBodySize)
+	}
+	// Past the bound with the excess in the SUBJECT: the subject's own size reason.
+	if _, err := memo.CheckSend(strings.Repeat("s", memo.MaxScannedBytes+1), "b", 0, scan); !errors.As(err, &r) || r.Reason != memo.RefusedSubjectSize {
+		t.Errorf("a subject past the scan bound: %v, want %q", err, memo.RefusedSubjectSize)
 	}
 }
 

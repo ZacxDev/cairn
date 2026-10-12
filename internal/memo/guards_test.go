@@ -65,6 +65,8 @@ var exportLedger = map[string]entry{
 	"NewScanner":       {"input", "func() (*redact.Redactor, error)"},
 	// a caller's TTL count on its way to CheckSend: numbers in, a duration out — no text at all.
 	"TTLOf": {"input", "func(int64, time.Duration) time.Duration"},
+	// whether CheckSend scans this text: two lengths in, a bool out — no text comes back.
+	"Scannable": {"input", "func(string, string) bool"},
 	// refusals: a closed reason and a RULE NAME — never content.
 	"Refusal":             {"refusal", "struct"},
 	"Refusal.Reason":      {"refusal", "RefusalReason"},
@@ -84,6 +86,7 @@ var exportLedger = map[string]entry{
 	// limits: numbers, no text.
 	"MaxSubjectBytes":        {"table", "const"},
 	"MaxBodyBytes":           {"table", "const"},
+	"MaxScannedBytes":        {"table", "const"},
 	"DefaultTTL":             {"table", "const"},
 	"MaxTTL":                 {"table", "const"},
 	"RetentionAfterExpiry":   {"table", "const"},
