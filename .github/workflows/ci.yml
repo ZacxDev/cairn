@@ -2264,7 +2264,7 @@ jobs:
           # memobrowser` (it needs a database this leg does not have), so `go test -list` here never
           # prints its test while a `git grep` over every `*_test.go` would count it — the cross-check
           # would refuse an honest tree. It is not thereby uncounted: the `memos` leg runs it BY NAME
-          # and refuses unless each of its five clauses printed its own PASS line.
+          # and refuses unless each of its six clauses printed its own PASS line.
           listed=$(go test -list '.*' ./... | grep -cE '^(Test|Example|Fuzz)' || true)
           declared() {
             { git grep -hE '^func (Test|Example|Fuzz)([A-Z0-9_][A-Za-z0-9_]*)?\(' "$1" -- '*_test.go' ':(exclude)memos_browser_test.go' || true; } \
@@ -2402,32 +2402,48 @@ jobs:
       # tab", `claudedocs/plan-cairn-scope-mail.md`). Neither world the walk boots has a database, so
       # until this leg the tab was only ever rendered saying it has no store: the send form, the
       # Retract button and a tombstone had never been laid out, typed into or clicked. The script
-      # boots the real `cairn-ui` over a real PostgreSQL and a control journal and drives five
-      # clauses (`uiaudit/memos_browser_test.go` says what each measures).
+      # boots the real `cairn-ui` over a real PostgreSQL and a control journal and drives six
+      # clauses (`uiaudit/memos_browser_test.go` says what each measures). Clause (f) is the WALK'S
+      # capture of the populated tab at every rung — axe, touch, overflow, a screenshot — refused by
+      # the walk's own `refuseWalkRegressions`; its screenshots are uploaded by the step after this.
       #
-      # ⚠ THE SELF-TEST RUNS FIRST: seven sabotages on a scratch copy, each required to turn its OWN
+      # ⚠ THE SELF-TEST RUNS FIRST: eleven sabotages on a scratch copy, each required to turn its OWN
       # clause red with that clause's own message, behind a positive control on the unedited copy.
-      # Then the plain run, whose five PASS lines are COUNTED here rather than its exit code read.
+      # Then the plain run, whose six PASS lines are COUNTED here rather than its exit code read.
       # Exit 2 is "could not vouch" and fails the step exactly like 1 — never a skip.
       - name: memos_check.py — the populated memos tab in a real browser, after proving each clause can go RED
         if: matrix.part == 'memos'
+        env:
+          MEMOS_CHECK_ARTIFACTS: ${{ runner.temp }}/memos-captures
         run: |
           set -uo pipefail
           rc=0
           ./uiaudit/memos_check.py --self-test 2>&1 | tee /tmp/memos-self.txt || rc=$?
-          if [ "$rc" != "0" ] || ! grep -qx 'SUMMARY memos-check-self-test: sabotaged=7 caught=7' /tmp/memos-self.txt; then
-            echo "::error::memos_check.py --self-test exited $rc without 'sabotaged=7 caught=7' (1 = a sabotage was not caught, 2 = could not vouch)"
+          if [ "$rc" != "0" ] || ! grep -qx 'SUMMARY memos-check-self-test: sabotaged=11 caught=11' /tmp/memos-self.txt; then
+            echo "::error::memos_check.py --self-test exited $rc without 'sabotaged=11 caught=11' (1 = a sabotage was not caught, 2 = could not vouch)"
             exit 1
           fi
           rc=0
           ./uiaudit/memos_check.py 2>&1 | tee /tmp/memos.txt || rc=$?
-          passes=$(grep -cE '^memos_check: [a-e]_[a-z]+ +PASS$' /tmp/memos.txt || true)
-          fails=$(grep -cE '^memos_check: [a-e]_[a-z]+ +(FAIL|NONE)$' /tmp/memos.txt || true)
+          passes=$(grep -cE '^memos_check: [a-f]_[a-z]+ +PASS$' /tmp/memos.txt || true)
+          fails=$(grep -cE '^memos_check: [a-f]_[a-z]+ +(FAIL|NONE)$' /tmp/memos.txt || true)
           echo "memos tab: clause PASS=$passes FAIL=$fails rc=$rc"
-          if [ "$rc" != "0" ] || [ "$passes" != "5" ] || [ "$fails" != "0" ]; then
-            echo "::error::memos_check.py exited $rc with $passes PASS / $fails FAIL clause line(s); 5 / 0 were measured (1 = a clause FAILED, 2 = could not vouch)"
+          if [ "$rc" != "0" ] || [ "$passes" != "6" ] || [ "$fails" != "0" ]; then
+            echo "::error::memos_check.py exited $rc with $passes PASS / $fails FAIL clause line(s); 6 / 0 were measured (1 = a clause FAILED, 2 = could not vouch)"
             exit 1
           fi
+
+      # Clause (f)'s captures — a screenshot and an axe result per rung of the populated memos tab —
+      # leave as an artifact, for the walk's upload step's reason: never committed (leakscan skips a
+      # binary by name), and narrowed to the one directory meant to leave.
+      - name: upload the memos tab captures
+        if: always() && matrix.part == 'memos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: uiaudit-memos-captures
+          path: ${{ runner.temp }}/memos-captures
+          retention-days: 7
+          if-no-files-found: warn
 
       # 🔴 THE `verify-push` CONTROL, AND WITHOUT IT A MISCONFIGURED TOKEN IS A SILENT
       # GREEN. The push path is non-fatal by design — a walk that captured is worth its

@@ -39,6 +39,7 @@ LEDGER = [
     ("pwa_check.sh — the mobile plan's closing-condition clauses (a)–(e)", PWA),
     ("postgres from the flake's pinned nixpkgs, its major asserted", MEMOS),
     ("memos_check.py — the populated memos tab in a real browser, after proving each clause can go RED", MEMOS),
+    ("upload the memos tab captures", f"always() && {MEMOS}"),
     ("verify-push — the push actually landed", f"{WALK} && steps.walk.outputs.credentialed == 'yes'"),
     ("the deterministic diff, in the log and in the step summary", f"always() && {WALK}"),
     ("upload the captures", f"always() && {WALK}"),
@@ -92,7 +93,7 @@ def test_the_memos_leg_runs_the_tagged_browser_test_through_its_one_runner():
     `go test ./...` (the walk leg) cannot see it, and the walk leg's declared-test count excludes
     its file by name. Both are only safe while SOMETHING runs it: this pins the three places that
     must agree — the tag on the file, the runner naming that tag and that test, and the leg
-    invoking the runner (self-test first) and counting the five clause lines.
+    invoking the runner (self-test first) and counting the six clause lines.
 
     ⚠ TEXT ONLY, like the rest of this file: that the leg passes is a live run's claim.
     """
@@ -105,21 +106,24 @@ def test_the_memos_leg_runs_the_tagged_browser_test_through_its_one_runner():
     # one TEST, so a second test function here would run in neither leg — and nothing would fail.
     assert _go_test_funcs(test) == ["TestTheMemosTabInARealBrowser"], _go_test_funcs(test)
     assert "t.Skip" not in test, "the browser test must refuse, never skip"
-    clauses = re.findall(r'^\tt\.Run\("([a-e]_[a-z]+)", ', test, re.M)
-    assert clauses == ["a_seeded", "b_send", "c_draft", "d_retract", "e_reader"]
+    clauses = re.findall(r'^\tt\.Run\("([a-z]_[a-z]+)", ', test, re.M)
+    assert clauses == ["a_seeded", "b_send", "c_draft", "d_retract", "e_reader", "f_walk"]
 
     runner = (repo / "uiaudit/memos_check.py").read_text(encoding="utf-8")
     assert 'TEST = "TestTheMemosTabInARealBrowser"' in runner
     assert 'TAG = "memobrowser"' in runner
-    assert re.findall(r'^    "([a-e]_[a-z]+)": "memos clause \(', runner, re.M) == clauses
-    sabotages = re.findall(r'^    \("[a-z-]+", "([a-e]_[a-z]+)", ', runner, re.M)
-    assert len(sabotages) == 7 and set(sabotages) == set(clauses), sabotages
+    assert re.findall(r'^    "([a-z]_[a-z]+)": "memos clause \(', runner, re.M) == clauses
+    sabotages = re.findall(r'^    \("[a-z-]+", "([a-z]_[a-z]+)", ', runner, re.M)
+    assert len(sabotages) == 11 and set(sabotages) == set(clauses), sabotages
 
     job = JOBS["uiaudit"]
     (step,) = [s for s in _steps(job) if _label(s).startswith("memos_check.py")]
     assert "./uiaudit/memos_check.py --self-test" in step
-    assert "'SUMMARY memos-check-self-test: sabotaged=7 caught=7'" in step
-    assert '[ "$passes" != "5" ]' in step
+    assert "'SUMMARY memos-check-self-test: sabotaged=11 caught=11'" in step
+    assert '[ "$passes" != "6" ]' in step
+    # The count regex must reach the LAST clause's letter: a `[a-e]` left behind when (f) was added
+    # counts five of six PASS lines and refuses an honest run.
+    assert "'^memos_check: [a-f]_[a-z]+ +PASS$'" in step
     assert "':(exclude)memos_browser_test.go'" in job, "the walk leg's static count must exclude the tagged file by name"
 
 

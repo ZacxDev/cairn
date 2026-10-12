@@ -403,20 +403,7 @@ func walkQueue(browser *Browser, world *World, seed []Target, ledger []string, w
 			}
 			c.World = worldName
 			captures = append(captures, c)
-			// `main=NNNpx/MM%` is printed on EVERY capture, not only the ones the floor
-			// binds: the number is the only way a reader of this log can see the width
-			// ladder working at four widths it is not asserted at. The `touch(…)` block is
-			// printed with `coarse=` FIRST, so every touch number on the line carries the
-			// pointer state it was measured under.
-			fmt.Printf("uiaudit: captured %s%-38s %-9s %d axe=%d layout(tap<44=%d text<12=%d overflow=%v no-viewport-meta=%v main=%dpx/%.0f%%) touch(coarse=%v target-size=%d box<24=%d/%d input<16px=%d/%d) scripts=%d console=%d net=%d digest=%v\n",
-				label, t.Path, vp.Name, c.DocStatus, len(c.Violations),
-				c.Layout.SmallTapTargets, c.Layout.SmallText, c.Layout.HorizontalOverflow,
-				c.Layout.MissingViewportMeta,
-				c.Content.MainWidth, 100*float64(c.Content.MainWidth)/float64(c.Content.InnerWidth),
-				c.Pointer.Coarse, c.TargetSizeNodes(), c.Touch.TargetsUnder24, c.Touch.TargetsMeasured,
-				len(c.Touch.SmallInputs), c.Touch.InputsMeasured,
-				c.ScriptCount(),
-				len(c.Console), len(c.Network), c.HasDigest())
+			fmt.Println(captureLine(label, c))
 
 			// Expansion is read from ONE viewport's render, not all five: the hrefs a
 			// page publishes are an authority answer and cannot depend on a width, and
@@ -462,6 +449,25 @@ func walkQueue(browser *Browser, world *World, seed []Target, ledger []string, w
 		}
 	}
 	return captures, nil
+}
+
+// captureLine is the walk's one-line record of a capture, shared by [walkQueue] and the memo world's
+// walk clause (`memos_browser_test.go`) so the two logs read alike.
+//
+// `main=NNNpx/MM%` is printed on EVERY capture, not only the ones the floor binds: the number is
+// the only way a reader of this log can see the width ladder working at four widths it is not
+// asserted at. The `touch(…)` block is printed with `coarse=` FIRST, so every touch number on the
+// line carries the pointer state it was measured under.
+func captureLine(label string, c *Capture) string {
+	return fmt.Sprintf("uiaudit: captured %s%-38s %-9s %d axe=%d layout(tap<44=%d text<12=%d overflow=%v no-viewport-meta=%v main=%dpx/%.0f%%) touch(coarse=%v target-size=%d box<24=%d/%d input<16px=%d/%d) scripts=%d console=%d net=%d digest=%v",
+		label, c.Target.Path, c.Viewport.Name, c.DocStatus, len(c.Violations),
+		c.Layout.SmallTapTargets, c.Layout.SmallText, c.Layout.HorizontalOverflow,
+		c.Layout.MissingViewportMeta,
+		c.Content.MainWidth, 100*float64(c.Content.MainWidth)/float64(c.Content.InnerWidth),
+		c.Pointer.Coarse, c.TargetSizeNodes(), c.Touch.TargetsUnder24, c.Touch.TargetsMeasured,
+		len(c.Touch.SmallInputs), c.Touch.InputsMeasured,
+		c.ScriptCount(),
+		len(c.Console), len(c.Network), c.HasDigest())
 }
 
 // journalWorldPaths is the set of ledger rows the journal-backed world walks.

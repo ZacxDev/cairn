@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """uiaudit/memos_check.py — the POPULATED memos tab, driven in a real browser over a real database.
 
-    uiaudit/memos_check.py              # run the five clauses over this tree
+    uiaudit/memos_check.py              # run the six clauses over this tree
     uiaudit/memos_check.py --self-test  # prove each clause can go RED on a sabotage of its own
 
 🔴 THE ONE RUNNER OF A BUILD-TAGGED TEST. `TestTheMemosTabInARealBrowser`
@@ -34,7 +34,9 @@ line and FAIL only on its `--- FAIL:` line; a run that printed neither for some 
 because a `go test` that never reached the subtest exits non-zero exactly like one whose subtest
 failed.
 
-ENV: MEMOS_CHECK_KEEP=1 keeps the work dir; MEMOS_CHECK_PORT moves the pod's port (default 18797).
+ENV: MEMOS_CHECK_KEEP=1 keeps the work dir; MEMOS_CHECK_PORT moves the pod's port (default 18797);
+MEMOS_CHECK_ARTIFACTS names a directory the plain run copies clause (f)'s screenshots and axe results
+into (the `memos` CI leg uploads it).
 """
 from __future__ import annotations
 
@@ -54,21 +56,31 @@ from testlib import mutant_tree  # noqa: E402
 TEST = "TestTheMemosTabInARealBrowser"
 TAG = "memobrowser"
 
-#: The five clauses, in run order, and the text that is each one's OWN verdict when it fails.
+#: The six clauses, in run order, and the text that is each one's OWN verdict when it fails.
 CLAUSES = {
     "a_seeded": "memos clause (a) seeded",
     "b_send": "memos clause (b) send",
     "c_draft": "memos clause (c) draft",
     "d_retract": "memos clause (d) retract",
     "e_reader": "memos clause (e) reader",
+    "f_walk": "memos clause (f) walk",
 }
 
 #: A control INSIDE a clause that did not hold: exit 2, not a FAIL of the clause.
 CONTROL_MARK = "CONTROL:"
 
-#: 🔴 THE SABOTAGE LEDGER: (name, the clause that must catch it, file, old, new). Each edit is the
-#: narrowest expression that can be wrong, asserted to occur exactly ONCE, and each must turn ITS
+#: 🔴 THE SABOTAGE LEDGER: (name, the clause that must catch it, file, old, new[, needle]). Each edit is
+#: the narrowest expression that can be wrong, asserted to occur exactly ONCE, and each must turn ITS
 #: clause red with that clause's own message. Other clauses may go red too (reported, not required).
+#:
+#: ⚠ THE OPTIONAL NEEDLE IS FOR A CLAUSE THAT CAN FAIL MORE THAN ONE WAY. Clause (f) fails on its
+#: positive control OR on any of the walk's refusals, so "(f) went red" alone cannot say the guard a
+#: sabotage targets is the one that fired; the needle is text only THAT guard prints, and it must be
+#: in the run's output too. The four (f) rows are its positive control (the listing gone: the walk
+#: would otherwise measure an empty tab), its own axe refusal (a send-form field losing its label),
+#: and the two defects the clause found on its first run, each reverted in the GENERATED stylesheet
+#: the binary embeds — `app.css`, not `tailwind.css`, because the
+#: binary reads only the former.
 SABOTAGES = (
     ("listing-oldest-first", "a_seeded", "internal/ui/memos.go",
      "if c := strings.Compare(b.CreatedAt, a.CreatedAt); c != 0 {",
@@ -91,6 +103,22 @@ SABOTAGES = (
     ("reader-shown-retract-buttons", "e_reader", "internal/ui/memos.go",
      'row.Retractable = row.Tombstone == "" && memo.MayRetractMemo(id.Principal, id.Auth, st)',
      'row.Retractable = row.Tombstone == ""'),
+    ("walk-sees-an-empty-tab", "f_walk", "internal/ui/memos.go",
+     'g.If(len(t.Rows) > 0, h.Ul(h.Class("memo-list")',
+     'g.If(false, h.Ul(h.Class("memo-list")',
+     "did not see a POPULATED memos tab"),
+    ("unbroken-memo-overflows", "f_walk", "internal/ui/app.css",
+     "gap: var(--spacing);\n    overflow-wrap: anywhere;\n  }\n  .link-targets, .link-log {",
+     "gap: var(--spacing);\n  }\n  .link-targets, .link-log {",
+     "HORIZONTAL OVERFLOW"),
+    ("memo-subject-unlabelled", "f_walk", "internal/ui/memos.go",
+     'h.Label(h.For("memo-subject"), g.Text("Subject")),',
+     'h.Span(g.Text("Subject")),',
+     "AXE VIOLATIONS on the populated memos tab"),
+    ("memo-fields-zoom-on-touch", "f_walk", "internal/ui/app.css",
+     '.memo-send textarea, .memo-send input[type="number"], .team-link input[type="number"] {',
+     ".memo-send-sabotaged {",
+     "INPUT FONT UNDER 16px"),
 )
 
 
@@ -198,7 +226,7 @@ def run_clauses(tree: Path, out: Path, db: Database, port: str) -> str:
     schema, dsn = db.schema()
     try:
         env = dict(os.environ, UIAUDIT_REPO_ROOT=str(tree), UIAUDIT_CAIRN_UI=str(ui), UIAUDIT_MEMO_DSN=dsn,
-                   UIAUDIT_MEMO_PORT=port)
+                   UIAUDIT_MEMO_PORT=port, UIAUDIT_MEMO_ARTIFACTS=str(out / "artifacts"))
         run = subprocess.run(["go", "test", "-tags", TAG, "-count=1", "-v", "-run", f"^{TEST}$", "."],
                              cwd=tree / "uiaudit", env=env, capture_output=True, text=True)
     finally:
@@ -236,6 +264,18 @@ def report(log: str) -> int:
     return 1 if failed else 0
 
 
+def publish(artifacts: Path) -> None:
+    """Copy the walk clause's screenshots to `$MEMOS_CHECK_ARTIFACTS` (CI uploads that directory).
+
+    Only the PLAIN run publishes: a sabotaged copy's captures are of a tree nobody ships."""
+    dest = os.environ.get("MEMOS_CHECK_ARTIFACTS", "")
+    shots = sorted(artifacts.glob("*.png")) if artifacts.is_dir() else []
+    say(f"walk clause screenshots: {len(shots)} ({', '.join(p.name for p in shots) or 'none'})")
+    if dest:
+        shutil.copytree(artifacts, dest, dirs_exist_ok=True)
+        say(f"walk clause artifacts copied to $MEMOS_CHECK_ARTIFACTS ({dest})")
+
+
 def self_test(work: Path, db: Database, port: str) -> int:
     tree = work / "tree"
     # ONE scratch copy, reused: a fresh directory per sabotage is a cold build each time
@@ -248,7 +288,7 @@ def self_test(work: Path, db: Database, port: str) -> int:
                             "below would score caught for a reason that has nothing to do with it")
     say(f"positive control PASSED all {len(CLAUSES)} clause(s)")
     caught = 0
-    for name, clause, rel, old, new in SABOTAGES:
+    for name, clause, rel, old, new, *needle in SABOTAGES:
         def refuse(found: int, name: str = name, rel: str = rel) -> BaseException:
             return CouldNotVouch(f"sabotage {name}: its anchor occurs {found} time(s) in {rel}, want exactly 1 — "
                                  "the source moved and the ledger did not")
@@ -257,13 +297,15 @@ def self_test(work: Path, db: Database, port: str) -> int:
         own = CLAUSES[clause]
         v = verdict(log, clause)
         also = [c for c in CLAUSES if c != clause and verdict(log, c) == "FAIL"]
-        if v == "FAIL" and own in log:
+        missing = [n for n in needle if n not in log]
+        if v == "FAIL" and own in log and not missing:
             caught += 1
             line = next(ln.strip() for ln in log.splitlines() if own in ln)
             say(f"sabotage {name:<30} CAUGHT by {clause}" + (f" (also red: {' '.join(also)})" if also else ""))
             say(f"    {line[:260]}")
         else:
-            say(f"sabotage {name:<30} NOT CAUGHT (own clause {clause}: {v}; red elsewhere: {' '.join(also) or 'none'})")
+            say(f"sabotage {name:<30} NOT CAUGHT (own clause {clause}: {v}; red elsewhere: {' '.join(also) or 'none'}"
+                + (f"; its guard's text {missing[0]!r} is absent" if missing else "") + ")")
             say("    " + "\n    ".join(log.splitlines()[-15:]))
     print(f"SUMMARY memos-check-self-test: sabotaged={len(SABOTAGES)} caught={caught}", flush=True)
     return 0 if caught == len(SABOTAGES) else 1
@@ -292,7 +334,9 @@ def main(argv: list[str]) -> int:
         port = os.environ.get("MEMOS_CHECK_PORT", "18797")
         if argv == ["--self-test"]:
             return self_test(work, db, port)
-        return report(run_clauses(ROOT, work / "check", db, port))
+        rc = report(run_clauses(ROOT, work / "check", db, port))
+        publish(work / "check" / "artifacts")
+        return rc
     except CouldNotVouch as err:
         print(f"memos_check: COULD NOT VOUCH — {err}", file=sys.stderr)
         print("memos_check: (re-run with MEMOS_CHECK_KEEP=1 to read the work dir's logs)", file=sys.stderr)

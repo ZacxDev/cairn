@@ -771,9 +771,28 @@ without the exclusion: 55 declared against 54 listed, which that step refuses.
 | `c_draft` | a subject the browser's `maxlength` ACCEPTS (61 two-byte letters = 61 UTF-16 units) and the store refuses (122 bytes) comes back in the form with what was typed |
 | `d_retract` | the Retract button submits: that row becomes its tombstone line, text gone, button gone; the other memo is untouched |
 | `e_reader` | the read-only viewer sees the tab and the same memos, the read-only note, no form and no Retract button — beside an owner who, on the same page, has both |
+| `f_walk` | the WALK's capture of the populated tab (owner's view, plus one memo whose subject and text are each ONE unbroken token) at every rung of `Viewports`: axe, layout, the touch measurements, a screenshot — refused by `refuseWalkRegressions`, the function `run` calls, never a copy, PLUS any axe violation at all (that function hands general axe rules to the hub, which never sees these captures; pinned at the 0 measured). 🔴 Behind a POSITIVE CONTROL at every rung: the page each capture measured lists both named memos whole and lays out the send form, so a capture of an EMPTY tab cannot pass |
+
+🔴 **CLAUSE (f) IS THE WALK'S INSTRUMENT IN THIS WORLD, NOT THE WALK GROWING A THIRD WORLD — A
+CHOICE, AND WHY.** The other route was a database in the walk leg and a memo world booted by `run`.
+It was not taken: the walk leg is the one holding the hub secrets, `pwa_check.sh` runs that same walk
+and would need a database too, and the hub would gain a third world's pages on every push. Here the
+tab gets every walk signal — `Browser.CaptureTarget` at all five widths, the two touch rungs emulated — in
+the one leg that already has a database, and nothing the walk pushes moves. ⚠ What that costs: the
+populated tab is NOT in the hub's visual diff or its axe baseline; its captures are a CI artifact
+(`uiaudit-memos-captures`) and its refusals a clause verdict.
+
+🔴 **ITS FIRST RUN FOUND TWO DEFECTS, BOTH FIXED IN `tailwind.css`, and the self-test reverts each in
+the generated `app.css` to keep them caught.** (1) A memo whose subject or text is one unbroken token
+made the PAGE scroll sideways at every width up to 1440px (`scrollWidth=1560 > innerWidth=390` at
+mobile): `.memo-list` now carries `wrap-anywhere`. (2) `#memo-body` and `#memo-ttl` rendered 14px at
+both touch rungs — the coarse-pointer 16px rule is (0,1,1), `.memo-send input[type="number"]` (0,2,1)
+beat it, and `textarea` was in no generic rule at all. ⚠ `.team-link input[type="number"]` has the same
+shape and is restated in the same rule, but no world captures that form (it needs a database), so
+that half is read off the generated CSS, not measured.
 
 ```bash
-uiaudit/memos_check.py              # the five clauses: exit 0 / 1 / 2 (could not vouch)
+uiaudit/memos_check.py              # the six clauses: exit 0 / 1 / 2 (could not vouch)
 uiaudit/memos_check.py --self-test  # each clause RED under a sabotage of its own
 ```
 
@@ -787,27 +806,33 @@ Measured on one host (chromium 152.0.7977.82 from the flake's nixpkgs, PostgreSQ
 shell, go1.25.14):
 
 ```
-memos_check: positive control PASSED all 5 clause(s)
+memos_check: positive control PASSED all 6 clause(s)
 memos_check: sabotage listing-oldest-first           CAUGHT by a_seeded (also red: b_send)
-memos_check: sabotage send-form-never-rendered       CAUGHT by b_send (also red: c_draft e_reader)
+memos_check: sabotage send-form-never-rendered       CAUGHT by b_send (also red: c_draft e_reader f_walk)
 memos_check: sabotage refusal-drops-the-draft        CAUGHT by c_draft
 memos_check: sabotage retract-is-a-no-op             CAUGHT by d_retract
 memos_check: sabotage tombstones-not-listed          CAUGHT by d_retract
 memos_check: sabotage reader-shown-the-send-form     CAUGHT by e_reader
 memos_check: sabotage reader-shown-retract-buttons   CAUGHT by e_reader
-SUMMARY memos-check-self-test: sabotaged=7 caught=7
+memos_check: sabotage walk-sees-an-empty-tab         CAUGHT by f_walk (also red: a_seeded b_send d_retract e_reader)
+memos_check: sabotage unbroken-memo-overflows        CAUGHT by f_walk
+memos_check: sabotage memo-subject-unlabelled        CAUGHT by f_walk
+memos_check: sabotage memo-fields-zoom-on-touch      CAUGHT by f_walk
+SUMMARY memos-check-self-test: sabotaged=11 caught=11
 ```
 
-Each is caught by its OWN clause's message; "also red" is a later clause that needs what the sabotage
+Each is caught by its OWN clause's message — and each (f) row also by the text only ITS guard prints
+(the positive control's "did not see a POPULATED memos tab", "HORIZONTAL OVERFLOW", "AXE VIOLATIONS
+on the populated memos tab", "INPUT FONT UNDER 16px"), since (f) can fail several ways; "also red" is another clause that needs what the sabotage
 removed. The sabotages run on ONE scratch copy with no `.git` (`tests/testlib/mutant_tree`), each edit
 restored and the restore verified by digest. With no chromium the script exits 2, never 0.
 
-⚠ **What this does NOT measure — it is a test, not a walk.**
-- **No capture of the populated tab is taken or pushed.** No axe run, no touch-target or input-font
-  measurement, no overflow reading at the five widths, no screenshot. The walk still reaches the tab
-  only in its `ui.NoMemoStore` state, so the populated tab's accessibility and layout are unmeasured.
-  Closing that means a database in the WALK's world, which changes what every existing signal is
-  measured over; it is not done here.
+⚠ **What this does NOT measure.**
+- **The populated tab in the HUB.** Clause (f) captures and refuses, but pushes nothing: no pixel
+  diff against a previous run, no axe baseline — a regression there is a clause going red, never a
+  hub delta. The walk itself still reaches the tab only in its `ui.NoMemoStore` state.
+- **The read-only viewer's tab, captured.** Clause (f) captures the OWNER's view; `e_reader` drives
+  the viewer's, but no axe/touch/overflow reading is taken of it.
 - **Authorisation.** A reader shown no button could still forge the POST; that the store refuses it
   is `cmd/cairn-ui`'s pgtest tier.
 - **The other refusals in a browser** (quota, the live bound, a suspected secret), a tombstone left by
@@ -1299,9 +1324,10 @@ one; its `select` and submit are covered only by S1's element/type selectors (`s
 ⚠ **The scope page's MEMOS tab, populated, AS A WALKED PAGE** — the same `-db-dsn`, plus a control
 journal. The tab is a `?tab=memos` link the scope page publishes, so `ExpandLinks` reaches it with no
 change here (a tab adds no ledger row), but only in its `ui.NoMemoStore` state. ✅ Its send form, memo
-rows and Retract buttons are now DRIVEN in a real browser by `memos_check.py` (the section above);
-what stays blind is every WALK signal over the populated tab — axe, touch targets, overflow, the
-capture itself.
+rows and Retract buttons are now DRIVEN in a real browser by `memos_check.py` (the section above),
+✅ and clause (f) there takes the walk's captures of the populated tab — axe, touch targets, input
+font, overflow, a screenshot — at every rung. What stays blind is the HUB: those captures are never
+pushed, so there is no visual diff or axe baseline over them.
 
 🔴 **AND ANYTHING BETWEEN THE ORIGIN AND A CLIENT, WHICH IS THE ONE BLIND SPOT THAT HAS BEEN
 MEASURED TO MATTER.** Every number this program produces is about the pod `BootWorld` starts on
@@ -1571,8 +1597,8 @@ indistinguishable from a fork PR by design.
 | `touch_test.go` | touch reachability (both halves, real chromium), the `target-size` and input-font controls, the journal world |
 | `pwa_test.go` | the closing condition's clauses (a), (b: name, icon, screenshots) and (e): chromium's installability and manifest verdicts over three boots, and `pwa.js`'s storage in four browsers |
 | `standalone_test.go` | S5: the standalone window's Back/Reload — hidden in a tab, revealed under a `matchMedia` stub, the two-row header that is NOT sticky, and Back/Reload behaviour, in one armed world |
-| `memoworld.go` | the THIRD world: `cairn-ui` with a database, a control journal and a client listener — for the memos tab, never walked |
-| `memos_browser_test.go` | behind `//go:build memobrowser`: the populated memos tab's five clauses, as an owner and a read-only viewer |
+| `memoworld.go` | the THIRD world: `cairn-ui` with a database, a control journal and a client listener — for the memos tab; `run` never boots it, clause (f) captures it with the walk's instrument |
+| `memos_browser_test.go` | behind `//go:build memobrowser`: the populated memos tab's six clauses, as an owner and a read-only viewer, the last of them the walk's capture of it |
 | `memos_check.py` | that test's ONE runner: the database, the schema, each clause's own result line; `--self-test` sabotages each |
 | `pwa_check.sh` | the closing-condition ORCHESTRATOR: runs (a), (b), the walk's (c), the root module's (d) and (e); `--self-test` sabotages each |
 | `screenshots.go` | `uiaudit -screenshots <dir>`: the manifest's install screenshots, captured from the walk's world — the generator `flake.nix`'s `uiScreenshots` runs in the sandbox |
