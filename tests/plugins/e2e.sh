@@ -162,8 +162,8 @@ PY
     "e-a-reader-of-one-written-scope-gets-the-no-transcript-bytes"
   # (f) The read half dropped from V: what the pod derived and what the agent declared are ignored.
   sabotage f-read-half-dropped-from-v internal/transcript/visible.go \
-    $'out := slices.Concat(written.Scopes, written.Unscanned, meta.Derived, meta.Declared)' \
-    $'out := slices.Concat(written.Scopes, written.Unscanned)' \
+    $'out := slices.Concat(written.Scopes, written.Unscanned, meta.Written, meta.Derived, meta.Declared)' \
+    $'out := slices.Concat(written.Scopes, written.Unscanned, meta.Written)' \
     "f-a-reader-of-the-written-scope-alone-gets-the-no-transcript-bytes"
   # (g) "Every scope of the empty set" treated as true.
   sabotage g-empty-set-vacuously-readable internal/transcript/visible.go \
@@ -528,7 +528,12 @@ ui_url="http://127.0.0.1:$port"
 snap() {
   local tag="$1" viewer root row url out
   mkdir -p "$work/vis/$tag"
-  for viewer in a r p n; do
+  # NARROWEST VIEWER FIRST, and the order is load-bearing: every store walk is KEPT in the session's
+  # grow-only meta (#261 round 2), so once R's walk has recorded both written scopes, P is refused
+  # whatever P's own walk would have found — and a walk computed over the VIEWER's scopes (the
+  # (e) sabotage) is only visible to the FIRST narrow viewer. Measured: in the order `a r p n` the
+  # self-test MISSED that sabotage.
+  for viewer in p n r a; do
     for root in "$vis_d" "$vis_e" "$vis_f" "$vis_g"; do
       for row in page raw; do
         url="$ui_url/session?session=$root"

@@ -241,8 +241,13 @@ func TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope(t *testing.T) {
 	}
 	for session, viewers := range want {
 		var got []string
-		for name, viewer := range w.viewers {
-			if w.sees(t, viewer, session) {
+		// NARROWEST FIRST, NEVER MAP ORDER. Every walk is kept in the session's grow-only meta, so
+		// once `every`'s walk recorded both of s-both-08's written scopes, `one` is refused whatever
+		// its own walk finds — and a walk computed over the VIEWER's scopes
+		// (`transcript-written-set-from-viewer-scopes`) is visible only to the first narrow viewer.
+		// In map order that mutant survived whenever `every` happened to come first.
+		for _, name := range []string{"one", "none", "wrote", "every", "owner"} {
+			if w.sees(t, w.viewers[name], session) {
 				got = append(got, name)
 			}
 		}
