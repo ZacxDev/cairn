@@ -23,38 +23,40 @@ UNTRUSTED pointer-plus-preview block. Per `claudedocs/plan-cairn-scope-mail.md` 
 
 ## State now
 - **Plan MERGED** `4413feb` (#221). Operator rulings since: **Q16** keep verb narrowing; **Q19** retraction requires
-  READ for sender AND scope admin; the memos tab ships ON at deploy (no flag); populated-tab browser fixtures are a
-  follow-up PR before S4. **Q20** (empty memo accepted) is OPEN, behaviour unchanged.
-- **MERGED:** S0 #230; S1 #235 `8b7ef0d`; S2 #236 `862d3cb`; S3 #239 `0d9ba01`; S3 follow-ups #241 `a46b447`;
-  **S5 #242 `74f826f`**; publish-workflow fix #243 `bb3ce63`. Each: round 0 + round 1, no 🔴.
-- **DEPLOYED `sha-bb3ce63`** to both pods (deployment trunk `5c58ba1`). Verified: running imageIDs equal the tag
-  digests, 0 restarts; cairn-ui logs `serving 51 route(s)`, `memos in postgres`, `client API off`; migrations 1,2,3;
-  `/sign-in` 200, `/` 401, an anonymous `POST /memo` without Origin 403; the store answered an authenticated sync.
-  Pre-deploy backup `cairn-ui-backup-pre-s5b` restored+verified.
-- 🔴 **NOT verified signed-in:** the memos tab, sending and retracting from the browser — the OPERATOR's check
-  (open a scope → Memos; send one; retract it; confirm the tombstone line).
-- 🔴 **ROLLBACK below `sha-0d9ba01` needs the migration-3 recipe (#235);** once any credential is narrowed by verbs,
-  the journal recipe too.
-- **IN FLIGHT:** S5 follow-ups (`zach/scope-mail-s5-followups`, claim `cairn-scope-mail-s5-followups`): a
-  database-backed uiaudit world driving the populated tab in a real browser, the adapter retract/tombstone pgtest,
-  the form length limits, the memowire listener-first rule, and the round-0 deletion candidates.
+  READ for sender AND scope admin; memos tab ON at deploy; the populated-tab click-path browser test (#244) satisfies
+  "before S4", and the WALK capture of a populated tab is a separate non-blocking follow-up; S7 live in two pushes;
+  a DEDICATED probe identity. **Q20** (empty memo accepted) is OPEN.
+- **MERGED (cairn):** S0 #230, S1 #235, S2 #236, S3 #239, S3 follow-ups #241, S5 #242, publish fix #243, S5
+  follow-ups #244 `e18efd1`, secret-first send check #246 `f162b54`. Each audited round 0 + 1, no 🔴.
+- **DEPLOYED `sha-f162b54`** to both pods (deployment trunk `186b730`); #244 was held until #246 merged so its
+  credential-echo case was never live. Running imageIDs = tag digests, 0 restarts.
+- **S7 DONE (deployment):** cairn-ui `-client-api-addr=0.0.0.0:8125` + Service port (`4cf9ac3`), a MESH-ONLY gateway
+  block `listen <mesh-gw>:8125` mirroring presence's 8105 (`11f9e1a`), and a store-pod token row `memo-probe` scoped
+  to `cairn-memo-probe` only (`e27c77f`). Probe identity: synthetic user (provider `memo-probe`, cannot sign in),
+  scope `cairn-memo-probe`, credential `crd_by7z77tk0yn6qrq64b5rbth850` (read,write). `SHOW server_version` 18.6.
+- ✅ **Closing-condition part 5 MET:** `tests/memo/live-probe.sh` against the deployed listener over the mesh →
+  `SUMMARY live-probe: steps=6 passed=6 failed=0 exit=0` (recorded as a comment on deployment commit `11f9e1a`),
+  re-run green after the `sha-f162b54` deploy. Probe input (0600, two live tokens) is in
+  `~/.config/cairn-memo-probe/probe-input` on the operator's host.
+- 🔴 NOT verified signed-in: the browser memos tab — the OPERATOR's check.
+- 🔴 ROLLBACK below `sha-0d9ba01` needs the migration-3 recipe (#235); the journal now holds verb-narrowed
+  credentials, so older binaries refuse it — roll back only to a build ≥ S1.
+- **IN FLIGHT:** S4 in the tooling repo (branch `zach/cairn-memo-s4`, claim `cairn-scope-mail-s4`): hook defects
+  (setsid pipes, output cap), registration, `cairn-memo` skill, opencode surfacing, cairn flake bump, rollout runbook.
 
 ## Next steps (ranked)
-1. **S1** — DONE, #235 `8b7ef0d`. forcing: user — operator asked for scope mail.
-2. **S7** (deployment: `-client-api-addr` container port, Service port, ingress route, trusted-proxy allowlist for
-   that bind, a designated PROBE scope + a probe credential narrowed to read,write, `SHOW server_version` ≥ 17, the
-   deploy-order check), then run `tests/memo/live-probe.sh` against it and record its summary line; then **S4**
-   (tooling hook registration, LAST). S5 is DONE (#242). forcing: user — operator asked for scope mail.
-3. **S5 follow-ups** — IN FLIGHT (see State now). forcing: user — operator chose "follow-up PR before S4".
+1. **S1** — DONE, #235. forcing: user — operator asked for scope mail.
+2. **S4** (tooling) — IN FLIGHT; audit + merge, then the PER-HOST ROLLOUT (operator: issue `agents@<host>` narrowed
+   read,write, write `CAIRN_UI_URL`/`CAIRN_UI_TOKEN` 0600), then closing-condition part 4 on the tooling repo's main.
+   S5 and S7 are DONE. forcing: user — operator asked for scope mail.
 
 ## Defects (batched)
-- **Being fixed in S5 follow-ups:** `cmd/cairn-ui/memotab.go`'s `IncludeRetracted: true` and `Retract` pass-through
-  have no real-store test (both mutants survive); the send form's `maxlength` counts UTF-16 units where the server
-  counts UTF-8 bytes; `internal/memowire` does not state that an added `memo.Rendered` field needs the listener
-  deployed before clients update.
-- **Carried to S4 (before the hook is registered):** a descendant that `setsid`s and keeps stdout open
-  defeats the 2 s bound (measured 12.03 s) — close the pipes after `killpg`; relayed output is
-  uncapped (64 MiB passed through) — cap it and treat overflow as `malformed`.
+- **Carried to S4 (being fixed in the S4 PR):** a descendant that `setsid`s and keeps stdout open defeats the 2 s bound
+  (measured 12.03 s); relayed output uncapped (64 MiB passed through).
+- **#246 round-1 🟡:** `internal/ui/memos.go:364`'s `memo.Scannable(subject, body)` → `Scannable("", body)` survives the
+  suite; a crafted POST with a >16 KiB subject and a secret in the body would then be echoed. Add the row.
+- **Walk capture of a POPULATED memos tab** (axe / touch / overflow / screenshots) — operator ruled it a separate,
+  non-blocking follow-up; needs a database in the walk world, which moves every existing walk measurement.
 - **Closing-condition part 3's wording** diffs `-routes` against `b2ba3ac`, which predates scope-refs' `sources`
   route — re-anchor it on a post-scope-refs base before reading it.
 - `tests/pgtest/run.sh:278` pipes into `head -1` inside an assignment under `set -euo pipefail` — safe only while
@@ -97,9 +99,22 @@ UNTRUSTED pointer-plus-preview block. Per `claudedocs/plan-cairn-scope-mail.md` 
   `main` was then CI-green, but that was checked AFTER — re-read the state until it settles before merging.
   via: command
 
+- **The memo listener's failed-credential lockout is PER MESH HOST** (the gateway sets `CF-Connecting-IP` to the mesh
+  peer): five bad tokens from one agent host lock that host out of memos for 15 min, and every unauthenticated 401
+  probe from a host counts. via: code
+- **Probe scopes need THREE things in this deployment:** a `scope-created` journal record (only `cairn-server
+  -create-user -scopes` writes one), a store directory holding ≥1 file, and a store-pod token row allowing it — the
+  client's `memo-check` answers `no-scope` from the local cache before it ever asks the listener. via: command
+- **`sops edit` with a scripted EDITOR:** copy the existing rows' indent; a wrong indent is refused by sops as invalid
+  YAML and the file is left untouched (it re-runs the editor once). via: measurement
+- **zsh ate a git refspec:** `"$C1:refs/heads/trunk"` expanded `:r` as a history modifier — brace it, `"${C1}:…"`.
+  via: command
+- **A subagent stuck polling CI re-emits its completion notice indefinitely** — read the PR state directly and
+  `TaskStop` it. via: command
+
 ## How to verify
 ```bash
-KUBECONFIG=<deployment kubeconfig> kubectl -n subsystem-store get deploy -o wide
-KUBECONFIG=<deployment kubeconfig> kubectl -n subsystem-store logs deploy/cairn-ui --tail=1   # "memos in postgres", "client API off" until S7
+bash tests/memo/live-probe.sh ~/.config/cairn-memo-probe/probe-input   # SUMMARY … exit=0
+KUBECONFIG=<deployment kubeconfig> kubectl -n subsystem-store logs deploy/cairn-ui --tail=1   # "client API on [::]:8125"
 gh pr list --repo ZacxDev/cairn --state open
 ```
