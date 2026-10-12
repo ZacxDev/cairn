@@ -302,7 +302,8 @@ func main() {
 		"the instance's transcript byte ceiling (`20GB`, `20GiB`); uploads past it answer 507; REQUIRED with the listener")
 	armCapture := flag.Bool(flagArmCapture, false,
 		"ARM transcript capture. Unset — the default, and every instance today (operator decision O16) — every upload "+
-			"answers 503 and nothing is stored. Set it only once the plan's arming preconditions hold (S11's read ledger; "+
+			"answers 503 and nothing is stored. Set it only once the plan's arming preconditions hold (S3b's agent upload "+
+			"and e2e gate, and S11's read ledger; "+
 			"O15's held-back gate is WAIVED by operator decision O17, not passed)")
 	issueWorker := flag.String(flagIssueWorker, "",
 		"capture: mint ONE worker token for -"+flagWorkerOwner+" on -"+flagWorkerHost+
@@ -746,10 +747,15 @@ func main() {
 		}
 		// AP1: cairn-ui's OWN state may not live in the transcript directory — checked against the
 		// paths this process WILL write, before the store's open checks what is already there.
-		statePaths := []statePath{{"control-journal", *controlJournal}, {"arc-journal", resolvedArcJournal},
-			{"token-file", *tokenFile}, {flagWorkerTokens, *workerTokens}, {flagPresenceTokens, *presenceTokens}}
+		statePaths := []statePath{{"-control-journal", *controlJournal}, {"-arc-journal", resolvedArcJournal},
+			{"-token-file", *tokenFile}, {"-" + flagWorkerTokens, *workerTokens}, {"-" + flagPresenceTokens, *presenceTokens}}
 		if pgDB == nil {
-			statePaths = append(statePaths, statePath{"session-file", *sessionFile})
+			statePaths = append(statePaths, statePath{"-session-file", *sessionFile})
+		}
+		// The code-sources journal (scope refs S4) is a file this surface WRITES, set by the
+		// environment alone — a seam with AP1 that arrived after it was closed.
+		if sourcesOn {
+			statePaths = append(statePaths, statePath{"$" + codesrc.EnvJournal, sourceJournal.Path})
 		}
 		if err := stateInsideTranscriptDir(workerConf.dir, statePaths); err != nil {
 			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error()+". Refusing to start")

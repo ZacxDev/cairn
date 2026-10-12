@@ -2,17 +2,20 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/codesrc"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/redact"
 	"github.com/ZacxDev/cairn/internal/transcript/archive"
@@ -388,6 +391,24 @@ func TestTheBinaryRefusesATranscriptDirHoldingItsOwnState(t *testing.T) {
 			t.Fatal("the refusing start changed the foreign journal")
 		}
 	})
+	t.Run("the code-sources journal (environment-only)", func(t *testing.T) {
+		dir := t.TempDir()
+		sources := filepath.Join(dir, "sources.jsonl") // absent at startup: only the state-path check can see it
+		self, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		args := append([]string{"-control-journal", journal, "-store", t.TempDir(),
+			"-session-file", filepath.Join(t.TempDir(), "sessions"), "-token-file", filepath.Join(t.TempDir(), "absent-token"),
+			"-host", "127.0.0.1", "-port", "0"}, workerArgs(t, tokens, "-transcript-dir", dir)...)
+		cmd := exec.CommandContext(ctx, self, args...)
+		cmd.Env = []string{reexecEnv + "=1", codesrc.EnvJournal + "=" + sources}
+		c := startChild(t, cmd, cancel, &syncBuffer{}, &syncBuffer{})
+		if code := c.exit(t); code != exitConfig || !strings.Contains(c.out.String(), "$"+codesrc.EnvJournal+" "+sources+" resolves INSIDE") {
+			t.Fatalf("exit %d, want %d naming the sources journal:\n%s", code, exitConfig, c.out.String())
+		}
+	})
 	t.Run("POSITIVE CONTROL: the store's own directory, restarted", func(t *testing.T) {
 		dir := populatedTranscriptDir(t)
 		c := startPresenceChild(t, journal, workerArgs(t, tokens, "-transcript-dir", dir)...)
@@ -416,11 +437,11 @@ func TestStateInsideTheTranscriptDirIsResolvedNotSpelled(t *testing.T) {
 		"a symlinked spelling": filepath.Join(link, "control.journal"),
 		"the directory itself": dir,
 	} {
-		if err := stateInsideTranscriptDir(dir, []statePath{{"arc-journal", p}}); err == nil || !strings.Contains(err.Error(), "resolves INSIDE") {
+		if err := stateInsideTranscriptDir(dir, []statePath{{"-arc-journal", p}}); err == nil || !strings.Contains(err.Error(), "resolves INSIDE") {
 			t.Errorf("%s (%s) was admitted: %v", name, p, err)
 		}
 	}
-	if err := stateInsideTranscriptDir(dir, []statePath{{"arc-journal", filepath.Join(base, "arc.journal")}, {"token-file", ""}}); err != nil {
+	if err := stateInsideTranscriptDir(dir, []statePath{{"-arc-journal", filepath.Join(base, "arc.journal")}, {"-token-file", ""}}); err != nil {
 		t.Fatalf("POSITIVE CONTROL: a sibling path was refused: %v", err)
 	}
 }

@@ -187,7 +187,8 @@ func openTranscriptArchive(p workerPlan) (*archive.Archive, error) {
 	return archive.Open(archive.Config{Dir: p.dir, Retention: p.retention, Quota: p.quota, Recheck: red})
 }
 
-// statePath is one file `cairn-ui` itself reads or writes, named by the flag that sets it.
+// statePath is one file `cairn-ui` itself reads or writes, named by what sets it as an operator
+// spells it: `-<flag>`, or `$<VARIABLE>` for a file configured by the environment alone.
 type statePath struct{ flag, path string }
 
 // stateInsideTranscriptDir refuses a transcript directory that would HOLD one of `cairn-ui`'s own
@@ -206,10 +207,10 @@ func stateInsideTranscriptDir(dir string, paths []statePath) error {
 		}
 		resolved, err := resolveMaybeAbsent(p.path)
 		if err != nil {
-			return fmt.Errorf("-%s %s does not resolve (%v), so it cannot be checked against -%s", p.flag, p.path, err, flagTranscriptDir)
+			return fmt.Errorf("%s %s does not resolve (%v), so it cannot be checked against -%s", p.flag, p.path, err, flagTranscriptDir)
 		}
 		if arcs.Inside(dir, resolved) {
-			return fmt.Errorf("-%s %s resolves INSIDE -%s %s. The transcript store owns that directory whole — its "+
+			return fmt.Errorf("%s %s resolves INSIDE -%s %s. The transcript store owns that directory whole — its "+
 				"retention sweep journals into it and its open refuses anything it did not write — so `cairn-ui`'s own "+
 				"state there is a refused restart waiting to happen. Give the transcripts a directory of their own",
 				p.flag, p.path, flagTranscriptDir, dir)
