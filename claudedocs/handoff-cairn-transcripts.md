@@ -35,7 +35,7 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
   answered 503 `capture-disarmed` unless cairn-ui starts with `-arm-transcript-capture` (no env
   spelling, no default).
 - 🔴 **CAPTURE IS UNARMED.** Still blocking: **S11** (client read ledger) is unbuilt. ✅ **S3b is
-  BUILT** (its PR): the host-side uploader `internal/capture.HTTPSink` + `cairn-capture --run` (one
+  BUILT** (#260): the host-side uploader `internal/capture.HTTPSink` + `cairn-capture --run` (one
   pass for a user timer), and `tests/plugins/e2e.sh` clauses (a, b, c, h), `sabotaged=4 caught=4`,
   in the CI `go` job. A record/blob over 4 MiB ships as a PLACEHOLDER under the same cursor (plan,
   AP2 note). NOT blocking any more: O15's held-back gate — waived as an arming gate by O17, kept as a measurement (last score
