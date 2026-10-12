@@ -39,19 +39,31 @@ UNTRUSTED pointer-plus-preview block. Per `claudedocs/plan-cairn-scope-mail.md` 
   `memo-retract`, a NEW session got 0 bytes and `memo-read` shows the tombstone. Live probe re-run: `steps=6
   passed=6 failed=0 exit=0`. Listener: 1 `client-api: refused` line since the pod started (the probe's own
   unauthenticated step), no lockout.
-- **Closing condition:** parts 1, 2, 3, 5 MET. Part 4 (tooling-repo hook target exits 0 on the tooling repo's `main`, hook `--self-test`)
-  — green on #2148's merged head in CI; the tooling repo's `main`'s own run (`1cbae305`) was still pending at writing. ⚠ The
-  self-test number is now `sabotaged=9 caught=9` (#2148 added three); the plan's `6/6` wording is superseded.
+- **Closing condition: ALL FIVE PARTS MET — the arc is CLOSED.** Part 4 on the tooling repo's `main`, three ways: (a) its
+  own push gate on `4a774ee2` GREEN on all four legs (pytests 26597/0, gotests 514/0, nodetests 1908/0, cairn-client-runs
+  pass), where the hook test is a per-target floor (`run-tests.sh` `…test_cairn_memo_hook.py|76`) and the hook and its
+  test are byte-identical to `1cbae305`; (b) run by hand in a clean worktree of `main` at `1cbae305`, inside `nix develop`:
+  `--targets …test_cairn_memo_hook.py` exit 0, 79/79 (floor 76), and the hook's `--self-test` → `sabotaged=9 caught=9`
+  (#2148 added three; the plan's `6/6` wording is superseded). (c) `main`'s run at `1cbae305` itself
+  gave NO verdict: the gate pod was `Preempted` and pytests exited 255 — a kill, not a test result; its log was gone
+  before it could be read. A hand re-run was staged and NOT created, because `main` had moved on and (a) covered it.
+  ⚠ Running the target outside the dev shell exits **3** (a missing-toolchain precondition), not a test failure.
 - 🔴 ROLLBACK below `sha-0d9ba01` needs the migration-3 recipe (#235); the journal holds verb-narrowed credentials,
   so older binaries refuse it — roll back only to a build ≥ S1.
 - NOT verified: the browser memos tab SIGNED IN (operator's check); opencode delivery on a live session (plugin
-  deployed, measured only on S0's one host); the tooling repo's `main` CI at `1cbae305`.
+  deployed, measured only on S0's one host).
 - Claims: all released.
 
 ## Next steps (ranked)
 1. **S1** — DONE, #235. forcing: user — operator asked for scope mail.
-2. **Scope mail** — DONE: all slices merged, deployed, rolled out to both hosts and validated. Read the tooling repo's `main`'s CI
-   for closing-condition part 4, then declare the arc CLOSED. forcing: user — operator asked for scope mail.
+2. **Scope mail** — DONE and CLOSED: all five closing-condition parts met (see State now). forcing: user — operator asked
+   for scope mail.
+3. **Batched defects below** — a NEW arc, not this one; each needs its own claim. Two follow-ups the operator raised at
+   closing, not yet planned: point the `cairn`, `handoff` and `resume` skills at `cairn-memo` (only `cairn-memo` names
+   memos today), and external senders — the task board's in-cluster agents (env-only rollout, per-agent narrowed
+   credential), the hosted personal agent (write access would break its read-only-on-cluster property: operator's call),
+   and a webhook receiver for
+   ClickUp/Discord/Signal (new service; scope routing, the 30-live-memo quota, per-peer lockout, third-party text).
 
 ## Defects (batched)
 - **#2148 round-1 🟡s (tooling-repo hook):** (1) the host backoff is keyed on ONE fingerprint, so sessions in DIFFERENT
