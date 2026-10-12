@@ -30,9 +30,11 @@ import (
 // refused for exactly as long as the port is held. `TestAPortNothingIsListeningOnCannotBeTakenWhileTheTestHoldsIt`
 // pins both halves.
 //
-// ⚠ A CHILD TOLD TO LISTEN HERE CANNOT, so a case that hands this port to a child as a listen
-// address asserts "never bound" by the child failing its bind ("cannot bind … Refusing to start"),
-// not by a dial that connects. A child that must ANSWER binds `-port 0` and is reached through
+// ⚠ NOTHING CAN LISTEN ON 127.0.0.1 AT THIS PORT — the child under test included — so a dial there
+// can never observe a child that wrongly bound it. A case that must catch that hands the child the
+// SAME port on 127.0.0.2: a different specific address does not conflict with the held bind, so
+// the child's bind there would succeed and the dial would connect, while no `:0` choice and no
+// wildcard bind can land on it. A child that must ANSWER binds `-port 0` and is reached through
 // `presenceChild.serving`; this helper is only for an address that must NOT answer.
 func aPortNothingIsListeningOn(t *testing.T) int {
 	t.Helper()
@@ -89,7 +91,18 @@ func aPortNothingIsListeningOn(t *testing.T) int {
 //
 // The positive control is a port closed the old way: the same probe MUST bind it, or a refused
 // bind below is a fact about the probe rather than about the helper.
+//
+// 🔴 AND THE SECOND HALF PINS THE PRESENCE CASE'S DIAL AS REACHABLE: 127.0.0.2 on the held port must
+// refuse a dial yet ACCEPT a bind — otherwise a child that wrongly bound the agent listener there
+// would fail its bind instead of answering, and that case's dial could never go red.
 func TestAPortNothingIsListeningOnCannotBeTakenWhileTheTestHoldsIt(t *testing.T) {
+	probeOn := func(host string, port int) error {
+		l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
+		if err == nil {
+			_ = l.Close()
+		}
+		return err
+	}
 	probe := func(port int) error {
 		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err == nil {
@@ -114,5 +127,20 @@ func TestAPortNothingIsListeningOnCannotBeTakenWhileTheTestHoldsIt(t *testing.T)
 		t.Fatalf("127.0.0.1:%d could be bound by another listener while this test holds it, so a case "+
 			"that asserts NOTHING answers there can be answered by whatever binds it next — the "+
 			"child's own `-port 0` listener included", port)
+	}
+	if err := probeOn("0.0.0.0", port); err == nil {
+		t.Fatalf("0.0.0.0:%d could be bound while 127.0.0.1:%d is held, so a wildcard listener could "+
+			"take the port the presence case points the agent at on 127.0.0.2", port, port)
+	}
+
+	second := fmt.Sprintf("127.0.0.2:%d", port)
+	if conn, err := net.DialTimeout("tcp", second, time.Second); err == nil {
+		_ = conn.Close()
+		t.Fatalf("a dial to %s CONNECTED while nothing should listen there", second)
+	}
+	if err := probeOn("127.0.0.2", port); err != nil {
+		t.Fatalf("%s could NOT be bound while 127.0.0.1:%d is held (%v), so a child that wrongly bound "+
+			"its agent listener there would fail rather than answer, and the presence case's dial "+
+			"could never go red", second, port, err)
 	}
 }

@@ -344,8 +344,7 @@ func TestTheBinaryRefusesEachPresenceMisconfiguration(t *testing.T) {
 // TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped: a readable token file
 // whose CONTENT is refused at startup — a row for another owner (decision 15's wall), or a
 // malformed row — does NOT take the process down. The browser surface answers `/healthz` 200, the
-// agent listener is never bound (the port it was given stays the test's), and stderr names the
-// file line, never a token.
+// agent address is connection-refused, and stderr names the file line, never a token.
 func TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped(t *testing.T) {
 	_, journal := seededJournal(t, credentialLive)
 	for _, arm := range []struct {
@@ -365,14 +364,17 @@ func TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped(t *te
 			if err := os.WriteFile(tokens, []byte(arm.rows), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			// 🔴 The agent port is HELD by this test (bound, never listening) for its whole life, not
-			// closed and handed over: the kernel was measured handing a just-closed port to the very
-			// next `:0` bind, which here is the child's own browser listener — and that then answered
-			// the "nothing accepts here" dial that used to stand below, failing the case under load.
-			// Held, nothing else can take it — so a child that tried to bind its agent
-			// listener despite the refused file could not, and exits "cannot bind … Refusing to start",
-			// which `serving` fails on. The browser port is the child's own (`serving`): that one must ANSWER.
-			agentAddr := fmt.Sprintf("127.0.0.1:%d", aPortNothingIsListeningOn(t))
+			// 🔴 THE AGENT ADDRESS IS THE HELD PORT ON A *SECOND* LOOPBACK ADDRESS. A port closed and
+			// handed over was measured coming back from the very next `:0` bind — here the child's own
+			// browser listener, which then answered the dial below and failed the case under load. So
+			// the port is HELD on 127.0.0.1 (`aPortNothingIsListeningOn`): no `:0` choice and no
+			// wildcard bind can take it while the test runs. The child is pointed at 127.0.0.2 on that
+			// SAME port, which only an explicit bind of exactly 127.0.0.2:<port> can take — so the dial
+			// below stays REACHABLE: a child that bound the agent listener despite the refused file,
+			// however it worded or swallowed any error, is accepting there and fails this case.
+			// `TestAPortNothingIsListeningOnCannotBeTakenWhileTheTestHoldsIt` pins both halves. The
+			// browser port is the child's own (`serving`): that one must ANSWER.
+			agentAddr := fmt.Sprintf("127.0.0.2:%d", aPortNothingIsListeningOn(t))
 			c := startPresenceChild(t, journal,
 				"-presence-agent-addr", agentAddr, "-presence-tokens", tokens, "-presence-owner", presenceOwnerA.String())
 			// `serving` fails fast if the process EXITS, which it must not.
@@ -391,17 +393,9 @@ func TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped(t *te
 				t.Fatalf("stderr carries a token:\n%s", out)
 			}
 			// The browser surface answering `/healthz` 200 was asserted by `serving` above.
-			//
-			// 🔴 "THE AGENT IS NOT ACCEPTING" IS ASSERTED BY THE BIND FAILING, NOT BY A DIAL — a dial
-			// to a port this test holds can never connect, so the dial that used to stand here was
-			// unreachable once the port was held. A child that tried to bind the agent listener
-			// anyway either EXITS ("cannot bind … Refusing to start", which `serving` fails on) or,
-			// if a change kept it serving, says so in the refusal's own text, asserted here.
-			// ⚠ NAMED BLIND SPOT: a child that attempted the bind and SILENTLY discarded the error
-			// passes, because the held port is what stops it listening.
-			if strings.Contains(out, "presence agent listener cannot bind") {
-				t.Fatalf("the child tried to bind the agent listener on %s although its token file was refused:\n%s",
-					agentAddr, out)
+			if conn, err := net.DialTimeout("tcp", agentAddr, time.Second); err == nil {
+				_ = conn.Close()
+				t.Fatalf("the agent listener is accepting on %s although its token file was refused", agentAddr)
 			}
 		})
 	}
