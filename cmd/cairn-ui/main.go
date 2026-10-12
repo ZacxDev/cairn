@@ -891,14 +891,14 @@ func main() {
 	}
 	// 🔴 THE TRANSCRIPT READ SIDE (S4 of the transcripts plan) EXISTS ONLY WHERE THE STORE WAS OPENED —
 	// which takes all six worker flags, `-transcript-dir` among them. Assigned inside the `if`, never
-	// as `&transcript.Store{Archive: transcripts}` unconditionally: with no archive the field stays
+	// as a Store over a nil archive unconditionally: with no archive the field stays
 	// NIL, the session page renders no transcript section and the raw-record row answers its one miss,
 	// so a deployment without `-transcript-dir` serves what it served before. It reads the SAME
 	// `*store` the browse pages read, because the write half of a session's visibility set is a walk
 	// of that store's trailers. Reading does NOT depend on `-arm-transcript-capture`: disarming stops
 	// uploads, it does not hide what is stored.
 	if transcripts != nil {
-		cfg.Transcripts = &transcript.Store{Archive: transcripts, StoreRoot: *store}
+		cfg.Transcripts = transcript.NewStore(transcripts, *store)
 	}
 	srv, err := ui.New(cfg)
 	if err != nil {

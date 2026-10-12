@@ -125,7 +125,7 @@ func benchSessionPageAndScopeTabs(b *testing.B, scopes, entries int) {
 	transcripttest.Append(b, arc, transcripttest.Session{Root: "s-bench-05", Owner: "user:bench-somebody-else"}, "main",
 		[]string{trUser("a synthetic message"), trAssistant("a synthetic answer")})
 	withTranscript := cfg
-	withTranscript.Transcripts = &transcript.Store{Archive: arc, StoreRoot: root}
+	withTranscript.Transcripts = transcript.NewStore(arc, root)
 	srvT, err := New(withTranscript)
 	if err != nil {
 		b.Fatal(err)

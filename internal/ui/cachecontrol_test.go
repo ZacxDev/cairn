@@ -50,7 +50,7 @@ func walkTranscripts(t *testing.T) *transcript.Store {
 	a := transcripttest.Open(t)
 	transcripttest.Append(t, a, transcripttest.Session{Root: walkSession, Owner: string(p.Kind) + ":" + string(p.ID)}, "main",
 		[]string{trUser("a synthetic message")})
-	return &transcript.Store{Archive: a, StoreRoot: t.TempDir()}
+	return transcript.NewStore(a, t.TempDir())
 }
 
 // redirectRows is every non-public GET row that answers a BODILESS 303 rather than a page —

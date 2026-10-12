@@ -4864,10 +4864,14 @@ records as stored (`transcript.go`). The plan is `claudedocs/plan-cairn-plugins.
 
 - 🔴 **ONE predicate, and this package cannot go around it.** `transcript.Store.View(viewer, id)` is
   the only way `internal/ui` reaches a stored record: it returns a `View` where `transcript.Visible`
-  said yes and **nil** otherwise, and the archive behind a `View` is unexported. Nil is one answer for
-  three states — no transcript, a refused viewer, an id that is no session — so a handler CANNOT
-  render them differently. `internal/ui` does not import the archive at all
-  (`internal/worker`'s importer ledger pins that).
+  said yes and **nil** otherwise. The Store's archive is unexported (`transcript.NewStore`), the
+  reading entry point is unexported, and a `View` serves records only up to where each stream stood
+  when it was decided — so a record uploaded afterwards, which may hide the session from this viewer,
+  is never served by an older verdict. Nil is one answer for three states — no transcript, a refused
+  viewer, an id that is no session — so a handler CANNOT render them differently. `internal/ui` does
+  not import the archive at all (`internal/worker`'s importer ledger pins that). *#261's audit found
+  both the exported field and the unbounded View; the claim above was wider than the code until it
+  did.*
 - 🔴 **A refused viewer gets the bytes of a session with no transcript** — no section, no link, no
   count on the page; one 404 body (`transcriptUnseenBody`) on the raw row. Hidden, absent, deleted by
   the retention sweep, and a deployment with no archive are four ways to the SAME response
@@ -4913,15 +4917,34 @@ loaded host, go1.25.14, three runs: the whole-store walk cost **0.24–0.31×** 
 met and NOTHING is cached. The walk runs only when it can change the answer: not for the owner, and
 not for a viewer the stored half of `V` already refuses.
 
+## What #261's audit found, and what changed
+
+- 🔴 **A record could hide a read from `V`**: the pod derived from a MAP, so a header in a member
+  NAME, or in the first of two members named alike, was never seen — while the raw view served it.
+  The pod now also scans every record as one string (every token, keys and repeats included), and a
+  repeated member name adds `*` (tool inputs are still read off a map). Not refused: the host
+  redactor keeps both copies on purpose, and a refusal would stall the stream.
+- 🔴 **The header scan was quadratic** on a line of back-to-back markers (2 min 39 s at 256 KB,
+  under the session's upload lock). `scopeuse.HeaderScopes` is linear now, held to the old per-marker
+  scan as an oracle over 20,000 generated lines.
+- 🟡 a View now stops at its decision-time positions; the Store's archive is unexported; the
+  "does the authority hold the name" guard was an invariant guard (deleting it changed nothing) and
+  is gone; `?turn=` is clamped at `transcript.MaxTurn`; a subagent stream the store does not hold is
+  no longer linked.
+
 ## The RED proof
 
-Eleven rows of `tests/control_mutants.py` (`transcript-*`), each run alone and KILLED by its named
-test with every listed extra killer red: the predicate not asked; the written set over the viewer's
+The plan's eleven rows of `tests/control_mutants.py`, each run alone and KILLED by its named test
+with every listed extra killer red: the predicate not asked; the written set over the viewer's
 scopes; the read half dropped; the empty set readable; the owner compared by display name; the owner
 arm given to a narrowed credential; any-scope for every-scope; a child's writes not counted toward
-its root; an unknown scope name readable; `*` readable; and classification by record type (the
-600 KB tool result rendered whole). `transcript-pod-skips-scope-rederivation` (an S3 row) was
-re-pointed at the real derivation and re-run. `tests/plugins/e2e.sh` clauses (d)–(g) each have a
+its root; an unknown scope name readable (since the audit, the "skip a name nobody holds" a reader
+would write); `*` readable; and classification by record type (the 600 KB tool result rendered
+whole). Five more: a user message clipped at the assistant's head limit, and #261's audit's four —
+the derivation from the map alone, a repeated member read past, a View serving past its decision,
+and an unclamped `?turn=`. `transcript-pod-skips-scope-rederivation` (an S3 row) was re-pointed at
+the real derivation, and the two `scopeuse-*` rows whose code the linear scan rewrote were
+re-pointed; all re-run. `tests/plugins/e2e.sh` clauses (d)–(g) each have a
 sabotage in `--self-test` (`sabotaged=9 caught=9`); (e), (f) and (g) turn exactly their own
 assertion red. `uiaudit`'s `TestTheSessionPageCarriesItsTranscriptAtEveryWidth` was watched red with
 the fixture upload skipped.
@@ -4941,3 +4964,6 @@ the fixture upload skipped.
   — the fail-closed direction, chosen here, not in the plan.
 - **The refused states in a real browser.** `uiaudit`'s world has one identity, the owner; the
   refusals are measured in-process and by the e2e's bearer requests.
+- **Another package holding an archive.** The bound is "`internal/ui` cannot reach one"; any package
+  that opens an `archive.Archive` itself reads records with no predicate. Only `cmd/cairn-ui` and the
+  worker listener do (the importer ledger).

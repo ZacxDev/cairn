@@ -160,7 +160,7 @@ func (w trWorld) server(t *testing.T, user string, a *archive.Archive) *Server {
 	cfg.Source = StoreSource{Root: w.store}
 	cfg.Now = func() time.Time { return sessNow }
 	if a != nil {
-		cfg.Transcripts = &transcript.Store{Archive: a, StoreRoot: w.store}
+		cfg.Transcripts = transcript.NewStore(a, w.store)
 	}
 	srv, err := New(cfg)
 	if err != nil {
@@ -528,9 +528,14 @@ func TestTheTranscriptPagesByFiftyTurns(t *testing.T) {
 			}
 		}
 	}
-	past := getAs(t, srv, sessionURL("s-full-01")+"&turn=5000").Body.String()
-	if strings.Contains(past, `class="turn"`) || !strings.Contains(past, "turn=101") || !strings.Contains(visibleText(past), "of 120") {
-		t.Error("a turn past the end is not an empty page linking back to the last real one")
+	// Past the end, up to the largest number `?turn=` parses as (a wider one does not parse and is
+	// page one, like any other unrecognised value — the `nonsense` row above).
+	for _, beyond := range []string{"5000", "9223372036854775807"} {
+		past := getAs(t, srv, sessionURL("s-full-01")+"&turn="+beyond).Body.String()
+		if strings.Contains(past, `class="turn"`) || !strings.Contains(past, "turn=101") || !strings.Contains(visibleText(past), "of 120") ||
+			strings.Contains(visibleText(past), "turns -") {
+			t.Errorf("?turn=%s is not an empty page linking back to the last real one (or it renders a negative page)", beyond)
+		}
 	}
 }
 

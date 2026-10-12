@@ -60,24 +60,14 @@ func (v Viewer) reads(scope string) bool {
 	if scope == Star {
 		return false
 	}
-	// 🔴 A NAME THIS AUTHORITY DOES NOT HOLD UNDER ANY VERB — renamed since the write, deleted, or
-	// living on another instance — IS UNREADABLE, never skipped. "It no longer exists, so it cannot
-	// be hiding anything" is the wrong direction: the content that was read from it is still in the
-	// transcript.
-	if !v.holds(scope) {
-		return false
-	}
+	// 🔴 A NAME THIS AUTHORITY DOES NOT HOLD — renamed since the write, deleted, or living on
+	// another instance — IS UNREADABLE, never skipped, and the line below is what makes it so: a
+	// name the authority does not hold is not in its read set. "It no longer exists, so it cannot
+	// be hiding anything" is the wrong direction — the content read from it is still in the
+	// transcript. (An explicit "does it hold the name at all" check stood here, and #261's audit
+	// measured it as an invariant guard: deleting it changed no answer, so it is gone and the row
+	// `transcript-unknown-scope-name-readable` mutates the skip a reader would actually write.)
 	return v.Auth.VisibleScopes(control.VerbRead).Allows(scope)
-}
-
-// holds reports whether the authority reaches a scope of that name with ANY verb.
-func (v Viewer) holds(scope string) bool {
-	for _, verb := range control.AllVerbs {
-		if v.Auth.VisibleScopes(verb).Allows(scope) {
-			return true
-		}
-	}
-	return false
 }
 
 // readsEvery is "every scope of the set", TRUE for the empty set — which is why [Visible] refuses
@@ -174,9 +164,19 @@ func VisibilitySet(meta *archive.Meta, written Written) []string {
 
 // Store is the read side of the transcript archive: where stored sessions live, and the store
 // root their write trailers are in.
+//
+// 🔴 ITS FIELDS ARE UNEXPORTED, SO [Store.View] IS THE ONLY WAY OUT. An exported archive field let
+// a caller holding a Store read any stream without asking the predicate (#261's audit: it
+// compiled from `internal/ui`, and no importer ledger can see a call made through a field).
 type Store struct {
-	Archive   *archive.Archive
-	StoreRoot string
+	archive   *archive.Archive
+	storeRoot string
+}
+
+// NewStore is the read side over `a`, whose write trailers are in the store at `storeRoot`. A nil
+// archive is a deployment with no transcript store: every [Store.View] is nil.
+func NewStore(a *archive.Archive, storeRoot string) *Store {
+	return &Store{archive: a, storeRoot: storeRoot}
 }
 
 // View is a stored session a viewer MAY see — and the only handle this package gives out on a
@@ -197,14 +197,30 @@ type Record = archive.StoredRecord
 // StopRecords is what a [View.Records] callback returns to end the scan early.
 var StopRecords = archive.StopScan
 
-// Records calls fn for every stored record of one of the session's streams, in order. A stream the
-// session does not hold calls fn zero times.
+// Records calls fn for every stored record of one of the session's streams, in order, UP TO the
+// position the stream had when [Store.View] decided — a stream the session does not hold calls fn
+// zero times.
+//
+// 🔴 BOUNDED BY THE DECISION, NOT BY THE STREAM: a record uploaded after the predicate was asked can
+// grow `V` past this viewer, and a View is a verdict about the session as it stood then (#261's
+// audit measured an old View serving such a record).
 func (v *View) Records(stream string, fn func(Record) error) error {
-	return v.a.ScanStream(v.Meta.Root, stream, fn)
+	return scanTo(v.a, v.Meta, stream, fn)
 }
 
-// Read builds the page of the collapsed reading that holds turn `turn` ([Read]).
-func (v *View) Read(turn int) (Reading, error) { return Read(v.a, v.Meta, turn) }
+// scanTo is [archive.Archive.ScanStream] stopped at the stream's position in `meta`.
+func scanTo(a *archive.Archive, meta *archive.Meta, stream string, fn func(Record) error) error {
+	limit := meta.Streams[stream].SeqTo
+	return a.ScanStream(meta.Root, stream, func(r Record) error {
+		if r.Seq > limit {
+			return archive.StopScan
+		}
+		return fn(r)
+	})
+}
+
+// Read builds the page of the collapsed reading that holds turn `turn`.
+func (v *View) Read(turn int) (Reading, error) { return readSession(v.a, v.Meta, turn) }
 
 // View answers "what may this viewer see of this session's transcript": the stored session when
 // [Visible] says so, and NIL otherwise.
@@ -221,18 +237,18 @@ func (v *View) Read(turn int) (Reading, error) { return Read(v.a, v.Meta, turn) 
 // ⚠ THE STORE WALK IS SKIPPED WHEN IT CANNOT CHANGE THE ANSWER: for the owner (the owner arm never
 // reads `V`), and for a viewer the STORED half of `V` already refuses (a superset cannot admit
 // them). [Visible] is still what decides, over the set as far as it was computed.
-func (s Store) View(viewer Viewer, root string) (*View, error) {
-	if s.Archive == nil {
+func (s *Store) View(viewer Viewer, root string) (*View, error) {
+	if s == nil || s.archive == nil {
 		return nil, nil
 	}
-	meta, err := s.Archive.ReadMeta(root)
+	meta, err := s.archive.ReadMeta(root)
 	if err != nil || meta == nil {
 		return nil, err
 	}
 	v := VisibilitySet(meta, Written{})
 	if !viewer.owns(meta) && viewer.readsEvery(v) {
 		ids := append([]string{meta.Root}, meta.Children...)
-		written, err := WrittenScopes(s.StoreRoot, ids)
+		written, err := WrittenScopes(s.storeRoot, ids)
 		if err != nil {
 			return nil, err
 		}
@@ -241,5 +257,5 @@ func (s Store) View(viewer Viewer, root string) (*View, error) {
 	if !Visible(viewer, meta, v) {
 		return nil, nil
 	}
-	return &View{Meta: meta, a: s.Archive}, nil
+	return &View{Meta: meta, a: s.archive}, nil
 }

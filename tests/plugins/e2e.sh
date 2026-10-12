@@ -157,8 +157,8 @@ PY
   # (e) Decision 3's trap: the written set computed over the VIEWER's readable scopes instead of
   #     the whole store, so every scope found is readable and the reader of one written scope sees it.
   sabotage e-written-set-over-the-viewers-scopes internal/transcript/visible.go \
-    $'written, err := WrittenScopes(s.StoreRoot, ids)' \
-    $'written, err := writtenWithin(s.StoreRoot, viewer.Auth.VisibleScopes(control.VerbRead), ids)' \
+    $'written, err := WrittenScopes(s.storeRoot, ids)' \
+    $'written, err := writtenWithin(s.storeRoot, viewer.Auth.VisibleScopes(control.VerbRead), ids)' \
     "e-a-reader-of-one-written-scope-gets-the-no-transcript-bytes"
   # (f) The read half dropped from V: what the pod derived and what the agent declared are ignored.
   sabotage f-read-half-dropped-from-v internal/transcript/visible.go \

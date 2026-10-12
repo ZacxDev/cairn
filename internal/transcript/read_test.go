@@ -3,6 +3,7 @@ package transcript
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"testing"
@@ -39,7 +40,7 @@ func readAll(t *testing.T, a *archive.Archive, root string, turn int) Reading {
 	if err != nil || meta == nil {
 		t.Fatalf("%s is not stored (%v)", root, err)
 	}
-	rd, err := Read(a, meta, turn)
+	rd, err := readSession(a, meta, turn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,6 +216,8 @@ func TestTurnsPageByFifty(t *testing.T) {
 	transcripttest.Append(t, a, sess, "main", lines)
 	for _, tc := range []struct{ ask, first, turns int }{
 		{1, 1, 50}, {0, 1, 50}, {50, 1, 50}, {51, 51, 50}, {77, 51, 50}, {101, 101, 20}, {120, 101, 20}, {999, 951, 0},
+		// A request past MaxTurn reads as MaxTurn — no page arithmetic may overflow (#261's audit).
+		{math.MaxInt, PageStart(MaxTurn), 0}, {MaxTurn + 1, PageStart(MaxTurn), 0},
 	} {
 		rd := readAll(t, a, "s-0001", tc.ask)
 		if rd.TotalTurns != 120 || rd.FirstTurn != tc.first || len(rd.Turns) != tc.turns {
@@ -254,10 +257,14 @@ func TestRecordsBeforeTheFirstMessageShareItsTurn(t *testing.T) {
 func TestCollapsedContentIsBudgetedAndUserTextNeverIs(t *testing.T) {
 	a := transcripttest.Open(t)
 	sess := transcripttest.Session{Root: "s-0001", Owner: readOwner}
-	chunk := strings.Repeat("0123456789abcdef", 600_000/16)
-	huge := strings.Repeat("typed. ", 3<<20/7)
+	// Sized so that charging the user message WOULD change the answer: 1.5 MiB of it would leave
+	// the 2 MiB budget room for none of the 600 KB results, where uncharged it holds three. (A user
+	// message wider than the budget is not needed for that, and costs the store's re-check — which
+	// runs beside a timing-ratio test in the same `go test` — several seconds.)
+	chunk := strings.Repeat("lorem ipsum dolor sit amet ", 600_000/27+1)[:600_000]
+	huge := strings.Repeat("typed. ", 3<<19/7)
 	lines := []string{claudeUser(huge)}
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 4; i++ {
 		lines = append(lines, fmt.Sprintf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result",`+
 			`"tool_use_id":"toolu_b%04d","content":%s}]}}`, i, jsonString(chunk)))
 	}
@@ -282,11 +289,11 @@ func TestCollapsedContentIsBudgetedAndUserTextNeverIs(t *testing.T) {
 			shown++
 		}
 	}
-	// 2 MiB of budget holds three 600 KB results; the other three keep only their summary; and the
-	// small one after them is shown, because a refused item takes nothing from the budget.
+	// 2 MiB of budget holds three 600 KB results; the fourth keeps only its summary; and the small
+	// one after it is shown, because a refused item takes nothing from the budget.
 	last := results[len(results)-1]
-	if len(results) != 7 || shown != 3 || elided != 3 || last.Elided || last.Tool.Result != "small" {
-		t.Fatalf("of %d results %d large ones are shown and %d elided, and the small last one is elided=%v; want 7, 3, 3, false "+
+	if len(results) != 5 || shown != 3 || elided != 1 || last.Elided || last.Tool.Result != "small" {
+		t.Fatalf("of %d results %d large ones are shown and %d elided, and the small last one is elided=%v; want 5, 3, 1, false "+
 			"under a %d-byte budget", len(results), shown, elided, last.Elided, CollapsedBudget)
 	}
 }
@@ -355,6 +362,26 @@ func TestAnOpencodeStreamReadsEachUnitAtItsLastVersion(t *testing.T) {
 	}
 	if len(c.Items) != 1 || c.Items[0].Class != AgentPrompt || c.Items[0].Text != "the parent asked for this" || c.Bookkeeping != 2 {
 		t.Errorf("the child reads as %+v with %d bookkeeping; want ONE agent-prompt and 2", c.Items, c.Bookkeeping)
+	}
+}
+
+// TestAChildStreamTheStoreDoesNotHoldIsNotLinked: a result naming a subagent whose stream was never
+// stored leaves the call with no child to render — not a link to a raw view that answers its miss.
+func TestAChildStreamTheStoreDoesNotHoldIsNotLinked(t *testing.T) {
+	a := transcripttest.Open(t)
+	transcripttest.Append(t, a, transcripttest.Session{Root: "s-0001", Owner: readOwner}, "main", []string{
+		claudeUser("go"),
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_n0001","name":"Agent",` +
+			`"input":{"description":"look","subagent_type":"general-purpose"}}]}}`,
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_n0001","content":"ok"}]},` +
+			`"toolUseResult":{"agentId":"never-stored"}}`,
+	})
+	call := itemsOf(readAll(t, a, "s-0001", 1).Turns[0].Items, ToolCall)
+	if len(call) != 1 || !call[0].Tool.HasResult {
+		t.Fatalf("CONTROL: the Agent call and its result were not paired: %+v", call)
+	}
+	if c := call[0].Tool.Child; c != nil && c.Stream != "" {
+		t.Errorf("the call carries child stream %q, which the store does not hold", c.Stream)
 	}
 }
 

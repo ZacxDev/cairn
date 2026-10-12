@@ -143,23 +143,30 @@ type Reading struct {
 	Streams []StreamRef
 }
 
+// MaxTurn is the largest turn a page may be asked for. A larger request reads as this one — a
+// page past the end — so no page arithmetic can overflow (#261's audit: `?turn=<MaxInt64>`
+// rendered negative page links).
+const MaxTurn = 1 << 30
+
 // PageStart folds a requested turn number onto the first turn of its page: 1 for anything that is
-// not a positive number.
+// not a positive number, and a request past [MaxTurn] as [MaxTurn].
 func PageStart(turn int) int {
 	if turn < 1 {
 		return 1
 	}
+	turn = min(turn, MaxTurn)
 	return (turn-1)/TurnsPerPage*TurnsPerPage + 1
 }
 
-// Read builds the page of `meta`'s session that holds turn `turn`.
+// readSession builds the page of `meta`'s session that holds turn `turn`. UNEXPORTED: outside this
+// package a reading is had only through [View.Read], which exists only where [Visible] said yes.
 //
 // ⚠ IT SCANS THE WHOLE MAIN STREAM ON EVERY CALL, one record in memory at a time: a turn boundary
 // is a `human-text` unit, which only classification finds, and nothing indexes it yet (the skeleton
 // of decision 17 is slice S8's). The RESPONSE is bounded by the page; the work is not. An opencode
 // stream is held whole instead, because a part is stored once per VERSION and only the last one is
 // the part.
-func Read(a *archive.Archive, meta *archive.Meta, turn int) (Reading, error) {
+func readSession(a *archive.Archive, meta *archive.Meta, turn int) (Reading, error) {
 	r := reader{a: a, meta: meta, budget: CollapsedBudget, entered: map[string]bool{}}
 	out := Reading{FirstTurn: PageStart(turn)}
 	for name, pos := range meta.Streams {
@@ -287,7 +294,7 @@ func (r *reader) stream(name string, emit func(piece)) error {
 	if r.meta.Runtime == "opencode" {
 		return r.opencodeStream(name, emit)
 	}
-	return r.a.ScanStream(r.meta.Root, name, func(rec archive.StoredRecord) error {
+	return scanTo(r.a, r.meta, name, func(rec archive.StoredRecord) error {
 		emit(r.claudePiece(name, rec))
 		return nil
 	})
@@ -301,7 +308,13 @@ func (r *reader) children(items []Item, depth int) {
 			continue
 		}
 		c := t.Child
-		if _, stored := r.meta.Streams[c.Stream]; c.Stream == "" || !stored || depth >= maxChildDepth || r.entered[c.Stream] {
+		if _, stored := r.meta.Streams[c.Stream]; !stored {
+			// A stream the records name and the store does not hold: nothing to nest, and no link to
+			// render to a raw view that would answer its miss.
+			c.Stream = ""
+			continue
+		}
+		if depth >= maxChildDepth || r.entered[c.Stream] {
 			continue
 		}
 		r.entered[c.Stream] = true
@@ -598,7 +611,7 @@ func (r *reader) opencodeStream(name string, emit func(piece)) error {
 	}
 	var order []string
 	last := map[string]unit{}
-	err := r.a.ScanStream(r.meta.Root, name, func(rec archive.StoredRecord) error {
+	err := scanTo(r.a, r.meta, name, func(rec archive.StoredRecord) error {
 		key := rec.Src
 		if i := strings.LastIndexByte(key, '@'); i >= 0 {
 			key = key[:i]

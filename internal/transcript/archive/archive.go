@@ -54,6 +54,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/redact"
@@ -84,6 +85,8 @@ const (
 	// compacted, walked by the re-check and gzipped. #224's audit measured a 32 MB record peaking
 	// at 459 MB resident (≈14× the record); measured here, the final frame ALLOCATES ≈18× the
 	// record (an upper bound on its live peak), linearly at 1, 2 and 4 MiB — ≈72 MiB at this cap.
+	// Since S4 the read-scope derivation ([derive]) and the repeated-member check read the assembled
+	// record too: 79.6 MiB at this cap (19.9×, measured at 4 MiB only).
 	// `TestTheAssembledRecordCapFitsThePod` re-measures it on every run against a 100 MiB budget,
 	// under half the limit, so two roots assembling at once still leave the rest of the process
 	// room. ⚠ The bound is PER RECORD, not per request: an unframed request of two records near
@@ -627,13 +630,33 @@ func syncDir(dir string) error {
 // fold has to carry evidence across requests; this function is where it lands.
 //
 // ⚠ A record that is not a JSON OBJECT (a bare string, an array) is scanned as content.
+//
+// 🔴 AND EVERY RECORD IS ALSO SCANNED AS ONE STRING, so a header the map walk never reads still
+// counts: in a member NAME, or in the first of two members with one name — Go's map decode keeps
+// only the last — while the raw-record view serves the stored bytes, first copy included (#261's
+// audit, measured: a viewer `V` should have refused was served the hidden read). `Content` on a
+// JSON document reads every string token, keys and repeats included.
+//
+// 🔴 AND A REPEATED MEMBER NAME ADDS `*`. The whole-record scan finds a HEADER anywhere, but which
+// strings are TOOL INPUTS (what F1 and F2 ask about) is read off the map, which drops the first
+// copy. No runtime writes a repeated name; a record that has one is either hostile or broken, so
+// it makes the session owner-only rather than being read as if the first copy were not there. It
+// is NOT refused: the host redactor deliberately keeps both copies (`internal/redact/ordered.go`),
+// and a refusal would stall that session's stream.
 func derive(lines [][]byte, text []byte) []string {
 	d := scopeuse.NewDeriver()
+	var extra []string
 	for _, line := range lines {
-		dec := json.NewDecoder(bytes.NewReader(line))
-		dec.UseNumber()
+		d.Content(string(line))
+		if duplicateMember(line) {
+			extra = []string{Star}
+		}
+		// `json.Unmarshal`, not a `Decoder`: it reads the line in place, where a decoder first
+		// copies it into a buffer it grows by doubling — measured at the 4 MiB cap, that copy alone
+		// was most of what this derivation added to one assembly's allocations. Only STRINGS are
+		// read here, so a number decoded as a float loses nothing.
 		var rec map[string]any
-		if err := dec.Decode(&rec); err != nil || rec == nil {
+		if err := json.Unmarshal(line, &rec); err != nil || rec == nil {
 			d.Content(string(line))
 			continue
 		}
@@ -643,7 +666,63 @@ func derive(lines [][]byte, text []byte) []string {
 	if text != nil {
 		d.Content(string(text))
 	}
-	return d.Result().V
+	return union(d.Result().V, extra)
+}
+
+// duplicateMember reports whether any object in one valid, COMPACTED JSON value repeats a member
+// name — compared as `encoding/json`'s map decoding compares them: after unescaping, with invalid
+// UTF-8 replaced. One pass, no decode of the values.
+func duplicateMember(v []byte) bool {
+	type frame struct {
+		obj, wantKey bool
+		keys         map[string]struct{}
+	}
+	var stack []*frame
+	for i := 0; i < len(v); {
+		switch v[i] {
+		case '{':
+			stack = append(stack, &frame{obj: true, wantKey: true})
+		case '[':
+			stack = append(stack, &frame{})
+		case '}', ']':
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+		case ',':
+			if n := len(stack); n > 0 && stack[n-1].obj {
+				stack[n-1].wantKey = true
+			}
+		case '"':
+			end := i + 1
+			for end < len(v) && v[end] != '"' {
+				if v[end] == '\\' {
+					end++
+				}
+				end++
+			}
+			end++ // past the closing quote
+			if n := len(stack); n > 0 && stack[n-1].obj && stack[n-1].wantKey && end <= len(v) {
+				top := stack[n-1]
+				raw := v[i:end]
+				key := string(raw[1 : len(raw)-1])
+				if bytes.IndexByte(raw, '\\') >= 0 || !utf8.Valid(raw) {
+					_ = json.Unmarshal(raw, &key)
+				}
+				if top.keys == nil {
+					top.keys = map[string]struct{}{}
+				}
+				if _, seen := top.keys[key]; seen {
+					return true
+				}
+				top.keys[key] = struct{}{}
+				top.wantKey = false
+			}
+			i = end
+			continue
+		}
+		i++
+	}
+	return false
 }
 
 func union(a, b []string) []string {
@@ -794,6 +873,7 @@ func (a *Archive) AppendRecords(who Uploader, u Upload, stream string, recs []Re
 		if err := json.Compact(&c, r.Rec); err != nil {
 			return Stored{}, invalid("record %d is not one JSON value", i)
 		}
+
 		// 🔴 THE REFUSING RE-CHECK (clause c). ANY hit refuses the whole request.
 		if _, hits := a.cfg.Recheck.Record(c.Bytes()); len(hits) > 0 {
 			return Stored{}, &RecheckError{Record: i}

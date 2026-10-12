@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,7 +177,7 @@ func quoteJSON(s string) string {
 
 func (w visWorld) sees(t *testing.T, viewer Viewer, session string) bool {
 	t.Helper()
-	view, err := Store{Archive: w.arc, StoreRoot: w.store}.View(viewer, session)
+	view, err := NewStore(w.arc, w.store).View(viewer, session)
 	if err != nil {
 		t.Fatalf("View(%s): %v", session, err)
 	}
@@ -338,8 +339,9 @@ func TestVisibleArms(t *testing.T) {
 	writeOnly := control.NewVerbSet(control.VerbWrite)
 	writer := Viewer{Principal: every.Principal, Auth: control.Narrow(every.Auth, nil, &writeOnly)}
 	other := &archive.Meta{Root: "s-0002", Owner: "user:nobody"}
-	if !writer.holds("alpha-notes") || Visible(writer, other, []string{"alpha-notes"}) {
-		t.Errorf("a write-only credential (holds alpha: %v) sees a session that touched alpha-notes", writer.holds("alpha-notes"))
+	holds := writer.Auth.VisibleScopes(control.VerbWrite).Allows("alpha-notes")
+	if !holds || Visible(writer, other, []string{"alpha-notes"}) {
+		t.Errorf("a write-only credential (holds alpha: %v) sees a session that touched alpha-notes", holds)
 	}
 	// POSITIVE CONTROL: the un-narrowed reader of the same scopes does.
 	if !Visible(every, other, []string{"alpha-notes", "beta-notes", "gamma-notes"}) {
@@ -397,14 +399,58 @@ func TestAnUnscannedEntryPutsItsScopeInV(t *testing.T) {
 	}
 }
 
+// TestAViewServesOnlyWhatItWasDecidedOver is #261's audit finding: a record uploaded AFTER a View
+// was decided — one that grows `V` past this viewer — is not served by that View, through either
+// way out (`Records` and `Read`); a fresh View refuses the viewer outright. The control is the
+// record before it, which the old View still serves.
+func TestAViewServesOnlyWhatItWasDecidedOver(t *testing.T) {
+	w := visBuild(t)
+	store := NewStore(w.arc, w.store)
+	view, err := store.View(w.viewers["one"], "s-only-04")
+	if err != nil || view == nil {
+		t.Fatalf("CONTROL: the reader of alpha-notes does not see s-only-04 (%v)", err)
+	}
+	owner := string(control.KindUser) + ":" + string(visID(control.PrefixUser, "owner"))
+	read := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_vis0009",` +
+		`"content":` + quoteJSON(recallHeader("gamma-notes")+" the late read") + `}]}}`
+	transcripttest.Append(t, w.arc, transcripttest.Session{Root: "s-only-04", Owner: owner}, "main", []string{read})
+	if fresh, _ := store.View(w.viewers["one"], "s-only-04"); fresh != nil {
+		t.Fatal("CONTROL: after the upload grew V by gamma-notes, a FRESH View still admits the reader of alpha-notes")
+	}
+	var seqs []int64
+	if err := view.Records("main", func(r Record) error {
+		seqs = append(seqs, r.Seq)
+		if strings.Contains(string(r.Rec), "the late read") {
+			t.Error("the old View's Records served the record uploaded after it was decided")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(seqs, []int64{1}) {
+		t.Errorf("the old View's Records served seqs %v, want exactly [1] — the record it was decided over", seqs)
+	}
+	rd, err := view.Read(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, turn := range rd.Turns {
+		for _, it := range turn.Items {
+			if it.Tool != nil && strings.Contains(it.Tool.Result, "the late read") {
+				t.Error("the old View's Read served the record uploaded after it was decided")
+			}
+		}
+	}
+}
+
 // TestNoArchiveMeansNoView: a deployment without a transcript store answers nil for every id.
 func TestNoArchiveMeansNoView(t *testing.T) {
 	w := visBuild(t)
-	view, err := Store{StoreRoot: w.store}.View(w.viewers["owner"], "s-full-01")
+	view, err := NewStore(nil, w.store).View(w.viewers["owner"], "s-full-01")
 	if view != nil || err != nil {
 		t.Fatalf("with no archive View answered %v, %v", view, err)
 	}
-	if view, err := (Store{Archive: w.arc, StoreRoot: w.store}).View(w.viewers["owner"], "not a session id"); view != nil || err != nil {
+	if view, err := NewStore(w.arc, w.store).View(w.viewers["owner"], "not a session id"); view != nil || err != nil {
 		t.Fatalf("an id the grammar cannot produce answered %v, %v", view, err)
 	}
 }

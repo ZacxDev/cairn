@@ -4849,8 +4849,8 @@ MUTANTS: tuple[Mutant, ...] = (
         name="scopeuse-all-scopes-header-names-a-scope",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\t\tif ValidScope(f[1]) {",
-        new="\t\t\tif ValidScope(f[1]) || strings.HasPrefix(f[1], \"(\") {",
+        old="\t\tif ValidScope(v) {",
+        new="\t\tif ValidScope(v) || strings.HasPrefix(v, \"(\") {",
         killer="TestTheAllScopesHeaderAddsStar",
         why="a store-wide search renders `scope=(all scopes)`, and reading the field as whatever "
         "follows `scope=` is the natural parse — it turns the one header that names EVERY scope into "
@@ -4861,8 +4861,8 @@ MUTANTS: tuple[Mutant, ...] = (
         name="scopeuse-scopeless-header-dropped",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\tif len(fields) == 0 {\n\t\t\tout = append(out, Star)\n\t\t\tcontinue\n\t\t}",
-        new="\t\tif len(fields) == 0 {\n\t\t\tcontinue\n\t\t}",
+        old="\t\tif !found {\n\t\t\tout = append(out, Star)\n\t\t}",
+        new="\t\tif !found {\n\t\t}",
         killer="TestTheScopelessHeaderFormAddsStar",
         why="the `all N entry files … MALFORMED` header carries no `scope=` field, and \"no field, "
         "nothing to add\" reads as tidy — it drops a read whose scope the line does not say.",
@@ -5180,8 +5180,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-written-set-from-viewer-scopes",
         path="internal/transcript/visible.go",
-        old="written, err := WrittenScopes(s.StoreRoot, ids)",
-        new="written, err := writtenWithin(s.StoreRoot, viewer.Auth.VisibleScopes(control.VerbRead), ids)",
+        old="written, err := WrittenScopes(s.storeRoot, ids)",
+        new="written, err := writtenWithin(s.storeRoot, viewer.Auth.VisibleScopes(control.VerbRead), ids)",
         killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
         why="every other walk on this surface is narrowed to the caller's readable scopes, and passing "
         "the same set here looks like the rule being followed — over that set every scope found is "
@@ -5256,8 +5256,9 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-unknown-scope-name-readable",
         path="internal/transcript/visible.go",
-        old="\tif !v.holds(scope) {\n\t\treturn false\n\t}",
-        new="\tif !v.holds(scope) {\n\t\treturn true\n\t}",
+        old="\treturn v.Auth.VisibleScopes(control.VerbRead).Allows(scope)\n}",
+        new="\treturn v.Auth.VisibleScopes(control.VerbRead).Allows(scope) || !slices.ContainsFunc(control.AllVerbs, "
+        "func(vb control.Verb) bool { return v.Auth.VisibleScopes(vb).Allows(scope) })\n}",
         killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
         extra_killers=("TestAScopeRenamedAfterTheWriteIsUnreadableUntilItIsRenamedBack",),
         why="'that scope no longer exists, so it cannot be hiding anything from anyone' — and the content "
@@ -5283,6 +5284,48 @@ MUTANTS: tuple[Mutant, ...] = (
         extra_killers=("TestTheTranscriptRendersCollapsed",),
         why="a `user` record is what a user sent, by its own type — and a tool result of several hundred "
         "kilobytes rides INSIDE one, so 'user messages are shown in full' renders every one of them whole.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    # #261's audit: the derivation's two blind spots and the View's decision bound, each a row.
+    Mutant(
+        name="transcript-pod-derives-from-the-map-alone",
+        path="internal/transcript/archive/archive.go",
+        old="\t\td.Content(string(line))\n\t\tif duplicateMember(line) {",
+        new="\t\tif duplicateMember(line) {",
+        killer="TestARecordCannotHideAReadFromTheDerivation",
+        why="the map walk already visits every value of the record, so scanning the record again as one "
+        "string reads as redundant — and a header in a member NAME, or in the first of two members "
+        "named alike, is then never derived while the raw view serves it.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-pod-reads-past-a-repeated-member",
+        path="internal/transcript/archive/archive.go",
+        old="\t\t\textra = []string{Star}",
+        new="\t\t\textra = nil",
+        killer="TestARecordCannotHideAReadFromTheDerivation",
+        why="once the whole-record scan finds every header, a repeated member looks harmless — but which "
+        "strings are tool inputs is still read off a map that drops the first copy.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-view-serves-past-its-decision",
+        path="internal/transcript/visible.go",
+        old="\t\tif r.Seq > limit {\n\t\t\treturn archive.StopScan",
+        new="\t\tif false && r.Seq > limit {\n\t\t\treturn archive.StopScan",
+        killer="TestAViewServesOnlyWhatItWasDecidedOver",
+        why="a stream is append-only, so reading it to its current end looks like reading 'the transcript' "
+        "— and a record uploaded after the predicate was asked can be one that hides it from this viewer.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-turn-unclamped",
+        path="internal/transcript/read.go",
+        old="\tturn = min(turn, MaxTurn)\n",
+        new="",
+        killer="TestTurnsPageByFifty",
+        why="a turn number is only a view selector, so bounding it reads as fussiness — and the page "
+        "arithmetic overflows at the top of int, rendering negative page links.",
         pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
     ),
     # A twelfth, beyond the plan's eleven: the one rendering rule the operator stated outright (O9 —

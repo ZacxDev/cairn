@@ -43,9 +43,10 @@ collapsed reading model the browser surface renders. `claudedocs/plan-cairn-plug
   its child sessions — never the viewer's readable set, which would make "every" vacuous), plus what
   the pod derived and what the agent declared. A scope with an entry the walk cannot scan counts as
   written.
-- **`Store.View` returns nil for absent, refused and not-a-session alike**, and the archive behind
-  a `View` is unexported — so a caller cannot render the three differently, or read a record
-  without asking.
+- **`Store.View` returns nil for absent, refused and not-a-session alike**, the Store's archive is
+  unexported (`NewStore`), and a `View` reads each stream only up to where it stood when the View was
+  decided — so a caller cannot render the three differently, read a record without asking, or be
+  served a record uploaded after the verdict.
 - **The reading classifies UNITS.** A `tool_result` block inside a `user` record is a tool result;
   the `toolUseResult` copy is counted, not shown. An opencode stream is read at each unit's LAST
   stored version.

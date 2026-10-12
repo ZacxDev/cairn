@@ -557,6 +557,157 @@ func TestThePodDerivesReadScopesTheAgentDidNotDeclare(t *testing.T) {
 	}
 }
 
+// TestARecordCannotHideAReadFromTheDerivation is #261's audit finding, both shapes: a header the
+// map walk never reads — in a member NAME, and in the first of two members with one name — must not
+// leave `V` short. Both are derived (`Content` over the whole record), and a repeated name adds `*`
+// as well, since which strings are tool inputs is read off a map that drops the first copy. Each
+// with its control: the same header in an ordinary member derives the scope and nothing else.
+func TestARecordCannotHideAReadFromTheDerivation(t *testing.T) {
+	g := newRig(t, 1<<30)
+	const header = "subsystem-recall: status=recalled scope=delta-notes entries=1"
+	put := func(root, rec string) error {
+		_, err := g.a.AppendRecords(ownerA, up(root, "", "1"), "main", []Record{{Src: "0", Rec: []byte(rec)}})
+		return err
+	}
+	derived := func(root string) []string {
+		m, err := g.a.ReadMeta(root)
+		if err != nil || m == nil {
+			t.Fatalf("%s is not stored (%v)", root, err)
+		}
+		return m.Derived
+	}
+	// CONTROL: the header as an ordinary value.
+	if err := put("s-0001", `{"type":"user","message":{"role":"user","content":"`+header+`"}}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := derived("s-0001"); !slices.Equal(got, []string{"delta-notes"}) {
+		t.Fatalf("CONTROL: the header as a value derived %v, want [delta-notes]", got)
+	}
+	// The header as a member NAME.
+	if err := put("s-0002", `{"type":"user","`+header+`":"x","message":{"role":"user","content":"hello"}}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := derived("s-0002"); !slices.Equal(got, []string{"delta-notes"}) {
+		t.Errorf("a header in a member NAME derived %v, want [delta-notes]", got)
+	}
+	// The header in the first of two members with one name — and the same name spelled with an
+	// escape, which a map decode treats as the same name.
+	for i, rec := range []string{
+		`{"type":"user","message":{"role":"user","content":"` + header + `"},"message":{"role":"user","content":"hello"}}`,
+		`{"type":"user","message":{"role":"user","content":"` + header + `"},"\u006dessage":{"role":"user","content":"hello"}}`,
+	} {
+		root := fmt.Sprintf("s-01%02d", i)
+		if err := put(root, rec); err != nil {
+			t.Fatalf("a record repeating a member name was refused (%v); it is stored and made owner-only", err)
+		}
+		if got := derived(root); !slices.Equal(got, []string{Star, "delta-notes"}) {
+			t.Errorf("a header in the first of two members named alike (%s) derived %v, want [* delta-notes]", rec, got)
+		}
+	}
+	// CONTROL: one name in two DIFFERENT objects is not a repeat, and adds nothing.
+	if err := put("s-0003", `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := derived("s-0003"); len(got) != 0 {
+		t.Errorf("one member name used in two different objects derived %v, want nothing", got)
+	}
+}
+
+// TestDuplicateMemberAgreesWithTheMapDecode: for each document, `duplicateMember` says "repeated"
+// exactly when decoding it into a map LOSES a member — measured against `encoding/json` itself, not
+// restated. The cases are the escapes, nesting, strings that look like keys, and invalid UTF-8.
+func TestDuplicateMemberAgreesWithTheMapDecode(t *testing.T) {
+	repeated := 0
+	for _, doc := range []string{
+		`{"a":1,"b":2}`, `{"a":1,"a":2}`, `{"a":1,"\u0061":2}`, `{"a":{"a":1},"b":{"a":2}}`,
+		`{"a":{"x":1,"x":2}}`, `[{"a":1},{"a":1}]`, `{"a":"\"a\":1","b":"a"}`, `{"a":["a","a"],"b":1}`,
+		"{\"\xff\":1,\"\xfe\":2}", `{"k\\":1,"k\\":2}`, `{"":1,"":2}`, `"a"`, `[]`, `{}`,
+	} {
+		var c bytes.Buffer
+		if err := json.Compact(&c, []byte(doc)); err != nil {
+			t.Fatalf("%s: %v", doc, err)
+		}
+		want := lossy(t, c.Bytes())
+		if got := duplicateMember(c.Bytes()); got != want {
+			t.Errorf("%s: duplicateMember says %v, a map decode loses a member: %v", doc, got, want)
+		}
+		if want {
+			repeated++
+		}
+	}
+	// Both answers occur, or the agreement above is with a constant.
+	if repeated == 0 || repeated == 14 {
+		t.Fatalf("%d of 14 documents lose a member in a map decode; the cases must include both", repeated)
+	}
+}
+
+// lossy reports whether decoding v into nested maps drops a member: the member names the TEXT
+// carries (which a map cannot drop) against the members the decoded maps hold.
+func lossy(t *testing.T, v []byte) bool {
+	t.Helper()
+	var decoded any
+	if err := json.Unmarshal(v, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	return countMembers(decoded) < namesIn(t, v)
+}
+
+func countMembers(v any) int {
+	switch x := v.(type) {
+	case map[string]any:
+		n := len(x)
+		for _, e := range x {
+			n += countMembers(e)
+		}
+		return n
+	case []any:
+		n := 0
+		for _, e := range x {
+			n += countMembers(e)
+		}
+		return n
+	}
+	return 0
+}
+
+func namesIn(t *testing.T, raw json.RawMessage) int {
+	t.Helper()
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return 0
+	}
+	switch trimmed[0] {
+	case '{':
+		dec := json.NewDecoder(bytes.NewReader(trimmed))
+		if _, err := dec.Token(); err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for dec.More() {
+			if _, err := dec.Token(); err != nil {
+				t.Fatal(err)
+			}
+			var val json.RawMessage
+			if err := dec.Decode(&val); err != nil {
+				t.Fatal(err)
+			}
+			n += 1 + namesIn(t, val)
+		}
+		return n
+	case '[':
+		var elems []json.RawMessage
+		if err := json.Unmarshal(trimmed, &elems); err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, e := range elems {
+			n += namesIn(t, e)
+		}
+		return n
+	}
+	return 0
+}
+
 // TestResolveDirRefusesInsideTheStoreRoot: the store root itself, a directory under it, and a
 // symlink outside that resolves into it are each refused; a sibling directory is accepted.
 func TestResolveDirRefusesInsideTheStoreRoot(t *testing.T) {

@@ -198,6 +198,12 @@ const assemblyBudget = 100 << 20
 // allocated, an UPPER bound on the peak live heap. Measured at 1, 2 and 4 MiB: 18.8×, 18.2×,
 // 17.9× the record (≈72 MiB at the cap), linear. It fails if the cap is raised, or the assembly
 // path grows, past [assemblyBudget].
+//
+// ⚠ THE PATH DID GROW ONCE, AND THIS IS WHAT NOTICED: S4's read-scope derivation decodes the
+// assembled record, and through a `json.Decoder` that took one assembly to 91.7 MiB (22.9×) —
+// inside the budget by 8 MiB. Read in place with `json.Unmarshal` it was 75.7 MiB (18.9×, two
+// runs); with #261's audit fixes — the whole-record header scan and the repeated-member check —
+// 79.6 MiB (19.9×). All at the 4 MiB cap only.
 func TestTheAssembledRecordCapFitsThePod(t *testing.T) {
 	g := newRig(t, 1<<40)
 	r := pad(MaxAssembledBytes)

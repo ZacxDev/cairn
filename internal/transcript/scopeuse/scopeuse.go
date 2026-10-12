@@ -56,31 +56,86 @@ func ValidScope(name string) bool { return authz.SafePathComponent.MatchString(n
 
 // HeaderScopes returns every scope named by a rendered read header in s, `*` for a header that
 // names none or names something that is not a scope.
+//
+// A header is a marker and the rest of ITS line: every `scope=` field from the marker to the end
+// of the line counts toward it, and a marker followed by none adds `*`.
+//
+// 🔴 LINEAR, AND THAT IS A REQUIREMENT, NOT A TUNING: the pod runs this over every record it
+// stores, while that session's uploads wait on its lock. It used to re-read the rest of the line
+// after EVERY marker, so a line of back-to-back markers with no newline was quadratic — measured
+// at 2.3 s for a 32 KB record and 2 min 39 s for 256 KB, under a 4 MiB cap (#261's audit). Now
+// each line is scanned once: the fields after its FIRST marker are found in one pass (they are the
+// union of every later marker's, since a field begins at whitespace and no field can swallow one),
+// plus the one case a later marker adds by itself — `scope=` IMMEDIATELY after it, where the old
+// per-marker scan matched at the start of its substring. `TestHeaderScopesMatchesThePerMarkerScan`
+// holds the two to the same answer over generated lines.
 func HeaderScopes(s string) []string {
 	var out []string
-	for rest := s; ; {
-		i := strings.Index(rest, HeaderMarker)
+	for {
+		i := strings.Index(s, HeaderMarker)
 		if i < 0 {
 			return out
 		}
-		line := rest[i+len(HeaderMarker):]
+		line := s[i:]
+		rest := ""
 		if nl := strings.IndexByte(line, '\n'); nl >= 0 {
-			line = line[:nl]
+			line, rest = line[:nl], line[nl:]
 		}
-		rest = rest[i+len(HeaderMarker):]
-		fields := scopeField.FindAllStringSubmatch(line, -1)
-		if len(fields) == 0 {
+		out = append(out, lineScopes(line)...)
+		s = rest
+	}
+}
+
+// fieldEnd is RE2's `\s` — the characters a `scope=` value (`\S*`) runs up to.
+const fieldEnd = "\t\n\f\r "
+
+// lineScopes is [HeaderScopes] for ONE line that begins with a marker.
+func lineScopes(line string) []string {
+	var marks []int // the offset just past each marker
+	for off := 0; ; {
+		j := strings.Index(line[off:], HeaderMarker)
+		if j < 0 {
+			break
+		}
+		off += j + len(HeaderMarker)
+		marks = append(marks, off)
+	}
+	var out []string
+	add := func(v string) {
+		if ValidScope(v) {
+			out = append(out, v)
+		} else {
 			out = append(out, Star)
-			continue
-		}
-		for _, f := range fields {
-			if ValidScope(f[1]) {
-				out = append(out, f[1])
-			} else {
-				out = append(out, Star)
-			}
 		}
 	}
+	body := line[marks[0]:]
+	locs := scopeField.FindAllStringSubmatchIndex(body, -1)
+	for _, l := range locs {
+		add(body[l[2]:l[3]])
+	}
+	k := 0
+	for _, m := range marks {
+		rel := m - marks[0]
+		found := false
+		if rel > 0 && strings.HasPrefix(body[rel:], "scope=") {
+			v := body[rel+len("scope="):]
+			if e := strings.IndexAny(v, fieldEnd); e >= 0 {
+				v = v[:e]
+			}
+			add(v)
+			found = true
+		}
+		for k < len(locs) && locs[k][0] < rel {
+			k++
+		}
+		if k < len(locs) {
+			found = true
+		}
+		if !found {
+			out = append(out, Star)
+		}
+	}
+	return out
 }
 
 // Deriver accumulates one ROOT session's evidence across every stream. Feed it every string of

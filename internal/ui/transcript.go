@@ -23,7 +23,9 @@ import (
 //   - the collapsed transcript SECTION on `GET /session` (decision 18), and
 //   - the raw-record view, `GET /session/transcript` — the stored records as stored.
 //
-// 🔴 BOTH ASK `transcript.Store.View` AND NOTHING ELSE. That function is the ONE visibility
+// 🔴 BOTH ASK `transcript.Store.View` AND NOTHING ELSE — and nothing else is reachable: the Store's
+// archive is unexported, so a stored record leaves `internal/transcript` only inside a `View`, and
+// a `View` serves records only up to where the stream stood when it was decided. That function is the ONE visibility
 // predicate (decision 4: the owner, or a reader of EVERY scope the session wrote or read), computed
 // from the request's own `control.Resolve` authority — never `Model.Grants`. It answers NIL for a
 // session with no transcript, for one this viewer is refused, and for an id that is no session at
@@ -123,13 +125,13 @@ func (s *Server) transcriptView(id identity.Identity, session string) *transcrip
 	return view
 }
 
-// turnParam reads `?turn=`: a positive number, or 1.
+// turnParam reads `?turn=`: a positive number, or 1; past `transcript.MaxTurn` it is that.
 func turnParam(r *http.Request) int {
 	n, err := strconv.Atoi(r.URL.Query().Get(QueryTurn))
 	if err != nil || n < 1 {
 		return 1
 	}
-	return n
+	return min(n, transcript.MaxTurn)
 }
 
 // transcriptRawHref is the ONE place a raw-record URL is built: the ledger path plus
