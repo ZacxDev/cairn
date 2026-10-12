@@ -204,6 +204,13 @@ var routes = map[routeKey]route{
 	{"POST", MemoPath}:        {(*Server).handleMemoSend, 0},
 	{"POST", MemoRetractPath}: {(*Server).handleMemoRetract, 0},
 
+	// 🔴 THE CODE-SOURCES EDIT FLOW (S4 of the scope-refs plan, `sources.go`): a scope-ADMINISTRATION
+	// read and its write, the share flow's shape. `GET` is `content` — whether the form renders is an
+	// answer about the caller's `admin` authority. The POST carries NO class, so both cross-site gates
+	// reach it by METHOD. This surface is the sources journal's ONLY writer (decision 5).
+	{"GET", SourcesPath}:  {(*Server).handleSourcesPage, classContent},
+	{"POST", SourcesPath}: {(*Server).handleSourcesSave, 0},
+
 	{"GET", "/team"}:              {(*Server).handleTeamPage, classContent},
 	{"POST", "/team/link"}:        {(*Server).handleTeamLink, 0},
 	{"POST", "/team/link/revoke"}: {(*Server).handleTeamLinkRevoke, 0},
@@ -320,6 +327,10 @@ const (
 	// token and says so, rather than guessing a host out of a request header that a proxy
 	// chooses.
 	JoinPath = "/join"
+
+	// SourcesPath is one scope's code-sources edit page (`GET`, keyed by `?scope=<control.ID>`) and
+	// its save (`POST`). A FIXED path with the scope in a query parameter, for the share flow's reason.
+	SourcesPath = "/scope/sources"
 
 	// TeamPath is the Team page: sharing, invitations and team links in one place.
 	TeamPath = "/team"

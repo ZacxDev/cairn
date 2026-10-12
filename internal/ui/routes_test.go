@@ -91,6 +91,7 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		"GET /session content",
 		"GET /share",
 		// 🔴 THE TEAM PAGE (`team.go`). `content`: every list on it is an authority answer.
+		"GET /scope/sources content",
 		"GET /team content",
 		"GET /sign-in public",
 		"GET /sign-in/github/callback public",
@@ -134,6 +135,7 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		"POST /sign-out",
 		// The Team page's two writes. NO class — both cross-site gates reach them by METHOD,
 		// which `TestTheTeamLinkRowsAreBehindBothCrossSiteGates` asserts by each gate's message.
+		"POST /scope/sources",
 		"POST /team/link",
 		"POST /team/link/revoke",
 		"POST /unshare",
@@ -526,6 +528,9 @@ var bareGETAnswer = map[string]int{
 	// invite and link halves say `NoInviteStore`
 	// `NoInviteStore` (`TestTheTeamPageAnswersHonestlyWithNoStore`).
 	"GET /team content": http.StatusOK,
+	// The code-sources page follows the browse pair: a request naming no scope gets the navigation
+	// page, not the uniform refusal (`handleSourcesPage`).
+	"GET /scope/sources content": http.StatusOK,
 	// 🔴 `GET /join` ANSWERS 200 TO A REQUEST CARRYING NO TOKEN, WHICH IS THE PAGE AND NOT A
 	// REFUSAL. It named no invitation, so there is nothing for a uniform refusal to protect
 	// and nothing it could learn; it gets a page saying the link carried no invitation. The
@@ -727,6 +732,12 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		{"GET", "/memo"},
 		{"GET", "/memo/retract"},
 		{"GET", "/memos"},
+		// The code-sources rows' near-misses (scope-refs S4): a prefix match on `/scope` or on the row
+		// itself would serve each.
+		{"GET", "/scope/sources/"},
+		{"GET", "/scope/sourcesx"},
+		{"GET", "/scope/source"},
+		{"GET", "/sources"},
 		// S4's near-misses: the unversioned script a worker-shaped draft would register, a wrong
 		// digest, the live script path suffixed, and a screenshot under a name nobody declared.
 		{"GET", "/static/pwa.js"},
@@ -781,6 +792,10 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		{"POST", "/memo/"},
 		{"POST", "/memo/retractx"},
 		{"PUT", "/memo"},
+		{"POST", "/scope/sources/"},
+		{"PUT", "/scope/sources"},
+		{"POST", "/scope"},
+		{"POST", "/sources"},
 	} {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(probe[0], probe[1], nil)
@@ -936,6 +951,9 @@ var contentAuthority = map[string]string{
 	// link chooser, `TeamLinking.Mintable`. A list, not one name, because a page that asked
 	// two of the three would render the third section's authority sentence unlicensed.
 	"GET /team content": "sharing,inviting,team",
+	// `source`: the code-sources page is found through `Visible`, like the scope page; `admin` (the
+	// form) is read off the request's own authorization, never a second seam.
+	"GET /scope/sources content": "source",
 }
 
 // countingSource records whether the authority was consulted, and is the whole

@@ -13,6 +13,7 @@ import (
 
 	g "maragu.dev/gomponents"
 
+	"github.com/ZacxDev/cairn/internal/codesrc"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/netid"
@@ -977,6 +978,10 @@ type Server struct {
 	// memos is the memo store, NIL when this deployment has none. See `memos.go`.
 	memos Memos
 
+	// sourceJournal is the scope's declared code sources (`sources.go`); a zero `Path` is the
+	// designed OFF state. THE ONE WRITER of that journal is `handleSourcesSave`.
+	sourceJournal codesrc.Journal
+
 	// app is this deployment's installable identity; the zero value is unarmed. See `pwa.go`.
 	app App
 }
@@ -1100,6 +1105,11 @@ type Config struct {
 	// rather than the rows appearing with a flag. `cmd/cairn-ui` wires it only with a database AND a
 	// control journal.
 	Memos Memos
+	// SourceJournal is the code-sources journal (S4 of the scope-refs plan, `sources.go`), already
+	// resolved and checked by `codesrc.FromEnv` (outside the store tree, never the arc journal). The
+	// zero value is the designed OFF state: the Sources block is absent from the scope page and the
+	// edit page says the deployment is unconfigured. This surface is the journal's ONLY writer.
+	SourceJournal codesrc.Journal
 	// App arms the installable surface (`pwa.go`): the manifest row, the icon links and the theme
 	// colour. The zero value is UNARMED and renders exactly what this surface rendered before it
 	// existed. [App.Validate] is applied here, so a server cannot be built around an app the
@@ -1207,6 +1217,8 @@ func New(cfg Config) (*Server, error) {
 
 		presence: cfg.Presence,
 		memos:    cfg.Memos,
+
+		sourceJournal: cfg.SourceJournal,
 
 		app: cfg.App,
 	}, nil
@@ -1624,6 +1636,9 @@ func (s *Server) scopeView(w http.ResponseWriter, r *http.Request, id identity.I
 		}
 		view.Memos = &tab
 	}
+	// 🔴 THE SOURCES BLOCK IS READ ONLY AFTER THE REFUSAL ABOVE, by the name out of the narrowed answer
+	// (`codesrc.Key` of the store directory), and only when a journal is configured (`sources.go`).
+	view.Sources = s.sourcesBlock(id, scope)
 	view.Panes = s.panesFor(id)
 	return view, true
 }
