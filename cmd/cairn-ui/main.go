@@ -414,6 +414,18 @@ func main() {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error()+". Refusing to start")
 		os.Exit(exitConfig)
 	}
+	// 🔴 AND NEVER A FILE THIS PROGRAM ALREADY WRITES. `FromEnv` refuses the arc journal; this surface
+	// also owns the CONTROL journal and the session table, and one sources record appended to the
+	// control journal makes every later `Refresh` and `Append` refuse it (measured by the S4 audit: an
+	// authority journal that then needs hand-editing to recover). The deployment puts the sources file
+	// BESIDE the control journal, so a one-token typo reaches this.
+	if sourcesOn {
+		if err := refuseASourceJournalThatIsAnotherFile(*store, sourceJournal.Path,
+			map[string]string{"-control-journal": *controlJournal, "-session-file": *sessionFile}); err != nil {
+			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error()+". Refusing to start")
+			os.Exit(exitConfig)
+		}
+	}
 	sourcesMode := "code sources unconfigured (no $" + codesrc.EnvJournal + ")"
 	if sourcesOn {
 		sourcesMode = "code sources written to " + sourceJournal.Path
@@ -1636,4 +1648,25 @@ func bindIsReachable(host string) bool {
 		return true
 	}
 	return !addr.IsLoopback()
+}
+
+// refuseASourceJournalThatIsAnotherFile is the sources journal resolving to a file this program
+// already writes. Both sides are resolved by `codesrc.ResolveJournalPath` — the resolution the
+// sources path itself went through — so a symlinked spelling of the same file is caught; a path
+// that does not resolve (unset, or refused for its own reason elsewhere) is not compared.
+func refuseASourceJournalThatIsAnotherFile(storeRoot, sources string, others map[string]string) error {
+	for flagName, other := range others {
+		if other == "" {
+			continue
+		}
+		resolved, err := codesrc.ResolveJournalPath(storeRoot, other)
+		if err != nil {
+			continue
+		}
+		if resolved == sources {
+			return fmt.Errorf("$%s resolves to %s, which is this program's %s: a sources record appended "+
+				"there would corrupt it. Give the sources journal its own file", codesrc.EnvJournal, sources, flagName)
+		}
+	}
+	return nil
 }

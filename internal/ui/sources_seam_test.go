@@ -106,7 +106,7 @@ func TestAUIWrittenDeclarationIsWhatThePodServes(t *testing.T) {
 	}
 	browser, err := ui.New(ui.Config{
 		Auth: chain, Credentials: authority, Source: ui.StoreSource{Root: root},
-		Sharing: ui.ControlSharing{Authority: authority, Now: func() time.Time { return clock }},
+		Sharing:  ui.ControlSharing{Authority: authority, Now: func() time.Time { return clock }},
 		Sessions: sessions, Now: func() time.Time { return clock }, Log: io.Discard,
 		SourceJournal: codesrc.Journal{Path: journal},
 	})

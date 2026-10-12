@@ -41,6 +41,7 @@ func TestTheBinaryREFUSESASourceJournalInsideTheStoreRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	arcJournal := filepath.Join(t.TempDir(), "arcs.jsonl")
+	controlJournal := filepath.Join(t.TempDir(), "control.journal")
 
 	for _, arm := range []struct {
 		name    string
@@ -53,6 +54,7 @@ func TestTheBinaryREFUSESASourceJournalInsideTheStoreRoot(t *testing.T) {
 		{"the store root itself", storeRoot, "", true, codesrc.EnvJournal},
 		{"a value that reduces to nothing", "   ", "", true, "reduces to nothing"},
 		{"the arc journal's own file", arcJournal, arcJournal, true, "is the ARC journal"},
+		{"the control journal's own file", controlJournal, "", true, "this program's -control-journal"},
 		// The CONTROLS.
 		{"a journal OUTSIDE the store root", outside, "", false, "code sources written to " + filepath.Join(resolvedOutside, "sources.jsonl")},
 		{"no journal at all", "", "", false, "code sources unconfigured"},
@@ -64,6 +66,9 @@ func TestTheBinaryREFUSESASourceJournalInsideTheStoreRoot(t *testing.T) {
 				"-session-file", filepath.Join(t.TempDir(), "sessions"), "-host", "127.0.0.1", "-port", "0"}
 			if arm.arc != "" {
 				args = append(args, "-arc-journal", arm.arc)
+			}
+			if arm.journal == controlJournal {
+				args = append(args, "-control-journal", controlJournal)
 			}
 			child := exec.CommandContext(ctx, self, args...)
 			child.Env = []string{reexecEnv + "=1", "PATH=" + os.Getenv("PATH")}

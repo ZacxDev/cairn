@@ -4798,14 +4798,17 @@ Both rows are in the ledger: the GET is `content` (found through `Visible`), the
   per segment, through `safeHref`); every other host is text, because this repository cannot know a
   self-hosted host's URL shape.
 - **Three journal states, never folded:** unset → no block, the edit page says
-  `NoSourceJournal` and a save is `501`; unreadable → the block says so and the edit page is `503`;
-  absent → every scope reads undeclared.
+  `NoSourceJournal` and a save is `501`; unreadable → the block says so and the edit page is `503`
+  with a constant body carrying no path (the detail goes to the log); absent → every scope reads
+  undeclared. The edit page shows the current list OUTSIDE the form, so a reader who cannot edit
+  still sees it.
 
 ## Deployment requirements (decision 1; done in the deployment repo, not here)
 
 - `CAIRN_SOURCE_JOURNAL=<path>` on `cairn-ui`, a file on the UI-owned volume beside the control
   journal, OUTSIDE the store root (both binaries refuse to start otherwise, and refuse the arc
-  journal's own file). Environment only: an old binary ignores the variable, which is the rollback.
+  journal's own file; `cairn-ui` also refuses its own `-control-journal` and `-session-file`, since
+  one sources record appended to the control journal makes the authority unreadable). Environment only: an old binary ignores the variable, which is the rollback.
 - The pod mounts the SAME volume read-only at the CONTAINER level (never claim-level), with the same
   variable — so it must schedule on the UI's node while the volume is ReadWriteOnce and node-local.
 - The file is created `0600` by the UI's first save, so the pod must run as the UI's uid (or the

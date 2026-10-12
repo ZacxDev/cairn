@@ -39,6 +39,11 @@ import (
 // sourcesRefusal is the edit flow's one refusal. It names no reason, `scopeRefusal`'s discipline.
 const sourcesRefusal = "no such scope, or it is not yours to administer"
 
+// sourcesUnreadable is the BROKEN state's answer on this surface. 🔴 IT CARRIES NO PATH AND NO OS
+// ERROR — the journal's location is a fact about the deployment (`arcJournalUnreadable`'s rule, one
+// file over); the detail goes to the operator log.
+const sourcesUnreadable = "the code-sources journal could not be read; this is NOT 'no sources declared'"
+
 // NoSourceJournal is the OFF state's sentence, on the edit page and on a save.
 const NoSourceJournal = "Code sources are not configured on this deployment — it was started without $" +
 	codesrc.EnvJournal + ", so no declaration can be shown or saved. This is the designed off state, " +
@@ -211,7 +216,7 @@ func (s *Server) handleSourcesPage(w http.ResponseWriter, r *http.Request, id id
 		snap, err := s.sourceJournal.Read()
 		if err != nil {
 			s.logf("sources: the journal could not be read: %v", err)
-			writePlain(w, http.StatusServiceUnavailable, err.Error())
+			writePlain(w, http.StatusServiceUnavailable, sourcesUnreadable)
 			return
 		}
 		edit.withCurrent(snap)
@@ -304,7 +309,8 @@ func (s *Server) handleSourcesSave(w http.ResponseWriter, r *http.Request, id id
 	case errors.As(err, &stale):
 		snap, readErr := s.sourceJournal.Read()
 		if readErr != nil {
-			writePlain(w, http.StatusServiceUnavailable, readErr.Error())
+			s.logf("sources: the journal could not be read: %v", readErr)
+			writePlain(w, http.StatusServiceUnavailable, sourcesUnreadable)
 			return
 		}
 		edit.withCurrent(snap)
@@ -314,7 +320,7 @@ func (s *Server) handleSourcesSave(w http.ResponseWriter, r *http.Request, id id
 		return
 	case errors.As(err, &unreadable):
 		s.logf("sources: the journal could not be written: %v", err)
-		writePlain(w, http.StatusServiceUnavailable, err.Error())
+		writePlain(w, http.StatusServiceUnavailable, sourcesUnreadable)
 		return
 	default:
 		s.logf("sources: the save failed: %v", err)
@@ -345,6 +351,13 @@ func SourcesPage(v PageView, e SourcesEdit) g.Node {
 			g.If(!e.Configured, h.P(h.Class("read-only"), h.Data("sources", "unconfigured"), g.Text(NoSourceJournal))),
 			g.If(e.Outcome != "", h.P(h.Class("outcome"), h.Data("sources", "outcome"), g.Text(e.Outcome))),
 			g.If(e.Problem != "", h.P(h.Class("outcome"), h.Data("sources", "problem"), g.Text(e.Problem))),
+			// 🔴 THE CURRENT LIST IS RENDERED OUTSIDE THE FORM, so a reader who may not edit still sees it —
+			// the page's stated contract. It was once only the textarea's content, which only an admin gets.
+			g.If(e.Configured && (e.Record == nil || len(e.Record.Sources) == 0),
+				h.P(h.Class("empty"), h.Data("sources", "undeclared"), g.Text("This scope declares no code sources."))),
+			g.Iff(e.Record != nil && len(e.Record.Sources) > 0, func() g.Node {
+				return h.Ul(h.Data("sources", "current"), g.Map(e.Record.Sources, sourceItem))
+			}),
 			g.Iff(e.Record != nil, func() g.Node {
 				return h.P(h.Class("note"), h.Data("sources", "set-by"),
 					g.Text("Current declaration set by "+e.Record.SetBy+" at "+e.Record.SetAt+"."))

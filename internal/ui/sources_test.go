@@ -254,13 +254,24 @@ func TestTheSaveIsBehindBothCrossSiteGatesAndTheAdminCheck(t *testing.T) {
 		t.Fatalf("a non-admin and an absent scope must get one refusal: %d %q / %d %q",
 			member.Code, member.Body.String(), absent.Code, absent.Body.String())
 	}
+	// The read-only view must SHOW the list: seed `commons-notes` through the one writer with a source
+	// the page's help text cannot contain (the help text quotes `srcGitHub`, which would make a
+	// Contains vacuous — the S4 audit's measured trap).
+	distinct := "git:github.com/distinct-org/distinct-repo@feature"
+	if _, err := rig.srv.sourceJournal.Set(shareOtherScopeName, []string{distinct}, codesrc.RevisionNone,
+		"scope-admin", shareClock, nil); err != nil {
+		t.Fatal(err)
+	}
 	readOnlyPage := rowan.get(sourcesPagePath(shareOtherScope))
+	if !strings.Contains(readOnlyPage.Body.String(), "<code>"+distinct+"</code>") {
+		t.Fatalf("a reader who is not an admin must see the current list:\n%s", readOnlyPage.Body.String())
+	}
 	if readOnlyPage.Code != http.StatusOK || strings.Contains(readOnlyPage.Body.String(), `action="`+SourcesPath+`"`) ||
 		!strings.Contains(readOnlyPage.Body.String(), `data-sources="read-only"`) {
 		t.Fatalf("a reader who is not an admin sees the page and no form: %d\n%s", readOnlyPage.Code, readOnlyPage.Body.String())
 	}
-	if lines := journalLines(t, path); lines != nil {
-		t.Fatalf("a refused save wrote: %q", lines)
+	if n := len(journalLines(t, path)); n != 1 {
+		t.Fatalf("a refused save wrote: %d line(s), want only the seeded one", n)
 	}
 
 	if ok := rowan.post(SourcesPath, saveForm(shareScope, srcGitHub, codesrc.RevisionNone)); ok.Code != http.StatusSeeOther {
@@ -376,7 +387,7 @@ func TestAnUnreadableJournalIsSaidAndNeverShownAsUndeclared(t *testing.T) {
 	rig.srv.sourceJournal = codesrc.Journal{Path: dir}
 	rowan := rig.signIn(shareRowanToken)
 	if rec := rowan.get(sourcesPagePath(shareScope)); rec.Code != http.StatusServiceUnavailable ||
-		!strings.Contains(rec.Body.String(), "code sources journal unreadable") {
+		rec.Body.String() != sourcesUnreadable || strings.Contains(rec.Body.String(), dir) {
 		t.Fatalf("the edit page over a broken journal: %d %q", rec.Code, rec.Body.String())
 	}
 	page := rowan.get(ScopePath + "?" + QueryID + "=" + string(shareScope)).Body.String()
