@@ -495,8 +495,17 @@ jobs:
             echo "  cluster outside this repository can pull the Go pod."
             exit 1
           fi
-          echo "$out" | head -20
-          digest=$(printf '%s' "$out" | sed -n 's/.*"Digest": "\([^"]*\)".*/\1/p' | head -1)
+          # 🔴 NO READER HERE MAY STOP BEFORE ITS INPUT ENDS. `$out` GROWS: the
+          # inspect lists every tag the package has ever carried, and this
+          # workflow adds one per published commit. `echo "$out" | head -20` is
+          # fine while that fits in a pipe buffer and fails the step for good
+          # once it does not — `head` exits, the writer gets a broken pipe, and
+          # `pipefail` reports it, AFTER the push, stranding every later leg.
+          # A here-string has no writer to break, and `sed -n` with no `q`
+          # reads to end-of-file: `1,20p` is the preview, `1p` the first match
+          # (the manifest's digest; each layer prints a `Digest` line below it).
+          sed -n '1,20p' <<<"$out"
+          digest=$(sed -n 's/.*"Digest": "\([^"]*\)".*/\1/p' <<<"$out" | sed -n '1p')
           echo
           echo "ANONYMOUS PULL OK: $ref"
           echo "digest: $digest"
@@ -705,8 +714,10 @@ jobs:
             echo "  which is the entire reason this workflow exists."
             exit 1
           fi
-          echo "$out" | head -20
-          digest=$(printf '%s' "$out" | sed -n 's/.*"Digest": "\([^"]*\)".*/\1/p' | head -1)
+          # A here-string and readers that drain their input — never `| head`
+          # under `pipefail` over an output that grows; the Go proof says why.
+          sed -n '1,20p' <<<"$out"
+          digest=$(sed -n 's/.*"Digest": "\([^"]*\)".*/\1/p' <<<"$out" | sed -n '1p')
           echo
           echo "ANONYMOUS PULL OK: $ref"
           echo "digest: $digest"
@@ -747,7 +758,7 @@ jobs:
         run: |
           set -euo pipefail
           archive="${{ steps.build-ui.outputs.archive }}"
-          ref=$(docker load -i "$archive" | sed -n 's/^Loaded image: //p' | head -1)
+          ref=$(docker load -i "$archive" | sed -n 's/^Loaded image: //p' | sed -n '1p')
           if [ -z "$ref" ]; then
             echo "REFUSING TO PUBLISH: docker load named no image."
             exit 1
@@ -772,7 +783,9 @@ jobs:
           out=$(docker run --rm "$ref" 2>&1)
           code=$?
           set -e
-          echo "$out" | head -20
+          # A refusal is as unbounded as a tag list (a crash prints a trace), so
+          # the preview drains too — same mechanism as the proof steps' `$out`.
+          sed -n '1,20p' <<<"$out"
           if [ "$code" -eq 0 ]; then
             echo "REFUSING TO PUBLISH: the UI image exited 0 with no configuration."
             echo "  It must refuse: a surface that comes up misconfigured looks healthy."
@@ -839,8 +852,10 @@ jobs:
             echo "    -> Danger Zone -> Change visibility -> Public"
             exit 1
           fi
-          echo "$out" | head -20
-          digest=$(printf '%s' "$out" | sed -n 's/.*"Digest": "\([^"]*\)".*/\1/p' | head -1)
+          # A here-string and readers that drain their input — never `| head`
+          # under `pipefail` over an output that grows; the Go proof says why.
+          sed -n '1,20p' <<<"$out"
+          digest=$(sed -n 's/.*"Digest": "\([^"]*\)".*/\1/p' <<<"$out" | sed -n '1p')
           echo
           echo "ANONYMOUS PULL OK: $ref"
           echo "digest: $digest"
