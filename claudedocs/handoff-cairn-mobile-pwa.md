@@ -40,15 +40,17 @@ decisions O1–O13 paraphrased, slices S0–S6b, the iPhone checklist, closing-c
 - **Closing condition, read part by part:** S0–S6b merged (content); the plain `pwa_check.sh` reports
   `9 PASS, 0 FAIL` on `main` (CI's `uiaudit (pwa)` leg); `uiaudit-touch` green on `main`. 🔴 **But
   `--self-test` exited 2 on `main`** (`c_input_font` sabotage anchor occurs twice in `app.css` since
-  #254's memo-field restatement) — CI runs only the plain check, so nothing noticed. Fixed by #262; the
-  arc closes once #262 is merged and a full `--self-test` reports `sabotaged=9 caught=9`.
+  #254's memo-field restatement) — CI runs only the plain check, so nothing noticed. Fixed by #262
+  (`168824c`); a full `--self-test` on a tree IDENTICAL to `main`'s at `168824c` (same tree id) reported
+  `sabotaged=9 caught=9 plain-loop=3/3`, exit 0 (local, pinned chromium). ✅ **CLOSING CONDITION MET —
+  ARC CLOSED.** The iPhone checklist still gates announcing install on the client instance.
 - ⚠ The `uiaudit` job's `verify-push` step fails while the audit hub's push endpoint is down; the
   TEST step is what to read (`uiaudit tests: top-level PASS=… FAIL=0`).
 - Claims: all released.
 
 ## Next steps (ranked)
-1. **(done) S6b** — #256. Left: merge #262 and read `pwa_check.sh --self-test` = `sabotaged=9
-   caught=9` on `main` (closes the arc); the operator may make `uiaudit-touch` a REQUIRED check.
+1. **(done) S6b** — #256, and #262 for the self-test. Optional, the operator's: make `uiaudit-touch` a
+   REQUIRED check (branch protection).
    forcing: user — operator chose this scope (O9–O11).
 2. 🟡 **Nothing in CI notices a `--self-test` sabotage anchor going stale** — only a manual run did.
    A cheap guard: a browser-free test asserting each `SABOTAGES` anchor's count against the tree
