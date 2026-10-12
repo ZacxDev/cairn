@@ -4801,6 +4801,46 @@ MUTANTS: tuple[Mutant, ...] = (
         why="'a damaged journal is as good as no journal' reads as caution — and a torn line in a scope the "
         "caller cannot read flips every other scope's answer, a signal about hidden activity on the wire.",
     ),
+    # S4 of the scope-refs plan: the browser surface is the sources journal's ONLY writer
+    # (`internal/ui/sources.go`). `./internal/ui/` is already in `PKGS`.
+    Mutant(
+        name="ui-sources-post-skips-the-admin-check",
+        path="internal/ui/sources.go",
+        old="if !found || !id.Auth.Allows(scope.ID, control.VerbAdmin) {",
+        new="if !found {",
+        killer="TestTheSaveIsBehindBothCrossSiteGatesAndTheAdminCheck",
+        extra_killers=("TestATokenFileDeploymentRefusesEverySave",),
+        why="'the scope is in the caller's narrowed answer, so they may edit it' reads as the check — and it "
+        "lets anyone who can READ a scope repoint its audit, which is the T5 threat.",
+    ),
+    Mutant(
+        name="ui-sources-links-a-non-github-host",
+        path="internal/ui/sources.go",
+        old='src.Host != "github.com"',
+        new='src.Host == ""',
+        killer="TestOnlyAGitHubSourceIsLinked",
+        why="'link every source, they all live on a code host' is a helpful-looking widening — and it builds "
+        "a GitHub-shaped URL on a host whose URL shape this repository cannot know.",
+    ),
+    Mutant(
+        name="ui-sources-set-by-taken-from-the-form",
+        path="internal/ui/sources.go",
+        old="principalStamp(id.Principal), s.now()",
+        new='func() string { if v := r.PostFormValue("set_by"); v != "" { return v }; return principalStamp(id.Principal) }(), s.now()',
+        killer="TestAnAdminsSaveAppendsOneLineStampedByTheServerNotTheForm",
+        why="'let an admin record who asked for the change' reads as a feature — and the journal's who/when "
+        "history becomes whatever the form says.",
+    ),
+    Mutant(
+        name="ui-sources-keyed-by-control-id",
+        path="internal/ui/sources.go",
+        old="codesrc.Key(scope.Name), raws",
+        new="codesrc.Key(string(scope.ID)), raws",
+        killer="TestAUIWrittenDeclarationIsWhatThePodServes",
+        why="revision 3 of the plan: 'key by the immutable id, a rename should not orphan the record' — and "
+        "the UI's ids come from the control journal while the pod's are derived from the directory name, "
+        "so the pod never finds the record (round 3's red).",
+    ),
     # S2 of the transcripts/plugins plan: `internal/transcript/scopeuse`, the READ half of a session's
     # visibility set. It is not in `PKGS` — it is an input to a predicate that does not exist until
     # S4, not a member of the control/identity/server seam — so each row ADDS its package, the
@@ -5595,6 +5635,15 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestASecretOverALimitIsNeverEchoed",
         why="a size refusal is in the kept set, so the extra clause reads as redundant — and past the "
         "scan's bound the size refusal comes UNSCANNED, so the draft echoed can carry a credential.",
+    ),
+    Mutant(
+        name="ui-memo-scannable-asks-about-the-body-only",
+        path="internal/ui/memos.go",
+        old="memoDraftKept[ref.Reason] && memo.Scannable(draft.Subject, draft.Body) {",
+        new="memoDraftKept[ref.Reason] && memo.Scannable(\"\", draft.Body) {",
+        killer="TestASecretOverALimitIsNeverEchoed",
+        why="the bound is over subject AND body together; with the excess in the subject a short body "
+        "alone looks scannable, so an UNSCANNED subject-size refusal echoes a body carrying a credential.",
     ),
     Mutant(
         name="memo-ttlof-multiplies-unguarded",
