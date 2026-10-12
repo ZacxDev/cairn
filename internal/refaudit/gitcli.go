@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ZacxDev/cairn/internal/codesrc"
@@ -41,6 +42,11 @@ func ParseHosts(raw string) (map[string]string, error) {
 		u, err := url.Parse(base)
 		if err != nil || (u.Scheme != "https" && u.Scheme != "file") {
 			return nil, fmt.Errorf("$%s entry %q: the base must be an https:// or file:// URL", EnvHosts, pair)
+		}
+		if u.User != nil {
+			// A credential in the base would be echoed by every failed fetch's error, into stdout and
+			// any transcript. Credentials come from the operator's credential helper (decision 8).
+			return nil, fmt.Errorf("$%s entry for %s carries credentials in its URL; use a credential helper", EnvHosts, host)
 		}
 		out[strings.ToLower(host)] = strings.TrimRight(base, "/")
 	}
@@ -84,8 +90,53 @@ func (g *GitCLI) allowProtocol() string {
 	return strings.Join(out, ":")
 }
 
-// run is the package's ONE `git` call site.
-func (g *GitCLI) run(dir string, args ...string) (string, int, error) {
+// repoLocalEnv is every variable that makes git act on a repository OTHER than the one named — git's
+// own `local_repo_env` list (`git rev-parse --local-env-vars`), pinned against the installed git by
+// `TestTheStrippedEnvironmentCoversGitsOwnLocalList`.
+//
+// 🔴 STRIPPED FROM EVERY CALL, BECAUSE AN INHERITED `GIT_DIR` OVERRIDES THE MIRROR — MEASURED BY THE S5
+// AUDIT: run from a git hook (git exports `GIT_DIR` to hooks and to `rebase -x`), the mirror fetch's
+// `--prune` over `+refs/heads/*:refs/heads/*` landed in the OPERATOR'S repository and deleted its
+// branches, while the audit printed a clean exit 0.
+var repoLocalEnv = []string{
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+	"GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",
+	"GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE",
+	"GIT_COMMON_DIR",
+}
+
+// gitEnv is the parent environment minus [repoLocalEnv] (and the numbered `GIT_CONFIG_KEY_n` /
+// `GIT_CONFIG_VALUE_n` pairs `GIT_CONFIG_COUNT` indexes), plus this package's fixed settings. HOME and
+// the credential-helper configuration are KEPT: they are how the operator's credentials reach a
+// private source.
+func (g *GitCLI) gitEnv() []string {
+	drop := map[string]bool{}
+	for _, name := range repoLocalEnv {
+		drop[name] = true
+	}
+	var env []string
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		if drop[name] || strings.HasPrefix(name, "GIT_CONFIG_KEY_") || strings.HasPrefix(name, "GIT_CONFIG_VALUE_") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env,
+		"GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_LITERAL_PATHSPECS=1",
+		"GIT_NO_LAZY_FETCH=1", "GIT_ALLOW_PROTOCOL="+g.allowProtocol())
+}
+
+// run is the package's ONE `git` call site. `gitDir` non-empty is passed as `--git-dir`, never `-C`:
+// with an explicit git dir git does NO upward discovery, so a mirror directory that exists but is not a
+// repository (an interrupted init, a hand-emptied cache) is an error — not the enclosing work tree's
+// repository, which the S5 audit measured being pruned the same way.
+//
+// 🔴 THE TIMEOUT REACHES THE WHOLE PROCESS GROUP. `exec.CommandContext` kills `git` alone, and
+// `git-remote-https` (its child) holds the output pipes open, so `Wait` blocked indefinitely on a remote
+// that accepts and never answers (measured by the S5 audit). The call runs in its own process group,
+// the cancel kills the group, and `WaitDelay` bounds the pipe drain.
+func (g *GitCLI) run(gitDir string, args ...string) (string, int, error) {
 	timeout := g.Timeout
 	if timeout <= 0 {
 		timeout = 120 * time.Second
@@ -93,13 +144,14 @@ func (g *GitCLI) run(dir string, args ...string) (string, int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	argv := args
-	if dir != "" {
-		argv = append([]string{"-C", dir}, args...)
+	if gitDir != "" {
+		argv = append([]string{"--git-dir=" + gitDir}, args...)
 	}
 	cmd := exec.CommandContext(ctx, "git", argv...)
-	cmd.Env = append(os.Environ(),
-		"GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_LITERAL_PATHSPECS=1",
-		"GIT_NO_LAZY_FETCH=1", "GIT_ALLOW_PROTOCOL="+g.allowProtocol())
+	cmd.Env = g.gitEnv()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 5 * time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
@@ -108,7 +160,10 @@ func (g *GitCLI) run(dir string, args ...string) (string, int, error) {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			code = exitErr.ExitCode()
 		}
-		return stdout.String(), code, fmt.Errorf("git %s: exit %d: %s", strings.Join(args, " "), code, strings.TrimSpace(stderr.String()))
+		if ctx.Err() != nil {
+			return stdout.String(), code, fmt.Errorf("git %s: timed out after %s", args[0], timeout)
+		}
+		return stdout.String(), code, fmt.Errorf("git %s: exit %d: %s", args[0], code, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), 0, nil
 }
@@ -128,6 +183,9 @@ func (g *GitCLI) Fetch(src codesrc.Source) (string, error) {
 		if _, _, err := g.run("", "init", "--bare", "--quiet", "--end-of-options", dir); err != nil {
 			return "", err
 		}
+	}
+	if out, _, err := g.run(dir, "rev-parse", "--is-bare-repository"); err != nil || strings.TrimSpace(out) != "true" {
+		return "", fmt.Errorf("the mirror %s is not a bare repository; remove it and re-run", dir)
 	}
 	remote := base + "/" + src.RepoPath
 	if _, _, err := g.run(dir, "fetch", "--prune", "--no-tags", "--quiet", "--end-of-options", remote,

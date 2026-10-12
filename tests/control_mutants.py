@@ -5691,7 +5691,8 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestSenderMaySendIsTheSendersOwnAuthorityNow",
         why="'can the sender still write' without saying WHERE reads as the question; a sender who "
         "writes elsewhere then hides a lapse here.",
-    ),    # S5 of the scope-refs plan: `internal/refaudit`, the auditor, and the `audit-refs` verb. Each row
+    ),
+    # S5 of the scope-refs plan: `internal/refaudit`, the auditor, and the `audit-refs` verb. Each row
     # ADDS `./internal/refaudit/` (outside the seam). The git-backed killers follow the two-tier rule:
     # the `go` job sets CAIRN_GIT_TESTS_REQUIRED, where a skip is a failure, never a kill.
     Mutant(

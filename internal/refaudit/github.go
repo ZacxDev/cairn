@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -17,7 +18,10 @@ const EnvGitHubAPI = "CAIRN_AUDIT_GITHUB_API"
 const DefaultGitHubAPI = "https://api.github.com"
 
 // GitHubPRs is the real [PRReader]: `GET /repos/<o>/<r>/pulls/<n>`, falling back to `/issues/<n>` on
-// a 404 (a converted issue). The token, when set, is sent ONLY to `Base` — never printed, logged or
+// a 404 — because a `github:<o>/<r>#N` ref names an issue OR a pull request (`store/refurl.go`), and
+// without the fallback every issue ref would read `not-found` (stale, exit 9). ⚠ An issue reuses the PR
+// states: open is `open`, closed is `closed-unmerged` — informational either way, never a verdict.
+// The token, when set, is sent ONLY to `Base` — never printed, logged or
 // sent to the pod.
 type GitHubPRs struct {
 	Base   string
@@ -30,7 +34,7 @@ func (g GitHubPRs) get(path string) (int, map[string]any, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
-	req, err := http.NewRequest(http.MethodGet, g.Base+path, nil)
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(g.Base, "/")+path, nil)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -67,6 +71,17 @@ func (g GitHubPRs) PRState(owner, repo string, number int) (string, error) {
 			return "", err
 		}
 		if code == http.StatusNotFound {
+			// 🔴 A 404 IS "NOT FOUND" ONLY WHEN THE REPOSITORY ITSELF IS VISIBLE. GitHub answers 404 —
+			// not 401/403 — for a PRIVATE repository to a caller without access, so without this every
+			// PR ref in a private scope audited with no (or the wrong) token read STALE at exit 9
+			// (measured by the S5 audit). An invisible repository is could-not-look.
+			repoCode, _, err := g.get(base)
+			if err != nil {
+				return "", err
+			}
+			if repoCode != http.StatusOK {
+				return "", fmt.Errorf("%s/repos/%s/%s answered HTTP %d: the repository is not visible to this credential", g.Base, owner, repo, repoCode)
+			}
 			return PRNotFound, nil
 		}
 	}

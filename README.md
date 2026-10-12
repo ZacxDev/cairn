@@ -604,8 +604,13 @@ tag) and a `github:<owner>/<repo>#N` ref (GitHub's API; `GH_TOKEN`/`GITHUB_TOKEN
   `checked > 0` and neither of those. A SHA reachable only off-branch, an open/merged/closed PR and a
   ref to a repository the scope does not declare are informational.
 - **Only hosts the auditing host maps are ever contacted**: `CAIRN_AUDIT_HOSTS=host=base[,…]`, default
-  `github.com=https://github.com`; bases are `https://` or `file://` (no SSH in v1).
-  `CAIRN_AUDIT_GITHUB_API` overrides the API base.
+  `github.com=https://github.com`; bases are `https://` or `file://` (no SSH in v1) and may not carry
+  credentials (use a credential helper). `CAIRN_AUDIT_GITHUB_API` overrides the API base (`https://`,
+  or `http://` to a loopback host only). A PR is `not-found` only when the repository itself is
+  visible to the credential; a 404 from an invisible (private) repository is could-not-look.
+- **The mirrors are isolated from the caller's repository**: every `git` call takes `--git-dir` and
+  runs with git's repository-local variables (`GIT_DIR`, `GIT_WORK_TREE`, …) stripped, so running it
+  from a hook cannot redirect a `--prune` fetch into the operator's own repository.
 - **What it does not judge**: whether a file still says what the entry claims, whether a commit
   implements it, whether an `OPEN:` item is still open. Those stay out of the exit code.
 

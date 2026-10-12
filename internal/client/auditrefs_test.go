@@ -3,6 +3,8 @@ package client
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -104,5 +106,24 @@ func TestABinaryWithoutTheAuditorRefusesLoudly(t *testing.T) {
 	code, out, errOut := runCLI(t, "audit-refs", "--scope", "alpha-notes")
 	if code == ExitOK || out != "" || !strings.Contains(errOut, "built without the auditor") {
 		t.Fatalf("%d %q %q", code, out, errOut)
+	}
+}
+
+// TestTheAuditRequestCarriesEveryFieldTheLibraryReads: `cmd/cairn`'s runAudit copies
+// `AuditRequest` into `refaudit.Run` field by field, so a field added to one and not the other
+// would arrive as a silent zero value. The two field sets are pinned EQUAL by name (Entries'
+// element types differ by design — the client may not import the library).
+func TestTheAuditRequestCarriesEveryFieldTheLibraryReads(t *testing.T) {
+	names := func(v any) []string {
+		var out []string
+		rt := reflect.TypeOf(v)
+		for i := 0; i < rt.NumField(); i++ {
+			out = append(out, rt.Field(i).Name)
+		}
+		sort.Strings(out)
+		return out
+	}
+	if a, b := names(AuditRequest{}), names(refaudit.Run{}); !reflect.DeepEqual(a, b) {
+		t.Fatalf("AuditRequest fields %v\nrefaudit.Run fields %v", a, b)
 	}
 }

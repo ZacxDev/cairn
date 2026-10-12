@@ -3,6 +3,8 @@ package refaudit
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -63,6 +65,9 @@ func Execute(r Run) (stdout, stderr string, code int) {
 		if api == "" {
 			api = DefaultGitHubAPI
 		}
+		if err := checkAPIBase(api); err != nil {
+			return "", "cairn: audit-refs: " + err.Error() + "\n", ExitUsage
+		}
 		git := &GitCLI{MirrorRoot: r.MirrorRoot, Hosts: hosts, Timeout: r.Timeout}
 		res = Audit(r.Sources, r.Entries, git, GitHubPRs{Base: api, Token: r.Token})
 	case report.StatusSourcesUnconfigured:
@@ -99,4 +104,22 @@ func Execute(r Run) (stdout, stderr string, code int) {
 		stderr = "🔴 cairn: audit-refs could NOT look — " + detail + "\n"
 	}
 	return out.String(), stderr, res.Exit()
+}
+
+// checkAPIBase refuses an API base the token could cross a network over in clear: https anywhere,
+// http only to a loopback host (the e2e stub's shape).
+func checkAPIBase(base string) error {
+	u, err := url.Parse(base)
+	if err != nil {
+		return fmt.Errorf("$%s %q is not a URL", EnvGitHubAPI, base)
+	}
+	switch {
+	case u.Scheme == "https" && u.Host != "":
+		return nil
+	case u.Scheme == "http":
+		if ip := net.ParseIP(u.Hostname()); (ip != nil && ip.IsLoopback()) || u.Hostname() == "localhost" {
+			return nil
+		}
+	}
+	return fmt.Errorf("$%s %q must be https:// (http:// only to a loopback host)", EnvGitHubAPI, base)
 }

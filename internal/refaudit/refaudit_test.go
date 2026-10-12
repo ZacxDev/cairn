@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -326,6 +327,8 @@ func TestThePRCheckReadsTheAPIAndNeverCallsOutsideTheSources(t *testing.T) {
 			w.Write([]byte(`{"state":"closed","merged_at":null}`))
 		case "/repos/example-org/example-repo/pulls/5":
 			w.WriteHeader(http.StatusForbidden)
+		case "/repos/example-org/example-repo":
+			w.Write([]byte(`{"full_name":"example-org/example-repo"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -334,7 +337,8 @@ func TestThePRCheckReadsTheAPIAndNeverCallsOutsideTheSources(t *testing.T) {
 	e := entry("g", "", "", "github:example-org/example-repo#1", "github:example-org/example-repo#2",
 		"github:example-org/example-repo#3", "github:example-org/example-repo#4", "github:example-org/example-repo#5",
 		"github:other-org/other-repo#9")
-	got := statesOf(Audit([]string{src}, []EntryInput{e}, fakeGit{}, GitHubPRs{Base: stub.URL}))
+	// A trailing slash on the base (GitHub Enterprise's `…/api/v3/` shape) must not build `//repos`.
+	got := statesOf(Audit([]string{src}, []EntryInput{e}, fakeGit{}, GitHubPRs{Base: stub.URL + "/"}))
 	for k, v := range map[string]string{
 		"pr example-org/example-repo#1": PROpen, "pr example-org/example-repo#2": PRMerged,
 		"pr example-org/example-repo#3": PRClosedUnmerged, "pr example-org/example-repo#4": PRNotFound,
@@ -349,7 +353,178 @@ func TestThePRCheckReadsTheAPIAndNeverCallsOutsideTheSources(t *testing.T) {
 			t.Fatalf("an outside-sources ref was sent to the API: %v", calls)
 		}
 	}
-	if len(calls) != 6 { // 1,2,3,5 once; 4 twice (pulls, then issues)
+	if len(calls) != 7 { // 1,2,3,5 once; 4 three times (pulls, issues, then the repository itself)
 		t.Fatalf("calls %v", calls)
+	}
+	for _, c := range calls {
+		if strings.HasPrefix(c, "//") {
+			t.Fatalf("a trailing-slash base built %q", c)
+		}
+	}
+}
+
+// TestA404FromAnInvisibleRepositoryIsCouldNotLookNotStale: GitHub answers 404 for a PRIVATE repository
+// to a caller without access, so a 404 on the PR and the issue is `not-found` ONLY when the repository
+// itself answers 200 — otherwise `unchecked` (exit 10), never a false stale (exit 9). RED before the
+// repository check: every PR ref in a private scope audited without a token read stale.
+func TestA404FromAnInvisibleRepositoryIsCouldNotLookNotStale(t *testing.T) {
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer stub.Close()
+	e := entry("g", "", "", "github:example-org/example-repo#4")
+	res := Audit([]string{src}, []EntryInput{e}, fakeGit{}, GitHubPRs{Base: stub.URL})
+	if s := statesOf(res)["pr example-org/example-repo#4"]; s != PRUnchecked {
+		t.Fatalf("a 404 from an invisible repository: %q, want %q", s, PRUnchecked)
+	}
+}
+
+// TestAnInheritedGitDirNeverRedirectsTheMirror: run from a git hook, `GIT_DIR` is exported, and an
+// inherited one overrode `-C <mirror>` — the S5 audit measured the mirror fetch's `--prune` over
+// `+refs/heads/*` DELETING the operator's branches while the audit exited 0. The victim's refs must be
+// byte-identical before and after, and the audit must still read the real remote.
+func TestAnInheritedGitDirNeverRedirectsTheMirror(t *testing.T) {
+	w := newWorld(t)
+	victim := filepath.Join(t.TempDir(), "victim")
+	gitIn(t, filepath.Dir(victim), "init", "--quiet", "-b", "trunk", victim)
+	writeFile(t, filepath.Join(victim, "precious.txt"), "wip\n")
+	gitIn(t, victim, "add", "-A")
+	gitIn(t, victim, "commit", "--quiet", "-m", "precious")
+	gitIn(t, victim, "branch", "precious-wip")
+	before := gitIn(t, victim, "for-each-ref", "--format=%(refname) %(objectname)")
+	t.Setenv("GIT_DIR", filepath.Join(victim, ".git"))
+	t.Setenv("GIT_WORK_TREE", victim)
+	res := Audit([]string{src}, []EntryInput{entry("g", "- `cmd/x.go` — x\n", "")}, w.git(t), nil)
+	os.Unsetenv("GIT_DIR")
+	os.Unsetenv("GIT_WORK_TREE")
+	if after := gitIn(t, victim, "for-each-ref", "--format=%(refname) %(objectname)"); after != before {
+		t.Fatalf("the operator's repository was rewritten:\nbefore %s\nafter  %s", before, after)
+	}
+	if res.Exit() != ExitClean || statesOf(res)["path cmd/x.go"] != HoldsRoot {
+		t.Fatalf("the audit did not read the real remote: exit %d\n%s", res.Exit(), res.Render())
+	}
+}
+
+// TestAMirrorThatIsNotARepositoryIsAnErrorNotTheEnclosingRepo: a mirror directory that exists but is
+// not a repository (an interrupted init) must never fall through to the work tree it sits in.
+func TestAMirrorThatIsNotARepositoryIsAnErrorNotTheEnclosingRepo(t *testing.T) {
+	w := newWorld(t)
+	outer := filepath.Join(t.TempDir(), "outer")
+	gitIn(t, filepath.Dir(outer), "init", "--quiet", "-b", "trunk", outer)
+	writeFile(t, filepath.Join(outer, "f.txt"), "x\n")
+	gitIn(t, outer, "add", "-A")
+	gitIn(t, outer, "commit", "--quiet", "-m", "outer")
+	before := gitIn(t, outer, "for-each-ref", "--format=%(refname) %(objectname)")
+	git := &GitCLI{MirrorRoot: filepath.Join(outer, "mirrors"), Hosts: map[string]string{"github.com": "file://" + w.base}, Timeout: 60 * time.Second}
+	if err := os.MkdirAll(git.MirrorDir(src), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	res := Audit([]string{src}, []EntryInput{entry("g", "- `cmd/x.go` — x\n", "")}, git, nil)
+	if res.Fetched[0].State != RemoteUnreachable {
+		t.Fatalf("an empty mirror directory was used: %+v", res.Fetched)
+	}
+	if after := gitIn(t, outer, "for-each-ref", "--format=%(refname) %(objectname)"); after != before {
+		t.Fatalf("the enclosing repository was rewritten:\nbefore %s\nafter  %s", before, after)
+	}
+}
+
+// TestTheStrippedEnvironmentCoversGitsOwnLocalList: every variable the INSTALLED git calls
+// repository-local is stripped, so a git upgrade that adds one goes red here.
+func TestTheStrippedEnvironmentCoversGitsOwnLocalList(t *testing.T) {
+	requireGit(t)
+	out, err := exec.Command("git", "rev-parse", "--local-env-vars").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	have := map[string]bool{}
+	for _, n := range repoLocalEnv {
+		have[n] = true
+	}
+	names := strings.Fields(string(out))
+	if len(names) < 5 {
+		t.Fatalf("git listed %d local variables; the probe is not reading git", len(names))
+	}
+	for _, n := range names {
+		if !have[n] {
+			t.Errorf("git calls %s repository-local and the auditor does not strip it", n)
+		}
+	}
+}
+
+// TestAStalledRemoteIsBoundedByTheTimeout (T12): a listener that accepts and never answers must cost
+// the per-call timeout, not forever — the kill reaches `git-remote-https`, which holds the pipes.
+func TestAStalledRemoteIsBoundedByTheTimeout(t *testing.T) {
+	requireGit(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	held := make(chan net.Conn, 64)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			held <- c // accept, never speak
+		}
+	}()
+	defer func() {
+		for {
+			select {
+			case c := <-held:
+				c.Close()
+			default:
+				return
+			}
+		}
+	}()
+	git := &GitCLI{MirrorRoot: t.TempDir(), Hosts: map[string]string{"github.com": "https://" + ln.Addr().String()}, Timeout: 2 * time.Second}
+	start := time.Now()
+	done := make(chan error, 1)
+	go func() {
+		s, _ := codesrc.Parse(src)
+		_, err := git.Fetch(s)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a stalled remote was fetched")
+		}
+		if took := time.Since(start); took > 15*time.Second {
+			t.Fatalf("the fetch took %s against a 2s timeout", took)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the fetch did not return within 30s against a 2s timeout: the kill does not reach the transport")
+	}
+}
+
+// TestCredentialsInAHostBaseAreRefused: a base carrying userinfo would be echoed by every failed
+// fetch's error into stdout; credentials come from the credential helper.
+func TestCredentialsInAHostBaseAreRefused(t *testing.T) {
+	if _, err := ParseHosts("github.com=https://x-access-token:SECRETVALUE@github.com"); err == nil ||
+		strings.Contains(err.Error(), "SECRETVALUE") {
+		t.Fatalf("a credentialed base: %v", err)
+	}
+	if _, err := ParseHosts("github.com=https://github.com"); err != nil {
+		t.Fatalf("POSITIVE CONTROL: %v", err)
+	}
+}
+
+// TestTheAPIBaseIsHTTPSOrLoopback: the token must not cross a network in clear.
+func TestTheAPIBaseIsHTTPSOrLoopback(t *testing.T) {
+	for base, ok := range map[string]bool{
+		"https://api.github.com": true, "http://127.0.0.1:8080": true, "http://localhost:9": true,
+		"http://api.example.com": false, "ftp://x.example": false,
+	} {
+		if err := checkAPIBase(base); (err == nil) != ok {
+			t.Errorf("%s: %v", base, err)
+		}
+	}
+	out, errOut, code := Execute(Run{SourcesStatus: "sources-declared", Sources: []string{src}, GitHubAPI: "http://api.example.com"})
+	if code != ExitUsage || out != "" || !strings.Contains(errOut, EnvGitHubAPI) {
+		t.Fatalf("Execute with a cleartext non-loopback API base: %d %q %q", code, out, errOut)
 	}
 }

@@ -28,10 +28,12 @@
 #   (e) the pod and the UI never fetch: `go list -deps` finds no `internal/refaudit` in either server,
 #       no `os/exec` in the pod, and `os/exec` in the UI's graph imported by `internal/client` ALONE
 #       (it was there before S5 — the agent tab imports `internal/client`); control: `cmd/cairn` has both.
-#   (f) reachability, not presence, not tags: a SHA reachable only from `refs/pull/1/head` is
-#       `exists-off-branch` and the exit is unaffected; with that ref DELETED on the remote and a TAG on
-#       the same SHA KEPT, the next run over the SAME mirror (the object still in it) is `not-reachable`
-#       (exit 10); a fresh mirror agrees.
+#   (f) reachability, not presence: a SHA reachable only from `refs/pull/1/head` is
+#       `exists-off-branch` and the exit is unaffected; with that ref DELETED on the remote (a tag on
+#       the same SHA kept there), the next run over the SAME mirror (the object still in it) is
+#       `not-reachable` (exit 10); a fresh mirror agrees. ⚠ The kept tag never reaches the mirror
+#       (`--no-tags`), so this clause does NOT test the tag restriction —
+#       `TestATagInAnOlderMirrorNeverCountsAsReachable` plants a tag in the mirror and does.
 #
 # Everything is synthetic; tokens are generated per run and never leave its temp directory.
 set -uo pipefail
@@ -157,7 +159,7 @@ src_sub="git:github.com/example-org/example-repo//services/widget@main"
 src_none="git:github.com/example-org/no-such-repo@main"
 src_unmapped="git:git.example.com/team/example-repo@main"
 
-# --- the GitHub stub: #1 open, #2 merged, every other number 404 (pulls AND issues) ----------------
+# --- the GitHub stub: the repository visible, #1 open, #2 merged, every other number 404 -------------
 free_port() { python3 -c 'import socket
 s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'; }
 stub_port="$(free_port)"
@@ -165,7 +167,8 @@ cat >"$work/stub.py" <<'PY'
 import http.server, json, sys
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        body = {"/repos/example-org/example-repo/pulls/1": {"state": "open", "merged_at": None},
+        body = {"/repos/example-org/example-repo": {"full_name": "example-org/example-repo"},
+                "/repos/example-org/example-repo/pulls/1": {"state": "open", "merged_at": None},
                 "/repos/example-org/example-repo/pulls/2": {"state": "closed", "merged_at": "2000-01-02T00:00:00Z"}}.get(self.path)
         self.send_response(200 if body else 404)
         self.send_header("Content-Type", "application/json")
