@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -653,5 +655,143 @@ func TestTheReachabilityRefusalRefusesAnEMPTYSide(t *testing.T) {
 				t.Fatalf("want the empty-side refusal naming %q, got %v", tc.want, err)
 			}
 		})
+	}
+}
+
+// TestTheTouchGateBindsExactlyTheTouchRefusals pins `-gate touch` (S6b of the mobile plan: the
+// blocking `uiaudit-touch` job) as a RELATIONSHIP with the ungated verdict, in both directions.
+//
+// 🔴 EVERY CASE IS RUN UNDER BOTH GATES, AND THAT IS THE CONTROL. A "not refused under touch" row
+// is only evidence if the SAME breakage is refused under `all` — otherwise a fixture that broke
+// nothing would read as a correctly-excluded class. And every "refused under touch" row must be
+// refused WITH ITS OWN MESSAGE, so a mutant that dies of the reachability refusal cannot pass as a
+// target-size one.
+func TestTheTouchGateBindsExactlyTheTouchRefusals(t *testing.T) {
+	// POSITIVE CONTROL: the clean walk passes the touch gate, or every red below is satisfied by a
+	// gate that refuses everything.
+	if err := refuseWalkRegressionsUnder(cleanWalk(), gateTouch); err != nil {
+		t.Fatalf("POSITIVE CONTROL FAILED: a clean walk was refused by the touch gate: %v", err)
+	}
+	for _, tc := range []struct {
+		name       string
+		break_     func([]*Capture)
+		wantSub    string // the refusal's own message, under BOTH gates
+		touchBinds bool
+	}{
+		// --- bound by the touch gate ---
+		{"a TOUCH capture that is not coarse", func(cs []*Capture) { captureAt(cs, Mobile).Pointer.Coarse = false },
+			"TOUCH REACHABILITY FAILED", true},
+		// Reachability is two-sided, so a NON-touch capture is read by the touch gate here and only here.
+		{"a NON-touch capture that IS coarse", func(cs []*Capture) { captureAt(cs, Desktop).Pointer.Coarse = true },
+			"TOUCH REACHABILITY FAILED", true},
+		{"axe target-size at the tablet rung", func(cs []*Capture) {
+			captureAt(cs, Tablet).Violations = []AxeViolation{{ID: "target-size", Nodes: 3}}
+		}, "TOUCH TARGET SIZE", true},
+		{"a 14px input at the mobile rung", func(cs []*Capture) {
+			captureAt(cs, Mobile).Touch.SmallInputs = []SmallInput{{Selector: "#q", FontPx: 14}}
+		}, "INPUT FONT UNDER 16px", true},
+		{"a touch capture with no touch measurement", func(cs []*Capture) { captureAt(cs, Tablet).Touch = nil },
+			"NO TOUCH MEASUREMENT", true},
+		{"horizontal overflow at the MOBILE rung", func(cs []*Capture) {
+			captureAt(cs, Mobile).Layout.HorizontalOverflow = true
+		}, "HORIZONTAL OVERFLOW on 1 capture(s)", true},
+		{"horizontal overflow at the TABLET rung", func(cs []*Capture) {
+			captureAt(cs, Tablet).Layout.HorizontalOverflow = true
+		}, "/ at tablet (834px): scrollWidth", true},
+		{"axe never ran at a touch rung", func(cs []*Capture) { captureAt(cs, Mobile).AxeJSON = []byte(`{"violations":[]}`) },
+			"AXE DID NOT RUN", true},
+		{"the matrix collapsed to the touch rungs and one other", func(cs []*Capture) {
+			for _, c := range cs {
+				if !c.Viewport.Touch {
+					c.Viewport.Name = Laptop.Name
+				}
+			}
+		}, "the matrix collapsed", true},
+		// --- NOT bound by the touch gate: each is the advisory job's ---
+		{"horizontal overflow at the LAPTOP rung", func(cs []*Capture) {
+			captureAt(cs, Laptop).Layout.HorizontalOverflow = true
+		}, "HORIZONTAL OVERFLOW", false},
+		{"axe never ran at a NON-touch rung", func(cs []*Capture) { captureAt(cs, Desktop).AxeJSON = []byte(`{"violations":[]}`) },
+			"AXE DID NOT RUN", false},
+		{"an inline script on a TOUCH capture", func(cs []*Capture) { captureAt(cs, Mobile).ScriptSrcs = []string{""} },
+			"SCRIPT ON THE PAGE", false},
+		{"content is a narrow column at the widest width", narrowContent, "CONTENT TOO NARROW", false},
+		{"the widest capture carries no content box", func(cs []*Capture) { widestCapture(cs).Content = nil },
+			"carries no content box", false},
+		{"a header focusable on a row ABOVE, at a TOUCH rung", func(cs []*Capture) {
+			captureAt(cs, Mobile).HeaderOrder = []FocusBox{
+				{"cairn", 16, 24, 81, 68}, {"Arcs", 16, 72, 128, 116}, {"Sign out", 300, 24, 374, 68}}
+		}, "HEADER READING ORDER", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			all := cleanWalk()
+			tc.break_(all)
+			err := refuseWalkRegressionsUnder(all, gateAll)
+			if err == nil || !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("CONTROL FAILED: the breakage is not refused with %q under the ungated verdict (%v), so "+
+					"its touch-gate reading below proves nothing", tc.wantSub, err)
+			}
+			touch := cleanWalk()
+			tc.break_(touch)
+			err = refuseWalkRegressionsUnder(touch, gateTouch)
+			switch {
+			case tc.touchBinds && (err == nil || !strings.Contains(err.Error(), tc.wantSub)):
+				t.Fatalf("the touch gate did not refuse this with %q: %v", tc.wantSub, err)
+			// The matrix-collapse refusal returns before any class is gathered, so it carries no gate.
+			case tc.touchBinds && strings.Contains(err.Error(), "regression class") && !strings.Contains(err.Error(), "(gate touch)"):
+				t.Fatalf("the refusal does not say which gate refused it: %v", err)
+			case !tc.touchBinds && err != nil:
+				t.Fatalf("the touch gate refused a class that is NOT a touch refusal (the advisory job's): %v", err)
+			}
+		})
+	}
+}
+
+// TestTheWalkGateFlagAcceptsExactlyTwoValues pins `-gate`: an unknown value is a usage error, never
+// a silent fall-back — to `all` it would make a typo in the blocking job block on the advisory
+// classes, to `touch` it would make one in the advisory job stop refusing them.
+func TestTheWalkGateFlagAcceptsExactlyTwoValues(t *testing.T) {
+	for in, want := range map[string]walkGate{"all": gateAll, "touch": gateTouch} {
+		if got, err := parseWalkGate(in); err != nil || got != want {
+			t.Errorf("parseWalkGate(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "Touch", "touch ", "none", "mobile"} {
+		if got, err := parseWalkGate(in); err == nil {
+			t.Errorf("parseWalkGate(%q) = %q with no error; an unknown gate must be refused", in, got)
+		}
+		if err := refuseWalkRegressionsUnder(cleanWalk(), walkGate(in)); err == nil {
+			t.Errorf("refuseWalkRegressionsUnder accepted gate %q", in)
+		}
+	}
+}
+
+// TestTheRefusalLineIsTheOnePwaCheckGreps applies `pwa_check.sh`'s OWN `walk_refused` pattern, read
+// out of the script, to a real refusal under BOTH gates. That line is how the script tells a (c)
+// check masked by a sibling's refusal from a harness that printed nothing; a reworded sentence
+// sends every real (c) failure to "could not vouch" (exit 2) and the self-test to plain-loop 0/3,
+// while an honest tree stays green — so only a behavioural pin sees it. Watched RED on the S6b
+// draft that put "(gate %s)" inside the sentence.
+func TestTheRefusalLineIsTheOnePwaCheckGreps(t *testing.T) {
+	script, err := os.ReadFile("pwa_check.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`walk_refused\(\) \{[^\n]*grep -qE "([^"]+)"`).FindSubmatch(script)
+	if m == nil {
+		t.Fatal("cannot find walk_refused's grep -qE pattern in pwa_check.sh; this pin would compare against nothing")
+	}
+	re := regexp.MustCompile(string(m[1]))
+	for _, g := range []walkGate{gateAll, gateTouch} {
+		cs := cleanWalk()
+		captureAt(cs, Mobile).Touch.SmallInputs = []SmallInput{{Selector: "#q", FontPx: 14}}
+		err := refuseWalkRegressionsUnder(cs, g)
+		if err == nil {
+			t.Fatalf("gate %s: the 14px input was not refused, so the pattern below is tested against nothing", g)
+		}
+		if !re.MatchString(err.Error()) {
+			t.Errorf("gate %s: pwa_check.sh's walk_refused pattern %q does not match the refusal line %q",
+				g, m[1], strings.SplitN(err.Error(), "\n", 2)[0])
+		}
 	}
 }

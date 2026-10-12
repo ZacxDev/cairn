@@ -679,7 +679,7 @@ touch never enabled, S1's coarse-pointer input rule never applies.
 script's own text and `main.go`'s refusal headlines. ⚠ It is a SPELLING guard, labelled as one.
 
 ✅ **A CI step since S4** — the PLAIN check, in the advisory `uiaudit` job (exit 1 or 2 fails the step;
-the job stays `continue-on-error` until S6b). It runs in that job's `pwa` matrix leg, in parallel with
+the job stays `continue-on-error`; S6b promoted only the walk's touch refusals, into `uiaudit-touch`). It runs in that job's `pwa` matrix leg, in parallel with
 the `walk` leg, so the job takes the longer leg rather than the sum; it shares no state with the walk (own work dir, own port, credentials stripped), and
 `tests/test_uiaudit_job_ledger.py` pins which leg every step of the job runs in. `--self-test` is NOT run in CI: nine tree copies and four
 full walks per push buy nothing the committed self-test record below does not, until the tree changes.
@@ -1321,12 +1321,14 @@ route measures the refusal, not the page.** What would close this blind spot is 
 against a real deployment** that this README's own opening retraction already names as real and
 unbuilt — not a guard here, which could only pin somebody else's edge configuration.
 
-## Gating — advisory only, deliberately
+## Gating — the `uiaudit` job is advisory; `uiaudit-touch` BLOCKS (S6b)
 
-**Nothing in this job blocks, and a captured regression exits 0.** The first diff against a
-nonexistent baseline flags every axe rule "new" exactly once, so a gate promoted on day one is
-red for a reason that has nothing to do with the tree — the permanently-red gate this
-repository already refuses, reached from a new direction.
+**Nothing in the `uiaudit` job blocks, and a HUB-side regression (a new axe rule, a pixel diff)
+exits 0.** The first diff against a nonexistent baseline flags every axe rule "new" exactly once,
+so a gate promoted on day one is red for a reason that has nothing to do with the tree — the
+permanently-red gate this repository already refuses, reached from a new direction. (A LOCAL
+refusal in `refuseWalkRegressions` exits 1 and reds the row; `continue-on-error` is what stops it
+blocking.) The ONE exception is the touch refusals, below.
 
 - **The one promotion candidate, after two baseline runs:** `new_a11y_rules` non-empty. It is
   a closed set of rule ids, it is deterministic, and this harness pushes the structured detail
@@ -1353,8 +1355,8 @@ repository already refuses, reached from a new direction.
   moves the browser, deliberately and in a diff.
   ⚠ **What the pin does NOT establish:** that the pixel diff is stable run-to-run under it in CI (not
   measured), or that the hub's stored baseline was captured under it (it was not — those captures ran
-  on the runner's chromium). So the pixel diff stays advisory for the reasons above; S6b promotes only
-  the walk's TOUCH refusals, into their own blocking job. A full-page height shift also reads as a
+  on the runner's chromium). So the pixel diff stays advisory for the reasons above; S6b promoted only
+  the walk's TOUCH refusals, into their own blocking job (below). A full-page height shift also reads as a
   near-100% pixel change, which is why the log annotates a `size_changed` page as a layout change
   rather than a regression.
   ⚠ **Local runs are not CI's browser** unless they use the same build: `nix shell --inputs-from .
@@ -1365,6 +1367,61 @@ repository already refuses, reached from a new direction.
   and synthesis 0.00. The read-back deliberately decodes only `summary` and `diff`; the
   persona evaluator's output is not read at all, so it cannot be printed beside the
   deterministic rows and invite exactly that.
+
+### S6b — `uiaudit-touch`, the blocking job
+
+`.github/workflows/ci.yml`'s `uiaudit-touch` job has **no `continue-on-error`**. It runs the same walk
+through `run.sh` with `UIAUDIT_GATE=touch` → `-gate touch` (`walkGate`, `main.go`):
+
+- **One body, two selections.** `refuseWalkRegressionsUnder` is the function every refusal lives in;
+  `refuseWalkRegressions` is its `gateAll` spelling. `gateTouch` re-implements nothing — it declines
+  to COUNT the classes that are not about a touch rung.
+- **Bound under `touch`:** touch REACHABILITY (two-sided, so it still reads the non-touch rungs), axe
+  `target-size` and input font < 16px at the touch rungs (with their measured-nothing refusals),
+  horizontal overflow and AXE DID NOT RUN at the touch rungs, and the matrix-collapse refusal.
+- **NOT bound under `touch`, still refused by the advisory job:** scripts outside the allowlist, the
+  content floor, header reading order, and overflow/axe at a non-touch rung.
+  `TestTheTouchGateBindsExactlyTheTouchRefusals` runs every case under BOTH gates, so a row "not bound
+  by touch" is only accepted when the same breakage IS refused under `all`.
+- **Why it can block when `uiaudit` cannot:** under `touch` the walk builds no payload and pushes
+  nothing, and the job holds no secret, so neither the hub nor its edge can red it. Its chromium
+  steps are BYTE-IDENTICAL to `uiaudit`'s (S6a's pin; the log prints `flake-resolved chromium:` and
+  `the binary says:` and the step refuses on a mismatch). `tests/test_uiaudit_job_ledger.py` pins
+  all of that. ⚠ The nix binary cache the pinned chromium is fetched from is the one third party
+  left; an outage there reds the job, the same dependency the blocking `nix` job already has.
+- **Also bound under either gate: the walk's harness preconditions**, which run before any verdict —
+  the pod boots, sign-in takes, `LedgerAccounting`, and `refuseJournalWorldFellBack`. So a change
+  that breaks the journal world's share page reds the blocking job with a message that is not a touch
+  refusal; that is a measurement that could not be taken, and it is not hidden.
+- **The step reads content, not only the exit code:** `rc=0`, the `touchGatePassed` needle (checked
+  to still be the constant `main.go` defines), and each of the four touch verdict lines exactly once.
+- **The gate's own guards run IN the blocking job**, before the walk: twelve named tests (the
+  selection, the refusals, the `pwa_check.sh` refusal-line contract, and the real-chromium touch
+  controls), each required to print its own `--- PASS`. Without that step they ran only in the
+  advisory job, so an edit that emptied the touch selection would have left the blocking row green.
+  Both of the job's own steps are pinned as WHOLE normalised strings.
+- 🔴 **The refusal sentence up to `regression class(es)` is a contract with `pwa_check.sh`'s
+  `walk_refused`**, which uses it to tell a sibling-masked (c) check from a harness that printed
+  nothing. S6b's first draft put `(gate …)` inside it and broke that (every real (c) failure would
+  have exited 2); `TestTheRefusalLineIsTheOnePwaCheckGreps` now applies the script's own regex to a
+  real refusal under both gates, and was watched RED on that draft.
+
+**Watched RED in CI before it was called a gate** — the plan's three negative controls, each a
+scratch branch off the PR head with ONE sabotage (`pwa_check.sh`'s own (c) sabotages) and a
+`ci.yml` trimmed to `changes` + `uiaudit-touch` (that job's text byte-identical), run by
+`workflow_dispatch`, chromium 152.0.7977.82 (the pin) in each log:
+
+| sabotage | `uiaudit-touch` | refused by (its own message) |
+|---|---|---|
+| none (the PR's own CI run, and locally) | **success** | — `TRUE at 134 of 134 touch capture(s) and FALSE at 201 of 201`, `0 of 18 text-entry input(s) under 16px` |
+| the scope page's `.view-tab`s 12×12px, no gap | **failure** | `TOUCH TARGET SIZE (WCAG 2.5.8, axe target-size) violated on 50 touch capture(s)` (the only class) |
+| S1's 16px input rule reverted to 14px | **failure** | `INPUT FONT UNDER 16px on 18 touch input(s)` (the only class) |
+| touch emulation never enabled | **failure** | `TOUCH REACHABILITY FAILED on 134 capture(s)` — plus overflow (15) and input font (18), because no `pointer: coarse` rule applied |
+
+The CI runs' URLs are in the PR that added the job. ⚠ **REQUIRED is an operator setting, not this
+repository's**: until branch protection names `uiaudit-touch`, a red row does not disable the merge
+button. On a docs-only change the job is skipped like every gated job, which a required check reads
+as passed.
 
 ## The `verify-push` control
 
