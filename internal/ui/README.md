@@ -4850,3 +4850,94 @@ ignoring `FromEnv`'s error, with both controls green.
 - `flock` across hosts on a network filesystem (advisory only; the reference deployment has one
   writer on a node-local volume).
 - An orphaned record after a directory rename is shown nowhere (Q12).
+
+---
+
+# Transcripts on the session page (S4 of the transcripts plan)
+
+`GET /session` shows a session's stored transcript — collapsed — to the viewers the visibility
+predicate admits, and `GET /session/transcript?session=<id>[&stream=…&seq=…&to=…]` shows the stored
+records as stored (`transcript.go`). The plan is `claudedocs/plan-cairn-plugins.md` (decisions 3, 4,
+7, 17, 18; operator decisions O2, O3, O8, O9, O10).
+
+## The binding rules
+
+- 🔴 **ONE predicate, and this package cannot go around it.** `transcript.Store.View(viewer, id)` is
+  the only way `internal/ui` reaches a stored record: it returns a `View` where `transcript.Visible`
+  said yes and **nil** otherwise, and the archive behind a `View` is unexported. Nil is one answer for
+  three states — no transcript, a refused viewer, an id that is no session — so a handler CANNOT
+  render them differently. `internal/ui` does not import the archive at all
+  (`internal/worker`'s importer ledger pins that).
+- 🔴 **A refused viewer gets the bytes of a session with no transcript** — no section, no link, no
+  count on the page; one 404 body (`transcriptUnseenBody`) on the raw row. Hidden, absent, deleted by
+  the retention sweep, and a deployment with no archive are four ways to the SAME response
+  (`TestARefusedViewerGetsTheBytesOfASessionWithNoTranscript`, with its positive control: an
+  admitted viewer's page differs).
+- 🔴 **The rule is stricter than the page's.** The page is found by a UNION (a write in any readable
+  scope); the transcript needs the owner — an un-narrowed credential whose `(Kind, ID)` uploaded it —
+  or `read` on EVERY scope in `V`: every scope the session wrote in (a whole-store trailer walk, never
+  the viewer's set — decision 3's trap), every scope it read (derived by the pod from the stored
+  records, plus what the agent declared), child sessions included. `*`, a name the viewer's authority
+  does not hold, and an EMPTY `V` are owner-only. Authority is `control.Resolve`'s, off the request's
+  own `Authorization` — never `Model.Grants`.
+- **The page can be found by its transcript.** A session with no recorded write has no trailer for
+  the writes walk to find; a viewer the predicate admits gets the page, with the transcript and "no
+  write by this session is visible to you". ⚠ As built this is BOTH arms, not only the owner arm the
+  plan's decision 4 names: a reader of every scope a read-only session touched would otherwise be
+  served it on the raw row and refused the page.
+- **No archive, nothing changes.** `Config.Transcripts` is nil wherever `cairn-ui` runs without the
+  worker flags (`-transcript-dir` among them): no section renders and the raw row answers its miss
+  for every id. Reading does not depend on `-arm-transcript-capture`.
+- **The collapsed reading (decision 18), and its numbers.** A user message — a `human-text` UNIT,
+  nothing else — is rendered whole, whatever its length. Assistant text shows its first 1,200
+  characters or 15 lines, then `<details><summary>read more (N more characters)</summary>`. A tool
+  call is one `<details>` (`Bash · exit 1 · 3.2 KB`) over its input and the first 64 KiB of its
+  result; a subagent nests under the call that spawned it; bookkeeping records and duplicate
+  tool-result copies are ONE `<details>` per turn; binary payloads are one line. 50 turns a page
+  (`?turn=`). Every reveal is a `<details>`: **no script**, and `AllowedScriptSources` is unchanged.
+- **Three read-time bounds the plan does not name, added here:** a page carries at most 2 MiB of
+  COLLAPSED content (`transcript.CollapsedBudget`; past it a block keeps its summary and its
+  raw-record link), a child stream at most 200 items inline (`ChildItemCap`; the rest are counted),
+  and a raw-record page at most 512 KiB (`rawPageBytes`; at least one record, then a next link).
+  User messages and assistant text are never charged to the budget.
+- **Text only.** Every transcript value is a `g.Text` or an attribute value; no link is ever built
+  from content — every href is this surface's own ledger path with encoded operands
+  (`TestHostileTranscriptTextIsEscaped`).
+
+## Cost, measured
+
+`BenchmarkSessionPageAndScopeTabs` (`written-scopes-walk`, `session-page-with-transcript`) on one
+loaded host, go1.25.14, three runs: the whole-store walk cost **0.24–0.31×** the session page at
+10 scopes × 30 entries and **0.31–0.49×** at 30 × 100 (8–11 ms against 26–44 ms; 105–108 ms against
+222–334 ms). It is below the page's own cost at both sizes, so decision 3's caching condition is not
+met and NOTHING is cached. The walk runs only when it can change the answer: not for the owner, and
+not for a viewer the stored half of `V` already refuses.
+
+## The RED proof
+
+Eleven rows of `tests/control_mutants.py` (`transcript-*`), each run alone and KILLED by its named
+test with every listed extra killer red: the predicate not asked; the written set over the viewer's
+scopes; the read half dropped; the empty set readable; the owner compared by display name; the owner
+arm given to a narrowed credential; any-scope for every-scope; a child's writes not counted toward
+its root; an unknown scope name readable; `*` readable; and classification by record type (the
+600 KB tool result rendered whole). `transcript-pod-skips-scope-rederivation` (an S3 row) was
+re-pointed at the real derivation and re-run. `tests/plugins/e2e.sh` clauses (d)–(g) each have a
+sabotage in `--self-test` (`sabotaged=9 caught=9`); (e), (f) and (g) turn exactly their own
+assertion red. `uiaudit`'s `TestTheSessionPageCarriesItsTranscriptAtEveryWidth` was watched red with
+the fixture upload skipped.
+
+## What these guards still cannot see
+
+- **Timing.** A refused viewer's response is byte-identical, not time-identical: a session that HAS
+  a transcript costs a meta read, and for a viewer the stored half admits, a store walk.
+- **A child session's own id.** `/session?session=<child id>` does not find its root's transcript
+  (that needs an index from child to root, which nothing keeps); the child's stream is reachable
+  under its root.
+- **Work is not bounded, the response is.** A page scans the whole main stream to find turn
+  boundaries (the skeleton of decision 17 is S8's), one record in memory at a time; an opencode
+  stream is held whole.
+- **A damaged entry costs visibility.** A scope holding an entry the trailer walk cannot scan is
+  counted as written, so viewers who cannot read that scope lose every transcript until it is fixed
+  — the fail-closed direction, chosen here, not in the plan.
+- **The refused states in a real browser.** `uiaudit`'s world has one identity, the owner; the
+  refusals are measured in-process and by the e2e's bearer requests.

@@ -15,6 +15,8 @@ import (
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/store"
+	"github.com/ZacxDev/cairn/internal/transcript"
+	"github.com/ZacxDev/cairn/internal/transcript/transcripttest"
 )
 
 // BenchmarkSessionPageAndScopeTabs is what makes the session page's cost a RE-DERIVABLE measurement
@@ -30,6 +32,15 @@ import (
 //
 // ⚠ ABSOLUTE TIMES ARE HOST- AND LOAD-DEPENDENT; the RATIO between the session page and a scope tab
 // is the claim that survives a different machine.
+//
+// 🔴 AND THE TRANSCRIPT'S WHOLE-STORE WALK IS MEASURED BESIDE THEM (S4 of the transcripts plan,
+// decision 3). A session's written scopes (`W_trailer`) are walked over EVERY scope in the store —
+// never the viewer's readable set — at view time, so its cost is stated against the session page's
+// own: `written-scopes-walk` is that walk alone, and `session-page-with-transcript` is the page a
+// NON-OWNER reader of every scope gets (the one viewer who pays both walks; the owner pays neither
+// extra walk, and a viewer the stored half of `V` refuses pays none). Read the pair as a RATIO to
+// `session-page`. `internal/ui/README.md` (the transcript section) records what was measured and
+// why no cache follows from it.
 func BenchmarkSessionPageAndScopeTabs(b *testing.B) {
 	// Two sizes, so the cost is a slope and not one point: 10×30 and 30×100 entries.
 	for _, size := range []struct{ scopes, entries int }{{10, 30}, {30, 100}} {
@@ -108,6 +119,41 @@ func benchSessionPageAndScopeTabs(b *testing.B, scopes, entries int) {
 		b.Fatal(err)
 	}
 	scope := control.DerivedID(control.PrefixScope, "bench-scope-07")
+	// The transcript half: `s-bench-05`'s transcript, owned by ANOTHER principal, so this reader is
+	// admitted by the scope arm — which is what takes the whole-store walk.
+	arc := transcripttest.Open(b)
+	transcripttest.Append(b, arc, transcripttest.Session{Root: "s-bench-05", Owner: "user:bench-somebody-else"}, "main",
+		[]string{trUser("a synthetic message"), trAssistant("a synthetic answer")})
+	withTranscript := cfg
+	withTranscript.Transcripts = &transcript.Store{Archive: arc, StoreRoot: root}
+	srvT, err := New(withTranscript)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Run("written-scopes-walk", func(b *testing.B) {
+		w, err := transcript.WrittenScopes(root, []string{"s-bench-05"})
+		if err != nil || len(w.Scopes) == 0 {
+			b.Fatalf("the walk found %v (%v): the benchmark would time a walk that finds nothing", w.Scopes, err)
+		}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, err := transcript.WrittenScopes(root, []string{"s-bench-05"}); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("session-page-with-transcript", func(b *testing.B) {
+		rec := httptest.NewRecorder()
+		srvT.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, sessionURL("s-bench-05"), nil))
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `id="transcript"`) {
+			b.Fatalf("the page answered %d without the transcript section: the benchmark would time the no-transcript page", rec.Code)
+		}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			rec := httptest.NewRecorder()
+			srvT.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, sessionURL("s-bench-05"), nil))
+		}
+	})
 	for _, tc := range []struct{ name, path string }{
 		{"session-page", sessionURL("s-bench-05")},
 		// The arcs page (S1 of the arcs/presence plan): ONE whole-store member walk, the session page's

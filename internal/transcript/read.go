@@ -322,9 +322,10 @@ func (r *reader) children(items []Item, depth int) {
 }
 
 // charge takes `n` bytes of collapsed content from the page's budget and reports whether they fit.
+// One item too large for what is left is elided and takes nothing, so a smaller one after it can
+// still be shown.
 func (r *reader) charge(n int) bool {
 	if n > r.budget {
-		r.budget = 0
 		return false
 	}
 	r.budget -= n

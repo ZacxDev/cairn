@@ -1890,6 +1890,17 @@
       justify-content: center;
       overflow-wrap: anywhere;
     }
+    .t-block > summary, .t-more > summary {
+      padding-block: calc(var(--spacing) * 3.5);
+    }
+    .pager a, .t-line a, .stat > a {
+      display: inline-flex;
+      min-height: calc(var(--spacing) * 11);
+      max-width: 100%;
+      min-width: calc(var(--spacing) * 11);
+      align-items: center;
+      overflow-wrap: anywhere;
+    }
     .share-index a, .invite-index a {
       display: flex;
       min-height: calc(var(--spacing) * 11);

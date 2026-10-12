@@ -34,6 +34,7 @@ import (
 //	s-tree-05  (opencode) root wrote alpha; its CHILD session wrote beta             V = {alpha, beta}
 //	s-decl-06  wrote alpha; the agent DECLARED beta                                 V = {alpha, beta}
 //	s-lost-07  wrote alpha; READ a scope no model holds (`ghost-notes`)             V = {alpha, ghost-notes}
+//	s-both-08  wrote alpha AND beta, read nothing                                   V = {alpha, beta}
 
 var visClock = time.Date(2000, 1, 2, 3, 4, 5, 0, time.UTC)
 
@@ -119,9 +120,9 @@ func visBuild(t *testing.T) visWorld {
 	put("alpha-notes", "kettle", "- 2000-01-03: one [cairn: fixture-bot/s-full-01]\n"+
 		"- 2000-01-03: two [cairn: fixture-bot/s-star-03]\n- 2000-01-03: three [cairn: fixture-bot/s-only-04]\n"+
 		"- 2000-01-03: four [cairn: fixture-bot/s-tree-05]\n- 2000-01-03: five [cairn: fixture-bot/s-decl-06]\n"+
-		"- 2000-01-03: six [cairn: fixture-bot/s-lost-07]\n")
+		"- 2000-01-03: six [cairn: fixture-bot/s-lost-07]\n- 2000-01-03: nine [cairn: fixture-bot/s-both-08]\n")
 	put("beta-notes", "ladle", "- 2000-01-04: seven [cairn: fixture-bot/s-full-01]\n"+
-		"- 2000-01-04: eight [cairn: fixture-bot/ses_child05]\n")
+		"- 2000-01-04: eight [cairn: fixture-bot/ses_child05]\n- 2000-01-04: ten [cairn: fixture-bot/s-both-08]\n")
 	put("gamma-notes", "spoon", "- 2000-01-05: unsigned\n")
 	put("delta-notes", "fork", "- 2000-01-06: unsigned\n")
 
@@ -154,6 +155,7 @@ func visBuild(t *testing.T) visWorld {
 	decl.Declared = []string{"beta-notes"}
 	transcripttest.Append(t, w.arc, decl, "main", []string{plain})
 	transcripttest.Append(t, w.arc, sess("s-lost-07"), "main", []string{plain, call, result("ghost-notes")})
+	transcripttest.Append(t, w.arc, sess("s-both-08"), "main", []string{plain})
 	return w
 }
 
@@ -186,9 +188,10 @@ func (w visWorld) sees(t *testing.T, viewer Viewer, session string) bool {
 // assumed), and each viewer sees exactly the sessions decision 4 admits.
 //
 // What each row is the control for:
-//   - s-full-01 / `one`: clause (e) — a reader of ONE written scope is refused. RED when the written
-//     set is computed over the viewer's own readable scopes (`transcript-written-set-from-viewer-scopes`)
-//     and when "every" becomes "any" (`transcript-any-scope-not-every-scope`).
+//   - s-both-08 / `one`: clause (e) — a reader of ONE written scope is refused. RED when the written
+//     set is computed over the viewer's own readable scopes (`transcript-written-set-from-viewer-scopes`:
+//     over `one`'s scopes the session wrote only alpha) and when "every" becomes "any"
+//     (`transcript-any-scope-not-every-scope`).
 //   - s-full-01 / `wrote`: clause (f) — every WRITTEN scope is not enough when the session READ
 //     another. RED when the read half is dropped (`transcript-visibility-set-ignores-reads`).
 //   - s-solo-02 / everyone but the owner: clause (g) — an empty `V` is owner-only. RED when the
@@ -209,6 +212,7 @@ func TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope(t *testing.T) {
 		"s-tree-05": {"alpha-notes", "beta-notes"},
 		"s-decl-06": {"alpha-notes", "beta-notes"},
 		"s-lost-07": {"alpha-notes", "ghost-notes"},
+		"s-both-08": {"alpha-notes", "beta-notes"},
 	}
 	for session, want := range wantV {
 		meta, err := w.arc.ReadMeta(session)
@@ -231,6 +235,7 @@ func TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope(t *testing.T) {
 		"s-tree-05": {"every", "owner", "wrote"},
 		"s-decl-06": {"every", "owner", "wrote"},
 		"s-lost-07": {"owner"},
+		"s-both-08": {"every", "owner", "wrote"},
 		"s-none-99": nil, // never stored
 	}
 	for session, viewers := range want {
@@ -253,8 +258,8 @@ func TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope(t *testing.T) {
 func TestStoreViewSkipsTheWalkOnlyWhereItCannotMatter(t *testing.T) {
 	w := visBuild(t)
 	roots, err := w.arc.Roots()
-	if err != nil || len(roots) != 7 {
-		t.Fatalf("the world holds %d stored sessions (%v), want 7", len(roots), err)
+	if err != nil || len(roots) != 8 {
+		t.Fatalf("the world holds %d stored sessions (%v), want 8", len(roots), err)
 	}
 	checked, admitted := 0, 0
 	for _, session := range roots {
@@ -275,7 +280,7 @@ func TestStoreViewSkipsTheWalkOnlyWhereItCannotMatter(t *testing.T) {
 			}
 		}
 	}
-	if checked != 35 || admitted == 0 || admitted == checked {
+	if checked != 40 || admitted == 0 || admitted == checked {
 		t.Fatalf("the comparison covered %d pairs with %d admitted — it needs both answers to mean anything", checked, admitted)
 	}
 }

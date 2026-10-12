@@ -5015,11 +5015,12 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-pod-skips-scope-rederivation",
         path="internal/transcript/archive/archive.go",
-        old="func derivedScopes() []string { return []string{Star} }",
-        new="func derivedScopes() []string { return nil }",
-        killer="TestThePodDerivesStarNotTheDeclarationAlone",
-        why="with no `scopeuse` on `main` an empty derivation reads as 'nothing found' — and it makes "
-        "the agent's DECLARATION the whole read half of V, which decision 3 exists to refuse.",
+        old="\tm.Derived = union(m.Derived, derived)",
+        new="\tm.Derived = union(m.Derived, nil)",
+        killer="TestThePodDerivesReadScopesTheAgentDidNotDeclare",
+        why="the agent already declares what it derived with the same function, so folding the pod's own "
+        "derivation in reads as redundant — and it makes the agent's DECLARATION the whole read half "
+        "of V, which decision 3 exists to refuse.",
         pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
     ),
     Mutant(
@@ -5153,6 +5154,148 @@ MUTANTS: tuple[Mutant, ...] = (
         why="the startup read already refused foreign rows, so the per-request re-read looks safe to "
         "trust — and a row appended afterwards would authenticate a second owner (Q7's wall).",
         pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    # 🔴 TRANSCRIPT VISIBILITY AND THE COLLAPSED READING (S4 of `claudedocs/plan-cairn-plugins.md`):
+    # the plan's eleven S4 rows. The predicate, the visibility set and the reading model live in
+    # `internal/transcript`, which is not in `PKGS` — it is a consumer of the control seam, not a
+    # member of it — so every row ADDS it (and the archive it reads). `./internal/ui/` is in `PKGS`
+    # already, and several rows name a page-level test there as an `extra_killers` entry: the
+    # predicate is one function, and the page is where a viewer would see it fail.
+    Mutant(
+        name="transcript-section-without-predicate",
+        path="internal/transcript/visible.go",
+        old="\tif !Visible(viewer, meta, v) {\n\t\treturn nil, nil\n\t}\n\treturn &View{",
+        new="\tif false && !Visible(viewer, meta, v) {\n\t\treturn nil, nil\n\t}\n\treturn &View{",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        extra_killers=(
+            "TestTheTranscriptSectionIsShownToExactlyThoseThePredicateAdmits",
+            "TestARefusedViewerGetsTheBytesOfASessionWithNoTranscript",
+            "TestTheRawRecordViewAsksThePredicate",
+        ),
+        why="the session page was already found for this viewer, so asking a second, stricter question "
+        "before rendering one more section reads as redundant — and it shows a transcript to anyone "
+        "who can read ONE scope the session wrote in (clause d).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-written-set-from-viewer-scopes",
+        path="internal/transcript/visible.go",
+        old="written, err := WrittenScopes(s.StoreRoot, ids)",
+        new="written, err := writtenWithin(s.StoreRoot, viewer.Auth.VisibleScopes(control.VerbRead), ids)",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        why="every other walk on this surface is narrowed to the caller's readable scopes, and passing "
+        "the same set here looks like the rule being followed — over that set every scope found is "
+        "readable by construction, so 'reads every written scope' is vacuously true (clause e).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-visibility-set-ignores-reads",
+        path="internal/transcript/visible.go",
+        old="out := slices.Concat(written.Scopes, written.Unscanned, meta.Derived, meta.Declared)",
+        new="out := slices.Concat(written.Scopes, written.Unscanned)",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        why="'the scopes a session touched' reads as the scopes it WROTE to, which is what the session "
+        "page shows — and a session that recalled another scope's notes into its tool results is then "
+        "visible to people who cannot read that scope (O8, clause f).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-empty-set-visible",
+        path="internal/transcript/visible.go",
+        old="\tif len(v) == 0 {\n\t\treturn false\n\t}\n\treturn viewer.readsEvery(v)",
+        new="\tif false && len(v) == 0 {\n\t\treturn false\n\t}\n\treturn viewer.readsEvery(v)",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        extra_killers=("TestASessionWithNoRecordedWriteIsFoundForItsOwnerAlone",),
+        why="'reads every scope in V' needs no special case to be written — and for a session with no "
+        "recorded write or read it is vacuously true for EVERYBODY (O10, clause g).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-owner-by-display-not-id",
+        path="internal/transcript/visible.go",
+        old='meta.Owner == string(v.Principal.Kind)+":"+string(v.Principal.ID)',
+        new='meta.Owner == string(v.Principal.Kind)+":"+v.Principal.Display',
+        killer="TestVisibleArms",
+        why="the display name is what every page and audit line shows for a principal, so comparing it "
+        "reads as comparing the principal — and it is mutable and not unique, so a rename makes one "
+        "principal another's owner.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-narrowed-owner-arm",
+        path="internal/transcript/visible.go",
+        old="return !v.Auth.Narrowed() && meta.Owner ==",
+        new="return meta.Owner ==",
+        killer="TestVisibleArms",
+        why="a narrowed credential is still the owner's credential, so letting it see the owner's "
+        "sessions reads as obvious — and it hands an agent credential cut down to one scope every "
+        "owner-only session, which is what the narrowing withheld.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-any-scope-not-every-scope",
+        path="internal/transcript/visible.go",
+        old="return !slices.ContainsFunc(scopes, func(scope string) bool { return !v.reads(scope) })",
+        new="return len(scopes) == 0 || slices.ContainsFunc(scopes, v.reads)",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        why="the session PAGE is found by a union — a write in any readable scope — and reusing that "
+        "rule for its content is the natural reading of 'can this viewer see the session'.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-child-visible-without-root",
+        path="internal/transcript/visible.go",
+        old="ids := append([]string{meta.Root}, meta.Children...)",
+        new="ids := []string{meta.Root}",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        why="a transcript is stored under its ROOT session id, so walking for that id reads as complete "
+        "— and a child session's own writes then never reach the root's V, leaving the child's stream "
+        "visible to people who cannot read where it wrote (decision 7).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-unknown-scope-name-readable",
+        path="internal/transcript/visible.go",
+        old="\tif !v.holds(scope) {\n\t\treturn false\n\t}",
+        new="\tif !v.holds(scope) {\n\t\treturn true\n\t}",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        extra_killers=("TestAScopeRenamedAfterTheWriteIsUnreadableUntilItIsRenamedBack",),
+        why="'that scope no longer exists, so it cannot be hiding anything from anyone' — and the content "
+        "read from it before the rename is still in the transcript.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-star-sentinel-readable",
+        path="internal/transcript/visible.go",
+        old="\tif scope == Star {\n\t\treturn false\n\t}",
+        new="\tif scope == Star {\n\t\treturn true\n\t}",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        why="`*` reads as a wildcard — 'every scope' — and a wildcard a viewer need not hold is the "
+        "usual meaning; here it means 'a scope nobody could identify', which nobody but the owner reads.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-render-classifies-by-record-type",
+        path="internal/transcript/read.go",
+        old="\t\tclass := u.Class\n",
+        new='\t\tclass := u.Class\n\t\tif kind == "user" {\n\t\t\tclass = HumanText\n\t\t}\n',
+        killer="TestAToolResultInsideAUserRecordIsNotAUserMessage",
+        extra_killers=("TestTheTranscriptRendersCollapsed",),
+        why="a `user` record is what a user sent, by its own type — and a tool result of several hundred "
+        "kilobytes rides INSIDE one, so 'user messages are shown in full' renders every one of them whole.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    # A twelfth, beyond the plan's eleven: the one rendering rule the operator stated outright (O9 —
+    # a user message is NEVER truncated). The test plan names it as a control; here it is a row.
+    Mutant(
+        name="transcript-user-message-clipped",
+        path="internal/ui/transcript.go",
+        old='\t\t\th.Div(h.Class("t-text"), g.Text(it.Text)))\n\tcase transcript.AssistantText:',
+        new='\t\t\th.Div(h.Class("t-text"), g.Text(clipUTF8(it.Text, assistantHeadChars))))\n\tcase transcript.AssistantText:',
+        killer="TestTheTranscriptRendersCollapsed",
+        why="every other block on the page has a display limit, and giving the user's message the "
+        "assistant's head limit reads as consistency — and the one thing the operator asked never to "
+        "be cut is then cut at 1,200 characters with no reveal.",
     ),
     Mutant(
         name="redact-marker-drops-the-whole-span",

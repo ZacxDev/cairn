@@ -1436,6 +1436,21 @@
       @apply inline-flex min-h-11 min-w-11 max-w-full items-center justify-center wrap-anywhere;
     }
 
+    /* The transcript section (`transcript.go`): its reveals and its few links. A `<summary>` stays
+     * a list-item so the disclosure marker survives — only its height moves (a 16px line plus the
+     * padding is the 44px row). The links are the pager, the raw-record links and the summary card's
+     * transcript link. */
+    .t-block > summary,
+    .t-more > summary {
+      @apply py-3.5;
+    }
+
+    .pager a,
+    .t-line a,
+    .stat > a {
+      @apply inline-flex min-h-11 min-w-11 max-w-full items-center wrap-anywhere;
+    }
+
     /* These two are `block` rows already — full width, so only the height moves. */
     .share-index a,
     .invite-index a {

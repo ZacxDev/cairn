@@ -34,6 +34,10 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
   train tree). S3 = transcript upload + per-session store in cairn-ui, DISARMED: every upload is
   answered 503 `capture-disarmed` unless cairn-ui starts with `-arm-transcript-capture` (no env
   spelling, no default).
+- **S4 BUILT (#S4PR, PR open):** `transcript.Visible` + `V`, the collapsed transcript section on
+  `/session`, `GET /session/transcript`, e2e clauses (d)–(g) (`sabotaged=9 caught=9`), eleven mutant
+  rows. The pod now derives the read half of `V` itself (no more `*` for every session); a
+  `cairn-ui` without `-transcript-dir` renders nothing new.
 - 🔴 **CAPTURE IS UNARMED.** Still blocking: **S11** (client read ledger) is unbuilt. ✅ **S3b is
   BUILT** (#260): the host-side uploader `internal/capture.HTTPSink` + `cairn-capture --run` (one
   pass for a user timer), and `tests/plugins/e2e.sh` clauses (a, b, c, h), `sabotaged=5 caught=5`,

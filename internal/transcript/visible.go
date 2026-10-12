@@ -128,7 +128,8 @@ type Written struct {
 // walks the viewer's set, rightly, for "which of its writes may I see"; this is the other question.
 // It therefore takes no scope set at all.
 //
-// The cost is one whole-store parse per call (`BenchmarkWrittenScopesWalk`), which is why
+// The cost is one whole-store parse per call — measured beside the session page's own walk by
+// `internal/ui`'s `BenchmarkSessionPageAndScopeTabs` (`written-scopes-walk`) — which is why
 // [Store.View] asks it only when the answer could matter.
 func WrittenScopes(storeRoot string, ids []string) (Written, error) {
 	return writtenWithin(storeRoot, store.Unrestricted(), ids)

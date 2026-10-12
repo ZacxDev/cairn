@@ -261,6 +261,9 @@ func TestCollapsedContentIsBudgetedAndUserTextNeverIs(t *testing.T) {
 		lines = append(lines, fmt.Sprintf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result",`+
 			`"tool_use_id":"toolu_b%04d","content":%s}]}}`, i, jsonString(chunk)))
 	}
+	// A SMALL result after the budget's last large one was refused: it still fits what is left.
+	lines = append(lines, `{"type":"user","message":{"role":"user","content":[{"type":"tool_result",`+
+		`"tool_use_id":"toolu_b9999","content":"small"}]}}`)
 	transcripttest.Append(t, a, sess, "main", lines)
 	rd := readAll(t, a, "s-0001", 1)
 	turn := rd.Turns[0]
@@ -270,7 +273,7 @@ func TestCollapsedContentIsBudgetedAndUserTextNeverIs(t *testing.T) {
 	results := itemsOf(turn.Items, ToolResult)
 	shown, elided := 0, 0
 	for _, r := range results {
-		if r.Tool.ResultBytes != len(chunk) {
+		if r.Tool.ResultBytes != len(chunk) && r.Tool.Result != "small" {
 			t.Errorf("a result reports %d bytes, want its full %d whether or not its body is shown", r.Tool.ResultBytes, len(chunk))
 		}
 		if r.Elided && r.Tool.ResultElided && r.Tool.Result == "" {
@@ -279,9 +282,12 @@ func TestCollapsedContentIsBudgetedAndUserTextNeverIs(t *testing.T) {
 			shown++
 		}
 	}
-	// 2 MiB of budget holds three 600 KB results; the other three keep only their summary.
-	if len(results) != 6 || shown != 3 || elided != 3 {
-		t.Fatalf("of %d results %d are shown and %d elided, want 3 and 3 under a %d-byte budget", len(results), shown, elided, CollapsedBudget)
+	// 2 MiB of budget holds three 600 KB results; the other three keep only their summary; and the
+	// small one after them is shown, because a refused item takes nothing from the budget.
+	last := results[len(results)-1]
+	if len(results) != 7 || shown != 3 || elided != 3 || last.Elided || last.Tool.Result != "small" {
+		t.Fatalf("of %d results %d large ones are shown and %d elided, and the small last one is elided=%v; want 7, 3, 3, false "+
+			"under a %d-byte budget", len(results), shown, elided, last.Elided, CollapsedBudget)
 	}
 }
 
