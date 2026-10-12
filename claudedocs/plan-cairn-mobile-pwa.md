@@ -1126,6 +1126,14 @@ They are `pwa_check.sh --self-test`'s sabotages.
   - a branch that removes touch emulation fails it with the reachability refusal's message.
 - **Positive control:** `main` passes.
 - **No `continue-on-error`**, read off the workflow file.
+- **AS BUILT (S6b):** `uiaudit -gate touch` (`walkGate`, `uiaudit/main.go`) selects the touch
+  classes inside the ONE refusal body, `refuseWalkRegressionsUnder`; the job sets
+  `UIAUDIT_GATE=touch` on `uiaudit/run.sh`, pushes nothing and holds no secret, and its chromium
+  steps are byte-identical to the advisory job's (`tests/test_uiaudit_job_ledger.py`). All three
+  negative controls went red in CI with their own message, and closing-condition part 3 reads off
+  the workflow file and the job log (`flake-resolved chromium:` / `the binary says:`) — the record
+  is `uiaudit/README.md`'s S6b section. ⚠ Making it a REQUIRED check is an operator setting; the
+  PR names the `gh api` call.
 
 ## Open questions
 
