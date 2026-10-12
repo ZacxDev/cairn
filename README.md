@@ -561,6 +561,7 @@ renaming a human-read label breaks nobody.
 | which registered arcs touched a scope, `declared` or `inferred` (Go client only; asks the pod) | `cairn arcs --scope X` (or `--repo P`) |
 | one registered arc: status, tooling coverage, members (Go client only; asks the pod) | `cairn arc-show --slug S` (home from `--scope`/`--repo`) |
 | register or update an arc from a JSON payload (Go client only) | `cairn arc-register --slug S --from F` (home from `--scope`/`--repo`) |
+| which code — repositories and branch — a scope declares it describes (Go client only; asks the pod; read-only, the browser is the only writer) | `cairn sources --scope X` (or `--repo P`) |
 | the post-write check: parse, dropped lines, marker reachability | `cairn validate` |
 | one call of diagnostics | `cairn doctor` (`--json`, `--no-sync`) |
 | append one dated, attributed bullet | `cairn append --scope S --ref R --text '…' --session ID` |

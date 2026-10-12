@@ -5597,6 +5597,15 @@ MUTANTS: tuple[Mutant, ...] = (
         "scan's bound the size refusal comes UNSCANNED, so the draft echoed can carry a credential.",
     ),
     Mutant(
+        name="ui-memo-scannable-asks-about-the-body-only",
+        path="internal/ui/memos.go",
+        old="memoDraftKept[ref.Reason] && memo.Scannable(draft.Subject, draft.Body) {",
+        new="memoDraftKept[ref.Reason] && memo.Scannable(\"\", draft.Body) {",
+        killer="TestASecretOverALimitIsNeverEchoed",
+        why="the bound is over subject AND body together; with the excess in the subject a short body "
+        "alone looks scannable, so an UNSCANNED subject-size refusal echoes a body carrying a credential.",
+    ),
+    Mutant(
         name="memo-ttlof-multiplies-unguarded",
         path="internal/memo/policy.go",
         old="\tcase n > limit:\n\t\treturn MaxTTL + unit\n",

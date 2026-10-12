@@ -583,14 +583,17 @@ func TestOnlyTheClosedSetOfRefusalsKeepsTheDraft(t *testing.T) {
 // cannot see). Every row must be a 303 to the `secret` refusal whose answer — body AND Location —
 // carries none of the token's bytes. Rows: the secret alone; with a 5000-byte text; with a 130-byte
 // subject; with a 31-day lifetime; and past `memo.MaxScannedBytes`, where the text is NOT scanned, is
-// refused as the size, and is redirected rather than echoed because `memo.Scannable` is false.
+// refused as the size, and is redirected rather than echoed because `memo.Scannable` is false — once
+// with the excess in the body, and once with it in the SUBJECT and the secret in a short body, which
+// is the row that sees a handler asking `Scannable` about the body alone.
 //
 // The token is generated at run time from a seeded RNG — never committed (`internal/redact/corpus.go`).
 // POSITIVE CONTROL per in-bound row: the SAME form with the token overwritten by same-length filler IS
 // the 422 page echoing that filler — so each row reaches the kept-draft path, and the echo detector
 // sees an echo when there is one.
 // RED at e18efd1 (the three limit rows answered 422 and echoed the token), under
-// `memo-secret-scan-after-size`, and (the past-the-bound row) under `ui-memo-draft-kept-unscanned`.
+// `memo-secret-scan-after-size`, (the past-the-bound rows) under `ui-memo-draft-kept-unscanned`, and
+// (the subject row alone) under `ui-memo-scannable-asks-about-the-body-only`.
 func TestASecretOverALimitIsNeverEchoed(t *testing.T) {
 	w := memoWorld(t)
 	rng := rand.New(rand.NewSource(20000103))
@@ -622,6 +625,11 @@ func TestASecretOverALimitIsNeverEchoed(t *testing.T) {
 		{"past the scan bound", func(v string) url.Values {
 			return sendForm(browseScopeA, "rotation", "value "+v+"\n"+strings.Repeat("b", memo.MaxScannedBytes))
 		}, memo.RefusedBodySize, false},
+		// The excess in the SUBJECT, the secret in a short BODY: the body alone is well inside the
+		// bound, so only a check over subject AND body together says "never scanned".
+		{"subject past the scan bound, secret in the body", func(v string) url.Values {
+			return sendForm(browseScopeA, strings.Repeat("s", memo.MaxScannedBytes+1), "value "+v)
+		}, memo.RefusedSubjectSize, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			memos := &fakeMemos{model: w.model, rows: memoRows()}
