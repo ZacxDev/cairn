@@ -1869,11 +1869,12 @@
           # moved between them, or declared Go-only here alone, without a red test. The
           # first, `sessions`, is the arcs/sessions S2 slice; the arc registry is S3; the four
           # `memo-*` verbs are scope mail's S3 (decision 8 of the scope-mail plan); `sources`
-          # is the scope-refs plan's S3.
+          # is the scope-refs plan's S3 and `audit-refs` its S5.
           cat > want-go-only-verbs.txt <<'EOF'
           arc-register writes
           arc-show reads
           arcs reads
+          audit-refs reads
           memo-check reads
           memo-read reads
           memo-retract writes

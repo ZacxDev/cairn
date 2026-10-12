@@ -5774,6 +5774,114 @@ MUTANTS: tuple[Mutant, ...] = (
         why="'can the sender still write' without saying WHERE reads as the question; a sender who "
         "writes elsewhere then hides a lapse here.",
     ),
+    # S5 of the scope-refs plan: `internal/refaudit`, the auditor, and the `audit-refs` verb. Each row
+    # ADDS `./internal/refaudit/` (outside the seam). The git-backed killers follow the two-tier rule:
+    # the `go` job sets CAIRN_GIT_TESTS_REQUIRED, where a skip is a failure, never a kill.
+    Mutant(
+        name="refaudit-tags-count-as-reachable",
+        path="internal/refaudit/gitcli.go",
+        old='"--contains", sha,\n\t\t"refs/heads/", "refs/pull/")',
+        new='"--contains", sha)',
+        killer="TestATagInAnOlderMirrorNeverCountsAsReachable",
+        why="'any ref that contains it' reads as reachability — and a tag an older mirror kept makes a "
+        "SHA whose branch is gone look reachable: a false clean exit (round 3 of the plan).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-off-branch-counted-stale",
+        path="internal/refaudit/refaudit.go",
+        old="ExistsOffBranch: ClassInformational",
+        new="ExistsOffBranch: ClassStale",
+        killer="TestTheExitIsTheMixedCase",
+        why="'not on the branch' reads as wrong — and every PR-merged-by-squash SHA would fail the audit.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-not-reachable-counted-stale",
+        path="internal/refaudit/refaudit.go",
+        old="NotReachable: ClassCouldNotLook",
+        new="NotReachable: ClassStale",
+        killer="TestTheExitIsTheMixedCase",
+        why="absence from the fetched refs proves nothing about the remote (squash-and-delete, "
+        "force-push); calling it stale is a verdict the auditor cannot support.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-presence-counted-as-reachability",
+        path="internal/refaudit/audit.go",
+        old="\t\tif len(refs) > 0 {",
+        new="\t\tif true {",
+        killer="TestReachabilityIsRecomputedFromTheRemotesCurrentRefs",
+        why="'the commit object exists' is what the out-of-tree audit checked — and a SHA whose only ref "
+        "was deleted stays in the mirror forever.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-ls-tree-exit-code-trusted",
+        path="internal/refaudit/gitcli.go",
+        old='"ls-tree", "-z", commit, "--", path)\n\tif err != nil {\n\t\treturn false, err\n\t}',
+        new='"ls-tree", "-z", commit, "--", path)\n\tif err != nil {\n\t\treturn false, err\n\t}\n\treturn true, nil',
+        killer="TestEachPlantedClaimMapsToOneLiteralState",
+        why="`ls-tree` exiting 0 reads as 'found' — it exits 0 on a missing path (round 1 F8).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-directory-counted-missing",
+        path="internal/refaudit/gitcli.go",
+        old='ok && name == path {',
+        new='ok && name == path && strings.Contains(rec, " blob ") {',
+        killer="TestEachPlantedClaimMapsToOneLiteralState",
+        why="'a path is a file' — and every `internal/` pointer row becomes a stale finding.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-literal-pathspecs-dropped",
+        path="internal/refaudit/gitcli.go",
+        old='"GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_LITERAL_PATHSPECS=1",',
+        new='"GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1",',
+        killer="TestEachPlantedClaimMapsToOneLiteralState",
+        why="the variable looks like noise beside two others — and a cited `a*.go` greps every file the "
+        "glob matches (T3).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-undeclared-scope-exits-0",
+        path="internal/refaudit/run.go",
+        old='res, detail = Result{ScopeReason: ReasonUndeclared}, "status="+r.SourcesStatus',
+        new='return ReasonUndeclared + "\\n", "", ExitClean',
+        killer="TestAuditRefsCouldNotLookIsTenForEveryScopeLevelReason",
+        why="'nothing declared, nothing to audit' reads as a clean answer — and an undeclared scope is "
+        "reported clean forever (decision 8).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-checked-zero-exits-0",
+        path="internal/refaudit/refaudit.go",
+        old="\tif checked == 0 {\n\t\treturn ExitCouldNotLook",
+        new="\tif checked < 0 {\n\t\treturn ExitCouldNotLook",
+        killer="TestTheExitIsTheMixedCase",
+        why="'no findings' reads as clean — and a scope whose entries cite nothing checkable passes.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-unmapped-host-counted-clean",
+        path="internal/refaudit/refaudit.go",
+        old="\tif r.unlookedSource() {",
+        new="\tif false {",
+        killer="TestTheExitIsTheMixedCase",
+        why="'the claims all held' reads as clean — while half the declaration was never fetched.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-mirror-dir-from-path-components",
+        path="internal/refaudit/gitcli.go",
+        old='return filepath.Join(g.MirrorRoot, hex.EncodeToString(sum[:])+".git")',
+        new='_ = hex.EncodeToString(sum[:])\n\treturn filepath.Join(g.MirrorRoot, strings.ReplaceAll(canonical, ":", "/")+".git")',
+        killer="TestTheMirrorDirectoryIsADigest",
+        why="a readable mirror path is friendlier — and a declaration then chooses where on disk the "
+        "auditor writes (T4).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
 )
 
 
