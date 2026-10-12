@@ -565,3 +565,29 @@ func TestTheTTLFlagSpellings(t *testing.T) {
 		}
 	}
 }
+
+// TestMemoSendHelpSaysWhatTheScanCannotCatch — `memo-send --help` states the secret scan's limits
+// (decision 11), the same claim the `cairn-memo` skill and `memo.CheckSend`'s doc make, so a sender
+// who reads only `--help` does not take a clean send for a clean memo. 🔴 PINNED AS ONE WHOLE
+// NORMALISED STRING, LITERALLY, and never read from the constant: a guard on a few WORDS is walked
+// by a reword, and a test reading the constant follows any edit to it. A reword fails here — pay it.
+// RED before the note existed (the help carried the one-line Help and the flags only).
+func TestMemoSendHelpSaysWhatTheScanCannotCatch(t *testing.T) {
+	const want = "The send-time secret scan refuses only a credential recognisable by its own shape " +
+		"(a PEM private key, a vendor-prefixed token, a JWT, an Authorization or Bearer value, " +
+		"a password in a URL). Everything else goes through: a password in prose, a short or " +
+		"unnamed token, an unprefixed hex secret, any novel format. Never put a secret in a " +
+		"memo; if one gets through, `cairn memo-retract` it at once."
+	var stdout strings.Builder
+	if code := Run(Env{Stdout: &stdout, Stderr: os.Stderr}, []string{"memo-send", "--help"}); code != ExitOK {
+		t.Fatalf("memo-send --help: exit %d", code)
+	}
+	got := strings.Join(strings.Fields(stdout.String()), " ")
+	if !strings.Contains(got, want) {
+		t.Fatalf("memo-send --help does not state the scan's limits; got:\n%s", stdout.String())
+	}
+	// POSITIVE CONTROL for the normalisation: the verb's own one-line Help is found the same way.
+	if !strings.Contains(got, "send a short memo to the scope (writes to the memo listener)") {
+		t.Fatalf("the help text was not read at all:\n%s", stdout.String())
+	}
+}
