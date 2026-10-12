@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 )
 
 // frameState is one record (or blob) being reassembled from continuation frames (decision 15:
@@ -22,11 +23,18 @@ import (
 // nothing is owned until an upload is accepted — a squatter's half-sent record must not create a
 // session. They count against the quota while staged. The in-memory index is lost on a restart,
 // which only means the next frame is refused and the agent starts again at 0.
+//
+// 🔴 AND THE ASSEMBLED SIZE IS BOUNDED BEFORE IT IS EVER IN MEMORY (AP2): every frame is refused
+// once the staged bytes plus its chunk would pass [MaxAssembledBytes], so the final frame's
+// `ReadFile` reads at most that. A sequence nobody finishes is discarded by the sweep after
+// [FrameIdle] (AP3), so its bytes stop counting against the quota without a restart.
 type frameState struct {
+	root, target  string
 	from, to, src string
 	count, next   int
 	path          string
 	bytes         int64
+	touched       time.Time
 }
 
 func (a *Archive) frameKey(root, target string) string { return root + "\x00" + target }
@@ -49,12 +57,19 @@ func (a *Archive) stageFrame(u Upload, target, src string, chunk []byte) ([]byte
 		if err := os.MkdirAll(filepath.Join(a.cfg.Dir, framesDir), dirMode); err != nil {
 			return nil, false, err
 		}
-		st = &frameState{from: u.From, to: u.To, src: src, count: f.Count, path: a.framePath(u.Root, target)}
+		st = &frameState{root: u.Root, target: target, from: u.From, to: u.To, src: src, count: f.Count,
+			path: a.framePath(u.Root, target)}
 	} else if st == nil || st.next != f.Index || st.count != f.Count || st.from != u.From || st.to != u.To || st.src != src {
 		a.dropFrames(u.Root, target)
 		return nil, false, invalid("frame %d of %d does not continue a staged sequence (a frame is missing or "+
 			"out of order); nothing is stored — restart the record at frame 0", f.Index, f.Count)
 	}
+	// 🔴 THE CAP, BEFORE ANY READ: the staged size is known from the index, never from the file.
+	if st.bytes+int64(len(chunk)) > MaxAssembledBytes {
+		a.dropFrames(u.Root, target)
+		return nil, false, &TooLargeError{Limit: MaxAssembledBytes}
+	}
+	st.touched = a.cfg.Now()
 	if f.Index == f.Count-1 {
 		staged, err := os.ReadFile(st.path)
 		if err != nil {

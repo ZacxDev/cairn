@@ -183,6 +183,13 @@ field names and types alone.
   residuals. Round 7 rescopes the clean-damage budget to a FROZEN committed corpus — round 6's
   live-tree budget went red on unrelated doc edits, on deleting docs and on go1.26 — and closes
   the one round-6 regression in the entropy rule (words shielding a random end segment).
+- *Revision 23 records operator decision O17 and closes arming preconditions AP1–AP3 (#PRNUM).*
+  The operator WAIVED the redactor's held-back gate (closing-condition part 5, O15's ≥ 90% floor)
+  as an arming precondition and chose to ship capture without perfect redaction; part 5 stays as
+  a MEASUREMENT, and the last score (`leaks caught=157/190 clean damaged=18/175`) stays recorded.
+  AP1–AP3 are closed in code, each by its own stated check (Rollout); AP4 becomes a re-measure-
+  and-record step rather than a gate. Capture is still armed on NO instance: arming remains the
+  operator's act, and S11's read ledger is still a precondition.
 
 ## Goal and premise
 
@@ -242,7 +249,12 @@ Drop the work, or the named half, if any of these holds:
      not read off the run).
   4. **The two example plugins' own suites exit 0** in the `go` job against in-process fake LLM and
      fake ClickUp servers, with synthetic fixtures only.
-  5. **The arming gate (O15) passes on a FRESH held-back set**: `redact-heldback <cases.jsonl>`
+  5. 🔴 **NO LONGER A GATE — WAIVED AS AN ARMING PRECONDITION BY O17, KEPT AS A MEASUREMENT.** The
+     run below is still made and recorded on the redactor commit being armed, its
+     `leaks caught=X/Y clean damaged=A/B` line verbatim; its exit code is REPORTED, not required —
+     neither arming nor this closing condition waits on it. The last recorded score is
+     `leaks caught=157/190 clean damaged=18/175` (O16). The original gate, for the record:
+     **The arming gate (O15) passes on a FRESH held-back set**: `redact-heldback <cases.jsonl>`
      (`internal/redact/cmd/redact-heldback`, built, not `go run`) exits 0 — at least 90% of leaks
      caught AND at most 15% of clean lines damaged, both controls having behaved — over a case set
      an AUDITOR wrote for the redactor commit being armed, that the fixer never saw, and that was
@@ -284,17 +296,18 @@ Drop the work, or the named half, if any of these holds:
 
 ### Rollout (NOT part of the closing condition)
 
-- 🔴 **Nothing is armed before closing-condition part 5 holds for the redactor being armed (O15)** —
-  not the personal instance, not one host. A rule change after the gate passed resets it: the next
-  arming needs a NEW held-back set scored against the new commit.
-- 🔴 **Today the gate FAILS and capture is armed NOWHERE (O16).** S1 merges unarmed; no rule
-  round is scheduled to change that. Arming waits for a separate operator decision, expected to
-  narrow WHAT is captured (raw tool output excluded or truncated) rather than to redact better,
-  and that decision still has to pass part 5 on a fresh set. The steps below describe what
-  happens after it, not now.
-- 🔴 **AND FOUR S3 ARMING PRECONDITIONS, INDEPENDENT OF PART 5: nothing is armed while any is
-  open.** Each was found by #224's audit against the S3 head, is harmless while capture is
-  disarmed, and becomes reachable the moment it is armed. Recorded, not fixed, in #224.
+- 🔴 **CLOSING-CONDITION PART 5 IS NO LONGER AN ARMING GATE (O17).** The operator waived it and
+  chose to ship capture without perfect redaction. It is kept as a MEASUREMENT: the held-back
+  score is re-run and recorded for the redactor commit being armed (AP4), and the last one —
+  `leaks caught=157/190 clean damaged=18/175`, under the 90% floor — stays on record. A secret the
+  redactor misses is stored (T1).
+- 🔴 **Capture is still armed NOWHERE.** S1 and S3 merged unarmed (O16), and O17 waived a gate —
+  it did not arm anything. Arming is the operator's act (`-arm-transcript-capture`), and S11's
+  read ledger is still a precondition. The steps below describe what happens after it, not now.
+- 🔴 **AND FOUR S3 ARMING PRECONDITIONS: AP1–AP3 ARE CLOSED (#PRNUM); AP4 IS A STEP, NOT A
+  GATE.** Each was found by #224's audit against the S3 head, was harmless while capture is
+  disarmed, and becomes reachable the moment it is armed. Recorded, not fixed, in #224; AP1–AP3
+  closed in #PRNUM, each by its own check below.
   - **AP1 — `-transcript-dir` can COLLIDE with `cairn-ui`'s own state.** The archive writes
     `<dir>/journal.jsonl` and `<dir>/sessions/` (`internal/transcript/archive/archive.go`,
     `journalName`/`sessionsDir`), and `ResolveDir` refuses only a directory INSIDE the store root.
@@ -306,6 +319,16 @@ Drop the work, or the named half, if any of these holds:
     /var/lib/cairn-ui`. **Closed when** startup REFUSES a `-transcript-dir` holding any entry the
     archive does not own (or the archive's names cannot collide), pinned by a startup test that
     places the control journal and the session file in the directory and watches the refusal.
+    ✅ **CLOSED (#PRNUM)** — two layers. `archive.CheckOwnership` (run by `Open` before it creates or
+    removes anything) refuses any entry but `journal.jsonl` whose every line is this store's
+    deletion record, a `sessions/` of session directories and a `frames/` of staged-frame files;
+    `cairn-ui` also refuses a `-transcript-dir` that would HOLD one of its own state paths
+    (control journal, session file, arc journal, token files), resolved through symlinks and for
+    files not yet created — which the ownership check, reading what is there at startup, cannot
+    see. `TestTheBinaryRefusesATranscriptDirHoldingItsOwnState` (control journal, session file,
+    another program's journal; the store's own populated directory serves), and
+    `TestOpenAcceptsAFreshAndItsOwnDirectoryAndNothingElse`. The session-file case was already
+    refused at the S3 head by accident (`MkdirAll` over a file), so it is an invariant guard there.
   - **AP2 — no cap on an ASSEMBLED framed record.** Each request is bounded (`worker.DefaultMaxBody`,
     8 MiB) and a sequence by `MaxFrames` (4096), but the final frame appends to whatever was staged
     (`frames.go`, `append(staged, chunk...)`) with no per-record bound. The audit measured a 32 MB
@@ -313,13 +336,30 @@ Drop the work, or the named half, if any of these holds:
     loop. **Closed when** an assembled record over a stated cap is refused with 413 before it is
     read into memory, by a test that sends one frame past the cap and asserts 413 and nothing
     stored.
+    ✅ **CLOSED (#PRNUM)** — `archive.MaxAssembledBytes` = 4 MiB, refused with 413 `too-large` on the
+    frame that crosses it, from the staged size in the index before any `ReadFile`; unframed
+    records and blobs are bounded the same. The final frame was measured to ALLOCATE ≈18× the
+    record, linearly over 1–4 MiB (≈72 MiB at the cap), re-measured on every run against a 100 MiB
+    budget (`TestTheAssembledRecordCapFitsThePod`, a budget guard, green at the S3 head too).
+    `TestOneFramePastTheCapIs413AndStoresNothing`.
   - **AP3 — the 🟢 findings, each small and each needed before arming:** a session with no
     `meta.json` is never swept by retention; abandoned frames hold quota until a restart; blob
     names, `src` and cursors are not re-checked by the pod's redaction pass (a 40-character token
     fits the blob-name pattern); and the owner principal is checked only at startup. **Closed
     when** each has its own test going red on the S3 head.
+    ✅ **CLOSED (#PRNUM)**, each red on the S3 head: a meta-less session is swept on the age of its
+    newest write and journaled as `retention-uncommitted` with no owner
+    (`TestASessionWithNoMetaIsSweptByRetention`); a staged sequence idle past `archive.FrameIdle`
+    (1 h) is discarded by the sweep (`TestAbandonedFramesStopHoldingQuotaWithoutARestart`); root,
+    stream, blob name, `from`, `to`, each declared scope and each `src` are re-checked, refused
+    422 naming the FIELD, never the value (`TestTheRecheckReadsNamesSrcAndCursors`,
+    `TestATokenInABlobNameIs422AndNeverEchoed`); `worker.Config.OwnerHeld` re-asks the authority on
+    every request, refusing the uniform 401 without counting toward the lockout
+    (`TestTheOwnerIsCheckedOnEveryRequest`).
   - **AP4 — the marker-adjacency residual (T1) is RE-MEASURED on the commit being armed**, so the
-    statement there describes that commit's redactor and not #224's.
+    statement there describes that commit's redactor and not #224's. ⚠ **Since O17 a STEP, not a
+    gate:** the re-measurement — and the held-back score (part 5) beside it — is run and RECORDED
+    for the commit being armed; neither result blocks arming.
 - **The personal instance first**, with capture armed on one host, retention set, plugins
   registered but every toggle OFF (decision 10 — an agent decision, not an operator one). The
   operator turns on summaries for one scope, reads a week of output, and judges it. The same for
@@ -727,6 +767,7 @@ script that prints only counts.
 | O14 | Answers Q6: retention 90 days; an instance quota of about twice the steady state — about 20 GB compressed per capturing host on the personal instance — re-measured after a month of real uploads. | Implemented in S3 (`-transcript-retention`, `-transcript-quota`); decision 15. |
 | O15 | After S1's third review round, the redactor changes approach: redact by KEY CONTEXT (any value attached to a secret-sounding name — a key, a flag, an environment variable, a config field, SQL's `IDENTIFIED BY`) plus ENTROPY (long random-looking tokens), retiring or narrowing the per-format rules those two subsume and accepting more damage to clean text, within a ceiling. Tool line prefixes are normalised FIRST, so every rule sees a line's content, with redaction still applied to the original bytes. And an arming gate: capture is armed on NO instance until a FRESH held-back set — written by an auditor, never seen by the fixer, replaced every round — shows at least 90% of its leaks caught AND at most 15% of its clean lines damaged. | Decision 6 (S1: `internal/redact/{normalise,keyed,entropy}.go`); closing-condition part 5; the S3 arming precondition; Rollout. The gate is `internal/redact/heldback.go` + `cmd/redact-heldback`. *As built (revision 21), and no wider: "any value" means any value whose SHAPE is not code, a placeholder or prose, at any length (revision 20's refusal of a bare run over 1 KiB is retracted); a name whose secret word is a segment rather than its end — and the abbreviation `cred`/`creds` — takes only a value that itself looks like a credential. Decision 6 states the refusals and T1 their measured cost.* |
 | O16 | After S1's sixth review round, the operator ends the heuristic fix rounds: round 7 is the last, and S1 (#216) merges with capture UNARMED on every instance. O15's gate stays the arming condition, and today it FAILS: a fresh auditor-written held-back set of 190 leak lines and 175 clean ones scored `leaks caught=157/190 clean damaged=18/175` at the round-6 head `13219d8` — 82.6% caught, under the 90% floor; 10.3% damaged, inside the 15% ceiling — and rounds 4, 5 and 6 moved that set only from 154 to 155 to 157. Arming is a separate decision for later, and is expected to be about capturing LESS — for example excluding or truncating raw tool output — rather than about redacting better. | Revision 22. T1 states the scorecard and its misses and damage by category as the measured residuals, plus round 6's unfixed findings; `internal/redact/README.md` ("The gate FAILS"); closing-condition part 5 and S3's arming precondition stand unchanged; Rollout. |
+| O17 | The operator waives the redactor's held-back gate as an ARMING precondition: capture may ship without perfect redaction. The gate (closing-condition part 5, O15's ≥ 90% of leaks caught on a fresh auditor-written set) is kept as a MEASUREMENT, not a gate; the last measured score stays on record — `leaks caught=157/190 clean damaged=18/175` at the round-6 head — and nothing about the redactor's measured residuals (T1) changes. | Revision 23. Closing-condition part 5 (now a recorded measurement); Rollout (no "nothing is armed before part 5"; AP4 is re-measure-and-record); the S3 row's arming note; `internal/redact/README.md` ("The gate FAILS"); the arming warning `cairn-ui` prints. A secret the redactor misses is stored — T1's residual, accepted. It does NOT arm anything: arming stays the operator's act, and S11's read ledger is still required. |
 
 ### Chosen by the AGENT writing this plan (open to review)
 
@@ -1421,7 +1462,7 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 | **S0** | **Fixtures and shape ledgers.** `tests/transcripts/gen.py` emits synthetic sessions in BOTH formats from the measured key sets (R1–R3): main stream, two subagents, an opencode child, a compaction boundary, a `pr-link`, persisted tool output, mutated opencode parts, bookkeeping records and duplicate fields, a `user` record carrying a large `tool_result` block, an inline image block AND its `toolUseResult.file.base64` duplicate, an opencode `tool` part with a `data:` URL in `state.attachments[].url`, a binary (PDF and JPEG), a UTF-8 text, a UTF-16 text and a JSON text tool-result blob, thinking `signature` values and 64-hex digests (which must survive untouched), and every read path of R7 (a rendered recall in a tool result; one in a hook attachment with no command line; a store-wide search rendered `scope=(all scopes)` in a hook attachment; a bare header-less `ls-entries`; an explicit `--scope` read; a `--repo` read; a `cd … && cairn recall` chain). A shape test pins the generator's record types, block types and field names against `internal/transcript`'s classification table. The generator also emits a synthetic read-ledger file per session (decision 3a), including an EMPTY one beside cairn-naming inputs (F1). And S0 MEASURES, on a host with opencode, whether `OPENCODE_SESSION_ID` reaches tool commands and which session id it carries, recording the answer for S11 — **done: decision 3a and `internal/transcript/README.md`.** The generator writes ONE file, `internal/transcript/testdata/synthetic_world.json`, which Go tests materialise, so `onlyGo` needs one row; the table is `internal/transcript/classify.go`. | `tests/`; `onlyGo` if Go tests read the fixtures; README. | Test-only. |
 | **S1** | **`internal/redact`** — its own rule table (decision 6), decoded-string traversal, text-blob redaction and the text/binary sniff (decision 6a), keyed tags, structural Secret rule, denylist loader; the corpus generator and the `planted/caught/clean-damaged` report; the behavioural containment test against leakscan's controls. | new package; `ok` floor; README. | Library only. |
 | **S2** | **`cmd/cairn-capture`** and **`internal/transcript/scopeuse`** — readers (JSONL by offset, subagents, blobs — text redacted, binary byte-identical; `opencode export` to a file, diffing by part digest), `V` derivation (the `*` mappings of decision 3), watermark state, routing (decision 16), `--dry-run`, `--self-test`. No upload, and no run mode, yet (D1). | `cmd/cairn-capture`; new packages (`internal/capture` holds the agent, so its tests sit in a package); the four `scopeuse-*` rows join `control_mutants.py` with a per-row `pkgs` override ADDING `./internal/transcript/scopeuse/` (+ pinned count) — *as built: not `PKGS` itself, because the battery's own rule is that a killer outside the control/identity/server seam gets a per-row addition, and widening `PKGS` would re-scope every existing row and move three pinned enumerations*; `depspolicy.LinkedBinaryRoots` + its test; `flake.nix` `packages.cairn-capture` + `checks.cairn-capture-self-test` (the built binary's self-test; CI's `nix` job builds both); `ok` floor. Review round 1 added four more battery rows (`scopeuse-restore-ignored`, `capture-v-not-a-union`, `capture-child-ledger-ignored`, `capture-unreadable-ledger-ignored`). | Inert: it sends nothing. |
-| **S3** | **Transcript store + capture API.** `internal/transcript` (directory layout, CAS append, frames, ownership, quota, retention sweeper, deletion, pod-side `V` re-derivation), worker listener + ledger, `capture` token kind and `cairn-ui -issue-worker-token capture`, refusing pod re-check. Agent gains upload. `tests/plugins/e2e.sh` created with clauses (a), (b), (c), (h). 🔴 **Arming precondition (O15):** S3 may MERGE inert, but capture is armed on NO instance until closing-condition part 5 holds for the redactor commit being armed (≥ 90% of a fresh held-back set's leaks caught, ≤ 15% of its clean lines damaged); S11 is a second, independent precondition. 🔴 **And the four S3 ARMING PRECONDITIONS AP1–AP4 under Rollout, recorded by #224's audit and NOT fixed there: each is closed, by its own stated check, before anything is armed — the gate passing does not close them.** | new package → `ok` floor, `control_mutants.py` `PKGS` (+ pinned count through `ci.yml` and `internal/control/README.md`); `cmd/cairn-ui` flags (`-worker-addr`, `-worker-tokens`, `-transcript-dir`, `-transcript-retention`, `-transcript-quota`) and tests; `ci.yml` e2e step. | Inert unless `-worker-addr` AND `-transcript-dir` are set. |
+| **S3** | **Transcript store + capture API.** `internal/transcript` (directory layout, CAS append, frames, ownership, quota, retention sweeper, deletion, pod-side `V` re-derivation), worker listener + ledger, `capture` token kind and `cairn-ui -issue-worker-token capture`, refusing pod re-check. Agent gains upload. `tests/plugins/e2e.sh` created with clauses (a), (b), (c), (h). 🔴 **Arming:** S3 merged inert and capture is armed on NO instance. Closing-condition part 5 (O15's held-back gate) is **WAIVED as an arming precondition by O17** and kept as a measurement; S11 is still a precondition. 🔴 **The four S3 ARMING PRECONDITIONS under Rollout, recorded by #224's audit: AP1–AP3 are CLOSED by #PRNUM, each by its own stated check; AP4 is a re-measure-and-record step, not a gate.** | new package → `ok` floor, `control_mutants.py` `PKGS` (+ pinned count through `ci.yml` and `internal/control/README.md`); `cmd/cairn-ui` flags (`-worker-addr`, `-worker-tokens`, `-transcript-dir`, `-transcript-retention`, `-transcript-quota`) and tests; `ci.yml` e2e step. | Inert unless `-worker-addr` AND `-transcript-dir` are set. |
 | **S4** | **Visibility + the session page shows content (O3).** `transcript.Visible` (decision 4) with `V` (decision 3); the collapsed transcript section on `/session` (decision 18); the owner arm finding O10 sessions; `GET /session/transcript` raw-record view. e2e clauses (d), (e), (f), (g — the visibility half). Benchmark of the whole-store `W_trailer` walk. | UI rows → hand ledger, `contentAuthority`, uiaudit targets + a synthetic transcript in the uiaudit world; mutant rows. | Read-only over S3; renders nothing when no transcript exists. |
 | **S5** | **Plugin registry, toggles, plugin API.** `internal/plugins` (manifest validation, closed capability and output-type vocabularies, plugin token kind, the narrowing-only toggle fold + `-plugin-journal`, the stateless pending query); `/plugins` page + toggle POSTs on scope, arc and session pages. e2e clauses (i), (j). | new package → `ok` floor, `PKGS`; UI rows; `cmd/cairn-ui` flags (`-plugin-registry`, `-plugin-journal`); mutant rows; README. | Inert with no registry; every toggle OFF by construction. |
 | **S6** | **Outputs: storage, rendering, deletion cascade.** Outputs stored per session; rendered labelled-derived (decision 11) on the session page and as a one-line summary on session rows; owner "delete transcript" POST cascading to outputs and edges; the capture `withdraw` route running the same cascade, and the agent's withdrawal on a routing change (decision 16). e2e clauses (k), (l), (m). | UI rows; worker-listener ledger (`withdraw`); `cmd/cairn-capture`; mutant rows; README. | Nothing renders until a plugin writes; the agent withdraws nothing until a routing answer changes. |

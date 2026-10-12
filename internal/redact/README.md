@@ -312,6 +312,8 @@ instance, O15's gate stays the arming condition, and arming is a separate future
 most likely about capturing LESS (excluding or truncating raw tool output) rather than redacting
 better. Round 7 was not re-scored against that set (the fixer has not seen it).
 
+🔴 **Since operator decision O17 this is NO LONGER AN ARMING GATE:** the operator waived it and chose to ship capture without perfect redaction; the score is kept as a measurement (`claudedocs/plan-cairn-plugins.md`, closing-condition part 5).
+
 **The measured residuals — what that set's misses and damage were, by category:**
 
 | leaks MISSED (33 of 190) | missed / in category |

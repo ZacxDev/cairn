@@ -301,8 +301,8 @@ func main() {
 		"the instance's transcript byte ceiling (`20GB`, `20GiB`); uploads past it answer 507; REQUIRED with the listener")
 	armCapture := flag.Bool(flagArmCapture, false,
 		"ARM transcript capture. Unset — the default, and every instance today (operator decision O16) — every upload "+
-			"answers 503 and nothing is stored. Set it only once the plan's arming preconditions hold (O15's held-back "+
-			"gate for this redactor, and S11's read ledger)")
+			"answers 503 and nothing is stored. Set it only once the plan's arming preconditions hold (S11's read ledger; "+
+			"O15's held-back gate is WAIVED by operator decision O17, not passed)")
 	issueWorker := flag.String(flagIssueWorker, "",
 		"capture: mint ONE worker token for -"+flagWorkerOwner+" on -"+flagWorkerHost+
 			", append its digest to -"+flagWorkerTokens+", print the token once on stdout, and exit")
@@ -715,13 +715,25 @@ func main() {
 			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 			os.Exit(exitConfig)
 		}
+		// AP1: cairn-ui's OWN state may not live in the transcript directory — checked against the
+		// paths this process WILL write, before the store's open checks what is already there.
+		statePaths := []statePath{{"control-journal", *controlJournal}, {"arc-journal", resolvedArcJournal},
+			{"token-file", *tokenFile}, {flagWorkerTokens, *workerTokens}, {flagPresenceTokens, *presenceTokens}}
+		if pgDB == nil {
+			statePaths = append(statePaths, statePath{"session-file", *sessionFile})
+		}
+		if err := stateInsideTranscriptDir(workerConf.dir, statePaths); err != nil {
+			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error()+". Refusing to start")
+			os.Exit(exitConfig)
+		}
 		transcripts, err = openTranscriptArchive(workerConf)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "cairn-ui: the transcript store cannot be opened: "+err.Error()+". Refusing to start")
 			os.Exit(exitConfig)
 		}
 		handler, rows, err := worker.New(worker.Config{
-			TokenFile: *workerTokens, Owner: workerConf.owner, Archive: transcripts, Armed: workerFlags.armed,
+			TokenFile: *workerTokens, Owner: workerConf.owner, OwnerHeld: ownerStillHeld(authority, workerConf.owner),
+			Archive: transcripts, Armed: workerFlags.armed,
 			Limiter: netid.NewRateLimiter(maxFailures, window, lockout), TrustedProxies: trustedProxies,
 			Log: func(line string) { fmt.Fprintln(os.Stderr, "cairn-ui: "+line) },
 		})

@@ -3,14 +3,15 @@
 // `claudedocs/plan-cairn-plugins.md` gives it the capture upload routes; the plugin API (S5) and
 // the withdrawal route (S6) join the same ledger later.
 //
-// 🔴 CAPTURE IS DISARMED BY DEFAULT, AND THE REFUSAL IS HERE. Operator decision O16: the arming
-// gate (O15 — a fresh auditor-written held-back set scoring ≥ 90% of leaks caught and ≤ 15% of
-// clean lines damaged) FAILS today, and the client read ledger (S11) does not exist, so capture is
-// armed on NO instance. [Config.Armed] is false unless `cairn-ui` was started with the explicit
-// `-arm-transcript-capture` flag (no default, no environment spelling); while it is false every
-// upload route answers 503 [DisarmedBody] AFTER authenticating and BEFORE reading the body, and
-// nothing is stored, created or staged. Arming is the operator's act, taken only once BOTH
-// preconditions hold; nothing in this package or in `internal/transcript/archive` can do it.
+// 🔴 CAPTURE IS DISARMED BY DEFAULT, AND THE REFUSAL IS HERE. Operator decision O16 armed NO
+// instance. The redactor's held-back gate (O15 — ≥ 90% of leaks caught, ≤ 15% of clean lines
+// damaged on a fresh auditor-written set) still FAILS as a measurement, but operator decision O17
+// WAIVED it as an arming precondition; the plan's remaining preconditions are in its Rollout
+// section, and nothing here can tell whether they hold. [Config.Armed] is false unless `cairn-ui`
+// was started with the explicit `-arm-transcript-capture` flag (no default, no environment
+// spelling); while it is false every upload route answers 503 [DisarmedBody] AFTER authenticating
+// and BEFORE reading the body, and nothing is stored, created or staged. Arming is the operator's
+// act; nothing in this package or in `internal/transcript/archive` can do it.
 //
 // 🔴 IT READS NO COOKIE AND SETS NONE, AND IT IS OUTSIDE THE BROWSER'S CROSS-SITE GATES BY DESIGN
 // (the presence precedent): a worker POST carries no `Origin` and must not be made to pass them.
@@ -82,8 +83,12 @@ type Config struct {
 	// TokenFile is RE-READ on every request, so deleting a row revokes it with no restart.
 	TokenFile string
 	// Owner is the instance's SOLE capture owner (Q7).
-	Owner   Owner
-	Archive *archive.Archive
+	Owner Owner
+	// OwnerHeld answers whether the authority STILL holds [Config.Owner] as a principal. It is
+	// asked on EVERY request (AP3): startup checks it once, and a principal the authority stops
+	// holding afterwards must stop being able to upload without a restart. Required.
+	OwnerHeld func() bool
+	Archive   *archive.Archive
 	// Armed is the operator's explicit arming (`-arm-transcript-capture`). FALSE is every
 	// instance today (O16): every upload is refused 503 and nothing is stored.
 	Armed          bool
@@ -112,7 +117,8 @@ var ErrMisconfigured = errors.New("worker listener: incomplete configuration")
 
 // New builds the handler and performs the STARTUP read of the token file.
 func New(cfg Config) (*Worker, []TokenRow, error) {
-	if cfg.TokenFile == "" || cfg.Archive == nil || cfg.Limiter == nil || !cfg.Owner.Kind.Valid() || cfg.Owner.ID == "" {
+	if cfg.TokenFile == "" || cfg.Archive == nil || cfg.Limiter == nil || !cfg.Owner.Kind.Valid() || cfg.Owner.ID == "" ||
+		cfg.OwnerHeld == nil {
 		return nil, nil, ErrMisconfigured
 	}
 	rows, err := LoadTokens(cfg.TokenFile, cfg.Owner)
@@ -205,6 +211,16 @@ func (w *Worker) serve(rw http.ResponseWriter, r *http.Request, rt route) {
 		refuseUnauthorized(rw)
 		return
 	}
+	// 🔴 THE OWNER IS RE-ASKED PER REQUEST (AP3). The token rows bind to `-worker-owner`, and that
+	// principal was checked against the authority only at startup; a principal removed from the
+	// authority afterwards kept uploading until a restart. Refused as an unknown token is — the
+	// uniform 401 — but NOT counted toward the lockout: the caller guessed nothing.
+	if !w.cfg.OwnerHeld() {
+		w.once(fmt.Sprintf("worker: the sole capture owner %s is no longer a principal the authority holds; "+
+			"every upload is refused 401", w.cfg.Owner))
+		refuseUnauthorized(rw)
+		return
+	}
 	// 🔴 THE DISARM GATE: after authentication, so an unauthenticated caller learns nothing about
 	// the instance's state and the lockout still counts its guesses; before the body is read, so a
 	// disarmed instance stores, creates and stages NOTHING.
@@ -276,6 +292,7 @@ func (w *Worker) answer(rw http.ResponseWriter, st archive.Stored, err error, re
 		stale   *archive.StaleError
 		recheck *archive.RecheckError
 		quota   *archive.QuotaError
+		large   *archive.TooLargeError
 		inv     *archive.InvalidError
 	)
 	switch {
@@ -290,8 +307,11 @@ func (w *Worker) answer(rw http.ResponseWriter, st archive.Stored, err error, re
 	case errors.As(err, &stale):
 		writeJSON(rw, http.StatusConflict, fmt.Sprintf(`{"stored_to":%s}`+"\n", quote(stale.StoredTo)))
 	case errors.As(err, &recheck):
-		// The index or the blob name — never the value.
-		if recheck.Blob != "" {
+		// The index, the blob name or the FIELD — never the value. A field hit is checked first:
+		// there the name IS the value.
+		if recheck.Field != "" {
+			writeJSON(rw, http.StatusUnprocessableEntity, fmt.Sprintf(`{"refused":"recheck","field":%s}`+"\n", quote(recheck.Field)))
+		} else if recheck.Blob != "" {
 			writeJSON(rw, http.StatusUnprocessableEntity, fmt.Sprintf(`{"refused":"recheck","blob":%s}`+"\n", quote(recheck.Blob)))
 		} else {
 			writeJSON(rw, http.StatusUnprocessableEntity, fmt.Sprintf(`{"refused":"recheck","record":%d}`+"\n", recheck.Record))
@@ -300,6 +320,9 @@ func (w *Worker) answer(rw http.ResponseWriter, st archive.Stored, err error, re
 	case errors.As(err, &quota):
 		writeJSON(rw, http.StatusInsufficientStorage, fmt.Sprintf(`{"refused":"quota","quota_bytes":%d}`+"\n", quota.Quota))
 		w.once("worker: the transcript quota is reached; uploads are refused 507 until retention frees space")
+	case errors.As(err, &large):
+		// AP2: one record or blob over the bound — refused before its staged bytes were read.
+		writeJSON(rw, http.StatusRequestEntityTooLarge, fmt.Sprintf(`{"refused":"too-large","max_bytes":%d}`+"\n", large.Limit))
 	case errors.As(err, &inv):
 		badRequest(rw, inv)
 	default:
