@@ -358,11 +358,21 @@ func TestEveryStatusTokenHasACaseThatProducesIt(t *testing.T) {
 	check("an answer that is not a list of memos", "malformed", ExitCorrupt, "--scope", "alpha-notes")
 
 	h.configure(t, "", EnvUIURL+"="+stub.srv.URL)
+	beforeUnconfigured := stub.count()
 	check("no CAIRN_UI_TOKEN", "unconfigured", ExitUnreachableNoCache, "--scope", "alpha-notes")
+	if n := stub.count() - beforeUnconfigured; n != 0 {
+		// The line that separates `unconfigured` from `refused`: a host with no key SENDS NOTHING,
+		// even with the listener's URL in hand, so nothing counts toward the listener's lockout.
+		t.Fatalf("unconfigured sent %d request(s) to the listener; it must send none", n)
+	}
 	h.configure(t, "", EnvUIToken+"="+stubToken)
 	check("no CAIRN_UI_URL", "unconfigured", ExitUnreachableNoCache, "--scope", "alpha-notes")
 	h.configure(t, "", EnvUIURL+"="+stub.srv.URL, EnvUIToken+"=memo-test-a-token-the-listener-never-issued")
-	check("a credential the listener refuses", "unconfigured", ExitUnreachableNoCache, "--scope", "alpha-notes")
+	before401 := stub.count()
+	check("a credential the listener refuses", "refused", ExitUnreachableNoCache, "--scope", "alpha-notes")
+	if n := stub.count() - before401; n != 1 {
+		t.Fatalf("POSITIVE CONTROL: refused moved the request counter by %d, want 1 (it is a SENT credential)", n)
+	}
 
 	// No cache at all.
 	if err := os.RemoveAll(filepath.Join(h.home, ".cache")); err != nil {
