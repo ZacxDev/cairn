@@ -30,7 +30,7 @@ decisions O1–O13 paraphrased, slices S0–S6b, the iPhone checklist, closing-c
   and covered in-page anchors; `TestStandaloneBackAndReload` refuses `sticky`/`fixed` and reads the
   header leaving the viewport after a 400px scroll. `overscroll-behavior-y: contain` stays.
 - **uiaudit counts:** top-level is DERIVED (#228); the subtest-total floor is the measured 129.
-- **Deployed:** personal instance at `sha-9292da2` (deployment trunk `faa94f1`); manifest shortcuts
+- **Deployed:** personal instance now at `sha-f162b54` (scope-mail's deploy; S5 went live at `sha-9292da2`); manifest shortcuts
   `/arcs`, `/scopes?q=`, `/team`, still ARMED (name `cairn`, icon `teal`). NOT verified on a phone.
 - **S6b MERGED** (#256, `1a0e090`): a new `uiaudit-touch` job with no `continue-on-error`, running the
   walk under `-gate touch` (reachability, axe target-size, input font, touch-rung overflow, plus two

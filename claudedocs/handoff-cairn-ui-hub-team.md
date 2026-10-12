@@ -31,8 +31,11 @@ Team page carrying sharing + invitations + multi-target team links (TTL, reuse, 
   unauthenticated: `/join` serves `join.<hash>.js` (`text/javascript`, immutable) plus a
   `<noscript>` notice, a wrong hash is refused, migrations still `1,2`. 🔴 NOT verified signed-in —
   minting a link, redeeming it in a second browser, and the Team page are the operator's checks.
-- **ROLLBACK (still binding):** an older cairn-ui refuses a version-2 database — run
-  `DELETE FROM schema_migrations WHERE version = 2;` BEFORE reverting the image below #214 (recipe on #214).
+  ⚠ SUPERSEDED: the instance now runs `sha-f162b54` with the memos migration (version 3) applied —
+  see `handoff-cairn-scope-mail.md`. #252/#253/#254 are merged, not deployed.
+- **ROLLBACK (still binding):** an older cairn-ui refuses a database from a newer build. The database
+  is now at version 3, so reverting below `sha-0d9ba01` needs the migration-3 recipe (#235) FIRST,
+  and then, to go below #214, `DELETE FROM schema_migrations WHERE version = 2;` (recipe on #214).
 - Claims: all released.
 
 ## Next steps (ranked)
@@ -44,12 +47,13 @@ Team page carrying sharing + invitations + multi-target team links (TTL, reuse, 
    "fold" picks a side on each — (i) invitations may confer `owner` (an owner may invite an owner,
    `control.Role.CanConfer`); team links refuse `owner` by design; (ii) an invitation is listed to and
    revocable by EVERY manager of its project (`mayManage`); a team link only by its minter;
-   (iii) open `invites` rows already exist in the version-1 table. **Recommended (no migration):** the
+   (iii) open `invites` rows MAY exist in the version-1 table (not counted). **Recommended (no migration):** the
    Team page keeps ONE mint form (the team-link form, `?project=` preselecting that project);
    `POST /invite` stops minting and 303s to it; outstanding invitations stay listed, revocable and
-   redeemable until they expire; owner invitations become CLI-only. Alternatives: widen team links to
-   carry (i)+(ii) for one-project single-use links (an authz-model change), or a migration-3 move of
-   open invitations into `team_links` (stop before deploy). The older invite branches
+   redeemable until they expire; a project owner can no longer confer `owner` self-service (no CLI mints
+   invitations; the only other path is the operator's `cairn-server set-member`). Alternatives: widen team links to
+   carry (i)+(ii) for one-project single-use links (an authz-model change), or a NEW migration (version 4 —
+   3 is the memos tables) moving open invitations into `team_links` (stop before deploy). The older invite branches
    (`feat/ui-invite-flow`, `p6/invite-*`, `fix/rank-33-…`) are squash-merged via #139/#144, predate
    team links, and neither implement the fold nor conflict with it.
 3. **(done) Deploy #214 + S4** — `sha-197dd0e`, trunk `bbb6055`. forcing: user — operator go.
