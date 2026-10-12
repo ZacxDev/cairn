@@ -145,8 +145,12 @@ Drop the work, or the named half, if any of these holds:
      (the `tests/pgtest/run.sh:80, :167` convention), when a built binary is missing, or when one of
      its own controls misbehaves. It is created in S3, which owns the verbs it drives (decision 18).
   3. **cairn: the pod does not move — an INVARIANT GUARD, labelled as one.** The runnable form:
-     build `cmd/cairn-server` at `b2ba3ac` and at HEAD, and
+     build `cmd/cairn-server` at `b06f15c` and at HEAD, and
      `diff <(./cairn-server-base -routes) <(./cairn-server-head -routes)` is EMPTY; and
+     ⚠ RE-ANCHORED from `b2ba3ac`, this plan's own read base, which predates scope-refs' S2
+     `GET`/`HEAD sources/<scope>` route (`35c1f82`): against it the diff is two `sources` lines
+     that no slice here added. `b06f15c` (#229, merge train 1) is the first `main` commit carrying
+     that route and the last before S0 (#230); measured EMPTY against `be6662e` (17 routes);
      `python3 tests/conformance/suite.py run` still reports 0 failures. No slice of this plan
      touches `internal/api`, and `internal/depspolicy` already makes the pod unable to link
      `internal/pgstore` (`internal/depspolicy/depspolicy.go:434-446`), so this part pins an
