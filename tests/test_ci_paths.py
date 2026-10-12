@@ -318,6 +318,8 @@ GATED_GO_STEPS = {
     "the conformance corpus against the Go server",
     "the arcs/sessions end-to-end check, after proving it can go RED",
     "the arcs/presence end-to-end check, after proving every clause can go RED",
+    # S5 of the scope-refs plan: the closing check, tiered like the arcs checks beside it.
+    "the scope-refs end-to-end check, after proving it can go RED",
 }
 UNGATED_JOBS = {"leakscan", "tests", "changes"}
 
