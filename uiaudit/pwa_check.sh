@@ -289,8 +289,18 @@ SABOTAGES = {
         "\n@media (pointer: coarse) { .view-tab { min-height: 12px !important; min-width: 12px !important; "
         "width: 12px !important; height: 12px !important; padding: 0 !important; overflow: hidden !important; } "
         ".view-tabs { column-gap: 0 !important; row-gap: 0 !important; } }\n", 0),
-    # Revert S1's 16px input rule to the base's `text-sm` (14px).
-    "c_input_font": ("internal/ui/app.css", "font-size: max(16px, 1em);", "font-size: 0.875rem;", 1),
+    # Revert S1's 16px input rule to the base's `text-sm` (14px). 🔴 ANCHORED ON THE RULE'S SELECTOR,
+    # NOT ON THE DECLARATION ALONE: the declaration is not unique — the memo-send / team-link
+    # restatement (#254) repeats it — and a bare-declaration anchor then occurs twice, so the sabotage
+    # cannot be applied and the whole --self-test exits 2 ("could not vouch"). The plain CI run never
+    # applies a sabotage, so it stayed green while the self-test was broken.
+    "c_input_font": ("internal/ui/app.css",
+        'input[type="password"], input[type="text"], input[type="search"], input[type="number"], select {\n'
+        "      min-height: calc(var(--spacing) * 11);\n"
+        "      font-size: max(16px, 1em);\n",
+        'input[type="password"], input[type="text"], input[type="search"], input[type="number"], select {\n'
+        "      min-height: calc(var(--spacing) * 11);\n"
+        "      font-size: 0.875rem;\n", 1),
     # Restore the base's EMPTY default: no HTML page carries a `Cache-Control` at all.
     "d_no_store": ("internal/ui/server.go", '\tw.Header().Set("Cache-Control", htmlCacheControl)\n', "", 1),
     # `pwa.js` writes a second key — a timestamp — beside the dismissal flag (the plan's (e) sabotage).
