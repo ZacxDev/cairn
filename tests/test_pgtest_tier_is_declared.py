@@ -66,6 +66,12 @@ TIER_FILES = (
     # principal, a cookie signed in next door, and the no-journal refusal with a database that
     # answers. None of it is visible without a server.
     "cmd/cairn-ui/clientapi_pgtest_test.go",
+    # SCOPE MAIL's BROWSER TAB (S5) on the real binary over the real `MemoStore`: the forged send the
+    # real store refuses, the wiring's two conditions, and — the adapter's other two methods —
+    # a retraction that reaches the row and comes back as a tombstone. ⚠ DECLARED ONE SLICE LATE:
+    # S5 added the file and no line here, which `test_every_tagged_file_in_the_tree_is_a_declared_
+    # tier_file` now refuses.
+    "cmd/cairn-ui/memotab_pgtest_test.go",
 )
 RUNNER = "tests/pgtest/run.sh"
 CI = ".github/workflows/ci.yml"
@@ -130,6 +136,9 @@ DECLARED_TESTS = {
         "TestTheQuotaCountsRetractedSends",
         "TestTheRetractionIsBoundedByTheTransactionTimeout",
         "TestAListingIsCappedAtTheLiveBound",
+        # `All`, the browser tab's one-call listing (the S5 follow-up; it replaced the tab's own paging).
+        "TestAllIsEveryUnexpiredMemoOfOneScopeInOneCall",
+        "TestAllRefusesAScopeHoldingMoreThanItsSendRulesAllow",
     },
     "cmd/cairn-ui/database_pgtest_test.go": {
         "TestWithADatabaseTheSurfaceMovesItsStateThereAndHoldsInvitations",
@@ -144,6 +153,11 @@ DECLARED_TESTS = {
         "TestACookieSignedInNextDoorIsGarbageToTheClientListener",
         "TestTheClientListenerNeverServesTheTokenFileProjection",
         "TestTheListRouteParametersReachTheRealStore",
+    },
+    "cmd/cairn-ui/memotab_pgtest_test.go": {
+        "TestTheMemoTabsForgedSendIsRefusedByTheRealStore",
+        "TestWireBrowserMemosNeedsADatabaseAndAJournal",
+        "TestTheMemosTabRetractsThroughTheRealStoreAndShowsTheTombstone",
     },
 }
 
@@ -183,6 +197,31 @@ def test_every_tier_file_exists_and_carries_the_build_tag():
             f"Without the tag this file runs in `go test ./...`, including inside the "
             f"nix sandbox, which has no database."
         )
+
+
+def test_every_tagged_file_in_the_tree_is_a_declared_tier_file():
+    """The ledger's own blind spot, closed: every assertion here iterates `TIER_FILES`, so a tagged
+    file nobody ADDED to it was invisible to all of them — its tests could be emptied or deleted
+    with this whole file green. Measured, not hypothetical: scope mail's S5 added
+    `cmd/cairn-ui/memotab_pgtest_test.go` and no line here, and the ledger stayed green for it.
+
+    So the set of files that CARRY the tag is read off the tree and must equal the declared set —
+    GROW or SHRINK. The nested `uiaudit` module is not searched: its one tagged file uses a
+    different tag and has its own runner and its own ledger (`tests/test_uiaudit_job_ledger.py`).
+    """
+    tagged = set()
+    for top in ("internal", "cmd"):
+        for path in (REPO / top).rglob("*.go"):
+            with path.open(encoding="utf-8") as fh:
+                if fh.readline().rstrip("\n") == BUILD_TAG:
+                    tagged.add(path.relative_to(REPO).as_posix())
+    assert len(tagged) >= 9, f"only {len(tagged)} tagged file(s) found — the search is not reading the tier"
+    undeclared = sorted(tagged - set(TIER_FILES))
+    assert not undeclared, (
+        f"{undeclared} carry `{BUILD_TAG}` and are not in TIER_FILES, so nothing in this ledger "
+        f"reads them: add each with its tests to DECLARED_TESTS."
+    )
+    assert not sorted(set(TIER_FILES) - tagged), f"declared but not tagged: {sorted(set(TIER_FILES) - tagged)}"
 
 
 def test_the_declared_test_set_is_exactly_what_the_tier_contains():

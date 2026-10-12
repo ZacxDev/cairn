@@ -423,7 +423,7 @@ func TestTheListRouteHandsTheStoreEveryParameter(t *testing.T) {
 	}
 }
 
-// TestTheSendTTLIsClampedWithoutOverflow — `ttlFrom`'s clamp, measured through the route. A
+// TestTheSendTTLIsClampedWithoutOverflow — `memo.TTLOf`'s clamp, measured through the route. A
 // `ttl_seconds` past `memo.MaxTTL` reaches the store as one second past it (which `memo.CheckSend`
 // refuses as `ttl`), a hugely negative one as -1 s, and nothing in between overflows. RED with the
 // clamp removed: `time.Duration(math.MaxInt64) * time.Second` wraps, and the store is handed a value

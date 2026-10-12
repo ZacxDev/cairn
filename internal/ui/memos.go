@@ -79,10 +79,15 @@ type Memos interface {
 	// Model is the authority model, read once per request: it resolves every sender's display and
 	// label in [Memos.List], and decision 12's "no longer has write here" mark ([memo.SenderMaySend]).
 	Model() control.Model
-	// List is the scope's unexpired memos — live ones AND tombstones (decision 10) — created strictly
-	// after `after`, oldest first, at most `limit`. A scope the caller cannot read is
-	// [memo.ErrNotFound].
-	List(ctx context.Context, m control.Model, auth control.Authorization, scope string, after time.Time, limit int) ([]memo.Stored, error)
+	// All is EVERY unexpired memo of the scope — live ones AND tombstones (decision 10) — oldest
+	// first, in one call. A scope the caller cannot read is [memo.ErrNotFound].
+	//
+	// 🔴 ONE CALL, NOT PAGES, AND THAT IS A DELETION RATHER THAN A SHORTCUT. This interface used to
+	// be the wire's paged listing, and this file paged it with a copy of the client's `memo-read`
+	// boundary rule (one second early, ids deduplicated). A caller in the same process as the store
+	// needs no pages, so the store answers the whole scope (`pgstore.MemoStore.All`, bounded by what
+	// its own send rules can hold) and the paging rule has ONE spelling: `internal/client/memo.go`.
+	All(ctx context.Context, m control.Model, auth control.Authorization, scope string) ([]memo.Stored, error)
 	// Send and Retract are `pgstore.MemoStore`'s, unchanged: a refusal is a [*memo.Refusal], a miss
 	// [memo.ErrNotFound].
 	Send(ctx context.Context, caller control.Principal, auth control.Authorization, scope, subject, body string, ttl time.Duration) (int64, time.Time, error)
@@ -139,7 +144,49 @@ type MemoTab struct {
 	Outcome string
 	// Rows is every unexpired memo of the scope, tombstones included, NEWEST FIRST.
 	Rows []MemoRow
+	// Draft is what a REFUSED send typed, handed back to the form so the refusal does not cost the
+	// text; nil on every GET. Set only by [Server.handleMemoSend], for [memoDraftKept]'s reasons.
+	Draft *MemoDraft
 }
+
+// MemoDraft is a refused send's own form values, re-rendered into the form it came from.
+//
+// 🔴 IT IS THE SENDER'S OWN TEXT, BACK TO THE SENDER, IN THE ANSWER TO THE POST THAT CARRIED IT —
+// never stored, never in a URL, never shown to anyone else. It is NOT memo text in decision 19's
+// sense (nothing was stored), and it reaches the page only as an attribute value and a textarea's
+// text node, escaped by gomponents like every other string here.
+type MemoDraft struct {
+	Subject, Body string
+	// TTLDays is the lifetime field as whole days, "" for the form's default.
+	TTLDays string
+}
+
+// memoDraftKept is the CLOSED set of refusals whose answer re-renders the form with the draft: the
+// ones a sender fixes by EDITING AND RESENDING THE SAME TEXT (a size, the lifetime) or by waiting
+// (the day's quota, the live bound). A reason outside it redirects as every other outcome does.
+//
+// 🔴 THE TWO CONTENT REFUSALS ARE DELIBERATELY NOT IN IT. `secret`: the page would re-serve what
+// looks like a credential. `characters`: the text carries a code point the render side exists to
+// never emit raw, and a textarea would show it as nothing at all. A NEW reason is not kept until
+// somebody adds it here — the set fails toward losing a draft, never toward echoing one.
+//
+// ⚠ WHY THIS EXISTS (#242 round 1): the form's `maxlength` counts UTF-16 code units and
+// [memo.CheckSend] counts UTF-8 BYTES, so non-ASCII text the form accepted is refused by the store —
+// and the redirect that used to answer every refusal threw the typed text away. No attribute can
+// count bytes and this surface runs no script for it, so the limits stay the store's and the
+// refusal stops costing the draft; the form's note says the limits are bytes.
+var memoDraftKept = map[memo.RefusalReason]bool{
+	memo.RefusedSubjectSize: true,
+	memo.RefusedBodySize:    true,
+	memo.RefusedTTL:         true,
+	memo.RefusedQuota:       true,
+	memo.RefusedLiveLimit:   true,
+}
+
+// MemoLimitsNote is the form's statement of its two size limits, in the unit the store counts.
+var MemoLimitsNote = fmt.Sprintf("The subject holds %d bytes and the text %d — bytes, not characters: an accented "+
+	"letter, a CJK character or an emoji counts for two to four. A memo over a limit is refused and your text is "+
+	"kept in this form.", memo.MaxSubjectBytes, memo.MaxBodyBytes)
 
 // MemoRow is one memo as the tab renders it: the RENDERED type (decision 19) plus two decisions
 // asked of the stored memo, which the rendered one cannot answer.
@@ -151,54 +198,6 @@ type MemoRow struct {
 	SenderLapsed bool
 }
 
-// memoListPage is one listing page: the store caps a page at the live bound.
-const memoListPage = memo.MaxLivePerScope
-
-// memoListMaxPages bounds the paging loop. A listing WITH tombstones holds at most
-// `SendsPerScopePerWindow` a day for `MaxTTL` (the quota is per scope), so this is that bound in
-// pages, plus slack — a store that returned more is refused rather than silently truncated.
-const memoListMaxPages = memo.SendsPerScopePerWindow*int(memo.MaxTTL/memo.QuotaWindow)/memoListPage + 4
-
-// listAllMemos pages the scope's memos until the store runs out.
-//
-// 🔴 THE PAGE BOUNDARY IS ONE SECOND EARLY ON PURPOSE, AND IDS ALREADY HELD ARE DROPPED — the S3
-// client's `memo-read` rule (`internal/client/memo.go`), for its reason: `memo.Rendered`'s time is
-// whole seconds, so a page's last time is ≤ the true one, and asking strictly after it would skip a
-// memo sharing that second. Two spellings of one paging rule in two layers — the client's is over
-// HTTP and this one is in process — and stated rather than hidden.
-func listAllMemos(ctx context.Context, store Memos, m control.Model, auth control.Authorization, scope string) ([]memo.Stored, error) {
-	var (
-		out   []memo.Stored
-		seen  = map[int64]bool{}
-		after time.Time
-	)
-	for page := 0; page < memoListMaxPages; page++ {
-		got, err := store.List(ctx, m, auth, scope, after, memoListPage)
-		if err != nil {
-			return nil, err
-		}
-		added := 0
-		for _, st := range got {
-			id := memo.Render(st).ID
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			out = append(out, st)
-			added++
-		}
-		if len(got) < memoListPage || added == 0 {
-			return out, nil
-		}
-		last, err := time.Parse(time.RFC3339, memo.Render(got[len(got)-1]).CreatedAt)
-		if err != nil {
-			return nil, fmt.Errorf("a memo's created time is not RFC 3339: %w", err)
-		}
-		after = last.Add(-time.Second)
-	}
-	return nil, fmt.Errorf("the memo listing did not end within %d pages", memoListMaxPages)
-}
-
 // memoTab builds the tab for `scope`, which the caller has already found in the viewer's narrowed
 // answer.
 func (s *Server) memoTab(r *http.Request, id identity.Identity, scope Scope) (MemoTab, error) {
@@ -206,7 +205,7 @@ func (s *Server) memoTab(r *http.Request, id identity.Identity, scope Scope) (Me
 		return MemoTab{NoStore: true}, nil
 	}
 	m := s.memos.Model()
-	stored, err := listAllMemos(r.Context(), s.memos, m, id.Auth, scope.Name)
+	stored, err := s.memos.All(r.Context(), m, id.Auth, scope.Name)
 	if errors.Is(err, memo.ErrNotFound) {
 		// The scope page found this scope in the narrowed answer, so the store's read predicate
 		// should agree; if a refresh moved between the two reads, the tab is empty, never an error
@@ -249,17 +248,24 @@ func memoOutcome(q url.Values) string {
 	case memoOutcomeGone:
 		return "That memo is not here any more: it expired, was already retracted, or is not in this scope."
 	case memoOutcomeRefused:
-		reason, ok := memoReasons[memo.RefusalReason(q.Get(QueryMemoReason))]
-		if !ok {
-			return "The memo was refused."
-		}
-		line := "The memo was refused: " + reason
-		if rule := q.Get(QueryMemoRule); rule != "" && slices.Contains(memo.ConfidentSecretRules(), rule) {
-			line += " (rule: " + rule + ")"
-		}
-		return line + "."
+		return memoRefusalLine(memo.RefusalReason(q.Get(QueryMemoReason)), q.Get(QueryMemoRule))
 	}
 	return ""
+}
+
+// memoRefusalLine is the ONE sentence for a refused memo write — the redirect's banner and the
+// re-rendered form's alike — from the closed reason set, with a secret's RULE NAME when it is one
+// of the scan's own.
+func memoRefusalLine(reason memo.RefusalReason, rule string) string {
+	sentence, ok := memoReasons[reason]
+	if !ok {
+		return "The memo was refused."
+	}
+	line := "The memo was refused: " + sentence
+	if rule != "" && slices.Contains(memo.ConfidentSecretRules(), rule) {
+		line += " (rule: " + rule + ")"
+	}
+	return line + "."
 }
 
 // memoTabHref is the memos tab, with a write's outcome when there is one.
@@ -274,18 +280,18 @@ func memoTabHref(scope control.ID, outcome url.Values) string {
 // memoScope resolves the form's [FieldScope] to a scope in the viewer's NARROWED answer — the
 // scope page's own lookup, so a write can only name a scope the tab could have shown. A miss is the
 // browse surface's ONE refusal, byte-identical for "not yours" and "does not exist".
-func (s *Server) memoScope(w http.ResponseWriter, r *http.Request, id identity.Identity) (Scope, bool) {
+func (s *Server) memoScope(w http.ResponseWriter, r *http.Request, id identity.Identity) ([]Scope, Scope, bool) {
 	scopes, err := s.source.Visible(id.Auth)
 	if err != nil {
 		writePlain(w, http.StatusInternalServerError, "the store could not be read")
-		return Scope{}, false
+		return nil, Scope{}, false
 	}
 	scope, found := pickScope(scopes, control.ID(r.PostFormValue(FieldScope)))
 	if !found {
 		writePlain(w, http.StatusNotFound, browseRefusal)
-		return Scope{}, false
+		return nil, Scope{}, false
 	}
-	return scope, true
+	return scopes, scope, true
 }
 
 // memoWriteAnswer redirects a memo write back to the tab: the outcome for a success, a refusal's
@@ -325,29 +331,59 @@ func (s *Server) handleMemoSend(w http.ResponseWriter, r *http.Request, id ident
 		writePlain(w, http.StatusBadRequest, memoFormRefusal)
 		return
 	}
+	draft := MemoDraft{Subject: r.PostFormValue(FieldMemoSubject), Body: r.PostFormValue(FieldMemoBody)}
 	var ttl time.Duration
 	if raw := r.PostFormValue(FieldTTLDays); raw != "" {
 		// Any positive whole number of days; the store's `memo.CheckSend` owns the ceiling, so a
-		// value past it is refused with the `ttl` reason rather than by a second copy of the rule.
-		days, err := strconv.Atoi(raw)
+		// value past it is refused with the `ttl` reason rather than by a second copy of the rule —
+		// and [memo.TTLOf] is the ONE conversion that cannot overflow on the way there, shared with
+		// the client listener's `ttl_seconds`.
+		days, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || days < 1 {
 			writePlain(w, http.StatusBadRequest, memoFormRefusal)
 			return
 		}
-		// Past the ceiling is handed on as just past it — `clientapi`'s `ttlFrom` shape — so a huge
-		// value cannot overflow the multiplication and still meets the store's own refusal.
-		ttl = memo.MaxTTL + 24*time.Hour
-		if days <= int(memo.MaxTTL/(24*time.Hour)) {
-			ttl = time.Duration(days) * 24 * time.Hour
-		}
+		ttl = memo.TTLOf(days, 24*time.Hour)
+		draft.TTLDays = strconv.FormatInt(days, 10)
 	}
-	scope, ok := s.memoScope(w, r, id)
+	scopes, scope, ok := s.memoScope(w, r, id)
 	if !ok {
 		return
 	}
-	_, _, err := s.memos.Send(r.Context(), id.Principal, id.Auth, scope.Name,
-		r.PostFormValue(FieldMemoSubject), r.PostFormValue(FieldMemoBody), ttl)
+	_, _, err := s.memos.Send(r.Context(), id.Principal, id.Auth, scope.Name, draft.Subject, draft.Body, ttl)
+	var ref *memo.Refusal
+	if errors.As(err, &ref) && memoDraftKept[ref.Reason] {
+		s.memoSendRefusedWithDraft(w, r, id, scopes, scope, ref, draft)
+		return
+	}
 	s.memoWriteAnswer(w, r, scope, memoOutcomeSent, err)
+}
+
+// memoRefusedStatus is what a refused send answers when the form is re-rendered with the draft: the
+// request was well-formed and understood, and its content was refused.
+const memoRefusedStatus = http.StatusUnprocessableEntity
+
+// memoSendRefusedWithDraft answers a refused send by rendering the memos tab ITSELF — the refusal's
+// sentence, and the form holding what was typed — instead of redirecting to it ([memoDraftKept]).
+//
+// 🔴 NOT A REDIRECT, BECAUSE A REDIRECT CANNOT CARRY THE DRAFT WITHOUT PUTTING IT IN A URL, and
+// nothing a URL carries is reflected into this page ([memoOutcome]'s closed set). The draft is read
+// from the body of a POST that already passed BOTH cross-site gates, so only the sender's own
+// browser can make this page show it. The page is the scope page's own ([Server.scopeView]): the
+// same narrowed read, the same tab, `no-store` like every HTML answer here. A reload re-submits the
+// POST, which the browser asks about first — the cost of not redirecting, accepted for the text.
+//
+// The tab is built AFTER the refused send, so a viewer whose write lapsed in between gets the tab's
+// read-only note and no form: [memo.MaySend] still decides the form, never the draft.
+func (s *Server) memoSendRefusedWithDraft(w http.ResponseWriter, r *http.Request, id identity.Identity,
+	scopes []Scope, scope Scope, ref *memo.Refusal, draft MemoDraft) {
+	view, ok := s.scopeView(w, r, id, scopes, scope, TabMemos)
+	if !ok {
+		return
+	}
+	view.Memos.Outcome = memoRefusalLine(ref.Reason, ref.Rule)
+	view.Memos.Draft = &draft
+	s.renderStatus(w, memoRefusedStatus, ScopePage(view))
 }
 
 // handleMemoRetract is `POST /memo/retract`: scope AND id, for the client listener's reason — an id
@@ -366,7 +402,7 @@ func (s *Server) handleMemoRetract(w http.ResponseWriter, r *http.Request, id id
 		writePlain(w, http.StatusBadRequest, memoFormRefusal)
 		return
 	}
-	scope, ok := s.memoScope(w, r, id)
+	_, scope, ok := s.memoScope(w, r, id)
 	if !ok {
 		return
 	}
@@ -383,7 +419,7 @@ func memosPanel(s Scope, t MemoTab, csrf string) g.Node {
 			"from its user.")),
 		g.If(t.NoStore, h.P(h.Class("read-only"), g.Text(NoMemoStore))),
 		g.If(t.Outcome != "", h.P(h.Class("outcome"), h.Data("memo", "outcome"), g.Text(t.Outcome))),
-		g.If(!t.NoStore && t.CanSend && csrf != "", memoSendForm(s, csrf)),
+		g.If(!t.NoStore && t.CanSend && csrf != "", memoSendForm(s, csrf, t.Draft)),
 		g.If(!t.NoStore && !t.CanSend, h.P(h.Class("note"), h.Data("memo", "read-only"), g.Text(
 			"You can read this scope's memos but not send one: sending takes write access to the scope."))),
 		g.If(!t.NoStore, h.P(h.Class("note"), h.Data("memo", "retraction-note"), g.Text(MemoRetractionNote))),
@@ -394,8 +430,20 @@ func memosPanel(s Scope, t MemoTab, csrf string) g.Node {
 	)
 }
 
-// memoSendForm is the send form: a POST, for `signOutForm`'s reason.
-func memoSendForm(s Scope, csrf string) g.Node {
+// memoSendForm is the send form: a POST, for `signOutForm`'s reason. `draft` is a refused send's own
+// values ([MemoDraft]), nil for an empty form.
+//
+// ⚠ `maxlength` IS A CONVENIENCE, NOT THE LIMIT: it counts UTF-16 code units and the store counts
+// UTF-8 bytes, so it is exact for ASCII and LOOSE for everything else. [MemoLimitsNote] says so on
+// the form, and a refusal keeps the draft ([memoDraftKept]).
+func memoSendForm(s Scope, csrf string, draft *MemoDraft) g.Node {
+	d := MemoDraft{}
+	if draft != nil {
+		d = *draft
+	}
+	if d.TTLDays == "" {
+		d.TTLDays = strconv.Itoa(int(memo.DefaultTTL / (24 * time.Hour)))
+	}
 	return h.FormEl(
 		h.Class("invite memo-send"),
 		h.Method("post"),
@@ -404,14 +452,15 @@ func memoSendForm(s Scope, csrf string) g.Node {
 		h.Input(h.Type("hidden"), h.Name(FieldScope), h.Value(string(s.ID))),
 		h.Label(h.For("memo-subject"), g.Text("Subject")),
 		h.Input(h.Type("text"), h.ID("memo-subject"), h.Name(FieldMemoSubject), h.Required(),
-			h.MaxLength(strconv.Itoa(memo.MaxSubjectBytes))),
+			h.MaxLength(strconv.Itoa(memo.MaxSubjectBytes)), h.Value(d.Subject)),
 		h.Label(h.For("memo-body"), g.Text("Text")),
 		h.Textarea(h.ID("memo-body"), h.Name(FieldMemoBody), h.Rows("5"),
-			h.MaxLength(strconv.Itoa(memo.MaxBodyBytes))),
+			h.MaxLength(strconv.Itoa(memo.MaxBodyBytes)), g.Text(d.Body)),
 		h.Label(h.For("memo-ttl"), g.Text("Expires after (days)")),
 		h.Input(h.Type("number"), h.ID("memo-ttl"), h.Name(FieldTTLDays), h.Required(),
 			h.Min("1"), h.Max(strconv.Itoa(int(memo.MaxTTL/(24*time.Hour)))),
-			h.Value(strconv.Itoa(int(memo.DefaultTTL/(24*time.Hour))))),
+			h.Value(d.TTLDays)),
+		h.P(h.Class("note"), h.Data("memo", "limits"), g.Text(MemoLimitsNote)),
 		h.P(h.Class("note"), g.Text("Sent as you; the sender line is the authority's, never what you type. "+
 			"A memo that looks like it carries a credential is refused — but only the common token shapes are "+
 			"recognised, so do not paste secrets.")),

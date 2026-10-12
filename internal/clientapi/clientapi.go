@@ -375,20 +375,6 @@ func decode(w http.ResponseWriter, r *http.Request, into any) bool {
 	return true
 }
 
-// ttlFrom converts `ttl_seconds` without overflowing: anything past `memo.MaxTTL` is handed on as
-// just past it, which `memo.CheckSend` refuses with the `ttl` reason — the store's rule, not one
-// restated here.
-func ttlFrom(seconds int64) time.Duration {
-	limit := int64(memo.MaxTTL / time.Second)
-	switch {
-	case seconds > limit:
-		return memo.MaxTTL + time.Second
-	case seconds < -limit:
-		return -time.Second
-	}
-	return time.Duration(seconds) * time.Second
-}
-
 // send answers `POST /client/v1/memos`. The caller's principal and credential come from the
 // authentication, never from the body (T4): the body names only the scope and the content.
 func (h *Handler) send(w http.ResponseWriter, r *http.Request, id identity.Identity) {
@@ -401,7 +387,7 @@ func (h *Handler) send(w http.ResponseWriter, r *http.Request, id identity.Ident
 		return
 	}
 	memoID, created, err := h.cfg.Memos.Send(r.Context(), id.Principal, id.Auth, req.Scope, req.Subject, req.Body,
-		ttlFrom(req.TTLSeconds))
+		memo.TTLOf(req.TTLSeconds, time.Second))
 	if err != nil {
 		h.storeError(w, "send", err)
 		return

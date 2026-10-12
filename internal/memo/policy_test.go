@@ -453,3 +453,53 @@ func TestTheCursorMarginCoversTheTransactionTimeout(t *testing.T) {
 		t.Fatalf("decision 6's values moved: timeout %v, margin %v", memo.TransactionTimeout, memo.CursorMargin)
 	}
 }
+
+// TestTTLOfNeverOverflowsAndLeavesTheCeilingToCheckSend — the ONE conversion of a caller's TTL count
+// (the wire's seconds, the form's days) into a duration. Measured at both units, at the ceiling and
+// one past it on each side, and at the count whose plain multiplication WRAPS: every in-range count
+// is exact, and every out-of-range one — the wrapping ones included — is a duration [CheckSend]
+// refuses as `ttl`, never one it would accept.
+func TestTTLOfNeverOverflowsAndLeavesTheCeilingToCheckSend(t *testing.T) {
+	scan, err := memo.NewScanner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const day = 24 * time.Hour
+	maxDays, maxSeconds := int64(memo.MaxTTL/day), int64(memo.MaxTTL/time.Second)
+	// 2^63 ns is about 106751.99 days, so this count times a day overflows int64 and wraps negative;
+	// one that wraps back POSITIVE and small is the dangerous one, and 2^64 ns is 213503.98 days.
+	wrapsNegative, wrapsPositive := int64(106752), int64(213504)
+	if time.Duration(wrapsNegative)*day > 0 || time.Duration(wrapsPositive)*day <= 0 || time.Duration(wrapsPositive)*day > memo.MaxTTL {
+		t.Fatal("the fixtures no longer wrap as described: re-derive them for this platform's int64")
+	}
+	for _, tc := range []struct {
+		n       int64
+		unit    time.Duration
+		want    time.Duration // the exact duration, or 0 with `refused`
+		refused bool
+	}{
+		{0, day, 0, false}, // 0 is 0: CheckSend's default
+		{1, day, day, false},
+		{7, time.Second, 7 * time.Second, false},
+		{maxDays, day, memo.MaxTTL, false},
+		{maxSeconds, time.Second, memo.MaxTTL, false},
+		{maxDays + 1, day, 0, true},
+		{maxSeconds + 1, time.Second, 0, true},
+		{wrapsNegative, day, 0, true},
+		{wrapsPositive, day, 0, true},
+		{1 << 62, time.Second, 0, true},
+		{-1, day, 0, true},
+		{-(maxSeconds + 1), time.Second, 0, true},
+		{-(1 << 62), time.Second, 0, true},
+	} {
+		got := memo.TTLOf(tc.n, tc.unit)
+		_, err := memo.CheckSend("subject", "body", got, scan)
+		var ref *memo.Refusal
+		switch {
+		case tc.refused && (!errors.As(err, &ref) || ref.Reason != memo.RefusedTTL):
+			t.Errorf("memo.TTLOf(%d, %s) = %s, which CheckSend answered %v — want its ttl refusal", tc.n, tc.unit, got, err)
+		case !tc.refused && (got != tc.want || err != nil):
+			t.Errorf("memo.TTLOf(%d, %s) = %s (CheckSend: %v), want exactly %s, accepted", tc.n, tc.unit, got, err, tc.want)
+		}
+	}
+}

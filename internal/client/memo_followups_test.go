@@ -13,12 +13,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/memo"
 	"github.com/ZacxDev/cairn/internal/memowire"
 )
 
@@ -343,5 +346,78 @@ func TestADerivationErrorIsSaidAfterTheNoScopeToken(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "git command failed") {
 		t.Fatalf("the derivation error was dropped; stderr:\n%s", errOut)
+	}
+}
+
+// renderedWireKeys is `memo.Rendered`'s field set AS THIS TEST LAST SAW IT, sorted — a literal, so
+// that a field added to (or removed from) the type is a red test whose message carries the deploy
+// order, rather than a change the reflection in `renderedKeys` absorbs without anyone reading the rule.
+var renderedWireKeys = []string{"Body", "CreatedAt", "ExpiresAt", "ID", "Scope", "Sender", "Subject", "Tombstone"}
+
+// TestTheMemoKeysAClientRequiresAreExactlyRenderedsFields — the relationship `internal/memowire`'s
+// deploy-order rule rests on (#241 rounds 0 and 1): the keys a client REQUIRES of a wire memo are
+// EXACTLY the keys the listener's encoder writes for `memo.Rendered` — no field optional, none
+// required that the type lacks.
+//
+// The wire's keys are taken from the ENCODER (`json.Marshal` of a `memowire.MemoBody`, as the listener
+// does), never from `renderedKeys`, so the expectation is not derived from the implementation. Then,
+// key by key: a memo lacking THAT key is refused by BOTH decoding paths (`decodeOne`, `decodeList`),
+// with an error naming the key. POSITIVE CONTROL: the complete memo decodes on both.
+//
+// RED with one field left out of the required set (`memo-required-keys-skip-a-rendered-field`).
+func TestTheMemoKeysAClientRequiresAreExactlyRenderedsFields(t *testing.T) {
+	const rule = "a client REQUIRES every field of memo.Rendered, so a field ADDED there must reach every LISTENER " +
+		"before any client built with it is released, and one REMOVED must leave every client first — " +
+		"internal/memowire's package doc is where that rule lives; re-read it, then update renderedWireKeys"
+	full := memo.Rendered{ID: 7, Scope: "alpha-notes", Sender: "writer-a via agents@host-a (user)",
+		CreatedAt: "2000-01-02T03:04:05Z", ExpiresAt: "2000-01-05", Subject: "kiln schedule", Body: "the second firing moves"}
+	data, err := json.Marshal(memowire.MemoBody{Memo: full})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Memo map[string]json.RawMessage `json:"memo"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatal(err)
+	}
+	var encoded []string
+	for k := range wire.Memo {
+		encoded = append(encoded, k)
+	}
+	sort.Strings(encoded)
+	if !reflect.DeepEqual(encoded, renderedWireKeys) {
+		t.Fatalf("the listener's encoder writes the memo keys %v, and this test last saw %v.\n%s", encoded, renderedWireKeys, rule)
+	}
+	required := append([]string(nil), renderedKeys...)
+	sort.Strings(required)
+	if !reflect.DeepEqual(required, encoded) {
+		t.Fatalf("the client requires %v of a wire memo, and the wire carries %v.\n%s", required, encoded, rule)
+	}
+
+	// POSITIVE CONTROL: the complete memo decodes on both paths.
+	one, _ := json.Marshal(map[string]any{"memo": wire.Memo})
+	list, _ := json.Marshal(map[string]any{"memos": []any{wire.Memo}})
+	if got, err := decodeOne(one); err != nil || got != full {
+		t.Fatalf("POSITIVE CONTROL FAILED: the complete memo did not decode as itself: %+v, %v", got, err)
+	}
+	if got, err := decodeList(list); err != nil || len(got) != 1 || got[0] != full {
+		t.Fatalf("POSITIVE CONTROL FAILED: the complete list did not decode: %+v, %v", got, err)
+	}
+	for _, key := range encoded {
+		short := map[string]json.RawMessage{}
+		for k, v := range wire.Memo {
+			if k != key {
+				short[k] = v
+			}
+		}
+		one, _ := json.Marshal(map[string]any{"memo": short})
+		list, _ := json.Marshal(map[string]any{"memos": []any{short}})
+		if _, err := decodeOne(one); err == nil || !strings.Contains(err.Error(), strconv.Quote(key)) {
+			t.Errorf("a memo without %s decoded on the single-memo path (%v) — it is not required there.\n%s", key, err, rule)
+		}
+		if _, err := decodeList(list); err == nil || !strings.Contains(err.Error(), strconv.Quote(key)) {
+			t.Errorf("a memo without %s decoded on the list path (%v) — it is not required there.\n%s", key, err, rule)
+		}
 	}
 }

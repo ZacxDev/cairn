@@ -1809,12 +1809,12 @@ go1.25.14 (the devShell's), PostgreSQL 18.6 (a throwaway server per run, and the
 **After merge — #239's round-1 findings, closed in the S3 follow-up PR.** Measured on one host
 (go1.25, PostgreSQL 18.6 from the devShell):
 
-- **Response decoding is TOLERANT, request decoding stays STRICT.** S3 refused unknown fields in
-  the listener's answers; since a listed memo IS `memo.Rendered`, a listener release adding one field
-  would have broken every older `memo-check` at exit 5. Now an unknown response field is ignored and
-  every field the client reads is REQUIRED (absent or `null` → `malformed`). The rule — the listener
-  may ADD a response field in any release, never remove or rename one ahead of the clients — is
-  stated once, in `internal/memowire`'s package doc.
+- **Response decoding is TOLERANT, request decoding stays STRICT** — the rule, and the DEPLOY ORDER
+  it implies, are stated once, in `internal/memowire`'s package doc, and are not restated here. (This
+  bullet used to restate them, as "every field the client reads is REQUIRED" — narrower than the
+  code, which requires every field of `memo.Rendered`; #241 rounds 0–1.) The DEVIATION this section
+  records is S3's: as merged it refused unknown response fields too, so a listener release adding one
+  field would have broken every older `memo-check` at exit 5.
 - **`--ttl` under one second is refused at 2** (`500ms`, `0`, `0d`): the wire carries whole seconds
   and 0 is the listener's 3-day DEFAULT, so it used to store a three-day memo at exit 0. Refused
   rather than rounded up.
@@ -1836,48 +1836,69 @@ go1.25.14 (the devShell's), PostgreSQL 18.6 (a throwaway server per run, and the
 
 ## S5 — measurements and corrections recorded by the slice
 
-S5 (`?tab=memos`, `POST /memo`, `POST /memo/retract`; `internal/ui/memos.go`,
-`cmd/cairn-ui/memotab.go`) recorded these where building it found the plan silent, or the code
-different from the plan. Measured by S5's author on one host: go1.25.14 (the devShell's), PostgreSQL
-18.6 through `tests/pgtest/run.sh`.
+S5 is `?tab=memos`, `POST /memo` and `POST /memo/retract` (`internal/ui/memos.go`,
+`cmd/cairn-ui/memotab.go`).
 
-- **`internal/ui` cannot import `internal/pgstore`.** The nested `uiaudit` module imports
-  `internal/ui`, so the PostgreSQL driver would enter its graph and move `internal/depspolicy`'s
-  nested allowlist. The tab therefore reads a `ui.Memos` interface (Model, List-with-tombstones, Send,
-  Retract) that `cmd/cairn-ui` adapts the store to — a translation only; every predicate stays the
-  store's (decision 9's "every send surface calls it" is met by the store asking it).
-- **Two predicates over ONE stored memo are new in `internal/memo`** — `MayRetractMemo` (decision
-  10/Q19's `MayRetract`, asked of the memo's own scope and sender key) and `SenderMaySend` (decision
-  12's mark: the sender PRINCIPAL's un-narrowed authority, resolved now). `memo.Rendered` carries no
-  sender key and `memo.Stored` lets none out (Guard A), so the button and the mark could not be
-  decided otherwise; both are Guard A ledger rows of class `predicate` (booleans, no text).
-- **The browser's memo store is wired only with a database AND a control journal** — the client
-  listener's two conditions, for O9's reason (a token-file authority's shared rows would make every
-  browser sender one sender). The plan did not say; the listener's rule was the plan's default for the
-  nearest surface. Without them the tab says so and the two writes answer 501, the `NoInviteStore`
-  ruling — not a startup refusal, because the tab is one view of a page that has others.
-- **A browser send carries no credential**, so its sender line reads `writer-a (user)` with no `via`
-  label (decision 5's label names a credential, and a session has none). Measured in the pgtest tier.
-- **The tab lists tombstones** (decision 10), which can exceed one store page, so the tab pages the
-  store with S3's `memo-read` rule (the boundary one second early, held ids dropped). The paging test's
-  first fixture used sub-second offsets and the "strictly after" mutant SURVIVED it; the boundary
-  hazard is a TIE at one instant (the store breaks it by id), which the fixture now plants.
-- **A refusal redirects back to the tab** with a closed-set outcome, a refusal reason and, for a
-  secret, the rule name only if it is in `memo.ConfidentSecretRules()`. ⚠ The typed text is lost on a
-  refusal (no script, no draft store).
-- **A write naming a scope the viewer cannot read is the browse surface's one miss** (404,
-  byte-identical to an absent scope) and never reaches the store; the forged-send bullet of the test
-  plan is a scope the viewer CAN read, which the store's `MaySend` refuses.
-- **The lifetime field is whole days, 1–30, default 3**; past the ceiling is handed to the store as
-  just past it, so `memo.CheckSend` owns the `ttl` refusal (`clientapi`'s `ttlFrom` shape).
-- **No new GET row and no count on the tab label** (a count would read the database on every tab of
-  every scope page). `cairn-server -routes` is byte-identical across the slice — measured, an
-  invariant guard (closing-condition part 3).
-- **`uiaudit`'s worlds have no database**, so the browser walk captures the tab in its no-store state
-  only — the invite mint form's residual (`uiaudit/README.md`).
-- **The operator ruled the tab ships ON at deploy** — no flag gates it. The populated-tab `uiaudit`
-  fixtures (a world with a database, so the walk captures a listed memo) are deferred to a follow-up
-  PR that lands before S4.
+📄 **THE RULES S5 BUILT ARE STATED WHERE THE CODE IS, AND NOT RESTATED HERE**: `internal/ui/README.md`
+("Phase Y": the binding rules, the RED proof, what the guards cannot see) and `internal/ui/memos.go`'s
+file comment. An earlier draft of this section repeated eleven of them, and two went stale the first
+time the code moved (#242 round 0, D5). What a plan reader needs and those files cannot say is where
+the PLAN was silent or different, so that is all this section keeps. Measured by S5's author on one
+host: go1.25.14 (the devShell's), PostgreSQL 18.6 through `tests/pgtest/run.sh`.
+
+- **The plan did not say when the browser's memo store is wired.** S5 took the client listener's two
+  conditions — a database AND a control journal — as the default for the nearest surface, for O9's
+  reason; without them the tab says so and the two writes answer 501 rather than the process refusing
+  to start.
+- **The plan named no predicate over a STORED memo.** `memo.MayRetractMemo` and `memo.SenderMaySend`
+  are new Guard A rows (class `predicate`): `memo.Rendered` carries no sender key and `memo.Stored`
+  lets none out, so the button and decision 12's mark could not be decided otherwise.
+- **Decision 9's "every send surface calls it" is met by the STORE asking**, because `internal/ui`
+  cannot import `internal/pgstore` (the driver would enter the nested `uiaudit` module's graph) and
+  reads an interface `cmd/cairn-ui` adapts.
+- **Decision 5's `via` label names a credential, and a browser session has none**, so a browser
+  send's sender line is `writer-a (user)`.
+- **The test plan's forged-send bullet is about a scope the viewer CAN read.** A write naming one
+  they cannot is the browse surface's uniform miss and never reaches the store.
+- **`cairn-server -routes` is byte-identical across the slice** (closing-condition part 3; an
+  invariant guard). The tab is a `?tab=` value, not a row.
+- **The operator ruled the tab ships ON at deploy** — no flag gates it — with the populated-tab
+  `uiaudit` fixtures deferred to a follow-up that lands before S4. That follow-up is below.
+
+## S5 follow-up — measurements and corrections
+
+The PR after #242: its round-1 findings, #241's memowire finding, and both PRs' round-0 deletion
+candidates. Measured by its author on one host (go1.25.14 and PostgreSQL 18.6 from the devShell,
+chromium 152.0.7977.82 from the flake's nixpkgs), load average 35–78 on 24 cores throughout — which
+matters for the wall times and for one result below.
+
+- **The populated tab is now driven in a real browser**, over a third `uiaudit` world with a database
+  — as a TEST with its own runner (`uiaudit/memos_check.py`), not as a walked page. `uiaudit/README.md`
+  ("The memos tab") has the five clauses, the seven sabotages and the blind set. ⚠ The plan's phrase
+  was "a world with a database, so the walk captures a listed memo": the WALK still does not. A
+  database in the walk's world changes what every existing walk signal is measured over, so the
+  populated tab's axe, touch-target and overflow readings remain unmeasured, and that is stated rather
+  than papered over.
+- **The `uiaudit` module still imports no database driver**: the real binary migrates its own schema,
+  the seed memos are sent through its client listener, and the runner creates the schema with a
+  root-module tool.
+- **The tab's own paging is deleted**, with its bound and its test: `pgstore.MemoStore.All` answers
+  the whole scope in one bounded query. The plan's S5 row had the tab "page the store with S3's
+  `memo-read` rule"; a caller in the store's process needs no pages, so that rule now has one
+  spelling.
+- **A refused send no longer costs the typed text** when the fix is to edit and resend (the closed
+  set is `memoDraftKept`). S5 recorded "the typed text is lost on a refusal (no script, no draft
+  store)" as a cost; #242's round 1 measured why it bites — the form's `maxlength` counts UTF-16
+  units and the store counts UTF-8 bytes. Neither a script nor a draft store was needed: the answer
+  to the POST renders the form.
+- **`memo.TTLOf` replaces two spellings of one overflow guard** (`clientapi`'s and the form's).
+- **The tier's ledger could not see a tagged file nobody declared**: S5's own
+  `cmd/cairn-ui/memotab_pgtest_test.go` was in no ledger row, and every assertion there iterates the
+  declared set. It now reads the tag off the tree.
+- ⚠ **A load flake that read as a refusal, not as a verdict.** At a load average near 78, three of the
+  new `tests/control_mutants.py` rows, run alone, had their UNEDITED positive control hit the battery's
+  two-minute test timeout, and the battery refused to vouch — correctly. Re-run at a load near 40 the
+  same three were KILLED behind a green control. Nothing about the rows changed between the two runs.
 
 ## Open questions
 

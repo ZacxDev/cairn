@@ -1999,9 +1999,9 @@ jobs:
     # into its own blocking job — not deleting this line, which would make chromium's version a merge
     # blocker again.
     continue-on-error: true
-    # 🔴 TWO LEGS, SPLIT ONLY WHERE NO STATE CROSSES THE LINE — `tests/test_uiaudit_job_ledger.py`
+    # 🔴 THREE LEGS, SPLIT ONLY WHERE NO STATE CROSSES THE LINE — `tests/test_uiaudit_job_ledger.py`
     # pins every step to its leg. It ran as one serial job, guards then walk then `pwa_check.sh`;
-    # the legs run in parallel on separate runners, so the job takes the longer leg, not the sum.
+    # the legs run in parallel on separate runners, so the job takes the longest leg, not the sum.
     #   walk — the guards, then the walk, then `verify-push`, the summary and the upload, IN THE
     #          ORDER THEY HAD. The guards stay AHEAD of the walk in the same leg because they hold
     #          the positive control: a walk that pushes before the instrument was validated would
@@ -2010,6 +2010,12 @@ jobs:
     #   pwa  — `pwa_check.sh` alone. It shares nothing with the walk leg: its own `mktemp` work dir,
     #          its own port, its own cairn-ui build, and it strips the four CAIRN_AUDIT_* variables
     #          from the walk it runs and exits 2 if a push confirmation appears anyway.
+    #   memos — `memos_check.py` alone: the POPULATED memos tab, driven in the pinned chromium over
+    #          a real PostgreSQL. It is the only leg with a database (the flake-pinned server, on a
+    #          unix socket the script starts and removes), it runs no walk and it holds no secret.
+    #          HERE rather than in `pgtest` — which has the database and is BLOCKING — because this
+    #          leg's chromium comes from a third-party binary cache, the category this job is
+    #          non-blocking for; a database-shaped failure of the store itself is still `pgtest`'s.
     # ⚠ Two orderings CHANGED, both toward more checking: `pwa_check.sh` used to be skipped when the
     # walk failed, and `verify-push` used to be skipped when `pwa_check.sh` failed (it had no
     # `always()`). Each now runs regardless of the other. And re-running only the failed `pwa` leg
@@ -2018,7 +2024,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [walk, pwa]
+        part: [walk, pwa, memos]
     # 🔴 `GOTOOLCHAIN=local` FORBIDS THE SWITCH, AND WITHOUT IT THIS JOB'S PIN WAS A MEASURED
     # NO-OP. Go 1.21+ defaults to `GOTOOLCHAIN=auto`, which DOWNLOADS a newer toolchain when a
     # `go` directive in the module graph asks for one — silently, and with the pinned compiler
@@ -2223,9 +2229,15 @@ jobs:
           # that, adding a `TestMain` red the cross-check on an honest tree. ⚠ STILL NOT MIRRORED:
           # an `Example` with no `// Output:` comment is compiled but not run, so `-list` omits it
           # and the cross-check refuses; give a new Example an Output comment.
+          #
+          # ⚠ AND ONE FILE IS EXCLUDED BY NAME: `memos_browser_test.go` is behind `//go:build
+          # memobrowser` (it needs a database this leg does not have), so `go test -list` here never
+          # prints its test while a `git grep` over every `*_test.go` would count it — the cross-check
+          # would refuse an honest tree. It is not thereby uncounted: the `memos` leg runs it BY NAME
+          # and refuses unless each of its five clauses printed its own PASS line.
           listed=$(go test -list '.*' ./... | grep -cE '^(Test|Example|Fuzz)' || true)
           declared() {
-            { git grep -hE '^func (Test|Example|Fuzz)([A-Z0-9_][A-Za-z0-9_]*)?\(' "$1" -- '*_test.go' || true; } \
+            { git grep -hE '^func (Test|Example|Fuzz)([A-Z0-9_][A-Za-z0-9_]*)?\(' "$1" -- '*_test.go' ':(exclude)memos_browser_test.go' || true; } \
               | { grep -cvE '^func TestMain\(' || true; }
           }
           if [ -z "${BASE_SHA:-}" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
@@ -2332,6 +2344,58 @@ jobs:
           if [ "$rc" != "0" ]; then
             echo "::error::pwa_check.sh exited $rc (1 = a clause FAILED, 2 = could not vouch)"
             exit "$rc"
+          fi
+
+      # 🔴 THE MEMOS LEG'S DATABASE COMES FROM THE FLAKE'S PINNED NIXPKGS, LIKE ITS CHROMIUM — the same
+      # `postgresql_18` the dev shell carries, so a developer's `nix develop -c uiaudit/memos_check.py`
+      # and this leg start one build. A service container would have attached a database to ALL three
+      # legs of this matrix; this one is a unix-socket server the script starts for itself and
+      # removes. The MAJOR is asserted from the binary, for the reason the `pgtest` job pins its
+      # image: a server that is merely "whatever resolved" is a claim about an unknown server.
+      - name: postgres from the flake's pinned nixpkgs, its major asserted
+        if: matrix.part == 'memos'
+        run: |
+          set -euo pipefail
+          # `^out` NAMES THE OUTPUT: postgresql is multi-output, and the first path printed was
+          # measured to be `-man`, which has no `bin/` (exit 127 on this step's first run).
+          out=$(nix build --no-link --print-out-paths --inputs-from . 'nixpkgs#postgresql_18^out')
+          got=$("$out/bin/postgres" --version)
+          echo "flake-resolved postgres: $got ($out)"
+          case "$got" in
+            *" 18."*) ;;
+            *) echo "::error::the pinned postgres reports '$got', want major 18 (the dev shell's and the pgtest job's)"; exit 1 ;;
+          esac
+          echo "$out/bin" >> "$GITHUB_PATH"
+
+      # 🔴 THE POPULATED MEMOS TAB IN A REAL BROWSER (scope mail S5's "`uiaudit` fixtures for the
+      # tab", `claudedocs/plan-cairn-scope-mail.md`). Neither world the walk boots has a database, so
+      # until this leg the tab was only ever rendered saying it has no store: the send form, the
+      # Retract button and a tombstone had never been laid out, typed into or clicked. The script
+      # boots the real `cairn-ui` over a real PostgreSQL and a control journal and drives five
+      # clauses (`uiaudit/memos_browser_test.go` says what each measures).
+      #
+      # ⚠ THE SELF-TEST RUNS FIRST: seven sabotages on a scratch copy, each required to turn its OWN
+      # clause red with that clause's own message, behind a positive control on the unedited copy.
+      # Then the plain run, whose five PASS lines are COUNTED here rather than its exit code read.
+      # Exit 2 is "could not vouch" and fails the step exactly like 1 — never a skip.
+      - name: memos_check.py — the populated memos tab in a real browser, after proving each clause can go RED
+        if: matrix.part == 'memos'
+        run: |
+          set -uo pipefail
+          rc=0
+          ./uiaudit/memos_check.py --self-test 2>&1 | tee /tmp/memos-self.txt || rc=$?
+          if [ "$rc" != "0" ] || ! grep -qx 'SUMMARY memos-check-self-test: sabotaged=7 caught=7' /tmp/memos-self.txt; then
+            echo "::error::memos_check.py --self-test exited $rc without 'sabotaged=7 caught=7' (1 = a sabotage was not caught, 2 = could not vouch)"
+            exit 1
+          fi
+          rc=0
+          ./uiaudit/memos_check.py 2>&1 | tee /tmp/memos.txt || rc=$?
+          passes=$(grep -cE '^memos_check: [a-e]_[a-z]+ +PASS$' /tmp/memos.txt || true)
+          fails=$(grep -cE '^memos_check: [a-e]_[a-z]+ +(FAIL|NONE)$' /tmp/memos.txt || true)
+          echo "memos tab: clause PASS=$passes FAIL=$fails rc=$rc"
+          if [ "$rc" != "0" ] || [ "$passes" != "5" ] || [ "$fails" != "0" ]; then
+            echo "::error::memos_check.py exited $rc with $passes PASS / $fails FAIL clause line(s); 5 / 0 were measured (1 = a clause FAILED, 2 = could not vouch)"
+            exit 1
           fi
 
       # 🔴 THE `verify-push` CONTROL, AND WITHOUT IT A MISCONFIGURED TOKEN IS A SILENT
@@ -2501,7 +2565,10 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/memo-e2e.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/memo-e2e.txt || true)
           echo "memo e2e: passes=$passes fails=$fails"
-          # 35 assertions, measured when the script landed; `EXPECTED_FULL` in the script moves with it.
+          # 35 assertions, measured when the script landed. This floor and the script's own per-clause
+          # table (`CLAUSE_ASSERTS`) are the TWO pins of the count, and they are independent: the
+          # script refuses when a clause ran other than its declared number, and this step re-counts
+          # the PASS lines without reading the table.
           if [ "$passes" -lt 35 ] || [ "$fails" -ne 0 ]; then
             echo "REFUSING: $passes PASS / $fails FAIL lines, and 35 / 0 were measured"
             exit 1

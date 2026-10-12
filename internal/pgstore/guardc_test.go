@@ -58,6 +58,8 @@ var pgstoreLedger = map[string]string{
 	"NewMemoStore":               "func(*DB, *secretscan.Redactor) (*MemoStore, error)",
 	"MemoStore.Send":             "(*MemoStore) func(context.Context, control.Principal, control.Authorization, string, string, string, time.Duration) (int64, time.Time, error)",
 	"MemoStore.List":             "(*MemoStore) func(context.Context, control.Model, control.Authorization, MemoQuery) ([]memo.Stored, error)",
+	"MemoStore.All":              "(*MemoStore) func(context.Context, control.Model, control.Authorization, string) ([]memo.Stored, error)",
+	"MaxUnexpiredPerScope":       "const",
 	"MemoStore.Get":              "(*MemoStore) func(context.Context, control.Model, control.Authorization, string, int64) (memo.Stored, error)",
 	"MemoStore.Retract":          "(*MemoStore) func(context.Context, control.Principal, control.Authorization, string, int64) error",
 	"MemoQuery":                  "struct",

@@ -144,6 +144,11 @@ func requireKeys(object []byte, keys []string) error {
 // renderedKeys is every JSON key of a wire memo — `memo.Rendered`'s Go field names (the type IS the
 // wire format, `internal/memowire`) — read off the type, so a field added there is required here
 // without a second list to forget.
+//
+// 🔴 "REQUIRED WITHOUT A LIST" IS ALSO A DEPLOY ORDER: a client built after a field joins
+// `memo.Rendered` requires it from EVERY listener, so the listener deploys first. The rule is stated
+// once, in `internal/memowire`'s package doc; `TestTheMemoKeysAClientRequiresAreExactlyRenderedsFields`
+// pins that this set is exactly the type's.
 var renderedKeys = func() []string {
 	t := reflect.TypeOf(memo.Rendered{})
 	keys := make([]string, 0, t.NumField())

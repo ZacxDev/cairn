@@ -1575,6 +1575,22 @@ func (s *Server) handleScopePage(w http.ResponseWriter, r *http.Request, id iden
 		writePlain(w, http.StatusNotFound, browseRefusal)
 		return
 	}
+	// The tab is read AFTER the refusal, for `?view=`'s reason in `handleEntryPage`: it selects which
+	// view of a scope the caller already proved they read, and is never an authority input.
+	if view, ok := s.scopeView(w, r, id, scopes, scope, scopeTab(r.URL.Query().Get(QueryTab))); ok {
+		s.renderScope(w, view)
+	}
+}
+
+// scopeView builds the scope page's view of ONE tab of `scope`, which the caller has ALREADY found
+// in this viewer's narrowed answer (`scopes`). On a failure it has written the answer and returns
+// false.
+//
+// It is `handleScopePage`'s body, a function of its own because a second caller renders the same
+// page: a refused memo send re-renders the memos tab with the draft (`memoSendRefusedWithDraft`),
+// and a second spelling of "what the scope page shows" is the one that drifts.
+func (s *Server) scopeView(w http.ResponseWriter, r *http.Request, id identity.Identity, scopes []Scope, scope Scope, tab string) (PageView, bool) {
+	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now(), App: s.app}
 	// 🔴 THE SESSIONS-AND-ARCS SECTION IS ASKED FOR ONLY AFTER THE REFUSAL ABOVE, AND BY NAME OUT OF
 	// THE NARROWED ANSWER — so a scope this caller cannot read never reaches it, and the refusal for
 	// it stays the one `browseRefusal` every other miss gets. What the section shows is narrowed
@@ -1582,20 +1598,18 @@ func (s *Server) handleScopePage(w http.ResponseWriter, r *http.Request, id iden
 	touched, err := s.source.Touched(id.Auth, scope.Name)
 	if err != nil {
 		writePlain(w, http.StatusInternalServerError, "the store could not be read")
-		return
+		return PageView{}, false
 	}
 	view.Scope = &scope
 	view.Touched = &touched
-	// The tab is read AFTER the refusal, for `?view=`'s reason in `handleEntryPage`: it selects which
-	// view of a scope the caller already proved they read, and is never an authority input.
-	view.Tab = scopeTab(r.URL.Query().Get(QueryTab))
+	view.Tab = tab
 	// 🔴 THE AGENT TAB'S RECALL IS READ ONLY FOR THAT TAB, AND ONLY AFTER THE REFUSAL ABOVE — by the
 	// name out of the narrowed answer, through a read narrowed again by the same authority (`agent.go`).
 	if view.Tab == TabAgent {
 		recall, err := s.source.Recall(id.Auth, scope.Name)
 		if err != nil {
 			writePlain(w, http.StatusInternalServerError, "the store could not be read")
-			return
+			return PageView{}, false
 		}
 		view.Agent = &recall
 	}
@@ -1606,12 +1620,12 @@ func (s *Server) handleScopePage(w http.ResponseWriter, r *http.Request, id iden
 		if err != nil {
 			s.logf("memo tab: the memo store could not be read: %v", err)
 			writePlain(w, http.StatusInternalServerError, "the memo store could not be read")
-			return
+			return PageView{}, false
 		}
 		view.Memos = &tab
 	}
 	view.Panes = s.panesFor(id)
-	s.renderScope(w, view)
+	return view, true
 }
 
 // handleEntryPage renders ONE entry: its sections and its line items.
@@ -1717,12 +1731,19 @@ func (s *Server) renderNavigate(w http.ResponseWriter, view PageView) {
 }
 
 func (s *Server) render(w http.ResponseWriter, node g.Node) {
+	s.renderStatus(w, http.StatusOK, node)
+}
+
+// renderStatus is [Server.render] with the status chosen: the ONE page that is not a 200 is a
+// refused memo send re-rendered with its draft (`memoSendRefusedWithDraft`). Same writer, so the
+// same headers — `no-store` included — as every other HTML answer.
+func (s *Server) renderStatus(w http.ResponseWriter, status int, node g.Node) {
 	var b strings.Builder
 	if err := node.Render(&b); err != nil {
 		writePlain(w, http.StatusInternalServerError, "the page could not be rendered")
 		return
 	}
-	writeHTML(w, http.StatusOK, b.String())
+	writeHTML(w, status, b.String())
 }
 
 // writeHTML is the ONE place an HTML response's headers are chosen, so the sign-in page

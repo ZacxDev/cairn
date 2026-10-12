@@ -24,10 +24,10 @@ var _ ui.Memos = browserMemos{}
 
 func (b browserMemos) Model() control.Model { return b.model() }
 
-// List asks for tombstones too: the tab shows a retracted memo as its tombstone (decision 10).
-func (b browserMemos) List(ctx context.Context, m control.Model, auth control.Authorization, scope string,
-	after time.Time, limit int) ([]memo.Stored, error) {
-	return b.store.List(ctx, m, auth, pgstore.MemoQuery{Scope: scope, After: after, Limit: limit, IncludeRetracted: true})
+// All is the store's own whole-scope listing — tombstones included, since the tab shows a retracted
+// memo as its tombstone (decision 10) — so nothing in this process pages.
+func (b browserMemos) All(ctx context.Context, m control.Model, auth control.Authorization, scope string) ([]memo.Stored, error) {
+	return b.store.All(ctx, m, auth, scope)
 }
 
 func (b browserMemos) Send(ctx context.Context, caller control.Principal, auth control.Authorization,

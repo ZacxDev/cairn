@@ -21,17 +21,38 @@
 //     field is a 400. The client is the only writer, and a request field the listener does not know
 //     is a client that believes it asked for something the listener will not do.
 //   - RESPONSES (`ListBody`, `MemoBody`, `SentBody`, `RetractedBody`) are decoded TOLERANTLY by the
-//     client: an unknown field is ignored, and every field the client reads is REQUIRED (absent or
-//     `null` is `malformed`). S3 first refused unknown response fields too, and since a listed memo
-//     IS `memo.Rendered`, a listener release that added one field would have broken every older
-//     host's `memo-check` at exit 5 — client and listener coupled into one lockstep deploy (#239
-//     round 1).
+//     client: a field it does not KNOW is ignored. What it REQUIRES (absent or `null` is
+//     `malformed`) is each answer's own key — `memos`, `memo`, `id` + `created_at`, `retracted` —
+//     and, of a memo, EVERY FIELD OF `memo.Rendered`, WHETHER OR NOT THAT CLIENT'S OUTPUT USES IT.
+//     The memo's required set is not a list anyone maintains: `renderedKeys` in
+//     `internal/client/memo.go` reads it off the type by reflection. S3 first refused unknown
+//     response fields too, and since a listed memo IS `memo.Rendered`, a listener release that
+//     added one field would have broken every older host's `memo-check` at exit 5 — client and
+//     listener coupled into one lockstep deploy (#239 round 1).
 //
-// So the listener may ADD a response field in any release, and older clients keep working. It may
-// never REMOVE or RENAME one until every client that reads it has been released without it — that is
-// what the required half catches, loudly, instead of an empty string decoded with no error. The
-// client side is `decodeAnswer` in `internal/client/memo.go`, pinned by
-// `TestAResponseFieldTheClientDoesNotKnowIsTolerated` and `TestAResponseMissingAFieldTheClientReadsIsMalformed`.
+// 🔴 THE DEPLOY ORDER THAT FOLLOWS, AND THIS IS THE ONE PLACE IT IS WRITTEN. The tolerance is real in
+// ONE direction only, because "the fields a client requires" is "the fields `memo.Rendered` had in
+// the tree that client was BUILT from":
+//
+//   - ADDING a field to `memo.Rendered`: THE LISTENER DEPLOYS FIRST, on every instance, and only
+//     then may any client built from that tree be released. An OLDER client ignores the new field
+//     (the tolerant half). A NEWER client REQUIRES it, so against a listener that has not deployed
+//     yet its every `memo-check` and `memo-read` is `malformed`, exit 5 — on every host that
+//     updated early. (This sentence used to read "every field the client reads is REQUIRED", which
+//     described a narrower set than the code requires and so hid that a field no client prints
+//     still orders the deploy — #241 rounds 0 and 1.)
+//   - REMOVING or RENAMING one: THE CLIENTS GO FIRST. Every client that requires it must have been
+//     released without it before the listener stops sending it — the required half is what turns
+//     that mistake into a loud `malformed` instead of an empty string decoded with no error.
+//   - A response field OUTSIDE `memo.Rendered` (a new top-level key of a body): the listener may add
+//     it in any release and in any order, because no client requires a key it was not written to.
+//
+// The client side is `decodeAnswer`, `requireKeys` and `renderedKeys` in `internal/client/memo.go`.
+// `TestAResponseFieldTheClientDoesNotKnowIsTolerated` and
+// `TestAResponseMissingAFieldTheClientReadsIsMalformed` pin the two halves, and
+// `TestTheMemoKeysAClientRequiresAreExactlyRenderedsFields` pins the relationship this paragraph
+// rests on: the required set EQUALS the type's field set, key by key, on both decoding paths — so a
+// field made optional, or one added to the type, is a red test that names this rule.
 package memowire
 
 import "github.com/ZacxDev/cairn/internal/memo"

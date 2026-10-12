@@ -3638,8 +3638,10 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-scope-section-fetched-before-the-refusal",
         path="internal/ui/server.go",
-        old="\tscope, found := pickScope(scopes, wanted)\n\tif !found {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn\n\t}\n\t// 🔴 THE SESSIONS",
-        new="\t_, _ = s.source.Touched(id.Auth, string(wanted))\n\tscope, found := pickScope(scopes, wanted)\n\tif !found {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn\n\t}\n\t// 🔴 THE SESSIONS",
+        # ⚠ The anchor's tail moved when the scope page's body became `scopeView` (the S5 follow-up);
+        # the mutation itself — a read keyed on the caller's `wanted` ahead of the refusal — did not.
+        old="\tscope, found := pickScope(scopes, wanted)\n\tif !found {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn\n\t}\n\t// The tab is read AFTER",
+        new="\t_, _ = s.source.Touched(id.Auth, string(wanted))\n\tscope, found := pickScope(scopes, wanted)\n\tif !found {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn\n\t}\n\t// The tab is read AFTER",
         killer="TestAScopeTheCallerCannotReadGetsTheExistingRefusalAndNoSection",
         why="fetching the page's data up front and refusing afterwards is an ordinary "
         "refactor, and it puts a read keyed on caller-chosen input ahead of the refusal that "
@@ -5137,8 +5139,10 @@ MUTANTS: tuple[Mutant, ...] = (
         old="\treturn a.VisibleScopes(control.VerbWrite).Allows(scope)\n",
         new="\treturn a.VisibleScopes(control.VerbRead).Allows(scope)\n",
         killer="TestThePredicatesAreRelationshipsOverOneModel",
-        # S5: the browser's forged send from a read-only viewer is refused by this predicate too.
-        extra_killers=("TestAForgedSendFromAReadOnlyViewerIsRefusedByMaySend",),
+        # S5: the browser tab asks this predicate to decide the send FORM, so the page notices too.
+        # ⚠ RE-POINTED (#242 round 0, D3): this named a UI test that drove a forged send over a fake
+        # store which called `memo.MaySend` ITSELF — the kill was the fake's, not the surface's.
+        extra_killers=("TestAReadOnlyViewerSeesTheMemosTabButNoSendForm",),
         why="a reader sending looks harmless — and O2 is that sending needs exactly the entry-write "
         "predicate (e2e sabotage (b)).",
     ),
@@ -5487,20 +5491,72 @@ MUTANTS: tuple[Mutant, ...] = (
         why="a memo stays delivered after the grant goes (decision 12), so the mark looks optional — "
         "it is the only thing telling a reader the sender has lost write.",
     ),
+    # ⚠ `ui-memo-listing-boundary-not-one-second-early` STOOD HERE AND IS GONE WITH ITS CODE: the tab
+    # no longer pages (the store answers a whole scope in one call, `pgstore.MemoStore.All`), so the
+    # boundary rule has one spelling, the client's — `memo-read-page-boundary-at-the-last-time` above.
+    # `All` is SQL; its mutants are in the S5 follow-up PR, run against PostgreSQL.
     Mutant(
-        name="ui-memo-listing-boundary-not-one-second-early",
+        name="ui-memo-refusal-drops-the-draft",
         path="internal/ui/memos.go",
-        old="after = last.Add(-time.Second)",
-        new="after = last",
-        killer="TestTheMemoListingPagesPastOnePageWithoutLosingASharedSecond",
-        why="'strictly after the last one we saw' is the obvious cursor — and the rendered time is whole "
-        "seconds, so it skips every memo sharing that second.",
+        old="\tif errors.As(err, &ref) && memoDraftKept[ref.Reason] {\n",
+        new="\tif errors.As(err, &ref) && false {\n",
+        killer="TestARefusedOverLongSendKeepsTheTypedTextInTheForm",
+        extra_killers=("TestOnlyTheClosedSetOfRefusalsKeepsTheDraft",),
+        why="every other write outcome is a redirect, so one uniform answer reads as tidier — and the "
+        "form's maxlength counts UTF-16 units, so non-ASCII text it accepted is refused and lost.",
+    ),
+    Mutant(
+        name="ui-memo-draft-subject-not-rendered",
+        path="internal/ui/memos.go",
+        old="h.MaxLength(strconv.Itoa(memo.MaxSubjectBytes)), h.Value(d.Subject)),",
+        new="h.MaxLength(strconv.Itoa(memo.MaxSubjectBytes))),",
+        killer="TestARefusedOverLongSendKeepsTheTypedTextInTheForm",
+        why="the text is the long field, so restoring only it looks like the whole fix.",
+    ),
+    Mutant(
+        name="ui-memo-draft-body-not-rendered",
+        path="internal/ui/memos.go",
+        old="h.MaxLength(strconv.Itoa(memo.MaxBodyBytes)), g.Text(d.Body)),",
+        new="h.MaxLength(strconv.Itoa(memo.MaxBodyBytes))),",
+        killer="TestARefusedOverLongSendKeepsTheTypedTextInTheForm",
+        why="a textarea has no `value` attribute, so a form restored attribute by attribute comes back "
+        "with its largest field empty.",
+    ),
+    Mutant(
+        name="ui-memo-draft-kept-for-a-suspected-secret",
+        path="internal/ui/memos.go",
+        old="\tmemo.RefusedLiveLimit:   true,\n}",
+        new="\tmemo.RefusedLiveLimit:   true,\n\tmemo.RefusedSecret:      true,\n}",
+        killer="TestOnlyTheClosedSetOfRefusalsKeepsTheDraft",
+        why="'never lose what the user typed' reads as the rule, applied evenly — and the page then "
+        "serves back the text the scan just called a credential.",
+    ),
+    Mutant(
+        name="memo-ttlof-multiplies-unguarded",
+        path="internal/memo/policy.go",
+        old="\tcase n > limit:\n\t\treturn MaxTTL + unit\n",
+        new="\tcase false:\n\t\treturn MaxTTL + unit\n",
+        killer="TestTTLOfNeverOverflowsAndLeavesTheCeilingToCheckSend",
+        extra_killers=("TestTheSendTTLIsClampedWithoutOverflow",),
+        pkgs=PKGS + ("./internal/clientapi/",),
+        why="`CheckSend` refuses a TTL past the ceiling anyway, so the clamp reads as a second copy of "
+        "its rule — and a count whose product wraps comes back small, positive and ACCEPTED.",
+    ),
+    Mutant(
+        name="memo-required-keys-skip-a-rendered-field",
+        path="internal/client/memo.go",
+        old="\tfor i := 0; i < t.NumField(); i++ {\n\t\tkeys = append(keys, t.Field(i).Name)\n",
+        new="\tfor i := 0; i < t.NumField()-1; i++ {\n\t\tkeys = append(keys, t.Field(i).Name)\n",
+        killer="TestTheMemoKeysAClientRequiresAreExactlyRenderedsFields",
+        pkgs=PKGS + ("./internal/client/",),
+        why="a field the client's own output does not print looks safely optional — and "
+        "`internal/memowire`'s deploy order is stated over the WHOLE type, so the rule and the code part.",
     ),
     Mutant(
         name="ui-memo-write-skips-the-scope-lookup",
         path="internal/ui/memos.go",
-        old="\tif !found {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn Scope{}, false\n",
-        new="\tif !found && false {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn Scope{}, false\n",
+        old="\tif !found {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn nil, Scope{}, false\n",
+        new="\tif !found && false {\n\t\twritePlain(w, http.StatusNotFound, browseRefusal)\n\t\treturn nil, Scope{}, false\n",
         killer="TestAWriteNamingAScopeTheViewerCannotReadIsTheBrowseRefusal",
         why="the store refuses an unwritable scope anyway, so the lookup reads as redundant — and the "
         "redirect it falls through to is not the browse surface's one miss.",
