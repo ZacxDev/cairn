@@ -22,40 +22,43 @@ UNTRUSTED pointer-plus-preview block. Per `claudedocs/plan-cairn-scope-mail.md` 
   DEPLOYED listener.
 
 ## State now
-- **Plan MERGED** `4413feb` (#221). Operator rulings since: **Q16** keep decision 17's verb narrowing; **Q19**
-  retraction requires READ for sender AND scope admin (narrows O8; recorded in the plan by #239). **Q20** (empty memo
-  accepted) is OPEN, behaviour unchanged.
-- **MERGED:** S0 #230; **S1 #235 `8b7ef0d`**; **S2 #236 `862d3cb`**; **S3 #239 `0d9ba01`**. Each: round 0 + round 1,
-  no 🔴, merged under the operator's "merge if the latest round has no high-severity finding" rule.
-- **DEPLOYED `sha-0d9ba01`** to both pods (deployment trunk `fd6aa85`), 2026-10-11. Verified: running imageIDs equal
-  the tag digests, 0 restarts; `schema_migrations` = 1,2,3 (memos/memo_events empty); cairn-ui logs `client API off
-  (no -client-api-addr)`; `/sign-in` 200, `/` 401 unauthenticated; store answered the client's authenticated sync
-  (304) and refuses an unauthenticated snapshot (401). Pre-deploy backups `cairn-ui-backup-pre-memo` and
-  `subsystem-store-backup-pre-memo` restored+verified. NOT verified: any memo path (listener off until S7).
+- **Plan MERGED** `4413feb` (#221). Operator rulings since: **Q16** keep verb narrowing; **Q19** retraction requires
+  READ for sender AND scope admin; the memos tab ships ON at deploy (no flag); populated-tab browser fixtures are a
+  follow-up PR before S4. **Q20** (empty memo accepted) is OPEN, behaviour unchanged.
+- **MERGED:** S0 #230; S1 #235 `8b7ef0d`; S2 #236 `862d3cb`; S3 #239 `0d9ba01`; S3 follow-ups #241 `a46b447`;
+  **S5 #242 `74f826f`**; publish-workflow fix #243 `bb3ce63`. Each: round 0 + round 1, no 🔴.
+- **DEPLOYED `sha-bb3ce63`** to both pods (deployment trunk `5c58ba1`). Verified: running imageIDs equal the tag
+  digests, 0 restarts; cairn-ui logs `serving 51 route(s)`, `memos in postgres`, `client API off`; migrations 1,2,3;
+  `/sign-in` 200, `/` 401, an anonymous `POST /memo` without Origin 403; the store answered an authenticated sync.
+  Pre-deploy backup `cairn-ui-backup-pre-s5b` restored+verified.
+- 🔴 **NOT verified signed-in:** the memos tab, sending and retracting from the browser — the OPERATOR's check
+  (open a scope → Memos; send one; retract it; confirm the tombstone line).
 - 🔴 **ROLLBACK below `sha-0d9ba01` needs the migration-3 recipe (#235);** once any credential is narrowed by verbs,
   the journal recipe too.
-- **IN FLIGHT:** S5 (`zach/scope-mail-s5`, the scope page's memos tab) and S3 follow-ups
-  (`zach/scope-mail-s3-followups`: #239's round-1 🟡s + the e2e self-test CI time), both by subagents.
+- **IN FLIGHT:** S5 follow-ups (`zach/scope-mail-s5-followups`, claim `cairn-scope-mail-s5-followups`): a
+  database-backed uiaudit world driving the populated tab in a real browser, the adapter retract/tombstone pgtest,
+  the form length limits, the memowire listener-first rule, and the round-0 deletion candidates.
 
 ## Next steps (ranked)
 1. **S1** — DONE, #235 `8b7ef0d`. forcing: user — operator asked for scope mail.
-2. **S5** (cairn UI tab) — IN FLIGHT; then **S7** (deployment: listener port/Service/ingress, trusted proxies,
-   probe scope + credential, deploy-order check), then **S4** (tooling hook registration, LAST).
-   forcing: user — operator asked for scope mail.
-3. **S3 follow-ups** — IN FLIGHT: the Defects (batched) list below plus round-0 D1 (e2e `--self-test` made `pgtest`
-   CI's critical path: 1m07s → 16m36s). forcing: user — operator asked to fix audit findings before S7's live probe.
+2. **S7** (deployment: `-client-api-addr` container port, Service port, ingress route, trusted-proxy allowlist for
+   that bind, a designated PROBE scope + a probe credential narrowed to read,write, `SHOW server_version` ≥ 17, the
+   deploy-order check), then run `tests/memo/live-probe.sh` against it and record its summary line; then **S4**
+   (tooling hook registration, LAST). S5 is DONE (#242). forcing: user — operator asked for scope mail.
+3. **S5 follow-ups** — IN FLIGHT (see State now). forcing: user — operator chose "follow-up PR before S4".
 
 ## Defects (batched)
-- **From #239 round 1 (being fixed in S3 follow-ups):** cursor margin / `after` / `memo-read` paging have no failing
-  test (`internal/client/memocursor.go:90-96`, `memo.go:414-451`); `memo-check`'s own instance routing untested
-  (`memo.go:228-238`); strict response decoding couples client and listener releases (`memo.go:108-119`); a failed
-  live probe leaves its memo live for an hour (`tests/memo/live-probe.sh`); `--ttl` under 1 s silently means 3 days;
-  cursor saved before the block prints; `ScopeForRepo` errors swallowed as `no-scope`.
+- **Being fixed in S5 follow-ups:** `cmd/cairn-ui/memotab.go`'s `IncludeRetracted: true` and `Retract` pass-through
+  have no real-store test (both mutants survive); the send form's `maxlength` counts UTF-16 units where the server
+  counts UTF-8 bytes; `internal/memowire` does not state that an added `memo.Rendered` field needs the listener
+  deployed before clients update.
 - **Carried to S4 (before the hook is registered):** a descendant that `setsid`s and keeps stdout open
   defeats the 2 s bound (measured 12.03 s) — close the pipes after `killpg`; relayed output is
   uncapped (64 MiB passed through) — cap it and treat overflow as `malformed`.
 - **Closing-condition part 3's wording** diffs `-routes` against `b2ba3ac`, which predates scope-refs' `sources`
   route — re-anchor it on a post-scope-refs base before reading it.
+- `tests/pgtest/run.sh:278` pipes into `head -1` inside an assignment under `set -euo pipefail` — safe only while
+  the version line is logged once.
 
 ## Gotchas / decisions / dead-ends
 - **Go's `unicode.C` already includes unassigned code points** — "unassigned" computed as "in no
@@ -86,9 +89,17 @@ UNTRUSTED pointer-plus-preview block. Per `claudedocs/plan-cairn-scope-mail.md` 
   worktree path literally. via: command
 - **S3's e2e self-test reruns the whole e2e per sabotage**, ~14.5 min per PR. via: measurement
 
+- **`echo "$out" | head -N` under `pipefail` fails once the writer's output passes the 64 KiB pipe buffer** — the
+  publish workflow's anonymous-pull proof did exactly that when the image's tag list grew, and because it is the
+  FIRST proof step the later legs never ran: two pod images pushed, the UI image not. A failed publish can be a
+  PARTIAL publish — check each image's tag (200 vs a 404 control) before deploying. Fixed in #243. via: measurement
+- **Merging while GitHub reports `mergeStateStatus: UNKNOWN`** (the base had just moved) went through; the merged
+  `main` was then CI-green, but that was checked AFTER — re-read the state until it settles before merging.
+  via: command
+
 ## How to verify
 ```bash
 KUBECONFIG=<deployment kubeconfig> kubectl -n subsystem-store get deploy -o wide
-KUBECONFIG=<deployment kubeconfig> kubectl -n subsystem-store logs deploy/cairn-ui --tail=1   # "client API off" until S7
+KUBECONFIG=<deployment kubeconfig> kubectl -n subsystem-store logs deploy/cairn-ui --tail=1   # "memos in postgres", "client API off" until S7
 gh pr list --repo ZacxDev/cairn --state open
 ```
