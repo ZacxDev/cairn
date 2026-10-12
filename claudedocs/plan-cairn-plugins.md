@@ -189,7 +189,8 @@ field names and types alone.
   a MEASUREMENT, and the last score (`leaks caught=157/190 clean damaged=18/175`) stays recorded.
   AP1–AP3 are closed in code, each by its own stated check (Rollout); AP4 becomes a re-measure-
   and-record step rather than a gate. Capture is still armed on NO instance: arming remains the
-  operator's act, and S11's read ledger is still a precondition.
+  operator's act, and two preconditions stay open — S11's read ledger, and **S3b**, the agent
+  upload half and `tests/plugins/e2e.sh` that S3 (#224) did not build.
 
 ## Goal and premise
 
@@ -301,9 +302,14 @@ Drop the work, or the named half, if any of these holds:
   score is re-run and recorded for the redactor commit being armed (AP4), and the last one —
   `leaks caught=157/190 clean damaged=18/175`, under the 90% floor — stays on record. A secret the
   redactor misses is stored (T1).
-- 🔴 **Capture is still armed NOWHERE.** S1 and S3 merged unarmed (O16), and O17 waived a gate —
-  it did not arm anything. Arming is the operator's act (`-arm-transcript-capture`), and S11's
-  read ledger is still a precondition. The steps below describe what happens after it, not now.
+- 🔴 **Capture is still armed NOWHERE — AND ARMING IT TODAY WOULD CAPTURE NOTHING.** S1 and S3
+  merged unarmed (O16), and O17 waived a gate — it did not arm anything. 🔴 **S3 BUILT ONLY THE
+  POD HALF.** On `main` there is NO host-side uploader: `internal/capture/sink.go` ships no HTTP
+  sink ("until S3 brings the real one"), nothing calls the `capture/v1` routes, and
+  `tests/plugins/e2e.sh` (clauses a, b, c, h) does not exist although the S3 row said S3 created
+  it. That half is **S3b**, an arming blocker, built as the next PR in this lane. The preconditions
+  still open are therefore **S3b** and **S11's read ledger**; arming is then the operator's act
+  (`-arm-transcript-capture`). The steps below describe what happens after it, not now.
 - 🔴 **AND FOUR S3 ARMING PRECONDITIONS: AP1–AP3 ARE CLOSED (#258); AP4 IS A STEP, NOT A
   GATE.** Each was found by #224's audit against the S3 head, was harmless while capture is
   disarmed, and becomes reachable the moment it is armed. Recorded, not fixed, in #224; AP1–AP3
@@ -342,6 +348,14 @@ Drop the work, or the named half, if any of these holds:
     record, linearly over 1–4 MiB (≈72 MiB at the cap), re-measured on every run against a 100 MiB
     budget (`TestTheAssembledRecordCapFitsThePod`, a budget guard, green at the S3 head too).
     `TestOneFramePastTheCapIs413AndStoresNothing`.
+    ⚠ **THE CAP NARROWS O9 — an agent decision, stated rather than implied.** Decision 15 says
+    nothing is truncated at storage; a record or blob over 4 MiB is now REFUSED whole (413), so it is
+    not stored at all unless the uploader splits or truncates it. Measured on one host: 0 Claude Code
+    JSONL lines over 4 MiB and 40 over 1 MiB (character length). What the uploader does with a 413
+    is **S3b's** to build and state. ⚠ **DISCLOSED RESIDUAL:** concurrent UNFRAMED requests (each up
+    to 8 MiB, `worker.DefaultMaxBody`; two near-cap records in one were measured allocating ≈129
+    MiB) have NO in-flight limit — only the sole capture owner's tokens can reach the route, which
+    bounds who, not how many.
   - **AP3 — the 🟢 findings, each small and each needed before arming:** a session with no
     `meta.json` is never swept by retention; abandoned frames hold quota until a restart; blob
     names, `src` and cursors are not re-checked by the pod's redaction pass (a 40-character token
@@ -1229,7 +1243,9 @@ script that prints only counts.
       `{seq, src, rec}` where `src` is the source offset or part version and `rec` the redacted raw
       record; `blobs/` for persisted tool-result files; `outputs.jsonl` for plugin outputs. The
       server assigns `seq` per stream, so ONE watermark shape serves both runtimes.
-    - **Nothing is truncated at storage** (O9). *Revision 1's per-record 1 MiB truncation and
+    - **Nothing is truncated at storage** (O9) — ⚠ *except that, since #258 (AP2), ONE record or blob
+      over 4 MiB is refused whole (413) rather than stored; Rollout's AP2 note states the narrowing
+      and its measurement.* *Revision 1's per-record 1 MiB truncation and
       per-session cap are REMOVED*: the measured p99 root session is 72 MB and the max 154 MB, so a
       per-session cap would have cut exactly the large sessions. Size limits exist only at READ time
       (decisions 17, 18). A request body is bounded; a record larger than one request is sent as
@@ -1462,7 +1478,7 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 | **S0** | **Fixtures and shape ledgers.** `tests/transcripts/gen.py` emits synthetic sessions in BOTH formats from the measured key sets (R1–R3): main stream, two subagents, an opencode child, a compaction boundary, a `pr-link`, persisted tool output, mutated opencode parts, bookkeeping records and duplicate fields, a `user` record carrying a large `tool_result` block, an inline image block AND its `toolUseResult.file.base64` duplicate, an opencode `tool` part with a `data:` URL in `state.attachments[].url`, a binary (PDF and JPEG), a UTF-8 text, a UTF-16 text and a JSON text tool-result blob, thinking `signature` values and 64-hex digests (which must survive untouched), and every read path of R7 (a rendered recall in a tool result; one in a hook attachment with no command line; a store-wide search rendered `scope=(all scopes)` in a hook attachment; a bare header-less `ls-entries`; an explicit `--scope` read; a `--repo` read; a `cd … && cairn recall` chain). A shape test pins the generator's record types, block types and field names against `internal/transcript`'s classification table. The generator also emits a synthetic read-ledger file per session (decision 3a), including an EMPTY one beside cairn-naming inputs (F1). And S0 MEASURES, on a host with opencode, whether `OPENCODE_SESSION_ID` reaches tool commands and which session id it carries, recording the answer for S11 — **done: decision 3a and `internal/transcript/README.md`.** The generator writes ONE file, `internal/transcript/testdata/synthetic_world.json`, which Go tests materialise, so `onlyGo` needs one row; the table is `internal/transcript/classify.go`. | `tests/`; `onlyGo` if Go tests read the fixtures; README. | Test-only. |
 | **S1** | **`internal/redact`** — its own rule table (decision 6), decoded-string traversal, text-blob redaction and the text/binary sniff (decision 6a), keyed tags, structural Secret rule, denylist loader; the corpus generator and the `planted/caught/clean-damaged` report; the behavioural containment test against leakscan's controls. | new package; `ok` floor; README. | Library only. |
 | **S2** | **`cmd/cairn-capture`** and **`internal/transcript/scopeuse`** — readers (JSONL by offset, subagents, blobs — text redacted, binary byte-identical; `opencode export` to a file, diffing by part digest), `V` derivation (the `*` mappings of decision 3), watermark state, routing (decision 16), `--dry-run`, `--self-test`. No upload, and no run mode, yet (D1). | `cmd/cairn-capture`; new packages (`internal/capture` holds the agent, so its tests sit in a package); the four `scopeuse-*` rows join `control_mutants.py` with a per-row `pkgs` override ADDING `./internal/transcript/scopeuse/` (+ pinned count) — *as built: not `PKGS` itself, because the battery's own rule is that a killer outside the control/identity/server seam gets a per-row addition, and widening `PKGS` would re-scope every existing row and move three pinned enumerations*; `depspolicy.LinkedBinaryRoots` + its test; `flake.nix` `packages.cairn-capture` + `checks.cairn-capture-self-test` (the built binary's self-test; CI's `nix` job builds both); `ok` floor. Review round 1 added four more battery rows (`scopeuse-restore-ignored`, `capture-v-not-a-union`, `capture-child-ledger-ignored`, `capture-unreadable-ledger-ignored`). | Inert: it sends nothing. |
-| **S3** | **Transcript store + capture API.** `internal/transcript` (directory layout, CAS append, frames, ownership, quota, retention sweeper, deletion, pod-side `V` re-derivation), worker listener + ledger, `capture` token kind and `cairn-ui -issue-worker-token capture`, refusing pod re-check. Agent gains upload. `tests/plugins/e2e.sh` created with clauses (a), (b), (c), (h). 🔴 **Arming:** S3 merged inert and capture is armed on NO instance. Closing-condition part 5 (O15's held-back gate) is **WAIVED as an arming precondition by O17** and kept as a measurement; S11 is still a precondition. 🔴 **The four S3 ARMING PRECONDITIONS under Rollout, recorded by #224's audit: AP1–AP3 are CLOSED by #258, each by its own stated check; AP4 is a re-measure-and-record step, not a gate.** | new package → `ok` floor, `control_mutants.py` `PKGS` (+ pinned count through `ci.yml` and `internal/control/README.md`); `cmd/cairn-ui` flags (`-worker-addr`, `-worker-tokens`, `-transcript-dir`, `-transcript-retention`, `-transcript-quota`) and tests; `ci.yml` e2e step. | Inert unless `-worker-addr` AND `-transcript-dir` are set. |
+| **S3** | **Transcript store + capture API.** `internal/transcript` (directory layout, CAS append, frames, ownership, quota, retention sweeper, deletion, pod-side `V` re-derivation), worker listener + ledger, `capture` token kind and `cairn-ui -issue-worker-token capture`, refusing pod re-check. Agent gains upload. `tests/plugins/e2e.sh` created with clauses (a), (b), (c), (h). 🔴 **AS BUILT (#224), ONLY THE POD HALF:** the store, the worker listener and its routes, the `capture` token and the pod re-check landed; the agent upload and `tests/plugins/e2e.sh` (clauses a, b, c, h) did NOT — no HTTP sink exists, nothing calls `capture/v1`. That half is **S3b**, an arming blocker, built as the next PR in this lane. 🔴 **Arming:** S3 merged inert and capture is armed on NO instance. Closing-condition part 5 (O15's held-back gate) is **WAIVED as an arming precondition by O17** and kept as a measurement; S11 is still a precondition. 🔴 **The four S3 ARMING PRECONDITIONS under Rollout, recorded by #224's audit: AP1–AP3 are CLOSED by #258, each by its own stated check; AP4 is a re-measure-and-record step, not a gate.** | new package → `ok` floor, `control_mutants.py` `PKGS` (+ pinned count through `ci.yml` and `internal/control/README.md`); `cmd/cairn-ui` flags (`-worker-addr`, `-worker-tokens`, `-transcript-dir`, `-transcript-retention`, `-transcript-quota`) and tests; `ci.yml` e2e step. | Inert unless `-worker-addr` AND `-transcript-dir` are set. |
 | **S4** | **Visibility + the session page shows content (O3).** `transcript.Visible` (decision 4) with `V` (decision 3); the collapsed transcript section on `/session` (decision 18); the owner arm finding O10 sessions; `GET /session/transcript` raw-record view. e2e clauses (d), (e), (f), (g — the visibility half). Benchmark of the whole-store `W_trailer` walk. | UI rows → hand ledger, `contentAuthority`, uiaudit targets + a synthetic transcript in the uiaudit world; mutant rows. | Read-only over S3; renders nothing when no transcript exists. |
 | **S5** | **Plugin registry, toggles, plugin API.** `internal/plugins` (manifest validation, closed capability and output-type vocabularies, plugin token kind, the narrowing-only toggle fold + `-plugin-journal`, the stateless pending query); `/plugins` page + toggle POSTs on scope, arc and session pages. e2e clauses (i), (j). | new package → `ok` floor, `PKGS`; UI rows; `cmd/cairn-ui` flags (`-plugin-registry`, `-plugin-journal`); mutant rows; README. | Inert with no registry; every toggle OFF by construction. |
 | **S6** | **Outputs: storage, rendering, deletion cascade.** Outputs stored per session; rendered labelled-derived (decision 11) on the session page and as a one-line summary on session rows; owner "delete transcript" POST cascading to outputs and edges; the capture `withdraw` route running the same cascade, and the agent's withdrawal on a routing change (decision 16). e2e clauses (k), (l), (m). | UI rows; worker-listener ledger (`withdraw`); `cmd/cairn-capture`; mutant rows; README. | Nothing renders until a plugin writes; the agent withdraws nothing until a routing answer changes. |

@@ -34,7 +34,10 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
   train tree). S3 = transcript upload + per-session store in cairn-ui, DISARMED: every upload is
   answered 503 `capture-disarmed` unless cairn-ui starts with `-arm-transcript-capture` (no env
   spelling, no default).
-- 🔴 **CAPTURE IS UNARMED.** Still blocking: S11 (client read ledger) is unbuilt. NOT blocking any
+- 🔴 **CAPTURE IS UNARMED, AND ARMING IT WOULD CAPTURE NOTHING.** Still blocking: (1) **S3b** — S3
+  (#224) built only the POD half; there is no host-side uploader (`internal/capture/sink.go` has
+  no HTTP sink, nothing calls `capture/v1`) and `tests/plugins/e2e.sh` (clauses a, b, c, h) does
+  not exist; built as the next PR in this lane; (2) S11 (client read ledger) is unbuilt. NOT blocking any
   more: O15's held-back gate — waived as an arming gate by O17, kept as a measurement (last score
   `leaks caught=157/190 clean damaged=18/175`, 82.6%, round-6 head); arming preconditions
   **AP1–AP3** — closed by #258 (transcript-dir ownership + state-path refusal; a 4 MiB cap on an
@@ -48,8 +51,10 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
 ## Next steps (ranked)
 1. **(done) #216 redactor** — merged `7ca2e25` under O16; capture unarmed. forcing: security —
    the redactor is the only control between raw transcripts and the store (O1).
-2. **S11** (client read ledger) next; then **S4–S10** per the plan. S3 is DONE (#224). Arming needs
-   S11 and the AP4 re-measure-and-record step (O15's gate waived by O17; AP1–AP3 closed by #258).
+2. **S3b** (the agent upload + `tests/plugins/e2e.sh`, incl. the uploader's 413 handling for a
+   record over the 4 MiB cap) next, then **S11** (client read ledger); then **S4–S10** per the
+   plan. S3's POD half is done (#224). Arming needs S3b, S11 and the AP4 re-measure-and-record
+   step (O15's gate waived by O17; AP1–AP3 closed by #258).
    forcing: user — operator chose the build.
 3. **(done) #215 follow-through** — delete the now-unused `zach/transcripts-s0`, `-s1`, `-s2` and
    `-s3` branches (every PR based on them is merged). forcing: user — operator asked for S0–S2.

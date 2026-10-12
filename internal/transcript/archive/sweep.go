@@ -132,6 +132,9 @@ func (a *Archive) sweepFrames(now time.Time) {
 		}
 	}
 	a.mu.Unlock()
+	if a.afterFrameSurvey != nil {
+		a.afterFrameSurvey()
+	}
 	for _, f := range found {
 		l := a.rootLock(f.root)
 		l.Lock()

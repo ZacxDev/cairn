@@ -85,8 +85,9 @@ const (
 	// under half the limit, so two roots assembling at once still leave the rest of the process
 	// room. ⚠ The bound is PER RECORD, not per request: an unframed request of two records near
 	// the cap (one 8 MiB body) was measured allocating ≈129 MiB, a shape the S3 head already
-	// admitted and this change does not narrow. A larger record is refused 413 and the agent
-	// truncates it; raise this only with the limit, and re-measure.
+	// admitted and this change does not narrow. A larger record is refused 413 and NOTHING of it
+	// is stored; no uploader exists on `main` yet, so what an agent does with that 413 is S3b's to
+	// decide (the plan, AP2). Raise this only with the limit, and re-measure.
 	MaxAssembledBytes = 4 << 20
 	// FrameIdle is how long a staged frame sequence may wait for its next frame before the sweep
 	// discards it and returns its bytes to the quota (AP3: an abandoned sequence must not hold
@@ -148,6 +149,9 @@ type Archive struct {
 	used   int64
 	locks  map[string]*sync.Mutex
 	frames map[string]*frameState
+	// afterFrameSurvey, when set (tests only), runs between the frame sweep's survey and its
+	// per-root re-check, so a frame staged in that window can be placed there deterministically.
+	afterFrameSurvey func()
 }
 
 // Uploader is who an upload comes from: the capture token's bound owner (`<kind>:<id>`) and host.
@@ -293,6 +297,9 @@ func Open(cfg Config) (*Archive, error) {
 	if err := CheckOwnership(cfg.Dir); err != nil {
 		return nil, err
 	}
+	if err := repairJournal(cfg.Dir); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(filepath.Join(cfg.Dir, sessionsDir), dirMode); err != nil {
 		return nil, err
 	}
@@ -329,7 +336,8 @@ var frameFile = regexp.MustCompile(`^[0-9a-f]{32}$`)
 // So ownership is decided by NAME, TYPE and — for the one file two writers could share — CONTENT:
 //   - `journal.jsonl` must be a regular file every line of which is one of THIS store's deletion
 //     records (strict decode, `event` = `transcript-deleted`). A control journal's lines carry
-//     `kind`, so they are refused; so is a torn final line, which names the file to repair.
+//     `kind`, so they are refused. A torn FINAL line that is the start of this store's record (a
+//     crash mid-append) is admitted and truncated by [Open]; a torn line of anything else is not.
 //   - `sessions` must be a directory whose entries are all session-id directories (a browser
 //     session FILE is refused by type).
 //   - `frames` must be a directory of staged-frame files only, because [Open] removes it whole.
@@ -409,8 +417,19 @@ func checkJournal(path string) error {
 	if len(raw) == 0 {
 		return nil
 	}
-	if raw[len(raw)-1] != '\n' {
-		return errors.New("its last line is not terminated — a torn write, or another writer's file")
+	if _, torn := tornTail(raw); torn {
+		frag := raw[bytes.LastIndexByte(raw, '\n')+1:]
+		// 🔴 A TORN FINAL LINE IS A CRASH MID-APPEND, AND REFUSING IT WOULD BE THE VERY RESTART
+		// OUTAGE AP1 EXISTS AGAINST — so it is admitted (and `Open` truncates it), but ONLY when it is
+		// a prefix of THIS store's record, or that record's head is a prefix of it: a fragment from
+		// another writer (a control journal line carries `kind`) is still refused.
+		if !bytes.HasPrefix(frag, []byte(recordHead)) && !bytes.HasPrefix([]byte(recordHead), frag) {
+			return errors.New("its unterminated last line is not the start of a transcript deletion record — another writer's file")
+		}
+		raw = raw[:len(raw)-len(frag)]
+		if len(raw) == 0 {
+			return nil
+		}
 	}
 	for i, line := range bytes.Split(bytes.TrimSuffix(raw, []byte("\n")), []byte("\n")) {
 		var r journalRecord
@@ -419,6 +438,34 @@ func checkJournal(path string) error {
 		if err := dec.Decode(&r); err != nil || r.Event != eventDeleted {
 			return fmt.Errorf("line %d is not a transcript deletion record — is this another program's journal?", i+1)
 		}
+	}
+	return nil
+}
+
+// recordHead is how every line [Archive.journal] writes begins (`Event` is journalRecord's first
+// field), so a torn write of one is a prefix of it or starts with it.
+const recordHead = `{"event":"` + eventDeleted + `",`
+
+// tornTail reports the length of the journal's complete-line prefix and whether anything follows
+// it.
+func tornTail(raw []byte) (int, bool) {
+	keep := bytes.LastIndexByte(raw, '\n') + 1
+	return keep, keep < len(raw)
+}
+
+// repairJournal truncates a torn final line [CheckOwnership] admitted, so the next append does not
+// glue onto it and leave a broken line in the MIDDLE, which a later start would refuse.
+func repairJournal(dir string) error {
+	path := filepath.Join(dir, journalName)
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if keep, torn := tornTail(raw); torn {
+		return os.Truncate(path, int64(keep))
 	}
 	return nil
 }

@@ -85,9 +85,9 @@ func TestOpenAcceptsAFreshAndItsOwnDirectoryAndNothingElse(t *testing.T) {
 		{"a control line appended to the store's own journal", func(d string) error {
 			return os.WriteFile(filepath.Join(d, journalName), []byte(ownLine+controlLine), 0o600)
 		}, "line 2 is not a transcript deletion record"},
-		{"a torn final journal line", func(d string) error {
-			return os.WriteFile(filepath.Join(d, journalName), []byte(ownLine+`{"event":"transcript-del`), 0o600)
-		}, "not terminated"},
+		{"a torn final line that is not this store's record", func(d string) error {
+			return os.WriteFile(filepath.Join(d, journalName), []byte(ownLine+`{"kind":"user-cr`), 0o600)
+		}, "not the start of a transcript deletion record"},
 		{"the browser session FILE under the store's sessions name", func(d string) error {
 			return os.WriteFile(filepath.Join(d, sessionsDir), []byte(`{"sessions":[]}`+"\n"), 0o600)
 		}, "a browser session table is a file"},
@@ -389,7 +389,10 @@ func write40(s string) bool { return streamName.MatchString("subagent:"+s) && sc
 // TestTheFrameSweepDoesNotRaceStaging: the sweep's survey and a frame being staged on the same
 // root run at once. Under `-race` (the `go` CI job) this was a reported DATA RACE on
 // `frameState.touched` — written under the root lock, read under `a.mu` — before the write took
-// `a.mu`. Without `-race` it is an invariant guard only.
+// `a.mu`. Without `-race` it is an invariant guard only, and under `-race` it is PROBABILISTIC:
+// with the fix removed it went red in about 1 run in 10 (measured twice), so one green CI run is
+// weak evidence. `TestAFrameStagedBetweenTheSurveyAndTheDropIsKept` is the deterministic guard on
+// the re-check this lock protects.
 func TestTheFrameSweepDoesNotRaceStaging(t *testing.T) {
 	g := newRig(t, 1<<30)
 	done := make(chan struct{})
@@ -417,4 +420,84 @@ func TestTheFrameSweepDoesNotRaceStaging(t *testing.T) {
 		}
 	}
 	<-done
+}
+
+// TestATornFinalJournalLineStillStartsAndIsRepaired: a crash mid-append leaves this store's journal
+// with an unterminated last line that is the start of its own record — both shorter than the
+// record's head and longer. `Open` admits it (refusing it would be the restart outage AP1 exists
+// against), truncates it so the next append starts a clean line, and the journal then holds only
+// whole records and reopens.
+//
+// RED on #258's first head, which refused every unterminated last line.
+func TestATornFinalJournalLineStillStartsAndIsRepaired(t *testing.T) {
+	own := `{"event":"transcript-deleted","root":"s-0001","owner":"user:u_alpha","host":"host-a","reason":"retention",` +
+		`"at":"2000-04-01T03:04:06Z"}` + "\n"
+	for name, frag := range map[string]string{
+		"shorter than the head": `{"event":"transc`,
+		"longer than the head":  `{"event":"transcript-deleted","root":"s-00`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newRig(t, 1<<30)
+			path := filepath.Join(g.dir, journalName)
+			if err := os.WriteFile(path, []byte(own+frag), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			a, err := Open(g.a.cfg)
+			if err != nil {
+				t.Fatalf("a torn final line of this store's own record refused startup: %v", err)
+			}
+			if got, _ := os.ReadFile(path); string(got) != own {
+				t.Fatalf("the torn line was not truncated: %q", got)
+			}
+			if _, err := a.AppendRecords(ownerA, up("s-0002", "", "1"), "main", recs(0, 1)); err != nil {
+				t.Fatal(err)
+			}
+			g.clk.Add(91 * 24 * time.Hour)
+			if deleted, err := a.Sweep(); err != nil || len(deleted) != 1 {
+				t.Fatalf("POSITIVE CONTROL: the sweep deleted %v (%v)", deleted, err)
+			}
+			if _, err := Open(a.cfg); err != nil {
+				t.Fatalf("after the repair and one more append the journal is refused: %v", err)
+			}
+		})
+	}
+}
+
+// TestAFrameStagedBetweenTheSurveyAndTheDropIsKept: the frame sweep surveys idle sequences under
+// `a.mu`, then re-checks each under its root's lock. A frame staged in between — placed there
+// deterministically through `afterFrameSurvey` — makes the sequence live again, and the re-check
+// must keep it; an untouched sequence surveyed in the same pass is dropped (control).
+func TestAFrameStagedBetweenTheSurveyAndTheDropIsKept(t *testing.T) {
+	g := newRig(t, 1<<30)
+	stage := func(root string, i int, chunk string) error {
+		u := up(root, "", "1")
+		u.Frame = &Frame{Index: i, Count: 3}
+		_, err := g.a.AppendRecords(ownerA, u, "main", []Record{{Src: "0", Rec: []byte(chunk)}})
+		return err
+	}
+	if err := stage("s-0001", 0, `{"a":`); err != nil {
+		t.Fatal(err)
+	}
+	if err := stage("s-0002", 0, `{"b":`); err != nil {
+		t.Fatal(err)
+	}
+	g.clk.Add(FrameIdle + time.Second)
+	g.a.afterFrameSurvey = func() {
+		if err := stage("s-0001", 1, `1,"c":`); err != nil {
+			t.Errorf("staging between the survey and the drop: %v", err)
+		}
+	}
+	if _, err := g.a.Sweep(); err != nil {
+		t.Fatal(err)
+	}
+	g.a.afterFrameSurvey = nil
+	if err := stage("s-0001", 2, `2}`); err != nil {
+		t.Fatalf("the sequence staged after the survey was dropped by it: %v", err)
+	}
+	if got := g.readBack("s-0001", "main"); len(got) != 1 {
+		t.Fatalf("stored %d record(s), want the one reassembled record", len(got))
+	}
+	if err := stage("s-0002", 1, `1,`); err == nil {
+		t.Fatal("CONTROL: the untouched idle sequence survived the sweep")
+	}
 }
