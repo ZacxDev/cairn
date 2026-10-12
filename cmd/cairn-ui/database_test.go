@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -139,9 +137,10 @@ func TestAWhitespaceDatabaseLineIsRefusedRatherThanReadAsUnset(t *testing.T) {
 // query — so without this wiring the failure surfaces at the first sign-in, which is
 // precisely the "looks healthy, serves nobody" shape this program's refusals exist against.
 //
-// 🔴 THE UNREACHABLE ADDRESS IS A PORT THIS TEST JUST CLOSED, NOT A MADE-UP ONE. Binding
-// `127.0.0.1:0`, reading the port and closing the listener leaves an address that is
-// certain to REFUSE rather than to hang or to resolve somewhere real — so the case is
+// 🔴 THE UNREACHABLE ADDRESS IS A PORT THIS TEST HOLDS, NOT A MADE-UP ONE. A socket bound
+// to `127.0.0.1:0` and never put into LISTEN (`aPortNothingIsListeningOn`) leaves an address
+// that is certain to REFUSE rather than to hang or to resolve somewhere real, and that
+// nothing else can bind while the case runs — so the case is
 // deterministic, needs no network, and cannot wander onto somebody else's service. A
 // literal port would be a bet on what is not listening on the machine running this.
 //
@@ -359,47 +358,4 @@ func TestWithNoDatabaseTheSurfaceComesUpSayingItHoldsNoInvitation(t *testing.T) 
 			"that has no database — and the Postgres tier's 'this path does not exist' assertion is "+
 			"then satisfied by a path nothing ever creates, on either branch", sessionFile, statErr)
 	}
-}
-
-// aPortNothingIsListeningOn binds an ephemeral port and gives it back closed.
-//
-// 🔴 IT IS A MEASURED ADDRESS RATHER THAN A CHOSEN NUMBER, and the difference is whether
-// the case is deterministic. A hard-coded port is a bet that nothing on the machine running
-// the suite is listening there — and the failure when that bet is lost is not a red test,
-// it is a connection that SUCCEEDS against somebody else's service and then fails as a
-// protocol error with a message nobody can act on. ⚠ There is a window between the close
-// and the child's dial in which something could take the port; it is the standard one, and
-// the direction is safe — a taken port produces a noisy failure here, never a false green,
-// because the assertion is that the process REFUSED.
-//
-// 🔴 SO IT IS ONLY FOR AN ADDRESS THAT MUST *NOT* ANSWER. Handed to a child as its OWN listen
-// port, the same window runs the other way: a stranger that takes the port answers in the child's
-// place, and its body is read as the child's — measured, when a parallel package's store server's
-// `unauthorized` was asserted against as the sign-in page and failed a publish. A child that must
-// answer binds `-port 0` and is reached through `presenceChild.serving`.
-func aPortNothingIsListeningOn(t *testing.T) int {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("no ephemeral port could be bound, so this case has no unreachable address to point at: %v", err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	if err := listener.Close(); err != nil {
-		t.Fatalf("the probe listener did not close, so %d may still be ACCEPTING and the refusal this "+
-			"case asserts would be about a successful connection: %v", port, err)
-	}
-	// A dial must now fail, or the address is not the unreachable one this case needs.
-	conn, dialErr := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
-	if dialErr == nil {
-		_ = conn.Close()
-		t.Fatalf("POSITIVE CONTROL FAILED: something is listening on 127.0.0.1:%d after the probe "+
-			"listener closed, so a 'connection refused' case pointed there would be measuring a "+
-			"successful connection to somebody else's service", port)
-	}
-	var opErr *net.OpError
-	if !errors.As(dialErr, &opErr) {
-		t.Fatalf("the probe dial failed with %v, which is not a network error — the address cannot be "+
-			"vouched for as refusing", dialErr)
-	}
-	return port
 }

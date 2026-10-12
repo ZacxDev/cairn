@@ -241,8 +241,9 @@ var servingLine = regexp.MustCompile(`cairn-ui: serving \d+ route\(s\) on (127\.
 // announce the port it BOUND, then for `/healthz` there to answer 200, and returns the base URL.
 //
 // 🔴 EVERY TEST THAT EXPECTS A `cairn-ui` CHILD TO ANSWER AN HTTP REQUEST GETS ITS ADDRESS FROM
-// HERE, NEVER FROM `aPortNothingIsListeningOn`. That helper's port is free only at the instant it
-// returns; handed to a child, it races every other process on the machine — and the nix build runs
+// HERE, NEVER FROM `aPortNothingIsListeningOn`. That helper's port is held BOUND by the test so that
+// it refuses, which no child can listen on; its earlier close-and-hand-back shape, given to a child,
+// raced every other process on the machine — and the nix build runs
 // every package's tests in parallel, so a sibling package's store server took one and its plain
 // `unauthorized` was read as the sign-in page. Here the kernel picks the port for the CHILD, and
 // `main` binds before it prints the line, so the address on the line is held by this child for as
@@ -343,7 +344,8 @@ func TestTheBinaryRefusesEachPresenceMisconfiguration(t *testing.T) {
 // TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped: a readable token file
 // whose CONTENT is refused at startup — a row for another owner (decision 15's wall), or a
 // malformed row — does NOT take the process down. The browser surface answers `/healthz` 200, the
-// agent port is connection-refused, and stderr names the file line, never a token.
+// agent listener is never bound (the port it was given stays the test's), and stderr names the
+// file line, never a token.
 func TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped(t *testing.T) {
 	_, journal := seededJournal(t, credentialLive)
 	for _, arm := range []struct {
@@ -363,9 +365,13 @@ func TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped(t *te
 			if err := os.WriteFile(tokens, []byte(arm.rows), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			// ⚠ The agent port is still a closed one, because this case asserts that NOTHING answers
-			// there — the direction in which a stranger taking it is a loud false RED, never a false
-			// green. The browser port is the child's own (`serving`): that one must ANSWER.
+			// 🔴 The agent port is HELD by this test (bound, never listening) for its whole life, not
+			// closed and handed over: the kernel was measured handing a just-closed port to the very
+			// next `:0` bind, which here is the child's own browser listener — and that then answered
+			// the "nothing accepts here" dial that used to stand below, failing the case under load.
+			// Held, nothing else can take it — so a child that tried to bind its agent
+			// listener despite the refused file could not, and exits "cannot bind … Refusing to start",
+			// which `serving` fails on. The browser port is the child's own (`serving`): that one must ANSWER.
 			agentAddr := fmt.Sprintf("127.0.0.1:%d", aPortNothingIsListeningOn(t))
 			c := startPresenceChild(t, journal,
 				"-presence-agent-addr", agentAddr, "-presence-tokens", tokens, "-presence-owner", presenceOwnerA.String())
@@ -385,9 +391,17 @@ func TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped(t *te
 				t.Fatalf("stderr carries a token:\n%s", out)
 			}
 			// The browser surface answering `/healthz` 200 was asserted by `serving` above.
-			if conn, err := net.DialTimeout("tcp", agentAddr, time.Second); err == nil {
-				_ = conn.Close()
-				t.Fatalf("the agent listener is accepting on %s although its token file was refused", agentAddr)
+			//
+			// 🔴 "THE AGENT IS NOT ACCEPTING" IS ASSERTED BY THE BIND FAILING, NOT BY A DIAL — a dial
+			// to a port this test holds can never connect, so the dial that used to stand here was
+			// unreachable once the port was held. A child that tried to bind the agent listener
+			// anyway either EXITS ("cannot bind … Refusing to start", which `serving` fails on) or,
+			// if a change kept it serving, says so in the refusal's own text, asserted here.
+			// ⚠ NAMED BLIND SPOT: a child that attempted the bind and SILENTLY discarded the error
+			// passes, because the held port is what stops it listening.
+			if strings.Contains(out, "presence agent listener cannot bind") {
+				t.Fatalf("the child tried to bind the agent listener on %s although its token file was refused:\n%s",
+					agentAddr, out)
 			}
 		})
 	}
