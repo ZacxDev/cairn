@@ -56,7 +56,9 @@ const (
 	// target-size zero from a page axe never inspected is the reassuring zero. The matrix-collapse
 	// refusal binds too: reachability over a collapsed matrix is a claim about one side. NOT bound:
 	// scripts, the content floor, header reading order, and overflow/axe at a non-touch rung — all
-	// still refused by the advisory job, which runs `gateAll` over the same walk.
+	// still refused by the advisory job, which runs `gateAll` over the same walk. ⚠ The walk's HARNESS
+	// preconditions (boot, sign-in, `LedgerAccounting`, `refuseJournalWorldFellBack`) run before any
+	// verdict and bind under BOTH gates: they say a measurement could not be taken, not that it failed.
 	gateTouch walkGate = "touch"
 )
 
@@ -1209,8 +1211,11 @@ func refuseWalkRegressionsUnder(captures []*Capture, gate walkGate) error {
 		refusals = append(refusals, headerRefusal)
 	}
 	if len(refusals) > 0 {
-		return fmt.Errorf("the walk (gate %s) measured %d regression class(es) over %d capture(s):\n  %s",
-			gate, len(refusals), len(captures), strings.Join(refusals, "\n  "))
+		// 🔴 THE SENTENCE UP TO "regression class(es)" IS A CONTRACT: `pwa_check.sh`'s `walk_refused`
+		// greps it to tell a sibling-masked (c) check from a harness that printed nothing, so the gate
+		// goes AFTER it — `TestTheRefusalLineIsTheOnePwaCheckGreps` applies the script's own regex.
+		return fmt.Errorf("the walk measured %d regression class(es) over %d capture(s) (gate %s):\n  %s",
+			len(refusals), len(captures), gate, strings.Join(refusals, "\n  "))
 	}
 	if all {
 		fmt.Printf("uiaudit:   REFUSALS: 0 horizontal overflow, 0 scripts outside the allowlist, %d/%d captures carry a decodable axe "+

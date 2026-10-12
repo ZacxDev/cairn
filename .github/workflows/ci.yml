@@ -2485,8 +2485,10 @@ jobs:
   # 🔴 THE BLOCKING HALF OF THE BROWSER WALK — S6b OF `claudedocs/plan-cairn-mobile-pwa.md` — AND THE
   # ONLY BROWSER JOB WITHOUT `continue-on-error`. It runs the SAME walk as `uiaudit`'s walk leg,
   # through the same `uiaudit/run.sh`, with `UIAUDIT_GATE=touch`: the verdict is decided by the touch
-  # refusals in `refuseWalkRegressions` (`uiaudit/main.go`, `walkGate` says exactly which) and by
-  # nothing else. No clause is re-implemented here; this job selects, the Go function decides.
+  # refusals in `refuseWalkRegressions` (`uiaudit/main.go`; `walkGate`'s doc is the ONE list of which
+  # classes bind) — plus the walk's own harness preconditions, which run before any verdict under
+  # either gate (the pod boots, sign-in takes, the ledger accounts, the journal world did not fall
+  # back). No clause is re-implemented here; this job selects, the Go function decides.
   #
   # 🔴 WHY THIS CAN BLOCK WHEN `uiaudit` CANNOT. `uiaudit` is advisory because it reaches third
   # parties on every run (the audit hub's edge, a CDN) and because its pixel diff moved on a chromium
@@ -2498,13 +2500,6 @@ jobs:
   # from; a cache outage reds this job. That is accepted and named, not hidden: it is the same
   # dependency the `nix` job, which also blocks, already has.
   #
-  # 🔴 WHAT IT REFUSES (each with its own message): touch REACHABILITY (`(pointer: coarse)` true at
-  # every touch capture, false at every other), axe `target-size` (WCAG 2.5.8) at the touch rungs,
-  # any text-entry input under 16px at the touch rungs, horizontal overflow at the touch rungs, and
-  # the instrument refusals those depend on (axe ran, the matrix did not collapse, inputs were
-  # measured per world). NOT here, still refused by the advisory job: scripts, the content floor,
-  # header reading order, overflow at a non-touch rung.
-  #
   # ⚠ "REQUIRED" IS AN OPERATOR SETTING, NOT THIS FILE. Without branch protection naming
   # `uiaudit-touch` a red row here does not stop a merge button; the PR that added this job names
   # the exact `gh api` call. On a docs-only change the job is SKIPPED like every gated job, and a
@@ -2513,6 +2508,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false') }}
+    # A required check that hangs holds every merge; the walk caps itself at 8 minutes, the nix
+    # fetch and the builds before it do not. Measured: ~4 minutes end to end on the controls' runs,
+    # before the guards step (~35s locally) was added.
+    timeout-minutes: 30
     # The same pin as `uiaudit`, for the reason written there: without it a `go` directive in the
     # module graph downloads a newer toolchain silently.
     env:
@@ -2610,16 +2609,40 @@ jobs:
           esac
           chromium --version
 
+      # 🔴 THE GATE'S OWN GUARDS, IN THE JOB THAT BLOCKS. They also run in `uiaudit`'s walk leg, but
+      # that job is `continue-on-error`, so without this step an edit that silently widened or emptied
+      # the touch selection (`bound := all`), or disabled axe's `target-size` rule, would leave this
+      # job green and only an advisory row red. The named set: the selection, the refusals it selects,
+      # the `pwa_check.sh` contract, and the real-chromium controls that each touch measurement can
+      # go non-zero. Each name must print its OWN `--- PASS` line; a name that matched nothing fails.
+      - name: the touch gate's own guards and browser controls, under the pinned chromium
+        run: |
+          set -uo pipefail
+          tests='TestTheTouchGateBindsExactlyTheTouchRefusals TestTheWalkGateFlagAcceptsExactlyTwoValues TestTheRefusalLineIsTheOnePwaCheckGreps TestTheWalkRefusalsCanEachGoRED TestTheTouchRefusalsBindOnlyTheTouchRungs TestTheReachabilityRefusalRefusesAnEMPTYSide TestTheInputFontThresholdIsSixteenPixelsExactly TestTouchEmulationReachesThePageAtEveryRung TestTheReachabilityRefusalGoesREDWhenEmulationIsOff TestTheTargetSizeRuleRunsOnlyBecauseItIsEnabled TestTheInputFontMeasurementSeesA14pxInput TestAnOverflowingPageIsRecordedAsOverflowAtATouchRung'
+          pattern="^($(echo $tests | tr ' ' '|'))\$"
+          rc=0
+          ( cd uiaudit && go test -count=1 -v -run "$pattern" . ) > /tmp/touch-guards.log 2>&1 || rc=$?
+          grep -E '^(=== RUN|--- |[[:space:]]+--- (FAIL|SKIP)|ok|FAIL|panic)' /tmp/touch-guards.log || true
+          if [ "$rc" != "0" ] || grep -qE '^[[:space:]]*--- (FAIL|SKIP)' /tmp/touch-guards.log; then
+            echo "::error::the touch gate's guards failed or skipped (go test rc $rc)"
+            exit 1
+          fi
+          for t in $tests; do
+            if ! grep -qE "^--- PASS: $t \(" /tmp/touch-guards.log; then
+              echo "::error::$t printed no top-level PASS line — it did not run"
+              exit 1
+            fi
+          done
+          echo "touch gate guards: $(echo $tests | wc -w) named, each PASSED"
+
       # 🔴 THE GATE. Three things must ALL hold, and each is read from the walk's own output rather than
       # inferred from an exit code alone:
       #   1. `run.sh` exited 0 (a refusal exits 1, a harness failure 1, a bad `-gate` 2);
       #   2. the walk printed `touchGatePassed` — the constant in `uiaudit/main.go`, checked to still
       #      say so before it is used as a needle (the `verify-push` pattern), so an early `return nil`
       #      added before the verdict cannot pass for one;
-      #   3. each of the four touch verdict lines printed exactly once. A walk that ran the ungated
-      #      verdict (an env var lost on the way to `run.sh`) prints a different REFUSALS line and fails 3.
-      # The hub variables are stripped from the walk's environment as a second wall: the job references
-      # no secret, and the touch gate never pushes.
+      #   3. each of the four touch verdict lines printed exactly once — the only check that sees an
+      #      early return INSIDE `refuseWalkRegressionsUnder`, since the needle prints after it returns.
       - name: the walk's touch refusals — BLOCKING
         env:
           UIAUDIT_WORK: ${{ runner.temp }}/uiaudit-touch
@@ -2633,8 +2656,7 @@ jobs:
           fi
           mkdir -p "$UIAUDIT_WORK"
           rc=0
-          env -u CAIRN_AUDIT_PUSH_URL -u CAIRN_AUDIT_PUSH_TOKEN -u CAIRN_AUDIT_API_URL -u CAIRN_AUDIT_API_TOKEN \
-            ./uiaudit/run.sh 2>&1 | tee "$UIAUDIT_WORK/walk.log" || rc=$?
+          ./uiaudit/run.sh 2>&1 | tee "$UIAUDIT_WORK/walk.log" || rc=$?
           if [ "$rc" != "0" ]; then
             echo "::error::the touch-gated walk exited $rc — a touch refusal (its message is above, under 'regression class'), or a harness that could not measure"
             exit 1

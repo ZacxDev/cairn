@@ -148,7 +148,9 @@ def test_the_hub_secrets_reach_ONE_step_in_ONE_leg():
 #: The steps `uiaudit-touch` SHARES with `uiaudit`, by label. They must be byte-identical in both jobs:
 #: the browser that blocks a merge is S6a's pinned chromium only while its install is the SAME text.
 SHARED_WITH_UIAUDIT = [label for label, leg in LEDGER[:7]]
-TOUCH_LEDGER = SHARED_WITH_UIAUDIT + ["the walk's touch refusals — BLOCKING"]
+GUARDS = "the touch gate's own guards and browser controls, under the pinned chromium"
+GATE = "the walk's touch refusals — BLOCKING"
+TOUCH_LEDGER = SHARED_WITH_UIAUDIT + [GUARDS, GATE]
 
 
 def _step(job: str, label: str) -> str:
@@ -176,15 +178,99 @@ def test_the_touch_job_is_exactly_these_steps_and_shares_the_pinned_install_BYTE
 def test_the_touch_job_BLOCKS_holds_no_secret_and_runs_the_walk_under_the_touch_gate():
     """The plan's closing condition, part 3, read off the workflow file: NOT `continue-on-error`."""
     touch = JOBS["uiaudit-touch"]
-    assert "continue-on-error" not in touch
+    # As a KEY, at the job or at any step — the job's comments may name the word.
+    assert not re.search(r"^\s+continue-on-error:", touch, re.M)
     assert "secrets." not in touch
     # The advisory job is unchanged in this respect: it stays non-blocking.
     assert re.search(r"^    continue-on-error: true$", JOBS["uiaudit"], re.M)
-    gate = _step(touch, "the walk's touch refusals — BLOCKING")
-    assert _if(gate) is None, "the gate step must run whenever the job does"
-    assert re.search(r"^          UIAUDIT_GATE: touch$", gate, re.M)
-    assert "./uiaudit/run.sh" in gate
-    assert "env -u CAIRN_AUDIT_PUSH_URL -u CAIRN_AUDIT_PUSH_TOKEN -u CAIRN_AUDIT_API_URL -u CAIRN_AUDIT_API_TOKEN" in gate
+    assert re.search(r"^    timeout-minutes: 30$", touch, re.M), "a hung required check holds every merge"
+    for label in (GUARDS, GATE):
+        assert _if(_step(touch, label)) is None, f"{label!r} must run whenever the job does"
+    assert re.search(r"^          UIAUDIT_GATE: touch$", _step(touch, GATE), re.M)
+
+
+def _normalised(step: str) -> str:
+    return "\n".join(ln.rstrip() for ln in step.splitlines() if ln.strip())
+
+
+#: 🔴 THE TWO STEPS THIS JOB OWNS, PINNED AS WHOLE NORMALISED STRINGS. A substring check was walkable:
+#: an `exit 0` as the step's first line, a dropped rc check, an inverted count, `|| true` for
+#: `|| rc=$?`, or `UIAUDIT_GATE=all` inline each left every assertion above green (measured in
+#: round 1 of the PR's audit). Any edit to these steps must edit this literal too, in the same diff.
+GUARDS_STEP = r"""name: the touch gate's own guards and browser controls, under the pinned chromium
+        run: |
+          set -uo pipefail
+          tests='TestTheTouchGateBindsExactlyTheTouchRefusals TestTheWalkGateFlagAcceptsExactlyTwoValues TestTheRefusalLineIsTheOnePwaCheckGreps TestTheWalkRefusalsCanEachGoRED TestTheTouchRefusalsBindOnlyTheTouchRungs TestTheReachabilityRefusalRefusesAnEMPTYSide TestTheInputFontThresholdIsSixteenPixelsExactly TestTouchEmulationReachesThePageAtEveryRung TestTheReachabilityRefusalGoesREDWhenEmulationIsOff TestTheTargetSizeRuleRunsOnlyBecauseItIsEnabled TestTheInputFontMeasurementSeesA14pxInput TestAnOverflowingPageIsRecordedAsOverflowAtATouchRung'
+          pattern="^($(echo $tests | tr ' ' '|'))\$"
+          rc=0
+          ( cd uiaudit && go test -count=1 -v -run "$pattern" . ) > /tmp/touch-guards.log 2>&1 || rc=$?
+          grep -E '^(=== RUN|--- |[[:space:]]+--- (FAIL|SKIP)|ok|FAIL|panic)' /tmp/touch-guards.log || true
+          if [ "$rc" != "0" ] || grep -qE '^[[:space:]]*--- (FAIL|SKIP)' /tmp/touch-guards.log; then
+            echo "::error::the touch gate's guards failed or skipped (go test rc $rc)"
+            exit 1
+          fi
+          for t in $tests; do
+            if ! grep -qE "^--- PASS: $t \(" /tmp/touch-guards.log; then
+              echo "::error::$t printed no top-level PASS line — it did not run"
+              exit 1
+            fi
+          done
+          echo "touch gate guards: $(echo $tests | wc -w) named, each PASSED"
+"""
+
+GATE_STEP = r"""name: the walk's touch refusals — BLOCKING
+        env:
+          UIAUDIT_WORK: ${{ runner.temp }}/uiaudit-touch
+          UIAUDIT_GATE: touch
+        run: |
+          set -uo pipefail
+          needle='uiaudit: TOUCH GATE PASSED'
+          if ! grep -qF "const touchGatePassed = \"$needle" uiaudit/main.go; then
+            echo "::error::this step greps for '$needle', which uiaudit/main.go's touchGatePassed no longer starts with; the gate would match nothing"
+            exit 1
+          fi
+          mkdir -p "$UIAUDIT_WORK"
+          rc=0
+          ./uiaudit/run.sh 2>&1 | tee "$UIAUDIT_WORK/walk.log" || rc=$?
+          if [ "$rc" != "0" ]; then
+            echo "::error::the touch-gated walk exited $rc — a touch refusal (its message is above, under 'regression class'), or a harness that could not measure"
+            exit 1
+          fi
+          if ! grep -qF "$needle" "$UIAUDIT_WORK/walk.log"; then
+            echo "::error::the walk exited 0 without printing '$needle', so it never reached the touch verdict"
+            exit 1
+          fi
+          for line in 'uiaudit:   GATE touch — REFUSALS: 0 horizontal overflow over ' \
+                      'uiaudit:   TOUCH REACHABILITY refusal PASSED: ' \
+                      'uiaudit:   TOUCH TARGET SIZE refusal PASSED: ' \
+                      'uiaudit:   INPUT FONT refusal PASSED: '; do
+            n=$(grep -cF "$line" "$UIAUDIT_WORK/walk.log" || true)
+            if [ "$n" != "1" ]; then
+              echo "::error::'$line' printed $n time(s), want exactly 1"
+              exit 1
+            fi
+            grep -F "$line" "$UIAUDIT_WORK/walk.log"
+          done
+"""
+
+
+def test_the_touch_jobs_own_steps_are_pinned_WHOLE():
+    touch = JOBS["uiaudit-touch"]
+    assert _normalised(_step(touch, GUARDS)) == _normalised(GUARDS_STEP)
+    assert _normalised(_step(touch, GATE)) == _normalised(GATE_STEP)
+
+
+def test_every_test_the_guards_step_names_is_declared_in_the_uiaudit_module():
+    """A name that matches no `func Test…` would be refused at run time (no PASS line); this says so
+    before CI does, and pins the list against a rename on the Go side."""
+    from pathlib import Path
+    mod = Path(__file__).resolve().parent.parent / "uiaudit"
+    declared = set()
+    for f in mod.glob("*_test.go"):
+        declared |= set(_go_test_funcs(f.read_text(encoding="utf-8")))
+    (names,) = re.findall(r"^          tests='([^']+)'$", _step(JOBS["uiaudit-touch"], GUARDS), re.M)
+    missing = [n for n in names.split() if n not in declared]
+    assert len(names.split()) == 12 and not missing, missing
 
 
 def test_the_touch_gates_needle_and_verdict_lines_are_ones_uiaudit_actually_prints():
@@ -193,7 +279,7 @@ def test_the_touch_gates_needle_and_verdict_lines_are_ones_uiaudit_actually_prin
     only ever pass). Text only: that the walk prints them is the live run's claim."""
     from pathlib import Path
     main = (Path(__file__).resolve().parent.parent / "uiaudit/main.go").read_text(encoding="utf-8")
-    gate = _step(JOBS["uiaudit-touch"], "the walk's touch refusals — BLOCKING")
+    gate = _step(JOBS["uiaudit-touch"], GATE)
     (needle,) = re.findall(r"^          needle='([^']+)'$", gate, re.M)
     assert f'const touchGatePassed = "{needle}' in main
     lines = re.findall(r"'(uiaudit:   [^']+)'", gate)

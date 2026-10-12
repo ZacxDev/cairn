@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -760,6 +762,36 @@ func TestTheWalkGateFlagAcceptsExactlyTwoValues(t *testing.T) {
 		}
 		if err := refuseWalkRegressionsUnder(cleanWalk(), walkGate(in)); err == nil {
 			t.Errorf("refuseWalkRegressionsUnder accepted gate %q", in)
+		}
+	}
+}
+
+// TestTheRefusalLineIsTheOnePwaCheckGreps applies `pwa_check.sh`'s OWN `walk_refused` pattern, read
+// out of the script, to a real refusal under BOTH gates. That line is how the script tells a (c)
+// check masked by a sibling's refusal from a harness that printed nothing; a reworded sentence
+// sends every real (c) failure to "could not vouch" (exit 2) and the self-test to plain-loop 0/3,
+// while an honest tree stays green — so only a behavioural pin sees it. Watched RED on the S6b
+// draft that put "(gate %s)" inside the sentence.
+func TestTheRefusalLineIsTheOnePwaCheckGreps(t *testing.T) {
+	script, err := os.ReadFile("pwa_check.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`walk_refused\(\) \{[^\n]*grep -qE "([^"]+)"`).FindSubmatch(script)
+	if m == nil {
+		t.Fatal("cannot find walk_refused's grep -qE pattern in pwa_check.sh; this pin would compare against nothing")
+	}
+	re := regexp.MustCompile(string(m[1]))
+	for _, g := range []walkGate{gateAll, gateTouch} {
+		cs := cleanWalk()
+		captureAt(cs, Mobile).Touch.SmallInputs = []SmallInput{{Selector: "#q", FontPx: 14}}
+		err := refuseWalkRegressionsUnder(cs, g)
+		if err == nil {
+			t.Fatalf("gate %s: the 14px input was not refused, so the pattern below is tested against nothing", g)
+		}
+		if !re.MatchString(err.Error()) {
+			t.Errorf("gate %s: pwa_check.sh's walk_refused pattern %q does not match the refusal line %q",
+				g, m[1], strings.SplitN(err.Error(), "\n", 2)[0])
 		}
 	}
 }
