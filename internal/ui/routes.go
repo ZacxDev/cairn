@@ -259,11 +259,11 @@ var routes = map[routeKey]route{
 	{"GET", StylesheetHashedPath}: {(*Server).handleHashedStylesheet, classPublic},
 
 	// 🔴 THE FILTER SCRIPT — the only script row in THIS literal; `pwa.js`'s row (S4) is added beside
-	// the icon rows by `pwa.go`'s `init`. A computed, content-hashed EXACT key for
-	// the stylesheet row's reasons above, and `classPublic` for the stylesheet's reason: it consults
-	// no authority and answers identical bytes to everybody. Only the scope page links it, and only
-	// `AllowedScriptSources` may name it — see `script.go` for the allowlist that replaced this
-	// surface's zero-script property, and the three guards that hold it.
+	// the icon rows by `pwa.go`'s `init`, and `join.js`'s by `join.go`'s. A computed, content-hashed
+	// EXACT key for the stylesheet row's reasons above, and `classPublic` for the stylesheet's
+	// reason: it consults no authority and answers identical bytes to everybody. Only the scope
+	// page links it, and only `AllowedScriptSources` may name it — see `script.go` for the
+	// allowlist that replaced this surface's zero-script property, and the three guards that hold it.
 	{"GET", FilterScriptPath}: {(*Server).handleFilterScript, classPublic},
 
 	// 🔴 THE WEB APP MANIFEST (S2 of the mobile plan, `pwa.go`). A FIXED path, and `classPublic` because

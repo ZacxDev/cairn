@@ -128,7 +128,7 @@ func TestTheWalkRefusalsCanEachGoRED(t *testing.T) {
 		t.Fatalf("POSITIVE CONTROL FAILED: a clean walk over all %d widths was REFUSED (%v). Every red "+
 			"below is then satisfied by a gate that refuses everything.", len(Viewports), err)
 	}
-	// …and a clean walk in which a page carries the ONE allowlisted script, once, is clean too —
+	// …and a clean walk in which a page carries an allowlisted script (the filter), once, is clean too —
 	// or every script refusal below is satisfied by a gate that still refuses any script at all,
 	// which is the pre-allowlist gate this one replaced.
 	withFilter := cleanWalk()

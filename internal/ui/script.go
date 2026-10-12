@@ -37,7 +37,7 @@ import (
 // `g.Text` or a quoted attribute value; the script READS what the server already escaped into a
 // `data-filter` attribute and writes only `hidden` and a count's `textContent`. And
 // `rawban_test.go` still bans `g.Raw`/`g.Rawf`: the tag below is built from `h.Script`/`h.Src`, so
-// the one script element is as structurally ordinary as a `<link>`.
+// the filter's script element is as structurally ordinary as a `<link>`.
 //
 // ⚠ AND THE SAME FLAKE RULE AS `app.css`: `//go:embed` on a file `flake.nix`'s `onlyGo` filter does
 // not carry stops compilation dead in the sandbox, so the filter names this file explicitly.

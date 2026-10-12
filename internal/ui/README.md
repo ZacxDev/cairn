@@ -363,8 +363,9 @@ package *emits*, they all still hold, and none of them is weakened by what follo
 
 What moved is a claim this section and `uiaudit` were both making one step wider than their
 evidence. The XSS story partly rests on **the page carrying no script but the allowlisted
-ones** — it was "no script at all" until the scope page's entry filter (see the section on the
-one script below); `uiaudit`'s `refuseWalkRegressions` refuses any capture holding an inline
+ones** — it was "no script at all" until the scope page's entry filter (see the section on
+"the ONE script" below; the allowlist has since grown to three: `filter.js`, `pwa.js`,
+`join.js`); `uiaudit`'s `refuseWalkRegressions` refuses any capture holding an inline
 script, a `src` `ui.AllowedScriptSources` does not name, or an allowlisted one twice, and is the
 gate behind it. **That gate boots its own pod on loopback over a temp directory it created**,
 so its zeros are a property of the ORIGIN's own bytes. They are structurally incapable of
@@ -2089,9 +2090,11 @@ it. Three constraints decided the shape, and each of them refused an obvious alt
 
 - **No JavaScript.** Tabs are where a browser surface usually grows its first script, and
   at the time this one had none and `uiaudit` asserted `document.scripts.length == 0` on every
-  page. ⚠ The surface has since grown exactly ONE script, the scope page's entry filter, on an
-  operator decision (see the section on it below); the entry page still carries none, and both
-  guards now refuse any script outside `ui.AllowedScriptSources`. The argument here is
+  page. ⚠ The surface has since grown THREE scripts, each on an operator decision: the scope
+  page's entry filter (see the section on it below), `pwa.js` on every frame of an armed
+  deployment (Phase S) and the fragment join page's `join.js` (Phase W); the entry page still
+  carries none of its own (only an armed frame's `pwa.js`), and both guards now refuse any script outside
+  `ui.AllowedScriptSources`. The argument here is
   unchanged by it: two server-rendered links cost nothing a script would have bought — a shareable URL, a
   working back button and a browser-native reload come free, which is `searchForm`'s ruling
   for the same shape.
@@ -2771,7 +2774,12 @@ preview refs follow the same order.
 An mtime of 0 (stat failed) renders no timestamp rather than the epoch; a zero clock renders dates.
 The entry page's provenance block gains an `updated` row.
 
-**The ONE script.** The scope page's entry filter is `filter.js`, embedded, served at a
+**The ONE script.** *(One at the time; the allowlist has since grown to three — `pwa.js` (see "One
+more script, admitted by the allowlist and nothing else") and `join.js` (Phase W). The CLAIM below
+holds for each; the GUARDS below see only `filter.js` — the renderer guard and the walk render
+unarmed, provider-less pages, which link neither of the others — so each later script has its
+own: `TestTheArmedPWAHeadAddsOnlyThePWAScript` and `TestThePWAScriptTouchesOnlyWhatItSays`;
+`TestTheFragmentJoinPageMovesTheTokenThroughTheScript` and `TestTheJoinScriptTouchesOnlyWhatItSays`.)* The scope page's entry filter is `filter.js`, embedded, served at a
 content-hashed `GET /static/filter.<12 hex>.js` (`classPublic`, `immutable`, `text/javascript`,
 `nosniff`), linked only from the scope page. It is a case-insensitive SUBSEQUENCE match, per field,
 over the ref, title, aliases and tags the server put in each row's `data-filter`; every
@@ -3904,8 +3912,8 @@ caller's raw bytes; every value survives, in sorted key order. A query naming ne
   off entirely, a lower bound reads `(≥N)`.
 - 🔴 **Aliases are rendered `hidden` on the entry card, and `filter.js` reveals one only when it is WHY
   the row matched** — a term that matches the alias and no other field on that row. The script still
-  writes only `hidden` (and the count's text), so `TestTheFilterScriptTouchesOnlyWhatItSays` and the
-  one-entry `AllowedScriptSources` are unchanged. Without script, no alias is visible.
+  writes only `hidden` (and the count's text), so `TestTheFilterScriptTouchesOnlyWhatItSays` and
+  `AllowedScriptSources` (one entry at the time) are unchanged. Without script, no alias is visible.
 - Tag chips: squarer, tighter pill, `#` drawn by CSS (`::before`), so link text, `data-filter` and every
   test reading `<a …>tag</a>` are unchanged. Breadcrumbs: `text-xs`, pulled up toward the header, and the
   card after them drops its top margin; still wrap, and still 44px under a coarse pointer (S1's block).
@@ -3968,7 +3976,8 @@ battery row (`ui-pwa-head-emits-an-unversioned-script`).
 
 ## 🔴 One more script, admitted by the allowlist and nothing else
 
-`AllowedScriptSources()` is now exactly `[filter.js, pwa.js]`, both content-hashed `classPublic` rows.
+`AllowedScriptSources()` became exactly `[filter.js, pwa.js]` here, both content-hashed `classPublic` rows
+(since grown to three: Phase W appends `join.js`).
 `pwaHead` emits `pwa.js` (`defer`) on every frame of an ARMED deployment — sign-in included, because an
 install starts there — and nothing on an unarmed one. The script:
 - reveals the header's `<button class="install" hidden>` (shell frame only) on `beforeinstallprompt`,

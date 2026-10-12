@@ -61,8 +61,9 @@ type Capture struct {
 	// name, and an allowlisted one present twice.
 	//
 	// ⚠ IT WAS `ScriptCount` AND THE REFUSAL WAS `!= 0`, until the operator chose a client-side
-	// entry filter for the scope page. A count cannot tell the one allowlisted script from an
-	// injected one, so the field became the list and the refusal became the allowlist.
+	// entry filter for the scope page. A count cannot tell an allowlisted script (three
+	// since: `filter.js`, `pwa.js`, `join.js`) from an injected one, so the field became the list
+	// and the refusal became the allowlist.
 	//
 	// 🔴 AND ITS SCOPE IS THE ORIGIN'S OWN DOM RATHER THAN A READER'S — MEASURED, NOT FEARED,
 	// AND THE ZERO IS ALREADY FALSE OF THE DEPLOYED SURFACE. The walk builds its own world:
