@@ -1238,9 +1238,9 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/plugins-e2e.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/plugins-e2e.txt || true)
           echo "plugins e2e: passes=$passes fails=$fails"
-          # 10 assertions, measured when the script landed (S3b); `EXPECTED` in the script moves with it.
-          if [ "$passes" -lt 10 ] || [ "$fails" -ne 0 ]; then
-            echo "REFUSING: $passes PASS / $fails FAIL lines, and 10 / 0 were measured"
+          # 11 assertions, measured when the script landed (S3b); `EXPECTED` in the script moves with it.
+          if [ "$passes" -lt 11 ] || [ "$fails" -ne 0 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL lines, and 11 / 0 were measured"
             exit 1
           fi
 

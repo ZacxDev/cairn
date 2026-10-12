@@ -104,7 +104,8 @@ func TestTheAgentShipsThroughThePodOnce(t *testing.T) {
 // run starts from the old cursor, the pod answers 409 naming where it is, and every record and
 // blob lands EXACTLY once.
 func TestALostAcknowledgementIsResumedNotDuplicated(t *testing.T) {
-	for _, lost := range []int64{2, 5} { // a records request in the middle; a later one
+	resumed := 0
+	for _, lost := range []int64{1, 2, 3, 5} { // stored requests and (at this request bound) a staged frame
 		w := loadWorld(t)
 		e := materialize(t, w, "cc-rich")
 		p := newPod(t, podOpts{})
@@ -117,10 +118,15 @@ func TestALostAcknowledgementIsResumedNotDuplicated(t *testing.T) {
 		if sum := mustRun(t, a); sum.Refused != 0 {
 			t.Fatalf("lost answer %d: run 2 %+v\n%s", lost, sum, log.String())
 		}
-		if !strings.Contains(log.String(), "resume ") {
-			t.Fatalf("lost answer %d: no resume was logged — the case did not exercise the 409\n%s", lost, log.String())
+		// A lost answer to a STORED request is resumed through the 409; a lost answer to a staged
+		// frame stored nothing and needs none. Both must end stored exactly once.
+		if strings.Contains(log.String(), "resume ") {
+			resumed++
 		}
 		assertWorldStoredOnce(t, w, e, p)
+	}
+	if resumed < 2 {
+		t.Fatalf("only %d of 4 cases resumed through a 409 — the cases did not exercise it", resumed)
 	}
 }
 
@@ -151,13 +157,14 @@ func TestOpencodeCursorsChainThroughThePod(t *testing.T) {
 	}
 }
 
-// TestARecheckRefusalHoldsTheStreamAndTheRestShips: the pod's 422 holds ONE stream for good — the
-// session's other streams still ship, the refusal is logged, and the next run sends nothing more of
-// the held stream.
-func TestARecheckRefusalHoldsTheStreamAndTheRestShips(t *testing.T) {
+// TestAFieldRecheckRefusalHoldsTheStreamAndTheRestShips: a 422 the sink could not answer with a
+// placeholder (it names a request FIELD) holds ONE stream for good — the session's other streams
+// still ship, the refusal is logged, and the next run sends nothing more of the held stream.
+func TestAFieldRecheckRefusalHoldsTheStreamAndTheRestShips(t *testing.T) {
 	w := loadWorld(t)
 	e := materialize(t, w, "cc-rich")
-	e.sink.recheck = "subagent:ba0c6809460e5295"
+	const held = "subagent:ba0c6809460e5295"
+	e.sink.fail = map[string]error{held: &RecheckRefusal{Record: -1, Field: "stream"}}
 	var log bytes.Buffer
 	a := newAgent(t, e, oneInstance, &fakeRunner{}, &log)
 	sum := mustRun(t, a)
@@ -166,12 +173,13 @@ func TestARecheckRefusalHoldsTheStreamAndTheRestShips(t *testing.T) {
 		len(spooled(t, e, "personal", id, "subagent:df83d3cb21cb55e1")) == 0 {
 		t.Fatalf("run 1: %+v — want the one refusal and the other streams shipped", sum)
 	}
-	st := a.State.Sessions[id].Streams["subagent:ba0c6809460e5295"]
-	if st.Refused == "" || st.Offset != 0 || !strings.Contains(log.String(), "HOLD "+id+"/subagent:ba0c6809460e5295") {
+	st := a.State.Sessions[id].Streams[held]
+	if st.Refused == "" || st.Offset != 0 || !strings.Contains(log.String(), "HOLD "+id+"/"+held) {
 		t.Fatalf("the refused stream is not held: %+v\n%s", st, log.String())
 	}
-	e.sink.recheck = "" // even a pod that would now accept it gets nothing: the hold is final
-	if sum := mustRun(t, a); sum.Records != 0 || sum.Refused != 0 {
+	e.sink.fail = nil // even a pod that would now accept it gets nothing: the hold is final
+	first := e.sink.attempts[held]
+	if sum := mustRun(t, a); sum.Records != 0 || sum.Refused != 0 || e.sink.attempts[held] != first {
 		t.Fatalf("run 2 resent the held stream: %+v", sum)
 	}
 }

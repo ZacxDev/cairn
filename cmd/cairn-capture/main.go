@@ -240,8 +240,9 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 		fmt.Fprintln(stderr, "cairn-capture: --run needs -host, the label this host's capture token was minted for")
 		return exitUsage
 	}
-	if c.maxRequest < 4096 {
-		fmt.Fprintln(stderr, "cairn-capture: -max-request-bytes under 4096 leaves no room for a request")
+	if c.maxRequest < 4096 || c.maxRequest > capture.MaxRequestCeiling {
+		fmt.Fprintf(stderr, "cairn-capture: -max-request-bytes must be 4096–%d (the worker listener's own bound on a body)\n",
+			capture.MaxRequestCeiling)
 		return exitUsage
 	}
 	routing, err := client.Discover(getenv)
@@ -306,6 +307,9 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 		Sink:         sink,
 		State:        state,
 		Log:          stderr,
+		// 🔴 SAVED AS IT GOES, not only at the end: a run killed mid-pass keeps every acknowledgement
+		// and hold it had reached, and an opencode write's plan is on disk before the request leaves.
+		Checkpoint: func() error { return state.Save(c.state) },
 	}
 	sum, runErr := agent.Run()
 	// 🔴 THE STATE IS SAVED EVEN WHEN THE RUN ENDS LOUDLY: every watermark in it advanced on a 200,
@@ -313,7 +317,7 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 	if err := state.Save(c.state); err != nil {
 		return fail(fmt.Errorf("the state file %s could not be saved: %w", c.state, err))
 	}
-	fmt.Fprintf(stderr, "cairn-capture: run %s omitted=%d requests=%d\n", sum, sink.Omitted, sink.Requests)
+	fmt.Fprintf(stderr, "cairn-capture: run %s omitted=%d recheck-omitted=%d requests=%d\n", sum, sink.Omitted, sink.Rechecked, sink.Requests)
 	if runErr != nil {
 		return fail(runErr)
 	}

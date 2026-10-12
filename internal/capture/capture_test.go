@@ -198,38 +198,44 @@ type memSink struct {
 	pos       map[string]string   // instance/root/stream-or-blob → stored cursor
 	withdrawn map[string][]string // instance → roots
 	failRoot  string              // a root whose writes fail, to test isolation
-	recheck   string              // a stream name whose writes the "pod" refuses 422
+	fail      map[string]error    // stream name, or "blob:"+name → the error its write returns
+	attempts  map[string]int      // stream name, or "blob:"+name → writes attempted
 	declared  map[string][]string // instance/root → the last declared set
 }
 
 func newMemSink() *memSink {
 	return &memSink{records: map[string][]Record{}, blobs: map[string][]byte{}, pos: map[string]string{},
-		withdrawn: map[string][]string{}, declared: map[string][]string{}}
+		withdrawn: map[string][]string{}, declared: map[string][]string{}, attempts: map[string]int{}}
 }
 
-func (s *memSink) Records(u Upload, stream string, recs []Record) error {
-	if u.Root == s.failRoot {
-		return fmt.Errorf("the sink refused %s", u.Root)
+func (s *memSink) Records(u Upload, stream string, recs []Record) (int, error) {
+	s.attempts[stream]++
+	if err := s.fail[stream]; err != nil {
+		return 0, err
 	}
-	if stream == s.recheck {
-		return &RecheckRefusal{Record: 0}
+	if u.Root == s.failRoot {
+		return 0, fmt.Errorf("the sink refused %s", u.Root)
 	}
 	k := u.Instance + "/" + u.Root + "/" + stream
 	if s.pos[k] != u.From {
-		return fmt.Errorf("stale from %q: the sink holds %s at %q", u.From, k, s.pos[k])
+		return 0, fmt.Errorf("stale from %q: the sink holds %s at %q", u.From, k, s.pos[k])
 	}
 	for _, r := range recs {
 		if r.End == "" {
-			return fmt.Errorf("record %s carries no end cursor", r.Src)
+			return 0, fmt.Errorf("record %s carries no end cursor", r.Src)
 		}
 	}
 	s.records[k] = append(s.records[k], recs...)
 	s.pos[k] = recs[len(recs)-1].End
 	s.declared[u.Instance+"/"+u.Root] = u.Declared
-	return nil
+	return len(recs), nil
 }
 
 func (s *memSink) Blob(u Upload, name, to string, data []byte) error {
+	s.attempts["blob:"+name]++
+	if err := s.fail["blob:"+name]; err != nil {
+		return err
+	}
 	if u.Root == s.failRoot {
 		return fmt.Errorf("the sink refused %s", u.Root)
 	}

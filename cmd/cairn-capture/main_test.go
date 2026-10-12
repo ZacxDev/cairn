@@ -207,14 +207,15 @@ func TestRunUsageRefusals(t *testing.T) {
 	open := tokenFile + ".open"
 	_ = os.WriteFile(open, []byte(runToken+"\n"), 0o644)
 	for name, args := range map[string][]string{
-		"two modes":           {"--run", "--dry-run", "-host", "host-a", "-worker", "http://127.0.0.1:9", "-capture-token-file", tokenFile},
-		"no host":             {"--run", "-worker", "http://127.0.0.1:9", "-capture-token-file", tokenFile},
-		"no worker":           {"--run", "-host", "host-a", "-capture-token-file", tokenFile},
-		"no token file":       {"--run", "-host", "host-a", "-worker", "http://127.0.0.1:9"},
-		"clear http":          {"--run", "-host", "host-a", "-worker", "http://worker.example.invalid", "-capture-token-file", tokenFile},
-		"open token file":     {"--run", "-host", "host-a", "-worker", "http://127.0.0.1:9", "-capture-token-file", open},
-		"unconfigured alias":  {"--run", "-host", "host-a", "-worker", "client=http://127.0.0.1:9", "-capture-token-file", "client=" + tokenFile},
-		"token for no worker": {"--run", "-host", "host-a", "-worker", "http://127.0.0.1:9", "-capture-token-file", tokenFile, "-capture-token-file", "client=" + tokenFile},
+		"two modes":                       {"--run", "--dry-run", "-host", "host-a", "-worker", "http://127.0.0.1:9", "-capture-token-file", tokenFile},
+		"no host":                         {"--run", "-worker", "http://127.0.0.1:9", "-capture-token-file", tokenFile},
+		"no worker":                       {"--run", "-host", "host-a", "-capture-token-file", tokenFile},
+		"no token file":                   {"--run", "-host", "host-a", "-worker", "http://127.0.0.1:9"},
+		"request over the worker's bound": {"--run", "-host", "host-a", "-worker", "http://127.0.0.1:9", "-capture-token-file", tokenFile, "-max-request-bytes", "8388609"},
+		"clear http":                      {"--run", "-host", "host-a", "-worker", "http://worker.example.invalid", "-capture-token-file", tokenFile},
+		"open token file":                 {"--run", "-host", "host-a", "-worker", "http://127.0.0.1:9", "-capture-token-file", open},
+		"unconfigured alias":              {"--run", "-host", "host-a", "-worker", "client=http://127.0.0.1:9", "-capture-token-file", "client=" + tokenFile},
+		"token for no worker":             {"--run", "-host", "host-a", "-worker", "http://127.0.0.1:9", "-capture-token-file", tokenFile, "-capture-token-file", "client=" + tokenFile},
 	} {
 		var errb bytes.Buffer
 		if code := run(args, &bytes.Buffer{}, &errb, env); code != exitUsage {

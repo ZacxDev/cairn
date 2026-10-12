@@ -38,6 +38,57 @@ type StreamState struct {
 	Cursor      string            `json:"cursor,omitempty"`
 	Refused     string            `json:"refused,omitempty"`
 	Units       map[string]string `json:"units,omitempty"`
+	// Pending is every write of an opencode stream that was SENT and not acknowledged whole, each
+	// as the units it carried and the cursor after each — saved BEFORE the request leaves.
+	//
+	// 🔴 WHY IT IS PERSISTED: an opencode cursor is a hash chain over the units as they were when
+	// sent, and opencode MUTATES units in place. When an acknowledgement is lost (a dropped answer,
+	// a kill before the state is saved) the instance holds a position the NEXT export can no longer
+	// reproduce, so its 409 would name a cursor nothing recomputes — the stream wedged for good,
+	// measured. The plan is what the 409 is matched against instead ([StreamState.reconcile]).
+	Pending [][]PendingUnit `json:"pending,omitempty"`
+}
+
+// PendingUnit is one unit of a sent, unacknowledged write: its key, the version (digest of its
+// raw bytes) that was sent, and the stream cursor once it is stored.
+type PendingUnit struct {
+	Key    string `json:"key"`
+	Digest string `json:"digest"`
+	End    string `json:"end"`
+}
+
+// maxPendingPlans bounds [StreamState.Pending]; the oldest plan goes first.
+const maxPendingPlans = 16
+
+// plan records a write about to be sent. A plan identical to the last one is not recorded twice.
+func (st *StreamState) plan(units []PendingUnit) {
+	if n := len(st.Pending); n > 0 && len(st.Pending[n-1]) == len(units) && len(units) > 0 &&
+		st.Pending[n-1][len(units)-1] == units[len(units)-1] {
+		return
+	}
+	st.Pending = append(st.Pending, units)
+	if len(st.Pending) > maxPendingPlans {
+		st.Pending = st.Pending[len(st.Pending)-maxPendingPlans:]
+	}
+}
+
+// reconcile adopts the position the instance says it holds when that position is the end of a
+// unit of a pending plan: every unit up to it is stored AS IT WAS SENT, and the cursor is that
+// position. It reports whether the position was found.
+func (st *StreamState) reconcile(storedTo string) bool {
+	for _, plan := range st.Pending {
+		for k, u := range plan {
+			if u.End != storedTo {
+				continue
+			}
+			for _, done := range plan[:k+1] {
+				st.Units[done.Key] = done.Digest
+			}
+			st.Cursor, st.Pending = storedTo, nil
+			return true
+		}
+	}
+	return false
 }
 
 // SessionState is everything the agent remembers about one ROOT session.
@@ -160,13 +211,22 @@ func (ss *SessionState) stream(name string) *StreamState {
 }
 
 // reset forgets every watermark, so the next ship starts from offset 0 (a re-ship, decision 16).
-// Refusals are kept: a rewritten file is no less rewritten for moving instance.
+// Refusals are kept, a stream's and a blob's alike: a rewritten file is no less rewritten, and a
+// name the re-check refuses no less refused, for moving instance.
 func (ss *SessionState) reset() {
 	for _, st := range ss.Streams {
 		st.Offset, st.Fingerprint, st.FPLen, st.Cursor = 0, "", 0, ""
 		st.Units = map[string]string{}
+		st.Pending = nil
 	}
-	ss.Blobs = map[string]BlobState{}
+	kept := map[string]BlobState{}
+	for name, b := range ss.Blobs {
+		if b.Refused != "" {
+			b.Cursor = ""
+			kept[name] = b
+		}
+	}
+	ss.Blobs = kept
 }
 
 // ErrRunning is [LockState]'s answer when another run holds the lock.

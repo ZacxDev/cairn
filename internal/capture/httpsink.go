@@ -40,6 +40,9 @@ const (
 	maxDeclared          = 256
 	maxRecordsPerRequest = 10000
 	maxFrames            = 4096
+	// MaxRequestCeiling is the worker's own bound on a request body (`worker.DefaultMaxBody`); a
+	// larger `-max-request-bytes` could only build requests the listener refuses.
+	MaxRequestCeiling = 8 << 20
 	// answerLimit bounds how much of a response body is read: every answer the worker gives is a
 	// one-line JSON object or a short line of text.
 	answerLimit = 64 << 10
@@ -69,9 +72,17 @@ type Endpoint struct {
 //     PLACEHOLDER naming its size and the bound, sent with the SAME `src` and cursor, so the stream
 //     moves on and the session's cursor is never wedged (decision 15's AP2 note). Counted in
 //     [HTTPSink.Omitted] and logged; the record's bytes never leave the host.
-//   - 422 (`recheck`): the pod's own redaction table matched something this agent sent.
-//     [RecheckRefusal]; the agent HOLDS that stream or blob for good and logs it — it never
-//     resends, and it has nothing else to send: every byte it sends was redacted on this host.
+//   - 422 (`recheck`) naming a RECORD or the BLOB: the pod's own redaction table matched something
+//     this agent already redacted. That one record (the pod names its index) or blob is replaced
+//     by a `refused-by-recheck` PLACEHOLDER — its bytes are never sent again and nothing the pod
+//     refused is ever stored — and the stream moves on; counted in [HTTPSink.Rechecked] and
+//     logged. ⚠ An agent decision, under O17 ("imperfect redaction accepted"): a hold was built
+//     first, and the pod's re-check was then MEASURED refusing clean data (its entropy rule on an
+//     encoded line), so a hold would freeze a stream for good on a false positive.
+//   - 422 naming a request FIELD (a name or a cursor): no placeholder can answer it — the name is
+//     the match. [RecheckRefusal]; the agent holds that stream or blob version and logs it.
+//   - 3xx: an error. The sink NEVER follows a redirect — the token and the body go nowhere but
+//     the configured URL.
 //   - 503 (`capture-disarmed`) and 507 (`quota`): the instance is not taking uploads. [HeldError]:
 //     nothing is advanced, so nothing is lost — the next run retries — and the instance gets NO
 //     further request in this run.
@@ -94,10 +105,31 @@ type HTTPSink struct {
 
 	// Omitted counts records and blobs replaced by a placeholder (413).
 	Omitted int
+	// Rechecked counts records and blobs the pod's re-check refused (422), replaced by a placeholder.
+	Rechecked int
 	// Requests counts the requests sent.
 	Requests int
 
 	stopped map[string]error
+	client  *http.Client
+}
+
+// Stopped is the error that ended uploads to an instance in this run (a 503, 507, 401 or 403), or
+// nil. The agent asks BEFORE reading a session bound for it, so a stopped instance costs one
+// request per run, not a re-read and re-redaction of the whole backlog.
+func (s *HTTPSink) Stopped(instance string) error { return s.stopped[instance] }
+
+// httpClient is the caller's client, or one that NEVER follows a redirect: a followed 307 would
+// carry the bearer token and the body to wherever the answer pointed.
+func (s *HTTPSink) httpClient() *http.Client {
+	if s.Client != nil {
+		return s.Client
+	}
+	if s.client == nil {
+		s.client = &http.Client{Timeout: 2 * time.Minute,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	}
+	return s.client
 }
 
 // ErrNotOwner is the uniform 409: the root is held by another (owner, host).
@@ -187,12 +219,14 @@ func loopbackHost(h string) bool {
 // ReadTokenFile reads a capture token from a file that only its owner may read. 🔴 The token is
 // never echoed: not in an error, not in a log.
 func ReadTokenFile(path string) (string, error) {
-	info, err := os.Lstat(path)
+	// `Stat`, not `Lstat`: a secret manager exposes a secret as a SYMLINK, so the checks below are
+	// made of the file the link resolves to.
+	info, err := os.Stat(path)
 	if err != nil {
 		return "", fmt.Errorf("the capture token file %s cannot be read: %w", path, err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("the capture token file %s is not a regular file", path)
+		return "", fmt.Errorf("the capture token file %s is not (a link to) a regular file", path)
 	}
 	if info.Mode().Perm()&0o077 != 0 {
 		return "", fmt.Errorf("the capture token file %s is readable by group or others (%#o); chmod 600 it", path, info.Mode().Perm())
@@ -272,12 +306,8 @@ func (s *HTTPSink) post(instance, path string, body []byte) (int, answer, error)
 	}
 	req.Header.Set("Authorization", "Bearer "+ep.Token)
 	req.Header.Set("Content-Type", "application/json")
-	client := s.Client
-	if client == nil {
-		client = &http.Client{Timeout: 2 * time.Minute}
-	}
 	s.Requests++
-	resp, err := client.Do(req)
+	resp, err := s.httpClient().Do(req)
 	if err != nil {
 		// The URL is ours; the error never carries the token (it is a header).
 		return 0, answer{}, fmt.Errorf("the upload to instance %s failed: %w", instance, err)
@@ -404,8 +434,11 @@ func quoteJSON(v string) []byte {
 // ⚠ NOT base64 of the whole line, which was built first and measured wrong: the pod's re-check
 // runs its entropy rule over a long base64 string and refused (422) a line with nothing secret in
 // it, holding the stream for good.
+//
+// 🔴 AND A LINE THAT IS JSON `null` IS WRAPPED TOO: it is a valid value, and the wire reads
+// `"rec":null` as "no rec" (400) — on every run, for good.
 func wireRec(rec []byte) []byte {
-	if json.Valid(rec) {
+	if json.Valid(rec) && !bytes.Equal(bytes.TrimSpace(rec), []byte("null")) {
 		return rec
 	}
 	var parts []any
@@ -445,6 +478,17 @@ func placeholder(size int, limit int64) []byte {
 	return []byte(fmt.Sprintf(`{"cairn_capture":"omitted","reason":"too-large","bytes":%d,"max_bytes":%d}`, size, limit))
 }
 
+// The placeholders for what the pod's re-check refused (422). Neither carries a byte of it.
+func recheckPlaceholder(size int) []byte {
+	return []byte(fmt.Sprintf(`{"cairn_capture":"omitted","reason":"refused-by-recheck","bytes":%d}`, size))
+}
+
+func recheckBlobPlaceholder(size int) []byte {
+	return []byte(fmt.Sprintf("cairn-capture: this file was omitted — the instance's redaction re-check refused its %d bytes\n", size))
+}
+
+const omittedPrefix = `{"cairn_capture":"omitted"`
+
 func blobPlaceholder(size int, limit int64) []byte {
 	return []byte(fmt.Sprintf("cairn-capture: this file was omitted — %d bytes is over the instance's %d-byte bound on one stored file\n", size, limit))
 }
@@ -476,18 +520,18 @@ func WireBlobName(rel string) string {
 }
 
 // Records implements [Sink].
-func (s *HTTPSink) Records(u Upload, stream string, recs []Record) error {
+func (s *HTTPSink) Records(u Upload, stream string, recs []Record) (int, error) {
 	if len(recs) == 0 {
-		return nil
+		return 0, nil
 	}
 	if _, err := s.endpoint(u.Instance); err != nil {
-		return err
+		return 0, err
 	}
 	// The wire bytes of every record, decided ONCE, so a resent request carries the same bytes.
 	wire := make([][]byte, len(recs))
 	for i, r := range recs {
 		if r.End == "" {
-			return fmt.Errorf("record %d of %s/%s carries no end cursor", i, u.Root, stream)
+			return 0, fmt.Errorf("record %d of %s/%s carries no end cursor", i, u.Root, stream)
 		}
 		wire[i] = wireRec(r.Rec)
 		if len(wire[i]) > s.maxRecord() {
@@ -498,7 +542,8 @@ func (s *HTTPSink) Records(u Upload, stream string, recs []Record) error {
 	from := u.From
 	solo := false
 	resumes := 0
-	for i := 0; i < len(recs); {
+	i := 0
+	for i < len(recs) {
 		// One request: as many records as fit, or one record framed.
 		envelope := len(s.header(u, from, recs[i].End)) + 32
 		j := i
@@ -522,22 +567,32 @@ func (s *HTTPSink) Records(u Upload, stream string, recs []Record) error {
 			status, ans, err = s.post(u.Instance, path, s.recordsBody(u, from, recs[i:j], wire[i:j]))
 		}
 		var rc *RecheckRefusal
-		if errors.As(err, &rc) && rc.Record >= 0 {
-			rc.Record += i
+		if errors.As(err, &rc) && rc.Field == "" && rc.Record >= 0 && i+rc.Record < j {
+			// The pod names the record's index in the REQUEST: exactly that record becomes a
+			// placeholder and the request is sent again. Its bytes are never resent.
+			k := i + rc.Record
+			if bytes.HasPrefix(wire[k], []byte(omittedPrefix)) {
+				return i, fmt.Errorf("instance %s refused even the placeholder for record %s (422)", u.Instance, recs[k].Src)
+			}
+			s.Rechecked++
+			s.logf("omitted record %s of %s/%s: the instance's redaction re-check refused it (422); a placeholder naming "+
+				"the omission is stored in its place and its bytes are not sent again", recs[k].Src, u.Root, stream)
+			wire[k] = recheckPlaceholder(len(wire[k]))
+			continue
 		}
 		if err != nil {
-			return err
+			return i, err
 		}
 		switch status {
 		case http.StatusOK:
 			if ans.StoredTo == nil || *ans.StoredTo != recs[j-1].End {
-				return fmt.Errorf("instance %s answered 200 without storing to %q", u.Instance, recs[j-1].End)
+				return i, fmt.Errorf("instance %s answered 200 without storing to %q", u.Instance, recs[j-1].End)
 			}
 			from, i = recs[j-1].End, j
 		case http.StatusConflict:
 			k := resumeAt(*ans.StoredTo, from, recs, i)
 			if k < 0 || resumes > len(recs) {
-				return &UnresumableError{StoredTo: *ans.StoredTo}
+				return i, &UnresumableError{StoredTo: *ans.StoredTo}
 			}
 			resumes++
 			s.logf("resume %s/%s at %s: the instance already holds it (a lost acknowledgement)", u.Root, stream, *ans.StoredTo)
@@ -547,15 +602,15 @@ func (s *HTTPSink) Records(u Upload, stream string, recs []Record) error {
 				solo = true // find WHICH record: one per request from here
 				continue
 			}
-			if bytes.HasPrefix(wire[i], []byte(`{"cairn_capture":"omitted"`)) {
-				return fmt.Errorf("instance %s refused even the placeholder for record %s as too large", u.Instance, recs[i].Src)
+			if bytes.HasPrefix(wire[i], []byte(omittedPrefix)) {
+				return i, fmt.Errorf("instance %s refused even the placeholder for record %s as too large", u.Instance, recs[i].Src)
 			}
 			wire[i] = s.omit(u, stream, recs[i].Src, len(wire[i]), ans.MaxBytes)
 		default:
-			return fmt.Errorf("instance %s answered %d to an unframed upload", u.Instance, status)
+			return i, fmt.Errorf("instance %s answered %d to an unframed upload", u.Instance, status)
 		}
 	}
-	return nil
+	return i, nil
 }
 
 // resumeAt is the index of the first record NOT yet stored when the instance holds the stream at
@@ -698,6 +753,14 @@ func (s *HTTPSink) Blob(u Upload, name, to string, data []byte) error {
 			status, ans, err = s.post(u.Instance, path, b.Bytes())
 		} else {
 			status, ans, err = s.framedBlob(u, path, from, to, data)
+		}
+		var rc *RecheckRefusal
+		if errors.As(err, &rc) && rc.Blob && !bytes.HasPrefix(data, []byte("cairn-capture: this file was omitted")) {
+			s.Rechecked++
+			s.logf("omitted blob %s of %s: the instance's redaction re-check refused it (422); a placeholder naming the "+
+				"omission is stored in its place and its bytes are not sent again", name, u.Root)
+			data = recheckBlobPlaceholder(len(data))
+			continue
 		}
 		if err != nil {
 			return err

@@ -31,15 +31,16 @@ type Upload struct {
 // Sink receives what the agent uploads. [HTTPSink] is the real one (the capture/v1 contract); the
 // agent's tests also drive an in-memory one.
 //
-// A Sink write is the "acknowledgement": every watermark advances only after its write returned
-// nil. A write that returned an error may have stored a PREFIX on the instance (one request of
-// several); the agent does not count on it, and the next run starts again from the same `From`,
-// where the instance's compare-and-swap answers 409 naming the position it really holds and the
-// sink resumes from there — so nothing is stored twice.
+// A Sink write is the "acknowledgement": a watermark advances only over what a write reported
+// stored. A write that fails part-way reports the prefix that WAS acknowledged and the agent
+// commits it; a request whose answer was lost is not in that prefix, so the next run starts before
+// it, the instance's compare-and-swap answers 409 naming the position it really holds, and the
+// sink resumes from there — nothing is stored twice.
 type Sink interface {
-	// Records appends recs to one stream, starting at u.From; on nil the stream is stored up to
-	// recs[len(recs)-1].End.
-	Records(u Upload, stream string, recs []Record) error
+	// Records appends recs to one stream, starting at u.From. `stored` is how many LEADING records
+	// are known stored — on a nil error all of them, on an error the prefix acknowledged before it
+	// — and the agent commits exactly that prefix.
+	Records(u Upload, stream string, recs []Record) (stored int, err error)
 	// Blob replaces one persisted tool-result file, from the version u.From to the version `to`.
 	Blob(u Upload, name, to string, data []byte) error
 	// Withdraw is decision 16's withdrawal of a shipped prefix (S6).

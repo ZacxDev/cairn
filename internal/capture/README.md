@@ -57,11 +57,13 @@ environment, never printed); `-host` is the label the token was minted for.
 | answer | what the agent does |
 |---|---|
 | 200 / 202 | stored / a staged non-final continuation frame |
-| 409 `{"stored_to":…}` | **resume**: the position is the end of a record this write carries (a lost acknowledgement) → continue after it, every record once; any other position → `UnresumableError`, nothing guessed |
+| 409 `{"stored_to":…}` | **resume**: the position is the end of a record this write carries (a lost acknowledgement) → continue after it, every record once. An opencode stream also matches it against the PLAN of every sent, unacknowledged write (`StreamState.Pending`, saved before the request leaves) — opencode mutates units in place, so the position may be one the current export cannot reproduce. Any other position → `UnresumableError`, nothing guessed |
 | 409 uniform | `ErrNotOwner`: another (owner, host) holds the root; logged every run |
 | 413 | the record or blob is replaced by a **placeholder** naming its size and the bound, under the SAME `src` and cursor; the stream moves on and is never wedged. A record over `MaxRecordBytes` (= `archive.MaxAssembledBytes`) is replaced BEFORE it is sent. Counted as `omitted=` |
-| 422 | the pod's re-check matched: that stream (or blob version) is **held for good** (`refused` in state) and never resent; the session's other streams continue |
-| 503 / 507 | `HeldError`: nothing advances, nothing is lost, the instance gets no further request this run, the next run retries |
+| 422 naming a record or the blob | EXACTLY that record or blob is replaced by a `refused-by-recheck` **placeholder** and the stream moves on; its bytes are sent once, never again, and nothing the pod refused is stored. Counted as `recheck-omitted=`. ⚠ An agent decision under O17: a hold was built first, and the pod's re-check was measured refusing clean data, which would freeze a stream for good |
+| 422 naming a request field | a name or cursor matched: that stream (or blob version) is **held for good** (`refused` in state) and never resent; the session's other streams continue |
+| 3xx | an error — a redirect is NEVER followed (it would carry the token and the body) |
+| 503 / 507 | `HeldError`: nothing advances, nothing is lost, the instance gets no further request this run, sessions bound for it are skipped UNREAD (`skipped=`), the next run retries |
 | 401 / 403 | `FatalError`: no further request to that instance this run (each would count toward the worker's lockout), exit 1 |
 
 **Cursors** carry no content: a Claude Code stream's is its byte offset; an opencode stream's is a hash
@@ -88,7 +90,10 @@ OnUnitActiveSec=60s
 AccuracySec=1s
 ```
 
-A run takes `<state>.lock` (`flock`); an overlapping run exits 0 having done nothing.
+A run takes `<state>.lock` (`flock`); an overlapping run exits 0 having done nothing. The state is
+saved after every session and before every opencode write, so a killed run keeps each
+acknowledgement, each hold and each sent plan. A write that fails part-way commits the prefix that
+was acknowledged. The token file may be a symlink (a secret manager's); the 0600 check is on its target.
 
 ## Not built here
 

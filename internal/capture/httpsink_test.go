@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -162,7 +163,7 @@ func TestTheSinkStoresEveryRecordOnceAcrossRequests(t *testing.T) {
 	n, _ := strconv.Atoi(last)
 	big.Src, big.End = last, strconv.Itoa(n+len(big.Rec)+1)
 	recs = append(recs, big)
-	if err := s.Records(up(""), "main", recs); err != nil {
+	if _, err := s.Records(up(""), "main", recs); err != nil {
 		t.Fatal(err)
 	}
 	got := p.stored("main")
@@ -195,11 +196,11 @@ func TestTheSinkStoresEveryRecordOnceAcrossRequests(t *testing.T) {
 func TestA409ResumesFromTheStoredPosition(t *testing.T) {
 	p := newPod(t, podOpts{})
 	recs := synth(300, 400)
-	if err := p.sink("host-a", sinkTokenA, 32<<10).Records(up(""), "main", recs[:120]); err != nil {
+	if _, err := p.sink("host-a", sinkTokenA, 32<<10).Records(up(""), "main", recs[:120]); err != nil {
 		t.Fatal(err)
 	}
 	s := p.sink("host-a", sinkTokenA, 32<<10)
-	if err := s.Records(up(""), "main", recs); err != nil {
+	if _, err := s.Records(up(""), "main", recs); err != nil {
 		t.Fatal(err)
 	}
 	got := p.stored("main")
@@ -207,7 +208,7 @@ func TestA409ResumesFromTheStoredPosition(t *testing.T) {
 		t.Fatalf("after a resume %d records are stored, want %d exactly once", len(got), len(recs))
 	}
 	// The same when EVERYTHING was stored: the retry stores nothing and succeeds.
-	if err := s.Records(up(""), "main", recs); err != nil || len(p.stored("main")) != len(recs) {
+	if _, err := s.Records(up(""), "main", recs); err != nil || len(p.stored("main")) != len(recs) {
 		t.Fatalf("a retry of a fully stored write: %v, %d stored", err, len(p.stored("main")))
 	}
 	// And a blob whose acknowledgement was lost: the 409 names the version sent, which is success.
@@ -232,10 +233,10 @@ func TestA409NamingAPositionNoRecordEndsAtIsRefused(t *testing.T) {
 	p := newPod(t, podOpts{})
 	other := synth(3, 100)
 	other[2].End = "999999"
-	if err := p.sink("host-a", sinkTokenA, 0).Records(up(""), "main", other); err != nil {
+	if _, err := p.sink("host-a", sinkTokenA, 0).Records(up(""), "main", other); err != nil {
 		t.Fatal(err)
 	}
-	err := p.sink("host-a", sinkTokenA, 0).Records(up(""), "main", synth(5, 100))
+	_, err := p.sink("host-a", sinkTokenA, 0).Records(up(""), "main", synth(5, 100))
 	var ue *UnresumableError
 	if !errors.As(err, &ue) || ue.StoredTo != "999999" {
 		t.Fatalf("got %v, want an UnresumableError naming 999999", err)
@@ -266,7 +267,7 @@ func TestAnOverBoundRecordIsAPlaceholderAndTheCursorMovesOn(t *testing.T) {
 	// (1) The POD's 413: the local bound is lifted, so the frame that crosses the pod's is refused.
 	s := p.sink("host-a", sinkTokenA, 1<<20)
 	s.MaxRecord = 64 << 20
-	if err := s.Records(up(""), "main", all); err != nil {
+	if _, err := s.Records(up(""), "main", all); err != nil {
 		t.Fatal(err)
 	}
 	got := p.stored("main")
@@ -290,7 +291,7 @@ func TestAnOverBoundRecordIsAPlaceholderAndTheCursorMovesOn(t *testing.T) {
 	s2.MaxRecord = 64 << 20
 	mid := synth(1, 4608<<10)[0]
 	mid.Src, mid.End = recs[0].End, strconv.Itoa(n+len(mid.Rec)+1)
-	if err := s2.Records(up(""), "main", []Record{recs[0], mid}); err != nil {
+	if _, err := s2.Records(up(""), "main", []Record{recs[0], mid}); err != nil {
 		t.Fatal(err)
 	}
 	got = p2.stored("main")
@@ -301,7 +302,7 @@ func TestAnOverBoundRecordIsAPlaceholderAndTheCursorMovesOn(t *testing.T) {
 	// (3) The LOCAL bound: a record over it never leaves the host — no request carries it.
 	p3 := newPod(t, podOpts{})
 	s3 := p3.sink("host-a", sinkTokenA, 1<<20)
-	if err := s3.Records(up(""), "main", []Record{huge}); err != nil {
+	if _, err := s3.Records(up(""), "main", []Record{huge}); err != nil {
 		t.Fatal(err)
 	}
 	if s3.Requests != 1 || s3.Omitted != 1 {
@@ -316,30 +317,58 @@ func TestAnOverBoundRecordIsAPlaceholderAndTheCursorMovesOn(t *testing.T) {
 	}
 }
 
-// TestThePodsRecheckRefusalNamesTheRecordAndStoresNothing: 422 is a RecheckRefusal naming the
-// record's index in the WRITE (not in the request) or the blob; nothing of that request is stored.
-func TestThePodsRecheckRefusalNamesTheRecordAndStoresNothing(t *testing.T) {
+// TestARecordThePodsRecheckRefusesBecomesAPlaceholder: a 422 naming a record replaces EXACTLY
+// that record with a `refused-by-recheck` placeholder — the refused bytes are sent once, never
+// again, and never stored — and every other record of the write is stored. The same for a blob.
+// A 422 naming a request FIELD has no placeholder and is returned.
+func TestARecordThePodsRecheckRefusesBecomesAPlaceholder(t *testing.T) {
 	p := newPod(t, podOpts{})
 	recs := synth(40, 300)
-	recs[33].Rec = []byte(fmt.Sprintf(`{"type":"user","message":{"role":"user","content":"export TOKEN=%s"}}`, liveToken()))
+	secret := liveToken()
+	recs[33].Rec = []byte(fmt.Sprintf(`{"type":"user","message":{"role":"user","content":"export TOKEN=%s"}}`, secret))
+	var bodies bytes.Buffer
 	s := p.sink("host-a", sinkTokenA, 4<<10)
-	err := s.Records(up(""), "main", recs)
-	var rc *RecheckRefusal
-	if !errors.As(err, &rc) || rc.Record != 33 {
-		t.Fatalf("got %v, want a RecheckRefusal naming record 33", err)
+	s.Client = &http.Client{Transport: recordingTransport{&bodies}}
+	if n, err := s.Records(up(""), "main", recs); err != nil || n != 40 {
+		t.Fatalf("stored %d, %v — want all 40 with record 33 a placeholder", n, err)
 	}
-	for _, r := range p.stored("main") {
-		if r.Src == recs[33].Src {
-			t.Fatal("the refused record was stored")
+	got := p.stored("main")
+	if strings.Join(srcs(got), ",") != strings.Join(wantSrcs(recs), ",") || s.Rechecked != 1 {
+		t.Fatalf("stored %d records, rechecked %d", len(got), s.Rechecked)
+	}
+	for i, r := range got {
+		placeholder := bytes.Contains(r.Rec, []byte(`"refused-by-recheck"`))
+		if placeholder != (i == 33) || bytes.Contains(r.Rec, []byte(secret)) {
+			t.Fatalf("record %d: placeholder=%v: %s", i, placeholder, r.Rec)
 		}
 	}
-	err = s.Blob(up(""), "toolu_0004.txt", "b-v1", []byte("token "+liveToken()+"\n"))
-	if !errors.As(err, &rc) || !rc.Blob {
-		t.Fatalf("got %v, want a RecheckRefusal naming the blob", err)
+	if n := strings.Count(bodies.String(), secret); n != 1 {
+		t.Fatalf("the refused record's bytes were sent %d times, want exactly once", n)
 	}
-	if _, err := p.arc.ReadBlob(sinkRoot, "toolu_0004.txt"); err == nil {
-		t.Fatal("the refused blob was stored")
+	if err := s.Blob(up(""), "toolu_0004.txt", "b-v1", []byte("token "+liveToken()+"\n")); err != nil {
+		t.Fatal(err)
 	}
+	if b, _ := p.arc.ReadBlob(sinkRoot, "toolu_0004.txt"); !bytes.HasPrefix(b, []byte("cairn-capture: this file was omitted")) || s.Rechecked != 2 {
+		t.Fatalf("the refused blob stored %q", b)
+	}
+	// A FIELD: the stream cursor itself matches the table. No placeholder can answer that.
+	bad := synth(1, 50)
+	bad[0].End = liveToken()
+	_, err := p.sink("host-a", sinkTokenA, 0).Records(up(""), "subagent:a1", bad)
+	var rc *RecheckRefusal
+	if !errors.As(err, &rc) || rc.Field == "" {
+		t.Fatalf("got %v, want a RecheckRefusal naming a field", err)
+	}
+}
+
+// recordingTransport copies every request body it carries.
+type recordingTransport struct{ to *bytes.Buffer }
+
+func (r recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	body, _ := io.ReadAll(req.Body)
+	r.to.Write(body)
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	return http.DefaultTransport.RoundTrip(req)
 }
 
 // TestADisarmedInstanceHoldsAndGetsNoFurtherRequest: 503 capture-disarmed is a HeldError, nothing
@@ -347,7 +376,7 @@ func TestThePodsRecheckRefusalNamesTheRecordAndStoresNothing(t *testing.T) {
 func TestADisarmedInstanceHoldsAndGetsNoFurtherRequest(t *testing.T) {
 	p := newPod(t, podOpts{disarmed: true})
 	s := p.sink("host-a", sinkTokenA, 0)
-	err := s.Records(up(""), "main", synth(3, 100))
+	_, err := s.Records(up(""), "main", synth(3, 100))
 	var he *HeldError
 	if !errors.As(err, &he) || !strings.Contains(he.Reason, "capture-disarmed") {
 		t.Fatalf("got %v, want a HeldError for capture-disarmed", err)
@@ -365,13 +394,13 @@ func TestADisarmedInstanceHoldsAndGetsNoFurtherRequest(t *testing.T) {
 func TestAFullInstanceHoldsAndGetsNoFurtherRequest(t *testing.T) {
 	p := newPod(t, podOpts{quota: 64})
 	s := p.sink("host-a", sinkTokenA, 0)
-	err := s.Records(up(""), "main", synth(3, 100))
+	_, err := s.Records(up(""), "main", synth(3, 100))
 	var he *HeldError
 	if !errors.As(err, &he) || !strings.Contains(he.Reason, "507") {
 		t.Fatalf("got %v, want a HeldError for the quota", err)
 	}
 	before := p.requests.Load()
-	if err := s.Records(up(""), "subagent:a1", synth(1, 10)); !errors.As(err, &he) {
+	if _, err := s.Records(up(""), "subagent:a1", synth(1, 10)); !errors.As(err, &he) {
 		t.Fatalf("a later write: %v", err)
 	}
 	if p.requests.Load() != before || len(p.stored("main")) != 0 {
@@ -387,7 +416,7 @@ func TestARefusedTokenIsFatalAndNeverEchoed(t *testing.T) {
 	s := p.sink("host-a", wrong, 0)
 	var log bytes.Buffer
 	s.Log = &log
-	err := s.Records(up(""), "main", synth(2, 100))
+	_, err := s.Records(up(""), "main", synth(2, 100))
 	var fe *FatalError
 	if !errors.As(err, &fe) || fe.Status != http.StatusUnauthorized {
 		t.Fatalf("got %v, want a FatalError 401", err)
@@ -407,10 +436,10 @@ func TestARefusedTokenIsFatalAndNeverEchoed(t *testing.T) {
 // TestARootHeldByAnotherHostIsNotOwner: the uniform 409.
 func TestARootHeldByAnotherHostIsNotOwner(t *testing.T) {
 	p := newPod(t, podOpts{})
-	if err := p.sink("host-b", sinkTokenB, 0).Records(up(""), "main", synth(1, 50)); err != nil {
+	if _, err := p.sink("host-b", sinkTokenB, 0).Records(up(""), "main", synth(1, 50)); err != nil {
 		t.Fatal(err)
 	}
-	err := p.sink("host-a", sinkTokenA, 0).Records(up(""), "main", synth(2, 50))
+	_, err := p.sink("host-a", sinkTokenA, 0).Records(up(""), "main", synth(2, 50))
 	if !errors.Is(err, ErrNotOwner) {
 		t.Fatalf("got %v, want ErrNotOwner", err)
 	}
@@ -421,7 +450,7 @@ func TestARootHeldByAnotherHostIsNotOwner(t *testing.T) {
 func TestARecordThatIsNotJSONShipsWrappedAndExact(t *testing.T) {
 	p := newPod(t, podOpts{})
 	raw := []byte("not json \xff\xfe at all")
-	if err := p.sink("host-a", sinkTokenA, 0).Records(up(""), "main", []Record{{Src: "0", Rec: raw, End: "22"}}); err != nil {
+	if _, err := p.sink("host-a", sinkTokenA, 0).Records(up(""), "main", []Record{{Src: "0", Rec: raw, End: "22"}}); err != nil {
 		t.Fatal(err)
 	}
 	got := p.stored("main")
@@ -465,7 +494,7 @@ func TestTheSinkBoundsFitThePod(t *testing.T) {
 		maxRecordsPerRequest != archive.MaxRecords || maxFrames != archive.MaxFrames || WireSchema != worker.Schema {
 		t.Fatal("a sink bound drifted from the pod's")
 	}
-	if DefaultMaxRequest > worker.DefaultMaxBody {
+	if DefaultMaxRequest > worker.DefaultMaxBody || MaxRequestCeiling != worker.DefaultMaxBody {
 		t.Fatal("the sink's request bound is over the worker's body bound")
 	}
 	// The scope grammar, asked of the ARCHIVE itself: a declared name it refuses is an
