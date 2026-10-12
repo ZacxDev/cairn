@@ -96,7 +96,8 @@ func TestTheSourcesVerbPrintsEachStateAsALiteral(t *testing.T) {
 		"  journal=present\n" +
 		"\n" +
 		"sources=undeclared\n"
-	if code != ExitOK || afterPreamble(t, out) != wantUndeclared {
+	pod, _ = podBody(t, tsrv.URL, "/api/v1/sources/beta-notes")
+	if code != ExitOK || out != pod || afterPreamble(t, out) != wantUndeclared {
 		t.Fatalf("undeclared: exit %d\n%q\nwant\n%q\n%s", code, afterPreamble(t, out), wantUndeclared, errOut)
 	}
 
@@ -106,7 +107,8 @@ func TestTheSourcesVerbPrintsEachStateAsALiteral(t *testing.T) {
 	wantOff := "cairn-sources: status=sources-unconfigured scope=alpha-notes\n" +
 		"\n" +
 		"CODE SOURCES ARE NOT CONFIGURED ON THIS POD — it was started without $CAIRN_SOURCE_JOURNAL, so no declaration can be shown. This is the designed off state, NOT 'this scope declares no sources'.\n"
-	if code != ExitOK || afterPreamble(t, out) != wantOff {
+	pod, _ = podBody(t, off.URL, "/api/v1/sources/alpha-notes")
+	if code != ExitOK || out != pod || afterPreamble(t, out) != wantOff {
 		t.Fatalf("unconfigured: exit %d\n%q\nwant\n%q\n%s", code, afterPreamble(t, out), wantOff, errOut)
 	}
 }
@@ -135,7 +137,9 @@ func TestAnUnreadableSourcesJournalIsAPlainReadsExit3(t *testing.T) {
 	}
 }
 
-// TestTheSourcesVerbTakesItsFlagsAndNothingElse: `--scope`/`--repo` only. 🔴 In particular no
+// TestTheSourcesVerbTakesItsFlagsAndNothingElse: `--scope`/`--repo` only. ⚠ AN INVARIANT GUARD,
+// LABELLED AS ONE: it pins a literal `Flags` slice no defect has violated; the pod's route ledger
+// (GET/HEAD `sources` only) is what keeps a client from becoming a writer. 🔴 In particular no
 // `--no-sync` (nothing is cached to read) and nothing that could carry a declaration — the browser
 // surface is the ONLY writer (decision 5), so a `--file`/`--text` here would be a second one.
 func TestTheSourcesVerbTakesItsFlagsAndNothingElse(t *testing.T) {
