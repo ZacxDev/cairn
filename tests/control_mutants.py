@@ -4861,7 +4861,8 @@ MUTANTS: tuple[Mutant, ...] = (
         name="scopeuse-scopeless-header-dropped",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\tif !found {\n\t\t\tout = append(out, Star)\n\t\t}",
+        # #261 round 3: the scan emits through a callback instead of appending to a slice.
+        old="\t\tif !found {\n\t\t\temit(Star)\n\t\t}",
         new="\t\tif !found {\n\t\t}",
         killer="TestTheScopelessHeaderFormAddsStar",
         why="the `all N entry files … MALFORMED` header carries no `scope=` field, and \"no field, "
@@ -5336,7 +5337,8 @@ MUTANTS: tuple[Mutant, ...] = (
         name="scopeuse-memo-block-not-a-read",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\tfor _, sc := range MemoScopes(s) {\n\t\td.headers[sc] = true\n\t}\n",
+        # #261 round 3: the memo scan emits through a callback instead of returning a slice.
+        old="\teachMemoScope(s, d.addHeader)\n",
         new="",
         killer="TestAMemoBlockIsARead",
         why="a memo is a NOTICE, not a recall — no `subsystem-recall:` header, nothing the client "
@@ -5373,6 +5375,61 @@ MUTANTS: tuple[Mutant, ...] = (
         why="a record on another page is simply skipped, which reads as costing nothing — but it was "
         "classified, and charged, before the window knew, so page two shows elided bodies with room to spare.",
         pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    # #261 round 3: the derivation fits the assembly budget, an unscanned scope is not kept, and a
+    # page ends at a turn boundary.
+    Mutant(
+        name="scopeuse-decode-gate-misses-unicode-escapes",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old=" || strings.Contains(s, `\\u`)",
+        new="",
+        killer="TestTheDecodeGateIsExact",
+        extra_killers=("TestAHeaderInsideAJSONStringNamesItsScope",),
+        why="a marker that is not in the raw text looks absent, so skipping the decode reads as a free "
+        "saving — and JSON can spell any character of either marker as `\\uXXXX`, so the read vanishes.",
+    ),
+    Mutant(
+        name="transcript-unscanned-scope-kept",
+        path="internal/transcript/visible.go",
+        old="s.archive.RecordWritten(meta.Root, written.Scopes)",
+        new="s.archive.RecordWritten(meta.Root, slices.Concat(written.Scopes, written.Unscanned))",
+        killer="TestARepairedEntryGivesTheTranscriptBack",
+        why="an unscanned scope is in `V` and the written half is kept, so keeping both reads as "
+        "consistent — but a malformed file is a fact about the store, and keeping it makes one "
+        "transient file a permanent refusal.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-page-does-not-end-at-a-turn",
+        path="internal/transcript/read.go",
+        old="\t\t\tif r.room <= 0 {\n\t\t\t\tr.roomOut = true\n\t\t\t}\n",
+        new="",
+        killer="TestEveryCallIsReachableAcrossPages",
+        extra_killers=("TestATurnWhoseChildDoesNotFitStartsTheNextPage", "TestATurnPastThePageItemCapIsCountedNotCarried"),
+        why="counting what the page cannot carry, with a raw link, reads as honest — but a turn cut that "
+        "way on page one had no page of its own, so its calls were reachable only as raw records.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-child-overflow-keeps-the-turn",
+        path="internal/transcript/read.go",
+        old="\tw.r.children(w.cur.Items, 0)\n\tif w.r.roomOut && len(w.turns) > 0 {",
+        new="\tw.r.children(w.cur.Items, 0)\n\tif false && w.r.roomOut && len(w.turns) > 0 {",
+        killer="TestATurnWhoseChildDoesNotFitStartsTheNextPage",
+        why="a turn's own items fit, so it looks carried — but its subagent spends the same allowance, "
+        "and the child's items past it were counted instead of moving with the turn.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-pager-steps-fifty-turns",
+        path="internal/ui/transcript.go",
+        old="\tif rd.NextTurn > 0 {\n\t\tlinks = append(links, h.A(h.Href(transcriptPageHref(v.Session, rd.NextTurn)),",
+        new="\tif nt := rd.FirstTurn + transcript.TurnsPerPage; nt <= rd.TotalTurns {\n\t\tlinks = append(links, h.A(h.Href(transcriptPageHref(v.Session, nt)),",
+        killer="TestEveryCallIsReachableByFollowingThePager",
+        why="a page holds fifty turns, so the next one starts fifty on — except when the item allowance "
+        "ended it early, and then every turn in between is skipped.",
+        pkgs=PKGS + ("./internal/ui/",),
     ),
     # A twelfth, beyond the plan's eleven: the one rendering rule the operator stated outright (O9 —
     # a user message is NEVER truncated). The test plan names it as a control; here it is a row.
