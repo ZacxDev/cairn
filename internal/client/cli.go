@@ -23,6 +23,10 @@ type Verb struct {
 	Name   string
 	Writes bool
 	Help   string
+	// Notes, when set, is printed by `<verb> --help` after Help and before the options: what a
+	// caller must know before running the verb that the one-line Help cannot carry. Never read by
+	// `-verbs`, so it is free to change without moving that ledger.
+	Notes string
 	// Flags is the flag set this verb accepts, used by the parser AND by `DeclaredVerbs`.
 	Flags []string
 	Run   func(Env, Options) (int, error)
@@ -99,6 +103,13 @@ func Verbs() []Verb {
 		{Name: "arc-register", Writes: true,
 			Help:  "register or update an arc from a JSON payload (writes to the pod)",
 			Flags: []string{"--scope", "--repo", "--slug", "--from"}, Run: ArcRegister},
+		// 🔴 GO-ONLY, DECLARED: the scope's declared code sources (S3 of the scope-refs plan) — the
+		// `scope-sources` row of `capability_ledger.LEDGER` and `flake.nix`'s
+		// `want-go-only-verbs.txt` make that legal. Read-only: the browser surface is the ONLY
+		// writer (decision 5), so there is no `sources-set` verb and there must not be one. Asks the
+		// pod and prints its body verbatim, the arc verbs' shape — see `SourcesShow`.
+		{Name: "sources", Help: "which code (repositories and branch) the scope declares it describes (asks the pod)",
+			Flags: []string{"--scope", "--repo"}, Run: SourcesShow},
 		{Name: "validate", Help: "the post-write check: parse, dropped lines, marker reachability",
 			Flags: commonReadFlags, Run: Validate},
 		{Name: "ls-entries", Help: "one `<scope>/<entry>.md` per line",
@@ -137,6 +148,7 @@ func Verbs() []Verb {
 		{Name: "memo-read", Help: "one memo, or every live memo of the scope, with full bodies (asks the memo listener)",
 			Flags: []string{"--scope", "--repo", "--id"}, Run: MemoRead},
 		{Name: "memo-send", Writes: true, Help: "send a short memo to the scope (writes to the memo listener)",
+			Notes: memoSendScanNotes,
 			Flags: []string{"--scope", "--repo", "--subject", "--body", "--body-file", "--ttl"}, Run: MemoSend},
 		{Name: "memo-retract", Writes: true, Help: "retract a memo you sent, or moderate one as a scope admin (writes to the memo listener)",
 			Flags: []string{"--scope", "--repo", "--id"}, Run: MemoRetract},
@@ -232,6 +244,9 @@ func Usage(verb string) string {
 			continue
 		}
 		fmt.Fprintf(&b, "usage: cairn %s [options]\n\n%s\n\n", v.Name, v.Help)
+		if v.Notes != "" {
+			b.WriteString(v.Notes + "\n\n")
+		}
 		b.WriteString("options:\n")
 		for _, flag := range v.Flags {
 			required := ""

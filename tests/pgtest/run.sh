@@ -275,6 +275,12 @@ echo ""
 # server itself — while the tier had just logged `server_version=18.6`, read out of the
 # server by `SHOW server_version`. A summary line that says "unknown" about something a
 # test measured one screen earlier is a false claim in the most-read line of the output.
-reported=$(grep -oE 'server_version=[0-9][0-9.A-Za-z]*' "$out" | head -1 | cut -d= -f2)
+# 🔴 ONE PROCESS, NO PIPE, BECAUSE THIS IS AN ASSIGNMENT UNDER `set -euo pipefail`. The
+# previous `grep | head -1 | cut` killed the script AFTER the tier had passed, two ways,
+# both measured: no `server_version=` line made grep exit 1 (exit 1, nothing printed, the
+# `:-` fallback below unreachable), and enough of them made `head -1` close the pipe on a
+# writer still writing (SIGPIPE, exit 141). `awk … exit` stops at the first match and exits
+# 0 with or without one. `tests/test_pgtest_tier_is_declared.py` runs this line.
+reported=$(awk 'match($0, /server_version=[0-9][0-9.A-Za-z]*/) { print substr($0, RSTART + 15, RLENGTH - 15); exit }' "$out")
 echo "POSTGRES TIER PASSED: $passed test(s) against PostgreSQL ${reported:-<version not reported by the run>},"
 echo "with the no-database control watched refusing first."
