@@ -140,11 +140,20 @@ func TestHeaderScopesIsLinearOnARunOfMarkers(t *testing.T) {
 				line := strings.Repeat(tc.unit, size/len(tc.unit))
 				var min time.Duration
 				for run := 0; run < 5; run++ {
+					// The scan the Deriver runs, timed by itself: [HeaderScopes] also grows a result
+					// slice (one entry per marker here), and once the scan stopped allocating (#261
+					// round 3) that slice's doubling and collection dominated the small size's
+					// sub-millisecond time and swung the ratio from 11× to 30× across runs.
+					var got []string
+					seen := map[string]bool{}
 					start := time.Now()
-					got := HeaderScopes(line)
+					eachHeaderScope(line, func(v string) { seen[v] = true })
 					took := time.Since(start)
 					if took > 5*time.Second {
 						t.Fatalf("one %d-byte line of %q took %v", size, tc.unit, took)
+					}
+					for v := range seen {
+						got = append(got, v)
 					}
 					if !slices.Equal(asSet(got), tc.want) {
 						t.Fatalf("a run of %q answered %v, want %v", tc.unit, asSet(got), tc.want)
