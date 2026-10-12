@@ -255,14 +255,15 @@ func ownerStillHeld(authority interface{ Model() control.Model }, owner worker.O
 
 // armedWarning is printed when capture is armed. 🔴 It names what the plan still asks and what the
 // operator WAIVED, because the flag is the operator's assertion and nothing in this binary can
-// check it: S11's read ledger, the pod-side `V` this build does not derive, and — waived by
-// operator decision O17, not passed — O15's held-back gate, so this redactor is NOT measured to
+// check it: S11's read ledger — without which this build's own derivation of a session's read
+// scopes marks every session that names `cairn` in a tool input owner-only — and, waived by
+// operator decision O17, not passed, O15's held-back gate, so this redactor is NOT measured to
 // that bar.
 const armedWarning = "cairn-ui: WARNING transcript capture is ARMED (-" + flagArmCapture + "). O15's arming gate " +
 	"(≥ 90% of leaks caught on a fresh held-back set) was WAIVED by operator decision O17, not passed: this " +
 	"redactor is not measured to that bar, so a secret it misses is stored. The plan also asks that S11's client " +
-	"read ledger has landed; and this build does not derive a session's scopes itself, so every stored session is " +
-	"OWNER-ONLY. Arming is your assertion that you accept both"
+	"read ledger has landed: this build holds no ledger, so a stored session that names cairn in a tool input is " +
+	"visible to its OWNER only. Arming is your assertion that you accept both"
 
 // workerMode is the startup line's clause about the third listener and capture.
 func workerMode(addr string, owner worker.Owner, rows int, dir string, armed bool) string {

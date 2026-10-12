@@ -89,6 +89,10 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		// every scope this credential can read, and a session that wrote only in scopes it cannot
 		// read must be indistinguishable from one that never wrote — an answer about authority.
 		"GET /session content",
+		// 🔴 THE RAW-RECORD VIEW (S4 of the transcripts plan). `content`, never `public`: whether it
+		// answers at all is the visibility predicate's verdict about this caller — the owner, or a
+		// reader of every scope the session touched — and every miss is one body.
+		"GET /session/transcript content",
 		"GET /share",
 		// 🔴 THE TEAM PAGE (`team.go`). `content`: every list on it is an authority answer.
 		"GET /scope/sources content",
@@ -513,6 +517,9 @@ var bareGETAnswer = map[string]int{
 	// And the session page: a request naming no session asked about nothing, so it gets the
 	// navigation page rather than the uniform unseen-session refusal.
 	"GET /session content": http.StatusOK,
+	// And the raw-record view, for the session page's reason: a request naming no session asked about
+	// nothing, so it gets the navigation page rather than the uniform no-transcript refusal.
+	"GET /session/transcript content": http.StatusOK,
 	// The scope list's bare request IS the page (it was the root's), and the sessions list's bare
 	// request is the list: neither has an operand to name, so there is nothing for a refusal to protect.
 	"GET /scopes content":   http.StatusOK,
@@ -736,6 +743,13 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		// itself would serve each.
 		{"GET", "/scope/sources/"},
 		{"GET", "/scope/sourcesx"},
+		// The raw-record row's near-misses (transcripts S4): a prefix match on `/session` or on the
+		// row itself would serve each.
+		{"GET", "/session/transcript/"},
+		{"GET", "/session/transcriptx"},
+		{"GET", "/session/transcripts"},
+		{"GET", "/session/"},
+		{"GET", "/transcript"},
 		{"GET", "/scope/source"},
 		{"GET", "/sources"},
 		// S4's near-misses: the unversioned script a worker-shaped draft would register, a wrong
@@ -793,6 +807,8 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		{"POST", "/memo/retractx"},
 		{"PUT", "/memo"},
 		{"POST", "/scope/sources/"},
+		{"POST", "/session/transcript"},
+		{"POST", "/session"},
 		{"PUT", "/scope/sources"},
 		{"POST", "/scope"},
 		{"POST", "/sources"},
@@ -939,6 +955,11 @@ var contentAuthority = map[string]string{
 	"GET /arcs content": "source",
 	// `source`, for `Source.Arc`'s reason: `Source.Session` is narrowed by the same authority.
 	"GET /session content": "source",
+	// `source`: the raw-record view consults `Visible` like the session page it hangs off (the
+	// navigation page is built from it). ⚠ The verdict that matters for a NAMED session is the
+	// transcript predicate's, read off the request's own authorization — a seam this walk has no
+	// counter for; `TestTheRawRecordViewAsksThePredicate` is what measures it.
+	"GET /session/transcript content": "source",
 	// `source`: the scope list is `Visible` (and `Search`), the root's answer before the hub.
 	"GET /scopes content": "source",
 	// `source`, for `Source.Session`'s reason: `Source.AllSessions` is narrowed by the same authority.

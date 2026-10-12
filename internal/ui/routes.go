@@ -147,6 +147,12 @@ var routes = map[routeKey]route{
 	// session id is global — so it is the one page that AGGREGATES across scopes, and it does so only
 	// over the caller's narrowed set. GET only. See `handleSessionPage`.
 	{"GET", "/session"}: {(*Server).handleSessionPage, classContent},
+	// 🔴 THE RAW-RECORD VIEW (S4 of the transcripts plan, `transcript.go`): one stored stream of a
+	// session's transcript, as stored. A SIXTH fixed browse path with its operands in query
+	// parameters — the session id, the stream name and two record numbers are all values somebody
+	// else supplied. `content`: whether it answers is the visibility predicate's verdict about this
+	// caller. GET only, so neither cross-site gate gains a case. See `handleSessionTranscript`.
+	{"GET", SessionTranscriptPath}: {(*Server).handleSessionTranscript, classContent},
 	// 🔴 THE BELL (S5 of the arcs/presence plan): queue a terminal-bell ring at the pane a session the
 	// VIEWER owns is running in. CLASS 0, ON PURPOSE — it declares nothing, so BOTH cross-site gates
 	// reach it by METHOD (same origin before auth, the CSRF token after), exactly as they reach

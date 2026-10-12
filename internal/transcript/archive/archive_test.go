@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -493,22 +494,66 @@ func TestRetentionSweepsAtItsBoundary(t *testing.T) {
 	}
 }
 
-// TestThePodDerivesStarNotTheDeclarationAlone: an agent that declares NOTHING still gets `*` in
-// the pod's own set, and one that declares `beta-notes` keeps both — the pod's set is never the
-// agent's declaration alone (decision 3: "so an old or lying agent cannot shrink `V`"). Until
-// `scopeuse` is wired, `*` is the fail-closed answer.
-func TestThePodDerivesStarNotTheDeclarationAlone(t *testing.T) {
+// TestThePodDerivesReadScopesTheAgentDidNotDeclare: an agent that declares NOTHING, whose records
+// carry a rendered `beta-notes` recall in a tool result, gets `beta-notes` in the pod's own set
+// anyway — the pod's set is never the agent's declaration alone (decision 3: "so an old or lying
+// agent cannot shrink `V`"). A text BLOB carrying a header counts the same way; a tool INPUT that
+// names the program adds `*` (F1: the pod holds no ledger until S11); a declaration is kept beside
+// the derivation and only adds. Each literal is distinct, so no arm can stand in for another.
+func TestThePodDerivesReadScopesTheAgentDidNotDeclare(t *testing.T) {
 	g := newRig(t, 1<<30)
-	if _, err := g.a.AppendRecords(ownerA, up("s-0001", "", "1"), "main", recs(0, 1)); err != nil {
-		t.Fatal(err)
+	// The header as a tool prints it: its own line, the body after a newline.
+	header := func(scope string) string {
+		return "subsystem-recall: status=recalled scope=" + scope + " entries=1\n- synthetic"
 	}
-	if _, err := g.a.AppendRecords(ownerA, up("s-0001", "", "2", "beta-notes"), "child:ses_0002", recs(1, 2)); err != nil {
+	quoted, _ := json.Marshal(header("beta-notes"))
+	result := Record{Src: "0", Rec: []byte(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result",` +
+		`"tool_use_id":"toolu_s0001","content":` + string(quoted) + `}]}}`)}
+	if _, err := g.a.AppendRecords(ownerA, up("s-0001", "", "1"), "main", []Record{result}); err != nil {
 		t.Fatal(err)
 	}
 	m, _ := g.a.ReadMeta("s-0001")
-	if !slices.Equal(m.Derived, []string{Star}) || !slices.Equal(m.Declared, []string{"beta-notes"}) ||
+	if !slices.Equal(m.Derived, []string{"beta-notes"}) || len(m.Declared) != 0 {
+		t.Fatalf("after a record carrying a rendered beta-notes recall and NO declaration: derived=%v declared=%v, "+
+			"want derived [beta-notes] and nothing declared", m.Derived, m.Declared)
+	}
+	// A plain record derives nothing: the positive result above is the header's doing.
+	if _, err := g.a.AppendRecords(ownerA, up("s-0002", "", "1"), "main", recs(0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := g.a.ReadMeta("s-0002"); len(m.Derived) != 0 {
+		t.Fatalf("a record with no header and no tool input derived %v, want nothing", m.Derived)
+	}
+	// A text blob's header counts; the declaration is kept beside it; a child stream is recorded.
+	if _, err := g.a.PutBlob(ownerA, up("s-0001", "", "b1"), "toolu_s0002.txt", []byte(header("gamma-notes"))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.a.AppendRecords(ownerA, up("s-0001", "", "2", "delta-notes"), "child:ses_0002", recs(1, 2)); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = g.a.ReadMeta("s-0001")
+	if !slices.Equal(m.Derived, []string{"beta-notes", "gamma-notes"}) || !slices.Equal(m.Declared, []string{"delta-notes"}) ||
 		!slices.Equal(m.Children, []string{"ses_0002"}) {
 		t.Fatalf("meta derived=%v declared=%v children=%v", m.Derived, m.Declared, m.Children)
+	}
+	// F1 with no ledger: a tool input naming the program is `*`, in the Claude Code shape and in the
+	// opencode one — and under EITHER runtime label, so a mislabelled request cannot hide an input.
+	claudeCall := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_s0003",` +
+		`"name":"Bash","input":{"command":"cairn recall"}}]}}`
+	opencodeCall := `{"id":"prt_s0001","type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"cairn recall"}}}`
+	for i, tc := range []struct{ runtime, rec string }{
+		{"claude", claudeCall}, {"opencode", opencodeCall}, {"opencode", claudeCall}, {"claude", opencodeCall},
+	} {
+		root := fmt.Sprintf("s-01%02d", i)
+		u := up(root, "", "1")
+		u.Runtime = tc.runtime
+		if _, err := g.a.AppendRecords(ownerA, u, "main", []Record{{Src: "0", Rec: []byte(tc.rec)}}); err != nil {
+			t.Fatal(err)
+		}
+		if m, _ := g.a.ReadMeta(root); !slices.Equal(m.Derived, []string{Star}) {
+			t.Errorf("runtime %s, record %s: derived=%v, want [*] (a tool input names the program and the pod holds no ledger)",
+				tc.runtime, tc.rec, m.Derived)
+		}
 	}
 }
 

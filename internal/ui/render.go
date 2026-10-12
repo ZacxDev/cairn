@@ -111,6 +111,10 @@ type PageView struct {
 	Tab string
 	// Session is the session page's answer, nil everywhere else. See `sessionpage.go`.
 	Session *SessionAnswer
+	// Transcript is the session page's transcript section, nil everywhere else — and nil on a session
+	// page whose viewer the visibility predicate shows nothing, which renders no node. See
+	// `transcript.go`.
+	Transcript *TranscriptView
 	// ArcsIndex is the arcs page's answer, nil everywhere else; ArcsAll is its `?all=1` toggle. See
 	// `arcsindex.go`.
 	ArcsIndex *report.ArcsAcrossReport
