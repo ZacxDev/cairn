@@ -4760,3 +4760,84 @@ its read predicate — each red in the test that names it, with that test's own 
   store's answer to it is S1's (`not-found` for an already-retracted memo).
 - A browser send carries no credential, so its sender line has no `via` label — measured in the
   pgtest tier, and by design (decision 5's label names an agent credential).
+
+---
+
+# Code sources — the edit flow (S4 of the scope-refs plan)
+
+`GET /scope/sources?scope=<control.ID>` shows a scope's declared code sources
+(`git:<host>/<repo-path>[//<subpath>]@<branch>`, first is primary, at most 8) and, for an `admin` of
+the scope with a session, one textarea to edit them; `POST /scope/sources` saves (`sources.go`). The
+scope page carries a read-only **Code sources** block above its tabs whenever a journal is configured.
+Both rows are in the ledger: the GET is `content` (found through `Visible`), the POST class 0.
+
+## The binding rules
+
+- 🔴 **This surface is the journal's ONLY writer, from ONE site.** `handleSourcesSave` is the one call
+  of `codesrc.Journal.Set`; the pod opens the file read-only and serves it on `GET
+  /api/v1/sources/<scope>`, and the CLI (`cairn sources`) only reads. T9's `internal/ui` half pins it:
+  `TestTheUIWritesTheSourcesJournalFromOneSite` (one `Set` site, no copy of the journal field, no fresh
+  `codesrc.Journal`, no store writer) and `TestTheUIPackageCallsNoFilesystemMutatingOSFunction`
+  (zero package-level `os` mutators, classified from the toolchain's own `os` source). Each carries its
+  own negative controls as injected synthetic files.
+- 🔴 **The key is `codesrc.Key(scope.Name)` — the store DIRECTORY name — never `scope.ID`.** The UI's
+  ids come from the control journal (random), the pod's from the token-file projection (derived), so
+  an id-keyed record is one the pod never finds. `TestAUIWrittenDeclarationIsWhatThePodServes` (an
+  external test package) builds both halves the way their `main`s do and asserts the GET returns what
+  the POST wrote; RED under the mutant `ui-sources-keyed-by-control-id`.
+- **Read takes `read`, edit takes `admin`.** The page shows the declaration to any reader and the form
+  to an admin; the save answers ONE refusal (`404`, `sourcesRefusal`), byte-identical for an absent
+  scope, an unreadable one, and a readable one the caller does not administer. A token-file deployment
+  confers `admin` on nobody, so there nobody can edit — the designed state.
+- **`set_by` is the signed-in principal and `set_at` this server's clock**, never form fields. The
+  form's `revision` is compared INSIDE the journal's lock: a stale save writes nothing, answers `409`
+  and re-renders the CURRENT list and revision. An invalid line answers `422` naming the form's own
+  line number (blank lines counted) and its rule, with the typed text kept. An empty textarea records
+  `sources: []` — an explicit, stamped "undeclared".
+- **Links only for `github.com`** (`https://github.com/<repo-path>/tree/<branch>`, the branch escaped
+  per segment, through `safeHref`); every other host is text, because this repository cannot know a
+  self-hosted host's URL shape.
+- **Three journal states, never folded:** unset → no block, the edit page says
+  `NoSourceJournal` and a save is `501`; unreadable → the block says so and the edit page is `503`
+  with a constant body carrying no path (the detail goes to the log); absent → every scope reads
+  undeclared. The edit page shows the current list OUTSIDE the form, so a reader who cannot edit
+  still sees it.
+
+## Deployment requirements (decision 1; done in the deployment repo, not here)
+
+- `CAIRN_SOURCE_JOURNAL=<path>` on `cairn-ui`, a file on the UI-owned volume beside the control
+  journal, OUTSIDE the store root (both binaries refuse to start otherwise, and refuse the arc
+  journal's own file; `cairn-ui` also refuses its own `-control-journal` and `-session-file`, since
+  one sources record appended to the control journal makes the authority unreadable). Environment only: an old binary ignores the variable, which is the rollback.
+- The pod mounts the SAME volume read-only at the CONTAINER level (never claim-level), with the same
+  variable — so it must schedule on the UI's node while the volume is ReadWriteOnce and node-local.
+- The file is created `0600` by the UI's first save, so the pod must run as the UI's uid (or the
+  deployment must make it readable); otherwise every pod GET is the `503 store-unreachable`.
+- The backup jobs stage `sources.jsonl` beside `arcs.jsonl`; an ABSENT file is a pass, logged
+  `sources: absent` — nothing creates it before the first save.
+
+## The RED proof
+
+Each watched red under a one-line mutant of `sources.go`, restored by digest after each: the admin
+check dropped (`TestTheSaveIsBehindBothCrossSiteGatesAndTheAdminCheck`,
+`TestATokenFileDeploymentRefusesEverySave`); every host linked (`TestOnlyAGitHubSourceIsLinked`);
+`set_by` read from the form (`TestAnAdminsSaveAppendsOneLineStampedByTheServerNotTheForm`); keyed by
+id (`TestAUIWrittenDeclarationIsWhatThePodServes`); the raw `ParseList` index reported as the line
+(`TestAnInvalidLineIsRefusedByItsLineNumberWithTheTextKept`); a stale save re-rendering the typed list
+(`TestAStaleSaveWritesNothingAndShowsTheCurrentList`); an unreadable journal shown as no block
+(`TestAnUnreadableJournalIsSaidAndNeverShownAsUndeclared`); an empty textarea writing nothing
+(`TestAnEmptyTextareaRecordsAnExplicitUndeclared`). The first four are rows of
+`tests/control_mutants.py`. The binary's refusal (`cmd/cairn-ui`'s
+`TestTheBinaryREFUSESASourceJournalInsideTheStoreRoot`) is red on all four refusal arms with `main`
+ignoring `FromEnv`'s error, with both controls green.
+
+## What these guards still cannot see
+
+- The pins bound the CODE in `internal/ui`, not the process: METHODS on `*os.File`/`*os.Root`, a write
+  through another package, `cmd/cairn-ui` itself, and the deployment's mounts (the plan's T9 list).
+- The per-scope edit page in a real browser: the `uiaudit` token-file world grants `admin` to nobody,
+  so the walk captures the scope page's read-only block (its world seeds a journal) and the bare
+  `/scope/sources` navigation page, never the form.
+- `flock` across hosts on a network filesystem (advisory only; the reference deployment has one
+  writer on a node-local volume).
+- An orphaned record after a directory rename is shown nowhere (Q12).
