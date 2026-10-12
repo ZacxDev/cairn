@@ -44,11 +44,14 @@
 //     the value escaping cannot see. The same test refuses a non-constant name
 //     argument to `El` or `Attr`.
 //
-// ⚠ AND ONE THING THIS PACKAGE USED TO SAY IT DID NOT DO, IT NOW DOES: it serves ONE
-// script, the scope page's entry filter (`script.go`, `filter.js`), on an operator
-// decision. It is a same-origin file, never inline, named by [AllowedScriptSources];
-// it reads only what the server already escaped into `data-filter` and writes only
-// `hidden` and a count's text. The three rules above are unchanged by it, and
+// ⚠ AND ONE THING THIS PACKAGE USED TO SAY IT DID NOT DO, IT NOW DOES: it serves
+// script — THREE files, each on an operator decision: the scope page's entry filter
+// (`script.go`, `filter.js`), the installable surface's `pwa.js` (`pwa.go`, linked only
+// by an armed deployment) and the fragment join page's `join.js` (`join.go`). Each is
+// a same-origin file, never inline, named by [AllowedScriptSources]; the filter reads
+// only what the server already escaped into `data-filter` and writes only `hidden` and
+// a count's text, and each script's header says what it may touch. The three rules
+// above are unchanged by it, and
 // `script.go` names the three guards that hold the allowlist.
 //
 // # WHAT THIS PACKAGE DOES, AND WHAT IT STILL DOES NOT

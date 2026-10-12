@@ -966,8 +966,9 @@ func exemptPagesForLog() string {
 //     phone above all. The widths are the whole point — a page can be clean at 390 and 1440
 //     and broken at 834, which is why there are five.
 //   - NO SCRIPT BUT THE ALLOWLISTED ONES. `internal/ui`'s RENDERER emits exactly the
-//     same-origin `src`s `ui.AllowedScriptSources` names (today: the scope page's entry
-//     filter), at most once each, and NO inline script — part of its XSS story rests on that.
+//     same-origin `src`s `ui.AllowedScriptSources` names (today three: the scope page's entry
+//     filter, `pwa.js` on an ARMED deployment, `join.js` on the fragment join page), at most
+//     once each, and NO inline script — part of its XSS story rests on that.
 //     An inline script, a foreign `src` or a duplicate is a refusal. ⚠ IT WAS "NO SCRIPT AT
 //     ALL" until the operator chose a client-side filter; a count cannot tell the allowed
 //     script from an injected one, so the refusal reads the list. ⚠ THE RENDERER, NOT THE
@@ -1204,8 +1205,8 @@ func viewportWidths() string {
 // ZERO" over both numbers, on the reasoning that a page with no scripts and no subresources
 // cannot produce either. The first half held then: `internal/ui` shipped an inline stylesheet,
 // no script, and an XSS guard asserting `"<img"` can never render, so the console collector had
-// nothing to observe. ⚠ It holds now only on pages without the one allowlisted script (the
-// scope page's entry filter) — the console line below says which kind of zero it printed. The second half was FALSE, and the walk that printed it had a non-zero
+// nothing to observe. ⚠ It holds now only on pages that link none of the allowlisted scripts (the
+// scope page's entry filter is one this walk captures) — the console line below says which kind of zero it printed. The second half was FALSE, and the walk that printed it had a non-zero
 // network count on the same line — because a browser requests `/favicon.ico` on its own
 // initiative and this surface has no such row, so it answers the dispatcher's refusal. That
 // is counted separately (see [Browser.FaviconRefusals]) and the per-page network zero below
@@ -1242,8 +1243,8 @@ func printSignalSummary(all []*Capture, faviconRefusals int) {
 	// `CaptureTarget`. This line was still printing "STRUCTURAL, NOT A PASS" unconditionally, so a
 	// surface that grew a script would have had a non-zero count printed beside a sentence saying the
 	// collector cannot count. A claim about a measurement has to read the measurement.
-	// ⚠ AND THE ZERO IS NO LONGER STRUCTURAL ON EVERY PAGE: the scope page now runs the ONE
-	// allowlisted script (`ui.AllowedScriptSources`), and a script that threw would land here. So
+	// ⚠ AND THE ZERO IS NO LONGER STRUCTURAL ON EVERY PAGE: the scope page now runs an
+	// allowlisted script (`ui.AllowedScriptSources`, the entry filter), and a script that threw would land here. So
 	// on a walk that captured a page carrying it, zero is a MEASUREMENT — the filter ran and logged
 	// nothing — and the sentence says which.
 	scripted := 0
@@ -1253,7 +1254,7 @@ func printSignalSummary(all []*Capture, faviconRefusals int) {
 		}
 	}
 	if console == 0 && scripted > 0 {
-		fmt.Printf("uiaudit:   console=0 — a MEASUREMENT on %d capture(s) that ran the allowlisted script (it threw and logged nothing there), and structural on the rest, which render no script. control_test.go counts 2 on a page that does log. (ORIGIN, not the served page — a downstream injector is out of this walk's reach; see Capture.ScriptSrcs.)\n", scripted)
+		fmt.Printf("uiaudit:   console=0 — a MEASUREMENT on %d capture(s) that ran an allowlisted script (it threw and logged nothing there), and structural on the rest, which render no script. control_test.go counts 2 on a page that does log. (ORIGIN, not the served page — a downstream injector is out of this walk's reach; see Capture.ScriptSrcs.)\n", scripted)
 	} else if console == 0 {
 		fmt.Printf("uiaudit:   console=0 — 🔴 STRUCTURAL, NOT A PASS: no captured page carried a script, and an existing XSS guard asserts \"<img\" can never render, so the console collector had nothing to observe. control_test.go counts 2 on a page that does. (ORIGIN, not the served page — a downstream injector is out of this walk's reach; see Capture.ScriptSrcs.)\n")
 	} else {

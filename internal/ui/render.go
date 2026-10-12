@@ -500,8 +500,10 @@ func relativeTime(at, now time.Time) string {
 // markdown file somebody else wrote, in both text and attribute positions, and
 // `entryRow`'s comment records why the two contexts have to be exercised separately.
 // 🔴 AND IT IS TWO VIEWS OF ONE ENTRY BEHIND ONE ROUTE, SWITCHED BY `?view=` AND NOT BY A
-// SCRIPT. This page carries NO script: the surface's one script is the scope page's filter, and
-// every script a page may carry is named by `AllowedScriptSources` and refused anywhere else by
+// SCRIPT. This page carries NO script of its own: of the surface's three scripts, the filter is
+// the scope page's and `join.js` the fragment join page's, and the only one this page can carry
+// is `pwa.js`, which the shared frame's `pwaHead` adds on an ARMED deployment. Every script a
+// page may carry is named by `AllowedScriptSources` and refused anywhere else by
 // `TestEveryBrowsePageCarriesOnlyAllowlistedScripts` and `uiaudit`'s walk. Two server-
 // rendered links cost nothing a script would have bought — they give a shareable URL, a
 // working back button and a browser-native reload for free, which is `searchForm`'s ruling
@@ -708,12 +710,13 @@ func breadcrumbs(crumbs []crumb) g.Node {
 
 // searchForm is a plain `GET` form, and it needs no script.
 //
-// 🔴 THE SEARCH STAYS SERVER-SIDE EVEN NOW THAT THE SURFACE SERVES ONE SCRIPT, AND THE TWO ARE
+// 🔴 THE SEARCH STAYS SERVER-SIDE EVEN NOW THAT THE SURFACE SERVES SCRIPT, AND THE TWO ARE
 // DIFFERENT QUESTIONS. The scope page's filter (`filter.js`) narrows rows ALREADY on the page;
 // this asks `report.Search` — the scored engine the CLI uses — over every entry the caller may
 // read, which a page that only holds one scope's rows could not answer. A type-ahead here would
-// need a script that FETCHES, which is exactly what `AllowedScriptSources`' one entry is pinned
-// not to do. A `GET` form gives a shareable URL, a working back button and a browser-native
+// need a script that FETCHES, which is exactly what every `AllowedScriptSources` entry is pinned
+// not to do (each one's spelling guard refuses `fetch`). A `GET` form gives a shareable URL,
+// a working back button and a browser-native
 // reload for free, none of which a script version gets without writing them.
 //
 // ⚠ THE ACTION IS THE ROOT PATH, WHICH IS ALSO WHERE A BLANK SUBMISSION LANDS. Submitting an

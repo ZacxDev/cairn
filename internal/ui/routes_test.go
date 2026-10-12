@@ -96,9 +96,10 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		"GET /sign-in/github/callback public",
 		"GET /static/app." + stylesheetDigestFromBytes(t) + ".css public",
 		"GET /static/app.css public",
-		// 🔴 THE ONE SCRIPT ROW (`script.go`). `public` for the stylesheet's reason — identical
-		// bytes to everybody, no authority consulted — and content-hashed for the stylesheet's
-		// reason, recomputed here from the embedded bytes rather than read off the implementation.
+		// 🔴 THE FIRST SCRIPT ROW (`script.go`): the scope page's `filter.js`. `public` for the
+		// stylesheet's reason — identical bytes to everybody, no authority consulted — and
+		// content-hashed for the stylesheet's reason, recomputed here from the embedded bytes
+		// rather than read off the implementation.
 		"GET /static/filter." + scriptDigestFromBytes(t) + ".js public",
 		// 🔴 THE WEB APP MANIFEST (S2 of the mobile plan). `public` because Chromium fetches a manifest
 		// with no credentials, and a fixed path; it answers 404 on an UNARMED deployment, which is why

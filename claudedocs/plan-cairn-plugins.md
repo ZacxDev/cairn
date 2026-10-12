@@ -670,7 +670,8 @@ script that prints only counts.
 - **XSS:** every rendered value is a `g.Text` or attribute; `Raw`/`Rawf` are AST-banned
   (`AGENTS.md`; `internal/ui/README.md` "The raw-node ban"). LLM output is attacker-influenced
   text and is rendered the same way — never as Markdown-to-HTML.
-- **Script policy:** exactly one allowlisted script, `filter.js` (`internal/ui/script.go:66`).
+- **Script policy:** exactly one allowlisted script, `filter.js` (`internal/ui/script.go:66`), at the
+  cited revision; since grown to three (`filter.js`, `pwa.js`, `join.js` — `internal/ui/script.go`).
   Decision 18's collapsing and "read more" use `<details>`/`<summary>`, so it adds none.
 - **No Content-Security-Policy** by operator decision (`internal/ui/server.go:1673`).
 
@@ -1332,7 +1333,7 @@ script that prints only counts.
       and `isMeta` content are `runtime` units and render as labelled, collapsed blocks.
     - **Assistant text** longer than 1,200 characters or 15 lines renders its head, then
       `<details><summary>read more (N more characters)</summary>…the rest…</details>`. `<details>`
-      needs no script, so `AllowedScriptSources` keeps its one entry.
+      needs no script, so `AllowedScriptSources` gains no entry.
     - **Tool calls** render collapsed: `<details><summary>Bash · exit 1 · 3.2 KB</summary>` with the
       input and the result inside; a result longer than 64 KiB shows its first 64 KiB and links to
       the raw-record view for the rest (a DISPLAY limit; storage is untouched).
