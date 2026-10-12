@@ -399,6 +399,40 @@ func TestAnUnscannedEntryPutsItsScopeInV(t *testing.T) {
 	}
 }
 
+// TestARewrittenEntryCannotShrinkV (#261 round 2): the written half of `V` is a walk of the store as
+// it is NOW, and a trailer leaves the store when its entry is rewritten without it (a put, a hygiene
+// pass). s-both-08 wrote alpha and beta; `one` reads alpha only and is refused. Rewriting
+// beta-notes/ladle.md without s-both-08's trailer must not turn that refusal into a view — before,
+// it did, because nothing a walk found was kept. CONTROL: the walk itself no longer finds beta, so
+// the refusal after the rewrite is the persisted set's doing, not the store's.
+func TestARewrittenEntryCannotShrinkV(t *testing.T) {
+	w := visBuild(t)
+	if w.sees(t, w.viewers["one"], "s-both-08") {
+		t.Fatal("CONTROL: before the rewrite the reader of alpha alone sees a session that also wrote beta")
+	}
+	if m, _ := w.arc.ReadMeta("s-both-08"); !slices.Equal(m.Written, []string{"alpha-notes", "beta-notes"}) {
+		t.Fatalf("the walk's answer was not kept: meta.Written = %v, want [alpha-notes beta-notes]", m.Written)
+	}
+	body := "---\nservice: ladle\nscope: beta-notes\n---\n\n## What it is\n\nsynthetic.\n\n" + store.NuanceHeading +
+		"\n\n- 2000-01-04: seven [cairn: fixture-bot/s-full-01]\n- 2000-01-04: eight [cairn: fixture-bot/ses_child05]\n"
+	if err := os.WriteFile(filepath.Join(w.store, "beta-notes", "ladle.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	written, err := WrittenScopes(w.store, []string{"s-both-08"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(written.Scopes, []string{"alpha-notes"}) {
+		t.Fatalf("CONTROL: after the rewrite the walk finds %v, want [alpha-notes] — the rewrite did not remove the trailer", written.Scopes)
+	}
+	if w.sees(t, w.viewers["one"], "s-both-08") {
+		t.Error("rewriting one entry without the session's trailer let a reader of alpha alone see a session that wrote beta")
+	}
+	if !w.sees(t, w.viewers["wrote"], "s-both-08") {
+		t.Error("the reader of alpha AND beta lost the session after the rewrite")
+	}
+}
+
 // TestAViewServesOnlyWhatItWasDecidedOver is #261's audit finding: a record uploaded AFTER a View
 // was decided — one that grows `V` past this viewer — is not served by that View, through either
 // way out (`Records` and `Read`); a fresh View refuses the viewer outright. The control is the

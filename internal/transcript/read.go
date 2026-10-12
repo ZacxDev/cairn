@@ -19,7 +19,8 @@ import (
 // Storage keeps every byte (O9); this is a DISPLAY model and it drops none of them either: what it
 // does not carry as an item it COUNTS (bookkeeping records, duplicate tool-result copies) and every
 // item names the stored record it came from, so the raw-record view shows the bytes. The limits
-// here are read-time limits only — [TurnsPerPage], [ChildItemCap] and [CollapsedBudget]; the
+// here are read-time limits only — [TurnsPerPage], [PageItemCap], [ChildItemCap] and
+// [CollapsedBudget]; the
 // per-item display limits (how much assistant text shows before "read more", how much of a tool
 // result shows inline) are the renderer's, because they are about HTML.
 //
@@ -43,7 +44,26 @@ const ChildItemCap = 200
 //
 // 🔴 USER MESSAGES AND ASSISTANT TEXT ARE NEVER CHARGED TO IT OR CUT BY IT: a `human-text` unit is
 // shown in full whatever its length (O9), and assistant text is shown whole behind its own reveal.
+//
+// 🔴 ONLY WHAT THE PAGE CARRIES IS CHARGED. A record is classified — and its collapsed body charged
+// — before the reading knows whether it lands on this page, inside [PageItemCap], or inside
+// [ChildItemCap]; whatever it then does not carry is refunded ([reader.refund]). Before #261 round
+// 2 nothing was: every turn on an EARLIER page, and every child item past its cap, spent this
+// page's budget, so page two of a large session showed elided bodies with room to spare.
 const CollapsedBudget = 2 << 20
+
+// PageItemCap bounds how many items one page carries — every item but a user message, counted
+// across the page's turns AND the child streams nested in them, in reading order (a turn's own
+// items first, then children). Past it an item is not carried: a turn counts it ([Turn.More]) and
+// names the first record it is in ([Turn.MoreFrom]), a child counts it in [Child.More]; the raw
+// records hold it.
+//
+// 🔴 IT EXISTS BECAUSE THE TWO BOUNDS ABOVE DO NOT BOUND A PAGE: fifty turns bound the TURNS and the
+// budget bounds collapsed BYTES, and one turn of 20,000 small tool calls fits both and rendered a
+// 7.5 MB page (#261 round 2). Each item costs markup however small its body.
+//
+// A user message is never dropped by it and never counted toward it (O9): it is what a turn IS.
+const PageItemCap = 1000
 
 // Item is one thing a reading shows, in order.
 type Item struct {
@@ -123,6 +143,11 @@ type Turn struct {
 	// Bookkeeping and Duplicates count what the turn does NOT show as items: whole bookkeeping
 	// records, and duplicate tool-result copies (a FIELD of a record, not a record).
 	Bookkeeping, Duplicates int
+	// More is how many of the turn's items [PageItemCap] left out — a tool call and its result are
+	// one — and MoreFrom the first record holding one, so `MoreFrom`–`SeqTo` in the raw records
+	// holds every one of them. Zero when the turn is carried whole.
+	More     int
+	MoreFrom int64
 }
 
 // StreamRef names one stored stream and how many records it holds.
@@ -163,11 +188,13 @@ func PageStart(turn int) int {
 //
 // ⚠ IT SCANS THE WHOLE MAIN STREAM ON EVERY CALL, one record in memory at a time: a turn boundary
 // is a `human-text` unit, which only classification finds, and nothing indexes it yet (the skeleton
-// of decision 17 is slice S8's). The RESPONSE is bounded by the page; the work is not. An opencode
+// of decision 17 is slice S8's). What the page CARRIES is bounded — [TurnsPerPage] turns,
+// [PageItemCap] items, [CollapsedBudget] collapsed bytes — except user messages (O9) and assistant
+// text, which are carried whole; the work of finding the page is not bounded. An opencode
 // stream is held whole instead, because a part is stored once per VERSION and only the last one is
 // the part.
 func readSession(a *archive.Archive, meta *archive.Meta, turn int) (Reading, error) {
-	r := reader{a: a, meta: meta, budget: CollapsedBudget, entered: map[string]bool{}}
+	r := &reader{a: a, meta: meta, budget: CollapsedBudget, room: PageItemCap, entered: map[string]bool{}, dropped: map[string]bool{}}
 	out := Reading{FirstTurn: PageStart(turn)}
 	for name, pos := range meta.Streams {
 		out.Streams = append(out.Streams, StreamRef{Name: name, Records: pos.SeqTo})
@@ -179,7 +206,7 @@ func readSession(a *archive.Archive, meta *archive.Meta, turn int) (Reading, err
 		}
 		return x < y
 	})
-	w := &window{first: out.FirstTurn, last: out.FirstTurn + TurnsPerPage - 1}
+	w := &window{r: r, first: out.FirstTurn, last: out.FirstTurn + TurnsPerPage - 1}
 	if err := r.stream(mainStream, w.add); err != nil {
 		return Reading{}, err
 	}
@@ -197,12 +224,16 @@ const mainStream = "main"
 // reading, so a cycle in what the records claim cannot recurse.
 const maxChildDepth = 4
 
-// reader carries what one reading shares: the archive, the session, the collapsed-content budget.
+// reader carries what one reading shares: the archive, the session, the collapsed-content budget,
+// the page's item allowance, and the tool calls that allowance left out (so their results, arriving
+// later, are absorbed with them rather than counted or shown on their own).
 type reader struct {
 	a       *archive.Archive
 	meta    *archive.Meta
 	budget  int
+	room    int
 	entered map[string]bool
+	dropped map[string]bool
 }
 
 // piece is what ONE stored record contributes: its items, what it only counts, and whether it
@@ -217,6 +248,7 @@ type piece struct {
 
 // window collects the turns of one page out of a stream of pieces.
 type window struct {
+	r           *reader
 	first, last int
 	n           int
 	cur         *Turn
@@ -240,12 +272,24 @@ func (w *window) add(p piece) {
 	}
 	w.curHuman = w.curHuman || p.human
 	if w.cur == nil {
+		// A turn on another page: nothing of it is carried, so none of it is charged.
+		for _, it := range p.items {
+			w.r.refund(it)
+		}
 		return
 	}
 	w.cur.SeqTo = p.seq
 	w.cur.Bookkeeping += p.bookkeeping
 	w.cur.Duplicates += p.duplicates
-	w.cur.Items = mergeResults(w.cur.Items, p.items)
+	for _, it := range p.items {
+		var counted bool
+		if w.cur.Items, counted = w.r.place(w.cur.Items, it, -1); counted {
+			if w.cur.More == 0 {
+				w.cur.MoreFrom = it.Seq
+			}
+			w.cur.More++
+		}
+	}
 }
 
 func (w *window) close() {
@@ -255,29 +299,60 @@ func (w *window) close() {
 	}
 }
 
-// mergeResults appends `more` to `items`, folding each Claude Code tool RESULT into the call it
-// answers when that call is already in `items`. A result with no call there stays its own item —
-// shown, never dropped.
-func mergeResults(items, more []Item) []Item {
-	for _, it := range more {
-		if it.Class == ToolResult && it.Tool != nil && it.Tool.ID != "" {
-			if call := findCall(items, it.Tool.ID); call != nil {
-				call.HasResult = true
-				call.Result, call.ResultBytes, call.ResultSeq = it.Tool.Result, it.Tool.ResultBytes, it.Seq
-				call.Status, call.Binary, call.ResultElided = it.Tool.Status, it.Tool.Binary, it.Tool.ResultElided
-				if it.Tool.Child != nil {
-					// The RESULT names the stream; the CALL said what was asked for.
-					if call.Child == nil {
-						call.Child = &Child{}
-					}
-					call.Child.Stream = it.Tool.Child.Stream
+// place puts one item into `items` — the ONE rule for a turn and a child stream alike — and reports
+// whether it was left out and must be COUNTED:
+//
+//   - a Claude Code tool RESULT whose call is in `items` folds into that call;
+//   - a result whose call was left out goes with it — refunded, not counted again, never shown on
+//     its own (a call and its result are one item);
+//   - a user message is always carried;
+//   - anything else is carried while the page's allowance ([PageItemCap]) and `limit` (a child's
+//     [ChildItemCap]; -1 for none) both have room, and otherwise refunded and counted.
+//
+// A result with no call anywhere stays its own item.
+func (r *reader) place(items []Item, it Item, limit int) ([]Item, bool) {
+	if it.Class == ToolResult && it.Tool != nil && it.Tool.ID != "" {
+		if call := findCall(items, it.Tool.ID); call != nil {
+			call.HasResult = true
+			call.Result, call.ResultBytes, call.ResultSeq = it.Tool.Result, it.Tool.ResultBytes, it.Seq
+			call.Status, call.Binary, call.ResultElided = it.Tool.Status, it.Tool.Binary, it.Tool.ResultElided
+			if it.Tool.Child != nil {
+				// The RESULT names the stream; the CALL said what was asked for.
+				if call.Child == nil {
+					call.Child = &Child{}
 				}
-				continue
+				call.Child.Stream = it.Tool.Child.Stream
 			}
+			return items, false
 		}
-		items = append(items, it)
+		if r.dropped[it.Tool.ID] {
+			r.refund(it)
+			return items, false
+		}
 	}
-	return items
+	if it.Class != HumanText {
+		if r.room <= 0 || (limit >= 0 && len(items) >= limit) {
+			r.refund(it)
+			if it.Class == ToolCall && it.Tool != nil && it.Tool.ID != "" {
+				r.dropped[it.Tool.ID] = true
+			}
+			return items, true
+		}
+		r.room--
+	}
+	return append(items, it), false
+}
+
+// refund returns to the budget what [reader.collapsed] charged for an item the page then did not
+// carry. An elided item was charged nothing.
+func (r *reader) refund(it Item) {
+	if it.Elided {
+		return
+	}
+	switch it.Class {
+	case Thinking, Runtime, ToolCall, ToolResult:
+		r.budget += collapsedSize(it)
+	}
 }
 
 func findCall(items []Item, id string) *Tool {
@@ -323,12 +398,12 @@ func (r *reader) children(items []Item, depth int) {
 		_ = r.stream(c.Stream, func(p piece) {
 			c.Bookkeeping += p.bookkeeping
 			c.Duplicates += p.duplicates
-			merged := mergeResults(c.Items, p.items)
-			if len(merged) > ChildItemCap {
-				c.More += len(merged) - ChildItemCap
-				merged = merged[:ChildItemCap]
+			for _, it := range p.items {
+				var counted bool
+				if c.Items, counted = r.place(c.Items, it, ChildItemCap); counted {
+					c.More++
+				}
 			}
-			c.Items = merged
 		})
 		r.children(c.Items, depth+1)
 	}
@@ -347,17 +422,22 @@ func (r *reader) charge(n int) bool {
 
 // collapsed is an item whose body is collapsed content: charged to the budget, elided past it.
 func (r *reader) collapsed(it Item) Item {
-	n := len(it.Text)
-	if it.Tool != nil {
-		n += len(it.Tool.Input) + len(it.Tool.Result)
-	}
-	if !r.charge(n) {
+	if !r.charge(collapsedSize(it)) {
 		it.Elided, it.Text = true, ""
 		if it.Tool != nil {
 			it.Tool.Input, it.Tool.Result, it.Tool.ResultElided = "", "", it.Tool.HasResult
 		}
 	}
 	return it
+}
+
+// collapsedSize is what [reader.collapsed] charges for an item, and so what [reader.refund] returns.
+func collapsedSize(it Item) int {
+	n := len(it.Text)
+	if it.Tool != nil {
+		n += len(it.Tool.Input) + len(it.Tool.Result)
+	}
+	return n
 }
 
 func decodeObject(raw []byte) map[string]any {

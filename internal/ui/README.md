@@ -4899,11 +4899,18 @@ records as stored (`transcript.go`). The plan is `claudedocs/plan-cairn-plugins.
   result; a subagent nests under the call that spawned it; bookkeeping records and duplicate
   tool-result copies are ONE `<details>` per turn; binary payloads are one line. 50 turns a page
   (`?turn=`). Every reveal is a `<details>`: **no script**, and `AllowedScriptSources` is unchanged.
-- **Three read-time bounds the plan does not name, added here:** a page carries at most 2 MiB of
+- **Four read-time bounds the plan does not name, added here:** a page carries at most 2 MiB of
   COLLAPSED content (`transcript.CollapsedBudget`; past it a block keeps its summary and its
-  raw-record link), a child stream at most 200 items inline (`ChildItemCap`; the rest are counted),
-  and a raw-record page at most 512 KiB (`rawPageBytes`; at least one record, then a next link).
-  User messages and assistant text are never charged to the budget.
+  raw-record link), at most 1,000 items (`PageItemCap`, every item but a user message, children
+  included; the rest are counted per turn with a link to the raw records from the first one left
+  out), a child stream at most 200 items inline (`ChildItemCap`; the rest are counted), and a
+  raw-record page at most 512 KiB (`rawPageBytes`; at least one record, then a next link). User
+  messages and assistant text are never charged to the budget, and only what the page CARRIES is:
+  an earlier page's records and a child's items past its cap are refunded. 🔴 *#261 round 2:* the
+  item bound is new — fifty turns and 2 MiB bounded neither one turn's ITEM count, and one turn of
+  20,000 small calls rendered 7.5 MB (now 375 KB; `TestOneTurnOfTwentyThousandCallsIsABoundedPage`
+  holds it under 1 MiB). User messages (O9) and assistant text are still carried whole, so the page
+  is bounded EXCEPT for what a human or the assistant wrote.
 - **Text only.** Every transcript value is a `g.Text` or an attribute value; no link is ever built
   from content — every href is this surface's own ledger path with encoded operands
   (`TestHostileTranscriptTextIsEscaped`).

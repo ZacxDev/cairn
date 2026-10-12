@@ -532,6 +532,12 @@ type Meta struct {
 	Declared []string `json:"declared_scopes"`
 	// Derived is the pod's own `R_header ∪ F` over the stored records and text blobs ([derive]).
 	Derived []string `json:"derived_scopes"`
+	// Written is every `W_trailer` scope a store walk has EVER found for the session (and every
+	// scope a walk could not fully scan), grow-only ([Archive.RecordWritten]). The walk itself
+	// answers about the store as it is NOW, and a trailer can leave it — an entry rewritten by a put
+	// or a hygiene pass without the session's trailer — so a set recomputed per view SHRANK, turning a
+	// refusal into a 200 (#261 round 2). Absent in a meta written before it existed: empty.
+	Written []string `json:"written_scopes,omitempty"`
 	// Children is every opencode child id uploaded as a `child:` stream (decision 7: trailers
 	// naming the child count toward the root's `V`).
 	Children []string            `json:"child_ids"`
@@ -1041,6 +1047,35 @@ func (a *Archive) commit(dir string, m *Meta, u Upload, derived []string) error 
 	}
 	a.adjust(fileSize(filepath.Join(dir, metaName)) - before)
 	return nil
+}
+
+// RecordWritten folds scopes a store walk found into the session's grow-only [Meta.Written] and
+// returns the meta as it now stands — (nil, nil) when no session is stored under root. Meta is
+// re-read under the root's lock, so an upload committing concurrently is neither lost nor
+// overwritten; it is written only when the set actually grows.
+func (a *Archive) RecordWritten(root string, scopes []string) (*Meta, error) {
+	if !write.SessionComponent.MatchString(root) {
+		return nil, invalid("not a stored session")
+	}
+	l := a.rootLock(root)
+	l.Lock()
+	defer l.Unlock()
+	m, err := a.readMeta(root)
+	if err != nil || m == nil {
+		return m, err
+	}
+	grown := union(m.Written, scopes)
+	if len(grown) == len(m.Written) {
+		return m, nil
+	}
+	m.Written = grown
+	dir := a.sessionDir(root)
+	before := fileSize(filepath.Join(dir, metaName))
+	if err := writeMeta(dir, m); err != nil {
+		return nil, err
+	}
+	a.adjust(fileSize(filepath.Join(dir, metaName)) - before)
+	return m, nil
 }
 
 func fileSize(p string) int64 {

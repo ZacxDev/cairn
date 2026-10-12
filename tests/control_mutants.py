@@ -5191,8 +5191,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-visibility-set-ignores-reads",
         path="internal/transcript/visible.go",
-        old="out := slices.Concat(written.Scopes, written.Unscanned, meta.Derived, meta.Declared)",
-        new="out := slices.Concat(written.Scopes, written.Unscanned)",
+        old="out := slices.Concat(written.Scopes, written.Unscanned, meta.Written, meta.Derived, meta.Declared)",
+        new="out := slices.Concat(written.Scopes, written.Unscanned, meta.Written)",
         killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
         why="'the scopes a session touched' reads as the scopes it WROTE to, which is what the session "
         "page shows — and a session that recalled another scope's notes into its tool results is then "
@@ -5329,6 +5329,49 @@ MUTANTS: tuple[Mutant, ...] = (
         # The ui's pager test is listed because the ui kept its OWN copy of this clamp, which masked
         # this mutant from every ui test (#261 round 2); `turnParam` now calls `PageStart`.
         extra_killers=("TestTheTranscriptPagesByFiftyTurns",),
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    # #261 round 2: a memo block is a read, the written half is kept, and a page is item-bounded.
+    Mutant(
+        name="scopeuse-memo-block-not-a-read",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\tfor _, sc := range MemoScopes(s) {\n\t\td.headers[sc] = true\n\t}\n",
+        new="",
+        killer="TestAMemoBlockIsARead",
+        why="a memo is a NOTICE, not a recall — no `subsystem-recall:` header, nothing the client "
+        "ledgered — so leaving it out of the read half reads as precise; and the hook has then shown "
+        "a gamma-notes memo's text in a session an alpha-only reader is served.",
+    ),
+    Mutant(
+        name="transcript-written-half-not-kept",
+        path="internal/transcript/visible.go",
+        old="out := slices.Concat(written.Scopes, written.Unscanned, meta.Written, meta.Derived, meta.Declared)",
+        new="out := slices.Concat(written.Scopes, written.Unscanned, meta.Derived, meta.Declared)",
+        killer="TestARewrittenEntryCannotShrinkV",
+        why="the walk is the authority on where a session wrote, so a stored copy of its answer reads "
+        "as a stale cache — and rewriting one entry without the trailer then turns a refusal into a 200.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-page-items-uncapped",
+        path="internal/transcript/read.go",
+        old="if r.room <= 0 || (limit >= 0 && len(items) >= limit) {",
+        new="if limit >= 0 && len(items) >= limit {",
+        killer="TestATurnPastThePageItemCapIsCountedNotCarried",
+        extra_killers=("TestOneTurnOfTwentyThousandCallsIsABoundedPage",),
+        why="fifty turns and a 2 MiB byte budget read as bounding a page, so an item cap looks "
+        "redundant — and one turn of 20,000 small calls fits both and renders 7.5 MB.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-other-pages-charged",
+        path="internal/transcript/read.go",
+        old="\t\tfor _, it := range p.items {\n\t\t\tw.r.refund(it)\n\t\t}\n\t\treturn\n",
+        new="\t\treturn\n",
+        killer="TestAnEarlierPageDoesNotSpendThisPagesBudget",
+        why="a record on another page is simply skipped, which reads as costing nothing — but it was "
+        "classified, and charged, before the window knew, so page two shows elided bodies with room to spare.",
         pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
     ),
     # A twelfth, beyond the plan's eleven: the one rendering rule the operator stated outright (O9 —

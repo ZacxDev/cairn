@@ -273,6 +273,10 @@ func turnNode(session string, t transcript.Turn) g.Node {
 		h.ID("turn-"+strconv.Itoa(t.N)),
 		h.H3(h.Class("turn-head"), g.Text("turn "+strconv.Itoa(t.N))),
 		g.Map(t.Items, func(it transcript.Item) g.Node { return itemNode(session, it) }),
+		g.If(t.More > 0, h.P(h.Class("t-line"),
+			g.Text(plural(t.More, "more item in this turn is", "more items in this turn are")+
+				" past this page's "+strconv.Itoa(transcript.PageItemCap)+"-item limit · "),
+			h.A(h.Href(transcriptRawHref(session, "main", t.MoreFrom, t.SeqTo)), g.Text("raw records")))),
 		uncountedNode(session, "main", t.Bookkeeping, t.Duplicates, t.SeqFrom, t.SeqTo),
 	)
 }

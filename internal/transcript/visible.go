@@ -147,17 +147,28 @@ func writtenWithin(storeRoot string, within store.ScopeSet, ids []string) (Writt
 }
 
 // VisibilitySet is decision 3's `V(s) = W_trailer ∪ R_header ∪ L ∪ F ∪ D`: the written half from a
-// store walk, and the read half as `meta.json` holds it — what the pod DERIVED over the stored
-// records and blobs (`R_header`, and `*` for the fallbacks) and what the capture agent DECLARED
-// (its own `L ∪ R_header ∪ F`). Sorted, de-duplicated.
+// store walk AND every earlier walk's answer as `meta.json` keeps it (`Written`), and the read half
+// as `meta.json` holds it — what the pod DERIVED over the stored records and blobs (`R_header`, and
+// `*` for the fallbacks) and what the capture agent DECLARED (its own `L ∪ R_header ∪ F`). Sorted,
+// de-duplicated.
+//
+// 🔴 THE WALK'S ANSWER CAN SHRINK, SO IT IS NOT `V`'S WRITTEN HALF BY ITSELF. A trailer leaves the
+// store whenever its entry is rewritten without it (a put, a hygiene pass), and a walk then no
+// longer finds that scope. This used to read "the one direction every part of this set refuses",
+// and the written half did not refuse it: it was recomputed per view and never kept, so rewriting
+// one entry turned a refusal into a 200 (#261 round 2). [Store.View] now folds every walk into the
+// grow-only `meta.Written`, which this unions in.
+//
+// ⚠ WHAT IS STILL OPEN: a trailer removed before ANY walk saw it — no non-owner view between the
+// write and the rewrite — was never recorded, so it is still lost. Persisting narrows the window
+// to "before the first walk", it does not close it.
 //
 // 🔴 A SCOPE THE WALK COULD NOT FULLY SCAN IS IN `V` TOO. `touch` reports such a scope's edges as a
-// LOWER bound: a trailer in a malformed or unreadable entry is not seen. Leaving the scope out
-// would let a damaged entry SHRINK `V`, the one direction every part of this set refuses, so the
-// scope counts as written — which costs a viewer who cannot read it the transcript, and costs a
-// viewer who can nothing.
+// LOWER bound: a trailer in a malformed or unreadable entry is not seen, so the scope counts as
+// written — which costs a viewer who cannot read it the transcript, and costs a viewer who can
+// nothing.
 func VisibilitySet(meta *archive.Meta, written Written) []string {
-	out := slices.Concat(written.Scopes, written.Unscanned, meta.Derived, meta.Declared)
+	out := slices.Concat(written.Scopes, written.Unscanned, meta.Written, meta.Derived, meta.Declared)
 	slices.Sort(out)
 	return slices.Compact(out)
 }
@@ -250,6 +261,11 @@ func (s *Store) View(viewer Viewer, root string) (*View, error) {
 		ids := append([]string{meta.Root}, meta.Children...)
 		written, err := WrittenScopes(s.storeRoot, ids)
 		if err != nil {
+			return nil, err
+		}
+		// Keep what this walk found, so a trailer that later leaves the store cannot shrink `V`.
+		// A failure to record is a failure to decide: nil, the same as any other error here.
+		if meta, err = s.archive.RecordWritten(meta.Root, slices.Concat(written.Scopes, written.Unscanned)); err != nil || meta == nil {
 			return nil, err
 		}
 		v = VisibilitySet(meta, written)

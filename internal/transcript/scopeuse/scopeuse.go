@@ -18,6 +18,10 @@
 //     string of ANY record — tool results, duplicates, hook attachments, opencode outputs. A
 //     header whose `scope=` is absent or not a valid scope name (the store-wide `(all scopes)`
 //     search, the "all N entry files … MALFORMED" form) contributes `*`.
+//   - R_memo (folded into R_header): every scope a MEMO BLOCK names (`<<<cairn-memo` …), found the
+//     same way. The memo hook injects one with no header and no command line, and its previews are
+//     that scope's text, so it is a read; a block that names no parseable scope contributes `*`.
+//     It was missing until #261 round 2 ([MemoScopes]).
 //   - L: the scopes the client read ledger names (decision 3a). A ledger line that does not parse,
 //     or names an invalid scope, contributes `*`.
 //   - F1: a tool INPUT names `cairn` or `subsystem-recall` (case-insensitive) AND the ledger holds
@@ -27,7 +31,8 @@
 //
 // ⚠ WHAT IT CANNOT SEE (threat T3): a session mixing a ledger-writing client with one that writes
 // nothing (non-empty ledger, so F1 is silent); a file read of a store copy whose path lacks
-// `subsystem-store`; a read that bypasses the client entirely.
+// `subsystem-store`; a read that bypasses the client entirely; a memo shown by any path that does
+// not print the renderer's block (a memo's text quoted without its fence, or the browser tab).
 package scopeuse
 
 import (
@@ -204,6 +209,93 @@ func (d *Deriver) content(s string, depth int) {
 	for _, sc := range HeaderScopes(s) {
 		d.headers[sc] = true
 	}
+	for _, sc := range MemoScopes(s) {
+		d.headers[sc] = true
+	}
+}
+
+// MemoBlockOpen and MemoBlockClose begin the first and last lines of a memo block as
+// `internal/memo` renders it (`<<<cairn-memo untrusted nonce=… count=…>>>` … `<<<end cairn-memo
+// nonce=…>>>`). They are spelled here rather than imported because `internal/memo` pulls the
+// store and the redactor into every capture binary; `TestAMemoBlockIsARead` renders a REAL block
+// through `memo.RenderPreview` and `memo.RenderFull`, so a renderer change that this parse no
+// longer reads turns that test red instead of shrinking `V`.
+const (
+	MemoBlockOpen  = "<<<cairn-memo"
+	MemoBlockClose = "<<<end cairn-memo"
+)
+
+// MemoScopes returns every scope a memo block in s names — `*` for a block that names none this
+// can parse. A memo block is a READ: the memo hook injects one into a session (a hook attachment,
+// with no `subsystem-recall:` header and no command line anywhere), and its previews are text OF
+// that scope. Before this, a session that wrote only alpha-notes and was shown a gamma-notes memo
+// was visible to an alpha-only viewer, memo text included (#261 round 2).
+//
+// A block runs from its open marker to its close marker or the next open marker, whichever comes
+// first, so a string of unterminated opens is still scanned once. Within it, a scope is read from
+// two line shapes, each after the block's `| ` content prefix:
+//
+//	[m-<id>] from <sender> · <scope> · <created> · expires <date>
+//	and <n> more on <scope>: cairn memo-read --scope <word>
+//
+// The memo heading is split from the RIGHT, so a sender carrying ` · ` cannot move the scope. A
+// scope that is not a valid name is `*`, like a header's.
+func MemoScopes(s string) []string {
+	var out []string
+	for {
+		i := strings.Index(s, MemoBlockOpen)
+		if i < 0 {
+			return out
+		}
+		s = s[i+len(MemoBlockOpen):]
+		// The next OPEN bounds the block before the close is looked for: searching for the close
+		// first would scan to the end of s from every unterminated open — quadratic.
+		block := s
+		if j := strings.Index(block, MemoBlockOpen); j >= 0 {
+			block = block[:j]
+		}
+		if j := strings.Index(block, MemoBlockClose); j >= 0 {
+			block = block[:j]
+		}
+		named := false
+		for _, line := range strings.Split(block, "\n") {
+			line = strings.TrimPrefix(strings.TrimRight(line, "\r"), "| ")
+			sc, ok := memoLineScope(line)
+			if !ok {
+				continue
+			}
+			named = true
+			if ValidScope(sc) {
+				out = append(out, sc)
+			} else {
+				out = append(out, Star)
+			}
+		}
+		if !named {
+			out = append(out, Star)
+		}
+		s = s[len(block):]
+	}
+}
+
+const memoMoreCommand = ": cairn memo-read --scope "
+
+func memoLineScope(line string) (string, bool) {
+	if strings.HasPrefix(line, "[m-") && strings.Contains(line, "] from ") {
+		parts := strings.Split(line, " · ")
+		if n := len(parts); n >= 4 && strings.HasPrefix(parts[n-1], "expires ") {
+			return parts[n-3], true
+		}
+		return "", true // a heading this cannot read: still a memo, so `*`
+	}
+	if strings.HasPrefix(line, "and ") {
+		if k := strings.Index(line, " more on "); k >= 0 {
+			if e := strings.LastIndex(line, memoMoreCommand); e > k {
+				return line[k+len(" more on ") : e], true
+			}
+		}
+	}
+	return "", false
 }
 
 // jsonStrings returns every string TOKEN of one JSON document — every key and every value,
