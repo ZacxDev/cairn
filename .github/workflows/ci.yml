@@ -954,8 +954,14 @@ jobs:
           CAIRN_RACE_EXEMPT_ONLY=1 go test -count=1 -v $pkgs | tee /tmp/go-exempt.txt
           modes=$(grep -c '^racegate: exempt-only ' /tmp/go-exempt.txt || true)
           oks=$(grep -c '^ok  ' /tmp/go-exempt.txt || true)
-          grep '^racegate: exempt-only ' /tmp/go-exempt.txt | cut -d: -f3 | tr ' ' '\n' | grep . | sort > /tmp/go-exempt-declared.txt
-          grep '^--- PASS: ' /tmp/go-exempt.txt | awk '{print $3}' | sort > /tmp/go-exempt-passed.txt
+          # 🔴 `|| true` ON BOTH LISTS, OR THE STEP DIES SILENT ON EXACTLY THE CASES IT EXISTS FOR.
+          # Under the runner's `bash -e` plus the `pipefail` above, a `grep` matching nothing
+          # fails the pipeline and ends the step HERE, before any `REFUSING` line: measured on a
+          # binary that never saw the variable (no `racegate:` line), on every exempt test
+          # skipping, and on every declared name matching no test (no `--- PASS`). It still went
+          # red, with no reason given. An EMPTY list is not a pass: the checks below refuse it.
+          { grep '^racegate: exempt-only ' /tmp/go-exempt.txt | cut -d: -f3 | tr ' ' '\n' | grep . | sort > /tmp/go-exempt-declared.txt; } || true
+          { grep '^--- PASS: ' /tmp/go-exempt.txt | awk '{print $3}' | sort > /tmp/go-exempt-passed.txt; } || true
           other=$(grep -cE '^--- (FAIL|SKIP): ' /tmp/go-exempt.txt || true)
           echo "packages in exempt-only mode: $modes, ok: $oks; declared: $(wc -l < /tmp/go-exempt-declared.txt), passed: $(wc -l < /tmp/go-exempt-passed.txt), failed or skipped: $other"
           if [ "$modes" -ne "$n" ] || [ "$oks" -ne "$n" ]; then
