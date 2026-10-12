@@ -86,7 +86,9 @@ const (
 	// at 459 MB resident (≈14× the record); measured here, the final frame ALLOCATES ≈18× the
 	// record (an upper bound on its live peak), linearly at 1, 2 and 4 MiB — ≈72 MiB at this cap.
 	// Since S4 the read-scope derivation ([derive]) and the repeated-member check read the assembled
-	// record too: 79.6 MiB at this cap (19.9×, measured at 4 MiB only).
+	// record too: 79.7 MiB at this cap (19.9×), 84.1 MiB under `-race` (CI's condition), measured
+	// at 4 MiB only, on a run of letters. ⚠ The re-check walk is NOT within budget on every shape:
+	// a record of short `key: value` lines costs it far more (the test's doc has the number).
 	// `TestTheAssembledRecordCapFitsThePod` re-measures it on every run against a 100 MiB budget,
 	// under half the limit, so two roots assembling at once still leave the rest of the process
 	// room. ⚠ The bound is PER RECORD, not per request: an unframed request of two records near
@@ -653,6 +655,9 @@ func derive(lines [][]byte, text []byte) []string {
 	d := scopeuse.NewDeriver()
 	var extra []string
 	for _, line := range lines {
+		// The whole-record scan IS the content scan of a record that does not decode, so a line
+		// that fails to unmarshal is not scanned a second time (it was, until #261 round 3: one more
+		// copy and one more pass at the cap, for an answer the first pass already gave).
 		d.Content(string(line))
 		if duplicateMember(line) {
 			extra = []string{Star}
@@ -663,7 +668,6 @@ func derive(lines [][]byte, text []byte) []string {
 		// read here, so a number decoded as a float loses nothing.
 		var rec map[string]any
 		if err := json.Unmarshal(line, &rec); err != nil || rec == nil {
-			d.Content(string(line))
 			continue
 		}
 		d.ClaudeRecord(rec)
