@@ -58,33 +58,31 @@ UNTRUSTED pointer-plus-preview block. Per `claudedocs/plan-cairn-scope-mail.md` 
 1. **S1** — DONE, #235. forcing: user — operator asked for scope mail.
 2. **Scope mail** — DONE and CLOSED: all five closing-condition parts met (see State now). forcing: user — operator asked
    for scope mail.
-3. **Batched defects below** — a NEW arc, not this one; each needs its own claim. Two follow-ups the operator raised at
-   closing, not yet planned: point the `cairn`, `handoff` and `resume` skills at `cairn-memo` (only `cairn-memo` names
-   memos today), and external senders — the task board's in-cluster agents (env-only rollout, per-agent narrowed
-   credential), the hosted personal agent (write access would break its read-only-on-cluster property: operator's call),
-   and a webhook receiver for
+3. **Batched defects below** — a NEW arc, not this one; each needs its own claim. The skill pointers the operator raised at
+   closing (`cairn`, `handoff`, `resume` → `cairn-memo`) landed in the tooling repo's #2157 (`8ff598fc`). Still unplanned: external
+   senders — the task board's in-cluster agents (env-only rollout, per-agent narrowed credential), the hosted personal
+   agent (write access would break its read-only-on-cluster property: operator's call), and a webhook receiver for
    ClickUp/Discord/Signal (new service; scope routing, the 30-live-memo quota, per-peer lockout, third-party text).
 
 ## Defects (batched)
-- **#2148 round-1 🟡s (tooling-repo hook):** (1) the host backoff is keyed on ONE fingerprint, so sessions in DIFFERENT
-  environments (some exporting `CAIRN_UI_URL`, some not) overwrite each other's record — 8 alternating sessions sent 8
-  refused requests; key a map fingerprint→expiry. (2) `_write_backoff` runs outside any try in `guarded_check`: a
-  read-only cache root with an existing `.host.lock` sends a request per session SILENTLY (no backoff, no stop, no
-  line) — wrap it and still write the session marker. (3) the 2 s host-lock wait turns a slow-but-healthy listener into
-  false `unreachable` (20 starts × 150 ms → 7) — on lock timeout don't stamp `last`, retry next event. 🟢 removing
-  `st_mtime_ns`/`st_size` from the fingerprint survives the suite.
-- **#2148 round 0:** the client prints `unconfigured` both when no `CAIRN_UI_*` is set (no request) and on a listener
-  401, so the hook backs off on both; a distinct "refused" client status would let it back off only on a real
-  refusal — changes cairn's 7-status contract, operator's call.
-- **#246 🟡:** `internal/ui/memos.go:364` `Scannable(subject, body)` → `Scannable("", body)` survives; add the
-  subject-past-`MaxScannedBytes` + secret-in-body row.
+- ✅ CLOSED (tooling repo #2157, `8ff598fc`) — **#2148 round-1 🟡s:** the host backoff is a map fingerprint → {until, token} (8
+  alternating sessions: 8 → 2 requests); an unwritable record still stops the session and says so; a host-lock timeout
+  is `busy` and un-stamps the throttle once per session (next event retries; a repeat busy keeps it); in-place size-only / mtime-only rows kill the 🟢 mutants.
+  Hook `--self-test` → `sabotaged=13 caught=13`; target floor 85 (89 collected). ⚠ Merged while GitHub said
+  `mergeStateStatus: UNKNOWN` (the base had moved two commits); the hook files on `main` are byte-identical to the PR head.
+- ✅ CLOSED (cairn #257 + tooling repo #2157 and its pin-bump follow-up) — **#2148 round 0:** a listener 401 is now
+  `memo-status=refused` (8 tokens; `unconfigured` = no key, no request). 🔴 DEPLOY ORDER: the hook that knows `refused`
+  (#2157, backing off on both tokens) on the tooling repo's `main` FIRST; then cairn #257; then ONE tooling-repo commit
+  bumping the cairn pin AND narrowing the hook's backoff to `{refused}`, shipped by `scripts/ship.sh` (hook and client
+  in one home-manager generation). An old hook reads `refused` as `malformed` (no stop, no backoff → lockout burst).
+- ✅ CLOSED (#251) — **#246 🟡:** the subject-past-`MaxScannedBytes` + secret-in-body row; mutant
+  `ui-memo-scannable-asks-about-the-body-only` killed (survived the old table).
 - **Walk capture of a POPULATED memos tab** (axe / touch / overflow / screenshots) — operator ruled it a separate,
   non-blocking follow-up.
-- **Closing-condition part 3's wording** diffs `-routes` against `b2ba3ac`, which predates scope-refs' `sources`
-  route — re-anchor it on a post-scope-refs base before reading it.
-- `tests/pgtest/run.sh:278` pipes into `head -1` inside an assignment under `set -euo pipefail` — safe only while
-  the version line is logged once.
-- `memo-send --help` does not say what the send-time secret scan cannot catch (the skill does); the plan's
+- ✅ CLOSED (#251) — **Closing-condition part 3** re-anchored on `b06f15c` (first `main` commit with the `sources`
+  route, last before S0); measured EMPTY against `be6662e`.
+- ✅ CLOSED (#251) — `tests/pgtest/run.sh` summary line is one `awk` (old: exit 1 on no match, 141 on many).
+- ✅ CLOSED (#251) — `memo-send --help` states what the send-time scan cannot catch. STILL OPEN: the plan's
   token-cost table was not recomputed from the S0 goldens.
 
 ## Gotchas / decisions / dead-ends
