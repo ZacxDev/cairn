@@ -561,9 +561,17 @@
     @apply w-24;
   }
 
-  /* The memo list: one row per memo, the invitation list's shape. */
+  /* The memo list: one row per memo, the invitation list's shape.
+   *
+   * 🔴 `wrap-anywhere` IS LOAD-BEARING, AND ITS ABSENCE WAS MEASURED RATHER THAN FEARED: a memo
+   * is free text from any writer, and ONE token with no break opportunity in its subject or text
+   * (a path, a URL, a hash) made the whole page scroll sideways at every width up to 1440px —
+   * `uiaudit`'s memo-world walk (clause (f)) caught it on the first run that sent one. `overflow-
+   * wrap: anywhere` rather than `break-words` for `.crumb`'s reason below: inside the row's flex
+   * boxes only `anywhere` also shrinks the min-content width. It inherits, so the subject, the
+   * text, the sender line and a tombstone are all covered by this one declaration. */
   .memo-list {
-    @apply flex flex-col gap-1;
+    @apply flex flex-col gap-1 wrap-anywhere;
   }
 
   /* A link's targets and its redemption log: the audit record, listed under its row. */
@@ -1320,6 +1328,24 @@
     }
 
     .team-link input[type="number"] {
+      @apply min-h-11;
+    }
+
+    /* 🔴 THE GENERIC FIELD RULE ABOVE LOSES TO A FORM'S OWN FIELD RULE, so each form that sizes its
+     * fields with `text-sm` restates the 16px here. `.memo-send textarea` and `.memo-send
+     * input[type="number"]` are (0,2,1) against the generic rule's (0,1,1), and `textarea` was in
+     * no rule at all: both memo fields rendered 14px at the touch rungs — measured by `uiaudit`'s
+     * memo-world walk (clause (f)), which is the first capture of the send form. ⚠
+     * `.team-link input[type="number"]` has the same specificity shape and is restated with them,
+     * but NO walk captures it (the team-link form needs a database the journal world does not
+     * have), so that half is read off the generated CSS, not measured in a browser. */
+    .memo-send textarea,
+    .memo-send input[type="number"],
+    .team-link input[type="number"] {
+      font-size: max(16px, 1em);
+    }
+
+    .memo-send input[type="number"] {
       @apply min-h-11;
     }
 

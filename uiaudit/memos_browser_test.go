@@ -20,6 +20,9 @@
 //	           store refuses (122 bytes) comes back in the form, typed text intact
 //	d_retract  the Retract button submits: the row becomes its tombstone, body gone, button gone
 //	e_reader   a read-only viewer is shown the tab and the memos, and no form and no button
+//	f_walk     the WALK's capture of the populated tab, at every rung of `Viewports`: axe, the touch
+//	           measurements, layout, a screenshot — refused by `refuseWalkRegressions`, the function
+//	           the walk itself calls, behind a positive control that each capture SAW the memos
 //
 // ⚠ WHAT IT DOES NOT MEASURE: authorisation. A reader shown no button could still forge the POST;
 // that the store refuses it is `cmd/cairn-ui`'s pgtest tier. This is the page, driven as a person
@@ -29,7 +32,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -143,10 +148,15 @@ var memoDraftSubject = strings.Repeat("é", 61)
 func TestTheMemosTabInARealBrowser(t *testing.T) {
 	chromiumOrRefuse(t)
 	bin, root, dsn := os.Getenv("UIAUDIT_CAIRN_UI"), os.Getenv("UIAUDIT_REPO_ROOT"), os.Getenv("UIAUDIT_MEMO_DSN")
-	if bin == "" || root == "" || dsn == "" {
-		t.Fatal("UIAUDIT_CAIRN_UI, UIAUDIT_REPO_ROOT and UIAUDIT_MEMO_DSN must name a built cairn-ui, its checkout and " +
-			"a PostgreSQL schema of this run's own: this is the only test that drives the populated memos tab in a " +
-			"browser, and it REFUSES rather than skipping. Run it through uiaudit/memos_check.sh, which sets all three.")
+	artifacts := os.Getenv("UIAUDIT_MEMO_ARTIFACTS")
+	if bin == "" || root == "" || dsn == "" || artifacts == "" {
+		t.Fatal("UIAUDIT_CAIRN_UI, UIAUDIT_REPO_ROOT, UIAUDIT_MEMO_DSN and UIAUDIT_MEMO_ARTIFACTS must name a built " +
+			"cairn-ui, its checkout, a PostgreSQL schema of this run's own and a directory for the walk clause's " +
+			"screenshots: this is the only test that drives the populated memos tab in a browser, and it REFUSES " +
+			"rather than skipping. Run it through uiaudit/memos_check.py, which sets all four.")
+	}
+	if err := os.MkdirAll(artifacts, 0o700); err != nil {
+		t.Fatalf("could not vouch: %v", err)
 	}
 	port := 18797
 	if raw := os.Getenv("UIAUDIT_MEMO_PORT"); raw != "" {
@@ -379,4 +389,82 @@ func TestTheMemosTabInARealBrowser(t *testing.T) {
 			t.Errorf("memos clause (e) reader: the read-only viewer is shown %d Retract button(s), want none", n)
 		}
 	})
+
+	t.Run("f_walk", func(t *testing.T) {
+		// One more memo, SENT like the seeds, whose subject and text are each one UNBROKEN token:
+		// the content most likely to push a page sideways at a phone width, and the reason the walk
+		// refuses horizontal overflow at all.
+		long, err := world.SendAsAgent(ctx, memoWalkSubject, memoWalkBody)
+		if err != nil {
+			t.Fatalf("memos clause (f) walk: sending the unbroken-token memo: %v", err)
+		}
+		// A FRESH browser: the writer's has typed into the form and clicked buttons, and the walk
+		// captures the tab as it is first opened, the way every other walked page is.
+		b := signedIn(world.WriterToken)
+		target := Target{Path: memoTabPath(world), SignedIn: true, LedgerRow: "GET " + ui.ScopePath + " (memo world)"}
+		target.PushURL = target.Path
+		var captures []*Capture
+		for _, vp := range Viewports {
+			c, err := b.CaptureTarget(target, vp)
+			if err != nil {
+				t.Fatalf("memos clause (f) walk: capturing %s at %s: %v\n--- cairn-ui log ---\n%s", target.Path, vp.Name, err, world.Log())
+			}
+			c.World = MemoWorldName
+			captures = append(captures, c)
+			t.Log(captureLine("["+MemoWorldName+"] ", c))
+			// 🔴 THE POSITIVE CONTROL, AT EVERY RUNG: the page this capture measured HOLDS memos —
+			// the two named ones, whole, and the writer's send form laid out. A walk of an EMPTY tab
+			// (`ui.NoMemoStore`, or a listing that rendered nothing) passes every refusal below, which
+			// is exactly the walk this clause exists to replace.
+			s := read(t, b)
+			got, okLong := s.row(long)
+			seeded, okSeed := s.row(seedNew)
+			if !okLong || !okSeed || got.Subject != memoWalkSubject || got.Body != memoWalkBody ||
+				seeded.Subject != memoSeedNewSubject || !s.SendForm {
+				t.Fatalf("memos clause (f) walk: the capture at %s did not see a POPULATED memos tab — rows %v, memo %d "+
+					"present=%v, memo %d present=%v (subject %q), send form=%v — so every refusal over it would be a "+
+					"verdict about an empty page", vp.Name, s.ids(), long, okLong, seedNew, okSeed, seeded.Subject, s.SendForm)
+			}
+			if err := writeMemoArtifact(artifacts, vp, c); err != nil {
+				t.Fatalf("memos clause (f) walk: %v", err)
+			}
+		}
+		// 🔴 THE WALK'S OWN REFUSALS, THE SAME FUNCTION `run` CALLS — never a second copy of them:
+		// overflow at every width, axe ran, the script allowlist, the content floor at the widest,
+		// touch reachability, axe target-size and input font at the touch rungs, header order.
+		if err := refuseWalkRegressions(captures); err != nil {
+			t.Fatalf("memos clause (f) walk: the populated memos tab fails the walk's refusals: %v", err)
+		}
+		violations := 0
+		for _, c := range captures {
+			violations += len(c.Violations)
+		}
+		t.Logf("memos clause (f) walk: %d capture(s), %d axe violation(s) reported, screenshots in %s", len(captures), violations, artifacts)
+	})
+}
+
+// The walk clause's memo: a subject at the store's full 120 bytes and a text, each ONE token with
+// no break opportunity. Repetitive rather than random, so the send-time secret scan has nothing to
+// mistake for a credential.
+var (
+	memoWalkSubject = strings.Repeat("glaze", 24)
+	memoWalkBody    = strings.Repeat("kilnfiring", 40)
+)
+
+// memoTabPath is the scope page's memos tab, as the scope page itself links it.
+func memoTabPath(w *MemoWorld) string {
+	return ui.ScopePath + "?" + url.Values{ui.QueryID: {string(w.ScopeID)}, ui.QueryTab: {ui.TabMemos}}.Encode()
+}
+
+// writeMemoArtifact writes one capture's screenshot and axe result where `memos_check.py` collects
+// them. Captures are never written into the repository (`main.go`'s reason).
+func writeMemoArtifact(dir string, vp Viewport, c *Capture) error {
+	if len(c.Screenshot) == 0 {
+		return fmt.Errorf("the capture at %s carries no screenshot", vp.Name)
+	}
+	stem := filepath.Join(dir, "memos-tab-"+vp.Name)
+	if err := os.WriteFile(stem+".png", c.Screenshot, 0o600); err != nil {
+		return err
+	}
+	return os.WriteFile(stem+".axe.json", c.AxeJSON, 0o600)
 }
