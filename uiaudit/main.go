@@ -967,10 +967,11 @@ func exemptPagesForLog() string {
 //     and broken at 834, which is why there are five.
 //   - NO SCRIPT BUT THE ALLOWLISTED ONES. `internal/ui`'s RENDERER emits exactly the
 //     same-origin `src`s `ui.AllowedScriptSources` names (today three: the scope page's entry
-//     filter, `pwa.js` on an ARMED deployment, `join.js` on the fragment join page), at most
-//     once each, and NO inline script — part of its XSS story rests on that.
+//     filter, `pwa.js` on an ARMED deployment, `join.js` on the fragment join page — this walk's
+//     worlds are unarmed and have no sign-in provider, so of the three it sees only the
+//     filter), at most once each, and NO inline script — part of its XSS story rests on that.
 //     An inline script, a foreign `src` or a duplicate is a refusal. ⚠ IT WAS "NO SCRIPT AT
-//     ALL" until the operator chose a client-side filter; a count cannot tell the allowed
+//     ALL" until the operator chose a client-side filter; a count cannot tell an allowed
 //     script from an injected one, so the refusal reads the list. ⚠ THE RENDERER, NOT THE
 //     SERVED PAGE: this walk boots its own pod on loopback, so an edge CDN that injects script
 //     downstream is invisible to it — and on the deployed surface one does. Scope and

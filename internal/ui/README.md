@@ -2775,8 +2775,11 @@ An mtime of 0 (stat failed) renders no timestamp rather than the epoch; a zero c
 The entry page's provenance block gains an `updated` row.
 
 **The ONE script.** *(One at the time; the allowlist has since grown to three — `pwa.js` (see "One
-more script, admitted by the allowlist and nothing else") and `join.js` (Phase W). The claim and
-guards below hold for each.)* The scope page's entry filter is `filter.js`, embedded, served at a
+more script, admitted by the allowlist and nothing else") and `join.js` (Phase W). The CLAIM below
+holds for each; the GUARDS below see only `filter.js` — the renderer guard and the walk render
+unarmed, provider-less pages, which link neither of the others — so each later script has its
+own: `TestTheArmedPWAHeadAddsOnlyThePWAScript` and `TestThePWAScriptTouchesOnlyWhatItSays`;
+`TestTheFragmentJoinPageMovesTheTokenThroughTheScript` and `TestTheJoinScriptTouchesOnlyWhatItSays`.)* The scope page's entry filter is `filter.js`, embedded, served at a
 content-hashed `GET /static/filter.<12 hex>.js` (`classPublic`, `immutable`, `text/javascript`,
 `nosniff`), linked only from the scope page. It is a case-insensitive SUBSEQUENCE match, per field,
 over the ref, title, aliases and tags the server put in each row's `data-filter`; every

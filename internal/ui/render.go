@@ -504,8 +504,9 @@ func relativeTime(at, now time.Time) string {
 // the scope page's and `join.js` the fragment join page's, and the only one this page can carry
 // is `pwa.js`, which the shared frame's `pwaHead` adds on an ARMED deployment. Every script a
 // page may carry is named by `AllowedScriptSources` and refused anywhere else by
-// `TestEveryBrowsePageCarriesOnlyAllowlistedScripts` and `uiaudit`'s walk. Two server-
-// rendered links cost nothing a script would have bought — they give a shareable URL, a
+// `TestEveryBrowsePageCarriesOnlyAllowlistedScripts` and `uiaudit`'s walk (both over unarmed
+// pages, so the frame's `pwa.js` has its own guard, `TestTheArmedPWAHeadAddsOnlyThePWAScript`).
+// Two server-rendered links cost nothing a script would have bought — they give a shareable URL, a
 // working back button and a browser-native reload for free, which is `searchForm`'s ruling
 // for the same shape. The alternative that WAS considered and refused: `:target`-driven
 // CSS tabs, which need both views in the DOM at once, doubling the page and putting the

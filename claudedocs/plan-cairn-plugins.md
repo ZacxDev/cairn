@@ -1721,7 +1721,7 @@ run time).
   a 5,000-character assistant message renders 1,200 + a `<details>` holding the rest; a tool call
   renders inside `<details>`; a subagent nests at its spawning call; bookkeeping collapses to one
   `<details>` per turn; the compaction summary is labelled runtime-generated; `AllowedScriptSources`
-  still has ONE entry. Control: a renderer that truncates user text fails the byte count.
+  gains no entry. Control: a renderer that truncates user text fails the byte count.
 - **Block-level classification (decision 17):** ONE `user` record carrying a 600 KB `tool_result`
   block renders that block COLLAPSED in a `<details>` showing its first 64 KiB with a raw-view link
   — not in full — while a separate `user` record with a 20,000-character `human-text` block renders
