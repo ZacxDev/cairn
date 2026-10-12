@@ -511,7 +511,8 @@ func main() {
 			os.Exit(exitConfig)
 		}
 		go func() {
-			if err := supabase.RunKeyRefresh(context.Background()); err != nil {
+			logf := func(line string) { fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: "+line)) }
+			if err := supabase.RunKeyRefresh(context.Background(), logf); err != nil {
 				fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: identity: the JWKS refresh loop stopped: "+err.Error()))
 			}
 		}()

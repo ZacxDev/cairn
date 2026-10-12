@@ -868,7 +868,9 @@ func main() {
 		// refuses every one. What is withheld is the BUTTON: `ui.Config.OAuthReady` below
 		// reads `KeyStatus().Fetched`, so the two provider rows answer 503 and the sign-in
 		// page renders the credential form alone until a fetch succeeds. The refresh loop
-		// keeps trying, and the door re-arms with no restart.
+		// keeps trying — on a backoff from `identity.jwksRetryMin` (5s, doubling, capped at
+		// the refresh interval) while it has never succeeded, NOT the full interval — and
+		// the door re-arms with no restart.
 		if err := supabase.RefreshKeys(ctx); err != nil {
 			fmt.Fprintf(os.Stderr,
 				"cairn-ui: WARNING identity: the Supabase key set could not be fetched at startup (%s). "+
@@ -879,7 +881,10 @@ func main() {
 				err.Error(), ui.GitHubLabel)
 		}
 		go func() {
-			if err := supabase.RunKeyRefresh(ctx); err != nil {
+			// Each failed attempt, and the success that ends a failing run, is a line here —
+			// see `identity.KeySet.Run` for why every failure rather than only the first.
+			logf := func(line string) { fmt.Fprintln(os.Stderr, "cairn-ui: "+line) }
+			if err := supabase.RunKeyRefresh(ctx, logf); err != nil {
 				fmt.Fprintln(os.Stderr, "cairn-ui: identity: the JWKS refresh loop stopped: "+err.Error())
 			}
 		}()

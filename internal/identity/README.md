@@ -494,6 +494,15 @@ ROTATED-OUT KEY KEEPS VERIFYING UNTIL THE NEXT REFRESH.** No arrangement makes t
 outage is supposed to survive. The lag is **bounded** by `DefaultJWKSInterval` (10m) and
 **reportable** by `Status`.
 
+🔴 **A FAILING KEY SET IS NOT ASKED AGAIN ONLY EVERY INTERVAL, AND EVERY FAILURE IS LOGGED.**
+While the last attempt failed — or no fetch has ever succeeded — `KeySet.Run` retries on a
+backoff from `jwksRetryMin` (5s, doubling, capped at the interval; reset by the first success),
+and writes one line per failed attempt plus one when a success ends the failing run, through the
+`logf` its caller passes. Before this, the loop ticked every interval and discarded the error, so
+a key set whose first fetch failed was silent and unarmed for one to two intervals after its
+provider came back. Why every failure rather than only the transition: `KeySet.Run`'s comment.
+Pinned by `jwksrun_test.go`, which records the waits `Run` asks for rather than sleeping them.
+
 ⚠ **"REPORTABLE" IS THE WORD IT EARNS, NOT "REPORTED".** No deployed program prints
 `KeySetStatus`, for the same reason nothing prints `control.Staleness`: the one place to
 put it is `cmd/cairn-server`'s startup banner, which `tests/dualrun/harness.py` compares
