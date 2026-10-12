@@ -248,10 +248,18 @@ var linkExpanded = map[string]bool{
 // [ExpandLinks] declines by design ("no query: already its own row") — so expanding it would buy
 // nothing and claim a discovery the walk never makes. The scope cards it used to publish are
 // `/scopes`'s now, and that row expands.
+//
+// 🔴 `GET /scope/sources` (S4 of the scope-refs plan) IS HERE AND NOT IN `linkExpanded`: bare it
+// answers the navigation page, a real 200 document (a request naming no scope asked nothing, the
+// browse pair's ruling), and the only page that publishes `?scope=` for it — the scope page's edit
+// link — renders that link for an `admin`, which the token-file world grants nobody. The per-scope
+// edit page is therefore NOT walked here; the scope page's read-only Sources block IS, because
+// `BootWorld` seeds a sources journal.
 var plainGET = map[string]bool{
-	ui.RootPath:   true,
-	ui.SignInPath: true,
-	ui.JoinPath:   true,
+	ui.RootPath:    true,
+	ui.SignInPath:  true,
+	ui.JoinPath:    true,
+	ui.SourcesPath: true,
 }
 
 // notADocument is the THIRD class: a `GET` row a browser walk must not capture as a page,
