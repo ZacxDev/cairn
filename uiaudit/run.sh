@@ -22,6 +22,9 @@ root="$(cd "$here/.." && pwd)"
 work="${UIAUDIT_WORK:-$(mktemp -d -t uiaudit-XXXXXX)}"
 port="${UIAUDIT_PORT:-18771}"
 label="${UIAUDIT_LABEL:-cairn-ui}"
+# `all` (the advisory job) or `touch` (the blocking `uiaudit-touch` job: only the touch refusals bind,
+# and nothing is built or pushed — `walkGate` in main.go). An unknown value is refused by the binary.
+gate="${UIAUDIT_GATE:-all}"
 
 mkdir -p "$work/bin"
 echo "uiaudit: building cairn-ui from the ROOT module"
@@ -34,7 +37,8 @@ echo "uiaudit: building uiaudit from the NESTED module"
   -cairn-ui "$work/bin/cairn-ui" \
   -work "$work" \
   -port "$port" \
-  -label "$label"
+  -label "$label" \
+  -gate "$gate"
 rc=$?
 
 # Exit 3 is "no audit-hub credentials": the capture ran and the push was skipped. The

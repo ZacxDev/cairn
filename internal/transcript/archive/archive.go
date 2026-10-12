@@ -68,11 +68,35 @@ var Runtimes = []string{"claude", "opencode"}
 // Bounds on what one request may carry. A request BODY is bounded by the listener; these bound
 // the strings inside it, so a log line or a page that renders one stays readable.
 const (
-	MaxCursorBytes   = 256
-	MaxDeclared      = 256
-	MaxRecords       = 10000
-	MaxFrames        = 4096
-	MaxNameBytes     = 128
+	MaxCursorBytes = 256
+	MaxDeclared    = 256
+	MaxRecords     = 10000
+	MaxFrames      = 4096
+	MaxNameBytes   = 128
+	// MaxAssembledBytes bounds ONE record or ONE blob — framed or not — and is checked BEFORE the
+	// staged bytes are read back into memory (arming precondition AP2).
+	//
+	// 🔴 WHY THIS NUMBER: the pod's memory limit is 256 Mi, and assembling a record is not a
+	// one-copy operation — the staged file is read whole, the final chunk appended, the result
+	// compacted, walked by the re-check and gzipped. #224's audit measured a 32 MB record peaking
+	// at 459 MB resident (≈14× the record); measured here, the final frame ALLOCATES ≈18× the
+	// record (an upper bound on its live peak), linearly at 1, 2 and 4 MiB — ≈72 MiB at this cap.
+	// `TestTheAssembledRecordCapFitsThePod` re-measures it on every run against a 100 MiB budget,
+	// under half the limit, so two roots assembling at once still leave the rest of the process
+	// room. ⚠ The bound is PER RECORD, not per request: an unframed request of two records near
+	// the cap (one 8 MiB body) was measured allocating ≈129 MiB, a shape the S3 head already
+	// admitted and this change does not narrow. A larger record is refused 413 and NOTHING of it
+	// is stored; no uploader exists on `main` yet, so what an agent does with that 413 is S3b's to
+	// decide (the plan, AP2). Raise this only with the limit, and re-measure.
+	MaxAssembledBytes = 4 << 20
+	// FrameIdle is how long a staged frame sequence may wait for its next frame before the sweep
+	// discards it and returns its bytes to the quota (AP3: an abandoned sequence must not hold
+	// quota until a restart). An agent that resumes after it simply restarts the record at frame
+	// 0, exactly as after a restart.
+	FrameIdle = time.Hour
+)
+
+const (
 	sessionsDir      = "sessions"
 	journalName      = "journal.jsonl"
 	metaName         = "meta.json"
@@ -125,6 +149,9 @@ type Archive struct {
 	used   int64
 	locks  map[string]*sync.Mutex
 	frames map[string]*frameState
+	// afterFrameSurvey, when set (tests only), runs between the frame sweep's survey and its
+	// per-root re-check, so a frame staged in that window can be placed there deterministically.
+	afterFrameSurvey func()
 }
 
 // Uploader is who an upload comes from: the capture token's bound owner (`<kind>:<id>`) and host.
@@ -177,14 +204,24 @@ func (e *StaleError) Error() string {
 	return fmt.Sprintf("from is not the stored position %q", e.StoredTo)
 }
 
-// RecheckError is the pod's refusing re-check: the table matched. It names the record index or
-// the blob, never the value.
+// RecheckError is the pod's refusing re-check: the table matched. It names the record index, the
+// blob, or the FIELD — never the value.
+//
+// 🔴 A HIT IN A NAME OR CURSOR IS REPORTED BY [RecheckError.Field] AND NEVER BY [RecheckError.Blob],
+// because there the name IS the matched value: echoing it would put the secret in the answer and in
+// the operator log (AP3).
 type RecheckError struct {
 	Record int
 	Blob   string
+	// Field names a request string the table matched — `root`, `stream`, `blob name`, `from`,
+	// `to`, `declared scope <i>`, `record <i> src`.
+	Field string
 }
 
 func (e *RecheckError) Error() string {
+	if e.Field != "" {
+		return fmt.Sprintf("the %s matched the redaction table; nothing was stored", e.Field)
+	}
 	if e.Blob != "" {
 		return fmt.Sprintf("blob %s matched the redaction table; nothing was stored", e.Blob)
 	}
@@ -197,6 +234,14 @@ type QuotaError struct{ Quota int64 }
 
 func (e *QuotaError) Error() string {
 	return fmt.Sprintf("the instance transcript quota of %d bytes is reached", e.Quota)
+}
+
+// TooLargeError refuses one record or blob over [MaxAssembledBytes] (AP2) — the contract's 413.
+// Nothing is stored and any staged frames are discarded.
+type TooLargeError struct{ Limit int64 }
+
+func (e *TooLargeError) Error() string {
+	return fmt.Sprintf("the record is over the %d-byte bound on one record or blob; nothing is stored", e.Limit)
 }
 
 // InvalidError is a malformed request: a bad name, an unknown runtime, a frame out of order.
@@ -247,6 +292,14 @@ func Open(cfg Config) (*Archive, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	// 🔴 BEFORE ANYTHING IS CREATED OR REMOVED: the frames directory is `RemoveAll`ed below, so a
+	// foreign `frames` would be destroyed by the very open that should have refused it.
+	if err := CheckOwnership(cfg.Dir); err != nil {
+		return nil, err
+	}
+	if err := repairJournal(cfg.Dir); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(filepath.Join(cfg.Dir, sessionsDir), dirMode); err != nil {
 		return nil, err
 	}
@@ -261,6 +314,160 @@ func Open(cfg Config) (*Archive, error) {
 		return nil, err
 	}
 	return &Archive{cfg: cfg, used: used, locks: map[string]*sync.Mutex{}, frames: map[string]*frameState{}}, nil
+}
+
+// ErrForeignEntry marks [CheckOwnership]'s refusal.
+var ErrForeignEntry = errors.New("the transcript directory holds an entry the transcript store does not own")
+
+// frameFile is a staged frame's file name ([Archive.framePath]).
+var frameFile = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+// CheckOwnership refuses a transcript directory holding ANY entry the store does not own
+// (arming precondition AP1).
+//
+// 🔴 THE HAZARD IS A NAME COLLISION WITH `cairn-ui`'s OWN STATE, AND IT IS AN OUTAGE, NOT A MESS.
+// The store appends `transcript-deleted` lines to `<dir>/journal.jsonl`; a control journal kept
+// under that name replays an unknown event kind as a refusal of the WHOLE journal
+// (`internal/control/journal.go`, no default-accept arm), so the next restart serves nobody. And
+// the browser session table's default, `/var/lib/cairn-ui/sessions`, IS this store's `sessions`
+// path for `-transcript-dir /var/lib/cairn-ui`. Refusing only a directory inside the store root
+// (`ResolveDir`) saw neither.
+//
+// So ownership is decided by NAME, TYPE and — for the one file two writers could share — CONTENT:
+//   - `journal.jsonl` must be a regular file every line of which is one of THIS store's deletion
+//     records (strict decode, `event` = `transcript-deleted`). A control journal's lines carry
+//     `kind`, so they are refused. A torn FINAL line that is the start of this store's record (a
+//     crash mid-append) is admitted and truncated by [Open]; a torn line of anything else is not.
+//   - `sessions` must be a directory whose entries are all session-id directories (a browser
+//     session FILE is refused by type).
+//   - `frames` must be a directory of staged-frame files only, because [Open] removes it whole.
+//   - a `lost+found` DIRECTORY is admitted: a fresh ext volume carries one and only fsck writes it.
+//   - anything else, and any symlink, is refused.
+//
+// An EMPTY directory (a fresh volume) and the store's own populated directory (a restart) both
+// pass; those are the two states `TestOpenAcceptsAFreshAndItsOwnDirectoryAndNothingElse` pins.
+func CheckOwnership(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	foreign := func(name, why string) error {
+		return fmt.Errorf("%w: %s (%s). Give the transcript store a directory of its own — nothing else "+
+			"`cairn-ui` writes (the control journal, the browser session table, a token file) may live in it",
+			ErrForeignEntry, filepath.Join(dir, name), why)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		switch {
+		case e.Type()&fs.ModeSymlink != 0:
+			return foreign(name, "a symlink")
+		case name == journalName:
+			if !e.Type().IsRegular() {
+				return foreign(name, "not a regular file")
+			}
+			if err := checkJournal(filepath.Join(dir, name)); err != nil {
+				return foreign(name, err.Error())
+			}
+		case name == sessionsDir:
+			if !e.IsDir() {
+				return foreign(name, "not a directory — a browser session table is a file")
+			}
+			if err := checkChildren(filepath.Join(dir, name), true, write.SessionComponent); err != nil {
+				return foreign(name, err.Error())
+			}
+		case name == framesDir:
+			if !e.IsDir() {
+				return foreign(name, "not a directory")
+			}
+			if err := checkChildren(filepath.Join(dir, name), false, frameFile); err != nil {
+				return foreign(name, err.Error())
+			}
+		case name == "lost+found" && e.IsDir():
+			// A fresh ext2/3/4 volume carries it at its root; nothing writes there but fsck.
+		default:
+			return foreign(name, "not one of journal.jsonl, sessions/ or frames/")
+		}
+	}
+	return nil
+}
+
+// checkChildren requires every entry of dir to be a directory (wantDir) or a regular file, named
+// by pattern.
+func checkChildren(dir string, wantDir bool, pattern *regexp.Regexp) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		ok := pattern.MatchString(e.Name()) && e.Type()&fs.ModeSymlink == 0 &&
+			((wantDir && e.IsDir()) || (!wantDir && e.Type().IsRegular()))
+		if !ok {
+			return fmt.Errorf("it holds %q, which this store never writes there", e.Name())
+		}
+	}
+	return nil
+}
+
+// checkJournal requires every line to be one of this store's deletion records.
+func checkJournal(path string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	if _, torn := tornTail(raw); torn {
+		frag := raw[bytes.LastIndexByte(raw, '\n')+1:]
+		// 🔴 A TORN FINAL LINE IS A CRASH MID-APPEND, AND REFUSING IT WOULD BE THE VERY RESTART
+		// OUTAGE AP1 EXISTS AGAINST — so it is admitted (and `Open` truncates it), but ONLY when it is
+		// a prefix of THIS store's record, or that record's head is a prefix of it: a fragment from
+		// another writer (a control journal line carries `kind`) is still refused.
+		if !bytes.HasPrefix(frag, []byte(recordHead)) && !bytes.HasPrefix([]byte(recordHead), frag) {
+			return errors.New("its unterminated last line is not the start of a transcript deletion record — another writer's file")
+		}
+		raw = raw[:len(raw)-len(frag)]
+		if len(raw) == 0 {
+			return nil
+		}
+	}
+	for i, line := range bytes.Split(bytes.TrimSuffix(raw, []byte("\n")), []byte("\n")) {
+		var r journalRecord
+		dec := json.NewDecoder(bytes.NewReader(line))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&r); err != nil || r.Event != eventDeleted {
+			return fmt.Errorf("line %d is not a transcript deletion record — is this another program's journal?", i+1)
+		}
+	}
+	return nil
+}
+
+// recordHead is how every line [Archive.journal] writes begins (`Event` is journalRecord's first
+// field), so a torn write of one is a prefix of it or starts with it.
+const recordHead = `{"event":"` + eventDeleted + `",`
+
+// tornTail reports the length of the journal's complete-line prefix and whether anything follows
+// it.
+func tornTail(raw []byte) (int, bool) {
+	keep := bytes.LastIndexByte(raw, '\n') + 1
+	return keep, keep < len(raw)
+}
+
+// repairJournal truncates a torn final line [CheckOwnership] admitted, so the next append does not
+// glue onto it and leave a broken line in the MIDDLE, which a later start would refuse.
+func repairJournal(dir string) error {
+	path := filepath.Join(dir, journalName)
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if keep, torn := tornTail(raw); torn {
+		return os.Truncate(path, int64(keep))
+	}
+	return nil
 }
 
 // Used is the byte count the quota is measured against.
@@ -465,6 +672,30 @@ func checkCursor(field, v string, mayBeEmpty bool) error {
 	return nil
 }
 
+// field is one request string the re-check reads, and the name its refusal reports.
+type field struct{ name, value string }
+
+// recheckFields runs the pod's refusing re-check over every STRING a request carries outside the
+// record and blob bytes — the root, the stream, the blob name, `from`, `to`, each declared scope
+// and each record's `src` (AP3).
+//
+// 🔴 EVERY ONE OF THEM IS STORED: as a directory or file name, inside `meta.json`, or on every
+// stored line. The re-check used to read only record and blob BYTES, and the name patterns do not
+// help — a 40-character `ghp_` token fits `blobName`, `idClass` and a cursor exactly. A hit refuses
+// the whole request, naming the FIELD and never the value.
+func (a *Archive) recheckFields(u Upload, extra ...field) error {
+	fields := []field{{"root", u.Root}, {"from", u.From}, {"to", u.To}}
+	for i, s := range u.Declared {
+		fields = append(fields, field{fmt.Sprintf("declared scope %d", i), s})
+	}
+	for _, f := range append(fields, extra...) {
+		if _, hits := a.cfg.Recheck.String(f.value); len(hits) > 0 {
+			return &RecheckError{Field: f.name}
+		}
+	}
+	return nil
+}
+
 // owned is decision 15's ownership rule: the first accepted upload fixes (owner, host).
 func owned(m *Meta, who Uploader) bool {
 	return m == nil || (m.Owner == who.Owner && m.Host == who.Host)
@@ -484,10 +715,19 @@ func (a *Archive) AppendRecords(who Uploader, u Upload, stream string, recs []Re
 	if u.Frame != nil && len(recs) != 1 {
 		return Stored{}, invalid("a framed upload carries exactly one record's frame, not %d", len(recs))
 	}
+	fields := make([]field, 0, len(recs)+1)
+	fields = append(fields, field{"stream", stream})
 	for i, r := range recs {
 		if err := checkCursor(fmt.Sprintf("record %d src", i), r.Src, false); err != nil {
 			return Stored{}, err
 		}
+		if u.Frame == nil && len(r.Rec) > MaxAssembledBytes {
+			return Stored{}, &TooLargeError{Limit: MaxAssembledBytes}
+		}
+		fields = append(fields, field{fmt.Sprintf("record %d src", i), r.Src})
+	}
+	if err := a.recheckFields(u, fields...); err != nil {
+		return Stored{}, err
 	}
 	l := a.rootLock(u.Root)
 	l.Lock()
@@ -584,8 +824,16 @@ func (a *Archive) PutBlob(who Uploader, u Upload, name string, data []byte) (Sto
 	if err := validateUpload(u); err != nil {
 		return Stored{}, err
 	}
+	// The name is NOT echoed: a name the re-check below would refuse must not reach the answer or
+	// the log through this one either.
 	if !blobName.MatchString(name) {
-		return Stored{}, invalid("blob name %q is not a file base name", name)
+		return Stored{}, invalid("the blob name is not a file base name (%s)", blobName)
+	}
+	if u.Frame == nil && len(data) > MaxAssembledBytes {
+		return Stored{}, &TooLargeError{Limit: MaxAssembledBytes}
+	}
+	if err := a.recheckFields(u, field{"blob name", name}); err != nil {
+		return Stored{}, err
 	}
 	l := a.rootLock(u.Root)
 	l.Lock()

@@ -15,14 +15,15 @@ import (
 	"github.com/ZacxDev/cairn/internal/ui"
 )
 
-// Exit codes. They are deliberately few, and NONE of them is a gating verdict.
+// Exit codes. They are deliberately few.
 //
-// 🔴 A CAPTURED REGRESSION EXITS 0 IN THIS CHANGE. The reason is mechanical rather than
-// timid: the first diff against a nonexistent baseline flags every axe rule "new" exactly
-// once, so a gate promoted today is red for a reason that has nothing to do with the tree —
-// which is the permanently-red gate this repository already refuses, reached from a new
-// direction. `README.md` names the ONE predicate that becomes a promotion candidate after
-// two baseline runs and what stays advisory forever.
+// 🔴 A HUB-SIDE REGRESSION (a new axe rule, a pixel diff) EXITS 0. The reason is mechanical
+// rather than timid: the first diff against a nonexistent baseline flags every axe rule "new"
+// exactly once, so a gate promoted on it is red for a reason that has nothing to do with the
+// tree. `README.md` names the ONE predicate that becomes a promotion candidate after two
+// baseline runs and what stays advisory forever. ⚠ A LOCAL refusal (`refuseWalkRegressions`)
+// is different and exits `exitHarness`: under `-gate touch` that exit is the BLOCKING verdict
+// of the `uiaudit-touch` CI job (S6b of the mobile plan).
 const (
 	exitOK = 0
 	// exitHarness is the harness itself failing: the pod would not boot, the browser would
@@ -36,6 +37,45 @@ const (
 	// success by the workflow rather than by this program pretending it ran.
 	exitSkipped = 3
 )
+
+// walkGate selects which of [refuseWalkRegressionsUnder]'s refusal classes decide the walk's verdict.
+//
+// 🔴 IT SELECTS, IT NEVER RE-IMPLEMENTS. Both gates run the ONE function the refusals live in, over
+// the same walk; `gateTouch` only declines to COUNT the classes that are not about a touch rung. That
+// is what the mobile plan's S6b asks for ("the walk's touch refusals, from `refuseWalkRegressions`,
+// the one place they live"): a second copy of a clause in a CI script or a second function is how
+// the blocking job and the advisory one would start disagreeing about what "touch" means.
+type walkGate string
+
+const (
+	// gateAll is every refusal, then the payload and the push: the advisory `uiaudit` job.
+	gateAll walkGate = "all"
+	// gateTouch is the blocking `uiaudit-touch` job: touch REACHABILITY (two-sided, so it reads the
+	// non-touch rungs too), axe `target-size`, input font under 16px (and their measured-nothing
+	// refusals), and horizontal overflow and AXE DID NOT RUN at the TOUCH rungs — the last because a
+	// target-size zero from a page axe never inspected is the reassuring zero. The matrix-collapse
+	// refusal binds too: reachability over a collapsed matrix is a claim about one side. NOT bound:
+	// scripts, the content floor, header reading order, and overflow/axe at a non-touch rung — all
+	// still refused by the advisory job, which runs `gateAll` over the same walk. ⚠ The walk's HARNESS
+	// preconditions (boot, sign-in, `LedgerAccounting`, `refuseJournalWorldFellBack`) run before any
+	// verdict and bind under BOTH gates: they say a measurement could not be taken, not that it failed.
+	gateTouch walkGate = "touch"
+)
+
+// touchGatePassed is the last line a passing touch-gated walk prints. The CI job requires it, so a
+// walk that exited 0 without reaching the verdict (an early `return nil` added later) is not a pass.
+const touchGatePassed = "uiaudit: TOUCH GATE PASSED — only the touch refusals bound this verdict; no payload was built and nothing was pushed"
+
+// parseWalkGate reads `-gate`. An unknown value is a usage error, never a silent fall-back to either
+// gate: falling back to `all` would make a typo in the blocking job block on non-touch classes, and
+// falling back to `touch` would make one in the advisory job stop refusing them.
+func parseWalkGate(s string) (walkGate, error) {
+	switch g := walkGate(s); g {
+	case gateAll, gateTouch:
+		return g, nil
+	}
+	return "", fmt.Errorf("-gate %q: want %q or %q", s, gateAll, gateTouch)
+}
 
 // pushConfirmation is the line the CI `verify-push` control greps for.
 //
@@ -57,7 +97,16 @@ func main() {
 	screenshots := flag.String("screenshots", "", "instead of the walk, write the manifest's install screenshots "+
 		"(ui.ScreenshotSpecs) into this directory — see screenshots.go; `nix run .#build-ui-screenshots` is the "+
 		"pinned way to regenerate the committed ones")
+	gateFlag := flag.String("gate", string(gateAll), "which refusals decide the verdict: \"all\" (the advisory "+
+		"job: every refusal, then the payload and the push) or \"touch\" (the blocking `uiaudit-touch` job: "+
+		"only the touch refusals, and NOTHING is built or pushed) — see walkGate")
 	flag.Parse()
+
+	gate, err := parseWalkGate(*gateFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "uiaudit: %v\n", err)
+		os.Exit(exitUsage)
+	}
 
 	if *uiBinary == "" || *workDir == "" {
 		fmt.Fprintln(os.Stderr, "uiaudit: -cairn-ui and -work are required")
@@ -73,7 +122,7 @@ func main() {
 		return
 	}
 
-	if err := run(*repoRoot, *uiBinary, *workDir, *port, *label, *budget); err != nil {
+	if err := run(*repoRoot, *uiBinary, *workDir, *port, *label, *budget, gate); err != nil {
 		if code, ok := err.(exitCode); ok {
 			os.Exit(int(code))
 		}
@@ -86,7 +135,7 @@ type exitCode int
 
 func (e exitCode) Error() string { return fmt.Sprintf("exit %d", int(e)) }
 
-func run(repoRoot, uiBinary, workDir string, port int, label string, budget time.Duration) error {
+func run(repoRoot, uiBinary, workDir string, port int, label string, budget time.Duration, gate walkGate) error {
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 
@@ -208,10 +257,19 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 	// walk whose touch rungs were never touch refuses without printing target sizes measured under
 	// a mouse pointer. ⚠ An earlier draft also called `refuseUnreachableTouch` here, BEFORE the
 	// summary; that made the call inside `refuseWalkRegressions` unreachable on a real walk.
-	if err := refuseWalkRegressions(captures); err != nil {
+	if err := refuseWalkRegressionsUnder(captures, gate); err != nil {
 		return err
 	}
 	printTouchSummary(captures)
+
+	// 🔴 THE TOUCH GATE STOPS HERE: it builds no payload, writes no artifact and pushes nothing, so
+	// the blocking job that runs it can never be reddened by the audit hub or its edge — the
+	// third-party reach the advisory job is `continue-on-error` FOR. Its verdict is the refusals
+	// above and nothing else.
+	if gate == gateTouch {
+		fmt.Println(touchGatePassed)
+		return nil
+	}
 
 	payload, files, err := BuildPayload(label, captures)
 	if err != nil {
@@ -998,6 +1056,17 @@ func exemptPagesForLog() string {
 // an opinion about, it is a property of THIS surface's own declared width ladder, derived
 // from it and asserted nowhere else.
 func refuseWalkRegressions(captures []*Capture) error {
+	return refuseWalkRegressionsUnder(captures, gateAll)
+}
+
+// refuseWalkRegressionsUnder is [refuseWalkRegressions] with the classes that decide the verdict
+// chosen by `gate` — see [walkGate] for exactly which ones `gateTouch` counts. It is the body; the
+// name above is the `gateAll` spelling every pre-S6b caller and test uses.
+func refuseWalkRegressionsUnder(captures []*Capture, gate walkGate) error {
+	if _, err := parseWalkGate(string(gate)); err != nil {
+		return err
+	}
+	all := gate == gateAll
 	if len(captures) == 0 {
 		return fmt.Errorf("refuseWalkRegressions was handed NO capture, so its clean verdict would be about nothing")
 	}
@@ -1018,13 +1087,16 @@ func refuseWalkRegressions(captures []*Capture) error {
 	for _, c := range captures {
 		where := fmt.Sprintf("%s at %s (%dpx)", c.Target.Path, c.Viewport.Name, c.Viewport.Width)
 		widths[c.Viewport.Name] = true
+		// Under the touch gate a non-touch capture still counts toward the matrix (above) and toward
+		// reachability (computed over every capture before this loop); nothing else reads it.
+		bound := all || c.Viewport.Touch
 		// 🔴 THE FLOOR BINDS AT THE WIDEST DECLARED WIDTH ONLY, AND THE VIEWPORT IS MATCHED BY
 		// VALUE RATHER THAN BY ITS NAME STRING — the same correction `Viewport.Touch` carries:
 		// a behavioural property keyed on a name is a property a width renamed anything else
 		// silently loses. Below `--breakpoint-ultra` the shell's cap is at or above the
 		// viewport, so the fraction is near 1 at every other width and the assertion would be
 		// vacuous there; at 3440 it is the whole question.
-		if c.Viewport == Ultrawide {
+		if all && c.Viewport == Ultrawide {
 			if c.Content == nil {
 				return fmt.Errorf("%s carries no content box, so the content floor would be deciding "+
 					"from a nil measurement", where)
@@ -1062,12 +1134,17 @@ func refuseWalkRegressions(captures []*Capture) error {
 				}
 			}
 		}
+		if !bound {
+			continue
+		}
 		if c.Layout.HorizontalOverflow {
 			overflow = append(overflow, fmt.Sprintf("%s: scrollWidth=%d > innerWidth=%d",
 				where, c.Layout.ScrollWidth, c.Layout.InnerWidth))
 		}
-		for _, bad := range scriptsOutsideAllowlist(c.ScriptSrcs) {
-			scripted = append(scripted, fmt.Sprintf("%s: %s", where, bad))
+		if all {
+			for _, bad := range scriptsOutsideAllowlist(c.ScriptSrcs) {
+				scripted = append(scripted, fmt.Sprintf("%s: %s", where, bad))
+			}
 		}
 		// The same discriminator `control_test.go` uses: an axe result that decodes and
 		// carries the engine block is an axe result that ran.
@@ -1090,13 +1167,13 @@ func refuseWalkRegressions(captures []*Capture) error {
 	// 58% at 5400: widening the widest capture without re-deriving the fraction would turn
 	// an honest tree red, and NARROWING it would make the floor pass on a layout that never
 	// reached the `ultra` breakpoint at all. Both are re-derivations, so both stop here.
-	if Ultrawide.Width != contentFloorWidth {
+	if all && Ultrawide.Width != contentFloorWidth {
 		return fmt.Errorf("the content floor of %.0f%% was derived at a %dpx viewport and the widest declared "+
 			"one is now %dpx: the fraction is not scale-free (the shell's cap is an absolute 200rem), so it has "+
 			"to be re-derived at the new width rather than carried over",
 			contentWidthFloor*100, contentFloorWidth, Ultrawide.Width)
 	}
-	if floorMeasured-floorExempt <= 0 {
+	if all && floorMeasured-floorExempt <= 0 {
 		return fmt.Errorf("the content floor BOUND 0 capture(s): %d were taken at the %dpx viewport and %d of "+
 			"those were the declared exemption, so its clean verdict would be about nothing. A walk that "+
 			"captured no page at the widest declared width, or only the sign-in page there, has not measured "+
@@ -1132,17 +1209,30 @@ func refuseWalkRegressions(captures []*Capture) error {
 			len(narrow), Ultrawide.Width, strings.Join(narrow, "\n    ")))
 	}
 	refusals = append(refusals, tr.refusals()...)
-	headerRefusal, headerMeasured := headerOrderRefusal(captures)
+	headerRefusal, headerMeasured := "", 0
+	if all {
+		headerRefusal, headerMeasured = headerOrderRefusal(captures)
+	}
 	if headerRefusal != "" {
 		refusals = append(refusals, headerRefusal)
 	}
 	if len(refusals) > 0 {
-		return fmt.Errorf("the walk measured %d regression class(es) over %d capture(s):\n  %s",
-			len(refusals), len(captures), strings.Join(refusals, "\n  "))
+		// 🔴 THE SENTENCE UP TO "regression class(es)" IS A CONTRACT: `pwa_check.sh`'s `walk_refused`
+		// greps it to tell a sibling-masked (c) check from a harness that printed nothing, so the gate
+		// goes AFTER it — `TestTheRefusalLineIsTheOnePwaCheckGreps` applies the script's own regex.
+		return fmt.Errorf("the walk measured %d regression class(es) over %d capture(s) (gate %s):\n  %s",
+			len(refusals), len(captures), gate, strings.Join(refusals, "\n  "))
 	}
-	fmt.Printf("uiaudit:   REFUSALS: 0 horizontal overflow, 0 scripts outside the allowlist, %d/%d captures carry a decodable axe "+
-		"testEngine — over %d distinct width(s): %s\n",
-		len(captures)-len(axeless), len(captures), len(widths), viewportWidths())
+	if all {
+		fmt.Printf("uiaudit:   REFUSALS: 0 horizontal overflow, 0 scripts outside the allowlist, %d/%d captures carry a decodable axe "+
+			"testEngine — over %d distinct width(s): %s\n",
+			len(captures)-len(axeless), len(captures), len(widths), viewportWidths())
+	} else {
+		fmt.Printf("uiaudit:   GATE touch — REFUSALS: 0 horizontal overflow over %d touch capture(s), %d/%d touch captures carry a "+
+			"decodable axe testEngine — over %d distinct width(s): %s. NOT bound here (the advisory job's): scripts, the "+
+			"content floor, header reading order, and overflow/axe at a non-touch rung\n",
+			tr.captures, tr.captures-len(axeless), tr.captures, len(widths), viewportWidths())
+	}
 	// ⚠ THIS LINE IS THE RESULT OF A REFUSAL THAT PASSED, NOT AN INDEPENDENT MEASUREMENT: reaching
 	// it means `refuseUnreachableTouch` found no mismatch, so the two numerators can only equal
 	// their denominators here. What it adds is that the numerators are counted from what the PROBE
@@ -1167,6 +1257,9 @@ func refuseWalkRegressions(captures []*Capture) error {
 		"capture(s), both worlds\n", tr.captures)
 	fmt.Printf("uiaudit:   INPUT FONT refusal PASSED: 0 of %d text-entry input(s) under %dpx over %d touch capture(s), "+
 		"both worlds\n", tr.inputs, minInputFontPx, tr.captures)
+	if !all {
+		return nil
+	}
 	fmt.Printf("uiaudit:   HEADER READING ORDER refusal PASSED: DOM order matched the visual order on %d capture(s) with "+
 		"two or more header focusables, at every rung\n", headerMeasured)
 	// 🔴 THE FLOOR REPORTS ITS NARROWEST MEASUREMENT RATHER THAN A ZERO. "0 refusals" is

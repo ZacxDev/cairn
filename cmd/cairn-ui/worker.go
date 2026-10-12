@@ -7,11 +7,13 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/redact"
@@ -185,15 +187,82 @@ func openTranscriptArchive(p workerPlan) (*archive.Archive, error) {
 	return archive.Open(archive.Config{Dir: p.dir, Retention: p.retention, Quota: p.quota, Recheck: red})
 }
 
-// armedWarning is printed when capture is armed. 🔴 It names every precondition the plan sets,
-// because the flag is the operator's assertion that they hold and nothing in this binary can check
-// them: O15's held-back gate for THIS redactor commit, S11's read ledger, and the pod-side `V`
-// this build does not derive.
-const armedWarning = "cairn-ui: WARNING transcript capture is ARMED (-" + flagArmCapture + "). The plan arms NO " +
-	"instance until (1) O15's arming gate passes on a FRESH auditor-written held-back set for the redactor commit " +
-	"being armed (≥ 90% of leaks caught, ≤ 15% of clean lines damaged) and (2) S11's client read ledger has " +
-	"landed; and this build does not derive a session's scopes itself, so every stored session is OWNER-ONLY. " +
-	"Arming is your assertion that (1) and (2) hold"
+// statePath is one file `cairn-ui` itself reads or writes, named by what sets it as an operator
+// spells it: `-<flag>`, or `$<VARIABLE>` for a file configured by the environment alone.
+type statePath struct{ flag, path string }
+
+// stateInsideTranscriptDir refuses a transcript directory that would HOLD one of `cairn-ui`'s own
+// state files (AP1, the half `archive.CheckOwnership` cannot see).
+//
+// 🔴 THE OWNERSHIP CHECK READS WHAT IS IN THE DIRECTORY AT STARTUP; THIS READS WHAT WILL BE. A
+// file this process creates LATER — an arc journal on its first write, a session table on a fresh
+// volume — is absent when the store opens, so the ownership check passes, the file appears, and the
+// NEXT restart is refused: the outage AP1 names, one restart later. Every path is resolved the way
+// the directory was (symlinks followed, through the nearest existing parent), so a symlinked
+// spelling of the same place is caught.
+func stateInsideTranscriptDir(dir string, paths []statePath) error {
+	for _, p := range paths {
+		if p.path == "" {
+			continue
+		}
+		resolved, err := resolveMaybeAbsent(p.path)
+		if err != nil {
+			return fmt.Errorf("%s %s does not resolve (%v), so it cannot be checked against -%s", p.flag, p.path, err, flagTranscriptDir)
+		}
+		if arcs.Inside(dir, resolved) {
+			return fmt.Errorf("%s %s resolves INSIDE -%s %s. The transcript store owns that directory whole — its "+
+				"retention sweep journals into it and its open refuses anything it did not write — so `cairn-ui`'s own "+
+				"state there is a refused restart waiting to happen. Give the transcripts a directory of their own",
+				p.flag, p.path, flagTranscriptDir, dir)
+		}
+	}
+	return nil
+}
+
+// resolveMaybeAbsent is `EvalSymlinks` for a path that may not exist yet: the nearest existing
+// ancestor is resolved and the rest re-joined.
+func resolveMaybeAbsent(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	var rest []string
+	for cur := abs; ; {
+		r, err := filepath.EvalSymlinks(cur)
+		if err == nil {
+			return filepath.Join(append([]string{r}, rest...)...), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return abs, nil
+		}
+		rest = append([]string{filepath.Base(cur)}, rest...)
+		cur = parent
+	}
+}
+
+// ownerStillHeld is the per-request owner check `worker.Config.OwnerHeld` asks (AP3): the SAME
+// predicate `workerListener` applies at startup, over the authority's CURRENT model.
+func ownerStillHeld(authority interface{ Model() control.Model }, owner worker.Owner) func() bool {
+	return func() bool {
+		_, known := authority.Model().PrincipalFor(owner.Kind, owner.ID)
+		return known
+	}
+}
+
+// armedWarning is printed when capture is armed. 🔴 It names what the plan still asks and what the
+// operator WAIVED, because the flag is the operator's assertion and nothing in this binary can
+// check it: S11's read ledger, the pod-side `V` this build does not derive, and — waived by
+// operator decision O17, not passed — O15's held-back gate, so this redactor is NOT measured to
+// that bar.
+const armedWarning = "cairn-ui: WARNING transcript capture is ARMED (-" + flagArmCapture + "). O15's arming gate " +
+	"(≥ 90% of leaks caught on a fresh held-back set) was WAIVED by operator decision O17, not passed: this " +
+	"redactor is not measured to that bar, so a secret it misses is stored. The plan also asks that S11's client " +
+	"read ledger has landed; and this build does not derive a session's scopes itself, so every stored session is " +
+	"OWNER-ONLY. Arming is your assertion that you accept both"
 
 // workerMode is the startup line's clause about the third listener and capture.
 func workerMode(addr string, owner worker.Owner, rows int, dir string, armed bool) string {

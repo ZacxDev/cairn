@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,6 +42,8 @@ type rig struct {
 	arc    *archive.Archive
 	tokens string
 	log    []string
+	// unheld flips the authority's answer for the owner (AP3); zero is "still held".
+	unheld atomic.Bool
 }
 
 func writeRows(t *testing.T, path string, rows ...TokenRow) {
@@ -78,7 +81,8 @@ func newRig(t *testing.T, armed bool, limiter *netid.RateLimiter) *rig {
 	}
 	g := &rig{t: t, arc: arc, tokens: filepath.Join(t.TempDir(), "worker-tokens")}
 	writeRows(t, g.tokens, standardRows()...)
-	w, _, err := New(Config{TokenFile: g.tokens, Owner: ownerA, Archive: arc, Armed: armed, Limiter: limiter,
+	w, _, err := New(Config{TokenFile: g.tokens, Owner: ownerA, OwnerHeld: func() bool { return !g.unheld.Load() },
+		Archive: arc, Armed: armed, Limiter: limiter,
 		Log: func(s string) { g.log = append(g.log, s) }})
 	if err != nil {
 		t.Fatal(err)
@@ -385,5 +389,90 @@ func TestOnlyTheBrowserProgramImportsWorker(t *testing.T) {
 		if !slices.Equal(importers, c.want) {
 			t.Fatalf("%s is imported by %v, want exactly %v", c.pkg, importers, c.want)
 		}
+	}
+}
+
+// TestOneFramePastTheCapIs413AndStoresNothing is AP2's closing check over the wire: two frames
+// staging EXACTLY `archive.MaxAssembledBytes` are accepted 202 (positive control — they reached the
+// staging and count against the quota), and a final frame of ONE more byte is refused 413 with the
+// one too-large body, before the staged bytes are read back; nothing is stored, no session exists,
+// and the staged bytes are back out of the quota.
+//
+// RED on the S3 head: no bound existed, so the final frame was assembled in memory (and, being
+// arbitrary bytes, answered 400 "not one JSON value" — after the read this precondition forbids).
+func TestOneFramePastTheCapIs413AndStoresNothing(t *testing.T) {
+	g := newRig(t, true, nil)
+	half := archive.MaxAssembledBytes / 2
+	frame := func(i int, chunk []byte) string {
+		return fmt.Sprintf(`{"schema":1,"runtime":"claude","host":"host-a","from":"","to":"100","declared_scopes":[],`+
+			`"records":[{"src":"0","chunk":%q}],"frames":{"index":%d,"count":3}}`, base64.StdEncoding.EncodeToString(chunk), i)
+	}
+	for i := range 2 {
+		if rec := g.do(http.MethodPost, recordsPath, captureA, frame(i, make([]byte, half))); rec.Code != http.StatusAccepted {
+			t.Fatalf("POSITIVE CONTROL: frame %d answered %d %q", i, rec.Code, rec.Body.String())
+		}
+	}
+	if used := g.arc.Used(); used != archive.MaxAssembledBytes {
+		t.Fatalf("POSITIVE CONTROL: %d bytes staged, want exactly the cap %d", used, archive.MaxAssembledBytes)
+	}
+	rec := g.do(http.MethodPost, recordsPath, captureA, frame(2, []byte("x")))
+	want := fmt.Sprintf(`{"refused":"too-large","max_bytes":%d}`+"\n", archive.MaxAssembledBytes)
+	if rec.Code != http.StatusRequestEntityTooLarge || rec.Body.String() != want {
+		t.Fatalf("one frame past the cap answered %d %q, want 413 %q", rec.Code, rec.Body.String(), want)
+	}
+	if roots, _ := g.arc.Roots(); len(roots) != 0 {
+		t.Fatalf("an over-cap record stored %v", roots)
+	}
+	if used := g.arc.Used(); used != 0 {
+		t.Fatalf("%d staged bytes still count against the quota after the refusal", used)
+	}
+}
+
+// TestATokenInABlobNameIs422AndNeverEchoed is AP3's re-check item over the wire: a 40-character
+// token as a BLOB NAME — it fits the name pattern — is refused 422 naming the field, and neither
+// the body nor any log line carries it; nothing is stored. Positive control: a clean name is 200.
+//
+// RED on the S3 head: names were never re-checked, so it stored.
+func TestATokenInABlobNameIs422AndNeverEchoed(t *testing.T) {
+	g := newRig(t, true, nil)
+	token := randToken(23)
+	rec := g.do(http.MethodPost, "/capture/v1/sessions/s-0001/blobs/"+token, captureA, blobBody("host-a", "", "v1", []byte("synthetic output\n")))
+	if rec.Code != http.StatusUnprocessableEntity || rec.Body.String() != `{"refused":"recheck","field":"blob name"}`+"\n" {
+		t.Fatalf("a token as a blob name answered %d %q", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(strings.Join(g.log, "\n"), token) {
+		t.Fatal("a log line carries the value")
+	}
+	if roots, _ := g.arc.Roots(); len(roots) != 0 {
+		t.Fatalf("a refused upload stored %v", roots)
+	}
+	if rec := g.do(http.MethodPost, blobPath, captureA, blobBody("host-a", "", "v1", []byte("synthetic output\n"))); rec.Code != http.StatusOK {
+		t.Fatalf("POSITIVE CONTROL: a clean blob name answered %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+// TestTheOwnerIsCheckedOnEveryRequest is AP3's last item: once the authority stops holding the
+// sole capture owner, the owner's own valid token is refused with the uniform 401 on the NEXT
+// request — no restart — and nothing more is stored; the refusal is not counted toward the lockout
+// (a one-failure limiter still admits the token once the owner is held again).
+//
+// RED with the per-request check removed from `serve` (the S3 head checked the owner only at
+// startup, and had no `OwnerHeld` to wire).
+func TestTheOwnerIsCheckedOnEveryRequest(t *testing.T) {
+	g := newRig(t, true, netid.NewRateLimiter(1, time.Minute, time.Minute))
+	if rec := g.do(http.MethodPost, recordsPath, captureA, recordsBody("host-a", "", "100", "turn")); rec.Code != http.StatusOK {
+		t.Fatalf("POSITIVE CONTROL: the held owner answered %d %q", rec.Code, rec.Body.String())
+	}
+	g.unheld.Store(true)
+	rec := g.do(http.MethodPost, recordsPath, captureA, recordsBody("host-a", "100", "200", "turn two"))
+	if rec.Code != http.StatusUnauthorized || rec.Body.String() != unauthorizedBody {
+		t.Fatalf("an owner the authority no longer holds answered %d %q, want the uniform 401", rec.Code, rec.Body.String())
+	}
+	if got, _ := g.arc.ReadStream("s-0001", "main"); len(got) != 1 {
+		t.Fatalf("the refused request stored: %d record(s)", len(got))
+	}
+	g.unheld.Store(false)
+	if rec := g.do(http.MethodPost, recordsPath, captureA, recordsBody("host-a", "100", "200", "turn two")); rec.Code != http.StatusOK {
+		t.Fatalf("the refusal was counted toward the lockout: the held owner now answers %d", rec.Code)
 	}
 }

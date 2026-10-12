@@ -291,6 +291,21 @@ LEDGER: tuple[Capability, ...] = (
                     "not extended",
     ),
     Capability(
+        name="audit-refs",
+        effect=READS,
+        cli="audit-refs",
+        route=None,
+        no_route_because="reads `GET /api/v1/sources/{scope}` (the `scope-sources` row's route) and the "
+                         "synced cache, then fetches the DECLARED REMOTES itself on the auditing host; "
+                         "the pod never fetches, so there is no route of its own",
+        note="S5 of the scope-refs plan: checks entries' paths, symbols, RESOLVED shas and PR refs "
+             "against the scope's code sources, exiting on doctor's 0/9/10. Writes only its own "
+             "mirror cache",
+        go_only=True,
+        go_only_why="decision 8 of the scope-refs plan: the auditor is a Go-only verb over "
+                    "`internal/refaudit`, and the Python oracle is not extended",
+    ),
+    Capability(
         name="cache-validate",
         effect=READS,
         cli="validate",

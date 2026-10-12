@@ -10,12 +10,27 @@ package memo
 //	none              nothing new                                  exit 0
 //	no-scope          no configured instance holds this scope      exit 0
 //	scope-unreadable  the cache holds it, the listener refuses     exit 3
-//	unconfigured      no memo listener URL or token                exit 3
+//	unconfigured      no memo listener URL or token; NO request    exit 3
+//	refused           the listener answered 401 (a request WAS sent) exit 3
 //	unreachable       the listener could not be reached in time    exit 3
 //	malformed         the listener answered something unreadable   exit 5
 //
 // The exit codes are the existing ledger's (decision 8); a token refines its code and never
 // contradicts it.
+//
+// 🔴 `refused` IS SPLIT FROM `unconfigured` BECAUSE THE HOOK MUST TELL THEM APART (operator
+// decision, the batched defect of the hook's round 0). Both are exit 3, but only `refused` SENT a
+// request. The listener answers ONE uniform 401 for three causes — a bad credential (the only one
+// its failed-credential lockout COUNTS: per HOST, 5 in 60 s → 15 min), this host already locked
+// out (checked before authentication, so a GOOD token is refused too), and no client identity —
+// and each is a reason for the hook to stop sending from the whole host. `unconfigured` sent
+// nothing and costs the listener nothing. One token for both made the hook back off a host that merely lacked keys,
+// or — read the other way — would make it stop backing off a real refusal.
+//
+// ⚠ ADDING A TOKEN IS A DEPLOY-ORDER CHANGE, NOT ONLY A CONTRACT CHANGE: a hook that does not know
+// a token reads it as `malformed`, which neither stops the session nor backs the host off. The
+// client reaches hosts only through the tooling repository's pin of this flake, so the hook that
+// knows the token must land on that repository's main BEFORE any pin bump past the commit adding it.
 func Statuses() []string {
-	return []string{"new", "none", "no-scope", "scope-unreadable", "unconfigured", "unreachable", "malformed"}
+	return []string{"new", "none", "no-scope", "scope-unreadable", "unconfigured", "refused", "unreachable", "malformed"}
 }

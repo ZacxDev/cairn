@@ -313,11 +313,13 @@ JOB_GATE = ("if: ${{ !cancelled() && (needs.changes.result != 'success' "
 STEP_GATE = "if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}"
 
 #: 🔴 THE LEDGER of jobs the docs lane skips. Fails on GROW or SHRINK.
-GATED_JOBS = {"parity", "dualrun", "nix", "uiaudit", "pgtest", "mutants", "mutants-aggregate"}
+GATED_JOBS = {"parity", "dualrun", "nix", "uiaudit", "uiaudit-touch", "pgtest", "mutants", "mutants-aggregate"}
 GATED_GO_STEPS = {
     "the conformance corpus against the Go server",
     "the arcs/sessions end-to-end check, after proving it can go RED",
     "the arcs/presence end-to-end check, after proving every clause can go RED",
+    # S5 of the scope-refs plan: the closing check, tiered like the arcs checks beside it.
+    "the scope-refs end-to-end check, after proving it can go RED",
 }
 UNGATED_JOBS = {"leakscan", "tests", "changes"}
 

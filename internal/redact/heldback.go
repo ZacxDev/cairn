@@ -9,9 +9,9 @@ import (
 	"strings"
 )
 
-// 🔴 THE ARMING GATE (operator decision O15): capture is not armed on ANY instance until a FRESH
-// held-back case set — written by an auditor, never seen by whoever tuned the rules, replaced each
-// round — scores at least [ArmingRecallFloorPct]% of its leaks caught AND at most
+// 🔴 THE HELD-BACK GATE (operator decision O15; since O17 a recorded MEASUREMENT, no longer an
+// arming precondition): O15 armed no instance until a FRESH held-back case set — written by an
+// auditor, never seen by whoever tuned the rules, replaced each round — scores at least [ArmingRecallFloorPct]% of its leaks caught AND at most
 // [ArmingDamageCeilingPct]% of its clean lines damaged. This file is that check, made
 // deterministic: `go build -o redact-heldback ./internal/redact/cmd/redact-heldback` and run it on
 // `<cases.jsonl>` (⚠ `go run` reports EVERY non-zero exit as 1 — build it to read 1 vs 2). It prints

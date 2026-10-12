@@ -110,6 +110,12 @@ func Verbs() []Verb {
 		// pod and prints its body verbatim, the arc verbs' shape — see `SourcesShow`.
 		{Name: "sources", Help: "which code (repositories and branch) the scope declares it describes (asks the pod)",
 			Flags: []string{"--scope", "--repo"}, Run: SourcesShow},
+		// 🔴 GO-ONLY, DECLARED: the reference auditor (S5 of the scope-refs plan) — the `audit-refs`
+		// row of `capability_ledger.LEDGER` and `flake.nix`'s `want-go-only-verbs.txt`. It exits on
+		// DOCTOR'S 0/9/10 at its own call site (decision 8), like `arcs --check`. Read-only: it writes
+		// only its own mirror cache, never the store and never the pod.
+		{Name: "audit-refs", Help: "check the scope's entries' paths, symbols, commits and PRs against its declared code sources (fetches them)",
+			Flags: []string{"--scope", "--repo", "--json", "--no-sync"}, Run: AuditRefs},
 		{Name: "validate", Help: "the post-write check: parse, dropped lines, marker reachability",
 			Flags: commonReadFlags, Run: Validate},
 		{Name: "ls-entries", Help: "one `<scope>/<entry>.md` per line",
