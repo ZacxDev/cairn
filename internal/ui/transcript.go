@@ -125,13 +125,18 @@ func (s *Server) transcriptView(id identity.Identity, session string) *transcrip
 	return view
 }
 
-// turnParam reads `?turn=`: a positive number, or 1; past `transcript.MaxTurn` it is that.
+// turnParam reads `?turn=` as the first turn of its page. A value that does not parse — a wider one
+// than `int` included — is page one, like any other unrecognised value.
+//
+// The clamp is `transcript.PageStart`'s and only its: this package kept a copy, so removing the
+// one in `transcript` left every ui test green (#261 round 2), and `transcript-turn-unclamped`
+// now lists this package's pager test as a killer too.
 func turnParam(r *http.Request) int {
 	n, err := strconv.Atoi(r.URL.Query().Get(QueryTurn))
-	if err != nil || n < 1 {
-		return 1
+	if err != nil {
+		n = 1
 	}
-	return min(n, transcript.MaxTurn)
+	return transcript.PageStart(n)
 }
 
 // transcriptRawHref is the ONE place a raw-record URL is built: the ledger path plus

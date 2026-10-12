@@ -5326,6 +5326,9 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestTurnsPageByFifty",
         why="a turn number is only a view selector, so bounding it reads as fussiness — and the page "
         "arithmetic overflows at the top of int, rendering negative page links.",
+        # The ui's pager test is listed because the ui kept its OWN copy of this clamp, which masked
+        # this mutant from every ui test (#261 round 2); `turnParam` now calls `PageStart`.
+        extra_killers=("TestTheTranscriptPagesByFiftyTurns",),
         pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
     ),
     # A twelfth, beyond the plan's eleven: the one rendering rule the operator stated outright (O9 —

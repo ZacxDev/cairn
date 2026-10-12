@@ -1096,49 +1096,25 @@ func (a *Archive) adjust(n int64) {
 	a.mu.Unlock()
 }
 
-// StoredRecord is one stored line, as [Archive.ReadStream] returns it.
+// StoredRecord is one stored line, as [Archive.ScanStream] yields it.
 type StoredRecord struct {
 	Seq int64           `json:"seq"`
 	Src string          `json:"src"`
 	Rec json.RawMessage `json:"rec"`
 }
 
-// ReadStream returns every COMMITTED record of one stream, in order. It is the read the later
-// slices render from (S4, S8); here it is what the tests read back.
+// ReadStream returns every COMMITTED record of one stream, in order, held in memory at once. Only
+// TESTS call it — the session page renders through [Archive.ScanStream], one record at a time — and
+// it is [Archive.ScanStream] collected, so what a test reads back is what the page reads: it was a
+// second copy of the scan (and, unlike it, held the root's lock across the read), so a defect in
+// the page's read was invisible to every test that read through this one (#261 round 2).
 func (a *Archive) ReadStream(root, stream string) ([]StoredRecord, error) {
-	if !write.SessionComponent.MatchString(root) || !streamName.MatchString(stream) {
-		return nil, invalid("not a stored stream")
-	}
-	l := a.rootLock(root)
-	l.Lock()
-	defer l.Unlock()
-	m, err := a.readMeta(root)
-	if err != nil || m == nil {
-		return nil, err
-	}
-	pos, ok := m.Streams[stream]
-	if !ok {
-		return nil, nil
-	}
-	f, err := os.Open(filepath.Join(a.sessionDir(root), streamPrefix+stream+streamSuffix))
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	zr, err := gzip.NewReader(io.LimitReader(f, pos.Bytes))
-	if err != nil {
-		return nil, err
-	}
-	dec := json.NewDecoder(zr)
 	var out []StoredRecord
-	for {
-		var r StoredRecord
-		if err := dec.Decode(&r); errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
-			return nil, err
-		}
+	if err := a.ScanStream(root, stream, func(r StoredRecord) error {
 		out = append(out, r)
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

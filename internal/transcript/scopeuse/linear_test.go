@@ -95,18 +95,73 @@ func TestHeaderScopesMatchesThePerMarkerScan(t *testing.T) {
 	t.Logf("20000 generated lines agree; %d of them a first-marker-only scan gets wrong", disagreeWithWrong)
 }
 
-// TestHeaderScopesIsLinearOnARunOfMarkers is the audit's input at a size the quadratic scan could
-// not finish: one 1 MiB line of back-to-back markers (the old scan took 2 min 39 s at 256 KB). The
-// bound is generous — 5 s for what measures in milliseconds — because it guards an ORDER of
-// growth, not a speed, and a timing test that flakes under load is one nobody believes.
-func TestHeaderScopesIsLinearOnARunOfMarkers(t *testing.T) {
-	line := strings.Repeat(HeaderMarker, (1<<20)/len(HeaderMarker))
-	start := time.Now()
-	got := HeaderScopes(line)
-	if took := time.Since(start); took > 5*time.Second {
-		t.Fatalf("one 1 MiB line of markers took %v", took)
+// TestTheShorterRuleIsNotEquivalent pins the two lines HeaderScopes' doc names as counterexamples to
+// the proposed "first marker's fields, `*` iff nothing at/after the LAST marker" rule: the oracle's
+// answers are literal here, and the scan must give the same.
+func TestTheShorterRuleIsNotEquivalent(t *testing.T) {
+	for line, want := range map[string][]string{
+		HeaderMarker + "x " + HeaderMarker + "scope=alpha-notes":                 {Star, "alpha-notes"},
+		HeaderMarker + "scope=beta-notes " + HeaderMarker + "scope=alpha-notes": {"alpha-notes", "beta-notes"},
+	} {
+		want = asSet(want)
+		if got := asSet(perMarkerScan(line)); !slices.Equal(got, want) {
+			t.Fatalf("ORACLE on %q answers %v, the doc claims %v", line, got, want)
+		}
+		if got := asSet(HeaderScopes(line)); !slices.Equal(got, want) {
+			t.Fatalf("on %q the scan answers %v, want %v", line, got, want)
+		}
 	}
-	if len(asSet(got)) != 1 || got[0] != Star {
-		t.Fatalf("a run of scope-less markers answered %v, want only *", asSet(got))
+}
+
+// TestHeaderScopesIsLinearOnARunOfMarkers holds the scan to LINEAR growth on the two whitespace-free
+// shapes #261's audits found quadratic, each measured at TWO sizes eight times apart:
+//
+//   - back-to-back markers (round 1: the old scan re-read the rest of the line after every marker —
+//     2 min 39 s at 256 KB);
+//   - back-to-back `subsystem-recall:scope=` (round 2: the line-once scan still looked for the end of
+//     the `scope=` value after EVERY marker, and with no whitespace that end is the end of the line —
+//     39 ms at 32 KB, 186 ms at 64 KB, 691 ms at 128 KB).
+//
+// A single wall-clock bound is a claim about one size; the growth RATIO between two is the claim
+// about the order. Linear grows ~8× across the pair and quadratic ~64×, so the bound sits between
+// at 24×, on the best of several runs at each size so one descheduled run cannot decide it. The
+// absolute 5 s cap fails a quadratic scan fast at the large size instead of letting it run minutes.
+func TestHeaderScopesIsLinearOnARunOfMarkers(t *testing.T) {
+	const small, large = 256 << 10, 2 << 20
+	for _, tc := range []struct {
+		name, unit string
+		want       []string
+	}{
+		{"markers", HeaderMarker, []string{Star}},
+		{"marker+scope=", HeaderMarker + "scope=", []string{Star}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			best := func(size int) time.Duration {
+				line := strings.Repeat(tc.unit, size/len(tc.unit))
+				var min time.Duration
+				for run := 0; run < 5; run++ {
+					start := time.Now()
+					got := HeaderScopes(line)
+					took := time.Since(start)
+					if took > 5*time.Second {
+						t.Fatalf("one %d-byte line of %q took %v", size, tc.unit, took)
+					}
+					if !slices.Equal(asSet(got), tc.want) {
+						t.Fatalf("a run of %q answered %v, want %v", tc.unit, asSet(got), tc.want)
+					}
+					if run == 0 || took < min {
+						min = took
+					}
+				}
+				return min
+			}
+			s, l := best(small), best(large)
+			ratio := float64(l) / float64(max(s, time.Microsecond))
+			t.Logf("%q: %d B best %v, %d B best %v, growth %.1f× for 8× the input", tc.unit, small, s, large, l, ratio)
+			if ratio > 24 {
+				t.Fatalf("growth %.1f× for 8× the input (linear ~8×, quadratic ~64×): %v at %d B, %v at %d B",
+					ratio, s, small, l, large)
+			}
+		})
 	}
 }

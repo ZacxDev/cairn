@@ -67,8 +67,18 @@ func ValidScope(name string) bool { return authz.SafePathComponent.MatchString(n
 // each line is scanned once: the fields after its FIRST marker are found in one pass (they are the
 // union of every later marker's, since a field begins at whitespace and no field can swallow one),
 // plus the one case a later marker adds by itself — `scope=` IMMEDIATELY after it, where the old
-// per-marker scan matched at the start of its substring. `TestHeaderScopesMatchesThePerMarkerScan`
-// holds the two to the same answer over generated lines.
+// per-marker scan matched at the start of its substring. That value's END is found by one forward
+// cursor every marker shares; looking for it from each marker was still quadratic on a
+// whitespace-free run of `subsystem-recall:scope=` (round 2: 691 ms at 128 KB).
+// `TestHeaderScopesMatchesThePerMarkerScan` holds the scan to the per-marker answer over generated
+// lines; `TestHeaderScopesIsLinearOnARunOfMarkers` holds both shapes to linear growth.
+//
+// ⚠ A SHORTER RULE WAS PROPOSED AND IS NOT EQUIVALENT: "the fields after the first marker, `*` if no
+// field starts at or after the LAST marker, and any later marker's immediate `scope=` value". On
+// `subsystem-recall:x subsystem-recall:scope=a` the first marker has no field of its own and the
+// per-marker answer is {*, a}; the rule gives {a} if an immediate `scope=` counts as a field (a
+// dropped `*` — fail OPEN), and on `subsystem-recall:scope=b subsystem-recall:scope=a` it gives
+// {*, a, b} against {a, b} if it does not. Per-marker `found` is kept for that reason.
 func HeaderScopes(s string) []string {
 	var out []string
 	for {
@@ -113,16 +123,25 @@ func lineScopes(line string) []string {
 	for _, l := range locs {
 		add(body[l[2]:l[3]])
 	}
+	// end is where the field-end scan last stopped: the first field end at or after the position it
+	// was asked about. Markers arrive in order, so a later marker whose value starts at or before
+	// `end` ends at that same `end` and never rescans; only one starting past it scans again, from
+	// its own start. Every byte is scanned at most once per line. (Scanning from each marker instead
+	// was the round-2 quadratic: with no whitespace, each `scope=` value ran to the end of the line.)
+	end := -1
 	k := 0
 	for _, m := range marks {
 		rel := m - marks[0]
 		found := false
 		if rel > 0 && strings.HasPrefix(body[rel:], "scope=") {
-			v := body[rel+len("scope="):]
-			if e := strings.IndexAny(v, fieldEnd); e >= 0 {
-				v = v[:e]
+			start := rel + len("scope=")
+			if end < start {
+				end = len(body)
+				if e := strings.IndexAny(body[start:], fieldEnd); e >= 0 {
+					end = start + e
+				}
 			}
-			add(v)
+			add(body[start:end])
 			found = true
 		}
 		for k < len(locs) && locs[k][0] < rel {
@@ -162,10 +181,16 @@ func NewDeriver() *Deriver {
 // fail-closed `*`, but `*` where the real scope is readable (review round 1). So a string that
 // decodes is scanned through EVERY string and EVERY key it holds instead of as raw text — nothing
 // it carries goes unscanned — and one that does not decode is scanned raw.
+//
+// 🔴 THE DECODE IS NOT GATED ON THE MARKER BEING PRESENT. It was, and JSON can ESCAPE any character
+// of the marker (`subsystem-recall:`), so such a string was neither decoded nor matched raw
+// and contributed NOTHING — not even `*` (#261 round 2). Every string that opens like a document is
+// now decoded. The cost stays linear: json.Valid and the token walk are each one pass, and the
+// depth cap bounds how many times one byte is re-decoded through nesting.
 func (d *Deriver) Content(s string) { d.content(s, 0) }
 
 func (d *Deriver) content(s string, depth int) {
-	if depth < 3 && strings.Contains(s, HeaderMarker) {
+	if depth < 3 {
 		t := strings.TrimSpace(s)
 		if len(t) >= 2 && (t[0] == '{' || t[0] == '[') {
 			if strs, ok := jsonStrings(t); ok {
