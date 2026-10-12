@@ -5055,11 +5055,93 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-retention-boundary-inclusive",
         path="internal/transcript/archive/sweep.go",
-        old="return now.Sub(m.UpdatedAt) > a.cfg.Retention }",
-        new="return now.Sub(m.UpdatedAt) >= a.cfg.Retention }",
+        old="return now.Sub(last) > a.cfg.Retention }",
+        new="return now.Sub(last) >= a.cfg.Retention }",
         killer="TestRetentionSweepsAtItsBoundary",
         why="`>=` and `>` read the same in a review; the boundary decides whether a session lives "
         "through the last instant of its retention.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    # 🔴 THE ARMING PRECONDITIONS AP1–AP3 (`claudedocs/plan-cairn-plugins.md`, "### Rollout"): one
+    # row per guard, each killed by the test its precondition's closing check names.
+    Mutant(
+        name="transcript-dir-ownership-unchecked",
+        path="internal/transcript/archive/archive.go",
+        old="\tif err := CheckOwnership(cfg.Dir); err != nil {\n\t\treturn nil, err\n\t}\n",
+        new="",
+        killer="TestOpenAcceptsAFreshAndItsOwnDirectoryAndNothingElse",
+        why="`ResolveDir` already refuses the store root, so the directory looks vetted — and a control "
+        "journal under the store's journal name receives a deletion line the next replay refuses whole (AP1).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-main-skips-state-paths",
+        path="cmd/cairn-ui/main.go",
+        old="if err := stateInsideTranscriptDir(workerConf.dir, statePaths); err != nil {",
+        new="if err := stateInsideTranscriptDir(workerConf.dir, nil); err != nil {",
+        killer="TestTheBinaryRefusesATranscriptDirHoldingItsOwnState",
+        why="the store's own ownership check refuses what is THERE at startup, so a second check reads as "
+        "redundant — and a state file this process creates later is refused one restart afterwards (AP1).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-state-path-compared-by-spelling",
+        path="cmd/cairn-ui/worker.go",
+        old="\t\tresolved, err := resolveMaybeAbsent(p.path)\n",
+        new="\t\tresolved, err := filepath.Abs(p.path)\n",
+        killer="TestStateInsideTheTranscriptDirIsResolvedNotSpelled",
+        why="`Abs` is the obvious normalisation, and a symlinked spelling of the transcript directory then "
+        "walks past it (AP1).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-assembled-record-uncapped",
+        path="internal/transcript/archive/frames.go",
+        old="if st.bytes+int64(len(chunk)) > MaxAssembledBytes {",
+        new="if false && st.bytes+int64(len(chunk)) > MaxAssembledBytes {",
+        killer="TestOneFramePastTheCapIs413AndStoresNothing",
+        why="each REQUEST is already bounded, so the record looks bounded too — and the final frame reads "
+        "every staged byte into memory, which the audit measured as an OOM kill in a 256 Mi pod (AP2).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-uncommitted-session-never-swept",
+        path="internal/transcript/archive/sweep.go",
+        old="\t\t\tok, err = a.deleteUncommitted(root, stale)\n",
+        new="",
+        killer="TestASessionWithNoMetaIsSweptByRetention",
+        why="retention is read off `meta.json`, so a root without one looks like nothing to sweep — and it "
+        "holds quota forever (AP3).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-abandoned-frames-hold-quota",
+        path="internal/transcript/archive/sweep.go",
+        old="\ta.sweepFrames(now)\n",
+        new="",
+        killer="TestAbandonedFramesStopHoldingQuotaWithoutARestart",
+        why="a restart discards staged frames, so they look bounded — and an agent that never finishes a "
+        "record holds its bytes against the quota until somebody restarts the pod (AP3).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-names-not-rechecked",
+        path="internal/transcript/archive/archive.go",
+        old="\t\tif _, hits := a.cfg.Recheck.String(f.value); len(hits) > 0 {",
+        new="\t\tif _, hits := a.cfg.Recheck.String(f.value); false && len(hits) > 0 {",
+        killer="TestTheRecheckReadsNamesSrcAndCursors",
+        why="names and cursors are pattern-checked, so they look inert — and a 40-character token fits "
+        "every one of those patterns and is stored as a file name or on every line (AP3).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="worker-owner-checked-only-at-startup",
+        path="internal/worker/worker.go",
+        old="\tif !w.cfg.OwnerHeld() {",
+        new="\tif false && !w.cfg.OwnerHeld() {",
+        killer="TestTheOwnerIsCheckedOnEveryRequest",
+        why="startup already refused an owner the authority does not hold, so a per-request check looks "
+        "redundant — and a principal removed afterwards keeps uploading until a restart (AP3).",
         pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
     ),
     Mutant(

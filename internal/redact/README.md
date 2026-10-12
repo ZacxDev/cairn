@@ -282,11 +282,12 @@ When two rules' spans overlap they merge, and the EARLIER rule in the table name
   build damaged (labelled as this round's own guards, not round-3 coverage).
 - Review round 2's adopted auditor tests (`audit_*_test.go`) still run.
 
-## The arming gate (O15)
+## The held-back gate (O15) — a measurement since O17, not an arming gate
 
-Capture is not armed on ANY instance until a FRESH held-back case set — written by an auditor,
-never seen by the fixer, replaced each round — shows **≥ 90% of leaks caught AND ≤ 15% of clean
-lines damaged**. `heldback.go` makes that a deterministic check:
+O15 made arming wait until a FRESH held-back case set — written by an auditor, never seen by the
+fixer, replaced each round — shows **≥ 90% of leaks caught AND ≤ 15% of clean lines damaged**.
+Operator decision O17 waived that as an arming precondition; the check below is still run and its
+line recorded. `heldback.go` makes it deterministic:
 
 ```bash
 go build -o redact-heldback ./internal/redact/cmd/redact-heldback
@@ -311,6 +312,8 @@ stopped heuristic fix rounds after round 7: this package merges with capture UNA
 instance, O15's gate stays the arming condition, and arming is a separate future decision —
 most likely about capturing LESS (excluding or truncating raw tool output) rather than redacting
 better. Round 7 was not re-scored against that set (the fixer has not seen it).
+
+🔴 **Since operator decision O17 this is NO LONGER AN ARMING GATE:** the operator waived it and chose to ship capture without perfect redaction; the score is kept as a measurement (`claudedocs/plan-cairn-plugins.md`, closing-condition part 5).
 
 **The measured residuals — what that set's misses and damage were, by category:**
 
