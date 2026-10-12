@@ -2,9 +2,9 @@
 // Code JSONL by byte offset and opencode through `opencode export`, derives each session's read
 // scopes, decides where the session may go, redacts, and hands the redacted bytes to a [Sink].
 //
-// 🔴 IT UPLOADS NOTHING (S2 of `claudedocs/plan-cairn-plugins.md`). This slice ships no [Sink]: the
-// agent is exercised through an in-memory one in its tests, and S3 adds the upload. A Sink write
-// is the "acknowledgement": every watermark advances only after its write succeeds.
+// It uploads through [HTTPSink] (S3b of `claudedocs/plan-cairn-plugins.md`), the capture/v1
+// contract `internal/worker` serves. A Sink write is the "acknowledgement": every watermark advances
+// only after its write succeeds, which for [HTTPSink] means a 200.
 //
 // 🔴 STDLIB ONLY, AND MEASURED SO: `cmd/cairn-capture` is in `internal/depspolicy`'s
 // `LinkedBinaryRoots`, so its whole import closure — this package included — is under the ban.
@@ -27,10 +27,15 @@ import (
 // bytes (up to 4 KiB): a file whose fingerprint changed was rewritten, not appended, and is refused
 // rather than resumed into different bytes. An opencode stream is the version (digest) of every
 // unit already shipped, because opencode MUTATES parts and its export carries no `time_updated`.
+//
+// `Cursor` is an opencode stream's position on the instance ([chainCursor]); a Claude Code
+// stream's is its `Offset`. `Refused` is FINAL for the stream: a rewritten file, or a write the
+// pod's re-check refused (422) — that stream is held and never resent.
 type StreamState struct {
 	Offset      int64             `json:"offset,omitempty"`
 	Fingerprint string            `json:"fp,omitempty"`
 	FPLen       int               `json:"fp_len,omitempty"`
+	Cursor      string            `json:"cursor,omitempty"`
 	Refused     string            `json:"refused,omitempty"`
 	Units       map[string]string `json:"units,omitempty"`
 }
@@ -53,10 +58,15 @@ type SessionState struct {
 // an unchanged blob is never re-read: hashing every persisted tool result on every 60-second run
 // cost ~311 MB of reads per run on the measured host (review round 1); decision 5's "idle
 // sessions cost one stat per file" is what this makes true.
+//
+// `Cursor` is the version the instance holds ([blobCursor]); `Refused` marks a version the pod's
+// re-check refused (422) — held, and not resent until the file changes.
 type BlobState struct {
 	Size    int64  `json:"size"`
 	MtimeNs int64  `json:"mtime_ns"`
 	Digest  string `json:"digest"`
+	Cursor  string `json:"cursor,omitempty"`
+	Refused string `json:"refused,omitempty"`
 }
 
 // State is the agent's whole local state: one 0600 file.
@@ -153,8 +163,29 @@ func (ss *SessionState) stream(name string) *StreamState {
 // Refusals are kept: a rewritten file is no less rewritten for moving instance.
 func (ss *SessionState) reset() {
 	for _, st := range ss.Streams {
-		st.Offset, st.Fingerprint, st.FPLen = 0, "", 0
+		st.Offset, st.Fingerprint, st.FPLen, st.Cursor = 0, "", 0, ""
 		st.Units = map[string]string{}
 	}
 	ss.Blobs = map[string]BlobState{}
+}
+
+// ErrRunning is [LockState]'s answer when another run holds the lock.
+var ErrRunning = errors.New("another capture run holds the lock")
+
+// LockState takes the run lock — `<state>.lock`, an exclusive non-blocking `flock` — so two runs
+// (a slow one and the next timer tick) never interleave writes of one session or overwrite each
+// other's state. The lock goes with the process, so a crashed run leaves nothing to clean up.
+func LockState(path string) (release func(), err error) {
+	f, err := os.OpenFile(path+".lock", os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("capture: the run lock %s.lock cannot be opened: %w", path, err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, ErrRunning
+		}
+		return nil, fmt.Errorf("capture: the run lock %s.lock cannot be taken: %w", path, err)
+	}
+	return func() { f.Close() }, nil
 }

@@ -28,11 +28,20 @@ type Agent struct {
 	Sink         Sink
 	State        *State
 	Log          io.Writer
+
+	// fatal is the first error that ends the run's uploads loudly (a refused token).
+	fatal error
 }
 
 // Summary counts one run. It carries no content.
 type Summary struct {
 	Sessions, Shipped, Held, Withdrawn, Records, Blobs, Refused int
+}
+
+// String is the run's one summary line.
+func (s Summary) String() string {
+	return fmt.Sprintf("sessions=%d shipped=%d held=%d withdrawn=%d records=%d blobs=%d refused=%d",
+		s.Sessions, s.Shipped, s.Held, s.Withdrawn, s.Records, s.Blobs, s.Refused)
 }
 
 func (a *Agent) logf(format string, args ...any) {
@@ -41,7 +50,9 @@ func (a *Agent) logf(format string, args ...any) {
 	}
 }
 
-// Run captures every session once.
+// Run captures every session once. It returns an error only for what ends the run's uploads — a
+// session tree that cannot be listed, or an instance that refused the capture token
+// ([FatalError]); every other failure is one session's, logged and counted in Refused.
 func (a *Agent) Run() (Summary, error) {
 	var sum Summary
 	if a.ClaudeRoot != "" {
@@ -70,7 +81,7 @@ func (a *Agent) Run() (Summary, error) {
 			sum.Refused++
 		}
 	}
-	return sum, nil
+	return sum, a.fatal
 }
 
 // isolate runs one session's capture and turns its failure into a logged refusal.
@@ -83,8 +94,47 @@ func (a *Agent) isolate(root string, sum *Summary, run func() error) {
 	if err := run(); err != nil {
 		a.logf("refused %s: %v", root, err)
 		sum.Refused++
+		var fatal *FatalError
+		if errors.As(err, &fatal) && a.fatal == nil {
+			a.fatal = err
+		}
 	}
 }
+
+// held decides whether a failed write is the pod's refusing re-check (422) — the one failure that
+// HOLDS a stream or blob for good — and if so records it in `mark` and logs it. Any other error is
+// returned for the session to report, and the next run retries it.
+//
+// 🔴 A 422 IS NEVER RETRIED. The pod's table matched something this host already redacted; the
+// next run would send the same redacted bytes and get the same answer. Nothing unredacted exists
+// to send instead, and the agent never sends anything but the redactor's output.
+func (a *Agent) held(err error, mark *string, what string, sum *Summary) error {
+	var rc *RecheckRefusal
+	if !errors.As(err, &rc) {
+		return err
+	}
+	*mark = rc.Error()
+	a.logf("HOLD %s: %v — held on this host for good and never resent", what, rc)
+	sum.Refused++
+	return nil
+}
+
+// offsetCursor is a Claude Code stream's cursor: its byte offset, "" for nothing written.
+func offsetCursor(off int64) string {
+	if off == 0 {
+		return ""
+	}
+	return strconv.FormatInt(off, 10)
+}
+
+// chainCursor is an opencode stream's cursor after one more unit: a hash chain over every unit
+// key and the digest of its REDACTED bytes, so it names a position and carries no content.
+func chainCursor(prev, key string, rec []byte) string {
+	return "c" + digest([]byte(prev + "\x00" + key + "\x00" + digest(rec)))[:32]
+}
+
+// blobCursor is a blob version's cursor: the digest of its REDACTED bytes.
+func blobCursor(out []byte) string { return "b" + digest(out)[:32] }
 
 // safeID is the session-id grammar a ledger file name may be built from: ONE path component,
 // tested as a component — `..` itself is refused, `a..b` is an ordinary name.
@@ -261,19 +311,32 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 			pend[i].lines, pend[i].starts, pend[i].fp, pend[i].fpLen = lines, splitWithOffsets(lines, 0), fp, fpLen
 		}
 	}
+	// 🔴 ONE STREAM'S FAILURE DOES NOT STOP THE SESSION'S OTHER STREAMS: each advances on its own
+	// acknowledgement, and the first error is the session's answer for this run.
+	var failed error
+	fail := func(err error) {
+		if err != nil && failed == nil {
+			failed = err
+		}
+	}
+	up := Upload{Instance: ss.Instance, Root: cs.Root, Runtime: "claude", Declared: ss.V}
 	shippedAny := false
 	for _, p := range pend {
 		if len(p.lines) == 0 {
 			continue
 		}
+		st := ss.stream(p.name)
 		recs := make([]Record, 0, len(p.lines))
 		for i, l := range p.lines {
-			recs = append(recs, a.redactLine(strconv.FormatInt(p.starts[i], 10), l))
+			r := a.redactLine(strconv.FormatInt(p.starts[i], 10), l)
+			r.End = strconv.FormatInt(p.starts[i]+int64(len(l))+1, 10)
+			recs = append(recs, r)
 		}
-		if err := a.Sink.Records(ss.Instance, cs.Root, p.name, recs); err != nil {
-			return err
+		up.From = offsetCursor(st.Offset)
+		if err := a.Sink.Records(up, p.name, recs); err != nil {
+			fail(a.held(err, &st.Refused, cs.Root+"/"+p.name, sum))
+			continue
 		}
-		st := ss.stream(p.name)
 		st.Offset, st.Fingerprint, st.FPLen = p.end, p.fp, p.fpLen
 		sum.Records += len(recs)
 		shippedAny = true
@@ -294,22 +357,34 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 			}
 			blobStat[n] = BlobState{Size: info.Size(), MtimeNs: info.ModTime().UnixNano(), Digest: digest(data)}
 		}
-		if prev, ok := ss.Blobs[n]; ok && prev.Digest == blobStat[n].Digest {
-			ss.Blobs[n] = blobStat[n] // touched, not changed
+		prev, seen := ss.Blobs[n]
+		next := blobStat[n]
+		next.Cursor, next.Refused = prev.Cursor, ""
+		if seen && prev.Digest == next.Digest {
+			next.Refused = prev.Refused
+			ss.Blobs[n] = next // touched, not changed
 			continue
 		}
-		out, _ := a.Redactor.Blob(n, data)
-		if err := a.Sink.Blob(ss.Instance, cs.Root, n, out); err != nil {
-			return err
+		out := a.redactBlob(n, data)
+		to := blobCursor(out)
+		up.From = prev.Cursor
+		if err := a.Sink.Blob(up, n, to, out); err != nil {
+			if err = a.held(err, &next.Refused, cs.Root+" blob "+n, sum); err != nil {
+				fail(err)
+				continue
+			}
+			ss.Blobs[n] = next // held: the stored version is still prev.Cursor
+			continue
 		}
-		ss.Blobs[n] = blobStat[n]
+		next.Cursor = to
+		ss.Blobs[n] = next
 		sum.Blobs++
 		shippedAny = true
 	}
 	if shippedAny {
 		sum.Shipped++
 	}
-	return nil
+	return failed
 }
 
 func feedClaudeLine(d *scopeuse.Deriver, line []byte) {
@@ -327,8 +402,19 @@ func feedClaudeLine(d *scopeuse.Deriver, line []byte) {
 var readFile = os.ReadFile
 
 func (a *Agent) redactLine(src string, line []byte) Record {
+	if redactionOff {
+		return Record{Src: src, Rec: append([]byte(nil), line...)}
+	}
 	out, _ := a.Redactor.Record(line)
 	return Record{Src: src, Rec: append([]byte(nil), out...)}
+}
+
+func (a *Agent) redactBlob(name string, data []byte) []byte {
+	if redactionOff {
+		return data
+	}
+	out, _ := a.Redactor.Blob(name, data)
+	return out
 }
 
 type ocStream struct {
@@ -399,23 +485,34 @@ func (a *Agent) runOpencode(root string, sum *Summary) error {
 	if err != nil || !ship {
 		return err
 	}
+	var failed error
+	up := Upload{Instance: ss.Instance, Root: root, Runtime: "opencode", Declared: ss.V}
 	shippedAny := false
 	for _, s := range streams {
 		todo := s.changed
 		if reset {
 			todo = s.all
 		}
-		if len(todo) == 0 {
+		st := ss.stream(s.name)
+		if len(todo) == 0 || st.Refused != "" {
 			continue
 		}
 		recs := make([]Record, 0, len(todo))
+		cur := st.Cursor
 		for _, u := range todo {
-			recs = append(recs, a.redactLine(u.Key+"@"+digest(u.Raw)[:12], u.Raw))
+			r := a.redactLine(u.Key+"@"+digest(u.Raw)[:12], u.Raw)
+			cur = chainCursor(cur, u.Key, r.Rec)
+			r.End = cur
+			recs = append(recs, r)
 		}
-		if err := a.Sink.Records(ss.Instance, root, s.name, recs); err != nil {
-			return err
+		up.From = st.Cursor
+		if err := a.Sink.Records(up, s.name, recs); err != nil {
+			if err = a.held(err, &st.Refused, root+"/"+s.name, sum); err != nil && failed == nil {
+				failed = err
+			}
+			continue
 		}
-		st := ss.stream(s.name)
+		st.Cursor = cur
 		for _, u := range todo {
 			st.Units[u.Key] = digest(u.Raw)
 		}
@@ -425,5 +522,5 @@ func (a *Agent) runOpencode(root string, sum *Summary) error {
 	if shippedAny {
 		sum.Shipped++
 	}
-	return nil
+	return failed
 }
