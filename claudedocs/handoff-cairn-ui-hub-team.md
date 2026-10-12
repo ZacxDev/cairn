@@ -51,7 +51,7 @@ Team page carrying sharing + invitations + multi-target team links (TTL, reuse, 
    Team page keeps ONE mint form (the team-link form, `?project=` preselecting that project);
    `POST /invite` stops minting and 303s to it; outstanding invitations stay listed, revocable and
    redeemable until they expire; a project owner can no longer confer `owner` self-service (no CLI mints
-   invitations; the only other path is the operator's `cairn-server set-member`). Alternatives: widen team links to
+   invitations; the only other path is the operator's `cairn-server -set-member`). Alternatives: widen team links to
    carry (i)+(ii) for one-project single-use links (an authz-model change), or a NEW migration (version 4 —
    3 is the memos tables) moving open invitations into `team_links` (stop before deploy). The older invite branches
    (`feat/ui-invite-flow`, `p6/invite-*`, `fix/rank-33-…`) are squash-merged via #139/#144, predate
