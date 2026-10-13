@@ -781,11 +781,16 @@ func (r *Runner) suggest(ctx context.Context, it pluginapi.PendingItem, res *ses
 	}
 	source, text, err := r.describe(ctx, it, h.prevScan)
 	if err != nil {
-		res.modelErr = true
-		r.Log(fmt.Sprintf("clickup: session=%s no suggestion was made: %v", it.Session, err))
-		return nil, nil
+		// 🔴 THE DESCRIPTION COULD NOT BE READ, SO THE PASS DOES NOT FINISH. Carrying on would write
+		// the scan and delete the marker — and with it an answer already paid for and not yet
+		// written. The pass fails here and is redone.
+		return nil, fmt.Errorf("reading what to ask the model about: %w", err)
 	}
 	if text == "" {
+		// Nothing NEW to describe — but an answer saved for this unfinished pass is still owed.
+		if ss.Asked != nil && ss.Asked.Model != "" {
+			return ss.Asked, nil
+		}
 		return nil, nil
 	}
 	sum := sha256.Sum256([]byte(source + "\x00" + text))

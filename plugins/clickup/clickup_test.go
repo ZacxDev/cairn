@@ -1322,4 +1322,50 @@ func TestTheSameQuestionIsNotBoughtAgainWhenTheSessionGrows(t *testing.T) {
 	if code, out, _ := w.run(t); code != 0 || !strings.Contains(out, "requests=1") {
 		t.Fatalf("a new summary was not asked about: exit %d %s", code, out)
 	}
+
+	// …and it is a new question WHILE a pass is unfinished too: the saved answer was to another one.
+	w2 := newWorld(t, human("please do the lorem export", ""))
+	w2.pod.addSummary("The first summary. SUMMARY-ONE")
+	w2.args = w2.withModel()
+	w2.prov.answer = `[{"ticket_id":"clk0000a1","confidence":0.9,"rationale":"synthetic"}]`
+	w2.pod.failTypes = map[string]bool{TypeSuggestion: true}
+	w2.run(t)
+	w2.run(t)
+	if n := len(w2.prov.received()); n != 1 {
+		t.Fatalf("the same question was asked %d times", n)
+	}
+	w2.pod.addSummary("A different summary. SUMMARY-TWO")
+	w2.run(t)
+	if got := w2.prov.received(); len(got) != 2 || !strings.Contains(got[1], "SUMMARY-TWO") {
+		t.Fatalf("a new summary during an unfinished pass was not asked about (%d requests)", len(got))
+	}
+}
+
+// TestASavedAnswerSurvivesARedoThatCannotReadTheSummary — an answer was paid for and its write failed;
+// on the redo the pod fails the SUMMARY read. The pass must not finish (and drop the answer): it fails,
+// is redone, and the saved suggestion is written with no second request. Red before: the scan was
+// written `model_asked:false`, the marker deleted, and the paid-for suggestion never stored.
+func TestASavedAnswerSurvivesARedoThatCannotReadTheSummary(t *testing.T) {
+	w := newWorld(t, human("please do the lorem export", ""))
+	w.pod.addSummary("The human asked for a lorem export.")
+	w.args = w.withModel()
+	w.prov.answer = `[{"ticket_id":"clk0000a1","confidence":0.9,"rationale":"synthetic"}]`
+	w.pod.failTypes = map[string]bool{TypeSuggestion: true}
+	w.run(t)
+	w.pod.mu.Lock()
+	w.pod.failTypes = nil
+	w.pod.failSummaryReads = 1
+	w.pod.mu.Unlock()
+	if code, _, errs := w.run(t); code != 1 || !strings.Contains(errs, "reading what to ask the model about") {
+		t.Fatalf("the redo whose summary read failed: exit %d %s", code, errs)
+	}
+	if n := len(w.pod.ofType(TypeScan)); n != 0 {
+		t.Fatalf("a pass that could not read its summary finished (%d scans) and dropped the saved answer", n)
+	}
+	if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "suggestions=1 requests=0") {
+		t.Fatalf("the next redo: exit %d\n%s%s", code, out, errs)
+	}
+	if n := len(w.prov.received()); n != 1 {
+		t.Fatalf("%d provider requests, want 1", n)
+	}
 }

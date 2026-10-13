@@ -97,9 +97,11 @@ type fakePod struct {
 	hidden map[string]bool
 	// failTypes makes every write of these output types answer failStatus (500 when 0): a pod that
 	// validates the request and then cannot store it. refuseStatus is what `refuse` answers (507 when 0).
-	failTypes    map[string]bool
-	failStatus   int
-	refuseStatus int
+	failTypes map[string]bool
+	// failSummaryReads makes the next N reads of `summary` outputs answer 500.
+	failSummaryReads int
+	failStatus       int
+	refuseStatus     int
 }
 
 // of is one session's streams; nil when the pod does not hold it.
@@ -275,6 +277,11 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		if p.of(q.Get("session")) == nil {
 			// The real pod's ONE 403: a session it does not hold.
 			writeJSON(rw, 403, map[string]string{"refused": "plugin-forbidden"})
+			return
+		}
+		if q.Get("type") == TypeSummary && p.failSummaryReads > 0 {
+			p.failSummaryReads--
+			http.Error(rw, "internal error", 500)
 			return
 		}
 		outs := []pluginapi.Output{}

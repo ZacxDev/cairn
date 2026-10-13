@@ -198,8 +198,10 @@ read.
 **A question is put to the model once.** What was asked (a digest of the session's description) and
 what came of it — a usable answer, an unusable one, or a failed request — is saved in the marker the
 moment the provider answers, before anything is written to the pod. A redo that would ask the SAME
-question writes what is saved and asks nobody, however the pass keeps failing and however the session
-grows meanwhile; a new summary is a new question. A request the run's own deadline cut short is the
+question writes what is saved and asks nobody, however the pass keeps failing — and however the
+session grows meanwhile under the same stored summary; a new summary is a new question. (With NO
+stored summary the description is the session's opening, which changes as a short session grows until
+it fills `-excerpt-bytes`: one request per growth until then.) A request the run's own deadline cut short is the
 one thing not recorded. ⚠ Until the pass finishes, that answer — ticket ids, confidences, one-sentence
 rationales about the session — is at rest in the state file.
 
@@ -257,7 +259,8 @@ stdout line is `SUMMARY clickup-run: sessions=… edges=… suggestions=… requ
   with `model_asked: false`, and that session is not asked again until its summary changes.
 - **A custom id glued to a URL is lost**: a URL is blanked to its end before bare tokens are read, so
   `…/t/abc123,ALPHA-12` (no space) names only `abc123`. With a space, a newline or `: ` it names both.
-- **A conflict list is not message text**: a path git lists under `Conflicts:` names no ticket.
+- **A conflict list AFTER the trailers is not message text**: a path git lists under `Conflicts:`
+  there names no ticket. One placed before the trailer block is read as prose.
 - **A given-up pass is not finished**: after its 6 attempts (or 30 days) the edges and suggestions it
   had not written are written only if the session grows again.
 - **More than 100 sessions in backoff at once hide the rest** — the pod's pending page is 100.
