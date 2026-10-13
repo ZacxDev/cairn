@@ -54,6 +54,7 @@ func TestThePluginFlagsAreBothOrNeitherAndNeedTheListener(t *testing.T) {
 		{"the journal at the control journal", pluginSettings{registry: reg, journal: control}, true, "-control-journal"},
 		{"the journal at the registry itself", pluginSettings{registry: reg, journal: reg}, true, "the -plugin-registry itself"},
 		{"a blank registry", pluginSettings{registry: " ", journal: journal}, true, "reduces to nothing"},
+		{"ticket titles with no registry", pluginSettings{storeTitles: true}, true, "no plugin is registered"},
 		{"an unknown capability", pluginSettings{registry: writeRegistry(t, strings.Replace(fixtureRegistry,
 			`"pending:list"`, `"store:read"`, 1)), journal: journal}, true, "closed vocabulary"},
 	} {

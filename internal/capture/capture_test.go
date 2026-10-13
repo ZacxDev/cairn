@@ -208,6 +208,13 @@ type memSink struct {
 	withdrawErr error
 	// onRecords, when set, runs as each records write arrives — before it is stored.
 	onRecords func()
+	// deletedOn is `instance/root` pairs the instance holds a FINAL deletion of: every write and
+	// every position probe of it answers [ErrDeleted], as the pod's 410 does.
+	deletedOn map[string]bool
+	// probes is every position asked, as `instance/root/stream`.
+	probes []string
+	// probeErr makes every position ask fail (an unreachable instance).
+	probeErr error
 }
 
 func newMemSink() *memSink {
@@ -220,6 +227,9 @@ func (s *memSink) Records(u Upload, stream string, recs []Record) (int, error) {
 		s.onRecords()
 	}
 	s.attempts[stream]++
+	if s.deletedOn[u.Instance+"/"+u.Root] {
+		return 0, ErrDeleted
+	}
 	if err := s.fail[stream]; err != nil {
 		return 0, err
 	}
@@ -259,6 +269,13 @@ func (s *memSink) Blob(u Upload, name, to string, data []byte) error {
 }
 
 func (s *memSink) Position(u Upload, stream string) (string, error) {
+	s.probes = append(s.probes, u.Instance+"/"+u.Root+"/"+stream)
+	if s.probeErr != nil {
+		return "", s.probeErr
+	}
+	if s.deletedOn[u.Instance+"/"+u.Root] {
+		return "", ErrDeleted
+	}
 	return s.pos[u.Instance+"/"+u.Root+"/"+stream], nil
 }
 

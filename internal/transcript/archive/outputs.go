@@ -54,16 +54,17 @@ var ErrNoSession = errors.New("no stored session")
 // `outputs.jsonl` before refusing — and a plugin sitting at its cap (or a stolen token, T6) made
 // each of its refused writes a walk of the whole archive.
 
-// outputUsage is every stored output byte, by plugin, read off the disk — [Open]'s one count.
-func (a *Archive) outputUsage() (map[string]int64, error) {
-	out := map[string]int64{}
+// outputUsage is every stored output byte, by plugin — and by session then plugin — read off the
+// disk: [Open]'s one count.
+func (a *Archive) outputUsage() (map[string]int64, map[string]map[string]int64, error) {
+	out, byRoot := map[string]int64{}, map[string]map[string]int64{}
 	roots, err := a.Roots()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, root := range roots {
 		one := map[string]int64{}
-		if err := a.sessionOutputBytes(root, one, 1); err != nil {
+		if err := a.sessionOutputBytes(root, one); err != nil {
 			// 🔴 ONE SESSION'S UNREADABLE `outputs.jsonl` MUST NOT STOP `cairn-ui` FROM STARTING — this
 			// runs in [Open]. Its bytes are counted, whole, as the file's on-disk size against NO
 			// plugin (the key ""): they still weigh on every plugin's shared 20% and on the quota,
@@ -73,44 +74,48 @@ func (a *Archive) outputUsage() (map[string]int64, error) {
 		for plugin, n := range one {
 			out[plugin] += n
 		}
+		if len(one) > 0 {
+			byRoot[root] = one
+		}
 	}
-	return out, nil
+	return out, byRoot, nil
 }
 
-// sessionOutputBytes adds (sign 1) or subtracts (sign -1) ONE session's stored output bytes, by
-// plugin, to `into`.
-func (a *Archive) sessionOutputBytes(root string, into map[string]int64, sign int64) error {
+// sessionOutputBytes adds ONE session's stored output bytes, by plugin, to `into`.
+func (a *Archive) sessionOutputBytes(root string, into map[string]int64) error {
 	return a.ScanOutputs(root, func(line []byte) error {
 		var head struct {
 			Plugin string `json:"plugin"`
 		}
 		_ = json.Unmarshal(line, &head)
-		into[head.Plugin] += sign * int64(len(line)+1)
+		into[head.Plugin] += int64(len(line) + 1)
 		return nil
 	})
 }
 
 // forgetOutputs takes a session's output bytes out of the running totals. The caller holds the
-// root's lock and is about to remove the directory. A file it cannot read is forgotten as [Open]
-// counted it: whole, against no plugin — a deletion is never refused over an output.
+// root's lock and is about to remove the directory.
+//
+// 🔴 IT SUBTRACTS WHAT WAS COUNTED, NEVER WHAT THE FILE NOW SAYS. It used to re-read the session's
+// `outputs.jsonl` and, when that failed, subtract the file's size against no plugin — so a file that
+// was readable when its lines were counted (per plugin) and unreadable at deletion left those
+// plugins' totals holding PHANTOM bytes for good: a share that filled up with nothing stored. The
+// per-session ledger ([Archive.byRoot]) is moved by the same two things that move the totals.
 func (a *Archive) forgetOutputs(root string) error {
-	gone := map[string]int64{}
-	if err := a.sessionOutputBytes(root, gone, 1); err != nil {
-		gone = map[string]int64{"": fileSize(filepath.Join(a.sessionDir(root), outputsName))}
-	}
 	a.mu.Lock()
-	for plugin, n := range gone {
+	for plugin, n := range a.byRoot[root] {
 		if a.outputs[plugin] -= n; a.outputs[plugin] <= 0 {
 			delete(a.outputs, plugin)
 		}
 	}
+	delete(a.byRoot, root)
 	a.mu.Unlock()
 	return nil
 }
 
 // reserveOutput charges n bytes of `plugin`'s outputs against both shares and the quota. The
 // refusal says WHICH limit it hit ([QuotaError.Share]).
-func (a *Archive) reserveOutput(plugin string, n int64) error {
+func (a *Archive) reserveOutput(root, plugin string, n int64) error {
 	pluginCap, totalCap := a.cfg.Quota/OutputPluginShareDivisor, a.cfg.Quota/OutputTotalShareDivisor
 	a.mu.Lock()
 	var total int64
@@ -125,20 +130,29 @@ func (a *Archive) reserveOutput(plugin string, n int64) error {
 		a.mu.Unlock()
 		return &QuotaError{Quota: totalCap, Share: ShareOutputs}
 	}
-	a.outputs[plugin] += n
+	a.charge(root, plugin, n)
 	a.mu.Unlock()
 	if err := a.reserve(n); err != nil {
 		a.mu.Lock()
-		a.outputs[plugin] -= n
+		a.charge(root, plugin, -n)
 		a.mu.Unlock()
 		return err
 	}
 	return nil
 }
 
-func (a *Archive) releaseOutput(plugin string, n int64) {
+// charge moves both ledgers by n bytes of `plugin`'s output in `root`. The caller holds `a.mu`.
+func (a *Archive) charge(root, plugin string, n int64) {
+	a.outputs[plugin] += n
+	if a.byRoot[root] == nil {
+		a.byRoot[root] = map[string]int64{}
+	}
+	a.byRoot[root][plugin] += n
+}
+
+func (a *Archive) releaseOutput(root, plugin string, n int64) {
 	a.mu.Lock()
-	a.outputs[plugin] -= n
+	a.charge(root, plugin, -n)
 	a.mu.Unlock()
 	a.release(n)
 }
@@ -164,18 +178,18 @@ func (a *Archive) AppendOutput(root, plugin string, line []byte) error {
 		return ErrNoSession
 	}
 	n := int64(len(line) + 1)
-	if err := a.reserveOutput(plugin, n); err != nil {
+	if err := a.reserveOutput(root, plugin, n); err != nil {
 		return err
 	}
 	f, err := os.OpenFile(filepath.Join(a.sessionDir(root), outputsName),
 		os.O_WRONLY|os.O_APPEND|os.O_CREATE|syscall.O_NOFOLLOW, fileMode)
 	if err != nil {
-		a.releaseOutput(plugin, n)
+		a.releaseOutput(root, plugin, n)
 		return err
 	}
 	defer f.Close()
 	if _, err := f.Write(append(append([]byte{}, line...), '\n')); err != nil {
-		a.releaseOutput(plugin, n)
+		a.releaseOutput(root, plugin, n)
 		return err
 	}
 	return f.Sync()

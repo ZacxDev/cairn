@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ZacxDev/cairn/internal/client"
 )
 
 // The agent's withdrawal on a routing change (S6, decision 16, clause m). Synthetic throughout: the
@@ -212,5 +216,163 @@ func TestTheAgentWithdrawsThroughTheRealRoute(t *testing.T) {
 	}
 	if m, err := p.arc.ReadMeta(s.ID); err != nil || m != nil {
 		t.Fatalf("the instance still holds the withdrawn session (%v, %v)", m != nil, err)
+	}
+}
+
+// TestARefusedTokenEndsWithdrawalsForTheRun — a 401 (or 403) on a withdrawal stops the instance for
+// the run, and that stop covers WITHDRAWALS too: every further request with a refused token counts
+// toward the worker's lockout. A second withdrawal sends nothing. CONTROL: a 507 (quota) stops
+// uploads and NOT withdrawals — a full instance is exactly when a prefix that must go should go.
+func TestARefusedTokenEndsWithdrawalsForTheRun(t *testing.T) {
+	for _, tc := range []struct {
+		status, want int
+	}{{http.StatusUnauthorized, 1}, {http.StatusForbidden, 1}, {http.StatusInsufficientStorage, 2}} {
+		var requests int
+		srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+			requests++
+			http.Error(rw, "refused", tc.status)
+		}))
+		sink := &HTTPSink{Host: "host-a", Endpoints: map[string]Endpoint{"personal": {URL: srv.URL, Token: sinkTokenA}}, Log: &bytes.Buffer{}}
+		for _, root := range []string{"s-0001", "s-0002"} {
+			if deleted, err := sink.Withdraw("personal", root); deleted || err == nil {
+				t.Errorf("%d: a withdrawal the instance refused answered %v %v", tc.status, deleted, err)
+			}
+		}
+		srv.Close()
+		if requests != tc.want {
+			t.Errorf("after a %d, two withdrawals sent %d request(s), want %d", tc.status, requests, tc.want)
+		}
+	}
+}
+
+// TestARouteBackToAnInstanceThatDeletedTheSessionHoldsItWhereItIs — #273's audit F1. The session's
+// prefix is on `personal`; its routing answer now names `client`, which holds a FINAL deletion of
+// this root (it was withdrawn from there once, and a routing-TABLE edit sends it back). Red before:
+// the agent withdrew from `personal` FIRST, then `client` answered 410 and the session was marked
+// deleted — gone from both, captured nowhere. Now the destination is asked first: the session is
+// HELD on `personal`, nothing is withdrawn, nothing is shipped, and it is said once.
+// CONTROL (`TestTheAgentWithdrawsThroughTheRealRoute` and its siblings): a destination that did NOT
+// delete it is withdrawn-then-shipped exactly as before.
+func TestARouteBackToAnInstanceThatDeletedTheSessionHoldsItWhereItIs(t *testing.T) {
+	// Run 1 ships the session (it touched `alpha-notes` only) to `personal`. Then the TABLE is edited:
+	// `alpha-notes` now routes to `client`.
+	w := loadWorld(t)
+	e := materialize(t, w, "cc-plain")
+	id := w.Sessions["cc-plain"].ID
+	path := filepath.Join(e.claude, w.Sessions["cc-plain"].Project, id+".jsonl")
+	appendTo(t, path, strings.Replace(betaRead, "beta-notes", "alpha-notes", 1))
+	log := &bytes.Buffer{}
+	a := newAgent(t, e, twoInstances, &fakeRunner{}, log)
+	mustRun(t, a)
+	if a.State.Sessions[id].Instance != "personal" {
+		t.Fatal("control: run 1 did not ship the session to the personal instance")
+	}
+	a.Routing = client.Routing{Instances: twoInstances.Instances, RoutesSource: "the test's edited table",
+		Routes: map[string]string{"alpha-notes": "client", "beta-notes": "client"}}
+	appendTo(t, path, strings.Replace(betaRead, "beta-notes", "alpha-notes", 1))
+	e.sink.deletedOn = map[string]bool{"client/" + id: true}
+	before := len(spooled(t, e, "personal", id, "main"))
+	sum := mustRun(t, a)
+	ss := a.State.Sessions[id]
+	if !ss.Held || ss.Instance != "personal" || ss.Deleted != "" || !strings.Contains(ss.HeldReason, "routed back to client") {
+		t.Fatalf("held=%v (%q) bound to %q, deleted=%q — want HELD on personal, not deleted", ss.Held, ss.HeldReason, ss.Instance, ss.Deleted)
+	}
+	if n := len(e.sink.withdrawn["personal"]); n != 0 || sum.Withdrawn != 0 || sum.Deleted != 0 || sum.Held != 1 {
+		t.Fatalf("%d withdrawals from the instance that holds the prefix; %+v — want none, and one hold", n, sum)
+	}
+	if got := len(spooled(t, e, "personal", id, "main")); got != before || e.sink.has("client", id) {
+		t.Fatalf("the prefix on personal went %d → %d records, shipped to client=%v", before, got, e.sink.has("client", id))
+	}
+	if !slices.Contains(e.sink.probes, "client/"+id+"/main") {
+		t.Fatalf("the destination was not asked: %v", e.sink.probes)
+	}
+	if n := strings.Count(log.String(), "HOLD "+id+": its routing answer now names instance client"); n != 1 {
+		t.Fatalf("the hold is logged %d times, want once:\n%s", n, log.String())
+	}
+	// A later run does nothing more — and does not ask again.
+	probes := len(e.sink.probes)
+	if sum := mustRun(t, a); sum.Records != 0 || len(e.sink.withdrawn["personal"]) != 0 || len(e.sink.probes) != probes ||
+		strings.Count(log.String(), "HOLD "+id) != 1 {
+		t.Fatalf("a later run acted on the held session: %+v", sum)
+	}
+}
+
+// TestThePositionProbeOfADeletedRootIsAnswered410ByTheRealPod — the signal the test above fakes is
+// the real instance's: after its own (owner, host) withdrew a root, a position probe of that root
+// (which stores nothing) is answered [ErrDeleted], and a root never stored is answered "".
+func TestThePositionProbeOfADeletedRootIsAnswered410ByTheRealPod(t *testing.T) {
+	p := newPod(t, podOpts{})
+	sink := p.sink("host-a", sinkTokenA, 0)
+	if at, err := sink.Position(up(""), "main"); err != nil || at != "" {
+		t.Fatalf("CONTROL: a root never stored answered %q %v", at, err)
+	}
+	recs := synth(2, 200)
+	if _, err := sink.Records(up(""), "main", recs); err != nil {
+		t.Fatal(err)
+	}
+	if deleted, err := sink.Withdraw("personal", sinkRoot); !deleted || err != nil {
+		t.Fatalf("the withdrawal: %v %v", deleted, err)
+	}
+	if _, err := sink.Position(up(""), "main"); !errors.Is(err, ErrDeleted) {
+		t.Fatalf("a position probe of a withdrawn root answered %v, want ErrDeleted", err)
+	}
+	if m, _ := p.arc.ReadMeta(sinkRoot); m != nil {
+		t.Fatal("the probe stored something")
+	}
+}
+
+// TestAnUnreachableDestinationDefersTheWithdrawal — #274's audit, on the route-back hold. The table
+// now routes the session to `client`. Run 2: `client` cannot be reached — nothing is withdrawn from
+// `personal` and nothing is shipped (red before: the withdrawal went ahead on no answer). Run 3:
+// `client` answers 410 — the session is HELD on `personal`, never deleted. So "captured nowhere" is
+// not reachable through a destination that is merely down when the table is edited.
+// CONTROL: when `client` answers a position, the session is withdrawn and moved as it always was.
+func TestAnUnreachableDestinationDefersTheWithdrawal(t *testing.T) {
+	setup := func(t *testing.T) (*Agent, env, *bytes.Buffer, string) {
+		w := loadWorld(t)
+		e := materialize(t, w, "cc-plain")
+		id := w.Sessions["cc-plain"].ID
+		path := filepath.Join(e.claude, w.Sessions["cc-plain"].Project, id+".jsonl")
+		appendTo(t, path, strings.Replace(betaRead, "beta-notes", "alpha-notes", 1))
+		log := &bytes.Buffer{}
+		a := newAgent(t, e, twoInstances, &fakeRunner{}, log)
+		mustRun(t, a)
+		if a.State.Sessions[id].Instance != "personal" {
+			t.Fatal("control: run 1 did not ship the session to the personal instance")
+		}
+		a.Routing = client.Routing{Instances: twoInstances.Instances, RoutesSource: "the test's edited table",
+			Routes: map[string]string{"alpha-notes": "client", "beta-notes": "client"}}
+		appendTo(t, path, strings.Replace(betaRead, "beta-notes", "alpha-notes", 1))
+		return a, e, log, id
+	}
+
+	a, e, _, id := setup(t)
+	before := len(spooled(t, e, "personal", id, "main"))
+	e.sink.probeErr = errors.New("dial tcp: connection refused")
+	sum, _ := a.Run()
+	ss := a.State.Sessions[id]
+	if n := len(e.sink.withdrawn["personal"]); n != 0 || ss.Instance != "personal" || ss.Held || ss.Deleted != "" || sum.WithdrawalPending != 1 {
+		t.Fatalf("run 2, destination unreachable: %d withdrawals, bound to %q, held=%v deleted=%q, %+v — want nothing withdrawn, still on personal, pending",
+			n, ss.Instance, ss.Held, ss.Deleted, sum)
+	}
+	if got := len(spooled(t, e, "personal", id, "main")); got != before || e.sink.has("client", id) {
+		t.Fatalf("run 2 shipped something: personal %d → %d, client=%v", before, got, e.sink.has("client", id))
+	}
+	e.sink.probeErr = nil
+	e.sink.deletedOn = map[string]bool{"client/" + id: true}
+	sum = mustRun(t, a)
+	ss = a.State.Sessions[id]
+	if !ss.Held || ss.Instance != "personal" || ss.Deleted != "" || len(e.sink.withdrawn["personal"]) != 0 || sum.Deleted != 0 {
+		t.Fatalf("run 3, destination answers 410: held=%v on %q deleted=%q, %d withdrawals — want HELD on personal, never deleted",
+			ss.Held, ss.Instance, ss.Deleted, len(e.sink.withdrawn["personal"]))
+	}
+	if got := len(spooled(t, e, "personal", id, "main")); got != before {
+		t.Fatalf("the prefix on personal went %d → %d records", before, got)
+	}
+
+	// CONTROL: a destination that answers a position — the move happens.
+	b, e2, _, id2 := setup(t)
+	if sum := mustRun(t, b); sum.Withdrawn != 1 || b.State.Sessions[id2].Instance != "client" || !e2.sink.has("client", id2) {
+		t.Fatalf("CONTROL: a reachable destination that did not delete the session: %+v, bound to %q", sum, b.State.Sessions[id2].Instance)
 	}
 }

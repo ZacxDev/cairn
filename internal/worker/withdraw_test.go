@@ -234,3 +234,25 @@ func TestTheWithdrawalRouteIsBehindTheTokenAndNotTheArmingGate(t *testing.T) {
 		t.Fatalf("the journal holds %v — want one line, and no content", got)
 	}
 }
+
+// TestARepeatedWithdrawalIsNotLoggedAsADeletion — the idempotent `true` (a lost acknowledgement, asked
+// again) deletes nothing, and the operator's log says a session was withdrawn exactly ONCE: a second
+// line would report a deletion that did not happen.
+func TestARepeatedWithdrawalIsNotLoggedAsADeletion(t *testing.T) {
+	g := newRig(t, true, nil)
+	storeOwned(t, g)
+	for i := 0; i < 3; i++ {
+		if rec := g.do(http.MethodPost, withdrawPath, captureA, ""); rec.Code != http.StatusOK || rec.Body.String() != WithdrawnBody {
+			t.Fatalf("withdrawal %d answered %d %q", i+1, rec.Code, rec.Body.String())
+		}
+	}
+	n := 0
+	for _, line := range g.log {
+		if strings.Contains(line, "withdrawn by its uploader") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("three withdrawals of one root logged %d deletions, want 1:\n%s", n, strings.Join(g.log, "\n"))
+	}
+}

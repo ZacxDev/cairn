@@ -193,6 +193,8 @@ func (w *Worker) handleOutputsWrite(rw http.ResponseWriter, r *http.Request, row
 	switch {
 	case errors.As(err, &wm):
 		badRequest(rw, wm)
+	case errors.Is(err, plugins.ErrTitleNotStored):
+		badRequest(rw, err)
 	case errors.As(err, &quota):
 		// 🔴 507, NAMED, AND SAID ONCE — capture's answer (#270 round 1: it was an opaque 500 and a log
 		// line per request). The plugin holds and retries; the operator sees one line.

@@ -5904,8 +5904,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-plugin-text-bidi-controls-rendered",
         path="internal/ui/outputs.go",
-        old="r == 0x200E, r == 0x200F, r == 0x061C:\n\t\t\treturn -1",
-        new="r == 0x200E, r == 0x200F, r == 0x061C:\n\t\t\treturn r",
+        old="case plugins.BidiControl(r):\n\t\t\treturn -1",
+        new="case plugins.BidiControl(r):\n\t\t\treturn r",
         killer="TestBidiControlsInPluginTextAreNotRendered",
         why="the text is escaped, so it looks inert — and a right-to-left override in a model's summary "
         "reorders how the page's own `derived` label and what follows it are displayed.",

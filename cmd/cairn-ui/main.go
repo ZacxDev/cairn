@@ -320,6 +320,9 @@ func main() {
 			"plugin is the instance-level decision; every toggle starts OFF. Needs -"+flagPluginJournal+" and the worker listener")
 	pluginJournal := flag.String(flagPluginJournal, "",
 		"the plugin TOGGLE journal (append-only; must resolve OUTSIDE -store). Needs -"+flagPluginRegistry)
+	pluginStoreTitles := flag.Bool(flagPluginStoreTitles, false,
+		"let a ticket-matching plugin store ticket TITLES beside ticket ids. NO DEFAULT: unset, ids only, and a "+
+			"body carrying a title is refused. Needs -"+flagPluginRegistry)
 	workerPlugin := flag.String(flagWorkerPlugin, "",
 		"the ONE registered plugin a token minted by -"+flagIssueWorker+" plugin is bound to")
 	// 🔴 SCOPE MAIL'S CLIENT LISTENER (S2 of the scope-mail plan): one flag, NO default and no
@@ -526,7 +529,7 @@ func main() {
 	// 🔴 THE PLUGIN REGISTRY AND JOURNAL ARE JUDGED HERE, after the worker flags (they need the
 	// listener) and before anything is served. The journal may not be any file this program writes.
 	pluginRegistryLoaded, pluginToggleJournal, pluginsOn, err := pluginsConfigured(
-		pluginSettings{registry: *pluginRegistry, journal: *pluginJournal}, *store, workerOn,
+		pluginSettings{registry: *pluginRegistry, journal: *pluginJournal, storeTitles: *pluginStoreTitles}, *store, workerOn,
 		map[string]string{"-control-journal": *controlJournal, "-session-file": *sessionFile, "-arc-journal": resolvedArcJournal,
 			"-" + flagWorkerTokens: *workerTokens, "-" + flagPresenceTokens: *presenceTokens, "-token-file": *tokenFile,
 			"$" + codesrc.EnvJournal: sourceJournal.Path})
@@ -801,7 +804,7 @@ func main() {
 		// answered by is the fold a toggle form describes.
 		if pluginsOn {
 			pluginService = newPluginService(pluginRegistryLoaded, pluginToggleJournal,
-				transcript.NewStore(transcripts, *store), resolvedArcJournal, authority)
+				transcript.NewStore(transcripts, *store), resolvedArcJournal, authority, *pluginStoreTitles)
 		}
 		handler, rows, err := worker.New(worker.Config{
 			TokenFile: *workerTokens, Owner: workerConf.owner, OwnerHeld: ownerStillHeld(authority, workerConf.owner),
@@ -833,7 +836,7 @@ func main() {
 
 	// The plugins clause rides on the worker listener's, whose API it is.
 	if pluginsOn {
-		workerModeLine += ", " + pluginMode(pluginRegistryLoaded, pluginToggleJournal)
+		workerModeLine += ", " + pluginMode(pluginRegistryLoaded, pluginToggleJournal, *pluginStoreTitles)
 	}
 
 	// 🔴 THE CLIENT LISTENER (S2 of the scope-mail plan), bound here for presence's reason: a

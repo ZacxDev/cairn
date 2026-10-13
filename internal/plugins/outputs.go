@@ -50,16 +50,20 @@ const (
 	maxModel         = 128
 	maxSummary       = 16 << 10
 	maxRationale     = 280
+	maxTicketTitle   = 256
 	maxStreams       = 1024
 )
 
 // TicketEdge is decision 14's deterministic match.
 type TicketEdge struct {
-	System   string  `json:"system"`
-	TicketID string  `json:"ticket_id"`
-	CustomID string  `json:"custom_id,omitempty"`
-	Signal   string  `json:"signal"`
-	Locator  Locator `json:"locator"`
+	System   string `json:"system"`
+	TicketID string `json:"ticket_id"`
+	CustomID string `json:"custom_id,omitempty"`
+	// Title is the ticket's title — stored ONLY on an instance that opted in ([Service.StoreTicketTitles],
+	// Q8); the default is ids only.
+	Title   string  `json:"title,omitempty"`
+	Signal  string  `json:"signal"`
+	Locator Locator `json:"locator"`
 }
 
 // Locator names WHERE a match was found — exactly ONE of its shapes.
@@ -73,10 +77,26 @@ type Locator struct {
 
 // TicketSuggestion is decision 14's LLM suggestion: never an edge.
 type TicketSuggestion struct {
-	TicketID   string  `json:"ticket_id"`
+	TicketID string `json:"ticket_id"`
+	// Title is as [TicketEdge.Title].
+	Title      string  `json:"title,omitempty"`
 	Confidence float64 `json:"confidence"`
 	Rationale  string  `json:"rationale"`
 }
+
+// TicketScan records that a ticket matcher examined a session through the envelope's watermark: how
+// many edges and suggestions that pass wrote, and whether a model was asked at all — so "0
+// suggestions" from a model that found none is told apart from a pass that asked nobody (no key, or
+// the plugin's spend cap). The numbers are the PLUGIN's claim, like every output.
+type TicketScan struct {
+	System      string `json:"system"`
+	Edges       int    `json:"edges"`
+	Suggestions int    `json:"suggestions"`
+	ModelAsked  bool   `json:"model_asked"`
+}
+
+// maxScanCount bounds a scan's counts.
+const maxScanCount = 10000
 
 // Summary is plugin A's output.
 type Summary struct {
@@ -122,6 +142,7 @@ type Body struct {
 	Summary    *Summary
 	Edge       *TicketEdge
 	Suggestion *TicketSuggestion
+	Scan       *TicketScan
 }
 
 // DecodeBody is THE schema check for an output body, for the write path ([CanonicalBody]) and for
@@ -153,6 +174,9 @@ func DecodeBody(t string, raw json.RawMessage) (Body, error) {
 		if e.CustomID != "" && !customID.MatchString(e.CustomID) {
 			return Body{}, fmt.Errorf("custom_id does not match %s", customID)
 		}
+		if len(e.Title) > maxTicketTitle || !displayable(e.Title) {
+			return Body{}, fmt.Errorf("title must be at most %d bytes with no control or bidirectional-control character", maxTicketTitle)
+		}
 		if !slices.Contains(Signals, e.Signal) {
 			return Body{}, fmt.Errorf("signal %q is not one of %v", e.Signal, Signals)
 		}
@@ -160,6 +184,18 @@ func DecodeBody(t string, raw json.RawMessage) (Body, error) {
 			return Body{}, err
 		}
 		return Body{Edge: &e}, nil
+	case TypeTicketScan:
+		var s TicketScan
+		if err := strict(raw, &s); err != nil {
+			return Body{}, err
+		}
+		if s.System != "clickup" {
+			return Body{}, fmt.Errorf("system %q is not clickup", s.System)
+		}
+		if s.Edges < 0 || s.Edges > maxScanCount || s.Suggestions < 0 || s.Suggestions > maxScanCount {
+			return Body{}, fmt.Errorf("a scan's counts must be 0–%d", maxScanCount)
+		}
+		return Body{Scan: &s}, nil
 	case TypeTicketSuggestion:
 		var s TicketSuggestion
 		if err := strict(raw, &s); err != nil {
@@ -168,11 +204,14 @@ func DecodeBody(t string, raw json.RawMessage) (Body, error) {
 		if !ticketID.MatchString(s.TicketID) {
 			return Body{}, fmt.Errorf("ticket_id is not a canonical id")
 		}
+		if len(s.Title) > maxTicketTitle || !displayable(s.Title) {
+			return Body{}, fmt.Errorf("title must be at most %d bytes with no control or bidirectional-control character", maxTicketTitle)
+		}
 		if s.Confidence < 0 || s.Confidence > 1 {
 			return Body{}, fmt.Errorf("confidence must be in [0, 1]")
 		}
-		if len(s.Rationale) > maxRationale || !printable(s.Rationale) {
-			return Body{}, fmt.Errorf("rationale must be at most %d bytes with no control character", maxRationale)
+		if len(s.Rationale) > maxRationale || !displayable(s.Rationale) {
+			return Body{}, fmt.Errorf("rationale must be at most %d bytes with no control or bidirectional-control character", maxRationale)
 		}
 		return Body{Suggestion: &s}, nil
 	}
@@ -196,6 +235,8 @@ func CanonicalBody(t string, raw json.RawMessage) (json.RawMessage, error) {
 		return json.Marshal(body.Summary)
 	case body.Edge != nil:
 		return json.Marshal(body.Edge)
+	case body.Scan != nil:
+		return json.Marshal(body.Scan)
 	}
 	return json.Marshal(body.Suggestion)
 }
@@ -241,8 +282,8 @@ func DecodeEnvelope(raw []byte) (Envelope, error) {
 	if err := strict(raw, &e); err != nil {
 		return e, fmt.Errorf("the envelope does not decode: %v", err)
 	}
-	if e.Model == "" || len(e.Model) > maxModel || !printable(e.Model) {
-		return e, fmt.Errorf("model must be 1–%d bytes with no control character", maxModel)
+	if e.Model == "" || len(e.Model) > maxModel || !displayable(e.Model) {
+		return e, fmt.Errorf("model must be 1–%d bytes with no control or bidirectional-control character", maxModel)
 	}
 	if len(e.InputWatermark) == 0 || len(e.InputWatermark) > maxStreams {
 		return e, fmt.Errorf("input_watermark must name 1–%d streams", maxStreams)
@@ -281,4 +322,15 @@ func Stamp(e Envelope, plugin Entry, now time.Time) (Output, error) {
 		Body:           e.Body,
 		ProducedAt:     now.UTC().Format(time.RFC3339),
 	}, nil
+}
+
+// Title is the ticket title a decoded body carries, "" for none (and for a type that has none).
+func (b Body) Title() string {
+	switch {
+	case b.Edge != nil:
+		return b.Edge.Title
+	case b.Suggestion != nil:
+		return b.Suggestion.Title
+	}
+	return ""
 }

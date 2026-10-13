@@ -28,6 +28,9 @@ type Service struct {
 	Arcs func() (arcs.Snapshot, error)
 	// Known reports whether the authority still holds a scope of that STORE name ([Effective]).
 	Known func(scope string) bool
+	// StoreTicketTitles is the instance's `-plugin-store-ticket-titles` (Q8): whether a ticket edge or
+	// suggestion may carry the ticket's TITLE. False — the default — stores ids only.
+	StoreTicketTitles bool
 	// Now is the pod clock.
 	Now func() time.Time
 	// Log receives operator lines (a session left out of a decision); nil discards them.
@@ -118,7 +121,19 @@ func (s *Service) deciderOver(st State, plugin string) (func(*transcript.Meta, [
 // nothing: the deleted session is gone from its pending list, and every refusal already means "stop
 // working on this session". The plan's clause is amended to say so.
 func (s *Service) Open(plugin, root string) (*transcript.View, error) {
-	on, err := s.decider(plugin)
+	st, err := s.Journal.Read()
+	if err != nil {
+		return nil, err
+	}
+	// 🔴 NO WALK WHEN NOTHING CAN BE ON — [Service.Pending]'s short-circuit, which this route's own
+	// comments described and did not have: with no scope `allowed` or `on` for the plugin, rule (1)
+	// of the fold refuses every session, so the answer is the one refusal without reading a session
+	// or walking the store. Before, every plugin read on an instance where nobody had consented
+	// walked the WHOLE store (and answered 500, not 403, when the store could not be read).
+	if !st.AnyConsent(plugin) {
+		return nil, ErrForbidden
+	}
+	on, err := s.deciderOver(st, plugin)
 	if err != nil {
 		return nil, err
 	}
@@ -209,6 +224,13 @@ func (s *Service) WriteOutput(e Entry, env Envelope) (Output, error) {
 	if !e.Writes(env.Type) {
 		return Output{}, ErrForbidden
 	}
+	// 🔴 IDS ONLY UNLESS THE INSTANCE SAID OTHERWISE (Q8) — and decided BEFORE the session is looked at,
+	// from the body and the instance's setting alone, so the refusal says nothing about any session.
+	if !s.StoreTicketTitles {
+		if body, err := DecodeBody(env.Type, env.Body); err == nil && body.Title() != "" {
+			return Output{}, ErrTitleNotStored
+		}
+	}
 	v, err := s.Open(e.Name, env.Session)
 	if err != nil {
 		return Output{}, err
@@ -235,6 +257,11 @@ func (s *Service) WriteOutput(e Entry, env Envelope) (Output, error) {
 	}
 	return out, nil
 }
+
+// ErrTitleNotStored is a ticket edge or suggestion carrying a TITLE on an instance that stores ids
+// only (the default, Q8).
+var ErrTitleNotStored = errors.New("this instance stores ticket ids only: a body carrying a ticket `title` is refused " +
+	"unless the instance is started with -plugin-store-ticket-titles")
 
 // WatermarkError is an envelope whose watermark names a stream the session does not hold, or a
 // position past what is stored. Only ever returned AFTER the toggle check admitted the plugin, so it

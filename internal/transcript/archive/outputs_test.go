@@ -2,9 +2,11 @@ package archive
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -345,5 +347,114 @@ func TestOneUnreadableOutputsFileDoesNotStopTheStoreOpening(t *testing.T) {
 	}
 	if ok, err := a.Delete("s-0001", ReasonOwnerDelete, nil); !ok || err != nil {
 		t.Fatalf("the session with the unreadable file cannot be deleted: %v %v", ok, err)
+	}
+}
+
+// TestDeletingASessionWhoseOutputsBecameUnreadableLeavesNoPhantomBytes — S6 audit F4. A plugin's lines
+// are counted per plugin as they are appended; the file then becomes unreadable (here: one line past
+// the scanner's bound, written behind the archive's back) and the session is deleted. The plugin's
+// share must be EMPTY again. Red before: the deletion re-read the file, failed, subtracted its size
+// against no plugin, and the plugin's total kept every byte — a share full of nothing.
+func TestDeletingASessionWhoseOutputsBecameUnreadableLeavesNoPhantomBytes(t *testing.T) {
+	const quota = 400 << 10 // one plugin's share is 20 KiB
+	g := newRig(t, quota)
+	for _, root := range []string{"s-0001", "s-0002"} {
+		if _, err := g.a.AppendRecords(ownerA, up(root, "", "100"), "main", recs(0, 1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if err := g.a.AppendOutput("s-0001", "summary", outputLine("summary", 9)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var q *QuotaError
+	if err := g.a.AppendOutput("s-0002", "summary", outputLine("summary", 9)); !errors.As(err, &q) || q.Share != SharePlugin {
+		t.Fatalf("POSITIVE CONTROL: the plugin is not at its share: %v", err)
+	}
+	f, err := os.OpenFile(filepath.Join(g.dir, "sessions", "s-0001", "outputs.jsonl"), os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(strings.Repeat("x", MaxOutputLine+10) + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if g.a.ScanOutputs("s-0001", func([]byte) error { return nil }) == nil {
+		t.Fatal("POSITIVE CONTROL: the outputs file is still readable; the test would prove nothing")
+	}
+	if ok, err := g.a.Delete("s-0001", ReasonOwnerDelete, nil); !ok || err != nil {
+		t.Fatalf("delete: %v %v", ok, err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := g.a.AppendOutput("s-0002", "summary", outputLine("summary", 9)); err != nil {
+			t.Fatalf("write %d after the deletion: %v — the deleted session's bytes are still charged to the plugin", i, err)
+		}
+	}
+}
+
+// TestConcurrentDeletionsDoNotDriftTheQuotasCount — the journal append measures the journal's size
+// before and after its own line, so it must be alone while it does: two roots' deletions hold two
+// different root locks. With the journal's own lock removed, concurrent deletions each count the
+// other's line and `Used()` drifts UP — away from what a restart counts off the disk.
+func TestConcurrentDeletionsDoNotDriftTheQuotasCount(t *testing.T) {
+	for round := 0; round < 4; round++ {
+		g := newRig(t, 1<<30)
+		const n = 48
+		var roots []string
+		for i := 0; i < n; i++ {
+			root := fmt.Sprintf("s-%04d", i)
+			roots = append(roots, root)
+			if _, err := g.a.AppendRecords(ownerA, up(root, "", "100"), "main", recs(0, 1)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for _, root := range roots {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				if ok, err := g.a.Delete(root, ReasonOwnerDelete, nil); !ok || err != nil {
+					t.Errorf("delete %s: %v %v", root, ok, err)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+		red, err := redact.New(redact.SelfTestKey(99), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		again, err := Open(Config{Dir: g.dir, Retention: 90 * 24 * time.Hour, Quota: 1 << 30, Recheck: red, Now: g.clk.Now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := g.a.Used(), again.Used(); got != want || want == 0 {
+			t.Fatalf("round %d: after %d concurrent deletions the running count is %d bytes and the disk holds %d", round, n, got, want)
+		}
+	}
+}
+
+// TestAWithdrawalDropsFramesStagedForARootThatNeverCommitted — a record still being reassembled from
+// continuation frames is that session's content, staged OUTSIDE any session directory. A withdrawal
+// of a root with nothing committed answers `false` (nothing of the caller's was deleted here) and
+// still discards those frames NOW, so they stop holding quota — not after the idle sweep.
+func TestAWithdrawalDropsFramesStagedForARootThatNeverCommitted(t *testing.T) {
+	g := newRig(t, 1<<30)
+	u := up("s-0001", "", "100")
+	u.Frame = &Frame{Index: 0, Count: 3}
+	if _, err := g.a.AppendRecords(ownerA, u, "main", []Record{{Src: "100", Rec: []byte(strings.Repeat("x", 1000))}}); err != nil {
+		t.Fatal(err)
+	}
+	if g.a.Used() == 0 {
+		t.Fatal("POSITIVE CONTROL: a staged frame is not counted against the quota")
+	}
+	if deleted, err := g.a.Withdraw(ownerA, "s-0001"); deleted || err != nil {
+		t.Fatalf("withdrawing a root with nothing committed answered %v %v, want false", deleted, err)
+	}
+	if used := g.a.Used(); used != 0 {
+		t.Fatalf("%d bytes of the withdrawn root's staged frames are still held", used)
 	}
 }

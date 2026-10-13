@@ -208,6 +208,85 @@ func TestAnOutputsTextIsNeverInterpreted(t *testing.T) {
 	}
 }
 
+// TestATicketScanRendersAsWhatWasExaminedAndOnlyTheLatestIsShown — S10's fourth output type. A scan is
+// the claim "this plugin EXAMINED the session through this watermark", so it renders as a labelled
+// derived block saying what that pass wrote and whether a model was asked — never as a ticket, and
+// never as a suggestion (RED before the renderer knew the type: a scan fell into the suggestion branch
+// and the page panicked). A plugin's EARLIER scans are superseded by its latest, like its summaries.
+func TestATicketScanRendersAsWhatWasExaminedAndOnlyTheLatestIsShown(t *testing.T) {
+	w := transcriptWorld(t)
+	a := w.archive(t)
+	transcripttest.Output(t, a, "s-solo-02", "clickup", "0.2.0", "none", 1, plugins.TypeTicketScan,
+		`{"system":"clickup","edges":0,"suggestions":0,"model_asked":false}`)
+	text := visibleText(getAs(t, w.server(t, "owner", a), sessionURL("s-solo-02")).Body.String())
+	for _, want := range []string{"derived · ticket scan · by clickup 0.2.0 · model none",
+		"examined for tickets · this pass wrote 0 ticket edges and 0 suggestions · no model was asked"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("the scan does not render %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "suggested") || strings.Contains(text, "matched on") {
+		t.Fatalf("a scan rendered as a suggestion or an edge:\n%s", text)
+	}
+	transcripttest.Output(t, a, "s-solo-02", "clickup", "0.2.0", "fixture-model", 2, plugins.TypeTicketScan,
+		`{"system":"clickup","edges":1,"suggestions":2,"model_asked":true}`)
+	body := getAs(t, w.server(t, "owner", a), sessionURL("s-solo-02")).Body.String()
+	text = visibleText(body)
+	if !strings.Contains(text, "this pass wrote 1 ticket edge and 2 suggestions · a model was asked") ||
+		strings.Contains(text, "wrote 0 ticket edges") || strings.Count(body, `data-type="ticket-scan"`) != 1 {
+		t.Fatalf("the page does not show exactly the LATEST scan:\n%s", text)
+	}
+}
+
+// TestAStoredTicketTitleRendersAsTextBesideItsId — a title an instance chose to store (Q8) is
+// somebody's text like every other byte of an output: shown beside the id it belongs to, escaped,
+// never linked. An edge with no title renders none.
+func TestAStoredTicketTitleRendersAsTextBesideItsId(t *testing.T) {
+	w := transcriptWorld(t)
+	a := w.archive(t)
+	transcripttest.Output(t, a, "s-solo-02", "clickup", "0.2.0", "none", 2, plugins.TypeTicketEdge,
+		`{"system":"clickup","ticket_id":"abc123","title":"Gadget <b>export</b> [x](javascript:alert(1))","signal":"branch-name","locator":{"stream":"main","seq":1}}`)
+	transcripttest.Output(t, a, "s-solo-02", "clickup", "0.2.0", "fixture-model", 2, plugins.TypeTicketSuggestion,
+		`{"ticket_id":"def456","title":"Widget import","confidence":0.75,"rationale":"synthetic"}`)
+	transcripttest.Output(t, a, "s-solo-02", "clickup", "0.2.0", "none", 2, plugins.TypeTicketEdge,
+		`{"system":"clickup","ticket_id":"ghi789","signal":"pr-body","locator":{"pr":7}}`)
+	body := getAs(t, w.server(t, "owner", a), sessionURL("s-solo-02")).Body.String()
+	text := visibleText(body)
+	if !strings.Contains(text, "— Gadget <b>export</b> [x](javascript:alert(1)) · matched on branch name") || strings.Contains(body, "<b>export</b>") ||
+		strings.Contains(body, `href="javascript:`) {
+		t.Fatalf("the edge's title is not rendered as escaped text beside its id:\n%s", text)
+	}
+	if !strings.Contains(text, "— Widget import · confidence 0.75") {
+		t.Fatalf("the suggestion's title is not rendered beside its id:\n%s", text)
+	}
+	if !strings.Contains(text, "ticket  clickup:ghi789  · matched on PR body") {
+		t.Fatalf("an edge with no title renders one:\n%s", text)
+	}
+}
+
+// TestAStoredTitleCannotReorderThePagesOwnLabel — #274's audit. A title is the one plugin string that
+// was printed without the bidi strip every other one gets. A body stored BEFORE the write path refused
+// such characters (planted on disk here, past the API) must not carry U+202E to the page: it no longer
+// validates, so it is shown as stored text — through the same strip — and the character is nowhere in
+// the response.
+func TestAStoredTitleCannotReorderThePagesOwnLabel(t *testing.T) {
+	w := transcriptWorld(t)
+	a := w.archive(t)
+	transcripttest.Output(t, a, "s-solo-02", "clickup", "0.2.0", "none", 2, plugins.TypeTicketEdge,
+		`{"system":"clickup","ticket_id":"abc123","title":"gadget \u202eexport","signal":"branch-name","locator":{"stream":"main","seq":1}}`)
+	transcripttest.Output(t, a, "s-solo-02", "clickup", "0.2.0", "none", 2, plugins.TypeTicketEdge,
+		`{"system":"clickup","ticket_id":"def456","title":"widget import","signal":"pr-body","locator":{"pr":7}}`)
+	body := getAs(t, w.server(t, "owner", a), sessionURL("s-solo-02")).Body.String()
+	for _, r := range []string{"\u202e", "\u2066", "\u200f"} {
+		if strings.Contains(body, r) {
+			t.Fatalf("the page carries the bidirectional control %U", []rune(r)[0])
+		}
+	}
+	if text := visibleText(body); !strings.Contains(text, "— widget import · matched on PR body") {
+		t.Fatalf("POSITIVE CONTROL: a clean stored title is not rendered:\n%s", text)
+	}
+}
+
 // outputsRig is the share rig with a transcript store whose directory the test can read: rowan owns
 // `s-rowan-01`'s transcript, which holds a summary and a ticket edge.
 func outputsRig(t *testing.T) (*shareRig, *archive.Archive, string) {

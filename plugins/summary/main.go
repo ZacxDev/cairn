@@ -29,21 +29,10 @@ import (
 	"github.com/ZacxDev/cairn/plugins/internal/llm"
 	"github.com/ZacxDev/cairn/plugins/internal/pluginapi"
 	"github.com/ZacxDev/cairn/plugins/internal/secretfile"
+	"github.com/ZacxDev/cairn/plugins/internal/spend"
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now)) }
-
-// defaultLedger is `$XDG_STATE_HOME/cairn-summary/spend.log`, or `~/.local/state/…`.
-func defaultLedger() string {
-	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
-		return filepath.Join(d, "cairn-summary", "spend.log")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".local", "state", "cairn-summary", "spend.log")
-}
 
 func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	fs := flag.NewFlagSet("summary", flag.ContinueOnError)
@@ -58,7 +47,7 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	keyFile := fs.String("key-file", "", "file holding the provider API key, mode 0600 (required)")
 	limit := fs.Int("limit", 10, "pending sessions one run takes (1–100)")
 	perDay := fs.Int("max-requests-per-day", 50, "the spend cap: provider requests over a rolling 24 hours; 0 sends none")
-	ledgerPath := fs.String("spend-ledger", defaultLedger(), "the spend cap's ledger file")
+	ledgerPath := fs.String("spend-ledger", spend.DefaultPath("cairn-summary"), "the spend cap's ledger file")
 	chunkBytes := fs.Int("chunk-bytes", 96<<10, "rendered transcript bytes one request carries (4 KiB–1 MiB); with the prompt and the "+
 		"previous summary it must fit the model's context window — roughly 4 bytes a token, so 1 MiB needs a ~300K-token window")
 	var plaintext pluginapi.HostList
@@ -123,7 +112,7 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 		State:           state,
 		Now:             now,
 		Provider:        p,
-		Spend:           &ledger{path: *ledgerPath, cap: *perDay, now: now},
+		Spend:           &spend.Ledger{Path: *ledgerPath, Cap: *perDay, Now: now},
 		Limit:           *limit,
 		ChunkBytes:      *chunkBytes,
 		MaxOutputTokens: *maxOut,

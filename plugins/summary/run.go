@@ -13,6 +13,8 @@ import (
 
 	"github.com/ZacxDev/cairn/plugins/internal/llm"
 	"github.com/ZacxDev/cairn/plugins/internal/pluginapi"
+	"github.com/ZacxDev/cairn/plugins/internal/spend"
+	"github.com/ZacxDev/cairn/plugins/internal/transcripttext"
 )
 
 // 🔴 CONTINUOUS = INCREMENTAL, AND THE PROGRESS STATE IS THE POD'S WATERMARK (decision 13). A run asks
@@ -56,7 +58,7 @@ const pendingAsk = 100
 type Runner struct {
 	API      *pluginapi.Client
 	Provider llm.Provider
-	Spend    *ledger
+	Spend    *spend.Ledger
 	State    *stateFile
 	Now      func() time.Time
 	// Limit is how many pending sessions one run WORKS ON (sessions skipped in backoff do not count).
@@ -79,8 +81,8 @@ type Stats struct {
 // errEmptyAnswer is a provider answering 200 with no text.
 var errEmptyAnswer = errors.New("the provider answered an empty summary")
 
-// refusedWrite is the pod answering the write with a status — a full quota (507), a 400, the one
-// 403 — as opposed to not being reached.
+// refusedWrite is the pod REFUSING the write — a full quota (507), a 400, the one 403 — as opposed to
+// failing (a 5xx), redirecting, or not being reached, which are transient.
 type refusedWrite struct{ err error }
 
 func (e *refusedWrite) Error() string { return e.err.Error() }
@@ -119,20 +121,37 @@ func (r *Runner) Run(ctx context.Context) (Stats, error) {
 	if err != nil {
 		return st, fmt.Errorf("the pending query: %w", err)
 	}
-	// A session the pod no longer lists — finished, toggled off, or DELETED — keeps nothing here: its
-	// backoff is moot and its cached summary is transcript-derived text with no reason left to exist.
+	// 🔴 A SESSION THE POD DID NOT LIST THIS RUN KEEPS ITS ENTRY ([hoststate.Backoff.Unlisted]): not
+	// listed is what a session merely RESUMED looks like, and dropping its backoff and its cached
+	// summary there re-paid a full quota once per pause/resume cycle. The entry goes only when the pod
+	// answers its one refusal for the session — DELETED, or this plugin turned off for it — at which
+	// point the cached summary is transcript-derived text with no reason left to exist; or when it is
+	// past its TTL.
 	listed := map[string]bool{}
 	for _, it := range items {
 		listed[it.Session] = true
 	}
-	dropped := false
-	for id := range r.State.Sessions {
-		if !listed[id] {
-			delete(r.State.Sessions, id)
-			dropped = true
+	changed := false
+	for id, ss := range r.State.Sessions {
+		if listed[id] {
+			changed = ss.Touch(r.Now()) || changed
+			continue
 		}
+		seen := ss.Seen
+		if ss.Unlisted(r.Now(), func() (bool, error) {
+			_, err := r.API.Outputs(ctx, id, OutputType)
+			if errors.Is(err, pluginapi.ErrForbidden) {
+				return true, nil // the pod's one refusal: the positive signal
+			}
+			return false, err
+		}) {
+			delete(r.State.Sessions, id)
+			changed = true
+			r.Log(fmt.Sprintf("summary: session=%s is gone from the pod (or past its state TTL); what this host kept for it is dropped", id))
+		}
+		changed = changed || ss.Seen != seen
 	}
-	if dropped {
+	if changed {
 		if err := r.State.save(); err != nil {
 			return st, err
 		}
@@ -169,6 +188,7 @@ func (r *Runner) Run(ctx context.Context) (Stats, error) {
 				ss = &sessionState{}
 				r.State.Sessions[it.Session] = ss
 			}
+			ss.Touch(r.Now())
 			ss.Cached = res.unwritten
 			note := ""
 			if deterministic(err) && ctx.Err() == nil {
@@ -243,8 +263,8 @@ func (r *Runner) prior(ctx context.Context, it pluginapi.PendingItem) (text stri
 }
 
 // read is every record of `main` in (after, to], rendered.
-func (r *Runner) read(ctx context.Context, session string, after, to int64) ([]entry, error) {
-	var out []entry
+func (r *Runner) read(ctx context.Context, session string, after, to int64) ([]transcripttext.Entry, error) {
+	var out []transcripttext.Entry
 	from := after + 1
 	for from <= to {
 		p, err := r.API.Transcript(ctx, pluginapi.TranscriptQuery{Session: session, Stream: "main", FromSeq: from,
@@ -264,8 +284,8 @@ func (r *Runner) read(ctx context.Context, session string, after, to int64) ([]e
 			if rec.Seq > to {
 				break
 			}
-			if text := renderRecord(rec); text != "" {
-				out = append(out, entry{Seq: rec.Seq, Text: text})
+			if text := transcripttext.Record(rec); text != "" {
+				out = append(out, transcripttext.Entry{Seq: rec.Seq, Text: text})
 			}
 		}
 		from = last + 1
@@ -302,9 +322,9 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem, cache *c
 		return res, fmt.Errorf("reading the transcript: %w", err)
 	}
 	covered := after
-	for _, chunk := range chunks(entries, r.ChunkBytes) {
-		if err := r.Spend.take(); err != nil {
-			if errors.Is(err, ErrCapped) {
+	for _, chunk := range transcripttext.Chunks(entries, r.ChunkBytes) {
+		if err := r.Spend.Take(); err != nil {
+			if errors.Is(err, spend.ErrCapped) {
 				res.capped = true
 				break
 			}
@@ -377,8 +397,10 @@ func (r *Runner) post(ctx context.Context, it pluginapi.PendingItem, res session
 	if err != nil {
 		res.unwritten = &c
 		err = fmt.Errorf("writing the summary (watermark %s): %w", strings.Join(keys, ","), err)
+		// 🔴 ONLY A REFUSAL IS A REFUSAL: 507 (the quota), 400 (the request) and the one 403. A 5xx or
+		// a 3xx says nothing about this session — it is retried next run, the summary kept, no backoff.
 		var status *pluginapi.StatusError
-		if errors.As(err, &status) || errors.Is(err, pluginapi.ErrForbidden) {
+		if (errors.As(err, &status) && (status.Status == 400 || status.Status == 507)) || errors.Is(err, pluginapi.ErrForbidden) {
 			return res, &refusedWrite{err}
 		}
 		return res, err

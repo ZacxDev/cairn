@@ -105,6 +105,7 @@ func storedOutput(line []byte) (plugins.Output, bool) {
 func derivedOf(view *transcript.View, rd transcript.Reading) (*DerivedView, error) {
 	out := &DerivedView{Session: view.Meta.Root}
 	latest := map[string]plugins.Output{} // plugin → its latest summary
+	scans := map[string]plugins.Output{}  // plugin → its latest ticket scan
 	seen := map[string]int{}              // an edge or suggestion's identity → its index in `rest`
 	var rest []plugins.Output
 	err := view.Outputs(func(line []byte) error {
@@ -117,6 +118,12 @@ func derivedOf(view *transcript.View, rd transcript.Reading) (*DerivedView, erro
 				out.Superseded++
 			}
 			latest[o.Plugin] = o
+			return nil
+		}
+		// A scan says how far a matcher has examined the session; every pass writes one, and only
+		// the latest says anything the earlier ones do not.
+		if o.Type == plugins.TypeTicketScan {
+			scans[o.Plugin] = o
 			return nil
 		}
 		// A plugin that re-derives the same edge on every run writes the same body again: shown once,
@@ -141,6 +148,16 @@ func derivedOf(view *transcript.View, rd transcript.Reading) (*DerivedView, erro
 	all := make([]plugins.Output, 0, len(names)+len(rest))
 	for _, name := range names {
 		all = append(all, latest[name])
+	}
+	// Scans BEFORE the edges and suggestions: the page shows a bounded number of blocks, and "how far
+	// this was examined" must not be the block a long list of edges cuts off.
+	scanners := make([]string, 0, len(scans))
+	for name := range scans {
+		scanners = append(scanners, name)
+	}
+	sort.Strings(scanners)
+	for _, name := range scanners {
+		all = append(all, scans[name])
 	}
 	all = append(all, rest...)
 	if len(all) == 0 {
@@ -203,6 +220,7 @@ var typeWords = map[string]string{
 	plugins.TypeSummary:          "summary",
 	plugins.TypeTicketEdge:       "ticket edge",
 	plugins.TypeTicketSuggestion: "ticket suggestion",
+	plugins.TypeTicketScan:       "ticket scan",
 }
 
 // signalWords is decision 14's closed signal set, as words.
@@ -261,14 +279,30 @@ func derivedBlock(session string, b DerivedBlock) g.Node {
 		e := b.Body.Edge
 		body = h.P(h.Class("t-line"),
 			g.Text("ticket "), ticketNode(e.TicketID),
-			g.If(e.CustomID != "", g.Text(" ("+e.CustomID+")")),
+			g.If(e.CustomID != "", g.Text(" ("+plainText(e.CustomID)+")")),
+			// ⚠ `plainText` here cannot be reached with anything to strip: a body carrying a bidi
+			// control no longer validates, so it is shown as stored text above. It is here so that
+			// EVERY plugin string is printed through the one strip, whatever the schema becomes.
+			g.If(e.Title != "", g.Text(" — "+plainText(e.Title))),
 			g.Text(" · matched on "+signalWords[e.Signal]+" · "), locatorNode(session, e.Locator))
-	default:
+	case b.Body.Scan != nil:
+		// 🔴 A SCAN IS NOT A TICKET AND NOT A SUGGESTION: it says a matcher EXAMINED the session through
+		// the watermark in its label, what that pass wrote, and whether a model was asked — so "no
+		// suggestion" from a model that found none is told apart from a pass that asked nobody.
+		sc := b.Body.Scan
+		asked := "no model was asked"
+		if sc.ModelAsked {
+			asked = "a model was asked"
+		}
+		body = h.P(h.Class("t-line"), g.Text("examined for tickets · this pass wrote "+
+			plural(sc.Edges, "ticket edge", "ticket edges")+" and "+plural(sc.Suggestions, "suggestion", "suggestions")+" · "+asked))
+	case b.Body.Suggestion != nil:
 		sg := b.Body.Suggestion
 		body = g.Group([]g.Node{
 			h.P(h.Class("t-line"),
 				h.Span(h.Class("badge badge-quiet"), g.Text("suggested")),
 				g.Text(" ticket "), ticketNode(sg.TicketID),
+				g.If(sg.Title != "", g.Text(" — "+plainText(sg.Title))),
 				g.Text(" · confidence "+strconv.FormatFloat(sg.Confidence, 'f', 2, 64)+" · not a match")),
 			g.If(sg.Rationale != "", h.Div(h.Class("t-text"), g.Text(plainText(sg.Rationale)))),
 		})
@@ -345,7 +379,7 @@ func (d derivedLines) line(session string) g.Node {
 func plainText(text string) string {
 	return strings.Map(func(r rune) rune {
 		switch {
-		case r >= 0x202A && r <= 0x202E, r >= 0x2066 && r <= 0x2069, r == 0x200E, r == 0x200F, r == 0x061C:
+		case plugins.BidiControl(r):
 			return -1
 		}
 		return r

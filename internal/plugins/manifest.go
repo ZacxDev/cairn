@@ -43,11 +43,16 @@ const (
 	TypeSummary          = "summary"
 	TypeTicketEdge       = "ticket-edge"
 	TypeTicketSuggestion = "ticket-suggestion"
+	// TypeTicketScan is S10's addition (a reviewed in-tree change, as the comment above requires): the
+	// record that a ticket matcher EXAMINED a session through a watermark, whatever it found. Without
+	// it a matcher that finds nothing has nothing to write, the watermark never advances (decision
+	// 13: writing an output IS the advance), and the session is pending — and re-read — forever.
+	TypeTicketScan = "ticket-scan"
 )
 
 // OutputTypes is the closed output-type set, sorted.
 func OutputTypes() []string {
-	return []string{TypeSummary, TypeTicketEdge, TypeTicketSuggestion}
+	return []string{TypeSummary, TypeTicketEdge, TypeTicketScan, TypeTicketSuggestion}
 }
 
 // IsOutputType reports whether t is a member of the closed set.
@@ -247,6 +252,23 @@ func ParseRegistry(raw []byte) (*Registry, error) {
 // printable reports whether s holds no control character.
 func printable(s string) bool {
 	return !strings.ContainsFunc(s, unicode.IsControl)
+}
+
+// BidiControl reports whether r is a Unicode BIDIRECTIONAL control: the embeddings, overrides and
+// isolates (U+202A–202E, U+2066–2069) and the marks (U+200E, U+200F, U+061C). ONE spelling: the
+// write path refuses a display string carrying one ([displayable]) and the renderer strips them
+// from anything stored before that rule (`internal/ui` `plainText`).
+func BidiControl(r rune) bool {
+	return r >= 0x202A && r <= 0x202E || r >= 0x2066 && r <= 0x2069 || r == 0x200E || r == 0x200F || r == 0x061C
+}
+
+// displayable reports whether s may be stored as a short string the page prints INSIDE its own
+// sentence — a model's name, a ticket title, a rationale: no control character and no bidirectional
+// control. Escaping does not cover the second: such a character is not markup, it reorders how what
+// FOLLOWS it is displayed, so one stored in a title could make the page's own label read as
+// something else.
+func displayable(s string) bool {
+	return printable(s) && !strings.ContainsFunc(s, BidiControl)
 }
 
 // ValidateManifest checks one manifest against the closed vocabularies.

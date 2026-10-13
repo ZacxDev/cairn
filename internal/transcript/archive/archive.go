@@ -165,6 +165,9 @@ type Archive struct {
 	// outputs is the RUNNING TOTAL of stored plugin output bytes, by plugin (`outputs.go`): counted
 	// off the disk ONCE, by [Open], then moved by every append and by every deletion.
 	outputs map[string]int64
+	// byRoot is the same bytes, by session then plugin: what each session CONTRIBUTED to `outputs`.
+	// A deletion subtracts exactly this, never a re-read of a file that may no longer be readable.
+	byRoot map[string]map[string]int64
 	// deleted is every root the journal records a deletion of, and whose it was (`sweep.go`): read
 	// once by [Open], added to by every deletion. A root in it is never stored under again.
 	deleted map[string]Uploader
@@ -361,7 +364,7 @@ func Open(cfg Config) (*Archive, error) {
 	a := &Archive{cfg: cfg, used: used, locks: map[string]*sync.Mutex{}, frames: map[string]*frameState{}}
 	// The output totals, counted HERE and nowhere else (`outputs.go`): nothing is appending yet, so
 	// the count cannot race an append.
-	if a.outputs, err = a.outputUsage(); err != nil {
+	if a.outputs, a.byRoot, err = a.outputUsage(); err != nil {
 		return nil, err
 	}
 	if a.deleted, err = readDeleted(cfg.Dir); err != nil {

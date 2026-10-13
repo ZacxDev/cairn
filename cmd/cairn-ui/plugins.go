@@ -20,6 +20,9 @@ import (
 const (
 	flagPluginRegistry = "plugin-registry"
 	flagPluginJournal  = "plugin-journal"
+	// flagPluginStoreTitles lets a ticket edge or suggestion carry the ticket's TITLE (Q8 of the
+	// transcripts plan). NO default: unset, this instance stores ticket ids only.
+	flagPluginStoreTitles = "plugin-store-ticket-titles"
 	// flagWorkerPlugin names the ONE registered plugin a token minted by `-issue-worker-token plugin`
 	// is bound to.
 	flagWorkerPlugin = "worker-plugin"
@@ -28,6 +31,8 @@ const (
 // pluginSettings is what the operator wrote.
 type pluginSettings struct {
 	registry, journal string
+	// storeTitles is `-plugin-store-ticket-titles`.
+	storeTitles bool
 }
 
 // pluginsConfigured decides the registry and the journal.
@@ -49,6 +54,11 @@ func pluginsConfigured(s pluginSettings, storeRoot string, workerOn bool, others
 		}
 	}
 	switch {
+	case s.registry == "" && s.journal == "" && s.storeTitles:
+		// A setting about what plugins may store, on an instance with no plugin: the operator meant
+		// something this start would not do.
+		return nil, plugins.Journal{}, false, fmt.Errorf("-%s is set but no plugin is registered (-%s). Refusing to start "+
+			"rather than ignoring it", flagPluginStoreTitles, flagPluginRegistry)
 	case s.registry == "" && s.journal == "":
 		return nil, plugins.Journal{}, false, nil
 	case s.registry == "" || s.journal == "":
@@ -105,9 +115,10 @@ func knownScope(authority interface{ Model() control.Model }) func(string) bool 
 // forms share. The arc journal is read per decision (nil when none is configured, and then no arc
 // lists any session); `known` asks the CURRENT model.
 func newPluginService(reg *plugins.Registry, journal plugins.Journal, transcripts *transcript.Store, arcJournal string,
-	authority interface{ Model() control.Model }) *plugins.Service {
+	authority interface{ Model() control.Model }, storeTitles bool) *plugins.Service {
 	svc := &plugins.Service{Registry: reg, Journal: journal, Transcripts: transcripts, Known: knownScope(authority),
-		Log: func(line string) { fmt.Fprintln(os.Stderr, "cairn-ui: "+line) }}
+		StoreTicketTitles: storeTitles,
+		Log:               func(line string) { fmt.Fprintln(os.Stderr, "cairn-ui: "+line) }}
 	if arcJournal != "" {
 		svc.Arcs = arcs.Journal{Path: arcJournal}.Read
 	}
@@ -115,7 +126,7 @@ func newPluginService(reg *plugins.Registry, journal plugins.Journal, transcript
 }
 
 // pluginMode is the startup line's clause about plugins.
-func pluginMode(reg *plugins.Registry, journal plugins.Journal) string {
+func pluginMode(reg *plugins.Registry, journal plugins.Journal, storeTitles bool) string {
 	if reg == nil {
 		return "plugins off (no -" + flagPluginRegistry + ")"
 	}
@@ -127,6 +138,10 @@ func pluginMode(reg *plugins.Registry, journal plugins.Journal) string {
 	if len(names) > 0 {
 		listed = strings.Join(names, ", ")
 	}
-	return fmt.Sprintf("%d plugin(s) registered (%s), toggles in %s — every toggle OFF until a scope admin sets it",
-		len(names), listed, journal.Path)
+	titles := "ticket ids only"
+	if storeTitles {
+		titles = "ticket TITLES stored beside ids (-" + flagPluginStoreTitles + ")"
+	}
+	return fmt.Sprintf("%d plugin(s) registered (%s), toggles in %s — every toggle OFF until a scope admin sets it; %s",
+		len(names), listed, journal.Path, titles)
 }

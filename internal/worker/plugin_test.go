@@ -381,6 +381,53 @@ func TestNothingIsWalkedWhenNoScopeConsents(t *testing.T) {
 	}
 }
 
+// TestAPluginReadWalksNothingWhenNoScopeConsents — the transcript and outputs-write
+// routes on an instance where NO scope consents to the plugin: each is the one 403, and the store is
+// not walked — counted (`transcript.PluginStoreWalks`), and shown again by removing the store root,
+// which turned every such request into a 500 before. RED before S10's carried fix (S6 audit F2): one
+// whole-store walk per request. POSITIVE CONTROL: once a scope is ON the same read walks, once.
+func TestAPluginReadWalksNothingWhenNoScopeConsents(t *testing.T) {
+	p := newPluginRig(t)
+	p.toggle(plugins.LevelArc, "alpha-notes/arc-one", plugins.ValueOn) // an arc alone consents to nothing
+	write := `{"plugin":"summary","plugin_version":"0.1.0","model":"fake","session":"s-alpha","input_watermark":{"main":3},"type":"summary","body":{"text":"x"}}`
+	requests := map[string][2]string{
+		"the transcript":  {http.MethodGet, TranscriptPattern + "?session=s-alpha"},
+		"an output write": {http.MethodPost, OutputsPattern},
+	}
+	ask := func(when string, want int) {
+		t.Helper()
+		for name, r := range requests {
+			body := ""
+			if r[0] == http.MethodPost {
+				body = write
+			}
+			if rec := p.do(r[0], r[1], summaryToken, body); rec.Code != want {
+				t.Errorf("%s: %s answered %d %q, want %d", when, name, rec.Code, rec.Body.String(), want)
+			}
+		}
+	}
+	before := transcript.PluginStoreWalks()
+	ask("no scope consents", http.StatusForbidden)
+	if walks := transcript.PluginStoreWalks() - before; walks != 0 {
+		t.Fatalf("two plugin requests with no scope consenting walked the store %d times, want 0", walks)
+	}
+	p.toggle(plugins.LevelScope, "alpha-notes", plugins.ValueOn)
+	before = transcript.PluginStoreWalks()
+	if rec := p.do(http.MethodGet, TranscriptPattern+"?session=s-alpha", summaryToken, ""); rec.Code != http.StatusOK {
+		t.Fatalf("POSITIVE CONTROL: the read with a scope ON answered %d", rec.Code)
+	}
+	if walks := transcript.PluginStoreWalks() - before; walks != 1 {
+		t.Fatalf("POSITIVE CONTROL: a read with a scope ON walked the store %d times, want 1", walks)
+	}
+	// …and with the store GONE: a 403 while nobody consents, never a 500.
+	q := newPluginRig(t)
+	if err := os.RemoveAll(q.store); err != nil {
+		t.Fatal(err)
+	}
+	p = q
+	ask("no scope consents and the store is gone", http.StatusForbidden)
+}
+
 // TestAPluginCannotFillTheCaptureQuota: one plugin's outputs stop at its share (1/20 of the quota) with
 // a NAMED 507 — not the opaque 500 they were — said ONCE in the log however many are refused, and
 // the instance is left with room for capture. RED before #270 round 1: 500 "internal error" once the
