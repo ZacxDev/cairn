@@ -4906,16 +4906,24 @@ Both rows are in the ledger: the GET is `content` (found through `Visible`), the
 
 ## Deployment requirements (decision 1; done in the deployment repo, not here)
 
-- `CAIRN_SOURCE_JOURNAL=<path>` on `cairn-ui`, a file on the UI-owned volume beside the control
-  journal, OUTSIDE the store root (both binaries refuse to start otherwise, and refuse the arc
+- `CAIRN_SOURCE_JOURNAL=<path>` on `cairn-ui`, a file on a volume the UI can write, OUTSIDE the store
+  root. 🔴 **Prefer a DEDICATED volume to the one holding the control journal**: the pod has to mount
+  whatever volume holds this file, a mount exposes the whole volume, and the control journal's volume
+  carries credential digests and may carry the session table. The reference deployment uses a
+  dedicated one (operator decision), which also means its backup has to be wired separately. Either
+  way the path is OUTSIDE the store root (both binaries refuse to start otherwise, and refuse the arc
   journal's own file; `cairn-ui` also refuses its own `-control-journal` and `-session-file`, since
   one sources record appended to the control journal makes the authority unreadable). Environment only: an old binary ignores the variable, which is the rollback.
-- The pod mounts the SAME volume read-only at the CONTAINER level (never claim-level), with the same
-  variable — so it must schedule on the UI's node while the volume is ReadWriteOnce and node-local.
+- The pod mounts the SAME volume read-only at the CONTAINER level, with the same variable (the plan
+  says never claim-level: on one storage driver a claim-level `readOnly` breaks co-mounting and the
+  reader sits Pending beside the read-write holder. A deployment that sets both must see BOTH pods
+  Running with the claim mounted) — so it must schedule on the UI's node while the volume is ReadWriteOnce and node-local.
 - The file is created `0600` by the UI's first save, so the pod must run as the UI's uid (or the
   deployment must make it readable); otherwise every pod GET is the `503 store-unreachable`.
-- The backup jobs stage `sources.jsonl` beside `arcs.jsonl`; an ABSENT file is a pass, logged
-  `sources: absent` — nothing creates it before the first save.
+- The backup job stages `sources.jsonl` in the same archive as `arcs.jsonl` (its own directory when
+  it has its own volume); an ABSENT file is a pass, logged `sources: absent` — nothing creates it
+  before the first save. Once a declaration exists, raise the job's line floor so a LOST journal
+  fails it.
 
 ## The RED proof
 
