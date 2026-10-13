@@ -56,14 +56,15 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
   a gate by O17, kept as a measurement, NOT re-measured (below).
 - 🔴 **CAPTURE IS ARMED ON THE PERSONAL INSTANCE, FOR ONE CAPTURING HOST** (operator decisions:
   one host now, the second host gets the agent but NO token; storage, 90-day retention and a
-  20 GB quota as proposed; the held share below ACCEPTED; plugins NOT registered). Both pods run
-  `b888b2d`; `cairn-ui` carries the six worker flags plus `-arm-transcript-capture`, a dedicated
+  20 GB quota as proposed; the held share below ACCEPTED; plugins NOT registered). The instance's
+  server and UI pods both run `b888b2d`; `cairn-ui` carries the six worker flags plus `-arm-transcript-capture`, a dedicated
   transcript volume, and a 768Mi memory limit. Its mode line reads `worker listener on … (sole
   capture owner …, 1 token row(s), 7 route(s)), transcripts in …, capture ARMED`. The client
   instance is NOT armed (Q5) and the host agent has exactly one `-worker`.
 - **Measured at arming, on that one host (two instances configured):**
   - full `--dry-run`: 845 sessions, **634 held** (633 carry `*` in `V`), **211 ship**, 0 routed
     wholly to the unarmed instance; 3,199,838 records read; 1 h 41 min.
+  - (two sessions began between the dry run and the runs: 845 became 847, 211 became 213.)
   - one `--run` against the still-DISARMED listener: `shipped=0 held=634 refused=1 skipped=212
     requests=1` in 80 s — one 503 `capture-disarmed`, then the instance is skipped; the pod stored
     0 sessions. 🔴 This is the run that made the 634 holds FINAL.
@@ -99,8 +100,11 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
 ## Arming — the ordered steps, and what each needs from the operator
 The literal manifests, unit files, commands and every rollback are kept OUT of this repository
 because they name a deployment (they are in the deployment repository's own handoff); this is the
-skeleton. ✅ **Steps 1–7 have been run for ONE host on the personal instance**; step 8 has not,
-and the second host stops after step 2 (agent installed, no token).
+skeleton. ✅ **Steps 1–6 have been run for ONE host on the personal instance, and step 7 in part**: the
+read-back was made with the owner's credential over HTTP, NOT in a real browser, and the refusal
+measured is the NO-credential 401 — a second authenticated principal being refused was not
+tested. Step 8 has not been run, and the second host stops after step 2 (agent installed, no
+token).
 **Rollbacks, smallest first:** disarm = remove the one `-arm-transcript-capture` line (uploads
 answer 503, agents hold, stored transcripts stay readable); stop a host = stop its timer and
 remove its token file (the unit's condition); revoke a host = delete its row from the
@@ -217,7 +221,7 @@ revoked token still presented is a 401 every minute that counts toward the liste
      `shipped` > 0 and the pod's mode line shows 2 token rows.
 2. **Observe one incremental upload from the timer** (a non-held session that grows after
    arming): the run line shows `requests` > 0 on a timer pass. forcing: quality — unobserved.
-3. **Decide the transcript store's backup** (first defect below). forcing: data — a lost volume
+3. **Decide the transcript store's backup** (first defect above). forcing: data — a lost volume
    loses every stored transcript.
 4. **The dualrun flake and the ClickUp boundary rule** before plugin B is toggled on anywhere;
    plugins stay unregistered until the operator asks. forcing: quality.
