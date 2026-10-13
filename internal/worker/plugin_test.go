@@ -503,14 +503,21 @@ func TestThe507LineNamesWhichLimitWasHit(t *testing.T) {
 // the walk was skipped on the strength of a "monotone" claim that is false — the session was
 // answered OFF, and flipped ON only after an unrelated VIEWER's page view happened to record
 // `alpha-notes` in its meta. The answer must not depend on who has looked. There is no skip now:
-// the fold is asked once, over the whole set (mutant `plugins-store-walk-skipped-on-a-stored-off`).
+// the fold is asked once, over the whole set (mutants `plugins-store-walk-skipped-on-a-stored-off` for
+// the read route and `plugins-pending-walk-skipped-on-a-stored-off` for the pending route).
 func TestAnArcHomeFoundOnlyByTheWalkDoesNotChangeTheAnswer(t *testing.T) {
 	p := newPluginRig(t)
 	owner := string(ownerA.Kind) + ":" + string(ownerA.ID)
-	transcripttest.Append(t, p.rig.arc, transcripttest.Session{Root: "s-mixed", Owner: owner, Declared: []string{"beta-notes"}}, "main",
-		[]string{`{"type":"user","message":{"role":"user","content":"mixed one"}}`})
-	extra := "---\nservice: widget\nscope: alpha-notes\n---\n\n## What it is\nsynthetic.\n\n## Nuance / work-history\n\n" +
-		"- 2000-01-05: mixed noted the widget [cairn: fixture-bot/s-mixed]\n"
+	// TWO such sessions, one per route: a transcript READ decides one session and records what its
+	// walk found for THAT session only, and the pending query walks for every root — so each route
+	// must meet a session nothing has walked yet, or the second would be answered from the first's
+	// recorded scope and a skip on its own path would go unseen (it did: the row survived in CI).
+	extra := "---\nservice: widget\nscope: alpha-notes\n---\n\n## What it is\nsynthetic.\n\n## Nuance / work-history\n\n"
+	for _, root := range []string{"s-mixed-read", "s-mixed-list"} {
+		transcripttest.Append(t, p.rig.arc, transcripttest.Session{Root: root, Owner: owner, Declared: []string{"beta-notes"}}, "main",
+			[]string{`{"type":"user","message":{"role":"user","content":"mixed one"}}`})
+		extra += "- 2000-01-05: mixed noted the widget [cairn: fixture-bot/" + root + "]\n"
+	}
 	if err := os.WriteFile(filepath.Join(p.store, "alpha-notes", "widget.md"), []byte(extra), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -520,28 +527,36 @@ func TestAnArcHomeFoundOnlyByTheWalkDoesNotChangeTheAnswer(t *testing.T) {
 	arcOne := arcs.Key{Home: "alpha-notes", Slug: "arc-one"}
 	p.svc.Arcs = func() (arcs.Snapshot, error) {
 		return arcs.Snapshot{Latest: map[arcs.Key]arcs.Registration{arcOne: {Home: arcOne.Home, Slug: arcOne.Slug,
-			Members: []arcs.Member{{Session: "s-mixed"}}}}}, nil
+			Members: []arcs.Member{{Session: "s-mixed-read"}, {Session: "s-mixed-list"}}}}}, nil
 	}
-	// CONTROL: the stored half really is narrower than the whole set — nothing has walked yet.
-	if m, err := p.rig.arc.ReadMeta("s-mixed"); err != nil || len(m.Written) != 0 || !slices.Equal(m.Declared, []string{"beta-notes"}) {
-		t.Fatalf("control: s-mixed's stored set is declared=%v written=%v (%v), want beta-notes declared and nothing walked", m.Declared, m.Written, err)
+	unwalked := func(root string) {
+		t.Helper()
+		// CONTROL: the stored half really is narrower than the whole set — nothing has walked it yet.
+		if m, err := p.rig.arc.ReadMeta(root); err != nil || len(m.Written) != 0 || !slices.Equal(m.Declared, []string{"beta-notes"}) {
+			t.Fatalf("control: %s's stored set is declared=%v written=%v (%v), want beta-notes declared and nothing walked", root, m.Declared, m.Written, err)
+		}
 	}
+	// THE READ ROUTE (`Store.ForPlugin`), first, on a session nothing has walked.
+	unwalked("s-mixed-read")
+	if read := p.do(http.MethodGet, TranscriptPattern+"?session=s-mixed-read", summaryToken, ""); read.Code != http.StatusOK {
+		t.Fatalf("the FIRST transcript read, before anything recorded the walked scope, answered %d — want 200", read.Code)
+	}
+	// THE PENDING ROUTE (`Store.ForPlugins`), on the OTHER session, which is still unwalked.
+	unwalked("s-mixed-list")
 	first := p.pending(summaryToken)
-	read := p.do(http.MethodGet, TranscriptPattern+"?session=s-mixed", summaryToken, "")
-	if !slices.Contains(first, "s-mixed") || read.Code != http.StatusOK {
-		t.Fatalf("the FIRST answers, before anything recorded the walked scope: pending %v, transcript %d — want s-mixed pending and 200",
-			first, read.Code)
+	if !slices.Contains(first, "s-mixed-list") || !slices.Contains(first, "s-mixed-read") {
+		t.Fatalf("the FIRST pending answer, before anything recorded s-mixed-list's walked scope: %v — want both sessions", first)
 	}
 	// …and they are the answers after the walk's find is in the meta, too.
-	if m, _ := p.rig.arc.ReadMeta("s-mixed"); !slices.Equal(m.Written, []string{"alpha-notes"}) {
+	if m, _ := p.rig.arc.ReadMeta("s-mixed-list"); !slices.Equal(m.Written, []string{"alpha-notes"}) {
 		t.Fatalf("the walk did not record alpha-notes: %v", m.Written)
 	}
 	if again := p.pending(summaryToken); !slices.Equal(again, first) {
 		t.Fatalf("the pending list changed once the walked scope was recorded: %v → %v", first, again)
 	}
-	// NEGATIVE CONTROL: without the arc the same session is OFF (both scopes are only `allowed`).
+	// NEGATIVE CONTROL: without the arc the same sessions are OFF (both scopes are only `allowed`).
 	p.toggle(plugins.LevelArc, "alpha-notes/arc-one", plugins.ValueUnset)
-	if got := p.pending(summaryToken); slices.Contains(got, "s-mixed") {
-		t.Fatalf("with the arc unset the session is still pending: %v", got)
+	if got := p.pending(summaryToken); slices.Contains(got, "s-mixed-list") || slices.Contains(got, "s-mixed-read") {
+		t.Fatalf("with the arc unset the sessions are still pending: %v", got)
 	}
 }
