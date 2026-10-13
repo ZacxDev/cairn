@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -13,6 +12,8 @@ import (
 
 	"github.com/ZacxDev/cairn/plugins/internal/llm"
 	"github.com/ZacxDev/cairn/plugins/internal/pluginapi"
+	"github.com/ZacxDev/cairn/plugins/internal/spend"
+	"github.com/ZacxDev/cairn/plugins/internal/transcripttext"
 )
 
 // 🔴 CONTINUOUS = INCREMENTAL, AND THE ONLY STATE IS THE POD'S WATERMARK (decision 13). A run asks the
@@ -35,10 +36,6 @@ const (
 // OutputType is the one output type this plugin writes.
 const OutputType = "summary"
 
-// watermarkStream is the stream vocabulary the pod accepts in an `input_watermark`
-// (`internal/plugins` `ValidStream`, decision 7) — a second spelling, pinned by the real-listener test.
-var watermarkStream = regexp.MustCompile(`^(main|subagent:[A-Za-z0-9][A-Za-z0-9_.-]{0,63}|child:[A-Za-z0-9][A-Za-z0-9_.-]{0,63})$`)
-
 // writeTimeout bounds the write that keeps a failed chain's progress.
 const writeTimeout = 30 * time.Second
 
@@ -49,7 +46,7 @@ const maxSummaryBytes = 16 << 10
 type Runner struct {
 	API      *pluginapi.Client
 	Provider llm.Provider
-	Spend    *ledger
+	Spend    *spend.Ledger
 	// Limit is how many pending sessions one run takes.
 	Limit int
 	// ChunkBytes bounds the rendered records one request carries.
@@ -144,8 +141,8 @@ func (r *Runner) prior(ctx context.Context, it pluginapi.PendingItem) (text stri
 }
 
 // read is every record of `main` in (after, to], rendered.
-func (r *Runner) read(ctx context.Context, session string, after, to int64) ([]entry, error) {
-	var out []entry
+func (r *Runner) read(ctx context.Context, session string, after, to int64) ([]transcripttext.Entry, error) {
+	var out []transcripttext.Entry
 	from := after + 1
 	for from <= to {
 		p, err := r.API.Transcript(ctx, pluginapi.TranscriptQuery{Session: session, Stream: "main", FromSeq: from,
@@ -165,8 +162,8 @@ func (r *Runner) read(ctx context.Context, session string, after, to int64) ([]e
 			if rec.Seq > to {
 				break
 			}
-			if text := renderRecord(rec); text != "" {
-				out = append(out, entry{Seq: rec.Seq, Text: text})
+			if text := transcripttext.Record(rec); text != "" {
+				out = append(out, transcripttext.Entry{Seq: rec.Seq, Text: text})
 			}
 		}
 		from = last + 1
@@ -196,9 +193,9 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem) (session
 		return res, fmt.Errorf("reading the transcript: %w", err)
 	}
 	covered := after
-	for _, chunk := range chunks(entries, r.ChunkBytes) {
-		if err := r.Spend.take(); err != nil {
-			if errors.Is(err, ErrCapped) {
+	for _, chunk := range transcripttext.Chunks(entries, r.ChunkBytes) {
+		if err := r.Spend.Take(); err != nil {
+			if errors.Is(err, spend.ErrCapped) {
 				res.capped = true
 				break
 			}
@@ -241,7 +238,7 @@ func (r *Runner) write(ctx context.Context, it pluginapi.PendingItem, res sessio
 	wm := map[string]int64{}
 	if it.PrevOutput != nil {
 		for s, seq := range it.PrevOutput.Watermark {
-			if _, held := it.Streams[s]; held && watermarkStream.MatchString(s) {
+			if _, held := it.Streams[s]; held && pluginapi.ValidWatermarkStream(s) {
 				wm[s] = seq
 			}
 		}
@@ -252,7 +249,7 @@ func (r *Runner) write(ctx context.Context, it pluginapi.PendingItem, res sessio
 			// read ledger) is listed by the pending query but is no conversation, and naming it made
 			// the pod refuse the WHOLE write — so the session was re-summarised, and re-paid for, on
 			// every run.
-			if watermarkStream.MatchString(s) {
+			if pluginapi.ValidWatermarkStream(s) {
 				wm[s] = pos.SeqTo
 			}
 		}

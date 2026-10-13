@@ -739,8 +739,15 @@
       # (no vendor hash to fetch it under) as well as that ledger. Its check phase runs the module's
       # own suite against the in-process fake provider and fake pod. A one-shot run for a user timer;
       # the manifest the operator registers ships beside it in `share/`.
-      mkSummaryPlugin = pkgs: (buildGoPinned pkgs) {
-        pname = "cairn-summary";
+      #
+      # 🔴 EXAMPLE PLUGIN B — CLICKUP TICKET MATCHING (S10) — IS THE SAME DERIVATION WITH ANOTHER NAME:
+      # one module, one source filter, and EACH package's check phase runs the WHOLE module's suite, so
+      # the code the two plugins share (`plugins/internal/…`) cannot pass in one and fail in the other.
+      # `gitMinimal` is a CHECK input only: plugin B's suite runs the real `git` over a repository it
+      # creates (and FAILS rather than skips without one); the installed binary takes its `git` and its
+      # GitHub CLI from the operator's own PATH, by flag.
+      mkPlugin = pkgs: name: description: (buildGoPinned pkgs) {
+        pname = "cairn-${name}";
         inherit version;
         src = pkgs.lib.cleanSourceWith {
           src = ./.;
@@ -751,8 +758,9 @@
         };
         modRoot = "plugins";
         vendorHash = null;
-        subPackages = [ "summary" ];
+        subPackages = [ name ];
         doCheck = true;
+        nativeCheckInputs = [ pkgs.gitMinimal ];
         checkPhase = ''
           runHook preCheck
           go vet ./...
@@ -760,17 +768,21 @@
           runHook postCheck
         '';
         postInstall = ''
-          mv "$out/bin/summary" "$out/bin/cairn-summary"
-          install -Dm444 summary/manifest.json "$out/share/cairn-summary/manifest.json"
+          mv "$out/bin/${name}" "$out/bin/cairn-${name}"
+          install -Dm444 ${name}/manifest.json "$out/share/cairn-${name}/manifest.json"
         '';
         meta = with pkgs.lib; {
-          description = "cairn example plugin A: continuous session summaries through the plugin API";
+          inherit description;
           homepage = "https://github.com/ZacxDev/cairn";
           license = licenses.mit;
-          mainProgram = "cairn-summary";
+          mainProgram = "cairn-${name}";
           platforms = platforms.unix;
         };
       };
+      mkSummaryPlugin = pkgs: mkPlugin pkgs "summary"
+        "cairn example plugin A: continuous session summaries through the plugin API";
+      mkClickupPlugin = pkgs: mkPlugin pkgs "clickup"
+        "cairn example plugin B: ClickUp ticket edges and suggestions through the plugin API (reads ClickUp, never writes to it)";
 
       # 🔴 THE BROWSER SURFACE, AND THE ONLY ARTEFACT HERE THAT LINKS A THIRD-PARTY
       # MODULE. `cmd/cairn-ui` carries the entries page, cookie sessions with a
@@ -1410,6 +1422,7 @@
           cairn-ui = mkGoUI pkgs;
           cairn-capture = mkGoCapture pkgs;
           cairn-summary = mkSummaryPlugin pkgs;
+          cairn-clickup = mkClickupPlugin pkgs;
         }
         // nixpkgs.lib.optionalAttrs (builtins.elem pkgs.stdenv.hostPlatform.system linuxSystems) {
           server-image = mkServerImage pkgs;
@@ -1495,6 +1508,7 @@
         cairn-ui = mkGoUI pkgs;
         cairn-capture = mkGoCapture pkgs;
         cairn-summary = mkSummaryPlugin pkgs;
+        cairn-clickup = mkClickupPlugin pkgs;
 
         # 🔴 THE CHECKED-IN STYLESHEET IS WHAT THE BINARY SERVES, SO A STALE ONE SHIPS
         # SILENTLY. `internal/ui/app.css` is `//go:embed`ed, so nothing about editing

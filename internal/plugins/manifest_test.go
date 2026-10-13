@@ -32,7 +32,7 @@ func TestTheVocabulariesAreClosed(t *testing.T) {
 	if _, err := ParseRegistry(registryJSON(t, summaryManifest())); err != nil {
 		t.Fatalf("POSITIVE CONTROL: plugin A's manifest is refused: %v", err)
 	}
-	if got := OutputTypes(); strings.Join(got, ",") != "summary,ticket-edge,ticket-suggestion" {
+	if got := OutputTypes(); strings.Join(got, ",") != "summary,ticket-edge,ticket-scan,ticket-suggestion" {
 		t.Fatalf("the output-type set is %v", got)
 	}
 	bad := map[string]func(*Manifest){
@@ -100,6 +100,7 @@ func TestBodiesAreValidatedAgainstTheirTypesSchema(t *testing.T) {
 		TypeSummary:          `{"text":"ok"}`,
 		TypeTicketEdge:       `{"system":"clickup","ticket_id":"abc123","signal":"branch-name","locator":{"stream":"main","seq":4}}`,
 		TypeTicketSuggestion: `{"ticket_id":"abc123","confidence":0.5,"rationale":"synthetic"}`,
+		TypeTicketScan:       `{"system":"clickup","edges":0,"suggestions":0,"model_asked":false}`,
 	}
 	for typ, body := range good {
 		if err := ValidateBody(typ, json.RawMessage(body)); err != nil {
@@ -110,6 +111,7 @@ func TestBodiesAreValidatedAgainstTheirTypesSchema(t *testing.T) {
 		TypeSummary:          `{"text":"ok","html":"<b>x</b>"}`,
 		TypeTicketEdge:       `{"system":"clickup","ticket_id":"javascript:alert(1)","signal":"branch-name","locator":{"pr":1}}`,
 		TypeTicketSuggestion: `{"ticket_id":"abc123","confidence":1.5,"rationale":"synthetic"}`,
+		TypeTicketScan:       `{"system":"clickup","edges":-1,"suggestions":0,"model_asked":false}`,
 		"essay":              `{"text":"ok"}`,
 	}
 	for typ, body := range bad {

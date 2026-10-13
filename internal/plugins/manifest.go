@@ -43,11 +43,16 @@ const (
 	TypeSummary          = "summary"
 	TypeTicketEdge       = "ticket-edge"
 	TypeTicketSuggestion = "ticket-suggestion"
+	// TypeTicketScan is S10's addition (a reviewed in-tree change, as the comment above requires): the
+	// record that a ticket matcher EXAMINED a session through a watermark, whatever it found. Without
+	// it a matcher that finds nothing has nothing to write, the watermark never advances (decision
+	// 13: writing an output IS the advance), and the session is pending — and re-read — forever.
+	TypeTicketScan = "ticket-scan"
 )
 
 // OutputTypes is the closed output-type set, sorted.
 func OutputTypes() []string {
-	return []string{TypeSummary, TypeTicketEdge, TypeTicketSuggestion}
+	return []string{TypeSummary, TypeTicketEdge, TypeTicketScan, TypeTicketSuggestion}
 }
 
 // IsOutputType reports whether t is a member of the closed set.

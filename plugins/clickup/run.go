@@ -1,0 +1,593 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/ZacxDev/cairn/plugins/internal/llm"
+	"github.com/ZacxDev/cairn/plugins/internal/pluginapi"
+	"github.com/ZacxDev/cairn/plugins/internal/spend"
+	"github.com/ZacxDev/cairn/plugins/internal/transcripttext"
+)
+
+// 🔴 ONE PASS OVER A SESSION WRITES ITS EDGES, THEN ITS SUGGESTIONS, THEN ONE `ticket-scan` — AND THE
+// SCAN IS WHAT SAYS THE PASS FINISHED. The pod holds the only progress state (decision 13): a session
+// is pending while it holds records past this plugin's LAST-WRITTEN output's watermark. Every output of
+// a pass carries the pass's watermark, so the first one written already takes the session off the
+// pending list; the scan, written last, is how the NEXT pass knows the previous one completed. A pass
+// whose previous output is NOT a scan (a run killed between two writes) re-reads the session from its
+// first record instead of from the watermark — duplicates are impossible, because an edge the session
+// already holds for the same ticket and signal is never written again.
+//
+// 🔴 THE SCAN IS ALSO WHY A SESSION THAT MATCHES NOTHING STOPS BEING PENDING. Most sessions name no
+// ticket. Without something to write, such a session would stay at the head of the pending list
+// (oldest first) forever, and a page of them would starve every session behind it.
+//
+// ⚠ SUGGESTIONS ARE BEST-EFFORT, AND EDGES ARE NOT HELD HOSTAGE TO THEM: when the spend cap is
+// reached, no key is configured, or the provider fails, the pass still completes and its scan says no
+// model was asked (`model_asked: false`). A failed request is counted and makes the run exit 1.
+
+// Name and Version are the plugin's own, matching `manifest.json` (the pod stamps the registry's).
+const (
+	Name    = "clickup"
+	Version = "0.1.0"
+)
+
+// The output types this plugin writes, and the one it reads from another plugin.
+const (
+	TypeEdge       = "ticket-edge"
+	TypeSuggestion = "ticket-suggestion"
+	TypeScan       = "ticket-scan"
+	TypeSummary    = "summary"
+)
+
+// The signals (decision 14's closed set, `internal/plugins` `Signals`).
+const (
+	SigBranch     = "branch-name"
+	SigCommitMsg  = "commit-message"
+	SigCommitTrlr = "commit-trailer"
+	SigPRBody     = "pr-body"
+	SigPRLink     = "pr-link"
+	SigTranscript = "transcript-url"
+	SigEntryRef   = "entry-ref"
+)
+
+// noModel is the `model` an output carries when no model made it: the envelope requires the field.
+const noModel = "none (deterministic match)"
+
+// maxEdgesPerPass bounds the edges one pass writes: a session that LISTED a workspace's tickets names
+// every one of them by URL.
+const maxEdgesPerPass = 100
+
+// Locator is where a match was found — exactly one of its shapes (`internal/plugins` `Locator`).
+type Locator struct {
+	Stream string `json:"stream,omitempty"`
+	Seq    int64  `json:"seq,omitempty"`
+	Commit string `json:"commit,omitempty"`
+	PR     int    `json:"pr,omitempty"`
+	Entry  string `json:"entry,omitempty"`
+}
+
+// Edge is one `ticket-edge` body.
+type Edge struct {
+	System   string  `json:"system"`
+	TicketID string  `json:"ticket_id"`
+	CustomID string  `json:"custom_id,omitempty"`
+	Signal   string  `json:"signal"`
+	Locator  Locator `json:"locator"`
+}
+
+// Scan is one `ticket-scan` body.
+type Scan struct {
+	System      string `json:"system"`
+	Edges       int    `json:"edges"`
+	Suggestions int    `json:"suggestions"`
+	ModelAsked  bool   `json:"model_asked"`
+}
+
+// Runner is one run's configuration.
+type Runner struct {
+	API     *pluginapi.Client
+	Matcher *Matcher
+	// Provider is nil when no key was configured: no suggestion is asked for.
+	Provider llm.Provider
+	Spend    *spend.Ledger
+	// Repos is the host-local repository list; GitBin the git to run in them.
+	Repos  []string
+	GitBin string
+	// GHBin is the GitHub CLI; "" reads no PR.
+	GHBin string
+	// Entries is the cache roots' index; nil when none is configured.
+	Entries EntryIndex
+	// PageBytes is the `max_bytes` of one transcript page.
+	PageBytes int
+	// ExcerptBytes bounds the opening excerpt sent when no summary is stored.
+	ExcerptBytes    int
+	MaxOutputTokens int
+	// MaxCandidates bounds the ticket list one request carries; MaxSuggestions what one pass writes.
+	MaxCandidates  int
+	MaxSuggestions int
+	MinConfidence  float64
+	Log            func(string)
+}
+
+// Stats is what a run did.
+type Stats struct {
+	Sessions, Edges, Suggestions, Requests, Failed int
+	Capped                                         bool
+}
+
+// Run does one pass over an already-fetched pending list.
+func (r *Runner) Run(ctx context.Context, items []pluginapi.PendingItem) Stats {
+	var st Stats
+	for _, it := range items {
+		st.Sessions++
+		res, err := r.session(ctx, it)
+		st.Edges += res.edges
+		st.Suggestions += res.suggestions
+		st.Requests += res.requests
+		if res.capped {
+			st.Capped = true
+		}
+		if err != nil {
+			st.Failed++
+			r.Log(fmt.Sprintf("clickup: session=%s FAILED: %v", it.Session, err))
+			continue
+		}
+		if res.softErrs > 0 {
+			st.Failed++
+		}
+		r.Log(fmt.Sprintf("clickup: session=%s full=%t edges=%d suggestions=%d requests=%d capped=%t source-errors=%d",
+			it.Session, res.full, res.edges, res.suggestions, res.requests, res.capped, res.softErrs))
+	}
+	return st
+}
+
+type sessionResult struct {
+	edges, suggestions, requests int
+	capped, full                 bool
+	// softErrs counts sources that failed without failing the pass (a repository, the GitHub CLI,
+	// the provider).
+	softErrs int
+}
+
+// found is one candidate edge, before it is checked against what the session already holds.
+type found struct {
+	hit Hit
+	sig string
+	loc Locator
+}
+
+// eachString calls fn for every string VALUE in a decoded JSON value — never a key.
+func eachString(v any, fn func(string)) {
+	switch t := v.(type) {
+	case string:
+		fn(t)
+	case []any:
+		for _, e := range t {
+			eachString(e, fn)
+		}
+	case map[string]any:
+		for _, e := range t {
+			eachString(e, fn)
+		}
+	}
+}
+
+// scanned is what one pass read off the transcript.
+type scanned struct {
+	// branches is each distinct `gitBranch`, at the first record that carried it.
+	branches map[string]Locator
+	urls     []found
+	prs      []PR
+}
+
+// scanStream reads one stream's records in (after, to] with `view=raw` — a matcher reads EVERY byte
+// the record holds, bookkeeping included: `gitBranch` and the `pr-link` record ARE bookkeeping, which
+// the conversation view leaves out.
+func (r *Runner) scanStream(ctx context.Context, session, stream string, after, to int64, into *scanned) error {
+	from := after + 1
+	for from <= to {
+		p, err := r.API.Transcript(ctx, pluginapi.TranscriptQuery{Session: session, Stream: stream, FromSeq: from,
+			View: "raw", MaxBytes: r.PageBytes})
+		if err != nil {
+			return err
+		}
+		if len(p.Records) == 0 {
+			break
+		}
+		last := from - 1
+		for _, rec := range p.Records {
+			if rec.Seq < from || rec.Seq <= last {
+				return fmt.Errorf("the transcript page went backwards (record %d after %d)", rec.Seq, last)
+			}
+			last = rec.Seq
+			if rec.Seq > to {
+				break
+			}
+			var v any
+			if len(rec.Rec) == 0 || json.Unmarshal(rec.Rec, &v) != nil {
+				continue
+			}
+			loc := Locator{Stream: stream, Seq: rec.Seq}
+			if obj, ok := v.(map[string]any); ok {
+				if b, _ := obj["gitBranch"].(string); b != "" {
+					if _, seen := into.branches[b]; !seen {
+						into.branches[b] = loc
+					}
+				}
+				if pr, ok := prOf(obj); ok {
+					pr.Stream, pr.Seq = stream, rec.Seq
+					into.prs = append(into.prs, pr)
+				}
+			}
+			// One record's map is walked in no fixed order; the hits are sorted so which ticket's
+			// edge is written first does not vary between runs.
+			var hits []Hit
+			eachString(v, func(s string) { hits = append(hits, r.Matcher.URLs(s)...) })
+			slices.SortStableFunc(hits, func(a, b Hit) int { return strings.Compare(a.ID, b.ID) })
+			for _, h := range hits {
+				into.urls = append(into.urls, found{hit: h, sig: SigTranscript, loc: loc})
+			}
+		}
+		from = last + 1
+	}
+	return nil
+}
+
+// streamsOf is the item's streams a watermark may name, `main` first.
+func streamsOf(it pluginapi.PendingItem) []string {
+	var out []string
+	for s := range it.Streams {
+		if pluginapi.ValidWatermarkStream(s) {
+			out = append(out, s)
+		}
+	}
+	slices.SortFunc(out, func(a, b string) int {
+		if (a == "main") != (b == "main") {
+			if a == "main" {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a, b)
+	})
+	return out
+}
+
+// held is what a session already holds from earlier passes.
+type held struct {
+	// edges is every (ticket, signal) an edge exists for; edged every ticket with any edge.
+	edges, edged map[string]bool
+	// suggested is every ticket already suggested.
+	suggested map[string]bool
+	// prevScan is the previous pass's scan when the session's LAST output is one; nil otherwise.
+	prevScan *pluginapi.Output
+}
+
+func (r *Runner) heldBy(ctx context.Context, it pluginapi.PendingItem) (held, error) {
+	h := held{edges: map[string]bool{}, edged: map[string]bool{}, suggested: map[string]bool{}}
+	edges, err := r.API.Outputs(ctx, it.Session, TypeEdge)
+	if err != nil {
+		return h, fmt.Errorf("reading the session's edges: %w", err)
+	}
+	for _, o := range edges {
+		var e Edge
+		if json.Unmarshal(o.Body, &e) == nil && e.TicketID != "" {
+			h.edges[e.TicketID+"\x00"+e.Signal] = true
+			h.edged[e.TicketID] = true
+		}
+	}
+	suggs, err := r.API.Outputs(ctx, it.Session, TypeSuggestion)
+	if err != nil {
+		return h, fmt.Errorf("reading the session's suggestions: %w", err)
+	}
+	for _, o := range suggs {
+		var s Suggestion
+		if json.Unmarshal(o.Body, &s) == nil {
+			h.suggested[s.TicketID] = true
+		}
+	}
+	if it.PrevOutput == nil {
+		return h, nil
+	}
+	scans, err := r.API.Outputs(ctx, it.Session, TypeScan)
+	if err != nil {
+		return h, fmt.Errorf("reading the session's scans: %w", err)
+	}
+	for i := range scans {
+		if scans[i].ID == it.PrevOutput.ID {
+			h.prevScan = &scans[i]
+		}
+	}
+	return h, nil
+}
+
+func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem) (sessionResult, error) {
+	var res sessionResult
+	streams := streamsOf(it)
+	if len(streams) == 0 {
+		return res, errors.New("the pending item names no stream a watermark may name")
+	}
+	if !sessionShape.MatchString(it.Session) {
+		return res, errors.New("the pending item's session is not a session id")
+	}
+	h, err := r.heldBy(ctx, it)
+	if err != nil {
+		return res, err
+	}
+	res.full = h.prevScan == nil
+
+	// --- the transcript: branches, PR links and URLs.
+	sc := scanned{branches: map[string]Locator{}}
+	wm := map[string]int64{}
+	for _, s := range streams {
+		after := int64(0)
+		if h.prevScan != nil {
+			after = min(it.PrevOutput.Watermark[s], it.Streams[s].SeqTo)
+		}
+		if err := r.scanStream(ctx, it.Session, s, after, it.Streams[s].SeqTo, &sc); err != nil {
+			return res, fmt.Errorf("reading the transcript (%s): %w", s, err)
+		}
+		wm[s] = it.Streams[s].SeqTo
+	}
+	all := sc.urls
+
+	// --- commits: messages now, trailers below — from the host-local repository list.
+	var commits []Commit
+	for _, repo := range r.Repos {
+		cs, err := SessionCommits(ctx, r.GitBin, repo, it.Session)
+		if err != nil {
+			res.softErrs++
+			r.Log(fmt.Sprintf("clickup: session=%s repository %s could not be read: %v", it.Session, repo, err))
+			continue
+		}
+		commits = append(commits, cs...)
+	}
+	for _, c := range commits {
+		for _, hit := range r.Matcher.Prose(c.Message) {
+			all = append(all, found{hit: hit, sig: SigCommitMsg, loc: Locator{Commit: c.SHA}})
+		}
+	}
+
+	// --- PRs: the body (`pr-body`), and the title (`pr-link`), through the host's GitHub CLI.
+	type prText struct {
+		pr   PR
+		text PRText
+	}
+	var fetched []prText
+	if r.GHBin != "" {
+		seen := map[string]bool{}
+		for _, pr := range sc.prs {
+			key := fmt.Sprintf("%s#%d", pr.Repo, pr.Number)
+			if seen[key] {
+				continue
+			}
+			if len(seen) == maxPRs {
+				r.Log(fmt.Sprintf("clickup: session=%s names more than %d PRs; the rest are not read", it.Session, maxPRs))
+				break
+			}
+			seen[key] = true
+			text, err := FetchPR(ctx, r.GHBin, pr)
+			if err != nil {
+				res.softErrs++
+				r.Log(fmt.Sprintf("clickup: session=%s PR %s could not be read: %v", it.Session, key, err))
+				continue
+			}
+			fetched = append(fetched, prText{pr, text})
+			for _, hit := range r.Matcher.Prose(text.Body) {
+				all = append(all, found{hit: hit, sig: SigPRBody, loc: Locator{PR: pr.Number}})
+			}
+			for _, hit := range r.Matcher.Prose(text.Title) {
+				all = append(all, found{hit: hit, sig: SigPRLink, loc: Locator{PR: pr.Number}})
+			}
+		}
+	}
+
+	// --- entries the session wrote: explicit `clickup:<id>` refs.
+	for _, e := range r.Entries[it.Session] {
+		for _, ident := range e.Idents {
+			switch t, ok := r.Matcher.Index.Resolve(ident); {
+			case ok:
+				all = append(all, found{hit: Hit{ID: t.ID, Custom: ident}, sig: SigEntryRef, loc: Locator{Entry: e.Ref}})
+			case canonicalID.MatchString(ident):
+				// An explicit ref names the canonical id itself; it needs no list to vouch for it.
+				all = append(all, found{hit: Hit{ID: ident}, sig: SigEntryRef, loc: Locator{Entry: e.Ref}})
+			}
+		}
+	}
+
+	// --- structured fields, LAST: a bare token counts when the list holds it or a URL above named it.
+	byURL := map[string]bool{}
+	for _, f := range all {
+		if f.hit.ByURL {
+			byURL[f.hit.ID] = true
+		}
+	}
+	names := make([]string, 0, len(sc.branches))
+	for b := range sc.branches {
+		names = append(names, b)
+	}
+	slices.Sort(names)
+	for _, b := range names {
+		for _, hit := range r.Matcher.Field(b, byURL) {
+			all = append(all, found{hit: hit, sig: SigBranch, loc: sc.branches[b]})
+		}
+	}
+	for _, c := range commits {
+		for _, t := range c.Trailers {
+			for _, hit := range r.Matcher.Field(t.Value, byURL) {
+				all = append(all, found{hit: hit, sig: SigCommitTrlr, loc: Locator{Commit: c.SHA}})
+			}
+		}
+	}
+	for _, f := range fetched {
+		for _, hit := range r.Matcher.Field(f.text.Head, byURL) {
+			all = append(all, found{hit: hit, sig: SigPRLink, loc: Locator{PR: f.pr.Number}})
+		}
+	}
+
+	// --- write the edges this session does not already hold: one per (ticket, signal).
+	for _, f := range all {
+		key := f.hit.ID + "\x00" + f.sig
+		if h.edges[key] {
+			continue
+		}
+		if res.edges == maxEdgesPerPass {
+			r.Log(fmt.Sprintf("clickup: session=%s names more than %d new tickets; the rest are not written", it.Session, maxEdgesPerPass))
+			break
+		}
+		h.edges[key] = true
+		h.edged[f.hit.ID] = true
+		body := Edge{System: "clickup", TicketID: f.hit.ID, CustomID: f.hit.Custom, Signal: f.sig, Locator: f.loc}
+		if _, err := r.API.WriteOutput(ctx, pluginapi.Envelope{Plugin: Name, PluginVersion: Version, Model: noModel,
+			Session: it.Session, InputWatermark: wm, Type: TypeEdge, Body: body}); err != nil {
+			return res, fmt.Errorf("writing a %s edge: %w", f.sig, err)
+		}
+		res.edges++
+	}
+
+	// --- suggestions: one request, and only ever written as suggestions.
+	scan := Scan{System: "clickup", Edges: res.edges}
+	model := noModel
+	if sg, m, err := r.suggest(ctx, it, &res, h); err != nil {
+		res.softErrs++
+		r.Log(fmt.Sprintf("clickup: session=%s no suggestion was made: %v", it.Session, err))
+	} else if m != "" {
+		scan.ModelAsked, model = true, m
+		for _, s := range sg {
+			if _, err := r.API.WriteOutput(ctx, pluginapi.Envelope{Plugin: Name, PluginVersion: Version, Model: m,
+				Session: it.Session, InputWatermark: wm, Type: TypeSuggestion, Body: s}); err != nil {
+				return res, fmt.Errorf("writing a suggestion: %w", err)
+			}
+			res.suggestions++
+		}
+	}
+	scan.Suggestions = res.suggestions
+
+	// --- the scan, LAST: the pass finished.
+	if _, err := r.API.WriteOutput(ctx, pluginapi.Envelope{Plugin: Name, PluginVersion: Version, Model: model,
+		Session: it.Session, InputWatermark: wm, Type: TypeScan, Body: scan}); err != nil {
+		return res, fmt.Errorf("writing the scan: %w", err)
+	}
+	return res, nil
+}
+
+// suggest asks the model once for this pass. It answers the model's name when a request was MADE and
+// answered ("" when none was: no provider, no candidate, nothing new to describe, or the spend cap).
+func (r *Runner) suggest(ctx context.Context, it pluginapi.PendingItem, res *sessionResult, h held) ([]Suggestion, string, error) {
+	if r.Provider == nil {
+		return nil, "", nil
+	}
+	var cands []Ticket
+	allowed := map[string]bool{}
+	for _, id := range r.Matcher.Index.order {
+		// A ticket the session already has an edge to, or was already suggested, is not asked about.
+		if h.edged[id] || h.suggested[id] {
+			continue
+		}
+		if len(cands) == r.MaxCandidates {
+			break
+		}
+		cands = append(cands, r.Matcher.Index.byID[id])
+		allowed[id] = true
+	}
+	if len(cands) == 0 {
+		return nil, "", nil
+	}
+	source, text, err := r.describe(ctx, it, h.prevScan)
+	if err != nil {
+		return nil, "", err
+	}
+	if text == "" {
+		return nil, "", nil
+	}
+	if err := r.Spend.Take(); err != nil {
+		if errors.Is(err, spend.ErrCapped) {
+			res.capped = true
+			return nil, "", nil
+		}
+		return nil, "", err
+	}
+	res.requests++
+	ans, err := r.Provider.Complete(ctx, llm.Request{System: suggestSystem, User: suggestPrompt(source, text, cands),
+		MaxTokens: r.MaxOutputTokens})
+	if err != nil {
+		return nil, "", err
+	}
+	sg, dropped, err := parseSuggestions(ans.Text, allowed, r.MinConfidence, r.MaxSuggestions)
+	if err != nil {
+		return nil, "", err
+	}
+	if dropped > 0 {
+		r.Log(fmt.Sprintf("clickup: session=%s %d of the model's picks were dropped (not a candidate, no usable confidence, below the floor, or past the limit)",
+			it.Session, dropped))
+	}
+	return sg, ans.Model, nil
+}
+
+// describe is what the model is told about the session: the latest stored `summary` (plugin A's — the
+// cross-plugin read, `output:read:summary`), or, when none is stored, the session's OPENING records
+// rendered as labelled lines. "" when there is nothing NEW to describe since the previous pass: the
+// same summary, or — with no summary — any pass after the first, because the opening does not change.
+func (r *Runner) describe(ctx context.Context, it pluginapi.PendingItem, prevScan *pluginapi.Output) (source, text string, err error) {
+	sums, err := r.API.Outputs(ctx, it.Session, TypeSummary)
+	if err != nil {
+		return "", "", fmt.Errorf("reading the session's summary: %w", err)
+	}
+	for i := len(sums) - 1; i >= 0; i-- {
+		var body struct {
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(sums[i].Body, &body) != nil || strings.TrimSpace(body.Text) == "" {
+			continue
+		}
+		if prevScan != nil && sums[i].ProducedAt <= prevScan.ProducedAt {
+			return "", "", nil // the summary this plugin already asked about
+		}
+		return "a summary written by the plugin " + oneLine(sums[i].Plugin, 64), body.Text, nil
+	}
+	if prevScan != nil {
+		return "", "", nil
+	}
+	mainPos, ok := it.Streams["main"]
+	if !ok {
+		return "", "", nil
+	}
+	var entries []transcripttext.Entry
+	size := 0
+	for from := int64(1); from <= mainPos.SeqTo && size < r.ExcerptBytes; {
+		p, err := r.API.Transcript(ctx, pluginapi.TranscriptQuery{Session: it.Session, Stream: "main", FromSeq: from,
+			View: "conversation", MaxBytes: r.PageBytes})
+		if err != nil {
+			return "", "", fmt.Errorf("reading the session's opening: %w", err)
+		}
+		if len(p.Records) == 0 {
+			break
+		}
+		for _, rec := range p.Records {
+			if rec.Seq < from {
+				return "", "", errors.New("the transcript page went backwards")
+			}
+			from = rec.Seq + 1
+			if t := transcripttext.Record(rec); t != "" && size < r.ExcerptBytes {
+				entries = append(entries, transcripttext.Entry{Seq: rec.Seq, Text: t})
+				size += len(t)
+			}
+		}
+	}
+	chunks := transcripttext.Chunks(entries, r.ExcerptBytes)
+	if len(chunks) == 0 {
+		return "", "", nil
+	}
+	var b strings.Builder
+	for _, e := range chunks[0] {
+		fmt.Fprintf(&b, "#%d %s\n", e.Seq, e.Text)
+	}
+	last := chunks[0][len(chunks[0])-1].Seq
+	return fmt.Sprintf("its opening records 1–%d, no summary being stored", last), strings.TrimRight(b.String(), "\n"), nil
+}

@@ -78,6 +78,20 @@ type TicketSuggestion struct {
 	Rationale  string  `json:"rationale"`
 }
 
+// TicketScan records that a ticket matcher examined a session through the envelope's watermark: how
+// many edges and suggestions that pass wrote, and whether a model was asked at all — so "0
+// suggestions" from a model that found none is told apart from a pass that asked nobody (no key, or
+// the plugin's spend cap). The numbers are the PLUGIN's claim, like every output.
+type TicketScan struct {
+	System      string `json:"system"`
+	Edges       int    `json:"edges"`
+	Suggestions int    `json:"suggestions"`
+	ModelAsked  bool   `json:"model_asked"`
+}
+
+// maxScanCount bounds a scan's counts.
+const maxScanCount = 10000
+
 // Summary is plugin A's output.
 type Summary struct {
 	Text string `json:"text"`
@@ -157,6 +171,18 @@ func CanonicalBody(t string, raw json.RawMessage) (json.RawMessage, error) {
 			return nil, err
 		}
 		v = e
+	case TypeTicketScan:
+		var s TicketScan
+		if err := strict(raw, &s); err != nil {
+			return nil, err
+		}
+		if s.System != "clickup" {
+			return nil, fmt.Errorf("system %q is not clickup", s.System)
+		}
+		if s.Edges < 0 || s.Edges > maxScanCount || s.Suggestions < 0 || s.Suggestions > maxScanCount {
+			return nil, fmt.Errorf("a scan's counts must be 0–%d", maxScanCount)
+		}
+		v = s
 	case TypeTicketSuggestion:
 		var s TicketSuggestion
 		if err := strict(raw, &s); err != nil {

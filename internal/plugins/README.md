@@ -9,7 +9,7 @@ plugin's own credential.
 
 | file | what |
 |---|---|
-| `manifest.go` | the manifest, the CLOSED capability vocabulary (`pending:list`, `transcript:read`, `output:read:<type>`, `output:write:<type>`) and output-type set (`summary`, `ticket-edge`, `ticket-suggestion`), `-plugin-registry` loading — any problem refuses the WHOLE file |
+| `manifest.go` | the manifest, the CLOSED capability vocabulary (`pending:list`, `transcript:read`, `output:read:<type>`, `output:write:<type>`) and output-type set (`summary`, `ticket-edge`, `ticket-scan`, `ticket-suggestion`), `-plugin-registry` loading — any problem refuses the WHOLE file |
 | `toggles.go` | the three levels, their values, `-plugin-journal` (the arc journal's write discipline), and `Effective` — decision 10's fold |
 | `outputs.go` | the output envelope, each type's in-tree body schema, `Stamp` (the pod's id, clock, plugin NAME and VERSION — never the body's) |
 | `pending.go` | decision 13's stateless pending query |
@@ -49,6 +49,10 @@ under its own `plugins-*` row in `tests/control_mutants.py`.
 - **The stored body is the re-encoded VALIDATED value** (`CanonicalBody`), never the bytes sent — a
   duplicate key validated as its last value was stored as both.
 - **The summary body is `{"text": …}`** (≤ 16 KiB) — the plan names the type, not its shape.
+- **`ticket-scan` is a fourth output type** (S10): `{system, edges, suggestions, model_asked}` — that a
+  ticket matcher EXAMINED a session through the envelope's watermark. Decision 13 advances a session only
+  when its plugin writes an output, and a matcher that finds nothing had nothing to write; the reasoning
+  is in `plugins/README.md`.
 - **The registry and the journal are both-or-neither, and only with the worker listener**; a `plugin`
   token row is admitted only for a plugin the registry holds, at startup and on every re-read.
 

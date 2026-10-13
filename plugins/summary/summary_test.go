@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ZacxDev/cairn/plugins/internal/transcripttext"
 )
 
 // marks is the set of `mark-<i>` words a body carries, sorted.
@@ -201,7 +203,7 @@ func TestASubagentStreamIsCoveredByTheWatermark(t *testing.T) {
 // TestWhatTheModelReadsIsLabelledByWhoWroteIt — tool calls and results are labelled and CLIPPED; a
 // bookkeeping placeholder renders as nothing; a prompt the human typed mid-turn is the human's.
 func TestWhatTheModelReadsIsLabelledByWhoWroteIt(t *testing.T) {
-	long := strings.Repeat("x", toolClip+100)
+	long := strings.Repeat("x", transcripttext.ToolClip+100)
 	queued := `{"type":"attachment","attachment":{"type":"queued_command","prompt":"also mark-5","commandMode":"prompt","origin":{"kind":"human"}}}`
 	hook := `{"type":"attachment","attachment":{"type":"hook_success","content":"hook mark-6"}}`
 	w := newWorld(t, []string{human("go mark-1"), toolCall("toolu_1", "ls mark-2"), toolResult("toolu_1", long+" mark-3"),
@@ -212,7 +214,7 @@ func TestWhatTheModelReadsIsLabelledByWhoWroteIt(t *testing.T) {
 	body := w.prov.received()[0]
 	for _, want := range []string{
 		`#2 [tool call Bash] {"command":"ls mark-2"}`,
-		"#3 [tool result] " + long[:toolClip] + " […",
+		"#3 [tool result] " + long[:transcripttext.ToolClip] + " […",
 		"#5 [human, typed while the agent worked] also mark-5",
 	} {
 		if !strings.Contains(body, want) {
@@ -364,7 +366,7 @@ func TestThePriorSummaryIsFoundByIDWhateverThePluginIsRegisteredAs(t *testing.T)
 func TestOneRecordCannotMakeARequestAnySize(t *testing.T) {
 	var blocks []string
 	for i := 0; i < 40; i++ {
-		blocks = append(blocks, `{"type":"tool_result","tool_use_id":"t`+fmt.Sprint(i)+`","content":`+q(strings.Repeat("y", toolClip))+`}`)
+		blocks = append(blocks, `{"type":"tool_result","tool_use_id":"t`+fmt.Sprint(i)+`","content":`+q(strings.Repeat("y", transcripttext.ToolClip))+`}`)
 	}
 	wide := `{"type":"user","message":{"role":"user","content":[` + strings.Join(blocks, ",") + `]}}`
 	w := newWorld(t, []string{human("go mark-1"), wide})

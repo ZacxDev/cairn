@@ -11,7 +11,10 @@ plugin API and write back DERIVED records, which the browser surface renders as 
 | `internal/pluginapi` | the plugin API client: pending, transcript pages, outputs, the one write |
 | `internal/llm` | the model provider: ONE request shape, spelled for the Anthropic Messages API and an OpenAI-compatible chat-completions API, over `net/http` — no SDK |
 | `internal/secretfile` | the only way a credential is taken: a file, mode 0600, never argv or the environment |
+| `internal/spend` | the plugins' OWN spend cap: a request ledger under `flock`, one file per program |
+| `internal/transcripttext` | transcript records rendered as LABELLED lines — what a model reads instead of raw records |
 | `summary/` | example plugin A — continuous session summaries (S9); `manifest.json` is what the operator registers |
+| `clickup/` | example plugin B — ClickUp ticket edges and suggestions (S10); reads ClickUp, never writes to it |
 
 ## Plugin A: `summary` (S9)
 
@@ -69,3 +72,106 @@ at the provider (decision 12: the pod never sees the key, so it cannot cap anyth
   client. What runs this binary against the REAL worker listener — registry parsed from the committed
   `manifest.json`, a real journal row, a real archive — is the parent module's
   `internal/worker` `TestTheSummaryPluginAgainstTheRealListener`; a real provider is never called by CI.
+
+## Plugin B: `clickup` (S10)
+
+Matches ClickUp tickets to sessions (operator decision O6). A ONE-SHOT run for the same kind of timer:
+
+```
+cairn-clickup -worker-url https://<worker listener> -token-file ~/.config/cairn-clickup/token \
+              -clickup-token-file ~/.config/cairn-clickup/clickup-token -clickup-list <list id> \
+              [-clickup-team <workspace id>] [-repo ~/src/alpha]… [-gh-bin gh] [-store-root <cairn cache root>]… \
+              [-key-file ~/.config/cairn-clickup/key -provider anthropic -model claude-opus-5-5]
+```
+
+It writes THREE output types, and they are three different claims (decision 14):
+
+| type | what it claims | made by |
+|---|---|---|
+| `ticket-edge` | the session NAMES this ticket: `{system, ticket_id, custom_id?, signal, locator}` — the signal says how, the locator where | a deterministic matcher; `model` reads `none (deterministic match)` |
+| `ticket-suggestion` | a model GUESSES this ticket: `{ticket_id, confidence, rationale}` | the provider; never promoted to an edge, at any confidence |
+| `ticket-scan` | this pass EXAMINED the session through its watermark: `{system, edges, suggestions, model_asked}` | every completed pass, written last |
+
+### What counts as naming a ticket
+
+ClickUp's id charset was not found in a primary source (R5), so nothing matches because it LOOKS like
+an id. A ticket is named only by:
+
+- a task URL — `https://app.clickup.com/t/<id>` (the id is the canonical id; it needs no list), or
+  `https://app.clickup.com/t/<workspace>/<custom-id>`, resolved through the fetched list (and, with
+  `-clickup-team`, only for that workspace);
+- a CUSTOM id that is a member of the fetched list, standing as a whole token (`ALPHA-12` is not in
+  `ALPHA-123`);
+- in a STRUCTURED field only (a branch name, a commit trailer's value, a PR's head branch): a whole
+  token that is a fetched canonical id, or one the same session named by URL;
+- an explicit `clickup:<id>` ref in the front matter of an entry the session wrote.
+
+The edge always stores the CANONICAL id; a custom id the list does not resolve is no edge.
+
+| signal | read from | locator |
+|---|---|---|
+| `transcript-url` | a URL in any string of any record, any stream (`view=raw`) | `{stream, seq}` |
+| `branch-name` | a record's `gitBranch` | the first record that carried the branch |
+| `commit-message`, `commit-trailer` | `git log` in each `-repo`, for commits whose TRAILER block names the session id (`Claude-Session-Id: <id>`, any key) | `{commit}` (the full SHA) |
+| `pr-body` | the body of a PR a `pr-link` record names, through `-gh-bin` | `{pr}` |
+| `pr-link` | that PR's TITLE and head branch | `{pr}` |
+| `entry-ref` | `refs:` of a cached entry (`-store-root`) carrying the session's `[cairn: <actor>/<session>]` attribution | `{entry}` (`<scope>/<entry>`) |
+
+One edge per (ticket, signal) per session: an edge the session already holds is never written again.
+
+### Suggestions
+
+With `-key-file`, ONE request per pass: the session's latest stored `summary` (plugin A's output, read
+through `output:read:summary` — the cross-plugin read) or, when none is stored, the session's opening
+records as labelled lines (first pass only), plus the candidate tickets — id and NAME, most recently
+updated first, at most `-max-candidates`, leaving out every ticket the session already has an edge or
+a suggestion for. The answer must be a JSON array; a pick outside the candidate list, without a
+confidence in [0, 1], or below `-min-confidence` is dropped, and the best `-max-suggestions` are
+written. A pass with nothing new to describe (the same summary as last pass) asks nothing. The spend
+cap is plugin A's (`-max-requests-per-day`, its own ledger file).
+
+### ClickUp, read-only
+
+`GET /api/v2/list/<id>/task` (closed tasks and subtasks included, 100 a page) and nothing else — the
+client has no other request, and the suite asserts the fake saw only `GET`s. A 429 is waited out
+until the `X-RateLimit-Reset` it names (at most `-clickup-max-wait`, 4 attempts). The ticket list is
+fetched BEFORE any session and only when something is pending; if the fetch fails nothing is written.
+What is kept of a task: id, custom id, name — the name in memory only (see below).
+
+Exit codes: 0 the run finished, 1 a session, a source or the ticket fetch failed, 2 usage. The last
+stdout line is `SUMMARY clickup-run: sessions=… edges=… suggestions=… requests=… failed=… capped=…`.
+
+### As built — departures from the plan, each deliberate
+
+- **`ticket-scan` is a FOURTH output type** (the plan's closed set had three). Decision 13 advances a
+  session only when the plugin WRITES an output, and a matcher usually has nothing to say: without a
+  type that records "examined, found nothing", every unmatched session stays at the head of the
+  pending list forever and a page of them starves the rest. It also marks a pass as finished, which is
+  how an interrupted pass is detected and redone from record 1.
+- **Which commits are a session's** — the plan names a repository list, not the join. Only a trailer
+  naming the session id is used; a branch or a time window would be a guess.
+- **The `pr-link` signal** is the linked PR's title and head branch; the plan names the signal, not
+  its source.
+- **Ticket NAMES are sent to the provider** as candidates whenever a model is asked. Q8 governs what
+  the POD stores (ids only by default); run without `-key-file` if names must not leave the host.
+- **`get one task` (R5) is not called**: a `/t/<id>` URL already names the canonical id.
+
+### What it cannot see, stated
+
+- **A session that stamps no session trailer has no commit signal**, and an entry it wrote only with
+  `put`/`create` (no attribution) has no `entry-ref`.
+- **Host sources are read when a session is PENDING.** A commit made, or a PR body edited, after the
+  session's last pass is seen only if the session grows again; a `pr-link` record is read once, so a
+  PR the CLI could not read then is not retried (the run exits 1 and says so).
+- **A session that LISTED tickets is linked to every one it listed** — a URL in a tool result is a
+  URL. At most 100 new edges a pass.
+- **A run killed between two writes** leaves the session covered until it grows; the next pass then
+  re-reads it from record 1 (the last output is not a scan) and writes what is missing.
+- **The entry reader is a narrow second reader**, not the store's parser: it reads the attribution
+  trailer and the `refs:` key and nothing else; a file it misreads costs an edge.
+- **Suggestions are best-effort**: a capped, failed or unconfigured model leaves the pass complete
+  with `model_asked: false`, and that session is not asked again until its summary changes.
+- **The fakes prove the PLUGIN, not the contract** — the real listener is the parent module's
+  `internal/worker` `TestTheClickupPluginAgainstTheRealListener`, which also stores a summary through
+  plugin A's registry entry and has plugin B read it. A real ClickUp workspace and a real provider are
+  never called by CI.

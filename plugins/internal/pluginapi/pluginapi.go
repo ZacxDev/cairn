@@ -24,6 +24,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -129,6 +130,15 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 	}
 	return nil
 }
+
+// watermarkStream is the stream vocabulary the pod accepts in an `input_watermark`
+// (`internal/plugins` `ValidStream`, decision 7) — a second spelling, pinned by the real-listener tests.
+var watermarkStream = regexp.MustCompile(`^(main|subagent:[A-Za-z0-9][A-Za-z0-9_.-]{0,63}|child:[A-Za-z0-9][A-Za-z0-9_.-]{0,63})$`)
+
+// ValidWatermarkStream reports whether an `input_watermark` may name stream s. A session's `ledger`
+// stream (the client read ledger) is LISTED by the pending query and is not one: naming it makes the
+// pod refuse the whole write.
+func ValidWatermarkStream(s string) bool { return watermarkStream.MatchString(s) }
 
 // StreamPos is one stream's committed position in a pending item.
 type StreamPos struct {
