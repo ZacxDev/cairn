@@ -67,5 +67,6 @@ under its own `plugins-*` row in `tests/control_mutants.py`.
   and "absent" that the uniform 403 does not hide.
 - **Journal damage is counted, not surfaced** (`State.Skipped`, `TornTail`): a damaged latest `off`
   falls back to the earlier value.
-- **One undecidable session** (an unparsable `meta.json`) is left out of the pending list (OFF); only
-  when NO session can be decided is the query an error.
+- **One undecidable session** (an unparsable `meta.json`) is left out of the pending list (OFF) and a
+  line says so; every OTHER error — a store walk, a meta write — fails the whole query (500), so a
+  broken store never reads as "nothing pending".

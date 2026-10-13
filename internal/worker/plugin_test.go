@@ -33,6 +33,7 @@ const (
 type pluginRig struct {
 	*rig
 	dir     string
+	store   string
 	journal plugins.Journal
 	arc     interface{ Used() int64 }
 	svc     *plugins.Service
@@ -92,10 +93,11 @@ func newPluginRig(t *testing.T) *pluginRig {
 	transcripttest.Append(t, arc, transcripttest.Session{Root: "s-both", Owner: owner, Declared: []string{"alpha-notes", "beta-notes"}},
 		"main", []string{user("both one")})
 	transcripttest.Append(t, arc, transcripttest.Session{Root: "s-none", Owner: owner}, "main", []string{user("none one")})
+	storeRoot := writeStoreWithTrailer(t)
 	svc := &plugins.Service{
 		Registry:    pluginRegistry(t),
 		Journal:     plugins.Journal{Path: filepath.Join(t.TempDir(), "toggles.jsonl")},
-		Transcripts: transcript.NewStore(arc, writeStoreWithTrailer(t)),
+		Transcripts: transcript.NewStore(arc, storeRoot),
 		Known:       func(s string) bool { return s == "alpha-notes" || s == "beta-notes" },
 		Now:         func() time.Time { return transcripttest.Clock.Add(time.Hour) },
 	}
@@ -108,7 +110,8 @@ func newPluginRig(t *testing.T) *pluginRig {
 		t.Fatal(err)
 	}
 	g.w = w
-	return &pluginRig{rig: g, dir: dir, journal: svc.Journal, arc: arc, svc: svc}
+	svc.Log = func(s string) { g.log = append(g.log, s) }
+	return &pluginRig{rig: g, dir: dir, store: storeRoot, journal: svc.Journal, arc: arc, svc: svc}
 }
 
 func (p *pluginRig) toggle(level plugins.Level, target, value string) {
@@ -292,5 +295,26 @@ func TestOneUndecidableSessionDoesNotStopThePendingQuery(t *testing.T) {
 	}
 	if got := p.pending(summaryToken); !slices.Equal(got, []string{"s-alpha"}) {
 		t.Fatalf("with s-both's meta damaged the pending list is %v, want [s-alpha]", got)
+	}
+	if !slices.ContainsFunc(p.log, func(l string) bool { return strings.Contains(l, "session s-both is left out") }) {
+		t.Fatalf("the left-out session was not said: %v", p.log)
+	}
+}
+
+// TestABrokenStoreIsAnErrorNotAnEmptyList: with the store root gone, a session that must be WALKED
+// cannot be decided, and the query is a 500 — even when another session was ruled out without a walk
+// (audit round 2: skipping every per-session error answered a removed store with a confident empty
+// list). s-both is ruled out on its stored scopes (beta is off); s-alpha needs the walk.
+func TestABrokenStoreIsAnErrorNotAnEmptyList(t *testing.T) {
+	p := newPluginRig(t)
+	p.toggle(plugins.LevelScope, "alpha-notes", plugins.ValueOn)
+	if got := p.pending(summaryToken); !slices.Equal(got, []string{"s-alpha"}) {
+		t.Fatalf("POSITIVE CONTROL: pending is %v", got)
+	}
+	if err := os.RemoveAll(p.store); err != nil {
+		t.Fatal(err)
+	}
+	if rec := p.do(http.MethodGet, PendingPattern, summaryToken, ""); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("with the store removed the pending route answered %d %q, want 500", rec.Code, rec.Body.String())
 	}
 }

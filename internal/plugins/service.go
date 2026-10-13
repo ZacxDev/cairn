@@ -30,6 +30,14 @@ type Service struct {
 	Known func(scope string) bool
 	// Now is the pod clock.
 	Now func() time.Time
+	// Log receives operator lines (a session left out of a decision); nil discards them.
+	Log func(string)
+}
+
+func (s *Service) log(line string) {
+	if s.Log != nil {
+		s.Log(line)
+	}
 }
 
 func (s *Service) now() time.Time {
@@ -137,15 +145,18 @@ func (s *Service) Pending(e Entry, limit int) ([]PendingItem, error) {
 		return nil, err
 	}
 	var cands []Candidate
-	var failed []error
 	for _, root := range roots {
 		v, err := s.Transcripts.ForPlugin(root, on)
-		if err != nil {
-			// 🔴 ONE SESSION THAT CANNOT BE DECIDED (an unparsable meta.json) IS LEFT OUT, not a 500 for
-			// every session (audit round 1) — left out is OFF, the fail-closed answer for it. Only when
-			// NOTHING could be decided is it an error: that is the store, not one session.
-			failed = append(failed, err)
+		if errors.Is(err, transcript.ErrMetaUnparsable) {
+			// 🔴 ONE SESSION WHOSE meta.json DOES NOT DECODE IS LEFT OUT (OFF, fail closed) and SAID, not a
+			// 500 for every session (audit round 1). ONLY that error: a store walk or a meta write that
+			// fails is a fact about the whole store, and skipping it made a removed store answer a
+			// confident empty list (audit round 2) — so every other error still fails the query.
+			s.log(fmt.Sprintf("plugins: session %s is left out of the pending query: %v", root, err))
 			continue
+		}
+		if err != nil {
+			return nil, err
 		}
 		if v == nil {
 			continue
@@ -159,9 +170,6 @@ func (s *Service) Pending(e Entry, limit int) ([]PendingItem, error) {
 			streams[name] = pos.SeqTo
 		}
 		cands = append(cands, Candidate{Root: root, Streams: streams, UpdatedAt: v.Meta.UpdatedAt, Prev: prev})
-	}
-	if len(failed) > 0 && len(failed) == len(roots) {
-		return nil, errors.Join(failed...)
 	}
 	return Pending(e, cands, s.now(), limit), nil
 }

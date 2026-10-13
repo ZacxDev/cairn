@@ -559,6 +559,10 @@ type Position struct {
 	Bytes    int64  `json:"bytes"`
 }
 
+// ErrMetaUnparsable marks a `meta.json` that is present and does not decode — a fact about ONE
+// session, which a caller deciding over many may leave out rather than fail on.
+var ErrMetaUnparsable = errors.New("the session's meta.json does not parse")
+
 // ReadMeta reads a stored session's meta, or (nil, nil) when there is none.
 func (a *Archive) ReadMeta(root string) (*Meta, error) {
 	if !write.SessionComponent.MatchString(root) {
@@ -577,7 +581,7 @@ func (a *Archive) readMeta(root string) (*Meta, error) {
 	}
 	var m Meta
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("archive: %s/%s does not parse: %w", root, metaName, err)
+		return nil, fmt.Errorf("archive: %s/%s does not parse: %w (%w)", root, metaName, ErrMetaUnparsable, err)
 	}
 	if m.Streams == nil {
 		m.Streams = map[string]Position{}

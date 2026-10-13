@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/ZacxDev/cairn/internal/arcs"
@@ -105,7 +106,8 @@ func knownScope(authority interface{ Model() control.Model }) func(string) bool 
 // lists any session); `known` asks the CURRENT model.
 func newPluginService(reg *plugins.Registry, journal plugins.Journal, transcripts *transcript.Store, arcJournal string,
 	authority interface{ Model() control.Model }) *plugins.Service {
-	svc := &plugins.Service{Registry: reg, Journal: journal, Transcripts: transcripts, Known: knownScope(authority)}
+	svc := &plugins.Service{Registry: reg, Journal: journal, Transcripts: transcripts, Known: knownScope(authority),
+		Log: func(line string) { fmt.Fprintln(os.Stderr, "cairn-ui: "+line) }}
 	if arcJournal != "" {
 		svc.Arcs = arcs.Journal{Path: arcJournal}.Read
 	}

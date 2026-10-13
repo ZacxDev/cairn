@@ -86,5 +86,8 @@ func (v *View) AppendOutput(line []byte) error {
 	return v.a.AppendOutput(v.Meta.Root, line)
 }
 
+// ErrMetaUnparsable marks one session whose `meta.json` does not decode.
+var ErrMetaUnparsable = archive.ErrMetaUnparsable
+
 // ErrNoSession is the archive's answer for a root it no longer holds.
 var ErrNoSession = archive.ErrNoSession
