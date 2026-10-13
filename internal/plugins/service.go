@@ -144,9 +144,16 @@ func (s *Service) Pending(e Entry, limit int) ([]PendingItem, error) {
 		if err != nil {
 			return nil, err
 		}
+		// 🔴 ONLY THE STREAMS A WATERMARK MAY NAME ([ValidStream]) are listed and counted as growth. A
+		// session's `ledger` stream (the client read ledger, S11) is no conversation and an envelope
+		// naming it is refused — so counting it kept a session pending forever, and a plugin that
+		// covered every conversation stream re-wrote its output on every poll (found by S9's
+		// real-listener test).
 		streams := map[string]int64{}
 		for name, pos := range v.Meta.Streams {
-			streams[name] = pos.SeqTo
+			if ValidStream(name) {
+				streams[name] = pos.SeqTo
+			}
 		}
 		cands = append(cands, Candidate{Root: v.Meta.Root, Streams: streams, UpdatedAt: v.Meta.UpdatedAt, Prev: prev})
 	}
