@@ -5327,9 +5327,12 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestTurnsPageByFifty",
         why="a turn number is only a view selector, so bounding it reads as fussiness — and the page "
         "arithmetic overflows at the top of int, rendering negative page links.",
-        # The ui's pager test is listed because the ui kept its OWN copy of this clamp, which masked
-        # this mutant from every ui test (#261 round 2); `turnParam` now calls `PageStart`.
-        extra_killers=("TestTheTranscriptPagesByFiftyTurns",),
+        # The ui's pager test WAS listed here (the ui kept its own copy of this clamp, which masked this
+        # mutant from every ui test; #261 round 2), and it stopped killing in round 3 because the GUARD
+        # moved, not the list: the pager no longer adds TurnsPerPage to FirstTurn (it links
+        # `Reading.NextTurn`), so an unclamped `?turn=<MaxInt64>` renders an empty page with an
+        # in-range back link instead of negative page links. The overflow left is readSession's own
+        # window arithmetic, which `TestTurnsPageByFifty` catches.
         pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
     ),
     # #261 round 2: a memo block is a read, the written half is kept, and a page is item-bounded.
