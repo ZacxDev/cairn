@@ -10,9 +10,9 @@
 #          tests/plugins/e2e.sh --self-test  # the negative control: exits 0 iff every SABOTAGED build
 #                                            # turns its clause's named assertion RED
 #
-# The clauses wired now (slices S3b and S4; the plan's table names fourteen, and the rest land with
-# their slices — the self-test count is the sabotages wired, nine over eight clauses because (a) has
-# a Claude Code leg and an opencode leg, not the plan's final 14):
+# The clauses wired now (slices S3b, S4 and S5; the plan's table names fourteen, and the rest land
+# with their slices — the self-test count is the sabotages wired, eleven over ten clauses because (a)
+# has a Claude Code leg and an opencode leg, not the plan's final 14):
 #   (a) resume — an upload whose acknowledgement is LOST mid-stream (the relay forwards a request,
 #       the pod stores it, the agent gets a 502) is retried by the next run and every record lands
 #       EXACTLY once; a request with a stale `from` gets 409 naming the stored position; and the
@@ -44,7 +44,16 @@
 #   (h) routing honours reads — with `alpha-notes` routed to the personal instance and `beta-notes` to
 #       the client instance, a session that WROTE `alpha-notes` and READ `beta-notes` in its first turn
 #       reaches NEITHER (0 relay requests name it) and is logged held, while a session in the same run
-#       that touched nothing ships.
+#       that touched nothing ships;
+#   (i) toggles default off, and only narrow — over the (d)–(g) sessions, once every one is past the
+#       registry's idle trigger, the summary plugin's token gets an EMPTY pending list; after the
+#       scope admin sets `alpha-notes` ON through the browser's toggle POST it lists EXACTLY the
+#       session whose every scope in its visibility set is ON (D: wrote `alpha-notes` only) — not E or
+#       F, which also touched `beta-notes`, and not G, whose empty set is OFF;
+#   (j) capability scoping — that token is refused with ONE 403 body on the transcript of a session it
+#       is OFF for (E), on one that was never stored, and on writing a `ticket-edge` (a type its
+#       manifest does not declare) for a session it is ON for; the POSITIVE CONTROL is the same token
+#       reading D's transcript.
 #
 # 🔴 (d)–(g) MEASURE "THE SAME BYTES AS A SESSION WITH NO TRANSCRIPT" AS BEFORE/AFTER: every viewer's
 # two rows are fetched for every fixture session BEFORE its transcript is uploaded and again after, and
@@ -70,7 +79,7 @@ src="${E2E_SOURCE:-$repo}"
 
 # The number of assertions a full run makes. 🔴 PINNED, so an assertion that silently stopped running
 # is exit 2 rather than a smaller green.
-EXPECTED=15
+EXPECTED=17
 
 couldnt() { echo "COULD NOT VOUCH: $*" >&2; exit 2; }
 
@@ -176,6 +185,17 @@ PY
     $'\tfor _, scope := range v {' \
     $'\tfor _, scope := range v[:1] {' \
     "h-held-session-reaches-neither-instance"
+  # (i) A scope nobody toggled defaults to ON, so every session whose scopes the authority knows is
+  #     pending before anybody consented.
+  sabotage i-a-missing-scope-toggle-defaults-on internal/plugins/toggles.go \
+    $'return s.Value(plugin, LevelScope, ScopeTarget(name), ValueOff)' \
+    $'return s.Value(plugin, LevelScope, ScopeTarget(name), ValueOn)' \
+    "i-pending-is-empty-until-a-toggle-then-exactly-the-every-scope-on-sessions"
+  # (j) The per-session toggle check dropped from the plugin's read: any stored transcript is served.
+  sabotage j-transcript-read-ignores-the-toggle internal/plugins/service.go \
+    $'\tv, err := s.Transcripts.ForPlugin(root, on)' \
+    $'\tv, err := s.Transcripts.ForPlugin(root, func(*transcript.Meta, []string) bool { return on != nil })' \
+    "j-a-plugin-is-refused-one-403-off-session-and-undeclared-type"
   echo "SUMMARY e2e-self-test: sabotaged=$sabotaged caught=$caught"
   if [[ ${#missed[@]} -gt 0 ]]; then
     echo "a sabotage that leaves its clause green is a clause that cannot fail: ${missed[*]}" >&2
@@ -289,6 +309,19 @@ token="$(run_env "$work/bin/cairn-ui" -store "$store" -control-journal "$journal
 tokenfile="$work/capture-token"
 (umask 077 && printf '%s\n' "$token" >"$tokenfile")
 
+# The plugin registry for (i) and (j): plugin A's manifest shape, with the idle trigger at ONE second so
+# the fixture sessions become pending within the run (decision 13's 10 minutes is registry-configurable).
+registry="$work/registry.json"
+cat >"$registry" <<'JSON'
+{"schema":1,"plugins":[{"schema":1,"name":"summary","version":"0.1.0","description":"synthetic summaries",
+ "toggle_key":"summary","capabilities":["pending:list","transcript:read","output:write:summary"],
+ "output_types":["summary"],"calls_model":true,"pending_idle_seconds":1}]}
+JSON
+plugin_token="$(run_env "$work/bin/cairn-ui" -store "$store" -control-journal "$journal" -session-file "$work/sessions.json" \
+  -issue-worker-token plugin -worker-plugin summary -plugin-registry "$registry" -worker-owner "$owner" \
+  -worker-tokens "$wtokens" 2>"$work/mint-plugin.log")" || couldnt "minting the plugin token failed: $(cat "$work/mint-plugin.log")"
+[[ -n "$plugin_token" && $(grep -c '^plugin summary ' "$wtokens") -eq 1 ]] || couldnt "the plugin mint did not write one row"
+
 free_port() { python3 -c 'import socket
 s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'; }
 
@@ -298,7 +331,8 @@ port="$(free_port)"
 wport="$(free_port)"
 "${clean_env[@]}" "$work/bin/cairn-ui" -store "$store" -control-journal "$journal" -session-file "$work/sessions.json" \
   -host 127.0.0.1 -port "$port" -worker-addr "127.0.0.1:$wport" -worker-tokens "$wtokens" -worker-owner "$owner" \
-  -transcript-dir "$tdir" -transcript-retention 90d -transcript-quota 1GB -arm-transcript-capture >"$work/ui.log" 2>&1 &
+  -transcript-dir "$tdir" -transcript-retention 90d -transcript-quota 1GB -arm-transcript-capture \
+  -plugin-registry "$registry" -plugin-journal "$work/toggles.jsonl" >"$work/ui.log" 2>&1 &
 ui=$!
 pids+=("$ui")
 up=no
@@ -611,6 +645,58 @@ assert g-a-session-with-no-write-or-read-is-owner-only eval '
   [[ -s "$tdir/sessions/$vis_g/meta.json" ]] && shows a "$vis_g" "clause g: this session touched nothing" &&
   [[ "$(status after a "$vis_g" page)" == 200 ]] &&
   refused r "$vis_g" && refused p "$vis_g" && refused n "$vis_g" && [[ "$(status after r "$vis_g" page)" == 404 ]]'
+
+# --- (i) and (j): the plugin API, and a toggle set through the browser ------------------------------
+# plugin_get <path> → $code, $body as the summary plugin's token
+plugin_get() {
+  code="$(curl -sS -o "$work/body" -w '%{http_code}' -H "Authorization: Bearer $plugin_token" "$pod$1" 2>"$work/curl.err")" || code="000"
+  body="$(cat "$work/body" 2>/dev/null)"
+}
+plugin_post() {
+  code="$(curl -sS -o "$work/body" -w '%{http_code}' -X POST -H "Authorization: Bearer $plugin_token" \
+    -H 'Content-Type: application/json' --data-binary "$2" "$pod$1" 2>"$work/curl.err")" || code="000"
+  body="$(cat "$work/body" 2>/dev/null)"
+}
+pending_sessions() { python3 -c 'import json,sys; print(" ".join(sorted(i["session"] for i in json.load(sys.stdin)["items"])))'; }
+# Past the registry's one-second idle trigger, so an empty list below is the TOGGLE's answer and not
+# "nothing is idle yet".
+sleep 1.5
+plugin_get /plugin/v1/pending
+[[ $code == 200 ]] || couldnt "the pending route answered $code: $body"
+pending_before="$(pending_sessions <<<"$body")"
+# The toggle, through the REAL browser POST: A signs in (A's project owns `alpha-notes`, so A is its
+# admin), reads the scope's id and a CSRF token off the pages, and sets `summary` ON for it.
+hdrs="$(curl -sS -o /dev/null -D - -X POST -H "Origin: $ui_url" --data-urlencode "token=$(head -n1 "$work/cred-a")" "$ui_url/sign-in" | tr -d '\r')"
+cookie_a="$(grep -i '^set-cookie: __Host-cairn-session=' <<<"$hdrs" | head -n1 | sed 's/^[^=]*=//; s/;.*//')"
+[[ -n "$cookie_a" ]] || couldnt "A could not sign in to set a toggle"
+plugins_page="$(curl -sS -H "Cookie: __Host-cairn-session=$cookie_a" "$ui_url/plugins")"
+alpha_id="$(grep -o 'href="/scope?id=scp_[^"]*">alpha-notes<' <<<"$plugins_page" | head -n1 | sed 's/.*id=//; s/".*//')"
+csrf_a="$(grep -o 'name="csrf" value="[^"]*"' <<<"$plugins_page" | head -n1 | sed 's/.*value="//; s/"$//')"
+[[ -n "$alpha_id" && -n "$csrf_a" ]] || couldnt "the plugins page did not carry alpha-notes' id and a CSRF token"
+toggle_code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "Origin: $ui_url" -H "Cookie: __Host-cairn-session=$cookie_a" \
+  --data-urlencode "csrf=$csrf_a" --data-urlencode plugin=summary --data-urlencode "scope=$alpha_id" --data-urlencode value=on \
+  "$ui_url/plugins/scope")"
+[[ $toggle_code == 303 && $(grep -c '"level":"scope"' "$work/toggles.jsonl") -eq 1 ]] ||
+  couldnt "the toggle POST answered $toggle_code and journaled $(grep -c . "$work/toggles.jsonl" 2>/dev/null) line(s)"
+plugin_get /plugin/v1/pending
+pending_after="$(pending_sessions <<<"$body")"
+echo "clause i: pending before the toggle [$pending_before], after alpha-notes ON [$pending_after]"
+assert i-pending-is-empty-until-a-toggle-then-exactly-the-every-scope-on-sessions eval \
+  '[[ -z "$pending_before" && "$pending_after" == "$vis_d" ]]'
+# (j) One 403 body for every refusal, beside a positive control.
+plugin_get "/plugin/v1/transcript?session=$vis_d"
+j_on_code="$code"; j_on_body="$body"
+plugin_get "/plugin/v1/transcript?session=$vis_e"
+j_off_code="$code"; j_off_body="$body"
+plugin_get "/plugin/v1/transcript?session=e2e-never-stored"
+j_absent_code="$code"; j_absent_body="$body"
+plugin_post /plugin/v1/outputs "{\"plugin\":\"summary\",\"plugin_version\":\"0.1.0\",\"model\":\"fake-model\",\"session\":\"$vis_d\",\"input_watermark\":{\"main\":1},\"type\":\"ticket-edge\",\"body\":{\"system\":\"clickup\",\"ticket_id\":\"abc123\",\"signal\":\"branch-name\",\"locator\":{\"pr\":1}}}"
+j_edge_code="$code"; j_edge_body="$body"
+forbidden='{"refused":"plugin-forbidden"}'
+assert j-a-plugin-is-refused-one-403-off-session-and-undeclared-type eval '
+  [[ $j_on_code == 200 ]] && grep -qF "clause d: only the owner asked for this" <<<"$j_on_body" &&
+  [[ $j_off_code == 403 && "$j_off_body" == "$forbidden" && $j_absent_code == 403 && "$j_absent_body" == "$forbidden" &&
+     $j_edge_code == 403 && "$j_edge_body" == "$forbidden" ]] && ! grep -qF "ticket-edge" "$tdir/sessions/$vis_d/outputs.jsonl" 2>/dev/null'
 
 # --- (b) and (h): the real agent through a forwarding relay into the armed pod ---------------------
 start_relay run1 --upstream "$pod"

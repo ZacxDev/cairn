@@ -21,7 +21,9 @@ var (
 	at2000 = time.Date(2000, 1, 2, 3, 4, 5, 0, time.UTC).Format(time.RFC3339)
 )
 
-func knownAll(name string) bool { return name == "alpha-notes" || name == "beta-notes" || name == "gamma-notes" }
+func knownAll(name string) bool {
+	return name == "alpha-notes" || name == "beta-notes" || name == "gamma-notes"
+}
 
 // state builds a fold from records `level target value`.
 func state(t *testing.T, rows ...[3]string) State {
@@ -40,60 +42,73 @@ func state(t *testing.T, rows ...[3]string) State {
 	return st
 }
 
-// TestTheToggleFoldIsExactlyThis is decision 10's ten cases, each a LITERAL expectation, each red
-// under its own mutant (`plugins-*` rows in `tests/control_mutants.py`, by case number). The ON cases
-// (2, 4) are what keep a blanket-OFF implementation from passing the OFF cases.
-func TestTheToggleFoldIsExactlyThis(t *testing.T) {
-	both := []string{"alpha-notes", "beta-notes"}
-	cases := []struct {
-		name string
-		rows [][3]string
-		sub  Subject
-		want bool
-	}{
-		{"1 nothing set is OFF", nil, Subject{Root: "s-0001", V: both}, false},
-		{"2 every scope on is ON", [][3]string{{"scope", "alpha-notes", "on"}, {"scope", "beta-notes", "on"}},
-			Subject{Root: "s-0001", V: both}, true},
-		{"3 an arc on with one scope off is OFF",
-			[][3]string{{"scope", "alpha-notes", "on"}, {"scope", "beta-notes", "off"}, {"arc", ArcTarget(arcOne), "on"}},
-			Subject{Root: "s-0001", V: both, Arcs: []arcs.Key{arcOne}}, false},
-		{"4 an arc on with every scope allowed is ON",
-			[][3]string{{"scope", "alpha-notes", "allowed"}, {"scope", "beta-notes", "allowed"}, {"arc", ArcTarget(arcOne), "on"}},
-			Subject{Root: "s-0001", V: both, Arcs: []arcs.Key{arcOne}}, true},
-		{"5 an arc on with one scope allowed and one off is OFF",
-			[][3]string{{"scope", "alpha-notes", "allowed"}, {"scope", "beta-notes", "off"}, {"arc", ArcTarget(arcOne), "on"}},
-			Subject{Root: "s-0001", V: both, Arcs: []arcs.Key{arcOne}}, false},
-		{"6 every scope on with an arc off is OFF",
-			[][3]string{{"scope", "alpha-notes", "on"}, {"scope", "beta-notes", "on"}, {"arc", ArcTarget(arcTwo), "off"}},
-			Subject{Root: "s-0001", V: both, Arcs: []arcs.Key{arcOne, arcTwo}}, false},
-		{"7 every scope on with the owner's opt-out is OFF",
-			[][3]string{{"scope", "alpha-notes", "on"}, {"scope", "beta-notes", "on"}, {"session", "s-0001", "off"}},
-			Subject{Root: "s-0001", V: both}, false},
-		{"8a a name the authority does not hold is OFF though its toggle says on",
-			[][3]string{{"scope", "alpha-notes", "on"}, {"scope", "delta-notes", "on"}},
-			Subject{Root: "s-0001", V: []string{"alpha-notes", "delta-notes"}}, false},
-		{"8b the star is OFF", [][3]string{{"scope", "alpha-notes", "on"}, {"scope", "*", "on"}},
-			Subject{Root: "s-0001", V: []string{"*", "alpha-notes"}}, false},
-		{"9 the empty set is OFF", [][3]string{{"scope", "alpha-notes", "on"}, {"arc", ArcTarget(arcOne), "on"}},
-			Subject{Root: "s-0001", Arcs: []arcs.Key{arcOne}}, false},
-		// Controls beside the cases: a later write wins, and an opt-out undone restores ON.
-		{"last write wins", [][3]string{{"scope", "alpha-notes", "off"}, {"scope", "alpha-notes", "on"}},
-			Subject{Root: "s-0001", V: []string{"alpha-notes"}}, true},
-		{"an opt-out set back to unset is ON again",
-			[][3]string{{"scope", "alpha-notes", "on"}, {"session", "s-0001", "off"}, {"session", "s-0001", "unset"}},
-			Subject{Root: "s-0001", V: []string{"alpha-notes"}}, true},
-		{"another session's opt-out changes nothing", [][3]string{{"scope", "alpha-notes", "on"}, {"session", "s-0002", "off"}},
-			Subject{Root: "s-0001", V: []string{"alpha-notes"}}, true},
+// foldCase asserts one of decision 10's cases with a LITERAL expectation.
+func foldCase(t *testing.T, rows [][3]string, sub Subject, want bool) {
+	t.Helper()
+	if got := Effective(state(t, rows...), plug, sub, knownAll); got != want {
+		t.Fatalf("Effective = %v, want %v", got, want)
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := Effective(state(t, c.rows...), plug, c.sub, knownAll); got != c.want {
-				t.Fatalf("Effective = %v, want %v", got, c.want)
-			}
-		})
-	}
-	// The star needs a toggle row to be written for case 8b, which `ScopeTarget` folds; and another
-	// plugin's ON is not this one's.
+}
+
+var both = []string{"alpha-notes", "beta-notes"}
+
+// The toggle fold is decision 10's ten cases, ONE test each, so each is red under its OWN mutant
+// (`plugins-*` rows in `tests/control_mutants.py`, by case number). The ON cases (2, 4) are what keep
+// a blanket-OFF implementation from passing the OFF cases. Case 10 is
+// `TestASessionLevelOnIsRefusedAndJournalsNothing`.
+
+func TestFoldCase01NothingSetIsOff(t *testing.T) {
+	foldCase(t, nil, Subject{Root: "s-0001", V: both}, false)
+}
+
+func TestFoldCase02EveryScopeOnIsOn(t *testing.T) {
+	foldCase(t, [][3]string{{"scope", "alpha-notes", "on"}, {"scope", "beta-notes", "on"}}, Subject{Root: "s-0001", V: both}, true)
+}
+
+func TestFoldCase03AnArcOnWithOneScopeOffIsOff(t *testing.T) {
+	foldCase(t, [][3]string{{"scope", "alpha-notes", "on"}, {"scope", "beta-notes", "off"}, {"arc", ArcTarget(arcOne), "on"}},
+		Subject{Root: "s-0001", V: both, Arcs: []arcs.Key{arcOne}}, false)
+}
+
+func TestFoldCase04AnArcOnWithEveryScopeAllowedIsOn(t *testing.T) {
+	foldCase(t, [][3]string{{"scope", "alpha-notes", "allowed"}, {"scope", "beta-notes", "allowed"}, {"arc", ArcTarget(arcOne), "on"}},
+		Subject{Root: "s-0001", V: both, Arcs: []arcs.Key{arcOne}}, true)
+}
+
+func TestFoldCase05AnArcOnWithOneScopeAllowedAndOneOffIsOff(t *testing.T) {
+	foldCase(t, [][3]string{{"scope", "alpha-notes", "allowed"}, {"scope", "beta-notes", "off"}, {"arc", ArcTarget(arcOne), "on"}},
+		Subject{Root: "s-0001", V: both, Arcs: []arcs.Key{arcOne}}, false)
+}
+
+func TestFoldCase06EveryScopeOnWithAnArcOffIsOff(t *testing.T) {
+	foldCase(t, [][3]string{{"scope", "alpha-notes", "on"}, {"scope", "beta-notes", "on"}, {"arc", ArcTarget(arcTwo), "off"}},
+		Subject{Root: "s-0001", V: both, Arcs: []arcs.Key{arcOne, arcTwo}}, false)
+}
+
+func TestFoldCase07EveryScopeOnWithTheOwnersOptOutIsOff(t *testing.T) {
+	foldCase(t, [][3]string{{"scope", "alpha-notes", "on"}, {"scope", "beta-notes", "on"}, {"session", "s-0001", "off"}},
+		Subject{Root: "s-0001", V: both}, false)
+}
+
+// Case 8: a name the authority does not hold is OFF though its journal line says on, and so is `*`.
+func TestFoldCase08AnUnknownScopeOrTheStarIsOff(t *testing.T) {
+	foldCase(t, [][3]string{{"scope", "alpha-notes", "on"}, {"scope", "delta-notes", "on"}},
+		Subject{Root: "s-0001", V: []string{"alpha-notes", "delta-notes"}}, false)
+	foldCase(t, [][3]string{{"scope", "alpha-notes", "on"}}, Subject{Root: "s-0001", V: []string{"*", "alpha-notes"}}, false)
+}
+
+func TestFoldCase09TheEmptySetIsOff(t *testing.T) {
+	foldCase(t, [][3]string{{"scope", "alpha-notes", "on"}, {"arc", ArcTarget(arcOne), "on"}},
+		Subject{Root: "s-0001", Arcs: []arcs.Key{arcOne}}, false)
+}
+
+// TestTheFoldsControls are the controls beside the cases: a later write wins, an opt-out set back to
+// unset restores ON, another session's opt-out and another plugin's ON change nothing.
+func TestTheFoldsControls(t *testing.T) {
+	foldCase(t, [][3]string{{"scope", "alpha-notes", "off"}, {"scope", "alpha-notes", "on"}}, Subject{Root: "s-0001", V: []string{"alpha-notes"}}, true)
+	foldCase(t, [][3]string{{"scope", "alpha-notes", "on"}, {"session", "s-0001", "off"}, {"session", "s-0001", "unset"}},
+		Subject{Root: "s-0001", V: []string{"alpha-notes"}}, true)
+	foldCase(t, [][3]string{{"scope", "alpha-notes", "on"}, {"session", "s-0002", "off"}}, Subject{Root: "s-0001", V: []string{"alpha-notes"}}, true)
 	other := state(t, [3]string{"scope", "alpha-notes", "on"})
 	if Effective(other, "clickup", Subject{Root: "s-0001", V: []string{"alpha-notes"}}, knownAll) {
 		t.Fatal("a toggle set for one plugin turned another ON")

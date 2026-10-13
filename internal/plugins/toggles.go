@@ -166,7 +166,7 @@ func Effective(st State, plugin string, sub Subject, known func(string) bool) bo
 	if len(sub.V) == 0 {
 		return false
 	}
-	everyOn := true
+	consented, everyOn := true, true
 	for _, scope := range sub.V {
 		if scope == "*" || !known(scope) {
 			return false
@@ -176,22 +176,21 @@ func Effective(st State, plugin string, sub Subject, known func(string) bool) bo
 		case ValueAllowed:
 			everyOn = false
 		default:
-			return false
+			consented, everyOn = false, false
 		}
 	}
-	arcOn := false
+	arcOn, arcOff := false, false
 	for _, k := range sub.Arcs {
 		switch st.Arc(plugin, k) {
 		case ValueOff:
-			return false
+			arcOff = true
 		case ValueOn:
 			arcOn = true
 		}
 	}
-	if !everyOn && !arcOn {
-		return false
-	}
-	return st.Session(plugin, sub.Root) != ValueOff
+	// 🔴 THE CONSENT AND IS NOT INSIDE THE OR. Revision 1 read `(consented || arcOn) && …` in effect —
+	// an arc ON overrode a scope OFF — and arc membership is whatever an arc `PUT` names.
+	return consented && (everyOn || arcOn) && !arcOff && st.Session(plugin, sub.Root) != ValueOff
 }
 
 // Journal is `-plugin-journal`: one JSON record per line, append-only — the arc journal's write

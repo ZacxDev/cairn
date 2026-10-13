@@ -100,8 +100,12 @@ func newPluginRig(t *testing.T) *pluginRig {
 }
 
 func (p *pluginRig) toggle(level plugins.Level, target, value string) {
+	p.toggleFor("summary", level, target, value)
+}
+
+func (p *pluginRig) toggleFor(plugin string, level plugins.Level, target, value string) {
 	p.t.Helper()
-	if err := p.journal.Append(plugins.Record{Plugin: "summary", Level: level, Target: target, Value: value,
+	if err := p.journal.Append(plugins.Record{Plugin: plugin, Level: level, Target: target, Value: value,
 		By: plugins.By{Kind: "user", ID: "u-admin"}, At: "2000-01-02T03:04:05Z"}); err != nil {
 		p.t.Fatal(err)
 	}
@@ -160,6 +164,9 @@ func TestThePendingListIsEmptyUntilAToggleIsSet(t *testing.T) {
 func TestEveryPluginRefusalIsTheSameBytes(t *testing.T) {
 	p := newPluginRig(t)
 	p.toggle(plugins.LevelScope, "alpha-notes", plugins.ValueOn)
+	// `lister` is ON for s-alpha too, so its refusal below can ONLY be the missing capability — the
+	// toggle check is not what answers it.
+	p.toggleFor("lister", plugins.LevelScope, "alpha-notes", plugins.ValueOn)
 	ok := p.do(http.MethodGet, TranscriptPattern+"?session=s-alpha", summaryToken, "")
 	if ok.Code != http.StatusOK || !strings.Contains(ok.Body.String(), "alpha two") {
 		t.Fatalf("POSITIVE CONTROL: reading s-alpha (ON) answered %d %q", ok.Code, ok.Body.String())
@@ -167,12 +174,12 @@ func TestEveryPluginRefusalIsTheSameBytes(t *testing.T) {
 	edge := `{"plugin":"summary","plugin_version":"0.1.0","model":"fake","session":"s-alpha","input_watermark":{"main":1},` +
 		`"type":"ticket-edge","body":{"system":"clickup","ticket_id":"abc123","signal":"branch-name","locator":{"pr":1}}}`
 	refusals := map[string]struct{ method, path, token, body string }{
-		"a transcript where it is OFF":     {http.MethodGet, TranscriptPattern + "?session=s-both", summaryToken, ""},
+		"a transcript where it is OFF":    {http.MethodGet, TranscriptPattern + "?session=s-both", summaryToken, ""},
 		"a session that was never stored": {http.MethodGet, TranscriptPattern + "?session=s-absent", summaryToken, ""},
-		"an id that is not a session id":   {http.MethodGet, TranscriptPattern + "?session=..%2Fescape", summaryToken, ""},
-		"a ticket-edge it does not write":  {http.MethodPost, OutputsPattern, summaryToken, edge},
-		"a read it has no capability for":  {http.MethodGet, TranscriptPattern + "?session=s-alpha", listerToken, ""},
-		"outputs it may not read":          {http.MethodGet, OutputsPattern + "?session=s-alpha&type=summary", summaryToken, ""},
+		"an id that is not a session id":  {http.MethodGet, TranscriptPattern + "?session=..%2Fescape", summaryToken, ""},
+		"a ticket-edge it does not write": {http.MethodPost, OutputsPattern, summaryToken, edge},
+		"a read it has no capability for": {http.MethodGet, TranscriptPattern + "?session=s-alpha", listerToken, ""},
+		"outputs it may not read":         {http.MethodGet, OutputsPattern + "?session=s-alpha&type=summary", summaryToken, ""},
 	}
 	for name, c := range refusals {
 		rec := p.do(c.method, c.path, c.token, c.body)

@@ -5090,3 +5090,41 @@ the fixture upload skipped.
 - **Another package holding an archive.** The bound is "`internal/ui` cannot reach one"; any package
   that opens an `archive.Archive` itself reads records with no predicate. Only `cmd/cairn-ui` and the
   worker listener do (the importer ledger).
+
+# Plugin toggles (S5 of the transcripts plan)
+
+`GET /plugins` lists what the operator registered (`-plugin-registry`) and each plugin's value on
+every scope the caller reads; three POST rows set a toggle, ONE PATH PER LEVEL (`UnsharePath`'s
+ruling — which authority a write is checked against is the route's, never a form field's). The forms
+live on the pages they toggle: the scope page, the arc page and — for the transcript's OWNER only —
+the session page. The fold and the levels are `internal/plugins/README.md`'s.
+
+## The binding rules
+
+- **Who may toggle is per level and never a form field.** Scope: `admin` on the scope. Arc: `admin` on
+  the HOME scope — not the right to `PUT` the arc, so naming a session in an arc widens nothing (T14).
+  Session: the transcript's owner arm (`transcript.Store.OwnedBy`), and only `off`/`unset`: an `on` is
+  a 400 decided BEFORE any authority is asked, so it is the same bytes for the owner and a stranger.
+- **One refusal** (`pluginToggleRefusal`, 403) for a target that does not exist, cannot be read, or is
+  not the caller's; the registry is public to every signed-in caller, so an unregistered plugin name
+  is a malformed form (400), not an authority question.
+- **The journal records `(Kind, ID)` and the pod clock**, never `Display` and never a form value.
+- **Class 0 for every POST row**, so both cross-site gates reach them by METHOD.
+- **A refused viewer's session page carries no trace of the block** — it renders for the owner only,
+  so clauses (d)–(g)'s byte-identity is untouched.
+
+## The RED proof
+
+`TestWhoMayToggleIsDecidedPerLevel` (write-only member, arc writer, non-owner, session ON — each
+refused and journaling nothing; each admin/owner journaling exactly one record) is red under
+`plugins-toggle-unauthorised-level` and `plugins-session-level-accepts-on`;
+`TestTheToggleRowsAreBehindBothCrossSiteGates` asserts each gate by its own message.
+`tests/plugins/e2e.sh` (i) sets the toggle through this POST and reads the plugin's pending list
+before and after.
+
+## What these guards still cannot see
+
+- **The forms in a real browser.** `uiaudit`'s worlds boot with no registry, so the walk captures
+  `/plugins`' OFF state and no toggle form; the forms are measured in-process.
+- **The EFFECTIVE value.** No page says whether a plugin is ON for a given session — that needs the
+  whole-store walk per session; the pages show the value at their own level.
