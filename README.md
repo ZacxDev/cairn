@@ -599,8 +599,8 @@ tag) and a `github:<owner>/<repo>#N` ref (GitHub's API; `GH_TOKEN`/`GITHUB_TOKEN
 
 - **Exit 9**: a claim was measured stale (a missing path, a symbol absent from its file, a PR that
   does not exist). A path or symbol is only ever stale when EVERY declared source was read: beside a
-  source that could not be fetched it is `unchecked: not in the sources fetched`, because the unread
-  source may hold it. **Exit 10**: something could not be looked at — an undeclared scope, an
+  source that could not be fetched, or whose `git` failed on that claim, it is `unchecked: not in the
+  sources read`, because the unread source may hold it. **Exit 10**: something could not be looked at — an undeclared scope, an
   unconfigured or unreadable sources journal, an unmapped or unreachable source, an ambiguous or
   unreachable sha, a rate-limited PR check, or a run that checked nothing. An interrupt (Ctrl-C)
   kills the running `git` call's whole process group before `cairn` exits. **Exit 0** only when

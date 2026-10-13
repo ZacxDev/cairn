@@ -54,12 +54,13 @@ const (
 	HostNotMapped     = "unchecked: host not mapped"
 	RemoteUnreachable = "unchecked: remote unreachable"
 
-	// NotInFetched is a claim no FETCHED source holds while another declared source was never looked
-	// at — what `missing`, `file-missing` or `absent-from-file` would have been with every source read.
+	// NotInFetched is a claim no READ source holds while another declared source was not read for it —
+	// never fetched, or fetched with its git failing on this claim — what `missing`, `file-missing` or
+	// `absent-from-file` would have been with every source read.
 	// 🔴 A STALE VERDICT MEANS EVERY DECLARED SOURCE WAS READ (operator decision on #259 r1 🟡2): a
 	// claim holds if ANY source holds it, so the unread one may, and calling it stale would be a verdict
 	// the auditor never measured.
-	NotInFetched = "unchecked: not in the sources fetched"
+	NotInFetched = "unchecked: not in the sources read"
 )
 
 // Class is a state's effect on the counts and the exit code.

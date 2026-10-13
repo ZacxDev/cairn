@@ -6231,8 +6231,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="refaudit-stale-beside-an-unlooked-source",
         path="internal/refaudit/audit.go",
-        old="if len(looked) < len(sources) && Severity[best.State] == ClassStale {",
-        new="if false && Severity[best.State] == ClassStale {",
+        old="if unread && Severity[best.State] == ClassStale {",
+        new="if unread && false && Severity[best.State] == ClassStale {",
         killer="TestAStaleVerdictMeansEverySourceWasRead",
         why="'missing from every source we read' reads as missing — while the unread source may hold "
         "it: a stale verdict nobody measured (the out-of-tree default the plan first pinned).",
@@ -6241,10 +6241,30 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="refaudit-stale-demoted-with-every-source-read",
         path="internal/refaudit/audit.go",
-        old="if len(looked) < len(sources) && Severity[best.State] == ClassStale {",
-        new="if len(looked) <= len(sources) && Severity[best.State] == ClassStale {",
+        old="unread := len(looked) < len(sources)",
+        new="unread := len(looked) <= len(sources)",
         killer="TestAStaleVerdictMeansEverySourceWasRead",
         why="an off-by-one on the comparison demotes EVERY stale claim and the audit never exits 9.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-stale-beside-a-failed-claim-read",
+        path="internal/refaudit/audit.go",
+        old="\t\t\t\t\tunread = true // fetched",
+        new="\t\t\t\t\t_ = true // fetched",
+        killer="TestAStaleVerdictMeansEverySourceWasRead",
+        why="'every source was FETCHED' reads as 'every source was read' — while one source's `git` "
+        "failed on this very claim and the other's `missing` became the verdict (#267 r1 🟡1).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-interrupt-ignored-signal-unignored",
+        path="internal/refaudit/gitcli.go",
+        old="\t\tif !signal.Ignored(s) {",
+        new="\t\tif true {",
+        killer="TestAnIgnoredHangupStaysIgnored",
+        why="handling every signal reads as thorough — and `nohup cairn audit-refs` then dies on the "
+        "hangup it was started to survive (#267 r1 🟡2).",
         pkgs=PKGS + ("./internal/refaudit/",),
     ),
     Mutant(

@@ -106,8 +106,8 @@ PY
     "d-clean-beside-unmapped-is-10"
   # (d) a path missing from the fetched source is stale though another declared source was never read.
   sabotage d-stale-beside-unmapped internal/refaudit/audit.go \
-    $'\t\t\tif len(looked) < len(sources) && Severity[best.State] == ClassStale {' \
-    $'\t\t\tif false && Severity[best.State] == ClassStale {' \
+    $'\t\t\tif unread && Severity[best.State] == ClassStale {' \
+    $'\t\t\tif unread && false && Severity[best.State] == ClassStale {' \
     "d-missing-beside-unmapped-is-10-not-stale"
   # (e) a blank os/exec import goes into the pod.
   sabotage e-exec-in-the-pod cmd/cairn-server/main.go \
@@ -323,7 +323,7 @@ cairn reader d audit-refs --scope zeta-notes
 assert d-clean-beside-unmapped-is-10 eval 'rc_is 10 && has "checked=1 stale=0" && has "source $src_unmapped state=\"unchecked: host not mapped\""'
 entry zeta-notes thing-six "" '- `cmd/gone.go` — x' '- 2000-01-02: a note.'
 cairn reader d audit-refs --scope zeta-notes
-assert d-missing-beside-unmapped-is-10-not-stale eval 'rc_is 10 && has "checked=0 stale=0 unchecked=2" && has "could-not-look thing-six path \"cmd/gone.go\" state=\"unchecked: not in the sources fetched\""'
+assert d-missing-beside-unmapped-is-10-not-stale eval 'rc_is 10 && has "checked=0 stale=0 unchecked=2" && has "could-not-look thing-six path \"cmd/gone.go\" state=\"unchecked: not in the sources read\""'
 entry zeta-notes thing-six "" '- `cmd/x.go` — x' '- 2000-01-02: a note.'
 cairn reader d audit-refs --scope eta-notes
 assert d-control-one-claim-mapped-only-is-0 eval 'rc_is 0 && has "checked=1 stale=0 unchecked=0"'

@@ -214,7 +214,13 @@ func (w *interruptWatch) reraise() {
 	<-w.done
 	signal.Stop(w.sigs)
 	if w.caught == nil {
-		return
+		// A signal that arrived after the watcher took `stop` sits in the buffer: still a signal.
+		select {
+		case s := <-w.sigs:
+			w.caught = s
+		default:
+			return
+		}
 	}
 	sig := w.caught.(syscall.Signal)
 	signal.Reset(sig)

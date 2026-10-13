@@ -52,8 +52,8 @@ CLI auditor can deterministically check entries' paths, SHAs and PR refs against
    journal fails the job instead of passing as `absent`. A `503 store-unreachable` from the pod at that point means the pod cannot read the
    file the UI created. forcing: user — operator asked for scope refs end to end.
 2. **Operator decisions the S5 audit raised** (each `forcing: audit`):
-   - ✅ DECIDED AND BUILT — 🟡2 of #259 r1: a claim missing from the fetched sources while another
-     declared source was never fetched is now `unchecked: not in the sources fetched` (exit 10), never
+   - ✅ DECIDED AND BUILT — 🟡2 of #259 r1: a claim missing from the read sources while another
+     declared source was not read for it (never fetched, or its `git` failed on that claim) is now `unchecked: not in the sources read` (exit 10), never
      stale; a stale verdict means every declared source was read. The plan's test-plan row records it.
    - Q3/Q7/Q8/Q9/Q11 shipped as the plan's recommendations (operator host; root-then-subpath paths;
      structural `path#Symbol` only; default host map `github.com`; off-branch informational) with no

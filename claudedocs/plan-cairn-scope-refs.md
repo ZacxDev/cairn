@@ -138,7 +138,7 @@ Drop the work, or the named half of it, if any of these holds:
   - **(c)** the symbol check is dropped;
   - **(d)** an unmapped host counts as clean;
   - **(d)** a path missing from the fetched source is stale beside an unmapped one (the
-    not-in-the-sources-fetched demotion dropped);
+    not-in-the-sources-read demotion dropped);
   - **(e)** a blank `os/exec` import goes into `cmd/cairn-server`;
   - **(f)** the reachability test is replaced by object presence (`cat-file -e`).
 
@@ -564,7 +564,7 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
    | **holds** | `holds(root)`, `holds(subpath)`, `on-branch`, `present` | `checked` | none |
    | **informational** | `exists-off-branch`, `open`, `merged`, `closed-unmerged`, `outside-sources` | `checked` | none |
    | **stale** | `missing`, `absent-from-file`, `file-missing`, `not-found` | `checked` and `stale` | **9** |
-   | **could not look** | `not-reachable`, `ambiguous`, `unchecked: rate-limited / no token`, `unchecked: host not mapped`, `unchecked: remote unreachable`, `unchecked: not in the sources fetched` | `unchecked` | **10**, unless something is stale |
+   | **could not look** | `not-reachable`, `ambiguous`, `unchecked: rate-limited / no token`, `unchecked: host not mapped`, `unchecked: remote unreachable`, `unchecked: not in the sources read` | `unchecked` | **10**, unless something is stale |
    | **unchecked by design** | `unchecked: not path-shaped` | `unchecked` | none on its own |
 
    Plus four SCOPE-level could-not-look reasons, each exit 10: `sources=undeclared` (including
@@ -735,7 +735,8 @@ alone.
   and three read states, and S4's POST, gates, T9 pins and the part-4 seam test.
 
 **Mutant rows** (indicative names; they join `tests/control_mutants.py` and move its pinned
-count). Recounted after S2's round-1 fix: **32** (S1 13, S2 4, S4 4, S5 11).
+count). Recounted after S2's round-1 fix: **32** (S1 13, S2 4, S4 4, S5 11); S5 is now 17 (the
+stale-needs-every-source decision and the interrupt fix added six), so **38**.
 
 - **S1 (13):**
   - `codesrc-accepts-a-non-dns-host`
@@ -762,7 +763,7 @@ count). Recounted after S2's round-1 fix: **32** (S1 13, S2 4, S4 4, S5 11).
   - `ui-sources-set-by-taken-from-the-form`
   - `ui-sources-keyed-by-control-id`: revision 3's design, which closing-condition part 4 must
     kill
-- **S5 (15):**
+- **S5 (17):**
   - `refaudit-tags-count-as-reachable`
   - `refaudit-off-branch-counted-stale`
   - `refaudit-not-reachable-counted-stale`
@@ -774,8 +775,10 @@ count). Recounted after S2's round-1 fix: **32** (S1 13, S2 4, S4 4, S5 11).
   - `refaudit-checked-zero-exits-0`
   - `refaudit-unmapped-host-counted-clean`
   - `refaudit-mirror-dir-from-path-components`
-  - `refaudit-stale-beside-an-unlooked-source` and `refaudit-stale-demoted-with-every-source-read`
-    (the operator's stale-needs-every-source decision, one per direction)
+  - `refaudit-stale-beside-an-unlooked-source`, `refaudit-stale-demoted-with-every-source-read` and
+    `refaudit-stale-beside-a-failed-claim-read` (the operator's stale-needs-every-source decision:
+    both directions, and the fetched-but-unread-for-this-claim path)
+  - `refaudit-interrupt-ignored-signal-unignored` (a `nohup`-ignored SIGHUP must stay ignored)
   - `refaudit-interrupt-never-reaches-the-group` and `refaudit-interrupt-swallowed-not-reraised`
     (#259 r2: a Ctrl-C cancels the call's context, so the process-group kill reaches
     `git-remote-https`, then is re-raised; `TestAnInterruptKillsTheStalledFetch`)
@@ -924,14 +927,16 @@ killed.
 - **Exit codes.**
   - Undeclared, `checked=0` and mixed mapped/unmapped each exit 10 — never 0 and never 2.
   - 🔴 **One missing path beside one unmapped host exits 10, NOT 9 — an operator decision that
-    replaced this row's earlier "exits 9".** When any declared source could not be fetched (unmapped
-    or unreachable), a path, symbol file or symbol missing from the sources that WERE fetched is
-    `unchecked: not in the sources fetched` (could-not-look), because a stale verdict must mean every
+    replaced this row's earlier "exits 9".** When any declared source was not read for a claim —
+    never fetched (unmapped or unreachable), or fetched with its `git` failing on that claim — a
+    path, symbol file or symbol missing from the sources that WERE read is
+    `unchecked: not in the sources read` (could-not-look), because a stale verdict must mean every
     declared source was actually read: a claim holds if ANY source holds it, and the unread one may.
     The same claim with every source read stays `missing` and exits 9 (the control). A PR's
     `not-found` is the GitHub API's answer, not a source's, so it stays stale beside an unlooked
     source. `TestAStaleVerdictMeansEverySourceWasRead`; mutants
-    `refaudit-stale-beside-an-unlooked-source` and `refaudit-stale-demoted-with-every-source-read`.
+    `refaudit-stale-beside-an-unlooked-source`, `refaudit-stale-demoted-with-every-source-read` and
+    `refaudit-stale-beside-a-failed-claim-read`.
 - **The host map.** An unmapped host is never contacted (the stub counts 0). A mapped one is
   (> 0); that is the pair.
 - **Once, by the operator, not in CI:** the proposed `audit-refs` verb over a scope citing a PR in
