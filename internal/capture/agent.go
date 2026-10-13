@@ -46,6 +46,10 @@ type Agent struct {
 	// dirty is whether the state holds a change no checkpoint has saved; saved is when it last was.
 	dirty bool
 	saved time.Time
+	// sawDeleted is set when a write of the session being captured was answered 410 ([ErrDeleted]),
+	// whichever of its failures the session reports; [Agent.isolate] turns it into the session's
+	// final mark.
+	sawDeleted bool
 }
 
 // checkpoint saves the state now.
@@ -79,17 +83,34 @@ func (a *Agent) stopped(instance string) bool {
 	return instance != "" && s.Stopped(instance) != nil
 }
 
+// skipUnread reports whether a session may be skipped WITHOUT reading it: its instance is not taking
+// uploads in this run AND nothing of the session is there.
+//
+// 🔴 A SESSION WITH A SHIPPED PREFIX IS STILL DERIVED AND ROUTED WHILE ITS INSTANCE IS STOPPED
+// (#273's audit, F3). Skipping it — as every bound session was — froze its `V` for as long as the
+// instance answered 503 or 507, so a read that moved its routing answer was never seen and the
+// prefix was never withdrawn; and a quota that is FULL is a long-lived stop. Reading it costs only
+// its new bytes (the watermarks hold); what is still never done for a stopped instance is the
+// backlog nobody shipped — the measured megabytes — and any upload.
+func (a *Agent) skipUnread(ss *SessionState) bool {
+	return a.stopped(ss.Instance) && !ss.shipped()
+}
+
 // Summary counts one run. It carries no content.
 type Summary struct {
 	Sessions, Shipped, Held, Withdrawn, Records, Blobs, Refused int
 	// Skipped counts sessions not read at all because their instance is not taking uploads.
 	Skipped int
+	// WithdrawalPending counts sessions whose shipped prefix must be withdrawn and whose withdrawal
+	// got no answer in this run; each is asked again on the next. Deleted counts sessions an instance
+	// answered 410 for in this run — their transcript was deleted there, and they are never sent again.
+	WithdrawalPending, Deleted int
 }
 
 // String is the run's one summary line.
 func (s Summary) String() string {
-	return fmt.Sprintf("sessions=%d shipped=%d held=%d withdrawn=%d records=%d blobs=%d refused=%d skipped=%d",
-		s.Sessions, s.Shipped, s.Held, s.Withdrawn, s.Records, s.Blobs, s.Refused, s.Skipped)
+	return fmt.Sprintf("sessions=%d shipped=%d held=%d withdrawn=%d records=%d blobs=%d refused=%d skipped=%d withdrawal-pending=%d deleted=%d",
+		s.Sessions, s.Shipped, s.Held, s.Withdrawn, s.Records, s.Blobs, s.Refused, s.Skipped, s.WithdrawalPending, s.Deleted)
 }
 
 func (a *Agent) logf(format string, args ...any) {
@@ -145,7 +166,22 @@ func (a *Agent) Run() (Summary, error) {
 // advance (each advances only after its own write), so the next run retries it.
 func (a *Agent) isolate(root string, sum *Summary, run func() error) {
 	before := a.sessionImage(root)
-	if err := run(); err != nil {
+	a.sawDeleted = false
+	err := run()
+	switch ss := a.State.Sessions[root]; {
+	case a.sawDeleted && ss != nil:
+		// 🔴 410 IS FINAL, AND SAID ONCE (#273's audit, F2). The instance deleted this session's
+		// transcript; the agent must not retry it every minute, and — what the deletion's owner was
+		// promised — must not send it anything that would start the session again there. Saved at
+		// once, so a kill cannot make the next run ask again.
+		ss.Deleted = ss.Instance
+		a.logf("DELETED %s: instance %s answered that this session's transcript was deleted there; nothing more of it "+
+			"is read or sent", root, ss.Instance)
+		sum.Deleted++
+		if cerr := a.checkpoint(); cerr != nil && a.fatal == nil {
+			a.fatal = fmt.Errorf("capture: the state could not be saved: %w", cerr)
+		}
+	case err != nil:
 		a.logf("refused %s: %v", root, err)
 		sum.Refused++
 	}
@@ -201,6 +237,9 @@ func (a *Agent) held(err error, mark *string, what string, sum *Summary) error {
 	var fatal *FatalError
 	if errors.As(err, &fatal) && a.fatal == nil {
 		a.fatal = err
+	}
+	if errors.Is(err, ErrDeleted) {
+		a.sawDeleted = true
 	}
 	var rc *RecheckRefusal
 	if !errors.As(err, &rc) {
@@ -371,34 +410,95 @@ func union(a, b []string) []string {
 // 🔴 THE DECISION IS MADE OVER `V` AS IT STANDS *INCLUDING* THE RECORDS ABOUT TO SHIP, so a
 // record that reads a scope on another instance never reaches the first one: the read moves the
 // session BEFORE anything from it ships.
+//
+// 🔴 WHEN THE ANSWER IS NO LONGER THE INSTANCE HOLDING THE PREFIX, THE PREFIX IS WITHDRAWN FIRST
+// (S6, clause m) — [Agent.withdraw] — and nothing is shipped anywhere until that instance has
+// answered that the prefix is gone.
+//
+// 🔴 WHERE A SESSION IS BOUND IS SAVED BEFORE ITS FIRST UPLOAD LEAVES, NOT UP TO TWO SECONDS AFTER
+// (S3b's audit, closed in S6). `Instance` used to be saved with the session's other changes, at
+// most every [Agent.CheckpointEvery]: a run killed inside that window had shipped a prefix under a
+// state that still said "nowhere", so when the routing answer later changed there was no instance
+// to withdraw from and the prefix stayed where the rule says it must not be. Every change of
+// `Instance` or `Held` made here is checkpointed AT ONCE, and a save that fails sends nothing.
 func (a *Agent) route(root string, ss *SessionState, sum *Summary) (ship bool, reset bool, err error) {
 	dec := Decide(ss.V, a.Routing)
-	if dec.Held {
-		if ss.Instance != "" {
-			if err := a.Sink.Withdraw(ss.Instance, root); err != nil {
-				return false, false, err
-			}
-			a.logf("withdraw %s from %s: it is held now", root, ss.Instance)
-			sum.Withdrawn++
-			ss.Instance = ""
+	if ss.Instance != "" && (dec.Held || ss.Instance != dec.Instance) {
+		gone, err := a.withdraw(root, ss, sum)
+		if err != nil || !gone {
+			return false, false, err
 		}
+		reset = !dec.Held
+	}
+	if dec.Held {
 		ss.Held, ss.HeldReason = true, dec.Reason
 		a.logf("held %s: %s", root, dec.Reason)
 		sum.Held++
-		return false, false, nil
+		return false, false, a.saveRouting(root)
 	}
-	if ss.Instance != "" && ss.Instance != dec.Instance {
-		if err := a.Sink.Withdraw(ss.Instance, root); err != nil {
+	if ss.Instance != dec.Instance {
+		ss.Instance = dec.Instance
+		if err := a.saveRouting(root); err != nil {
 			return false, false, err
 		}
-		a.logf("withdraw %s from %s: re-shipping it whole to %s", root, ss.Instance, dec.Instance)
-		sum.Withdrawn++
-		ss.reset()
-		ss.Instance = dec.Instance
-		return true, true, nil
 	}
-	ss.Instance = dec.Instance
-	return true, false, nil
+	return true, reset, nil
+}
+
+// saveRouting checkpoints a routing decision at once. A decision that cannot be saved is not acted
+// on: the session's error for this run, and nothing of it is sent.
+func (a *Agent) saveRouting(root string) error {
+	if err := a.checkpoint(); err != nil {
+		return fmt.Errorf("capture: where %s ships could not be saved, so nothing of it is sent: %w", root, err)
+	}
+	return nil
+}
+
+// withdraw asks the instance holding a session's prefix to forget it (decision 16), and reports
+// whether the prefix is GONE from there — in which case the session's watermarks are reset and it
+// is bound nowhere, saved at once.
+//
+//   - `{"deleted": true}`: the instance held it for this host's (owner, host) and deleted it — its
+//     transcript, plugin outputs and ticket edges — or had already (a repeat after a lost
+//     acknowledgement). Gone.
+//   - `{"deleted": false}` when this agent has an ACKNOWLEDGED upload of the session on record: the
+//     instance holds no such root for this (owner, host) — the token was reissued under another
+//     host label, say. FINAL: the session is HELD on this host, loudly, and is never shipped
+//     anywhere else — the prefix's presence elsewhere is surfaced rather than duplicated.
+//   - `{"deleted": false}` when NO upload of it was ever acknowledged: the session was bound for the
+//     instance and nothing landed (the instance was not taking uploads), so there is nothing to
+//     withdraw. Gone. ⚠ That is read off this agent's own watermarks, which a kill can leave
+//     unsaved — but then the instance DOES hold the prefix and answers `true`, so the two cases
+//     cannot be confused in the direction that matters.
+//   - an error (no answer): not done. The session stays bound where it was and the next run asks
+//     again; a refused token is recorded as the run's fatal error.
+func (a *Agent) withdraw(root string, ss *SessionState, sum *Summary) (gone bool, err error) {
+	from := ss.Instance
+	deleted, err := a.Sink.Withdraw(from, root)
+	if err != nil {
+		var fatal *FatalError
+		if errors.As(err, &fatal) && a.fatal == nil {
+			a.fatal = err
+		}
+		sum.WithdrawalPending++
+		return false, fmt.Errorf("the prefix on %s could not be withdrawn (withdrawal pending — asked again next run), so "+
+			"nothing more of this session is sent anywhere: %w", from, err)
+	}
+	if !deleted && ss.shipped() {
+		ss.Held, ss.HeldReason = true, "prefix not withdrawn: not held by this owner and host on "+from
+		a.logf("HOLD %s: PREFIX NOT WITHDRAWN: not held by this owner and host on instance %s — the session is held on "+
+			"this host for good and is not shipped anywhere else; what %s holds of it must be removed there by hand",
+			root, from, from)
+		sum.Held++
+		return false, a.saveRouting(root)
+	}
+	if deleted {
+		a.logf("withdraw %s from %s: its routing answer changed", root, from)
+		sum.Withdrawn++
+	}
+	ss.reset()
+	ss.Instance = ""
+	return true, a.saveRouting(root)
 }
 
 type pendingStream struct {
@@ -423,12 +523,12 @@ func splitWithOffsets(lines [][]byte, start int64) []int64 {
 func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 	ss := a.State.session(cs.Root, "claude")
 	sum.Sessions++
-	if ss.Held {
+	if ss.Held || ss.Deleted != "" {
 		return nil
 	}
 	// 🔴 BEFORE ANYTHING IS READ: an instance that is not taking uploads would have this session
 	// read, derived and redacted on every run for nothing (measured at megabytes a second).
-	if a.stopped(ss.Instance) {
+	if a.skipUnread(ss) {
 		sum.Skipped++
 		return nil
 	}
@@ -652,10 +752,10 @@ type ocStream struct {
 func (a *Agent) runOpencode(root string, sum *Summary) error {
 	ss := a.State.session(root, "opencode")
 	sum.Sessions++
-	if ss.Held {
+	if ss.Held || ss.Deleted != "" {
 		return nil
 	}
-	if a.stopped(ss.Instance) {
+	if a.skipUnread(ss) {
 		sum.Skipped++
 		return nil
 	}

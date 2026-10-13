@@ -12,8 +12,9 @@ collapsed reading model the browser surface renders. `claudedocs/plan-cairn-plug
 | `classify.go` | decision 17's ONE table: declared record/block/part types, their key sets, and the class each UNIT takes (`ClassifyClaude`, `ClassifyOpencodePart`) |
 | `testdata/synthetic_world.json` | written by `tests/transcripts/gen.py` — regenerate and diff, never hand-edit |
 | `classify_test.go` | the shape ledger (both directions), its comparator's own control, and decision 17's rules over literal records |
-| `archive/` | S3's transcript STORE on `cairn-ui` (decision 15): per-session directories, CAS append, frames, ownership, the refusing re-check, quota, retention. Written only through `internal/worker`, whose upload routes are DISARMED unless `cairn-ui -arm-transcript-capture` (O16). Since S4 it derives the READ half of a session's visibility set itself, through `scopeuse`, over every record and text blob it stores |
+| `archive/` | S3's transcript STORE on `cairn-ui` (decision 15): per-session directories, CAS append, frames, ownership, the refusing re-check, quota, retention, plugin outputs (`outputs.jsonl`, capped by running totals) and — since S6 — the ONE deletion cascade (`deleteLocked`: retention, the owner's delete and `Withdraw` all end there, each journaled). Written only through `internal/worker`, whose upload routes are DISARMED unless `cairn-ui -arm-transcript-capture` (O16). Since S4 it derives the READ half of a session's visibility set itself, through `scopeuse`, over every record and text blob it stores |
 | `visible.go` | S4: `Visible` (decision 4), `VisibilitySet` and the whole-store `WrittenScopes` walk (decision 3), and `Store.View` — the only way a stored session's content leaves this package |
+| `plugin.go` | S5/S6: the PLUGIN's way out (`Store.ForPlugin`, `Store.ForPlugins` — `Visible` REPLACED by the caller's toggle fold, never skipped, and asked ONCE over the whole set: there is no shortcut on the stored half), `Store.ViewsWithOutputs` (the viewers' views of many sessions that hold a plugin output, one walk at most — what a session row's derived line is read through), `View.Outputs`, and `Store.Delete` (the OWNER arm's deletion, which cascades) |
 | `mine.go` | S7: `Store.Mine` — the viewer's OWN stored sessions for "My sessions", newest upload first: the owner arm alone, metadata only |
 | `read.go` | S4: the collapsed reading (decision 18) — turns of classified items, at most 50 turns and 1,000 items a page (ending at a turn boundary), child streams nested under the call that spawned them |
 | `agent.go` | S8: the agent read API (decision 17) — `View.Skeleton`, `View.Page` (two views, filters, ranges, a byte bound), `View.Tool`, and `Store.Answer`, the ONE entry point both listeners serve it through. Its spellings are `internal/transcriptwire`'s |
@@ -87,6 +88,49 @@ collapsed reading model the browser surface renders. `claudedocs/plan-cairn-plug
   collapsed reading does, but DECODES only from `from_seq` on unless a Claude `tool` filter needs
   every earlier call's name (measured: the last record of a 20,000-record stream, 274 ms and 920,110
   allocations decoding everything, 128 ms and 60,144 skipping; `page_decode_test.go`).
+
+## Outputs, deletion and withdrawal (S6)
+
+- **An output leaves this package only on a `View`** (`View.Outputs`), so it is shown to exactly the
+  principals `Visible` admits to the transcript it was derived from (clause k). There are two
+  constructors a viewer has — `Store.View` and `Store.ViewsWithOutputs` — and each ends in `Visible`
+  over the same set: the stored half, a whole-store walk's finds (folded into the grow-only
+  `meta.Written`) and that walk's unscanned scopes. `ViewsWithOutputs` exists because a LIST of
+  sessions asked per row would walk the store once per row.
+- **ONE deletion cascade** (`archive.deleteLocked`). Retention (`Sweep`), the owner's delete
+  (`Store.Delete`, the owner arm, asked again under the root's lock) and a capture agent's withdrawal
+  (`archive.Withdraw`) all end in it: the fact is journaled first (root, the uploader's owner and
+  host, the reason — `retention`, `owner-delete`, `withdrawn` — and the clock; never content), the
+  session's output bytes come out of the cap totals, any continuation frames staged for the root are
+  dropped (they live outside the directory), and the directory is removed. Every plugin output and
+  ticket edge is a line of `outputs.jsonl` INSIDE that directory, so there is no second place a
+  cascade could forget.
+- **`archive.Withdraw(who, root)`** (decision 16): `true` when `who` — a capture token's own (owner,
+  host) — holds the root (it is deleted) or holds nothing under it and a deletion of that root as
+  uploaded by the same (owner, host) is on record; `false`, deleting nothing, for another owner's
+  root, the same owner's under another host label, a root never stored and an id that is no session
+  id. The ownership test is the upload path's own `owned`. ⚠ The second `true` arm reads ANY
+  deletion of the caller's own root, not only a withdrawal — a stated widening of the plan's
+  "already withdrew it": a prefix retention or the owner's delete removed is as gone as a withdrawn
+  one. Frames staged for a root with nothing committed are dropped by a withdrawal too.
+- **A deletion is FINAL for its root** (`archive.gone`, #273's audit). With no `meta.json` the
+  upload path read a deleted root as "a first upload": anything sent with `from == ""` — a subagent
+  stream that began later, a new or changed blob, a first frame — was accepted and re-created the
+  directory. Now the journal's deleted roots are held in memory (read at `Open`, added to by every
+  deletion) and an upload under one is refused: `ErrDeleted` (410 on the wire) to the root's own
+  (owner, host), the uniform `ErrNotOwner` to anybody else. ⚠ Every reason is final — retention
+  included, so a swept session is not re-shipped from offset 0 by a host that still has it — except
+  `retention-uncommitted`: a directory no upload ever committed held no session.
+- **The journal's size is accounted under its own lock**: two roots' deletions hold two different
+  root locks, and each measured the journal before and after its own append.
+- **The output caps count from a running total.** Stored output bytes are counted once, by
+  `archive.Open`; an append adds its line and a deletion subtracts that session's lines, each under
+  the session's lock. As first built (S5) every write that would cross a cap re-read every session's
+  `outputs.jsonl` before refusing. A `QuotaError` says which limit it hit (`Share`).
+- **A plugin's fold is asked once, over the whole `V`.** The walk is never skipped because the
+  stored half already refuses — `internal/plugins/README.md` has the defect that shortcut was.
+- **One unreadable `outputs.jsonl` does not fail `Open`**: it is counted at its on-disk size
+  against no plugin.
 
 ## Shapes deliberately NOT declared
 

@@ -39,15 +39,42 @@ func Open(t testing.TB) *archive.Archive {
 // OpenAt is [Open] with the clock chosen, so a test can move past [Retention] and sweep.
 func OpenAt(t testing.TB, now func() time.Time) *archive.Archive {
 	t.Helper()
+	a, _ := OpenDir(t, now)
+	return a
+}
+
+// OpenDir is [OpenAt] that also returns the archive's directory, for a test that reads what a
+// deletion left on disk — the session directories under `sessions/` and the deletion journal,
+// `journal.jsonl`.
+func OpenDir(t testing.TB, now func() time.Time) (*archive.Archive, string) {
+	t.Helper()
 	red, err := redact.New(redact.SelfTestKey(41), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := archive.Open(archive.Config{Dir: t.TempDir(), Retention: Retention, Quota: 1 << 30, Recheck: red, Now: now})
+	dir := t.TempDir()
+	a, err := archive.Open(archive.Config{Dir: dir, Retention: Retention, Quota: 1 << 30, Recheck: red, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return a
+	return a, dir
+}
+
+// Output stores one plugin output line for a stored session, as `internal/plugins` would have
+// stamped it: `plugin` at `version`, saying it used `model`, with its watermark at main-stream
+// record `seq`, of type `kind`, carrying `body` (one JSON value). The id is derived from what is
+// already stored, so two calls never collide.
+func Output(t testing.TB, a *archive.Archive, root, plugin, version, model string, seq int64, kind, body string) {
+	t.Helper()
+	n := 0
+	if err := a.ScanOutputs(root, func([]byte) error { n++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	line := fmt.Sprintf(`{"id":"o-%024d","plugin":%q,"plugin_version":%q,"model":%q,"session":%q,"input_watermark":{"main":%d},`+
+		`"type":%q,"body":%s,"produced_at":"2000-01-02T03:04:05Z"}`, n+1, plugin, version, model, root, seq, kind, body)
+	if err := a.AppendOutput(root, plugin, []byte(line)); err != nil {
+		t.Fatalf("storing an output for %s: %v", root, err)
+	}
 }
 
 // Session is one stored session to write.

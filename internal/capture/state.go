@@ -96,9 +96,13 @@ type SessionState struct {
 	// Instance is where this session's prefix has been shipped, "" when nowhere yet.
 	Instance string `json:"instance,omitempty"`
 	// Held is FINAL: V only grows, so a held session stays held (decision 16).
-	Held       bool     `json:"held,omitempty"`
-	HeldReason string   `json:"held_reason,omitempty"`
-	V          []string `json:"v,omitempty"`
+	Held       bool   `json:"held,omitempty"`
+	HeldReason string `json:"held_reason,omitempty"`
+	// Deleted names the instance that answered 410 for this session: its transcript was deleted
+	// there (by its owner, a withdrawal or retention), which is FINAL — nothing of the session is
+	// read, derived or sent again. "" when no instance has said so.
+	Deleted string   `json:"deleted,omitempty"`
+	V       []string `json:"v,omitempty"`
 	// Declared is what the agent DECLARES to the pod: `V` without F1's `*` ([scopeuse.Result]'s
 	// `Declare`), grow-only. F1 asks "is the ledger EMPTY" and the pod decides it ITSELF, at view
 	// time, from the ledger it holds — a `*` declared here while this run's ledger was empty would
@@ -217,6 +221,22 @@ func (ss *SessionState) stream(name string) *StreamState {
 		st.Units = map[string]string{}
 	}
 	return st
+}
+
+// shipped reports whether any upload of this session was ever ACKNOWLEDGED, as this state records
+// it: a stream past its start, or a blob version the instance holds.
+func (ss *SessionState) shipped() bool {
+	for _, st := range ss.Streams {
+		if st.Offset > 0 || st.Cursor != "" || len(st.Units) > 0 {
+			return true
+		}
+	}
+	for _, b := range ss.Blobs {
+		if b.Cursor != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // reset forgets every watermark, so the next ship starts from offset 0 (a re-ship, decision 16).

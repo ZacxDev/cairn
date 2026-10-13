@@ -55,9 +55,13 @@ func TestAnIdleRunSavesNothing(t *testing.T) {
 	b := newAgent(t, materialize(t, w), oneInstance, &fakeRunner{}, &bytes.Buffer{})
 	saves = 0
 	b.Checkpoint, b.CheckpointEvery = func() error { saves++; return nil }, time.Hour
-	if sum := mustRun(t, b); saves != 2+ledgered || sum.Shipped < 8 {
-		t.Fatalf("a first run over %d sessions saved %d times, want %d (the first change, the end, and one plan per ledger)",
-			sum.Sessions, saves, 2+ledgered)
+	//
+	// ⚠ AND, SINCE S6, ONE SAVE PER SESSION THE FIRST TIME IT IS BOUND FOR AN INSTANCE — before its
+	// first upload leaves, so a kill cannot leave a shipped prefix under a state that says "nowhere".
+	// Once per session's life, not once per run: the idle run above saves nothing.
+	if sum := mustRun(t, b); saves != sum.Sessions+1+ledgered || sum.Shipped < 8 {
+		t.Fatalf("a first run over %d sessions saved %d times, want %d (one per session bound, the end, and one plan per ledger)",
+			sum.Sessions, saves, sum.Sessions+1+ledgered)
 	}
 }
 

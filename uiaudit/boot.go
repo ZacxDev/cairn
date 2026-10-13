@@ -140,6 +140,11 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int, ex
 		return nil, err
 	}
 	trans.workerAddr = fmt.Sprintf("%s:%d", bindHost, workerPort)
+	// …and two registered plugins, ON for every fixture scope, so the session it uploads can carry
+	// plugin outputs (`transcript.go`).
+	if err := trans.registerPlugins(ctx, uiBinary, dir, store, tokenPath, scopes); err != nil {
+		return nil, err
+	}
 
 	w := &World{
 		BaseURL: fmt.Sprintf("http://%s:%d", bindHost, port),
@@ -175,6 +180,12 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int, ex
 	// A refused upload is a boot failure, for the presence push's reason below: the walk would
 	// otherwise capture the session page in its no-transcript state and report the section covered.
 	if err := trans.upload(ctx, pres.session); err != nil {
+		w.Stop()
+		return nil, fmt.Errorf("%w\n--- cairn-ui log ---\n%s", err, w.Log())
+	}
+	// …and so is a refused OUTPUT: the walk would capture the session page with no derived section
+	// and report it covered.
+	if err := trans.derive(ctx, pres.session); err != nil {
 		w.Stop()
 		return nil, fmt.Errorf("%w\n--- cairn-ui log ---\n%s", err, w.Log())
 	}

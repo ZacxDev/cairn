@@ -5200,6 +5200,92 @@ unclamped `?page=` (a slice panic), and the empty sentence withheld. `tests/plug
 
 ---
 
+# Plugin outputs and the owner's delete (S6 of the transcripts plan)
+
+`outputs.go`. A session page whose viewer can see the transcript also renders what plugins derived
+from it; every list of sessions carries each session's one-line summary on the same terms; and the
+transcript's owner can delete it, which removes everything derived from it. Decisions 11, 14 and 15;
+clauses (k) and (l).
+
+## The binding rules
+
+- **An output is a CLAIM and renders as one** (decision 11). Each sits in a block whose label reads
+  `derived · <type> · by <plugin> <version> · model <model> · <produced_at> · <watermark>`. The
+  plugin's name and version are the pod's stamp (from the token's registry entry), never the body's.
+  The watermark is in TURNS of the main stream — "from turns 1–N of M", plus "K newer turns not yet
+  summarised" once the transcript grew past it (`transcript.Reading.TurnStarts`; a watermark naming
+  no `main` is stated by stream and record number). The section opens by saying an output is not
+  part of the session's record and that nothing checked it.
+- **It is shown to exactly the viewers of its transcript** (clause k), and that is NOT re-derived:
+  an output is read only through a `transcript.View`, which exists only where `transcript.Visible`
+  said yes. The session page's outputs come off the SAME view its transcript section does
+  (`transcriptFor`); a row's one-liner comes from `transcript.Store.ViewsWithOutputs`, which ends in
+  the same predicate over the same set (one store walk at most per page, none for the owner's rows
+  or when no listed session holds an output). A refused viewer's page and rows are the bytes of a
+  session with no output.
+- **Every byte of an output is text.** `g.Text` and attribute values; no Markdown; NO link is built
+  from an output — with one exception: a ticket edge's or suggestion's CANONICAL ClickUp id, linked
+  through `store.RefURL`'s template and then `safeHref`, after `plugins.DecodeBody` validated it
+  (alphanumeric: no scheme, no `/`, no markup). A stored body that does not validate against this
+  build's schema is shown as its stored text in a `<pre>` and nothing in it is linked. A locator
+  naming a stored record links this surface's own raw-record row. Bidirectional CONTROL characters
+  (U+202A–202E, U+2066–2069, U+200E/F, U+061C) are dropped from every rendered piece of plugin text
+  and from the model name — escaping does not cover them, and an override would reorder how the
+  page's own `derived` label is displayed. The stored bytes are untouched.
+- **Only a plugin's LATEST summary is shown**; earlier ones are counted ("N earlier summaries are
+  stored and not shown") — each summary is written over the plugin's previous one. An edge or a
+  suggestion a plugin re-derives with an identical body is shown once. At most 60 blocks render.
+- **A suggestion is never worded as a match**: `suggested`, its confidence, "not a match". An edge
+  names its signal in words ("matched on branch name").
+- **Rows** (`derivedLines`): `/sessions`, `/my-sessions`, the scope page's sessions tab and the arc
+  page's sessions tab each carry `derived · <plugin> <version>: <first 160 characters>` — the
+  session's latest summary — with the model and time in `title=`.
+- **`POST /session/delete` is the OWNER ARM, asked by the store** (`transcript.Store.Delete`:
+  un-narrowed `(Kind, ID)`, asked again under the session's lock). CLASS 0, so both cross-site gates
+  reach it by METHOD. It answers a 303 to `/my-sessions`, or ONE refusal (`sessionDeleteRefusal`,
+  403) for not stored, somebody else's, a narrowed credential, an id that is no session id, and a
+  deployment with no transcript store. A reader of every scope the session touched can SEE the
+  transcript and cannot delete it.
+- **The delete cascades because everything derived is in the session's directory** (decision 15):
+  the streams, the blobs and `outputs.jsonl` — every summary, edge and suggestion. The archive
+  journals the fact (root, the uploader's owner and host, `owner-delete`, the pod clock — no
+  content); the server logs who.
+- **The form** renders on the owner's session page only, collapsed in a `<details>` that states what
+  goes. No script and no confirmation checkbox (built, then removed: a third control with its own
+  touch target that guards nothing the reveal does not).
+
+## The RED proof
+
+| guard | mutant row (`tests/control_mutants.py`), each run alone: killed=1 |
+|---|---|
+| `TestAnOutputIsShownToExactlyTheViewersOfItsTranscript` — equal viewer SETS on the page, byte-identical refused pages, the row on four lists | `plugins-output-rendered-without-predicate` |
+| `TestTheOwnerDeletesATranscriptAndEverythingDerivedGoesWithIt` | `plugins-delete-keeps-outputs`, `transcript-delete-skips-the-owner-arm` |
+| `TestAnArcVetoSnapshotsItsMembersAndThePageSaysWhoIsStillVetoed` | `plugins-arc-toggle-snapshot-not-taken` |
+| `TestAnArcToggleFromAStaleTabIsNotSaved` | `plugins-arc-toggle-saved-from-a-stale-page` |
+| `TestBidiControlsInPluginTextAreNotRendered` | `ui-plugin-text-bidi-controls-rendered` |
+
+`TestAnOutputRendersAsALabelledClaim`, `TestAnOutputsTextIsNeverInterpreted` (its control: the plugin
+API REFUSES the `javascript:` id the page renders inert) and
+`TestTheDeleteRowIsBehindBothCrossSiteGates` are invariant guards — no row mutates them.
+`tests/plugins/e2e.sh` clauses (k) and (l) drive both over the real binaries, each with its sabotage.
+
+## What these guards still cannot see
+
+- **A deleted session that keeps growing on its host** is NOT re-created: a deletion is final for
+  its root (`archive.gone`), the uploader's next request is answered 410 `deleted`, and the capture
+  agent marks the session and never reads or sends it again (it says so once). ⚠ That includes a
+  session RETENTION swept: a host that still has its files does not re-ship it.
+- **What a plugin already sent to a model provider** (T7) — the form says so.
+- **The session-level toggle records** for a deleted session stay in `-plugin-journal` (who, when,
+  no content).
+- **A summary longer than 160 characters on a row** is clipped mid-sentence; the whole text is one
+  click away, on the session page.
+- **Cost on a list.** One `stat` per listed session, then one read of `outputs.jsonl` per session
+  that has one, and at most one whole-store walk per page for a non-owner. `/sessions` is unpaged.
+
+
+---
+
 # Plugin toggles (S5 of the transcripts plan)
 
 `GET /plugins` lists what the operator registered (`-plugin-registry`) and each plugin's value on
@@ -5211,15 +5297,23 @@ the session page. The fold and the levels are `internal/plugins/README.md`'s.
 ## The binding rules
 
 - **Who may toggle is per level and never a form field.** Scope: `admin` on the scope. Arc: `admin` on
-  the HOME scope — not the right to `PUT` the arc. And since #270 round 1 an arc speaks only for sessions whose visibility set holds its HOME scope
-  (`plugins.Effective`): arc members are arbitrary session ids any writer of the home can add, so an
-  arc homed outside a session's `V` — an unrelated scope's admin listing a session they saw — says
-  nothing about it, neither `on` nor `off`. Inside `V`, an `on` arc runs the plugin where every scope is
-  at least `allowed`: the home's admin chose it for a session that touched the home, and every other
-  scope's admins had consented. ⚠ What remains: once an arc is `on`, a WRITER of its home can add a
-  session that touched the home, and it goes ON without another admin act — the home's admin
-  delegated that by turning the arc on. An arc never runs a plugin on a session any of whose scopes is
-  `off`.
+  the HOME scope — not the right to `PUT` the arc. An arc speaks only for sessions whose visibility
+  set holds its HOME scope (`plugins.Effective`). `on` is read against the arc's members as they are
+  NOW; `off` against them AND the members the arc listed when the veto was saved, which
+  `handlePluginArc` snapshots into the journal record from the registration the authority had just
+  answered with — so removing a session from an `off` arc lifts nothing, and the arc page lists the
+  sessions a veto still covers although the arc no longer lists them (`arcCoverage`).
+  ⚠ **The residual, stated on `/plugins` and on both toggle blocks in these words:** because `on` is
+  live, anyone who can WRITE to an `on` arc's home scope can add a session to the arc, and the plugin
+  then runs on it with no admin acting again — when the session touched the arc's home scope and
+  every other scope it touched is `allowed` or `on`. That is what `allowed` consents to. A scope left
+  `off` is never overridden. (An agent decision under the plan's decision 10 / T14, open to operator
+  review: a snapshot for `on` was built and withdrawn so per-arc summaries stay continuous as an arc
+  grows, O5.)
+- **An arc toggle is saved only over the member list its page showed.** The form carries
+  `members=<digest of the rendered list>`; a POST whose digest is not the current list's — a tab left
+  open while a writer changed the arc — journals nothing and answers 409 with a sentence saying to
+  reload. For every value: `on` is read against the live list, so the admin must have seen it.
   Session: the transcript's owner arm (`transcript.Store.OwnedBy`), and only `off`/`unset`: an `on` is
   a 400 decided BEFORE any authority is asked, so it is the same bytes for the owner and a stranger.
 - **One refusal** (`pluginToggleRefusal`, 403) for a target that does not exist, cannot be read, or is
@@ -5241,7 +5335,10 @@ before and after.
 
 ## What these guards still cannot see
 
-- **The forms in a real browser.** `uiaudit`'s worlds boot with no registry, so the walk captures
-  `/plugins`' OFF state and no toggle form; the forms are measured in-process.
+- **The toggle POSTs in a real browser.** Since S6 `uiaudit`'s token-file world registers two plugins
+  (seeded ON for every fixture scope), so the walk captures `/plugins` populated and the toggle forms
+  on the scope, arc and session pages at every rung — which is how `/plugins`' scope list was found
+  pushing the page sideways at 390 px (a bare `<li><a>` around an unbreakable scope name; it is an
+  `entry-row` now). The walk navigates GET rows only: no toggle is SUBMITTED by it.
 - **The EFFECTIVE value.** No page says whether a plugin is ON for a given session — that needs the
   whole-store walk per session; the pages show the value at their own level.

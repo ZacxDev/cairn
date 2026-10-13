@@ -55,7 +55,7 @@ func (s *Service) arcSnapshot() (arcs.Snapshot, error) {
 	return s.Arcs()
 }
 
-// ArcsListing is every registered arc naming one of `ids` as a member, sorted.
+// ArcsListing is every registered arc naming one of `ids` as a member NOW, sorted.
 func ArcsListing(snap arcs.Snapshot, ids []string) []arcs.Key {
 	var out []arcs.Key
 	for k, reg := range snap.Latest {
@@ -63,20 +63,22 @@ func ArcsListing(snap arcs.Snapshot, ids []string) []arcs.Key {
 			out = append(out, k)
 		}
 	}
-	slices.SortFunc(out, func(a, b arcs.Key) int {
-		if a.Home != b.Home {
-			if a.Home < b.Home {
-				return -1
-			}
-			return 1
+	sortKeys(out)
+	return out
+}
+
+// ArcsFor is every arc that speaks for a session — [Subject.Arcs]: the arcs listing one of `ids`
+// NOW (what an `on` is read against, and an `off` too), and the arcs whose `off` veto snapshotted
+// one of them ([State.ArcsVetoing]) — so a veto outlives the member's removal from the arc. Sorted,
+// each arc once.
+func ArcsFor(st State, plugin string, snap arcs.Snapshot, ids []string) []arcs.Key {
+	out := ArcsListing(snap, ids)
+	for _, k := range st.ArcsVetoing(plugin, ids) {
+		if !slices.Contains(out, k) {
+			out = append(out, k)
 		}
-		if a.Slug < b.Slug {
-			return -1
-		} else if a.Slug > b.Slug {
-			return 1
-		}
-		return 0
-	})
+	}
+	sortKeys(out)
 	return out
 }
 
@@ -101,12 +103,20 @@ func (s *Service) deciderOver(st State, plugin string) (func(*transcript.Meta, [
 	}
 	return func(meta *transcript.Meta, v []string) bool {
 		ids := append([]string{meta.Root}, meta.Children...)
-		return Effective(st, plugin, Subject{Root: meta.Root, V: v, Arcs: ArcsListing(snap, ids)}, known)
+		return Effective(st, plugin, Subject{Root: meta.Root, V: v, Arcs: ArcsFor(st, plugin, snap, ids)}, known)
 	}, nil
 }
 
 // Open returns the session's [transcript.View] when `plugin` is ON for it, and [ErrForbidden]
 // otherwise — whatever the reason.
+//
+// 🔴 A DELETED SESSION IS THAT SAME REFUSAL, AND DELIBERATELY NOT A 404 (S6, clause l). The plan's
+// clause (l) reads "the plugin's next transcript read is 404"; as built it is the ONE 403 body, the
+// bytes a never-stored id and an OFF session get. A distinct 404 for "this id WAS stored and has
+// been deleted" would be the existence oracle T10 closes — any plugin token could ask which session
+// ids ever held a transcript, including sessions it was never ON for — and it buys a plugin
+// nothing: the deleted session is gone from its pending list, and every refusal already means "stop
+// working on this session". The plan's clause is amended to say so.
 func (s *Service) Open(plugin, root string) (*transcript.View, error) {
 	on, err := s.decider(plugin)
 	if err != nil {

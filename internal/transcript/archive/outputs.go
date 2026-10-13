@@ -15,10 +15,9 @@ import (
 
 // 🔴 PLUGIN OUTPUTS LIVE IN THE SESSION'S OWN DIRECTORY (decision 15: `outputs.jsonl`), AND THAT IS
 // THE WHOLE DELETION CASCADE'S MECHANISM. Retention, a withdrawal and the owner's delete are each an
-// `rm -r` of `sessions/<root>/`, so an output can never outlive the transcript it was derived from.
-// Slice S5 adds only the minimal storage the plugin API's WRITE route needs to be meaningful (the
-// pending query reads the plugin's latest watermark back from here); S6 renders outputs and owns the
-// cascade's journal fact.
+// `rm -r` of `sessions/<root>/` ([Archive.deleteLocked], `sweep.go`), so an output — a summary, a
+// ticket EDGE, a suggestion: every type is a line of this one file — can never outlive the
+// transcript it was derived from, and there is no second place a cascade could forget.
 //
 // The archive does not interpret a line beyond its `plugin` field: `internal/plugins` validates and
 // stamps the envelope before it reaches [Archive.AppendOutput].
@@ -46,9 +45,16 @@ const (
 // since the caller decided). One value, so the caller answers it as it answers every other miss.
 var ErrNoSession = errors.New("no stored session")
 
-// outputUsage is every stored output byte, by plugin, read off the disk. It is the counters' truth:
-// the in-memory ones only ever OVER-count (a deleted session's outputs are not subtracted), and an
-// append that would cross a cap recounts from here before refusing.
+// 🔴 THE CAPS ARE CHECKED AGAINST A RUNNING TOTAL, NEVER A RESCAN (#270's audit, closed in S6). The
+// totals are counted off the disk ONCE, by [Open] — before anything can append — and are then moved
+// by exactly two things, each under the session's own lock: an append adds its line, and a deletion
+// (retention, the owner's delete, a withdrawal — [Archive.deleteLocked]) subtracts that ONE
+// session's lines, read from its `outputs.jsonl` before the directory goes. As first built, the
+// in-memory totals only ever grew, so a write that would cross a cap re-read EVERY session's
+// `outputs.jsonl` before refusing — and a plugin sitting at its cap (or a stolen token, T6) made
+// each of its refused writes a walk of the whole archive.
+
+// outputUsage is every stored output byte, by plugin, read off the disk — [Open]'s one count.
 func (a *Archive) outputUsage() (map[string]int64, error) {
 	out := map[string]int64{}
 	roots, err := a.Roots()
@@ -56,50 +62,68 @@ func (a *Archive) outputUsage() (map[string]int64, error) {
 		return nil, err
 	}
 	for _, root := range roots {
-		if err := a.ScanOutputs(root, func(line []byte) error {
-			var head struct {
-				Plugin string `json:"plugin"`
-			}
-			_ = json.Unmarshal(line, &head)
-			out[head.Plugin] += int64(len(line) + 1)
-			return nil
-		}); err != nil {
-			return nil, err
+		one := map[string]int64{}
+		if err := a.sessionOutputBytes(root, one, 1); err != nil {
+			// 🔴 ONE SESSION'S UNREADABLE `outputs.jsonl` MUST NOT STOP `cairn-ui` FROM STARTING — this
+			// runs in [Open]. Its bytes are counted, whole, as the file's on-disk size against NO
+			// plugin (the key ""): they still weigh on every plugin's shared 20% and on the quota,
+			// and no plugin's own share is charged for bytes nobody could attribute.
+			one = map[string]int64{"": fileSize(filepath.Join(a.sessionDir(root), outputsName))}
+		}
+		for plugin, n := range one {
+			out[plugin] += n
 		}
 	}
 	return out, nil
 }
 
-// reserveOutput charges n bytes of `plugin`'s outputs against both shares and the quota.
+// sessionOutputBytes adds (sign 1) or subtracts (sign -1) ONE session's stored output bytes, by
+// plugin, to `into`.
+func (a *Archive) sessionOutputBytes(root string, into map[string]int64, sign int64) error {
+	return a.ScanOutputs(root, func(line []byte) error {
+		var head struct {
+			Plugin string `json:"plugin"`
+		}
+		_ = json.Unmarshal(line, &head)
+		into[head.Plugin] += sign * int64(len(line)+1)
+		return nil
+	})
+}
+
+// forgetOutputs takes a session's output bytes out of the running totals. The caller holds the
+// root's lock and is about to remove the directory. A file it cannot read is forgotten as [Open]
+// counted it: whole, against no plugin — a deletion is never refused over an output.
+func (a *Archive) forgetOutputs(root string) error {
+	gone := map[string]int64{}
+	if err := a.sessionOutputBytes(root, gone, 1); err != nil {
+		gone = map[string]int64{"": fileSize(filepath.Join(a.sessionDir(root), outputsName))}
+	}
+	a.mu.Lock()
+	for plugin, n := range gone {
+		if a.outputs[plugin] -= n; a.outputs[plugin] <= 0 {
+			delete(a.outputs, plugin)
+		}
+	}
+	a.mu.Unlock()
+	return nil
+}
+
+// reserveOutput charges n bytes of `plugin`'s outputs against both shares and the quota. The
+// refusal says WHICH limit it hit ([QuotaError.Share]).
 func (a *Archive) reserveOutput(plugin string, n int64) error {
 	pluginCap, totalCap := a.cfg.Quota/OutputPluginShareDivisor, a.cfg.Quota/OutputTotalShareDivisor
-	over := func() bool { // a.mu held
-		var total int64
-		for _, b := range a.outputs {
-			total += b
-		}
-		return a.outputs[plugin]+n > pluginCap || total+n > totalCap
-	}
 	a.mu.Lock()
-	stale := a.outputs == nil || over()
-	a.mu.Unlock()
-	if stale {
-		usage, err := a.outputUsage()
-		if err != nil {
-			return err
-		}
-		a.mu.Lock()
-		a.outputs = usage
-		a.mu.Unlock()
+	var total int64
+	for _, b := range a.outputs {
+		total += b
 	}
-	a.mu.Lock()
-	if over() {
-		limit := pluginCap
-		if a.outputs[plugin]+n <= pluginCap {
-			limit = totalCap
-		}
+	switch {
+	case a.outputs[plugin]+n > pluginCap:
 		a.mu.Unlock()
-		return &QuotaError{Quota: limit}
+		return &QuotaError{Quota: pluginCap, Share: SharePlugin}
+	case total+n > totalCap:
+		a.mu.Unlock()
+		return &QuotaError{Quota: totalCap, Share: ShareOutputs}
 	}
 	a.outputs[plugin] += n
 	a.mu.Unlock()
@@ -155,6 +179,15 @@ func (a *Archive) AppendOutput(root, plugin string, line []byte) error {
 		return err
 	}
 	return f.Sync()
+}
+
+// HasOutputs reports whether a session holds a non-empty `outputs.jsonl` — one `stat`, no read.
+func (a *Archive) HasOutputs(root string) bool {
+	if !write.SessionComponent.MatchString(root) {
+		return false
+	}
+	info, err := os.Lstat(filepath.Join(a.sessionDir(root), outputsName))
+	return err == nil && info.Mode().IsRegular() && info.Size() > 0
 }
 
 // ScanOutputs calls fn for every stored output line of a session, in the order written. A session

@@ -152,6 +152,10 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		"POST /plugins/scope",
 		"POST /plugins/session",
 		"POST /ring",
+		// 🔴 THE OWNER'S "DELETE TRANSCRIPT" (S6 of the transcripts plan). NO CLASS — both cross-site gates
+		// reach it by METHOD, which `TestTheDeleteRowIsBehindBothCrossSiteGates` asserts by each gate's own
+		// message. Never `content`: it answers a 303 to "My sessions", or ONE refusal that names nothing.
+		"POST /session/delete",
 		"POST /share",
 		"POST /sign-in public",
 		"POST /sign-in/github public",

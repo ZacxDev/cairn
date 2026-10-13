@@ -199,3 +199,135 @@ func TestTheJournalIsLastWriteWinsAndSealsATornTail(t *testing.T) {
 		t.Fatalf("the journal's mode is %v, want 0600", info.Mode().Perm())
 	}
 }
+
+// arcRecord journals one arc toggle; an `off` carries its member snapshot.
+func arcRecord(t *testing.T, j Journal, k arcs.Key, value string, members ...string) {
+	t.Helper()
+	if err := j.Append(Record{Plugin: plug, Level: LevelArc, Target: ArcTarget(k), Value: value, Members: members,
+		By: By{Kind: "user", ID: "u-admin"}, At: at2000}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// registry is an arc registry in which each arc lists the given sessions NOW.
+func registry(members map[arcs.Key][]string) arcs.Snapshot {
+	snap := arcs.Snapshot{Latest: map[arcs.Key]arcs.Registration{}}
+	for k, ids := range members {
+		reg := arcs.Registration{Home: k.Home, Slug: k.Slug}
+		for _, id := range ids {
+			reg.Members = append(reg.Members, arcs.Member{Session: id})
+		}
+		snap.Latest[k] = reg
+	}
+	return snap
+}
+
+// TestAnArcVetoOutlivesTheMembersRemovalAndAnArcOnIsReadLive — #270's audit, as S6 closed it. The
+// two directions of an arc toggle are read against DIFFERENT member lists, deliberately:
+//
+//   - `off` (the veto) covers the arc's current members AND the members it listed when an admin set
+//     it — so a WRITER of the home who re-registers the arc without a session does not lift the veto.
+//     RED before the fix (membership read live only): the removed session went back ON.
+//   - `on` is read against the arc's members as they are NOW — a session added later IS covered
+//     (per-arc summaries stay continuous as an arc grows, operator decision O5). That is the stated
+//     residual, pinned here so it cannot change silently in either direction.
+func TestAnArcVetoOutlivesTheMembersRemovalAndAnArcOnIsReadLive(t *testing.T) {
+	alpha := []string{"alpha-notes"}
+	on := func(st State, snap arcs.Snapshot, root string) bool {
+		return Effective(st, plug, Subject{Root: root, V: alpha, Arcs: ArcsFor(st, plug, snap, []string{root})}, knownAll)
+	}
+	scope := func(j Journal, value string) {
+		if err := j.Append(Record{Plugin: plug, Level: LevelScope, Target: "alpha-notes", Value: value,
+			By: By{Kind: "user", ID: "u-admin"}, At: at2000}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// THE VETO: alpha is ON for everybody; the admin vetoes the arc while it lists s-0001 and s-0002.
+	veto := Journal{Path: filepath.Join(t.TempDir(), "toggles.jsonl")}
+	scope(veto, ValueOn)
+	arcRecord(t, veto, arcOne, ValueOff, "s-0001", "s-0002")
+	st, _ := veto.Read()
+	listed := registry(map[arcs.Key][]string{arcOne: {"s-0001", "s-0002"}})
+	if on(st, listed, "s-0001") || !on(st, listed, "s-0009") {
+		t.Fatal("CONTROL: a vetoed member is ON, or a session the arc never listed is OFF")
+	}
+	// A writer of the home re-registers the arc WITHOUT s-0001. No admin acted.
+	removed := registry(map[arcs.Key][]string{arcOne: {"s-0002"}})
+	if on(st, removed, "s-0001") {
+		t.Fatal("removing a session from an `off` arc lifted the admin's veto: it is ON again")
+	}
+	if got := st.ArcSnapshot(plug, arcOne); len(got) != 2 || got[0] != "s-0001" {
+		t.Fatalf("ArcSnapshot = %v, want the veto's snapshot", got)
+	}
+	// A CHILD session id in the snapshot covers its root (the ids asked are the root and its children).
+	if got := st.ArcsVetoing(plug, []string{"s-root", "s-0002"}); len(got) != 1 || got[0] != arcOne {
+		t.Fatalf("a veto snapshot naming a child session does not cover its root: %v", got)
+	}
+	// A member ADDED to an `off` arc is vetoed too (the live half): narrowing is never lost.
+	if on(st, registry(map[arcs.Key][]string{arcOne: {"s-0002", "s-0003"}}), "s-0003") {
+		t.Fatal("a session added to an `off` arc is ON")
+	}
+	// The admin sets the arc back to `unset`: the veto, snapshot and all, is gone.
+	arcRecord(t, veto, arcOne, ValueUnset)
+	if st, _ = veto.Read(); !on(st, removed, "s-0001") || len(st.ArcsVetoing(plug, []string{"s-0001"})) != 0 {
+		t.Fatal("an arc set back to `unset` still vetoes its old snapshot")
+	}
+	// Another plugin's veto covers nothing for this one.
+	if got := st.ArcsVetoing("clickup", []string{"s-0001"}); len(got) != 0 {
+		t.Fatalf("another plugin's vetoes: %v", got)
+	}
+
+	// `on` IS LIVE: alpha is only `allowed`; the admin turns the arc ON while it lists s-0001.
+	live := Journal{Path: filepath.Join(t.TempDir(), "toggles.jsonl")}
+	scope(live, ValueAllowed)
+	arcRecord(t, live, arcOne, ValueOn)
+	st, _ = live.Read()
+	if !on(st, registry(map[arcs.Key][]string{arcOne: {"s-0001"}}), "s-0001") {
+		t.Fatal("POSITIVE CONTROL: a member of an `on` arc is not ON")
+	}
+	grown := registry(map[arcs.Key][]string{arcOne: {"s-0001", "s-0002"}})
+	if !on(st, grown, "s-0002") {
+		t.Fatal("a session added to an `on` arc is not covered — `on` must be read against the arc's members now")
+	}
+	// …and one REMOVED from an `on` arc is no longer covered: `on` keeps no snapshot.
+	if on(st, registry(map[arcs.Key][]string{arcOne: {"s-0002"}}), "s-0001") {
+		t.Fatal("a session removed from an `on` arc is still ON")
+	}
+	// The limits `on` keeps: the session must have touched the arc's HOME, and no scope may be off.
+	beta := Subject{Root: "s-0002", V: []string{"beta-notes"}, Arcs: ArcsFor(st, plug, grown, []string{"s-0002"})}
+	if Effective(st, plug, beta, knownAll) {
+		t.Fatal("an `on` arc homed in alpha turned the plugin on for a session that touched only beta")
+	}
+}
+
+// TestAMemberSnapshotIsAnArcRecordsAndIsSessionIds: the journal refuses a snapshot on a scope or
+// session record, on an arc record that is not a veto, a value that is not a session id, and one past the arc registry's own bound — and
+// journals nothing for any of them.
+func TestAMemberSnapshotIsAnArcRecordsAndIsSessionIds(t *testing.T) {
+	j := Journal{Path: filepath.Join(t.TempDir(), "toggles.jsonl")}
+	rec := func(level Level, target, value string, members []string) Record {
+		return Record{Plugin: plug, Level: level, Target: target, Value: value, Members: members, By: By{Kind: "user", ID: "u-admin"}, At: at2000}
+	}
+	many := make([]string, arcs.MaxMembers+1)
+	for i := range many {
+		many[i] = "s-" + strings.Repeat("0", 4) + string(rune('a'+i%26)) + strings.Repeat("x", i%7)
+	}
+	for name, r := range map[string]Record{
+		"a snapshot on a scope record":   rec(LevelScope, "alpha-notes", ValueOn, []string{"s-0001"}),
+		"a snapshot on a session record": rec(LevelSession, "s-0001", ValueOff, []string{"s-0001"}),
+		"a snapshot on an arc `on`":      rec(LevelArc, ArcTarget(arcOne), ValueOn, []string{"s-0001"}),
+		"a snapshot on an arc `unset`":   rec(LevelArc, ArcTarget(arcOne), ValueUnset, []string{"s-0001"}),
+		"a member that is not an id":     rec(LevelArc, ArcTarget(arcOne), ValueOff, []string{"../s-0001"}),
+		"more members than an arc holds": rec(LevelArc, ArcTarget(arcOne), ValueOff, many),
+	} {
+		if err := j.Append(r); err == nil {
+			t.Errorf("%s was journaled", name)
+		}
+	}
+	if _, err := os.Stat(j.Path); !os.IsNotExist(err) {
+		t.Fatalf("a refused record left a journal behind: %v", err)
+	}
+	if err := j.Append(rec(LevelArc, ArcTarget(arcOne), ValueOff, []string{"s-0001"})); err != nil {
+		t.Fatalf("POSITIVE CONTROL: a well-formed arc veto was refused: %v", err)
+	}
+}

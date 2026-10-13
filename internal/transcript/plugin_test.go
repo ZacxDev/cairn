@@ -46,12 +46,22 @@ func TestForPluginsWalksTheStoreOnceAndFindsEveryRootsTrailers(t *testing.T) {
 		len(seen["s-c"]) != 0 {
 		t.Fatalf("views=%d, V per root %v — want alpha for s-a, beta for s-b, nothing for s-c", len(views), seen)
 	}
-	// And no walk at all when no root needs one: a stored `V` the predicate already refuses.
+	// 🔴 A ROOT `on` REFUSES OVER ITS STORED HALF IS STILL WALKED (#270's audit): the fold is not
+	// monotone in `V`, so "OFF so far" settles nothing. One walk, however many roots; and none only
+	// when no root is stored at all.
+	no := func(*Meta, []string) bool { return false }
 	before = storeWalks.Load()
-	if _, err := NewStore(a, root).ForPlugins([]string{"s-a", "s-b"}, func(*Meta, []string) bool { return false }, nil); err != nil {
+	if _, err := NewStore(a, root).ForPlugins([]string{"s-a", "s-b"}, no, nil); err != nil {
+		t.Fatal(err)
+	}
+	if walks := storeWalks.Load() - before; walks != 1 {
+		t.Fatalf("two roots whose stored V is refused walked the store %d times, want exactly 1", walks)
+	}
+	before = storeWalks.Load()
+	if _, err := NewStore(a, root).ForPlugins([]string{"s-never-stored"}, no, nil); err != nil {
 		t.Fatal(err)
 	}
 	if walks := storeWalks.Load() - before; walks != 0 {
-		t.Fatalf("roots whose stored V is refused walked the store %d times, want 0", walks)
+		t.Fatalf("no stored root walked the store %d times, want 0", walks)
 	}
 }

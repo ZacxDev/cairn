@@ -5004,8 +5004,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-capture-armed-by-default",
         path="internal/worker/worker.go",
-        old="\tif !w.cfg.Armed {",
-        new="\tif false && !w.cfg.Armed {",
+        old="\tif rt.upload && !w.cfg.Armed {",
+        new="\tif false && rt.upload && !w.cfg.Armed {",
         killer="TestADisarmedListenerRefusesEveryUploadAndStoresNothing",
         why="a listener that is configured looks like a listener that is meant to accept; the arming "
         "is a separate operator decision (O16) and the configuration is not it.",
@@ -5679,6 +5679,268 @@ MUTANTS: tuple[Mutant, ...] = (
         why="the envelope HAS a plugin field, so storing what it says looks faithful — and one plugin then "
         "writes outputs under another's name, and moves the other's watermark.",
         pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+    ),
+    # ---- S6 of the transcripts plan: outputs rendered, the deletion cascade, the withdraw route ---
+    # The plan's six rows, by name. `internal/ui` is in `PKGS`; every row ADDS the package holding
+    # its other killers (the S2/S3/S5 rows' per-row rule).
+    Mutant(
+        name="plugins-output-rendered-without-predicate",
+        path="internal/transcript/plugin.go",
+        old="\t\tcase viewer.owns(meta):\n\t\t\tout[root] = &View{Meta: meta, a: s.archive}",
+        new="\t\tcase true:\n\t\t\tout[root] = &View{Meta: meta, a: s.archive}",
+        killer="TestAnOutputIsShownToExactlyTheViewersOfItsTranscript",
+        why="a summary is a few sentences ABOUT a session, not the session's content, so showing it on "
+        "every row that lists the session reads as harmless context — and a reader of ONE scope the "
+        "session wrote then reads a digest of everything it did in the scopes they cannot read "
+        "(clause k).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="plugins-delete-keeps-outputs",
+        path="internal/transcript/archive/sweep.go",
+        old="\tif err := os.RemoveAll(dir); err != nil {\n\t\treturn err\n\t}\n\ta.adjust(-freed)\n\treturn nil\n}",
+        new="\tkept, _ := os.ReadFile(filepath.Join(dir, outputsName))\n"
+        "\tif err := os.RemoveAll(dir); err != nil {\n\t\treturn err\n\t}\n"
+        "\tif kept != nil {\n\t\t_ = os.MkdirAll(dir, dirMode)\n"
+        "\t\t_ = os.WriteFile(filepath.Join(dir, outputsName), kept, fileMode)\n\t}\n"
+        "\ta.adjust(-freed)\n\treturn nil\n}",
+        killer="TestTheDeletionCascadeTakesEverythingDerived",
+        extra_killers=("TestTheOwnerDeletesATranscriptAndEverythingDerivedGoesWithIt",
+                       "TestAWithdrawalDeletesOnlyTheCallersOwnRoot"),
+        why="the outputs are the plugin's work and cost money to make, so keeping them when the raw "
+        "transcript goes reads as the considerate delete — and the summary of a transcript its owner "
+        "deleted, and every ticket edge mined from it, stays on the instance (clause l).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/", "./internal/worker/"),
+    ),
+    Mutant(
+        name="transcript-withdraw-keeps-directory",
+        path="internal/transcript/archive/sweep.go",
+        old="\t\treturn true, a.deleteLocked(m, ReasonWithdrawn)",
+        new="\t\treturn true, nil",
+        killer="TestAWithdrawalDeletesOnlyTheCallersOwnRoot",
+        extra_killers=("TestAWithdrawalIsOwnerAndHostBoundAndIdempotent", "TestTheAgentWithdrawsThroughTheRealRoute"),
+        why="the agent stops shipping the session there, so acknowledging the withdrawal and leaving "
+        "the bytes for retention reads as enough — and a prefix the routing rule says must not be on "
+        "this instance stays on it for ninety days, with the agent told it is gone (clause m).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/", "./internal/capture/"),
+    ),
+    Mutant(
+        name="transcript-withdraw-deletes-another-owners-root",
+        path="internal/transcript/archive/sweep.go",
+        old="\t\tif !owned(m, who) {\n\t\t\treturn false, nil\n\t\t}\n\t\treturn true, a.deleteLocked(m, ReasonWithdrawn)",
+        new="\t\tif m.Host != who.Host {\n\t\t\treturn false, nil\n\t\t}\n\t\treturn true, a.deleteLocked(m, ReasonWithdrawn)",
+        killer="TestAWithdrawalDeletesOnlyTheCallersOwnRoot",
+        extra_killers=("TestAWithdrawalIsOwnerAndHostBoundAndIdempotent",),
+        why="the listener admits one capture owner, so the token already IS the owner and only the host "
+        "looks left to check — and the day a second owner's root is in the store (a changed "
+        "`-worker-owner`, a restored volume), any capture token deletes it by id.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-withdraw-host-unchecked",
+        path="internal/transcript/archive/sweep.go",
+        old="\t\tif !owned(m, who) {\n\t\t\treturn false, nil\n\t\t}\n\t\treturn true, a.deleteLocked(m, ReasonWithdrawn)",
+        new="\t\tif m.Owner != who.Owner {\n\t\t\treturn false, nil\n\t\t}\n\t\treturn true, a.deleteLocked(m, ReasonWithdrawn)",
+        killer="TestAWithdrawalDeletesOnlyTheCallersOwnRoot",
+        extra_killers=("TestAWithdrawalIsOwnerAndHostBoundAndIdempotent",),
+        why="every host's token is the SAME owner's, so the owner's sessions look like one pool any of "
+        "their hosts may tidy — and a token copied to (or minted for) another machine deletes "
+        "transcripts that machine never uploaded (the precedent: `transcript-capture-token-host-unchecked`).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-withdraw-repeat-answers-false",
+        path="internal/transcript/archive/sweep.go",
+        old="\treturn a.deletedFor(who, root), nil\n}",
+        new="\treturn false, nil\n}",
+        killer="TestAWithdrawalDeletesOnlyTheCallersOwnRoot",
+        extra_killers=("TestAWithdrawalIsOwnerAndHostBoundAndIdempotent",),
+        why="the root is gone, so 'nothing of yours is held here' is the literal truth on the second "
+        "call — and the agent, which treats `false` as final, turns a withdrawal whose acknowledgement "
+        "was lost into a permanent hold (the plan's revision 4, retracted).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    # Beyond the plan's six: the owner arm of the delete, the agent's withdrawal rules, the S5 audit
+    # findings S6 closed (#270: the walk-skip, the arc veto's snapshot, the output totals, the 507
+    # line), and #273's own audit (a deletion is final for its root, a withdrawal reaches a stopped
+    # instance, no environment proxy, an arc toggle is saved only over the list its page showed).
+    Mutant(
+        name="transcript-delete-skips-the-owner-arm",
+        path="internal/transcript/plugin.go",
+        old="\treturn s.archive.Delete(root, archive.ReasonOwnerDelete, viewer.owns)",
+        new="\treturn s.archive.Delete(root, archive.ReasonOwnerDelete, nil)",
+        killer="TestTheOwnerDeletesATranscriptAndEverythingDerivedGoesWithIt",
+        why="the form renders only on the owner's page, so the row looks reachable only by the owner — "
+        "and any signed-in principal who knows a session id (they are on session pages) deletes its "
+        "transcript with one POST.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="capture-binding-not-saved-before-upload",
+        path="internal/capture/agent.go",
+        old="\tif ss.Instance != dec.Instance {\n\t\tss.Instance = dec.Instance\n"
+        "\t\tif err := a.saveRouting(root); err != nil {\n\t\t\treturn false, false, err\n\t\t}\n\t}",
+        new="\tif ss.Instance != dec.Instance {\n\t\tss.Instance = dec.Instance\n\t}",
+        killer="TestWhereASessionIsBoundIsSavedBeforeItsFirstUpload",
+        why="the state is saved within two seconds anyway and a save per new session costs a write, so "
+        "leaving the binding to the spaced checkpoint reads as the efficient version — and a run killed "
+        "in that window has shipped a prefix under a state that says 'nowhere', so a later routing "
+        "change withdraws nothing (S3b's audit).",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="capture-false-withdrawal-reships",
+        path="internal/capture/agent.go",
+        old="\tif !deleted && ss.shipped() {",
+        new="\tif false && !deleted && ss.shipped() {",
+        killer="TestAWithdrawalAnsweredFalseHoldsTheSessionForGood",
+        why="`false` means the instance holds nothing of this host's, which reads as 'nothing left to "
+        "withdraw, carry on' — and a prefix that IS there under another host label is then duplicated "
+        "onto a second instance instead of being surfaced (decision 16).",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="capture-plaintext-host-matched-by-suffix",
+        path="internal/capture/httpsink.go",
+        old="\t\t\tif !slices.Contains(plaintextHosts, u.Hostname()) {",
+        new="\t\t\tif !slices.ContainsFunc(plaintextHosts, func(h string) bool { return strings.HasSuffix(u.Hostname(), h) }) {",
+        killer="TestPlainHTTPToANamedHostIsAnExplicitExactOptIn",
+        why="an operator with several hosts on one mesh would rather name the mesh's domain once, so a "
+        "suffix match reads as the convenient form — and `evil-<host>`, or any host under a parent "
+        "domain somebody else can register in, then receives the capture token in clear.",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="plugins-store-walk-skipped-on-a-stored-off",
+        path="internal/transcript/plugin.go",
+        old="\n\tids := append([]string{meta.Root}, meta.Children...)\n\twritten, err := WrittenScopes(s.storeRoot, ids)\n",
+        new="\n\tif stored := VisibilitySet(meta, Written{}); len(stored) > 0 && !on(meta, stored) {\n\t\treturn nil, nil\n\t}\n"
+        "\tids := append([]string{meta.Root}, meta.Children...)\n\twritten, err := WrittenScopes(s.storeRoot, ids)\n",
+        killer="TestAnArcHomeFoundOnlyByTheWalkDoesNotChangeTheAnswer",
+        why="'OFF over the scopes already known' looks like a sound reason to skip a whole-store walk — it "
+        "was the shipped rule, under a comment calling the fold monotone — and a session whose arc home "
+        "only the walk finds is answered OFF until an unrelated page view records the scope (#270).",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/", "./internal/transcript/"),
+    ),
+    Mutant(
+        name="plugins-pending-walk-skipped-on-a-stored-off",
+        path="internal/transcript/plugin.go",
+        old="\t\tneed = append(need, meta)\n",
+        new="\t\tif stored := VisibilitySet(meta, Written{}); len(stored) > 0 && !on(meta, stored) {\n\t\t\tcontinue\n\t\t}\n"
+        "\t\tneed = append(need, meta)\n",
+        killer="TestAnArcHomeFoundOnlyByTheWalkDoesNotChangeTheAnswer",
+        why="the pending query is where the walk's cost is felt, so skipping roots the stored half "
+        "already refuses is the tempting half of the same shortcut — and those sessions are never "
+        "offered to the plugin until something else records the scope (#270).",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/", "./internal/transcript/"),
+    ),
+    Mutant(
+        name="plugins-arc-veto-lifted-by-removing-the-member",
+        path="internal/plugins/service.go",
+        old="\tfor _, k := range st.ArcsVetoing(plugin, ids) {",
+        new="\tfor _, k := range []arcs.Key(nil) {",
+        killer="TestAnArcVetoOutlivesTheMembersRemovalAndAnArcOnIsReadLive",
+        why="an arc toggle reads as a statement about the arc AS IT IS, so folding it over the live member "
+        "list is the natural rule — and a writer of the home, who can PUT the arc without a session, "
+        "lifts an admin's veto with no admin act (#270, T14).",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="transcript-upload-resurrects-a-deleted-root",
+        path="internal/transcript/archive/archive.go",
+        old="\tif m != nil {\n\t\treturn nil\n\t}\n\ta.mu.Lock()\n\twas, deleted := a.deleted[root]",
+        new="\tif m != nil || true {\n\t\treturn nil\n\t}\n\ta.mu.Lock()\n\twas, deleted := a.deleted[root]",
+        killer="TestADeletedSessionIsNotResurrectedByALaterUpload",
+        extra_killers=("TestADeletionIsFinalForItsRoot", "TestASessionDeletedOnItsInstanceIsNeverSentAgain"),
+        why="a root with no meta is a root nobody holds, which is exactly what a first upload looks like — "
+        "and a stream or blob the agent sends from its start after the owner's delete re-creates the "
+        "session the owner deleted (#273).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/", "./internal/capture/"),
+    ),
+    Mutant(
+        name="capture-deleted-answer-retried-forever",
+        path="internal/capture/agent.go",
+        old="\tif errors.Is(err, ErrDeleted) {\n\t\ta.sawDeleted = true",
+        new="\tif errors.Is(err, ErrDeleted) {\n\t\ta.sawDeleted = false",
+        killer="TestASessionDeletedOnItsInstanceIsNeverSentAgain",
+        why="every other refusal is one session's failure for one run and is retried, so treating the 410 "
+        "the same reads as consistent — and a session deleted on its instance is re-read, re-redacted "
+        "and refused every minute for as long as it exists on the host.",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="capture-withdrawal-not-sent-to-a-stopped-instance",
+        path="internal/capture/agent.go",
+        old="\treturn a.stopped(ss.Instance) && !ss.shipped()",
+        new="\treturn a.stopped(ss.Instance)",
+        killer="TestAWithdrawalReachesAnInstanceThatIsNotTakingUploads",
+        why="an instance that refuses uploads has nothing to gain from a session being read, so skipping "
+        "every session bound for it is the cheap rule — and a prefix on a quota-full or disarmed "
+        "instance is never withdrawn while it stays that way (#273).",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="capture-sink-uses-the-environment-proxy",
+        path="internal/capture/httpsink.go",
+        old="\t\ttransport.Proxy = nil\n",
+        new="",
+        killer="TestNoEnvironmentProxyEverCarriesTheCaptureToken",
+        why="honouring HTTP_PROXY is what every well-behaved client does — and for a plain-http worker "
+        "URL the proxy named by a stray variable receives the capture token and every transcript byte "
+        "in clear (#273).",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="plugins-arc-toggle-saved-from-a-stale-page",
+        path="internal/ui/plugins.go",
+        old="\tif r.PostFormValue(FieldMembers) != arcMembersDigest(memberSessions(rep.Reg)) {",
+        new="\tif false && r.PostFormValue(FieldMembers) != arcMembersDigest(memberSessions(rep.Reg)) {",
+        killer="TestAnArcToggleFromAStaleTabIsNotSaved",
+        why="the handler re-reads the arc and checks admin on its home, which reads as binding enough — "
+        "and an admin's `on` from a tab opened before a writer added a session turns the plugin on for "
+        "a session that admin was never shown (#273).",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="ui-plugin-text-bidi-controls-rendered",
+        path="internal/ui/outputs.go",
+        old="r == 0x200E, r == 0x200F, r == 0x061C:\n\t\t\treturn -1",
+        new="r == 0x200E, r == 0x200F, r == 0x061C:\n\t\t\treturn r",
+        killer="TestBidiControlsInPluginTextAreNotRendered",
+        why="the text is escaped, so it looks inert — and a right-to-left override in a model's summary "
+        "reorders how the page's own `derived` label and what follows it are displayed.",
+    ),
+    Mutant(
+        name="plugins-arc-toggle-snapshot-not-taken",
+        path="internal/ui/plugins.go",
+        old="plugins.ArcTarget(rep.Reg.Key()), value, vetoSnapshot(value, rep.Reg)...) {",
+        new="plugins.ArcTarget(rep.Reg.Key()), value) {",
+        killer="TestAnArcVetoSnapshotsItsMembersAndThePageSaysWhoIsStillVetoed",
+        why="the journal line already names the arc, and the arc's members are one registry read away, "
+        "so recording them again looks redundant — and with no snapshot a veto covers only what the arc "
+        "lists NOW, so a writer of the home lifts it by re-registering the arc without the session.",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="transcript-output-totals-not-reduced-on-delete",
+        path="internal/transcript/archive/sweep.go",
+        old="\tif err := a.forgetOutputs(m.Root); err != nil {\n\t\treturn err\n\t}\n",
+        new="",
+        killer="TestTheOutputTotalsFollowDeletionsAndARestart",
+        why="the totals only bound growth, so an over-count after a deletion reads as erring on the safe "
+        "side — and a plugin whose outputs were all deleted with their sessions stays refused 507 until "
+        "the pod restarts, which is the pressure that brought the per-refusal rescan in (#270).",
+        pkgs=PKGS + ("./internal/transcript/archive/",),
+    ),
+    Mutant(
+        name="worker-507-line-names-one-limit",
+        path="internal/worker/plugin.go",
+        old="\tswitch q.Share {\n\tcase transcript.SharePlugin:",
+        new="\tswitch q.Share {\n\tdefault:",
+        killer="TestThe507LineNamesWhichLimitWasHit",
+        why="every 507 on this route is about a plugin's write, so one line naming the plugin reads as "
+        "enough — and an INSTANCE full of transcripts sends the operator to a plugin that wrote nothing (#270).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
     ),
     # 🔴 THE AGENT READ API (S8 of the transcripts plan): the plan's two rows. ⚠ NEITHER CAN BE A
     # LISTENER-LOCAL "SKIP THE PREDICATE" EDIT, AND THAT IS #261's DESIGN RATHER THAN A GAP: a stored

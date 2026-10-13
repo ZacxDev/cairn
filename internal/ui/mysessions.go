@@ -82,7 +82,15 @@ func (s *Server) handleMySessions(w http.ResponseWriter, r *http.Request, id ide
 		fmt.Fprintf(s.log, "ui: %d stored transcript session(s) have a meta.json that could not be read or parsed; listed for nobody\n",
 			mine.Unreadable)
 	}
-	s.render(w, MySessionsPage(view, pageOf(mine.Sessions, r.URL.Query().Get(QueryPage))))
+	page := pageOf(mine.Sessions, r.URL.Query().Get(QueryPage))
+	// Each row's one-line plugin summary (`outputs.go`) — for the page's rows only. Every row here is
+	// the viewer's own, so the predicate's owner arm admits each and no store walk is made.
+	listed := make([]string, 0, len(page.Sessions))
+	for _, o := range page.Sessions {
+		listed = append(listed, o.Root)
+	}
+	view.Derived = s.derivedFor(id, listed)
+	s.render(w, MySessionsPage(view, page))
 }
 
 // pageOf cuts one page out of the whole sorted list. `raw` is `?page=`: not a positive integer —
@@ -145,6 +153,7 @@ func mySessionRow(o transcript.Owned, label string, v PageView) g.Node {
 			h.A(h.Class("row-link"), h.Href(sessionHref(o.Root)), g.Text(label))),
 		h.Span(h.Class("title"), g.Text(o.Runtime+" · from "+o.Host)),
 		dateAgo(o.UpdatedAt.UTC().Format("2006-01-02"), v.Now),
+		v.Derived.line(o.Root),
 	)
 }
 

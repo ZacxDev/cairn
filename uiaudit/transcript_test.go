@@ -34,6 +34,24 @@ const transcriptProbeJS = `(() => {
 	});
 })()`
 
+// derivedProbeJS reads what S6 put on the same page: the "derived by plugins" section (one block per
+// stored output, each labelled), the ticket edge's templated link, the summary's unbreakable token,
+// the owner's delete form — collapsed until asked — and the session-level plugin toggles.
+const derivedProbeJS = `(() => {
+	const d = document.getElementById('derived');
+	if (!d) return JSON.stringify({section: false});
+	const del = document.getElementById('transcript-delete');
+	return JSON.stringify({
+		section: true, blocks: d.querySelectorAll('[data-output]').length,
+		summaryLabel: [...d.querySelectorAll('.t-label')].some(e =>
+			e.textContent.includes('derived · summary · by summary 0.1.0 · model fixture-model')),
+		ticket: !!d.querySelector('a[href="https://app.clickup.com/t/abc123"]'),
+		tokenWhole: d.textContent.includes('` + "synthetic" + `'.repeat(12)),
+		deleteForm: !!del && !del.open && !!del.querySelector('form[action="/session/delete"]'),
+		toggles: document.querySelectorAll('#plugin-toggles li[data-plugin]').length,
+	});
+})()`
+
 // TestTheSessionPageCarriesItsTranscriptAtEveryWidth is the walk's transcript reading as a GUARD
 // rather than a row in an advisory log (the S4 test plan: the session page with a transcript at all
 // five widths, overflow 0).
@@ -119,6 +137,33 @@ func TestTheSessionPageCarriesItsTranscriptAtEveryWidth(t *testing.T) {
 		if capture.Layout.HorizontalOverflow || got.ScrollWidth > got.InnerWidth {
 			t.Errorf("%s: the session page with its transcript scrolls sideways (document %dpx, viewport %dpx)",
 				vp.Name, got.ScrollWidth, got.InnerWidth)
+		}
+		// 🔴 AND ITS PLUGIN OUTPUTS (S6), FOR THE SAME REASON: a world whose plugin write was refused,
+		// or a page that stopped rendering the section, captures this page with every number green.
+		// The overflow reading above is of the page WITH the section, the delete form and the toggles.
+		if err := chromedp.Run(b.ctx, chromedp.Evaluate(derivedProbeJS, &raw)); err != nil {
+			t.Fatal(err)
+		}
+		var derived struct {
+			Section, SummaryLabel, Ticket, TokenWhole, DeleteForm bool
+			Blocks, Toggles                                       int
+		}
+		if err := json.Unmarshal([]byte(raw), &derived); err != nil {
+			t.Fatalf("%s: %q: %v", vp.Name, raw, err)
+		}
+		t.Logf("%-9s %s: %+v", vp.Name, page, derived)
+		if !derived.Section {
+			t.Fatalf("%s: the session page carries NO derived section — the world's plugin outputs were not stored, or "+
+				"the page stopped rendering them", vp.Name)
+		}
+		if derived.Blocks != 2 || !derived.SummaryLabel || !derived.Ticket || !derived.TokenWhole {
+			t.Errorf("%s: the derived section holds %d block(s), summary label=%v, ticket link=%v, whole token=%v; "+
+				"want the summary and the ticket edge, labelled, linked and whole", vp.Name, derived.Blocks,
+				derived.SummaryLabel, derived.Ticket, derived.TokenWhole)
+		}
+		if !derived.DeleteForm || derived.Toggles != 2 {
+			t.Errorf("%s: the owner's page carries delete form (collapsed)=%v and %d plugin toggle row(s); want the form and 2",
+				vp.Name, derived.DeleteForm, derived.Toggles)
 		}
 	}
 }

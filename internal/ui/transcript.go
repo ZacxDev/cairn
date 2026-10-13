@@ -90,6 +90,10 @@ type TranscriptView struct {
 	// label).
 	Runtime, Host string
 	Reading       transcript.Reading
+	// Derived is the plugin outputs derived from this transcript (`outputs.go`), nil when it has
+	// none. It rides on the transcript's OWN view — the one predicate's verdict — so it can never
+	// render where the transcript does not.
+	Derived *DerivedView
 }
 
 // transcriptFor is the session page's ONE question about a transcript: the section to render, or
@@ -109,7 +113,15 @@ func (s *Server) transcriptFor(id identity.Identity, session string, turn int) *
 		fmt.Fprintf(s.log, "ui: the transcript of a stored session could not be read: %v\n", err)
 		return nil
 	}
-	return &TranscriptView{Session: session, Runtime: view.Meta.Runtime, Host: view.Meta.Host, Reading: reading}
+	// 🔴 THE OUTPUTS COME OFF THE SAME VIEW (S6, clause k): no second question is asked about who may
+	// see them, so there is no second answer to get wrong. Unreadable outputs are logged and not
+	// shown; the transcript still is.
+	derived, err := derivedOf(view, reading)
+	if err != nil {
+		fmt.Fprintf(s.log, "ui: the plugin outputs of a stored session could not be read: %v\n", err)
+		derived = nil
+	}
+	return &TranscriptView{Session: session, Runtime: view.Meta.Runtime, Host: view.Meta.Host, Reading: reading, Derived: derived}
 }
 
 // transcriptView asks the ONE predicate.
