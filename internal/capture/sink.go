@@ -53,6 +53,11 @@ type Sink interface {
 	// Position asks where the instance holds a stream ("" for one never written). It stores
 	// NOTHING: it is how an unacknowledged opencode write is settled before another is sent.
 	Position(u Upload, stream string) (string, error)
-	// Withdraw is decision 16's withdrawal of a shipped prefix (S6).
-	Withdraw(instance, root string) error
+	// Withdraw is decision 16's withdrawal of a shipped prefix (S6): the instance is asked to forget
+	// the session. `deleted` is the instance's own answer — true when this host's (owner, host) held
+	// the root (it is deleted now) or had it deleted there already, so a repeat after a lost
+	// acknowledgement is true again; FALSE is FINAL: the root is not this uploader's there, and the
+	// agent holds the session rather than shipping it anywhere else. An error is a request that did
+	// not get an answer; the agent retries it on the next run.
+	Withdraw(instance, root string) (deleted bool, err error)
 }

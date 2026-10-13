@@ -169,6 +169,13 @@ var routes = map[routeKey]route{
 	// else's session does not see it listed. GET only, so neither cross-site gate gains a case. See
 	// `handleMySessions`.
 	{"GET", MySessionsPath}: {(*Server).handleMySessions, classContent},
+	// 🔴 THE OWNER'S "DELETE TRANSCRIPT" (S6 of the transcripts plan, `outputs.go`): the stored
+	// transcript, and every plugin output and ticket edge derived from it, removed and the deletion
+	// journaled. CLASS 0, for the bell's reason and with more at stake: both cross-site gates reach it
+	// by METHOD, and `TestTheDeleteRowIsBehindBothCrossSiteGates` asserts each by its own message.
+	// Never `content`: it answers a 303 to "My sessions" or ONE refusal. Its own path rather than an
+	// action field on another row, for `UnsharePath`'s reason. See `handleSessionDelete`.
+	{"POST", SessionDeletePath}: {(*Server).handleSessionDelete, 0},
 	// 🔴 THE BELL (S5 of the arcs/presence plan): queue a terminal-bell ring at the pane a session the
 	// VIEWER owns is running in. CLASS 0, ON PURPOSE — it declares nothing, so BOTH cross-site gates
 	// reach it by METHOD (same origin before auth, the CSRF token after), exactly as they reach

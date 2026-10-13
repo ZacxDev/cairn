@@ -371,34 +371,94 @@ func union(a, b []string) []string {
 // 🔴 THE DECISION IS MADE OVER `V` AS IT STANDS *INCLUDING* THE RECORDS ABOUT TO SHIP, so a
 // record that reads a scope on another instance never reaches the first one: the read moves the
 // session BEFORE anything from it ships.
+//
+// 🔴 WHEN THE ANSWER IS NO LONGER THE INSTANCE HOLDING THE PREFIX, THE PREFIX IS WITHDRAWN FIRST
+// (S6, clause m) — [Agent.withdraw] — and nothing is shipped anywhere until that instance has
+// answered that the prefix is gone.
+//
+// 🔴 WHERE A SESSION IS BOUND IS SAVED BEFORE ITS FIRST UPLOAD LEAVES, NOT UP TO TWO SECONDS AFTER
+// (S3b's audit, closed in S6). `Instance` used to be saved with the session's other changes, at
+// most every [Agent.CheckpointEvery]: a run killed inside that window had shipped a prefix under a
+// state that still said "nowhere", so when the routing answer later changed there was no instance
+// to withdraw from and the prefix stayed where the rule says it must not be. Every change of
+// `Instance` or `Held` made here is checkpointed AT ONCE, and a save that fails sends nothing.
 func (a *Agent) route(root string, ss *SessionState, sum *Summary) (ship bool, reset bool, err error) {
 	dec := Decide(ss.V, a.Routing)
-	if dec.Held {
-		if ss.Instance != "" {
-			if err := a.Sink.Withdraw(ss.Instance, root); err != nil {
-				return false, false, err
-			}
-			a.logf("withdraw %s from %s: it is held now", root, ss.Instance)
-			sum.Withdrawn++
-			ss.Instance = ""
+	if ss.Instance != "" && (dec.Held || ss.Instance != dec.Instance) {
+		gone, err := a.withdraw(root, ss, sum)
+		if err != nil || !gone {
+			return false, false, err
 		}
+		reset = !dec.Held
+	}
+	if dec.Held {
 		ss.Held, ss.HeldReason = true, dec.Reason
 		a.logf("held %s: %s", root, dec.Reason)
 		sum.Held++
-		return false, false, nil
+		return false, false, a.saveRouting(root)
 	}
-	if ss.Instance != "" && ss.Instance != dec.Instance {
-		if err := a.Sink.Withdraw(ss.Instance, root); err != nil {
+	if ss.Instance != dec.Instance {
+		ss.Instance = dec.Instance
+		if err := a.saveRouting(root); err != nil {
 			return false, false, err
 		}
-		a.logf("withdraw %s from %s: re-shipping it whole to %s", root, ss.Instance, dec.Instance)
-		sum.Withdrawn++
-		ss.reset()
-		ss.Instance = dec.Instance
-		return true, true, nil
 	}
-	ss.Instance = dec.Instance
-	return true, false, nil
+	return true, reset, nil
+}
+
+// saveRouting checkpoints a routing decision at once. A decision that cannot be saved is not acted
+// on: the session's error for this run, and nothing of it is sent.
+func (a *Agent) saveRouting(root string) error {
+	if err := a.checkpoint(); err != nil {
+		return fmt.Errorf("capture: where %s ships could not be saved, so nothing of it is sent: %w", root, err)
+	}
+	return nil
+}
+
+// withdraw asks the instance holding a session's prefix to forget it (decision 16), and reports
+// whether the prefix is GONE from there — in which case the session's watermarks are reset and it
+// is bound nowhere, saved at once.
+//
+//   - `{"deleted": true}`: the instance held it for this host's (owner, host) and deleted it — its
+//     transcript, plugin outputs and ticket edges — or had already (a repeat after a lost
+//     acknowledgement). Gone.
+//   - `{"deleted": false}` when this agent has an ACKNOWLEDGED upload of the session on record: the
+//     instance holds no such root for this (owner, host) — the token was reissued under another
+//     host label, say. FINAL: the session is HELD on this host, loudly, and is never shipped
+//     anywhere else — the prefix's presence elsewhere is surfaced rather than duplicated.
+//   - `{"deleted": false}` when NO upload of it was ever acknowledged: the session was bound for the
+//     instance and nothing landed (the instance was not taking uploads), so there is nothing to
+//     withdraw. Gone. ⚠ That is read off this agent's own watermarks, which a kill can leave
+//     unsaved — but then the instance DOES hold the prefix and answers `true`, so the two cases
+//     cannot be confused in the direction that matters.
+//   - an error (no answer): not done. The session stays bound where it was and the next run asks
+//     again; a refused token is recorded as the run's fatal error.
+func (a *Agent) withdraw(root string, ss *SessionState, sum *Summary) (gone bool, err error) {
+	from := ss.Instance
+	deleted, err := a.Sink.Withdraw(from, root)
+	if err != nil {
+		var fatal *FatalError
+		if errors.As(err, &fatal) && a.fatal == nil {
+			a.fatal = err
+		}
+		return false, fmt.Errorf("the prefix on %s could not be withdrawn, so nothing more of this session is sent "+
+			"anywhere: %w", from, err)
+	}
+	if !deleted && ss.shipped() {
+		ss.Held, ss.HeldReason = true, "prefix not withdrawn: not held by this owner and host on "+from
+		a.logf("HOLD %s: PREFIX NOT WITHDRAWN: not held by this owner and host on instance %s — the session is held on "+
+			"this host for good and is not shipped anywhere else; what %s holds of it must be removed there by hand",
+			root, from, from)
+		sum.Held++
+		return false, a.saveRouting(root)
+	}
+	if deleted {
+		a.logf("withdraw %s from %s: its routing answer changed", root, from)
+		sum.Withdrawn++
+	}
+	ss.reset()
+	ss.Instance = ""
+	return true, a.saveRouting(root)
 }
 
 type pendingStream struct {

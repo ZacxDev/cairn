@@ -89,6 +89,8 @@ type fakePod struct {
 	extra map[string][]string
 	// refuse answers every write for these sessions 507, as a pod whose quota is full does.
 	refuse map[string]bool
+	// titles is the instance's `-plugin-store-ticket-titles`: false refuses a body carrying a title.
+	titles bool
 }
 
 // of is one session's streams; nil when the pod does not hold it.
@@ -275,6 +277,13 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		}
 		if !slices.Contains(manifestWrites, env.Type) {
 			writeJSON(rw, 403, map[string]string{"refused": "plugin-forbidden"})
+			return
+		}
+		var titled struct {
+			Title string `json:"title"`
+		}
+		if _ = json.Unmarshal(env.Body, &titled); titled.Title != "" && !p.titles {
+			http.Error(rw, "this instance stores ticket ids only", 400)
 			return
 		}
 		if err := podAccepts(env.Type, env.Body); err != nil {

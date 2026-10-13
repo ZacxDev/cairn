@@ -248,3 +248,110 @@ func TestTheClickupPluginAgainstTheRealListener(t *testing.T) {
 		t.Fatalf("run 2 with nothing new: %s (ClickUp saw %d more requests)", out, len(cuMethods)-asked)
 	}
 }
+
+// TestATicketTitleIsStoredOnlyWhereTheInstanceSaysSo — Q8: ClickUp ids only by default; a ticket's
+// TITLE is stored only on an instance started with `-plugin-store-ticket-titles`. Without it a body
+// carrying a title is a 400 that names the flag, decided from the request and the instance's setting
+// alone (the same answer for a session that was never stored, so it is no oracle), and NOTHING is
+// stored; the same body without the title is stored (positive control). With it, the title is stored
+// — bounded, and with no control character.
+func TestATicketTitleIsStoredOnlyWhereTheInstanceSaysSo(t *testing.T) {
+	reg, err := plugins.ParseRegistry([]byte(`{"schema":1,"plugins":[{"schema":1,"name":"clickup","version":"0.1.0",` +
+		`"description":"synthetic","capabilities":["output:read:ticket-edge","output:write:ticket-edge","output:write:ticket-suggestion"],` +
+		`"calls_model":true}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	red, err := redact.New(redact.SelfTestKey(47), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arc, err := archive.Open(archive.Config{Dir: t.TempDir(), Retention: transcripttest.Retention, Quota: 1 << 30,
+		Recheck: red, Now: func() time.Time { return transcripttest.Clock }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcripttest.Append(t, arc, transcripttest.Session{Root: "s-alpha", Owner: string(ownerA.Kind) + ":" + string(ownerA.ID)},
+		"main", []string{`{"type":"user","message":{"role":"user","content":"alpha one"}}`})
+	svc := &plugins.Service{
+		Registry:    reg,
+		Journal:     plugins.Journal{Path: filepath.Join(t.TempDir(), "toggles.jsonl")},
+		Transcripts: transcript.NewStore(arc, writeStoreWithTrailer(t)),
+		Known:       func(s string) bool { return s == "alpha-notes" },
+		Now:         func() time.Time { return transcripttest.Clock.Add(time.Hour) },
+	}
+	if err := svc.Journal.Append(plugins.Record{Plugin: "clickup", Level: plugins.LevelScope, Target: "alpha-notes",
+		Value: plugins.ValueOn, By: plugins.By{Kind: "user", ID: "u-admin"}, At: "2000-01-02T03:04:05Z"}); err != nil {
+		t.Fatal(err)
+	}
+	const token = "fixture-plugin-token-clickup-titles"
+	tokens := filepath.Join(t.TempDir(), "worker-tokens")
+	writeRows(t, tokens, append(standardRows(), NewPluginTokenRow("clickup", token))...)
+	w, _, err := New(Config{TokenFile: tokens, Owner: ownerA, OwnerHeld: func() bool { return true }, Archive: arc,
+		Limiter: netid.NewRateLimiter(1000, time.Minute, time.Minute), Plugins: svc, Log: func(string) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := func(session, typ, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, OutputsPattern, strings.NewReader(
+			`{"plugin":"clickup","plugin_version":"0.1.0","model":"none","session":"`+session+`","input_watermark":{"main":1},"type":"`+typ+`","body":`+body+`}`))
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		w.ServeHTTP(rec, req)
+		return rec
+	}
+	stored := func() []string {
+		t.Helper()
+		outs, err := svc.ReadOutputs(plugins.Entry{Manifest: plugins.Manifest{Name: "clickup",
+			Capabilities: []string{plugins.CapOutputRead(plugins.TypeTicketEdge)}}}, "s-alpha", plugins.TypeTicketEdge)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, o := range outs {
+			got = append(got, string(o.Body))
+		}
+		return got
+	}
+	const bare = `{"system":"clickup","ticket_id":"clk0000a1","signal":"branch-name","locator":{"stream":"main","seq":1}}`
+	const titled = `{"system":"clickup","ticket_id":"clk0000b2","title":"Synthetic ticket two","signal":"branch-name","locator":{"stream":"main","seq":1}}`
+	const suggestion = `{"ticket_id":"clk0000c3","title":"Synthetic ticket three","confidence":0.5,"rationale":"synthetic"}`
+
+	// The default: ids only.
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"a titled edge":                        post("s-alpha", plugins.TypeTicketEdge, titled),
+		"a titled suggestion":                  post("s-alpha", plugins.TypeTicketSuggestion, suggestion),
+		"a titled edge for a session not held": post("s-absent", plugins.TypeTicketEdge, titled),
+	} {
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "-plugin-store-ticket-titles") {
+			t.Errorf("%s on an instance that stores no titles answered %d %q, want a 400 naming the flag", name, rec.Code, rec.Body.String())
+		}
+	}
+	if got := stored(); len(got) != 0 {
+		t.Fatalf("a refused titled write stored %q", got)
+	}
+	if rec := post("s-alpha", plugins.TypeTicketEdge, bare); rec.Code != http.StatusCreated {
+		t.Fatalf("POSITIVE CONTROL: the same edge without a title answered %d %q", rec.Code, rec.Body.String())
+	}
+
+	// The instance opted in.
+	svc.StoreTicketTitles = true
+	if rec := post("s-alpha", plugins.TypeTicketEdge, titled); rec.Code != http.StatusCreated {
+		t.Fatalf("a titled edge on an instance that stores titles answered %d %q", rec.Code, rec.Body.String())
+	}
+	if got := stored(); len(got) != 2 || !strings.Contains(got[1], `"title":"Synthetic ticket two"`) || strings.Contains(got[0], "title") {
+		t.Fatalf("the stored edges are %q, want the bare one and the titled one", got)
+	}
+	for name, body := range map[string]string{
+		"a title over its bound":           `{"system":"clickup","ticket_id":"clk0000b2","title":"` + strings.Repeat("x", 257) + `","signal":"branch-name","locator":{"stream":"main","seq":1}}`,
+		"a title with a control character": `{"system":"clickup","ticket_id":"clk0000b2","title":"a\u0007b","signal":"branch-name","locator":{"stream":"main","seq":1}}`,
+	} {
+		if rec := post("s-alpha", plugins.TypeTicketEdge, body); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s answered %d, want 400", name, rec.Code)
+		}
+	}
+	// With titles allowed the session is looked at again: one never stored is the ONE 403.
+	if rec := post("s-absent", plugins.TypeTicketEdge, titled); rec.Code != http.StatusForbidden {
+		t.Errorf("a titled edge for a session not held answered %d, want the uniform 403", rec.Code)
+	}
+}

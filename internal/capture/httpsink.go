@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -185,31 +186,55 @@ func (e *FatalError) Error() string {
 		"file and that the token's row is still in the instance's -worker-tokens", e.Instance, e.Status)
 }
 
-// ErrWithdrawalUnbuilt is the answer to a withdrawal until S6 builds the route.
-var ErrWithdrawalUnbuilt = errors.New("the withdraw route is S6's and is not built: the shipped prefix stays where it " +
-	"is, and NOTHING more of this session is sent anywhere until it can be withdrawn")
-
 // ValidateEndpoint refuses a URL that is not `https`, or plain `http` to anything but a loopback
 // address: the capture token rides in a header.
 func ValidateEndpoint(raw string) (string, error) {
+	u, _, err := ValidateEndpointAllowing(raw)
+	return u, err
+}
+
+// ValidateEndpointAllowing is [ValidateEndpoint] with the operator's explicit opt-in: plain `http`
+// to a NON-loopback host is accepted when — and only when — the URL's host is EXACTLY one of
+// `plaintextHosts` (`cairn-capture -allow-plaintext-host`). `plaintext` reports that the opt-in is
+// what admitted the URL, so the caller can say so on every run.
+//
+// 🔴 WHAT THE OPT-IN IS FOR, AND WHAT IT GIVES UP. Some deployments reach `cairn-ui`'s host-side
+// listeners over a private ENCRYPTED mesh, addressed as plain `http` — the network is the transport
+// protection, and there is no certificate for TLS to check. Without an opt-in the real worker URL is
+// refused. With it, the capture token and every uploaded byte cross whatever network the named host
+// is reached over IN CLEAR as far as this program can tell: the operator is asserting the path is
+// protected, and nothing here can check that.
+//
+// 🔴 AN EXACT HOST MATCH, NEVER A PATTERN: no suffix, no prefix, no case fold, no port. A suffix
+// match would admit `evil-<host>`; a prefix match `<host>.example`. There is NO default and NO
+// environment spelling — a copied environment must not be able to switch it on.
+//
+// 🔴 TWO THINGS IT DOES NOT TOUCH: a redirect is still never followed ([HTTPSink.httpClient]), so
+// the token goes nowhere but the named host; and a REDACTION-OFF test build still sends to a
+// loopback address only, whatever is allowed.
+func ValidateEndpointAllowing(raw string, plaintextHosts ...string) (endpoint string, plaintext bool, err error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("worker URL %q is not an absolute http(s) URL with no credentials, query or fragment", raw)
+		return "", false, fmt.Errorf("worker URL %q is not an absolute http(s) URL with no credentials, query or fragment", raw)
 	}
 	switch u.Scheme {
 	case "https":
 	case "http":
 		if !loopbackHost(u.Hostname()) {
-			return "", fmt.Errorf("worker URL %q is plain http to a non-loopback host; the capture token would cross the "+
-				"network in clear — use https", raw)
+			if !slices.Contains(plaintextHosts, u.Hostname()) {
+				return "", false, fmt.Errorf("worker URL %q is plain http to a non-loopback host; the capture token would cross the "+
+					"network in clear — use https, or, where the network itself is the protection, name the host exactly "+
+					"with -allow-plaintext-host", raw)
+			}
+			plaintext = true
 		}
 	default:
-		return "", fmt.Errorf("worker URL %q is not http(s)", raw)
+		return "", false, fmt.Errorf("worker URL %q is not http(s)", raw)
 	}
 	if RedactionOff() && !loopbackHost(u.Hostname()) {
-		return "", fmt.Errorf("this is a REDACTION-OFF test build; it sends only to a loopback address, not %q", raw)
+		return "", false, fmt.Errorf("this is a REDACTION-OFF test build; it sends only to a loopback address, not %q", raw)
 	}
-	return strings.TrimRight(u.String(), "/"), nil
+	return strings.TrimRight(u.String(), "/"), plaintext, nil
 }
 
 func loopbackHost(h string) bool {
@@ -297,37 +322,23 @@ type answer struct {
 	MaxBytes int64   `json:"max_bytes"`
 }
 
-// post sends one request and classifies the answer. A status this function returns with a nil
+// post sends one upload and classifies the answer. A status this function returns with a nil
 // error is one the caller branches on (200, 202, 409 stale, 413); every other outcome is an error.
 func (s *HTTPSink) post(instance, path string, body []byte) (int, answer, error) {
-	ep, err := s.endpoint(instance)
-	if err != nil {
-		return 0, answer{}, err
-	}
-	req, err := http.NewRequest(http.MethodPost, ep.URL+path, bytes.NewReader(body))
-	if err != nil {
-		return 0, answer{}, err
-	}
-	req.Header.Set("Authorization", "Bearer "+ep.Token)
-	req.Header.Set("Content-Type", "application/json")
-	s.Requests++
-	resp, err := s.httpClient().Do(req)
-	if err != nil {
-		// The URL is ours; the error never carries the token (it is a header).
-		return 0, answer{}, fmt.Errorf("the upload to instance %s failed: %w", instance, err)
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, answerLimit))
+	status, raw, err := s.exchange(instance, path, body)
 	var a answer
 	_ = json.Unmarshal(raw, &a)
-	switch resp.StatusCode {
+	if err != nil {
+		return status, a, err
+	}
+	switch status {
 	case http.StatusOK, http.StatusAccepted, http.StatusRequestEntityTooLarge:
-		return resp.StatusCode, a, nil
+		return status, a, nil
 	case http.StatusConflict:
 		if a.StoredTo != nil {
-			return resp.StatusCode, a, nil
+			return status, a, nil
 		}
-		return resp.StatusCode, a, ErrNotOwner
+		return status, a, ErrNotOwner
 	case http.StatusUnprocessableEntity:
 		r := &RecheckRefusal{Record: -1}
 		switch {
@@ -338,19 +349,47 @@ func (s *HTTPSink) post(instance, path string, body []byte) (int, answer, error)
 		case a.Record != nil:
 			r.Record = *a.Record
 		}
-		return resp.StatusCode, a, r
+		return status, a, r
+	}
+	return status, a, fmt.Errorf("instance %s answered %d: %s", instance, status, firstLine(raw))
+}
+
+// exchange sends ONE request to an instance and returns its status and (bounded) body. The answers
+// that end the instance's part in this run are classified HERE, for every caller alike: 503 and 507
+// ([HeldError]) and 401/403 ([FatalError]) each stop the instance and come back as that error.
+func (s *HTTPSink) exchange(instance, path string, body []byte) (int, []byte, error) {
+	ep, err := s.endpoint(instance)
+	if err != nil {
+		return 0, nil, err
+	}
+	req, err := http.NewRequest(http.MethodPost, ep.URL+path, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+ep.Token)
+	req.Header.Set("Content-Type", "application/json")
+	s.Requests++
+	resp, err := s.httpClient().Do(req)
+	if err != nil {
+		// The URL is ours; the error never carries the token (it is a header).
+		return 0, nil, fmt.Errorf("the request to instance %s failed: %w", instance, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, answerLimit))
+	switch resp.StatusCode {
 	case http.StatusServiceUnavailable:
 		reason := "503"
-		if a.Refused != "" {
+		var a answer
+		if json.Unmarshal(raw, &a) == nil && a.Refused != "" {
 			reason = a.Refused
 		}
-		return resp.StatusCode, a, s.stop(instance, &HeldError{Instance: instance, Reason: reason})
+		return resp.StatusCode, raw, s.stop(instance, &HeldError{Instance: instance, Reason: reason})
 	case http.StatusInsufficientStorage:
-		return resp.StatusCode, a, s.stop(instance, &HeldError{Instance: instance, Reason: "quota reached (507)"})
+		return resp.StatusCode, raw, s.stop(instance, &HeldError{Instance: instance, Reason: "quota reached (507)"})
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return resp.StatusCode, a, s.stop(instance, &FatalError{Instance: instance, Status: resp.StatusCode})
+		return resp.StatusCode, raw, s.stop(instance, &FatalError{Instance: instance, Status: resp.StatusCode})
 	}
-	return resp.StatusCode, a, fmt.Errorf("instance %s answered %d: %s", instance, resp.StatusCode, firstLine(raw))
+	return resp.StatusCode, raw, nil
 }
 
 func firstLine(b []byte) string {
@@ -857,9 +896,28 @@ func (s *HTTPSink) framedBlob(u Upload, path, from, to string, data []byte) (int
 	}
 }
 
-// Withdraw implements [Sink]. 🔴 THE ROUTE IS S6's: until it exists the withdrawal fails, which
-// the agent treats as "withdrawal not yet done" — the session is not re-shipped anywhere and
-// nothing more of it is sent, every run, logged.
-func (s *HTTPSink) Withdraw(instance, root string) error {
-	return ErrWithdrawalUnbuilt
+// Withdraw implements [Sink]: `POST /capture/v1/sessions/{root}/withdraw` (`internal/worker`'s
+// `WithdrawPattern`), with this instance's capture token and NO body the worker reads — who is
+// asking is the token's own (owner, host).
+//
+// 200 `{"deleted":true}` and 200 `{"deleted":false}` are the instance's two answers and both are
+// returned as they are. Anything else is an error and the withdrawal is not done: a 401/403 stops
+// the instance for the run and fails it loudly ([FatalError]); a 503/507 stops the instance for the
+// run ([HeldError]); a 404 is an instance older than the route; a 5xx or a network error is this
+// run's failure. In every such case the agent keeps the session exactly where it was and asks
+// again on the next run — a 200 that carries no `deleted` at all is refused the same way rather
+// than read as either answer.
+func (s *HTTPSink) Withdraw(instance, root string) (bool, error) {
+	status, raw, err := s.exchange(instance, "/capture/v1/sessions/"+url.PathEscape(root)+"/withdraw", []byte("{}"))
+	if err != nil {
+		return false, err
+	}
+	var ans struct {
+		Deleted *bool `json:"deleted"`
+	}
+	if status != http.StatusOK || json.Unmarshal(raw, &ans) != nil || ans.Deleted == nil {
+		return false, fmt.Errorf("instance %s answered %d to a withdrawal without saying whether it deleted anything",
+			instance, status)
+	}
+	return *ans.Deleted, nil
 }

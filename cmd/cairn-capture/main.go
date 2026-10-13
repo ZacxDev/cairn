@@ -27,7 +27,12 @@
 //	cairn-capture --self-test [-seed N]
 //	cairn-capture --dry-run [-claude-root DIR] [-opencode-project DIR]... [-ledger-dir DIR] [-denylist FILE]
 //	cairn-capture --run -host LABEL -worker [ALIAS=]URL -capture-token-file [ALIAS=]FILE [-state FILE]
-//	              [-host-key FILE] [the --dry-run reading flags]
+//	              [-host-key FILE] [-allow-plaintext-host [ALIAS=]HOST]... [the --dry-run reading flags]
+//
+// 🔴 `-allow-plaintext-host` IS AN EXPLICIT OPERATOR OPT-IN, FLAG ONLY — no default, no environment
+// spelling. A worker URL must be `https`, or `http` to a loopback address; this names ONE instance's
+// worker HOST, exactly, for which plain `http` is accepted because the network it is reached over (a
+// private encrypted mesh) is itself the transport protection. The run says so on stderr every time.
 package main
 
 import (
@@ -38,6 +43,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -75,6 +81,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		maxRequest = fs.Int("max-request-bytes", capture.DefaultMaxRequest, "--run: the largest request body; a larger record is sent as frames")
 		workers    multi
 		tokenFiles multi
+		plaintext  multi
 		claudeRoot = fs.String("claude-root", filepath.Join(home, ".claude", "projects"), "the Claude Code projects root")
 		ledgerDir  = fs.String("ledger-dir", "", "the client read-ledger directory (default $XDG_STATE_HOME/cairn/read-ledger)")
 		denylist   = fs.String("denylist", "", "a 0600 per-host denylist file (optional)")
@@ -84,6 +91,8 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	fs.Var(&ocDirs, "opencode-project", "an opencode project directory to enumerate (repeatable; `session list` lists ONE project's roots)")
 	fs.Var(&workers, "worker", "--run: [ALIAS=]URL of an instance's worker listener (repeatable; no alias is the default instance)")
 	fs.Var(&tokenFiles, "capture-token-file", "--run: [ALIAS=]FILE holding that instance's capture token, mode 0600 (repeatable)")
+	fs.Var(&plaintext, "allow-plaintext-host", "--run: [ALIAS=]HOST — accept plain http for that instance's -worker when its URL's "+
+		"host is EXACTLY this one, because the network it is reached over is the transport protection (repeatable; no default)")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -113,7 +122,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	}
 	if *runOnce {
 		return runPass(runConfig{host: *host, state: *statePath, hostKey: *hostKey, maxRequest: *maxRequest,
-			workers: workers, tokenFiles: tokenFiles, stateHome: stateHome, claudeRoot: *claudeRoot,
+			workers: workers, tokenFiles: tokenFiles, plaintext: plaintext, stateHome: stateHome, claudeRoot: *claudeRoot,
 			ocDirs: ocDirs, ocBin: *ocBin, ledgerDir: *ledgerDir, denylist: *denylist}, stderr, getenv)
 	}
 	// 🔴 --dry-run WRITES NOTHING, THE HOST KEY INCLUDED. It prints counts by rule, never a tag, so
@@ -161,7 +170,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 type runConfig struct {
 	host, state, hostKey, stateHome string
 	maxRequest                      int
-	workers, tokenFiles             []string
+	workers, tokenFiles, plaintext  []string
 	claudeRoot, ocBin, ledgerDir    string
 	denylist                        string
 	ocDirs                          []string
@@ -178,28 +187,54 @@ func aliased(v string) (string, string) {
 // endpoints pairs every -worker with its -capture-token-file, by alias. A URL with no token file,
 // a token file with no URL, an alias named twice, or an alias the routing does not configure is a
 // usage error: each is an instance the run would silently never reach.
-func endpoints(c runConfig, routing client.Routing) (map[string]capture.Endpoint, error) {
-	urls, files := map[string]string{}, map[string]string{}
+//
+// 🔴 `-allow-plaintext-host` IS PER INSTANCE AND MUST BE USED. Each names one alias's worker host;
+// only that alias's URL is checked against it, and an opt-in that admitted nothing — an alias with
+// no `-worker`, a host that is not that worker's, a worker that is `https` or loopback anyway — is a
+// usage error: an opt-in left lying in a unit file is one a later URL change silently starts using.
+// `plain` is every instance whose URL the opt-in admitted, for the run's warning line.
+func endpoints(c runConfig, routing client.Routing) (eps map[string]capture.Endpoint, plain map[string]string, err error) {
+	urls, files, allowed := map[string]string{}, map[string]string{}, map[string][]string{}
+	for _, a := range c.plaintext {
+		alias, host := aliased(a)
+		if host == "" || strings.ContainsAny(host, "/@ \t") {
+			return nil, nil, fmt.Errorf("-allow-plaintext-host %q is not [ALIAS=]HOST — a bare host name or address, no scheme, port or path", a)
+		}
+		allowed[alias] = append(allowed[alias], host)
+	}
+	plain = map[string]string{}
 	for _, w := range c.workers {
 		alias, raw := aliased(w)
 		if _, dup := urls[alias]; dup {
-			return nil, fmt.Errorf("-worker names instance %s twice", alias)
+			return nil, nil, fmt.Errorf("-worker names instance %s twice", alias)
 		}
-		u, err := capture.ValidateEndpoint(raw)
+		u, usedPlaintext, err := capture.ValidateEndpointAllowing(raw, allowed[alias]...)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		if len(allowed[alias]) > 0 && !usedPlaintext {
+			return nil, nil, fmt.Errorf("-allow-plaintext-host is set for instance %s, whose -worker does not need it (it is https, "+
+				"or a loopback address); remove the opt-in", alias)
+		}
+		if usedPlaintext {
+			plain[alias] = u
 		}
 		urls[alias] = u
+	}
+	for alias := range allowed {
+		if _, ok := urls[alias]; !ok {
+			return nil, nil, fmt.Errorf("-allow-plaintext-host names instance %s, which has no -worker %s=<url>", alias, alias)
+		}
 	}
 	for _, f := range c.tokenFiles {
 		alias, path := aliased(f)
 		if _, dup := files[alias]; dup {
-			return nil, fmt.Errorf("-capture-token-file names instance %s twice", alias)
+			return nil, nil, fmt.Errorf("-capture-token-file names instance %s twice", alias)
 		}
 		files[alias] = path
 	}
 	if len(urls) == 0 {
-		return nil, errors.New("--run needs at least one -worker [ALIAS=]URL")
+		return nil, nil, errors.New("--run needs at least one -worker [ALIAS=]URL")
 	}
 	known := map[string]bool{}
 	for _, a := range routing.Aliases() {
@@ -208,25 +243,34 @@ func endpoints(c runConfig, routing client.Routing) (map[string]capture.Endpoint
 	out := map[string]capture.Endpoint{}
 	for alias, u := range urls {
 		if !known[alias] {
-			return nil, fmt.Errorf("-worker names instance %s, which this host's routing does not configure (%s)",
+			return nil, nil, fmt.Errorf("-worker names instance %s, which this host's routing does not configure (%s)",
 				alias, strings.Join(routing.Aliases(), ", "))
 		}
 		path, ok := files[alias]
 		if !ok {
-			return nil, fmt.Errorf("-worker %s has no -capture-token-file %s=<file>", alias, alias)
+			return nil, nil, fmt.Errorf("-worker %s has no -capture-token-file %s=<file>", alias, alias)
 		}
 		tok, err := capture.ReadTokenFile(path)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out[alias] = capture.Endpoint{URL: u, Token: tok}
 	}
 	for alias := range files {
 		if _, ok := urls[alias]; !ok {
-			return nil, fmt.Errorf("-capture-token-file %s has no -worker %s=<url>", alias, alias)
+			return nil, nil, fmt.Errorf("-capture-token-file %s has no -worker %s=<url>", alias, alias)
 		}
 	}
-	return out, nil
+	return out, plain, nil
+}
+
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // runPass is `--run`: ONE capture pass. Exit 0 when the pass completed — a session that was held,
@@ -250,10 +294,16 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 	if err != nil {
 		return fail(err)
 	}
-	eps, err := endpoints(c, routing)
+	eps, plain, err := endpoints(c, routing)
 	if err != nil {
 		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
 		return exitUsage
+	}
+	// 🔴 SAID ON EVERY RUN, per instance: the opt-in is a standing statement about a network, and a
+	// line in the journal each minute is what keeps it from being forgotten.
+	for _, alias := range sortedKeys(plain) {
+		fmt.Fprintf(stderr, "cairn-capture: ⚠ instance %s: the capture token and every upload go to %s over PLAIN HTTP "+
+			"(-allow-plaintext-host); the network between is the only transport protection\n", alias, plain[alias])
 	}
 	dir := filepath.Join(c.stateHome, "cairn", "capture")
 	if c.state == "" || c.hostKey == "" {

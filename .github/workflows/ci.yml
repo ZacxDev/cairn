@@ -1251,7 +1251,7 @@ jobs:
           fi
 
       # 🔴 THE TRANSCRIPTS CLOSING CHECK (closing-condition part 2 of `claudedocs/plan-cairn-plugins.md`),
-      # clauses (a), (b), (c), (h), — since S4 — (d), (e), (f), (g), — since S5 — (i), (j), and — since S11 — (n): `cairn-ui` booted with its worker
+      # clauses (a), (b), (c), (h), — since S4 — (d), (e), (f), (g), — since S5 — (i), (j), — since S11 — (n), and — since S6 — (k), (l), (m): `cairn-ui` booted with its worker
       # listener ARMED over a scratch transcript directory, and the REAL capture agent's `--run` driven
       # through a recording relay — a lost acknowledgement resumed with every record stored once (a),
       # 0 of the run's planted secrets in the agent's reassembled outgoing bodies with the
@@ -1273,6 +1273,16 @@ jobs:
       # read whose command line names no program and whose output carries no header — and the real
       # agent uploads the ledger record that call wrote: the pod's own fold holds the scope, and the
       # reader of the written scope alone is refused.
+      # Since S6 the output clauses too: the summary plugin writes a summary of three fixture sessions
+      # through its real route, and the SET of viewers whose page shows each output equals the set
+      # whose page shows its transcript, with the reader of one written scope getting the admitted
+      # session's derived line on the sessions list and neither refused one's (k); the owner's "delete
+      # transcript" POST removes the session's directory — its transcript, summary and ticket edge —
+      # journals the fact, and the plugin's next read is its ONE 403 body, while a reader who can see
+      # another session's transcript and does not own it deletes nothing (l); and a session whose
+      # prefix the real agent shipped and which then reads the other instance's scope has that prefix
+      # WITHDRAWN on the next run — one request naming it, no record from the read onward, the
+      # instance's directory gone, the repeat answered `{"deleted":true}` (m).
       # Beside the presence check for its reason: it needs the Go toolchain, and it exits 2 rather
       # than skipping without one.
       #
@@ -1282,25 +1292,27 @@ jobs:
       # (d) the predicate not asked, (e) the written set computed over the viewer's own scopes,
       # (f) the read half dropped, (g) the empty set vacuously readable, and "My sessions" listed by
       # visibility instead of ownership, (i) a missing scope toggle defaulting ON, (j) the plugin's
-      # transcript read ignoring the toggle, (n) the pod not folding the uploaded ledger
-      # — and refuses (exit 2) unless EACH turns its own named assertion RED. Thirteen sabotages over
-      # the eleven clauses wired now; the plan's 14 is the count at S10.
+      # transcript read ignoring the toggle, (n) the pod not folding the uploaded ledger, (k) outputs
+      # rendered without the predicate, (l) a delete that keeps the outputs, (m) the agent's withdrawal
+      # skipped
+      # — and refuses (exit 2) unless EACH turns its own named assertion RED. Sixteen sabotages over
+      # all fourteen clauses (two of them have two legs).
       - name: the transcripts end-to-end check, after proving every wired clause can go RED
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}
         run: |
           set -o pipefail
           tests/plugins/e2e.sh --self-test | tee /tmp/plugins-e2e-self.txt
-          grep -qx 'SUMMARY e2e-self-test: sabotaged=13 caught=13' /tmp/plugins-e2e-self.txt
+          grep -qx 'SUMMARY e2e-self-test: sabotaged=16 caught=16' /tmp/plugins-e2e-self.txt
           tests/plugins/e2e.sh > /tmp/plugins-e2e.txt 2>&1 || { cat /tmp/plugins-e2e.txt; exit 1; }
           cat /tmp/plugins-e2e.txt
           passes=$(grep -c '^PASS ' /tmp/plugins-e2e.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/plugins-e2e.txt || true)
           echo "plugins e2e: passes=$passes fails=$fails"
-          # 19 assertions: 11 measured when the script landed (S3b), 4 more with S4's clauses (d)–(g),
+          # 22 assertions: 11 measured when the script landed (S3b), 4 more with S4's clauses (d)–(g),
           # 2 more with S5's (i) and (j), 1 more with S11's clause (n), 1 more with S7's listing half of
-          # (g); `EXPECTED` in the script moves with it.
-          if [ "$passes" -lt 19 ] || [ "$fails" -ne 0 ]; then
-            echo "REFUSING: $passes PASS / $fails FAIL lines, and 19 / 0 were measured"
+          # (g), 3 more with S6's (k), (l) and (m); `EXPECTED` in the script moves with it.
+          if [ "$passes" -lt 22 ] || [ "$fails" -ne 0 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL lines, and 22 / 0 were measured"
             exit 1
           fi
 

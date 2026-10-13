@@ -102,7 +102,7 @@ func newPluginRigQuota(t *testing.T, quota int64) *pluginRig {
 		Known:       func(s string) bool { return s == "alpha-notes" || s == "beta-notes" },
 		Now:         func() time.Time { return transcripttest.Clock.Add(time.Hour) },
 	}
-	g := &rig{t: t, arc: arc, tokens: filepath.Join(t.TempDir(), "worker-tokens")}
+	g := &rig{t: t, arc: arc, dir: dir, tokens: filepath.Join(t.TempDir(), "worker-tokens")}
 	writeRows(t, g.tokens, append(standardRows(), NewPluginTokenRow("summary", summaryToken), NewPluginTokenRow("lister", listerToken))...)
 	w, _, err := New(Config{TokenFile: g.tokens, Owner: ownerA, OwnerHeld: func() bool { return true }, Archive: arc,
 		Limiter: netid.NewRateLimiter(1000, time.Minute, time.Minute), Plugins: svc,
@@ -413,5 +413,134 @@ func TestAPluginCannotFillTheCaptureQuota(t *testing.T) {
 	}
 	if used := p.arc.Used(); used > quota/2 {
 		t.Fatalf("the archive holds %d of %d bytes after the plugin was stopped — capture's room is gone", used, quota)
+	}
+}
+
+// TestThe507LineNamesWhichLimitWasHit — #270's audit, closed in S6. A plugin write is refused 507 for
+// THREE different reasons, and the operator's one line must say which: the plugin's OWN share (1/20
+// of the quota), ALL plugins' share together (1/5), or the INSTANCE quota — full of transcripts, with
+// the plugin's outputs nowhere near their share. RED before the fix: all three logged "plugin
+// summary's outputs reached their share of the transcript quota", so the third sent the operator to
+// a plugin that had written almost nothing.
+func TestThe507LineNamesWhichLimitWasHit(t *testing.T) {
+	const quota = 400 << 10                                // one plugin's share is 20 KiB, all plugins' 80 KiB
+	text := strings.Repeat("synthetic summary text ", 400) // ~9 KiB a line
+	body := `{"plugin":"summary","plugin_version":"0.1.0","model":"fake","session":"s-alpha","input_watermark":{"main":3},` +
+		`"type":"summary","body":{"text":"` + text + `"}}`
+	refusedLine := func(t *testing.T, p *pluginRig) string {
+		t.Helper()
+		rec := p.do(http.MethodPost, OutputsPattern, summaryToken, body)
+		if rec.Code != http.StatusInsufficientStorage {
+			t.Fatalf("the write answered %d %q, want 507", rec.Code, rec.Body.String())
+		}
+		var lines []string
+		for _, l := range p.log {
+			if strings.Contains(l, "507") {
+				lines = append(lines, l)
+			}
+		}
+		if len(lines) != 1 {
+			t.Fatalf("the refusal was logged %d times, want once: %v", len(lines), p.log)
+		}
+		return lines[0]
+	}
+	t.Run("the plugin's own share", func(t *testing.T) {
+		p := newPluginRigQuota(t, quota)
+		p.toggle(plugins.LevelScope, "alpha-notes", plugins.ValueOn)
+		for i := 0; i < 2; i++ {
+			if rec := p.do(http.MethodPost, OutputsPattern, summaryToken, body); rec.Code != http.StatusCreated {
+				t.Fatalf("control: write %d answered %d", i, rec.Code)
+			}
+		}
+		if line := refusedLine(t, p); !strings.Contains(line, "plugin summary's OWN outputs reached that plugin's share") ||
+			!strings.Contains(line, fmt.Sprintf("(%d bytes)", quota/20)) {
+			t.Fatalf("the line does not name the plugin's own share:\n%s", line)
+		}
+	})
+	t.Run("all plugins' share together", func(t *testing.T) {
+		p := newPluginRigQuota(t, quota)
+		p.toggle(plugins.LevelScope, "alpha-notes", plugins.ValueOn)
+		// Four OTHER plugins' outputs, each under its own 20 KiB share, 76 KiB together: `summary` has
+		// written nothing, and its 9 KiB would cross the 80 KiB all-plugins share.
+		line := []byte(`{"plugin":"x","body":"` + strings.Repeat("y", 19<<10) + `"}`)
+		for _, other := range []string{"other-1", "other-2", "other-3", "other-4"} {
+			if err := p.rig.arc.AppendOutput("s-both", other, line); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := refusedLine(t, p); !strings.Contains(got, "ALL plugins' outputs together reached their share") ||
+			!strings.Contains(got, fmt.Sprintf("(%d bytes)", quota/5)) {
+			t.Fatalf("the line does not name all plugins' share:\n%s", got)
+		}
+	})
+	t.Run("the instance quota", func(t *testing.T) {
+		p := newPluginRigQuota(t, quota)
+		p.toggle(plugins.LevelScope, "alpha-notes", plugins.ValueOn)
+		// A BINARY blob (stored as it is, never scanned) that leaves the instance 4 KiB: the plugin has
+		// written nothing, and it is the INSTANCE that is full.
+		fill := make([]byte, quota-p.rig.arc.Used()-(4<<10))
+		for i := range fill {
+			fill[i] = byte(i * 7)
+		}
+		if _, err := p.rig.arc.PutBlob(archive.Uploader{Owner: string(ownerA.Kind) + ":" + string(ownerA.ID), Host: transcripttest.Host},
+			archive.Upload{Root: "s-both", Runtime: "claude", From: "", To: "v1"}, "fill.bin", fill); err != nil {
+			t.Fatal(err)
+		}
+		if got := refusedLine(t, p); !strings.Contains(got, "the INSTANCE transcript quota") ||
+			!strings.Contains(got, "not by plugin summary's outputs") || !strings.Contains(got, fmt.Sprintf("(%d bytes)", quota)) {
+			t.Fatalf("the line does not name the instance quota:\n%s", got)
+		}
+	})
+}
+
+// TestAnArcHomeFoundOnlyByTheWalkDoesNotChangeTheAnswer — #270's audit, closed in S6. `s-mixed`
+// DECLARED `beta-notes` (the stored half of its visibility set) and WROTE `alpha-notes` (a trailer
+// only the store walk finds), so its stored set is not its whole set. Both scopes are `allowed` and
+// an arc homed in `alpha-notes`, covering the session, is ON — so the plugin is ON for it.
+//
+// RED before the fix: over the STORED half the arc's home is not in the set, the fold says OFF, and
+// the walk was skipped on the strength of a "monotone" claim that is false — the session was
+// answered OFF, and flipped ON only after an unrelated VIEWER's page view happened to record
+// `alpha-notes` in its meta. The answer must not depend on who has looked.
+func TestAnArcHomeFoundOnlyByTheWalkDoesNotChangeTheAnswer(t *testing.T) {
+	p := newPluginRig(t)
+	owner := string(ownerA.Kind) + ":" + string(ownerA.ID)
+	transcripttest.Append(t, p.rig.arc, transcripttest.Session{Root: "s-mixed", Owner: owner, Declared: []string{"beta-notes"}}, "main",
+		[]string{`{"type":"user","message":{"role":"user","content":"mixed one"}}`})
+	extra := "---\nservice: widget\nscope: alpha-notes\n---\n\n## What it is\nsynthetic.\n\n## Nuance / work-history\n\n" +
+		"- 2000-01-05: mixed noted the widget [cairn: fixture-bot/s-mixed]\n"
+	if err := os.WriteFile(filepath.Join(p.store, "alpha-notes", "widget.md"), []byte(extra), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p.toggle(plugins.LevelScope, "alpha-notes", plugins.ValueAllowed)
+	p.toggle(plugins.LevelScope, "beta-notes", plugins.ValueAllowed)
+	if err := p.journal.Append(plugins.Record{Plugin: "summary", Level: plugins.LevelArc, Target: "alpha-notes/arc-one",
+		Value: plugins.ValueOn, Members: []string{"s-mixed"}, By: plugins.By{Kind: "user", ID: "u-admin"}, At: "2000-01-02T03:04:05Z"}); err != nil {
+		t.Fatal(err)
+	}
+	// CONTROL: the stored half really is narrower than the whole set — nothing has walked yet.
+	if m, err := p.rig.arc.ReadMeta("s-mixed"); err != nil || len(m.Written) != 0 || !slices.Equal(m.Declared, []string{"beta-notes"}) {
+		t.Fatalf("control: s-mixed's stored set is declared=%v written=%v (%v), want beta-notes declared and nothing walked", m.Declared, m.Written, err)
+	}
+	first := p.pending(summaryToken)
+	read := p.do(http.MethodGet, TranscriptPattern+"?session=s-mixed", summaryToken, "")
+	if !slices.Contains(first, "s-mixed") || read.Code != http.StatusOK {
+		t.Fatalf("the FIRST answers, before anything recorded the walked scope: pending %v, transcript %d — want s-mixed pending and 200",
+			first, read.Code)
+	}
+	// …and they are the answers after the walk's find is in the meta, too.
+	if m, _ := p.rig.arc.ReadMeta("s-mixed"); !slices.Equal(m.Written, []string{"alpha-notes"}) {
+		t.Fatalf("the walk did not record alpha-notes: %v", m.Written)
+	}
+	if again := p.pending(summaryToken); !slices.Equal(again, first) {
+		t.Fatalf("the pending list changed once the walked scope was recorded: %v → %v", first, again)
+	}
+	// NEGATIVE CONTROL: without the arc the same session is OFF (both scopes are only `allowed`).
+	if err := p.journal.Append(plugins.Record{Plugin: "summary", Level: plugins.LevelArc, Target: "alpha-notes/arc-one",
+		Value: plugins.ValueUnset, By: plugins.By{Kind: "user", ID: "u-admin"}, At: "2000-01-02T03:04:06Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.pending(summaryToken); slices.Contains(got, "s-mixed") {
+		t.Fatalf("with the arc unset the session is still pending: %v", got)
 	}
 }

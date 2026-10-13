@@ -137,6 +137,15 @@ type PageView struct {
 	// Plugins is the plugin toggle block on the scope, arc and session pages (`plugins.go`), nil when
 	// no registry is configured — and nil on a session page for anybody but the transcript's owner.
 	Plugins *PluginToggles
+	// OwnsTranscript is set on the session page when this viewer holds the OWNER ARM of the session's
+	// stored transcript (`transcript.Store.OwnedBy`): it renders the "delete transcript" form
+	// (`outputs.go`), and nothing for anybody else.
+	OwnsTranscript bool
+	// Derived is each listed session's one-line plugin summary, for THIS request's viewer
+	// ([Server.derivedFor]) — nil when this deployment stores no transcript. Set by the pages that
+	// list sessions; read only through its `line` method, so a session whose transcript the viewer
+	// cannot see renders no node. See `outputs.go`.
+	Derived derivedLines
 	// Panes is the presence predicate bound to THIS request's viewer ([Server.panesFor]), nil when
 	// presence is off. Set by the four pages that list a session; read only through its methods, so
 	// a viewer the predicate shows nothing renders no node at all. See `presence.go`.
@@ -247,7 +256,7 @@ func ScopePage(v PageView) g.Node {
 	var body g.Node
 	switch {
 	case v.Tab == TabSessions && v.Touched != nil:
-		body = sessionsPanel(*v.Touched, v.Scopes, v.Now, v.Panes)
+		body = sessionsPanel(*v.Touched, v.Scopes, v.Now, v.Panes, v.Derived)
 	case v.Tab == TabArcs && v.Touched != nil:
 		body = arcsPanel(*v.Touched, v.Scopes, v.Now)
 	case v.Tab == TabAgent && v.Agent != nil:

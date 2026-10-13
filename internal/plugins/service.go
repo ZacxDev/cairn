@@ -4,10 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
-	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/transcript"
 )
 
@@ -24,10 +22,11 @@ type Service struct {
 	// Transcripts is the transcript store's read side; nil means none — every session is "not
 	// stored" and every plugin read is refused.
 	Transcripts *transcript.Store
-	// Arcs reads the arc registry; nil means none is configured, and no arc lists any session.
-	Arcs func() (arcs.Snapshot, error)
 	// Known reports whether the authority still holds a scope of that STORE name ([Effective]).
 	Known func(scope string) bool
+	// StoreTicketTitles is the instance's `-plugin-store-ticket-titles` (Q8): whether a ticket edge or
+	// suggestion may carry the ticket's TITLE. False — the default — stores ids only.
+	StoreTicketTitles bool
 	// Now is the pod clock.
 	Now func() time.Time
 	// Log receives operator lines (a session left out of a decision); nil discards them.
@@ -47,72 +46,51 @@ func (s *Service) now() time.Time {
 	return s.Now()
 }
 
-// arcSnapshot reads the arc registry once per decision.
-func (s *Service) arcSnapshot() (arcs.Snapshot, error) {
-	if s.Arcs == nil {
-		return arcs.Snapshot{}, nil
-	}
-	return s.Arcs()
-}
-
-// ArcsListing is every registered arc naming one of `ids` as a member, sorted.
-func ArcsListing(snap arcs.Snapshot, ids []string) []arcs.Key {
-	var out []arcs.Key
-	for k, reg := range snap.Latest {
-		if slices.ContainsFunc(reg.Members, func(m arcs.Member) bool { return slices.Contains(ids, m.Session) }) {
-			out = append(out, k)
-		}
-	}
-	slices.SortFunc(out, func(a, b arcs.Key) int {
-		if a.Home != b.Home {
-			if a.Home < b.Home {
-				return -1
-			}
-			return 1
-		}
-		if a.Slug < b.Slug {
-			return -1
-		} else if a.Slug > b.Slug {
-			return 1
-		}
-		return 0
-	})
-	return out
-}
-
-// decider binds ONE journal read and ONE arc read into the `on` predicate [transcript.Store.ForPlugin]
-// asks.
-func (s *Service) decider(plugin string) (func(*transcript.Meta, []string) bool, error) {
+// decider binds ONE journal read into the gate [transcript.Store.ForPlugin] asks.
+func (s *Service) decider(plugin string) (transcript.Gate, error) {
 	st, err := s.Journal.Read()
 	if err != nil {
-		return nil, err
+		return transcript.Gate{}, err
 	}
-	return s.deciderOver(st, plugin)
+	return s.deciderOver(st, plugin), nil
 }
 
-func (s *Service) deciderOver(st State, plugin string) (func(*transcript.Meta, []string) bool, error) {
-	snap, err := s.arcSnapshot()
-	if err != nil {
-		return nil, err
-	}
+// deciderOver is the gate over one folded journal.
+//
+// 🔴 IT READS NO ARC REGISTRY. Which arcs speak for a session is the member snapshot each arc
+// toggle carries ([State.ArcsCovering]); the live registration — whatever a writer of the home last
+// `PUT` — is not an input to any plugin decision.
+func (s *Service) deciderOver(st State, plugin string) transcript.Gate {
 	known := s.Known
 	if known == nil {
 		known = func(string) bool { return false }
 	}
-	return func(meta *transcript.Meta, v []string) bool {
+	subject := func(meta *transcript.Meta, v []string) Subject {
 		ids := append([]string{meta.Root}, meta.Children...)
-		return Effective(st, plugin, Subject{Root: meta.Root, V: v, Arcs: ArcsListing(snap, ids)}, known)
-	}, nil
+		return Subject{Root: meta.Root, V: v, Arcs: st.ArcsCovering(plugin, ids)}
+	}
+	return transcript.Gate{
+		On:      func(meta *transcript.Meta, v []string) bool { return Effective(st, plugin, subject(meta, v), known) },
+		Settled: func(meta *transcript.Meta, v []string) bool { return Settled(st, plugin, subject(meta, v), known) },
+	}
 }
 
 // Open returns the session's [transcript.View] when `plugin` is ON for it, and [ErrForbidden]
 // otherwise — whatever the reason.
+//
+// 🔴 A DELETED SESSION IS THAT SAME REFUSAL, AND DELIBERATELY NOT A 404 (S6, clause l). The plan's
+// clause (l) reads "the plugin's next transcript read is 404"; as built it is the ONE 403 body, the
+// bytes a never-stored id and an OFF session get. A distinct 404 for "this id WAS stored and has
+// been deleted" would be the existence oracle T10 closes — any plugin token could ask which session
+// ids ever held a transcript, including sessions it was never ON for — and it buys a plugin
+// nothing: the deleted session is gone from its pending list, and every refusal already means "stop
+// working on this session". The plan's clause is amended to say so.
 func (s *Service) Open(plugin, root string) (*transcript.View, error) {
-	on, err := s.decider(plugin)
+	gate, err := s.decider(plugin)
 	if err != nil {
 		return nil, err
 	}
-	v, err := s.Transcripts.ForPlugin(root, on)
+	v, err := s.Transcripts.ForPlugin(root, gate)
 	if err != nil {
 		return nil, err
 	}
@@ -157,11 +135,7 @@ func (s *Service) Pending(e Entry, limit int) ([]PendingItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	on, err := s.deciderOver(st, e.Name)
-	if err != nil {
-		return nil, err
-	}
-	views, err := s.Transcripts.ForPlugins(roots, on, func(root string, err error) {
+	views, err := s.Transcripts.ForPlugins(roots, s.deciderOver(st, e.Name), func(root string, err error) {
 		s.log(fmt.Sprintf("plugins: session %s is left out of the pending query: %v", root, err))
 	})
 	if err != nil {
@@ -199,6 +173,13 @@ func (s *Service) WriteOutput(e Entry, env Envelope) (Output, error) {
 	if !e.Writes(env.Type) {
 		return Output{}, ErrForbidden
 	}
+	// 🔴 IDS ONLY UNLESS THE INSTANCE SAID OTHERWISE (Q8) — and decided BEFORE the session is looked at,
+	// from the body and the instance's setting alone, so the refusal says nothing about any session.
+	if !s.StoreTicketTitles {
+		if body, err := DecodeBody(env.Type, env.Body); err == nil && body.Title() != "" {
+			return Output{}, ErrTitleNotStored
+		}
+	}
 	v, err := s.Open(e.Name, env.Session)
 	if err != nil {
 		return Output{}, err
@@ -225,6 +206,11 @@ func (s *Service) WriteOutput(e Entry, env Envelope) (Output, error) {
 	}
 	return out, nil
 }
+
+// ErrTitleNotStored is a ticket edge or suggestion carrying a TITLE on an instance that stores ids
+// only (the default, Q8).
+var ErrTitleNotStored = errors.New("this instance stores ticket ids only: a body carrying a ticket `title` is refused " +
+	"unless the instance is started with -plugin-store-ticket-titles")
 
 // WatermarkError is an envelope whose watermark names a stream the session does not hold, or a
 // position past what is stored. Only ever returned AFTER the toggle check admitted the plugin, so it

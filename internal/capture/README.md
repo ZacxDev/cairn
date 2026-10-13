@@ -97,11 +97,67 @@ AccuracySec=1s
 
 A run takes `<state>.lock` (`flock`); an overlapping run exits 0 having done nothing. The state is
 saved only when it CHANGED: at once where a crash must not lose a decision (an opencode write's
-plan, a re-check refusal), after a changed session at most every two seconds, and when the run
-ends with unsaved changes — an idle run writes nothing. A write that fails part-way commits the
+plan, a re-check refusal, and — since S6 — WHERE a session is bound: its instance, or its hold,
+saved before the first upload leaves), after a changed session at most every two seconds, and when
+the run ends with unsaved changes — an idle run writes nothing. A write that fails part-way commits the
 prefix that was acknowledged. The token file may be a symlink (a secret manager's); the 0600 check is on its target.
 
-## Not built here
+## Plain `http` to a named host — `-allow-plaintext-host` (an operator opt-in)
 
-The withdraw route (S6): until it exists `Withdraw` fails, so a session whose routing moved or
-turned held keeps its shipped prefix where it is and NOTHING more of it is sent, logged every run.
+A worker URL must be `https`, or `http` to a loopback address: the capture token rides in a header
+and the bodies are transcripts. Some deployments reach `cairn-ui`'s host-side listeners over a
+PRIVATE ENCRYPTED MESH, addressed as plain `http` — there the mesh IS the transport protection, and
+there is no certificate for TLS to check — so the real worker URL was refused (exit 2).
+
+`cairn-capture --run … -allow-plaintext-host [ALIAS=]HOST` (repeatable) accepts plain `http` for
+that instance's `-worker` when its URL's host is EXACTLY `HOST`.
+
+- **Exact, never a pattern**: no suffix, prefix, wildcard, case fold or port
+  (`TestPlainHTTPToANamedHostIsAnExplicitExactOptIn`; mutant
+  `capture-plaintext-host-matched-by-suffix`). Per instance: an opt-in for one alias does not admit
+  another's URL.
+- **A flag only** — no default and no environment spelling, so a copied environment cannot switch
+  it on.
+- **It must be used**: an opt-in naming an alias with no `-worker`, a host that is not that
+  worker's, or a worker that is `https` or loopback anyway is a usage error (exit 2) — one left
+  lying in a unit file would silently start applying after a later URL change.
+- **Said on every run**, per instance, on stderr: `⚠ instance <alias>: the capture token and every
+  upload go to <url> over PLAIN HTTP (-allow-plaintext-host); the network between is the only
+  transport protection`.
+- **Unchanged by it**: a redirect is never followed (`TestTheSinkNeverFollowsARedirect` — the sink
+  knows nothing of the opt-in, so the token still goes nowhere but the named host), and the
+  REDACTION-OFF test build still sends to a loopback address only.
+
+⚠ **What nothing here can check:** that the path to the named host really is protected. The flag is
+the operator's assertion about a network; on an unprotected one the token and every transcript byte
+cross it in clear.
+
+## The withdrawal (S6, decision 16, clause m)
+
+When a run's routing answer is no longer the instance holding a session's prefix — its scopes now
+route to another instance, or to two (held) — the agent FIRST asks the holding instance to forget it:
+`POST /capture/v1/sessions/{root}/withdraw` with that instance's capture token (`HTTPSink.Withdraw`;
+`internal/worker`'s `WithdrawPattern`). Nothing of the session is shipped anywhere until that
+instance has answered.
+
+| the instance answers | the agent |
+|---|---|
+| `{"deleted": true}` — it held the root for this host's (owner, host) and deleted it (transcript, plugin outputs, ticket edges), or already had | resets the session's watermarks, binds it nowhere, then acts on the new answer: re-ships it WHOLE from offset 0 to the other instance, or holds it |
+| `{"deleted": false}`, and this agent has an ACKNOWLEDGED upload of the session on record | holds the session FOR GOOD, loudly (`HOLD … PREFIX NOT WITHDRAWN: not held by this owner and host`): the token was reissued under another host label, say. It is never shipped anywhere else — the prefix's presence elsewhere is surfaced, not duplicated — and what the instance holds must be removed there by hand |
+| `{"deleted": false}`, and no upload of it was ever acknowledged | treats the prefix as never having landed (the instance was not taking uploads) and acts on the new answer |
+| no answer (a network error, a 5xx, a 404 from an instance older than the route, 503/507) | leaves the session bound where it was, ships nothing of it, and asks again next run |
+| 401 / 403 | the same, and the run fails loudly (the token is refused) |
+
+🔴 **WHERE A SESSION IS BOUND IS SAVED BEFORE ITS FIRST UPLOAD LEAVES.** It used to be saved with the
+session's other changes, up to two seconds later: a run killed in that window had shipped a prefix
+under a state that still said "nowhere", so a later routing change found no instance to withdraw
+from (S3b's audit). ⚠ The cost is one state save per session the FIRST time it is bound — a first run
+over a large backlog saves once per session (`TestAnIdleRunSavesNothing` pins the count; an idle run
+still saves nothing).
+
+⚠ **What it cannot do.** The third row reads "never landed" off this agent's own watermarks, which a
+kill can leave unsaved — but then the instance DOES hold the prefix and answers `true`, so the case
+cannot be confused in the direction that matters. And a session its OWNER deleted on the instance
+(or retention swept) while it keeps growing here is not re-uploaded: the next upload is answered 409
+naming an empty position, which cannot be resumed from, so the session is refused and logged each
+run. A withdrawal of such a session is answered `true` (the prefix is gone).

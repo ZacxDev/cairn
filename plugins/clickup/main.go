@@ -78,6 +78,8 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	maxCands := fs.Int("max-candidates", 200, "the most candidate tickets one request names (most recently updated first)")
 	maxSugg := fs.Int("max-suggestions", 3, "the most suggestions one pass writes for a session")
 	minConf := fs.Float64("min-confidence", 0.5, "a suggestion below this confidence is not written")
+	storeTitles := fs.Bool("store-ticket-titles", false, "send each ticket's NAME to the pod as the output's title; the default "+
+		"stores ticket ids only, and an instance not started with -plugin-store-ticket-titles refuses a titled output")
 	timeout := fs.Duration("timeout", 30*time.Minute, "the bound on the whole run")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -163,6 +165,7 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 		MaxCandidates:   *maxCands,
 		MaxSuggestions:  *maxSugg,
 		MinConfidence:   *minConf,
+		StoreTitles:     *storeTitles,
 		Log:             logf,
 	}
 	if *keyFile != "" {

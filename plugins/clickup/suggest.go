@@ -69,6 +69,7 @@ func suggestPrompt(source, text string, candidates []Ticket) string {
 // Suggestion is one `ticket-suggestion` body.
 type Suggestion struct {
 	TicketID   string  `json:"ticket_id"`
+	Title      string  `json:"title,omitempty"`
 	Confidence float64 `json:"confidence"`
 	Rationale  string  `json:"rationale"`
 }

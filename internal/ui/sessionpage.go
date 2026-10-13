@@ -17,6 +17,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/report"
 	"github.com/ZacxDev/cairn/internal/store"
 	"github.com/ZacxDev/cairn/internal/touch"
+	"github.com/ZacxDev/cairn/internal/transcript"
 	"github.com/ZacxDev/cairn/internal/write"
 )
 
@@ -136,6 +137,12 @@ func (s *Server) handleSessionPage(w http.ResponseWriter, r *http.Request, id id
 	// The owner's plugin opt-out, AFTER every refusal and only for the transcript's owner — nil for
 	// everybody else, so a refused viewer's page is byte-identical to one with no registry (`plugins.go`).
 	view.Plugins = s.sessionToggles(id, session)
+	// The owner's "delete transcript" form, on the same terms: the transcript's owner arm, asked of
+	// the store, and only when there is a transcript on the page to delete.
+	if view.Transcript != nil && s.transcripts != nil {
+		owns, err := s.transcripts.OwnedBy(transcript.Viewer{Principal: id.Principal, Auth: id.Auth}, session)
+		view.OwnsTranscript = err == nil && owns
+	}
 	// Presence is bound AFTER every refusal above (the plan's P5): it decorates a page that was already
 	// found and can never make one.
 	view.Panes = s.panesFor(id)
@@ -290,10 +297,17 @@ func SessionPage(v PageView) g.Node {
 			return sessionScopeCard(sc, ids[store.NormalizeRef(sc.Scope)], excerpts, v)
 		}),
 		// nil — no node, so no bytes — unless the ONE predicate showed this viewer the transcript.
+		// The plugin outputs derived from it, ABOVE the transcript they summarise — nil unless that same
+		// verdict admitted this viewer AND the session holds an output (`outputs.go`).
+		g.Iff(v.Transcript != nil && v.Transcript.Derived != nil, func() g.Node { return derivedSection(*v.Transcript.Derived) }),
 		g.Iff(v.Transcript != nil, func() g.Node { return transcriptSection(*v.Transcript) }),
 		// nil unless a registry is configured AND this viewer is the transcript's owner (`plugins.go`).
 		g.Iff(v.Plugins != nil, func() g.Node {
 			return h.Section(h.Class("card"), pluginTogglesNode(*v.Plugins, v.CSRF))
+		}),
+		// nil unless this viewer is the transcript's OWNER and has a CSRF token to carry (`outputs.go`).
+		g.Iff(v.OwnsTranscript && v.CSRF != "", func() g.Node {
+			return h.Section(h.Class("card"), deleteForm(rep.ID, v.CSRF))
 		}),
 	)
 }

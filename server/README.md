@@ -448,6 +448,13 @@ are stated in both files and neither can move alone. Do not add a third
 STATEMENT of the runtime contract: it would be outside that pin, and it would be
 the one that actually ships.
 
+**The interpreter pin's history** (moved here from `AGENTS.md`, which keeps the rule: `flake.nix`'s
+`pkgs.python312`, the Dockerfile's `python:3.12-slim` and CI's `python-version: "3.12"` move together
+or not at all). A bare `pkgs.python3` followed nixpkgs to 3.14 and shipped an interpreter nothing in
+this repository had ever run the suite under. And the leak gate's coverage sentence in `AGENTS.md` was
+wrong both ways once — it claimed all five classes were gated when three were, then omitted
+`reachable-hostname`; `tests/leakscan.py`'s docstring says why.
+
 ⚠ **THE RETRACTED WORDING, KEPT HERE SO NOBODY RE-DERIVES IT.** `AGENTS.md` read
 *"`server/Dockerfile` is what is deployed today"* from before the Go cutover
 until well after it, while three other claims in the SAME file said the Go pod is

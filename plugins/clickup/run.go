@@ -58,6 +58,9 @@ const (
 	SigEntryRef   = "entry-ref"
 )
 
+// maxTitle is the pod's bound on a stored ticket title (`internal/plugins` outputs.go).
+const maxTitle = 256
+
 // noModel is the `model` an output carries when no model made it: the envelope requires the field.
 const noModel = "none (deterministic match)"
 
@@ -79,6 +82,7 @@ type Edge struct {
 	System   string  `json:"system"`
 	TicketID string  `json:"ticket_id"`
 	CustomID string  `json:"custom_id,omitempty"`
+	Title    string  `json:"title,omitempty"`
 	Signal   string  `json:"signal"`
 	Locator  Locator `json:"locator"`
 }
@@ -119,7 +123,10 @@ type Runner struct {
 	MaxCandidates  int
 	MaxSuggestions int
 	MinConfidence  float64
-	Log            func(string)
+	// StoreTitles sends each fetched ticket's NAME as the output's `title` (Q8) — only useful against
+	// an instance started with `-plugin-store-ticket-titles`; any other refuses the write.
+	StoreTitles bool
+	Log         func(string)
 }
 
 // Stats is what a run did.
@@ -544,7 +551,7 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem) (session
 		}
 		h.edges[key] = true
 		h.edged[f.hit.ID] = true
-		body := Edge{System: "clickup", TicketID: f.hit.ID, CustomID: f.hit.Custom, Signal: f.sig, Locator: f.loc}
+		body := Edge{System: "clickup", TicketID: f.hit.ID, CustomID: f.hit.Custom, Title: r.title(f.hit.ID), Signal: f.sig, Locator: f.loc}
 		if _, err := r.API.WriteOutput(ctx, pluginapi.Envelope{Plugin: Name, PluginVersion: Version, Model: noModel,
 			Session: it.Session, InputWatermark: wm, Type: TypeEdge, Body: body}); err != nil {
 			return res, fmt.Errorf("writing a %s edge: %w", f.sig, err)
@@ -561,6 +568,7 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem) (session
 	} else if m != "" {
 		scan.ModelAsked, model = true, m
 		for _, s := range sg {
+			s.Title = r.title(s.TicketID)
 			if _, err := r.API.WriteOutput(ctx, pluginapi.Envelope{Plugin: Name, PluginVersion: Version, Model: m,
 				Session: it.Session, InputWatermark: wm, Type: TypeSuggestion, Body: s}); err != nil {
 				return res, fmt.Errorf("writing a suggestion: %w", err)
@@ -576,6 +584,15 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem) (session
 		return res, fmt.Errorf("writing the scan: %w", err)
 	}
 	return res, nil
+}
+
+// title is the ticket's name as an output may carry it: "" unless the operator asked for titles and
+// the fetched list holds the ticket (a ticket named only by URL has no name here).
+func (r *Runner) title(id string) string {
+	if !r.StoreTitles {
+		return ""
+	}
+	return oneLine(r.Matcher.Index.byID[id].Name, maxTitle)
 }
 
 // suggest asks the model once for this pass. It answers the model's name when a request was MADE and

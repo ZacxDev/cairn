@@ -219,6 +219,22 @@ func (ss *SessionState) stream(name string) *StreamState {
 	return st
 }
 
+// shipped reports whether any upload of this session was ever ACKNOWLEDGED, as this state records
+// it: a stream past its start, or a blob version the instance holds.
+func (ss *SessionState) shipped() bool {
+	for _, st := range ss.Streams {
+		if st.Offset > 0 || st.Cursor != "" || len(st.Units) > 0 {
+			return true
+		}
+	}
+	for _, b := range ss.Blobs {
+		if b.Cursor != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // reset forgets every watermark, so the next ship starts from offset 0 (a re-ship, decision 16).
 // Refusals are kept, a stream's and a blob's alike: a rewritten file is no less rewritten, and a
 // name the re-check refuses no less refused, for moving instance.

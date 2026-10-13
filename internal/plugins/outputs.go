@@ -50,16 +50,20 @@ const (
 	maxModel         = 128
 	maxSummary       = 16 << 10
 	maxRationale     = 280
+	maxTicketTitle   = 256
 	maxStreams       = 1024
 )
 
 // TicketEdge is decision 14's deterministic match.
 type TicketEdge struct {
-	System   string  `json:"system"`
-	TicketID string  `json:"ticket_id"`
-	CustomID string  `json:"custom_id,omitempty"`
-	Signal   string  `json:"signal"`
-	Locator  Locator `json:"locator"`
+	System   string `json:"system"`
+	TicketID string `json:"ticket_id"`
+	CustomID string `json:"custom_id,omitempty"`
+	// Title is the ticket's title — stored ONLY on an instance that opted in ([Service.StoreTicketTitles],
+	// Q8); the default is ids only.
+	Title   string  `json:"title,omitempty"`
+	Signal  string  `json:"signal"`
+	Locator Locator `json:"locator"`
 }
 
 // Locator names WHERE a match was found — exactly ONE of its shapes.
@@ -73,7 +77,9 @@ type Locator struct {
 
 // TicketSuggestion is decision 14's LLM suggestion: never an edge.
 type TicketSuggestion struct {
-	TicketID   string  `json:"ticket_id"`
+	TicketID string `json:"ticket_id"`
+	// Title is as [TicketEdge.Title].
+	Title      string  `json:"title,omitempty"`
 	Confidence float64 `json:"confidence"`
 	Rationale  string  `json:"rationale"`
 }
@@ -131,77 +137,108 @@ func ValidateBody(t string, raw json.RawMessage) error {
 	return err
 }
 
-// CanonicalBody decodes a body against its type's in-tree schema and returns it RE-ENCODED from the
-// decoded value — what the pod stores.
+// Body is one output body decoded against its type's in-tree schema: exactly ONE field is set.
+type Body struct {
+	Summary    *Summary
+	Edge       *TicketEdge
+	Suggestion *TicketSuggestion
+	Scan       *TicketScan
+}
+
+// DecodeBody is THE schema check for an output body, for the write path ([CanonicalBody]) and for
+// the renderer (S6) alike — one rule, so what the page shows is decided by the same function that
+// decided what could be stored. Unknown fields are refused, every string is bounded, and a ticket id
+// is a CANONICAL id ([ticketID]): alphanumeric, so it can carry no scheme, no `/` and no markup.
+func DecodeBody(t string, raw json.RawMessage) (Body, error) {
+	switch t {
+	case TypeSummary:
+		var s Summary
+		if err := strict(raw, &s); err != nil {
+			return Body{}, err
+		}
+		if s.Text == "" || len(s.Text) > maxSummary {
+			return Body{}, fmt.Errorf("a summary's text must be 1–%d bytes", maxSummary)
+		}
+		return Body{Summary: &s}, nil
+	case TypeTicketEdge:
+		var e TicketEdge
+		if err := strict(raw, &e); err != nil {
+			return Body{}, err
+		}
+		if e.System != "clickup" {
+			return Body{}, fmt.Errorf("system %q is not clickup", e.System)
+		}
+		if !ticketID.MatchString(e.TicketID) {
+			return Body{}, fmt.Errorf("ticket_id is not a canonical id")
+		}
+		if e.CustomID != "" && !customID.MatchString(e.CustomID) {
+			return Body{}, fmt.Errorf("custom_id does not match %s", customID)
+		}
+		if len(e.Title) > maxTicketTitle || !printable(e.Title) {
+			return Body{}, fmt.Errorf("title must be at most %d bytes with no control character", maxTicketTitle)
+		}
+		if !slices.Contains(Signals, e.Signal) {
+			return Body{}, fmt.Errorf("signal %q is not one of %v", e.Signal, Signals)
+		}
+		if err := validLocator(e.Locator); err != nil {
+			return Body{}, err
+		}
+		return Body{Edge: &e}, nil
+	case TypeTicketScan:
+		var s TicketScan
+		if err := strict(raw, &s); err != nil {
+			return Body{}, err
+		}
+		if s.System != "clickup" {
+			return Body{}, fmt.Errorf("system %q is not clickup", s.System)
+		}
+		if s.Edges < 0 || s.Edges > maxScanCount || s.Suggestions < 0 || s.Suggestions > maxScanCount {
+			return Body{}, fmt.Errorf("a scan's counts must be 0–%d", maxScanCount)
+		}
+		return Body{Scan: &s}, nil
+	case TypeTicketSuggestion:
+		var s TicketSuggestion
+		if err := strict(raw, &s); err != nil {
+			return Body{}, err
+		}
+		if !ticketID.MatchString(s.TicketID) {
+			return Body{}, fmt.Errorf("ticket_id is not a canonical id")
+		}
+		if len(s.Title) > maxTicketTitle || !printable(s.Title) {
+			return Body{}, fmt.Errorf("title must be at most %d bytes with no control character", maxTicketTitle)
+		}
+		if s.Confidence < 0 || s.Confidence > 1 {
+			return Body{}, fmt.Errorf("confidence must be in [0, 1]")
+		}
+		if len(s.Rationale) > maxRationale || !printable(s.Rationale) {
+			return Body{}, fmt.Errorf("rationale must be at most %d bytes with no control character", maxRationale)
+		}
+		return Body{Suggestion: &s}, nil
+	}
+	return Body{}, fmt.Errorf("type %q is not one of %v", t, OutputTypes())
+}
+
+// CanonicalBody decodes a body against its type's in-tree schema ([DecodeBody]) and returns it
+// RE-ENCODED from the decoded value — what the pod stores.
 //
 // 🔴 THE STORED BYTES ARE THE VALIDATED VALUE, NEVER THE SENT ONES (#270 round 1). The decoder takes
 // the LAST of two duplicate keys, so `{"text":"FIRST","text":"ok"}` validated as "ok" while the raw
 // bytes stored "FIRST" too — and a renderer that read the first would have shown text nobody
 // validated. Re-encoding also drops case-variant keys and repairs invalid UTF-8.
 func CanonicalBody(t string, raw json.RawMessage) (json.RawMessage, error) {
-	var v any
-	switch t {
-	case TypeSummary:
-		var s Summary
-		if err := strict(raw, &s); err != nil {
-			return nil, err
-		}
-		if s.Text == "" || len(s.Text) > maxSummary {
-			return nil, fmt.Errorf("a summary's text must be 1–%d bytes", maxSummary)
-		}
-		v = s
-	case TypeTicketEdge:
-		var e TicketEdge
-		if err := strict(raw, &e); err != nil {
-			return nil, err
-		}
-		if e.System != "clickup" {
-			return nil, fmt.Errorf("system %q is not clickup", e.System)
-		}
-		if !ticketID.MatchString(e.TicketID) {
-			return nil, fmt.Errorf("ticket_id is not a canonical id")
-		}
-		if e.CustomID != "" && !customID.MatchString(e.CustomID) {
-			return nil, fmt.Errorf("custom_id does not match %s", customID)
-		}
-		if !slices.Contains(Signals, e.Signal) {
-			return nil, fmt.Errorf("signal %q is not one of %v", e.Signal, Signals)
-		}
-		if err := validLocator(e.Locator); err != nil {
-			return nil, err
-		}
-		v = e
-	case TypeTicketScan:
-		var s TicketScan
-		if err := strict(raw, &s); err != nil {
-			return nil, err
-		}
-		if s.System != "clickup" {
-			return nil, fmt.Errorf("system %q is not clickup", s.System)
-		}
-		if s.Edges < 0 || s.Edges > maxScanCount || s.Suggestions < 0 || s.Suggestions > maxScanCount {
-			return nil, fmt.Errorf("a scan's counts must be 0–%d", maxScanCount)
-		}
-		v = s
-	case TypeTicketSuggestion:
-		var s TicketSuggestion
-		if err := strict(raw, &s); err != nil {
-			return nil, err
-		}
-		if !ticketID.MatchString(s.TicketID) {
-			return nil, fmt.Errorf("ticket_id is not a canonical id")
-		}
-		if s.Confidence < 0 || s.Confidence > 1 {
-			return nil, fmt.Errorf("confidence must be in [0, 1]")
-		}
-		if len(s.Rationale) > maxRationale || !printable(s.Rationale) {
-			return nil, fmt.Errorf("rationale must be at most %d bytes with no control character", maxRationale)
-		}
-		v = s
-	default:
-		return nil, fmt.Errorf("type %q is not one of %v", t, OutputTypes())
+	body, err := DecodeBody(t, raw)
+	if err != nil {
+		return nil, err
 	}
-	return json.Marshal(v)
+	switch {
+	case body.Summary != nil:
+		return json.Marshal(body.Summary)
+	case body.Edge != nil:
+		return json.Marshal(body.Edge)
+	case body.Scan != nil:
+		return json.Marshal(body.Scan)
+	}
+	return json.Marshal(body.Suggestion)
 }
 
 func validLocator(l Locator) error {
@@ -285,4 +322,15 @@ func Stamp(e Envelope, plugin Entry, now time.Time) (Output, error) {
 		Body:           e.Body,
 		ProducedAt:     now.UTC().Format(time.RFC3339),
 	}, nil
+}
+
+// Title is the ticket title a decoded body carries, "" for none (and for a type that has none).
+func (b Body) Title() string {
+	switch {
+	case b.Edge != nil:
+		return b.Edge.Title
+	case b.Suggestion != nil:
+		return b.Suggestion.Title
+	}
+	return ""
 }

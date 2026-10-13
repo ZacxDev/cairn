@@ -734,3 +734,34 @@ func TestNoCredentialFollowsARedirectOrCrossesTheNetworkInCleartext(t *testing.T
 		t.Fatalf("a plain-http ClickUp URL off the host: exit %d %s", code, errs)
 	}
 }
+
+// TestTicketTitlesAreSentOnlyWhenAskedForAndStoredOnlyWhereTheInstanceAllows — Q8. By default no
+// output carries a ticket's name (the read-only test above asserts that over a whole run). With
+// `-store-ticket-titles` against an instance that stores titles, an edge and a suggestion carry the
+// fetched name — and a ticket named only by URL, which the list does not hold, carries none. Against
+// an instance that stores ids only the titled write is REFUSED and nothing is stored.
+func TestTicketTitlesAreSentOnlyWhenAskedForAndStoredOnlyWhereTheInstanceAllows(t *testing.T) {
+	records := []string{human("see "+cuURLPrefix+"clk0000a1 and "+cuURLPrefix+"zzz999", "")}
+	w := newWorld(t, records...)
+	w.pod.titles = true
+	w.prov.answer = `[{"ticket_id":"clk0000b2","confidence":0.9,"rationale":"synthetic"}]`
+	w.args = append(w.withModel(), "-store-ticket-titles")
+	if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "edges=2 suggestions=1") {
+		t.Fatalf("exit %d\n%s%s", code, out, errs)
+	}
+	wantEdges(t, w.pod.edges(t),
+		Edge{System: "clickup", TicketID: "clk0000a1", Title: "Synthetic ticket one: lorem export", Signal: SigTranscript, Locator: rec(1)},
+		Edge{System: "clickup", TicketID: "zzz999", Signal: SigTranscript, Locator: rec(1)})
+	var s Suggestion
+	_ = json.Unmarshal(w.pod.ofType(TypeSuggestion)[0].Body, &s)
+	if s.Title != "Synthetic ticket two: ipsum import" {
+		t.Errorf("the suggestion's title is %q", s.Title)
+	}
+
+	w2 := newWorld(t, records...)
+	w2.args = []string{"-store-ticket-titles"}
+	code, out, errs := w2.run(t)
+	if code != 1 || !strings.Contains(errs, "stores ticket ids only") || len(w2.pod.outputs) != 0 {
+		t.Fatalf("titles sent to an instance that stores ids only: exit %d, %d outputs\n%s%s", code, len(w2.pod.outputs), out, errs)
+	}
+}
