@@ -53,6 +53,13 @@ const (
 
 	HostNotMapped     = "unchecked: host not mapped"
 	RemoteUnreachable = "unchecked: remote unreachable"
+
+	// NotInFetched is a claim no FETCHED source holds while another declared source was never looked
+	// at — what `missing`, `file-missing` or `absent-from-file` would have been with every source read.
+	// 🔴 A STALE VERDICT MEANS EVERY DECLARED SOURCE WAS READ (operator decision on #259 r1 🟡2): a
+	// claim holds if ANY source holds it, so the unread one may, and calling it stale would be a verdict
+	// the auditor never measured.
+	NotInFetched = "unchecked: not in the sources fetched"
 )
 
 // Class is a state's effect on the counts and the exit code.
@@ -78,7 +85,7 @@ var Severity = map[string]Class{
 	Missing: ClassStale, SymbolAbsent: ClassStale, SymbolFileMissing: ClassStale, PRNotFound: ClassStale,
 
 	NotReachable: ClassCouldNotLook, Ambiguous: ClassCouldNotLook, PRUnchecked: ClassCouldNotLook,
-	HostNotMapped: ClassCouldNotLook, RemoteUnreachable: ClassCouldNotLook,
+	HostNotMapped: ClassCouldNotLook, RemoteUnreachable: ClassCouldNotLook, NotInFetched: ClassCouldNotLook,
 
 	NotPathShaped: ClassByDesign,
 }
@@ -90,7 +97,7 @@ var EmittedStates = []string{
 	OnBranch, ExistsOffBranch, NotReachable, Ambiguous,
 	PROpen, PRMerged, PRClosedUnmerged, PRNotFound, PRUnchecked, OutsideSources,
 	SymbolPresent, SymbolAbsent, SymbolFileMissing,
-	HostNotMapped, RemoteUnreachable,
+	HostNotMapped, RemoteUnreachable, NotInFetched,
 }
 
 // The four SCOPE-level could-not-look reasons, each exit 10.
@@ -168,7 +175,9 @@ func (r Result) Counts() (checked, stale, unchecked int) {
 }
 
 // Exit is decision 6's mixed case: 9 if anything is stale; else 10 if anything — a claim, a source,
-// or the scope — could not be looked at, or nothing was checked; else 0.
+// or the scope — could not be looked at, or nothing was checked; else 0. A source-dependent claim can
+// only BE stale when every declared source was read ([NotInFetched]), so "stale beside an unlooked
+// source" is reachable here only through a PR's `not-found`, which no git source answers.
 func (r Result) Exit() int {
 	if r.ScopeReason != "" {
 		return ExitCouldNotLook

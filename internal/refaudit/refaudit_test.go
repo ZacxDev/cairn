@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -242,25 +243,31 @@ func TestAnUnmappedHostIsNeverContacted(t *testing.T) {
 
 // fakeGit answers every claim from a table, for the exit-code rules (no git needed).
 type fakeGit struct {
-	unmapped map[string]bool
-	paths    map[string]bool
-	commits  map[string][]string
-	refs     map[string][]string
+	unmapped    map[string]bool
+	unreachable map[string]bool // a host whose fetch fails (a remote that could not be fetched)
+	paths       map[string]bool
+	commits     map[string][]string
+	refs        map[string][]string
+	noSymbol    map[string]bool // a symbol Grep does not find; every other symbol is found
 }
 
 func (f fakeGit) Fetch(s codesrc.Source) (string, error) {
 	if f.unmapped[s.Host] {
 		return "", &HostNotMappedError{Host: s.Host}
 	}
+	if f.unreachable[s.Host] {
+		return "", errors.New("git fetch: exit 128: synthetic")
+	}
 	return "c0ffee", nil
 }
 func (f fakeGit) HasPath(_ string, _, p string) (bool, error)        { return f.paths[p], nil }
 func (f fakeGit) Commits(_ string, prefix string) ([]string, error)  { return f.commits[prefix], nil }
 func (f fakeGit) ContainedBy(_ string, sha string) ([]string, error) { return f.refs[sha], nil }
-func (f fakeGit) Grep(string, string, string, string) (bool, error)  { return true, nil }
+func (f fakeGit) Grep(_, _, _, symbol string) (bool, error)          { return !f.noSymbol[symbol], nil }
 
-// TestTheExitIsTheMixedCase is decision 6's rule, each case a literal: one stale claim beside an
-// unmapped source is 9; a clean mapped source beside an unmapped one is 10; nothing checked is 10; an
+// TestTheExitIsTheMixedCase is decision 6's rule, each case a literal: one missing path beside an
+// unmapped source is 10 (a stale verdict needs every source read — the operator's decision; the rows
+// are `TestAStaleVerdictMeansEverySourceWasRead`); a clean mapped source beside an unmapped one is 10; nothing checked is 10; an
 // off-branch commit is informational (0); an unreachable or ambiguous one is could-not-look (10).
 func TestTheExitIsTheMixedCase(t *testing.T) {
 	clean := fakeGit{paths: map[string]bool{"cmd/x.go": true}, unmapped: map[string]bool{"git.example.com": true},
@@ -274,7 +281,8 @@ func TestTheExitIsTheMixedCase(t *testing.T) {
 		want    int
 		reason  string
 	}{
-		{"stale beside unmapped", both, []EntryInput{entry("g", "- `cmd/gone.go` — x\n", "")}, ExitStale, ""},
+		{"missing beside unmapped is not stale", both, []EntryInput{entry("g", "- `cmd/gone.go` — x\n", "")}, ExitCouldNotLook, ReasonCheckedZero},
+		{"stale, every source read", []string{src}, []EntryInput{entry("g", "- `cmd/gone.go` — x\n", "")}, ExitStale, ""},
 		{"clean beside unmapped", both, []EntryInput{entry("g", "- `cmd/x.go` — x\n", "")}, ExitCouldNotLook, ""},
 		{"clean, mapped only", []string{src}, []EntryInput{entry("g", "- `cmd/x.go` — x\n", "")}, ExitClean, ""},
 		{"checked=0", []string{src}, []EntryInput{entry("g", "- prose only\n", "")}, ExitCouldNotLook, ReasonCheckedZero},
@@ -293,6 +301,63 @@ func TestTheExitIsTheMixedCase(t *testing.T) {
 	}
 }
 
+// TestAStaleVerdictMeansEverySourceWasRead is the operator's decision on #259 r1 🟡2: when ANY declared
+// source could not be looked at, a claim missing from the sources that WERE fetched is could-not-look
+// (exit 10), never stale (exit 9) — the unfetched source may hold it, and a claim holds if ANY source
+// does. Each source-dependent stale state is a row (path, symbol file, symbol), and both ways a source
+// goes unlooked (unmapped, unreachable) appear; the CONTROLS are the same claims with every source read,
+// which stay 9. A PR's `not-found` is the GitHub API's answer, not a source's, so it stays stale beside
+// an unlooked source — pinned so the demotion cannot quietly widen to it.
+//
+// The new state is spelled as a literal rather than named, so the test pins the output a reader sees.
+func TestAStaleVerdictMeansEverySourceWasRead(t *testing.T) {
+	const notInFetched = "unchecked: not in the sources fetched"
+	git := fakeGit{paths: map[string]bool{"cmd/x.go": true}, noSymbol: map[string]bool{"Vanished": true},
+		unmapped: map[string]bool{"git.example.com": true}, unreachable: map[string]bool{"git.example.org": true}}
+	unmapped := []string{src, "git:git.example.com/team/example-repo@main"}
+	unreachable := []string{src, "git:git.example.org/team/example-repo@main"}
+	gone := entry("g", "- `cmd/gone.go` — x\n", "")
+	fileGone := entry("g", "- `cmd/gone.go#Widget` — x\n", "")
+	absent := entry("g", "- `cmd/x.go#Vanished` — x\n", "")
+	for _, tc := range []struct {
+		name    string
+		sources []string
+		e       EntryInput
+		claim   string // the finding's `kind value`
+		state   string
+		exit    int
+		stale   int
+	}{
+		{"missing path beside unmapped", unmapped, gone, "path cmd/gone.go", notInFetched, ExitCouldNotLook, 0},
+		{"missing path beside unreachable", unreachable, gone, "path cmd/gone.go", notInFetched, ExitCouldNotLook, 0},
+		{"symbol file missing beside unmapped", unmapped, fileGone, "symbol cmd/gone.go#Widget", notInFetched, ExitCouldNotLook, 0},
+		{"symbol absent beside unreachable", unreachable, absent, "symbol cmd/x.go#Vanished", notInFetched, ExitCouldNotLook, 0},
+		{"control: missing path, every source read", []string{src}, gone, "path cmd/gone.go", Missing, ExitStale, 1},
+		{"control: symbol file missing, every source read", []string{src}, fileGone, "symbol cmd/gone.go#Widget", SymbolFileMissing, ExitStale, 1},
+		{"control: symbol absent, every source read", []string{src}, absent, "symbol cmd/x.go#Vanished", SymbolAbsent, ExitStale, 1},
+	} {
+		res := Audit(tc.sources, []EntryInput{tc.e}, git, nil)
+		_, stale, _ := res.Counts()
+		if got := statesOf(res)[tc.claim]; got != tc.state || res.Exit() != tc.exit || stale != tc.stale {
+			t.Errorf("%s: %s state %q exit %d stale=%d, want %q %d stale=%d\n%s",
+				tc.name, tc.claim, got, res.Exit(), stale, tc.state, tc.exit, tc.stale, res.Render())
+		}
+	}
+	// The PR row: the API answered 404, which no unfetched git source could change.
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/example-org/example-repo" {
+			w.Write([]byte(`{"full_name":"example-org/example-repo"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer stub.Close()
+	res := Audit(unmapped, []EntryInput{entry("g", "", "", "github:example-org/example-repo#4")}, git, GitHubPRs{Base: stub.URL})
+	if got := statesOf(res)["pr example-org/example-repo#4"]; got != PRNotFound || res.Exit() != ExitStale {
+		t.Errorf("a 404 PR beside an unmapped source: state %q exit %d, want %q %d\n%s", got, res.Exit(), PRNotFound, ExitStale, res.Render())
+	}
+}
+
 // TestTheSeverityTableIsExactlyTheEmittedStates (round 2's 🟡5): the table's key set EQUALS the states
 // the checks emit, so a state added without a class goes red.
 func TestTheSeverityTableIsExactlyTheEmittedStates(t *testing.T) {
@@ -306,8 +371,8 @@ func TestTheSeverityTableIsExactlyTheEmittedStates(t *testing.T) {
 	if strings.Join(keys, "|") != strings.Join(emitted, "|") {
 		t.Fatalf("severity keys %v\nemitted      %v", keys, emitted)
 	}
-	if len(keys) != 19 {
-		t.Fatalf("%d states, want the plan's 19", len(keys))
+	if len(keys) != 20 {
+		t.Fatalf("%d states, want the plan's 20", len(keys))
 	}
 }
 
@@ -526,5 +591,80 @@ func TestTheAPIBaseIsHTTPSOrLoopback(t *testing.T) {
 	out, errOut, code := Execute(Run{SourcesStatus: "sources-declared", Sources: []string{src}, GitHubAPI: "http://api.example.com"})
 	if code != ExitUsage || out != "" || !strings.Contains(errOut, EnvGitHubAPI) {
 		t.Fatalf("Execute with a cleartext non-loopback API base: %d %q %q", code, out, errOut)
+	}
+}
+
+// TestAnInterruptKillsTheStalledFetch (#259 r2): `git` runs in its OWN process group so the timeout can
+// kill `git-remote-https`, which also means a terminal's Ctrl-C never reaches it. A child process (this
+// test binary, re-executed) fetches from a listener that accepts and never answers, with a timeout far
+// longer than the test waits; the parent sends the child SIGINT and then watches the HELD CONNECTION.
+// The transport closing it is the observable: with no handler the child dies and `git-remote-https`
+// keeps the connection open until the parent closes it; with the handler the interrupt reaches the
+// group kill. The child must also still die BY the signal (re-raised), not exit as if it refused.
+func TestAnInterruptKillsTheStalledFetch(t *testing.T) {
+	if addr := os.Getenv("CAIRN_REFAUDIT_INTERRUPT_CHILD"); addr != "" {
+		git := &GitCLI{MirrorRoot: os.Getenv("CAIRN_REFAUDIT_INTERRUPT_MIRRORS"),
+			Hosts: map[string]string{"github.com": "https://" + addr}, Timeout: 5 * time.Minute}
+		s, _ := codesrc.Parse(src)
+		_, err := git.Fetch(s)
+		t.Fatalf("the child's fetch returned (%v); it should have been interrupted", err)
+	}
+	requireGit(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	held := make(chan net.Conn, 64)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			held <- c // accept, never speak
+		}
+	}()
+	child := exec.Command(os.Args[0], "-test.run=^TestAnInterruptKillsTheStalledFetch$", "-test.count=1")
+	child.Env = append(os.Environ(), "CAIRN_REFAUDIT_INTERRUPT_CHILD="+ln.Addr().String(),
+		"CAIRN_REFAUDIT_INTERRUPT_MIRRORS="+t.TempDir())
+	var childOut strings.Builder
+	child.Stdout, child.Stderr = &childOut, &childOut
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var conn net.Conn
+	select {
+	case conn = <-held:
+		defer conn.Close() // the RED case's cleanup: closing it is what ends the orphaned transport
+	case <-time.After(30 * time.Second):
+		child.Process.Kill()
+		child.Wait()
+		t.Fatalf("the child's fetch never connected\n%s", childOut.String())
+	}
+	if err := child.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- child.Wait() }()
+	select {
+	case err := <-exited:
+		var exitErr *exec.ExitError
+		ws, ok := child.ProcessState.Sys().(syscall.WaitStatus)
+		if !errors.As(err, &exitErr) || !ok || !ws.Signaled() || ws.Signal() != syscall.SIGINT {
+			t.Errorf("the child did not die by SIGINT (err %v, status %v)\n%s", err, child.ProcessState, childOut.String())
+		}
+	case <-time.After(15 * time.Second):
+		child.Process.Kill()
+		t.Fatalf("the child outlived SIGINT by 15s\n%s", childOut.String())
+	}
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_, err = conn.Read(make([]byte, 1<<16))
+	for err == nil { // a TLS ClientHello may already be buffered; the close is what is awaited
+		_, err = conn.Read(make([]byte, 1<<16))
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		t.Fatal("the transport still held the connection 10s after the child was interrupted: Ctrl-C does not reach git's process group")
 	}
 }

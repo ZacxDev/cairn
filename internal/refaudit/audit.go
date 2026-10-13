@@ -96,6 +96,11 @@ func Audit(sources []string, entries []EntryInput, git GitReader, prs PRReader) 
 					best, bestRank = finding, r
 				}
 			}
+			if len(looked) < len(sources) && Severity[best.State] == ClassStale {
+				// Some declared source was never looked at, and it may hold what no fetched one does: a
+				// stale verdict needs every source read (operator decision on #259 r1 🟡2).
+				best.State = NotInFetched
+			}
 			res.Findings = append(res.Findings, best)
 		}
 	}
