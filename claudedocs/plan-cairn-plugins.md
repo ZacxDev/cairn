@@ -208,6 +208,11 @@ field names and types alone.
   archive feeds every stored record and text blob to `scopeuse` (#224 recorded `*` for every session
   because `scopeuse` was not on `main` then; with that, no non-owner could ever have been admitted,
   so S4's clauses (e) and (f) needed it). Deviations and additions are in the S4 slice row.
+- *Revision 26 records operator decision O18, which ANSWERS Q16 with option (a)*: keep every client
+  current (both clients write the read ledger from S11 on) and have callers read through the client
+  rather than the cache files. F2 is NOT narrowed and no share measurement is required before
+  arming; Q16 leaves the list of open questions and is no longer an arming blocker. Keeping both
+  hosts' clients current is a rollout step, not a code change.
 
 ## Goal and premise
 
@@ -398,6 +403,10 @@ Drop the work, or the named half, if any of these holds:
     statement there describes that commit's redactor and not #224's. ⚠ **Since O17 a STEP, not a
     gate:** the re-measurement — and the held-back score (part 5) beside it — is run and RECORDED
     for the commit being armed; neither result blocks arming.
+- **Every capturing host's clients are current before arming (O18).** Both `cairn` clients and
+  `cairn-capture` on a capturing host must be built from a cairn commit at or past the S11 merge
+  (`8184e79`, #266) — older clients write no read ledger, so every session that runs one is
+  owner-only by F1. Shipping that pin to both hosts is the coordinator's rollout step.
 - **The personal instance first**, with capture armed on one host, retention set, plugins
   registered but every toggle OFF (decision 10 — an agent decision, not an operator one). The
   operator turns on summaries for one scope, reads a week of output, and judges it. The same for
@@ -807,6 +816,7 @@ script that prints only counts.
 | O15 | After S1's third review round, the redactor changes approach: redact by KEY CONTEXT (any value attached to a secret-sounding name — a key, a flag, an environment variable, a config field, SQL's `IDENTIFIED BY`) plus ENTROPY (long random-looking tokens), retiring or narrowing the per-format rules those two subsume and accepting more damage to clean text, within a ceiling. Tool line prefixes are normalised FIRST, so every rule sees a line's content, with redaction still applied to the original bytes. And an arming gate: capture is armed on NO instance until a FRESH held-back set — written by an auditor, never seen by the fixer, replaced every round — shows at least 90% of its leaks caught AND at most 15% of its clean lines damaged. | Decision 6 (S1: `internal/redact/{normalise,keyed,entropy}.go`); closing-condition part 5; the S3 arming precondition; Rollout. The gate is `internal/redact/heldback.go` + `cmd/redact-heldback`. *As built (revision 21), and no wider: "any value" means any value whose SHAPE is not code, a placeholder or prose, at any length (revision 20's refusal of a bare run over 1 KiB is retracted); a name whose secret word is a segment rather than its end — and the abbreviation `cred`/`creds` — takes only a value that itself looks like a credential. Decision 6 states the refusals and T1 their measured cost.* |
 | O16 | After S1's sixth review round, the operator ends the heuristic fix rounds: round 7 is the last, and S1 (#216) merges with capture UNARMED on every instance. O15's gate stays the arming condition, and today it FAILS: a fresh auditor-written held-back set of 190 leak lines and 175 clean ones scored `leaks caught=157/190 clean damaged=18/175` at the round-6 head `13219d8` — 82.6% caught, under the 90% floor; 10.3% damaged, inside the 15% ceiling — and rounds 4, 5 and 6 moved that set only from 154 to 155 to 157. Arming is a separate decision for later, and is expected to be about capturing LESS — for example excluding or truncating raw tool output — rather than about redacting better. | Revision 22. T1 states the scorecard and its misses and damage by category as the measured residuals, plus round 6's unfixed findings; `internal/redact/README.md` ("The gate FAILS"); closing-condition part 5 and S3's arming precondition stand unchanged; Rollout. |
 | O17 | The operator waives the redactor's held-back gate as an ARMING precondition: capture may ship without perfect redaction. The gate (closing-condition part 5, O15's ≥ 90% of leaks caught on a fresh auditor-written set) is kept as a MEASUREMENT, not a gate; the last measured score stays on record — `leaks caught=157/190 clean damaged=18/175` at the round-6 head — and nothing about the redactor's measured residuals (T1) changes. | Revision 23. Closing-condition part 5 (now a recorded measurement); Rollout (no "nothing is armed before part 5"; AP4 is re-measure-and-record); the S3 row's arming note; `internal/redact/README.md` ("The gate FAILS"); the arming warning `cairn-ui` prints. A secret the redactor misses is stored — T1's residual, accepted. It does NOT arm anything: arming stays the operator's act, and S11's read ledger is still required. |
+| O18 | Answers Q16 with option (a): keep every `cairn` client current — both clients write the read ledger from S11 on — and have callers read through the client rather than the cache files. F2 is not narrowed (option b not taken) and no measurement of the owner-only/held share is required (option c not taken). | Revision 26. Q16 marked ANSWERED and removed from the arming blockers; the residual owner-only/held cases Q16 lists (F1 for a stale or id-less client, F2 for any input naming the cache root, a ledger `*` from a `*`-writing verb) are ACCEPTED as they stand. Keeping both hosts' clients at or past the S11 merge is a rollout step (Rollout). |
 
 ### Chosen by the AGENT writing this plan (open to review)
 
@@ -1980,13 +1990,13 @@ by that plugin's code (decision 3a); S11 maps a child id to its root and pins th
 ## Open questions for the operator
 
 Each has a recommendation. **Answered (revision 17):** Q2 by O12 (binary ships); Q6 by O14;
-Q4, Q5, Q7, Q8, Q9, Q10, Q11, Q12 and Q15 by O13 (recommendation adopted). **Still open: Q13, Q14 and
-Q16.** S0 and S1 depend on none of them; S11 depends on none either. **Q14 and Q16 shape S2**:
+Q4, Q5, Q7, Q8, Q9, Q10, Q11, Q12 and Q15 by O13 (recommendation adopted). Q16 by O18 (option a, revision 26). **Still open: Q13 and
+Q14.** S0 and S1 depend on none of them; S11 depends on none either. **Q14 and Q16 shape S2**:
 hold-back, withdrawal and re-shipping (Q14), and the pod-side `*` rule, which lives in S2's
 `scopeuse` package with its fallback mutants (F1, F2) and first RUNS on the pod in S3 (Q16). S2
 builds the RECOMMENDED answers, and because S2 uploads nothing, a different answer changes S2's code
-before any byte has left a host. No question blocks merging S0–S2; Q14 and Q16 must be answered
-before S3 ships to a real instance. *Revision 3 said Q16 shapes S3; the rule's code and mutant are
+before any byte has left a host. No question blocks merging S0–S2; Q14 must be answered (Q16 is,
+by O18) before S3 ships to a real instance. *Revision 3 said Q16 shapes S3; the rule's code and mutant are
 in S2. Revisions 3–16 listed Q2 as shaping S2; O12 answered it.*
 
 - **Q1. REMOVED (O9)** — subagent transcripts are shipped.
@@ -2054,7 +2064,8 @@ in S2. Revisions 3–16 listed Q2 as shaping S2; O12 answered it.*
 - **Q15. Agent reads through `cairn` or a separate binary? Recommendation adopted (O13):** the
   proposed Go-only `transcript` verbs (decision 17): agents already run `cairn`, and the Go-only mechanism exists. The alternative
   is a `cairn-transcript` reader binary that leaves `cmd/cairn`'s ledgers untouched.
-- **Q16. What still makes a session owner-only (and, with several instances, HELD).** Under O11
+- **Q16. ANSWERED by O18 — option (a); the text below is kept as the record of what was decided.
+  What still makes a session owner-only (and, with several instances, HELD).** Under O11
   the read ledger (decision 3a) records the scope a bare or `--repo` `cairn` call actually read,
   so **the bare-read cost is gone when the client is current and the session id reaches it.**
   *Revisions 7–12 charged every bare or `--repo` call `*` (round 6 of the audit counted 597 such
