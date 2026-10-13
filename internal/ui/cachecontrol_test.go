@@ -40,6 +40,9 @@ var realPage = map[string]struct{ query, marker string }{
 	// The raw-record view's real page needs a STORED transcript the caller may see: `walkTranscripts`
 	// stores one for [walkSession], owned by the walk's own identity.
 	"GET /session/transcript content": {"?" + QuerySession + "=" + walkSession, `id="transcript-raw"`},
+	// "My sessions" (S7): the walk's identity owns `walkTranscripts`' one session, so its page LISTS
+	// it — the row, not the empty state.
+	"GET /my-sessions content": {"", `id="my-sessions-list"`},
 }
 
 // walkTranscripts is a transcript store holding ONE session, [walkSession], owned by the walk's

@@ -81,10 +81,14 @@ const (
 	hubArcsWhat     = "Named pieces of work, and the sessions and scopes each one touched."
 	hubScopesWhat   = "Every scope you can read, newest first — with search and the tag filter."
 	hubSessionsWhat = "Every writing session you can see, newest first."
-	hubTeamWhat     = "Who can read and write each scope you administer, invitations, and team links."
+	// The "My sessions" card (S7 of the transcripts plan): no count, for the arcs and sessions cards'
+	// reason — the number is one click away, and counting it would read every stored session's meta on
+	// every hub load.
+	hubMySessionsWhat = "The sessions whose transcripts you uploaded, newest first — including those only you can open."
+	hubTeamWhat       = "Who can read and write each scope you administer, invitations, and team links."
 )
 
-// HubPage is the root: four cards, each a way in. Only the scopes card carries a count.
+// HubPage is the root: five cards, each a way in. Only the scopes card carries a count.
 func HubPage(v PageView) g.Node {
 	return shell("", v, nil,
 		// The iOS install hint (S4, `pwa.go`): hidden, and nothing at all when unarmed.
@@ -94,6 +98,9 @@ func HubPage(v PageView) g.Node {
 			hubCard("scopes", "Scopes", ScopesPath, hubScopesWhat,
 				stat(plural(len(v.Scopes), "readable scope", "readable scopes"), "")),
 			hubCard("sessions", "Sessions", SessionsPath, hubSessionsWhat, nil),
+			// "My sessions" (S7): the way in to the viewer's OWN stored transcripts, owner-only ones
+			// included — which nothing else on this surface links, since nothing in the store names them.
+			hubCard("mysessions", "My sessions", MySessionsPath, hubMySessionsWhat, nil),
 			// The Team page (#214): sharing, single invitations and team links on one page —
 			// `/share` and `/invite` now only redirect there.
 			hubCard("team", "Team", TeamPath, hubTeamWhat, nil),

@@ -5499,6 +5499,19 @@ MUTANTS: tuple[Mutant, ...] = (
         "assistant's head limit reads as consistency — and the one thing the operator asked never to "
         "be cut is then cut at 1,200 characters with no reveal.",
     ),
+    # ---- transcripts S7: "My sessions" (O10, clause g — the listing half) ----------------------
+    Mutant(
+        name="my-sessions-lists-another-owner",
+        path="internal/transcript/mine.go",
+        old="\t\tif !viewer.owns(meta) {",
+        new="\t\tif v, _ := s.View(viewer, root); v == nil {",
+        killer="TestMySessionsListsOwnershipNotVisibility",
+        why="the visibility predicate is THE gate on transcript content, so listing every session it "
+        "admits reads as the careful version of the page — and turns a reader's \"My sessions\" into a "
+        "feed of every session over their readable scopes that somebody else uploaded.",
+        extra_killers=("TestMySessionsListsTheViewersOwnAndNoOneElses",),
+        pkgs=PKGS + ("./internal/transcript/",),
+    ),
     Mutant(
         name="redact-marker-drops-the-whole-span",
         path="internal/redact/marker.go",
