@@ -52,8 +52,16 @@ at the provider (decision 12: the pod never sees the key, so it cannot cap anyth
   result in main; the watermark still covers them so the session stops being pending.
 - **One worker per plugin** (decision 13): two hosts running it duplicate the work, and each has its
   own ledger, so each gets the whole cap.
-- **A crashed run repeats its last session's requests** — nothing is written until a session's chain
-  ends (or is capped), and the ledger has already counted them.
+- **A crashed run repeats its last session's requests** — a chain's progress is written when it ends,
+  is capped, or a request fails (an error, an empty answer, the run's own deadline), but a KILLED
+  process writes nothing, and the ledger has already counted them.
+- **A deterministic refusal is re-paid every run**: a provider that refuses or truncates the same
+  records (`refusal`, `max_tokens`, a 400) fails that session each run, one request each, with no
+  backoff — the spend cap is what bounds it.
+- **A `ledger` stream is listed, never summarised or named**: the client read ledger is no conversation,
+  and a watermark may name only `main`, `subagent:…` and `child:…`.
+- **opencode text parts are not attributed**: the role is on the message's `info` record, which the
+  conversation view leaves out, so they render as `[text — opencode, speaker not recorded…]`.
 - **Prompt injection** (T8): the system prompt says the transcript is data; what holds is downstream
   — an output is a labelled, derived claim, rendered as text only, and this program writes nothing
   else.

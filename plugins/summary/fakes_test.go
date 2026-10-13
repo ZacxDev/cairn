@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,12 +40,22 @@ type fakePod struct {
 	pageMax  int // records per page, to exercise paging
 	views    []string
 	refuseTr bool // answer 403 on the transcript route (the toggle turned OFF)
+	ledger   int64  // a `ledger` stream's seq_to (the client read ledger); 0 is none
+	plugin   string // the registered name the pod stamps on outputs ("" is "summary")
+	srcs     []string // per-record src (opencode `prt:…`); nil is the record's index
 }
+
+// streamWire is the pod's `ValidStream` vocabulary (`internal/plugins`): the streams an
+// `input_watermark` may name. The fake REFUSES any other, as the pod does.
+var streamWire = regexp.MustCompile(`^(main|subagent:[A-Za-z0-9][A-Za-z0-9_.-]{0,63}|child:[A-Za-z0-9][A-Za-z0-9_.-]{0,63})$`)
 
 func (p *fakePod) streams() map[string]int64 {
 	s := map[string]int64{"main": int64(len(p.records))}
 	if p.sub > 0 {
 		s["subagent:a1"] = p.sub
+	}
+	if p.ledger > 0 {
+		s["ledger"] = p.ledger
 	}
 	return s
 }
@@ -84,7 +95,9 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		pos := map[string]any{}
 		for s, seq := range streams {
 			pos[s] = map[string]int64{"seq_to": seq}
-			if seq > wm[s] {
+			// Growth is counted over the streams a watermark can name — the rule the pod's pending
+			// query keeps (a `ledger` stream is listed, never counted).
+			if streamWire.MatchString(s) && seq > wm[s] {
 				grown = true
 			}
 		}
@@ -110,7 +123,11 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 				recs = append(recs, map[string]any{"seq": i, "src": strconv.Itoa(i),
 					"omitted": []any{map[string]any{"class": "bookkeeping", "path": "", "bytes": len(rec), "label": "attachment"}}})
 			} else {
-				recs = append(recs, map[string]any{"seq": i, "src": strconv.Itoa(i), "rec": json.RawMessage(rec)})
+				src := strconv.Itoa(i)
+				if p.srcs != nil {
+					src = p.srcs[i-1]
+				}
+				recs = append(recs, map[string]any{"seq": i, "src": src, "rec": json.RawMessage(rec)})
 			}
 			next = i + 1
 		}
@@ -136,13 +153,21 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for s, seq := range env.InputWatermark {
+			if !streamWire.MatchString(s) {
+				http.Error(rw, "input_watermark holds a bad stream or a negative seq", 400)
+				return
+			}
 			if top, ok := p.streams()[s]; !ok || seq > top {
 				http.Error(rw, "watermark past what is stored", 400)
 				return
 			}
 		}
 		id := fmt.Sprintf("o-%04d", len(p.outputs)+1)
-		p.outputs = append(p.outputs, map[string]any{"id": id, "plugin": "summary", "plugin_version": "0.1.0",
+		name := p.plugin
+		if name == "" {
+			name = "summary"
+		}
+		p.outputs = append(p.outputs, map[string]any{"id": id, "plugin": name, "plugin_version": "0.1.0",
 			"model": env.Model, "session": session, "input_watermark": env.InputWatermark, "type": "summary",
 			"body": env.Body, "produced_at": "2000-01-01T00:00:00Z"})
 		writeJSON(rw, 201, map[string]string{"id": id})
@@ -174,12 +199,25 @@ type fakeProvider struct {
 	status int    // non-zero: answer this status instead
 	echo   string // with status: a body echoing this (the key, to prove it is scrubbed)
 	openai bool
+	// emptyOn and hangOn make request number N (1-based) answer an empty text, or hang for hang.
+	emptyOn, hangOn int
+	hang            time.Duration
+	sizes           []int // each request body's size
 }
 
 func (f *fakeProvider) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	raw, _ := io.ReadAll(r.Body)
+	f.sizes = append(f.sizes, len(raw))
+	if f.hangOn == len(f.users)+1 {
+		f.mu.Unlock()
+		select {
+		case <-time.After(f.hang):
+		case <-r.Context().Done():
+		}
+		f.mu.Lock()
+	}
 	if f.status != 0 {
 		http.Error(rw, `{"error":{"message":"bad key `+f.echo+`"}}`, f.status)
 		return
@@ -214,8 +252,15 @@ func (f *fakeProvider) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	f.users = append(f.users, body.Messages[0].Content)
 	writeJSON(rw, 200, map[string]any{"model": "fake-model-1", "stop_reason": "end_turn",
 		"content": []any{map[string]string{"type": "thinking", "thinking": ""},
-			map[string]string{"type": "text", "text": fmt.Sprintf("summary %d", len(f.users))}},
+			map[string]string{"type": "text", "text": f.answer()}},
 		"usage": map[string]int{"input_tokens": 10, "output_tokens": 5}})
+}
+
+func (f *fakeProvider) answer() string {
+	if len(f.users) == f.emptyOn {
+		return ""
+	}
+	return fmt.Sprintf("summary %d", len(f.users))
 }
 
 func (f *fakeProvider) received() []string {

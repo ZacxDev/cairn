@@ -831,6 +831,11 @@ jobs:
       # same reason: a skip nobody counts is a pass.
       - name: the tier that must not skip a git-dependent test
         run: echo "CAIRN_GIT_TESTS_REQUIRED=1" >> "$GITHUB_ENV"
+      # …and the same for `internal/worker`'s TestTheSummaryPluginAgainstTheRealListener, which builds
+      # the S9 plugin from `plugins/` — absent from the nix derivations' filtered source, where it
+      # skips; here the source is present and a skip REFUSES.
+      - name: the tier that must not skip the plugin built against the real listener
+        run: echo "CAIRN_PLUGIN_BUILD_REQUIRED=1" >> "$GITHUB_ENV"
 
       - name: go vet
         run: go vet ./...
@@ -1224,7 +1229,7 @@ jobs:
       # tests would run only in the nix tier. It runs against an in-process FAKE provider and a fake pod,
       # synthetic fixtures only — no real provider is ever called by CI (the plan's (iii)).
       #
-      # 🔴 COUNTED, NOT EXIT-CODED: a module whose tests vanished exits 0 too. 9 `--- PASS` lines and 1
+      # 🔴 COUNTED, NOT EXIT-CODED: a module whose tests vanished exits 0 too. 14 `--- PASS` lines and 1
       # `ok` package were measured when the plugin landed; a drop below either, or any FAIL, refuses.
       - name: the summary plugin's own suite, against an in-process fake provider and fake pod
         run: |
@@ -1236,8 +1241,8 @@ jobs:
           fails=$(grep -c '^--- FAIL' /tmp/plugins-suite.txt || true)
           oks=$(grep -c '^ok ' /tmp/plugins-suite.txt || true)
           echo "plugins suite: passes=$passes fails=$fails ok=$oks"
-          if [ "$passes" -lt 9 ] || [ "$fails" -ne 0 ] || [ "$oks" -lt 1 ]; then
-            echo "REFUSING: $passes PASS / $fails FAIL / $oks ok, and 9 / 0 / 1 were measured"
+          if [ "$passes" -lt 14 ] || [ "$fails" -ne 0 ] || [ "$oks" -lt 1 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL / $oks ok, and 14 / 0 / 1 were measured"
             exit 1
           fi
 

@@ -45,7 +45,7 @@ func TestTheFirstRunSummarisesOneToNAndTheSecondOnlyTheNewRecordsPlusThePriorSum
 	}
 	got := w.prov.received()
 	if len(got) != 1 || !slices.Equal(marks(got[0]), span(1, n)) || !strings.Contains(got[0], "PREVIOUS SUMMARY: (none") {
-		t.Fatalf("run 1 sent %d request(s); the first carried records %v, want exactly 1–%d and no prior summary", len(got), marks(got[0]), n)
+		t.Fatalf("run 1 sent %d request(s) %q, want exactly one carrying records 1–%d and no prior summary", len(got), got, n)
 	}
 	w.pod.mu.Lock()
 	first := w.pod.outputs[0]
@@ -156,7 +156,7 @@ func TestASessionLargerThanOneChunkIsSummarisedInARollingChain(t *testing.T) {
 	}
 	got := w.prov.received()
 	if len(got) != 2 || !slices.Equal(marks(got[0]), []int{1, 2}) || !slices.Equal(marks(got[1]), []int{3, 4}) {
-		t.Fatalf("the chain sent %d requests carrying %v / %v, want [1 2] then [3 4]", len(got), marks(got[0]), marks(got[1]))
+		t.Fatalf("the chain sent %d requests %q, want two carrying [1 2] then [3 4]", len(got), got)
 	}
 	if !strings.Contains(got[1], "PREVIOUS SUMMARY (of records 1–2):\n<<<SUMMARY\nsummary 1") {
 		t.Errorf("the second request does not carry the first's summary")
@@ -277,5 +277,128 @@ func TestARefusedTranscriptIsAFailureNotASummary(t *testing.T) {
 	code, out, errs := w.run(t)
 	if code != 1 || !strings.Contains(errs, "403") || len(w.prov.received()) != 0 || len(w.pod.outputs) != 0 {
 		t.Fatalf("exit %d, %d requests, %d outputs\n%s%s", code, len(w.prov.received()), len(w.pod.outputs), out, errs)
+	}
+}
+
+// TestALedgerStreamNeitherBlocksTheWriteNorKeepsTheSessionPending — a session the client read ledger
+// ran in carries a `ledger` stream, which the pending query LISTS but a watermark may not NAME (the pod
+// refuses the whole write). Red at the first S9 commit: the watermark copied every listed stream, the
+// write was refused 400, nothing was stored, and every run re-paid for the same records.
+func TestALedgerStreamNeitherBlocksTheWriteNorKeepsTheSessionPending(t *testing.T) {
+	w := newWorld(t, numbered(1, 3))
+	w.pod.ledger = 2
+	if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "written=1 requests=1 failed=0") {
+		t.Fatalf("exit %d\n%s%s", code, out, errs)
+	}
+	wm := w.pod.latest()["input_watermark"].(map[string]int64)
+	if _, named := wm["ledger"]; named || wm["main"] != 3 {
+		t.Errorf("the watermark is %v, want main=3 and no ledger", wm)
+	}
+	if code, out, _ := w.run(t); code != 0 || !strings.Contains(out, "sessions=0 written=0 requests=0") {
+		t.Errorf("the session is still pending after its summary: %s", out)
+	}
+	if n := len(w.prov.received()); n != 1 {
+		t.Errorf("the provider received %d requests over two runs, want 1", n)
+	}
+}
+
+// TestAFailedChainKeepsWhatItSummarised — when request N of a chain fails, the summary of requests
+// 1..N-1 is written with the watermark at the last record they covered: on a provider ERROR, on an
+// EMPTY answer, and when the run's own DEADLINE is what failed it (the write then runs on a context the
+// deadline did not cancel). Red at the first S9 commit for the empty answer (it returned without
+// writing) and for the deadline (the write ran on the cancelled context and failed too).
+func TestAFailedChainKeepsWhatItSummarised(t *testing.T) {
+	var recs []string
+	for i := 1; i <= 4; i++ {
+		recs = append(recs, human(fmt.Sprintf("mark-%d %s", i, strings.Repeat("lorem ", 500))))
+	}
+	for name, set := range map[string]func(*world, ...string) []string{
+		"an empty answer": func(w *world, a ...string) []string { w.prov.emptyOn = 2; return a },
+		"the run's deadline": func(w *world, a ...string) []string {
+			w.prov.hangOn, w.prov.hang = 2, 10*time.Second
+			return append(a, "-timeout", "1s")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t, recs)
+			args := set(w, "-chunk-bytes", "6500")
+			code, out, errs := w.run(t, args...)
+			if code != 1 {
+				t.Fatalf("exit %d, want 1 (a session failed)\n%s%s", code, out, errs)
+			}
+			if len(w.pod.outputs) != 1 {
+				t.Fatalf("%d outputs written, want 1 — the first request's summary\n%s", len(w.pod.outputs), errs)
+			}
+			if wm := w.pod.latest()["input_watermark"].(map[string]int64); wm["main"] != 2 {
+				t.Errorf("the kept summary's watermark is %v, want main=2 (the first chunk's last record)", wm)
+			}
+		})
+	}
+}
+
+// TestThePriorSummaryIsFoundByIDWhateverThePluginIsRegisteredAs — the pending item names this token's
+// own last output; the pod stamps the REGISTRY's name, which need not be "summary". Red at the first S9
+// commit, which also required the name: the prior summary was never found and every run restarted
+// from record 1.
+func TestThePriorSummaryIsFoundByIDWhateverThePluginIsRegisteredAs(t *testing.T) {
+	w := newWorld(t, numbered(1, 3))
+	w.pod.plugin = "summary-alt"
+	if code, _, errs := w.run(t); code != 0 {
+		t.Fatalf("run 1: %s", errs)
+	}
+	w.pod.mu.Lock()
+	w.pod.records = append(w.pod.records, numbered(4, 2)...)
+	w.pod.mu.Unlock()
+	if code, _, errs := w.run(t); code != 0 {
+		t.Fatalf("run 2: %s", errs)
+	}
+	got := w.prov.received()
+	if len(got) != 2 || !slices.Equal(marks(got[1]), []int{4, 5}) || !strings.Contains(got[1], "<<<SUMMARY\nsummary 1\n") {
+		t.Fatalf("run 2 sent %q, want only records 4–5 and the prior summary", got[len(got)-1])
+	}
+}
+
+// TestOneRecordCannotMakeARequestAnySize — the per-line clips bound each LINE; a user record answering
+// many parallel tool calls is many lines, so the entry itself is clipped to `-chunk-bytes`. Red at the
+// first S9 commit: the request carried every result.
+func TestOneRecordCannotMakeARequestAnySize(t *testing.T) {
+	var blocks []string
+	for i := 0; i < 40; i++ {
+		blocks = append(blocks, `{"type":"tool_result","tool_use_id":"t`+fmt.Sprint(i)+`","content":`+q(strings.Repeat("y", toolClip))+`}`)
+	}
+	wide := `{"type":"user","message":{"role":"user","content":[` + strings.Join(blocks, ",") + `]}}`
+	w := newWorld(t, []string{human("go mark-1"), wide})
+	if code, out, errs := w.run(t, "-chunk-bytes", "8192"); code != 0 {
+		t.Fatalf("exit %d\n%s%s", code, out, errs)
+	}
+	limit := 8192 + len(systemPrompt) + 4096 // the chunk, the system prompt, and the envelope around them
+	for i, n := range w.prov.sizes {
+		if n > limit {
+			t.Errorf("request %d is %d bytes, over the %d one chunk allows", i+1, n, limit)
+		}
+	}
+	if len(w.prov.sizes) == 0 {
+		t.Fatal("POSITIVE CONTROL: no request was sent, so the bound measured nothing")
+	}
+}
+
+// TestAnOpencodeTextPartSaysItsSpeakerIsNotRecorded — the conversation view leaves an opencode
+// message's `info` record (its role) out, so a text part is NOT attributed to anyone, and says so.
+func TestAnOpencodeTextPartSaysItsSpeakerIsNotRecorded(t *testing.T) {
+	w := newWorld(t, []string{
+		`{"type":"text","id":"prt_1","sessionID":"ses_1","messageID":"msg_1","text":"hello mark-1"}`,
+		`{"type":"tool","id":"prt_2","sessionID":"ses_1","messageID":"msg_2","callID":"c1","tool":"bash","state":{"status":"completed","input":{"command":"ls mark-2"},"output":"a.txt"}}`,
+		`{"type":"compaction","id":"prt_3","sessionID":"ses_1","messageID":"msg_3"}`,
+	})
+	w.pod.srcs = []string{"prt:prt_1@d1", "prt:prt_2@d2", "prt:prt_3@d3"}
+	if code, out, errs := w.run(t); code != 0 {
+		t.Fatalf("exit %d\n%s%s", code, out, errs)
+	}
+	body := w.prov.received()[0]
+	for _, want := range []string{"#1 [text — opencode, speaker not recorded in this view] hello mark-1",
+		`#2 [tool call bash] {"command":"ls mark-2"}`, "[tool result] a.txt", "#3 [RUNTIME-GENERATED compaction"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the prompt lacks %q:\n%s", want, body)
+		}
 	}
 }

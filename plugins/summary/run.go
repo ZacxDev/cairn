@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/ZacxDev/cairn/plugins/internal/llm"
@@ -32,6 +34,13 @@ const (
 
 // OutputType is the one output type this plugin writes.
 const OutputType = "summary"
+
+// watermarkStream is the stream vocabulary the pod accepts in an `input_watermark`
+// (`internal/plugins` `ValidStream`, decision 7) — a second spelling, pinned by the real-listener test.
+var watermarkStream = regexp.MustCompile(`^(main|subagent:[A-Za-z0-9][A-Za-z0-9_.-]{0,63}|child:[A-Za-z0-9][A-Za-z0-9_.-]{0,63})$`)
+
+// writeTimeout bounds the write that keeps a failed chain's progress.
+const writeTimeout = 30 * time.Second
 
 // maxSummaryBytes is the pod's bound on a summary's text (`internal/plugins` outputs.go).
 const maxSummaryBytes = 16 << 10
@@ -116,7 +125,9 @@ func (r *Runner) prior(ctx context.Context, it pluginapi.PendingItem) (text stri
 		return "", 0, "", fmt.Errorf("reading the previous summary: %w", err)
 	}
 	for _, o := range outs {
-		if o.ID != it.PrevOutput.ID || o.Plugin != Name {
+		// Matched on the id ALONE: the pending item names this token's own last output, and a
+		// name check would lose the prior summary whenever the registry names the plugin otherwise.
+		if o.ID != it.PrevOutput.ID {
 			continue
 		}
 		var body struct {
@@ -196,16 +207,20 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem) (session
 		res.requests++
 		ans, err := r.Provider.Complete(ctx, llm.Request{System: systemPrompt, User: userPrompt(summary, covered, chunk),
 			MaxTokens: r.MaxOutputTokens})
+		if err == nil && ans.Text == "" {
+			err = errors.New("the provider answered an empty summary")
+		}
 		if err != nil {
 			if covered > after {
-				// Keep what was summarised: write it below, then report the failure.
-				res, werr := r.write(ctx, it, res, summary, model, covered, false)
+				// 🔴 KEEP WHAT WAS SUMMARISED, AND ON A CONTEXT THE FAILURE DID NOT CANCEL: when the run's
+				// own deadline is what failed the request, writing on the same context would fail too,
+				// and a backlog larger than one run would restart from the same record forever.
+				wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
+				defer cancel()
+				res, werr := r.write(wctx, it, res, summary, model, covered, false)
 				return res, errors.Join(err, werr)
 			}
 			return res, err
-		}
-		if ans.Text == "" {
-			return res, errors.New("the provider answered an empty summary")
 		}
 		summary, model = clipSummary(ans.Text), ans.Model
 		covered = chunk[len(chunk)-1].Seq
@@ -226,14 +241,20 @@ func (r *Runner) write(ctx context.Context, it pluginapi.PendingItem, res sessio
 	wm := map[string]int64{}
 	if it.PrevOutput != nil {
 		for s, seq := range it.PrevOutput.Watermark {
-			if _, held := it.Streams[s]; held {
+			if _, held := it.Streams[s]; held && watermarkStream.MatchString(s) {
 				wm[s] = seq
 			}
 		}
 	}
 	if complete {
 		for s, pos := range it.Streams {
-			wm[s] = pos.SeqTo
+			// 🔴 ONLY A STREAM THE POD ACCEPTS IN A WATERMARK: a session's `ledger` stream (the client
+			// read ledger) is listed by the pending query but is no conversation, and naming it made
+			// the pod refuse the WHOLE write — so the session was re-summarised, and re-paid for, on
+			// every run.
+			if watermarkStream.MatchString(s) {
+				wm[s] = pos.SeqTo
+			}
 		}
 	}
 	wm["main"] = covered
