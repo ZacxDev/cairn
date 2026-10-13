@@ -318,3 +318,48 @@ func TestABrokenStoreIsAnErrorNotAnEmptyList(t *testing.T) {
 		t.Fatalf("with the store removed the pending route answered %d %q, want 500", rec.Code, rec.Body.String())
 	}
 }
+
+// TestThePluginTranscriptReadIsTheAgentReadModel: the plugin route pages through S8's ONE pager —
+// `view=conversation` by default and `view=raw` on request, `next_seq` and `max_bytes` included —
+// and an unknown view is a 400 decided before any session is looked at (so it is the same for a
+// session the plugin is OFF for), while a stream the session does not hold is the one 403.
+func TestThePluginTranscriptReadIsTheAgentReadModel(t *testing.T) {
+	p := newPluginRig(t)
+	p.toggle(plugins.LevelScope, "alpha-notes", plugins.ValueOn)
+	var page struct {
+		View    string `json:"view"`
+		NextSeq int64  `json:"next_seq"`
+		Done    bool   `json:"done"`
+		Records []struct {
+			Seq int64 `json:"seq"`
+		} `json:"records"`
+	}
+	read := func(query string) {
+		t.Helper()
+		rec := p.do(http.MethodGet, TranscriptPattern+"?session=s-alpha"+query, summaryToken, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s answered %d %q", query, rec.Code, rec.Body.String())
+		}
+		page.Records = nil
+		if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read("")
+	if page.View != "conversation" || len(page.Records) != 3 || !page.Done || page.NextSeq != 4 {
+		t.Fatalf("the default read is %+v, want the conversation view of all 3 records, done, next_seq 4", page)
+	}
+	read("&view=raw&from_seq=2&max_bytes=1")
+	if page.View != "raw" || len(page.Records) != 1 || page.Records[0].Seq != 2 || page.Done || page.NextSeq != 3 {
+		t.Fatalf("a one-byte raw page from 2 is %+v, want record 2 alone (whole), next_seq 3", page)
+	}
+	for _, session := range []string{"s-alpha", "s-both"} {
+		if rec := p.do(http.MethodGet, TranscriptPattern+"?session="+session+"&view=summary", summaryToken, ""); rec.Code != http.StatusBadRequest {
+			t.Fatalf("an unknown view on %s answered %d, want 400 before the session is looked at", session, rec.Code)
+		}
+	}
+	if rec := p.do(http.MethodGet, TranscriptPattern+"?session=s-alpha&stream=subagent:a1", summaryToken, ""); rec.Code != http.StatusForbidden ||
+		rec.Body.String() != ForbiddenBody {
+		t.Fatalf("a stream the session does not hold answered %d %q, want the one 403", rec.Code, rec.Body.String())
+	}
+}

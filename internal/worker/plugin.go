@@ -16,7 +16,7 @@ import (
 // a `plugin` worker token reaches, plain HTTP+JSON (O7 — never MCP).
 //
 //	GET  /plugin/v1/pending?limit=N                                   pending:list
-//	GET  /plugin/v1/transcript?session=&stream=&from_seq=&max_bytes=  transcript:read + ON
+//	GET  /plugin/v1/transcript?session=&stream=&from_seq=&max_bytes=&view=  transcript:read + ON
 //	GET  /plugin/v1/outputs?session=&type=                            output:read:<type> + ON
 //	POST /plugin/v1/outputs  {envelope}                               output:write:<type> + ON → 201 {"id"}
 //
@@ -35,13 +35,6 @@ const (
 
 // ForbiddenBody is the plugin API's ONE refusal body.
 const ForbiddenBody = `{"refused":"plugin-forbidden"}` + "\n"
-
-// Transcript read bounds: a page carries records up to `max_bytes` of record bytes, and always at
-// least one record when one is there (a record is bounded by `archive.MaxAssembledBytes`).
-const (
-	DefaultTranscriptPageBytes = 1 << 20
-	MaxTranscriptPageBytes     = 8 << 20
-)
 
 func forbidden(rw http.ResponseWriter) { writeJSON(rw, http.StatusForbidden, ForbiddenBody) }
 
@@ -121,43 +114,27 @@ func (w *Worker) handlePending(rw http.ResponseWriter, r *http.Request, row Toke
 	writeValue(rw, http.StatusOK, map[string]any{"items": items})
 }
 
-// transcriptRecord is one record on the wire.
-type transcriptRecord struct {
-	Seq int64           `json:"seq"`
-	Rec json.RawMessage `json:"rec"`
-}
-
+// handleTranscript is `GET /plugin/v1/transcript`: ONE page of a stored stream, through S8's read
+// model — `transcript.ParseRecordsQuery` for the parameters (`stream`, `from_seq`, `to_seq`,
+// `max_bytes`, `view` — `conversation` by default, or `raw` — and the class/role/tool filters) and
+// `View.Page` for the page, so the plugin API and the agent read API have ONE pager (one rule, one
+// place) and a plugin reads what decision 17 says an agent reads.
+//
+// 🔴 THE CAPABILITY FIRST, THEN THE REQUEST'S SHAPE, THEN THE SESSION'S TOGGLE. A plugin without
+// `transcript:read` learns nothing about its parameters either; a malformed query is a 400 decided
+// from the query alone; only then is the session looked at, and every miss after that — OFF, never
+// stored, no such stream — is the ONE 403.
 func (w *Worker) handleTranscript(rw http.ResponseWriter, r *http.Request, row TokenRow) {
 	e, ok := w.entry(rw, row)
 	if !ok {
 		return
 	}
-	// 🔴 THE CAPABILITY FIRST, THEN THE REQUEST'S SHAPE, THEN THE SESSION'S TOGGLE. A plugin without
-	// `transcript:read` learns nothing about its parameters either.
 	if !e.Has(plugins.CapTranscriptRead) {
 		forbidden(rw)
 		return
 	}
 	q := r.URL.Query()
-	stream := q.Get("stream")
-	if stream == "" {
-		stream = "main"
-	}
-	if !plugins.ValidStream(stream) {
-		badRequest(rw, errors.New("stream is not a stream name"))
-		return
-	}
-	if v := q.Get("view"); v != "" {
-		// Decision 17's views are slice S8's; this build serves stored records as stored.
-		badRequest(rw, errors.New("view is not served by this build: records are returned as stored"))
-		return
-	}
-	from, err := intParam(r, "from_seq", 1, 0, 1<<62)
-	if err != nil {
-		badRequest(rw, err)
-		return
-	}
-	budget, err := intParam(r, "max_bytes", DefaultTranscriptPageBytes, 1, MaxTranscriptPageBytes)
+	rq, err := transcript.ParseRecordsQuery(q)
 	if err != nil {
 		badRequest(rw, err)
 		return
@@ -167,27 +144,16 @@ func (w *Worker) handleTranscript(rw http.ResponseWriter, r *http.Request, row T
 		w.refuse(rw, err)
 		return
 	}
-	out := []transcriptRecord{}
-	var used int64
-	next := from
-	err = v.Records(stream, func(rec transcript.Record) error {
-		if rec.Seq < from {
-			return nil
-		}
-		if len(out) > 0 && used+int64(len(rec.Rec)) > budget {
-			return transcript.StopRecords
-		}
-		out = append(out, transcriptRecord{Seq: rec.Seq, Rec: rec.Rec})
-		used += int64(len(rec.Rec))
-		next = rec.Seq + 1
-		return nil
-	})
+	page, err := v.Page(rq)
+	if errors.Is(err, transcript.ErrNotHeld) {
+		forbidden(rw)
+		return
+	}
 	if err != nil {
 		w.refuse(rw, err)
 		return
 	}
-	writeValue(rw, http.StatusOK, map[string]any{"records": out, "next_seq": next,
-		"seq_to": v.Meta.Streams[stream].SeqTo})
+	writeJSON(rw, http.StatusOK, string(page.JSON()))
 }
 
 func (w *Worker) handleOutputsRead(rw http.ResponseWriter, r *http.Request, row TokenRow) {

@@ -40,8 +40,9 @@ under its own `plugins-*` row in `tests/control_mutants.py`.
   transcript read is 404" after a deletion is S6's to reconcile with that.
 - **`plugin_version` is stamped from the registry too**, not only the name.
 - **`prev_output` is the plugin's LAST-WRITTEN output** for the session, any type.
-- **`view=` is refused 400** on the transcript route: decision 17's views are S8's; records are served
-  as stored.
+- **The transcript route IS S8's read model**: `transcript.ParseRecordsQuery` and `View.Page`, so
+  `view=conversation` by default (decision 13's "reads through `view=conversation`"), `view=raw` on
+  request, and ONE pager for agents and plugins. A stream the session does not hold is the one 403.
 - **The summary body is `{"text": …}`** (≤ 16 KiB) — the plan names the type, not its shape.
 - **The registry and the journal are both-or-neither, and only with the worker listener**; a `plugin`
   token row is admitted only for a plugin the registry holds, at startup and on every re-read.
