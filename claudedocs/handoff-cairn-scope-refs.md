@@ -48,7 +48,8 @@ CLI auditor can deterministically check entries' paths, SHAs and PR refs against
 1. **Operator: declare the first source in the browser** (an admin of the scope, the scope page's
    Sources block). Then verify the half nothing has exercised: `cairn sources --scope <s>` lists it,
    `cairn audit-refs --scope <s>` runs, and the next UI backup logs `sources: lines=1`, twice (stage
-   and restore). A `503 store-unreachable` from the pod at that point means the pod cannot read the
+   and restore). Then set the backup job's source-line floor to 1 in the deployment repo, so a lost
+   journal fails the job instead of passing as `absent`. A `503 store-unreachable` from the pod at that point means the pod cannot read the
    file the UI created. forcing: user — operator asked for scope refs end to end.
 2. **Operator decisions the S5 audit raised** (each `forcing: audit`):
    - 🟡2 of #259 r1: a path missing in every LOOKED-AT source is `stale` (exit 9) even when another
@@ -80,15 +81,16 @@ CLI auditor can deterministically check entries' paths, SHAs and PR refs against
   via: code
 - **The sources journal's dedicated volume is node-local and ReadWriteOnce, shared by two pods** —
   safe only because both already mount the store's volume, whose node pin places them together, so
-  the new claim is provisioned on that node whichever pod consumes it first (no ordering can
-  deadlock). If the store's volume ever moves, both pods go Pending on a volume-affinity conflict:
+  the new claim is provisioned on that node whichever pod consumes it first (so no ordering should
+  deadlock — derived from the node pins; one rollout observed, both pods up in under a minute). If the store's volume ever moves, both pods go Pending on a volume-affinity conflict:
   loud, not silent. Rollback of the deployment change DELETES the claim and the journal with it
   (prune, reclaim `Delete`) — restore `sources/` from the UI backup archive if declarations exist.
   via: command
-- **Claim-level `readOnly` on the pod's mount did NOT make the UI's mount read-only** on this
-  deployment's hostpath-style provisioner (the UI's mount reads `rw` and the directory is writable
-  while the pod's reads `ro` and refuses a write) — one driver, one measurement; the plan's "never
-  claim-level" warning is about a different driver and still stands elsewhere. via: command
+- **Claim-level `readOnly` on the pod's mount co-mounted fine** on this deployment's hostpath-style
+  provisioner: both pods Running with the claim mounted, the UI's `rw`, the pod's `ro` and refusing
+  a write. One driver, one measurement; the plan's "never claim-level" warning (the reader stuck
+  Pending beside the read-write holder) is about a different driver and still stands there.
+  via: command
 - **Arc journal: `/var/lib/cairn-arcs/arcs.jsonl` on PVC `cairn-arc-journal` (local-path RWO);
   the store pod writes, cairn-ui mounts it read-only** — both pods must share a node. The sources
   journal reverses the direction (UI writes, pod reads). via: command
