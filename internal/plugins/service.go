@@ -1,0 +1,226 @@
+package plugins
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"time"
+
+	"github.com/ZacxDev/cairn/internal/arcs"
+	"github.com/ZacxDev/cairn/internal/transcript"
+)
+
+// ErrForbidden is EVERY refusal the plugin API answers with its one 403 body (decision 9, clause j,
+// T10): a capability the manifest does not hold, a type outside its `output_types`, a session the
+// plugin is OFF for, and a session that is not stored. One value, so no caller can answer them
+// differently.
+var ErrForbidden = errors.New("forbidden")
+
+// Service is what the plugin API and the browser surface decide from.
+type Service struct {
+	Registry *Registry
+	Journal  Journal
+	// Transcripts is the transcript store's read side; nil means none — every session is "not
+	// stored" and every plugin read is refused.
+	Transcripts *transcript.Store
+	// Arcs reads the arc registry; nil means none is configured, and no arc lists any session.
+	Arcs func() (arcs.Snapshot, error)
+	// Known reports whether the authority still holds a scope of that STORE name ([Effective]).
+	Known func(scope string) bool
+	// Now is the pod clock.
+	Now func() time.Time
+}
+
+func (s *Service) now() time.Time {
+	if s.Now == nil {
+		return time.Now()
+	}
+	return s.Now()
+}
+
+// arcSnapshot reads the arc registry once per decision.
+func (s *Service) arcSnapshot() (arcs.Snapshot, error) {
+	if s.Arcs == nil {
+		return arcs.Snapshot{}, nil
+	}
+	return s.Arcs()
+}
+
+// ArcsListing is every registered arc naming one of `ids` as a member, sorted.
+func ArcsListing(snap arcs.Snapshot, ids []string) []arcs.Key {
+	var out []arcs.Key
+	for k, reg := range snap.Latest {
+		if slices.ContainsFunc(reg.Members, func(m arcs.Member) bool { return slices.Contains(ids, m.Session) }) {
+			out = append(out, k)
+		}
+	}
+	slices.SortFunc(out, func(a, b arcs.Key) int {
+		if a.Home != b.Home {
+			if a.Home < b.Home {
+				return -1
+			}
+			return 1
+		}
+		if a.Slug < b.Slug {
+			return -1
+		} else if a.Slug > b.Slug {
+			return 1
+		}
+		return 0
+	})
+	return out
+}
+
+// decider binds ONE journal read and ONE arc read into the `on` predicate [transcript.Store.ForPlugin]
+// asks.
+func (s *Service) decider(plugin string) (func(*transcript.Meta, []string) bool, error) {
+	st, err := s.Journal.Read()
+	if err != nil {
+		return nil, err
+	}
+	snap, err := s.arcSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	known := s.Known
+	if known == nil {
+		known = func(string) bool { return false }
+	}
+	return func(meta *transcript.Meta, v []string) bool {
+		ids := append([]string{meta.Root}, meta.Children...)
+		return Effective(st, plugin, Subject{Root: meta.Root, V: v, Arcs: ArcsListing(snap, ids)}, known)
+	}, nil
+}
+
+// Open returns the session's [transcript.View] when `plugin` is ON for it, and [ErrForbidden]
+// otherwise — whatever the reason.
+func (s *Service) Open(plugin, root string) (*transcript.View, error) {
+	on, err := s.decider(plugin)
+	if err != nil {
+		return nil, err
+	}
+	v, err := s.Transcripts.ForPlugin(root, on)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, ErrForbidden
+	}
+	return v, nil
+}
+
+// latestOutput is `plugin`'s last-written output in a session, nil when it has none.
+func latestOutput(v *transcript.View, plugin string) (*Output, error) {
+	var last *Output
+	err := v.Outputs(func(line []byte) error {
+		var o Output
+		if err := json.Unmarshal(line, &o); err != nil {
+			return nil // a line this build cannot read is not this plugin's watermark
+		}
+		if o.Plugin == plugin {
+			last = &o
+		}
+		return nil
+	})
+	return last, err
+}
+
+// Pending is decision 13's query for one plugin.
+func (s *Service) Pending(e Entry, limit int) ([]PendingItem, error) {
+	roots, err := s.Transcripts.Roots()
+	if err != nil {
+		return nil, err
+	}
+	on, err := s.decider(e.Name)
+	if err != nil {
+		return nil, err
+	}
+	var cands []Candidate
+	for _, root := range roots {
+		v, err := s.Transcripts.ForPlugin(root, on)
+		if err != nil {
+			return nil, err
+		}
+		if v == nil {
+			continue
+		}
+		prev, err := latestOutput(v, e.Name)
+		if err != nil {
+			return nil, err
+		}
+		streams := map[string]int64{}
+		for name, pos := range v.Meta.Streams {
+			streams[name] = pos.SeqTo
+		}
+		cands = append(cands, Candidate{Root: root, Streams: streams, UpdatedAt: v.Meta.UpdatedAt, Prev: prev})
+	}
+	return Pending(e, cands, s.now(), limit), nil
+}
+
+// WriteOutput validates, stamps and stores one output.
+//
+// 🔴 THE TYPE IS CHECKED AGAINST THE TOKEN'S MANIFEST BEFORE THE SESSION IS LOOKED AT, and the
+// session's toggle after — both refusals are [ErrForbidden]. The watermark may not name a stream the
+// session does not hold or a position past what is stored: a summary "of turns 1–N" where N was
+// never uploaded is a claim about records nobody can read.
+func (s *Service) WriteOutput(e Entry, env Envelope) (Output, error) {
+	if !e.Writes(env.Type) {
+		return Output{}, ErrForbidden
+	}
+	v, err := s.Open(e.Name, env.Session)
+	if err != nil {
+		return Output{}, err
+	}
+	for stream, seq := range env.InputWatermark {
+		pos, ok := v.Meta.Streams[stream]
+		if !ok || seq > pos.SeqTo {
+			return Output{}, &WatermarkError{Stream: stream}
+		}
+	}
+	out, err := Stamp(env, e, s.now())
+	if err != nil {
+		return Output{}, err
+	}
+	line, err := json.Marshal(out)
+	if err != nil {
+		return Output{}, err
+	}
+	if err := v.AppendOutput(line); err != nil {
+		if errors.Is(err, transcript.ErrNoSession) {
+			return Output{}, ErrForbidden
+		}
+		return Output{}, err
+	}
+	return out, nil
+}
+
+// WatermarkError is an envelope whose watermark names a stream the session does not hold, or a
+// position past what is stored. Only ever returned AFTER the toggle check admitted the plugin, so it
+// tells the plugin nothing about a session it may not read.
+type WatermarkError struct{ Stream string }
+
+func (e *WatermarkError) Error() string {
+	return fmt.Sprintf("input_watermark names stream %q past what is stored (or a stream the session does not hold)", e.Stream)
+}
+
+// ReadOutputs is every stored output of type `t` for a session, any plugin's — for a plugin holding
+// `output:read:<t>` that is ON for the session.
+func (s *Service) ReadOutputs(e Entry, root, t string) ([]Output, error) {
+	if !IsOutputType(t) || !e.Has(CapOutputRead(t)) {
+		return nil, ErrForbidden
+	}
+	v, err := s.Open(e.Name, root)
+	if err != nil {
+		return nil, err
+	}
+	out := []Output{}
+	err = v.Outputs(func(line []byte) error {
+		var o Output
+		if json.Unmarshal(line, &o) == nil && o.Type == t {
+			out = append(out, o)
+		}
+		return nil
+	})
+	return out, err
+}

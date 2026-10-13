@@ -173,6 +173,8 @@ func (s *Server) handleArcPage(w http.ResponseWriter, r *http.Request, id identi
 	switch rep.Status {
 	case report.StatusArcFound:
 		view.Scope = &scope
+		// The plugin toggles are read only for a FOUND arc, after every refusal (`plugins.go`).
+		view.Plugins = s.arcToggles(id, scope, rep.Reg)
 		// The tab is read AFTER every refusal, `handleScopePage`'s rule: it selects which view of an
 		// arc the caller already proved they can see, and is never an authority input — so every miss
 		// answers the same bytes whatever `tab` says.
@@ -520,6 +522,7 @@ func ArcPage(v PageView) g.Node {
 			),
 			arcTabs(s.ID, reg.Slug, v.Tab, len(arcScopeRows(rep)), len(reg.Members)),
 			arcTabPanel(rep, v.Tab, memberLabels, ids, v.Now, v.Panes),
+			g.Iff(v.Plugins != nil, func() g.Node { return pluginTogglesNode(*v.Plugins, v.CSRF) }),
 		),
 	)
 }

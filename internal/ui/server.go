@@ -17,6 +17,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/netid"
+	"github.com/ZacxDev/cairn/internal/plugins"
 	"github.com/ZacxDev/cairn/internal/presence"
 	"github.com/ZacxDev/cairn/internal/report"
 	"github.com/ZacxDev/cairn/internal/store"
@@ -988,6 +989,11 @@ type Server struct {
 	// `transcript.go`.
 	transcripts *transcript.Store
 
+	// plugins is the plugin registry and its toggles (S5 of the transcripts plan, `plugins.go`), NIL
+	// when this deployment registers none — then no toggle form renders and every toggle POST
+	// answers 501 [NoPluginRegistry].
+	plugins *plugins.Service
+
 	// app is this deployment's installable identity; the zero value is unarmed. See `pwa.go`.
 	app App
 }
@@ -1122,6 +1128,11 @@ type Config struct {
 	// designed OFF state and the deployed one wherever `cairn-ui` runs without `-transcript-dir`:
 	// every page then renders exactly what it rendered before this field existed.
 	Transcripts *transcript.Store
+	// Plugins is the plugin registry, its toggle journal and the toggle fold (S5 of the transcripts
+	// plan, `plugins.go`) — the SAME service the worker listener's plugin API decides from. NIL is
+	// the designed OFF state: `/plugins` says no plugin is registered, no page renders a toggle form,
+	// and the three toggle rows stay in the ledger and answer 501.
+	Plugins *plugins.Service
 	// App arms the installable surface (`pwa.go`): the manifest row, the icon links and the theme
 	// colour. The zero value is UNARMED and renders exactly what this surface rendered before it
 	// existed. [App.Validate] is applied here, so a server cannot be built around an app the
@@ -1232,6 +1243,7 @@ func New(cfg Config) (*Server, error) {
 
 		sourceJournal: cfg.SourceJournal,
 		transcripts:   cfg.Transcripts,
+		plugins:       cfg.Plugins,
 
 		app: cfg.App,
 	}, nil
@@ -1652,6 +1664,9 @@ func (s *Server) scopeView(w http.ResponseWriter, r *http.Request, id identity.I
 	// 🔴 THE SOURCES BLOCK IS READ ONLY AFTER THE REFUSAL ABOVE, by the name out of the narrowed answer
 	// (`codesrc.Key` of the store directory), and only when a journal is configured (`sources.go`).
 	view.Sources = s.sourcesBlock(id, scope)
+	// The plugin toggles, for the same reason and in the same place: after the refusal, by the name out
+	// of the narrowed answer, and only when a registry is configured (`plugins.go`).
+	view.Plugins = s.scopeToggles(id, scope)
 	view.Panes = s.panesFor(id)
 	return view, true
 }

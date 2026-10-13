@@ -140,8 +140,13 @@ func randToken(seed uint64) string {
 // a row is 405, and a path in no row is 404.
 func TestTheWorkerRouteLedgerIsExactlyThis(t *testing.T) {
 	want := []string{
+		// The plugin API (S5): three reads and one write, each reachable by a `plugin` token only.
+		"GET /plugin/v1/outputs plugin",
+		"GET /plugin/v1/pending plugin",
+		"GET /plugin/v1/transcript plugin",
 		"POST /capture/v1/sessions/{root}/blobs/{name} capture",
 		"POST /capture/v1/sessions/{root}/streams/{stream}/records capture",
+		"POST /plugin/v1/outputs plugin",
 	}
 	if got := Routes(); !slices.Equal(got, want) {
 		t.Fatalf("the worker route ledger is\n%v\nwant\n%v", got, want)
@@ -322,7 +327,7 @@ func TestFailedTokensLockTheClientOut(t *testing.T) {
 func TestTheWallRefusesAForeignRowAtStartupAndAsARowAfterwards(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "worker-tokens")
 	writeRows(t, path, NewTokenRow(KindCapture, ownerA, "host-a", captureA), NewTokenRow(KindCapture, ownerB, "host-a", foreignB))
-	if _, err := LoadTokens(path, ownerA); err == nil || !strings.Contains(err.Error(), "line 3") {
+	if _, err := LoadTokens(path, Wall{Owner: ownerA}); err == nil || !strings.Contains(err.Error(), "line 3") {
 		t.Fatalf("a foreign row at startup answered %v", err)
 	}
 	g := newRig(t, true, nil)
@@ -348,7 +353,7 @@ func TestTheTokenFileHoldsDigestsOnly(t *testing.T) {
 		if err := os.WriteFile(path, []byte(line+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		_, err := LoadTokens(path, ownerA)
+		_, err := LoadTokens(path, Wall{Owner: ownerA})
 		if err == nil || strings.Contains(err.Error(), captureA) {
 			t.Fatalf("%s: answered %v", name, err)
 		}

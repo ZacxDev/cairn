@@ -78,6 +78,9 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		// Team page (operator decision O-a), which renders no answer about authority.
 		"GET /invite",
 		"GET /join public",
+		// 🔴 THE PLUGIN REGISTRY PAGE (S5 of the transcripts plan). `content`, never `public`: beside the
+		// registry it lists this caller's readable scopes and each plugin's toggle on them.
+		"GET /plugins content",
 		"GET /scope content",
 		// 🔴 THE SCOPE LIST (moved off the root, which became the hub). `content`, never `public`: it is
 		// the list of scopes this credential can read, and `?q=`/`?tag=` search inside that set.
@@ -132,6 +135,12 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		// cross-site gates reach it by METHOD, which `TestTheRingRowIsBehindBothCrossSiteGates`
 		// asserts by each gate's own message. Never `content`: every answer is one 303, so it renders
 		// nothing about authority — `TestEveryRingAnswerIsTheSameRedirect` holds that.
+		// 🔴 THE PLUGIN TOGGLES (S5 of the transcripts plan): one row per LEVEL, NO class — both cross-site
+		// gates reach them by METHOD, which `TestTheToggleRowsAreBehindBothCrossSiteGates` asserts by each
+		// gate's own message. Never `content`: each answers a 303 back to the page it toggles.
+		"POST /plugins/arc",
+		"POST /plugins/scope",
+		"POST /plugins/session",
 		"POST /ring",
 		"POST /share",
 		"POST /sign-in public",
@@ -538,6 +547,9 @@ var bareGETAnswer = map[string]int{
 	// The code-sources page follows the browse pair: a request naming no scope gets the navigation
 	// page, not the uniform refusal (`handleSourcesPage`).
 	"GET /scope/sources content": http.StatusOK,
+	// The plugin registry page's bare request IS the page: it has no operand to name. With no registry it
+	// is still 200 and says so (`NoPluginRegistry`) — the off state is a page, not a refusal.
+	"GET /plugins content": http.StatusOK,
 	// 🔴 `GET /join` ANSWERS 200 TO A REQUEST CARRYING NO TOKEN, WHICH IS THE PAGE AND NOT A
 	// REFUSAL. It named no invitation, so there is nothing for a uniform refusal to protect
 	// and nothing it could learn; it gets a page saying the link carried no invitation. The
@@ -975,6 +987,9 @@ var contentAuthority = map[string]string{
 	// `source`: the code-sources page is found through `Visible`, like the scope page; `admin` (the
 	// form) is read off the request's own authorization, never a second seam.
 	"GET /scope/sources content": "source",
+	// `source`: the registry page lists each plugin's value on the scopes `Visible` returns; the
+	// registry itself is the operator's, not an authority answer.
+	"GET /plugins content": "source",
 }
 
 // countingSource records whether the authority was consulted, and is the whole
