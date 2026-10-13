@@ -270,6 +270,12 @@ var DeclaredNestedModules = []string{
 	// separate module is what makes "it cannot reach the pod" a property of the module boundary
 	// rather than of a test somebody can delete.
 	"uiaudit",
+	// The example plugins (transcripts plan S9, S10): out-of-process programs that read transcripts
+	// through the plugin API and hold a model provider's key. STDLIB-ONLY, and declared so below
+	// ([NestedModuleDeps.StdlibOnly]) — a provider SDK, or the parent module, appearing in its
+	// lock files is a refusal, not a ledger edit. A separate module so that nothing a plugin ever
+	// imports can reach the pod, and so the pod's graph cannot reach a plugin.
+	"plugins",
 }
 
 // NestedModuleDeps is one nested module's declared third-party module sets.
@@ -289,6 +295,10 @@ type NestedModuleDeps struct {
 	// `GoMod` and the extras are the interesting ones: a transitive addition is exactly the
 	// shape a routine `go get -u` produces, and it is invisible to `go.mod` alone.
 	GoSum []string
+	// StdlibOnly declares a module that requires NOTHING — no third party and not the parent
+	// module either — so both lists are empty BY DECLARATION. Without it an empty entry is refused,
+	// because an empty allowlist is otherwise indistinguishable from one nobody filled in.
+	StdlibOnly bool
 }
 
 // NestedModuleAllowlist is every nested module's declared dependency set, keyed by the same
@@ -338,6 +348,7 @@ var NestedModuleAllowlist = map[string]NestedModuleDeps{
 			"maragu.dev/gomponents",
 		},
 	},
+	"plugins": {StdlibOnly: true},
 }
 
 // NestedModuleDirs returns every directory holding a `go.mod` other than the root, relative to it

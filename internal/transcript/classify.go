@@ -77,7 +77,9 @@ func with(base []string, extra ...string) []string {
 
 // ClaudeRecords declares every top-level `type` value R1 measured, with the class a whole record
 // takes and its key set. `user` and `assistant` have no whole-record class: they split into
-// blocks ([ClaudeBlocks]) and, for `user`, the duplicate field.
+// blocks ([ClaudeBlocks]) and, for `user`, the duplicate field. ⚠ `attachment`'s class is the
+// DEFAULT for its subtypes, not all of them: a queued human prompt is human text ([queuedPrompt]),
+// so a reader asking "is this whole record bookkeeping" asks [ClassifyClaude], never this table.
 var ClaudeRecords = map[string]Shape{
 	"user": {Fields: with(envelope, "message", "promptId", "isMeta", "isCompactSummary",
 		"isVisibleInTranscriptOnly", "toolUseResult", "sourceToolAssistantUUID")},
@@ -129,8 +131,9 @@ var ClaudeSystemSubtypes = []string{
 
 // ClaudeAttachmentTypes declares the `attachment` subtypes the synthetic world carries. The real
 // set is wider (R1 measured more than thirty); every attachment is [Bookkeeping] whatever its
-// subtype, so this list governs the FIXTURE's coverage, not classification.
-var ClaudeAttachmentTypes = []string{"credential_org", "file", "hook_additional_context", "hook_success"}
+// subtype EXCEPT a queued human prompt ([queuedPrompt]), so this list governs the FIXTURE's
+// coverage, not classification.
+var ClaudeAttachmentTypes = []string{"credential_org", "file", "hook_additional_context", "hook_success", "queued_command"}
 
 // partEnvelope is the key set every opencode part carries.
 var partEnvelope = []string{"type", "id", "sessionID", "messageID"}
@@ -174,6 +177,11 @@ func ClassifyClaude(rec map[string]any) []Unit {
 	shape, declared := ClaudeRecords[kind]
 	if !declared {
 		return []Unit{{Class: Unknown, Path: ""}}
+	}
+	if kind == "attachment" {
+		if u, ok := queuedPrompt(rec); ok {
+			return []Unit{u}
+		}
 	}
 	if shape.Class != "" {
 		return []Unit{{Class: shape.Class, Path: ""}}
@@ -230,6 +238,29 @@ func ClassifyClaude(rec map[string]any) []Unit {
 		return blockUnits(content, AssistantText)
 	}
 	return []Unit{{Class: Unknown, Path: "/message/content"}}
+}
+
+// queuedPrompt is the ONE attachment that is not bookkeeping: a message a human typed WHILE A TURN
+// RAN, which the runtime queues and stores as an `attachment` of type `queued_command` with
+// `commandMode: "prompt"` rather than as a `user` record (measured: every such record carried
+// `origin.kind: "human"`). It is [HumanText] — whole, never cut (O9) — or [AgentPrompt] in a
+// sidechain, by the rule a `user` record follows. A queued TASK NOTIFICATION (`commandMode:
+// "task-notification"`) is the runtime relaying a background task, and one the runtime marks
+// `isMeta` is a relayed peer message: both stay bookkeeping. A prompt that is not a string is an
+// unmeasured shape: [Unknown] at the prompt, shown and counted rather than dropped.
+func queuedPrompt(rec map[string]any) (Unit, bool) {
+	att, _ := rec["attachment"].(map[string]any)
+	if att["type"] != "queued_command" || att["commandMode"] != "prompt" || truthy(att["isMeta"]) {
+		return Unit{}, false
+	}
+	const path = "/attachment/prompt"
+	if _, ok := att["prompt"].(string); !ok {
+		return Unit{Class: Unknown, Path: path}, true
+	}
+	if truthy(rec["isSidechain"]) {
+		return Unit{Class: AgentPrompt, Path: path}, true
+	}
+	return Unit{Class: HumanText, Path: path}, true
 }
 
 func blockUnits(blocks []any, textClass Class) []Unit {

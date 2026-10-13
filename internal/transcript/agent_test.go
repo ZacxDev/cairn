@@ -473,3 +473,27 @@ func TestAChildReadBeforeItsParentIsStillPlaced(t *testing.T) {
 		}
 	}
 }
+
+// TestAToolAnswerCarriesItsInputWhole — the range cuts the result and the duplicate, never the call's
+// input, which is JSON carried whole ([ToolAnswer]'s doc). An INVARIANT guard pinning the doc to the
+// code: the code never cut the input; what was wrong was a doc that read as if it did.
+func TestAToolAnswerCarriesItsInputWhole(t *testing.T) {
+	a := transcripttest.Open(t)
+	s := transcripttest.Session{Root: "s-agent-07", Owner: readOwner}
+	body := strings.Repeat("lorem ", 100)
+	transcripttest.Append(t, a, s, "main", []string{
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_c1","name":"Write","input":{"content":"` + body + `"}}]}}`,
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_c1","content":"` + body + `"}]}}`,
+	})
+	meta, _ := a.ReadMeta("s-agent-07")
+	got, err := (&View{Meta: meta, a: a}).Tool(ToolQuery{Stream: "main", Seq: 1, Start: 0, End: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"content":"` + body + `"}`; string(got.Input) != want {
+		t.Errorf("the input is %d bytes, want the whole %d-byte input whatever the range", len(got.Input), len(want))
+	}
+	if got.Result == nil || len(got.Result.Text) != 10 {
+		t.Errorf("POSITIVE CONTROL: the result under range 0-10 is %+v, want 10 bytes — the range must be live", got.Result)
+	}
+}

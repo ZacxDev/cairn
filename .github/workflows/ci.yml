@@ -831,6 +831,11 @@ jobs:
       # same reason: a skip nobody counts is a pass.
       - name: the tier that must not skip a git-dependent test
         run: echo "CAIRN_GIT_TESTS_REQUIRED=1" >> "$GITHUB_ENV"
+      # …and the same for `internal/worker`'s TestTheSummaryPluginAgainstTheRealListener, which builds
+      # the S9 plugin from `plugins/` — absent from the nix derivations' filtered source, where it
+      # skips; here the source is present and a skip REFUSES.
+      - name: the tier that must not skip the plugin built against the real listener
+        run: echo "CAIRN_PLUGIN_BUILD_REQUIRED=1" >> "$GITHUB_ENV"
 
       - name: go vet
         run: go vet ./...
@@ -1215,6 +1220,29 @@ jobs:
           # 19 assertions, measured when the script landed; `EXPECTED` in the script moves with it.
           if [ "$passes" -lt 19 ] || [ "$fails" -ne 0 ]; then
             echo "REFUSING: $passes PASS / $fails FAIL lines, and 19 / 0 were measured"
+            exit 1
+          fi
+
+      # 🔴 THE EXAMPLE PLUGINS' OWN SUITE — closing-condition part 4 of `claudedocs/plan-cairn-plugins.md`,
+      # S9's half (S10 adds ClickUp's to the same module). `plugins/` is a NESTED, stdlib-only module, so
+      # the root `go vet ./...` and `go test ./...` above do NOT descend into it: without this step its
+      # tests would run only in the nix tier. It runs against an in-process FAKE provider and a fake pod,
+      # synthetic fixtures only — no real provider is ever called by CI (the plan's (iii)).
+      #
+      # 🔴 COUNTED, NOT EXIT-CODED: a module whose tests vanished exits 0 too. 34 `--- PASS` lines and 4
+      # `ok` packages were measured when the plugin landed; a drop below either, or any FAIL, refuses.
+      - name: the summary plugin's own suite, against an in-process fake provider and fake pod
+        run: |
+          set -o pipefail
+          go -C plugins vet ./...
+          go -C plugins test -race -count=1 -v ./... > /tmp/plugins-suite.txt 2>&1 || { cat /tmp/plugins-suite.txt; exit 1; }
+          grep -E '^(ok|FAIL|---)' /tmp/plugins-suite.txt
+          passes=$(grep -c '^--- PASS' /tmp/plugins-suite.txt || true)
+          fails=$(grep -c '^--- FAIL' /tmp/plugins-suite.txt || true)
+          oks=$(grep -c '^ok ' /tmp/plugins-suite.txt || true)
+          echo "plugins suite: passes=$passes fails=$fails ok=$oks"
+          if [ "$passes" -lt 34 ] || [ "$fails" -ne 0 ] || [ "$oks" -lt 4 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL / $oks ok, and 34 / 0 / 4 were measured"
             exit 1
           fi
 
@@ -2004,6 +2032,9 @@ jobs:
         run: nix build .#packages.x86_64-linux.cairn-capture --no-link --print-build-logs
       - name: the capture agent's redaction self-test passes as built (planted=P caught=P clean-damaged=0)
         run: nix build .#checks.x86_64-linux.cairn-capture-self-test --no-link --print-build-logs
+      # The summary plugin (S9): its NESTED module built alone, its suite in the check phase.
+      - name: the summary plugin builds, and its suite passes under the pinned toolchain
+        run: nix build .#packages.x86_64-linux.cairn-summary --no-link --print-build-logs
 
       # …and its verb and exit-code tables are read out of the running binary. This is the nix
       # tier of the claim `tests/test_go_client_ledgers.py` makes in the `go` job — a different

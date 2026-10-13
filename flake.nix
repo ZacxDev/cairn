@@ -364,6 +364,9 @@
             # nothing — the filtered tree still held no such file. Verified by
             # materialising the filtered source and listing it.
             || rel == "uiaudit"
+            # The example plugins' nested module, for the SAME reason as `uiaudit` above: the
+            # directory row is what lets `plugins/go.mod` below exist in the filtered tree.
+            || rel == "plugins"
             || pkgs.lib.hasPrefix "cmd/" rel || pkgs.lib.hasPrefix "internal/" rel
           ))
           || (rel == "go.mod")
@@ -491,6 +494,11 @@
           # advisory tick.
           || (rel == "uiaudit/go.mod")
           || (rel == "uiaudit/go.sum")
+          # 🔴 AND THE PLUGINS MODULE'S `go.mod`, FOR THE SAME LEDGER. It has NO `go.sum` — it is
+          # STDLIB-ONLY, which the ledger declares and checks — so there is no second row; its `.go`
+          # files stay out of these derivations like `uiaudit`'s (`packages.cairn-summary` builds
+          # them from their own source).
+          || (rel == "plugins/go.mod")
           # A `.go` file only under the two directories this module is made of. A
           # bare suffix test would also carry a stray `.go` anywhere in the tree,
           # which is an allowlist that says something wider than it means.
@@ -718,6 +726,48 @@
           homepage = "https://github.com/ZacxDev/cairn";
           license = licenses.mit;
           mainProgram = "cairn-capture";
+          platforms = platforms.unix;
+        };
+      };
+
+      # 🔴 EXAMPLE PLUGIN A — SESSION SUMMARIES (S9 of the transcripts/plugins plan). A SEPARATE
+      # BINARY IN A NESTED, STDLIB-ONLY MODULE (`plugins/`): it holds a model provider's key and reads
+      # transcripts, so nothing it imports may reach the pod and nothing the pod imports reaches it.
+      # Built from `plugins/` ALONE — the module requires nothing, not even the parent, which
+      # `internal/depspolicy`'s nested-module ledger checks — so `vendorHash = null` is EXACT here
+      # rather than the hole it was for the root module: a `require` appearing would fail this build
+      # (no vendor hash to fetch it under) as well as that ledger. Its check phase runs the module's
+      # own suite against the in-process fake provider and fake pod. A one-shot run for a user timer;
+      # the manifest the operator registers ships beside it in `share/`.
+      mkSummaryPlugin = pkgs: (buildGoPinned pkgs) {
+        pname = "cairn-summary";
+        inherit version;
+        src = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          name = "cairn-plugins-source";
+          filter = path: type:
+            let rel = pkgs.lib.removePrefix (toString ./. + "/") (toString path);
+            in rel == "plugins" || pkgs.lib.hasPrefix "plugins/" rel;
+        };
+        modRoot = "plugins";
+        vendorHash = null;
+        subPackages = [ "summary" ];
+        doCheck = true;
+        checkPhase = ''
+          runHook preCheck
+          go vet ./...
+          go test ./...
+          runHook postCheck
+        '';
+        postInstall = ''
+          mv "$out/bin/summary" "$out/bin/cairn-summary"
+          install -Dm444 summary/manifest.json "$out/share/cairn-summary/manifest.json"
+        '';
+        meta = with pkgs.lib; {
+          description = "cairn example plugin A: continuous session summaries through the plugin API";
+          homepage = "https://github.com/ZacxDev/cairn";
+          license = licenses.mit;
+          mainProgram = "cairn-summary";
           platforms = platforms.unix;
         };
       };
@@ -1359,6 +1409,7 @@
           # implied any of that.
           cairn-ui = mkGoUI pkgs;
           cairn-capture = mkGoCapture pkgs;
+          cairn-summary = mkSummaryPlugin pkgs;
         }
         // nixpkgs.lib.optionalAttrs (builtins.elem pkgs.stdenv.hostPlatform.system linuxSystems) {
           server-image = mkServerImage pkgs;
@@ -1443,6 +1494,7 @@
         cairn-go = mkGoClient pkgs;
         cairn-ui = mkGoUI pkgs;
         cairn-capture = mkGoCapture pkgs;
+        cairn-summary = mkSummaryPlugin pkgs;
 
         # 🔴 THE CHECKED-IN STYLESHEET IS WHAT THE BINARY SERVES, SO A STALE ONE SHIPS
         # SILENTLY. `internal/ui/app.css` is `//go:embed`ed, so nothing about editing

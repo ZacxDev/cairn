@@ -297,6 +297,20 @@ func TestTheNestedModuleSetIsExactlyTheAllowlist(t *testing.T) {
 			}
 
 			deps, ok := NestedModuleAllowlist[dir]
+			if ok && deps.StdlibOnly {
+				// 🔴 STDLIB-ONLY IS CHECKED OVER EVERY MODULE, NOT ONLY THE THIRD-PARTY ONES: a
+				// `require` of the parent module (through a `replace`, as `uiaudit/` has) would
+				// bring the parent's whole graph in, and [IsThirdParty] would hide it.
+				if len(deps.GoMod) != 0 || len(deps.GoSum) != 0 {
+					t.Fatalf("%s is declared StdlibOnly AND lists modules; it is one or the other", dir)
+				}
+				if len(fromMod) != 0 || len(fromSum) != 0 {
+					t.Fatalf("%s is declared STDLIB-ONLY, and its lock files name modules:\n  go.mod: %v\n  go.sum: %v\n"+
+						"A module appearing here is a decision nobody reviewed — it reaches a program that holds a "+
+						"model provider's key.", dir, fromMod, fromSum)
+				}
+				return
+			}
 			if !ok || len(deps.GoMod) == 0 || len(deps.GoSum) == 0 {
 				t.Fatalf("%s is in DeclaredNestedModules with no complete entry in NestedModuleAllowlist; "+
 					"an empty allowlist is satisfied by any dependency set, which is coverage that governs nothing", dir)
