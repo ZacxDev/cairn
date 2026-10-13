@@ -5823,6 +5823,18 @@ MUTANTS: tuple[Mutant, ...] = (
         pkgs=PKGS + ("./internal/plugins/", "./internal/worker/", "./internal/transcript/"),
     ),
     Mutant(
+        name="plugins-pending-walk-skipped-on-a-stored-off",
+        path="internal/transcript/plugin.go",
+        old="\t\tneed = append(need, meta)\n",
+        new="\t\tif stored := VisibilitySet(meta, Written{}); len(stored) > 0 && !on(meta, stored) {\n\t\t\tcontinue\n\t\t}\n"
+        "\t\tneed = append(need, meta)\n",
+        killer="TestAnArcHomeFoundOnlyByTheWalkDoesNotChangeTheAnswer",
+        why="the pending query is where the walk's cost is felt, so skipping roots the stored half "
+        "already refuses is the tempting half of the same shortcut — and those sessions are never "
+        "offered to the plugin until something else records the scope (#270).",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/", "./internal/transcript/"),
+    ),
+    Mutant(
         name="plugins-arc-veto-lifted-by-removing-the-member",
         path="internal/plugins/service.go",
         old="\tfor _, k := range st.ArcsVetoing(plugin, ids) {",
