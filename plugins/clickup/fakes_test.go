@@ -78,12 +78,44 @@ type fakePod struct {
 	records map[string][]string // stream → records, seq = index+1
 	outputs []pluginapi.Output
 	pageMax int
-	// reads is every transcript request as "<stream> <view> <from_seq>".
-	reads []string
+	// reads is every transcript request as "<stream> <view> <from_seq>"; limits every pending `limit`.
+	reads  []string
+	limits []int
 	// failWrite makes the Nth output write (1-based) answer 500.
 	failWrite int
 	writes    int
 	clock     time.Time
+	// extra is further sessions (each one `main` stream), listed BEFORE `session`: they are older.
+	extra map[string][]string
+	// refuse answers every write for these sessions 507, as a pod whose quota is full does.
+	refuse map[string]bool
+}
+
+// of is one session's streams; nil when the pod does not hold it.
+func (p *fakePod) of(id string) map[string][]string {
+	if id == session {
+		return p.records
+	}
+	if recs, ok := p.extra[id]; ok {
+		return map[string][]string{"main": recs}
+	}
+	return nil
+}
+
+// ids is every stored session, oldest first.
+func (p *fakePod) ids() []string {
+	var out []string
+	for id := range p.extra {
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return append(out, session)
+}
+
+// validStream is the pod's `ValidStream` vocabulary (`internal/plugins`): what a watermark and a record
+// locator may name, and what the pending query lists.
+func validStream(s string) bool {
+	return s == "main" || strings.HasPrefix(s, "subagent:") || strings.HasPrefix(s, "child:")
 }
 
 var manifestWrites = []string{TypeEdge, TypeSuggestion, TypeScan}
@@ -105,7 +137,7 @@ func podAccepts(typ string, raw []byte) error {
 		}
 		shapes := 0
 		if e.Locator.Stream != "" || e.Locator.Seq != 0 {
-			if !pluginapi.ValidWatermarkStream(e.Locator.Stream) || e.Locator.Seq < 1 {
+			if !validStream(e.Locator.Stream) || e.Locator.Seq < 1 {
 				return fmt.Errorf("a record locator needs a stream and a seq")
 			}
 			shapes++
@@ -152,9 +184,9 @@ func writeJSON(rw http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(rw).Encode(v)
 }
 
-func (p *fakePod) streams() map[string]int64 {
+func (p *fakePod) streams(id string) map[string]int64 {
 	out := map[string]int64{}
-	for s, recs := range p.records {
+	for s, recs := range p.of(id) {
 		out[s] = int64(len(recs))
 	}
 	return out
@@ -171,29 +203,33 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/plugin/v1/pending":
 		items := []any{}
-		var wm map[string]int64
-		var prev any
-		for _, o := range p.outputs {
-			if o.Plugin == Name {
-				wm = o.InputWatermark
-				prev = map[string]any{"id": o.ID, "watermark": wm}
+		limit, _ := strconv.Atoi(q.Get("limit"))
+		p.limits = append(p.limits, limit)
+		for _, id := range p.ids() {
+			var wm map[string]int64
+			var prev any
+			for _, o := range p.outputs {
+				if o.Plugin == Name && o.Session == id {
+					wm = o.InputWatermark
+					prev = map[string]any{"id": o.ID, "watermark": wm}
+				}
 			}
-		}
-		grown := false
-		pos := map[string]any{}
-		for s, seq := range p.streams() {
-			pos[s] = map[string]int64{"seq_to": seq}
-			if pluginapi.ValidWatermarkStream(s) && seq > wm[s] {
-				grown = true
+			grown := false
+			pos := map[string]any{}
+			for s, seq := range p.streams(id) {
+				pos[s] = map[string]int64{"seq_to": seq}
+				if validStream(s) && seq > wm[s] {
+					grown = true
+				}
 			}
-		}
-		if grown {
-			items = append(items, map[string]any{"session": session, "streams": pos, "prev_output": prev})
+			if grown && len(items) < limit {
+				items = append(items, map[string]any{"session": id, "streams": pos, "prev_output": prev})
+			}
 		}
 		writeJSON(rw, 200, map[string]any{"items": items})
 	case r.URL.Path == "/plugin/v1/transcript":
-		recs, ok := p.records[q.Get("stream")]
-		if q.Get("session") != session || !ok {
+		recs, ok := p.of(q.Get("session"))[q.Get("stream")]
+		if !ok {
 			writeJSON(rw, 403, map[string]string{"refused": "plugin-forbidden"})
 			return
 		}
@@ -217,7 +253,7 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/plugin/v1/outputs" && r.Method == http.MethodGet:
 		outs := []pluginapi.Output{}
 		for _, o := range p.outputs {
-			if o.Type == q.Get("type") {
+			if o.Type == q.Get("type") && o.Session == q.Get("session") {
 				outs = append(outs, o)
 			}
 		}
@@ -233,7 +269,7 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			Body           json.RawMessage  `json:"body"`
 		}
 		raw, _ := io.ReadAll(r.Body)
-		if err := strictInto(raw, &env); err != nil || env.Session != session || env.Model == "" || len(env.InputWatermark) == 0 {
+		if err := strictInto(raw, &env); err != nil || p.of(env.Session) == nil || env.Model == "" || len(env.InputWatermark) == 0 {
 			http.Error(rw, "bad envelope", 400)
 			return
 		}
@@ -246,10 +282,14 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for s, seq := range env.InputWatermark {
-			if top, ok := p.streams()[s]; !ok || !pluginapi.ValidWatermarkStream(s) || seq > top {
+			if top, ok := p.streams(env.Session)[s]; !ok || !validStream(s) || seq > top {
 				http.Error(rw, "watermark past what is stored", 400)
 				return
 			}
+		}
+		if p.refuse[env.Session] {
+			http.Error(rw, `{"refused":"quota","quota_bytes":1}`, http.StatusInsufficientStorage)
+			return
 		}
 		p.writes++
 		if p.writes == p.failWrite {
@@ -259,7 +299,7 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		id := fmt.Sprintf("o-%04d", len(p.outputs)+1)
 		p.clock = p.clock.Add(time.Second)
 		p.outputs = append(p.outputs, pluginapi.Output{ID: id, Plugin: Name, PluginVersion: Version, Model: env.Model,
-			Session: session, InputWatermark: env.InputWatermark, Type: env.Type, Body: env.Body,
+			Session: env.Session, InputWatermark: env.InputWatermark, Type: env.Type, Body: env.Body,
 			ProducedAt: p.clock.UTC().Format(time.RFC3339)})
 		writeJSON(rw, 201, map[string]string{"id": id})
 	default:
@@ -420,6 +460,8 @@ type world struct {
 	dir                    string
 	podURL, cuURL, provURL string
 	clock                  time.Time
+	// realClock runs the plugin on time.Now (the 429 wait is measured against the header's real time).
+	realClock bool
 	// args are flags every run of this world adds.
 	args []string
 }
@@ -462,10 +504,15 @@ func newWorld(t *testing.T, main ...string) *world {
 func (w *world) run(t *testing.T, extra ...string) (int, string, string) {
 	t.Helper()
 	args := []string{"-worker-url", w.podURL, "-token-file", filepath.Join(w.dir, "token"),
-		"-clickup-url", w.cuURL, "-clickup-token-file", filepath.Join(w.dir, "clickup-token"), "-clickup-list", listID}
+		"-clickup-url", w.cuURL, "-clickup-token-file", filepath.Join(w.dir, "clickup-token"), "-clickup-list", listID,
+		"-state-file", filepath.Join(w.dir, "sessions.json")}
 	args = append(append(args, w.args...), extra...)
 	var out, errb strings.Builder
-	code := run(args, &out, &errb, func() time.Time { return w.clock })
+	now := func() time.Time { return w.clock }
+	if w.realClock {
+		now = time.Now
+	}
+	code := run(args, &out, &errb, now)
 	return code, out.String(), errb.String()
 }
 

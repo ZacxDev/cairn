@@ -29,11 +29,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/ZacxDev/cairn/plugins/internal/endpoint"
 	"github.com/ZacxDev/cairn/plugins/internal/llm"
 	"github.com/ZacxDev/cairn/plugins/internal/pluginapi"
 	"github.com/ZacxDev/cairn/plugins/internal/secretfile"
@@ -66,11 +67,12 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	provider := fs.String("provider", "anthropic", "model provider: anthropic or openai (an OpenAI-compatible chat-completions API)")
 	providerURL := fs.String("provider-url", "", "override the provider's base URL (a proxy)")
 	model := fs.String("model", "claude-opus-5-5", "the model to ask")
-	effort := fs.String("effort", "low", "anthropic only: output_config.effort (\"\" sends none)")
+	effort := fs.String("effort", "", "anthropic only: output_config.effort (\"\" sends none)")
 	keyFile := fs.String("key-file", "", "file holding the provider API key, mode 0600 (\"\" asks no model: deterministic matches only)")
 	limit := fs.Int("limit", 10, "pending sessions one run takes (1–100)")
 	perDay := fs.Int("max-requests-per-day", 50, "the spend cap: provider requests over a rolling 24 hours; 0 sends none")
 	ledgerPath := fs.String("spend-ledger", spend.DefaultPath("cairn-clickup"), "the spend cap's ledger file")
+	statePath := fs.String("state-file", "", "per-session backoff (default: sessions.json beside -spend-ledger)")
 	excerpt := fs.Int("excerpt-bytes", 32<<10, "rendered bytes of a session's opening sent when no summary is stored")
 	maxOut := fs.Int("max-output-tokens", 4000, "the bound on one answer, thinking included")
 	maxCands := fs.Int("max-candidates", 200, "the most candidate tickets one request names (most recently updated first)")
@@ -128,9 +130,30 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	if err != nil {
 		return usage(err.Error())
 	}
+	workerBase, err := endpoint.Validate("-worker-url", *workerURL)
+	if err != nil {
+		return usage(err.Error())
+	}
+	cuBase, err := endpoint.Validate("-clickup-url", *cuURL)
+	if err != nil {
+		return usage(err.Error())
+	}
+	if *statePath == "" {
+		if *ledgerPath == "" {
+			return usage("-state-file is required (no home directory to default it under)")
+		}
+		*statePath = filepath.Join(filepath.Dir(*ledgerPath), "sessions.json")
+	}
+	state, err := loadState(*statePath)
+	if err != nil {
+		return usage(err.Error())
+	}
 	logf := func(s string) { fmt.Fprintln(stderr, s) }
 	r := &Runner{
-		API:             &pluginapi.Client{Base: *workerURL, Token: token},
+		API:             &pluginapi.Client{Base: workerBase, Token: token},
+		State:           state,
+		Now:             now,
+		Limit:           *limit,
 		Repos:           repos,
 		GitBin:          *gitBin,
 		GHBin:           *ghBin,
@@ -145,9 +168,6 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	if *keyFile != "" {
 		if *ledgerPath == "" {
 			return usage("-spend-ledger is required (no home directory to default it under)")
-		}
-		if *provider != "anthropic" && *effort == "low" {
-			*effort = "" // the default is Anthropic's; another provider takes none
 		}
 		key, err := secretfile.Read(*keyFile)
 		if err != nil {
@@ -165,8 +185,8 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 
 	var st Stats
 	summary := func() {
-		fmt.Fprintf(stdout, "SUMMARY clickup-run: sessions=%d edges=%d suggestions=%d requests=%d failed=%d capped=%t\n",
-			st.Sessions, st.Edges, st.Suggestions, st.Requests, st.Failed, st.Capped)
+		fmt.Fprintf(stdout, "SUMMARY clickup-run: sessions=%d edges=%d suggestions=%d requests=%d failed=%d capped=%t skipped=%d\n",
+			st.Sessions, st.Edges, st.Suggestions, st.Requests, st.Failed, st.Capped, st.Skipped)
 	}
 	fail := func(err error) int {
 		summary()
@@ -174,9 +194,13 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 		return 1
 	}
 	// The pending list FIRST: a run with nothing to do asks ClickUp nothing.
-	items, err := r.API.Pending(ctx, *limit)
+	items, err := r.API.Pending(ctx, pendingAsk)
 	if err != nil {
 		return fail(fmt.Errorf("the pending query: %w", err))
+	}
+	items, err = r.due(items, &st)
+	if err != nil {
+		return fail(err)
 	}
 	if len(items) == 0 {
 		summary()
@@ -184,7 +208,7 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	}
 	// 🔴 THE TICKET LIST BEFORE ANY SESSION, AND A FAILED FETCH WRITES NOTHING: a pass over a session
 	// without the closed list would resolve no custom id and still write a scan saying it examined it.
-	cu := &ClickUp{Base: *cuURL, Token: cuToken, HTTP: &http.Client{Timeout: 60 * time.Second}, MaxWait: *cuWait, Log: logf, Now: now}
+	cu := &ClickUp{Base: cuBase, Token: cuToken, MaxWait: *cuWait, Log: logf, Now: now}
 	var tickets []Ticket
 	for _, l := range lists {
 		ts, err := cu.List(ctx, l)
@@ -208,7 +232,9 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 		}
 		r.Entries = entries
 	}
-	st = r.Run(ctx, items)
+	if err := r.Run(ctx, items, &st); err != nil {
+		return fail(err)
+	}
 	summary()
 	if st.Failed > 0 {
 		return 1

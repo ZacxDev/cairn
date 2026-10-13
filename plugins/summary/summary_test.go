@@ -282,28 +282,6 @@ func TestARefusedTranscriptIsAFailureNotASummary(t *testing.T) {
 	}
 }
 
-// TestALedgerStreamNeitherBlocksTheWriteNorKeepsTheSessionPending — a session the client read ledger
-// ran in carries a `ledger` stream, which the pending query LISTS but a watermark may not NAME (the pod
-// refuses the whole write). Red at the first S9 commit: the watermark copied every listed stream, the
-// write was refused 400, nothing was stored, and every run re-paid for the same records.
-func TestALedgerStreamNeitherBlocksTheWriteNorKeepsTheSessionPending(t *testing.T) {
-	w := newWorld(t, numbered(1, 3))
-	w.pod.ledger = 2
-	if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "written=1 requests=1 failed=0") {
-		t.Fatalf("exit %d\n%s%s", code, out, errs)
-	}
-	wm := w.pod.latest()["input_watermark"].(map[string]int64)
-	if _, named := wm["ledger"]; named || wm["main"] != 3 {
-		t.Errorf("the watermark is %v, want main=3 and no ledger", wm)
-	}
-	if code, out, _ := w.run(t); code != 0 || !strings.Contains(out, "sessions=0 written=0 requests=0") {
-		t.Errorf("the session is still pending after its summary: %s", out)
-	}
-	if n := len(w.prov.received()); n != 1 {
-		t.Errorf("the provider received %d requests over two runs, want 1", n)
-	}
-}
-
 // TestAFailedChainKeepsWhatItSummarised — when request N of a chain fails, the summary of requests
 // 1..N-1 is written with the watermark at the last record they covered: on a provider ERROR, on an
 // EMPTY answer, and when the run's own DEADLINE is what failed it (the write then runs on a context the

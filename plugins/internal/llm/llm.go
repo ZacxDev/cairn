@@ -23,6 +23,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/ZacxDev/cairn/plugins/internal/endpoint"
 )
 
 // Request is one completion.
@@ -76,19 +78,30 @@ func New(c Config) (Provider, error) {
 	if c.Key == "" {
 		return nil, errors.New("no API key was read")
 	}
-	if c.HTTP == nil {
-		c.HTTP = &http.Client{Timeout: DefaultTimeout}
-	}
+	// 🔴 REDIRECTS ARE NOT FOLLOWED, whatever client the caller passed: Go re-sends `x-api-key` to a
+	// redirect target on ANY host (`internal/endpoint`). A 3xx is a [StatusError].
+	c.HTTP = endpoint.Client(c.HTTP, DefaultTimeout)
 	switch c.Provider {
 	case "anthropic":
 		if c.BaseURL == "" {
 			c.BaseURL = "https://api.anthropic.com"
 		}
-		return &anthropic{c}, nil
 	case "openai":
 		if c.BaseURL == "" {
 			c.BaseURL = "https://api.openai.com"
 		}
+	default:
+		return nil, fmt.Errorf("provider %q is not one of %v", c.Provider, Providers())
+	}
+	base, err := endpoint.Validate("the provider URL", c.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	c.BaseURL = base
+	switch c.Provider {
+	case "anthropic":
+		return &anthropic{c}, nil
+	case "openai":
 		if c.Effort != "" {
 			return nil, errors.New("-effort is an Anthropic setting; the openai provider takes none")
 		}
@@ -157,6 +170,17 @@ func (e *StatusError) Error() string {
 	return fmt.Sprintf("the %s provider answered %d: %s", e.Provider, e.Status, e.Detail)
 }
 
+// StopError is a 200 answer that is NOT a finished summary: a refusal, an answer cut at the output
+// bound, or any stop the provider did not call a normal end. Deterministic for the same input, which
+// is why the caller backs the session off rather than re-paying for it every run.
+type StopError struct {
+	Provider, Reason string
+}
+
+func (e *StopError) Error() string {
+	return fmt.Sprintf("the %s provider stopped with %q, not a finished answer", e.Provider, e.Reason)
+}
+
 // ---------------------------------------------------------------- Anthropic Messages API
 
 type anthropic struct{ c Config }
@@ -195,7 +219,7 @@ func (a *anthropic) Complete(ctx context.Context, r Request) (Response, error) {
 	// A refusal or a truncated answer is not a summary: writing either would store a claim the model
 	// did not finish making.
 	if ans.StopReason != "end_turn" && ans.StopReason != "stop_sequence" {
-		return Response{}, fmt.Errorf("the anthropic provider stopped with %q, not end_turn", ans.StopReason)
+		return Response{}, &StopError{Provider: "anthropic", Reason: ans.StopReason}
 	}
 	var parts []string
 	for _, b := range ans.Content {
@@ -242,7 +266,7 @@ func (o *openai) Complete(ctx context.Context, r Request) (Response, error) {
 		return Response{}, errors.New("the openai provider answered no choice")
 	}
 	if fr := ans.Choices[0].FinishReason; fr != "stop" {
-		return Response{}, fmt.Errorf("the openai provider stopped with %q, not stop", fr)
+		return Response{}, &StopError{Provider: "openai", Reason: fr}
 	}
 	return Response{Text: strings.TrimSpace(ans.Choices[0].Message.Content), Model: orDefault(ans.Model, o.c.Model),
 		InputTokens: ans.Usage.PromptTokens, OutputTokens: ans.Usage.CompletionTokens}, nil

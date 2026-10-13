@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ZacxDev/cairn/plugins/internal/endpoint"
 )
 
 // 🔴 CLICKUP IS READ, NEVER WRITTEN (operator decision O6; write-back is the plan's B5, future work).
@@ -22,7 +24,10 @@ import (
 //
 // 🔴 THE TOKEN IS READ FROM A FILE AND SENT IN ONE HEADER (`secretfile`). It is never a flag value,
 // never in the environment, and an error body is quoted back only after every occurrence of it is
-// replaced.
+// replaced. 🔴 AND IT FOLLOWS NO REDIRECT AND CROSSES NO NETWORK IN CLEARTEXT — the module's two rules
+// for every client that carries a credential (`internal/endpoint`): Go re-sends `Authorization` to a
+// redirect target, so a 3xx is answered as an error rather than chased, and the base URL must be
+// `https` (or `http` to a loopback address).
 //
 // 🔴 A 429 IS WAITED OUT, NOT RETRIED BLINDLY (R5): ClickUp limits requests per token per minute and
 // answers 429 with `X-RateLimit-Reset`, the Unix time the window reopens. The client sleeps until then
@@ -56,7 +61,8 @@ type ClickUp struct {
 	// Base is the API's base URL, no trailing path (`https://api.clickup.com`).
 	Base  string
 	Token string
-	HTTP  *http.Client
+	// HTTP is the client to use; nil is a default. Either way redirects are NOT followed.
+	HTTP *http.Client
 	// MaxWait bounds ONE wait for a rate-limit window.
 	MaxWait time.Duration
 	Log     func(string)
@@ -75,6 +81,8 @@ const (
 	// fallbackWait is the wait when a 429 names no reset this client can read: the window is a minute.
 	fallbackWait = 60 * time.Second
 	maxListBody  = 16 << 20
+	// clickUpTimeout bounds one request.
+	clickUpTimeout = 60 * time.Second
 )
 
 func (c *ClickUp) now() time.Time {
@@ -115,7 +123,12 @@ func (c *ClickUp) resetWait(h http.Header) time.Duration {
 
 // get is the ONE request this client makes: a GET, with the 429 wait.
 func (c *ClickUp) get(ctx context.Context, path string, q url.Values, into any) error {
-	u := strings.TrimRight(c.Base, "/") + path + "?" + q.Encode()
+	base, err := endpoint.Validate("the ClickUp URL", c.Base)
+	if err != nil {
+		return err
+	}
+	u := base + path + "?" + q.Encode()
+	client := endpoint.Client(c.HTTP, clickUpTimeout)
 	for attempt := 1; ; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 		if err != nil {
@@ -124,7 +137,7 @@ func (c *ClickUp) get(ctx context.Context, path string, q url.Values, into any) 
 		// A ClickUp personal token is sent bare — no `Bearer`.
 		req.Header.Set("Authorization", c.Token)
 		req.Header.Set("Accept", "application/json")
-		resp, err := c.HTTP.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			return fmt.Errorf("clickup %s could not be reached: %s", path, c.scrub(err.Error()))
 		}

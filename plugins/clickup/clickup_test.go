@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -363,12 +365,10 @@ func TestASpendCapOfZeroSendsNothingAndAProviderFailureDoesNotHoldTheEdges(t *te
 func TestA429IsWaitedOutUntilTheResetTheHeaderNames(t *testing.T) {
 	w := newWorld(t, human("see "+cuURLPrefix+"clk0000a1", ""))
 	w.cu.limited, w.cu.resetIn = 1, 300*time.Millisecond
-	// The plugin's clock is the real one here: the wait is measured against the header's real time.
-	args := []string{"-worker-url", w.podURL, "-token-file", filepath.Join(w.dir, "token"),
-		"-clickup-url", w.cuURL, "-clickup-token-file", filepath.Join(w.dir, "clickup-token"), "-clickup-list", listID}
-	var out, errb strings.Builder
-	if code := run(args, &out, &errb, time.Now); code != 0 || !strings.Contains(out.String(), "edges=1") {
-		t.Fatalf("exit %d\n%s%s", code, out.String(), errb.String())
+	w.realClock = true
+	code, out, errs := w.run(t)
+	if code != 0 || !strings.Contains(out, "edges=1") {
+		t.Fatalf("exit %d\n%s%s", code, out, errs)
 	}
 	if len(w.cu.times) != 2 || len(w.cu.resets) != 1 {
 		t.Fatalf("ClickUp saw %d requests and answered %d 429s, want 2 and 1", len(w.cu.times), len(w.cu.resets))
@@ -376,19 +376,15 @@ func TestA429IsWaitedOutUntilTheResetTheHeaderNames(t *testing.T) {
 	if w.cu.times[1].Before(w.cu.resets[0]) {
 		t.Errorf("the retry arrived at %s, BEFORE the reset %s the 429 named", w.cu.times[1].Format(time.RFC3339Nano), w.cu.resets[0].Format(time.RFC3339Nano))
 	}
-	if !strings.Contains(errb.String(), "rate limited (429)") {
-		t.Errorf("the wait was not logged:\n%s", errb.String())
+	if !strings.Contains(errs, "rate limited (429)") {
+		t.Errorf("the wait was not logged:\n%s", errs)
 	}
 
 	// A window that reopens later than the run will wait fails the run, and NOTHING is written.
 	w2 := newWorld(t, human("see "+cuURLPrefix+"clk0000a1", ""))
-	w2.cu.limited, w2.cu.resetIn = 1, time.Hour
-	args2 := []string{"-worker-url", w2.podURL, "-token-file", filepath.Join(w2.dir, "token"),
-		"-clickup-url", w2.cuURL, "-clickup-token-file", filepath.Join(w2.dir, "clickup-token"), "-clickup-list", listID}
-	out.Reset()
-	errb.Reset()
-	if code := run(args2, &out, &errb, time.Now); code != 1 || !strings.Contains(errb.String(), "past the 2m0s this run will wait") {
-		t.Fatalf("an hour-long window: exit %d\n%s%s", code, out.String(), errb.String())
+	w2.cu.limited, w2.cu.resetIn, w2.realClock = 1, time.Hour, true
+	if code, out, errs := w2.run(t); code != 1 || !strings.Contains(errs, "past the 2m0s this run will wait") {
+		t.Fatalf("an hour-long window: exit %d\n%s%s", code, out, errs)
 	}
 	if len(w2.pod.outputs) != 0 {
 		t.Errorf("a failed ticket fetch still wrote %d outputs", len(w2.pod.outputs))
@@ -657,3 +653,84 @@ func TestTheModelsAnswerIsFilteredToWhatThePodStores(t *testing.T) {
 }
 
 func mustJSON(v any) []byte { raw, _ := json.Marshal(v); return raw }
+
+// TestARefusedSessionBacksOffAndDoesNotStarveTheRest — the pod lists pending sessions oldest first and
+// knows nothing of one this plugin cannot finish. Twelve older sessions whose every write the pod
+// refuses (507, a full quota) sit ahead of a healthy one with `-limit 10`: run 1 works on ten of them
+// and each is paid for once; run 2 SKIPS those ten and reaches the other two and the healthy session,
+// whose edge is written; no refused session is paid for twice inside its backoff.
+func TestARefusedSessionBacksOffAndDoesNotStarveTheRest(t *testing.T) {
+	w := newWorld(t, human("see "+cuURLPrefix+"clk0000a1", ""))
+	w.pod.extra, w.pod.refuse = map[string][]string{}, map[string]bool{}
+	for i := range 12 {
+		id := "s-bad-" + string(rune('a'+i))
+		w.pod.extra[id] = []string{human("please do lorem", "")}
+		w.pod.refuse[id] = true
+	}
+	w.args = w.withModel()
+	code, out, errs := w.run(t)
+	if code != 1 || !strings.Contains(out, "sessions=10 edges=0 suggestions=0 requests=10 failed=10 capped=false skipped=0") {
+		t.Fatalf("run 1: exit %d\n%s%s", code, out, errs)
+	}
+	if !slices.Equal(w.pod.limits, []int{100}) {
+		t.Errorf("the pending query asked for %v, want the pod's maximum (100) — `-limit` is what a run WORKS ON", w.pod.limits)
+	}
+	if !strings.Contains(errs, "backing off 15m0s") {
+		t.Errorf("run 1 did not say it backs off:\n%s", errs)
+	}
+	code, out, errs = w.run(t)
+	if code != 1 || !strings.Contains(out, "sessions=3 edges=1 suggestions=0 requests=3 failed=2 capped=false skipped=10") {
+		t.Fatalf("run 2: exit %d\n%s%s", code, out, errs)
+	}
+	wantEdges(t, w.pod.edges(t), Edge{System: "clickup", TicketID: "clk0000a1", Signal: SigTranscript, Locator: rec(1)})
+	// Inside the backoff nothing is asked again; past it, the refused sessions are tried again.
+	if code, out, _ := w.run(t); code != 0 || !strings.Contains(out, "sessions=0 edges=0 suggestions=0 requests=0 failed=0 capped=false skipped=12") {
+		t.Fatalf("run 3, inside every backoff: exit %d %s", code, out)
+	}
+	if n := len(w.prov.received()); n != 13 {
+		t.Fatalf("the provider received %d requests over three runs, want 13 (one per session)", n)
+	}
+	w.clock = w.clock.Add(15 * time.Minute)
+	if code, out, _ := w.run(t); code != 1 || !strings.Contains(out, "sessions=10 ") || !strings.Contains(out, "skipped=0") {
+		t.Fatalf("run 4, past the backoff: exit %d %s", code, out)
+	}
+	// A session that GROWS leaves its backoff: new records are new input.
+	w.pod.mu.Lock()
+	w.pod.extra["s-bad-a"] = append(w.pod.extra["s-bad-a"], assistant("more"))
+	w.pod.refuse["s-bad-a"] = false
+	w.pod.mu.Unlock()
+	// (The two sessions run 4's limit did not reach are due as well; the nine others stay skipped.)
+	if code, out, errs := w.run(t); !strings.Contains(out, "sessions=3 ") || !strings.Contains(out, "skipped=9") ||
+		!strings.Contains(errs, "session=s-bad-a full=true") {
+		t.Fatalf("run 5, one session grew: exit %d\n%s%s", code, out, errs)
+	}
+}
+
+// TestNoCredentialFollowsARedirectOrCrossesTheNetworkInCleartext — the module's two rules for a client
+// that carries a credential, applied to the ClickUp token: a 3xx is an error and the token is NOT
+// re-sent to its target, and a plain-http URL off the host is refused before anything is sent.
+func TestNoCredentialFollowsARedirectOrCrossesTheNetworkInCleartext(t *testing.T) {
+	var got []string
+	target := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("Authorization"))
+		writeJSON(rw, 200, map[string]any{"tasks": []any{}, "last_page": true})
+	}))
+	defer target.Close()
+	redirector := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		http.Redirect(rw, r, target.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer redirector.Close()
+	w := newWorld(t, human("see "+cuURLPrefix+"clk0000a1", ""))
+	w.cuURL = redirector.URL
+	code, out, errs := w.run(t)
+	if code != 1 || !strings.Contains(errs, "answered 302") || len(got) != 0 {
+		t.Fatalf("a redirecting ClickUp: exit %d, the redirect target received %q\n%s%s", code, got, out, errs)
+	}
+	if len(w.pod.outputs) != 0 {
+		t.Errorf("%d outputs were written without a ticket list", len(w.pod.outputs))
+	}
+	w.cuURL = "http://clickup.example.invalid"
+	if code, _, errs := w.run(t); code != 2 || !strings.Contains(errs, "cleartext") {
+		t.Fatalf("a plain-http ClickUp URL off the host: exit %d %s", code, errs)
+	}
+}

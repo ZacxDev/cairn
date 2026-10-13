@@ -831,9 +831,10 @@ jobs:
       # same reason: a skip nobody counts is a pass.
       - name: the tier that must not skip a git-dependent test
         run: echo "CAIRN_GIT_TESTS_REQUIRED=1" >> "$GITHUB_ENV"
-      # …and the same for `internal/worker`'s TestTheSummaryPluginAgainstTheRealListener, which builds
-      # the S9 plugin from `plugins/` — absent from the nix derivations' filtered source, where it
-      # skips; here the source is present and a skip REFUSES.
+      # …and the same for `internal/worker`'s TestTheSummaryPluginAgainstTheRealListener and
+      # TestTheClickupPluginAgainstTheRealListener, which build the S9 and S10 plugins from `plugins/` —
+      # absent from the nix derivations' filtered source, where they skip; here the source is present
+      # and a skip REFUSES.
       - name: the tier that must not skip the plugin built against the real listener
         run: echo "CAIRN_PLUGIN_BUILD_REQUIRED=1" >> "$GITHUB_ENV"
 
@@ -1223,15 +1224,18 @@ jobs:
             exit 1
           fi
 
-      # 🔴 THE EXAMPLE PLUGINS' OWN SUITE — closing-condition part 4 of `claudedocs/plan-cairn-plugins.md`,
-      # S9's half (S10 adds ClickUp's to the same module). `plugins/` is a NESTED, stdlib-only module, so
-      # the root `go vet ./...` and `go test ./...` above do NOT descend into it: without this step its
-      # tests would run only in the nix tier. It runs against an in-process FAKE provider and a fake pod,
-      # synthetic fixtures only — no real provider is ever called by CI (the plan's (iii)).
+      # 🔴 THE EXAMPLE PLUGINS' OWN SUITES — closing-condition part 4 of `claudedocs/plan-cairn-plugins.md`:
+      # plugin A (summaries, S9) and plugin B (ClickUp ticket matching, S10), one module. `plugins/` is a
+      # NESTED, stdlib-only module, so the root `go vet ./...` and `go test ./...` above do NOT descend
+      # into it: without this step its tests would run only in the nix tier. They run against in-process
+      # FAKE provider, fake ClickUp and fake pod servers, synthetic fixtures only — no real provider and
+      # no real ClickUp workspace is ever called by CI (the plan's (iii)). Plugin B's commit matcher runs
+      # the REAL `git` over a repository the test creates, and FAILS rather than skips without one.
       #
-      # 🔴 COUNTED, NOT EXIT-CODED: a module whose tests vanished exits 0 too. 14 `--- PASS` lines and 1
-      # `ok` package were measured when the plugin landed; a drop below either, or any FAIL, refuses.
-      - name: the summary plugin's own suite, against an in-process fake provider and fake pod
+      # 🔴 COUNTED, NOT EXIT-CODED: a module whose tests vanished exits 0 too. 54 `--- PASS` lines and 7
+      # `ok` packages were measured when plugin B landed (31 and 4 with plugin A alone); a drop below
+      # either, or any FAIL, refuses.
+      - name: the example plugins' own suites, against in-process fake provider, ClickUp and pod servers
         run: |
           set -o pipefail
           go -C plugins vet ./...
@@ -1241,8 +1245,8 @@ jobs:
           fails=$(grep -c '^--- FAIL' /tmp/plugins-suite.txt || true)
           oks=$(grep -c '^ok ' /tmp/plugins-suite.txt || true)
           echo "plugins suite: passes=$passes fails=$fails ok=$oks"
-          if [ "$passes" -lt 14 ] || [ "$fails" -ne 0 ] || [ "$oks" -lt 1 ]; then
-            echo "REFUSING: $passes PASS / $fails FAIL / $oks ok, and 14 / 0 / 1 were measured"
+          if [ "$passes" -lt 54 ] || [ "$fails" -ne 0 ] || [ "$oks" -lt 7 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL / $oks ok, and 54 / 0 / 7 were measured"
             exit 1
           fi
 
@@ -2035,6 +2039,10 @@ jobs:
       # The summary plugin (S9): its NESTED module built alone, its suite in the check phase.
       - name: the summary plugin builds, and its suite passes under the pinned toolchain
         run: nix build .#packages.x86_64-linux.cairn-summary --no-link --print-build-logs
+      # The ClickUp plugin (S10): the same module and the same check phase — the whole module's suite,
+      # with `git` as a check input — under its own name, with its own manifest beside it.
+      - name: the clickup plugin builds, and the module's suite passes under the pinned toolchain
+        run: nix build .#packages.x86_64-linux.cairn-clickup --no-link --print-build-logs
 
       # …and its verb and exit-code tables are read out of the running binary. This is the nix
       # tier of the claim `tests/test_go_client_ledgers.py` makes in the `go` job — a different

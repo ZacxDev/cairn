@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/ZacxDev/cairn/plugins/internal/hoststate"
 	"github.com/ZacxDev/cairn/plugins/internal/llm"
 	"github.com/ZacxDev/cairn/plugins/internal/pluginapi"
 	"github.com/ZacxDev/cairn/plugins/internal/spend"
@@ -103,6 +105,11 @@ type Runner struct {
 	GHBin string
 	// Entries is the cache roots' index; nil when none is configured.
 	Entries EntryIndex
+	// State is the host-local backoff; Now its clock. Limit is how many sessions one run WORKS ON
+	// (sessions skipped in backoff do not count).
+	State *stateFile
+	Now   func() time.Time
+	Limit int
 	// PageBytes is the `max_bytes` of one transcript page.
 	PageBytes int
 	// ExcerptBytes bounds the opening excerpt sent when no summary is stored.
@@ -117,13 +124,87 @@ type Runner struct {
 
 // Stats is what a run did.
 type Stats struct {
-	Sessions, Edges, Suggestions, Requests, Failed int
-	Capped                                         bool
+	Sessions, Edges, Suggestions, Requests, Failed, Skipped int
+	Capped                                                  bool
 }
 
-// Run does one pass over an already-fetched pending list.
-func (r *Runner) Run(ctx context.Context, items []pluginapi.PendingItem) Stats {
-	var st Stats
+// pendingAsk is how many pending sessions one run ASKS for — the pod's maximum, not `-limit`: sessions
+// in backoff still occupy the oldest-first list, so asking for only `-limit` would let that many
+// failing sessions hide every healthy one behind them. ⚠ More than this many in backoff at once
+// still hides the rest.
+const pendingAsk = 100
+
+// stateFile is this plugin's host-local memory (`internal/hoststate`): each failing session's backoff.
+type stateFile struct {
+	path     string
+	Sessions map[string]*hoststate.Backoff `json:"sessions"`
+}
+
+func loadState(path string) (*stateFile, error) {
+	st := &stateFile{path: path}
+	if err := hoststate.Load(path, st); err != nil {
+		return nil, err
+	}
+	if st.Sessions == nil {
+		st.Sessions = map[string]*hoststate.Backoff{}
+	}
+	return st, nil
+}
+
+func (st *stateFile) save() error { return hoststate.Save(st.path, st) }
+
+// records is a pending item's record count over every listed stream.
+func records(it pluginapi.PendingItem) int64 {
+	var n int64
+	for _, pos := range it.Streams {
+		n += pos.SeqTo
+	}
+	return n
+}
+
+// due is the sessions this run works on: the pending list without the sessions in backoff, at most
+// Limit. A session the pod no longer lists keeps no backoff here.
+func (r *Runner) due(items []pluginapi.PendingItem, st *Stats) ([]pluginapi.PendingItem, error) {
+	listed := map[string]bool{}
+	for _, it := range items {
+		listed[it.Session] = true
+	}
+	dropped := false
+	for id := range r.State.Sessions {
+		if !listed[id] {
+			delete(r.State.Sessions, id)
+			dropped = true
+		}
+	}
+	if dropped {
+		if err := r.State.save(); err != nil {
+			return nil, err
+		}
+	}
+	var out []pluginapi.PendingItem
+	for _, it := range items {
+		if b := r.State.Sessions[it.Session]; b.Active(r.Now(), records(it)) {
+			st.Skipped++
+			r.Log(fmt.Sprintf("clickup: session=%s SKIPPED: %d failure(s) at this size, next attempt %s", it.Session, b.Failures, b.RetryAt))
+			continue
+		}
+		if len(out) < r.Limit {
+			out = append(out, it)
+		}
+	}
+	return out, nil
+}
+
+// refused reports whether a pass failed because the POD answered a request with a status — a full
+// quota (507), a 400, the one 403 — which will repeat for the same records; as opposed to the pod not
+// being reached or the run's own deadline, which say nothing about THIS session.
+func refused(err error) bool {
+	var se *pluginapi.StatusError
+	return errors.As(err, &se) || errors.Is(err, pluginapi.ErrForbidden)
+}
+
+// Run does one pass over the sessions [Runner.due] chose.
+func (r *Runner) Run(ctx context.Context, items []pluginapi.PendingItem, st *Stats) error {
 	for _, it := range items {
 		st.Sessions++
 		res, err := r.session(ctx, it)
@@ -135,8 +216,29 @@ func (r *Runner) Run(ctx context.Context, items []pluginapi.PendingItem) Stats {
 		}
 		if err != nil {
 			st.Failed++
-			r.Log(fmt.Sprintf("clickup: session=%s FAILED: %v", it.Session, err))
+			note := ""
+			// 🔴 A PASS THE POD REFUSED IS NOT RETRIED NEXT RUN: a model may already have been paid for
+			// the suggestion whose write was refused, and retrying at once re-pays for it every run
+			// while the session sits at the head of the oldest-first list.
+			if refused(err) && ctx.Err() == nil {
+				b := r.State.Sessions[it.Session]
+				if b == nil {
+					b = &hoststate.Backoff{}
+					r.State.Sessions[it.Session] = b
+				}
+				note = fmt.Sprintf(" — backing off %s", b.Fail(r.Now(), records(it)))
+				if serr := r.State.save(); serr != nil {
+					return serr
+				}
+			}
+			r.Log(fmt.Sprintf("clickup: session=%s FAILED: %v%s", it.Session, err, note))
 			continue
+		}
+		if _, had := r.State.Sessions[it.Session]; had {
+			delete(r.State.Sessions, it.Session)
+			if serr := r.State.save(); serr != nil {
+				return serr
+			}
 		}
 		if res.softErrs > 0 {
 			st.Failed++
@@ -144,7 +246,7 @@ func (r *Runner) Run(ctx context.Context, items []pluginapi.PendingItem) Stats {
 		r.Log(fmt.Sprintf("clickup: session=%s full=%t edges=%d suggestions=%d requests=%d capped=%t source-errors=%d",
 			it.Session, res.full, res.edges, res.suggestions, res.requests, res.capped, res.softErrs))
 	}
-	return st
+	return nil
 }
 
 type sessionResult struct {
@@ -239,13 +341,12 @@ func (r *Runner) scanStream(ctx context.Context, session, stream string, after, 
 	return nil
 }
 
-// streamsOf is the item's streams a watermark may name, `main` first.
+// streamsOf is the item's streams, `main` first. The pod lists only streams a watermark may name (a
+// session's `ledger` stream is not listed), so no second filter is kept here.
 func streamsOf(it pluginapi.PendingItem) []string {
 	var out []string
 	for s := range it.Streams {
-		if pluginapi.ValidWatermarkStream(s) {
-			out = append(out, s)
-		}
+		out = append(out, s)
 	}
 	slices.SortFunc(out, func(a, b string) int {
 		if (a == "main") != (b == "main") {
@@ -311,7 +412,7 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem) (session
 	var res sessionResult
 	streams := streamsOf(it)
 	if len(streams) == 0 {
-		return res, errors.New("the pending item names no stream a watermark may name")
+		return res, errors.New("the pending item names no stream")
 	}
 	if !sessionShape.MatchString(it.Session) {
 		return res, errors.New("the pending item's session is not a session id")

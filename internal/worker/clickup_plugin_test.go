@@ -186,7 +186,7 @@ func TestTheClickupPluginAgainstTheRealListener(t *testing.T) {
 		cmd := exec.Command(bin, "-worker-url", pod.URL, "-token-file", filepath.Join(dir, "token"),
 			"-clickup-url", clickup.URL, "-clickup-token-file", filepath.Join(dir, "clickup-token"), "-clickup-list", "list-0001",
 			"-provider-url", provider.URL, "-key-file", filepath.Join(dir, "key"), "-model", "fake-model-1",
-			"-spend-ledger", filepath.Join(dir, "spend.log"))
+			"-spend-ledger", filepath.Join(dir, "spend.log"), "-state-file", filepath.Join(dir, "sessions.json"))
 		var out, errb strings.Builder
 		cmd.Stdout, cmd.Stderr = &out, &errb
 		if err := cmd.Run(); err != nil {
