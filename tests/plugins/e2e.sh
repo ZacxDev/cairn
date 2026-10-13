@@ -193,8 +193,8 @@ PY
     "i-pending-is-empty-until-a-toggle-then-exactly-the-every-scope-on-sessions"
   # (j) The per-session toggle check dropped from the plugin's read: any stored transcript is served.
   sabotage j-transcript-read-ignores-the-toggle internal/plugins/service.go \
-    $'\tv, err := s.Transcripts.ForPlugin(root, on)' \
-    $'\tv, err := s.Transcripts.ForPlugin(root, func(*transcript.Meta, []string) bool { return on != nil })' \
+    $'\tv, err := s.Transcripts.ForPlugin(root, on)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden' \
+    $'\tv, err := s.Transcripts.ForPlugin(root, func(*transcript.Meta, []string) bool { return on != nil })\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden' \
     "j-a-plugin-is-refused-one-403-off-session-and-undeclared-type"
   echo "SUMMARY e2e-self-test: sabotaged=$sabotaged caught=$caught"
   if [[ ${#missed[@]} -gt 0 ]]; then
