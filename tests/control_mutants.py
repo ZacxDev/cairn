@@ -5076,7 +5076,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-pod-skips-scope-rederivation",
         path="internal/transcript/archive/archive.go",
-        old="\tm.Derived = union(m.Derived, derived)",
+        old="\tm.Derived = union(m.Derived, found.Scopes)",
         new="\tm.Derived = union(m.Derived, nil)",
         killer="TestThePodDerivesReadScopesTheAgentDidNotDeclare",
         why="the agent already declares what it derived with the same function, so folding the pod's own "
