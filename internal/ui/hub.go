@@ -143,6 +143,12 @@ func (s *Server) handleSessionsPage(w http.ResponseWriter, r *http.Request, id i
 	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now(), App: s.app}
 	view.SessionsList = &list
 	view.Panes = s.panesFor(id)
+	// Each row's one-line plugin summary, through the transcript predicate (`outputs.go`).
+	listed := make([]string, 0, len(list.Report.Sessions))
+	for _, sess := range list.Report.Sessions {
+		listed = append(listed, sess.ID)
+	}
+	view.Derived = s.derivedFor(id, listed)
 	s.render(w, SessionsPage(view))
 }
 
@@ -207,6 +213,7 @@ func sessionsListRow(s report.SessionAcrossReport, label string, ids map[string]
 		h.Span(h.Class("entry-count"), g.Text(plural(s.Bullets(), "bullet", "bullets"))),
 		dateAgo(last, v.Now),
 		v.Panes.badge(s.ID, v.Now),
+		v.Derived.line(s.ID),
 		g.If(len(scopes) > 0, h.Ul(h.Class("chips chips-scope"), g.Map(scopes, func(name string) g.Node {
 			return scopeChip(name, ids)
 		}))),

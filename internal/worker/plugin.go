@@ -197,11 +197,30 @@ func (w *Worker) handleOutputsWrite(rw http.ResponseWriter, r *http.Request, row
 		// 🔴 507, NAMED, AND SAID ONCE — capture's answer (#270 round 1: it was an opaque 500 and a log
 		// line per request). The plugin holds and retries; the operator sees one line.
 		writeJSON(rw, http.StatusInsufficientStorage, fmt.Sprintf(`{"refused":"quota","quota_bytes":%d}`+"\n", quota.Quota))
-		w.once(fmt.Sprintf("worker: plugin %s's outputs reached their share of the transcript quota (%d bytes); "+
-			"its writes are refused 507", e.Name, quota.Quota))
+		w.once(quotaLine(e.Name, quota))
 	case err != nil:
 		w.refuse(rw, err)
 	default:
 		writeValue(rw, http.StatusCreated, map[string]string{"id": out.ID})
 	}
+}
+
+// quotaLine is the operator's line for a plugin write refused 507, and it says WHICH limit was hit.
+//
+// 🔴 THREE LIMITS, THREE REMEDIES, AND THE LINE NAMED ONE OF THEM FOR ALL THREE (#270's audit, closed
+// in S6): it read "plugin X's outputs reached their share" whether X had filled its own share, all
+// plugins together had filled theirs, or the INSTANCE quota was full of transcripts — and for the
+// last, the operator was sent to look at a plugin that had written almost nothing.
+func quotaLine(plugin string, q *transcript.QuotaError) string {
+	switch q.Share {
+	case transcript.SharePlugin:
+		return fmt.Sprintf("worker: plugin %s's OWN outputs reached that plugin's share of the transcript quota "+
+			"(%d bytes); its writes are refused 507 until sessions holding them are deleted", plugin, q.Quota)
+	case transcript.ShareOutputs:
+		return fmt.Sprintf("worker: ALL plugins' outputs together reached their share of the transcript quota "+
+			"(%d bytes); plugin %s's write — and every other plugin's — is refused 507 until sessions holding outputs "+
+			"are deleted", q.Quota, plugin)
+	}
+	return fmt.Sprintf("worker: the INSTANCE transcript quota (%d bytes) is reached — by everything stored, not by "+
+		"plugin %s's outputs; its write is refused 507 until retention frees space", q.Quota, plugin)
 }

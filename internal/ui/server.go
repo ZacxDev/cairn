@@ -1668,6 +1668,15 @@ func (s *Server) scopeView(w http.ResponseWriter, r *http.Request, id identity.I
 	// of the narrowed answer, and only when a registry is configured (`plugins.go`).
 	view.Plugins = s.scopeToggles(id, scope)
 	view.Panes = s.panesFor(id)
+	// Each listed session's one-line plugin summary, through the transcript predicate (`outputs.go`) —
+	// asked only for the tab that lists sessions.
+	if view.Tab == TabSessions {
+		listed := make([]string, 0, len(touched.Sessions.Sessions))
+		for _, sess := range touched.Sessions.Sessions {
+			listed = append(listed, sess.ID)
+		}
+		view.Derived = s.derivedFor(id, listed)
+	}
 	return view, true
 }
 

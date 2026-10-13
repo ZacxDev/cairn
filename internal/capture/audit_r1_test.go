@@ -224,11 +224,13 @@ func TestAKilledRunKeepsItsPlan(t *testing.T) {
 		return nil
 	}
 	mustRun(t, a) // the pod stores everything
-	if len(onDisk) < 2 {
+	if len(onDisk) < 3 {
 		t.Fatalf("%d checkpoints: the plan was not saved before the request left", len(onDisk))
 	}
-	// THE KILL: what survives is the checkpoint taken before the request, not the run's end.
-	if err := os.WriteFile(path, onDisk[0], 0o600); err != nil {
+	// THE KILL: what survives is the checkpoint taken before the request, not the run's end. That is
+	// the SECOND save — the first is where the session is bound (S6: saved at once, before any
+	// upload), the second the write's plan.
+	if err := os.WriteFile(path, onDisk[1], 0o600); err != nil {
 		t.Fatal(err)
 	}
 	st, err := LoadState(path)

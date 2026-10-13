@@ -203,6 +203,11 @@ type memSink struct {
 	fail      map[string]error    // stream name, or "blob:"+name → the error its write returns
 	attempts  map[string]int      // stream name, or "blob:"+name → writes attempted
 	declared  map[string][]string // instance/root → the last declared set
+	// notHeld makes every withdrawal answer `{"deleted": false}`; withdrawErr makes it fail.
+	notHeld     bool
+	withdrawErr error
+	// onRecords, when set, runs as each records write arrives — before it is stored.
+	onRecords func()
 }
 
 func newMemSink() *memSink {
@@ -211,6 +216,9 @@ func newMemSink() *memSink {
 }
 
 func (s *memSink) Records(u Upload, stream string, recs []Record) (int, error) {
+	if s.onRecords != nil {
+		s.onRecords()
+	}
 	s.attempts[stream]++
 	if err := s.fail[stream]; err != nil {
 		return 0, err
@@ -254,14 +262,20 @@ func (s *memSink) Position(u Upload, stream string) (string, error) {
 	return s.pos[u.Instance+"/"+u.Root+"/"+stream], nil
 }
 
-func (s *memSink) Withdraw(instance, root string) error {
+func (s *memSink) Withdraw(instance, root string) (bool, error) {
+	if s.withdrawErr != nil {
+		return false, s.withdrawErr
+	}
 	s.withdrawn[instance] = append(s.withdrawn[instance], root)
+	if s.notHeld {
+		return false, nil
+	}
 	for k := range s.pos {
 		if strings.HasPrefix(k, instance+"/"+root+"/") {
 			delete(s.pos, k)
 		}
 	}
-	return nil
+	return true, nil
 }
 
 // has answers whether anything of root reached instance.

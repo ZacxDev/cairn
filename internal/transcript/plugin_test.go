@@ -35,7 +35,7 @@ func TestForPluginsWalksTheStoreOnceAndFindsEveryRootsTrailers(t *testing.T) {
 	seen := map[string][]string{}
 	on := func(m *Meta, v []string) bool { seen[m.Root] = slices.Clone(v); return true }
 	before := storeWalks.Load()
-	views, err := NewStore(a, root).ForPlugins([]string{"s-a", "s-b", "s-c"}, on, func(string, error) {})
+	views, err := NewStore(a, root).ForPlugins([]string{"s-a", "s-b", "s-c"}, Gate{On: on}, func(string, error) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,12 +46,31 @@ func TestForPluginsWalksTheStoreOnceAndFindsEveryRootsTrailers(t *testing.T) {
 		len(seen["s-c"]) != 0 {
 		t.Fatalf("views=%d, V per root %v — want alpha for s-a, beta for s-b, nothing for s-c", len(views), seen)
 	}
-	// And no walk at all when no root needs one: a stored `V` the predicate already refuses.
+	// And no walk at all when no root needs one: a stored `V` (the walk above recorded it) that the
+	// gate says is SETTLED — OFF for it and every superset.
+	no := func(*Meta, []string) bool { return false }
 	before = storeWalks.Load()
-	if _, err := NewStore(a, root).ForPlugins([]string{"s-a", "s-b"}, func(*Meta, []string) bool { return false }, nil); err != nil {
+	if _, err := NewStore(a, root).ForPlugins([]string{"s-a", "s-b"}, Gate{On: no, Settled: func(*Meta, []string) bool { return true }}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if walks := storeWalks.Load() - before; walks != 0 {
-		t.Fatalf("roots whose stored V is refused walked the store %d times, want 0", walks)
+		t.Fatalf("roots whose stored V is settled walked the store %d times, want 0", walks)
+	}
+	// 🔴 …but `On` saying no over the STORED half settles nothing (#270's audit): the fold is not
+	// monotone, so only the gate's own `Settled` may skip the walk. A gate with none always walks,
+	// and so does one for a session whose stored half is EMPTY, whatever `Settled` says.
+	before = storeWalks.Load()
+	if _, err := NewStore(a, root).ForPlugins([]string{"s-a", "s-b"}, Gate{On: no}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if walks := storeWalks.Load() - before; walks != 1 {
+		t.Fatalf("a gate that never settles walked the store %d times, want 1", walks)
+	}
+	before = storeWalks.Load()
+	if _, err := NewStore(a, root).ForPlugins([]string{"s-c"}, Gate{On: no, Settled: func(*Meta, []string) bool { return true }}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if walks := storeWalks.Load() - before; walks != 1 {
+		t.Fatalf("a session with an EMPTY stored set walked the store %d times, want 1 (empty is never settled)", walks)
 	}
 }

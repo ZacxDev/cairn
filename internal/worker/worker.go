@@ -1,7 +1,7 @@
 // Package worker is `cairn-ui`'s THIRD listener (plan decision 8, `-worker-addr`): the routes a
 // host-side machine reaches with a WORKER token rather than a browser credential. Slice S3 of
-// `claudedocs/plan-cairn-plugins.md` gives it the capture upload routes and slice S5 the PLUGIN API
-// (`plugin.go`); the withdrawal route (S6) joins the same ledger later.
+// `claudedocs/plan-cairn-plugins.md` gives it the capture upload routes, slice S5 the PLUGIN API
+// (`plugin.go`) and slice S6 the capture WITHDRAWAL route (`withdraw.go`).
 //
 // 🔴 CAPTURE IS DISARMED BY DEFAULT, AND THE REFUSAL IS HERE. Operator decision O16 armed NO
 // instance. The redactor's held-back gate (O15 — ≥ 90% of leaks caught, ≤ 15% of clean lines
@@ -58,19 +58,24 @@ type route struct {
 	method  string
 	pattern string
 	kind    TokenKind
-	handle  func(w *Worker, rw http.ResponseWriter, r *http.Request, row TokenRow)
+	// upload marks a route that STORES what a capture token sends, and so sits behind the arming
+	// gate ([Config.Armed]). The withdrawal route is a capture route that is not one: it only
+	// deletes (`withdraw.go`).
+	upload bool
+	handle func(w *Worker, rw http.ResponseWriter, r *http.Request, row TokenRow)
 }
 
 // routes is THE dispatch table; [Routes] derives the ledger from it and [New] the mux, so the
 // two cannot disagree. Every CAPTURE route is `POST` (every one changes state); the plugin API's
 // reads are `GET` and its one write is `POST` (`plugin.go`).
 var routes = []route{
-	{http.MethodPost, RecordsPattern, KindCapture, (*Worker).handleRecords},
-	{http.MethodPost, BlobsPattern, KindCapture, (*Worker).handleBlob},
-	{http.MethodGet, PendingPattern, KindPlugin, (*Worker).handlePending},
-	{http.MethodGet, TranscriptPattern, KindPlugin, (*Worker).handleTranscript},
-	{http.MethodGet, OutputsPattern, KindPlugin, (*Worker).handleOutputsRead},
-	{http.MethodPost, OutputsPattern, KindPlugin, (*Worker).handleOutputsWrite},
+	{http.MethodPost, RecordsPattern, KindCapture, true, (*Worker).handleRecords},
+	{http.MethodPost, BlobsPattern, KindCapture, true, (*Worker).handleBlob},
+	{http.MethodPost, WithdrawPattern, KindCapture, false, (*Worker).handleWithdraw},
+	{http.MethodGet, PendingPattern, KindPlugin, false, (*Worker).handlePending},
+	{http.MethodGet, TranscriptPattern, KindPlugin, false, (*Worker).handleTranscript},
+	{http.MethodGet, OutputsPattern, KindPlugin, false, (*Worker).handleOutputsRead},
+	{http.MethodPost, OutputsPattern, KindPlugin, false, (*Worker).handleOutputsWrite},
 }
 
 // Routes is every `<METHOD> <pattern> <token kind>` this listener dispatches, sorted. Adding a row
@@ -251,7 +256,12 @@ func (w *Worker) serve(rw http.ResponseWriter, r *http.Request, rt route) {
 	// 🔴 THE DISARM GATE: after authentication, so an unauthenticated caller learns nothing about
 	// the instance's state and the lockout still counts its guesses; before the body is read, so a
 	// disarmed instance stores, creates and stages NOTHING.
-	if !w.cfg.Armed {
+	//
+	// 🔴 UPLOAD ROUTES ONLY. The withdrawal route stores nothing — it deletes the caller's own root —
+	// so an instance that was armed, holds transcripts, and was then disarmed still honours a
+	// withdrawal: refusing it 503 would keep a prefix the routing rule says must go for as long as
+	// the instance stayed disarmed.
+	if rt.upload && !w.cfg.Armed {
 		w.once("worker: capture is DISARMED on this instance (no -arm-transcript-capture); uploads are refused 503")
 		writeJSON(rw, http.StatusServiceUnavailable, DisarmedBody)
 		return
@@ -346,7 +356,7 @@ func (w *Worker) answer(rw http.ResponseWriter, st archive.Stored, err error, re
 		w.cfg.Log("worker: refused an upload the redaction table matched (" + recheck.Error() + ")")
 	case errors.As(err, &quota):
 		writeJSON(rw, http.StatusInsufficientStorage, fmt.Sprintf(`{"refused":"quota","quota_bytes":%d}`+"\n", quota.Quota))
-		w.once("worker: the transcript quota is reached; uploads are refused 507 until retention frees space")
+		w.once("worker: the INSTANCE transcript quota is reached; uploads are refused 507 until retention frees space")
 	case errors.As(err, &large):
 		// AP2: one record or blob over the bound — refused before its staged bytes were read.
 		writeJSON(rw, http.StatusRequestEntityTooLarge, fmt.Sprintf(`{"refused":"too-large","max_bytes":%d}`+"\n", large.Limit))

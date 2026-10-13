@@ -37,9 +37,11 @@ var (
 )
 
 type rig struct {
-	t      *testing.T
-	w      *Worker
-	arc    *archive.Archive
+	t   *testing.T
+	w   *Worker
+	arc *archive.Archive
+	// dir is the archive's directory.
+	dir    string
 	tokens string
 	log    []string
 	// unheld flips the authority's answer for the owner (AP3); zero is "still held".
@@ -74,12 +76,13 @@ func newRig(t *testing.T, armed bool, limiter *netid.RateLimiter) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	arc, err := archive.Open(archive.Config{Dir: t.TempDir(), Retention: time.Hour, Quota: 1 << 30, Recheck: red,
+	dir := t.TempDir()
+	arc, err := archive.Open(archive.Config{Dir: dir, Retention: time.Hour, Quota: 1 << 30, Recheck: red,
 		Now: func() time.Time { return time.Date(2000, 1, 2, 3, 4, 5, 0, time.UTC) }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := &rig{t: t, arc: arc, tokens: filepath.Join(t.TempDir(), "worker-tokens")}
+	g := &rig{t: t, arc: arc, dir: dir, tokens: filepath.Join(t.TempDir(), "worker-tokens")}
 	writeRows(t, g.tokens, standardRows()...)
 	w, _, err := New(Config{TokenFile: g.tokens, Owner: ownerA, OwnerHeld: func() bool { return !g.unheld.Load() },
 		Archive: arc, Armed: armed, Limiter: limiter,
@@ -146,13 +149,15 @@ func TestTheWorkerRouteLedgerIsExactlyThis(t *testing.T) {
 		"GET /plugin/v1/transcript plugin",
 		"POST /capture/v1/sessions/{root}/blobs/{name} capture",
 		"POST /capture/v1/sessions/{root}/streams/{stream}/records capture",
+		// The withdrawal (S6, decision 16): a capture token deleting its OWN (owner, host)'s root.
+		"POST /capture/v1/sessions/{root}/withdraw capture",
 		"POST /plugin/v1/outputs plugin",
 	}
 	if got := Routes(); !slices.Equal(got, want) {
 		t.Fatalf("the worker route ledger is\n%v\nwant\n%v", got, want)
 	}
 	g := newRig(t, true, nil)
-	for _, p := range []string{recordsPath, blobPath} {
+	for _, p := range []string{recordsPath, blobPath, withdrawPath} {
 		if rec := g.do(http.MethodPost, p, "", "{}"); rec.Code != http.StatusUnauthorized || rec.Body.String() != unauthorizedBody {
 			t.Fatalf("POST %s with no token answered %d %q, want the uniform 401", p, rec.Code, rec.Body.String())
 		}
@@ -160,8 +165,8 @@ func TestTheWorkerRouteLedgerIsExactlyThis(t *testing.T) {
 			t.Fatalf("GET %s answered %d, want 405", p, rec.Code)
 		}
 	}
-	if rec := g.do(http.MethodPost, "/capture/v1/sessions/s-0001/withdraw", captureA, "{}"); rec.Code != http.StatusNotFound {
-		t.Fatalf("a path in no row (S6's withdraw) answered %d, want 404", rec.Code)
+	if rec := g.do(http.MethodPost, "/capture/v1/sessions/s-0001/delete", captureA, "{}"); rec.Code != http.StatusNotFound {
+		t.Fatalf("a path in no row answered %d, want 404", rec.Code)
 	}
 }
 

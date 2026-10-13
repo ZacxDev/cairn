@@ -162,8 +162,11 @@ type Archive struct {
 	used   int64
 	locks  map[string]*sync.Mutex
 	frames map[string]*frameState
-	// outputs is plugin output bytes by plugin (`outputs.go`); nil until the first append counts them.
-	outputs map[string]int64
+	// outputs is the RUNNING TOTAL of stored plugin output bytes, by plugin (`outputs.go`): counted
+	// off the disk ONCE, by [Open], then moved by every append and by every deletion. outputScans
+	// counts those whole-archive counts — a test's instrument for "a refused write rescans nothing".
+	outputs     map[string]int64
+	outputScans int
 	// afterFrameSurvey, when set (tests only), runs between the frame sweep's survey and its
 	// per-root re-check, so a frame staged in that window can be placed there deterministically.
 	afterFrameSurvey func()
@@ -243,11 +246,29 @@ func (e *RecheckError) Error() string {
 	return fmt.Sprintf("record %d matched the redaction table; nothing was stored", e.Record)
 }
 
-// QuotaError is the instance quota refusal (decision 15: delayed, never dropped — the agent holds
-// and retries).
-type QuotaError struct{ Quota int64 }
+// QuotaError is a quota refusal (decision 15: delayed, never dropped — the caller holds and
+// retries). `Quota` is the limit that was hit and `Share` says WHICH one: the instance quota
+// ([ShareInstance], every capture refusal), ONE plugin's share of it ([SharePlugin]) or every
+// plugin's outputs together ([ShareOutputs]) — `outputs.go`.
+type QuotaError struct {
+	Quota int64
+	Share string
+}
+
+// Which limit a [QuotaError] names.
+const (
+	ShareInstance = ""
+	SharePlugin   = "plugin"
+	ShareOutputs  = "outputs"
+)
 
 func (e *QuotaError) Error() string {
+	switch e.Share {
+	case SharePlugin:
+		return fmt.Sprintf("this plugin's %d-byte share of the transcript quota is reached", e.Quota)
+	case ShareOutputs:
+		return fmt.Sprintf("the %d-byte share of the transcript quota that all plugin outputs have together is reached", e.Quota)
+	}
 	return fmt.Sprintf("the instance transcript quota of %d bytes is reached", e.Quota)
 }
 
@@ -328,7 +349,13 @@ func Open(cfg Config) (*Archive, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Archive{cfg: cfg, used: used, locks: map[string]*sync.Mutex{}, frames: map[string]*frameState{}}, nil
+	a := &Archive{cfg: cfg, used: used, locks: map[string]*sync.Mutex{}, frames: map[string]*frameState{}}
+	// The output totals, counted HERE and nowhere else (`outputs.go`): nothing is appending yet, so
+	// the count cannot race an append.
+	if a.outputs, err = a.outputUsage(); err != nil {
+		return nil, err
+	}
+	return a, nil
 }
 
 // ErrForeignEntry marks [CheckOwnership]'s refusal.

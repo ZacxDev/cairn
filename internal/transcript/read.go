@@ -185,6 +185,23 @@ type Reading struct {
 	// Streams is every stored stream, `main` first — so a child stream no tool call on this page
 	// names is still reachable, through the raw-record view.
 	Streams []StreamRef
+	// TurnStarts is the main-stream `seq` of the first record of EVERY turn, in order —
+	// `len(TurnStarts) == TotalTurns`, whatever page this is. It is what turns a plugin output's
+	// watermark (a `seq`) into "turns 1–N of M" ([Reading.TurnsThrough]).
+	TurnStarts []int64
+}
+
+// TurnsThrough is how many turns had BEGUN by main-stream record `seq` — the N of "from turns 1–N
+// of M" for an output whose watermark is `seq`. 0 for a watermark before the first record.
+func (r Reading) TurnsThrough(seq int64) int {
+	n := 0
+	for _, start := range r.TurnStarts {
+		if start > seq {
+			break
+		}
+		n++
+	}
+	return n
 }
 
 // MaxTurn is the largest turn a page may be asked for. A larger request reads as this one — a
@@ -235,7 +252,7 @@ func readSession(a *archive.Archive, meta *archive.Meta, turn int) (Reading, err
 		return Reading{}, err
 	}
 	w.close()
-	out.Turns, out.TotalTurns = w.turns, w.n
+	out.Turns, out.TotalTurns, out.TurnStarts = w.turns, w.n, w.starts
 	if next := out.FirstTurn + len(out.Turns); len(out.Turns) > 0 && next <= out.TotalTurns {
 		out.NextTurn = next
 	}
@@ -297,6 +314,8 @@ type window struct {
 	cur         *Turn
 	curHuman    bool
 	turns       []Turn
+	// starts is the `seq` each turn began at, for every turn of the stream (not only the page's).
+	starts []int64
 	// full is set once a turn did not fit the page's item allowance: the page ends before it.
 	full bool
 }
@@ -310,6 +329,7 @@ func (w *window) add(p piece) {
 	if w.n == 0 || (p.human && w.curHuman) {
 		w.close()
 		w.n++
+		w.starts = append(w.starts, p.seq)
 		w.curHuman = false
 		if w.n >= w.first && w.n <= w.last && !w.full {
 			w.cur = &Turn{N: w.n, SeqFrom: p.seq}
