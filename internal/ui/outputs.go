@@ -53,13 +53,6 @@ import (
 // field, and its own path rather than an action on another row — `UnsharePath`'s ruling.
 const SessionDeletePath = "/session/delete"
 
-// FieldConfirm is the delete form's confirmation: a checkbox the browser requires, and the handler
-// requires again. Not a security control (both cross-site gates are) — a guard against a slip.
-const (
-	FieldConfirm  = "confirm"
-	confirmDelete = "delete"
-)
-
 // sessionDeleteRefusal is the delete row's ONE authority refusal: no transcript by that id, a
 // transcript that is somebody else's, a narrowed credential, an id that is no session id, and a
 // deployment with no transcript store.
@@ -394,8 +387,13 @@ func (s *Server) derivedFor(id identity.Identity, sessions []string) derivedLine
 	return out
 }
 
-// deleteForm is the owner's "delete transcript" control: collapsed, with a confirmation the browser
-// requires. NO SCRIPT — the reveal is a `<details>`.
+// deleteForm is the owner's "delete transcript" control. NO SCRIPT: it is COLLAPSED in a `<details>`,
+// so deleting takes two deliberate acts — opening the reveal, which states what goes, and pressing
+// the button under it — and a slip on the page presses nothing.
+//
+// ⚠ NO CONFIRMATION FIELD. A "tick to confirm" checkbox was built first and removed: it is a third
+// control with a touch target of its own, and it guards nothing the reveal does not (the cross-site
+// gates, not a checkbox, are what stop a request the owner did not make).
 func deleteForm(session, csrf string) g.Node {
 	return h.Details(h.Class("t-block"), h.ID("transcript-delete"),
 		h.Summary(g.Text("Delete this transcript")),
@@ -407,9 +405,6 @@ func deleteForm(session, csrf string) g.Node {
 			h.Class("invite"), h.Method("post"), h.Action(SessionDeletePath),
 			h.Input(h.Type("hidden"), h.Name(FieldCSRF), h.Value(csrf)),
 			h.Input(h.Type("hidden"), h.Name(FieldSession), h.Value(session)),
-			h.Label(h.For("transcript-delete-confirm"),
-				h.Input(h.Type("checkbox"), h.ID("transcript-delete-confirm"), h.Name(FieldConfirm), h.Value(confirmDelete), h.Required()),
-				g.Text(" I want this transcript and everything derived from it deleted")),
 			h.Button(h.Type("submit"), g.Text("Delete transcript")),
 		),
 	)
@@ -426,11 +421,6 @@ func deleteForm(session, csrf string) g.Node {
 func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request, id identity.Identity) {
 	if err := r.ParseForm(); err != nil {
 		writePlain(w, http.StatusBadRequest, "the form could not be read")
-		return
-	}
-	// Decided from the request alone, before any session is looked at.
-	if r.PostFormValue(FieldConfirm) != confirmDelete {
-		writePlain(w, http.StatusBadRequest, "tick the confirmation to delete a transcript")
 		return
 	}
 	session := r.PostFormValue(FieldSession)

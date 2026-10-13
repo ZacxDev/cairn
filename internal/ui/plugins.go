@@ -470,9 +470,14 @@ func pluginEntryNode(e plugins.Entry, scopes []PluginScopeValue) g.Node {
 			true:  "Sends what it reads to a model provider — outside this deployment once read.",
 			false: "Does not call a model.",
 		}[e.CallsModel])),
-		g.If(len(scopes) > 0, h.Ul(g.Map(scopes, func(sv PluginScopeValue) g.Node {
-			return h.Li(h.A(h.Href(scopeHref(sv.Scope)), g.Text(sv.Scope.Name)), g.Text(" — "),
-				h.Span(h.Data("toggle-value", sv.Value), g.Text(sv.Value)))
+		// 🔴 AN `entry-row` WITH THE NAME IN A `.ref`, NOT A BARE `<li><a>`: a scope name can be one
+		// unbreakable token longer than a phone is wide, and only the row classes carry the wrap rule
+		// (and, under a coarse pointer, the 44px target). The bare list pushed this page sideways at
+		// 390px — measured by `uiaudit` the first time its world registered a plugin (S6).
+		g.If(len(scopes) > 0, h.Ul(h.Class("entry-list"), g.Map(scopes, func(sv PluginScopeValue) g.Node {
+			return h.Li(h.Class("entry-row"),
+				h.Span(h.Class("ref"), h.TitleAttr(sv.Scope.Name), h.A(h.Href(scopeHref(sv.Scope)), g.Text(sv.Scope.Name))),
+				h.Span(h.Class("badge badge-quiet"), h.Data("toggle-value", sv.Value), g.Text(sv.Value)))
 		}))),
 	)
 }

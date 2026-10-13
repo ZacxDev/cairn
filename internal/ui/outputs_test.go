@@ -223,13 +223,7 @@ func outputsRig(t *testing.T) (*shareRig, *archive.Archive, string) {
 	return rig, arc, dir
 }
 
-func deleteValues(session string, confirm bool) url.Values {
-	form := url.Values{FieldSession: {session}}
-	if confirm {
-		form.Set(FieldConfirm, "delete")
-	}
-	return form
-}
+func deleteValues(session string) url.Values { return url.Values{FieldSession: {session}} }
 
 // TestTheOwnerDeletesATranscriptAndEverythingDerivedGoesWithIt is clause (l) on the browser surface.
 // The OWNER's delete removes the session's directory — the transcript, and with it the summary and
@@ -256,23 +250,20 @@ func TestTheOwnerDeletesATranscriptAndEverythingDerivedGoesWithIt(t *testing.T) 
 		who  *browser
 		form url.Values
 	}{
-		"a principal who is not the owner":     {wren, deleteValues(toggleSession, true)},
-		"the owner, for a session not stored":  {rowan, deleteValues("s-never-stored", true)},
-		"the owner, for an id that is not one": {rowan, deleteValues("../"+toggleSession, true)},
+		"a principal who is not the owner":     {wren, deleteValues(toggleSession)},
+		"the owner, for a session not stored":  {rowan, deleteValues("s-never-stored")},
+		"the owner, for an id that is not one": {rowan, deleteValues("../"+toggleSession)},
 	} {
 		rec := c.who.post(SessionDeletePath, c.form)
 		if rec.Code != http.StatusForbidden || rec.Body.String() != sessionDeleteRefusal {
 			t.Errorf("%s: answered %d %q, want 403 %q", name, rec.Code, rec.Body.String(), sessionDeleteRefusal)
 		}
 	}
-	if rec := rowan.post(SessionDeletePath, deleteValues(toggleSession, false)); rec.Code != http.StatusBadRequest {
-		t.Fatalf("a delete with no confirmation answered %d, want 400", rec.Code)
-	}
 	if m, _ := arc.ReadMeta(toggleSession); m == nil || !arc.HasOutputs(toggleSession) || len(journalLines(t, journal)) != 0 {
 		t.Fatal("a refused delete deleted or journaled something")
 	}
 
-	rec := rowan.post(SessionDeletePath, deleteValues(toggleSession, true))
+	rec := rowan.post(SessionDeletePath, deleteValues(toggleSession))
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != MySessionsPath {
 		t.Fatalf("the owner's delete answered %d → %q, want 303 → %s: %s", rec.Code, rec.Header().Get("Location"), MySessionsPath, rec.Body.String())
 	}
@@ -305,7 +296,7 @@ func TestTheOwnerDeletesATranscriptAndEverythingDerivedGoesWithIt(t *testing.T) 
 		}
 	}
 	// A second delete of the same session is the refusal: there is nothing of the owner's there now.
-	if rec := rowan.post(SessionDeletePath, deleteValues(toggleSession, true)); rec.Code != http.StatusForbidden || rec.Body.String() != sessionDeleteRefusal {
+	if rec := rowan.post(SessionDeletePath, deleteValues(toggleSession)); rec.Code != http.StatusForbidden || rec.Body.String() != sessionDeleteRefusal {
 		t.Fatalf("deleting it again answered %d %q", rec.Code, rec.Body.String())
 	}
 	if n := len(journalLines(t, journal)); n != 1 {
@@ -323,7 +314,7 @@ func TestTheDeleteRowIsBehindBothCrossSiteGates(t *testing.T) {
 		"cross-origin": func(r *http.Request) { r.Header.Set("Origin", "https://elsewhere.example.invalid") },
 		"no csrf":      func(r *http.Request) { r.Header.Set("Origin", "https://"+r.Host) },
 	} {
-		form := deleteValues(toggleSession, true)
+		form := deleteValues(toggleSession)
 		if name == "cross-origin" {
 			form.Set(FieldCSRF, "irrelevant")
 		}
@@ -343,7 +334,7 @@ func TestTheDeleteRowIsBehindBothCrossSiteGates(t *testing.T) {
 	}
 	// With NO transcript store the row is the one refusal, never a crash.
 	rig.srv.transcripts = nil
-	if rec := rowan.post(SessionDeletePath, deleteValues(toggleSession, true)); rec.Code != http.StatusForbidden || rec.Body.String() != sessionDeleteRefusal {
+	if rec := rowan.post(SessionDeletePath, deleteValues(toggleSession)); rec.Code != http.StatusForbidden || rec.Body.String() != sessionDeleteRefusal {
 		t.Fatalf("with no transcript store the row answered %d %q", rec.Code, rec.Body.String())
 	}
 }

@@ -5629,8 +5629,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="plugins-transcript-read-ignores-toggle",
         path="internal/plugins/service.go",
-        old="\tv, err := s.Transcripts.ForPlugin(root, on)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden",
-        new="\tv, err := s.Transcripts.ForPlugin(root, func(*transcript.Meta, []string) bool { return on != nil })\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden",
+        old="\tv, err := s.Transcripts.ForPlugin(root, gate)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden",
+        new="\tv, err := s.Transcripts.ForPlugin(root, transcript.Gate{On: func(*transcript.Meta, []string) bool { return gate.On != nil }})\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden",
         killer="TestEveryPluginRefusalIsTheSameBytes",
         why="the capability is checked and the token is the plugin's own, so the session's toggle looks "
         "like a second check of the same thing — and a stolen plugin token reads every stored "
@@ -5679,6 +5679,190 @@ MUTANTS: tuple[Mutant, ...] = (
         why="the envelope HAS a plugin field, so storing what it says looks faithful — and one plugin then "
         "writes outputs under another's name, and moves the other's watermark.",
         pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+    ),
+    # ---- S6 of the transcripts plan: outputs rendered, the deletion cascade, the withdraw route ---
+    # The plan's six rows, by name. `internal/ui` is in `PKGS`; every row ADDS the package holding
+    # its other killers (the S2/S3/S5 rows' per-row rule).
+    Mutant(
+        name="plugins-output-rendered-without-predicate",
+        path="internal/transcript/plugin.go",
+        old="\t\tcase viewer.owns(meta):\n\t\t\tout[root] = &View{Meta: meta, a: s.archive}",
+        new="\t\tcase true:\n\t\t\tout[root] = &View{Meta: meta, a: s.archive}",
+        killer="TestAnOutputIsShownToExactlyTheViewersOfItsTranscript",
+        why="a summary is a few sentences ABOUT a session, not the session's content, so showing it on "
+        "every row that lists the session reads as harmless context — and a reader of ONE scope the "
+        "session wrote then reads a digest of everything it did in the scopes they cannot read "
+        "(clause k).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="plugins-delete-keeps-outputs",
+        path="internal/transcript/archive/sweep.go",
+        old="\tif err := os.RemoveAll(dir); err != nil {\n\t\treturn err\n\t}\n\ta.adjust(-freed)\n\treturn nil\n}",
+        new="\tkept, _ := os.ReadFile(filepath.Join(dir, outputsName))\n"
+        "\tif err := os.RemoveAll(dir); err != nil {\n\t\treturn err\n\t}\n"
+        "\tif kept != nil {\n\t\t_ = os.MkdirAll(dir, dirMode)\n"
+        "\t\t_ = os.WriteFile(filepath.Join(dir, outputsName), kept, fileMode)\n\t}\n"
+        "\ta.adjust(-freed)\n\treturn nil\n}",
+        killer="TestTheDeletionCascadeTakesEverythingDerived",
+        extra_killers=("TestTheOwnerDeletesATranscriptAndEverythingDerivedGoesWithIt",
+                       "TestAWithdrawalDeletesOnlyTheCallersOwnRoot"),
+        why="the outputs are the plugin's work and cost money to make, so keeping them when the raw "
+        "transcript goes reads as the considerate delete — and the summary of a transcript its owner "
+        "deleted, and every ticket edge mined from it, stays on the instance (clause l).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/", "./internal/worker/"),
+    ),
+    Mutant(
+        name="transcript-withdraw-keeps-directory",
+        path="internal/transcript/archive/sweep.go",
+        old="\t\treturn true, a.deleteLocked(m, ReasonWithdrawn)",
+        new="\t\treturn true, nil",
+        killer="TestAWithdrawalDeletesOnlyTheCallersOwnRoot",
+        extra_killers=("TestAWithdrawalIsOwnerAndHostBoundAndIdempotent", "TestTheAgentWithdrawsThroughTheRealRoute"),
+        why="the agent stops shipping the session there, so acknowledging the withdrawal and leaving "
+        "the bytes for retention reads as enough — and a prefix the routing rule says must not be on "
+        "this instance stays on it for ninety days, with the agent told it is gone (clause m).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/", "./internal/capture/"),
+    ),
+    Mutant(
+        name="transcript-withdraw-deletes-another-owners-root",
+        path="internal/transcript/archive/sweep.go",
+        old="\t\tif !owned(m, who) {\n\t\t\treturn false, nil\n\t\t}\n\t\treturn true, a.deleteLocked(m, ReasonWithdrawn)",
+        new="\t\tif m.Host != who.Host {\n\t\t\treturn false, nil\n\t\t}\n\t\treturn true, a.deleteLocked(m, ReasonWithdrawn)",
+        killer="TestAWithdrawalDeletesOnlyTheCallersOwnRoot",
+        extra_killers=("TestAWithdrawalIsOwnerAndHostBoundAndIdempotent",),
+        why="the listener admits one capture owner, so the token already IS the owner and only the host "
+        "looks left to check — and the day a second owner's root is in the store (a changed "
+        "`-worker-owner`, a restored volume), any capture token deletes it by id.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-withdraw-host-unchecked",
+        path="internal/transcript/archive/sweep.go",
+        old="\t\tif !owned(m, who) {\n\t\t\treturn false, nil\n\t\t}\n\t\treturn true, a.deleteLocked(m, ReasonWithdrawn)",
+        new="\t\tif m.Owner != who.Owner {\n\t\t\treturn false, nil\n\t\t}\n\t\treturn true, a.deleteLocked(m, ReasonWithdrawn)",
+        killer="TestAWithdrawalDeletesOnlyTheCallersOwnRoot",
+        extra_killers=("TestAWithdrawalIsOwnerAndHostBoundAndIdempotent",),
+        why="every host's token is the SAME owner's, so the owner's sessions look like one pool any of "
+        "their hosts may tidy — and a token copied to (or minted for) another machine deletes "
+        "transcripts that machine never uploaded (the precedent: `transcript-capture-token-host-unchecked`).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-withdraw-repeat-answers-false",
+        path="internal/transcript/archive/sweep.go",
+        old="\treturn a.deletedFor(who, root)\n}",
+        new="\treturn false, nil\n}",
+        killer="TestAWithdrawalDeletesOnlyTheCallersOwnRoot",
+        extra_killers=("TestAWithdrawalIsOwnerAndHostBoundAndIdempotent",),
+        why="the root is gone, so 'nothing of yours is held here' is the literal truth on the second "
+        "call — and the agent, which treats `false` as final, turns a withdrawal whose acknowledgement "
+        "was lost into a permanent hold (the plan's revision 4, retracted).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    # Beyond the plan's six: the owner arm of the delete, the agent's two withdrawal rules, and the
+    # four S5 audit findings S6 closed (#270: the walk-skip, the arc member snapshot, the output
+    # totals, the 507 line).
+    Mutant(
+        name="transcript-delete-skips-the-owner-arm",
+        path="internal/transcript/plugin.go",
+        old="\treturn s.archive.Delete(root, archive.ReasonOwnerDelete, viewer.owns)",
+        new="\treturn s.archive.Delete(root, archive.ReasonOwnerDelete, nil)",
+        killer="TestTheOwnerDeletesATranscriptAndEverythingDerivedGoesWithIt",
+        why="the form renders only on the owner's page, so the row looks reachable only by the owner — "
+        "and any signed-in principal who knows a session id (they are on session pages) deletes its "
+        "transcript with one POST.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="capture-binding-not-saved-before-upload",
+        path="internal/capture/agent.go",
+        old="\tif ss.Instance != dec.Instance {\n\t\tss.Instance = dec.Instance\n"
+        "\t\tif err := a.saveRouting(root); err != nil {\n\t\t\treturn false, false, err\n\t\t}\n\t}",
+        new="\tif ss.Instance != dec.Instance {\n\t\tss.Instance = dec.Instance\n\t}",
+        killer="TestWhereASessionIsBoundIsSavedBeforeItsFirstUpload",
+        why="the state is saved within two seconds anyway and a save per new session costs a write, so "
+        "leaving the binding to the spaced checkpoint reads as the efficient version — and a run killed "
+        "in that window has shipped a prefix under a state that says 'nowhere', so a later routing "
+        "change withdraws nothing (S3b's audit).",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="capture-false-withdrawal-reships",
+        path="internal/capture/agent.go",
+        old="\tif !deleted && ss.shipped() {",
+        new="\tif false && !deleted && ss.shipped() {",
+        killer="TestAWithdrawalAnsweredFalseHoldsTheSessionForGood",
+        why="`false` means the instance holds nothing of this host's, which reads as 'nothing left to "
+        "withdraw, carry on' — and a prefix that IS there under another host label is then duplicated "
+        "onto a second instance instead of being surfaced (decision 16).",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="plugins-walk-skipped-on-a-stored-off",
+        path="internal/plugins/service.go",
+        old="\t\tSettled: func(meta *transcript.Meta, v []string) bool { return Settled(st, plugin, subject(meta, v), known) },",
+        new="\t\tSettled: func(meta *transcript.Meta, v []string) bool { return !Effective(st, plugin, subject(meta, v), known) },",
+        killer="TestAnArcHomeFoundOnlyByTheWalkDoesNotChangeTheAnswer",
+        why="'OFF over the scopes already known' looks like a sound reason to skip a whole-store walk — it "
+        "was the shipped rule, under a comment calling the fold monotone — and a session whose arc home "
+        "only the walk finds is answered OFF until an unrelated page view records the scope (#270).",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+    ),
+    Mutant(
+        name="plugins-settled-ignores-an-on-arc",
+        path="internal/plugins/toggles.go",
+        old="\treturn !everyOn && !anArcIsOn\n}",
+        new="\treturn !everyOn && (!anArcIsOn || true)\n}",
+        killer="TestSettledIsOffForEverySuperset",
+        extra_killers=("TestAnArcHomeFoundOnlyByTheWalkDoesNotChangeTheAnswer",),
+        why="an arc whose home is not in the set says nothing about the session TODAY, so leaving arcs "
+        "out of the skip reads as consistent with the fold — and it is exactly the arc the walk is about "
+        "to bring into the set.",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+    ),
+    Mutant(
+        name="plugins-arc-toggle-covers-unlisted-sessions",
+        path="internal/plugins/toggles.go",
+        old="\t\tif !slices.ContainsFunc(r.Members, func(m string) bool { return slices.Contains(ids, m) }) {\n\t\t\tcontinue",
+        new="\t\tif false && !slices.ContainsFunc(r.Members, func(m string) bool { return slices.Contains(ids, m) }) {\n\t\t\tcontinue",
+        killer="TestAnArcToggleCoversExactlyTheMembersAnAdminSaw",
+        why="an arc toggle reads as a statement about the ARC, so applying it to whatever the arc holds "
+        "is the natural fold — and a writer of the home, who can PUT any session id into the arc and "
+        "self-declare a trailer in the home, turns the plugin on for sessions no admin ever saw (#270, T14).",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-arc-toggle-snapshot-not-taken",
+        path="internal/ui/plugins.go",
+        old="plugins.ArcTarget(rep.Reg.Key()), value, memberSessions(rep.Reg)...) {",
+        new="plugins.ArcTarget(rep.Reg.Key()), value) {",
+        killer="TestAnArcToggleSnapshotsItsMembersAndThePageSaysWhoIsCovered",
+        why="the journal line already names the arc, and the arc's members are one registry read away, "
+        "so recording them again looks redundant — and with no snapshot there is nothing an admin's act "
+        "covers: the toggle is inert, or (read live) covers whoever is added later.",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="transcript-output-totals-not-reduced-on-delete",
+        path="internal/transcript/archive/sweep.go",
+        old="\tif err := a.forgetOutputs(m.Root); err != nil {\n\t\treturn err\n\t}\n",
+        new="",
+        killer="TestARefusedOutputWriteRescansNothing",
+        why="the totals only bound growth, so an over-count after a deletion reads as erring on the safe "
+        "side — and a plugin whose outputs were all deleted with their sessions stays refused 507 until "
+        "the pod restarts, which is the pressure that brought the per-refusal rescan in (#270).",
+        pkgs=PKGS + ("./internal/transcript/archive/",),
+    ),
+    Mutant(
+        name="worker-507-line-names-one-limit",
+        path="internal/worker/plugin.go",
+        old="\tswitch q.Share {\n\tcase transcript.SharePlugin:",
+        new="\tswitch q.Share {\n\tdefault:",
+        killer="TestThe507LineNamesWhichLimitWasHit",
+        why="every 507 on this route is about a plugin's write, so one line naming the plugin reads as "
+        "enough — and an INSTANCE full of transcripts sends the operator to a plugin that wrote nothing (#270).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
     ),
     # 🔴 THE AGENT READ API (S8 of the transcripts plan): the plan's two rows. ⚠ NEITHER CAN BE A
     # LISTENER-LOCAL "SKIP THE PREDICATE" EDIT, AND THAT IS #261's DESIGN RATHER THAN A GAP: a stored

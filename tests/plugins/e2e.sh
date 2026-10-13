@@ -10,10 +10,9 @@
 #          tests/plugins/e2e.sh --self-test  # the negative control: exits 0 iff every SABOTAGED build
 #                                            # turns its clause's named assertion RED
 #
-# The clauses wired now (slices S3b, S4, S5, S7 and S11; the plan's table names fourteen, and the
-# rest land with their slices — the self-test count is the sabotages wired, thirteen over eleven
-# clauses because (a) has a Claude Code leg and an opencode leg and (g) a visibility half and a
-# listing half, not the plan's final 14):
+# The clauses wired now (slices S3b, S4, S5, S6, S7 and S11 — every one of the plan's fourteen; the
+# self-test count is the sabotages wired, sixteen over fourteen clauses because (a) has a Claude Code
+# leg and an opencode leg and (g) a visibility half and a listing half):
 #   (a) resume — an upload whose acknowledgement is LOST mid-stream (the relay forwards a request,
 #       the pod stores it, the agent gets a 502) is retried by the next run and every record lands
 #       EXACTLY once; a request with a stale `from` gets 409 naming the stored position; and the
@@ -57,6 +56,27 @@
 #       is OFF for (E), on one that was never stored, and on writing a `ticket-edge` (a type its
 #       manifest does not declare) for a session it is ON for; the POSITIVE CONTROL is the same token
 #       reading D's transcript.
+#   (k) outputs inherit visibility, and say what they are — the summary plugin writes a summary of D,
+#       E and F through its real route (B turns it ON for `beta-notes` first; G's empty set stays
+#       OFF, so no output of it can exist). For each, the SET of viewers whose session page shows the
+#       output equals the set whose page shows the transcript — the sets (d)–(f) admit; the render
+#       carries `derived`, the plugin's name and version, the model and the watermark in turns; and on
+#       the sessions LIST, P — who reads one scope each of them wrote — gets D's derived line and
+#       neither E's nor F's;
+#   (l) deletion cascades — with a summary AND a ticket edge stored for D, the OWNER's "delete
+#       transcript" POST (a real browser session, both cross-site gates) removes D's directory, so
+#       its transcript, its summary and its edge; the deletion is journaled with no content; the
+#       plugin's next transcript read is its ONE 403 body — byte-identical to a never-stored id's
+#       (🔴 NOT the plan's literal 404: a distinct answer for "was stored, now deleted" would tell any
+#       plugin token which session ids ever held a transcript); and R, who can SEE E's transcript
+#       and does not own it, is refused and deletes nothing;
+#   (m) a shipped prefix is withdrawn when routing changes — a session WROTE `alpha-notes` and the
+#       real agent ships its prefix to the personal instance; a summary and an edge are derived from
+#       it; then it READS `beta-notes` (the client instance's). The next run sends ONE request naming
+#       the session — the withdrawal — and no record from the read onward; the instance's directory
+#       for it is gone and the withdrawal journaled; the run after that asks nothing; and the route
+#       itself answers `{"deleted":true}` to the uploader's repeat and `{"deleted":false}` for a root
+#       that never existed.
 #   (n) the client read ledger counts — a session that WROTE `alpha-notes` READS `beta-notes` only
 #       through `"$BIN" sessions --scope beta-notes`, run for real against a store pod with the session
 #       id in its environment: the command line names no program and the output carries no rendered
@@ -91,7 +111,7 @@ src="${E2E_SOURCE:-$repo}"
 
 # The number of assertions a full run makes. 🔴 PINNED, so an assertion that silently stopped running
 # is exit 2 rather than a smaller green.
-EXPECTED=19
+EXPECTED=22
 
 couldnt() { echo "COULD NOT VOUCH: $*" >&2; exit 2; }
 
@@ -211,9 +231,25 @@ PY
     "i-pending-is-empty-until-a-toggle-then-exactly-the-every-scope-on-sessions"
   # (j) The per-session toggle check dropped from the plugin's read: any stored transcript is served.
   sabotage j-transcript-read-ignores-the-toggle internal/plugins/service.go \
-    $'\tv, err := s.Transcripts.ForPlugin(root, on)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden' \
-    $'\tv, err := s.Transcripts.ForPlugin(root, func(*transcript.Meta, []string) bool { return on != nil })\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden' \
+    $'\tv, err := s.Transcripts.ForPlugin(root, gate)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden' \
+    $'\tv, err := s.Transcripts.ForPlugin(root, transcript.Gate{On: func(*transcript.Meta, []string) bool { return gate.On != nil }})\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden' \
     "j-a-plugin-is-refused-one-403-off-session-and-undeclared-type"
+  # (k) Outputs rendered without the source predicate: every listed session with an output gets its
+  #     derived line, so a reader of ONE scope a session wrote reads the summary of the rest of it.
+  sabotage k-outputs-rendered-without-the-predicate internal/transcript/plugin.go \
+    $'\t\tcase viewer.owns(meta):\n\t\t\tout[root] = &View{Meta: meta, a: s.archive}' \
+    $'\t\tcase true:\n\t\t\tout[root] = &View{Meta: meta, a: s.archive}' \
+    "k-an-output-is-shown-to-exactly-the-viewers-of-its-transcript"
+  # (l) The transcript deleted and its outputs kept: the summary and the ticket edge survive.
+  sabotage l-delete-keeps-the-outputs internal/transcript/archive/sweep.go \
+    $'\tif err := os.RemoveAll(dir); err != nil {\n\t\treturn err\n\t}\n\ta.adjust(-freed)\n\treturn nil\n}' \
+    $'\tkept, _ := os.ReadFile(filepath.Join(dir, outputsName))\n\tif err := os.RemoveAll(dir); err != nil {\n\t\treturn err\n\t}\n\tif kept != nil {\n\t\t_ = os.MkdirAll(dir, dirMode)\n\t\t_ = os.WriteFile(filepath.Join(dir, outputsName), kept, fileMode)\n\t}\n\ta.adjust(-freed)\n\treturn nil\n}' \
+    "l-the-owners-delete-takes-the-transcript-its-outputs-and-its-edges"
+  # (m) The agent stops shipping and never withdraws: the prefix stays on the instance.
+  sabotage m-the-withdrawal-is-skipped internal/capture/agent.go \
+    $'\tif ss.Instance != "" && (dec.Held || ss.Instance != dec.Instance) {' \
+    $'\tif false && ss.Instance != "" && (dec.Held || ss.Instance != dec.Instance) {' \
+    "m-a-shipped-prefix-is-withdrawn-when-routing-changes"
   # (n) The pod stores the uploaded ledger like any other stream and never folds it: the agent's
   #     declaration still hides the session, and the pod's own `L(s)` is empty.
   sabotage n-pod-ignores-the-uploaded-ledger internal/transcript/archive/archive.go \
@@ -325,7 +361,7 @@ run_env CAIRN_CONTROL_JOURNAL="$journal" "$work/bin/cairn-server" -store "$store
   couldnt "issue-credential failed: $(cat "$work/issue.log")"
 # …and it IS used now: each (d)–(g) viewer reads the browser surface with its own, un-narrowed
 # credential (a bearer GET; neither cross-site gate applies to a GET).
-for v in r p n; do
+for v in r p n b; do
   principal="user_$v"
   run_env CAIRN_CONTROL_JOURNAL="$journal" "$work/bin/cairn-server" -store "$store" -issue-credential \
     -principal "${!principal}" -label "e2e-$v" -token-out "$work/cred-$v" 2>>"$work/issue.log" ||
@@ -346,12 +382,19 @@ registry="$work/registry.json"
 cat >"$registry" <<'JSON'
 {"schema":1,"plugins":[{"schema":1,"name":"summary","version":"0.1.0","description":"synthetic summaries",
  "capabilities":["pending:list","transcript:read","output:write:summary"],
- "calls_model":true,"pending_idle_seconds":1}]}
+ "calls_model":true,"pending_idle_seconds":1},
+ {"schema":1,"name":"clickup","version":"0.2.0","description":"synthetic ticket edges",
+ "capabilities":["output:write:ticket-edge"],"calls_model":false}]}
 JSON
 plugin_token="$(run_env "$work/bin/cairn-ui" -store "$store" -control-journal "$journal" -session-file "$work/sessions.json" \
   -issue-worker-token plugin -worker-plugin summary -plugin-registry "$registry" -worker-owner "$owner" \
   -worker-tokens "$wtokens" 2>"$work/mint-plugin.log")" || couldnt "minting the plugin token failed: $(cat "$work/mint-plugin.log")"
 [[ -n "$plugin_token" && $(grep -c '^plugin summary ' "$wtokens") -eq 1 ]] || couldnt "the plugin mint did not write one row"
+# A second plugin, for (l) and (m): the one that writes ticket EDGES, so "its edges are gone" is measured.
+edge_token="$(run_env "$work/bin/cairn-ui" -store "$store" -control-journal "$journal" -session-file "$work/sessions.json" \
+  -issue-worker-token plugin -worker-plugin clickup -plugin-registry "$registry" -worker-owner "$owner" \
+  -worker-tokens "$wtokens" 2>>"$work/mint-plugin.log")" || couldnt "minting the edge plugin's token failed: $(cat "$work/mint-plugin.log")"
+[[ -n "$edge_token" && $(grep -c '^plugin clickup ' "$wtokens") -eq 1 ]] || couldnt "the edge plugin mint did not write one row"
 
 free_port() { python3 -c 'import socket
 s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'; }
@@ -839,6 +882,207 @@ assert j-a-plugin-is-refused-one-403-off-session-and-undeclared-type eval '
   [[ $j_on_code == 200 ]] && grep -qF "clause d: only the owner asked for this" <<<"$j_on_body" &&
   [[ $j_off_code == 403 && "$j_off_body" == "$forbidden" && $j_absent_code == 403 && "$j_absent_body" == "$forbidden" &&
      $j_edge_code == 403 && "$j_edge_body" == "$forbidden" ]] && ! grep -qF "ticket-edge" "$tdir/sessions/$vis_d/outputs.jsonl" 2>/dev/null'
+
+# --- (k) outputs inherit visibility, and say what they are ----------------------------------------
+# sign_in <viewer> → cookie_<viewer>, csrf_<viewer>, plugins_page_<viewer> (a real browser session:
+# the POSTs below are behind both cross-site gates)
+sign_in() {
+  local v="$1" hdrs cookie page csrf
+  hdrs="$(curl -sS -o /dev/null -D - -X POST -H "Origin: $ui_url" --data-urlencode "token=$(head -n1 "$work/cred-$v")" "$ui_url/sign-in" | tr -d '\r')"
+  cookie="$(grep -i '^set-cookie: __Host-cairn-session=' <<<"$hdrs" | head -n1 | sed 's/^[^=]*=//; s/;.*//')"
+  [[ -n "$cookie" ]] || couldnt "$v could not sign in"
+  page="$(curl -sS -H "Cookie: __Host-cairn-session=$cookie" "$ui_url/plugins")"
+  csrf="$(grep -o 'name="csrf" value="[^"]*"' <<<"$page" | head -n1 | sed 's/.*value="//; s/"$//')"
+  [[ -n "$csrf" ]] || couldnt "$v's pages carry no CSRF token"
+  printf -v "cookie_$v" '%s' "$cookie"
+  printf -v "csrf_$v" '%s' "$csrf"
+  printf -v "plugins_page_$v" '%s' "$page"
+}
+# browser_post <viewer> <path> <curl data args…> → the status code; the body in $work/browser.body
+browser_post() {
+  local path="$2" cookie="cookie_$1" csrf="csrf_$1"
+  shift 2
+  curl -sS -o "$work/browser.body" -w '%{http_code}' -X POST -H "Origin: $ui_url" -H "Cookie: __Host-cairn-session=${!cookie}" \
+    --data-urlencode "csrf=${!csrf}" "$@" "$ui_url$path"
+}
+# B administers `beta-notes` and turns the summary plugin ON there, so E and F (which touched both
+# scopes) are ON as D is; A turns the edge plugin ON for `alpha-notes`. G's empty set stays OFF: no
+# plugin can ever write an output for it.
+sign_in b
+beta_id="$(grep -o 'href="/scope?id=scp_[^"]*">beta-notes<' <<<"$plugins_page_b" | head -n1 | sed 's/.*id=//; s/".*//')"
+[[ -n "$beta_id" ]] || couldnt "B's plugins page did not carry beta-notes' id"
+[[ "$(browser_post b /plugins/scope --data-urlencode plugin=summary --data-urlencode "scope=$beta_id" --data-urlencode value=on)" == 303 ]] ||
+  couldnt "B could not turn the summary plugin on for beta-notes: $(cat "$work/browser.body")"
+[[ "$(browser_post a /plugins/scope --data-urlencode plugin=clickup --data-urlencode "scope=$alpha_id" --data-urlencode value=on)" == 303 ]] ||
+  couldnt "A could not turn the edge plugin on for alpha-notes: $(cat "$work/browser.body")"
+# summary_for <session> <watermark> <text> → $code: the summary plugin writes one output, for real.
+summary_for() {
+  plugin_post /plugin/v1/outputs "{\"plugin\":\"summary\",\"plugin_version\":\"0.1.0\",\"model\":\"fake-model\",\"session\":\"$1\",\"input_watermark\":{\"main\":$2},\"type\":\"summary\",\"body\":{\"text\":\"$3\"}}"
+}
+# edge_for <session> → $code: the edge plugin writes one ticket edge.
+edge_for() {
+  code="$(curl -sS -o "$work/body" -w '%{http_code}' -X POST -H "Authorization: Bearer $edge_token" -H 'Content-Type: application/json' \
+    --data-binary "{\"plugin\":\"clickup\",\"plugin_version\":\"0.2.0\",\"model\":\"none\",\"session\":\"$1\",\"input_watermark\":{\"main\":1},\"type\":\"ticket-edge\",\"body\":{\"system\":\"clickup\",\"ticket_id\":\"abc123\",\"signal\":\"branch-name\",\"locator\":{\"pr\":1}}}" \
+    "$pod/plugin/v1/outputs" 2>"$work/curl.err")" || code="000"
+  body="$(cat "$work/body" 2>/dev/null)"
+}
+declare -A k_text=([$vis_d]="clause k summary of d" [$vis_e]="clause k summary of e" [$vis_f]="clause k summary of f")
+declare -A k_mark=([$vis_d]=2 [$vis_e]=2 [$vis_f]=4)
+for root in "$vis_d" "$vis_e" "$vis_f"; do
+  summary_for "$root" "${k_mark[$root]}" "${k_text[$root]}"
+  [[ $code == 201 ]] || couldnt "writing the summary of $root answered $code: $body"
+done
+# INSTRUMENT CONTROL: G, whose set is empty, is refused — no output exists for it to leak.
+summary_for "$vis_g" 2 "clause k summary of g"
+[[ $code == 403 ]] || couldnt "the summary plugin wrote an output for the owner-only session G ($code)"
+# Every viewer's page for every session, and every viewer's sessions LIST, with the outputs stored.
+mkdir -p "$work/vis/k"
+for viewer in p n r a; do
+  for root in "$vis_d" "$vis_e" "$vis_f"; do
+    curl -sS -o "$work/vis/k/$viewer.$root.page" -H "Authorization: Bearer $(head -n1 "$work/cred-$viewer")" \
+      "$ui_url/session?session=$root" 2>>"$work/curl.err" || couldnt "GET the session page of $root as $viewer failed"
+  done
+  curl -sS -o "$work/vis/k/$viewer.list" -H "Authorization: Bearer $(head -n1 "$work/cred-$viewer")" "$ui_url/sessions" \
+    2>>"$work/curl.err" || couldnt "GET /sessions as $viewer failed"
+done
+# k_sets <session> → "<viewers who see its transcript> | <viewers who see its output>" (each sorted)
+k_sets() {
+  local root="$1" viewer t="" o=""
+  for viewer in a n p r; do
+    grep -qF 'id="transcript"' "$work/vis/k/$viewer.$root.page" && t+="$viewer"
+    if grep -qF 'id="derived"' "$work/vis/k/$viewer.$root.page" || grep -qF "${k_text[$root]}" "$work/vis/k/$viewer.$root.page"; then o+="$viewer"; fi
+  done
+  echo "$t | $o"
+}
+echo "clause k: transcript | output viewers — d [$(k_sets "$vis_d")] e [$(k_sets "$vis_e")] f [$(k_sets "$vis_f")]"
+# The SET of viewers who see each output is the set who see its transcript (and is the set clauses
+# (d)–(f) admit); the render says what it is; a refused viewer's row carries no derived line while an
+# admitted viewer's does — P reads `alpha-notes`, so P's list holds all three rows and only D's line.
+assert k-an-output-is-shown-to-exactly-the-viewers-of-its-transcript eval '
+  [[ "$(k_sets "$vis_d")" == "apr | apr" && "$(k_sets "$vis_e")" == "ar | ar" && "$(k_sets "$vis_f")" == "ar | ar" ]] &&
+  grep -qF "derived · summary · by summary 0.1.0 · model fake-model" "$work/vis/k/a.$vis_d.page" &&
+  grep -qF "from turn 1 of 1" "$work/vis/k/a.$vis_d.page" &&
+  grep -qF "data-session=\"$vis_e\"" "$work/vis/k/p.list" && grep -qF "data-session=\"$vis_f\"" "$work/vis/k/p.list" &&
+  grep -qF "${k_text[$vis_d]}" "$work/vis/k/p.list" && ! grep -qF "${k_text[$vis_e]}" "$work/vis/k/p.list" &&
+  ! grep -qF "${k_text[$vis_f]}" "$work/vis/k/p.list" &&
+  grep -qF "${k_text[$vis_e]}" "$work/vis/k/r.list" && grep -qF "${k_text[$vis_f]}" "$work/vis/k/r.list" &&
+  ! grep -qF "clause k summary" "$work/vis/k/n.list"'
+
+# --- (l) deletion cascades ------------------------------------------------------------------------
+edge_for "$vis_d"
+[[ $code == 201 ]] || couldnt "writing D's ticket edge answered $code: $body"
+# INSTRUMENT CONTROLS, before the delete: D's directory holds its transcript, a summary AND an edge,
+# and the plugin reads its transcript.
+[[ -s "$tdir/sessions/$vis_d/stream-main.jsonl.gz" ]] && grep -qF '"type":"summary"' "$tdir/sessions/$vis_d/outputs.jsonl" &&
+  grep -qF '"type":"ticket-edge"' "$tdir/sessions/$vis_d/outputs.jsonl" ||
+  couldnt "before the delete, D does not hold a transcript, a summary and a ticket edge"
+plugin_get "/plugin/v1/transcript?session=$vis_d"
+[[ $code == 200 ]] || couldnt "before the delete the plugin's read of D answered $code"
+# R can SEE E's transcript (clause e) and is not its owner: R's delete is refused and deletes nothing.
+sign_in r
+l_stranger_code="$(browser_post r /session/delete --data-urlencode "session=$vis_e")"
+l_stranger_body="$(cat "$work/browser.body")"
+# The OWNER's delete, through the real browser POST.
+l_owner_code="$(browser_post a /session/delete --data-urlencode "session=$vis_d")"
+plugin_get "/plugin/v1/transcript?session=$vis_d"
+l_read_code="$code"; l_read_body="$body"
+l_page_after="$(curl -sS -H "Authorization: Bearer $(head -n1 "$work/cred-a")" "$ui_url/session?session=$vis_d")"
+echo "clause l: a non-owner's delete $l_stranger_code, the owner's $l_owner_code, the plugin's next read $l_read_code"
+# The directory is gone — and with it the summary and the edge; the fact is journaled with no content;
+# the plugin's next read is its ONE refusal, the bytes a never-stored id got in (j) (deliberately not
+# a 404: that would say which ids were ever stored); the non-owner's attempt deleted nothing.
+assert l-the-owners-delete-takes-the-transcript-its-outputs-and-its-edges eval '
+  [[ $l_owner_code == 303 && ! -e "$tdir/sessions/$vis_d" ]] &&
+  grep -qF "\"root\":\"$vis_d\",\"owner\":\"$owner\",\"host\":\"host-a\",\"reason\":\"owner-delete\"" "$tdir/journal.jsonl" &&
+  ! grep -qF "clause" "$tdir/journal.jsonl" &&
+  [[ $l_read_code == 403 && "$l_read_body" == "$forbidden" && "$l_read_body" == "$j_absent_body" ]] &&
+  ! grep -qF "id=\"transcript\"" <<<"$l_page_after" && ! grep -qF "${k_text[$vis_d]}" <<<"$l_page_after" &&
+  [[ $l_stranger_code == 403 && "$l_stranger_body" == "no such transcript, or it is not yours to delete" ]] &&
+  [[ -s "$tdir/sessions/$vis_e/meta.json" ]] && grep -qF "\"type\":\"summary\"" "$tdir/sessions/$vis_e/outputs.jsonl"'
+
+# --- (m) a shipped prefix is withdrawn when routing changes ------------------------------------------
+# The session WROTE `alpha-notes` (its ledger says so), so run 1 ships it to the personal instance.
+world5="$work/world5"
+m_root="e2e00000-0000-4000-8000-0000000000aa"
+python3 - "$world5" "$m_root" <<'PY' || couldnt "clause (m)'s world could not be written"
+import json, os, sys
+root, sid = sys.argv[1], sys.argv[2]
+proj = os.path.join(root, "projects", "-work-alpha")
+os.makedirs(proj, exist_ok=True)
+os.makedirs(os.path.join(root, "ledger"), exist_ok=True)
+def rec(i, text, kind="user"):
+    return json.dumps({"type": kind, "sessionId": sid, "uuid": f"00000000-0000-4000-8000-{i:012d}",
+        "timestamp": "2000-01-01T00:00:%02dZ" % i, "message": {"role": kind, "content": text}})
+with open(os.path.join(proj, sid + ".jsonl"), "w") as f:
+    f.write(rec(1, "clause m: note the gadget") + "\n" + rec(2, "noted", "assistant") + "\n")
+with open(os.path.join(root, "ledger", sid + ".jsonl"), "w") as f:
+    f.write(json.dumps({"schema": 1, "session": sid, "verb": "append", "instance": "personal", "scope": "alpha-notes",
+        "client": "cairn-go", "client_version": "synthetic", "at": "2000-01-01T00:00:01.000Z"}) + "\n")
+PY
+start_relay run-m1 --upstream "$pod"
+capture "$work/bin/cairn-capture" "$work/home6" "$world5/projects" "$world5/ledger" "$relay_url"
+m1_rc=$?
+stop_relay
+[[ $m1_rc -eq 0 && -s "$tdir/sessions/$m_root/stream-main.jsonl.gz" ]] ||
+  couldnt "clause (m)'s first run (exit $m1_rc) did not ship the session's prefix: $(cat "$work/home6/run.log")"
+# Outputs and an edge derived from the prefix, so "its outputs and edges are gone" is measured.
+summary_for "$m_root" 2 "clause m summary"
+[[ $code == 201 ]] || couldnt "writing the summary of the clause (m) session answered $code: $body"
+edge_for "$m_root"
+[[ $code == 201 ]] || couldnt "writing the clause (m) session's ticket edge answered $code: $body"
+# …then it READS `beta-notes`, which routes to the client instance: its scopes now route to two.
+python3 - "$world5" "$m_root" <<'PY' || couldnt "clause (m)'s read could not be written"
+import json, os, sys
+root, sid = sys.argv[1], sys.argv[2]
+with open(os.path.join(root, "projects", "-work-alpha", sid + ".jsonl"), "a") as f:
+    f.write(json.dumps({"type": "user", "sessionId": sid, "uuid": "00000000-0000-4000-8000-000000000003",
+        "timestamp": "2000-01-01T00:00:03Z", "message": {"role": "user", "content": "clause m: THE RECORD AFTER THE READ"}}) + "\n")
+with open(os.path.join(root, "ledger", sid + ".jsonl"), "a") as f:
+    f.write(json.dumps({"schema": 1, "session": sid, "verb": "recall", "instance": "client", "scope": "beta-notes",
+        "client": "cairn-go", "client_version": "synthetic", "at": "2000-01-01T00:00:02.000Z"}) + "\n")
+PY
+start_relay run-m2 --upstream "$pod"
+capture "$work/bin/cairn-capture" "$work/home6" "$world5/projects" "$world5/ledger" "$relay_url"
+m2_rc=$?
+stop_relay
+# m_requests <relay log> → "<requests naming the session> <of them, withdrawals> <bodies carrying the record after the read>"
+m_requests() {
+  python3 - "$1" "$m_root" <<'PY'
+import base64, json, sys
+naming = withdrawals = after = 0
+for line in open(sys.argv[1]):
+    e = json.loads(line)
+    if "/sessions/" + sys.argv[2] + "/" not in e["path"]:
+        continue
+    naming += 1
+    withdrawals += e["path"].endswith("/sessions/" + sys.argv[2] + "/withdraw")
+    after += b"THE RECORD AFTER THE READ" in base64.b64decode(e["body"])
+print(naming, withdrawals, after)
+PY
+}
+read -r m_naming m_withdrawals m_after < <(m_requests "$work/run-m2.log") || couldnt "clause (m)'s relay log could not be read"
+# A third run: the session is held now — nothing more is asked of either instance.
+start_relay run-m3 --upstream "$pod"
+capture "$work/bin/cairn-capture" "$work/home6" "$world5/projects" "$world5/ledger" "$relay_url"
+m3_rc=$?
+stop_relay
+read -r m3_naming _ _ < <(m_requests "$work/run-m3.log") || couldnt "clause (m)'s third relay log could not be read"
+# The route's own answers, asked directly with the owner's capture token: the repeat is `true` again
+# (idempotent across a lost acknowledgement) and a root that never existed is `false`.
+post "/capture/v1/sessions/$m_root/withdraw" '{}'
+m_repeat="$code $body"
+post "/capture/v1/sessions/e2e-never-withdrawn/withdraw" '{}'
+m_never="$code $body"
+echo "clause m: run 2 sent $m_naming request(s) naming the session ($m_withdrawals a withdrawal, $m_after carrying the record after the read); the repeat answered [$m_repeat], a root never stored [$m_never]"
+# The agent sent ONE request for the session — the withdrawal — and no record from the read onward;
+# the instance's directory for it (transcript, summary, edge) is gone and the fact is journaled.
+assert m-a-shipped-prefix-is-withdrawn-when-routing-changes eval '
+  [[ $m2_rc == 0 && $m_naming == 1 && $m_withdrawals == 1 && $m_after == 0 ]] &&
+  [[ ! -e "$tdir/sessions/$m_root" ]] &&
+  grep -qF "\"root\":\"$m_root\",\"owner\":\"$owner\",\"host\":\"host-a\",\"reason\":\"withdrawn\"" "$tdir/journal.jsonl" &&
+  grep -qF "withdraw $m_root from personal" "$work/home6/run.log" && grep -qF "held $m_root" "$work/home6/run.log" &&
+  [[ $m3_rc == 0 && $m3_naming == 0 ]] &&
+  [[ "$m_repeat" == "200 {\"deleted\":true}" && "$m_never" == "200 {\"deleted\":false}" ]]'
 
 # --- (b) and (h): the real agent through a forwarding relay into the armed pod ---------------------
 start_relay run1 --upstream "$pod"

@@ -315,6 +315,22 @@ with records on it. A refused upload is a boot failure, not a missing section.
   whole, overflow 0. Watched red with the upload skipped.
 - **Only the owner half**, for the presence fixture's structural reason: one capture owner, one
   walk identity. The refusals are `internal/ui`'s and `tests/plugins/e2e.sh`'s to measure.
+- **And it carries PLUGIN OUTPUTS (transcripts S6).** The world registers two plugins
+  (`-plugin-registry`: `summary`, and `clickup`, which writes ticket edges), mints each a token with
+  the binary's own mint, turns both ON for every fixture scope in `-plugin-journal` (through
+  `plugins.Journal.Append`, the journal's only writer — seeded, not clicked: the walk navigates GET
+  rows only), and has each write ONE output through the real plugin route, where the pod validates,
+  asks the toggle fold and stamps. So the session page is captured with its "derived by plugins"
+  section, the session-level toggles and the owner's delete form; every list of sessions with a
+  derived line on that row; `/plugins` populated; and the toggle FORMS on the scope, arc and session
+  pages — none of which any capture had measured. A refused output is a boot failure. The same
+  guard reads it: at all five widths the section holds the summary and the ticket edge, labelled,
+  the edge's templated link, the summary's unbreakable token whole, the delete form collapsed and
+  two toggle rows — overflow 0. Watched red with the output write skipped.
+  🔴 **It found one defect the first time it ran:** `/plugins` at 390 px scrolled sideways
+  (`scrollWidth=425`) — S5's scope list was a bare `<li><a>` around a 42-character unbreakable scope
+  name, and no world had ever registered a plugin, so no capture had rendered the list. It is an
+  `entry-row` now; the touch gate is green over both worlds with it.
 - **"My sessions" (transcripts S7) rides on the same upload.** `GET /my-sessions` is a `linkExpanded`
   row (it publishes `/session?session=…`, and `?page=N` past fifty sessions); the walk's identity owns
   the stored transcript, so the page is captured with its row, not in its empty state. No browser
