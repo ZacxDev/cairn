@@ -222,10 +222,10 @@ func TestAllRolesIsTheWholeRoleTable(t *testing.T) {
 		}
 	}
 	// 🔴 THE ORDER IS PART OF THE CONTRACT, BECAUSE A RENDERER PICKS ITS DEFAULT AGAINST IT.
-	// `AllRoles`'s own comment says descending authority, and `internal/ui`'s `inviteForm`
-	// relies on that being true to explain why it selects the least-privileged entry
-	// EXPLICITLY rather than letting the first option win. If the order ever flips, that
-	// comment becomes false while the form keeps working — so the order is pinned here.
+	// `AllRoles`'s own comment says descending authority, and any chooser built from it has
+	// to select the least-privileged entry EXPLICITLY rather than letting the first option
+	// win (`internal/ui`'s invitation form did, until the invite fold removed it). If the
+	// order ever flips, that comment becomes false silently — so the order is pinned here.
 	if AllRoles[0] != RoleOwner {
 		t.Errorf("AllRoles[0] is %q, want %q. The list is documented as DESCENDING authority and a "+
 			"chooser's unselected default is its FIRST option", AllRoles[0], RoleOwner)
@@ -317,12 +317,12 @@ func TestCanConferRefusesEveryEscalationAndPermitsEveryLegitimateHandOff(t *test
 	}
 	if Role("").CanConfer(RoleMember) {
 		t.Error("the ZERO role may confer `member` — `RoleIn` returns it for a user with no membership, " +
-			"so this is the value `ControlInviting.Mint` sees for a caller who belongs to nothing")
+			"so this is the value `mayLink` sees for a caller who belongs to nothing")
 	}
 }
 
 // TestProjectsManagedByCarriesTheCallersOwnRole is the component half of a seam guard whose
-// behavioural half lives in `internal/ui` (`TestTheRoleChooserIsDrivenByTheREALModelsHeldRole`).
+// behavioural half lives in `internal/ui` (`TestTheInviteIndexIsDrivenByTheREALModelsHeldRole`).
 //
 // 🔴 IT EXISTS BECAUSE A MUTATION DELETING `HeldRole: ship.Role` SURVIVED THE WHOLE SUITE.
 // Nothing here read the field and nothing over in the renderer built a value from this

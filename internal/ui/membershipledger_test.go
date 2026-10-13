@@ -213,8 +213,8 @@ var wantMembershipLedger = []string{
 	// `ControlInviting.Redeem`'s delegation, one type over: a provider identity the model
 	// already holds, found by `UserByProviderSubject`.
 	"ControlTeamLinks.Redeem ControlTeamLinks.RedeemFor principal",
-	"Server.handleInvite Inviting.Invitable membershipActor(id)",
-	"Server.handleInvite Inviting.Mint membershipActor(id)",
+	// (No `Server.handleInvite` rows: since the fold that handler asks the invitation half
+	// nothing — it creates nothing and answers a redirect.)
 	"Server.handleInviteRevoke Inviting.Revoke membershipActor(id)",
 	// EXEMPT: a provider identity with no credential behind it, so no narrowing to lose.
 	"Server.handleOAuthCallback Inviting.RedeemFor principal",

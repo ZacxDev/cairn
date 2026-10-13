@@ -546,9 +546,11 @@ MUTANTS: tuple[Mutant, ...] = (
         path="internal/ui/invitehandlers.go",
         old="\tif id.Auth.Narrowed() {\n\t\treturn control.Principal{}\n\t}",
         new="\tif false && id.Auth.Narrowed() {\n\t\treturn control.Principal{}\n\t}",
-        killer="TestANarrowedBearerCannotMintAnInvitation",
+        # Re-aimed with the invite fold: `POST /invite` mints nothing for anybody now, so the door
+        # a narrowed bearer would walk through is the team-link mint. The row keeps its name.
+        killer="TestANarrowedBearerHasNoTeamLinkAuthority",
         why="membership authority is decided from the principal's project ROLE, which no "
-        "scope narrowing bounds — so a narrowed bearer token mints an invitation into its "
+        "scope narrowing bounds — so a narrowed bearer token mints a team link over its "
         "owner's project and redeems it as an identity its holder controls.",
     ),
     # ---- the membershipActor CALL SITES -------------------------------------------
@@ -573,16 +575,6 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestANarrowedBearerCannotRevokeAnInvitation",
         why="a narrowed bearer withdrawing its owner's invitations — membership authority "
         "exercised through a credential meant to see one scope.",
-    ),
-    Mutant(
-        name="ui-invite-mint-display-bypasses-membership-actor",
-        path="internal/ui/invitehandlers.go",
-        old="pickProject(s.inviting.Invitable(membershipActor(id)), project)",
-        new="pickProject(s.inviting.Invitable(id.Principal), project)",
-        killer="TestEveryMembershipDecisionActsAsMembershipActor",
-        why="behaviourally INVISIBLE today — this read only finds a display name, and `Mint` "
-        "refuses on its own — which is exactly why the ledger, not a behavioural test, is its "
-        "killer: the next edit that trusts this list would inherit an un-narrowed one.",
     ),
     Mutant(
         name="ui-share-page-candidates-bypass-membership-actor",
@@ -2917,11 +2909,12 @@ MUTANTS: tuple[Mutant, ...] = (
         old="out = append(out, NamedProject{ID: p.ID, Name: p.Name, HeldRole: ship.Role})",
         new="out = append(out, NamedProject{ID: p.ID, Name: p.Name})",
         killer="TestProjectsManagedByCarriesTheCallersOwnRole",
-        extra_killers=("TestTheRoleChooserIsDrivenByTheREALModelsHeldRole",),
+        extra_killers=("TestTheInviteIndexIsDrivenByTheREALModelsHeldRole",),
         why="THE MEASURED SEAM. This mutant SURVIVED a fully green suite before those two "
         "guards existed: one side tested the model against a hand-built Model, the other "
-        "tested the chooser against a hand-built NamedProject, and neither built the "
-        "combined state. Its only symptom was a role chooser that silently offered nothing.",
+        "tested the renderer against a hand-built NamedProject, and neither built the "
+        "combined state. (The field fed the invitation form's role chooser then; since the "
+        "fold it feeds the index's 'you are <role>'.)",
     ),
     Mutant(
         name="namedproject-reports-a-constant-role",
@@ -2930,28 +2923,7 @@ MUTANTS: tuple[Mutant, ...] = (
         new="out = append(out, NamedProject{ID: p.ID, Name: p.Name, HeldRole: RoleOwner})",
         killer="TestProjectsManagedByCarriesTheCallersOwnRole",
         why="the direction a zero-check cannot see: a role that is present and WRONG, in the "
-        "permissive direction. It offers every admin the `owner` option, which the mint then "
-        "refuses — so the visible symptom is a form that errors rather than one that is empty.",
-    ),
-    Mutant(
-        name="ui-mint-stops-checking-conferrability",
-        path="internal/ui/inviting.go",
-        old="if !held.CanConfer(role) {",
-        new="if false {",
-        killer="TestAnAdminCannotMintAnOwnerInvitation",
-        why="the escalation itself, at the one gate that is load-bearing. The chooser's "
-        "filtering constrains a browser and nothing else; this is the check an HTTP client "
-        "has to get past.",
-    ),
-    Mutant(
-        name="ui-mint-error-loses-its-sentinel",
-        path="internal/ui/inviting.go",
-        old='"%w: a %q may not confer %q (see control.Role.CanConfer)",\n\t\t\tErrRoleNotConferrable, held, role)',
-        new='"ui: a %q may not confer %q (see control.Role.CanConfer)", held, role)',
-        killer="TestAnAdminCannotMintAnOwnerInvitation",
-        why="a `fmt.Errorf` written without `%w`, which is the commonest way a sentinel stops "
-        "being recognisable. `refuseInviteWrite` maps on `errors.Is`, so the refusal becomes a "
-        "500 — the wrong status, and a sentence that sends an operator hunting a broken server.",
+        "permissive direction — every admin is told they are an owner.",
     ),
     Mutant(
         name="ui-invite-narrowing-skipped-before-the-unnarrowed-read",
@@ -2965,40 +2937,40 @@ MUTANTS: tuple[Mutant, ...] = (
     ),
     Mutant(
         name="ui-mint-response-loses-no-store",
-        path="internal/ui/invitehandlers.go",
-        # 🔴 RE-DERIVED TWICE IN S3 OF THE MOBILE PLAN. First when `writeHTMLNoStore` was folded into
-        # `writeHTML`'s default (the old pattern named a function that no longer existed — the full
-        # battery scored it a HARNESS ERROR); then when the public opt-down writer was deleted too, so
-        # there is ONE HTML writer and no weaker value to reach for. What is left that can lose the
-        # mint's `no-store` is BYPASSING the writer at the mint's call site: rendering straight into the
-        # ResponseWriter.
-        # Re-derived a THIRD time in #214: the mint renders on the Team page now (O-a), through
-        # `renderTeamAfterMint` and so through the one writer; the bypass is still the same shape.
-        old="\ts.renderTeamAfterMint(w, r, id, func(v *TeamView) { v.Invite = view })",
-        new="\tw.Header().Set(\"Content-Type\", \"text/html; charset=utf-8\")\n"
-        "\t_ = TeamPage(TeamView{Viewer: id.Principal.Display, Invite: view}).Render(w)",
-        killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
+        path="internal/ui/team.go",
+        # 🔴 RE-DERIVED FOUR TIMES, and the row keeps its name. Twice in S3 of the mobile plan (the
+        # writers it named were folded into one), once in #214 (the mint moved onto the Team page),
+        # and now with the invite fold: the invitation mint it bypassed is gone, so it bypasses the
+        # one writer at the ONE mint left — the team link's, inside `renderTeamAfterMint`.
+        old="\tset(&view)\n\ts.render(w, TeamPage(view))",
+        new="\tset(&view)\n\tw.Header().Set(\"Content-Type\", \"text/html; charset=utf-8\")\n"
+        "\t_ = TeamPage(view).Render(w)",
+        killer="TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged",
+        extra_killers=("TestTheTeamLinkFormPassesEveryTickedTargetThrough",),
         why="rendering straight into the ResponseWriter to skip the buffer looks like an optimisation, "
         "and it skips the one writer that sets `no-store` — on the response whose BODY is a bearer "
         "capability. The ledger walk is GET-only and cannot see this POST.",
     ),
     Mutant(
         name="ui-minted-link-becomes-an-anchor",
-        path="internal/ui/render.go",
+        # Re-aimed with the invite fold: the invitation's minted section is gone; the team link's
+        # (`mintedLinkSection`) renders the same line and is the one mint left.
+        path="internal/ui/team.go",
         old='h.P(h.Class("invite-link"), g.Text(m.Link)),',
         new='h.P(h.Class("invite-link"), h.A(h.Href(m.Link), g.Text(m.Link))),',
-        killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
+        killer="TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged",
         why="the single most natural improvement to make to this page — a URL rendered as "
         "text looks like an oversight. The link is a PATH with no origin, so an anchor "
         "resolves it against THIS page: one stray click, or one link-prefetcher, and the "
-        "minter has redeemed the invitation on themselves.",
+        "minter has redeemed the link on themselves.",
     ),
     Mutant(
         name="ui-mint-logs-the-token",
-        path="internal/ui/invitehandlers.go",
-        old='s.logf("an invitation was minted: project=%s role=%s expires=%s by=%s",\n\t\tinv.ProjectID, inv.Role, inv.ExpiresAt.UTC().Format(time.RFC3339), inv.Inviter)',
-        new='s.logf("an invitation was minted: project=%s role=%s expires=%s by=%s token=%s",\n\t\tinv.ProjectID, inv.Role, inv.ExpiresAt.UTC().Format(time.RFC3339), inv.Inviter, token)',
-        killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
+        # Re-aimed with the invite fold, at the one mint left.
+        path="internal/ui/team.go",
+        old='link.ExpiresAt.UTC().Format(time.RFC3339), link.Inviter)',
+        new='link.ExpiresAt.UTC().Format(time.RFC3339), link.Inviter+" token="+control.ID(token))',
+        killer="TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged",
         why="one field added to a log line while debugging, and never taken out. This is the "
         "shape that put a 64-character secret into the control journal once already, and the "
         "value here can create a principal.",
@@ -3099,26 +3071,6 @@ MUTANTS: tuple[Mutant, ...] = (
         "in as nobody — or refused — with nothing saying the link was at fault.",
     ),
     Mutant(
-        name="ui-role-chooser-stops-filtering",
-        path="internal/ui/render.go",
-        old="\tconferrable := conferrableRoles(v.Project.HeldRole)",
-        new="\tconferrable := control.AllRoles",
-        killer="TestTheRoleChooserOffersOnlyWhatTheCallerMayConfer",
-        why="`grantableVerbs = control.AllVerbs` one file over is exactly this shape and is "
-        "CORRECT there, which is what makes it the natural edit here. Roles differ: the mint "
-        "refuses `owner` from an admin, so an unfiltered list offers a value that cannot work.",
-    ),
-    Mutant(
-        name="ui-role-chooser-default-follows-the-list-order",
-        path="internal/ui/render.go",
-        old="g.If(r == leastPrivilegedRole, h.Selected()),",
-        new="g.If(false, h.Selected()),",
-        killer="TestTheRoleChooserOffersOnlyWhatTheCallerMayConfer",
-        why="a `selected` attribute reads as cosmetic. `control.AllRoles` is in DESCENDING "
-        "authority and a `select` with no explicit selection submits its FIRST option — so "
-        "removing this makes an unread form confer OWNERSHIP of a project.",
-    ),
-    Mutant(
         name="ui-revoke-button-appears-on-a-spent-invitation",
         path="internal/ui/render.go",
         old='g.If(csrf != "" && row.State == "open", h.FormEl(',
@@ -3129,14 +3081,115 @@ MUTANTS: tuple[Mutant, ...] = (
         "row that works on one of them, which teaches people to ignore the refusal.",
     ),
     Mutant(
-        name="ui-invite-write-refusals-collapse-into-one",
+        name="ui-invite-revoke-refusals-stop-being-uniform",
         path="internal/ui/invitehandlers.go",
-        old="\tcase errors.Is(err, ErrRoleNotConferrable):",
-        new="\tcase false:",
-        killer="TestTheTwoInviteWriteRefusalsAnswerDifferentlyForDifferentReasons",
-        why="the tidy-up that makes every refusal uniform, which is this surface's own rule "
-        "elsewhere and is wrong here: a person who picked `owner` from a list would be told "
-        "'that invitation cannot be recorded' and could never learn why.",
+        old="\tcase errors.Is(err, ErrNotInvitable), errors.Is(err, invite.ErrNotRedeemable):",
+        new="\tcase errors.Is(err, ErrNotInvitable):",
+        killer="TestTheInviteRevokeRefusalsAreUniform",
+        why="replaces `ui-invite-write-refusals-collapse-into-one`, whose third arm (a role the "
+        "caller could not confer) went with the invitation mint. What is left to get wrong is the "
+        "opposite: dropping one of the two uniform arms, so an unknown digest answers 500 where a "
+        "foreign one answers 403 — a revoke that says whether a digest exists.",
+    ),
+    # ---- THE INVITE FOLD (operator decision, option A) ------------------------------
+    # Single-project invitations are no longer minted: `POST /invite` creates nothing and 303s to
+    # the team-link form, which pre-ticks the project; invitations that already exist stay
+    # listed, revocable and redeemable. Each row below is one way that comes undone.
+    Mutant(
+        name="ui-post-invite-mints-a-team-link-instead",
+        path="internal/ui/invitehandlers.go",
+        old="func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request, _ identity.Identity) {\n",
+        new="func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request, id identity.Identity) {\n"
+        "\tif s.teamLinks != nil && r.ParseForm() == nil {\n"
+        "\t\t_, _, _ = s.teamLinks.Mint(r.Context(), membershipActor(id), []invite.Target{{Kind: invite.TargetProject, "
+        "ID: control.ID(r.PostFormValue(FieldProject))}}, invite.LinkMember, 0, false)\n\t}\n",
+        killer="TestPostInviteNoLongerMintsAnInvitation",
+        why="the helpful reading of 'fold': translate the old request into the new capability instead of "
+        "sending the person to the form. It creates a capability nobody asked for, at a role this handler "
+        "chose, that nothing renders — so it can never be used and sits open until it expires.",
+    ),
+    Mutant(
+        name="ui-post-invite-redirect-drops-the-project",
+        path="internal/ui/invitehandlers.go",
+        old="\t\tq.Set(QueryProject, project)\n\t}\n\tq.Set(QueryOutcome, inviteOutcomeFolded)",
+        new="\t\t_ = project\n\t}\n\tq.Set(QueryOutcome, inviteOutcomeFolded)",
+        killer="TestPostInviteNoLongerMintsAnInvitation",
+        extra_killers=("TestPostInviteCarriesOnlyAProjectItWasGivenIntoItsRedirect",),
+        why="a redirect that carries nothing caller-chosen reads as the safer one. It lands the person on "
+        "a form with nothing ticked, having asked to invite somebody to ONE project.",
+    ),
+    Mutant(
+        name="ui-post-invite-lands-on-the-invitation-list",
+        path="internal/ui/invitehandlers.go",
+        old="\thttp.Redirect(w, r, teamHref(q.Encode(), teamLinksAnchor), http.StatusSeeOther)",
+        new="\thttp.Redirect(w, r, teamHref(q.Encode(), teamInviteAnchor), http.StatusSeeOther)",
+        killer="TestPostInviteNoLongerMintsAnInvitation",
+        why="`handleInviteRevoke` two functions down lands on `#invite`, so this is the anchor a copy "
+        "of it carries — the section that no longer has a form on it.",
+    ),
+    Mutant(
+        name="ui-team-link-form-preticks-every-project",
+        path="internal/ui/team.go",
+        old="g.If(m.Target == preselected, h.Checked())",
+        new="g.If(m.Target.Kind == preselected.Kind, h.Checked())",
+        killer="TestTheTeamPageHasOneMintFormAndPreselectsTheProject",
+        why="a comparison narrowed to the half that reads as the discriminator. Every project the caller "
+        "manages arrives ticked — with NO `?project=` too — so the unread form puts all of them on a link.",
+    ),
+    Mutant(
+        name="ui-team-link-form-never-preticks",
+        path="internal/ui/team.go",
+        old="g.If(m.Target == preselected, h.Checked())",
+        new="g.If(m.Target == preselected && v.Invite.Project.ID == \"\", h.Checked())",
+        killer="TestTheTeamPageHasOneMintFormAndPreselectsTheProject",
+        why="a guard for 'no project chosen' written the wrong way round, so the condition is never "
+        "true: 'invite somebody to this project' lands on a form that has forgotten which project.",
+    ),
+    Mutant(
+        name="ui-fold-notice-loses-a-cost-the-operator-accepted",
+        path="internal/ui/invitehandlers.go",
+        old="\"of one project cannot see or revoke each other's links.\"",
+        new="\"of one project each manage their own links.\"",
+        killer="TestTheFoldNoticeIsPinnedWhole",
+        why="the clause that makes the product sound weakest, reworded into one that sounds like a "
+        "feature. A guard on the words 'team link' or 'owner' passes it.",
+    ),
+    Mutant(
+        name="ui-fold-notice-is-not-rendered",
+        path="internal/ui/team.go",
+        old="g.If(!v.NoInviteStore, h.P(h.Class(\"note\"), g.Text(InviteFoldNotice))),",
+        new="g.If(false, h.P(h.Class(\"note\"), g.Text(InviteFoldNotice))),",
+        killer="TestTheFoldNoticeIsPinnedWhole",
+        why="a constant pinned word for word and shown to nobody: the constant-only half of the test "
+        "stays green, which is why the test also reads the rendered page.",
+    ),
+    Mutant(
+        name="ui-fold-hides-the-invitations-that-exist",
+        path="internal/ui/invitehandlers.go",
+        old="\tview.Outstanding = inviteRows(rows, s.now())",
+        new="\tview.Outstanding = inviteRows(rows[:0], s.now())",
+        killer="TestAnInvitationIssuedBeforeTheFoldStillRedeemsAndIsStillRevocable",
+        why="'invitations are gone' taken one step too far. A link sent last week still redeems, and "
+        "the page that could withdraw it says no invitation exists.",
+    ),
+    Mutant(
+        name="ui-fold-stops-revoking-an-invitation",
+        path="internal/ui/invitehandlers.go",
+        old="\tif err := s.inviting.Revoke(r.Context(), membershipActor(id), digest); err != nil {",
+        new="\tif err := error(nil); err != nil {",
+        killer="TestAnInvitationIssuedBeforeTheFoldStillRedeemsAndIsStillRevocable",
+        why="the revoke row made as inert as the mint row beside it. It still answers 303 with the "
+        "'Revoked.' banner, and the invitation stays open.",
+    ),
+    Mutant(
+        name="ui-fold-sends-every-token-to-the-link-store",
+        path="internal/ui/inviting.go",
+        old="\tif !known && c.Links != nil {\n\t\t// Not an invitation: a team link, or nothing. See [ControlInviting.Links].",
+        new="\tif c.Links != nil {\n\t\t// Not an invitation: a team link, or nothing. See [ControlInviting.Links].",
+        killer="TestAnInvitationIssuedBeforeTheFoldStillRedeemsAndIsStillRevocable",
+        extra_killers=("TestAnInvitationStillRedeemsAsAnInvitationWithLinksWired",),
+        why="'every invitation is a team link now' read as a statement about TOKENS. An invitation "
+        "already in somebody's inbox is then looked up in a table that has never held it, and refuses.",
     ),
     Mutant(
         name="ui-invite-read-refuses-instead-of-answering-with-no-store",
@@ -4523,10 +4576,10 @@ MUTANTS: tuple[Mutant, ...] = (
         old="\tw.Header().Set(\"Cache-Control\", htmlCacheControl)\n",
         new="\tw.Header().Set(\"Cache-Control\", \"no-cache\")\n",
         killer="TestEveryNonPublicHTMLRowIsNoStore",
-        extra_killers=("TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",),
+        extra_killers=("TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged",),
         why="`no-cache` reads as the cautious value and is not: it permits STORING the page and only "
         "asks for revalidation, so every authenticated page would sit in the device's HTTP cache — the "
-        "invitation mint, whose body is a bearer capability, included.",
+        "team-link mint, whose body is a bearer capability, included.",
     ),
     # 🔴 THE HUB AND THE SESSIONS LIST. Every hub count and every listed session comes out of a read
     # narrowed by `auth.NamedScopes(VerbRead)`; each row below widens ONE of those reads (by the

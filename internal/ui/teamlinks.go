@@ -29,7 +29,9 @@ type TeamLinking interface {
 	// minter alone.
 	Links(actor control.Principal) ([]LinkWithLog, error)
 
-	// Mint creates a link and returns the token ONCE — `Inviting.Mint`'s rule.
+	// Mint creates a link and returns the token ONCE: it is returned, never stored (only its
+	// digest is — `invite.NewToken`) and never re-derivable, so a caller that loses it has to
+	// mint another. The ONE mint on this surface since the invite fold.
 	Mint(ctx context.Context, actor control.Principal, targets []invite.Target, role invite.LinkRole,
 		ttl time.Duration, reusable bool) (token string, link invite.TeamLink, err error)
 

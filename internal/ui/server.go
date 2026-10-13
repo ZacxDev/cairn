@@ -1868,8 +1868,9 @@ func (s *Server) renderStatus(w http.ResponseWriter, status int, node g.Node) {
 //     a hidden field. Recorded in `internal/ui/README.md`, Phase Q.
 //   - THE INVITATION MINT IS NO LONGER A SPECIAL CASE. It was the one page sent `no-store`,
 //     through its own entry point, because its body IS a bearer capability; it now gets the same
-//     value through this function, and `TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged`
-//     still pins it.
+//     value through this function. (That mint is gone since the invite fold; the team-link
+//     mint is the capability-bearing page now, and
+//     `TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged` pins it.)
 //   - ⚠ WHAT IT COSTS IS RESEARCHED, NOT MEASURED HERE: Chromium admits `no-store` pages to the
 //     back/forward cache for at most three minutes and evicts them on any cookie change (so a
 //     sign-out always evicts); Safari and Firefox re-fetch on Back. The plan's Q7 is the

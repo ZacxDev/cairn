@@ -1052,11 +1052,20 @@ That is deliberate — a picker listing every user would turn admin on one scope
 a directory of everyone in the deployment — and it means reaching anybody else needs
 an invite. ⚠ **The clause that stood here said an invite "does not exist yet", and it
 is corrected rather than deleted because it was true across three changes and is the
-sentence somebody would act on.** The invite flow exists: `GET`/`POST /invite`,
-`POST /invite/revoke` and a public `GET /join`, over the invite store `-db-dsn`
-configures. It is **absent on a deployment with no `-db-dsn`**, where the invite pages
-say so and their writes answer 501 — so "does not exist yet" is now a statement about a
-CONFIGURATION rather than about this repository.
+sentence somebody would act on.** The invite flow exists: a **team link**, created on the
+Team page (`GET /team`, `POST /team/link`) and opened at a public `GET /join`, over the
+store `-db-dsn` configures. It is **absent on a deployment with no `-db-dsn`**, where the
+Team page says so and its writes answer 501 — so "does not exist yet" is now a statement
+about a CONFIGURATION rather than about this repository.
+
+🔴 **SINGLE-PROJECT INVITATIONS WERE FOLDED INTO TEAM LINKS, AND TWO THINGS WENT WITH
+THEM.** `POST /invite` creates nothing now and redirects to the team-link form;
+invitations issued before that stay listed, revocable and redeemable until they expire.
+What a team link does not do: **it cannot confer `owner`**, so a project owner can no
+longer make another owner from the browser — the operator's `cairn-server -set-member` is
+the path left — and **it is listed to, and revocable by, only whoever created it**, so two
+admins of one project cannot see or revoke each other's links. Both were accepted, and
+the Team page says both.
 
 🔴 **THE SHARE FLOW NEEDS `-control-journal <path>`, AND NOT ONLY TO WRITE.** Without one
 the authority is the token file, which has no shares to record and **confers `admin` on

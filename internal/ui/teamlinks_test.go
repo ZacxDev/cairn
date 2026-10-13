@@ -538,7 +538,7 @@ func TestLinkVerbsMatchTheControlRoleTable(t *testing.T) {
 // route an INVITATION token to the link store.
 func TestAnInvitationStillRedeemsAsAnInvitationWithLinksWired(t *testing.T) {
 	r := newTeamRig(t)
-	token, _, err := r.inviting.Mint(context.Background(), r.principal(invOwner), tlThird, control.RoleMember, 0)
+	token, _, err := r.seedInvitation(r.principal(invOwner), tlThird, control.RoleMember, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

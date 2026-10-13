@@ -105,7 +105,9 @@ const (
 // order pick its default. The most-authority-first order makes `owner` the first option,
 // and a form whose unread default confers ownership is a form that hands out ownership
 // to everybody who does not read it; the renderer therefore selects the least-privileged
-// entry explicitly. See `inviteForm` in `internal/ui`, which is where that is spelled.
+// entry explicitly. (`internal/ui`'s invitation form was where that was spelled; it went
+// with the invite fold, and the team-link form chooses from `invite.AllLinkRoles`, which is
+// ordered LEAST privileged first for the same reason.)
 //
 // ⚠ IT IS A SECOND ENUMERATION OF THE SAME SET AS `roleVerbs`, AND THAT IS WHY
 // `TestAllRolesIsTheWholeRoleTable` pins the two against each other in both directions.
