@@ -64,7 +64,8 @@ collapsed reading model the browser surface renders. `claudedocs/plan-cairn-plug
   is a 400 naming it, decided from the query alone before the predicate.
 - **The views.** `conversation` (the DEFAULT) leaves each bookkeeping record out as a placeholder
   naming its class, type and size, and strips the duplicate `toolUseResult` FIELD, naming its size;
-  every other member keeps its stored bytes and order. `raw` is the stored bytes, byte-exact — the
+  every other member keeps its VALUE's stored bytes and its order (its key is re-encoded), and a key
+  present twice is removed twice. `raw` is the stored bytes, byte-exact — the
   page is encoded by hand, because `encoding/json` compacts a raw message and escapes `<`, `>`, `&`
   in it. An unrecognised view is REFUSED, never defaulted. `ParseView` and `View.Page` are what the
   plugin route (S5) and the summary plugin (S9, `view=conversation`) are meant to read through.

@@ -5507,10 +5507,12 @@ MUTANTS: tuple[Mutant, ...] = (
         "be cut is then cut at 1,200 characters with no reveal.",
     ),
     # 🔴 THE AGENT READ API (S8 of the transcripts plan): the plan's two rows. ⚠ NEITHER CAN BE A
-    # SURFACE-LOCAL "SKIP THE PREDICATE" EDIT, AND THAT IS #261's DESIGN RATHER THAN A GAP: a stored
-    # record leaves `internal/transcript` only inside a `View`, `Store.View` is the only constructor, and
-    # the read API's one entry point (`transcript.Store.Answer`) has no other way in — so no compiling
-    # edit in `agent.go`, `internal/ui` or `internal/clientapi` serves a session without asking. Each row
+    # LISTENER-LOCAL "SKIP THE PREDICATE" EDIT, AND THAT IS #261's DESIGN RATHER THAN A GAP: a stored
+    # record leaves `internal/transcript` only inside a `View`, and `Store.View` is the only constructor
+    # OUTSIDE the package — so no compiling edit in `internal/ui` or `internal/clientapi` serves a
+    # session without asking. ⚠ Inside the package one does compile (`Answer` building a `View` from
+    # `ReadMeta` directly), and `TestTheAgentReadRoutesAskThePredicate` would see it, but it is not a
+    # row here. Each row
     # therefore breaks the PREDICATE the read API asks, in a shape a reader of that API would plausibly
     # write, and names the S8 surface test as its killer: what it proves is that the JSON routes'
     # tests SEE a predicate that stopped refusing, on the route each row is named for.

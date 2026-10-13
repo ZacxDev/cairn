@@ -331,7 +331,6 @@ func (v *View) Skeleton() (Skeleton, error) {
 		seq         int64
 		agentType   string
 		description string
-		depth       int
 	}
 	spawns := map[string]spawn{}
 	done := map[string]bool{}
@@ -361,18 +360,37 @@ func (v *View) Skeleton() (Skeleton, error) {
 		if err != nil {
 			return Skeleton{}, err
 		}
-		sp := spawns[name]
-		ss.Parent, ss.ParentSeq, ss.AgentType, ss.Description, ss.SpawnDepth = sp.parent, sp.seq, sp.agentType, sp.description, sp.depth
 		for _, c := range children {
-			if _, stored := v.Meta.Streams[c.Stream]; !stored || done[c.Stream] {
+			if _, stored := v.Meta.Streams[c.Stream]; !stored || c.Stream == mainStream || c.Stream == name {
 				continue
 			}
+			// 🔴 RECORDED EVEN FOR A STREAM ALREADY READ: a child that is not reachable from `main` yet
+			// (its spawning result not uploaded) is read in sorted order, possibly BEFORE its parent,
+			// and its placement must not depend on that order. The first spawn found wins.
 			if _, placed := spawns[c.Stream]; !placed {
-				spawns[c.Stream] = spawn{name, c.seq, c.AgentType, c.Description, sp.depth + 1}
+				spawns[c.Stream] = spawn{name, c.seq, c.AgentType, c.Description}
 			}
 			queue = append(queue, c.Stream)
 		}
 		sk.Streams = append(sk.Streams, ss)
+	}
+	// Placement after every stream is read; the depth follows parent links, bounded so a cycle the
+	// records claim cannot loop.
+	for i := range sk.Streams {
+		ss := &sk.Streams[i]
+		sp, ok := spawns[ss.Stream]
+		if !ok {
+			continue
+		}
+		ss.Parent, ss.ParentSeq, ss.AgentType, ss.Description = sp.parent, sp.seq, sp.agentType, sp.description
+		for at, n := ss.Stream, 0; n <= len(sk.Streams); n++ {
+			up, ok := spawns[at]
+			if !ok {
+				break
+			}
+			ss.SpawnDepth++
+			at = up.parent
+		}
 	}
 	return sk, nil
 }
@@ -741,21 +759,22 @@ func conversation(pr PageRecord, obj map[string]any, opencode bool) PageRecord {
 		return PageRecord{Seq: pr.Seq, Src: pr.Src, Omitted: []Omission{{Bookkeeping, "", len(pr.Rec), kind}}}
 	}
 	if _, ok := obj["toolUseResult"]; ok {
-		if out, removed, ok := dropKey(pr.Rec, "toolUseResult"); ok {
+		if out, _, total, ok := dropKey(pr.Rec, "toolUseResult"); ok {
 			pr.Rec = out
-			pr.Omitted = []Omission{{Class: Duplicate, Path: "/toolUseResult", Bytes: len(removed)}}
+			pr.Omitted = []Omission{{Class: Duplicate, Path: "/toolUseResult", Bytes: total}}
 		}
 	}
 	return pr
 }
 
-// dropKey removes one top-level key from a JSON object and returns the object and the removed
-// value's bytes. Every other member keeps its stored bytes and its order: only the separators
-// between members are rewritten.
-func dropKey(raw []byte, key string) (out, removed []byte, ok bool) {
+// dropKey removes a top-level key — every occurrence of it — from a JSON object and returns the
+// object and the removed value's bytes. Every other member keeps its VALUE's stored bytes and its
+// order; its KEY is re-encoded (`"\u0074ype"` comes out as `"type"`), and the separators between
+// members are rewritten.
+func dropKey(raw []byte, key string) (out, removed []byte, total int, ok bool) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
 	var b bytes.Buffer
 	b.WriteByte('{')
@@ -763,15 +782,18 @@ func dropKey(raw []byte, key string) (out, removed []byte, ok bool) {
 	for dec.More() {
 		tok, err := dec.Token()
 		if err != nil {
-			return nil, nil, false
+			return nil, nil, 0, false
 		}
 		k, isKey := tok.(string)
 		var v json.RawMessage
 		if !isKey || dec.Decode(&v) != nil {
-			return nil, nil, false
+			return nil, nil, 0, false
 		}
-		if k == key && removed == nil {
-			removed = v
+		if k == key {
+			// EVERY occurrence goes: a record carrying the key twice must not keep the second copy
+			// while the omission says it was removed. `removed` is the LAST one — the copy Go's
+			// decoder (and so every reader here) sees.
+			removed, total = v, total+len(v)
 			continue
 		}
 		if !first {
@@ -783,7 +805,7 @@ func dropKey(raw []byte, key string) (out, removed []byte, ok bool) {
 		b.Write(v)
 	}
 	b.WriteByte('}')
-	return b.Bytes(), removed, removed != nil
+	return b.Bytes(), removed, total, removed != nil
 }
 
 // jsonString encodes a string as JSON, HTML left unescaped.
@@ -983,7 +1005,7 @@ func (v *View) Tool(q ToolQuery) (ToolAnswer, error) {
 						ans.ChildStream = "subagent:" + id
 					}
 				}
-				if _, raw, ok := dropKey(rec.Rec, "toolUseResult"); ok {
+				if _, raw, _, ok := dropKey(rec.Rec, "toolUseResult"); ok {
 					ans.Duplicate = toolText(rec.Seq, false, string(raw), q)
 				}
 			}

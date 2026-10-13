@@ -429,3 +429,47 @@ func TestTheReadParametersAreRefusedBeforeThePredicate(t *testing.T) {
 		t.Errorf("no session answered %d, want 400", code)
 	}
 }
+
+// TestARepeatedDuplicateFieldIsStrippedWhole (S8 review): a record carrying `toolUseResult` TWICE
+// loses both in the conversation view, and the omission counts both. RED when only the first
+// occurrence was dropped: the second stayed on the page while the omission said it was removed.
+func TestARepeatedDuplicateFieldIsStrippedWhole(t *testing.T) {
+	a := transcripttest.Open(t)
+	transcripttest.Append(t, a, transcripttest.Session{Root: "s-agent-05", Owner: readOwner}, "main", []string{
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"x"}]},"toolUseResult":{"a":1},"toolUseResult":{"b":2}}`,
+	})
+	meta, _ := a.ReadMeta("s-agent-05")
+	p, err := (&View{Meta: meta, a: a}).Page(RecordsQuery{Stream: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := p.Records[0]
+	if bytes.Contains(pr.Rec, []byte("toolUseResult")) || len(pr.Omitted) != 1 || pr.Omitted[0].Bytes != len(`{"a":1}`)+len(`{"b":2}`) {
+		t.Errorf("rec %s omitted %+v — want both copies gone and counted", pr.Rec, pr.Omitted)
+	}
+}
+
+// TestAChildReadBeforeItsParentIsStillPlaced (S8 review): a subagent spawned by ANOTHER subagent
+// that `main` does not link yet is read in sorted order — before its parent here — and must still
+// be placed under the call that spawned it. RED when placement happened while reading: the child
+// came out with no parent and depth 0.
+func TestAChildReadBeforeItsParentIsStillPlaced(t *testing.T) {
+	a := transcripttest.Open(t)
+	s := transcripttest.Session{Root: "s-agent-06", Owner: readOwner}
+	transcripttest.Append(t, a, s, "main", []string{`{"type":"user","message":{"role":"user","content":"go"}}`})
+	transcripttest.Append(t, a, s, "subagent:zz", []string{
+		`{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_z1","name":"Task","input":{"subagent_type":"general","description":"deeper"}}]}}`,
+		`{"type":"user","isSidechain":true,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_z1","content":"ok"}]},"toolUseResult":{"agentId":"aa"}}`,
+	})
+	transcripttest.Append(t, a, s, "subagent:aa", []string{`{"type":"user","isSidechain":true,"message":{"role":"user","content":"deeper"}}`})
+	meta, _ := a.ReadMeta("s-agent-06")
+	sk, err := (&View{Meta: meta, a: a}).Skeleton()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ss := range sk.Streams {
+		if ss.Stream == "subagent:aa" && (ss.Parent != "subagent:zz" || ss.ParentSeq != 1 || ss.SpawnDepth != 1 || ss.Description != "deeper") {
+			t.Errorf("subagent:aa is placed as %+v, want under subagent:zz's call at 1, depth 1", ss)
+		}
+	}
+}

@@ -5124,8 +5124,9 @@ answer one stored session as JSON for an agent — decision 17. The model is `in
 `transcript-read-api-without-predicate` (the predicate's owner arm answering for everybody) is
 KILLED by `TestTheAgentReadRoutesAskThePredicate`, and `transcript-raw-view-without-predicate` (the
 scope arm admitting anybody once `V` is non-empty) by `TestTheRawRecordsViewAsksThePredicate` and the
-S4 raw-record view's test. ⚠ Neither is a surface-local "skip the predicate" edit, because none
-compiles: `Store.View` is the only way to a record. The model's own guards were each watched red
+S4 raw-record view's test. ⚠ Neither is a listener-local "skip the predicate" edit, because none
+compiles outside `internal/transcript`: there `Store.View` is the only way to a record (inside the
+package one does compile, and the predicate test would see it). The model's own guards were each watched red
 under a hand mutation (conversation strip off, bookkeeping kept, the first record split, an
 unrecognised view defaulted, the spawn depth not incremented, a range not moved to a character
 boundary).
