@@ -314,7 +314,7 @@ func main() {
 	// 🔴 SCOPE MAIL'S CLIENT LISTENER (S2 of the scope-mail plan): one flag, NO default and no
 	// environment spelling — see `clientapi.go` beside this file for why, and for its refusals.
 	clientAPIAddr := flag.String(flagClientAPIAddr, "",
-		"host:port of the THIRD listener serving the four memo routes to agents' narrowed journal credentials "+
+		"host:port of the THIRD listener serving the four memo routes and the three transcript read routes to agents' narrowed journal credentials "+
 			"(machine tokens only). NO DEFAULT: unset, there is no listener. Needs -control-journal and -db-dsn")
 	dsnDefault, dsnErr := databaseDSNDefault(os.Getenv)
 	dbDSN := flag.String("db-dsn", dsnDefault,

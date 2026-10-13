@@ -1,4 +1,5 @@
-// Package clientapi is scope mail's CLIENT LISTENER: the four memo routes a host-side agent
+// Package clientapi is scope mail's CLIENT LISTENER: the four memo routes (and, since the transcripts
+// plan's S8, three transcript read routes — below) a host-side agent
 // reaches with its own narrowed journal credential (S2 of `claudedocs/plan-cairn-scope-mail.md`,
 // decisions 3, 8, 10, 12 and 19; threats T3, T9 and T12).
 //

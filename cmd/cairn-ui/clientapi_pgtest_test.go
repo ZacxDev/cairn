@@ -488,7 +488,7 @@ func TestTheListRouteParametersReachTheRealStore(t *testing.T) {
 
 // ---------------------------------------------------------------- the binary
 
-var clientAPILine = regexp.MustCompile(`client API on (127\.0\.0\.1:\d+) \(4 route\(s\), machine tokens only\)`)
+var clientAPILine = regexp.MustCompile(`client API on (127\.0\.0\.1:\d+) \(7 route\(s\), machine tokens only\)`)
 
 func startMemoChild(t *testing.T, journal, dsn string, extra ...string) *presenceChild {
 	t.Helper()
