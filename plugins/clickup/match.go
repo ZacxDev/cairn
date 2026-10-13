@@ -61,6 +61,10 @@ func (m *Matcher) URLs(text string) []Hit {
 			if m.Team != "" && first != m.Team {
 				continue
 			}
+			// A custom id a tool cut short (`…/ALPHA-1...`) is not the shorter listed id it now spells.
+			if continues(text[loc[5]:]) {
+				continue
+			}
 			custom := text[loc[4]:loc[5]]
 			t, ok := m.Index.Resolve(custom)
 			if !ok {
@@ -76,6 +80,11 @@ func (m *Matcher) URLs(text string) []Hit {
 		// `/t/<id>`. The id must END there: `…/t/abc123-draft` addresses no task `abc123`, and neither
 		// does an id a tool cut short (`…/t/abc...`).
 		if continues(text[loc[3]:]) {
+			continue
+		}
+		// 🔴 ALL DIGITS AND THEN A `/`: that is the WORKSPACE form with a custom id this pattern could
+		// not read (`/t/9000001/`, `/t/9000001/{custom_id}`). The workspace id is never a ticket.
+		if allDigits.MatchString(first) && loc[3] < len(text) && text[loc[3]] == '/' {
 			continue
 		}
 		if canonicalID.MatchString(first) {
@@ -160,7 +169,19 @@ func withoutURLs(text string) string {
 	if !strings.Contains(text, urlMarker) {
 		return text
 	}
-	return taskURL.ReplaceAllStringFunc(text, func(u string) string { return strings.Repeat(" ", len(u)) })
+	out := []byte(text)
+	for _, loc := range taskURL.FindAllStringIndex(text, -1) {
+		// Through the END of the URL as written, not just the part the pattern read: the rest of
+		// `…/t/9000002/x/ALPHA-12` is still that URL.
+		end := loc[1]
+		for end < len(text) && !strings.ContainsRune(" \t\r\n\"'<>()[]{}`", rune(text[end])) {
+			end++
+		}
+		for i := loc[0]; i < end; i++ {
+			out[i] = ' '
+		}
+	}
+	return string(out)
 }
 
 // Prose is what free text names: URLs and listed custom ids.

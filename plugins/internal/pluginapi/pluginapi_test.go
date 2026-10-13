@@ -6,7 +6,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 )
@@ -169,5 +172,49 @@ func TestPlainHTTPOffTheHostNeedsTheOperatorToNameTheHost(t *testing.T) {
 	}
 	if list.Set(host) != nil || list.Set("fd00::1") != nil || len(list) != 2 {
 		t.Errorf("a bare host and a bare IPv6 address must be accepted: %v", list)
+	}
+}
+
+// proxyChildEnv marks the re-executed test binary that makes ONE request to the worker URL it names.
+const proxyChildEnv = "CAIRN_PLUGINAPI_TEST_PROXY_CHILD_URL"
+
+// TestTheWorkerListenerIsNeverReachedThroughAProxyFromTheEnvironment — with `-allow-plaintext-host`
+// the worker URL may be plain http to a non-loopback host, and Go's default transport sends exactly
+// that request, whole, to `HTTP_PROXY`: the bearer token and every transcript byte. Red before the
+// transport's proxy was removed: the listener standing in for the proxy received the request and its
+// `Authorization` header. In a SUBPROCESS, because Go reads the proxy environment once per process.
+func TestTheWorkerListenerIsNeverReachedThroughAProxyFromTheEnvironment(t *testing.T) {
+	if u := os.Getenv(proxyChildEnv); u != "" {
+		c := &Client{Base: u, Token: testToken, AllowPlaintextHosts: []string{"worker.example.invalid"}}
+		_, err := c.Pending(context.Background(), 1)
+		if err == nil {
+			t.Fatal("the request to a host that does not resolve succeeded: something answered for it")
+		}
+		return
+	}
+	var mu sync.Mutex
+	var got []string
+	proxy := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		got = append(got, r.Method+" "+r.URL.String()+" "+r.Header.Get("Authorization"))
+		mu.Unlock()
+		rw.Header().Set("Content-Type", "application/json")
+		_, _ = rw.Write([]byte(`{"items":[]}`))
+	}))
+	defer proxy.Close()
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestTheWorkerListenerIsNeverReachedThroughAProxyFromTheEnvironment$", "-test.v")
+	cmd.Env = append(os.Environ(), proxyChildEnv+"=http://worker.example.invalid", "HTTP_PROXY="+proxy.URL, "http_proxy="+proxy.URL,
+		"NO_PROXY=", "no_proxy=")
+	out, err := cmd.CombinedOutput()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 0 {
+		t.Fatalf("the proxy named by HTTP_PROXY received the worker request — token included: %q\n%s", got, out)
+	}
+	if err != nil {
+		t.Fatalf("the child failed for another reason: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "--- PASS") {
+		t.Fatalf("the child did not run its request:\n%s", out)
 	}
 }

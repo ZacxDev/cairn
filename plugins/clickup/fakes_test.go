@@ -95,6 +95,11 @@ type fakePod struct {
 	titles bool
 	// hidden sessions are stored but NOT listed by the pending query (resumed, not idle).
 	hidden map[string]bool
+	// failTypes makes every write of these output types answer failStatus (500 when 0): a pod that
+	// validates the request and then cannot store it. refuseStatus is what `refuse` answers (507 when 0).
+	failTypes    map[string]bool
+	failStatus   int
+	refuseStatus int
 }
 
 // of is one session's streams; nil when the pod does not hold it.
@@ -267,6 +272,11 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(rw, 200, map[string]any{"records": page, "next_seq": next, "done": next > len(recs), "seq_to": len(recs)})
 	case r.URL.Path == "/plugin/v1/outputs" && r.Method == http.MethodGet:
+		if p.of(q.Get("session")) == nil {
+			// The real pod's ONE 403: a session it does not hold.
+			writeJSON(rw, 403, map[string]string{"refused": "plugin-forbidden"})
+			return
+		}
 		outs := []pluginapi.Output{}
 		for _, o := range p.outputs {
 			if o.Type == q.Get("type") && o.Session == q.Get("session") {
@@ -316,7 +326,19 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if p.refuse[env.Session] {
-			http.Error(rw, `{"refused":"quota","quota_bytes":1}`, http.StatusInsufficientStorage)
+			status := http.StatusInsufficientStorage
+			if p.refuseStatus != 0 {
+				status = p.refuseStatus
+			}
+			http.Error(rw, `{"refused":"quota","quota_bytes":1}`, status)
+			return
+		}
+		if p.failTypes[env.Type] {
+			status := http.StatusInternalServerError
+			if p.failStatus != 0 {
+				status = p.failStatus
+			}
+			http.Error(rw, "internal error", status)
 			return
 		}
 		p.writes++

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ZacxDev/cairn/plugins/internal/hoststate"
+	"github.com/ZacxDev/cairn/plugins/internal/pluginapi"
 )
 
 // TestABranchTokenMatchesOnlyAFetchedIdOrOneNamedByURL — the plan's S10 branch case: `feature/clk0000a1-x`
@@ -604,7 +608,13 @@ func TestTheURLMatcherTakesBothFormsAndNothingThatOnlyLooksLikeOne(t *testing.T)
 		cuURLPrefix + team + "/ALPHA-12":               {{ID: "clk0000c3", Custom: "ALPHA-12", ByURL: true}},
 		cuURLPrefix + team + "/ALPHA-12_ and more":     {{ID: "clk0000c3", Custom: "ALPHA-12", ByURL: true}},
 		cuURLPrefix + team + "/ALPHA-13":               nil, // not in the list — and the workspace id is no ticket
-		cuURLPrefix + "9000002/ALPHA-12":               nil, // another workspace
+		cuURLPrefix + team + "/":                       nil, // the workspace form with no custom id: never ticket 9000001
+		cuURLPrefix + team + "/{custom_id}":            nil,
+		cuURLPrefix + "9000002/":                       nil,
+		cuURLPrefix + team + "/ALPHA-12...":            nil, // a custom id cut short is not the id it now spells
+		cuURLPrefix + team + "/ALPHA-12…":              nil,
+		cuURLPrefix + "clk0000a1/":                     {{ID: "clk0000a1", ByURL: true}}, // a trailing slash on a canonical URL
+		cuURLPrefix + "9000002/ALPHA-12":               nil,                              // another workspace
 		"https://app.clickup.com.example.invalid/t/x1": nil,
 		"https://example.invalid/app.clickup.com/t/x1": nil,
 		"clk0000a1 and ALPHA-12 bare":                  nil,
@@ -643,6 +653,16 @@ func TestACustomIdIsAWholeTokenOfTheClosedList(t *testing.T) {
 			t.Errorf("Customs(%q) = %v, want %v", text, got, want)
 		}
 	}
+	// A URL is judged ONCE, as a URL — to its END as written, not just the part the pattern read: the
+	// rest of another workspace's URL, or of a URL the matcher refused, is not a bare token.
+	for _, text := range []string{cuURLPrefix + "9000002/x/ALPHA-12", cuURLPrefix + "abc-ALPHA-12", "(" + cuURLPrefix + "9000002/ALPHA-12)"} {
+		if got := (&Matcher{Index: ix, Team: team}).Field(text, nil); len(got) != 0 {
+			t.Errorf("Field(%q) = %+v, want nothing", text, got)
+		}
+	}
+	if got := m.Prose("see " + cuURLPrefix + "zzz999 (ALPHA-12)"); len(got) != 2 {
+		t.Errorf("a custom id BESIDE a URL was blanked with it: %+v", got)
+	}
 	// CONTROL: an empty list matches nothing.
 	if got := (&Matcher{Index: NewIndex(nil)}).Field("feature/ALPHA-12-clk0000a1", nil); len(got) != 0 {
 		t.Errorf("an empty list matched %+v", got)
@@ -669,6 +689,17 @@ func TestATrailerBlockIsTheLastParagraphOfKeyValueLines(t *testing.T) {
 		if name == "a URL line in the block" && !strings.Contains(body, cuURLPrefix+"zzz999") {
 			t.Errorf("%s: the URL line left the message: %q", name, body)
 		}
+	}
+	// A whitespace-only line under the trailers is no continuation of the session id; an uncommented
+	// `Conflicts:` list hides nothing; and a paragraph looked PAST stays in the message.
+	if _, tr := splitMessage("subject\n\nClaude-Session-Id: s-1\n  "); len(tr) != 1 || tr[0].Value != "s-1" {
+		t.Errorf("a whitespace-only last line changed the trailer: %+v", tr)
+	}
+	if _, tr := splitMessage("subject\n\nTicket: clk0000a1\n\nConflicts:\n\tsome/file.go"); len(tr) != 1 || tr[0].Key != "Ticket" {
+		t.Errorf("an uncommented Conflicts list hid the trailer block: %+v", tr)
+	}
+	if body, tr := splitMessage("subject\n\nTicket: clk0000a1\n\n#42 is the PR for ALPHA-12"); len(tr) != 1 || !strings.Contains(body, "#42 is the PR for ALPHA-12") {
+		t.Errorf("a paragraph after the trailers left the message: %q %+v", body, tr)
 	}
 	for _, msg := range []string{"subject only", "Ticket: clk0000a1", "subject\n\nNote: this paragraph\nis prose, not trailers"} {
 		if _, tr := splitMessage(msg); tr != nil {
@@ -1004,5 +1035,216 @@ func TestABackoffSurvivesASessionThatIsMerelyNotListedAndEndsWhenThePodRefusesIt
 	}
 	if raw, _ := os.ReadFile(state); strings.Contains(string(raw), "s-bad-a") {
 		t.Fatalf("a deleted session is still remembered:\n%s", raw)
+	}
+}
+
+// TestAModelIsPaidOncePerPassHoweverOftenThePassIsRedone — delta audit 🔴. The model answers, and the
+// pod then FAILS the scan's write with a 500 on every run (transient: no backoff for a listed
+// session). Red before: each run asked the provider again — one paid request per run, forever. Now
+// the answer is saved in the redo marker before any of it is written, and a redo asks nobody.
+func TestAModelIsPaidOncePerPassHoweverOftenThePassIsRedone(t *testing.T) {
+	t.Run("a session the pod still lists", func(t *testing.T) {
+		w := newWorld(t, human("please do the lorem export", ""))
+		w.args = w.withModel()
+		w.prov.answer = `[{"ticket_id":"clk0000a1","confidence":0.9,"rationale":"synthetic"}]`
+		w.pod.failTypes = map[string]bool{TypeSuggestion: true} // nothing is written, so it stays listed
+		for range 5 {
+			if code, _, errs := w.run(t); code != 1 || strings.Contains(errs, "backing off") {
+				t.Fatalf("a run against a failing pod: exit %d %s", code, errs)
+			}
+		}
+		if n := len(w.prov.received()); n != 1 {
+			t.Fatalf("the provider received %d requests over 5 runs of one pass, want 1", n)
+		}
+		w.pod.failTypes = nil
+		if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "suggestions=1 requests=0") {
+			t.Fatalf("the redo once the pod recovered: exit %d\n%s%s", code, out, errs)
+		}
+		if n := len(w.prov.received()); n != 1 || len(w.pod.ofType(TypeSuggestion)) != 1 || len(w.pod.ofType(TypeScan)) != 1 {
+			t.Fatalf("after recovery: %d provider requests, %d suggestions, %d scans — want 1, 1, 1", n,
+				len(w.pod.ofType(TypeSuggestion)), len(w.pod.ofType(TypeScan)))
+		}
+		if raw, _ := os.ReadFile(filepath.Join(w.dir, "sessions.json")); strings.Contains(string(raw), "asked") {
+			t.Errorf("a finished pass left the model's answer on the host:\n%s", raw)
+		}
+	})
+	t.Run("a session only the marker brings back is bounded", func(t *testing.T) {
+		// The suggestion LANDS (so the pod stops listing the session) and the scan's write fails, on
+		// every run for 60 days. Red before: one request per run and a marker that never expired.
+		w := newWorld(t, human("please do the lorem export", ""))
+		w.args = w.withModel()
+		w.prov.answer = `[{"ticket_id":"clk0000a1","confidence":0.9,"rationale":"synthetic"}]`
+		w.pod.failTypes = map[string]bool{TypeScan: true}
+		attempts := 0
+		for range 30 {
+			_, out, _ := w.run(t)
+			if strings.Contains(out, "sessions=1") {
+				attempts++
+			}
+			w.clock = w.clock.Add(48 * time.Hour)
+		}
+		if n := len(w.prov.received()); n != 1 {
+			t.Fatalf("the provider received %d requests, want 1", n)
+		}
+		// The pass itself, then maxRedoFailures redos (each backed off, the session being unlisted).
+		if attempts != 1+maxRedoFailures {
+			t.Fatalf("the unfinished pass was attempted %d times, want exactly %d and then given up", attempts, 1+maxRedoFailures)
+		}
+		if raw, _ := os.ReadFile(filepath.Join(w.dir, "sessions.json")); strings.Contains(string(raw), session) {
+			t.Errorf("the given-up pass is still on the host:\n%s", raw)
+		}
+		if n := len(w.pod.ofType(TypeSuggestion)); n != 1 {
+			t.Errorf("%d suggestions stored, want the one — a redo must not write it again", n)
+		}
+	})
+}
+
+// TestASessionThePodStillListsIsNeverGivenUp — the give-up is for a session NOTHING else will bring
+// back. One the pod still lists keeps its backoff, which grows to its ceiling: 400 is a refusal.
+func TestASessionThePodStillListsIsNeverGivenUp(t *testing.T) {
+	w := newWorld(t)
+	w.pod.extra = map[string][]string{"s-bad-a": {human("see "+cuURLPrefix+"clk0000a1", "")}}
+	w.pod.refuseStatus = 400
+	w.pod.refuse = map[string]bool{"s-bad-a": true}
+	for i := range maxRedoFailures + 3 {
+		code, out, errs := w.run(t)
+		if code != 1 || !strings.Contains(out, "sessions=1") || !strings.Contains(errs, "backing off") {
+			t.Fatalf("attempt %d on a listed, refused session: exit %d\n%s%s", i+1, code, out, errs)
+		}
+		if strings.Contains(errs, "GIVEN UP") {
+			t.Fatalf("a session the pod still lists was given up on attempt %d", i+1)
+		}
+		w.clock = w.clock.Add(48 * time.Hour)
+	}
+}
+
+// TestAMarkerPastWhatThePodHoldsIsDroppedBeforeAnythingIsPaid — the session was deleted and uploaded
+// again, shorter, under the same id: the marker names positions that no longer exist. The pass stops
+// at its first transcript page — no model request, no refused write — and the marker is dropped.
+func TestAMarkerPastWhatThePodHoldsIsDroppedBeforeAnythingIsPaid(t *testing.T) {
+	w := newWorld(t, human("one", ""), human("two", ""), human("three", ""))
+	w.args = w.withModel()
+	w.pod.failTypes = map[string]bool{TypeScan: true}
+	w.pod.failStatus = 400
+	w.prov.answer = `[{"ticket_id":"clk0000a1","confidence":0.9,"rationale":"synthetic"}]`
+	if code, _, _ := w.run(t); code != 1 || len(w.prov.received()) != 1 {
+		t.Fatalf("the interrupted pass: exit %d, %d requests", code, len(w.prov.received()))
+	}
+	w.pod.mu.Lock()
+	w.pod.records["main"] = w.pod.records["main"][:1]
+	w.pod.hidden = map[string]bool{session: true}
+	w.pod.mu.Unlock()
+	w.clock = w.clock.Add(time.Hour)
+	_, _, errs := w.run(t)
+	if !strings.Contains(errs, "fewer records than the pending item names") {
+		t.Fatalf("the redo over a shrunk session: %s", errs)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(w.dir, "sessions.json")); strings.Contains(string(raw), session) {
+		t.Errorf("the stale marker is still kept:\n%s", raw)
+	}
+	if n := len(w.prov.received()); n != 1 {
+		t.Errorf("%d provider requests, want no new one", n)
+	}
+}
+
+// TestAnEntryWithNoUnfinishedPassIsDroppedWhenThePodRefusesTheSession — a backoff entry carrying no
+// marker (a state file written before the marker existed) for a session the pod does not list: kept
+// while the pod still answers for it, dropped when the pod answers its one 403.
+func TestAnEntryWithNoUnfinishedPassIsDroppedWhenThePodRefusesTheSession(t *testing.T) {
+	w := newWorld(t)
+	w.pod.extra = map[string][]string{"s-old-a": {human("x", "")}}
+	w.pod.hidden = map[string]bool{"s-old-a": true}
+	state := filepath.Join(w.dir, "sessions.json")
+	write := func() {
+		if err := os.WriteFile(state, []byte(`{"sessions":{"s-old-a":{"failures":2,"retry_at":"2000-01-03T00:00:00Z","records":1}}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write()
+	w.run(t)
+	if raw, _ := os.ReadFile(state); !strings.Contains(string(raw), "s-old-a") || !strings.Contains(string(raw), `"seen"`) {
+		t.Fatalf("an unlisted entry the pod still answers for was dropped, or not stamped:\n%s", raw)
+	}
+	w.pod.mu.Lock()
+	delete(w.pod.extra, "s-old-a")
+	w.pod.mu.Unlock()
+	w.run(t)
+	if raw, _ := os.ReadFile(state); strings.Contains(string(raw), "s-old-a") {
+		t.Fatalf("an entry for a session the pod refuses is still kept:\n%s", raw)
+	}
+}
+
+// TestUnfinishedPassesAreWorkedOnBeforeNewOnes — with `-limit 1`, the pass that was started is
+// finished before a new session is begun.
+func TestUnfinishedPassesAreWorkedOnBeforeNewOnes(t *testing.T) {
+	w := newWorld(t, human("see "+cuURLPrefix+"clk0000a1", ""))
+	w.pod.failTypes = map[string]bool{TypeScan: true}
+	if code, _, _ := w.run(t); code != 1 {
+		t.Fatalf("the interrupted pass: exit %d", code)
+	}
+	w.pod.mu.Lock()
+	w.pod.failTypes = nil
+	w.pod.extra = map[string][]string{"s-aaa-new": {human("see "+cuURLPrefix+"clk0000b2", "")}}
+	w.pod.mu.Unlock()
+	w.clock = w.clock.Add(time.Hour)
+	if _, _, errs := w.run(t, "-limit", "1"); !strings.Contains(errs, "session="+session+" full=true") || strings.Contains(errs, "session=s-aaa-new") {
+		t.Fatalf("with -limit 1 the run did not finish the unfinished pass first:\n%s", errs)
+	}
+}
+
+// TestAListedSessionInBackoffIsStampedAndAnUnlistedRedoIsNot — the stamp the state TTL counts from.
+// A session the pod LISTS is stamped on disk even when the run only skips it. A session only the redo
+// marker brings back is NOT re-stamped by being retried — otherwise the TTL could never end a pass
+// that keeps failing without a refusal (the run's own deadline, here a cancelled context).
+func TestAListedSessionInBackoffIsStampedAndAnUnlistedRedoIsNot(t *testing.T) {
+	w := newWorld(t, human("x", ""))
+	state := filepath.Join(w.dir, "sessions.json")
+	retry := w.clock.Add(time.Hour).UTC().Format(time.RFC3339)
+	if err := os.WriteFile(state, []byte(`{"sessions":{"`+session+`":{"failures":1,"retry_at":"`+retry+`","records":1}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, out, _ := w.run(t); !strings.Contains(out, "skipped=1") {
+		t.Fatalf("expected the session inside its backoff: %s", out)
+	}
+	if raw, _ := os.ReadFile(state); !strings.Contains(string(raw), `"seen": "`+w.clock.UTC().Format(time.RFC3339)+`"`) {
+		t.Fatalf("a listed, skipped session was not stamped on disk:\n%s", raw)
+	}
+
+	const old = "2000-01-01T00:00:00Z"
+	item := pluginapi.PendingItem{Session: session, Streams: map[string]pluginapi.StreamPos{"main": {SeqTo: 1}}}
+	for _, unlisted := range []bool{true, false} {
+		st := &stateFile{path: filepath.Join(t.TempDir(), "s.json"), Sessions: map[string]*sessionState{
+			session: {Backoff: hoststate.Backoff{Seen: old}, Redo: &item}}}
+		r := &Runner{API: &pluginapi.Client{Base: w.podURL, Token: fakeToken}, State: st, Now: func() time.Time { return w.clock },
+			Matcher: &Matcher{Index: NewIndex(nil)}, Log: func(string) {}}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // the run's deadline: every request fails, and it is no refusal
+		var stats Stats
+		if err := r.Run(ctx, []work{{item: item, redo: true, unlisted: unlisted}}, &stats); err != nil || stats.Failed != 1 {
+			t.Fatalf("unlisted=%t: %v %+v", unlisted, err, stats)
+		}
+		ss := st.Sessions[session]
+		if ss == nil || ss.Failures != 0 {
+			t.Fatalf("unlisted=%t: a cancelled run dropped or backed off the pass: %+v", unlisted, ss)
+		}
+		if got := ss.Seen == old; got != unlisted {
+			t.Errorf("unlisted=%t: the stamp is %s (was %s)", unlisted, ss.Seen, old)
+		}
+	}
+
+	// …and that is what lets the TTL end it: an unfinished pass the pod has not listed for longer
+	// than the TTL is dropped rather than retried; one inside the TTL is still due.
+	for _, tc := range []struct {
+		seen string
+		due  int
+	}{{w.clock.Add(-hoststate.StateTTL - time.Hour).UTC().Format(time.RFC3339), 0}, {w.clock.Add(-time.Hour).UTC().Format(time.RFC3339), 1}} {
+		st := &stateFile{path: filepath.Join(t.TempDir(), "s.json"), Sessions: map[string]*sessionState{
+			session: {Backoff: hoststate.Backoff{Seen: tc.seen}, Redo: &item}}}
+		r := &Runner{State: st, Now: func() time.Time { return w.clock }, Limit: 10, Log: func(string) {}}
+		var stats Stats
+		todo, err := r.due(context.Background(), nil, &stats)
+		if err != nil || len(todo) != tc.due || len(st.Sessions) != tc.due {
+			t.Errorf("an unfinished pass last listed at %s: %d due, %d kept (err %v), want %d", tc.seen, len(todo), len(st.Sessions), err, tc.due)
+		}
 	}
 }

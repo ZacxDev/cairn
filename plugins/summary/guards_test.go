@@ -67,7 +67,7 @@ func TestTheAnswerAndTheModelAreMadeToFitThePod(t *testing.T) {
 // skipped while it backs off, and the next attempt POSTs the SAME summary without a second provider
 // request. Red before the state file existed: every run re-bought the whole chain.
 func TestARefusedWriteIsKeptAndRePostedWithoutTheProvider(t *testing.T) {
-	for _, status := range []int{http.StatusInsufficientStorage, http.StatusBadRequest} {
+	for _, status := range []int{http.StatusInsufficientStorage, http.StatusBadRequest, http.StatusForbidden} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			w := newWorld(t, numbered(1, 3))
 			w.pod.writeStatus = status
@@ -511,5 +511,24 @@ func TestOnlyARefusalBacksOff(t *testing.T) {
 	w2.pod.writeStatus = 0
 	if code, out, errs := w2.run(t); code != 0 || !strings.Contains(out, "written=1 requests=0") {
 		t.Fatalf("the run right after a pod 500: exit %d — want the kept summary re-posted, no backoff, no provider\n%s%s", code, out, errs)
+	}
+}
+
+// TestAListedSessionsStampReachesTheStateFile — an entry with no `seen` stamp (a state file written
+// before the stamp existed) for a session the pod LISTS and this plugin skips (inside its backoff) is
+// stamped ON DISK by that run, though nothing else about it changed: the 30-day TTL counts from when
+// the pod last listed the session.
+func TestAListedSessionsStampReachesTheStateFile(t *testing.T) {
+	w := newWorld(t, numbered(1, 3))
+	state := filepath.Join(w.dir, "sessions.json")
+	retry := w.clock.Add(time.Hour).UTC().Format(time.RFC3339)
+	if err := os.WriteFile(state, []byte(`{"sessions":{"`+session+`":{"failures":1,"retry_at":"`+retry+`","records":3}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, out, _ := w.run(t); !strings.Contains(out, "skipped=1") {
+		t.Fatalf("expected the session inside its backoff: %s", out)
+	}
+	if raw, _ := os.ReadFile(state); !strings.Contains(string(raw), `"seen": "`+w.clock.UTC().Format(time.RFC3339)+`"`) {
+		t.Fatalf("a listed, skipped session was not stamped on disk:\n%s", raw)
 	}
 }

@@ -1,6 +1,7 @@
 package hoststate
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,5 +74,54 @@ func TestTheStateFileIsWrittenWholeAndAnUnreadableOneIsAnError(t *testing.T) {
 	}
 	if err := Load(path, &out); err == nil || !strings.Contains(err.Error(), "does not parse") {
 		t.Fatalf("a damaged state file loaded: %v", err)
+	}
+}
+
+// TestAnUnlistedEntryGoesOnlyOnAPositiveSignalOrItsTTL — and its stamp is NOT renewed by being asked
+// about: twenty unlisted runs two days apart cross the TTL, where a stamp refreshed on every run
+// would never expire.
+func TestAnUnlistedEntryGoesOnlyOnAPositiveSignalOrItsTTL(t *testing.T) {
+	here := func() (bool, error) { return false, nil }
+	gone := func() (bool, error) { return true, nil }
+	broken := func() (bool, error) { return true, errors.New("the pod could not be reached") }
+
+	b := &Backoff{Failures: 1}
+	if b.Unlisted(t0, here) || b.Seen == "" {
+		t.Fatalf("an entry the pod still answers for was dropped, or left unstamped: %+v", b)
+	}
+	stamped := b.Seen
+	if b.Unlisted(t0.Add(time.Hour), broken) {
+		t.Fatal("a probe that FAILED dropped the entry")
+	}
+	if !(&Backoff{Seen: stamped}).Unlisted(t0.Add(time.Hour), gone) {
+		t.Fatal("the pod's refusal did not drop the entry")
+	}
+	dropped := -1
+	for i := range 20 {
+		if b.Unlisted(t0.Add(time.Duration(i)*48*time.Hour), here) {
+			dropped = i
+			break
+		}
+	}
+	if b.Seen != stamped {
+		t.Errorf("being asked about refreshed the stamp: %s → %s", stamped, b.Seen)
+	}
+	if dropped != 16 { // 32 days: the first run past the 30-day TTL
+		t.Errorf("the entry was dropped at run %d, want 16 (the first past %s)", dropped, StateTTL)
+	}
+}
+
+// TestTouchSaysWhenTheStampMovedEnoughToSave — a listed session's stamp must reach the file, but not
+// on every run.
+func TestTouchSaysWhenTheStampMovedEnoughToSave(t *testing.T) {
+	b := &Backoff{}
+	if !b.Touch(t0) {
+		t.Fatal("the first stamp is not reported")
+	}
+	if b.Touch(t0.Add(23 * time.Hour)) {
+		t.Error("a stamp less than a day old was reported as moved")
+	}
+	if !b.Touch(t0.Add(25*time.Hour)) || b.Stale(t0.Add(25*time.Hour+StateTTL)) {
+		t.Errorf("a stamp a day old was not renewed: %+v", b)
 	}
 }

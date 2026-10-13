@@ -154,9 +154,12 @@ const pendingAsk = 100
 // never written twice). The same marker keeps a pass that stopped at the edge cap, or whose host
 // source (a repository, the GitHub CLI) could not be read, coming back.
 //
-// ⚠ BOUNDED: for a session the pod no longer lists, after [maxRedoFailures] failed attempts at the
-// same size the marker is dropped and a line says so (one the pod still lists keeps backing off); and a session the pod answers its one 403 for (deleted, or toggled off) is dropped at
-// once.
+// ⚠ BOUNDED, FOR A SESSION ONLY THE MARKER BRINGS BACK: any failure backs it off, and after
+// [maxRedoFailures] failed attempts at the same size the marker is dropped and a line says so; it is
+// dropped at once when the pod answers its one 403 (deleted, or toggled off) or holds fewer records
+// than the marker names; and it is never re-stamped by being retried, so [hoststate.StateTTL] ends it
+// whatever else happens. A session the pod still lists keeps backing off instead — and in every case
+// the model is not asked twice for one pass ([sessionState.Asked]).
 type stateFile struct {
 	path     string
 	Sessions map[string]*sessionState `json:"sessions"`
@@ -167,7 +170,27 @@ type sessionState struct {
 	hoststate.Backoff
 	// Redo is the pending item of a pass that started and has not finished.
 	Redo *pluginapi.PendingItem `json:"redo,omitempty"`
+	// Asked is the model's answer for the unfinished pass.
+	//
+	// 🔴 A MODEL IS PAID ONCE PER PASS, HOWEVER OFTEN THE PASS IS REDONE. The answer is saved here the
+	// moment the provider gives it, BEFORE any of it is written to the pod; a redo writes what is
+	// saved and asks nobody. Without it every redo — after a 500 on the scan's write, a refused
+	// write, a failed host source — bought the same request again.
+	Asked *asked `json:"asked,omitempty"`
 }
+
+// asked is a provider's answer for one pass: what it suggested (already filtered), and for how many
+// records — an answer for a session that has since GROWN is not reused.
+type asked struct {
+	Records     int64        `json:"records"`
+	Model       string       `json:"model"`
+	Suggestions []Suggestion `json:"suggestions"`
+}
+
+// errShrunk is a session whose stored streams end BEFORE the positions a pending item names: it was
+// deleted and uploaded again under the same id. A watermark at the old positions would be refused,
+// so the pass stops before anything is paid for and the stale marker is dropped.
+var errShrunk = errors.New("the session holds fewer records than the pending item names (deleted and re-uploaded); the pass is dropped")
 
 // maxRedoFailures bounds how often an unfinished pass is retried at one size.
 const maxRedoFailures = 6
@@ -214,7 +237,7 @@ func (r *Runner) due(ctx context.Context, items []pluginapi.PendingItem, st *Sta
 	var unlisted []string
 	for id, ss := range r.State.Sessions {
 		if _, ok := listed[id]; ok {
-			ss.Touch(r.Now())
+			changed = ss.Touch(r.Now()) || changed
 			continue
 		}
 		// 🔴 NOT LISTED IS NOT GONE ([hoststate.Backoff.Unlisted]): a session that was only resumed
@@ -289,11 +312,18 @@ func (r *Runner) Run(ctx context.Context, items []work, st *Stats) error {
 			r.State.Sessions[it.Session] = ss
 		}
 		ss.Redo = &it
-		ss.Touch(r.Now())
+		if !w.unlisted {
+			// 🔴 NOT for a session only the marker brought here: its stamp stays where the pod last
+			// listed it, so the state TTL bounds how long an unfinished pass is retried.
+			ss.Touch(r.Now())
+		}
+		if ss.Asked != nil && ss.Asked.Records != records(it) {
+			ss.Asked = nil // the session grew since that answer
+		}
 		if err := r.State.save(); err != nil {
 			return err
 		}
-		res, err := r.session(ctx, it, w.redo)
+		res, err := r.session(ctx, it, w.redo, ss)
 		st.Edges += res.edges
 		st.Suggestions += res.suggestions
 		st.Requests += res.requests
@@ -307,7 +337,11 @@ func (r *Runner) Run(ctx context.Context, items []work, st *Stats) error {
 			// off for it. There is nothing left to finish.
 			delete(r.State.Sessions, it.Session)
 			note = " — the pod no longer serves this session to the plugin; the unfinished pass is dropped"
-		case err != nil && ctx.Err() == nil && refused(err), err == nil && res.sourceErrs > 0:
+		case errors.Is(err, errShrunk):
+			delete(r.State.Sessions, it.Session)
+		case err != nil && ctx.Err() == nil && (refused(err) || w.unlisted), err == nil && res.sourceErrs > 0:
+			// A session ONLY the marker brings back backs off on ANY failure, transient ones included:
+			// nothing else is waiting on it, and an unbounded every-run retry is what it would be.
 			// 🔴 NOT RETRIED NEXT RUN: a refusal by the pod repeats for the same records, and a model
 			// may already have been paid for the suggestion whose write was refused.
 			wait := ss.Fail(r.Now(), records(it))
@@ -321,8 +355,9 @@ func (r *Runner) Run(ctx context.Context, items []work, st *Stats) error {
 		case err == nil && !res.more:
 			delete(r.State.Sessions, it.Session) // the pass finished
 		}
-		// Anything else — the pod not reached, the run's deadline, the edge cap — keeps the marker
-		// with no backoff: the next run continues.
+		// Anything else — for a session the pod lists: the pod failing (5xx) or not reached, the
+		// run's deadline; for any session: the edge cap — keeps the marker with no backoff, and the
+		// next run continues. It asks no model again: the answer is in the marker ([sessionState.Asked]).
 		if serr := r.State.save(); serr != nil {
 			return serr
 		}
@@ -402,6 +437,9 @@ func (r *Runner) scanStream(ctx context.Context, session, stream string, after, 
 			View: "raw", MaxBytes: r.PageBytes})
 		if err != nil {
 			return err
+		}
+		if p.SeqTo < to {
+			return errShrunk
 		}
 		if len(p.Records) == 0 {
 			break
@@ -523,7 +561,7 @@ func (r *Runner) heldBy(ctx context.Context, it pluginapi.PendingItem, redo bool
 	return h, nil
 }
 
-func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem, redo bool) (sessionResult, error) {
+func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem, redo bool, ss *sessionState) (sessionResult, error) {
 	var res sessionResult
 	streams := streamsOf(it)
 	if len(streams) == 0 {
@@ -671,12 +709,27 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem, redo boo
 	// --- suggestions: one request, and only ever written as suggestions.
 	scan := Scan{System: "clickup", Edges: res.edges}
 	model := noModel
-	if sg, m, err := r.suggest(ctx, it, &res, h); err != nil {
-		res.modelErr = true
-		r.Log(fmt.Sprintf("clickup: session=%s no suggestion was made: %v", it.Session, err))
-	} else if m != "" {
+	if ss.Asked == nil {
+		if sg, m, err := r.suggest(ctx, it, &res, h); err != nil {
+			res.modelErr = true
+			r.Log(fmt.Sprintf("clickup: session=%s no suggestion was made: %v", it.Session, err))
+		} else if m != "" {
+			// Saved BEFORE the first of it is written: see [sessionState.Asked].
+			ss.Asked = &asked{Records: records(it), Model: m, Suggestions: sg}
+			if err := r.State.save(); err != nil {
+				return res, err
+			}
+		}
+	}
+	if a := ss.Asked; a != nil {
+		m := a.Model
 		scan.ModelAsked, model = true, m
-		for _, s := range sg {
+		for _, s := range a.Suggestions {
+			// A redo re-writes only what the interrupted pass did not get to.
+			if h.suggested[s.TicketID] || h.edged[s.TicketID] {
+				continue
+			}
+			h.suggested[s.TicketID] = true
 			s.Title = r.title(s.TicketID)
 			if _, err := r.API.WriteOutput(ctx, pluginapi.Envelope{Plugin: Name, PluginVersion: Version, Model: m,
 				Session: it.Session, InputWatermark: wm, Type: TypeSuggestion, Body: s}); err != nil {

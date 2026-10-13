@@ -134,7 +134,7 @@ func (r *Runner) Run(ctx context.Context) (Stats, error) {
 	changed := false
 	for id, ss := range r.State.Sessions {
 		if listed[id] {
-			ss.Touch(r.Now())
+			changed = ss.Touch(r.Now()) || changed
 			continue
 		}
 		seen := ss.Seen

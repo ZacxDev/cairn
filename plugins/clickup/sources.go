@@ -63,35 +63,44 @@ type Commit struct {
 // gitNote is a line git itself adds to a message's last paragraph that is no trailer.
 var gitNote = regexp.MustCompile(`^\(cherry picked from commit [0-9a-f]{7,64}\)$`)
 
-// splitMessage separates a commit message from its trailer block: the LAST paragraph (after any
-// trailing paragraphs of `#` comment lines, which a conflicted merge leaves), when it is not the only
-// one and every line of it is a trailer, a continuation of the line above, a line git adds itself
-// (`(cherry picked from commit …)`), or a bare URL — which is prose and stays in the message.
+// gitComment reports whether a paragraph is one git appends that is no part of the message's trailer
+// block: `#` comment lines, or a `Conflicts:` list (commented or not) with its tab-indented paths.
+func gitComment(par string) bool {
+	lines := strings.Split(par, "\n")
+	if !strings.HasPrefix(lines[0], "#") && strings.TrimSpace(lines[0]) != "Conflicts:" {
+		return false
+	}
+	for _, line := range lines[1:] {
+		if !strings.HasPrefix(line, "#") && !strings.HasPrefix(line, "\t") {
+			return false
+		}
+	}
+	return true
+}
+
+// splitMessage separates a commit message from its trailer block: the LAST paragraph — looking past
+// any trailing paragraphs git itself appended ([gitComment]) — when it is not the only one and every
+// line of it is a trailer, a continuation of the line above, a line git adds itself
+// (`(cherry picked from commit …)`), or a bare URL, which is prose. The message returned is
+// EVERYTHING ELSE: only the trailer lines leave it.
 func splitMessage(msg string) (string, []Trailer) {
 	msg = strings.TrimRight(strings.ReplaceAll(msg, "\r\n", "\n"), "\n")
-	body := msg
-	for {
-		cut := strings.LastIndex(body, "\n\n")
-		if cut < 0 {
-			return msg, nil
-		}
-		comment := true
-		for _, line := range strings.Split(body[cut+2:], "\n") {
-			if !strings.HasPrefix(line, "#") && !strings.HasPrefix(line, "\t") {
-				comment = false
-			}
-		}
-		if !comment {
-			break
-		}
-		body = strings.TrimRight(body[:cut], "\n")
+	pars := strings.Split(msg, "\n\n")
+	at := len(pars) - 1
+	for at > 0 && gitComment(pars[at]) {
+		at--
 	}
-	cut := strings.LastIndex(body, "\n\n")
+	if at == 0 {
+		return msg, nil // the subject paragraph is never a trailer block
+	}
 	var out []Trailer
 	var prose []string
-	for _, line := range strings.Split(body[cut+2:], "\n") {
+	for _, line := range strings.Split(pars[at], "\n") {
 		m := trailerLine.FindStringSubmatch(line)
 		switch {
+		case strings.TrimSpace(line) == "":
+			// A whitespace-only line is no continuation: appended to the value above it made a
+			// session id that was never equal to itself.
 		case m != nil && strings.HasPrefix(m[2], "//"):
 			prose = append(prose, line) // `https://…` on its own line: a URL, not a `https:` trailer
 		case m != nil:
@@ -106,7 +115,15 @@ func splitMessage(msg string) (string, []Trailer) {
 	if len(out) == 0 {
 		return msg, nil
 	}
-	return strings.TrimRight(body[:cut]+"\n\n"+strings.Join(prose, "\n"), "\n"), out
+	rest := append(append([]string{}, pars[:at]...), strings.Join(prose, "\n"))
+	rest = append(rest, pars[at+1:]...)
+	var kept []string
+	for _, p := range rest {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, "\n\n"), out
 }
 
 // run executes one host program with a bounded answer. The environment is this process's, so the

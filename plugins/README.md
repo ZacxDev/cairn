@@ -173,6 +173,11 @@ stores ticket ids only) — and that works only against an instance started with
 The ClickUp token follows the module's rules for every credential (`internal/endpoint`,
 `internal/secretfile`): a 0600 file, one header, no redirect followed (a 3xx is an error — Go would
 re-send `Authorization` to its target), `https` or loopback only, and scrubbed from any error text.
+The WORKER listener is reached directly, never through a proxy from the environment: with
+`-allow-plaintext-host` the request is plain http to a non-loopback host, which Go's default transport
+would hand whole — token and transcript bytes — to `HTTP_PROXY`. The provider and ClickUp clients keep
+the environment's proxy: both are https (ClickUp: https or loopback, no plaintext exception), so a proxy
+sees a `CONNECT` tunnel, not the request.
 `-allow-plaintext-host` is plugin A's flag and applies to `-worker-url` alone — never to ClickUp or the
 provider, which are on the public internet.
 
@@ -190,13 +195,22 @@ from record 1 (an edge it already holds is not written twice). The marker also b
 stopped at the 100-edge cap, and one whose host source (a repository, the GitHub CLI) could not be
 read.
 
+**The model's answer rides in the marker.** It is saved the moment the provider gives it, before any
+of it is written to the pod, and a redo writes what is saved: a model is paid ONCE per pass however
+often the pass is redone. An answer for a session that has since grown is not reused. ⚠ Until the pass
+finishes, that answer — ticket ids, confidences, one-sentence rationales about the session — is at
+rest in the state file.
+
 **The backoff.** A pass the pod REFUSED (507 quota, 400, the 403) or whose host source failed is
-skipped for 15 minutes doubling to 24 hours; a success, or the session growing, clears it. A 5xx, an
-unreachable pod and the run's own deadline are transient: retried by the next run, no backoff. A
-session the pod no longer lists is given up after 6 failed attempts at one size (a line says so), and
-at once when the pod answers its 403 for it (deleted, or toggled off). A backoff is NOT dropped because
-one pending page did not list the session (plugin A's rule, `hoststate.Backoff.Unlisted`). The run asks the pod for its
-maximum page (100) and WORKS ON `-limit` sessions not in backoff, unfinished passes first.
+skipped for 15 minutes doubling to 24 hours; a success, or the session growing, clears it. For a
+session the pod still lists, a 5xx, an unreachable pod and the run's own deadline are transient:
+retried by the next run, no backoff (and no second model request). A session ONLY the marker brings
+back backs off on any failure and is given up after 6 failed attempts at one size (a line says so);
+at once when the pod answers its 403 for it (deleted, or toggled off) or holds fewer records than the
+marker names (deleted and re-uploaded); and after 30 days without the pod listing it. A backoff is NOT
+dropped because one pending page did not list the session (plugin A's rule,
+`hoststate.Backoff.Unlisted`). The run asks the pod for its maximum page (100) and WORKS ON `-limit`
+sessions not in backoff, unfinished passes first.
 
 Exit codes: 0 the run finished, 1 a session, a source or the ticket fetch failed, 2 usage. The last
 stdout line is `SUMMARY clickup-run: sessions=… edges=… suggestions=… requests=… failed=… capped=… skipped=…`.
@@ -231,13 +245,14 @@ stdout line is `SUMMARY clickup-run: sessions=… edges=… suggestions=… requ
   whole-second stamp against this plugin's previous scan, so a summary stamped at or before that scan
   waits for the summary after it.
 - **A URL split across two strings, or cut short by a tool, is no URL**: `…/t/abc...` is refused
-  rather than read as ticket `abc`.
+  rather than read as ticket `abc`, a custom-id URL cut short is not the shorter listed id it spells,
+  and `/t/<workspace>/` with nothing readable after it is never read as a ticket.
 - **The entry reader is a narrow second reader**, not the store's parser: it reads the attribution
   trailer and the `refs:` key and nothing else; a file it misreads costs an edge.
 - **Suggestions are best-effort**: a capped, failed or unconfigured model leaves the pass complete
   with `model_asked: false`, and that session is not asked again until its summary changes.
-- **A suggestion whose write the pod refused is not kept**: after the backoff the model is asked — and
-  paid — again. Plugin A caches its unwritten summary; this plugin does not cache.
+- **A given-up pass is not finished**: after its 6 attempts (or 30 days) the edges and suggestions it
+  had not written are written only if the session grows again.
 - **More than 100 sessions in backoff at once hide the rest** — the pod's pending page is 100.
 - **The fakes prove the PLUGIN, not the contract** — the real listener is the parent module's
   `internal/worker` `TestTheClickupPluginAgainstTheRealListener`, which also stores a summary through

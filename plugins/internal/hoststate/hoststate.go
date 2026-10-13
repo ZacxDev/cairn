@@ -42,8 +42,18 @@ type Backoff struct {
 // for. Past it the entry is dropped whatever it holds.
 const StateTTL = 30 * 24 * time.Hour
 
-// Touch records that the session was listed (or its entry written) now.
-func (b *Backoff) Touch(now time.Time) { b.Seen = now.UTC().Format(time.RFC3339) }
+// Touch records that the session was listed (or its entry written) now. It reports whether the
+// stamp moved by a day or more (or was absent): the caller SAVES then, so the stamp of a session that
+// is listed run after run without anything else changing is not only ever in memory — and is not
+// rewritten on every run either.
+func (b *Backoff) Touch(now time.Time) (moved bool) {
+	at, err := time.Parse(time.RFC3339, b.Seen)
+	if err == nil && now.Sub(at) < 24*time.Hour && !now.Before(at) {
+		return false
+	}
+	b.Seen = now.UTC().Format(time.RFC3339)
+	return true
+}
 
 // Stale reports whether the entry was last touched more than [StateTTL] ago. An entry with no stamp
 // (written before the stamp existed) is not stale; the caller stamps it.
@@ -62,8 +72,10 @@ func (b *Backoff) Stale(now time.Time) bool {
 // refusal for the session (deleted, or the plugin turned off for it), or the entry is past
 // [StateTTL]. A probe that FAILS for any other reason keeps the entry.
 func (b *Backoff) Unlisted(now time.Time, gone func() (bool, error)) (drop bool) {
+	// Stamped ONCE, when an entry has none (written before the stamp existed) — never refreshed
+	// here: a stamp renewed on every unlisted run is a TTL that never expires.
 	if b.Seen == "" {
-		b.Touch(now)
+		b.Seen = now.UTC().Format(time.RFC3339)
 	}
 	if b.Stale(now) {
 		return true
