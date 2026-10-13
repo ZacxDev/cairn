@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 )
 
 // 🔴 TWO IN-PROCESS FAKES, BOTH SYNTHETIC, BOTH WRITTEN FROM THE CONTRACTS THIS MODULE SPELLS. The fake
@@ -40,9 +41,13 @@ type fakePod struct {
 	pageMax  int // records per page, to exercise paging
 	views    []string
 	refuseTr bool // answer 403 on the transcript route (the toggle turned OFF)
-	ledger   int64  // a `ledger` stream's seq_to (the client read ledger); 0 is none
 	plugin   string // the registered name the pod stamps on outputs ("" is "summary")
 	srcs     []string // per-record src (opencode `prt:…`); nil is the record's index
+	// writeStatus, when non-zero, is what the POST answers instead of storing (507 a full quota, 400).
+	writeStatus int
+	// pendingLag makes the pending item name a main `seq_to` this many records SHORT of what the
+	// transcript route then serves — a session that grew between the two requests.
+	pendingLag int
 }
 
 // streamWire is the pod's `ValidStream` vocabulary (`internal/plugins`): the streams an
@@ -50,12 +55,9 @@ type fakePod struct {
 var streamWire = regexp.MustCompile(`^(main|subagent:[A-Za-z0-9][A-Za-z0-9_.-]{0,63}|child:[A-Za-z0-9][A-Za-z0-9_.-]{0,63})$`)
 
 func (p *fakePod) streams() map[string]int64 {
-	s := map[string]int64{"main": int64(len(p.records))}
+	s := map[string]int64{"main": int64(len(p.records) - p.pendingLag)}
 	if p.sub > 0 {
 		s["subagent:a1"] = p.sub
-	}
-	if p.ledger > 0 {
-		s["ledger"] = p.ledger
 	}
 	return s
 }
@@ -95,9 +97,7 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		pos := map[string]any{}
 		for s, seq := range streams {
 			pos[s] = map[string]int64{"seq_to": seq}
-			// Growth is counted over the streams a watermark can name — the rule the pod's pending
-			// query keeps (a `ledger` stream is listed, never counted).
-			if streamWire.MatchString(s) && seq > wm[s] {
+			if seq > wm[s] {
 				grown = true
 			}
 		}
@@ -152,6 +152,19 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			http.Error(rw, "bad envelope", 400)
 			return
 		}
+		if p.writeStatus != 0 {
+			http.Error(rw, `{"refused":"quota","quota_bytes":1}`, p.writeStatus)
+			return
+		}
+		// The pod's own bounds (`internal/plugins` outputs.go): model 1–128 bytes with no control
+		// character, a summary's text 1–16 KiB.
+		var body struct{ Text string }
+		_ = json.Unmarshal(env.Body, &body)
+		if env.Model == "" || len(env.Model) > 128 || strings.ContainsFunc(env.Model, unicode.IsControl) ||
+			body.Text == "" || len(body.Text) > 16<<10 {
+			http.Error(rw, "the envelope is outside the pod's bounds", 400)
+			return
+		}
 		for s, seq := range env.InputWatermark {
 			if !streamWire.MatchString(s) {
 				http.Error(rw, "input_watermark holds a bad stream or a negative seq", 400)
@@ -203,6 +216,9 @@ type fakeProvider struct {
 	emptyOn, hangOn int
 	hang            time.Duration
 	sizes           []int // each request body's size
+	raws            []string
+	// stop, model and text override the answer's stop/finish reason, model and text ("" keeps the default).
+	stop, model, text string
 }
 
 func (f *fakeProvider) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
@@ -210,6 +226,7 @@ func (f *fakeProvider) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	raw, _ := io.ReadAll(r.Body)
 	f.sizes = append(f.sizes, len(raw))
+	f.raws = append(f.raws, string(raw))
 	if f.hangOn == len(f.users)+1 {
 		f.mu.Unlock()
 		select {
@@ -240,8 +257,8 @@ func (f *fakeProvider) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		f.system = append(f.system, body.Messages[0].Content)
 		f.users = append(f.users, body.Messages[len(body.Messages)-1].Content)
 		writeJSON(rw, 200, map[string]any{"model": "fake-chat-1", "choices": []any{map[string]any{
-			"message": map[string]string{"role": "assistant", "content": fmt.Sprintf("summary %d", len(f.users))},
-			"finish_reason": "stop"}}, "usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 5}})
+			"message":       map[string]string{"role": "assistant", "content": fmt.Sprintf("summary %d", len(f.users))},
+			"finish_reason": orStr(f.stop, "stop")}}, "usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 5}})
 		return
 	}
 	if r.URL.Path != "/v1/messages" || r.Header.Get("x-api-key") != fakeKey || r.Header.Get("anthropic-version") == "" {
@@ -250,15 +267,25 @@ func (f *fakeProvider) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 	f.system = append(f.system, body.System)
 	f.users = append(f.users, body.Messages[0].Content)
-	writeJSON(rw, 200, map[string]any{"model": "fake-model-1", "stop_reason": "end_turn",
+	writeJSON(rw, 200, map[string]any{"model": orStr(f.model, "fake-model-1"), "stop_reason": orStr(f.stop, "end_turn"),
 		"content": []any{map[string]string{"type": "thinking", "thinking": ""},
 			map[string]string{"type": "text", "text": f.answer()}},
 		"usage": map[string]int{"input_tokens": 10, "output_tokens": 5}})
 }
 
+func orStr(s, d string) string {
+	if s == "" {
+		return d
+	}
+	return s
+}
+
 func (f *fakeProvider) answer() string {
 	if len(f.users) == f.emptyOn {
 		return ""
+	}
+	if f.text != "" {
+		return f.text
 	}
 	return fmt.Sprintf("summary %d", len(f.users))
 }

@@ -27,6 +27,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ZacxDev/cairn/plugins/internal/endpoint"
 )
 
 // The routes, spelled as `internal/worker/plugin.go` spells them.
@@ -47,7 +49,7 @@ var ErrUnauthorized = errors.New("the plugin API did not accept the token (401)"
 type StatusError struct {
 	Path   string
 	Status int
-	// Detail is the start of the body, for the operator; the API's bodies carry no secret.
+	// Detail is the start of the body, for the operator, with the token scrubbed.
 	Detail string
 }
 
@@ -72,15 +74,24 @@ const DefaultTimeout = 60 * time.Second
 // and JSON escaping can grow it.
 const maxAnswer = 32 << 20
 
-func (c *Client) http() *http.Client {
-	if c.HTTP != nil {
-		return c.HTTP
+// http is the client every request uses: the caller's (or a default) with redirects NOT followed —
+// a 3xx is answered as a [StatusError], never chased with the bearer token (`internal/endpoint`).
+func (c *Client) http() *http.Client { return endpoint.Client(c.HTTP, DefaultTimeout) }
+
+// scrub removes the token from text about to be shown.
+func (c *Client) scrub(s string) string {
+	if c.Token == "" {
+		return s
 	}
-	return &http.Client{Timeout: DefaultTimeout}
+	return strings.ReplaceAll(s, c.Token, "[token]")
 }
 
 func (c *Client) do(ctx context.Context, method, path string, q url.Values, body []byte, into any) error {
-	u := strings.TrimRight(c.Base, "/") + path
+	base, err := endpoint.Validate("the worker URL", c.Base)
+	if err != nil {
+		return err
+	}
+	u := base + path
 	if len(q) > 0 {
 		u += "?" + q.Encode()
 	}
@@ -99,7 +110,7 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 	}
 	resp, err := c.http().Do(req)
 	if err != nil {
-		return fmt.Errorf("%s: %w", path, err)
+		return fmt.Errorf("%s: %s", path, c.scrub(err.Error()))
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer+1))
@@ -115,7 +126,8 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 	case resp.StatusCode == http.StatusUnauthorized:
 		return ErrUnauthorized
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
-		detail := string(raw)
+		// Scrubbed like the provider's: a body that echoes the request's credential must not print it.
+		detail := c.scrub(string(raw))
 		if len(detail) > 300 {
 			detail = detail[:300]
 		}

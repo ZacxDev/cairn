@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/ZacxDev/cairn/plugins/internal/endpoint"
 	"github.com/ZacxDev/cairn/plugins/internal/llm"
 	"github.com/ZacxDev/cairn/plugins/internal/pluginapi"
 	"github.com/ZacxDev/cairn/plugins/internal/secretfile"
@@ -53,12 +54,15 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	provider := fs.String("provider", "anthropic", "model provider: anthropic or openai (an OpenAI-compatible chat-completions API)")
 	providerURL := fs.String("provider-url", "", "override the provider's base URL (a proxy)")
 	model := fs.String("model", "claude-opus-5-5", "the model to ask")
-	effort := fs.String("effort", "low", "anthropic only: output_config.effort (\"\" sends none)")
+	effort := fs.String("effort", "", "anthropic only: output_config.effort (low, medium, high, …). Sent ONLY when set: Opus 4.5 and later, "+
+		"Sonnet 4.6 and later and Fable accept it; Haiku 4.5 and Sonnet 4.5 answer 400 to it")
 	keyFile := fs.String("key-file", "", "file holding the provider API key, mode 0600 (required)")
 	limit := fs.Int("limit", 10, "pending sessions one run takes (1–100)")
 	perDay := fs.Int("max-requests-per-day", 50, "the spend cap: provider requests over a rolling 24 hours; 0 sends none")
 	ledgerPath := fs.String("spend-ledger", defaultLedger(), "the spend cap's ledger file")
-	chunkBytes := fs.Int("chunk-bytes", 96<<10, "rendered transcript bytes one request carries")
+	chunkBytes := fs.Int("chunk-bytes", 96<<10, "rendered transcript bytes one request carries (4 KiB–1 MiB); with the prompt and the "+
+		"previous summary it must fit the model's context window — roughly 4 bytes a token, so 1 MiB needs a ~300K-token window")
+	statePath := fs.String("state-file", "", "per-session backoff and unwritten summaries (default: sessions.json beside -spend-ledger)")
 	maxOut := fs.Int("max-output-tokens", 16000, "the bound on one answer, thinking included")
 	timeout := fs.Duration("timeout", 30*time.Minute, "the bound on the whole run")
 	if err := fs.Parse(args); err != nil {
@@ -84,9 +88,6 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	case *maxOut < 256 || *maxOut > 64000:
 		return usage("-max-output-tokens must be 256–64000")
 	}
-	if *provider != "anthropic" && *effort == "low" {
-		*effort = "" // the default is Anthropic's; another provider takes none
-	}
 	token, err := secretfile.Read(*tokenFile)
 	if err != nil {
 		return usage(err.Error())
@@ -99,8 +100,21 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	if err != nil {
 		return usage(err.Error())
 	}
+	if *statePath == "" {
+		*statePath = filepath.Join(filepath.Dir(*ledgerPath), "sessions.json")
+	}
+	state, err := loadState(*statePath)
+	if err != nil {
+		return usage(err.Error())
+	}
+	workerBase, err := endpoint.Validate("-worker-url", *workerURL)
+	if err != nil {
+		return usage(err.Error())
+	}
 	r := &Runner{
-		API:             &pluginapi.Client{Base: *workerURL, Token: token},
+		API:             &pluginapi.Client{Base: workerBase, Token: token},
+		State:           state,
+		Now:             now,
 		Provider:        p,
 		Spend:           &ledger{path: *ledgerPath, cap: *perDay, now: now},
 		Limit:           *limit,
@@ -112,8 +126,8 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	st, err := r.Run(ctx)
-	fmt.Fprintf(stdout, "SUMMARY summary-run: sessions=%d written=%d requests=%d failed=%d capped=%t\n",
-		st.Sessions, st.Written, st.Requests, st.Failed, st.Capped)
+	fmt.Fprintf(stdout, "SUMMARY summary-run: sessions=%d written=%d requests=%d failed=%d capped=%t skipped=%d\n",
+		st.Sessions, st.Written, st.Requests, st.Failed, st.Capped, st.Skipped)
 	if err != nil {
 		fmt.Fprintln(stderr, "summary: "+err.Error())
 		return 1
