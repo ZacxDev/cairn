@@ -122,10 +122,18 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 			return usage(fmt.Sprintf("-clickup-list %q is not a ClickUp list id", l))
 		}
 	}
-	for _, dir := range append(append([]string{}, repos...), roots...) {
+	for _, dir := range repos {
 		if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 			return usage(fmt.Sprintf("%s is not a directory", dir))
 		}
+	}
+	for i, dir := range roots {
+		// Resolved first: a walk does not follow a symlinked ROOT, and would index nothing in silence.
+		real, err := filepath.EvalSymlinks(dir)
+		if st, serr := os.Stat(real); err != nil || serr != nil || !st.IsDir() {
+			return usage(fmt.Sprintf("%s is not a directory", dir))
+		}
+		roots[i] = real
 	}
 	token, err := secretfile.Read(*tokenFile)
 	if err != nil {
@@ -209,11 +217,11 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	if err != nil {
 		return fail(fmt.Errorf("the pending query: %w", err))
 	}
-	items, err = r.due(items, &st)
+	todo, err := r.due(items, &st)
 	if err != nil {
 		return fail(err)
 	}
-	if len(items) == 0 {
+	if len(todo) == 0 {
 		summary()
 		return 0
 	}
@@ -243,7 +251,7 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 		}
 		r.Entries = entries
 	}
-	if err := r.Run(ctx, items, &st); err != nil {
+	if err := r.Run(ctx, todo, &st); err != nil {
 		return fail(err)
 	}
 	summary()

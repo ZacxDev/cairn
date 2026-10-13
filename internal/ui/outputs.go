@@ -149,7 +149,8 @@ func derivedOf(view *transcript.View, rd transcript.Reading) (*DerivedView, erro
 	for _, name := range names {
 		all = append(all, latest[name])
 	}
-	all = append(all, rest...)
+	// Scans BEFORE the edges and suggestions: the page shows a bounded number of blocks, and "how far
+	// this was examined" must not be the block a long list of edges cuts off.
 	scanners := make([]string, 0, len(scans))
 	for name := range scans {
 		scanners = append(scanners, name)
@@ -158,6 +159,7 @@ func derivedOf(view *transcript.View, rd transcript.Reading) (*DerivedView, erro
 	for _, name := range scanners {
 		all = append(all, scans[name])
 	}
+	all = append(all, rest...)
 	if len(all) == 0 {
 		return nil, nil
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -111,9 +112,13 @@ func TestACustomIdMatchesOnlyThroughTheFetchedListAndStoresTheCanonicalId(t *tes
 	}
 	wantEdges(t, w2.pod.edges(t))
 
-	// Another workspace's URL is not this workspace's ticket, even though the list holds the custom id.
-	w3 := newWorld(t, human("see "+cuURLPrefix+"9000002/ALPHA-12", ""))
-	w3.args = []string{"-clickup-team", team}
+	// Another workspace's URL is not this workspace's ticket, even though the list holds the custom id
+	// — in the transcript, in a commit message, and in a branch alike: the bare-token matchers must
+	// not re-read the inside of a URL the URL matcher refused.
+	repo3, commit3 := gitRepo(t)
+	commit3("lorem: see " + cuURLPrefix + "9000002/ALPHA-12\n\nRefs: " + cuURLPrefix + "9000002/ALPHA-12\nClaude-Session-Id: " + session)
+	w3 := newWorld(t, human("see "+cuURLPrefix+"9000002/ALPHA-12", "x/"+cuURLPrefix+"9000002/ALPHA-12"))
+	w3.args = []string{"-clickup-team", team, "-repo", repo3}
 	if code, out, _ := w3.run(t); code != 0 || !strings.Contains(out, "edges=0") {
 		t.Fatalf("another workspace's URL: exit %d %s", code, out)
 	}
@@ -161,6 +166,31 @@ func TestAPRLinkRecordPlusThePRsBody(t *testing.T) {
 	if n := len(w3.pod.ofType(TypeScan)); n != 1 {
 		t.Errorf("an unreadable PR left %d scans, want the pass completed (1)", n)
 	}
+	// …and the pass is REDONE once its backoff passes, though the pod no longer lists the session: the
+	// PR that could not be read then is readable now, and its edge is written.
+	if code, out, _ := w3.run(t); code != 0 || !strings.Contains(out, "sessions=0") || !strings.Contains(out, "skipped=1") {
+		t.Fatalf("inside the backoff: exit %d %s", code, out)
+	}
+	writePR(t, dir2, "example-org/alpha-notes", 8, "ipsum", "see "+cuURLPrefix+"clk0000b2", "main")
+	w3.clock = w3.clock.Add(15 * time.Minute)
+	if code, out, errs := w3.run(t); code != 0 || !strings.Contains(out, "sessions=1 edges=1") {
+		t.Fatalf("the redo after the PR became readable: exit %d\n%s%s", code, out, errs)
+	}
+	wantEdges(t, w3.pod.edges(t), Edge{System: "clickup", TicketID: "clk0000b2", Signal: SigPRBody, Locator: Locator{PR: 8}})
+	// A PR that NEVER becomes readable is given up after a bounded number of attempts.
+	w4 := newWorld(t, human("open the PR", ""), prLink(9, "example-org/alpha-notes"))
+	w4.args = []string{"-gh-bin", gh}
+	attempts := 0
+	for range 12 {
+		_, out, _ := w4.run(t)
+		if strings.Contains(out, "sessions=1") {
+			attempts++
+		}
+		w4.clock = w4.clock.Add(48 * time.Hour)
+	}
+	if attempts != maxRedoFailures {
+		t.Errorf("a PR that is never readable was attempted %d times, want exactly %d and then given up", attempts, maxRedoFailures)
+	}
 }
 
 // TestAnEntryTheSessionWroteWithAClickupRef — an entry in the host's cairn cache whose bullet carries
@@ -185,8 +215,8 @@ func TestAnEntryTheSessionWroteWithAClickupRef(t *testing.T) {
 	write("alpha-notes/lorem-export.md", entry("refs: [clickup:clk0000a1, github:example-org/alpha-notes#7]", session))
 	write("alpha-notes/ipsum-import.md", entry("refs:\n  - clickup:ALPHA-12\n  - clickup:not/an-id", session))
 	// CONTROLS: another session's entry; and an entry that only QUOTES the attribution mid-prose.
-	write("alpha-notes/dolor.md", entry("refs: clickup:clk0000b2", otherSess))
-	write("beta-notes/sit.md", "---\nslug: sit\nrefs: clickup:clk0000b2\n---\n\n- the trailer `[cairn: host-a/"+session+"]` is quoted here, mid-line\n")
+	write("alpha-notes/dolor.md", entry("refs: [clickup:clk0000b2]", otherSess))
+	write("beta-notes/sit.md", "---\nslug: sit\nrefs: [clickup:clk0000b2]\n---\n\n- the trailer `[cairn: host-a/"+session+"]` is quoted here, mid-line\n")
 
 	w := newWorld(t, human("do lorem", ""))
 	w.args = []string{"-store-root", root}
@@ -477,8 +507,9 @@ func TestASessionThatNamesNoTicketStopsBeingPendingAndALaterPassReadsOnlyTheNewR
 }
 
 // TestAnInterruptedPassIsRedoneFromTheFirstRecordWithoutDuplicates — a pass that died between two
-// writes left an EDGE as the session's last output: the watermark moved, but no scan says the pass
-// finished. The next pass (once the session grows) reads from record 1 and writes only what is missing.
+// writes left an EDGE as the session's last output: the watermark moved, the pod stopped listing the
+// session, and no scan says the pass finished. The next run redoes it from record 1 and writes only
+// what is missing.
 func TestAnInterruptedPassIsRedoneFromTheFirstRecordWithoutDuplicates(t *testing.T) {
 	w := newWorld(t, human("see "+cuURLPrefix+"clk0000a1", ""), assistant("and "+cuURLPrefix+"clk0000b2"))
 	w.pod.failWrite = 2 // the second edge's write fails: one edge stored, no scan
@@ -486,12 +517,25 @@ func TestAnInterruptedPassIsRedoneFromTheFirstRecordWithoutDuplicates(t *testing
 	if code != 1 || !strings.Contains(out, "failed=1") || len(w.pod.outputs) != 1 {
 		t.Fatalf("the interrupted run: exit %d, %d outputs\n%s%s", code, len(w.pod.outputs), out, errs)
 	}
-	w.pod.grow("main", assistant("three"))
+	// 🔴 THE SESSION DOES NOT GROW. The one edge written carries the pass's watermark, so the pod no
+	// longer lists the session — and a session that has ended never grows. What brings the pass
+	// back is the redo marker on this host. (RED before the marker: this run found nothing pending,
+	// exited 0, and the second edge and the scan were never written.)
+	// A 500 is transient — it says nothing about this session — so the redo is the very next run.
 	w.pod.mu.Lock()
 	w.pod.reads = nil
 	w.pod.mu.Unlock()
-	if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "edges=1") || !strings.Contains(errs, "full=true") {
+	if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "sessions=1 edges=1") || !strings.Contains(errs, "full=true") {
 		t.Fatalf("the redo: exit %d\n%s%s", code, out, errs)
+	}
+	if scans := w.pod.ofType(TypeScan); len(scans) != 1 {
+		t.Fatalf("the redo left %d scans, want the pass finished (1)", len(scans))
+	}
+	if raw, _ := os.ReadFile(filepath.Join(w.dir, "sessions.json")); strings.Contains(string(raw), "redo") {
+		t.Errorf("a finished pass left its redo marker:\n%s", raw)
+	}
+	if code, out, _ := w.run(t); code != 0 || !strings.Contains(out, "sessions=0") {
+		t.Fatalf("a run after the pass finished worked on it again: exit %d %s", code, out)
 	}
 	if len(w.pod.reads) == 0 || w.pod.reads[0] != "main raw 1" {
 		t.Errorf("the redo read %v, want it to start at record 1", w.pod.reads)
@@ -551,6 +595,12 @@ func TestTheURLMatcherTakesBothFormsAndNothingThatOnlyLooksLikeOne(t *testing.T)
 		"_" + cuURLPrefix + "clk0000a1_":               {{ID: "clk0000a1", ByURL: true}},
 		"http://app.clickup.com/t/zzz999":              {{ID: "zzz999", ByURL: true}}, // a URL needs no list
 		cuURLPrefix + "clk0000a1-draft":                nil,
+		cuURLPrefix + "clk0000a1_draft":                nil,
+		cuURLPrefix + "clk0000a1%2Ddraft":              nil,
+		cuURLPrefix + "clk00...":                       nil, // an id a tool cut short
+		cuURLPrefix + "clk00…":                         nil,
+		cuURLPrefix + "clk0000a1. Next sentence":       {{ID: "clk0000a1", ByURL: true}},
+		cuURLPrefix + "clk0000a1?comment=1":            {{ID: "clk0000a1", ByURL: true}},
 		cuURLPrefix + team + "/ALPHA-12":               {{ID: "clk0000c3", Custom: "ALPHA-12", ByURL: true}},
 		cuURLPrefix + team + "/ALPHA-12_ and more":     {{ID: "clk0000c3", Custom: "ALPHA-12", ByURL: true}},
 		cuURLPrefix + team + "/ALPHA-13":               nil, // not in the list — and the workspace id is no ticket
@@ -605,6 +655,21 @@ func TestATrailerBlockIsTheLastParagraphOfKeyValueLines(t *testing.T) {
 		tr[1].Value != "Synthetic Author <author@example.invalid>" {
 		t.Errorf("split into %q and %+v", body, tr)
 	}
+	// What git itself adds to a last paragraph, and what a conflicted merge appends, hide no trailer;
+	// a bare URL line beside the trailers stays PROSE (it is no `https:` trailer).
+	for name, msg := range map[string]string{
+		"a cherry-pick -x note":   "subject\n\nTicket: clk0000a1\n(cherry picked from commit 0123456789abcdef0123456789abcdef01234567)",
+		"a conflicts paragraph":   "subject\n\nTicket: clk0000a1\n\n# Conflicts:\n#\tsome/file.go",
+		"a URL line in the block": "subject\n\n" + cuURLPrefix + "zzz999\nTicket: clk0000a1",
+	} {
+		body, tr := splitMessage(msg)
+		if len(tr) != 1 || tr[0] != (Trailer{"Ticket", "clk0000a1"}) {
+			t.Errorf("%s: trailers %+v, want the one Ticket trailer", name, tr)
+		}
+		if name == "a URL line in the block" && !strings.Contains(body, cuURLPrefix+"zzz999") {
+			t.Errorf("%s: the URL line left the message: %q", name, body)
+		}
+	}
 	for _, msg := range []string{"subject only", "Ticket: clk0000a1", "subject\n\nNote: this paragraph\nis prose, not trailers"} {
 		if _, tr := splitMessage(msg); tr != nil {
 			t.Errorf("splitMessage(%q) found trailers %+v", msg, tr)
@@ -614,7 +679,9 @@ func TestATrailerBlockIsTheLastParagraphOfKeyValueLines(t *testing.T) {
 
 func TestTheRefsKeyInItsThreeShapesAndItsOlderSpellings(t *testing.T) {
 	cases := map[string][]string{
-		"---\nrefs: clickup:clk0000a1\n---\n":                                                          {"clk0000a1"},
+		"---\nrefs: clickup:clk0000a1\n---\n":                                                          nil, // a scalar `refs:` — the store refuses the entry
+		"---\ntask: clickup:clk0000a1\n---\n":                                                          {"clk0000a1"},
+		"---\nrefs: clickup:clk0000b2\ntasks: [clickup:clk0000a1]\n---\n":                              nil, // `refs:` wins even unreadable
 		"---\nrefs: [clickup:clk0000a1, \"clickup:ALPHA-12\", github:o/r#1]\n---\n":                    {"clk0000a1", "ALPHA-12"},
 		"---\nrefs:\n  - clickup:clk0000a1\n\n  # a comment\n  - 'clickup:clk0000b2'\ntitle: x\n---\n": {"clk0000a1", "clk0000b2"},
 		"---\ntasks: [clickup:clk0000a1]\n---\n":                                                       {"clk0000a1"},
@@ -764,4 +831,137 @@ func TestTicketTitlesAreSentOnlyWhenAskedForAndStoredOnlyWhereTheInstanceAllows(
 	if code != 1 || !strings.Contains(errs, "stores ticket ids only") || len(w2.pod.outputs) != 0 {
 		t.Fatalf("titles sent to an instance that stores ids only: exit %d, %d outputs\n%s%s", code, len(w2.pod.outputs), out, errs)
 	}
+}
+
+// TestAPassThatStopsAtTheEdgeCapIsContinuedByTheNextRun — a session naming more tickets than one pass
+// writes is not cut off at the cap: the pass says there is more, keeps its marker, and the next run
+// writes the rest, each exactly once.
+func TestAPassThatStopsAtTheEdgeCapIsContinuedByTheNextRun(t *testing.T) {
+	var text strings.Builder
+	const n = maxEdgesPerPass + 30
+	for i := range n {
+		fmt.Fprintf(&text, "%sclkcap%04d ", cuURLPrefix, i)
+	}
+	w := newWorld(t, human(text.String(), ""))
+	if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, fmt.Sprintf("edges=%d ", maxEdgesPerPass)) || !strings.Contains(errs, "more=true") {
+		t.Fatalf("run 1: exit %d\n%s", code, out)
+	}
+	if code, out, _ := w.run(t); code != 0 || !strings.Contains(out, "sessions=1 edges=30 ") {
+		t.Fatalf("run 2: exit %d %s", code, out)
+	}
+	seen := map[string]int{}
+	for _, e := range w.pod.edges(t) {
+		seen[e.TicketID]++
+	}
+	if len(seen) != n {
+		t.Fatalf("%d distinct tickets have an edge, want all %d", len(seen), n)
+	}
+	for id, c := range seen {
+		if c != 1 {
+			t.Fatalf("ticket %s has %d edges", id, c)
+		}
+	}
+	if code, out, _ := w.run(t); code != 0 || !strings.Contains(out, "sessions=0") {
+		t.Fatalf("run 3: exit %d %s", code, out)
+	}
+}
+
+// TestAURLInOnePassVouchesForABranchTokenInALaterPass — "a bare token counts when the session named it
+// by URL" must not depend on where a pass boundary fell: the URL is read by pass 1, the branch first
+// appears in a record pass 2 reads.
+func TestAURLInOnePassVouchesForABranchTokenInALaterPass(t *testing.T) {
+	w := newWorld(t, human("see "+cuURLPrefix+"zzz999", ""))
+	if code, out, _ := w.run(t); code != 0 || !strings.Contains(out, "edges=1") {
+		t.Fatalf("pass 1: exit %d %s", code, out)
+	}
+	w.pod.grow("main", human("now on a branch", "feature/zzz999-x"))
+	if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "edges=1") {
+		t.Fatalf("pass 2: exit %d\n%s%s", code, out, errs)
+	}
+	wantEdges(t, w.pod.edges(t),
+		Edge{System: "clickup", TicketID: "zzz999", Signal: SigTranscript, Locator: rec(1)},
+		Edge{System: "clickup", TicketID: "zzz999", Signal: SigBranch, Locator: rec(2)})
+}
+
+// TestOneRecordNamingATicketBothWaysAlwaysStoresItsCustomId — a record carrying the canonical URL and
+// the custom-id URL of ONE ticket writes one edge, and it always carries the custom id (the two hits
+// came out of a map walk in either order: 36 runs of 40 dropped it).
+func TestOneRecordNamingATicketBothWaysAlwaysStoresItsCustomId(t *testing.T) {
+	for range 25 {
+		w := newWorld(t, `{"type":"user","a":"`+cuURLPrefix+`clk0000c3","b":"`+cuURLPrefix+team+`/ALPHA-12","c":"`+cuURLPrefix+`clk0000c3"}`)
+		if code, out, _ := w.run(t); code != 0 || !strings.Contains(out, "edges=1 ") {
+			t.Fatalf("exit %d %s", code, out)
+		}
+		wantEdges(t, w.pod.edges(t), Edge{System: "clickup", TicketID: "clk0000c3", CustomID: "ALPHA-12", Signal: SigTranscript, Locator: rec(1)})
+	}
+}
+
+// TestAResetTheClientDoesNotBelieveIsNotAZeroWait — a 429 whose reset is absurdly far (or overflows a
+// duration) must read as "past what this run will wait", never as "no wait at all".
+func TestAResetTheClientDoesNotBelieveIsNotAZeroWait(t *testing.T) {
+	now := time.Date(2000, 1, 2, 3, 4, 5, 0, time.UTC)
+	c := &ClickUp{Now: func() time.Time { return now }}
+	h := func(k, v string) http.Header { return http.Header{k: {v}} }
+	for name, tc := range map[string]struct {
+		h    http.Header
+		want time.Duration
+	}{
+		"seconds, 30s ahead":      {h("X-Ratelimit-Reset", fmt.Sprint(now.Unix()+30)), 31 * time.Second},
+		"milliseconds, 30s ahead": {h("X-Ratelimit-Reset", fmt.Sprint(now.UnixMilli()+30000)), 31 * time.Second},
+		"already past":            {h("X-Ratelimit-Reset", fmt.Sprint(now.Unix()-5)), 0},
+		"absurdly far":            {h("X-Ratelimit-Reset", "99999999999"), maxResetAhead},
+		"overflowing":             {h("X-Ratelimit-Reset", "9223372036854775807"), maxResetAhead},
+		"a huge Retry-After":      {h("Retry-After", "9300000000"), maxResetAhead},
+		"Retry-After 7":           {h("Retry-After", "7"), 7 * time.Second},
+		"no header":               {http.Header{}, fallbackWait},
+	} {
+		if got := c.resetWait(tc.h); got != tc.want {
+			t.Errorf("%s: wait %s, want %s", name, got, tc.want)
+		}
+	}
+}
+
+// TestASymlinkedStoreRootIsRead — a cache root given as a symlink indexes what the directory holds
+// (a walk does not follow a symlinked root: it found nothing, in silence).
+func TestASymlinkedStoreRootIsRead(t *testing.T) {
+	real := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(real, "alpha-notes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	entry := "---\nrefs: [clickup:clk0000a1]\n---\n\n- 2000-01-02: did it [cairn: host-a/" + session + "]\n"
+	if err := os.WriteFile(filepath.Join(real, "alpha-notes", "lorem.md"), []byte(entry), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "cache")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	w := newWorld(t, human("do lorem", ""))
+	w.args = []string{"-store-root", link}
+	if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "edges=1 ") {
+		t.Fatalf("exit %d\n%s%s", code, out, errs)
+	}
+}
+
+// TestAnInterruptedPassOfASessionThatThenGrewIsStillReadFromTheFirstRecord — the other half of the
+// interrupted pass: the session DID grow, so the pod lists it again, naming the lone edge as its
+// previous output. That edge's watermark is not proof the records before it were examined: no scan
+// follows it, so the pass reads from record 1 and the edge the interrupted pass never wrote is found.
+// The redo marker is removed first, so this is the plugin's rule with no host state to lean on.
+func TestAnInterruptedPassOfASessionThatThenGrewIsStillReadFromTheFirstRecord(t *testing.T) {
+	w := newWorld(t, human("see "+cuURLPrefix+"clk0000a1", ""), assistant("and "+cuURLPrefix+"clk0000b2"))
+	w.pod.failWrite = 2
+	if code, _, _ := w.run(t); code != 1 || len(w.pod.outputs) != 1 {
+		t.Fatalf("the interrupted run: exit %d, %d outputs", code, len(w.pod.outputs))
+	}
+	if err := os.Remove(filepath.Join(w.dir, "sessions.json")); err != nil {
+		t.Fatal(err)
+	}
+	w.pod.grow("main", assistant("three"))
+	if code, out, errs := w.run(t); code != 0 || !strings.Contains(errs, "full=true") {
+		t.Fatalf("exit %d\n%s%s", code, out, errs)
+	}
+	wantEdges(t, w.pod.edges(t),
+		Edge{System: "clickup", TicketID: "clk0000a1", Signal: SigTranscript, Locator: rec(1)},
+		Edge{System: "clickup", TicketID: "clk0000b2", Signal: SigTranscript, Locator: rec(2)})
 }

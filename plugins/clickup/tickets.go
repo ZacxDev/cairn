@@ -81,6 +81,9 @@ const (
 	// fallbackWait is the wait when a 429 names no reset this client can read: the window is a minute.
 	fallbackWait = 60 * time.Second
 	maxListBody  = 16 << 20
+	// maxResetAhead is the furthest reset a 429 may name and be believed; anything else reads as this,
+	// which is past every `-clickup-max-wait` a timer run would set, so the run gives up.
+	maxResetAhead = 24 * time.Hour
 	// clickUpTimeout bounds one request.
 	clickUpTimeout = 60 * time.Second
 )
@@ -99,23 +102,27 @@ func (c *ClickUp) scrub(s string) string {
 	return strings.ReplaceAll(s, c.Token, "[token]")
 }
 
-// resetWait is how long a 429 says to wait. `X-RateLimit-Reset` is a Unix time — seconds in every
-// answer observed in the documentation, and a value too large to be seconds is read as milliseconds —
-// and `Retry-After` (seconds) is honoured when that header is absent.
+// resetWait is how long a 429 says to wait. `X-RateLimit-Reset` is a Unix time — read as seconds, and
+// as milliseconds when only that lands near now (the documentation does not say which) — and
+// `Retry-After` (seconds) is honoured when that header is absent.
 func (c *ClickUp) resetWait(h http.Header) time.Duration {
 	if v := strings.TrimSpace(h.Get("X-RateLimit-Reset")); v != "" {
+		// 🔴 BOUNDED BEFORE ANY ARITHMETIC: a value outside the next day is not a reset this client
+		// believes, and subtracting a far-off instant overflows a Duration into "no wait at all".
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
-			at := time.Unix(n, 0)
-			if n > 100_000_000_000 {
-				at = time.UnixMilli(n)
+			now := c.now()
+			for _, at := range []time.Time{time.Unix(n, 0), time.UnixMilli(n)} {
+				if at.After(now.Add(-time.Hour)) && at.Before(now.Add(maxResetAhead)) {
+					// One second past the stated instant: the header has whole-second precision.
+					return max(at.Sub(now)+time.Second, 0)
+				}
 			}
-			// One second past the stated instant: the header has whole-second precision.
-			return max(at.Sub(c.now())+time.Second, 0)
+			return maxResetAhead
 		}
 	}
 	if v := strings.TrimSpace(h.Get("Retry-After")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			return time.Duration(n) * time.Second
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			return time.Duration(min(n, int64(maxResetAhead/time.Second))) * time.Second
 		}
 	}
 	return fallbackWait

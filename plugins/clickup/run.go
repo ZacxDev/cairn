@@ -16,14 +16,14 @@ import (
 	"github.com/ZacxDev/cairn/plugins/internal/transcripttext"
 )
 
-// 🔴 ONE PASS OVER A SESSION WRITES ITS EDGES, THEN ITS SUGGESTIONS, THEN ONE `ticket-scan` — AND THE
-// SCAN IS WHAT SAYS THE PASS FINISHED. The pod holds the only progress state (decision 13): a session
-// is pending while it holds records past this plugin's LAST-WRITTEN output's watermark. Every output of
-// a pass carries the pass's watermark, so the first one written already takes the session off the
-// pending list; the scan, written last, is how the NEXT pass knows the previous one completed. A pass
-// whose previous output is NOT a scan (a run killed between two writes) re-reads the session from its
-// first record instead of from the watermark — duplicates are impossible, because an edge the session
-// already holds for the same ticket and signal is never written again.
+// 🔴 ONE PASS OVER A SESSION WRITES ITS EDGES, THEN ITS SUGGESTIONS, THEN ONE `ticket-scan`. The pod
+// holds the progress state (decision 13): a session is pending while it holds records past this
+// plugin's LAST-WRITTEN output's watermark, and every output of a pass carries the pass's watermark —
+// so the FIRST one written already takes the session off the pending list. What makes the rest of the
+// pass happen anyway is on THIS host: the redo marker ([stateFile]), set before the first write and
+// cleared when the scan is written. A pass that is being redone, and a pass whose previous output is
+// not a scan, read the session from its first record; duplicates are impossible, because an edge the
+// session already holds for the same ticket and signal is never written again.
 //
 // 🔴 THE SCAN IS ALSO WHY A SESSION THAT MATCHES NOTHING STOPS BEING PENDING. Most sessions name no
 // ticket. Without something to write, such a session would stay at the head of the pending list
@@ -65,7 +65,7 @@ const maxTitle = 256
 const noModel = "none (deterministic match)"
 
 // maxEdgesPerPass bounds the edges one pass writes: a session that LISTED a workspace's tickets names
-// every one of them by URL.
+// every one of them by URL. A pass that stops here is continued by the next run (the redo marker).
 const maxEdgesPerPass = 100
 
 // Locator is where a match was found — exactly one of its shapes (`internal/plugins` `Locator`).
@@ -141,11 +141,36 @@ type Stats struct {
 // still hides the rest.
 const pendingAsk = 100
 
-// stateFile is this plugin's host-local memory (`internal/hoststate`): each failing session's backoff.
+// stateFile is this plugin's host-local memory (`internal/hoststate`): per session, a failure backoff
+// and the REDO marker.
+//
+// 🔴 THE REDO MARKER IS WHAT MAKES A PASS ALL-OR-RETRIED. Every output of a pass carries the pass's
+// watermark, so the FIRST one written already takes the session off the pod's pending list (decision
+// 13). A pass that then stops — a write the pod refuses, a 500, the run's deadline, a killed process —
+// would leave a session that never grows again short of its remaining edges FOREVER: the pod no
+// longer lists it, and nothing else would ask. So the pending item is saved here BEFORE the pass's
+// first write and cleared only when the pass finished; a session carrying the marker is worked on
+// again whether or not the pod lists it, from its first record (an edge the session already holds is
+// never written twice). The same marker keeps a pass that stopped at the edge cap, or whose host
+// source (a repository, the GitHub CLI) could not be read, coming back.
+//
+// ⚠ BOUNDED: for a session the pod no longer lists, after [maxRedoFailures] failed attempts at the
+// same size the marker is dropped and a line says so (one the pod still lists keeps backing off); and a session the pod answers its one 403 for (deleted, or toggled off) is dropped at
+// once.
 type stateFile struct {
 	path     string
-	Sessions map[string]*hoststate.Backoff `json:"sessions"`
+	Sessions map[string]*sessionState `json:"sessions"`
 }
+
+// sessionState is one session's entry. The backoff's fields are flattened into its JSON object.
+type sessionState struct {
+	hoststate.Backoff
+	// Redo is the pending item of a pass that started and has not finished.
+	Redo *pluginapi.PendingItem `json:"redo,omitempty"`
+}
+
+// maxRedoFailures bounds how often an unfinished pass is retried at one size.
+const maxRedoFailures = 6
 
 func loadState(path string) (*stateFile, error) {
 	st := &stateFile{path: path}
@@ -153,7 +178,7 @@ func loadState(path string) (*stateFile, error) {
 		return nil, err
 	}
 	if st.Sessions == nil {
-		st.Sessions = map[string]*hoststate.Backoff{}
+		st.Sessions = map[string]*sessionState{}
 	}
 	return st, nil
 }
@@ -169,89 +194,134 @@ func records(it pluginapi.PendingItem) int64 {
 	return n
 }
 
-// due is the sessions this run works on: the pending list without the sessions in backoff, at most
-// Limit. A session the pod no longer lists keeps no backoff here.
-func (r *Runner) due(items []pluginapi.PendingItem, st *Stats) ([]pluginapi.PendingItem, error) {
-	listed := map[string]bool{}
+// work is one session a run works on: its pending item, and whether an earlier pass over it did not
+// finish (so this one reads from the first record).
+type work struct {
+	item pluginapi.PendingItem
+	redo bool
+	// unlisted reports that the pod no longer lists the session: only the redo marker brought it here.
+	unlisted bool
+}
+
+// due is the sessions this run works on: every unfinished pass first — listed by the pod or not —
+// then the pending list, without the sessions in backoff, at most Limit. A session the pod no longer
+// lists and that carries no redo marker keeps nothing here.
+func (r *Runner) due(items []pluginapi.PendingItem, st *Stats) ([]work, error) {
+	listed := map[string]pluginapi.PendingItem{}
 	for _, it := range items {
-		listed[it.Session] = true
+		listed[it.Session] = it
 	}
 	dropped := false
-	for id := range r.State.Sessions {
-		if !listed[id] {
+	var unlisted []string
+	for id, ss := range r.State.Sessions {
+		if _, ok := listed[id]; ok {
+			continue
+		}
+		if ss.Redo == nil {
 			delete(r.State.Sessions, id)
 			dropped = true
+			continue
 		}
+		unlisted = append(unlisted, id)
 	}
 	if dropped {
 		if err := r.State.save(); err != nil {
 			return nil, err
 		}
 	}
-	var out []pluginapi.PendingItem
+	slices.Sort(unlisted)
+	var all []work
+	for _, id := range unlisted {
+		all = append(all, work{item: *r.State.Sessions[id].Redo, redo: true, unlisted: true})
+	}
 	for _, it := range items {
-		if b := r.State.Sessions[it.Session]; b.Active(r.Now(), records(it)) {
+		ss := r.State.Sessions[it.Session]
+		all = append(all, work{item: it, redo: ss != nil && ss.Redo != nil})
+	}
+	var out []work
+	for _, w := range all {
+		if ss := r.State.Sessions[w.item.Session]; ss != nil && ss.Active(r.Now(), records(w.item)) {
 			st.Skipped++
-			r.Log(fmt.Sprintf("clickup: session=%s SKIPPED: %d failure(s) at this size, next attempt %s", it.Session, b.Failures, b.RetryAt))
+			r.Log(fmt.Sprintf("clickup: session=%s SKIPPED: %d failure(s) at this size, next attempt %s", w.item.Session, ss.Failures, ss.RetryAt))
 			continue
 		}
 		if len(out) < r.Limit {
-			out = append(out, it)
+			out = append(out, w)
 		}
 	}
 	return out, nil
 }
 
-// refused reports whether a pass failed because the POD answered a request with a status — a full
-// quota (507), a 400, the one 403 — which will repeat for the same records; as opposed to the pod not
-// being reached or the run's own deadline, which say nothing about THIS session.
+// refused reports whether a pass failed because the POD REFUSED a request — a full quota (507), a
+// malformed or over-bound request (400), the one 403 — which repeats for the same records. A 5xx, a
+// 3xx, the pod not being reached and the run's own deadline say nothing about THIS session: those are
+// retried by the next run with no backoff.
 func refused(err error) bool {
 	var se *pluginapi.StatusError
-	return errors.As(err, &se) || errors.Is(err, pluginapi.ErrForbidden)
+	if errors.As(err, &se) {
+		return se.Status == 400 || se.Status == 507
+	}
+	return errors.Is(err, pluginapi.ErrForbidden)
 }
 
 // Run does one pass over the sessions [Runner.due] chose.
-func (r *Runner) Run(ctx context.Context, items []pluginapi.PendingItem, st *Stats) error {
-	for _, it := range items {
+func (r *Runner) Run(ctx context.Context, items []work, st *Stats) error {
+	for _, w := range items {
+		it := w.item
 		st.Sessions++
-		res, err := r.session(ctx, it)
+		// The marker BEFORE the first write: see [stateFile].
+		ss := r.State.Sessions[it.Session]
+		if ss == nil {
+			ss = &sessionState{}
+			r.State.Sessions[it.Session] = ss
+		}
+		ss.Redo = &it
+		if err := r.State.save(); err != nil {
+			return err
+		}
+		res, err := r.session(ctx, it, w.redo)
 		st.Edges += res.edges
 		st.Suggestions += res.suggestions
 		st.Requests += res.requests
 		if res.capped {
 			st.Capped = true
 		}
+		note := ""
+		switch {
+		case err != nil && w.redo && errors.Is(err, pluginapi.ErrForbidden):
+			// The pod's one 403 on a pass being redone: the session was deleted or the plugin turned
+			// off for it. There is nothing left to finish.
+			delete(r.State.Sessions, it.Session)
+			note = " — the pod no longer serves this session to the plugin; the unfinished pass is dropped"
+		case err != nil && ctx.Err() == nil && refused(err), err == nil && res.sourceErrs > 0:
+			// 🔴 NOT RETRIED NEXT RUN: a refusal by the pod repeats for the same records, and a model
+			// may already have been paid for the suggestion whose write was refused.
+			wait := ss.Fail(r.Now(), records(it))
+			note = fmt.Sprintf(" — backing off %s", wait)
+			// Given up only where nothing else will ever bring the session back with a longer wait: a
+			// session the pod still lists keeps its backoff, which grows to its ceiling.
+			if w.unlisted && ss.Failures >= maxRedoFailures {
+				delete(r.State.Sessions, it.Session)
+				note = fmt.Sprintf(" — %d failed attempts at this size; the unfinished pass is GIVEN UP until the session grows", maxRedoFailures)
+			}
+		case err == nil && !res.more:
+			delete(r.State.Sessions, it.Session) // the pass finished
+		}
+		// Anything else — the pod not reached, the run's deadline, the edge cap — keeps the marker
+		// with no backoff: the next run continues.
+		if serr := r.State.save(); serr != nil {
+			return serr
+		}
 		if err != nil {
 			st.Failed++
-			note := ""
-			// 🔴 A PASS THE POD REFUSED IS NOT RETRIED NEXT RUN: a model may already have been paid for
-			// the suggestion whose write was refused, and retrying at once re-pays for it every run
-			// while the session sits at the head of the oldest-first list.
-			if refused(err) && ctx.Err() == nil {
-				b := r.State.Sessions[it.Session]
-				if b == nil {
-					b = &hoststate.Backoff{}
-					r.State.Sessions[it.Session] = b
-				}
-				note = fmt.Sprintf(" — backing off %s", b.Fail(r.Now(), records(it)))
-				if serr := r.State.save(); serr != nil {
-					return serr
-				}
-			}
 			r.Log(fmt.Sprintf("clickup: session=%s FAILED: %v%s", it.Session, err, note))
 			continue
 		}
-		if _, had := r.State.Sessions[it.Session]; had {
-			delete(r.State.Sessions, it.Session)
-			if serr := r.State.save(); serr != nil {
-				return serr
-			}
-		}
-		if res.softErrs > 0 {
+		if res.sourceErrs > 0 || res.modelErr {
 			st.Failed++
 		}
-		r.Log(fmt.Sprintf("clickup: session=%s full=%t edges=%d suggestions=%d requests=%d capped=%t source-errors=%d",
-			it.Session, res.full, res.edges, res.suggestions, res.requests, res.capped, res.softErrs))
+		r.Log(fmt.Sprintf("clickup: session=%s full=%t edges=%d suggestions=%d requests=%d capped=%t source-errors=%d more=%t%s",
+			it.Session, res.full, res.edges, res.suggestions, res.requests, res.capped, res.sourceErrs, res.more, note))
 	}
 	return nil
 }
@@ -259,9 +329,13 @@ func (r *Runner) Run(ctx context.Context, items []pluginapi.PendingItem, st *Sta
 type sessionResult struct {
 	edges, suggestions, requests int
 	capped, full                 bool
-	// softErrs counts sources that failed without failing the pass (a repository, the GitHub CLI,
-	// the provider).
-	softErrs int
+	// sourceErrs counts host sources (a repository, the GitHub CLI) that could not be read: the pass
+	// completes and is redone later. modelErr is a provider failure: suggestions are best-effort, so
+	// the pass completes and is NOT redone for it.
+	sourceErrs int
+	modelErr   bool
+	// more reports that the pass stopped at the edge cap with edges still unwritten.
+	more bool
 }
 
 // found is one candidate edge, before it is checked against what the session already holds.
@@ -269,6 +343,15 @@ type found struct {
 	hit Hit
 	sig string
 	loc Locator
+}
+
+// hitOrder sorts one record's hits so which is written does not vary between runs: by ticket, and
+// for one ticket the hit that spelled a custom id first — the edge then carries it.
+func hitOrder(a, b Hit) int {
+	if c := strings.Compare(a.ID, b.ID); c != 0 {
+		return c
+	}
+	return strings.Compare(b.Custom, a.Custom)
 }
 
 // eachString calls fn for every string VALUE in a decoded JSON value — never a key.
@@ -338,7 +421,7 @@ func (r *Runner) scanStream(ctx context.Context, session, stream string, after, 
 			// edge is written first does not vary between runs.
 			var hits []Hit
 			eachString(v, func(s string) { hits = append(hits, r.Matcher.URLs(s)...) })
-			slices.SortStableFunc(hits, func(a, b Hit) int { return strings.Compare(a.ID, b.ID) })
+			slices.SortStableFunc(hits, hitOrder)
 			for _, h := range hits {
 				into.urls = append(into.urls, found{hit: h, sig: SigTranscript, loc: loc})
 			}
@@ -373,12 +456,15 @@ type held struct {
 	edges, edged map[string]bool
 	// suggested is every ticket already suggested.
 	suggested map[string]bool
+	// byURL is every ticket an EARLIER pass found named by URL in the transcript — what lets a bare
+	// token in a branch count when the URL and the branch are read by two different passes.
+	byURL map[string]bool
 	// prevScan is the previous pass's scan when the session's LAST output is one; nil otherwise.
 	prevScan *pluginapi.Output
 }
 
-func (r *Runner) heldBy(ctx context.Context, it pluginapi.PendingItem) (held, error) {
-	h := held{edges: map[string]bool{}, edged: map[string]bool{}, suggested: map[string]bool{}}
+func (r *Runner) heldBy(ctx context.Context, it pluginapi.PendingItem, redo bool) (held, error) {
+	h := held{edges: map[string]bool{}, edged: map[string]bool{}, suggested: map[string]bool{}, byURL: map[string]bool{}}
 	edges, err := r.API.Outputs(ctx, it.Session, TypeEdge)
 	if err != nil {
 		return h, fmt.Errorf("reading the session's edges: %w", err)
@@ -388,6 +474,9 @@ func (r *Runner) heldBy(ctx context.Context, it pluginapi.PendingItem) (held, er
 		if json.Unmarshal(o.Body, &e) == nil && e.TicketID != "" {
 			h.edges[e.TicketID+"\x00"+e.Signal] = true
 			h.edged[e.TicketID] = true
+			if e.Signal == SigTranscript {
+				h.byURL[e.TicketID] = true
+			}
 		}
 	}
 	suggs, err := r.API.Outputs(ctx, it.Session, TypeSuggestion)
@@ -400,7 +489,7 @@ func (r *Runner) heldBy(ctx context.Context, it pluginapi.PendingItem) (held, er
 			h.suggested[s.TicketID] = true
 		}
 	}
-	if it.PrevOutput == nil {
+	if it.PrevOutput == nil && !redo {
 		return h, nil
 	}
 	scans, err := r.API.Outputs(ctx, it.Session, TypeScan)
@@ -408,14 +497,19 @@ func (r *Runner) heldBy(ctx context.Context, it pluginapi.PendingItem) (held, er
 		return h, fmt.Errorf("reading the session's scans: %w", err)
 	}
 	for i := range scans {
-		if scans[i].ID == it.PrevOutput.ID {
+		switch {
+		case redo:
+			// A pass being redone reads from record 1 whatever the last output is; the latest scan
+			// is kept only so the model is not asked again about a summary it already saw.
+			h.prevScan = &scans[i]
+		case scans[i].ID == it.PrevOutput.ID:
 			h.prevScan = &scans[i]
 		}
 	}
 	return h, nil
 }
 
-func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem) (sessionResult, error) {
+func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem, redo bool) (sessionResult, error) {
 	var res sessionResult
 	streams := streamsOf(it)
 	if len(streams) == 0 {
@@ -424,18 +518,18 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem) (session
 	if !sessionShape.MatchString(it.Session) {
 		return res, errors.New("the pending item's session is not a session id")
 	}
-	h, err := r.heldBy(ctx, it)
+	h, err := r.heldBy(ctx, it, redo)
 	if err != nil {
 		return res, err
 	}
-	res.full = h.prevScan == nil
+	res.full = redo || h.prevScan == nil
 
 	// --- the transcript: branches, PR links and URLs.
 	sc := scanned{branches: map[string]Locator{}}
 	wm := map[string]int64{}
 	for _, s := range streams {
 		after := int64(0)
-		if h.prevScan != nil {
+		if !res.full {
 			after = min(it.PrevOutput.Watermark[s], it.Streams[s].SeqTo)
 		}
 		if err := r.scanStream(ctx, it.Session, s, after, it.Streams[s].SeqTo, &sc); err != nil {
@@ -450,7 +544,7 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem) (session
 	for _, repo := range r.Repos {
 		cs, err := SessionCommits(ctx, r.GitBin, repo, it.Session)
 		if err != nil {
-			res.softErrs++
+			res.sourceErrs++
 			r.Log(fmt.Sprintf("clickup: session=%s repository %s could not be read: %v", it.Session, repo, err))
 			continue
 		}
@@ -482,7 +576,7 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem) (session
 			seen[key] = true
 			text, err := FetchPR(ctx, r.GHBin, pr)
 			if err != nil {
-				res.softErrs++
+				res.sourceErrs++
 				r.Log(fmt.Sprintf("clickup: session=%s PR %s could not be read: %v", it.Session, key, err))
 				continue
 			}
@@ -510,7 +604,7 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem) (session
 	}
 
 	// --- structured fields, LAST: a bare token counts when the list holds it or a URL above named it.
-	byURL := map[string]bool{}
+	byURL := h.byURL
 	for _, f := range all {
 		if f.hit.ByURL {
 			byURL[f.hit.ID] = true
@@ -546,7 +640,8 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem) (session
 			continue
 		}
 		if res.edges == maxEdgesPerPass {
-			r.Log(fmt.Sprintf("clickup: session=%s names more than %d new tickets; the rest are not written", it.Session, maxEdgesPerPass))
+			r.Log(fmt.Sprintf("clickup: session=%s names more than %d new tickets; the rest are written by the next run", it.Session, maxEdgesPerPass))
+			res.more = true
 			break
 		}
 		h.edges[key] = true
@@ -563,7 +658,7 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem) (session
 	scan := Scan{System: "clickup", Edges: res.edges}
 	model := noModel
 	if sg, m, err := r.suggest(ctx, it, &res, h); err != nil {
-		res.softErrs++
+		res.modelErr = true
 		r.Log(fmt.Sprintf("clickup: session=%s no suggestion was made: %v", it.Session, err))
 	} else if m != "" {
 		scan.ModelAsked, model = true, m

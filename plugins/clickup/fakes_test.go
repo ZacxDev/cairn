@@ -10,12 +10,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/ZacxDev/cairn/plugins/internal/pluginapi"
 )
@@ -122,6 +124,9 @@ func validStream(s string) bool {
 
 var manifestWrites = []string{TypeEdge, TypeSuggestion, TypeScan}
 
+// printable is the pod's rule for a stored string: no control character.
+func printable(s string) bool { return !strings.ContainsFunc(s, unicode.IsControl) }
+
 func strictInto(raw []byte, into any) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -154,8 +159,14 @@ func podAccepts(typ string, raw []byte) error {
 			shapes++
 		}
 		signals := []string{SigBranch, SigCommitMsg, SigCommitTrlr, SigPRBody, SigPRLink, SigTranscript, SigEntryRef}
+		if e.Locator.Commit != "" && !regexp.MustCompile(`^[0-9a-f]{7,64}$`).MatchString(e.Locator.Commit) {
+			return fmt.Errorf("commit is not a hex SHA")
+		}
+		if e.Locator.Entry != "" && (!entryRefShape.MatchString(e.Locator.Entry) || strings.Contains(e.Locator.Entry, "..")) {
+			return fmt.Errorf("entry is not an entry ref")
+		}
 		if e.System != "clickup" || !canonicalID.MatchString(e.TicketID) || !slices.Contains(signals, e.Signal) || shapes != 1 ||
-			(e.CustomID != "" && !customIDShape.MatchString(e.CustomID)) {
+			(e.CustomID != "" && !customIDShape.MatchString(e.CustomID)) || len(e.Title) > 256 || !printable(e.Title) {
 			return fmt.Errorf("not an edge the pod stores: %s", raw)
 		}
 	case TypeSuggestion:
@@ -163,7 +174,8 @@ func podAccepts(typ string, raw []byte) error {
 		if err := strictInto(raw, &s); err != nil {
 			return err
 		}
-		if !canonicalID.MatchString(s.TicketID) || s.Confidence < 0 || s.Confidence > 1 || len(s.Rationale) > 280 {
+		if !canonicalID.MatchString(s.TicketID) || s.Confidence < 0 || s.Confidence > 1 || len(s.Rationale) > 280 ||
+			!printable(s.Rationale) || len(s.Title) > 256 || !printable(s.Title) {
 			return fmt.Errorf("not a suggestion the pod stores: %s", raw)
 		}
 	case TypeScan:
@@ -171,7 +183,7 @@ func podAccepts(typ string, raw []byte) error {
 		if err := strictInto(raw, &s); err != nil {
 			return err
 		}
-		if s.System != "clickup" || s.Edges < 0 || s.Suggestions < 0 {
+		if s.System != "clickup" || s.Edges < 0 || s.Edges > 10000 || s.Suggestions < 0 || s.Suggestions > 10000 {
 			return fmt.Errorf("not a scan the pod stores: %s", raw)
 		}
 	default:
@@ -271,8 +283,13 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			Body           json.RawMessage  `json:"body"`
 		}
 		raw, _ := io.ReadAll(r.Body)
-		if err := strictInto(raw, &env); err != nil || p.of(env.Session) == nil || env.Model == "" || len(env.InputWatermark) == 0 {
+		if err := strictInto(raw, &env); err != nil || env.Model == "" || len(env.Model) > 128 || !printable(env.Model) || len(env.InputWatermark) == 0 {
 			http.Error(rw, "bad envelope", 400)
+			return
+		}
+		if p.of(env.Session) == nil {
+			// The real pod's ONE 403: a session it does not hold is not told apart from one the plugin is OFF for.
+			writeJSON(rw, 403, map[string]string{"refused": "plugin-forbidden"})
 			return
 		}
 		if !slices.Contains(manifestWrites, env.Type) {

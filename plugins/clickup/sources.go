@@ -60,27 +60,53 @@ type Commit struct {
 	Trailers []Trailer
 }
 
-// splitMessage separates a commit message from its trailer block: the LAST paragraph, when it is not
-// the only one and every line of it is `Key: value` (or a continuation of the line above).
+// gitNote is a line git itself adds to a message's last paragraph that is no trailer.
+var gitNote = regexp.MustCompile(`^\(cherry picked from commit [0-9a-f]{7,64}\)$`)
+
+// splitMessage separates a commit message from its trailer block: the LAST paragraph (after any
+// trailing paragraphs of `#` comment lines, which a conflicted merge leaves), when it is not the only
+// one and every line of it is a trailer, a continuation of the line above, a line git adds itself
+// (`(cherry picked from commit …)`), or a bare URL — which is prose and stays in the message.
 func splitMessage(msg string) (string, []Trailer) {
 	msg = strings.TrimRight(strings.ReplaceAll(msg, "\r\n", "\n"), "\n")
-	cut := strings.LastIndex(msg, "\n\n")
-	if cut < 0 {
+	body := msg
+	for {
+		cut := strings.LastIndex(body, "\n\n")
+		if cut < 0 {
+			return msg, nil
+		}
+		comment := true
+		for _, line := range strings.Split(body[cut+2:], "\n") {
+			if !strings.HasPrefix(line, "#") && !strings.HasPrefix(line, "\t") {
+				comment = false
+			}
+		}
+		if !comment {
+			break
+		}
+		body = strings.TrimRight(body[:cut], "\n")
+	}
+	cut := strings.LastIndex(body, "\n\n")
+	var out []Trailer
+	var prose []string
+	for _, line := range strings.Split(body[cut+2:], "\n") {
+		m := trailerLine.FindStringSubmatch(line)
+		switch {
+		case m != nil && strings.HasPrefix(m[2], "//"):
+			prose = append(prose, line) // `https://…` on its own line: a URL, not a `https:` trailer
+		case m != nil:
+			out = append(out, Trailer{Key: m[1], Value: strings.TrimSpace(m[2])})
+		case len(out) > 0 && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")):
+			out[len(out)-1].Value += " " + strings.TrimSpace(line)
+		case gitNote.MatchString(line):
+		default:
+			return msg, nil // prose in the last paragraph: it is not a trailer block
+		}
+	}
+	if len(out) == 0 {
 		return msg, nil
 	}
-	var out []Trailer
-	for _, line := range strings.Split(msg[cut+2:], "\n") {
-		if m := trailerLine.FindStringSubmatch(line); m != nil {
-			out = append(out, Trailer{Key: m[1], Value: strings.TrimSpace(m[2])})
-			continue
-		}
-		if len(out) > 0 && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) {
-			out[len(out)-1].Value += " " + strings.TrimSpace(line)
-			continue
-		}
-		return msg, nil // prose in the last paragraph: it is not a trailer block
-	}
-	return msg[:cut], out
+	return strings.TrimRight(body[:cut]+"\n\n"+strings.Join(prose, "\n"), "\n"), out
 }
 
 // run executes one host program with a bounded answer. The environment is this process's, so the
@@ -120,7 +146,7 @@ func SessionCommits(ctx context.Context, gitBin, repo, session string) ([]Commit
 	}
 	// %x1f and %x1e: separators no commit message carries.
 	raw, err := runProgram(ctx, []string{"GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0"}, gitBin, "-C", repo, "--no-pager",
-		"log", "--all", "-n", strconv.Itoa(maxCommits), "--fixed-strings", "--grep="+session, "--format=%H%x1f%B%x1e")
+		"log", "--all", "--no-show-signature", "-n", strconv.Itoa(maxCommits), "--fixed-strings", "--grep="+session, "--format=%H%x1f%B%x1e")
 	if err != nil {
 		return nil, err
 	}
@@ -252,8 +278,9 @@ func sessionsOf(text string) map[string]bool {
 	return out
 }
 
-// frontMatterRefs is the `clickup:` idents of an entry's `refs:` key, in its three written shapes:
-// `refs: clickup:x`, `refs: [clickup:x, github:o/r#1]`, and a block list of `- item` lines.
+// frontMatterRefs is the `clickup:` idents of an entry's `refs:` key, in its two list shapes —
+// `refs: [clickup:x, github:o/r#1]` and a block list of `- item` lines — and of the older `task:`
+// key's one scalar. A scalar `refs:` is read as nothing: the store refuses such an entry as malformed.
 func frontMatterRefs(text string) []string {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	if !strings.HasPrefix(text, "---\n") {
@@ -265,6 +292,7 @@ func frontMatterRefs(text string) []string {
 	}
 	lines := strings.Split(text[4:4+end], "\n")
 	values := map[string][]string{}
+	hasRefs := false
 	for i := 0; i < len(lines); i++ {
 		line := strings.TrimSpace(lines[i])
 		key, val, ok := strings.Cut(line, ":")
@@ -275,12 +303,14 @@ func frontMatterRefs(text string) []string {
 		if key != "refs" && key != "tasks" && key != "task" {
 			continue
 		}
+		hasRefs = hasRefs || (key == "refs" && val != "")
 		var items []string
 		switch {
 		case strings.HasPrefix(val, "[") && strings.HasSuffix(val, "]"):
 			items = strings.Split(val[1:len(val)-1], ",")
-		case val != "":
+		case val != "" && key == "task":
 			items = []string{val}
+		case val != "":
 		default:
 			for j := i + 1; j < len(lines); j++ {
 				item := strings.TrimSpace(lines[j])
@@ -300,7 +330,9 @@ func frontMatterRefs(text string) []string {
 		}
 	}
 	items := values["refs"]
-	if len(items) == 0 {
+	// `refs:` WINS BY NOT CONSULTING THE OLDER KEYS AT ALL (the store's rule) — even when what it
+	// holds is unreadable here.
+	if len(items) == 0 && !hasRefs {
 		items = append(values["tasks"], values["task"]...)
 	}
 	var out []string

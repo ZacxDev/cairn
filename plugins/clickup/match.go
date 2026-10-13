@@ -73,8 +73,9 @@ func (m *Matcher) URLs(text string) []Hit {
 			// 🔴 NO FALLBACK to reading the workspace id as a ticket: an unresolved custom id is no edge.
 			continue
 		}
-		// `/t/<id>`. The id must END there: `…/t/abc123-draft` addresses no task `abc123`.
-		if end := loc[3]; end < len(text) && text[end] == '-' {
+		// `/t/<id>`. The id must END there: `…/t/abc123-draft` addresses no task `abc123`, and neither
+		// does an id a tool cut short (`…/t/abc...`).
+		if continues(text[loc[3]:]) {
 			continue
 		}
 		if canonicalID.MatchString(first) {
@@ -136,12 +137,38 @@ func (m *Matcher) Tokens(text string, also map[string]bool) []Hit {
 	return out
 }
 
+// continues reports whether the text right after a URL's id shows the id did not end there.
+func continues(rest string) bool {
+	switch {
+	case rest == "":
+		return false
+	case rest[0] == '-', rest[0] == '%':
+		return true
+	case rest[0] == '_':
+		// `_` then more id-like text continues it; a lone `_` is markup around the URL.
+		return len(rest) > 1 && isAlnum(rest[1])
+	}
+	return strings.HasPrefix(rest, "..") || strings.HasPrefix(rest, "…")
+}
+
+// withoutURLs is text with every task-URL-shaped span blanked.
+//
+// 🔴 A URL IS JUDGED ONCE, AS A URL. Without this the bare-token matchers re-read the inside of a URL
+// the URL matcher had just REFUSED — another workspace's `/t/<workspace>/ALPHA-12` still held the
+// listed token `ALPHA-12` — and wrote the edge the refusal existed to prevent.
+func withoutURLs(text string) string {
+	if !strings.Contains(text, urlMarker) {
+		return text
+	}
+	return taskURL.ReplaceAllStringFunc(text, func(u string) string { return strings.Repeat(" ", len(u)) })
+}
+
 // Prose is what free text names: URLs and listed custom ids.
 func (m *Matcher) Prose(text string) []Hit {
-	return append(m.URLs(text), m.Customs(text)...)
+	return append(m.URLs(text), m.Customs(withoutURLs(text))...)
 }
 
 // Field is what a structured field names: everything prose does, plus a bare fetched id.
 func (m *Matcher) Field(text string, also map[string]bool) []Hit {
-	return append(m.Prose(text), m.Tokens(text, also)...)
+	return append(m.Prose(text), m.Tokens(withoutURLs(text), also)...)
 }

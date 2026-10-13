@@ -140,7 +140,7 @@ The edge always stores the CANONICAL id; a custom id the list does not resolve i
 | `commit-message`, `commit-trailer` | `git log` in each `-repo`, for commits whose TRAILER block names the session id (`Claude-Session-Id: <id>`, any key) | `{commit}` (the full SHA) |
 | `pr-body` | the body of a PR a `pr-link` record names, through `-gh-bin` | `{pr}` |
 | `pr-link` | that PR's TITLE and head branch | `{pr}` |
-| `entry-ref` | `refs:` of a cached entry (`-store-root`) carrying the session's `[cairn: <actor>/<session>]` attribution | `{entry}` (`<scope>/<entry>`) |
+| `entry-ref` | `refs:` (a list; a scalar `refs:` is an entry the store refuses) of a cached entry (`-store-root`) carrying the session's `[cairn: <actor>/<session>]` attribution | `{entry}` (`<scope>/<entry>`) |
 
 One edge per (ticket, signal) per session: an edge the session already holds is never written again.
 
@@ -172,15 +172,26 @@ re-send `Authorization` to its target), `https` or loopback only, and scrubbed f
 `-allow-plaintext-host` is plugin A's flag and applies to `-worker-url` alone — never to ClickUp or the
 provider, which are on the public internet.
 
-### Backoff
+### The state file: an unfinished pass is finished, a refused one backs off
 
-`-state-file` (default `sessions.json` beside the spend ledger, mode 0600) holds one thing: the
-backoff of a session whose pass THE POD REFUSED (a full quota's 507, a 400, the 403) — plugin A's
-rule, from the same `internal/hoststate`. A model may already have been paid for the suggestion whose
-write was refused, so retrying at once would re-pay every run. A refused session is skipped for 15
-minutes doubling to 24 hours; a success, or the session growing, clears it. The run asks the pod for
-its maximum page (100) and WORKS ON `-limit` sessions not in backoff, so refused sessions cannot hide
-healthy ones behind them.
+`-state-file` (default `sessions.json` beside the spend ledger, mode 0600; `internal/hoststate`, shared
+with plugin A) holds two things per session.
+
+**The redo marker.** Every output of a pass carries the pass's watermark, so the FIRST one written
+already takes the session off the pod's pending list. A pass that then stops — a refused write, a 500,
+the run's deadline, a killed process — would leave a session that never grows again without its
+remaining edges for good. So the pending item is saved before the pass's first write and cleared when
+its scan is written; a session carrying the marker is worked on again whether or not the pod lists it,
+from record 1 (an edge it already holds is not written twice). The marker also brings back a pass that
+stopped at the 100-edge cap, and one whose host source (a repository, the GitHub CLI) could not be
+read.
+
+**The backoff.** A pass the pod REFUSED (507 quota, 400, the 403) or whose host source failed is
+skipped for 15 minutes doubling to 24 hours; a success, or the session growing, clears it. A 5xx, an
+unreachable pod and the run's own deadline are transient: retried by the next run, no backoff. A
+session the pod no longer lists is given up after 6 failed attempts at one size (a line says so), and
+at once when the pod answers its 403 for it (deleted, or toggled off). The run asks the pod for its
+maximum page (100) and WORKS ON `-limit` sessions not in backoff, unfinished passes first.
 
 Exit codes: 0 the run finished, 1 a session, a source or the ticket fetch failed, 2 usage. The last
 stdout line is `SUMMARY clickup-run: sessions=… edges=… suggestions=… requests=… failed=… capped=… skipped=…`.
@@ -205,12 +216,17 @@ stdout line is `SUMMARY clickup-run: sessions=… edges=… suggestions=… requ
 - **A session that stamps no session trailer has no commit signal**, and an entry it wrote only with
   `put`/`create` (no attribution) has no `entry-ref`.
 - **Host sources are read when a session is PENDING.** A commit made, or a PR body edited, after the
-  session's last pass is seen only if the session grows again; a `pr-link` record is read once, so a
-  PR the CLI could not read then is not retried (the run exits 1 and says so).
+  session's last finished pass is seen only if the session grows again. (A source that FAILED is
+  retried: the state file's redo marker.)
 - **A session that LISTED tickets is linked to every one it listed** — a URL in a tool result is a
-  URL. At most 100 new edges a pass.
-- **A run killed between two writes** leaves the session covered until it grows; the next pass then
-  re-reads it from record 1 (the last output is not a scan) and writes what is missing.
+  URL. At most 100 new edges a pass; the next run writes the rest.
+- **The redo marker is on ONE host.** A pass interrupted on a host whose state file is then lost is
+  finished only if the session grows (its last output is not a scan, so it is re-read from record 1).
+- **A summary written WHILE a pass runs is not asked about**: "new" is judged by the pod's
+  whole-second stamp against this plugin's previous scan, so a summary stamped at or before that scan
+  waits for the summary after it.
+- **A URL split across two strings, or cut short by a tool, is no URL**: `…/t/abc...` is refused
+  rather than read as ticket `abc`.
 - **The entry reader is a narrow second reader**, not the store's parser: it reads the attribution
   trailer and the `refs:` key and nothing else; a file it misreads costs an edge.
 - **Suggestions are best-effort**: a capped, failed or unconfigured model leaves the pass complete
