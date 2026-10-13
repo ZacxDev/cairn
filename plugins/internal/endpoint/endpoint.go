@@ -7,9 +7,13 @@
 // token to wherever it pointed. [Client] answers the 3xx itself, and both callers treat it as an
 // error.
 //
-// 🔴 NO CLEARTEXT OFF THE HOST. [Validate] takes `https`, or plain `http` to a loopback address only
-// — the rule `cairn-capture` applies to its worker URL, for the same reason: the credential would
-// cross the network readable.
+// 🔴 NO CLEARTEXT OFF THE HOST, UNLESS THE OPERATOR NAMED THE HOST. [Validate] takes `https`, or plain
+// `http` to a loopback address — the rule `cairn-capture` applies to its worker URL, for the same
+// reason: the credential would cross the network readable. The one exception is a host the operator
+// listed BY NAME (`-allow-plaintext-host`, exact match, no default, no environment spelling): a
+// deployment whose listener is plain http over a private ENCRYPTED mesh address has its transport
+// encrypted below HTTP, which this program cannot see and must be told. A PROVIDER URL takes no such
+// list — a model provider is on the public internet.
 package endpoint
 
 import (
@@ -17,12 +21,26 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
 
 // Validate returns the base URL without a trailing slash, or why it is refused. `what` names the flag.
-func Validate(what, raw string) (string, error) {
+// `allowPlaintext` is the hosts plain `http` is accepted for beyond loopback (nil: none); the second
+// result is the listed host that was USED, "" when the URL needed no exception.
+func Validate(what, raw string, allowPlaintext []string) (base, plaintextHost string, err error) {
+	base, err = validate(what, raw, func(host string) bool {
+		if slices.Contains(allowPlaintext, host) {
+			plaintextHost = host
+			return true
+		}
+		return false
+	})
+	return base, plaintextHost, err
+}
+
+func validate(what, raw string, allowed func(host string) bool) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
 		return "", fmt.Errorf("%s is not a URL with a host", what)
@@ -33,7 +51,9 @@ func Validate(what, raw string) (string, error) {
 	switch u.Scheme {
 	case "https":
 	case "http":
-		if !Loopback(u.Hostname()) {
+		// 🔴 AN EXACT match of the URL's host (no port), never a suffix or a pattern: `mesh.example`
+		// listed must not admit `mesh.example.attacker.invalid`.
+		if !Loopback(u.Hostname()) && !allowed(u.Hostname()) {
 			return "", fmt.Errorf("%s is plain http to a non-loopback host; the credential would cross the network in cleartext", what)
 		}
 	default:

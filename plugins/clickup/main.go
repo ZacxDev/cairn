@@ -80,6 +80,9 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	minConf := fs.Float64("min-confidence", 0.5, "a suggestion below this confidence is not written")
 	storeTitles := fs.Bool("store-ticket-titles", false, "send each ticket's NAME to the pod as the output's title; the default "+
 		"stores ticket ids only, and an instance not started with -plugin-store-ticket-titles refuses a titled output")
+	var plaintext pluginapi.HostList
+	fs.Var(&plaintext, "allow-plaintext-host", "a host -worker-url may be plain http to (exact match, repeatable; no default): "+
+		"for a listener on a private ENCRYPTED mesh address. Never applies to -clickup-url or -provider-url")
 	timeout := fs.Duration("timeout", 30*time.Minute, "the bound on the whole run")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -132,11 +135,16 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	if err != nil {
 		return usage(err.Error())
 	}
-	workerBase, err := endpoint.Validate("-worker-url", *workerURL)
+	api := &pluginapi.Client{Base: *workerURL, Token: token, AllowPlaintextHosts: plaintext}
+	plainHost, err := api.ValidateBase()
 	if err != nil {
 		return usage(err.Error())
 	}
-	cuBase, err := endpoint.Validate("-clickup-url", *cuURL)
+	if plainHost != "" {
+		fmt.Fprintf(stderr, "clickup: -worker-url is PLAIN HTTP to %s, allowed by -allow-plaintext-host: the plugin token and transcript "+
+			"content are encrypted only by whatever carries that address\n", plainHost)
+	}
+	cuBase, _, err := endpoint.Validate("-clickup-url", *cuURL, nil)
 	if err != nil {
 		return usage(err.Error())
 	}
@@ -152,7 +160,7 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	}
 	logf := func(s string) { fmt.Fprintln(stderr, s) }
 	r := &Runner{
-		API:             &pluginapi.Client{Base: workerBase, Token: token},
+		API:             api,
 		State:           state,
 		Now:             now,
 		Limit:           *limit,

@@ -123,7 +123,8 @@ func (c *ClickUp) resetWait(h http.Header) time.Duration {
 
 // get is the ONE request this client makes: a GET, with the 429 wait.
 func (c *ClickUp) get(ctx context.Context, path string, q url.Values, into any) error {
-	base, err := endpoint.Validate("the ClickUp URL", c.Base)
+	// No plaintext exception: ClickUp is on the public internet.
+	base, _, err := endpoint.Validate("the ClickUp URL", c.Base, nil)
 	if err != nil {
 		return err
 	}

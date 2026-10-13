@@ -1232,8 +1232,8 @@ jobs:
       # no real ClickUp workspace is ever called by CI (the plan's (iii)). Plugin B's commit matcher runs
       # the REAL `git` over a repository the test creates, and FAILS rather than skips without one.
       #
-      # 🔴 COUNTED, NOT EXIT-CODED: a module whose tests vanished exits 0 too. 54 `--- PASS` lines and 7
-      # `ok` packages were measured when plugin B landed (31 and 4 with plugin A alone); a drop below
+      # 🔴 COUNTED, NOT EXIT-CODED: a module whose tests vanished exits 0 too. 58 `--- PASS` lines and 7
+      # `ok` packages were measured when plugin B landed (34 and 4 with plugin A alone); a drop below
       # either, or any FAIL, refuses.
       - name: the example plugins' own suites, against in-process fake provider, ClickUp and pod servers
         run: |
@@ -1245,8 +1245,8 @@ jobs:
           fails=$(grep -c '^--- FAIL' /tmp/plugins-suite.txt || true)
           oks=$(grep -c '^ok ' /tmp/plugins-suite.txt || true)
           echo "plugins suite: passes=$passes fails=$fails ok=$oks"
-          if [ "$passes" -lt 54 ] || [ "$fails" -ne 0 ] || [ "$oks" -lt 7 ]; then
-            echo "REFUSING: $passes PASS / $fails FAIL / $oks ok, and 54 / 0 / 7 were measured"
+          if [ "$passes" -lt 58 ] || [ "$fails" -ne 0 ] || [ "$oks" -lt 7 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL / $oks ok, and 58 / 0 / 7 were measured"
             exit 1
           fi
 

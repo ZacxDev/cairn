@@ -93,7 +93,8 @@ func New(c Config) (Provider, error) {
 	default:
 		return nil, fmt.Errorf("provider %q is not one of %v", c.Provider, Providers())
 	}
-	base, err := endpoint.Validate("the provider URL", c.BaseURL)
+	// No plaintext exception for a provider: https, or http to loopback (a local proxy), only.
+	base, _, err := endpoint.Validate("the provider URL", c.BaseURL, nil)
 	if err != nil {
 		return nil, err
 	}
