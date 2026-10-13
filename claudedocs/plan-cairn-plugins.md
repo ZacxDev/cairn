@@ -1444,6 +1444,12 @@ script that prints only counts.
       a `false` answer is final and is logged loudly ("prefix not withdrawn: not held by this owner and host" — e.g. the
       token was reissued under another host label), and the session stays held rather than being
       re-shipped, so the prefix's presence elsewhere is surfaced instead of duplicated. Clause (m).
+      *As built (S10, from #273's audit): before withdrawing on a MOVE the agent probes the
+      destination's position (nothing is stored); a destination that answers 410 — it holds a final
+      deletion of this root, which a routing-table edit can route a session back to — means the
+      session is HELD where it is, with no withdrawal. Withdrawing first ended the session's capture
+      on every instance. The cost, stated: that prefix stays on an instance the current table no
+      longer routes its scopes to, until its owner deletes it there.*
     - ⚠ **Re-shipping from offset 0 needs the source.** If the runtime has already deleted part of a
       session's files on the host, the re-shipped copy is what remains, and the agent logs the
       shortfall; it never re-sends bytes it no longer has.

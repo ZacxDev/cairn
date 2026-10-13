@@ -60,6 +60,7 @@ func (s *Store) ForPlugin(root string, on func(meta *Meta, v []string) bool) (*V
 	if err != nil || meta == nil {
 		return nil, err
 	}
+	storeWalks.Add(1)
 	ids := append([]string{meta.Root}, meta.Children...)
 	written, err := WrittenScopes(s.storeRoot, ids)
 	if err != nil {
@@ -77,6 +78,10 @@ func (s *Store) ForPlugin(root string, on func(meta *Meta, v []string) bool) (*V
 // storeWalks counts whole-store trailer walks made for plugins — a test's instrument for "ONE walk
 // per pending query, and none when nothing could be ON".
 var storeWalks atomic.Int64
+
+// PluginStoreWalks is how many whole-store trailer walks have been made for plugins — an instrument
+// for tests in other packages ("no walk while no scope consents").
+func PluginStoreWalks() int64 { return storeWalks.Load() }
 
 // writtenIndex is ONE walk of the whole store's write trailers, indexed by session id: every scope a
 // trailer names each session in, and every scope the walk could not fully scan. [WrittenScopes]

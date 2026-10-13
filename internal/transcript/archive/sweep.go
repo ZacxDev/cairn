@@ -227,8 +227,10 @@ func (a *Archive) deleteLocked(m *Meta, reason string) error {
 //     deleted, so the route is no oracle over other uploaders' roots: a `true` only ever speaks
 //     about the caller's own.
 //
-// ⚠ THE SECOND ARM READS ANY DELETION OF THE CALLER'S OWN ROOT, NOT ONLY A WITHDRAWAL — a stated
-// widening of the plan's "already withdrew it". The agent's question is "is my prefix gone from
+// ⚠ THE SECOND ARM READS ANY *FINAL* DELETION OF THE CALLER'S OWN ROOT, NOT ONLY A WITHDRAWAL — a
+// stated widening of the plan's "already withdrew it". (Final: every journaled reason but
+// [ReasonRetentionNoMeta], whose directory no upload ever committed and whose owner is unknown —
+// [readDeleted] leaves it out, so it answers `false`.) The agent's question is "is my prefix gone from
 // you", and a prefix the retention sweep or the owner's own delete removed is as gone as one a
 // withdrawal removed; answering `false` there would hold the session on its host for good over a
 // prefix that no longer exists anywhere. It still names only the caller's own (owner, host).

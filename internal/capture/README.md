@@ -179,6 +179,18 @@ agent marks the session (`deleted` in the state, saved at once), logs `DELETED <
 session was refused every run, and a stream or blob sent from its start was accepted, re-creating
 on the instance the session its owner had deleted.
 
+🔴 **The destination is asked BEFORE the current holder is told to forget** (#273's audit F1, closed
+in S10). A routing-TABLE edit can send a session back to an instance it was once withdrawn from, where
+its deletion is final. Withdrawing first removed the prefix from the instance that held it, and the
+first upload to the other then answered 410 and marked the session `deleted` — captured nowhere, over
+an edit to a table. So on a move the agent first sends the destination a position probe (the CAS's own
+409, which stores nothing). If it answers 410, the session is HELD where it is: no withdrawal, nothing
+more of it shipped, `HOLD <root>: its routing answer now names instance <x>, where this session's
+transcript was DELETED…` logged once, counted `held`. Any other answer — or none — changes nothing
+and the withdrawal proceeds. ⚠ The held prefix then sits on an instance the CURRENT table no longer
+routes its scopes to: that is the stated cost of not deleting it everywhere, and removing it is the
+operator's act (the owner's delete, on that instance).
+
 ⚠ **What it cannot do.** The withdrawal table's third row reads "never landed" off this agent's own
 watermarks, which a kill can leave unsaved — but then the instance DOES hold the prefix and answers
 `true`, so the case cannot be confused in the direction that matters. And `deleted` is per session,

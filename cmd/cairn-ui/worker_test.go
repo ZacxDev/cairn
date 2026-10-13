@@ -220,8 +220,14 @@ func TestTheWorkerListenerIsDisarmedUnlessArmedByFlag(t *testing.T) {
 	on := startPresenceChild(t, journal, workerArgs(t, tokens, "-arm-transcript-capture")...)
 	on.serving(t)
 	m = on.workerAddr(t)
-	if m[5] != "ARMED" || !strings.Contains(on.out.String(), "WAIVED by operator decision O17") || !strings.Contains(on.out.String(), "S11's client read ledger") {
+	if m[5] != "ARMED" || !strings.Contains(on.out.String(), "WAIVED by operator decision O17") ||
+		!strings.Contains(on.out.String(), "client read ledger its host uploads") || !strings.Contains(on.out.String(), "while its ledger is EMPTY") {
 		t.Fatalf("an armed child does not announce the arming and its preconditions:\n%s", on.out.String())
+	}
+	// 🔴 The warning said "this build holds no ledger" long after S11 built one. A warning that is
+	// false about the build trains its reader to skip it.
+	if strings.Contains(on.out.String(), "holds no ledger") {
+		t.Fatalf("the arming warning still says this build holds no ledger:\n%s", on.out.String())
 	}
 	if code, body := postUpload(t, m[1], childCaptureToken); code != http.StatusOK || body != `{"stored_to":"100","seq_to":1}`+"\n" {
 		t.Fatalf("POSITIVE CONTROL: an armed child answered %d %q", code, body)

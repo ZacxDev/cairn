@@ -121,7 +121,19 @@ func (s *Service) deciderOver(st State, plugin string) (func(*transcript.Meta, [
 // nothing: the deleted session is gone from its pending list, and every refusal already means "stop
 // working on this session". The plan's clause is amended to say so.
 func (s *Service) Open(plugin, root string) (*transcript.View, error) {
-	on, err := s.decider(plugin)
+	st, err := s.Journal.Read()
+	if err != nil {
+		return nil, err
+	}
+	// 🔴 NO WALK WHEN NOTHING CAN BE ON — [Service.Pending]'s short-circuit, which this route's own
+	// comments described and did not have: with no scope `allowed` or `on` for the plugin, rule (1)
+	// of the fold refuses every session, so the answer is the one refusal without reading a session
+	// or walking the store. Before, every plugin read on an instance where nobody had consented
+	// walked the WHOLE store (and answered 500, not 403, when the store could not be read).
+	if !st.AnyConsent(plugin) {
+		return nil, ErrForbidden
+	}
+	on, err := s.deciderOver(st, plugin)
 	if err != nil {
 		return nil, err
 	}

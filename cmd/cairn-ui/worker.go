@@ -261,19 +261,20 @@ func ownerStillHeld(authority interface{ Model() control.Model }, owner worker.O
 	}
 }
 
-// armedWarning is printed when capture is armed. 🔴 It names what the plan still asks and what the
-// operator WAIVED, because the flag is the operator's assertion and nothing in this binary can
-// check it: S11's read ledger — without which this build's own derivation of a session's read
-// scopes marks owner-only every session whose tool input names `cairn` or the cache directory, as
-// well as any carrying a header that names no scope — and, waived by
-// operator decision O17, not passed, O15's held-back gate, so this redactor is NOT measured to
-// that bar.
+// armedWarning is printed when capture is armed. 🔴 It names what the operator WAIVED and what
+// arming still depends on OUTSIDE this binary, because the flag is the operator's assertion and
+// nothing here can check it: O15's held-back gate, waived by operator decision O17 and not passed,
+// so this redactor is NOT measured to that bar; and the client read ledger (S11, BUILT — the pod
+// folds an uploaded ledger into a session's read scopes), which only helps a session whose HOST runs
+// a client that writes one. It said "this build holds no ledger" until S10; that stopped being true
+// when S11 landed.
 const armedWarning = "cairn-ui: WARNING transcript capture is ARMED (-" + flagArmCapture + "). O15's arming gate " +
 	"(≥ 90% of leaks caught on a fresh held-back set) was WAIVED by operator decision O17, not passed: this " +
-	"redactor is not measured to that bar, so a secret it misses is stored. The plan also asks that S11's client " +
-	"read ledger has landed: this build holds no ledger, so a stored session whose tool input names cairn or its " +
-	"cache directory, or that carries a read header naming no scope, is visible to its OWNER only. Arming is your " +
-	"assertion that you accept both"
+	"redactor is not measured to that bar, so a secret it misses is stored. A session's read scopes come from the " +
+	"client read ledger its host uploads: a session whose tool input names cairn while its ledger is EMPTY (its " +
+	"host's client predates the ledger, or the read went around the client), or names the cache directory, or " +
+	"carries a read header naming no scope, is visible to its OWNER only — so keep every capturing host's client " +
+	"current. Arming is your assertion that you accept both"
 
 // workerMode is the startup line's clause about the third listener and capture.
 func workerMode(addr string, owner worker.Owner, rows int, dir string, armed bool) string {
