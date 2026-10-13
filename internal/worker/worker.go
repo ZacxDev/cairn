@@ -1,7 +1,7 @@
 // Package worker is `cairn-ui`'s THIRD listener (plan decision 8, `-worker-addr`): the routes a
 // host-side machine reaches with a WORKER token rather than a browser credential. Slice S3 of
-// `claudedocs/plan-cairn-plugins.md` gives it the capture upload routes; the plugin API (S5) and
-// the withdrawal route (S6) join the same ledger later.
+// `claudedocs/plan-cairn-plugins.md` gives it the capture upload routes and slice S5 the PLUGIN API
+// (`plugin.go`); the withdrawal route (S6) joins the same ledger later.
 //
 // 🔴 CAPTURE IS DISARMED BY DEFAULT, AND THE REFUSAL IS HERE. Operator decision O16 armed NO
 // instance. The redactor's held-back gate (O15 — ≥ 90% of leaks caught, ≤ 15% of clean lines
@@ -33,6 +33,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/authz"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/netid"
+	"github.com/ZacxDev/cairn/internal/plugins"
 	"github.com/ZacxDev/cairn/internal/transcript/archive"
 )
 
@@ -54,16 +55,22 @@ const (
 )
 
 type route struct {
+	method  string
 	pattern string
 	kind    TokenKind
 	handle  func(w *Worker, rw http.ResponseWriter, r *http.Request, row TokenRow)
 }
 
 // routes is THE dispatch table; [Routes] derives the ledger from it and [New] the mux, so the
-// two cannot disagree. Every route is `POST`: every one changes state.
+// two cannot disagree. Every CAPTURE route is `POST` (every one changes state); the plugin API's
+// reads are `GET` and its one write is `POST` (`plugin.go`).
 var routes = []route{
-	{RecordsPattern, KindCapture, (*Worker).handleRecords},
-	{BlobsPattern, KindCapture, (*Worker).handleBlob},
+	{http.MethodPost, RecordsPattern, KindCapture, (*Worker).handleRecords},
+	{http.MethodPost, BlobsPattern, KindCapture, (*Worker).handleBlob},
+	{http.MethodGet, PendingPattern, KindPlugin, (*Worker).handlePending},
+	{http.MethodGet, TranscriptPattern, KindPlugin, (*Worker).handleTranscript},
+	{http.MethodGet, OutputsPattern, KindPlugin, (*Worker).handleOutputsRead},
+	{http.MethodPost, OutputsPattern, KindPlugin, (*Worker).handleOutputsWrite},
 }
 
 // Routes is every `<METHOD> <pattern> <token kind>` this listener dispatches, sorted. Adding a row
@@ -72,7 +79,7 @@ var routes = []route{
 func Routes() []string {
 	out := make([]string, 0, len(routes))
 	for _, rt := range routes {
-		out = append(out, http.MethodPost+" "+rt.pattern+" "+string(rt.kind))
+		out = append(out, rt.method+" "+rt.pattern+" "+string(rt.kind))
 	}
 	slices.Sort(out)
 	return out
@@ -98,6 +105,10 @@ type Config struct {
 	MaxBody int64
 	// Log receives operator lines — never a token, never content.
 	Log func(string)
+	// Plugins is the plugin registry, toggles and outputs (slice S5); nil is "no -plugin-registry",
+	// under which no plugin row is admitted: one present at startup refuses the whole file (as any
+	// refused row does), and one appearing afterwards authenticates nothing — the uniform 401.
+	Plugins *plugins.Service
 }
 
 // DefaultMaxBody bounds a request. A record larger than what fits is sent as continuation frames.
@@ -121,7 +132,7 @@ func New(cfg Config) (*Worker, []TokenRow, error) {
 		cfg.OwnerHeld == nil {
 		return nil, nil, ErrMisconfigured
 	}
-	rows, err := LoadTokens(cfg.TokenFile, cfg.Owner)
+	rows, err := LoadTokens(cfg.TokenFile, cfg.wall())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -134,11 +145,20 @@ func New(cfg Config) (*Worker, []TokenRow, error) {
 	w := &Worker{cfg: cfg, mux: http.NewServeMux(), announced: map[string]bool{}}
 	for _, rt := range routes {
 		rt := rt
-		w.mux.HandleFunc(http.MethodPost+" "+rt.pattern, func(rw http.ResponseWriter, r *http.Request) {
+		w.mux.HandleFunc(rt.method+" "+rt.pattern, func(rw http.ResponseWriter, r *http.Request) {
 			w.serve(rw, r, rt)
 		})
 	}
 	return w, rows, nil
+}
+
+// wall is the token file's wall for this configuration.
+func (c Config) wall() Wall {
+	w := Wall{Owner: c.Owner}
+	if c.Plugins != nil && c.Plugins.Registry != nil {
+		w.Plugins = c.Plugins.Registry.Holds
+	}
+	return w
 }
 
 // ServeHTTP dispatches through the ledger-built mux. A path in no row is 404; a known path with
@@ -174,7 +194,7 @@ func (w *Worker) authenticate(presented string, kind TokenKind) (TokenRow, bool)
 	digest := control.HashToken(presented)
 	var matched *TokenRow
 	for _, row := range rows {
-		if err := admit(row, w.cfg.Owner); err != nil {
+		if err := admit(row, w.cfg.wall()); err != nil {
 			w.once(fmt.Sprintf("worker: token file line %d (digest %s…) refused: %v", row.Line, row.DigestPrefix(), err))
 			continue
 		}
@@ -209,6 +229,13 @@ func (w *Worker) serve(rw http.ResponseWriter, r *http.Request, rt route) {
 			w.cfg.Log("worker: refused: bad token from " + client)
 		}
 		refuseUnauthorized(rw)
+		return
+	}
+	// 🔴 THE CAPTURE GATES BELOW ARE CAPTURE'S, AND A PLUGIN ROUTE NEVER REACHES THEM: a plugin token
+	// uploads nothing, so neither the sole capture owner nor the arming flag says anything about it.
+	// What a plugin may do is its manifest and its toggles, decided in `plugin.go`.
+	if rt.kind == KindPlugin {
+		rt.handle(w, rw, r, row)
 		return
 	}
 	// 🔴 THE OWNER IS RE-ASKED PER REQUEST (AP3). The token rows bind to `-worker-owner`, and that

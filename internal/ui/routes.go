@@ -238,6 +238,16 @@ var routes = map[routeKey]route{
 	{"GET", SourcesPath}:  {(*Server).handleSourcesPage, classContent},
 	{"POST", SourcesPath}: {(*Server).handleSourcesSave, 0},
 
+	// 🔴 THE PLUGIN SURFACE (S5 of the transcripts plan, `plugins.go`): the registry page and the three
+	// toggle writes, one path per LEVEL for `UnsharePath`'s reason — which authority a toggle is checked
+	// against is the route's to decide, never a form field's. `GET /plugins` is `content` (it lists this
+	// caller's readable scopes' values); the POSTs carry NO class, so both cross-site gates reach them by
+	// METHOD.
+	{"GET", PluginsPath}:        {(*Server).handlePluginsPage, classContent},
+	{"POST", PluginScopePath}:   {(*Server).handlePluginScope, 0},
+	{"POST", PluginArcPath}:     {(*Server).handlePluginArc, 0},
+	{"POST", PluginSessionPath}: {(*Server).handlePluginSession, 0},
+
 	{"GET", "/team"}:              {(*Server).handleTeamPage, classContent},
 	{"POST", "/team/link"}:        {(*Server).handleTeamLink, 0},
 	{"POST", "/team/link/revoke"}: {(*Server).handleTeamLinkRevoke, 0},

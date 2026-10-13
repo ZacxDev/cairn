@@ -5209,8 +5209,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="worker-wall-skipped-on-the-reread",
         path="internal/worker/worker.go",
-        old="\t\tif err := admit(row, w.cfg.Owner); err != nil {\n\t\t\tw.once(",
-        new="\t\tif err := admit(row, row.Owner); err != nil {\n\t\t\tw.once(",
+        old="\t\tif err := admit(row, w.cfg.wall()); err != nil {\n\t\t\tw.once(",
+        new="\t\tif err := admit(row, Wall{Owner: row.Owner, Plugins: w.cfg.wall().Plugins}); err != nil {\n\t\t\tw.once(",
         killer="TestTheWallRefusesAForeignRowAtStartupAndAsARowAfterwards",
         why="the startup read already refused foreign rows, so the per-request re-read looks safe to "
         "trust — and a row appended afterwards would authenticate a second owner (Q7's wall).",
@@ -5505,6 +5505,180 @@ MUTANTS: tuple[Mutant, ...] = (
         why="every other block on the page has a display limit, and giving the user's message the "
         "assistant's head limit reads as consistency — and the one thing the operator asked never to "
         "be cut is then cut at 1,200 characters with no reveal.",
+    ),
+    # ---- S5 of the transcripts plan: the plugin registry, toggles and API ------------------------
+    # The toggle fold, ONE row per decision-10 case (the case number is in each name's killer), and
+    # the five the plan names beside them. `internal/plugins` and `internal/worker` sit outside the
+    # seam, so each row ADDS the package holding its killer (the S2/S3 rows' per-row rule).
+    Mutant(
+        name="plugins-toggle-default-on",
+        path="internal/plugins/toggles.go",
+        old="return s.Value(plugin, LevelScope, ScopeTarget(name), ValueOff)",
+        new="return s.Value(plugin, LevelScope, ScopeTarget(name), ValueOn)",
+        killer="TestFoldCase01NothingSetIsOff",
+        extra_killers=("TestThePendingListIsEmptyUntilAToggleIsSet",),
+        why="'a scope nobody has said anything about is fine' is the opt-out reading of consent — and "
+        "every registered plugin then reads every session on day one (clause i).",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+    ),
+    Mutant(
+        name="plugins-scope-on-ignored",
+        path="internal/plugins/toggles.go",
+        old="return consented && (everyOn || arcOn) && !arcOff",
+        new="return consented && (everyOn && false || arcOn) && !arcOff",
+        killer="TestFoldCase02EveryScopeOnIsOn",
+        why="reading `on` as just a louder `allowed` makes arcs the only way to run — and a scope whose "
+        "admins turned a plugin ON gets nothing.",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-arc-overrides-scope-off",
+        path="internal/plugins/toggles.go",
+        old="return consented && (everyOn || arcOn) && !arcOff",
+        new="return (consented || arcOn) && (everyOn || arcOn) && !arcOff",
+        killer="TestFoldCase03AnArcOnWithOneScopeOffIsOff",
+        why="revision 1's fold: a finer level overriding a coarser one is the usual shape of settings — and "
+        "arc membership is whatever an arc PUT names, so a scope's refusal is overridden by anyone who "
+        "registers an arc (T14).",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-arc-on-ignored",
+        path="internal/plugins/toggles.go",
+        old="\t\tcase ValueOn:\n\t\t\tarcOn = true",
+        new="\t\tcase ValueOn:\n\t\t\tarcOn = false",
+        killer="TestFoldCase04AnArcOnWithEveryScopeAllowedIsOn",
+        why="an arc that can only veto looks like the safe half — and O5's per-arc toggle then enables "
+        "nothing, so `allowed` scopes never run anywhere.",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-scope-toggle-any-not-every",
+        path="internal/plugins/toggles.go",
+        old="\t\tdefault:\n\t\t\tconsented, everyOn = false, false",
+        new="\t\tdefault:\n\t\t\teveryOn = false",
+        killer="TestFoldCase05AnArcOnWithOneScopeAllowedAndOneOffIsOff",
+        why="consent read as 'some scope agreed' — the union the session PAGE is found by — and a session "
+        "that touched a refusing scope is sent to a third party on its neighbour's say-so.",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-arc-off-ignored",
+        path="internal/plugins/toggles.go",
+        old="\t\tcase ValueOff:\n\t\t\tarcOff = true",
+        new="\t\tcase ValueOff:\n\t\t\tarcOff = false",
+        killer="TestFoldCase06EveryScopeOnWithAnArcOffIsOff",
+        why="with every scope ON an arc's `off` looks redundant — and the one way to keep a single arc's "
+        "sessions away from a plugin is gone.",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-session-opt-out-ignored",
+        path="internal/plugins/toggles.go",
+        old="&& !arcOff && st.Session(plugin, sub.Root) != ValueOff",
+        new="&& !arcOff",
+        killer="TestFoldCase07EveryScopeOnWithTheOwnersOptOutIsOff",
+        extra_killers=("TestThePendingListIsEmptyUntilAToggleIsSet",),
+        why="the session level can only say OFF, so it reads as a no-op beside the scope consent — and "
+        "the owner of a session that handled something sensitive has no way to keep it from a "
+        "third-party-egress plugin (T7).",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+    ),
+    Mutant(
+        name="plugins-unknown-scope-toggle-falls-back",
+        path="internal/plugins/toggles.go",
+        old='if scope == "*" || !known(scope) {',
+        new='if scope == "*" {',
+        killer="TestFoldCase08AnUnknownScopeOrTheStarIsOff",
+        why="the journal still holds the deleted scope's ON, so reading it is the obvious lookup — and a "
+        "scope nobody can administer any more keeps consenting forever.",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-empty-set-vacuously-on",
+        path="internal/plugins/toggles.go",
+        old="\tif len(sub.V) == 0 {\n\t\treturn false\n\t}\n\tconsented, everyOn := true, true",
+        new="\tconsented, everyOn := true, true",
+        killer="TestFoldCase09TheEmptySetIsOff",
+        why="'every scope of V is on' needs no special case to be written — and for an owner-only session "
+        "it is vacuously true, so a session no scope admin was ever asked about runs (clause g's shape).",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-session-level-accepts-on",
+        path="internal/plugins/toggles.go",
+        old="\t\tif v == ValueOn {\n\t\t\treturn ErrSessionOn\n\t\t}\n\t\tok = v == ValueUnset || v == ValueOff",
+        new="\t\tok = v == ValueUnset || v == ValueOff || v == ValueOn",
+        killer="TestASessionLevelOnIsRefusedAndJournalsNothing",
+        extra_killers=("TestWhoMayToggleIsDecidedPerLevel",),
+        why="three values at every level is the symmetric shape — and a session-level ON is then a "
+        "journaled claim of consent nobody who could give it gave (case 10).",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-arc-home-outside-v-counts",
+        path="internal/plugins/toggles.go",
+        old="\t\tif !inV[ScopeTarget(k.Home)] {\n\t\t\tcontinue",
+        new="\t\tif false && !inV[ScopeTarget(k.Home)] {\n\t\t\tcontinue",
+        killer="TestAnArcSpeaksOnlyForSessionsThatTouchedItsHome",
+        why="the plan's fold names no limit on which arcs count, so every arc listing the session looks like "
+        "the rule — and an admin of an unrelated scope then turns a plugin ON (or vetoes it) for a session "
+        "that scope never saw, by listing its id in their own arc (#270 round 1).",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-transcript-read-ignores-toggle",
+        path="internal/plugins/service.go",
+        old="\tv, err := s.Transcripts.ForPlugin(root, on)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden",
+        new="\tv, err := s.Transcripts.ForPlugin(root, func(*transcript.Meta, []string) bool { return on != nil })\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden",
+        killer="TestEveryPluginRefusalIsTheSameBytes",
+        why="the capability is checked and the token is the plugin's own, so the session's toggle looks "
+        "like a second check of the same thing — and a stolen plugin token reads every stored "
+        "transcript (clause j, T6).",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+    ),
+    Mutant(
+        name="plugins-output-type-unchecked",
+        path="internal/plugins/service.go",
+        old="\tif !e.Writes(env.Type) {\n\t\treturn Output{}, ErrForbidden",
+        new="\tif false && !e.Writes(env.Type) {\n\t\treturn Output{}, ErrForbidden",
+        killer="TestEveryPluginRefusalIsTheSameBytes",
+        why="the body is validated against its type's schema, which reads as the type check — and the "
+        "summariser then mints ticket EDGES, which render as deterministic facts (clause j).",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+    ),
+    Mutant(
+        name="plugins-capability-unchecked",
+        path="internal/worker/plugin.go",
+        old="\tif !e.Has(plugins.CapTranscriptRead) {\n\t\tforbidden(rw)",
+        new="\tif false && !e.Has(plugins.CapTranscriptRead) {\n\t\tforbidden(rw)",
+        killer="TestEveryPluginRefusalIsTheSameBytes",
+        why="the toggle already decides whether the plugin may see the session, so the manifest's "
+        "capability looks redundant — and a plugin registered only to LIST reads every transcript it "
+        "is on for.",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+    ),
+    Mutant(
+        name="plugins-toggle-unauthorised-level",
+        path="internal/ui/plugins.go",
+        old="\tscope, found := pickScope(scopes, control.ID(r.PostFormValue(FieldScope)))\n\tif !found || !id.Auth.Allows(scope.ID, control.VerbAdmin) {",
+        new="\tscope, found := pickScope(scopes, control.ID(r.PostFormValue(FieldScope)))\n\tif !found || !id.Auth.Allows(scope.ID, control.VerbWrite) {",
+        killer="TestWhoMayToggleIsDecidedPerLevel",
+        why="a writer of a scope already puts content in it, so letting them say where it goes looks "
+        "proportionate — and consent to third-party egress is an administration act the scope's "
+        "admins never gave.",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-plugin-name-from-body-not-token",
+        path="internal/plugins/outputs.go",
+        old="\t\tPlugin:         plugin.Name,",
+        new="\t\tPlugin:         e.Plugin,",
+        killer="TestTheEnvelopeIsStampedFromTheTokenNotTheBody",
+        extra_killers=("TestAnOutputIsStoredUnderTheTokensNameAndAdvancesTheWatermark",),
+        why="the envelope HAS a plugin field, so storing what it says looks faithful — and one plugin then "
+        "writes outputs under another's name, and moves the other's watermark.",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
     ),
     # 🔴 THE AGENT READ API (S8 of the transcripts plan): the plan's two rows. ⚠ NEITHER CAN BE A
     # LISTENER-LOCAL "SKIP THE PREDICATE" EDIT, AND THAT IS #261's DESIGN RATHER THAN A GAP: a stored

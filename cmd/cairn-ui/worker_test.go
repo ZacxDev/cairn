@@ -165,7 +165,7 @@ func TestTheBinaryRefusesEachWorkerMisconfiguration(t *testing.T) {
 	}
 }
 
-var workerLine = regexp.MustCompile(`worker listener on (127\.0\.0\.1:\d+) \(sole capture owner (\S+), (\d+) token row\(s\), 2 route\(s\)\), ` +
+var workerLine = regexp.MustCompile(`worker listener on (127\.0\.0\.1:\d+) \(sole capture owner (\S+), (\d+) token row\(s\), 6 route\(s\)\), ` +
 	`transcripts in (\S+), capture (DISARMED|ARMED)`)
 
 func (c *presenceChild) workerAddr(t *testing.T) []string {

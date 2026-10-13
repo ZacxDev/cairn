@@ -134,6 +134,9 @@ type PageView struct {
 	// Sources is the scope page's code-sources block, nil when no sources journal is configured and on
 	// every other page. See `sources.go`.
 	Sources *SourcesBlock
+	// Plugins is the plugin toggle block on the scope, arc and session pages (`plugins.go`), nil when
+	// no registry is configured — and nil on a session page for anybody but the transcript's owner.
+	Plugins *PluginToggles
 	// Panes is the presence predicate bound to THIS request's viewer ([Server.panesFor]), nil when
 	// presence is off. Set by the four pages that list a session; read only through its methods, so
 	// a viewer the predicate shows nothing renders no node at all. See `presence.go`.
@@ -263,6 +266,7 @@ func ScopePage(v PageView) g.Node {
 			// scope LIST's cards keep both. What stays is when the scope last changed.
 			g.If(s.MTime() > 0, h.P(h.Class("card-stats"), updatedAgo(s.MTime(), v.Now))),
 			g.Iff(v.Sources != nil, func() g.Node { return sourcesBlockNode(s, *v.Sources) }),
+			g.Iff(v.Plugins != nil, func() g.Node { return pluginTogglesNode(*v.Plugins, v.CSRF) }),
 			scopeTabs(s, v.Tab, v.Touched),
 			body,
 		),
