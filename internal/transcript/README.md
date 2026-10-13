@@ -77,13 +77,16 @@ collapsed reading model the browser surface renders. `claudedocs/plan-cairn-plug
 - **The bounds.** A page is at most `max_bytes` (64 KiB default, 1 MiB ceiling) of encoded records
   and always carries its first record WHOLE, however large, with `next_seq` naming the next — never
   split. A tool answer carries one byte range (64 KiB default, 1 MiB at most) of its result and of
-  its duplicate, moved inward to character boundaries and reported.
+  its duplicate, moved inward to character boundaries and reported. Its call's INPUT is carried
+  whole (bounded by its record, 4 MiB), never cut to the range.
 - **The skeleton carries no content beyond tool names** — and what the spawning call said a
   subagent was for (`agent_type`, `description`), which the plan names. ⚠ It is NOT bounded: it reads
   every stream once and lists every call, so a session of tens of thousands of calls is a
   proportionally large answer (the client bounds what it accepts at 16 MiB).
-- ⚠ **Work is not bounded, the response is** — a page scans its stream from record 1 (a `tool`
-  filter needs every earlier call's name), as the collapsed reading does.
+- ⚠ **Work is not bounded, the response is** — a page scans its stream from record 1, as the
+  collapsed reading does, but DECODES only from `from_seq` on unless a Claude `tool` filter needs
+  every earlier call's name (measured: the last record of a 20,000-record stream, 274 ms and 920,110
+  allocations decoding everything, 128 ms and 60,144 skipping; `page_decode_test.go`).
 
 ## Shapes deliberately NOT declared
 
@@ -94,7 +97,10 @@ collapsed reading model the browser surface renders. `claudedocs/plan-cairn-plug
 - opencode `compaction` parts carry only the part envelope here: R3 counted one, and its other
   keys were not measured.
 - Claude Code `attachment` subtypes: the real set is wider (R1); every attachment is bookkeeping
-  whatever its subtype, so the declared list governs the fixture's coverage only.
+  whatever its subtype — EXCEPT a `queued_command` with `commandMode: "prompt"` (not `isMeta`):
+  a message a human typed mid-turn, which is human text (an agent's prompt in a sidechain) in every
+  view, the skeleton's turn index and the browser surface, never cut. A queued task notification
+  stays bookkeeping. So the declared list governs the fixture's coverage only.
 
 ## Measured while building S0 (one host, opencode 1.18.29)
 

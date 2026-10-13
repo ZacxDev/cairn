@@ -642,3 +642,50 @@ func TestSplitAssistantTextCutsAtTheFirstLimit(t *testing.T) {
 		}
 	}
 }
+
+// TestAPromptTypedMidTurnRendersAsAUserMessageWhole — a human message typed while a turn ran is stored
+// by the runtime as a `queued_command` attachment (`commandMode: "prompt"`), not as a `user` record.
+// It renders as a user message, WHOLE — the one arm with no head and no reveal (O9) — and opens a
+// turn; a queued TASK NOTIFICATION beside it stays counted bookkeeping. The records are the
+// generator's `cc-queued-prompt` session (`tests/transcripts/gen.py`), stored under this world's
+// session; its prompt is 21 lines, past the assistant-text head, so "whole" is measurable.
+func TestAPromptTypedMidTurnRendersAsAUserMessageWhole(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "transcript", "testdata", "synthetic_world.json"))
+	if err != nil {
+		t.Fatalf("the synthetic world is missing (%v) — written by tests/transcripts/gen.py, named in flake.nix's onlyGo filter", err)
+	}
+	var world struct {
+		Sessions map[string]struct{ ID string } `json:"sessions"`
+		Claude   struct {
+			Files map[string]map[string]string `json:"files"`
+		} `json:"claude"`
+	}
+	if err := json.Unmarshal(raw, &world); err != nil {
+		t.Fatal(err)
+	}
+	file := world.Claude.Files["-work-alpha/"+world.Sessions["cc-queued-prompt"].ID+".jsonl"]["utf8"]
+	lines := strings.Split(strings.TrimRight(file, "\n"), "\n")
+	var queued struct{ Attachment struct{ Prompt, CommandMode string } }
+	if len(lines) != 6 || json.Unmarshal([]byte(lines[3]), &queued) != nil || queued.Attachment.CommandMode != "prompt" {
+		t.Fatalf("cc-queued-prompt is not the 6-record layout with the queued prompt at record 4; regenerate the world")
+	}
+	prompt := queued.Attachment.Prompt
+	if strings.Count(prompt, "\n") < assistantHeadLines {
+		t.Fatalf("the fixture prompt has %d lines, not past the %d-line head, so it cannot show whole-vs-clipped", strings.Count(prompt, "\n"), assistantHeadLines)
+	}
+	w := transcriptWorld(t)
+	a := transcripttest.OpenAt(t, w.clock.Now)
+	transcripttest.Append(t, a, w.session("s-full-01"), "main", lines)
+	rec := getAs(t, w.server(t, "owner", a), sessionURL("s-full-01"))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET the session page: %d", rec.Code)
+	}
+	whole := `<div class="t-user" data-class="human-text"><p class="t-label">user</p><div class="t-text">` + prompt + `</div></div>`
+	if !strings.Contains(body, whole) {
+		t.Errorf("the prompt typed mid-turn is not rendered as a user message, whole (%d bytes)", len(prompt))
+	}
+	if n := strings.Count(body, `<div class="t-user" data-class="human-text">`); n != 2 {
+		t.Errorf("the page carries %d user messages, want 2 (the first prompt and the queued one)", n)
+	}
+}

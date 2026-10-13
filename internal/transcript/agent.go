@@ -148,7 +148,7 @@ type ToolQuery struct {
 	Seq int64
 	ID  string
 	// Start and End are the byte range of the result (and of the duplicate copy) to carry, end
-	// exclusive.
+	// exclusive. The input is never cut ([ToolAnswer]).
 	Start, End int
 }
 
@@ -557,6 +557,12 @@ func (v *View) Page(q RecordsQuery) (Page, error) {
 		}
 	}
 	decode := q.View == ViewConversation || q.Class != "" || q.Role != "" || q.Tool != ""
+	// 🔴 A RECORD BEFORE `from_seq` IS DECODED ONLY WHEN THE CLAUDE `tool=` FILTER NEEDS ITS CALL NAMES
+	// (a result on the page answers a call that may be anywhere earlier). Anything else before the
+	// page is skipped undecoded: decoding it cost the whole stream's JSON on every late page —
+	// measured on 20,000 ~1 KiB records, the last record's page took 274 ms and 920,110 allocations
+	// before, and is in `page_decode_test.go`'s guard after.
+	namesBefore := !opencode && q.Tool != ""
 	callNames := map[string]string{}
 	used := 0
 	stopped := false
@@ -564,11 +570,14 @@ func (v *View) Page(q RecordsQuery) (Page, error) {
 		if rec.Seq > to {
 			return StopRecords
 		}
+		if rec.Seq < from && !namesBefore {
+			return nil
+		}
 		var obj map[string]any
 		if decode {
 			obj = decodeObject(rec.Rec)
 		}
-		if !opencode && q.Tool != "" && obj != nil {
+		if namesBefore && obj != nil {
 			// Remember every call's tool by id — those BEFORE the page too — so a result can be
 			// matched to the tool it answers.
 			for _, b := range contentBlocks(obj) {
@@ -754,8 +763,10 @@ func conversation(pr PageRecord, obj map[string]any, opencode bool) PageRecord {
 		}
 		return PageRecord{Seq: pr.Seq, Src: pr.Src, Omitted: []Omission{{Bookkeeping, "", len(pr.Rec), label}}}
 	}
+	// 🔴 ASKED OF THE CLASSIFICATION, NEVER OF THE RECORD TYPE: an `attachment` is bookkeeping by
+	// default, but a queued human prompt is one too and is the user's own words ([queuedPrompt]).
 	kind, _ := obj["type"].(string)
-	if ClaudeRecords[kind].Class == Bookkeeping {
+	if units := ClassifyClaude(obj); len(units) == 1 && units[0] == (Unit{Class: Bookkeeping}) {
 		return PageRecord{Seq: pr.Seq, Src: pr.Src, Omitted: []Omission{{Bookkeeping, "", len(pr.Rec), kind}}}
 	}
 	if _, ok := obj["toolUseResult"]; ok {
@@ -878,8 +889,15 @@ func marshal(v any) []byte {
 
 // ---------------------------------------------------------------- one tool call
 
-// ToolAnswer is one tool call: the call, its result and its duplicate copy, each long text cut to
-// the requested byte range.
+// ToolAnswer is one tool call: the call, its result and its duplicate copy. The RESULT and the
+// DUPLICATE are cut to the requested byte range; the call's INPUT is not — it is carried WHOLE, as
+// JSON, whatever `range` says.
+//
+// ⚠ AN EARLIER DOC SAID "EACH LONG TEXT CUT TO THE RANGE", WHICH READ AS COVERING THE INPUT, AND NO CODE
+// EVER CUT IT. The doc was narrowed rather than the input cut, because a cut would turn a JSON value
+// into a string — a wire-shape change for every reader of `input` — and the input is already bounded
+// by its record (`archive.MaxAssembledBytes`, 4 MiB, under the client's 16 MiB answer bound), the
+// same bound a page's always-whole first record has. `TestAToolAnswerCarriesItsInputWhole` pins it.
 type ToolAnswer struct {
 	Session     string          `json:"session"`
 	Stream      string          `json:"stream"`
