@@ -66,5 +66,6 @@ at the provider (decision 12: the pod never sees the key, so it cannot cap anyth
   — an output is a labelled, derived claim, rendered as text only, and this program writes nothing
   else.
 - **The fakes prove the PLUGIN, not the contract**: they are written from the same spelling as the
-  client. What runs this binary against the REAL worker listener is named in the PR that wired it;
-  a real provider is never called by CI.
+  client. What runs this binary against the REAL worker listener — registry parsed from the committed
+  `manifest.json`, a real journal row, a real archive — is the parent module's
+  `internal/worker` `TestTheSummaryPluginAgainstTheRealListener`; a real provider is never called by CI.
