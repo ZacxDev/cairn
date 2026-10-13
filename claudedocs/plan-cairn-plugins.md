@@ -327,9 +327,9 @@ Drop the work, or the named half, if any of these holds:
 - 🔴 **Capture is still armed NOWHERE.** S1 and S3 merged unarmed (O16), and O17 waived a gate — it
   did not arm anything. S3 (#224) built only the POD half; **S3b is now BUILT**: the host-side
   uploader (`internal/capture.HTTPSink`, `cairn-capture --run`) and `tests/plugins/e2e.sh` with
-  clauses (a), (b), (c) and (h), gated in the CI `go` job. ✅ S3b CLOSED as a precondition. The one
-  still open is **S11's read ledger** — without it every session that runs `cairn` is owner-only by
-  F1; arming is then the operator's act (`-arm-transcript-capture`). The steps below describe what
+  clauses (a), (b), (c) and (h), gated in the CI `go` job. ✅ S3b CLOSED as a precondition. ✅ **S11's
+  read ledger** is BUILT too (#266, `8184e79`); what remains is the client-currency step below (O18)
+  and then the operator's own act (`-arm-transcript-capture`). The steps below describe what
   happens after it, not now.
 - 🔴 **AND FOUR S3 ARMING PRECONDITIONS: AP1–AP3 ARE CLOSED (#258); AP4 IS A STEP, NOT A
   GATE.** Each was found by #224's audit against the S3 head, was harmless while capture is
