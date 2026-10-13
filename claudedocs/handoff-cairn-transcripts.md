@@ -47,7 +47,8 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
   `cairn-capture -allow-plaintext-host`); S10 #274 `b888b2d` (`cairn-clickup`, `ticket-scan`, the
   closing wiring). Each PR's batched 🟡s are in its final PR comment; the ones still open are
   under "Defects (batched)" below.
-- **Closing condition, measured at `b888b2d`:** part 1 met (slices merged); part 2 —
+- **Closing condition, measured on #274's head `6b094c9` (tree-identical to `b888b2d`) in its CI
+  `go`/`nix` jobs:** part 1 met (slices merged); part 2 —
   `tests/plugins/e2e.sh` `passed=22 failed=0 expected=22`, `--self-test` `sabotaged=16 caught=16`
   (the plan now states the measured 16: all fourteen clauses are wired, (a) and (g) carry two
   sabotages each); part 3 — `cairn-capture --self-test` `SUMMARY redaction: planted=79 caught=79
@@ -67,8 +68,10 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
   record is `leaks caught=157/190 clean damaged=18/175` at the round-6 head, and `internal/redact`
   has changed since that commit. Neither line is a gate.
 - **Needs deploy (coordinator):** the `cairn-ui` image at `b888b2d` carries S4–S10 with capture
-  OFF. **No database migration** in `16f2a0a..b888b2d` (`internal/pgstore` is untouched). The
-  image for `b888b2d` was still publishing when this was written — confirm the tag before pinning.
+  OFF. **No database migration** in `16f2a0a..b888b2d` (`internal/pgstore` is untouched) — the
+  range starts at `16f2a0a` because that is the `cairn-ui` image pin on the deployment's trunk as
+  read when this was written; from an OLDER running image the range must be re-checked (pgstore
+  did change before `16f2a0a`). The image for `b888b2d` is published.
 - Claims: `cairn-transcripts-arming` released with this doc.
 
 ## Arming — the ordered steps, and what each needs from the operator
@@ -128,15 +131,16 @@ it names a deployment; this is its skeleton. Nothing here has been run.
 - **`tests/dualrun`'s self-test is nondeterministic for one mutant.** On #274's head `6b094c9` the
   `dualrun` job failed once, exit 2, `mutants=7 caught=6`: the `audit-identity-field-dropped`
   mutant also tripped the `process` comparison where it declares `['audit']` only. A re-run of the
-  SAME commit passed `mutants=7 caught=7`; `main` passed the job at `ad7306e`. The process-stream
-  comparison flakes; not caused by S10 and not fixed.
+  SAME commit passed `mutants=7 caught=7`; `main` passed the job at `ad7306e`. Nondeterministic on
+  that evidence (1 fail / 1 pass on one commit, 1 pass on its parent); not shown to be caused by
+  S10, not diagnosed, not fixed.
 - **`plugins/clickup` boundary rule drops `<type>-<ID>-<slug>` branch names** (`fix-ALPHA-12`,
   `ALPHA-12-2nd-try`) with nothing logged, while `x--ALPHA-12` still matches
   (`plugins/clickup/match.go` `boundedLeft`/`boundedRight`). Decide: narrow the left rule, or
   state the cost.
 - **Guards removable with the suite green (#274 round 2):** bidi set membership
-  (`internal/plugins/manifest.go`), a 401/403 on the destination probe not recorded as fatal
-  (`internal/capture/agent.go`), Unicode neighbours of a canonical ticket token, `_` on the left.
+  (`internal/plugins/manifest.go`), the recording of a 401/403 on the destination probe as fatal
+  (`internal/capture/agent.go` — the behaviour is correct, no test pins it), Unicode neighbours of a canonical ticket token, `_` on the left.
 - **`plugins/clickup`:** with the plugin's `-store-ticket-titles` on, an ids-only pod and a
   nameless ticket, the model's rationale is still stored; a hung `gh` is paid once per PR; a
   409-without-position / 404 / no-endpoint probe answer defers a withdrawal forever (logged and
@@ -144,7 +148,9 @@ it names a deployment; this is its skeleton. Nothing here has been run.
 - **`/my-sessions` and the pending/plugin paths read every `meta.json` per request** (measured:
   2,000 sessions 31 ms / 13.9 MB; 10,000 sessions 221 ms / 69.6 MB); no owner index.
 - **A refused viewer gets a 500, not the uniform miss, when a session's `meta.json` does not
-  parse** (S4; reachable on the client listener too since S8).
+  parse — on S8's three JSON read routes only** (`Store.Answer` in `internal/transcript/agent.go`,
+  both listeners; `ReadMeta` runs before the predicate). S4's HTML routes already answer the
+  uniform miss.
 - **The redact re-check walk allocates ~253 MiB for one cap-sized record of short `x: y` lines**
   (recorded in `arming_test.go`); concurrent unframed uploads have no in-flight limit.
 - **`internal/capture` state:** a `Rechecked` entry is left behind when a lost placeholder ack is
