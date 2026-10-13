@@ -50,8 +50,8 @@ const mySessionsPerPage = 50
 
 // mySessionsEmpty is the empty state's sentence — one for "you uploaded nothing", "this deployment
 // stores no transcripts" and "your credential is narrowed", which the page does not tell apart.
-const mySessionsEmpty = "No stored session transcript is yours: none was uploaded under your sign-in, or this " +
-	"deployment stores none."
+const mySessionsEmpty = "No stored session transcript is listed for this credential: none was uploaded under it, " +
+	"this deployment stores none, or the credential is narrowed — a narrowed credential lists none, even its owner's."
 
 // MySessions is one page of the viewer's owned sessions.
 type MySessions struct {

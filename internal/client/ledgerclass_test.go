@@ -89,6 +89,10 @@ func TestEveryVerbRecordsWhatItsLedgerClassSays(t *testing.T) {
 		"memo-retract": func(string) probe {
 			return probe{"memo", []string{"memo-retract", "--scope", "alpha-notes", "--id", "7"}, "alpha-notes", nil}
 		},
+		// S8: a served read of ANOTHER session's transcript, whose visibility set may hold any scope.
+		"transcript": func(string) probe {
+			return probe{"transcript", []string{"transcript", "skeleton", "--session", transcriptStubSession}, "", nil}
+		},
 	}
 	// `arcs --check` is a MODE of `arcs`, not a verb: probed beside it, under the same class.
 	extra := []struct {
@@ -155,6 +159,9 @@ func TestEveryVerbRecordsWhatItsLedgerClassSays(t *testing.T) {
 			stub := newMemoStub(t, stubToken, &stubMemo{id: 7, scope: "alpha-notes", created: memoT0, subject: "seven"})
 			h := newMemoHost(t, "alpha-notes")
 			h.configure(t, "", uiLines(stub.srv.URL)...)
+			return h.home
+		case "transcript":
+			_, h := transcriptHost(t)
 			return h.home
 		}
 		t.Fatalf("no host %q", kind)

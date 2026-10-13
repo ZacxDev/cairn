@@ -27,6 +27,9 @@ import (
 	"github.com/ZacxDev/cairn/internal/memo"
 	"github.com/ZacxDev/cairn/internal/netid"
 	"github.com/ZacxDev/cairn/internal/pgstore"
+	"github.com/ZacxDev/cairn/internal/transcript"
+	"github.com/ZacxDev/cairn/internal/transcript/transcripttest"
+	"github.com/ZacxDev/cairn/internal/transcriptwire"
 )
 
 var t0 = time.Date(2000, 2, 3, 4, 5, 6, 0, time.UTC)
@@ -95,6 +98,12 @@ type rig struct {
 
 func newRig(t *testing.T, limiter *netid.RateLimiter) *rig {
 	t.Helper()
+	return newRigWith(t, limiter, nil)
+}
+
+// newRigWith is [newRig] with a transcript store behind the agent read routes (nil: none).
+func newRigWith(t *testing.T, limiter *netid.RateLimiter, transcripts *transcript.Store) *rig {
+	t.Helper()
 	fs, err := control.OpenFileStore(filepath.Join(t.TempDir(), "control.journal"))
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +139,7 @@ func newRig(t *testing.T, limiter *netid.RateLimiter) *rig {
 		limiter = netid.NewRateLimiter(1000, time.Minute, time.Minute)
 	}
 	st := &stubStore{}
-	h, err := clientapi.New(clientapi.Config{Auth: machine, Model: cache.Model, Memos: st, Limiter: limiter})
+	h, err := clientapi.New(clientapi.Config{Auth: machine, Model: cache.Model, Memos: st, Limiter: limiter, Transcripts: transcripts})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,12 +173,20 @@ const peerA, peerB = "192.0.2.10", "192.0.2.20"
 // row also DISPATCHES (the store is reached), a ledger path under another method is 405, and a path
 // off the ledger is 404 — so the ledger cannot list a row the dispatcher does not serve.
 func TestTheClientRouteLedgerMatchesTheDispatchTable(t *testing.T) {
-	want := []string{
+	memoRows := []string{
 		"GET /client/v1/memo",
 		"GET /client/v1/memos",
 		"POST /client/v1/memo/retract",
 		"POST /client/v1/memos",
 	}
+	// The agent read API (transcripts S8): three GET rows answered by `transcript.Store.Answer`.
+	transcriptRows := []string{
+		"GET /client/v1/transcript/records",
+		"GET /client/v1/transcript/skeleton",
+		"GET /client/v1/transcript/tool",
+	}
+	want := append(append([]string{}, memoRows[:2]...), transcriptRows...)
+	want = append(want, memoRows[2:]...)
 	if got := clientapi.ClientRoutes(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ClientRoutes() = %q\nwant          %q\nA row added or removed here is an endpoint an agent credential reaches; "+
 			"change this list in the same commit and say why.", got, want)
@@ -181,7 +198,16 @@ func TestTheClientRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		"POST /client/v1/memos":        `{"scope":"alpha-notes","subject":"s","body":"b"}`,
 		"POST /client/v1/memo/retract": `{"scope":"alpha-notes","id":1}`,
 	}
-	for _, row := range want {
+	for _, row := range transcriptRows {
+		// Dispatched: a bare request is the read API's own 400 naming the missing session, never the
+		// listener's 404 or 405.
+		method, path, _ := strings.Cut(row, " ")
+		if got := r.do(method, path, "", peerA, bearer(tokA)); got.status != http.StatusBadRequest ||
+			!strings.Contains(got.body, `"detail":"session: is required"`) {
+			t.Errorf("%s: answered %d %q — a ledger row the dispatcher does not serve", row, got.status, got.body)
+		}
+	}
+	for _, row := range memoRows {
 		method, path, _ := strings.Cut(row, " ")
 		before := r.store.n()
 		got := r.do(method, path+"?scope=alpha-notes&id=1", bodies[row], peerA, bearer(tokA))
@@ -468,5 +494,62 @@ func TestTheBodyBoundIsALiteral64KiBWithAPositiveControl(t *testing.T) {
 	}
 	if got := r.do(http.MethodPost, clientapi.MemosPath, body, peerA, bearer(tokA)); got.status != http.StatusCreated {
 		t.Fatalf("a %d-byte send answered %d %q, want it decoded and handed to the store", len(body), got.status, got.body)
+	}
+}
+
+// TestTheAgentReadRoutesAnswerTheRequestsOwnNarrowedAuthority — the transcripts plan's agent read API
+// on THIS listener (S8; scope mail's Q3 put agent reads here): an agent credential NARROWED to
+// alpha-notes reads a session whose visibility set is {alpha-notes}, and gets the one miss — which is
+// this listener's own `not-found` body, byte for byte — for a session that also touched a scope it
+// cannot read, for its OWNER's owner-only session (a narrowed credential holds no owner arm), for a
+// session never stored, and on a listener with no transcript store. RED before S8: the paths were
+// 404 `no such route` from the dispatcher.
+func TestTheAgentReadRoutesAnswerTheRequestsOwnNarrowedAuthority(t *testing.T) {
+	if transcriptwire.UnseenBody != clientapi.NotFoundBody {
+		t.Fatalf("the read API's miss %q is not this listener's %q — an agent would read two misses", transcriptwire.UnseenBody,
+			clientapi.NotFoundBody)
+	}
+	a := transcripttest.Open(t)
+	owner := "user:" + string(uWriter)
+	user := `{"type":"user","message":{"role":"user","content":"a synthetic alpha message"}}`
+	for root, declared := range map[string][]string{
+		"s-capi-alpha": {"alpha-notes"}, "s-capi-wide": {"alpha-notes", "beta-notes"}, "s-capi-solo": nil,
+	} {
+		transcripttest.Append(t, a, transcripttest.Session{Root: root, Owner: owner, Declared: declared}, "main", []string{user})
+	}
+	st := transcript.NewStore(a, t.TempDir())
+	r := newRigWith(t, nil, st)
+	records := func(session string) string {
+		return transcriptwire.ClientPathPrefix + transcriptwire.RouteRecords + "?" + transcriptwire.ParamSession + "=" + session
+	}
+	got := r.do(http.MethodGet, records("s-capi-alpha"), "", peerA, bearer(tokA))
+	if got.status != http.StatusOK || !strings.Contains(got.body, "a synthetic alpha message") || got.ctype != "application/json" {
+		t.Fatalf("POSITIVE CONTROL: the alpha session answered %+v", got)
+	}
+	for _, path := range []string{
+		transcriptwire.ClientPathPrefix + transcriptwire.RouteSkeleton + "?session=s-capi-alpha",
+		transcriptwire.ClientPathPrefix + transcriptwire.RouteTool + "?session=s-capi-alpha&seq=1",
+	} {
+		// The skeleton answers; record 1 holds no tool call, which is the one miss.
+		got := r.do(http.MethodGet, path, "", peerA, bearer(tokA))
+		if want := strings.Contains(path, "skeleton"); (got.status == http.StatusOK) != want {
+			t.Errorf("%s: %+v", path, got)
+		}
+	}
+	miss := answer{http.StatusNotFound, clientapi.NotFoundBody, "application/json"}
+	for name, session := range map[string]string{
+		"a session that also touched a scope the credential cannot read": "s-capi-wide",
+		"the owner's own owner-only session, to its narrowed credential": "s-capi-solo",
+		"a session never stored": "s-capi-never",
+	} {
+		if got := r.do(http.MethodGet, records(session), "", peerA, bearer(tokA)); got != miss {
+			t.Errorf("%s: %+v, want %+v", name, got, miss)
+		}
+	}
+	if got := newRig(t, nil).do(http.MethodGet, records("s-capi-alpha"), "", peerA, bearer(tokA)); got != miss {
+		t.Errorf("a listener with no transcript store: %+v, want %+v", got, miss)
+	}
+	if got := r.do(http.MethodGet, records("s-capi-alpha"), "", peerA, bearer(garbage)); got.status != http.StatusUnauthorized {
+		t.Errorf("a garbage credential reached the read API: %+v", got)
 	}
 }

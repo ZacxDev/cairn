@@ -37,8 +37,12 @@ func foldLedger(m *Meta, lines [][]byte) {
 // for "the program ran and nothing says what it read", and a ledger record is what says it. A host
 // that forges one record defeats it — the ledger is self-reported (threat T3), like the trailer.
 //
-// ⚠ ONLY THE POD'S OWN F1 GOES AWAY. The agent declares its own `L ∪ R_header ∪ F`, and a `*` it
-// declared while ITS ledger was empty is in the grow-only [Meta.Declared] for good.
+// ⚠ AND IT IS ONLY EVER DECIDED HERE. Since #266 the capture agent declares `R_header ∪ L ∪ F2`
+// (`scopeuse.Result.Declare`) and NEVER F1's `*` — so F1 lives in exactly one place, this function,
+// over the ledger the pod holds, and a ledger record that arrives later lifts it. A `*` in the
+// grow-only [Meta.Declared] is a scopeless header, a ledger `*` or F2, which are `*` for good. ⚠ The
+// one exception is history: an agent built before #266 declared F1's `*`, and a session it uploaded
+// keeps that `*` in [Meta.Declared]; nothing here can tell it from the others.
 func (m *Meta) LedgerScopes() []string {
 	if m.NamesProgram && m.LedgerRecords == 0 {
 		return union(m.Ledger, []string{Star})

@@ -305,6 +305,25 @@ LEDGER: tuple[Capability, ...] = (
         go_only_why="decision 8 of the scope-refs plan: the auditor is a Go-only verb over "
                     "`internal/refaudit`, and the Python oracle is not extended",
     ),
+    # The transcripts plan's agent read API client (S8, decision 17; Q15 adopted under O13). Like
+    # the memo verbs it is a client of `cairn-ui`'s CLIENT LISTENER (`CAIRN_UI_URL`), never of the
+    # pod, so no row names a route here: the pod's ledger does not move, and the listener's routes
+    # are `clientapi.ClientRoutes()` (the browser surface serves the same three answers under
+    # `/transcript/…`, in `ui.DeclaredRoutes()`).
+    Capability(
+        name="transcript",
+        effect=READS,
+        cli="transcript",
+        route=None,
+        no_route_because="reads `GET /client/v1/transcript/{skeleton,records,tool}` on `cairn-ui`'s "
+                         "client listener, never the pod; a stored transcript lives in `cairn-ui`'s "
+                         "transcript archive, outside the store tree",
+        note="one verb, three actions (`skeleton`, `records`, `tool`) as its positional; prints the "
+             "listener's JSON verbatim and records `*` in the read ledger",
+        go_only=True,
+        go_only_why="decision 17 of the transcripts plan (Q15 adopted under O13): the agent read verb is "
+                    "Go-only and the Python oracle is not extended — P8 retires it",
+    ),
     Capability(
         name="cache-validate",
         effect=READS,

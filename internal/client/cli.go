@@ -163,6 +163,14 @@ func Verbs() []Verb {
 			Flags: []string{"--scope", "--repo", "--subject", "--body", "--body-file", "--ttl"}, Run: MemoSend},
 		{Name: "memo-retract", Ledger: LedgerResolved, Writes: true, Help: "retract a memo you sent, or moderate one as a scope admin (writes to the memo listener)",
 			Flags: []string{"--scope", "--repo", "--id"}, Run: MemoRetract},
+		// 🔴 GO-ONLY, DECLARED: the agent read API's client (S8 of the transcripts plan, decision 17; Q15
+		// adopted under O13) — the `transcript` row of `capability_ledger.LEDGER` and `flake.nix`'s
+		// `want-go-only-verbs.txt`. ONE verb whose positional is the action (`skeleton`, `records`,
+		// `tool`): all three read, so the one `Writes` bit the flat-verb ruling protects is the same for
+		// each. It asks `cairn-ui`'s client listener (`CAIRN_UI_URL`) — see `transcript.go`. Class `*`:
+		// it prints ANOTHER session's transcript, whose visibility set may hold any scope (decision 3a).
+		{Name: "transcript", Ledger: LedgerAll, Help: "read a stored session transcript: skeleton | records | tool (asks cairn-ui's client listener)",
+			Notes: transcriptNotes, Flags: transcriptVerbFlags(), Run: Transcript},
 	}
 }
 
@@ -194,6 +202,9 @@ var requiredFlags = map[string][]string{
 	// because `--statuses` alone needs none; `memo-send`'s body is one of TWO flags, also the verb's.
 	"memo-send":    {"--subject"},
 	"memo-retract": {"--id"},
+	// The session a transcript read is about; there is no default and no environment fallback, for
+	// `append --session`'s reason.
+	"transcript": {"--session"},
 }
 
 // DeclaredVerbs is `<name> <writes|reads>` per line, sorted, for a ledger to read out of the
@@ -270,6 +281,9 @@ func Usage(verb string) string {
 		}
 		if v.Name == "search" {
 			b.WriteString("  <query>         (required, positional)\n")
+		}
+		if v.Name == "transcript" {
+			b.WriteString("  <action>        (required, positional: " + strings.Join(transcriptActions, ", ") + ")\n")
 		}
 		b.WriteString("\n")
 		b.WriteString(exitLegendText())
@@ -455,7 +469,7 @@ func Parse(argv []string) (Verb, Options, error) {
 	}
 	seen := map[string]struct{}{}
 	positionalsWanted := 0
-	if verb.Name == "search" {
+	if verb.Name == "search" || verb.Name == "transcript" {
 		positionalsWanted = 1
 	}
 	var positionals []string
@@ -540,6 +554,16 @@ func Parse(argv []string) (Verb, Options, error) {
 			}
 			i++
 			value = argv[i]
+		}
+		// The `transcript` verb's read parameters, collected as the query they become (`transcript.go`).
+		if param, ok := transcriptFlags[name]; ok {
+			if opts.TranscriptParams == nil {
+				opts.TranscriptParams = map[string][]string{}
+			}
+			opts.TranscriptParams[param] = []string{value}
+			opts.TranscriptFlagsGiven = append(opts.TranscriptFlagsGiven, name)
+			i++
+			continue
 		}
 		switch name {
 		case "--scope":
@@ -629,7 +653,11 @@ func Parse(argv []string) (Verb, Options, error) {
 			verb.Name, positionalsWanted, len(positionals))
 	}
 	if positionalsWanted == 1 {
-		opts.Query = positionals[0]
+		if verb.Name == "transcript" {
+			opts.Action = positionals[0]
+		} else {
+			opts.Query = positionals[0]
+		}
 	}
 	return verb, opts, nil
 }

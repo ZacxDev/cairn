@@ -153,6 +153,15 @@ var routes = map[routeKey]route{
 	// else supplied. `content`: whether it answers is the visibility predicate's verdict about this
 	// caller. GET only, so neither cross-site gate gains a case. See `handleSessionTranscript`.
 	{"GET", SessionTranscriptPath}: {(*Server).handleSessionTranscript, classContent},
+	// 🔴 THE AGENT READ API (S8 of the transcripts plan, `agentread.go`): a session's skeleton, a bounded
+	// page of its records, one tool call — JSON, for agents holding their own credential. Three FIXED
+	// paths with every operand in a query parameter, for the browse pair's reason. `content`: whether
+	// any of them answers is the visibility predicate's verdict about this caller, asked through
+	// `transcript.Store.Answer` — the ONE function the client listener serves the same answers
+	// through. GET only, so neither cross-site gate gains a case.
+	{"GET", TranscriptSkeletonPath}: {(*Server).handleTranscriptSkeleton, classContent},
+	{"GET", TranscriptRecordsPath}:  {(*Server).handleTranscriptRecords, classContent},
+	{"GET", TranscriptToolPath}:     {(*Server).handleTranscriptTool, classContent},
 	// 🔴 "MY SESSIONS" (S7 of the transcripts plan, `mysessions.go`): the stored sessions the VIEWER
 	// uploaded, newest first — the one way in to an owner-only session. A fixed path whose only operand
 	// (`?page=`) is a view selector. `content`: the list is the transcript store's OWNER ARM, an answer

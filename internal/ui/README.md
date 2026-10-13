@@ -5080,7 +5080,7 @@ the fixture upload skipped.
   (that needs an index from child to root, which nothing keeps); the child's stream is reachable
   under its root.
 - **Work is not bounded, the response is.** A page scans the whole main stream to find turn
-  boundaries (the skeleton of decision 17 is S8's), one record in memory at a time; an opencode
+  boundaries (S8's skeleton exists now and does not index it either), one record in memory at a time; an opencode
   stream is held whole.
 - **A damaged entry costs visibility.** A scope holding an entry the trailer walk cannot scan is
   counted as written, so viewers who cannot read that scope lose every transcript until it is fixed
@@ -5093,12 +5093,61 @@ the fixture upload skipped.
 
 ---
 
+# The agent read API (S8 of the transcripts plan)
+
+`GET /transcript/skeleton`, `GET /transcript/records` and `GET /transcript/tool` (`agentread.go`)
+answer one stored session as JSON for an agent — decision 17. The model is `internal/transcript`'s
+(`agent.go`, its README); this surface only hands it the request's own authority.
+
+## The binding rules
+
+- 🔴 **Nothing here decides.** Each row calls `transcript.Store.Answer` with
+  `transcript.Viewer{Principal, Auth}` off the request's identity — the resolved, possibly NARROWED
+  authorization — and writes what it returns. The client listener (`internal/clientapi`) serves the
+  same three answers through the same function, so the two listeners cannot disagree; a narrowed
+  agent credential reads exactly the sessions its narrowing covers and never one by the owner arm.
+- 🔴 **One miss, byte for byte.** A refused viewer, a session never stored, an id that is no session,
+  a deployment with no archive, and a stream, record or call that is not there all answer 404
+  `transcript.UnseenBody` (`TestARefusedAgentGetsTheBytesOfASessionWithNoTranscript`, positive control
+  first). A request naming no session is a 400 naming the parameter — there is no navigation page to
+  fall back on for JSON.
+- **`content`, measured elsewhere.** The rows are `content` (whether they answer is the predicate's
+  verdict), but they ask no `Source` method, so `TestEveryContentRouteConsultsTheAuthority` declares
+  their authority as `transcript` and asserts only what it can (the bare 400, no `Source` read);
+  `TestTheAgentReadRoutesAskThePredicate` is what measures the predicate, over every row and viewer.
+- **`Cache-Control: no-store`**, the HTML rows' value: the walk in `cachecontrol_test.go` reaches each
+  row's real answer and holds it to that (`agentJSONRows`).
+- GET rows: neither cross-site gate applies, and a bearer credential reaches them before the cookie.
+
+## The RED proof
+
+`transcript-read-api-without-predicate` (the predicate's owner arm answering for everybody) is
+KILLED by `TestTheAgentReadRoutesAskThePredicate`, and `transcript-raw-view-without-predicate` (the
+scope arm admitting anybody once `V` is non-empty) by `TestTheRawRecordsViewAsksThePredicate` and the
+S4 raw-record view's test. ⚠ Neither is a listener-local "skip the predicate" edit, because none
+compiles outside `internal/transcript`: there `Store.View` is the only way to a record (inside the
+package one does compile, and the predicate test would see it). The model's own guards were each watched red
+under a hand mutation (conversation strip off, bookkeeping kept, the first record split, an
+unrecognised view defaulted, the spawn depth not incremented, a range not moved to a character
+boundary).
+
+## What these guards still cannot see
+
+- **The refused states over a real listener in a browser** — `uiaudit` lists the rows as
+  not-a-document; the matrix is in-process.
+- **Timing**, as for the session page: a stored-and-hidden session costs a meta read and maybe a walk.
+- **An unbounded skeleton** — see `internal/transcript/README.md`.
+
+---
+
 # "My sessions" (S7 of the transcripts plan)
 
 `GET /my-sessions[?page=N]` lists the stored sessions the VIEWER uploaded, newest upload first, each
 row linking `/session?session=<id>` (`mysessions.go`). It is the one way in to an owner-only session
 (an empty `V`, clause g): such a session wrote no trailer, so no scope tab, sessions list or arc chip
-names it. The hub links it ("My sessions" card, no count). Operator decision O10.
+names it. The hub links it ("My sessions" card, no count) — ONLY on a deployment with a transcript
+store, so a `cairn-ui` without `-transcript-dir` renders nothing new (`TestTheHubHasNoMySessionsCardWithoutATranscriptStore`);
+the row still answers there, with the empty state. Operator decision O10.
 
 ## The binding rules
 
@@ -5119,7 +5168,9 @@ names it. The hub links it ("My sessions" card, no count). Operator decision O10
 - **No transcript store is the empty state, not a 404** — S4's convention: a deployment without
   `-transcript-dir` answers what one with nothing of the viewer's stored answers, byte for byte
   (`TestMySessionsWithNoStoreIsTheEmptyState`, with its positive control). One sentence covers "you
-  uploaded nothing", "this deployment stores none" and "your credential is narrowed".
+  uploaded nothing", "this deployment stores none" and "your credential is narrowed", and it SAYS all
+  three — it said only the first two, false for the owner's narrowed credential; it is pinned whole
+  (`TestTheEmptySentenceIsTrueForANarrowedOwner`).
 - **Text only, no script.** Session ids, runtimes and host labels are uploader text in `g.Text` and
   attribute values; every href is a ledger path with encoded operands (`sessionHref`,
   `mySessionsPageHref`).
@@ -5137,8 +5188,10 @@ unclamped `?page=` (a slice panic), and the empty sentence withheld. `tests/plug
 
 ## What these guards still cannot see
 
-- **The cost at thousands of sessions** is unmeasured: one `meta.json` read per stored session per
-  request. Nothing here caches or indexes by owner.
+- **The cost at thousands of sessions — MEASURED, and not bounded:** every request parses every stored
+  `meta.json` (no owner index, nothing cached): 2,000 sessions cost 31 ms and 13.9 MB a request,
+  10,000 cost 221 ms and 69.6 MB (one host). It grows linearly with the whole archive, not with the
+  viewer's own sessions.
 - **A session uploaded under another capture owner.** Ownership is the capture token's bound owner;
   a session a person ran under a token minted for somebody else is that somebody's.
 - **The page in a real browser at every width** is only the `uiaudit` walk's (advisory) capture; no

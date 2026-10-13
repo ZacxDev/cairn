@@ -12,6 +12,8 @@ import (
 	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/store"
+	"github.com/ZacxDev/cairn/internal/transcript"
+	"github.com/ZacxDev/cairn/internal/transcript/transcripttest"
 )
 
 // 🔴 THE HUB AND THE SESSIONS LIST, DRIVEN THROUGH THE REAL DISPATCHER OVER THE REAL `StoreSource`, A
@@ -72,7 +74,38 @@ func hubArcs() []arcs.Registration {
 
 func hubServer(t *testing.T, id identity.Identity) *Server {
 	t.Helper()
-	return arcsServer(t, StoreSource{Root: hubStore(t), ArcJournal: arcsJournal(t, hubArcs()...)}, id)
+	return hubServerWith(t, id, transcript.NewStore(transcripttest.Open(t), t.TempDir()))
+}
+
+// hubServerWith is [hubServer] over a chosen transcript store — nil is a deployment with none.
+func hubServerWith(t *testing.T, id identity.Identity, transcripts *transcript.Store) *Server {
+	t.Helper()
+	cfg := testConfig(t, staticAuth{id})
+	cfg.Source = StoreSource{Root: hubStore(t), ArcJournal: arcsJournal(t, hubArcs()...)}
+	cfg.Transcripts = transcripts
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("the server did not build: %v", err)
+	}
+	return srv
+}
+
+// TestTheHubHasNoMySessionsCardWithoutATranscriptStore (S7 follow-up): S4's rule that a `cairn-ui`
+// without `-transcript-dir` renders nothing new — the hub is the four cards it was, and nothing links
+// `/my-sessions`. The control is the same viewer over a store: five cards. RED before: the card
+// rendered on every deployment.
+func TestTheHubHasNoMySessionsCardWithoutATranscriptStore(t *testing.T) {
+	readsA, _, _ := arcsWorld(t)
+	with := getAs(t, hubServer(t, readsA), RootPath).Body.String()
+	if !strings.Contains(with, `data-hub="mysessions"`) {
+		t.Fatal("CONTROL: with a transcript store the hub has no My sessions card")
+	}
+	without := getAs(t, hubServerWith(t, readsA, nil), RootPath).Body.String()
+	if strings.Contains(without, `data-hub="mysessions"`) || strings.Contains(without, MySessionsPath) ||
+		strings.Count(without, `data-hub="`) != 4 {
+		t.Errorf("with no transcript store the hub renders %d cards and links My sessions: %v",
+			strings.Count(without, `data-hub="`), strings.Contains(without, MySessionsPath))
+	}
 }
 
 // hubCardText is the visible text of ONE hub card, found by its `data-hub` name.

@@ -44,6 +44,22 @@ var realPage = map[string]struct{ query, marker string }{
 	// "My sessions" (S7): the walk's identity owns `walkTranscripts`' one session, so its page LISTS
 	// it — the row, not the empty state.
 	"GET /my-sessions content": {"", `id="my-sessions-list"`},
+	// 🔴 THE AGENT READ API'S THREE ROWS (S8) ANSWER JSON, NOT A PAGE — the decision this walk's own
+	// refusal asks to have written down, and it is written in [agentJSONRows]. Their real answer is a
+	// stored session the caller may see: [walkSession], with one tool call at record 2.
+	"GET /transcript/skeleton content": {"?" + transcript.ParamSession + "=" + walkSession, `"streams":[{"stream":"main"`},
+	"GET /transcript/records content":  {"?" + transcript.ParamSession + "=" + walkSession, `"records":[{"seq":1,`},
+	"GET /transcript/tool content": {"?" + transcript.ParamSession + "=" + walkSession + "&" + transcript.ParamSeq + "=2",
+		`"tool":"Bash"`},
+}
+
+// agentJSONRows is every non-public GET row that answers `application/json` rather than a page: the
+// agent read API (S8). Each is still held to `Cache-Control: no-store` — a transcript in JSON is as
+// much somebody's text as the rendered section — and to its real answer's marker.
+var agentJSONRows = map[string]bool{
+	"GET /transcript/skeleton content": true,
+	"GET /transcript/records content":  true,
+	"GET /transcript/tool content":     true,
 }
 
 // walkTranscripts is a transcript store holding ONE session, [walkSession], owned by the walk's
@@ -53,7 +69,8 @@ func walkTranscripts(t *testing.T) *transcript.Store {
 	p := testIdentity().Principal
 	a := transcripttest.Open(t)
 	transcripttest.Append(t, a, transcripttest.Session{Root: walkSession, Owner: string(p.Kind) + ":" + string(p.ID)}, "main",
-		[]string{trUser("a synthetic message")})
+		[]string{trUser("a synthetic message"),
+			`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_w1","name":"Bash","input":{"command":"true"}}]}}`})
 	return transcript.NewStore(a, t.TempDir())
 }
 
@@ -170,6 +187,21 @@ func TestEveryNonPublicHTMLRowIsNoStore(t *testing.T) {
 				t.Errorf("pwa clause (d) no-store: %s is declared a bodiless redirect to %q and answered %d Location=%q "+
 					"Content-Type=%q with %d body byte(s)", line, wantLoc, rec.Code, rec.Header().Get("Location"),
 					rec.Header().Get("Content-Type"), rec.Body.Len())
+			}
+			continue
+		}
+		if agentJSONRows[line] {
+			values, present := rec.Header()["Cache-Control"]
+			if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" ||
+				!strings.Contains(rec.Body.String(), marker) {
+				t.Errorf("pwa clause (d) no-store: GET %s is declared a JSON row and answered %d %q without its marker %q",
+					target, rec.Code, rec.Header().Get("Content-Type"), marker)
+			} else {
+				realPages++
+			}
+			if !present || len(values) != 1 || values[0] != "no-store" {
+				t.Errorf("pwa clause (d) no-store: GET %s answered a transcript as JSON with Cache-Control %q, want exactly "+
+					"\"no-store\"", target, values)
 			}
 			continue
 		}
