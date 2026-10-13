@@ -100,7 +100,7 @@ func (s walkSource) Session(_ control.Authorization, session string) (SessionAns
 // the one above — a refusal, another tab, the raw view, a search. Those reach the header through
 // the same [writeHTML], which is the property that makes one query per row sufficient; it is a
 // structural argument, not a measurement of each of them. The one POST that answers a page — the
-// invitation MINT — is pinned by `TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged`.
+// team-link MINT — is pinned by `TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged`.
 //
 // ⚠ THE EXPECTED VALUE IS A LITERAL, NEVER `htmlCacheControl`: reading it off the implementation
 // would make this assert `a == a`.

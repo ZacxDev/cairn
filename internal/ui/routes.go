@@ -192,6 +192,11 @@ var routes = map[routeKey]route{
 	// body — chosen by whoever gets one request past both cross-site gates — rather than
 	// something the route decides. Two paths are two rows in this ledger, which is where
 	// somebody reads them.
+	//
+	// 🔴 `POST /invite` MINTS NOTHING SINCE THE INVITE FOLD AND KEEPS ITS ROW AND ITS CLASS.
+	// It answers a 303 to the team-link form (`handleInvite`). Class 0 still: both cross-site
+	// gates are derived from the METHOD, and "this write no longer writes" is exactly the
+	// kind of route-class reasoning no gate may be derived from.
 	{"GET", "/invite"}:         {(*Server).handleInvitePage, 0},
 	{"POST", "/invite"}:        {(*Server).handleInvite, 0},
 	{"POST", "/invite/revoke"}: {(*Server).handleInviteRevoke, 0},
@@ -317,8 +322,11 @@ const (
 	// somebody reads them.
 	UnsharePath = "/unshare"
 
-	// InvitePath answers the invite flow's read AND its mint, split by method — the same
-	// shape as [SharePath], keyed by `?project=<control.ID>`.
+	// InvitePath answers two 303s, split by method: the read lands on the Team page's
+	// invitation section, and the POST — which MINTED an invitation before single-project
+	// invitations were folded into team links, and creates nothing now — on its team-link
+	// form (`handleInvite`). Both rows stay declared: a page rendered before the fold still
+	// posts here.
 	InvitePath = "/invite"
 	// InviteRevokePath withdraws an outstanding invitation. A SEPARATE path rather than an
 	// action field on [InvitePath], for the reason `UnsharePath` gives and `routes` restates.

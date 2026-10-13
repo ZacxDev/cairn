@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -110,7 +111,9 @@ func invitePath(project control.ID) string {
 // past both).
 func TestTheInviteWritesAreBehindBothCrossSiteGates(t *testing.T) {
 	writes := []struct{ name, path string }{
-		{"mint", InvitePath},
+		// `POST /invite` creates nothing since the fold and is STILL behind both gates: they
+		// are derived from the method, not from what the handler does.
+		{"folded mint", InvitePath},
 		{"revoke", InviteRevokePath},
 	}
 	for _, w := range writes {
@@ -143,24 +146,25 @@ func TestTheInviteWritesAreBehindBothCrossSiteGates(t *testing.T) {
 
 		// POSITIVE CONTROL: the rig CAN get past both, or every write test below is
 		// measuring a refusal it cannot see.
-		if rig.inviting.minted != 0 || rig.inviting.revoked != 0 {
-			t.Fatalf("%s: a refused request reached the authority (minted %d, revoked %d)",
-				w.name, rig.inviting.minted, rig.inviting.revoked)
+		if rig.inviting.revoked != 0 {
+			t.Fatalf("%s: a refused request reached the authority (revoked %d)", w.name, rig.inviting.revoked)
 		}
 	}
 
-	// The control, spelled as a request that must SUCCEED.
+	// The controls, spelled as requests that must get PAST both gates: the revoke reaches the
+	// authority, and the folded mint reaches its handler's own answer (a 303, never a 403).
 	rig := newInviteRig(t, nil)
 	form := url.Values{}
 	form.Set(FieldProject, string(fixtureNamedProject.ID))
-	form.Set(FieldRole, string(control.RoleMember))
-	if rec := rig.post(InvitePath, form); rec.Code != http.StatusOK {
-		t.Fatalf("the positive control failed: a correctly-gated mint answered %d, want 200. Every write "+
-			"assertion in this file would then be about a cross-site refusal. Body: %q",
-			rec.Code, rec.Body.String())
+	form.Set(FieldDigest, fixtureInviteDigest)
+	if rec := rig.post(InviteRevokePath, form); rec.Code != http.StatusSeeOther || rig.inviting.revoked != 1 {
+		t.Fatalf("the positive control failed: a correctly-gated revoke answered %d and reached the authority "+
+			"%d time(s), want 303 and 1. Every write assertion in this file would then be about a cross-site "+
+			"refusal. Body: %q", rec.Code, rig.inviting.revoked, rec.Body.String())
 	}
-	if rig.inviting.minted != 1 {
-		t.Fatalf("the positive control reached no authority (minted %d)", rig.inviting.minted)
+	if rec := rig.post(InvitePath, form); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the positive control failed: a correctly-gated POST %s answered %d, want its handler's 303. "+
+			"Body: %q", InvitePath, rec.Code, rec.Body.String())
 	}
 }
 
@@ -216,9 +220,12 @@ func TestTheInviteRowsAnswerHonestlyWithNoInviteStore(t *testing.T) {
 	form := url.Values{}
 	form.Set(FieldProject, string(fixtureNamedProject.ID))
 	form.Set(FieldRole, string(control.RoleMember))
-	if rec := wired.post(InvitePath, form); rec.Code == http.StatusNotImplemented {
-		t.Error("a mint against a WIRED invite store also answered 501, so the assertions above are a " +
-			"fact about the request and not about the missing store")
+	form.Set(FieldDigest, fixtureInviteDigest)
+	for _, path := range []string{InvitePath, InviteRevokePath} {
+		if rec := wired.post(path, form); rec.Code == http.StatusNotImplemented {
+			t.Errorf("POST %s against a WIRED invite store also answered 501, so the assertions above are a "+
+				"fact about the request and not about the missing store", path)
+		}
 	}
 }
 
@@ -261,75 +268,6 @@ func TestAProjectThatIsNotInvitableIsRefusedBEFORETheUnnarrowedRead(t *testing.T
 	if ok.inviting.reads != 2 {
 		t.Errorf("an invitable project drew %d authority read(s), want 2 (`Invitable` then `Outstanding`); "+
 			"the count above cannot distinguish a narrowing from a handler that reads nothing", ok.inviting.reads)
-	}
-}
-
-// TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged is the capability's own guard.
-//
-// 🔴 THREE CLAIMS, AND THEY FAIL IN THREE DIFFERENT PLACES, WHICH IS WHY THEY ARE ASSERTED
-// SEPARATELY RATHER THAN AS "the page looks right". The token must be IN the body (or the
-// mint produced nothing usable), the response must carry `no-store` (or a shared cache may
-// keep a page that IS a bearer capability), and the token must NOT be in the log (the
-// journal-leak shape this repository has already shipped once, at rank 5).
-func TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged(t *testing.T) {
-	rig := newInviteRig(t, nil)
-	form := url.Values{}
-	form.Set(FieldProject, string(fixtureNamedProject.ID))
-	form.Set(FieldRole, string(control.RoleMember))
-	rec := rig.post(InvitePath, form)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("a mint answered %d, want 200. Body: %q", rec.Code, rec.Body.String())
-	}
-	body := rec.Body.String()
-
-	// The link, as the page renders it: a PATH plus the token, and no origin.
-	wantLink := JoinPath + "#" + url.Values{inviteTokenField: []string{fixtureInviteToken}}.Encode()
-	if !strings.Contains(body, wantLink) {
-		t.Errorf("the minted page does not carry the join link %q. The token is returned once and cannot "+
-			"be re-derived, so a page that does not render it has produced an invitation nobody can use",
-			wantLink)
-	}
-	if n := strings.Count(body, fixtureInviteToken); n != 1 {
-		t.Errorf("the token appears %d time(s) in the page, want exactly 1. More than one is a second "+
-			"place it can be copied from by accident — most of the ways that happens put it in an href", n)
-	}
-
-	// 🔴 NOT AN ANCHOR. `MintedInvite.Link` is a PATH with no origin, so an `<a href>` would
-	// resolve it against THIS page and offer the minter a one-click way to redeem the
-	// invitation they just created — spending it on themselves. It is also the shape a
-	// link-prefetcher follows.
-	if strings.Contains(body, `href="`+wantLink) {
-		t.Error("the minted link is rendered as an anchor. It resolves against this origin, so one stray " +
-			"click — or one link-prefetcher — redeems the invitation on the person who created it")
-	}
-
-	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
-		t.Errorf("the mint response's Cache-Control is %q, want \"no-store\". Its BODY is a bearer "+
-			"capability that can create a principal", got)
-	}
-	// ⚠ THE POSITIVE CONTROL THAT STOOD HERE IS RETIRED, NOT FORGOTTEN. It required an ordinary
-	// invite page to carry NO `Cache-Control`, proving the assertion above was about the mint
-	// response in particular. Since S3 of the mobile plan every HTML page is
-	// `no-store` (the one value `writeHTML` sends, walked by `TestEveryNonPublicHTMLRowIsNoStore`), so the
-	// mint is no longer special and that control would now assert the opposite of the contract.
-	// What keeps the assertion above non-vacuous is that it is a literal value a different
-	// default ("" or `no-cache`) fails.
-
-	if logged := rig.log.String(); strings.Contains(logged, fixtureInviteToken) {
-		t.Errorf("the minted TOKEN reached the log. Hand-appending a secret to a durable stream is what "+
-			"put a 64-character secret in the control journal once already. Log: %q", logged)
-	}
-	// POSITIVE CONTROL on the log sink: it must have captured SOMETHING, or "the token is
-	// not in the log" is a fact about a writer wired to nothing.
-	if !strings.Contains(rig.log.String(), "an invitation was minted") {
-		t.Fatalf("the log captured no mint line, so the absence above is about the sink rather than about "+
-			"the token. Log: %q", rig.log.String())
-	}
-	// And the line that IS there must carry the digest-free facts an operator needs.
-	if !strings.Contains(rig.log.String(), string(fixtureNamedProject.ID)) {
-		t.Error("the mint log line does not name the project, so an operator reading the stream cannot " +
-			"tell which project gained an invitation")
 	}
 }
 
@@ -376,47 +314,39 @@ func TestRevokingNamesTheInvitationByDigestAndRedirects(t *testing.T) {
 	}
 }
 
-// TestTheTwoInviteWriteRefusalsAnswerDIFFERENTLYForDIFFERENTREASONS is `refuseInviteWrite`'s
-// mapping, driven through the real dispatcher.
+// TestTheInviteRevokeRefusalsAreUniform is `refuseInviteWrite`'s mapping, driven through the
+// real dispatcher.
 //
-// 🔴 ONE OF THE TWO DISCRIMINATES AND ONE DOES NOT, AND A TEST THAT CHECKED ONLY THE STATUS
-// WOULD MISS IT. `ErrNotInvitable` is a fact about somebody else's projects and must be
-// uniform; `ErrRoleNotConferrable` is a fact about the caller's own standing and must SAY so,
-// or a person who picked `owner` from a list is told "that invitation cannot be recorded" and
-// can never learn why. Both are 403, so the bodies are the whole claim.
-func TestTheTwoInviteWriteRefusalsAnswerDifferentlyForDifferentReasons(t *testing.T) {
+// 🔴 BOTH ARMS ANSWER ONE STATUS AND ONE SENTENCE, AND THE BODY IS THE CLAIM. `ErrNotInvitable`
+// is "no such project, or not yours" and `ErrNotRedeemable` is "no such invitation, or no
+// longer open"; answering them differently would let a revoke ask whether a digest exists.
+// (The third arm this mapping had — a role the caller could not confer — went with the mint.)
+func TestTheInviteRevokeRefusalsAreUniform(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		err  error
-		want string
 	}{
-		{"not invitable", ErrNotInvitable, inviteWriteRefusal},
-		{"role not conferrable", ErrRoleNotConferrable, roleRefusal},
+		{"not invitable", ErrNotInvitable},
+		{"not redeemable", invite.ErrNotRedeemable},
 	} {
 		rig := newInviteRig(t, nil)
-		rig.inviting.mintErr = tc.err
-		form := url.Values{}
-		form.Set(FieldProject, string(fixtureNamedProject.ID))
-		form.Set(FieldRole, string(control.RoleOwner))
-		rec := rig.post(InvitePath, form)
+		rig.inviting.revokeErr = tc.err
+		rec := rig.post(InviteRevokePath, url.Values{FieldDigest: {fixtureInviteDigest}})
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("%s: answered %d, want 403", tc.name, rec.Code)
 		}
-		if got := strings.TrimSpace(rec.Body.String()); got != tc.want {
-			t.Errorf("%s: body is %q, want %q", tc.name, got, tc.want)
+		if got := strings.TrimSpace(rec.Body.String()); got != inviteWriteRefusal {
+			t.Errorf("%s: body is %q, want %q", tc.name, got, inviteWriteRefusal)
 		}
 	}
 
-	// 🔴 AND AN ERROR THE MAPPING DOES NOT KNOW IS A 500, NOT A 403 — which is what makes an
-	// UNWRAPPED sentinel a real defect rather than a wording nit. This is the arm a
-	// `fmt.Errorf` with no `%w` falls into.
+	// 🔴 AND AN ERROR THE MAPPING DOES NOT KNOW IS A 500, NOT A 403 — the arm a store failure
+	// falls into, and the one that must not carry the store's own text to the wire.
 	rig := newInviteRig(t, nil)
-	rig.inviting.mintErr = invite.ErrNotRedeemable
-	form := url.Values{}
-	form.Set(FieldProject, string(fixtureNamedProject.ID))
-	form.Set(FieldRole, string(control.RoleMember))
-	if rec := rig.post(InvitePath, form); rec.Code != http.StatusForbidden {
-		t.Errorf("ErrNotRedeemable answered %d, want 403 — it is one of the two uniform arms", rec.Code)
+	rig.inviting.revokeErr = errors.New("fixture store failure naming a table")
+	rec := rig.post(InviteRevokePath, url.Values{FieldDigest: {fixtureInviteDigest}})
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "fixture store failure") {
+		t.Errorf("an unknown error answered %d %q, want a 500 that does not carry its text", rec.Code, rec.Body.String())
 	}
 }
 
@@ -518,65 +448,6 @@ func TestTheJoinPageWithoutATokenSaysSoAndOffersNoForm(t *testing.T) {
 	}
 }
 
-// TestTheRoleChooserOffersOnlyWhatTheCallerMayConfer is the escalation rule as the FORM
-// expresses it, and it is a different claim from the mint's refusal.
-//
-// 🔴 THE MINT'S GUARD IS WHAT MAKES IT SAFE; THIS IS WHAT MAKES IT HONEST. `ControlInviting.
-// Mint` refuses an `owner` invitation from an admin whatever the form offered — that is the
-// security property and `inviting_test.go` measures it. What this measures is that the
-// chooser does not OFFER a value the mint will refuse, which is the difference between a form
-// and a trap. Both read `control.Role.CanConfer`, which is why the predicate is a method.
-func TestTheRoleChooserOffersOnlyWhatTheCallerMayConfer(t *testing.T) {
-	for _, tc := range []struct {
-		held        control.Role
-		wantOffered []control.Role
-		wantAbsent  []control.Role
-	}{
-		{control.RoleOwner, []control.Role{control.RoleOwner, control.RoleAdmin, control.RoleMember}, nil},
-		{control.RoleAdmin, []control.Role{control.RoleAdmin, control.RoleMember}, []control.Role{control.RoleOwner}},
-	} {
-		project := fixtureNamedProject
-		project.HeldRole = tc.held
-		view := InviteView{
-			Viewer:   "operator@example.invalid",
-			CSRF:     renderCSRF,
-			Projects: []control.NamedProject{project},
-			Project:  project,
-		}
-		html := renderNode(t, inviteOnTeam(view))
-
-		for _, r := range tc.wantOffered {
-			if !strings.Contains(html, `value="`+string(r)+`"`) {
-				t.Errorf("held=%s: the chooser does not offer %q, so an authority the model permits "+
-					"cannot be expressed by the form", tc.held, r)
-			}
-		}
-		for _, r := range tc.wantAbsent {
-			if strings.Contains(html, `value="`+string(r)+`"`) {
-				t.Errorf("held=%s: the chooser OFFERS %q, which `Mint` will refuse. A form whose visible "+
-					"options include one that cannot work is a trap", tc.held, r)
-			}
-		}
-		// 🔴 THE PRE-SELECTED OPTION IS THE LEAST PRIVILEGED ONE, ON BOTH ROWS. A `select`
-		// with no explicit selection submits its FIRST option and `control.AllRoles` is in
-		// descending authority, so the unread default would be `owner` — a form that hands
-		// out ownership of a project to everybody who does not read it.
-		if !strings.Contains(html, `<option value="`+string(leastPrivilegedRole)+`" selected>`) {
-			t.Errorf("held=%s: %q is not the pre-selected option. The list is in DESCENDING authority, so "+
-				"an unselected chooser defaults to the most authority it can confer", tc.held, leastPrivilegedRole)
-		}
-	}
-
-	// POSITIVE CONTROL on the matcher: a role string this chooser could never offer must be
-	// absent, or `strings.Contains` on `value="…"` is matching something else on the page.
-	view := InviteView{Viewer: "v", CSRF: renderCSRF, Project: fixtureNamedProject,
-		Projects: []control.NamedProject{fixtureNamedProject}}
-	if html := renderNode(t, inviteOnTeam(view)); strings.Contains(html, `value="emperor"`) {
-		t.Error("the matcher reports a role nothing defines as offered, so its verdicts above are about " +
-			"the matcher")
-	}
-}
-
 // TestTheRevokeButtonIsOfferedOnlyForAnOpenInvitation walks all four states.
 //
 // ⚠ THE BUTTON'S ABSENCE IS NOT THE GUARD AND THIS TEST DOES NOT CLAIM IT IS.
@@ -668,10 +539,8 @@ func TestTheInviteHonestyNoticeIsPinnedWhole(t *testing.T) {
 			got, want)
 	}
 	for name, view := range map[string]InviteView{
-		"index":   {Viewer: "v", CSRF: renderCSRF, Projects: []control.NamedProject{fixtureNamedProject}},
-		"project": {Viewer: "v", CSRF: renderCSRF, Project: fixtureNamedProject, Projects: []control.NamedProject{fixtureNamedProject}},
-		"minted": {Viewer: "v", CSRF: renderCSRF, Project: fixtureNamedProject,
-			Minted: &MintedInvite{Link: JoinPath + "?invite=x", Role: control.RoleMember, Expires: "2000-01-09T03:04:05Z"}},
+		"index":    {Viewer: "v", CSRF: renderCSRF, Projects: []control.NamedProject{fixtureNamedProject}},
+		"project":  {Viewer: "v", CSRF: renderCSRF, Project: fixtureNamedProject, Projects: []control.NamedProject{fixtureNamedProject}},
 		"no-store": {Viewer: "v", CSRF: renderCSRF, NoStore: true},
 	} {
 		got := pageText(renderNode(t, inviteOnTeam(view)))

@@ -158,14 +158,15 @@ func TestTheTeamPageRefusesAForeignScopeOrProjectUniformly(t *testing.T) {
 	// authority that ALLOWS admin, which this static rig's identity does not carry; the share
 	// rig in `sharing_test.go` drives `/team?scope=` against a real journal.)
 	project := rig.get(TeamPath + "?" + QueryProject + "=" + string(fixtureNamedProject.ID))
-	if project.Code != http.StatusOK || !strings.Contains(project.Body.String(), `action="`+InvitePath+`"`) {
-		t.Errorf("POSITIVE CONTROL: the caller's own project answered %d without its mint form", project.Code)
+	if project.Code != http.StatusOK || !strings.Contains(project.Body.String(), `action="`+InviteRevokePath+`"`) {
+		t.Errorf("POSITIVE CONTROL: the caller's own project answered %d without its invitation's revoke form", project.Code)
 	}
 }
 
 // TestTheMovedWritesLandOnTheTeamPage — the POST rows are unchanged as routes, and each lands
 // on its Team section: a share and a revoke at `#share` with the scope and outcome, an invite
-// revoke at `#invite` with this flow's own code, and a mint renders its link ON the Team page.
+// revoke at `#invite` with this flow's own code, and `POST /invite` — which creates nothing
+// since the fold — at the team-link form, `#links`, with the project carried.
 func TestTheMovedWritesLandOnTheTeamPage(t *testing.T) {
 	rig := newInviteRig(t, nil)
 	rec := rig.post(InviteRevokePath, url.Values{FieldDigest: {fixtureInviteDigest}, FieldProject: {string(fixtureNamedProject.ID)}})
@@ -173,11 +174,11 @@ func TestTheMovedWritesLandOnTheTeamPage(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != want {
 		t.Errorf("an invite revoke answered %d → %q, want 303 → %q", rec.Code, rec.Header().Get("Location"), want)
 	}
-	mint := rig.post(InvitePath, url.Values{FieldProject: {string(fixtureNamedProject.ID)}, FieldRole: {string(control.RoleMember)}})
-	body := mint.Body.String()
-	if mint.Code != http.StatusOK || !strings.Contains(body, "<title>cairn — team") ||
-		strings.Count(body, url.Values{inviteTokenField: {fixtureInviteToken}}.Encode()) != 1 {
-		t.Errorf("an invitation mint answered %d, and must render the Team page carrying the link exactly once", mint.Code)
+	folded := rig.post(InvitePath, url.Values{FieldProject: {string(fixtureNamedProject.ID)}, FieldRole: {string(control.RoleMember)}})
+	want = TeamPath + "?" + QueryOutcome + "=" + inviteOutcomeFolded + "&" + QueryProject + "=" + string(fixtureNamedProject.ID) + "#links"
+	if folded.Code != http.StatusSeeOther || folded.Header().Get("Location") != want || folded.Body.Len() != 0 {
+		t.Errorf("POST /invite answered %d → %q (%d body bytes), want a bodiless 303 → %q",
+			folded.Code, folded.Header().Get("Location"), folded.Body.Len(), want)
 	}
 }
 

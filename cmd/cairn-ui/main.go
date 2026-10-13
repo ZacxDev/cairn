@@ -419,8 +419,9 @@ func main() {
 	// 🔴 AND NEVER A FILE THIS PROGRAM ALREADY WRITES. `FromEnv` refuses the arc journal; this surface
 	// also owns the CONTROL journal and the session table, and one sources record appended to the
 	// control journal makes every later `Refresh` and `Append` refuse it (measured by the S4 audit: an
-	// authority journal that then needs hand-editing to recover). The deployment puts the sources file
-	// BESIDE the control journal, so a one-token typo reaches this.
+	// authority journal that then needs hand-editing to recover). A deployment that puts the sources file
+	// BESIDE the control journal is a one-token typo away from this; one that gives it a dedicated
+	// volume (the README's recommendation) is not, and the refusal costs nothing there.
 	if sourcesOn {
 		if err := refuseASourceJournalThatIsAnotherFile(*store, sourceJournal.Path,
 			map[string]string{"-control-journal": *controlJournal, "-session-file": *sessionFile}); err != nil {

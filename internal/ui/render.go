@@ -2107,11 +2107,11 @@ var grantableVerbs = control.AllVerbs
 
 // InviteView is everything the invite flow renders, assembled by the handler.
 //
-// 🔴 ONE TYPE FOR THREE SHAPES, WHICH IS `ShareView`'s RULING AND THE SAME REASON: all
-// three are reached through ONE route and ONE handler, so a second type would be a second
-// place to forget the notice. An empty `Project` means the INDEX — the projects this caller
-// may invite into — and not "a project page with nothing on it"; a non-nil `Minted` means
-// the response to a mint, which renders the invitation and nothing else actionable.
+// 🔴 ONE TYPE FOR BOTH SHAPES, WHICH IS `ShareView`'s RULING AND THE SAME REASON: both are
+// reached through ONE route and ONE handler, so a second type would be a second place to
+// forget the notice. An empty `Project` means the INDEX — the projects this caller may
+// invite into — and not "a project page with nothing on it". There is no third, "minted",
+// shape since the fold: nothing on this surface creates an invitation.
 type InviteView struct {
 	// Viewer is the signed-in principal's display name. USER TEXT.
 	Viewer string
@@ -2141,8 +2141,6 @@ type InviteView struct {
 	Outstanding []InviteRow
 	// Outcome is the result of the write that redirected here, or "".
 	Outcome string
-	// Minted is the invitation this request just created, shown ONCE and never again.
-	Minted *MintedInvite
 }
 
 // InviteRow is one invitation as the page shows it.
@@ -2166,26 +2164,9 @@ type InviteRow struct {
 	Expires string
 }
 
-// MintedInvite is a freshly created invitation, rendered exactly once.
-type MintedInvite struct {
-	// Link is the PATH AND QUERY an invited person must open — never an absolute URL.
-	//
-	// 🔴 THE ORIGIN IS MISSING ON PURPOSE AND THE PAGE SAYS SO. This process cannot know
-	// the scheme and host a reader reaches it by: the only candidate available to it is a
-	// `Host` header a proxy chooses, and `identity.ErrSupabaseOAuthNoRedirect` records the
-	// same fact about the same kind of value one package over. A guessed origin here would
-	// produce a link to the wrong hostname for a capability that cannot be re-issued, so
-	// the page renders the path and asks the sender to put their own origin in front of it.
-	Link string
-	// Role is what the invitation confers, and Expires is RFC3339 in UTC.
-	Role    control.Role
-	Expires string
-}
-
-// The invite flow's PAGE is the Team page too (`TeamPage`): `GET /invite` answers a 303
-// there, and a mint renders its one-time link ON it. `inviteIndex`,
-// `inviteProjectSection` and `mintedSection` below are its sections, and
-// `InviteHonesty` rides every shape of the Team page.
+// The invite flow's PAGE is the Team page (`TeamPage`): `GET /invite` answers a 303 there.
+// `inviteIndex` and `inviteProjectSection` below are its sections, and `InviteHonesty` and
+// `InviteFoldNotice` ride it.
 
 // inviteIndex lists the projects this caller may invite into.
 func inviteIndex(v InviteView) g.Node {
@@ -2209,24 +2190,26 @@ func inviteIndex(v InviteView) g.Node {
 			href := teamHref(QueryProject+"="+string(p.ID), teamInviteAnchor)
 			return h.Li(
 				h.A(h.Href(href), g.Text(p.Name)),
-				// The caller's own role is rendered beside each project because it is what
-				// decides which roles the next page will offer — see `inviteForm`. Without
-				// it, an admin who finds `owner` missing from the chooser has no way to see
-				// why.
+				// The caller's own role is rendered beside each project: it is why the
+				// project is in this list at all (`Invitable` admits owner and admin).
 				h.Span(h.Class("kind"), g.Text("you are "+string(p.HeldRole))),
 			)
 		})),
 	)
 }
 
-// inviteProjectSection is one project's page: what is outstanding, and the form that
-// creates another.
+// inviteProjectSection is one project's invitations: every one that exists, each revocable
+// while it is open.
+//
+// 🔴 IT HAS NO MINT FORM, AND THAT IS THE FOLD (operator decision, option A). The Team page
+// carries ONE mint form — `teamLinkForm`, which pre-ticks this project — and
+// `InviteFoldNotice`, rendered above this section, says what that costs.
+// `TestTheTeamPageHasOneMintFormAndPreselectsTheProject` pins both halves.
 func inviteProjectSection(v InviteView) g.Node {
 	return h.Section(
 		h.Class("invite-project"),
-		h.H2(g.Text("Inviting to "+v.Project.Name)),
+		h.H2(g.Text("Invitations to "+v.Project.Name)),
 
-		h.H3(g.Text("Invitations you have sent")),
 		// 🔴 THIS SENTENCE IS WHY THE LIST SHOWS SPENT ROWS RATHER THAN ONLY LIVE ONES. An
 		// administrator reading a list that silently dropped redeemed and expired rows
 		// would conclude nothing had been sent, which is the opposite of what happened.
@@ -2234,15 +2217,15 @@ func inviteProjectSection(v InviteView) g.Node {
 			"Every invitation this project has, in every state. Only an OPEN one can be "+
 				"revoked, and revoking one takes nothing back from somebody who already joined.")),
 		g.If(len(v.Outstanding) == 0, h.P(h.Class("empty"), g.Text(
-			"No invitation has been created for this project."))),
+			"No invitation exists for this project."))),
 		h.Ul(h.Class("invites"), g.Map(v.Outstanding, func(row InviteRow) g.Node {
 			return inviteRowItem(row, v.Project.ID, v.CSRF)
 		})),
 
-		h.H3(g.Text("Invite somebody")),
-		g.If(v.CSRF == "", h.P(h.Class("note"), g.Text(
-			"This credential has no browser session, so no form is rendered. Sign in to invite."))),
-		g.If(v.CSRF != "" && !v.NoStore, inviteForm(v)),
+		h.P(h.Class("note"), h.A(
+			h.Href("#"+teamLinksAnchor),
+			g.Text("Invite somebody to "+v.Project.Name+" with a team link"),
+		)),
 	)
 }
 
@@ -2276,120 +2259,6 @@ func inviteRowItem(row InviteRow, project control.ID, csrf string) g.Node {
 			// input. `handleInviteRevoke` says so at the read.
 			h.Input(h.Type("hidden"), h.Name(FieldProject), h.Value(string(project))),
 			h.Button(h.Type("submit"), g.Text("Revoke")),
-		)),
-	)
-}
-
-// inviteForm is the mint form.
-//
-// 🔴 THE ROLE CHOOSER OFFERS ONLY WHAT THIS CALLER MAY CONFER, DECIDED BY
-// `control.Role.CanConfer` — THE SAME PREDICATE `ControlInviting.Mint` REFUSES WITH. That is
-// the whole reason the predicate exists as a method rather than as a condition at the mint:
-// a chooser built from `control.AllRoles` unfiltered would offer an admin the `owner` option
-// and the mint would then refuse it, which is a form whose visible options include one that
-// cannot work. `shareForm` offers every verb for a reason that does not apply here — there
-// is no verb an authority-holder may not grant, so nothing to filter.
-//
-// 🔴 AND THE PRE-SELECTED OPTION IS THE LEAST PRIVILEGED ONE, WHICH IS NOT THE FIRST. A
-// `select` with no explicit selection submits its first option, and `control.AllRoles` is in
-// DESCENDING authority — so the unread default would be `owner`, i.e. a form that hands out
-// ownership of a project to everybody who does not read it. `shareForm` pre-ticks `read` on
-// the argument that a form whose default submission is an error teaches people to ignore the
-// error; this is the same class of decision with a worse failure mode, so the default is
-// chosen rather than inherited from a list's order.
-func inviteForm(v InviteView) g.Node {
-	conferrable := conferrableRoles(v.Project.HeldRole)
-	if len(conferrable) == 0 {
-		// Unreachable through this page today — `Invitable` only lists projects whose role
-		// `CanManageMembers` admits, and every such role can confer at least `member`. It
-		// is a statement of the rule rather than dead code: the alternative is a form with
-		// an empty `select`, which submits nothing and refuses for a reason nobody can see.
-		return h.P(h.Class("empty"), g.Text(
-			"Your role in this project cannot confer any role, so no invitation can be created."))
-	}
-	return h.FormEl(
-		h.Class("invite"),
-		h.Method("post"),
-		h.Action(InvitePath),
-		h.Input(h.Type("hidden"), h.Name(FieldCSRF), h.Value(v.CSRF)),
-		h.Input(h.Type("hidden"), h.Name(FieldProject), h.Value(string(v.Project.ID))),
-		h.Label(h.For("role"), g.Text("Join as")),
-		h.Select(
-			h.ID("role"),
-			h.Name(FieldRole),
-			h.Required(),
-			g.Map(conferrable, func(r control.Role) g.Node {
-				return h.Option(
-					h.Value(string(r)),
-					g.If(r == leastPrivilegedRole, h.Selected()),
-					g.Text(string(r)),
-				)
-			}),
-		),
-		h.P(h.Class("note"), g.Text(
-			"The link this creates is shown once. Send it to one person: anybody who opens "+
-				"it joins this project at the role above.")),
-		h.Button(h.Type("submit"), g.Text("Create an invitation")),
-	)
-}
-
-// leastPrivilegedRole is the role a chooser pre-selects.
-//
-// ⚠ IT IS SPELLED AS ITS OWN NAME RATHER THAN AS `control.AllRoles[len-1]`, BECAUSE THE
-// INDEX FORM WOULD BE A CLAIM ABOUT THAT SLICE'S ORDER AND NOT ABOUT PRIVILEGE. Reordering
-// `AllRoles` — a cosmetic change to a rendered list — would silently move the default.
-var leastPrivilegedRole = control.RoleMember
-
-// conferrableRoles filters `control.AllRoles` by what `held` may hand out.
-//
-// ⚠ IT RANGES OVER `control.AllRoles` RATHER THAN OVER A LIST WRITTEN HERE, which is
-// `grantableVerbs`'s ruling: a hand-written copy would silently stop offering a role the
-// model gained, and the chooser would express less than the authority model does with
-// nothing going red.
-func conferrableRoles(held control.Role) []control.Role {
-	var out []control.Role
-	for _, r := range control.AllRoles {
-		if held.CanConfer(r) {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-// mintedSection renders a freshly created invitation, and it is the one place on this
-// surface where a page's own body is a bearer credential.
-//
-// 🔴 THE LINK IS RENDERED AS TEXT AND NOT AS AN `<a href>`, WHICH IS A DECISION RATHER THAN
-// AN OMISSION. Three reasons, and the first alone settles it: [MintedInvite.Link] is a PATH
-// with no origin, so an anchor would resolve it against THIS page and offer the minter a
-// link that redeems the invitation they just created — one stray click and the invitation is
-// spent on the person who sent it. Beyond that, a rendered anchor is the shape a
-// link-prefetcher and a mail scanner follow, and the thing a reader needs to do with this
-// value is COPY it, which text serves and a link does not.
-func mintedSection(v InviteView) g.Node {
-	m := v.Minted
-	return h.Section(
-		h.Class("invite-minted"),
-		h.H2(g.Text("Invitation created")),
-		h.P(h.Class("note"), g.Text(
-			"This is the only time this link is shown. It is not stored and cannot be "+
-				"recovered; if it is lost, revoke it and create another.")),
-		// The path, verbatim, for copying. Not an anchor — see this function's comment.
-		h.P(h.Class("invite-link"), g.Text(m.Link)),
-		h.P(h.Class("note"), g.Text(
-			"Put this deployment's own address in front of that path before sending it. "+
-				"cairn cannot know the address you reach it by, so it does not guess one. Send all of "+
-				"it: the part after # is the invitation, and no browser sends that part to any server.")),
-		h.Ul(h.Class("invites"), h.Li(
-			h.Class("invite-row"),
-			h.Span(h.Class("kind"), g.Text(string(m.Role))),
-			h.Span(h.Class("at"), g.Text("expires "+m.Expires)),
-		)),
-		g.If(v.Project.ID != "", h.P(h.Class("note"),
-			h.A(
-				h.Href(teamHref(QueryProject+"="+string(v.Project.ID), teamInviteAnchor)),
-				g.Text("Back to this project's invitations"),
-			),
 		)),
 	)
 }

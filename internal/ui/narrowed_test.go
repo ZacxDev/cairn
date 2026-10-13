@@ -224,39 +224,43 @@ func TestANarrowedSignInCountsTowardTheLockout(t *testing.T) {
 	}
 }
 
-// TestANarrowedBearerCannotMintAnInvitation is the SAME defect through the other door.
+// TestNoBearerMintsAnInvitationThroughPostInvite is what is left of the SAME defect through
+// the other door, since the fold.
 //
-// 🔴 THE INVITE FLOW AUTHORISES FROM THE PRINCIPAL'S PROJECT ROLE, WHICH NO SCOPE NARROWING
-// BOUNDS. A narrowed bearer token reaches `POST /invite` through the machine-token backend and
-// passes the CSRF gate with a self-chosen cookie (see `csrfTokenValid`). On the pre-fix code it
-// mints an invitation into the owner's project — which the holder can redeem as an identity
-// they control, for membership across every scope in it. The un-narrowed bearer is the
-// positive control: the same request with it mints, so the refusal is about the narrowing.
-func TestANarrowedBearerCannotMintAnInvitation(t *testing.T) {
+// 🔴 THE HAZARD IT WAS WRITTEN FOR: the invite flow authorised from the principal's project
+// ROLE, which no scope narrowing bounds, so a narrowed bearer token reaching `POST /invite`
+// through the machine-token backend (it passes the CSRF gate with a self-chosen cookie — see
+// `csrfTokenValid`) minted an invitation into its owner's project. `POST /invite` now creates
+// nothing for ANYBODY, so the claim is wider and simpler: no bearer, narrowed or not, leaves a
+// row in the invitation store. The narrowing's own guard over the door that DOES still mint is
+// `TestANarrowedBearerHasNoTeamLinkAuthority`.
+func TestNoBearerMintsAnInvitationThroughPostInvite(t *testing.T) {
 	authority := narrowedWorld(t)
-	inviting := ControlInviting{Authority: authority, Invites: newMemInvites(),
+	store := newMemInvites()
+	inviting := ControlInviting{Authority: authority, Invites: store,
 		Now: func() time.Time { return fixtureClock }, Links: &ControlTeamLinks{Authority: authority, Store: newMemLinks()}}
-
-	mint := func(t *testing.T, bearer string) *httptest.ResponseRecorder {
-		t.Helper()
-		l := newLiveOver(t, authority, inviting, nil, nil)
-		return l.bearerDo(http.MethodPost, InvitePath, bearer,
-			url.Values{FieldProject: {string(fixtureProject)}, FieldRole: {string(control.RoleMember)}})
-	}
-
-	if rec := mint(t, testCredential); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), JoinPath+"#") {
-		t.Fatalf("POSITIVE CONTROL FAILED: the un-narrowed bearer could not mint (status %d), so a refusal "+
-			"below would not be about the narrowing:\n%s", rec.Code, rec.Body.String())
-	}
-	for _, token := range []string{narrowedToOneToken, narrowedToNoneToken, narrowedToAllToken} {
-		rec := mint(t, token)
-		if strings.Contains(rec.Body.String(), JoinPath+"#") {
-			t.Fatalf("A NARROWED BEARER MINTED AN INVITATION into the owner's project (status %d): "+
-				"membership authority is not bounded by a scope narrowing", rec.Code)
+	count := func() int {
+		rows, err := store.ForProject(fixtureProject)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), inviteWriteRefusal) {
-			t.Fatalf("a narrowed bearer's mint answered %d, want the uniform 403 %q:\n%s",
-				rec.Code, inviteWriteRefusal, rec.Body.String())
+		return len(rows)
+	}
+
+	// POSITIVE CONTROL: the count moves when a row is written.
+	owner, _ := authority.Model().PrincipalFor(control.KindUser, fixtureUser)
+	if _, _, err := seedInvitationInto(inviting, owner, fixtureProject, control.RoleMember, 0); err != nil || count() != 1 {
+		t.Fatalf("POSITIVE CONTROL FAILED: a seeded row reads as %d (err=%v)", count(), err)
+	}
+	for _, bearer := range append([]string{testCredential}, narrowedBearers...) {
+		l := newLiveOver(t, authority, inviting, nil, nil)
+		rec := l.bearerDo(http.MethodPost, InvitePath, bearer,
+			url.Values{FieldProject: {string(fixtureProject)}, FieldRole: {string(control.RoleMember)}})
+		if rec.Code != http.StatusSeeOther || strings.Contains(rec.Body.String(), JoinPath+"#") {
+			t.Fatalf("POST /invite answered %d %q, want a bodiless 303", rec.Code, rec.Body.String())
+		}
+		if got := count(); got != 1 {
+			t.Fatalf("A BEARER MINTED AN INVITATION through POST /invite: the store holds %d row(s), want the 1 seeded", got)
 		}
 	}
 }
