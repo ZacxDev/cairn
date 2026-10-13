@@ -298,6 +298,24 @@ this credential"* — an authority answer, not an empty store. The walk captures
 says so. Reaching a per-scope share page needs a journal-backed world; that is declared gap 1
 below.
 
+### The world stores ONE transcript, through the real upload route (transcripts S4)
+
+`boot.go` mints a capture token with the binary's own `-issue-worker-token`, starts `cairn-ui` with
+the six worker flags and `-arm-transcript-capture`, and `transcript.go` POSTs a synthetic session —
+a main stream carrying every kind of unit the collapsed reading renders differently, and the
+subagent one of its calls spawned — to the worker listener, for the session `fixtureMembers` already
+uses. So the session page is captured WITH its transcript section at every width, and
+`GET /session/transcript` (a `linkExpanded` row: the section publishes its operands) is captured
+with records on it. A refused upload is a boot failure, not a missing section.
+
+- **The guard is `TestTheSessionPageCarriesItsTranscriptAtEveryWidth`**, not the walk: a world
+  whose upload stored nothing would capture the no-transcript page with every number green. It reads
+  the section in the browser at all five widths — present, every reveal closed, one click opens a
+  tool call with no script on the page, the subagent nested, the 108-character unbreakable token
+  whole, overflow 0. Watched red with the upload skipped.
+- **Only the owner half**, for the presence fixture's structural reason: one capture owner, one
+  walk identity. The refusals are `internal/ui`'s and `tests/plugins/e2e.sh`'s to measure.
+
 ## What the first draft got wrong — the defect this harness shipped and then caught
 
 **This is the one regression guard in the module; everything else here is an invariant guard

@@ -29,23 +29,28 @@ CLI auditor can deterministically check entries' paths, SHAs and PR refs against
   no 🔴). #259 r0 (requirements questioned, below) + r1 (two 🔴 fixed: an inherited `GIT_DIR` could
   redirect the `--prune` fetch into the caller's repo; a private repo's 404 read as a stale PR) + r2
   delta.
-- **Deployed:** the personal instance runs pod and UI at `sha-be6662e` — S2's route, no S4/S5. The pod
-  still answers `sources-unconfigured`: no journal is configured. **The deployment change is
-  PREPARED, NOT APPLIED** (see Next steps 1).
+- **Deployed and CONFIGURED:** the personal instance runs pod and UI at `sha-168824c` (S3–S5), and
+  the source journal is now configured on a DEDICATED volume (operator decision): the UI mounts it
+  read-write and writes `sources.jsonl` there, the pod mounts the same claim read-only, and the pod
+  does NOT mount the UI's state volume (read from the live pod spec: three claims, none of them the
+  UI's; the UI's four as the positive control). Measured after the rollout, image digests unchanged
+  and restarts 0 on both: the UI's startup line reads `code sources written to <path>`; `cairn
+  sources --scope <s>` answers `status=sources-undeclared … journal=absent`, exit 0, on two scopes
+  (the `sources-unconfigured` it replaced is the earlier record's reading, not re-measured here);
+  the memo live probe still exits 0 (6/6). The UI backup job stages the volume as `sources/` and
+  logs `sources: absent` at stage and again after restore-verify.
+  ⚠ NOT verified: a WRITE. Nothing has been saved, so the UI creating the file (`0600`) and the pod
+  then reading it across the two mounts is unexercised — the mount is read-write and the directory
+  writable by the UI's uid, which are prerequisites, not the save.
 - Claims: `scope-refs-s3-s5` released at the end of the run.
 
 ## Next steps (ranked)
-1. **Deploy wave (coordinator):** bump `cairn-ui` to an image carrying S4 (`231aea5` or later) and
-   apply the prepared change in the deployment repo's subsystem-store app directory:
-   `CAIRN_SOURCE_JOURNAL=/var/lib/cairn-ui/sources.jsonl` on `cairn-ui` (the writer) AND on
-   `subsystem-store-api` (the reader), the pod mounting `cairn-ui-state` read-only at
-   `/var/lib/cairn-ui` (container-level `readOnly`), and a `sources: lines=N | absent` log line in
-   `ui-backup-scripts.yaml` (the state volume is already staged verbatim and restore-verified). No
-   migration, no credential. ⚠ The pod gains READ access to the whole UI state volume (control
-   journal = credential HASHES); the alternative is a dedicated PVC plus its own backup wiring.
-   Verify live: `cairn sources --scope <s>` answers `sources=undeclared journal=absent` (not
-   `sources-unconfigured`); an admin saves a declaration in the browser; `cairn sources` then lists
-   it; `cairn audit-refs --scope <s>` runs. forcing: user — operator asked for scope refs end to end.
+1. **Operator: declare the first source in the browser** (an admin of the scope, the scope page's
+   Sources block). Then verify the half nothing has exercised: `cairn sources --scope <s>` lists it,
+   `cairn audit-refs --scope <s>` runs, and the next UI backup logs `sources: lines=1`, twice (stage
+   and restore). Then set the backup job's source-line floor to 1 in the deployment repo, so a lost
+   journal fails the job instead of passing as `absent`. A `503 store-unreachable` from the pod at that point means the pod cannot read the
+   file the UI created. forcing: user — operator asked for scope refs end to end.
 2. **Operator decisions the S5 audit raised** (each `forcing: audit`):
    - 🟡2 of #259 r1: a path missing in every LOOKED-AT source is `stale` (exit 9) even when another
      declared source was never fetched — the plan's S5 test plan pins exactly that; the audit
@@ -74,6 +79,18 @@ CLI auditor can deterministically check entries' paths, SHAs and PR refs against
 - **The pod's store is a COPY that `seed.sh` overwrites** (`tar -xf` over `/data`) — anything the UI
   writes into the store tree is reverted on re-seed; keep UI-written state in its own journal.
   via: code
+- **The sources journal's dedicated volume is node-local and ReadWriteOnce, shared by two pods** —
+  safe only because both already mount the store's volume, whose node pin places them together, so
+  the new claim is provisioned on that node whichever pod consumes it first (so no ordering should
+  deadlock — derived from the node pins; one rollout observed, both pods up in under a minute). If the store's volume ever moves, both pods go Pending on a volume-affinity conflict:
+  loud, not silent. Rollback of the deployment change DELETES the claim and the journal with it
+  (prune, reclaim `Delete`) — restore `sources/` from the UI backup archive if declarations exist.
+  via: command
+- **Claim-level `readOnly` on the pod's mount co-mounted fine** on this deployment's hostpath-style
+  provisioner: both pods Running with the claim mounted, the UI's `rw`, the pod's `ro` and refusing
+  a write. One driver, one measurement; the plan's "never claim-level" warning (the reader stuck
+  Pending beside the read-write holder) is about a different driver and still stands there.
+  via: command
 - **Arc journal: `/var/lib/cairn-arcs/arcs.jsonl` on PVC `cairn-arc-journal` (local-path RWO);
   the store pod writes, cairn-ui mounts it read-only** — both pods must share a node. The sources
   journal reverses the direction (UI writes, pod reads). via: command

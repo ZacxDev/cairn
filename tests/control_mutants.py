@@ -553,9 +553,11 @@ MUTANTS: tuple[Mutant, ...] = (
         path="internal/ui/invitehandlers.go",
         old="\tif id.Auth.Narrowed() {\n\t\treturn control.Principal{}\n\t}",
         new="\tif false && id.Auth.Narrowed() {\n\t\treturn control.Principal{}\n\t}",
-        killer="TestANarrowedBearerCannotMintAnInvitation",
+        # Re-aimed with the invite fold: `POST /invite` mints nothing for anybody now, so the door
+        # a narrowed bearer would walk through is the team-link mint. The row keeps its name.
+        killer="TestANarrowedBearerHasNoTeamLinkAuthority",
         why="membership authority is decided from the principal's project ROLE, which no "
-        "scope narrowing bounds — so a narrowed bearer token mints an invitation into its "
+        "scope narrowing bounds — so a narrowed bearer token mints a team link over its "
         "owner's project and redeems it as an identity its holder controls.",
     ),
     # ---- the membershipActor CALL SITES -------------------------------------------
@@ -580,16 +582,6 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestANarrowedBearerCannotRevokeAnInvitation",
         why="a narrowed bearer withdrawing its owner's invitations — membership authority "
         "exercised through a credential meant to see one scope.",
-    ),
-    Mutant(
-        name="ui-invite-mint-display-bypasses-membership-actor",
-        path="internal/ui/invitehandlers.go",
-        old="pickProject(s.inviting.Invitable(membershipActor(id)), project)",
-        new="pickProject(s.inviting.Invitable(id.Principal), project)",
-        killer="TestEveryMembershipDecisionActsAsMembershipActor",
-        why="behaviourally INVISIBLE today — this read only finds a display name, and `Mint` "
-        "refuses on its own — which is exactly why the ledger, not a behavioural test, is its "
-        "killer: the next edit that trusts this list would inherit an un-narrowed one.",
     ),
     Mutant(
         name="ui-share-page-candidates-bypass-membership-actor",
@@ -2924,11 +2916,12 @@ MUTANTS: tuple[Mutant, ...] = (
         old="out = append(out, NamedProject{ID: p.ID, Name: p.Name, HeldRole: ship.Role})",
         new="out = append(out, NamedProject{ID: p.ID, Name: p.Name})",
         killer="TestProjectsManagedByCarriesTheCallersOwnRole",
-        extra_killers=("TestTheRoleChooserIsDrivenByTheREALModelsHeldRole",),
+        extra_killers=("TestTheInviteIndexIsDrivenByTheREALModelsHeldRole",),
         why="THE MEASURED SEAM. This mutant SURVIVED a fully green suite before those two "
         "guards existed: one side tested the model against a hand-built Model, the other "
-        "tested the chooser against a hand-built NamedProject, and neither built the "
-        "combined state. Its only symptom was a role chooser that silently offered nothing.",
+        "tested the renderer against a hand-built NamedProject, and neither built the "
+        "combined state. (The field fed the invitation form's role chooser then; since the "
+        "fold it feeds the index's 'you are <role>'.)",
     ),
     Mutant(
         name="namedproject-reports-a-constant-role",
@@ -2937,28 +2930,7 @@ MUTANTS: tuple[Mutant, ...] = (
         new="out = append(out, NamedProject{ID: p.ID, Name: p.Name, HeldRole: RoleOwner})",
         killer="TestProjectsManagedByCarriesTheCallersOwnRole",
         why="the direction a zero-check cannot see: a role that is present and WRONG, in the "
-        "permissive direction. It offers every admin the `owner` option, which the mint then "
-        "refuses — so the visible symptom is a form that errors rather than one that is empty.",
-    ),
-    Mutant(
-        name="ui-mint-stops-checking-conferrability",
-        path="internal/ui/inviting.go",
-        old="if !held.CanConfer(role) {",
-        new="if false {",
-        killer="TestAnAdminCannotMintAnOwnerInvitation",
-        why="the escalation itself, at the one gate that is load-bearing. The chooser's "
-        "filtering constrains a browser and nothing else; this is the check an HTTP client "
-        "has to get past.",
-    ),
-    Mutant(
-        name="ui-mint-error-loses-its-sentinel",
-        path="internal/ui/inviting.go",
-        old='"%w: a %q may not confer %q (see control.Role.CanConfer)",\n\t\t\tErrRoleNotConferrable, held, role)',
-        new='"ui: a %q may not confer %q (see control.Role.CanConfer)", held, role)',
-        killer="TestAnAdminCannotMintAnOwnerInvitation",
-        why="a `fmt.Errorf` written without `%w`, which is the commonest way a sentinel stops "
-        "being recognisable. `refuseInviteWrite` maps on `errors.Is`, so the refusal becomes a "
-        "500 — the wrong status, and a sentence that sends an operator hunting a broken server.",
+        "permissive direction — every admin is told they are an owner.",
     ),
     Mutant(
         name="ui-invite-narrowing-skipped-before-the-unnarrowed-read",
@@ -2972,40 +2944,40 @@ MUTANTS: tuple[Mutant, ...] = (
     ),
     Mutant(
         name="ui-mint-response-loses-no-store",
-        path="internal/ui/invitehandlers.go",
-        # 🔴 RE-DERIVED TWICE IN S3 OF THE MOBILE PLAN. First when `writeHTMLNoStore` was folded into
-        # `writeHTML`'s default (the old pattern named a function that no longer existed — the full
-        # battery scored it a HARNESS ERROR); then when the public opt-down writer was deleted too, so
-        # there is ONE HTML writer and no weaker value to reach for. What is left that can lose the
-        # mint's `no-store` is BYPASSING the writer at the mint's call site: rendering straight into the
-        # ResponseWriter.
-        # Re-derived a THIRD time in #214: the mint renders on the Team page now (O-a), through
-        # `renderTeamAfterMint` and so through the one writer; the bypass is still the same shape.
-        old="\ts.renderTeamAfterMint(w, r, id, func(v *TeamView) { v.Invite = view })",
-        new="\tw.Header().Set(\"Content-Type\", \"text/html; charset=utf-8\")\n"
-        "\t_ = TeamPage(TeamView{Viewer: id.Principal.Display, Invite: view}).Render(w)",
-        killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
+        path="internal/ui/team.go",
+        # 🔴 RE-DERIVED FOUR TIMES, and the row keeps its name. Twice in S3 of the mobile plan (the
+        # writers it named were folded into one), once in #214 (the mint moved onto the Team page),
+        # and now with the invite fold: the invitation mint it bypassed is gone, so it bypasses the
+        # one writer at the ONE mint left — the team link's, inside `renderTeamAfterMint`.
+        old="\tset(&view)\n\ts.render(w, TeamPage(view))",
+        new="\tset(&view)\n\tw.Header().Set(\"Content-Type\", \"text/html; charset=utf-8\")\n"
+        "\t_ = TeamPage(view).Render(w)",
+        killer="TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged",
+        extra_killers=("TestTheTeamLinkFormPassesEveryTickedTargetThrough",),
         why="rendering straight into the ResponseWriter to skip the buffer looks like an optimisation, "
         "and it skips the one writer that sets `no-store` — on the response whose BODY is a bearer "
         "capability. The ledger walk is GET-only and cannot see this POST.",
     ),
     Mutant(
         name="ui-minted-link-becomes-an-anchor",
-        path="internal/ui/render.go",
+        # Re-aimed with the invite fold: the invitation's minted section is gone; the team link's
+        # (`mintedLinkSection`) renders the same line and is the one mint left.
+        path="internal/ui/team.go",
         old='h.P(h.Class("invite-link"), g.Text(m.Link)),',
         new='h.P(h.Class("invite-link"), h.A(h.Href(m.Link), g.Text(m.Link))),',
-        killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
+        killer="TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged",
         why="the single most natural improvement to make to this page — a URL rendered as "
         "text looks like an oversight. The link is a PATH with no origin, so an anchor "
         "resolves it against THIS page: one stray click, or one link-prefetcher, and the "
-        "minter has redeemed the invitation on themselves.",
+        "minter has redeemed the link on themselves.",
     ),
     Mutant(
         name="ui-mint-logs-the-token",
-        path="internal/ui/invitehandlers.go",
-        old='s.logf("an invitation was minted: project=%s role=%s expires=%s by=%s",\n\t\tinv.ProjectID, inv.Role, inv.ExpiresAt.UTC().Format(time.RFC3339), inv.Inviter)',
-        new='s.logf("an invitation was minted: project=%s role=%s expires=%s by=%s token=%s",\n\t\tinv.ProjectID, inv.Role, inv.ExpiresAt.UTC().Format(time.RFC3339), inv.Inviter, token)',
-        killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
+        # Re-aimed with the invite fold, at the one mint left.
+        path="internal/ui/team.go",
+        old='link.ExpiresAt.UTC().Format(time.RFC3339), link.Inviter)',
+        new='link.ExpiresAt.UTC().Format(time.RFC3339), link.Inviter+" token="+control.ID(token))',
+        killer="TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged",
         why="one field added to a log line while debugging, and never taken out. This is the "
         "shape that put a 64-character secret into the control journal once already, and the "
         "value here can create a principal.",
@@ -3106,26 +3078,6 @@ MUTANTS: tuple[Mutant, ...] = (
         "in as nobody — or refused — with nothing saying the link was at fault.",
     ),
     Mutant(
-        name="ui-role-chooser-stops-filtering",
-        path="internal/ui/render.go",
-        old="\tconferrable := conferrableRoles(v.Project.HeldRole)",
-        new="\tconferrable := control.AllRoles",
-        killer="TestTheRoleChooserOffersOnlyWhatTheCallerMayConfer",
-        why="`grantableVerbs = control.AllVerbs` one file over is exactly this shape and is "
-        "CORRECT there, which is what makes it the natural edit here. Roles differ: the mint "
-        "refuses `owner` from an admin, so an unfiltered list offers a value that cannot work.",
-    ),
-    Mutant(
-        name="ui-role-chooser-default-follows-the-list-order",
-        path="internal/ui/render.go",
-        old="g.If(r == leastPrivilegedRole, h.Selected()),",
-        new="g.If(false, h.Selected()),",
-        killer="TestTheRoleChooserOffersOnlyWhatTheCallerMayConfer",
-        why="a `selected` attribute reads as cosmetic. `control.AllRoles` is in DESCENDING "
-        "authority and a `select` with no explicit selection submits its FIRST option — so "
-        "removing this makes an unread form confer OWNERSHIP of a project.",
-    ),
-    Mutant(
         name="ui-revoke-button-appears-on-a-spent-invitation",
         path="internal/ui/render.go",
         old='g.If(csrf != "" && row.State == "open", h.FormEl(',
@@ -3136,14 +3088,115 @@ MUTANTS: tuple[Mutant, ...] = (
         "row that works on one of them, which teaches people to ignore the refusal.",
     ),
     Mutant(
-        name="ui-invite-write-refusals-collapse-into-one",
+        name="ui-invite-revoke-refusals-stop-being-uniform",
         path="internal/ui/invitehandlers.go",
-        old="\tcase errors.Is(err, ErrRoleNotConferrable):",
-        new="\tcase false:",
-        killer="TestTheTwoInviteWriteRefusalsAnswerDifferentlyForDifferentReasons",
-        why="the tidy-up that makes every refusal uniform, which is this surface's own rule "
-        "elsewhere and is wrong here: a person who picked `owner` from a list would be told "
-        "'that invitation cannot be recorded' and could never learn why.",
+        old="\tcase errors.Is(err, ErrNotInvitable), errors.Is(err, invite.ErrNotRedeemable):",
+        new="\tcase errors.Is(err, ErrNotInvitable):",
+        killer="TestTheInviteRevokeRefusalsAreUniform",
+        why="replaces `ui-invite-write-refusals-collapse-into-one`, whose third arm (a role the "
+        "caller could not confer) went with the invitation mint. What is left to get wrong is the "
+        "opposite: dropping one of the two uniform arms, so an unknown digest answers 500 where a "
+        "foreign one answers 403 — a revoke that says whether a digest exists.",
+    ),
+    # ---- THE INVITE FOLD (operator decision, option A) ------------------------------
+    # Single-project invitations are no longer minted: `POST /invite` creates nothing and 303s to
+    # the team-link form, which pre-ticks the project; invitations that already exist stay
+    # listed, revocable and redeemable. Each row below is one way that comes undone.
+    Mutant(
+        name="ui-post-invite-mints-a-team-link-instead",
+        path="internal/ui/invitehandlers.go",
+        old="func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request, _ identity.Identity) {\n",
+        new="func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request, id identity.Identity) {\n"
+        "\tif s.teamLinks != nil && r.ParseForm() == nil {\n"
+        "\t\t_, _, _ = s.teamLinks.Mint(r.Context(), membershipActor(id), []invite.Target{{Kind: invite.TargetProject, "
+        "ID: control.ID(r.PostFormValue(FieldProject))}}, invite.LinkMember, 0, false)\n\t}\n",
+        killer="TestPostInviteNoLongerMintsAnInvitation",
+        why="the helpful reading of 'fold': translate the old request into the new capability instead of "
+        "sending the person to the form. It creates a capability nobody asked for, at a role this handler "
+        "chose, that nothing renders — so it can never be used and sits open until it expires.",
+    ),
+    Mutant(
+        name="ui-post-invite-redirect-drops-the-project",
+        path="internal/ui/invitehandlers.go",
+        old="\t\tq.Set(QueryProject, project)\n\t}\n\tq.Set(QueryOutcome, inviteOutcomeFolded)",
+        new="\t\t_ = project\n\t}\n\tq.Set(QueryOutcome, inviteOutcomeFolded)",
+        killer="TestPostInviteNoLongerMintsAnInvitation",
+        extra_killers=("TestPostInviteCarriesOnlyAProjectItWasGivenIntoItsRedirect",),
+        why="a redirect that carries nothing caller-chosen reads as the safer one. It lands the person on "
+        "a form with nothing ticked, having asked to invite somebody to ONE project.",
+    ),
+    Mutant(
+        name="ui-post-invite-lands-on-the-invitation-list",
+        path="internal/ui/invitehandlers.go",
+        old="\thttp.Redirect(w, r, teamHref(q.Encode(), teamLinksAnchor), http.StatusSeeOther)",
+        new="\thttp.Redirect(w, r, teamHref(q.Encode(), teamInviteAnchor), http.StatusSeeOther)",
+        killer="TestPostInviteNoLongerMintsAnInvitation",
+        why="`handleInviteRevoke` two functions down lands on `#invite`, so this is the anchor a copy "
+        "of it carries — the section that no longer has a form on it.",
+    ),
+    Mutant(
+        name="ui-team-link-form-preticks-every-project",
+        path="internal/ui/team.go",
+        old="g.If(m.Target == preselected, h.Checked())",
+        new="g.If(m.Target.Kind == preselected.Kind, h.Checked())",
+        killer="TestTheTeamPageHasOneMintFormAndPreselectsTheProject",
+        why="a comparison narrowed to the half that reads as the discriminator. Every project the caller "
+        "manages arrives ticked — with NO `?project=` too — so the unread form puts all of them on a link.",
+    ),
+    Mutant(
+        name="ui-team-link-form-never-preticks",
+        path="internal/ui/team.go",
+        old="g.If(m.Target == preselected, h.Checked())",
+        new="g.If(m.Target == preselected && v.Invite.Project.ID == \"\", h.Checked())",
+        killer="TestTheTeamPageHasOneMintFormAndPreselectsTheProject",
+        why="a guard for 'no project chosen' written the wrong way round, so the condition is never "
+        "true: 'invite somebody to this project' lands on a form that has forgotten which project.",
+    ),
+    Mutant(
+        name="ui-fold-notice-loses-a-cost-the-operator-accepted",
+        path="internal/ui/invitehandlers.go",
+        old="\"of one project cannot see or revoke each other's links.\"",
+        new="\"of one project each manage their own links.\"",
+        killer="TestTheFoldNoticeIsPinnedWhole",
+        why="the clause that makes the product sound weakest, reworded into one that sounds like a "
+        "feature. A guard on the words 'team link' or 'owner' passes it.",
+    ),
+    Mutant(
+        name="ui-fold-notice-is-not-rendered",
+        path="internal/ui/team.go",
+        old="g.If(!v.NoInviteStore, h.P(h.Class(\"note\"), g.Text(InviteFoldNotice))),",
+        new="g.If(false, h.P(h.Class(\"note\"), g.Text(InviteFoldNotice))),",
+        killer="TestTheFoldNoticeIsPinnedWhole",
+        why="a constant pinned word for word and shown to nobody: the constant-only half of the test "
+        "stays green, which is why the test also reads the rendered page.",
+    ),
+    Mutant(
+        name="ui-fold-hides-the-invitations-that-exist",
+        path="internal/ui/invitehandlers.go",
+        old="\tview.Outstanding = inviteRows(rows, s.now())",
+        new="\tview.Outstanding = inviteRows(rows[:0], s.now())",
+        killer="TestAnInvitationIssuedBeforeTheFoldStillRedeemsAndIsStillRevocable",
+        why="'invitations are gone' taken one step too far. A link sent last week still redeems, and "
+        "the page that could withdraw it says no invitation exists.",
+    ),
+    Mutant(
+        name="ui-fold-stops-revoking-an-invitation",
+        path="internal/ui/invitehandlers.go",
+        old="\tif err := s.inviting.Revoke(r.Context(), membershipActor(id), digest); err != nil {",
+        new="\tif err := error(nil); err != nil {",
+        killer="TestAnInvitationIssuedBeforeTheFoldStillRedeemsAndIsStillRevocable",
+        why="the revoke row made as inert as the mint row beside it. It still answers 303 with the "
+        "'Revoked.' banner, and the invitation stays open.",
+    ),
+    Mutant(
+        name="ui-fold-sends-every-token-to-the-link-store",
+        path="internal/ui/inviting.go",
+        old="\tif !known && c.Links != nil {\n\t\t// Not an invitation: a team link, or nothing. See [ControlInviting.Links].",
+        new="\tif c.Links != nil {\n\t\t// Not an invitation: a team link, or nothing. See [ControlInviting.Links].",
+        killer="TestAnInvitationIssuedBeforeTheFoldStillRedeemsAndIsStillRevocable",
+        extra_killers=("TestAnInvitationStillRedeemsAsAnInvitationWithLinksWired",),
+        why="'every invitation is a team link now' read as a statement about TOKENS. An invitation "
+        "already in somebody's inbox is then looked up in a table that has never held it, and refuses.",
     ),
     Mutant(
         name="ui-invite-read-refuses-instead-of-answering-with-no-store",
@@ -4530,10 +4583,10 @@ MUTANTS: tuple[Mutant, ...] = (
         old="\tw.Header().Set(\"Cache-Control\", htmlCacheControl)\n",
         new="\tw.Header().Set(\"Cache-Control\", \"no-cache\")\n",
         killer="TestEveryNonPublicHTMLRowIsNoStore",
-        extra_killers=("TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",),
+        extra_killers=("TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged",),
         why="`no-cache` reads as the cautious value and is not: it permits STORING the page and only "
         "asks for revalidation, so every authenticated page would sit in the device's HTTP cache — the "
-        "invitation mint, whose body is a bearer capability, included.",
+        "team-link mint, whose body is a bearer capability, included.",
     ),
     # 🔴 THE HUB AND THE SESSIONS LIST. Every hub count and every listed session comes out of a read
     # narrowed by `auth.NamedScopes(VerbRead)`; each row below widens ONE of those reads (by the
@@ -4856,8 +4909,8 @@ MUTANTS: tuple[Mutant, ...] = (
         name="scopeuse-all-scopes-header-names-a-scope",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\t\tif ValidScope(f[1]) {",
-        new="\t\t\tif ValidScope(f[1]) || strings.HasPrefix(f[1], \"(\") {",
+        old="\t\tif ValidScope(v) {",
+        new="\t\tif ValidScope(v) || strings.HasPrefix(v, \"(\") {",
         killer="TestTheAllScopesHeaderAddsStar",
         why="a store-wide search renders `scope=(all scopes)`, and reading the field as whatever "
         "follows `scope=` is the natural parse — it turns the one header that names EVERY scope into "
@@ -4868,8 +4921,9 @@ MUTANTS: tuple[Mutant, ...] = (
         name="scopeuse-scopeless-header-dropped",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\tif len(fields) == 0 {\n\t\t\tout = append(out, Star)\n\t\t\tcontinue\n\t\t}",
-        new="\t\tif len(fields) == 0 {\n\t\t\tcontinue\n\t\t}",
+        # #261 round 3: the scan emits through a callback instead of appending to a slice.
+        old="\t\tif !found {\n\t\t\temit(Star)\n\t\t}",
+        new="\t\tif !found {\n\t\t}",
         killer="TestTheScopelessHeaderFormAddsStar",
         why="the `all N entry files … MALFORMED` header carries no `scope=` field, and \"no field, "
         "nothing to add\" reads as tidy — it drops a read whose scope the line does not say.",
@@ -5022,11 +5076,12 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-pod-skips-scope-rederivation",
         path="internal/transcript/archive/archive.go",
-        old="func derivedScopes() []string { return []string{Star} }",
-        new="func derivedScopes() []string { return nil }",
-        killer="TestThePodDerivesStarNotTheDeclarationAlone",
-        why="with no `scopeuse` on `main` an empty derivation reads as 'nothing found' — and it makes "
-        "the agent's DECLARATION the whole read half of V, which decision 3 exists to refuse.",
+        old="\tm.Derived = union(m.Derived, derived)",
+        new="\tm.Derived = union(m.Derived, nil)",
+        killer="TestThePodDerivesReadScopesTheAgentDidNotDeclare",
+        why="the agent already declares what it derived with the same function, so folding the pod's own "
+        "derivation in reads as redundant — and it makes the agent's DECLARATION the whole read half "
+        "of V, which decision 3 exists to refuse.",
         pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
     ),
     Mutant(
@@ -5160,6 +5215,296 @@ MUTANTS: tuple[Mutant, ...] = (
         why="the startup read already refused foreign rows, so the per-request re-read looks safe to "
         "trust — and a row appended afterwards would authenticate a second owner (Q7's wall).",
         pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    # 🔴 TRANSCRIPT VISIBILITY AND THE COLLAPSED READING (S4 of `claudedocs/plan-cairn-plugins.md`):
+    # the plan's eleven S4 rows. The predicate, the visibility set and the reading model live in
+    # `internal/transcript`, which is not in `PKGS` — it is a consumer of the control seam, not a
+    # member of it — so every row ADDS it (and the archive it reads). `./internal/ui/` is in `PKGS`
+    # already, and several rows name a page-level test there as an `extra_killers` entry: the
+    # predicate is one function, and the page is where a viewer would see it fail.
+    Mutant(
+        name="transcript-section-without-predicate",
+        path="internal/transcript/visible.go",
+        old="\tif !Visible(viewer, meta, v) {\n\t\treturn nil, nil\n\t}\n\treturn &View{",
+        new="\tif false && !Visible(viewer, meta, v) {\n\t\treturn nil, nil\n\t}\n\treturn &View{",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        extra_killers=(
+            "TestTheTranscriptSectionIsShownToExactlyThoseThePredicateAdmits",
+            "TestARefusedViewerGetsTheBytesOfASessionWithNoTranscript",
+            "TestTheRawRecordViewAsksThePredicate",
+        ),
+        why="the session page was already found for this viewer, so asking a second, stricter question "
+        "before rendering one more section reads as redundant — and it shows a transcript to anyone "
+        "who can read ONE scope the session wrote in (clause d).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-written-set-from-viewer-scopes",
+        path="internal/transcript/visible.go",
+        old="written, err := WrittenScopes(s.storeRoot, ids)",
+        new="written, err := writtenWithin(s.storeRoot, viewer.Auth.VisibleScopes(control.VerbRead), ids)",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        why="every other walk on this surface is narrowed to the caller's readable scopes, and passing "
+        "the same set here looks like the rule being followed — over that set every scope found is "
+        "readable by construction, so 'reads every written scope' is vacuously true (clause e).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-visibility-set-ignores-reads",
+        path="internal/transcript/visible.go",
+        old="out := slices.Concat(written.Scopes, written.Unscanned, meta.Written, meta.Derived, meta.Declared)",
+        new="out := slices.Concat(written.Scopes, written.Unscanned, meta.Written)",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        why="'the scopes a session touched' reads as the scopes it WROTE to, which is what the session "
+        "page shows — and a session that recalled another scope's notes into its tool results is then "
+        "visible to people who cannot read that scope (O8, clause f).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-empty-set-visible",
+        path="internal/transcript/visible.go",
+        old="\tif len(v) == 0 {\n\t\treturn false\n\t}\n\treturn viewer.readsEvery(v)",
+        new="\tif false && len(v) == 0 {\n\t\treturn false\n\t}\n\treturn viewer.readsEvery(v)",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        extra_killers=("TestASessionWithNoRecordedWriteIsFoundForItsOwnerAlone",),
+        why="'reads every scope in V' needs no special case to be written — and for a session with no "
+        "recorded write or read it is vacuously true for EVERYBODY (O10, clause g).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-owner-by-display-not-id",
+        path="internal/transcript/visible.go",
+        old='meta.Owner == string(v.Principal.Kind)+":"+string(v.Principal.ID)',
+        new='meta.Owner == string(v.Principal.Kind)+":"+v.Principal.Display',
+        killer="TestVisibleArms",
+        why="the display name is what every page and audit line shows for a principal, so comparing it "
+        "reads as comparing the principal — and it is mutable and not unique, so a rename makes one "
+        "principal another's owner.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-narrowed-owner-arm",
+        path="internal/transcript/visible.go",
+        old="return !v.Auth.Narrowed() && meta.Owner ==",
+        new="return meta.Owner ==",
+        killer="TestVisibleArms",
+        why="a narrowed credential is still the owner's credential, so letting it see the owner's "
+        "sessions reads as obvious — and it hands an agent credential cut down to one scope every "
+        "owner-only session, which is what the narrowing withheld.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-any-scope-not-every-scope",
+        path="internal/transcript/visible.go",
+        old="return !slices.ContainsFunc(scopes, func(scope string) bool { return !v.reads(scope) })",
+        new="return len(scopes) == 0 || slices.ContainsFunc(scopes, v.reads)",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        why="the session PAGE is found by a union — a write in any readable scope — and reusing that "
+        "rule for its content is the natural reading of 'can this viewer see the session'.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-child-visible-without-root",
+        path="internal/transcript/visible.go",
+        old="ids := append([]string{meta.Root}, meta.Children...)",
+        new="ids := []string{meta.Root}",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        why="a transcript is stored under its ROOT session id, so walking for that id reads as complete "
+        "— and a child session's own writes then never reach the root's V, leaving the child's stream "
+        "visible to people who cannot read where it wrote (decision 7).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-unknown-scope-name-readable",
+        path="internal/transcript/visible.go",
+        old="\treturn v.Auth.VisibleScopes(control.VerbRead).Allows(scope)\n}",
+        new="\treturn v.Auth.VisibleScopes(control.VerbRead).Allows(scope) || !slices.ContainsFunc(control.AllVerbs, "
+        "func(vb control.Verb) bool { return v.Auth.VisibleScopes(vb).Allows(scope) })\n}",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        extra_killers=("TestAScopeRenamedAfterTheWriteIsUnreadableUntilItIsRenamedBack",),
+        why="'that scope no longer exists, so it cannot be hiding anything from anyone' — and the content "
+        "read from it before the rename is still in the transcript.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-star-sentinel-readable",
+        path="internal/transcript/visible.go",
+        old="\tif scope == Star {\n\t\treturn false\n\t}",
+        new="\tif scope == Star {\n\t\treturn true\n\t}",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        why="`*` reads as a wildcard — 'every scope' — and a wildcard a viewer need not hold is the "
+        "usual meaning; here it means 'a scope nobody could identify', which nobody but the owner reads.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-render-classifies-by-record-type",
+        path="internal/transcript/read.go",
+        old="\t\tclass := u.Class\n",
+        new='\t\tclass := u.Class\n\t\tif kind == "user" {\n\t\t\tclass = HumanText\n\t\t}\n',
+        killer="TestAToolResultInsideAUserRecordIsNotAUserMessage",
+        extra_killers=("TestTheTranscriptRendersCollapsed",),
+        why="a `user` record is what a user sent, by its own type — and a tool result of several hundred "
+        "kilobytes rides INSIDE one, so 'user messages are shown in full' renders every one of them whole.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    # #261's audit: the derivation's two blind spots and the View's decision bound, each a row.
+    Mutant(
+        name="transcript-pod-derives-from-the-map-alone",
+        path="internal/transcript/archive/archive.go",
+        old="\t\td.Content(string(line))\n\t\tif duplicateMember(line) {",
+        new="\t\tif duplicateMember(line) {",
+        killer="TestARecordCannotHideAReadFromTheDerivation",
+        why="the map walk already visits every value of the record, so scanning the record again as one "
+        "string reads as redundant — and a header in a member NAME, or in the first of two members "
+        "named alike, is then never derived while the raw view serves it.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-pod-reads-past-a-repeated-member",
+        path="internal/transcript/archive/archive.go",
+        old="\t\t\textra = []string{Star}",
+        new="\t\t\textra = nil",
+        killer="TestARecordCannotHideAReadFromTheDerivation",
+        why="once the whole-record scan finds every header, a repeated member looks harmless — but which "
+        "strings are tool inputs is still read off a map that drops the first copy.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-view-serves-past-its-decision",
+        path="internal/transcript/visible.go",
+        old="\t\tif r.Seq > limit {\n\t\t\treturn archive.StopScan",
+        new="\t\tif false && r.Seq > limit {\n\t\t\treturn archive.StopScan",
+        killer="TestAViewServesOnlyWhatItWasDecidedOver",
+        why="a stream is append-only, so reading it to its current end looks like reading 'the transcript' "
+        "— and a record uploaded after the predicate was asked can be one that hides it from this viewer.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-turn-unclamped",
+        path="internal/transcript/read.go",
+        old="\tturn = min(turn, MaxTurn)\n",
+        new="",
+        killer="TestTurnsPageByFifty",
+        why="a turn number is only a view selector, so bounding it reads as fussiness — and the page "
+        "arithmetic overflows at the top of int, rendering negative page links.",
+        # The ui's pager test WAS listed here (the ui kept its own copy of this clamp, which masked this
+        # mutant from every ui test; #261 round 2), and it stopped killing in round 3 because the GUARD
+        # moved, not the list: the pager no longer adds TurnsPerPage to FirstTurn (it links
+        # `Reading.NextTurn`), so an unclamped `?turn=<MaxInt64>` renders an empty page with an
+        # in-range back link instead of negative page links. The overflow left is readSession's own
+        # window arithmetic, which `TestTurnsPageByFifty` catches.
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    # #261 round 2: a memo block is a read, the written half is kept, and a page is item-bounded.
+    Mutant(
+        name="scopeuse-memo-block-not-a-read",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        # #261 round 3: the memo scan emits through a callback instead of returning a slice.
+        old="\teachMemoScope(s, d.addHeader)\n",
+        new="",
+        killer="TestAMemoBlockIsARead",
+        why="a memo is a NOTICE, not a recall — no `subsystem-recall:` header, nothing the client "
+        "ledgered — so leaving it out of the read half reads as precise; and the hook has then shown "
+        "a gamma-notes memo's text in a session an alpha-only reader is served.",
+    ),
+    Mutant(
+        name="transcript-written-half-not-kept",
+        path="internal/transcript/visible.go",
+        old="out := slices.Concat(written.Scopes, written.Unscanned, meta.Written, meta.Derived, meta.Declared)",
+        new="out := slices.Concat(written.Scopes, written.Unscanned, meta.Derived, meta.Declared)",
+        killer="TestARewrittenEntryCannotShrinkV",
+        why="the walk is the authority on where a session wrote, so a stored copy of its answer reads "
+        "as a stale cache — and rewriting one entry without the trailer then turns a refusal into a 200.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-page-items-uncapped",
+        path="internal/transcript/read.go",
+        old="if r.room <= 0 || (limit >= 0 && len(items) >= limit) {",
+        new="if limit >= 0 && len(items) >= limit {",
+        killer="TestATurnPastThePageItemCapIsCountedNotCarried",
+        extra_killers=("TestOneTurnOfTwentyThousandCallsIsABoundedPage",),
+        why="fifty turns and a 2 MiB byte budget read as bounding a page, so an item cap looks "
+        "redundant — and one turn of 20,000 small calls fits both and renders 7.5 MB.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-other-pages-charged",
+        path="internal/transcript/read.go",
+        old="\t\tfor _, it := range p.items {\n\t\t\tw.r.refund(it)\n\t\t}\n\t\treturn\n",
+        new="\t\treturn\n",
+        killer="TestAnEarlierPageDoesNotSpendThisPagesBudget",
+        why="a record on another page is simply skipped, which reads as costing nothing — but it was "
+        "classified, and charged, before the window knew, so page two shows elided bodies with room to spare.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    # #261 round 3: the derivation fits the assembly budget, an unscanned scope is not kept, and a
+    # page ends at a turn boundary.
+    Mutant(
+        name="scopeuse-decode-gate-misses-unicode-escapes",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old=" || strings.Contains(s, `\\u`)",
+        new="",
+        killer="TestTheDecodeGateIsExact",
+        extra_killers=("TestAHeaderInsideAJSONStringNamesItsScope",),
+        why="a marker that is not in the raw text looks absent, so skipping the decode reads as a free "
+        "saving — and JSON can spell any character of either marker as `\\uXXXX`, so the read vanishes.",
+    ),
+    Mutant(
+        name="transcript-unscanned-scope-kept",
+        path="internal/transcript/visible.go",
+        old="s.archive.RecordWritten(meta.Root, written.Scopes)",
+        new="s.archive.RecordWritten(meta.Root, slices.Concat(written.Scopes, written.Unscanned))",
+        killer="TestARepairedEntryGivesTheTranscriptBack",
+        why="an unscanned scope is in `V` and the written half is kept, so keeping both reads as "
+        "consistent — but a malformed file is a fact about the store, and keeping it makes one "
+        "transient file a permanent refusal.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-page-does-not-end-at-a-turn",
+        path="internal/transcript/read.go",
+        old="\t\t\tif r.room <= 0 {\n\t\t\t\tr.roomOut = true\n\t\t\t}\n",
+        new="",
+        killer="TestEveryCallIsReachableAcrossPages",
+        extra_killers=("TestATurnWhoseChildDoesNotFitStartsTheNextPage", "TestATurnPastThePageItemCapIsCountedNotCarried"),
+        why="counting what the page cannot carry, with a raw link, reads as honest — but a turn cut that "
+        "way on page one had no page of its own, so its calls were reachable only as raw records.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-child-overflow-keeps-the-turn",
+        path="internal/transcript/read.go",
+        old="\tw.r.children(w.cur.Items, 0)\n\tif w.r.roomOut && len(w.turns) > 0 {",
+        new="\tw.r.children(w.cur.Items, 0)\n\tif false && w.r.roomOut && len(w.turns) > 0 {",
+        killer="TestATurnWhoseChildDoesNotFitStartsTheNextPage",
+        why="a turn's own items fit, so it looks carried — but its subagent spends the same allowance, "
+        "and the child's items past it were counted instead of moving with the turn.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-pager-steps-fifty-turns",
+        path="internal/ui/transcript.go",
+        old="\tif rd.NextTurn > 0 {\n\t\tlinks = append(links, h.A(h.Href(transcriptPageHref(v.Session, rd.NextTurn)),",
+        new="\tif nt := rd.FirstTurn + transcript.TurnsPerPage; nt <= rd.TotalTurns {\n\t\tlinks = append(links, h.A(h.Href(transcriptPageHref(v.Session, nt)),",
+        killer="TestEveryCallIsReachableByFollowingThePager",
+        why="a page holds fifty turns, so the next one starts fifty on — except when the item allowance "
+        "ended it early, and then every turn in between is skipped.",
+        pkgs=PKGS + ("./internal/ui/",),
+    ),
+    # A twelfth, beyond the plan's eleven: the one rendering rule the operator stated outright (O9 —
+    # a user message is NEVER truncated). The test plan names it as a control; here it is a row.
+    Mutant(
+        name="transcript-user-message-clipped",
+        path="internal/ui/transcript.go",
+        old='\t\t\th.Div(h.Class("t-text"), g.Text(it.Text)))\n\tcase transcript.AssistantText:',
+        new='\t\t\th.Div(h.Class("t-text"), g.Text(clipUTF8(it.Text, assistantHeadChars))))\n\tcase transcript.AssistantText:',
+        killer="TestTheTranscriptRendersCollapsed",
+        why="every other block on the page has a display limit, and giving the user's message the "
+        "assistant's head limit reads as consistency — and the one thing the operator asked never to "
+        "be cut is then cut at 1,200 characters with no reveal.",
     ),
     Mutant(
         name="redact-marker-drops-the-whole-span",
@@ -5903,9 +6248,10 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-pod-ignores-ledger",
         path="internal/transcript/archive/archive.go",
-        old="\tif stream == LedgerStream {\n\t\tfoldLedger(m, lines)\n\t}",
-        new="\tif false && stream == LedgerStream {\n\t\tfoldLedger(m, lines)\n\t}",
+        old="\tif stream == LedgerStream {\n\t\tfoldLedger(m, lines)\n\t} else {",
+        new="\tif false && stream == LedgerStream {\n\t\tfoldLedger(m, lines)\n\t} else {",
         killer="TestAnUploadedLedgerPutsItsScopesInMeta",
+        extra_killers=("TestAnUploadedLedgerIsInV", "TestALedgerArrivingLaterLiftsF1"),
         why="storing the ledger like any other stream looks complete — and then the only thing carrying "
         "a read the transcript never shows is the agent's DECLARATION, which an old or lying agent "
         "omits (clause n). Moved here from S3 in revision 14: the battery runs `go test`, and S3 had "

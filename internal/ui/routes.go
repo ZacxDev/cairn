@@ -147,6 +147,12 @@ var routes = map[routeKey]route{
 	// session id is global — so it is the one page that AGGREGATES across scopes, and it does so only
 	// over the caller's narrowed set. GET only. See `handleSessionPage`.
 	{"GET", "/session"}: {(*Server).handleSessionPage, classContent},
+	// 🔴 THE RAW-RECORD VIEW (S4 of the transcripts plan, `transcript.go`): one stored stream of a
+	// session's transcript, as stored. A SIXTH fixed browse path with its operands in query
+	// parameters — the session id, the stream name and two record numbers are all values somebody
+	// else supplied. `content`: whether it answers is the visibility predicate's verdict about this
+	// caller. GET only, so neither cross-site gate gains a case. See `handleSessionTranscript`.
+	{"GET", SessionTranscriptPath}: {(*Server).handleSessionTranscript, classContent},
 	// 🔴 THE BELL (S5 of the arcs/presence plan): queue a terminal-bell ring at the pane a session the
 	// VIEWER owns is running in. CLASS 0, ON PURPOSE — it declares nothing, so BOTH cross-site gates
 	// reach it by METHOD (same origin before auth, the CSRF token after), exactly as they reach
@@ -186,6 +192,11 @@ var routes = map[routeKey]route{
 	// body — chosen by whoever gets one request past both cross-site gates — rather than
 	// something the route decides. Two paths are two rows in this ledger, which is where
 	// somebody reads them.
+	//
+	// 🔴 `POST /invite` MINTS NOTHING SINCE THE INVITE FOLD AND KEEPS ITS ROW AND ITS CLASS.
+	// It answers a 303 to the team-link form (`handleInvite`). Class 0 still: both cross-site
+	// gates are derived from the METHOD, and "this write no longer writes" is exactly the
+	// kind of route-class reasoning no gate may be derived from.
 	{"GET", "/invite"}:         {(*Server).handleInvitePage, 0},
 	{"POST", "/invite"}:        {(*Server).handleInvite, 0},
 	{"POST", "/invite/revoke"}: {(*Server).handleInviteRevoke, 0},
@@ -311,8 +322,11 @@ const (
 	// somebody reads them.
 	UnsharePath = "/unshare"
 
-	// InvitePath answers the invite flow's read AND its mint, split by method — the same
-	// shape as [SharePath], keyed by `?project=<control.ID>`.
+	// InvitePath answers two 303s, split by method: the read lands on the Team page's
+	// invitation section, and the POST — which MINTED an invitation before single-project
+	// invitations were folded into team links, and creates nothing now — on its team-link
+	// form (`handleInvite`). Both rows stay declared: a page rendered before the fold still
+	// posts here.
 	InvitePath = "/invite"
 	// InviteRevokePath withdraws an outstanding invitation. A SEPARATE path rather than an
 	// action field on [InvitePath], for the reason `UnsharePath` gives and `routes` restates.

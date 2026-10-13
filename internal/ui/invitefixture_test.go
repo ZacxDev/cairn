@@ -24,21 +24,14 @@ type staticInviting struct {
 	// counter beside `countingSource` and `staticSharing`, because that test requires a
 	// PER-ROUTE expectation and a sum was measured to destroy it.
 	reads int
-	// minted and revoked record the writes, for a test that needs to know a handler
-	// reached the authority rather than refusing before it.
-	minted  int
+	// revoked records the one write this half still has, for a test that needs to know a
+	// handler reached the authority rather than refusing before it. (There is no `minted`:
+	// `Inviting` has no `Mint` since the fold, so there is nothing for a fixture to count.)
 	revoked int
-	// token is what `Mint` hands back. SYNTHETIC — see `fixtures_test.go` for the rule.
-	token string
-	// mintErr and revokeErr, when set, are what the respective write returns.
-	mintErr   error
+	// revokeErr, when set, is what the write returns.
 	revokeErr error
 	// readErr, when set, is what `Outstanding` returns.
 	readErr error
-	// lastRole and lastProject record what the write was ASKED for, which is what pins
-	// that a handler passed the form's values through rather than a default.
-	lastRole    control.Role
-	lastProject control.ID
 	// lastDigest records what `Revoke` was asked to withdraw.
 	lastDigest string
 
@@ -82,24 +75,6 @@ func (s *staticInviting) Outstanding(control.ID) ([]invite.Invite, error) {
 		return nil, s.readErr
 	}
 	return s.outstanding, nil
-}
-
-func (s *staticInviting) Mint(_ context.Context, _ control.Principal, project control.ID,
-	role control.Role, _ time.Duration) (string, invite.Invite, error) {
-
-	s.lastProject, s.lastRole = project, role
-	if s.mintErr != nil {
-		return "", invite.Invite{}, s.mintErr
-	}
-	s.minted++
-	return s.token, invite.Invite{
-		Digest:    fixtureInviteDigest,
-		ProjectID: project,
-		Role:      role,
-		Inviter:   testIdentity().Principal.ID,
-		CreatedAt: fixtureInviteCreated,
-		ExpiresAt: fixtureInviteCreated.Add(invite.DefaultTTL),
-	}, nil
 }
 
 func (s *staticInviting) Revoke(_ context.Context, _ control.Principal, digest string) error {
@@ -176,9 +151,7 @@ const (
 	fixtureInviteToken = "fixture-invite-token-which-is-not-a-real-capability"
 )
 
-// fixtureNamedProject is the project the dispatch fixtures invite into, at `owner` — so
-// `conferrableRoles` returns every role and the chooser's filtering is visible. A fixture
-// at `admin` is what `TestTheRoleChooserOffersOnlyWhatTheCallerMayConfer` varies.
+// fixtureNamedProject is the project the dispatch fixtures list invitations for, at `owner`.
 var fixtureNamedProject = control.NamedProject{
 	ID:       control.DerivedID(control.PrefixProject, "quarry"),
 	Name:     "quarry",
@@ -190,7 +163,6 @@ func benignInviting() *staticInviting {
 	return &staticInviting{
 		team:      benignTeamLinks(),
 		invitable: []control.NamedProject{fixtureNamedProject},
-		token:     fixtureInviteToken,
 		outstanding: []invite.Invite{{
 			Digest:    fixtureInviteDigest,
 			ProjectID: fixtureNamedProject.ID,

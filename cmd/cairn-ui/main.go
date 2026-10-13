@@ -64,6 +64,7 @@ import (
 	// on every route.
 	"github.com/ZacxDev/cairn/internal/pgstore"
 	"github.com/ZacxDev/cairn/internal/presence"
+	"github.com/ZacxDev/cairn/internal/transcript"
 	"github.com/ZacxDev/cairn/internal/transcript/archive"
 	"github.com/ZacxDev/cairn/internal/ui"
 	"github.com/ZacxDev/cairn/internal/worker"
@@ -418,8 +419,9 @@ func main() {
 	// 🔴 AND NEVER A FILE THIS PROGRAM ALREADY WRITES. `FromEnv` refuses the arc journal; this surface
 	// also owns the CONTROL journal and the session table, and one sources record appended to the
 	// control journal makes every later `Refresh` and `Append` refuse it (measured by the S4 audit: an
-	// authority journal that then needs hand-editing to recover). The deployment puts the sources file
-	// BESIDE the control journal, so a one-token typo reaches this.
+	// authority journal that then needs hand-editing to recover). A deployment that puts the sources file
+	// BESIDE the control journal is a one-token typo away from this; one that gives it a dedicated
+	// volume (the README's recommendation) is not, and the refusal costs nothing there.
 	if sourcesOn {
 		if err := refuseASourceJournalThatIsAnotherFile(*store, sourceJournal.Path,
 			map[string]string{"-control-journal": *controlJournal, "-session-file": *sessionFile}); err != nil {
@@ -887,6 +889,17 @@ func main() {
 		// The zero value when `-app-name` is unset, which is the unarmed surface; `Instance` is
 		// `-instance-name`'s, set whether or not the app is armed.
 		App: app,
+	}
+	// 🔴 THE TRANSCRIPT READ SIDE (S4 of the transcripts plan) EXISTS ONLY WHERE THE STORE WAS OPENED —
+	// which takes all six worker flags, `-transcript-dir` among them. Assigned inside the `if`, never
+	// as a Store over a nil archive unconditionally: with no archive the field stays
+	// NIL, the session page renders no transcript section and the raw-record row answers its one miss,
+	// so a deployment without `-transcript-dir` serves what it served before. It reads the SAME
+	// `*store` the browse pages read, because the write half of a session's visibility set is a walk
+	// of that store's trailers. Reading does NOT depend on `-arm-transcript-capture`: disarming stops
+	// uploads, it does not hide what is stored.
+	if transcripts != nil {
+		cfg.Transcripts = transcript.NewStore(transcripts, *store)
 	}
 	srv, err := ui.New(cfg)
 	if err != nil {

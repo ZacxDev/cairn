@@ -1008,7 +1008,9 @@ caller passes the CSRF gate with a cookie of its own choosing. A narrowed token 
 an invitation into its owner's project and redeem it as an identity its holder controls. The invite
 handlers now act as `membershipActor(id)`, the zero principal for a narrowed caller, so `Invitable`
 lists nothing and `mayManage` refuses — on all three rows: the project page
-(`TestANarrowedBearerSeesNoInvitations`), mint (`TestANarrowedBearerCannotMintAnInvitation`) and
+(`TestANarrowedBearerSeesNoInvitations`), mint (`TestANarrowedBearerCannotMintAnInvitation` — since
+Phase Z `POST /invite` mints for nobody, so that guard is `TestNoBearerMintsAnInvitationThroughPostInvite`
+and the narrowing's own guard over a mint is `TestANarrowedBearerHasNoTeamLinkAuthority`) and
 revoke (`TestANarrowedBearerCannotRevokeAnInvitation`).
 
 🔴 **THE SHARE FLOW'S CANDIDATE LIST IS MEMBERSHIP-DERIVED TOO, AND IS CLOSED THE SAME WAY.**
@@ -2233,6 +2235,11 @@ in as nobody, or refused, with nothing anywhere saying the link was at fault.
 
 ## 🔴 The mint response does not redirect, and that is the one place this flow breaks the house pattern
 
+⚠ **SUPERSEDED by Phase Z (the invite fold):** nothing mints a single-project invitation any more, so the response this section describes is the TEAM LINK's (`handleTeamLink`, `mintedLinkSection`), which
+kept the same ruling for the same reasons; its guard is
+`TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged`. The text below is the record of the
+decision as it was made for the invitation.
+
 Every other write here is a POST-redirect-GET, because a write that renders its own answer is a
 write a refresh repeats. This one cannot be: `invite.NewToken` returns the token exactly once
 and only its digest is stored, so there is nothing to render on the far side of a hop. Both ways
@@ -2277,6 +2284,11 @@ in that configuration nothing was asked. Rendering it would be the measured lie 
 already shipped once. Pinned by `TestTheInviteRowsAnswerHonestlyWithNoInviteStore`.
 
 ## 🔴 The role chooser and the mint read ONE predicate, and the seam between them was a measured hole
+
+⚠ **SUPERSEDED by Phase Z (the invite fold):** nothing mints a single-project invitation any more, so the chooser, `ControlInviting.Mint`, `leastPrivilegedRole` and their tests are deleted.
+`control.Role.CanConfer` survives with one reader (`mayLink`, the team link's project arm), and the
+seam guard survives re-aimed at what `HeldRole` still feeds, the index's "you are <role>"
+(`TestTheInviteIndexIsDrivenByTheREALModelsHeldRole`). The text below is the record.
 
 `control.Role.CanConfer` is the escalation rule — an admin may not make an owner, because they
 could then confer it on themselves and the journal would read as an ordinary join. It is a
@@ -2364,6 +2376,9 @@ redeemed" is a reassuring zero and a zero is indistinguishable from a harness wi
 that guard can go red, rather than one afternoon's reading recorded in a commit message.
 
 ## Refusals: which one discriminates, and why exactly one does
+
+⚠ **SUPERSEDED by Phase Z (the invite fold):** nothing mints a single-project invitation any more, so the `roleRefusal` row is gone with the mint and NO invitation refusal discriminates now. The other
+three rows stand (`TestTheInviteRevokeRefusalsAreUniform`).
 
 | condition | status | body |
 |---|---|---|
@@ -4772,6 +4787,93 @@ its read predicate — each red in the test that names it, with that test's own 
 
 ---
 
+# Phase Z — the invite fold: single-project invitations became team links
+
+**Operator decision, option A of the three the hub/team handoff set out.** The Team page has ONE mint
+form, the team-link form. `GET /team?project=<id>` lists that project's invitations and pre-ticks the
+project on that form. `POST /invite` creates nothing and answers `303 /team?outcome=invite-folded
+[&project=<id>]#links`. No route was removed, no migration was written, and no row was moved.
+
+## The binding rules
+
+- 🔴 **`Inviting` has no `Mint`, and that is the guard.** The server holds its invitation half as that
+  interface, so no handler — `handleInvite` or a later one — can create an invitation
+  (`TestTheInvitingInterfaceCannotMint`). `ControlInviting.Mint`, the role chooser, the minted
+  section and `roleRefusal` are deleted, not parked.
+- 🔴 **`POST /invite` is a REDIRECT, never a translation into a team-link mint.** A translation would
+  choose the role itself (`owner` has no link role; an invitation's `member` is not the team-link
+  form's unread default, `reader`) and create a capability nothing renders. The project is carried
+  as an ANCILLARY value (`handleInviteRevoke`'s ruling); the role is dropped on purpose.
+- 🔴 **The row keeps class 0, so both cross-site gates still reach it by METHOD.** "This write no
+  longer writes" is a route-class argument, and no gate may be derived from one.
+  `TestTheInviteWritesAreBehindBothCrossSiteGates` still walks it.
+- 🔴 **An invitation that already exists is untouched**: listed to every manager of its project,
+  revocable by any of them, redeemable through both callback arms at the role it was issued at —
+  `owner` included — until it expires. `ControlInviting.Redeem`/`RedeemFor`/`Revoke` and
+  `invite.Store` did not change. ⚠ **Only ONE of the two arms is guarded with a link store
+  wired**: the fold's invariant test redeems through the PROVISIONING arm (`Redeem`); round 1 of
+  #265 measured that sending every token to the link store in `RedeemFor` — the arm an invitee
+  who already has an account takes — leaves `go test ./internal/ui/` green, because that arm's
+  tests use a rig with no `Links`. The code is correct and unchanged; the guard is missing.
+- 🔴 **The pre-tick cannot widen anything.** It is `InviteView.Project`, set only for a project
+  `Invitable` returned, and it ticks a box only where `Mintable` offered that same target; `Mint`
+  re-asks `mayLink` of every target at the write regardless. With no `?project=` nothing is ticked.
+- 🔴 **`InviteFoldNotice` is pinned as one normalised string** and rendered in the invitation section
+  on both its shapes. It states the two costs below.
+
+## 🔴 The two costs, accepted and stated on the page
+
+1. **Nobody can confer `owner` self-service.** A team link has no owner role by design
+   (`invite.AllLinkRoles`), and the single-use owner invitation was the one bounded way an owner
+   could make another. The remaining writer is the operator's `cairn-server -set-member`.
+2. **Two admins of one project cannot see or revoke each other's new links.** An invitation was
+   listed to and revocable by every manager of its project (`mayManage`); a team link is listed to
+   and revocable by its minter only (`ControlTeamLinks.Links`/`Revoke`). A link still dies with its
+   minter's authority (`reCheckMinter`), which is the bound that remains.
+
+## The RED proof
+
+Pre-change tree = `origin/main` at the fold's parent, with this phase's test file added (and a
+one-line shim for the constant that did not exist yet):
+
+| test | pre-change | post-change |
+|---|---|---|
+| `TestPostInviteNoLongerMintsAnInvitation` | RED — 200, a join link, one more row | green |
+| `TestPostInviteCarriesOnlyAProjectItWasGivenIntoItsRedirect` | RED | green |
+| `TestTheTeamPageHasOneMintFormAndPreselectsTheProject` | RED — the old form present, 0 boxes ticked | green |
+| `TestTheFoldNoticeIsPinnedWhole` | RED | green |
+| `TestTheInvitingInterfaceCannotMint` | RED | green |
+| `TestAnInvitationIssuedBeforeTheFoldStillRedeemsAndIsStillRevocable` | green | green |
+
+The last row is an **INVARIANT GUARD and is labelled as one**: an existing invitation redeemed and
+was revocable before the fold, and the claim is that it still does. Its evidence is its mutants.
+`tests/control_mutants.py` gained ten rows for this phase (`ui-post-invite-*`,
+`ui-team-link-form-*`, `ui-fold-*`) — three of them kill that invariant guard — and re-aimed the
+invitation mint's three capability rows (`ui-mint-response-loses-no-store`,
+`ui-minted-link-becomes-an-anchor`, `ui-mint-logs-the-token`) at the team-link mint, whose own guard
+had asserted `no-store` and exactly-once but neither "not an anchor" nor "never logged". Five rows
+whose target was deleted went with it and one was replaced (`ui-invite-revoke-refusals-stop-being-uniform`);
+read the battery's run for the count.
+
+## What these guards still cannot see
+
+- **The real database.** Every test here is over the in-memory stores. That open version-1
+  `invites` rows keep redeeming on Postgres rests on `internal/pgstore`'s own tier, which this
+  change did not touch — and on there BEING no schema change, which is why there is no migration.
+- **How many open invitations exist on any deployment** — not counted; the fold needs none to exist.
+- **A form rendered before the deploy** posts `POST /invite` and lands on the banner; that is
+  exercised by the handler tests, not in a real browser across a real deploy.
+- **The owner path that remains** (`cairn-server -set-member`) is named on the page and is not
+  driven from here.
+- **The invitation half has a sunset nobody has scheduled.** The only mint there ever was passed
+  no lifetime, so every invitation expires within `invite.DefaultTTL` of the last one minted
+  before the deploy. After that the list, the revoke row, the invitation arm of both redeems,
+  `InviteHonesty`, the `POST /invite` redirect and `invite.Store.Create` (test-only already) have
+  nothing left to act on. Retiring them is a separate change; its condition is in the hub/team
+  handoff.
+
+---
+
 # Code sources — the edit flow (S4 of the scope-refs plan)
 
 `GET /scope/sources?scope=<control.ID>` shows a scope's declared code sources
@@ -4814,16 +4916,24 @@ Both rows are in the ledger: the GET is `content` (found through `Visible`), the
 
 ## Deployment requirements (decision 1; done in the deployment repo, not here)
 
-- `CAIRN_SOURCE_JOURNAL=<path>` on `cairn-ui`, a file on the UI-owned volume beside the control
-  journal, OUTSIDE the store root (both binaries refuse to start otherwise, and refuse the arc
+- `CAIRN_SOURCE_JOURNAL=<path>` on `cairn-ui`, a file on a volume the UI can write, OUTSIDE the store
+  root. 🔴 **Prefer a DEDICATED volume to the one holding the control journal**: the pod has to mount
+  whatever volume holds this file, a mount exposes the whole volume, and the control journal's volume
+  carries credential digests and may carry the session table. The reference deployment uses a
+  dedicated one (operator decision), which also means its backup has to be wired separately. Either
+  way the path is OUTSIDE the store root (both binaries refuse to start otherwise, and refuse the arc
   journal's own file; `cairn-ui` also refuses its own `-control-journal` and `-session-file`, since
   one sources record appended to the control journal makes the authority unreadable). Environment only: an old binary ignores the variable, which is the rollback.
-- The pod mounts the SAME volume read-only at the CONTAINER level (never claim-level), with the same
-  variable — so it must schedule on the UI's node while the volume is ReadWriteOnce and node-local.
+- The pod mounts the SAME volume read-only at the CONTAINER level, with the same variable (the plan
+  says never claim-level: on one storage driver a claim-level `readOnly` breaks co-mounting and the
+  reader sits Pending beside the read-write holder. A deployment that sets both must see BOTH pods
+  Running with the claim mounted) — so it must schedule on the UI's node while the volume is ReadWriteOnce and node-local.
 - The file is created `0600` by the UI's first save, so the pod must run as the UI's uid (or the
   deployment must make it readable); otherwise every pod GET is the `503 store-unreachable`.
-- The backup jobs stage `sources.jsonl` beside `arcs.jsonl`; an ABSENT file is a pass, logged
-  `sources: absent` — nothing creates it before the first save.
+- The backup job stages `sources.jsonl` in the same archive as `arcs.jsonl` (its own directory when
+  it has its own volume); an ABSENT file is a pass, logged `sources: absent` — nothing creates it
+  before the first save. Once a declaration exists, raise the job's line floor so a LOST journal
+  fails it.
 
 ## The RED proof
 
@@ -4850,3 +4960,133 @@ ignoring `FromEnv`'s error, with both controls green.
 - `flock` across hosts on a network filesystem (advisory only; the reference deployment has one
   writer on a node-local volume).
 - An orphaned record after a directory rename is shown nowhere (Q12).
+
+---
+
+# Transcripts on the session page (S4 of the transcripts plan)
+
+`GET /session` shows a session's stored transcript — collapsed — to the viewers the visibility
+predicate admits, and `GET /session/transcript?session=<id>[&stream=…&seq=…&to=…]` shows the stored
+records as stored (`transcript.go`). The plan is `claudedocs/plan-cairn-plugins.md` (decisions 3, 4,
+7, 17, 18; operator decisions O2, O3, O8, O9, O10).
+
+## The binding rules
+
+- 🔴 **ONE predicate, and this package cannot go around it.** `transcript.Store.View(viewer, id)` is
+  the only way `internal/ui` reaches a stored record: it returns a `View` where `transcript.Visible`
+  said yes and **nil** otherwise. The Store's archive is unexported (`transcript.NewStore`), the
+  reading entry point is unexported, and a `View` serves records only up to where each stream stood
+  when it was decided — so a record uploaded afterwards, which may hide the session from this viewer,
+  is never served by an older verdict. Nil is one answer for three states — no transcript, a refused
+  viewer, an id that is no session — so a handler CANNOT render them differently. `internal/ui` does
+  not import the archive at all (`internal/worker`'s importer ledger pins that). *#261's audit found
+  both the exported field and the unbounded View; the claim above was wider than the code until it
+  did.*
+- 🔴 **A refused viewer gets the bytes of a session with no transcript** — no section, no link, no
+  count on the page; one 404 body (`transcriptUnseenBody`) on the raw row. Hidden, absent, deleted by
+  the retention sweep, and a deployment with no archive are four ways to the SAME response
+  (`TestARefusedViewerGetsTheBytesOfASessionWithNoTranscript`, with its positive control: an
+  admitted viewer's page differs).
+- 🔴 **The rule is stricter than the page's.** The page is found by a UNION (a write in any readable
+  scope); the transcript needs the owner — an un-narrowed credential whose `(Kind, ID)` uploaded it —
+  or `read` on EVERY scope in `V`: every scope the session wrote in (a whole-store trailer walk, never
+  the viewer's set — decision 3's trap), every scope it read (derived by the pod from the stored
+  records, plus what the agent declared), child sessions included. `*`, a name the viewer's authority
+  does not hold, and an EMPTY `V` are owner-only. Authority is `control.Resolve`'s, off the request's
+  own `Authorization` — never `Model.Grants`.
+- **The page can be found by its transcript.** A session with no recorded write has no trailer for
+  the writes walk to find; a viewer the predicate admits gets the page, with the transcript and "no
+  write by this session is visible to you". ⚠ As built this is BOTH arms, not only the owner arm the
+  plan's decision 4 names: a reader of every scope a read-only session touched would otherwise be
+  served it on the raw row and refused the page.
+- **No archive, nothing changes.** `Config.Transcripts` is nil wherever `cairn-ui` runs without the
+  worker flags (`-transcript-dir` among them): no section renders and the raw row answers its miss
+  for every id. Reading does not depend on `-arm-transcript-capture`.
+- **The collapsed reading (decision 18), and its numbers.** A user message — a `human-text` UNIT,
+  nothing else — is rendered whole, whatever its length. Assistant text shows its first 1,200
+  characters or 15 lines, then `<details><summary>read more (N more characters)</summary>`. A tool
+  call is one `<details>` (`Bash · exit 1 · 3.2 KB`) over its input and the first 64 KiB of its
+  result; a subagent nests under the call that spawned it; bookkeeping records and duplicate
+  tool-result copies are ONE `<details>` per turn; binary payloads are one line. At most 50 turns a
+  page, starting at the turn `?turn=` names. Every reveal is a `<details>`: **no script**, and `AllowedScriptSources` is unchanged.
+- **Four read-time bounds the plan does not name, added here:** a page carries at most 2 MiB of
+  COLLAPSED content (`transcript.CollapsedBudget`; past it a block keeps its summary and its
+  raw-record link), at most 1,000 items (`PageItemCap`, every item but a user message, children
+  included — the page ENDS before the first turn that does not fit whole, and its pager's next link
+  is that turn; only a page's FIRST turn, when it alone is over 1,000 items, is cut, the rest counted
+  with a link to the raw records from the first one left out), a child stream at most 200 items inline (`ChildItemCap`; the rest are counted), and a
+  raw-record page at most 512 KiB (`rawPageBytes`; at least one record, then a next link). User
+  messages and assistant text are never charged to the budget, and only what the page CARRIES is:
+  an earlier page's records and a child's items past its cap are refunded. 🔴 *#261 round 2:* the
+  item bound is new — fifty turns and 2 MiB bounded neither one turn's ITEM count, and one turn of
+  20,000 small calls rendered 7.5 MB (now 375 KB; `TestOneTurnOfTwentyThousandCallsIsABoundedPage`
+  holds it under 1 MiB). User messages (O9) and assistant text are still carried whole, so the page
+  is bounded EXCEPT for what a human or the assistant wrote. 🔴 *#261 round 3:* round 2's cap was
+  PAGE-wide and `?turn=` folded onto a fifty-turn grid, so fifty turns of thirty calls showed turns
+  34–50 as "N more items" and `?turn=34` folded back to page one — those calls were reachable only
+  as raw records. A page now starts at the turn asked for and ends at a turn boundary
+  (`TestEveryCallIsReachableByFollowingThePager`, `TestEveryCallIsReachableAcrossPages`; a turn
+  whose CHILD does not fit moves too, `TestATurnWhoseChildDoesNotFitStartsTheNextPage`).
+- **Text only.** Every transcript value is a `g.Text` or an attribute value; no link is ever built
+  from content — every href is this surface's own ledger path with encoded operands
+  (`TestHostileTranscriptTextIsEscaped`).
+
+## Cost, measured
+
+`BenchmarkSessionPageAndScopeTabs` (`written-scopes-walk`, `session-page-with-transcript`) on one
+loaded host, go1.25.14, three runs: the whole-store walk cost **0.24–0.31×** the session page at
+10 scopes × 30 entries and **0.31–0.49×** at 30 × 100 (8–11 ms against 26–44 ms; 105–108 ms against
+222–334 ms). It is below the page's own cost at both sizes, so decision 3's caching condition is not
+met and NOTHING is cached. The walk runs only when it can change the answer: not for the owner, and
+not for a viewer the stored half of `V` already refuses.
+
+## What #261's audit found, and what changed
+
+- 🔴 **A record could hide a read from `V`**: the pod derived from a MAP, so a header in a member
+  NAME, or in the first of two members named alike, was never seen — while the raw view served it.
+  The pod now also scans every record as one string (every token, keys and repeats included), and a
+  repeated member name adds `*` (tool inputs are still read off a map). Not refused: the host
+  redactor keeps both copies on purpose, and a refusal would stall the stream.
+- 🔴 **The header scan was quadratic** on a line of back-to-back markers (2 min 39 s at 256 KB,
+  under the session's upload lock). `scopeuse.HeaderScopes` is linear now, held to the old per-marker
+  scan as an oracle over 20,000 generated lines.
+- 🟡 a View now stops at its decision-time positions; the Store's archive is unexported; the
+  "does the authority hold the name" guard was an invariant guard (deleting it changed nothing) and
+  is gone; `?turn=` is clamped at `transcript.MaxTurn`; a subagent stream the store does not hold is
+  no longer linked.
+
+## The RED proof
+
+The plan's eleven rows of `tests/control_mutants.py`, each run alone and KILLED by its named test
+with every listed extra killer red: the predicate not asked; the written set over the viewer's
+scopes; the read half dropped; the empty set readable; the owner compared by display name; the owner
+arm given to a narrowed credential; any-scope for every-scope; a child's writes not counted toward
+its root; an unknown scope name readable (since the audit, the "skip a name nobody holds" a reader
+would write); `*` readable; and classification by record type (the 600 KB tool result rendered
+whole). Five more: a user message clipped at the assistant's head limit, and #261's audit's four —
+the derivation from the map alone, a repeated member read past, a View serving past its decision,
+and an unclamped `?turn=`. `transcript-pod-skips-scope-rederivation` (an S3 row) was re-pointed at
+the real derivation, and the two `scopeuse-*` rows whose code the linear scan rewrote were
+re-pointed; all re-run. `tests/plugins/e2e.sh` clauses (d)–(g) each have a
+sabotage in `--self-test` (`sabotaged=9 caught=9`); (e), (f) and (g) turn exactly their own
+assertion red. `uiaudit`'s `TestTheSessionPageCarriesItsTranscriptAtEveryWidth` was watched red with
+the fixture upload skipped.
+
+## What these guards still cannot see
+
+- **Timing.** A refused viewer's response is byte-identical, not time-identical: a session that HAS
+  a transcript costs a meta read, and for a viewer the stored half admits, a store walk.
+- **A child session's own id.** `/session?session=<child id>` does not find its root's transcript
+  (that needs an index from child to root, which nothing keeps); the child's stream is reachable
+  under its root.
+- **Work is not bounded, the response is.** A page scans the whole main stream to find turn
+  boundaries (the skeleton of decision 17 is S8's), one record in memory at a time; an opencode
+  stream is held whole.
+- **A damaged entry costs visibility.** A scope holding an entry the trailer walk cannot scan is
+  counted as written, so viewers who cannot read that scope lose every transcript until it is fixed
+  — the fail-closed direction, chosen here, not in the plan.
+- **The refused states in a real browser.** `uiaudit`'s world has one identity, the owner; the
+  refusals are measured in-process and by the e2e's bearer requests.
+- **Another package holding an archive.** The bound is "`internal/ui` cannot reach one"; any package
+  that opens an `archive.Archive` itself reads records with no predicate. Only `cmd/cairn-ui` and the
+  worker listener do (the importer ledger).

@@ -196,6 +196,14 @@ var linkExpanded = map[string]bool{
 	// unseen-session refusal and count it as a page. The scope page's TABS are what reach it, and the
 	// tabs are `/scope` links — see `roundRobinByRow` for why the cap no longer bounds them away.
 	ui.SessionPath: true,
+	// 🔴 `GET /session/transcript` (S4 of the transcripts plan) FOR `GET /session`'s REASON: its
+	// operands — a session id, a stream name, record numbers — are values the SURFACE publishes, on
+	// the transcript section of a session page, so guessing them would capture the one no-transcript
+	// refusal and count it as a page. `transcript.go` is what puts a stored transcript in the world;
+	// with none, the session page publishes no such link and this row is captured only bare (the
+	// navigation page). The raw page links back to `/session?session=…`; the queue's `Path` dedupe
+	// ends that cycle.
+	ui.SessionTranscriptPath: true,
 	// 🔴 `GET /arcs` IS HERE RATHER THAN IN `plainGET`, EVEN THOUGH ITS BARE PATH IS A PAGE, because
 	// it is the page that PUBLISHES the arcs a reader opens: each listed arc links `/arc?home=…&slug=…`
 	// with a minted home id, and its show-all toggle links `/arcs?all=1` — a view of the same row the

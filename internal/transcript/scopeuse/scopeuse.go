@@ -18,6 +18,10 @@
 //     string of ANY record — tool results, duplicates, hook attachments, opencode outputs. A
 //     header whose `scope=` is absent or not a valid scope name (the store-wide `(all scopes)`
 //     search, the "all N entry files … MALFORMED" form) contributes `*`.
+//   - R_memo (folded into R_header): every scope a MEMO BLOCK names (`<<<cairn-memo` …), found the
+//     same way. The memo hook injects one with no header and no command line, and its previews are
+//     that scope's text, so it is a read; a block that names no parseable scope contributes `*`.
+//     It was missing until #261 round 2 ([MemoScopes]).
 //   - L: the scopes the client read ledger names (decision 3a). A ledger line that does not parse,
 //     or names an invalid scope, contributes `*`.
 //   - F1: a tool INPUT names `cairn` or `subsystem-recall` (case-insensitive) AND the ledger holds
@@ -27,17 +31,18 @@
 //
 // ⚠ WHAT IT CANNOT SEE (threat T3): a session mixing a ledger-writing client with one that writes
 // nothing (non-empty ledger, so F1 is silent); a file read of a store copy whose path lacks
-// `subsystem-store`; a read that bypasses the client entirely.
+// `subsystem-store`; a read that bypasses the client entirely; a memo shown by any path that does
+// not print the renderer's block (a memo's text quoted without its fence, or the browser tab).
 package scopeuse
 
 import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"io"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ZacxDev/cairn/internal/authz"
 )
@@ -56,30 +61,134 @@ func ValidScope(name string) bool { return authz.SafePathComponent.MatchString(n
 
 // HeaderScopes returns every scope named by a rendered read header in s, `*` for a header that
 // names none or names something that is not a scope.
+//
+// A header is a marker and the rest of ITS line: every `scope=` field from the marker to the end
+// of the line counts toward it, and a marker followed by none adds `*`.
+//
+// 🔴 LINEAR, AND THAT IS A REQUIREMENT, NOT A TUNING: the pod runs this over every record it
+// stores, while that session's uploads wait on its lock. It used to re-read the rest of the line
+// after EVERY marker, so a line of back-to-back markers with no newline was quadratic — measured
+// at 2.3 s for a 32 KB record and 2 min 39 s for 256 KB, under a 4 MiB cap (#261's audit). Now
+// each line is scanned once: the fields after its FIRST marker are found in one pass (they are the
+// union of every later marker's, since a field begins at whitespace and no field can swallow one),
+// plus the one case a later marker adds by itself — `scope=` IMMEDIATELY after it, where the old
+// per-marker scan matched at the start of its substring. That value's END is found by one forward
+// cursor every marker shares; looking for it from each marker was still quadratic on a
+// whitespace-free run of `subsystem-recall:scope=` (round 2: 691 ms at 128 KB).
+// `TestHeaderScopesMatchesThePerMarkerScan` holds the scan to the per-marker answer over generated
+// lines; `TestHeaderScopesIsLinearOnARunOfMarkers` holds both shapes to linear growth.
+//
+// ⚠ A SHORTER RULE WAS PROPOSED AND IS NOT EQUIVALENT: "the fields after the first marker, `*` if no
+// field starts at or after the LAST marker, and any later marker's immediate `scope=` value". On
+// `subsystem-recall:x subsystem-recall:scope=a` the first marker has no field of its own and the
+// per-marker answer is {*, a}; the rule gives {a} if an immediate `scope=` counts as a field (a
+// dropped `*` — fail OPEN), and on `subsystem-recall:scope=b subsystem-recall:scope=a` it gives
+// {*, a, b} against {a, b} if it does not. Per-marker `found` is kept for that reason.
 func HeaderScopes(s string) []string {
 	var out []string
-	for rest := s; ; {
-		i := strings.Index(rest, HeaderMarker)
+	eachHeaderScope(s, func(v string) { out = append(out, v) })
+	return out
+}
+
+// eachHeaderScope is [HeaderScopes] without the slice: it hands each scope (or `*`) to emit as it
+// is found. 🔴 IT ALLOCATES NOTHING PER LINE, and that is a MEMORY bound, not a tuning: the pod
+// runs it over a record of up to 4 MiB inside a 256 Mi limit, and a record that is one long run of
+// header lines made the slice-per-line form (a marker list, a regexp match list, the result)
+// allocate more than the whole assembly's budget (`TestTheAssembledRecordCapFitsThePod`, the
+// escaped-markers shape).
+func eachHeaderScope(s string, emit func(string)) {
+	for {
+		i := strings.Index(s, HeaderMarker)
 		if i < 0 {
-			return out
+			return
 		}
-		line := rest[i+len(HeaderMarker):]
+		line := s[i:]
+		rest := ""
 		if nl := strings.IndexByte(line, '\n'); nl >= 0 {
-			line = line[:nl]
+			line, rest = line[:nl], line[nl:]
 		}
-		rest = rest[i+len(HeaderMarker):]
-		fields := scopeField.FindAllStringSubmatch(line, -1)
-		if len(fields) == 0 {
-			out = append(out, Star)
+		lineScopes(line, emit)
+		s = rest
+	}
+}
+
+// fieldEnd is RE2's `\s` — the characters a `scope=` value (`\S*`) runs up to.
+const fieldEnd = "\t\n\f\r "
+
+const scopeEq = "scope="
+
+func isFieldEnd(c byte) bool { return strings.IndexByte(fieldEnd, c) >= 0 }
+
+// valueEnd is the end of the `\S*` value starting at start.
+func valueEnd(body string, start int) int {
+	if e := strings.IndexAny(body[start:], fieldEnd); e >= 0 {
+		return start + e
+	}
+	return len(body)
+}
+
+// lineScopes is [eachHeaderScope] for ONE line that begins with a marker.
+//
+// The fields are what `scopeField` (`(?:^|\s)scope=(\S*)`) finds in the body after the first
+// marker, found here by hand so nothing is allocated: a `scope=` at the body's start or after a
+// whitespace byte. Matches cannot overlap (a value ends AT whitespace, and the next match's
+// whitespace is at or after it), so every such position is a match, and a match STARTS one byte
+// before its `scope=` (the whitespace), or at 0 for `^`. All the per-marker loop needs from the
+// match list is whether one starts at or after a marker — that is, the LAST match's start.
+func lineScopes(line string, emit func(string)) {
+	add := func(v string) {
+		if ValidScope(v) {
+			emit(v)
+		} else {
+			emit(Star)
+		}
+	}
+	first := len(HeaderMarker) // line begins with a marker
+	body := line[first:]
+	lastStart := -1
+	for p := 0; ; {
+		j := strings.Index(body[p:], scopeEq)
+		if j < 0 {
+			break
+		}
+		at := p + j
+		if at == 0 || isFieldEnd(body[at-1]) {
+			start := at + len(scopeEq)
+			end := valueEnd(body, start)
+			add(body[start:end])
+			lastStart = max(at-1, 0)
+			p = end
 			continue
 		}
-		for _, f := range fields {
-			if ValidScope(f[1]) {
-				out = append(out, f[1])
-			} else {
-				out = append(out, Star)
+		p = at + 1
+	}
+	// end is where the field-end scan last stopped: the first field end at or after the position it
+	// was asked about. Markers arrive in order, so a later marker whose value starts at or before
+	// `end` ends at that same `end` and never rescans; only one starting past it scans again, from
+	// its own start. Every byte is scanned at most once per line. (Scanning from each marker instead
+	// was the round-2 quadratic: with no whitespace, each `scope=` value ran to the end of the line.)
+	end := -1
+	for rel := 0; ; {
+		found := false
+		if rel > 0 && strings.HasPrefix(body[rel:], scopeEq) {
+			start := rel + len(scopeEq)
+			if end < start {
+				end = valueEnd(body, start)
 			}
+			add(body[start:end])
+			found = true
 		}
+		if lastStart >= rel {
+			found = true
+		}
+		if !found {
+			emit(Star)
+		}
+		j := strings.Index(body[rel:], HeaderMarker)
+		if j < 0 {
+			return
+		}
+		rel += j + len(HeaderMarker)
 	}
 }
 
@@ -107,42 +216,188 @@ func NewDeriver() *Deriver {
 // fail-closed `*`, but `*` where the real scope is readable (review round 1). So a string that
 // decodes is scanned through EVERY string and EVERY key it holds instead of as raw text — nothing
 // it carries goes unscanned — and one that does not decode is scanned raw.
+//
+// 🔴 THE DECODE IS NOT GATED ON THE MARKER BEING PRESENT RAW. It was, and JSON can ESCAPE any
+// character of the marker (`subsystem-recall:`), so such a string was neither decoded nor matched
+// raw and contributed NOTHING — not even `*` (#261 round 2).
+//
+// 🔴 IT IS GATED ON A MARKER BEING *POSSIBLE*, AND THAT GATE IS EXACT, NOT A HEURISTIC. Decoding
+// rewrites only escapes, and the only JSON escape that can produce a character of either marker
+// (letters, `-`, `:`, `<`) is `\uXXXX`; `\" \\ \/ \b \f \n \r \t` produce none of them. So a
+// string holding neither marker raw and no `\u` decodes to strings holding no marker — and, by the
+// same argument one level down, so does everything nested in it — and neither the decoded scan nor
+// the raw one can add anything. Such a string is skipped whole. That matters for MEMORY: a 4 MiB
+// record decoded token by token was most of what pushed one assembly at the cap over its budget
+// (`TestTheAssembledRecordCapFitsThePod`, #261 round 3); `TestTheDecodeGateIsExact` holds the gated
+// answer to the always-decode one over generated documents.
+//
+// The cost stays linear: the gate, json.Valid and the token walk are each one pass, the walk hands
+// out substrings rather than copies (only an escaped token is unescaped), and the depth cap bounds
+// how many times one byte is re-decoded through nesting.
 func (d *Deriver) Content(s string) { d.content(s, 0) }
 
 func (d *Deriver) content(s string, depth int) {
-	if depth < 3 && strings.Contains(s, HeaderMarker) {
+	if !MayHoldMarker(s) {
+		return
+	}
+	if depth < 3 {
 		t := strings.TrimSpace(s)
-		if len(t) >= 2 && (t[0] == '{' || t[0] == '[') {
-			if strs, ok := jsonStrings(t); ok {
-				for _, inner := range strs {
-					d.content(inner, depth+1)
-				}
-				return
-			}
+		if len(t) >= 2 && (t[0] == '{' || t[0] == '[') && json.Valid([]byte(t)) {
+			eachJSONString(t, func(inner string) { d.content(inner, depth+1) })
+			return
 		}
 	}
-	for _, sc := range HeaderScopes(s) {
-		d.headers[sc] = true
+	eachHeaderScope(s, d.addHeader)
+	eachMemoScope(s, d.addHeader)
+}
+
+func (d *Deriver) addHeader(sc string) { d.headers[sc] = true }
+
+// MayHoldMarker reports whether s, or any string JSON-decoding s (at any depth) can produce, can
+// hold a header or memo marker — see [Deriver.Content] for why `\u` is the only escape that counts.
+func MayHoldMarker(s string) bool {
+	return strings.Contains(s, HeaderMarker) || strings.Contains(s, MemoBlockOpen) || strings.Contains(s, `\u`)
+}
+
+// MemoBlockOpen and MemoBlockClose begin the first and last lines of a memo block as
+// `internal/memo` renders it (`<<<cairn-memo untrusted nonce=… count=…>>>` … `<<<end cairn-memo
+// nonce=…>>>`). They are spelled here rather than imported because `internal/memo` pulls the
+// store and the redactor into every capture binary; `TestAMemoBlockIsARead` renders a REAL block
+// through `memo.RenderPreview` and `memo.RenderFull`, so a renderer change that this parse no
+// longer reads turns that test red instead of shrinking `V`.
+const (
+	MemoBlockOpen  = "<<<cairn-memo"
+	MemoBlockClose = "<<<end cairn-memo"
+)
+
+// MemoScopes returns every scope a memo block in s names — `*` for a block that names none this
+// can parse. A memo block is a READ: the memo hook injects one into a session (a hook attachment,
+// with no `subsystem-recall:` header and no command line anywhere), and its previews are text OF
+// that scope. Before this, a session that wrote only alpha-notes and was shown a gamma-notes memo
+// was visible to an alpha-only viewer, memo text included (#261 round 2).
+//
+// A block runs from its open marker to its close marker or the next open marker, whichever comes
+// first, so a string of unterminated opens is still scanned once. Within it, a scope is read from
+// two line shapes, each after the block's `| ` content prefix:
+//
+//	[m-<id>] from <sender> · <scope> · <created> · expires <date>
+//	and <n> more on <scope>: cairn memo-read --scope <word>
+//
+// The memo heading is split from the RIGHT, so a sender carrying ` · ` cannot move the scope. A
+// scope that is not a valid name is `*`, like a header's.
+func MemoScopes(s string) []string {
+	var out []string
+	eachMemoScope(s, func(v string) { out = append(out, v) })
+	return out
+}
+
+// eachMemoScope is [MemoScopes] without the slices — no result list and no split of a block into
+// lines — for the same memory reason as [eachHeaderScope].
+func eachMemoScope(s string, emit func(string)) {
+	for {
+		i := strings.Index(s, MemoBlockOpen)
+		if i < 0 {
+			return
+		}
+		s = s[i+len(MemoBlockOpen):]
+		// The next OPEN bounds the block before the close is looked for: searching for the close
+		// first would scan to the end of s from every unterminated open — quadratic.
+		block := s
+		if j := strings.Index(block, MemoBlockOpen); j >= 0 {
+			block = block[:j]
+		}
+		if j := strings.Index(block, MemoBlockClose); j >= 0 {
+			block = block[:j]
+		}
+		named := false
+		for rest := block; ; {
+			line := rest
+			nl := strings.IndexByte(rest, '\n')
+			if nl >= 0 {
+				line, rest = rest[:nl], rest[nl+1:]
+			}
+			line = strings.TrimPrefix(strings.TrimRight(line, "\r"), "| ")
+			if sc, ok := memoLineScope(line); ok {
+				named = true
+				if ValidScope(sc) {
+					emit(sc)
+				} else {
+					emit(Star)
+				}
+			}
+			if nl < 0 {
+				break
+			}
+		}
+		if !named {
+			emit(Star)
+		}
+		s = s[len(block):]
 	}
 }
 
-// jsonStrings returns every string TOKEN of one JSON document — every key and every value,
-// DUPLICATE members included (a map decode keeps only the last of two equal keys, and a header in
-// the first would be lost) — or false when t is not exactly one valid document.
-func jsonStrings(t string) ([]string, bool) {
-	if !json.Valid([]byte(t)) {
-		return nil, false
+const memoMoreCommand = ": cairn memo-read --scope "
+
+func memoLineScope(line string) (string, bool) {
+	if strings.HasPrefix(line, "[m-") && strings.Contains(line, "] from ") {
+		// The scope is the third ` · `-separated part from the RIGHT. The separators are found as
+		// `strings.Split` finds them — left to right, NOT overlapping (` · · ` holds one, not two) —
+		// keeping only the last three, so nothing is allocated and the answer is Split's exactly
+		// (`TestMemoHeadingSplitsFromTheRightWithoutSplitting`).
+		const sep = " · "
+		a, b, c := -1, -1, -1
+		for off := 0; ; {
+			j := strings.Index(line[off:], sep)
+			if j < 0 {
+				break
+			}
+			a, b, c = b, c, off+j
+			off += j + len(sep)
+		}
+		if a >= 0 && strings.HasPrefix(line[c+len(sep):], "expires ") {
+			return line[a+len(sep) : b], true
+		}
+		return "", true // a heading this cannot read: still a memo, so `*`
 	}
-	dec := json.NewDecoder(strings.NewReader(t))
-	var out []string
-	for {
-		tok, err := dec.Token()
-		if err != nil {
-			return out, err == io.EOF
+	if strings.HasPrefix(line, "and ") {
+		if k := strings.Index(line, " more on "); k >= 0 {
+			if e := strings.LastIndex(line, memoMoreCommand); e > k {
+				return line[k+len(" more on ") : e], true
+			}
 		}
-		if s, ok := tok.(string); ok {
-			out = append(out, s)
+	}
+	return "", false
+}
+
+// eachJSONString hands emit every string TOKEN of one VALID JSON document t — every key and every
+// value, DUPLICATE members included (a map decode keeps only the last of two equal keys, and a
+// header in the first would be lost). The caller has checked validity, so a `"` outside a string
+// always opens one; a token with no escape is handed out as a substring of t (no copy), and only an
+// escaped one is decoded, by `encoding/json` itself so every escape and invalid-UTF-8 rule is the
+// library's. It replaced a `json.Decoder` token walk, which first copied t into a buffer grown by
+// doubling and then copied each token out again.
+func eachJSONString(t string, emit func(string)) {
+	for i := 0; i < len(t); i++ {
+		if t[i] != '"' {
+			continue
 		}
+		end, escaped := i+1, false
+		for end < len(t) && t[end] != '"' {
+			if t[end] == '\\' {
+				escaped = true
+				end++
+			}
+			end++
+		}
+		raw := t[i : end+1]
+		if !escaped && utf8.ValidString(raw) {
+			emit(raw[1 : len(raw)-1])
+		} else {
+			var v string
+			_ = json.Unmarshal([]byte(raw), &v)
+			emit(v)
+		}
+		i = end
 	}
 }
 

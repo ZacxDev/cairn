@@ -16,12 +16,14 @@
 // not recognise (T1). That refusal is only possible because the table is quiet on its own
 // markers; see `internal/redact/marker.go` for the 1,502 re-hits it had before.
 //
-// 🔴 THE POD DOES NOT YET DERIVE `V` ITSELF, SO IT RECORDS `*` (fail closed). Decision 3 has the pod
-// re-derive `R_header` and `F` over the stored records through `internal/transcript/scopeuse`,
-// "so an old or lying agent cannot shrink `V`". That package is slice S2's and is not on `main`;
-// re-implementing it here would be the second spelling decision 3 forbids ("one function, two
-// callers"). Until it lands, every stored session's derived set is `{*}`, which decision 4 makes
-// OWNER-ONLY — the narrow direction. See [derivedScopes].
+// 🔴 THE POD DERIVES THE READ HALF OF `V` ITSELF, FROM WHAT IT STORES (decision 3: "so an old or
+// lying agent cannot shrink `V`"). Every accepted record and every text blob is fed to
+// `internal/transcript/scopeuse` — the ONE function the capture agent routes with — and what it finds
+// (`R_header`, and `*` for F1/F2) is folded into `meta.json`'s grow-only `derived_scopes`. The agent's
+// declaration is kept BESIDE it and can only add. ⚠ The pod holds no read LEDGER until S11, so F1
+// ("a tool input names the program and the ledger is empty") fires for every session that names
+// `cairn` in a tool input: such a session is `*` — owner-only (decision 4) — which is the plan's
+// stated cost until S11. See [derive].
 //
 // Layout under the configured directory (decision 15, with one deviation stated):
 //
@@ -52,9 +54,11 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/redact"
+	"github.com/ZacxDev/cairn/internal/transcript/scopeuse"
 	"github.com/ZacxDev/cairn/internal/write"
 )
 
@@ -81,6 +85,10 @@ const (
 	// compacted, walked by the re-check and gzipped. #224's audit measured a 32 MB record peaking
 	// at 459 MB resident (≈14× the record); measured here, the final frame ALLOCATES ≈18× the
 	// record (an upper bound on its live peak), linearly at 1, 2 and 4 MiB — ≈72 MiB at this cap.
+	// Since S4 the read-scope derivation ([derive]) and the repeated-member check read the assembled
+	// record too: 79.7 MiB at this cap (19.9×), 84.1 MiB under `-race` (CI's condition), measured
+	// at 4 MiB only, on a run of letters. ⚠ The re-check walk is NOT within budget on every shape:
+	// a record of short `key: value` lines costs it far more (the test's doc has the number).
 	// `TestTheAssembledRecordCapFitsThePod` re-measures it on every run against a 100 MiB budget,
 	// under half the limit, so two roots assembling at once still leave the rest of the process
 	// room. ⚠ The bound is PER RECORD, not per request: an unframed request of two records near
@@ -525,14 +533,28 @@ type Meta struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	// Declared is `D(s)`: what the agent declared, grow-only.
 	Declared []string `json:"declared_scopes"`
-	// Derived is the pod's own `R_header ∪ F` — today `{*}` ([derivedScopes]).
+	// Derived is the pod's own `R_header ∪ F` over the stored records and text blobs ([derive]).
 	Derived []string `json:"derived_scopes"`
+	// Written is every `W_trailer` scope a store walk has EVER found for the session — a scope
+	// where its trailer was actually seen — grow-only ([Archive.RecordWritten]). The walk itself
+	// answers about the store as it is NOW, and a trailer can leave it — an entry rewritten by a put
+	// or a hygiene pass without the session's trailer — so a set recomputed per view SHRANK, turning a
+	// refusal into a 200 (#261 round 2). Absent in a meta written before it existed: empty.
+	//
+	// 🔴 A scope the walk could NOT fully scan is NOT kept here. Round 2 kept it, and it is a
+	// property of the store (any scope holding a malformed entry), not of the session: one transient
+	// malformed file then hid every transcript walked during it, permanently (#261 round 3). The
+	// reader puts such a scope in `V` for the view that saw it, and only while it lasts.
+	Written []string `json:"written_scopes,omitempty"`
 	// Ledger is `L(s)`: every scope the session's uploaded client read ledger names, `*` for a
 	// record that names none it can read ([foldLedger]); grow-only. LedgerRecords counts the
 	// records folded, which is what F1 ("the ledger is EMPTY") asks. Absent in a meta written
 	// before S11: empty, zero.
 	Ledger        []string `json:"ledger_scopes,omitempty"`
 	LedgerRecords int      `json:"ledger_records,omitempty"`
+	// NamesProgram is F1's evidence: some stored tool input names `cairn` or `subsystem-recall`
+	// (`scopeuse`). Grow-only; F1 itself is [Meta.LedgerScopes]'s question.
+	NamesProgram bool `json:"names_program,omitempty"`
 	// Children is every opencode child id uploaded as a `child:` stream (decision 7: trailers
 	// naming the child count toward the root's `V`).
 	Children []string            `json:"child_ids"`
@@ -617,17 +639,132 @@ func syncDir(dir string) error {
 	return d.Sync()
 }
 
-// derivedScopes is the pod's own derivation of `R_header ∪ F` over a session's stored records.
+// derive is the pod's own derivation of `R_header ∪ F` over ONE request's records (and, for a blob
+// upload, its text): `internal/transcript/scopeuse`, the function the capture agent routes with
+// (decision 3: one function, two callers).
 //
-// 🔴 IT RETURNS `{*}`, AND THAT IS A DECISION, NOT A STUB TO BE READ AS "NOTHING FOUND". The
-// derivation belongs to `internal/transcript/scopeuse` (decision 3: ONE function, called by the
-// agent for routing and by the pod at upload), which is slice S2's and is not on `main`. An empty
-// answer here would let the agent's DECLARATION be the whole read half of `V` — exactly what the
-// pod-side re-derivation exists to refuse ("so an old or lying agent cannot shrink `V`"). `*`
-// makes every stored session owner-only (decision 4), the direction that cannot widen visibility.
-// ⚠ It is grow-only like every set in meta, so a session stored under this rule stays owner-only
-// after `scopeuse` is wired; nothing is stored while capture is unarmed (O16).
-func derivedScopes() []string { return []string{Star} }
+// 🔴 EACH RECORD IS READ BOTH WAYS — as a Claude Code record AND as an opencode part — WHATEVER
+// RUNTIME THE REQUEST DECLARES. Which strings are TOOL INPUTS (what F1 and F2 ask about) depends on
+// the format, and the runtime label is the uploader's word; reading both shapes means a mislabelled
+// request cannot turn a tool input into plain content. Both readings only ADD.
+//
+// 🔴 F1 IS NOT DECIDED HERE, AND IT USED TO BE. F1 is "a tool input names the program AND the
+// session's ledger holds ZERO records" — a question about the WHOLE session, and the ledger arrives
+// on a stream of its own (S11). Decided per request it was always "no ledger", so every session that
+// named `cairn` in a tool input got a grow-only `*` that the ledger could never take back. So this
+// returns only the EVIDENCE ([derived.NamesProgram]), kept in [Meta.NamesProgram], and
+// [Meta.LedgerScopes] decides F1 against [Meta.LedgerRecords] when `V` is asked for. F2 and the
+// headers need no memory and are still folded here.
+//
+// ⚠ A record that is not a JSON OBJECT (a bare string, an array) is scanned as content.
+//
+// 🔴 AND EVERY RECORD IS ALSO SCANNED AS ONE STRING, so a header the map walk never reads still
+// counts: in a member NAME, or in the first of two members with one name — Go's map decode keeps
+// only the last — while the raw-record view serves the stored bytes, first copy included (#261's
+// audit, measured: a viewer `V` should have refused was served the hidden read). `Content` on a
+// JSON document reads every string token, keys and repeats included.
+//
+// 🔴 AND A REPEATED MEMBER NAME ADDS `*`. The whole-record scan finds a HEADER anywhere, but which
+// strings are TOOL INPUTS (what F1 and F2 ask about) is read off the map, which drops the first
+// copy. No runtime writes a repeated name; a record that has one is either hostile or broken, so
+// it makes the session owner-only rather than being read as if the first copy were not there. It
+// is NOT refused: the host redactor deliberately keeps both copies (`internal/redact/ordered.go`),
+// and a refusal would stall that session's stream.
+func derive(lines [][]byte, text []byte) derived {
+	d := scopeuse.NewDeriver()
+	var extra []string
+	for _, line := range lines {
+		// The whole-record scan IS the content scan of a record that does not decode, so a line
+		// that fails to unmarshal is not scanned a second time (it was, until #261 round 3: one more
+		// copy and one more pass at the cap, for an answer the first pass already gave).
+		d.Content(string(line))
+		if duplicateMember(line) {
+			extra = []string{Star}
+		}
+		// `json.Unmarshal`, not a `Decoder`: it reads the line in place, where a decoder first
+		// copies it into a buffer it grows by doubling — measured at the 4 MiB cap, that copy alone
+		// was most of what this derivation added to one assembly's allocations. Only STRINGS are
+		// read here, so a number decoded as a float loses nothing.
+		var rec map[string]any
+		if err := json.Unmarshal(line, &rec); err != nil || rec == nil {
+			continue
+		}
+		d.ClaudeRecord(rec)
+		d.OpencodePart(rec)
+	}
+	if text != nil {
+		d.Content(string(text))
+	}
+	res := d.Result()
+	scopes := union(res.Headers, extra)
+	if res.F2 {
+		scopes = union(scopes, []string{Star})
+	}
+	return derived{Scopes: scopes, NamesProgram: d.Evidence().NamesProgram}
+}
+
+// derived is what one request adds: `R_header` and F2's `*` (grow-only, straight into
+// [Meta.Derived]), and F1's evidence, which is only an answer once the ledger is known.
+type derived struct {
+	Scopes       []string
+	NamesProgram bool
+}
+
+// duplicateMember reports whether any object in one valid, COMPACTED JSON value repeats a member
+// name — compared as `encoding/json`'s map decoding compares them: after unescaping, with invalid
+// UTF-8 replaced. One pass, no decode of the values.
+func duplicateMember(v []byte) bool {
+	type frame struct {
+		obj, wantKey bool
+		keys         map[string]struct{}
+	}
+	var stack []*frame
+	for i := 0; i < len(v); {
+		switch v[i] {
+		case '{':
+			stack = append(stack, &frame{obj: true, wantKey: true})
+		case '[':
+			stack = append(stack, &frame{})
+		case '}', ']':
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+		case ',':
+			if n := len(stack); n > 0 && stack[n-1].obj {
+				stack[n-1].wantKey = true
+			}
+		case '"':
+			end := i + 1
+			for end < len(v) && v[end] != '"' {
+				if v[end] == '\\' {
+					end++
+				}
+				end++
+			}
+			end++ // past the closing quote
+			if n := len(stack); n > 0 && stack[n-1].obj && stack[n-1].wantKey && end <= len(v) {
+				top := stack[n-1]
+				raw := v[i:end]
+				key := string(raw[1 : len(raw)-1])
+				if bytes.IndexByte(raw, '\\') >= 0 || !utf8.Valid(raw) {
+					_ = json.Unmarshal(raw, &key)
+				}
+				if top.keys == nil {
+					top.keys = map[string]struct{}{}
+				}
+				if _, seen := top.keys[key]; seen {
+					return true
+				}
+				top.keys[key] = struct{}{}
+				top.wantKey = false
+			}
+			i = end
+			continue
+		}
+		i++
+	}
+	return false
+}
 
 func union(a, b []string) []string {
 	out := append(append([]string(nil), a...), b...)
@@ -777,6 +914,7 @@ func (a *Archive) AppendRecords(who Uploader, u Upload, stream string, recs []Re
 		if err := json.Compact(&c, r.Rec); err != nil {
 			return Stored{}, invalid("record %d is not one JSON value", i)
 		}
+
 		// 🔴 THE REFUSING RE-CHECK (clause c). ANY hit refuses the whole request.
 		if _, hits := a.cfg.Recheck.Record(c.Bytes()); len(hits) > 0 {
 			return Stored{}, &RecheckError{Record: i}
@@ -812,13 +950,18 @@ func (a *Archive) AppendRecords(who Uploader, u Upload, stream string, recs []Re
 		return Stored{}, err
 	}
 	m.Streams[stream] = Position{StoredTo: u.To, SeqTo: seq, Bytes: size}
+	// The ledger is the client's report of what the session READ, not transcript content, so it is
+	// folded as a ledger and never scanned as one.
+	var found derived
 	if stream == LedgerStream {
 		foldLedger(m, lines)
+	} else {
+		found = derive(lines, nil)
 	}
 	if child, ok := cutPrefix(stream, "child:"); ok && !slices.Contains(m.Children, child) {
 		m.Children = union(m.Children, []string{child})
 	}
-	if err := a.commit(dir, m, u); err != nil {
+	if err := a.commit(dir, m, u, found); err != nil {
 		return Stored{}, err
 	}
 	return Stored{StoredTo: u.To, SeqTo: seq}, nil
@@ -906,7 +1049,13 @@ func (a *Archive) PutBlob(who Uploader, u Upload, name string, data []byte) (Sto
 	// The previous version's bytes are gone with the rename.
 	a.adjust(-pos.Bytes)
 	m.Blobs[name] = Position{StoredTo: u.To, Bytes: int64(len(data))}
-	if err := a.commit(dir, m, u); err != nil {
+	// A TEXT blob is content the session saw (a persisted tool result can hold a rendered recall); a
+	// binary one is not scanned — the agent's own rule (`internal/capture`), so the two agree.
+	var text []byte
+	if !redact.IsBinary(data) {
+		text = data
+	}
+	if err := a.commit(dir, m, u, derive(nil, text)); err != nil {
 		return Stored{}, err
 	}
 	return Stored{StoredTo: u.To}, nil
@@ -931,9 +1080,10 @@ func (a *Archive) ensureSession(m *Meta, who Uploader, u Upload) (string, *Meta,
 
 // commit folds the request's declarations and the pod's derivation into the grow-only sets and
 // writes meta — the moment the upload exists.
-func (a *Archive) commit(dir string, m *Meta, u Upload) error {
+func (a *Archive) commit(dir string, m *Meta, u Upload, found derived) error {
 	m.Declared = union(m.Declared, u.Declared)
-	m.Derived = union(m.Derived, derivedScopes())
+	m.Derived = union(m.Derived, found.Scopes)
+	m.NamesProgram = m.NamesProgram || found.NamesProgram
 	m.UpdatedAt = a.cfg.Now().UTC()
 	before := fileSize(filepath.Join(dir, metaName))
 	if err := writeMeta(dir, m); err != nil {
@@ -941,6 +1091,35 @@ func (a *Archive) commit(dir string, m *Meta, u Upload) error {
 	}
 	a.adjust(fileSize(filepath.Join(dir, metaName)) - before)
 	return nil
+}
+
+// RecordWritten folds scopes a store walk found into the session's grow-only [Meta.Written] and
+// returns the meta as it now stands — (nil, nil) when no session is stored under root. Meta is
+// re-read under the root's lock, so an upload committing concurrently is neither lost nor
+// overwritten; it is written only when the set actually grows.
+func (a *Archive) RecordWritten(root string, scopes []string) (*Meta, error) {
+	if !write.SessionComponent.MatchString(root) {
+		return nil, invalid("not a stored session")
+	}
+	l := a.rootLock(root)
+	l.Lock()
+	defer l.Unlock()
+	m, err := a.readMeta(root)
+	if err != nil || m == nil {
+		return m, err
+	}
+	grown := union(m.Written, scopes)
+	if len(grown) == len(m.Written) {
+		return m, nil
+	}
+	m.Written = grown
+	dir := a.sessionDir(root)
+	before := fileSize(filepath.Join(dir, metaName))
+	if err := writeMeta(dir, m); err != nil {
+		return nil, err
+	}
+	a.adjust(fileSize(filepath.Join(dir, metaName)) - before)
+	return m, nil
 }
 
 func fileSize(p string) int64 {
@@ -996,51 +1175,81 @@ func (a *Archive) adjust(n int64) {
 	a.mu.Unlock()
 }
 
-// StoredRecord is one stored line, as [Archive.ReadStream] returns it.
+// StoredRecord is one stored line, as [Archive.ScanStream] yields it.
 type StoredRecord struct {
 	Seq int64           `json:"seq"`
 	Src string          `json:"src"`
 	Rec json.RawMessage `json:"rec"`
 }
 
-// ReadStream returns every COMMITTED record of one stream, in order. It is the read the later
-// slices render from (S4, S8); here it is what the tests read back.
+// ReadStream returns every COMMITTED record of one stream, in order, held in memory at once. Only
+// TESTS call it — the session page renders through [Archive.ScanStream], one record at a time — and
+// it is [Archive.ScanStream] collected, so what a test reads back is what the page reads: it was a
+// second copy of the scan (and, unlike it, held the root's lock across the read), so a defect in
+// the page's read was invisible to every test that read through this one (#261 round 2).
 func (a *Archive) ReadStream(root, stream string) ([]StoredRecord, error) {
+	var out []StoredRecord
+	if err := a.ScanStream(root, stream, func(r StoredRecord) error {
+		out = append(out, r)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// StopScan is what a [Archive.ScanStream] callback returns to end the scan early; the scan then
+// returns nil.
+var StopScan = errors.New("stop the scan")
+
+// ScanStream calls fn for every COMMITTED record of one stream, in order, one record in memory at
+// a time — the read the session page renders from (S4). A stream that is not stored calls fn zero
+// times and returns nil; fn returning [StopScan] ends the scan without an error.
+//
+// 🔴 IT DOES NOT HOLD THE ROOT'S LOCK WHILE IT READS, AND THAT IS SOUND FOR ONE REASON: a segment
+// is append-only below its committed size. An upload truncates the file TO that size and writes
+// after it ([appendSegment]), so the first `pos.Bytes` bytes — the only ones this reads — are never
+// rewritten; a page render over a large session therefore cannot stall that session's uploads. A
+// retention sweep or a withdrawal CAN remove the file mid-read; that is an error here, and the
+// caller treats it as the transcript being gone.
+func (a *Archive) ScanStream(root, stream string, fn func(StoredRecord) error) error {
 	if !write.SessionComponent.MatchString(root) || !streamName.MatchString(stream) {
-		return nil, invalid("not a stored stream")
+		return invalid("not a stored stream")
 	}
 	l := a.rootLock(root)
 	l.Lock()
-	defer l.Unlock()
 	m, err := a.readMeta(root)
+	l.Unlock()
 	if err != nil || m == nil {
-		return nil, err
+		return err
 	}
 	pos, ok := m.Streams[stream]
 	if !ok {
-		return nil, nil
+		return nil
 	}
 	f, err := os.Open(filepath.Join(a.sessionDir(root), streamPrefix+stream+streamSuffix))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer f.Close()
 	zr, err := gzip.NewReader(io.LimitReader(f, pos.Bytes))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	dec := json.NewDecoder(zr)
-	var out []StoredRecord
 	for {
 		var r StoredRecord
 		if err := dec.Decode(&r); errors.Is(err, io.EOF) {
-			break
+			return nil
 		} else if err != nil {
-			return nil, err
+			return err
 		}
-		out = append(out, r)
+		if err := fn(r); errors.Is(err, StopScan) {
+			return nil
+		} else if err != nil {
+			return err
+		}
 	}
-	return out, nil
 }
 
 // ReadBlob returns a stored blob's bytes.

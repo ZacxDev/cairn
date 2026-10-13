@@ -28,3 +28,20 @@ func foldLedger(m *Meta, lines [][]byte) {
 	m.Ledger = union(m.Ledger, d.Result().Ledger)
 	m.LedgerRecords += len(lines)
 }
+
+// LedgerScopes is the ledger's half of `V`: `L(s)`, plus `*` when F1 fires — some stored tool input
+// names the program and the session's uploaded ledger holds ZERO records (decision 3: "it asks only
+// is the ledger empty").
+//
+// ⚠ F1's `*` IS THE ONE PART OF `V` THAT CAN GO AWAY, AND THAT IS THE DECISION, NOT A LEAK: it stands
+// for "the program ran and nothing says what it read", and a ledger record is what says it. A host
+// that forges one record defeats it — the ledger is self-reported (threat T3), like the trailer.
+//
+// ⚠ ONLY THE POD'S OWN F1 GOES AWAY. The agent declares its own `L ∪ R_header ∪ F`, and a `*` it
+// declared while ITS ledger was empty is in the grow-only [Meta.Declared] for good.
+func (m *Meta) LedgerScopes() []string {
+	if m.NamesProgram && m.LedgerRecords == 0 {
+		return union(m.Ledger, []string{Star})
+	}
+	return m.Ledger
+}

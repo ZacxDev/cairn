@@ -8,6 +8,8 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/report"
+	"github.com/ZacxDev/cairn/internal/transcript"
+	"github.com/ZacxDev/cairn/internal/transcript/transcripttest"
 )
 
 // realPage is, for every CONTENT GET row, the query that reaches its REAL page against
@@ -35,6 +37,20 @@ var realPage = map[string]struct{ query, marker string }{
 	"GET /session content":       {"?" + QuerySession + "=" + walkSession, `id="session-summary"`},
 	"GET /team content":          {"", `<title>cairn — team`},
 	"GET /scope/sources content": {"?" + QueryScope + "=" + string(fixtureScope), `<h2>Code sources · platform</h2>`},
+	// The raw-record view's real page needs a STORED transcript the caller may see: `walkTranscripts`
+	// stores one for [walkSession], owned by the walk's own identity.
+	"GET /session/transcript content": {"?" + QuerySession + "=" + walkSession, `id="transcript-raw"`},
+}
+
+// walkTranscripts is a transcript store holding ONE session, [walkSession], owned by the walk's
+// identity — so the raw-record row's real page is reachable (the owner arm; no store walk).
+func walkTranscripts(t *testing.T) *transcript.Store {
+	t.Helper()
+	p := testIdentity().Principal
+	a := transcripttest.Open(t)
+	transcripttest.Append(t, a, transcripttest.Session{Root: walkSession, Owner: string(p.Kind) + ":" + string(p.ID)}, "main",
+		[]string{trUser("a synthetic message")})
+	return transcript.NewStore(a, t.TempDir())
 }
 
 // redirectRows is every non-public GET row that answers a BODILESS 303 rather than a page —
@@ -84,13 +100,14 @@ func (s walkSource) Session(_ control.Authorization, session string) (SessionAns
 // the one above — a refusal, another tab, the raw view, a search. Those reach the header through
 // the same [writeHTML], which is the property that makes one query per row sufficient; it is a
 // structural argument, not a measurement of each of them. The one POST that answers a page — the
-// invitation MINT — is pinned by `TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged`.
+// team-link MINT — is pinned by `TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged`.
 //
 // ⚠ THE EXPECTED VALUE IS A LITERAL, NEVER `htmlCacheControl`: reading it off the implementation
 // would make this assert `a == a`.
 func TestEveryNonPublicHTMLRowIsNoStore(t *testing.T) {
 	cfg := testConfig(t, staticAuth{testIdentity()})
 	cfg.Source = walkSource{staticSource{scopes: benignWorld()}}
+	cfg.Transcripts = walkTranscripts(t)
 	authed, err := New(cfg)
 	if err != nil {
 		t.Fatalf("the server did not build: %v", err)

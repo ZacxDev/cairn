@@ -18,17 +18,21 @@ import (
 // # 🔴 THE TEAM PAGE IS THE ONE PAGE — THE FORMS LIVE HERE (operator decision O-a)
 //
 // `GET /team` carries the whole of "who can get at my notes": the SHARE flow (`?scope=` picks
-// a scope: who has access, what can be taken back, the grant form), the single-project
-// INVITE flow (`?project=` picks a project: its outstanding invitations, revoke, the mint
-// form, and its PROJECT-WIDE grants with revoke — O-b), and the multi-target TEAM LINK (its
-// form, and every link this caller minted with its redemption log and revoke).
+// a scope: who has access, what can be taken back, the grant form), the INVITATIONS that
+// already exist (`?project=` picks a project: its invitations, revoke, and its PROJECT-WIDE
+// grants with revoke — O-b), and the multi-target TEAM LINK (the page's ONE mint form, and
+// every link this caller minted with its redemption log and revoke).
+//
+// 🔴 SINGLE-PROJECT INVITATIONS ARE FOLDED INTO TEAM LINKS (operator decision, option A): the
+// project section has no mint form, `?project=` pre-ticks that project on the team-link form,
+// and `POST /invite` creates nothing (`handleInvite`). `InviteFoldNotice` states the costs.
 //
 // `GET /share` and `GET /invite` answer a 303 here, carrying their query. Their POST rows
 // (`/share`, `/unshare`, `/invite`, `/invite/revoke`) are UNCHANGED as routes, so both
-// cross-site gates still reach them by METHOD and every refusal they answer is the same; only
-// where they land afterwards moved, to this page. The sections are the same renderers the two
-// old pages used (`shareIndex`, `shareScopeSection`, `inviteIndex`, `inviteProjectSection`,
-// `mintedSection`), so what each guard over them read is what it still reads.
+// cross-site gates still reach them by METHOD; only where they land afterwards moved, to this
+// page. The sections are the renderers the two old pages used (`shareIndex`,
+// `shareScopeSection`, `inviteIndex`, `inviteProjectSection`), so what each guard over them
+// read is what it still reads.
 
 // TeamHonesty is the notice the Team page carries on every shape of it.
 //
@@ -111,8 +115,8 @@ type TeamView struct {
 	App    App
 	// Share is the share section: the index (zero `Scope`) or one scope — `shareSection`.
 	Share ShareView
-	// Invite is the invitation section: the index, one project, or a just-minted invitation
-	// — `inviteSection` / `handleInvite`.
+	// Invite is the invitation section: the index or one project — `inviteSection`. Its
+	// `Project`, when set, is also the box the team-link form pre-ticks.
 	Invite InviteView
 	// ProjectGrants is the project-wide grants over `Invite.Project`, revocable here (O-b).
 	ProjectGrants []GrantRow
@@ -157,7 +161,7 @@ type TeamRedemptionRow struct {
 	Confirmed bool
 }
 
-// MintedTeamLink is a freshly created link, rendered exactly once — `MintedInvite`'s rule.
+// MintedTeamLink is a freshly created link, rendered exactly once.
 type MintedTeamLink struct {
 	Link     string
 	Role     string
@@ -233,8 +237,8 @@ func (s *Server) teamView(w http.ResponseWriter, r *http.Request, id identity.Id
 	return view, true
 }
 
-// renderTeamAfterMint renders the Team page as the response to a MINT (an invitation or a
-// team link), with `set` adding the one-time value.
+// renderTeamAfterMint renders the Team page as the response to a team-link MINT, with `set`
+// adding the one-time value.
 //
 // ⚠ THE SECTIONS ARE BUILT FROM A COPY OF THE REQUEST WITH NO QUERY. A POST's URL may carry
 // one (`POST /team/link?scope=…` is a string anybody can put in a form action), and a section
@@ -253,9 +257,13 @@ func (s *Server) renderTeamAfterMint(w http.ResponseWriter, r *http.Request, id 
 
 // handleTeamLink mints one team link and renders it ONCE.
 //
-// ⚠ IT DOES NOT REDIRECT — `handleInvite`'s ruling, for its reason: the token survives no
-// hop. A reload re-submits the form and mints a second link; the extra one is listed and
-// revocable.
+// ⚠ IT DOES NOT REDIRECT, AND THAT IS THE ONE PLACE THIS SURFACE BREAKS ITS
+// POST-REDIRECT-GET PATTERN: `invite.NewToken` returns the token exactly once and only its
+// digest is stored, so there is nothing to render on the far side of a hop. Putting it in the
+// redirect URL would land a bearer capability in history, referrers and access logs
+// (`inviteTokenField`); stashing it server-side would be a new table of live capabilities.
+// The accepted cost: a reload re-submits the form and mints a second link, which is listed
+// and revocable.
 func (s *Server) handleTeamLink(w http.ResponseWriter, r *http.Request, id identity.Identity) {
 	if s.teamLinks == nil {
 		s.refuseWithoutInviteStore(w)
@@ -299,8 +307,10 @@ func (s *Server) handleTeamLink(w http.ResponseWriter, r *http.Request, id ident
 			shown = append(shown, targetLabel(t, names[t]))
 		}
 		view.Minted = &MintedTeamLink{
-			// A PATH AND A FRAGMENT, NEVER AN ABSOLUTE URL — `handleInvite`'s ruling. And the SAME
-			// join path and field as an invitation: see `ControlInviting.Links`.
+			// A PATH AND A FRAGMENT, NEVER AN ABSOLUTE URL: this process does not know its own
+			// external origin (the only candidate is a `Host` header a proxy chooses), and a
+			// guessed one would hand somebody a link to the wrong hostname. And the SAME join
+			// path and field as an invitation: see `ControlInviting.Links`.
 			Link:     joinLink(token),
 			Role:     string(link.Role),
 			Expires:  link.ExpiresAt.UTC().Format(time.RFC3339),
@@ -419,8 +429,9 @@ func teamLinkRows(links []LinkWithLog, now time.Time) []TeamLinkRow {
 //
 // 🔴 ALL THREE NOTICES, ON EVERY SHAPE AND ABOVE EVERY ANSWER THEY QUALIFY — the rule each of
 // the two old pages stated for its own: the replica-honesty notice qualifies the audience
-// list, `InviteHonesty` the invitation link, `TeamHonesty` the team link. A notice shown only
-// on the shape about to write would leave the read — far more common — unqualified.
+// list, `InviteHonesty` the invitations that already exist, `TeamHonesty` the team link. A
+// notice shown only on the shape about to write would leave the read — far more common —
+// unqualified. `InviteFoldNotice` sits in the invitation section itself, on both its shapes.
 func TeamPage(v TeamView) g.Node {
 	title := "team"
 	switch {
@@ -443,9 +454,8 @@ func TeamPage(v TeamView) g.Node {
 		g.If(share.Outcome != "", h.P(h.Class("outcome"), g.Text(share.Outcome))),
 		g.If(inv.Outcome != "", h.P(h.Class("outcome"), g.Text(inv.Outcome))),
 		g.If(v.Outcome != "", h.P(h.Class("outcome"), g.Text(v.Outcome))),
-		// `g.Iff` for each pointer — the measured nil-deref the old invite page recorded:
+		// `g.Iff` for the pointer — the measured nil-deref the old invite page recorded:
 		// `g.If` evaluates its argument before the condition.
-		g.Iff(inv.Minted != nil, func() g.Node { return mintedSection(inv) }),
 		g.Iff(v.Minted != nil, func() g.Node { return mintedLinkSection(v.Minted) }),
 		h.Div(h.ID(teamShareAnchor),
 			g.If(share.Scope.Name == "", shareIndex(share)),
@@ -453,6 +463,7 @@ func TeamPage(v TeamView) g.Node {
 		),
 		h.Div(h.ID(teamInviteAnchor),
 			g.If(v.NoInviteStore, h.P(h.Class("read-only"), g.Text(NoInviteStore))),
+			g.If(!v.NoInviteStore, h.P(h.Class("note"), g.Text(InviteFoldNotice))),
 			g.If(!v.NoInviteStore && inv.Project.Name == "", inviteIndex(inv)),
 			g.If(!v.NoInviteStore && inv.Project.Name != "", inviteProjectSection(inv)),
 			g.If(!v.NoInviteStore && inv.Project.Name != "", projectGrantsSection(v)),
@@ -504,9 +515,19 @@ func teamLinkSection(v TeamView) g.Node {
 
 // teamLinkForm is the multi-target mint form.
 //
-// 🔴 THE ROLE DEFAULT IS THE LEAST PRIVILEGED (`reader`), FOR `inviteForm`'s REASON, AND
-// THE REUSE BOX IS UNTICKED, FOR THE SAME ONE: the unread default must be the safe one.
+// 🔴 THE ROLE DEFAULT IS THE LEAST PRIVILEGED (`reader`) AND THE REUSE BOX IS UNTICKED, FOR
+// ONE REASON: a form's unread default is what it hands out to everybody who does not read
+// it, so the unread default must be the safe one.
+//
+// 🔴 ONE BOX MAY ARRIVE TICKED, AND ONLY BY THE READER'S OWN CHOICE: the project `?project=`
+// named (the fold — this is where "invite somebody to this project" lands). It is
+// `v.Invite.Project`, which `inviteSection` sets only for a project `Invitable` returned, and
+// it ticks a box only if `Mintable` offered that same target — so the pre-tick can neither
+// add a target the chooser lacks nor name one the caller may not confer. With no `?project=`
+// nothing is ticked: `preselected` then has an empty id, and no target `Mintable` lists has
+// one.
 func teamLinkForm(v TeamView) g.Node {
+	preselected := invite.Target{Kind: invite.TargetProject, ID: v.Invite.Project.ID}
 	return h.FormEl(
 		h.Class("invite team-link"),
 		h.Method("post"),
@@ -522,7 +543,8 @@ func teamLinkForm(v TeamView) g.Node {
 					roles = append(roles, string(r))
 				}
 				return h.Label(
-					h.Input(h.Type("checkbox"), h.Name(FieldTarget), h.Value(targetValue(m.Target))),
+					h.Input(h.Type("checkbox"), h.Name(FieldTarget), h.Value(targetValue(m.Target)),
+						g.If(m.Target == preselected, h.Checked())),
 					g.Text(targetLabel(m.Target, m.Name)+" (up to "+strings.Join(roles, ", ")+")"),
 				)
 			}),
@@ -606,7 +628,10 @@ func confirmedCount(log []TeamRedemptionRow) int {
 	return n
 }
 
-// mintedLinkSection renders a fresh link ONCE, as TEXT — `mintedSection`'s three reasons.
+// mintedLinkSection renders a fresh link ONCE, as TEXT and never as an `<a href>`: the link is
+// a PATH with no origin, so an anchor would resolve against THIS page and offer the minter a
+// one-click way to spend their own link; an anchor is also what a link-prefetcher and a mail
+// scanner follow; and what a reader needs to do with the value is COPY it.
 func mintedLinkSection(m *MintedTeamLink) g.Node {
 	reuse := "Single use: the first person to redeem it spends it."
 	if m.Reusable {

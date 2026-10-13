@@ -359,6 +359,12 @@ func TestTheTokenFileHoldsDigestsOnly(t *testing.T) {
 // imports, through the walk the dependency ban trusts). A worker token means something only where
 // `internal/worker` is reachable, so a new importer — `internal/identity`, `internal/ui`, the pod —
 // is a new place a capture token could come to authenticate. Fails on SHRINK too.
+//
+// 🔴 THE ARCHIVE GAINED ONE READER IN S4, AND IT IS `internal/transcript` — NOT `internal/ui`. The
+// browser surface reads a stored record only through a `transcript.View`, which exists only where
+// the visibility predicate said yes; `internal/ui` importing the archive itself would be a way to
+// read one without asking. `internal/transcript/transcripttest` is the tests' fixture writer, and
+// its own row pins that NOTHING that ships imports it.
 func TestOnlyTheBrowserProgramImportsWorker(t *testing.T) {
 	root, err := depspolicy.RepoRoot()
 	if err != nil {
@@ -374,7 +380,9 @@ func TestOnlyTheBrowserProgramImportsWorker(t *testing.T) {
 		want []string
 	}{
 		{mod + "/internal/worker", []string{mod + "/cmd/cairn-ui"}},
-		{mod + "/internal/transcript/archive", []string{mod + "/cmd/cairn-ui", mod + "/internal/worker"}},
+		{mod + "/internal/transcript/archive", []string{mod + "/cmd/cairn-ui", mod + "/internal/transcript",
+			mod + "/internal/transcript/transcripttest", mod + "/internal/worker"}},
+		{mod + "/internal/transcript/transcripttest", nil},
 	} {
 		if _, ok := graph[c.pkg]; !ok || len(graph) < 10 {
 			t.Fatalf("POSITIVE CONTROL: the walk saw %d package(s) and %s=%v", len(graph), c.pkg, ok)

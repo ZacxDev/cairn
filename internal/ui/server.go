@@ -20,6 +20,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/presence"
 	"github.com/ZacxDev/cairn/internal/report"
 	"github.com/ZacxDev/cairn/internal/store"
+	"github.com/ZacxDev/cairn/internal/transcript"
 )
 
 // Source is the read half this surface needs, as an interface so the renderer's
@@ -982,6 +983,11 @@ type Server struct {
 	// designed OFF state. THE ONE WRITER of that journal is `handleSourcesSave`.
 	sourceJournal codesrc.Journal
 
+	// transcripts is the transcript archive's read side, NIL when this deployment has none — then
+	// no page renders a transcript section and the raw-record row answers its one miss. See
+	// `transcript.go`.
+	transcripts *transcript.Store
+
 	// app is this deployment's installable identity; the zero value is unarmed. See `pwa.go`.
 	app App
 }
@@ -1110,6 +1116,12 @@ type Config struct {
 	// zero value is the designed OFF state: the Sources block is absent from the scope page and the
 	// edit page says the deployment is unconfigured. This surface is the journal's ONLY writer.
 	SourceJournal codesrc.Journal
+	// Transcripts is the transcript archive's READ side (S4 of the transcripts plan,
+	// `transcript.go`): the session page's transcript section and the raw-record row answer from it,
+	// through `transcript.Store.View` — the ONE visibility predicate — and never around it. NIL is the
+	// designed OFF state and the deployed one wherever `cairn-ui` runs without `-transcript-dir`:
+	// every page then renders exactly what it rendered before this field existed.
+	Transcripts *transcript.Store
 	// App arms the installable surface (`pwa.go`): the manifest row, the icon links and the theme
 	// colour. The zero value is UNARMED and renders exactly what this surface rendered before it
 	// existed. [App.Validate] is applied here, so a server cannot be built around an app the
@@ -1219,6 +1231,7 @@ func New(cfg Config) (*Server, error) {
 		memos:    cfg.Memos,
 
 		sourceJournal: cfg.SourceJournal,
+		transcripts:   cfg.Transcripts,
 
 		app: cfg.App,
 	}, nil
@@ -1868,8 +1881,9 @@ func (s *Server) renderStatus(w http.ResponseWriter, status int, node g.Node) {
 //     a hidden field. Recorded in `internal/ui/README.md`, Phase Q.
 //   - THE INVITATION MINT IS NO LONGER A SPECIAL CASE. It was the one page sent `no-store`,
 //     through its own entry point, because its body IS a bearer capability; it now gets the same
-//     value through this function, and `TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged`
-//     still pins it.
+//     value through this function. (That mint is gone since the invite fold; the team-link
+//     mint is the capability-bearing page now, and
+//     `TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged` pins it.)
 //   - ⚠ WHAT IT COSTS IS RESEARCHED, NOT MEASURED HERE: Chromium admits `no-store` pages to the
 //     back/forward cache for at most three minutes and evicts them on any cookie change (so a
 //     sign-out always evicts); Safari and Firefox re-fetch on Back. The plan's Q7 is the

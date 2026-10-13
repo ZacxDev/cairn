@@ -79,12 +79,12 @@ type Inviting interface {
 	// Outstanding is every invitation naming a project, newest first, in every state.
 	Outstanding(project control.ID) ([]invite.Invite, error)
 
-	// Mint creates an invitation and returns the token ONCE.
-	//
-	// 🔴 THE TOKEN IS RETURNED, NEVER STORED, AND NEVER RE-DERIVABLE. See
-	// `invite.NewToken`. A caller that loses it has to mint another.
-	Mint(ctx context.Context, actor control.Principal, project control.ID, role control.Role,
-		ttl time.Duration) (token string, inv invite.Invite, err error)
+	// 🔴 THERE IS NO `Mint`, AND ITS ABSENCE IS THE GUARD. Single-project invitations were
+	// folded into team links (operator decision, option A): the server holds this half as an
+	// `Inviting`, so a method set that cannot create an invitation is a server that cannot
+	// create one from any handler. What remains is everything an invitation that ALREADY
+	// EXISTS needs — listed, revocable, redeemable until it expires.
+	// `TestTheInvitingInterfaceCannotMint` pins the method set.
 
 	// Revoke withdraws an outstanding invitation by DIGEST, which is the only handle the
 	// mint page has — it never sees the tokens.
@@ -185,36 +185,19 @@ func (r Redemption) logFields() string {
 	return out
 }
 
-// ErrNotInvitable refuses an invite into a project this actor may not manage.
+// ErrNotInvitable refuses a revoke of an invitation into a project this actor may not manage.
 //
 // ⚠ ONE ERROR FOR "no such project" AND "not yours to manage", for `ErrNotPermitted`'s
 // reason on the share flow: a caller that could tell them apart could enumerate projects.
 var ErrNotInvitable = errors.New("ui: no such project, or it is not yours to invite into")
-
-// ErrRoleNotConferrable refuses an invitation at a role this actor may not hand out.
-//
-// 🔴 IT IS A SENTINEL RATHER THAN A BARE `fmt.Errorf`, AND THAT IS WHAT MAKES THE HANDLER
-// ABLE TO ANSWER IT AT ALL. `refuseInviteWrite` maps errors onto statuses with `errors.Is`,
-// so an unwrapped error falls to its `default` arm and becomes a **500** — which for a
-// caller who picked a role their own standing does not permit is both the wrong status and a
-// sentence that sends an operator looking for a broken server. The two cases it covers are
-// deliberately ONE sentinel: "that is not a role at all" and "that role is above yours" have
-// to be answered identically on the wire, because a form posting a bogus role and a form
-// posting `owner` are the same user error from the same control.
-//
-// ⚠ THE WRAPPED MESSAGES DIFFER, AND THAT IS ON PURPOSE. The operator's log gets which of
-// the two it was, and which roles were involved; the page gets one fixed sentence
-// (`roleRefusal`). Discriminating in the log and not on the wire is this surface's standing
-// pattern — see `signInRefused` for the case where even the log line is the point.
-var ErrRoleNotConferrable = errors.New("ui: that role cannot be conferred by the role you hold")
 
 // ErrAlreadyAMember refuses a redemption by somebody the project already holds.
 //
 // ⚠ IT IS NOT UNIFORM WITH `invite.ErrNotRedeemable`, AND THE ASYMMETRY IS DELIBERATE.
 // Every other refusal on this flow is collapsed so that a caller cannot learn facts about
 // somebody ELSE's invitation. This one is a fact about the CALLER's own membership in a
-// project they are authenticated for, which is the same admissibility argument
-// `roleRefusal` rests on — and telling them "you are already in" is the only answer that
+// project they are authenticated for, which is `ReadOnlyAuthority`'s admissibility
+// argument — and telling them "you are already in" is the only answer that
 // does not read as a broken link.
 //
 // 🔴 IT IS RETURNED BEFORE THE INVITATION IS SPENT, so the link keeps working for whoever
@@ -295,54 +278,6 @@ func (c ControlInviting) Outstanding(project control.ID) ([]invite.Invite, error
 		return nil, nil
 	}
 	return c.Invites.ForProject(project)
-}
-
-// Mint creates an invitation for a project this actor manages.
-func (c ControlInviting) Mint(ctx context.Context, actor control.Principal, project control.ID,
-	role control.Role, ttl time.Duration) (string, invite.Invite, error) {
-
-	if !c.mayManage(actor, project) {
-		return "", invite.Invite{}, ErrNotInvitable
-	}
-	if !role.Valid() {
-		return "", invite.Invite{}, fmt.Errorf("%w: %q is not a role", ErrRoleNotConferrable, role)
-	}
-	// 🔴 AN INVITATION MAY NOT CONFER MORE THAN THE INVITER HOLDS. Without this an `admin`
-	// could mint an `owner` invitation and then redeem it themselves — a privilege
-	// escalation with an audit trail that reads as an ordinary join.
-	//
-	// 🔴 THE RULE ITSELF IS `control.Role.CanConfer` AND IS NOT SPELLED HERE, WHICH IS A
-	// CONSOLIDATION RATHER THAN AN INDIRECTION. The role CHOOSER on the mint page has to
-	// ask the same question — a select offering `owner` to an admin offers a value this
-	// function then refuses — so the condition had two readers the moment the page existed.
-	// It used to read `role == control.RoleOwner && held != control.RoleOwner` right here,
-	// which is correct and is the spelling the second reader would have copied.
-	held, _ := c.Authority.Model().RoleIn(project, actor.ID)
-	if !held.CanConfer(role) {
-		return "", invite.Invite{}, fmt.Errorf(
-			"%w: a %q may not confer %q (see control.Role.CanConfer)",
-			ErrRoleNotConferrable, held, role)
-	}
-	if ttl <= 0 {
-		ttl = invite.DefaultTTL
-	}
-	token, digest, err := invite.NewToken()
-	if err != nil {
-		return "", invite.Invite{}, err
-	}
-	now := c.now()
-	inv := invite.Invite{
-		Digest:    digest,
-		ProjectID: project,
-		Role:      role,
-		Inviter:   actor.ID,
-		CreatedAt: now,
-		ExpiresAt: now.Add(ttl),
-	}
-	if err := c.Invites.Create(inv); err != nil {
-		return "", invite.Invite{}, err
-	}
-	return token, inv, nil
 }
 
 // Revoke withdraws an invitation the actor may manage.

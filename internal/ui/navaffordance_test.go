@@ -38,7 +38,7 @@ func TestEveryRenderedPageCarriesBothNavigationAffordances(t *testing.T) {
 	// The ledger. A page added to the surface must be added here, and the count is
 	// asserted so that adding one without an entry FAILS rather than passing unseen.
 	want := []string{
-		"entry", "hub", "invite-index", "invite-minted", "invite-project", "navigate", "root",
+		"entry", "hub", "invite-index", "invite-project", "navigate", "root",
 		"scope", "search", "sessions", "share-index", "share-scope", "team", "team-minted",
 	}
 	got := make([]string, 0, len(pages))
@@ -170,12 +170,6 @@ func everyRenderedPage(t *testing.T) map[string]string {
 	}
 	inviteProjectView := inviteIndexView
 	inviteProjectView.Project = fixtureNamedProject
-	inviteMintedView := inviteProjectView
-	inviteMintedView.Minted = &MintedInvite{
-		Link:    JoinPath + "?invite=" + fixtureInviteToken,
-		Role:    control.RoleMember,
-		Expires: "2000-01-09T03:04:05Z",
-	}
 
 	sessionsView := v
 	sessionsView.SessionsList = &SessionsList{}
@@ -191,15 +185,15 @@ func everyRenderedPage(t *testing.T) map[string]string {
 		"search":      renderNode(t, Page(searchView)),
 		"share-index": renderNode(t, shareOnTeam(shareIndexView)),
 		"share-scope": renderNode(t, shareOnTeam(shareScopeView)),
-		// 🔴 ALL THREE INVITE SHAPES, BECAUSE THE MINTED ONE IS THE PAGE MOST LIKELY TO BE
-		// WRITTEN WITHOUT THE FRAME. It is the response to a POST rather than a navigation,
-		// so it is the one a later change would be tempted to render as a bare fragment —
-		// and a page holding a single-use capability with no way back to the rest of the
-		// surface is the worst place for a reader to be stranded.
+		// Both invite shapes. (There was a third, "invite-minted"; nothing mints an invitation
+		// since the fold, so that page no longer exists.)
 		"invite-index":   renderNode(t, inviteOnTeam(inviteIndexView)),
 		"invite-project": renderNode(t, inviteOnTeam(inviteProjectView)),
-		"invite-minted":  renderNode(t, inviteOnTeam(inviteMintedView)),
-		// The Team page, and its MINTED shape for the invite-minted reason above.
+		// 🔴 THE Team page, AND ITS MINTED SHAPE, BECAUSE THAT ONE IS THE PAGE MOST LIKELY TO BE
+		// WRITTEN WITHOUT THE FRAME. It is the response to a POST rather than a navigation,
+		// so it is the one a later change would be tempted to render as a bare fragment —
+		// and a page holding a capability with no way back to the rest of the surface is the
+		// worst place for a reader to be stranded.
 		"team": renderNode(t, TeamPage(TeamView{Viewer: "operator@example.invalid", CSRF: renderCSRF})),
 		"team-minted": renderNode(t, TeamPage(TeamView{Viewer: "operator@example.invalid", CSRF: renderCSRF,
 			Minted: &MintedTeamLink{Link: JoinPath + "?invite=" + fixtureLinkToken, Role: "reader", Expires: "2000-01-09T03:04:05Z"}})),

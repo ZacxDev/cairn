@@ -131,9 +131,16 @@ func TestOpenAcceptsAFreshAndItsOwnDirectoryAndNothingElse(t *testing.T) {
 }
 
 // pad builds a record of EXACTLY n bytes.
-func pad(n int) []byte {
+func pad(n int) []byte { return padWith(n, "a") }
+
+// padWith builds a record of EXACTLY n bytes whose one text string repeats unit (topped up with
+// `a`), so the budget can be measured over content the derivation has to WORK on, not only over
+// a run of letters it can skip.
+func padWith(n int, unit string) []byte {
 	head, tail := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"`, `"}]}}`
-	return []byte(head + strings.Repeat("a", n-len(head)-len(tail)) + tail)
+	fill := n - len(head) - len(tail)
+	body := strings.Repeat(unit, fill/len(unit))
+	return []byte(head + body + strings.Repeat("a", fill-len(body)) + tail)
 }
 
 // sendFrames sends rec as `count` frames of at most `size` bytes and returns the last error.
@@ -198,9 +205,80 @@ const assemblyBudget = 100 << 20
 // allocated, an UPPER bound on the peak live heap. Measured at 1, 2 and 4 MiB: 18.8×, 18.2×,
 // 17.9× the record (≈72 MiB at the cap), linear. It fails if the cap is raised, or the assembly
 // path grows, past [assemblyBudget].
+//
+// It runs over three CONTENT shapes, because what the assembly costs depends on what the record
+// says, not only on its size: a run of letters (the shape every earlier number here was measured
+// on), `\n`-escaped lines (what tool output looks like) and `\u`-escaped text (every string token
+// decoded by the read-scope derivation).
+//
+// ⚠ AND IT IS KNOWN NOT TO HOLD FOR EVERY SHAPE — THE RE-CHECK WALK (`internal/redact`) IS NOT
+// BOUNDED BY THIS BUDGET ON SHORT LINES. A record at the cap that is one run of `x: y\n` lines
+// allocated 241.4 MiB on `main` and 252.8 MiB here (no `-race`), the derivation contributing
+// nothing (it skips a string that cannot hold a marker): `redact.views` builds per-line offsets for
+// every layer combination. It is NOT one of the shapes above because it is not this change's to
+// fix; it is recorded in #261's body with its closing condition (that shape added here, green).
+//
+// ⚠ THE PATH DID GROW ONCE, AND THIS IS WHAT NOTICED: S4's read-scope derivation decodes the
+// assembled record, and through a `json.Decoder` that took one assembly to 91.7 MiB (22.9×) —
+// inside the budget by 8 MiB. Read in place with `json.Unmarshal` it was 75.7 MiB (18.9×, two
+// runs); with #261's audit fixes — the whole-record header scan and the repeated-member check —
+// 79.6 MiB (19.9×). All at the 4 MiB cap only. It GREW AGAIN in #261 round 2, and CI's `-race` run
+// is what noticed: decoding every JSON-looking string whatever its content took the letters shape
+// to 104.0 MiB under `-race` (99.7 without). Round 3 gates that decode on a marker being possible
+// and walks the tokens in place: 84.1 MiB under `-race` (79.7 without), and
+// [TestTheDerivationStaysWithinItsShare] bounds the derivation by itself.
 func TestTheAssembledRecordCapFitsThePod(t *testing.T) {
+	for _, tc := range []struct{ name, unit string }{
+		{"letters", "a"},
+		{"newline escapes", `line\n`},
+		{"unicode escapes", `\u0061`},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assembleAtCap(t, padWith(MaxAssembledBytes, tc.unit)) })
+	}
+}
+
+// TestTheDerivationStaysWithinItsShare measures [derive] ALONE over one record at the cap, so its
+// share of the assembly is bounded whatever the re-check walk around it costs — including over the
+// shapes that walk itself cannot fit (see above). The bound, [deriveBudget], is 8× the record.
+//
+// RED on #261 round 2's head (6dd486e): the escaped-markers shape — a record whose one string is a
+// run of `\u`-escaped header and memo lines — derived with 114.8 MiB (3207.7 MiB under `-race`),
+// because every header LINE allocated its marker list, its regexp match list and its result slice;
+// the memo shape (58.3 MiB) split each block into a line slice. Letters were 28.0 MiB there and are
+// 8.0 now: the gate skips the decode, and the record is no longer scanned twice.
+func TestTheDerivationStaysWithinItsShare(t *testing.T) {
+	for _, tc := range []struct{ name, unit, want string }{
+		{"letters", "a", ""},
+		{"unicode escapes", `\u0061`, ""},
+		{"escaped markers", `\u0073ubsystem-recall: scope=alpha-notes\n\u003c\u003c\u003ccairn-memo\n`, "alpha-notes"},
+		{"memo headings", `\u003c\u003c\u003ccairn-memo\n| [m-1] from a · beta-notes · 2000-01-01 · expires 2000-01-02\n`, "beta-notes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := padWith(MaxAssembledBytes, tc.unit)
+			var before, after runtime.MemStats
+			runtime.GC()
+			runtime.ReadMemStats(&before)
+			got := derive([][]byte{r}, nil).Scopes
+			runtime.ReadMemStats(&after)
+			if tc.want != "" && !slices.Contains(got, tc.want) {
+				t.Fatalf("POSITIVE CONTROL: the %s record derived %v, without the %s it reads", tc.name, got, tc.want)
+			}
+			n := after.TotalAlloc - before.TotalAlloc
+			if n > deriveBudget {
+				t.Fatalf("deriving one %s record at the %d-byte cap allocated %.1f MiB, over the %d MiB share",
+					tc.name, MaxAssembledBytes, float64(n)/(1<<20), deriveBudget>>20)
+			}
+			t.Logf("derive over %s: %.1f MiB (%.1f× the record)", tc.name, float64(n)/(1<<20), float64(n)/MaxAssembledBytes)
+		})
+	}
+}
+
+// deriveBudget is the derivation's share of [assemblyBudget]: 8× the record at the cap. Measured after
+// round 3 at 21.6–22.6 MiB (5.4–5.7×) for the two marker shapes, 25.6 MiB under `-race`.
+const deriveBudget = 8 * MaxAssembledBytes
+
+func assembleAtCap(t *testing.T, r []byte) {
 	g := newRig(t, 1<<40)
-	r := pad(MaxAssembledBytes)
 	half := len(r)/2 + 1
 	u := up("s-0001", "", "1")
 	u.Frame = &Frame{Index: 0, Count: 2}
