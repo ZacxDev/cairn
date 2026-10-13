@@ -64,7 +64,8 @@ type Client struct {
 	Base string
 	// Token is the plugin token (`-plugin-token-file`'s contents).
 	Token string
-	// HTTP is the client to use; nil is a client with [DefaultTimeout].
+	// HTTP is the client to use; nil is a client with [DefaultTimeout]. Its redirect policy is always
+	// replaced; a nil Transport becomes a proxy-less one, a non-nil Transport is used AS GIVEN.
 	HTTP *http.Client
 	// AllowPlaintextHosts is the operator's `-allow-plaintext-host` list: hosts (exact match, no
 	// port) the worker URL may be plain `http` to beyond loopback — a listener on a private
@@ -108,7 +109,8 @@ const maxAnswer = 32 << 20
 // request for a non-loopback host to `HTTP_PROXY` — whole, `Authorization` header and transcript bytes
 // included. With `-allow-plaintext-host` that is exactly the request this client makes, so an
 // environment variable would hand the plugin token to whatever it named. The worker listener is
-// reached DIRECTLY, always.
+// reached DIRECTLY — unless the caller supplies its own `HTTP` client WITH a transport, which is then
+// used as given, proxy and all (no program in this module does).
 func (c *Client) http() *http.Client {
 	cl := endpoint.Client(c.HTTP, DefaultTimeout)
 	if cl.Transport == nil {

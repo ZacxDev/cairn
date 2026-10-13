@@ -116,7 +116,13 @@ func splitMessage(msg string) (string, []Trailer) {
 		return msg, nil
 	}
 	rest := append(append([]string{}, pars[:at]...), strings.Join(prose, "\n"))
-	rest = append(rest, pars[at+1:]...)
+	for _, p := range pars[at+1:] {
+		// A conflict list is a list of PATHS git wrote, not something the author said: a path named
+		// for a ticket is no mention of it. Any other paragraph looked past stays in the message.
+		if first := strings.TrimSpace(strings.TrimLeft(strings.SplitN(p, "\n", 2)[0], "# ")); first != "Conflicts:" {
+			rest = append(rest, p)
+		}
+	}
 	var kept []string
 	for _, p := range rest {
 		if p != "" {

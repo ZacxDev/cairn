@@ -124,4 +124,10 @@ func TestTouchSaysWhenTheStampMovedEnoughToSave(t *testing.T) {
 	if !b.Touch(t0.Add(25*time.Hour)) || b.Stale(t0.Add(25*time.Hour+StateTTL)) {
 		t.Errorf("a stamp a day old was not renewed: %+v", b)
 	}
+	// A clock stepped BACK past the stamp: the stamp is in the future, which no TTL can count from, so
+	// it is rewritten to now.
+	back := t0.Add(-48 * time.Hour)
+	if !b.Touch(back) || b.Seen != back.UTC().Format(time.RFC3339) {
+		t.Errorf("a stamp in the future was kept after the clock stepped back: %+v", b)
+	}
 }

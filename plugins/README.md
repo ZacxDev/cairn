@@ -195,19 +195,23 @@ from record 1 (an edge it already holds is not written twice). The marker also b
 stopped at the 100-edge cap, and one whose host source (a repository, the GitHub CLI) could not be
 read.
 
-**The model's answer rides in the marker.** It is saved the moment the provider gives it, before any
-of it is written to the pod, and a redo writes what is saved: a model is paid ONCE per pass however
-often the pass is redone. An answer for a session that has since grown is not reused. ⚠ Until the pass
-finishes, that answer — ticket ids, confidences, one-sentence rationales about the session — is at
-rest in the state file.
+**A question is put to the model once.** What was asked (a digest of the session's description) and
+what came of it — a usable answer, an unusable one, or a failed request — is saved in the marker the
+moment the provider answers, before anything is written to the pod. A redo that would ask the SAME
+question writes what is saved and asks nobody, however the pass keeps failing and however the session
+grows meanwhile; a new summary is a new question. A request the run's own deadline cut short is the
+one thing not recorded. ⚠ Until the pass finishes, that answer — ticket ids, confidences, one-sentence
+rationales about the session — is at rest in the state file.
 
 **The backoff.** A pass the pod REFUSED (507 quota, 400, the 403) or whose host source failed is
 skipped for 15 minutes doubling to 24 hours; a success, or the session growing, clears it. For a
 session the pod still lists, a 5xx, an unreachable pod and the run's own deadline are transient:
 retried by the next run, no backoff (and no second model request). A session ONLY the marker brings
-back backs off on any failure and is given up after 6 failed attempts at one size (a line says so);
+back backs off on any failure the pod or a host source answered, and is given up after 6 failed
+attempts at one size (a line says so);
 at once when the pod answers its 403 for it (deleted, or toggled off) or holds fewer records than the
-marker names (deleted and re-uploaded); and after 30 days without the pod listing it. A backoff is NOT
+marker names (deleted and re-uploaded); and after 30 days without the pod listing it — the only bound
+on a pass the run's own deadline keeps cutting short. A backoff is NOT
 dropped because one pending page did not list the session (plugin A's rule,
 `hoststate.Backoff.Unlisted`). The run asks the pod for its maximum page (100) and WORKS ON `-limit`
 sessions not in backoff, unfinished passes first.
@@ -251,6 +255,9 @@ stdout line is `SUMMARY clickup-run: sessions=… edges=… suggestions=… requ
   trailer and the `refs:` key and nothing else; a file it misreads costs an edge.
 - **Suggestions are best-effort**: a capped, failed or unconfigured model leaves the pass complete
   with `model_asked: false`, and that session is not asked again until its summary changes.
+- **A custom id glued to a URL is lost**: a URL is blanked to its end before bare tokens are read, so
+  `…/t/abc123,ALPHA-12` (no space) names only `abc123`. With a space, a newline or `: ` it names both.
+- **A conflict list is not message text**: a path git lists under `Conflicts:` names no ticket.
 - **A given-up pass is not finished**: after its 6 attempts (or 30 days) the edges and suggestions it
   had not written are written only if the session grows again.
 - **More than 100 sessions in backoff at once hide the rest** — the pod's pending page is 100.

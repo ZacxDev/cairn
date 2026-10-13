@@ -698,6 +698,12 @@ func TestATrailerBlockIsTheLastParagraphOfKeyValueLines(t *testing.T) {
 	if _, tr := splitMessage("subject\n\nTicket: clk0000a1\n\nConflicts:\n\tsome/file.go"); len(tr) != 1 || tr[0].Key != "Ticket" {
 		t.Errorf("an uncommented Conflicts list hid the trailer block: %+v", tr)
 	}
+	// …but a conflict list is PATHS git wrote, not something the author said: it is not message text.
+	for _, list := range []string{"Conflicts:\n\tALPHA-12/file.go", "# Conflicts:\n#\tALPHA-12/file.go"} {
+		if body, tr := splitMessage("subject\n\nTicket: clk0000a1\n\n" + list); len(tr) != 1 || strings.Contains(body, "ALPHA-12") {
+			t.Errorf("a conflict list's path is in the message: %q %+v", body, tr)
+		}
+	}
 	if body, tr := splitMessage("subject\n\nTicket: clk0000a1\n\n#42 is the PR for ALPHA-12"); len(tr) != 1 || !strings.Contains(body, "#42 is the PR for ALPHA-12") {
 		t.Errorf("a paragraph after the trailers left the message: %q %+v", body, tr)
 	}
@@ -1246,5 +1252,74 @@ func TestAListedSessionInBackoffIsStampedAndAnUnlistedRedoIsNot(t *testing.T) {
 		if err != nil || len(todo) != tc.due || len(st.Sessions) != tc.due {
 			t.Errorf("an unfinished pass last listed at %s: %d due, %d kept (err %v), want %d", tc.seen, len(todo), len(st.Sessions), err, tc.due)
 		}
+	}
+}
+
+// TestAQuestionIsPutToTheModelOnceWhateverItAnswered — round-3 audit 🔴. The model answers PROSE (a
+// paid request with no usable answer) and the pod then fails the scan's write on every run. Red
+// before: only a usable answer was remembered, so each redo bought the request again — five runs,
+// five requests. The record of the question is now saved whether the answer was usable or not.
+func TestAQuestionIsPutToTheModelOnceWhateverItAnswered(t *testing.T) {
+	for name, arm := range map[string]func(w *world){
+		"an unusable answer": func(w *world) { w.prov.answer = "this is not json" },
+		"a provider 400":     func(w *world) { w.prov.status = 400 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t, human("please do the lorem export", ""))
+			w.args = w.withModel()
+			arm(w)
+			w.pod.failTypes = map[string]bool{TypeScan: true}
+			w.pod.hidden = nil
+			for range 5 {
+				w.run(t)
+				w.clock = w.clock.Add(48 * time.Hour)
+			}
+			if n := len(w.prov.received()); n != 1 {
+				t.Fatalf("the provider received %d requests over 5 attempts at one pass, want 1", n)
+			}
+		})
+	}
+}
+
+// TestTheSameQuestionIsNotBoughtAgainWhenTheSessionGrows — what identifies a question is the
+// DESCRIPTION the model was sent, not the session's size. A suggestion whose write the pod refuses (a
+// full quota) while the session keeps growing under the SAME summary is one request, not one per
+// growth; a NEW summary is a new question. And a saved suggestion for a ticket the session has since
+// been found to name is not written beside its edge.
+func TestTheSameQuestionIsNotBoughtAgainWhenTheSessionGrows(t *testing.T) {
+	w := newWorld(t, human("please do the lorem export", ""))
+	w.pod.addSummary("The human asked for a lorem export. SUMMARY-ONE")
+	w.args = w.withModel()
+	w.prov.answer = `[{"ticket_id":"clk0000a1","confidence":0.9,"rationale":"synthetic"},{"ticket_id":"clk0000b2","confidence":0.8,"rationale":"synthetic"}]`
+	w.pod.failTypes = map[string]bool{TypeSuggestion: true}
+	w.pod.failStatus = http.StatusInsufficientStorage
+	for i := range 4 {
+		w.run(t)
+		w.pod.grow("main", assistant(fmt.Sprintf("more %d", i)))
+		w.clock = w.clock.Add(time.Minute)
+	}
+	if n := len(w.prov.received()); n != 1 {
+		t.Fatalf("the provider received %d requests while the session grew under one summary, want 1", n)
+	}
+	// The session now NAMES one of the suggested tickets, and the quota is freed.
+	w.pod.grow("main", assistant("see "+cuURLPrefix+"clk0000a1"))
+	w.pod.mu.Lock()
+	w.pod.failTypes = nil
+	w.pod.mu.Unlock()
+	w.clock = w.clock.Add(48 * time.Hour)
+	if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "edges=1 suggestions=1 requests=0") {
+		t.Fatalf("the redo: exit %d\n%s%s", code, out, errs)
+	}
+	var s Suggestion
+	sg := w.pod.ofType(TypeSuggestion)
+	_ = json.Unmarshal(sg[0].Body, &s)
+	if len(sg) != 1 || s.TicketID != "clk0000b2" {
+		t.Fatalf("stored suggestions: %d, the first for %s — want only clk0000b2 (clk0000a1 has an edge now)", len(sg), s.TicketID)
+	}
+	// A NEW summary is a new question.
+	w.pod.addSummary("An updated summary. SUMMARY-TWO")
+	w.pod.grow("main", assistant("and more"))
+	if code, out, _ := w.run(t); code != 0 || !strings.Contains(out, "requests=1") {
+		t.Fatalf("a new summary was not asked about: exit %d %s", code, out)
 	}
 }

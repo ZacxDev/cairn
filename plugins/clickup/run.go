@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -154,12 +156,13 @@ const pendingAsk = 100
 // never written twice). The same marker keeps a pass that stopped at the edge cap, or whose host
 // source (a repository, the GitHub CLI) could not be read, coming back.
 //
-// ⚠ BOUNDED, FOR A SESSION ONLY THE MARKER BRINGS BACK: any failure backs it off, and after
-// [maxRedoFailures] failed attempts at the same size the marker is dropped and a line says so; it is
-// dropped at once when the pod answers its one 403 (deleted, or toggled off) or holds fewer records
-// than the marker names; and it is never re-stamped by being retried, so [hoststate.StateTTL] ends it
-// whatever else happens. A session the pod still lists keeps backing off instead — and in every case
-// the model is not asked twice for one pass ([sessionState.Asked]).
+// ⚠ BOUNDED, FOR A SESSION ONLY THE MARKER BRINGS BACK: a failure the pod or a host source ANSWERED
+// backs it off, and after [maxRedoFailures] failed attempts at the same size the marker is dropped and
+// a line says so; it is dropped at once when the pod answers its one 403 (deleted, or toggled off) or
+// holds fewer records than the marker names; and it is never re-stamped by being retried, so
+// [hoststate.StateTTL] ends it whatever else happens — that is the ONLY bound on a pass the run's own
+// deadline keeps cutting short. A session the pod still lists keeps backing off instead; and in every
+// case the model is not asked the same question twice ([sessionState.Asked]).
 type stateFile struct {
 	path     string
 	Sessions map[string]*sessionState `json:"sessions"`
@@ -170,19 +173,24 @@ type sessionState struct {
 	hoststate.Backoff
 	// Redo is the pending item of a pass that started and has not finished.
 	Redo *pluginapi.PendingItem `json:"redo,omitempty"`
-	// Asked is the model's answer for the unfinished pass.
+	// Asked is what the model was asked, and answered, for the unfinished pass.
 	//
-	// 🔴 A MODEL IS PAID ONCE PER PASS, HOWEVER OFTEN THE PASS IS REDONE. The answer is saved here the
-	// moment the provider gives it, BEFORE any of it is written to the pod; a redo writes what is
-	// saved and asks nobody. Without it every redo — after a 500 on the scan's write, a refused
-	// write, a failed host source — bought the same request again.
+	// 🔴 A MODEL IS PAID ONCE FOR ONE QUESTION, HOWEVER OFTEN THE PASS IS REDONE — AND WHATEVER IT
+	// ANSWERED. The record is saved here the moment the provider answers OR FAILS, before anything is
+	// written to the pod; a redo that would ask the SAME question (the same description of the
+	// session) writes what is saved and asks nobody. Without it every redo — after a 500 on the
+	// scan's write, a refused write, a failed host source — bought the same request again; and with
+	// only the successes remembered, a model that answered prose was re-bought on every redo.
 	Asked *asked `json:"asked,omitempty"`
 }
 
-// asked is a provider's answer for one pass: what it suggested (already filtered), and for how many
-// records — an answer for a session that has since GROWN is not reused.
+// asked is one question put to the provider and what came of it.
 type asked struct {
-	Records     int64        `json:"records"`
+	// Digest identifies the QUESTION: the description of the session the model was sent. A session
+	// that grew without its description changing (the same stored summary) is the same question; a
+	// new summary is a new one.
+	Digest string `json:"digest"`
+	// Model is the model that answered; "" when the request failed or its answer could not be used.
 	Model       string       `json:"model"`
 	Suggestions []Suggestion `json:"suggestions"`
 }
@@ -316,9 +324,6 @@ func (r *Runner) Run(ctx context.Context, items []work, st *Stats) error {
 			// 🔴 NOT for a session only the marker brought here: its stamp stays where the pod last
 			// listed it, so the state TTL bounds how long an unfinished pass is retried.
 			ss.Touch(r.Now())
-		}
-		if ss.Asked != nil && ss.Asked.Records != records(it) {
-			ss.Asked = nil // the session grew since that answer
 		}
 		if err := r.State.save(); err != nil {
 			return err
@@ -709,23 +714,16 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem, redo boo
 	// --- suggestions: one request, and only ever written as suggestions.
 	scan := Scan{System: "clickup", Edges: res.edges}
 	model := noModel
-	if ss.Asked == nil {
-		if sg, m, err := r.suggest(ctx, it, &res, h); err != nil {
-			res.modelErr = true
-			r.Log(fmt.Sprintf("clickup: session=%s no suggestion was made: %v", it.Session, err))
-		} else if m != "" {
-			// Saved BEFORE the first of it is written: see [sessionState.Asked].
-			ss.Asked = &asked{Records: records(it), Model: m, Suggestions: sg}
-			if err := r.State.save(); err != nil {
-				return res, err
-			}
-		}
+	a, err := r.suggest(ctx, it, &res, h, ss)
+	if err != nil {
+		return res, err
 	}
-	if a := ss.Asked; a != nil {
+	if a != nil && a.Model != "" {
 		m := a.Model
 		scan.ModelAsked, model = true, m
 		for _, s := range a.Suggestions {
-			// A redo re-writes only what the interrupted pass did not get to.
+			// A redo writes only what the interrupted pass did not get to — and nothing for a ticket
+			// the session has since been found to NAME: an edge needs no suggestion beside it.
 			if h.suggested[s.TicketID] || h.edged[s.TicketID] {
 				continue
 			}
@@ -757,11 +755,13 @@ func (r *Runner) title(id string) string {
 	return oneLine(r.Matcher.Index.byID[id].Name, maxTitle)
 }
 
-// suggest asks the model once for this pass. It answers the model's name when a request was MADE and
-// answered ("" when none was: no provider, no candidate, nothing new to describe, or the spend cap).
-func (r *Runner) suggest(ctx context.Context, it pluginapi.PendingItem, res *sessionResult, h held) ([]Suggestion, string, error) {
+// suggest is this pass's answer from the model: nil when nobody was (or is to be) asked — no provider,
+// no candidate, nothing new to describe, the spend cap — and otherwise the record of the ONE request
+// for this question, made now or by an earlier attempt at this pass ([sessionState.Asked]). A request
+// that failed is such a record too, with no model: it is counted, logged and NOT made again.
+func (r *Runner) suggest(ctx context.Context, it pluginapi.PendingItem, res *sessionResult, h held, ss *sessionState) (*asked, error) {
 	if r.Provider == nil {
-		return nil, "", nil
+		return nil, nil
 	}
 	var cands []Ticket
 	allowed := map[string]bool{}
@@ -777,37 +777,58 @@ func (r *Runner) suggest(ctx context.Context, it pluginapi.PendingItem, res *ses
 		allowed[id] = true
 	}
 	if len(cands) == 0 {
-		return nil, "", nil
+		return nil, nil
 	}
 	source, text, err := r.describe(ctx, it, h.prevScan)
 	if err != nil {
-		return nil, "", err
+		res.modelErr = true
+		r.Log(fmt.Sprintf("clickup: session=%s no suggestion was made: %v", it.Session, err))
+		return nil, nil
 	}
 	if text == "" {
-		return nil, "", nil
+		return nil, nil
+	}
+	sum := sha256.Sum256([]byte(source + "\x00" + text))
+	digest := hex.EncodeToString(sum[:])
+	if ss.Asked != nil && ss.Asked.Digest == digest {
+		return ss.Asked, nil // this question was already put: no second request
 	}
 	if err := r.Spend.Take(); err != nil {
 		if errors.Is(err, spend.ErrCapped) {
 			res.capped = true
-			return nil, "", nil
+			return nil, nil
 		}
-		return nil, "", err
+		res.modelErr = true
+		r.Log(fmt.Sprintf("clickup: session=%s no suggestion was made: %v", it.Session, err))
+		return nil, nil
 	}
 	res.requests++
+	a := &asked{Digest: digest}
 	ans, err := r.Provider.Complete(ctx, llm.Request{System: suggestSystem, User: suggestPrompt(source, text, cands),
 		MaxTokens: r.MaxOutputTokens})
+	if err == nil {
+		var dropped int
+		if a.Suggestions, dropped, err = parseSuggestions(ans.Text, allowed, r.MinConfidence, r.MaxSuggestions); err == nil {
+			a.Model = ans.Model
+			if dropped > 0 {
+				r.Log(fmt.Sprintf("clickup: session=%s %d of the model's picks were dropped (not a candidate, no usable confidence, below the floor, or past the limit)",
+					it.Session, dropped))
+			}
+		}
+	}
 	if err != nil {
-		return nil, "", err
+		res.modelErr = true
+		r.Log(fmt.Sprintf("clickup: session=%s no suggestion was made: %v", it.Session, err))
 	}
-	sg, dropped, err := parseSuggestions(ans.Text, allowed, r.MinConfidence, r.MaxSuggestions)
-	if err != nil {
-		return nil, "", err
+	// Saved BEFORE anything of it is written, success or failure — except when the run's own deadline
+	// cut the request short: that says nothing about the question, and the next run may ask it.
+	if err == nil || ctx.Err() == nil {
+		ss.Asked = a
+		if serr := r.State.save(); serr != nil {
+			return nil, serr
+		}
 	}
-	if dropped > 0 {
-		r.Log(fmt.Sprintf("clickup: session=%s %d of the model's picks were dropped (not a candidate, no usable confidence, below the floor, or past the limit)",
-			it.Session, dropped))
-	}
-	return sg, ans.Model, nil
+	return a, nil
 }
 
 // describe is what the model is told about the session: the latest stored `summary` (plugin A's — the
