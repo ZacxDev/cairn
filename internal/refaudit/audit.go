@@ -89,12 +89,22 @@ func Audit(sources []string, entries []EntryInput, git GitReader, prs PRReader) 
 			}
 			var best Finding
 			bestRank := -1
+			unread := len(looked) < len(sources) // a declared source was never fetched
 			for _, f := range looked {
 				finding := Finding{Claim: c, Source: f.canon, At: f.commit}
 				finding.State = checkAgainst(c, f.src, f.canon, f.commit, git)
+				if finding.State == RemoteUnreachable {
+					unread = true // fetched, but its git failed on THIS claim: not read either
+				}
 				if r := rank(finding.State); r > bestRank {
 					best, bestRank = finding, r
 				}
+			}
+			if unread && Severity[best.State] == ClassStale {
+				// Some declared source was not read for this claim — never fetched, or its git failed on
+				// it — and it may hold what no read one does: a stale verdict needs every source read
+				// (operator decision on #259 r1 🟡2).
+				best.State = NotInFetched
 			}
 			res.Findings = append(res.Findings, best)
 		}

@@ -23,8 +23,10 @@
 #   (c) stale world: one missing path, one symbol absent from its file, one PR answering 404 → exit 9,
 #       the stale finding set EQUALS the planted set; removing each defect drops exactly its finding.
 #   (d) could not look, each exit 10 with its reason: a remote that does not exist; an undeclared
-#       scope; a declared scope with checked=0; a clean mapped source beside an unmapped one. Control:
-#       one claim, mapped sources only → 0.
+#       scope; a declared scope with checked=0; a clean mapped source beside an unmapped one; a path
+#       missing from the mapped source beside an unmapped one — never stale, because a stale verdict
+#       needs every declared source read (the operator's decision). Control: one claim, mapped sources
+#       only → 0.
 #   (e) the pod and the UI never fetch: `go list -deps` finds no `internal/refaudit` in either server,
 #       no `os/exec` in the pod, and `os/exec` in the UI's graph imported by `internal/client` ALONE
 #       (it was there before S5 — the agent tab imports `internal/client`); control: `cmd/cairn` has both.
@@ -42,7 +44,7 @@ repo="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 src="${E2E_SOURCE:-$repo}"
 
 # 🔴 PINNED, so an assertion that silently stopped running is exit 2 rather than a smaller green.
-EXPECTED=27
+EXPECTED=28
 
 if [[ "${1:-}" == "--self-test" ]]; then
   work="$(mktemp -d "${TMPDIR:-/tmp}/cairn-refaudit-e2e-selftest-XXXXXX")"
@@ -102,6 +104,11 @@ PY
   sabotage d-unmapped-counted-clean internal/refaudit/refaudit.go \
     $'\tif r.unlookedSource() {' $'\tif false {' \
     "d-clean-beside-unmapped-is-10"
+  # (d) a path missing from the fetched source is stale though another declared source was never read.
+  sabotage d-stale-beside-unmapped internal/refaudit/audit.go \
+    $'\t\t\tif unread && Severity[best.State] == ClassStale {' \
+    $'\t\t\tif unread && false && Severity[best.State] == ClassStale {' \
+    "d-missing-beside-unmapped-is-10-not-stale"
   # (e) a blank os/exec import goes into the pod.
   sabotage e-exec-in-the-pod cmd/cairn-server/main.go \
     'package main' $'package main\n\nimport _ "os/exec"' \
@@ -314,6 +321,10 @@ cairn reader d audit-refs --scope epsilon-notes
 assert d-checked-zero-is-10 eval 'rc_is 10 && has "checked=0 stale=0 unchecked=1" && has "could-not-look reason=checked=0"'
 cairn reader d audit-refs --scope zeta-notes
 assert d-clean-beside-unmapped-is-10 eval 'rc_is 10 && has "checked=1 stale=0" && has "source $src_unmapped state=\"unchecked: host not mapped\""'
+entry zeta-notes thing-six "" '- `cmd/gone.go` — x' '- 2000-01-02: a note.'
+cairn reader d audit-refs --scope zeta-notes
+assert d-missing-beside-unmapped-is-10-not-stale eval 'rc_is 10 && has "checked=0 stale=0 unchecked=2" && has "could-not-look thing-six path \"cmd/gone.go\" state=\"unchecked: not in the sources read\""'
+entry zeta-notes thing-six "" '- `cmd/x.go` — x' '- 2000-01-02: a note.'
 cairn reader d audit-refs --scope eta-notes
 assert d-control-one-claim-mapped-only-is-0 eval 'rc_is 0 && has "checked=1 stale=0 unchecked=0"'
 # The PAIR: the mapped source's mirror exists (it was fetched), the unmapped one's does not (never
