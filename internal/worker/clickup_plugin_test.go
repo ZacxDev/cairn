@@ -227,7 +227,9 @@ func TestTheClickupPluginAgainstTheRealListener(t *testing.T) {
 	want := []string{
 		`ticket-edge {"system":"clickup","ticket_id":"clk0000b2","signal":"transcript-url","locator":{"stream":"main","seq":2}}`,
 		`ticket-edge {"system":"clickup","ticket_id":"clk0000a1","signal":"branch-name","locator":{"stream":"main","seq":1}}`,
-		`ticket-suggestion {"ticket_id":"clk0000c3","confidence":1,"rationale":"synthetic rationale"}`,
+		// The rationale is the plugin's own fixed sentence, not the model's "synthetic rationale": this
+		// instance stores ticket ids only, and a model's sentence can quote a ticket's name.
+		`ticket-suggestion {"ticket_id":"clk0000c3","confidence":1,"rationale":"suggested by the model from the session's stored summary"}`,
 		`ticket-scan {"system":"clickup","edges":2,"suggestions":1,"model_asked":true}`,
 	}
 	if !slices.Equal(got, want) {

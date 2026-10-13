@@ -5241,9 +5241,16 @@ clauses (k) and (l).
   suggestions", and whether a model was asked. Only a plugin's LATEST scan is shown — every pass writes
   one. `TestATicketScanRendersAsWhatWasExaminedAndOnlyTheLatestIsShown` (RED before the renderer knew
   the type: the scan reached the suggestion branch and the page panicked).
-- **A stored ticket TITLE (S10, Q8) is text beside its id** — `g.Text`, never a link — and exists only
-  on an instance started with `-plugin-store-ticket-titles`
-  (`TestAStoredTicketTitleRendersAsTextBesideItsId`).
+- **A stored ticket TITLE (S10, Q8) is text beside its id** — `g.Text` through `plainText`, never a
+  link — and is STORED only on an instance started with `-plugin-store-ticket-titles`
+  (`TestAStoredTicketTitleRendersAsTextBesideItsId`). ⚠ The flag gates the WRITE, not the read:
+  turning it off stops new titles and leaves every title already stored on the page until its
+  session's transcript is deleted.
+- **No bidirectional control reaches the page from a plugin** (#274's audit): a title, a rationale or
+  a model's name carrying one (U+202E and its family) is refused at `plugins.DecodeBody` /
+  `DecodeEnvelope`, so it is never stored; a body stored before that rule no longer validates and is
+  shown as stored text, through the same strip (`TestAStoredTitleCannotReorderThePagesOwnLabel`). The
+  set is ONE spelling, `plugins.BidiControl`.
 - **Rows** (`derivedLines`): `/sessions`, `/my-sessions`, the scope page's sessions tab and the arc
   page's sessions tab each carry `derived · <plugin> <version>: <first 160 characters>` — the
   session's latest summary — with the model and time in `title=`.

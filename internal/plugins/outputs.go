@@ -174,8 +174,8 @@ func DecodeBody(t string, raw json.RawMessage) (Body, error) {
 		if e.CustomID != "" && !customID.MatchString(e.CustomID) {
 			return Body{}, fmt.Errorf("custom_id does not match %s", customID)
 		}
-		if len(e.Title) > maxTicketTitle || !printable(e.Title) {
-			return Body{}, fmt.Errorf("title must be at most %d bytes with no control character", maxTicketTitle)
+		if len(e.Title) > maxTicketTitle || !displayable(e.Title) {
+			return Body{}, fmt.Errorf("title must be at most %d bytes with no control or bidirectional-control character", maxTicketTitle)
 		}
 		if !slices.Contains(Signals, e.Signal) {
 			return Body{}, fmt.Errorf("signal %q is not one of %v", e.Signal, Signals)
@@ -204,14 +204,14 @@ func DecodeBody(t string, raw json.RawMessage) (Body, error) {
 		if !ticketID.MatchString(s.TicketID) {
 			return Body{}, fmt.Errorf("ticket_id is not a canonical id")
 		}
-		if len(s.Title) > maxTicketTitle || !printable(s.Title) {
-			return Body{}, fmt.Errorf("title must be at most %d bytes with no control character", maxTicketTitle)
+		if len(s.Title) > maxTicketTitle || !displayable(s.Title) {
+			return Body{}, fmt.Errorf("title must be at most %d bytes with no control or bidirectional-control character", maxTicketTitle)
 		}
 		if s.Confidence < 0 || s.Confidence > 1 {
 			return Body{}, fmt.Errorf("confidence must be in [0, 1]")
 		}
-		if len(s.Rationale) > maxRationale || !printable(s.Rationale) {
-			return Body{}, fmt.Errorf("rationale must be at most %d bytes with no control character", maxRationale)
+		if len(s.Rationale) > maxRationale || !displayable(s.Rationale) {
+			return Body{}, fmt.Errorf("rationale must be at most %d bytes with no control or bidirectional-control character", maxRationale)
 		}
 		return Body{Suggestion: &s}, nil
 	}
@@ -282,8 +282,8 @@ func DecodeEnvelope(raw []byte) (Envelope, error) {
 	if err := strict(raw, &e); err != nil {
 		return e, fmt.Errorf("the envelope does not decode: %v", err)
 	}
-	if e.Model == "" || len(e.Model) > maxModel || !printable(e.Model) {
-		return e, fmt.Errorf("model must be 1–%d bytes with no control character", maxModel)
+	if e.Model == "" || len(e.Model) > maxModel || !displayable(e.Model) {
+		return e, fmt.Errorf("model must be 1–%d bytes with no control or bidirectional-control character", maxModel)
 	}
 	if len(e.InputWatermark) == 0 || len(e.InputWatermark) > maxStreams {
 		return e, fmt.Errorf("input_watermark must name 1–%d streams", maxStreams)

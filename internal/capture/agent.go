@@ -426,21 +426,43 @@ func union(a, b []string) []string {
 func (a *Agent) route(root string, ss *SessionState, sum *Summary) (ship bool, reset bool, err error) {
 	dec := Decide(ss.V, a.Routing)
 	if ss.Instance != "" && !dec.Held && dec.Instance != "" && ss.Instance != dec.Instance {
-		// 🔴 THE DESTINATION IS ASKED BEFORE THE CURRENT HOLDER IS TOLD TO FORGET (#273's audit, F1,
-		// closed in S10). A routing-TABLE edit can send a session BACK to an instance it was once
-		// withdrawn from — and a deletion there is final for the root (410). Withdrawing first
+		// 🔴 THE DESTINATION IS ASKED BEFORE THE CURRENT HOLDER IS TOLD TO FORGET, AND ONLY A DEFINITE
+		// "NOT DELETED HERE" LETS THE WITHDRAWAL GO AHEAD (#273's audit F1, closed in S10; #274's
+		// audit made it "only"). A routing-TABLE edit can send a session BACK to an instance it was
+		// once withdrawn from — and a deletion there is final for the root (410). Withdrawing first
 		// deleted the prefix from the instance that held it, and the first upload to the other then
 		// answered 410 and marked the session deleted: its capture ended EVERYWHERE, over an edit to
-		// a table. The probe stores nothing ([Sink.Position]); when it answers that the root was
-		// deleted there, the session is HELD where it is — no withdrawal, nothing more shipped,
-		// said once. Any other answer, or none, changes nothing: the withdrawal proceeds as before.
-		if _, perr := a.Sink.Position(Upload{Instance: dec.Instance, Root: root, Runtime: probeRuntime(ss), Declared: ss.Declared}, "main"); errors.Is(perr, ErrDeleted) {
+		// a table. The probe stores nothing ([Sink.Position]) and has three outcomes:
+		//
+		//   - a position (the CAS's own 409): the destination has NOT deleted this root — withdraw
+		//     and move, as before;
+		//   - 410: the session is HELD where it is, for good — no withdrawal, nothing more shipped,
+		//     said once;
+		//   - NO ANSWER, or any other: the withdrawal is DEFERRED to the next run. The first version
+		//     of this probe withdrew anyway, so an unreachable destination that would have said 410
+		//     still ended the capture everywhere.
+		//
+		// ⚠ THE TRADE, an agent decision open to operator review: while the destination cannot be
+		// asked, the prefix stays on an instance the CURRENT table no longer routes its scopes to,
+		// and nothing new of the session is shipped anywhere.
+		_, perr := a.Sink.Position(Upload{Instance: dec.Instance, Root: root, Runtime: probeRuntime(ss), Declared: ss.Declared}, "main")
+		switch {
+		case errors.Is(perr, ErrDeleted):
 			ss.Held, ss.HeldReason = true, "routed back to "+dec.Instance+", which deleted this session's transcript: kept on "+ss.Instance
 			a.logf("HOLD %s: its routing answer now names instance %s, where this session's transcript was DELETED and "+
 				"cannot be stored again — the prefix stays on %s, nothing is withdrawn and nothing more of the session is "+
 				"shipped", root, dec.Instance, ss.Instance)
 			sum.Held++
 			return false, false, a.saveRouting(root)
+		case perr != nil:
+			var fatal *FatalError
+			if errors.As(perr, &fatal) && a.fatal == nil {
+				a.fatal = perr
+			}
+			sum.WithdrawalPending++
+			return false, false, fmt.Errorf("its routing answer now names instance %s, which could not be asked whether it "+
+				"deleted this session — so nothing is withdrawn from %s and nothing more of the session is sent this run "+
+				"(asked again next run): %w", dec.Instance, ss.Instance, perr)
 		}
 	}
 	if ss.Instance != "" && (dec.Held || ss.Instance != dec.Instance) {

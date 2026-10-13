@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // 🔴 THE HOST-LOCAL SOURCES (the plan's Q13): commit messages and trailers from a list of repository
@@ -132,15 +134,51 @@ func splitMessage(msg string) (string, []Trailer) {
 	return strings.Join(kept, "\n\n"), out
 }
 
-// run executes one host program with a bounded answer. The environment is this process's, so the
-// programs use the operator's own configuration and login.
+// The bounds on ONE run of a host program. Variables, so a test can shorten them.
+var (
+	// execTimeout bounds the program itself.
+	execTimeout = 60 * time.Second
+	// execWaitDelay bounds how long its output pipes are waited on after it exits or is killed.
+	execWaitDelay = 2 * time.Second
+)
+
+// errExecDeadline marks a host program that did not finish inside [execTimeout].
+var errExecDeadline = errors.New("it did not finish in time and was killed")
+
+// runProgram executes one host program with a bounded answer AND a bounded life. The environment is
+// this process's, so the programs use the operator's own configuration and login.
+//
+// 🔴 A HOST PROGRAM CAN HANG, AND IT MUST NOT TAKE THE RUN WITH IT (#274's audit). `gh` waiting on a
+// network that never answers, or `git` on a lock, used to hold the whole run — and past `-timeout`,
+// because a child that inherited the output pipe keeps `Wait` blocked after the program itself is
+// killed. Three things bound it: its own deadline ([execTimeout], inside the run's); its PROCESS
+// GROUP is killed, not just the program, so a helper it spawned goes too; and [execWaitDelay] closes
+// the pipes if anything still holds them. A program that exits 0 while something it started still
+// holds its output is refused too: its answer cannot be known complete.
 func runProgram(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, execTimeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(os.Environ(), env...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	killGroup := func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		// The group the child leads (its pid), so whatever it started dies with it.
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.Cancel = killGroup
+	cmd.WaitDelay = execWaitDelay
 	var out, errb bytes.Buffer
 	cmd.Stdout = &limitWriter{w: &out, left: maxExecBytes}
 	cmd.Stderr = &limitWriter{w: &errb, left: 4 << 10}
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	_ = killGroup() // nothing it started outlives it, however it ended
+	switch {
+	case ctx.Err() != nil:
+		return nil, fmt.Errorf("%s: %w (after %s)", filepath.Base(name), errExecDeadline, execTimeout)
+	case err != nil:
 		return nil, fmt.Errorf("%s: %w: %s", filepath.Base(name), err, strings.TrimSpace(errb.String()))
 	}
 	return out.Bytes(), nil

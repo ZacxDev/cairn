@@ -191,7 +191,9 @@ type asked struct {
 	// new summary is a new one.
 	Digest string `json:"digest"`
 	// Model is the model that answered; "" when the request failed or its answer could not be used.
-	Model       string       `json:"model"`
+	Model string `json:"model"`
+	// FromSummary reports that the description was a stored summary (false: the session's opening).
+	FromSummary bool         `json:"from_summary,omitempty"`
 	Suggestions []Suggestion `json:"suggestions"`
 }
 
@@ -513,15 +515,12 @@ type held struct {
 	edges, edged map[string]bool
 	// suggested is every ticket already suggested.
 	suggested map[string]bool
-	// byURL is every ticket an EARLIER pass found named by URL in the transcript — what lets a bare
-	// token in a branch count when the URL and the branch are read by two different passes.
-	byURL map[string]bool
 	// prevScan is the previous pass's scan when the session's LAST output is one; nil otherwise.
 	prevScan *pluginapi.Output
 }
 
 func (r *Runner) heldBy(ctx context.Context, it pluginapi.PendingItem, redo bool) (held, error) {
-	h := held{edges: map[string]bool{}, edged: map[string]bool{}, suggested: map[string]bool{}, byURL: map[string]bool{}}
+	h := held{edges: map[string]bool{}, edged: map[string]bool{}, suggested: map[string]bool{}}
 	edges, err := r.API.Outputs(ctx, it.Session, TypeEdge)
 	if err != nil {
 		return h, fmt.Errorf("reading the session's edges: %w", err)
@@ -531,9 +530,6 @@ func (r *Runner) heldBy(ctx context.Context, it pluginapi.PendingItem, redo bool
 		if json.Unmarshal(o.Body, &e) == nil && e.TicketID != "" {
 			h.edges[e.TicketID+"\x00"+e.Signal] = true
 			h.edged[e.TicketID] = true
-			if e.Signal == SigTranscript {
-				h.byURL[e.TicketID] = true
-			}
 		}
 	}
 	suggs, err := r.API.Outputs(ctx, it.Session, TypeSuggestion)
@@ -647,45 +643,44 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem, redo boo
 		}
 	}
 
-	// --- entries the session wrote: explicit `clickup:<id>` refs.
+	// --- entries the session wrote: explicit `clickup:<id>` refs — and, like every other source, only
+	// for an id the fetched list HOLDS.
+	//
+	// 🔴 WHICH ENTRIES ARE "THE SESSION'S" IS SELF-DECLARED: the attribution trailer is text in an
+	// entry, and anyone who can write a cached scope can write one naming any session. So an
+	// `entry-ref` edge can be attached to a session by forging a trailer. What that buys is bounded
+	// by this rule and by the edge's shape: the ticket must be one of the workspace's own listed
+	// tickets, only its id is stored, and the edge names the `<scope>/<entry>` it came from.
 	for _, e := range r.Entries[it.Session] {
 		for _, ident := range e.Idents {
-			switch t, ok := r.Matcher.Index.Resolve(ident); {
-			case ok:
+			if t, ok := r.Matcher.Index.Resolve(ident); ok {
 				all = append(all, found{hit: Hit{ID: t.ID, Custom: ident}, sig: SigEntryRef, loc: Locator{Entry: e.Ref}})
-			case canonicalID.MatchString(ident):
-				// An explicit ref names the canonical id itself; it needs no list to vouch for it.
+			} else if r.Matcher.Index.Has(ident) {
 				all = append(all, found{hit: Hit{ID: ident}, sig: SigEntryRef, loc: Locator{Entry: e.Ref}})
 			}
 		}
 	}
 
-	// --- structured fields, LAST: a bare token counts when the list holds it or a URL above named it.
-	byURL := h.byURL
-	for _, f := range all {
-		if f.hit.ByURL {
-			byURL[f.hit.ID] = true
-		}
-	}
+	// --- structured fields: a bare token counts when it is a canonical id the list holds.
 	names := make([]string, 0, len(sc.branches))
 	for b := range sc.branches {
 		names = append(names, b)
 	}
 	slices.Sort(names)
 	for _, b := range names {
-		for _, hit := range r.Matcher.Field(b, byURL) {
+		for _, hit := range r.Matcher.Field(b) {
 			all = append(all, found{hit: hit, sig: SigBranch, loc: sc.branches[b]})
 		}
 	}
 	for _, c := range commits {
 		for _, t := range c.Trailers {
-			for _, hit := range r.Matcher.Field(t.Value, byURL) {
+			for _, hit := range r.Matcher.Field(t.Value) {
 				all = append(all, found{hit: hit, sig: SigCommitTrlr, loc: Locator{Commit: c.SHA}})
 			}
 		}
 	}
 	for _, f := range fetched {
-		for _, hit := range r.Matcher.Field(f.text.Head, byURL) {
+		for _, hit := range r.Matcher.Field(f.text.Head) {
 			all = append(all, found{hit: hit, sig: SigPRLink, loc: Locator{PR: f.pr.Number}})
 		}
 	}
@@ -729,6 +724,7 @@ func (r *Runner) session(ctx context.Context, it pluginapi.PendingItem, redo boo
 			}
 			h.suggested[s.TicketID] = true
 			s.Title = r.title(s.TicketID)
+			s.Rationale = r.rationale(a, s)
 			if _, err := r.API.WriteOutput(ctx, pluginapi.Envelope{Plugin: Name, PluginVersion: Version, Model: m,
 				Session: it.Session, InputWatermark: wm, Type: TypeSuggestion, Body: s}); err != nil {
 				return res, fmt.Errorf("writing a suggestion: %w", err)
@@ -753,6 +749,32 @@ func (r *Runner) title(id string) string {
 		return ""
 	}
 	return oneLine(r.Matcher.Index.byID[id].Name, maxTitle)
+}
+
+// The rationale stored when the model's own words are not: which description the pick was made from.
+// Fixed text, written by this program — nothing in it came from a model, a ticket or a transcript.
+const (
+	rationaleFromSummary = "suggested by the model from the session's stored summary"
+	rationaleFromOpening = "suggested by the model from the session's opening records"
+)
+
+// rationale is what a suggestion says about itself.
+//
+// 🔴 THE MODEL'S OWN SENTENCE IS STORED ONLY WHERE TICKET TITLES ARE (#274's audit). The model is sent
+// the candidate tickets' NAMES and asked to say what points at its pick; the natural answer quotes
+// the name. Stored as the rationale, that put a ticket's title on a pod that had asked for ids only
+// (Q8) — through a field the title gate does not look at. A prompt telling the model not to quote
+// would be a request, not a rule, so the rule is here: unless the operator turned titles on
+// (`-store-ticket-titles`, which the pod must also allow), the rationale is one of two fixed
+// sentences saying what the pick was made from.
+func (r *Runner) rationale(a *asked, s Suggestion) string {
+	if r.StoreTitles {
+		return s.Rationale
+	}
+	if a.FromSummary {
+		return rationaleFromSummary
+	}
+	return rationaleFromOpening
 }
 
 // suggest is this pass's answer from the model: nil when nobody was (or is to be) asked — no provider,
@@ -808,7 +830,7 @@ func (r *Runner) suggest(ctx context.Context, it pluginapi.PendingItem, res *ses
 		return nil, nil
 	}
 	res.requests++
-	a := &asked{Digest: digest}
+	a := &asked{Digest: digest, FromSummary: strings.HasPrefix(source, summarySource)}
 	ans, err := r.Provider.Complete(ctx, llm.Request{System: suggestSystem, User: suggestPrompt(source, text, cands),
 		MaxTokens: r.MaxOutputTokens})
 	if err == nil {
@@ -836,6 +858,9 @@ func (r *Runner) suggest(ctx context.Context, it pluginapi.PendingItem, res *ses
 	return a, nil
 }
 
+// summarySource opens the description's source line when the description is a stored summary.
+const summarySource = "a summary written by the plugin "
+
 // describe is what the model is told about the session: the latest stored `summary` (plugin A's — the
 // cross-plugin read, `output:read:summary`), or, when none is stored, the session's OPENING records
 // rendered as labelled lines. "" when there is nothing NEW to describe since the previous pass: the
@@ -855,7 +880,7 @@ func (r *Runner) describe(ctx context.Context, it pluginapi.PendingItem, prevSca
 		if prevScan != nil && sums[i].ProducedAt <= prevScan.ProducedAt {
 			return "", "", nil // the summary this plugin already asked about
 		}
-		return "a summary written by the plugin " + oneLine(sums[i].Plugin, 64), body.Text, nil
+		return summarySource + oneLine(sums[i].Plugin, 64), body.Text, nil
 	}
 	if prevScan != nil {
 		return "", "", nil

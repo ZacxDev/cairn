@@ -264,6 +264,29 @@ func TestAStoredTicketTitleRendersAsTextBesideItsId(t *testing.T) {
 	}
 }
 
+// TestAStoredTitleCannotReorderThePagesOwnLabel — #274's audit. A title is the one plugin string that
+// was printed without the bidi strip every other one gets. A body stored BEFORE the write path refused
+// such characters (planted on disk here, past the API) must not carry U+202E to the page: it no longer
+// validates, so it is shown as stored text — through the same strip — and the character is nowhere in
+// the response.
+func TestAStoredTitleCannotReorderThePagesOwnLabel(t *testing.T) {
+	w := transcriptWorld(t)
+	a := w.archive(t)
+	transcripttest.Output(t, a, "s-solo-02", "clickup", "0.2.0", "none", 2, plugins.TypeTicketEdge,
+		`{"system":"clickup","ticket_id":"abc123","title":"gadget \u202eexport","signal":"branch-name","locator":{"stream":"main","seq":1}}`)
+	transcripttest.Output(t, a, "s-solo-02", "clickup", "0.2.0", "none", 2, plugins.TypeTicketEdge,
+		`{"system":"clickup","ticket_id":"def456","title":"widget import","signal":"pr-body","locator":{"pr":7}}`)
+	body := getAs(t, w.server(t, "owner", a), sessionURL("s-solo-02")).Body.String()
+	for _, r := range []string{"\u202e", "\u2066", "\u200f"} {
+		if strings.Contains(body, r) {
+			t.Fatalf("the page carries the bidirectional control %U", []rune(r)[0])
+		}
+	}
+	if text := visibleText(body); !strings.Contains(text, "— widget import · matched on PR body") {
+		t.Fatalf("POSITIVE CONTROL: a clean stored title is not rendered:\n%s", text)
+	}
+}
+
 // outputsRig is the share rig with a transcript store whose directory the test can read: rowan owns
 // `s-rowan-01`'s transcript, which holds a summary and a ticket edge.
 func outputsRig(t *testing.T) (*shareRig, *archive.Archive, string) {

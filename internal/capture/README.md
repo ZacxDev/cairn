@@ -184,12 +184,23 @@ in S10). A routing-TABLE edit can send a session back to an instance it was once
 its deletion is final. Withdrawing first removed the prefix from the instance that held it, and the
 first upload to the other then answered 410 and marked the session `deleted` — captured nowhere, over
 an edit to a table. So on a move the agent first sends the destination a position probe (the CAS's own
-409, which stores nothing). If it answers 410, the session is HELD where it is: no withdrawal, nothing
-more of it shipped, `HOLD <root>: its routing answer now names instance <x>, where this session's
-transcript was DELETED…` logged once, counted `held`. Any other answer — or none — changes nothing
-and the withdrawal proceeds. ⚠ The held prefix then sits on an instance the CURRENT table no longer
-routes its scopes to: that is the stated cost of not deleting it everywhere, and removing it is the
-operator's act (the owner's delete, on that instance).
+409, which stores nothing), and ONLY a definite "not deleted here" lets the withdrawal go ahead:
+
+| the destination answers | the agent |
+|---|---|
+| a position (the 409) | withdraws from the holder and moves the session, as before |
+| 410 | HOLDS the session where it is, for good: no withdrawal, nothing more of it shipped, `HOLD <root>: its routing answer now names instance <x>, where this session's transcript was DELETED…` logged once, counted `held` |
+| nothing — unreachable, a 5xx, disarmed, a refused token | DEFERS: nothing is withdrawn and nothing of the session is sent this run; counted `withdrawal-pending`; asked again next run |
+
+The third row is #274's audit: the first version withdrew on no answer, so a destination that was
+merely down when the table was edited — and would have said 410 — still ended the capture everywhere.
+
+⚠ **The trade, an AGENT decision open to operator review.** While the destination cannot be asked —
+and for good once it answers 410 — the prefix stays on an instance the CURRENT table no longer routes
+its scopes to, and nothing new of the session is captured. The alternative (withdraw at once, as
+decision 16 reads) keeps the routing rule strict and loses the session's capture whenever the
+destination turns out to have deleted it. Removing a held prefix is the operator's act: the owner's
+delete, on that instance.
 
 ⚠ **What it cannot do.** The withdrawal table's third row reads "never landed" off this agent's own
 watermarks, which a kill can leave unsaved — but then the instance DOES hold the prefix and answers

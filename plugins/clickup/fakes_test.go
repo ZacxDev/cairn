@@ -57,6 +57,22 @@ func TestMain(m *testing.M) {
 
 // fakeGH is `gh pr view <n> --repo <owner/name> --json title,body,headRefName`, and nothing else.
 func fakeGH(dir string, args []string) int {
+	switch os.Getenv(fakeGHMode) {
+	case "sleep": // the child an "orphan" leaves behind, holding the inherited output
+		time.Sleep(5 * time.Minute)
+		return 0
+	case "hang":
+		time.Sleep(5 * time.Minute)
+		return 0
+	case "orphan":
+		child := exec.Command(os.Args[0])
+		child.Env = append(os.Environ(), fakeGHMode+"=sleep")
+		child.Stdout, child.Stderr = os.Stdout, os.Stderr
+		if err := child.Start(); err != nil {
+			return 3
+		}
+		_ = os.WriteFile(filepath.Join(dir, "child.pid"), []byte(strconv.Itoa(child.Process.Pid)), 0o600)
+	}
 	f, _ := os.OpenFile(filepath.Join(dir, "calls.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	fmt.Fprintln(f, strings.Join(args, " "))
 	f.Close()
@@ -134,7 +150,9 @@ func validStream(s string) bool {
 var manifestWrites = []string{TypeEdge, TypeSuggestion, TypeScan}
 
 // printable is the pod's rule for a stored string: no control character.
-func printable(s string) bool { return !strings.ContainsFunc(s, unicode.IsControl) }
+func printable(s string) bool {
+	return !strings.ContainsFunc(s, unicode.IsControl) && !strings.ContainsFunc(s, bidiControl)
+}
 
 func strictInto(raw []byte, into any) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))

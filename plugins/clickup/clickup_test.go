@@ -10,7 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -18,10 +20,11 @@ import (
 	"github.com/ZacxDev/cairn/plugins/internal/pluginapi"
 )
 
-// TestABranchTokenMatchesOnlyAFetchedIdOrOneNamedByURL — the plan's S10 branch case: `feature/clk0000a1-x`
-// is an edge when `clk0000a1` is a FETCHED ticket id, and when the session names it by URL; with
-// neither, the same branch is no edge (a token that merely looks like an id is never matched).
-func TestABranchTokenMatchesOnlyAFetchedIdOrOneNamedByURL(t *testing.T) {
+// TestABranchTokenMatchesOnlyAFetchedId — the plan's S10 branch case: `feature/clk0000a1-x` is an edge
+// when `clk0000a1` is a FETCHED ticket id, and no edge otherwise (a token that merely looks like an id
+// is never matched). ⚠ The plan's "OR appears as a ClickUp URL" is NOT built: since #274's audit a URL
+// names a ticket only when the list holds its id too, so a URL can vouch for nothing the list does not.
+func TestABranchTokenMatchesOnlyAFetchedId(t *testing.T) {
 	const branch = "feature/clk0000a1-x"
 	t.Run("a fetched id", func(t *testing.T) {
 		w := newWorld(t, assistant("hello"), human("do lorem", branch), human("more", branch))
@@ -31,7 +34,7 @@ func TestABranchTokenMatchesOnlyAFetchedIdOrOneNamedByURL(t *testing.T) {
 		// The locator is the FIRST record that carried the branch.
 		wantEdges(t, w.pod.edges(t), Edge{System: "clickup", TicketID: "clk0000a1", Signal: SigBranch, Locator: rec(2)})
 	})
-	t.Run("CONTROL: not fetched and not named by URL", func(t *testing.T) {
+	t.Run("CONTROL: not fetched", func(t *testing.T) {
 		w := newWorld(t, human("do lorem", branch))
 		w.cu.tasks = tickets()[1:] // the list no longer holds clk0000a1
 		if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "sessions=1 edges=0") {
@@ -39,15 +42,13 @@ func TestABranchTokenMatchesOnlyAFetchedIdOrOneNamedByURL(t *testing.T) {
 		}
 		wantEdges(t, w.pod.edges(t))
 	})
-	t.Run("not fetched, named by URL", func(t *testing.T) {
+	t.Run("CONTROL: not fetched, though the session names it by URL", func(t *testing.T) {
 		w := newWorld(t, human("do lorem", branch), assistant("see "+cuURLPrefix+"clk0000a1 for the ask"))
 		w.cu.tasks = tickets()[1:]
-		if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "edges=2") {
+		if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "edges=0") {
 			t.Fatalf("exit %d\n%s%s", code, out, errs)
 		}
-		wantEdges(t, w.pod.edges(t),
-			Edge{System: "clickup", TicketID: "clk0000a1", Signal: SigTranscript, Locator: rec(2)},
-			Edge{System: "clickup", TicketID: "clk0000a1", Signal: SigBranch, Locator: rec(1)})
+		wantEdges(t, w.pod.edges(t))
 	})
 }
 
@@ -288,7 +289,7 @@ func TestSuggestionsAreNeverEdges(t *testing.T) {
 	}
 	var s Suggestion
 	_ = json.Unmarshal(sg[0].Body, &s)
-	if s != (Suggestion{TicketID: "clk0000a1", Confidence: 1.0, Rationale: "the session is the lorem export"}) || sg[0].Model != "fake-model-1" {
+	if s != (Suggestion{TicketID: "clk0000a1", Confidence: 1.0, Rationale: rationaleFromSummary}) || sg[0].Model != "fake-model-1" {
 		t.Errorf("the suggestion is %+v by model %q", s, sg[0].Model)
 	}
 	got := w.prov.received()
@@ -594,27 +595,36 @@ func TestCredentialsComeFromFilesOnlyAndTheManifestDeclaresWhatTheCodeUses(t *te
 func TestTheURLMatcherTakesBothFormsAndNothingThatOnlyLooksLikeOne(t *testing.T) {
 	m := &Matcher{Index: NewIndex(tickets()), Team: team}
 	cases := map[string][]Hit{
-		cuURLPrefix + "clk0000a1":                      {{ID: "clk0000a1", ByURL: true}},
-		"(" + cuURLPrefix + "clk0000a1).":              {{ID: "clk0000a1", ByURL: true}},
-		"_" + cuURLPrefix + "clk0000a1_":               {{ID: "clk0000a1", ByURL: true}},
-		"http://app.clickup.com/t/zzz999":              {{ID: "zzz999", ByURL: true}}, // a URL needs no list
+		cuURLPrefix + "clk0000a1":            {{ID: "clk0000a1"}},
+		"(" + cuURLPrefix + "clk0000a1).":    {{ID: "clk0000a1"}},
+		"_" + cuURLPrefix + "clk0000a1_":     {{ID: "clk0000a1"}},
+		"http://app.clickup.com/t/clk0000a1": {{ID: "clk0000a1"}},
+		// 🔴 A URL NEEDS THE LIST TOO. The five shapes #274's audit measured writing an edge to a ticket
+		// that does not exist — a well-formed URL whose id is not one the list holds:
+		"http://app.clickup.com/t/zzz999":              nil, // an id of some other workspace, or a typo
+		cuURLPrefix + "clk00":                          nil, // cut short with nothing after it
+		cuURLPrefix + "clk00 and more":                 nil, // cut short, then a space
+		cuURLPrefix + "clk0000a":                       nil, // one character short
+		cuURLPrefix + "clk0000a12":                     nil, // one character long
+		cuURLPrefix + team:                             nil, // the workspace's own id is no ticket…
+		cuURLPrefix + "clk0000a1x/" + team:             nil,
 		cuURLPrefix + "clk0000a1-draft":                nil,
 		cuURLPrefix + "clk0000a1_draft":                nil,
 		cuURLPrefix + "clk0000a1%2Ddraft":              nil,
 		cuURLPrefix + "clk00...":                       nil, // an id a tool cut short
 		cuURLPrefix + "clk00…":                         nil,
-		cuURLPrefix + "clk0000a1. Next sentence":       {{ID: "clk0000a1", ByURL: true}},
-		cuURLPrefix + "clk0000a1?comment=1":            {{ID: "clk0000a1", ByURL: true}},
-		cuURLPrefix + team + "/ALPHA-12":               {{ID: "clk0000c3", Custom: "ALPHA-12", ByURL: true}},
-		cuURLPrefix + team + "/ALPHA-12_ and more":     {{ID: "clk0000c3", Custom: "ALPHA-12", ByURL: true}},
+		cuURLPrefix + "clk0000a1. Next sentence":       {{ID: "clk0000a1"}},
+		cuURLPrefix + "clk0000a1?comment=1":            {{ID: "clk0000a1"}},
+		cuURLPrefix + team + "/ALPHA-12":               {{ID: "clk0000c3", Custom: "ALPHA-12"}},
+		cuURLPrefix + team + "/ALPHA-12_ and more":     {{ID: "clk0000c3", Custom: "ALPHA-12"}},
 		cuURLPrefix + team + "/ALPHA-13":               nil, // not in the list — and the workspace id is no ticket
 		cuURLPrefix + team + "/":                       nil, // the workspace form with no custom id: never ticket 9000001
 		cuURLPrefix + team + "/{custom_id}":            nil,
 		cuURLPrefix + "9000002/":                       nil,
 		cuURLPrefix + team + "/ALPHA-12...":            nil, // a custom id cut short is not the id it now spells
 		cuURLPrefix + team + "/ALPHA-12…":              nil,
-		cuURLPrefix + "clk0000a1/":                     {{ID: "clk0000a1", ByURL: true}}, // a trailing slash on a canonical URL
-		cuURLPrefix + "9000002/ALPHA-12":               nil,                              // another workspace
+		cuURLPrefix + "clk0000a1/":                     {{ID: "clk0000a1"}}, // a trailing slash on a canonical URL
+		cuURLPrefix + "9000002/ALPHA-12":               nil,                 // another workspace
 		"https://app.clickup.com.example.invalid/t/x1": nil,
 		"https://example.invalid/app.clickup.com/t/x1": nil,
 		"clk0000a1 and ALPHA-12 bare":                  nil,
@@ -635,9 +645,22 @@ func TestACustomIdIsAWholeTokenOfTheClosedList(t *testing.T) {
 	}
 	m := &Matcher{Index: ix}
 	cases := map[string][]string{
-		"ALPHA-12":              {"clk0000c3"},
-		"feature/ALPHA-12-fix":  {"clk0000c3"},
-		"ALPHA-123":             nil,
+		"ALPHA-12":             {"clk0000c3"},
+		"feature/ALPHA-12-fix": {"clk0000c3"},
+		"ALPHA-123":            nil,
+		// A neighbouring id is another id: joined by `-`, `_` or `.` to a digit on the right, or to
+		// a word on the left.
+		"PRE-ALPHA-12":   nil,
+		"ALPHA-12-13":    nil,
+		"ALPHA-12_3":     nil,
+		"ALPHA-12.5":     nil,
+		"ALPHA-12. Next": {"clk0000c3"},
+		"(ALPHA-12)":     {"clk0000c3"},
+		// …and the boundary is not ASCII's: a letter or digit of any script is part of the word.
+		"éALPHA-12":             nil,
+		"ALPHA-12é":             nil,
+		"ALPHA-12\u0663":        nil, // an Arabic-Indic digit
+		"«ALPHA-12»":            {"clk0000c3"},
 		"XALPHA-12":             nil,
 		"ALPHA-1 then ALPHA-12": {"clk0000d4", "clk0000c3"},
 		"alpha-12":              nil, // exact case: the list's own spelling
@@ -656,15 +679,15 @@ func TestACustomIdIsAWholeTokenOfTheClosedList(t *testing.T) {
 	// A URL is judged ONCE, as a URL — to its END as written, not just the part the pattern read: the
 	// rest of another workspace's URL, or of a URL the matcher refused, is not a bare token.
 	for _, text := range []string{cuURLPrefix + "9000002/x/ALPHA-12", cuURLPrefix + "abc-ALPHA-12", "(" + cuURLPrefix + "9000002/ALPHA-12)"} {
-		if got := (&Matcher{Index: ix, Team: team}).Field(text, nil); len(got) != 0 {
+		if got := (&Matcher{Index: ix, Team: team}).Field(text); len(got) != 0 {
 			t.Errorf("Field(%q) = %+v, want nothing", text, got)
 		}
 	}
-	if got := m.Prose("see " + cuURLPrefix + "zzz999 (ALPHA-12)"); len(got) != 2 {
+	if got := m.Prose("see " + cuURLPrefix + "clk0000a1 (ALPHA-12)"); len(got) != 2 {
 		t.Errorf("a custom id BESIDE a URL was blanked with it: %+v", got)
 	}
 	// CONTROL: an empty list matches nothing.
-	if got := (&Matcher{Index: NewIndex(nil)}).Field("feature/ALPHA-12-clk0000a1", nil); len(got) != 0 {
+	if got := (&Matcher{Index: NewIndex(nil)}).Field("feature/ALPHA-12-clk0000a1 " + cuURLPrefix + "clk0000a1"); len(got) != 0 {
 		t.Errorf("an empty list matched %+v", got)
 	}
 }
@@ -842,25 +865,37 @@ func TestNoCredentialFollowsARedirectOrCrossesTheNetworkInCleartext(t *testing.T
 // TestTicketTitlesAreSentOnlyWhenAskedForAndStoredOnlyWhereTheInstanceAllows — Q8. By default no
 // output carries a ticket's name (the read-only test above asserts that over a whole run). With
 // `-store-ticket-titles` against an instance that stores titles, an edge and a suggestion carry the
-// fetched name — and a ticket named only by URL, which the list does not hold, carries none. Against
+// fetched name. Against
 // an instance that stores ids only the titled write is REFUSED and nothing is stored.
 func TestTicketTitlesAreSentOnlyWhenAskedForAndStoredOnlyWhereTheInstanceAllows(t *testing.T) {
-	records := []string{human("see "+cuURLPrefix+"clk0000a1 and "+cuURLPrefix+"zzz999", "")}
+	records := []string{human("see "+cuURLPrefix+"clk0000a1", "")}
 	w := newWorld(t, records...)
 	w.pod.titles = true
-	w.prov.answer = `[{"ticket_id":"clk0000b2","confidence":0.9,"rationale":"synthetic"}]`
+	w.prov.answer = `[{"ticket_id":"clk0000b2","confidence":0.9,"rationale":"the model's own words"}]`
 	w.args = append(w.withModel(), "-store-ticket-titles")
-	if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "edges=2 suggestions=1") {
+	if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "edges=1 suggestions=1") {
 		t.Fatalf("exit %d\n%s%s", code, out, errs)
 	}
 	wantEdges(t, w.pod.edges(t),
-		Edge{System: "clickup", TicketID: "clk0000a1", Title: "Synthetic ticket one: lorem export", Signal: SigTranscript, Locator: rec(1)},
-		Edge{System: "clickup", TicketID: "zzz999", Signal: SigTranscript, Locator: rec(1)})
+		Edge{System: "clickup", TicketID: "clk0000a1", Title: "Synthetic ticket one: lorem export", Signal: SigTranscript, Locator: rec(1)})
 	var s Suggestion
 	_ = json.Unmarshal(w.pod.ofType(TypeSuggestion)[0].Body, &s)
-	if s.Title != "Synthetic ticket two: ipsum import" {
-		t.Errorf("the suggestion's title is %q", s.Title)
+	// With titles ON the model's own rationale is stored too: both are the operator's one decision.
+	if s.Title != "Synthetic ticket two: ipsum import" || s.Rationale != "the model's own words" {
+		t.Errorf("the suggestion is %+v", s)
 	}
+
+	// A ticket NAME carrying a bidirectional control (ClickUp stores what its users type) is sent
+	// without it: the pod refuses such a title, and one refused title would fail the whole pass.
+	w3 := newWorld(t, records...)
+	w3.pod.titles = true
+	w3.cu.tasks = []Ticket{{ID: "clk0000a1", Name: "gadget \u202eexport\u2066 now"}}
+	w3.args = []string{"-store-ticket-titles"}
+	if code, out, errs := w3.run(t); code != 0 || !strings.Contains(out, "edges=1") {
+		t.Fatalf("a ticket name with a bidirectional control: exit %d\n%s%s", code, out, errs)
+	}
+	wantEdges(t, w3.pod.edges(t),
+		Edge{System: "clickup", TicketID: "clk0000a1", Title: "gadget export now", Signal: SigTranscript, Locator: rec(1)})
 
 	w2 := newWorld(t, records...)
 	w2.args = []string{"-store-ticket-titles"}
@@ -876,10 +911,14 @@ func TestTicketTitlesAreSentOnlyWhenAskedForAndStoredOnlyWhereTheInstanceAllows(
 func TestAPassThatStopsAtTheEdgeCapIsContinuedByTheNextRun(t *testing.T) {
 	var text strings.Builder
 	const n = maxEdgesPerPass + 30
+	var listed []Ticket
 	for i := range n {
 		fmt.Fprintf(&text, "%sclkcap%04d ", cuURLPrefix, i)
+		listed = append(listed, Ticket{ID: fmt.Sprintf("clkcap%04d", i), Name: "synthetic"})
 	}
 	w := newWorld(t, human(text.String(), ""))
+	w.cu.tasks = listed
+	w.cu.perPage = 100
 	if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, fmt.Sprintf("edges=%d ", maxEdgesPerPass)) || !strings.Contains(errs, "more=true") {
 		t.Fatalf("run 1: exit %d\n%s", code, out)
 	}
@@ -901,23 +940,6 @@ func TestAPassThatStopsAtTheEdgeCapIsContinuedByTheNextRun(t *testing.T) {
 	if code, out, _ := w.run(t); code != 0 || !strings.Contains(out, "sessions=0") {
 		t.Fatalf("run 3: exit %d %s", code, out)
 	}
-}
-
-// TestAURLInOnePassVouchesForABranchTokenInALaterPass — "a bare token counts when the session named it
-// by URL" must not depend on where a pass boundary fell: the URL is read by pass 1, the branch first
-// appears in a record pass 2 reads.
-func TestAURLInOnePassVouchesForABranchTokenInALaterPass(t *testing.T) {
-	w := newWorld(t, human("see "+cuURLPrefix+"zzz999", ""))
-	if code, out, _ := w.run(t); code != 0 || !strings.Contains(out, "edges=1") {
-		t.Fatalf("pass 1: exit %d %s", code, out)
-	}
-	w.pod.grow("main", human("now on a branch", "feature/zzz999-x"))
-	if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "edges=1") {
-		t.Fatalf("pass 2: exit %d\n%s%s", code, out, errs)
-	}
-	wantEdges(t, w.pod.edges(t),
-		Edge{System: "clickup", TicketID: "zzz999", Signal: SigTranscript, Locator: rec(1)},
-		Edge{System: "clickup", TicketID: "zzz999", Signal: SigBranch, Locator: rec(2)})
 }
 
 // TestOneRecordNamingATicketBothWaysAlwaysStoresItsCustomId — a record carrying the canonical URL and
@@ -1368,4 +1390,127 @@ func TestASavedAnswerSurvivesARedoThatCannotReadTheSummary(t *testing.T) {
 	if n := len(w.prov.received()); n != 1 {
 		t.Fatalf("%d provider requests, want 1", n)
 	}
+}
+
+// TestATicketNameDoesNotReachAnIdsOnlyPodThroughTheRationale — #274's audit. The model is sent the
+// candidates' NAMES and asked what points at its pick; here it quotes the name, as models do. On an
+// instance that stores ticket ids only, NOTHING the pod stores may carry it: the rationale stored is
+// this program's own fixed sentence. Red before: the model's sentence — name included — was stored as
+// the rationale, past a title gate that only looks at `title`.
+func TestATicketNameDoesNotReachAnIdsOnlyPodThroughTheRationale(t *testing.T) {
+	const name = "Synthetic ticket one: lorem export"
+	for desc, withSummary := range map[string]bool{"from a summary": true, "from the opening": false} {
+		t.Run(desc, func(t *testing.T) {
+			w := newWorld(t, human("please do the lorem export", ""))
+			want := rationaleFromOpening
+			if withSummary {
+				w.pod.addSummary("The human asked for a lorem export.")
+				want = rationaleFromSummary
+			}
+			w.args = w.withModel()
+			w.prov.answer = `[{"ticket_id":"clk0000a1","confidence":0.9,"rationale":"this is clearly '` + name + `'"}]`
+			if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "suggestions=1") {
+				t.Fatalf("exit %d\n%s%s", code, out, errs)
+			}
+			if got := w.prov.received(); len(got) != 1 || !strings.Contains(got[0], name) {
+				t.Fatal("POSITIVE CONTROL: the model was not sent the ticket's name, so this proves nothing")
+			}
+			for _, o := range w.pod.outputs {
+				if strings.Contains(string(o.Body), "Synthetic ticket") || strings.Contains(string(o.Body), "clearly") {
+					t.Fatalf("an output on an ids-only pod carries the ticket's name or the model's sentence: %s", o.Body)
+				}
+			}
+			var s Suggestion
+			_ = json.Unmarshal(w.pod.ofType(TypeSuggestion)[0].Body, &s)
+			if s.Rationale != want {
+				t.Errorf("the stored rationale is %q, want the fixed %q", s.Rationale, want)
+			}
+		})
+	}
+}
+
+// TestAnEntryRefNeedsTheListToo — the attribution trailer that makes an entry "the session's" is text
+// anyone who can write the cached scope can forge, so an `entry-ref` is held to the rule every other
+// source is: the id must be one the fetched list holds. An explicit `clickup:<id>` naming anything
+// else — which used to need no list — is no edge.
+func TestAnEntryRefNeedsTheListToo(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "alpha-notes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	entry := "---\nrefs: [clickup:zzz999, clickup:clk0000b2, clickup:BETA-7]\n---\n\n- 2000-01-02: did it [cairn: host-a/" + session + "]\n"
+	if err := os.WriteFile(filepath.Join(root, "alpha-notes", "lorem.md"), []byte(entry), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w := newWorld(t, human("do lorem", ""))
+	w.args = []string{"-store-root", root}
+	if code, out, errs := w.run(t); code != 0 || !strings.Contains(out, "edges=1 ") {
+		t.Fatalf("exit %d\n%s%s", code, out, errs)
+	}
+	wantEdges(t, w.pod.edges(t), Edge{System: "clickup", TicketID: "clk0000b2", Signal: SigEntryRef, Locator: Locator{Entry: "alpha-notes/lorem"}})
+}
+
+// fakeGHMode makes the re-executed fake GitHub CLI misbehave: "hang" never answers; "orphan" answers
+// and exits 0 while a child it started keeps its output open.
+const fakeGHMode = "CAIRN_CLICKUP_TEST_FAKE_GH_MODE"
+
+// TestAHungHostProgramIsKilledAndTheSessionBacksOff — #274's audit. `gh` (or `git`) that never
+// answers used to hold the whole run, past `-timeout`; and one that exits while a child it started
+// holds its output kept `Wait` blocked just the same. Each is now bounded by its own deadline, its
+// PROCESS GROUP is killed, and the session takes a backoff so the next run works on others first.
+func TestAHungHostProgramIsKilledAndTheSessionBacksOff(t *testing.T) {
+	oldTimeout, oldDelay := execTimeout, execWaitDelay
+	execTimeout, execWaitDelay = 500*time.Millisecond, 300*time.Millisecond
+	defer func() { execTimeout, execWaitDelay = oldTimeout, oldDelay }()
+	for _, mode := range []string{"hang", "orphan"} {
+		t.Run(mode, func(t *testing.T) {
+			dir, gh := ghDir(t)
+			t.Setenv(fakeGHMode, mode)
+			writePR(t, dir, "example-org/alpha-notes", 7, "lorem", "see "+cuURLPrefix+"clk0000a1", "main")
+			w := newWorld(t, human("open the PR", ""), prLink(7, "example-org/alpha-notes"))
+			w.args = []string{"-gh-bin", gh}
+			start := time.Now()
+			code, out, errs := w.run(t)
+			if took := time.Since(start); took > 10*time.Second {
+				t.Fatalf("the run took %s: the hung program was not bounded", took)
+			}
+			if code != 1 || !strings.Contains(out, "sessions=1 edges=0") || !strings.Contains(errs, "could not be read") {
+				t.Fatalf("exit %d\n%s%s", code, out, errs)
+			}
+			if mode == "hang" && !strings.Contains(errs, "did not finish in time and was killed") {
+				t.Errorf("the deadline is not what failed it:\n%s", errs)
+			}
+			if !strings.Contains(errs, "backing off") {
+				t.Errorf("a host program that failed did not back the session off:\n%s", errs)
+			}
+			// Nothing the program started is left running.
+			raw, _ := os.ReadFile(filepath.Join(dir, "child.pid"))
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(raw))); mode == "orphan" && (err != nil || pid < 2) {
+				t.Fatalf("POSITIVE CONTROL: the fake started no child (%q)", raw)
+			} else if err == nil {
+				deadline := time.Now().Add(3 * time.Second)
+				for syscall.Kill(pid, 0) == nil && time.Now().Before(deadline) {
+					time.Sleep(20 * time.Millisecond)
+				}
+				if alive := syscall.Kill(pid, 0) == nil && !zombie(pid); alive {
+					_ = syscall.Kill(pid, syscall.SIGKILL)
+					t.Errorf("the program's child (pid %d) outlived it", pid)
+				}
+			}
+			// The next run does not work on the session again: it is inside its backoff.
+			if code, out, _ := w.run(t); code != 0 || !strings.Contains(out, "sessions=0") || !strings.Contains(out, "skipped=1") {
+				t.Fatalf("the next run: exit %d %s", code, out)
+			}
+		})
+	}
+}
+
+// zombie reports whether a pid is a defunct process awaiting its parent's wait (it answers signal 0).
+func zombie(pid int) bool {
+	raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return true // gone
+	}
+	i := strings.LastIndexByte(string(raw), ')')
+	return i >= 0 && i+2 < len(raw) && raw[i+2] == 'Z'
 }

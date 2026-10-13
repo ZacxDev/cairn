@@ -213,6 +213,8 @@ type memSink struct {
 	deletedOn map[string]bool
 	// probes is every position asked, as `instance/root/stream`.
 	probes []string
+	// probeErr makes every position ask fail (an unreachable instance).
+	probeErr error
 }
 
 func newMemSink() *memSink {
@@ -268,6 +270,9 @@ func (s *memSink) Blob(u Upload, name, to string, data []byte) error {
 
 func (s *memSink) Position(u Upload, stream string) (string, error) {
 	s.probes = append(s.probes, u.Instance+"/"+u.Root+"/"+stream)
+	if s.probeErr != nil {
+		return "", s.probeErr
+	}
 	if s.deletedOn[u.Instance+"/"+u.Root] {
 		return "", ErrDeleted
 	}

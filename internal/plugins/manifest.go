@@ -254,6 +254,23 @@ func printable(s string) bool {
 	return !strings.ContainsFunc(s, unicode.IsControl)
 }
 
+// BidiControl reports whether r is a Unicode BIDIRECTIONAL control: the embeddings, overrides and
+// isolates (U+202A–202E, U+2066–2069) and the marks (U+200E, U+200F, U+061C). ONE spelling: the
+// write path refuses a display string carrying one ([displayable]) and the renderer strips them
+// from anything stored before that rule (`internal/ui` `plainText`).
+func BidiControl(r rune) bool {
+	return r >= 0x202A && r <= 0x202E || r >= 0x2066 && r <= 0x2069 || r == 0x200E || r == 0x200F || r == 0x061C
+}
+
+// displayable reports whether s may be stored as a short string the page prints INSIDE its own
+// sentence — a model's name, a ticket title, a rationale: no control character and no bidirectional
+// control. Escaping does not cover the second: such a character is not markup, it reorders how what
+// FOLLOWS it is displayed, so one stored in a title could make the page's own label read as
+// something else.
+func displayable(s string) bool {
+	return printable(s) && !strings.ContainsFunc(s, BidiControl)
+}
+
 // ValidateManifest checks one manifest against the closed vocabularies.
 func ValidateManifest(m Manifest) error {
 	switch {

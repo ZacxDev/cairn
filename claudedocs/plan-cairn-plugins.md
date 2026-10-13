@@ -224,6 +224,12 @@ field names and types alone.
   14); ticket titles as an optional body field behind `-plugin-store-ticket-titles` on the pod AND
   `-store-ticket-titles` on the plugin (Q8); and the commit join by session TRAILER (Q13, which
   named the repository list and not the join — Q13 is otherwise built as recommended).
+  After #274's audit, three rules are NARROWER than decision 14 reads: a ticket is an edge only when
+  its id is a member of the fetched list — a `/t/<id>` URL and an entry's `clickup:<id>` included
+  (so the S10 test plan's "OR appears as a ClickUp URL" is not built); a suggestion's stored
+  rationale is the plugin's own fixed sentence unless titles are stored, because a model's sentence
+  quotes the ticket's name; and a title, a rationale or a model name carrying a bidirectional
+  control is refused by the pod.
 
 ## Goal and premise
 
@@ -1444,12 +1450,15 @@ script that prints only counts.
       a `false` answer is final and is logged loudly ("prefix not withdrawn: not held by this owner and host" — e.g. the
       token was reissued under another host label), and the session stays held rather than being
       re-shipped, so the prefix's presence elsewhere is surfaced instead of duplicated. Clause (m).
-      *As built (S10, from #273's audit): before withdrawing on a MOVE the agent probes the
-      destination's position (nothing is stored); a destination that answers 410 — it holds a final
-      deletion of this root, which a routing-table edit can route a session back to — means the
-      session is HELD where it is, with no withdrawal. Withdrawing first ended the session's capture
-      on every instance. The cost, stated: that prefix stays on an instance the current table no
-      longer routes its scopes to, until its owner deletes it there.*
+      *As built (S10, from #273's and #274's audits): before withdrawing on a MOVE the agent probes
+      the destination's position (nothing is stored), and only a definite position lets the
+      withdrawal go ahead. A destination that answers 410 — it holds a final deletion of this root,
+      which a routing-table edit can route a session back to — means the session is HELD where it
+      is, with no withdrawal; a destination that does not answer DEFERS the withdrawal to the next
+      run. Withdrawing first ended the session's capture on every instance. ⚠ An AGENT decision,
+      open to operator review, because it relaxes this rule: while the destination cannot be asked,
+      and for good after a 410, the prefix stays on an instance the current table no longer routes
+      its scopes to, until its owner deletes it there.*
     - ⚠ **Re-shipping from offset 0 needs the source.** If the runtime has already deleted part of a
       session's files on the host, the re-shipped copy is what remains, and the agent logs the
       shortfall; it never re-sends bytes it no longer has.

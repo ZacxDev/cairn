@@ -118,22 +118,32 @@ It writes THREE output types, and they are three different claims (decision 14):
 | type | what it claims | made by |
 |---|---|---|
 | `ticket-edge` | the session NAMES this ticket: `{system, ticket_id, custom_id?, signal, locator}` — the signal says how, the locator where | a deterministic matcher; `model` reads `none (deterministic match)` |
-| `ticket-suggestion` | a model GUESSES this ticket: `{ticket_id, confidence, rationale}` | the provider; never promoted to an edge, at any confidence |
+| `ticket-suggestion` | a model GUESSES this ticket: `{ticket_id, confidence, rationale}` — the rationale is this program's own fixed sentence unless titles are stored (below) | the provider; never promoted to an edge, at any confidence |
 | `ticket-scan` | this pass EXAMINED the session through its watermark: `{system, edges, suggestions, model_asked}` | every completed pass, written last |
 
 ### What counts as naming a ticket
 
 ClickUp's id charset was not found in a primary source (R5), so nothing matches because it LOOKS like
-an id. A ticket is named only by:
+an id — and **nothing is an edge unless its id is a MEMBER of the ticket list this run fetched**
+(`-clickup-list`). One rule, every source. A ticket is named by:
 
-- a task URL — `https://app.clickup.com/t/<id>` (the id is the canonical id; it needs no list), or
-  `https://app.clickup.com/t/<workspace>/<custom-id>`, resolved through the fetched list (and, with
-  `-clickup-team`, only for that workspace);
-- a CUSTOM id that is a member of the fetched list, standing as a whole token (`ALPHA-12` is not in
-  `ALPHA-123`);
+- a task URL — `https://app.clickup.com/t/<id>` whose id the list holds, or
+  `https://app.clickup.com/t/<workspace>/<custom-id>` whose custom id the list holds (and, with
+  `-clickup-team`, only for that workspace; the workspace's own id is never a ticket);
+- a CUSTOM id the list holds, standing as a whole token: `ALPHA-12` is in `feature/ALPHA-12-fix`, and
+  in none of `ALPHA-123`, `PRE-ALPHA-12`, `ALPHA-12-13`, `ALPHA-12.5` (letters and digits of any script
+  are part of a word);
 - in a STRUCTURED field only (a branch name, a commit trailer's value, a PR's head branch): a whole
-  token that is a fetched canonical id, or one the same session named by URL;
-- an explicit `clickup:<id>` ref in the front matter of an entry the session wrote.
+  token that is a canonical id the list holds;
+- an explicit `clickup:<id>` ref in the front matter of an entry the session wrote, the id (or custom
+  id) being one the list holds.
+
+🔴 **A URL does not vouch for itself.** A tool cuts it short (`…/t/clk00`), a human mistypes it, a page
+prints `/t/<workspace>` with nothing after: each is a well-formed URL naming a ticket that does not
+exist. So a URL whose id the list does not hold is NO edge — which also means a ticket outside the
+configured lists is never linked, however explicitly a session names it. List every list you want
+matched. (The plan's "a branch token matches when the id appears as a ClickUp URL" is not built: a
+URL can vouch for nothing the list does not already hold.)
 
 The edge always stores the CANONICAL id; a custom id the list does not resolve is no edge.
 
@@ -221,6 +231,13 @@ sessions not in backoff, unfinished passes first.
 Exit codes: 0 the run finished, 1 a session, a source or the ticket fetch failed, 2 usage. The last
 stdout line is `SUMMARY clickup-run: sessions=… edges=… suggestions=… requests=… failed=… capped=… skipped=…`.
 
+### Rolling `cairn-ui` back
+
+⚠ A registry that holds this plugin's manifest names `ticket-scan`, which a `cairn-ui` older than S10
+does not know — and a registry is refused WHOLE on any capability outside its vocabulary, so the older
+image does not start. Remove the `clickup` manifest from `-plugin-registry` BEFORE rolling the image
+back (plugin A's manifest is unaffected).
+
 ### As built — departures from the plan, each deliberate
 
 - **`ticket-scan` is a FOURTH output type** (the plan's closed set had three). Decision 13 advances a
@@ -234,12 +251,28 @@ stdout line is `SUMMARY clickup-run: sessions=… edges=… suggestions=… requ
   its source.
 - **Ticket NAMES are sent to the provider** as candidates whenever a model is asked. Q8 governs what
   the POD stores (ids only by default); run without `-key-file` if names must not leave the host.
-- **`get one task` (R5) is not called**: a `/t/<id>` URL already names the canonical id.
+- **`get one task` (R5) is not called**: a ticket outside the fetched lists is not matched at all.
+- **The model's rationale is NOT stored by default.** The model is sent the candidates' names and
+  asked what points at its pick; its sentence quotes the name. Stored, that put a ticket's title on a
+  pod that asked for ids only, through a field the title gate does not read. So unless
+  `-store-ticket-titles` is on, the stored rationale is one of two fixed sentences ("suggested by the
+  model from the session's stored summary" / "…opening records"). The plan's `rationale (≤ 280 chars)`
+  is the model's only where titles are stored too.
 
 ### What it cannot see, stated
 
 - **A session that stamps no session trailer has no commit signal**, and an entry it wrote only with
   `put`/`create` (no attribution) has no `entry-ref`.
+- **An `entry-ref` can be FORGED onto a session.** Which entries are "the session's" is read off the
+  `[cairn: <actor>/<session>]` trailer, which is text in an entry: anyone who can write a cached scope
+  can write one naming any session id, and its `refs:` then become that session's `entry-ref` edges.
+  A declared residual of trailers being self-declared (`internal/touch` says the same). What it buys
+  is bounded: the ticket must be one of the workspace's own listed tickets, only its id is stored, and
+  the edge names the `<scope>/<entry>` it came from.
+- **A host program that hangs fails the session, not the run.** `git` and `gh` each get 60 seconds;
+  past it the program AND everything it started are killed (its process group), the session is logged
+  with a source error and takes a backoff, and the run goes on to the next. A program that exits while
+  something it started still holds its output is refused the same way.
 - **Host sources are read when a session is PENDING.** A commit made, or a PR body edited, after the
   session's last finished pass is seen only if the session grows again. (A source that FAILED is
   retried: the state file's redo marker.)
@@ -250,9 +283,10 @@ stdout line is `SUMMARY clickup-run: sessions=… edges=… suggestions=… requ
 - **A summary written WHILE a pass runs is not asked about**: "new" is judged by the pod's
   whole-second stamp against this plugin's previous scan, so a summary stamped at or before that scan
   waits for the summary after it.
-- **A URL split across two strings, or cut short by a tool, is no URL**: `…/t/abc...` is refused
-  rather than read as ticket `abc`, a custom-id URL cut short is not the shorter listed id it spells,
-  and `/t/<workspace>/` with nothing readable after it is never read as a ticket.
+- **A URL split across two strings, or cut short by a tool, is no ticket**: its id is not one the
+  list holds (and a cut-short id that happens to BE a shorter listed id is still refused when `...`,
+  `…`, `-`, `%` or `_x` follows it). A custom-id URL cut short is not the shorter listed id it spells,
+  and `/t/<workspace>` — with or without anything after it — is never read as a ticket.
 - **The entry reader is a narrow second reader**, not the store's parser: it reads the attribution
   trailer and the `refs:` key and nothing else; a file it misreads costs an edge.
 - **Suggestions are best-effort**: a capped, failed or unconfigured model leaves the pass complete

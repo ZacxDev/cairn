@@ -139,3 +139,41 @@ func TestTheStoredBodyIsTheValidatedValue(t *testing.T) {
 		t.Fatalf("the body to store is %s, want {\"text\":\"ok\"}", env.Body)
 	}
 }
+
+// TestADisplayStringCarryingABidiControlIsNeverStored — #274's audit. A ticket title, a rationale and a
+// model's name are printed INSIDE the page's own sentences, and a bidirectional control (U+202E and
+// its family) is not markup: it reorders how what follows it is displayed. Each is refused at the ONE
+// schema check, so none is ever stored. Red before: `printable` looked only for control characters
+// (category Cc) and these are format characters (Cf). CONTROL: the same bodies without it are stored.
+func TestADisplayStringCarryingABidiControlIsNeverStored(t *testing.T) {
+	const rlo = "\u202e"
+	envelope := func(model, typ, body string) []byte {
+		return []byte(`{"plugin":"clickup","plugin_version":"0.1.0","model":"` + model + `","session":"s-0001","input_watermark":{"main":1},"type":"` + typ + `","body":` + body + `}`)
+	}
+	edge := func(title string) string {
+		return `{"system":"clickup","ticket_id":"abc123","title":"` + title + `","signal":"branch-name","locator":{"stream":"main","seq":1}}`
+	}
+	suggestion := func(title, rationale string) string {
+		return `{"ticket_id":"abc123","title":"` + title + `","confidence":0.5,"rationale":"` + rationale + `"}`
+	}
+	for name, raw := range map[string][]byte{
+		"an edge's title":          envelope("none", TypeTicketEdge, edge("gadget "+rlo+"export")),
+		"a suggestion's title":     envelope("fake-model", TypeTicketSuggestion, suggestion("gadget "+rlo+"export", "synthetic")),
+		"a suggestion's rationale": envelope("fake-model", TypeTicketSuggestion, suggestion("gadget", "synthetic "+rlo+"reason")),
+		"the model's name":         envelope("fake-"+rlo+"model", TypeTicketSuggestion, suggestion("gadget", "synthetic")),
+		"an isolate (U+2066)":      envelope("none", TypeTicketEdge, edge("gadget \u2066export")),
+		"a mark (U+200F)":          envelope("none", TypeTicketEdge, edge("gadget \u200fexport")),
+	} {
+		if _, err := DecodeEnvelope(raw); err == nil {
+			t.Errorf("%s carrying a bidirectional control was accepted", name)
+		}
+	}
+	for name, raw := range map[string][]byte{
+		"an edge":      envelope("none", TypeTicketEdge, edge("gadget export")),
+		"a suggestion": envelope("fake-model", TypeTicketSuggestion, suggestion("gadget — «export» é", "synthetic reason")),
+	} {
+		if _, err := DecodeEnvelope(raw); err != nil {
+			t.Errorf("POSITIVE CONTROL: %s without one was refused: %v", name, err)
+		}
+	}
+}

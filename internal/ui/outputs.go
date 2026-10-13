@@ -279,8 +279,11 @@ func derivedBlock(session string, b DerivedBlock) g.Node {
 		e := b.Body.Edge
 		body = h.P(h.Class("t-line"),
 			g.Text("ticket "), ticketNode(e.TicketID),
-			g.If(e.CustomID != "", g.Text(" ("+e.CustomID+")")),
-			g.If(e.Title != "", g.Text(" — "+e.Title)),
+			g.If(e.CustomID != "", g.Text(" ("+plainText(e.CustomID)+")")),
+			// ⚠ `plainText` here cannot be reached with anything to strip: a body carrying a bidi
+			// control no longer validates, so it is shown as stored text above. It is here so that
+			// EVERY plugin string is printed through the one strip, whatever the schema becomes.
+			g.If(e.Title != "", g.Text(" — "+plainText(e.Title))),
 			g.Text(" · matched on "+signalWords[e.Signal]+" · "), locatorNode(session, e.Locator))
 	case b.Body.Scan != nil:
 		// 🔴 A SCAN IS NOT A TICKET AND NOT A SUGGESTION: it says a matcher EXAMINED the session through
@@ -299,7 +302,7 @@ func derivedBlock(session string, b DerivedBlock) g.Node {
 			h.P(h.Class("t-line"),
 				h.Span(h.Class("badge badge-quiet"), g.Text("suggested")),
 				g.Text(" ticket "), ticketNode(sg.TicketID),
-				g.If(sg.Title != "", g.Text(" — "+sg.Title)),
+				g.If(sg.Title != "", g.Text(" — "+plainText(sg.Title))),
 				g.Text(" · confidence "+strconv.FormatFloat(sg.Confidence, 'f', 2, 64)+" · not a match")),
 			g.If(sg.Rationale != "", h.Div(h.Class("t-text"), g.Text(plainText(sg.Rationale)))),
 		})
@@ -376,7 +379,7 @@ func (d derivedLines) line(session string) g.Node {
 func plainText(text string) string {
 	return strings.Map(func(r rune) rune {
 		switch {
-		case r >= 0x202A && r <= 0x202E, r >= 0x2066 && r <= 0x2069, r == 0x200E, r == 0x200F, r == 0x061C:
+		case plugins.BidiControl(r):
 			return -1
 		}
 		return r
