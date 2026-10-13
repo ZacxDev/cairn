@@ -87,6 +87,13 @@ type Options struct {
 	HasBody  bool
 	BodyFile string
 	TTL      string
+
+	// The `transcript` verb's operands (transcripts S8): the action positional, and every read flag
+	// as the query parameter it becomes, with the flags given — so the verb can refuse one its action
+	// does not take rather than send it.
+	Action               string
+	TranscriptParams     map[string][]string
+	TranscriptFlagsGiven []string
 }
 
 // Selection is recall's FLAGS mapped onto the reader's arguments.

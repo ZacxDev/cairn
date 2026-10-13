@@ -153,6 +153,15 @@ var routes = map[routeKey]route{
 	// else supplied. `content`: whether it answers is the visibility predicate's verdict about this
 	// caller. GET only, so neither cross-site gate gains a case. See `handleSessionTranscript`.
 	{"GET", SessionTranscriptPath}: {(*Server).handleSessionTranscript, classContent},
+	// 🔴 THE AGENT READ API (S8 of the transcripts plan, `agentread.go`): a session's skeleton, a bounded
+	// page of its records, one tool call — JSON, for agents holding their own credential. Three FIXED
+	// paths with every operand in a query parameter, for the browse pair's reason. `content`: whether
+	// any of them answers is the visibility predicate's verdict about this caller, asked through
+	// `transcript.Store.Answer` — the ONE function the client listener serves the same answers
+	// through. GET only, so neither cross-site gate gains a case.
+	{"GET", TranscriptSkeletonPath}: {(*Server).handleTranscriptSkeleton, classContent},
+	{"GET", TranscriptRecordsPath}:  {(*Server).handleTranscriptRecords, classContent},
+	{"GET", TranscriptToolPath}:     {(*Server).handleTranscriptTool, classContent},
 	// 🔴 THE BELL (S5 of the arcs/presence plan): queue a terminal-bell ring at the pane a session the
 	// VIEWER owns is running in. CLASS 0, ON PURPOSE — it declares nothing, so BOTH cross-site gates
 	// reach it by METHOD (same origin before auth, the CSRF token after), exactly as they reach

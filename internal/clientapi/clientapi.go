@@ -30,6 +30,15 @@
 // purpose: the type IS the wire format, so there is no copy step between the renderer and the
 // encoder that could drop a field's sanitising.
 //
+// 🔴 AND THREE READ ROUTES THAT ARE NOT MEMOS: the transcripts plan's agent read API (S8, its decision
+// 17) — a stored session's skeleton, a page of its records, one tool call — under
+// [transcriptwire.ClientPathPrefix]. Scope mail's Q3 put agent reads on THIS listener so an agent holds
+// one `CAIRN_UI_URL` and one credential; the browser surface serves the same three answers. Both serve
+// them through `transcript.Store.Answer` and nothing else, so this package asks no transcript
+// predicate of its own either: the answer is decision 4's (`transcript.Store.View`) over the request's
+// own — narrowed — authority, and every miss is `transcriptwire.UnseenBody`, which is [NotFoundBody]
+// byte for byte. With no transcript store configured every named session is that miss.
+//
 // 🔴 ONE ANSWER FOR EVERY MISS (decision 4, T12). A scope the caller cannot read, a scope that
 // does not exist, an id that does not exist, an id asked under a scope it does not belong to and
 // an expired memo are all `404` with [NotFoundBody], byte for byte. A send to a scope the caller
@@ -55,6 +64,8 @@ import (
 	"github.com/ZacxDev/cairn/internal/memowire"
 	"github.com/ZacxDev/cairn/internal/netid"
 	"github.com/ZacxDev/cairn/internal/pgstore"
+	"github.com/ZacxDev/cairn/internal/transcript"
+	"github.com/ZacxDev/cairn/internal/transcriptwire"
 )
 
 // The four routes' paths (decision 8), re-exported from `internal/memowire`, which is where the
@@ -106,6 +117,9 @@ type Config struct {
 	// credential label (decision 5). `(*control.Cache).Model` in production.
 	Model func() control.Model
 	Memos Store
+	// Transcripts is the transcript archive's read side for the agent read routes, NIL on a deployment
+	// with no `-transcript-dir` — every named session is then the one miss.
+	Transcripts *transcript.Store
 	// Limiter is the failed-token lockout; TrustedProxies is what makes the client-IP header
 	// readable. The caller has already refused a reachable bind with no allowlist, so the lockout
 	// keys on the real client and not on a proxy (`netid.ResolveClient`).
@@ -144,6 +158,10 @@ var routes = map[routeKey]func(*Handler, http.ResponseWriter, *http.Request, ide
 	{http.MethodPost, MemosPath}:   (*Handler).send,
 	{http.MethodGet, MemoPath}:     (*Handler).get,
 	{http.MethodPost, RetractPath}: (*Handler).retract,
+	// The agent read API (transcripts S8): GET only, every operand in a query parameter.
+	{http.MethodGet, transcriptwire.ClientPathPrefix + transcriptwire.RouteSkeleton}: (*Handler).transcriptSkeleton,
+	{http.MethodGet, transcriptwire.ClientPathPrefix + transcriptwire.RouteRecords}:  (*Handler).transcriptRecords,
+	{http.MethodGet, transcriptwire.ClientPathPrefix + transcriptwire.RouteTool}:     (*Handler).transcriptTool,
 }
 
 // ClientRoutes is every `<METHOD> <path>` the client listener dispatches, sorted.
@@ -411,4 +429,30 @@ func (h *Handler) retract(w http.ResponseWriter, r *http.Request, id identity.Id
 		return
 	}
 	writeJSON(w, http.StatusOK, RetractedBody{Retracted: memoID})
+}
+
+func (h *Handler) transcriptSkeleton(w http.ResponseWriter, r *http.Request, id identity.Identity) {
+	h.transcriptRead(w, r, id, transcriptwire.RouteSkeleton)
+}
+
+func (h *Handler) transcriptRecords(w http.ResponseWriter, r *http.Request, id identity.Identity) {
+	h.transcriptRead(w, r, id, transcriptwire.RouteRecords)
+}
+
+func (h *Handler) transcriptTool(w http.ResponseWriter, r *http.Request, id identity.Identity) {
+	h.transcriptRead(w, r, id, transcriptwire.RouteTool)
+}
+
+// transcriptRead answers one agent read route through `transcript.Store.Answer` — the browser
+// surface's one function — with the request's own authority. The body is a transcript: no cache keeps
+// it.
+func (h *Handler) transcriptRead(w http.ResponseWriter, r *http.Request, id identity.Identity, route string) {
+	status, body, err := h.cfg.Transcripts.Answer(transcript.Viewer{Principal: id.Principal, Auth: id.Auth}, route, r.URL.Query())
+	if err != nil {
+		h.cfg.Log("client-api: transcript " + route + " failed: " + err.Error())
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }

@@ -332,6 +332,14 @@ var notADocument = map[string]string{
 		"(operator decision O-a) — there is no document; the walk captures /team and its /team?scope=… pages",
 	ui.InvitePath: "a bodiless 303 to /team#invite since the invite flow moved onto the Team page " +
 		"(O-a) — there is no document; the walk captures /team and its /team?project=… pages",
+	// The agent read API (transcripts S8): three JSON rows for agents, never a page.
+	ui.TranscriptSkeletonPath: "an application/json response and not a document — the agent read API's " +
+		"skeleton of a stored session (transcripts S8). `internal/ui`'s TestTheAgentReadRoutesAskThePredicate " +
+		"drives it for every viewer, and TestEveryNonPublicHTMLRowIsNoStore holds it to no-store",
+	ui.TranscriptRecordsPath: "an application/json response and not a document — the agent read API's page " +
+		"of a stored session's records (transcripts S8); measured as the skeleton row is",
+	ui.TranscriptToolPath: "an application/json response and not a document — the agent read API's one tool " +
+		"call (transcripts S8); measured as the skeleton row is",
 	ui.ManifestPath: "an application/manifest+json response and not a document — and a 404 in this walk's " +
 		"worlds, which boot UNARMED (no -app-name). `internal/ui`'s TestTheManifestIsBuiltFromTheConfiguredApp " +
 		"pins its members; `pwa_test.go` reads it the way a browser does, through Page.getAppManifest",

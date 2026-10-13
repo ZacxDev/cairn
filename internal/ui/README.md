@@ -5080,7 +5080,7 @@ the fixture upload skipped.
   (that needs an index from child to root, which nothing keeps); the child's stream is reachable
   under its root.
 - **Work is not bounded, the response is.** A page scans the whole main stream to find turn
-  boundaries (the skeleton of decision 17 is S8's), one record in memory at a time; an opencode
+  boundaries (S8's skeleton exists now and does not index it either), one record in memory at a time; an opencode
   stream is held whole.
 - **A damaged entry costs visibility.** A scope holding an entry the trailer walk cannot scan is
   counted as written, so viewers who cannot read that scope lose every transcript until it is fixed
@@ -5090,3 +5090,49 @@ the fixture upload skipped.
 - **Another package holding an archive.** The bound is "`internal/ui` cannot reach one"; any package
   that opens an `archive.Archive` itself reads records with no predicate. Only `cmd/cairn-ui` and the
   worker listener do (the importer ledger).
+
+---
+
+# The agent read API (S8 of the transcripts plan)
+
+`GET /transcript/skeleton`, `GET /transcript/records` and `GET /transcript/tool` (`agentread.go`)
+answer one stored session as JSON for an agent — decision 17. The model is `internal/transcript`'s
+(`agent.go`, its README); this surface only hands it the request's own authority.
+
+## The binding rules
+
+- 🔴 **Nothing here decides.** Each row calls `transcript.Store.Answer` with
+  `transcript.Viewer{Principal, Auth}` off the request's identity — the resolved, possibly NARROWED
+  authorization — and writes what it returns. The client listener (`internal/clientapi`) serves the
+  same three answers through the same function, so the two listeners cannot disagree; a narrowed
+  agent credential reads exactly the sessions its narrowing covers and never one by the owner arm.
+- 🔴 **One miss, byte for byte.** A refused viewer, a session never stored, an id that is no session,
+  a deployment with no archive, and a stream, record or call that is not there all answer 404
+  `transcript.UnseenBody` (`TestARefusedAgentGetsTheBytesOfASessionWithNoTranscript`, positive control
+  first). A request naming no session is a 400 naming the parameter — there is no navigation page to
+  fall back on for JSON.
+- **`content`, measured elsewhere.** The rows are `content` (whether they answer is the predicate's
+  verdict), but they ask no `Source` method, so `TestEveryContentRouteConsultsTheAuthority` declares
+  their authority as `transcript` and asserts only what it can (the bare 400, no `Source` read);
+  `TestTheAgentReadRoutesAskThePredicate` is what measures the predicate, over every row and viewer.
+- **`Cache-Control: no-store`**, the HTML rows' value: the walk in `cachecontrol_test.go` reaches each
+  row's real answer and holds it to that (`agentJSONRows`).
+- GET rows: neither cross-site gate applies, and a bearer credential reaches them before the cookie.
+
+## The RED proof
+
+`transcript-read-api-without-predicate` (the predicate's owner arm answering for everybody) is
+KILLED by `TestTheAgentReadRoutesAskThePredicate`, and `transcript-raw-view-without-predicate` (the
+scope arm admitting anybody once `V` is non-empty) by `TestTheRawRecordsViewAsksThePredicate` and the
+S4 raw-record view's test. ⚠ Neither is a surface-local "skip the predicate" edit, because none
+compiles: `Store.View` is the only way to a record. The model's own guards were each watched red
+under a hand mutation (conversation strip off, bookkeeping kept, the first record split, an
+unrecognised view defaulted, the spawn depth not incremented, a range not moved to a character
+boundary).
+
+## What these guards still cannot see
+
+- **The refused states over a real listener in a browser** — `uiaudit` lists the rows as
+  not-a-document; the matrix is in-process.
+- **Timing**, as for the session page: a stored-and-hidden session costs a meta read and maybe a walk.
+- **An unbounded skeleton** — see `internal/transcript/README.md`.

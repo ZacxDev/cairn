@@ -15,6 +15,7 @@ collapsed reading model the browser surface renders. `claudedocs/plan-cairn-plug
 | `archive/` | S3's transcript STORE on `cairn-ui` (decision 15): per-session directories, CAS append, frames, ownership, the refusing re-check, quota, retention. Written only through `internal/worker`, whose upload routes are DISARMED unless `cairn-ui -arm-transcript-capture` (O16). Since S4 it derives the READ half of a session's visibility set itself, through `scopeuse`, over every record and text blob it stores |
 | `visible.go` | S4: `Visible` (decision 4), `VisibilitySet` and the whole-store `WrittenScopes` walk (decision 3), and `Store.View` — the only way a stored session's content leaves this package |
 | `read.go` | S4: the collapsed reading (decision 18) — turns of classified items, at most 50 turns and 1,000 items a page (ending at a turn boundary), child streams nested under the call that spawned them |
+| `agent.go` | S8: the agent read API (decision 17) — `View.Skeleton`, `View.Page` (two views, filters, ranges, a byte bound), `View.Tool`, and `Store.Answer`, the ONE entry point both listeners serve it through. Its spellings are `internal/transcriptwire`'s |
 | `transcripttest/` | a fixture archive for tests in this package and `internal/ui`; nothing that ships imports it |
 
 `tests/test_transcript_fixtures.py` refuses a stale world and any date outside the year 2000.
@@ -52,6 +53,31 @@ collapsed reading model the browser surface renders. `claudedocs/plan-cairn-plug
   stored version.
 - **Read-time bounds only:** `TurnsPerPage` (50), `ChildItemCap` (200), `CollapsedBudget` (2 MiB of
   collapsed content a page; user messages and assistant text are never charged).
+
+## The agent read API (S8)
+
+- **One entry point, two listeners.** `Store.Answer(viewer, route, query)` is what `internal/ui`
+  (`/transcript/{skeleton,records,tool}`) and `internal/clientapi` (`/client/v1/transcript/…`, what
+  `CAIRN_UI_URL` names and the `transcript` verb asks) both serve. It asks `Store.View` first; every
+  miss after that — no transcript, a refused viewer, a stream, record or call not there — is ONE body,
+  `transcriptwire.UnseenBody`, which is the client listener's own `not-found`. A malformed parameter
+  is a 400 naming it, decided from the query alone before the predicate.
+- **The views.** `conversation` (the DEFAULT) leaves each bookkeeping record out as a placeholder
+  naming its class, type and size, and strips the duplicate `toolUseResult` FIELD, naming its size;
+  every other member keeps its stored bytes and order. `raw` is the stored bytes, byte-exact — the
+  page is encoded by hand, because `encoding/json` compacts a raw message and escapes `<`, `>`, `&`
+  in it. An unrecognised view is REFUSED, never defaulted. `ParseView` and `View.Page` are what the
+  plugin route (S5) and the summary plugin (S9, `view=conversation`) are meant to read through.
+- **The bounds.** A page is at most `max_bytes` (64 KiB default, 1 MiB ceiling) of encoded records
+  and always carries its first record WHOLE, however large, with `next_seq` naming the next — never
+  split. A tool answer carries one byte range (64 KiB default, 1 MiB at most) of its result and of
+  its duplicate, moved inward to character boundaries and reported.
+- **The skeleton carries no content beyond tool names** — and what the spawning call said a
+  subagent was for (`agent_type`, `description`), which the plan names. ⚠ It is NOT bounded: it reads
+  every stream once and lists every call, so a session of tens of thousands of calls is a
+  proportionally large answer (the client bounds what it accepts at 16 MiB).
+- ⚠ **Work is not bounded, the response is** — a page scans its stream from record 1 (a `tool`
+  filter needs every earlier call's name), as the collapsed reading does.
 
 ## Shapes deliberately NOT declared
 
