@@ -297,7 +297,7 @@ func TestTheWireIsStrict(t *testing.T) {
 	} {
 		path := recordsPath
 		if name == "an unknown stream" {
-			path, body = "/capture/v1/sessions/s-0001/streams/ledger/records", recordsBody("host-a", "", "1", "t")
+			path, body = "/capture/v1/sessions/s-0001/streams/notes/records", recordsBody("host-a", "", "1", "t")
 		}
 		if rec := g.do(http.MethodPost, path, captureA, body); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s answered %d %q, want 400", name, rec.Code, rec.Body.String())

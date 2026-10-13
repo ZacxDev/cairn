@@ -24,7 +24,12 @@ operator's act.
    a UNION with the stored `V`, so a deleted ledger cannot shrink it.
 3. **Routes** (`Decide`, decision 16) over `V` *including* the records about to ship. A scope the
    routing table explicitly sends to an unconfigured alias is HELD at any instance count.
-4. **Acts**: ship to the routed instance; on a move, withdraw from the old one and re-ship the
+4. **Acts**: ship to the routed instance — the client read ledger FIRST (S11, decision 3a): the
+   root's `<session>.jsonl` and every opencode child's, new complete lines only, as the root's
+   `ledger` stream through the opencode path's saved-plan resume, a line that is not JSON (or a
+   ledger that exists and cannot be read) shipped as a record naming `*` with its bytes dropped. The
+   pod folds it into `V` itself (`internal/transcript/archive`'s `foldLedger`), and it goes before the
+   transcript because the pod's F1 asks "is the ledger empty"; on a move, withdraw from the old one and re-ship the
    whole session from offset 0 (only up to what was derived); on a hold, withdraw any shipped
    prefix and stop for good.
 5. **Redacts** every record and blob (`internal/redact`) and hands the exact bytes to the Sink; a
@@ -100,4 +105,3 @@ prefix that was acknowledged. The token file may be a symlink (a secret manager'
 
 The withdraw route (S6): until it exists `Withdraw` fails, so a session whose routing moved or
 turned held keeps its shipped prefix where it is and NOTHING more of it is sent, logged every run.
-The ledger stream's upload (S11).

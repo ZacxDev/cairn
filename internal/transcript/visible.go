@@ -11,9 +11,10 @@ import (
 
 // 🔴 VISIBILITY: ONE PREDICATE, ASKED BY EVERY SURFACE THAT SHOWS TRANSCRIPT CONTENT
 // (`claudedocs/plan-cairn-plugins.md`, decisions 3 and 4; slice S4). The session page's transcript
-// section and the raw-record view ask it today; the agent read API, plugin output rendering, edges
-// and "My sessions" are later slices and ask the SAME function — through [Store.View], which is the
-// only way this package hands out a stored session.
+// section and the raw-record view ask it today; the agent read API, plugin output rendering and
+// edges are later slices and ask the SAME function — through [Store.View], which is the only way
+// this package hands out a stored session's CONTENT. "My sessions" (S7, [Store.Mine]) asks only the
+// owner arm, [Viewer.owns], and hands out metadata: it lists ownership, never visibility.
 //
 // The rule (operator decisions O2, O8, O10): a session's content is visible to its OWNER, and to a
 // principal that can read EVERY scope the session wrote to or read from. Stricter than the session
@@ -149,8 +150,8 @@ func writtenWithin(storeRoot string, within store.ScopeSet, ids []string) (Writt
 // VisibilitySet is decision 3's `V(s) = W_trailer ∪ R_header ∪ L ∪ F ∪ D`: the written half from a
 // store walk AND every earlier walk's answer as `meta.json` keeps it (`Written`), and the read half
 // as `meta.json` holds it — what the pod DERIVED over the stored records and blobs (`R_header`, and
-// `*` for the fallbacks) and what the capture agent DECLARED (its own `L ∪ R_header ∪ F`). Sorted,
-// de-duplicated.
+// `*` for F2), the client read LEDGER it folded (`L`, and F1's `*` while that ledger is empty), and
+// what the capture agent DECLARED (its own `L ∪ R_header ∪ F`). Sorted, de-duplicated.
 //
 // 🔴 THE WALK'S ANSWER CAN SHRINK, SO IT IS NOT `V`'S WRITTEN HALF BY ITSELF. A trailer leaves the
 // store whenever its entry is rewritten without it (a put, a hygiene pass), and a walk then no
@@ -171,6 +172,9 @@ func writtenWithin(storeRoot string, within store.ScopeSet, ids []string) (Writt
 // keeping it made one transient file a permanent refusal (#261 round 3).
 func VisibilitySet(meta *archive.Meta, written Written) []string {
 	out := slices.Concat(written.Scopes, written.Unscanned, meta.Written, meta.Derived, meta.Declared)
+	// `L` and F1 (S11): the client read ledger the pod folded, and `*` when a tool input names the
+	// program and no ledger record has arrived ([archive.Meta.LedgerScopes]).
+	out = append(out, meta.LedgerScopes()...)
 	slices.Sort(out)
 	return slices.Compact(out)
 }

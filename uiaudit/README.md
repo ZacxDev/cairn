@@ -315,6 +315,10 @@ with records on it. A refused upload is a boot failure, not a missing section.
   whole, overflow 0. Watched red with the upload skipped.
 - **Only the owner half**, for the presence fixture's structural reason: one capture owner, one
   walk identity. The refusals are `internal/ui`'s and `tests/plugins/e2e.sh`'s to measure.
+- **"My sessions" (transcripts S7) rides on the same upload.** `GET /my-sessions` is a `linkExpanded`
+  row (it publishes `/session?session=…`, and `?page=N` past fifty sessions); the walk's identity owns
+  the stored transcript, so the page is captured with its row, not in its empty state. No browser
+  guard reads it — the walk's capture is advisory.
 
 ## What the first draft got wrong — the defect this harness shipped and then caught
 

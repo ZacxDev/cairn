@@ -431,6 +431,10 @@ func TestAnUNTRACKEDNestedModuleIsIGNOREDButATRACKEDOneIsNOT(t *testing.T) {
 	// statement of which tier is which, set in the `go` CI job — so a skip in the environment that
 	// was supposed to measure this is a FAILURE, and a skip in the sandbox is a fact about the
 	// sandbox.
+	//
+	// ⚠ THE NIX CHECK PHASES HAVE `gitMinimal` SINCE S11 (the client read ledger's tests derive a
+	// scope through `git`), so this test now RUNS there too — measured green in all four Go
+	// derivations. The skip below is reached only where no `git` is on PATH at all.
 	if _, err := exec.LookPath("git"); err != nil {
 		if os.Getenv("CAIRN_GIT_TESTS_REQUIRED") != "" {
 			t.Fatalf("CAIRN_GIT_TESTS_REQUIRED is set but git is absent: this is the only test of the "+

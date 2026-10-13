@@ -161,6 +161,13 @@ PKGS = (
     # predicates' own guards are reachable at unit level here; through S2's listener they are
     # reached only in the Postgres tier, which this battery does not run (the S2 PR's matrix).
     "./internal/memo/",
+    # 🔴 THE CLIENT (S11 of the transcripts/plugins plan), BECAUSE ITS READ LEDGER IS AN INPUT TO A
+    # VISIBILITY PREDICATE. Every scope a served call touches is appended to the session's ledger,
+    # and `cairn-ui` folds that ledger into `V` — the set `transcript.Visible` admits a viewer by.
+    # A ledger that records the FLAG instead of the resolved scope, or nothing, shows a transcript to
+    # a principal who cannot read what the session read; that is an authorization defect that
+    # lives entirely in this package, with no guard on the pod that could notice it.
+    "./internal/client/",
 )
 
 
@@ -5069,7 +5076,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-pod-skips-scope-rederivation",
         path="internal/transcript/archive/archive.go",
-        old="\tm.Derived = union(m.Derived, derived)",
+        old="\tm.Derived = union(m.Derived, found.Scopes)",
         new="\tm.Derived = union(m.Derived, nil)",
         killer="TestThePodDerivesReadScopesTheAgentDidNotDeclare",
         why="the agent already declares what it derived with the same function, so folding the pod's own "
@@ -5661,6 +5668,19 @@ MUTANTS: tuple[Mutant, ...] = (
         why="the envelope HAS a plugin field, so storing what it says looks faithful — and one plugin then "
         "writes outputs under another's name, and moves the other's watermark.",
         pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+    ),
+    # ---- transcripts S7: "My sessions" (O10, clause g — the listing half) ----------------------
+    Mutant(
+        name="my-sessions-lists-another-owner",
+        path="internal/transcript/mine.go",
+        old="\t\tif !viewer.owns(meta) {",
+        new="\t\tif v, _ := s.View(viewer, root); v == nil {",
+        killer="TestMySessionsListsOwnershipNotVisibility",
+        why="the visibility predicate is THE gate on transcript content, so listing every session it "
+        "admits reads as the careful version of the page — and turns a reader's \"My sessions\" into a "
+        "feed of every session over their readable scopes that somebody else uploaded.",
+        extra_killers=("TestMySessionsListsTheViewersOwnAndNoOneElses",),
+        pkgs=PKGS + ("./internal/transcript/",),
     ),
     Mutant(
         name="redact-marker-drops-the-whole-span",
@@ -6459,6 +6479,52 @@ MUTANTS: tuple[Mutant, ...] = (
         why="a readable mirror path is friendlier — and a declaration then chooses where on disk the "
         "auditor writes (T4).",
         pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    # ---- S11: the client read ledger, both ends (decision 3a) --------------------------------------
+    Mutant(
+        name="transcript-pod-ignores-ledger",
+        path="internal/transcript/archive/archive.go",
+        old="\tif stream == LedgerStream {\n\t\tfoldLedger(m, lines)\n\t} else {",
+        new="\tif false && stream == LedgerStream {\n\t\tfoldLedger(m, lines)\n\t} else {",
+        killer="TestAnUploadedLedgerPutsItsScopesInMeta",
+        extra_killers=("TestAnUploadedLedgerIsInV", "TestALedgerArrivingLaterLiftsF1"),
+        why="storing the ledger like any other stream looks complete — and then the only thing carrying "
+        "a read the transcript never shows is the agent's DECLARATION, which an old or lying agent "
+        "omits (clause n). Moved here from S3 in revision 14: the battery runs `go test`, and S3 had "
+        "no fold to mutate.",
+        pkgs=PKGS + ("./internal/transcript/archive/",),
+    ),
+    Mutant(
+        name="client-ledger-write-skipped",
+        path="internal/client/readledger.go",
+        old="\tif e.ledger != nil {\n\t\t_ = e.ledger.record(instance, scope)",
+        new="\tif false && e.ledger != nil {\n\t\t_ = e.ledger.record(instance, scope)",
+        killer="TestNoSessionIdWritesNothing",
+        extra_killers=("TestTheLedgerRecordsTheScopeEachServedCallResolved",),
+        why="a ledger nobody reads on the client side looks optional — and every session that runs "
+        "`cairn` is then owner-only by F1, or, beside a pre-ledger record, shows its transcript to a "
+        "viewer who cannot read what it read.",
+    ),
+    Mutant(
+        name="client-ledger-records-requested-not-resolved-scope",
+        path="internal/client/verbs.go",
+        old="\t\t\treturn 0, recallErr\n\t\t}\n\t\tenv.recordRead(alias, scope)",
+        new="\t\t\treturn 0, recallErr\n\t\t}\n\t\tenv.recordRead(alias, opts.Scope)",
+        killer="TestTheLedgerRecordsTheScopeEachServedCallResolved",
+        why="the flag is what the caller asked for, so it reads as the honest record — but a bare "
+        "`recall` asks for NOTHING and reads the scope `--repo` derived, and the empty flag then names "
+        "no scope at all.",
+    ),
+    Mutant(
+        name="client-ledger-write-visible-in-output",
+        path="internal/client/readledger.go",
+        old="\t\t_ = e.ledger.record(instance, scope)",
+        new="\t\tif err := e.ledger.record(instance, scope); err != nil {\n"
+        "\t\t\te.Stderr.WriteString(\"cairn: the read ledger was not written: \" + err.Error() + \"\\n\")\n\t\t}",
+        killer="TestAFailedLedgerWriteIsInvisible",
+        why="a failure nobody hears about looks like a hidden bug, so reporting it reads as diligence — "
+        "and every call on a host with a read-only state directory then changes its stderr, which the "
+        "parity gate diffs byte for byte and an agent's tool output carries.",
     ),
 )
 

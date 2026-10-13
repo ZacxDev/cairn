@@ -24,6 +24,8 @@ func Routes(env Env, opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	// `*`: the table names every routed scope (decision 3a).
+	env.recordRead("", LedgerAllScopes)
 	fmt.Fprintf(env.Stdout, "instances: %s\n", joinComma(routing.Aliases()))
 	if routing.Routes == nil {
 		if !routing.MultiInstance() {

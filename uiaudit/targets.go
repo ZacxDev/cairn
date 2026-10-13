@@ -215,6 +215,12 @@ var linkExpanded = map[string]bool{
 	// visible session as `/session?session=<id>` — a second way to the session page beside the scope
 	// tabs, and the only one that does not pass through a scope.
 	ui.SessionsPath: true,
+	// 🔴 `GET /my-sessions` (S7 of the transcripts plan) FOR `GET /sessions`'s REASON: its bare path IS
+	// the page, and it PUBLISHES the viewer's own stored sessions as `/session?session=<id>` — the only
+	// way to an owner-only one — plus `?page=N` when there are more than one page of them. The
+	// token-file world's one identity owns the transcript `transcript.go` uploads, so the page is
+	// captured with a row rather than in its empty state.
+	ui.MySessionsPath: true,
 	// 🔴 `GET /team`, WHICH CARRIES BOTH MOVED FLOWS: its share index publishes
 	// `/team?scope=…` and its invite index `/team?project=…`, each a minted id, so expanding it
 	// reaches every per-scope page (the grant form) and per-project page (the mint form) the old

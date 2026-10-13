@@ -120,7 +120,7 @@ func ArcsList(env Env, opts Options) (int, error) {
 	if opts.Check {
 		return arcsCheck(env, opts, scope)
 	}
-	_, label, cfg, err := podFor(scope)
+	alias, label, cfg, err := podFor(scope)
 	if err != nil {
 		return 0, err
 	}
@@ -128,6 +128,8 @@ func ArcsList(env Env, opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	// `*`, NOT `scope`: the listing names arcs homed in OTHER scopes (decision 3a).
+	env.recordRead(alias, LedgerAllScopes)
 	return printPodReport(env, label, headers, body), nil
 }
 
@@ -149,7 +151,7 @@ func ArcsList(env Env, opts Options) (int, error) {
 // the pod, and `--all-scopes` means every arc visible on THAT pod. A multi-instance host is not
 // fanned out; run it once per instance's scope.
 func arcsCheck(env Env, opts Options, scope string) (int, error) {
-	_, label, cfg, err := podFor(scope)
+	alias, label, cfg, err := podFor(scope)
 	if err != nil {
 		var unrouted *UnroutedScope
 		var badConfig *RoutingConfigError
@@ -168,6 +170,7 @@ func arcsCheck(env Env, opts Options, scope string) (int, error) {
 		fmt.Fprintf(env.Stderr, "🔴 cairn: arcs --check could NOT look — %s\n", err)
 		return doctor.ExitUnmeasured, nil
 	}
+	env.recordRead(alias, LedgerAllScopes)
 	printPodReport(env, label, headers, body)
 	status := headers.Get("X-Store-Status")
 	code, ok := report.ArcsCheckExit(status)
@@ -184,7 +187,7 @@ func ArcShow(env Env, opts Options) (int, error) {
 	if home == "" {
 		return ExitUsage, nil
 	}
-	_, label, cfg, err := podFor(home)
+	alias, label, cfg, err := podFor(home)
 	if err != nil {
 		return 0, err
 	}
@@ -193,6 +196,8 @@ func ArcShow(env Env, opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	// `*`: the declared-scopes line and each member's "wrote in:" list name other scopes.
+	env.recordRead(alias, LedgerAllScopes)
 	return printPodReport(env, label, headers, body), nil
 }
 
@@ -238,6 +243,7 @@ func ArcRegister(env Env, opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	env.recordRead(alias, home)
 	fmt.Fprintf(env.Stdout, "cairn: %s instance=%s home=%s slug=%s\n",
 		headerOr(headers, "X-Store-Status", "unknown"), alias, home, opts.Slug)
 	fmt.Fprint(env.Stdout, store.DecodeReplace(body))

@@ -577,6 +577,11 @@
         # would otherwise reach a machine — and `checks` is also where a
         # `--no-link` CI job is easiest to forget.
         doCheck = true;
+        # 🔴 `gitMinimal` FOR THE CHECK PHASE ONLY (all four Go derivations): the client read
+        # ledger's tests (S11) run a bare `recall` whose scope `--repo .` derives by invoking `git`
+        # by bare name, so without it the sandbox failed them on `exec: "git": not found`. It
+        # reaches no installed output; the wrappers' PATH is decided separately below.
+        nativeCheckInputs = [ pkgs.gitMinimal ];
 
         # 🔴 `go test ./...`, SPELLED OUT, BECAUSE THE DEFAULT CHECK PHASE
         # HONOURS `subPackages` AND THAT MADE IT VACUOUS. MEASURED: with
@@ -661,6 +666,8 @@
         # scoped the test walk to the one directory with none. Every test in this module
         # lives under `internal/`.
         doCheck = true;
+        # `gitMinimal` for the check phase only — see `mkGoServer`.
+        nativeCheckInputs = [ pkgs.gitMinimal ];
         checkPhase = ''
           runHook preCheck
           go vet ./...
@@ -698,6 +705,8 @@
         vendorHash = goVendorHash;
         subPackages = [ "cmd/cairn-capture" ];
         doCheck = true;
+        # `gitMinimal` for the check phase only — see `mkGoServer`.
+        nativeCheckInputs = [ pkgs.gitMinimal ];
         checkPhase = ''
           runHook preCheck
           go vet ./...
@@ -762,6 +771,8 @@
         subPackages = [ "cmd/cairn-ui" ];
 
         doCheck = true;
+        # `gitMinimal` for the check phase only — see `mkGoServer`.
+        nativeCheckInputs = [ pkgs.gitMinimal ];
         checkPhase = ''
           runHook preCheck
           go vet ./...

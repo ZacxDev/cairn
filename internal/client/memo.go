@@ -399,6 +399,7 @@ func MemoCheck(env Env, opts Options) (int, error) {
 	// recording them as seen without ever having shown them (a LOSS) — S3 first saved first, which
 	// contradicted this very sentence (#239 round 1). The status token is still the FIRST stderr line:
 	// it is written before the block, and the save's own note follows the block.
+	env.recordRead(alias, scope)
 	code, _ := status("new", ExitOK, notes...)
 	fmt.Fprint(env.Stdout, memo.RenderPreview(stored))
 	if problem := save(); problem != "" {
@@ -471,7 +472,7 @@ func MemoRead(env Env, opts Options) (int, error) {
 		}
 		id = n
 	}
-	_, label, cfg, err := memoRoute(scope)
+	alias, label, cfg, err := memoRoute(scope)
 	if isRoutingError(err) {
 		return 0, err
 	}
@@ -565,6 +566,9 @@ func MemoRead(env Env, opts Options) (int, error) {
 		fmt.Fprintf(env.Stderr, "🔴 cairn: memo-read: %s answered an unreadable memo: %v\n", cfg.URL, err)
 		return ExitCorrupt, nil
 	}
+	if len(stored) > 0 {
+		env.recordRead(alias, scope)
+	}
 	if label != "" && len(stored) > 0 {
 		fmt.Fprintf(env.Stderr, "cairn: instance=%s\n", label)
 	}
@@ -653,6 +657,7 @@ func MemoSend(env Env, opts Options) (int, error) {
 			"UNKNOWN; read the scope before re-sending\n", a.status, oneLineSuffix(a.body))
 		return ExitWriteUnreachable, nil
 	}
+	env.recordRead(alias, scope)
 	fmt.Fprintf(env.Stdout, "cairn: memo sent — id=%d scope=%s instance=%s created=%s\n", sent.ID, scope, alias, sent.CreatedAt)
 	return ExitOK, nil
 }
@@ -757,6 +762,7 @@ func MemoRetract(env Env, opts Options) (int, error) {
 			"is UNKNOWN; read the memo to see\n", a.status, oneLineSuffix(a.body))
 		return ExitWriteUnreachable, nil
 	}
+	env.recordRead(alias, scope)
 	fmt.Fprintf(env.Stdout, "cairn: memo retracted — id=%d scope=%s instance=%s\n", id, scope, alias)
 	return ExitOK, nil
 }
