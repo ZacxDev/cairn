@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "name": "summary",
+  "version": "0.1.0",
+  "description": "Continuous session summaries: summarises each session's new records with the operator's model provider and writes a summary output.",
+  "capabilities": ["pending:list", "transcript:read", "output:read:summary", "output:write:summary"],
+  "toggle_key": "summary",
+  "output_types": ["summary"],
+  "calls_model": true
+}
