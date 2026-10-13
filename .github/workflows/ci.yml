@@ -1229,7 +1229,7 @@ jobs:
       # tests would run only in the nix tier. It runs against an in-process FAKE provider and a fake pod,
       # synthetic fixtures only — no real provider is ever called by CI (the plan's (iii)).
       #
-      # 🔴 COUNTED, NOT EXIT-CODED: a module whose tests vanished exits 0 too. 31 `--- PASS` lines and 4
+      # 🔴 COUNTED, NOT EXIT-CODED: a module whose tests vanished exits 0 too. 34 `--- PASS` lines and 4
       # `ok` packages were measured when the plugin landed; a drop below either, or any FAIL, refuses.
       - name: the summary plugin's own suite, against an in-process fake provider and fake pod
         run: |
@@ -1241,8 +1241,8 @@ jobs:
           fails=$(grep -c '^--- FAIL' /tmp/plugins-suite.txt || true)
           oks=$(grep -c '^ok ' /tmp/plugins-suite.txt || true)
           echo "plugins suite: passes=$passes fails=$fails ok=$oks"
-          if [ "$passes" -lt 31 ] || [ "$fails" -ne 0 ] || [ "$oks" -lt 4 ]; then
-            echo "REFUSING: $passes PASS / $fails FAIL / $oks ok, and 31 / 0 / 4 were measured"
+          if [ "$passes" -lt 34 ] || [ "$fails" -ne 0 ] || [ "$oks" -lt 4 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL / $oks ok, and 34 / 0 / 4 were measured"
             exit 1
           fi
 

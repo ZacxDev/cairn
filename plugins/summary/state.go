@@ -79,6 +79,9 @@ func loadState(path string) (*stateFile, error) {
 	return st, nil
 }
 
+// stateWrite is the temporary file's write — a seam, so a test can make it fail part-way.
+var stateWrite = func(f *os.File, raw []byte) (int, error) { return f.Write(raw) }
+
 // save writes the file whole, through a temporary file and a rename, mode 0600.
 func (st *stateFile) save() error {
 	raw, err := json.MarshalIndent(st, "", " ")
@@ -93,8 +96,10 @@ func (st *stateFile) save() error {
 		return fmt.Errorf("the state file %s: %w", st.path, err)
 	}
 	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err == nil {
-		_, err = tmp.Write(append(raw, '\n'))
+	// 🔴 PLAIN ASSIGNMENT, NOT `:=`: a shadowed `err` here dropped a failed write, and the truncated
+	// temporary file was then renamed over the good state — every backoff and unwritten summary lost.
+	if err = tmp.Chmod(0o600); err == nil {
+		_, err = stateWrite(tmp, append(raw, '\n'))
 	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr

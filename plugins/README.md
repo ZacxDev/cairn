@@ -38,8 +38,11 @@ cairn-summary -worker-url https://<worker listener> -token-file ~/.config/cairn-
 Exit codes: 0 the run finished (a capped run included), 1 a session failed, 2 usage/configuration.
 The last stdout line is `SUMMARY summary-run: sessions=… written=… requests=… failed=… capped=… skipped=…`.
 
-Both URLs must be `https`, or `http` to a loopback address (the rule `cairn-capture` applies), and
-neither client follows a redirect — Go re-sends `x-api-key` to a redirect target on any host and the
+Both URLs must be `https`, or `http` to a loopback address (the rule `cairn-capture` applies).
+`-allow-plaintext-host <host>` (repeatable, exact match of the URL's host, no default, no environment
+spelling) admits a plain-http `-worker-url` to that host — for a listener on a private ENCRYPTED mesh
+address — and the run says so on stderr; it never applies to `-provider-url`. Neither client follows
+a redirect, exception or not — Go re-sends `x-api-key` to a redirect target on any host and the
 bearer token to the same host on another port, so a 3xx is an error (`internal/endpoint`).
 `-effort` (Anthropic's `output_config.effort`) is sent only when set: models that do not take it
 answer 400.

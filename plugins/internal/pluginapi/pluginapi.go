@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -65,6 +66,32 @@ type Client struct {
 	Token string
 	// HTTP is the client to use; nil is a client with [DefaultTimeout].
 	HTTP *http.Client
+	// AllowPlaintextHosts is the operator's `-allow-plaintext-host` list: hosts (exact match, no
+	// port) the worker URL may be plain `http` to beyond loopback — a listener on a private
+	// ENCRYPTED mesh address. Empty by default; redirects are refused regardless.
+	AllowPlaintextHosts []string
+}
+
+// ValidateBase checks the worker URL against the rule every request re-applies, and reports the
+// listed plaintext host it relies on ("" when none) so the caller can SAY so once per run.
+func (c *Client) ValidateBase() (plaintextHost string, err error) {
+	_, plaintextHost, err = endpoint.Validate("the worker URL", c.Base, c.AllowPlaintextHosts)
+	return plaintextHost, err
+}
+
+// HostList is a repeatable flag's value (`-allow-plaintext-host a -allow-plaintext-host b`), shared
+// so every plugin in this module spells the flag one way.
+type HostList []string
+
+func (h *HostList) String() string { return strings.Join(*h, ",") }
+
+// Set adds one host. It must be a bare host name or address — what a URL's host is compared against.
+func (h *HostList) Set(v string) error {
+	if v == "" || strings.ContainsAny(v, "/@ ") || (strings.Contains(v, ":") && net.ParseIP(v) == nil) {
+		return fmt.Errorf("%q is not a bare host (no scheme, port or path)", v)
+	}
+	*h = append(*h, v)
+	return nil
 }
 
 // DefaultTimeout bounds one request when [Client.HTTP] is nil.
@@ -87,7 +114,7 @@ func (c *Client) scrub(s string) string {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, q url.Values, body []byte, into any) error {
-	base, err := endpoint.Validate("the worker URL", c.Base)
+	base, _, err := endpoint.Validate("the worker URL", c.Base, c.AllowPlaintextHosts)
 	if err != nil {
 		return err
 	}

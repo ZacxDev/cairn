@@ -154,6 +154,31 @@ func TestACleartextURLOffTheHostIsRefused(t *testing.T) {
 	}
 }
 
+// TestThePlaintextExceptionIsTheWorkerURLsAloneAndIsSaid — `-allow-plaintext-host` admits a plain-http
+// worker URL to exactly the named host and says so on stderr every run; it never applies to the
+// provider URL, and a host that is not the one named is still refused.
+func TestThePlaintextExceptionIsTheWorkerURLsAloneAndIsSaid(t *testing.T) {
+	w := newWorld(t, numbered(1, 2))
+	// Accepted: the run gets PAST validation (exit 1 — the `.invalid` host cannot be reached — not 2).
+	code, _, errs := w.run(t, "-worker-url", "http://mesh-host.invalid:8080", "-allow-plaintext-host", "mesh-host.invalid", "-timeout", "5s")
+	if code != 1 || !strings.Contains(errs, "-worker-url is PLAIN HTTP to mesh-host.invalid, allowed by -allow-plaintext-host") ||
+		strings.Contains(errs, "non-loopback") {
+		t.Errorf("the named host: exit %d (want 1: accepted, then unreachable)\n%s", code, errs)
+	}
+	if code, _, errs := w.run(t, "-worker-url", "http://other-host.invalid", "-allow-plaintext-host", "mesh-host.invalid"); code != 2 ||
+		!strings.Contains(errs, "plain http to a non-loopback host") {
+		t.Errorf("a host that was not named: exit %d %s", code, errs)
+	}
+	if code, _, errs := w.run(t, "-provider-url", "http://mesh-host.invalid", "-allow-plaintext-host", "mesh-host.invalid"); code != 2 ||
+		!strings.Contains(errs, "the provider URL is plain http to a non-loopback host") || len(w.prov.received()) != 0 {
+		t.Errorf("the provider URL under the worker's exception: exit %d %s", code, errs)
+	}
+	// And a loopback run that names no exception says nothing about plaintext.
+	if _, _, errs := w.run(t); strings.Contains(errs, "PLAIN HTTP") {
+		t.Errorf("a loopback run logged the plaintext line: %s", errs)
+	}
+}
+
 // TestEffortIsSentOnlyWhenSet — `output_config.effort` is refused (400) by models that do not take it,
 // so the default sends none.
 func TestEffortIsSentOnlyWhenSet(t *testing.T) {
@@ -383,5 +408,44 @@ func TestOneRefusedSessionDoesNotStarveTheRest(t *testing.T) {
 	_, out, _ := w.run(t, "-limit", "4", "-max-requests-per-day", "200")
 	if strings.Contains(out, "skipped=0") || asked > 19 {
 		t.Fatalf("the backoff did not double: %d requests, %s", asked, out)
+	}
+}
+
+// TestAFailedStateWriteLeavesTheGoodFileAlone — the state file is replaced by a rename of a temporary
+// file; when that file's write FAILS part-way, save reports it and the existing state is untouched.
+// Red before: `if err := tmp.Chmod(…); err == nil { _, err = tmp.Write(…) }` shadowed `err`, the
+// failure was dropped, and the truncated temporary file was renamed over the good one.
+func TestAFailedStateWriteLeavesTheGoodFileAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	st, err := loadState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Sessions["s-sum-0001"] = &sessionState{Failures: 2, Records: 3, Cached: &cachedSummary{Summary: "summary 1"}}
+	if err := st.save(); err != nil {
+		t.Fatal(err)
+	}
+	good, _ := os.ReadFile(path)
+	if !strings.Contains(string(good), "summary 1") {
+		t.Fatalf("POSITIVE CONTROL: a working save did not write the state:\n%s", good)
+	}
+	real := stateWrite
+	defer func() { stateWrite = real }()
+	stateWrite = func(f *os.File, raw []byte) (int, error) {
+		n, _ := f.Write(raw[:len(raw)/2])
+		return n, fmt.Errorf("no space left on device")
+	}
+	st.Sessions["s-sum-0002"] = &sessionState{Failures: 1}
+	if err := st.save(); err == nil || !strings.Contains(err.Error(), "no space left") {
+		t.Errorf("a failed write: save answered %v, want the failure", err)
+	}
+	if now, _ := os.ReadFile(path); string(now) != string(good) {
+		t.Errorf("a failed write replaced the good state file:\n%s", now)
+	}
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(path), ".sessions-*")); len(left) != 0 {
+		t.Errorf("the temporary file was left behind: %v", left)
+	}
+	if again, err := loadState(path); err != nil || again.Sessions["s-sum-0001"] == nil {
+		t.Errorf("the state no longer loads: %v", err)
 	}
 }

@@ -26,7 +26,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ZacxDev/cairn/plugins/internal/endpoint"
 	"github.com/ZacxDev/cairn/plugins/internal/llm"
 	"github.com/ZacxDev/cairn/plugins/internal/pluginapi"
 	"github.com/ZacxDev/cairn/plugins/internal/secretfile"
@@ -62,6 +61,9 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	ledgerPath := fs.String("spend-ledger", defaultLedger(), "the spend cap's ledger file")
 	chunkBytes := fs.Int("chunk-bytes", 96<<10, "rendered transcript bytes one request carries (4 KiB–1 MiB); with the prompt and the "+
 		"previous summary it must fit the model's context window — roughly 4 bytes a token, so 1 MiB needs a ~300K-token window")
+	var plaintext pluginapi.HostList
+	fs.Var(&plaintext, "allow-plaintext-host", "a host -worker-url may be plain http to (exact match, repeatable; no default): "+
+		"for a listener on a private ENCRYPTED mesh address. Never applies to -provider-url")
 	statePath := fs.String("state-file", "", "per-session backoff and unwritten summaries (default: sessions.json beside -spend-ledger)")
 	maxOut := fs.Int("max-output-tokens", 16000, "the bound on one answer, thinking included")
 	timeout := fs.Duration("timeout", 30*time.Minute, "the bound on the whole run")
@@ -107,12 +109,17 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	if err != nil {
 		return usage(err.Error())
 	}
-	workerBase, err := endpoint.Validate("-worker-url", *workerURL)
+	api := &pluginapi.Client{Base: *workerURL, Token: token, AllowPlaintextHosts: plaintext}
+	plainHost, err := api.ValidateBase()
 	if err != nil {
 		return usage(err.Error())
 	}
+	if plainHost != "" {
+		fmt.Fprintf(stderr, "summary: -worker-url is PLAIN HTTP to %s, allowed by -allow-plaintext-host: the plugin token and transcript "+
+			"content are encrypted only by whatever carries that address\n", plainHost)
+	}
 	r := &Runner{
-		API:             &pluginapi.Client{Base: workerBase, Token: token},
+		API:             api,
 		State:           state,
 		Now:             now,
 		Provider:        p,

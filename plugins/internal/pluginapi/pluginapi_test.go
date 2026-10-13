@@ -3,6 +3,7 @@ package pluginapi
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -94,5 +95,79 @@ func TestAWorkerURLMustBeHTTPSOrLoopback(t *testing.T) {
 		if _, err := c.Pending(context.Background(), 1); err == nil || strings.Contains(err.Error(), "dial") {
 			t.Errorf("Base %q: %v, want a refusal before any request", base, err)
 		}
+	}
+}
+
+// TestPlainHTTPOffTheHostNeedsTheOperatorToNameTheHost — `-allow-plaintext-host`: a worker URL that is
+// plain http to a non-loopback host is refused BEFORE any request unless that exact host is listed; a
+// different host listed, or a host the listed one is merely a prefix or suffix of, is still refused;
+// and with the exception in use a redirect is still not followed. The server is reached through a
+// transport that dials it whatever the URL's host says, so "accepted" is a request that ARRIVED.
+func TestPlainHTTPOffTheHostNeedsTheOperatorToNameTheHost(t *testing.T) {
+	const host = "mesh-host.invalid"
+	var hits, redirected atomic.Int32
+	redirect := false
+	target := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { redirected.Add(1) }))
+	defer target.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if redirect {
+			http.Redirect(rw, r, target.URL+r.URL.RequestURI(), http.StatusFound)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer "+testToken {
+			rw.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = rw.Write([]byte(`{"items":[]}`))
+	}))
+	defer srv.Close()
+	dialSrv := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+	}}}
+	ask := func(urlHost string, allow ...string) (string, error) {
+		c := &Client{Base: "http://" + urlHost + ":8080", Token: testToken, HTTP: dialSrv, AllowPlaintextHosts: allow}
+		used, verr := c.ValidateBase()
+		_, err := c.Pending(context.Background(), 1)
+		if (verr != nil) != (err != nil && strings.Contains(err.Error(), "non-loopback")) {
+			t.Errorf("%s allow %v: ValidateBase says %v and the request says %v — one rule, two answers", urlHost, allow, verr, err)
+		}
+		return used, err
+	}
+	for name, c := range map[string]struct {
+		urlHost string
+		allow   []string
+	}{
+		"no host listed":                       {host, nil},
+		"a different host listed":              {host, []string{"other-host.invalid"}},
+		"the listed host is a suffix of it":    {"evil." + host, []string{host}},
+		"the listed host is a prefix of it":    {host + ".evil.invalid", []string{host}},
+		"the URL's host:port listed, not host": {host, []string{host + ":8080"}},
+	} {
+		if _, err := ask(c.urlHost, c.allow...); err == nil || !strings.Contains(err.Error(), "plain http to a non-loopback host") {
+			t.Errorf("%s: %v, want the cleartext refusal", name, err)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("a refused URL still sent %d request(s) — the token left the process", hits.Load())
+	}
+	if used, err := ask(host, "other-host.invalid", host); err != nil || used != host || hits.Load() != 1 {
+		t.Fatalf("the exact host listed: used %q, %v, %d request(s) arrived; want it accepted and ONE request", used, err, hits.Load())
+	}
+	redirect = true
+	_, err := ask(host, host)
+	var se *StatusError
+	if !errors.As(err, &se) || se.Status != http.StatusFound || redirected.Load() != 0 {
+		t.Errorf("a redirect under the plaintext exception: %v, %d request(s) at its target; want a 302 error and none", err, redirected.Load())
+	}
+
+	var list HostList
+	for _, bad := range []string{"", "http://mesh-host.invalid", "mesh-host.invalid:8080", "mesh-host.invalid/x", "u@mesh-host.invalid"} {
+		if list.Set(bad) == nil {
+			t.Errorf("-allow-plaintext-host %q was accepted; it takes a bare host", bad)
+		}
+	}
+	if list.Set(host) != nil || list.Set("fd00::1") != nil || len(list) != 2 {
+		t.Errorf("a bare host and a bare IPv6 address must be accepted: %v", list)
 	}
 }
