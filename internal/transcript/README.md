@@ -1,8 +1,9 @@
 # internal/transcript
 
-The classification table for session transcripts (Claude Code JSONL, opencode export documents)
-and the synthetic world it is tested against. This is S0 of `claudedocs/plan-cairn-plugins.md`;
-later slices add storage, visibility and rendering here. Nothing imports this package yet.
+The classification table for session transcripts (Claude Code JSONL, opencode export documents),
+the synthetic world it is tested against, and — since S4 — the ONE visibility predicate and the
+collapsed reading model the browser surface renders. `claudedocs/plan-cairn-plugins.md` is the plan.
+`internal/ui` is the importer; the capture agent imports only `scopeuse`.
 
 ## What is here
 
@@ -11,7 +12,10 @@ later slices add storage, visibility and rendering here. Nothing imports this pa
 | `classify.go` | decision 17's ONE table: declared record/block/part types, their key sets, and the class each UNIT takes (`ClassifyClaude`, `ClassifyOpencodePart`) |
 | `testdata/synthetic_world.json` | written by `tests/transcripts/gen.py` — regenerate and diff, never hand-edit |
 | `classify_test.go` | the shape ledger (both directions), its comparator's own control, and decision 17's rules over literal records |
-| `archive/` | S3's transcript STORE on `cairn-ui` (decision 15): per-session directories, CAS append, frames, ownership, the refusing re-check, quota, retention. Reached only through `internal/worker`, whose upload routes are DISARMED unless `cairn-ui -arm-transcript-capture` (O16). Its package doc states what it does not do yet — it records `*` for every session's derived scopes until S2's `scopeuse` is on `main` |
+| `archive/` | S3's transcript STORE on `cairn-ui` (decision 15): per-session directories, CAS append, frames, ownership, the refusing re-check, quota, retention. Written only through `internal/worker`, whose upload routes are DISARMED unless `cairn-ui -arm-transcript-capture` (O16). Since S4 it derives the READ half of a session's visibility set itself, through `scopeuse`, over every record and text blob it stores |
+| `visible.go` | S4: `Visible` (decision 4), `VisibilitySet` and the whole-store `WrittenScopes` walk (decision 3), and `Store.View` — the only way a stored session's content leaves this package |
+| `read.go` | S4: the collapsed reading (decision 18) — turns of classified items, at most 50 turns and 1,000 items a page (ending at a turn boundary), child streams nested under the call that spawned them |
+| `transcripttest/` | a fixture archive for tests in this package and `internal/ui`; nothing that ships imports it |
 
 `tests/test_transcript_fixtures.py` refuses a stale world and any date outside the year 2000.
 
@@ -29,6 +33,25 @@ later slices add storage, visibility and rendering here. Nothing imports this pa
 - **`binary` is a display label.** Under operator decision O12 binary content ships; the class
   says where it sits (an `image` item, `toolUseResult.file.base64`, an opencode attachment or
   `file` part) so a renderer can collapse it.
+
+## Visibility and reading (S4)
+
+- **One predicate.** `Visible(viewer, meta, V)`: the OWNER (an un-narrowed credential whose
+  `(Kind, ID)` uploaded the session), or a viewer who reads EVERY scope in a non-empty `V`. `*`, a
+  name the viewer's authority does not hold under any verb, and an empty `V` are owner-only.
+- **`V` only grows.** `W_trailer` (every scope in the STORE where a trailer names the root or one of
+  its child sessions — never the viewer's readable set, which would make "every" vacuous), plus what
+  the pod derived and what the agent declared. A scope with an entry the walk cannot scan counts as
+  written.
+- **`Store.View` returns nil for absent, refused and not-a-session alike**, the Store's archive is
+  unexported (`NewStore`), and a `View` reads each stream only up to where it stood when the View was
+  decided — so a caller cannot render the three differently, read a record without asking, or be
+  served a record uploaded after the verdict.
+- **The reading classifies UNITS.** A `tool_result` block inside a `user` record is a tool result;
+  the `toolUseResult` copy is counted, not shown. An opencode stream is read at each unit's LAST
+  stored version.
+- **Read-time bounds only:** `TurnsPerPage` (50), `ChildItemCap` (200), `CollapsedBudget` (2 MiB of
+  collapsed content a page; user messages and assistant text are never charged).
 
 ## Shapes deliberately NOT declared
 

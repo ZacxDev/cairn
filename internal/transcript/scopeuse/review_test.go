@@ -37,6 +37,21 @@ func TestAHeaderInsideAJSONStringNamesItsScope(t *testing.T) {
 	if r := d.Result(); !slices.Equal(r.V, []string{"alpha-notes"}) {
 		t.Fatalf("duplicate member: V = %v, want [alpha-notes]", r.V)
 	}
+	// The marker itself ESCAPED (round 2): the raw string never contains `subsystem-recall:`, so a
+	// decode gated on the literal marker never ran and V was EMPTY — not even `*`, so the session read
+	// a scope its visibility set did not name. Two escapes, and one a level deeper (a JSON string
+	// holding a JSON document).
+	for _, raw := range []string{
+		`{"result":"\u0073ubsystem-recall: status=recalled scope=delta-notes\n"}`,
+		`["subsystem\u002drecall: status=recalled scope=delta-notes\n"]`,
+		`{"a":"{\"b\":\"\\u0073ubsystem-recall: scope=delta-notes\\n\"}"}`,
+	} {
+		d = NewDeriver()
+		d.Content(raw)
+		if r := d.Result(); !slices.Equal(r.V, []string{"delta-notes"}) {
+			t.Fatalf("escaped marker %s: V = %v, want [delta-notes]", raw, r.V)
+		}
+	}
 	// Control: undecodable text with the same escape still fails CLOSED.
 	d = NewDeriver()
 	d.Content(`not json: subsystem-recall: status=recalled scope=beta-notes\n`)

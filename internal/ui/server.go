@@ -20,6 +20,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/presence"
 	"github.com/ZacxDev/cairn/internal/report"
 	"github.com/ZacxDev/cairn/internal/store"
+	"github.com/ZacxDev/cairn/internal/transcript"
 )
 
 // Source is the read half this surface needs, as an interface so the renderer's
@@ -982,6 +983,11 @@ type Server struct {
 	// designed OFF state. THE ONE WRITER of that journal is `handleSourcesSave`.
 	sourceJournal codesrc.Journal
 
+	// transcripts is the transcript archive's read side, NIL when this deployment has none — then
+	// no page renders a transcript section and the raw-record row answers its one miss. See
+	// `transcript.go`.
+	transcripts *transcript.Store
+
 	// app is this deployment's installable identity; the zero value is unarmed. See `pwa.go`.
 	app App
 }
@@ -1110,6 +1116,12 @@ type Config struct {
 	// zero value is the designed OFF state: the Sources block is absent from the scope page and the
 	// edit page says the deployment is unconfigured. This surface is the journal's ONLY writer.
 	SourceJournal codesrc.Journal
+	// Transcripts is the transcript archive's READ side (S4 of the transcripts plan,
+	// `transcript.go`): the session page's transcript section and the raw-record row answer from it,
+	// through `transcript.Store.View` — the ONE visibility predicate — and never around it. NIL is the
+	// designed OFF state and the deployed one wherever `cairn-ui` runs without `-transcript-dir`:
+	// every page then renders exactly what it rendered before this field existed.
+	Transcripts *transcript.Store
 	// App arms the installable surface (`pwa.go`): the manifest row, the icon links and the theme
 	// colour. The zero value is UNARMED and renders exactly what this surface rendered before it
 	// existed. [App.Validate] is applied here, so a server cannot be built around an app the
@@ -1219,6 +1231,7 @@ func New(cfg Config) (*Server, error) {
 		memos:    cfg.Memos,
 
 		sourceJournal: cfg.SourceJournal,
+		transcripts:   cfg.Transcripts,
 
 		app: cfg.App,
 	}, nil

@@ -129,6 +129,18 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int, ex
 	pres.agentURL = fmt.Sprintf("http://%s:%d", bindHost, agentPort)
 	pres.session = presenceSession[0].Session
 
+	// The transcript store (`transcript.go`): owned by the SAME principal the presence token resolved
+	// to — the walk's one identity — so the session page it captures carries the transcript section.
+	trans, err := mintCapture(ctx, uiBinary, dir, store, tokenPath, pres.owner)
+	if err != nil {
+		return nil, err
+	}
+	workerPort, err := aFreeLoopbackPort()
+	if err != nil {
+		return nil, err
+	}
+	trans.workerAddr = fmt.Sprintf("%s:%d", bindHost, workerPort)
+
 	w := &World{
 		BaseURL: fmt.Sprintf("http://%s:%d", bindHost, port),
 		Store:   store,
@@ -157,8 +169,14 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int, ex
 		"-presence-agent-addr", fmt.Sprintf("%s:%d", bindHost, agentPort),
 		"-presence-tokens", pres.tokens,
 		"-presence-owner", pres.owner,
-	}, extra...)...); err != nil {
+	}, append(trans.flags(), extra...)...)...); err != nil {
 		return nil, err
+	}
+	// A refused upload is a boot failure, for the presence push's reason below: the walk would
+	// otherwise capture the session page in its no-transcript state and report the section covered.
+	if err := trans.upload(ctx, pres.session); err != nil {
+		w.Stop()
+		return nil, fmt.Errorf("%w\n--- cairn-ui log ---\n%s", err, w.Log())
 	}
 	// A refused FIRST push is a boot failure, not a missing badge: the walk would otherwise capture
 	// every page in its no-presence state and report the badged surfaces covered.

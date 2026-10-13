@@ -1120,6 +1120,72 @@
     @apply flex flex-col gap-1;
   }
 
+  /* THE TRANSCRIPT SECTION (`transcript.go`): a session's content, collapsed. Every reveal is a
+   * `<details>` — no script. A user message is the one block that is never clipped, so it carries
+   * the accent rule; everything collapsed is a quiet bordered row whose `<summary>` is the whole
+   * target. */
+  .transcript {
+    @apply flex flex-col gap-4;
+  }
+
+  .turn {
+    @apply flex flex-col gap-2 border-t border-line pt-3;
+  }
+
+  .turn-head {
+    @apply font-mono text-xs text-muted normal-case tracking-normal;
+  }
+
+  .t-user {
+    @apply border-l-4 border-accent/70 pl-3;
+  }
+
+  .t-assistant,
+  .t-prompt {
+    @apply border-l-4 border-line pl-3;
+  }
+
+  .t-label {
+    @apply font-mono text-xs text-muted;
+  }
+
+  /* 🔴 `whitespace-pre-wrap` IS THE CLAIM: what a human typed is shown as typed, line breaks
+   * included, and `break-words` is what keeps one long token from widening the page. */
+  .t-text {
+    @apply text-sm leading-relaxed whitespace-pre-wrap break-words;
+    max-width: min(100%, var(--measure-code));
+  }
+
+  .t-block {
+    @apply border border-line rounded bg-surface px-3 py-1 text-sm;
+    max-width: min(100%, var(--measure-code));
+  }
+
+  .t-block > summary {
+    @apply cursor-pointer font-mono text-xs text-muted break-words py-1;
+  }
+
+  .t-more > summary {
+    @apply cursor-pointer text-xs text-accent py-1;
+  }
+
+  .t-pre {
+    @apply font-mono text-xs leading-relaxed whitespace-pre-wrap break-words overflow-x-auto;
+    @apply border-t border-line mt-1 pt-2;
+  }
+
+  .t-line {
+    @apply font-mono text-xs text-muted break-words;
+  }
+
+  .t-child {
+    @apply flex flex-col gap-2 mt-2;
+  }
+
+  .pager {
+    @apply flex flex-wrap items-center gap-x-3 gap-y-1 text-xs;
+  }
+
   .missing {
     @apply text-sm text-muted italic;
   }
@@ -1368,6 +1434,21 @@
     .chips a,
     .hit-where a {
       @apply inline-flex min-h-11 min-w-11 max-w-full items-center justify-center wrap-anywhere;
+    }
+
+    /* The transcript section (`transcript.go`): its reveals and its few links. A `<summary>` stays
+     * a list-item so the disclosure marker survives — only its height moves (a 16px line plus the
+     * padding is the 44px row). The links are the pager, the raw-record links and the summary card's
+     * transcript link. */
+    .t-block > summary,
+    .t-more > summary {
+      @apply py-3.5;
+    }
+
+    .pager a,
+    .t-line a,
+    .stat > a {
+      @apply inline-flex min-h-11 min-w-11 max-w-full items-center wrap-anywhere;
     }
 
     /* These two are `block` rows already — full width, so only the height moves. */

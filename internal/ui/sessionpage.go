@@ -113,7 +113,18 @@ func (s *Server) handleSessionPage(w http.ResponseWriter, r *http.Request, id id
 		writePlain(w, http.StatusInternalServerError, "the store could not be read")
 		return
 	}
-	if !answer.Report.Found() {
+	// 🔴 THE TRANSCRIPT, THROUGH THE ONE PREDICATE (`transcript.go`): the section to render, or nil.
+	// Nil is no transcript, no archive AND a refused viewer alike, so everything below — whether the
+	// page is found, and every byte of it — is identical for a refused viewer and for a session that
+	// has no transcript.
+	//
+	// 🔴 AND IT CAN FIND A PAGE THE WRITES WALK DOES NOT (decision 4, O10): a session with NO recorded
+	// write has no trailer for `report.SessionAcross` to find, so until now it had no page at all. A
+	// viewer the predicate admits — its owner, or a reader of every scope it touched — gets the page,
+	// with the transcript and an honest "no write" summary. It widens nothing the predicate did not
+	// already grant: the same viewer could read every byte of it on the raw-record row.
+	view.Transcript = s.transcriptFor(id, session, turnParam(r))
+	if !answer.Report.Found() && view.Transcript == nil {
 		if answer.ArcsUnreadable {
 			writePlain(w, http.StatusServiceUnavailable, arcJournalUnreadable)
 			return
@@ -246,7 +257,16 @@ func SessionPage(v PageView) g.Node {
 			// the bell out of the container and leave a stray empty paragraph behind it.
 			g.If(pane != nil, h.Div(h.Class("card-stats"), h.Data("presence", "session"), pane,
 				g.If(v.CSRF != "", bellForm(rep.ID, v.CSRF)))),
-			h.P(h.Class("card-stats"),
+			// A page found ONLY by its transcript (a session with no recorded write this viewer can see)
+			// says so instead of "0 bullets in 0 scopes"; and a transcript, when there is one, is one
+			// link away from the top. Both are nil — no bytes — on every other page.
+			g.If(!rep.Found(), h.P(h.Class("card-stats"),
+				h.Span(h.Class("stat stat-quiet"), g.Text("no write by this session is visible to you")))),
+			g.Iff(v.Transcript != nil, func() g.Node {
+				return h.P(h.Class("card-stats"), h.Span(h.Class("stat"), h.A(h.Href("#transcript"),
+					g.Text("transcript · "+plural(v.Transcript.Reading.TotalTurns, "turn", "turns")))))
+			}),
+			g.If(rep.Found(), h.P(h.Class("card-stats"),
 				stat(plural(rep.Bullets(), "bullet", "bullets")+" in "+plural(len(rep.Scopes), "scope", "scopes"), ""),
 				stat(strconv.Itoa(rep.Coverage.Attributed)+" of "+strconv.Itoa(rep.Coverage.Bullets)+" bullets attributed",
 					joinCaveats(coverage, report.SessionsAttributionLine, report.SessionsReadsLine)),
@@ -255,7 +275,7 @@ func SessionPage(v PageView) g.Node {
 				g.If(!rep.ArcsConfigured && !answer.ArcsUnreadable,
 					h.Span(h.Class("stat stat-quiet"), h.TitleAttr(report.RegistrationsUnconfiguredBody), g.Text("arcs off"))),
 				g.Group(badges),
-			),
+			)),
 			g.If(len(actors) > 0, labelledList("Actors", "the <actor> half of each trailer, as written — self-reported",
 				h.Ul(h.Class("chips chips-alias"), g.Map(actors, plainItem)))),
 			g.If(len(rep.Arcs) > 0, labelledList("Arcs", "registered arcs homed in a scope you can read that list this session as a member",
@@ -266,6 +286,8 @@ func SessionPage(v PageView) g.Node {
 		g.Map(rep.Scopes, func(sc report.SessionInScope) g.Node {
 			return sessionScopeCard(sc, ids[store.NormalizeRef(sc.Scope)], excerpts, v)
 		}),
+		// nil — no node, so no bytes — unless the ONE predicate showed this viewer the transcript.
+		g.Iff(v.Transcript != nil, func() g.Node { return transcriptSection(*v.Transcript) }),
 	)
 }
 
