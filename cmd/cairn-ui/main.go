@@ -63,6 +63,7 @@ import (
 	// allowlist entry alone would be satisfied by a tree where `internal/api` imported it
 	// on every route.
 	"github.com/ZacxDev/cairn/internal/pgstore"
+	"github.com/ZacxDev/cairn/internal/plugins"
 	"github.com/ZacxDev/cairn/internal/presence"
 	"github.com/ZacxDev/cairn/internal/transcript"
 	"github.com/ZacxDev/cairn/internal/transcript/archive"
@@ -311,6 +312,16 @@ func main() {
 			", append its digest to -"+flagWorkerTokens+", print the token once on stdout, and exit")
 	workerHost := flag.String(flagWorkerHost, "",
 		"the ONE host label a token minted by -"+flagIssueWorker+" is bound to")
+	// 🔴 THE PLUGIN REGISTRY AND ITS TOGGLE JOURNAL (S5 of the transcripts plan): two flags that
+	// configure ONE thing together, only with the worker listener, NO default and no environment
+	// spelling — see `plugins.go` beside this file.
+	pluginRegistry := flag.String(flagPluginRegistry, "",
+		"the plugin REGISTRY (a JSON file of manifests). NO DEFAULT: unset, no plugin exists here. Registering a "+
+			"plugin is the instance-level decision; every toggle starts OFF. Needs -"+flagPluginJournal+" and the worker listener")
+	pluginJournal := flag.String(flagPluginJournal, "",
+		"the plugin TOGGLE journal (append-only; must resolve OUTSIDE -store). Needs -"+flagPluginRegistry)
+	workerPlugin := flag.String(flagWorkerPlugin, "",
+		"the ONE registered plugin a token minted by -"+flagIssueWorker+" plugin is bound to")
 	// 🔴 SCOPE MAIL'S CLIENT LISTENER (S2 of the scope-mail plan): one flag, NO default and no
 	// environment spelling — see `clientapi.go` beside this file for why, and for its refusals.
 	clientAPIAddr := flag.String(flagClientAPIAddr, "",
@@ -498,7 +509,7 @@ func main() {
 	// owner must be a principal the authority holds, and the mint mode exits here.
 	workerFlags := workerSettings{addr: *workerAddr, tokens: *workerTokens, owner: *workerOwner,
 		dir: *transcriptDir, retention: *transcriptRetention, quota: *transcriptQuota, armed: *armCapture,
-		issue: *issueWorker, host: *workerHost}
+		issue: *issueWorker, host: *workerHost, plugin: *workerPlugin, registry: *pluginRegistry}
 	workerConf, workerOn, err := workerListener(workerFlags, authority.Model(), *store)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
@@ -510,6 +521,18 @@ func main() {
 			os.Exit(exitConfig)
 		}
 		os.Exit(0)
+	}
+
+	// 🔴 THE PLUGIN REGISTRY AND JOURNAL ARE JUDGED HERE, after the worker flags (they need the
+	// listener) and before anything is served. The journal may not be any file this program writes.
+	pluginRegistryLoaded, pluginToggleJournal, pluginsOn, err := pluginsConfigured(
+		pluginSettings{registry: *pluginRegistry, journal: *pluginJournal}, *store, workerOn,
+		map[string]string{"-control-journal": *controlJournal, "-session-file": *sessionFile, "-arc-journal": resolvedArcJournal,
+			"-" + flagWorkerTokens: *workerTokens, "-" + flagPresenceTokens: *presenceTokens, "-token-file": *tokenFile,
+			"$" + codesrc.EnvJournal: sourceJournal.Path})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
+		os.Exit(exitConfig)
 	}
 
 	machine, err := identity.NewMachineToken(authority)
@@ -742,6 +765,7 @@ func main() {
 	var workerServer *http.Server
 	var workerNet net.Listener
 	var transcripts *archive.Archive
+	var pluginService *plugins.Service
 	if workerOn {
 		if err := workerBindRefusal(*workerAddr, proxyErr); err != nil {
 			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
@@ -759,6 +783,10 @@ func main() {
 		if sourcesOn {
 			statePaths = append(statePaths, statePath{"$" + codesrc.EnvJournal, sourceJournal.Path})
 		}
+		// The plugin toggle journal (S5): another file this surface WRITES.
+		if pluginsOn {
+			statePaths = append(statePaths, statePath{"-" + flagPluginJournal, pluginToggleJournal.Path})
+		}
 		if err := stateInsideTranscriptDir(workerConf.dir, statePaths); err != nil {
 			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error()+". Refusing to start")
 			os.Exit(exitConfig)
@@ -768,9 +796,16 @@ func main() {
 			fmt.Fprintln(os.Stderr, "cairn-ui: the transcript store cannot be opened: "+err.Error()+". Refusing to start")
 			os.Exit(exitConfig)
 		}
+		// 🔴 ONE SERVICE FOR THE PLUGIN API AND THE BROWSER'S TOGGLES — the same registry, the same
+		// journal, the same transcript read side and the same arc journal, so the fold a plugin is
+		// answered by is the fold a toggle form describes.
+		if pluginsOn {
+			pluginService = newPluginService(pluginRegistryLoaded, pluginToggleJournal,
+				transcript.NewStore(transcripts, *store), resolvedArcJournal, authority)
+		}
 		handler, rows, err := worker.New(worker.Config{
 			TokenFile: *workerTokens, Owner: workerConf.owner, OwnerHeld: ownerStillHeld(authority, workerConf.owner),
-			Archive: transcripts, Armed: workerFlags.armed,
+			Archive: transcripts, Armed: workerFlags.armed, Plugins: pluginService,
 			Limiter: netid.NewRateLimiter(maxFailures, window, lockout), TrustedProxies: trustedProxies,
 			Log: func(line string) { fmt.Fprintln(os.Stderr, "cairn-ui: "+line) },
 		})
@@ -794,6 +829,11 @@ func main() {
 				fmt.Fprintln(os.Stderr, armedWarning)
 			}
 		}
+	}
+
+	// The plugins clause rides on the worker listener's, whose API it is.
+	if pluginsOn {
+		workerModeLine += ", " + pluginMode(pluginRegistryLoaded, pluginToggleJournal)
 	}
 
 	// 🔴 THE CLIENT LISTENER (S2 of the scope-mail plan), bound here for presence's reason: a
@@ -906,6 +946,11 @@ func main() {
 	}
 	// The transcript read side built above, NIL without an archive (see there).
 	cfg.Transcripts = transcriptReads
+	// 🔴 THE TOGGLES' BROWSER HALF EXISTS ONLY WHERE THE PLUGIN API DOES — the same service object.
+	// nil renders no toggle form and answers every toggle POST with `ui.NoPluginRegistry`.
+	if pluginService != nil {
+		cfg.Plugins = pluginService
+	}
 	srv, err := ui.New(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())

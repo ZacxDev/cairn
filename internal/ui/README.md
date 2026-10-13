@@ -5197,3 +5197,51 @@ unclamped `?page=` (a slice panic), and the empty sentence withheld. `tests/plug
 - **The page in a real browser at every width** is only the `uiaudit` walk's (advisory) capture; no
   browser guard reads it.
 
+
+---
+
+# Plugin toggles (S5 of the transcripts plan)
+
+`GET /plugins` lists what the operator registered (`-plugin-registry`) and each plugin's value on
+every scope the caller reads; three POST rows set a toggle, ONE PATH PER LEVEL (`UnsharePath`'s
+ruling — which authority a write is checked against is the route's, never a form field's). The forms
+live on the pages they toggle: the scope page, the arc page and — for the transcript's OWNER only —
+the session page. The fold and the levels are `internal/plugins/README.md`'s.
+
+## The binding rules
+
+- **Who may toggle is per level and never a form field.** Scope: `admin` on the scope. Arc: `admin` on
+  the HOME scope — not the right to `PUT` the arc. And since #270 round 1 an arc speaks only for sessions whose visibility set holds its HOME scope
+  (`plugins.Effective`): arc members are arbitrary session ids any writer of the home can add, so an
+  arc homed outside a session's `V` — an unrelated scope's admin listing a session they saw — says
+  nothing about it, neither `on` nor `off`. Inside `V`, an `on` arc runs the plugin where every scope is
+  at least `allowed`: the home's admin chose it for a session that touched the home, and every other
+  scope's admins had consented. ⚠ What remains: once an arc is `on`, a WRITER of its home can add a
+  session that touched the home, and it goes ON without another admin act — the home's admin
+  delegated that by turning the arc on. An arc never runs a plugin on a session any of whose scopes is
+  `off`.
+  Session: the transcript's owner arm (`transcript.Store.OwnedBy`), and only `off`/`unset`: an `on` is
+  a 400 decided BEFORE any authority is asked, so it is the same bytes for the owner and a stranger.
+- **One refusal** (`pluginToggleRefusal`, 403) for a target that does not exist, cannot be read, or is
+  not the caller's; the registry is public to every signed-in caller, so an unregistered plugin name
+  is a malformed form (400), not an authority question.
+- **The journal records `(Kind, ID)` and the pod clock**, never `Display` and never a form value.
+- **Class 0 for every POST row**, so both cross-site gates reach them by METHOD.
+- **A refused viewer's session page carries no trace of the block** — it renders for the owner only,
+  so clauses (d)–(g)'s byte-identity is untouched.
+
+## The RED proof
+
+`TestWhoMayToggleIsDecidedPerLevel` (write-only member, arc writer, non-owner, session ON — each
+refused and journaling nothing; each admin/owner journaling exactly one record) is red under
+`plugins-toggle-unauthorised-level` and `plugins-session-level-accepts-on`;
+`TestTheToggleRowsAreBehindBothCrossSiteGates` asserts each gate by its own message.
+`tests/plugins/e2e.sh` (i) sets the toggle through this POST and reads the plugin's pending list
+before and after.
+
+## What these guards still cannot see
+
+- **The forms in a real browser.** `uiaudit`'s worlds boot with no registry, so the walk captures
+  `/plugins`' OFF state and no toggle form; the forms are measured in-process.
+- **The EFFECTIVE value.** No page says whether a plugin is ON for a given session — that needs the
+  whole-store walk per session; the pages show the value at their own level.

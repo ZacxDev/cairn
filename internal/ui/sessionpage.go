@@ -133,6 +133,9 @@ func (s *Server) handleSessionPage(w http.ResponseWriter, r *http.Request, id id
 		return
 	}
 	view.Session = &answer
+	// The owner's plugin opt-out, AFTER every refusal and only for the transcript's owner — nil for
+	// everybody else, so a refused viewer's page is byte-identical to one with no registry (`plugins.go`).
+	view.Plugins = s.sessionToggles(id, session)
 	// Presence is bound AFTER every refusal above (the plan's P5): it decorates a page that was already
 	// found and can never make one.
 	view.Panes = s.panesFor(id)
@@ -288,6 +291,10 @@ func SessionPage(v PageView) g.Node {
 		}),
 		// nil — no node, so no bytes — unless the ONE predicate showed this viewer the transcript.
 		g.Iff(v.Transcript != nil, func() g.Node { return transcriptSection(*v.Transcript) }),
+		// nil unless a registry is configured AND this viewer is the transcript's owner (`plugins.go`).
+		g.Iff(v.Plugins != nil, func() g.Node {
+			return h.Section(h.Class("card"), pluginTogglesNode(*v.Plugins, v.CSRF))
+		}),
 	)
 }
 

@@ -37,6 +37,7 @@ var realPage = map[string]struct{ query, marker string }{
 	"GET /session content":       {"?" + QuerySession + "=" + walkSession, `id="session-summary"`},
 	"GET /team content":          {"", `<title>cairn — team`},
 	"GET /scope/sources content": {"?" + QueryScope + "=" + string(fixtureScope), `<h2>Code sources · platform</h2>`},
+	"GET /plugins content":       {"", `id="plugins-index"`},
 	// The raw-record view's real page needs a STORED transcript the caller may see: `walkTranscripts`
 	// stores one for [walkSession], owned by the walk's own identity.
 	"GET /session/transcript content": {"?" + QuerySession + "=" + walkSession, `id="transcript-raw"`},

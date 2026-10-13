@@ -16,6 +16,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
+	"github.com/ZacxDev/cairn/internal/plugins"
 	"github.com/ZacxDev/cairn/internal/redact"
 	"github.com/ZacxDev/cairn/internal/transcript/archive"
 	"github.com/ZacxDev/cairn/internal/worker"
@@ -43,6 +44,9 @@ type workerSettings struct {
 	dir, retention, quota string
 	armed                 bool
 	issue, host           string
+	// plugin is the plugin a minted `plugin` token is bound to; registry is `-plugin-registry`, which
+	// a plugin mint reads to refuse a name nobody registered.
+	plugin, registry string
 }
 
 // workerPlan is a validated, armed-or-not worker configuration.
@@ -91,6 +95,10 @@ func workerListener(s workerSettings, m control.Model, storeRoot string) (worker
 	if s.host != "" {
 		return workerPlan{}, false, fmt.Errorf("-%s names the host a MINTED token is bound to and means "+
 			"nothing without -%s. Refusing to start", flagWorkerHost, flagIssueWorker)
+	}
+	if s.plugin != "" {
+		return workerPlan{}, false, fmt.Errorf("-%s names the plugin a MINTED token is bound to and means "+
+			"nothing without -%s plugin. Refusing to start", flagWorkerPlugin, flagIssueWorker)
 	}
 	if len(missing) == len(order) {
 		if s.armed {
@@ -277,21 +285,20 @@ func workerMode(addr string, owner worker.Owner, rows int, dir string, armed boo
 		addr, owner, rows, len(worker.Routes()), dir, state)
 }
 
-// issueWorkerToken mints ONE capture token, appends its DIGEST to the token file, and prints the
-// token once to `out`. The wall holds at mint: a file with another owner's rows refuses.
+// issueWorkerToken mints ONE worker token — a `capture` token bound to `-worker-owner` on
+// `-worker-host`, or a `plugin` token bound to ONE plugin `-plugin-registry` holds — appends its
+// DIGEST to the token file, and prints the token once to `out`. The wall holds at mint: a file with
+// another owner's rows, or a row for an unregistered plugin, refuses.
 func issueWorkerToken(out, note io.Writer, m control.Model, s workerSettings) error {
 	kind := worker.TokenKind(s.issue)
 	if !kind.Valid() {
-		return fmt.Errorf("-%s %q is not %q", flagIssueWorker, s.issue, worker.KindCapture)
+		return fmt.Errorf("-%s %q is not %q or %q", flagIssueWorker, s.issue, worker.KindCapture, worker.KindPlugin)
 	}
 	if s.tokens == "" || identity.ValueReducesToNothing(s.tokens) {
 		return fmt.Errorf("-%s needs -%s, the file the digest is appended to", flagIssueWorker, flagWorkerTokens)
 	}
 	if s.owner == "" {
-		return fmt.Errorf("-%s needs -%s (<kind>:<id>)", flagIssueWorker, flagWorkerOwner)
-	}
-	if !worker.ValidHostLabel(s.host) {
-		return fmt.Errorf("-%s needs -%s, the ONE host label the token is bound to (got %q)", flagIssueWorker, flagWorkerHost, s.host)
+		return fmt.Errorf("-%s needs -%s (<kind>:<id>): the token file's capture rows are checked against it", flagIssueWorker, flagWorkerOwner)
 	}
 	owner, err := worker.ParseOwner(s.owner)
 	if err != nil {
@@ -300,23 +307,61 @@ func issueWorkerToken(out, note io.Writer, m control.Model, s workerSettings) er
 	if _, known := m.PrincipalFor(owner.Kind, owner.ID); !known {
 		return fmt.Errorf("-%s %s names a principal this authority does not hold", flagWorkerOwner, owner)
 	}
+	// 🔴 THE FILE'S EXISTING PLUGIN ROWS ARE ASKED OF THE REGISTRY WHEN ONE IS NAMED, AND ADMITTED
+	// WHEN NONE IS — whichever kind is being minted. A capture mint with a nil wall refused every file
+	// that already held a plugin row (#S5 audit round 1), leaving hand-editing as the only way to add a
+	// capture token beside one. Without a registry this mint does not vouch for plugin rows; startup
+	// refuses a file holding a plugin row its registry does not hold (or any plugin row, with no
+	// registry), so an unchecked row is found at the next restart at the latest.
+	wall := worker.Wall{Owner: owner, Plugins: func(string) bool { return true }}
+	if s.registry != "" {
+		reg, err := plugins.LoadRegistry(s.registry)
+		if err != nil {
+			return fmt.Errorf("-%s: %v", flagPluginRegistry, err)
+		}
+		wall.Plugins = reg.Holds
+	}
+	var row worker.TokenRow
+	token, err := worker.MintToken()
+	if err != nil {
+		return err
+	}
+	if kind == worker.KindPlugin {
+		if s.host != "" {
+			return fmt.Errorf("-%s binds a CAPTURE token to a host; a plugin token is bound to a plugin (-%s)", flagWorkerHost, flagWorkerPlugin)
+		}
+		if s.registry == "" {
+			return fmt.Errorf("-%s plugin needs -%s: a token for a plugin nobody registered authenticates nothing", flagIssueWorker, flagPluginRegistry)
+		}
+		if !wall.Plugins(s.plugin) {
+			return fmt.Errorf("-%s plugin needs -%s naming a plugin -%s registers (got %q)", flagIssueWorker, flagWorkerPlugin, flagPluginRegistry, s.plugin)
+		}
+		row = worker.NewPluginTokenRow(s.plugin, token)
+	} else {
+		if s.plugin != "" {
+			return fmt.Errorf("-%s binds a PLUGIN token; a capture token is bound to a host (-%s)", flagWorkerPlugin, flagWorkerHost)
+		}
+		if !worker.ValidHostLabel(s.host) {
+			return fmt.Errorf("-%s needs -%s, the ONE host label the token is bound to (got %q)", flagIssueWorker, flagWorkerHost, s.host)
+		}
+		row = worker.NewTokenRow(kind, owner, s.host, token)
+	}
 	if _, statErr := os.Stat(s.tokens); statErr == nil {
-		if _, err := worker.LoadTokens(s.tokens, owner); err != nil {
+		if _, err := worker.LoadTokens(s.tokens, wall); err != nil {
 			return fmt.Errorf("refusing to mint into %s: %w", s.tokens, err)
 		}
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return fmt.Errorf("the worker token file %s cannot be checked: %w", s.tokens, statErr)
 	}
-	token, err := worker.MintToken()
-	if err != nil {
-		return err
-	}
-	row := worker.NewTokenRow(kind, owner, s.host, token)
 	if err := worker.AppendTokenRow(s.tokens, row); err != nil {
 		return fmt.Errorf("the worker token file %s could not be written: %w", s.tokens, err)
 	}
-	fmt.Fprintf(note, "cairn-ui: minted a %s worker token for %s on host %s; its digest %s… is in %s. The token "+
-		"is printed ONCE on stdout and stored nowhere\n", kind, owner, s.host, row.DigestPrefix(), s.tokens)
+	bound := "for " + owner.String() + " on host " + s.host
+	if kind == worker.KindPlugin {
+		bound = "for plugin " + s.plugin
+	}
+	fmt.Fprintf(note, "cairn-ui: minted a %s worker token %s; its digest %s… is in %s. The token "+
+		"is printed ONCE on stdout and stored nowhere\n", kind, bound, row.DigestPrefix(), s.tokens)
 	_, err = fmt.Fprintln(out, token)
 	return err
 }

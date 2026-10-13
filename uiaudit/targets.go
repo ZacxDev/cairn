@@ -269,11 +269,17 @@ var linkExpanded = map[string]bool{
 // link — renders that link for an `admin`, which the token-file world grants nobody. The per-scope
 // edit page is therefore NOT walked here; the scope page's read-only Sources block IS, because
 // `BootWorld` seeds a sources journal.
+//
+// 🔴 `GET /plugins` (S5 of the transcripts plan) IS HERE: it has no operand, so its bare path IS the
+// page — the registry and each plugin's value on the readable scopes. The walk's worlds boot with no
+// `-plugin-registry`, so what it captures is the designed OFF state (`ui.NoPluginRegistry`), a real 200
+// document; the toggle FORMS are measured by `internal/ui`'s own tests, not by this walk.
 var plainGET = map[string]bool{
 	ui.RootPath:    true,
 	ui.SignInPath:  true,
 	ui.JoinPath:    true,
 	ui.SourcesPath: true,
+	ui.PluginsPath: true,
 }
 
 // notADocument is the THIRD class: a `GET` row a browser walk must not capture as a page,

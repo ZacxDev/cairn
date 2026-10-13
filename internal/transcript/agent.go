@@ -69,9 +69,6 @@ const (
 	RouteTool     = transcriptwire.RouteTool
 )
 
-// ReadRoutes is the three routes, in a fixed order.
-func ReadRoutes() []string { return []string{RouteSkeleton, RouteRecords, RouteTool} }
-
 // The query parameters of the read routes, spelled once (`internal/transcriptwire`) for both
 // listeners and the client.
 const (
