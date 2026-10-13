@@ -345,8 +345,8 @@ tokenfile="$work/capture-token"
 registry="$work/registry.json"
 cat >"$registry" <<'JSON'
 {"schema":1,"plugins":[{"schema":1,"name":"summary","version":"0.1.0","description":"synthetic summaries",
- "toggle_key":"summary","capabilities":["pending:list","transcript:read","output:write:summary"],
- "output_types":["summary"],"calls_model":true,"pending_idle_seconds":1}]}
+ "capabilities":["pending:list","transcript:read","output:write:summary"],
+ "calls_model":true,"pending_idle_seconds":1}]}
 JSON
 plugin_token="$(run_env "$work/bin/cairn-ui" -store "$store" -control-journal "$journal" -session-file "$work/sessions.json" \
   -issue-worker-token plugin -worker-plugin summary -plugin-registry "$registry" -worker-owner "$owner" \

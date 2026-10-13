@@ -12,7 +12,7 @@ import (
 )
 
 // ErrForbidden is EVERY refusal the plugin API answers with its one 403 body (decision 9, clause j,
-// T10): a capability the manifest does not hold, a type outside its `output_types`, a session the
+// T10): a capability the manifest does not hold, a type it holds no `output:write:<type>` for, a session the
 // plugin is OFF for, and a session that is not stored. One value, so no caller can answer them
 // differently.
 var ErrForbidden = errors.New("forbidden")
@@ -87,6 +87,10 @@ func (s *Service) decider(plugin string) (func(*transcript.Meta, []string) bool,
 	if err != nil {
 		return nil, err
 	}
+	return s.deciderOver(st, plugin)
+}
+
+func (s *Service) deciderOver(st State, plugin string) (func(*transcript.Meta, []string) bool, error) {
 	snap, err := s.arcSnapshot()
 	if err != nil {
 		return nil, err
@@ -135,32 +139,36 @@ func latestOutput(v *transcript.View, plugin string) (*Output, error) {
 }
 
 // Pending is decision 13's query for one plugin.
+//
+// 🔴 NO WALK WHEN NOTHING CAN BE ON, AND ONE WALK OTHERWISE (#270 round 1). With no scope `allowed`
+// or `on` for the plugin ([State.AnyConsent]) the answer is empty without reading a single session;
+// otherwise every stored root is decided over ONE whole-store walk ([transcript.Store.ForPlugins]).
+// A root whose `meta.json` does not decode is left out (OFF) and logged; any other error fails the
+// query — a broken store is never a confident empty list.
 func (s *Service) Pending(e Entry, limit int) ([]PendingItem, error) {
+	st, err := s.Journal.Read()
+	if err != nil {
+		return nil, err
+	}
+	if !st.AnyConsent(e.Name) {
+		return []PendingItem{}, nil
+	}
 	roots, err := s.Transcripts.Roots()
 	if err != nil {
 		return nil, err
 	}
-	on, err := s.decider(e.Name)
+	on, err := s.deciderOver(st, e.Name)
+	if err != nil {
+		return nil, err
+	}
+	views, err := s.Transcripts.ForPlugins(roots, on, func(root string, err error) {
+		s.log(fmt.Sprintf("plugins: session %s is left out of the pending query: %v", root, err))
+	})
 	if err != nil {
 		return nil, err
 	}
 	var cands []Candidate
-	for _, root := range roots {
-		v, err := s.Transcripts.ForPlugin(root, on)
-		if errors.Is(err, transcript.ErrMetaUnparsable) {
-			// 🔴 ONE SESSION WHOSE meta.json DOES NOT DECODE IS LEFT OUT (OFF, fail closed) and SAID, not a
-			// 500 for every session (audit round 1). ONLY that error: a store walk or a meta write that
-			// fails is a fact about the whole store, and skipping it made a removed store answer a
-			// confident empty list (audit round 2) — so every other error still fails the query.
-			s.log(fmt.Sprintf("plugins: session %s is left out of the pending query: %v", root, err))
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		if v == nil {
-			continue
-		}
+	for _, v := range views {
 		prev, err := latestOutput(v, e.Name)
 		if err != nil {
 			return nil, err
@@ -169,7 +177,7 @@ func (s *Service) Pending(e Entry, limit int) ([]PendingItem, error) {
 		for name, pos := range v.Meta.Streams {
 			streams[name] = pos.SeqTo
 		}
-		cands = append(cands, Candidate{Root: root, Streams: streams, UpdatedAt: v.Meta.UpdatedAt, Prev: prev})
+		cands = append(cands, Candidate{Root: v.Meta.Root, Streams: streams, UpdatedAt: v.Meta.UpdatedAt, Prev: prev})
 	}
 	return Pending(e, cands, s.now(), limit), nil
 }
@@ -202,7 +210,7 @@ func (s *Service) WriteOutput(e Entry, env Envelope) (Output, error) {
 	if err != nil {
 		return Output{}, err
 	}
-	if err := v.AppendOutput(line); err != nil {
+	if err := v.AppendOutput(e.Name, line); err != nil {
 		if errors.Is(err, transcript.ErrNoSession) {
 			return Output{}, ErrForbidden
 		}

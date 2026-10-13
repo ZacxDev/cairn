@@ -16,8 +16,8 @@ import (
 // worker listener is wiring no in-process test can see.
 
 const fixtureRegistry = `{"schema":1,"plugins":[{"schema":1,"name":"summary","version":"0.1.0","description":"synthetic",` +
-	`"toggle_key":"summary","capabilities":["pending:list","transcript:read","output:write:summary"],` +
-	`"output_types":["summary"],"calls_model":true}]}`
+	`"capabilities":["pending:list","transcript:read","output:write:summary"]` +
+	`,"calls_model":true}]}`
 
 func writeRegistry(t *testing.T, body string) string {
 	t.Helper()

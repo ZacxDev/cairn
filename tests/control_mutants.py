@@ -5616,6 +5616,17 @@ MUTANTS: tuple[Mutant, ...] = (
         pkgs=PKGS + ("./internal/plugins/",),
     ),
     Mutant(
+        name="plugins-arc-home-outside-v-counts",
+        path="internal/plugins/toggles.go",
+        old="\t\tif !inV[ScopeTarget(k.Home)] {\n\t\t\tcontinue",
+        new="\t\tif false && !inV[ScopeTarget(k.Home)] {\n\t\t\tcontinue",
+        killer="TestAnArcSpeaksOnlyForSessionsThatTouchedItsHome",
+        why="the plan's fold names no limit on which arcs count, so every arc listing the session looks like "
+        "the rule — and an admin of an unrelated scope then turns a plugin ON (or vetoes it) for a session "
+        "that scope never saw, by listing its id in their own arc (#270 round 1).",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
         name="plugins-transcript-read-ignores-toggle",
         path="internal/plugins/service.go",
         old="\tv, err := s.Transcripts.ForPlugin(root, on)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden",

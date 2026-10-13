@@ -102,6 +102,27 @@ func TestFoldCase09TheEmptySetIsOff(t *testing.T) {
 		Subject{Root: "s-0001", Arcs: []arcs.Key{arcOne}}, false)
 }
 
+// TestAnArcSpeaksOnlyForSessionsThatTouchedItsHome — #270 round 1, both halves: (a) an admin of an
+// UNRELATED scope (gamma) cannot turn a plugin ON — or OFF — for a session that only touched other
+// scopes by listing it in an arc homed in gamma; (b) once an arc homed in alpha is ON, a session a
+// mere writer of alpha adds to it goes ON only if it touched alpha, and not one that touched beta
+// alone. RED before the fix: (a) ON, (a') vetoed, (b) ON.
+func TestAnArcSpeaksOnlyForSessionsThatTouchedItsHome(t *testing.T) {
+	arcGamma := arcs.Key{Home: "gamma-notes", Slug: "arc-g"}
+	// (a) beta is only `allowed`; an arc homed in gamma (outside V) is ON.
+	foldCase(t, [][3]string{{"scope", "beta-notes", "allowed"}, {"arc", ArcTarget(arcGamma), "on"}},
+		Subject{Root: "s-0001", V: []string{"beta-notes"}, Arcs: []arcs.Key{arcGamma}}, false)
+	// (a') nor can it VETO: beta is `on`, the gamma arc says `off`.
+	foldCase(t, [][3]string{{"scope", "beta-notes", "on"}, {"arc", ArcTarget(arcGamma), "off"}},
+		Subject{Root: "s-0001", V: []string{"beta-notes"}, Arcs: []arcs.Key{arcGamma}}, true)
+	// (b) arc-one (home alpha) is ON; a session that touched beta alone, added as a member, stays OFF…
+	foldCase(t, [][3]string{{"scope", "beta-notes", "allowed"}, {"arc", ArcTarget(arcOne), "on"}},
+		Subject{Root: "s-0009", V: []string{"beta-notes"}, Arcs: []arcs.Key{arcOne}}, false)
+	// …and one that touched alpha (allowed) goes ON: the home's admin set the arc, inside its own scope.
+	foldCase(t, [][3]string{{"scope", "alpha-notes", "allowed"}, {"arc", ArcTarget(arcOne), "on"}},
+		Subject{Root: "s-0010", V: []string{"alpha-notes"}, Arcs: []arcs.Key{arcOne}}, true)
+}
+
 // TestTheFoldsControls are the controls beside the cases: a later write wins, an opt-out set back to
 // unset restores ON, another session's opt-out and another plugin's ON change nothing.
 func TestTheFoldsControls(t *testing.T) {

@@ -82,15 +82,16 @@ const (
 // Manifest is a plugin's declaration (decision 9), committed beside the plugin and registered on the
 // pod by the operator.
 type Manifest struct {
-	Schema       int      `json:"schema"`
-	Name         string   `json:"name"`
-	Version      string   `json:"version"`
-	Description  string   `json:"description"`
+	Schema      int    `json:"schema"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	Description string `json:"description"`
+	// Capabilities is the WHOLE declaration. The plan's separate `toggle_key` (forced equal to the
+	// name, read by nothing) and `output_types` (forced equal to the `output:write:<type>` set, both
+	// ways) are DELETED (#270 round 0, D1/D2): toggles are keyed by the name, and the types a plugin
+	// writes are derived from its write capabilities ([Manifest.OutputTypes]) — one declaration, so
+	// there is no second spelling to disagree with it.
 	Capabilities []string `json:"capabilities"`
-	// ToggleKey is the name toggles are journaled under. It must EQUAL [Manifest.Name]: two plugins
-	// sharing a key would share consent, and consent is given to ONE plugin.
-	ToggleKey   string   `json:"toggle_key"`
-	OutputTypes []string `json:"output_types"`
 	// CallsModel is rendered on `/plugins`: whether the plugin sends what it reads to a model
 	// provider (T7).
 	CallsModel bool `json:"calls_model"`
@@ -107,11 +108,20 @@ type Entry struct {
 // Has reports whether the entry's manifest declares capability c.
 func (e Entry) Has(c string) bool { return slices.Contains(e.Capabilities, c) }
 
-// Writes reports whether the plugin may WRITE outputs of type t: t is one of its declared
-// `output_types` AND it holds `output:write:<t>`. Both, because the registry refuses a manifest
-// where they disagree and this is the one predicate the write route asks.
-func (e Entry) Writes(t string) bool {
-	return slices.Contains(e.OutputTypes, t) && e.Has(CapOutputWrite(t))
+// Writes reports whether the plugin may WRITE outputs of type t: it holds `output:write:<t>`. The one
+// predicate the write route asks.
+func (e Entry) Writes(t string) bool { return IsOutputType(t) && e.Has(CapOutputWrite(t)) }
+
+// OutputTypes is the types the plugin writes, derived from its `output:write:<type>` capabilities,
+// in the closed set's order.
+func (m Manifest) OutputTypes() []string {
+	var out []string
+	for _, t := range OutputTypes() {
+		if slices.Contains(m.Capabilities, CapOutputWrite(t)) {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // Registry is the registered plugins, by name.
@@ -250,18 +260,6 @@ func ValidateManifest(m Manifest) error {
 		return fmt.Errorf("version %q does not match %s", m.Version, versionClass)
 	case len(m.Description) > maxDescription || !printable(m.Description):
 		return fmt.Errorf("description is over %d bytes or carries a control character", maxDescription)
-	case m.ToggleKey != m.Name:
-		return fmt.Errorf("toggle_key %q is not the plugin's name %q — consent is given to ONE plugin", m.ToggleKey, m.Name)
-	}
-	seenType := map[string]bool{}
-	for _, t := range m.OutputTypes {
-		if !IsOutputType(t) {
-			return fmt.Errorf("output type %q is not one of %v (the set is closed and in-tree)", t, OutputTypes())
-		}
-		if seenType[t] {
-			return fmt.Errorf("output type %q is declared twice", t)
-		}
-		seenType[t] = true
 	}
 	seenCap := map[string]bool{}
 	for _, c := range m.Capabilities {
@@ -273,20 +271,6 @@ func ValidateManifest(m Manifest) error {
 			return fmt.Errorf("capability %q is declared twice", c)
 		}
 		seenCap[c] = true
-	}
-	// 🔴 THE WRITE CAPABILITIES AND THE OUTPUT TYPES ARE ONE DECLARATION, CHECKED BOTH WAYS: a type with
-	// no write capability is a type the plugin can never produce, and a write capability for an
-	// undeclared type is the one shape the write route's "declared output types only" rule exists to
-	// refuse.
-	for _, t := range m.OutputTypes {
-		if !seenCap[CapOutputWrite(t)] {
-			return fmt.Errorf("output type %q is declared without %q", t, CapOutputWrite(t))
-		}
-	}
-	for c := range seenCap {
-		if t, ok := strings.CutPrefix(c, capOutputWrite); ok && !seenType[t] {
-			return fmt.Errorf("capability %q writes a type the manifest's output_types do not declare", c)
-		}
 	}
 	return nil
 }

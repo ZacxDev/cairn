@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -311,9 +310,9 @@ func issueWorkerToken(out, note io.Writer, m control.Model, s workerSettings) er
 	// 🔴 THE FILE'S EXISTING PLUGIN ROWS ARE ASKED OF THE REGISTRY WHEN ONE IS NAMED, AND ADMITTED
 	// WHEN NONE IS — whichever kind is being minted. A capture mint with a nil wall refused every file
 	// that already held a plugin row (#S5 audit round 1), leaving hand-editing as the only way to add a
-	// capture token beside one. Without a registry this mint does not vouch for plugin rows, and SAYS
-	// so; startup refuses a file holding a plugin row its registry does not hold (or any plugin row, with
-	// no registry), so an unchecked row is found at the next restart at the latest.
+	// capture token beside one. Without a registry this mint does not vouch for plugin rows; startup
+	// refuses a file holding a plugin row its registry does not hold (or any plugin row, with no
+	// registry), so an unchecked row is found at the next restart at the latest.
 	wall := worker.Wall{Owner: owner, Plugins: func(string) bool { return true }}
 	if s.registry != "" {
 		reg, err := plugins.LoadRegistry(s.registry)
@@ -348,13 +347,8 @@ func issueWorkerToken(out, note io.Writer, m control.Model, s workerSettings) er
 		row = worker.NewTokenRow(kind, owner, s.host, token)
 	}
 	if _, statErr := os.Stat(s.tokens); statErr == nil {
-		existing, err := worker.LoadTokens(s.tokens, wall)
-		if err != nil {
+		if _, err := worker.LoadTokens(s.tokens, wall); err != nil {
 			return fmt.Errorf("refusing to mint into %s: %w", s.tokens, err)
-		}
-		if s.registry == "" && slices.ContainsFunc(existing, func(r worker.TokenRow) bool { return r.Kind == worker.KindPlugin }) {
-			fmt.Fprintf(note, "cairn-ui: NOTE %s holds plugin row(s) this mint did not check (no -%s); a row for a "+
-				"plugin the registry does not hold refuses the whole file at the next start\n", s.tokens, flagPluginRegistry)
 		}
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return fmt.Errorf("the worker token file %s cannot be checked: %w", s.tokens, statErr)

@@ -10,8 +10,7 @@ import (
 // summaryManifest is plugin A's shape, SYNTHETIC.
 func summaryManifest() Manifest {
 	return Manifest{Schema: 1, Name: "summary", Version: "0.1.0", Description: "continuous session summaries",
-		Capabilities: []string{CapPendingList, CapTranscriptRead, CapOutputWrite(TypeSummary)},
-		ToggleKey:    "summary", OutputTypes: []string{TypeSummary}, CallsModel: true}
+		Capabilities: []string{CapPendingList, CapTranscriptRead, CapOutputWrite(TypeSummary)}, CallsModel: true}
 }
 
 func registryJSON(t *testing.T, ms ...Manifest) []byte {
@@ -37,19 +36,13 @@ func TestTheVocabulariesAreClosed(t *testing.T) {
 		t.Fatalf("the output-type set is %v", got)
 	}
 	bad := map[string]func(*Manifest){
-		"an unknown capability":           func(m *Manifest) { m.Capabilities = append(m.Capabilities, "store:read") },
-		"a write for an unknown type":     func(m *Manifest) { m.Capabilities = append(m.Capabilities, "output:write:essay") },
-		"a read for an unknown type":      func(m *Manifest) { m.Capabilities = append(m.Capabilities, "output:read:essay") },
-		"an unknown output type":          func(m *Manifest) { m.OutputTypes = append(m.OutputTypes, "essay") },
-		"a type with no write capability": func(m *Manifest) { m.OutputTypes = append(m.OutputTypes, TypeTicketEdge) },
-		"a write capability for an undeclared type": func(m *Manifest) {
-			m.Capabilities = append(m.Capabilities, CapOutputWrite(TypeTicketEdge))
-		},
-		"a toggle key not its name": func(m *Manifest) { m.ToggleKey = "clickup" },
-		"a capability twice":        func(m *Manifest) { m.Capabilities = append(m.Capabilities, CapPendingList) },
-		"a bad name":                func(m *Manifest) { m.Name, m.ToggleKey = "Summary!", "Summary!" },
-		"schema 2":                  func(m *Manifest) { m.Schema = 2 },
-		"a control character":       func(m *Manifest) { m.Description = "a\x07b" },
+		"an unknown capability":       func(m *Manifest) { m.Capabilities = append(m.Capabilities, "store:read") },
+		"a write for an unknown type": func(m *Manifest) { m.Capabilities = append(m.Capabilities, "output:write:essay") },
+		"a read for an unknown type":  func(m *Manifest) { m.Capabilities = append(m.Capabilities, "output:read:essay") },
+		"a capability twice":          func(m *Manifest) { m.Capabilities = append(m.Capabilities, CapPendingList) },
+		"a bad name":                  func(m *Manifest) { m.Name = "Summary!" },
+		"schema 2":                    func(m *Manifest) { m.Schema = 2 },
+		"a control character":         func(m *Manifest) { m.Description = "a\x07b" },
 	}
 	for name, mutate := range bad {
 		m := summaryManifest()
@@ -70,8 +63,14 @@ func TestTheVocabulariesAreClosed(t *testing.T) {
 	if e.PendingIdleSeconds != 600 || e.PendingGrowRecords != 200 {
 		t.Fatalf("the pending defaults are %d s / %d records, want decision 13's 600 / 200", e.PendingIdleSeconds, e.PendingGrowRecords)
 	}
-	if !e.Writes(TypeSummary) || e.Writes(TypeTicketEdge) {
-		t.Fatal("Writes does not answer the manifest's own declaration")
+	if !e.Writes(TypeSummary) || e.Writes(TypeTicketEdge) || strings.Join(e.OutputTypes(), ",") != TypeSummary {
+		t.Fatal("Writes / OutputTypes do not answer the manifest's own write capabilities")
+	}
+	for _, removed := range []string{`"toggle_key":"summary"`, `"output_types":["summary"]`} {
+		withKey := strings.Replace(string(registryJSON(t, summaryManifest())), `"calls_model":true`, removed+`,"calls_model":true`, 1)
+		if _, err := ParseRegistry([]byte(withKey)); err == nil {
+			t.Errorf("a manifest carrying the deleted key %s was admitted (it is no longer part of the schema)", removed)
+		}
 	}
 }
 
@@ -121,5 +120,20 @@ func TestBodiesAreValidatedAgainstTheirTypesSchema(t *testing.T) {
 	twoPlaces := `{"system":"clickup","ticket_id":"abc123","signal":"pr-body","locator":{"pr":1,"commit":"abcdef0"}}`
 	if ValidateBody(TypeTicketEdge, json.RawMessage(twoPlaces)) == nil {
 		t.Error("a locator naming two places was accepted")
+	}
+}
+
+// TestTheStoredBodyIsTheValidatedValue: a body with a duplicate key is stored as the value the decoder
+// validated (the LAST), never as the bytes sent — RED before #270 round 1, when the raw bytes, both
+// keys included, were what reached the store.
+func TestTheStoredBodyIsTheValidatedValue(t *testing.T) {
+	raw := []byte(`{"plugin":"summary","plugin_version":"0.1.0","model":"fake","session":"s-0001","input_watermark":{"main":1},` +
+		`"type":"summary","body":{"text":"FIRST","text":"ok"}}`)
+	env, err := DecodeEnvelope(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(env.Body) != `{"text":"ok"}` {
+		t.Fatalf("the body to store is %s, want {\"text\":\"ok\"}", env.Body)
 	}
 }

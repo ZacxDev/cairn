@@ -27,8 +27,8 @@ func pluginsRig(t *testing.T) (*shareRig, plugins.Journal) {
 	t.Helper()
 	rig := newShareRig(t)
 	reg, err := plugins.ParseRegistry([]byte(`{"schema":1,"plugins":[{"schema":1,"name":"summary","version":"0.1.0",` +
-		`"description":"synthetic summaries","toggle_key":"summary","capabilities":["pending:list","transcript:read",` +
-		`"output:write:summary"],"output_types":["summary"],"calls_model":true}]}`))
+		`"description":"synthetic summaries","capabilities":["pending:list","transcript:read",` +
+		`"output:write:summary"],"calls_model":true}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}

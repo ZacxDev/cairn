@@ -189,9 +189,16 @@ func (w *Worker) handleOutputsWrite(rw http.ResponseWriter, r *http.Request, row
 	}
 	out, err := w.cfg.Plugins.WriteOutput(e, env)
 	var wm *plugins.WatermarkError
+	var quota *transcript.QuotaError
 	switch {
 	case errors.As(err, &wm):
 		badRequest(rw, wm)
+	case errors.As(err, &quota):
+		// 🔴 507, NAMED, AND SAID ONCE — capture's answer (#270 round 1: it was an opaque 500 and a log
+		// line per request). The plugin holds and retries; the operator sees one line.
+		writeJSON(rw, http.StatusInsufficientStorage, fmt.Sprintf(`{"refused":"quota","quota_bytes":%d}`+"\n", quota.Quota))
+		w.once(fmt.Sprintf("worker: plugin %s's outputs reached their share of the transcript quota (%d bytes); "+
+			"its writes are refused 507", e.Name, quota.Quota))
 	case err != nil:
 		w.refuse(rw, err)
 	default:

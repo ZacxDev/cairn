@@ -32,6 +32,7 @@
 //	sessions/<root>/meta.json              owner, host, runtime, scope sets, positions (the COMMIT point)
 //	sessions/<root>/stream-<name>.jsonl.gz append-only gzip members of `{seq, src, rec}` lines
 //	sessions/<root>/blobs/<name>           a persisted tool-result file, redacted text or binary as is
+//	sessions/<root>/outputs.jsonl          plugin outputs, one stamped envelope per line (`outputs.go`)
 //	sessions/<root>/frames/<target>        a record or blob being reassembled from continuation frames
 //
 // ⚠ THE DEVIATION: the plan writes `<dir>/<root-session>/`. A root id is any
@@ -161,6 +162,8 @@ type Archive struct {
 	used   int64
 	locks  map[string]*sync.Mutex
 	frames map[string]*frameState
+	// outputs is plugin output bytes by plugin (`outputs.go`); nil until the first append counts them.
+	outputs map[string]int64
 	// afterFrameSurvey, when set (tests only), runs between the frame sweep's survey and its
 	// per-root re-check, so a frame staged in that window can be placed there deterministically.
 	afterFrameSurvey func()

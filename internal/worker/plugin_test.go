@@ -3,6 +3,7 @@ package worker
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -42,10 +43,8 @@ type pluginRig struct {
 func pluginRegistry(t *testing.T) *plugins.Registry {
 	t.Helper()
 	reg, err := plugins.ParseRegistry([]byte(`{"schema":1,"plugins":[
-	 {"schema":1,"name":"summary","version":"0.1.0","description":"synthetic","toggle_key":"summary",
-	  "capabilities":["pending:list","transcript:read","output:write:summary"],"output_types":["summary"],"calls_model":true},
-	 {"schema":1,"name":"lister","version":"0.0.1","description":"lists only","toggle_key":"lister",
-	  "capabilities":["pending:list"],"output_types":[],"calls_model":false}]}`))
+	 {"schema":1,"name":"summary","version":"0.1.0","description":"synthetic",	  "capabilities":["pending:list","transcript:read","output:write:summary"],"calls_model":true},
+	 {"schema":1,"name":"lister","version":"0.0.1","description":"lists only",	  "capabilities":["pending:list"],"calls_model":false}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,14 +70,16 @@ func writeStoreWithTrailer(t *testing.T) string {
 	return root
 }
 
-func newPluginRig(t *testing.T) *pluginRig {
+func newPluginRig(t *testing.T) *pluginRig { return newPluginRigQuota(t, 1<<30) }
+
+func newPluginRigQuota(t *testing.T, quota int64) *pluginRig {
 	t.Helper()
 	dir := t.TempDir()
 	red, err := redact.New(redact.SelfTestKey(43), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	arc, err := archive.Open(archive.Config{Dir: dir, Retention: transcripttest.Retention, Quota: 1 << 30, Recheck: red,
+	arc, err := archive.Open(archive.Config{Dir: dir, Retention: transcripttest.Retention, Quota: quota, Recheck: red,
 		Now: func() time.Time { return transcripttest.Clock }})
 	if err != nil {
 		t.Fatal(err)
@@ -361,5 +362,56 @@ func TestThePluginTranscriptReadIsTheAgentReadModel(t *testing.T) {
 	if rec := p.do(http.MethodGet, TranscriptPattern+"?session=s-alpha&stream=subagent:a1", summaryToken, ""); rec.Code != http.StatusForbidden ||
 		rec.Body.String() != ForbiddenBody {
 		t.Fatalf("a stream the session does not hold answered %d %q, want the one 403", rec.Code, rec.Body.String())
+	}
+}
+
+// TestNothingIsWalkedWhenNoScopeConsents: with no scope `allowed` or `on` for the plugin the pending
+// query reads no session and walks no store — measured by removing the store root, which any walk
+// turns into a 500 (`TestABrokenStoreIsAnErrorNotAnEmptyList`), and getting 200 with no item. RED
+// before #270 round 1 (every root was walked on every poll, toggles or not).
+func TestNothingIsWalkedWhenNoScopeConsents(t *testing.T) {
+	p := newPluginRig(t)
+	p.toggle(plugins.LevelArc, "alpha-notes/arc-one", plugins.ValueOn) // an arc alone consents to nothing
+	if err := os.RemoveAll(p.store); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.pending(summaryToken); len(got) != 0 {
+		t.Fatalf("with no scope consenting the pending list is %v", got)
+	}
+}
+
+// TestAPluginCannotFillTheCaptureQuota: one plugin's outputs stop at its share (1/20 of the quota) with
+// a NAMED 507 — not the opaque 500 they were — said ONCE in the log however many are refused, and
+// the instance is left with room for capture. RED before #270 round 1: 500 "internal error" once the
+// whole quota was gone, a log line per request, and nothing reserved for capture.
+func TestAPluginCannotFillTheCaptureQuota(t *testing.T) {
+	const quota = 400 << 10 // the plugin's share is 20 KiB
+	p := newPluginRigQuota(t, quota)
+	p.toggle(plugins.LevelScope, "alpha-notes", plugins.ValueOn)
+	text := strings.Repeat("synthetic summary text ", 400) // ~9 KiB a line
+	body := `{"plugin":"summary","plugin_version":"0.1.0","model":"fake","session":"s-alpha","input_watermark":{"main":3},` +
+		`"type":"summary","body":{"text":"` + text + `"}}`
+	var codes []int
+	for i := 0; i < 5; i++ {
+		rec := p.do(http.MethodPost, OutputsPattern, summaryToken, body)
+		codes = append(codes, rec.Code)
+		if rec.Code == http.StatusInsufficientStorage && rec.Body.String() != fmt.Sprintf(`{"refused":"quota","quota_bytes":%d}`+"\n", quota/20) {
+			t.Fatalf("the 507 body is %q", rec.Body.String())
+		}
+	}
+	if !slices.Equal(codes, []int{201, 201, 507, 507, 507}) {
+		t.Fatalf("five ~9 KiB outputs against a 20 KiB share answered %v, want 201 201 507 507 507", codes)
+	}
+	said := 0
+	for _, l := range p.log {
+		if strings.Contains(l, "share of the transcript quota") {
+			said++
+		}
+	}
+	if said != 1 {
+		t.Fatalf("the refusal was logged %d times, want once: %v", said, p.log)
+	}
+	if used := p.arc.Used(); used > quota/2 {
+		t.Fatalf("the archive holds %d of %d bytes after the plugin was stopped — capture's room is gone", used, quota)
 	}
 }

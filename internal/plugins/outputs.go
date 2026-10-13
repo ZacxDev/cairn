@@ -113,51 +113,69 @@ func strict(raw []byte, into any) error {
 
 // ValidateBody checks a body against its type's in-tree schema.
 func ValidateBody(t string, raw json.RawMessage) error {
+	_, err := CanonicalBody(t, raw)
+	return err
+}
+
+// CanonicalBody decodes a body against its type's in-tree schema and returns it RE-ENCODED from the
+// decoded value — what the pod stores.
+//
+// 🔴 THE STORED BYTES ARE THE VALIDATED VALUE, NEVER THE SENT ONES (#270 round 1). The decoder takes
+// the LAST of two duplicate keys, so `{"text":"FIRST","text":"ok"}` validated as "ok" while the raw
+// bytes stored "FIRST" too — and a renderer that read the first would have shown text nobody
+// validated. Re-encoding also drops case-variant keys and repairs invalid UTF-8.
+func CanonicalBody(t string, raw json.RawMessage) (json.RawMessage, error) {
+	var v any
 	switch t {
 	case TypeSummary:
 		var s Summary
 		if err := strict(raw, &s); err != nil {
-			return err
+			return nil, err
 		}
 		if s.Text == "" || len(s.Text) > maxSummary {
-			return fmt.Errorf("a summary's text must be 1–%d bytes", maxSummary)
+			return nil, fmt.Errorf("a summary's text must be 1–%d bytes", maxSummary)
 		}
+		v = s
 	case TypeTicketEdge:
 		var e TicketEdge
 		if err := strict(raw, &e); err != nil {
-			return err
+			return nil, err
 		}
 		if e.System != "clickup" {
-			return fmt.Errorf("system %q is not clickup", e.System)
+			return nil, fmt.Errorf("system %q is not clickup", e.System)
 		}
 		if !ticketID.MatchString(e.TicketID) {
-			return fmt.Errorf("ticket_id is not a canonical id")
+			return nil, fmt.Errorf("ticket_id is not a canonical id")
 		}
 		if e.CustomID != "" && !customID.MatchString(e.CustomID) {
-			return fmt.Errorf("custom_id does not match %s", customID)
+			return nil, fmt.Errorf("custom_id does not match %s", customID)
 		}
 		if !slices.Contains(Signals, e.Signal) {
-			return fmt.Errorf("signal %q is not one of %v", e.Signal, Signals)
+			return nil, fmt.Errorf("signal %q is not one of %v", e.Signal, Signals)
 		}
-		return validLocator(e.Locator)
+		if err := validLocator(e.Locator); err != nil {
+			return nil, err
+		}
+		v = e
 	case TypeTicketSuggestion:
 		var s TicketSuggestion
 		if err := strict(raw, &s); err != nil {
-			return err
+			return nil, err
 		}
 		if !ticketID.MatchString(s.TicketID) {
-			return fmt.Errorf("ticket_id is not a canonical id")
+			return nil, fmt.Errorf("ticket_id is not a canonical id")
 		}
 		if s.Confidence < 0 || s.Confidence > 1 {
-			return fmt.Errorf("confidence must be in [0, 1]")
+			return nil, fmt.Errorf("confidence must be in [0, 1]")
 		}
 		if len(s.Rationale) > maxRationale || !printable(s.Rationale) {
-			return fmt.Errorf("rationale must be at most %d bytes with no control character", maxRationale)
+			return nil, fmt.Errorf("rationale must be at most %d bytes with no control character", maxRationale)
 		}
+		v = s
 	default:
-		return fmt.Errorf("type %q is not one of %v", t, OutputTypes())
+		return nil, fmt.Errorf("type %q is not one of %v", t, OutputTypes())
 	}
-	return nil
+	return json.Marshal(v)
 }
 
 func validLocator(l Locator) error {
@@ -215,9 +233,11 @@ func DecodeEnvelope(raw []byte) (Envelope, error) {
 	if len(e.Body) == 0 {
 		return e, fmt.Errorf("body is required")
 	}
-	if err := ValidateBody(e.Type, e.Body); err != nil {
+	body, err := CanonicalBody(e.Type, e.Body)
+	if err != nil {
 		return e, fmt.Errorf("body: %v", err)
 	}
+	e.Body = body
 	return e, nil
 }
 

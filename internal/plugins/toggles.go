@@ -133,6 +133,24 @@ func (s State) Session(plugin, root string) string {
 	return s.Value(plugin, LevelSession, root, ValueUnset)
 }
 
+// AnyConsent reports whether ANY scope holds `allowed` or `on` for the plugin. Without one, rule (1)
+// of [Effective] refuses every session with a non-empty `V`, and an empty `V` is OFF — so no session
+// can be ON and a caller need not look at any (the pending query's zero-walk short-circuit).
+//
+// ⚠ IT ASKS THE DEFAULT THROUGH [State.Scope] TOO, so it can never disagree with the fold about a
+// scope nobody toggled: a default that read anything but `off` makes every session a candidate.
+func (s State) AnyConsent(plugin string) bool {
+	if v := s.Scope(plugin, "never-toggled-scope-default-probe"); v == ValueAllowed || v == ValueOn {
+		return true
+	}
+	for k, r := range s.latest {
+		if k.plugin == plugin && k.level == LevelScope && (r.Value == ValueAllowed || r.Value == ValueOn) {
+			return true
+		}
+	}
+	return false
+}
+
 // Last is the record that set a value, for "set by … at …" on a page.
 func (s State) Last(plugin string, level Level, target string) (Record, bool) {
 	r, ok := s.latest[toggleKey{plugin, level, target}]
@@ -153,8 +171,9 @@ type Subject struct {
 //
 // ON iff (1) EVERY scope in `V` is a scope this authority still holds AND is `allowed` or `on` —
 // the consent AND, applied regardless of every other level; AND (2) EITHER every scope in `V` is
-// `on`, OR some arc listing the session is `on`; AND (3) no arc listing the session is `off`; AND
-// (4) the owner has not opted out. An EMPTY `V` resolves OFF.
+// `on`, OR some arc listing the session AND HOMED IN A SCOPE OF `V` is `on`; AND (3) no such arc is
+// `off`; AND (4) the owner has not opted out. An EMPTY `V` resolves OFF. An arc homed outside `V`
+// says nothing about the session (#270 round 1 — the plan's decision 10 named no such limit).
 //
 // 🔴 `known` IS ASKED OF EVERY NAME, AND A NAME IT DOES NOT KNOW IS OFF WHATEVER THE JOURNAL SAYS.
 // A scope deleted or renamed after its admins consented keeps its journal line; the session's
@@ -168,7 +187,9 @@ func Effective(st State, plugin string, sub Subject, known func(string) bool) bo
 		return false
 	}
 	consented, everyOn := true, true
+	inV := map[string]bool{}
 	for _, scope := range sub.V {
+		inV[ScopeTarget(scope)] = true
 		if scope == "*" || !known(scope) {
 			return false
 		}
@@ -182,6 +203,14 @@ func Effective(st State, plugin string, sub Subject, known func(string) bool) bo
 	}
 	arcOn, arcOff := false, false
 	for _, k := range sub.Arcs {
+		// 🔴 AN ARC SPEAKS ONLY FOR A SESSION THAT TOUCHED ITS HOME (#270 round 1). Arc membership is
+		// whatever an arc PUT names — any WRITER of the home can add any session id — so an arc whose
+		// home is outside `V` would let an admin of an unrelated scope turn the plugin ON (or OFF)
+		// for sessions that scope never saw. Inside `V`, the home's admin set the arc and the home's
+		// admins (the same authority) are among those whose consent rule (1) already requires.
+		if !inV[ScopeTarget(k.Home)] {
+			continue
+		}
 		switch st.Arc(plugin, k) {
 		case ValueOff:
 			arcOff = true

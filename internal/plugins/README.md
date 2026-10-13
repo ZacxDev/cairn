@@ -43,6 +43,11 @@ under its own `plugins-*` row in `tests/control_mutants.py`.
 - **The transcript route IS S8's read model**: `transcript.ParseRecordsQuery` and `View.Page`, so
   `view=conversation` by default (decision 13's "reads through `view=conversation`"), `view=raw` on
   request, and ONE pager for agents and plugins. A stream the session does not hold is the one 403.
+- **The manifest has no `toggle_key` and no `output_types`** (#270 round 0): toggles are keyed by the
+  plugin's name, and the types it writes are derived from its `output:write:<type>` capabilities — one
+  declaration, so nothing can disagree with it. A registry carrying either key is refused.
+- **The stored body is the re-encoded VALIDATED value** (`CanonicalBody`), never the bytes sent — a
+  duplicate key validated as its last value was stored as both.
 - **The summary body is `{"text": …}`** (≤ 16 KiB) — the plan names the type, not its shape.
 - **The registry and the journal are both-or-neither, and only with the worker listener**; a `plugin`
   token row is admitted only for a plugin the registry holds, at startup and on every re-read.
@@ -54,18 +59,21 @@ under its own `plugins-*` row in `tests/control_mutants.py`.
   refuses. Unmeasured at scale; the S4 walk measurement is the nearest number.
 - **One worker per plugin** (decision 13): two receive the same items.
 - **A stolen plugin token** reads every transcript its plugin is ON for (T6) — and can fill the
-  instance's transcript QUOTA with outputs (each ≤ 64 KiB, no per-plugin cap), after which capture
-  uploads answer 507 (T12). Not capped here.
-- **An arc is anybody's** (audit round 1): members are arbitrary session ids, so a user who can see a
-  session's id can list it in an arc homed in their own scope and turn the plugin ON wherever its scopes
-  are only `allowed`, or OFF anywhere. `allowed` means "run when any arc asks". An arc still cannot run
-  a plugin on a session any of whose scopes is `off`. Narrowing arc authority is open for review.
+  instance's transcript quota with outputs only up to the plugin's SHARE: one stored line is at most
+  `archive.MaxOutputLine` (128 KiB after escaping), one plugin's outputs at most 1/20 of the quota and
+  all plugins' at most 1/5, each refused 507 past it — so capture keeps at least 80% (T12).
+- **An arc speaks only for sessions whose `V` holds its home** (#270 round 1; the plan's decision 10
+  named no such limit): an unrelated scope's admin cannot turn a plugin ON or OFF by listing a session
+  in their own arc. ⚠ Once an arc is `on`, a mere WRITER of its home can add a session that touched the
+  home and it goes ON with no further admin act — the home's admin delegated that by turning it on.
 - **Consent is keyed by the folded scope NAME**, not a control id — the store's own name=directory rule.
   A scope deleted and recreated under the same name inherits its predecessor's toggle; `known` neutralises
   only a name the authority no longer holds at all.
-- **Owner-only sessions are walked on every pending poll** (their stored `V` is empty, so no shortcut
-  applies): O(owner-only roots × store) per poll, and a latency difference between "stored owner-only"
-  and "absent" that the uniform 403 does not hide.
+- **The pending query walks the store at most ONCE per poll** (`transcript.Store.ForPlugins`), and
+  NOT AT ALL while no scope consents to the plugin (`State.AnyConsent`) — #270 round 1 measured one
+  walk per session (0.36 s for 50 sessions, 1.04 s for 200, every toggle off). A single transcript read
+  (`Service.Open`) still walks for its one session, so a latency difference between "stored
+  owner-only" and "absent" remains, unhidden by the uniform 403.
 - **Journal damage is counted, not surfaced** (`State.Skipped`, `TornTail`): a damaged latest `off`
   falls back to the earlier value.
 - **One undecidable session** (an unparsable `meta.json`) is left out of the pending list (OFF) and a

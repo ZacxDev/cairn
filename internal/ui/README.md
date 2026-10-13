@@ -5211,14 +5211,15 @@ the session page. The fold and the levels are `internal/plugins/README.md`'s.
 ## The binding rules
 
 - **Who may toggle is per level and never a form field.** Scope: `admin` on the scope. Arc: `admin` on
-  the HOME scope — not the right to `PUT` the arc. ⚠ **That does NOT make an arc harmless, and an earlier
-  draft of this line said it did.** Arc members are arbitrary session ids (`internal/arcs`), and every
-  user administers their own project's scopes, so anyone who can see a session id can list it in an arc
-  homed in a scope they administer and set it `on` — RUNNING the plugin wherever the session's scopes
-  are only `allowed` — or `off`, vetoing it. What holds: an arc can never run a plugin on a session any
-  of whose scopes is `off` (T14's narrowing). `allowed` therefore means "consent to run whenever any arc
-  listing the session asks", not "consent without running". The plan's case 4 is built as written;
-  narrowing arc authority (e.g. the home must be in `V`) is open for review.
+  the HOME scope — not the right to `PUT` the arc. And since #270 round 1 an arc speaks only for sessions whose visibility set holds its HOME scope
+  (`plugins.Effective`): arc members are arbitrary session ids any writer of the home can add, so an
+  arc homed outside a session's `V` — an unrelated scope's admin listing a session they saw — says
+  nothing about it, neither `on` nor `off`. Inside `V`, an `on` arc runs the plugin where every scope is
+  at least `allowed`: the home's admin chose it for a session that touched the home, and every other
+  scope's admins had consented. ⚠ What remains: once an arc is `on`, a WRITER of its home can add a
+  session that touched the home, and it goes ON without another admin act — the home's admin
+  delegated that by turning the arc on. An arc never runs a plugin on a session any of whose scopes is
+  `off`.
   Session: the transcript's owner arm (`transcript.Store.OwnedBy`), and only `off`/`unset`: an `on` is
   a 400 decided BEFORE any authority is asked, so it is the same bytes for the owner and a stranger.
 - **One refusal** (`pluginToggleRefusal`, 403) for a target that does not exist, cannot be read, or is

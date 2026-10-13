@@ -29,7 +29,8 @@ import (
 //   - a SCOPE toggle takes `admin` on that scope (the share flow's verb — consent to send a scope's
 //     content to a third party is an administration act, and `write` is not enough);
 //   - an ARC toggle takes `admin` on the arc's HOME scope — NOT the right to `PUT` the arc, which any
-//     writer of the home scope has, because naming a session in an arc must widen nothing (T14);
+//     writer of the home scope has — and an arc speaks only for sessions whose visibility set holds its
+//     home (`plugins.Effective`), so an arc homed elsewhere changes nothing for a session (T14);
 //   - a SESSION opt-out takes the transcript's OWNER arm (un-narrowed, `(Kind, ID)`), and can only
 //     say OFF: a session-level ON is refused 400 and journals nothing ([plugins.ErrSessionOn]).
 //
@@ -166,8 +167,8 @@ func pluginTogglesNode(t PluginToggles, csrf string) g.Node {
 	}[t.Level]
 	note := map[plugins.Level]string{
 		plugins.LevelScope: "A plugin runs on a session only when EVERY scope the session touched is at least `allowed`, " +
-			"and either every one is `on` or an arc listing it is `on`. `allowed` is consent to run wherever an arc " +
-			"listing the session turns it on — any arc, homed in any scope its registrant administers. Default: off.",
+			"and either every one is `on` or an arc listing it — homed in a scope the session touched — is `on`. " +
+			"`allowed` is consent to run where such an arc turns it on. Default: off.",
 		plugins.LevelArc: "An arc can turn a plugin on only inside scopes whose admins already allowed it, and `off` here " +
 			"vetoes it for every session the arc lists. Default: unset.",
 		plugins.LevelSession: "Your opt-out for this one session. It can only turn a plugin OFF — never on.",
@@ -396,7 +397,7 @@ func pluginEntryNode(e plugins.Entry, scopes []PluginScopeValue) g.Node {
 		h.H3(g.Text(e.Name+" "+e.Version)),
 		g.If(e.Description != "", h.P(g.Text(e.Description))),
 		h.P(h.Class("note"), g.Text("Capabilities: "+strings.Join(e.Capabilities, ", ")+
-			". Writes: "+orNone(e.OutputTypes)+".")),
+			". Writes: "+orNone(e.OutputTypes())+".")),
 		h.P(h.Class("note"), h.Data("calls-model", fmt.Sprint(e.CallsModel)), g.Text(map[bool]string{
 			true:  "Sends what it reads to a model provider — outside this deployment once read.",
 			false: "Does not call a model.",
