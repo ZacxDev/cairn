@@ -3886,7 +3886,7 @@ the agent tab).
 
 | route | class | what |
 |---|---|---|
-| `GET /` | `content` | the HUB: four cards — Arcs (`/arcs`), Scopes (`/scopes`), Sessions (`/sessions`), Team (`/team` — repointed from `/share` by #214, Phase T). `/?q=` and `/?tag=` answer **303** to `/scopes` with the query |
+| `GET /` | `content` | the HUB: five cards — Arcs (`/arcs`), Scopes (`/scopes`), Sessions (`/sessions`), My sessions (`/my-sessions` — transcripts S7), Team (`/team` — repointed from `/share` by #214, Phase T). `/?q=` and `/?tag=` answer **303** to `/scopes` with the query |
 | `GET /scopes` | `content` | the scope list, search box and tag filter — the old root, unchanged |
 | `GET /sessions` | `content` | every session the viewer can see anything of, newest first, each a link to `/session?session=…` |
 | `GET /scope?id=…&tab=agent` | (the `/scope` row) | the "What an agent sees" tab |
@@ -3896,7 +3896,7 @@ the agent tab).
 The scopes card's count is the scopes this viewer can read — the list `/scopes` renders. The first cut
 also counted arcs (the arcs page's live rows) and sessions (the sessions page's rows); **both were
 DROPPED in review (round 0, D1)**: each cost a whole-store walk on every hub load, roughly doubling it,
-for a number one click away. The four cards stay. The Team card never had a count: "who has access" is
+for a number one click away. The cards stay — five since transcripts S7 added "My sessions", which carries no count for the same reason (counting it reads every stored session's meta). The Team card never had a count: "who has access" is
 the sharing authority, and a hub consulting two authorities was a row `contentAuthority` could not express (it takes a list since #214 — `GET /team` declares three — but the hub still asks one).
 The mutant row that widened the arcs read for the hub's count was RE-POINTED rather than deleted —
 `StoreSource.Arcs` still feeds `/arcs` — as `ui-arcs-index-read-includes-unreadable-homes`, killed by
@@ -5137,3 +5137,57 @@ boundary).
   not-a-document; the matrix is in-process.
 - **Timing**, as for the session page: a stored-and-hidden session costs a meta read and maybe a walk.
 - **An unbounded skeleton** — see `internal/transcript/README.md`.
+
+---
+
+# "My sessions" (S7 of the transcripts plan)
+
+`GET /my-sessions[?page=N]` lists the stored sessions the VIEWER uploaded, newest upload first, each
+row linking `/session?session=<id>` (`mysessions.go`). It is the one way in to an owner-only session
+(an empty `V`, clause g): such a session wrote no trailer, so no scope tab, sessions list or arc chip
+names it. The hub links it ("My sessions" card, no count). Operator decision O10.
+
+## The binding rules
+
+- 🔴 **Ownership, never visibility.** The list is `transcript.Store.Mine`, which is decision 4's OWNER
+  ARM alone — the same `(Kind, ID)`-and-un-narrowed check `transcript.Visible` uses — and reads no
+  `V`. A reader of every scope of somebody else's session OPENS it (the session page asks
+  `transcript.Store.View`) and does NOT see it listed: the page is "mine", not "what I can see"
+  (`TestMySessionsListsTheViewersOwnAndNoOneElses`, with its instrument control that the reader really
+  does open it). A narrowed credential of the owner lists nothing.
+- **Metadata only.** `Mine` returns root, runtime, host and the two upload times; a listed session's
+  content is read through `View` like any other, so the listing adds no second way to a record.
+- **Bounded by pages.** 50 rows a page; `?page=` that is not a positive integer (a wider one than `int`
+  included) is page one, past the end is the last page; the pager links only pages that exist.
+  ⚠ The WORK is not bounded the same way: newest-first over sessions nothing indexes by owner reads
+  every stored session's `meta.json` on every request. A meta that does not parse is skipped, logged
+  as a count, and listed for nobody — its owner is unknown, and other people's damage is not the
+  viewer's to read.
+- **No transcript store is the empty state, not a 404** — S4's convention: a deployment without
+  `-transcript-dir` answers what one with nothing of the viewer's stored answers, byte for byte
+  (`TestMySessionsWithNoStoreIsTheEmptyState`, with its positive control). One sentence covers "you
+  uploaded nothing", "this deployment stores none" and "your credential is narrowed".
+- **Text only, no script.** Session ids, runtimes and host labels are uploader text in `g.Text` and
+  attribute values; every href is a ledger path with encoded operands (`sessionHref`,
+  `mySessionsPageHref`).
+
+## The RED proof
+
+`my-sessions-lists-another-owner` (`tests/control_mutants.py`: the listing asks `View` instead of the
+owner arm) is KILLED by `transcript`'s `TestMySessionsListsOwnershipNotVisibility` with
+`TestMySessionsListsTheViewersOwnAndNoOneElses` red beside it (`killed=1 stale-extras=0`). By hand,
+each killed: newest-CREATED instead of newest-upload order, a corrupt meta failing the whole list, an
+unclamped `?page=` (a slice panic), and the empty sentence withheld. `tests/plugins/e2e.sh`'s
+`g-my-sessions-lists-the-owners-own-and-no-one-elses` has its sabotage in `--self-test`
+(`g-my-sessions-lists-by-visibility`). The `uiaudit` row is `linkExpanded`, watched red
+(`TestTheREALLedgerIsFullyACCOUNTEDFor`) with the class removed.
+
+## What these guards still cannot see
+
+- **The cost at thousands of sessions** is unmeasured: one `meta.json` read per stored session per
+  request. Nothing here caches or indexes by owner.
+- **A session uploaded under another capture owner.** Ownership is the capture token's bound owner;
+  a session a person ran under a token minted for somebody else is that somebody's.
+- **The page in a real browser at every width** is only the `uiaudit` walk's (advisory) capture; no
+  browser guard reads it.
+

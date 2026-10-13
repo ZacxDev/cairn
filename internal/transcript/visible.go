@@ -12,8 +12,10 @@ import (
 // 🔴 VISIBILITY: ONE PREDICATE, ASKED BY EVERY SURFACE THAT SHOWS TRANSCRIPT CONTENT
 // (`claudedocs/plan-cairn-plugins.md`, decisions 3 and 4; slice S4). The session page's transcript
 // section, the raw-record view and the agent read API (S8, `agent.go`, on both listeners) ask it
-// today; plugin output rendering, edges and "My sessions" are later slices and ask the SAME function
-// — through [Store.View], which is the only way this package hands out a stored session.
+// today; plugin output rendering and edges are later slices and ask the SAME function — through
+// [Store.View], which is the only way this package hands out a stored session's CONTENT. "My
+// sessions" (S7, [Store.Mine]) asks only the owner arm, [Viewer.owns], and hands out metadata: it
+// lists ownership, never visibility.
 //
 // The rule (operator decisions O2, O8, O10): a session's content is visible to its OWNER, and to a
 // principal that can read EVERY scope the session wrote to or read from. Stricter than the session

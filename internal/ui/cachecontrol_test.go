@@ -40,6 +40,9 @@ var realPage = map[string]struct{ query, marker string }{
 	// The raw-record view's real page needs a STORED transcript the caller may see: `walkTranscripts`
 	// stores one for [walkSession], owned by the walk's own identity.
 	"GET /session/transcript content": {"?" + QuerySession + "=" + walkSession, `id="transcript-raw"`},
+	// "My sessions" (S7): the walk's identity owns `walkTranscripts`' one session, so its page LISTS
+	// it — the row, not the empty state.
+	"GET /my-sessions content": {"", `id="my-sessions-list"`},
 	// 🔴 THE AGENT READ API'S THREE ROWS (S8) ANSWER JSON, NOT A PAGE — the decision this walk's own
 	// refusal asks to have written down, and it is written in [agentJSONRows]. Their real answer is a
 	// stored session the caller may see: [walkSession], with one tool call at record 2.

@@ -38,6 +38,11 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
   `/session`, `GET /session/transcript`, e2e clauses (d)–(g) (`sabotaged=9 caught=9`), eleven mutant
   rows. The pod now derives the read half of `V` itself (no more `*` for every session); a
   `cairn-ui` without `-transcript-dir` renders nothing new.
+- **S7 BUILT (branch `zach/transcripts-s7`):** `GET /my-sessions` — the viewer's OWN stored sessions,
+  newest upload first, 50 a page, owner-only ones included; ownership (the owner arm), never
+  visibility; a hub card links it. No transcript store = the empty state (S4's convention). e2e
+  clause (g)'s listing half (`sabotaged=10 caught=10`, 16 assertions); mutant
+  `my-sessions-lists-another-owner`.
 - 🔴 **CAPTURE IS UNARMED.** Still blocking: **S11** (client read ledger) is unbuilt. ✅ **S3b is
   BUILT** (#260): the host-side uploader `internal/capture.HTTPSink` + `cairn-capture --run` (one
   pass for a user timer), and `tests/plugins/e2e.sh` clauses (a, b, c, h), `sabotaged=5 caught=5`,

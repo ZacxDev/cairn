@@ -1230,6 +1230,9 @@ jobs:
       # wrote or read see it, and a refused viewer's bytes are IDENTICAL to what they were with no
       # transcript — a stranger (d), a reader of one written scope (e), a reader of the written scope
       # but not the read one (f), and everyone but the owner of a session that touched nothing (g).
+      # Since S7, (g)'s LISTING half too: the owner's "My sessions" lists the owner-only session beside
+      # its shared ones, and a reader who opens a shared one lists none of them — ownership, not
+      # visibility.
       # Clause (n) runs the REAL client against a store pod with a session id in its environment — a
       # read whose command line names no program and whose output carries no header — and the real
       # agent uploads the ledger record that call wrote: the pod's own fold holds the scope, and the
@@ -1241,25 +1244,26 @@ jobs:
       # copy of the source — (a) the stream CAS, and for its opencode leg the saved plan never being
       # matched, (b) the agent's blob redaction, (c) the pod's record scan, (h) routing on one scope
       # (d) the predicate not asked, (e) the written set computed over the viewer's own scopes,
-      # (f) the read half dropped, (g) the empty set vacuously readable, (n) the pod not folding the
-      # uploaded ledger
-      # — and refuses (exit 2) unless EACH turns its own named assertion RED. Ten sabotages over
+      # (f) the read half dropped, (g) the empty set vacuously readable, and "My sessions" listed by
+      # visibility instead of ownership, (n) the pod not folding the uploaded ledger
+      # — and refuses (exit 2) unless EACH turns its own named assertion RED. Eleven sabotages over
       # the nine clauses wired now; the plan's 14 is the count at S10.
       - name: the transcripts end-to-end check, after proving every wired clause can go RED
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}
         run: |
           set -o pipefail
           tests/plugins/e2e.sh --self-test | tee /tmp/plugins-e2e-self.txt
-          grep -qx 'SUMMARY e2e-self-test: sabotaged=10 caught=10' /tmp/plugins-e2e-self.txt
+          grep -qx 'SUMMARY e2e-self-test: sabotaged=11 caught=11' /tmp/plugins-e2e-self.txt
           tests/plugins/e2e.sh > /tmp/plugins-e2e.txt 2>&1 || { cat /tmp/plugins-e2e.txt; exit 1; }
           cat /tmp/plugins-e2e.txt
           passes=$(grep -c '^PASS ' /tmp/plugins-e2e.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/plugins-e2e.txt || true)
           echo "plugins e2e: passes=$passes fails=$fails"
-          # 16 assertions: 11 measured when the script landed (S3b), 4 more with S4's clauses (d)–(g),
-          # 1 more with S11's clause (n); `EXPECTED` in the script moves with it.
-          if [ "$passes" -lt 16 ] || [ "$fails" -ne 0 ]; then
-            echo "REFUSING: $passes PASS / $fails FAIL lines, and 16 / 0 were measured"
+          # 17 assertions: 11 measured when the script landed (S3b), 4 more with S4's clauses (d)–(g),
+          # 1 more with S11's clause (n), 1 more with S7's listing half of (g); `EXPECTED` in the
+          # script moves with it.
+          if [ "$passes" -lt 17 ] || [ "$fails" -ne 0 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL lines, and 17 / 0 were measured"
             exit 1
           fi
 

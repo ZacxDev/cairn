@@ -14,6 +14,7 @@ collapsed reading model the browser surface renders. `claudedocs/plan-cairn-plug
 | `classify_test.go` | the shape ledger (both directions), its comparator's own control, and decision 17's rules over literal records |
 | `archive/` | S3's transcript STORE on `cairn-ui` (decision 15): per-session directories, CAS append, frames, ownership, the refusing re-check, quota, retention. Written only through `internal/worker`, whose upload routes are DISARMED unless `cairn-ui -arm-transcript-capture` (O16). Since S4 it derives the READ half of a session's visibility set itself, through `scopeuse`, over every record and text blob it stores |
 | `visible.go` | S4: `Visible` (decision 4), `VisibilitySet` and the whole-store `WrittenScopes` walk (decision 3), and `Store.View` — the only way a stored session's content leaves this package |
+| `mine.go` | S7: `Store.Mine` — the viewer's OWN stored sessions for "My sessions", newest upload first: the owner arm alone, metadata only |
 | `read.go` | S4: the collapsed reading (decision 18) — turns of classified items, at most 50 turns and 1,000 items a page (ending at a turn boundary), child streams nested under the call that spawned them |
 | `agent.go` | S8: the agent read API (decision 17) — `View.Skeleton`, `View.Page` (two views, filters, ranges, a byte bound), `View.Tool`, and `Store.Answer`, the ONE entry point both listeners serve it through. Its spellings are `internal/transcriptwire`'s |
 | `transcripttest/` | a fixture archive for tests in this package and `internal/ui`; nothing that ships imports it |
@@ -51,6 +52,10 @@ collapsed reading model the browser surface renders. `claudedocs/plan-cairn-plug
 - **The reading classifies UNITS.** A `tool_result` block inside a `user` record is a tool result;
   the `toolUseResult` copy is counted, not shown. An opencode stream is read at each unit's LAST
   stored version.
+- **"My sessions" lists ownership, never visibility (S7).** `Store.Mine` keeps a stored session iff
+  the owner arm holds — the `(Kind, ID)`-and-un-narrowed check `Visible` uses — and reads no `V`, so a
+  reader who can open somebody else's session never sees it listed as theirs, and a narrowed
+  credential lists nothing. It returns metadata only; content still leaves through `View`.
 - **Read-time bounds only:** `TurnsPerPage` (50), `ChildItemCap` (200), `CollapsedBudget` (2 MiB of
   collapsed content a page; user messages and assistant text are never charged).
 
