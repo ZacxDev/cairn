@@ -71,7 +71,8 @@ func (s *Server) handleHub(w http.ResponseWriter, r *http.Request, id identity.I
 		writePlain(w, http.StatusInternalServerError, "the store could not be read")
 		return
 	}
-	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now(), App: s.app}
+	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now(), App: s.app,
+		TranscriptsStored: s.transcripts != nil}
 	s.render(w, HubPage(view))
 }
 
@@ -81,10 +82,15 @@ const (
 	hubArcsWhat     = "Named pieces of work, and the sessions and scopes each one touched."
 	hubScopesWhat   = "Every scope you can read, newest first — with search and the tag filter."
 	hubSessionsWhat = "Every writing session you can see, newest first."
-	hubTeamWhat     = "Who can read and write each scope you administer, invitations, and team links."
+	// The "My sessions" card (S7 of the transcripts plan): no count, for the arcs and sessions cards'
+	// reason — the number is one click away, and counting it would read every stored session's meta on
+	// every hub load.
+	hubMySessionsWhat = "The sessions whose transcripts you uploaded, newest first — including those only you can open."
+	hubTeamWhat       = "Who can read and write each scope you administer, invitations, and team links."
 )
 
-// HubPage is the root: four cards, each a way in. Only the scopes card carries a count.
+// HubPage is the root: five cards (four with no transcript store), each a way in. Only the scopes card
+// carries a count.
 func HubPage(v PageView) g.Node {
 	return shell("", v, nil,
 		// The iOS install hint (S4, `pwa.go`): hidden, and nothing at all when unarmed.
@@ -94,6 +100,12 @@ func HubPage(v PageView) g.Node {
 			hubCard("scopes", "Scopes", ScopesPath, hubScopesWhat,
 				stat(plural(len(v.Scopes), "readable scope", "readable scopes"), "")),
 			hubCard("sessions", "Sessions", SessionsPath, hubSessionsWhat, nil),
+			// "My sessions" (S7): the way in to the viewer's OWN stored transcripts, owner-only ones
+			// included — which nothing else on this surface links, since nothing in the store names them.
+			// ONLY on a deployment with a transcript store: without `-transcript-dir` the hub is the
+			// four cards it was before S7 (S4's "renders nothing new"). The ROW still answers there —
+			// the empty state — so a bookmark is never a dead link.
+			g.If(v.TranscriptsStored, hubCard("mysessions", "My sessions", MySessionsPath, hubMySessionsWhat, nil)),
 			// The Team page (#214): sharing, single invitations and team links on one page —
 			// `/share` and `/invite` now only redirect there.
 			hubCard("team", "Team", TeamPath, hubTeamWhat, nil),
@@ -131,6 +143,12 @@ func (s *Server) handleSessionsPage(w http.ResponseWriter, r *http.Request, id i
 	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now(), App: s.app}
 	view.SessionsList = &list
 	view.Panes = s.panesFor(id)
+	// Each row's one-line plugin summary, through the transcript predicate (`outputs.go`).
+	listed := make([]string, 0, len(list.Report.Sessions))
+	for _, sess := range list.Report.Sessions {
+		listed = append(listed, sess.ID)
+	}
+	view.Derived = s.derivedFor(id, listed)
 	s.render(w, SessionsPage(view))
 }
 
@@ -195,6 +213,7 @@ func sessionsListRow(s report.SessionAcrossReport, label string, ids map[string]
 		h.Span(h.Class("entry-count"), g.Text(plural(s.Bullets(), "bullet", "bullets"))),
 		dateAgo(last, v.Now),
 		v.Panes.badge(s.ID, v.Now),
+		v.Derived.line(s.ID),
 		g.If(len(scopes) > 0, h.Ul(h.Class("chips chips-scope"), g.Map(scopes, func(name string) g.Node {
 			return scopeChip(name, ids)
 		}))),

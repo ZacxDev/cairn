@@ -8,6 +8,8 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/report"
+	"github.com/ZacxDev/cairn/internal/transcript"
+	"github.com/ZacxDev/cairn/internal/transcript/transcripttest"
 )
 
 // realPage is, for every CONTENT GET row, the query that reaches its REAL page against
@@ -27,13 +29,49 @@ var realPage = map[string]struct{ query, marker string }{
 	"GET / content":       {"", `id="hub"`},
 	"GET /scopes content": {"", `class="scope-grid"`},
 	// The sessions page renders its list card even when nothing is visible; the marker is that card.
-	"GET /sessions content": {"", `id="sessions-index"`},
-	"GET /scope content":    {"?" + QueryID + "=" + string(fixtureScope), `<h2>platform</h2>`},
-	"GET /entry content":    {"?" + QueryScope + "=" + string(fixtureScope) + "&" + QueryRef + "=runbook", `<h2>runbook</h2>`},
-	"GET /arc content":      {"?" + QueryHome + "=" + string(fixtureScope) + "&" + QuerySlug + "=walk-arc", `<h2>Arc</h2>`},
-	"GET /arcs content":     {"", `id="arcs-index"`},
-	"GET /session content":  {"?" + QuerySession + "=" + walkSession, `id="session-summary"`},
-	"GET /team content":     {"", `<title>cairn — team`},
+	"GET /sessions content":      {"", `id="sessions-index"`},
+	"GET /scope content":         {"?" + QueryID + "=" + string(fixtureScope), `<h2>platform</h2>`},
+	"GET /entry content":         {"?" + QueryScope + "=" + string(fixtureScope) + "&" + QueryRef + "=runbook", `<h2>runbook</h2>`},
+	"GET /arc content":           {"?" + QueryHome + "=" + string(fixtureScope) + "&" + QuerySlug + "=walk-arc", `<h2>Arc</h2>`},
+	"GET /arcs content":          {"", `id="arcs-index"`},
+	"GET /session content":       {"?" + QuerySession + "=" + walkSession, `id="session-summary"`},
+	"GET /team content":          {"", `<title>cairn — team`},
+	"GET /scope/sources content": {"?" + QueryScope + "=" + string(fixtureScope), `<h2>Code sources · platform</h2>`},
+	"GET /plugins content":       {"", `id="plugins-index"`},
+	// The raw-record view's real page needs a STORED transcript the caller may see: `walkTranscripts`
+	// stores one for [walkSession], owned by the walk's own identity.
+	"GET /session/transcript content": {"?" + QuerySession + "=" + walkSession, `id="transcript-raw"`},
+	// "My sessions" (S7): the walk's identity owns `walkTranscripts`' one session, so its page LISTS
+	// it — the row, not the empty state.
+	"GET /my-sessions content": {"", `id="my-sessions-list"`},
+	// 🔴 THE AGENT READ API'S THREE ROWS (S8) ANSWER JSON, NOT A PAGE — the decision this walk's own
+	// refusal asks to have written down, and it is written in [agentJSONRows]. Their real answer is a
+	// stored session the caller may see: [walkSession], with one tool call at record 2.
+	"GET /transcript/skeleton content": {"?" + transcript.ParamSession + "=" + walkSession, `"streams":[{"stream":"main"`},
+	"GET /transcript/records content":  {"?" + transcript.ParamSession + "=" + walkSession, `"records":[{"seq":1,`},
+	"GET /transcript/tool content": {"?" + transcript.ParamSession + "=" + walkSession + "&" + transcript.ParamSeq + "=2",
+		`"tool":"Bash"`},
+}
+
+// agentJSONRows is every non-public GET row that answers `application/json` rather than a page: the
+// agent read API (S8). Each is still held to `Cache-Control: no-store` — a transcript in JSON is as
+// much somebody's text as the rendered section — and to its real answer's marker.
+var agentJSONRows = map[string]bool{
+	"GET /transcript/skeleton content": true,
+	"GET /transcript/records content":  true,
+	"GET /transcript/tool content":     true,
+}
+
+// walkTranscripts is a transcript store holding ONE session, [walkSession], owned by the walk's
+// identity — so the raw-record row's real page is reachable (the owner arm; no store walk).
+func walkTranscripts(t *testing.T) *transcript.Store {
+	t.Helper()
+	p := testIdentity().Principal
+	a := transcripttest.Open(t)
+	transcripttest.Append(t, a, transcripttest.Session{Root: walkSession, Owner: string(p.Kind) + ":" + string(p.ID)}, "main",
+		[]string{trUser("a synthetic message"),
+			`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_w1","name":"Bash","input":{"command":"true"}}]}}`})
+	return transcript.NewStore(a, t.TempDir())
 }
 
 // redirectRows is every non-public GET row that answers a BODILESS 303 rather than a page —
@@ -83,13 +121,14 @@ func (s walkSource) Session(_ control.Authorization, session string) (SessionAns
 // the one above — a refusal, another tab, the raw view, a search. Those reach the header through
 // the same [writeHTML], which is the property that makes one query per row sufficient; it is a
 // structural argument, not a measurement of each of them. The one POST that answers a page — the
-// invitation MINT — is pinned by `TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged`.
+// team-link MINT — is pinned by `TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged`.
 //
 // ⚠ THE EXPECTED VALUE IS A LITERAL, NEVER `htmlCacheControl`: reading it off the implementation
 // would make this assert `a == a`.
 func TestEveryNonPublicHTMLRowIsNoStore(t *testing.T) {
 	cfg := testConfig(t, staticAuth{testIdentity()})
 	cfg.Source = walkSource{staticSource{scopes: benignWorld()}}
+	cfg.Transcripts = walkTranscripts(t)
 	authed, err := New(cfg)
 	if err != nil {
 		t.Fatalf("the server did not build: %v", err)
@@ -148,6 +187,21 @@ func TestEveryNonPublicHTMLRowIsNoStore(t *testing.T) {
 				t.Errorf("pwa clause (d) no-store: %s is declared a bodiless redirect to %q and answered %d Location=%q "+
 					"Content-Type=%q with %d body byte(s)", line, wantLoc, rec.Code, rec.Header().Get("Location"),
 					rec.Header().Get("Content-Type"), rec.Body.Len())
+			}
+			continue
+		}
+		if agentJSONRows[line] {
+			values, present := rec.Header()["Cache-Control"]
+			if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" ||
+				!strings.Contains(rec.Body.String(), marker) {
+				t.Errorf("pwa clause (d) no-store: GET %s is declared a JSON row and answered %d %q without its marker %q",
+					target, rec.Code, rec.Header().Get("Content-Type"), marker)
+			} else {
+				realPages++
+			}
+			if !present || len(values) != 1 || values[0] != "no-store" {
+				t.Errorf("pwa clause (d) no-store: GET %s answered a transcript as JSON with Cache-Control %q, want exactly "+
+					"\"no-store\"", target, values)
 			}
 			continue
 		}

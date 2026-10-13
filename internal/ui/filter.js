@@ -1,4 +1,4 @@
-// filter.js: the scope page's entry filter, and the ONE script this surface serves.
+// filter.js: the scope page's entry filter, and the FIRST entry of the script allowlist.
 //
 // What it may touch is pinned by `internal/ui`'s tests, and the list is short on purpose:
 //

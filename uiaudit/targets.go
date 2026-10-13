@@ -196,6 +196,14 @@ var linkExpanded = map[string]bool{
 	// unseen-session refusal and count it as a page. The scope page's TABS are what reach it, and the
 	// tabs are `/scope` links — see `roundRobinByRow` for why the cap no longer bounds them away.
 	ui.SessionPath: true,
+	// 🔴 `GET /session/transcript` (S4 of the transcripts plan) FOR `GET /session`'s REASON: its
+	// operands — a session id, a stream name, record numbers — are values the SURFACE publishes, on
+	// the transcript section of a session page, so guessing them would capture the one no-transcript
+	// refusal and count it as a page. `transcript.go` is what puts a stored transcript in the world;
+	// with none, the session page publishes no such link and this row is captured only bare (the
+	// navigation page). The raw page links back to `/session?session=…`; the queue's `Path` dedupe
+	// ends that cycle.
+	ui.SessionTranscriptPath: true,
 	// 🔴 `GET /arcs` IS HERE RATHER THAN IN `plainGET`, EVEN THOUGH ITS BARE PATH IS A PAGE, because
 	// it is the page that PUBLISHES the arcs a reader opens: each listed arc links `/arc?home=…&slug=…`
 	// with a minted home id, and its show-all toggle links `/arcs?all=1` — a view of the same row the
@@ -207,6 +215,12 @@ var linkExpanded = map[string]bool{
 	// visible session as `/session?session=<id>` — a second way to the session page beside the scope
 	// tabs, and the only one that does not pass through a scope.
 	ui.SessionsPath: true,
+	// 🔴 `GET /my-sessions` (S7 of the transcripts plan) FOR `GET /sessions`'s REASON: its bare path IS
+	// the page, and it PUBLISHES the viewer's own stored sessions as `/session?session=<id>` — the only
+	// way to an owner-only one — plus `?page=N` when there are more than one page of them. The
+	// token-file world's one identity owns the transcript `transcript.go` uploads, so the page is
+	// captured with a row rather than in its empty state.
+	ui.MySessionsPath: true,
 	// 🔴 `GET /team`, WHICH CARRIES BOTH MOVED FLOWS: its share index publishes
 	// `/team?scope=…` and its invite index `/team?project=…`, each a minted id, so expanding it
 	// reaches every per-scope page (the grant form) and per-project page (the mint form) the old
@@ -248,10 +262,24 @@ var linkExpanded = map[string]bool{
 // [ExpandLinks] declines by design ("no query: already its own row") — so expanding it would buy
 // nothing and claim a discovery the walk never makes. The scope cards it used to publish are
 // `/scopes`'s now, and that row expands.
+//
+// 🔴 `GET /scope/sources` (S4 of the scope-refs plan) IS HERE AND NOT IN `linkExpanded`: bare it
+// answers the navigation page, a real 200 document (a request naming no scope asked nothing, the
+// browse pair's ruling), and the only page that publishes `?scope=` for it — the scope page's edit
+// link — renders that link for an `admin`, which the token-file world grants nobody. The per-scope
+// edit page is therefore NOT walked here; the scope page's read-only Sources block IS, because
+// `BootWorld` seeds a sources journal.
+//
+// 🔴 `GET /plugins` (S5 of the transcripts plan) IS HERE: it has no operand, so its bare path IS the
+// page — the registry and each plugin's value on the readable scopes. The walk's worlds boot with no
+// `-plugin-registry`, so what it captures is the designed OFF state (`ui.NoPluginRegistry`), a real 200
+// document; the toggle FORMS are measured by `internal/ui`'s own tests, not by this walk.
 var plainGET = map[string]bool{
-	ui.RootPath:   true,
-	ui.SignInPath: true,
-	ui.JoinPath:   true,
+	ui.RootPath:    true,
+	ui.SignInPath:  true,
+	ui.JoinPath:    true,
+	ui.SourcesPath: true,
+	ui.PluginsPath: true,
 }
 
 // notADocument is the THIRD class: a `GET` row a browser walk must not capture as a page,
@@ -316,6 +344,14 @@ var notADocument = map[string]string{
 		"(operator decision O-a) — there is no document; the walk captures /team and its /team?scope=… pages",
 	ui.InvitePath: "a bodiless 303 to /team#invite since the invite flow moved onto the Team page " +
 		"(O-a) — there is no document; the walk captures /team and its /team?project=… pages",
+	// The agent read API (transcripts S8): three JSON rows for agents, never a page.
+	ui.TranscriptSkeletonPath: "an application/json response and not a document — the agent read API's " +
+		"skeleton of a stored session (transcripts S8). `internal/ui`'s TestTheAgentReadRoutesAskThePredicate " +
+		"drives it for every viewer, and TestEveryNonPublicHTMLRowIsNoStore holds it to no-store",
+	ui.TranscriptRecordsPath: "an application/json response and not a document — the agent read API's page " +
+		"of a stored session's records (transcripts S8); measured as the skeleton row is",
+	ui.TranscriptToolPath: "an application/json response and not a document — the agent read API's one tool " +
+		"call (transcripts S8); measured as the skeleton row is",
 	ui.ManifestPath: "an application/manifest+json response and not a document — and a 404 in this walk's " +
 		"worlds, which boot UNARMED (no -app-name). `internal/ui`'s TestTheManifestIsBuiltFromTheConfiguredApp " +
 		"pins its members; `pwa_test.go` reads it the way a browser does, through Page.getAppManifest",

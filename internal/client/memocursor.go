@@ -48,13 +48,9 @@ const memoCursorSchema = 1
 // memoStateDir is `$XDG_STATE_HOME/cairn/memo/<instance>`, with `~/.local/state` when the variable
 // is unset or not absolute (the XDG rule: a relative value is ignored).
 func memoStateDir(alias string) (string, error) {
-	base := getenv(StateHomeEnv)
-	if base == "" || !filepath.IsAbs(base) {
-		home, err := homeDir()
-		if err != nil || home == "" {
-			return "", fmt.Errorf("no state directory: $%s is unset and $%s cannot be resolved", StateHomeEnv, HomeEnv)
-		}
-		base = filepath.Join(home, ".local", "state")
+	base, err := stateHome()
+	if err != nil {
+		return "", fmt.Errorf("no state directory: $%s is unset and $%s cannot be resolved", StateHomeEnv, HomeEnv)
 	}
 	return filepath.Join(base, "cairn", "memo", alias), nil
 }

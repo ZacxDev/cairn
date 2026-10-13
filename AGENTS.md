@@ -29,8 +29,7 @@ which.** Credentials, private IPs, dated incidents AND hosts under the deploymen
 domains (`reachable-hostname`, UNBOUNDED) are gated in GENERAL. Only a CLOSED SET of digests
 covers the REST of the project/scope/host class (`denied-identifier`): a name a scrub removed
 cannot return, a NEW one is invisible until you add it. Captured text is gated by NOTHING; that
-bullet is yours. ⚠ Wrong BOTH ways here once — all five over
-three, then omitting `reachable-hostname`; the docstring says why. Run it before you push:
+bullet is yours. Run it before you push:
 
 ```bash
 python3 tests/leakscan.py            # scan the tree
@@ -96,6 +95,7 @@ These are the house style, and they are why the guards here are worth trusting:
 | `internal/depspolicy` | the ALLOWLIST and import BAN that replaced `vendorHash = null` |
 | `internal/control` | P3: the ONE authz predicate the pod now authorises from, and `tokenfile/` (the token file, projected); 📄 its own README |
 | `internal/identity` | P4: the ONE `Authenticator` (🔴 one backend BYPASSES auth on a DIRECTLY-reached pod; never default, refuses to start); 📄 its own README |
+| `cmd/cairn-capture`, `internal/{capture,transcript,worker,plugins}`, `plugins/` | TRANSCRIPTS + PLUGINS: host capture, worker listener, the plugin API; `plugins/` is a NESTED stdlib-only module; 📄 their READMEs |
 | `tests/` | the suites, `leakscan.py`, `conformance/`+`dualrun/` (P1's gates), `parity/` (P2's) |
 | `flake.nix` | both clients (**`default` is the GO one; `#cairn` is the Python one**), BOTH pod images, the UI, and the checks |
 
@@ -240,17 +240,17 @@ renderer still ships as `packages.cairn` until the oracle is deleted, so until t
 the comparison rather than the absence of one.
 
 🔴 **THE HEADLINE READS WIDER THAN THE GATE, SO KNOW WHICH ROWS ARE LOAD-BEARING BEFORE
-TRUSTING ONE.** "123 cases, 126 PASS, 0 failures, 0 dead normalizations" is NOT 123 byte
-diffs: 92 rows compare stdout, stderr AND the exit code; 23 compare the exit code ONLY; 8
-compare the exit code plus "both sides put something on stdout" — so **31 of 123 never
+TRUSTING ONE.** "134 cases, 138 PASS, 0 failures, 0 dead normalizations" is NOT 134 byte
+diffs: 103 rows compare stdout, stderr AND the exit code; 23 compare the exit code ONLY; 8
+compare the exit code plus "both sides put something on stdout" — so **31 of 134 never
 compare output text.** Declared per row; what the corpus covers is in `tests/parity/README.md`.
 
 🔴 **TWO CLIENTS FAILING IDENTICALLY COMPARE EQUAL** — its first full run reported 72 PASS / 0
 FAIL against a pod that refused every request. Three controls stand against that, they are three
 different claims, and each refuses with exit **2** ("could not vouch", never "failed"):
 `PREFLIGHT` (the POD answers a non-empty snapshot for this token), `CONTENT-FLOOR` (the CLIENTS
-reached a live fetch and a rendered digest), and `--self-test` → `sabotaged=4 caught=4` (the differ
-goes red on stdout, on stderr, on the exit code **and** on `exit+stdout`). `--break-pod` is the
+reached a live fetch and a rendered digest), and `--self-test` → `sabotaged=5 caught=5` (the differ
+goes red on stdout, on stderr, on the exit code, on `exit+stdout` **and** on the read ledger). `--break-pod` is the
 negative control on the first. Read all three; a green without them is a green about nothing.
 
 📄 **READ ON DEMAND RATHER THAN HERE, all in `tests/parity/README.md`:** the worked example behind
@@ -436,9 +436,7 @@ retracted prediction about that is in `server/README.md`.
 
 🔴 **THE INTERPRETER IS PINNED, NOT INHERITED.** `flake.nix` uses
 `pkgs.python312` because `server/Dockerfile` is `python:3.12-slim` and CI pins
-`python-version: "3.12"`. A bare `pkgs.python3` followed nixpkgs to 3.14 and
-shipped an interpreter **nothing in this repo had ever run the suite under**.
-Move all three together or not at all.
+`python-version: "3.12"`. Move all three together or not at all (📄 `server/README.md`).
 
 ## Naming
 

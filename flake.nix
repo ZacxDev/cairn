@@ -364,6 +364,9 @@
             # nothing — the filtered tree still held no such file. Verified by
             # materialising the filtered source and listing it.
             || rel == "uiaudit"
+            # The example plugins' nested module, for the SAME reason as `uiaudit` above: the
+            # directory row is what lets `plugins/go.mod` below exist in the filtered tree.
+            || rel == "plugins"
             || pkgs.lib.hasPrefix "cmd/" rel || pkgs.lib.hasPrefix "internal/" rel
           ))
           || (rel == "go.mod")
@@ -491,6 +494,11 @@
           # advisory tick.
           || (rel == "uiaudit/go.mod")
           || (rel == "uiaudit/go.sum")
+          # 🔴 AND THE PLUGINS MODULE'S `go.mod`, FOR THE SAME LEDGER. It has NO `go.sum` — it is
+          # STDLIB-ONLY, which the ledger declares and checks — so there is no second row; its `.go`
+          # files stay out of these derivations like `uiaudit`'s (`packages.cairn-summary` builds
+          # them from their own source).
+          || (rel == "plugins/go.mod")
           # A `.go` file only under the two directories this module is made of. A
           # bare suffix test would also carry a stray `.go` anywhere in the tree,
           # which is an allowlist that says something wider than it means.
@@ -577,6 +585,11 @@
         # would otherwise reach a machine — and `checks` is also where a
         # `--no-link` CI job is easiest to forget.
         doCheck = true;
+        # 🔴 `gitMinimal` FOR THE CHECK PHASE ONLY (all four Go derivations): the client read
+        # ledger's tests (S11) run a bare `recall` whose scope `--repo .` derives by invoking `git`
+        # by bare name, so without it the sandbox failed them on `exec: "git": not found`. It
+        # reaches no installed output; the wrappers' PATH is decided separately below.
+        nativeCheckInputs = [ pkgs.gitMinimal ];
 
         # 🔴 `go test ./...`, SPELLED OUT, BECAUSE THE DEFAULT CHECK PHASE
         # HONOURS `subPackages` AND THAT MADE IT VACUOUS. MEASURED: with
@@ -661,6 +674,8 @@
         # scoped the test walk to the one directory with none. Every test in this module
         # lives under `internal/`.
         doCheck = true;
+        # `gitMinimal` for the check phase only — see `mkGoServer`.
+        nativeCheckInputs = [ pkgs.gitMinimal ];
         checkPhase = ''
           runHook preCheck
           go vet ./...
@@ -686,7 +701,8 @@
       # NOT A `cairn` VERB, because it reads every session transcript on its host and the reader
       # installed everywhere should not. It is under the import ban (`internal/depspolicy`'s
       # `LinkedBinaryRoots`), and its check phase runs the whole module's tests like the other Go
-      # derivations. ⚠ IT SENDS AND STORES NOTHING YET: S2 offers `--dry-run` and `--self-test` only; S3 adds the upload.
+      # derivations. `--run` (S3b) uploads over the capture/v1 contract — to an instance that is
+      # armed; every instance is unarmed today (O16) and answers 503, which the agent holds on.
       # ⚠ NO `opencode` ON ITS PATH, deliberately: it runs `opencode export` by bare name, and the
       # answer has to be the opencode the host's sessions were written by — a pinned copy here
       # could read a different database version than the one in use.
@@ -697,6 +713,8 @@
         vendorHash = goVendorHash;
         subPackages = [ "cmd/cairn-capture" ];
         doCheck = true;
+        # `gitMinimal` for the check phase only — see `mkGoServer`.
+        nativeCheckInputs = [ pkgs.gitMinimal ];
         checkPhase = ''
           runHook preCheck
           go vet ./...
@@ -711,6 +729,60 @@
           platforms = platforms.unix;
         };
       };
+
+      # 🔴 EXAMPLE PLUGIN A — SESSION SUMMARIES (S9 of the transcripts/plugins plan). A SEPARATE
+      # BINARY IN A NESTED, STDLIB-ONLY MODULE (`plugins/`): it holds a model provider's key and reads
+      # transcripts, so nothing it imports may reach the pod and nothing the pod imports reaches it.
+      # Built from `plugins/` ALONE — the module requires nothing, not even the parent, which
+      # `internal/depspolicy`'s nested-module ledger checks — so `vendorHash = null` is EXACT here
+      # rather than the hole it was for the root module: a `require` appearing would fail this build
+      # (no vendor hash to fetch it under) as well as that ledger. Its check phase runs the module's
+      # own suite against the in-process fake provider and fake pod. A one-shot run for a user timer;
+      # the manifest the operator registers ships beside it in `share/`.
+      #
+      # 🔴 EXAMPLE PLUGIN B — CLICKUP TICKET MATCHING (S10) — IS THE SAME DERIVATION WITH ANOTHER NAME:
+      # one module, one source filter, and EACH package's check phase runs the WHOLE module's suite, so
+      # the code the two plugins share (`plugins/internal/…`) cannot pass in one and fail in the other.
+      # `gitMinimal` is a CHECK input only: plugin B's suite runs the real `git` over a repository it
+      # creates (and FAILS rather than skips without one); the installed binary takes its `git` and its
+      # GitHub CLI from the operator's own PATH, by flag.
+      mkPlugin = pkgs: name: description: (buildGoPinned pkgs) {
+        pname = "cairn-${name}";
+        inherit version;
+        src = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          name = "cairn-plugins-source";
+          filter = path: type:
+            let rel = pkgs.lib.removePrefix (toString ./. + "/") (toString path);
+            in rel == "plugins" || pkgs.lib.hasPrefix "plugins/" rel;
+        };
+        modRoot = "plugins";
+        vendorHash = null;
+        subPackages = [ name ];
+        doCheck = true;
+        nativeCheckInputs = [ pkgs.gitMinimal ];
+        checkPhase = ''
+          runHook preCheck
+          go vet ./...
+          go test ./...
+          runHook postCheck
+        '';
+        postInstall = ''
+          mv "$out/bin/${name}" "$out/bin/cairn-${name}"
+          install -Dm444 ${name}/manifest.json "$out/share/cairn-${name}/manifest.json"
+        '';
+        meta = with pkgs.lib; {
+          inherit description;
+          homepage = "https://github.com/ZacxDev/cairn";
+          license = licenses.mit;
+          mainProgram = "cairn-${name}";
+          platforms = platforms.unix;
+        };
+      };
+      mkSummaryPlugin = pkgs: mkPlugin pkgs "summary"
+        "cairn example plugin A: continuous session summaries through the plugin API";
+      mkClickupPlugin = pkgs: mkPlugin pkgs "clickup"
+        "cairn example plugin B: ClickUp ticket edges and suggestions through the plugin API (reads ClickUp, never writes to it)";
 
       # 🔴 THE BROWSER SURFACE, AND THE ONLY ARTEFACT HERE THAT LINKS A THIRD-PARTY
       # MODULE. `cmd/cairn-ui` carries the entries page, cookie sessions with a
@@ -761,6 +833,8 @@
         subPackages = [ "cmd/cairn-ui" ];
 
         doCheck = true;
+        # `gitMinimal` for the check phase only — see `mkGoServer`.
+        nativeCheckInputs = [ pkgs.gitMinimal ];
         checkPhase = ''
           runHook preCheck
           go vet ./...
@@ -1347,6 +1421,8 @@
           # implied any of that.
           cairn-ui = mkGoUI pkgs;
           cairn-capture = mkGoCapture pkgs;
+          cairn-summary = mkSummaryPlugin pkgs;
+          cairn-clickup = mkClickupPlugin pkgs;
         }
         // nixpkgs.lib.optionalAttrs (builtins.elem pkgs.stdenv.hostPlatform.system linuxSystems) {
           server-image = mkServerImage pkgs;
@@ -1431,6 +1507,8 @@
         cairn-go = mkGoClient pkgs;
         cairn-ui = mkGoUI pkgs;
         cairn-capture = mkGoCapture pkgs;
+        cairn-summary = mkSummaryPlugin pkgs;
+        cairn-clickup = mkClickupPlugin pkgs;
 
         # 🔴 THE CHECKED-IN STYLESHEET IS WHAT THE BINARY SERVES, SO A STALE ONE SHIPS
         # SILENTLY. `internal/ui/app.css` is `//go:embed`ed, so nothing about editing
@@ -1868,16 +1946,21 @@
           # `capability_ledger.GO_ONLY_VERBS` (the `go_only` rows), so a verb cannot be
           # moved between them, or declared Go-only here alone, without a red test. The
           # first, `sessions`, is the arcs/sessions S2 slice; the arc registry is S3; the four
-          # `memo-*` verbs are scope mail's S3 (decision 8 of the scope-mail plan).
+          # `memo-*` verbs are scope mail's S3 (decision 8 of the scope-mail plan); `sources`
+          # is the scope-refs plan's S3 and `audit-refs` its S5; `transcript` is the transcripts
+          # plan's S8 (its decision 17).
           cat > want-go-only-verbs.txt <<'EOF'
           arc-register writes
           arc-show reads
           arcs reads
+          audit-refs reads
           memo-check reads
           memo-read reads
           memo-retract writes
           memo-send writes
           sessions reads
+          sources reads
+          transcript reads
           EOF
           sed -i 's/^ *//; /^$/d' want-verbs.txt want-go-only-verbs.txt
           sort -u want-verbs.txt want-go-only-verbs.txt > want-all-verbs.txt

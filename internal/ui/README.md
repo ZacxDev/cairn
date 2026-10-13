@@ -363,8 +363,9 @@ package *emits*, they all still hold, and none of them is weakened by what follo
 
 What moved is a claim this section and `uiaudit` were both making one step wider than their
 evidence. The XSS story partly rests on **the page carrying no script but the allowlisted
-ones** — it was "no script at all" until the scope page's entry filter (see the section on the
-one script below); `uiaudit`'s `refuseWalkRegressions` refuses any capture holding an inline
+ones** — it was "no script at all" until the scope page's entry filter (see the section on
+"the ONE script" below; the allowlist has since grown to three: `filter.js`, `pwa.js`,
+`join.js`); `uiaudit`'s `refuseWalkRegressions` refuses any capture holding an inline
 script, a `src` `ui.AllowedScriptSources` does not name, or an allowlisted one twice, and is the
 gate behind it. **That gate boots its own pod on loopback over a temp directory it created**,
 so its zeros are a property of the ORIGIN's own bytes. They are structurally incapable of
@@ -1007,7 +1008,9 @@ caller passes the CSRF gate with a cookie of its own choosing. A narrowed token 
 an invitation into its owner's project and redeem it as an identity its holder controls. The invite
 handlers now act as `membershipActor(id)`, the zero principal for a narrowed caller, so `Invitable`
 lists nothing and `mayManage` refuses — on all three rows: the project page
-(`TestANarrowedBearerSeesNoInvitations`), mint (`TestANarrowedBearerCannotMintAnInvitation`) and
+(`TestANarrowedBearerSeesNoInvitations`), mint (`TestANarrowedBearerCannotMintAnInvitation` — since
+Phase Z `POST /invite` mints for nobody, so that guard is `TestNoBearerMintsAnInvitationThroughPostInvite`
+and the narrowing's own guard over a mint is `TestANarrowedBearerHasNoTeamLinkAuthority`) and
 revoke (`TestANarrowedBearerCannotRevokeAnInvitation`).
 
 🔴 **THE SHARE FLOW'S CANDIDATE LIST IS MEMBERSHIP-DERIVED TOO, AND IS CLOSED THE SAME WAY.**
@@ -2089,9 +2092,11 @@ it. Three constraints decided the shape, and each of them refused an obvious alt
 
 - **No JavaScript.** Tabs are where a browser surface usually grows its first script, and
   at the time this one had none and `uiaudit` asserted `document.scripts.length == 0` on every
-  page. ⚠ The surface has since grown exactly ONE script, the scope page's entry filter, on an
-  operator decision (see the section on it below); the entry page still carries none, and both
-  guards now refuse any script outside `ui.AllowedScriptSources`. The argument here is
+  page. ⚠ The surface has since grown THREE scripts, each on an operator decision: the scope
+  page's entry filter (see the section on it below), `pwa.js` on every frame of an armed
+  deployment (Phase S) and the fragment join page's `join.js` (Phase W); the entry page still
+  carries none of its own (only an armed frame's `pwa.js`), and both guards now refuse any script outside
+  `ui.AllowedScriptSources`. The argument here is
   unchanged by it: two server-rendered links cost nothing a script would have bought — a shareable URL, a
   working back button and a browser-native reload come free, which is `searchForm`'s ruling
   for the same shape.
@@ -2230,6 +2235,11 @@ in as nobody, or refused, with nothing anywhere saying the link was at fault.
 
 ## 🔴 The mint response does not redirect, and that is the one place this flow breaks the house pattern
 
+⚠ **SUPERSEDED by Phase Z (the invite fold):** nothing mints a single-project invitation any more, so the response this section describes is the TEAM LINK's (`handleTeamLink`, `mintedLinkSection`), which
+kept the same ruling for the same reasons; its guard is
+`TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged`. The text below is the record of the
+decision as it was made for the invitation.
+
 Every other write here is a POST-redirect-GET, because a write that renders its own answer is a
 write a refresh repeats. This one cannot be: `invite.NewToken` returns the token exactly once
 and only its digest is stored, so there is nothing to render on the far side of a hop. Both ways
@@ -2274,6 +2284,11 @@ in that configuration nothing was asked. Rendering it would be the measured lie 
 already shipped once. Pinned by `TestTheInviteRowsAnswerHonestlyWithNoInviteStore`.
 
 ## 🔴 The role chooser and the mint read ONE predicate, and the seam between them was a measured hole
+
+⚠ **SUPERSEDED by Phase Z (the invite fold):** nothing mints a single-project invitation any more, so the chooser, `ControlInviting.Mint`, `leastPrivilegedRole` and their tests are deleted.
+`control.Role.CanConfer` survives with one reader (`mayLink`, the team link's project arm), and the
+seam guard survives re-aimed at what `HeldRole` still feeds, the index's "you are <role>"
+(`TestTheInviteIndexIsDrivenByTheREALModelsHeldRole`). The text below is the record.
 
 `control.Role.CanConfer` is the escalation rule — an admin may not make an owner, because they
 could then confer it on themselves and the journal would read as an ordinary join. It is a
@@ -2361,6 +2376,9 @@ redeemed" is a reassuring zero and a zero is indistinguishable from a harness wi
 that guard can go red, rather than one afternoon's reading recorded in a commit message.
 
 ## Refusals: which one discriminates, and why exactly one does
+
+⚠ **SUPERSEDED by Phase Z (the invite fold):** nothing mints a single-project invitation any more, so the `roleRefusal` row is gone with the mint and NO invitation refusal discriminates now. The other
+three rows stand (`TestTheInviteRevokeRefusalsAreUniform`).
 
 | condition | status | body |
 |---|---|---|
@@ -2771,7 +2789,12 @@ preview refs follow the same order.
 An mtime of 0 (stat failed) renders no timestamp rather than the epoch; a zero clock renders dates.
 The entry page's provenance block gains an `updated` row.
 
-**The ONE script.** The scope page's entry filter is `filter.js`, embedded, served at a
+**The ONE script.** *(One at the time; the allowlist has since grown to three — `pwa.js` (see "One
+more script, admitted by the allowlist and nothing else") and `join.js` (Phase W). The CLAIM below
+holds for each; the GUARDS below see only `filter.js` — the renderer guard and the walk render
+unarmed, provider-less pages, which link neither of the others — so each later script has its
+own: `TestTheArmedPWAHeadAddsOnlyThePWAScript` and `TestThePWAScriptTouchesOnlyWhatItSays`;
+`TestTheFragmentJoinPageMovesTheTokenThroughTheScript` and `TestTheJoinScriptTouchesOnlyWhatItSays`.)* The scope page's entry filter is `filter.js`, embedded, served at a
 content-hashed `GET /static/filter.<12 hex>.js` (`classPublic`, `immutable`, `text/javascript`,
 `nosniff`), linked only from the scope page. It is a case-insensitive SUBSEQUENCE match, per field,
 over the ref, title, aliases and tags the server put in each row's `data-filter`; every
@@ -3863,7 +3886,7 @@ the agent tab).
 
 | route | class | what |
 |---|---|---|
-| `GET /` | `content` | the HUB: four cards — Arcs (`/arcs`), Scopes (`/scopes`), Sessions (`/sessions`), Team (`/team` — repointed from `/share` by #214, Phase T). `/?q=` and `/?tag=` answer **303** to `/scopes` with the query |
+| `GET /` | `content` | the HUB: five cards — Arcs (`/arcs`), Scopes (`/scopes`), Sessions (`/sessions`), My sessions (`/my-sessions` — transcripts S7), Team (`/team` — repointed from `/share` by #214, Phase T). `/?q=` and `/?tag=` answer **303** to `/scopes` with the query |
 | `GET /scopes` | `content` | the scope list, search box and tag filter — the old root, unchanged |
 | `GET /sessions` | `content` | every session the viewer can see anything of, newest first, each a link to `/session?session=…` |
 | `GET /scope?id=…&tab=agent` | (the `/scope` row) | the "What an agent sees" tab |
@@ -3873,7 +3896,7 @@ the agent tab).
 The scopes card's count is the scopes this viewer can read — the list `/scopes` renders. The first cut
 also counted arcs (the arcs page's live rows) and sessions (the sessions page's rows); **both were
 DROPPED in review (round 0, D1)**: each cost a whole-store walk on every hub load, roughly doubling it,
-for a number one click away. The four cards stay. The Team card never had a count: "who has access" is
+for a number one click away. The cards stay — five since transcripts S7 added "My sessions", which carries no count for the same reason (counting it reads every stored session's meta). The Team card never had a count: "who has access" is
 the sharing authority, and a hub consulting two authorities was a row `contentAuthority` could not express (it takes a list since #214 — `GET /team` declares three — but the hub still asks one).
 The mutant row that widened the arcs read for the hub's count was RE-POINTED rather than deleted —
 `StoreSource.Arcs` still feeds `/arcs` — as `ui-arcs-index-read-includes-unreadable-homes`, killed by
@@ -3904,8 +3927,8 @@ caller's raw bytes; every value survives, in sorted key order. A query naming ne
   off entirely, a lower bound reads `(≥N)`.
 - 🔴 **Aliases are rendered `hidden` on the entry card, and `filter.js` reveals one only when it is WHY
   the row matched** — a term that matches the alias and no other field on that row. The script still
-  writes only `hidden` (and the count's text), so `TestTheFilterScriptTouchesOnlyWhatItSays` and the
-  one-entry `AllowedScriptSources` are unchanged. Without script, no alias is visible.
+  writes only `hidden` (and the count's text), so `TestTheFilterScriptTouchesOnlyWhatItSays` and
+  `AllowedScriptSources` (one entry at the time) are unchanged. Without script, no alias is visible.
 - Tag chips: squarer, tighter pill, `#` drawn by CSS (`::before`), so link text, `data-filter` and every
   test reading `<a …>tag</a>` are unchanged. Breadcrumbs: `text-xs`, pulled up toward the header, and the
   card after them drops its top margin; still wrap, and still 44px under a coarse pointer (S1's block).
@@ -3968,7 +3991,8 @@ battery row (`ui-pwa-head-emits-an-unversioned-script`).
 
 ## 🔴 One more script, admitted by the allowlist and nothing else
 
-`AllowedScriptSources()` is now exactly `[filter.js, pwa.js]`, both content-hashed `classPublic` rows.
+`AllowedScriptSources()` became exactly `[filter.js, pwa.js]` here, both content-hashed `classPublic` rows
+(since grown to three: Phase W appends `join.js`).
 `pwaHead` emits `pwa.js` (`defer`) on every frame of an ARMED deployment — sign-in included, because an
 install starts there — and nothing on an unarmed one. The script:
 - reveals the header's `<button class="install" hidden>` (shell frame only) on `beforeinstallprompt`,
@@ -4760,3 +4784,575 @@ its read predicate — each red in the test that names it, with that test's own 
   store's answer to it is S1's (`not-found` for an already-retracted memo).
 - A browser send carries no credential, so its sender line has no `via` label — measured in the
   pgtest tier, and by design (decision 5's label names an agent credential).
+
+---
+
+# Phase Z — the invite fold: single-project invitations became team links
+
+**Operator decision, option A of the three the hub/team handoff set out.** The Team page has ONE mint
+form, the team-link form. `GET /team?project=<id>` lists that project's invitations and pre-ticks the
+project on that form. `POST /invite` creates nothing and answers `303 /team?outcome=invite-folded
+[&project=<id>]#links`. No route was removed, no migration was written, and no row was moved.
+
+## The binding rules
+
+- 🔴 **`Inviting` has no `Mint`, and that is the guard.** The server holds its invitation half as that
+  interface, so no handler — `handleInvite` or a later one — can create an invitation
+  (`TestTheInvitingInterfaceCannotMint`). `ControlInviting.Mint`, the role chooser, the minted
+  section and `roleRefusal` are deleted, not parked.
+- 🔴 **`POST /invite` is a REDIRECT, never a translation into a team-link mint.** A translation would
+  choose the role itself (`owner` has no link role; an invitation's `member` is not the team-link
+  form's unread default, `reader`) and create a capability nothing renders. The project is carried
+  as an ANCILLARY value (`handleInviteRevoke`'s ruling); the role is dropped on purpose.
+- 🔴 **The row keeps class 0, so both cross-site gates still reach it by METHOD.** "This write no
+  longer writes" is a route-class argument, and no gate may be derived from one.
+  `TestTheInviteWritesAreBehindBothCrossSiteGates` still walks it.
+- 🔴 **An invitation that already exists is untouched**: listed to every manager of its project,
+  revocable by any of them, redeemable through both callback arms at the role it was issued at —
+  `owner` included — until it expires. `ControlInviting.Redeem`/`RedeemFor`/`Revoke` and
+  `invite.Store` did not change. ⚠ **Only ONE of the two arms is guarded with a link store
+  wired**: the fold's invariant test redeems through the PROVISIONING arm (`Redeem`); round 1 of
+  #265 measured that sending every token to the link store in `RedeemFor` — the arm an invitee
+  who already has an account takes — leaves `go test ./internal/ui/` green, because that arm's
+  tests use a rig with no `Links`. The code is correct and unchanged; the guard is missing.
+- 🔴 **The pre-tick cannot widen anything.** It is `InviteView.Project`, set only for a project
+  `Invitable` returned, and it ticks a box only where `Mintable` offered that same target; `Mint`
+  re-asks `mayLink` of every target at the write regardless. With no `?project=` nothing is ticked.
+- 🔴 **`InviteFoldNotice` is pinned as one normalised string** and rendered in the invitation section
+  on both its shapes. It states the two costs below.
+
+## 🔴 The two costs, accepted and stated on the page
+
+1. **Nobody can confer `owner` self-service.** A team link has no owner role by design
+   (`invite.AllLinkRoles`), and the single-use owner invitation was the one bounded way an owner
+   could make another. The remaining writer is the operator's `cairn-server -set-member`.
+2. **Two admins of one project cannot see or revoke each other's new links.** An invitation was
+   listed to and revocable by every manager of its project (`mayManage`); a team link is listed to
+   and revocable by its minter only (`ControlTeamLinks.Links`/`Revoke`). A link still dies with its
+   minter's authority (`reCheckMinter`), which is the bound that remains.
+
+## The RED proof
+
+Pre-change tree = `origin/main` at the fold's parent, with this phase's test file added (and a
+one-line shim for the constant that did not exist yet):
+
+| test | pre-change | post-change |
+|---|---|---|
+| `TestPostInviteNoLongerMintsAnInvitation` | RED — 200, a join link, one more row | green |
+| `TestPostInviteCarriesOnlyAProjectItWasGivenIntoItsRedirect` | RED | green |
+| `TestTheTeamPageHasOneMintFormAndPreselectsTheProject` | RED — the old form present, 0 boxes ticked | green |
+| `TestTheFoldNoticeIsPinnedWhole` | RED | green |
+| `TestTheInvitingInterfaceCannotMint` | RED | green |
+| `TestAnInvitationIssuedBeforeTheFoldStillRedeemsAndIsStillRevocable` | green | green |
+
+The last row is an **INVARIANT GUARD and is labelled as one**: an existing invitation redeemed and
+was revocable before the fold, and the claim is that it still does. Its evidence is its mutants.
+`tests/control_mutants.py` gained ten rows for this phase (`ui-post-invite-*`,
+`ui-team-link-form-*`, `ui-fold-*`) — three of them kill that invariant guard — and re-aimed the
+invitation mint's three capability rows (`ui-mint-response-loses-no-store`,
+`ui-minted-link-becomes-an-anchor`, `ui-mint-logs-the-token`) at the team-link mint, whose own guard
+had asserted `no-store` and exactly-once but neither "not an anchor" nor "never logged". Five rows
+whose target was deleted went with it and one was replaced (`ui-invite-revoke-refusals-stop-being-uniform`);
+read the battery's run for the count.
+
+## What these guards still cannot see
+
+- **The real database.** Every test here is over the in-memory stores. That open version-1
+  `invites` rows keep redeeming on Postgres rests on `internal/pgstore`'s own tier, which this
+  change did not touch — and on there BEING no schema change, which is why there is no migration.
+- **How many open invitations exist on any deployment** — not counted; the fold needs none to exist.
+- **A form rendered before the deploy** posts `POST /invite` and lands on the banner; that is
+  exercised by the handler tests, not in a real browser across a real deploy.
+- **The owner path that remains** (`cairn-server -set-member`) is named on the page and is not
+  driven from here.
+- **The invitation half has a sunset nobody has scheduled.** The only mint there ever was passed
+  no lifetime, so every invitation expires within `invite.DefaultTTL` of the last one minted
+  before the deploy. After that the list, the revoke row, the invitation arm of both redeems,
+  `InviteHonesty`, the `POST /invite` redirect and `invite.Store.Create` (test-only already) have
+  nothing left to act on. Retiring them is a separate change; its condition is in the hub/team
+  handoff.
+
+---
+
+# Code sources — the edit flow (S4 of the scope-refs plan)
+
+`GET /scope/sources?scope=<control.ID>` shows a scope's declared code sources
+(`git:<host>/<repo-path>[//<subpath>]@<branch>`, first is primary, at most 8) and, for an `admin` of
+the scope with a session, one textarea to edit them; `POST /scope/sources` saves (`sources.go`). The
+scope page carries a read-only **Code sources** block above its tabs whenever a journal is configured.
+Both rows are in the ledger: the GET is `content` (found through `Visible`), the POST class 0.
+
+## The binding rules
+
+- 🔴 **This surface is the journal's ONLY writer, from ONE site.** `handleSourcesSave` is the one call
+  of `codesrc.Journal.Set`; the pod opens the file read-only and serves it on `GET
+  /api/v1/sources/<scope>`, and the CLI (`cairn sources`) only reads. T9's `internal/ui` half pins it:
+  `TestTheUIWritesTheSourcesJournalFromOneSite` (one `Set` site, no copy of the journal field, no fresh
+  `codesrc.Journal`, no store writer) and `TestTheUIPackageCallsNoFilesystemMutatingOSFunction`
+  (zero package-level `os` mutators, classified from the toolchain's own `os` source). Each carries its
+  own negative controls as injected synthetic files.
+- 🔴 **The key is `codesrc.Key(scope.Name)` — the store DIRECTORY name — never `scope.ID`.** The UI's
+  ids come from the control journal (random), the pod's from the token-file projection (derived), so
+  an id-keyed record is one the pod never finds. `TestAUIWrittenDeclarationIsWhatThePodServes` (an
+  external test package) builds both halves the way their `main`s do and asserts the GET returns what
+  the POST wrote; RED under the mutant `ui-sources-keyed-by-control-id`.
+- **Read takes `read`, edit takes `admin`.** The page shows the declaration to any reader and the form
+  to an admin; the save answers ONE refusal (`404`, `sourcesRefusal`), byte-identical for an absent
+  scope, an unreadable one, and a readable one the caller does not administer. A token-file deployment
+  confers `admin` on nobody, so there nobody can edit — the designed state.
+- **`set_by` is the signed-in principal and `set_at` this server's clock**, never form fields. The
+  form's `revision` is compared INSIDE the journal's lock: a stale save writes nothing, answers `409`
+  and re-renders the CURRENT list and revision. An invalid line answers `422` naming the form's own
+  line number (blank lines counted) and its rule, with the typed text kept. An empty textarea records
+  `sources: []` — an explicit, stamped "undeclared".
+- **Links only for `github.com`** (`https://github.com/<repo-path>/tree/<branch>`, the branch escaped
+  per segment, through `safeHref`); every other host is text, because this repository cannot know a
+  self-hosted host's URL shape.
+- **Three journal states, never folded:** unset → no block, the edit page says
+  `NoSourceJournal` and a save is `501`; unreadable → the block says so and the edit page is `503`
+  with a constant body carrying no path (the detail goes to the log); absent → every scope reads
+  undeclared. The edit page shows the current list OUTSIDE the form, so a reader who cannot edit
+  still sees it.
+
+## Deployment requirements (decision 1; done in the deployment repo, not here)
+
+- `CAIRN_SOURCE_JOURNAL=<path>` on `cairn-ui`, a file on a volume the UI can write, OUTSIDE the store
+  root. 🔴 **Prefer a DEDICATED volume to the one holding the control journal**: the pod has to mount
+  whatever volume holds this file, a mount exposes the whole volume, and the control journal's volume
+  carries credential digests and may carry the session table. The reference deployment uses a
+  dedicated one (operator decision), which also means its backup has to be wired separately. Either
+  way the path is OUTSIDE the store root (both binaries refuse to start otherwise, and refuse the arc
+  journal's own file; `cairn-ui` also refuses its own `-control-journal` and `-session-file`, since
+  one sources record appended to the control journal makes the authority unreadable). Environment only: an old binary ignores the variable, which is the rollback.
+- The pod mounts the SAME volume read-only at the CONTAINER level, with the same variable (the plan
+  says never claim-level: on one storage driver a claim-level `readOnly` breaks co-mounting and the
+  reader sits Pending beside the read-write holder. A deployment that sets both must see BOTH pods
+  Running with the claim mounted) — so it must schedule on the UI's node while the volume is ReadWriteOnce and node-local.
+- The file is created `0600` by the UI's first save, so the pod must run as the UI's uid (or the
+  deployment must make it readable); otherwise every pod GET is the `503 store-unreachable`.
+- The backup job stages `sources.jsonl` in the same archive as `arcs.jsonl` (its own directory when
+  it has its own volume); an ABSENT file is a pass, logged `sources: absent` — nothing creates it
+  before the first save. Once a declaration exists, raise the job's line floor so a LOST journal
+  fails it.
+
+## The RED proof
+
+Each watched red under a one-line mutant of `sources.go`, restored by digest after each: the admin
+check dropped (`TestTheSaveIsBehindBothCrossSiteGatesAndTheAdminCheck`,
+`TestATokenFileDeploymentRefusesEverySave`); every host linked (`TestOnlyAGitHubSourceIsLinked`);
+`set_by` read from the form (`TestAnAdminsSaveAppendsOneLineStampedByTheServerNotTheForm`); keyed by
+id (`TestAUIWrittenDeclarationIsWhatThePodServes`); the raw `ParseList` index reported as the line
+(`TestAnInvalidLineIsRefusedByItsLineNumberWithTheTextKept`); a stale save re-rendering the typed list
+(`TestAStaleSaveWritesNothingAndShowsTheCurrentList`); an unreadable journal shown as no block
+(`TestAnUnreadableJournalIsSaidAndNeverShownAsUndeclared`); an empty textarea writing nothing
+(`TestAnEmptyTextareaRecordsAnExplicitUndeclared`). The first four are rows of
+`tests/control_mutants.py`. The binary's refusal (`cmd/cairn-ui`'s
+`TestTheBinaryREFUSESASourceJournalInsideTheStoreRoot`) is red on all four refusal arms with `main`
+ignoring `FromEnv`'s error, with both controls green.
+
+## What these guards still cannot see
+
+- The pins bound the CODE in `internal/ui`, not the process: METHODS on `*os.File`/`*os.Root`, a write
+  through another package, `cmd/cairn-ui` itself, and the deployment's mounts (the plan's T9 list).
+- The per-scope edit page in a real browser: the `uiaudit` token-file world grants `admin` to nobody,
+  so the walk captures the scope page's read-only block (its world seeds a journal) and the bare
+  `/scope/sources` navigation page, never the form.
+- `flock` across hosts on a network filesystem (advisory only; the reference deployment has one
+  writer on a node-local volume).
+- An orphaned record after a directory rename is shown nowhere (Q12).
+
+---
+
+# Transcripts on the session page (S4 of the transcripts plan)
+
+`GET /session` shows a session's stored transcript — collapsed — to the viewers the visibility
+predicate admits, and `GET /session/transcript?session=<id>[&stream=…&seq=…&to=…]` shows the stored
+records as stored (`transcript.go`). The plan is `claudedocs/plan-cairn-plugins.md` (decisions 3, 4,
+7, 17, 18; operator decisions O2, O3, O8, O9, O10).
+
+## The binding rules
+
+- 🔴 **ONE predicate, and this package cannot go around it.** `transcript.Store.View(viewer, id)` is
+  the only way `internal/ui` reaches a stored record: it returns a `View` where `transcript.Visible`
+  said yes and **nil** otherwise. The Store's archive is unexported (`transcript.NewStore`), the
+  reading entry point is unexported, and a `View` serves records only up to where each stream stood
+  when it was decided — so a record uploaded afterwards, which may hide the session from this viewer,
+  is never served by an older verdict. Nil is one answer for three states — no transcript, a refused
+  viewer, an id that is no session — so a handler CANNOT render them differently. `internal/ui` does
+  not import the archive at all (`internal/worker`'s importer ledger pins that). *#261's audit found
+  both the exported field and the unbounded View; the claim above was wider than the code until it
+  did.*
+- 🔴 **A refused viewer gets the bytes of a session with no transcript** — no section, no link, no
+  count on the page; one 404 body (`transcriptUnseenBody`) on the raw row. Hidden, absent, deleted by
+  the retention sweep, and a deployment with no archive are four ways to the SAME response
+  (`TestARefusedViewerGetsTheBytesOfASessionWithNoTranscript`, with its positive control: an
+  admitted viewer's page differs).
+- 🔴 **The rule is stricter than the page's.** The page is found by a UNION (a write in any readable
+  scope); the transcript needs the owner — an un-narrowed credential whose `(Kind, ID)` uploaded it —
+  or `read` on EVERY scope in `V`: every scope the session wrote in (a whole-store trailer walk, never
+  the viewer's set — decision 3's trap), every scope it read (derived by the pod from the stored
+  records, plus what the agent declared), child sessions included. `*`, a name the viewer's authority
+  does not hold, and an EMPTY `V` are owner-only. Authority is `control.Resolve`'s, off the request's
+  own `Authorization` — never `Model.Grants`.
+- **The page can be found by its transcript.** A session with no recorded write has no trailer for
+  the writes walk to find; a viewer the predicate admits gets the page, with the transcript and "no
+  write by this session is visible to you". ⚠ As built this is BOTH arms, not only the owner arm the
+  plan's decision 4 names: a reader of every scope a read-only session touched would otherwise be
+  served it on the raw row and refused the page.
+- **No archive, nothing changes.** `Config.Transcripts` is nil wherever `cairn-ui` runs without the
+  worker flags (`-transcript-dir` among them): no section renders and the raw row answers its miss
+  for every id. Reading does not depend on `-arm-transcript-capture`.
+- **The collapsed reading (decision 18), and its numbers.** A user message — a `human-text` UNIT,
+  nothing else — is rendered whole, whatever its length. Assistant text shows its first 1,200
+  characters or 15 lines, then `<details><summary>read more (N more characters)</summary>`. A tool
+  call is one `<details>` (`Bash · exit 1 · 3.2 KB`) over its input and the first 64 KiB of its
+  result; a subagent nests under the call that spawned it; bookkeeping records and duplicate
+  tool-result copies are ONE `<details>` per turn; binary payloads are one line. At most 50 turns a
+  page, starting at the turn `?turn=` names. Every reveal is a `<details>`: **no script**, and `AllowedScriptSources` is unchanged.
+- **Four read-time bounds the plan does not name, added here:** a page carries at most 2 MiB of
+  COLLAPSED content (`transcript.CollapsedBudget`; past it a block keeps its summary and its
+  raw-record link), at most 1,000 items (`PageItemCap`, every item but a user message, children
+  included — the page ENDS before the first turn that does not fit whole, and its pager's next link
+  is that turn; only a page's FIRST turn, when it alone is over 1,000 items, is cut, the rest counted
+  with a link to the raw records from the first one left out), a child stream at most 200 items inline (`ChildItemCap`; the rest are counted), and a
+  raw-record page at most 512 KiB (`rawPageBytes`; at least one record, then a next link). User
+  messages and assistant text are never charged to the budget, and only what the page CARRIES is:
+  an earlier page's records and a child's items past its cap are refunded. 🔴 *#261 round 2:* the
+  item bound is new — fifty turns and 2 MiB bounded neither one turn's ITEM count, and one turn of
+  20,000 small calls rendered 7.5 MB (now 375 KB; `TestOneTurnOfTwentyThousandCallsIsABoundedPage`
+  holds it under 1 MiB). User messages (O9) and assistant text are still carried whole, so the page
+  is bounded EXCEPT for what a human or the assistant wrote. 🔴 *#261 round 3:* round 2's cap was
+  PAGE-wide and `?turn=` folded onto a fifty-turn grid, so fifty turns of thirty calls showed turns
+  34–50 as "N more items" and `?turn=34` folded back to page one — those calls were reachable only
+  as raw records. A page now starts at the turn asked for and ends at a turn boundary
+  (`TestEveryCallIsReachableByFollowingThePager`, `TestEveryCallIsReachableAcrossPages`; a turn
+  whose CHILD does not fit moves too, `TestATurnWhoseChildDoesNotFitStartsTheNextPage`).
+- **Text only.** Every transcript value is a `g.Text` or an attribute value; no link is ever built
+  from content — every href is this surface's own ledger path with encoded operands
+  (`TestHostileTranscriptTextIsEscaped`).
+
+## Cost, measured
+
+`BenchmarkSessionPageAndScopeTabs` (`written-scopes-walk`, `session-page-with-transcript`) on one
+loaded host, go1.25.14, three runs: the whole-store walk cost **0.24–0.31×** the session page at
+10 scopes × 30 entries and **0.31–0.49×** at 30 × 100 (8–11 ms against 26–44 ms; 105–108 ms against
+222–334 ms). It is below the page's own cost at both sizes, so decision 3's caching condition is not
+met and NOTHING is cached. The walk runs only when it can change the answer: not for the owner, and
+not for a viewer the stored half of `V` already refuses.
+
+## What #261's audit found, and what changed
+
+- 🔴 **A record could hide a read from `V`**: the pod derived from a MAP, so a header in a member
+  NAME, or in the first of two members named alike, was never seen — while the raw view served it.
+  The pod now also scans every record as one string (every token, keys and repeats included), and a
+  repeated member name adds `*` (tool inputs are still read off a map). Not refused: the host
+  redactor keeps both copies on purpose, and a refusal would stall the stream.
+- 🔴 **The header scan was quadratic** on a line of back-to-back markers (2 min 39 s at 256 KB,
+  under the session's upload lock). `scopeuse.HeaderScopes` is linear now, held to the old per-marker
+  scan as an oracle over 20,000 generated lines.
+- 🟡 a View now stops at its decision-time positions; the Store's archive is unexported; the
+  "does the authority hold the name" guard was an invariant guard (deleting it changed nothing) and
+  is gone; `?turn=` is clamped at `transcript.MaxTurn`; a subagent stream the store does not hold is
+  no longer linked.
+
+## The RED proof
+
+The plan's eleven rows of `tests/control_mutants.py`, each run alone and KILLED by its named test
+with every listed extra killer red: the predicate not asked; the written set over the viewer's
+scopes; the read half dropped; the empty set readable; the owner compared by display name; the owner
+arm given to a narrowed credential; any-scope for every-scope; a child's writes not counted toward
+its root; an unknown scope name readable (since the audit, the "skip a name nobody holds" a reader
+would write); `*` readable; and classification by record type (the 600 KB tool result rendered
+whole). Five more: a user message clipped at the assistant's head limit, and #261's audit's four —
+the derivation from the map alone, a repeated member read past, a View serving past its decision,
+and an unclamped `?turn=`. `transcript-pod-skips-scope-rederivation` (an S3 row) was re-pointed at
+the real derivation, and the two `scopeuse-*` rows whose code the linear scan rewrote were
+re-pointed; all re-run. `tests/plugins/e2e.sh` clauses (d)–(g) each have a
+sabotage in `--self-test` (`sabotaged=9 caught=9`); (e), (f) and (g) turn exactly their own
+assertion red. `uiaudit`'s `TestTheSessionPageCarriesItsTranscriptAtEveryWidth` was watched red with
+the fixture upload skipped.
+
+## What these guards still cannot see
+
+- **Timing.** A refused viewer's response is byte-identical, not time-identical: a session that HAS
+  a transcript costs a meta read, and for a viewer the stored half admits, a store walk.
+- **A child session's own id.** `/session?session=<child id>` does not find its root's transcript
+  (that needs an index from child to root, which nothing keeps); the child's stream is reachable
+  under its root.
+- **Work is not bounded, the response is.** A page scans the whole main stream to find turn
+  boundaries (S8's skeleton exists now and does not index it either), one record in memory at a time; an opencode
+  stream is held whole.
+- **A damaged entry costs visibility.** A scope holding an entry the trailer walk cannot scan is
+  counted as written, so viewers who cannot read that scope lose every transcript until it is fixed
+  — the fail-closed direction, chosen here, not in the plan.
+- **The refused states in a real browser.** `uiaudit`'s world has one identity, the owner; the
+  refusals are measured in-process and by the e2e's bearer requests.
+- **Another package holding an archive.** The bound is "`internal/ui` cannot reach one"; any package
+  that opens an `archive.Archive` itself reads records with no predicate. Only `cmd/cairn-ui` and the
+  worker listener do (the importer ledger).
+
+---
+
+# The agent read API (S8 of the transcripts plan)
+
+`GET /transcript/skeleton`, `GET /transcript/records` and `GET /transcript/tool` (`agentread.go`)
+answer one stored session as JSON for an agent — decision 17. The model is `internal/transcript`'s
+(`agent.go`, its README); this surface only hands it the request's own authority.
+
+## The binding rules
+
+- 🔴 **Nothing here decides.** Each row calls `transcript.Store.Answer` with
+  `transcript.Viewer{Principal, Auth}` off the request's identity — the resolved, possibly NARROWED
+  authorization — and writes what it returns. The client listener (`internal/clientapi`) serves the
+  same three answers through the same function, so the two listeners cannot disagree; a narrowed
+  agent credential reads exactly the sessions its narrowing covers and never one by the owner arm.
+- 🔴 **One miss, byte for byte.** A refused viewer, a session never stored, an id that is no session,
+  a deployment with no archive, and a stream, record or call that is not there all answer 404
+  `transcript.UnseenBody` (`TestARefusedAgentGetsTheBytesOfASessionWithNoTranscript`, positive control
+  first). A request naming no session is a 400 naming the parameter — there is no navigation page to
+  fall back on for JSON.
+- **`content`, measured elsewhere.** The rows are `content` (whether they answer is the predicate's
+  verdict), but they ask no `Source` method, so `TestEveryContentRouteConsultsTheAuthority` declares
+  their authority as `transcript` and asserts only what it can (the bare 400, no `Source` read);
+  `TestTheAgentReadRoutesAskThePredicate` is what measures the predicate, over every row and viewer.
+- **`Cache-Control: no-store`**, the HTML rows' value: the walk in `cachecontrol_test.go` reaches each
+  row's real answer and holds it to that (`agentJSONRows`).
+- GET rows: neither cross-site gate applies, and a bearer credential reaches them before the cookie.
+
+## The RED proof
+
+`transcript-read-api-without-predicate` (the predicate's owner arm answering for everybody) is
+KILLED by `TestTheAgentReadRoutesAskThePredicate`, and `transcript-raw-view-without-predicate` (the
+scope arm admitting anybody once `V` is non-empty) by `TestTheRawRecordsViewAsksThePredicate` and the
+S4 raw-record view's test. ⚠ Neither is a listener-local "skip the predicate" edit, because none
+compiles outside `internal/transcript`: there `Store.View` is the only way to a record (inside the
+package one does compile, and the predicate test would see it). The model's own guards were each watched red
+under a hand mutation (conversation strip off, bookkeeping kept, the first record split, an
+unrecognised view defaulted, the spawn depth not incremented, a range not moved to a character
+boundary).
+
+## What these guards still cannot see
+
+- **The refused states over a real listener in a browser** — `uiaudit` lists the rows as
+  not-a-document; the matrix is in-process.
+- **Timing**, as for the session page: a stored-and-hidden session costs a meta read and maybe a walk.
+- **An unbounded skeleton** — see `internal/transcript/README.md`.
+
+---
+
+# "My sessions" (S7 of the transcripts plan)
+
+`GET /my-sessions[?page=N]` lists the stored sessions the VIEWER uploaded, newest upload first, each
+row linking `/session?session=<id>` (`mysessions.go`). It is the one way in to an owner-only session
+(an empty `V`, clause g): such a session wrote no trailer, so no scope tab, sessions list or arc chip
+names it. The hub links it ("My sessions" card, no count) — ONLY on a deployment with a transcript
+store, so a `cairn-ui` without `-transcript-dir` renders nothing new (`TestTheHubHasNoMySessionsCardWithoutATranscriptStore`);
+the row still answers there, with the empty state. Operator decision O10.
+
+## The binding rules
+
+- 🔴 **Ownership, never visibility.** The list is `transcript.Store.Mine`, which is decision 4's OWNER
+  ARM alone — the same `(Kind, ID)`-and-un-narrowed check `transcript.Visible` uses — and reads no
+  `V`. A reader of every scope of somebody else's session OPENS it (the session page asks
+  `transcript.Store.View`) and does NOT see it listed: the page is "mine", not "what I can see"
+  (`TestMySessionsListsTheViewersOwnAndNoOneElses`, with its instrument control that the reader really
+  does open it). A narrowed credential of the owner lists nothing.
+- **Metadata only.** `Mine` returns root, runtime, host and the two upload times; a listed session's
+  content is read through `View` like any other, so the listing adds no second way to a record.
+- **Bounded by pages.** 50 rows a page; `?page=` that is not a positive integer (a wider one than `int`
+  included) is page one, past the end is the last page; the pager links only pages that exist.
+  ⚠ The WORK is not bounded the same way: newest-first over sessions nothing indexes by owner reads
+  every stored session's `meta.json` on every request. A meta that does not parse is skipped, logged
+  as a count, and listed for nobody — its owner is unknown, and other people's damage is not the
+  viewer's to read.
+- **No transcript store is the empty state, not a 404** — S4's convention: a deployment without
+  `-transcript-dir` answers what one with nothing of the viewer's stored answers, byte for byte
+  (`TestMySessionsWithNoStoreIsTheEmptyState`, with its positive control). One sentence covers "you
+  uploaded nothing", "this deployment stores none" and "your credential is narrowed", and it SAYS all
+  three — it said only the first two, false for the owner's narrowed credential; it is pinned whole
+  (`TestTheEmptySentenceIsTrueForANarrowedOwner`).
+- **Text only, no script.** Session ids, runtimes and host labels are uploader text in `g.Text` and
+  attribute values; every href is a ledger path with encoded operands (`sessionHref`,
+  `mySessionsPageHref`).
+
+## The RED proof
+
+`my-sessions-lists-another-owner` (`tests/control_mutants.py`: the listing asks `View` instead of the
+owner arm) is KILLED by `transcript`'s `TestMySessionsListsOwnershipNotVisibility` with
+`TestMySessionsListsTheViewersOwnAndNoOneElses` red beside it (`killed=1 stale-extras=0`). By hand,
+each killed: newest-CREATED instead of newest-upload order, a corrupt meta failing the whole list, an
+unclamped `?page=` (a slice panic), and the empty sentence withheld. `tests/plugins/e2e.sh`'s
+`g-my-sessions-lists-the-owners-own-and-no-one-elses` has its sabotage in `--self-test`
+(`g-my-sessions-lists-by-visibility`). The `uiaudit` row is `linkExpanded`, watched red
+(`TestTheREALLedgerIsFullyACCOUNTEDFor`) with the class removed.
+
+## What these guards still cannot see
+
+- **The cost at thousands of sessions — MEASURED, and not bounded:** every request parses every stored
+  `meta.json` (no owner index, nothing cached): 2,000 sessions cost 31 ms and 13.9 MB a request,
+  10,000 cost 221 ms and 69.6 MB (one host). It grows linearly with the whole archive, not with the
+  viewer's own sessions.
+- **A session uploaded under another capture owner.** Ownership is the capture token's bound owner;
+  a session a person ran under a token minted for somebody else is that somebody's.
+- **The page in a real browser at every width** is only the `uiaudit` walk's (advisory) capture; no
+  browser guard reads it.
+
+
+---
+
+# Plugin outputs and the owner's delete (S6 of the transcripts plan)
+
+`outputs.go`. A session page whose viewer can see the transcript also renders what plugins derived
+from it; every list of sessions carries each session's one-line summary on the same terms; and the
+transcript's owner can delete it, which removes everything derived from it. Decisions 11, 14 and 15;
+clauses (k) and (l).
+
+## The binding rules
+
+- **An output is a CLAIM and renders as one** (decision 11). Each sits in a block whose label reads
+  `derived · <type> · by <plugin> <version> · model <model> · <produced_at> · <watermark>`. The
+  plugin's name and version are the pod's stamp (from the token's registry entry), never the body's.
+  The watermark is in TURNS of the main stream — "from turns 1–N of M", plus "K newer turns not yet
+  summarised" once the transcript grew past it (`transcript.Reading.TurnStarts`; a watermark naming
+  no `main` is stated by stream and record number). The section opens by saying an output is not
+  part of the session's record and that nothing checked it.
+- **It is shown to exactly the viewers of its transcript** (clause k), and that is NOT re-derived:
+  an output is read only through a `transcript.View`, which exists only where `transcript.Visible`
+  said yes. The session page's outputs come off the SAME view its transcript section does
+  (`transcriptFor`); a row's one-liner comes from `transcript.Store.ViewsWithOutputs`, which ends in
+  the same predicate over the same set (one store walk at most per page, none for the owner's rows
+  or when no listed session holds an output). A refused viewer's page and rows are the bytes of a
+  session with no output.
+- **Every byte of an output is text.** `g.Text` and attribute values; no Markdown; NO link is built
+  from an output — with one exception: a ticket edge's or suggestion's CANONICAL ClickUp id, linked
+  through `store.RefURL`'s template and then `safeHref`, after `plugins.DecodeBody` validated it
+  (alphanumeric: no scheme, no `/`, no markup). A stored body that does not validate against this
+  build's schema is shown as its stored text in a `<pre>` and nothing in it is linked. A locator
+  naming a stored record links this surface's own raw-record row. Bidirectional CONTROL characters
+  (U+202A–202E, U+2066–2069, U+200E/F, U+061C) are dropped from every rendered piece of plugin text
+  and from the model name — escaping does not cover them, and an override would reorder how the
+  page's own `derived` label is displayed. The stored bytes are untouched.
+- **Only a plugin's LATEST summary is shown**; earlier ones are counted ("N earlier summaries are
+  stored and not shown") — each summary is written over the plugin's previous one. An edge or a
+  suggestion a plugin re-derives with an identical body is shown once. At most 60 blocks render.
+- **A suggestion is never worded as a match**: `suggested`, its confidence, "not a match". An edge
+  names its signal in words ("matched on branch name").
+- **A ticket scan (S10) is neither**: "examined for tickets · this pass wrote N ticket edges and M
+  suggestions", and whether a model was asked. Only a plugin's LATEST scan is shown — every pass writes
+  one. `TestATicketScanRendersAsWhatWasExaminedAndOnlyTheLatestIsShown` (RED before the renderer knew
+  the type: the scan reached the suggestion branch and the page panicked).
+- **A stored ticket TITLE (S10, Q8) is text beside its id** — `g.Text` through `plainText`, never a
+  link — and is STORED only on an instance started with `-plugin-store-ticket-titles`
+  (`TestAStoredTicketTitleRendersAsTextBesideItsId`). ⚠ The flag gates the WRITE, not the read:
+  turning it off stops new titles and leaves every title already stored on the page until its
+  session's transcript is deleted.
+- **No bidirectional control reaches the page from a plugin** (#274's audit): a title, a rationale or
+  a model's name carrying one (U+202E and its family) is refused at `plugins.DecodeBody` /
+  `DecodeEnvelope`, so it is never stored; a body stored before that rule no longer validates and is
+  shown as stored text, through the same strip (`TestAStoredTitleCannotReorderThePagesOwnLabel`). The
+  set is ONE spelling, `plugins.BidiControl`.
+- **Rows** (`derivedLines`): `/sessions`, `/my-sessions`, the scope page's sessions tab and the arc
+  page's sessions tab each carry `derived · <plugin> <version>: <first 160 characters>` — the
+  session's latest summary — with the model and time in `title=`.
+- **`POST /session/delete` is the OWNER ARM, asked by the store** (`transcript.Store.Delete`:
+  un-narrowed `(Kind, ID)`, asked again under the session's lock). CLASS 0, so both cross-site gates
+  reach it by METHOD. It answers a 303 to `/my-sessions`, or ONE refusal (`sessionDeleteRefusal`,
+  403) for not stored, somebody else's, a narrowed credential, an id that is no session id, and a
+  deployment with no transcript store. A reader of every scope the session touched can SEE the
+  transcript and cannot delete it.
+- **The delete cascades because everything derived is in the session's directory** (decision 15):
+  the streams, the blobs and `outputs.jsonl` — every summary, edge and suggestion. The archive
+  journals the fact (root, the uploader's owner and host, `owner-delete`, the pod clock — no
+  content); the server logs who.
+- **The form** renders on the owner's session page only, collapsed in a `<details>` that states what
+  goes. No script and no confirmation checkbox (built, then removed: a third control with its own
+  touch target that guards nothing the reveal does not).
+
+## The RED proof
+
+| guard | mutant row (`tests/control_mutants.py`), each run alone: killed=1 |
+|---|---|
+| `TestAnOutputIsShownToExactlyTheViewersOfItsTranscript` — equal viewer SETS on the page, byte-identical refused pages, the row on four lists | `plugins-output-rendered-without-predicate` |
+| `TestTheOwnerDeletesATranscriptAndEverythingDerivedGoesWithIt` | `plugins-delete-keeps-outputs`, `transcript-delete-skips-the-owner-arm` |
+| `TestAnArcVetoSnapshotsItsMembersAndThePageSaysWhoIsStillVetoed` | `plugins-arc-toggle-snapshot-not-taken` |
+| `TestAnArcToggleFromAStaleTabIsNotSaved` | `plugins-arc-toggle-saved-from-a-stale-page` |
+| `TestBidiControlsInPluginTextAreNotRendered` | `ui-plugin-text-bidi-controls-rendered` |
+
+`TestAnOutputRendersAsALabelledClaim`, `TestAnOutputsTextIsNeverInterpreted` (its control: the plugin
+API REFUSES the `javascript:` id the page renders inert) and
+`TestTheDeleteRowIsBehindBothCrossSiteGates` are invariant guards — no row mutates them.
+`tests/plugins/e2e.sh` clauses (k) and (l) drive both over the real binaries, each with its sabotage.
+
+## What these guards still cannot see
+
+- **A deleted session that keeps growing on its host** is NOT re-created: a deletion is final for
+  its root (`archive.gone`), the uploader's next request is answered 410 `deleted`, and the capture
+  agent marks the session and never reads or sends it again (it says so once). ⚠ That includes a
+  session RETENTION swept: a host that still has its files does not re-ship it.
+- **What a plugin already sent to a model provider** (T7) — the form says so.
+- **The session-level toggle records** for a deleted session stay in `-plugin-journal` (who, when,
+  no content).
+- **A summary longer than 160 characters on a row** is clipped mid-sentence; the whole text is one
+  click away, on the session page.
+- **Cost on a list.** One `stat` per listed session, then one read of `outputs.jsonl` per session
+  that has one, and at most one whole-store walk per page for a non-owner. `/sessions` is unpaged.
+
+
+---
+
+# Plugin toggles (S5 of the transcripts plan)
+
+`GET /plugins` lists what the operator registered (`-plugin-registry`) and each plugin's value on
+every scope the caller reads; three POST rows set a toggle, ONE PATH PER LEVEL (`UnsharePath`'s
+ruling — which authority a write is checked against is the route's, never a form field's). The forms
+live on the pages they toggle: the scope page, the arc page and — for the transcript's OWNER only —
+the session page. The fold and the levels are `internal/plugins/README.md`'s.
+
+## The binding rules
+
+- **Who may toggle is per level and never a form field.** Scope: `admin` on the scope. Arc: `admin` on
+  the HOME scope — not the right to `PUT` the arc. An arc speaks only for sessions whose visibility
+  set holds its HOME scope (`plugins.Effective`). `on` is read against the arc's members as they are
+  NOW; `off` against them AND the members the arc listed when the veto was saved, which
+  `handlePluginArc` snapshots into the journal record from the registration the authority had just
+  answered with — so removing a session from an `off` arc lifts nothing, and the arc page lists the
+  sessions a veto still covers although the arc no longer lists them (`arcCoverage`).
+  ⚠ **The residual, stated on `/plugins` and on both toggle blocks in these words:** because `on` is
+  live, anyone who can WRITE to an `on` arc's home scope can add a session to the arc, and the plugin
+  then runs on it with no admin acting again — when the session touched the arc's home scope and
+  every other scope it touched is `allowed` or `on`. That is what `allowed` consents to. A scope left
+  `off` is never overridden. (An agent decision under the plan's decision 10 / T14, open to operator
+  review: a snapshot for `on` was built and withdrawn so per-arc summaries stay continuous as an arc
+  grows, O5.)
+- **An arc toggle is saved only over the member list its page showed.** The form carries
+  `members=<digest of the rendered list>`; a POST whose digest is not the current list's — a tab left
+  open while a writer changed the arc — journals nothing and answers 409 with a sentence saying to
+  reload. For every value: `on` is read against the live list, so the admin must have seen it.
+  Session: the transcript's owner arm (`transcript.Store.OwnedBy`), and only `off`/`unset`: an `on` is
+  a 400 decided BEFORE any authority is asked, so it is the same bytes for the owner and a stranger.
+- **One refusal** (`pluginToggleRefusal`, 403) for a target that does not exist, cannot be read, or is
+  not the caller's; the registry is public to every signed-in caller, so an unregistered plugin name
+  is a malformed form (400), not an authority question.
+- **The journal records `(Kind, ID)` and the pod clock**, never `Display` and never a form value.
+- **Class 0 for every POST row**, so both cross-site gates reach them by METHOD.
+- **A refused viewer's session page carries no trace of the block** — it renders for the owner only,
+  so clauses (d)–(g)'s byte-identity is untouched.
+
+## The RED proof
+
+`TestWhoMayToggleIsDecidedPerLevel` (write-only member, arc writer, non-owner, session ON — each
+refused and journaling nothing; each admin/owner journaling exactly one record) is red under
+`plugins-toggle-unauthorised-level` and `plugins-session-level-accepts-on`;
+`TestTheToggleRowsAreBehindBothCrossSiteGates` asserts each gate by its own message.
+`tests/plugins/e2e.sh` (i) sets the toggle through this POST and reads the plugin's pending list
+before and after.
+
+## What these guards still cannot see
+
+- **The toggle POSTs in a real browser.** Since S6 `uiaudit`'s token-file world registers two plugins
+  (seeded ON for every fixture scope), so the walk captures `/plugins` populated and the toggle forms
+  on the scope, arc and session pages at every rung — which is how `/plugins`' scope list was found
+  pushing the page sideways at 390 px (a bare `<li><a>` around an unbreakable scope name; it is an
+  `entry-row` now). The walk navigates GET rows only: no toggle is SUBMITTED by it.
+- **The EFFECTIVE value.** No page says whether a plugin is ON for a given session — that needs the
+  whole-store walk per session; the pages show the value at their own level.

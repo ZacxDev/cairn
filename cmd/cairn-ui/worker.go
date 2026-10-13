@@ -7,13 +7,16 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
+	"github.com/ZacxDev/cairn/internal/plugins"
 	"github.com/ZacxDev/cairn/internal/redact"
 	"github.com/ZacxDev/cairn/internal/transcript/archive"
 	"github.com/ZacxDev/cairn/internal/worker"
@@ -41,6 +44,9 @@ type workerSettings struct {
 	dir, retention, quota string
 	armed                 bool
 	issue, host           string
+	// plugin is the plugin a minted `plugin` token is bound to; registry is `-plugin-registry`, which
+	// a plugin mint reads to refuse a name nobody registered.
+	plugin, registry string
 }
 
 // workerPlan is a validated, armed-or-not worker configuration.
@@ -89,6 +95,10 @@ func workerListener(s workerSettings, m control.Model, storeRoot string) (worker
 	if s.host != "" {
 		return workerPlan{}, false, fmt.Errorf("-%s names the host a MINTED token is bound to and means "+
 			"nothing without -%s. Refusing to start", flagWorkerHost, flagIssueWorker)
+	}
+	if s.plugin != "" {
+		return workerPlan{}, false, fmt.Errorf("-%s names the plugin a MINTED token is bound to and means "+
+			"nothing without -%s plugin. Refusing to start", flagWorkerPlugin, flagIssueWorker)
 	}
 	if len(missing) == len(order) {
 		if s.armed {
@@ -185,15 +195,86 @@ func openTranscriptArchive(p workerPlan) (*archive.Archive, error) {
 	return archive.Open(archive.Config{Dir: p.dir, Retention: p.retention, Quota: p.quota, Recheck: red})
 }
 
-// armedWarning is printed when capture is armed. 🔴 It names every precondition the plan sets,
-// because the flag is the operator's assertion that they hold and nothing in this binary can check
-// them: O15's held-back gate for THIS redactor commit, S11's read ledger, and the pod-side `V`
-// this build does not derive.
-const armedWarning = "cairn-ui: WARNING transcript capture is ARMED (-" + flagArmCapture + "). The plan arms NO " +
-	"instance until (1) O15's arming gate passes on a FRESH auditor-written held-back set for the redactor commit " +
-	"being armed (≥ 90% of leaks caught, ≤ 15% of clean lines damaged) and (2) S11's client read ledger has " +
-	"landed; and this build does not derive a session's scopes itself, so every stored session is OWNER-ONLY. " +
-	"Arming is your assertion that (1) and (2) hold"
+// statePath is one file `cairn-ui` itself reads or writes, named by what sets it as an operator
+// spells it: `-<flag>`, or `$<VARIABLE>` for a file configured by the environment alone.
+type statePath struct{ flag, path string }
+
+// stateInsideTranscriptDir refuses a transcript directory that would HOLD one of `cairn-ui`'s own
+// state files (AP1, the half `archive.CheckOwnership` cannot see).
+//
+// 🔴 THE OWNERSHIP CHECK READS WHAT IS IN THE DIRECTORY AT STARTUP; THIS READS WHAT WILL BE. A
+// file this process creates LATER — an arc journal on its first write, a session table on a fresh
+// volume — is absent when the store opens, so the ownership check passes, the file appears, and the
+// NEXT restart is refused: the outage AP1 names, one restart later. Every path is resolved the way
+// the directory was (symlinks followed, through the nearest existing parent), so a symlinked
+// spelling of the same place is caught.
+func stateInsideTranscriptDir(dir string, paths []statePath) error {
+	for _, p := range paths {
+		if p.path == "" {
+			continue
+		}
+		resolved, err := resolveMaybeAbsent(p.path)
+		if err != nil {
+			return fmt.Errorf("%s %s does not resolve (%v), so it cannot be checked against -%s", p.flag, p.path, err, flagTranscriptDir)
+		}
+		if arcs.Inside(dir, resolved) {
+			return fmt.Errorf("%s %s resolves INSIDE -%s %s. The transcript store owns that directory whole — its "+
+				"retention sweep journals into it and its open refuses anything it did not write — so `cairn-ui`'s own "+
+				"state there is a refused restart waiting to happen. Give the transcripts a directory of their own",
+				p.flag, p.path, flagTranscriptDir, dir)
+		}
+	}
+	return nil
+}
+
+// resolveMaybeAbsent is `EvalSymlinks` for a path that may not exist yet: the nearest existing
+// ancestor is resolved and the rest re-joined.
+func resolveMaybeAbsent(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	var rest []string
+	for cur := abs; ; {
+		r, err := filepath.EvalSymlinks(cur)
+		if err == nil {
+			return filepath.Join(append([]string{r}, rest...)...), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return abs, nil
+		}
+		rest = append([]string{filepath.Base(cur)}, rest...)
+		cur = parent
+	}
+}
+
+// ownerStillHeld is the per-request owner check `worker.Config.OwnerHeld` asks (AP3): the SAME
+// predicate `workerListener` applies at startup, over the authority's CURRENT model.
+func ownerStillHeld(authority interface{ Model() control.Model }, owner worker.Owner) func() bool {
+	return func() bool {
+		_, known := authority.Model().PrincipalFor(owner.Kind, owner.ID)
+		return known
+	}
+}
+
+// armedWarning is printed when capture is armed. 🔴 It names what the operator WAIVED and what
+// arming still depends on OUTSIDE this binary, because the flag is the operator's assertion and
+// nothing here can check it: O15's held-back gate, waived by operator decision O17 and not passed,
+// so this redactor is NOT measured to that bar; and the client read ledger (S11, BUILT — the pod
+// folds an uploaded ledger into a session's read scopes), which only helps a session whose HOST runs
+// a client that writes one. It said "this build holds no ledger" until S10; that stopped being true
+// when S11 landed.
+const armedWarning = "cairn-ui: WARNING transcript capture is ARMED (-" + flagArmCapture + "). O15's arming gate " +
+	"(≥ 90% of leaks caught on a fresh held-back set) was WAIVED by operator decision O17, not passed: this " +
+	"redactor is not measured to that bar, so a secret it misses is stored. A session's read scopes come from the " +
+	"client read ledger its host uploads: a session whose tool input names cairn while its ledger is EMPTY (its " +
+	"host's client predates the ledger, or the read went around the client), or names the cache directory, or " +
+	"carries a read header naming no scope, is visible to its OWNER only — so keep every capturing host's client " +
+	"current. Arming is your assertion that you accept both"
 
 // workerMode is the startup line's clause about the third listener and capture.
 func workerMode(addr string, owner worker.Owner, rows int, dir string, armed bool) string {
@@ -205,21 +286,20 @@ func workerMode(addr string, owner worker.Owner, rows int, dir string, armed boo
 		addr, owner, rows, len(worker.Routes()), dir, state)
 }
 
-// issueWorkerToken mints ONE capture token, appends its DIGEST to the token file, and prints the
-// token once to `out`. The wall holds at mint: a file with another owner's rows refuses.
+// issueWorkerToken mints ONE worker token — a `capture` token bound to `-worker-owner` on
+// `-worker-host`, or a `plugin` token bound to ONE plugin `-plugin-registry` holds — appends its
+// DIGEST to the token file, and prints the token once to `out`. The wall holds at mint: a file with
+// another owner's rows, or a row for an unregistered plugin, refuses.
 func issueWorkerToken(out, note io.Writer, m control.Model, s workerSettings) error {
 	kind := worker.TokenKind(s.issue)
 	if !kind.Valid() {
-		return fmt.Errorf("-%s %q is not %q", flagIssueWorker, s.issue, worker.KindCapture)
+		return fmt.Errorf("-%s %q is not %q or %q", flagIssueWorker, s.issue, worker.KindCapture, worker.KindPlugin)
 	}
 	if s.tokens == "" || identity.ValueReducesToNothing(s.tokens) {
 		return fmt.Errorf("-%s needs -%s, the file the digest is appended to", flagIssueWorker, flagWorkerTokens)
 	}
 	if s.owner == "" {
-		return fmt.Errorf("-%s needs -%s (<kind>:<id>)", flagIssueWorker, flagWorkerOwner)
-	}
-	if !worker.ValidHostLabel(s.host) {
-		return fmt.Errorf("-%s needs -%s, the ONE host label the token is bound to (got %q)", flagIssueWorker, flagWorkerHost, s.host)
+		return fmt.Errorf("-%s needs -%s (<kind>:<id>): the token file's capture rows are checked against it", flagIssueWorker, flagWorkerOwner)
 	}
 	owner, err := worker.ParseOwner(s.owner)
 	if err != nil {
@@ -228,23 +308,61 @@ func issueWorkerToken(out, note io.Writer, m control.Model, s workerSettings) er
 	if _, known := m.PrincipalFor(owner.Kind, owner.ID); !known {
 		return fmt.Errorf("-%s %s names a principal this authority does not hold", flagWorkerOwner, owner)
 	}
+	// 🔴 THE FILE'S EXISTING PLUGIN ROWS ARE ASKED OF THE REGISTRY WHEN ONE IS NAMED, AND ADMITTED
+	// WHEN NONE IS — whichever kind is being minted. A capture mint with a nil wall refused every file
+	// that already held a plugin row (#S5 audit round 1), leaving hand-editing as the only way to add a
+	// capture token beside one. Without a registry this mint does not vouch for plugin rows; startup
+	// refuses a file holding a plugin row its registry does not hold (or any plugin row, with no
+	// registry), so an unchecked row is found at the next restart at the latest.
+	wall := worker.Wall{Owner: owner, Plugins: func(string) bool { return true }}
+	if s.registry != "" {
+		reg, err := plugins.LoadRegistry(s.registry)
+		if err != nil {
+			return fmt.Errorf("-%s: %v", flagPluginRegistry, err)
+		}
+		wall.Plugins = reg.Holds
+	}
+	var row worker.TokenRow
+	token, err := worker.MintToken()
+	if err != nil {
+		return err
+	}
+	if kind == worker.KindPlugin {
+		if s.host != "" {
+			return fmt.Errorf("-%s binds a CAPTURE token to a host; a plugin token is bound to a plugin (-%s)", flagWorkerHost, flagWorkerPlugin)
+		}
+		if s.registry == "" {
+			return fmt.Errorf("-%s plugin needs -%s: a token for a plugin nobody registered authenticates nothing", flagIssueWorker, flagPluginRegistry)
+		}
+		if !wall.Plugins(s.plugin) {
+			return fmt.Errorf("-%s plugin needs -%s naming a plugin -%s registers (got %q)", flagIssueWorker, flagWorkerPlugin, flagPluginRegistry, s.plugin)
+		}
+		row = worker.NewPluginTokenRow(s.plugin, token)
+	} else {
+		if s.plugin != "" {
+			return fmt.Errorf("-%s binds a PLUGIN token; a capture token is bound to a host (-%s)", flagWorkerPlugin, flagWorkerHost)
+		}
+		if !worker.ValidHostLabel(s.host) {
+			return fmt.Errorf("-%s needs -%s, the ONE host label the token is bound to (got %q)", flagIssueWorker, flagWorkerHost, s.host)
+		}
+		row = worker.NewTokenRow(kind, owner, s.host, token)
+	}
 	if _, statErr := os.Stat(s.tokens); statErr == nil {
-		if _, err := worker.LoadTokens(s.tokens, owner); err != nil {
+		if _, err := worker.LoadTokens(s.tokens, wall); err != nil {
 			return fmt.Errorf("refusing to mint into %s: %w", s.tokens, err)
 		}
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return fmt.Errorf("the worker token file %s cannot be checked: %w", s.tokens, statErr)
 	}
-	token, err := worker.MintToken()
-	if err != nil {
-		return err
-	}
-	row := worker.NewTokenRow(kind, owner, s.host, token)
 	if err := worker.AppendTokenRow(s.tokens, row); err != nil {
 		return fmt.Errorf("the worker token file %s could not be written: %w", s.tokens, err)
 	}
-	fmt.Fprintf(note, "cairn-ui: minted a %s worker token for %s on host %s; its digest %s… is in %s. The token "+
-		"is printed ONCE on stdout and stored nowhere\n", kind, owner, s.host, row.DigestPrefix(), s.tokens)
+	bound := "for " + owner.String() + " on host " + s.host
+	if kind == worker.KindPlugin {
+		bound = "for plugin " + s.plugin
+	}
+	fmt.Fprintf(note, "cairn-ui: minted a %s worker token %s; its digest %s… is in %s. The token "+
+		"is printed ONCE on stdout and stored nowhere\n", kind, bound, row.DigestPrefix(), s.tokens)
 	_, err = fmt.Fprintln(out, token)
 	return err
 }

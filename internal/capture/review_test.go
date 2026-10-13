@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/ZacxDev/cairn/internal/client"
 )
@@ -228,5 +230,111 @@ func TestARewritePastTheFingerprintIsRefused(t *testing.T) {
 	}
 	if sum := mustRun(t, a); sum.Refused != 1 || !strings.Contains(log.String(), "refused "+rich.ID+"/main") {
 		t.Fatalf("a rewrite past the fingerprint was resumed: %+v %s", sum, log.String())
+	}
+}
+
+// TestTheAgentDoesNotDeclareF1 (#266's audit): F1's `*` — inputs name the program and the ledger is
+// EMPTY — stays in the agent's own `V` (routing must still treat the session as unknown) but is NOT
+// DECLARED to the pod, which decides F1 itself at view time from the ledger it holds. Declared, it
+// would sit in the pod's grow-only `declared_scopes` and keep the session owner-only after its
+// ledger landed. The control: what the session's headers name IS declared.
+//
+// RED while the agent declared `V`: the upload carried `*`.
+func TestTheAgentDoesNotDeclareF1(t *testing.T) {
+	w := loadWorld(t)
+	e := materialize(t, w, "oc-root")
+	a := newAgent(t, e, oneInstance, &fakeRunner{exports: exportsOf(w, "before"), list: w.Opencode.SessionList},
+		&bytes.Buffer{})
+	a.ClaudeRoot = ""
+	a.OpencodeDirs = []string{"/work/alpha"}
+	mustRun(t, a)
+	root := w.Sessions["oc-root"].ID
+	if got := a.State.Sessions[root].V; !slices.Contains(got, "*") {
+		t.Fatalf("the fixture: with no ledger the program-naming inputs must trip F1 in V, got %v", got)
+	}
+	if got := e.sink.declared["personal/"+root]; !slices.Equal(got, []string{"alpha-notes"}) {
+		t.Fatalf("declared %v, want [alpha-notes] — the header's scope, and never F1's `*`", got)
+	}
+}
+
+// TestTheAgentDoesNotDeclareF1ForAClaudeCodeSession — the Claude Code half of the rule above, which
+// is a separate upload site (`Declared:` is spelled once per runtime in `agent.go`): a session whose
+// tool input names the program and whose ledger is EMPTY carries F1's `*` in its own `V` and does NOT
+// declare it. The control is that the session SHIPPED — the sink holds its declaration, so an empty
+// one below is the agent's choice, not an upload that never happened.
+//
+// RED with the Claude Code upload declaring `ss.V`: #266's audit measured that mutation leaving the
+// whole suite green, because only the opencode site had a test.
+func TestTheAgentDoesNotDeclareF1ForAClaudeCodeSession(t *testing.T) {
+	w := loadWorld(t)
+	e := materialize(t, w, "cc-f1-empty-ledger")
+	a := newAgent(t, e, oneInstance, &fakeRunner{}, &bytes.Buffer{})
+	mustRun(t, a)
+	id := w.Sessions["cc-f1-empty-ledger"].ID
+	if got := a.State.Sessions[id].V; !slices.Contains(got, "*") {
+		t.Fatalf("the fixture: a program-naming input with an empty ledger must trip F1 in V, got %v", got)
+	}
+	declared, shipped := e.sink.declared["personal/"+id]
+	if !shipped || len(e.sink.records["personal/"+id+"/main"]) == 0 {
+		t.Fatalf("the control: the session did not ship (declared=%v), so its declaration below says nothing", declared)
+	}
+	if slices.Contains(declared, "*") {
+		t.Fatalf("declared %v — F1's `*` must stay in the agent's own V and never reach the pod", declared)
+	}
+}
+
+// TestALedgerThatIsNotARegularFileFailsClosed (#266's audit): the client refuses to write through a
+// symlink or into anything but a regular file, and the agent now refuses to READ one: a symlink at
+// the ledger path (here to a perfectly good ledger naming `beta-notes`) and a FIFO are each `*` —
+// never followed, never "no ledger", and the FIFO never hangs the run. The control: the same
+// ledger as a regular file is read as `beta-notes`.
+//
+// RED before: the symlink was followed (V = [alpha-notes beta-notes]) and the FIFO blocked the run.
+func TestALedgerThatIsNotARegularFileFailsClosed(t *testing.T) {
+	for _, kind := range []string{"regular", "symlink", "fifo"} {
+		t.Run(kind, func(t *testing.T) {
+			w := loadWorld(t)
+			e := materialize(t, w, "oc-root")
+			id := w.Sessions["oc-child"].ID
+			path := filepath.Join(e.ledger, id+".jsonl")
+			body := []byte(`{"schema":1,"scope":"beta-notes"}` + "\n")
+			switch kind {
+			case "regular":
+				writeLedger(t, e, id, string(body))
+			case "symlink":
+				target := filepath.Join(t.TempDir(), "elsewhere.jsonl")
+				if err := os.WriteFile(target, body, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, path); err != nil {
+					t.Fatal(err)
+				}
+			case "fifo":
+				if err := syscall.Mkfifo(path, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a := newAgent(t, e, oneInstance, &fakeRunner{exports: exportsOf(w, "before"), list: w.Opencode.SessionList},
+				&bytes.Buffer{})
+			a.ClaudeRoot = ""
+			a.OpencodeDirs = []string{"/work/alpha"}
+			done := make(chan struct{})
+			go func() { mustRun(t, a); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(20 * time.Second):
+				if f, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+					f.Close()
+				}
+				t.Fatal("the run HUNG on the ledger path")
+			}
+			want := []string{"*", "alpha-notes"}
+			if kind == "regular" {
+				want = []string{"alpha-notes", "beta-notes"}
+			}
+			if got := a.State.Sessions[w.Sessions["oc-root"].ID].V; !slices.Equal(got, want) {
+				t.Fatalf("V = %v, want %v", got, want)
+			}
+		})
 	}
 }

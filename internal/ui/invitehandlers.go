@@ -21,27 +21,10 @@ import (
 // (`control.NewID` uses `crypto/rand`) and this refusal is what keeps that worth something.
 const inviteRefusal = "no such project, or it is not yours to invite into"
 
-// inviteWriteRefusal is the uniform refusal for both write routes. Same discipline as
+// inviteWriteRefusal is the uniform refusal for the invitation write rows. Same discipline as
 // `shareWriteRefusal`: it names no reason, so a caller cannot tell an unknown project from
 // one they may not touch, nor an unknown invitation from one that is no longer open.
 const inviteWriteRefusal = "that invitation cannot be recorded"
-
-// roleRefusal is what a caller gets for a role they may not confer.
-//
-// 🔴 IT DISCRIMINATES, AND THAT IS CORRECT HERE FOR `ReadOnlyAuthority`'s REASON RATHER
-// THAN AN EXCEPTION TO THE UNIFORM-REFUSAL RULE. Everything the rule protects is a fact
-// about somebody ELSE — which projects exist, which invitations exist, which credentials
-// are valid. This sentence is a fact about the CALLER'S OWN standing in a project they
-// have already proved they manage, so it is identical for every caller in that state and
-// discloses nothing they could not read off the page they submitted. The alternative is a
-// person who picked `owner` from a list getting "that invitation cannot be recorded" and
-// having no way to learn that the list offered them a value their role cannot hand out.
-//
-// ⚠ IT DOES NOT NAME THE ROLE THEY HOLD OR THE ROLE THEY ASKED FOR. Both are in the
-// operator's log line instead — not for secrecy, but because a page that echoed the
-// submitted role would be reflecting caller-chosen text into a sentence the page presents
-// as its own, which is the shape `outcomeFrom` refuses for the share flow's banner.
-const roleRefusal = "that role cannot be conferred by the role you hold in this project"
 
 // NoInviteStore is what the invite flow says on a deployment that has no store to hold an
 // invitation.
@@ -60,7 +43,9 @@ const roleRefusal = "that role cannot be conferred by the role you hold in this 
 const NoInviteStore = "This deployment has no invitation store, so no invitation can be " +
 	"minted or redeemed here: cairn-ui was started without a database to hold them."
 
-// InviteHonesty is the notice the invite flow carries on every shape of its page.
+// InviteHonesty is the notice the invite flow carries on every shape of its page. It
+// qualifies the invitations that ALREADY EXIST — none is created since the fold
+// ([InviteFoldNotice]) — and stays for as long as one of them can still be redeemed.
 //
 // 🔴 IT IS PINNED AS ONE NORMALISED STRING, WHICH IS `ReplicaHonesty`'s RULING AND FOR THE
 // SAME REASON: a test asserting the page contains "token" or "once" passes against a
@@ -84,28 +69,54 @@ const NoInviteStore = "This deployment has no invitation store, so no invitation
 //     authority a redeemed one conferred is a `member-set` record on an append-only
 //     journal. Revoking the invitation does not revoke the membership.
 //
-// ⚠ WHAT IT DOES NOT SAY, DELIBERATELY: it gives no lifetime. `invite.DefaultTTL` is seven
-// days and a minting caller may pass another, so a number here would be a promise about a
-// value this sentence does not own. The bound that IS known travels per invitation instead,
+// ⚠ WHAT IT DOES NOT SAY, DELIBERATELY: it gives no lifetime. The invitations still
+// outstanding were minted with whatever lifetime their minting caller passed, so a number
+// here would be a promise about a value this sentence does not own. The bound that IS known travels per invitation instead,
 // as the expiry rendered on its own row.
 const InviteHonesty = "An invitation is a link, and the link is the authority: it is shown " +
 	"once and cannot be recovered, anyone who holds it can use it to join this project, and " +
 	"revoking it stops it being redeemed but takes nothing back from somebody who has " +
 	"already joined."
 
-// inviteOutcomeRevoked is the one outcome a redirect into this flow may carry.
+// inviteOutcomeRevoked is the outcome a REVOKE's redirect into this flow carries.
 //
 // 🔴 A CODE FROM A CLOSED SET RATHER THAN A SENTENCE FROM THE QUERY STRING, which is the
 // share flow's ruling and the reason is identical: a redirect target is something anybody
 // can put in a link, so a reflected sentence would let an attacker choose the text of a
-// banner the page presents as its OWN. There is exactly one code because there is exactly
-// one write that redirects — the MINT cannot, since its whole answer is a value that
-// survives no hop. See `handleInvite`.
+// banner the page presents as its OWN. The set has two members, one per write that redirects
+// here: this one and [inviteOutcomeFolded].
 //
 // ⚠ IT IS `invite-revoked`, NOT `revoked`, SINCE THE FLOW MOVED ONTO `/team`: the share flow's
 // own code is `revoked`, and on one page one parameter cannot mean two banners. A pre-move
 // `/invite?outcome=revoked` link is translated by `handleInvitePage`'s redirect.
 const inviteOutcomeRevoked = "invite-revoked"
+
+// inviteOutcomeFolded is what `POST /invite`'s redirect carries since the fold: the request
+// asked for an invitation and nothing was created. See `handleInvite`.
+const inviteOutcomeFolded = "invite-folded"
+
+// InviteFoldNotice is what the invitation section says about itself since single-project
+// invitations were folded into team links (operator decision, option A).
+//
+// 🔴 PINNED AS ONE NORMALISED STRING (`TestTheFoldNoticeIsPinnedWhole`), `InviteHonesty`'s
+// ruling for its reason: the two clauses most worth dropping are the two COSTS the operator
+// accepted, and they are the ones a reader has to be told. Each is a property of the code:
+//
+//   - "no invitation of this older kind can be created any more" — `Inviting` has no `Mint`
+//     and `handleInvite` creates nothing;
+//   - "stay listed … redeemable and revocable until they expire" — `inviteSection`,
+//     `handleInviteRevoke` and both `Redeem` arms are unchanged, and no row was migrated;
+//   - "cannot confer the owner role" — `invite.AllLinkRoles` has no `owner`, and the
+//     operator's `cairn-server -set-member` is the one writer of that role left;
+//   - "listed to, and revocable by, only whoever created it" — `ControlTeamLinks.Links` and
+//     `Revoke` answer the MINTER, where an invitation answers every manager (`mayManage`).
+const InviteFoldNotice = "New invitations are team links. Choosing a project here ticks it on " +
+	"the Create a team link form below; no invitation of this older kind can be created any " +
+	"more. Those that already exist stay listed here, and stay redeemable and revocable until " +
+	"they expire. Two things a team link does not do, and both were accepted: it cannot confer " +
+	"the owner role, so making somebody an owner is now only the operator's cairn-server " +
+	"-set-member; and it is listed to, and revocable by, only whoever created it, so two admins " +
+	"of one project cannot see or revoke each other's links."
 
 // inviteOutcomeRevokedBeforeTeam is the code this flow redirected with before it moved.
 const inviteOutcomeRevokedBeforeTeam = "revoked"
@@ -119,11 +130,12 @@ const inviteOutcomeRevokedBeforeTeam = "revoked"
 // Candidates` enumerates everyone the principal shares a project with. A bearer token
 // narrowed to one scope reaches these rows through the machine-token backend, and the
 // state-changing gate does not stop it (`csrfTokenValid`'s comment: the caller chooses its
-// own cookie). So a leaked narrowed token could mint an invitation into every project its
+// own cookie). So a leaked narrowed token could mint a team link over every project its
 // owner manages and redeem it as an identity the holder controls — full project membership
 // out of a credential meant to see one scope — and could list every collaborator across
 // projects its narrowing excludes. A narrowed credential therefore exercises NO
-// membership-derived authority: no invitations, and no share candidates (so it cannot share
+// membership-derived authority: no invitation list or revoke, no team links, and no share
+// candidates (so it cannot share
 // through this surface at all — `handleShare` validates the subject against `Candidates`).
 //
 // ⚠ WHY "NOTHING" AND NOT "THE CANDIDATES WITHIN THE NARROWING". A membership has no scope
@@ -140,7 +152,7 @@ const inviteOutcomeRevokedBeforeTeam = "revoked"
 // session — see `internal/ui/README.md`, "What a session can be minted from") must hold the
 // same line. 🔴 Every use of an actor-taking `Inviting`/`Sharing` method goes through this
 // function. The real call sites are guarded by the behavioural tests
-// (`TestANarrowedBearerSeesNoInvitations`, `TestANarrowedBearerCannotMintAnInvitation`,
+// (`TestANarrowedBearerSeesNoInvitations`, `TestANarrowedBearerHasNoTeamLinkAuthority`,
 // `TestANarrowedBearerCannotRevokeAnInvitation`, `TestANarrowedAdminBearerIsOfferedNoShareCandidates`);
 // `TestEveryMembershipDecisionActsAsMembershipActor` is a type-resolved ledger that also
 // catches direct, aliased, method-value and interface-helper uses of the watched types — not
@@ -165,7 +177,8 @@ func (s *Server) handleInvitePage(w http.ResponseWriter, r *http.Request, _ iden
 }
 
 // inviteSection builds the Team page's invitation section: the index with no `?project=`,
-// one project's outstanding invitations and mint form with it. It writes the uniform refusal
+// one project's outstanding invitations with it (and no mint form since the fold — choosing
+// a project pre-ticks it on the team-link form instead). It writes the uniform refusal
 // itself and answers ok=false for a project the caller may not invite into.
 //
 // 🔴 THE NARROWING IS `Invitable`, AND `Outstanding` IS REACHED ONLY THROUGH IT. That is not
@@ -222,32 +235,30 @@ func (s *Server) inviteSection(w http.ResponseWriter, r *http.Request, id identi
 	return view, true
 }
 
-// handleInvite mints one invitation and renders its link ONCE.
+// handleInvite is `POST /invite` since the fold, and it CREATES NOTHING: it answers a 303 to
+// the Team page's one mint form — the team-link form — with the project the request named
+// pre-ticked.
 //
-// # 🔴 IT DOES NOT REDIRECT, AND THAT IS THE ONE PLACE THIS FLOW BREAKS THE HOUSE PATTERN
+// 🔴 THE ROW STAYS IN THE LEDGER AND BEHIND BOTH CROSS-SITE GATES. Nothing was removed (a
+// page rendered before the deploy still posts here, and a 404 would tell its reader nothing);
+// the gates are derived from the METHOD, so they reach this row exactly as they did when it
+// minted, and a class added here to "relax" a write that no longer writes would be the one
+// thing `stateChanging`'s ruling forbids.
 //
-// Every other write on this surface is a POST-redirect-GET, because a write that renders its
-// own answer is a write a refresh repeats (`redirectToScope`). This one cannot be, and the
-// reason is the value it produces: `invite.NewToken` returns the token exactly once and only
-// its digest is stored, so there is nothing to render on the far side of a hop. The two ways
-// to keep the redirect were both weighed and refused:
+// 🔴 IT IS A REDIRECT AND NOT A TRANSLATION INTO A TEAM-LINK MINT. Minting a link here would
+// make the role a value this handler chooses — `owner` has no link role, and `member` on an
+// invitation is not what an unread team-link form defaults to (`reader`) — and would create a
+// capability from a request that asked for a different one. The person lands on the form and
+// submits it themselves.
 //
-//   - PUT THE TOKEN IN THE REDIRECT URL. Refused outright. It is a bearer capability that can
-//     create a principal, and a query parameter lands in browser history, in the referrer the
-//     next hop receives and in every access log on the way — which is the argument
-//     `inviteTokenField` makes about the same value, and the reason the token is a form field
-//     everywhere else.
-//   - STASH IT SERVER-SIDE, KEYED BY SESSION, AND REDIRECT. Refused as a worse trade: it is a
-//     new table of live capabilities with its own expiry, its own single-use question and its
-//     own restart behaviour, bought to avoid a refresh that mints a spare invitation.
+// ⚠ THE PROJECT IN THE REDIRECT IS ANCILLARY, `handleInviteRevoke`'s ruling: it only chooses
+// which box the landing page ticks, and a value the caller may not invite into lands on the
+// uniform 404 they could have typed. Nothing else from the form is carried: the ROLE is
+// dropped on purpose (see above).
 //
-// ⚠ SO THE ACCEPTED COST, NAMED RATHER THAN DISCOVERED: a browser reload of this response
-// re-submits the form and mints a SECOND invitation. Browsers prompt before doing it, the
-// extra invitation is listed on the project's page and is revocable, and an invitation grants
-// nothing until it is redeemed (`internal/invite`'s package doc). The response carries
-// `Cache-Control: no-store` because its body is the capability — once its own entry point, now
-// simply the one value [writeHTML] sends on every HTML page.
-func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request, id identity.Identity) {
+// ⚠ WITH NO INVITE STORE IT IS STILL THE 501, for `refuseWithoutInviteStore`'s reason — there
+// is no form on the far side of the redirect in that configuration either.
+func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request, _ identity.Identity) {
 	if s.inviting == nil {
 		s.refuseWithoutInviteStore(w)
 		return
@@ -256,54 +267,12 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request, id identit
 		writePlain(w, http.StatusBadRequest, inviteWriteRefusal)
 		return
 	}
-	project := control.ID(r.PostFormValue(FieldProject))
-	role := control.Role(r.PostFormValue(FieldRole))
-
-	// 🔴 THIS READ IS FOR THE PROJECT'S DISPLAY NAME AND IS NOT THE AUTHORITY CHECK. `Mint`
-	// does the check itself, from the model, and it is the only one that counts — a gate
-	// here would be a second place the rule lives and the second place is what drifts.
-	// Looking the name up BEFORE the write rather than after is deliberate: after a
-	// successful mint a concurrent membership change could remove the project from this
-	// list, and the page would then render an invitation with no name on it.
-	chosen, _ := pickProject(s.inviting.Invitable(membershipActor(id)), project)
-
-	token, inv, err := s.inviting.Mint(r.Context(), membershipActor(id), project, role, 0)
-	if err != nil {
-		s.refuseInviteWrite(w, err, "mint")
-		return
+	q := url.Values{}
+	if project := r.PostFormValue(FieldProject); project != "" {
+		q.Set(QueryProject, project)
 	}
-	// 🔴 THE PROJECT RENDERED IS THE ONE THE STORE RECORDED, NEVER THE ONE THE FORM NAMED.
-	// `Mint` returns the `invite.Invite` it created, so `inv.ProjectID` is what was written;
-	// the form value only found a display name. They agree today because `Mint` writes what
-	// it was given, and reading the stored value is what keeps that an observation rather
-	// than an assumption.
-	if chosen.ID != inv.ProjectID {
-		chosen = control.NamedProject{ID: inv.ProjectID}
-	}
-	s.logf("an invitation was minted: project=%s role=%s expires=%s by=%s",
-		inv.ProjectID, inv.Role, inv.ExpiresAt.UTC().Format(time.RFC3339), inv.Inviter)
-
-	view := InviteView{
-		Viewer:  id.Principal.Display,
-		App:     s.app,
-		CSRF:    csrfTokenFor(r),
-		NoStore: false,
-		Project: chosen,
-		Minted: &MintedInvite{
-			// 🔴 A PATH AND A FRAGMENT (`joinLink`), NEVER AN ABSOLUTE URL, BECAUSE THIS PROCESS DOES NOT
-			// KNOW ITS OWN EXTERNAL ORIGIN. The scheme and host a reader must send are
-			// configuration — the identical reason `OAuthCallbackPath` is spelled as a path
-			// and its full URL is not — and the only candidate available here is a `Host`
-			// header a proxy chooses. A page that guessed it would hand somebody a link to
-			// the wrong hostname, which for a single-use capability means a link they cannot
-			// re-issue. [MintedInvite.Link] says so on the page instead.
-			Link:    joinLink(token),
-			Role:    inv.Role,
-			Expires: inv.ExpiresAt.UTC().Format(time.RFC3339),
-		},
-	}
-	// The minted invitation is rendered ON THE TEAM PAGE, once — the flow's one page (O-a).
-	s.renderTeamAfterMint(w, r, id, func(v *TeamView) { v.Invite = view })
+	q.Set(QueryOutcome, inviteOutcomeFolded)
+	http.Redirect(w, r, teamHref(q.Encode(), teamLinksAnchor), http.StatusSeeOther)
 }
 
 // handleInviteRevoke withdraws an outstanding invitation.
@@ -388,7 +357,7 @@ func (s *Server) handleJoinPage(w http.ResponseWriter, r *http.Request, _ identi
 	s.render(w, JoinPage(token, s.providerArmed(), s.app))
 }
 
-// refuseWithoutInviteStore is what the two invite WRITES answer on a deployment with no
+// refuseWithoutInviteStore is what the invite POST rows answer on a deployment with no
 // store. The READ answers a page instead — see [NoInviteStore].
 //
 // ⚠ 501 RATHER THAN 404 OR 403, AND THE DIFFERENCE IS WHICH FACT IS BEING REPORTED. A 404
@@ -401,16 +370,12 @@ func (s *Server) refuseWithoutInviteStore(w http.ResponseWriter) {
 	writePlain(w, http.StatusNotImplemented, NoInviteStore)
 }
 
-// refuseInviteWrite maps a write failure onto a status, and it is the ONE place that mapping
-// lives so the two write routes cannot answer differently — `refuseWrite`'s reason, and the
-// `what` argument is only for the log line that attributes the refusal to a route.
+// refuseInviteWrite maps a write failure onto a status. ONE write reaches it since the fold
+// (the revoke; `handleInvite` creates nothing and so refuses nothing), and the `what` argument
+// is only for the log line that attributes the refusal to a route.
 func (s *Server) refuseInviteWrite(w http.ResponseWriter, err error, what string) {
 	s.logf("an invitation %s was refused: %v", what, err)
 	switch {
-	case errors.Is(err, ErrRoleNotConferrable):
-		// 403 with the cause. See [roleRefusal] for why this one discriminates and the
-		// others do not.
-		writePlain(w, http.StatusForbidden, roleRefusal)
 	case errors.Is(err, ErrNotInvitable), errors.Is(err, invite.ErrNotRedeemable):
 		// 🔴 ONE STATUS AND ONE SENTENCE FOR BOTH, WHICH IS THE POINT RATHER THAN A
 		// SHORTCUT. `ErrNotInvitable` is "no such project, or not yours";
@@ -479,7 +444,8 @@ func shortDigest(digest string) string {
 	return digest[:shortDigestChars]
 }
 
-// inviteOutcomeFrom renders the banner for a redirect that arrived from a revoke.
+// inviteOutcomeFrom renders the banner for a redirect that arrived from a revoke, or from a
+// `POST /invite` that created nothing.
 //
 // 🔴 EVERY BRANCH RETURNS A SENTENCE WRITTEN HERE AND NO CALLER-SUPPLIED TEXT REACHES THE
 // PAGE — `outcomeFrom`'s rule, with one fewer moving part because this flow has no
@@ -491,9 +457,13 @@ func shortDigest(digest string) string {
 // claim is in [InviteHonesty] above the list; this is the one place a reader is looking
 // immediately after acting.
 func inviteOutcomeFrom(r *http.Request) string {
-	if r.URL.Query().Get(QueryOutcome) != inviteOutcomeRevoked {
-		return ""
+	switch r.URL.Query().Get(QueryOutcome) {
+	case inviteOutcomeRevoked:
+		return "Revoked. That link can no longer be redeemed. Anybody who already joined with " +
+			"it keeps their membership."
+	case inviteOutcomeFolded:
+		// What a `POST /invite` lands on: a form rendered before the fold was submitted.
+		return "Nothing was created. Invitations are now team links: use the Create a team link form."
 	}
-	return "Revoked. That link can no longer be redeemed. Anybody who already joined with " +
-		"it keeps their membership."
+	return ""
 }

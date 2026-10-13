@@ -78,6 +78,9 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		// Team page (operator decision O-a), which renders no answer about authority.
 		"GET /invite",
 		"GET /join public",
+		// 🔴 THE PLUGIN REGISTRY PAGE (S5 of the transcripts plan). `content`, never `public`: beside the
+		// registry it lists this caller's readable scopes and each plugin's toggle on them.
+		"GET /plugins content",
 		"GET /scope content",
 		// 🔴 THE SCOPE LIST (moved off the root, which became the hub). `content`, never `public`: it is
 		// the list of scopes this credential can read, and `?q=`/`?tag=` search inside that set.
@@ -89,16 +92,32 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		// every scope this credential can read, and a session that wrote only in scopes it cannot
 		// read must be indistinguishable from one that never wrote — an answer about authority.
 		"GET /session content",
+		// 🔴 THE RAW-RECORD VIEW (S4 of the transcripts plan). `content`, never `public`: whether it
+		// answers at all is the visibility predicate's verdict about this caller — the owner, or a
+		// reader of every scope the session touched — and every miss is one body.
+		"GET /session/transcript content",
+		// 🔴 THE AGENT READ API (S8 of the transcripts plan). `content`, never `public`: whether any of the
+		// three answers is the visibility predicate's verdict about this caller, and every miss is one
+		// body. The client listener serves the same three answers through the same function.
+		"GET /transcript/records content",
+		"GET /transcript/skeleton content",
+		"GET /transcript/tool content",
+		// 🔴 "MY SESSIONS" (S7 of the transcripts plan). `content`, never `public`: the list is the
+		// transcript store's owner arm — which stored sessions are THIS caller's — and a narrowed
+		// credential lists nothing.
+		"GET /my-sessions content",
 		"GET /share",
 		// 🔴 THE TEAM PAGE (`team.go`). `content`: every list on it is an authority answer.
+		"GET /scope/sources content",
 		"GET /team content",
 		"GET /sign-in public",
 		"GET /sign-in/github/callback public",
 		"GET /static/app." + stylesheetDigestFromBytes(t) + ".css public",
 		"GET /static/app.css public",
-		// 🔴 THE ONE SCRIPT ROW (`script.go`). `public` for the stylesheet's reason — identical
-		// bytes to everybody, no authority consulted — and content-hashed for the stylesheet's
-		// reason, recomputed here from the embedded bytes rather than read off the implementation.
+		// 🔴 THE FIRST SCRIPT ROW (`script.go`): the scope page's `filter.js`. `public` for the
+		// stylesheet's reason — identical bytes to everybody, no authority consulted — and
+		// content-hashed for the stylesheet's reason, recomputed here from the embedded bytes
+		// rather than read off the implementation.
 		"GET /static/filter." + scriptDigestFromBytes(t) + ".js public",
 		// 🔴 THE WEB APP MANIFEST (S2 of the mobile plan). `public` because Chromium fetches a manifest
 		// with no credentials, and a fixed path; it answers 404 on an UNARMED deployment, which is why
@@ -126,13 +145,24 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		// cross-site gates reach it by METHOD, which `TestTheRingRowIsBehindBothCrossSiteGates`
 		// asserts by each gate's own message. Never `content`: every answer is one 303, so it renders
 		// nothing about authority — `TestEveryRingAnswerIsTheSameRedirect` holds that.
+		// 🔴 THE PLUGIN TOGGLES (S5 of the transcripts plan): one row per LEVEL, NO class — both cross-site
+		// gates reach them by METHOD, which `TestTheToggleRowsAreBehindBothCrossSiteGates` asserts by each
+		// gate's own message. Never `content`: each answers a 303 back to the page it toggles.
+		"POST /plugins/arc",
+		"POST /plugins/scope",
+		"POST /plugins/session",
 		"POST /ring",
+		// 🔴 THE OWNER'S "DELETE TRANSCRIPT" (S6 of the transcripts plan). NO CLASS — both cross-site gates
+		// reach it by METHOD, which `TestTheDeleteRowIsBehindBothCrossSiteGates` asserts by each gate's own
+		// message. Never `content`: it answers a 303 to "My sessions", or ONE refusal that names nothing.
+		"POST /session/delete",
 		"POST /share",
 		"POST /sign-in public",
 		"POST /sign-in/github public",
 		"POST /sign-out",
 		// The Team page's two writes. NO class — both cross-site gates reach them by METHOD,
 		// which `TestTheTeamLinkRowsAreBehindBothCrossSiteGates` asserts by each gate's message.
+		"POST /scope/sources",
 		"POST /team/link",
 		"POST /team/link/revoke",
 		"POST /unshare",
@@ -510,6 +540,18 @@ var bareGETAnswer = map[string]int{
 	// And the session page: a request naming no session asked about nothing, so it gets the
 	// navigation page rather than the uniform unseen-session refusal.
 	"GET /session content": http.StatusOK,
+	// And the raw-record view, for the session page's reason: a request naming no session asked about
+	// nothing, so it gets the navigation page rather than the uniform no-transcript refusal.
+	"GET /session/transcript content": http.StatusOK,
+	// 🔴 THE AGENT READ API ANSWERS 400 BARE, AND THAT IS THE DECISION: it is JSON for an agent, not a
+	// page, so there is no navigation page to fall back on, and a request naming no session asked about
+	// nothing — the 400 names the missing parameter and is decided before any predicate is asked.
+	"GET /transcript/skeleton content": http.StatusBadRequest,
+	"GET /transcript/records content":  http.StatusBadRequest,
+	"GET /transcript/tool content":     http.StatusBadRequest,
+	// "My sessions" has no operand to name: its bare request IS the page (the empty state when the
+	// caller owns nothing, or the deployment stores no transcripts).
+	"GET /my-sessions content": http.StatusOK,
 	// The scope list's bare request IS the page (it was the root's), and the sessions list's bare
 	// request is the list: neither has an operand to name, so there is nothing for a refusal to protect.
 	"GET /scopes content":   http.StatusOK,
@@ -525,6 +567,12 @@ var bareGETAnswer = map[string]int{
 	// invite and link halves say `NoInviteStore`
 	// `NoInviteStore` (`TestTheTeamPageAnswersHonestlyWithNoStore`).
 	"GET /team content": http.StatusOK,
+	// The code-sources page follows the browse pair: a request naming no scope gets the navigation
+	// page, not the uniform refusal (`handleSourcesPage`).
+	"GET /scope/sources content": http.StatusOK,
+	// The plugin registry page's bare request IS the page: it has no operand to name. With no registry it
+	// is still 200 and says so (`NoPluginRegistry`) — the off state is a page, not a refusal.
+	"GET /plugins content": http.StatusOK,
 	// 🔴 `GET /join` ANSWERS 200 TO A REQUEST CARRYING NO TOKEN, WHICH IS THE PAGE AND NOT A
 	// REFUSAL. It named no invitation, so there is nothing for a uniform refusal to protect
 	// and nothing it could learn; it gets a page saying the link carried no invitation. The
@@ -726,6 +774,31 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		{"GET", "/memo"},
 		{"GET", "/memo/retract"},
 		{"GET", "/memos"},
+		// The code-sources rows' near-misses (scope-refs S4): a prefix match on `/scope` or on the row
+		// itself would serve each.
+		{"GET", "/scope/sources/"},
+		{"GET", "/scope/sourcesx"},
+		// The raw-record row's near-misses (transcripts S4): a prefix match on `/session` or on the
+		// row itself would serve each.
+		{"GET", "/session/transcript/"},
+		{"GET", "/session/transcriptx"},
+		{"GET", "/session/transcripts"},
+		{"GET", "/session/"},
+		{"GET", "/transcript"},
+		// The agent read API's near-misses (transcripts S8): a prefix match on any of its rows would serve each.
+		{"GET", "/transcript/"},
+		{"GET", "/transcript/records/"},
+		{"GET", "/transcript/recordsx"},
+		{"GET", "/transcript/skeletons"},
+		{"GET", "/transcript/tool/1"},
+		{"GET", "/transcripts/records"},
+		// "My sessions"' near-misses (transcripts S7): a prefix match on the row would serve each.
+		{"GET", "/my-sessions/"},
+		{"GET", "/my-sessionsx"},
+		{"GET", "/my-session"},
+		{"GET", "/my"},
+		{"GET", "/scope/source"},
+		{"GET", "/sources"},
 		// S4's near-misses: the unversioned script a worker-shaped draft would register, a wrong
 		// digest, the live script path suffixed, and a screenshot under a name nobody declared.
 		{"GET", "/static/pwa.js"},
@@ -780,6 +853,14 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		{"POST", "/memo/"},
 		{"POST", "/memo/retractx"},
 		{"PUT", "/memo"},
+		{"POST", "/scope/sources/"},
+		{"POST", "/session/transcript"},
+		{"POST", "/transcript/records"},
+		{"POST", "/my-sessions"},
+		{"POST", "/session"},
+		{"PUT", "/scope/sources"},
+		{"POST", "/scope"},
+		{"POST", "/sources"},
 	} {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(probe[0], probe[1], nil)
@@ -923,6 +1004,23 @@ var contentAuthority = map[string]string{
 	"GET /arcs content": "source",
 	// `source`, for `Source.Arc`'s reason: `Source.Session` is narrowed by the same authority.
 	"GET /session content": "source",
+	// `source`: the raw-record view consults `Visible` like the session page it hangs off (the
+	// navigation page is built from it). ⚠ The verdict that matters for a NAMED session is the
+	// transcript predicate's, read off the request's own authorization — a seam this walk has no
+	// counter for; `TestTheRawRecordViewAsksThePredicate` is what measures it.
+	"GET /session/transcript content": "source",
+	// 🔴 `transcript`: the agent read API asks NO `Source` method — its one authority is the transcript
+	// predicate (`transcript.Store.View`), read off the request's own authorization, and this walk has
+	// no counter for it. So the walk asserts what it CAN of these rows (the bare 400 names the missing
+	// `session`, before anything is asked) and `TestTheAgentReadRoutesAskThePredicate` measures the
+	// predicate over every row, every viewer, and every miss.
+	"GET /transcript/skeleton content": "transcript",
+	"GET /transcript/records content":  "transcript",
+	"GET /transcript/tool content":     "transcript",
+	// `source`: "My sessions" consults `Visible` for the shell, like every browse page. ⚠ The list
+	// itself is the transcript store's OWNER ARM, read off the request's own identity — a seam this
+	// walk has no counter for; `TestMySessionsListsTheViewersOwnAndNoOneElses` is what measures it.
+	"GET /my-sessions content": "source",
 	// `source`: the scope list is `Visible` (and `Search`), the root's answer before the hub.
 	"GET /scopes content": "source",
 	// `source`, for `Source.Session`'s reason: `Source.AllSessions` is narrowed by the same authority.
@@ -935,6 +1033,12 @@ var contentAuthority = map[string]string{
 	// link chooser, `TeamLinking.Mintable`. A list, not one name, because a page that asked
 	// two of the three would render the third section's authority sentence unlicensed.
 	"GET /team content": "sharing,inviting,team",
+	// `source`: the code-sources page is found through `Visible`, like the scope page; `admin` (the
+	// form) is read off the request's own authorization, never a second seam.
+	"GET /scope/sources content": "source",
+	// `source`: the registry page lists each plugin's value on the scopes `Visible` returns; the
+	// registry itself is the operator's, not an authority answer.
+	"GET /plugins content": "source",
 }
 
 // countingSource records whether the authority was consulted, and is the whole
@@ -1039,6 +1143,15 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
 
+		if contentAuthority[route] == "transcript" {
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"detail":"session: is required"`) {
+				t.Errorf("%s answered %d %q bare, want the 400 naming the missing session", route, rec.Code, rec.Body.String())
+			}
+			if source.calls != 0 {
+				t.Errorf("%s consulted the Source (%d) — its one authority is the transcript predicate", route, source.calls)
+			}
+			continue
+		}
 		if rec.Code != http.StatusOK {
 			t.Errorf("declared route %s answered %d, not 200, so the authority count below is about a refusal",
 				route, rec.Code)

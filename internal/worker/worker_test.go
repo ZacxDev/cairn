@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,11 +37,15 @@ var (
 )
 
 type rig struct {
-	t      *testing.T
-	w      *Worker
-	arc    *archive.Archive
+	t   *testing.T
+	w   *Worker
+	arc *archive.Archive
+	// dir is the archive's directory.
+	dir    string
 	tokens string
 	log    []string
+	// unheld flips the authority's answer for the owner (AP3); zero is "still held".
+	unheld atomic.Bool
 }
 
 func writeRows(t *testing.T, path string, rows ...TokenRow) {
@@ -71,14 +76,16 @@ func newRig(t *testing.T, armed bool, limiter *netid.RateLimiter) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	arc, err := archive.Open(archive.Config{Dir: t.TempDir(), Retention: time.Hour, Quota: 1 << 30, Recheck: red,
+	dir := t.TempDir()
+	arc, err := archive.Open(archive.Config{Dir: dir, Retention: time.Hour, Quota: 1 << 30, Recheck: red,
 		Now: func() time.Time { return time.Date(2000, 1, 2, 3, 4, 5, 0, time.UTC) }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := &rig{t: t, arc: arc, tokens: filepath.Join(t.TempDir(), "worker-tokens")}
+	g := &rig{t: t, arc: arc, dir: dir, tokens: filepath.Join(t.TempDir(), "worker-tokens")}
 	writeRows(t, g.tokens, standardRows()...)
-	w, _, err := New(Config{TokenFile: g.tokens, Owner: ownerA, Archive: arc, Armed: armed, Limiter: limiter,
+	w, _, err := New(Config{TokenFile: g.tokens, Owner: ownerA, OwnerHeld: func() bool { return !g.unheld.Load() },
+		Archive: arc, Armed: armed, Limiter: limiter,
 		Log: func(s string) { g.log = append(g.log, s) }})
 	if err != nil {
 		t.Fatal(err)
@@ -136,14 +143,21 @@ func randToken(seed uint64) string {
 // a row is 405, and a path in no row is 404.
 func TestTheWorkerRouteLedgerIsExactlyThis(t *testing.T) {
 	want := []string{
+		// The plugin API (S5): three reads and one write, each reachable by a `plugin` token only.
+		"GET /plugin/v1/outputs plugin",
+		"GET /plugin/v1/pending plugin",
+		"GET /plugin/v1/transcript plugin",
 		"POST /capture/v1/sessions/{root}/blobs/{name} capture",
 		"POST /capture/v1/sessions/{root}/streams/{stream}/records capture",
+		// The withdrawal (S6, decision 16): a capture token deleting its OWN (owner, host)'s root.
+		"POST /capture/v1/sessions/{root}/withdraw capture",
+		"POST /plugin/v1/outputs plugin",
 	}
 	if got := Routes(); !slices.Equal(got, want) {
 		t.Fatalf("the worker route ledger is\n%v\nwant\n%v", got, want)
 	}
 	g := newRig(t, true, nil)
-	for _, p := range []string{recordsPath, blobPath} {
+	for _, p := range []string{recordsPath, blobPath, withdrawPath} {
 		if rec := g.do(http.MethodPost, p, "", "{}"); rec.Code != http.StatusUnauthorized || rec.Body.String() != unauthorizedBody {
 			t.Fatalf("POST %s with no token answered %d %q, want the uniform 401", p, rec.Code, rec.Body.String())
 		}
@@ -151,8 +165,8 @@ func TestTheWorkerRouteLedgerIsExactlyThis(t *testing.T) {
 			t.Fatalf("GET %s answered %d, want 405", p, rec.Code)
 		}
 	}
-	if rec := g.do(http.MethodPost, "/capture/v1/sessions/s-0001/withdraw", captureA, "{}"); rec.Code != http.StatusNotFound {
-		t.Fatalf("a path in no row (S6's withdraw) answered %d, want 404", rec.Code)
+	if rec := g.do(http.MethodPost, "/capture/v1/sessions/s-0001/delete", captureA, "{}"); rec.Code != http.StatusNotFound {
+		t.Fatalf("a path in no row answered %d, want 404", rec.Code)
 	}
 }
 
@@ -288,7 +302,7 @@ func TestTheWireIsStrict(t *testing.T) {
 	} {
 		path := recordsPath
 		if name == "an unknown stream" {
-			path, body = "/capture/v1/sessions/s-0001/streams/ledger/records", recordsBody("host-a", "", "1", "t")
+			path, body = "/capture/v1/sessions/s-0001/streams/notes/records", recordsBody("host-a", "", "1", "t")
 		}
 		if rec := g.do(http.MethodPost, path, captureA, body); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s answered %d %q, want 400", name, rec.Code, rec.Body.String())
@@ -318,7 +332,7 @@ func TestFailedTokensLockTheClientOut(t *testing.T) {
 func TestTheWallRefusesAForeignRowAtStartupAndAsARowAfterwards(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "worker-tokens")
 	writeRows(t, path, NewTokenRow(KindCapture, ownerA, "host-a", captureA), NewTokenRow(KindCapture, ownerB, "host-a", foreignB))
-	if _, err := LoadTokens(path, ownerA); err == nil || !strings.Contains(err.Error(), "line 3") {
+	if _, err := LoadTokens(path, Wall{Owner: ownerA}); err == nil || !strings.Contains(err.Error(), "line 3") {
 		t.Fatalf("a foreign row at startup answered %v", err)
 	}
 	g := newRig(t, true, nil)
@@ -344,7 +358,7 @@ func TestTheTokenFileHoldsDigestsOnly(t *testing.T) {
 		if err := os.WriteFile(path, []byte(line+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		_, err := LoadTokens(path, ownerA)
+		_, err := LoadTokens(path, Wall{Owner: ownerA})
 		if err == nil || strings.Contains(err.Error(), captureA) {
 			t.Fatalf("%s: answered %v", name, err)
 		}
@@ -355,6 +369,12 @@ func TestTheTokenFileHoldsDigestsOnly(t *testing.T) {
 // imports, through the walk the dependency ban trusts). A worker token means something only where
 // `internal/worker` is reachable, so a new importer — `internal/identity`, `internal/ui`, the pod —
 // is a new place a capture token could come to authenticate. Fails on SHRINK too.
+//
+// 🔴 THE ARCHIVE GAINED ONE READER IN S4, AND IT IS `internal/transcript` — NOT `internal/ui`. The
+// browser surface reads a stored record only through a `transcript.View`, which exists only where
+// the visibility predicate said yes; `internal/ui` importing the archive itself would be a way to
+// read one without asking. `internal/transcript/transcripttest` is the tests' fixture writer, and
+// its own row pins that NOTHING that ships imports it.
 func TestOnlyTheBrowserProgramImportsWorker(t *testing.T) {
 	root, err := depspolicy.RepoRoot()
 	if err != nil {
@@ -370,7 +390,9 @@ func TestOnlyTheBrowserProgramImportsWorker(t *testing.T) {
 		want []string
 	}{
 		{mod + "/internal/worker", []string{mod + "/cmd/cairn-ui"}},
-		{mod + "/internal/transcript/archive", []string{mod + "/cmd/cairn-ui", mod + "/internal/worker"}},
+		{mod + "/internal/transcript/archive", []string{mod + "/cmd/cairn-ui", mod + "/internal/transcript",
+			mod + "/internal/transcript/transcripttest", mod + "/internal/worker"}},
+		{mod + "/internal/transcript/transcripttest", nil},
 	} {
 		if _, ok := graph[c.pkg]; !ok || len(graph) < 10 {
 			t.Fatalf("POSITIVE CONTROL: the walk saw %d package(s) and %s=%v", len(graph), c.pkg, ok)
@@ -385,5 +407,90 @@ func TestOnlyTheBrowserProgramImportsWorker(t *testing.T) {
 		if !slices.Equal(importers, c.want) {
 			t.Fatalf("%s is imported by %v, want exactly %v", c.pkg, importers, c.want)
 		}
+	}
+}
+
+// TestOneFramePastTheCapIs413AndStoresNothing is AP2's closing check over the wire: two frames
+// staging EXACTLY `archive.MaxAssembledBytes` are accepted 202 (positive control — they reached the
+// staging and count against the quota), and a final frame of ONE more byte is refused 413 with the
+// one too-large body, before the staged bytes are read back; nothing is stored, no session exists,
+// and the staged bytes are back out of the quota.
+//
+// RED on the S3 head: no bound existed, so the final frame was assembled in memory (and, being
+// arbitrary bytes, answered 400 "not one JSON value" — after the read this precondition forbids).
+func TestOneFramePastTheCapIs413AndStoresNothing(t *testing.T) {
+	g := newRig(t, true, nil)
+	half := archive.MaxAssembledBytes / 2
+	frame := func(i int, chunk []byte) string {
+		return fmt.Sprintf(`{"schema":1,"runtime":"claude","host":"host-a","from":"","to":"100","declared_scopes":[],`+
+			`"records":[{"src":"0","chunk":%q}],"frames":{"index":%d,"count":3}}`, base64.StdEncoding.EncodeToString(chunk), i)
+	}
+	for i := range 2 {
+		if rec := g.do(http.MethodPost, recordsPath, captureA, frame(i, make([]byte, half))); rec.Code != http.StatusAccepted {
+			t.Fatalf("POSITIVE CONTROL: frame %d answered %d %q", i, rec.Code, rec.Body.String())
+		}
+	}
+	if used := g.arc.Used(); used != archive.MaxAssembledBytes {
+		t.Fatalf("POSITIVE CONTROL: %d bytes staged, want exactly the cap %d", used, archive.MaxAssembledBytes)
+	}
+	rec := g.do(http.MethodPost, recordsPath, captureA, frame(2, []byte("x")))
+	want := fmt.Sprintf(`{"refused":"too-large","max_bytes":%d}`+"\n", archive.MaxAssembledBytes)
+	if rec.Code != http.StatusRequestEntityTooLarge || rec.Body.String() != want {
+		t.Fatalf("one frame past the cap answered %d %q, want 413 %q", rec.Code, rec.Body.String(), want)
+	}
+	if roots, _ := g.arc.Roots(); len(roots) != 0 {
+		t.Fatalf("an over-cap record stored %v", roots)
+	}
+	if used := g.arc.Used(); used != 0 {
+		t.Fatalf("%d staged bytes still count against the quota after the refusal", used)
+	}
+}
+
+// TestATokenInABlobNameIs422AndNeverEchoed is AP3's re-check item over the wire: a 40-character
+// token as a BLOB NAME — it fits the name pattern — is refused 422 naming the field, and neither
+// the body nor any log line carries it; nothing is stored. Positive control: a clean name is 200.
+//
+// RED on the S3 head: names were never re-checked, so it stored.
+func TestATokenInABlobNameIs422AndNeverEchoed(t *testing.T) {
+	g := newRig(t, true, nil)
+	token := randToken(23)
+	rec := g.do(http.MethodPost, "/capture/v1/sessions/s-0001/blobs/"+token, captureA, blobBody("host-a", "", "v1", []byte("synthetic output\n")))
+	if rec.Code != http.StatusUnprocessableEntity || rec.Body.String() != `{"refused":"recheck","field":"blob name"}`+"\n" {
+		t.Fatalf("a token as a blob name answered %d %q", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(strings.Join(g.log, "\n"), token) {
+		t.Fatal("a log line carries the value")
+	}
+	if roots, _ := g.arc.Roots(); len(roots) != 0 {
+		t.Fatalf("a refused upload stored %v", roots)
+	}
+	if rec := g.do(http.MethodPost, blobPath, captureA, blobBody("host-a", "", "v1", []byte("synthetic output\n"))); rec.Code != http.StatusOK {
+		t.Fatalf("POSITIVE CONTROL: a clean blob name answered %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+// TestTheOwnerIsCheckedOnEveryRequest is AP3's last item: once the authority stops holding the
+// sole capture owner, the owner's own valid token is refused with the uniform 401 on the NEXT
+// request — no restart — and nothing more is stored; the refusal is not counted toward the lockout
+// (a one-failure limiter still admits the token once the owner is held again).
+//
+// RED with the per-request check removed from `serve` (the S3 head checked the owner only at
+// startup, and had no `OwnerHeld` to wire).
+func TestTheOwnerIsCheckedOnEveryRequest(t *testing.T) {
+	g := newRig(t, true, netid.NewRateLimiter(1, time.Minute, time.Minute))
+	if rec := g.do(http.MethodPost, recordsPath, captureA, recordsBody("host-a", "", "100", "turn")); rec.Code != http.StatusOK {
+		t.Fatalf("POSITIVE CONTROL: the held owner answered %d %q", rec.Code, rec.Body.String())
+	}
+	g.unheld.Store(true)
+	rec := g.do(http.MethodPost, recordsPath, captureA, recordsBody("host-a", "100", "200", "turn two"))
+	if rec.Code != http.StatusUnauthorized || rec.Body.String() != unauthorizedBody {
+		t.Fatalf("an owner the authority no longer holds answered %d %q, want the uniform 401", rec.Code, rec.Body.String())
+	}
+	if got, _ := g.arc.ReadStream("s-0001", "main"); len(got) != 1 {
+		t.Fatalf("the refused request stored: %d record(s)", len(got))
+	}
+	g.unheld.Store(false)
+	if rec := g.do(http.MethodPost, recordsPath, captureA, recordsBody("host-a", "100", "200", "turn two")); rec.Code != http.StatusOK {
+		t.Fatalf("the refusal was counted toward the lockout: the held owner now answers %d", rec.Code)
 	}
 }

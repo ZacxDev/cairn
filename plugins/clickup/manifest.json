@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "name": "clickup",
+  "version": "0.1.0",
+  "description": "ClickUp ticket matching: deterministic ticket edges from explicit ids and URLs, and model-made suggestions shown as suggestions. Reads ClickUp, never writes to it.",
+  "capabilities": ["pending:list", "transcript:read", "output:read:summary", "output:read:ticket-edge", "output:read:ticket-scan", "output:read:ticket-suggestion", "output:write:ticket-edge", "output:write:ticket-scan", "output:write:ticket-suggestion"],
+  "calls_model": true
+}

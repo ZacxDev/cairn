@@ -30,8 +30,12 @@ import (
 // read off the page. The schema the DSN names is created (and dropped) by `memos_check.sh`, with a
 // root-module tool.
 //
-// ⚠ IT IS NOT PART OF THE WALK: no capture of it is pushed, and `main.go` never boots it. The walk's
-// signals stay the two worlds' they were measured over; this world exists for one test.
+// ⚠ `main.go` NEVER BOOTS IT, AND NO CAPTURE OF IT IS PUSHED. The walk's own run stays the two
+// worlds it was measured over, with no database. The WALK'S INSTRUMENT reaches this world instead:
+// clause (f) of `memos_browser_test.go` captures the populated tab with `Browser.CaptureTarget` at
+// every rung of `Viewports` and refuses with `refuseWalkRegressions`, the function `run` calls — so
+// the tab gets the walk's axe, touch, overflow and screenshot without the walk leg needing a
+// database or the hub a third world's pages.
 
 // The memo world's people and its one machine credential. `writer-a`, `reader-b` and
 // `agents@host-a` are the scope-mail suites' own synthetic names (`tests/memo/world.sh`), reused so
@@ -41,6 +45,9 @@ const (
 	memoReaderDisplay = "reader-b"
 	memoAgentLabel    = "agents@host-a"
 )
+
+// MemoWorldName is the [Capture.World] label of the memo world's captures.
+const MemoWorldName = "memos"
 
 // MemoWorld is a booted memo world: the pod, its client listener, and the three credentials.
 type MemoWorld struct {

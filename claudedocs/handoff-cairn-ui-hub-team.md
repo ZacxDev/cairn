@@ -31,15 +31,25 @@ Team page carrying sharing + invitations + multi-target team links (TTL, reuse, 
   unauthenticated: `/join` serves `join.<hash>.js` (`text/javascript`, immutable) plus a
   `<noscript>` notice, a wrong hash is refused, migrations still `1,2`. 🔴 NOT verified signed-in —
   minting a link, redeeming it in a second browser, and the Team page are the operator's checks.
-- **ROLLBACK (still binding):** an older cairn-ui refuses a version-2 database — run
-  `DELETE FROM schema_migrations WHERE version = 2;` BEFORE reverting the image below #214 (recipe on #214).
+  ⚠ SUPERSEDED: the instance now runs `sha-f162b54` with the memos migration (version 3) applied —
+  see `handoff-cairn-scope-mail.md`. #252/#253/#254 are merged, not deployed.
+- **ROLLBACK (still binding):** an older cairn-ui refuses a database from a newer build. The database
+  is now at version 3, so reverting below `sha-0d9ba01` needs the migration-3 recipe (#235) FIRST,
+  and then, to go below #214, `DELETE FROM schema_migrations WHERE version = 2;` (recipe on #214).
 - Claims: all released.
 
 ## Next steps (ranked)
 1. **(done) Keep reusable-link tokens out of access logs** — fragment links, #232, deployed.
    forcing: security — a logged reusable token is a standing enrolment capability.
-2. **Fold single-project invitations into team links** — a separate PR now that #214 has soaked.
-   forcing: user — operator chose "fold later".
+2. **(done, #265) Fold single-project invitations into team links — option A, no migration.**
+   forcing: user — operator ruled for the recommended option. The Team page has ONE mint form (the
+   team-link form; `?project=` pre-ticks that project); `POST /invite` creates nothing and 303s to
+   `/team?outcome=invite-folded[&project=…]#links`; `Inviting` has no `Mint`. Invitations issued
+   before stay listed, revocable by every manager and redeemable (at `owner` too) until they expire.
+   Accepted costs, on the page (`InviteFoldNotice`) and in `README.md`: no self-service `owner`
+   (the operator's `cairn-server -set-member` is the path left); two admins of one project cannot
+   see or revoke each other's links. Record: `internal/ui/README.md` Phase Z.
+   🔴 **MERGED, NOT DEPLOYED — needs a cairn-ui image deploy; NO migration.** Not verified signed-in.
 3. **(done) Deploy #214 + S4** — `sha-197dd0e`, trunk `bbb6055`. forcing: user — operator go.
 
 ## Gotchas / decisions / dead-ends
@@ -68,10 +78,28 @@ Team page carrying sharing + invitations + multi-target team links (TTL, reuse, 
   `uiaudit/targets.go`): #232 added `join.js`'s route without one and `TestPWAClauses/e_storage`
   plus `TestTheREALLedgerIsFullyACCOUNTEDFor` went red until it joined `notADocument`. via: measurement
 ## Defects (batched)
-- `cmd/cairn-ui`'s `aPortNothingIsListeningOn` can hand out the same port twice (measured 17 in
-  200,000 pairs), which makes `TestATokenFileContentProblemLeavesTheBrowserServingAndTheAgentStopped`
-  flake under load — keep the two picked ports distinct, or assert on WHAT answers.
-- `internal/ui/render.go` (~:496) and `routes_test.go` (~:99) still say the surface has ONE script;
-  there are now three (`filter.js`, `pwa.js`, `join.js`).
+- 🟡 **#265 round 1 (no 🔴; merged on the standing rule):** the "already-issued invitation still
+  redeems" guard covers the provisioning arm only. Changing `RedeemFor`'s `if !known && c.Links !=
+  nil` to `if c.Links != nil` survives `go test ./internal/ui/` (its tests use `newInvRig`, no
+  `Links`). Fix: a `RedeemFor` leg in `TestAnInvitationIssuedBeforeTheFoldStillRedeemsAndIsStillRevocable`
+  on `newTeamRig`, plus a sibling battery row. 🟢 with it: `team.go`'s pre-tick comment says "only
+  by the reader's own choice" where `?project=` can arrive in a link somebody else sent (no
+  exploit found: only a project the caller may confer is tickable, and they must submit);
+  `internal/ui/README.md` Phase Q's table and one `control_mutants.py` `why` still name deleted
+  identifiers.
+- **Follow-up, not built: retire the invitation half.** Closing condition (mechanical): zero rows
+  in the deployed `invites` table with `redeemed_at`, `revoked_at` both null and `expires_at` in
+  the future — reached at most `invite.DefaultTTL` (7 days) after the #265 deploy, since the only
+  mint passed no lifetime. Then `POST /invite/revoke`, the invitation arm of `Redeem`/`RedeemFor`,
+  `InviteHonesty`, the `POST /invite` 303 and `invite.Store.Create` can go; whether spent rows stay
+  listed as history is an operator call. Removing routes is a route-ledger change.
+- ✅ **CLOSED by #252** (`429e953`, test-only): `aPortNothingIsListeningOn` now HOLDS a bound,
+  non-listening socket for the whole test instead of closing it (old shape: 38 duplicates in 200,000
+  pairs; held: 0). 🟡 left: the agent address uses `127.0.0.2`, unconfigured by default on macOS —
+  moot while `cmd/cairn{,-ui}` do not build for macOS (`st.Mtim`, `internal/report/entry.go`).
+  The same close-then-reuse shape remains in `cmd/cairn-server/main_test.go` `freePort` and
+  `uiaudit/payload_test.go` — not fixed.
+- ✅ **CLOSED by #253** (`c8aab6b`): every "the surface has ONE script" claim now names three
+  (`filter.js`, `pwa.js`, `join.js`); per-page "one script" claims, which are true, stay.
 - The deployed cairn-ui still sets `CAIRN_SUPABASE_ISSUER`/`CAIRN_SUPABASE_JWKS_URL`, which it warns
   are deprecated aliases for `CAIRN_OIDC_*` — rename them in the deployment repo.

@@ -279,15 +279,50 @@ LEDGER: tuple[Capability, ...] = (
     Capability(
         name="scope-sources",
         effect=READS,
-        cli=None,
+        cli="sources",
         route=("GET", "/api/v1/sources/{scope}"),
-        no_cli_because="S2 of the scope-refs plan lands the ROUTE alone; the proposed sources "
-                       "verb, its client, is S3. Until then the route's readers are the browser "
-                       "surface (S4) and the auditor (S5), neither of which is a verb yet",
+        note="the verb IS a client of the route (S3 of the scope-refs plan): declarations live "
+             "in the sources journal outside the store tree, never in the cache, so `cairn "
+             "sources` prints the pod's body verbatim and there is one renderer "
+             "(`report.Sources`). Read-only: the browser surface is the journal's ONLY writer",
         go_only=True,
         go_only_why="decision 10 of the scope-refs plan: the sources read is added to "
                     "`cmd/cairn-server` only, on the arcs precedent, and the Python oracle is "
                     "not extended",
+    ),
+    Capability(
+        name="audit-refs",
+        effect=READS,
+        cli="audit-refs",
+        route=None,
+        no_route_because="reads `GET /api/v1/sources/{scope}` (the `scope-sources` row's route) and the "
+                         "synced cache, then fetches the DECLARED REMOTES itself on the auditing host; "
+                         "the pod never fetches, so there is no route of its own",
+        note="S5 of the scope-refs plan: checks entries' paths, symbols, RESOLVED shas and PR refs "
+             "against the scope's code sources, exiting on doctor's 0/9/10. Writes only its own "
+             "mirror cache",
+        go_only=True,
+        go_only_why="decision 8 of the scope-refs plan: the auditor is a Go-only verb over "
+                    "`internal/refaudit`, and the Python oracle is not extended",
+    ),
+    # The transcripts plan's agent read API client (S8, decision 17; Q15 adopted under O13). Like
+    # the memo verbs it is a client of `cairn-ui`'s CLIENT LISTENER (`CAIRN_UI_URL`), never of the
+    # pod, so no row names a route here: the pod's ledger does not move, and the listener's routes
+    # are `clientapi.ClientRoutes()` (the browser surface serves the same three answers under
+    # `/transcript/…`, in `ui.DeclaredRoutes()`).
+    Capability(
+        name="transcript",
+        effect=READS,
+        cli="transcript",
+        route=None,
+        no_route_because="reads `GET /client/v1/transcript/{skeleton,records,tool}` on `cairn-ui`'s "
+                         "client listener, never the pod; a stored transcript lives in `cairn-ui`'s "
+                         "transcript archive, outside the store tree",
+        note="one verb, three actions (`skeleton`, `records`, `tool`) as its positional; prints the "
+             "listener's JSON verbatim and records `*` in the read ledger",
+        go_only=True,
+        go_only_why="decision 17 of the transcripts plan (Q15 adopted under O13): the agent read verb is "
+                    "Go-only and the Python oracle is not extended — P8 retires it",
     ),
     Capability(
         name="cache-validate",

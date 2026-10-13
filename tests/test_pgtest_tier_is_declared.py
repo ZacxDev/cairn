@@ -25,6 +25,7 @@ real server, or whether an assertion inside one still asserts anything. That is
 from __future__ import annotations
 
 import re
+import subprocess
 import stat
 from pathlib import Path
 
@@ -409,3 +410,33 @@ def test_this_ledger_can_go_red():
     found = set(FUNC_TEST.findall(read("internal/pgstore/invites_pgtest_test.go")))
     assert "TestAGuardNobodyWrote" not in found, "internal: the control's own premise is wrong"
     assert found, "the regex matched NO test functions — it is not reading Go source"
+
+
+def _summary_line_under_pipefail(tmp_path: Path, log_text: str) -> subprocess.CompletedProcess:
+    """Run the runner's OWN `reported=` line (read out of `tests/pgtest/run.sh`, never a copy)
+    and its summary `echo` under the runner's `set -euo pipefail`, against a synthetic log."""
+    lines = read("tests/pgtest/run.sh").splitlines()
+    assignment = [ln for ln in lines if ln.startswith("reported=")]
+    summary = [ln for ln in lines if ln.startswith('echo "POSTGRES TIER PASSED:')]
+    assert len(assignment) == 1 and len(summary) == 1, (assignment, summary)
+    log = tmp_path / "tier.log"
+    log.write_text(log_text)
+    script = "set -euo pipefail\nout=$1\npassed=3\n" + assignment[0] + "\n" + summary[0] + "\n"
+    return subprocess.run(["bash", "-c", script, "summary", str(log)], capture_output=True, text=True,
+                          timeout=60)
+
+
+@pytest.mark.parametrize("log_text,version", [
+    # The ordinary run: one line names the server.
+    ("--- PASS: TestX\n    harness: server_version=18.6\nok\n", "18.6"),
+    # No line names it (an older tier, or a run that never logged it): the fallback must be
+    # REACHABLE. RED before: grep exited 1 under pipefail and the script died, printing nothing.
+    ("--- PASS: TestX\nok\n", "<version not reported by the run>"),
+    # Enough lines that the writer is still writing when the first match is taken — past the
+    # 64 KiB pipe buffer. RED before: `head -1` closed the pipe and the script exited 141.
+    ("    server_version=18.6 logged again\n" * 20000, "18.6"),
+], ids=["one", "none", "many"])
+def test_the_summary_line_survives_pipefail_with_none_one_or_many_version_lines(tmp_path, log_text, version):
+    p = _summary_line_under_pipefail(tmp_path, log_text)
+    assert p.returncode == 0, f"exit {p.returncode}: {p.stderr}"
+    assert p.stdout == f"POSTGRES TIER PASSED: 3 test(s) against PostgreSQL {version},\n"

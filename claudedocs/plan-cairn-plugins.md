@@ -183,6 +183,53 @@ field names and types alone.
   residuals. Round 7 rescopes the clean-damage budget to a FROZEN committed corpus — round 6's
   live-tree budget went red on unrelated doc edits, on deleting docs and on go1.26 — and closes
   the one round-6 regression in the entropy rule (words shielding a random end segment).
+- *Revision 23 records operator decision O17 and closes arming preconditions AP1–AP3 (#258).*
+  The operator WAIVED the redactor's held-back gate (closing-condition part 5, O15's ≥ 90% floor)
+  as an arming precondition and chose to ship capture without perfect redaction; part 5 stays as
+  a MEASUREMENT, and the last score (`leaks caught=157/190 clean damaged=18/175`) stays recorded.
+  AP1–AP3 are closed in code, each by its own stated check (Rollout); AP4 becomes a re-measure-
+  and-record step rather than a gate. Capture is still armed on NO instance: arming remains the
+  operator's act, and two preconditions stay open — S11's read ledger, and **S3b**, the agent
+  upload half and `tests/plugins/e2e.sh` that S3 (#224) did not build.
+- *Revision 24 records S3b as BUILT (#260).* `internal/capture.HTTPSink` speaks capture/v1 (CAS with
+  resume on 409, continuation frames, blobs, declared scopes; withdrawal still S6's);
+  `cairn-capture --run` is one pass for a user timer; `tests/plugins/e2e.sh` wires clauses (a), (b),
+  (c) and (h) (`sabotaged=5 caught=5`, 11 assertions, the CI `go` job). The 413 decision is in
+  Rollout's AP2 note and decision 15; the 422 decision (a placeholder, not a hold) under decision
+  6's pod re-check. An opencode write's plan is saved BEFORE it is sent, because opencode mutates
+  units in place and a lost acknowledgement would otherwise leave a cursor nothing can recompute;
+  there is one pending plan at most, settled by asking the instance its position before anything
+  new is sent.
+  The one arming precondition left is **S11**.
+- *Revision 25 records S4 as BUILT (#261).* `transcript.Visible`, `VisibilitySet` and `Store.View`
+  (decisions 3 and 4), the collapsed reading and its section on `/session` (decisions 17 and 18),
+  `GET /session/transcript`, e2e clauses (d)–(g) (`sabotaged=9 caught=9`, 15 assertions), the eleven
+  S4 mutant rows, and the walk benchmark. **The pod now derives the read half of `V` itself**: the
+  archive feeds every stored record and text blob to `scopeuse` (#224 recorded `*` for every session
+  because `scopeuse` was not on `main` then; with that, no non-owner could ever have been admitted,
+  so S4's clauses (e) and (f) needed it). Deviations and additions are in the S4 slice row.
+- *Revision 26 records operator decision O18, which ANSWERS Q16 with option (a)*: keep every client
+  current (both clients write the read ledger from S11 on) and have callers read through the client
+  rather than the cache files. F2 is NOT narrowed and no share measurement is required before
+  arming; Q16 leaves the list of open questions and is no longer an arming blocker. Keeping both
+  hosts' clients current is a rollout step, not a code change.
+- *Revision 27 records S10 as BUILT and the closing wiring MEASURED.* `plugins/clickup`
+  (`cairn-clickup`), beside plugin A in the one nested stdlib-only module, with the code the two
+  share moved into `plugins/internal/` rather than copied. **The closing condition's self-test
+  number is corrected from 14 to the measured 16**: all FOURTEEN clauses (a)–(n) are wired, and two
+  of them carry two sabotages each — (a) a Claude Code leg and an opencode leg, (g) a visibility
+  half and a listing half — so `--self-test` prints `sabotaged=16 caught=16`. The 14 was a count of
+  clauses written before those two grew a second half; nothing is unwired. Three departures, each in
+  the S10 slice row and in `plugins/README.md`: a FOURTH closed output type, `ticket-scan` (decision
+  14); ticket titles as an optional body field behind `-plugin-store-ticket-titles` on the pod AND
+  `-store-ticket-titles` on the plugin (Q8); and the commit join by session TRAILER (Q13, which
+  named the repository list and not the join — Q13 is otherwise built as recommended).
+  After #274's audit, three rules are NARROWER than decision 14 reads: a ticket is an edge only when
+  its id is a member of the fetched list — a `/t/<id>` URL and an entry's `clickup:<id>` included
+  (so the S10 test plan's "OR appears as a ClickUp URL" is not built); a suggestion's stored
+  rationale is the plugin's own fixed sentence unless titles are stored, because a model's sentence
+  quotes the ticket's name; and a title, a rationale or a model name carrying a bidirectional
+  control is refused by the pod.
 
 ## Goal and premise
 
@@ -232,7 +279,9 @@ Drop the work, or the named half, if any of these holds:
   1. Slices **S0–S11 are MERGED** on cairn `main`, verified by content (the named files exist with
      the named tests), not by ancestry.
   2. **`tests/plugins/e2e.sh` exits 0** in the `go` CI job, with **`--self-test` printing
-     `SUMMARY e2e-self-test: sabotaged=14 caught=14`** (one sabotage per clause below), and the
+     `SUMMARY e2e-self-test: sabotaged=16 caught=16`** (every clause below sabotaged — fourteen
+     clauses, sixteen sabotages, because (a) has a Claude Code leg and an opencode leg and (g) a
+     visibility half and a listing half; *revisions before 27 said 14, the clause count*), and the
      job's PASS floor set to the count measured when the script lands (the `tests/presence/e2e.sh`
      pattern, `.github/workflows/ci.yml:1045-1055`).
   3. **`cairn-capture --self-test` exits 0** in the `nix` job (the built binary, `checks.cairn-capture-self-test`; the
@@ -242,7 +291,12 @@ Drop the work, or the named half, if any of these holds:
      not read off the run).
   4. **The two example plugins' own suites exit 0** in the `go` job against in-process fake LLM and
      fake ClickUp servers, with synthetic fixtures only.
-  5. **The arming gate (O15) passes on a FRESH held-back set**: `redact-heldback <cases.jsonl>`
+  5. 🔴 **NO LONGER A GATE — WAIVED AS AN ARMING PRECONDITION BY O17, KEPT AS A MEASUREMENT.** The
+     run below is still made and recorded on the redactor commit being armed, its
+     `leaks caught=X/Y clean damaged=A/B` line verbatim; its exit code is REPORTED, not required —
+     neither arming nor this closing condition waits on it. The last recorded score is
+     `leaks caught=157/190 clean damaged=18/175` (O16). The original gate, for the record:
+     **The arming gate (O15) passes on a FRESH held-back set**: `redact-heldback <cases.jsonl>`
      (`internal/redact/cmd/redact-heldback`, built, not `go run`) exits 0 — at least 90% of leaks
      caught AND at most 15% of clean lines damaged, both controls having behaved — over a case set
      an AUDITOR wrote for the redactor commit being armed, that the fixer never saw, and that was
@@ -263,12 +317,12 @@ Drop the work, or the named half, if any of these holds:
   | **(d) visibility, owner** | the uploading owner sees the transcript section; a principal with no read on any scope in `V` gets the same bytes as a session that has no transcript | render without the predicate | S4 |
   | **(e) visibility, every WRITTEN scope** | over one store, viewer R reads `alpha-notes` AND `beta-notes` (both written) and sees it; viewer P reads only `alpha-notes` and gets the no-transcript bytes, although P's session PAGE is found | compute the written set over the VIEWER's readable scopes instead of the whole store (decision 3's trap) | S4 |
   | **(f) visibility, every READ scope (O8)** | the session WROTE only `alpha-notes` and READ `beta-notes` (a rendered recall of it is in a tool result); viewer Q reads `alpha-notes` only and gets the no-transcript bytes; R sees it | drop the read half from `V` | S4 |
-  | **(g) empty set is owner-only (O10)** | a session with no recorded write or read is stored, visible to its owner, listed on the owner's "My sessions" page, and absent for everyone else | treat "every scope of the empty set" as true | S4 |
+  | **(g) empty set is owner-only (O10)** | a session with no recorded write or read is stored, visible to its owner, listed on the owner's "My sessions" page, and absent for everyone else | treat "every scope of the empty set" as true; and (the listing half) list "My sessions" by visibility instead of ownership | S4 (visibility); S7 (listing) |
   | **(h) routing honours reads (O8)** | THE routing fixture (shared with decision 16 and S2's routing test): a routing table sending `alpha-notes` to the personal instance and `beta-notes` to the client instance, and a session that WROTE `alpha-notes` and READ `beta-notes` in its FIRST turn. It is uploaded to NEITHER instance (the relay sees 0 requests for it) and is held, logged | route on written scopes only | S3 |
   | **(i) toggles default off, and only narrow** | a plugin token's pending list is empty until a toggle is set; after `alpha-notes` is set ON it lists exactly the sessions whose every scope in `V` is ON | default a missing scope toggle to ON | S5 |
   | **(j) capability scoping** | the summary plugin's token is refused (403, uniform) on a transcript of a session where it is OFF, and on writing a `ticket-edge` output | drop the per-session toggle check on `transcript:read` | S5 |
   | **(k) outputs inherit visibility, and say what they are** | a summary is shown to exactly the principals clauses (d)–(g) admit, and its render carries plugin name, version, model and watermark | render outputs without the source predicate | S6 |
-  | **(l) deletion cascades** | the owner deletes a session's transcript; its directory, its plugin outputs and its edges are gone; the plugin's next transcript read is 404 | delete the transcript but keep outputs | S6 |
+  | **(l) deletion cascades** | the owner deletes a session's transcript; its directory, its plugin outputs and its edges are gone; the plugin's next transcript read is refused — *as built (S6): the ONE uniform 403 body, byte-identical to a never-stored id's, NOT a 404: a distinct answer for "was stored, now deleted" would tell any plugin token which session ids ever held a transcript (T10), and the plugin learns nothing it needs from it; and NOTHING LANDS AFTERWARDS — a deletion is final for its root, so an upload under it is refused 410 `deleted` and the capture agent stops sending the session for good (#273 round 1: with no `meta.json` the root read as "a first upload", and a stream or blob sent from its start re-created the session)* | delete the transcript but keep outputs | S6 |
   | **(m) a shipped prefix is withdrawn when routing changes** | the same two instances; a session WROTE `alpha-notes` and shipped its prefix to the personal instance, then READ `beta-notes`. On the agent's next run no record from the read onward reaches either instance, the agent sends a withdrawal, the personal instance answers `{"deleted": true}`, and its directory, outputs and edges for the session are gone (the deletion cascade of (l)) | skip the withdrawal (stop shipping only) | S6 |
   | **(n) the client ledger counts (O11)** | a session that WROTE `alpha-notes` READS `beta-notes` only through `"$BIN" sessions --scope beta-notes`, where `BIN` holds the client's path — no `cairn` token in the command line, no header in the output — with the session id in its environment; the client writes a ledger record, the agent uploads it, and viewer Q (reads `alpha-notes` only) gets the no-transcript bytes while R (reads both) sees it | the pod ignores the uploaded ledger | S11 |
 
@@ -284,17 +338,36 @@ Drop the work, or the named half, if any of these holds:
 
 ### Rollout (NOT part of the closing condition)
 
-- 🔴 **Nothing is armed before closing-condition part 5 holds for the redactor being armed (O15)** —
-  not the personal instance, not one host. A rule change after the gate passed resets it: the next
-  arming needs a NEW held-back set scored against the new commit.
-- 🔴 **Today the gate FAILS and capture is armed NOWHERE (O16).** S1 merges unarmed; no rule
-  round is scheduled to change that. Arming waits for a separate operator decision, expected to
-  narrow WHAT is captured (raw tool output excluded or truncated) rather than to redact better,
-  and that decision still has to pass part 5 on a fresh set. The steps below describe what
+- ⚠ **THE HOST → `cairn-ui` TRANSPORT IS THE DEPLOYMENT'S MESH, NOT TLS, AND THE AGENT MUST BE TOLD
+  SO (found by arming prep, built with S6).** `cairn-capture` refuses a worker URL that is plain
+  `http` to a non-loopback host, and the deployment reaches its host-side listeners (presence, the
+  client API, and now the worker listener) as plain `http` over a private encrypted mesh address —
+  so the real worker URL was refused (exit 2). The opt-in is `-allow-plaintext-host [ALIAS=]HOST`
+  on `cairn-capture --run`: an EXACT host match for that instance's worker, a flag only (no default,
+  no environment spelling), a warning line on every run it is used — and one, never a refusal, when
+  it admits nothing (a worker later moved to `https` must not stop capture); redirects stay refused,
+  NO proxy from the environment is ever used (a plain-`http` request would go to `HTTP_PROXY` whole),
+  and the redaction-off test build stays loopback-only. **In that deployment
+  the mesh is the transport protection** — the flag is the operator's assertion that the path to the
+  named host is protected, and nothing in the agent can check it (`internal/capture/README.md`).
+  The plugins' own API client takes the same flag with the same semantics (S9).
+
+- 🔴 **CLOSING-CONDITION PART 5 IS NO LONGER AN ARMING GATE (O17).** The operator waived it and
+  chose to ship capture without perfect redaction. It is kept as a MEASUREMENT: the held-back
+  score is re-run and recorded for the redactor commit being armed (AP4), and the last one —
+  `leaks caught=157/190 clean damaged=18/175`, under the 90% floor — stays on record. A secret the
+  redactor misses is stored (T1).
+- 🔴 **Capture is still armed NOWHERE.** S1 and S3 merged unarmed (O16), and O17 waived a gate — it
+  did not arm anything. S3 (#224) built only the POD half; **S3b is now BUILT**: the host-side
+  uploader (`internal/capture.HTTPSink`, `cairn-capture --run`) and `tests/plugins/e2e.sh` with
+  clauses (a), (b), (c) and (h), gated in the CI `go` job. ✅ S3b CLOSED as a precondition. ✅ **S11's
+  read ledger** is BUILT too (#266, `8184e79`); what remains is the client-currency step below (O18)
+  and then the operator's own act (`-arm-transcript-capture`). The steps below describe what
   happens after it, not now.
-- 🔴 **AND FOUR S3 ARMING PRECONDITIONS, INDEPENDENT OF PART 5: nothing is armed while any is
-  open.** Each was found by #224's audit against the S3 head, is harmless while capture is
-  disarmed, and becomes reachable the moment it is armed. Recorded, not fixed, in #224.
+- 🔴 **AND FOUR S3 ARMING PRECONDITIONS: AP1–AP3 ARE CLOSED (#258); AP4 IS A STEP, NOT A
+  GATE.** Each was found by #224's audit against the S3 head, was harmless while capture is
+  disarmed, and becomes reachable the moment it is armed. Recorded, not fixed, in #224; AP1–AP3
+  closed in #258, each by its own check below.
   - **AP1 — `-transcript-dir` can COLLIDE with `cairn-ui`'s own state.** The archive writes
     `<dir>/journal.jsonl` and `<dir>/sessions/` (`internal/transcript/archive/archive.go`,
     `journalName`/`sessionsDir`), and `ResolveDir` refuses only a directory INSIDE the store root.
@@ -306,6 +379,16 @@ Drop the work, or the named half, if any of these holds:
     /var/lib/cairn-ui`. **Closed when** startup REFUSES a `-transcript-dir` holding any entry the
     archive does not own (or the archive's names cannot collide), pinned by a startup test that
     places the control journal and the session file in the directory and watches the refusal.
+    ✅ **CLOSED (#258)** — two layers. `archive.CheckOwnership` (run by `Open` before it creates or
+    removes anything) refuses any entry but `journal.jsonl` whose every line is this store's
+    deletion record, a `sessions/` of session directories and a `frames/` of staged-frame files;
+    `cairn-ui` also refuses a `-transcript-dir` that would HOLD one of its own state paths
+    (control journal, session file, arc journal, token files), resolved through symlinks and for
+    files not yet created — which the ownership check, reading what is there at startup, cannot
+    see. `TestTheBinaryRefusesATranscriptDirHoldingItsOwnState` (control journal, session file,
+    another program's journal; the store's own populated directory serves), and
+    `TestOpenAcceptsAFreshAndItsOwnDirectoryAndNothingElse`. The session-file case was already
+    refused at the S3 head by accident (`MkdirAll` over a file), so it is an invariant guard there.
   - **AP2 — no cap on an ASSEMBLED framed record.** Each request is bounded (`worker.DefaultMaxBody`,
     8 MiB) and a sequence by `MaxFrames` (4096), but the final frame appends to whatever was staged
     (`frames.go`, `append(staged, chunk...)`) with no per-record bound. The audit measured a 32 MB
@@ -313,13 +396,50 @@ Drop the work, or the named half, if any of these holds:
     loop. **Closed when** an assembled record over a stated cap is refused with 413 before it is
     read into memory, by a test that sends one frame past the cap and asserts 413 and nothing
     stored.
+    ✅ **CLOSED (#258)** — `archive.MaxAssembledBytes` = 4 MiB, refused with 413 `too-large` on the
+    frame that crosses it, from the staged size in the index before any `ReadFile`; unframed
+    records and blobs are bounded the same. The final frame was measured to ALLOCATE ≈18× the
+    record, linearly over 1–4 MiB (≈72 MiB at the cap), re-measured on every run against a 100 MiB
+    budget (`TestTheAssembledRecordCapFitsThePod`, a budget guard, green at the S3 head too).
+    `TestOneFramePastTheCapIs413AndStoresNothing`.
+    ⚠ **THE CAP NARROWS O9 — an agent decision, stated rather than implied.** Decision 15 says
+    nothing is truncated at storage; a record or blob over 4 MiB is now REFUSED whole (413), so it is
+    not stored at all unless the uploader splits or truncates it. Measured on one host: 0 Claude Code
+    JSONL lines over 4 MiB and 40 over 1 MiB (character length). ✅ **S3b's decision — a
+    PLACEHOLDER, not a truncation:** a record or blob over the bound (`capture.MaxRecordBytes`,
+    pinned equal to `archive.MaxAssembledBytes`) is replaced, BEFORE it is sent, by
+    `{"cairn_capture":"omitted","reason":"too-large","bytes":N,"max_bytes":M}` (a blob: one text
+    line saying the same), under the SAME `src` and cursor; a pod whose bound is smaller answers 413
+    and gets the same placeholder. The stream moves on, so the session's cursor is never wedged, the
+    omission is visible in the stored transcript, the run logs it (`omitted=` on its summary line),
+    and none of the record's bytes leave the host. A truncation was rejected: a cut JSON record is
+    not a JSON value (the pod stores only those), and a "first 4 MiB" of a record is content the
+    operator never chose to keep in that shape. `TestAnOverBoundRecordIsAPlaceholderAndTheCursorMovesOn`. ⚠ **DISCLOSED RESIDUAL:** concurrent UNFRAMED requests (each up
+    to 8 MiB, `worker.DefaultMaxBody`; two near-cap records in one were measured allocating ≈129
+    MiB) have NO in-flight limit — only the sole capture owner's tokens can reach the route, which
+    bounds who, not how many.
   - **AP3 — the 🟢 findings, each small and each needed before arming:** a session with no
     `meta.json` is never swept by retention; abandoned frames hold quota until a restart; blob
     names, `src` and cursors are not re-checked by the pod's redaction pass (a 40-character token
     fits the blob-name pattern); and the owner principal is checked only at startup. **Closed
     when** each has its own test going red on the S3 head.
+    ✅ **CLOSED (#258)**, each red on the S3 head: a meta-less session is swept on the age of its
+    newest write and journaled as `retention-uncommitted` with no owner
+    (`TestASessionWithNoMetaIsSweptByRetention`); a staged sequence idle past `archive.FrameIdle`
+    (1 h) is discarded by the sweep (`TestAbandonedFramesStopHoldingQuotaWithoutARestart`); root,
+    stream, blob name, `from`, `to`, each declared scope and each `src` are re-checked, refused
+    422 naming the FIELD, never the value (`TestTheRecheckReadsNamesSrcAndCursors`,
+    `TestATokenInABlobNameIs422AndNeverEchoed`); `worker.Config.OwnerHeld` re-asks the authority on
+    every request, refusing the uniform 401 without counting toward the lockout
+    (`TestTheOwnerIsCheckedOnEveryRequest`).
   - **AP4 — the marker-adjacency residual (T1) is RE-MEASURED on the commit being armed**, so the
-    statement there describes that commit's redactor and not #224's.
+    statement there describes that commit's redactor and not #224's. ⚠ **Since O17 a STEP, not a
+    gate:** the re-measurement — and the held-back score (part 5) beside it — is run and RECORDED
+    for the commit being armed; neither result blocks arming.
+- **Every capturing host's clients are current before arming (O18).** Both `cairn` clients and
+  `cairn-capture` on a capturing host must be built from a cairn commit at or past the S11 merge
+  (`8184e79`, #266) — older clients write no read ledger, so every session that runs one is
+  owner-only by F1. Shipping that pin to both hosts is the coordinator's rollout step.
 - **The personal instance first**, with capture armed on one host, retention set, plugins
   registered but every toggle OFF (decision 10 — an agent decision, not an operator one). The
   operator turns on summaries for one scope, reads a week of output, and judges it. The same for
@@ -670,7 +790,8 @@ script that prints only counts.
 - **XSS:** every rendered value is a `g.Text` or attribute; `Raw`/`Rawf` are AST-banned
   (`AGENTS.md`; `internal/ui/README.md` "The raw-node ban"). LLM output is attacker-influenced
   text and is rendered the same way — never as Markdown-to-HTML.
-- **Script policy:** exactly one allowlisted script, `filter.js` (`internal/ui/script.go:66`).
+- **Script policy:** exactly one allowlisted script, `filter.js` (`internal/ui/script.go:66`), at the
+  cited revision; since grown to three (`filter.js`, `pwa.js`, `join.js` — `internal/ui/script.go`).
   Decision 18's collapsing and "read more" use `<details>`/`<summary>`, so it adds none.
 - **No Content-Security-Policy** by operator decision (`internal/ui/server.go:1673`).
 
@@ -727,6 +848,8 @@ script that prints only counts.
 | O14 | Answers Q6: retention 90 days; an instance quota of about twice the steady state — about 20 GB compressed per capturing host on the personal instance — re-measured after a month of real uploads. | Implemented in S3 (`-transcript-retention`, `-transcript-quota`); decision 15. |
 | O15 | After S1's third review round, the redactor changes approach: redact by KEY CONTEXT (any value attached to a secret-sounding name — a key, a flag, an environment variable, a config field, SQL's `IDENTIFIED BY`) plus ENTROPY (long random-looking tokens), retiring or narrowing the per-format rules those two subsume and accepting more damage to clean text, within a ceiling. Tool line prefixes are normalised FIRST, so every rule sees a line's content, with redaction still applied to the original bytes. And an arming gate: capture is armed on NO instance until a FRESH held-back set — written by an auditor, never seen by the fixer, replaced every round — shows at least 90% of its leaks caught AND at most 15% of its clean lines damaged. | Decision 6 (S1: `internal/redact/{normalise,keyed,entropy}.go`); closing-condition part 5; the S3 arming precondition; Rollout. The gate is `internal/redact/heldback.go` + `cmd/redact-heldback`. *As built (revision 21), and no wider: "any value" means any value whose SHAPE is not code, a placeholder or prose, at any length (revision 20's refusal of a bare run over 1 KiB is retracted); a name whose secret word is a segment rather than its end — and the abbreviation `cred`/`creds` — takes only a value that itself looks like a credential. Decision 6 states the refusals and T1 their measured cost.* |
 | O16 | After S1's sixth review round, the operator ends the heuristic fix rounds: round 7 is the last, and S1 (#216) merges with capture UNARMED on every instance. O15's gate stays the arming condition, and today it FAILS: a fresh auditor-written held-back set of 190 leak lines and 175 clean ones scored `leaks caught=157/190 clean damaged=18/175` at the round-6 head `13219d8` — 82.6% caught, under the 90% floor; 10.3% damaged, inside the 15% ceiling — and rounds 4, 5 and 6 moved that set only from 154 to 155 to 157. Arming is a separate decision for later, and is expected to be about capturing LESS — for example excluding or truncating raw tool output — rather than about redacting better. | Revision 22. T1 states the scorecard and its misses and damage by category as the measured residuals, plus round 6's unfixed findings; `internal/redact/README.md` ("The gate FAILS"); closing-condition part 5 and S3's arming precondition stand unchanged; Rollout. |
+| O17 | The operator waives the redactor's held-back gate as an ARMING precondition: capture may ship without perfect redaction. The gate (closing-condition part 5, O15's ≥ 90% of leaks caught on a fresh auditor-written set) is kept as a MEASUREMENT, not a gate; the last measured score stays on record — `leaks caught=157/190 clean damaged=18/175` at the round-6 head — and nothing about the redactor's measured residuals (T1) changes. | Revision 23. Closing-condition part 5 (now a recorded measurement); Rollout (no "nothing is armed before part 5"; AP4 is re-measure-and-record); the S3 row's arming note; `internal/redact/README.md` ("The gate FAILS"); the arming warning `cairn-ui` prints. A secret the redactor misses is stored — T1's residual, accepted. It does NOT arm anything: arming stays the operator's act, and S11's read ledger is still required. |
+| O18 | Answers Q16 with option (a): keep every `cairn` client current — both clients write the read ledger from S11 on — and have callers read through the client rather than the cache files. F2 is not narrowed (option b not taken) and no measurement of the owner-only/held share is required (option c not taken). | Revision 26. Q16 marked ANSWERED and removed from the arming blockers; the residual owner-only/held cases Q16 lists (F1 for a stale or id-less client, F2 for any input naming the cache root, a ledger `*` from a `*`-writing verb) are ACCEPTED as they stand. Keeping both hosts' clients at or past the S11 merge is a rollout step (Rollout). |
 
 ### Chosen by the AGENT writing this plan (open to review)
 
@@ -767,6 +890,13 @@ script that prints only counts.
      context, opencode tool outputs. A content signal; clause (f).
    - `R_header` maps a `subsystem-recall:` line whose `scope=` is absent or not a valid scope name
      (`(all scopes)`, the `renderer.go:158` form) to the sentinel **`*`** — "unknown scope" (R7).
+   - **A memo block is a read too** (*#261 round 2*): the memo hook injects a `<<<cairn-memo` block
+     with no `subsystem-recall:` header and no command line, and its previews are that scope's
+     text. `R_header` therefore also holds every scope such a block names (its `· <scope> ·` memo
+     headings and `and N more on <scope>` lines; `scopeuse.MemoScopes`), and a block naming none it
+     can parse adds `*`. Before this, a session shown a gamma memo stayed visible to an alpha-only
+     viewer, memo text included. ⚠ A memo's text reaching a session WITHOUT the renderer's fence
+     (quoted, or read in the browser tab and pasted) is not seen; T3.
    - `L(s)` = **the client READ LEDGER (O11).** Both `cairn` clients — the Go `cmd/cairn` and,
      while it lives, the Python oracle — append one record per SERVED scope access to a local,
      append-only ledger whenever a session id is present in their environment, and the capture
@@ -820,18 +950,34 @@ script that prints only counts.
    - **Unknown names fail closed.** A scope name in `V` that the control model does not know
      (renamed, deleted, on another instance) and the sentinel `*` are unreadable by everyone but the
      owner.
+   - 🔴 **F1's `*` is the ONE element of `V` that is re-decided rather than kept** (*#266, as
+     built in S11*). F1 is "a tool input names the program AND the ledger is EMPTY" — a question
+     about the whole session, whose ledger arrives on a stream of its own. Decided per upload and
+     kept, it was always "no ledger yet", so every session that named the program stayed owner-only
+     after its ledger landed. So the pod keeps only F1's EVIDENCE (`names_program`, grow-only) and
+     decides F1 when `V` is asked for, against the ledger records it holds (`ledger_records`); the
+     capture agent DECLARES `V` without F1's `*` (it keeps F1 for its own routing and hold
+     decision). The cost is the one T3 already accepts: the ledger is self-reported, so a forged
+     record lifts F1 — as a forged or deleted one already shrinks `L`.
    - **Cost.** `R_header`, `L`, `F` and `D` are computed once per upload and stored in
-     `meta.json` (grow-only). `W_trailer` changes whenever anyone writes a trailer, so it is a
+     `meta.json` (grow-only — except F1's `*`, above). `W_trailer` changes whenever anyone writes a trailer, so it is a
      whole-store walk at view time — unmeasured for this design. S4 benchmarks it beside
      `BenchmarkSessionPageAndScopeTabs`; if it costs more than the session page's own walk, S4 caches
      it per session keyed on a store-change signal, which S4 must identify and name (none is
-     designated here).
+     designated here). ✅ **Measured in S4:** 0.24–0.31× the session page at 10×30 and 0.31–0.49× at
+     30×100, so nothing is cached; the walk is skipped for the owner and for a viewer the stored half
+     of `V` already refuses. 🔴 *#261 round 2:* **a walk's answer is KEPT** — every walk unions what
+     it found into the grow-only `meta.json` `written_scopes`, and `V` reads it — because a trailer
+     leaves the store when its entry is rewritten without it, and a per-view walk alone let that
+     SHRINK `V` (a refusal became a 200). ⚠ Still open: a trailer removed before any walk saw it.
 
 3a. **The client read ledger (O11; this design is the agent's, under that decision).**
    - **When it is written.** Each client checks its environment for a session id —
      `CLAUDE_CODE_SESSION_ID` (MEASURED on this host: Claude Code sets it for tool commands, and in
      a SUBAGENT's tool commands it equals the ROOT session id, so subagent reads attribute to their
-     root, matching decision 7) or `OPENCODE_SESSION_ID` — **measured in S0: opencode does NOT set
+     root, matching decision 7) or `OPENCODE_SESSION_ID` — 🔴 *as built (#266):* **the opencode id
+     WINS when both are set**, because an opencode run launched from a Claude Code tool inherits the
+     Claude id, which then names the OUTER session — **measured in S0: opencode does NOT set
      it.** The 1.18.29 bundle carries no such string (the same search finds
      `OPENCODE_DISABLE_AUTOUPDATE` in it — the positive control). On the measured host it is
      exported by the operator's OWN `shell.env` plugin from the hook's `sessionID` argument — the
@@ -890,6 +1036,16 @@ script that prints only counts.
    - **Upload.** The capture agent reads `<session>.jsonl` for the root and every child id and
      ships the records as a `ledger` stream of the root (decision 15's CAS and caps); the pod folds
      them into `L(s)`.
+   - **Scope NAMES are content too** (*#266*): output that lists scopes beyond the one read records
+     them — a `scope-absent` recall or search and a refused `validate --scope` list every held
+     scope (`*`), and the "further malformed entries in OTHER scopes" line records each scope it
+     names. Every verb carries a ledger CLASS in the Go verb table (`resolved`, `named`, `*`,
+     `none`), mirrored by the oracle and pinned verb by verb; S8's `transcript` verbs fail that test
+     until classed `*`.
+   - ⚠ **Residual — retention.** Nothing deletes a ledger file: `read-ledger/` grows by one small
+     file per agent session for the life of the host. Owner: arming/rollout (AP1–AP4), which decides
+     a retention rule (e.g. delete a file once its session's `ledger` stream is acknowledged and the
+     session is past the capture window). No code here.
 
 4. **ONE predicate: `transcript.Visible(viewer, meta, V) bool`**, asked by every surface — the
    transcript section, the agent read API (decision 17), the raw-record view, plugin output
@@ -904,7 +1060,9 @@ script that prints only counts.
    and nothing says which scope hid it. *Revision 1 refused every narrowed credential outright;
    `Narrow` already intersects scopes, so only the owner arm needed the un-narrowed requirement.*
    On `/session`, the owner arm also FINDS a page that `report.SessionAcross` would not (an O10
-   session with no write): the page then shows the transcript section alone.
+   session with no write): the page then shows the transcript section alone. *As built (S4): the
+   PREDICATE finds it, both arms — a reader of every scope a read-only session touched gets the page
+   too, since the raw-record row would serve it the same content.*
 
 5. **The capture agent is a NEW stdlib-only binary, `cmd/cairn-capture`, added to the import ban's
    `LinkedBinaryRoots`** — not a verb of `cmd/cairn`.
@@ -1018,6 +1176,20 @@ script that prints only counts.
      holds that stream and logs, rather than losing it), NOT a miss: the same table cannot catch
      what it does not recognise. Clause (b) is measured on the agent's outgoing bytes precisely so
      this refusal cannot mask it.
+     ⚠ **AGENT DECISION (S3b, #260's audit; under O17's "imperfect redaction accepted") — the host
+     does NOT hold the stream on a 422, which the sentence above said it would.** A hold was built
+     first, and the pod's re-check was then MEASURED refusing clean data (its entropy rule over an
+     encoded non-secret line), so a hold freezes a stream for good on a false positive — and a
+     session's later records can never pass the stuck one, because the stream is one
+     compare-and-swap chain. Instead the uploader replaces EXACTLY the refused record (the pod names
+     its index) or blob with a placeholder — `{"cairn_capture":"omitted","reason":
+     "refused-by-recheck","bytes":N}`, or one text line for a blob — and the stream moves on. The
+     refused bytes are sent once — the refusal is saved in the agent's state BEFORE the placeholder
+     leaves, so a later run sends the placeholder at once (residual: a process killed between the
+     422 and that save sends them one more time); **nothing the pod refused is ever stored**; the
+     omission is counted (`recheck-omitted=`) and logged. The one 422 that still holds is one
+     naming a request FIELD (a name or cursor matched the table): no placeholder can answer that,
+     so that stream or blob version is held and logged.
    - *Measurement (closing condition part 3):* a generator emits synthetic transcripts in BOTH
      formats with **P** secrets planted in realistic positions — a shell tool's stdout of a dotenv
      file, `toolUseResult.originalFile`, an edit's `oldString`, a JSON-escaped value, a Kubernetes
@@ -1094,9 +1266,14 @@ script that prints only counts.
    - **Manifest** (committed beside each plugin; registered on the pod by the operator through
      `-plugin-registry <file>`, no default — registering a plugin IS the instance-level decision):
      `schema`, `name`, `version`, `description`, `capabilities` (a closed in-tree vocabulary:
-     `pending:list`, `transcript:read`, `output:read:<type>`, `output:write:<type>`), `toggle_key`
-     (the plugin name), `output_types` (each a member of a CLOSED in-tree set: `summary`,
-     `ticket-edge`, `ticket-suggestion`), `calls_model` (bool, rendered on `/plugins`).
+     `pending:list`, `transcript:read`, `output:read:<type>`, `output:write:<type>`), ~~`toggle_key`
+     (the plugin name)~~, ~~`output_types`~~ (each a member of a CLOSED in-tree set: `summary`,
+     `ticket-edge`, `ticket-suggestion` — *and, since S10, `ticket-scan`: see decision 14*),
+     `calls_model` (bool, rendered on `/plugins`).
+     ⚠ **`toggle_key` and `output_types` are SUPERSEDED (#270 round 0, D1/D2) and a registry
+     carrying either is REFUSED:** toggles are keyed by the plugin's `name`, and the types a plugin
+     writes are DERIVED from its `output:write:<type>` capabilities (`Manifest.OutputTypes`) — one
+     declaration, so there is no second spelling to disagree with it. The closed type set stands.
    - **Output envelope**, pod-validated: `{plugin, plugin_version, model, session, input_watermark:
      {stream → seq}, type, body}`; the pod stamps `produced_at` and the token's plugin name (a plugin
      cannot claim to be another). Bodies are validated against the in-tree schema for their type
@@ -1115,6 +1292,22 @@ script that prints only counts.
       `allowed` (the scope's admins consent; nothing runs because of it alone), `on` (consent AND
       run).
     - **Arc toggle** — `unset` (default), `on`, `off`, set by `admin` on the arc's HOME scope.
+      *As built (#270 round 1, then S6):* an arc speaks only for a session whose `V` holds the
+      arc's home. **`on` is read LIVE** against the arc's members at the moment of the decision;
+      **`off` (the veto) also covers a SNAPSHOT** — the member ids the arc listed when the admin
+      set it — so removing a session from an `off` arc lifts nothing. The arc toggle POST carries a
+      digest of the member list its page rendered and is not saved over a changed list.
+      🔴 **AN AGENT DECISION, OPEN TO OPERATOR REVIEW (S6, #273 round 0):** a snapshot for `on` as
+      well was built first — "an arc toggle covers exactly the members an admin saw" — and
+      withdrawn, because per-arc summaries must stay continuous as an arc grows (O5): frozen at the
+      admin's view, an `on` arc would stop at every session added after it. **The residual this
+      accepts, exactly:** a WRITER of an `on` arc's home scope, who is not an admin, can enrol a
+      session by adding it to the arc, when that session touched the home scope and every other
+      scope in its `V` is `allowed` or `on`. `allowed` IS that consent — an arc may turn the plugin
+      on for sessions that touched the scope — and `/plugins` and both toggle blocks say so in
+      those words. A scope left `off` is never overridden. The alternative (snapshot `on` too, an
+      admin re-saving the toggle to admit each new member) is one function away
+      (`plugins.ArcsFor`).
     - **Session opt-out** — the owner may turn a plugin OFF for one session. OFF only: a
       session-level ON is refused 400, so it can never enable anything. *Kept because scope consent
       is per SCOPE: when a session's every scope is ON, its owner has no other way to keep ONE
@@ -1173,8 +1366,14 @@ script that prints only counts.
       does not resolve produces no edge.
     - `ticket-suggestion {ticket_id, confidence: 0.0–1.0, rationale (≤ 280 chars)}` — LLM-produced,
       rendered as a suggestion, never promoted to an edge by the plugin.
+    - *As built (S10):* `ticket-scan {system, edges, suggestions, model_asked}` — that a matcher
+      EXAMINED the session through the envelope's watermark, whatever it found. It exists because
+      decision 13 advances a session only when its plugin writes an output: without it a session
+      that names no ticket is pending forever. It is a claim like the others and is rendered as one.
     - **What ClickUp material is stored:** the ticket id (and custom id) only by default; the ticket
-      TITLE only when the instance sets a no-default `-plugin-store-ticket-titles` (Q8).
+      TITLE only when the instance sets a no-default `-plugin-store-ticket-titles` (Q8). *As built
+      (S10): an optional `title` on both bodies (≤ 256 bytes), refused 400 by the pod unless that
+      flag is set; the plugin sends it only with its own `-store-ticket-titles`.*
       Descriptions, comments and assignees are never stored. Edges and suggestions are visible
       exactly when their session is (decision 4).
 
@@ -1188,7 +1387,10 @@ script that prints only counts.
       `{seq, src, rec}` where `src` is the source offset or part version and `rec` the redacted raw
       record; `blobs/` for persisted tool-result files; `outputs.jsonl` for plugin outputs. The
       server assigns `seq` per stream, so ONE watermark shape serves both runtimes.
-    - **Nothing is truncated at storage** (O9). *Revision 1's per-record 1 MiB truncation and
+    - **Nothing is truncated at storage** (O9) — ⚠ *except that, since #258 (AP2), ONE record or blob
+      over 4 MiB is refused whole (413) rather than stored, and the uploader (S3b) stores a
+      PLACEHOLDER naming its size in its place, under the same cursor, so the stream moves on;
+      Rollout's AP2 note states the narrowing, the placeholder and its measurement.* *Revision 1's per-record 1 MiB truncation and
       per-session cap are REMOVED*: the measured p99 root session is 72 MB and the max 154 MB, so a
       per-session cap would have cut exactly the large sessions. Size limits exist only at READ time
       (decisions 17, 18). A request body is bounded; a record larger than one request is sent as
@@ -1248,6 +1450,15 @@ script that prints only counts.
       a `false` answer is final and is logged loudly ("prefix not withdrawn: not held by this owner and host" — e.g. the
       token was reissued under another host label), and the session stays held rather than being
       re-shipped, so the prefix's presence elsewhere is surfaced instead of duplicated. Clause (m).
+      *As built (S10, from #273's and #274's audits): before withdrawing on a MOVE the agent probes
+      the destination's position (nothing is stored), and only a definite position lets the
+      withdrawal go ahead. A destination that answers 410 — it holds a final deletion of this root,
+      which a routing-table edit can route a session back to — means the session is HELD where it
+      is, with no withdrawal; a destination that does not answer DEFERS the withdrawal to the next
+      run. Withdrawing first ended the session's capture on every instance. ⚠ An AGENT decision,
+      open to operator review, because it relaxes this rule: while the destination cannot be asked,
+      and for good after a 410, the prefix stays on an instance the current table no longer routes
+      its scopes to, until its owner deletes it there.*
     - ⚠ **Re-shipping from offset 0 needs the source.** If the runtime has already deleted part of a
       session's files on the host, the re-shipped copy is what remains, and the agent logs the
       shortfall; it never re-sends bytes it no longer has.
@@ -1332,7 +1543,7 @@ script that prints only counts.
       and `isMeta` content are `runtime` units and render as labelled, collapsed blocks.
     - **Assistant text** longer than 1,200 characters or 15 lines renders its head, then
       `<details><summary>read more (N more characters)</summary>…the rest…</details>`. `<details>`
-      needs no script, so `AllowedScriptSources` keeps its one entry.
+      needs no script, so `AllowedScriptSources` gains no entry.
     - **Tool calls** render collapsed: `<details><summary>Bash · exit 1 · 3.2 KB</summary>` with the
       input and the result inside; a result longer than 64 KiB shows its first 64 KiB and links to
       the raw-record view for the rest (a DISPLAY limit; storage is untouched).
@@ -1346,7 +1557,9 @@ script that prints only counts.
       type and size, with the bytes in the raw view. *Revisions 3–16 rendered a "withheld"
       placeholder here; O12 retracted it.*
     - **Pages** are bounded by turns (`?turn=` paging, 50 turns per page) so a 154 MB session never
-      renders in one response.
+      renders in one response. *As built (#261 round 3): also by 1,000 items, the page ending at a
+      turn boundary, and `?turn=N` starts the page AT turn N rather than folding onto a fifty-turn
+      grid — so a turn the item bound pushes off a page is the next page's first.*
 
 ## The contracts
 
@@ -1364,6 +1577,9 @@ POST {worker}/capture/v1/sessions/{root}/streams/{stream}/records
   422 a record matched the rule table (index named, value not); nothing stored
   507 instance quota reached (named)     400 malformed / host ≠ token's host / unknown field
   401 uniform
+  410 {"refused":"deleted"}      # (S6) the root's transcript was DELETED here — by its owner, a
+                                 # withdrawal or retention — and that is final: only ever to the
+                                 # deleted root's own (owner, host), who must stop sending the session
 POST {worker}/capture/v1/sessions/{root}/blobs/{name}   # a persisted tool-result file: redacted
                                                          # text, or binary bytes as they are (6a,
                                                          # O12); same CAS, frames, 409/422/507 rules
@@ -1375,6 +1591,10 @@ POST {worker}/capture/v1/sessions/{root}/withdraw       # decision 16: runs the 
                               # three, so no oracle (a `true` reveals only the caller's own root)
   # Revision 3 answered a uniform {"withdrawn": true} in every case, which made the agent's "retry
   # until acknowledged" unable to tell a deletion from a no-op; retracted.
+  # As built (S6): the request body is not read (who is asking is the token row's owner AND host);
+  # "already withdrew it" is ANY journaled deletion of this (owner, host)'s root — retention and the
+  # owner's own delete included; an id that is no session id is the same {"deleted": false}; and the
+  # route is NOT behind the arming gate (it stores nothing). 401 uniform, as every capture route.
 
 # plugin — worker listener, plugin token (name)
 GET  {worker}/plugin/v1/pending?limit=10
@@ -1385,6 +1605,10 @@ GET  {worker}/plugin/v1/transcript?session=s-0001&stream=main&from_seq=M&max_byt
 GET  {worker}/plugin/v1/outputs?session=s-0001&type=summary   # needs output:read:summary
 POST {worker}/plugin/v1/outputs          {envelope, decision 9}  → 201 {"id":"o-…"}
   403 uniform for every capability, toggle or type refusal     401 uniform
+  # …and for a session that is not stored, DELETED sessions included (S6; clause (l) as amended)
+  507 {"refused":"quota","quota_bytes":N}   # the plugin's share, all plugins' share, or the instance
+                                            # quota — the body carries the limit, the operator's log
+                                            # says which (#270, S6)
 
 # agent reads — BROWSER listener, the reader's own credential, decision 4's predicate
 GET /transcript/skeleton  ·  GET /transcript/records  ·  GET /transcript/tool   (decision 17)
@@ -1394,9 +1618,9 @@ GET /transcript/skeleton  ·  GET /transcript/records  ·  GET /transcript/tool 
 
 | threat | control |
 |---|---|
-| **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. 🔴 **THE MEASURED RESIDUAL IS LARGE ENOUGH THAT CAPTURE IS UNARMED (O16).** A fresh auditor-written held-back set (190 leak lines, 175 clean) scored `leaks caught=157/190 clean damaged=18/175` at the round-6 head, under the arming gate's 90% floor, and three fix rounds moved it 154 → 155 → 157. Its 33 MISSES by category: a secret in prose 11 of 15 missed; a PIN 9 of 10; a positional argument in code 6 of 12; a CLI flag no rule reads 2; a hex secret 2; a long value 1; a value under a strong name 1; a symbol-led value 1. Its 18 DAMAGED clean lines: base64 of non-secret data 9 of 10; a public key 8 of 10; a type annotation 1. Round 6's findings left unfixed by O16, stated as residuals: (1) the `.netrc` context rule damages prose — `See netrc(5).` then `password field`, a grep path containing `netrc`, `machine translation` then `password storage`; (2) a digits-only password in INI, `.properties`, TOML or Makefile layout ships — `password = 482915`, `db.password = 482915`, `DB_PASSWORD ?= 482915`; (3) a Makefile `:=`, an indented INI line and an INI line with a trailing `; comment` fall through config detection; (4) minified JavaScript after `password:` is damaged. **What is NOT controlled:** secrets that are neither NAMED nor RANDOM-LOOKING (typed passwords in prose, an unnamed all-lower-case, hex or short token — O15's two general rules cannot see them; a novel token format that is long and mixed-case IS caught by the entropy rule); an UNNAMED password-manager password with symbols (the symbols split it into base64-alphabet runs under 20 characters: 0–1/200 caught at 16–32 characters, measured revision 20 — a symbol-token rule that caught 175/200 at 24 was measured damaging 275 tokens of this repository's own text and not adopted); a NAMED value the key-context rule refuses by design, each MEASURED (revision 21; `internal/redact/README.md` names the test that pins each): one whose shape is code, a placeholder or prose (symbol-bearing generated passwords 193–200/200 over seeds 4–8; every symbol-free generator 200/200); a WEAK name's value that is itself identifier- or slug-shaped, e.g. `DB_PASSWORD_PROD=tiger_2024` (0/200, pinned; random values under weak names 199–200/200); a hex constant of at most 8 digits, or a signed or decimal number, under any name; a digits-only value in code notation or under four digits; a letters-only value after a spaced `=`, and a bracket-led value the line does not close there; a symbol-led password in an indented `key: value,` whose operand does not look random (194–200/200); a `.netrc` password that is a plain word AND is alone AND is an attribute word, sits behind a quote, diff, compose or non-netrc path prefix, or follows a capitalised keyword (plain-word passwords with netrc structure or file context: 340/340 over 17 layouts); a `.pgpass` row whose database or user starts with a digit. *Revision 20 also listed "a bare value over 1 KiB" here; that refusal is retracted — such a value is taken (90/90 at 1 KiB to 64 KiB).* **And what redaction costs clean text, now measured on text nobody wrote for the purpose and pinned as a budget** (`internal/redact/budget_test.go`): the Go standard library's source, 3,027,865 lines — 10,285 changed at round 4, 11,182 at round 5, 4,790 at round 6, nearly all of them the library's own test keys, certificates and vectors; this repository's tracked text, 300,774 lines — 1,422, 1,419, 224, of which 19 are in files that are not tests or fixtures and are enumerated. *Since revision 22 what `go test` pins is a FROZEN committed corpus (41,477 lines of this repository's neutral text and of go1.25.14 standard-library files; 631 lines damaged, enumerated, matched exactly both ways), because the live-tree budget went red on unrelated doc edits, on deleting docs and on go1.26; the live sweeps are opt-in (`-redact.live-budget`). Open, and no job is added for it: whether CI should run the live sweeps, which would see new prose and a new toolchain but would bring back the red-on-unrelated-edit failure unless they only REPORT.* Stated clean-text costs, each pinned: a line that is exactly `password <non-attribute word>`, bare or behind a line number; `grep -n` output over a line that is itself three colon-separated words; a weak name over a value that does look random (a key id after a `…_KID` name; pinned in `TestRoundSixWeakNamesNeedACredentialShapedValue`); **a secret inside an image, a PDF, an archive or any other payload that begins with a known binary file signature (a PNG carrying a token in a text chunk included) — that content SHIPS UNREDACTED by operator decision (O12, decision 6a, the coordinator's reading), because no text rule can read it**; text in an encoding other than UTF-8 or BOM-marked UTF-16 (scanned byte-wise only); an encoded secret embedded in a longer string (not decoded — caught as a token only when long and random-looking), a flow-style YAML `Secret` (decision 6), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). 🔴 **THE MARKER-ADJACENCY CLASS — a secret glued to a `[redacted:…]` marker already in the text** (an agent's own earlier output, quoted back). #224 made the table quiet on its own output (the pod re-checks with it) by first DROPPING every span that touched a marker, which shipped a key-context value glued directly BEFORE one — `password=<v>[redacted:…]`, under `export`, YAML, a CLI flag, a JSON text field and a DSN's userinfo — that the base caught. **Status after #224's fix round:** a span now loses only the marker REGIONS and the rest is redacted, so those six shapes are caught with the marker left byte-identical (`TestAMarkerDoesNotShieldASecretBesideIt`; mutant `redact-marker-drops-the-whole-span`), and the re-scan stays at 0 over seeds 1–40. **Residual, measured identical at the base, at the dropping cut and after the fix:** a low-entropy value glued directly AFTER a marker under a key (`password=[redacted:…]<v>`, `db_password: [redacted:…]<v>` — pinned as declared residual rows) and a WORD-LIKE value glued before one (`password=tulipwagon42[redacted:…]`, which reads as an index expression), because key-context's value filter refuses those shapes and no span exists to subtract from. A high-entropy value or a vendor-shaped token beside a marker is its own span and is caught. |
+| **T1. A secret survives redaction and is stored** | The residual the operator accepted by choosing every byte (O1, O9). Controls: host-side redaction on decoded strings with a keyed tag (decision 6), the pod's refusing re-check (clause c), the realistic corpus (closing condition 3), per-host denylist, retention, per-session deletion. 🔴 **THE MEASURED RESIDUAL KEPT CAPTURE UNARMED (O16); O17 WAIVED IT AS AN ARMING GATE AND ACCEPTED THIS RESIDUAL — a secret the redactor misses is stored once capture is armed.** A fresh auditor-written held-back set (190 leak lines, 175 clean) scored `leaks caught=157/190 clean damaged=18/175` at the round-6 head, under the arming gate's 90% floor, and three fix rounds moved it 154 → 155 → 157. Its 33 MISSES by category: a secret in prose 11 of 15 missed; a PIN 9 of 10; a positional argument in code 6 of 12; a CLI flag no rule reads 2; a hex secret 2; a long value 1; a value under a strong name 1; a symbol-led value 1. Its 18 DAMAGED clean lines: base64 of non-secret data 9 of 10; a public key 8 of 10; a type annotation 1. Round 6's findings left unfixed by O16, stated as residuals: (1) the `.netrc` context rule damages prose — `See netrc(5).` then `password field`, a grep path containing `netrc`, `machine translation` then `password storage`; (2) a digits-only password in INI, `.properties`, TOML or Makefile layout ships — `password = 482915`, `db.password = 482915`, `DB_PASSWORD ?= 482915`; (3) a Makefile `:=`, an indented INI line and an INI line with a trailing `; comment` fall through config detection; (4) minified JavaScript after `password:` is damaged. **What is NOT controlled:** secrets that are neither NAMED nor RANDOM-LOOKING (typed passwords in prose, an unnamed all-lower-case, hex or short token — O15's two general rules cannot see them; a novel token format that is long and mixed-case IS caught by the entropy rule); an UNNAMED password-manager password with symbols (the symbols split it into base64-alphabet runs under 20 characters: 0–1/200 caught at 16–32 characters, measured revision 20 — a symbol-token rule that caught 175/200 at 24 was measured damaging 275 tokens of this repository's own text and not adopted); a NAMED value the key-context rule refuses by design, each MEASURED (revision 21; `internal/redact/README.md` names the test that pins each): one whose shape is code, a placeholder or prose (symbol-bearing generated passwords 193–200/200 over seeds 4–8; every symbol-free generator 200/200); a WEAK name's value that is itself identifier- or slug-shaped, e.g. `DB_PASSWORD_PROD=tiger_2024` (0/200, pinned; random values under weak names 199–200/200); a hex constant of at most 8 digits, or a signed or decimal number, under any name; a digits-only value in code notation or under four digits; a letters-only value after a spaced `=`, and a bracket-led value the line does not close there; a symbol-led password in an indented `key: value,` whose operand does not look random (194–200/200); a `.netrc` password that is a plain word AND is alone AND is an attribute word, sits behind a quote, diff, compose or non-netrc path prefix, or follows a capitalised keyword (plain-word passwords with netrc structure or file context: 340/340 over 17 layouts); a `.pgpass` row whose database or user starts with a digit. *Revision 20 also listed "a bare value over 1 KiB" here; that refusal is retracted — such a value is taken (90/90 at 1 KiB to 64 KiB).* **And what redaction costs clean text, now measured on text nobody wrote for the purpose and pinned as a budget** (`internal/redact/budget_test.go`): the Go standard library's source, 3,027,865 lines — 10,285 changed at round 4, 11,182 at round 5, 4,790 at round 6, nearly all of them the library's own test keys, certificates and vectors; this repository's tracked text, 300,774 lines — 1,422, 1,419, 224, of which 19 are in files that are not tests or fixtures and are enumerated. *Since revision 22 what `go test` pins is a FROZEN committed corpus (41,477 lines of this repository's neutral text and of go1.25.14 standard-library files; 631 lines damaged, enumerated, matched exactly both ways), because the live-tree budget went red on unrelated doc edits, on deleting docs and on go1.26; the live sweeps are opt-in (`-redact.live-budget`). Open, and no job is added for it: whether CI should run the live sweeps, which would see new prose and a new toolchain but would bring back the red-on-unrelated-edit failure unless they only REPORT.* Stated clean-text costs, each pinned: a line that is exactly `password <non-attribute word>`, bare or behind a line number; `grep -n` output over a line that is itself three colon-separated words; a weak name over a value that does look random (a key id after a `…_KID` name; pinned in `TestRoundSixWeakNamesNeedACredentialShapedValue`); **a secret inside an image, a PDF, an archive or any other payload that begins with a known binary file signature (a PNG carrying a token in a text chunk included) — that content SHIPS UNREDACTED by operator decision (O12, decision 6a, the coordinator's reading), because no text rule can read it**; text in an encoding other than UTF-8 or BOM-marked UTF-16 (scanned byte-wise only); an encoded secret embedded in a longer string (not decoded — caught as a token only when long and random-looking), a flow-style YAML `Secret` (decision 6), and anything stored BEFORE a rule existed — a rule added later does not rewrite stored records (B3 proposes a re-scan). 🔴 **THE MARKER-ADJACENCY CLASS — a secret glued to a `[redacted:…]` marker already in the text** (an agent's own earlier output, quoted back). #224 made the table quiet on its own output (the pod re-checks with it) by first DROPPING every span that touched a marker, which shipped a key-context value glued directly BEFORE one — `password=<v>[redacted:…]`, under `export`, YAML, a CLI flag, a JSON text field and a DSN's userinfo — that the base caught. **Status after #224's fix round:** a span now loses only the marker REGIONS and the rest is redacted, so those six shapes are caught with the marker left byte-identical (`TestAMarkerDoesNotShieldASecretBesideIt`; mutant `redact-marker-drops-the-whole-span`), and the re-scan stays at 0 over seeds 1–40. **Residual, measured identical at the base, at the dropping cut and after the fix:** a low-entropy value glued directly AFTER a marker under a key (`password=[redacted:…]<v>`, `db_password: [redacted:…]<v>` — pinned as declared residual rows) and a WORD-LIKE value glued before one (`password=tulipwagon42[redacted:…]`, which reads as an index expression), because key-context's value filter refuses those shapes and no span exists to subtract from. A high-entropy value or a vendor-shaped token beside a marker is its own span and is caught. |
 | **T2. Confidential but non-secret content** (client business detail, personal data in a tool output) | Redaction does not address it at all; VISIBILITY is the only control (decision 4). Stated, so nobody believes the redactor covers it. |
-| **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store, plus the client read ledger (decision 3a), plus rendered headers anywhere in the content, plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope and a ledger `*` add `*`; F1 adds `*` when any tool input names `cairn`/`subsystem-recall` and the ledger is empty, F2 when any input names the cache root `subsystem-store`; nothing cancels a `*`, no caller resolves a working directory or parses a shell line; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The ledger is SELF-REPORTED by the host**, like the write trailer: a session or anything else on the host can edit or delete it, and that can only make `V` SMALLER — an emptied ledger trips F1 if any input names the program. **The residual:** (1) a session MIXING a ledger-writing client with one that writes no record — a pre-ledger client (an older pinned revision), or a call whose environment lost the session id (`env -i`, some `sudo` setups) — has a non-empty ledger, so F1 does not fire and the unrecorded call's scope is missing; (2) a file-tool read of a local store copy whose path does not contain `subsystem-store` — a `--cache <dir>` root (`internal/client/cli.go:339`), a `CAIRN_MIRROR_ROOT` mirror (`cli.go:834`), or a moved cache root; (3) a store or transcript read that bypasses the client entirely (a direct HTTP call to the pod, or to `cairn-ui`'s `/transcript/…` routes — decision 17's CLI verbs write `*`, a raw HTTP call writes nothing). *Revisions 8–12 listed, as the residual, invocations whose program name never appears in the command line (a variable, a script, a shell function); the ledger records the read however it was invoked, so that residual is CLOSED for a current, ledger-writing client that sees the session id (residual (1) is what is left when either fails) — retracted with the parser.* |
+| **T3. Under-counted `V` widens visibility** | `V` is writes over the whole store, plus the client read ledger (decision 3a), plus rendered headers anywhere in the content, plus declarations, re-derived on the pod, grow-only (decision 3); a header naming no scope and a ledger `*` add `*`; F1 adds `*` when any tool input names `cairn`/`subsystem-recall` and the ledger is empty, F2 when any input names the cache root `subsystem-store`; nothing cancels a `*` except F1's own, which a ledger record lifts at view time (decision 3, *#266*: the pod decides F1 from the ledger it holds, and the agent does not declare it), no caller resolves a working directory or parses a shell line; `*` and unknown names fail closed; empty `V` is owner-only (clause g); a session touching two instances is held and an already-shipped prefix withdrawn (decision 16, clauses h and m). **The ledger is SELF-REPORTED by the host**, like the write trailer: a session or anything else on the host can edit or delete it, and that can only make `V` SMALLER — an emptied ledger trips F1 if any input names the program. **The residual:** (1) a session MIXING a ledger-writing client with one that writes no record — a pre-ledger client (an older pinned revision), or a call whose environment lost the session id (`env -i`, some `sudo` setups) — has a non-empty ledger, so F1 does not fire and the unrecorded call's scope is missing; (2) a file-tool read of a local store copy whose path does not contain `subsystem-store` — a `--cache <dir>` root (`internal/client/cli.go:339`), a `CAIRN_MIRROR_ROOT` mirror (`cli.go:834`), or a moved cache root; (3) a store or transcript read that bypasses the client entirely (a direct HTTP call to the pod, or to `cairn-ui`'s `/transcript/…` routes — decision 17's CLI verbs write `*`, a raw HTTP call writes nothing). *Revisions 8–12 listed, as the residual, invocations whose program name never appears in the command line (a variable, a script, a shell function); the ledger records the read however it was invoked, so that residual is CLOSED for a current, ledger-writing client that sees the session id (residual (1) is what is left when either fails) — retracted with the parser.* |
 | **T4. Viewer-set computation makes the predicate vacuous** | Clause (e), and a mutant row (`transcript-written-set-from-viewer-scopes`). |
 | **T5. A stolen capture token** | Can APPEND to its owner's transcripts from its one host — inject fake records into the owner's own sessions — can SQUAT a not-yet-uploaded session id (decision 15), and can WITHDRAW (delete) its owner's sessions uploaded from that host (decision 16). Cannot read, or touch another owner's or host's existing sessions. Revoke by deleting the row (re-read per request). |
 | **T6. A stolen plugin token** | Can read every transcript where that plugin is ON, and write outputs of its declared types. The largest single exposure the design creates; it is why toggles default OFF, require every scope's consent (decision 10), and why a plugin token is per plugin. |
@@ -1407,7 +1631,7 @@ GET /transcript/skeleton  ·  GET /transcript/records  ·  GET /transcript/tool 
 | **T11. Cross-instance leakage** | Decision 16 on the host (reads included, O8), including withdrawal of a prefix shipped before the routing answer changed (clause m); per-instance worker tokens; the client instance arms nothing until Q5. **Residual:** a prefix sits on the first instance until the next agent run withdraws it (it predates the read, so it holds no content cairn saw from the other instance); client-related prompts and code that never touched cairn do not move `V` and land on the default instance, owner-only; content a plugin already sent to an LLM provider cannot be recalled. |
 | **T12. Storage exhaustion** | Required retention, an instance quota that delays rather than drops (decision 15). |
 | **T13. Committed fixtures leak** | Synthetic generator only; planted secrets generated at run time (decision 6); `leakscan` in CI; no captured text, ever (`AGENTS.md`). |
-| **T14. Toggle tampering, including by arc membership** | Toggles are browser POSTs behind both gates, authorised per level (decision 10), journaled with `(Kind, ID)` and pod time; an arc can only enable inside scopes whose admins already consented, so naming a session in an arc `PUT` widens nothing. |
+| **T14. Toggle tampering, including by arc membership** | Toggles are browser POSTs behind both gates, authorised per level (decision 10), journaled with `(Kind, ID)` and pod time; an arc can only enable inside scopes whose admins already consented, and (#270 round 1) speaks only for a session whose `V` holds the arc's HOME — so an unrelated scope's admin listing a session in their own arc changes nothing. As built in S6: an `off` arc keeps covering the members it listed when the admin set it (a snapshot in the journal record), so a writer of the home cannot LIFT a veto by re-registering the arc without a session; and an arc toggle POST is saved only over the member list its page rendered (a digest in the form), so an admin's stale tab cannot turn a plugin on for a session they were never shown. ⚠ **Residual, accepted by an agent decision open to operator review (decision 10):** `on` is read against the arc's LIVE members, so a WRITER of an `on` arc's home scope — not an admin — can enrol a session by adding it to the arc, provided the session touched that home scope (itself a claim a writer of the home can make with a trailer) and every other scope in its `V` is `allowed` or `on`. `allowed` is the consent that an arc may do this; a scope left `off` is never overridden. |
 | **T15. Guess-confirmation of a redacted value** | The tag is keyed by a per-host secret (decision 6), so hashing a guess confirms nothing without that key. |
 
 ## Slices
@@ -1421,14 +1645,14 @@ alone. None touches `internal/api` or `cmd/cairn-server`; only S8 touches `cmd/c
 | **S0** | **Fixtures and shape ledgers.** `tests/transcripts/gen.py` emits synthetic sessions in BOTH formats from the measured key sets (R1–R3): main stream, two subagents, an opencode child, a compaction boundary, a `pr-link`, persisted tool output, mutated opencode parts, bookkeeping records and duplicate fields, a `user` record carrying a large `tool_result` block, an inline image block AND its `toolUseResult.file.base64` duplicate, an opencode `tool` part with a `data:` URL in `state.attachments[].url`, a binary (PDF and JPEG), a UTF-8 text, a UTF-16 text and a JSON text tool-result blob, thinking `signature` values and 64-hex digests (which must survive untouched), and every read path of R7 (a rendered recall in a tool result; one in a hook attachment with no command line; a store-wide search rendered `scope=(all scopes)` in a hook attachment; a bare header-less `ls-entries`; an explicit `--scope` read; a `--repo` read; a `cd … && cairn recall` chain). A shape test pins the generator's record types, block types and field names against `internal/transcript`'s classification table. The generator also emits a synthetic read-ledger file per session (decision 3a), including an EMPTY one beside cairn-naming inputs (F1). And S0 MEASURES, on a host with opencode, whether `OPENCODE_SESSION_ID` reaches tool commands and which session id it carries, recording the answer for S11 — **done: decision 3a and `internal/transcript/README.md`.** The generator writes ONE file, `internal/transcript/testdata/synthetic_world.json`, which Go tests materialise, so `onlyGo` needs one row; the table is `internal/transcript/classify.go`. | `tests/`; `onlyGo` if Go tests read the fixtures; README. | Test-only. |
 | **S1** | **`internal/redact`** — its own rule table (decision 6), decoded-string traversal, text-blob redaction and the text/binary sniff (decision 6a), keyed tags, structural Secret rule, denylist loader; the corpus generator and the `planted/caught/clean-damaged` report; the behavioural containment test against leakscan's controls. | new package; `ok` floor; README. | Library only. |
 | **S2** | **`cmd/cairn-capture`** and **`internal/transcript/scopeuse`** — readers (JSONL by offset, subagents, blobs — text redacted, binary byte-identical; `opencode export` to a file, diffing by part digest), `V` derivation (the `*` mappings of decision 3), watermark state, routing (decision 16), `--dry-run`, `--self-test`. No upload, and no run mode, yet (D1). | `cmd/cairn-capture`; new packages (`internal/capture` holds the agent, so its tests sit in a package); the four `scopeuse-*` rows join `control_mutants.py` with a per-row `pkgs` override ADDING `./internal/transcript/scopeuse/` (+ pinned count) — *as built: not `PKGS` itself, because the battery's own rule is that a killer outside the control/identity/server seam gets a per-row addition, and widening `PKGS` would re-scope every existing row and move three pinned enumerations*; `depspolicy.LinkedBinaryRoots` + its test; `flake.nix` `packages.cairn-capture` + `checks.cairn-capture-self-test` (the built binary's self-test; CI's `nix` job builds both); `ok` floor. Review round 1 added four more battery rows (`scopeuse-restore-ignored`, `capture-v-not-a-union`, `capture-child-ledger-ignored`, `capture-unreadable-ledger-ignored`). | Inert: it sends nothing. |
-| **S3** | **Transcript store + capture API.** `internal/transcript` (directory layout, CAS append, frames, ownership, quota, retention sweeper, deletion, pod-side `V` re-derivation), worker listener + ledger, `capture` token kind and `cairn-ui -issue-worker-token capture`, refusing pod re-check. Agent gains upload. `tests/plugins/e2e.sh` created with clauses (a), (b), (c), (h). 🔴 **Arming precondition (O15):** S3 may MERGE inert, but capture is armed on NO instance until closing-condition part 5 holds for the redactor commit being armed (≥ 90% of a fresh held-back set's leaks caught, ≤ 15% of its clean lines damaged); S11 is a second, independent precondition. 🔴 **And the four S3 ARMING PRECONDITIONS AP1–AP4 under Rollout, recorded by #224's audit and NOT fixed there: each is closed, by its own stated check, before anything is armed — the gate passing does not close them.** | new package → `ok` floor, `control_mutants.py` `PKGS` (+ pinned count through `ci.yml` and `internal/control/README.md`); `cmd/cairn-ui` flags (`-worker-addr`, `-worker-tokens`, `-transcript-dir`, `-transcript-retention`, `-transcript-quota`) and tests; `ci.yml` e2e step. | Inert unless `-worker-addr` AND `-transcript-dir` are set. |
-| **S4** | **Visibility + the session page shows content (O3).** `transcript.Visible` (decision 4) with `V` (decision 3); the collapsed transcript section on `/session` (decision 18); the owner arm finding O10 sessions; `GET /session/transcript` raw-record view. e2e clauses (d), (e), (f), (g — the visibility half). Benchmark of the whole-store `W_trailer` walk. | UI rows → hand ledger, `contentAuthority`, uiaudit targets + a synthetic transcript in the uiaudit world; mutant rows. | Read-only over S3; renders nothing when no transcript exists. |
-| **S5** | **Plugin registry, toggles, plugin API.** `internal/plugins` (manifest validation, closed capability and output-type vocabularies, plugin token kind, the narrowing-only toggle fold + `-plugin-journal`, the stateless pending query); `/plugins` page + toggle POSTs on scope, arc and session pages. e2e clauses (i), (j). | new package → `ok` floor, `PKGS`; UI rows; `cmd/cairn-ui` flags (`-plugin-registry`, `-plugin-journal`); mutant rows; README. | Inert with no registry; every toggle OFF by construction. |
-| **S6** | **Outputs: storage, rendering, deletion cascade.** Outputs stored per session; rendered labelled-derived (decision 11) on the session page and as a one-line summary on session rows; owner "delete transcript" POST cascading to outputs and edges; the capture `withdraw` route running the same cascade, and the agent's withdrawal on a routing change (decision 16). e2e clauses (k), (l), (m). | UI rows; worker-listener ledger (`withdraw`); `cmd/cairn-capture`; mutant rows; README. | Nothing renders until a plugin writes; the agent withdraws nothing until a routing answer changes. |
-| **S7** | **"My sessions" (O10).** `GET /my-sessions`: the viewer's OWN sessions with a transcript (owner arm only), newest first, including owner-only ones, each linking to `/session`. e2e clause (g — the listing half). | UI row → ledgers, uiaudit; mutant row; README. | Read-only over S3/S4. |
-| **S8** | **Agent read API and CLI (decision 17).** The classification table's skeleton, records and tool routes on `cairn-ui`; the proposed Go-only `transcript` verb (`transcript skeleton|records|tool`) over `CAIRN_UI_URL`. | UI rows; `internal/client/cli.go` verbs; `capability_ledger` `go_only`; `want-go-only-verbs.txt`; `tests/test_go_client_ledgers.py`; mutant rows. | Read-only; the pod and parity corpus untouched. |
-| **S9** | **Example plugin A — summaries.** `plugins/summary` in a NESTED stdlib-only module (provider HTTP API over `net/http`, no SDK), host-side user timer, incremental per decision 13, its own spend cap, a fake provider in tests. Reads through `view=conversation` by default. | `depspolicy.DeclaredNestedModules`; `flake.nix` package; `ci.yml` step for its suite. | A separate binary; nothing runs until registered and toggled. |
-| **S10** | **Example plugin B — ClickUp.** `plugins/clickup` in the same nested module: ticket list fetch (read-only token, 429-aware), deterministic matchers (decision 14) over transcript records (`gitBranch`, `pr-link`, URLs), commit messages and trailers from a host-local repo list, PR bodies via the host's own GitHub CLI, entry refs; LLM suggestions using plugin A's summaries when present (`output:read:summary` — the cross-plugin test of the abstraction). Synthetic ClickUp fixtures only. Then closing wiring: `sabotaged=14 caught=14`, measured floors, the `AGENTS.md` row with an equal eviction (Q11). | same nested module; flake package; `ci.yml`; `AGENTS.md`; READMEs. | Separate binary; inert until registered and toggled. |
+| **S3** | **Transcript store + capture API.** `internal/transcript` (directory layout, CAS append, frames, ownership, quota, retention sweeper, deletion, pod-side `V` re-derivation), worker listener + ledger, `capture` token kind and `cairn-ui -issue-worker-token capture`, refusing pod re-check. Agent gains upload. `tests/plugins/e2e.sh` created with clauses (a), (b), (c), (h). 🔴 **AS BUILT (#224), ONLY THE POD HALF:** the store, the worker listener and its routes, the `capture` token and the pod re-check landed; the agent upload and `tests/plugins/e2e.sh` (clauses a, b, c, h) did NOT. ✅ **That half is S3b, BUILT (#260):** `internal/capture.HTTPSink` (CAS + resume on 409 — an opencode stream against the plan saved before sending — frames, blobs, the 413 placeholder, a 422 placeholder for the one refused record or blob, 503/507 hold the run, 401/403 stop it loudly, no redirect followed), `cairn-capture --run` (state saved as it goes), and `tests/plugins/e2e.sh` with clauses (a) — Claude Code and opencode legs — (b), (c), (h): `--self-test` `sabotaged=5 caught=5`, 11 assertions, a CI `go`-job step with a PASS floor of 11. *As built, two deviations:* blob names are mapped onto the pod's one-component grammar (`capture.WireBlobName`; S2 named them by relative path, which the pod refused 400), and a record that is not JSON ships wrapped (`{"cairn_capture":"not-json","parts":[…]}`, bytes exact). 🔴 **Arming:** S3 merged inert and capture is armed on NO instance. Closing-condition part 5 (O15's held-back gate) is **WAIVED as an arming precondition by O17** and kept as a measurement; S11 is still a precondition. 🔴 **The four S3 ARMING PRECONDITIONS under Rollout, recorded by #224's audit: AP1–AP3 are CLOSED by #258, each by its own stated check; AP4 is a re-measure-and-record step, not a gate.** | new package → `ok` floor, `control_mutants.py` `PKGS` (+ pinned count through `ci.yml` and `internal/control/README.md`); `cmd/cairn-ui` flags (`-worker-addr`, `-worker-tokens`, `-transcript-dir`, `-transcript-retention`, `-transcript-quota`) and tests; `ci.yml` e2e step. | Inert unless `-worker-addr` AND `-transcript-dir` are set. |
+| **S4** | **Visibility + the session page shows content (O3).** `transcript.Visible` (decision 4) with `V` (decision 3); the collapsed transcript section on `/session` (decision 18); the owner arm finding O10 sessions; `GET /session/transcript` raw-record view. e2e clauses (d), (e), (f), (g — the visibility half). Benchmark of the whole-store `W_trailer` walk. | UI rows → hand ledger, `contentAuthority`, uiaudit targets + a synthetic transcript in the uiaudit world; mutant rows. | Read-only over S3; renders nothing when no transcript exists. ✅ **AS BUILT (#261)**, with these departures, each stated where it lives (`internal/ui/README.md`, "Transcripts on the session page"): (1) **the pod derives `R_header ∪ F` itself** (`archive.derive`, through `scopeuse`, over records and text blobs, each record read as BOTH a Claude Code record and an opencode part) — #224's `{*}` for every session is gone, and with no ledger until S11, F1 still makes any session naming `cairn` in a tool input owner-only; (2) **a page is found by its transcript for ANY viewer the predicate admits**, not only the owner arm of decision 4 — otherwise a reader of every scope a read-only session touched is served it on the raw row and refused the page; (3) **a scope holding an entry the trailer walk cannot scan is in `V`** (fail closed; decision 3 is silent on a partial walk); (4) **four read-time bounds beyond decision 18**: 2 MiB of collapsed content a page (charged only for what the page carries), 1,000 items a page (`PageItemCap`, user messages exempt; #261 round 2 — one turn of 20,000 calls had rendered 7.5 MB), 200 inline items a child stream, 512 KiB a raw-record page; (5) `internal/ui` reads the archive only through `transcript.View` (unexported archive), and a child session's OWN id does not find its root's transcript (no child→root index exists). Measured: the whole-store `W_trailer` walk is 0.24–0.31× the session page at 10×30 and 0.31–0.49× at 30×100 (one loaded host, go1.25.14, three runs), so decision 3's caching condition is not met and nothing is cached. `uiaudit`: the token-file world stores a synthetic transcript through the real upload route; `TestTheSessionPageCarriesItsTranscriptAtEveryWidth` reads the section at all five widths, overflow 0. |
+| **S5** | **Plugin registry, toggles, plugin API.** `internal/plugins` (manifest validation, closed capability and output-type vocabularies, plugin token kind, the narrowing-only toggle fold + `-plugin-journal`, the stateless pending query); `/plugins` page + toggle POSTs on scope, arc and session pages. e2e clauses (i), (j). | new package → `ok` floor, `PKGS`; UI rows; `cmd/cairn-ui` flags (`-plugin-registry`, `-plugin-journal`); mutant rows; README. | Inert with no registry; every toggle OFF by construction. ✅ **AS BUILT (branch `zach/transcripts-s5`)**, departures stated in `internal/plugins/README.md`: (1) **outputs are STORED in S5**, minimally — `outputs.jsonl` in the session's own directory (`archive.AppendOutput`), because the write route and the pending watermark mean nothing without it; S6 renders them and owns the cascade's journal fact; (2) an unstored session is the same 403 as an OFF one (clause l's 404 is S6's to reconcile); (3) `plugin_version` is stamped from the registry as well as the name; (4) the registry and journal are both-or-neither and need the worker listener; a `plugin` token row is admitted only for a registered plugin; (5) the transcript route pages through S8's `ParseRecordsQuery` + `View.Page` (default `view=conversation`), one pager for agents and plugins, and S8's caller-less `transcript.ReadRoutes()` is deleted; (6) the mutant rows add their packages per row (the S2/S3 rule), not to `PKGS`; and from #270's audit (7) the manifest has NO `toggle_key` and NO `output_types` — toggles are keyed by the name and the written types are derived from the `output:write:<type>` capabilities; (8) an arc speaks only for a session whose `V` holds the arc's home (T14); (9) outputs are capped at 1/20 of the quota per plugin and 1/5 for all plugins (507 past either), and the stored body is the re-encoded validated value; (10) the pending query walks the store once per poll, and not at all while no scope consents. e2e (i), (j) wired: two sabotages and two assertions (`sabotaged=13 caught=13`, 19 assertions with S7 and S11). |
+| **S6** | **Outputs: storage, rendering, deletion cascade.** Outputs stored per session; rendered labelled-derived (decision 11) on the session page and as a one-line summary on session rows; owner "delete transcript" POST cascading to outputs and edges; the capture `withdraw` route running the same cascade, and the agent's withdrawal on a routing change (decision 16). e2e clauses (k), (l), (m). | UI rows; worker-listener ledger (`withdraw`); `cmd/cairn-capture`; mutant rows; README. | Nothing renders until a plugin writes; the agent withdraws nothing until a routing answer changes. ✅ **AS BUILT** (branch `zach/transcripts-s6`), with these departures, each stated where it lives (`internal/ui/README.md`, `internal/plugins/README.md`, `internal/transcript/README.md`, `internal/capture/README.md`): (1) **a deleted session's plugin read is the uniform 403, not clause (l)'s 404** — a distinct answer would be an existence oracle (T10); (2) **the withdrawal's idempotent `true` reads ANY journaled deletion of the caller's own (owner, host)'s root**, not only a withdrawal — a prefix retention or the owner's delete removed is as gone, and `false` there would hold the session on its host for good; (3) **the agent treats `false` as final only when it has an ACKNOWLEDGED upload on record** — a session bound for an instance that never took an upload has nothing there to withdraw, and holding it for good on a truthful `false` would strand it; (4) **the withdraw route is not behind the arming gate** (it stores nothing; a disarmed instance still honours its uploader's withdrawal); (5) outputs render off the transcript's OWN `transcript.View` (no second predicate), and session ROWS — `/sessions`, `/my-sessions`, the scope and arc sessions tabs — through `Store.ViewsWithOutputs` (one store walk per page at most); only a plugin's LATEST summary is shown; (6) the journal gains no field: `owner-delete` and `withdrawn` are REASONS on the existing record, whose owner and host already say who (a new key would make an older build refuse the whole journal at startup); (7) the agent saves WHERE a session is bound before its first upload leaves (S3b's audit) — one state save per session the first time it is bound; (8) the #270 audit findings closed here: the plugin gate has NO walk-skip — the one fold is asked over the whole `V` (the skip rested on a false "monotone" claim; a second spelling of the fold that made it correct was written and deleted); an arc's `off` covers a member SNAPSHOT while `on` is read live (decision 10's agent decision, with its residual); output caps count from a running total; the 507 log line names which limit was hit; (9) from #273's own audit: **a deletion is FINAL for its root** — every reason, retention included, except a directory no upload committed — so nothing sent after an owner's delete re-creates the session (410 `deleted` to its own uploader, the uniform 409 to anybody else), and the agent marks such a session and never sends it again; the agent derives and routes a session with a shipped prefix even when its instance is not taking uploads, and the withdrawal is exempt from that stop; the capture client uses no proxy from the environment; an arc toggle is saved only over the member list its page showed; bidirectional controls are dropped from rendered plugin text; (10) `cairn-capture -allow-plaintext-host` (Rollout). Twenty-two mutant rows in all — the plan's six and sixteen more. `uiaudit`'s token-file world registers two plugins and stores a summary and a ticket edge. |
+| **S7** | **"My sessions" (O10).** `GET /my-sessions`: the viewer's OWN sessions with a transcript (owner arm only), newest first, including owner-only ones, each linking to `/session`. e2e clause (g — the listing half). | UI row → ledgers, uiaudit; mutant row; README. | Read-only over S3/S4. ✅ **AS BUILT** (branch `zach/transcripts-s7`): `transcript.Store.Mine` is the owner arm alone (`(Kind, ID)`, un-narrowed; no `V` read), metadata only, newest LAST upload first; the page is bounded at 50 rows (`?page=N`, unrecognised → 1, past the end → last) though the listing reads every stored `meta.json` per request; no `-transcript-dir` renders the same empty state as nothing stored (S4's convention: a 200, not a 404); a fifth hub card links it. `uiaudit`: a `linkExpanded` row; the token-file world's identity owns the uploaded transcript, so the page is captured with a row. |
+| **S8** | **Agent read API and CLI (decision 17).** The classification table's skeleton, records and tool routes on `cairn-ui`; the proposed Go-only `transcript` verb (`transcript skeleton|records|tool`) over `CAIRN_UI_URL`. | UI rows; `internal/client/cli.go` verbs; `capability_ledger` `go_only`; `want-go-only-verbs.txt`; `tests/test_go_client_ledgers.py`; mutant rows. | Read-only; the pod and parity corpus untouched. ✅ **AS BUILT**, with these departures (each stated where it lives — `internal/transcript/README.md`, `internal/ui/README.md`): (1) **the three routes are served on BOTH `cairn-ui` listeners** — the browser surface (`/transcript/{skeleton,records,tool}`, this plan's contract) AND the client listener (`/client/v1/transcript/…`), because `CAIRN_UI_URL` was given to the client listener by scope mail (its Q3 put agent reads there), so a verb "over `CAIRN_UI_URL`" can only reach that one; both serve through ONE function, `transcript.Store.Answer`; (2) the spellings live in a new stdlib-free `internal/transcriptwire` so the client does not link the archive; (3) a records page answers `next_seq` as a CURSOR plus `done` (S5's route already answered a cursor); a tool call is picked by `seq` and an optional `id` (a record can hold several calls); (4) an unrecognised `view=` is REFUSED (400), never defaulted; (5) the two mutant rows cannot be listener-local "skip the predicate" edits — outside `internal/transcript`, `Store.View` is the only way to a record — and break the predicate's owner arm and scope arm instead, each killed by the S8 surface test it is named for. |
+| **S9** | **Example plugin A — summaries.** `plugins/summary` in a NESTED stdlib-only module (provider HTTP API over `net/http`, no SDK), host-side user timer, incremental per decision 13, its own spend cap, a fake provider in tests. Reads through `view=conversation` by default. *As built:* the module is `plugins/` (stdlib-only, `depspolicy` `StdlibOnly`), the binary `cairn-summary`; providers `anthropic` (Messages API) and `openai` (chat completions), key from a 0600 file; the cap is requests per rolling 24 h in a flock'd ledger (a request is bounded both ways, so it is a cost cap); it READS only `main` — a subagent reaches the summary as its spawning call's result — and its watermark covers every listed stream once main is read to its end; the real-listener test is `internal/worker`'s `TestTheSummaryPluginAgainstTheRealListener`. | `depspolicy.DeclaredNestedModules`; `flake.nix` package; `ci.yml` step for its suite. | A separate binary; nothing runs until registered and toggled. |
+| **S10** | **Example plugin B — ClickUp.** `plugins/clickup` in the same nested module: ticket list fetch (read-only token, 429-aware), deterministic matchers (decision 14) over transcript records (`gitBranch`, `pr-link`, URLs), commit messages and trailers from a host-local repo list, PR bodies via the host's own GitHub CLI, entry refs; LLM suggestions using plugin A's summaries when present (`output:read:summary` — the cross-plugin test of the abstraction). Synthetic ClickUp fixtures only. *As built:* the binary is `cairn-clickup` (`packages.cairn-clickup`, the same derivation shape as plugin A); it writes THREE types — `ticket-edge`, `ticket-suggestion` and a FOURTH closed type this slice adds to `internal/plugins`, **`ticket-scan`** `{system, edges, suggestions, model_asked}`, written last in every pass: decision 13 advances a session only when its plugin WRITES, and a matcher that finds nothing had nothing to write, so every unmatched session stayed at the head of the oldest-first pending list (the scan is also how an interrupted pass is detected and redone from record 1). A commit is a session's only when a TRAILER's value is the session id (Q13 named the repository list, not the join); the `pr-link` signal is the linked PR's title and head branch; an `entry-ref` is read from a host cairn cache (`-store-root`) by a deliberately narrow reader (the attribution trailer and `refs:`); the transcript is read with `view=raw` (`gitBranch` and `pr-link` are bookkeeping, which the conversation view leaves out). Suggestions: one request a pass, from plugin A's latest summary or — none stored — the session's opening, candidates limited to the fetched list minus tickets already edged or suggested; ticket NAMES go to the provider as candidates (Q8 governs what the POD stores). Shared with plugin A rather than copied: `plugins/internal/{spend,transcripttext,hoststate,endpoint}` — the spend cap, the labelled rendering, the per-session backoff and state file, the no-redirect/no-cleartext client rules. The real-listener test is `internal/worker`'s `TestTheClickupPluginAgainstTheRealListener`, which stores a summary through plugin A's registry entry and has plugin B read it. `plugins/README.md` states what it cannot see. Titles (Q8): an optional `title` on the edge and suggestion bodies, refused 400 by the pod unless `cairn-ui -plugin-store-ticket-titles` is set, sent by the plugin only with `-store-ticket-titles`. Then closing wiring: `sabotaged=16 caught=16` *(measured; the 14 this row said was the clause count — (a) and (g) carry two sabotages each)*, measured floors, the `AGENTS.md` row with an equal eviction (Q11). | same nested module; flake package; `ci.yml`; `AGENTS.md`; READMEs. | Separate binary; inert until registered and toggled. |
 | **S11** | **The client read ledger (O11, decision 3a)** in BOTH clients: the Go `internal/client` writes a record per scope a served call touched when `CLAUDE_CODE_SESSION_ID` or `OPENCODE_SESSION_ID` is set; the Python oracle does the same; a parity row compares the two clients' ledger files; `cmd/cairn-capture` uploads the `ledger` stream; the POD's fold of that stream into `meta.json` and `V` (moved here from S3: S11 adds the ledger, so it owns both ends); `tests/testlib/env_pin.py` clears `CLAUDE_CODE_SESSION_ID`, `OPENCODE_SESSION_ID` and `XDG_STATE_HOME`; e2e clause (n). **Must land before S3 is armed on a real instance** — without it every session that runs `cairn` is owner-only by F1. | `internal/client` (+ joins `control_mutants.py` `PKGS`, moving the pinned count and its enumerations); `internal/transcript` (the pod-side ledger fold); `tests/testlib/env_pin.py` (three cleared variables); the Python `cairn`/`lib/`; `tests/parity/` (a new row, and its README's P8 retirement ledger); `cmd/cairn-capture`; `ci.yml` e2e floor. NOT `internal/api` or `cmd/cairn-server`: the store POD (`cmd/cairn-server`) is untouched — the ledger fold lives in `cairn-ui`'s `internal/transcript`. | Inert without a session id in the environment; with one, the write is invisible to stdout, stderr and the exit code. |
 
 **Mutant rows** (indicative names). The pinned count starts at **296**; the **51** rows below would
@@ -1471,7 +1695,17 @@ measured by the redaction corpus; S9/S10 by their own suites).
   `plugins-plugin-name-from-body-not-token`
 - **S6 (6):** `plugins-output-rendered-without-predicate` (k), `plugins-delete-keeps-outputs` (l),
   `transcript-withdraw-keeps-directory` (m), `transcript-withdraw-deletes-another-owners-root`,
-  `transcript-withdraw-host-unchecked`, `transcript-withdraw-repeat-answers-false`
+  `transcript-withdraw-host-unchecked`, `transcript-withdraw-repeat-answers-false` — and, *as built,
+  SIXTEEN more (twenty-two S6 rows, counted off `tests/control_mutants.py`)*:
+  `transcript-delete-skips-the-owner-arm`, `capture-binding-not-saved-before-upload`,
+  `capture-false-withdrawal-reships`, `capture-plaintext-host-matched-by-suffix`; for the #270
+  findings `plugins-store-walk-skipped-on-a-stored-off`, `plugins-pending-walk-skipped-on-a-stored-off`,
+  `plugins-arc-veto-lifted-by-removing-the-member`, `plugins-arc-toggle-snapshot-not-taken`,
+  `transcript-output-totals-not-reduced-on-delete`, `worker-507-line-names-one-limit`; and for
+  #273's own audit `transcript-upload-resurrects-a-deleted-root`,
+  `capture-deleted-answer-retried-forever`, `capture-withdrawal-not-sent-to-a-stopped-instance`,
+  `capture-sink-uses-the-environment-proxy`, `plugins-arc-toggle-saved-from-a-stale-page`,
+  `ui-plugin-text-bidi-controls-rendered`
 - **S7 (1):** `my-sessions-lists-another-owner`
 - **S8 (2):** `transcript-read-api-without-predicate`, `transcript-raw-view-without-predicate`
 - **S11 (4, `./internal/client/` joins `PKGS`):** `transcript-pod-ignores-ledger` (n) (the pod's fold of an uploaded `ledger` stream into `meta.json` is skipped — moved here from S3 in revision 14, because S3 has no ledger fold and the battery runs `go test`, not the e2e, so the row was unkillable there), `client-ledger-write-skipped` (a served call with a session id in its environment writes no record), `client-ledger-records-requested-not-resolved-scope` (the record names the flag as typed instead of the scope the call resolved and touched), `client-ledger-write-visible-in-output` (a ledger write error reaches stderr or the exit code).
@@ -1720,7 +1954,7 @@ run time).
   a 5,000-character assistant message renders 1,200 + a `<details>` holding the rest; a tool call
   renders inside `<details>`; a subagent nests at its spawning call; bookkeeping collapses to one
   `<details>` per turn; the compaction summary is labelled runtime-generated; `AllowedScriptSources`
-  still has ONE entry. Control: a renderer that truncates user text fails the byte count.
+  gains no entry. Control: a renderer that truncates user text fails the byte count.
 - **Block-level classification (decision 17):** ONE `user` record carrying a 600 KB `tool_result`
   block renders that block COLLAPSED in a `<details>` showing its first 64 KiB with a raw-view link
   — not in full — while a separate `user` record with a 20,000-character `human-text` block renders
@@ -1797,7 +2031,8 @@ that resolves. LLM suggestions come from the fake provider with a fixed confiden
 written as edges (control: the fake returns a suggestion at confidence 1.0 — still a suggestion).
 429 handling: the fake answers 429 with a reset header and the plugin waits, asserted by the fake's
 request timestamps. **All ClickUp fixtures are synthetic** (ids `clk0000a1…`, list `list-0001`).
-Closing wiring: `--self-test` prints `sabotaged=14 caught=14`; each sabotage fails ITS clause's
+Closing wiring: `--self-test` prints `sabotaged=16 caught=16` (fourteen clauses; (a) and (g) have
+two sabotages each — measured on the merged tree, where this line used to say 14); each sabotage fails ITS clause's
 message; the `ok` floor, mutant count and e2e floor equal the counts measured on the merged tree;
 `AGENTS.md` stays under its working budget.
 
@@ -1846,13 +2081,13 @@ by that plugin's code (decision 3a); S11 maps a child id to its root and pins th
 ## Open questions for the operator
 
 Each has a recommendation. **Answered (revision 17):** Q2 by O12 (binary ships); Q6 by O14;
-Q4, Q5, Q7, Q8, Q9, Q10, Q11, Q12 and Q15 by O13 (recommendation adopted). **Still open: Q13, Q14 and
-Q16.** S0 and S1 depend on none of them; S11 depends on none either. **Q14 and Q16 shape S2**:
+Q4, Q5, Q7, Q8, Q9, Q10, Q11, Q12 and Q15 by O13 (recommendation adopted). Q16 by O18 (option a, revision 26). **Q13 is built as recommended (S10, revision 27). Still open:
+Q14.** S0 and S1 depend on none of them; S11 depends on none either. **Q14 and Q16 shape S2**:
 hold-back, withdrawal and re-shipping (Q14), and the pod-side `*` rule, which lives in S2's
 `scopeuse` package with its fallback mutants (F1, F2) and first RUNS on the pod in S3 (Q16). S2
 builds the RECOMMENDED answers, and because S2 uploads nothing, a different answer changes S2's code
-before any byte has left a host. No question blocks merging S0–S2; Q14 and Q16 must be answered
-before S3 ships to a real instance. *Revision 3 said Q16 shapes S3; the rule's code and mutant are
+before any byte has left a host. No question blocks merging S0–S2; Q14 must be answered (Q16 is,
+by O18) before S3 ships to a real instance. *Revision 3 said Q16 shapes S3; the rule's code and mutant are
 in S2. Revisions 3–16 listed Q2 as shaping S2; O12 answered it.*
 
 - **Q1. REMOVED (O9)** — subagent transcripts are shipped.
@@ -1895,7 +2130,9 @@ in S2. Revisions 3–16 listed Q2 as shaping S2; O12 answered it.*
 - **Q12. Storage backend and replicas. Recommendation adopted (O13):** the per-session directory
   (decision 15) and one replica; if a second replica is ever needed, move transcripts to object storage or pgstore
   behind the same `internal/transcript` interface.
-- **Q13. Commit-message and PR-body signals need host access to repositories.** **Recommend** a
+- **Q13. Commit-message and PR-body signals need host access to repositories.** *Built as
+  recommended (S10): `-repo` (repeatable) and `-gh-bin`, both off by default; a commit is a session's
+  only when a trailer names the session id.* **Recommend** a
   host-local list of repository paths in plugin B's config, read with `git log` and the host's
   existing GitHub CLI login — nothing new on the pod.
 - **Q14. What happens when a session's scopes span two instances (decision 16).** What would
@@ -1920,7 +2157,8 @@ in S2. Revisions 3–16 listed Q2 as shaping S2; O12 answered it.*
 - **Q15. Agent reads through `cairn` or a separate binary? Recommendation adopted (O13):** the
   proposed Go-only `transcript` verbs (decision 17): agents already run `cairn`, and the Go-only mechanism exists. The alternative
   is a `cairn-transcript` reader binary that leaves `cmd/cairn`'s ledgers untouched.
-- **Q16. What still makes a session owner-only (and, with several instances, HELD).** Under O11
+- **Q16. ANSWERED by O18 — option (a); the text below is kept as the record of what was decided.
+  What still makes a session owner-only (and, with several instances, HELD).** Under O11
   the read ledger (decision 3a) records the scope a bare or `--repo` `cairn` call actually read,
   so **the bare-read cost is gone when the client is current and the session id reaches it.**
   *Revisions 7–12 charged every bare or `--repo` call `*` (round 6 of the audit counted 597 such

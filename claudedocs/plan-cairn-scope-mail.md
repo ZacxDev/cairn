@@ -145,8 +145,12 @@ Drop the work, or the named half, if any of these holds:
      (the `tests/pgtest/run.sh:80, :167` convention), when a built binary is missing, or when one of
      its own controls misbehaves. It is created in S3, which owns the verbs it drives (decision 18).
   3. **cairn: the pod does not move — an INVARIANT GUARD, labelled as one.** The runnable form:
-     build `cmd/cairn-server` at `b2ba3ac` and at HEAD, and
+     build `cmd/cairn-server` at `b06f15c` and at HEAD, and
      `diff <(./cairn-server-base -routes) <(./cairn-server-head -routes)` is EMPTY; and
+     ⚠ RE-ANCHORED from `b2ba3ac`, this plan's own read base, which predates scope-refs' S2
+     `GET`/`HEAD sources/<scope>` route (`35c1f82`): against it the diff is two `sources` lines
+     that no slice here added. `b06f15c` (#229, merge train 1) is the first `main` commit carrying
+     that route and the last before S0 (#230); measured EMPTY against `be6662e` (17 routes);
      `python3 tests/conformance/suite.py run` still reports 0 failures. No slice of this plan
      touches `internal/api`, and `internal/depspolicy` already makes the pod unable to link
      `internal/pgstore` (`internal/depspolicy/depspolicy.go:434-446`), so this part pins an
@@ -854,6 +858,9 @@ no longer reversible: the operator ruled to keep it (Q16).
      alone means "nothing was read" for three different reasons, so `memo-check` ALSO writes, as its
      FIRST stderr line on every run, `memo-status=<token>` from a CLOSED set: `new` (a block is on
      stdout), `none`, `no-scope`, `scope-unreadable`, `unconfigured`, `unreachable`, `malformed`.
+     ⚠ SUPERSEDED after the arc closed: an eighth token, `refused` (a listener 401), split from
+     `unconfigured` (no key, no request) by operator decision, so the hook can back a host off
+     only for a credential the listener actually counted. `internal/memo/status.go` is the table.
      The set is a table in `internal/memo`, printed by `memo-check --statuses`, and the hook's test
      reads it out of the BUILT binary and compares it with the hook's own table — the `-verbs`
      pattern, so neither side can grow a token silently. Exit codes stay the existing ledger's
@@ -1769,7 +1776,8 @@ go1.25.14 (the devShell's), PostgreSQL 18.6 (a throwaway server per run, and the
   growing a set the hook carries a copy of is S0/S4's decision, not S3's. The hook reads a
   token-less run as `malformed` (loud, once per throttle interval). `--statuses` prints the table
   and no token.
-- **A 401 from the listener is `unconfigured` (exit 3)** in `memo-check` — a revoked or mistyped
+- **A 401 from the listener is `unconfigured` (exit 3)** ⚠ SUPERSEDED: it is `refused` now, still exit 3
+  (see the status-token decision above) in `memo-check` — a revoked or mistyped
   `CAIRN_UI_TOKEN` is persistent configuration, so the hook says it once per session — and exit 6
   for the write verbs (the listener answered no). A missing `CAIRN_UI_URL`/`CAIRN_UI_TOKEN` is 3 for
   the reads and **7 for the writes** — the same code `append` gives a missing `CAIRN_TOKEN`.

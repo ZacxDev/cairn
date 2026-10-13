@@ -30,21 +30,34 @@ decisions O1–O13 paraphrased, slices S0–S6b, the iPhone checklist, closing-c
   and covered in-page anchors; `TestStandaloneBackAndReload` refuses `sticky`/`fixed` and reads the
   header leaving the viewport after a 400px scroll. `overscroll-behavior-y: contain` stays.
 - **uiaudit counts:** top-level is DERIVED (#228); the subtest-total floor is the measured 129.
-- **Deployed:** personal instance at `sha-9292da2` (deployment trunk `faa94f1`); manifest shortcuts
+- **Deployed:** personal instance now at `sha-f162b54` (scope-mail's deploy; S5 went live at `sha-9292da2`); manifest shortcuts
   `/arcs`, `/scopes?q=`, `/team`, still ARMED (name `cairn`, icon `teal`). NOT verified on a phone.
-- 🔴 **Closing condition NOT met:** S6b (a BLOCKING `uiaudit-touch` job) is unbuilt. The pinned
-  chromium has now run green in CI on several heads (#223, #229, #234) — the plan's "same version on
-  two consecutive runs" precondition for S6b is satisfied, read from those logs.
+- **S6b MERGED** (#256, `1a0e090`): a new `uiaudit-touch` job with no `continue-on-error`, running the
+  walk under `-gate touch` (reachability, axe target-size, input font, touch-rung overflow, plus two
+  instrument checks), asserting `Chromium 152.0.7977.82`. Negative controls went red in CI on their
+  own refusal lines (12×12 `.view-tab`; 14px input; emulation off). ⚠ It is NOT a REQUIRED check:
+  `main` has no branch protection, which is an operator setting (command in #256's body).
+- **Closing condition, read part by part:** S0–S6b merged (content); the plain `pwa_check.sh` reports
+  `9 PASS, 0 FAIL` on `main` (CI's `uiaudit (pwa)` leg); `uiaudit-touch` green on `main`. 🔴 **But
+  `--self-test` exited 2 on `main`** (`c_input_font` sabotage anchor occurs twice in `app.css` since
+  #254's memo-field restatement) — CI runs only the plain check, so nothing noticed. Fixed by #262
+  (`168824c`); a full `--self-test` on a tree IDENTICAL to `main`'s at `168824c` (same tree id) reported
+  `sabotaged=9 caught=9 plain-loop=3/3`, exit 0 (local, pinned chromium). ✅ **CLOSING CONDITION MET —
+  ARC CLOSED.** The iPhone checklist still gates announcing install on the client instance.
 - ⚠ The `uiaudit` job's `verify-push` step fails while the audit hub's push endpoint is down; the
   TEST step is what to read (`uiaudit tests: top-level PASS=… FAIL=0`).
 - Claims: all released.
 
 ## Next steps (ranked)
-1. **S6b** — make the `uiaudit-touch` job BLOCKING per the plan (S5 and S6a are DONE). forcing: user
-   — operator chose this scope (O9–O11).
-2. **(done) Deploy S4** — rode with #214 at `sha-197dd0e`; S5 is now live at `sha-9292da2`.
+1. **(done) S6b** — #256, and #262 for the self-test. Optional, the operator's: make `uiaudit-touch` a
+   REQUIRED check (branch protection).
+   forcing: user — operator chose this scope (O9–O11).
+2. 🟡 **Nothing in CI notices a `--self-test` sabotage anchor going stale** — only a manual run did.
+   A cheap guard: a browser-free test asserting each `SABOTAGES` anchor's count against the tree
+   (also `memos_check.py`'s table). forcing: quality — this gap hid a broken closing instrument.
+3. **(done) Deploy S4** — rode with #214 at `sha-197dd0e`; S5 is now live at `sha-9292da2`.
    forcing: user — operator go.
-3. **(done) Merge #220** — merged `f3623d4`. forcing: user — operator asked for S4.
+4. **(done) Merge #220** — merged `f3623d4`. forcing: user — operator asked for S4.
 
 ## Gotchas / decisions / dead-ends
 - **Operator decisions this session (paraphrased; never quote verbatim — AGENTS.md forbids
@@ -76,8 +89,10 @@ decisions O1–O13 paraphrased, slices S0–S6b, the iPhone checklist, closing-c
   package's 120 s `-timeout`** — two waiters still poll after child exit
   (`database_test.go` ~:318, 60 s; `main_test.go` ~:817, 20 s). Moving them onto `presenceChild`
   (whose `waitFor` now fails on exit) restores the margin. via: measurement
-- **`pwa_check.sh` breaks under an exported `CDPATH`** (`$(cd … && pwd)` prints the path twice →
-  a misleading "missing built cairn-ui"); pre-existing pattern, unset `CDPATH` to run it. via: measurement
+- ✅ **FIXED by #209 (`0355c7a`): `pwa_check.sh` no longer breaks under an exported `CDPATH`** — it
+  runs `unset CDPATH` before its first `cd`. Re-measured on `main`: with `CDPATH=.:/tmp` exported, its
+  path-resolution prefix yields ONE `here` line; the same prefix with that line deleted yields two
+  (the old `$(cd … && pwd)` double-print). via: measurement
 
 - **`opencode export`, chromium and the uiaudit walk all misbehave on a loaded host** — the S4
   screenshot world is UNARMED (armed headless chromium fires `beforeinstallprompt` itself → racy

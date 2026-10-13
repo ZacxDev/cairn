@@ -45,7 +45,7 @@ type LinkRole string
 const (
 	// LinkReader may read, and nothing else. The DEFAULT, because a form whose unread
 	// default confers write is a form that hands out write to everybody who does not read
-	// it — `inviteForm`'s ruling about `owner`, one step down.
+	// it.
 	LinkReader LinkRole = "reader"
 	// LinkMember may read and write.
 	LinkMember LinkRole = "member"
@@ -57,8 +57,13 @@ const (
 // the reason its first option is the safe default.
 //
 // ⚠ THERE IS NO `owner`. A link may be redeemable by anybody, any number of times; a
-// reusable owner link would be a transfer of a project to whoever reads a chat log. The
-// single-project invite flow keeps its owner option, bounded by single use.
+// reusable owner link would be a transfer of a project to whoever reads a chat log.
+//
+// 🔴 AND SINCE THE INVITE FOLD NOTHING SELF-SERVICE CONFERS `owner` AT ALL. The
+// single-project invitation kept an owner option, bounded by single use; that mint is gone
+// (operator decision — `internal/ui`'s `InviteFoldNotice` states it on the page), so the one
+// writer of the owner role left is the operator's `cairn-server -set-member`. An invitation
+// issued at `owner` BEFORE the fold still redeems at it until it expires.
 var AllLinkRoles = []LinkRole{LinkReader, LinkMember, LinkAdmin}
 
 // Valid answers whether r is a link role this package defines.

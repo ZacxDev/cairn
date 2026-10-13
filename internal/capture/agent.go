@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/ZacxDev/cairn/internal/client"
 	"github.com/ZacxDev/cairn/internal/redact"
@@ -28,11 +30,89 @@ type Agent struct {
 	Sink         Sink
 	State        *State
 	Log          io.Writer
+
+	// Checkpoint, when set, saves the state. It is called AT ONCE where a crash must not lose a
+	// decision — before an opencode write leaves (its plan), before a re-check placeholder is sent
+	// — and after a session whose state CHANGED, at most once per CheckpointEvery, with one last
+	// save when the run ends with unsaved changes.
+	//
+	// 🔴 NOT AFTER EVERY SESSION. That was built first: an idle run over 861 sessions rewrote and
+	// fsynced the whole state 861 times (measured: 4.7 s and 196 MB per run, every minute).
+	Checkpoint      func() error
+	CheckpointEvery time.Duration
+
+	// fatal is the first error that ends the run's uploads loudly (a refused token).
+	fatal error
+	// dirty is whether the state holds a change no checkpoint has saved; saved is when it last was.
+	dirty bool
+	saved time.Time
+	// sawDeleted is set when a write of the session being captured was answered 410 ([ErrDeleted]),
+	// whichever of its failures the session reports; [Agent.isolate] turns it into the session's
+	// final mark.
+	sawDeleted bool
+}
+
+// checkpoint saves the state now.
+func (a *Agent) checkpoint() error {
+	if a.Checkpoint == nil {
+		return nil
+	}
+	if err := a.Checkpoint(); err != nil {
+		return err
+	}
+	a.dirty, a.saved = false, time.Now()
+	return nil
+}
+
+// sessionImage is one session's state as it would be saved, for telling whether a run changed it.
+func (a *Agent) sessionImage(root string) []byte {
+	raw, _ := json.Marshal(a.State.Sessions[root])
+	return raw
+}
+
+// stopped reports whether the instance a session is bound for is not taking uploads in this run.
+// A session with no instance yet is bound for the sole instance when there is only one.
+func (a *Agent) stopped(instance string) bool {
+	s, ok := a.Sink.(interface{ Stopped(string) error })
+	if !ok {
+		return false
+	}
+	if instance == "" && !a.Routing.MultiInstance() && len(a.Routing.Instances) == 1 {
+		instance = a.Routing.Instances[0].Alias
+	}
+	return instance != "" && s.Stopped(instance) != nil
+}
+
+// skipUnread reports whether a session may be skipped WITHOUT reading it: its instance is not taking
+// uploads in this run AND nothing of the session is there.
+//
+// 🔴 A SESSION WITH A SHIPPED PREFIX IS STILL DERIVED AND ROUTED WHILE ITS INSTANCE IS STOPPED
+// (#273's audit, F3). Skipping it — as every bound session was — froze its `V` for as long as the
+// instance answered 503 or 507, so a read that moved its routing answer was never seen and the
+// prefix was never withdrawn; and a quota that is FULL is a long-lived stop. Reading it costs only
+// its new bytes (the watermarks hold); what is still never done for a stopped instance is the
+// backlog nobody shipped — the measured megabytes — and any upload.
+func (a *Agent) skipUnread(ss *SessionState) bool {
+	return a.stopped(ss.Instance) && !ss.shipped()
 }
 
 // Summary counts one run. It carries no content.
 type Summary struct {
 	Sessions, Shipped, Held, Withdrawn, Records, Blobs, Refused int
+	// Skipped counts sessions nothing was sent for because their instance is not taking uploads in
+	// this run: those not read at all (already bound to it with nothing shipped), and those read and
+	// routed to it only to find it stopped.
+	Skipped int
+	// WithdrawalPending counts sessions whose shipped prefix must be withdrawn and whose withdrawal
+	// got no answer in this run; each is asked again on the next. Deleted counts sessions an instance
+	// answered 410 for in this run — their transcript was deleted there, and they are never sent again.
+	WithdrawalPending, Deleted int
+}
+
+// String is the run's one summary line.
+func (s Summary) String() string {
+	return fmt.Sprintf("sessions=%d shipped=%d held=%d withdrawn=%d records=%d blobs=%d refused=%d skipped=%d withdrawal-pending=%d deleted=%d",
+		s.Sessions, s.Shipped, s.Held, s.Withdrawn, s.Records, s.Blobs, s.Refused, s.Skipped, s.WithdrawalPending, s.Deleted)
 }
 
 func (a *Agent) logf(format string, args ...any) {
@@ -41,7 +121,9 @@ func (a *Agent) logf(format string, args ...any) {
 	}
 }
 
-// Run captures every session once.
+// Run captures every session once. It returns an error only for what ends the run's uploads — a
+// session tree that cannot be listed, or an instance that refused the capture token
+// ([FatalError]); every other failure is one session's, logged and counted in Refused.
 func (a *Agent) Run() (Summary, error) {
 	var sum Summary
 	if a.ClaudeRoot != "" {
@@ -70,7 +152,12 @@ func (a *Agent) Run() (Summary, error) {
 			sum.Refused++
 		}
 	}
-	return sum, nil
+	if a.dirty {
+		if err := a.checkpoint(); err != nil && a.fatal == nil {
+			a.fatal = fmt.Errorf("capture: the state could not be saved: %w", err)
+		}
+	}
+	return sum, a.fatal
 }
 
 // isolate runs one session's capture and turns its failure into a logged refusal.
@@ -80,11 +167,108 @@ func (a *Agent) Run() (Summary, error) {
 // that fails, a blob a sink refuses (review round 1). The failed session's watermarks did not
 // advance (each advances only after its own write), so the next run retries it.
 func (a *Agent) isolate(root string, sum *Summary, run func() error) {
-	if err := run(); err != nil {
+	before := a.sessionImage(root)
+	a.sawDeleted = false
+	err := run()
+	switch ss := a.State.Sessions[root]; {
+	case a.sawDeleted && ss != nil:
+		// 🔴 410 IS FINAL, AND SAID ONCE (#273's audit, F2). The instance deleted this session's
+		// transcript; the agent must not retry it every minute, and — what the deletion's owner was
+		// promised — must not send it anything that would start the session again there. Saved at
+		// once, so a kill cannot make the next run ask again.
+		ss.Deleted = ss.Instance
+		a.logf("DELETED %s: instance %s answered that this session's transcript was deleted there; nothing more of it "+
+			"is read or sent", root, ss.Instance)
+		sum.Deleted++
+		if cerr := a.checkpoint(); cerr != nil && a.fatal == nil {
+			a.fatal = fmt.Errorf("capture: the state could not be saved: %w", cerr)
+		}
+	case err != nil:
 		a.logf("refused %s: %v", root, err)
 		sum.Refused++
 	}
+	if !bytes.Equal(before, a.sessionImage(root)) {
+		a.dirty = true
+	}
+	if a.dirty && time.Since(a.saved) >= a.CheckpointEvery {
+		if err := a.checkpoint(); err != nil && a.fatal == nil {
+			a.fatal = fmt.Errorf("capture: the state could not be saved: %w", err)
+		}
+	}
 }
+
+// rechecks is the half of an [Upload] that carries the pod's re-check refusals for one stream:
+// which of recs it already refused (same `src`, same bytes), and the hook that records a new one
+// in the state and SAVES it before the placeholder is sent.
+func (a *Agent) rechecks(up *Upload, st *StreamState, recs []Record) {
+	byDigest := map[string]string{}
+	up.Rechecked = map[string]bool{}
+	for _, r := range recs {
+		byDigest[r.Src] = digest(r.Rec)
+		if st.Rechecked[r.Src] == byDigest[r.Src] {
+			up.Rechecked[r.Src] = true
+		}
+	}
+	up.OnRecheck = func(src string) error {
+		if st.Rechecked == nil {
+			st.Rechecked = map[string]string{}
+		}
+		st.Rechecked[src] = byDigest[src]
+		return a.checkpoint()
+	}
+}
+
+// settled forgets the re-check refusals of records that are now stored (as placeholders).
+func settled(st *StreamState, stored []Record) {
+	for _, r := range stored {
+		delete(st.Rechecked, r.Src)
+	}
+	if len(st.Rechecked) == 0 {
+		st.Rechecked = nil
+	}
+}
+
+// held is every failed write's first stop. A re-check refusal the sink could not answer with a
+// placeholder — a 422 naming a request FIELD, where the name or cursor itself matched — HOLDS that
+// stream or blob version for good: recorded in `mark`, logged, never resent. Any other error is
+// returned for the session to report, and the next run retries it.
+//
+// 🔴 AND A REFUSED TOKEN IS RECORDED HERE, WHEREVER IT ARRIVES. A session reports its FIRST
+// failure; a 401 on a later stream behind an ordinary error was masked and the run exited 0.
+func (a *Agent) held(err error, mark *string, what string, sum *Summary) error {
+	var fatal *FatalError
+	if errors.As(err, &fatal) && a.fatal == nil {
+		a.fatal = err
+	}
+	if errors.Is(err, ErrDeleted) {
+		a.sawDeleted = true
+	}
+	var rc *RecheckRefusal
+	if !errors.As(err, &rc) {
+		return err
+	}
+	*mark = rc.Error()
+	a.logf("HOLD %s: %v — held on this host for good and never resent", what, rc)
+	sum.Refused++
+	return nil
+}
+
+// offsetCursor is a Claude Code stream's cursor: its byte offset, "" for nothing written.
+func offsetCursor(off int64) string {
+	if off == 0 {
+		return ""
+	}
+	return strconv.FormatInt(off, 10)
+}
+
+// chainCursor is an opencode stream's cursor after one more unit: a hash chain over every unit
+// key and the digest of its REDACTED bytes, so it names a position and carries no content.
+func chainCursor(prev, key string, rec []byte) string {
+	return "c" + digest([]byte(prev + "\x00" + key + "\x00" + digest(rec)))[:32]
+}
+
+// blobCursor is a blob version's cursor: the digest of its REDACTED bytes.
+func blobCursor(out []byte) string { return "b" + digest(out)[:32] }
 
 // safeID is the session-id grammar a ledger file name may be built from: ONE path component,
 // tested as a component — `..` itself is refused, `a..b` is an ordinary name.
@@ -92,11 +276,32 @@ func safeID(id string) bool {
 	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, `/\`)
 }
 
+// readLedger reads one ledger file the way the client writes it: a REGULAR file, never followed
+// through a symlink (`O_NOFOLLOW`), opened `O_NONBLOCK` so a FIFO planted at the path cannot hang the
+// run (#266's audit). Absent is [os.ErrNotExist] — zero records; anything else that is not a regular
+// file is an error, which both callers turn into `*` (fail closed: a link or a pipe where the ledger
+// goes is a ledger nobody can vouch for, not an empty one).
+func readLedger(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	return io.ReadAll(f)
+}
+
 func (a *Agent) foldLedger(d *scopeuse.Deriver, id string) {
 	if a.LedgerDir == "" || !safeID(id) {
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(a.LedgerDir, id+".jsonl"))
+	data, err := readLedger(filepath.Join(a.LedgerDir, id+".jsonl"))
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
@@ -104,6 +309,85 @@ func (a *Agent) foldLedger(d *scopeuse.Deriver, id string) {
 	default:
 		d.Ledger(data)
 	}
+}
+
+// LedgerStream is the stream a session's client read ledger ships as — the pod's
+// `archive.LedgerStream`, spelled here because this package must not import the pod's store.
+// `TestTheLedgerStreamNameIsThePods` pins the two equal.
+const LedgerStream = "ledger"
+
+// ledgerUnits is the client read ledger of `ids` — the root first, then each child id (decision 7:
+// an opencode child's reads attribute to its ROOT, and this is where its id is mapped to it) — as
+// units keyed `<id>@<byte offset>`, so an append-only file ships only its new lines.
+//
+// 🔴 ONLY COMPLETE LINES. A client appends one line per write; a line with no newline yet is a
+// write in flight and waits for the next run, or it would ship half a record.
+//
+// 🔴 FAIL CLOSED, NEVER SILENT: a ledger that EXISTS and cannot be read ships one record naming `*`
+// (the routing fold's `LedgerUnreadable`), and a line that is not one JSON value ships as a record
+// naming `*` with its bytes DROPPED — the pod parses the ledger itself, and a record it could not
+// store would stall the stream, while one it stores as `*` makes the session owner-only.
+func (a *Agent) ledgerUnits(ids []string) []exportUnit {
+	var out []exportUnit
+	for _, id := range ids {
+		if a.LedgerDir == "" || !safeID(id) {
+			continue
+		}
+		data, err := readLedger(filepath.Join(a.LedgerDir, id+".jsonl"))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			out = append(out, exportUnit{Key: id + "@unreadable", Raw: json.RawMessage(ledgerStar("unreadable"))})
+			continue
+		}
+		for off := 0; off < len(data); {
+			nl := bytes.IndexByte(data[off:], '\n')
+			if nl < 0 {
+				break
+			}
+			line := bytes.TrimSpace(data[off : off+nl])
+			key := id + "@" + strconv.Itoa(off)
+			off += nl + 1
+			if len(line) == 0 {
+				continue
+			}
+			if !json.Valid(line) {
+				line = ledgerStar("unparsed")
+			}
+			out = append(out, exportUnit{Key: key, Raw: append(json.RawMessage(nil), line...)})
+		}
+	}
+	return out
+}
+
+// ledgerStar is the record that stands for a ledger line or file the agent could not read.
+func ledgerStar(why string) []byte {
+	return []byte(`{"schema":1,"scope":"*","cairn_capture":"` + why + `"}`)
+}
+
+// shipLedger uploads the session's client read ledger as its [LedgerStream] (decision 3a), through
+// the same plan-saved, resumable path as an opencode stream ([Agent.shipUnits]).
+//
+// 🔴 BEFORE THE TRANSCRIPT STREAMS: the pod's F1 asks "is the ledger EMPTY", so a transcript that
+// names `cairn` uploaded ahead of its ledger is owner-only until the ledger lands.
+func (a *Agent) shipLedger(up Upload, ids []string, ss *SessionState, sum *Summary) (bool, error) {
+	units := a.ledgerUnits(ids)
+	if len(units) == 0 {
+		return false, nil
+	}
+	st := ss.stream(LedgerStream)
+	if st.Refused != "" {
+		return false, nil
+	}
+	n, err := a.shipUnits(up, ocStream{name: LedgerStream, all: units}, st)
+	if n > 0 {
+		sum.Records += n
+	}
+	if err != nil {
+		err = a.held(err, &st.Refused, up.Root+"/"+LedgerStream, sum)
+	}
+	return n > 0, err
 }
 
 func union(a, b []string) []string {
@@ -128,34 +412,144 @@ func union(a, b []string) []string {
 // 🔴 THE DECISION IS MADE OVER `V` AS IT STANDS *INCLUDING* THE RECORDS ABOUT TO SHIP, so a
 // record that reads a scope on another instance never reaches the first one: the read moves the
 // session BEFORE anything from it ships.
+//
+// 🔴 WHEN THE ANSWER IS NO LONGER THE INSTANCE HOLDING THE PREFIX, THE PREFIX IS WITHDRAWN FIRST
+// (S6, clause m) — [Agent.withdraw] — and nothing is shipped anywhere until that instance has
+// answered that the prefix is gone.
+//
+// 🔴 WHERE A SESSION IS BOUND IS SAVED BEFORE ITS FIRST UPLOAD LEAVES, NOT UP TO TWO SECONDS AFTER
+// (S3b's audit, closed in S6). `Instance` used to be saved with the session's other changes, at
+// most every [Agent.CheckpointEvery]: a run killed inside that window had shipped a prefix under a
+// state that still said "nowhere", so when the routing answer later changed there was no instance
+// to withdraw from and the prefix stayed where the rule says it must not be. Every change of
+// `Instance` or `Held` made here is checkpointed AT ONCE, and a save that fails sends nothing.
 func (a *Agent) route(root string, ss *SessionState, sum *Summary) (ship bool, reset bool, err error) {
 	dec := Decide(ss.V, a.Routing)
-	if dec.Held {
-		if ss.Instance != "" {
-			if err := a.Sink.Withdraw(ss.Instance, root); err != nil {
-				return false, false, err
+	if ss.Instance != "" && !dec.Held && dec.Instance != "" && ss.Instance != dec.Instance {
+		// 🔴 THE DESTINATION IS ASKED BEFORE THE CURRENT HOLDER IS TOLD TO FORGET, AND ONLY A DEFINITE
+		// "NOT DELETED HERE" LETS THE WITHDRAWAL GO AHEAD (#273's audit F1, closed in S10; #274's
+		// audit made it "only"). A routing-TABLE edit can send a session BACK to an instance it was
+		// once withdrawn from — and a deletion there is final for the root (410). Withdrawing first
+		// deleted the prefix from the instance that held it, and the first upload to the other then
+		// answered 410 and marked the session deleted: its capture ended EVERYWHERE, over an edit to
+		// a table. The probe stores nothing ([Sink.Position]) and has three outcomes:
+		//
+		//   - a position (the CAS's own 409): the destination has NOT deleted this root — withdraw
+		//     and move, as before;
+		//   - 410: the session is HELD where it is, for good — no withdrawal, nothing more shipped,
+		//     said once;
+		//   - NO ANSWER, or any other: the withdrawal is DEFERRED to the next run. The first version
+		//     of this probe withdrew anyway, so an unreachable destination that would have said 410
+		//     still ended the capture everywhere.
+		//
+		// ⚠ THE TRADE, an agent decision open to operator review: while the destination cannot be
+		// asked, the prefix stays on an instance the CURRENT table no longer routes its scopes to,
+		// and nothing new of the session is shipped anywhere.
+		_, perr := a.Sink.Position(Upload{Instance: dec.Instance, Root: root, Runtime: probeRuntime(ss), Declared: ss.Declared}, "main")
+		switch {
+		case errors.Is(perr, ErrDeleted):
+			ss.Held, ss.HeldReason = true, "routed back to "+dec.Instance+", which deleted this session's transcript: kept on "+ss.Instance
+			a.logf("HOLD %s: its routing answer now names instance %s, where this session's transcript was DELETED and "+
+				"cannot be stored again — the prefix stays on %s, nothing is withdrawn and nothing more of the session is "+
+				"shipped", root, dec.Instance, ss.Instance)
+			sum.Held++
+			return false, false, a.saveRouting(root)
+		case perr != nil:
+			var fatal *FatalError
+			if errors.As(perr, &fatal) && a.fatal == nil {
+				a.fatal = perr
 			}
-			a.logf("withdraw %s from %s: it is held now", root, ss.Instance)
-			sum.Withdrawn++
-			ss.Instance = ""
+			sum.WithdrawalPending++
+			return false, false, fmt.Errorf("its routing answer now names instance %s, which could not be asked whether it "+
+				"deleted this session — so nothing is withdrawn from %s and nothing more of the session is sent this run "+
+				"(asked again next run): %w", dec.Instance, ss.Instance, perr)
 		}
+	}
+	if ss.Instance != "" && (dec.Held || ss.Instance != dec.Instance) {
+		gone, err := a.withdraw(root, ss, sum)
+		if err != nil || !gone {
+			return false, false, err
+		}
+		reset = !dec.Held
+	}
+	if dec.Held {
 		ss.Held, ss.HeldReason = true, dec.Reason
 		a.logf("held %s: %s", root, dec.Reason)
 		sum.Held++
-		return false, false, nil
+		return false, false, a.saveRouting(root)
 	}
-	if ss.Instance != "" && ss.Instance != dec.Instance {
-		if err := a.Sink.Withdraw(ss.Instance, root); err != nil {
+	if ss.Instance != dec.Instance {
+		ss.Instance = dec.Instance
+		if err := a.saveRouting(root); err != nil {
 			return false, false, err
 		}
-		a.logf("withdraw %s from %s: re-shipping it whole to %s", root, ss.Instance, dec.Instance)
-		sum.Withdrawn++
-		ss.reset()
-		ss.Instance = dec.Instance
-		return true, true, nil
 	}
-	ss.Instance = dec.Instance
-	return true, false, nil
+	return true, reset, nil
+}
+
+// probeRuntime is the runtime a position probe names: the session's own, or Claude Code's when the
+// state predates the field — the probe is answered before the runtime is looked at either way.
+func probeRuntime(ss *SessionState) string {
+	if ss.Runtime == "opencode" {
+		return "opencode"
+	}
+	return "claude"
+}
+
+// saveRouting checkpoints a routing decision at once. A decision that cannot be saved is not acted
+// on: the session's error for this run, and nothing of it is sent.
+func (a *Agent) saveRouting(root string) error {
+	if err := a.checkpoint(); err != nil {
+		return fmt.Errorf("capture: where %s ships could not be saved, so nothing of it is sent: %w", root, err)
+	}
+	return nil
+}
+
+// withdraw asks the instance holding a session's prefix to forget it (decision 16), and reports
+// whether the prefix is GONE from there — in which case the session's watermarks are reset and it
+// is bound nowhere, saved at once.
+//
+//   - `{"deleted": true}`: the instance held it for this host's (owner, host) and deleted it — its
+//     transcript, plugin outputs and ticket edges — or had already (a repeat after a lost
+//     acknowledgement). Gone.
+//   - `{"deleted": false}` when this agent has an ACKNOWLEDGED upload of the session on record: the
+//     instance holds no such root for this (owner, host) — the token was reissued under another
+//     host label, say. FINAL: the session is HELD on this host, loudly, and is never shipped
+//     anywhere else — the prefix's presence elsewhere is surfaced rather than duplicated.
+//   - `{"deleted": false}` when NO upload of it was ever acknowledged: the session was bound for the
+//     instance and nothing landed (the instance was not taking uploads), so there is nothing to
+//     withdraw. Gone. ⚠ That is read off this agent's own watermarks, which a kill can leave
+//     unsaved — but then the instance DOES hold the prefix and answers `true`, so the two cases
+//     cannot be confused in the direction that matters.
+//   - an error (no answer): not done. The session stays bound where it was and the next run asks
+//     again; a refused token is recorded as the run's fatal error.
+func (a *Agent) withdraw(root string, ss *SessionState, sum *Summary) (gone bool, err error) {
+	from := ss.Instance
+	deleted, err := a.Sink.Withdraw(from, root)
+	if err != nil {
+		var fatal *FatalError
+		if errors.As(err, &fatal) && a.fatal == nil {
+			a.fatal = err
+		}
+		sum.WithdrawalPending++
+		return false, fmt.Errorf("the prefix on %s could not be withdrawn (withdrawal pending — asked again next run), so "+
+			"nothing more of this session is sent anywhere: %w", from, err)
+	}
+	if !deleted && ss.shipped() {
+		ss.Held, ss.HeldReason = true, "prefix not withdrawn: not held by this owner and host on "+from
+		a.logf("HOLD %s: PREFIX NOT WITHDRAWN: not held by this owner and host on instance %s — the session is held on "+
+			"this host for good and is not shipped anywhere else; what %s holds of it must be removed there by hand",
+			root, from, from)
+		sum.Held++
+		return false, a.saveRouting(root)
+	}
+	if deleted {
+		a.logf("withdraw %s from %s: its routing answer changed", root, from)
+		sum.Withdrawn++
+	}
+	ss.reset()
+	ss.Instance = ""
+	return true, a.saveRouting(root)
 }
 
 type pendingStream struct {
@@ -180,7 +574,13 @@ func splitWithOffsets(lines [][]byte, start int64) []int64 {
 func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 	ss := a.State.session(cs.Root, "claude")
 	sum.Sessions++
-	if ss.Held {
+	if ss.Held || ss.Deleted != "" {
+		return nil
+	}
+	// 🔴 BEFORE ANYTHING IS READ: an instance that is not taking uploads would have this session
+	// read, derived and redacted on every run for nothing (measured at megabytes a second).
+	if a.skipUnread(ss) {
+		sum.Skipped++
 		return nil
 	}
 	d := scopeuse.NewDeriver()
@@ -244,10 +644,15 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 	res := d.Result()
 	ss.Evidence = d.Evidence()
 	ss.V = union(ss.V, res.V)
+	ss.Declared = union(ss.Declared, res.Declare)
 
 	ship, reset, err := a.route(cs.Root, ss, sum)
 	if err != nil || !ship {
 		return err
+	}
+	if a.stopped(ss.Instance) {
+		sum.Skipped++
+		return nil
 	}
 	if reset {
 		// A MOVE re-ships the whole session from offset 0 — but only up to what was DERIVED above,
@@ -261,22 +666,46 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 			pend[i].lines, pend[i].starts, pend[i].fp, pend[i].fpLen = lines, splitWithOffsets(lines, 0), fp, fpLen
 		}
 	}
-	shippedAny := false
+	// 🔴 ONE STREAM'S FAILURE DOES NOT STOP THE SESSION'S OTHER STREAMS: each advances on its own
+	// acknowledgement, and the first error is the session's answer for this run.
+	var failed error
+	fail := func(err error) {
+		if err != nil && failed == nil {
+			failed = err
+		}
+	}
+	up := Upload{Instance: ss.Instance, Root: cs.Root, Runtime: "claude", Declared: ss.Declared}
+	shippedAny, err := a.shipLedger(up, []string{cs.Root}, ss, sum)
+	fail(err)
 	for _, p := range pend {
 		if len(p.lines) == 0 {
 			continue
 		}
+		st := ss.stream(p.name)
 		recs := make([]Record, 0, len(p.lines))
 		for i, l := range p.lines {
-			recs = append(recs, a.redactLine(strconv.FormatInt(p.starts[i], 10), l))
+			r := a.redactLine(strconv.FormatInt(p.starts[i], 10), l)
+			r.End = strconv.FormatInt(p.starts[i]+int64(len(l))+1, 10)
+			recs = append(recs, r)
 		}
-		if err := a.Sink.Records(ss.Instance, cs.Root, p.name, recs); err != nil {
-			return err
+		up.From = offsetCursor(st.Offset)
+		a.rechecks(&up, st, recs)
+		n, err := a.Sink.Records(up, p.name, recs)
+		settled(st, recs[:n])
+		// 🔴 THE ACKNOWLEDGED PREFIX IS COMMITTED EVEN WHEN THE WRITE FAILED: each record of it
+		// answered 200, and its end is a line boundary.
+		if n > 0 {
+			st.Offset = p.end
+			if n < len(recs) {
+				st.Offset = p.starts[n]
+			}
+			st.Fingerprint, st.FPLen = p.fp, p.fpLen
+			sum.Records += n
+			shippedAny = true
 		}
-		st := ss.stream(p.name)
-		st.Offset, st.Fingerprint, st.FPLen = p.end, p.fp, p.fpLen
-		sum.Records += len(recs)
-		shippedAny = true
+		if err != nil {
+			fail(a.held(err, &st.Refused, cs.Root+"/"+p.name, sum))
+		}
 	}
 	for _, n := range blobNames {
 		data, read := blobData[n]
@@ -294,22 +723,45 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 			}
 			blobStat[n] = BlobState{Size: info.Size(), MtimeNs: info.ModTime().UnixNano(), Digest: digest(data)}
 		}
-		if prev, ok := ss.Blobs[n]; ok && prev.Digest == blobStat[n].Digest {
-			ss.Blobs[n] = blobStat[n] // touched, not changed
+		prev, seen := ss.Blobs[n]
+		next := blobStat[n]
+		next.Cursor, next.Refused = prev.Cursor, ""
+		if seen && prev.Digest == next.Digest {
+			next.Refused = prev.Refused
+			ss.Blobs[n] = next // touched, not changed
 			continue
 		}
-		out, _ := a.Redactor.Blob(n, data)
-		if err := a.Sink.Blob(ss.Instance, cs.Root, n, out); err != nil {
-			return err
+		out := a.redactBlob(n, data)
+		to := blobCursor(out)
+		up.From = prev.Cursor
+		up.Rechecked = map[string]bool{"": prev.Rechecked == next.Digest}
+		up.OnRecheck = func(string) error {
+			// Saved under the PREVIOUS version's size and mtime, so the next run reads the file again
+			// and, finding this digest, sends the placeholder at once.
+			prev.Rechecked, next.Rechecked = next.Digest, next.Digest
+			ss.Blobs[n] = prev
+			return a.checkpoint()
 		}
-		ss.Blobs[n] = blobStat[n]
+		if prev.Rechecked == next.Digest {
+			next.Rechecked = prev.Rechecked
+		}
+		if err := a.Sink.Blob(up, n, to, out); err != nil {
+			if err = a.held(err, &next.Refused, cs.Root+" blob "+n, sum); err != nil {
+				fail(err)
+				continue
+			}
+			ss.Blobs[n] = next // held: the stored version is still prev.Cursor
+			continue
+		}
+		next.Cursor = to
+		ss.Blobs[n] = next
 		sum.Blobs++
 		shippedAny = true
 	}
 	if shippedAny {
 		sum.Shipped++
 	}
-	return nil
+	return failed
 }
 
 func feedClaudeLine(d *scopeuse.Deriver, line []byte) {
@@ -327,8 +779,19 @@ func feedClaudeLine(d *scopeuse.Deriver, line []byte) {
 var readFile = os.ReadFile
 
 func (a *Agent) redactLine(src string, line []byte) Record {
+	if redactionOff {
+		return Record{Src: src, Rec: append([]byte(nil), line...)}
+	}
 	out, _ := a.Redactor.Record(line)
 	return Record{Src: src, Rec: append([]byte(nil), out...)}
+}
+
+func (a *Agent) redactBlob(name string, data []byte) []byte {
+	if redactionOff {
+		return data
+	}
+	out, _ := a.Redactor.Blob(name, data)
+	return out
 }
 
 type ocStream struct {
@@ -340,7 +803,11 @@ type ocStream struct {
 func (a *Agent) runOpencode(root string, sum *Summary) error {
 	ss := a.State.session(root, "opencode")
 	sum.Sessions++
-	if ss.Held {
+	if ss.Held || ss.Deleted != "" {
+		return nil
+	}
+	if a.skipUnread(ss) {
+		sum.Skipped++
 		return nil
 	}
 	// Export the root and, recursively, every child its `task` parts name.
@@ -394,36 +861,98 @@ func (a *Agent) runOpencode(root string, sum *Summary) error {
 	res := d.Result()
 	ss.Evidence = d.Evidence()
 	ss.V = union(ss.V, res.V)
+	ss.Declared = union(ss.Declared, res.Declare)
 
-	ship, reset, err := a.route(root, ss, sum)
+	ship, _, err := a.route(root, ss, sum)
 	if err != nil || !ship {
 		return err
 	}
-	shippedAny := false
+	if a.stopped(ss.Instance) {
+		sum.Skipped++
+		return nil
+	}
+	var failed error
+	up := Upload{Instance: ss.Instance, Root: root, Runtime: "opencode", Declared: ss.Declared}
+	shippedAny, failed := a.shipLedger(up, append([]string{root}, children...), ss, sum)
 	for _, s := range streams {
-		todo := s.changed
-		if reset {
-			todo = s.all
-		}
-		if len(todo) == 0 {
+		st := ss.stream(s.name)
+		if st.Refused != "" {
 			continue
 		}
-		recs := make([]Record, 0, len(todo))
-		for _, u := range todo {
-			recs = append(recs, a.redactLine(u.Key+"@"+digest(u.Raw)[:12], u.Raw))
+		n, err := a.shipUnits(up, s, st)
+		if n > 0 {
+			sum.Records += n
+			shippedAny = true
 		}
-		if err := a.Sink.Records(ss.Instance, root, s.name, recs); err != nil {
-			return err
+		if err != nil {
+			if err = a.held(err, &st.Refused, root+"/"+s.name, sum); err != nil && failed == nil {
+				failed = err
+			}
 		}
-		st := ss.stream(s.name)
-		for _, u := range todo {
-			st.Units[u.Key] = digest(u.Raw)
-		}
-		sum.Records += len(recs)
-		shippedAny = true
 	}
 	if shippedAny {
 		sum.Shipped++
 	}
-	return nil
+	return failed
+}
+
+// shipUnits sends every unit of one opencode stream whose version is not the one shipped, and
+// commits the acknowledged prefix.
+//
+// 🔴 A PENDING WRITE IS SETTLED FIRST, AND NOTHING NEW IS SENT UNTIL IT IS. If an earlier write
+// went unacknowledged, the instance is asked where the stream is ([Sink.Position] — it stores
+// nothing) and the plan is settled against the answer ([StreamState.reconcile]). An instance that
+// cannot be asked gets no new write, so there is only ever ONE plan and never one to evict.
+//
+// The write's own plan — each unit, its version, the cursor after it — is then put in the state
+// AND SAVED before the request leaves. The upsert set is recomputed from the state HERE rather
+// than taken from the derivation, so a move's reset (every unit again) and a settled position
+// (only what the instance lacks) are the same computation.
+func (a *Agent) shipUnits(up Upload, s ocStream, st *StreamState) (int, error) {
+	if len(st.Pending) > 0 {
+		at, err := a.Sink.Position(up, s.name)
+		if err != nil {
+			return 0, err
+		}
+		was := st.Cursor
+		if !st.reconcile(at) {
+			return 0, &UnresumableError{StoredTo: at}
+		}
+		if at != was {
+			a.logf("resume %s/%s at %s: matched against a sent, unacknowledged write", up.Root, s.name, at)
+		}
+	}
+	todo := diffUnits(s.all, st.Units)
+	if len(todo) == 0 {
+		return 0, nil
+	}
+	recs := make([]Record, 0, len(todo))
+	plan := make([]PendingUnit, 0, len(todo))
+	cur := st.Cursor
+	for _, u := range todo {
+		r := a.redactLine(u.Key+"@"+digest(u.Raw)[:12], u.Raw)
+		cur = chainCursor(cur, u.Key, r.Rec)
+		r.End = cur
+		recs = append(recs, r)
+		plan = append(plan, PendingUnit{Key: u.Key, Digest: digest(u.Raw), End: cur})
+	}
+	st.Pending = plan
+	if err := a.checkpoint(); err != nil {
+		return 0, fmt.Errorf("capture: the write's plan could not be saved, so it is not sent: %w", err)
+	}
+	up.From = st.Cursor
+	a.rechecks(&up, st, recs)
+	n, err := a.Sink.Records(up, s.name, recs)
+	settled(st, recs[:n])
+	if n > 0 {
+		for _, done := range plan[:n] {
+			st.Units[done.Key] = done.Digest
+		}
+		// The instance is known to be at this cursor; what is left of the plan still chains from it.
+		st.Cursor, st.Pending = plan[n-1].End, plan[n:]
+		if n == len(plan) {
+			st.Pending = nil
+		}
+	}
+	return n, err
 }

@@ -561,6 +561,8 @@ renaming a human-read label breaks nobody.
 | which registered arcs touched a scope, `declared` or `inferred` (Go client only; asks the pod) | `cairn arcs --scope X` (or `--repo P`) |
 | one registered arc: status, tooling coverage, members (Go client only; asks the pod) | `cairn arc-show --slug S` (home from `--scope`/`--repo`) |
 | register or update an arc from a JSON payload (Go client only) | `cairn arc-register --slug S --from F` (home from `--scope`/`--repo`) |
+| which code — repositories and branch — a scope declares it describes (Go client only; asks the pod; read-only, the browser is the only writer) | `cairn sources --scope X` (or `--repo P`) |
+| check a scope's entries — `## Pointers` paths and `path#Symbol` rows, `RESOLVED <sha>` markers, `github:` PR refs — against its declared code sources, fetched into a local mirror (Go client only; exits on doctor's 0/9/10; see below) | `cairn audit-refs --scope X` (`--json`, `--no-sync`) |
 | the post-write check: parse, dropped lines, marker reachability | `cairn validate` |
 | one call of diagnostics | `cairn doctor` (`--json`, `--no-sync`) |
 | append one dated, attributed bullet | `cairn append --scope S --ref R --text '…' --session ID` |
@@ -582,6 +584,38 @@ session id is the writer's own word). `scope-absent`, `scope-empty`, `no-attribu
 `scope-unreadable` are four different statements and render differently; a scope you may not read
 answers exactly like one that does not exist. Exit codes are the read set below — `0` for every
 answer, `3` when nothing in the scope could be scanned.
+
+### `cairn audit-refs` — do the entries still hold against the code they describe?
+
+A scope declares its code sources in the browser (`git:<host>/<repo-path>[//<subpath>]@<branch>`;
+`cairn sources` prints them). `cairn audit-refs` reads them from the pod, reads the scope's entries
+from the synced cache, fetches each source into a full mirror under `$XDG_CACHE_HOME/cairn/mirrors`
+(`git fetch --prune --no-tags` of `refs/heads/*` and `refs/pull/*/head`), and checks every
+CHECKABLE claim at the fetched commit: a `## Pointers` path (repo-root-relative, then
+subpath-relative), a structural `path#Symbol` row, a `RESOLVED <sha>:` marker (reachable from the
+declared branch, from another fetched ref, or not at all — never by object presence, never through a
+tag) and a `github:<owner>/<repo>#N` ref (GitHub's API; `GH_TOKEN`/`GITHUB_TOKEN` if set). It prints
+`sources=…`, `checked=N stale=S unchecked=U`, then one line per finding quoting the commit.
+
+- **Exit 9**: a claim was measured stale (a missing path, a symbol absent from its file, a PR that
+  does not exist). A path or symbol is only ever stale when EVERY declared source was read: beside a
+  source that could not be fetched, or whose `git` failed on that claim, it is `unchecked: not in the
+  sources read`, because the unread source may hold it. **Exit 10**: something could not be looked at — an undeclared scope, an
+  unconfigured or unreadable sources journal, an unmapped or unreachable source, an ambiguous or
+  unreachable sha, a rate-limited PR check, or a run that checked nothing. An interrupt (Ctrl-C)
+  kills the running `git` call's whole process group before `cairn` exits. **Exit 0** only when
+  `checked > 0` and neither of those. A SHA reachable only off-branch, an open/merged/closed PR and a
+  ref to a repository the scope does not declare are informational.
+- **Only hosts the auditing host maps are ever contacted**: `CAIRN_AUDIT_HOSTS=host=base[,…]`, default
+  `github.com=https://github.com`; bases are `https://` or `file://` (no SSH in v1) and may not carry
+  credentials (use a credential helper). `CAIRN_AUDIT_GITHUB_API` overrides the API base (`https://`,
+  or `http://` to a loopback host only). A PR is `not-found` only when the repository itself is
+  visible to the credential; a 404 from an invisible (private) repository is could-not-look.
+- **The mirrors are isolated from the caller's repository**: every `git` call takes `--git-dir` and
+  runs with git's repository-local variables (`GIT_DIR`, `GIT_WORK_TREE`, …) stripped, so running it
+  from a hook cannot redirect a `--prune` fetch into the operator's own repository.
+- **What it does not judge**: whether a file still says what the entry claims, whether a commit
+  implements it, whether an `OPEN:` item is still open. Those stay out of the exit code.
 
 ### `cairn arcs`, `cairn arc-show`, `cairn arc-register` — the arc registry
 
@@ -1021,11 +1055,20 @@ That is deliberate — a picker listing every user would turn admin on one scope
 a directory of everyone in the deployment — and it means reaching anybody else needs
 an invite. ⚠ **The clause that stood here said an invite "does not exist yet", and it
 is corrected rather than deleted because it was true across three changes and is the
-sentence somebody would act on.** The invite flow exists: `GET`/`POST /invite`,
-`POST /invite/revoke` and a public `GET /join`, over the invite store `-db-dsn`
-configures. It is **absent on a deployment with no `-db-dsn`**, where the invite pages
-say so and their writes answer 501 — so "does not exist yet" is now a statement about a
-CONFIGURATION rather than about this repository.
+sentence somebody would act on.** The invite flow exists: a **team link**, created on the
+Team page (`GET /team`, `POST /team/link`) and opened at a public `GET /join`, over the
+store `-db-dsn` configures. It is **absent on a deployment with no `-db-dsn`**, where the
+Team page says so and its writes answer 501 — so "does not exist yet" is now a statement
+about a CONFIGURATION rather than about this repository.
+
+🔴 **SINGLE-PROJECT INVITATIONS WERE FOLDED INTO TEAM LINKS, AND TWO THINGS WENT WITH
+THEM.** `POST /invite` creates nothing now and redirects to the team-link form;
+invitations issued before that stay listed, revocable and redeemable until they expire.
+What a team link does not do: **it cannot confer `owner`**, so a project owner can no
+longer make another owner from the browser — the operator's `cairn-server -set-member` is
+the path left — and **it is listed to, and revocable by, only whoever created it**, so two
+admins of one project cannot see or revoke each other's links. Both were accepted, and
+the Team page says both.
 
 🔴 **THE SHARE FLOW NEEDS `-control-journal <path>`, AND NOT ONLY TO WRITE.** Without one
 the authority is the token file, which has no shares to record and **confers `admin` on

@@ -1,17 +1,24 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/codesrc"
+	"github.com/ZacxDev/cairn/internal/control"
+	"github.com/ZacxDev/cairn/internal/redact"
+	"github.com/ZacxDev/cairn/internal/transcript/archive"
 	"github.com/ZacxDev/cairn/internal/ui"
 	"github.com/ZacxDev/cairn/internal/worker"
 )
@@ -158,7 +165,7 @@ func TestTheBinaryRefusesEachWorkerMisconfiguration(t *testing.T) {
 	}
 }
 
-var workerLine = regexp.MustCompile(`worker listener on (127\.0\.0\.1:\d+) \(sole capture owner (\S+), (\d+) token row\(s\), 2 route\(s\)\), ` +
+var workerLine = regexp.MustCompile(`worker listener on (127\.0\.0\.1:\d+) \(sole capture owner (\S+), (\d+) token row\(s\), 7 route\(s\)\), ` +
 	`transcripts in (\S+), capture (DISARMED|ARMED)`)
 
 func (c *presenceChild) workerAddr(t *testing.T) []string {
@@ -213,8 +220,14 @@ func TestTheWorkerListenerIsDisarmedUnlessArmedByFlag(t *testing.T) {
 	on := startPresenceChild(t, journal, workerArgs(t, tokens, "-arm-transcript-capture")...)
 	on.serving(t)
 	m = on.workerAddr(t)
-	if m[5] != "ARMED" || !strings.Contains(on.out.String(), "O15's arming gate") || !strings.Contains(on.out.String(), "S11's client read ledger") {
+	if m[5] != "ARMED" || !strings.Contains(on.out.String(), "WAIVED by operator decision O17") ||
+		!strings.Contains(on.out.String(), "client read ledger its host uploads") || !strings.Contains(on.out.String(), "while its ledger is EMPTY") {
 		t.Fatalf("an armed child does not announce the arming and its preconditions:\n%s", on.out.String())
+	}
+	// 🔴 The warning said "this build holds no ledger" long after S11 built one. A warning that is
+	// false about the build trains its reader to skip it.
+	if strings.Contains(on.out.String(), "holds no ledger") {
+		t.Fatalf("the arming warning still says this build holds no ledger:\n%s", on.out.String())
 	}
 	if code, body := postUpload(t, m[1], childCaptureToken); code != http.StatusOK || body != `{"stored_to":"100","seq_to":1}`+"\n" {
 		t.Fatalf("POSITIVE CONTROL: an armed child answered %d %q", code, body)
@@ -288,5 +301,173 @@ func TestAWorkerTokenIsGarbageToEveryBrowserRow(t *testing.T) {
 		if got := ask(method, path, childCaptureToken); got != g1 {
 			t.Fatalf("%s: a capture token is answered differently from a random one:\ncapture: %.200s\nrandom:  %.200s", row, got, g1)
 		}
+	}
+}
+
+// populatedTranscriptDir is a directory the transcript store itself filled — a committed session,
+// a retention journal line and a staged frame — i.e. what a RESTART opens.
+func populatedTranscriptDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	red, err := redact.New(redact.SelfTestKey(5), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2000, 1, 2, 3, 4, 5, 0, time.UTC)
+	a, err := archive.Open(archive.Config{Dir: dir, Retention: time.Hour, Quota: 1 << 30, Recheck: red, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	who := archive.Uploader{Owner: workerOwnerA.String(), Host: "host-a"}
+	rec := []archive.Record{{Src: "0", Rec: []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"synthetic"}]}}`)}}
+	up := func(root string) archive.Upload {
+		return archive.Upload{Root: root, Runtime: "claude", From: "", To: "1"}
+	}
+	if _, err := a.AppendRecords(who, up("s-0001"), "main", rec); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Hour)
+	if deleted, err := a.Sweep(); err != nil || len(deleted) != 1 {
+		t.Fatalf("POSITIVE CONTROL: the sweep deleted %v (%v)", deleted, err)
+	}
+	if _, err := a.AppendRecords(who, up("s-0002"), "main", rec); err != nil {
+		t.Fatal(err)
+	}
+	framed := up("s-0003")
+	framed.Frame = &archive.Frame{Index: 0, Count: 2}
+	if _, err := a.AppendRecords(who, framed, "main", []archive.Record{{Src: "0", Rec: []byte(`{"half":`)}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"journal.jsonl", "sessions", "frames"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Fatalf("POSITIVE CONTROL: the populated directory lacks %s (%v)", name, err)
+		}
+	}
+	return dir
+}
+
+// TestTheBinaryRefusesATranscriptDirHoldingItsOwnState is AP1's closing check, through `main`: a
+// `-transcript-dir` holding the CONTROL JOURNAL (under the store's own journal name) or the
+// BROWSER SESSION FILE (under the store's own `sessions` name) is refused at startup, exit 78,
+// with a refusal naming the colliding flag; so is a directory holding ANOTHER program's journal
+// under that name (the store's own ownership check — this process's flags do not name it). A
+// fresh directory (every other test here) and the store's OWN populated directory (a restart)
+// both serve — the positive controls.
+//
+// RED on the S3 head for the control journal and the foreign journal: `ResolveDir` refused only a
+// directory inside the store root, so both children SERVED. The session-file case was already
+// refused there by accident — `MkdirAll` of `sessions` over a file fails — so it is an INVARIANT
+// guard for that case, kept because the refusal now names the cause.
+func TestTheBinaryRefusesATranscriptDirHoldingItsOwnState(t *testing.T) {
+	_, journal := seededJournal(t, credentialLive)
+	raw, err := os.ReadFile(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := workerTokenFile(t)
+
+	t.Run("the control journal", func(t *testing.T) {
+		dir := t.TempDir()
+		inside := filepath.Join(dir, "journal.jsonl")
+		if err := os.WriteFile(inside, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		c := startPresenceChild(t, inside, workerArgs(t, tokens, "-transcript-dir", dir)...)
+		if code := c.exit(t); code != exitConfig || !strings.Contains(c.out.String(), "-control-journal "+inside+" resolves INSIDE -transcript-dir") {
+			t.Fatalf("exit %d, want %d naming the control journal:\n%s", code, exitConfig, c.out.String())
+		}
+	})
+	t.Run("the browser session file", func(t *testing.T) {
+		dir := t.TempDir()
+		c := startPresenceChild(t, journal, workerArgs(t, tokens, "-transcript-dir", dir, "-session-file", filepath.Join(dir, "sessions"))...)
+		if code := c.exit(t); code != exitConfig || !strings.Contains(c.out.String(), "-session-file "+filepath.Join(dir, "sessions")+" resolves INSIDE") {
+			t.Fatalf("exit %d, want %d naming the session file:\n%s", code, exitConfig, c.out.String())
+		}
+	})
+	t.Run("another program's journal", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "journal.jsonl"), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		c := startPresenceChild(t, journal, workerArgs(t, tokens, "-transcript-dir", dir)...)
+		if code := c.exit(t); code != exitConfig || !strings.Contains(c.out.String(), "holds an entry the transcript store does not own") {
+			t.Fatalf("exit %d, want %d with the ownership refusal:\n%s", code, exitConfig, c.out.String())
+		}
+		if got, _ := os.ReadFile(filepath.Join(dir, "journal.jsonl")); !bytes.Equal(got, raw) {
+			t.Fatal("the refusing start changed the foreign journal")
+		}
+	})
+	t.Run("the code-sources journal (environment-only)", func(t *testing.T) {
+		dir := t.TempDir()
+		sources := filepath.Join(dir, "sources.jsonl") // absent at startup: only the state-path check can see it
+		self, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		args := append([]string{"-control-journal", journal, "-store", t.TempDir(),
+			"-session-file", filepath.Join(t.TempDir(), "sessions"), "-token-file", filepath.Join(t.TempDir(), "absent-token"),
+			"-host", "127.0.0.1", "-port", "0"}, workerArgs(t, tokens, "-transcript-dir", dir)...)
+		cmd := exec.CommandContext(ctx, self, args...)
+		cmd.Env = []string{reexecEnv + "=1", codesrc.EnvJournal + "=" + sources}
+		c := startChild(t, cmd, cancel, &syncBuffer{}, &syncBuffer{})
+		if code := c.exit(t); code != exitConfig || !strings.Contains(c.out.String(), "$"+codesrc.EnvJournal+" "+sources+" resolves INSIDE") {
+			t.Fatalf("exit %d, want %d naming the sources journal:\n%s", code, exitConfig, c.out.String())
+		}
+	})
+	t.Run("POSITIVE CONTROL: the store's own directory, restarted", func(t *testing.T) {
+		dir := populatedTranscriptDir(t)
+		c := startPresenceChild(t, journal, workerArgs(t, tokens, "-transcript-dir", dir)...)
+		c.serving(t)
+		if m := c.workerAddr(t); m[4] != dir {
+			t.Fatalf("the child serves transcripts from %s, want %s", m[4], dir)
+		}
+	})
+}
+
+// TestStateInsideTheTranscriptDirIsResolvedNotSpelled: a state path that does not EXIST yet (an
+// arc journal before its first write) and one spelled through a symlink to the directory are both
+// refused; a sibling path is admitted, and an unset one is skipped.
+func TestStateInsideTheTranscriptDirIsResolvedNotSpelled(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "transcripts")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "alias")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	for name, p := range map[string]string{
+		"an absent file":       filepath.Join(dir, "not-yet", "arc.journal"),
+		"a symlinked spelling": filepath.Join(link, "control.journal"),
+		"the directory itself": dir,
+	} {
+		if err := stateInsideTranscriptDir(dir, []statePath{{"-arc-journal", p}}); err == nil || !strings.Contains(err.Error(), "resolves INSIDE") {
+			t.Errorf("%s (%s) was admitted: %v", name, p, err)
+		}
+	}
+	if err := stateInsideTranscriptDir(dir, []statePath{{"-arc-journal", filepath.Join(base, "arc.journal")}, {"-token-file", ""}}); err != nil {
+		t.Fatalf("POSITIVE CONTROL: a sibling path was refused: %v", err)
+	}
+}
+
+// fixedModel is an authority whose model a test swaps.
+type fixedModel struct{ m control.Model }
+
+func (f *fixedModel) Model() control.Model { return f.m }
+
+// TestTheWorkerOwnerIsAskedOfTheCurrentModel: `ownerStillHeld` reads the authority's model at CALL
+// time, so a model that stops holding the owner turns the answer false with no restart (AP3).
+func TestTheWorkerOwnerIsAskedOfTheCurrentModel(t *testing.T) {
+	cache, _ := seededJournal(t, credentialLive)
+	f := &fixedModel{m: cache.Model()}
+	held := ownerStillHeld(f, workerOwnerA)
+	if !held() {
+		t.Fatal("POSITIVE CONTROL: the seeded owner is not held")
+	}
+	f.m = control.Model{}
+	if held() {
+		t.Fatal("an owner the current model does not hold is still answered held")
 	}
 }

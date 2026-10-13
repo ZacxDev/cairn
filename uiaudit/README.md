@@ -298,6 +298,44 @@ this credential"* — an authority answer, not an empty store. The walk captures
 says so. Reaching a per-scope share page needs a journal-backed world; that is declared gap 1
 below.
 
+### The world stores ONE transcript, through the real upload route (transcripts S4)
+
+`boot.go` mints a capture token with the binary's own `-issue-worker-token`, starts `cairn-ui` with
+the six worker flags and `-arm-transcript-capture`, and `transcript.go` POSTs a synthetic session —
+a main stream carrying every kind of unit the collapsed reading renders differently, and the
+subagent one of its calls spawned — to the worker listener, for the session `fixtureMembers` already
+uses. So the session page is captured WITH its transcript section at every width, and
+`GET /session/transcript` (a `linkExpanded` row: the section publishes its operands) is captured
+with records on it. A refused upload is a boot failure, not a missing section.
+
+- **The guard is `TestTheSessionPageCarriesItsTranscriptAtEveryWidth`**, not the walk: a world
+  whose upload stored nothing would capture the no-transcript page with every number green. It reads
+  the section in the browser at all five widths — present, every reveal closed, one click opens a
+  tool call with no script on the page, the subagent nested, the 108-character unbreakable token
+  whole, overflow 0. Watched red with the upload skipped.
+- **Only the owner half**, for the presence fixture's structural reason: one capture owner, one
+  walk identity. The refusals are `internal/ui`'s and `tests/plugins/e2e.sh`'s to measure.
+- **And it carries PLUGIN OUTPUTS (transcripts S6).** The world registers two plugins
+  (`-plugin-registry`: `summary`, and `clickup`, which writes ticket edges), mints each a token with
+  the binary's own mint, turns both ON for every fixture scope in `-plugin-journal` (through
+  `plugins.Journal.Append`, the journal's only writer — seeded, not clicked: the walk navigates GET
+  rows only), and has each write ONE output through the real plugin route, where the pod validates,
+  asks the toggle fold and stamps. So the session page is captured with its "derived by plugins"
+  section, the session-level toggles and the owner's delete form; every list of sessions with a
+  derived line on that row; `/plugins` populated; and the toggle FORMS on the scope, arc and session
+  pages — none of which any capture had measured. A refused output is a boot failure. The same
+  guard reads it: at all five widths the section holds the summary and the ticket edge, labelled,
+  the edge's templated link, the summary's unbreakable token whole, the delete form collapsed and
+  two toggle rows — overflow 0. Watched red with the output write skipped.
+  🔴 **It found one defect the first time it ran:** `/plugins` at 390 px scrolled sideways
+  (`scrollWidth=425`) — S5's scope list was a bare `<li><a>` around a 42-character unbreakable scope
+  name, and no world had ever registered a plugin, so no capture had rendered the list. It is an
+  `entry-row` now; the touch gate is green over both worlds with it.
+- **"My sessions" (transcripts S7) rides on the same upload.** `GET /my-sessions` is a `linkExpanded`
+  row (it publishes `/session?session=…`, and `?page=N` past fifty sessions); the walk's identity owns
+  the stored transcript, so the page is captured with its row, not in its empty state. No browser
+  guard reads it — the walk's capture is advisory.
+
 ## What the first draft got wrong — the defect this harness shipped and then caught
 
 **This is the one regression guard in the module; everything else here is an invariant guard
@@ -348,7 +386,7 @@ nothing). Measured, both halves in the same run:
 | images with no dimensions | **1** | **0** | **structural** — no `<img>` renders anywhere; an existing XSS guard asserts `"<img"` cannot |
 | horizontal overflow | **true** | **false** on every page | real |
 | missing `<meta viewport>` | **true** | **false** on every page | real — gomponents' `HTML5` supplies it, and nothing pinned that before |
-| console events | **2** | **0** | **structural** on pages with no script; ⚠ since the entry filter, a MEASUREMENT on the scope page, which runs the one allowlisted script (`ui.AllowedScriptSources`). Not "no script anywhere": see the scope note below the blind set |
+| console events | **2** | **0** | **structural** on pages with no script; ⚠ since the entry filter, a MEASUREMENT on the scope page, which runs an allowlisted script (the entry filter; `ui.AllowedScriptSources` has three entries). Not "no script anywhere": see the scope note below the blind set |
 | network events (page subresources) | **2** | **0** | **structural** — there are none |
 | a11y digest entries | **1** | **10** on `/`, 3 on `/sign-in`, 4 on `/share` | real |
 | screenshot | **31137 bytes**, PNG magic checked | 6 PNGs | real |
@@ -679,7 +717,7 @@ touch never enabled, S1's coarse-pointer input rule never applies.
 script's own text and `main.go`'s refusal headlines. ⚠ It is a SPELLING guard, labelled as one.
 
 ✅ **A CI step since S4** — the PLAIN check, in the advisory `uiaudit` job (exit 1 or 2 fails the step;
-the job stays `continue-on-error` until S6b). It runs in that job's `pwa` matrix leg, in parallel with
+the job stays `continue-on-error`; S6b promoted only the walk's touch refusals, into `uiaudit-touch`). It runs in that job's `pwa` matrix leg, in parallel with
 the `walk` leg, so the job takes the longer leg rather than the sum; it shares no state with the walk (own work dir, own port, credentials stripped), and
 `tests/test_uiaudit_job_ledger.py` pins which leg every step of the job runs in. `--self-test` is NOT run in CI: nine tree copies and four
 full walks per push buy nothing the committed self-test record below does not, until the tree changes.
@@ -771,9 +809,28 @@ without the exclusion: 55 declared against 54 listed, which that step refuses.
 | `c_draft` | a subject the browser's `maxlength` ACCEPTS (61 two-byte letters = 61 UTF-16 units) and the store refuses (122 bytes) comes back in the form with what was typed |
 | `d_retract` | the Retract button submits: that row becomes its tombstone line, text gone, button gone; the other memo is untouched |
 | `e_reader` | the read-only viewer sees the tab and the same memos, the read-only note, no form and no Retract button — beside an owner who, on the same page, has both |
+| `f_walk` | the WALK's capture of the populated tab (owner's view, plus one memo whose subject and text are each ONE unbroken token) at every rung of `Viewports`: axe, layout, the touch measurements, a screenshot — refused by `refuseWalkRegressions`, the function `run` calls, never a copy, PLUS any axe violation at all (that function hands general axe rules to the hub, which never sees these captures; pinned at the 0 measured). 🔴 Behind a POSITIVE CONTROL at every rung: the page each capture measured lists both named memos whole and lays out the send form, so a capture of an EMPTY tab cannot pass |
+
+🔴 **CLAUSE (f) IS THE WALK'S INSTRUMENT IN THIS WORLD, NOT THE WALK GROWING A THIRD WORLD — A
+CHOICE, AND WHY.** The other route was a database in the walk leg and a memo world booted by `run`.
+It was not taken: the walk leg is the one holding the hub secrets, `pwa_check.sh` runs that same walk
+and would need a database too, and the hub would gain a third world's pages on every push. Here the
+tab gets every walk signal — `Browser.CaptureTarget` at all five widths, the two touch rungs emulated — in
+the one leg that already has a database, and nothing the walk pushes moves. ⚠ What that costs: the
+populated tab is NOT in the hub's visual diff or its axe baseline; its captures are a CI artifact
+(`uiaudit-memos-captures`) and its refusals a clause verdict.
+
+🔴 **ITS FIRST RUN FOUND TWO DEFECTS, BOTH FIXED IN `tailwind.css`, and the self-test reverts each in
+the generated `app.css` to keep them caught.** (1) A memo whose subject or text is one unbroken token
+made the PAGE scroll sideways at every width up to 1440px (`scrollWidth=1560 > innerWidth=390` at
+mobile): `.memo-list` now carries `wrap-anywhere`. (2) `#memo-body` and `#memo-ttl` rendered 14px at
+both touch rungs — the coarse-pointer 16px rule is (0,1,1), `.memo-send input[type="number"]` (0,2,1)
+beat it, and `textarea` was in no generic rule at all. ⚠ `.team-link input[type="number"]` has the same
+shape and is restated in the same rule, but no world captures that form (it needs a database), so
+that half is read off the generated CSS, not measured.
 
 ```bash
-uiaudit/memos_check.py              # the five clauses: exit 0 / 1 / 2 (could not vouch)
+uiaudit/memos_check.py              # the six clauses: exit 0 / 1 / 2 (could not vouch)
 uiaudit/memos_check.py --self-test  # each clause RED under a sabotage of its own
 ```
 
@@ -787,27 +844,33 @@ Measured on one host (chromium 152.0.7977.82 from the flake's nixpkgs, PostgreSQ
 shell, go1.25.14):
 
 ```
-memos_check: positive control PASSED all 5 clause(s)
+memos_check: positive control PASSED all 6 clause(s)
 memos_check: sabotage listing-oldest-first           CAUGHT by a_seeded (also red: b_send)
-memos_check: sabotage send-form-never-rendered       CAUGHT by b_send (also red: c_draft e_reader)
+memos_check: sabotage send-form-never-rendered       CAUGHT by b_send (also red: c_draft e_reader f_walk)
 memos_check: sabotage refusal-drops-the-draft        CAUGHT by c_draft
 memos_check: sabotage retract-is-a-no-op             CAUGHT by d_retract
 memos_check: sabotage tombstones-not-listed          CAUGHT by d_retract
 memos_check: sabotage reader-shown-the-send-form     CAUGHT by e_reader
 memos_check: sabotage reader-shown-retract-buttons   CAUGHT by e_reader
-SUMMARY memos-check-self-test: sabotaged=7 caught=7
+memos_check: sabotage walk-sees-an-empty-tab         CAUGHT by f_walk (also red: a_seeded b_send d_retract e_reader)
+memos_check: sabotage unbroken-memo-overflows        CAUGHT by f_walk
+memos_check: sabotage memo-subject-unlabelled        CAUGHT by f_walk
+memos_check: sabotage memo-fields-zoom-on-touch      CAUGHT by f_walk
+SUMMARY memos-check-self-test: sabotaged=11 caught=11
 ```
 
-Each is caught by its OWN clause's message; "also red" is a later clause that needs what the sabotage
+Each is caught by its OWN clause's message — and each (f) row also by the text only ITS guard prints
+(the positive control's "did not see a POPULATED memos tab", "HORIZONTAL OVERFLOW", "AXE VIOLATIONS
+on the populated memos tab", "INPUT FONT UNDER 16px"), since (f) can fail several ways; "also red" is another clause that needs what the sabotage
 removed. The sabotages run on ONE scratch copy with no `.git` (`tests/testlib/mutant_tree`), each edit
 restored and the restore verified by digest. With no chromium the script exits 2, never 0.
 
-⚠ **What this does NOT measure — it is a test, not a walk.**
-- **No capture of the populated tab is taken or pushed.** No axe run, no touch-target or input-font
-  measurement, no overflow reading at the five widths, no screenshot. The walk still reaches the tab
-  only in its `ui.NoMemoStore` state, so the populated tab's accessibility and layout are unmeasured.
-  Closing that means a database in the WALK's world, which changes what every existing signal is
-  measured over; it is not done here.
+⚠ **What this does NOT measure.**
+- **The populated tab in the HUB.** Clause (f) captures and refuses, but pushes nothing: no pixel
+  diff against a previous run, no axe baseline — a regression there is a clause going red, never a
+  hub delta. The walk itself still reaches the tab only in its `ui.NoMemoStore` state.
+- **The read-only viewer's tab, captured.** Clause (f) captures the OWNER's view; `e_reader` drives
+  the viewer's, but no axe/touch/overflow reading is taken of it.
 - **Authorisation.** A reader shown no button could still forge the POST; that the store refuses it
   is `cmd/cairn-ui`'s pgtest tier.
 - **The other refusals in a browser** (quota, the live bound, a suspected secret), a tombstone left by
@@ -1299,9 +1362,10 @@ one; its `select` and submit are covered only by S1's element/type selectors (`s
 ⚠ **The scope page's MEMOS tab, populated, AS A WALKED PAGE** — the same `-db-dsn`, plus a control
 journal. The tab is a `?tab=memos` link the scope page publishes, so `ExpandLinks` reaches it with no
 change here (a tab adds no ledger row), but only in its `ui.NoMemoStore` state. ✅ Its send form, memo
-rows and Retract buttons are now DRIVEN in a real browser by `memos_check.py` (the section above);
-what stays blind is every WALK signal over the populated tab — axe, touch targets, overflow, the
-capture itself.
+rows and Retract buttons are now DRIVEN in a real browser by `memos_check.py` (the section above),
+✅ and clause (f) there takes the walk's captures of the populated tab — axe, touch targets, input
+font, overflow, a screenshot — at every rung. What stays blind is the HUB: those captures are never
+pushed, so there is no visual diff or axe baseline over them.
 
 🔴 **AND ANYTHING BETWEEN THE ORIGIN AND A CLIENT, WHICH IS THE ONE BLIND SPOT THAT HAS BEEN
 MEASURED TO MATTER.** Every number this program produces is about the pod `BootWorld` starts on
@@ -1321,12 +1385,14 @@ route measures the refusal, not the page.** What would close this blind spot is 
 against a real deployment** that this README's own opening retraction already names as real and
 unbuilt — not a guard here, which could only pin somebody else's edge configuration.
 
-## Gating — advisory only, deliberately
+## Gating — the `uiaudit` job is advisory; `uiaudit-touch` BLOCKS (S6b)
 
-**Nothing in this job blocks, and a captured regression exits 0.** The first diff against a
-nonexistent baseline flags every axe rule "new" exactly once, so a gate promoted on day one is
-red for a reason that has nothing to do with the tree — the permanently-red gate this
-repository already refuses, reached from a new direction.
+**Nothing in the `uiaudit` job blocks, and a HUB-side regression (a new axe rule, a pixel diff)
+exits 0.** The first diff against a nonexistent baseline flags every axe rule "new" exactly once,
+so a gate promoted on day one is red for a reason that has nothing to do with the tree — the
+permanently-red gate this repository already refuses, reached from a new direction. (A LOCAL
+refusal in `refuseWalkRegressions` exits 1 and reds the row; `continue-on-error` is what stops it
+blocking.) The ONE exception is the touch refusals, below.
 
 - **The one promotion candidate, after two baseline runs:** `new_a11y_rules` non-empty. It is
   a closed set of rule ids, it is deterministic, and this harness pushes the structured detail
@@ -1353,8 +1419,8 @@ repository already refuses, reached from a new direction.
   moves the browser, deliberately and in a diff.
   ⚠ **What the pin does NOT establish:** that the pixel diff is stable run-to-run under it in CI (not
   measured), or that the hub's stored baseline was captured under it (it was not — those captures ran
-  on the runner's chromium). So the pixel diff stays advisory for the reasons above; S6b promotes only
-  the walk's TOUCH refusals, into their own blocking job. A full-page height shift also reads as a
+  on the runner's chromium). So the pixel diff stays advisory for the reasons above; S6b promoted only
+  the walk's TOUCH refusals, into their own blocking job (below). A full-page height shift also reads as a
   near-100% pixel change, which is why the log annotates a `size_changed` page as a layout change
   rather than a regression.
   ⚠ **Local runs are not CI's browser** unless they use the same build: `nix shell --inputs-from .
@@ -1365,6 +1431,61 @@ repository already refuses, reached from a new direction.
   and synthesis 0.00. The read-back deliberately decodes only `summary` and `diff`; the
   persona evaluator's output is not read at all, so it cannot be printed beside the
   deterministic rows and invite exactly that.
+
+### S6b — `uiaudit-touch`, the blocking job
+
+`.github/workflows/ci.yml`'s `uiaudit-touch` job has **no `continue-on-error`**. It runs the same walk
+through `run.sh` with `UIAUDIT_GATE=touch` → `-gate touch` (`walkGate`, `main.go`):
+
+- **One body, two selections.** `refuseWalkRegressionsUnder` is the function every refusal lives in;
+  `refuseWalkRegressions` is its `gateAll` spelling. `gateTouch` re-implements nothing — it declines
+  to COUNT the classes that are not about a touch rung.
+- **Bound under `touch`:** touch REACHABILITY (two-sided, so it still reads the non-touch rungs), axe
+  `target-size` and input font < 16px at the touch rungs (with their measured-nothing refusals),
+  horizontal overflow and AXE DID NOT RUN at the touch rungs, and the matrix-collapse refusal.
+- **NOT bound under `touch`, still refused by the advisory job:** scripts outside the allowlist, the
+  content floor, header reading order, and overflow/axe at a non-touch rung.
+  `TestTheTouchGateBindsExactlyTheTouchRefusals` runs every case under BOTH gates, so a row "not bound
+  by touch" is only accepted when the same breakage IS refused under `all`.
+- **Why it can block when `uiaudit` cannot:** under `touch` the walk builds no payload and pushes
+  nothing, and the job holds no secret, so neither the hub nor its edge can red it. Its chromium
+  steps are BYTE-IDENTICAL to `uiaudit`'s (S6a's pin; the log prints `flake-resolved chromium:` and
+  `the binary says:` and the step refuses on a mismatch). `tests/test_uiaudit_job_ledger.py` pins
+  all of that. ⚠ The nix binary cache the pinned chromium is fetched from is the one third party
+  left; an outage there reds the job, the same dependency the blocking `nix` job already has.
+- **Also bound under either gate: the walk's harness preconditions**, which run before any verdict —
+  the pod boots, sign-in takes, `LedgerAccounting`, and `refuseJournalWorldFellBack`. So a change
+  that breaks the journal world's share page reds the blocking job with a message that is not a touch
+  refusal; that is a measurement that could not be taken, and it is not hidden.
+- **The step reads content, not only the exit code:** `rc=0`, the `touchGatePassed` needle (checked
+  to still be the constant `main.go` defines), and each of the four touch verdict lines exactly once.
+- **The gate's own guards run IN the blocking job**, before the walk: twelve named tests (the
+  selection, the refusals, the `pwa_check.sh` refusal-line contract, and the real-chromium touch
+  controls), each required to print its own `--- PASS`. Without that step they ran only in the
+  advisory job, so an edit that emptied the touch selection would have left the blocking row green.
+  Both of the job's own steps are pinned as WHOLE normalised strings.
+- 🔴 **The refusal sentence up to `regression class(es)` is a contract with `pwa_check.sh`'s
+  `walk_refused`**, which uses it to tell a sibling-masked (c) check from a harness that printed
+  nothing. S6b's first draft put `(gate …)` inside it and broke that (every real (c) failure would
+  have exited 2); `TestTheRefusalLineIsTheOnePwaCheckGreps` now applies the script's own regex to a
+  real refusal under both gates, and was watched RED on that draft.
+
+**Watched RED in CI before it was called a gate** — the plan's three negative controls, each a
+scratch branch off the PR head with ONE sabotage (`pwa_check.sh`'s own (c) sabotages) and a
+`ci.yml` trimmed to `changes` + `uiaudit-touch` (that job's text byte-identical), run by
+`workflow_dispatch`, chromium 152.0.7977.82 (the pin) in each log:
+
+| sabotage | `uiaudit-touch` | refused by (its own message) |
+|---|---|---|
+| none (the PR's own CI run, and locally) | **success** | — `TRUE at 134 of 134 touch capture(s) and FALSE at 201 of 201`, `0 of 18 text-entry input(s) under 16px` |
+| the scope page's `.view-tab`s 12×12px, no gap | **failure** | `TOUCH TARGET SIZE (WCAG 2.5.8, axe target-size) violated on 50 touch capture(s)` (the only class) |
+| S1's 16px input rule reverted to 14px | **failure** | `INPUT FONT UNDER 16px on 18 touch input(s)` (the only class) |
+| touch emulation never enabled | **failure** | `TOUCH REACHABILITY FAILED on 134 capture(s)` — plus overflow (15) and input font (18), because no `pointer: coarse` rule applied |
+
+The CI runs' URLs are in the PR that added the job. ⚠ **REQUIRED is an operator setting, not this
+repository's**: until branch protection names `uiaudit-touch`, a red row does not disable the merge
+button. On a docs-only change the job is skipped like every gated job, which a required check reads
+as passed.
 
 ## The `verify-push` control
 
@@ -1514,8 +1635,8 @@ indistinguishable from a fork PR by design.
 | `touch_test.go` | touch reachability (both halves, real chromium), the `target-size` and input-font controls, the journal world |
 | `pwa_test.go` | the closing condition's clauses (a), (b: name, icon, screenshots) and (e): chromium's installability and manifest verdicts over three boots, and `pwa.js`'s storage in four browsers |
 | `standalone_test.go` | S5: the standalone window's Back/Reload — hidden in a tab, revealed under a `matchMedia` stub, the two-row header that is NOT sticky, and Back/Reload behaviour, in one armed world |
-| `memoworld.go` | the THIRD world: `cairn-ui` with a database, a control journal and a client listener — for the memos tab, never walked |
-| `memos_browser_test.go` | behind `//go:build memobrowser`: the populated memos tab's five clauses, as an owner and a read-only viewer |
+| `memoworld.go` | the THIRD world: `cairn-ui` with a database, a control journal and a client listener — for the memos tab; `run` never boots it, clause (f) captures it with the walk's instrument |
+| `memos_browser_test.go` | behind `//go:build memobrowser`: the populated memos tab's six clauses, as an owner and a read-only viewer, the last of them the walk's capture of it |
 | `memos_check.py` | that test's ONE runner: the database, the schema, each clause's own result line; `--self-test` sabotages each |
 | `pwa_check.sh` | the closing-condition ORCHESTRATOR: runs (a), (b), the walk's (c), the root module's (d) and (e); `--self-test` sabotages each |
 | `screenshots.go` | `uiaudit -screenshots <dir>`: the manifest's install screenshots, captured from the walk's world — the generator `flake.nix`'s `uiScreenshots` runs in the sandbox |

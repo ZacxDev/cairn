@@ -265,6 +265,16 @@ class ClaudeSession:
         rec["attachment"] = body
         return self.add(rec)
 
+    def queued(self, text: str, mode: str) -> dict:
+        """A message QUEUED while a turn runs, delivered as an `attachment` of type `queued_command`.
+
+        `mode="prompt"` is what a human typed mid-turn (`origin.kind` `human`): human text, never
+        bookkeeping. `mode="task-notification"` is the runtime relaying a background task's note:
+        bookkeeping. The keys are the measured ones for each mode, values synthetic."""
+        origin = {"kind": "human"} if mode == "prompt" else {"kind": mode, "producer": "background-task"}
+        return self.attachment({"type": "queued_command", "prompt": text, "commandMode": mode,
+                                "origin": origin, "timestamp": self.g.ts()})
+
     def system(self, subtype: str, extra: dict) -> dict:
         rec = self.envelope("system")
         rec["subtype"] = subtype
@@ -647,11 +657,29 @@ def opencode_world(g: Gen) -> dict:
     }
 
 
+def queued_prompt_world(files: dict, sessions: dict) -> None:
+    """cc-queued-prompt: a human message typed MID-TURN, which the runtime stores as a
+    `queued_command` attachment rather than a `user` record — beside a queued task notification,
+    which is bookkeeping. Its OWN seeded generator, so adding it moved no byte of the world above."""
+    g = Gen(SEED + 1)
+    sid = g.uuid()
+    sessions["cc-queued-prompt"] = {"runtime": "claude", "id": sid, "project": PROJECT}
+    s = ClaudeSession(g, sid)
+    s.human("please " + g.words(10))
+    s.bash("ls", "lorem.py\n")
+    # Longer than the browser surface's assistant-text head (15 lines), so "shown whole" is measurable.
+    s.queued("also " + "\n".join(g.words(9) for _ in range(20)), "prompt")
+    s.queued(g.words(6), "task-notification")
+    s.assistant([{"type": "text", "text": g.words(12)}])
+    files[f"{PROJECT}/{sid}.jsonl"] = {"utf8": jsonl(s.records)}
+
+
 def build() -> dict:
     g = Gen(SEED)
     files, sessions, ledgers = claude_world(g)
     oc = opencode_world(g)
     sessions.update(oc.pop("sessions"))
+    queued_prompt_world(files, sessions)
     return {
         "schema": 1,
         "generator": "tests/transcripts/gen.py",

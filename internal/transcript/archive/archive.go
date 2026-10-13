@@ -16,12 +16,15 @@
 // not recognise (T1). That refusal is only possible because the table is quiet on its own
 // markers; see `internal/redact/marker.go` for the 1,502 re-hits it had before.
 //
-// 🔴 THE POD DOES NOT YET DERIVE `V` ITSELF, SO IT RECORDS `*` (fail closed). Decision 3 has the pod
-// re-derive `R_header` and `F` over the stored records through `internal/transcript/scopeuse`,
-// "so an old or lying agent cannot shrink `V`". That package is slice S2's and is not on `main`;
-// re-implementing it here would be the second spelling decision 3 forbids ("one function, two
-// callers"). Until it lands, every stored session's derived set is `{*}`, which decision 4 makes
-// OWNER-ONLY — the narrow direction. See [derivedScopes].
+// 🔴 THE POD DERIVES THE READ HALF OF `V` ITSELF, FROM WHAT IT STORES (decision 3: "so an old or
+// lying agent cannot shrink `V`"). Every accepted record and every text blob is fed to
+// `internal/transcript/scopeuse` — the ONE function the capture agent routes with — and what it finds
+// (`R_header`, and `*` for F2) is folded into `meta.json`'s grow-only `derived_scopes`. The agent's
+// declaration is kept BESIDE it and can only add. F1 ("a tool input names the program and the ledger is
+// empty") is NOT derived into that set: since S11 (#266) the pod holds the uploaded client read
+// LEDGER and decides F1 at view time from it ([Meta.LedgerScopes]), and the agent does not declare F1
+// either — so a session that names `cairn` is `*` (owner-only, decision 4) only until its ledger
+// arrives. See [derive].
 //
 // Layout under the configured directory (decision 15, with one deviation stated):
 //
@@ -29,6 +32,7 @@
 //	sessions/<root>/meta.json              owner, host, runtime, scope sets, positions (the COMMIT point)
 //	sessions/<root>/stream-<name>.jsonl.gz append-only gzip members of `{seq, src, rec}` lines
 //	sessions/<root>/blobs/<name>           a persisted tool-result file, redacted text or binary as is
+//	sessions/<root>/outputs.jsonl          plugin outputs, one stamped envelope per line (`outputs.go`)
 //	sessions/<root>/frames/<target>        a record or blob being reassembled from continuation frames
 //
 // ⚠ THE DEVIATION: the plan writes `<dir>/<root-session>/`. A root id is any
@@ -52,9 +56,11 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/redact"
+	"github.com/ZacxDev/cairn/internal/transcript/scopeuse"
 	"github.com/ZacxDev/cairn/internal/write"
 )
 
@@ -68,11 +74,41 @@ var Runtimes = []string{"claude", "opencode"}
 // Bounds on what one request may carry. A request BODY is bounded by the listener; these bound
 // the strings inside it, so a log line or a page that renders one stays readable.
 const (
-	MaxCursorBytes   = 256
-	MaxDeclared      = 256
-	MaxRecords       = 10000
-	MaxFrames        = 4096
-	MaxNameBytes     = 128
+	MaxCursorBytes = 256
+	MaxDeclared    = 256
+	MaxRecords     = 10000
+	MaxFrames      = 4096
+	MaxNameBytes   = 128
+	// MaxAssembledBytes bounds ONE record or ONE blob — framed or not — and is checked BEFORE the
+	// staged bytes are read back into memory (arming precondition AP2).
+	//
+	// 🔴 WHY THIS NUMBER: the pod's memory limit is 256 Mi, and assembling a record is not a
+	// one-copy operation — the staged file is read whole, the final chunk appended, the result
+	// compacted, walked by the re-check and gzipped. #224's audit measured a 32 MB record peaking
+	// at 459 MB resident (≈14× the record); measured here, the final frame ALLOCATES ≈18× the
+	// record (an upper bound on its live peak), linearly at 1, 2 and 4 MiB — ≈72 MiB at this cap.
+	// Since S4 the read-scope derivation ([derive]) and the repeated-member check read the assembled
+	// record too: 79.7 MiB at this cap (19.9×), 84.1 MiB under `-race` (CI's condition), measured
+	// at 4 MiB only, on a run of letters. ⚠ The re-check walk is NOT within budget on every shape:
+	// a record of short `key: value` lines costs it far more (the test's doc has the number).
+	// `TestTheAssembledRecordCapFitsThePod` re-measures it on every run against a 100 MiB budget,
+	// under half the limit, so two roots assembling at once still leave the rest of the process
+	// room. ⚠ The bound is PER RECORD, not per request: an unframed request of two records near
+	// the cap (one 8 MiB body) was measured allocating ≈129 MiB, a shape the S3 head already
+	// admitted and this change does not narrow. A larger record is refused 413 and NOTHING of it
+	// is stored. The uploader (S3b, `internal/capture.HTTPSink`) never sends one: it replaces such a
+	// record with a placeholder naming its size and this bound, under the same `src` and cursor, so
+	// the stream moves on (the plan, decision 15's AP2 note). Raise this only with the limit, and
+	// re-measure — and `capture.MaxRecordBytes` with it (`TestTheSinkBoundsFitThePod` pins the two).
+	MaxAssembledBytes = 4 << 20
+	// FrameIdle is how long a staged frame sequence may wait for its next frame before the sweep
+	// discards it and returns its bytes to the quota (AP3: an abandoned sequence must not hold
+	// quota until a restart). An agent that resumes after it simply restarts the record at frame
+	// 0, exactly as after a restart.
+	FrameIdle = time.Hour
+)
+
+const (
 	sessionsDir      = "sessions"
 	journalName      = "journal.jsonl"
 	metaName         = "meta.json"
@@ -92,9 +128,10 @@ const idClass = `[A-Za-z0-9][A-Za-z0-9_.-]{0,63}`
 
 var (
 	// streamName is decision 7's stream vocabulary: the root's own `main`, a Claude Code subagent,
-	// an opencode child session. `ledger` is S11's and is refused until S11 adds its fold — a
-	// stream the pod stored and never read would be a `V` input nobody consumes.
-	streamName = regexp.MustCompile(`^(main|subagent:` + idClass + `|child:` + idClass + `)$`)
+	// an opencode child session — and S11's [LedgerStream], the client read ledger, which is
+	// accepted only because [foldLedger] reads it: a stream the pod stored and never read would
+	// be a `V` input nobody consumes.
+	streamName = regexp.MustCompile(`^(main|subagent:` + idClass + `|child:` + idClass + `|` + LedgerStream + `)$`)
 	// blobName is a persisted tool-result file's base name (`toolu_….txt`, `….pdf`).
 	blobName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 	// scopeName is a declared scope: a bounded identifier, or [Star]. An unknown NAME is not
@@ -125,6 +162,21 @@ type Archive struct {
 	used   int64
 	locks  map[string]*sync.Mutex
 	frames map[string]*frameState
+	// outputs is the RUNNING TOTAL of stored plugin output bytes, by plugin (`outputs.go`): counted
+	// off the disk ONCE, by [Open], then moved by every append and by every deletion.
+	outputs map[string]int64
+	// byRoot is the same bytes, by session then plugin: what each session CONTRIBUTED to `outputs`.
+	// A deletion subtracts exactly this, never a re-read of a file that may no longer be readable.
+	byRoot map[string]map[string]int64
+	// deleted is every root the journal records a deletion of, and whose it was (`sweep.go`): read
+	// once by [Open], added to by every deletion. A root in it is never stored under again.
+	deleted map[string]Uploader
+	// journalMu serialises appends to the deletion journal, so each one's size is accounted whole
+	// (two roots' deletions run under two different root locks).
+	journalMu sync.Mutex
+	// afterFrameSurvey, when set (tests only), runs between the frame sweep's survey and its
+	// per-root re-check, so a frame staged in that window can be placed there deterministically.
+	afterFrameSurvey func()
 }
 
 // Uploader is who an upload comes from: the capture token's bound owner (`<kind>:<id>`) and host.
@@ -164,6 +216,11 @@ type Stored struct {
 	FrameCount int
 }
 
+// ErrDeleted refuses an upload for a root whose stored session was DELETED here — by its owner, by
+// its uploader's withdrawal, or by retention — and is only ever returned to that root's own (owner,
+// host). The uploader must stop sending the session for good ([Archive.gone]).
+var ErrDeleted = errors.New("this session's transcript was deleted on this instance; nothing more of it is stored")
+
 // ErrNotOwner is decision 15's ownership refusal: the root was first uploaded by another
 // (owner, host). ONE value for every such case, so the answer names neither.
 var ErrNotOwner = errors.New("this session is held by another uploader")
@@ -177,26 +234,62 @@ func (e *StaleError) Error() string {
 	return fmt.Sprintf("from is not the stored position %q", e.StoredTo)
 }
 
-// RecheckError is the pod's refusing re-check: the table matched. It names the record index or
-// the blob, never the value.
+// RecheckError is the pod's refusing re-check: the table matched. It names the record index, the
+// blob, or the FIELD — never the value.
+//
+// 🔴 A HIT IN A NAME OR CURSOR IS REPORTED BY [RecheckError.Field] AND NEVER BY [RecheckError.Blob],
+// because there the name IS the matched value: echoing it would put the secret in the answer and in
+// the operator log (AP3).
 type RecheckError struct {
 	Record int
 	Blob   string
+	// Field names a request string the table matched — `root`, `stream`, `blob name`, `from`,
+	// `to`, `declared scope <i>`, `record <i> src`.
+	Field string
 }
 
 func (e *RecheckError) Error() string {
+	if e.Field != "" {
+		return fmt.Sprintf("the %s matched the redaction table; nothing was stored", e.Field)
+	}
 	if e.Blob != "" {
 		return fmt.Sprintf("blob %s matched the redaction table; nothing was stored", e.Blob)
 	}
 	return fmt.Sprintf("record %d matched the redaction table; nothing was stored", e.Record)
 }
 
-// QuotaError is the instance quota refusal (decision 15: delayed, never dropped — the agent holds
-// and retries).
-type QuotaError struct{ Quota int64 }
+// QuotaError is a quota refusal (decision 15: delayed, never dropped — the caller holds and
+// retries). `Quota` is the limit that was hit and `Share` says WHICH one: the instance quota
+// ([ShareInstance], every capture refusal), ONE plugin's share of it ([SharePlugin]) or every
+// plugin's outputs together ([ShareOutputs]) — `outputs.go`.
+type QuotaError struct {
+	Quota int64
+	Share string
+}
+
+// Which limit a [QuotaError] names.
+const (
+	ShareInstance = ""
+	SharePlugin   = "plugin"
+	ShareOutputs  = "outputs"
+)
 
 func (e *QuotaError) Error() string {
+	switch e.Share {
+	case SharePlugin:
+		return fmt.Sprintf("this plugin's %d-byte share of the transcript quota is reached", e.Quota)
+	case ShareOutputs:
+		return fmt.Sprintf("the %d-byte share of the transcript quota that all plugin outputs have together is reached", e.Quota)
+	}
 	return fmt.Sprintf("the instance transcript quota of %d bytes is reached", e.Quota)
+}
+
+// TooLargeError refuses one record or blob over [MaxAssembledBytes] (AP2) — the contract's 413.
+// Nothing is stored and any staged frames are discarded.
+type TooLargeError struct{ Limit int64 }
+
+func (e *TooLargeError) Error() string {
+	return fmt.Sprintf("the record is over the %d-byte bound on one record or blob; nothing is stored", e.Limit)
 }
 
 // InvalidError is a malformed request: a bad name, an unknown runtime, a frame out of order.
@@ -247,6 +340,14 @@ func Open(cfg Config) (*Archive, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	// 🔴 BEFORE ANYTHING IS CREATED OR REMOVED: the frames directory is `RemoveAll`ed below, so a
+	// foreign `frames` would be destroyed by the very open that should have refused it.
+	if err := CheckOwnership(cfg.Dir); err != nil {
+		return nil, err
+	}
+	if err := repairJournal(cfg.Dir); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(filepath.Join(cfg.Dir, sessionsDir), dirMode); err != nil {
 		return nil, err
 	}
@@ -260,7 +361,170 @@ func Open(cfg Config) (*Archive, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Archive{cfg: cfg, used: used, locks: map[string]*sync.Mutex{}, frames: map[string]*frameState{}}, nil
+	a := &Archive{cfg: cfg, used: used, locks: map[string]*sync.Mutex{}, frames: map[string]*frameState{}}
+	// The output totals, counted HERE and nowhere else (`outputs.go`): nothing is appending yet, so
+	// the count cannot race an append.
+	if a.outputs, a.byRoot, err = a.outputUsage(); err != nil {
+		return nil, err
+	}
+	if a.deleted, err = readDeleted(cfg.Dir); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// ErrForeignEntry marks [CheckOwnership]'s refusal.
+var ErrForeignEntry = errors.New("the transcript directory holds an entry the transcript store does not own")
+
+// frameFile is a staged frame's file name ([Archive.framePath]).
+var frameFile = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+// CheckOwnership refuses a transcript directory holding ANY entry the store does not own
+// (arming precondition AP1).
+//
+// 🔴 THE HAZARD IS A NAME COLLISION WITH `cairn-ui`'s OWN STATE, AND IT IS AN OUTAGE, NOT A MESS.
+// The store appends `transcript-deleted` lines to `<dir>/journal.jsonl`; a control journal kept
+// under that name replays an unknown event kind as a refusal of the WHOLE journal
+// (`internal/control/journal.go`, no default-accept arm), so the next restart serves nobody. And
+// the browser session table's default, `/var/lib/cairn-ui/sessions`, IS this store's `sessions`
+// path for `-transcript-dir /var/lib/cairn-ui`. Refusing only a directory inside the store root
+// (`ResolveDir`) saw neither.
+//
+// So ownership is decided by NAME, TYPE and — for the one file two writers could share — CONTENT:
+//   - `journal.jsonl` must be a regular file every line of which is one of THIS store's deletion
+//     records (strict decode, `event` = `transcript-deleted`). A control journal's lines carry
+//     `kind`, so they are refused. A torn FINAL line that is the start of this store's record (a
+//     crash mid-append) is admitted and truncated by [Open]; a torn line of anything else is not.
+//   - `sessions` must be a directory whose entries are all session-id directories (a browser
+//     session FILE is refused by type).
+//   - `frames` must be a directory of staged-frame files only, because [Open] removes it whole.
+//   - a `lost+found` DIRECTORY is admitted: a fresh ext volume carries one and only fsck writes it.
+//   - anything else, and any symlink, is refused.
+//
+// An EMPTY directory (a fresh volume) and the store's own populated directory (a restart) both
+// pass; those are the two states `TestOpenAcceptsAFreshAndItsOwnDirectoryAndNothingElse` pins.
+func CheckOwnership(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	foreign := func(name, why string) error {
+		return fmt.Errorf("%w: %s (%s). Give the transcript store a directory of its own — nothing else "+
+			"`cairn-ui` writes (the control journal, the browser session table, a token file) may live in it",
+			ErrForeignEntry, filepath.Join(dir, name), why)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		switch {
+		case e.Type()&fs.ModeSymlink != 0:
+			return foreign(name, "a symlink")
+		case name == journalName:
+			if !e.Type().IsRegular() {
+				return foreign(name, "not a regular file")
+			}
+			if err := checkJournal(filepath.Join(dir, name)); err != nil {
+				return foreign(name, err.Error())
+			}
+		case name == sessionsDir:
+			if !e.IsDir() {
+				return foreign(name, "not a directory — a browser session table is a file")
+			}
+			if err := checkChildren(filepath.Join(dir, name), true, write.SessionComponent); err != nil {
+				return foreign(name, err.Error())
+			}
+		case name == framesDir:
+			if !e.IsDir() {
+				return foreign(name, "not a directory")
+			}
+			if err := checkChildren(filepath.Join(dir, name), false, frameFile); err != nil {
+				return foreign(name, err.Error())
+			}
+		case name == "lost+found" && e.IsDir():
+			// A fresh ext2/3/4 volume carries it at its root; nothing writes there but fsck.
+		default:
+			return foreign(name, "not one of journal.jsonl, sessions/ or frames/")
+		}
+	}
+	return nil
+}
+
+// checkChildren requires every entry of dir to be a directory (wantDir) or a regular file, named
+// by pattern.
+func checkChildren(dir string, wantDir bool, pattern *regexp.Regexp) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		ok := pattern.MatchString(e.Name()) && e.Type()&fs.ModeSymlink == 0 &&
+			((wantDir && e.IsDir()) || (!wantDir && e.Type().IsRegular()))
+		if !ok {
+			return fmt.Errorf("it holds %q, which this store never writes there", e.Name())
+		}
+	}
+	return nil
+}
+
+// checkJournal requires every line to be one of this store's deletion records.
+func checkJournal(path string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	if _, torn := tornTail(raw); torn {
+		frag := raw[bytes.LastIndexByte(raw, '\n')+1:]
+		// 🔴 A TORN FINAL LINE IS A CRASH MID-APPEND, AND REFUSING IT WOULD BE THE VERY RESTART
+		// OUTAGE AP1 EXISTS AGAINST — so it is admitted (and `Open` truncates it), but ONLY when it is
+		// a prefix of THIS store's record, or that record's head is a prefix of it: a fragment from
+		// another writer (a control journal line carries `kind`) is still refused.
+		if !bytes.HasPrefix(frag, []byte(recordHead)) && !bytes.HasPrefix([]byte(recordHead), frag) {
+			return errors.New("its unterminated last line is not the start of a transcript deletion record — another writer's file")
+		}
+		raw = raw[:len(raw)-len(frag)]
+		if len(raw) == 0 {
+			return nil
+		}
+	}
+	for i, line := range bytes.Split(bytes.TrimSuffix(raw, []byte("\n")), []byte("\n")) {
+		var r journalRecord
+		dec := json.NewDecoder(bytes.NewReader(line))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&r); err != nil || r.Event != eventDeleted {
+			return fmt.Errorf("line %d is not a transcript deletion record — is this another program's journal?", i+1)
+		}
+	}
+	return nil
+}
+
+// recordHead is how every line [Archive.journal] writes begins (`Event` is journalRecord's first
+// field), so a torn write of one is a prefix of it or starts with it.
+const recordHead = `{"event":"` + eventDeleted + `",`
+
+// tornTail reports the length of the journal's complete-line prefix and whether anything follows
+// it.
+func tornTail(raw []byte) (int, bool) {
+	keep := bytes.LastIndexByte(raw, '\n') + 1
+	return keep, keep < len(raw)
+}
+
+// repairJournal truncates a torn final line [CheckOwnership] admitted, so the next append does not
+// glue onto it and leave a broken line in the MIDDLE, which a later start would refuse.
+func repairJournal(dir string) error {
+	path := filepath.Join(dir, journalName)
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if keep, torn := tornTail(raw); torn {
+		return os.Truncate(path, int64(keep))
+	}
+	return nil
 }
 
 // Used is the byte count the quota is measured against.
@@ -315,8 +579,28 @@ type Meta struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	// Declared is `D(s)`: what the agent declared, grow-only.
 	Declared []string `json:"declared_scopes"`
-	// Derived is the pod's own `R_header ∪ F` — today `{*}` ([derivedScopes]).
+	// Derived is the pod's own `R_header ∪ F` over the stored records and text blobs ([derive]).
 	Derived []string `json:"derived_scopes"`
+	// Written is every `W_trailer` scope a store walk has EVER found for the session — a scope
+	// where its trailer was actually seen — grow-only ([Archive.RecordWritten]). The walk itself
+	// answers about the store as it is NOW, and a trailer can leave it — an entry rewritten by a put
+	// or a hygiene pass without the session's trailer — so a set recomputed per view SHRANK, turning a
+	// refusal into a 200 (#261 round 2). Absent in a meta written before it existed: empty.
+	//
+	// 🔴 A scope the walk could NOT fully scan is NOT kept here. Round 2 kept it, and it is a
+	// property of the store (any scope holding a malformed entry), not of the session: one transient
+	// malformed file then hid every transcript walked during it, permanently (#261 round 3). The
+	// reader puts such a scope in `V` for the view that saw it, and only while it lasts.
+	Written []string `json:"written_scopes,omitempty"`
+	// Ledger is `L(s)`: every scope the session's uploaded client read ledger names, `*` for a
+	// record that names none it can read ([foldLedger]); grow-only. LedgerRecords counts the
+	// records folded, which is what F1 ("the ledger is EMPTY") asks. Absent in a meta written
+	// before S11: empty, zero.
+	Ledger        []string `json:"ledger_scopes,omitempty"`
+	LedgerRecords int      `json:"ledger_records,omitempty"`
+	// NamesProgram is F1's evidence: some stored tool input names `cairn` or `subsystem-recall`
+	// (`scopeuse`). Grow-only; F1 itself is [Meta.LedgerScopes]'s question.
+	NamesProgram bool `json:"names_program,omitempty"`
 	// Children is every opencode child id uploaded as a `child:` stream (decision 7: trailers
 	// naming the child count toward the root's `V`).
 	Children []string            `json:"child_ids"`
@@ -330,6 +614,10 @@ type Position struct {
 	SeqTo    int64  `json:"seq_to,omitempty"`
 	Bytes    int64  `json:"bytes"`
 }
+
+// ErrMetaUnparsable marks a `meta.json` that is present and does not decode — a fact about ONE
+// session, which a caller deciding over many may leave out rather than fail on.
+var ErrMetaUnparsable = errors.New("the session's meta.json does not parse")
 
 // ReadMeta reads a stored session's meta, or (nil, nil) when there is none.
 func (a *Archive) ReadMeta(root string) (*Meta, error) {
@@ -349,7 +637,7 @@ func (a *Archive) readMeta(root string) (*Meta, error) {
 	}
 	var m Meta
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("archive: %s/%s does not parse: %w", root, metaName, err)
+		return nil, fmt.Errorf("archive: %s/%s does not parse: %w (%w)", root, metaName, ErrMetaUnparsable, err)
 	}
 	if m.Streams == nil {
 		m.Streams = map[string]Position{}
@@ -401,17 +689,132 @@ func syncDir(dir string) error {
 	return d.Sync()
 }
 
-// derivedScopes is the pod's own derivation of `R_header ∪ F` over a session's stored records.
+// derive is the pod's own derivation of `R_header ∪ F` over ONE request's records (and, for a blob
+// upload, its text): `internal/transcript/scopeuse`, the function the capture agent routes with
+// (decision 3: one function, two callers).
 //
-// 🔴 IT RETURNS `{*}`, AND THAT IS A DECISION, NOT A STUB TO BE READ AS "NOTHING FOUND". The
-// derivation belongs to `internal/transcript/scopeuse` (decision 3: ONE function, called by the
-// agent for routing and by the pod at upload), which is slice S2's and is not on `main`. An empty
-// answer here would let the agent's DECLARATION be the whole read half of `V` — exactly what the
-// pod-side re-derivation exists to refuse ("so an old or lying agent cannot shrink `V`"). `*`
-// makes every stored session owner-only (decision 4), the direction that cannot widen visibility.
-// ⚠ It is grow-only like every set in meta, so a session stored under this rule stays owner-only
-// after `scopeuse` is wired; nothing is stored while capture is unarmed (O16).
-func derivedScopes() []string { return []string{Star} }
+// 🔴 EACH RECORD IS READ BOTH WAYS — as a Claude Code record AND as an opencode part — WHATEVER
+// RUNTIME THE REQUEST DECLARES. Which strings are TOOL INPUTS (what F1 and F2 ask about) depends on
+// the format, and the runtime label is the uploader's word; reading both shapes means a mislabelled
+// request cannot turn a tool input into plain content. Both readings only ADD.
+//
+// 🔴 F1 IS NOT DECIDED HERE, AND IT USED TO BE. F1 is "a tool input names the program AND the
+// session's ledger holds ZERO records" — a question about the WHOLE session, and the ledger arrives
+// on a stream of its own (S11). Decided per request it was always "no ledger", so every session that
+// named `cairn` in a tool input got a grow-only `*` that the ledger could never take back. So this
+// returns only the EVIDENCE ([derived.NamesProgram]), kept in [Meta.NamesProgram], and
+// [Meta.LedgerScopes] decides F1 against [Meta.LedgerRecords] when `V` is asked for. F2 and the
+// headers need no memory and are still folded here.
+//
+// ⚠ A record that is not a JSON OBJECT (a bare string, an array) is scanned as content.
+//
+// 🔴 AND EVERY RECORD IS ALSO SCANNED AS ONE STRING, so a header the map walk never reads still
+// counts: in a member NAME, or in the first of two members with one name — Go's map decode keeps
+// only the last — while the raw-record view serves the stored bytes, first copy included (#261's
+// audit, measured: a viewer `V` should have refused was served the hidden read). `Content` on a
+// JSON document reads every string token, keys and repeats included.
+//
+// 🔴 AND A REPEATED MEMBER NAME ADDS `*`. The whole-record scan finds a HEADER anywhere, but which
+// strings are TOOL INPUTS (what F1 and F2 ask about) is read off the map, which drops the first
+// copy. No runtime writes a repeated name; a record that has one is either hostile or broken, so
+// it makes the session owner-only rather than being read as if the first copy were not there. It
+// is NOT refused: the host redactor deliberately keeps both copies (`internal/redact/ordered.go`),
+// and a refusal would stall that session's stream.
+func derive(lines [][]byte, text []byte) derived {
+	d := scopeuse.NewDeriver()
+	var extra []string
+	for _, line := range lines {
+		// The whole-record scan IS the content scan of a record that does not decode, so a line
+		// that fails to unmarshal is not scanned a second time (it was, until #261 round 3: one more
+		// copy and one more pass at the cap, for an answer the first pass already gave).
+		d.Content(string(line))
+		if duplicateMember(line) {
+			extra = []string{Star}
+		}
+		// `json.Unmarshal`, not a `Decoder`: it reads the line in place, where a decoder first
+		// copies it into a buffer it grows by doubling — measured at the 4 MiB cap, that copy alone
+		// was most of what this derivation added to one assembly's allocations. Only STRINGS are
+		// read here, so a number decoded as a float loses nothing.
+		var rec map[string]any
+		if err := json.Unmarshal(line, &rec); err != nil || rec == nil {
+			continue
+		}
+		d.ClaudeRecord(rec)
+		d.OpencodePart(rec)
+	}
+	if text != nil {
+		d.Content(string(text))
+	}
+	res := d.Result()
+	scopes := union(res.Headers, extra)
+	if res.F2 {
+		scopes = union(scopes, []string{Star})
+	}
+	return derived{Scopes: scopes, NamesProgram: d.Evidence().NamesProgram}
+}
+
+// derived is what one request adds: `R_header` and F2's `*` (grow-only, straight into
+// [Meta.Derived]), and F1's evidence, which is only an answer once the ledger is known.
+type derived struct {
+	Scopes       []string
+	NamesProgram bool
+}
+
+// duplicateMember reports whether any object in one valid, COMPACTED JSON value repeats a member
+// name — compared as `encoding/json`'s map decoding compares them: after unescaping, with invalid
+// UTF-8 replaced. One pass, no decode of the values.
+func duplicateMember(v []byte) bool {
+	type frame struct {
+		obj, wantKey bool
+		keys         map[string]struct{}
+	}
+	var stack []*frame
+	for i := 0; i < len(v); {
+		switch v[i] {
+		case '{':
+			stack = append(stack, &frame{obj: true, wantKey: true})
+		case '[':
+			stack = append(stack, &frame{})
+		case '}', ']':
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+		case ',':
+			if n := len(stack); n > 0 && stack[n-1].obj {
+				stack[n-1].wantKey = true
+			}
+		case '"':
+			end := i + 1
+			for end < len(v) && v[end] != '"' {
+				if v[end] == '\\' {
+					end++
+				}
+				end++
+			}
+			end++ // past the closing quote
+			if n := len(stack); n > 0 && stack[n-1].obj && stack[n-1].wantKey && end <= len(v) {
+				top := stack[n-1]
+				raw := v[i:end]
+				key := string(raw[1 : len(raw)-1])
+				if bytes.IndexByte(raw, '\\') >= 0 || !utf8.Valid(raw) {
+					_ = json.Unmarshal(raw, &key)
+				}
+				if top.keys == nil {
+					top.keys = map[string]struct{}{}
+				}
+				if _, seen := top.keys[key]; seen {
+					return true
+				}
+				top.keys[key] = struct{}{}
+				top.wantKey = false
+			}
+			i = end
+			continue
+		}
+		i++
+	}
+	return false
+}
 
 func union(a, b []string) []string {
 	out := append(append([]string(nil), a...), b...)
@@ -465,6 +868,64 @@ func checkCursor(field, v string, mayBeEmpty bool) error {
 	return nil
 }
 
+// field is one request string the re-check reads, and the name its refusal reports.
+type field struct{ name, value string }
+
+// recheckFields runs the pod's refusing re-check over every STRING a request carries outside the
+// record and blob bytes — the root, the stream, the blob name, `from`, `to`, each declared scope
+// and each record's `src` (AP3).
+//
+// 🔴 EVERY ONE OF THEM IS STORED: as a directory or file name, inside `meta.json`, or on every
+// stored line. The re-check used to read only record and blob BYTES, and the name patterns do not
+// help — a 40-character `ghp_` token fits `blobName`, `idClass` and a cursor exactly. A hit refuses
+// the whole request, naming the FIELD and never the value.
+func (a *Archive) recheckFields(u Upload, extra ...field) error {
+	fields := []field{{"root", u.Root}, {"from", u.From}, {"to", u.To}}
+	for i, s := range u.Declared {
+		fields = append(fields, field{fmt.Sprintf("declared scope %d", i), s})
+	}
+	for _, f := range append(fields, extra...) {
+		if _, hits := a.cfg.Recheck.String(f.value); len(hits) > 0 {
+			return &RecheckError{Field: f.name}
+		}
+	}
+	return nil
+}
+
+// gone refuses an upload for a root that was stored here and DELETED (S6). The caller holds the
+// root's lock and read `m` under it.
+//
+// 🔴 A DELETION IS FINAL FOR ITS ROOT, BECAUSE "NO SESSION STORED" WAS READ AS "A NEW SESSION MAY
+// BEGIN". After an owner's delete (or a withdrawal) the root has no `meta.json`, and the upload path
+// treats that as a first upload: `owned(nil)` is true and every position is "". The capture agent
+// still holds its offsets for the streams it shipped — those were refused 409 — but anything it
+// sends with `from == ""` was ACCEPTED: a subagent stream that started after the delete, a new or
+// changed blob. The directory came back holding a fragment of the session its owner had deleted,
+// and a plugin could attach an output to it. So every journaled deletion of a root is final.
+//
+// ⚠ RETENTION INCLUDED, by decision: a session swept after its retention would otherwise be
+// re-shipped from offset 0 by a host that still has its files — the old content, back for another
+// retention period. The one deletion that is NOT final is [ReasonRetentionNoMeta]: a directory no
+// upload ever committed held no session, and its owner is unknown.
+//
+// The refusal is [ErrDeleted] for the deleted root's own (owner, host) — who must stop — and
+// [ErrNotOwner], the uniform answer, for anybody else, so the id of a deleted session is no oracle.
+func (a *Archive) gone(m *Meta, who Uploader, root string) error {
+	if m != nil {
+		return nil
+	}
+	a.mu.Lock()
+	was, deleted := a.deleted[root]
+	a.mu.Unlock()
+	switch {
+	case !deleted:
+		return nil
+	case was == who:
+		return ErrDeleted
+	}
+	return ErrNotOwner
+}
+
 // owned is decision 15's ownership rule: the first accepted upload fixes (owner, host).
 func owned(m *Meta, who Uploader) bool {
 	return m == nil || (m.Owner == who.Owner && m.Host == who.Host)
@@ -476,7 +937,7 @@ func (a *Archive) AppendRecords(who Uploader, u Upload, stream string, recs []Re
 		return Stored{}, err
 	}
 	if !streamName.MatchString(stream) {
-		return Stored{}, invalid("stream %q is not main, subagent:<id> or child:<id>", stream)
+		return Stored{}, invalid("stream %q is not main, subagent:<id>, child:<id> or ledger", stream)
 	}
 	if len(recs) == 0 || len(recs) > MaxRecords {
 		return Stored{}, invalid("a records upload carries 1–%d records, not %d", MaxRecords, len(recs))
@@ -484,10 +945,19 @@ func (a *Archive) AppendRecords(who Uploader, u Upload, stream string, recs []Re
 	if u.Frame != nil && len(recs) != 1 {
 		return Stored{}, invalid("a framed upload carries exactly one record's frame, not %d", len(recs))
 	}
+	fields := make([]field, 0, len(recs)+1)
+	fields = append(fields, field{"stream", stream})
 	for i, r := range recs {
 		if err := checkCursor(fmt.Sprintf("record %d src", i), r.Src, false); err != nil {
 			return Stored{}, err
 		}
+		if u.Frame == nil && len(r.Rec) > MaxAssembledBytes {
+			return Stored{}, &TooLargeError{Limit: MaxAssembledBytes}
+		}
+		fields = append(fields, field{fmt.Sprintf("record %d src", i), r.Src})
+	}
+	if err := a.recheckFields(u, fields...); err != nil {
+		return Stored{}, err
 	}
 	l := a.rootLock(u.Root)
 	l.Lock()
@@ -495,6 +965,9 @@ func (a *Archive) AppendRecords(who Uploader, u Upload, stream string, recs []Re
 
 	m, err := a.readMeta(u.Root)
 	if err != nil {
+		return Stored{}, err
+	}
+	if err := a.gone(m, who, u.Root); err != nil {
 		return Stored{}, err
 	}
 	// 🔴 OWNERSHIP BEFORE THE CAS, so the stale answer — which names the stored position — is
@@ -528,6 +1001,7 @@ func (a *Archive) AppendRecords(who Uploader, u Upload, stream string, recs []Re
 		if err := json.Compact(&c, r.Rec); err != nil {
 			return Stored{}, invalid("record %d is not one JSON value", i)
 		}
+
 		// 🔴 THE REFUSING RE-CHECK (clause c). ANY hit refuses the whole request.
 		if _, hits := a.cfg.Recheck.Record(c.Bytes()); len(hits) > 0 {
 			return Stored{}, &RecheckError{Record: i}
@@ -563,10 +1037,18 @@ func (a *Archive) AppendRecords(who Uploader, u Upload, stream string, recs []Re
 		return Stored{}, err
 	}
 	m.Streams[stream] = Position{StoredTo: u.To, SeqTo: seq, Bytes: size}
+	// The ledger is the client's report of what the session READ, not transcript content, so it is
+	// folded as a ledger and never scanned as one.
+	var found derived
+	if stream == LedgerStream {
+		foldLedger(m, lines)
+	} else {
+		found = derive(lines, nil)
+	}
 	if child, ok := cutPrefix(stream, "child:"); ok && !slices.Contains(m.Children, child) {
 		m.Children = union(m.Children, []string{child})
 	}
-	if err := a.commit(dir, m, u); err != nil {
+	if err := a.commit(dir, m, u, found); err != nil {
 		return Stored{}, err
 	}
 	return Stored{StoredTo: u.To, SeqTo: seq}, nil
@@ -584,8 +1066,16 @@ func (a *Archive) PutBlob(who Uploader, u Upload, name string, data []byte) (Sto
 	if err := validateUpload(u); err != nil {
 		return Stored{}, err
 	}
+	// The name is NOT echoed: a name the re-check below would refuse must not reach the answer or
+	// the log through this one either.
 	if !blobName.MatchString(name) {
-		return Stored{}, invalid("blob name %q is not a file base name", name)
+		return Stored{}, invalid("the blob name is not a file base name (%s)", blobName)
+	}
+	if u.Frame == nil && len(data) > MaxAssembledBytes {
+		return Stored{}, &TooLargeError{Limit: MaxAssembledBytes}
+	}
+	if err := a.recheckFields(u, field{"blob name", name}); err != nil {
+		return Stored{}, err
 	}
 	l := a.rootLock(u.Root)
 	l.Lock()
@@ -593,6 +1083,9 @@ func (a *Archive) PutBlob(who Uploader, u Upload, name string, data []byte) (Sto
 
 	m, err := a.readMeta(u.Root)
 	if err != nil {
+		return Stored{}, err
+	}
+	if err := a.gone(m, who, u.Root); err != nil {
 		return Stored{}, err
 	}
 	if !owned(m, who) {
@@ -646,7 +1139,13 @@ func (a *Archive) PutBlob(who Uploader, u Upload, name string, data []byte) (Sto
 	// The previous version's bytes are gone with the rename.
 	a.adjust(-pos.Bytes)
 	m.Blobs[name] = Position{StoredTo: u.To, Bytes: int64(len(data))}
-	if err := a.commit(dir, m, u); err != nil {
+	// A TEXT blob is content the session saw (a persisted tool result can hold a rendered recall); a
+	// binary one is not scanned — the agent's own rule (`internal/capture`), so the two agree.
+	var text []byte
+	if !redact.IsBinary(data) {
+		text = data
+	}
+	if err := a.commit(dir, m, u, derive(nil, text)); err != nil {
 		return Stored{}, err
 	}
 	return Stored{StoredTo: u.To}, nil
@@ -671,9 +1170,10 @@ func (a *Archive) ensureSession(m *Meta, who Uploader, u Upload) (string, *Meta,
 
 // commit folds the request's declarations and the pod's derivation into the grow-only sets and
 // writes meta — the moment the upload exists.
-func (a *Archive) commit(dir string, m *Meta, u Upload) error {
+func (a *Archive) commit(dir string, m *Meta, u Upload, found derived) error {
 	m.Declared = union(m.Declared, u.Declared)
-	m.Derived = union(m.Derived, derivedScopes())
+	m.Derived = union(m.Derived, found.Scopes)
+	m.NamesProgram = m.NamesProgram || found.NamesProgram
 	m.UpdatedAt = a.cfg.Now().UTC()
 	before := fileSize(filepath.Join(dir, metaName))
 	if err := writeMeta(dir, m); err != nil {
@@ -681,6 +1181,35 @@ func (a *Archive) commit(dir string, m *Meta, u Upload) error {
 	}
 	a.adjust(fileSize(filepath.Join(dir, metaName)) - before)
 	return nil
+}
+
+// RecordWritten folds scopes a store walk found into the session's grow-only [Meta.Written] and
+// returns the meta as it now stands — (nil, nil) when no session is stored under root. Meta is
+// re-read under the root's lock, so an upload committing concurrently is neither lost nor
+// overwritten; it is written only when the set actually grows.
+func (a *Archive) RecordWritten(root string, scopes []string) (*Meta, error) {
+	if !write.SessionComponent.MatchString(root) {
+		return nil, invalid("not a stored session")
+	}
+	l := a.rootLock(root)
+	l.Lock()
+	defer l.Unlock()
+	m, err := a.readMeta(root)
+	if err != nil || m == nil {
+		return m, err
+	}
+	grown := union(m.Written, scopes)
+	if len(grown) == len(m.Written) {
+		return m, nil
+	}
+	m.Written = grown
+	dir := a.sessionDir(root)
+	before := fileSize(filepath.Join(dir, metaName))
+	if err := writeMeta(dir, m); err != nil {
+		return nil, err
+	}
+	a.adjust(fileSize(filepath.Join(dir, metaName)) - before)
+	return m, nil
 }
 
 func fileSize(p string) int64 {
@@ -736,51 +1265,81 @@ func (a *Archive) adjust(n int64) {
 	a.mu.Unlock()
 }
 
-// StoredRecord is one stored line, as [Archive.ReadStream] returns it.
+// StoredRecord is one stored line, as [Archive.ScanStream] yields it.
 type StoredRecord struct {
 	Seq int64           `json:"seq"`
 	Src string          `json:"src"`
 	Rec json.RawMessage `json:"rec"`
 }
 
-// ReadStream returns every COMMITTED record of one stream, in order. It is the read the later
-// slices render from (S4, S8); here it is what the tests read back.
+// ReadStream returns every COMMITTED record of one stream, in order, held in memory at once. Only
+// TESTS call it — the session page renders through [Archive.ScanStream], one record at a time — and
+// it is [Archive.ScanStream] collected, so what a test reads back is what the page reads: it was a
+// second copy of the scan (and, unlike it, held the root's lock across the read), so a defect in
+// the page's read was invisible to every test that read through this one (#261 round 2).
 func (a *Archive) ReadStream(root, stream string) ([]StoredRecord, error) {
+	var out []StoredRecord
+	if err := a.ScanStream(root, stream, func(r StoredRecord) error {
+		out = append(out, r)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// StopScan is what a [Archive.ScanStream] callback returns to end the scan early; the scan then
+// returns nil.
+var StopScan = errors.New("stop the scan")
+
+// ScanStream calls fn for every COMMITTED record of one stream, in order, one record in memory at
+// a time — the read the session page renders from (S4). A stream that is not stored calls fn zero
+// times and returns nil; fn returning [StopScan] ends the scan without an error.
+//
+// 🔴 IT DOES NOT HOLD THE ROOT'S LOCK WHILE IT READS, AND THAT IS SOUND FOR ONE REASON: a segment
+// is append-only below its committed size. An upload truncates the file TO that size and writes
+// after it ([appendSegment]), so the first `pos.Bytes` bytes — the only ones this reads — are never
+// rewritten; a page render over a large session therefore cannot stall that session's uploads. A
+// retention sweep or a withdrawal CAN remove the file mid-read; that is an error here, and the
+// caller treats it as the transcript being gone.
+func (a *Archive) ScanStream(root, stream string, fn func(StoredRecord) error) error {
 	if !write.SessionComponent.MatchString(root) || !streamName.MatchString(stream) {
-		return nil, invalid("not a stored stream")
+		return invalid("not a stored stream")
 	}
 	l := a.rootLock(root)
 	l.Lock()
-	defer l.Unlock()
 	m, err := a.readMeta(root)
+	l.Unlock()
 	if err != nil || m == nil {
-		return nil, err
+		return err
 	}
 	pos, ok := m.Streams[stream]
 	if !ok {
-		return nil, nil
+		return nil
 	}
 	f, err := os.Open(filepath.Join(a.sessionDir(root), streamPrefix+stream+streamSuffix))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer f.Close()
 	zr, err := gzip.NewReader(io.LimitReader(f, pos.Bytes))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	dec := json.NewDecoder(zr)
-	var out []StoredRecord
 	for {
 		var r StoredRecord
 		if err := dec.Decode(&r); errors.Is(err, io.EOF) {
-			break
+			return nil
 		} else if err != nil {
-			return nil, err
+			return err
 		}
-		out = append(out, r)
+		if err := fn(r); errors.Is(err, StopScan) {
+			return nil
+		} else if err != nil {
+			return err
+		}
 	}
-	return out, nil
 }
 
 // ReadBlob returns a stored blob's bytes.

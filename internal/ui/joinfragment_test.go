@@ -2,7 +2,6 @@ package ui
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -140,19 +139,14 @@ func followTheQueryLink(t *testing.T, srv *Server, token string) *httptest.Respo
 	return joinCallback(srv, startWith(t, srv, form))
 }
 
-// TestNoMintedLinkCarriesItsTokenInAQueryString — every mint, of every kind (an invitation, a
-// single-use team link, a reusable one), renders `/join#invite=<token>` and never `?invite=`.
-// RED before the change: both mint handlers built `JoinPath + "?" + …`.
+// TestNoMintedLinkCarriesItsTokenInAQueryString — every mint, of every kind (a single-use
+// team link, a reusable one), renders `/join#invite=<token>` and never `?invite=`.
+// RED before the change: the mint handler built `JoinPath + "?" + …`. (The invitation mint
+// this also walked is gone: `POST /invite` creates nothing since the fold.)
 func TestNoMintedLinkCarriesItsTokenInAQueryString(t *testing.T) {
-	wantInvite := JoinPath + "#" + url.Values{inviteTokenField: {fixtureInviteToken}}.Encode()
 	wantLink := JoinPath + "#" + url.Values{inviteTokenField: {fixtureLinkToken}}.Encode()
 
-	rig := newInviteRig(t, nil)
-	inv := rig.post(InvitePath, url.Values{FieldProject: {string(fixtureNamedProject.ID)}, FieldRole: {string(control.RoleMember)}})
-	pages := map[string]string{"an invitation": inv.Body.String()}
-	if inv.Code != http.StatusOK {
-		t.Fatalf("the invitation mint answered %d: %s", inv.Code, inv.Body.String())
-	}
+	pages := map[string]string{}
 	for name, reuse := range map[string]bool{"a single-use team link": false, "a reusable team link": true} {
 		trig, _ := newTeamHTTPRig(t, nil)
 		form := linkForm(fixtureScopeTarget())
@@ -170,9 +164,6 @@ func TestNoMintedLinkCarriesItsTokenInAQueryString(t *testing.T) {
 			t.Errorf("%s: the minted page carries a QUERY-STRING join link; every server that sees it logs the token", name)
 		}
 		want := wantLink
-		if name == "an invitation" {
-			want = wantInvite
-		}
 		// POSITIVE CONTROL: the page DOES carry the link, in the fragment — so the absence above is
 		// about the shape, not about a page that rendered no link at all.
 		if strings.Count(body, want) != 1 {
@@ -258,7 +249,7 @@ func TestAReusableTeamLinkInTheQUERYStringIsRefusedAndNotRedeemed(t *testing.T) 
 func TestASingleUseTokenInTheQUERYStringStillRedeems(t *testing.T) {
 	t.Run("an invitation", func(t *testing.T) {
 		r := newTeamRig(t)
-		token, _, err := r.inviting.Mint(context.Background(), r.principal(invOwner), tlThird, control.RoleMember, 0)
+		token, _, err := r.seedInvitation(r.principal(invOwner), tlThird, control.RoleMember, 0)
 		if err != nil {
 			t.Fatal(err)
 		}

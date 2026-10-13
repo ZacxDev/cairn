@@ -13,12 +13,15 @@ import (
 
 	g "maragu.dev/gomponents"
 
+	"github.com/ZacxDev/cairn/internal/codesrc"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/netid"
+	"github.com/ZacxDev/cairn/internal/plugins"
 	"github.com/ZacxDev/cairn/internal/presence"
 	"github.com/ZacxDev/cairn/internal/report"
 	"github.com/ZacxDev/cairn/internal/store"
+	"github.com/ZacxDev/cairn/internal/transcript"
 )
 
 // Source is the read half this surface needs, as an interface so the renderer's
@@ -977,6 +980,20 @@ type Server struct {
 	// memos is the memo store, NIL when this deployment has none. See `memos.go`.
 	memos Memos
 
+	// sourceJournal is the scope's declared code sources (`sources.go`); a zero `Path` is the
+	// designed OFF state. THE ONE WRITER of that journal is `handleSourcesSave`.
+	sourceJournal codesrc.Journal
+
+	// transcripts is the transcript archive's read side, NIL when this deployment has none — then
+	// no page renders a transcript section and the raw-record row answers its one miss. See
+	// `transcript.go`.
+	transcripts *transcript.Store
+
+	// plugins is the plugin registry and its toggles (S5 of the transcripts plan, `plugins.go`), NIL
+	// when this deployment registers none — then no toggle form renders and every toggle POST
+	// answers 501 [NoPluginRegistry].
+	plugins *plugins.Service
+
 	// app is this deployment's installable identity; the zero value is unarmed. See `pwa.go`.
 	app App
 }
@@ -1100,6 +1117,22 @@ type Config struct {
 	// rather than the rows appearing with a flag. `cmd/cairn-ui` wires it only with a database AND a
 	// control journal.
 	Memos Memos
+	// SourceJournal is the code-sources journal (S4 of the scope-refs plan, `sources.go`), already
+	// resolved and checked by `codesrc.FromEnv` (outside the store tree, never the arc journal). The
+	// zero value is the designed OFF state: the Sources block is absent from the scope page and the
+	// edit page says the deployment is unconfigured. This surface is the journal's ONLY writer.
+	SourceJournal codesrc.Journal
+	// Transcripts is the transcript archive's READ side (S4 of the transcripts plan,
+	// `transcript.go`): the session page's transcript section and the raw-record row answer from it,
+	// through `transcript.Store.View` — the ONE visibility predicate — and never around it. NIL is the
+	// designed OFF state and the deployed one wherever `cairn-ui` runs without `-transcript-dir`:
+	// every page then renders exactly what it rendered before this field existed.
+	Transcripts *transcript.Store
+	// Plugins is the plugin registry, its toggle journal and the toggle fold (S5 of the transcripts
+	// plan, `plugins.go`) — the SAME service the worker listener's plugin API decides from. NIL is
+	// the designed OFF state: `/plugins` says no plugin is registered, no page renders a toggle form,
+	// and the three toggle rows stay in the ledger and answer 501.
+	Plugins *plugins.Service
 	// App arms the installable surface (`pwa.go`): the manifest row, the icon links and the theme
 	// colour. The zero value is UNARMED and renders exactly what this surface rendered before it
 	// existed. [App.Validate] is applied here, so a server cannot be built around an app the
@@ -1207,6 +1240,10 @@ func New(cfg Config) (*Server, error) {
 
 		presence: cfg.Presence,
 		memos:    cfg.Memos,
+
+		sourceJournal: cfg.SourceJournal,
+		transcripts:   cfg.Transcripts,
+		plugins:       cfg.Plugins,
 
 		app: cfg.App,
 	}, nil
@@ -1624,7 +1661,22 @@ func (s *Server) scopeView(w http.ResponseWriter, r *http.Request, id identity.I
 		}
 		view.Memos = &tab
 	}
+	// 🔴 THE SOURCES BLOCK IS READ ONLY AFTER THE REFUSAL ABOVE, by the name out of the narrowed answer
+	// (`codesrc.Key` of the store directory), and only when a journal is configured (`sources.go`).
+	view.Sources = s.sourcesBlock(id, scope)
+	// The plugin toggles, for the same reason and in the same place: after the refusal, by the name out
+	// of the narrowed answer, and only when a registry is configured (`plugins.go`).
+	view.Plugins = s.scopeToggles(id, scope)
 	view.Panes = s.panesFor(id)
+	// Each listed session's one-line plugin summary, through the transcript predicate (`outputs.go`) —
+	// asked only for the tab that lists sessions.
+	if view.Tab == TabSessions {
+		listed := make([]string, 0, len(touched.Sessions.Sessions))
+		for _, sess := range touched.Sessions.Sessions {
+			listed = append(listed, sess.ID)
+		}
+		view.Derived = s.derivedFor(id, listed)
+	}
 	return view, true
 }
 
@@ -1853,8 +1905,9 @@ func (s *Server) renderStatus(w http.ResponseWriter, status int, node g.Node) {
 //     a hidden field. Recorded in `internal/ui/README.md`, Phase Q.
 //   - THE INVITATION MINT IS NO LONGER A SPECIAL CASE. It was the one page sent `no-store`,
 //     through its own entry point, because its body IS a bearer capability; it now gets the same
-//     value through this function, and `TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged`
-//     still pins it.
+//     value through this function. (That mint is gone since the invite fold; the team-link
+//     mint is the capability-bearing page now, and
+//     `TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged` pins it.)
 //   - ⚠ WHAT IT COSTS IS RESEARCHED, NOT MEASURED HERE: Chromium admits `no-store` pages to the
 //     back/forward cache for at most three minutes and evicts them on any cookie change (so a
 //     sign-out always evicts); Safari and Firefox re-fetch on Back. The plan's Q7 is the

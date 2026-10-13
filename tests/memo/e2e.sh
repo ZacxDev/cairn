@@ -546,7 +546,7 @@ done
 echo "  (k) revocation latency measured: $((SECONDS - k_start)) s (deadline refreshInterval 30 s + 5 s)"
 cairn host-a memo-check --scope alpha-notes --session s-k-client
 k_client="$rc/$status_line"
-assert k-revoked-credential-refused-within-deadline eval '[[ $k_done == yes && $k_client == 3/memo-status=unconfigured ]]'
+assert k-revoked-credential-refused-within-deadline eval '[[ $k_done == yes && $k_client == 3/memo-status=refused ]]'
 send host-c alpha-notes "k-sibling-sends"
 assert k-sibling-credential-keeps-working-throughout eval '[[ $sibling_ok == yes && $rc == 0 ]]'
 fi # (k)

@@ -18,8 +18,8 @@ import (
 //
 // ⚠ THE CONTRACT DOES NOT SAY HOW A FRAME CARRIES ITS BYTES; `chunk` IS THIS SLICE'S READING, and
 // so are 202 `{"frame":i,"of":n}` for a staged non-final frame and `from: ""` for a stream never
-// written. The agent's upload (which lands once S2's `cmd/cairn-capture` is merged) is built
-// against these.
+// written. The agent's upload, `internal/capture.HTTPSink` (S3b), is built against these and is
+// tested against this decoder.
 
 // Schema is the one wire schema version.
 const Schema = 1

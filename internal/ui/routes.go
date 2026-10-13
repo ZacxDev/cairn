@@ -116,7 +116,7 @@ type route struct {
 // against the narrowed answer and never resolves. See `handleEntryPage`.
 var routes = map[routeKey]route{
 	// 🔴 THE ROOT IS THE HUB, AND THE SCOPE LIST MOVED TO `/scopes` (an operator decision). The hub is
-	// four cards — arcs, scopes, sessions, team — only the scopes card carries a count (`len(Visible)`, an answer
+	// five cards — arcs, scopes, sessions, my sessions (S7), team — only the scopes card carries a count (`len(Visible)`, an answer
 	// this caller is authorised to see); the scope cards, the search box and the tag filter are
 	// `/scopes`'s. `/?q=` and `/?tag=` still ANSWER, with a 303 to `/scopes` carrying the query, so a
 	// bookmark or a home-screen shortcut is never a dead link. See `handleHub`.
@@ -147,6 +147,35 @@ var routes = map[routeKey]route{
 	// session id is global — so it is the one page that AGGREGATES across scopes, and it does so only
 	// over the caller's narrowed set. GET only. See `handleSessionPage`.
 	{"GET", "/session"}: {(*Server).handleSessionPage, classContent},
+	// 🔴 THE RAW-RECORD VIEW (S4 of the transcripts plan, `transcript.go`): one stored stream of a
+	// session's transcript, as stored. A SIXTH fixed browse path with its operands in query
+	// parameters — the session id, the stream name and two record numbers are all values somebody
+	// else supplied. `content`: whether it answers is the visibility predicate's verdict about this
+	// caller. GET only, so neither cross-site gate gains a case. See `handleSessionTranscript`.
+	{"GET", SessionTranscriptPath}: {(*Server).handleSessionTranscript, classContent},
+	// 🔴 THE AGENT READ API (S8 of the transcripts plan, `agentread.go`): a session's skeleton, a bounded
+	// page of its records, one tool call — JSON, for agents holding their own credential. Three FIXED
+	// paths with every operand in a query parameter, for the browse pair's reason. `content`: whether
+	// any of them answers is the visibility predicate's verdict about this caller, asked through
+	// `transcript.Store.Answer` — the ONE function the client listener serves the same answers
+	// through. GET only, so neither cross-site gate gains a case.
+	{"GET", TranscriptSkeletonPath}: {(*Server).handleTranscriptSkeleton, classContent},
+	{"GET", TranscriptRecordsPath}:  {(*Server).handleTranscriptRecords, classContent},
+	{"GET", TranscriptToolPath}:     {(*Server).handleTranscriptTool, classContent},
+	// 🔴 "MY SESSIONS" (S7 of the transcripts plan, `mysessions.go`): the stored sessions the VIEWER
+	// uploaded, newest first — the one way in to an owner-only session. A fixed path whose only operand
+	// (`?page=`) is a view selector. `content`: the list is the transcript store's OWNER ARM, an answer
+	// about who this caller is — ownership, never visibility, so a reader of every scope of somebody
+	// else's session does not see it listed. GET only, so neither cross-site gate gains a case. See
+	// `handleMySessions`.
+	{"GET", MySessionsPath}: {(*Server).handleMySessions, classContent},
+	// 🔴 THE OWNER'S "DELETE TRANSCRIPT" (S6 of the transcripts plan, `outputs.go`): the stored
+	// transcript, and every plugin output and ticket edge derived from it, removed and the deletion
+	// journaled. CLASS 0, for the bell's reason and with more at stake: both cross-site gates reach it
+	// by METHOD, and `TestTheDeleteRowIsBehindBothCrossSiteGates` asserts each by its own message.
+	// Never `content`: it answers a 303 to "My sessions" or ONE refusal. Its own path rather than an
+	// action field on another row, for `UnsharePath`'s reason. See `handleSessionDelete`.
+	{"POST", SessionDeletePath}: {(*Server).handleSessionDelete, 0},
 	// 🔴 THE BELL (S5 of the arcs/presence plan): queue a terminal-bell ring at the pane a session the
 	// VIEWER owns is running in. CLASS 0, ON PURPOSE — it declares nothing, so BOTH cross-site gates
 	// reach it by METHOD (same origin before auth, the CSRF token after), exactly as they reach
@@ -186,6 +215,11 @@ var routes = map[routeKey]route{
 	// body — chosen by whoever gets one request past both cross-site gates — rather than
 	// something the route decides. Two paths are two rows in this ledger, which is where
 	// somebody reads them.
+	//
+	// 🔴 `POST /invite` MINTS NOTHING SINCE THE INVITE FOLD AND KEEPS ITS ROW AND ITS CLASS.
+	// It answers a 303 to the team-link form (`handleInvite`). Class 0 still: both cross-site
+	// gates are derived from the METHOD, and "this write no longer writes" is exactly the
+	// kind of route-class reasoning no gate may be derived from.
 	{"GET", "/invite"}:         {(*Server).handleInvitePage, 0},
 	{"POST", "/invite"}:        {(*Server).handleInvite, 0},
 	{"POST", "/invite/revoke"}: {(*Server).handleInviteRevoke, 0},
@@ -203,6 +237,23 @@ var routes = map[routeKey]route{
 	// `GET /scope`. Retract is its own path for `UnsharePath`'s reason.
 	{"POST", MemoPath}:        {(*Server).handleMemoSend, 0},
 	{"POST", MemoRetractPath}: {(*Server).handleMemoRetract, 0},
+
+	// 🔴 THE CODE-SOURCES EDIT FLOW (S4 of the scope-refs plan, `sources.go`): a scope-ADMINISTRATION
+	// read and its write, the share flow's shape. `GET` is `content` — whether the form renders is an
+	// answer about the caller's `admin` authority. The POST carries NO class, so both cross-site gates
+	// reach it by METHOD. This surface is the sources journal's ONLY writer (decision 5).
+	{"GET", SourcesPath}:  {(*Server).handleSourcesPage, classContent},
+	{"POST", SourcesPath}: {(*Server).handleSourcesSave, 0},
+
+	// 🔴 THE PLUGIN SURFACE (S5 of the transcripts plan, `plugins.go`): the registry page and the three
+	// toggle writes, one path per LEVEL for `UnsharePath`'s reason — which authority a toggle is checked
+	// against is the route's to decide, never a form field's. `GET /plugins` is `content` (it lists this
+	// caller's readable scopes' values); the POSTs carry NO class, so both cross-site gates reach them by
+	// METHOD.
+	{"GET", PluginsPath}:        {(*Server).handlePluginsPage, classContent},
+	{"POST", PluginScopePath}:   {(*Server).handlePluginScope, 0},
+	{"POST", PluginArcPath}:     {(*Server).handlePluginArc, 0},
+	{"POST", PluginSessionPath}: {(*Server).handlePluginSession, 0},
 
 	{"GET", "/team"}:              {(*Server).handleTeamPage, classContent},
 	{"POST", "/team/link"}:        {(*Server).handleTeamLink, 0},
@@ -252,11 +303,11 @@ var routes = map[routeKey]route{
 	{"GET", StylesheetHashedPath}: {(*Server).handleHashedStylesheet, classPublic},
 
 	// 🔴 THE FILTER SCRIPT — the only script row in THIS literal; `pwa.js`'s row (S4) is added beside
-	// the icon rows by `pwa.go`'s `init`. A computed, content-hashed EXACT key for
-	// the stylesheet row's reasons above, and `classPublic` for the stylesheet's reason: it consults
-	// no authority and answers identical bytes to everybody. Only the scope page links it, and only
-	// `AllowedScriptSources` may name it — see `script.go` for the allowlist that replaced this
-	// surface's zero-script property, and the three guards that hold it.
+	// the icon rows by `pwa.go`'s `init`, and `join.js`'s by `join.go`'s. A computed, content-hashed
+	// EXACT key for the stylesheet row's reasons above, and `classPublic` for the stylesheet's
+	// reason: it consults no authority and answers identical bytes to everybody. Only the scope
+	// page links it, and only `AllowedScriptSources` may name it — see `script.go` for the
+	// allowlist that replaced this surface's zero-script property, and the three guards that hold it.
 	{"GET", FilterScriptPath}: {(*Server).handleFilterScript, classPublic},
 
 	// 🔴 THE WEB APP MANIFEST (S2 of the mobile plan, `pwa.go`). A FIXED path, and `classPublic` because
@@ -304,8 +355,11 @@ const (
 	// somebody reads them.
 	UnsharePath = "/unshare"
 
-	// InvitePath answers the invite flow's read AND its mint, split by method — the same
-	// shape as [SharePath], keyed by `?project=<control.ID>`.
+	// InvitePath answers two 303s, split by method: the read lands on the Team page's
+	// invitation section, and the POST — which MINTED an invitation before single-project
+	// invitations were folded into team links, and creates nothing now — on its team-link
+	// form (`handleInvite`). Both rows stay declared: a page rendered before the fold still
+	// posts here.
 	InvitePath = "/invite"
 	// InviteRevokePath withdraws an outstanding invitation. A SEPARATE path rather than an
 	// action field on [InvitePath], for the reason `UnsharePath` gives and `routes` restates.
@@ -320,6 +374,10 @@ const (
 	// token and says so, rather than guessing a host out of a request header that a proxy
 	// chooses.
 	JoinPath = "/join"
+
+	// SourcesPath is one scope's code-sources edit page (`GET`, keyed by `?scope=<control.ID>`) and
+	// its save (`POST`). A FIXED path with the scope in a query parameter, for the share flow's reason.
+	SourcesPath = "/scope/sources"
 
 	// TeamPath is the Team page: sharing, invitations and team links in one place.
 	TeamPath = "/team"

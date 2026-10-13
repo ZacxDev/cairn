@@ -50,6 +50,7 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/authz"
+	"github.com/ZacxDev/cairn/internal/codesrc"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/control/tokenfile"
 	"github.com/ZacxDev/cairn/internal/envalias"
@@ -62,7 +63,9 @@ import (
 	// allowlist entry alone would be satisfied by a tree where `internal/api` imported it
 	// on every route.
 	"github.com/ZacxDev/cairn/internal/pgstore"
+	"github.com/ZacxDev/cairn/internal/plugins"
 	"github.com/ZacxDev/cairn/internal/presence"
+	"github.com/ZacxDev/cairn/internal/transcript"
 	"github.com/ZacxDev/cairn/internal/transcript/archive"
 	"github.com/ZacxDev/cairn/internal/ui"
 	"github.com/ZacxDev/cairn/internal/worker"
@@ -301,17 +304,31 @@ func main() {
 		"the instance's transcript byte ceiling (`20GB`, `20GiB`); uploads past it answer 507; REQUIRED with the listener")
 	armCapture := flag.Bool(flagArmCapture, false,
 		"ARM transcript capture. Unset — the default, and every instance today (operator decision O16) — every upload "+
-			"answers 503 and nothing is stored. Set it only once the plan's arming preconditions hold (O15's held-back "+
-			"gate for this redactor, and S11's read ledger)")
+			"answers 503 and nothing is stored. Set it only once the plan's arming preconditions hold (S11's read "+
+			"ledger; S3b's agent upload and e2e gate have landed; "+
+			"O15's held-back gate is WAIVED by operator decision O17, not passed)")
 	issueWorker := flag.String(flagIssueWorker, "",
 		"capture: mint ONE worker token for -"+flagWorkerOwner+" on -"+flagWorkerHost+
 			", append its digest to -"+flagWorkerTokens+", print the token once on stdout, and exit")
 	workerHost := flag.String(flagWorkerHost, "",
 		"the ONE host label a token minted by -"+flagIssueWorker+" is bound to")
+	// 🔴 THE PLUGIN REGISTRY AND ITS TOGGLE JOURNAL (S5 of the transcripts plan): two flags that
+	// configure ONE thing together, only with the worker listener, NO default and no environment
+	// spelling — see `plugins.go` beside this file.
+	pluginRegistry := flag.String(flagPluginRegistry, "",
+		"the plugin REGISTRY (a JSON file of manifests). NO DEFAULT: unset, no plugin exists here. Registering a "+
+			"plugin is the instance-level decision; every toggle starts OFF. Needs -"+flagPluginJournal+" and the worker listener")
+	pluginJournal := flag.String(flagPluginJournal, "",
+		"the plugin TOGGLE journal (append-only; must resolve OUTSIDE -store). Needs -"+flagPluginRegistry)
+	pluginStoreTitles := flag.Bool(flagPluginStoreTitles, false,
+		"let a ticket-matching plugin store ticket TITLES beside ticket ids. NO DEFAULT: unset, ids only, and a "+
+			"body carrying a title is refused. Needs -"+flagPluginRegistry)
+	workerPlugin := flag.String(flagWorkerPlugin, "",
+		"the ONE registered plugin a token minted by -"+flagIssueWorker+" plugin is bound to")
 	// 🔴 SCOPE MAIL'S CLIENT LISTENER (S2 of the scope-mail plan): one flag, NO default and no
 	// environment spelling — see `clientapi.go` beside this file for why, and for its refusals.
 	clientAPIAddr := flag.String(flagClientAPIAddr, "",
-		"host:port of the THIRD listener serving the four memo routes to agents' narrowed journal credentials "+
+		"host:port of the THIRD listener serving the four memo routes and the three transcript read routes to agents' narrowed journal credentials "+
 			"(machine tokens only). NO DEFAULT: unset, there is no listener. Needs -control-journal and -db-dsn")
 	dsnDefault, dsnErr := databaseDSNDefault(os.Getenv)
 	dbDSN := flag.String("db-dsn", dsnDefault,
@@ -402,6 +419,35 @@ func main() {
 		os.Exit(exitConfig)
 	}
 
+	// 🔴 THE CODE-SOURCES JOURNAL (S4 of the scope-refs plan): this surface is its ONLY WRITER, and
+	// it is configured by `$CAIRN_SOURCE_JOURNAL` alone — no flag, for the rollback reason the pod's
+	// `main` gives. EVERY refusal (a blank value, a path inside the store root, the arc journal's own
+	// file) is `codesrc.FromEnv`'s, the variable's ONE reader, so the pod that READS this file and the
+	// surface that WRITES it cannot disagree about a value. Unset is the designed OFF state: no
+	// Sources block on the scope page, and the edit page says so.
+	sourceJournal, sourcesOn, err := codesrc.FromEnv(*store, os.LookupEnv, resolvedArcJournal)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error()+". Refusing to start")
+		os.Exit(exitConfig)
+	}
+	// 🔴 AND NEVER A FILE THIS PROGRAM ALREADY WRITES. `FromEnv` refuses the arc journal; this surface
+	// also owns the CONTROL journal and the session table, and one sources record appended to the
+	// control journal makes every later `Refresh` and `Append` refuse it (measured by the S4 audit: an
+	// authority journal that then needs hand-editing to recover). A deployment that puts the sources file
+	// BESIDE the control journal is a one-token typo away from this; one that gives it a dedicated
+	// volume (the README's recommendation) is not, and the refusal costs nothing there.
+	if sourcesOn {
+		if err := refuseASourceJournalThatIsAnotherFile(*store, sourceJournal.Path,
+			map[string]string{"-control-journal": *controlJournal, "-session-file": *sessionFile}); err != nil {
+			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error()+". Refusing to start")
+			os.Exit(exitConfig)
+		}
+	}
+	sourcesMode := "code sources unconfigured (no $" + codesrc.EnvJournal + ")"
+	if sourcesOn {
+		sourcesMode = "code sources written to " + sourceJournal.Path
+	}
+
 	authority, err := openAuthority(*controlJournal, *store, *tokenFile)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
@@ -466,7 +512,7 @@ func main() {
 	// owner must be a principal the authority holds, and the mint mode exits here.
 	workerFlags := workerSettings{addr: *workerAddr, tokens: *workerTokens, owner: *workerOwner,
 		dir: *transcriptDir, retention: *transcriptRetention, quota: *transcriptQuota, armed: *armCapture,
-		issue: *issueWorker, host: *workerHost}
+		issue: *issueWorker, host: *workerHost, plugin: *workerPlugin, registry: *pluginRegistry}
 	workerConf, workerOn, err := workerListener(workerFlags, authority.Model(), *store)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
@@ -478,6 +524,18 @@ func main() {
 			os.Exit(exitConfig)
 		}
 		os.Exit(0)
+	}
+
+	// 🔴 THE PLUGIN REGISTRY AND JOURNAL ARE JUDGED HERE, after the worker flags (they need the
+	// listener) and before anything is served. The journal may not be any file this program writes.
+	pluginRegistryLoaded, pluginToggleJournal, pluginsOn, err := pluginsConfigured(
+		pluginSettings{registry: *pluginRegistry, journal: *pluginJournal, storeTitles: *pluginStoreTitles}, *store, workerOn,
+		map[string]string{"-control-journal": *controlJournal, "-session-file": *sessionFile, "-arc-journal": resolvedArcJournal,
+			"-" + flagWorkerTokens: *workerTokens, "-" + flagPresenceTokens: *presenceTokens, "-token-file": *tokenFile,
+			"$" + codesrc.EnvJournal: sourceJournal.Path})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
+		os.Exit(exitConfig)
 	}
 
 	machine, err := identity.NewMachineToken(authority)
@@ -710,9 +768,30 @@ func main() {
 	var workerServer *http.Server
 	var workerNet net.Listener
 	var transcripts *archive.Archive
+	var pluginService *plugins.Service
 	if workerOn {
 		if err := workerBindRefusal(*workerAddr, proxyErr); err != nil {
 			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
+			os.Exit(exitConfig)
+		}
+		// AP1: cairn-ui's OWN state may not live in the transcript directory — checked against the
+		// paths this process WILL write, before the store's open checks what is already there.
+		statePaths := []statePath{{"-control-journal", *controlJournal}, {"-arc-journal", resolvedArcJournal},
+			{"-token-file", *tokenFile}, {"-" + flagWorkerTokens, *workerTokens}, {"-" + flagPresenceTokens, *presenceTokens}}
+		if pgDB == nil {
+			statePaths = append(statePaths, statePath{"-session-file", *sessionFile})
+		}
+		// The code-sources journal (scope refs S4) is a file this surface WRITES, set by the
+		// environment alone — a seam with AP1 that arrived after it was closed.
+		if sourcesOn {
+			statePaths = append(statePaths, statePath{"$" + codesrc.EnvJournal, sourceJournal.Path})
+		}
+		// The plugin toggle journal (S5): another file this surface WRITES.
+		if pluginsOn {
+			statePaths = append(statePaths, statePath{"-" + flagPluginJournal, pluginToggleJournal.Path})
+		}
+		if err := stateInsideTranscriptDir(workerConf.dir, statePaths); err != nil {
+			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error()+". Refusing to start")
 			os.Exit(exitConfig)
 		}
 		transcripts, err = openTranscriptArchive(workerConf)
@@ -720,8 +799,16 @@ func main() {
 			fmt.Fprintln(os.Stderr, "cairn-ui: the transcript store cannot be opened: "+err.Error()+". Refusing to start")
 			os.Exit(exitConfig)
 		}
+		// 🔴 ONE SERVICE FOR THE PLUGIN API AND THE BROWSER'S TOGGLES — the same registry, the same
+		// journal, the same transcript read side and the same arc journal, so the fold a plugin is
+		// answered by is the fold a toggle form describes.
+		if pluginsOn {
+			pluginService = newPluginService(pluginRegistryLoaded, pluginToggleJournal,
+				transcript.NewStore(transcripts, *store), resolvedArcJournal, authority, *pluginStoreTitles)
+		}
 		handler, rows, err := worker.New(worker.Config{
-			TokenFile: *workerTokens, Owner: workerConf.owner, Archive: transcripts, Armed: workerFlags.armed,
+			TokenFile: *workerTokens, Owner: workerConf.owner, OwnerHeld: ownerStillHeld(authority, workerConf.owner),
+			Archive: transcripts, Armed: workerFlags.armed, Plugins: pluginService,
 			Limiter: netid.NewRateLimiter(maxFailures, window, lockout), TrustedProxies: trustedProxies,
 			Log: func(line string) { fmt.Fprintln(os.Stderr, "cairn-ui: "+line) },
 		})
@@ -747,17 +834,36 @@ func main() {
 		}
 	}
 
+	// The plugins clause rides on the worker listener's, whose API it is.
+	if pluginsOn {
+		workerModeLine += ", " + pluginMode(pluginRegistryLoaded, pluginToggleJournal, *pluginStoreTitles)
+	}
+
 	// 🔴 THE CLIENT LISTENER (S2 of the scope-mail plan), bound here for presence's reason: a
 	// configuration that cannot work is a refusal to start. Its flags were judged before anything
 	// was opened; what is left is the store, the handler and the bind. The authenticator is the SAME
 	// `machine` the browser chain holds — the one machine-token backend over the one journal
 	// authority — and `clientapi.Config.Auth`'s type admits nothing else.
+	// 🔴 THE TRANSCRIPT READ SIDE (S4 of the transcripts plan) EXISTS ONLY WHERE THE STORE WAS OPENED —
+	// which takes all six worker flags, `-transcript-dir` among them. Built here, once, because TWO
+	// listeners read through it: the browser surface (the session page, the raw-record row and the agent
+	// read rows) and the client listener (the agent read rows, transcripts S8). NIL without an archive —
+	// never a Store over a nil archive — so the section never renders and every read row answers its
+	// one miss, and a deployment without `-transcript-dir` serves what it served before. It reads the
+	// SAME `*store` the browse pages read, because the write half of a session's visibility set is a
+	// walk of that store's trailers. Reading does NOT depend on `-arm-transcript-capture`: disarming
+	// stops uploads, it does not hide what is stored.
+	var transcriptReads *transcript.Store
+	if transcripts != nil {
+		transcriptReads = transcript.NewStore(transcripts, *store)
+	}
+
 	clientAPIModeLine := "client API off (no -" + flagClientAPIAddr + ")"
 	var clientAPIServer *http.Server
 	var clientAPINet net.Listener
 	if *clientAPIAddr != "" {
 		clientAPIServer, clientAPINet, clientAPIModeLine, err = openClientAPI(*clientAPIAddr, machine, authority, pgDB,
-			netid.NewRateLimiter(maxFailures, window, lockout), trustedProxies)
+			netid.NewRateLimiter(maxFailures, window, lockout), trustedProxies, transcriptReads)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error()+". Refusing to start")
 			os.Exit(exitConfig)
@@ -811,7 +917,9 @@ func main() {
 		Presence: browserPresence,
 		// nil unless both a database and a control journal are configured (`wireBrowserMemos`).
 		Memos: browserMemoStore,
-		TTL:   *sessionTTL,
+		// The zero value when `$CAIRN_SOURCE_JOURNAL` is unset — the designed off state.
+		SourceJournal: sourceJournal,
+		TTL:           *sessionTTL,
 		// nil when no provider is configured, which is a legitimate deployment and is why
 		// this field is the one on `ui.Config` that may be nil. See its own comment.
 		OAuth: oauth,
@@ -838,6 +946,13 @@ func main() {
 		// The zero value when `-app-name` is unset, which is the unarmed surface; `Instance` is
 		// `-instance-name`'s, set whether or not the app is armed.
 		App: app,
+	}
+	// The transcript read side built above, NIL without an archive (see there).
+	cfg.Transcripts = transcriptReads
+	// 🔴 THE TOGGLES' BROWSER HALF EXISTS ONLY WHERE THE PLUGIN API DOES — the same service object.
+	// nil renders no toggle form and answers every toggle POST with `ui.NoPluginRegistry`.
+	if pluginService != nil {
+		cfg.Plugins = pluginService
 	}
 	srv, err := ui.New(cfg)
 	if err != nil {
@@ -1054,8 +1169,8 @@ func main() {
 		os.Exit(1)
 	}
 	boundAddr := net.JoinHostPort(*host, strconv.Itoa(bound.Addr().(*net.TCPAddr).Port))
-	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s, %s, %s, %s, %s, %s\n",
-		len(ui.DeclaredRoutes()), boundAddr, *store, sharingMode, signInMode, stateMode, arcsMode, presenceMode, appMode(cfg.App),
+	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s, %s, %s, %s, %s, %s, %s, %s\n",
+		len(ui.DeclaredRoutes()), boundAddr, *store, sharingMode, signInMode, stateMode, arcsMode, sourcesMode, presenceMode, appMode(cfg.App),
 		instanceMode(cfg.App), workerModeLine, clientAPIModeLine)
 	if err := listener.Serve(bound); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
@@ -1617,4 +1732,25 @@ func bindIsReachable(host string) bool {
 		return true
 	}
 	return !addr.IsLoopback()
+}
+
+// refuseASourceJournalThatIsAnotherFile is the sources journal resolving to a file this program
+// already writes. Both sides are resolved by `codesrc.ResolveJournalPath` — the resolution the
+// sources path itself went through — so a symlinked spelling of the same file is caught; a path
+// that does not resolve (unset, or refused for its own reason elsewhere) is not compared.
+func refuseASourceJournalThatIsAnotherFile(storeRoot, sources string, others map[string]string) error {
+	for flagName, other := range others {
+		if other == "" {
+			continue
+		}
+		resolved, err := codesrc.ResolveJournalPath(storeRoot, other)
+		if err != nil {
+			continue
+		}
+		if resolved == sources {
+			return fmt.Errorf("$%s resolves to %s, which is this program's %s: a sources record appended "+
+				"there would corrupt it. Give the sources journal its own file", codesrc.EnvJournal, sources, flagName)
+		}
+	}
+	return nil
 }

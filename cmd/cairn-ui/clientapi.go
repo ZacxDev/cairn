@@ -16,11 +16,13 @@ import (
 	"github.com/ZacxDev/cairn/internal/memo"
 	"github.com/ZacxDev/cairn/internal/netid"
 	"github.com/ZacxDev/cairn/internal/pgstore"
+	"github.com/ZacxDev/cairn/internal/transcript"
 )
 
 // flagClientAPIAddr is scope mail's CLIENT LISTENER (S2 of `claudedocs/plan-cairn-scope-mail.md`,
-// decision 3): the THIRD listener, serving `internal/clientapi`'s four memo routes to agents
-// holding their own narrowed journal credential.
+// decision 3): the THIRD listener, serving `internal/clientapi`'s four memo routes — and the
+// transcripts plan's three agent read routes (S8) — to agents holding their own narrowed journal
+// credential.
 //
 // A flag only — NO default and NO environment spelling, for presence's reason: a listener that
 // accepts bearer credentials from outside the browser has to be a deliberate, reviewable line in
@@ -83,8 +85,11 @@ func trustedProxiesErr() error {
 //
 // 🔴 THE SEND SCAN'S KEY IS FRESH PER PROCESS (decision 11): `memo.NewScanner` draws 32 bytes from
 // `crypto/rand` and nothing stores them, because the scan reads only rule NAMES.
+//
+// `transcripts` is the transcript archive's read side for the agent read routes (transcripts S8), NIL
+// on a deployment with no `-transcript-dir`.
 func openClientAPI(addr string, machine *identity.MachineToken, authority *control.Cache, db *pgstore.DB,
-	limiter *netid.RateLimiter, trusted []netip.Prefix) (*http.Server, net.Listener, string, error) {
+	limiter *netid.RateLimiter, trusted []netip.Prefix, transcripts *transcript.Store) (*http.Server, net.Listener, string, error) {
 	if db == nil {
 		// Unreachable while `clientAPIRefusal` requires -db-dsn and `main` refuses a DSN it cannot
 		// open; a nil store here would be a listener answering 500 to everything, so it is refused.
@@ -99,7 +104,7 @@ func openClientAPI(addr string, machine *identity.MachineToken, authority *contr
 		return nil, nil, "", err
 	}
 	handler, err := clientapi.New(clientapi.Config{
-		Auth: machine, Model: authority.Model, Memos: memos, Limiter: limiter, TrustedProxies: trusted,
+		Auth: machine, Model: authority.Model, Memos: memos, Limiter: limiter, TrustedProxies: trusted, Transcripts: transcripts,
 		Log: func(line string) { fmt.Fprintln(os.Stderr, "cairn-ui: "+line) },
 	})
 	if err != nil {

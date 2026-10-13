@@ -710,7 +710,11 @@ jobs:
           # unedited. The literal moves to put the margin back at 50, the same choice as
           # the transitions above. Measured 2885 collected (2885 passed, `-n auto`), so
           # `2885 - min(50, max(1, 2885/20)) = 2835`.
-          FLOOR = 2835
+          # ⚠ 2835 -> 2886 FOR TRANSCRIPTS S11 (the client read ledger, merged with S4), AND THE
+          # DRIFT GUARD FORCED IT: CI measured 2936 collected on the PR head, a gap of 101 against a
+          # `MAX_GAP` of 100 (S4's and S11's Python tests together — `tests/test_read_ledger.py`,
+          # the env_pin rows, the parity-harness rows). `2936 - min(50, max(1, 2936/20)) = 2886`.
+          FLOOR = 2886
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -818,14 +822,21 @@ jobs:
       # `internal/depspolicy`'s `TestAnUNTRACKEDNestedModuleIsIGNOREDButATRACKEDOneIsNOT` is the only
       # thing that exercises the tracked-file path behind `NestedModuleDirs` — the path that stops a
       # stray checkout under `.claude/worktrees/` from turning `go test ./...` red on every
-      # developer's machine. The nix derivations' check phase has no git and legitimately skips it
-      # (there, the `onlyGo`-filtered source makes the fallback path the correct one). This variable
+      # developer's machine. The nix derivations' check phase had no git and legitimately skipped it
+      # (there, the `onlyGo`-filtered source makes the fallback path the correct one); since S11 it
+      # carries `gitMinimal` and runs it, measured green. This variable
       # is what makes the skip a FAILURE here, where git exists and the path is real.
       #
       # ⚠ SAME SHAPE AS `tests/test_go_client_ledgers.py` REFUSING ON A SKIP IN THIS JOB, and for the
       # same reason: a skip nobody counts is a pass.
       - name: the tier that must not skip a git-dependent test
         run: echo "CAIRN_GIT_TESTS_REQUIRED=1" >> "$GITHUB_ENV"
+      # …and the same for `internal/worker`'s TestTheSummaryPluginAgainstTheRealListener and
+      # TestTheClickupPluginAgainstTheRealListener, which build the S9 and S10 plugins from `plugins/` —
+      # absent from the nix derivations' filtered source, where they skip; here the source is present
+      # and a skip REFUSES.
+      - name: the tier that must not skip the plugin built against the real listener
+        run: echo "CAIRN_PLUGIN_BUILD_REQUIRED=1" >> "$GITHUB_ENV"
 
       - name: go vet
         run: go vet ./...
@@ -1131,6 +1142,29 @@ jobs:
             exit 1
           fi
 
+      # 🔴 THE SCOPE-REFS CLOSING CHECK (part 2 of `claudedocs/plan-cairn-scope-refs.md`'s closing
+      # condition): bare repositories over `file://`, a loopback GitHub stub, a pod serving a sources
+      # journal written through `internal/codesrc`, and `cairn sources` / `cairn audit-refs` asserted
+      # over clauses (a)-(f). In THIS job because it sets CAIRN_GIT_TESTS_REQUIRED and has the Go
+      # toolchain and git; NOT continue-on-error. The self-test first, for the arcs step's reason below:
+      # six sabotaged builds, each required to turn its OWN clause's assertion red.
+      - name: the scope-refs end-to-end check, after proving it can go RED
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}
+        run: |
+          set -o pipefail
+          tests/refaudit/e2e.sh --self-test | tee /tmp/refaudit-e2e-self.txt
+          grep -qx 'SUMMARY e2e-self-test: sabotaged=7 caught=7' /tmp/refaudit-e2e-self.txt
+          tests/refaudit/e2e.sh > /tmp/refaudit-e2e.txt 2>&1 || { cat /tmp/refaudit-e2e.txt; exit 1; }
+          cat /tmp/refaudit-e2e.txt
+          passes=$(grep -c '^PASS ' /tmp/refaudit-e2e.txt || true)
+          fails=$(grep -c '^FAIL ' /tmp/refaudit-e2e.txt || true)
+          echo "refaudit e2e: passes=$passes fails=$fails"
+          # 27 assertions, measured when the script landed; `EXPECTED` in the script moves with it.
+          if [ "$passes" -lt 27 ] || [ "$fails" -ne 0 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL lines, and 27 / 0 were measured"
+            exit 1
+          fi
+
       # 🔴 THE ARCS/SESSIONS CLOSING CHECK (S5): both Go binaries, a synthetic store, an arc journal
       # outside it, real `append`/`arc-register` writes, and what `sessions`/`arcs`/`arc-show`/
       # `arcs --check` answer — including the not-found answer for a principal without the home
@@ -1187,6 +1221,98 @@ jobs:
           # 19 assertions, measured when the script landed; `EXPECTED` in the script moves with it.
           if [ "$passes" -lt 19 ] || [ "$fails" -ne 0 ]; then
             echo "REFUSING: $passes PASS / $fails FAIL lines, and 19 / 0 were measured"
+            exit 1
+          fi
+
+      # 🔴 THE EXAMPLE PLUGINS' OWN SUITES — closing-condition part 4 of `claudedocs/plan-cairn-plugins.md`:
+      # plugin A (summaries, S9) and plugin B (ClickUp ticket matching, S10), one module. `plugins/` is a
+      # NESTED, stdlib-only module, so the root `go vet ./...` and `go test ./...` above do NOT descend
+      # into it: without this step its tests would run only in the nix tier. They run against in-process
+      # FAKE provider, fake ClickUp and fake pod servers, synthetic fixtures only — no real provider and
+      # no real ClickUp workspace is ever called by CI (the plan's (iii)). Plugin B's commit matcher runs
+      # the REAL `git` over a repository the test creates, and FAILS rather than skips without one.
+      #
+      # 🔴 COUNTED, NOT EXIT-CODED: a module whose tests vanished exits 0 too. 83 `--- PASS` lines and 7
+      # `ok` packages were measured when plugin B landed (34 and 4 with plugin A alone); a drop below
+      # either, or any FAIL, refuses.
+      - name: the example plugins' own suites, against in-process fake provider, ClickUp and pod servers
+        run: |
+          set -o pipefail
+          go -C plugins vet ./...
+          go -C plugins test -race -count=1 -v ./... > /tmp/plugins-suite.txt 2>&1 || { cat /tmp/plugins-suite.txt; exit 1; }
+          grep -E '^(ok|FAIL|---)' /tmp/plugins-suite.txt
+          passes=$(grep -c '^--- PASS' /tmp/plugins-suite.txt || true)
+          fails=$(grep -c '^--- FAIL' /tmp/plugins-suite.txt || true)
+          oks=$(grep -c '^ok ' /tmp/plugins-suite.txt || true)
+          echo "plugins suite: passes=$passes fails=$fails ok=$oks"
+          if [ "$passes" -lt 83 ] || [ "$fails" -ne 0 ] || [ "$oks" -lt 7 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL / $oks ok, and 83 / 0 / 7 were measured"
+            exit 1
+          fi
+
+      # 🔴 THE TRANSCRIPTS CLOSING CHECK (closing-condition part 2 of `claudedocs/plan-cairn-plugins.md`),
+      # clauses (a), (b), (c), (h), — since S4 — (d), (e), (f), (g), — since S5 — (i), (j), — since S11 — (n), and — since S6 — (k), (l), (m): `cairn-ui` booted with its worker
+      # listener ARMED over a scratch transcript directory, and the REAL capture agent's `--run` driven
+      # through a recording relay — a lost acknowledgement resumed with every record stored once (a),
+      # 0 of the run's planted secrets in the agent's reassembled outgoing bodies with the
+      # redaction-off build's control seeing all of them (b), the pod's refusing re-check on a record
+      # and a text blob (c), and a session that read another instance's scope sending nothing (h).
+      # The visibility clauses fetch every viewer's session page and raw-record row BEFORE each
+      # fixture transcript is uploaded and after: the owner and a reader of every scope the session
+      # wrote or read see it, and a refused viewer's bytes are IDENTICAL to what they were with no
+      # transcript — a stranger (d), a reader of one written scope (e), a reader of the written scope
+      # but not the read one (f), and everyone but the owner of a session that touched nothing (g).
+      # The plugin clauses register one plugin and mint its token through the binary: its pending list
+      # is empty until a scope admin sets a toggle through the browser's POST, then lists exactly the
+      # session whose every scope is ON (i); it is refused ONE 403 body on a session it is OFF for, on
+      # one never stored, and on writing a type its manifest does not declare (j).
+      # Since S7, (g)'s LISTING half too: the owner's "My sessions" lists the owner-only session beside
+      # its shared ones, and a reader who opens a shared one lists none of them — ownership, not
+      # visibility.
+      # Clause (n) runs the REAL client against a store pod with a session id in its environment — a
+      # read whose command line names no program and whose output carries no header — and the real
+      # agent uploads the ledger record that call wrote: the pod's own fold holds the scope, and the
+      # reader of the written scope alone is refused.
+      # Since S6 the output clauses too: the summary plugin writes a summary of three fixture sessions
+      # through its real route, and the SET of viewers whose page shows each output equals the set
+      # whose page shows its transcript, with the reader of one written scope getting the admitted
+      # session's derived line on the sessions list and neither refused one's (k); the owner's "delete
+      # transcript" POST removes the session's directory — its transcript, summary and ticket edge —
+      # journals the fact, and the plugin's next read is its ONE 403 body, while a reader who can see
+      # another session's transcript and does not own it deletes nothing (l); and a session whose
+      # prefix the real agent shipped and which then reads the other instance's scope has that prefix
+      # WITHDRAWN on the next run — one request naming it, no record from the read onward, the
+      # instance's directory gone, the repeat answered `{"deleted":true}` (m).
+      # Beside the presence check for its reason: it needs the Go toolchain, and it exits 2 rather
+      # than skipping without one.
+      #
+      # ⚠ THE SELF-TEST RUNS FIRST AND IS NOT OPTIONAL: it sabotages each wired clause on a scratch
+      # copy of the source — (a) the stream CAS, and for its opencode leg the saved plan never being
+      # matched, (b) the agent's blob redaction, (c) the pod's record scan, (h) routing on one scope
+      # (d) the predicate not asked, (e) the written set computed over the viewer's own scopes,
+      # (f) the read half dropped, (g) the empty set vacuously readable, and "My sessions" listed by
+      # visibility instead of ownership, (i) a missing scope toggle defaulting ON, (j) the plugin's
+      # transcript read ignoring the toggle, (n) the pod not folding the uploaded ledger, (k) outputs
+      # rendered without the predicate, (l) a delete that keeps the outputs, (m) the agent's withdrawal
+      # skipped
+      # — and refuses (exit 2) unless EACH turns its own named assertion RED. Sixteen sabotages over
+      # all fourteen clauses (two of them have two legs).
+      - name: the transcripts end-to-end check, after proving every wired clause can go RED
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}
+        run: |
+          set -o pipefail
+          tests/plugins/e2e.sh --self-test | tee /tmp/plugins-e2e-self.txt
+          grep -qx 'SUMMARY e2e-self-test: sabotaged=16 caught=16' /tmp/plugins-e2e-self.txt
+          tests/plugins/e2e.sh > /tmp/plugins-e2e.txt 2>&1 || { cat /tmp/plugins-e2e.txt; exit 1; }
+          cat /tmp/plugins-e2e.txt
+          passes=$(grep -c '^PASS ' /tmp/plugins-e2e.txt || true)
+          fails=$(grep -c '^FAIL ' /tmp/plugins-e2e.txt || true)
+          echo "plugins e2e: passes=$passes fails=$fails"
+          # 22 assertions: 11 measured when the script landed (S3b), 4 more with S4's clauses (d)–(g),
+          # 2 more with S5's (i) and (j), 1 more with S11's clause (n), 1 more with S7's listing half of
+          # (g), 3 more with S6's (k), (l) and (m); `EXPECTED` in the script moves with it.
+          if [ "$passes" -lt 22 ] || [ "$fails" -ne 0 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL lines, and 22 / 0 were measured"
             exit 1
           fi
 
@@ -1260,12 +1386,13 @@ jobs:
       # guard the row exists for, so it is never scored as a kill: each row runs ONLY the
       # tests it names (`-run` over its `killer` and `extra_killers`), so a row whose named
       # killer stays green reads SURVIVED, and MISATTRIBUTED now means one narrower thing — a
-      # listed extra killer fired while the named one did not. The battery runs over NINE packages, in `PKGS` order: `internal/control`,
+      # listed extra killer fired while the named one did not. The battery runs over TEN packages, in `PKGS` order: `internal/control`,
       # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
-      # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence`, `internal/memo` —
+      # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence`, `internal/memo`, `internal/client` —
       # the model, the token-file projection, P4's identity backends, the server that authorises
       # from all of them, the pod's program, the browser surface, the browser surface's program,
-      # the presence owner predicate and scope mail's send/read/retract predicates, because a mutant in one is killed by a guard in another, the
+      # the presence owner predicate, scope mail's send/read/retract predicates and the client's read
+      # ledger (an input to the transcript visibility set), because a mutant in one is killed by a guard in another, the
       # refresh loop that bounds the adapter's declared divergence exists only in `main`, the
       # share flow is the second consumer of the same authority, the browser's startup refusals
       # are the only thing between a misconfigured deployment and a surface that serves nobody,
@@ -1412,9 +1539,15 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 126 PASS lines measured on this head: 123 cases plus THREE structural checks —
+          # 138 PASS lines measured on this head: 134 cases plus FOUR structural checks —
           # re-derived by RUNNING the harness on this tree and reading `grep -c '^PASS '`, never
           # by arithmetic on the previous literal.
+          # ⚠ 136 -> 138 ON #266's AUDIT: two more `ledger-*` rows (output that LISTS other scopes
+          # records them — a scope-absent recall, a refused `validate --scope`).
+          # ⚠ 126 -> 136 WHEN S11's READ LEDGER LANDED: nine `ledger-*` rows (each also compares
+          # the two clients' ledger FILES) and a fourth structural check, `read-ledger-leak`,
+          # which counts ledger files a client wrote with a session id the harness exported into
+          # its OWN environment — `env_pin` must clear it. Its line is asserted below.
           # ⚠ 127 -> 126 WHEN `recall-tag-repeated-is-AND` WAS DELETED: `--tag` became SCALAR on
           # an operator decision, so the row comparing the two clients on a REPEATED flag has
           # nothing left to measure — a repeated scalar flag is last-wins by the same
@@ -1473,8 +1606,8 @@ jobs:
           # zero failures too; the floor is what tells a green gate from an absent one.
           # 🔴 AND IT IS RAISED WITH EVERY ROW THAT LANDS. It sat at 98 for four rows after the
           # rows were added, which is a floor that cannot see the four newest disappear.
-          if [ "$passes" -lt 126 ]; then
-            echo "REFUSING: $passes passes, and 126 were measured — the gate got smaller"
+          if [ "$passes" -lt 138 ]; then
+            echo "REFUSING: $passes passes, and 138 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then
@@ -1518,6 +1651,12 @@ jobs:
           # every corpus change.
           grep -q '^CONTENT-FLOOR live-banner=True rendered-digest=True unreadable-entry=True unreadable-scope-dir=True tag-narrowing=True tag-match=True req-open=True' /tmp/parity.txt
           grep -q 'dead-normalizations=0' /tmp/parity.txt
+          # 🔴 THE READ LEDGER (S11): all eleven `ledger-*` rows ran, the oracle wrote at least ONE
+          # record across them (a TOTAL, not per row — two clients that both write nothing agree on
+          # every ledger row, and this is the floor against that; a single row writing nothing is
+          # seen only by its own comparison, e.g. `ledger-sync-records-nothing` is MEANT to), and NO
+          # client wrote a ledger with the session id exported into the harness's environment.
+          grep -Eq '^READ-LEDGER rows=11 oracle-records=[1-9][0-9]* leak-files=0$' /tmp/parity.txt
 
   # 🔴 P1's LAST STEP, AND IT IS ITS OWN JOB FOR THE SAME REASON THE CORPUS AND THE PARITY
   # GATE ARE: its verdict is readable on its own in the checks list, and a failure in either
@@ -1909,6 +2048,13 @@ jobs:
         run: nix build .#packages.x86_64-linux.cairn-capture --no-link --print-build-logs
       - name: the capture agent's redaction self-test passes as built (planted=P caught=P clean-damaged=0)
         run: nix build .#checks.x86_64-linux.cairn-capture-self-test --no-link --print-build-logs
+      # The summary plugin (S9): its NESTED module built alone, its suite in the check phase.
+      - name: the summary plugin builds, and its suite passes under the pinned toolchain
+        run: nix build .#packages.x86_64-linux.cairn-summary --no-link --print-build-logs
+      # The ClickUp plugin (S10): the same module and the same check phase — the whole module's suite,
+      # with `git` as a check input — under its own name, with its own manifest beside it.
+      - name: the clickup plugin builds, and the module's suite passes under the pinned toolchain
+        run: nix build .#packages.x86_64-linux.cairn-clickup --no-link --print-build-logs
 
       # …and its verb and exit-code tables are read out of the running binary. This is the nix
       # tier of the claim `tests/test_go_client_ledgers.py` makes in the `go` job — a different
@@ -1982,7 +2128,8 @@ jobs:
     # nix binary cache its chromium comes from — any of which would otherwise gate a tree nobody
     # touched. (Its chromium is now PINNED to the flake's nixpkgs, S6a; it used to be whatever the
     # runner image shipped.) A permanently-blocking gate on a third party's availability is the
-    # category this repository refuses; S6b promotes the touch refusals into their own job instead.
+    # category this repository refuses; S6b promoted the touch refusals into their own job instead —
+    # `uiaudit-touch`, below, which reaches no hub and holds no secret.
     #
     # ⚠ AND WHAT IT DOES NOT BUY, SAID PLAINLY RATHER THAN PAPERED OVER: **the row can still go red,
     # and a reader of the checks list will see it.** That is accepted, not fixed. The alternative
@@ -2240,7 +2387,7 @@ jobs:
           # memobrowser` (it needs a database this leg does not have), so `go test -list` here never
           # prints its test while a `git grep` over every `*_test.go` would count it — the cross-check
           # would refuse an honest tree. It is not thereby uncounted: the `memos` leg runs it BY NAME
-          # and refuses unless each of its five clauses printed its own PASS line.
+          # and refuses unless each of its six clauses printed its own PASS line.
           listed=$(go test -list '.*' ./... | grep -cE '^(Test|Example|Fuzz)' || true)
           declared() {
             { git grep -hE '^func (Test|Example|Fuzz)([A-Z0-9_][A-Za-z0-9_]*)?\(' "$1" -- '*_test.go' ':(exclude)memos_browser_test.go' || true; } \
@@ -2330,8 +2477,9 @@ jobs:
 
       # 🔴 THE MOBILE PLAN'S CLOSING-CONDITION INSTRUMENT (`claudedocs/plan-cairn-mobile-pwa.md`),
       # WIRED HERE BY S4 AND IN THIS NON-BLOCKING JOB ON PURPOSE: the plan keeps `pwa_check.sh` advisory
-      # until S6b adds the blocking `uiaudit-touch` job — this job's chromium is pinned since S6a, but
-      # the job itself stays advisory (see `continue-on-error` above). It runs the PLAIN check (all nine
+      # for good — S6b promoted only the walk's TOUCH refusals, into the blocking `uiaudit-touch` job —
+      # so although this job's chromium is pinned since S6a, the job itself stays advisory (see
+      # `continue-on-error` above). It runs the PLAIN check (all nine
       # clauses, exit 0/1/2); `--self-test` (nine sabotaged tree copies, four of them full walks) is a
       # local instrument validation, too heavy to repeat on every push. Exit 2 is "could not vouch" and
       # is a failure here exactly like 1 — never a skip.
@@ -2377,32 +2525,48 @@ jobs:
       # tab", `claudedocs/plan-cairn-scope-mail.md`). Neither world the walk boots has a database, so
       # until this leg the tab was only ever rendered saying it has no store: the send form, the
       # Retract button and a tombstone had never been laid out, typed into or clicked. The script
-      # boots the real `cairn-ui` over a real PostgreSQL and a control journal and drives five
-      # clauses (`uiaudit/memos_browser_test.go` says what each measures).
+      # boots the real `cairn-ui` over a real PostgreSQL and a control journal and drives six
+      # clauses (`uiaudit/memos_browser_test.go` says what each measures). Clause (f) is the WALK'S
+      # capture of the populated tab at every rung — axe, touch, overflow, a screenshot — refused by
+      # the walk's own `refuseWalkRegressions`; its screenshots are uploaded by the step after this.
       #
-      # ⚠ THE SELF-TEST RUNS FIRST: seven sabotages on a scratch copy, each required to turn its OWN
+      # ⚠ THE SELF-TEST RUNS FIRST: eleven sabotages on a scratch copy, each required to turn its OWN
       # clause red with that clause's own message, behind a positive control on the unedited copy.
-      # Then the plain run, whose five PASS lines are COUNTED here rather than its exit code read.
+      # Then the plain run, whose six PASS lines are COUNTED here rather than its exit code read.
       # Exit 2 is "could not vouch" and fails the step exactly like 1 — never a skip.
       - name: memos_check.py — the populated memos tab in a real browser, after proving each clause can go RED
         if: matrix.part == 'memos'
+        env:
+          MEMOS_CHECK_ARTIFACTS: ${{ runner.temp }}/memos-captures
         run: |
           set -uo pipefail
           rc=0
           ./uiaudit/memos_check.py --self-test 2>&1 | tee /tmp/memos-self.txt || rc=$?
-          if [ "$rc" != "0" ] || ! grep -qx 'SUMMARY memos-check-self-test: sabotaged=7 caught=7' /tmp/memos-self.txt; then
-            echo "::error::memos_check.py --self-test exited $rc without 'sabotaged=7 caught=7' (1 = a sabotage was not caught, 2 = could not vouch)"
+          if [ "$rc" != "0" ] || ! grep -qx 'SUMMARY memos-check-self-test: sabotaged=11 caught=11' /tmp/memos-self.txt; then
+            echo "::error::memos_check.py --self-test exited $rc without 'sabotaged=11 caught=11' (1 = a sabotage was not caught, 2 = could not vouch)"
             exit 1
           fi
           rc=0
           ./uiaudit/memos_check.py 2>&1 | tee /tmp/memos.txt || rc=$?
-          passes=$(grep -cE '^memos_check: [a-e]_[a-z]+ +PASS$' /tmp/memos.txt || true)
-          fails=$(grep -cE '^memos_check: [a-e]_[a-z]+ +(FAIL|NONE)$' /tmp/memos.txt || true)
+          passes=$(grep -cE '^memos_check: [a-f]_[a-z]+ +PASS$' /tmp/memos.txt || true)
+          fails=$(grep -cE '^memos_check: [a-f]_[a-z]+ +(FAIL|NONE)$' /tmp/memos.txt || true)
           echo "memos tab: clause PASS=$passes FAIL=$fails rc=$rc"
-          if [ "$rc" != "0" ] || [ "$passes" != "5" ] || [ "$fails" != "0" ]; then
-            echo "::error::memos_check.py exited $rc with $passes PASS / $fails FAIL clause line(s); 5 / 0 were measured (1 = a clause FAILED, 2 = could not vouch)"
+          if [ "$rc" != "0" ] || [ "$passes" != "6" ] || [ "$fails" != "0" ]; then
+            echo "::error::memos_check.py exited $rc with $passes PASS / $fails FAIL clause line(s); 6 / 0 were measured (1 = a clause FAILED, 2 = could not vouch)"
             exit 1
           fi
+
+      # Clause (f)'s captures — a screenshot and an axe result per rung of the populated memos tab —
+      # leave as an artifact, for the walk's upload step's reason: never committed (leakscan skips a
+      # binary by name), and narrowed to the one directory meant to leave.
+      - name: upload the memos tab captures
+        if: always() && matrix.part == 'memos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: uiaudit-memos-captures
+          path: ${{ runner.temp }}/memos-captures
+          retention-days: 7
+          if-no-files-found: warn
 
       # 🔴 THE `verify-push` CONTROL, AND WITHOUT IT A MISCONFIGURED TOKEN IS A SILENT
       # GREEN. The push path is non-fatal by design — a walk that captured is worth its
@@ -2479,6 +2643,201 @@ jobs:
             ${{ runner.temp }}/uiaudit/walk.log
           retention-days: 7
           if-no-files-found: warn
+
+  # 🔴 THE BLOCKING HALF OF THE BROWSER WALK — S6b OF `claudedocs/plan-cairn-mobile-pwa.md` — AND THE
+  # ONLY BROWSER JOB WITHOUT `continue-on-error`. It runs the SAME walk as `uiaudit`'s walk leg,
+  # through the same `uiaudit/run.sh`, with `UIAUDIT_GATE=touch`: the verdict is decided by the touch
+  # refusals in `refuseWalkRegressions` (`uiaudit/main.go`; `walkGate`'s doc is the ONE list of which
+  # classes bind) — plus the walk's own harness preconditions, which run before any verdict under
+  # either gate (the pod boots, sign-in takes, the ledger accounts, the journal world did not fall
+  # back). No clause is re-implemented here; this job selects, the Go function decides.
+  #
+  # 🔴 WHY THIS CAN BLOCK WHEN `uiaudit` CANNOT. `uiaudit` is advisory because it reaches third
+  # parties on every run (the audit hub's edge, a CDN) and because its pixel diff moved on a chromium
+  # PATCH difference. Neither reaches this job: under the touch gate the walk builds no payload and
+  # pushes nothing, and this job holds NO secret (`tests/test_uiaudit_job_ledger.py` pins both). Its
+  # chromium is S6a's pin, installed by steps that are BYTE-IDENTICAL to `uiaudit`'s (the same test
+  # pins that), so the browser that blocks a merge is the version `flake.lock` names, asserted from
+  # the binary. ⚠ The one third party left is the nix binary cache the pinned chromium is fetched
+  # from; a cache outage reds this job. That is accepted and named, not hidden: it is the same
+  # dependency the `nix` job, which also blocks, already has.
+  #
+  # ⚠ "REQUIRED" IS AN OPERATOR SETTING, NOT THIS FILE. Without branch protection naming
+  # `uiaudit-touch` a red row here does not stop a merge button; the PR that added this job names
+  # the exact `gh api` call. On a docs-only change the job is SKIPPED like every gated job, and a
+  # skipped required check counts as passed.
+  uiaudit-touch:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false') }}
+    # A required check that hangs holds every merge; the walk caps itself at 8 minutes, the nix
+    # fetch and the builds before it do not. Measured: ~4 minutes end to end on the controls' runs,
+    # before the guards step (~35s locally) was added.
+    timeout-minutes: 30
+    # The same pin as `uiaudit`, for the reason written there: without it a `go` directive in the
+    # module graph downloads a newer toolchain silently.
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v4
+      # 🔴 THE SAME 1.25 THE `go` JOB PINS. The nested module's own `go` directive says
+      # 1.25.0 for this reason: it is not governed by `internal/depspolicy` or by any nix
+      # derivation, so the ONLY thing keeping its toolchain from drifting away from the
+      # root module's is that both are pinned here and in `uiaudit/go.mod`.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+      # 🔴 READ THE PIN OUT OF THE COMPILER, BECAUSE SETTING IT IS NOT OBSERVING IT. This is
+      # the step that would have caught the no-op above: `GOTOOLCHAIN=local` makes a switch
+      # impossible, and this makes the version an assertion rather than a log line nobody reads.
+      - name: the toolchain that will actually run, asserted rather than assumed
+        run: |
+          set -euo pipefail
+          got=$(go version)
+          echo "$got"
+          case "$got" in
+            *go1.25*) ;;
+            *) echo "::error::this job must run go1.25 (the pin) but the compiler reports: $got"; exit 1 ;;
+          esac
+          # And the nested module's own directive, which is the other half of the pin.
+          directive=$(grep -m1 '^go ' uiaudit/go.mod)
+          echo "uiaudit/go.mod: $directive"
+          case "$directive" in
+            "go 1.25"*) ;;
+            *) echo "::error::uiaudit/go.mod says '$directive'; a go mod tidy on a newer host raises this silently and GOTOOLCHAIN=auto would then download that toolchain"; exit 1 ;;
+          esac
+      # 🔴 THE INTERPRETER IS PINNED TOO, BECAUSE THE FIXTURE WORLD IS PYTHON.
+      # `uiaudit/boot.go` calls `tests/reader_fixtures.py`'s own `build_store` rather than
+      # transcribing it, so this job runs that file — and running it on whatever
+      # interpreter the runner image ships would materialise the store with a tool nothing
+      # else in this repository has ever used. Same reason, same version, as every other
+      # job here.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 🔴 CHROMIUM COMES FROM THE FLAKE'S PINNED NIXPKGS (S6a of the mobile plan, decision 17), NOT
+      # FROM THE RUNNER IMAGE. It used to be `apt-get install chromium-browser || snap install
+      # chromium` — whatever the image shipped that day — and that was MEASURED to move the result:
+      # two runs on one machine (chromium 153.0.8010.52) diffed `0 changed` of 6 pages; a CI run on
+      # 153.0.8010.36, the runner's snap, diffed **4 changed** of 6 against the same baseline, with
+      # `0 size-changed` — four pages moved on a PATCH difference. Pinning is the precondition for any
+      # pixel gate and for S6b's blocking touch job (O11); it is not, by itself, a reason to promote
+      # anything (`uiaudit/README.md`'s gating section).
+      #
+      # `--inputs-from .` resolves `nixpkgs` to the revision `flake.lock` pins — the SAME chromium the
+      # `uiScreenshots` derivation captures with — so the install screenshots, the walk and these tests
+      # now run one build. A `flake.lock` bump moves it, deliberately and visibly.
+      #
+      # 🔴 THE VERSION IS ASSERTED, NOT ONLY PRINTED: the binary's own `--version` must name the version
+      # nix evaluated for the lock, and the `chromium` this job's later steps resolve must be the store
+      # path — the runner image ALSO carries browsers, and chromedp and `pwa_check.sh` both find theirs
+      # by NAME on `PATH` (chromedp tries `headless_shell`/`headless-shell` before `chromium`, so those
+      # must not resolve either). A pin that is set but not the one that runs is the `GOTOOLCHAIN` no-op
+      # above, reached through `PATH`.
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: chromium from the flake's pinned nixpkgs, its version asserted
+        run: |
+          set -euo pipefail
+          rev=$(python3 -c 'import json; print(json.load(open("flake.lock"))["nodes"]["nixpkgs"]["locked"]["rev"])')
+          want=$(nix eval --raw --inputs-from . nixpkgs#chromium.version)
+          out=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#chromium)
+          got=$("$out/bin/chromium" --version)
+          echo "flake.lock nixpkgs: $rev"
+          echo "flake-resolved chromium: $want ($out)"
+          echo "the binary says: $got"
+          case "$got" in
+            *" $want"|*" $want "*) ;;
+            *) echo "::error::the pinned chromium reports '$got', but nix evaluated $want for flake.lock's nixpkgs"; exit 1 ;;
+          esac
+          echo "$out/bin" >> "$GITHUB_PATH"
+      - name: the pinned chromium is the one on PATH
+        run: |
+          set -euo pipefail
+          for name in headless_shell headless-shell; do
+            if p=$(command -v "$name"); then
+              echo "::error::$name resolves to $p, and chromedp would launch it before the pinned chromium"; exit 1
+            fi
+          done
+          p=$(command -v chromium)
+          echo "chromium on PATH: $p"
+          case "$p" in
+            /nix/store/*) ;;
+            *) echo "::error::chromium resolves to $p, not the flake-pinned store path"; exit 1 ;;
+          esac
+          chromium --version
+
+      # 🔴 THE GATE'S OWN GUARDS, IN THE JOB THAT BLOCKS. They also run in `uiaudit`'s walk leg, but
+      # that job is `continue-on-error`, so without this step an edit that silently widened or emptied
+      # the touch selection (`bound := all`), or disabled axe's `target-size` rule, would leave this
+      # job green and only an advisory row red. The named set: the selection, the refusals it selects,
+      # the `pwa_check.sh` contract, and the real-chromium controls that each touch measurement can
+      # go non-zero. Each name must print its OWN `--- PASS` line; a name that matched nothing fails.
+      - name: the touch gate's own guards and browser controls, under the pinned chromium
+        run: |
+          set -uo pipefail
+          tests='TestTheTouchGateBindsExactlyTheTouchRefusals TestTheWalkGateFlagAcceptsExactlyTwoValues TestTheRefusalLineIsTheOnePwaCheckGreps TestTheWalkRefusalsCanEachGoRED TestTheTouchRefusalsBindOnlyTheTouchRungs TestTheReachabilityRefusalRefusesAnEMPTYSide TestTheInputFontThresholdIsSixteenPixelsExactly TestTouchEmulationReachesThePageAtEveryRung TestTheReachabilityRefusalGoesREDWhenEmulationIsOff TestTheTargetSizeRuleRunsOnlyBecauseItIsEnabled TestTheInputFontMeasurementSeesA14pxInput TestAnOverflowingPageIsRecordedAsOverflowAtATouchRung'
+          pattern="^($(echo $tests | tr ' ' '|'))\$"
+          rc=0
+          ( cd uiaudit && go test -count=1 -v -run "$pattern" . ) > /tmp/touch-guards.log 2>&1 || rc=$?
+          grep -E '^(=== RUN|--- |[[:space:]]+--- (FAIL|SKIP)|ok|FAIL|panic)' /tmp/touch-guards.log || true
+          if [ "$rc" != "0" ] || grep -qE '^[[:space:]]*--- (FAIL|SKIP)' /tmp/touch-guards.log; then
+            echo "::error::the touch gate's guards failed or skipped (go test rc $rc)"
+            exit 1
+          fi
+          for t in $tests; do
+            if ! grep -qE "^--- PASS: $t \(" /tmp/touch-guards.log; then
+              echo "::error::$t printed no top-level PASS line — it did not run"
+              exit 1
+            fi
+          done
+          echo "touch gate guards: $(echo $tests | wc -w) named, each PASSED"
+
+      # 🔴 THE GATE. Three things must ALL hold, and each is read from the walk's own output rather than
+      # inferred from an exit code alone:
+      #   1. `run.sh` exited 0 (a refusal exits 1, a harness failure 1, a bad `-gate` 2);
+      #   2. the walk printed `touchGatePassed` — the constant in `uiaudit/main.go`, checked to still
+      #      say so before it is used as a needle (the `verify-push` pattern), so an early `return nil`
+      #      added before the verdict cannot pass for one;
+      #   3. each of the four touch verdict lines printed exactly once — the only check that sees an
+      #      early return INSIDE `refuseWalkRegressionsUnder`, since the needle prints after it returns.
+      - name: the walk's touch refusals — BLOCKING
+        env:
+          UIAUDIT_WORK: ${{ runner.temp }}/uiaudit-touch
+          UIAUDIT_GATE: touch
+        run: |
+          set -uo pipefail
+          needle='uiaudit: TOUCH GATE PASSED'
+          if ! grep -qF "const touchGatePassed = \"$needle" uiaudit/main.go; then
+            echo "::error::this step greps for '$needle', which uiaudit/main.go's touchGatePassed no longer starts with; the gate would match nothing"
+            exit 1
+          fi
+          mkdir -p "$UIAUDIT_WORK"
+          rc=0
+          ./uiaudit/run.sh 2>&1 | tee "$UIAUDIT_WORK/walk.log" || rc=$?
+          if [ "$rc" != "0" ]; then
+            echo "::error::the touch-gated walk exited $rc — a touch refusal (its message is above, under 'regression class'), or a harness that could not measure"
+            exit 1
+          fi
+          if ! grep -qF "$needle" "$UIAUDIT_WORK/walk.log"; then
+            echo "::error::the walk exited 0 without printing '$needle', so it never reached the touch verdict"
+            exit 1
+          fi
+          for line in 'uiaudit:   GATE touch — REFUSALS: 0 horizontal overflow over ' \
+                      'uiaudit:   TOUCH REACHABILITY refusal PASSED: ' \
+                      'uiaudit:   TOUCH TARGET SIZE refusal PASSED: ' \
+                      'uiaudit:   INPUT FONT refusal PASSED: '; do
+            n=$(grep -cF "$line" "$UIAUDIT_WORK/walk.log" || true)
+            if [ "$n" != "1" ]; then
+              echo "::error::'$line' printed $n time(s), want exactly 1"
+              exit 1
+            fi
+            grep -F "$line" "$UIAUDIT_WORK/walk.log"
+          done
 
   # 🔴 THE POSTGRES TIER, AND IT IS ITS OWN JOB FOR THE REASON `parity` IS: its verdict is
   # readable on its own in the checks list, and it is the ONLY job in this workflow that

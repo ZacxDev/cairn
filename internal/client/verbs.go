@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -25,6 +26,9 @@ type Env struct {
 	Stderr *os.File
 	// Host is "whose disk is this", threaded to the renderer. nil means hostid.ThisHost.
 	Host func() string
+	// ledger is this call's client read ledger (`readledger.go`), set by [Run]; nil records
+	// nothing.
+	ledger *readLedger
 }
 
 func (e Env) host() string {
@@ -267,6 +271,7 @@ func LsEntries(env Env, opts Options) (int, error) {
 			}
 		}
 		sort.Strings(lines)
+		env.recordReads(instance.Alias, listedScopes(lines))
 		for _, line := range lines {
 			fmt.Fprintf(env.Stdout, "%s%s\n", prefix, line)
 		}
@@ -360,6 +365,12 @@ func Report(env Env, opts Options, isSearch bool) (int, error) {
 		if searchErr != nil {
 			return 0, searchErr
 		}
+		if opts.AllScopes {
+			env.recordRead(alias, LedgerAllScopes)
+		} else {
+			env.recordRead(alias, scope)
+		}
+		env.recordNamed(alias, rep.Status, rep.MalformedElsewhere)
 		text = rep.RenderText(env.host(), nil, label)
 		status, malformed = rep.Status, rep.Malformed
 		// 🔴 SEARCH USES ITS OWN EXIT LABEL. `SearchReport.Label()` names the scopes SEARCHED;
@@ -426,6 +437,8 @@ func Report(env Env, opts Options, isSearch bool) (int, error) {
 		if recallErr != nil {
 			return 0, recallErr
 		}
+		env.recordRead(alias, scope)
+		env.recordNamed(alias, rep.Status, rep.MalformedElsewhere)
 		text = rep.RenderText(env.host(), nil, label)
 		status, malformed = rep.Status, rep.Malformed
 		// ⚠ THE EXIT LABEL IS DERIVED, NOT AN ATTRIBUTE. The recall report has no label field,
@@ -501,6 +514,7 @@ func searchEveryInstance(env Env, opts Options, routing Routing) (int, error) {
 		if searchErr != nil {
 			return 0, searchErr
 		}
+		env.recordRead(instance.Alias, LedgerAllScopes)
 		fmt.Fprintln(env.Stdout, BannerNamed(state.Name, state.Detail, instance.Alias))
 		fmt.Fprintln(env.Stdout)
 		fmt.Fprintln(env.Stdout, rep.RenderText(env.host(), nil, instance.Alias))
@@ -619,6 +633,10 @@ func Validate(env Env, opts Options) (int, error) {
 			shown := strings.Join(held, ", ")
 			if shown == "" {
 				shown = "(none)"
+			} else {
+				// The refusal LISTS every scope the cache holds — a store-wide listing, so `*`
+				// (#266's audit). A refusal that names none records nothing.
+				env.recordRead(alias, LedgerAllScopes)
 			}
 			fmt.Fprintf(env.Stderr, "cairn: cache holds no scope %s — nothing was "+
 				"validated. Held: %s\n", store.PyRepr(opts.Scope), shown)
@@ -650,6 +668,7 @@ func Validate(env Env, opts Options) (int, error) {
 		if loadErr != nil {
 			return 0, loadErr
 		}
+		env.recordRead(alias, scope)
 		for _, bad := range index.Malformed {
 			fmt.Fprintf(env.Stderr, "cairn: %s: malformed: %s\n", scope, pyMalformedRepr(bad))
 		}
@@ -943,6 +962,7 @@ func Append(env Env, opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	env.recordRead(alias, scope)
 	// 🔴 `duplicate` IS PRINTED, NOT SWALLOWED, and it exits 0. The server recognises a bullet
 	// by CONTENT HASH, so a re-POST after a timeout is idempotent — which is the property that
 	// makes a retry safe. But a caller told nothing would read "appended" into a run that wrote
@@ -1098,6 +1118,7 @@ func Put(env Env, opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	env.recordRead(alias, scope)
 	fmt.Fprintf(env.Stdout, "cairn: %s instance=%s scope=%s ref=%s revision=%s\n",
 		headerOr(headers, "X-Store-Status", "unknown"), alias, scope, opts.Ref,
 		etagOr(headers, "unknown"))
@@ -1138,6 +1159,7 @@ func Create(env Env, opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	env.recordRead(alias, scope)
 	fmt.Fprintf(env.Stdout, "cairn: %s instance=%s scope=%s ref=%s revision=%s\n",
 		headerOr(headers, "X-Store-Status", "unknown"), alias, scope, opts.Ref,
 		etagOr(headers, "unknown"))
@@ -1198,4 +1220,18 @@ func pyJSONObject(pairs [][2]string) ([]byte, error) {
 	}
 	b.WriteByte('}')
 	return []byte(b.String()), nil
+}
+
+// listedScopes is the sorted, distinct scope of every `<scope>/<entry>.md` line `ls-entries` is
+// about to print — what its ledger records (decision 3a: "one record per scope it listed").
+func listedScopes(lines []string) []string {
+	var out []string
+	for _, line := range lines {
+		scope, _, _ := strings.Cut(line, "/")
+		if len(out) == 0 || out[len(out)-1] != scope {
+			out = append(out, scope)
+		}
+	}
+	sort.Strings(out)
+	return slices.Compact(out)
 }

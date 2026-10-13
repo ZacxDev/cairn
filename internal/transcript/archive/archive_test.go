@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -493,23 +494,221 @@ func TestRetentionSweepsAtItsBoundary(t *testing.T) {
 	}
 }
 
-// TestThePodDerivesStarNotTheDeclarationAlone: an agent that declares NOTHING still gets `*` in
-// the pod's own set, and one that declares `beta-notes` keeps both — the pod's set is never the
-// agent's declaration alone (decision 3: "so an old or lying agent cannot shrink `V`"). Until
-// `scopeuse` is wired, `*` is the fail-closed answer.
-func TestThePodDerivesStarNotTheDeclarationAlone(t *testing.T) {
+// TestThePodDerivesReadScopesTheAgentDidNotDeclare: an agent that declares NOTHING, whose records
+// carry a rendered `beta-notes` recall in a tool result, gets `beta-notes` in the pod's own set
+// anyway — the pod's set is never the agent's declaration alone (decision 3: "so an old or lying
+// agent cannot shrink `V`"). A text BLOB carrying a header counts the same way; a tool INPUT that
+// names the program adds `*` while the session's ledger is empty (F1); a declaration is kept beside
+// the derivation and only adds. Each literal is distinct, so no arm can stand in for another.
+func TestThePodDerivesReadScopesTheAgentDidNotDeclare(t *testing.T) {
 	g := newRig(t, 1<<30)
-	if _, err := g.a.AppendRecords(ownerA, up("s-0001", "", "1"), "main", recs(0, 1)); err != nil {
-		t.Fatal(err)
+	// The header as a tool prints it: its own line, the body after a newline.
+	header := func(scope string) string {
+		return "subsystem-recall: status=recalled scope=" + scope + " entries=1\n- synthetic"
 	}
-	if _, err := g.a.AppendRecords(ownerA, up("s-0001", "", "2", "beta-notes"), "child:ses_0002", recs(1, 2)); err != nil {
+	quoted, _ := json.Marshal(header("beta-notes"))
+	result := Record{Src: "0", Rec: []byte(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result",` +
+		`"tool_use_id":"toolu_s0001","content":` + string(quoted) + `}]}}`)}
+	if _, err := g.a.AppendRecords(ownerA, up("s-0001", "", "1"), "main", []Record{result}); err != nil {
 		t.Fatal(err)
 	}
 	m, _ := g.a.ReadMeta("s-0001")
-	if !slices.Equal(m.Derived, []string{Star}) || !slices.Equal(m.Declared, []string{"beta-notes"}) ||
+	if !slices.Equal(m.Derived, []string{"beta-notes"}) || len(m.Declared) != 0 {
+		t.Fatalf("after a record carrying a rendered beta-notes recall and NO declaration: derived=%v declared=%v, "+
+			"want derived [beta-notes] and nothing declared", m.Derived, m.Declared)
+	}
+	// A plain record derives nothing: the positive result above is the header's doing.
+	if _, err := g.a.AppendRecords(ownerA, up("s-0002", "", "1"), "main", recs(0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := g.a.ReadMeta("s-0002"); len(m.Derived) != 0 {
+		t.Fatalf("a record with no header and no tool input derived %v, want nothing", m.Derived)
+	}
+	// A text blob's header counts; the declaration is kept beside it; a child stream is recorded.
+	if _, err := g.a.PutBlob(ownerA, up("s-0001", "", "b1"), "toolu_s0002.txt", []byte(header("gamma-notes"))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.a.AppendRecords(ownerA, up("s-0001", "", "2", "delta-notes"), "child:ses_0002", recs(1, 2)); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = g.a.ReadMeta("s-0001")
+	if !slices.Equal(m.Derived, []string{"beta-notes", "gamma-notes"}) || !slices.Equal(m.Declared, []string{"delta-notes"}) ||
 		!slices.Equal(m.Children, []string{"ses_0002"}) {
 		t.Fatalf("meta derived=%v declared=%v children=%v", m.Derived, m.Declared, m.Children)
 	}
+	// F1 with no ledger: a tool input naming the program is `*`, in the Claude Code shape and in the
+	// opencode one — and under EITHER runtime label, so a mislabelled request cannot hide an input.
+	claudeCall := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_s0003",` +
+		`"name":"Bash","input":{"command":"cairn recall"}}]}}`
+	opencodeCall := `{"id":"prt_s0001","type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"cairn recall"}}}`
+	for i, tc := range []struct{ runtime, rec string }{
+		{"claude", claudeCall}, {"opencode", opencodeCall}, {"opencode", claudeCall}, {"claude", opencodeCall},
+	} {
+		root := fmt.Sprintf("s-01%02d", i)
+		u := up(root, "", "1")
+		u.Runtime = tc.runtime
+		if _, err := g.a.AppendRecords(ownerA, u, "main", []Record{{Src: "0", Rec: []byte(tc.rec)}}); err != nil {
+			t.Fatal(err)
+		}
+		// Since S11 F1 is decided against the LEDGER, not per request: the request records the
+		// EVIDENCE, and the ledger's half of `V` is `*` while no ledger record has arrived.
+		if m, _ := g.a.ReadMeta(root); !m.NamesProgram || !slices.Equal(m.LedgerScopes(), []string{Star}) || len(m.Derived) != 0 {
+			t.Errorf("runtime %s, record %s: names_program=%v ledger half=%v derived=%v, want true, [*], [] "+
+				"(a tool input names the program and the pod holds no ledger)",
+				tc.runtime, tc.rec, m.NamesProgram, m.LedgerScopes(), m.Derived)
+		}
+	}
+}
+
+// TestARecordCannotHideAReadFromTheDerivation is #261's audit finding, both shapes: a header the
+// map walk never reads — in a member NAME, and in the first of two members with one name — must not
+// leave `V` short. Both are derived (`Content` over the whole record), and a repeated name adds `*`
+// as well, since which strings are tool inputs is read off a map that drops the first copy. Each
+// with its control: the same header in an ordinary member derives the scope and nothing else.
+func TestARecordCannotHideAReadFromTheDerivation(t *testing.T) {
+	g := newRig(t, 1<<30)
+	const header = "subsystem-recall: status=recalled scope=delta-notes entries=1"
+	put := func(root, rec string) error {
+		_, err := g.a.AppendRecords(ownerA, up(root, "", "1"), "main", []Record{{Src: "0", Rec: []byte(rec)}})
+		return err
+	}
+	derived := func(root string) []string {
+		m, err := g.a.ReadMeta(root)
+		if err != nil || m == nil {
+			t.Fatalf("%s is not stored (%v)", root, err)
+		}
+		return m.Derived
+	}
+	// CONTROL: the header as an ordinary value.
+	if err := put("s-0001", `{"type":"user","message":{"role":"user","content":"`+header+`"}}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := derived("s-0001"); !slices.Equal(got, []string{"delta-notes"}) {
+		t.Fatalf("CONTROL: the header as a value derived %v, want [delta-notes]", got)
+	}
+	// The header as a member NAME.
+	if err := put("s-0002", `{"type":"user","`+header+`":"x","message":{"role":"user","content":"hello"}}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := derived("s-0002"); !slices.Equal(got, []string{"delta-notes"}) {
+		t.Errorf("a header in a member NAME derived %v, want [delta-notes]", got)
+	}
+	// The header in the first of two members with one name — and the same name spelled with an
+	// escape, which a map decode treats as the same name.
+	for i, rec := range []string{
+		`{"type":"user","message":{"role":"user","content":"` + header + `"},"message":{"role":"user","content":"hello"}}`,
+		`{"type":"user","message":{"role":"user","content":"` + header + `"},"\u006dessage":{"role":"user","content":"hello"}}`,
+	} {
+		root := fmt.Sprintf("s-01%02d", i)
+		if err := put(root, rec); err != nil {
+			t.Fatalf("a record repeating a member name was refused (%v); it is stored and made owner-only", err)
+		}
+		if got := derived(root); !slices.Equal(got, []string{Star, "delta-notes"}) {
+			t.Errorf("a header in the first of two members named alike (%s) derived %v, want [* delta-notes]", rec, got)
+		}
+	}
+	// CONTROL: one name in two DIFFERENT objects is not a repeat, and adds nothing.
+	if err := put("s-0003", `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := derived("s-0003"); len(got) != 0 {
+		t.Errorf("one member name used in two different objects derived %v, want nothing", got)
+	}
+}
+
+// TestDuplicateMemberAgreesWithTheMapDecode: for each document, `duplicateMember` says "repeated"
+// exactly when decoding it into a map LOSES a member — measured against `encoding/json` itself, not
+// restated. The cases are the escapes, nesting, strings that look like keys, and invalid UTF-8.
+func TestDuplicateMemberAgreesWithTheMapDecode(t *testing.T) {
+	repeated := 0
+	for _, doc := range []string{
+		`{"a":1,"b":2}`, `{"a":1,"a":2}`, `{"a":1,"\u0061":2}`, `{"a":{"a":1},"b":{"a":2}}`,
+		`{"a":{"x":1,"x":2}}`, `[{"a":1},{"a":1}]`, `{"a":"\"a\":1","b":"a"}`, `{"a":["a","a"],"b":1}`,
+		"{\"\xff\":1,\"\xfe\":2}", `{"k\\":1,"k\\":2}`, `{"":1,"":2}`, `"a"`, `[]`, `{}`,
+	} {
+		var c bytes.Buffer
+		if err := json.Compact(&c, []byte(doc)); err != nil {
+			t.Fatalf("%s: %v", doc, err)
+		}
+		want := lossy(t, c.Bytes())
+		if got := duplicateMember(c.Bytes()); got != want {
+			t.Errorf("%s: duplicateMember says %v, a map decode loses a member: %v", doc, got, want)
+		}
+		if want {
+			repeated++
+		}
+	}
+	// Both answers occur, or the agreement above is with a constant.
+	if repeated == 0 || repeated == 14 {
+		t.Fatalf("%d of 14 documents lose a member in a map decode; the cases must include both", repeated)
+	}
+}
+
+// lossy reports whether decoding v into nested maps drops a member: the member names the TEXT
+// carries (which a map cannot drop) against the members the decoded maps hold.
+func lossy(t *testing.T, v []byte) bool {
+	t.Helper()
+	var decoded any
+	if err := json.Unmarshal(v, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	return countMembers(decoded) < namesIn(t, v)
+}
+
+func countMembers(v any) int {
+	switch x := v.(type) {
+	case map[string]any:
+		n := len(x)
+		for _, e := range x {
+			n += countMembers(e)
+		}
+		return n
+	case []any:
+		n := 0
+		for _, e := range x {
+			n += countMembers(e)
+		}
+		return n
+	}
+	return 0
+}
+
+func namesIn(t *testing.T, raw json.RawMessage) int {
+	t.Helper()
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return 0
+	}
+	switch trimmed[0] {
+	case '{':
+		dec := json.NewDecoder(bytes.NewReader(trimmed))
+		if _, err := dec.Token(); err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for dec.More() {
+			if _, err := dec.Token(); err != nil {
+				t.Fatal(err)
+			}
+			var val json.RawMessage
+			if err := dec.Decode(&val); err != nil {
+				t.Fatal(err)
+			}
+			n += 1 + namesIn(t, val)
+		}
+		return n
+	case '[':
+		var elems []json.RawMessage
+		if err := json.Unmarshal(trimmed, &elems); err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, e := range elems {
+			n += namesIn(t, e)
+		}
+		return n
+	}
+	return 0
 }
 
 // TestResolveDirRefusesInsideTheStoreRoot: the store root itself, a directory under it, and a
@@ -549,8 +748,9 @@ func TestUploadsAreValidated(t *testing.T) {
 			_, err := g.a.AppendRecords(ownerA, up("../etc", "", "1"), "main", recs(0, 1))
 			return err
 		},
-		"the ledger stream (S11's)": func() error {
-			_, err := g.a.AppendRecords(ownerA, up("s-0001", "", "1"), "ledger", recs(0, 1))
+		// S11 made `ledger` a stream (its fold reads it); a name merely LIKE it is still refused.
+		"a stream named like the ledger": func() error {
+			_, err := g.a.AppendRecords(ownerA, up("s-0001", "", "1"), "ledger:s-0002", recs(0, 1))
 			return err
 		},
 		"a stream outside the vocabulary": func() error {

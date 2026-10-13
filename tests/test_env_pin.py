@@ -221,6 +221,26 @@ class TestThePredicate:
             assert env_pin.is_client_config(name), name
 
 
+class TestTheReadLedgerVariables:
+    def test_the_session_ids_and_the_state_home_are_CLEARED(self, monkeypatch) -> None:
+        """S11: an inherited session id makes every client subprocess append FIXTURE scopes to
+        the developer's real session ledger. RED before S11's `READ_LEDGER_ENV`: none of the
+        three carries a swept prefix, so all three survived the sweep."""
+        for name in ("CLAUDE_CODE_SESSION_ID", "OPENCODE_SESSION_ID", "XDG_STATE_HOME"):
+            monkeypatch.setenv(name, "leaked")
+        env = env_pin.sanitized_env(HOME="/pinned")
+        for name in ("CLAUDE_CODE_SESSION_ID", "OPENCODE_SESSION_ID", "XDG_STATE_HOME"):
+            assert name not in env, name
+        # …and a row that WANTS one (the parity ledger rows) still gets exactly what it set.
+        assert env_pin.sanitized_env(CLAUDE_CODE_SESSION_ID="s")["CLAUDE_CODE_SESSION_ID"] == "s"
+
+    def test_the_names_are_the_CLIENTS_own(self) -> None:
+        """Derived from `lib/read_ledger.py`, never restated; `tests/test_read_ledger.py` holds
+        the Go client's spelling (`internal/client/readledger.go`) to the same names."""
+        assert env_pin.READ_LEDGER_ENV == {
+            "CLAUDE_CODE_SESSION_ID", "OPENCODE_SESSION_ID", "XDG_STATE_HOME"}
+
+
 class TestSanitizedEnv:
     def test_a_stray_client_variable_is_CLEARED(self, monkeypatch) -> None:
         """🔴 THE KILLER FOR THE SURVIVING MUTANT. Restore the pre-`env_pin`
@@ -301,6 +321,9 @@ class TestTheConsumerSetIsPinned:
         "tests/test_cairn_instances.py",
         "tests/test_cairn_write.py",
         "tests/unchanged_output_capture.py",
+        # S11: the oracle's read-ledger rows drive the client as a subprocess and set the
+        # session id and `XDG_STATE_HOME` they want over a cleared environment.
+        "tests/test_read_ledger.py",
     }
 
     def test_the_consumer_set_is_exactly_these_files(self) -> None:

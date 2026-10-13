@@ -828,6 +828,7 @@ func TestTheDeclaredVerbSetIsTheDispatchTable(t *testing.T) {
 		"sync": false, "recall": false, "search": false, "validate": false,
 		"ls-entries": false, "doctor": false, "sessions": false,
 		"arcs": false, "arc-show": false, "arc-register": true,
+		"sources": false, "audit-refs": false,
 	} {
 		if writes[name] != want {
 			t.Errorf("%s: Writes=%v, want %v", name, writes[name], want)

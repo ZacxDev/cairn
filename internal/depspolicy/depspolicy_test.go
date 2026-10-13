@@ -297,6 +297,20 @@ func TestTheNestedModuleSetIsExactlyTheAllowlist(t *testing.T) {
 			}
 
 			deps, ok := NestedModuleAllowlist[dir]
+			if ok && deps.StdlibOnly {
+				// 🔴 STDLIB-ONLY IS CHECKED OVER EVERY MODULE, NOT ONLY THE THIRD-PARTY ONES: a
+				// `require` of the parent module (through a `replace`, as `uiaudit/` has) would
+				// bring the parent's whole graph in, and [IsThirdParty] would hide it.
+				if len(deps.GoMod) != 0 || len(deps.GoSum) != 0 {
+					t.Fatalf("%s is declared StdlibOnly AND lists modules; it is one or the other", dir)
+				}
+				if len(fromMod) != 0 || len(fromSum) != 0 {
+					t.Fatalf("%s is declared STDLIB-ONLY, and its lock files name modules:\n  go.mod: %v\n  go.sum: %v\n"+
+						"A module appearing here is a decision nobody reviewed — it reaches a program that holds a "+
+						"model provider's key.", dir, fromMod, fromSum)
+				}
+				return
+			}
 			if !ok || len(deps.GoMod) == 0 || len(deps.GoSum) == 0 {
 				t.Fatalf("%s is in DeclaredNestedModules with no complete entry in NestedModuleAllowlist; "+
 					"an empty allowlist is satisfied by any dependency set, which is coverage that governs nothing", dir)
@@ -431,6 +445,10 @@ func TestAnUNTRACKEDNestedModuleIsIGNOREDButATRACKEDOneIsNOT(t *testing.T) {
 	// statement of which tier is which, set in the `go` CI job — so a skip in the environment that
 	// was supposed to measure this is a FAILURE, and a skip in the sandbox is a fact about the
 	// sandbox.
+	//
+	// ⚠ THE NIX CHECK PHASES HAVE `gitMinimal` SINCE S11 (the client read ledger's tests derive a
+	// scope through `git`), so this test now RUNS there too — measured green in all four Go
+	// derivations. The skip below is reached only where no `git` is on PATH at all.
 	if _, err := exec.LookPath("git"); err != nil {
 		if os.Getenv("CAIRN_GIT_TESTS_REQUIRED") != "" {
 			t.Fatalf("CAIRN_GIT_TESTS_REQUIRED is set but git is absent: this is the only test of the "+

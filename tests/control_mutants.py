@@ -161,6 +161,13 @@ PKGS = (
     # predicates' own guards are reachable at unit level here; through S2's listener they are
     # reached only in the Postgres tier, which this battery does not run (the S2 PR's matrix).
     "./internal/memo/",
+    # 🔴 THE CLIENT (S11 of the transcripts/plugins plan), BECAUSE ITS READ LEDGER IS AN INPUT TO A
+    # VISIBILITY PREDICATE. Every scope a served call touches is appended to the session's ledger,
+    # and `cairn-ui` folds that ledger into `V` — the set `transcript.Visible` admits a viewer by.
+    # A ledger that records the FLAG instead of the resolved scope, or nothing, shows a transcript to
+    # a principal who cannot read what the session read; that is an authorization defect that
+    # lives entirely in this package, with no guard on the pod that could notice it.
+    "./internal/client/",
 )
 
 
@@ -546,9 +553,11 @@ MUTANTS: tuple[Mutant, ...] = (
         path="internal/ui/invitehandlers.go",
         old="\tif id.Auth.Narrowed() {\n\t\treturn control.Principal{}\n\t}",
         new="\tif false && id.Auth.Narrowed() {\n\t\treturn control.Principal{}\n\t}",
-        killer="TestANarrowedBearerCannotMintAnInvitation",
+        # Re-aimed with the invite fold: `POST /invite` mints nothing for anybody now, so the door
+        # a narrowed bearer would walk through is the team-link mint. The row keeps its name.
+        killer="TestANarrowedBearerHasNoTeamLinkAuthority",
         why="membership authority is decided from the principal's project ROLE, which no "
-        "scope narrowing bounds — so a narrowed bearer token mints an invitation into its "
+        "scope narrowing bounds — so a narrowed bearer token mints a team link over its "
         "owner's project and redeems it as an identity its holder controls.",
     ),
     # ---- the membershipActor CALL SITES -------------------------------------------
@@ -573,16 +582,6 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestANarrowedBearerCannotRevokeAnInvitation",
         why="a narrowed bearer withdrawing its owner's invitations — membership authority "
         "exercised through a credential meant to see one scope.",
-    ),
-    Mutant(
-        name="ui-invite-mint-display-bypasses-membership-actor",
-        path="internal/ui/invitehandlers.go",
-        old="pickProject(s.inviting.Invitable(membershipActor(id)), project)",
-        new="pickProject(s.inviting.Invitable(id.Principal), project)",
-        killer="TestEveryMembershipDecisionActsAsMembershipActor",
-        why="behaviourally INVISIBLE today — this read only finds a display name, and `Mint` "
-        "refuses on its own — which is exactly why the ledger, not a behavioural test, is its "
-        "killer: the next edit that trusts this list would inherit an un-narrowed one.",
     ),
     Mutant(
         name="ui-share-page-candidates-bypass-membership-actor",
@@ -2917,11 +2916,12 @@ MUTANTS: tuple[Mutant, ...] = (
         old="out = append(out, NamedProject{ID: p.ID, Name: p.Name, HeldRole: ship.Role})",
         new="out = append(out, NamedProject{ID: p.ID, Name: p.Name})",
         killer="TestProjectsManagedByCarriesTheCallersOwnRole",
-        extra_killers=("TestTheRoleChooserIsDrivenByTheREALModelsHeldRole",),
+        extra_killers=("TestTheInviteIndexIsDrivenByTheREALModelsHeldRole",),
         why="THE MEASURED SEAM. This mutant SURVIVED a fully green suite before those two "
         "guards existed: one side tested the model against a hand-built Model, the other "
-        "tested the chooser against a hand-built NamedProject, and neither built the "
-        "combined state. Its only symptom was a role chooser that silently offered nothing.",
+        "tested the renderer against a hand-built NamedProject, and neither built the "
+        "combined state. (The field fed the invitation form's role chooser then; since the "
+        "fold it feeds the index's 'you are <role>'.)",
     ),
     Mutant(
         name="namedproject-reports-a-constant-role",
@@ -2930,28 +2930,7 @@ MUTANTS: tuple[Mutant, ...] = (
         new="out = append(out, NamedProject{ID: p.ID, Name: p.Name, HeldRole: RoleOwner})",
         killer="TestProjectsManagedByCarriesTheCallersOwnRole",
         why="the direction a zero-check cannot see: a role that is present and WRONG, in the "
-        "permissive direction. It offers every admin the `owner` option, which the mint then "
-        "refuses — so the visible symptom is a form that errors rather than one that is empty.",
-    ),
-    Mutant(
-        name="ui-mint-stops-checking-conferrability",
-        path="internal/ui/inviting.go",
-        old="if !held.CanConfer(role) {",
-        new="if false {",
-        killer="TestAnAdminCannotMintAnOwnerInvitation",
-        why="the escalation itself, at the one gate that is load-bearing. The chooser's "
-        "filtering constrains a browser and nothing else; this is the check an HTTP client "
-        "has to get past.",
-    ),
-    Mutant(
-        name="ui-mint-error-loses-its-sentinel",
-        path="internal/ui/inviting.go",
-        old='"%w: a %q may not confer %q (see control.Role.CanConfer)",\n\t\t\tErrRoleNotConferrable, held, role)',
-        new='"ui: a %q may not confer %q (see control.Role.CanConfer)", held, role)',
-        killer="TestAnAdminCannotMintAnOwnerInvitation",
-        why="a `fmt.Errorf` written without `%w`, which is the commonest way a sentinel stops "
-        "being recognisable. `refuseInviteWrite` maps on `errors.Is`, so the refusal becomes a "
-        "500 — the wrong status, and a sentence that sends an operator hunting a broken server.",
+        "permissive direction — every admin is told they are an owner.",
     ),
     Mutant(
         name="ui-invite-narrowing-skipped-before-the-unnarrowed-read",
@@ -2965,40 +2944,40 @@ MUTANTS: tuple[Mutant, ...] = (
     ),
     Mutant(
         name="ui-mint-response-loses-no-store",
-        path="internal/ui/invitehandlers.go",
-        # 🔴 RE-DERIVED TWICE IN S3 OF THE MOBILE PLAN. First when `writeHTMLNoStore` was folded into
-        # `writeHTML`'s default (the old pattern named a function that no longer existed — the full
-        # battery scored it a HARNESS ERROR); then when the public opt-down writer was deleted too, so
-        # there is ONE HTML writer and no weaker value to reach for. What is left that can lose the
-        # mint's `no-store` is BYPASSING the writer at the mint's call site: rendering straight into the
-        # ResponseWriter.
-        # Re-derived a THIRD time in #214: the mint renders on the Team page now (O-a), through
-        # `renderTeamAfterMint` and so through the one writer; the bypass is still the same shape.
-        old="\ts.renderTeamAfterMint(w, r, id, func(v *TeamView) { v.Invite = view })",
-        new="\tw.Header().Set(\"Content-Type\", \"text/html; charset=utf-8\")\n"
-        "\t_ = TeamPage(TeamView{Viewer: id.Principal.Display, Invite: view}).Render(w)",
-        killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
+        path="internal/ui/team.go",
+        # 🔴 RE-DERIVED FOUR TIMES, and the row keeps its name. Twice in S3 of the mobile plan (the
+        # writers it named were folded into one), once in #214 (the mint moved onto the Team page),
+        # and now with the invite fold: the invitation mint it bypassed is gone, so it bypasses the
+        # one writer at the ONE mint left — the team link's, inside `renderTeamAfterMint`.
+        old="\tset(&view)\n\ts.render(w, TeamPage(view))",
+        new="\tset(&view)\n\tw.Header().Set(\"Content-Type\", \"text/html; charset=utf-8\")\n"
+        "\t_ = TeamPage(view).Render(w)",
+        killer="TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged",
+        extra_killers=("TestTheTeamLinkFormPassesEveryTickedTargetThrough",),
         why="rendering straight into the ResponseWriter to skip the buffer looks like an optimisation, "
         "and it skips the one writer that sets `no-store` — on the response whose BODY is a bearer "
         "capability. The ledger walk is GET-only and cannot see this POST.",
     ),
     Mutant(
         name="ui-minted-link-becomes-an-anchor",
-        path="internal/ui/render.go",
+        # Re-aimed with the invite fold: the invitation's minted section is gone; the team link's
+        # (`mintedLinkSection`) renders the same line and is the one mint left.
+        path="internal/ui/team.go",
         old='h.P(h.Class("invite-link"), g.Text(m.Link)),',
         new='h.P(h.Class("invite-link"), h.A(h.Href(m.Link), g.Text(m.Link))),',
-        killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
+        killer="TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged",
         why="the single most natural improvement to make to this page — a URL rendered as "
         "text looks like an oversight. The link is a PATH with no origin, so an anchor "
         "resolves it against THIS page: one stray click, or one link-prefetcher, and the "
-        "minter has redeemed the invitation on themselves.",
+        "minter has redeemed the link on themselves.",
     ),
     Mutant(
         name="ui-mint-logs-the-token",
-        path="internal/ui/invitehandlers.go",
-        old='s.logf("an invitation was minted: project=%s role=%s expires=%s by=%s",\n\t\tinv.ProjectID, inv.Role, inv.ExpiresAt.UTC().Format(time.RFC3339), inv.Inviter)',
-        new='s.logf("an invitation was minted: project=%s role=%s expires=%s by=%s token=%s",\n\t\tinv.ProjectID, inv.Role, inv.ExpiresAt.UTC().Format(time.RFC3339), inv.Inviter, token)',
-        killer="TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",
+        # Re-aimed with the invite fold, at the one mint left.
+        path="internal/ui/team.go",
+        old='link.ExpiresAt.UTC().Format(time.RFC3339), link.Inviter)',
+        new='link.ExpiresAt.UTC().Format(time.RFC3339), link.Inviter+" token="+control.ID(token))',
+        killer="TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged",
         why="one field added to a log line while debugging, and never taken out. This is the "
         "shape that put a 64-character secret into the control journal once already, and the "
         "value here can create a principal.",
@@ -3099,26 +3078,6 @@ MUTANTS: tuple[Mutant, ...] = (
         "in as nobody — or refused — with nothing saying the link was at fault.",
     ),
     Mutant(
-        name="ui-role-chooser-stops-filtering",
-        path="internal/ui/render.go",
-        old="\tconferrable := conferrableRoles(v.Project.HeldRole)",
-        new="\tconferrable := control.AllRoles",
-        killer="TestTheRoleChooserOffersOnlyWhatTheCallerMayConfer",
-        why="`grantableVerbs = control.AllVerbs` one file over is exactly this shape and is "
-        "CORRECT there, which is what makes it the natural edit here. Roles differ: the mint "
-        "refuses `owner` from an admin, so an unfiltered list offers a value that cannot work.",
-    ),
-    Mutant(
-        name="ui-role-chooser-default-follows-the-list-order",
-        path="internal/ui/render.go",
-        old="g.If(r == leastPrivilegedRole, h.Selected()),",
-        new="g.If(false, h.Selected()),",
-        killer="TestTheRoleChooserOffersOnlyWhatTheCallerMayConfer",
-        why="a `selected` attribute reads as cosmetic. `control.AllRoles` is in DESCENDING "
-        "authority and a `select` with no explicit selection submits its FIRST option — so "
-        "removing this makes an unread form confer OWNERSHIP of a project.",
-    ),
-    Mutant(
         name="ui-revoke-button-appears-on-a-spent-invitation",
         path="internal/ui/render.go",
         old='g.If(csrf != "" && row.State == "open", h.FormEl(',
@@ -3129,14 +3088,115 @@ MUTANTS: tuple[Mutant, ...] = (
         "row that works on one of them, which teaches people to ignore the refusal.",
     ),
     Mutant(
-        name="ui-invite-write-refusals-collapse-into-one",
+        name="ui-invite-revoke-refusals-stop-being-uniform",
         path="internal/ui/invitehandlers.go",
-        old="\tcase errors.Is(err, ErrRoleNotConferrable):",
-        new="\tcase false:",
-        killer="TestTheTwoInviteWriteRefusalsAnswerDifferentlyForDifferentReasons",
-        why="the tidy-up that makes every refusal uniform, which is this surface's own rule "
-        "elsewhere and is wrong here: a person who picked `owner` from a list would be told "
-        "'that invitation cannot be recorded' and could never learn why.",
+        old="\tcase errors.Is(err, ErrNotInvitable), errors.Is(err, invite.ErrNotRedeemable):",
+        new="\tcase errors.Is(err, ErrNotInvitable):",
+        killer="TestTheInviteRevokeRefusalsAreUniform",
+        why="replaces `ui-invite-write-refusals-collapse-into-one`, whose third arm (a role the "
+        "caller could not confer) went with the invitation mint. What is left to get wrong is the "
+        "opposite: dropping one of the two uniform arms, so an unknown digest answers 500 where a "
+        "foreign one answers 403 — a revoke that says whether a digest exists.",
+    ),
+    # ---- THE INVITE FOLD (operator decision, option A) ------------------------------
+    # Single-project invitations are no longer minted: `POST /invite` creates nothing and 303s to
+    # the team-link form, which pre-ticks the project; invitations that already exist stay
+    # listed, revocable and redeemable. Each row below is one way that comes undone.
+    Mutant(
+        name="ui-post-invite-mints-a-team-link-instead",
+        path="internal/ui/invitehandlers.go",
+        old="func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request, _ identity.Identity) {\n",
+        new="func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request, id identity.Identity) {\n"
+        "\tif s.teamLinks != nil && r.ParseForm() == nil {\n"
+        "\t\t_, _, _ = s.teamLinks.Mint(r.Context(), membershipActor(id), []invite.Target{{Kind: invite.TargetProject, "
+        "ID: control.ID(r.PostFormValue(FieldProject))}}, invite.LinkMember, 0, false)\n\t}\n",
+        killer="TestPostInviteNoLongerMintsAnInvitation",
+        why="the helpful reading of 'fold': translate the old request into the new capability instead of "
+        "sending the person to the form. It creates a capability nobody asked for, at a role this handler "
+        "chose, that nothing renders — so it can never be used and sits open until it expires.",
+    ),
+    Mutant(
+        name="ui-post-invite-redirect-drops-the-project",
+        path="internal/ui/invitehandlers.go",
+        old="\t\tq.Set(QueryProject, project)\n\t}\n\tq.Set(QueryOutcome, inviteOutcomeFolded)",
+        new="\t\t_ = project\n\t}\n\tq.Set(QueryOutcome, inviteOutcomeFolded)",
+        killer="TestPostInviteNoLongerMintsAnInvitation",
+        extra_killers=("TestPostInviteCarriesOnlyAProjectItWasGivenIntoItsRedirect",),
+        why="a redirect that carries nothing caller-chosen reads as the safer one. It lands the person on "
+        "a form with nothing ticked, having asked to invite somebody to ONE project.",
+    ),
+    Mutant(
+        name="ui-post-invite-lands-on-the-invitation-list",
+        path="internal/ui/invitehandlers.go",
+        old="\thttp.Redirect(w, r, teamHref(q.Encode(), teamLinksAnchor), http.StatusSeeOther)",
+        new="\thttp.Redirect(w, r, teamHref(q.Encode(), teamInviteAnchor), http.StatusSeeOther)",
+        killer="TestPostInviteNoLongerMintsAnInvitation",
+        why="`handleInviteRevoke` two functions down lands on `#invite`, so this is the anchor a copy "
+        "of it carries — the section that no longer has a form on it.",
+    ),
+    Mutant(
+        name="ui-team-link-form-preticks-every-project",
+        path="internal/ui/team.go",
+        old="g.If(m.Target == preselected, h.Checked())",
+        new="g.If(m.Target.Kind == preselected.Kind, h.Checked())",
+        killer="TestTheTeamPageHasOneMintFormAndPreselectsTheProject",
+        why="a comparison narrowed to the half that reads as the discriminator. Every project the caller "
+        "manages arrives ticked — with NO `?project=` too — so the unread form puts all of them on a link.",
+    ),
+    Mutant(
+        name="ui-team-link-form-never-preticks",
+        path="internal/ui/team.go",
+        old="g.If(m.Target == preselected, h.Checked())",
+        new="g.If(m.Target == preselected && v.Invite.Project.ID == \"\", h.Checked())",
+        killer="TestTheTeamPageHasOneMintFormAndPreselectsTheProject",
+        why="a guard for 'no project chosen' written the wrong way round, so the condition is never "
+        "true: 'invite somebody to this project' lands on a form that has forgotten which project.",
+    ),
+    Mutant(
+        name="ui-fold-notice-loses-a-cost-the-operator-accepted",
+        path="internal/ui/invitehandlers.go",
+        old="\"of one project cannot see or revoke each other's links.\"",
+        new="\"of one project each manage their own links.\"",
+        killer="TestTheFoldNoticeIsPinnedWhole",
+        why="the clause that makes the product sound weakest, reworded into one that sounds like a "
+        "feature. A guard on the words 'team link' or 'owner' passes it.",
+    ),
+    Mutant(
+        name="ui-fold-notice-is-not-rendered",
+        path="internal/ui/team.go",
+        old="g.If(!v.NoInviteStore, h.P(h.Class(\"note\"), g.Text(InviteFoldNotice))),",
+        new="g.If(false, h.P(h.Class(\"note\"), g.Text(InviteFoldNotice))),",
+        killer="TestTheFoldNoticeIsPinnedWhole",
+        why="a constant pinned word for word and shown to nobody: the constant-only half of the test "
+        "stays green, which is why the test also reads the rendered page.",
+    ),
+    Mutant(
+        name="ui-fold-hides-the-invitations-that-exist",
+        path="internal/ui/invitehandlers.go",
+        old="\tview.Outstanding = inviteRows(rows, s.now())",
+        new="\tview.Outstanding = inviteRows(rows[:0], s.now())",
+        killer="TestAnInvitationIssuedBeforeTheFoldStillRedeemsAndIsStillRevocable",
+        why="'invitations are gone' taken one step too far. A link sent last week still redeems, and "
+        "the page that could withdraw it says no invitation exists.",
+    ),
+    Mutant(
+        name="ui-fold-stops-revoking-an-invitation",
+        path="internal/ui/invitehandlers.go",
+        old="\tif err := s.inviting.Revoke(r.Context(), membershipActor(id), digest); err != nil {",
+        new="\tif err := error(nil); err != nil {",
+        killer="TestAnInvitationIssuedBeforeTheFoldStillRedeemsAndIsStillRevocable",
+        why="the revoke row made as inert as the mint row beside it. It still answers 303 with the "
+        "'Revoked.' banner, and the invitation stays open.",
+    ),
+    Mutant(
+        name="ui-fold-sends-every-token-to-the-link-store",
+        path="internal/ui/inviting.go",
+        old="\tif !known && c.Links != nil {\n\t\t// Not an invitation: a team link, or nothing. See [ControlInviting.Links].",
+        new="\tif c.Links != nil {\n\t\t// Not an invitation: a team link, or nothing. See [ControlInviting.Links].",
+        killer="TestAnInvitationIssuedBeforeTheFoldStillRedeemsAndIsStillRevocable",
+        extra_killers=("TestAnInvitationStillRedeemsAsAnInvitationWithLinksWired",),
+        why="'every invitation is a team link now' read as a statement about TOKENS. An invitation "
+        "already in somebody's inbox is then looked up in a table that has never held it, and refuses.",
     ),
     Mutant(
         name="ui-invite-read-refuses-instead-of-answering-with-no-store",
@@ -4523,10 +4583,10 @@ MUTANTS: tuple[Mutant, ...] = (
         old="\tw.Header().Set(\"Cache-Control\", htmlCacheControl)\n",
         new="\tw.Header().Set(\"Cache-Control\", \"no-cache\")\n",
         killer="TestEveryNonPublicHTMLRowIsNoStore",
-        extra_killers=("TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged",),
+        extra_killers=("TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged",),
         why="`no-cache` reads as the cautious value and is not: it permits STORING the page and only "
         "asks for revalidation, so every authenticated page would sit in the device's HTTP cache — the "
-        "invitation mint, whose body is a bearer capability, included.",
+        "team-link mint, whose body is a bearer capability, included.",
     ),
     # 🔴 THE HUB AND THE SESSIONS LIST. Every hub count and every listed session comes out of a read
     # narrowed by `auth.NamedScopes(VerbRead)`; each row below widens ONE of those reads (by the
@@ -4801,6 +4861,46 @@ MUTANTS: tuple[Mutant, ...] = (
         why="'a damaged journal is as good as no journal' reads as caution — and a torn line in a scope the "
         "caller cannot read flips every other scope's answer, a signal about hidden activity on the wire.",
     ),
+    # S4 of the scope-refs plan: the browser surface is the sources journal's ONLY writer
+    # (`internal/ui/sources.go`). `./internal/ui/` is already in `PKGS`.
+    Mutant(
+        name="ui-sources-post-skips-the-admin-check",
+        path="internal/ui/sources.go",
+        old="if !found || !id.Auth.Allows(scope.ID, control.VerbAdmin) {",
+        new="if !found {",
+        killer="TestTheSaveIsBehindBothCrossSiteGatesAndTheAdminCheck",
+        extra_killers=("TestATokenFileDeploymentRefusesEverySave",),
+        why="'the scope is in the caller's narrowed answer, so they may edit it' reads as the check — and it "
+        "lets anyone who can READ a scope repoint its audit, which is the T5 threat.",
+    ),
+    Mutant(
+        name="ui-sources-links-a-non-github-host",
+        path="internal/ui/sources.go",
+        old='src.Host != "github.com"',
+        new='src.Host == ""',
+        killer="TestOnlyAGitHubSourceIsLinked",
+        why="'link every source, they all live on a code host' is a helpful-looking widening — and it builds "
+        "a GitHub-shaped URL on a host whose URL shape this repository cannot know.",
+    ),
+    Mutant(
+        name="ui-sources-set-by-taken-from-the-form",
+        path="internal/ui/sources.go",
+        old="principalStamp(id.Principal), s.now()",
+        new='func() string { if v := r.PostFormValue("set_by"); v != "" { return v }; return principalStamp(id.Principal) }(), s.now()',
+        killer="TestAnAdminsSaveAppendsOneLineStampedByTheServerNotTheForm",
+        why="'let an admin record who asked for the change' reads as a feature — and the journal's who/when "
+        "history becomes whatever the form says.",
+    ),
+    Mutant(
+        name="ui-sources-keyed-by-control-id",
+        path="internal/ui/sources.go",
+        old="codesrc.Key(scope.Name), raws",
+        new="codesrc.Key(string(scope.ID)), raws",
+        killer="TestAUIWrittenDeclarationIsWhatThePodServes",
+        why="revision 3 of the plan: 'key by the immutable id, a rename should not orphan the record' — and "
+        "the UI's ids come from the control journal while the pod's are derived from the directory name, "
+        "so the pod never finds the record (round 3's red).",
+    ),
     # S2 of the transcripts/plugins plan: `internal/transcript/scopeuse`, the READ half of a session's
     # visibility set. It is not in `PKGS` — it is an input to a predicate that does not exist until
     # S4, not a member of the control/identity/server seam — so each row ADDS its package, the
@@ -4809,8 +4909,8 @@ MUTANTS: tuple[Mutant, ...] = (
         name="scopeuse-all-scopes-header-names-a-scope",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\t\tif ValidScope(f[1]) {",
-        new="\t\t\tif ValidScope(f[1]) || strings.HasPrefix(f[1], \"(\") {",
+        old="\t\tif ValidScope(v) {",
+        new="\t\tif ValidScope(v) || strings.HasPrefix(v, \"(\") {",
         killer="TestTheAllScopesHeaderAddsStar",
         why="a store-wide search renders `scope=(all scopes)`, and reading the field as whatever "
         "follows `scope=` is the natural parse — it turns the one header that names EVERY scope into "
@@ -4821,8 +4921,9 @@ MUTANTS: tuple[Mutant, ...] = (
         name="scopeuse-scopeless-header-dropped",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\tif len(fields) == 0 {\n\t\t\tout = append(out, Star)\n\t\t\tcontinue\n\t\t}",
-        new="\t\tif len(fields) == 0 {\n\t\t\tcontinue\n\t\t}",
+        # #261 round 3: the scan emits through a callback instead of appending to a slice.
+        old="\t\tif !found {\n\t\t\temit(Star)\n\t\t}",
+        new="\t\tif !found {\n\t\t}",
         killer="TestTheScopelessHeaderFormAddsStar",
         why="the `all N entry files … MALFORMED` header carries no `scope=` field, and \"no field, "
         "nothing to add\" reads as tidy — it drops a read whose scope the line does not say.",
@@ -4903,8 +5004,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-capture-armed-by-default",
         path="internal/worker/worker.go",
-        old="\tif !w.cfg.Armed {",
-        new="\tif false && !w.cfg.Armed {",
+        old="\tif rt.upload && !w.cfg.Armed {",
+        new="\tif false && rt.upload && !w.cfg.Armed {",
         killer="TestADisarmedListenerRefusesEveryUploadAndStoresNothing",
         why="a listener that is configured looks like a listener that is meant to accept; the arming "
         "is a separate operator decision (O16) and the configuration is not it.",
@@ -4975,11 +5076,12 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-pod-skips-scope-rederivation",
         path="internal/transcript/archive/archive.go",
-        old="func derivedScopes() []string { return []string{Star} }",
-        new="func derivedScopes() []string { return nil }",
-        killer="TestThePodDerivesStarNotTheDeclarationAlone",
-        why="with no `scopeuse` on `main` an empty derivation reads as 'nothing found' — and it makes "
-        "the agent's DECLARATION the whole read half of V, which decision 3 exists to refuse.",
+        old="\tm.Derived = union(m.Derived, found.Scopes)",
+        new="\tm.Derived = union(m.Derived, nil)",
+        killer="TestThePodDerivesReadScopesTheAgentDidNotDeclare",
+        why="the agent already declares what it derived with the same function, so folding the pod's own "
+        "derivation in reads as redundant — and it makes the agent's DECLARATION the whole read half "
+        "of V, which decision 3 exists to refuse.",
         pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
     ),
     Mutant(
@@ -5015,22 +5117,876 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-retention-boundary-inclusive",
         path="internal/transcript/archive/sweep.go",
-        old="return now.Sub(m.UpdatedAt) > a.cfg.Retention }",
-        new="return now.Sub(m.UpdatedAt) >= a.cfg.Retention }",
+        old="return now.Sub(last) > a.cfg.Retention }",
+        new="return now.Sub(last) >= a.cfg.Retention }",
         killer="TestRetentionSweepsAtItsBoundary",
         why="`>=` and `>` read the same in a review; the boundary decides whether a session lives "
         "through the last instant of its retention.",
         pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
     ),
+    # 🔴 THE ARMING PRECONDITIONS AP1–AP3 (`claudedocs/plan-cairn-plugins.md`, "### Rollout"): one
+    # row per guard, each killed by the test its precondition's closing check names.
+    Mutant(
+        name="transcript-dir-ownership-unchecked",
+        path="internal/transcript/archive/archive.go",
+        old="\tif err := CheckOwnership(cfg.Dir); err != nil {\n\t\treturn nil, err\n\t}\n",
+        new="",
+        killer="TestOpenAcceptsAFreshAndItsOwnDirectoryAndNothingElse",
+        why="`ResolveDir` already refuses the store root, so the directory looks vetted — and a control "
+        "journal under the store's journal name receives a deletion line the next replay refuses whole (AP1).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-main-skips-state-paths",
+        path="cmd/cairn-ui/main.go",
+        old="if err := stateInsideTranscriptDir(workerConf.dir, statePaths); err != nil {",
+        new="if err := stateInsideTranscriptDir(workerConf.dir, nil); err != nil {",
+        killer="TestTheBinaryRefusesATranscriptDirHoldingItsOwnState",
+        why="the store's own ownership check refuses what is THERE at startup, so a second check reads as "
+        "redundant — and a state file this process creates later is refused one restart afterwards (AP1).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-state-path-compared-by-spelling",
+        path="cmd/cairn-ui/worker.go",
+        old="\t\tresolved, err := resolveMaybeAbsent(p.path)\n",
+        new="\t\tresolved, err := filepath.Abs(p.path)\n",
+        killer="TestStateInsideTheTranscriptDirIsResolvedNotSpelled",
+        why="`Abs` is the obvious normalisation, and a symlinked spelling of the transcript directory then "
+        "walks past it (AP1).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-assembled-record-uncapped",
+        path="internal/transcript/archive/frames.go",
+        old="if st.bytes+int64(len(chunk)) > MaxAssembledBytes {",
+        new="if false && st.bytes+int64(len(chunk)) > MaxAssembledBytes {",
+        killer="TestOneFramePastTheCapIs413AndStoresNothing",
+        why="each REQUEST is already bounded, so the record looks bounded too — and the final frame reads "
+        "every staged byte into memory, which the audit measured as an OOM kill in a 256 Mi pod (AP2).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-uncommitted-session-never-swept",
+        path="internal/transcript/archive/sweep.go",
+        old="\t\t\tok, err = a.deleteUncommitted(root, stale)\n",
+        new="",
+        killer="TestASessionWithNoMetaIsSweptByRetention",
+        why="retention is read off `meta.json`, so a root without one looks like nothing to sweep — and it "
+        "holds quota forever (AP3).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-abandoned-frames-hold-quota",
+        path="internal/transcript/archive/sweep.go",
+        old="\ta.sweepFrames(now)\n",
+        new="",
+        killer="TestAbandonedFramesStopHoldingQuotaWithoutARestart",
+        why="a restart discards staged frames, so they look bounded — and an agent that never finishes a "
+        "record holds its bytes against the quota until somebody restarts the pod (AP3).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-names-not-rechecked",
+        path="internal/transcript/archive/archive.go",
+        old="\t\tif _, hits := a.cfg.Recheck.String(f.value); len(hits) > 0 {",
+        new="\t\tif _, hits := a.cfg.Recheck.String(f.value); false && len(hits) > 0 {",
+        killer="TestTheRecheckReadsNamesSrcAndCursors",
+        why="names and cursors are pattern-checked, so they look inert — and a 40-character token fits "
+        "every one of those patterns and is stored as a file name or on every line (AP3).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="worker-owner-checked-only-at-startup",
+        path="internal/worker/worker.go",
+        old="\tif !w.cfg.OwnerHeld() {",
+        new="\tif false && !w.cfg.OwnerHeld() {",
+        killer="TestTheOwnerIsCheckedOnEveryRequest",
+        why="startup already refused an owner the authority does not hold, so a per-request check looks "
+        "redundant — and a principal removed afterwards keeps uploading until a restart (AP3).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
     Mutant(
         name="worker-wall-skipped-on-the-reread",
         path="internal/worker/worker.go",
-        old="\t\tif err := admit(row, w.cfg.Owner); err != nil {\n\t\t\tw.once(",
-        new="\t\tif err := admit(row, row.Owner); err != nil {\n\t\t\tw.once(",
+        old="\t\tif err := admit(row, w.cfg.wall()); err != nil {\n\t\t\tw.once(",
+        new="\t\tif err := admit(row, Wall{Owner: row.Owner, Plugins: w.cfg.wall().Plugins}); err != nil {\n\t\t\tw.once(",
         killer="TestTheWallRefusesAForeignRowAtStartupAndAsARowAfterwards",
         why="the startup read already refused foreign rows, so the per-request re-read looks safe to "
         "trust — and a row appended afterwards would authenticate a second owner (Q7's wall).",
         pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    # 🔴 TRANSCRIPT VISIBILITY AND THE COLLAPSED READING (S4 of `claudedocs/plan-cairn-plugins.md`):
+    # the plan's eleven S4 rows. The predicate, the visibility set and the reading model live in
+    # `internal/transcript`, which is not in `PKGS` — it is a consumer of the control seam, not a
+    # member of it — so every row ADDS it (and the archive it reads). `./internal/ui/` is in `PKGS`
+    # already, and several rows name a page-level test there as an `extra_killers` entry: the
+    # predicate is one function, and the page is where a viewer would see it fail.
+    Mutant(
+        name="transcript-section-without-predicate",
+        path="internal/transcript/visible.go",
+        old="\tif !Visible(viewer, meta, v) {\n\t\treturn nil, nil\n\t}\n\treturn &View{",
+        new="\tif false && !Visible(viewer, meta, v) {\n\t\treturn nil, nil\n\t}\n\treturn &View{",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        extra_killers=(
+            "TestTheTranscriptSectionIsShownToExactlyThoseThePredicateAdmits",
+            "TestARefusedViewerGetsTheBytesOfASessionWithNoTranscript",
+            "TestTheRawRecordViewAsksThePredicate",
+        ),
+        why="the session page was already found for this viewer, so asking a second, stricter question "
+        "before rendering one more section reads as redundant — and it shows a transcript to anyone "
+        "who can read ONE scope the session wrote in (clause d).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-written-set-from-viewer-scopes",
+        path="internal/transcript/visible.go",
+        old="written, err := WrittenScopes(s.storeRoot, ids)",
+        new="written, err := writtenWithin(s.storeRoot, viewer.Auth.VisibleScopes(control.VerbRead), ids)",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        why="every other walk on this surface is narrowed to the caller's readable scopes, and passing "
+        "the same set here looks like the rule being followed — over that set every scope found is "
+        "readable by construction, so 'reads every written scope' is vacuously true (clause e).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-visibility-set-ignores-reads",
+        path="internal/transcript/visible.go",
+        old="out := slices.Concat(written.Scopes, written.Unscanned, meta.Written, meta.Derived, meta.Declared)",
+        new="out := slices.Concat(written.Scopes, written.Unscanned, meta.Written)",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        why="'the scopes a session touched' reads as the scopes it WROTE to, which is what the session "
+        "page shows — and a session that recalled another scope's notes into its tool results is then "
+        "visible to people who cannot read that scope (O8, clause f).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-empty-set-visible",
+        path="internal/transcript/visible.go",
+        old="\tif len(v) == 0 {\n\t\treturn false\n\t}\n\treturn viewer.readsEvery(v)",
+        new="\tif false && len(v) == 0 {\n\t\treturn false\n\t}\n\treturn viewer.readsEvery(v)",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        extra_killers=("TestASessionWithNoRecordedWriteIsFoundForItsOwnerAlone",),
+        why="'reads every scope in V' needs no special case to be written — and for a session with no "
+        "recorded write or read it is vacuously true for EVERYBODY (O10, clause g).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-owner-by-display-not-id",
+        path="internal/transcript/visible.go",
+        old='meta.Owner == string(v.Principal.Kind)+":"+string(v.Principal.ID)',
+        new='meta.Owner == string(v.Principal.Kind)+":"+v.Principal.Display',
+        killer="TestVisibleArms",
+        why="the display name is what every page and audit line shows for a principal, so comparing it "
+        "reads as comparing the principal — and it is mutable and not unique, so a rename makes one "
+        "principal another's owner.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-narrowed-owner-arm",
+        path="internal/transcript/visible.go",
+        old="return !v.Auth.Narrowed() && meta.Owner ==",
+        new="return meta.Owner ==",
+        killer="TestVisibleArms",
+        why="a narrowed credential is still the owner's credential, so letting it see the owner's "
+        "sessions reads as obvious — and it hands an agent credential cut down to one scope every "
+        "owner-only session, which is what the narrowing withheld.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-any-scope-not-every-scope",
+        path="internal/transcript/visible.go",
+        old="return !slices.ContainsFunc(scopes, func(scope string) bool { return !v.reads(scope) })",
+        new="return len(scopes) == 0 || slices.ContainsFunc(scopes, v.reads)",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        why="the session PAGE is found by a union — a write in any readable scope — and reusing that "
+        "rule for its content is the natural reading of 'can this viewer see the session'.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-child-visible-without-root",
+        path="internal/transcript/visible.go",
+        old="ids := append([]string{meta.Root}, meta.Children...)",
+        new="ids := []string{meta.Root}",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        why="a transcript is stored under its ROOT session id, so walking for that id reads as complete "
+        "— and a child session's own writes then never reach the root's V, leaving the child's stream "
+        "visible to people who cannot read where it wrote (decision 7).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-unknown-scope-name-readable",
+        path="internal/transcript/visible.go",
+        old="\treturn v.Auth.VisibleScopes(control.VerbRead).Allows(scope)\n}",
+        new="\treturn v.Auth.VisibleScopes(control.VerbRead).Allows(scope) || !slices.ContainsFunc(control.AllVerbs, "
+        "func(vb control.Verb) bool { return v.Auth.VisibleScopes(vb).Allows(scope) })\n}",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        extra_killers=("TestAScopeRenamedAfterTheWriteIsUnreadableUntilItIsRenamedBack",),
+        why="'that scope no longer exists, so it cannot be hiding anything from anyone' — and the content "
+        "read from it before the rename is still in the transcript.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-star-sentinel-readable",
+        path="internal/transcript/visible.go",
+        old="\tif scope == Star {\n\t\treturn false\n\t}",
+        new="\tif scope == Star {\n\t\treturn true\n\t}",
+        killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
+        why="`*` reads as a wildcard — 'every scope' — and a wildcard a viewer need not hold is the "
+        "usual meaning; here it means 'a scope nobody could identify', which nobody but the owner reads.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-render-classifies-by-record-type",
+        path="internal/transcript/read.go",
+        old="\t\tclass := u.Class\n",
+        new='\t\tclass := u.Class\n\t\tif kind == "user" {\n\t\t\tclass = HumanText\n\t\t}\n',
+        killer="TestAToolResultInsideAUserRecordIsNotAUserMessage",
+        extra_killers=("TestTheTranscriptRendersCollapsed",),
+        why="a `user` record is what a user sent, by its own type — and a tool result of several hundred "
+        "kilobytes rides INSIDE one, so 'user messages are shown in full' renders every one of them whole.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    # #261's audit: the derivation's two blind spots and the View's decision bound, each a row.
+    Mutant(
+        name="transcript-pod-derives-from-the-map-alone",
+        path="internal/transcript/archive/archive.go",
+        old="\t\td.Content(string(line))\n\t\tif duplicateMember(line) {",
+        new="\t\tif duplicateMember(line) {",
+        killer="TestARecordCannotHideAReadFromTheDerivation",
+        why="the map walk already visits every value of the record, so scanning the record again as one "
+        "string reads as redundant — and a header in a member NAME, or in the first of two members "
+        "named alike, is then never derived while the raw view serves it.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-pod-reads-past-a-repeated-member",
+        path="internal/transcript/archive/archive.go",
+        old="\t\t\textra = []string{Star}",
+        new="\t\t\textra = nil",
+        killer="TestARecordCannotHideAReadFromTheDerivation",
+        why="once the whole-record scan finds every header, a repeated member looks harmless — but which "
+        "strings are tool inputs is still read off a map that drops the first copy.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-view-serves-past-its-decision",
+        path="internal/transcript/visible.go",
+        old="\t\tif r.Seq > limit {\n\t\t\treturn archive.StopScan",
+        new="\t\tif false && r.Seq > limit {\n\t\t\treturn archive.StopScan",
+        killer="TestAViewServesOnlyWhatItWasDecidedOver",
+        why="a stream is append-only, so reading it to its current end looks like reading 'the transcript' "
+        "— and a record uploaded after the predicate was asked can be one that hides it from this viewer.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-turn-unclamped",
+        path="internal/transcript/read.go",
+        old="\tturn = min(turn, MaxTurn)\n",
+        new="",
+        killer="TestTurnsPageByFifty",
+        why="a turn number is only a view selector, so bounding it reads as fussiness — and the page "
+        "arithmetic overflows at the top of int, rendering negative page links.",
+        # The ui's pager test WAS listed here (the ui kept its own copy of this clamp, which masked this
+        # mutant from every ui test; #261 round 2), and it stopped killing in round 3 because the GUARD
+        # moved, not the list: the pager no longer adds TurnsPerPage to FirstTurn (it links
+        # `Reading.NextTurn`), so an unclamped `?turn=<MaxInt64>` renders an empty page with an
+        # in-range back link instead of negative page links. The overflow left is readSession's own
+        # window arithmetic, which `TestTurnsPageByFifty` catches.
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    # #261 round 2: a memo block is a read, the written half is kept, and a page is item-bounded.
+    Mutant(
+        name="scopeuse-memo-block-not-a-read",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        # #261 round 3: the memo scan emits through a callback instead of returning a slice.
+        old="\teachMemoScope(s, d.addHeader)\n",
+        new="",
+        killer="TestAMemoBlockIsARead",
+        why="a memo is a NOTICE, not a recall — no `subsystem-recall:` header, nothing the client "
+        "ledgered — so leaving it out of the read half reads as precise; and the hook has then shown "
+        "a gamma-notes memo's text in a session an alpha-only reader is served.",
+    ),
+    Mutant(
+        name="transcript-written-half-not-kept",
+        path="internal/transcript/visible.go",
+        old="out := slices.Concat(written.Scopes, written.Unscanned, meta.Written, meta.Derived, meta.Declared)",
+        new="out := slices.Concat(written.Scopes, written.Unscanned, meta.Derived, meta.Declared)",
+        killer="TestARewrittenEntryCannotShrinkV",
+        why="the walk is the authority on where a session wrote, so a stored copy of its answer reads "
+        "as a stale cache — and rewriting one entry without the trailer then turns a refusal into a 200.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-page-items-uncapped",
+        path="internal/transcript/read.go",
+        old="if r.room <= 0 || (limit >= 0 && len(items) >= limit) {",
+        new="if limit >= 0 && len(items) >= limit {",
+        killer="TestATurnPastThePageItemCapIsCountedNotCarried",
+        extra_killers=("TestOneTurnOfTwentyThousandCallsIsABoundedPage",),
+        why="fifty turns and a 2 MiB byte budget read as bounding a page, so an item cap looks "
+        "redundant — and one turn of 20,000 small calls fits both and renders 7.5 MB.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-other-pages-charged",
+        path="internal/transcript/read.go",
+        old="\t\tfor _, it := range p.items {\n\t\t\tw.r.refund(it)\n\t\t}\n\t\treturn\n",
+        new="\t\treturn\n",
+        killer="TestAnEarlierPageDoesNotSpendThisPagesBudget",
+        why="a record on another page is simply skipped, which reads as costing nothing — but it was "
+        "classified, and charged, before the window knew, so page two shows elided bodies with room to spare.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    # #261 round 3: the derivation fits the assembly budget, an unscanned scope is not kept, and a
+    # page ends at a turn boundary.
+    Mutant(
+        name="scopeuse-decode-gate-misses-unicode-escapes",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old=" || strings.Contains(s, `\\u`)",
+        new="",
+        killer="TestTheDecodeGateIsExact",
+        extra_killers=("TestAHeaderInsideAJSONStringNamesItsScope",),
+        why="a marker that is not in the raw text looks absent, so skipping the decode reads as a free "
+        "saving — and JSON can spell any character of either marker as `\\uXXXX`, so the read vanishes.",
+    ),
+    Mutant(
+        name="transcript-unscanned-scope-kept",
+        path="internal/transcript/visible.go",
+        old="s.archive.RecordWritten(meta.Root, written.Scopes)",
+        new="s.archive.RecordWritten(meta.Root, slices.Concat(written.Scopes, written.Unscanned))",
+        killer="TestARepairedEntryGivesTheTranscriptBack",
+        why="an unscanned scope is in `V` and the written half is kept, so keeping both reads as "
+        "consistent — but a malformed file is a fact about the store, and keeping it makes one "
+        "transient file a permanent refusal.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-page-does-not-end-at-a-turn",
+        path="internal/transcript/read.go",
+        old="\t\t\tif r.room <= 0 {\n\t\t\t\tr.roomOut = true\n\t\t\t}\n",
+        new="",
+        killer="TestEveryCallIsReachableAcrossPages",
+        extra_killers=("TestATurnWhoseChildDoesNotFitStartsTheNextPage", "TestATurnPastThePageItemCapIsCountedNotCarried"),
+        why="counting what the page cannot carry, with a raw link, reads as honest — but a turn cut that "
+        "way on page one had no page of its own, so its calls were reachable only as raw records.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-child-overflow-keeps-the-turn",
+        path="internal/transcript/read.go",
+        old="\tw.r.children(w.cur.Items, 0)\n\tif w.r.roomOut && len(w.turns) > 0 {",
+        new="\tw.r.children(w.cur.Items, 0)\n\tif false && w.r.roomOut && len(w.turns) > 0 {",
+        killer="TestATurnWhoseChildDoesNotFitStartsTheNextPage",
+        why="a turn's own items fit, so it looks carried — but its subagent spends the same allowance, "
+        "and the child's items past it were counted instead of moving with the turn.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-pager-steps-fifty-turns",
+        path="internal/ui/transcript.go",
+        old="\tif rd.NextTurn > 0 {\n\t\tlinks = append(links, h.A(h.Href(transcriptPageHref(v.Session, rd.NextTurn)),",
+        new="\tif nt := rd.FirstTurn + transcript.TurnsPerPage; nt <= rd.TotalTurns {\n\t\tlinks = append(links, h.A(h.Href(transcriptPageHref(v.Session, nt)),",
+        killer="TestEveryCallIsReachableByFollowingThePager",
+        why="a page holds fifty turns, so the next one starts fifty on — except when the item allowance "
+        "ended it early, and then every turn in between is skipped.",
+        pkgs=PKGS + ("./internal/ui/",),
+    ),
+    # A twelfth, beyond the plan's eleven: the one rendering rule the operator stated outright (O9 —
+    # a user message is NEVER truncated). The test plan names it as a control; here it is a row.
+    Mutant(
+        name="transcript-user-message-clipped",
+        path="internal/ui/transcript.go",
+        old='\t\t\th.Div(h.Class("t-text"), g.Text(it.Text)))\n\tcase transcript.AssistantText:',
+        new='\t\t\th.Div(h.Class("t-text"), g.Text(clipUTF8(it.Text, assistantHeadChars))))\n\tcase transcript.AssistantText:',
+        killer="TestTheTranscriptRendersCollapsed",
+        why="every other block on the page has a display limit, and giving the user's message the "
+        "assistant's head limit reads as consistency — and the one thing the operator asked never to "
+        "be cut is then cut at 1,200 characters with no reveal.",
+    ),
+    # ---- S5 of the transcripts plan: the plugin registry, toggles and API ------------------------
+    # The toggle fold, ONE row per decision-10 case (the case number is in each name's killer), and
+    # the five the plan names beside them. `internal/plugins` and `internal/worker` sit outside the
+    # seam, so each row ADDS the package holding its killer (the S2/S3 rows' per-row rule).
+    Mutant(
+        name="plugins-toggle-default-on",
+        path="internal/plugins/toggles.go",
+        old="return s.Value(plugin, LevelScope, ScopeTarget(name), ValueOff)",
+        new="return s.Value(plugin, LevelScope, ScopeTarget(name), ValueOn)",
+        killer="TestFoldCase01NothingSetIsOff",
+        extra_killers=("TestThePendingListIsEmptyUntilAToggleIsSet",),
+        why="'a scope nobody has said anything about is fine' is the opt-out reading of consent — and "
+        "every registered plugin then reads every session on day one (clause i).",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+    ),
+    Mutant(
+        name="plugins-scope-on-ignored",
+        path="internal/plugins/toggles.go",
+        old="return consented && (everyOn || arcOn) && !arcOff",
+        new="return consented && (everyOn && false || arcOn) && !arcOff",
+        killer="TestFoldCase02EveryScopeOnIsOn",
+        why="reading `on` as just a louder `allowed` makes arcs the only way to run — and a scope whose "
+        "admins turned a plugin ON gets nothing.",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-arc-overrides-scope-off",
+        path="internal/plugins/toggles.go",
+        old="return consented && (everyOn || arcOn) && !arcOff",
+        new="return (consented || arcOn) && (everyOn || arcOn) && !arcOff",
+        killer="TestFoldCase03AnArcOnWithOneScopeOffIsOff",
+        why="revision 1's fold: a finer level overriding a coarser one is the usual shape of settings — and "
+        "arc membership is whatever an arc PUT names, so a scope's refusal is overridden by anyone who "
+        "registers an arc (T14).",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-arc-on-ignored",
+        path="internal/plugins/toggles.go",
+        old="\t\tcase ValueOn:\n\t\t\tarcOn = true",
+        new="\t\tcase ValueOn:\n\t\t\tarcOn = false",
+        killer="TestFoldCase04AnArcOnWithEveryScopeAllowedIsOn",
+        why="an arc that can only veto looks like the safe half — and O5's per-arc toggle then enables "
+        "nothing, so `allowed` scopes never run anywhere.",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-scope-toggle-any-not-every",
+        path="internal/plugins/toggles.go",
+        old="\t\tdefault:\n\t\t\tconsented, everyOn = false, false",
+        new="\t\tdefault:\n\t\t\teveryOn = false",
+        killer="TestFoldCase05AnArcOnWithOneScopeAllowedAndOneOffIsOff",
+        why="consent read as 'some scope agreed' — the union the session PAGE is found by — and a session "
+        "that touched a refusing scope is sent to a third party on its neighbour's say-so.",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-arc-off-ignored",
+        path="internal/plugins/toggles.go",
+        old="\t\tcase ValueOff:\n\t\t\tarcOff = true",
+        new="\t\tcase ValueOff:\n\t\t\tarcOff = false",
+        killer="TestFoldCase06EveryScopeOnWithAnArcOffIsOff",
+        why="with every scope ON an arc's `off` looks redundant — and the one way to keep a single arc's "
+        "sessions away from a plugin is gone.",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-session-opt-out-ignored",
+        path="internal/plugins/toggles.go",
+        old="&& !arcOff && st.Session(plugin, sub.Root) != ValueOff",
+        new="&& !arcOff",
+        killer="TestFoldCase07EveryScopeOnWithTheOwnersOptOutIsOff",
+        extra_killers=("TestThePendingListIsEmptyUntilAToggleIsSet",),
+        why="the session level can only say OFF, so it reads as a no-op beside the scope consent — and "
+        "the owner of a session that handled something sensitive has no way to keep it from a "
+        "third-party-egress plugin (T7).",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+    ),
+    Mutant(
+        name="plugins-unknown-scope-toggle-falls-back",
+        path="internal/plugins/toggles.go",
+        old='if scope == "*" || !known(scope) {',
+        new='if scope == "*" {',
+        killer="TestFoldCase08AnUnknownScopeOrTheStarIsOff",
+        why="the journal still holds the deleted scope's ON, so reading it is the obvious lookup — and a "
+        "scope nobody can administer any more keeps consenting forever.",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-empty-set-vacuously-on",
+        path="internal/plugins/toggles.go",
+        old="\tif len(sub.V) == 0 {\n\t\treturn false\n\t}\n\tconsented, everyOn := true, true",
+        new="\tconsented, everyOn := true, true",
+        killer="TestFoldCase09TheEmptySetIsOff",
+        why="'every scope of V is on' needs no special case to be written — and for an owner-only session "
+        "it is vacuously true, so a session no scope admin was ever asked about runs (clause g's shape).",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-session-level-accepts-on",
+        path="internal/plugins/toggles.go",
+        old="\t\tif v == ValueOn {\n\t\t\treturn ErrSessionOn\n\t\t}\n\t\tok = v == ValueUnset || v == ValueOff",
+        new="\t\tok = v == ValueUnset || v == ValueOff || v == ValueOn",
+        killer="TestASessionLevelOnIsRefusedAndJournalsNothing",
+        extra_killers=("TestWhoMayToggleIsDecidedPerLevel",),
+        why="three values at every level is the symmetric shape — and a session-level ON is then a "
+        "journaled claim of consent nobody who could give it gave (case 10).",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-arc-home-outside-v-counts",
+        path="internal/plugins/toggles.go",
+        old="\t\tif !inV[ScopeTarget(k.Home)] {\n\t\t\tcontinue",
+        new="\t\tif false && !inV[ScopeTarget(k.Home)] {\n\t\t\tcontinue",
+        killer="TestAnArcSpeaksOnlyForSessionsThatTouchedItsHome",
+        why="the plan's fold names no limit on which arcs count, so every arc listing the session looks like "
+        "the rule — and an admin of an unrelated scope then turns a plugin ON (or vetoes it) for a session "
+        "that scope never saw, by listing its id in their own arc (#270 round 1).",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-transcript-read-ignores-toggle",
+        path="internal/plugins/service.go",
+        old="\tv, err := s.Transcripts.ForPlugin(root, on)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden",
+        new="\tv, err := s.Transcripts.ForPlugin(root, func(*transcript.Meta, []string) bool { return on != nil })\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden",
+        killer="TestEveryPluginRefusalIsTheSameBytes",
+        why="the capability is checked and the token is the plugin's own, so the session's toggle looks "
+        "like a second check of the same thing — and a stolen plugin token reads every stored "
+        "transcript (clause j, T6).",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+    ),
+    Mutant(
+        name="plugins-output-type-unchecked",
+        path="internal/plugins/service.go",
+        old="\tif !e.Writes(env.Type) {\n\t\treturn Output{}, ErrForbidden",
+        new="\tif false && !e.Writes(env.Type) {\n\t\treturn Output{}, ErrForbidden",
+        killer="TestEveryPluginRefusalIsTheSameBytes",
+        why="the body is validated against its type's schema, which reads as the type check — and the "
+        "summariser then mints ticket EDGES, which render as deterministic facts (clause j).",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+    ),
+    Mutant(
+        name="plugins-capability-unchecked",
+        path="internal/worker/plugin.go",
+        old="\tif !e.Has(plugins.CapTranscriptRead) {\n\t\tforbidden(rw)",
+        new="\tif false && !e.Has(plugins.CapTranscriptRead) {\n\t\tforbidden(rw)",
+        killer="TestEveryPluginRefusalIsTheSameBytes",
+        why="the toggle already decides whether the plugin may see the session, so the manifest's "
+        "capability looks redundant — and a plugin registered only to LIST reads every transcript it "
+        "is on for.",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+    ),
+    Mutant(
+        name="plugins-toggle-unauthorised-level",
+        path="internal/ui/plugins.go",
+        old="\tscope, found := pickScope(scopes, control.ID(r.PostFormValue(FieldScope)))\n\tif !found || !id.Auth.Allows(scope.ID, control.VerbAdmin) {",
+        new="\tscope, found := pickScope(scopes, control.ID(r.PostFormValue(FieldScope)))\n\tif !found || !id.Auth.Allows(scope.ID, control.VerbWrite) {",
+        killer="TestWhoMayToggleIsDecidedPerLevel",
+        why="a writer of a scope already puts content in it, so letting them say where it goes looks "
+        "proportionate — and consent to third-party egress is an administration act the scope's "
+        "admins never gave.",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="plugins-plugin-name-from-body-not-token",
+        path="internal/plugins/outputs.go",
+        old="\t\tPlugin:         plugin.Name,",
+        new="\t\tPlugin:         e.Plugin,",
+        killer="TestTheEnvelopeIsStampedFromTheTokenNotTheBody",
+        extra_killers=("TestAnOutputIsStoredUnderTheTokensNameAndAdvancesTheWatermark",),
+        why="the envelope HAS a plugin field, so storing what it says looks faithful — and one plugin then "
+        "writes outputs under another's name, and moves the other's watermark.",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+    ),
+    # ---- S6 of the transcripts plan: outputs rendered, the deletion cascade, the withdraw route ---
+    # The plan's six rows, by name. `internal/ui` is in `PKGS`; every row ADDS the package holding
+    # its other killers (the S2/S3/S5 rows' per-row rule).
+    Mutant(
+        name="plugins-output-rendered-without-predicate",
+        path="internal/transcript/plugin.go",
+        old="\t\tcase viewer.owns(meta):\n\t\t\tout[root] = &View{Meta: meta, a: s.archive}",
+        new="\t\tcase true:\n\t\t\tout[root] = &View{Meta: meta, a: s.archive}",
+        killer="TestAnOutputIsShownToExactlyTheViewersOfItsTranscript",
+        why="a summary is a few sentences ABOUT a session, not the session's content, so showing it on "
+        "every row that lists the session reads as harmless context — and a reader of ONE scope the "
+        "session wrote then reads a digest of everything it did in the scopes they cannot read "
+        "(clause k).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="plugins-delete-keeps-outputs",
+        path="internal/transcript/archive/sweep.go",
+        old="\tif err := os.RemoveAll(dir); err != nil {\n\t\treturn err\n\t}\n\ta.adjust(-freed)\n\treturn nil\n}",
+        new="\tkept, _ := os.ReadFile(filepath.Join(dir, outputsName))\n"
+        "\tif err := os.RemoveAll(dir); err != nil {\n\t\treturn err\n\t}\n"
+        "\tif kept != nil {\n\t\t_ = os.MkdirAll(dir, dirMode)\n"
+        "\t\t_ = os.WriteFile(filepath.Join(dir, outputsName), kept, fileMode)\n\t}\n"
+        "\ta.adjust(-freed)\n\treturn nil\n}",
+        killer="TestTheDeletionCascadeTakesEverythingDerived",
+        extra_killers=("TestTheOwnerDeletesATranscriptAndEverythingDerivedGoesWithIt",
+                       "TestAWithdrawalDeletesOnlyTheCallersOwnRoot"),
+        why="the outputs are the plugin's work and cost money to make, so keeping them when the raw "
+        "transcript goes reads as the considerate delete — and the summary of a transcript its owner "
+        "deleted, and every ticket edge mined from it, stays on the instance (clause l).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/", "./internal/worker/"),
+    ),
+    Mutant(
+        name="transcript-withdraw-keeps-directory",
+        path="internal/transcript/archive/sweep.go",
+        old="\t\treturn true, a.deleteLocked(m, ReasonWithdrawn)",
+        new="\t\treturn true, nil",
+        killer="TestAWithdrawalDeletesOnlyTheCallersOwnRoot",
+        extra_killers=("TestAWithdrawalIsOwnerAndHostBoundAndIdempotent", "TestTheAgentWithdrawsThroughTheRealRoute"),
+        why="the agent stops shipping the session there, so acknowledging the withdrawal and leaving "
+        "the bytes for retention reads as enough — and a prefix the routing rule says must not be on "
+        "this instance stays on it for ninety days, with the agent told it is gone (clause m).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/", "./internal/capture/"),
+    ),
+    Mutant(
+        name="transcript-withdraw-deletes-another-owners-root",
+        path="internal/transcript/archive/sweep.go",
+        old="\t\tif !owned(m, who) {\n\t\t\treturn false, nil\n\t\t}\n\t\treturn true, a.deleteLocked(m, ReasonWithdrawn)",
+        new="\t\tif m.Host != who.Host {\n\t\t\treturn false, nil\n\t\t}\n\t\treturn true, a.deleteLocked(m, ReasonWithdrawn)",
+        killer="TestAWithdrawalDeletesOnlyTheCallersOwnRoot",
+        extra_killers=("TestAWithdrawalIsOwnerAndHostBoundAndIdempotent",),
+        why="the listener admits one capture owner, so the token already IS the owner and only the host "
+        "looks left to check — and the day a second owner's root is in the store (a changed "
+        "`-worker-owner`, a restored volume), any capture token deletes it by id.",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-withdraw-host-unchecked",
+        path="internal/transcript/archive/sweep.go",
+        old="\t\tif !owned(m, who) {\n\t\t\treturn false, nil\n\t\t}\n\t\treturn true, a.deleteLocked(m, ReasonWithdrawn)",
+        new="\t\tif m.Owner != who.Owner {\n\t\t\treturn false, nil\n\t\t}\n\t\treturn true, a.deleteLocked(m, ReasonWithdrawn)",
+        killer="TestAWithdrawalDeletesOnlyTheCallersOwnRoot",
+        extra_killers=("TestAWithdrawalIsOwnerAndHostBoundAndIdempotent",),
+        why="every host's token is the SAME owner's, so the owner's sessions look like one pool any of "
+        "their hosts may tidy — and a token copied to (or minted for) another machine deletes "
+        "transcripts that machine never uploaded (the precedent: `transcript-capture-token-host-unchecked`).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-withdraw-repeat-answers-false",
+        path="internal/transcript/archive/sweep.go",
+        old="\treturn a.deletedFor(who, root), nil\n}",
+        new="\treturn false, nil\n}",
+        killer="TestAWithdrawalDeletesOnlyTheCallersOwnRoot",
+        extra_killers=("TestAWithdrawalIsOwnerAndHostBoundAndIdempotent",),
+        why="the root is gone, so 'nothing of yours is held here' is the literal truth on the second "
+        "call — and the agent, which treats `false` as final, turns a withdrawal whose acknowledgement "
+        "was lost into a permanent hold (the plan's revision 4, retracted).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    # Beyond the plan's six: the owner arm of the delete, the agent's withdrawal rules, the S5 audit
+    # findings S6 closed (#270: the walk-skip, the arc veto's snapshot, the output totals, the 507
+    # line), and #273's own audit (a deletion is final for its root, a withdrawal reaches a stopped
+    # instance, no environment proxy, an arc toggle is saved only over the list its page showed).
+    Mutant(
+        name="transcript-delete-skips-the-owner-arm",
+        path="internal/transcript/plugin.go",
+        old="\treturn s.archive.Delete(root, archive.ReasonOwnerDelete, viewer.owns)",
+        new="\treturn s.archive.Delete(root, archive.ReasonOwnerDelete, nil)",
+        killer="TestTheOwnerDeletesATranscriptAndEverythingDerivedGoesWithIt",
+        why="the form renders only on the owner's page, so the row looks reachable only by the owner — "
+        "and any signed-in principal who knows a session id (they are on session pages) deletes its "
+        "transcript with one POST.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="capture-binding-not-saved-before-upload",
+        path="internal/capture/agent.go",
+        old="\tif ss.Instance != dec.Instance {\n\t\tss.Instance = dec.Instance\n"
+        "\t\tif err := a.saveRouting(root); err != nil {\n\t\t\treturn false, false, err\n\t\t}\n\t}",
+        new="\tif ss.Instance != dec.Instance {\n\t\tss.Instance = dec.Instance\n\t}",
+        killer="TestWhereASessionIsBoundIsSavedBeforeItsFirstUpload",
+        why="the state is saved within two seconds anyway and a save per new session costs a write, so "
+        "leaving the binding to the spaced checkpoint reads as the efficient version — and a run killed "
+        "in that window has shipped a prefix under a state that says 'nowhere', so a later routing "
+        "change withdraws nothing (S3b's audit).",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="capture-false-withdrawal-reships",
+        path="internal/capture/agent.go",
+        old="\tif !deleted && ss.shipped() {",
+        new="\tif false && !deleted && ss.shipped() {",
+        killer="TestAWithdrawalAnsweredFalseHoldsTheSessionForGood",
+        why="`false` means the instance holds nothing of this host's, which reads as 'nothing left to "
+        "withdraw, carry on' — and a prefix that IS there under another host label is then duplicated "
+        "onto a second instance instead of being surfaced (decision 16).",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="capture-plaintext-host-matched-by-suffix",
+        path="internal/capture/httpsink.go",
+        old="\t\t\tif !slices.Contains(plaintextHosts, u.Hostname()) {",
+        new="\t\t\tif !slices.ContainsFunc(plaintextHosts, func(h string) bool { return strings.HasSuffix(u.Hostname(), h) }) {",
+        killer="TestPlainHTTPToANamedHostIsAnExplicitExactOptIn",
+        why="an operator with several hosts on one mesh would rather name the mesh's domain once, so a "
+        "suffix match reads as the convenient form — and `evil-<host>`, or any host under a parent "
+        "domain somebody else can register in, then receives the capture token in clear.",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="plugins-store-walk-skipped-on-a-stored-off",
+        path="internal/transcript/plugin.go",
+        old="\n\tids := append([]string{meta.Root}, meta.Children...)\n\twritten, err := WrittenScopes(s.storeRoot, ids)\n",
+        new="\n\tif stored := VisibilitySet(meta, Written{}); len(stored) > 0 && !on(meta, stored) {\n\t\treturn nil, nil\n\t}\n"
+        "\tids := append([]string{meta.Root}, meta.Children...)\n\twritten, err := WrittenScopes(s.storeRoot, ids)\n",
+        killer="TestAnArcHomeFoundOnlyByTheWalkDoesNotChangeTheAnswer",
+        why="'OFF over the scopes already known' looks like a sound reason to skip a whole-store walk — it "
+        "was the shipped rule, under a comment calling the fold monotone — and a session whose arc home "
+        "only the walk finds is answered OFF until an unrelated page view records the scope (#270).",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/", "./internal/transcript/"),
+    ),
+    Mutant(
+        name="plugins-pending-walk-skipped-on-a-stored-off",
+        path="internal/transcript/plugin.go",
+        old="\t\tneed = append(need, meta)\n",
+        new="\t\tif stored := VisibilitySet(meta, Written{}); len(stored) > 0 && !on(meta, stored) {\n\t\t\tcontinue\n\t\t}\n"
+        "\t\tneed = append(need, meta)\n",
+        killer="TestAnArcHomeFoundOnlyByTheWalkDoesNotChangeTheAnswer",
+        why="the pending query is where the walk's cost is felt, so skipping roots the stored half "
+        "already refuses is the tempting half of the same shortcut — and those sessions are never "
+        "offered to the plugin until something else records the scope (#270).",
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/", "./internal/transcript/"),
+    ),
+    Mutant(
+        name="plugins-arc-veto-lifted-by-removing-the-member",
+        path="internal/plugins/service.go",
+        old="\tfor _, k := range st.ArcsVetoing(plugin, ids) {",
+        new="\tfor _, k := range []arcs.Key(nil) {",
+        killer="TestAnArcVetoOutlivesTheMembersRemovalAndAnArcOnIsReadLive",
+        why="an arc toggle reads as a statement about the arc AS IT IS, so folding it over the live member "
+        "list is the natural rule — and a writer of the home, who can PUT the arc without a session, "
+        "lifts an admin's veto with no admin act (#270, T14).",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="transcript-upload-resurrects-a-deleted-root",
+        path="internal/transcript/archive/archive.go",
+        old="\tif m != nil {\n\t\treturn nil\n\t}\n\ta.mu.Lock()\n\twas, deleted := a.deleted[root]",
+        new="\tif m != nil || true {\n\t\treturn nil\n\t}\n\ta.mu.Lock()\n\twas, deleted := a.deleted[root]",
+        killer="TestADeletedSessionIsNotResurrectedByALaterUpload",
+        extra_killers=("TestADeletionIsFinalForItsRoot", "TestASessionDeletedOnItsInstanceIsNeverSentAgain"),
+        why="a root with no meta is a root nobody holds, which is exactly what a first upload looks like — "
+        "and a stream or blob the agent sends from its start after the owner's delete re-creates the "
+        "session the owner deleted (#273).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/", "./internal/capture/"),
+    ),
+    Mutant(
+        name="capture-deleted-answer-retried-forever",
+        path="internal/capture/agent.go",
+        old="\tif errors.Is(err, ErrDeleted) {\n\t\ta.sawDeleted = true",
+        new="\tif errors.Is(err, ErrDeleted) {\n\t\ta.sawDeleted = false",
+        killer="TestASessionDeletedOnItsInstanceIsNeverSentAgain",
+        why="every other refusal is one session's failure for one run and is retried, so treating the 410 "
+        "the same reads as consistent — and a session deleted on its instance is re-read, re-redacted "
+        "and refused every minute for as long as it exists on the host.",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="capture-withdrawal-not-sent-to-a-stopped-instance",
+        path="internal/capture/agent.go",
+        old="\treturn a.stopped(ss.Instance) && !ss.shipped()",
+        new="\treturn a.stopped(ss.Instance)",
+        killer="TestAWithdrawalReachesAnInstanceThatIsNotTakingUploads",
+        why="an instance that refuses uploads has nothing to gain from a session being read, so skipping "
+        "every session bound for it is the cheap rule — and a prefix on a quota-full or disarmed "
+        "instance is never withdrawn while it stays that way (#273).",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="capture-sink-uses-the-environment-proxy",
+        path="internal/capture/httpsink.go",
+        old="\t\ttransport.Proxy = nil\n",
+        new="",
+        killer="TestNoEnvironmentProxyEverCarriesTheCaptureToken",
+        why="honouring HTTP_PROXY is what every well-behaved client does — and for a plain-http worker "
+        "URL the proxy named by a stray variable receives the capture token and every transcript byte "
+        "in clear (#273).",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="plugins-arc-toggle-saved-from-a-stale-page",
+        path="internal/ui/plugins.go",
+        old="\tif r.PostFormValue(FieldMembers) != arcMembersDigest(memberSessions(rep.Reg)) {",
+        new="\tif false && r.PostFormValue(FieldMembers) != arcMembersDigest(memberSessions(rep.Reg)) {",
+        killer="TestAnArcToggleFromAStaleTabIsNotSaved",
+        why="the handler re-reads the arc and checks admin on its home, which reads as binding enough — "
+        "and an admin's `on` from a tab opened before a writer added a session turns the plugin on for "
+        "a session that admin was never shown (#273).",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="ui-plugin-text-bidi-controls-rendered",
+        path="internal/ui/outputs.go",
+        old="case plugins.BidiControl(r):\n\t\t\treturn -1",
+        new="case plugins.BidiControl(r):\n\t\t\treturn r",
+        killer="TestBidiControlsInPluginTextAreNotRendered",
+        why="the text is escaped, so it looks inert — and a right-to-left override in a model's summary "
+        "reorders how the page's own `derived` label and what follows it are displayed.",
+    ),
+    Mutant(
+        name="plugins-arc-toggle-snapshot-not-taken",
+        path="internal/ui/plugins.go",
+        old="plugins.ArcTarget(rep.Reg.Key()), value, vetoSnapshot(value, rep.Reg)...) {",
+        new="plugins.ArcTarget(rep.Reg.Key()), value) {",
+        killer="TestAnArcVetoSnapshotsItsMembersAndThePageSaysWhoIsStillVetoed",
+        why="the journal line already names the arc, and the arc's members are one registry read away, "
+        "so recording them again looks redundant — and with no snapshot a veto covers only what the arc "
+        "lists NOW, so a writer of the home lifts it by re-registering the arc without the session.",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="transcript-output-totals-not-reduced-on-delete",
+        path="internal/transcript/archive/sweep.go",
+        old="\tif err := a.forgetOutputs(m.Root); err != nil {\n\t\treturn err\n\t}\n",
+        new="",
+        killer="TestTheOutputTotalsFollowDeletionsAndARestart",
+        why="the totals only bound growth, so an over-count after a deletion reads as erring on the safe "
+        "side — and a plugin whose outputs were all deleted with their sessions stays refused 507 until "
+        "the pod restarts, which is the pressure that brought the per-refusal rescan in (#270).",
+        pkgs=PKGS + ("./internal/transcript/archive/",),
+    ),
+    Mutant(
+        name="worker-507-line-names-one-limit",
+        path="internal/worker/plugin.go",
+        old="\tswitch q.Share {\n\tcase transcript.SharePlugin:",
+        new="\tswitch q.Share {\n\tdefault:",
+        killer="TestThe507LineNamesWhichLimitWasHit",
+        why="every 507 on this route is about a plugin's write, so one line naming the plugin reads as "
+        "enough — and an INSTANCE full of transcripts sends the operator to a plugin that wrote nothing (#270).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
+    ),
+    # 🔴 THE AGENT READ API (S8 of the transcripts plan): the plan's two rows. ⚠ NEITHER CAN BE A
+    # LISTENER-LOCAL "SKIP THE PREDICATE" EDIT, AND THAT IS #261's DESIGN RATHER THAN A GAP: a stored
+    # record leaves `internal/transcript` only inside a `View`, and `Store.View` is the only constructor
+    # OUTSIDE the package — so no compiling edit in `internal/ui` or `internal/clientapi` serves a
+    # session without asking. ⚠ Inside the package one does compile (`Answer` building a `View` from
+    # `ReadMeta` directly), and `TestTheAgentReadRoutesAskThePredicate` would see it, but it is not a
+    # row here. Each row
+    # therefore breaks the PREDICATE the read API asks, in a shape a reader of that API would plausibly
+    # write, and names the S8 surface test as its killer: what it proves is that the JSON routes'
+    # tests SEE a predicate that stopped refusing, on the route each row is named for.
+    Mutant(
+        name="transcript-read-api-without-predicate",
+        path="internal/transcript/visible.go",
+        old="\tif viewer.owns(meta) {\n\t\treturn true\n\t}",
+        new="\tif true || viewer.owns(meta) {\n\t\treturn true\n\t}",
+        killer="TestTheAgentReadRoutesAskThePredicate",
+        why="the read API is for the owner's own agents, so 'an authenticated caller is reading its own "
+        "sessions' reads as the rule — and every credential then reads every stored transcript, a stranger's "
+        "and a narrowed agent's included.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-raw-view-without-predicate",
+        path="internal/transcript/visible.go",
+        old="\tif len(v) == 0 {\n\t\treturn false\n\t}\n\treturn viewer.readsEvery(v)\n}",
+        new="\tif len(v) == 0 {\n\t\treturn false\n\t}\n\treturn true\n}",
+        killer="TestTheRawRecordsViewAsksThePredicate",
+        extra_killers=("TestTheRawRecordViewAsksThePredicate",),
+        why="a session that wrote or read SOMETHING has been vouched for by a scope, so admitting anyone "
+        "once the empty-set case is refused reads as the rule's remainder — and the stored bytes, `view=raw` "
+        "included, then reach a reader of ONE scope the session touched (clause d).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    # ---- transcripts S7: "My sessions" (O10, clause g — the listing half) ----------------------
+    Mutant(
+        name="my-sessions-lists-another-owner",
+        path="internal/transcript/mine.go",
+        old="\t\tif !viewer.owns(meta) {",
+        new="\t\tif v, _ := s.View(viewer, root); v == nil {",
+        killer="TestMySessionsListsOwnershipNotVisibility",
+        why="the visibility predicate is THE gate on transcript content, so listing every session it "
+        "admits reads as the careful version of the page — and turns a reader's \"My sessions\" into a "
+        "feed of every session over their readable scopes that somebody else uploaded.",
+        extra_killers=("TestMySessionsListsTheViewersOwnAndNoOneElses",),
+        pkgs=PKGS + ("./internal/transcript/",),
     ),
     Mutant(
         name="redact-marker-drops-the-whole-span",
@@ -5320,6 +6276,16 @@ MUTANTS: tuple[Mutant, ...] = (
         "listener's full list hands back a memo it no longer remembers, on every check.",
     ),
     Mutant(
+        name="memo-check-401-reported-as-unconfigured",
+        path="internal/client/memo.go",
+        old="\t\treturn status(\"refused\", ExitUnreachableNoCache, fmt.Sprintf(",
+        new="\t\treturn status(\"unconfigured\", ExitUnreachableNoCache, fmt.Sprintf(",
+        killer="TestEveryStatusTokenHasACaseThatProducesIt",
+        pkgs=PKGS + ("./internal/client/",),
+        why="both are exit 3 and both say 'memos not checked', so one token reads as enough — but only a "
+        "401 SENT a credential the listener's per-host lockout counted, and the hook backs a host off on it.",
+    ),
+    Mutant(
         name="memo-read-stops-after-one-page",
         path="internal/client/memo.go",
         old="\t\t\tif len(page) < memoListPage || added == 0 {\n",
@@ -5597,6 +6563,15 @@ MUTANTS: tuple[Mutant, ...] = (
         "scan's bound the size refusal comes UNSCANNED, so the draft echoed can carry a credential.",
     ),
     Mutant(
+        name="ui-memo-scannable-asks-about-the-body-only",
+        path="internal/ui/memos.go",
+        old="memoDraftKept[ref.Reason] && memo.Scannable(draft.Subject, draft.Body) {",
+        new="memoDraftKept[ref.Reason] && memo.Scannable(\"\", draft.Body) {",
+        killer="TestASecretOverALimitIsNeverEchoed",
+        why="the bound is over subject AND body together; with the excess in the subject a short body "
+        "alone looks scannable, so an UNSCANNED subject-size refusal echoes a body carrying a credential.",
+    ),
+    Mutant(
         name="memo-ttlof-multiplies-unguarded",
         path="internal/memo/policy.go",
         old="\tcase n > limit:\n\t\treturn MaxTTL + unit\n",
@@ -5642,6 +6617,220 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestSenderMaySendIsTheSendersOwnAuthorityNow",
         why="'can the sender still write' without saying WHERE reads as the question; a sender who "
         "writes elsewhere then hides a lapse here.",
+    ),
+    # S5 of the scope-refs plan: `internal/refaudit`, the auditor, and the `audit-refs` verb. Each row
+    # ADDS `./internal/refaudit/` (outside the seam). The git-backed killers follow the two-tier rule:
+    # the `go` job sets CAIRN_GIT_TESTS_REQUIRED, where a skip is a failure, never a kill.
+    Mutant(
+        name="refaudit-tags-count-as-reachable",
+        path="internal/refaudit/gitcli.go",
+        old='"--contains", sha,\n\t\t"refs/heads/", "refs/pull/")',
+        new='"--contains", sha)',
+        killer="TestATagInAnOlderMirrorNeverCountsAsReachable",
+        why="'any ref that contains it' reads as reachability — and a tag an older mirror kept makes a "
+        "SHA whose branch is gone look reachable: a false clean exit (round 3 of the plan).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-off-branch-counted-stale",
+        path="internal/refaudit/refaudit.go",
+        old="ExistsOffBranch: ClassInformational",
+        new="ExistsOffBranch: ClassStale",
+        killer="TestTheExitIsTheMixedCase",
+        why="'not on the branch' reads as wrong — and every PR-merged-by-squash SHA would fail the audit.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-not-reachable-counted-stale",
+        path="internal/refaudit/refaudit.go",
+        old="NotReachable: ClassCouldNotLook",
+        new="NotReachable: ClassStale",
+        killer="TestTheExitIsTheMixedCase",
+        why="absence from the fetched refs proves nothing about the remote (squash-and-delete, "
+        "force-push); calling it stale is a verdict the auditor cannot support.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-presence-counted-as-reachability",
+        path="internal/refaudit/audit.go",
+        old="\t\tif len(refs) > 0 {",
+        new="\t\tif true {",
+        killer="TestReachabilityIsRecomputedFromTheRemotesCurrentRefs",
+        why="'the commit object exists' is what the out-of-tree audit checked — and a SHA whose only ref "
+        "was deleted stays in the mirror forever.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-ls-tree-exit-code-trusted",
+        path="internal/refaudit/gitcli.go",
+        old='"ls-tree", "-z", commit, "--", path)\n\tif err != nil {\n\t\treturn false, err\n\t}',
+        new='"ls-tree", "-z", commit, "--", path)\n\tif err != nil {\n\t\treturn false, err\n\t}\n\treturn true, nil',
+        killer="TestEachPlantedClaimMapsToOneLiteralState",
+        why="`ls-tree` exiting 0 reads as 'found' — it exits 0 on a missing path (round 1 F8).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-directory-counted-missing",
+        path="internal/refaudit/gitcli.go",
+        old='ok && name == path {',
+        new='ok && name == path && strings.Contains(rec, " blob ") {',
+        killer="TestEachPlantedClaimMapsToOneLiteralState",
+        why="'a path is a file' — and every `internal/` pointer row becomes a stale finding.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-literal-pathspecs-dropped",
+        path="internal/refaudit/gitcli.go",
+        old='"GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_LITERAL_PATHSPECS=1",',
+        new='"GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1",',
+        killer="TestEachPlantedClaimMapsToOneLiteralState",
+        why="the variable looks like noise beside two others — and a cited `a*.go` greps every file the "
+        "glob matches (T3).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-undeclared-scope-exits-0",
+        path="internal/refaudit/run.go",
+        old='res, detail = Result{ScopeReason: ReasonUndeclared}, "status="+r.SourcesStatus',
+        new='return ReasonUndeclared + "\\n", "", ExitClean',
+        killer="TestAuditRefsCouldNotLookIsTenForEveryScopeLevelReason",
+        why="'nothing declared, nothing to audit' reads as a clean answer — and an undeclared scope is "
+        "reported clean forever (decision 8).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-checked-zero-exits-0",
+        path="internal/refaudit/refaudit.go",
+        old="\tif checked == 0 {\n\t\treturn ExitCouldNotLook",
+        new="\tif checked < 0 {\n\t\treturn ExitCouldNotLook",
+        killer="TestTheExitIsTheMixedCase",
+        why="'no findings' reads as clean — and a scope whose entries cite nothing checkable passes.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-unmapped-host-counted-clean",
+        path="internal/refaudit/refaudit.go",
+        old="\tif r.unlookedSource() {",
+        new="\tif false {",
+        killer="TestTheExitIsTheMixedCase",
+        why="'the claims all held' reads as clean — while half the declaration was never fetched.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    # The operator's decision on #259 r1 🟡2, and #259 r2's interrupt: two rows each, one per direction.
+    Mutant(
+        name="refaudit-stale-beside-an-unlooked-source",
+        path="internal/refaudit/audit.go",
+        old="if unread && Severity[best.State] == ClassStale {",
+        new="if unread && false && Severity[best.State] == ClassStale {",
+        killer="TestAStaleVerdictMeansEverySourceWasRead",
+        why="'missing from every source we read' reads as missing — while the unread source may hold "
+        "it: a stale verdict nobody measured (the out-of-tree default the plan first pinned).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-stale-demoted-with-every-source-read",
+        path="internal/refaudit/audit.go",
+        old="unread := len(looked) < len(sources)",
+        new="unread := len(looked) <= len(sources)",
+        killer="TestAStaleVerdictMeansEverySourceWasRead",
+        why="an off-by-one on the comparison demotes EVERY stale claim and the audit never exits 9.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-stale-beside-a-failed-claim-read",
+        path="internal/refaudit/audit.go",
+        old="\t\t\t\t\tunread = true // fetched",
+        new="\t\t\t\t\t_ = true // fetched",
+        killer="TestAStaleVerdictMeansEverySourceWasRead",
+        why="'every source was FETCHED' reads as 'every source was read' — while one source's `git` "
+        "failed on this very claim and the other's `missing` became the verdict (#267 r1 🟡1).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-interrupt-ignored-signal-unignored",
+        path="internal/refaudit/gitcli.go",
+        old="\t\tif !signal.Ignored(s) {",
+        new="\t\tif true {",
+        killer="TestAnIgnoredHangupStaysIgnored",
+        why="handling every signal reads as thorough — and `nohup cairn audit-refs` then dies on the "
+        "hangup it was started to survive (#267 r1 🟡2).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-interrupt-never-reaches-the-group",
+        path="internal/refaudit/gitcli.go",
+        old="\t\t\tw.caught = s\n\t\t\tcancel()",
+        new="\t\t\tw.caught = s",
+        killer="TestAnInterruptKillsTheStalledFetch",
+        why="re-raising the signal reads as handling it — and the re-raise waits on a `git` that "
+        "nothing killed, or `cairn` dies and leaves `git-remote-https` holding the remote (#259 r2).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-interrupt-swallowed-not-reraised",
+        path="internal/refaudit/gitcli.go",
+        old="\t_ = syscall.Kill(os.Getpid(), sig)",
+        new="\t_ = sig",
+        killer="TestAnInterruptKillsTheStalledFetch",
+        why="exiting 130 by hand looks the same in a shell — but the parent sees an exit, not a death "
+        "by SIGINT, and a caller that distinguishes the two (a shell loop's own Ctrl-C) carries on.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-mirror-dir-from-path-components",
+        path="internal/refaudit/gitcli.go",
+        old='return filepath.Join(g.MirrorRoot, hex.EncodeToString(sum[:])+".git")',
+        new='_ = hex.EncodeToString(sum[:])\n\treturn filepath.Join(g.MirrorRoot, strings.ReplaceAll(canonical, ":", "/")+".git")',
+        killer="TestTheMirrorDirectoryIsADigest",
+        why="a readable mirror path is friendlier — and a declaration then chooses where on disk the "
+        "auditor writes (T4).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    # ---- S11: the client read ledger, both ends (decision 3a) --------------------------------------
+    Mutant(
+        name="transcript-pod-ignores-ledger",
+        path="internal/transcript/archive/archive.go",
+        old="\tif stream == LedgerStream {\n\t\tfoldLedger(m, lines)\n\t} else {",
+        new="\tif false && stream == LedgerStream {\n\t\tfoldLedger(m, lines)\n\t} else {",
+        killer="TestAnUploadedLedgerPutsItsScopesInMeta",
+        extra_killers=("TestAnUploadedLedgerIsInV", "TestALedgerArrivingLaterLiftsF1"),
+        why="storing the ledger like any other stream looks complete — and then the only thing carrying "
+        "a read the transcript never shows is the agent's DECLARATION, which an old or lying agent "
+        "omits (clause n). Moved here from S3 in revision 14: the battery runs `go test`, and S3 had "
+        "no fold to mutate.",
+        pkgs=PKGS + ("./internal/transcript/archive/",),
+    ),
+    Mutant(
+        name="client-ledger-write-skipped",
+        path="internal/client/readledger.go",
+        old="\tif e.ledger != nil {\n\t\t_ = e.ledger.record(instance, scope)",
+        new="\tif false && e.ledger != nil {\n\t\t_ = e.ledger.record(instance, scope)",
+        killer="TestNoSessionIdWritesNothing",
+        extra_killers=("TestTheLedgerRecordsTheScopeEachServedCallResolved",),
+        why="a ledger nobody reads on the client side looks optional — and every session that runs "
+        "`cairn` is then owner-only by F1, or, beside a pre-ledger record, shows its transcript to a "
+        "viewer who cannot read what it read.",
+    ),
+    Mutant(
+        name="client-ledger-records-requested-not-resolved-scope",
+        path="internal/client/verbs.go",
+        old="\t\t\treturn 0, recallErr\n\t\t}\n\t\tenv.recordRead(alias, scope)",
+        new="\t\t\treturn 0, recallErr\n\t\t}\n\t\tenv.recordRead(alias, opts.Scope)",
+        killer="TestTheLedgerRecordsTheScopeEachServedCallResolved",
+        why="the flag is what the caller asked for, so it reads as the honest record — but a bare "
+        "`recall` asks for NOTHING and reads the scope `--repo` derived, and the empty flag then names "
+        "no scope at all.",
+    ),
+    Mutant(
+        name="client-ledger-write-visible-in-output",
+        path="internal/client/readledger.go",
+        old="\t\t_ = e.ledger.record(instance, scope)",
+        new="\t\tif err := e.ledger.record(instance, scope); err != nil {\n"
+        "\t\t\te.Stderr.WriteString(\"cairn: the read ledger was not written: \" + err.Error() + \"\\n\")\n\t\t}",
+        killer="TestAFailedLedgerWriteIsInvisible",
+        why="a failure nobody hears about looks like a hidden bug, so reporting it reads as diligence — "
+        "and every call on a host with a read-only state directory then changes its stderr, which the "
+        "parity gate diffs byte for byte and an agent's tool output carries.",
     ),
 )
 
