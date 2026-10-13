@@ -79,7 +79,7 @@ func (s *Server) handleMySessions(w http.ResponseWriter, r *http.Request, id ide
 		return
 	}
 	if mine.Unreadable > 0 {
-		fmt.Fprintf(s.log, "ui: %d stored transcript session(s) have a meta.json that does not parse; listed for nobody\n",
+		fmt.Fprintf(s.log, "ui: %d stored transcript session(s) have a meta.json that could not be read or parsed; listed for nobody\n",
 			mine.Unreadable)
 	}
 	s.render(w, MySessionsPage(view, pageOf(mine.Sessions, r.URL.Query().Get(QueryPage))))

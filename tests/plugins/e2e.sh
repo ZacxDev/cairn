@@ -647,7 +647,8 @@ assert g-a-session-with-no-write-or-read-is-owner-only eval '
 # F; R opens E and F (asserted by (e) and (f) above, and again here) and lists NONE of them — they are
 # not R's; neither do P and N. Ownership, never visibility.
 assert g-my-sessions-lists-the-owners-own-and-no-one-elses eval '
-  [[ "$(head -n1 "$work/vis/after/a.mine")" == 200 ]] &&
+  [[ "$(head -n1 "$work/vis/after/a.mine")" == 200 && "$(head -n1 "$work/vis/after/r.mine")" == 200 &&
+     "$(head -n1 "$work/vis/after/p.mine")" == 200 && "$(head -n1 "$work/vis/after/n.mine")" == 200 ]] &&
   lists after a "$vis_g" && lists after a "$vis_d" && lists after a "$vis_e" && lists after a "$vis_f" &&
   shows r "$vis_e" "clause e: this session wrote two scopes" && shows r "$vis_f" "clause f: this session read another scope" &&
   ! lists after r "$vis_e" && ! lists after r "$vis_f" && ! lists after r "$vis_d" && ! lists after r "$vis_g" &&

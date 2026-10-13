@@ -40,7 +40,7 @@ type Owned struct {
 // could not be read at all.
 type MineResult struct {
 	Sessions []Owned
-	// Unreadable counts stored sessions whose `meta.json` did not parse. Their owner is unknown, so
+	// Unreadable counts stored sessions whose `meta.json` could not be read or did not parse. Their owner is unknown, so
 	// they cannot be attributed to this viewer or to anyone; the caller logs the count and shows
 	// nothing about it — a count of other people's damage is not this viewer's to read.
 	Unreadable int
@@ -75,7 +75,7 @@ func (s *Store) Mine(viewer Viewer) (MineResult, error) {
 		if !viewer.owns(meta) {
 			continue
 		}
-		out.Sessions = append(out.Sessions, Owned{Root: meta.Root, Runtime: meta.Runtime, Host: meta.Host,
+		out.Sessions = append(out.Sessions, Owned{Root: root, Runtime: meta.Runtime, Host: meta.Host,
 			CreatedAt: meta.CreatedAt, UpdatedAt: meta.UpdatedAt})
 	}
 	slices.SortFunc(out.Sessions, func(a, b Owned) int {
