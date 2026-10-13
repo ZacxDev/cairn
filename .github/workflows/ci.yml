@@ -1142,7 +1142,7 @@ jobs:
         run: |
           set -o pipefail
           tests/refaudit/e2e.sh --self-test | tee /tmp/refaudit-e2e-self.txt
-          grep -qx 'SUMMARY e2e-self-test: sabotaged=6 caught=6' /tmp/refaudit-e2e-self.txt
+          grep -qx 'SUMMARY e2e-self-test: sabotaged=7 caught=7' /tmp/refaudit-e2e-self.txt
           tests/refaudit/e2e.sh > /tmp/refaudit-e2e.txt 2>&1 || { cat /tmp/refaudit-e2e.txt; exit 1; }
           cat /tmp/refaudit-e2e.txt
           passes=$(grep -c '^PASS ' /tmp/refaudit-e2e.txt || true)
