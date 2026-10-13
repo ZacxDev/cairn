@@ -6227,6 +6227,66 @@ MUTANTS: tuple[Mutant, ...] = (
         why="'the claims all held' reads as clean — while half the declaration was never fetched.",
         pkgs=PKGS + ("./internal/refaudit/",),
     ),
+    # The operator's decision on #259 r1 🟡2, and #259 r2's interrupt: two rows each, one per direction.
+    Mutant(
+        name="refaudit-stale-beside-an-unlooked-source",
+        path="internal/refaudit/audit.go",
+        old="if unread && Severity[best.State] == ClassStale {",
+        new="if unread && false && Severity[best.State] == ClassStale {",
+        killer="TestAStaleVerdictMeansEverySourceWasRead",
+        why="'missing from every source we read' reads as missing — while the unread source may hold "
+        "it: a stale verdict nobody measured (the out-of-tree default the plan first pinned).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-stale-demoted-with-every-source-read",
+        path="internal/refaudit/audit.go",
+        old="unread := len(looked) < len(sources)",
+        new="unread := len(looked) <= len(sources)",
+        killer="TestAStaleVerdictMeansEverySourceWasRead",
+        why="an off-by-one on the comparison demotes EVERY stale claim and the audit never exits 9.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-stale-beside-a-failed-claim-read",
+        path="internal/refaudit/audit.go",
+        old="\t\t\t\t\tunread = true // fetched",
+        new="\t\t\t\t\t_ = true // fetched",
+        killer="TestAStaleVerdictMeansEverySourceWasRead",
+        why="'every source was FETCHED' reads as 'every source was read' — while one source's `git` "
+        "failed on this very claim and the other's `missing` became the verdict (#267 r1 🟡1).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-interrupt-ignored-signal-unignored",
+        path="internal/refaudit/gitcli.go",
+        old="\t\tif !signal.Ignored(s) {",
+        new="\t\tif true {",
+        killer="TestAnIgnoredHangupStaysIgnored",
+        why="handling every signal reads as thorough — and `nohup cairn audit-refs` then dies on the "
+        "hangup it was started to survive (#267 r1 🟡2).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-interrupt-never-reaches-the-group",
+        path="internal/refaudit/gitcli.go",
+        old="\t\t\tw.caught = s\n\t\t\tcancel()",
+        new="\t\t\tw.caught = s",
+        killer="TestAnInterruptKillsTheStalledFetch",
+        why="re-raising the signal reads as handling it — and the re-raise waits on a `git` that "
+        "nothing killed, or `cairn` dies and leaves `git-remote-https` holding the remote (#259 r2).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-interrupt-swallowed-not-reraised",
+        path="internal/refaudit/gitcli.go",
+        old="\t_ = syscall.Kill(os.Getpid(), sig)",
+        new="\t_ = sig",
+        killer="TestAnInterruptKillsTheStalledFetch",
+        why="exiting 130 by hand looks the same in a shell — but the parent sees an exit, not a death "
+        "by SIGINT, and a caller that distinguishes the two (a shell loop's own Ctrl-C) carries on.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
     Mutant(
         name="refaudit-mirror-dir-from-path-components",
         path="internal/refaudit/gitcli.go",
