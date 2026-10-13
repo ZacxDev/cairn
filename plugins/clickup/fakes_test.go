@@ -93,6 +93,8 @@ type fakePod struct {
 	refuse map[string]bool
 	// titles is the instance's `-plugin-store-ticket-titles`: false refuses a body carrying a title.
 	titles bool
+	// hidden sessions are stored but NOT listed by the pending query (resumed, not idle).
+	hidden map[string]bool
 }
 
 // of is one session's streams; nil when the pod does not hold it.
@@ -236,7 +238,7 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 					grown = true
 				}
 			}
-			if grown && len(items) < limit {
+			if grown && len(items) < limit && !p.hidden[id] {
 				items = append(items, map[string]any{"session": id, "streams": pos, "prev_output": prev})
 			}
 		}

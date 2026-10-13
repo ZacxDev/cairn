@@ -34,6 +34,42 @@ type Backoff struct {
 	RetryAt  string `json:"retry_at,omitempty"`
 	// Records is the session's record count (every listed stream) when it last failed.
 	Records int64 `json:"records"`
+	// Seen is when the pod last LISTED the session to this plugin, or this entry was last written.
+	Seen string `json:"seen,omitempty"`
+}
+
+// StateTTL is how long an entry is kept for a session the pod has stopped listing and still answers
+// for. Past it the entry is dropped whatever it holds.
+const StateTTL = 30 * 24 * time.Hour
+
+// Touch records that the session was listed (or its entry written) now.
+func (b *Backoff) Touch(now time.Time) { b.Seen = now.UTC().Format(time.RFC3339) }
+
+// Stale reports whether the entry was last touched more than [StateTTL] ago. An entry with no stamp
+// (written before the stamp existed) is not stale; the caller stamps it.
+func (b *Backoff) Stale(now time.Time) bool {
+	at, err := time.Parse(time.RFC3339, b.Seen)
+	return err == nil && now.Sub(at) > StateTTL
+}
+
+// Unlisted decides what happens to the entry of a session the pending query did NOT list this run.
+//
+// 🔴 ABSENCE FROM ONE PENDING PAGE IS NOT A SIGNAL. The pod lists a session only when it is idle (or
+// grew past a threshold) and within the page: a session that was merely RESUMED drops off the list
+// and comes back when it pauses. Dropping its entry on absence forgot the backoff — and, for plugin A,
+// the already-paid-for summary — once per pause/resume cycle, and a full quota was re-paid each
+// time. An entry is dropped only on a POSITIVE signal: `gone` reports the pod answering its one
+// refusal for the session (deleted, or the plugin turned off for it), or the entry is past
+// [StateTTL]. A probe that FAILS for any other reason keeps the entry.
+func (b *Backoff) Unlisted(now time.Time, gone func() (bool, error)) (drop bool) {
+	if b.Seen == "" {
+		b.Touch(now)
+	}
+	if b.Stale(now) {
+		return true
+	}
+	isGone, err := gone()
+	return err == nil && isGone
 }
 
 // Active reports whether the session is inside a backoff taken at this record count. A nil Backoff is

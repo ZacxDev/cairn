@@ -48,6 +48,9 @@ type fakePod struct {
 	// pendingLag makes the pending item name a main `seq_to` this many records SHORT of what the
 	// transcript route then serves — a session that grew between the two requests.
 	pendingLag int
+	// unlisted makes the pending query list nothing though the session is still stored (a session
+	// that was resumed and is not idle); gone makes the pod answer its one 403 for it as well.
+	unlisted, gone bool
 }
 
 // streamWire is the pod's `ValidStream` vocabulary (`internal/plugins`): the streams an
@@ -85,6 +88,10 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	switch {
 	case r.URL.Path == "/plugin/v1/pending":
+		if p.unlisted || p.gone {
+			writeJSON(rw, 200, map[string]any{"items": []any{}})
+			return
+		}
 		items := []any{}
 		streams := p.streams()
 		var wm map[string]int64
@@ -134,6 +141,10 @@ func (p *fakePod) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, 200, map[string]any{"session": session, "stream": "main", "view": q.Get("view"), "records": recs,
 			"next_seq": next, "done": next > len(p.records), "seq_to": len(p.records)})
 	case r.URL.Path == "/plugin/v1/outputs" && r.Method == http.MethodGet:
+		if p.gone {
+			writeJSON(rw, 403, map[string]string{"refused": "plugin-forbidden"})
+			return
+		}
 		outs := []any{}
 		for _, o := range p.outputs {
 			outs = append(outs, o)

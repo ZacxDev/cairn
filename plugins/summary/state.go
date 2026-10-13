@@ -18,11 +18,14 @@ import (
 //     new records are new input, and the refusal was about the old.
 //  2. THE SUMMARY A REFUSED WRITE DID NOT STORE. The provider was already paid for it; it is kept here
 //     and re-POSTed on the next attempt WITHOUT calling the provider again. It is dropped when the
-//     write lands, when the pod's own last output for the session changes under it, or when the pod
-//     stops listing the session.
+//     write lands, when the pod's own last output for the session changes under it, when the pod
+//     answers its one refusal for the session (deleted, or the plugin turned off), or after
+//     [hoststate.StateTTL] unlisted — NEVER merely because one pending page did not list the session,
+//     which is what a session that was only resumed looks like.
 //
-// ⚠ A CACHED SUMMARY IS DERIVED TRANSCRIPT CONTENT AT REST ON THIS HOST, until one of those three
-// happens. A session deleted on the pod stops being listed, and the next run drops its entry.
+// ⚠ A CACHED SUMMARY IS DERIVED TRANSCRIPT CONTENT AT REST ON THIS HOST, until one of those happens.
+// A session deleted on the pod is dropped by the next run: each entry the pod did not list is asked
+// about (one read), and the pod's refusal is the signal.
 //
 // ⚠ BOTH CLOCKS HERE ARE THE HOST'S. A clock stepped FORWARD ends a backoff (and the spend ledger's
 // 24-hour window) early; stepped BACK, it lengthens both.

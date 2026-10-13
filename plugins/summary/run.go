@@ -81,8 +81,8 @@ type Stats struct {
 // errEmptyAnswer is a provider answering 200 with no text.
 var errEmptyAnswer = errors.New("the provider answered an empty summary")
 
-// refusedWrite is the pod answering the write with a status — a full quota (507), a 400, the one
-// 403 — as opposed to not being reached.
+// refusedWrite is the pod REFUSING the write — a full quota (507), a 400, the one 403 — as opposed to
+// failing (a 5xx), redirecting, or not being reached, which are transient.
 type refusedWrite struct{ err error }
 
 func (e *refusedWrite) Error() string { return e.err.Error() }
@@ -121,20 +121,37 @@ func (r *Runner) Run(ctx context.Context) (Stats, error) {
 	if err != nil {
 		return st, fmt.Errorf("the pending query: %w", err)
 	}
-	// A session the pod no longer lists — finished, toggled off, or DELETED — keeps nothing here: its
-	// backoff is moot and its cached summary is transcript-derived text with no reason left to exist.
+	// 🔴 A SESSION THE POD DID NOT LIST THIS RUN KEEPS ITS ENTRY ([hoststate.Backoff.Unlisted]): not
+	// listed is what a session merely RESUMED looks like, and dropping its backoff and its cached
+	// summary there re-paid a full quota once per pause/resume cycle. The entry goes only when the pod
+	// answers its one refusal for the session — DELETED, or this plugin turned off for it — at which
+	// point the cached summary is transcript-derived text with no reason left to exist; or when it is
+	// past its TTL.
 	listed := map[string]bool{}
 	for _, it := range items {
 		listed[it.Session] = true
 	}
-	dropped := false
-	for id := range r.State.Sessions {
-		if !listed[id] {
-			delete(r.State.Sessions, id)
-			dropped = true
+	changed := false
+	for id, ss := range r.State.Sessions {
+		if listed[id] {
+			ss.Touch(r.Now())
+			continue
 		}
+		seen := ss.Seen
+		if ss.Unlisted(r.Now(), func() (bool, error) {
+			_, err := r.API.Outputs(ctx, id, OutputType)
+			if errors.Is(err, pluginapi.ErrForbidden) {
+				return true, nil // the pod's one refusal: the positive signal
+			}
+			return false, err
+		}) {
+			delete(r.State.Sessions, id)
+			changed = true
+			r.Log(fmt.Sprintf("summary: session=%s is gone from the pod (or past its state TTL); what this host kept for it is dropped", id))
+		}
+		changed = changed || ss.Seen != seen
 	}
-	if dropped {
+	if changed {
 		if err := r.State.save(); err != nil {
 			return st, err
 		}
@@ -171,6 +188,7 @@ func (r *Runner) Run(ctx context.Context) (Stats, error) {
 				ss = &sessionState{}
 				r.State.Sessions[it.Session] = ss
 			}
+			ss.Touch(r.Now())
 			ss.Cached = res.unwritten
 			note := ""
 			if deterministic(err) && ctx.Err() == nil {
@@ -379,8 +397,10 @@ func (r *Runner) post(ctx context.Context, it pluginapi.PendingItem, res session
 	if err != nil {
 		res.unwritten = &c
 		err = fmt.Errorf("writing the summary (watermark %s): %w", strings.Join(keys, ","), err)
+		// 🔴 ONLY A REFUSAL IS A REFUSAL: 507 (the quota), 400 (the request) and the one 403. A 5xx or
+		// a 3xx says nothing about this session — it is retried next run, the summary kept, no backoff.
 		var status *pluginapi.StatusError
-		if errors.As(err, &status) || errors.Is(err, pluginapi.ErrForbidden) {
+		if (errors.As(err, &status) && (status.Status == 400 || status.Status == 507)) || errors.Is(err, pluginapi.ErrForbidden) {
 			return res, &refusedWrite{err}
 		}
 		return res, err

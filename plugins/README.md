@@ -69,8 +69,12 @@ skipped for 15 minutes, doubling per failure to 24 hours; a success clears it an
 growing. The pod lists oldest-first, so the run asks for the pod's maximum (100) and works on the first
 `-limit` sessions NOT in backoff: failing sessions cannot hide healthy ones behind them. A summary whose
 write was refused is kept there and re-POSTed on the next attempt without calling the provider again;
-it is dropped when written, when the pod's last output for the session changes, or when the pod stops
-listing the session (deleted, toggled off).
+it is dropped when written, when the pod's last output for the session changes, when the pod answers
+its one refusal for the session (deleted, or the plugin turned off — each entry the pod did not list
+is asked about once a run), or after 30 days unlisted. 🔴 NOT when the session is merely absent from
+one pending page: that is what a session that was only RESUMED looks like, and dropping there re-paid
+a full quota once per pause/resume cycle. A 5xx or a 3xx on the write is transient — the summary is
+kept, there is no backoff, and the next run re-posts it.
 
 ### What it cannot see, stated
 
@@ -81,11 +85,11 @@ listing the session (deleted, toggled off).
 - **A crashed run repeats its last session's requests** — a chain's progress is written when it ends,
   is capped, or a request fails (an error, an empty answer, the run's own deadline), but a KILLED
   process writes nothing, and the ledger has already counted them.
-- **A non-deterministic failure is retried every run with no backoff**: a provider 5xx or 429, an
-  unreachable endpoint, the run's own deadline. One request per such session per run; the cap bounds it.
+- **A non-deterministic failure is retried every run with no backoff**: a provider 5xx or 429, a pod
+  5xx, an unreachable endpoint, the run's own deadline. One request per such session per run; the cap bounds it.
 - **More than 100 sessions in backoff at once hide the rest** — the pod's pending page is 100.
-- **A cached summary is transcript-derived text at rest on this host** until its write lands or the
-  pod stops listing the session.
+- **A cached summary is transcript-derived text at rest on this host** until its write lands, the pod
+  refuses the session (deleted or toggled off), or 30 days pass unlisted.
 - **The host clock decides both windows**: stepped FORWARD it ends a backoff and the spend ledger's 24
   hours early (more spend than the cap intends); stepped back it lengthens both.
 - **opencode text parts are not attributed**: the role is on the message's `info` record, which the
@@ -190,7 +194,8 @@ read.
 skipped for 15 minutes doubling to 24 hours; a success, or the session growing, clears it. A 5xx, an
 unreachable pod and the run's own deadline are transient: retried by the next run, no backoff. A
 session the pod no longer lists is given up after 6 failed attempts at one size (a line says so), and
-at once when the pod answers its 403 for it (deleted, or toggled off). The run asks the pod for its
+at once when the pod answers its 403 for it (deleted, or toggled off). A backoff is NOT dropped because
+one pending page did not list the session (plugin A's rule, `hoststate.Backoff.Unlisted`). The run asks the pod for its
 maximum page (100) and WORKS ON `-limit` sessions not in backoff, unfinished passes first.
 
 Exit codes: 0 the run finished, 1 a session, a source or the ticket fetch failed, 2 usage. The last

@@ -204,27 +204,40 @@ type work struct {
 }
 
 // due is the sessions this run works on: every unfinished pass first — listed by the pod or not —
-// then the pending list, without the sessions in backoff, at most Limit. A session the pod no longer
-// lists and that carries no redo marker keeps nothing here.
-func (r *Runner) due(items []pluginapi.PendingItem, st *Stats) ([]work, error) {
+// then the pending list, without the sessions in backoff, at most Limit.
+func (r *Runner) due(ctx context.Context, items []pluginapi.PendingItem, st *Stats) ([]work, error) {
 	listed := map[string]pluginapi.PendingItem{}
 	for _, it := range items {
 		listed[it.Session] = it
 	}
-	dropped := false
+	changed := false
 	var unlisted []string
 	for id, ss := range r.State.Sessions {
 		if _, ok := listed[id]; ok {
+			ss.Touch(r.Now())
 			continue
 		}
-		if ss.Redo == nil {
+		// 🔴 NOT LISTED IS NOT GONE ([hoststate.Backoff.Unlisted]): a session that was only resumed
+		// drops off the pending list and comes back. Its backoff is kept until the pod answers its
+		// one refusal for it, or the entry is past its TTL.
+		seen := ss.Seen
+		if ss.Redo == nil && ss.Unlisted(r.Now(), func() (bool, error) {
+			_, err := r.API.Outputs(ctx, id, TypeScan)
+			if errors.Is(err, pluginapi.ErrForbidden) {
+				return true, nil // the pod's one refusal: the positive signal
+			}
+			return false, err
+		}) || ss.Redo != nil && ss.Stale(r.Now()) {
 			delete(r.State.Sessions, id)
-			dropped = true
+			changed = true
 			continue
 		}
-		unlisted = append(unlisted, id)
+		changed = changed || ss.Seen != seen
+		if ss.Redo != nil {
+			unlisted = append(unlisted, id)
+		}
 	}
-	if dropped {
+	if changed {
 		if err := r.State.save(); err != nil {
 			return nil, err
 		}
@@ -276,6 +289,7 @@ func (r *Runner) Run(ctx context.Context, items []work, st *Stats) error {
 			r.State.Sessions[it.Session] = ss
 		}
 		ss.Redo = &it
+		ss.Touch(r.Now())
 		if err := r.State.save(); err != nil {
 			return err
 		}

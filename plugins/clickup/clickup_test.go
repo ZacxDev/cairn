@@ -965,3 +965,44 @@ func TestAnInterruptedPassOfASessionThatThenGrewIsStillReadFromTheFirstRecord(t 
 		Edge{System: "clickup", TicketID: "clk0000a1", Signal: SigTranscript, Locator: rec(1)},
 		Edge{System: "clickup", TicketID: "clk0000b2", Signal: SigTranscript, Locator: rec(2)})
 }
+
+// TestABackoffSurvivesASessionThatIsMerelyNotListedAndEndsWhenThePodRefusesIt — the pod stops listing
+// a refused session (it was resumed) and then lists it again: its backoff is still there, so it is
+// SKIPPED rather than paid for again. A session the pod answers its one 403 for keeps nothing.
+func TestABackoffSurvivesASessionThatIsMerelyNotListedAndEndsWhenThePodRefusesIt(t *testing.T) {
+	w := newWorld(t)
+	w.pod.extra = map[string][]string{"s-bad-a": {human("please do lorem", "")}}
+	w.pod.refuse = map[string]bool{"s-bad-a": true}
+	w.args = w.withModel()
+	if code, out, _ := w.run(t); code != 1 || !strings.Contains(out, "sessions=1") || !strings.Contains(out, "requests=1") {
+		t.Fatalf("the refused pass: exit %d %s", code, out)
+	}
+	state := filepath.Join(w.dir, "sessions.json")
+	w.pod.mu.Lock()
+	w.pod.hidden = map[string]bool{"s-bad-a": true}
+	w.pod.mu.Unlock()
+	// The marker makes the session due whether listed or not; inside its backoff it is skipped.
+	if code, out, _ := w.run(t); code != 0 || !strings.Contains(out, "sessions=0") || !strings.Contains(out, "skipped=1") {
+		t.Fatalf("unlisted, inside the backoff: exit %d %s", code, out)
+	}
+	if raw, _ := os.ReadFile(state); !strings.Contains(string(raw), "s-bad-a") {
+		t.Fatalf("a session the pod merely did not list lost its backoff:\n%s", raw)
+	}
+	w.pod.mu.Lock()
+	w.pod.hidden = nil
+	w.pod.mu.Unlock()
+	if code, out, _ := w.run(t); code != 0 || !strings.Contains(out, "skipped=1") || len(w.prov.received()) != 1 {
+		t.Fatalf("listed again inside the backoff: exit %d %s (%d provider requests, want 1)", code, out, len(w.prov.received()))
+	}
+	// Deleted on the pod: the next attempt gets the one 403 and the entry is dropped.
+	w.pod.mu.Lock()
+	delete(w.pod.extra, "s-bad-a")
+	w.pod.mu.Unlock()
+	w.clock = w.clock.Add(15 * time.Minute)
+	if _, _, errs := w.run(t); !strings.Contains(errs, "no longer serves this session") {
+		t.Fatalf("the pass after the deletion did not drop the session: %s", errs)
+	}
+	if raw, _ := os.ReadFile(state); strings.Contains(string(raw), "s-bad-a") {
+		t.Fatalf("a deleted session is still remembered:\n%s", raw)
+	}
+}

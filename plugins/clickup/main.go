@@ -217,7 +217,7 @@ func run(args []string, stdout, stderr io.Writer, now func() time.Time) int {
 	if err != nil {
 		return fail(fmt.Errorf("the pending query: %w", err))
 	}
-	todo, err := r.due(items, &st)
+	todo, err := r.due(ctx, items, &st)
 	if err != nil {
 		return fail(err)
 	}
