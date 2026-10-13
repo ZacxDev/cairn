@@ -10,9 +10,10 @@
 #          tests/plugins/e2e.sh --self-test  # the negative control: exits 0 iff every SABOTAGED build
 #                                            # turns its clause's named assertion RED
 #
-# The clauses wired now (slices S3b, S4 and S11; the plan's table names fourteen, and the rest land
-# with their slices — the self-test count is the sabotages wired, ten over nine clauses because (a)
-# has a Claude Code leg and an opencode leg, not the plan's final 14):
+# The clauses wired now (slices S3b, S4, S7 and S11; the plan's table names fourteen, and the rest
+# land with their slices — the self-test count is the sabotages wired, eleven over nine clauses
+# because (a) has a Claude Code leg and an opencode leg and (g) a visibility half and a listing
+# half, not the plan's final 14):
 #   (a) resume — an upload whose acknowledgement is LOST mid-stream (the relay forwards a request,
 #       the pod stores it, the agent gets a 502) is retried by the next run and every record lands
 #       EXACTLY once; a request with a stale `from` gets 409 naming the stored position; and the
@@ -38,9 +39,11 @@
 #   (f) visibility, every READ scope — a session WROTE only `alpha-notes` and READ `beta-notes` (a
 #       rendered recall in a tool result, which the POD derives — the upload declares nothing): the
 #       reader of `alpha-notes` alone gets the no-transcript bytes; the reader of both sees it;
-#   (g) the empty set is owner-only (the visibility half; the "My sessions" listing is S7's) — a
-#       session with no recorded write or read is stored, its owner's page is found and shows it,
-#       and for everyone else it is the 404 it was before the upload;
+#   (g) the empty set is owner-only — the VISIBILITY half (S4): a session with no recorded write or
+#       read is stored, its owner's page is found and shows it, and for everyone else it is the 404 it
+#       was before the upload; and the LISTING half (S7): the owner's "My sessions" lists it beside
+#       its shared sessions, and R — who reads every scope of a shared one and OPENS it — lists none
+#       of them on R's own "My sessions" (nor do P and N), because it lists ownership, not visibility;
 #   (h) routing honours reads — with `alpha-notes` routed to the personal instance and `beta-notes` to
 #       the client instance, a session that WROTE `alpha-notes` and READ `beta-notes` in its first turn
 #       reaches NEITHER (0 relay requests name it) and is logged held, while a session in the same run
@@ -79,7 +82,7 @@ src="${E2E_SOURCE:-$repo}"
 
 # The number of assertions a full run makes. 🔴 PINNED, so an assertion that silently stopped running
 # is exit 2 rather than a smaller green.
-EXPECTED=16
+EXPECTED=17
 
 couldnt() { echo "COULD NOT VOUCH: $*" >&2; exit 2; }
 
@@ -179,6 +182,12 @@ PY
     $'\tif len(v) == 0 {\n\t\treturn false\n\t}\n\treturn viewer.readsEvery(v)' \
     $'\treturn viewer.readsEvery(v)' \
     "g-a-session-with-no-write-or-read-is-owner-only"
+  # (g, the listing half) "My sessions" lists what the viewer can SEE instead of what it OWNS: R,
+  #     who reads every scope of E and F, then lists both on its own page.
+  sabotage g-my-sessions-lists-by-visibility internal/transcript/mine.go \
+    $'\t\tif !viewer.owns(meta) {' \
+    $'\t\tif v, _ := s.View(viewer, root); v == nil {' \
+    "g-my-sessions-lists-the-owners-own-and-no-one-elses"
   # (h) Routing on the first scope only — the WRITTEN `alpha-notes` sorts first — so the read of
   #     `beta-notes` no longer holds the session.
   sabotage h-routes-on-one-scope internal/capture/route.go \
@@ -575,8 +584,23 @@ same() { cmp -s "$work/vis/before/$1.$2.$3" "$work/vis/after/$1.$2.$3"; }  # sam
 shows() { grep -qF 'id="transcript"' "$work/vis/after/$1.$2.page" && grep -qF "$3" "$work/vis/after/$1.$2.page"; }
 # refused <viewer> <session>: both rows are byte-identical to what they were with no transcript.
 refused() { same "$1" "$2" page && same "$1" "$2" raw; }
+# mine <tag>: every viewer's "My sessions" page (S7), as `<status>\n<body>` in $work/vis/<tag>/<viewer>.mine.
+mine() {
+  local tag="$1" viewer out
+  mkdir -p "$work/vis/$tag"
+  for viewer in p n r a; do
+    out="$work/vis/$tag/$viewer.mine"
+    curl -sS -o "$out.body" -w '%{http_code}\n' -H "Authorization: Bearer $(head -n1 "$work/cred-$viewer")" "$ui_url/my-sessions" \
+      >"$out" 2>>"$work/curl.err" || couldnt "GET /my-sessions as $viewer failed: $(tail -n2 "$work/curl.err")"
+    cat "$out.body" >>"$out"
+    rm -f "$out.body"
+  done
+}
+# lists <tag> <viewer> <session>: that viewer's "My sessions" page carries the session's row.
+lists() { grep -qF "data-session=\"$3\"" "$work/vis/$1/$2.mine"; }
 
 snap before "$vis_d" "$vis_e" "$vis_f" "$vis_g" "$vis_n"
+mine before
 # INSTRUMENT CONTROLS on the world, before anything is uploaded: the page is FOUND exactly where a
 # viewer reads a scope the session wrote in, and no raw-record row answers yet.
 [[ "$(status before p "$vis_e" page)" == 200 && "$(status before p "$vis_f" page)" == 200 &&
@@ -584,6 +608,13 @@ snap before "$vis_d" "$vis_e" "$vis_f" "$vis_g" "$vis_n"
    "$(status before a "$vis_g" page)" == 404 && "$(status before a "$vis_d" raw)" == 404 &&
    "$(status before p "$vis_n" page)" == 200 && "$(status before r "$vis_n" raw)" == 404 ]] ||
   couldnt "the visibility world is not the one clauses (d)–(g) assume (statuses before any upload: p/e $(status before p "$vis_e" page), p/f $(status before p "$vis_f" page), r/e $(status before r "$vis_e" page), n/d $(status before n "$vis_d" page), a/g $(status before a "$vis_g" page))"
+# …and "My sessions" answers every viewer, listing none of the fixture sessions yet.
+for v in p n r a; do
+  [[ "$(head -n1 "$work/vis/before/$v.mine")" == 200 ]] || couldnt "GET /my-sessions as $v answered $(head -n1 "$work/vis/before/$v.mine") before any upload"
+  for root in "$vis_d" "$vis_e" "$vis_f" "$vis_g"; do
+    ! lists before "$v" "$root" || couldnt "$v's My sessions lists $root before it was uploaded"
+  done
+done
 
 # Each session's transcript, uploaded by hand as the OWNER's capture token: a sentence only it holds,
 # and — for F — a read of `beta-notes` made through a variable (so no tool input names the program)
@@ -616,6 +647,7 @@ for root in "$vis_d" "$vis_e" "$vis_f" "$vis_g"; do
   [[ $code == 200 ]] || couldnt "uploading $root answered $code: $body"
 done
 snap after "$vis_d" "$vis_e" "$vis_f" "$vis_g"
+mine after
 
 # (d) The owner sees it; a principal with no read on any scope in V gets the no-transcript bytes.
 assert d-owner-sees-it-and-a-stranger-gets-the-no-transcript-bytes eval '
@@ -635,6 +667,16 @@ assert g-a-session-with-no-write-or-read-is-owner-only eval '
   [[ -s "$tdir/sessions/$vis_g/meta.json" ]] && shows a "$vis_g" "clause g: this session touched nothing" &&
   [[ "$(status after a "$vis_g" page)" == 200 ]] &&
   refused r "$vis_g" && refused p "$vis_g" && refused n "$vis_g" && [[ "$(status after r "$vis_g" page)" == 404 ]]'
+# (g, the listing half — S7) The owner's "My sessions" lists the owner-only G beside the shared D, E and
+# F; R opens E and F (asserted by (e) and (f) above, and again here) and lists NONE of them — they are
+# not R's; neither do P and N. Ownership, never visibility.
+assert g-my-sessions-lists-the-owners-own-and-no-one-elses eval '
+  [[ "$(head -n1 "$work/vis/after/a.mine")" == 200 && "$(head -n1 "$work/vis/after/r.mine")" == 200 &&
+     "$(head -n1 "$work/vis/after/p.mine")" == 200 && "$(head -n1 "$work/vis/after/n.mine")" == 200 ]] &&
+  lists after a "$vis_g" && lists after a "$vis_d" && lists after a "$vis_e" && lists after a "$vis_f" &&
+  shows r "$vis_e" "clause e: this session wrote two scopes" && shows r "$vis_f" "clause f: this session read another scope" &&
+  ! lists after r "$vis_e" && ! lists after r "$vis_f" && ! lists after r "$vis_d" && ! lists after r "$vis_g" &&
+  ! lists after p "$vis_d" && ! lists after p "$vis_e" && ! lists after n "$vis_d" && ! lists after n "$vis_g"'
 
 # --- (n) the client read ledger: a read whose only trace is the record the client wrote ----------
 # A real store pod over the same store, so the client's call is SERVED (a live sync, then the read).

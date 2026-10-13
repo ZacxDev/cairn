@@ -93,6 +93,10 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		// answers at all is the visibility predicate's verdict about this caller — the owner, or a
 		// reader of every scope the session touched — and every miss is one body.
 		"GET /session/transcript content",
+		// 🔴 "MY SESSIONS" (S7 of the transcripts plan). `content`, never `public`: the list is the
+		// transcript store's owner arm — which stored sessions are THIS caller's — and a narrowed
+		// credential lists nothing.
+		"GET /my-sessions content",
 		"GET /share",
 		// 🔴 THE TEAM PAGE (`team.go`). `content`: every list on it is an authority answer.
 		"GET /scope/sources content",
@@ -520,6 +524,9 @@ var bareGETAnswer = map[string]int{
 	// And the raw-record view, for the session page's reason: a request naming no session asked about
 	// nothing, so it gets the navigation page rather than the uniform no-transcript refusal.
 	"GET /session/transcript content": http.StatusOK,
+	// "My sessions" has no operand to name: its bare request IS the page (the empty state when the
+	// caller owns nothing, or the deployment stores no transcripts).
+	"GET /my-sessions content": http.StatusOK,
 	// The scope list's bare request IS the page (it was the root's), and the sessions list's bare
 	// request is the list: neither has an operand to name, so there is nothing for a refusal to protect.
 	"GET /scopes content":   http.StatusOK,
@@ -750,6 +757,11 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		{"GET", "/session/transcripts"},
 		{"GET", "/session/"},
 		{"GET", "/transcript"},
+		// "My sessions"' near-misses (transcripts S7): a prefix match on the row would serve each.
+		{"GET", "/my-sessions/"},
+		{"GET", "/my-sessionsx"},
+		{"GET", "/my-session"},
+		{"GET", "/my"},
 		{"GET", "/scope/source"},
 		{"GET", "/sources"},
 		// S4's near-misses: the unversioned script a worker-shaped draft would register, a wrong
@@ -808,6 +820,7 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		{"PUT", "/memo"},
 		{"POST", "/scope/sources/"},
 		{"POST", "/session/transcript"},
+		{"POST", "/my-sessions"},
 		{"POST", "/session"},
 		{"PUT", "/scope/sources"},
 		{"POST", "/scope"},
@@ -960,6 +973,10 @@ var contentAuthority = map[string]string{
 	// transcript predicate's, read off the request's own authorization — a seam this walk has no
 	// counter for; `TestTheRawRecordViewAsksThePredicate` is what measures it.
 	"GET /session/transcript content": "source",
+	// `source`: "My sessions" consults `Visible` for the shell, like every browse page. ⚠ The list
+	// itself is the transcript store's OWNER ARM, read off the request's own identity — a seam this
+	// walk has no counter for; `TestMySessionsListsTheViewersOwnAndNoOneElses` is what measures it.
+	"GET /my-sessions content": "source",
 	// `source`: the scope list is `Visible` (and `Search`), the root's answer before the hub.
 	"GET /scopes content": "source",
 	// `source`, for `Source.Session`'s reason: `Source.AllSessions` is narrowed by the same authority.

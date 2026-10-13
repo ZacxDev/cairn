@@ -102,7 +102,7 @@ func TestTheHubCountsOnlyWhatTheViewerCanRead(t *testing.T) {
 			t.Errorf("%s: the scopes card reads %q, want it to carry %q — the count of what THIS viewer can read",
 				who, got, want[who])
 		}
-		for _, card := range []string{"arcs", "sessions", "team"} {
+		for _, card := range []string{"arcs", "sessions", "mysessions", "team"} {
 			if got := hubCardText(t, body, card); strings.ContainsAny(got, "0123456789") {
 				t.Errorf("%s: the %s card carries a number (%q); only the scopes card has a count", who, card, got)
 			}
@@ -117,20 +117,21 @@ func TestTheHubCountsOnlyWhatTheViewerCanRead(t *testing.T) {
 	}
 }
 
-// TestTheHubIsFourCardsEachLinkingItsPage pins the hub's shape: the four ways in, each title a link
-// to its page — the team card to `/team` (#214), which `/share` and `/invite` now redirect to.
-func TestTheHubIsFourCardsEachLinkingItsPage(t *testing.T) {
+// TestTheHubIsFiveCardsEachLinkingItsPage pins the hub's shape: the five ways in, each title a link
+// to its page — the team card to `/team` (#214), which `/share` and `/invite` now redirect to, and
+// the "My sessions" card to `/my-sessions` (transcripts S7), the only link to an owner-only session.
+func TestTheHubIsFiveCardsEachLinkingItsPage(t *testing.T) {
 	readsA, _, _ := arcsWorld(t)
 	body := getAs(t, hubServer(t, readsA), RootPath).Body.String()
-	for card, href := range map[string]string{"arcs": "/arcs", "scopes": "/scopes", "sessions": "/sessions", "team": "/team"} {
+	for card, href := range map[string]string{"arcs": "/arcs", "scopes": "/scopes", "sessions": "/sessions", "mysessions": "/my-sessions", "team": "/team"} {
 		re := regexp.MustCompile(`(?s)<section class="card" data-hub="` + card + `">.*?<a class="card-name" href="` +
 			regexp.QuoteMeta(href) + `">`)
 		if !re.MatchString(body) {
 			t.Errorf("the %s card does not link %s from its title", card, href)
 		}
 	}
-	if n := strings.Count(body, `data-hub="`); n != 4 {
-		t.Errorf("the hub renders %d cards, want 4", n)
+	if n := strings.Count(body, `data-hub="`); n != 5 {
+		t.Errorf("the hub renders %d cards, want 5", n)
 	}
 	// The scope list moved: no scope card and no search box on the hub.
 	if strings.Contains(body, `class="searchbar"`) || strings.Contains(body, `class="kind"`) {
