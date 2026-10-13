@@ -158,7 +158,7 @@ it names a deployment; this is its skeleton. Nothing here has been run.
   OpenAI-compatible provider spelling in `plugins/internal/llm`; paging on `/my-sessions`.
 
 ## Next steps (ranked)
-1. **Deploy `b888b2d`** (capture OFF, no migration). forcing: user — operator chose "ship it".
+1. **Deploy `b888b2d`** (capture OFF, no migration). forcing: user — the operator chose to ship capture now (O17).
 2. **Arming, steps 2–7 above**, stopping for the operator at steps 4, 5 and 6. forcing: user.
 3. **The first two defects above** (the dualrun flake; the ClickUp boundary rule) before plugin B
    is toggled on anywhere. forcing: quality.
