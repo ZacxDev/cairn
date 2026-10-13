@@ -205,17 +205,7 @@ func (a *Archive) deleteLocked(m *Meta, reason string) error {
 	if err := a.forgetOutputs(m.Root); err != nil {
 		return err
 	}
-	a.mu.Lock()
-	var staged []string
-	for _, st := range a.frames {
-		if st.root == m.Root {
-			staged = append(staged, st.target)
-		}
-	}
-	a.mu.Unlock()
-	for _, target := range staged {
-		a.dropFrames(m.Root, target)
-	}
+	a.dropRootFrames(m.Root)
 	if err := os.RemoveAll(dir); err != nil {
 		return err
 	}
@@ -264,31 +254,67 @@ func (a *Archive) Withdraw(who Uploader, root string) (bool, error) {
 		}
 		return true, a.deleteLocked(m, ReasonWithdrawn)
 	}
-	return a.deletedFor(who, root)
+	// Nothing is stored under the root. A record or blob still being reassembled from continuation
+	// frames (staged OUTSIDE every session directory, before any upload commits) is that session's
+	// content all the same, and goes now rather than after [FrameIdle].
+	a.dropRootFrames(root)
+	return a.deletedFor(who, root), nil
 }
 
 // deletedFor reports whether the journal records a deletion of `root` as uploaded by `who`.
-func (a *Archive) deletedFor(who Uploader, root string) (bool, error) {
-	raw, err := os.ReadFile(filepath.Join(a.cfg.Dir, journalName))
+func (a *Archive) deletedFor(who Uploader, root string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	was, ok := a.deleted[root]
+	return ok && was == who && who.Owner != ""
+}
+
+// dropRootFrames discards every continuation-frame sequence staged for a root. The caller holds the
+// root's lock.
+func (a *Archive) dropRootFrames(root string) {
+	a.mu.Lock()
+	var staged []string
+	for _, st := range a.frames {
+		if st.root == root {
+			staged = append(staged, st.target)
+		}
+	}
+	a.mu.Unlock()
+	for _, target := range staged {
+		a.dropFrames(root, target)
+	}
+}
+
+// readDeleted is every root the journal records a FINAL deletion of ([Archive.gone]), and whose it
+// was. A line that does not decode is skipped: [CheckOwnership] already vetted the file, and a
+// finality nobody can read must not stop the store from opening.
+func readDeleted(dir string) (map[string]Uploader, error) {
+	out := map[string]Uploader{}
+	raw, err := os.ReadFile(filepath.Join(dir, journalName))
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil
+		return out, nil
 	}
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	for _, line := range bytes.Split(raw, []byte("\n")) {
 		var r journalRecord
-		if json.Unmarshal(line, &r) != nil {
+		if json.Unmarshal(line, &r) != nil || r.Event != eventDeleted || r.Reason == ReasonRetentionNoMeta || r.Root == "" {
 			continue
 		}
-		if r.Event == eventDeleted && r.Root == root && r.Owner == who.Owner && r.Host == who.Host && r.Owner != "" {
-			return true, nil
-		}
+		out[r.Root] = Uploader{Owner: r.Owner, Host: r.Host}
 	}
-	return false, nil
+	return out, nil
 }
 
+// journal appends one deletion fact and, once it is on disk, makes the deletion FINAL for the root.
+//
+// 🔴 UNDER ITS OWN LOCK: two roots' deletions hold two different root locks, and each measured the
+// journal's size before and after its own append — so two concurrent ones each counted the other's
+// line, and `used` drifted up by a line per collision.
 func (a *Archive) journal(r journalRecord) error {
+	a.journalMu.Lock()
+	defer a.journalMu.Unlock()
 	line, err := json.Marshal(r)
 	if err != nil {
 		return err
@@ -311,5 +337,10 @@ func (a *Archive) journal(r journalRecord) error {
 		return err
 	}
 	a.adjust(fileSize(path) - before)
+	if r.Reason != ReasonRetentionNoMeta {
+		a.mu.Lock()
+		a.deleted[r.Root] = Uploader{Owner: r.Owner, Host: r.Host}
+		a.mu.Unlock()
+	}
 	return nil
 }

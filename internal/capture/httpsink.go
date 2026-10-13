@@ -69,6 +69,8 @@ type Endpoint struct {
 //     other position is refused ([UnresumableError]) rather than guessed at.
 //   - 409 uniform (`{"refused":"held-by-another-uploader"}`): another (owner, host) holds the root.
 //     [ErrNotOwner]; logged by the agent every run, nothing stored.
+//   - 410 (`deleted`): the session's transcript was deleted on the instance. [ErrDeleted]; the agent
+//     marks the session and never sends anything of it there again.
 //   - 413 (`too-large`): one record or blob is over the pod's bound. It is replaced by a
 //     PLACEHOLDER naming its size and the bound, sent with the SAME `src` and cursor, so the stream
 //     moves on and the session's cursor is never wedged (decision 15's AP2 note). Counted in
@@ -124,18 +126,35 @@ type HTTPSink struct {
 // request per run, not a re-read and re-redaction of the whole backlog.
 func (s *HTTPSink) Stopped(instance string) error { return s.stopped[instance] }
 
-// httpClient is the caller's client, or one that NEVER follows a redirect: a followed 307 would
-// carry the bearer token and the body to wherever the answer pointed.
+// httpClient is the caller's client, or one that NEVER follows a redirect and NEVER uses a proxy
+// from the environment.
+//
+// 🔴 NO REDIRECT: a followed 307 would carry the bearer token and the body to wherever the answer
+// pointed.
+//
+// 🔴 NO ENVIRONMENT PROXY (#273's audit, F4). Go's default transport reads `HTTP_PROXY` /
+// `HTTPS_PROXY`, and for a plain-`http` worker URL — which `-allow-plaintext-host` admits — the
+// whole request goes TO the proxy in clear: the capture token and every transcript byte, to
+// whatever a stray variable in a unit's environment names. The worker listener is never meant to be
+// reached through a proxy the environment chose, so this transport has none, for `https` too.
 func (s *HTTPSink) httpClient() *http.Client {
 	if s.Client != nil {
 		return s.Client
 	}
 	if s.client == nil {
-		s.client = &http.Client{Timeout: 2 * time.Minute,
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+		s.client = &http.Client{Timeout: 2 * time.Minute, Transport: transport,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	return s.client
 }
+
+// ErrDeleted is the instance's 410: the session's transcript was DELETED there — by its owner, by
+// this agent's own withdrawal, or by retention — and that is final for the session on that
+// instance. The agent stops sending it for good ([SessionState.Deleted]); it is not an error to
+// retry, and not one to log every run.
+var ErrDeleted = errors.New("the instance answered that this session's transcript was deleted there (410); nothing more of it is sent")
 
 // ErrNotOwner is the uniform 409: the root is held by another (owner, host).
 var ErrNotOwner = errors.New("the instance answered that this session is held by another uploader (409); nothing was stored")
@@ -209,9 +228,10 @@ func ValidateEndpoint(raw string) (string, error) {
 // match would admit `evil-<host>`; a prefix match `<host>.example`. There is NO default and NO
 // environment spelling — a copied environment must not be able to switch it on.
 //
-// 🔴 TWO THINGS IT DOES NOT TOUCH: a redirect is still never followed ([HTTPSink.httpClient]), so
-// the token goes nowhere but the named host; and a REDACTION-OFF test build still sends to a
-// loopback address only, whatever is allowed.
+// 🔴 THREE THINGS IT DOES NOT LOOSEN: a redirect is still never followed and no proxy from the
+// environment is ever used ([HTTPSink.httpClient]), so the token goes to the named host and nowhere
+// else this program chooses; and a REDACTION-OFF test build still sends to a loopback address only,
+// whatever is allowed.
 func ValidateEndpointAllowing(raw string, plaintextHosts ...string) (endpoint string, plaintext bool, err error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
@@ -339,6 +359,8 @@ func (s *HTTPSink) post(instance, path string, body []byte) (int, answer, error)
 			return status, a, nil
 		}
 		return status, a, ErrNotOwner
+	case http.StatusGone:
+		return status, a, ErrDeleted
 	case http.StatusUnprocessableEntity:
 		r := &RecheckRefusal{Record: -1}
 		switch {
@@ -362,6 +384,11 @@ func (s *HTTPSink) exchange(instance, path string, body []byte) (int, []byte, er
 	if err != nil {
 		return 0, nil, err
 	}
+	return s.send(instance, ep, path, body)
+}
+
+// send is one request to a resolved endpoint.
+func (s *HTTPSink) send(instance string, ep Endpoint, path string, body []byte) (int, []byte, error) {
 	req, err := http.NewRequest(http.MethodPost, ep.URL+path, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, err
@@ -907,8 +934,22 @@ func (s *HTTPSink) framedBlob(u Upload, path, from, to string, data []byte) (int
 // run's failure. In every such case the agent keeps the session exactly where it was and asks
 // again on the next run — a 200 that carries no `deleted` at all is refused the same way rather
 // than read as either answer.
+//
+// 🔴 A WITHDRAWAL IS SENT TO AN INSTANCE THAT IS NOT TAKING UPLOADS (#273's audit, F3). A 503
+// (disarmed) or a 507 (quota) ends that instance's UPLOADS for the run ([HeldError]) — and a quota
+// that is full is exactly when a prefix that must go should go. The withdrawal route stores nothing
+// and is not behind the arming gate, so it is exempt from that stop. It is NOT exempt from a refused
+// token ([FatalError]): every further request with it counts toward the worker's lockout.
 func (s *HTTPSink) Withdraw(instance, root string) (bool, error) {
-	status, raw, err := s.exchange(instance, "/capture/v1/sessions/"+url.PathEscape(root)+"/withdraw", []byte("{}"))
+	var fatal *FatalError
+	if err := s.stopped[instance]; errors.As(err, &fatal) {
+		return false, err
+	}
+	ep, ok := s.Endpoints[instance]
+	if !ok {
+		return false, fmt.Errorf("no worker listener is configured for instance %s (-worker %s=<url>); nothing was sent", instance, instance)
+	}
+	status, raw, err := s.send(instance, ep, "/capture/v1/sessions/"+url.PathEscape(root)+"/withdraw", []byte("{}"))
 	if err != nil {
 		return false, err
 	}

@@ -71,7 +71,8 @@ func TestWhoMayToggleIsDecidedPerLevel(t *testing.T) {
 	rig, journal := pluginsRig(t)
 	rowan, wren := rig.signIn(shareRowanToken), rig.signIn(shareWrenToken)
 	arcForm := func(value string) url.Values {
-		return url.Values{FieldPlugin: {"summary"}, QueryHome: {string(shareOtherScope)}, QuerySlug: {"arc-one"}, FieldValue: {value}}
+		return url.Values{FieldPlugin: {"summary"}, QueryHome: {string(shareOtherScope)}, QuerySlug: {"arc-one"}, FieldValue: {value},
+			FieldMembers: {arcMembersDigest([]string{toggleSession})}}
 	}
 	sessionForm := func(value string) url.Values {
 		return url.Values{FieldPlugin: {"summary"}, FieldSession: {toggleSession}, FieldValue: {value}}

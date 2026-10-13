@@ -163,10 +163,14 @@ type Archive struct {
 	locks  map[string]*sync.Mutex
 	frames map[string]*frameState
 	// outputs is the RUNNING TOTAL of stored plugin output bytes, by plugin (`outputs.go`): counted
-	// off the disk ONCE, by [Open], then moved by every append and by every deletion. outputScans
-	// counts those whole-archive counts — a test's instrument for "a refused write rescans nothing".
-	outputs     map[string]int64
-	outputScans int
+	// off the disk ONCE, by [Open], then moved by every append and by every deletion.
+	outputs map[string]int64
+	// deleted is every root the journal records a deletion of, and whose it was (`sweep.go`): read
+	// once by [Open], added to by every deletion. A root in it is never stored under again.
+	deleted map[string]Uploader
+	// journalMu serialises appends to the deletion journal, so each one's size is accounted whole
+	// (two roots' deletions run under two different root locks).
+	journalMu sync.Mutex
 	// afterFrameSurvey, when set (tests only), runs between the frame sweep's survey and its
 	// per-root re-check, so a frame staged in that window can be placed there deterministically.
 	afterFrameSurvey func()
@@ -208,6 +212,11 @@ type Stored struct {
 	FrameIndex int
 	FrameCount int
 }
+
+// ErrDeleted refuses an upload for a root whose stored session was DELETED here — by its owner, by
+// its uploader's withdrawal, or by retention — and is only ever returned to that root's own (owner,
+// host). The uploader must stop sending the session for good ([Archive.gone]).
+var ErrDeleted = errors.New("this session's transcript was deleted on this instance; nothing more of it is stored")
 
 // ErrNotOwner is decision 15's ownership refusal: the root was first uploaded by another
 // (owner, host). ONE value for every such case, so the answer names neither.
@@ -353,6 +362,9 @@ func Open(cfg Config) (*Archive, error) {
 	// The output totals, counted HERE and nowhere else (`outputs.go`): nothing is appending yet, so
 	// the count cannot race an append.
 	if a.outputs, err = a.outputUsage(); err != nil {
+		return nil, err
+	}
+	if a.deleted, err = readDeleted(cfg.Dir); err != nil {
 		return nil, err
 	}
 	return a, nil
@@ -877,6 +889,40 @@ func (a *Archive) recheckFields(u Upload, extra ...field) error {
 	return nil
 }
 
+// gone refuses an upload for a root that was stored here and DELETED (S6). The caller holds the
+// root's lock and read `m` under it.
+//
+// 🔴 A DELETION IS FINAL FOR ITS ROOT, BECAUSE "NO SESSION STORED" WAS READ AS "A NEW SESSION MAY
+// BEGIN". After an owner's delete (or a withdrawal) the root has no `meta.json`, and the upload path
+// treats that as a first upload: `owned(nil)` is true and every position is "". The capture agent
+// still holds its offsets for the streams it shipped — those were refused 409 — but anything it
+// sends with `from == ""` was ACCEPTED: a subagent stream that started after the delete, a new or
+// changed blob. The directory came back holding a fragment of the session its owner had deleted,
+// and a plugin could attach an output to it. So every journaled deletion of a root is final.
+//
+// ⚠ RETENTION INCLUDED, by decision: a session swept after its retention would otherwise be
+// re-shipped from offset 0 by a host that still has its files — the old content, back for another
+// retention period. The one deletion that is NOT final is [ReasonRetentionNoMeta]: a directory no
+// upload ever committed held no session, and its owner is unknown.
+//
+// The refusal is [ErrDeleted] for the deleted root's own (owner, host) — who must stop — and
+// [ErrNotOwner], the uniform answer, for anybody else, so the id of a deleted session is no oracle.
+func (a *Archive) gone(m *Meta, who Uploader, root string) error {
+	if m != nil {
+		return nil
+	}
+	a.mu.Lock()
+	was, deleted := a.deleted[root]
+	a.mu.Unlock()
+	switch {
+	case !deleted:
+		return nil
+	case was == who:
+		return ErrDeleted
+	}
+	return ErrNotOwner
+}
+
 // owned is decision 15's ownership rule: the first accepted upload fixes (owner, host).
 func owned(m *Meta, who Uploader) bool {
 	return m == nil || (m.Owner == who.Owner && m.Host == who.Host)
@@ -916,6 +962,9 @@ func (a *Archive) AppendRecords(who Uploader, u Upload, stream string, recs []Re
 
 	m, err := a.readMeta(u.Root)
 	if err != nil {
+		return Stored{}, err
+	}
+	if err := a.gone(m, who, u.Root); err != nil {
 		return Stored{}, err
 	}
 	// 🔴 OWNERSHIP BEFORE THE CAS, so the stale answer — which names the stored position — is
@@ -1031,6 +1080,9 @@ func (a *Archive) PutBlob(who Uploader, u Upload, name string, data []byte) (Sto
 
 	m, err := a.readMeta(u.Root)
 	if err != nil {
+		return Stored{}, err
+	}
+	if err := a.gone(m, who, u.Root); err != nil {
 		return Stored{}, err
 	}
 	if !owned(m, who) {

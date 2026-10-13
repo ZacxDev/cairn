@@ -2,6 +2,7 @@ package worker
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -138,16 +139,59 @@ func TestAWithdrawalDeletesOnlyTheCallersOwnRoot(t *testing.T) {
 		t.Fatalf("host-b, which never held the root, was answered %q after host-a withdrew it", rec.Body.String())
 	}
 
-	// 🔴 A ROOT SOMEBODY ELSE HOLDS NOW IS `false` EVEN FOR A CALLER WHO ONCE WITHDREW THAT ID: host-b
-	// uploads the same id, and host-a's repeat must not claim a deletion that did not happen.
-	if rec := g.do(http.MethodPost, recordsPath, captureAB, recordsBody("host-b", "", "100", "synthetic turn")); rec.Code != http.StatusOK {
-		t.Fatalf("host-b's upload of the freed id answered %d %q", rec.Code, rec.Body.String())
+}
+
+// TestADeletedSessionIsNotResurrectedByALaterUpload — #273's audit (F2). After a session's transcript
+// is deleted here, the root has no `meta.json`, and the upload path used to read that as "a first
+// upload": anything sent with `from == ""` — a subagent stream that began after the delete, a new or
+// changed blob, the first frame of a large record — was ACCEPTED and re-created the directory, a
+// fragment of the session its owner had deleted, to which a plugin could attach an output. RED before
+// the fix: each of those answered 200 and the directory came back.
+//
+// Now a journaled deletion is FINAL for its root: the uploader that held it gets 410 `deleted` — the
+// agent's signal to stop for good — on every route; another host label asking about that id gets
+// the uniform 409 (no oracle); nothing is stored, staged or created.
+func TestADeletedSessionIsNotResurrectedByALaterUpload(t *testing.T) {
+	g := newRig(t, true, nil)
+	dir := storeOwned(t, g)
+	if rec := g.do(http.MethodPost, withdrawPath, captureA, ""); rec.Body.String() != WithdrawnBody {
+		t.Fatalf("control: the withdrawal answered %q", rec.Body.String())
 	}
-	if rec := g.do(http.MethodPost, withdrawPath, captureA, ""); rec.Body.String() != NotWithdrawnBody {
-		t.Fatalf("host-a was answered %q for a root host-b holds now", rec.Body.String())
+	used := g.arc.Used()
+	for name, c := range map[string]struct{ path, body string }{
+		"the main stream again, from the start": {recordsPath, recordsBody("host-a", "", "100", "synthetic turn")},
+		"a subagent stream that began later":    {"/capture/v1/sessions/s-0001/streams/subagent:late01/records", recordsBody("host-a", "", "100", "synthetic turn")},
+		"a new blob":                            {"/capture/v1/sessions/s-0001/blobs/toolu_new.txt", blobBody("host-a", "", "v1", []byte("synthetic output\n"))},
+		"the old blob, changed":                 {blobPath, blobBody("host-a", "", "v2", []byte("synthetic output, changed\n"))},
+		"the first frame of a large record": {recordsPath, `{"schema":1,"runtime":"claude","host":"host-a","from":"","to":"100","declared_scopes":[],` +
+			`"records":[{"src":"0","chunk":"e30="}],"frames":{"index":0,"count":2}}`},
+	} {
+		rec := g.do(http.MethodPost, c.path, captureA, c.body)
+		if rec.Code != http.StatusGone || rec.Body.String() != DeletedBody {
+			t.Errorf("%s: answered %d %q, want 410 %q", name, rec.Code, rec.Body.String(), DeletedBody)
+		}
 	}
-	if _, err := os.Stat(filepath.Join(dir, "meta.json")); err != nil {
-		t.Fatalf("host-a's repeat deleted host-b's root: %v", err)
+	// Another host label of the same owner: the uniform refusal, never "deleted".
+	if rec := g.do(http.MethodPost, recordsPath, captureAB, recordsBody("host-b", "", "100", "synthetic turn")); rec.Code != http.StatusConflict ||
+		rec.Body.String() != NotOwnerBody {
+		t.Errorf("host-b's upload under the deleted id answered %d %q, want the uniform 409", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("an upload after the deletion re-created the session's directory (%v)", err)
+	}
+	if staged, _ := os.ReadDir(filepath.Join(g.dir, "frames")); len(staged) != 0 {
+		t.Fatalf("an upload after the deletion staged %d frame file(s)", len(staged))
+	}
+	if g.arc.Used() != used {
+		t.Fatalf("refused uploads changed the quota's count: %d → %d", used, g.arc.Used())
+	}
+	// A plugin cannot attach an output to it either.
+	if err := g.arc.AppendOutput("s-0001", "summary", []byte(fixtureOutput)); !errors.Is(err, archive.ErrNoSession) {
+		t.Fatalf("an output for the deleted session: %v, want no stored session", err)
+	}
+	// CONTROL: a root that was never deleted is stored as ever.
+	if rec := g.do(http.MethodPost, "/capture/v1/sessions/s-0002/streams/main/records", captureA, recordsBody("host-a", "", "100", "synthetic turn")); rec.Code != http.StatusOK {
+		t.Fatalf("control: a fresh root answered %d %q", rec.Code, rec.Body.String())
 	}
 }
 

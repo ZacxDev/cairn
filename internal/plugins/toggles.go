@@ -21,9 +21,9 @@ import (
 // 🔴 TOGGLES: DEFAULT OFF, SET PER SCOPE AND PER ARC (O5), AND EVERY FINER LEVEL CAN ONLY NARROW
 // (decision 10). Revision 1's fold, under which an arc or a session ON overrode a scope OFF, is
 // RETRACTED: arc membership is whatever an arc `PUT` names, with no admin needed, so an arc that
-// could widen would hand the consent of a scope's admins to whoever registers arcs. For the same
-// reason an arc toggle covers the members SNAPSHOTTED when an admin set it ([Record.Members]),
-// never the arc's registration as it reads later.
+// could widen would hand the consent of a scope's admins to whoever registers arcs. And an arc's
+// `off` keeps covering the members it was set over ([Record.Members]), so re-registering the arc
+// without a session cannot lift an admin's veto.
 
 // Level is where a toggle is set.
 type Level string
@@ -98,21 +98,23 @@ type Record struct {
 	Value  string `json:"value"`
 	By     By     `json:"by"`
 	At     string `json:"at"`
-	// Members is an ARC record's SNAPSHOT: the session ids the arc listed at the moment an admin of
-	// its home set this value. Arc level only; absent on every other level.
+	// Members is an ARC `off` record's SNAPSHOT: the session ids the arc listed at the moment an
+	// admin of its home set the VETO. Arc level and value `off` only; absent on every other record.
 	//
-	// 🔴 AN ARC TOGGLE COVERS EXACTLY THIS LIST, AND NOTHING THE ARC'S REGISTRATION SAYS LATER (#270's
-	// audit, closed in S6). Arc membership is whatever an arc `PUT` names, and any WRITER of the home
-	// may `PUT`: read live, a writer added a session to an ON arc and it went ON with no admin act —
-	// and REMOVED one from an OFF arc and lifted the admin's veto. "It must have touched the home" did
-	// not close that either: a trailer naming a session id is self-declared, by the same writer. So
-	// the admin's act speaks for the members it could see, a later registration changes nothing in
-	// either direction, and covering a member added since takes an admin setting the toggle again.
-	// A record with NO snapshot covers nobody.
+	// 🔴 A VETO KEEPS COVERING THE MEMBERS IT WAS SET OVER (#270's audit, S6). Arc membership is
+	// whatever an arc `PUT` names, and any WRITER of the home may `PUT`: read live alone, a writer
+	// REMOVED a session from an `off` arc and the admin's veto was lifted with no admin act. So an
+	// `off` arc covers its CURRENT members and, as well, every member it listed when the veto was
+	// set — [State.ArcsVetoing].
 	//
-	// ⚠ A build older than this field refuses the line (unknown key) and counts it `Skipped`, so
-	// after a rollback an arc toggle reads `unset` — fail closed for an ON, and an OFF veto is lost
-	// until the toggle is saved again.
+	// ⚠ `on` CARRIES NO SNAPSHOT AND IS READ LIVE, DELIBERATELY (an agent decision recorded in the
+	// plan under decision 10 / T14, open to operator review). A snapshot there was built first and
+	// withdrawn: per-arc summaries must stay continuous as an arc grows (operator decision O5), and
+	// freezing `on` at the members an admin happened to see would stop them at every new session.
+	// What that leaves is stated where [Effective] is.
+	//
+	// ⚠ A build older than this field refuses an `off` line carrying it (unknown key) and counts it
+	// `Skipped`, so after a rollback that veto reads as the arc's PREVIOUS value — possibly `on`.
 	Members []string `json:"members,omitempty"`
 }
 
@@ -154,23 +156,23 @@ func (s State) Session(plugin, root string) string {
 	return s.Value(plugin, LevelSession, root, ValueUnset)
 }
 
-// ArcMembers is the member snapshot the latest record for `(plugin, arc)` carries, and whether any
-// record exists for it. An `unset` record covers nothing whatever it carries.
-func (s State) ArcMembers(plugin string, k arcs.Key) ([]string, bool) {
+// ArcSnapshot is the member snapshot an arc's latest `off` record carries — nil when the arc's
+// latest value for the plugin is not `off`, or its record carries none.
+func (s State) ArcSnapshot(plugin string, k arcs.Key) []string {
 	r, ok := s.latest[toggleKey{plugin, LevelArc, ArcTarget(k)}]
-	if !ok {
-		return nil, false
+	if !ok || r.Value != ValueOff {
+		return nil
 	}
-	return r.Members, true
+	return r.Members
 }
 
-// ArcsCovering is every arc whose toggle for `plugin` COVERS one of `ids` (a root session and its
-// children) — whose latest record, `on` or `off`, snapshotted one of them as a member — sorted. It
-// is what [Subject.Arcs] is built from: the journal's own snapshots, never the live arc registry.
-func (s State) ArcsCovering(plugin string, ids []string) []arcs.Key {
+// ArcsVetoing is every arc whose latest value for `plugin` is `off` AND whose record snapshotted one
+// of `ids` (a root session and its children) as a member — the arcs whose veto still covers the
+// session even if the arc no longer lists it. Sorted. [ArcsFor] unions it with the live listing.
+func (s State) ArcsVetoing(plugin string, ids []string) []arcs.Key {
 	var out []arcs.Key
 	for k, r := range s.latest {
-		if k.plugin != plugin || k.level != LevelArc || r.Value == ValueUnset {
+		if k.plugin != plugin || k.level != LevelArc || r.Value != ValueOff {
 			continue
 		}
 		if !slices.ContainsFunc(r.Members, func(m string) bool { return slices.Contains(ids, m) }) {
@@ -183,13 +185,17 @@ func (s State) ArcsCovering(plugin string, ids []string) []arcs.Key {
 		}
 		out = append(out, arcs.Key{Home: home, Slug: slug})
 	}
-	slices.SortFunc(out, func(a, b arcs.Key) int {
+	sortKeys(out)
+	return out
+}
+
+func sortKeys(keys []arcs.Key) {
+	slices.SortFunc(keys, func(a, b arcs.Key) int {
 		if c := strings.Compare(a.Home, b.Home); c != 0 {
 			return c
 		}
 		return strings.Compare(a.Slug, b.Slug)
 	})
-	return out
 }
 
 // AnyConsent reports whether ANY scope holds `allowed` or `on` for the plugin. Without one, rule (1)
@@ -222,9 +228,9 @@ type Subject struct {
 	Root string
 	// V is the session's WHOLE visibility set (decision 3) — written AND read scopes, `*` included.
 	V []string
-	// Arcs is every arc whose toggle for the plugin COVERS the root or one of its child sessions:
-	// the member snapshot an admin's act recorded ([State.ArcsCovering], [Record.Members]) — never
-	// the arc registry as it reads now.
+	// Arcs is every arc that SPEAKS for the root or one of its child sessions ([ArcsFor]): each
+	// registered arc that lists one of them NOW, and each arc whose `off` veto snapshotted one of
+	// them when it was set ([State.ArcsVetoing]).
 	Arcs []arcs.Key
 }
 
@@ -236,9 +242,15 @@ type Subject struct {
 // (4) the owner has not opted out. An EMPTY `V` resolves OFF. An arc homed outside `V` says nothing
 // about the session (#270 round 1 — the plan's decision 10 named no such limit).
 //
-// 🔴 `sub.Arcs` IS THE ARCS WHOSE TOGGLE COVERS THE SESSION — the member list an ADMIN's act
-// snapshotted ([Record.Members]) — so BOTH limits hold together: the session was a member when the
-// home's admin set the toggle, AND its `V` holds the home.
+// 🔴 WHICH ARCS SPEAK, EXACTLY ([ArcsFor]): for `on`, the arcs that list the session NOW; for `off`,
+// those AND every arc whose veto snapshotted the session when an admin set it ([Record.Members]) —
+// so removing a member from an `off` arc lifts nothing. Either way only an arc HOMED IN `V` counts.
+//
+// ⚠ THE RESIDUAL, STATED: `on` is read live, so a WRITER of an `on` arc's home scope — not an admin
+// — can enrol a session by adding it to the arc, provided the session touched that home scope and
+// every OTHER scope in its `V` is `allowed` or `on`. That is what `allowed` means: a scope's admins
+// consenting that an arc may turn the plugin on for sessions that touched their scope. A scope that
+// is `off` is never overridden, and a scope set `on` runs regardless of any arc.
 //
 // 🔴 `known` IS ASKED OF EVERY NAME, AND A NAME IT DOES NOT KNOW IS OFF WHATEVER THE JOURNAL SAYS.
 // A scope deleted or renamed after its admins consented keeps its journal line; the session's
@@ -286,57 +298,6 @@ func Effective(st State, plugin string, sub Subject, known func(string) bool) bo
 	// 🔴 THE CONSENT AND IS NOT INSIDE THE OR. Revision 1 read `(consented || arcOn) && …` in effect —
 	// an arc ON overrode a scope OFF — and arc membership is whatever an arc `PUT` names.
 	return consented && (everyOn || arcOn) && !arcOff && st.Session(plugin, sub.Root) != ValueOff
-}
-
-// Settled reports that `plugin` is OFF for `sub` AND FOR EVERY SUPERSET of `sub.V` — the only case
-// in which a caller holding part of a session's visibility set may stop looking for the rest
-// (`transcript.Gate.Settled`). `sub.Arcs` is [State.ArcsCovering], as for [Effective].
-//
-// 🔴 [Effective] SAYING OFF IS NOT ENOUGH, BECAUSE THE FOLD IS NOT MONOTONE IN `V`: an arc counts
-// only when its home is in `V`, so a scope ADDED to `V` can be the home of an ON arc. What cannot
-// be undone by adding scopes is exactly:
-//   - a scope already in the set that is `*`, unknown, or not consented (rule 1 fails for good);
-//   - the owner's opt-out (rule 4);
-//   - an `off` arc covering the session whose home is ALREADY in the set (rule 3);
-//   - some scope in the set merely `allowed` AND no `on` arc covering the session at all, whatever
-//     its home (rule 2 can never be met: "every scope on" is already false, and no arc can turn on).
-//
-// Anything else — in particular an `on` arc covering the session whose home the set does not hold
-// YET — is not settled, and the caller must compute the whole set. An empty set is never settled.
-func Settled(st State, plugin string, sub Subject, known func(string) bool) bool {
-	if len(sub.V) == 0 {
-		return false
-	}
-	if st.Session(plugin, sub.Root) == ValueOff {
-		return true
-	}
-	everyOn := true
-	inV := map[string]bool{}
-	for _, scope := range sub.V {
-		inV[ScopeTarget(scope)] = true
-		if scope == "*" || !known(scope) {
-			return true
-		}
-		switch st.Scope(plugin, scope) {
-		case ValueOn:
-		case ValueAllowed:
-			everyOn = false
-		default:
-			return true
-		}
-	}
-	anArcIsOn := false
-	for _, k := range sub.Arcs {
-		switch st.Arc(plugin, k) {
-		case ValueOff:
-			if inV[ScopeTarget(k.Home)] {
-				return true
-			}
-		case ValueOn:
-			anArcIsOn = true
-		}
-	}
-	return !everyOn && !anArcIsOn
 }
 
 // Journal is `-plugin-journal`: one JSON record per line, append-only — the arc journal's write
@@ -395,10 +356,10 @@ func validRecord(r Record) error {
 	if _, err := time.Parse(time.RFC3339, r.At); err != nil {
 		return err
 	}
-	// A member snapshot belongs to an ARC record and to nothing else, and is the arc registry's own
+	// A member snapshot belongs to an ARC VETO and to nothing else, and is the arc registry's own
 	// shape: at most [arcs.MaxMembers] session ids.
-	if len(r.Members) > 0 && r.Level != LevelArc {
-		return errors.New("only an arc record carries a member snapshot")
+	if len(r.Members) > 0 && (r.Level != LevelArc || r.Value != ValueOff) {
+		return errors.New("only an arc `off` record carries a member snapshot")
 	}
 	if len(r.Members) > arcs.MaxMembers {
 		return fmt.Errorf("a member snapshot holds at most %d sessions", arcs.MaxMembers)

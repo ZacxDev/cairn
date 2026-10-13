@@ -56,17 +56,22 @@ var ErrNoSession = errors.New("no stored session")
 
 // outputUsage is every stored output byte, by plugin, read off the disk — [Open]'s one count.
 func (a *Archive) outputUsage() (map[string]int64, error) {
-	a.mu.Lock()
-	a.outputScans++
-	a.mu.Unlock()
 	out := map[string]int64{}
 	roots, err := a.Roots()
 	if err != nil {
 		return nil, err
 	}
 	for _, root := range roots {
-		if err := a.sessionOutputBytes(root, out, 1); err != nil {
-			return nil, err
+		one := map[string]int64{}
+		if err := a.sessionOutputBytes(root, one, 1); err != nil {
+			// 🔴 ONE SESSION'S UNREADABLE `outputs.jsonl` MUST NOT STOP `cairn-ui` FROM STARTING — this
+			// runs in [Open]. Its bytes are counted, whole, as the file's on-disk size against NO
+			// plugin (the key ""): they still weigh on every plugin's shared 20% and on the quota,
+			// and no plugin's own share is charged for bytes nobody could attribute.
+			one = map[string]int64{"": fileSize(filepath.Join(a.sessionDir(root), outputsName))}
+		}
+		for plugin, n := range one {
+			out[plugin] += n
 		}
 	}
 	return out, nil
@@ -86,11 +91,12 @@ func (a *Archive) sessionOutputBytes(root string, into map[string]int64, sign in
 }
 
 // forgetOutputs takes a session's output bytes out of the running totals. The caller holds the
-// root's lock and is about to remove the directory.
+// root's lock and is about to remove the directory. A file it cannot read is forgotten as [Open]
+// counted it: whole, against no plugin — a deletion is never refused over an output.
 func (a *Archive) forgetOutputs(root string) error {
 	gone := map[string]int64{}
 	if err := a.sessionOutputBytes(root, gone, 1); err != nil {
-		return err
+		gone = map[string]int64{"": fileSize(filepath.Join(a.sessionDir(root), outputsName))}
 	}
 	a.mu.Lock()
 	for plugin, n := range gone {

@@ -112,14 +112,17 @@ func knownScope(authority interface{ Model() control.Model }) func(string) bool 
 }
 
 // newPluginService builds the ONE service the worker listener's plugin API and the browser's toggle
-// forms share. `known` asks the CURRENT model. It is handed NO arc journal: which arcs speak for a
-// session is the member snapshot each arc toggle recorded when an admin set it (`plugins.Record`),
-// never the arc registry as it reads now.
-func newPluginService(reg *plugins.Registry, journal plugins.Journal, transcripts *transcript.Store,
+// forms share. The arc journal is read per decision (nil when none is configured, and then no arc
+// lists any session); `known` asks the CURRENT model.
+func newPluginService(reg *plugins.Registry, journal plugins.Journal, transcripts *transcript.Store, arcJournal string,
 	authority interface{ Model() control.Model }, storeTitles bool) *plugins.Service {
-	return &plugins.Service{Registry: reg, Journal: journal, Transcripts: transcripts, Known: knownScope(authority),
+	svc := &plugins.Service{Registry: reg, Journal: journal, Transcripts: transcripts, Known: knownScope(authority),
 		StoreTicketTitles: storeTitles,
 		Log:               func(line string) { fmt.Fprintln(os.Stderr, "cairn-ui: "+line) }}
+	if arcJournal != "" {
+		svc.Arcs = arcs.Journal{Path: arcJournal}.Read
+	}
+	return svc
 }
 
 // pluginMode is the startup line's clause about plugins.

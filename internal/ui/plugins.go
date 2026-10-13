@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -31,12 +33,12 @@ import (
 //   - a SCOPE toggle takes `admin` on that scope (the share flow's verb — consent to send a scope's
 //     content to a third party is an administration act, and `write` is not enough);
 //   - an ARC toggle takes `admin` on the arc's HOME scope — NOT the right to `PUT` the arc, which any
-//     writer of the home scope has. It covers EXACTLY the members the arc listed when that admin set
-//     it: the handler snapshots their ids into the journal record (`plugins.Record.Members`), and a
-//     member a writer adds — or removes — afterwards changes nothing until an admin sets the toggle
-//     again. And it speaks only for sessions whose visibility set holds its home
-//     (`plugins.Effective`), so an arc homed elsewhere changes nothing for a session (T14). The arc
-//     page says which members a toggle covers, and which it does not;
+//     writer of the home scope has — and an arc speaks only for sessions whose visibility set holds its
+//     home (`plugins.Effective`), so an arc homed elsewhere changes nothing for a session (T14). `on`
+//     is read against the arc's members as they are NOW; `off` against them AND the members the arc
+//     listed when the veto was saved — the handler snapshots their ids into the journal record
+//     (`plugins.Record.Members`), so removing a session from an `off` arc lifts nothing. The arc
+//     page lists the sessions a veto still covers although the arc no longer lists them;
 //   - a SESSION opt-out takes the transcript's OWNER arm (un-narrowed, `(Kind, ID)`), and can only
 //     say OFF: a session-level ON is refused 400 and journals nothing ([plugins.ErrSessionOn]).
 //
@@ -64,7 +66,23 @@ const (
 const (
 	FieldPlugin = "plugin"
 	FieldValue  = "value"
+	// FieldMembers is the ARC toggle form's digest of the member list the page rendered
+	// ([arcMembersDigest]): the POST is saved only over the list the admin was shown.
+	FieldMembers = "members"
 )
+
+// arcMembersChanged answers an arc toggle POST whose page is stale: nothing is saved.
+const arcMembersChanged = "this arc's members changed since the page you saved from was rendered, so the toggle was NOT " +
+	"saved. Reload the arc page, read the member list, and save again."
+
+// arcMembersDigest is a digest of an arc's member session ids, order-free. Not a secret and not an
+// authority input: it only says WHICH list a form was rendered over.
+func arcMembersDigest(members []string) string {
+	sorted := slices.Clone(members)
+	slices.Sort(sorted)
+	sum := sha256.Sum256([]byte(strings.Join(sorted, "\n")))
+	return hex.EncodeToString(sum[:16])
+}
 
 // NoPluginRegistry is the OFF state's sentence.
 const NoPluginRegistry = "No plugin is registered on this deployment — it was started without -plugin-registry, so " +
@@ -83,11 +101,9 @@ type PluginToggleRow struct {
 	CallsModel    bool
 	Value         string
 	SetBy, SetAt  string
-	// Covered and Uncovered are an ARC row's coverage, set when the value is `on` or `off`: Covered
-	// is the member snapshot the toggle speaks for (the arc's members when an admin set it), and
-	// Uncovered the arc's members NOW that are not in it — added since, and outside the toggle until
-	// an admin saves it again.
-	Covered, Uncovered []string
+	// StillVetoed is an ARC row's whose value is `off`: the sessions the arc listed when the veto was
+	// saved and no longer lists — still covered by it (`plugins.State.ArcSnapshot`).
+	StillVetoed []string
 }
 
 // PluginToggles is the toggle block a scope, arc or session page carries.
@@ -138,16 +154,14 @@ func (s *Server) toggleBlock(level plugins.Level, target string, canEdit bool, a
 		}
 		if rec, ok := st.Last(e.Name, level, key); ok {
 			row.SetBy, row.SetAt = rec.By.Kind+":"+rec.By.ID, rec.At
-			// An arc toggle that says something covers its record's member snapshot, and only that.
-			if level == plugins.LevelArc && row.Value != plugins.ValueUnset {
-				row.Covered = slices.Clone(rec.Members)
-				slices.Sort(row.Covered)
-				for _, m := range members {
-					if !slices.Contains(rec.Members, m) {
-						row.Uncovered = append(row.Uncovered, m)
+			// An arc VETO keeps covering the members it was saved over, listed or not.
+			if level == plugins.LevelArc && row.Value == plugins.ValueOff {
+				for _, m := range rec.Members {
+					if !slices.Contains(members, m) {
+						row.StillVetoed = append(row.StillVetoed, m)
 					}
 				}
-				slices.Sort(row.Uncovered)
+				slices.Sort(row.StillVetoed)
 			}
 		}
 		block.Rows = append(block.Rows, row)
@@ -164,7 +178,17 @@ func (s *Server) scopeToggles(id identity.Identity, scope Scope) *PluginToggles 
 // arcToggles is the arc page's block: `admin` on the HOME scope edits.
 func (s *Server) arcToggles(id identity.Identity, home Scope, reg arcs.Registration) *PluginToggles {
 	return s.toggleBlock(plugins.LevelArc, plugins.ArcTarget(reg.Key()), home.ID != "" && id.Auth.Allows(home.ID, control.VerbAdmin),
-		PluginArcPath, [][2]string{{QueryHome, string(home.ID)}, {QuerySlug, reg.Slug}}, memberSessions(reg)...)
+		PluginArcPath, [][2]string{{QueryHome, string(home.ID)}, {QuerySlug, reg.Slug},
+			{FieldMembers, arcMembersDigest(memberSessions(reg))}}, memberSessions(reg)...)
+}
+
+// vetoSnapshot is the member ids an arc toggle record carries: the arc's members for an `off`, and
+// none for any other value.
+func vetoSnapshot(value string, reg arcs.Registration) []string {
+	if value != plugins.ValueOff {
+		return nil
+	}
+	return memberSessions(reg)
 }
 
 // memberSessions is an arc registration's member session ids, in the registration's order.
@@ -198,13 +222,13 @@ func pluginTogglesNode(t PluginToggles, csrf string) g.Node {
 	}[t.Level]
 	note := map[plugins.Level]string{
 		plugins.LevelScope: "A plugin runs on a session only when EVERY scope the session touched is at least `allowed`, " +
-			"and either every one is `on` or an arc — homed in a scope the session touched, and listing the session " +
-			"when an admin of that scope turned the arc on — is `on`. `allowed` is consent to run where such an arc " +
-			"turns it on. Default: off.",
+			"and either every one is `on` or an arc listing it — homed in a scope the session touched — is `on`. " +
+			"`allowed` is consent that such an arc may turn the plugin on here: anyone who can WRITE to the arc's home " +
+			"scope can add a session to the arc, so `allowed` extends to every session those writers enrol. Default: off.",
 		plugins.LevelArc: "An arc can turn a plugin on only inside scopes whose admins already allowed it, and only for " +
-			"sessions that touched this arc's home scope. `on` and `off` cover exactly the members this arc listed when " +
-			"the toggle was saved — shown below; a member added later is not covered until the toggle is saved again. " +
-			"Default: unset.",
+			"sessions that touched this arc's home scope. `on` applies to the sessions the arc lists now — including " +
+			"ones added later by anyone who can write to the home scope. `off` vetoes every session the arc lists, and " +
+			"keeps vetoing the ones it listed when the veto was saved even if they are removed. Default: unset.",
 		plugins.LevelSession: "Your opt-out for this one session. It can only turn a plugin OFF — never on.",
 	}[t.Level]
 	return h.Div(
@@ -244,30 +268,23 @@ func pluginToggleItem(t PluginToggles, r PluginToggleRow, csrf string) g.Node {
 	)
 }
 
-// arcCoverage says which members an arc toggle speaks for — nothing on another level, and nothing
-// for an arc toggle that is `unset` (it covers nobody). Every id is `g.Text` with the whole id in
-// `title=`, linked to its session page by this surface's own ledger path.
+// arcCoverage says what an arc VETO still covers beyond the arc's current members — nothing on
+// another level, for another value, or when every snapshotted member is still listed. Every id is
+// `g.Text` with the whole id in `title=`, linked to its session page by this surface's own ledger
+// path.
 func arcCoverage(t PluginToggles, r PluginToggleRow) g.Node {
-	if t.Level != plugins.LevelArc || r.Value == plugins.ValueUnset {
+	if t.Level != plugins.LevelArc || r.Value != plugins.ValueOff || len(r.StillVetoed) == 0 {
 		return nil
 	}
-	list := func(ids []string) g.Node {
-		labels := shortIDsIn(ids)
-		return h.Ul(h.Class("chips chips-alias"), g.Map(ids, func(id string) g.Node {
-			return h.Li(h.TitleAttr(id), h.A(h.Href(sessionHref(id)), g.Text(labels[id])))
-		}))
-	}
-	covers := "`" + r.Value + "` covers " + plural(len(r.Covered), "member", "members") +
-		" — the sessions this arc listed when the toggle was saved"
-	one := len(r.Uncovered) == 1
+	labels := shortIDsIn(r.StillVetoed)
+	one := len(r.StillVetoed) == 1
 	return g.Group([]g.Node{
-		h.P(h.Class("note"), h.Data("covers", strconv.Itoa(len(r.Covered))), g.Text(covers+map[bool]string{true: ":", false: "."}[len(r.Covered) > 0])),
-		g.If(len(r.Covered) > 0, list(r.Covered)),
-		g.If(len(r.Uncovered) > 0, h.P(h.Class("read-only"), h.Data("uncovered", strconv.Itoa(len(r.Uncovered))),
-			g.Text(plural(len(r.Uncovered), "member was", "members were")+" added to this arc since and "+
-				map[bool]string{true: "is", false: "are"}[one]+" NOT covered — an admin of the home scope must save this "+
-				"toggle again to cover "+map[bool]string{true: "it", false: "them"}[one]+":"))),
-		g.If(len(r.Uncovered) > 0, list(r.Uncovered)),
+		h.P(h.Class("note"), h.Data("still-vetoed", strconv.Itoa(len(r.StillVetoed))),
+			g.Text("`off` still covers "+plural(len(r.StillVetoed), "session", "sessions")+" this arc listed when the veto was "+
+				"saved and no longer lists — removing "+map[bool]string{true: "it", false: "them"}[one]+" from the arc did not lift it:")),
+		h.Ul(h.Class("chips chips-alias"), g.Map(r.StillVetoed, func(id string) g.Node {
+			return h.Li(h.TitleAttr(id), h.A(h.Href(sessionHref(id)), g.Text(labels[id])))
+		})),
 	})
 }
 
@@ -301,8 +318,8 @@ func (s *Server) toggleForm(w http.ResponseWriter, r *http.Request, level plugin
 
 // journal appends one toggle stamped with the AUTHENTICATED principal and the pod clock.
 //
-// `members` is an ARC toggle's snapshot — the session ids the arc lists at this moment, as the
-// handler just read them — and nothing on any other level.
+// `members` is an ARC VETO's snapshot — the session ids the arc lists at this moment, as the handler
+// just read them — and nothing for any other level or value.
 func (s *Server) journalToggle(w http.ResponseWriter, id identity.Identity, plugin string, level plugins.Level, target, value string, members ...string) bool {
 	err := s.plugins.Journal.Append(plugins.Record{Plugin: plugin, Level: level, Target: target, Value: value, Members: members,
 		By: plugins.By{Kind: string(id.Principal.Kind), ID: string(id.Principal.ID)}, At: s.now().UTC().Format(time.RFC3339)})
@@ -365,10 +382,20 @@ func (s *Server) handlePluginArc(w http.ResponseWriter, r *http.Request, id iden
 		writePlain(w, http.StatusForbidden, pluginToggleRefusal)
 		return
 	}
-	// 🔴 THE SNAPSHOT: the arc's members AS THIS ADMIN'S REQUEST FOUND THEM are what the toggle covers
-	// (`plugins.Record.Members`). It is read from the registration the authority just answered with,
-	// never from the form.
-	if s.journalToggle(w, id, e.Name, plugins.LevelArc, plugins.ArcTarget(rep.Reg.Key()), value, memberSessions(rep.Reg)...) {
+	// 🔴 THE TOGGLE IS SAVED ONLY OVER THE MEMBER LIST THE ADMIN WAS SHOWN (#273's audit, F6). An arc's
+	// members are whatever a writer of the home last `PUT`, and an admin deciding on a page rendered a
+	// minute ago is deciding about that page's list: a tab left open while a writer adds a session
+	// would turn the plugin on for a session the admin never saw. The form carries a digest of the
+	// list it was rendered over; a POST whose digest is not the CURRENT list's saves nothing.
+	if r.PostFormValue(FieldMembers) != arcMembersDigest(memberSessions(rep.Reg)) {
+		writePlain(w, http.StatusConflict, arcMembersChanged)
+		return
+	}
+	// 🔴 A VETO'S SNAPSHOT: an `off` records the arc's members AS THIS ADMIN'S REQUEST FOUND THEM, so it
+	// keeps covering them if they are later removed from the arc (`plugins.Record.Members`). Read from
+	// the registration the authority just answered with, never from the form. `on` and `unset` carry
+	// none: `on` is read against the arc's live members.
+	if s.journalToggle(w, id, e.Name, plugins.LevelArc, plugins.ArcTarget(rep.Reg.Key()), value, vetoSnapshot(value, rep.Reg)...) {
 		http.Redirect(w, r, arcHref(home.ID, rep.Reg.Slug), http.StatusSeeOther)
 	}
 }
@@ -451,6 +478,13 @@ func PluginsPage(v PageView, pv PluginsView) g.Node {
 				"transcript only where it is ON for that session, and writes back derived records. Every toggle starts "+
 				"off; a scope's admins consent on the scope page, an arc's on the arc page, and a session's owner can "+
 				"opt one session out on its page.")),
+			// 🔴 THE CONSENT SCREEN SAYS WHAT `allowed` DELEGATES, in the words the fold enforces.
+			h.P(h.Class("note"), h.Data("plugins", "arc-consent"), g.Text("What `allowed` means: a scope set to `allowed` "+
+				"lets an arc turn the plugin on for sessions that touched that scope. An arc that is `on` applies to "+
+				"whatever sessions it lists, and anyone who can WRITE to the arc's home scope can add a session to it — "+
+				"so such a writer can enrol a session, without an admin acting again, when the session touched the "+
+				"arc's home scope and every other scope it touched is `allowed` or `on`. A scope left `off` is never "+
+				"overridden by any arc.")),
 			g.If(!pv.Configured, h.P(h.Class("read-only"), h.Data("plugins", "unconfigured"), g.Text(NoPluginRegistry))),
 			g.If(pv.Unreadable, h.P(h.Class("read-only"), h.Data("plugins", "unreadable"), g.Text(pluginJournalUnreadable))),
 			g.If(pv.Configured && len(pv.Entries) == 0, h.P(h.Class("empty"), g.Text("The registry holds no plugin."))),
