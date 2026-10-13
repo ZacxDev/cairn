@@ -240,9 +240,9 @@ renderer still ships as `packages.cairn` until the oracle is deleted, so until t
 the comparison rather than the absence of one.
 
 🔴 **THE HEADLINE READS WIDER THAN THE GATE, SO KNOW WHICH ROWS ARE LOAD-BEARING BEFORE
-TRUSTING ONE.** "132 cases, 136 PASS, 0 failures, 0 dead normalizations" is NOT 132 byte
-diffs: 101 rows compare stdout, stderr AND the exit code; 23 compare the exit code ONLY; 8
-compare the exit code plus "both sides put something on stdout" — so **31 of 132 never
+TRUSTING ONE.** "134 cases, 138 PASS, 0 failures, 0 dead normalizations" is NOT 134 byte
+diffs: 103 rows compare stdout, stderr AND the exit code; 23 compare the exit code ONLY; 8
+compare the exit code plus "both sides put something on stdout" — so **31 of 134 never
 compare output text.** Declared per row; what the corpus covers is in `tests/parity/README.md`.
 
 🔴 **TWO CLIENTS FAILING IDENTICALLY COMPARE EQUAL** — its first full run reported 72 PASS / 0

@@ -822,8 +822,9 @@ jobs:
       # `internal/depspolicy`'s `TestAnUNTRACKEDNestedModuleIsIGNOREDButATRACKEDOneIsNOT` is the only
       # thing that exercises the tracked-file path behind `NestedModuleDirs` — the path that stops a
       # stray checkout under `.claude/worktrees/` from turning `go test ./...` red on every
-      # developer's machine. The nix derivations' check phase has no git and legitimately skips it
-      # (there, the `onlyGo`-filtered source makes the fallback path the correct one). This variable
+      # developer's machine. The nix derivations' check phase had no git and legitimately skipped it
+      # (there, the `onlyGo`-filtered source makes the fallback path the correct one); since S11 it
+      # carries `gitMinimal` and runs it, measured green. This variable
       # is what makes the skip a FAILURE here, where git exists and the path is real.
       #
       # ⚠ SAME SHAPE AS `tests/test_go_client_ledgers.py` REFUSING ON A SKIP IN THIS JOB, and for the
@@ -1485,9 +1486,11 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 136 PASS lines measured on this head: 132 cases plus FOUR structural checks —
+          # 138 PASS lines measured on this head: 134 cases plus FOUR structural checks —
           # re-derived by RUNNING the harness on this tree and reading `grep -c '^PASS '`, never
           # by arithmetic on the previous literal.
+          # ⚠ 136 -> 138 ON #266's AUDIT: two more `ledger-*` rows (output that LISTS other scopes
+          # records them — a scope-absent recall, a refused `validate --scope`).
           # ⚠ 126 -> 136 WHEN S11's READ LEDGER LANDED: nine `ledger-*` rows (each also compares
           # the two clients' ledger FILES) and a fourth structural check, `read-ledger-leak`,
           # which counts ledger files a client wrote with a session id the harness exported into
@@ -1550,8 +1553,8 @@ jobs:
           # zero failures too; the floor is what tells a green gate from an absent one.
           # 🔴 AND IT IS RAISED WITH EVERY ROW THAT LANDS. It sat at 98 for four rows after the
           # rows were added, which is a floor that cannot see the four newest disappear.
-          if [ "$passes" -lt 136 ]; then
-            echo "REFUSING: $passes passes, and 136 were measured — the gate got smaller"
+          if [ "$passes" -lt 138 ]; then
+            echo "REFUSING: $passes passes, and 138 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then
@@ -1595,10 +1598,12 @@ jobs:
           # every corpus change.
           grep -q '^CONTENT-FLOOR live-banner=True rendered-digest=True unreadable-entry=True unreadable-scope-dir=True tag-narrowing=True tag-match=True req-open=True' /tmp/parity.txt
           grep -q 'dead-normalizations=0' /tmp/parity.txt
-          # 🔴 THE READ LEDGER (S11): every row compared at least one record (`oracle-records`
-          # non-zero — two clients that both write nothing agree on every ledger row), and NO
+          # 🔴 THE READ LEDGER (S11): all eleven `ledger-*` rows ran, the oracle wrote at least ONE
+          # record across them (a TOTAL, not per row — two clients that both write nothing agree on
+          # every ledger row, and this is the floor against that; a single row writing nothing is
+          # seen only by its own comparison, e.g. `ledger-sync-records-nothing` is MEANT to), and NO
           # client wrote a ledger with the session id exported into the harness's environment.
-          grep -Eq '^READ-LEDGER rows=9 oracle-records=[1-9][0-9]* leak-files=0$' /tmp/parity.txt
+          grep -Eq '^READ-LEDGER rows=11 oracle-records=[1-9][0-9]* leak-files=0$' /tmp/parity.txt
 
   # 🔴 P1's LAST STEP, AND IT IS ITS OWN JOB FOR THE SAME REASON THE CORPUS AND THE PARITY
   # GATE ARE: its verdict is readable on its own in the checks list, and a failure in either

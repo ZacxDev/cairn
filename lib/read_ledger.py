@@ -38,6 +38,24 @@ CLIENT_VERSION = "oracle"
 #: The pod's own root-id grammar (`internal/write.SessionComponent`, `server/server.py`'s
 #: `SESSION_COMPONENT`), anchored. A value outside it is no session: it could not name a file
 #: safely and the pod would refuse it as a root anyway.
+#: What a served call of each verb records — the Go verb table's `Ledger` class, mirrored
+#: (`internal/client/readledger.go`'s `LedgerClass`): `resolved` (the scope it resolved, plus every
+#: other scope its output names), `listed` (each scope listed), `all` (one `*`), `none`.
+#: `tests/test_read_ledger.py` holds this equal to the Go table for every verb this client has, and
+#: holds its keys equal to this parser's verbs.
+VERB_CLASS = {
+    "append": "resolved",
+    "create": "resolved",
+    "doctor": "all",
+    "ls-entries": "listed",
+    "put": "resolved",
+    "recall": "resolved",
+    "routes": "all",
+    "search": "resolved",
+    "sync": "none",
+    "validate": "resolved",
+}
+
 _SESSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 
 _call: "_Call | None" = None
@@ -53,7 +71,9 @@ class _Call:
 
 def session_id(environ=None) -> str:
     env = os.environ if environ is None else environ
-    value = env.get(CLAUDE_SESSION_ENV, "") or env.get(OPENCODE_SESSION_ENV, "")
+    # OPENCODE_SESSION_ID WINS: an opencode run launched from a Claude Code tool inherits the
+    # Claude id, which names the OUTER session (Go: `ledgerSession`).
+    value = env.get(OPENCODE_SESSION_ENV, "") or env.get(CLAUDE_SESSION_ENV, "")
     return value if _SESSION.fullmatch(value) else ""
 
 
@@ -98,6 +118,20 @@ def record(instance: str, scope: str) -> None:
         pass
 
 
+def record_named(instance: str, report) -> None:
+    """Every OTHER scope a recall or search report NAMES in what it prints: `*` for a
+    `scope-absent` report (it lists every scope the store holds), and each scope of the "further
+    malformed entries in OTHER scopes" line (`*` for one with no scope). The Go client's
+    `Env.recordNamed`, spelled a second time."""
+    try:
+        if getattr(report, "status", "") == "scope-absent":
+            record(instance, ALL_SCOPES)
+        for entry in getattr(report, "malformed_elsewhere", ()) or ():
+            record(instance, getattr(entry, "scope", "") or ALL_SCOPES)
+    except Exception:  # noqa: BLE001 — invisible by contract
+        pass
+
+
 def record_all(instance: str, scopes) -> None:
     for scope in scopes:
         record(instance, scope)
@@ -121,8 +155,13 @@ def _append(call: _Call, instance: str, scope: str) -> None:
     os.makedirs(call.path.parent, mode=0o700, exist_ok=True)
     # ONE `O_APPEND` write, file 0600, and `O_NOFOLLOW`: a symlink planted at the ledger's name is
     # refused rather than followed — the Go client's `appendLedgerLine`.
-    fd = os.open(call.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    # O_NONBLOCK and a regular-file check: a FIFO at the path must not hang the call (Go:
+    # `appendLedgerLine`).
+    fd = os.open(call.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     try:
+        import stat as _stat
+        if not _stat.S_ISREG(os.fstat(fd).st_mode):
+            return
         os.write(fd, line.encode("utf-8"))
     finally:
         os.close(fd)

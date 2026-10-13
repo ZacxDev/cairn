@@ -370,6 +370,7 @@ func Report(env Env, opts Options, isSearch bool) (int, error) {
 		} else {
 			env.recordRead(alias, scope)
 		}
+		env.recordNamed(alias, rep.Status, rep.MalformedElsewhere)
 		text = rep.RenderText(env.host(), nil, label)
 		status, malformed = rep.Status, rep.Malformed
 		// 🔴 SEARCH USES ITS OWN EXIT LABEL. `SearchReport.Label()` names the scopes SEARCHED;
@@ -437,6 +438,7 @@ func Report(env Env, opts Options, isSearch bool) (int, error) {
 			return 0, recallErr
 		}
 		env.recordRead(alias, scope)
+		env.recordNamed(alias, rep.Status, rep.MalformedElsewhere)
 		text = rep.RenderText(env.host(), nil, label)
 		status, malformed = rep.Status, rep.Malformed
 		// ⚠ THE EXIT LABEL IS DERIVED, NOT AN ATTRIBUTE. The recall report has no label field,
@@ -631,6 +633,10 @@ func Validate(env Env, opts Options) (int, error) {
 			shown := strings.Join(held, ", ")
 			if shown == "" {
 				shown = "(none)"
+			} else {
+				// The refusal LISTS every scope the cache holds — a store-wide listing, so `*`
+				// (#266's audit). A refusal that names none records nothing.
+				env.recordRead(alias, LedgerAllScopes)
 			}
 			fmt.Fprintf(env.Stderr, "cairn: cache holds no scope %s — nothing was "+
 				"validated. Held: %s\n", store.PyRepr(opts.Scope), shown)

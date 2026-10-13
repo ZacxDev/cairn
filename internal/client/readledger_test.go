@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -38,8 +39,15 @@ func ledgerHost(t *testing.T) (home, state string) {
 	home = t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CAIRN_MIRROR_ROOT", "")
-	t.Setenv("SUBSYSTEM_STORE_URL", "http://127.0.0.1:1")
-	t.Setenv("SUBSYSTEM_STORE_TOKEN", "x")
+	// The NEW names, and the old ones UNSET: an old name present warns once per PROCESS
+	// (`internal/envalias`), and spending that warning here made a later test that asserts on it
+	// order-dependent.
+	for _, old := range []string{"SUBSYSTEM_STORE_URL", "SUBSYSTEM_STORE_TOKEN"} {
+		t.Setenv(old, "")
+		os.Unsetenv(old)
+	}
+	t.Setenv("CAIRN_URL", "http://127.0.0.1:1")
+	t.Setenv("CAIRN_TOKEN", "x")
 	t.Setenv(ClaudeSessionEnv, "")
 	t.Setenv(OpencodeSessionEnv, "")
 	state = filepath.Join(home, "state")
@@ -237,14 +245,16 @@ func TestARecordCarriesTheDeclaredFields(t *testing.T) {
 			t.Fatalf("%s: mode %v, want %v (%v)", p, info.Mode().Perm(), want, err)
 		}
 	}
-	// CLAUDE_CODE_SESSION_ID WINS when both are set.
+	// OPENCODE_SESSION_ID WINS when both are set: an opencode run launched from a Claude Code tool
+	// inherits the Claude id, which names the OUTER session (#266's audit). RED while the Claude id
+	// won: the record went to `ses-claude-0003.jsonl`.
 	t.Setenv(ClaudeSessionEnv, "ses-claude-0003")
 	runCLI(t, "recall", "--no-sync")
-	if got := readLedgerFile(t, ledgerPath(state, "ses-claude-0003")); len(got) != 1 {
-		t.Fatalf("with both set, the Claude Code id names the file: %v", got)
+	if got := readLedgerFile(t, path); len(got) != 2 {
+		t.Fatalf("with both set, the opencode id names the file: %v", got)
 	}
-	if got := readLedgerFile(t, path); len(got) != 1 {
-		t.Fatalf("…and nothing more is appended under the opencode id: %v", got)
+	if got := readLedgerFile(t, ledgerPath(state, "ses-claude-0003")); len(got) != 0 {
+		t.Fatalf("…and nothing is written under the inherited Claude Code id: %v", got)
 	}
 }
 
@@ -362,5 +372,92 @@ func TestTheLedgerFileIsWhatTheDeriverReads(t *testing.T) {
 	}
 	if !slices.Equal(scopes, []string{"beta-notes", "*"}) {
 		t.Fatalf("scopes %v", scopes)
+	}
+}
+
+// TestOutputThatNamesOtherScopesRecordsThem (#266's audit): a scope NAME is store content too, so
+// output that lists scopes beyond the one read records them — `*` for a store-wide listing (the
+// rule `routes` records `*` under), and each scope of the "further malformed entries in OTHER
+// scopes" line by name.
+//
+// RED before the fix: each row below recorded only the scope it read (or, for the refused
+// `validate`, nothing), while its output named the others.
+func TestOutputThatNamesOtherScopesRecordsThem(t *testing.T) {
+	home, state := ledgerHost(t)
+	const session = "ses-ledger-0006"
+	t.Setenv(ClaudeSessionEnv, session)
+	path := ledgerPath(state, session)
+	star := LedgerAllScopes
+	run := func(want []ledgerKey, code int, needle string, argv ...string) {
+		t.Helper()
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		got, out, stderr := runCLI(t, argv...)
+		if code >= 0 && got != code {
+			t.Fatalf("%v: exit %d, want %d\n%s\n%s", argv, got, code, out, stderr)
+		}
+		// The instrument: the output really names what the record claims it does.
+		if !strings.Contains(out+stderr, needle) {
+			t.Fatalf("%v: the output does not name %q — the fixture is not the case under test\n%s\n%s", argv, needle, out, stderr)
+		}
+		if keys := keys(readLedgerFile(t, path)); !slices.Equal(keys, want) {
+			t.Errorf("%v: the ledger holds %v, want %v", argv, keys, want)
+		}
+	}
+	run([]ledgerKey{{"recall", DefaultAlias, "gamma-notes"}, {"recall", DefaultAlias, star}}, -1,
+		"beta-notes", "recall", "--no-sync", "--scope", "gamma-notes")
+	run([]ledgerKey{{"search", DefaultAlias, "gamma-notes"}, {"search", DefaultAlias, star}}, -1,
+		"beta-notes", "search", "synthetic", "--no-sync", "--scope", "gamma-notes")
+	run([]ledgerKey{{"validate", DefaultAlias, star}}, ExitUsage,
+		"Held: alpha-notes, beta-notes", "validate", "--no-sync", "--scope", "gamma-notes")
+	// A malformed entry in `beta-notes`: a recall of `alpha-notes` names it on its
+	// "further malformed entries in OTHER scopes" line.
+	cache := filepath.Join(home, ".cache", "subsystem-store")
+	if err := os.WriteFile(filepath.Join(cache, "beta-notes", "broken.md"), []byte("no front matter at all\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run([]ledgerKey{{"recall", DefaultAlias, "alpha-notes"}, {"recall", DefaultAlias, "beta-notes"}}, ExitOK,
+		"OTHER scopes", "recall", "--no-sync", "--scope", "alpha-notes")
+}
+
+// TestAFifoAtTheLedgerPathCannotHangACall (#266's audit): a FIFO where the ledger file goes, with
+// no reader, blocked the append's open forever — the agent's tool call hung. Now the call finishes
+// with the same output as a run with no session id, and writes nothing.
+//
+// RED before O_NONBLOCK: the call never returned (the 10 s bound below fires).
+func TestAFifoAtTheLedgerPathCannotHangACall(t *testing.T) {
+	_, state := ledgerHost(t)
+	const session = "ses-ledger-fifo"
+	path := ledgerPath(state, session)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	argv := []string{"recall", "--no-sync", "--scope", "beta-notes"}
+	wantCode, wantOut, wantErr := runCLI(t, argv...)
+	t.Setenv(ClaudeSessionEnv, session)
+	type result struct {
+		code     int
+		out, err string
+	}
+	done := make(chan result, 1)
+	go func() { c, o, e := runCLI(t, argv...); done <- result{c, o, e} }()
+	select {
+	case r := <-done:
+		if r.code != wantCode || r.out != wantOut || r.err != wantErr {
+			t.Fatalf("a FIFO at the ledger path changed the call: exit %d/%d\n%s\n%s", r.code, wantCode, r.err, wantErr)
+		}
+	case <-time.After(10 * time.Second):
+		// Unblock the stuck open so the process can exit, then fail.
+		if f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0); err == nil {
+			defer f.Close()
+		}
+		t.Fatal("a FIFO at the ledger path HUNG the call")
+	}
+	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+		t.Fatalf("the FIFO was replaced: %v %v", info, err)
 	}
 }

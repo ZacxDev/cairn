@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ZacxDev/cairn/internal/client"
@@ -234,11 +235,32 @@ func safeID(id string) bool {
 	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, `/\`)
 }
 
+// readLedger reads one ledger file the way the client writes it: a REGULAR file, never followed
+// through a symlink (`O_NOFOLLOW`), opened `O_NONBLOCK` so a FIFO planted at the path cannot hang the
+// run (#266's audit). Absent is [os.ErrNotExist] — zero records; anything else that is not a regular
+// file is an error, which both callers turn into `*` (fail closed: a link or a pipe where the ledger
+// goes is a ledger nobody can vouch for, not an empty one).
+func readLedger(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	return io.ReadAll(f)
+}
+
 func (a *Agent) foldLedger(d *scopeuse.Deriver, id string) {
 	if a.LedgerDir == "" || !safeID(id) {
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(a.LedgerDir, id+".jsonl"))
+	data, err := readLedger(filepath.Join(a.LedgerDir, id+".jsonl"))
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
@@ -270,7 +292,7 @@ func (a *Agent) ledgerUnits(ids []string) []exportUnit {
 		if a.LedgerDir == "" || !safeID(id) {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(a.LedgerDir, id+".jsonl"))
+		data, err := readLedger(filepath.Join(a.LedgerDir, id+".jsonl"))
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -471,6 +493,7 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 	res := d.Result()
 	ss.Evidence = d.Evidence()
 	ss.V = union(ss.V, res.V)
+	ss.Declared = union(ss.Declared, res.Declare)
 
 	ship, reset, err := a.route(cs.Root, ss, sum)
 	if err != nil || !ship {
@@ -500,7 +523,7 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 			failed = err
 		}
 	}
-	up := Upload{Instance: ss.Instance, Root: cs.Root, Runtime: "claude", Declared: ss.V}
+	up := Upload{Instance: ss.Instance, Root: cs.Root, Runtime: "claude", Declared: ss.Declared}
 	shippedAny, err := a.shipLedger(up, []string{cs.Root}, ss, sum)
 	fail(err)
 	for _, p := range pend {
@@ -687,6 +710,7 @@ func (a *Agent) runOpencode(root string, sum *Summary) error {
 	res := d.Result()
 	ss.Evidence = d.Evidence()
 	ss.V = union(ss.V, res.V)
+	ss.Declared = union(ss.Declared, res.Declare)
 
 	ship, _, err := a.route(root, ss, sum)
 	if err != nil || !ship {
@@ -697,7 +721,7 @@ func (a *Agent) runOpencode(root string, sum *Summary) error {
 		return nil
 	}
 	var failed error
-	up := Upload{Instance: ss.Instance, Root: root, Runtime: "opencode", Declared: ss.V}
+	up := Upload{Instance: ss.Instance, Root: root, Runtime: "opencode", Declared: ss.Declared}
 	shippedAny, failed := a.shipLedger(up, append([]string{root}, children...), ss, sum)
 	for _, s := range streams {
 		st := ss.stream(s.name)

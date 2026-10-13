@@ -109,6 +109,12 @@ CASES = [
     (["doctor", "--no-sync"], [("doctor", "", STAR)]),
     (["routes"], [("routes", "", STAR)]),
     (["sync"], []),
+    # Output that LISTS other scopes records them (#266's audit): a scope-absent report and the
+    # refused `validate` each print every held scope — `*`.
+    (["recall", "--no-sync", "--scope", "gamma-notes"], [("recall", "personal", "gamma-notes"), ("recall", "personal", STAR)]),
+    (["search", "synthetic", "--no-sync", "--scope", "gamma-notes"],
+     [("search", "personal", "gamma-notes"), ("search", "personal", STAR)]),
+    (["validate", "--no-sync", "--scope", "gamma-notes"], [("validate", "personal", STAR)]),
     (["recall", "--no-sync", "--bogus-flag"], []),
     (["recall", "--no-sync", "--scope", "ghost-scope"], []),
     (["append", "--scope", "ghost-scope", "--ref", "one", "--text", "x", "--session", "s"], []),
@@ -164,6 +170,56 @@ def test_a_failed_ledger_write_is_invisible(world) -> None:
         assert not list(directory.iterdir()), "the breaker did not break the write"
     finally:
         directory.chmod(0o700)
+
+
+def test_a_malformed_entry_in_another_scope_is_recorded_by_name(world) -> None:
+    """The "further malformed entries in OTHER scopes" line names `beta-notes`, so a recall of
+    `alpha-notes` records it too (#266's audit; Go: `TestOutputThatNamesOtherScopesRecordsThem`)."""
+    (world[1] / "beta-notes" / "broken.md").write_text("no front matter at all\n", encoding="utf-8")
+    clear(world)
+    proc = run(world, "recall", "--no-sync", "--scope", "alpha-notes")
+    assert "OTHER scopes" in proc.stdout + proc.stderr, "the fixture is not the case under test"
+    assert ledger(world) == [("recall", "personal", "alpha-notes"), ("recall", "personal", "beta-notes")]
+
+
+def test_a_fifo_at_the_ledger_path_cannot_hang_a_call(world) -> None:
+    """A FIFO where the ledger file goes blocked the append's open forever (#266's audit). Now the
+    call returns with the bytes of a run with no session id."""
+    import os
+    directory = world[0] / "state" / "cairn" / "read-ledger"
+    directory.mkdir(parents=True)
+    os.mkfifo(directory / f"{SESSION}.jsonl", 0o600)
+    without = run(world, "recall", "--no-sync", "--scope", "beta-notes", session=None)
+    with_ = run(world, "recall", "--no-sync", "--scope", "beta-notes")  # hangs to the 120 s bound when broken
+    assert (with_.returncode, with_.stdout, with_.stderr) == (without.returncode, without.stdout, without.stderr)
+
+
+def test_the_opencode_session_id_wins_over_an_inherited_claude_one() -> None:
+    """An opencode run launched from a Claude Code tool inherits the Claude id (#266's audit)."""
+    assert read_ledger.session_id({"CLAUDE_CODE_SESSION_ID": "ses-outer", "OPENCODE_SESSION_ID": "ses_inner"}) == "ses_inner"
+    assert read_ledger.session_id({"CLAUDE_CODE_SESSION_ID": "ses-outer"}) == "ses-outer"
+
+
+def _go_verb_classes() -> dict[str, str]:
+    """`{Name: "<verb>", Ledger: Ledger<Class>,` out of the Go verb table, and the class
+    constants' values out of `readledger.go` — read from source, the way the spelling row is."""
+    import re
+    cli = (REPO / "internal" / "client" / "cli.go").read_text(encoding="utf-8")
+    consts = dict(re.findall(r'(Ledger[A-Z][a-z]+) +LedgerClass = "([a-z]+)"',
+                             (REPO / "internal" / "client" / "readledger.go").read_text(encoding="utf-8")))
+    pairs = re.findall(r'\{Name: "([a-z-]+)", Ledger: (Ledger[A-Z][a-z]+),', cli)
+    assert len(pairs) == cli.count("{Name: "), "a Go verb row carries no Ledger class (or a new spelling)"
+    return {verb: consts[c] for verb, c in pairs}
+
+
+def test_every_verb_carries_the_go_tables_ledger_class() -> None:
+    """The oracle's VERB_CLASS covers exactly this parser's verbs, and agrees with the Go table on
+    every one. RED when either side reclassifies a verb, or a verb is added to one side unclassed."""
+    from testlib import capability_ledger
+    go = _go_verb_classes()
+    assert set(read_ledger.VERB_CLASS) == set(capability_ledger.cli_verbs_from_parser())
+    assert {v: go[v] for v in read_ledger.VERB_CLASS} == read_ledger.VERB_CLASS
+    assert set(go.values()) <= {"resolved", "listed", "all", "none"}
 
 
 def test_the_go_client_spells_the_same_names() -> None:

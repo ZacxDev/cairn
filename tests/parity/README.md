@@ -31,7 +31,7 @@ append-only mechanism had **no control at all** over the `exit+stdout` mode's tw
 
 ## What is compared
 
-🔴 **AND, ON THE NINE `ledger-*` ROWS, THE CLIENT READ LEDGER (S11).** With a session id in the
+🔴 **AND, ON THE ELEVEN `ledger-*` ROWS, THE CLIENT READ LEDGER (S11; two added on #266's audit).** With a session id in the
 environment each client APPENDS one record per scope it served to
 `$XDG_STATE_HOME/cairn/read-ledger/<session>.jsonl`, invisibly — no stdout, no stderr, no exit
 code — so the three comparisons below are structurally blind to it: a client that recorded the

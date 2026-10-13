@@ -2,12 +2,15 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime/debug"
 	"syscall"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/report"
+	"github.com/ZacxDev/cairn/internal/store"
 	"github.com/ZacxDev/cairn/internal/write"
 )
 
@@ -43,10 +46,33 @@ import (
 // The two session-id variables (decision 3a). Claude Code sets the first for tool commands, with the
 // ROOT session's id inside a subagent; opencode sets neither — the measured host exports the second
 // from its own plugin, with the CHILD's id inside a subagent, and the capture agent maps a child id to
-// its root (decision 7). The first that is set wins.
+// its root (decision 7).
+//
+// 🔴 `OPENCODE_SESSION_ID` WINS WHEN BOTH ARE SET. An opencode run dispatched from a Claude Code
+// Bash tool INHERITS the Claude id, so the Claude id names the OUTER session and the opencode id
+// the one actually running this call (#266's audit). Preferring the Claude id filed the opencode
+// session's reads under the session that only launched it.
 const (
 	ClaudeSessionEnv   = "CLAUDE_CODE_SESSION_ID"
 	OpencodeSessionEnv = "OPENCODE_SESSION_ID"
+)
+
+// LedgerClass is what one verb's served call records (#266's audit, round 0): the Go verb table
+// carries one per verb, the Python oracle mirrors the table (`lib/read_ledger.py`'s `VERB_CLASS`),
+// and `tests/test_read_ledger.py` holds the two equal.
+type LedgerClass string
+
+const (
+	// LedgerResolved: the scope the call RESOLVED and touched — never the flag as typed — plus
+	// every OTHER scope its output names ([Env.recordNamed]; `*` for a store-wide listing). A
+	// widening flag the client cannot enumerate (`search --all-scopes`) records `*` instead.
+	LedgerResolved LedgerClass = "resolved"
+	// LedgerListed: one record per scope the call LISTED.
+	LedgerListed LedgerClass = "listed"
+	// LedgerAll: exactly one `*` — output that names scopes this client does not enumerate.
+	LedgerAll LedgerClass = "all"
+	// LedgerNone: nothing; the verb prints no store content.
+	LedgerNone LedgerClass = "none"
 )
 
 // LedgerSchema is the record's `schema`.
@@ -84,9 +110,9 @@ type readLedger struct {
 // session component (`write.SessionComponent`, the pod's own root-id grammar) is no session: it
 // could not name a file safely and the pod would refuse it as a root anyway.
 func ledgerSession() string {
-	v := getenv(ClaudeSessionEnv)
+	v := getenv(OpencodeSessionEnv)
 	if v == "" {
-		v = getenv(OpencodeSessionEnv)
+		v = getenv(ClaudeSessionEnv)
 	}
 	if !write.SessionComponent.MatchString(v) {
 		return ""
@@ -143,6 +169,25 @@ func (e Env) recordRead(instance, scope string) {
 	}
 }
 
+// recordNamed records every OTHER scope a recall or search report NAMES in what it prints, beside
+// the scope it read: a `scope-absent` report lists every scope the store holds ("scopes THIS
+// HOST's store holds: …") — a store-wide listing, so `*` — and every status prints the
+// "further malformed entries in OTHER scopes" line naming each scope that holds one. A scope name
+// is store content too: printing one the session's viewer cannot read is a read of it, by the
+// same rule `routes` records `*` under (#266's audit). A malformed entry with no scope is `*`.
+func (e Env) recordNamed(instance, status string, elsewhere []store.MalformedEntry) {
+	if status == report.StatusScopeAbsent {
+		e.recordRead(instance, LedgerAllScopes)
+	}
+	for _, m := range elsewhere {
+		scope := m.Scope
+		if scope == "" {
+			scope = LedgerAllScopes
+		}
+		e.recordRead(instance, scope)
+	}
+}
+
 // recordReads is [Env.recordRead] for several scopes.
 func (e Env) recordReads(instance string, scopes []string) {
 	for _, s := range scopes {
@@ -168,13 +213,22 @@ func (l *readLedger) record(instance, scope string) error {
 // appendLedgerLine is ONE `O_APPEND` write of one line: directory 0700, file 0600, and a symlink at
 // the file's name is refused rather than followed (`O_NOFOLLOW`), so a link planted there cannot
 // redirect the append into another file.
+//
+// 🔴 AND ONLY INTO A REGULAR FILE, OPENED `O_NONBLOCK`. A FIFO at the path blocked the open until a
+// reader appeared — the agent's tool call HUNG, the one way this write could become visible (#266's
+// audit). Non-blocking, a FIFO with no reader fails at the open (`ENXIO`), and anything that opens
+// but is not a regular file (a FIFO with a reader, a device) is refused before the write.
 func appendLedgerLine(path string, line []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
 	if err != nil {
 		return err
+	}
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		f.Close()
+		return errNotRegular
 	}
 	_, werr := f.Write(line)
 	cerr := f.Close()
@@ -183,6 +237,9 @@ func appendLedgerLine(path string, line []byte) error {
 	}
 	return cerr
 }
+
+// errNotRegular is a ledger path that is not a regular file.
+var errNotRegular = errors.New("the read ledger is not a regular file")
 
 // clientVersion is the build's VCS revision when the toolchain stamped one, else the module
 // version (`(devel)` for a local build). The nix build stamps neither, so it reads `(devel)` there;

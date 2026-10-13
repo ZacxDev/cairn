@@ -264,7 +264,7 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     and no duplicate id. So the floor covers those two, and nothing else in this file does.
 
     ⚠ It is also the only floor that runs in the `tests` job. CI's `parity` job refuses below the
-    PASS count `.github/workflows/ci.yml` pins — **136 at this head** — but that job needs a Go
+    PASS count `.github/workflows/ci.yml` pins — **138 at this head** — but that job needs a Go
     toolchain and a running pod; a developer running `pytest tests` reaches this one and not that
     one. 🔴 THE TWO NUMBERS ARE STILL NOT ASSERTED EQUAL — they measure different things and must
     not be — but the SENTENCE above is now pinned to the file it cites by
@@ -285,7 +285,7 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE — no defect ever narrowed the case list.
     """
     declared = len(harness.cases(1))
-    # 132 measured on this tree — by `len(harness.cases(1))`, which is what the assertion below
+    # 134 measured on this tree — by `len(harness.cases(1))`, which is what the assertion below
     # compares and is therefore the only measurement that can be right. The floor is the
     # repository's own formula for a collected-count floor — `m - min(50, max(1, m / 20))` for a
     # measured `m`, which `.github/workflows/ci.yml` owns and justifies: close enough that a real
@@ -330,7 +330,9 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # ⚠ 116 -> 125 WHEN THE NINE READ-LEDGER ROWS LANDED (S11): `m` moved 123 -> 132 and 125 is
     # what the formula prescribes for it (`132 - min(50, max(1, 132/20)) = 125.4 -> 125`),
     # re-derived by RUNNING the formula on `len(harness.cases(1))`.
-    floor = 125
+    # ⚠ 125 -> 127 WHEN TWO MORE READ-LEDGER ROWS LANDED (#266's audit: output that LISTS other
+    # scopes records them): `m` moved 132 -> 134, `134 - min(50, max(1, 134/20)) = 127.3 -> 127`.
+    floor = 127
     # ✅ **DECIDED: PINNED TO ITS OWN FORMULA, BECAUSE IT HAS GONE STALE TWICE.**
     # The handoff filed this under "counts quoted in prose that nothing asserts
     # on", closing condition "a decision to pin each or a written line saying why
@@ -371,7 +373,7 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # THREE structural checks. ⚠ It was 104/102, then 105/103, then 106/103, then
     # 111/108, then 110/107, then 117/114, then 127/124, then 126/123 when `--tag` became
     # scalar and a row was DELETED, then 136/132 when S11 added nine `ledger-*` rows AND a FOURTH
-    # structural check, `read-ledger-leak` — and one of those pairs was WRONG for a whole
+    # structural check, `read-ledger-leak`, then 138/134 with two more `ledger-*` rows — and one of those pairs was WRONG for a whole
     # round, because rows
     # moved `m` and only `ci.yml` was updated. The gap itself
     # widens every time a claim turns out to be unreachable from any row. A
@@ -379,7 +381,7 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # reader to edit whichever number was handier. The docstring's instruction —
     # read `ci.yml`'s comparison rather than that sentence — remains the answer.
     assert declared >= floor, (
-        f"the parity gate declares only {declared} cases, and the floor is {floor} (132 were "
+        f"the parity gate declares only {declared} cases, and the floor is {floor} (134 were "
         f"measured on this tree, across every verb and every documented exit code). Two guards in "
         f"this file — the exit-only `why` check and the unique-id check — pass vacuously on a "
         f"narrowed list, so a shrinking case set gets quieter, not louder."

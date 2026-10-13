@@ -1096,6 +1096,16 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              "`sync` prints only banners, so neither client writes a record — the two EMPTY "
              "ledgers agree, and the rows above are what show the comparison can see a record",
              ["sync"], ledger=True),
+        # 🔴 SCOPE NAMES ARE CONTENT TOO (#266's audit): output that LISTS other scopes records
+        # them — `*` for a store-wide listing — by the rule `routes` records `*` under.
+        Case("ledger-recall-scope-absent-lists-the-store",
+             "a `scope-absent` recall prints every scope the store holds, so beside the scope it "
+             "read it records `*`",
+             ["recall", "--scope", "no-such-notes"], ledger=True, wipe_cache=True),
+        Case("ledger-validate-refusal-lists-the-store",
+             "`validate --scope` of a scope the cache does not hold is REFUSED at 2, and the "
+             "refusal lists every held scope: `*`, although the call read nothing else",
+             ["validate", "--scope", "no-such-notes"], ledger=True, wipe_cache=True),
         Case("ledger-put-routed-to-a-NON-DEFAULT-instance",
              "the record's `instance` is the ALIAS the call was routed to — `secondary` here, "
              "where every row above records `personal`",
