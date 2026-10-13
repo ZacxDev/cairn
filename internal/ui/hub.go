@@ -71,7 +71,8 @@ func (s *Server) handleHub(w http.ResponseWriter, r *http.Request, id identity.I
 		writePlain(w, http.StatusInternalServerError, "the store could not be read")
 		return
 	}
-	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now(), App: s.app}
+	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes, Now: s.now(), App: s.app,
+		TranscriptsStored: s.transcripts != nil}
 	s.render(w, HubPage(view))
 }
 
@@ -88,7 +89,8 @@ const (
 	hubTeamWhat       = "Who can read and write each scope you administer, invitations, and team links."
 )
 
-// HubPage is the root: five cards, each a way in. Only the scopes card carries a count.
+// HubPage is the root: five cards (four with no transcript store), each a way in. Only the scopes card
+// carries a count.
 func HubPage(v PageView) g.Node {
 	return shell("", v, nil,
 		// The iOS install hint (S4, `pwa.go`): hidden, and nothing at all when unarmed.
@@ -100,7 +102,10 @@ func HubPage(v PageView) g.Node {
 			hubCard("sessions", "Sessions", SessionsPath, hubSessionsWhat, nil),
 			// "My sessions" (S7): the way in to the viewer's OWN stored transcripts, owner-only ones
 			// included — which nothing else on this surface links, since nothing in the store names them.
-			hubCard("mysessions", "My sessions", MySessionsPath, hubMySessionsWhat, nil),
+			// ONLY on a deployment with a transcript store: without `-transcript-dir` the hub is the
+			// four cards it was before S7 (S4's "renders nothing new"). The ROW still answers there —
+			// the empty state — so a bookmark is never a dead link.
+			g.If(v.TranscriptsStored, hubCard("mysessions", "My sessions", MySessionsPath, hubMySessionsWhat, nil)),
 			// The Team page (#214): sharing, single invitations and team links on one page —
 			// `/share` and `/invite` now only redirect there.
 			hubCard("team", "Team", TeamPath, hubTeamWhat, nil),

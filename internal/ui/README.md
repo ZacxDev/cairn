@@ -5145,7 +5145,9 @@ boundary).
 `GET /my-sessions[?page=N]` lists the stored sessions the VIEWER uploaded, newest upload first, each
 row linking `/session?session=<id>` (`mysessions.go`). It is the one way in to an owner-only session
 (an empty `V`, clause g): such a session wrote no trailer, so no scope tab, sessions list or arc chip
-names it. The hub links it ("My sessions" card, no count). Operator decision O10.
+names it. The hub links it ("My sessions" card, no count) — ONLY on a deployment with a transcript
+store, so a `cairn-ui` without `-transcript-dir` renders nothing new (`TestTheHubHasNoMySessionsCardWithoutATranscriptStore`);
+the row still answers there, with the empty state. Operator decision O10.
 
 ## The binding rules
 
@@ -5166,7 +5168,9 @@ names it. The hub links it ("My sessions" card, no count). Operator decision O10
 - **No transcript store is the empty state, not a 404** — S4's convention: a deployment without
   `-transcript-dir` answers what one with nothing of the viewer's stored answers, byte for byte
   (`TestMySessionsWithNoStoreIsTheEmptyState`, with its positive control). One sentence covers "you
-  uploaded nothing", "this deployment stores none" and "your credential is narrowed".
+  uploaded nothing", "this deployment stores none" and "your credential is narrowed", and it SAYS all
+  three — it said only the first two, false for the owner's narrowed credential; it is pinned whole
+  (`TestTheEmptySentenceIsTrueForANarrowedOwner`).
 - **Text only, no script.** Session ids, runtimes and host labels are uploader text in `g.Text` and
   attribute values; every href is a ledger path with encoded operands (`sessionHref`,
   `mySessionsPageHref`).
@@ -5184,8 +5188,10 @@ unclamped `?page=` (a slice panic), and the empty sentence withheld. `tests/plug
 
 ## What these guards still cannot see
 
-- **The cost at thousands of sessions** is unmeasured: one `meta.json` read per stored session per
-  request. Nothing here caches or indexes by owner.
+- **The cost at thousands of sessions — MEASURED, and not bounded:** every request parses every stored
+  `meta.json` (no owner index, nothing cached): 2,000 sessions cost 31 ms and 13.9 MB a request,
+  10,000 cost 221 ms and 69.6 MB (one host). It grows linearly with the whole archive, not with the
+  viewer's own sessions.
 - **A session uploaded under another capture owner.** Ownership is the capture token's bound owner;
   a session a person ran under a token minted for somebody else is that somebody's.
 - **The page in a real browser at every width** is only the `uiaudit` walk's (advisory) capture; no
