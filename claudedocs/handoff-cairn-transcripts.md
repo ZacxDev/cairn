@@ -54,10 +54,38 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
   sabotages each); part 3 — `cairn-capture --self-test` `SUMMARY redaction: planted=79 caught=79
   clean-damaged=0`; part 4 — the plugins suite, 83 PASS / 7 ok in the `go` job; part 5 — WAIVED as
   a gate by O17, kept as a measurement, NOT re-measured (below).
-- 🔴 **CAPTURE IS UNARMED EVERYWHERE, AND ARMING IS THE OPERATOR'S ACT.** Nothing code-side blocks
-  it any more: O15's gate is waived (O17), Q16 is answered (O18), AP1–AP3 are closed (#258), S3b
-  and S11 are built. A `cairn-ui` with no `-worker-addr`/`-transcript-dir` renders nothing new and
-  serves no worker listener.
+- 🔴 **CAPTURE IS ARMED ON THE PERSONAL INSTANCE, FOR ONE CAPTURING HOST** (operator decisions:
+  one host now, the second host gets the agent but NO token; storage, 90-day retention and a
+  20 GB quota as proposed; the held share below ACCEPTED; plugins NOT registered). The instance's
+  server and UI pods both run `b888b2d`; `cairn-ui` carries the six worker flags plus `-arm-transcript-capture`, a dedicated
+  transcript volume, and a 768Mi memory limit. Its mode line reads `worker listener on … (sole
+  capture owner …, 1 token row(s), 7 route(s)), transcripts in …, capture ARMED`. The client
+  instance is NOT armed (Q5) and the host agent has exactly one `-worker`.
+- **Measured at arming, on that one host (two instances configured):**
+  - full `--dry-run`: 845 sessions, **634 held** (633 carry `*` in `V`), **211 ship**, 0 routed
+    wholly to the unarmed instance; 3,199,838 records read; 1 h 41 min.
+  - (two sessions began between the dry run and the runs: 845 became 847, 211 became 213.)
+  - one `--run` against the still-DISARMED listener: `shipped=0 held=634 refused=1 skipped=212
+    requests=1` in 80 s — one 503 `capture-disarmed`, then the instance is skipped; the pod stored
+    0 sessions. 🔴 This is the run that made the 634 holds FINAL.
+  - first ARMED `--run`: `sessions=847 shipped=213 records=78625 blobs=261 omitted=1 refused=0
+    requests=836`, exit 0, 14 min 10 s. `omitted=1` is one 63 MB tool-result blob stored as the
+    too-large placeholder. Stored afterwards: 213 session directories, 99 MB on disk, 321 MB
+    decompressed.
+  - pod memory during that pass: **18 Mi peak** (sampled every 20 s from the metrics API — a
+    coarse instrument that can miss a sub-interval spike), 0 restarts. The 253 MiB worst shape
+    was NOT met by this corpus; the limit is untested by a real worst case.
+  - reading it back: `/my-sessions` with the owner's credential answers 200 and lists sessions
+    (50 per page); a session page answers 200 with every transcript block collapsed (0 `open`
+    blocks of ~950); the same two URLs and an upload with no credential answer 401.
+  - redaction spot-check over the stored bytes (counts only; `tool_use` matched 35,662 lines, so
+    the search could see content): the capture token's first 8 characters — **0**; `Authorization:
+    Bearer` — 115 occurrences, 20 followed by a redaction marker, 93 by a variable or placeholder,
+    2 by nothing, **0 by 20 or more token characters**. A spot-check of two patterns, not a
+    redaction measurement (part 5 stays un-re-measured).
+  - the timer, once enabled: four consecutive passes exit 0 with `shipped=0 requests=0` (nothing
+    new). ⚠ An INCREMENTAL upload from the timer has not been observed yet — every session that
+    grew in that window was a held one.
 - **AP4, RECORDED at `b888b2d`** (a record step since O17, not a gate; `internal/redact` is
   byte-identical from `8ba0327` to `b888b2d`): the three marker-adjacency tests
   (`TestAMarkerDoesNotShieldASecretBesideIt`, `TestTheRedactorIsQuietOnItsOwnOutput`,
@@ -67,16 +95,21 @@ session page, plus an out-of-process plugin system (summaries; ClickUp matching)
   it needs a fresh auditor-written set and none exists in any repository; the last score on
   record is `leaks caught=157/190 clean damaged=18/175` at the round-6 head, and `internal/redact`
   has changed since that commit. Neither line is a gate.
-- **Needs deploy (coordinator):** the `cairn-ui` image at `b888b2d` carries S4–S10 with capture
-  OFF. **No database migration** in `16f2a0a..b888b2d` (`internal/pgstore` is untouched) — the
-  range starts at `16f2a0a` because that is the `cairn-ui` image pin on the deployment's trunk as
-  read when this was written; from an OLDER running image the range must be re-checked (pgstore
-  did change before `16f2a0a`). The image for `b888b2d` is published.
-- Claims: `cairn-transcripts-arming` released with this doc.
+- Claims: all released.
 
 ## Arming — the ordered steps, and what each needs from the operator
-The full runbook (literal manifests, unit files, commands) is kept OUT of this repository because
-it names a deployment; this is its skeleton. Nothing here has been run.
+The literal manifests, unit files, commands and every rollback are kept OUT of this repository
+because they name a deployment (they are in the deployment repository's own handoff); this is the
+skeleton. ✅ **Steps 1–6 have been run for ONE host on the personal instance, and step 7 in part**: the
+read-back was made with the owner's credential over HTTP, NOT in a real browser, and the refusal
+measured is the NO-credential 401 — a second authenticated principal being refused was not
+tested. Step 8 has not been run, and the second host stops after step 2 (agent installed, no
+token).
+**Rollbacks, smallest first:** disarm = remove the one `-arm-transcript-capture` line (uploads
+answer 503, agents hold, stored transcripts stay readable); stop a host = stop its timer and
+remove its token file (the unit's condition); revoke a host = delete its row from the
+`-worker-tokens` file (effective on the next request) AND remove the host's token file, since a
+revoked token still presented is a 401 every minute that counts toward the listener's lockout.
 1. **Deploy the image at `b888b2d`, no new flags.** Needs: nothing but the deploy.
 2. **Host tooling.** The tooling repository installs neither `cairn-capture` nor the plugins: add
    `packages.cairn-capture` (and, later, `cairn-summary` / `cairn-clickup`) from this flake, move
@@ -128,6 +161,23 @@ it names a deployment; this is its skeleton. Nothing here has been run.
   that session); kept under O18.
 
 ## Defects (batched)
+- **The transcript store is NOT backed up** (found at arming). The deployment's backup job does
+  not include the transcript volume: an archive would outlive the retention sweep and an owner's
+  deletion, and the tree is far larger than that job is built for. A lost volume loses every
+  stored transcript, and a host does not re-send what the instance acknowledged — a re-capture
+  needs each host's capture state cleared by hand. Closing condition: an operator decision on
+  record — "accepted, no backup", or a backup that honours retention and deletion.
+- **A session routed WHOLLY to an instance with no `-worker` is re-read and re-redacted on every
+  pass** (found by the host unit's audit; `internal/capture`): an unconfigured instance is not a
+  "stopped" one, so nothing marks the session and no watermark moves. Measured by the auditor at
+  27 s per pass for one 55 MB session. 0 such sessions on the armed host today; the cost appears
+  the day a session reads only the other instance's scopes.
+- **75% of one host's history is held** (634 of 845) because pre-ledger sessions carry `*` and the
+  host knows two instances. Accepted by the operator for arming; recorded because the first
+  disarmed `--run` made those holds final and no flag reverses that.
+- **The first pass can outlast any reasonable unit timeout** (the dry run took 1 h 41 min; the
+  armed pass 14 min after holds were settled). It was run by hand; a host armed straight from its
+  timer would be killed mid-pass and resume, showing a failed unit meanwhile.
 - **`tests/dualrun`'s self-test is nondeterministic for one mutant.** On #274's head `6b094c9` the
   `dualrun` job failed once, exit 2, `mutants=7 caught=6`: the `audit-identity-field-dropped`
   mutant also tripped the `process` comparison where it declares `['audit']` only. A re-run of the
@@ -164,10 +214,17 @@ it names a deployment; this is its skeleton. Nothing here has been run.
   OpenAI-compatible provider spelling in `plugins/internal/llm`; paging on `/my-sessions`.
 
 ## Next steps (ranked)
-1. **Deploy `b888b2d`** (capture OFF, no migration). forcing: user — the operator chose to ship capture now (O17).
-2. **Arming, steps 2–7 above**, stopping for the operator at steps 4, 5 and 6. forcing: user.
-3. **The first two defects above** (the dualrun flake; the ClickUp boundary rule) before plugin B
-   is toggled on anywhere. forcing: quality.
+1. **Judge a period on one host, then the second host:** mint its token (operator OK), raise
+   `-transcript-quota` for two hosts, run its `--dry-run` and first pass by hand, start its
+   timer. forcing: user — the plan's rollout is one host first.
+   - **closing-condition:** `check` — the second host's `cairn-capture` run line shows
+     `shipped` > 0 and the pod's mode line shows 2 token rows.
+2. **Observe one incremental upload from the timer** (a non-held session that grows after
+   arming): the run line shows `requests` > 0 on a timer pass. forcing: quality — unobserved.
+3. **Decide the transcript store's backup** (first defect above). forcing: data — a lost volume
+   loses every stored transcript.
+4. **The dualrun flake and the ClickUp boundary rule** before plugin B is toggled on anywhere;
+   plugins stay unregistered until the operator asks. forcing: quality.
 
 ## Gotchas / decisions / dead-ends
 - **`opencode export` silently truncates at ~8–96 KiB when piped (exit 0)** but is complete to a
