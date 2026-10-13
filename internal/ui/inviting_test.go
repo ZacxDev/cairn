@@ -210,97 +210,17 @@ func (r *invRig) principal(id control.ID) control.Principal {
 	return p
 }
 
-func TestOnlyAProjectsOwnerOrAdminCanMintAnInvitation(t *testing.T) {
-	r := newInvRig(t)
-
-	// An owner may.
-	if _, _, err := r.inviting.Mint(context.Background(), r.principal(invOwner), invProject, control.RoleMember, 0); err != nil {
-		t.Fatalf("an owner could not mint: %v", err)
-	}
-	// An admin may.
-	if _, _, err := r.inviting.Mint(context.Background(), r.principal(invAdmin), invProject, control.RoleMember, 0); err != nil {
-		t.Fatalf("an admin could not mint: %v", err)
-	}
-	// 🔴 A PLAIN MEMBER MAY NOT. This is the clause that decides whether belonging to a
-	// project lets you widen who else belongs to it.
-	if _, _, err := r.inviting.Mint(context.Background(), r.principal(invPlain), invProject, control.RoleMember, 0); !errors.Is(err, ErrNotInvitable) {
-		t.Fatalf("a plain member minted an invitation (err=%v)", err)
-	}
-	// 🔴 AND THE CROSS-PROJECT CASE: owning ANOTHER project confers nothing here. `invPlain`
-	// owns `invOther`, so a check that asked "do you own anything" rather than "do you manage
-	// THIS one" would pass.
-	if _, _, err := r.inviting.Mint(context.Background(), r.principal(invPlain), invProject, control.RoleMember, 0); !errors.Is(err, ErrNotInvitable) {
-		t.Fatal("owning a different project let a caller invite into this one")
-	}
-	// An unknown project is the same refusal, so it cannot be used to ask which exist.
-	if _, _, err := r.inviting.Mint(context.Background(), r.principal(invOwner), "prj_nosuch", control.RoleMember, 0); !errors.Is(err, ErrNotInvitable) {
-		t.Fatalf("an unknown project gave a distinguishable error: %v", err)
-	}
-}
-
-// TestAnAdminCannotMintAnOwnerInvitation is the privilege-escalation case.
-//
-// 🔴 WITHOUT THIS, AN ADMIN MINTS AN `owner` INVITATION AND REDEEMS IT THEMSELVES. The audit
-// trail then reads as an ordinary join: a `member-set` to `owner`, actor the inviter, which
-// is also the redeemer. Nothing in the journal would look wrong.
-func TestAnAdminCannotMintAnOwnerInvitation(t *testing.T) {
-	r := newInvRig(t)
-	_, _, err := r.inviting.Mint(context.Background(), r.principal(invAdmin), invProject, control.RoleOwner, 0)
-	if err == nil {
-		t.Fatal("an admin minted an OWNER invitation — that is an escalation with a clean-looking audit trail")
-	}
-	// 🔴 THE SENTINEL, NOT THE SENTENCE — AND THE SWAP IS WHAT MAKES THIS A GUARD ON THE
-	// REFUSAL RATHER THAN ON ITS WORDING. It asserted `strings.Contains(err.Error(), "only
-	// an owner may invite another owner")`, which is this repository's own spelled-guard
-	// trap: a reword walks past it, and it says nothing about the one property the HANDLER
-	// depends on, which is that `refuseInviteWrite` can RECOGNISE this error with
-	// `errors.Is`. An unwrapped error of any wording falls to that function's `default` arm
-	// and becomes a 500.
-	if !errors.Is(err, ErrRoleNotConferrable) {
-		t.Fatalf("refused for a different reason, or with an error no handler can classify "+
-			"(`refuseInviteWrite` maps on ErrRoleNotConferrable and answers 500 for anything "+
-			"it cannot match): %v", err)
-	}
-	// The positive half: an OWNER may, or the assertion above would also pass against a
-	// blanket refusal of owner invitations.
-	if _, _, err := r.inviting.Mint(context.Background(), r.principal(invOwner), invProject, control.RoleOwner, 0); err != nil {
-		t.Fatalf("an owner could not mint an owner invitation: %v", err)
-	}
-}
-
-// TestTheMintedTokenIsReturnedOnceAndOnlyItsDigestIsStored.
-func TestTheMintedTokenIsReturnedOnceAndOnlyItsDigestIsStored(t *testing.T) {
-	r := newInvRig(t)
-	token, inv, err := r.inviting.Mint(context.Background(), r.principal(invOwner), invProject, control.RoleMember, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if token == "" {
-		t.Fatal("no token was returned, so the invitation could never be redeemed")
-	}
-	if inv.Digest != invite.Digest(token) {
-		t.Fatal("the stored digest is not the token's digest")
-	}
-	// The stored row must not BE the token, under any field.
-	stored, ok, err := r.invites.ByToken(token)
-	if err != nil || !ok {
-		t.Fatalf("the invitation did not store: ok=%v err=%v", ok, err)
-	}
-	if stored.Digest == token {
-		t.Fatal("the token itself was stored as the digest")
-	}
-	if stored.Inviter != invOwner {
-		t.Errorf("inviter is %q, want %q — the journal's 'who let this person in' comes from here", stored.Inviter, invOwner)
-	}
-	if stored.ExpiresAt != invClock.Add(invite.DefaultTTL) {
-		t.Errorf("a zero ttl did not fall back to invite.DefaultTTL: %v", stored.ExpiresAt)
-	}
-}
+// ⚠ THE MINT'S OWN TESTS ARE GONE WITH THE MINT. Single-project invitations were folded into
+// team links, so `ControlInviting` has no `Mint` to test: who may create one, the
+// owner-invites-owner escalation rule and the token-returned-once property are now questions
+// about `ControlTeamLinks.Mint` and are answered in `teamlinks_test.go`. Every test below
+// starts from a row that ALREADY EXISTS (`invRig.seedInvitation`), which is the only state an
+// invitation can be in on a deployed surface.
 
 // TestRevokingIsCheckedAgainstTheInvitationsOwnProject is `Sharing.Unshare`'s rule.
 func TestRevokingIsCheckedAgainstTheInvitationsOwnProject(t *testing.T) {
 	r := newInvRig(t)
-	token, inv, err := r.inviting.Mint(context.Background(), r.principal(invOwner), invProject, control.RoleMember, 0)
+	token, inv, err := r.seedInvitation(r.principal(invOwner), invProject, control.RoleMember, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +249,7 @@ func TestRevokingIsCheckedAgainstTheInvitationsOwnProject(t *testing.T) {
 // decision, measured.
 func TestRedeemingProvisionsAnUnknownSubjectAndRecordsTheInviterAsActor(t *testing.T) {
 	r := newInvRig(t)
-	token, _, err := r.inviting.Mint(context.Background(), r.principal(invOwner), invProject, control.RoleMember, 0)
+	token, _, err := r.seedInvitation(r.principal(invOwner), invProject, control.RoleMember, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +317,7 @@ func TestRedeemingAKnownUserJoinsThemWithoutCreatingASecondAccount(t *testing.T)
 	// `invPlain` exists and is NOT a member of `invProject`... they are, as `member`. Use a
 	// project they are not in: invite the OWNER of `invOther` into `invProject` is already
 	// true, so instead invite `invAdmin` into `invOther`, whose owner is `invPlain`.
-	token, _, err := r.inviting.Mint(context.Background(), r.principal(invPlain), invOther, control.RoleMember, 0)
+	token, _, err := r.seedInvitation(r.principal(invPlain), invOther, control.RoleMember, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +362,7 @@ func TestANonOpenInvitationIsRefusedUniformly(t *testing.T) {
 		}
 	})
 	t.Run("revoked", func(t *testing.T) {
-		token, inv, err := r.inviting.Mint(context.Background(), r.principal(invOwner), invProject, control.RoleMember, 0)
+		token, inv, err := r.seedInvitation(r.principal(invOwner), invProject, control.RoleMember, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -454,7 +374,7 @@ func TestANonOpenInvitationIsRefusedUniformly(t *testing.T) {
 		}
 	})
 	t.Run("expired", func(t *testing.T) {
-		token, _, err := r.inviting.Mint(context.Background(), r.principal(invOwner), invProject, control.RoleMember, time.Hour)
+		token, _, err := r.seedInvitation(r.principal(invOwner), invProject, control.RoleMember, time.Hour)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -468,7 +388,7 @@ func TestANonOpenInvitationIsRefusedUniformly(t *testing.T) {
 		}
 	})
 	t.Run("an empty provider or subject is not redeemable", func(t *testing.T) {
-		token, _, err := r.inviting.Mint(context.Background(), r.principal(invOwner), invProject, control.RoleMember, 0)
+		token, _, err := r.seedInvitation(r.principal(invOwner), invProject, control.RoleMember, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -497,7 +417,7 @@ func TestANonOpenInvitationIsRefusedUniformly(t *testing.T) {
 // afterwards, the store write happened first.
 func TestTheInvitationIsSpentBEFORETheMembershipIsRecorded(t *testing.T) {
 	r := newInvRig(t)
-	token, _, err := r.inviting.Mint(context.Background(), r.principal(invOwner), invProject, control.RoleMember, 0)
+	token, _, err := r.seedInvitation(r.principal(invOwner), invProject, control.RoleMember, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -539,7 +459,7 @@ function's doc comment.`, got, invite.StateRedeemed)
 // for, driven concurrently.
 func TestTwoSimultaneousRedemptionsProduceOneMembership(t *testing.T) {
 	r := newInvRig(t)
-	token, _, err := r.inviting.Mint(context.Background(), r.principal(invOwner), invProject, control.RoleMember, 0)
+	token, _, err := r.seedInvitation(r.principal(invOwner), invProject, control.RoleMember, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -637,32 +557,28 @@ func TestInvitableListsOnlyManagedProjectsAndNothingForAProjectPrincipal(t *test
 	}
 }
 
-// TestTheRoleChooserIsDrivenByTheREALModelsHeldRole is the SEAM, and it exists because a
+// TestTheInviteIndexIsDrivenByTheREALModelsHeldRole is the SEAM, and it exists because a
 // mutation sweep found the gap it closes.
 //
 // 🔴 THE MEASURED HOLE: dropping `HeldRole` from `Model.ProjectsManagedBy` SURVIVED a fully
-// green suite. `internal/control` tests `ProjectsManagedBy` against a hand-built Model;
-// `TestTheRoleChooserOffersOnlyWhatTheCallerMayConfer` tests the chooser against a hand-built
-// `control.NamedProject`. Both were hermetic, both passed, and NEITHER built the combined
-// state — so the field that carries the caller's role from the model to the form could be
-// deleted and the only visible consequence was a chooser that silently offered nothing at
-// all. That is this repository's own "verified in isolation is the new vacuous green".
+// green suite. `internal/control` tests `ProjectsManagedBy` against a hand-built Model and the
+// renderer was tested against a hand-built `control.NamedProject`; NEITHER built the combined
+// state, so the field that carries the caller's role from the model to the page could be
+// deleted unseen. That is this repository's own "verified in isolation is the new vacuous
+// green".
 //
-// 🔴 SO WHAT IS ASSERTED IS THE RELATIONSHIP, IN BOTH DIRECTIONS AND BEHAVIOURALLY. The real
-// authority's owner must see `owner` offered and the real authority's ADMIN must not — which
-// is a claim about `ProjectsManagedBy`, about `Invitable`, about `CanConfer` and about
-// `inviteForm` together, and no one of them can satisfy it alone.
-func TestTheRoleChooserIsDrivenByTheREALModelsHeldRole(t *testing.T) {
+// ⚠ WHAT THE FIELD FEEDS CHANGED WITH THE FOLD: it used to decide which roles the invitation
+// form offered, and that form is gone. It is still what the index prints beside each project
+// ("you are owner"), so the relationship asserted is model → `Invitable` → rendered index.
+func TestTheInviteIndexIsDrivenByTheREALModelsHeldRole(t *testing.T) {
 	r := newInvRig(t)
 
 	for _, tc := range []struct {
-		who        control.ID
-		wantHeld   control.Role
-		wantOwner  bool
-		wantMember bool
+		who      control.ID
+		wantHeld control.Role
 	}{
-		{invOwner, control.RoleOwner, true, true},
-		{invAdmin, control.RoleAdmin, false, true},
+		{invOwner, control.RoleOwner},
+		{invAdmin, control.RoleAdmin},
 	} {
 		projects := r.inviting.Invitable(r.principal(tc.who))
 		if len(projects) != 1 {
@@ -671,35 +587,21 @@ func TestTheRoleChooserIsDrivenByTheREALModelsHeldRole(t *testing.T) {
 		}
 		// The STRUCTURAL half: the field crossing the seam carries the caller's own role.
 		if got := projects[0].HeldRole; got != tc.wantHeld {
-			t.Errorf("%s: Invitable reported HeldRole %q, want %q. A zero value here is what the mutation "+
-				"that survived produced, and its only symptom was a chooser offering nothing",
-				tc.who, got, tc.wantHeld)
+			t.Errorf("%s: Invitable reported HeldRole %q, want %q", tc.who, got, tc.wantHeld)
 		}
-
-		// The BEHAVIOURAL half, because a structural check type-checks past a wrong value: the
-		// rendered form over that REAL value must offer what the role admits.
-		view := InviteView{
-			Viewer:   "fixture-viewer",
-			CSRF:     renderCSRF,
-			Projects: projects,
-			Project:  projects[0],
+		// The BEHAVIOURAL half, because a structural check type-checks past a wrong value.
+		view := InviteView{Viewer: "fixture-viewer", CSRF: renderCSRF, Projects: projects}
+		text := pageText(renderNode(t, inviteOnTeam(view)))
+		if !strings.Contains(text, "you are "+string(tc.wantHeld)) {
+			t.Errorf("%s: the index does not say %q beside the project. Text: %q", tc.who, "you are "+string(tc.wantHeld), text)
 		}
-		html := renderNode(t, inviteOnTeam(view))
-		if got := strings.Contains(html, `value="`+string(control.RoleOwner)+`"`); got != tc.wantOwner {
-			t.Errorf("%s (holds %s): the chooser offers `owner` = %v, want %v",
-				tc.who, tc.wantHeld, got, tc.wantOwner)
+		// The two rows are distinguishable: neither role's sentence appears on the other's page.
+		other := control.RoleOwner
+		if tc.wantHeld == control.RoleOwner {
+			other = control.RoleAdmin
 		}
-		if got := strings.Contains(html, `value="`+string(control.RoleMember)+`"`); got != tc.wantMember {
-			t.Errorf("%s (holds %s): the chooser offers `member` = %v, want %v",
-				tc.who, tc.wantHeld, got, tc.wantMember)
-		}
-		// 🔴 AND THE FORM MUST BE THERE AT ALL. `inviteForm` renders a sentence instead of a
-		// form when nothing is conferrable, which is exactly what a zero `HeldRole` produces
-		// — so an assertion that only looked for the ABSENCE of `owner` would be satisfied by
-		// a page with no chooser on it.
-		if !strings.Contains(html, `action="`+InvitePath+`"`) {
-			t.Errorf("%s: no mint form is rendered at all. That is what a zero HeldRole looks like, and "+
-				"it satisfies every absence assertion above", tc.who)
+		if strings.Contains(text, "you are "+string(other)) {
+			t.Errorf("%s: the index also says %q", tc.who, "you are "+string(other))
 		}
 	}
 }
@@ -709,7 +611,7 @@ func TestTheRoleChooserIsDrivenByTheREALModelsHeldRole(t *testing.T) {
 func TestRedeemForJoinsAPrincipalTheControlPlaneAlreadyHolds(t *testing.T) {
 	r := newInvRig(t)
 	// `invAdmin` is not in `invOther`, whose owner is `invPlain`.
-	token, _, err := r.inviting.Mint(context.Background(), r.principal(invPlain), invOther, control.RoleMember, 0)
+	token, _, err := r.seedInvitation(r.principal(invPlain), invOther, control.RoleMember, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -750,7 +652,7 @@ func TestRedeemForJoinsAPrincipalTheControlPlaneAlreadyHolds(t *testing.T) {
 func TestRedeemForRefusesSomebodyTheProjectAlreadyHolds(t *testing.T) {
 	r := newInvRig(t)
 	// `invPlain` owns `invOther`. Mint an invitation into it and have its OWNER redeem.
-	token, _, err := r.inviting.Mint(context.Background(), r.principal(invPlain), invOther, control.RoleMember, 0)
+	token, _, err := r.seedInvitation(r.principal(invPlain), invOther, control.RoleMember, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -810,7 +712,7 @@ func TestRedeemForRefusesSomebodyTheProjectAlreadyHolds(t *testing.T) {
 func TestRedeemAlsoRefusesSomebodyTheProjectAlreadyHolds(t *testing.T) {
 	r := newInvRig(t)
 	// `invPlain` OWNS `invOther`, and is a subject the model already knows.
-	token, _, err := r.inviting.Mint(context.Background(), r.principal(invPlain), invOther, control.RoleMember, 0)
+	token, _, err := r.seedInvitation(r.principal(invPlain), invOther, control.RoleMember, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

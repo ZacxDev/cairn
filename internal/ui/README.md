@@ -1008,7 +1008,9 @@ caller passes the CSRF gate with a cookie of its own choosing. A narrowed token 
 an invitation into its owner's project and redeem it as an identity its holder controls. The invite
 handlers now act as `membershipActor(id)`, the zero principal for a narrowed caller, so `Invitable`
 lists nothing and `mayManage` refuses — on all three rows: the project page
-(`TestANarrowedBearerSeesNoInvitations`), mint (`TestANarrowedBearerCannotMintAnInvitation`) and
+(`TestANarrowedBearerSeesNoInvitations`), mint (`TestANarrowedBearerCannotMintAnInvitation` — since
+Phase Z `POST /invite` mints for nobody, so that guard is `TestNoBearerMintsAnInvitationThroughPostInvite`
+and the narrowing's own guard over a mint is `TestANarrowedBearerHasNoTeamLinkAuthority`) and
 revoke (`TestANarrowedBearerCannotRevokeAnInvitation`).
 
 🔴 **THE SHARE FLOW'S CANDIDATE LIST IS MEMBERSHIP-DERIVED TOO, AND IS CLOSED THE SAME WAY.**
@@ -2233,6 +2235,11 @@ in as nobody, or refused, with nothing anywhere saying the link was at fault.
 
 ## 🔴 The mint response does not redirect, and that is the one place this flow breaks the house pattern
 
+⚠ **SUPERSEDED by Phase Z (the invite fold):** nothing mints a single-project invitation any more, so the response this section describes is the TEAM LINK's (`handleTeamLink`, `mintedLinkSection`), which
+kept the same ruling for the same reasons; its guard is
+`TestTheMintedTeamLinkIsRenderedOnceAsTextAndNeverLogged`. The text below is the record of the
+decision as it was made for the invitation.
+
 Every other write here is a POST-redirect-GET, because a write that renders its own answer is a
 write a refresh repeats. This one cannot be: `invite.NewToken` returns the token exactly once
 and only its digest is stored, so there is nothing to render on the far side of a hop. Both ways
@@ -2277,6 +2284,11 @@ in that configuration nothing was asked. Rendering it would be the measured lie 
 already shipped once. Pinned by `TestTheInviteRowsAnswerHonestlyWithNoInviteStore`.
 
 ## 🔴 The role chooser and the mint read ONE predicate, and the seam between them was a measured hole
+
+⚠ **SUPERSEDED by Phase Z (the invite fold):** nothing mints a single-project invitation any more, so the chooser, `ControlInviting.Mint`, `leastPrivilegedRole` and their tests are deleted.
+`control.Role.CanConfer` survives with one reader (`mayLink`, the team link's project arm), and the
+seam guard survives re-aimed at what `HeldRole` still feeds, the index's "you are <role>"
+(`TestTheInviteIndexIsDrivenByTheREALModelsHeldRole`). The text below is the record.
 
 `control.Role.CanConfer` is the escalation rule — an admin may not make an owner, because they
 could then confer it on themselves and the journal would read as an ordinary join. It is a
@@ -2364,6 +2376,9 @@ redeemed" is a reassuring zero and a zero is indistinguishable from a harness wi
 that guard can go red, rather than one afternoon's reading recorded in a commit message.
 
 ## Refusals: which one discriminates, and why exactly one does
+
+⚠ **SUPERSEDED by Phase Z (the invite fold):** nothing mints a single-project invitation any more, so the `roleRefusal` row is gone with the mint and NO invitation refusal discriminates now. The other
+three rows stand (`TestTheInviteRevokeRefusalsAreUniform`).
 
 | condition | status | body |
 |---|---|---|
@@ -4769,6 +4784,83 @@ its read predicate — each red in the test that names it, with that test's own 
   store's answer to it is S1's (`not-found` for an already-retracted memo).
 - A browser send carries no credential, so its sender line has no `via` label — measured in the
   pgtest tier, and by design (decision 5's label names an agent credential).
+
+---
+
+# Phase Z — the invite fold: single-project invitations became team links
+
+**Operator decision, option A of the three the hub/team handoff set out.** The Team page has ONE mint
+form, the team-link form. `GET /team?project=<id>` lists that project's invitations and pre-ticks the
+project on that form. `POST /invite` creates nothing and answers `303 /team?outcome=invite-folded
+[&project=<id>]#links`. No route was removed, no migration was written, and no row was moved.
+
+## The binding rules
+
+- 🔴 **`Inviting` has no `Mint`, and that is the guard.** The server holds its invitation half as that
+  interface, so no handler — `handleInvite` or a later one — can create an invitation
+  (`TestTheInvitingInterfaceCannotMint`). `ControlInviting.Mint`, the role chooser, the minted
+  section and `roleRefusal` are deleted, not parked.
+- 🔴 **`POST /invite` is a REDIRECT, never a translation into a team-link mint.** A translation would
+  choose the role itself (`owner` has no link role; an invitation's `member` is not the team-link
+  form's unread default, `reader`) and create a capability nothing renders. The project is carried
+  as an ANCILLARY value (`handleInviteRevoke`'s ruling); the role is dropped on purpose.
+- 🔴 **The row keeps class 0, so both cross-site gates still reach it by METHOD.** "This write no
+  longer writes" is a route-class argument, and no gate may be derived from one.
+  `TestTheInviteWritesAreBehindBothCrossSiteGates` still walks it.
+- 🔴 **An invitation that already exists is untouched**: listed to every manager of its project,
+  revocable by any of them, redeemable through both callback arms at the role it was issued at —
+  `owner` included — until it expires. `ControlInviting.Redeem`/`RedeemFor`/`Revoke` and
+  `invite.Store` did not change.
+- 🔴 **The pre-tick cannot widen anything.** It is `InviteView.Project`, set only for a project
+  `Invitable` returned, and it ticks a box only where `Mintable` offered that same target; `Mint`
+  re-asks `mayLink` of every target at the write regardless. With no `?project=` nothing is ticked.
+- 🔴 **`InviteFoldNotice` is pinned as one normalised string** and rendered in the invitation section
+  on both its shapes. It states the two costs below.
+
+## 🔴 The two costs, accepted and stated on the page
+
+1. **Nobody can confer `owner` self-service.** A team link has no owner role by design
+   (`invite.AllLinkRoles`), and the single-use owner invitation was the one bounded way an owner
+   could make another. The remaining writer is the operator's `cairn-server -set-member`.
+2. **Two admins of one project cannot see or revoke each other's new links.** An invitation was
+   listed to and revocable by every manager of its project (`mayManage`); a team link is listed to
+   and revocable by its minter only (`ControlTeamLinks.Links`/`Revoke`). A link still dies with its
+   minter's authority (`reCheckMinter`), which is the bound that remains.
+
+## The RED proof
+
+Pre-change tree = `origin/main` at the fold's parent, with this phase's test file added (and a
+one-line shim for the constant that did not exist yet):
+
+| test | pre-change | post-change |
+|---|---|---|
+| `TestPostInviteNoLongerMintsAnInvitation` | RED — 200, a join link, one more row | green |
+| `TestPostInviteCarriesOnlyAProjectItWasGivenIntoItsRedirect` | RED | green |
+| `TestTheTeamPageHasOneMintFormAndPreselectsTheProject` | RED — the old form present, 0 boxes ticked | green |
+| `TestTheFoldNoticeIsPinnedWhole` | RED | green |
+| `TestTheInvitingInterfaceCannotMint` | RED | green |
+| `TestAnInvitationIssuedBeforeTheFoldStillRedeemsAndIsStillRevocable` | green | green |
+
+The last row is an **INVARIANT GUARD and is labelled as one**: an existing invitation redeemed and
+was revocable before the fold, and the claim is that it still does. Its evidence is its mutants.
+`tests/control_mutants.py` gained ten rows for this phase (`ui-post-invite-*`,
+`ui-team-link-form-*`, `ui-fold-*`) — three of them kill that invariant guard — and re-aimed the
+invitation mint's three capability rows (`ui-mint-response-loses-no-store`,
+`ui-minted-link-becomes-an-anchor`, `ui-mint-logs-the-token`) at the team-link mint, whose own guard
+had asserted `no-store` and exactly-once but neither "not an anchor" nor "never logged". Five rows
+whose target was deleted went with it and one was replaced (`ui-invite-revoke-refusals-stop-being-uniform`);
+read the battery's run for the count.
+
+## What these guards still cannot see
+
+- **The real database.** Every test here is over the in-memory stores. That open version-1
+  `invites` rows keep redeeming on Postgres rests on `internal/pgstore`'s own tier, which this
+  change did not touch — and on there BEING no schema change, which is why there is no migration.
+- **How many open invitations exist on any deployment** — not counted; the fold needs none to exist.
+- **A form rendered before the deploy** posts `POST /invite` and lands on the banner; that is
+  exercised by the handler tests, not in a real browser across a real deploy.
+- **The owner path that remains** (`cairn-server -set-member`) is named on the page and is not
+  driven from here.
 
 ---
 

@@ -41,21 +41,15 @@ Team page carrying sharing + invitations + multi-target team links (TTL, reuse, 
 ## Next steps (ranked)
 1. **(done) Keep reusable-link tokens out of access logs** — fragment links, #232, deployed.
    forcing: security — a logged reusable token is a standing enrolment capability.
-2. **Fold single-project invitations into team links** — a separate PR now that #214 has soaked.
-   forcing: user — operator chose "fold later". 🔴 **BLOCKED ON AN OPERATOR RULING, not built:** a
-   single-project invitation and a one-project single-use team link differ in three ways, and
-   "fold" picks a side on each — (i) invitations may confer `owner` (an owner may invite an owner,
-   `control.Role.CanConfer`); team links refuse `owner` by design; (ii) an invitation is listed to and
-   revocable by EVERY manager of its project (`mayManage`); a team link only by its minter;
-   (iii) open `invites` rows MAY exist in the version-1 table (not counted). **Recommended (no migration):** the
-   Team page keeps ONE mint form (the team-link form, `?project=` preselecting that project);
-   `POST /invite` stops minting and 303s to it; outstanding invitations stay listed, revocable and
-   redeemable until they expire; a project owner can no longer confer `owner` self-service (no CLI mints
-   invitations; the only other path is the operator's `cairn-server -set-member`). Alternatives: widen team links to
-   carry (i)+(ii) for one-project single-use links (an authz-model change), or a NEW migration (version 4 —
-   3 is the memos tables) moving open invitations into `team_links` (stop before deploy). The older invite branches
-   (`feat/ui-invite-flow`, `p6/invite-*`, `fix/rank-33-…`) are squash-merged via #139/#144, predate
-   team links, and neither implement the fold nor conflict with it.
+2. **(done, #NNN) Fold single-project invitations into team links — option A, no migration.**
+   forcing: user — operator ruled for the recommended option. The Team page has ONE mint form (the
+   team-link form; `?project=` pre-ticks that project); `POST /invite` creates nothing and 303s to
+   `/team?outcome=invite-folded[&project=…]#links`; `Inviting` has no `Mint`. Invitations issued
+   before stay listed, revocable by every manager and redeemable (at `owner` too) until they expire.
+   Accepted costs, on the page (`InviteFoldNotice`) and in `README.md`: no self-service `owner`
+   (the operator's `cairn-server -set-member` is the path left); two admins of one project cannot
+   see or revoke each other's links. Record: `internal/ui/README.md` Phase Z.
+   🔴 **MERGED, NOT DEPLOYED — needs a cairn-ui image deploy; NO migration.** Not verified signed-in.
 3. **(done) Deploy #214 + S4** — `sha-197dd0e`, trunk `bbb6055`. forcing: user — operator go.
 
 ## Gotchas / decisions / dead-ends

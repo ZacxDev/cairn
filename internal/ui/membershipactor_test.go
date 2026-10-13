@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -43,8 +42,8 @@ func (l *live) bearerDo(method, path, bearer string, form url.Values) *httptest.
 
 var narrowedBearers = []string{narrowedToOneToken, narrowedToNoneToken, narrowedToAllToken}
 
-// seededInvite is a real invitation into the fixture user's project, minted directly by the
-// service as the UN-narrowed principal, so the page and revoke rows have something to show
+// seededInvite is a real invitation row into the fixture user's project, written as the
+// UN-narrowed principal (`seedInvitationInto` — nothing mints one any more), so the page and revoke rows have something to show
 // and something to withdraw.
 func seededInvite(t *testing.T, authority *control.Cache) (ControlInviting, *memInvites, string) {
 	t.Helper()
@@ -55,9 +54,9 @@ func seededInvite(t *testing.T, authority *control.Cache) (ControlInviting, *mem
 	if !ok {
 		t.Fatal("precondition: the fixture user is not in the model")
 	}
-	_, inv, err := inviting.Mint(context.Background(), owner, fixtureProject, control.RoleMember, 0)
+	_, inv, err := seedInvitationInto(inviting, owner, fixtureProject, control.RoleMember, 0)
 	if err != nil {
-		t.Fatalf("precondition: the owner could not mint: %v", err)
+		t.Fatalf("precondition: the invitation row could not be written: %v", err)
 	}
 	return inviting, store, inv.Digest
 }
