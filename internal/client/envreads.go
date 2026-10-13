@@ -56,7 +56,8 @@ const (
 	EnvUIURL   = "CAIRN_UI_URL"
 	EnvUIToken = "CAIRN_UI_TOKEN"
 	// StateHomeEnv is where the memo cursor lives (decision 6): `$XDG_STATE_HOME/cairn/memo/…`,
-	// defaulting to `~/.local/state` when unset.
+	// defaulting to `~/.local/state` when unset — and the client read ledger beside it,
+	// `…/cairn/read-ledger/` (`readledger.go`, whose two session-id names are in this ledger too).
 	StateHomeEnv = "XDG_STATE_HOME"
 	// The `audit-refs` verb's reads (S5 of the scope-refs plan). AuditHostsEnv is the host → base-URL
 	// map and AuditGitHubAPIEnv the PR check's REST base — the SAME spellings as `refaudit.EnvHosts` /
@@ -75,7 +76,8 @@ const (
 func EnvReads() []string {
 	out := []string{ConfigEnv, EnvURL, EnvToken, RoutesEnv, MirrorRootEnv, EnvUIURL, EnvUIToken,
 		AuditHostsEnv, AuditGitHubAPIEnv, GHTokenEnv, GitHubTokenEnv, CacheHomeEnv,
-		StateHomeEnv, HomeEnv}
+		StateHomeEnv, HomeEnv,
+		ClaudeSessionEnv, OpencodeSessionEnv}
 	sort.Strings(out)
 	return out
 }

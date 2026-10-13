@@ -39,12 +39,25 @@ func TestAnIdleRunSavesNothing(t *testing.T) {
 		t.Fatalf("a run in which ONE session grew saved %d times (%+v), want exactly 1", saves, sum)
 	}
 	// A backlog: with the saves spaced out, ten changed sessions cost the first save and the one
-	// when the run ends — not ten.
+	// when the run ends — not ten — PLUS one save per session whose client READ LEDGER ships (S11):
+	// the ledger goes through the opencode path, whose write plan is saved BEFORE the request leaves
+	// (a chain cursor cannot be resumed without it). That is per session WITH a ledger, not per
+	// session, which is the bound this keeps.
+	ledgered := 0
+	for _, body := range w.Ledgers {
+		if strings.TrimSpace(body) != "" {
+			ledgered++
+		}
+	}
+	if ledgered == 0 || ledgered >= 8 {
+		t.Fatalf("control: the world holds %d non-empty ledgers — this bound needs some and not all", ledgered)
+	}
 	b := newAgent(t, materialize(t, w), oneInstance, &fakeRunner{}, &bytes.Buffer{})
 	saves = 0
 	b.Checkpoint, b.CheckpointEvery = func() error { saves++; return nil }, time.Hour
-	if sum := mustRun(t, b); saves != 2 || sum.Shipped < 8 {
-		t.Fatalf("a first run over %d sessions saved %d times, want 2 (the first change, and the end)", sum.Sessions, saves)
+	if sum := mustRun(t, b); saves != 2+ledgered || sum.Shipped < 8 {
+		t.Fatalf("a first run over %d sessions saved %d times, want %d (the first change, the end, and one plan per ledger)",
+			sum.Sessions, saves, 2+ledgered)
 	}
 }
 

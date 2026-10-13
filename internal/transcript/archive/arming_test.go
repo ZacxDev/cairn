@@ -258,7 +258,7 @@ func TestTheDerivationStaysWithinItsShare(t *testing.T) {
 			var before, after runtime.MemStats
 			runtime.GC()
 			runtime.ReadMemStats(&before)
-			got := derive([][]byte{r}, nil)
+			got := derive([][]byte{r}, nil).Scopes
 			runtime.ReadMemStats(&after)
 			if tc.want != "" && !slices.Contains(got, tc.want) {
 				t.Fatalf("POSITIVE CONTROL: the %s record derived %v, without the %s it reads", tc.name, got, tc.want)

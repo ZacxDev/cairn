@@ -480,6 +480,11 @@ type Result struct {
 	F1, F2  bool
 	// V is R_header ∪ L ∪ F, sorted, with `*` present when any part contributed it.
 	V []string
+	// Declare is V WITHOUT F1's `*`: R_header ∪ L ∪ (F2 ? `*`). It is what an agent DECLARES to the
+	// pod, which decides F1 itself, at view time, from the ledger it holds (`archive.Meta.
+	// LedgerScopes`) — so F1 is the one part of `V` a declaration must not freeze (#266's audit).
+	// A `*` from a header or a ledger record is still in it.
+	Declare []string
 }
 
 // Result reads the accumulated evidence.
@@ -494,7 +499,11 @@ func (d *Deriver) Result() Result {
 	for k := range d.ledger {
 		all[k] = true
 	}
-	if r.F1 || r.F2 {
+	if r.F2 {
+		all[Star] = true
+	}
+	r.Declare = keys(all)
+	if r.F1 {
 		all[Star] = true
 	}
 	r.V = keys(all)

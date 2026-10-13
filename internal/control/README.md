@@ -258,7 +258,7 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # over NINE packages; prints its own mutant count
+python3 tests/control_mutants.py          # over TEN packages; prints its own mutant count
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
@@ -372,10 +372,13 @@ survivor did not exist while that survivor was the round's most important findin
 `python3 tests/control_mutants.py` prints the `SUMMARY` line these are copied from, and
 the survivor paragraph below must name exactly the mutants that actually survived.
 
-🔴 **IT RUNS OVER NINE PACKAGES NOW, BECAUSE THE GUARDS SPAN A SEAM.** The set, in `PKGS`
+🔴 **IT RUNS OVER TEN PACKAGES NOW, BECAUSE THE GUARDS SPAN A SEAM.** The set, in `PKGS`
 order: `internal/control`, `internal/control/tokenfile`, `internal/identity`,
-`internal/api`, `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence`, `internal/memo`.
-`internal/memo` (S1 of the scope-mail plan) is the ninth: `MaySend`, `MayRead` and `MayRetract` decide
+`internal/api`, `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence`, `internal/memo`,
+`internal/client`. `internal/client` (S11 of the transcripts/plugins plan) is the tenth: its read ledger
+is an input to `transcript.Visible`'s set, so a ledger that records the flag instead of the resolved
+scope, or nothing, admits a viewer who cannot read what the session read — a defect with no guard on
+the pod. `internal/memo` (S1 of the scope-mail plan) is the ninth: `MaySend`, `MayRead` and `MayRetract` decide
 memo authority from the same `control.Authorization`, and the retraction rule's decision-17 case is
 where a `control.Narrow` that ignored its verb argument is killed. `internal/presence`
 (S2 of the arcs/presence plan) is the eighth: its owner predicate decides who may see and ring a pane

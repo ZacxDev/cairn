@@ -710,7 +710,11 @@ jobs:
           # unedited. The literal moves to put the margin back at 50, the same choice as
           # the transitions above. Measured 2885 collected (2885 passed, `-n auto`), so
           # `2885 - min(50, max(1, 2885/20)) = 2835`.
-          FLOOR = 2835
+          # ⚠ 2835 -> 2886 FOR TRANSCRIPTS S11 (the client read ledger, merged with S4), AND THE
+          # DRIFT GUARD FORCED IT: CI measured 2936 collected on the PR head, a gap of 101 against a
+          # `MAX_GAP` of 100 (S4's and S11's Python tests together — `tests/test_read_ledger.py`,
+          # the env_pin rows, the parity-harness rows). `2936 - min(50, max(1, 2936/20)) = 2886`.
+          FLOOR = 2886
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -818,8 +822,9 @@ jobs:
       # `internal/depspolicy`'s `TestAnUNTRACKEDNestedModuleIsIGNOREDButATRACKEDOneIsNOT` is the only
       # thing that exercises the tracked-file path behind `NestedModuleDirs` — the path that stops a
       # stray checkout under `.claude/worktrees/` from turning `go test ./...` red on every
-      # developer's machine. The nix derivations' check phase has no git and legitimately skips it
-      # (there, the `onlyGo`-filtered source makes the fallback path the correct one). This variable
+      # developer's machine. The nix derivations' check phase had no git and legitimately skipped it
+      # (there, the `onlyGo`-filtered source makes the fallback path the correct one); since S11 it
+      # carries `gitMinimal` and runs it, measured green. This variable
       # is what makes the skip a FAILURE here, where git exists and the path is real.
       #
       # ⚠ SAME SHAPE AS `tests/test_go_client_ledgers.py` REFUSING ON A SKIP IN THIS JOB, and for the
@@ -1214,7 +1219,7 @@ jobs:
           fi
 
       # 🔴 THE TRANSCRIPTS CLOSING CHECK (closing-condition part 2 of `claudedocs/plan-cairn-plugins.md`),
-      # clauses (a), (b), (c), (h) and — since S4 — (d), (e), (f), (g): `cairn-ui` booted with its worker
+      # clauses (a), (b), (c), (h), — since S4 — (d), (e), (f), (g), and — since S11 — (n): `cairn-ui` booted with its worker
       # listener ARMED over a scratch transcript directory, and the REAL capture agent's `--run` driven
       # through a recording relay — a lost acknowledgement resumed with every record stored once (a),
       # 0 of the run's planted secrets in the agent's reassembled outgoing bodies with the
@@ -1225,6 +1230,10 @@ jobs:
       # wrote or read see it, and a refused viewer's bytes are IDENTICAL to what they were with no
       # transcript — a stranger (d), a reader of one written scope (e), a reader of the written scope
       # but not the read one (f), and everyone but the owner of a session that touched nothing (g).
+      # Clause (n) runs the REAL client against a store pod with a session id in its environment — a
+      # read whose command line names no program and whose output carries no header — and the real
+      # agent uploads the ledger record that call wrote: the pod's own fold holds the scope, and the
+      # reader of the written scope alone is refused.
       # Beside the presence check for its reason: it needs the Go toolchain, and it exits 2 rather
       # than skipping without one.
       #
@@ -1232,24 +1241,25 @@ jobs:
       # copy of the source — (a) the stream CAS, and for its opencode leg the saved plan never being
       # matched, (b) the agent's blob redaction, (c) the pod's record scan, (h) routing on one scope
       # (d) the predicate not asked, (e) the written set computed over the viewer's own scopes,
-      # (f) the read half dropped, (g) the empty set vacuously readable
-      # — and refuses (exit 2) unless EACH turns its own named assertion RED. Nine sabotages over
-      # the eight clauses wired now; the plan's 14 is the count at S10.
+      # (f) the read half dropped, (g) the empty set vacuously readable, (n) the pod not folding the
+      # uploaded ledger
+      # — and refuses (exit 2) unless EACH turns its own named assertion RED. Ten sabotages over
+      # the nine clauses wired now; the plan's 14 is the count at S10.
       - name: the transcripts end-to-end check, after proving every wired clause can go RED
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false' }}
         run: |
           set -o pipefail
           tests/plugins/e2e.sh --self-test | tee /tmp/plugins-e2e-self.txt
-          grep -qx 'SUMMARY e2e-self-test: sabotaged=9 caught=9' /tmp/plugins-e2e-self.txt
+          grep -qx 'SUMMARY e2e-self-test: sabotaged=10 caught=10' /tmp/plugins-e2e-self.txt
           tests/plugins/e2e.sh > /tmp/plugins-e2e.txt 2>&1 || { cat /tmp/plugins-e2e.txt; exit 1; }
           cat /tmp/plugins-e2e.txt
           passes=$(grep -c '^PASS ' /tmp/plugins-e2e.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/plugins-e2e.txt || true)
           echo "plugins e2e: passes=$passes fails=$fails"
-          # 15 assertions: 11 measured when the script landed (S3b), 4 more with S4's clauses (d)–(g);
-          # `EXPECTED` in the script moves with it.
-          if [ "$passes" -lt 15 ] || [ "$fails" -ne 0 ]; then
-            echo "REFUSING: $passes PASS / $fails FAIL lines, and 15 / 0 were measured"
+          # 16 assertions: 11 measured when the script landed (S3b), 4 more with S4's clauses (d)–(g),
+          # 1 more with S11's clause (n); `EXPECTED` in the script moves with it.
+          if [ "$passes" -lt 16 ] || [ "$fails" -ne 0 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL lines, and 16 / 0 were measured"
             exit 1
           fi
 
@@ -1323,12 +1333,13 @@ jobs:
       # guard the row exists for, so it is never scored as a kill: each row runs ONLY the
       # tests it names (`-run` over its `killer` and `extra_killers`), so a row whose named
       # killer stays green reads SURVIVED, and MISATTRIBUTED now means one narrower thing — a
-      # listed extra killer fired while the named one did not. The battery runs over NINE packages, in `PKGS` order: `internal/control`,
+      # listed extra killer fired while the named one did not. The battery runs over TEN packages, in `PKGS` order: `internal/control`,
       # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
-      # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence`, `internal/memo` —
+      # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`, `internal/presence`, `internal/memo`, `internal/client` —
       # the model, the token-file projection, P4's identity backends, the server that authorises
       # from all of them, the pod's program, the browser surface, the browser surface's program,
-      # the presence owner predicate and scope mail's send/read/retract predicates, because a mutant in one is killed by a guard in another, the
+      # the presence owner predicate, scope mail's send/read/retract predicates and the client's read
+      # ledger (an input to the transcript visibility set), because a mutant in one is killed by a guard in another, the
       # refresh loop that bounds the adapter's declared divergence exists only in `main`, the
       # share flow is the second consumer of the same authority, the browser's startup refusals
       # are the only thing between a misconfigured deployment and a surface that serves nobody,
@@ -1475,9 +1486,15 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 126 PASS lines measured on this head: 123 cases plus THREE structural checks —
+          # 138 PASS lines measured on this head: 134 cases plus FOUR structural checks —
           # re-derived by RUNNING the harness on this tree and reading `grep -c '^PASS '`, never
           # by arithmetic on the previous literal.
+          # ⚠ 136 -> 138 ON #266's AUDIT: two more `ledger-*` rows (output that LISTS other scopes
+          # records them — a scope-absent recall, a refused `validate --scope`).
+          # ⚠ 126 -> 136 WHEN S11's READ LEDGER LANDED: nine `ledger-*` rows (each also compares
+          # the two clients' ledger FILES) and a fourth structural check, `read-ledger-leak`,
+          # which counts ledger files a client wrote with a session id the harness exported into
+          # its OWN environment — `env_pin` must clear it. Its line is asserted below.
           # ⚠ 127 -> 126 WHEN `recall-tag-repeated-is-AND` WAS DELETED: `--tag` became SCALAR on
           # an operator decision, so the row comparing the two clients on a REPEATED flag has
           # nothing left to measure — a repeated scalar flag is last-wins by the same
@@ -1536,8 +1553,8 @@ jobs:
           # zero failures too; the floor is what tells a green gate from an absent one.
           # 🔴 AND IT IS RAISED WITH EVERY ROW THAT LANDS. It sat at 98 for four rows after the
           # rows were added, which is a floor that cannot see the four newest disappear.
-          if [ "$passes" -lt 126 ]; then
-            echo "REFUSING: $passes passes, and 126 were measured — the gate got smaller"
+          if [ "$passes" -lt 138 ]; then
+            echo "REFUSING: $passes passes, and 138 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then
@@ -1581,6 +1598,12 @@ jobs:
           # every corpus change.
           grep -q '^CONTENT-FLOOR live-banner=True rendered-digest=True unreadable-entry=True unreadable-scope-dir=True tag-narrowing=True tag-match=True req-open=True' /tmp/parity.txt
           grep -q 'dead-normalizations=0' /tmp/parity.txt
+          # 🔴 THE READ LEDGER (S11): all eleven `ledger-*` rows ran, the oracle wrote at least ONE
+          # record across them (a TOTAL, not per row — two clients that both write nothing agree on
+          # every ledger row, and this is the floor against that; a single row writing nothing is
+          # seen only by its own comparison, e.g. `ledger-sync-records-nothing` is MEANT to), and NO
+          # client wrote a ledger with the session id exported into the harness's environment.
+          grep -Eq '^READ-LEDGER rows=11 oracle-records=[1-9][0-9]* leak-files=0$' /tmp/parity.txt
 
   # 🔴 P1's LAST STEP, AND IT IS ITS OWN JOB FOR THE SAME REASON THE CORPUS AND THE PARITY
   # GATE ARE: its verdict is readable on its own in the checks list, and a failure in either

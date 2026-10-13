@@ -23,7 +23,7 @@ func SourcesShow(env Env, opts Options) (int, error) {
 	if scope == "" {
 		return ExitUsage, nil
 	}
-	_, label, cfg, err := podFor(scope)
+	alias, label, cfg, err := podFor(scope)
 	if err != nil {
 		return 0, err
 	}
@@ -31,5 +31,6 @@ func SourcesShow(env Env, opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	env.recordRead(alias, scope)
 	return printPodReport(env, label, headers, body), nil
 }

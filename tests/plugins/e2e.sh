@@ -10,9 +10,9 @@
 #          tests/plugins/e2e.sh --self-test  # the negative control: exits 0 iff every SABOTAGED build
 #                                            # turns its clause's named assertion RED
 #
-# The clauses wired now (slices S3b and S4; the plan's table names fourteen, and the rest land with
-# their slices — the self-test count is the sabotages wired, nine over eight clauses because (a) has
-# a Claude Code leg and an opencode leg, not the plan's final 14):
+# The clauses wired now (slices S3b, S4 and S11; the plan's table names fourteen, and the rest land
+# with their slices — the self-test count is the sabotages wired, ten over nine clauses because (a)
+# has a Claude Code leg and an opencode leg, not the plan's final 14):
 #   (a) resume — an upload whose acknowledgement is LOST mid-stream (the relay forwards a request,
 #       the pod stores it, the agent gets a 502) is retried by the next run and every record lands
 #       EXACTLY once; a request with a stale `from` gets 409 naming the stored position; and the
@@ -44,7 +44,16 @@
 #   (h) routing honours reads — with `alpha-notes` routed to the personal instance and `beta-notes` to
 #       the client instance, a session that WROTE `alpha-notes` and READ `beta-notes` in its first turn
 #       reaches NEITHER (0 relay requests name it) and is logged held, while a session in the same run
-#       that touched nothing ships.
+#       that touched nothing ships;
+#   (n) the client read ledger counts — a session that WROTE `alpha-notes` READS `beta-notes` only
+#       through `"$BIN" sessions --scope beta-notes`, run for real against a store pod with the session
+#       id in its environment: the command line names no program and the output carries no rendered
+#       header, so the ONLY trace of the read is the record the client appended to its ledger. The
+#       agent uploads that ledger as the session's `ledger` stream, the pod folds it into `meta.json`
+#       ITSELF, and the reader of `alpha-notes` alone gets the no-transcript bytes while the reader
+#       of both sees it. ⚠ The agent also DECLARES what its ledger names, so the two viewers alone
+#       cannot tell a pod that folds the ledger from one that ignores it — the pod's own
+#       `ledger_scopes` in `meta.json` is the part of the assertion that can.
 #
 # 🔴 (d)–(g) MEASURE "THE SAME BYTES AS A SESSION WITH NO TRANSCRIPT" AS BEFORE/AFTER: every viewer's
 # two rows are fetched for every fixture session BEFORE its transcript is uploaded and again after, and
@@ -70,7 +79,7 @@ src="${E2E_SOURCE:-$repo}"
 
 # The number of assertions a full run makes. 🔴 PINNED, so an assertion that silently stopped running
 # is exit 2 rather than a smaller green.
-EXPECTED=15
+EXPECTED=16
 
 couldnt() { echo "COULD NOT VOUCH: $*" >&2; exit 2; }
 
@@ -176,6 +185,12 @@ PY
     $'\tfor _, scope := range v {' \
     $'\tfor _, scope := range v[:1] {' \
     "h-held-session-reaches-neither-instance"
+  # (n) The pod stores the uploaded ledger like any other stream and never folds it: the agent's
+  #     declaration still hides the session, and the pod's own `L(s)` is empty.
+  sabotage n-pod-ignores-the-uploaded-ledger internal/transcript/archive/archive.go \
+    $'\tif stream == LedgerStream {\n\t\tfoldLedger(m, lines)\n\t} else {' \
+    $'\tif false {\n\t\tfoldLedger(m, lines)\n\t} else {' \
+    "n-a-read-only-the-client-ledger-records-hides-the-session"
   echo "SUMMARY e2e-self-test: sabotaged=$sabotaged caught=$caught"
   if [[ ${#missed[@]} -gt 0 ]]; then
     echo "a sabotage that leaves its clause green is a clause that cannot fail: ${missed[*]}" >&2
@@ -198,6 +213,9 @@ mkdir -p "$work/bin"
 go build -C "$src" -o "$work/bin/cairn-ui" ./cmd/cairn-ui || couldnt "cairn-ui did not build"
 go build -C "$src" -o "$work/bin/cairn-server" ./cmd/cairn-server || couldnt "cairn-server did not build"
 go build -C "$src" -o "$work/bin/cairn-capture" ./cmd/cairn-capture || couldnt "cairn-capture did not build"
+# Clause (n)'s client. 🔴 NOT NAMED `cairn`: the clause is a read whose command line names no
+# program, and a path that spelled it would be one typo from a fixture F1 covers.
+go build -C "$src" -o "$work/bin/store-client" ./cmd/cairn || couldnt "the client did not build"
 go build -C "$src" -tags cairn_capture_noredact -o "$work/bin/cairn-capture-noredact" ./cmd/cairn-capture ||
   couldnt "the redaction-off cairn-capture did not build"
 
@@ -215,10 +233,14 @@ vis_d="e2e-vis-d"
 vis_e="e2e-vis-e"
 vis_f="e2e-vis-f"
 vis_g="e2e-vis-g"
+# Clause (n)'s session: it wrote `alpha-notes` (the trailer below) and its read of `beta-notes` is in
+# NEITHER the store nor its transcript — only in the ledger the client writes when it runs.
+vis_n="e2e00000-0000-4000-8000-00000000000e"
 declare -A nuance=(
   [alpha-notes]="- 2000-01-03: d noted the gadget [cairn: e2e-bot/$vis_d]
 - 2000-01-03: e noted the gadget [cairn: e2e-bot/$vis_e]
-- 2000-01-03: f noted the gadget [cairn: e2e-bot/$vis_f]"
+- 2000-01-03: f noted the gadget [cairn: e2e-bot/$vis_f]
+- 2000-01-03: n noted the gadget [cairn: e2e-bot/$vis_n]"
   [beta-notes]="- 2000-01-04: e noted the widget [cairn: e2e-bot/$vis_e]"
   [delta-notes]="- 2000-01-05: nobody signed this"
 )
@@ -525,8 +547,9 @@ ui_url="http://127.0.0.1:$port"
 # snap <tag>: for every viewer × fixture session, the session page and the raw-record row, each as
 # `<status>\n<body>` in $work/vis/<tag>/<viewer>.<session>.<row> — so one `cmp` compares the status
 # AND every body byte.
-snap() {
+snap() { # snap <tag> <session…>
   local tag="$1" viewer root row url out
+  shift
   mkdir -p "$work/vis/$tag"
   # NARROWEST VIEWER FIRST, and the order is load-bearing: every store walk is KEPT in the session's
   # grow-only meta (#261 round 2), so once R's walk has recorded both written scopes, P is refused
@@ -534,7 +557,7 @@ snap() {
   # (e) sabotage) is only visible to the FIRST narrow viewer. Measured: in the order `a r p n` the
   # self-test MISSED that sabotage.
   for viewer in p n r a; do
-    for root in "$vis_d" "$vis_e" "$vis_f" "$vis_g"; do
+    for root in "$@"; do
       for row in page raw; do
         url="$ui_url/session?session=$root"
         [[ $row == raw ]] && url="$ui_url/session/transcript?session=$root"
@@ -553,12 +576,13 @@ shows() { grep -qF 'id="transcript"' "$work/vis/after/$1.$2.page" && grep -qF "$
 # refused <viewer> <session>: both rows are byte-identical to what they were with no transcript.
 refused() { same "$1" "$2" page && same "$1" "$2" raw; }
 
-snap before
+snap before "$vis_d" "$vis_e" "$vis_f" "$vis_g" "$vis_n"
 # INSTRUMENT CONTROLS on the world, before anything is uploaded: the page is FOUND exactly where a
 # viewer reads a scope the session wrote in, and no raw-record row answers yet.
 [[ "$(status before p "$vis_e" page)" == 200 && "$(status before p "$vis_f" page)" == 200 &&
    "$(status before r "$vis_e" page)" == 200 && "$(status before n "$vis_d" page)" == 404 &&
-   "$(status before a "$vis_g" page)" == 404 && "$(status before a "$vis_d" raw)" == 404 ]] ||
+   "$(status before a "$vis_g" page)" == 404 && "$(status before a "$vis_d" raw)" == 404 &&
+   "$(status before p "$vis_n" page)" == 200 && "$(status before r "$vis_n" raw)" == 404 ]] ||
   couldnt "the visibility world is not the one clauses (d)–(g) assume (statuses before any upload: p/e $(status before p "$vis_e" page), p/f $(status before p "$vis_f" page), r/e $(status before r "$vis_e" page), n/d $(status before n "$vis_d" page), a/g $(status before a "$vis_g" page))"
 
 # Each session's transcript, uploaded by hand as the OWNER's capture token: a sentence only it holds,
@@ -591,7 +615,7 @@ for root in "$vis_d" "$vis_e" "$vis_f" "$vis_g"; do
   post "/capture/v1/sessions/$root/streams/main/records" "$(cat "$work/vis/$root.json")"
   [[ $code == 200 ]] || couldnt "uploading $root answered $code: $body"
 done
-snap after
+snap after "$vis_d" "$vis_e" "$vis_f" "$vis_g"
 
 # (d) The owner sees it; a principal with no read on any scope in V gets the no-transcript bytes.
 assert d-owner-sees-it-and-a-stranger-gets-the-no-transcript-bytes eval '
@@ -611,6 +635,82 @@ assert g-a-session-with-no-write-or-read-is-owner-only eval '
   [[ -s "$tdir/sessions/$vis_g/meta.json" ]] && shows a "$vis_g" "clause g: this session touched nothing" &&
   [[ "$(status after a "$vis_g" page)" == 200 ]] &&
   refused r "$vis_g" && refused p "$vis_g" && refused n "$vis_g" && [[ "$(status after r "$vis_g" page)" == 404 ]]'
+
+# --- (n) the client read ledger: a read whose only trace is the record the client wrote ----------
+# A real store pod over the same store, so the client's call is SERVED (a live sync, then the read).
+sport="$(free_port)"
+store_token="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+"${clean_env[@]}" CAIRN_TOKEN="$store_token" CAIRN_TRUSTED_PROXIES=192.0.2.0/24 "$work/bin/cairn-server" -store "$store" -host 127.0.0.1 -port "$sport" \
+  -token-file "$work/no-such-token-file" >"$work/store-pod.log" 2>&1 &
+spod=$!
+pids+=("$spod")
+up=no
+for _ in $(seq 1 200); do
+  if curl -fsS -o /dev/null "http://127.0.0.1:$sport/healthz" 2>/dev/null; then up=yes; break; fi
+  kill -0 "$spod" 2>/dev/null || break
+  sleep 0.05
+done
+[[ $up == yes ]] || { cat "$work/store-pod.log" >&2; couldnt "the store pod for clause (n) did not come up"; }
+home_n="$work/home5"
+ledger_n="$home_n/state/cairn/read-ledger"
+mkdir -p "$home_n"
+# The call, exactly as the session's tool input spells it: `BIN` holds the client's path.
+n_command='"$BIN" sessions --scope beta-notes'
+"${clean_env[@]}" HOME="$home_n" XDG_STATE_HOME="$home_n/state" CAIRN_URL="http://127.0.0.1:$sport" CAIRN_TOKEN="$store_token" \
+  CLAUDE_CODE_SESSION_ID="$vis_n" BIN="$work/bin/store-client" bash -c "$n_command" >"$work/n.stdout" 2>"$work/n.stderr"
+n_rc=$?
+[[ $n_rc -eq 0 && -s "$work/n.stdout" ]] ||
+  couldnt "clause (n)'s client call exited $n_rc: $(cat "$work/n.stderr")"
+# INSTRUMENT CONTROLS: the fixture is the one the clause names — no program name in the command line,
+# no rendered header in the output — and the SAME call with no session id writes no ledger at all.
+if grep -qiE 'cairn|subsystem-recall|subsystem-store' <<<"$n_command" || grep -qF 'subsystem-recall:' "$work/n.stdout"; then
+  couldnt "clause (n)'s read is visible without the ledger (the command line names the program, or the output carries a header)"
+fi
+"${clean_env[@]}" HOME="$work/home5-noid" XDG_STATE_HOME="$work/home5-noid/state" CAIRN_URL="http://127.0.0.1:$sport" \
+  CAIRN_TOKEN="$store_token" BIN="$work/bin/store-client" bash -c "$n_command" >/dev/null 2>&1
+[[ ! -e "$work/home5-noid/state" ]] || couldnt "the client wrote a ledger with no session id in its environment"
+world4="$work/world4"
+python3 - "$world4" "$vis_n" "$n_command" "$work/n.stdout" <<'PY' || couldnt "clause (n)'s session could not be written"
+import json, os, sys
+root, sid, command, stdout = sys.argv[1:5]
+proj = os.path.join(root, "projects", "-work-alpha")
+os.makedirs(proj, exist_ok=True)
+recs = [
+    {"type": "user", "message": {"role": "user", "content": "clause n: this session read another scope through a variable"}},
+    {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_e2evisn1",
+        "name": "Bash", "input": {"command": command}}]}},
+    {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_e2evisn1",
+        "content": open(stdout).read()}]}},
+    {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "read it"}]}},
+]
+with open(os.path.join(proj, sid + ".jsonl"), "w") as f:
+    for i, r in enumerate(recs):
+        r.update({"sessionId": sid, "uuid": f"00000000-0000-4000-8000-{i:012d}", "timestamp": "2000-01-01T00:00:%02dZ" % i})
+        f.write(json.dumps(r) + "\n")
+PY
+start_relay run-n --upstream "$pod"
+capture "$work/bin/cairn-capture" "$home_n" "$world4/projects" "$ledger_n" "$relay_url"
+n_capture_rc=$?
+stop_relay
+[[ $n_capture_rc -eq 0 ]] || couldnt "clause (n)'s capture run exited $n_capture_rc: $(cat "$home_n/run.log")"
+n_ledger_requests="$(python3 -c 'import json, sys
+print(sum(1 for l in open(sys.argv[1]) if "/sessions/" + sys.argv[2] + "/streams/ledger/" in json.loads(l)["path"]))' "$work/run-n.log" "$vis_n")"
+snap after "$vis_n"
+# meta_ledger <session> → "<the pod's own ledger scopes, comma-joined> <ledger records folded>"
+meta_ledger() {
+  python3 -c 'import json, sys
+m = json.load(open(sys.argv[1]))
+print(",".join(m.get("ledger_scopes") or []), m.get("ledger_records", 0))' "$tdir/sessions/$1/meta.json" 2>/dev/null
+}
+# The client wrote ONE record naming the scope it read; the agent uploaded it as the `ledger` stream;
+# the POD's own fold holds it; the reader of `alpha-notes` alone gets the no-transcript bytes (its
+# page is found — the session wrote there) and the reader of both sees the transcript.
+assert n-a-read-only-the-client-ledger-records-hides-the-session eval '
+  [[ "$(grep -c . "$ledger_n/$vis_n.jsonl")" == 1 ]] && grep -qF "\"verb\":\"sessions\"" "$ledger_n/$vis_n.jsonl" &&
+  grep -qF "\"scope\":\"beta-notes\"" "$ledger_n/$vis_n.jsonl" && [[ $n_ledger_requests -ge 1 ]] &&
+  [[ "$(meta_ledger "$vis_n")" == "beta-notes 1" ]] &&
+  shows r "$vis_n" "clause n: this session read another scope through a variable" && ! same r "$vis_n" page &&
+  refused p "$vis_n" && [[ "$(status after p "$vis_n" page)" == 200 ]]'
 
 # --- (b) and (h): the real agent through a forwarding relay into the armed pod ---------------------
 start_relay run1 --upstream "$pod"
