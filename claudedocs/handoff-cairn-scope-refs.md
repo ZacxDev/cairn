@@ -52,10 +52,9 @@ CLI auditor can deterministically check entries' paths, SHAs and PR refs against
    journal fails the job instead of passing as `absent`. A `503 store-unreachable` from the pod at that point means the pod cannot read the
    file the UI created. forcing: user — operator asked for scope refs end to end.
 2. **Operator decisions the S5 audit raised** (each `forcing: audit`):
-   - 🟡2 of #259 r1: a path missing in every LOOKED-AT source is `stale` (exit 9) even when another
-     declared source was never fetched — the plan's S5 test plan pins exactly that; the audit
-     recommends could-not-look. Decide and, if changed, move `TestTheExitIsTheMixedCase`'s
-     "stale beside unmapped" row with it.
+   - ✅ DECIDED AND BUILT — 🟡2 of #259 r1: a claim missing from the read sources while another
+     declared source was not read for it (never fetched, or its `git` failed on that claim) is now `unchecked: not in the sources read` (exit 10), never
+     stale; a stale verdict means every declared source was read. The plan's test-plan row records it.
    - Q3/Q7/Q8/Q9/Q11 shipped as the plan's recommendations (operator host; root-then-subpath paths;
      structural `path#Symbol` only; default host map `github.com`; off-branch informational) with no
      recorded operator answer. Confirm or redirect.
@@ -64,10 +63,9 @@ CLI auditor can deterministically check entries' paths, SHAs and PR refs against
 4. **B3 (census mode)**, the plan's recommended cheap half, is NOT built.
 
 ## Defects (batched, open — merged under the no-🔴 rule)
-- 🟡 #259 r2: `internal/refaudit/gitcli.go`'s `run` puts git in its OWN process group (so the timeout
-  kill reaches `git-remote-https`), and a terminal Ctrl-C therefore kills `cairn` but leaves the
-  `git fetch` running against a stalled remote, unbounded. Fix: `signal.NotifyContext` in `run`
-  feeding the existing group kill, then re-raise. forcing: audit.
+- ✅ FIXED — 🟡 #259 r2: a Ctrl-C (SIGINT/SIGTERM/SIGHUP) during a `git` call now cancels its
+  context — the same process-group kill the timeout uses — and is re-raised once `git` is reaped
+  (`TestAnInterruptKillsTheStalledFetch`, red before the fix).
 - 🟢 #259 r2: no test pins the process-group kill on its own (`WaitDelay` alone keeps the stall test
   green while leaving `git-remote-https` alive); and `gitEnv`'s comment says credential-helper config
   is kept, while config injected through `GIT_CONFIG_COUNT`/`GIT_CONFIG_PARAMETERS` is stripped (a

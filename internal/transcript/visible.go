@@ -150,8 +150,8 @@ func writtenWithin(storeRoot string, within store.ScopeSet, ids []string) (Writt
 // VisibilitySet is decision 3's `V(s) = W_trailer ∪ R_header ∪ L ∪ F ∪ D`: the written half from a
 // store walk AND every earlier walk's answer as `meta.json` keeps it (`Written`), and the read half
 // as `meta.json` holds it — what the pod DERIVED over the stored records and blobs (`R_header`, and
-// `*` for the fallbacks) and what the capture agent DECLARED (its own `L ∪ R_header ∪ F`). Sorted,
-// de-duplicated.
+// `*` for F2), the client read LEDGER it folded (`L`, and F1's `*` while that ledger is empty), and
+// what the capture agent DECLARED (its own `L ∪ R_header ∪ F`). Sorted, de-duplicated.
 //
 // 🔴 THE WALK'S ANSWER CAN SHRINK, SO IT IS NOT `V`'S WRITTEN HALF BY ITSELF. A trailer leaves the
 // store whenever its entry is rewritten without it (a put, a hygiene pass), and a walk then no
@@ -172,6 +172,9 @@ func writtenWithin(storeRoot string, within store.ScopeSet, ids []string) (Writt
 // keeping it made one transient file a permanent refusal (#261 round 3).
 func VisibilitySet(meta *archive.Meta, written Written) []string {
 	out := slices.Concat(written.Scopes, written.Unscanned, meta.Written, meta.Derived, meta.Declared)
+	// `L` and F1 (S11): the client read ledger the pod folded, and `*` when a tool input names the
+	// program and no ledger record has arrived ([archive.Meta.LedgerScopes]).
+	out = append(out, meta.LedgerScopes()...)
 	slices.Sort(out)
 	return slices.Compact(out)
 }

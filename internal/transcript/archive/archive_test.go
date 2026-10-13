@@ -498,7 +498,7 @@ func TestRetentionSweepsAtItsBoundary(t *testing.T) {
 // carry a rendered `beta-notes` recall in a tool result, gets `beta-notes` in the pod's own set
 // anyway — the pod's set is never the agent's declaration alone (decision 3: "so an old or lying
 // agent cannot shrink `V`"). A text BLOB carrying a header counts the same way; a tool INPUT that
-// names the program adds `*` (F1: the pod holds no ledger until S11); a declaration is kept beside
+// names the program adds `*` while the session's ledger is empty (F1); a declaration is kept beside
 // the derivation and only adds. Each literal is distinct, so no arm can stand in for another.
 func TestThePodDerivesReadScopesTheAgentDidNotDeclare(t *testing.T) {
 	g := newRig(t, 1<<30)
@@ -550,9 +550,12 @@ func TestThePodDerivesReadScopesTheAgentDidNotDeclare(t *testing.T) {
 		if _, err := g.a.AppendRecords(ownerA, u, "main", []Record{{Src: "0", Rec: []byte(tc.rec)}}); err != nil {
 			t.Fatal(err)
 		}
-		if m, _ := g.a.ReadMeta(root); !slices.Equal(m.Derived, []string{Star}) {
-			t.Errorf("runtime %s, record %s: derived=%v, want [*] (a tool input names the program and the pod holds no ledger)",
-				tc.runtime, tc.rec, m.Derived)
+		// Since S11 F1 is decided against the LEDGER, not per request: the request records the
+		// EVIDENCE, and the ledger's half of `V` is `*` while no ledger record has arrived.
+		if m, _ := g.a.ReadMeta(root); !m.NamesProgram || !slices.Equal(m.LedgerScopes(), []string{Star}) || len(m.Derived) != 0 {
+			t.Errorf("runtime %s, record %s: names_program=%v ledger half=%v derived=%v, want true, [*], [] "+
+				"(a tool input names the program and the pod holds no ledger)",
+				tc.runtime, tc.rec, m.NamesProgram, m.LedgerScopes(), m.Derived)
 		}
 	}
 }
@@ -745,8 +748,9 @@ func TestUploadsAreValidated(t *testing.T) {
 			_, err := g.a.AppendRecords(ownerA, up("../etc", "", "1"), "main", recs(0, 1))
 			return err
 		},
-		"the ledger stream (S11's)": func() error {
-			_, err := g.a.AppendRecords(ownerA, up("s-0001", "", "1"), "ledger", recs(0, 1))
+		// S11 made `ledger` a stream (its fold reads it); a name merely LIKE it is still refused.
+		"a stream named like the ledger": func() error {
+			_, err := g.a.AppendRecords(ownerA, up("s-0001", "", "1"), "ledger:s-0002", recs(0, 1))
 			return err
 		},
 		"a stream outside the vocabulary": func() error {

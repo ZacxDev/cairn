@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ZacxDev/cairn/internal/client"
@@ -234,11 +235,32 @@ func safeID(id string) bool {
 	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, `/\`)
 }
 
+// readLedger reads one ledger file the way the client writes it: a REGULAR file, never followed
+// through a symlink (`O_NOFOLLOW`), opened `O_NONBLOCK` so a FIFO planted at the path cannot hang the
+// run (#266's audit). Absent is [os.ErrNotExist] — zero records; anything else that is not a regular
+// file is an error, which both callers turn into `*` (fail closed: a link or a pipe where the ledger
+// goes is a ledger nobody can vouch for, not an empty one).
+func readLedger(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	return io.ReadAll(f)
+}
+
 func (a *Agent) foldLedger(d *scopeuse.Deriver, id string) {
 	if a.LedgerDir == "" || !safeID(id) {
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(a.LedgerDir, id+".jsonl"))
+	data, err := readLedger(filepath.Join(a.LedgerDir, id+".jsonl"))
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
@@ -246,6 +268,85 @@ func (a *Agent) foldLedger(d *scopeuse.Deriver, id string) {
 	default:
 		d.Ledger(data)
 	}
+}
+
+// LedgerStream is the stream a session's client read ledger ships as — the pod's
+// `archive.LedgerStream`, spelled here because this package must not import the pod's store.
+// `TestTheLedgerStreamNameIsThePods` pins the two equal.
+const LedgerStream = "ledger"
+
+// ledgerUnits is the client read ledger of `ids` — the root first, then each child id (decision 7:
+// an opencode child's reads attribute to its ROOT, and this is where its id is mapped to it) — as
+// units keyed `<id>@<byte offset>`, so an append-only file ships only its new lines.
+//
+// 🔴 ONLY COMPLETE LINES. A client appends one line per write; a line with no newline yet is a
+// write in flight and waits for the next run, or it would ship half a record.
+//
+// 🔴 FAIL CLOSED, NEVER SILENT: a ledger that EXISTS and cannot be read ships one record naming `*`
+// (the routing fold's `LedgerUnreadable`), and a line that is not one JSON value ships as a record
+// naming `*` with its bytes DROPPED — the pod parses the ledger itself, and a record it could not
+// store would stall the stream, while one it stores as `*` makes the session owner-only.
+func (a *Agent) ledgerUnits(ids []string) []exportUnit {
+	var out []exportUnit
+	for _, id := range ids {
+		if a.LedgerDir == "" || !safeID(id) {
+			continue
+		}
+		data, err := readLedger(filepath.Join(a.LedgerDir, id+".jsonl"))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			out = append(out, exportUnit{Key: id + "@unreadable", Raw: json.RawMessage(ledgerStar("unreadable"))})
+			continue
+		}
+		for off := 0; off < len(data); {
+			nl := bytes.IndexByte(data[off:], '\n')
+			if nl < 0 {
+				break
+			}
+			line := bytes.TrimSpace(data[off : off+nl])
+			key := id + "@" + strconv.Itoa(off)
+			off += nl + 1
+			if len(line) == 0 {
+				continue
+			}
+			if !json.Valid(line) {
+				line = ledgerStar("unparsed")
+			}
+			out = append(out, exportUnit{Key: key, Raw: append(json.RawMessage(nil), line...)})
+		}
+	}
+	return out
+}
+
+// ledgerStar is the record that stands for a ledger line or file the agent could not read.
+func ledgerStar(why string) []byte {
+	return []byte(`{"schema":1,"scope":"*","cairn_capture":"` + why + `"}`)
+}
+
+// shipLedger uploads the session's client read ledger as its [LedgerStream] (decision 3a), through
+// the same plan-saved, resumable path as an opencode stream ([Agent.shipUnits]).
+//
+// 🔴 BEFORE THE TRANSCRIPT STREAMS: the pod's F1 asks "is the ledger EMPTY", so a transcript that
+// names `cairn` uploaded ahead of its ledger is owner-only until the ledger lands.
+func (a *Agent) shipLedger(up Upload, ids []string, ss *SessionState, sum *Summary) (bool, error) {
+	units := a.ledgerUnits(ids)
+	if len(units) == 0 {
+		return false, nil
+	}
+	st := ss.stream(LedgerStream)
+	if st.Refused != "" {
+		return false, nil
+	}
+	n, err := a.shipUnits(up, ocStream{name: LedgerStream, all: units}, st)
+	if n > 0 {
+		sum.Records += n
+	}
+	if err != nil {
+		err = a.held(err, &st.Refused, up.Root+"/"+LedgerStream, sum)
+	}
+	return n > 0, err
 }
 
 func union(a, b []string) []string {
@@ -392,6 +493,7 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 	res := d.Result()
 	ss.Evidence = d.Evidence()
 	ss.V = union(ss.V, res.V)
+	ss.Declared = union(ss.Declared, res.Declare)
 
 	ship, reset, err := a.route(cs.Root, ss, sum)
 	if err != nil || !ship {
@@ -421,8 +523,9 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 			failed = err
 		}
 	}
-	up := Upload{Instance: ss.Instance, Root: cs.Root, Runtime: "claude", Declared: ss.V}
-	shippedAny := false
+	up := Upload{Instance: ss.Instance, Root: cs.Root, Runtime: "claude", Declared: ss.Declared}
+	shippedAny, err := a.shipLedger(up, []string{cs.Root}, ss, sum)
+	fail(err)
 	for _, p := range pend {
 		if len(p.lines) == 0 {
 			continue
@@ -607,6 +710,7 @@ func (a *Agent) runOpencode(root string, sum *Summary) error {
 	res := d.Result()
 	ss.Evidence = d.Evidence()
 	ss.V = union(ss.V, res.V)
+	ss.Declared = union(ss.Declared, res.Declare)
 
 	ship, _, err := a.route(root, ss, sum)
 	if err != nil || !ship {
@@ -617,8 +721,8 @@ func (a *Agent) runOpencode(root string, sum *Summary) error {
 		return nil
 	}
 	var failed error
-	up := Upload{Instance: ss.Instance, Root: root, Runtime: "opencode", Declared: ss.V}
-	shippedAny := false
+	up := Upload{Instance: ss.Instance, Root: root, Runtime: "opencode", Declared: ss.Declared}
+	shippedAny, failed := a.shipLedger(up, append([]string{root}, children...), ss, sum)
 	for _, s := range streams {
 		st := ss.stream(s.name)
 		if st.Refused != "" {

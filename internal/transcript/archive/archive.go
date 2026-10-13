@@ -126,9 +126,10 @@ const idClass = `[A-Za-z0-9][A-Za-z0-9_.-]{0,63}`
 
 var (
 	// streamName is decision 7's stream vocabulary: the root's own `main`, a Claude Code subagent,
-	// an opencode child session. `ledger` is S11's and is refused until S11 adds its fold — a
-	// stream the pod stored and never read would be a `V` input nobody consumes.
-	streamName = regexp.MustCompile(`^(main|subagent:` + idClass + `|child:` + idClass + `)$`)
+	// an opencode child session — and S11's [LedgerStream], the client read ledger, which is
+	// accepted only because [foldLedger] reads it: a stream the pod stored and never read would
+	// be a `V` input nobody consumes.
+	streamName = regexp.MustCompile(`^(main|subagent:` + idClass + `|child:` + idClass + `|` + LedgerStream + `)$`)
 	// blobName is a persisted tool-result file's base name (`toolu_….txt`, `….pdf`).
 	blobName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 	// scopeName is a declared scope: a bounded identifier, or [Star]. An unknown NAME is not
@@ -545,6 +546,15 @@ type Meta struct {
 	// malformed file then hid every transcript walked during it, permanently (#261 round 3). The
 	// reader puts such a scope in `V` for the view that saw it, and only while it lasts.
 	Written []string `json:"written_scopes,omitempty"`
+	// Ledger is `L(s)`: every scope the session's uploaded client read ledger names, `*` for a
+	// record that names none it can read ([foldLedger]); grow-only. LedgerRecords counts the
+	// records folded, which is what F1 ("the ledger is EMPTY") asks. Absent in a meta written
+	// before S11: empty, zero.
+	Ledger        []string `json:"ledger_scopes,omitempty"`
+	LedgerRecords int      `json:"ledger_records,omitempty"`
+	// NamesProgram is F1's evidence: some stored tool input names `cairn` or `subsystem-recall`
+	// (`scopeuse`). Grow-only; F1 itself is [Meta.LedgerScopes]'s question.
+	NamesProgram bool `json:"names_program,omitempty"`
 	// Children is every opencode child id uploaded as a `child:` stream (decision 7: trailers
 	// naming the child count toward the root's `V`).
 	Children []string            `json:"child_ids"`
@@ -638,9 +648,13 @@ func syncDir(dir string) error {
 // the format, and the runtime label is the uploader's word; reading both shapes means a mislabelled
 // request cannot turn a tool input into plain content. Both readings only ADD.
 //
-// ⚠ PER REQUEST, AND THAT IS SOUND ONLY BECAUSE THE POD HAS NO LEDGER: with zero ledger records F1
-// is "some tool input names the program", which needs no memory of earlier requests. S11's ledger
-// fold has to carry evidence across requests; this function is where it lands.
+// 🔴 F1 IS NOT DECIDED HERE, AND IT USED TO BE. F1 is "a tool input names the program AND the
+// session's ledger holds ZERO records" — a question about the WHOLE session, and the ledger arrives
+// on a stream of its own (S11). Decided per request it was always "no ledger", so every session that
+// named `cairn` in a tool input got a grow-only `*` that the ledger could never take back. So this
+// returns only the EVIDENCE ([derived.NamesProgram]), kept in [Meta.NamesProgram], and
+// [Meta.LedgerScopes] decides F1 against [Meta.LedgerRecords] when `V` is asked for. F2 and the
+// headers need no memory and are still folded here.
 //
 // ⚠ A record that is not a JSON OBJECT (a bare string, an array) is scanned as content.
 //
@@ -656,7 +670,7 @@ func syncDir(dir string) error {
 // it makes the session owner-only rather than being read as if the first copy were not there. It
 // is NOT refused: the host redactor deliberately keeps both copies (`internal/redact/ordered.go`),
 // and a refusal would stall that session's stream.
-func derive(lines [][]byte, text []byte) []string {
+func derive(lines [][]byte, text []byte) derived {
 	d := scopeuse.NewDeriver()
 	var extra []string
 	for _, line := range lines {
@@ -681,7 +695,19 @@ func derive(lines [][]byte, text []byte) []string {
 	if text != nil {
 		d.Content(string(text))
 	}
-	return union(d.Result().V, extra)
+	res := d.Result()
+	scopes := union(res.Headers, extra)
+	if res.F2 {
+		scopes = union(scopes, []string{Star})
+	}
+	return derived{Scopes: scopes, NamesProgram: d.Evidence().NamesProgram}
+}
+
+// derived is what one request adds: `R_header` and F2's `*` (grow-only, straight into
+// [Meta.Derived]), and F1's evidence, which is only an answer once the ledger is known.
+type derived struct {
+	Scopes       []string
+	NamesProgram bool
 }
 
 // duplicateMember reports whether any object in one valid, COMPACTED JSON value repeats a member
@@ -827,7 +853,7 @@ func (a *Archive) AppendRecords(who Uploader, u Upload, stream string, recs []Re
 		return Stored{}, err
 	}
 	if !streamName.MatchString(stream) {
-		return Stored{}, invalid("stream %q is not main, subagent:<id> or child:<id>", stream)
+		return Stored{}, invalid("stream %q is not main, subagent:<id>, child:<id> or ledger", stream)
 	}
 	if len(recs) == 0 || len(recs) > MaxRecords {
 		return Stored{}, invalid("a records upload carries 1–%d records, not %d", MaxRecords, len(recs))
@@ -924,10 +950,18 @@ func (a *Archive) AppendRecords(who Uploader, u Upload, stream string, recs []Re
 		return Stored{}, err
 	}
 	m.Streams[stream] = Position{StoredTo: u.To, SeqTo: seq, Bytes: size}
+	// The ledger is the client's report of what the session READ, not transcript content, so it is
+	// folded as a ledger and never scanned as one.
+	var found derived
+	if stream == LedgerStream {
+		foldLedger(m, lines)
+	} else {
+		found = derive(lines, nil)
+	}
 	if child, ok := cutPrefix(stream, "child:"); ok && !slices.Contains(m.Children, child) {
 		m.Children = union(m.Children, []string{child})
 	}
-	if err := a.commit(dir, m, u, derive(lines, nil)); err != nil {
+	if err := a.commit(dir, m, u, found); err != nil {
 		return Stored{}, err
 	}
 	return Stored{StoredTo: u.To, SeqTo: seq}, nil
@@ -1046,9 +1080,10 @@ func (a *Archive) ensureSession(m *Meta, who Uploader, u Upload) (string, *Meta,
 
 // commit folds the request's declarations and the pod's derivation into the grow-only sets and
 // writes meta — the moment the upload exists.
-func (a *Archive) commit(dir string, m *Meta, u Upload, derived []string) error {
+func (a *Archive) commit(dir string, m *Meta, u Upload, found derived) error {
 	m.Declared = union(m.Declared, u.Declared)
-	m.Derived = union(m.Derived, derived)
+	m.Derived = union(m.Derived, found.Scopes)
+	m.NamesProgram = m.NamesProgram || found.NamesProgram
 	m.UpdatedAt = a.cfg.Now().UTC()
 	before := fileSize(filepath.Join(dir, metaName))
 	if err := writeMeta(dir, m); err != nil {

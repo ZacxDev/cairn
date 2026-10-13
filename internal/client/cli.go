@@ -29,7 +29,12 @@ type Verb struct {
 	Notes string
 	// Flags is the flag set this verb accepts, used by the parser AND by `DeclaredVerbs`.
 	Flags []string
-	Run   func(Env, Options) (int, error)
+	// Ledger is what a SERVED call of this verb records in the client read ledger (decision 3a):
+	// see [LedgerClass]. 🔴 EVERY VERB CARRIES ONE, AND WHAT IT RECORDS IS PINNED TO IT VERB BY VERB
+	// (`TestEveryVerbRecordsWhatItsLedgerClassSays`), so a new verb — S8's `transcript` verbs among
+	// them — fails that test until it is classed and its class is true of it.
+	Ledger LedgerClass
+	Run    func(Env, Options) (int, error)
 }
 
 // commonReadFlags is `common(sp)` on the Python side: the three every read verb takes.
@@ -49,7 +54,7 @@ var commonReadFlags = []string{"--scope", "--repo", "--no-sync"}
 // of the arcs/sessions plan), and must also appear in `flake.nix`'s `want-go-only-verbs.txt`.
 func Verbs() []Verb {
 	return []Verb{
-		{Name: "sync", Help: "refresh the local cache from the pod",
+		{Name: "sync", Ledger: LedgerNone, Help: "refresh the local cache from the pod",
 			// ⚠ `sync` TAKES `--scope` AND IGNORES IT, WHICH IS THE ORACLE'S OWN SHAPE. The
 			// flag is declared on the subparser and `cmd_sync` passes `scope=None`
 			// regardless — see `Sync` for the measured reason the cache may never be
@@ -57,7 +62,7 @@ func Verbs() []Verb {
 			// error on one client and a no-op on the other, which is a parity difference
 			// introduced by tidying.
 			Flags: []string{"--scope"}, Run: Sync},
-		{Name: "recall", Help: "the scope's digest",
+		{Name: "recall", Ledger: LedgerResolved, Help: "the scope's digest",
 			Flags: append(append([]string{}, commonReadFlags...),
 				// 🔴 `--ref-to`, AND THE SPELLING IS THE POINT. `--ref` names an ENTRY;
 				// this names something an entry POINTS AT, and the two compose. The pod's
@@ -70,7 +75,7 @@ func Verbs() []Verb {
 				// `RejectRecallFlags` deliberately does not name it.
 				"--mode", "--ref", "--ref-to", "--tag", "--list", "--limit", "--page"),
 			Run: func(e Env, o Options) (int, error) { return Report(e, o, false) }},
-		{Name: "search", Help: "search the scope for hunks",
+		{Name: "search", Ledger: LedgerResolved, Help: "search the scope for hunks",
 			// The same `--ref-to` `recall` carries, for the same reason. Searching within
 			// the entries that reference one task is the narrowing a reverse lookup is
 			// usually wanted for.
@@ -82,7 +87,7 @@ func Verbs() []Verb {
 		// arcs/sessions plan), and the `scope-sessions` row of `capability_ledger.LEDGER` plus
 		// `flake.nix`'s `want-go-only-verbs.txt` are what make that legal. It renders through the
 		// SAME `report.Sessions` the pod's `sessions/<scope>` route does.
-		{Name: "sessions", Help: "which sessions wrote attributed bullets in the scope, with coverage",
+		{Name: "sessions", Ledger: LedgerResolved, Help: "which sessions wrote attributed bullets in the scope, with coverage",
 			Flags: commonReadFlags, Run: Sessions},
 		// 🔴 GO-ONLY, DECLARED: the arc registry (the arcs/sessions S3 slice). Three FLAT verbs,
 		// not one `arc` verb with sub-actions, because this parser and every ledger that reads it
@@ -96,11 +101,11 @@ func Verbs() []Verb {
 		// no verb ledger moves, and it asks the same pod the same head (`arcs/<scope>?check=1`). It
 		// exits on doctor's 0/9/10 (operator decision Q5); `--all-scopes` widens it from arcs homed
 		// in the scope to every arc visible on that scope's instance. See `ArcsList`.
-		{Name: "arcs", Help: "which registered arcs touched the scope, declared or inferred; --check: the orphan check (asks the pod)",
+		{Name: "arcs", Ledger: LedgerAll, Help: "which registered arcs touched the scope, declared or inferred; --check: the orphan check (asks the pod)",
 			Flags: []string{"--scope", "--repo", "--check", "--all-scopes"}, Run: ArcsList},
-		{Name: "arc-show", Help: "one registered arc: status, coverage, members (asks the pod)",
+		{Name: "arc-show", Ledger: LedgerAll, Help: "one registered arc: status, coverage, members (asks the pod)",
 			Flags: []string{"--scope", "--repo", "--slug"}, Run: ArcShow},
-		{Name: "arc-register", Writes: true,
+		{Name: "arc-register", Ledger: LedgerResolved, Writes: true,
 			Help:  "register or update an arc from a JSON payload (writes to the pod)",
 			Flags: []string{"--scope", "--repo", "--slug", "--from"}, Run: ArcRegister},
 		// 🔴 GO-ONLY, DECLARED: the scope's declared code sources (S3 of the scope-refs plan) — the
@@ -108,55 +113,55 @@ func Verbs() []Verb {
 		// `want-go-only-verbs.txt` make that legal. Read-only: the browser surface is the ONLY
 		// writer (decision 5), so there is no `sources-set` verb and there must not be one. Asks the
 		// pod and prints its body verbatim, the arc verbs' shape — see `SourcesShow`.
-		{Name: "sources", Help: "which code (repositories and branch) the scope declares it describes (asks the pod)",
+		{Name: "sources", Ledger: LedgerResolved, Help: "which code (repositories and branch) the scope declares it describes (asks the pod)",
 			Flags: []string{"--scope", "--repo"}, Run: SourcesShow},
 		// 🔴 GO-ONLY, DECLARED: the reference auditor (S5 of the scope-refs plan) — the `audit-refs`
 		// row of `capability_ledger.LEDGER` and `flake.nix`'s `want-go-only-verbs.txt`. It exits on
 		// DOCTOR'S 0/9/10 at its own call site (decision 8), like `arcs --check`. Read-only: it writes
 		// only its own mirror cache, never the store and never the pod.
-		{Name: "audit-refs", Help: "check the scope's entries' paths, symbols, commits and PRs against its declared code sources (fetches them)",
+		{Name: "audit-refs", Ledger: LedgerResolved, Help: "check the scope's entries' paths, symbols, commits and PRs against its declared code sources (fetches them)",
 			Flags: []string{"--scope", "--repo", "--json", "--no-sync"}, Run: AuditRefs},
-		{Name: "validate", Help: "the post-write check: parse, dropped lines, marker reachability",
+		{Name: "validate", Ledger: LedgerResolved, Help: "the post-write check: parse, dropped lines, marker reachability",
 			Flags: commonReadFlags, Run: Validate},
-		{Name: "ls-entries", Help: "one `<scope>/<entry>.md` per line",
+		{Name: "ls-entries", Ledger: LedgerListed, Help: "one `<scope>/<entry>.md` per line",
 			Flags: commonReadFlags, Run: LsEntries},
 		// 🔴 `doctor` TAKES NO `--scope`/`--repo`. It asks about THIS HOST and THIS
 		// CREDENTIAL, not about a scope, and a `--scope` here would invite the
 		// filtered-cache mistake `Sync` documents. `--no-sync` it does take: "diagnose
 		// without touching the network" is a real mode, and it turns every pod-dependent
 		// check UNMEASURED with that as the stated reason rather than reporting a zero.
-		{Name: "doctor", Help: "one call: pod reachability, credential, cache stamp, counts, " +
+		{Name: "doctor", Ledger: LedgerAll, Help: "one call: pod reachability, credential, cache stamp, counts, " +
 			"scope visibility, and which store this host's reader resolves",
 			Flags: []string{"--json", "--no-sync"}, Run: Doctor},
 		// 🔴 NEITHER WRITE VERB TAKES `--no-sync`. It would be meaningless on `append` and
 		// actively harmful on `put` (see `Put` on deriving a precondition from bytes we did
 		// not confirm), so it is absent rather than refused.
-		{Name: "append", Writes: true,
+		{Name: "append", Ledger: LedgerResolved, Writes: true,
 			Help:  "append ONE dated, attributed bullet to an entry (writes to the pod)",
 			Flags: []string{"--scope", "--repo", "--ref", "--text", "--session"}, Run: Append},
-		{Name: "put", Writes: true,
+		{Name: "put", Ledger: LedgerResolved, Writes: true,
 			Help:  "replace a whole entry behind an If-Match precondition",
 			Flags: []string{"--scope", "--repo", "--ref", "--file", "--if-match"}, Run: Put},
-		{Name: "create", Writes: true,
+		{Name: "create", Ledger: LedgerResolved, Writes: true,
 			Help:  "create a NEW entry that does not exist yet (refuses to overwrite)",
 			Flags: []string{"--scope", "--repo", "--ref", "--file"}, Run: Create},
 		// 🔴 `routes` TAKES NO `--scope`. It is a statement about the TABLE and every
 		// instance in it, not about one scope, and a `--scope` here would invite the reading
 		// that it grades a single row.
-		{Name: "routes", Help: "print the scope->instance table, and grade it against reality",
+		{Name: "routes", Ledger: LedgerAll, Help: "print the scope->instance table, and grade it against reality",
 			Flags: []string{"--check", "--no-sync"}, Run: Routes},
 		// 🔴 GO-ONLY, DECLARED: scope mail's four verbs (S3 of the scope-mail plan, decision 8) —
 		// the `memo-*` rows of `capability_ledger.LEDGER` and `flake.nix`'s `want-go-only-verbs.txt`
 		// make that legal. FLAT and hyphenated for the arc verbs' reason: ONE `Writes` bit each. They
 		// talk to `cairn-ui`'s client listener (`CAIRN_UI_URL`), never the pod — see `memo.go`.
-		{Name: "memo-check", Help: "print memos this session has not seen, as one fenced UNTRUSTED block (asks the memo listener)",
+		{Name: "memo-check", Ledger: LedgerResolved, Help: "print memos this session has not seen, as one fenced UNTRUSTED block (asks the memo listener)",
 			Flags: []string{"--scope", "--repo", "--session", "--timeout", "--statuses"}, Run: MemoCheck},
-		{Name: "memo-read", Help: "one memo, or every live memo of the scope, with full bodies (asks the memo listener)",
+		{Name: "memo-read", Ledger: LedgerResolved, Help: "one memo, or every live memo of the scope, with full bodies (asks the memo listener)",
 			Flags: []string{"--scope", "--repo", "--id"}, Run: MemoRead},
-		{Name: "memo-send", Writes: true, Help: "send a short memo to the scope (writes to the memo listener)",
+		{Name: "memo-send", Ledger: LedgerResolved, Writes: true, Help: "send a short memo to the scope (writes to the memo listener)",
 			Notes: memoSendScanNotes,
 			Flags: []string{"--scope", "--repo", "--subject", "--body", "--body-file", "--ttl"}, Run: MemoSend},
-		{Name: "memo-retract", Writes: true, Help: "retract a memo you sent, or moderate one as a scope admin (writes to the memo listener)",
+		{Name: "memo-retract", Ledger: LedgerResolved, Writes: true, Help: "retract a memo you sent, or moderate one as a scope admin (writes to the memo listener)",
 			Flags: []string{"--scope", "--repo", "--id"}, Run: MemoRetract},
 	}
 }
@@ -703,6 +708,9 @@ func Run(env Env, argv []string) int {
 			"and no --cache was given, so there is nowhere to read or write the store cache.")
 		return ExitUsage
 	}
+	// 🔴 THE READ LEDGER IS OPENED HERE, AFTER EVERY USAGE REFUSAL ABOVE, SO A REFUSED CALL CANNOT
+	// RECORD. Each verb records at the point its content is in hand (`readledger.go`).
+	env.ledger = openReadLedger(verb.Name)
 	code, runErr := verb.Run(env, opts)
 	flushMemoWarnings(env)
 	if runErr == nil {
@@ -799,6 +807,8 @@ func Doctor(env Env, opts Options) (int, error) {
 	if refusal := refuseSharedCache(env, routing, opts, "doctor"); refusal != 0 {
 		return refusal, nil
 	}
+	// `*`: per-scope visibility and counts name every scope (decision 3a).
+	env.recordRead("", LedgerAllScopes)
 	var checks []doctor.Check
 	for _, instance := range routing.Instances {
 		rows, rowErr := doctorInstance(opts, routing, instance)

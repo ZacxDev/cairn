@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -136,6 +137,13 @@ func (g *GitCLI) gitEnv() []string {
 // `git-remote-https` (its child) holds the output pipes open, so `Wait` blocked indefinitely on a remote
 // that accepts and never answers (measured by the S5 audit). The call runs in its own process group,
 // the cancel kills the group, and `WaitDelay` bounds the pipe drain.
+//
+// 🔴 AND SO DOES AN INTERRUPT. The group is ALSO what keeps a terminal's Ctrl-C (sent to the foreground
+// process group) from reaching `git`: with no handler, `cairn` died and left `git fetch` running against
+// a stalled remote, unbounded (#259 r2). So SIGINT/SIGTERM/SIGHUP cancel the same context — the same
+// group kill — and, once `git` is reaped, are re-raised with the default action, so `cairn` still dies
+// BY the signal (a shell sees 130, not a refusal). A signal the process inherited as IGNORED (`nohup`,
+// a non-interactive shell's `&`) is left ignored: `signal.Notify` would otherwise un-ignore it.
 func (g *GitCLI) run(gitDir string, args ...string) (string, int, error) {
 	timeout := g.Timeout
 	if timeout <= 0 {
@@ -143,6 +151,8 @@ func (g *GitCLI) run(gitDir string, args ...string) (string, int, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	interrupted := watchInterrupts(cancel)
+	defer interrupted.reraise()
 	argv := args
 	if gitDir != "" {
 		argv = append([]string{"--git-dir=" + gitDir}, args...)
@@ -166,6 +176,59 @@ func (g *GitCLI) run(gitDir string, args ...string) (string, int, error) {
 		return stdout.String(), code, fmt.Errorf("git %s: exit %d: %s", args[0], code, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), 0, nil
+}
+
+// interruptWatch is one [GitCLI.run] call's signal handler: a caught signal cancels the call's context
+// (the process-group kill) and is re-raised by [interruptWatch.reraise] after `git` has been reaped.
+type interruptWatch struct {
+	sigs   chan os.Signal
+	stop   chan struct{}
+	done   chan struct{}
+	caught os.Signal
+}
+
+func watchInterrupts(cancel context.CancelFunc) *interruptWatch {
+	w := &interruptWatch{sigs: make(chan os.Signal, 1), stop: make(chan struct{}), done: make(chan struct{})}
+	for _, s := range []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP} {
+		if !signal.Ignored(s) {
+			signal.Notify(w.sigs, s)
+		}
+	}
+	go func() {
+		defer close(w.done)
+		select {
+		case s := <-w.sigs:
+			w.caught = s
+			cancel()
+		case <-w.stop:
+		}
+	}()
+	return w
+}
+
+// reraise stops watching and, if a signal was caught, delivers it again with its DEFAULT action, so
+// the process ends as it would have with no handler. It runs after `cmd.Run` returned, so the group
+// kill has already happened. The watcher goroutine is joined first, so a signal it took is never lost.
+func (w *interruptWatch) reraise() {
+	close(w.stop)
+	<-w.done
+	signal.Stop(w.sigs)
+	if w.caught == nil {
+		// A signal that arrived after the watcher took `stop` sits in the buffer: still a signal.
+		select {
+		case s := <-w.sigs:
+			w.caught = s
+		default:
+			return
+		}
+	}
+	sig := w.caught.(syscall.Signal)
+	signal.Reset(sig)
+	_ = syscall.Kill(os.Getpid(), sig)
+	// Delivery to the process is asynchronous; if it has not ended the process within a second,
+	// exit with the shell's code for death-by-signal rather than carry on auditing.
+	time.Sleep(time.Second)
+	os.Exit(128 + int(sig))
 }
 
 // Fetch implements [GitReader].

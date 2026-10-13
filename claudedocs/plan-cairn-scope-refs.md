@@ -126,17 +126,19 @@ Drop the work, or the named half of it, if any of these holds:
   | **(a) the declaration is served** | the pod, started with the journal mounted read-only, serves `alpha-notes`'s two sources on `GET /api/v1/sources/alpha-notes`. The proposed `sources` verb prints exactly those two canonical forms, in order | `beta-notes`, which has no record, prints `sources=undeclared`; a principal with no grant on `alpha-notes` gets the byte-identical answer it gets for a scope that does not exist |
   | **(b) clean world** | the proposed `audit-refs` verb, fetching over the real `file://` path, exits **0** and prints `checked=<N> stale=0 unchecked=0` with N equal to the planted count, and N > 0 | — |
   | **(c) stale world** | exactly one missing path, one symbol absent from its file and one PR answering 404 → exit **9**. The finding set EQUALS the planted set, by entry, claim and state | removing each planted defect drops exactly its own finding |
-  | **(d) could not look** | exit **10**, with the reason named, for each of: a remote that does not exist; an undeclared scope; a declared scope with `checked=0`; one mapped source clean beside one unmapped source | the same scope with the remote present, one claim, and only mapped sources exits 0 |
+  | **(d) could not look** | exit **10**, with the reason named, for each of: a remote that does not exist; an undeclared scope; a declared scope with `checked=0`; one mapped source clean beside one unmapped source; a path missing from the mapped source beside an unmapped one (never stale — a stale verdict needs every source read) | the same scope with the remote present, one claim, and only mapped sources exits 0 |
   | **(e) the pod and UI never fetch** | `go list -deps` finds no `os/exec` and no `internal/refaudit` in `cmd/cairn-server` or `cmd/cairn-ui` | the same query on `cmd/cairn` finds both, so the count can move |
   | **(f) reachability, not presence, not tags** | a `RESOLVED` SHA reachable ONLY from `refs/pull/1/head` reports `exists-off-branch` (informational), and the exit is unaffected. Then that ref is DELETED on the remote while a TAG pointing at the same SHA is KEPT, and the run repeats. The SHA now reports `not-reachable` (could-not-look, exit 10). That holds even though the previous run left the object in the mirror, and even though the tag still contains it (🟡1) | the run with the pull refspec removed also reports `not-reachable` |
 
   **`--self-test`** applies one sabotage per clause on a scratch copy of the tree with its `.git`
   removed (the `tests/control_mutants.py` pattern). Each must be caught by its OWN clause's
-  message. It prints **`sabotaged=6 caught=6`**. The sabotages:
+  message. It prints **`sabotaged=7 caught=7`**. The sabotages:
   - **(a)** the pod serves the first source only;
   - **(b)** the denominator prints 0;
   - **(c)** the symbol check is dropped;
   - **(d)** an unmapped host counts as clean;
+  - **(d)** a path missing from the fetched source is stale beside an unmapped one (the
+    not-in-the-sources-read demotion dropped);
   - **(e)** a blank `os/exec` import goes into `cmd/cairn-server`;
   - **(f)** the reachability test is replaced by object presence (`cat-file -e`).
 
@@ -562,14 +564,16 @@ So `github:example-org/example-repo#428` is already a structured PR claim.
    | **holds** | `holds(root)`, `holds(subpath)`, `on-branch`, `present` | `checked` | none |
    | **informational** | `exists-off-branch`, `open`, `merged`, `closed-unmerged`, `outside-sources` | `checked` | none |
    | **stale** | `missing`, `absent-from-file`, `file-missing`, `not-found` | `checked` and `stale` | **9** |
-   | **could not look** | `not-reachable`, `ambiguous`, `unchecked: rate-limited / no token`, `unchecked: host not mapped`, `unchecked: remote unreachable` | `unchecked` | **10**, unless something is stale |
+   | **could not look** | `not-reachable`, `ambiguous`, `unchecked: rate-limited / no token`, `unchecked: host not mapped`, `unchecked: remote unreachable`, `unchecked: not in the sources read` | `unchecked` | **10**, unless something is stale |
    | **unchecked by design** | `unchecked: not path-shaped` | `unchecked` | none on its own |
 
    Plus four SCOPE-level could-not-look reasons, each exit 10: `sources=undeclared` (including
    `journal=absent`), `sources-unconfigured`, `sources-unreadable` (the auditor's name for the pod's 503 `store-unreachable`, decision 1), and
    `checked=0`.
 
-   **The mixed case, spelled out.** Exit **9** if any claim anywhere is stale. Otherwise exit
+   **The mixed case, spelled out.** Exit **9** if any claim anywhere is stale — and a path, symbol
+   file or symbol can only BE stale when every declared source was read (the operator's decision,
+   recorded in the test plan's exit-code rows). Otherwise exit
    **10** if any claim or source could not be looked at. That includes a declared source on an
    unmapped host sitting beside a clean mapped one, because part of the declaration was never
    looked at. Otherwise exit **0**, and only when `checked > 0`.
@@ -731,7 +735,8 @@ alone.
   and three read states, and S4's POST, gates, T9 pins and the part-4 seam test.
 
 **Mutant rows** (indicative names; they join `tests/control_mutants.py` and move its pinned
-count). Recounted after S2's round-1 fix: **32** (S1 13, S2 4, S4 4, S5 11).
+count). Recounted after S2's round-1 fix: **32** (S1 13, S2 4, S4 4, S5 11); S5 is now 17 (the
+stale-needs-every-source decision and the interrupt fix added six), so **38**.
 
 - **S1 (13):**
   - `codesrc-accepts-a-non-dns-host`
@@ -758,7 +763,7 @@ count). Recounted after S2's round-1 fix: **32** (S1 13, S2 4, S4 4, S5 11).
   - `ui-sources-set-by-taken-from-the-form`
   - `ui-sources-keyed-by-control-id`: revision 3's design, which closing-condition part 4 must
     kill
-- **S5 (11):**
+- **S5 (17):**
   - `refaudit-tags-count-as-reachable`
   - `refaudit-off-branch-counted-stale`
   - `refaudit-not-reachable-counted-stale`
@@ -770,6 +775,13 @@ count). Recounted after S2's round-1 fix: **32** (S1 13, S2 4, S4 4, S5 11).
   - `refaudit-checked-zero-exits-0`
   - `refaudit-unmapped-host-counted-clean`
   - `refaudit-mirror-dir-from-path-components`
+  - `refaudit-stale-beside-an-unlooked-source`, `refaudit-stale-demoted-with-every-source-read` and
+    `refaudit-stale-beside-a-failed-claim-read` (the operator's stale-needs-every-source decision:
+    both directions, and the fetched-but-unread-for-this-claim path)
+  - `refaudit-interrupt-ignored-signal-unignored` (a `nohup`-ignored SIGHUP must stay ignored)
+  - `refaudit-interrupt-never-reaches-the-group` and `refaudit-interrupt-swallowed-not-reraised`
+    (#259 r2: a Ctrl-C cancels the call's context, so the process-group kill reaches
+    `git-remote-https`, then is re-raised; `TestAnInterruptKillsTheStalledFetch`)
 
 Revision 2's `write-sources-*` and README-splice rows are deleted with the machinery. So are
 `refaudit-closed-pr-escalates` and `refaudit-host-map-bypassed`: the first is subsumed by the
@@ -914,7 +926,17 @@ killed.
   the namespace restriction ALONE also holds.
 - **Exit codes.**
   - Undeclared, `checked=0` and mixed mapped/unmapped each exit 10 — never 0 and never 2.
-  - One stale claim beside one unmapped host exits 9.
+  - 🔴 **One missing path beside one unmapped host exits 10, NOT 9 — an operator decision that
+    replaced this row's earlier "exits 9".** When any declared source was not read for a claim —
+    never fetched (unmapped or unreachable), or fetched with its `git` failing on that claim — a
+    path, symbol file or symbol missing from the sources that WERE read is
+    `unchecked: not in the sources read` (could-not-look), because a stale verdict must mean every
+    declared source was actually read: a claim holds if ANY source holds it, and the unread one may.
+    The same claim with every source read stays `missing` and exits 9 (the control). A PR's
+    `not-found` is the GitHub API's answer, not a source's, so it stays stale beside an unlooked
+    source. `TestAStaleVerdictMeansEverySourceWasRead`; mutants
+    `refaudit-stale-beside-an-unlooked-source`, `refaudit-stale-demoted-with-every-source-read` and
+    `refaudit-stale-beside-a-failed-claim-read`.
 - **The host map.** An unmapped host is never contacted (the stub counts 0). A mapped one is
   (> 0); that is the pair.
 - **Once, by the operator, not in CI:** the proposed `audit-refs` verb over a scope citing a PR in

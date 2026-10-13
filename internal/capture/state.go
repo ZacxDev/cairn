@@ -96,12 +96,19 @@ type SessionState struct {
 	// Instance is where this session's prefix has been shipped, "" when nowhere yet.
 	Instance string `json:"instance,omitempty"`
 	// Held is FINAL: V only grows, so a held session stays held (decision 16).
-	Held       bool                    `json:"held,omitempty"`
-	HeldReason string                  `json:"held_reason,omitempty"`
-	V          []string                `json:"v,omitempty"`
-	Evidence   scopeuse.Evidence       `json:"evidence"`
-	Streams    map[string]*StreamState `json:"streams,omitempty"`
-	Blobs      map[string]BlobState    `json:"blobs,omitempty"`
+	Held       bool     `json:"held,omitempty"`
+	HeldReason string   `json:"held_reason,omitempty"`
+	V          []string `json:"v,omitempty"`
+	// Declared is what the agent DECLARES to the pod: `V` without F1's `*` ([scopeuse.Result]'s
+	// `Declare`), grow-only. F1 asks "is the ledger EMPTY" and the pod decides it ITSELF, at view
+	// time, from the ledger it holds — a `*` declared here while this run's ledger was empty would
+	// sit in the pod's grow-only `declared_scopes` and make the session owner-only for good, after
+	// the ledger that answers F1 had landed (#266's audit). `V` keeps F1 for ROUTING, which must
+	// hold a session whose reads nothing names.
+	Declared []string                `json:"declared,omitempty"`
+	Evidence scopeuse.Evidence       `json:"evidence"`
+	Streams  map[string]*StreamState `json:"streams,omitempty"`
+	Blobs    map[string]BlobState    `json:"blobs,omitempty"`
 }
 
 // BlobState is what was shipped of one blob. Size and modification time are compared FIRST, so

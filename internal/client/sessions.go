@@ -54,6 +54,7 @@ func Sessions(env Env, opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	env.recordRead(alias, scope)
 	// The `scope-empty` promotion `recall` makes, for the same reason: a live sync that reached
 	// the store and found nothing for this scope says so in the banner, keeping the stamp detail.
 	if state.Name == StateLive && isEmptyStatus(rep.Status) {

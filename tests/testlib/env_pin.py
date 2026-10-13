@@ -95,6 +95,11 @@ if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
 
 from host_identity import HOST_LABEL_ENV  # noqa: E402
+from read_ledger import (  # noqa: E402
+    CLAUDE_SESSION_ENV,
+    OPENCODE_SESSION_ENV,
+    STATE_HOME_ENV,
+)
 
 #: Every variable that configures the client and carries a shared prefix.
 CONFIG_ENV_PREFIXES = ("SUBSYSTEM_STORE_", "CAIRN_")
@@ -103,7 +108,18 @@ CONFIG_ENV_PREFIXES = ("SUBSYSTEM_STORE_", "CAIRN_")
 #: restated: `HOST_LABEL_ENV` is `("CAIRN_HOST", "ASIB_HOST", "ACTIVITY_HOST")`
 #: and only the first carries a swept prefix. Deriving it is what makes a fourth
 #: host-label name covered without anybody editing this file.
-EXTRA_CONFIG_ENV = frozenset(HOST_LABEL_ENV)
+#:
+#: 🔴 PLUS THE CLIENT READ LEDGER'S THREE (S11, decision 3a), DERIVED THE SAME WAY from
+#: `lib/read_ledger.py`. With a session id in its environment either client APPENDS to
+#: `$XDG_STATE_HOME/cairn/read-ledger/<session>.jsonl`, invisibly. Inherited, that is two
+#: harms at once: on an agent-run host every client subprocess a suite spawns writes FIXTURE
+#: scopes into the developer's REAL session ledger (a suite that leaves `HOME` alone writes
+#: under the real `~/.local/state`), making that session owner-only or held; and the local and
+#: CI tiers diverge, because CI has no session id. `tests/parity/harness.py` exports all three
+#: into its own environment on every run and counts ledger files afterwards — the positive
+#: control that this set is what keeps them out.
+READ_LEDGER_ENV = frozenset((CLAUDE_SESSION_ENV, OPENCODE_SESSION_ENV, STATE_HOME_ENV))
+EXTRA_CONFIG_ENV = frozenset(HOST_LABEL_ENV) | READ_LEDGER_ENV
 
 #: …except the harness's own knobs, which are NOT client configuration.
 #: `testlib/store_siting.py` reads `CAIRN_TEST_TMPFS` at call time to decide

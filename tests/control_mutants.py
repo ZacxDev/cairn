@@ -161,6 +161,13 @@ PKGS = (
     # predicates' own guards are reachable at unit level here; through S2's listener they are
     # reached only in the Postgres tier, which this battery does not run (the S2 PR's matrix).
     "./internal/memo/",
+    # 🔴 THE CLIENT (S11 of the transcripts/plugins plan), BECAUSE ITS READ LEDGER IS AN INPUT TO A
+    # VISIBILITY PREDICATE. Every scope a served call touches is appended to the session's ledger,
+    # and `cairn-ui` folds that ledger into `V` — the set `transcript.Visible` admits a viewer by.
+    # A ledger that records the FLAG instead of the resolved scope, or nothing, shows a transcript to
+    # a principal who cannot read what the session read; that is an authorization defect that
+    # lives entirely in this package, with no guard on the pod that could notice it.
+    "./internal/client/",
 )
 
 
@@ -5069,7 +5076,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-pod-skips-scope-rederivation",
         path="internal/transcript/archive/archive.go",
-        old="\tm.Derived = union(m.Derived, derived)",
+        old="\tm.Derived = union(m.Derived, found.Scopes)",
         new="\tm.Derived = union(m.Derived, nil)",
         killer="TestThePodDerivesReadScopesTheAgentDidNotDeclare",
         why="the agent already declares what it derived with the same function, so folding the pod's own "
@@ -6240,6 +6247,66 @@ MUTANTS: tuple[Mutant, ...] = (
         why="'the claims all held' reads as clean — while half the declaration was never fetched.",
         pkgs=PKGS + ("./internal/refaudit/",),
     ),
+    # The operator's decision on #259 r1 🟡2, and #259 r2's interrupt: two rows each, one per direction.
+    Mutant(
+        name="refaudit-stale-beside-an-unlooked-source",
+        path="internal/refaudit/audit.go",
+        old="if unread && Severity[best.State] == ClassStale {",
+        new="if unread && false && Severity[best.State] == ClassStale {",
+        killer="TestAStaleVerdictMeansEverySourceWasRead",
+        why="'missing from every source we read' reads as missing — while the unread source may hold "
+        "it: a stale verdict nobody measured (the out-of-tree default the plan first pinned).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-stale-demoted-with-every-source-read",
+        path="internal/refaudit/audit.go",
+        old="unread := len(looked) < len(sources)",
+        new="unread := len(looked) <= len(sources)",
+        killer="TestAStaleVerdictMeansEverySourceWasRead",
+        why="an off-by-one on the comparison demotes EVERY stale claim and the audit never exits 9.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-stale-beside-a-failed-claim-read",
+        path="internal/refaudit/audit.go",
+        old="\t\t\t\t\tunread = true // fetched",
+        new="\t\t\t\t\t_ = true // fetched",
+        killer="TestAStaleVerdictMeansEverySourceWasRead",
+        why="'every source was FETCHED' reads as 'every source was read' — while one source's `git` "
+        "failed on this very claim and the other's `missing` became the verdict (#267 r1 🟡1).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-interrupt-ignored-signal-unignored",
+        path="internal/refaudit/gitcli.go",
+        old="\t\tif !signal.Ignored(s) {",
+        new="\t\tif true {",
+        killer="TestAnIgnoredHangupStaysIgnored",
+        why="handling every signal reads as thorough — and `nohup cairn audit-refs` then dies on the "
+        "hangup it was started to survive (#267 r1 🟡2).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-interrupt-never-reaches-the-group",
+        path="internal/refaudit/gitcli.go",
+        old="\t\t\tw.caught = s\n\t\t\tcancel()",
+        new="\t\t\tw.caught = s",
+        killer="TestAnInterruptKillsTheStalledFetch",
+        why="re-raising the signal reads as handling it — and the re-raise waits on a `git` that "
+        "nothing killed, or `cairn` dies and leaves `git-remote-https` holding the remote (#259 r2).",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    Mutant(
+        name="refaudit-interrupt-swallowed-not-reraised",
+        path="internal/refaudit/gitcli.go",
+        old="\t_ = syscall.Kill(os.Getpid(), sig)",
+        new="\t_ = sig",
+        killer="TestAnInterruptKillsTheStalledFetch",
+        why="exiting 130 by hand looks the same in a shell — but the parent sees an exit, not a death "
+        "by SIGINT, and a caller that distinguishes the two (a shell loop's own Ctrl-C) carries on.",
+        pkgs=PKGS + ("./internal/refaudit/",),
+    ),
     Mutant(
         name="refaudit-mirror-dir-from-path-components",
         path="internal/refaudit/gitcli.go",
@@ -6249,6 +6316,52 @@ MUTANTS: tuple[Mutant, ...] = (
         why="a readable mirror path is friendlier — and a declaration then chooses where on disk the "
         "auditor writes (T4).",
         pkgs=PKGS + ("./internal/refaudit/",),
+    ),
+    # ---- S11: the client read ledger, both ends (decision 3a) --------------------------------------
+    Mutant(
+        name="transcript-pod-ignores-ledger",
+        path="internal/transcript/archive/archive.go",
+        old="\tif stream == LedgerStream {\n\t\tfoldLedger(m, lines)\n\t} else {",
+        new="\tif false && stream == LedgerStream {\n\t\tfoldLedger(m, lines)\n\t} else {",
+        killer="TestAnUploadedLedgerPutsItsScopesInMeta",
+        extra_killers=("TestAnUploadedLedgerIsInV", "TestALedgerArrivingLaterLiftsF1"),
+        why="storing the ledger like any other stream looks complete — and then the only thing carrying "
+        "a read the transcript never shows is the agent's DECLARATION, which an old or lying agent "
+        "omits (clause n). Moved here from S3 in revision 14: the battery runs `go test`, and S3 had "
+        "no fold to mutate.",
+        pkgs=PKGS + ("./internal/transcript/archive/",),
+    ),
+    Mutant(
+        name="client-ledger-write-skipped",
+        path="internal/client/readledger.go",
+        old="\tif e.ledger != nil {\n\t\t_ = e.ledger.record(instance, scope)",
+        new="\tif false && e.ledger != nil {\n\t\t_ = e.ledger.record(instance, scope)",
+        killer="TestNoSessionIdWritesNothing",
+        extra_killers=("TestTheLedgerRecordsTheScopeEachServedCallResolved",),
+        why="a ledger nobody reads on the client side looks optional — and every session that runs "
+        "`cairn` is then owner-only by F1, or, beside a pre-ledger record, shows its transcript to a "
+        "viewer who cannot read what it read.",
+    ),
+    Mutant(
+        name="client-ledger-records-requested-not-resolved-scope",
+        path="internal/client/verbs.go",
+        old="\t\t\treturn 0, recallErr\n\t\t}\n\t\tenv.recordRead(alias, scope)",
+        new="\t\t\treturn 0, recallErr\n\t\t}\n\t\tenv.recordRead(alias, opts.Scope)",
+        killer="TestTheLedgerRecordsTheScopeEachServedCallResolved",
+        why="the flag is what the caller asked for, so it reads as the honest record — but a bare "
+        "`recall` asks for NOTHING and reads the scope `--repo` derived, and the empty flag then names "
+        "no scope at all.",
+    ),
+    Mutant(
+        name="client-ledger-write-visible-in-output",
+        path="internal/client/readledger.go",
+        old="\t\t_ = e.ledger.record(instance, scope)",
+        new="\t\tif err := e.ledger.record(instance, scope); err != nil {\n"
+        "\t\t\te.Stderr.WriteString(\"cairn: the read ledger was not written: \" + err.Error() + \"\\n\")\n\t\t}",
+        killer="TestAFailedLedgerWriteIsInvisible",
+        why="a failure nobody hears about looks like a hidden bug, so reporting it reads as diligence — "
+        "and every call on a host with a read-only state directory then changes its stderr, which the "
+        "parity gate diffs byte for byte and an agent's tool output carries.",
     ),
 )
 

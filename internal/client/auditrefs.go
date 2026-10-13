@@ -109,6 +109,7 @@ func AuditRefs(env Env, opts Options) (int, error) {
 		return finishAudit(env, req)
 	}
 	req.Label = label
+	env.recordRead(alias, scope)
 	_, body, err := FetchReport(cfg, "/api/v1/sources/"+quoteAll(scope), opts.Timeout)
 	if err != nil {
 		req.SourcesDetail = err.Error()
