@@ -166,7 +166,8 @@ func pluginTogglesNode(t PluginToggles, csrf string) g.Node {
 	}[t.Level]
 	note := map[plugins.Level]string{
 		plugins.LevelScope: "A plugin runs on a session only when EVERY scope the session touched is at least `allowed`, " +
-			"and either every one is `on` or an arc listing it is `on`. `allowed` is consent without running. Default: off.",
+			"and either every one is `on` or an arc listing it is `on`. `allowed` is consent to run wherever an arc " +
+			"listing the session turns it on — any arc, homed in any scope its registrant administers. Default: off.",
 		plugins.LevelArc: "An arc can turn a plugin on only inside scopes whose admins already allowed it, and `off` here " +
 			"vetoes it for every session the arc lists. Default: unset.",
 		plugins.LevelSession: "Your opt-out for this one session. It can only turn a plugin OFF — never on.",

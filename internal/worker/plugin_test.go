@@ -14,7 +14,9 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/netid"
 	"github.com/ZacxDev/cairn/internal/plugins"
+	"github.com/ZacxDev/cairn/internal/redact"
 	"github.com/ZacxDev/cairn/internal/transcript"
+	"github.com/ZacxDev/cairn/internal/transcript/archive"
 	"github.com/ZacxDev/cairn/internal/transcript/transcripttest"
 )
 
@@ -30,6 +32,7 @@ const (
 
 type pluginRig struct {
 	*rig
+	dir     string
 	journal plugins.Journal
 	arc     interface{ Used() int64 }
 	svc     *plugins.Service
@@ -69,7 +72,16 @@ func writeStoreWithTrailer(t *testing.T) string {
 
 func newPluginRig(t *testing.T) *pluginRig {
 	t.Helper()
-	arc := transcripttest.Open(t)
+	dir := t.TempDir()
+	red, err := redact.New(redact.SelfTestKey(43), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arc, err := archive.Open(archive.Config{Dir: dir, Retention: transcripttest.Retention, Quota: 1 << 30, Recheck: red,
+		Now: func() time.Time { return transcripttest.Clock }})
+	if err != nil {
+		t.Fatal(err)
+	}
 	owner := string(ownerA.Kind) + ":" + string(ownerA.ID)
 	user := func(text string) string {
 		raw, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": text}})
@@ -96,7 +108,7 @@ func newPluginRig(t *testing.T) *pluginRig {
 		t.Fatal(err)
 	}
 	g.w = w
-	return &pluginRig{rig: g, journal: svc.Journal, arc: arc, svc: svc}
+	return &pluginRig{rig: g, dir: dir, journal: svc.Journal, arc: arc, svc: svc}
 }
 
 func (p *pluginRig) toggle(level plugins.Level, target, value string) {
@@ -262,5 +274,23 @@ func TestAPluginRowIsAdmittedOnlyForARegisteredPlugin(t *testing.T) {
 	}
 	if got := p.pending(listerToken); got != nil {
 		t.Fatalf("POSITIVE CONTROL: lister's pending is %v", got)
+	}
+}
+
+// TestOneUndecidableSessionDoesNotStopThePendingQuery: a session whose meta.json no longer parses is
+// LEFT OUT (OFF, fail closed) and every other session is still answered — before the fix it was a 500
+// for every session, forever (audit round 1).
+func TestOneUndecidableSessionDoesNotStopThePendingQuery(t *testing.T) {
+	p := newPluginRig(t)
+	p.toggle(plugins.LevelScope, "alpha-notes", plugins.ValueOn)
+	p.toggle(plugins.LevelScope, "beta-notes", plugins.ValueOn)
+	if got := p.pending(summaryToken); !slices.Equal(got, []string{"s-alpha", "s-both"}) {
+		t.Fatalf("POSITIVE CONTROL: pending is %v", got)
+	}
+	if err := os.WriteFile(filepath.Join(p.dir, "sessions", "s-both", "meta.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.pending(summaryToken); !slices.Equal(got, []string{"s-alpha"}) {
+		t.Fatalf("with s-both's meta damaged the pending list is %v, want [s-alpha]", got)
 	}
 }

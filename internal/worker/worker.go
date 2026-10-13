@@ -106,7 +106,8 @@ type Config struct {
 	// Log receives operator lines — never a token, never content.
 	Log func(string)
 	// Plugins is the plugin registry, toggles and outputs (slice S5); nil is "no -plugin-registry",
-	// under which no plugin row is admitted and every plugin route answers the uniform 401.
+	// under which no plugin row is admitted: one present at startup refuses the whole file (as any
+	// refused row does), and one appearing afterwards authenticates nothing — the uniform 401.
 	Plugins *plugins.Service
 }
 

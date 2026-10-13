@@ -66,6 +66,12 @@ func pluginsConfigured(s pluginSettings, storeRoot string, workerOn bool, others
 	if err != nil {
 		return nil, plugins.Journal{}, false, fmt.Errorf("-%s: %v. Refusing to start", flagPluginJournal, err)
 	}
+	// The registry itself is one more file the journal may not be: a toggle line appended to it makes
+	// the next start refuse the registry (audit round 1).
+	if resolved, err := resolveMaybeAbsent(s.registry); err == nil && resolved == path {
+		return nil, plugins.Journal{}, false, fmt.Errorf("-%s resolves to %s, which is the -%s itself. Give the plugin "+
+			"journal its own file. Refusing to start", flagPluginJournal, path, flagPluginRegistry)
+	}
 	for flagName, other := range others {
 		if other == "" {
 			continue

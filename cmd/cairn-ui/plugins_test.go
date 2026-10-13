@@ -52,6 +52,7 @@ func TestThePluginFlagsAreBothOrNeitherAndNeedTheListener(t *testing.T) {
 		{"both with no worker listener", pluginSettings{registry: reg, journal: journal}, false, "nowhere to run"},
 		{"a journal inside the store root", pluginSettings{registry: reg, journal: filepath.Join(storeRoot, "toggles.jsonl")}, true, "INSIDE"},
 		{"the journal at the control journal", pluginSettings{registry: reg, journal: control}, true, "-control-journal"},
+		{"the journal at the registry itself", pluginSettings{registry: reg, journal: reg}, true, "the -plugin-registry itself"},
 		{"a blank registry", pluginSettings{registry: " ", journal: journal}, true, "reduces to nothing"},
 		{"an unknown capability", pluginSettings{registry: writeRegistry(t, strings.Replace(fixtureRegistry,
 			`"pending:list"`, `"store:read"`, 1)), journal: journal}, true, "closed vocabulary"},
@@ -95,6 +96,17 @@ func TestTheBinaryMintsAPluginTokenAndServesThePluginAPI(t *testing.T) {
 	raw, _ := os.ReadFile(tokens)
 	if len(token) != 43 || !strings.HasSuffix(string(raw), worker.NewPluginTokenRow("summary", token).String()+"\n") {
 		t.Fatalf("the mint printed %q and the file is %q", token, raw)
+	}
+
+	// A CAPTURE token minted into a file that already holds a plugin row, with and without the
+	// registry named (audit round 1: both were refused, leaving hand-editing the only way).
+	for _, extra := range [][]string{nil, {"-plugin-registry", reg}} {
+		args := append([]string{"-issue-worker-token", "capture", "-worker-owner", workerOwnerA.String(),
+			"-worker-host", "host-b", "-worker-tokens", tokens}, extra...)
+		c := startPresenceChild(t, journal, args...)
+		if code := c.exit(t); code != 0 {
+			t.Fatalf("a capture mint beside a plugin row (%v) exited %d:\n%s", extra, code, c.out.String())
+		}
 	}
 
 	child := startPresenceChild(t, journal, workerArgs(t, tokens, "-plugin-registry", reg,

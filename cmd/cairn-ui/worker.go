@@ -307,7 +307,19 @@ func issueWorkerToken(out, note io.Writer, m control.Model, s workerSettings) er
 	if _, known := m.PrincipalFor(owner.Kind, owner.ID); !known {
 		return fmt.Errorf("-%s %s names a principal this authority does not hold", flagWorkerOwner, owner)
 	}
-	wall := worker.Wall{Owner: owner}
+	// 🔴 THE FILE'S EXISTING PLUGIN ROWS ARE ASKED OF THE REGISTRY WHEN ONE IS NAMED, AND ADMITTED
+	// WHEN NONE IS — whichever kind is being minted. A capture mint with a nil wall refused every file
+	// that already held a plugin row (#S5 audit round 1), leaving hand-editing as the only way to add a
+	// capture token beside one. Without a registry this mint does not vouch for plugin rows; startup,
+	// which always has the registry, does.
+	wall := worker.Wall{Owner: owner, Plugins: func(string) bool { return true }}
+	if s.registry != "" {
+		reg, err := plugins.LoadRegistry(s.registry)
+		if err != nil {
+			return fmt.Errorf("-%s: %v", flagPluginRegistry, err)
+		}
+		wall.Plugins = reg.Holds
+	}
 	var row worker.TokenRow
 	token, err := worker.MintToken()
 	if err != nil {
@@ -320,14 +332,9 @@ func issueWorkerToken(out, note io.Writer, m control.Model, s workerSettings) er
 		if s.registry == "" {
 			return fmt.Errorf("-%s plugin needs -%s: a token for a plugin nobody registered authenticates nothing", flagIssueWorker, flagPluginRegistry)
 		}
-		reg, err := plugins.LoadRegistry(s.registry)
-		if err != nil {
-			return fmt.Errorf("-%s: %v", flagPluginRegistry, err)
-		}
-		if !reg.Holds(s.plugin) {
+		if !wall.Plugins(s.plugin) {
 			return fmt.Errorf("-%s plugin needs -%s naming a plugin -%s registers (got %q)", flagIssueWorker, flagWorkerPlugin, flagPluginRegistry, s.plugin)
 		}
-		wall.Plugins = reg.Holds
 		row = worker.NewPluginTokenRow(s.plugin, token)
 	} else {
 		if s.plugin != "" {

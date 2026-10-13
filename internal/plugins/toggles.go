@@ -159,6 +159,7 @@ type Subject struct {
 // 🔴 `known` IS ASKED OF EVERY NAME, AND A NAME IT DOES NOT KNOW IS OFF WHATEVER THE JOURNAL SAYS.
 // A scope deleted or renamed after its admins consented keeps its journal line; the session's
 // content from it is still in the transcript, and nobody who could administer it is left to say no.
+// ⚠ Keyed by NAME: a scope RECREATED under that name is known again and inherits the old line.
 // `*` is "a scope nobody can name" and is OFF the same way.
 func Effective(st State, plugin string, sub Subject, known func(string) bool) bool {
 	// 🔴 (9) EMPTY `V` IS OFF — "every scope of the empty set" is vacuously true, and an owner-only

@@ -137,10 +137,15 @@ func (s *Service) Pending(e Entry, limit int) ([]PendingItem, error) {
 		return nil, err
 	}
 	var cands []Candidate
+	var failed []error
 	for _, root := range roots {
 		v, err := s.Transcripts.ForPlugin(root, on)
 		if err != nil {
-			return nil, err
+			// 🔴 ONE SESSION THAT CANNOT BE DECIDED (an unparsable meta.json) IS LEFT OUT, not a 500 for
+			// every session (audit round 1) — left out is OFF, the fail-closed answer for it. Only when
+			// NOTHING could be decided is it an error: that is the store, not one session.
+			failed = append(failed, err)
+			continue
 		}
 		if v == nil {
 			continue
@@ -154,6 +159,9 @@ func (s *Service) Pending(e Entry, limit int) ([]PendingItem, error) {
 			streams[name] = pos.SeqTo
 		}
 		cands = append(cands, Candidate{Root: root, Streams: streams, UpdatedAt: v.Meta.UpdatedAt, Prev: prev})
+	}
+	if len(failed) > 0 && len(failed) == len(roots) {
+		return nil, errors.Join(failed...)
 	}
 	return Pending(e, cands, s.now(), limit), nil
 }

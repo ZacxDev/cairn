@@ -52,4 +52,20 @@ under its own `plugins-*` row in `tests/control_mutants.py`.
   its write trailers (decision 3's trap forbids a narrower walk) unless the stored half of `V` already
   refuses. Unmeasured at scale; the S4 walk measurement is the nearest number.
 - **One worker per plugin** (decision 13): two receive the same items.
-- **A stolen plugin token** reads every transcript its plugin is ON for (T6).
+- **A stolen plugin token** reads every transcript its plugin is ON for (T6) — and can fill the
+  instance's transcript QUOTA with outputs (each ≤ 64 KiB, no per-plugin cap), after which capture
+  uploads answer 507 (T12). Not capped here.
+- **An arc is anybody's** (audit round 1): members are arbitrary session ids, so a user who can see a
+  session's id can list it in an arc homed in their own scope and turn the plugin ON wherever its scopes
+  are only `allowed`, or OFF anywhere. `allowed` means "run when any arc asks". An arc still cannot run
+  a plugin on a session any of whose scopes is `off`. Narrowing arc authority is open for review.
+- **Consent is keyed by the folded scope NAME**, not a control id — the store's own name=directory rule.
+  A scope deleted and recreated under the same name inherits its predecessor's toggle; `known` neutralises
+  only a name the authority no longer holds at all.
+- **Owner-only sessions are walked on every pending poll** (their stored `V` is empty, so no shortcut
+  applies): O(owner-only roots × store) per poll, and a latency difference between "stored owner-only"
+  and "absent" that the uniform 403 does not hide.
+- **Journal damage is counted, not surfaced** (`State.Skipped`, `TornTail`): a damaged latest `off`
+  falls back to the earlier value.
+- **One undecidable session** (an unparsable `meta.json`) is left out of the pending list (OFF); only
+  when NO session can be decided is the query an error.
