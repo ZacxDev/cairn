@@ -5799,6 +5799,17 @@ MUTANTS: tuple[Mutant, ...] = (
         pkgs=PKGS + ("./internal/capture/",),
     ),
     Mutant(
+        name="capture-plaintext-host-matched-by-suffix",
+        path="internal/capture/httpsink.go",
+        old="\t\t\tif !slices.Contains(plaintextHosts, u.Hostname()) {",
+        new="\t\t\tif !slices.ContainsFunc(plaintextHosts, func(h string) bool { return strings.HasSuffix(u.Hostname(), h) }) {",
+        killer="TestPlainHTTPToANamedHostIsAnExplicitExactOptIn",
+        why="an operator with several hosts on one mesh would rather name the mesh's domain once, so a "
+        "suffix match reads as the convenient form — and `evil-<host>`, or any host under a parent "
+        "domain somebody else can register in, then receives the capture token in clear.",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
         name="plugins-walk-skipped-on-a-stored-off",
         path="internal/plugins/service.go",
         old="\t\tSettled: func(meta *transcript.Meta, v []string) bool { return Settled(st, plugin, subject(meta, v), known) },",

@@ -932,9 +932,11 @@ for root in "$vis_d" "$vis_e" "$vis_f"; do
   summary_for "$root" "${k_mark[$root]}" "${k_text[$root]}"
   [[ $code == 201 ]] || couldnt "writing the summary of $root answered $code: $body"
 done
-# INSTRUMENT CONTROL: G, whose set is empty, is refused — no output exists for it to leak.
+# G, whose set is empty, is refused: no output can exist for an owner-only session. Part of the
+# assertion below rather than a `couldnt` — under clause (j)'s sabotage this write is ACCEPTED, and
+# that run must end FAILED, not unable to vouch.
 summary_for "$vis_g" 2 "clause k summary of g"
-[[ $code == 403 ]] || couldnt "the summary plugin wrote an output for the owner-only session G ($code)"
+k_g_code="$code"
 # Every viewer's page for every session, and every viewer's sessions LIST, with the outputs stored.
 mkdir -p "$work/vis/k"
 for viewer in p n r a; do
@@ -960,6 +962,7 @@ echo "clause k: transcript | output viewers — d [$(k_sets "$vis_d")] e [$(k_se
 # admitted viewer's does — P reads `alpha-notes`, so P's list holds all three rows and only D's line.
 assert k-an-output-is-shown-to-exactly-the-viewers-of-its-transcript eval '
   [[ "$(k_sets "$vis_d")" == "apr | apr" && "$(k_sets "$vis_e")" == "ar | ar" && "$(k_sets "$vis_f")" == "ar | ar" ]] &&
+  [[ $k_g_code == 403 ]] &&
   grep -qF "derived · summary · by summary 0.1.0 · model fake-model" "$work/vis/k/a.$vis_d.page" &&
   grep -qF "from turn 1 of 1" "$work/vis/k/a.$vis_d.page" &&
   grep -qF "data-session=\"$vis_e\"" "$work/vis/k/p.list" && grep -qF "data-session=\"$vis_f\"" "$work/vis/k/p.list" &&

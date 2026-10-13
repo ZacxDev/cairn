@@ -102,6 +102,36 @@ saved before the first upload leaves), after a changed session at most every two
 the run ends with unsaved changes — an idle run writes nothing. A write that fails part-way commits the
 prefix that was acknowledged. The token file may be a symlink (a secret manager's); the 0600 check is on its target.
 
+## Plain `http` to a named host — `-allow-plaintext-host` (an operator opt-in)
+
+A worker URL must be `https`, or `http` to a loopback address: the capture token rides in a header
+and the bodies are transcripts. Some deployments reach `cairn-ui`'s host-side listeners over a
+PRIVATE ENCRYPTED MESH, addressed as plain `http` — there the mesh IS the transport protection, and
+there is no certificate for TLS to check — so the real worker URL was refused (exit 2).
+
+`cairn-capture --run … -allow-plaintext-host [ALIAS=]HOST` (repeatable) accepts plain `http` for
+that instance's `-worker` when its URL's host is EXACTLY `HOST`.
+
+- **Exact, never a pattern**: no suffix, prefix, wildcard, case fold or port
+  (`TestPlainHTTPToANamedHostIsAnExplicitExactOptIn`; mutant
+  `capture-plaintext-host-matched-by-suffix`). Per instance: an opt-in for one alias does not admit
+  another's URL.
+- **A flag only** — no default and no environment spelling, so a copied environment cannot switch
+  it on.
+- **It must be used**: an opt-in naming an alias with no `-worker`, a host that is not that
+  worker's, or a worker that is `https` or loopback anyway is a usage error (exit 2) — one left
+  lying in a unit file would silently start applying after a later URL change.
+- **Said on every run**, per instance, on stderr: `⚠ instance <alias>: the capture token and every
+  upload go to <url> over PLAIN HTTP (-allow-plaintext-host); the network between is the only
+  transport protection`.
+- **Unchanged by it**: a redirect is never followed (`TestTheSinkNeverFollowsARedirect` — the sink
+  knows nothing of the opt-in, so the token still goes nowhere but the named host), and the
+  REDACTION-OFF test build still sends to a loopback address only.
+
+⚠ **What nothing here can check:** that the path to the named host really is protected. The flag is
+the operator's assertion about a network; on an unprotected one the token and every transcript byte
+cross it in clear.
+
 ## The withdrawal (S6, decision 16, clause m)
 
 When a run's routing answer is no longer the instance holding a session's prefix — its scopes now

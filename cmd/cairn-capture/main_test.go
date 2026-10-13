@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/client"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/netid"
 	"github.com/ZacxDev/cairn/internal/redact"
@@ -220,10 +221,68 @@ func TestRunUsageRefusals(t *testing.T) {
 		"open token file":                 {"--run", "-host", "host-a", "-worker", "http://127.0.0.1:9", "-capture-token-file", open},
 		"unconfigured alias":              {"--run", "-host", "host-a", "-worker", "client=http://127.0.0.1:9", "-capture-token-file", "client=" + tokenFile},
 		"token for no worker":             {"--run", "-host", "host-a", "-worker", "http://127.0.0.1:9", "-capture-token-file", tokenFile, "-capture-token-file", "client=" + tokenFile},
+		// -allow-plaintext-host (S6): an EXACT host for ONE instance's worker, and it must be used.
+		"plaintext: a different host":         {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", "other.example.invalid"},
+		"plaintext: a suffix of the host":     {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", "example.invalid"},
+		"plaintext: a prefix of the host":     {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", "mesh-host"},
+		"plaintext: host with its port":       {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", "mesh-host.example.invalid:8443"},
+		"plaintext: a URL, not a host":        {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", meshWorker},
+		"plaintext: for another instance":     {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", "client=mesh-host.example.invalid"},
+		"plaintext: unused, the URL is https": {"--run", "-host", "host-a", "-worker", "https://mesh-host.example.invalid", "-capture-token-file", tokenFile, "-allow-plaintext-host", "mesh-host.example.invalid"},
+		"plaintext: unused, loopback":         {"--run", "-host", "host-a", "-worker", "http://127.0.0.1:9", "-capture-token-file", tokenFile, "-allow-plaintext-host", "127.0.0.1"},
 	} {
 		var errb bytes.Buffer
 		if code := run(args, &bytes.Buffer{}, &errb, env); code != exitUsage {
 			t.Errorf("%s: exit %d, want %d (%s)", name, code, exitUsage, errb.String())
 		}
+	}
+}
+
+// meshWorker is a synthetic non-loopback worker URL over plain http.
+const meshWorker = "http://mesh-host.example.invalid:8443"
+
+// TestAPlaintextWorkerIsAcceptedOnlyByItsExactOptInAndSaidEveryRun: with `-allow-plaintext-host`
+// naming the worker's host exactly, the URL the usage check refuses (`clear http`, above) is
+// accepted — `endpoints` reports the instance as plaintext — and the run says so on stderr before
+// anything is sent. NO environment variable switches it on. The host is `.invalid`, so nothing is
+// reached: the pass ends with every upload failed, which is not what this measures.
+func TestAPlaintextWorkerIsAcceptedOnlyByItsExactOptInAndSaidEveryRun(t *testing.T) {
+	_, tokenFile, env := runWorld(t, runToken)
+	base := runConfig{workers: []string{meshWorker}, tokenFiles: []string{tokenFile}}
+	routing, err := client.Discover(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := endpoints(base, routing); err == nil {
+		t.Fatal("CONTROL: plain http to a non-loopback host was accepted with no opt-in")
+	}
+	base.plaintext = []string{"mesh-host.example.invalid"}
+	eps, plain, err := endpoints(base, routing)
+	if err != nil || len(eps) != 1 || len(plain) != 1 {
+		t.Fatalf("with the exact opt-in: %d endpoint(s), %d plaintext, %v", len(eps), len(plain), err)
+	}
+	for alias, u := range plain {
+		if eps[alias].URL != meshWorker || u != meshWorker {
+			t.Fatalf("instance %s: endpoint %q, reported plaintext %q", alias, eps[alias].URL, u)
+		}
+	}
+	// No environment spelling: the variable a reader would guess changes nothing.
+	guessed := func(k string) string {
+		if k == "CAIRN_ALLOW_PLAINTEXT_HOST" || k == "CAIRN_CAPTURE_ALLOW_PLAINTEXT_HOST" {
+			return "mesh-host.example.invalid"
+		}
+		return env(k)
+	}
+	var errb bytes.Buffer
+	if code := run([]string{"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile},
+		&bytes.Buffer{}, &errb, guessed); code != exitUsage {
+		t.Fatalf("an environment variable admitted plain http: exit %d (%s)", code, errb.String())
+	}
+	errb.Reset()
+	code := run([]string{"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile,
+		"-allow-plaintext-host", "mesh-host.example.invalid"}, &bytes.Buffer{}, &errb, env)
+	if code == exitUsage || !strings.Contains(errb.String(), "over PLAIN HTTP (-allow-plaintext-host)") ||
+		!strings.Contains(errb.String(), meshWorker) || strings.Contains(errb.String(), runToken) {
+		t.Fatalf("the opted-in run: exit %d, and stderr does not carry the plaintext warning (or carries the token):\n%s", code, errb.String())
 	}
 }

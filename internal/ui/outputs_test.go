@@ -252,7 +252,7 @@ func TestTheOwnerDeletesATranscriptAndEverythingDerivedGoesWithIt(t *testing.T) 
 	}{
 		"a principal who is not the owner":     {wren, deleteValues(toggleSession)},
 		"the owner, for a session not stored":  {rowan, deleteValues("s-never-stored")},
-		"the owner, for an id that is not one": {rowan, deleteValues("../"+toggleSession)},
+		"the owner, for an id that is not one": {rowan, deleteValues("../" + toggleSession)},
 	} {
 		rec := c.who.post(SessionDeletePath, c.form)
 		if rec.Code != http.StatusForbidden || rec.Body.String() != sessionDeleteRefusal {

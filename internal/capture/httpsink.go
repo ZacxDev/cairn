@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -188,24 +189,52 @@ func (e *FatalError) Error() string {
 // ValidateEndpoint refuses a URL that is not `https`, or plain `http` to anything but a loopback
 // address: the capture token rides in a header.
 func ValidateEndpoint(raw string) (string, error) {
+	u, _, err := ValidateEndpointAllowing(raw)
+	return u, err
+}
+
+// ValidateEndpointAllowing is [ValidateEndpoint] with the operator's explicit opt-in: plain `http`
+// to a NON-loopback host is accepted when — and only when — the URL's host is EXACTLY one of
+// `plaintextHosts` (`cairn-capture -allow-plaintext-host`). `plaintext` reports that the opt-in is
+// what admitted the URL, so the caller can say so on every run.
+//
+// 🔴 WHAT THE OPT-IN IS FOR, AND WHAT IT GIVES UP. Some deployments reach `cairn-ui`'s host-side
+// listeners over a private ENCRYPTED mesh, addressed as plain `http` — the network is the transport
+// protection, and there is no certificate for TLS to check. Without an opt-in the real worker URL is
+// refused. With it, the capture token and every uploaded byte cross whatever network the named host
+// is reached over IN CLEAR as far as this program can tell: the operator is asserting the path is
+// protected, and nothing here can check that.
+//
+// 🔴 AN EXACT HOST MATCH, NEVER A PATTERN: no suffix, no prefix, no case fold, no port. A suffix
+// match would admit `evil-<host>`; a prefix match `<host>.example`. There is NO default and NO
+// environment spelling — a copied environment must not be able to switch it on.
+//
+// 🔴 TWO THINGS IT DOES NOT TOUCH: a redirect is still never followed ([HTTPSink.httpClient]), so
+// the token goes nowhere but the named host; and a REDACTION-OFF test build still sends to a
+// loopback address only, whatever is allowed.
+func ValidateEndpointAllowing(raw string, plaintextHosts ...string) (endpoint string, plaintext bool, err error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("worker URL %q is not an absolute http(s) URL with no credentials, query or fragment", raw)
+		return "", false, fmt.Errorf("worker URL %q is not an absolute http(s) URL with no credentials, query or fragment", raw)
 	}
 	switch u.Scheme {
 	case "https":
 	case "http":
 		if !loopbackHost(u.Hostname()) {
-			return "", fmt.Errorf("worker URL %q is plain http to a non-loopback host; the capture token would cross the "+
-				"network in clear — use https", raw)
+			if !slices.Contains(plaintextHosts, u.Hostname()) {
+				return "", false, fmt.Errorf("worker URL %q is plain http to a non-loopback host; the capture token would cross the "+
+					"network in clear — use https, or, where the network itself is the protection, name the host exactly "+
+					"with -allow-plaintext-host", raw)
+			}
+			plaintext = true
 		}
 	default:
-		return "", fmt.Errorf("worker URL %q is not http(s)", raw)
+		return "", false, fmt.Errorf("worker URL %q is not http(s)", raw)
 	}
 	if RedactionOff() && !loopbackHost(u.Hostname()) {
-		return "", fmt.Errorf("this is a REDACTION-OFF test build; it sends only to a loopback address, not %q", raw)
+		return "", false, fmt.Errorf("this is a REDACTION-OFF test build; it sends only to a loopback address, not %q", raw)
 	}
-	return strings.TrimRight(u.String(), "/"), nil
+	return strings.TrimRight(u.String(), "/"), plaintext, nil
 }
 
 func loopbackHost(h string) bool {

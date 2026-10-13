@@ -319,6 +319,18 @@ Drop the work, or the named half, if any of these holds:
 
 ### Rollout (NOT part of the closing condition)
 
+- ⚠ **THE HOST → `cairn-ui` TRANSPORT IS THE DEPLOYMENT'S MESH, NOT TLS, AND THE AGENT MUST BE TOLD
+  SO (found by arming prep, built with S6).** `cairn-capture` refuses a worker URL that is plain
+  `http` to a non-loopback host, and the deployment reaches its host-side listeners (presence, the
+  client API, and now the worker listener) as plain `http` over a private encrypted mesh address —
+  so the real worker URL was refused (exit 2). The opt-in is `-allow-plaintext-host [ALIAS=]HOST`
+  on `cairn-capture --run`: an EXACT host match for that instance's worker, a flag only (no default,
+  no environment spelling), a usage error when it admits nothing, a warning line on every run;
+  redirects stay refused and the redaction-off test build stays loopback-only. **In that deployment
+  the mesh is the transport protection** — the flag is the operator's assertion that the path to the
+  named host is protected, and nothing in the agent can check it (`internal/capture/README.md`).
+  The plugins' own API client takes the same flag with the same semantics (S9).
+
 - 🔴 **CLOSING-CONDITION PART 5 IS NO LONGER AN ARMING GATE (O17).** The operator waived it and
   chose to ship capture without perfect redaction. It is kept as a MEASUREMENT: the held-back
   score is re-run and recorded for the redactor commit being armed (AP4), and the last one —
