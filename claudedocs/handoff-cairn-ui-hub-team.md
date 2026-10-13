@@ -41,7 +41,7 @@ Team page carrying sharing + invitations + multi-target team links (TTL, reuse, 
 ## Next steps (ranked)
 1. **(done) Keep reusable-link tokens out of access logs** — fragment links, #232, deployed.
    forcing: security — a logged reusable token is a standing enrolment capability.
-2. **(done, #NNN) Fold single-project invitations into team links — option A, no migration.**
+2. **(done, #265) Fold single-project invitations into team links — option A, no migration.**
    forcing: user — operator ruled for the recommended option. The Team page has ONE mint form (the
    team-link form; `?project=` pre-ticks that project); `POST /invite` creates nothing and 303s to
    `/team?outcome=invite-folded[&project=…]#links`; `Inviting` has no `Mint`. Invitations issued
