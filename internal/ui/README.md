@@ -4810,7 +4810,11 @@ project on that form. `POST /invite` creates nothing and answers `303 /team?outc
 - 🔴 **An invitation that already exists is untouched**: listed to every manager of its project,
   revocable by any of them, redeemable through both callback arms at the role it was issued at —
   `owner` included — until it expires. `ControlInviting.Redeem`/`RedeemFor`/`Revoke` and
-  `invite.Store` did not change.
+  `invite.Store` did not change. ⚠ **Only ONE of the two arms is guarded with a link store
+  wired**: the fold's invariant test redeems through the PROVISIONING arm (`Redeem`); round 1 of
+  #265 measured that sending every token to the link store in `RedeemFor` — the arm an invitee
+  who already has an account takes — leaves `go test ./internal/ui/` green, because that arm's
+  tests use a rig with no `Links`. The code is correct and unchanged; the guard is missing.
 - 🔴 **The pre-tick cannot widen anything.** It is `InviteView.Project`, set only for a project
   `Invitable` returned, and it ticks a box only where `Mintable` offered that same target; `Mint`
   re-asks `mayLink` of every target at the write regardless. With no `?project=` nothing is ticked.
@@ -4861,6 +4865,12 @@ read the battery's run for the count.
   exercised by the handler tests, not in a real browser across a real deploy.
 - **The owner path that remains** (`cairn-server -set-member`) is named on the page and is not
   driven from here.
+- **The invitation half has a sunset nobody has scheduled.** The only mint there ever was passed
+  no lifetime, so every invitation expires within `invite.DefaultTTL` of the last one minted
+  before the deploy. After that the list, the revoke row, the invitation arm of both redeems,
+  `InviteHonesty`, the `POST /invite` redirect and `invite.Store.Create` (test-only already) have
+  nothing left to act on. Retiring them is a separate change; its condition is in the hub/team
+  handoff.
 
 ---
 

@@ -78,6 +78,21 @@ Team page carrying sharing + invitations + multi-target team links (TTL, reuse, 
   `uiaudit/targets.go`): #232 added `join.js`'s route without one and `TestPWAClauses/e_storage`
   plus `TestTheREALLedgerIsFullyACCOUNTEDFor` went red until it joined `notADocument`. via: measurement
 ## Defects (batched)
+- 🟡 **#265 round 1 (no 🔴; merged on the standing rule):** the "already-issued invitation still
+  redeems" guard covers the provisioning arm only. Changing `RedeemFor`'s `if !known && c.Links !=
+  nil` to `if c.Links != nil` survives `go test ./internal/ui/` (its tests use `newInvRig`, no
+  `Links`). Fix: a `RedeemFor` leg in `TestAnInvitationIssuedBeforeTheFoldStillRedeemsAndIsStillRevocable`
+  on `newTeamRig`, plus a sibling battery row. 🟢 with it: `team.go`'s pre-tick comment says "only
+  by the reader's own choice" where `?project=` can arrive in a link somebody else sent (no
+  exploit found: only a project the caller may confer is tickable, and they must submit);
+  `internal/ui/README.md` Phase Q's table and one `control_mutants.py` `why` still name deleted
+  identifiers.
+- **Follow-up, not built: retire the invitation half.** Closing condition (mechanical): zero rows
+  in the deployed `invites` table with `redeemed_at`, `revoked_at` both null and `expires_at` in
+  the future — reached at most `invite.DefaultTTL` (7 days) after the #265 deploy, since the only
+  mint passed no lifetime. Then `POST /invite/revoke`, the invitation arm of `Redeem`/`RedeemFor`,
+  `InviteHonesty`, the `POST /invite` 303 and `invite.Store.Create` can go; whether spent rows stay
+  listed as history is an operator call. Removing routes is a route-ledger change.
 - ✅ **CLOSED by #252** (`429e953`, test-only): `aPortNothingIsListeningOn` now HOLDS a bound,
   non-listening socket for the whole test instead of closing it (old shape: 38 duplicates in 200,000
   pairs; held: 0). 🟡 left: the agent address uses `127.0.0.2`, unconfigured by default on macOS —
